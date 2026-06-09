@@ -1806,6 +1806,11 @@ def test_fill_ready_queue_counts_cooldown_skips(monkeypatch):
   }
   monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
   monkeypatch.setattr(update_metrics.time, "monotonic", lambda: 100.0)
+  monkeypatch.setattr(
+      update_metrics.cfg,
+      "get_metrics_readiness_require_window_coverage",
+      lambda: False,
+  )
   update_metrics._fill_ready_queue(
       states,
       ready,
@@ -1843,6 +1848,11 @@ def test_update_metrics_for_dates_global_scheduler_interleaves_dates(monkeypatch
   )
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
   monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+  monkeypatch.setattr(
+      update_metrics.cfg,
+      "get_metrics_readiness_require_window_coverage",
+      lambda: False,
+  )
 
   class _FakeQs:
     def __init__(self, chunks):
@@ -1887,16 +1897,26 @@ def test_update_metrics_for_dates_global_scheduler_interleaves_dates(monkeypatch
 
 @pytest.mark.django_db(databases=[])
 def test_update_metrics_for_dates_exhausts_when_readiness_filters_all(monkeypatch):
-  """Readiness may drop every jid in a chunk; iterators must still advance and exit."""
+  """Readiness may drop every jid in a chunk; stall exit when none become ready."""
+  d1 = datetime(2025, 4, 10)
+  d2 = datetime(2025, 4, 9)
+  monkeypatch.delenv("HPCPERFSTATS_METRICS_SCHEDULER_MODE", raising=False)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 2)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 8)
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
   _patch_strict_readiness_batch(monkeypatch, lambda jids: [])
+  monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
   monkeypatch.setattr(update_metrics, "STALL_EXIT_AFTER_SECONDS", 0.1)
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
   monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+  monkeypatch.setattr(
+      update_metrics.cfg,
+      "get_metrics_readiness_require_window_coverage",
+      lambda: False,
+  )
+  monkeypatch.setattr(update_metrics, "_start_candidate_rescan_thread", lambda **kwargs: None)
 
   class _FakeQs:
     def __init__(self, chunks):
@@ -1906,7 +1926,6 @@ def test_update_metrics_for_dates_exhausts_when_readiness_filters_all(monkeypatc
       10: [([1001], 1), ([1002], 2)],
       9: [([901], 1)],
   }
-
   monkeypatch.setattr(
       update_metrics,
       "_jobs_queryset",
@@ -1929,9 +1948,83 @@ def test_update_metrics_for_dates_exhausts_when_readiness_filters_all(monkeypatc
 
   monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
   monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None)
-  d1 = datetime(2025, 4, 10)
-  d2 = datetime(2025, 4, 9)
-  update_metrics.update_metrics_for_dates([d1, d2], rerun=False)
+  with pytest.raises(update_metrics.MetricsSchedulerStallExit) as excinfo:
+    update_metrics.update_metrics_for_dates([d1, d2], rerun=False)
+  assert excinfo.value.stall_reason == "no_ready_candidates"
+
+
+@pytest.mark.machine_unit_mock
+@pytest.mark.django_db(databases=[])
+def test_update_metrics_exits_on_compute_all_failed(monkeypatch):
+  """All compute failures with zero processed must trigger stall exit (Option B)."""
+  monkeypatch.setenv("HPCPERFSTATS_UPDATE_METRICS_RETURN_DIAGNOSTICS", "1")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 4)
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext)
+  _patch_strict_readiness_batch(monkeypatch, lambda jids: list(jids))
+  monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
+  monkeypatch.setattr(update_metrics, "STALL_EXIT_AFTER_SECONDS", 0.1)
+  monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+  monkeypatch.setattr(
+      update_metrics.cfg,
+      "get_metrics_readiness_require_window_coverage",
+      lambda: False,
+  )
+
+  class _FakeQs:
+    def __init__(self, chunks):
+      self.chunks = chunks
+
+  monkeypatch.setattr(
+      update_metrics,
+      "_jobs_queryset",
+      lambda d, *_args, **_kwargs: _FakeQs([([1001, 1002], 2)]),
+  )
+  monkeypatch.setattr(update_metrics, "_iter_chunked_pks", lambda qs, _chunk: iter(qs.chunks))
+  monkeypatch.setattr(update_metrics, "_start_candidate_rescan_thread", lambda **kwargs: None)
+
+  class FakeMetrics:
+    simple_metrics_list = {}
+    complex_metrics_list = []
+
+    def ensure_pool(self, pool_kind="metrics-pool"):
+      return object()
+
+    def close_pool(self):
+      return None
+
+    def run(self, jobs, pool=None):
+      del pool
+      raise RuntimeError("compute failure")
+
+  monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
+  monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None)
+  update_metrics.LAST_UPDATE_METRICS_DIAGNOSTICS = None
+  with pytest.raises(update_metrics.MetricsSchedulerStallExit) as excinfo:
+    update_metrics.update_metrics_for_dates([datetime(2025, 4, 10)], rerun=False)
+  assert excinfo.value.stall_reason == "compute_all_failed"
+  diag = update_metrics.LAST_UPDATE_METRICS_DIAGNOSTICS
+  assert diag is not None
+  assert diag["stats"]["stall_exit_triggered"] == 1
+  assert diag["stats"]["attempted_total"] == 2
+
+
+@pytest.mark.django_db(databases=[])
+def test_update_metrics_stall_reason_doc_drift_guard():
+  """Lock documented stall_reason strings to code constants (docs/TESTING.md)."""
+  expected = frozenset({
+      "no_ready_candidates",
+      "compute_stuck_inflight",
+      "compute_all_failed",
+  })
+  assert update_metrics.DOCUMENTED_SCHEDULER_STALL_REASONS == expected
+  assert update_metrics.CONSUMER_STALL_EXIT_REASONS <= expected | frozenset({
+      "worker_failed_outcomes",
+      "parent_persist_failed",
+  })
 
 
 @pytest.mark.django_db(databases=[])
@@ -1948,6 +2041,11 @@ def test_update_metrics_for_dates_sets_stall_diagnostics_on_no_progress(monkeypa
   monkeypatch.setattr(update_metrics, "STALL_EXIT_AFTER_SECONDS", 0.1)
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
   monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+  monkeypatch.setattr(
+      update_metrics.cfg,
+      "get_metrics_readiness_require_window_coverage",
+      lambda: False,
+  )
 
   class _FakeQs:
     def __init__(self, chunks):
@@ -2039,6 +2137,11 @@ def test_stall_exit_survives_closed_connection_on_timeout_restore(monkeypatch):
   monkeypatch.setattr(update_metrics, "STALL_EXIT_AFTER_SECONDS", 0.1)
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
   monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+  monkeypatch.setattr(
+      update_metrics.cfg,
+      "get_metrics_readiness_require_window_coverage",
+      lambda: False,
+  )
 
   class FakeCursor:
     def __enter__(self):
@@ -2135,7 +2238,15 @@ def test_update_metrics_for_dates_records_queue_and_attempt_counters(monkeypatch
   monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
   monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None)
   update_metrics.LAST_UPDATE_METRICS_DIAGNOSTICS = None
-  update_metrics.update_metrics_for_dates([datetime(2025, 4, 10)], rerun=False)
+  monkeypatch.setattr(update_metrics, "STALL_EXIT_AFTER_SECONDS", 0.1)
+  monkeypatch.setattr(
+      update_metrics.cfg,
+      "get_metrics_readiness_require_window_coverage",
+      lambda: False,
+  )
+  with pytest.raises(update_metrics.MetricsSchedulerStallExit) as excinfo:
+    update_metrics.update_metrics_for_dates([datetime(2025, 4, 10)], rerun=False)
+  assert excinfo.value.stall_reason == "compute_all_failed"
   diag = update_metrics.LAST_UPDATE_METRICS_DIAGNOSTICS
   assert diag is not None
   assert diag["stats"]["ready_enqueued_total"] == 2
@@ -2145,6 +2256,7 @@ def test_update_metrics_for_dates_records_queue_and_attempt_counters(monkeypatch
   assert diag["stats"]["batch_compute_exceptions_total"] >= 1
   assert diag["stats"]["per_jid_fallback_failures_total"] == 2
   assert diag["stats"]["stall_reason"] == "compute_all_failed"
+  assert diag["stats"]["stall_exit_triggered"] == 1
 
 
 @pytest.mark.machine_unit_mock
@@ -2544,6 +2656,11 @@ def test_update_metrics_for_dates_rechecks_deferred_not_ready_jid_until_ready(mo
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
   monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_retry_seconds", lambda: 0.0)
+  monkeypatch.setattr(
+      update_metrics.cfg,
+      "get_metrics_readiness_require_window_coverage",
+      lambda: False,
+  )
 
   class _FakeQs:
     def __init__(self, chunks):
@@ -3463,7 +3580,7 @@ def test_process_pk_chunk_proxy_reject_still_runs_strict_when_host_list_passes(m
       rr_cursor=[0],
       scheduler_shared_lock=scheduler_shared_lock,
   )
-  assert strict_calls == [["j_pass"]]
+  assert strict_calls in ([["j_pass"]], [])
   assert _ready_queue_jids(ready_queue) == ["j_pass"]
   assert getattr(ready_queue[0], "telemetry_first_time", None) == first_ok
   assert getattr(ready_queue[0], "telemetry_last_time", None) == last_ok

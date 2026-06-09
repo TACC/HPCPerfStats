@@ -123,6 +123,19 @@ RESCAN_INTERVAL_SECONDS = 5.0
 RESCAN_IDLE_INTERVAL_MAX_SECONDS = 60.0
 STALL_WARNING_EVERY_PASSES = 200
 STALL_EXIT_AFTER_SECONDS = 900.0
+# User-facing stall_reason strings (docs/TESTING.md); producer sets no_ready_candidates;
+# consumer sets compute_* / worker_* after sustained zero processed progress.
+DOCUMENTED_SCHEDULER_STALL_REASONS = frozenset({
+    "no_ready_candidates",
+    "compute_stuck_inflight",
+    "compute_all_failed",
+})
+CONSUMER_STALL_EXIT_REASONS = frozenset({
+    "compute_stuck_inflight",
+    "compute_all_failed",
+    "worker_failed_outcomes",
+    "parent_persist_failed",
+})
 COMPUTE_BATCH_MIN_CAP = 16
 COMPUTE_BATCH_DOWNSHIFT_FACTOR = 0.5
 COMPUTE_BATCH_UPSHIFT_STEP = 16
@@ -166,6 +179,22 @@ class MetricsSchedulerStallExit(BaseException):
     super().__init__(
         "metrics scheduler stalled ({0})".format(self.stall_reason)
     )
+
+
+def _maybe_trigger_consumer_stall_exit(stats, consumer_stall_since, scheduler_shared_lock):
+  """Set ``stall_exit_triggered`` when compute-stage stall persists with zero processed."""
+  if consumer_stall_since is None:
+    return False
+  if time.monotonic() - consumer_stall_since < STALL_EXIT_AFTER_SECONDS:
+    return False
+  with scheduler_shared_lock:
+    if int(stats["processed"]) != 0:
+      return False
+    reason = stats.get("stall_reason") or ""
+    if reason not in CONSUMER_STALL_EXIT_REASONS:
+      return False
+    stats["stall_exit_triggered"] = 1
+  return True
 
 
 def _job_window_runtime_seconds(start_time, end_time):
@@ -1566,7 +1595,7 @@ def _ready_jids_from_job_rows(jobs):
   return ready
 
 
-def _ready_jids_and_bounds_from_job_rows(jobs):
+def _ready_jids_and_bounds_from_job_rows(jobs, *, precomputed_bounds_by_jid=None):
   """Return ``(ready_jids, bounds_by_jid)`` for pre-fetched job rows."""
   if not jobs:
     return [], {}
@@ -1574,7 +1603,11 @@ def _ready_jids_and_bounds_from_job_rows(jobs):
   if cfg.get_metrics_readiness_require_window_coverage():
     start_margin_s = float(cfg.get_metrics_readiness_start_margin_seconds())
     end_margin_s = float(cfg.get_metrics_readiness_end_margin_seconds())
-    bounds_by_jid = _in_window_min_max_by_job_rows(jobs)
+    bounds_by_jid = (
+        precomputed_bounds_by_jid
+        if precomputed_bounds_by_jid is not None
+        else _in_window_min_max_by_job_rows(jobs)
+    )
     ready = []
     for row in jobs:
       jid = row["jid"]
@@ -1969,6 +2002,37 @@ def _fill_ready_queue(
         for candidate in list(pk_chunk)
     ]
     candidate_by_jid = {candidate.jid: candidate for candidate in ordered}
+    chunk_job_by_jid = {}
+    chunk_bounds_by_jid = None
+    if (
+        connections["default"].vendor == "postgresql"
+        and cfg.get_metrics_readiness_require_window_coverage()
+    ):
+      chunk_jids = [candidate.jid for candidate in ordered]
+      chunk_job_rows = list(
+          job_data.objects.filter(jid__in=chunk_jids)
+          .values("jid", "start_time", "end_time", "host_list")
+      )
+      chunk_job_by_jid = {row["jid"]: row for row in chunk_job_rows}
+      chunk_bounds_by_jid = _in_window_min_max_by_job_rows(
+          [chunk_job_by_jid[jid] for jid in chunk_jids if jid in chunk_job_by_jid]
+      )
+      reject_set = set()
+      for candidate in ordered:
+        jid = candidate.jid
+        row = chunk_job_by_jid.get(jid)
+        if row is None:
+          continue
+        start_time = row.get("start_time")
+        end_time = row.get("end_time")
+        if start_time is None or end_time is None:
+          continue
+        min_t, max_t = chunk_bounds_by_jid.get(jid, (None, None))
+        if _proxy_window_coverage_bucket(start_time, end_time, min_t, max_t) == "reject":
+          reject_set.add(jid)
+    else:
+      reject_set, _ = _proxy_reject_not_ready_jids([candidate.jid for candidate in ordered])
+      reject_set = set(reject_set)
     for candidate in ordered:
       jid = candidate.jid
       if on_candidate_jid is not None:
@@ -1976,8 +2040,6 @@ def _fill_ready_queue(
       with scheduler_shared_lock:
         stats["candidate_jids"] += 1
 
-    reject_set, _ = _proxy_reject_not_ready_jids([candidate.jid for candidate in ordered])
-    reject_set = set(reject_set)
     for candidate in ordered:
       jid = candidate.jid
       if jid not in reject_set:
@@ -2022,11 +2084,21 @@ def _fill_ready_queue(
       try:
         with phase_timer.phase("readiness_s"):
           with _pg_local_readiness_timeouts():
-            ready_list, bounds_by_jid = (
-                _filter_jids_with_samples_after_end_and_bounds(
-                    [candidate.jid for candidate in work]
-                )
-            )
+            if (
+                chunk_bounds_by_jid is not None
+                and all(candidate.jid in chunk_job_by_jid for candidate in work)
+            ):
+              jobs_for_strict = [chunk_job_by_jid[candidate.jid] for candidate in work]
+              ready_list, bounds_by_jid = _ready_jids_and_bounds_from_job_rows(
+                  jobs_for_strict,
+                  precomputed_bounds_by_jid=chunk_bounds_by_jid,
+              )
+            else:
+              ready_list, bounds_by_jid = (
+                  _filter_jids_with_samples_after_end_and_bounds(
+                      [candidate.jid for candidate in work]
+                  )
+              )
       except (OperationalError, DatabaseError) as exc:
         if is_database_unavailable_error(exc):
           log_and_raise_database_unavailable(
@@ -2327,7 +2399,7 @@ def _start_readiness_producer(
     rr_cursor = {"idx": 0}
     deferred_not_ready = {}
     deferred_meta = {}
-    last_attempted_total = 0
+    last_processed_total = 0
     last_progress_at = time.monotonic()
 
     def _remember_candidate(candidate):
@@ -2381,9 +2453,9 @@ def _start_readiness_producer(
     try:
       while not shutdown_requested[0]:
         with scheduler_shared_lock:
-          attempted_now = int(stats["processed"]) + int(stats["failed"])
-        if attempted_now > last_attempted_total:
-          last_attempted_total = attempted_now
+          processed_now = int(stats["processed"])
+        if processed_now > last_processed_total:
+          last_processed_total = processed_now
           last_progress_at = time.monotonic()
         with ready_queue_lock:
           current_depth = len(ready_queue)
@@ -2526,7 +2598,7 @@ def _start_readiness_producer(
               "metrics scheduler: no progress for {0:.1f}s; exiting producer "
               "(attempted_total={1} candidate_jids={2} deferred_not_ready={3} rescan_backlog={4}).".format(
                   stalled_for_s,
-                  attempted_now,
+                  int(stats.get("processed", 0)) + int(stats.get("failed", 0)),
                   stats.get("candidate_jids", 0),
                   len(deferred_not_ready),
                   int(has_rescan_backlog),
@@ -3266,6 +3338,7 @@ def update_metrics_for_dates(dates, rerun=False):
       t0 = time.monotonic()
       compute_batches = 0
       stall_iters = 0
+      consumer_stall_since = None
       telemetry_enabled = _metrics_telemetry_enabled()
       telemetry_metrics_samples = []
       telemetry_prewarm_samples = []
@@ -3281,6 +3354,10 @@ def update_metrics_for_dates(dates, rerun=False):
       telemetry_detail_gpu_fallback_queries = 0
       try:
         while not shutdown_requested[0]:
+          if _maybe_trigger_consumer_stall_exit(
+              stats, consumer_stall_since, scheduler_shared_lock,
+          ):
+            break
           with ready_queue_lock:
             if ready_queue:
               jobs_this_round = _pop_candidates_for_compute_batch_locked(
@@ -3294,9 +3371,34 @@ def update_metrics_for_dates(dates, rerun=False):
               stats["ready_dequeued_total"] += len(jobs_this_round)
               stats["inflight_jids"] += len(jobs_this_round)
           if not jobs_this_round:
+            if _maybe_trigger_consumer_stall_exit(
+                stats, consumer_stall_since, scheduler_shared_lock,
+            ):
+              break
             if producer_done.is_set():
+              with scheduler_shared_lock:
+                proc = int(stats["processed"])
+                reason = stats.get("stall_reason") or ""
+              if (
+                  proc == 0
+                  and reason in CONSUMER_STALL_EXIT_REASONS
+                  and consumer_stall_since is not None
+              ):
+                if not _maybe_trigger_consumer_stall_exit(
+                    stats, consumer_stall_since, scheduler_shared_lock,
+                ):
+                  time.sleep(0.05)
+                  continue
               break
             stall_iters += 1
+            with scheduler_shared_lock:
+              inflight = stats["inflight_jids"]
+              proc = int(stats["processed"])
+              if inflight > 0 and not stats.get("stall_reason"):
+                stats["stall_reason"] = "compute_stuck_inflight"
+            if inflight > 0 and proc == 0:
+              if consumer_stall_since is None:
+                consumer_stall_since = time.monotonic()
             if stall_iters == 1 or stall_iters % STALL_WARNING_EVERY_PASSES == 0:
               pending_days = sum(1 for s in date_states if not s["done"]) if not producer_done.is_set() else 0
               with scheduler_shared_lock:
@@ -3310,8 +3412,6 @@ def update_metrics_for_dates(dates, rerun=False):
                 enq = stats["ready_enqueued_total"]
                 deq = stats["ready_dequeued_total"]
                 inflight = stats["inflight_jids"]
-                if inflight > 0 and not stats.get("stall_reason"):
-                  stats["stall_reason"] = "compute_stuck_inflight"
               log_print(
                   "metrics scheduler: no ready jobs yet "
                   "(pending_days={0} candidate_jids={1} skipped_not_ready={2} "
@@ -3334,6 +3434,10 @@ def update_metrics_for_dates(dates, rerun=False):
                   ),
                   flush=True,
               )
+            if _maybe_trigger_consumer_stall_exit(
+                stats, consumer_stall_since, scheduler_shared_lock,
+            ):
+              break
             time.sleep(0.05)
             continue
           stall_iters = 0
@@ -3444,6 +3548,18 @@ def update_metrics_for_dates(dates, rerun=False):
                 stats["stall_reason"] = "worker_failed_outcomes"
               else:
                 stats["stall_reason"] = "compute_all_failed"
+          if proc_total > 0:
+            consumer_stall_since = None
+          elif proc_total == 0 and fail_total > 0:
+            with scheduler_shared_lock:
+              reason = stats.get("stall_reason") or ""
+            if reason in CONSUMER_STALL_EXIT_REASONS:
+              if consumer_stall_since is None:
+                consumer_stall_since = time.monotonic()
+              elif _maybe_trigger_consumer_stall_exit(
+                  stats, consumer_stall_since, scheduler_shared_lock,
+              ):
+                break
           completion_reporter.sync_completed_total(proc_total)
           compute_batches += 1
           if downshift:

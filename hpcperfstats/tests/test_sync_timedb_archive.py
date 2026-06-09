@@ -3711,7 +3711,59 @@ def test_raw_stats_needs_append_false_when_day_skipped(
   ) is False
 
 
-def test_raw_stats_path_needs_tar_append_conservative_on_redis_failure(
+def test_get_existing_archive_members_no_local_scan_when_degraded(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  """Degraded Redis populate without day skip must not fall through to local zstd."""
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+      ArchiveMembersRedisUnavailableError,
+      build_archive_members_redis_keys,
+  )
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import FakeRedis
+
+  day_gz = tmp_path / "2024-06-14.tar.gz"
+  inner = tmp_path / "raw.txt"
+  inner.write_text("data")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(inner), arcname="host/raw")
+  sealed = str(day_gz)
+  stream_calls = {"n": 0}
+  fake = FakeRedis()
+
+  def _forbidden_stream(*_a, **_k):
+    stream_calls["n"] += 1
+    raise AssertionError("must not stream sealed archive when Redis degraded")
+
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: fake,
+  )
+  monkeypatch.setattr(
+      helpers, "_stream_compressed_archive_members", _forbidden_stream,
+  )
+  monkeypatch.setattr(
+      helpers, "_scan_compressed_archive_members_and_readable", _forbidden_stream,
+  )
+
+  canonical = helpers.normalize_daily_compressed_path(sealed)
+  cache_key = helpers._daily_archive_members_cache_key(canonical)
+  keys = build_archive_members_redis_keys(cache_key)
+  fake.set(keys.degraded_key, "1")
+
+  with pytest.raises(ArchiveMembersRedisUnavailableError):
+    get_existing_archive_members_for_daily_archive(sealed)
+  assert stream_calls["n"] == 0
+
+
+def test_raw_stats_path_needs_tar_append_reraises_redis_unavailable(
     monkeypatch, tmp_path,
 ):
   import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
@@ -3733,11 +3785,33 @@ def test_raw_stats_path_needs_tar_append_conservative_on_redis_failure(
   monkeypatch.setattr(
       helpers, "daily_archive_has_member_with_size", _raise_lookup,
   )
-  assert raw_stats_path_needs_tar_append(
-      str(raw_path),
-      str(daily_dir),
-      first_ts=ts,
-  ) is True
+  with pytest.raises(ArchiveMembersRedisUnavailableError, match="redis down"):
+    raw_stats_path_needs_tar_append(
+        str(raw_path),
+        str(daily_dir),
+        first_ts=ts,
+    )
+
+
+def test_ingest_skipped_calendar_days_lru_not_full_clear(monkeypatch):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  helpers._INGEST_SKIPPED_CALENDAR_DAYS.clear()
+  monkeypatch.setattr(
+      helpers, "_INGEST_SKIPPED_CALENDAR_DAYS_MAX", 3,
+  )
+  helpers._cache_ingest_skipped_calendar_day("day-a", "k", "d", "/a")
+  helpers._cache_ingest_skipped_calendar_day("day-b", "k", "d", "/b")
+  helpers._cache_ingest_skipped_calendar_day("day-c", "k", "d", "/c")
+  helpers._cache_ingest_skipped_calendar_day("day-d", "k", "d", "/d")
+  assert "day-a" not in helpers._INGEST_SKIPPED_CALENDAR_DAYS
+  assert "day-b" in helpers._INGEST_SKIPPED_CALENDAR_DAYS
+  helpers._cache_ingest_skipped_calendar_day("day-b", "k2", "d2", "/b2")
+  helpers._cache_ingest_skipped_calendar_day("day-e", "k", "d", "/e")
+  assert "day-c" not in helpers._INGEST_SKIPPED_CALENDAR_DAYS
+  assert "day-b" in helpers._INGEST_SKIPPED_CALENDAR_DAYS
+  assert "day-d" in helpers._INGEST_SKIPPED_CALENDAR_DAYS
+  helpers._INGEST_SKIPPED_CALENDAR_DAYS.clear()
 
 
 def test_daily_archive_members_cache_hit_skips_second_scan(

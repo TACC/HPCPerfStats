@@ -20,15 +20,17 @@ When code on the **ingest pool worker** hot path can read or decompress the **sa
 2. **Per-process L1 is not cluster dedupe:** `sync_archive_members_cache_*` dedupes only within one worker process; it does **not** prevent N× parallel `zstd` across the ingest pool.
 3. **Redis L2 enabled (`sync_archive_members_redis_enabled=yes`):** on ingest duplicate-check, order MUST be:
    - L1 skip cache → Redis `archive_day_ingest_skip` → L1 member map → Redis HGET / complete map → wait while populate lock held → **single-flight populate** (at most one decompress per daily archive identity).
-   - **Forbidden:** local `_sealed_archive_member_has_exact_size` or full sealed stream when Redis is enabled and the day is not yet `complete=1` — including after populate failure (`populate_degraded`) or waiter timeout. Waiters must read `archive_day_ingest_skip` and raise `ArchiveDayIngestSkipError` immediately.
+   - **Forbidden:** local `_sealed_archive_member_has_exact_size` or full sealed stream when Redis is enabled and the day is not yet `complete=1` — including after populate failure (`populate_degraded`) or waiter timeout. Waiters must read `archive_day_ingest_skip` and raise `ArchiveDayIngestSkipError` immediately; if degraded is set **without** day skip, raise `ArchiveMembersRedisUnavailableError` (never fall through to `_scan_compressed_archive_members_*` in `get_existing_archive_members_for_daily_archive`).
    - Local sealed scan only when **Redis is disabled** (no cross-worker guarantee).
-4. **Unreadable sealed day (populate winner only):** classify once with `zstd -t` vs tar stream error → set Redis `archive_day_ingest_skip:v1:{day}` **before** populate lock release → log once per calendar day. All DB-complete raw for that day: `raw_stats_path_needs_tar_append` returns **`False`** (`need_archival=False`); ingest continues for other days.
-5. **Waiter semantics:** waiters block on incremental HASH + `complete=1`, `archive_day_ingest_skip`, or stall detection (`populate_stall_seconds`); see `sync_timedb_archive_members_redis.py`.
-6. **Operator-visible goal:** at most **one** `zstd -d` (or equivalent sealed stream) per calendar day per site at a time during ingest catch-up, not one per ingest worker — including failure/diagnostic paths.
+4. **Redis L2 outage during ingest:** when `sync_archive_members_redis_enabled=yes`, `ArchiveMembersRedisUnavailableError` on duplicate-check (including mid-chunk ingest) must propagate to the supervisor and **`sys.exit(1)`** — same class as startup `verify_archive_members_redis_startup`. Do **not** assume-append or per-file fail-open.
+5. **Unreadable sealed day (populate winner only):** classify once with `zstd -t` vs tar stream error → set Redis `archive_day_ingest_skip:v1:{day}` **before** populate lock release → log once per calendar day. All DB-complete raw for that day: `raw_stats_path_needs_tar_append` returns **`False`** (`need_archival=False`); ingest continues for other days.
+6. **Waiter semantics:** waiters block on incremental HASH + `complete=1`, `archive_day_ingest_skip`, or stall detection (`populate_stall_seconds`); pass `sealed_path` into `wait_for_complete_members` for skip checks.
+7. **Operator-visible goal:** at most **one** `zstd -d` (or equivalent sealed stream) per calendar day per site at a time during ingest catch-up, not one per ingest worker — including failure/diagnostic paths.
 
 ## Tests (same task, non-optional)
 
 - Add or extend a **concurrent** regression test (threads or processes + `FakeRedis`) that invokes the ingest duplicate-check path N times on the same cold sealed day and asserts the sealed stream / populate entrypoint runs **once** (e.g. `test_ingest_sealed_single_flight_one_zstd_scan`).
+- Add **`test_get_existing_archive_members_no_local_scan_when_degraded`**: Redis + `populate_degraded` without day skip → zero sealed streams, `ArchiveMembersRedisUnavailableError`.
 - Add **`test_concurrent_waiters_no_zstd_after_day_skip`**: after `archive_day_ingest_skip` is set, N ingest workers issue **zero** sealed streams.
 - When changing coordination order, grep all callers per `exhaustive-error-path-analysis.mdc` and extend tests for each ingest entrypoint affected.
 

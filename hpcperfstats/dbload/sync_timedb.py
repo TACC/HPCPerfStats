@@ -111,6 +111,9 @@ from hpcperfstats.dbload.sync_timedb_startup_raw_removal import (
     PHASE_VERIFICATION_COMPLETE,
     StartupRawRemovalPreflight,
 )
+from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+    ArchiveMembersRedisUnavailableError,
+)
 
 # Supervisor tests monkeypatch these names; cold-path maintenance lives in ArchiveJanitor.
 def seal_dirty_daily_archives(*args, **kwargs):
@@ -321,6 +324,17 @@ _HOST_ITIMES_CACHE_MAX_ENTRIES = 2000
 _HOST_ITIMES_CACHE_MAX_TIMESTAMPS_PER_ENTRY = 100000
 
 tgz_archive_dir = cfg.get_daily_archive_dir_path()
+
+
+def _exit_on_archive_members_redis_unavailable(exc):
+  """Fatal exit when Redis L2 is required but unavailable during ingest."""
+  log_print("ERROR: %s" % exc, flush=True)
+  log_print(
+      "ERROR: sync_archive_members_redis_enabled=yes requires a reachable "
+      "Redis at [CACHE] redis_location.",
+      flush=True,
+  )
+  sys.exit(1)
 
 
 @contextmanager
@@ -2362,6 +2376,8 @@ def run_sync_timedb_supervisor_loop(
             raise
           except DatabaseUnavailableExit:
             raise
+          except ArchiveMembersRedisUnavailableError as exc:
+            _exit_on_archive_members_redis_unavailable(exc)
           except Exception as exc:
             reraise_database_unavailable_chain(
                 exc, context="sync_timedb ingest pool"
@@ -2414,6 +2430,8 @@ def run_sync_timedb_supervisor_loop(
             raise
           except DatabaseUnavailableExit:
             raise
+          except ArchiveMembersRedisUnavailableError as exc:
+            _exit_on_archive_members_redis_unavailable(exc)
           except Exception as exc:
             reraise_database_unavailable_chain(
                 exc, context="sync_timedb ingest pool"
@@ -2669,13 +2687,7 @@ def run_sync_timedb_supervisor_from_parsed(run_once, startdate, enddate):
     )
     verify_archive_members_redis_startup()
   except ArchiveMembersRedisUnavailableError as exc:
-    log_print("ERROR: %s" % exc, flush=True)
-    log_print(
-        "ERROR: sync_archive_members_redis_enabled=yes requires a reachable "
-        "Redis at [CACHE] redis_location.",
-        flush=True,
-    )
-    sys.exit(1)
+    _exit_on_archive_members_redis_unavailable(exc)
 
   directory = cfg.get_archive_dir_path()
 

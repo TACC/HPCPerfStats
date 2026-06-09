@@ -9,7 +9,7 @@ import subprocess
 import tarfile
 import tempfile
 import time
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from datetime import datetime, time as dt_time, timedelta
 
 import hpcperfstats.conf_parser as cfg
@@ -250,19 +250,7 @@ def raw_stats_path_needs_tar_append(
     if isinstance(exc, ArchiveDayIngestSkipError):
       _log_archive_day_ingest_skip_once(exc)
       return False
-    if isinstance(exc, ArchiveMembersRedisUnavailableError):
-      return _member_lookup_failed_assume_append(stats_path, exc)
     raise
-  return True
-
-
-def _member_lookup_failed_assume_append(stats_path, exc):
-  """Log and conservatively require tar append when member lookup fails."""
-  log_print(
-      "WARNING: archive member lookup failed for %s: %s; assuming append needed"
-      % (stats_path, exc),
-      flush=True,
-  )
   return True
 
 
@@ -1204,7 +1192,7 @@ def _sealed_archive_member_has_exact_size(sealed_path, member_name, expected_siz
 
 _INGEST_SEALED_LOOKUP_WARNED = set()
 _INGEST_SEALED_LOOKUP_WARNED_MAX = 256
-_INGEST_SKIPPED_CALENDAR_DAYS = {}
+_INGEST_SKIPPED_CALENDAR_DAYS = OrderedDict()
 _INGEST_SKIPPED_CALENDAR_DAYS_MAX = 512
 _LOGGED_ARCHIVE_DAY_INGEST_SKIP = set()
 _LOGGED_ARCHIVE_DAY_INGEST_SKIP_MAX = 256
@@ -1251,9 +1239,11 @@ def classify_sealed_archive_stream_failure(sealed_path, stream_error=None):
 
 
 def _cache_ingest_skipped_calendar_day(day_token, kind, detail, sealed_path):
-  if len(_INGEST_SKIPPED_CALENDAR_DAYS) >= _INGEST_SKIPPED_CALENDAR_DAYS_MAX:
-    _INGEST_SKIPPED_CALENDAR_DAYS.clear()
+  if day_token in _INGEST_SKIPPED_CALENDAR_DAYS:
+    _INGEST_SKIPPED_CALENDAR_DAYS.move_to_end(day_token)
   _INGEST_SKIPPED_CALENDAR_DAYS[day_token] = (kind, detail, sealed_path)
+  while len(_INGEST_SKIPPED_CALENDAR_DAYS) > _INGEST_SKIPPED_CALENDAR_DAYS_MAX:
+    _INGEST_SKIPPED_CALENDAR_DAYS.popitem(last=False)
 
 
 def _raise_if_ingest_day_skipped(keys, sealed_path, client):
@@ -1721,8 +1711,12 @@ def get_existing_archive_members_for_daily_archive(archive_compressed_path):
             members,
             saw_duplicates=tar_has_duplicate_file_members(tar_path),
         )
-    except Exception:
-      pass
+    except Exception as exc:
+      log_print(
+          "WARNING: store_complete_members_in_redis failed for %s: %s"
+          % (cache_key, exc),
+          flush=True,
+      )
     return members
   sealed_path = _resolve_sealed_daily_archive_path(archive_compressed_path)
   if sealed_path is None:
@@ -1742,14 +1736,18 @@ def get_existing_archive_members_for_daily_archive(archive_compressed_path):
       if members is None:
         client = get_archive_members_redis_client(required=True)
         if client.exists(keys.lock_key):
-          members = wait_for_complete_members(keys)
+          members = wait_for_complete_members(keys, sealed_path=sealed_path)
         elif populate_degraded_is_set(keys, client=client):
           from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+              ArchiveMembersRedisUnavailableError,
               get_archive_day_ingest_skip,
           )
           if get_archive_day_ingest_skip(keys, client=client) is not None:
             return {}
-          members = None
+          raise ArchiveMembersRedisUnavailableError(
+              "archive members Redis populate degraded for %s without day skip"
+              % keys.day_token,
+          )
         else:
           members = _populate_redis_members_from_sealed_scan(
               sealed_path,
@@ -1760,6 +1758,14 @@ def get_existing_archive_members_for_daily_archive(archive_compressed_path):
         return dict(members)
   except Exception:
     raise
+  if archive_members_redis_enabled():
+    from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+        ArchiveMembersRedisUnavailableError,
+    )
+    raise ArchiveMembersRedisUnavailableError(
+        "archive members Redis enabled but lookup did not return members for %s"
+        % canonical,
+    )
   readable, members = _scan_compressed_archive_members_and_readable(
       sealed_path,
       apply_priority_wrap=False,

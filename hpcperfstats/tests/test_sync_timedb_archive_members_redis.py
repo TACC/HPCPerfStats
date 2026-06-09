@@ -1,6 +1,7 @@
 """Tests for Redis L2 daily archive member cache (no Django)."""
 from __future__ import annotations
 
+import os
 import tarfile
 import threading
 import time
@@ -25,6 +26,17 @@ from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
     store_complete_members_in_redis,
     verify_archive_members_redis_startup,
     wait_for_member_match,
+)
+
+_COMPOSE = os.environ.get("HPCPERFSTATS_COMPOSE_NETWORK", "").strip().lower() in (
+    "1",
+    "yes",
+    "true",
+)
+_LIVE = os.environ.get("HPCPERFSTATS_PYTEST_LIVE_REDIS", "").strip().lower() in (
+    "1",
+    "yes",
+    "true",
 )
 
 
@@ -146,8 +158,12 @@ def _sample_cache_key(tmp_path, day="2026-05-09"):
 
 
 @pytest.fixture(autouse=True)
-def _redis_test_env(monkeypatch):
+def _redis_test_env(request, monkeypatch):
   reset_archive_members_redis_client_for_tests()
+  if request.node.get_closest_marker("live_redis") and _LIVE:
+    yield None
+    reset_archive_members_redis_client_for_tests()
+    return
   fake = FakeRedis()
   monkeypatch.setattr(
       "hpcperfstats.dbload.sync_timedb_archive_members_redis.get_archive_members_redis_client",
@@ -578,3 +594,43 @@ def test_stream_logs_generic_failure(tmp_path, capsys, monkeypatch):
   captured = capsys.readouterr()
   assert "sealed archive member stream failed" in captured.out
   assert "disk read error" in captured.out
+
+
+@pytest.mark.skipif(
+    not (_COMPOSE and _LIVE),
+    reason=(
+        "Requires Docker Compose network and live Redis "
+        "(HPCPERFSTATS_COMPOSE_NETWORK=1 and HPCPERFSTATS_PYTEST_LIVE_REDIS=1). "
+        "Run: tests/run_redis_cache_pytest_workflow.sh"
+    ),
+)
+@pytest.mark.live_redis
+def test_archive_members_redis_populate_single_flight_compose(tmp_path):
+  """Real redis hostname: single-flight populate and day_skip TTL."""
+  reset_archive_members_redis_client_for_tests()
+  verify_archive_members_redis_startup()
+  cache_key = _sample_cache_key(tmp_path, day="2026-06-09")
+  keys = build_archive_members_redis_keys(cache_key)
+  invalidate_archive_members_redis(cache_key)
+  scan_calls = {"n": 0}
+  sealed_path = cache_key[0]
+
+  def _scan(on_member):
+    scan_calls["n"] += 1
+    on_member("onlymember", 7)
+    return True, False
+
+  members = populate_archive_members_redis(
+      keys, _scan, sealed_path=sealed_path,
+  )
+  assert members == {"onlymember": 7}
+  assert scan_calls["n"] == 1
+  client = get_archive_members_redis_client(required=True)
+  assert get_archive_day_ingest_skip(keys, client=client) is None
+  set_archive_day_ingest_skip(
+      client, keys, "tar_truncated_or_unreadable", "compose smoke",
+  )
+  skip = get_archive_day_ingest_skip(keys, client=client)
+  assert skip is not None
+  assert skip[0] == "tar_truncated_or_unreadable"
+  invalidate_archive_members_redis(cache_key)

@@ -1749,6 +1749,90 @@ def test_parse_payload_marks_fully_duplicate_file_for_archival(monkeypatch):
   assert parse_elapsed_s >= 0.0
 
 
+def test_parse_stats_file_payload_need_archival_false_on_day_skip(monkeypatch):
+  target = "/tmp/stats-day-skip"
+  monkeypatch.setattr(st, "close_old_connections", lambda: None)
+  monkeypatch.setattr(st, "parse_stats_file_path", lambda _p: ("h1", "123"))
+  monkeypatch.setattr(st, "stats_file_is_active_segment", lambda _p: False)
+  monkeypatch.setattr(st, "load_stats_file_lines", lambda *_a, **_k: (["100 job1 h1\n"], None))
+  monkeypatch.setattr(st, "parse_first_timestamp_line", lambda _lines: ("100", "job1", "h1"))
+  monkeypatch.setattr(st, "head_timestamp_present_in_db", lambda *_a, **_k: True)
+  monkeypatch.setattr(st.host_data, "objects", type("_Mgr", (), {
+      "filter": staticmethod(lambda **_k: type("_QS", (), {
+          "values_list": staticmethod(lambda *a, **k: type("_V", (), {"distinct": staticmethod(lambda: type("_I", (), {"iterator": staticmethod(lambda: iter([]))})())})())
+      })())
+  })())
+  monkeypatch.setattr(st, "find_processing_start_index", lambda *_a, **_k: (-1, True))
+  monkeypatch.setattr(st, "raw_stats_path_needs_tar_append", lambda *_a, **_k: False)
+  stats_file, payload, need_archival, ingest_ok, parse_elapsed_s = st._parse_stats_file_payload(target)
+  assert stats_file == target
+  assert payload is None
+  assert need_archival is False
+  assert ingest_ok is True
+  assert parse_elapsed_s >= 0.0
+
+
+def test_sync_timedb_exits_on_redis_unavailable_during_ingest(monkeypatch):
+  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+      ArchiveMembersRedisUnavailableError,
+  )
+
+  shutdown_requested[0] = False
+  try:
+    target = "/fake/stats-redis-fatal"
+
+    def fake_rescan(*_a, **_k):
+      if fake_rescan.calls == 0:
+        fake_rescan.calls += 1
+        return [target]
+      return []
+    fake_rescan.calls = 0
+
+    def fake_combined(_lock, path, stats_file_contents=None):
+      del _lock, stats_file_contents
+      raise ArchiveMembersRedisUnavailableError("redis down mid-ingest")
+
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "_ingest_parse_and_write_file", fake_combined)
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_sync_db_writer_combined_task", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_sync_ingest_chunk_size", lambda: 1000)
+    monkeypatch.setattr(st.cfg, "get_sync_supervisor_rss_limit_mb", lambda: 0)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+    monkeypatch.setattr(st, "build_archive_mapping", lambda *_a, **_k: {})
+    monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
+    monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+    monkeypatch.setattr(
+        st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(
+        "hpcperfstats.dbload.sync_timedb_archive_members_redis"
+        ".verify_archive_members_redis_startup",
+        lambda: None,
+    )
+
+    archive_pool = _FakeArchivePool()
+    archive_pool.__enter__()
+    try:
+      with pytest.raises(SystemExit) as excinfo:
+        st.run_sync_timedb_supervisor_loop(
+            "/tmp/archive",
+            "all",
+            None,
+            ".hpc",
+            object(),
+            archive_pool,
+            run_once=True,
+        )
+      assert excinfo.value.code == 1
+    finally:
+      archive_pool.__exit__(None, None, None)
+  finally:
+    shutdown_requested[0] = False
+
+
 def _parse_payload_quarantine_fixture(monkeypatch, tmp_path, *, lines, parse_side_effect=None):
   archive_dir = tmp_path / "archive"
   host_dir = archive_dir / "host.hpc"
