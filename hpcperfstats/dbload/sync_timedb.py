@@ -2662,6 +2662,21 @@ def run_sync_timedb_supervisor_from_parsed(run_once, startdate, enddate):
         "subdirectories whose names end with this suffix.")
     sys.exit(1)
 
+  try:
+    from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+        ArchiveMembersRedisUnavailableError,
+        verify_archive_members_redis_startup,
+    )
+    verify_archive_members_redis_startup()
+  except ArchiveMembersRedisUnavailableError as exc:
+    log_print("ERROR: %s" % exc, flush=True)
+    log_print(
+        "ERROR: sync_archive_members_redis_enabled=yes requires a reachable "
+        "Redis at [CACHE] redis_location.",
+        flush=True,
+    )
+    sys.exit(1)
+
   directory = cfg.get_archive_dir_path()
 
   manager = multiprocessing.Manager()

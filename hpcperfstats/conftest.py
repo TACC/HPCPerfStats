@@ -130,6 +130,26 @@ def pytest_collection_modifyitems(config, items):
     item.add_marker(skip_compose)
 
 
+@pytest.fixture(autouse=True)
+def _archive_members_redis_test_policy(request, monkeypatch):
+  """Disable Redis L2 in archive unit tests unless the dedicated module opts in."""
+  mod = getattr(request.node, "module", None)
+  mod_name = getattr(mod, "__name__", "") or ""
+  if mod_name.endswith("test_sync_timedb_archive_members_redis"):
+    from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+        reset_archive_members_redis_client_for_tests,
+    )
+    reset_archive_members_redis_client_for_tests()
+    yield
+    reset_archive_members_redis_client_for_tests()
+    return
+  monkeypatch.setattr(
+      "hpcperfstats.conf_parser.get_sync_archive_members_redis_enabled",
+      lambda: False,
+  )
+  yield
+
+
 @pytest.fixture
 def temp_ini(tmp_path):
   """Create a minimal hpcperfstats.ini for tests that need conf_parser.

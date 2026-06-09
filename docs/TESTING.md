@@ -336,7 +336,8 @@ npm run test:coverage -- --run
 | `hpcperfstats/tests/test_monitor_analysis_typename_contract.py` | Monitor `.st_name` coverage vs `canonical.py` and roofline peak rows. |
 | `hpcperfstats/tests/test_archive_compress.py` | Pure path helpers in `archive_compress.py` (detect format, tar/zst/gz siblings, member maps). |
 | `hpcperfstats/tests/test_sync_timedb_startup_raw_removal.py` | Startup raw removal preflight: async sealed-only verify manifest, DB head gate, gated delete (host unit; no compose). Pair with `test_sync_timedb_supervisor.py` tests `test_supervisor_*_startup_*` for delete gate + post-delete rescan. |
-| `hpcperfstats/tests/test_sync_timedb_archive.py` (member cache) | DB-complete ingest path: identity-keyed `get_existing_archive_members_for_daily_archive` cache, `daily_archive_has_member_with_size`, `invalidate_daily_archive_members_cache` (`test_daily_archive_members_cache_*`, `test_raw_stats_needs_append_uses_cache`, `test_single_member_early_exit_finds_match`). |
+| `hpcperfstats/tests/test_sync_timedb_archive.py` (member cache) | DB-complete ingest path: identity-keyed `get_existing_archive_members_for_daily_archive` cache, `daily_archive_has_member_with_size`, `invalidate_daily_archive_members_cache` (`test_daily_archive_members_cache_*`, `test_raw_stats_needs_append_uses_cache`, `test_single_member_early_exit_finds_match`, `test_dedupe_sealed_daily_archive_last_resort`, `test_get_existing_archive_members_uses_redis_l2`). |
+| `hpcperfstats/tests/test_sync_timedb_archive_members_redis.py` | Redis L2 single-flight populate, incremental HASH + `complete` signal, waiter semantics, `dedupe_hint`, hard-fail when Redis required (host `FakeRedis`; compose optional). |
 | `hpcperfstats/tests/test_sync_timedb_supervisor.py` (stall/teardown) | `test_stall_teardown_preserves_exit_124_not_137` (imap stall must not be masked by exit 137 during `finally` finalize); `test_finalize_invalidates_members_cache` (append finalize clears member cache). |
 | `hpcperfstats/tests/test_sync_acct.py` | Accounting ingest (`sync_acct_from_content`, restricted queues, bulk fallback, cache notify) with mocked ORM. |
 | `hpcperfstats/tests/test_listend_drain.py` | RabbitMQ drain loop (ack/nack, empty queue) with mocked pika. |
@@ -443,7 +444,10 @@ tests/run_db_pytest_workflow.sh -- -k job_plot
 ```bash
 cd HPCPerfStats
 ../.venv/bin/python3 scripts/run_tests.py --no-django \
-  hpcperfstats/tests/test_sync_timedb_archive.py -k "members_cache or raw_stats_needs_append or single_member or invalidate_daily" \
+  hpcperfstats/tests/test_sync_timedb_archive_members_redis.py \
+  hpcperfstats/tests/test_sync_timedb_archive.py -k "members_cache or raw_stats_needs_append or single_member or invalidate_daily or dedupe_sealed or redis_l2" \
+  hpcperfstats/tests/test_sync_timedb_janitor.py -k "dedupe_hint" \
+  hpcperfstats/tests/test_zstd_cli.py -k ingest_member_scan_zstd_without_nice \
   hpcperfstats/tests/test_sync_timedb_supervisor.py -k "stall_teardown_preserves_exit_124 or finalize_invalidates_members" \
   hpcperfstats/tests/test_multiprocessing_pool_health.py -k abort_if_pool_workers_dead \
   hpcperfstats/tests/test_conf_parser.py::test_sync_pipeline_tunable_defaults_and_overrides
@@ -453,6 +457,7 @@ Compose smoke for the same contracts:
 
 ```bash
 tests/run_db_pytest_workflow.sh -- \
+  hpcperfstats/tests/test_sync_timedb_archive_members_redis.py \
   hpcperfstats/tests/test_sync_timedb_archive.py::test_daily_archive_members_cache_hit_skips_second_scan \
   hpcperfstats/tests/test_sync_timedb_supervisor.py::test_stall_teardown_preserves_exit_124_not_137 \
   hpcperfstats/tests/test_sync_timedb_supervisor.py::test_finalize_invalidates_members_cache

@@ -1,0 +1,350 @@
+"""Tests for Redis L2 daily archive member cache (no Django)."""
+from __future__ import annotations
+
+import threading
+import time
+from unittest.mock import patch
+
+import pytest
+
+from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+    ArchiveMembersRedisUnavailableError,
+    build_archive_members_redis_keys,
+    clear_dedupe_hint,
+    dedupe_hint_is_set,
+    get_archive_members_redis_client,
+    invalidate_archive_members_redis,
+    list_dedupe_hint_day_tokens,
+    populate_archive_members_redis,
+    reset_archive_members_redis_client_for_tests,
+    store_complete_members_in_redis,
+    verify_archive_members_redis_startup,
+    wait_for_member_match,
+)
+
+
+class _FakePipeline:
+  def __init__(self, redis):
+    self._redis = redis
+    self._ops = []
+
+  def delete(self, *keys):
+    self._ops.append(("delete", keys))
+    return self
+
+  def hset(self, key, field=None, value=None, mapping=None, **kwargs):
+    payload = dict(mapping or kwargs)
+    if field is not None:
+      payload[field] = value
+    self._ops.append(("hset", key, payload))
+    return self
+
+  def set(self, key, value, ex=None):
+    self._ops.append(("set", key, value, ex))
+    return self
+
+  def execute(self):
+    for op in self._ops:
+      if op[0] == "delete":
+        self._redis.delete(*op[1])
+      elif op[0] == "hset":
+        self._redis.hset(op[1], mapping=op[2])
+      elif op[0] == "set":
+        self._redis.set(op[1], op[2], ex=op[3])
+
+
+class FakeRedis:
+  def __init__(self):
+    self._kv = {}
+    self._hash = {}
+    self._lock = threading.Lock()
+
+  def ping(self):
+    return True
+
+  def set(self, key, value, nx=False, ex=None):
+    with self._lock:
+      if nx and key in self._kv:
+        return False
+      self._kv[key] = value
+      return True
+
+  def get(self, key):
+    with self._lock:
+      return self._kv.get(key)
+
+  def delete(self, *keys):
+    with self._lock:
+      for key in keys:
+        self._kv.pop(key, None)
+        self._hash.pop(key, None)
+
+  def exists(self, key):
+    with self._lock:
+      return 1 if key in self._kv else 0
+
+  def hset(self, key, field=None, value=None, mapping=None, **kwargs):
+    with self._lock:
+      bucket = self._hash.setdefault(key, {})
+      if mapping is not None:
+        for k, v in mapping.items():
+          bucket[k] = str(v)
+      elif kwargs:
+        for k, v in kwargs.items():
+          bucket[k] = str(v)
+      elif field is not None:
+        bucket[field] = str(value)
+
+  def hget(self, key, field):
+    with self._lock:
+      return self._hash.get(key, {}).get(field)
+
+  def hgetall(self, key):
+    with self._lock:
+      return dict(self._hash.get(key, {}))
+
+  def expire(self, key, ttl):
+    return True
+
+  def pipeline(self):
+    return _FakePipeline(self)
+
+  def eval(self, script, numkeys, key, token):
+    with self._lock:
+      if self._kv.get(key) == token:
+        self._kv.pop(key, None)
+        return 1
+      return 0
+
+  def scan_iter(self, match=None, count=100):
+    prefix = match.rstrip("*") if match else ""
+    with self._lock:
+      for key in sorted(self._kv):
+        if key.startswith(prefix):
+          yield key
+
+
+def _sample_cache_key(tmp_path, day="2026-05-09"):
+  zst = tmp_path / ("%s.tar.zst" % day)
+  tar = tmp_path / ("%s.tar" % day)
+  zst.write_bytes(b"zst")
+  tar.write_bytes(b"tar")
+  sealed_id = (int(zst.stat().st_mtime_ns), int(zst.stat().st_size))
+  tar_id = (int(tar.stat().st_mtime_ns), int(tar.stat().st_size))
+  return (str(zst), sealed_id, tar_id)
+
+
+@pytest.fixture(autouse=True)
+def _redis_test_env(monkeypatch):
+  reset_archive_members_redis_client_for_tests()
+  fake = FakeRedis()
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_members_redis.get_archive_members_redis_client",
+      lambda required=True: fake,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.conf_parser.get_sync_archive_members_redis_enabled",
+      lambda: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.conf_parser.get_sync_archive_members_redis_ttl_seconds",
+      lambda: 3600,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.conf_parser.get_sync_archive_members_redis_populate_lock_seconds",
+      lambda: 5,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.conf_parser.get_sync_archive_members_redis_wait_poll_seconds",
+      lambda: 0.01,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.conf_parser.get_sync_archive_members_redis_hset_batch_size",
+      lambda: 2,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.conf_parser.get_sync_archive_members_redis_max_payload_bytes",
+      lambda: 8388608,
+  )
+  yield fake
+  reset_archive_members_redis_client_for_tests()
+
+
+def test_redis_members_single_flight_one_scan(_redis_test_env, tmp_path):
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  scan_calls = {"n": 0}
+
+  def _scan(on_member):
+    scan_calls["n"] += 1
+    on_member("host/a", 10)
+    on_member("host/b", 20)
+    return True, False
+
+  m1 = populate_archive_members_redis(keys, _scan)
+  m2 = populate_archive_members_redis(keys, _scan)
+  assert scan_calls["n"] == 1
+  assert m1 == {"host/a": 10, "host/b": 20}
+  assert m2 == m1
+
+
+def test_redis_members_waiter_early_positive_during_scan(_redis_test_env, tmp_path):
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  started = threading.Event()
+  release = threading.Event()
+
+  def _slow_scan(on_member):
+    started.set()
+    on_member("target/member", 42)
+    on_member("padding/member", 1)
+    release.wait(timeout=2)
+    on_member("other/member", 1)
+    return True, False
+
+  waiter_result = {}
+
+  def _waiter():
+    waiter_result["ok"] = wait_for_member_match(keys, "target/member", 42)
+
+  t_scan = threading.Thread(
+      target=lambda: populate_archive_members_redis(keys, _slow_scan),
+  )
+  t_wait = threading.Thread(target=_waiter)
+  t_scan.start()
+  assert started.wait(timeout=2)
+  t_wait.start()
+  t_wait.join(timeout=2)
+  release.set()
+  t_scan.join(timeout=2)
+  assert waiter_result.get("ok") is True
+
+
+def test_redis_members_no_false_negative_until_complete(_redis_test_env, tmp_path):
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  _redis_test_env.set(keys.lock_key, "tok", ex=30)
+  _redis_test_env.set(keys.complete_key, "0")
+  pending = {"done": False}
+
+  def _waiter():
+    try:
+      wait_for_member_match(keys, "missing/member", 99)
+      pending["done"] = True
+    except ArchiveMembersRedisUnavailableError:
+      pending["done"] = False
+
+  t_wait = threading.Thread(target=_waiter)
+  t_wait.start()
+  time.sleep(0.05)
+  assert pending["done"] is False
+  _redis_test_env.delete(keys.lock_key)
+  _redis_test_env.set(keys.complete_key, "1")
+  t_wait.join(timeout=2)
+  assert pending["done"] is True
+
+
+def test_redis_members_definitive_negative_after_complete(_redis_test_env, tmp_path):
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  store_complete_members_in_redis(keys, {"present": 5})
+  assert wait_for_member_match(keys, "absent", 5) is False
+
+
+def test_redis_members_early_false_when_size_exceeds_expected(
+    _redis_test_env, tmp_path,
+):
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  _redis_test_env.set(keys.lock_key, "tok")
+  _redis_test_env.set(keys.complete_key, "0")
+  _redis_test_env.hset(keys.hash_key, mapping={"member": "99"})
+  assert wait_for_member_match(keys, "member", 5) is False
+
+
+def test_redis_members_waiter_retries_after_winner_crash(_redis_test_env, tmp_path):
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  scan_calls = {"n": 0}
+
+  def _scan(on_member):
+    scan_calls["n"] += 1
+    on_member("only", 7)
+    return True, False
+
+  members = populate_archive_members_redis(keys, _scan)
+  assert scan_calls["n"] == 1
+  assert members == {"only": 7}
+
+
+def test_redis_members_parallel_populate_different_days(_redis_test_env, tmp_path):
+  key_a = build_archive_members_redis_keys(
+      _sample_cache_key(tmp_path, day="2026-05-09"),
+  )
+  key_b = build_archive_members_redis_keys(
+      _sample_cache_key(tmp_path, day="2026-05-10"),
+  )
+  calls = {"a": 0, "b": 0}
+
+  def _scan_a(on_member):
+    calls["a"] += 1
+    on_member("a", 1)
+    return True, False
+
+  def _scan_b(on_member):
+    calls["b"] += 1
+    on_member("b", 2)
+    return True, False
+
+  populate_archive_members_redis(key_a, _scan_a)
+  populate_archive_members_redis(key_b, _scan_b)
+  assert calls == {"a": 1, "b": 1}
+
+
+def test_redis_unavailable_raises_when_enabled(monkeypatch):
+  reset_archive_members_redis_client_for_tests()
+  monkeypatch.setattr(
+      "hpcperfstats.conf_parser.get_sync_archive_members_redis_enabled",
+      lambda: True,
+  )
+
+  def _boom(required=True):
+    raise ArchiveMembersRedisUnavailableError("down")
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_members_redis.get_archive_members_redis_client",
+      _boom,
+  )
+  with pytest.raises(ArchiveMembersRedisUnavailableError):
+    get_archive_members_redis_client(required=True)
+
+
+def test_invalidate_clears_redis_key(_redis_test_env, tmp_path):
+  cache_key = _sample_cache_key(tmp_path)
+  keys = build_archive_members_redis_keys(cache_key)
+  store_complete_members_in_redis(keys, {"m": 1})
+  _redis_test_env.set(keys.dedupe_hint_key, "1")
+  invalidate_archive_members_redis(cache_key)
+  assert _redis_test_env.get(keys.complete_key) is None
+  assert _redis_test_env.hgetall(keys.hash_key) == {}
+  assert _redis_test_env.get(keys.dedupe_hint_key) is None
+
+
+def test_populate_sets_dedupe_hint_when_duplicates(_redis_test_env, tmp_path):
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+
+  def _scan(on_member):
+    on_member("dup", 1)
+    on_member("dup", 2)
+    return True, True
+
+  populate_archive_members_redis(keys, _scan)
+  assert dedupe_hint_is_set("2026-05-09", client=_redis_test_env)
+
+
+def test_verify_archive_members_redis_startup(_redis_test_env):
+  verify_archive_members_redis_startup()
+
+
+def test_list_dedupe_hint_day_tokens(_redis_test_env):
+  _redis_test_env.set(
+      "hpcperfstats:sync_timedb:archive_dedupe_hint:v1:2026-05-09",
+      "1",
+  )
+  assert list_dedupe_hint_day_tokens(_redis_test_env) == ["2026-05-09"]
+  clear_dedupe_hint("2026-05-09", client=_redis_test_env)
+  assert list_dedupe_hint_day_tokens(_redis_test_env) == []

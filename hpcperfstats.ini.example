@@ -313,6 +313,24 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Max cached daily archive member maps per ingest/archive worker (default 64).
 # sync_archive_members_cache_max_entries = 64
 
+# Cross-worker Redis L2 for daily archive member maps (default yes; hard-fail when enabled).
+# sync_archive_members_redis_enabled = yes
+
+# Redis TTL seconds for member HASH / complete keys (default 86400).
+# sync_archive_members_redis_ttl_seconds = 86400
+
+# Populate lock lease and waiter wall-clock cap seconds (default 600).
+# sync_archive_members_redis_populate_lock_seconds = 600
+
+# Waiter poll interval seconds for incremental member lookups (default 0.25).
+# sync_archive_members_redis_wait_poll_seconds = 0.25
+
+# HSET pipeline batch size during winner populate scan (default 500).
+# sync_archive_members_redis_hset_batch_size = 500
+
+# Refuse populate when estimated Redis HASH payload exceeds this many bytes (default 8388608).
+# sync_archive_members_redis_max_payload_bytes = 8388608
+
 # Write-lock shard count for sync ingest; auto if unset.
 # sync_write_lock_shards =
 

@@ -16,6 +16,7 @@ from hpcperfstats.dbload.zstd_cli import (
     zstd_compress_tar_to_file,
     zstd_decompress_stdout,
     zstd_decompress_verbose,
+    zstd_executable,
     zstd_gzip_decompress_verbose,
     zstd_gzip_supported,
     zstd_test,
@@ -47,6 +48,31 @@ def test_wrap_archive_zstd_cmd_adds_ionice_and_nice(monkeypatch):
       "/usr/bin/zstd", "-T0", "-q",
   ]
   assert wrapped[8] == "x.zst"
+
+
+def test_ingest_member_scan_zstd_without_nice(monkeypatch):
+  captured = []
+
+  def _fake_popen(cmd, stdout, stderr, apply_priority_wrap=True):
+    captured.append((cmd, apply_priority_wrap))
+    proc = subprocess.Popen(
+        ["echo"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    return proc
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.zstd_cli._popen_zstd",
+      _fake_popen,
+  )
+  with zstd_decompress_stdout("/tmp/day.tar.zst", 0, apply_priority_wrap=False):
+    pass
+  assert captured
+  cmd, wrapped = captured[0]
+  assert wrapped is False
+  assert cmd[0] == zstd_executable()
+  assert "nice" not in cmd[:3]
 
 
 def test_wrap_archive_zstd_cmd_skips_when_disabled(monkeypatch):

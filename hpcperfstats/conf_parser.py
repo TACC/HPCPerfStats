@@ -109,6 +109,12 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_ingest_per_file_timeout_s"),
     ("PIPELINE", "sync_archive_members_cache_enabled"),
     ("PIPELINE", "sync_archive_members_cache_max_entries"),
+    ("PIPELINE", "sync_archive_members_redis_enabled"),
+    ("PIPELINE", "sync_archive_members_redis_ttl_seconds"),
+    ("PIPELINE", "sync_archive_members_redis_populate_lock_seconds"),
+    ("PIPELINE", "sync_archive_members_redis_wait_poll_seconds"),
+    ("PIPELINE", "sync_archive_members_redis_hset_batch_size"),
+    ("PIPELINE", "sync_archive_members_redis_max_payload_bytes"),
     ("PIPELINE", "sync_write_lock_shards"),
     ("PIPELINE", "sync_enable_db_writer_pipeline"),
     ("PIPELINE", "sync_db_writer_combined_task"),
@@ -1591,6 +1597,80 @@ def get_sync_archive_members_cache_max_entries():
     )
   except (TypeError, ValueError, OverflowError):
     return 64
+
+
+def get_sync_archive_members_redis_enabled():
+  """Whether cross-worker Redis L2 backs daily archive member maps."""
+  _ensure_cfg_loaded()
+  return _parse_bool(
+      _pipeline_get("sync_archive_members_redis_enabled", fallback="yes"),
+  )
+
+
+def get_sync_archive_members_redis_ttl_seconds():
+  """TTL for Redis archive member HASH / complete keys."""
+  _ensure_cfg_loaded()
+  try:
+    return max(60, int(_pipeline_get(
+        "sync_archive_members_redis_ttl_seconds",
+        fallback="86400",
+    )))
+  except (TypeError, ValueError, OverflowError):
+    return 86400
+
+
+def get_sync_archive_members_redis_populate_lock_seconds():
+  """Populate lock lease and waiter wall-clock cap."""
+  _ensure_cfg_loaded()
+  try:
+    return max(30, int(_pipeline_get(
+        "sync_archive_members_redis_populate_lock_seconds",
+        fallback="600",
+    )))
+  except (TypeError, ValueError, OverflowError):
+    return 600
+
+
+def get_sync_archive_members_redis_wait_poll_seconds():
+  """Waiter poll interval for incremental member lookups."""
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        0.05,
+        float(_pipeline_get(
+            "sync_archive_members_redis_wait_poll_seconds",
+            fallback="0.25",
+        )),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 0.25
+
+
+def get_sync_archive_members_redis_hset_batch_size():
+  """Pipeline batch size for incremental Redis HASH writes during populate."""
+  _ensure_cfg_loaded()
+  try:
+    return max(1, int(_pipeline_get(
+        "sync_archive_members_redis_hset_batch_size",
+        fallback="500",
+    )))
+  except (TypeError, ValueError, OverflowError):
+    return 500
+
+
+def get_sync_archive_members_redis_max_payload_bytes():
+  """Refuse populate when estimated Redis HASH payload exceeds this size."""
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        65536,
+        int(_pipeline_get(
+            "sync_archive_members_redis_max_payload_bytes",
+            fallback="8388608",
+        )),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 8388608
 
 
 def get_sync_ingest_per_file_timeout_s():

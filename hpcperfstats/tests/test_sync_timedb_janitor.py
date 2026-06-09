@@ -365,6 +365,24 @@ def test_tick_lock_cleanup_runs_before_day_close(monkeypatch, tmp_path):
   assert all(step == "cleanup" for step in order[:-1])
 
 
+def test_janitor_enqueues_day_close_from_dedupe_hint(monkeypatch, tmp_path):
+  janitor = _make_janitor(tgz_archive_dir=str(tmp_path))
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_members_redis.archive_members_redis_enabled",
+      lambda: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_members_redis.list_dedupe_hint_day_tokens",
+      lambda client=None: ["2026-05-09"],
+  )
+  janitor._consume_dedupe_hints(set())
+  with janitor._debt_lock:
+    kinds = {debt.kind for debt in janitor._debt_heap}
+    tar_paths = {debt.tar_path for debt in janitor._debt_heap}
+  assert DebtKind.DAY_CLOSE in kinds
+  assert os.path.join(str(tmp_path), "2026-05-09.tar") in tar_paths
+
+
 def test_close_one_day_dedupes_before_seal(monkeypatch, tmp_path):
   tar_path = str(tmp_path / "2020-01-05.tar")
   open(tar_path, "wb").close()

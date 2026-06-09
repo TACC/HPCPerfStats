@@ -912,17 +912,22 @@ def _tar_zst_readable_via_zstd_tar_pipe(zst_path, tar_bin, num_threads):
 
 
 @contextlib.contextmanager
-def _open_tarfile_for_read(path, num_threads):
+def _open_tarfile_for_read(path, num_threads, *, apply_priority_wrap=True):
   """Open a tar or compressed daily archive for sequential reads."""
   if path.endswith(DAILY_ARCHIVE_ZST_SUFFIX) and shutil.which("zstd"):
     with zstd_decompress_stdout(
         path,
         num_threads,
+        apply_priority_wrap=apply_priority_wrap,
     ) as stdout:
       with tarfile.open(fileobj=stdout, mode="r|") as tf:
         yield tf
   elif path.endswith(DAILY_ARCHIVE_GZ_SUFFIX) and zstd_gzip_supported():
-    with zstd_gzip_decompress_stdout(path, num_threads) as stdout:
+    with zstd_gzip_decompress_stdout(
+        path,
+        num_threads,
+        apply_priority_wrap=apply_priority_wrap,
+    ) as stdout:
       with tarfile.open(fileobj=stdout, mode="r|") as tf:
         yield tf
   else:
@@ -1025,6 +1030,19 @@ def invalidate_daily_archive_members_cache(compressed_path):
   ]
   for key in drop_keys:
     _DAILY_ARCHIVE_MEMBERS_CACHE.pop(key, None)
+  try:
+    from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+        archive_members_redis_enabled,
+        build_archive_members_redis_keys,
+        invalidate_archive_members_redis,
+    )
+    if archive_members_redis_enabled():
+      for key in drop_keys:
+        invalidate_archive_members_redis(key)
+      if not drop_keys:
+        invalidate_archive_members_redis(_daily_archive_members_cache_key(canonical))
+  except Exception:
+    pass
 
 
 def _daily_archive_members_cache_enabled():
@@ -1094,29 +1112,94 @@ def _store_daily_archive_members_cache(compressed_path, members):
 def daily_archive_has_member_with_size(compressed_path, member_name, expected_size):
   """True when the daily archive contains ``member_name`` with exact byte size."""
   members = _lookup_daily_archive_members_cache(compressed_path)
-  if members is None:
+  if members is not None:
+    return members.get(member_name) == expected_size
+  canonical = normalize_daily_compressed_path(compressed_path)
+  tar_path = daily_tar_path_from_compressed(canonical)
+  if os.path.isfile(tar_path):
     members = get_existing_archive_members_for_daily_archive(compressed_path)
+    return members.get(member_name) == expected_size
+  try:
+    from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+        archive_members_redis_enabled,
+        build_archive_members_redis_keys,
+        get_archive_members_redis_client,
+        redis_lookup_full_members,
+        wait_for_member_match,
+    )
+    if archive_members_redis_enabled():
+      cache_key = _daily_archive_members_cache_key(canonical)
+      keys = build_archive_members_redis_keys(cache_key)
+      cached = redis_lookup_full_members(keys)
+      if cached is not None:
+        _store_daily_archive_members_cache(canonical, cached)
+        return cached.get(member_name) == expected_size
+      sealed_path = _resolve_sealed_daily_archive_path(compressed_path)
+      if sealed_path is None:
+        return False
+      client = get_archive_members_redis_client(required=True)
+      if client.exists(keys.lock_key):
+        return wait_for_member_match(keys, member_name, expected_size)
+      members = _populate_redis_members_from_sealed_scan(sealed_path, cache_key)
+      _store_daily_archive_members_cache(canonical, members)
+      return members.get(member_name) == expected_size
+  except Exception:
+    raise
+  members = get_existing_archive_members_for_daily_archive(compressed_path)
   return members.get(member_name) == expected_size
 
 
-def _scan_compressed_archive_members_and_readable(compressed_path):
-  """Return ``(readable, members)`` from one streamed zstd/gzip pass."""
+def _stream_compressed_archive_members(
+    compressed_path,
+    on_member=None,
+    *,
+    apply_priority_wrap=True,
+):
+  """Stream file members from a sealed archive.
+
+  ``on_member(name, size)`` is invoked for each file member when provided.
+  Returns ``(readable, members_dict, saw_duplicate_names)``.
+  """
   if detect_compressed_format(compressed_path) is None or not os.path.isfile(
       compressed_path,
   ):
-    return False, {}
+    return False, {}, False
   try:
     with file_read_lock_wait(compressed_path):
       with _open_tarfile_for_read(
-          compressed_path, get_archive_zstd_thread_count(),
+          compressed_path,
+          get_archive_zstd_thread_count(),
+          apply_priority_wrap=apply_priority_wrap,
       ) as tf:
         by_name = defaultdict(list)
+        seen_names = set()
+        saw_duplicates = False
         for m in _iter_tar_members(tf):
-          if m.isfile():
-            by_name[m.name].append(m.size)
-        return True, {name: max(sizes) for name, sizes in by_name.items()}
+          if not m.isfile():
+            continue
+          if m.name in seen_names:
+            saw_duplicates = True
+          seen_names.add(m.name)
+          by_name[m.name].append(m.size)
+          if on_member is not None:
+            on_member(m.name, m.size)
+        members = {name: max(sizes) for name, sizes in by_name.items()}
+        return True, members, saw_duplicates
   except Exception:
-    return False, {}
+    return False, {}, False
+
+
+def _scan_compressed_archive_members_and_readable(
+    compressed_path,
+    *,
+    apply_priority_wrap=True,
+):
+  """Return ``(readable, members)`` from one streamed zstd/gzip pass."""
+  readable, members, _duplicates = _stream_compressed_archive_members(
+      compressed_path,
+      apply_priority_wrap=apply_priority_wrap,
+  )
+  return readable, members
 
 
 def _scan_gzip_archive_members_and_readable(gz_path):
@@ -1350,6 +1433,24 @@ def get_existing_archive_members(tar_path):
   return members
 
 
+def _populate_redis_members_from_sealed_scan(sealed_path, cache_key):
+  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+      build_archive_members_redis_keys,
+      populate_archive_members_redis,
+  )
+
+  keys = build_archive_members_redis_keys(cache_key)
+
+  def _scan_fn(on_member):
+    return _stream_compressed_archive_members(
+        sealed_path,
+        on_member,
+        apply_priority_wrap=False,
+    )
+
+  return populate_archive_members_redis(keys, _scan_fn)
+
+
 def get_existing_archive_members_for_daily_archive(archive_compressed_path):
   """File member sizes for a daily ``.tar.zst`` or legacy ``.tar.gz``.
 
@@ -1360,15 +1461,57 @@ def get_existing_archive_members_for_daily_archive(archive_compressed_path):
   cached = _lookup_daily_archive_members_cache(canonical)
   if cached is not None:
     return cached
+  cache_key = _daily_archive_members_cache_key(canonical)
   tar_path = daily_tar_path_from_compressed(canonical)
   if os.path.isfile(tar_path):
     members = get_existing_archive_members(tar_path)
     _store_daily_archive_members_cache(canonical, members)
+    try:
+      from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+          archive_members_redis_enabled,
+          build_archive_members_redis_keys,
+          store_complete_members_in_redis,
+      )
+      if archive_members_redis_enabled():
+        store_complete_members_in_redis(
+            build_archive_members_redis_keys(cache_key),
+            members,
+            saw_duplicates=tar_has_duplicate_file_members(tar_path),
+        )
+    except Exception:
+      pass
     return members
   sealed_path = _resolve_sealed_daily_archive_path(archive_compressed_path)
   if sealed_path is None:
     return {}
-  readable, members = _scan_compressed_archive_members_and_readable(sealed_path)
+  try:
+    from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+        archive_members_redis_enabled,
+        build_archive_members_redis_keys,
+        get_archive_members_redis_client,
+        redis_lookup_full_members,
+        wait_for_complete_members,
+    )
+    if archive_members_redis_enabled():
+      keys = build_archive_members_redis_keys(cache_key)
+      members = redis_lookup_full_members(keys)
+      if members is None:
+        client = get_archive_members_redis_client(required=True)
+        if client.exists(keys.lock_key):
+          members = wait_for_complete_members(keys)
+        else:
+          members = _populate_redis_members_from_sealed_scan(
+              sealed_path,
+              cache_key,
+          )
+      _store_daily_archive_members_cache(canonical, members)
+      return dict(members)
+  except Exception:
+    raise
+  readable, members = _scan_compressed_archive_members_and_readable(
+      sealed_path,
+      apply_priority_wrap=False,
+  )
   if not readable:
     return {}
   _store_daily_archive_members_cache(canonical, members)
@@ -1872,6 +2015,86 @@ def dedupe_tar_keep_largest_file_per_member(tar_path, log_fn=log_print):
     except OSError:
       pass
     return False
+
+
+def dedupe_sealed_daily_archive(
+    archive_compressed_path,
+    log_fn=log_print,
+    *,
+    keep_uncompressed_tar=None,
+):
+  """Last resort: decompress sealed archive, dedupe ``.tar``, and re-seal.
+
+  Used by the archive janitor when only ``.tar.zst`` / ``.tar.gz`` exists and
+  duplicate file members were detected during ingest member-cache populate.
+  """
+  fmt = detect_compressed_format(archive_compressed_path)
+  if fmt not in ("zst", "gz"):
+    return False
+  sealed_path = archive_compressed_path
+  if not os.path.isfile(sealed_path):
+    sealed_path = _resolve_sealed_daily_archive_path(archive_compressed_path)
+  if sealed_path is None or not os.path.isfile(sealed_path):
+    return False
+  tar_path = daily_tar_path_from_compressed(sealed_path)
+  zst_path, gz_path = compressed_sibling_paths(tar_path)
+  if os.path.isfile(tar_path):
+    if not tar_has_duplicate_file_members(tar_path):
+      return True
+    if not dedupe_tar_keep_largest_file_per_member(tar_path, log_fn=log_fn):
+      return False
+  else:
+    if not decompress_compressed_to_tar(
+        sealed_path,
+        tar_path,
+        get_archive_zstd_thread_count(),
+        remove_compressed=False,
+    ):
+      if log_fn:
+        log_fn(
+            "dedupe_sealed_daily_archive: decompress failed for %s"
+            % sealed_path,
+            flush=True,
+        )
+      return False
+    if not dedupe_tar_keep_largest_file_per_member(tar_path, log_fn=log_fn):
+      return False
+  if keep_uncompressed_tar is None:
+    keep_uncompressed_tar = cfg.get_archive_keep_uncompressed_tar()
+  try:
+    atomic_seal_tar_to_zst(
+        tar_path,
+        zst_path if sealed_path.endswith(DAILY_ARCHIVE_ZST_SUFFIX) else zst_path,
+        num_threads=get_archive_zstd_thread_count(),
+        compress_level=cfg.get_archive_zstd_level(),
+        keep_uncompressed_tar=keep_uncompressed_tar,
+        log_fn=log_fn,
+    )
+  except (OSError, subprocess.CalledProcessError) as exc:
+    if log_fn:
+      log_fn(
+          "dedupe_sealed_daily_archive: re-seal failed for %s (%s)"
+          % (tar_path, exc),
+          flush=True,
+      )
+    return False
+  invalidate_daily_archive_members_cache(sealed_path)
+  try:
+    from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+        clear_dedupe_hint,
+        dedupe_hint_is_set,
+    )
+    day = calendar_date_from_daily_tar_path(tar_path)
+    if day is not None and dedupe_hint_is_set(day.isoformat()):
+      clear_dedupe_hint(day.isoformat())
+  except Exception:
+    pass
+  if log_fn:
+    log_fn(
+        "dedupe_sealed_daily_archive: re-sealed after dedupe %s" % sealed_path,
+        flush=True,
+    )
+  return True
 
 
 def resolve_preferred_archive_path_for_read(path):

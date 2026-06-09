@@ -100,12 +100,29 @@ def wrap_archive_zstd_cmd(cmd: list[str]) -> list[str]:
   return _wrap_zstd_cmd(cmd)
 
 
-def _run_zstd(cmd: list[str], **kwargs):
-  return subprocess.run(_wrap_zstd_cmd(cmd), **kwargs)
+def _maybe_wrap_zstd_cmd(cmd: list[str], *, apply_priority_wrap: bool) -> list[str]:
+  if apply_priority_wrap:
+    return _wrap_zstd_cmd(cmd)
+  return list(cmd)
 
 
-def _popen_zstd(cmd: list[str], **kwargs) -> subprocess.Popen:
-  return subprocess.Popen(_wrap_zstd_cmd(cmd), **kwargs)
+def _run_zstd(cmd: list[str], *, apply_priority_wrap: bool = True, **kwargs):
+  return subprocess.run(
+      _maybe_wrap_zstd_cmd(cmd, apply_priority_wrap=apply_priority_wrap),
+      **kwargs,
+  )
+
+
+def _popen_zstd(
+    cmd: list[str],
+    *,
+    apply_priority_wrap: bool = True,
+    **kwargs,
+) -> subprocess.Popen:
+  return subprocess.Popen(
+      _maybe_wrap_zstd_cmd(cmd, apply_priority_wrap=apply_priority_wrap),
+      **kwargs,
+  )
 
 
 def _verify_uncompressed_tar_readable(tar_path: str) -> bool:
@@ -217,11 +234,14 @@ def _wait_decompress_proc(proc: subprocess.Popen, args: list) -> None:
 @contextlib.contextmanager
 def _decompress_stdout(
     cmd: list[str],
+    *,
+    apply_priority_wrap: bool = True,
 ) -> Iterator[BinaryIO]:
   proc = _popen_zstd(
       cmd,
       stdout=subprocess.PIPE,
       stderr=subprocess.DEVNULL,
+      apply_priority_wrap=apply_priority_wrap,
   )
   assert proc.stdout is not None
   try:
@@ -249,6 +269,8 @@ def zstd_decompress_verbose(
 def zstd_decompress_stdout(
     zst_path: str,
     thread_count: int,
+    *,
+    apply_priority_wrap: bool = True,
 ) -> Iterator[BinaryIO]:
   cmd = [
       zstd_executable(),
@@ -258,7 +280,7 @@ def zstd_decompress_stdout(
       "-q",
       zst_path,
   ]
-  with _decompress_stdout(cmd) as stdout:
+  with _decompress_stdout(cmd, apply_priority_wrap=apply_priority_wrap) as stdout:
     yield stdout
 
 
@@ -301,6 +323,8 @@ def zstd_gzip_decompress_verbose(
 def zstd_gzip_decompress_stdout(
     gz_path: str,
     thread_count: int,
+    *,
+    apply_priority_wrap: bool = True,
 ) -> Iterator[BinaryIO]:
   cmd = [
       zstd_executable(),
@@ -311,7 +335,7 @@ def zstd_gzip_decompress_stdout(
       "-q",
       gz_path,
   ]
-  with _decompress_stdout(cmd) as stdout:
+  with _decompress_stdout(cmd, apply_priority_wrap=apply_priority_wrap) as stdout:
     yield stdout
 
 

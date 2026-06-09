@@ -1842,6 +1842,67 @@ def test_dedupe_tar_keep_largest_file_per_member_keeps_largest(tmp_path):
   assert names == ["p/q"]
 
 
+def test_dedupe_sealed_daily_archive_last_resort(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  zst_path = tmp_path / "2026-06-01.tar.zst"
+  tar_path = tmp_path / "2026-06-01.tar"
+  zst_path.write_bytes(b"sealed")
+  calls = []
+
+  monkeypatch.setattr(
+      helpers,
+      "decompress_compressed_to_tar",
+      lambda *_a, **_k: calls.append("decompress") or True,
+  )
+  monkeypatch.setattr(
+      helpers,
+      "dedupe_tar_keep_largest_file_per_member",
+      lambda *_a, **_k: calls.append("dedupe") or True,
+  )
+  monkeypatch.setattr(
+      helpers,
+      "atomic_seal_tar_to_zst",
+      lambda *_a, **_k: calls.append("seal"),
+  )
+  monkeypatch.setattr(
+      helpers,
+      "invalidate_daily_archive_members_cache",
+      lambda *_a, **_k: calls.append("invalidate"),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_members_redis.dedupe_hint_is_set",
+      lambda *_a, **_k: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_members_redis.clear_dedupe_hint",
+      lambda *_a, **_k: calls.append("clear_hint"),
+  )
+  assert helpers.dedupe_sealed_daily_archive(str(zst_path), log_fn=None)
+  assert calls == ["decompress", "dedupe", "seal", "invalidate", "clear_hint"]
+
+
+def test_get_existing_archive_members_uses_redis_l2(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  zst_path = tmp_path / "2026-06-02.tar.zst"
+  zst_path.write_bytes(b"z")
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_members_redis.redis_lookup_full_members",
+      lambda keys: {"cached/member": 11},
+  )
+  members = helpers.get_existing_archive_members_for_daily_archive(str(zst_path))
+  assert members == {"cached/member": 11}
+
+
 def test_dedupe_tar_tie_same_size_keeps_last(tmp_path):
   """Equal sizes: last archive entry is retained."""
   tar_path = tmp_path / "tie.tar"
@@ -3231,9 +3292,9 @@ def test_daily_archive_members_cache_hit_skips_second_scan(
   scan_calls = {"n": 0}
   original = helpers._scan_compressed_archive_members_and_readable
 
-  def counting_scan(path):
+  def counting_scan(path, **kwargs):
     scan_calls["n"] += 1
-    return original(path)
+    return original(path, **kwargs)
 
   monkeypatch.setattr(
       helpers, "_scan_compressed_archive_members_and_readable", counting_scan,
@@ -3334,9 +3395,9 @@ def test_single_member_early_exit_finds_match(
   scan_calls = {"n": 0}
   original = helpers._scan_compressed_archive_members_and_readable
 
-  def counting_scan(path):
+  def counting_scan(path, **kwargs):
     scan_calls["n"] += 1
-    return original(path)
+    return original(path, **kwargs)
 
   monkeypatch.setattr(
       helpers, "_scan_compressed_archive_members_and_readable", counting_scan,
@@ -3366,9 +3427,9 @@ def test_invalidate_daily_archive_members_cache_forces_rescan(
   scan_calls = {"n": 0}
   original = helpers._scan_compressed_archive_members_and_readable
 
-  def counting_scan(p):
+  def counting_scan(p, **kwargs):
     scan_calls["n"] += 1
-    return original(p)
+    return original(p, **kwargs)
 
   monkeypatch.setattr(
       helpers, "_scan_compressed_archive_members_and_readable", counting_scan,

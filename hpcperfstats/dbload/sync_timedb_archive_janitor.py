@@ -502,6 +502,24 @@ class ArchiveJanitor:
     removed += cleanup_stale_fnctl_lock_sidecars(self.tgz_archive_dir)
     return removed
 
+  def _consume_dedupe_hints(self, disqualified: Set[str]):
+    """Enqueue ``DAY_CLOSE`` for days flagged by ingest member-cache populate."""
+    try:
+      from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+          archive_members_redis_enabled,
+          list_dedupe_hint_day_tokens,
+      )
+    except Exception:
+      return
+    if not archive_members_redis_enabled() or not self.tgz_archive_dir:
+      return
+    for day_token in list_dedupe_hint_day_tokens():
+      tar_path = os.path.join(self.tgz_archive_dir, "%s.tar" % day_token)
+      tar_norm = os.path.normpath(tar_path)
+      if tar_norm in disqualified:
+        continue
+      self._enqueue_day_close(tar_norm)
+
   def _effective_tick_limits(self):
     budget = float(cfg.get_archive_janitor_budget_seconds())
     max_days = int(cfg.get_archive_janitor_days_per_tick())
@@ -596,6 +614,7 @@ class ArchiveJanitor:
       if pass_reason:
         self.run_scheduled_maintenance_pass(reason=pass_reason)
       disqualified = set(self.get_disqualified_daily_tars())
+      self._consume_dedupe_hints(disqualified)
       self._tick_remaining_raw_cache = {}
       with self._debt_lock:
         has_day_work = self._heap_has_day_close_work_locked()
@@ -752,12 +771,43 @@ class ArchiveJanitor:
   ) -> bool:
     tar_norm = os.path.normpath(tar_path)
     if not self._day_phase_at_least(tar_norm, "sealed"):
-      if tar_has_duplicate_file_members(tar_norm):
-        self.log_fn(
-            "janitor: day_close dedupe tar=%s" % tar_norm,
-            flush=True,
-        )
-        dedupe_tar_keep_largest_file_per_member(tar_norm, log_fn=self.log_fn)
+      needs_dedupe = False
+      if os.path.isfile(tar_norm):
+        needs_dedupe = tar_has_duplicate_file_members(tar_norm)
+      else:
+        try:
+          from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+              dedupe_hint_is_set,
+          )
+          from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+              calendar_date_from_daily_tar_path,
+          )
+
+          day = calendar_date_from_daily_tar_path(tar_norm)
+          if day is not None and dedupe_hint_is_set(day.isoformat()):
+            needs_dedupe = True
+        except Exception:
+          needs_dedupe = False
+      if needs_dedupe:
+        if os.path.isfile(tar_norm):
+          self.log_fn(
+              "janitor: day_close dedupe tar=%s" % tar_norm,
+              flush=True,
+          )
+          dedupe_tar_keep_largest_file_per_member(tar_norm, log_fn=self.log_fn)
+        else:
+          zst_path, gz_path = compressed_sibling_paths(tar_norm)
+          sealed_path = zst_path if os.path.isfile(zst_path) else gz_path
+          if os.path.isfile(sealed_path):
+            from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+                dedupe_sealed_daily_archive,
+            )
+
+            self.log_fn(
+                "janitor: day_close sealed dedupe %s" % sealed_path,
+                flush=True,
+            )
+            dedupe_sealed_daily_archive(sealed_path, log_fn=self.log_fn)
       if not self._seal_one_day(tar_norm, ignore_remaining_raw=True):
         return False
     if self._day_close_raw_removal_enabled():

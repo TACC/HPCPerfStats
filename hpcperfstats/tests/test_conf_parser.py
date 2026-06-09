@@ -886,6 +886,12 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_ingest_per_file_timeout_s() == 0.0
   assert cfg.get_sync_archive_members_cache_enabled() is True
   assert cfg.get_sync_archive_members_cache_max_entries() == 64
+  assert cfg.get_sync_archive_members_redis_enabled() is True
+  assert cfg.get_sync_archive_members_redis_ttl_seconds() == 86400
+  assert cfg.get_sync_archive_members_redis_populate_lock_seconds() == 600
+  assert cfg.get_sync_archive_members_redis_wait_poll_seconds() == 0.25
+  assert cfg.get_sync_archive_members_redis_hset_batch_size() == 500
+  assert cfg.get_sync_archive_members_redis_max_payload_bytes() == 8388608
 
   with open(temp_ini) as f:
     content = f.read()
@@ -902,7 +908,13 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
       "sync_pool_poll_timeout_s = 2.5\n"
       "sync_ingest_per_file_timeout_s = 900\n"
       "sync_archive_members_cache_enabled = no\n"
-      "sync_archive_members_cache_max_entries = 32",
+      "sync_archive_members_cache_max_entries = 32\n"
+      "sync_archive_members_redis_enabled = no\n"
+      "sync_archive_members_redis_ttl_seconds = 7200\n"
+      "sync_archive_members_redis_populate_lock_seconds = 120\n"
+      "sync_archive_members_redis_wait_poll_seconds = 0.5\n"
+      "sync_archive_members_redis_hset_batch_size = 100\n"
+      "sync_archive_members_redis_max_payload_bytes = 1048576",
   )
   with open(temp_ini, "w") as f:
     f.write(content)
@@ -919,6 +931,12 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_ingest_per_file_timeout_s() == 900.0
   assert cfg.get_sync_archive_members_cache_enabled() is False
   assert cfg.get_sync_archive_members_cache_max_entries() == 32
+  assert cfg.get_sync_archive_members_redis_enabled() is False
+  assert cfg.get_sync_archive_members_redis_ttl_seconds() == 7200
+  assert cfg.get_sync_archive_members_redis_populate_lock_seconds() == 120
+  assert cfg.get_sync_archive_members_redis_wait_poll_seconds() == 0.5
+  assert cfg.get_sync_archive_members_redis_hset_batch_size() == 100
+  assert cfg.get_sync_archive_members_redis_max_payload_bytes() == 1048576
   monkeypatch.setenv("HPCPERFSTATS_SYNC_INGEST_PER_FILE_TIMEOUT_S", "45")
   assert cfg.get_sync_ingest_per_file_timeout_s() == 45.0
 

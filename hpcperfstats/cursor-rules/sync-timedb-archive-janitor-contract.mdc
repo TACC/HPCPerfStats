@@ -76,7 +76,7 @@ This must **not** wait for an empty global ingest queue.
 - **day_phases:** set only on verified success (sealed, raw gone, tar dropped).
 - **Full** `build_archive_maintenance_snapshot` on **scheduled maintenance passes** (startup + every N chunks + ingest queue drain), not every tick.
 - **Lock cleanup:** once per janitor tick when the heap has day-pipeline work, before popping `DAY_CLOSE` debt.
-- **Dedupe:** inline in `_close_one_day` before `_seal_one_day` when `tar_has_duplicate_file_members`.
+- **Dedupe:** `_consume_dedupe_hints` on each tick enqueues **`DAY_CLOSE`** when Redis `dedupe_hint` is set (from ingest member-cache populate). Inline in `_close_one_day` before `_seal_one_day`: `.tar` → `dedupe_tar_keep_largest_file_per_member`; sealed-only → `dedupe_sealed_daily_archive` last resort. Clear hint after successful re-seal; invalidate L1 + Redis members keys.
 - Persist hints after progress; trim heap to `archive_janitor_debt_max_entries` before persist.
 - `close_old_connections()` at tick entry and in `finally`.
 
