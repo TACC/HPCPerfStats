@@ -2418,6 +2418,64 @@ def test_stall_teardown_preserves_exit_124_not_137(monkeypatch):
   assert get_watch_calls == []
 
 
+def test_finalize_invalidates_members_cache(monkeypatch):
+  shutdown_requested[0] = False
+  invalidated = []
+  monkeypatch.setattr(
+      st,
+      "invalidate_daily_archive_members_cache",
+      lambda path: invalidated.append(path),
+  )
+  target = "/tmp/stats-inv"
+  archive_compressed = "/tmp/2026-06-01.tar.gz"
+
+  def fake_rescan(*_a, **_k):
+    if fake_rescan.calls == 0:
+      fake_rescan.calls += 1
+      return [target]
+    return []
+  fake_rescan.calls = 0
+
+  class _ArchivePoolSuccess:
+    def map_async(self, _fn, items):
+      class _R:
+        def ready(self):
+          return True
+
+        def get(self):
+          return [True for _ in items]
+
+      return _R()
+
+  monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+  monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (target, True, True, 0.0))
+  monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+  monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: False)
+  monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+  monkeypatch.setattr(
+      st, "build_archive_mapping", lambda *_a, **_k: {archive_compressed: [target]},
+  )
+  monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
+  monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+  monkeypatch.setattr(st, "close_old_connections", lambda: None)
+  monkeypatch.setattr(st.connections, "close_all", lambda: None)
+  monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+
+  try:
+    st.run_sync_timedb_supervisor_loop(
+        "/tmp/archive",
+        "all",
+        None,
+        ".hpc",
+        object(),
+        _ArchivePoolSuccess(),
+        run_once=True,
+    )
+  finally:
+    shutdown_requested[0] = False
+  assert archive_compressed in invalidated
+
+
 def test_combined_db_writer_task_uses_single_pool_path(monkeypatch):
   shutdown_requested[0] = False
   target = "/fake/stats-combined"
