@@ -67,7 +67,7 @@ def abort_if_pool_workers_dead(pool, *, context=""):
   if not dead:
     return
   message = (
-      "Multiprocessing pool worker exited unexpectedly (likely OOM/SIGKILL); "
+      "Multiprocessing pool worker no longer alive; "
       "dead_pids=%s context=%s"
       % (dead, context or "unknown")
   )

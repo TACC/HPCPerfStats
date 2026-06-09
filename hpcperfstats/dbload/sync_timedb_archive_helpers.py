@@ -232,8 +232,16 @@ def raw_stats_path_needs_tar_append(
   if file_date is None:
     return False
   compressed_path = daily_compressed_path_for_date(tgz_archive_dir, file_date)
-  existing_members = get_existing_archive_members_for_daily_archive(compressed_path)
-  return bool(filter_files_to_add_to_archive([stats_path], existing_members))
+  member_name = get_tar_member_name(stats_path)
+  try:
+    expected_size = os.path.getsize(stats_path)
+  except OSError:
+    return True
+  if daily_archive_has_member_with_size(
+      compressed_path, member_name, expected_size,
+  ):
+    return False
+  return True
 
 
 def daily_tar_paths_for_stats_paths(
@@ -999,6 +1007,98 @@ def _build_archive_validation_cache_key(compressed_path):
   )
 
 
+_DAILY_ARCHIVE_MEMBERS_CACHE = {}
+
+
+def clear_daily_archive_members_cache():
+  """Clear per-process daily archive member maps (tests and worker reset)."""
+  _DAILY_ARCHIVE_MEMBERS_CACHE.clear()
+
+
+def invalidate_daily_archive_members_cache(compressed_path):
+  """Drop cached member maps for a daily archive (append, seal, identity change)."""
+  if not compressed_path:
+    return
+  canonical = normalize_daily_compressed_path(compressed_path)
+  drop_keys = [
+      key for key in _DAILY_ARCHIVE_MEMBERS_CACHE if key[0] == canonical
+  ]
+  for key in drop_keys:
+    _DAILY_ARCHIVE_MEMBERS_CACHE.pop(key, None)
+
+
+def _daily_archive_members_cache_enabled():
+  return cfg.get_sync_archive_members_cache_enabled()
+
+
+def _trim_daily_archive_members_cache():
+  max_entries = cfg.get_sync_archive_members_cache_max_entries()
+  while len(_DAILY_ARCHIVE_MEMBERS_CACHE) > max_entries:
+    oldest_key = next(iter(_DAILY_ARCHIVE_MEMBERS_CACHE))
+    _DAILY_ARCHIVE_MEMBERS_CACHE.pop(oldest_key, None)
+
+
+def _daily_archive_members_cache_key(canonical_zst_path):
+  """Cache key keyed by canonical ``.tar.zst`` path and on-disk archive identities."""
+  tar_path = daily_tar_path_from_compressed(canonical_zst_path)
+  zst_path, gz_path = compressed_sibling_paths(tar_path)
+  if os.path.isfile(zst_path):
+    sealed_identity = _archive_file_identity(zst_path)
+  elif os.path.isfile(gz_path):
+    sealed_identity = _archive_file_identity(gz_path)
+  else:
+    sealed_identity = None
+  return (
+      canonical_zst_path,
+      sealed_identity,
+      _archive_file_identity(tar_path),
+  )
+
+
+def _resolve_sealed_daily_archive_path(compressed_path):
+  """Return on-disk sealed path (``.tar.zst`` or legacy ``.tar.gz``), if any."""
+  if detect_compressed_format(compressed_path) is not None and os.path.isfile(
+      compressed_path,
+  ):
+    return compressed_path
+  canonical = normalize_daily_compressed_path(compressed_path)
+  tar_path = daily_tar_path_from_compressed(canonical)
+  zst_path, gz_path = compressed_sibling_paths(tar_path)
+  if os.path.isfile(zst_path):
+    return zst_path
+  if os.path.isfile(gz_path):
+    return gz_path
+  return None
+
+
+def _lookup_daily_archive_members_cache(compressed_path):
+  if not _daily_archive_members_cache_enabled():
+    return None
+  canonical = normalize_daily_compressed_path(compressed_path)
+  cache_key = _daily_archive_members_cache_key(canonical)
+  cached = _DAILY_ARCHIVE_MEMBERS_CACHE.get(cache_key)
+  if cached is None:
+    return None
+  return dict(cached)
+
+
+def _store_daily_archive_members_cache(compressed_path, members):
+  if not _daily_archive_members_cache_enabled():
+    return
+  canonical = normalize_daily_compressed_path(compressed_path)
+  cache_key = _daily_archive_members_cache_key(canonical)
+  _DAILY_ARCHIVE_MEMBERS_CACHE[cache_key] = dict(members)
+  _trim_daily_archive_members_cache()
+
+
+def daily_archive_has_member_with_size(compressed_path, member_name, expected_size):
+  """True when the daily archive contains ``member_name`` with exact byte size."""
+  members = _lookup_daily_archive_members_cache(compressed_path)
+  if members is None:
+    members = get_existing_archive_members_for_daily_archive(compressed_path)
+  return members.get(member_name) == expected_size
+
+
 def _scan_compressed_archive_members_and_readable(compressed_path):
   """Return ``(readable, members)`` from one streamed zstd/gzip pass."""
   if detect_compressed_format(compressed_path) is None or not os.path.isfile(
@@ -1222,6 +1322,17 @@ def get_existing_archive_members(tar_path):
   """
   if not os.path.exists(tar_path):
     return {}
+  zst_path, gz_path = compressed_sibling_paths(tar_path)
+  canonical = None
+  if os.path.isfile(zst_path):
+    canonical = normalize_daily_compressed_path(zst_path)
+  elif os.path.isfile(gz_path):
+    canonical = normalize_daily_compressed_path(gz_path)
+  if canonical is not None:
+    cached = _lookup_daily_archive_members_cache(canonical)
+    if cached is not None:
+      return cached
+  members = {}
   try:
     with file_read_lock_wait(tar_path):
       with _open_tarfile_for_read(tar_path, get_archive_zstd_thread_count()) as tf:
@@ -1229,11 +1340,14 @@ def get_existing_archive_members(tar_path):
         for m in _iter_tar_members(tf):
           if m.isfile():
             by_name[m.name].append(m.size)
-        return {name: max(sizes) for name, sizes in by_name.items()}
+        members = {name: max(sizes) for name, sizes in by_name.items()}
   except Exception:
     return {}
   finally:
     _remove_read_lock_sidecar(tar_path)
+  if canonical is not None:
+    _store_daily_archive_members_cache(canonical, members)
+  return members
 
 
 def get_existing_archive_members_for_daily_archive(archive_compressed_path):
@@ -1242,25 +1356,23 @@ def get_existing_archive_members_for_daily_archive(archive_compressed_path):
   Prefers sibling ``.tar`` when present (mutable / post-append). Otherwise
   reads members directly from the sealed archive.
   """
-  if detect_compressed_format(archive_compressed_path) is None:
-    return {}
-  tar_path = daily_tar_path_from_compressed(archive_compressed_path)
+  canonical = normalize_daily_compressed_path(archive_compressed_path)
+  cached = _lookup_daily_archive_members_cache(canonical)
+  if cached is not None:
+    return cached
+  tar_path = daily_tar_path_from_compressed(canonical)
   if os.path.isfile(tar_path):
-    return get_existing_archive_members(tar_path)
-  if not os.path.isfile(archive_compressed_path):
+    members = get_existing_archive_members(tar_path)
+    _store_daily_archive_members_cache(canonical, members)
+    return members
+  sealed_path = _resolve_sealed_daily_archive_path(archive_compressed_path)
+  if sealed_path is None:
     return {}
-  try:
-    with file_read_lock_wait(archive_compressed_path):
-      with _open_tarfile_for_read(
-          archive_compressed_path, get_archive_zstd_thread_count(),
-      ) as tf:
-        by_name = defaultdict(list)
-        for m in _iter_tar_members(tf):
-          if m.isfile():
-            by_name[m.name].append(m.size)
-        return {name: max(sizes) for name, sizes in by_name.items()}
-  except Exception:
+  readable, members = _scan_compressed_archive_members_and_readable(sealed_path)
+  if not readable:
     return {}
+  _store_daily_archive_members_cache(canonical, members)
+  return dict(members)
 
 
 def _record_validated_day_hint(validated_days_out, gz_path, members):
@@ -2130,6 +2242,7 @@ def atomic_seal_tar_to_zst(
     raise
   if log_fn:
     log_fn("Sealed archive %s -> %s" % (tar_path, zst_path), flush=True)
+  invalidate_daily_archive_members_cache(zst_path)
   zst_key = normalize_daily_compressed_path(zst_path)
   if keep_uncompressed_tar:
     if log_fn:

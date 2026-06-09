@@ -3209,6 +3209,174 @@ def test_raw_stats_path_needs_tar_append_when_member_size_differs(tmp_path):
   )
 
 
+@pytest.fixture(autouse=False)
+def _clear_daily_archive_members_cache():
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  helpers.clear_daily_archive_members_cache()
+  yield
+  helpers.clear_daily_archive_members_cache()
+
+
+def test_daily_archive_members_cache_hit_skips_second_scan(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  day_gz = tmp_path / "2024-06-01.tar.gz"
+  inner = tmp_path / "z.txt"
+  inner.write_text("abc")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(inner), arcname="onlymember")
+  scan_calls = {"n": 0}
+  original = helpers._scan_compressed_archive_members_and_readable
+
+  def counting_scan(path):
+    scan_calls["n"] += 1
+    return original(path)
+
+  monkeypatch.setattr(
+      helpers, "_scan_compressed_archive_members_and_readable", counting_scan,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
+  )
+  path = str(day_gz)
+  first = get_existing_archive_members_for_daily_archive(path)
+  second = get_existing_archive_members_for_daily_archive(path)
+  assert first == second == {"onlymember": 3}
+  assert scan_calls["n"] == 1
+
+
+def test_daily_archive_members_cache_invalidates_on_tar_mtime(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  day_tar = tmp_path / "2024-06-02.tar"
+  day_gz = tmp_path / "2024-06-02.tar.gz"
+  inner = tmp_path / "a.txt"
+  inner.write_text("one")
+  with tarfile.open(day_tar, "w") as tf:
+    tf.add(str(inner), arcname="member")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(inner), arcname="stale")
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
+  )
+  path = str(day_gz)
+  get_existing_archive_members_for_daily_archive(path)
+  inner.write_text("two")
+  with tarfile.open(day_tar, "w") as tf:
+    tf.add(str(inner), arcname="member")
+  updated = get_existing_archive_members_for_daily_archive(path)
+  assert updated["member"] == 3
+
+
+def test_raw_stats_needs_append_uses_cache(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  host_dir = tmp_path / "archive" / "node1.hpc"
+  host_dir.mkdir(parents=True)
+  ts = _local_day_epoch("2024-06-03")
+  raw_path = host_dir / ts
+  payload = f"{ts} job1 node1\n".encode()
+  raw_path.write_bytes(payload)
+  tar_path = daily_dir / "2024-06-03.tar"
+  member_name = get_tar_member_name(str(raw_path))
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(raw_path), arcname=member_name)
+  scan_calls = {"n": 0}
+  original = helpers.get_existing_archive_members
+
+  def counting_get_members(tar_p):
+    scan_calls["n"] += 1
+    return original(tar_p)
+
+  monkeypatch.setattr(
+      helpers, "get_existing_archive_members", counting_get_members,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
+  )
+  assert not raw_stats_path_needs_tar_append(
+      str(raw_path), str(daily_dir), first_ts=ts,
+  )
+  assert not raw_stats_path_needs_tar_append(
+      str(raw_path), str(daily_dir), first_ts=ts,
+  )
+  assert scan_calls["n"] == 1
+
+
+def test_single_member_early_exit_finds_match(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  day_gz = tmp_path / "2024-06-04.tar.gz"
+  inner = tmp_path / "target.txt"
+  inner.write_text("match")
+  other = tmp_path / "other.txt"
+  other.write_text("noise")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(other), arcname="noise/member")
+    tf.add(str(inner), arcname="host/target")
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
+  )
+  assert helpers.daily_archive_has_member_with_size(
+      str(day_gz), "host/target", 5,
+  )
+  scan_calls = {"n": 0}
+  original = helpers._scan_compressed_archive_members_and_readable
+
+  def counting_scan(path):
+    scan_calls["n"] += 1
+    return original(path)
+
+  monkeypatch.setattr(
+      helpers, "_scan_compressed_archive_members_and_readable", counting_scan,
+  )
+  assert helpers.daily_archive_has_member_with_size(
+      str(day_gz), "host/target", 5,
+  )
+  assert scan_calls["n"] == 0
+
+
+def test_invalidate_daily_archive_members_cache_forces_rescan(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  day_gz = tmp_path / "2024-06-05.tar.gz"
+  inner = tmp_path / "z.txt"
+  inner.write_text("abc")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(inner), arcname="onlymember")
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
+  )
+  path = str(day_gz)
+  get_existing_archive_members_for_daily_archive(path)
+  helpers.invalidate_daily_archive_members_cache(path)
+  scan_calls = {"n": 0}
+  original = helpers._scan_compressed_archive_members_and_readable
+
+  def counting_scan(p):
+    scan_calls["n"] += 1
+    return original(p)
+
+  monkeypatch.setattr(
+      helpers, "_scan_compressed_archive_members_and_readable", counting_scan,
+  )
+  get_existing_archive_members_for_daily_archive(path)
+  assert scan_calls["n"] == 1
+
+
 def test_prior_day_tar_removed_at_seal_when_keep_false(monkeypatch, tmp_path):
   import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
 

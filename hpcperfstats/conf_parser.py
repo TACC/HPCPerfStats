@@ -107,6 +107,8 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_pool_poll_timeout_s"),
     ("PIPELINE", "sync_pool_stall_abort_after_timeouts"),
     ("PIPELINE", "sync_ingest_per_file_timeout_s"),
+    ("PIPELINE", "sync_archive_members_cache_enabled"),
+    ("PIPELINE", "sync_archive_members_cache_max_entries"),
     ("PIPELINE", "sync_write_lock_shards"),
     ("PIPELINE", "sync_enable_db_writer_pipeline"),
     ("PIPELINE", "sync_db_writer_combined_task"),
@@ -1569,6 +1571,26 @@ def get_sync_pool_poll_timeout_s():
     )
   except (TypeError, ValueError, OverflowError):
     return 5.0
+
+
+def get_sync_archive_members_cache_enabled():
+  """Whether ingest/archive workers cache daily tar member maps per archive identity."""
+  _ensure_cfg_loaded()
+  return _parse_bool(
+      _pipeline_get("sync_archive_members_cache_enabled", fallback="yes"),
+  )
+
+
+def get_sync_archive_members_cache_max_entries():
+  """Max cached daily archive member maps per worker process."""
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        1,
+        int(_pipeline_get("sync_archive_members_cache_max_entries", fallback="64")),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 64
 
 
 def get_sync_ingest_per_file_timeout_s():

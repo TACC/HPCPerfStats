@@ -61,6 +61,15 @@ def test_abort_if_pool_workers_dead_raises():
   assert excinfo.value.dead_pids == (4242,)
 
 
+def test_abort_if_pool_workers_dead_log_does_not_claim_oom():
+  pool = SimpleNamespace(_pool=[_DeadWorker()])
+  with pytest.raises(mph.MultiprocessingWorkerExitError) as excinfo:
+    mph.abort_if_pool_workers_dead(pool, context="test")
+  message = str(excinfo.value)
+  assert "likely OOM" not in message
+  assert "no longer alive" in message
+
+
 def test_imap_unordered_watch_pool_aborts_when_worker_dies():
   pool = _BlockingPool()
 

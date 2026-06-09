@@ -204,15 +204,21 @@ The background **`ArchiveJanitor`** processes up to **`archive_janitor_days_per_
 
 **Validation read locks:** parallel raw-remove validation defaults to **`sync_archive_validation_max_workers=2`** (INI `[PIPELINE]`). Raise only when append/read-lock contention is acceptable.
 
-**Pool stall guard (exit 124):** When `imap_unordered_watch_pool` sees **N** consecutive poll timeouts with **no** completed task while all workers are still alive, it raises `MultiprocessingPoolStallError` and `sync_timedb` exits with status **124** (not OOM **137**, not parse errors). Default wall time is `sync_pool_stall_abort_after_timeouts` × `sync_pool_poll_timeout_s` (**120** × **5s** ≈ **10 minutes**). Logs now include an **`ERROR: Pool imap stalled`** line before exit, plus **`WARN: pool imap stall progress`** at 50%/75% of the abort threshold with an **`in_flight_sample`** of paths still in the chunk.
+**Pool stall guard (exit 124):** When `imap_unordered_watch_pool` sees **N** consecutive poll timeouts with **no** completed task while all workers are still alive, it raises `MultiprocessingPoolStallError` and `sync_timedb` exits with status **124**. Default wall time is `sync_pool_stall_abort_after_timeouts` × `sync_pool_poll_timeout_s` (**120** × **5s** ≈ **10 minutes**). Logs include an **`ERROR: Pool imap stalled`** line before exit, plus **`WARN: pool imap stall progress`** at 50%/75% of the abort threshold with an **`in_flight_sample`** of paths still in the chunk.
+
+**Exit 137 vs 124:** Exit **137** (`MultiprocessingWorkerExitError`) means a pool worker was **no longer alive** when the supervisor polled finalize/`get()`—it is **not** proof of kernel OOM. A prior ingest stall may terminate pools and, without teardown guards, a forced archive finalize in `finally` could mask the intended **124** with **137**; current code skips finalize when `pool_worker_exit` is set after stall/worker death.
+
+**DB-complete ingest + sealed-only days:** When `archive_keep_uncompressed_tar=no`, DB-complete files (`No missing timestamps found`) call `raw_stats_path_needs_tar_append`, which must not stream the full `.tar.zst` once per file. Per-worker cache (`sync_archive_members_cache_enabled`, keyed by archive identity) limits sealed-archive member scans to **one per calendar day per worker**.
 
 | Knob | Default | Effect |
 |------|---------|--------|
 | `sync_pool_poll_timeout_s` | 5 | Poll interval between imap progress checks |
 | `sync_pool_stall_abort_after_timeouts` | 120 | Consecutive timeouts before exit **124** |
 | `sync_ingest_per_file_timeout_s` | 0 (off) | Wall-clock cap per ingest worker task; on expiry the file returns `ingest_ok=False` for retry instead of blocking the chunk |
+| `sync_archive_members_cache_enabled` | yes | Cache daily tar member maps on ingest duplicate-check path |
+| `sync_archive_members_cache_max_entries` | 64 | Max cached days per ingest/archive worker process |
 
-For large DB sites with slow duplicate-detection or bulk writes, prefer enabling **`sync_ingest_per_file_timeout_s`** (for example **900**) so one straggler path does not hold the whole chunk until the pool stall abort. Raising only `sync_pool_stall_abort_after_timeouts` prolongs hangs without identifying the path. Ingest-time DLO quarantine for permanently corrupt raw is separate from exit **124**.
+For large DB sites with slow duplicate-detection or bulk writes, prefer enabling **`sync_ingest_per_file_timeout_s`** (for example **900**) so one straggler path does not hold the whole chunk until the pool stall abort. Raising only `sync_pool_stall_abort_after_timeouts` prolongs hangs without identifying the path. Catch-up mitigations for sealed-only archives: **`archive_keep_uncompressed_tar=yes`**, lower **`sync_ingest_pool_processes`**, or rely on the member cache above. Ingest-time DLO quarantine for permanently corrupt raw is separate from exit **124**.
 
 **Unmapped closed raw:** when ingest backlog prevents full accrual snapshots, the supervisor unions a cached unmapped-closed-raw scan into janitor disqualification so `.tar` drop cannot proceed while unparseable closed raw remains on disk.
 

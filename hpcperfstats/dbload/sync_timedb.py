@@ -91,6 +91,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     daily_tar_paths_from_pending_archive_tasks,
     filter_files_to_add_to_archive,
     get_existing_archive_members,
+    invalidate_daily_archive_members_cache,
     iter_daily_tar_paths,
     replace_corrupt_tar_from_compressed_backup,
     cap_pending_stats_file_list,
@@ -1700,6 +1701,7 @@ def run_sync_timedb_supervisor_loop(
       archive_task = task_payload["task"]
       archive_paths = task_payload["paths"]
       if result:
+        invalidate_daily_archive_members_cache(archive_task.archive_info[0])
         for p in archive_paths:
           _transition_file_state(file_states, p, SyncFileState.ARCHIVED)
           added = _add_processed_path(
@@ -2605,7 +2607,13 @@ def run_sync_timedb_supervisor_loop(
     if day_raw_removal is not None:
       day_raw_removal.shutdown(wait=True)
     archive_janitor.shutdown(wait=True)
-    _finalize_archive_slots_if_needed(force=True)
+    if not pool_worker_exit:
+      _finalize_archive_slots_if_needed(force=True)
+    else:
+      log_print(
+          "Archive finalize skipped during pool_worker_exit teardown",
+          flush=True,
+      )
     _persist_dead_letters_if_needed(force=True)
     _flush_checkpoint_if_needed(force=True)
     _shutdown_ingest_pools(

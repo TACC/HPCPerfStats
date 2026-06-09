@@ -72,7 +72,7 @@ This must **not** wait for an empty global ingest queue.
 - **Hints:** guard `_validated_days` / `_day_phases` with `_hints_state_lock`; defer paths call `_persist_hints` before tick end.
 - **Budget/exception:** re-queue **all** unprocessed popped debt; never drop tail debt on budget break or tick exception.
 - **Fresh per-day raw:** `build_remaining_raw_for_daily_tar` before seal deferral and `TAR_DROP`.
-- **Seal:** `DAY_CLOSE` calls `_seal_one_day(..., ignore_remaining_raw=True)` so seal proceeds after pending ingest drains even when closed raw remains on disk; raw remove and `.tar` drop follow in the same debt item. Non-`DAY_CLOSE` seal paths still defer when closed raw remains. Pass `effective_keep_uncompressed_tar` into `atomic_seal_tar_to_zst`. Re-check `daily_tar_seal_calendar_eligible` in `_seal_one_day` (defense in depth).
+- **Seal:** `DAY_CLOSE` calls `_seal_one_day(..., ignore_remaining_raw=True)` so seal proceeds after pending ingest drains even when closed raw remains on disk; raw remove and `.tar` drop follow in the same debt item. Non-`DAY_CLOSE` seal paths still defer when closed raw remains. Pass `effective_keep_uncompressed_tar` into `atomic_seal_tar_to_zst`. Re-check `daily_tar_seal_calendar_eligible` in `_seal_one_day` (defense in depth). Successful `atomic_seal_tar_to_zst` must call `invalidate_daily_archive_members_cache` so ingest workers rescan sealed identity.
 - **day_phases:** set only on verified success (sealed, raw gone, tar dropped).
 - **Full** `build_archive_maintenance_snapshot` on **scheduled maintenance passes** (startup + every N chunks + ingest queue drain), not every tick.
 - **Lock cleanup:** once per janitor tick when the heap has day-pipeline work, before popping `DAY_CLOSE` debt.
