@@ -50,6 +50,7 @@ Canonical per-calendar-day pipeline debt is **`DebtKind.DAY_CLOSE`**: one heap i
 **Enqueue paths (oldest first where applicable):**
 
 - **Scheduled scan:** `enqueue_scheduled_day_close` via `run_scheduled_maintenance_pass` at supervisor **startup**, every **`rescan_every_chunks`** ingest chunks (default 10), and when the ingest queue **drains to zero** after chunk processing. Eligible days: prior calendar days (or calendar today when `daily_tar_seal_calendar_eligible`), not disqualified, and needs work (hints phase `< tar_dropped`, dirty mtime, or `remaining_raw_by_gz` has paths).
+- **Calendar-day ingest drain (immediate):** supervisor `_maybe_enqueue_immediate_day_close` after **`chunk_end`** (post `end_of_batch` finalize), **`archive_finalize`**, and **`idle_finalize`**. Uses `find_immediate_day_close_candidates` + `enqueue_immediate_day_close` / `enqueue_immediate_day_close_many` — **≤1 ingest batch** enqueue latency after hot-path quiescence; does **not** call `build_archive_maintenance_snapshot` or `signal_scheduled_maintenance_pass`. Tar-append must be finalized (not merely dispatched); stream-past gate uses `max_ingest_sort_epoch_by_tar` + pending oldest-first queue.
 - **In-progress pipeline:** janitor re-enqueues `DAY_CLOSE` while `DayRawRemovalCoordinator` async verify+delete is incomplete for that day.
 
 **Legacy hints/debt:** persisted `SEAL_PRIOR_DAY` / `RAW_REMOVE` / `TAR_DROP` for the same `tar_path` coalesce to one `DAY_CLOSE` on load and when popped for a tick.
@@ -64,6 +65,8 @@ This must **not** wait for an empty global ingest queue.
 
 ## Janitor tick contract
 
+- **Tick chaining:** when a tick made progress (`tick_made_progress`: processed at least one debt item or hit budget break after partial progress) and `debt_depth() > 0` afterward, `_run_tick_body` `finally` sets `_pending_signal` and schedules the next tick immediately. **Do not** chain on empty `work_items` or when every popped item was only re-queued mid-tick due to disqualification (avoids busy spin). RSS defer and existing `_pending_signal` paths unchanged.
+- **`archive_janitor_budget_seconds`** / **`archive_janitor_days_per_tick`** gate **starting the next calendar day** between debt items, not mid-seal abort. Large ingest backlog still shrinks slices via `sync_dispatch_archive_backoff_ratio`; chaining keeps execution continuous.
 - Single-flight `ThreadPoolExecutor(max_workers=1)`; thread title `sync_timedb.py [thread:archive-janitor]`.
 - Guard `_debt_heap` / `_debt_seen` with `_debt_lock`; accrual and ticks share the same lock.
 - Per tick: RSS pre-check (reschedule only at outermost tick depth) → pop ≤ `archive_janitor_days_per_tick` **distinct calendar days** (`tar_path` values, not raw heap entry count) within `archive_janitor_budget_seconds` → `DAY_CLOSE` (or maintenance debt kinds) per item.
@@ -114,13 +117,13 @@ This must **not** wait for an empty global ingest queue.
 
 ## Tests
 
-- `hpcperfstats/tests/test_sync_timedb_janitor.py` (`DAY_CLOSE`, days-per-tick calendar cap, day-drain, defer persist, partial raw ticks)
+- `hpcperfstats/tests/test_sync_timedb_janitor.py` (`DAY_CLOSE`, days-per-tick calendar cap, day-drain, defer persist, partial raw ticks, `enqueue_immediate_day_close*`, tick chaining)
 - `hpcperfstats/tests/test_sync_timedb_hints.py`
 - `hpcperfstats/tests/test_sync_timedb_archive_dispatch.py`
-- `hpcperfstats/tests/test_sync_timedb_supervisor.py` (day-drain + chunk reclaim; oldest-first ingest order; startup preflight delete gate + post-delete rescan)
+- `hpcperfstats/tests/test_sync_timedb_supervisor.py` (immediate day-close on calendar-day drain, mid-day negative, ≤1-batch latency, every-batch check, startup coexistence, boundary-finalize ordering, idle_finalize; oldest-first ingest order; startup preflight delete gate + post-delete rescan)
 - `hpcperfstats/tests/test_sync_timedb_startup_raw_removal.py` (async verify manifest, sealed-only skip, DB gate, gated delete)
 - `hpcperfstats/tests/test_sync_timedb_day_raw_removal.py` (per-day verify manifest, batch delete, async verify)
-- `hpcperfstats/tests/test_sync_timedb_archive.py` (`effective_keep_uncompressed_tar`, `daily_tar_seal_calendar_eligible`, `raw_stats_path_needs_tar_append`, seal drop-at-seal)
+- `hpcperfstats/tests/test_sync_timedb_archive.py` (`stats_path_ingest_sort_epoch`, `ingest_stream_past_calendar_day`, `find_immediate_day_close_candidates`, `effective_keep_uncompressed_tar`, `daily_tar_seal_calendar_eligible`, `raw_stats_path_needs_tar_append`, seal drop-at-seal)
 
 ## Overlap
 

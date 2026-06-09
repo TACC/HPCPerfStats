@@ -161,6 +161,120 @@ def calendar_date_from_daily_tar_path(tar_path):
     return None
 
 
+def stats_path_ingest_sort_epoch(stats_path):
+  """Oldest-first ingest sort key (numeric basename, else mtime; ``None`` last)."""
+  if not stats_path:
+    return None
+  try:
+    return int(os.path.basename(stats_path))
+  except (TypeError, ValueError):
+    pass
+  try:
+    return int(os.path.getmtime(stats_path))
+  except (OSError, OverflowError, ValueError):
+    return None
+
+
+def daily_tar_path_for_stats_path(stats_path, tgz_archive_dir, first_ts=None):
+  """Normalized daily ``.tar`` path for a raw stats file."""
+  file_date = _derive_stats_path_date(stats_path, first_ts)
+  if file_date is None or not tgz_archive_dir:
+    return None
+  return _daily_tar_path_for_date(tgz_archive_dir, file_date)
+
+
+def _day_phase_name_from_hints(day_phases, tar_path):
+  tar_norm = os.path.normpath(str(tar_path or ""))
+  phase = (day_phases or {}).get(tar_norm)
+  if isinstance(phase, dict):
+    return phase.get("phase")
+  return phase
+
+
+def _day_phase_at_least_hints(day_phases, tar_path, target):
+  order = {"sealed": 1, "raw_removed": 2, "tar_dropped": 3}
+  phase_name = _day_phase_name_from_hints(day_phases, tar_path)
+  if phase_name not in order:
+    return False
+  return order[phase_name] >= order[target]
+
+
+def ingest_stream_past_calendar_day(
+    day_date,
+    *,
+    pending_stats_paths,
+    max_sort_epoch_for_day,
+    first_timestamp_by_path=None,
+):
+  """True when oldest-first ingest stream has moved past ``day_date``."""
+  if day_date is None:
+    return False
+  fmap = first_timestamp_by_path or {}
+  for path in pending_stats_paths or ():
+    if _derive_stats_path_date(path, fmap.get(path)) == day_date:
+      return False
+  if not pending_stats_paths:
+    return True
+  if max_sort_epoch_for_day is None:
+    return True
+  min_pending = None
+  for path in pending_stats_paths:
+    epoch = stats_path_ingest_sort_epoch(path)
+    if epoch is None:
+      continue
+    min_pending = epoch if min_pending is None else min(min_pending, epoch)
+  if min_pending is None:
+    return True
+  return min_pending > max_sort_epoch_for_day
+
+
+def find_immediate_day_close_candidates(
+    *,
+    tgz_archive_dir,
+    candidate_tar_paths,
+    disqualified_daily_tars,
+    pending_stats_paths,
+    max_sort_epoch_by_tar,
+    local_tz,
+    now=None,
+    day_phases=None,
+    first_timestamp_by_path=None,
+):
+  """Return oldest-first daily ``.tar`` paths eligible for immediate ``DAY_CLOSE``."""
+  if not tgz_archive_dir:
+    return []
+  disqualified = _normalize_daily_tar_path_set(disqualified_daily_tars)
+  fmap = first_timestamp_by_path or {}
+  epoch_by_tar = max_sort_epoch_by_tar or {}
+  seen = set()
+  ranked = []
+  for tar_path in candidate_tar_paths or ():
+    tar_norm = os.path.normpath(str(tar_path or ""))
+    if not tar_norm or tar_norm in seen:
+      continue
+    seen.add(tar_norm)
+    if tar_norm in disqualified:
+      continue
+    day_date = calendar_date_from_daily_tar_path(tar_norm)
+    if day_date is None:
+      continue
+    if not daily_tar_seal_calendar_eligible(tar_norm, local_tz, now=now):
+      continue
+    if not ingest_stream_past_calendar_day(
+        day_date,
+        pending_stats_paths=pending_stats_paths,
+        max_sort_epoch_for_day=epoch_by_tar.get(tar_norm),
+        first_timestamp_by_path=fmap,
+    ):
+      continue
+    if _day_phase_at_least_hints(day_phases, tar_norm, "tar_dropped"):
+      if not (os.path.isfile(tar_norm) and tar_day_dirty_by_mtime(tar_norm)):
+        continue
+    ranked.append((day_date, tar_norm))
+  ranked.sort(key=lambda item: item[0])
+  return [tar_norm for _, tar_norm in ranked]
+
+
 def effective_keep_uncompressed_tar(tar_path, *, local_tz, now=None):
   """Whether to retain uncompressed ``.tar`` after seal for ``tar_path``.
 

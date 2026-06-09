@@ -6,7 +6,7 @@ import subprocess
 import tarfile
 import threading
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -36,6 +36,9 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     collect_stats_files_in_range,
     dedupe_tar_keep_largest_file_per_member,
     filter_files_to_add_to_archive,
+    find_immediate_day_close_candidates,
+    ingest_stream_past_calendar_day,
+    stats_path_ingest_sort_epoch,
     get_existing_archive_members,
     get_existing_archive_members_for_daily_archive,
     get_file_member_sizes_from_gzip_archive,
@@ -4125,3 +4128,122 @@ def test_build_seal_disqualified_daily_tars_unions_all_sources():
   assert d(6) in disqualified  # queued archive task
   assert d(7) in disqualified  # unmapped closed raw
   assert d(9) not in disqualified  # empty append-cache bucket ignored
+
+
+def test_stats_path_ingest_sort_epoch_matches_collect_order(tmp_path):
+  host_dir = tmp_path / "host.hpc"
+  host_dir.mkdir()
+  older = host_dir / "1000"
+  newer = host_dir / "2000"
+  older.write_text("x")
+  newer.write_text("y")
+  assert stats_path_ingest_sort_epoch(str(older)) == 1000
+  assert stats_path_ingest_sort_epoch(str(newer)) == 2000
+  collected = collect_stats_files_in_range(
+      str(tmp_path), "all", None, ".hpc", force_full_scan=True)
+  assert collected == [str(older), str(newer)]
+
+
+def test_ingest_stream_past_calendar_day_empty_pending():
+  day = date(2020, 1, 1)
+  assert ingest_stream_past_calendar_day(
+      day,
+      pending_stats_paths=[],
+      max_sort_epoch_for_day=None,
+  )
+
+
+def test_ingest_stream_past_calendar_day_blocks_same_day_pending():
+  day = date(2020, 1, 1)
+  epoch = int(datetime(2020, 1, 1, 12, tzinfo=timezone.utc).timestamp())
+  pending = ["/raw/host.hpc/%d" % epoch]
+  assert not ingest_stream_past_calendar_day(
+      day,
+      pending_stats_paths=pending,
+      max_sort_epoch_for_day=epoch,
+  )
+
+
+def test_ingest_stream_past_calendar_day_true_when_min_pending_after_day():
+  day = date(2020, 1, 1)
+  day1_epoch = int(datetime(2020, 1, 1, 12, tzinfo=timezone.utc).timestamp())
+  day2_epoch = int(datetime(2020, 1, 2, 12, tzinfo=timezone.utc).timestamp())
+  pending = ["/raw/host.hpc/%d" % day2_epoch]
+  assert ingest_stream_past_calendar_day(
+      day,
+      pending_stats_paths=pending,
+      max_sort_epoch_for_day=day1_epoch,
+  )
+
+
+def test_ingest_stream_past_calendar_day_restart_without_epoch_history():
+  day = date(2020, 1, 1)
+  day2_epoch = int(datetime(2020, 1, 2, 12, tzinfo=timezone.utc).timestamp())
+  pending = ["/raw/host.hpc/%d" % day2_epoch]
+  assert ingest_stream_past_calendar_day(
+      day,
+      pending_stats_paths=pending,
+      max_sort_epoch_for_day=None,
+  )
+
+
+def test_find_immediate_day_close_candidates_orders_oldest_first(tmp_path):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_old = str(daily_dir / "2020-01-01.tar")
+  tar_new = str(daily_dir / "2020-01-02.tar")
+  open(tar_old, "wb").close()
+  open(tar_new, "wb").close()
+  day1_epoch = int(datetime(2020, 1, 1, 12, tzinfo=timezone.utc).timestamp())
+  day2_epoch = int(datetime(2020, 1, 2, 12, tzinfo=timezone.utc).timestamp())
+  pending = ["/raw/host.hpc/%d" % day2_epoch]
+  result = find_immediate_day_close_candidates(
+      tgz_archive_dir=str(daily_dir),
+      candidate_tar_paths=[tar_new, tar_old],
+      disqualified_daily_tars=set(),
+      pending_stats_paths=pending,
+      max_sort_epoch_by_tar={
+          os.path.normpath(tar_old): day1_epoch,
+          os.path.normpath(tar_new): day2_epoch,
+      },
+      local_tz=timezone.utc,
+  )
+  assert result == [os.path.normpath(tar_old)]
+
+
+def test_find_immediate_day_close_candidates_skips_disqualified(tmp_path):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = str(daily_dir / "2020-01-01.tar")
+  open(tar_path, "wb").close()
+  day_epoch = int(datetime(2020, 1, 1, 12, tzinfo=timezone.utc).timestamp())
+  result = find_immediate_day_close_candidates(
+      tgz_archive_dir=str(daily_dir),
+      candidate_tar_paths=[tar_path],
+      disqualified_daily_tars={os.path.normpath(tar_path)},
+      pending_stats_paths=[],
+      max_sort_epoch_by_tar={os.path.normpath(tar_path): day_epoch},
+      local_tz=timezone.utc,
+  )
+  assert result == []
+
+
+def test_find_immediate_day_close_candidates_skips_tar_dropped_phase(tmp_path, monkeypatch):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers_mod
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = str(daily_dir / "2020-01-01.tar")
+  open(tar_path, "wb").close()
+  day_epoch = int(datetime(2020, 1, 1, 12, tzinfo=timezone.utc).timestamp())
+  monkeypatch.setattr(helpers_mod, "tar_day_dirty_by_mtime", lambda _p: False)
+  result = find_immediate_day_close_candidates(
+      tgz_archive_dir=str(daily_dir),
+      candidate_tar_paths=[tar_path],
+      disqualified_daily_tars=set(),
+      pending_stats_paths=[],
+      max_sort_epoch_by_tar={os.path.normpath(tar_path): day_epoch},
+      local_tz=timezone.utc,
+      day_phases={os.path.normpath(tar_path): {"phase": "tar_dropped"}},
+  )
+  assert result == []

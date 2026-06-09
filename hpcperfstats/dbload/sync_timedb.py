@@ -84,7 +84,9 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     build_archive_mapping,
     build_seal_disqualified_daily_tars,
     collect_days_with_unmapped_closed_raw,
+    daily_tar_path_for_stats_path,
     daily_tar_path_from_compressed,
+    find_immediate_day_close_candidates,
     get_unmapped_closed_raw_daily_tars_cached,
     daily_tar_paths_for_archive_job_tasks,
     daily_tar_paths_for_stats_paths,
@@ -101,6 +103,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     rescan_pending_stats_files,
     should_seal_daily_tar,
     stats_file_is_active_segment,
+    stats_path_ingest_sort_epoch,
     verify_tar_archive_readable,
 )
 from hpcperfstats.file_locking import file_write_lock
@@ -1664,6 +1667,7 @@ def run_sync_timedb_supervisor_loop(
   delete_phase_active = False
   day_close_rescan_pending = False
   chunk_in_progress = False
+  max_ingest_sort_epoch_by_tar: dict[str, int] = {}
 
   def _get_quarantine_skip_paths():
     captured = _capture_disqualification_inputs()
@@ -1714,6 +1718,42 @@ def run_sync_timedb_supervisor_loop(
         tgz_archive_dir,
     )
     return tar_norm in {os.path.normpath(t) for t in inflight_tars}
+
+  def _record_ingest_sort_epochs_for_paths(paths):
+    for stats_path in paths or ():
+      tar_path = daily_tar_path_for_stats_path(stats_path, tgz_archive_dir)
+      if not tar_path:
+        continue
+      tar_norm = os.path.normpath(tar_path)
+      epoch = stats_path_ingest_sort_epoch(stats_path)
+      if epoch is None:
+        continue
+      prev = max_ingest_sort_epoch_by_tar.get(tar_norm)
+      if prev is None or epoch > prev:
+        max_ingest_sort_epoch_by_tar[tar_norm] = epoch
+
+  def _maybe_enqueue_immediate_day_close(*, context: str):
+    if not tgz_archive_dir:
+      return
+    captured = _capture_disqualification_inputs()
+    disqualified = _janitor_disqualified_daily_tars()
+    with archive_janitor._hints_state_lock:
+      day_phases = dict(archive_janitor._day_phases)
+    candidates = find_immediate_day_close_candidates(
+        tgz_archive_dir=tgz_archive_dir,
+        candidate_tar_paths=list(max_ingest_sort_epoch_by_tar.keys()),
+        disqualified_daily_tars=disqualified,
+        pending_stats_paths=captured["pending_stats_paths"],
+        max_sort_epoch_by_tar=max_ingest_sort_epoch_by_tar,
+        local_tz=archive_janitor.local_tz,
+        day_phases=day_phases,
+    )
+    enqueued_any = False
+    for tar_path in candidates:
+      if archive_janitor.enqueue_immediate_day_close(tar_path, reason=context):
+        enqueued_any = True
+    if enqueued_any:
+      archive_janitor.signal_work_available()
 
   def _apply_archive_finalize_results(deferred_paths, results):
     nonlocal checkpoint_dirty_count
@@ -1816,6 +1856,13 @@ def run_sync_timedb_supervisor_loop(
             _transition_file_state(file_states, p, SyncFileState.ARCHIVE_FAILED_RETRYABLE)
             _discard_inflight_archive_path(p)
     _flush_checkpoint_if_needed()
+    finalized_paths = []
+    for task_payload, result in zip(deferred_paths, results):
+      if result:
+        finalized_paths.extend(task_payload.get("paths") or ())
+    if finalized_paths:
+      _record_ingest_sort_epochs_for_paths(finalized_paths)
+      _maybe_enqueue_immediate_day_close(context="archive_finalize")
 
   def _finalize_archive_slot(slot, *, force=False, allow_defer=False, context=""):
     ready_fn = getattr(slot.async_result, "ready", None)
@@ -1881,7 +1928,8 @@ def run_sync_timedb_supervisor_loop(
 
   log_print(
       "sync_timedb: day_close schedule startup + every %d ingest chunks + "
-      "on ingest queue drain; idle rescan sleep %s s"
+      "on ingest queue drain + each ingest batch (calendar-day drain); "
+      "idle rescan sleep %s s"
       % (
           int(rescan_every_chunks),
           int(EMPTY_QUEUE_RESCAN_SLEEP_SECONDS),
@@ -2148,6 +2196,7 @@ def run_sync_timedb_supervisor_loop(
               flush=True,
           )
         _finalize_archive_slots_if_needed(force=True, context="pre_rescan")
+        _maybe_enqueue_immediate_day_close(context="idle_finalize")
         pending_stats_files = _cap_pending_stats_files_list(
             rescan_pending_stats_files(
                 directory,
@@ -2198,6 +2247,7 @@ def run_sync_timedb_supervisor_loop(
           log_print("Worker idle loops while waiting for pending files: %d" % worker_idle_loops)
           log_print("No pending stats files after rescan", flush=True)
           _finalize_archive_slots_if_needed(force=True)
+          _maybe_enqueue_immediate_day_close(context="idle_finalize")
           log_print(
               "Sleeping %s s before exiting sync_timedb"
               % EMPTY_QUEUE_RESCAN_SLEEP_SECONDS,
@@ -2569,6 +2619,8 @@ def run_sync_timedb_supervisor_loop(
               flush=True,
           )
 
+        _record_ingest_sort_epochs_for_paths(
+            [p for p in stats_files_chunk if p in set(successful_paths)])
         pending_stats_files = pending_stats_files[len(stats_files_chunk):]
         if len(pending_stats_files) <= ingest_queue_low:
           log_print(
@@ -2614,12 +2666,13 @@ def run_sync_timedb_supervisor_loop(
         _signal_maintenance_pass_if_queue_drained(
             had_pending_before_chunk=had_pending_before_chunk,
         )
+        _finalize_archive_slots_if_needed(
+            force=True,
+            allow_defer=bool(pending_stats_files),
+            context="end_of_batch",
+        )
+        _maybe_enqueue_immediate_day_close(context="chunk_end")
 
-      _finalize_archive_slots_if_needed(
-          force=True,
-          allow_defer=bool(pending_stats_files),
-          context="end_of_batch",
-      )
       _persist_dead_letters_if_needed(force=True)
       _flush_checkpoint_if_needed(force=True)
       janitor_stats = archive_janitor.stats()

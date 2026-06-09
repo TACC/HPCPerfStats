@@ -72,6 +72,7 @@ def _make_janitor(**kwargs):
   defaults.update(kwargs)
   janitor = ArchiveJanitor(**defaults)
   janitor._persist_hints = MagicMock()
+  janitor._allow_tick_chaining = False
   return janitor
 
 
@@ -150,15 +151,12 @@ def test_janitor_tick_budget_interrupt_requeues_remaining_debt(monkeypatch, tmp_
       (DebtKind.TAR_DROP, "/tmp/2026-01-03.tar"),
   ):
     janitor._enqueue_debt(kind, tar, persist=False)
-  time_calls = {"n": 0}
+  processed = {"n": 0}
 
   def fake_time():
-    time_calls["n"] += 1
-    if time_calls["n"] <= 3:
-      return 100.0
-    return 200.0
-
-  processed = {"n": 0}
+    if processed["n"] >= 2:
+      return 200.0
+    return 100.0
 
   def fake_process(_debt, **_kwargs):
     processed["n"] += 1
@@ -1249,3 +1247,132 @@ def test_janitor_persist_hints_snapshots_day_phases_under_lock(monkeypatch, tmp_
   loaded = janitor_mod.load_archive_maint_hints(archive_dir)
   assert loaded is not None
   assert tar_path in loaded.get("day_phases", {})
+
+
+def test_enqueue_immediate_day_close_respects_disqualified(monkeypatch, tmp_path):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = str(daily_dir / "2020-01-01.tar")
+  open(tar_path, "wb").close()
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      get_disqualified_daily_tars=lambda: {os.path.normpath(tar_path)},
+  )
+  monkeypatch.setattr(
+      janitor_mod, "build_remaining_raw_stats_by_daily_gz", lambda *a, **k: {})
+  assert not janitor.enqueue_immediate_day_close(tar_path, reason="test")
+  assert janitor.debt_depth() == 0
+
+
+def test_enqueue_immediate_day_close_enqueues_eligible_day(tmp_path):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = str(daily_dir / "2020-01-01.tar")
+  open(tar_path, "wb").close()
+  janitor = _make_janitor(tgz_archive_dir=str(daily_dir))
+  assert janitor.enqueue_immediate_day_close(tar_path, reason="chunk_end")
+  assert janitor.debt_depth() == 1
+  assert janitor._debt_heap[0].kind == DebtKind.DAY_CLOSE
+
+
+def test_enqueue_immediate_day_close_many_signals_once(tmp_path):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_paths = []
+  for day in ("2020-01-01", "2020-01-02"):
+    tar_path = str(daily_dir / f"{day}.tar")
+    open(tar_path, "wb").close()
+    tar_paths.append(tar_path)
+  janitor = _make_janitor(tgz_archive_dir=str(daily_dir))
+  signal_count = {"n": 0}
+  real_signal = janitor.signal_work_available
+
+  def counting_signal():
+    signal_count["n"] += 1
+    return real_signal()
+
+  janitor.signal_work_available = counting_signal
+  janitor.enqueue_immediate_day_close_many(tar_paths, reason="bulk")
+  assert janitor.debt_depth() == 2
+  assert signal_count["n"] == 1
+
+
+def test_janitor_chains_ticks_while_debt_remains(monkeypatch, tmp_path):
+  signal_count = {"n": 0}
+  janitor = _make_janitor(tgz_archive_dir=str(tmp_path))
+  janitor._allow_tick_chaining = True
+  real_signal = janitor.signal_work_available
+
+  def counting_signal():
+    signal_count["n"] += 1
+    return real_signal()
+
+  janitor.signal_work_available = counting_signal
+  tar1 = str(tmp_path / "2026-01-01.tar")
+  tar2 = str(tmp_path / "2026-01-02.tar")
+  for tar in (tar1, tar2):
+    open(tar, "wb").close()
+    open(tar.replace(".tar", ".tar.zst"), "wb").close()
+    janitor._enqueue_debt(DebtKind.DAY_CLOSE, tar, persist=False)
+  monkeypatch.setattr(janitor_mod, "build_remaining_raw_for_daily_tar", lambda *a, **k: {})
+  monkeypatch.setattr(janitor_mod.cfg, "get_archive_janitor_days_per_tick", lambda: 1)
+  monkeypatch.setattr(janitor_mod.cfg, "get_archive_janitor_budget_seconds", lambda: 3600.0)
+  monkeypatch.setattr(janitor_mod, "atomic_seal_tar_to_zst", lambda *a, **k: None)
+  monkeypatch.setattr(janitor_mod, "remove_verified_archived_raw_files", lambda *a, **k: None)
+  monkeypatch.setattr(janitor_mod, "remove_verified_uncompressed_daily_tars", lambda *a, **k: None)
+  janitor._run_tick_body()
+  assert janitor.debt_depth() >= 1
+  assert signal_count["n"] >= 1
+
+
+def test_janitor_does_not_chain_on_all_disqualified_noop(monkeypatch, tmp_path):
+  signal_count = {"n": 0}
+  tar_path = str(tmp_path / "2026-01-01.tar")
+  open(tar_path, "wb").close()
+  janitor = _make_janitor(
+      tgz_archive_dir=str(tmp_path),
+      get_disqualified_daily_tars=lambda: {os.path.normpath(tar_path)},
+  )
+  janitor._allow_tick_chaining = True
+  real_signal = janitor.signal_work_available
+
+  def counting_signal():
+    signal_count["n"] += 1
+    return real_signal()
+
+  janitor.signal_work_available = counting_signal
+  janitor._enqueue_debt(DebtKind.DAY_CLOSE, tar_path, persist=False)
+  janitor._run_tick_body()
+  assert janitor.debt_depth() == 1
+  assert signal_count["n"] == 0
+
+
+def test_janitor_does_not_chain_when_mid_tick_only_requeues_disqualified(monkeypatch, tmp_path):
+  signal_count = {"n": 0}
+  tar_path = str(tmp_path / "2026-01-01.tar")
+  open(tar_path, "wb").close()
+  disqualified = set()
+
+  def flip_disqualified():
+    tar_norm = os.path.normpath(tar_path)
+    if not disqualified:
+      disqualified.add(tar_norm)
+      return set()
+    return set(disqualified)
+
+  janitor = _make_janitor(
+      tgz_archive_dir=str(tmp_path),
+      get_disqualified_daily_tars=flip_disqualified,
+  )
+  janitor._allow_tick_chaining = True
+  real_signal = janitor.signal_work_available
+
+  def counting_signal():
+    signal_count["n"] += 1
+    return real_signal()
+
+  janitor.signal_work_available = counting_signal
+  janitor._enqueue_debt(DebtKind.DAY_CLOSE, tar_path, persist=False)
+  janitor._run_tick_body()
+  assert janitor.debt_depth() == 1
+  assert signal_count["n"] == 0

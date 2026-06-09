@@ -156,6 +156,7 @@ class ArchiveJanitor:
     self.archive_stats_files_fn = archive_stats_files_fn
     self.day_raw_removal_coordinator = day_raw_removal_coordinator
     self.process_title = process_title
+    self._allow_tick_chaining = True
 
     self._executor = ThreadPoolExecutor(
         max_workers=1, thread_name_prefix="archive-janitor")
@@ -491,6 +492,61 @@ class ArchiveJanitor:
         flush=True,
     )
 
+  def enqueue_immediate_day_close(self, tar_path: str, *, reason: str) -> bool:
+    """Enqueue ``DAY_CLOSE`` when hot-path ingest+append for a day is quiescent."""
+    tar_norm = os.path.normpath(tar_path) if tar_path else ""
+    if not tar_norm:
+      return False
+    disqualified = set(self.get_disqualified_daily_tars())
+    if not self._day_needs_scheduled_close(
+        tar_norm,
+        remaining_raw_by_gz=None,
+        disqualified=disqualified,
+    ):
+      return False
+    with self._debt_lock:
+      self._enqueue_day_close_locked(tar_norm, persist=False)
+      self._trim_heap_to_max_entries_locked()
+    self._persist_hints()
+    self.log_fn(
+        "janitor: day_close immediate reason=day_ingest_complete:%s tar=%s "
+        "debt_depth=%d"
+        % (reason, tar_norm, self.debt_depth()),
+        flush=True,
+    )
+    return True
+
+  def enqueue_immediate_day_close_many(self, tar_paths, *, reason: str):
+    """Bulk immediate ``DAY_CLOSE`` enqueue (oldest-first list); one wake signal."""
+    if not tar_paths:
+      return
+    disqualified = set(self.get_disqualified_daily_tars())
+    enqueued = 0
+    with self._debt_lock:
+      for tar_path in tar_paths:
+        tar_norm = os.path.normpath(tar_path) if tar_path else ""
+        if not tar_norm:
+          continue
+        if not self._day_needs_scheduled_close(
+            tar_norm,
+            remaining_raw_by_gz=None,
+            disqualified=disqualified,
+        ):
+          continue
+        self._enqueue_day_close_locked(tar_norm, persist=False)
+        enqueued += 1
+      self._trim_heap_to_max_entries_locked()
+    if not enqueued:
+      return
+    self._persist_hints()
+    self.log_fn(
+        "janitor: day_close immediate reason=day_ingest_complete:%s days=%d "
+        "debt_depth=%d"
+        % (reason, enqueued, self.debt_depth()),
+        flush=True,
+    )
+    self.signal_work_available()
+
   def _heap_has_day_close_work_locked(self) -> bool:
     for debt in self._debt_heap:
       if debt.kind in _DAY_PIPELINE_KINDS:
@@ -594,6 +650,7 @@ class ArchiveJanitor:
     self._tick_depth += 1
     work_items = []
     processed_index = 0
+    tick_made_progress = False
     try:
       close_old_connections()
       if self._rss_over_limit():
@@ -641,6 +698,8 @@ class ArchiveJanitor:
           self._budget_throttled_count += 1
           self._requeue_unprocessed_work(work_items, i)
           tick_mutated = True
+          if processed_index > 0:
+            tick_made_progress = True
           break
 
         try:
@@ -656,6 +715,7 @@ class ArchiveJanitor:
           )
           processed_index = i + 1
           tick_mutated = True
+          tick_made_progress = True
           if success and debt.kind in (
               DebtKind.DAY_CLOSE,
               DebtKind.SEAL_PRIOR_DAY,
@@ -678,6 +738,8 @@ class ArchiveJanitor:
           )
           self._requeue_unprocessed_work(work_items, i)
           tick_mutated = True
+          if processed_index > 0:
+            tick_made_progress = True
           break
 
       if tick_mutated:
@@ -700,6 +762,12 @@ class ArchiveJanitor:
         self._persist_hints()
     finally:
       close_old_connections()
+      if (
+          self._allow_tick_chaining
+          and self.debt_depth() > 0
+          and tick_made_progress
+      ):
+        self._pending_signal = True
       if self._pending_signal and self._tick_depth == 1:
         self._pending_signal = False
         self.signal_work_available()
