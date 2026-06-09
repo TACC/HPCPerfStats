@@ -3279,6 +3279,114 @@ def _clear_daily_archive_members_cache():
   helpers.clear_daily_archive_members_cache()
 
 
+def test_sealed_archive_member_has_exact_size_early_exit(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  day_gz = tmp_path / "2024-06-11.tar.gz"
+  inner_target = tmp_path / "target.txt"
+  inner_target.write_text("x")
+  inner_noise = tmp_path / "noise.txt"
+  inner_noise.write_text("padding")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(inner_target), arcname="host/target")
+    for i in range(50):
+      tf.add(str(inner_noise), arcname="noise/%d" % i)
+
+  iter_count = {"n": 0}
+  real_iter = helpers._iter_tar_members
+
+  def counting_iter(tf):
+    for member in real_iter(tf):
+      iter_count["n"] += 1
+      yield member
+
+  monkeypatch.setattr(helpers, "_iter_tar_members", counting_iter)
+  sealed = str(day_gz)
+  assert helpers._sealed_archive_member_has_exact_size(
+      sealed, "host/target", 1,
+  ) is True
+  assert iter_count["n"] == 1
+  iter_count["n"] = 0
+  assert helpers._sealed_archive_member_has_exact_size(
+      sealed, "missing/member", 1,
+  ) is False
+
+
+def test_daily_archive_has_member_falls_back_when_populate_raises(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+      ArchiveMembersRedisUnavailableError,
+  )
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
+      FakeRedis,
+  )
+
+  day_gz = tmp_path / "2024-06-12.tar.gz"
+  inner = tmp_path / "raw.txt"
+  inner.write_text("data")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(inner), arcname="host/raw")
+  sealed = str(day_gz)
+
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: FakeRedis(),
+  )
+
+  def _raise_populate(_sealed_path, _cache_key):
+    raise ArchiveMembersRedisUnavailableError("scan failed")
+
+  monkeypatch.setattr(
+      helpers, "_populate_redis_members_from_sealed_scan", _raise_populate,
+  )
+  assert helpers.daily_archive_has_member_with_size(
+      sealed, "host/raw", 4,
+  ) is True
+  assert helpers.daily_archive_has_member_with_size(
+      sealed, "host/other", 4,
+  ) is False
+
+
+def test_raw_stats_path_needs_tar_append_conservative_on_redis_failure(
+    monkeypatch, tmp_path,
+):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+      ArchiveMembersRedisUnavailableError,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  host_dir = tmp_path / "archive" / "node1.hpc"
+  host_dir.mkdir(parents=True)
+  ts = _local_day_epoch("2024-06-13")
+  raw_path = host_dir / ts
+  raw_path.write_bytes(("%s job1 node1\n" % ts).encode())
+
+  def _raise_lookup(*_a, **_k):
+    raise ArchiveMembersRedisUnavailableError("redis down")
+
+  monkeypatch.setattr(
+      helpers, "daily_archive_has_member_with_size", _raise_lookup,
+  )
+  assert raw_stats_path_needs_tar_append(
+      str(raw_path),
+      str(daily_dir),
+      first_ts=ts,
+  ) is True
+
+
 def test_daily_archive_members_cache_hit_skips_second_scan(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):

@@ -214,6 +214,8 @@ def _estimate_hash_bytes(member_count: int) -> int:
 def populate_archive_members_redis(
     keys: ArchiveMembersRedisKeys,
     scan_fn: Callable[[Callable[[str, int], None]], tuple],
+    *,
+    sealed_path=None,
 ) -> dict:
   """Single-flight populate: ``scan_fn(on_member)`` returns ``(readable, saw_duplicates)``.
 
@@ -259,9 +261,10 @@ def populate_archive_members_redis(
     try:
       readable, scan_duplicates = scan_fn(_on_member)
       if not readable:
-        raise ArchiveMembersRedisUnavailableError(
-            "Archive member scan failed for %s" % keys.hash_key,
-        )
+        msg = "Archive member scan failed for %s" % keys.hash_key
+        if sealed_path:
+          msg = "%s (sealed_path=%s)" % (msg, sealed_path)
+        raise ArchiveMembersRedisUnavailableError(msg)
       if scan_duplicates:
         saw_duplicates = True
       _flush_hset_batch(client, keys, pending_batch)

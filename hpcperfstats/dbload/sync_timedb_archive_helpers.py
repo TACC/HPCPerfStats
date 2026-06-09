@@ -237,10 +237,28 @@ def raw_stats_path_needs_tar_append(
     expected_size = os.path.getsize(stats_path)
   except OSError:
     return True
-  if daily_archive_has_member_with_size(
-      compressed_path, member_name, expected_size,
-  ):
-    return False
+  try:
+    if daily_archive_has_member_with_size(
+        compressed_path, member_name, expected_size,
+    ):
+      return False
+  except Exception as exc:
+    from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+        ArchiveMembersRedisUnavailableError,
+    )
+    if isinstance(exc, ArchiveMembersRedisUnavailableError):
+      return _member_lookup_failed_assume_append(stats_path, exc)
+    raise
+  return True
+
+
+def _member_lookup_failed_assume_append(stats_path, exc):
+  """Log and conservatively require tar append when member lookup fails."""
+  log_print(
+      "WARNING: archive member lookup failed for %s: %s; assuming append needed"
+      % (stats_path, exc),
+      flush=True,
+  )
   return True
 
 
@@ -1125,7 +1143,6 @@ def daily_archive_has_member_with_size(compressed_path, member_name, expected_si
         build_archive_members_redis_keys,
         get_archive_members_redis_client,
         redis_lookup_full_members,
-        wait_for_member_match,
     )
     if archive_members_redis_enabled():
       cache_key = _daily_archive_members_cache_key(canonical)
@@ -1138,15 +1155,86 @@ def daily_archive_has_member_with_size(compressed_path, member_name, expected_si
       if sealed_path is None:
         return False
       client = get_archive_members_redis_client(required=True)
-      if client.exists(keys.lock_key):
-        return wait_for_member_match(keys, member_name, expected_size)
-      members = _populate_redis_members_from_sealed_scan(sealed_path, cache_key)
-      _store_daily_archive_members_cache(canonical, members)
-      return members.get(member_name) == expected_size
+      return _member_match_via_redis_or_sealed_point(
+          canonical,
+          cache_key,
+          keys,
+          sealed_path,
+          member_name,
+          expected_size,
+          client=client,
+      )
   except Exception:
     raise
   members = get_existing_archive_members_for_daily_archive(compressed_path)
   return members.get(member_name) == expected_size
+
+
+class _MemberStreamEarlyExit(Exception):
+  """Stop streaming after a single-member point lookup match."""
+
+
+def _sealed_archive_member_has_exact_size(sealed_path, member_name, expected_size):
+  """Return ``True``/``False`` when readable; ``None`` when sealed archive unreadable."""
+  match_result = [None]
+
+  def on_member(name, size):
+    if name == member_name:
+      match_result[0] = int(size) == int(expected_size)
+      raise _MemberStreamEarlyExit()
+
+  try:
+    readable, _, _ = _stream_compressed_archive_members(
+        sealed_path,
+        on_member,
+        apply_priority_wrap=False,
+    )
+    if not readable:
+      return None
+    return False if match_result[0] is None else match_result[0]
+  except _MemberStreamEarlyExit:
+    return match_result[0]
+
+
+def _member_match_via_redis_or_sealed_point(
+    canonical,
+    cache_key,
+    keys,
+    sealed_path,
+    member_name,
+    expected_size,
+    *,
+    client,
+):
+  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+      ArchiveMembersRedisUnavailableError,
+      wait_for_member_match,
+  )
+
+  try:
+    if client.exists(keys.lock_key):
+      return wait_for_member_match(keys, member_name, expected_size)
+    members = _populate_redis_members_from_sealed_scan(sealed_path, cache_key)
+    _store_daily_archive_members_cache(canonical, members)
+    return members.get(member_name) == expected_size
+  except ArchiveMembersRedisUnavailableError as exc:
+    log_print(
+        "WARNING: Redis archive member populate failed for %s: %s; "
+        "falling back to sealed point lookup"
+        % (sealed_path, exc),
+        flush=True,
+    )
+    point = _sealed_archive_member_has_exact_size(
+        sealed_path, member_name, expected_size,
+    )
+    if point is None:
+      log_print(
+          "WARNING: sealed archive point lookup unreadable for %s"
+          % sealed_path,
+          flush=True,
+      )
+      return False
+    return point
 
 
 def _stream_compressed_archive_members(

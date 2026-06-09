@@ -4,6 +4,7 @@ from __future__ import annotations
 import tarfile
 import threading
 import time
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -359,6 +360,43 @@ def test_populate_redis_members_from_sealed_scan_wires_stream_fn(
 
   members = _populate_redis_members_from_sealed_scan(sealed_path, cache_key)
   assert members == {"host/payload": 5}
+
+
+def test_populate_scan_failed_includes_sealed_path(_redis_test_env, tmp_path):
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  sealed = str(tmp_path / "2024-06-10.tar.zst")
+  Path(sealed).write_bytes(b"z")
+
+  def _unreadable_scan(_on_member):
+    return False, False
+
+  with pytest.raises(ArchiveMembersRedisUnavailableError) as exc_info:
+    populate_archive_members_redis(
+        keys, _unreadable_scan, sealed_path=sealed,
+    )
+  assert sealed in str(exc_info.value)
+
+
+def test_stream_re_raises_archive_members_redis_unavailable_from_on_member(
+    tmp_path,
+):
+  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+      _stream_compressed_archive_members,
+  )
+
+  day_gz = tmp_path / "2024-06-11.tar.gz"
+  inner = tmp_path / "payload.txt"
+  inner.write_text("hello")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(inner), arcname="host/payload")
+
+  def on_member(_name, _size):
+    raise ArchiveMembersRedisUnavailableError("payload limit")
+
+  with pytest.raises(ArchiveMembersRedisUnavailableError, match="payload limit"):
+    _stream_compressed_archive_members(
+        str(day_gz), on_member, apply_priority_wrap=False,
+    )
 
 
 def test_verify_archive_members_redis_startup(_redis_test_env):
