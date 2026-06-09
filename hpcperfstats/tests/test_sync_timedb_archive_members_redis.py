@@ -105,7 +105,13 @@ class FakeRedis:
     with self._lock:
       return dict(self._hash.get(key, {}))
 
+  def hlen(self, key):
+    with self._lock:
+      return len(self._hash.get(key, {}))
+
   def expire(self, key, ttl):
+    self._expire_calls = getattr(self, "_expire_calls", [])
+    self._expire_calls.append((key, ttl))
     return True
 
   def pipeline(self):
@@ -155,6 +161,14 @@ def _redis_test_env(monkeypatch):
   monkeypatch.setattr(
       "hpcperfstats.conf_parser.get_sync_archive_members_redis_populate_lock_seconds",
       lambda: 5,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.conf_parser.get_sync_archive_members_redis_populate_stall_seconds",
+      lambda: 2,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.conf_parser.get_sync_archive_members_redis_populate_max_seconds",
+      lambda: 0,
   )
   monkeypatch.setattr(
       "hpcperfstats.conf_parser.get_sync_archive_members_redis_wait_poll_seconds",
@@ -224,23 +238,27 @@ def test_redis_members_no_false_negative_until_complete(_redis_test_env, tmp_pat
   keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
   _redis_test_env.set(keys.lock_key, "tok", ex=30)
   _redis_test_env.set(keys.complete_key, "0")
-  pending = {"done": False}
+  _redis_test_env.set(keys.progress_key, str(time.time()))
+  pending = {"done": False, "exc": None}
 
   def _waiter():
     try:
-      wait_for_member_match(keys, "missing/member", 99)
-      pending["done"] = True
-    except ArchiveMembersRedisUnavailableError:
-      pending["done"] = False
+      pending["done"] = wait_for_member_match(keys, "missing/member", 99)
+    except ArchiveMembersRedisUnavailableError as exc:
+      pending["exc"] = exc
 
   t_wait = threading.Thread(target=_waiter)
   t_wait.start()
   time.sleep(0.05)
-  assert pending["done"] is False
+  assert pending["done"] is False and pending["exc"] is None
+  _redis_test_env.set(keys.progress_key, str(time.time()))
+  time.sleep(0.05)
+  assert pending["done"] is False and pending["exc"] is None
   _redis_test_env.delete(keys.lock_key)
   _redis_test_env.set(keys.complete_key, "1")
   t_wait.join(timeout=2)
-  assert pending["done"] is True
+  assert pending["exc"] is None
+  assert pending["done"] is False
 
 
 def test_redis_members_definitive_negative_after_complete(_redis_test_env, tmp_path):
@@ -411,3 +429,91 @@ def test_list_dedupe_hint_day_tokens(_redis_test_env):
   assert list_dedupe_hint_day_tokens(_redis_test_env) == ["2026-05-09"]
   clear_dedupe_hint("2026-05-09", client=_redis_test_env)
   assert list_dedupe_hint_day_tokens(_redis_test_env) == []
+
+
+def test_wait_for_member_waits_until_complete(_redis_test_env, tmp_path):
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  _redis_test_env.set(keys.lock_key, "tok", ex=30)
+  _redis_test_env.set(keys.complete_key, "0")
+  _redis_test_env.set(keys.progress_key, str(time.time()))
+  result = {"done": None}
+
+  def _waiter():
+    result["done"] = wait_for_member_match(keys, "missing/member", 99)
+
+  t_wait = threading.Thread(target=_waiter)
+  t_wait.start()
+  time.sleep(0.05)
+  assert result["done"] is None
+  _redis_test_env.set(keys.progress_key, str(time.time()))
+  time.sleep(0.05)
+  assert result["done"] is None
+  _redis_test_env.delete(keys.lock_key)
+  _redis_test_env.set(keys.complete_key, "1")
+  t_wait.join(timeout=2)
+  assert result["done"] is False
+
+
+def test_wait_for_member_stalls_without_progress(_redis_test_env, tmp_path):
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  _redis_test_env.set(keys.lock_key, "tok", ex=30)
+  _redis_test_env.set(keys.complete_key, "0")
+  with pytest.raises(ArchiveMembersRedisUnavailableError, match="stalled"):
+    wait_for_member_match(keys, "missing/member", 99)
+
+
+def test_populate_lock_renewed_on_flush(_redis_test_env, tmp_path):
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  _redis_test_env._expire_calls = []
+
+  def _scan(on_member):
+    on_member("a", 1)
+    on_member("b", 2)
+    on_member("c", 3)
+    return True, False
+
+  populate_archive_members_redis(keys, _scan)
+  lock_expires = [
+      key for key, _ttl in _redis_test_env._expire_calls
+      if key == keys.lock_key
+  ]
+  assert lock_expires
+
+
+def test_stream_logs_generic_failure(tmp_path, capsys, monkeypatch):
+  from contextlib import contextmanager
+
+  from hpcperfstats.dbload import sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+      _MemberStreamEarlyExit,
+      _stream_compressed_archive_members,
+  )
+
+  day_gz = tmp_path / "2024-06-12.tar.gz"
+  inner = tmp_path / "payload.txt"
+  inner.write_text("hello")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(inner), arcname="host/payload")
+
+  def on_member(_name, _size):
+    raise _MemberStreamEarlyExit()
+
+  with pytest.raises(_MemberStreamEarlyExit):
+    _stream_compressed_archive_members(
+        str(day_gz), on_member, apply_priority_wrap=False,
+    )
+
+  @contextmanager
+  def _fail_read_lock(_path, timeout_seconds=None, expiry_seconds=None):
+    del timeout_seconds, expiry_seconds
+    raise IOError("disk read error")
+    yield
+
+  monkeypatch.setattr(helpers, "file_read_lock_wait", _fail_read_lock)
+  readable, members, dups = _stream_compressed_archive_members(str(day_gz))
+  assert readable is False
+  assert members == {}
+  assert dups is False
+  captured = capsys.readouterr()
+  assert "sealed archive member stream failed" in captured.out
+  assert "disk read error" in captured.out

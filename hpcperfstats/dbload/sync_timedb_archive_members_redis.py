@@ -14,6 +14,8 @@ _HASH_PREFIX = "%s:archive_members:hash:v1" % _KEY_PREFIX
 _COMPLETE_PREFIX = "%s:archive_members:complete:v1" % _KEY_PREFIX
 _LOCK_PREFIX = "%s:archive_members:lock:v1" % _KEY_PREFIX
 _DEDUPE_HINT_PREFIX = "%s:archive_dedupe_hint:v1" % _KEY_PREFIX
+_DEGRADED_PREFIX = "%s:archive_populate_degraded:v1" % _KEY_PREFIX
+_PROGRESS_SUFFIX = ":progress"
 
 _REDIS_CLIENT = None
 _REDIS_CLIENT_URL = None
@@ -30,6 +32,14 @@ class ArchiveMembersRedisKeys:
   complete_key: str
   lock_key: str
   dedupe_hint_key: str
+
+  @property
+  def progress_key(self) -> str:
+    return "%s%s" % (self.hash_key, _PROGRESS_SUFFIX)
+
+  @property
+  def degraded_key(self) -> str:
+    return "%s:%s" % (_DEGRADED_PREFIX, self.day_token)
 
 
 def archive_members_redis_enabled() -> bool:
@@ -71,6 +81,14 @@ def _redis_ttl_seconds() -> int:
 
 def _populate_lock_seconds() -> int:
   return cfg.get_sync_archive_members_redis_populate_lock_seconds()
+
+
+def _populate_stall_seconds() -> int:
+  return cfg.get_sync_archive_members_redis_populate_stall_seconds()
+
+
+def _populate_max_seconds() -> int:
+  return cfg.get_sync_archive_members_redis_populate_max_seconds()
 
 
 def _wait_poll_seconds() -> float:
@@ -162,6 +180,51 @@ def _hgetall_members(client, keys: ArchiveMembersRedisKeys) -> Optional[dict]:
   return {name: int(size) for name, size in raw.items()}
 
 
+def _hash_member_count(client, keys: ArchiveMembersRedisKeys) -> int:
+  try:
+    return int(client.hlen(keys.hash_key))
+  except Exception:
+    return len(client.hgetall(keys.hash_key))
+
+
+def _touch_populate_progress(client, keys: ArchiveMembersRedisKeys):
+  ttl = _redis_ttl_seconds()
+  client.set(keys.progress_key, str(time.time()), ex=ttl if ttl > 0 else None)
+
+
+def _read_populate_progress_ts(client, keys: ArchiveMembersRedisKeys) -> Optional[float]:
+  raw = client.get(keys.progress_key)
+  if raw is None:
+    return None
+  try:
+    return float(raw)
+  except (TypeError, ValueError):
+    return None
+
+
+def _renew_populate_lock(client, keys: ArchiveMembersRedisKeys):
+  ttl = _populate_lock_seconds()
+  if ttl > 0:
+    client.expire(keys.lock_key, ttl)
+
+
+def populate_degraded_is_set(keys: ArchiveMembersRedisKeys, client=None) -> bool:
+  if keys.day_token == "unknown":
+    return False
+  if client is None:
+    client = get_archive_members_redis_client(required=False)
+  if client is None:
+    return False
+  return bool(client.get(keys.degraded_key))
+
+
+def _set_populate_degraded(client, keys: ArchiveMembersRedisKeys):
+  if keys.day_token == "unknown":
+    return
+  ttl = _redis_ttl_seconds()
+  client.set(keys.degraded_key, "1", ex=ttl if ttl > 0 else None)
+
+
 def redis_lookup_full_members(keys: ArchiveMembersRedisKeys) -> Optional[dict]:
   """Return member map when ``complete=1``, else ``None``."""
   if not archive_members_redis_enabled():
@@ -179,9 +242,12 @@ def _release_populate_lock(client, keys: ArchiveMembersRedisKeys, token: str):
     client.eval(script, 1, keys.lock_key, token)
   except Exception:
     client.delete(keys.lock_key)
+  client.delete(keys.progress_key)
 
 
 def _try_acquire_populate_lock(client, keys: ArchiveMembersRedisKeys) -> Optional[str]:
+  if populate_degraded_is_set(keys, client=client):
+    return None
   token = secrets.token_hex(16)
   acquired = client.set(
       keys.lock_key,
@@ -192,10 +258,17 @@ def _try_acquire_populate_lock(client, keys: ArchiveMembersRedisKeys) -> Optiona
   if not acquired:
     return None
   client.set(keys.complete_key, "0", ex=_redis_ttl_seconds())
+  _touch_populate_progress(client, keys)
   return token
 
 
-def _flush_hset_batch(client, keys: ArchiveMembersRedisKeys, batch: dict):
+def _flush_hset_batch(
+    client,
+    keys: ArchiveMembersRedisKeys,
+    batch: dict,
+    *,
+    lock_token=None,
+):
   if not batch:
     return
   pipe = client.pipeline()
@@ -205,10 +278,65 @@ def _flush_hset_batch(client, keys: ArchiveMembersRedisKeys, batch: dict):
   )
   pipe.execute()
   _apply_ttl(client, keys)
+  if lock_token is not None:
+    _renew_populate_lock(client, keys)
+  _touch_populate_progress(client, keys)
 
 
 def _estimate_hash_bytes(member_count: int) -> int:
   return member_count * 128
+
+
+def _populate_progress_seen(
+    client,
+    keys: ArchiveMembersRedisKeys,
+    *,
+    last_progress_ts,
+    last_hlen,
+):
+  progress_ts = _read_populate_progress_ts(client, keys)
+  hlen = _hash_member_count(client, keys)
+  if progress_ts is not None and progress_ts != last_progress_ts:
+    return True, progress_ts, hlen
+  if hlen > last_hlen:
+    return True, progress_ts, hlen
+  return False, last_progress_ts, hlen
+
+
+def _check_populate_wait_limits(
+    client,
+    keys: ArchiveMembersRedisKeys,
+    *,
+    started_monotonic,
+    last_progress_monotonic,
+):
+  max_seconds = _populate_max_seconds()
+  if max_seconds > 0 and (time.monotonic() - started_monotonic) >= max_seconds:
+    raise ArchiveMembersRedisUnavailableError(
+        "Timed out waiting for archive members populate (max_seconds=%s): %s"
+        % (max_seconds, keys.hash_key),
+    )
+  lock_held = bool(client.exists(keys.lock_key))
+  complete = client.get(keys.complete_key)
+  if complete == "1":
+    return
+  if lock_held:
+    if (time.monotonic() - last_progress_monotonic) >= float(
+        _populate_stall_seconds(),
+    ):
+      raise ArchiveMembersRedisUnavailableError(
+          "Archive members populate stalled (no progress for %ss): %s"
+          % (_populate_stall_seconds(), keys.hash_key),
+      )
+    return
+  if complete == "0" or complete is None:
+    if (time.monotonic() - last_progress_monotonic) >= float(
+        _populate_stall_seconds(),
+    ):
+      raise ArchiveMembersRedisUnavailableError(
+          "Archive members populate incomplete after lock release: %s"
+          % keys.hash_key,
+      )
 
 
 def populate_archive_members_redis(
@@ -223,8 +351,8 @@ def populate_archive_members_redis(
   ``on_member`` callbacks during the scan (not from a third return value).
   """
   client = get_archive_members_redis_client(required=True)
-  deadline = time.monotonic() + float(_populate_lock_seconds())
-  while time.monotonic() < deadline:
+  acquire_deadline = time.monotonic() + float(_populate_lock_seconds())
+  while time.monotonic() < acquire_deadline:
     existing = _hgetall_members(client, keys)
     if existing is not None:
       return existing
@@ -238,6 +366,7 @@ def populate_archive_members_redis(
     pending_batch: Dict[str, int] = {}
     saw_duplicates = False
     seen_in_stream: set = set()
+    populate_failed = False
 
     def _on_member(name: str, size: int):
       nonlocal saw_duplicates
@@ -255,7 +384,9 @@ def populate_archive_members_redis(
               % keys.hash_key,
           )
         if len(pending_batch) >= _hset_batch_size():
-          _flush_hset_batch(client, keys, pending_batch)
+          _flush_hset_batch(
+              client, keys, pending_batch, lock_token=token,
+          )
           pending_batch.clear()
 
     try:
@@ -267,13 +398,19 @@ def populate_archive_members_redis(
         raise ArchiveMembersRedisUnavailableError(msg)
       if scan_duplicates:
         saw_duplicates = True
-      _flush_hset_batch(client, keys, pending_batch)
+      _flush_hset_batch(client, keys, pending_batch, lock_token=token)
       if saw_duplicates and keys.day_token != "unknown":
         client.set(keys.dedupe_hint_key, "1", ex=_redis_ttl_seconds())
       client.set(keys.complete_key, "1", ex=_redis_ttl_seconds())
       _apply_ttl(client, keys)
+      client.delete(keys.progress_key)
       return dict(running_max)
+    except Exception:
+      populate_failed = True
+      raise
     finally:
+      if populate_failed:
+        _set_populate_degraded(client, keys)
       _release_populate_lock(client, keys, token)
 
   raise ArchiveMembersRedisUnavailableError(
@@ -287,11 +424,15 @@ def wait_for_member_match(
     member_name: str,
     expected_size: int,
 ) -> bool:
-  """Three-state point lookup with incremental HASH polling."""
+  """Wait for populate completion or incremental HASH hit; stall if no progress."""
   client = get_archive_members_redis_client(required=True)
-  deadline = time.monotonic() + float(_populate_lock_seconds())
   expected_size = int(expected_size)
-  while time.monotonic() < deadline:
+  started = time.monotonic()
+  last_progress_ts = _read_populate_progress_ts(client, keys)
+  last_hlen = _hash_member_count(client, keys)
+  last_progress_monotonic = started
+
+  while True:
     complete = client.get(keys.complete_key)
     raw_size = client.hget(keys.hash_key, member_name)
     if raw_size is not None:
@@ -302,37 +443,61 @@ def wait_for_member_match(
         return False
     if complete == "1":
       return False
+
+    progress_seen, last_progress_ts, last_hlen = _populate_progress_seen(
+        client,
+        keys,
+        last_progress_ts=last_progress_ts,
+        last_hlen=last_hlen,
+    )
+    if progress_seen:
+      last_progress_monotonic = time.monotonic()
+
+    _check_populate_wait_limits(
+        client,
+        keys,
+        started_monotonic=started,
+        last_progress_monotonic=last_progress_monotonic,
+    )
+
     if not client.exists(keys.lock_key):
       existing = _hgetall_members(client, keys)
       if existing is not None:
         return existing.get(member_name) == expected_size
-      token = _try_acquire_populate_lock(client, keys)
-      if token is not None:
-        _release_populate_lock(client, keys, token)
+
     time.sleep(_wait_poll_seconds())
-  raise ArchiveMembersRedisUnavailableError(
-      "Timed out waiting for member %s in %s"
-      % (member_name, keys.hash_key),
-  )
 
 
 def wait_for_complete_members(keys: ArchiveMembersRedisKeys) -> dict:
   """Block until ``complete=1`` and return full member map."""
   client = get_archive_members_redis_client(required=True)
-  deadline = time.monotonic() + float(_populate_lock_seconds())
-  while time.monotonic() < deadline:
+  started = time.monotonic()
+  last_progress_ts = _read_populate_progress_ts(client, keys)
+  last_hlen = _hash_member_count(client, keys)
+  last_progress_monotonic = started
+
+  while True:
     members = _hgetall_members(client, keys)
     if members is not None:
       return members
-    if not client.exists(keys.lock_key):
-      time.sleep(_wait_poll_seconds())
-      members = _hgetall_members(client, keys)
-      if members is not None:
-        return members
+
+    progress_seen, last_progress_ts, last_hlen = _populate_progress_seen(
+        client,
+        keys,
+        last_progress_ts=last_progress_ts,
+        last_hlen=last_hlen,
+    )
+    if progress_seen:
+      last_progress_monotonic = time.monotonic()
+
+    _check_populate_wait_limits(
+        client,
+        keys,
+        started_monotonic=started,
+        last_progress_monotonic=last_progress_monotonic,
+    )
+
     time.sleep(_wait_poll_seconds())
-  raise ArchiveMembersRedisUnavailableError(
-      "Timed out waiting for complete archive members: %s" % keys.hash_key,
-  )
 
 
 def store_complete_members_in_redis(
@@ -355,6 +520,7 @@ def store_complete_members_in_redis(
   pipe.set(keys.complete_key, "1", ex=_redis_ttl_seconds())
   pipe.execute()
   _apply_ttl(client, keys)
+  client.delete(keys.progress_key)
   if saw_duplicates and keys.day_token != "unknown":
     client.set(keys.dedupe_hint_key, "1", ex=_redis_ttl_seconds())
 
@@ -370,7 +536,14 @@ def invalidate_archive_members_redis(cache_key):
   if client is None:
     return
   keys = build_archive_members_redis_keys(cache_key)
-  client.delete(keys.hash_key, keys.complete_key, keys.lock_key, keys.dedupe_hint_key)
+  client.delete(
+      keys.hash_key,
+      keys.complete_key,
+      keys.lock_key,
+      keys.dedupe_hint_key,
+      keys.progress_key,
+      keys.degraded_key,
+  )
 
 
 def list_dedupe_hint_day_tokens(client=None) -> list:

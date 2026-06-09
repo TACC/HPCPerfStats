@@ -1196,6 +1196,19 @@ def _sealed_archive_member_has_exact_size(sealed_path, member_name, expected_siz
     return match_result[0]
 
 
+_INGEST_SEALED_LOOKUP_WARNED = set()
+_INGEST_SEALED_LOOKUP_WARNED_MAX = 256
+
+
+def _log_ingest_sealed_lookup_issue(sealed_path, message):
+  if len(_INGEST_SEALED_LOOKUP_WARNED) >= _INGEST_SEALED_LOOKUP_WARNED_MAX:
+    _INGEST_SEALED_LOOKUP_WARNED.clear()
+  if sealed_path in _INGEST_SEALED_LOOKUP_WARNED:
+    return
+  _INGEST_SEALED_LOOKUP_WARNED.add(sealed_path)
+  log_print(message, flush=True)
+
+
 def _member_match_via_redis_or_sealed_point(
     canonical,
     cache_key,
@@ -1211,30 +1224,34 @@ def _member_match_via_redis_or_sealed_point(
       wait_for_member_match,
   )
 
-  try:
-    if client.exists(keys.lock_key):
-      return wait_for_member_match(keys, member_name, expected_size)
-    members = _populate_redis_members_from_sealed_scan(sealed_path, cache_key)
-    _store_daily_archive_members_cache(canonical, members)
-    return members.get(member_name) == expected_size
-  except ArchiveMembersRedisUnavailableError as exc:
-    log_print(
-        "WARNING: Redis archive member populate failed for %s: %s; "
-        "falling back to sealed point lookup"
-        % (sealed_path, exc),
-        flush=True,
-    )
-    point = _sealed_archive_member_has_exact_size(
-        sealed_path, member_name, expected_size,
-    )
-    if point is None:
-      log_print(
-          "WARNING: sealed archive point lookup unreadable for %s"
-          % sealed_path,
-          flush=True,
-      )
-      return False
+  point = _sealed_archive_member_has_exact_size(
+      sealed_path, member_name, expected_size,
+  )
+  if point is not None:
     return point
+
+  if client.exists(keys.lock_key):
+    try:
+      return wait_for_member_match(keys, member_name, expected_size)
+    except ArchiveMembersRedisUnavailableError as exc:
+      _log_ingest_sealed_lookup_issue(
+          sealed_path,
+          "WARNING: Redis archive member wait failed for %s: %s; "
+          "using safe duplicate-check fallback"
+          % (sealed_path, exc),
+      )
+      point = _sealed_archive_member_has_exact_size(
+          sealed_path, member_name, expected_size,
+      )
+      if point is not None:
+        return point
+
+  _log_ingest_sealed_lookup_issue(
+      sealed_path,
+      "WARNING: sealed archive point lookup unreadable for %s"
+      % sealed_path,
+  )
+  return False
 
 
 def _stream_compressed_archive_members(
@@ -1273,7 +1290,19 @@ def _stream_compressed_archive_members(
             on_member(m.name, m.size)
         members = {name: max(sizes) for name, sizes in by_name.items()}
         return True, members, saw_duplicates
-  except Exception:
+  except _MemberStreamEarlyExit:
+    raise
+  except Exception as exc:
+    from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+        ArchiveMembersRedisUnavailableError,
+    )
+    if isinstance(exc, ArchiveMembersRedisUnavailableError):
+      raise
+    log_print(
+        "WARNING: sealed archive member stream failed for %s: %s"
+        % (compressed_path, exc),
+        flush=True,
+    )
     return False, {}, False
 
 
@@ -1537,7 +1566,7 @@ def _populate_redis_members_from_sealed_scan(sealed_path, cache_key):
     )
     return readable, saw_duplicates
 
-  return populate_archive_members_redis(keys, _scan_fn)
+  return populate_archive_members_redis(keys, _scan_fn, sealed_path=sealed_path)
 
 
 def get_existing_archive_members_for_daily_archive(archive_compressed_path):
@@ -1578,6 +1607,7 @@ def get_existing_archive_members_for_daily_archive(archive_compressed_path):
         archive_members_redis_enabled,
         build_archive_members_redis_keys,
         get_archive_members_redis_client,
+        populate_degraded_is_set,
         redis_lookup_full_members,
         wait_for_complete_members,
     )
@@ -1588,13 +1618,16 @@ def get_existing_archive_members_for_daily_archive(archive_compressed_path):
         client = get_archive_members_redis_client(required=True)
         if client.exists(keys.lock_key):
           members = wait_for_complete_members(keys)
+        elif populate_degraded_is_set(keys, client=client):
+          members = None
         else:
           members = _populate_redis_members_from_sealed_scan(
               sealed_path,
               cache_key,
           )
-      _store_daily_archive_members_cache(canonical, members)
-      return dict(members)
+      if members is not None:
+        _store_daily_archive_members_cache(canonical, members)
+        return dict(members)
   except Exception:
     raise
   readable, members = _scan_compressed_archive_members_and_readable(

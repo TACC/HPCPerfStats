@@ -319,8 +319,14 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Redis TTL seconds for member HASH / complete keys (default 86400).
 # sync_archive_members_redis_ttl_seconds = 86400
 
-# Populate lock lease and waiter wall-clock cap seconds (default 600).
-# sync_archive_members_redis_populate_lock_seconds = 600
+# Populate lock lease seconds; renewed during winner scan (default 3600).
+# sync_archive_members_redis_populate_lock_seconds = 3600
+
+# Waiter abort when populate shows no HASH/lock-renewal progress (default 120).
+# sync_archive_members_redis_populate_stall_seconds = 120
+
+# Absolute cap for populate/waiter loops; 0 disables (default 7200).
+# sync_archive_members_redis_populate_max_seconds = 7200
 
 # Waiter poll interval seconds for incremental member lookups (default 0.25).
 # sync_archive_members_redis_wait_poll_seconds = 0.25

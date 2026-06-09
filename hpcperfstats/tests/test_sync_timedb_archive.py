@@ -3318,9 +3318,6 @@ def test_daily_archive_has_member_falls_back_when_populate_raises(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
   import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
-      ArchiveMembersRedisUnavailableError,
-  )
   from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
       FakeRedis,
   )
@@ -3343,19 +3340,52 @@ def test_daily_archive_has_member_falls_back_when_populate_raises(
       ".get_archive_members_redis_client",
       lambda required=True: FakeRedis(),
   )
-
-  def _raise_populate(_sealed_path, _cache_key):
-    raise ArchiveMembersRedisUnavailableError("scan failed")
-
-  monkeypatch.setattr(
-      helpers, "_populate_redis_members_from_sealed_scan", _raise_populate,
-  )
   assert helpers.daily_archive_has_member_with_size(
       sealed, "host/raw", 4,
   ) is True
   assert helpers.daily_archive_has_member_with_size(
       sealed, "host/other", 4,
   ) is False
+
+
+def test_ingest_sealed_path_skips_populate(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
+      FakeRedis,
+  )
+
+  day_gz = tmp_path / "2024-06-13.tar.gz"
+  inner = tmp_path / "raw.txt"
+  inner.write_text("data")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(inner), arcname="host/raw")
+  sealed = str(day_gz)
+  populate_calls = {"n": 0}
+
+  def _track_populate(_sealed_path, _cache_key):
+    populate_calls["n"] += 1
+    raise AssertionError("ingest must not run full Redis populate")
+
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: FakeRedis(),
+  )
+  monkeypatch.setattr(
+      helpers, "_populate_redis_members_from_sealed_scan", _track_populate,
+  )
+  assert helpers.daily_archive_has_member_with_size(
+      sealed, "host/raw", 4,
+  ) is True
+  assert populate_calls["n"] == 0
 
 
 def test_raw_stats_path_needs_tar_append_conservative_on_redis_failure(

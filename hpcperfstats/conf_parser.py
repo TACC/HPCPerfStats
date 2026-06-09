@@ -112,6 +112,8 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_archive_members_redis_enabled"),
     ("PIPELINE", "sync_archive_members_redis_ttl_seconds"),
     ("PIPELINE", "sync_archive_members_redis_populate_lock_seconds"),
+    ("PIPELINE", "sync_archive_members_redis_populate_stall_seconds"),
+    ("PIPELINE", "sync_archive_members_redis_populate_max_seconds"),
     ("PIPELINE", "sync_archive_members_redis_wait_poll_seconds"),
     ("PIPELINE", "sync_archive_members_redis_hset_batch_size"),
     ("PIPELINE", "sync_archive_members_redis_max_payload_bytes"),
@@ -1620,15 +1622,39 @@ def get_sync_archive_members_redis_ttl_seconds():
 
 
 def get_sync_archive_members_redis_populate_lock_seconds():
-  """Populate lock lease and waiter wall-clock cap."""
+  """Populate lock lease (renewed during scan)."""
   _ensure_cfg_loaded()
   try:
     return max(30, int(_pipeline_get(
         "sync_archive_members_redis_populate_lock_seconds",
-        fallback="600",
+        fallback="3600",
     )))
   except (TypeError, ValueError, OverflowError):
-    return 600
+    return 3600
+
+
+def get_sync_archive_members_redis_populate_stall_seconds():
+  """Waiter abort when populate shows no lock renewal or HASH growth."""
+  _ensure_cfg_loaded()
+  try:
+    return max(5, int(_pipeline_get(
+        "sync_archive_members_redis_populate_stall_seconds",
+        fallback="120",
+    )))
+  except (TypeError, ValueError, OverflowError):
+    return 120
+
+
+def get_sync_archive_members_redis_populate_max_seconds():
+  """Absolute cap for populate/waiter loops (0 = disabled)."""
+  _ensure_cfg_loaded()
+  try:
+    return max(0, int(_pipeline_get(
+        "sync_archive_members_redis_populate_max_seconds",
+        fallback="7200",
+    )))
+  except (TypeError, ValueError, OverflowError):
+    return 7200
 
 
 def get_sync_archive_members_redis_wait_poll_seconds():

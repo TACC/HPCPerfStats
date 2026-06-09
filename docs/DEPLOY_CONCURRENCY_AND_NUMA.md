@@ -208,7 +208,7 @@ The background **`ArchiveJanitor`** processes up to **`archive_janitor_days_per_
 
 **Exit 137 vs 124:** Exit **137** (`MultiprocessingWorkerExitError`) means a pool worker was **no longer alive** when the supervisor polled finalize/`get()`—it is **not** proof of kernel OOM. A prior ingest stall may terminate pools and, without teardown guards, a forced archive finalize in `finally` could mask the intended **124** with **137**; current code skips finalize when `pool_worker_exit` is set after stall/worker death.
 
-**DB-complete ingest + sealed-only days:** When `archive_keep_uncompressed_tar=no`, DB-complete files (`No missing timestamps found`) call `raw_stats_path_needs_tar_append`, which must not stream the full `.tar.zst` once per file. Per-process L1 (`sync_archive_members_cache_enabled`) plus **Redis L2** (`sync_archive_members_redis_enabled`, keyed by archive identity) limit sealed-archive member scans to **one zstd stream per calendar day cluster-wide** (single-flight populate lock per day). When Redis L2 is enabled, `sync_timedb` **hard-fails** startup if `[CACHE] redis_location` is unreachable. Ingest member scans use **plain zstd** (no `nice`/`ionice`); janitor seal/decompress keeps archive priority wrappers. If Redis populate fails on the ingest duplicate-check path, `daily_archive_has_member_with_size` falls back to a **single-member sealed stream lookup** (early exit) and logs `WARNING` with the underlying sealed path; check those lines for zstd/read-lock/corruption errors before tuning knobs. Janitor bulk member maps remain fail-closed on populate failure.
+**DB-complete ingest + sealed-only days:** When `archive_keep_uncompressed_tar=no`, DB-complete files (`No missing timestamps found`) call `raw_stats_path_needs_tar_append`, which must not stream the full `.tar.zst` once per file. Per-process L1 (`sync_archive_members_cache_enabled`) plus **Redis L2** (`sync_archive_members_redis_enabled`, keyed by archive identity) support bulk/janitor member maps via **single-flight populate** per calendar day. **Ingest duplicate-check** uses **point lookup first** (early-exit zstd stream per file); it does **not** start full-day Redis populate. When Redis is incomplete and populate is in flight, ingest waiters block until **`complete=1`** or populate **stall** (no lock renewal / HASH growth)—not a fixed per-member wall clock. There is **no zstd decompress timeout** on the ingest lookup path; exit **124** is pool-level (zero task completions), not mid-stream zstd abort. When Redis L2 is enabled, `sync_timedb` **hard-fails** startup if `[CACHE] redis_location` is unreachable. Ingest member scans use **plain zstd** (no `nice`/`ionice`); janitor seal/decompress keeps archive priority wrappers. Janitor bulk member maps use populate with lock renewal; on populate failure a **`populate_degraded`** hint skips repeat populate attempts for that day.
 
 | Knob | Default | Effect |
 |------|---------|--------|
@@ -217,16 +217,18 @@ The background **`ArchiveJanitor`** processes up to **`archive_janitor_days_per_
 | `sync_ingest_per_file_timeout_s` | 0 (off) | Wall-clock cap per ingest worker task; on expiry the file returns `ingest_ok=False` for retry instead of blocking the chunk |
 | `sync_archive_members_cache_enabled` | yes | Per-process L1 cache on ingest duplicate-check path |
 | `sync_archive_members_cache_max_entries` | 64 | Max cached days per ingest/archive worker process |
-| `sync_archive_members_redis_enabled` | yes | Cross-worker Redis HASH + single-flight populate |
+| `sync_archive_members_redis_enabled` | yes | Cross-worker Redis HASH + single-flight populate (bulk/janitor) |
 | `sync_archive_members_redis_ttl_seconds` | 86400 | TTL for Redis member HASH / complete keys |
-| `sync_archive_members_redis_populate_lock_seconds` | 600 | Populate lock lease and waiter cap |
+| `sync_archive_members_redis_populate_lock_seconds` | 3600 | Populate lock lease; renewed on each HSET batch during scan |
+| `sync_archive_members_redis_populate_stall_seconds` | 120 | Waiter abort only when populate shows no progress |
+| `sync_archive_members_redis_populate_max_seconds` | 7200 | Optional absolute populate/wait cap (`0` = off) |
 | `sync_archive_members_redis_wait_poll_seconds` | 0.25 | Waiter poll for incremental `HGET` + `complete` |
 | `sync_archive_members_redis_hset_batch_size` | 500 | Winner `HSET` pipeline batch size during scan |
 | `sync_archive_members_redis_max_payload_bytes` | 8388608 | Refuse oversized HASH populate |
 
 Duplicate file members detected during populate set a Redis **`dedupe_hint`**; the archive janitor enqueues **`DAY_CLOSE`** (inline `.tar` dedupe or sealed-only `dedupe_sealed_daily_archive` last resort).
 
-For large DB sites with slow duplicate-detection or bulk writes, prefer enabling **`sync_ingest_per_file_timeout_s`** (for example **900**) so one straggler path does not hold the whole chunk until the pool stall abort. Raising only `sync_pool_stall_abort_after_timeouts` prolongs hangs without identifying the path. Catch-up mitigations for sealed-only archives: **`archive_keep_uncompressed_tar=yes`**, lower **`sync_ingest_pool_processes`**, or rely on the L1+Redis member caches above. Ingest-time DLO quarantine for permanently corrupt raw is separate from exit **124**.
+For large DB sites with slow duplicate-detection or bulk writes, prefer enabling **`sync_ingest_per_file_timeout_s`** (for example **900**) so one straggler path does not hold the whole chunk until the pool stall abort. Raising only `sync_pool_stall_abort_after_timeouts` prolongs hangs without identifying the path. Catch-up mitigations for sealed-only archives: **`archive_keep_uncompressed_tar=yes`**, lower **`sync_ingest_pool_processes`**, and rely on ingest **point lookup** plus L1/Redis complete maps—not full populate per ingest worker. Ingest-time DLO quarantine for permanently corrupt raw is separate from exit **124**.
 
 **Unmapped closed raw:** when ingest backlog prevents full accrual snapshots, the supervisor unions a cached unmapped-closed-raw scan into janitor disqualification so `.tar` drop cannot proceed while unparseable closed raw remains on disk.
 
