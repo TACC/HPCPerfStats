@@ -25,7 +25,7 @@ Immediately after **`StartupRawRemovalPreflight.start_async_verify()`**, the sup
 | **Eligibility** | `.tar` on disk; `is_daily_tar_sealed_dirty`; `build_remaining_raw_for_daily_tar` **empty**; `daily_tar_seal_calendar_eligible` |
 | **Skip** | Active append for that daily tar only (`pending_append_by_daily_tar` or `inflight_archive_paths` mapped to day)—not full janitor disqualification |
 | **Action** | `atomic_seal_tar_to_zst` + `effective_keep_uncompressed_tar`; `invalidate_daily_archive_members_cache` on success |
-| **Resume** | Manifest `{archive_data_dir}/.sync_timedb_startup_tar_seal.json` |
+| **Resume** | Manifest `{archive_data_dir}/.sync_timedb_startup_tar_seal.json`; `phase=done` is set only when **no dirty** daily `.tar` remain. If discover finds zero eligible days but dirty tars still exist (skipped raw/append/grace), the pass **retries** on later slices and on restart |
 
 INI tunables ( `[PIPELINE]` ): `sync_startup_tar_seal_budget_seconds` (default **300**), `sync_startup_tar_seal_days_per_slice` (default **1**).
 

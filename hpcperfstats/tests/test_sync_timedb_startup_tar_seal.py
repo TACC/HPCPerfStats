@@ -178,3 +178,36 @@ def test_manifest_persists_under_archive_dir(tmp_path):
 
   _save_manifest(manifest_path(str(tmp_path)), preflight._manifest)
   assert os.path.isfile(manifest_path(str(tmp_path)))
+
+
+def test_seal_slice_retries_when_all_skipped_but_dirty_tar_remains(
+    tmp_path, monkeypatch,
+):
+  day = date(2022, 6, 7)
+  tar_path, _zst = _make_quiescent_tar(tmp_path, day)
+  preflight = _make_preflight(
+      tmp_path,
+      has_active_append_for_tar=lambda _tar: True,
+  )
+  monkeypatch.setattr(cfg, "get_sync_startup_tar_seal_days_per_slice", lambda: 1)
+  monkeypatch.setattr(cfg, "get_sync_startup_tar_seal_budget_seconds", lambda: 30.0)
+
+  assert preflight._seal_slice() is False
+  assert preflight.phase() == PHASE_SEALING
+  assert os.path.isfile(tar_path)
+
+
+def test_start_async_seal_resumes_when_manifest_done_but_dirty_tar_remains(
+    tmp_path, monkeypatch,
+):
+  day = date(2022, 6, 8)
+  _make_quiescent_tar(tmp_path, day)
+  preflight = _make_preflight(tmp_path)
+  preflight._manifest["phase"] = PHASE_DONE
+  from hpcperfstats.dbload.sync_timedb_startup_tar_seal import _save_manifest
+
+  _save_manifest(manifest_path(str(tmp_path)), preflight._manifest)
+  preflight2 = _make_preflight(tmp_path)
+  preflight2.start_async_seal()
+  assert preflight2.phase() == PHASE_SEALING
+  preflight2.shutdown(wait=True)
