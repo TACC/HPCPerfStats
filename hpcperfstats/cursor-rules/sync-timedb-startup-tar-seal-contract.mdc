@@ -1,0 +1,49 @@
+---
+description: Startup quiescent daily tar seal for sync_timedb (parallel with ingest)
+alwaysApply: true
+---
+
+# sync_timedb startup tar seal contract
+
+`sync_timedb` runs a **startup-only** background pass that seals and drops uncompressed daily `.tar` files when **no closed raw stats remain on the filesystem** for that calendar day. This reclaims disk under ingest backlog without modifying janitor **`DAY_CLOSE`** workflow.
+
+## Canonical module
+
+| Concern | Location |
+|---|---|
+| Discover, eligibility, slice loop, manifest | `hpcperfstats/dbload/sync_timedb_startup_tar_seal.py` → `StartupTarSealPreflight` |
+| Supervisor wiring | `run_sync_timedb_supervisor_loop` in `sync_timedb.py` |
+| Seal primitive (reuse only) | `atomic_seal_tar_to_zst` in `sync_timedb_archive_helpers.py` |
+
+## Startup behavior (default `sync_startup_tar_seal_preflight=yes`)
+
+Immediately after **`StartupRawRemovalPreflight.start_async_verify()`**, the supervisor starts **`StartupTarSealPreflight.start_async_seal()`** on thread `sync_timedb.py [thread:startup-tar-seal-preflight]`. Ingest begins **without waiting** on tar seal completion (**no ingest gate**).
+
+| Step | Behavior |
+|---|---|
+| **Discover** | `iter_daily_tar_paths`; oldest calendar day first |
+| **Eligibility** | `.tar` on disk; `is_daily_tar_sealed_dirty`; `build_remaining_raw_for_daily_tar` **empty**; `daily_tar_seal_calendar_eligible` |
+| **Skip** | Active append for that daily tar only (`pending_append_by_daily_tar` or `inflight_archive_paths` mapped to day)—not full janitor disqualification |
+| **Action** | `atomic_seal_tar_to_zst` + `effective_keep_uncompressed_tar`; `invalidate_daily_archive_members_cache` on success |
+| **Resume** | Manifest `{archive_data_dir}/.sync_timedb_startup_tar_seal.json` |
+
+INI tunables ( `[PIPELINE]` ): `sync_startup_tar_seal_budget_seconds` (default **300**), `sync_startup_tar_seal_days_per_slice` (default **1**).
+
+## Forbidden patterns
+
+- Routing startup tar reclaim through **`DAY_CLOSE`** / `_close_one_day`
+- Blocking supervisor ingest on tar seal completion
+- Editing `build_seal_disqualified_daily_tars` for this feature
+- Raw delete in this pass (raw absence is eligibility precondition; use startup raw removal or janitor)
+
+## Tests
+
+- `hpcperfstats/tests/test_sync_timedb_startup_tar_seal.py`
+- `hpcperfstats/tests/test_sync_timedb_supervisor.py` (`test_supervisor_starts_ingest_without_waiting_for_tar_seal`)
+
+## Overlap
+
+- **`sync-timedb-archive-janitor-contract.mdc`** — steady-state seal/raw/`.tar` via **`DAY_CLOSE`** unchanged
+- **`sync-timedb-db-before-archive-contract.mdc`** — startup raw removal is separate; tar seal uses filesystem raw gate only
+- **`sync-timedb-lock-and-archive-contract.mdc`** — seal locks, shrink guard, idempotent zst
+- **`process-title-and-pool-labels.mdc`** — thread title `startup-tar-seal-preflight`

@@ -111,6 +111,9 @@ from hpcperfstats.dbload.sync_timedb_startup_raw_removal import (
     PHASE_VERIFICATION_COMPLETE,
     StartupRawRemovalPreflight,
 )
+from hpcperfstats.dbload.sync_timedb_startup_tar_seal import (
+    StartupTarSealPreflight,
+)
 from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
     ArchiveMembersRedisUnavailableError,
 )
@@ -1656,6 +1659,7 @@ def run_sync_timedb_supervisor_loop(
       }
 
   startup_preflight = None
+  startup_tar_seal = None
   day_raw_removal = None
   delete_phase_active = False
   day_close_rescan_pending = False
@@ -1698,6 +1702,18 @@ def run_sync_timedb_supervisor_loop(
         pending_archive_task_tars=captured["pending_archive_task_tars"],
         unmapped_closed_raw_tars=set(unmapped or ()),
     ))
+
+  def _has_active_append_for_tar(tar_path: str) -> bool:
+    captured = _capture_disqualification_inputs()
+    tar_norm = os.path.normpath(tar_path)
+    append_bucket = captured["pending_append_by_daily_tar"].get(tar_norm)
+    if append_bucket:
+      return True
+    inflight_tars = daily_tar_paths_for_stats_paths(
+        captured["inflight_paths"],
+        tgz_archive_dir,
+    )
+    return tar_norm in {os.path.normpath(t) for t in inflight_tars}
 
   def _apply_archive_finalize_results(deferred_paths, results):
     nonlocal checkpoint_dirty_count
@@ -2058,6 +2074,16 @@ def run_sync_timedb_supervisor_loop(
         process_title=SYNC_TIMEDB_PROCESS_TITLE,
     )
     startup_preflight.start_async_verify()
+    startup_tar_seal = StartupTarSealPreflight(
+        archive_data_dir=directory,
+        host_name_ext=host_name_ext,
+        tgz_archive_dir=tgz_archive_dir,
+        local_tz=local_timezone,
+        log_fn=log_print,
+        has_active_append_for_tar=_has_active_append_for_tar,
+        process_title=SYNC_TIMEDB_PROCESS_TITLE,
+    )
+    startup_tar_seal.start_async_seal()
 
     def _post_startup_raw_removal_rescan():
       nonlocal pending_stats_files
@@ -2622,6 +2648,8 @@ def run_sync_timedb_supervisor_loop(
     chunk_in_progress = False
     if startup_preflight is not None:
       startup_preflight.shutdown(wait=True)
+    if startup_tar_seal is not None:
+      startup_tar_seal.shutdown(wait=True)
     if day_raw_removal is not None:
       day_raw_removal.shutdown(wait=True)
     archive_janitor.shutdown(wait=True)

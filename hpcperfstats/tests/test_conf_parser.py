@@ -1238,6 +1238,9 @@ def test_archive_janitor_and_dispatch_defaults(temp_ini, monkeypatch):
   assert cfg.get_sync_startup_raw_removal_verify_budget_seconds() == 60.0
   assert cfg.get_sync_startup_raw_removal_verify_days_per_slice() == 5
   assert cfg.get_sync_startup_raw_removal_max_deletes_per_pass() == 0
+  assert cfg.get_sync_startup_tar_seal_preflight() is True
+  assert cfg.get_sync_startup_tar_seal_budget_seconds() == 300.0
+  assert cfg.get_sync_startup_tar_seal_days_per_slice() == 1
   assert cfg.get_sync_day_close_raw_removal_preflight() is True
   assert cfg.get_sync_day_close_raw_removal_verify_budget_seconds() == 30.0
   assert cfg.get_sync_day_close_raw_removal_max_deletes_per_pass() == 0

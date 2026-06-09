@@ -3069,6 +3069,7 @@ def test_supervisor_startup_empty_queue_no_duplicate_drain_pass(
 
 def _supervisor_startup_preflight_patches(monkeypatch, preflight_obj):
   import hpcperfstats.dbload.sync_timedb_startup_raw_removal as preflight_mod
+  import hpcperfstats.dbload.sync_timedb_startup_tar_seal as tar_seal_mod
 
   class _FakePreflight:
     def __init__(self, **_kwargs):
@@ -3077,8 +3078,25 @@ def _supervisor_startup_preflight_patches(monkeypatch, preflight_obj):
     def __getattr__(self, name):
       return getattr(self._delegate, name)
 
+  class _DoneTarSeal:
+    enabled = False
+
+    def __init__(self, **_kwargs):
+      pass
+
+    def seal_pass_done(self):
+      return True
+
+    def start_async_seal(self):
+      return None
+
+    def shutdown(self, wait=True):
+      del wait
+
   monkeypatch.setattr(preflight_mod, "StartupRawRemovalPreflight", _FakePreflight)
   monkeypatch.setattr(st, "StartupRawRemovalPreflight", _FakePreflight)
+  monkeypatch.setattr(tar_seal_mod, "StartupTarSealPreflight", _DoneTarSeal)
+  monkeypatch.setattr(st, "StartupTarSealPreflight", _DoneTarSeal)
 
 
 def test_supervisor_ingest_continues_during_verification(monkeypatch):
@@ -3327,6 +3345,7 @@ def _supervisor_day_raw_removal_patches(monkeypatch, coord_obj):
 
 def _supervisor_startup_preflight_disabled(monkeypatch):
   import hpcperfstats.dbload.sync_timedb_startup_raw_removal as preflight_mod
+  import hpcperfstats.dbload.sync_timedb_startup_tar_seal as tar_seal_mod
 
   class _DonePreflight:
     enabled = False
@@ -3352,8 +3371,110 @@ def _supervisor_startup_preflight_disabled(monkeypatch):
     def shutdown(self, wait=True):
       del wait
 
+  class _DoneTarSeal:
+    enabled = False
+
+    def __init__(self, **_kwargs):
+      pass
+
+    def seal_pass_done(self):
+      return True
+
+    def start_async_seal(self):
+      return None
+
+    def shutdown(self, wait=True):
+      del wait
+
   monkeypatch.setattr(preflight_mod, "StartupRawRemovalPreflight", _DonePreflight)
   monkeypatch.setattr(st, "StartupRawRemovalPreflight", _DonePreflight)
+  monkeypatch.setattr(tar_seal_mod, "StartupTarSealPreflight", _DoneTarSeal)
+  monkeypatch.setattr(st, "StartupTarSealPreflight", _DoneTarSeal)
+
+
+def test_supervisor_starts_ingest_without_waiting_for_tar_seal(monkeypatch):
+  shutdown_requested[0] = False
+  ingest_calls = {"n": 0}
+  tar_seal_started = {"value": False}
+
+  import hpcperfstats.dbload.sync_timedb_startup_raw_removal as preflight_mod
+  import hpcperfstats.dbload.sync_timedb_startup_tar_seal as tar_seal_mod
+
+  class _DoneRawPreflight:
+    enabled = False
+
+    def __init__(self, **_kwargs):
+      pass
+
+    def delete_phase_done(self):
+      return True
+
+    def needs_delete_phase(self):
+      return False
+
+    def paths_pending_startup_delete(self):
+      return set()
+
+    def consumed_paths(self):
+      return set()
+
+    def start_async_verify(self):
+      return None
+
+    def shutdown(self, wait=True):
+      del wait
+
+  class _SlowTarSeal:
+    enabled = True
+
+    def __init__(self, **_kwargs):
+      pass
+
+    def seal_pass_done(self):
+      return False
+
+    def start_async_seal(self):
+      tar_seal_started["value"] = True
+
+    def shutdown(self, wait=True):
+      del wait
+
+  try:
+    target = "/fake/statsA"
+
+    def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
+      ingest_calls["n"] += 1
+      if ingest_calls["n"] == 1:
+        return [target]
+      shutdown_requested[0] = True
+      return []
+
+    def fake_add(_lock, path, _contents=None):
+      return (path, True, True, 0.0)
+
+    monkeypatch.setattr(preflight_mod, "StartupRawRemovalPreflight", _DoneRawPreflight)
+    monkeypatch.setattr(st, "StartupRawRemovalPreflight", _DoneRawPreflight)
+    monkeypatch.setattr(tar_seal_mod, "StartupTarSealPreflight", _SlowTarSeal)
+    monkeypatch.setattr(st, "StartupTarSealPreflight", _SlowTarSeal)
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "add_stats_file_to_db", fake_add)
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "chunk_size", 1)
+    monkeypatch.setattr(st, "rescan_every_chunks", 100)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp/daily")
+    monkeypatch.setattr(
+        st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
+
+    st.run_sync_timedb_supervisor_loop(
+        "/tmp/archive", "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
+
+    assert tar_seal_started["value"] is True
+    assert ingest_calls["n"] >= 1
+  finally:
+    shutdown_requested[0] = False
 
 
 def test_supervisor_ingest_proceeds_without_day_close_delete_gate(monkeypatch):

@@ -160,6 +160,9 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_startup_raw_removal_verify_budget_seconds"),
     ("PIPELINE", "sync_startup_raw_removal_verify_days_per_slice"),
     ("PIPELINE", "sync_startup_raw_removal_max_deletes_per_pass"),
+    ("PIPELINE", "sync_startup_tar_seal_preflight"),
+    ("PIPELINE", "sync_startup_tar_seal_budget_seconds"),
+    ("PIPELINE", "sync_startup_tar_seal_days_per_slice"),
     ("PIPELINE", "sync_day_close_raw_removal_preflight"),
     ("PIPELINE", "sync_day_close_raw_removal_verify_budget_seconds"),
     ("PIPELINE", "sync_day_close_raw_removal_max_deletes_per_pass"),
@@ -2266,6 +2269,35 @@ def get_sync_startup_raw_removal_max_deletes_per_pass():
     return max(0, int(raw))
   except (TypeError, ValueError):
     return 0
+
+
+def get_sync_startup_tar_seal_preflight():
+  """Enable startup quiescent daily tar seal pass (default on)."""
+  _ensure_cfg_loaded()
+  return _parse_bool(
+      _pipeline_get("sync_startup_tar_seal_preflight", fallback="yes"),
+  )
+
+
+def get_sync_startup_tar_seal_budget_seconds():
+  """Wall-clock budget per startup tar-seal slice (default 300s)."""
+  _ensure_cfg_loaded()
+  return max(
+      1.0,
+      float(_pipeline_get(
+          "sync_startup_tar_seal_budget_seconds",
+          fallback="300",
+      )),
+  )
+
+
+def get_sync_startup_tar_seal_days_per_slice():
+  """Max calendar days sealed per startup tar-seal slice (default 1)."""
+  _ensure_cfg_loaded()
+  return max(
+      1,
+      _pipeline_getint("sync_startup_tar_seal_days_per_slice", fallback=1),
+  )
 
 
 def get_sync_day_close_raw_removal_preflight():
