@@ -464,6 +464,21 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Max calendar days sealed per startup tar-seal slice (default 1).
 # sync_startup_tar_seal_days_per_slice = 1
 
+# Startup checkpoint-driven async DAY_CLOSE for ingest-complete calendar days (default yes).
+# sync_startup_day_close_preflight = yes
+
+# Wall-clock budget per startup day-close discover slice (default 300 seconds).
+# sync_startup_day_close_budget_seconds = 300
+
+# Max calendar days submitted per startup day-close slice (default 1).
+# sync_startup_day_close_days_per_slice = 1
+
+# Async DAY_CLOSE worker threads (default 1).
+# sync_day_close_async_workers = 1
+
+# Log day-close candidate report (queued/disqualified only; default yes).
+# sync_day_close_candidate_report = yes
+
 # Per-day async verify+delete pipeline after DAY_CLOSE seal (default yes). DAY_CLOSE debt
 # is scheduled at supervisor startup and every rescan_every_chunks ingest chunks (default 10).
 # sync_day_close_raw_removal_preflight = yes

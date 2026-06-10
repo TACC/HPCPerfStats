@@ -1,5 +1,6 @@
 """Unit tests for sync_timedb archive helpers and main-block helpers (no Django)."""
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -4103,6 +4104,19 @@ def test_collect_days_with_unmapped_closed_raw_buckets_unmapped_only():
   assert os.path.normpath("/arch/2024-05-01.tar") not in result
 
 
+def test_build_seal_disqualified_daily_tars_ignores_pending_ingest():
+  archive_dir = "/arch"
+  d = lambda day: os.path.normpath("/arch/2024-06-%02d.tar" % day)
+  pending_day = datetime(2024, 6, 1, 3, 0, 0)
+  pending_path = "/raw/host/%d" % int(pending_day.timestamp())
+  disqualified = build_seal_disqualified_daily_tars(
+      tgz_archive_dir=archive_dir,
+      pending_stats_paths=[pending_path],
+      inflight_paths=[],
+  )
+  assert d(1) not in disqualified
+
+
 def test_build_seal_disqualified_daily_tars_unions_all_sources():
   archive_dir = "/arch"
   d = lambda day: os.path.normpath("/arch/2024-06-%02d.tar" % day)
@@ -4120,7 +4134,7 @@ def test_build_seal_disqualified_daily_tars_unions_all_sources():
       pending_archive_task_tars=[d(6)],
       unmapped_closed_raw_tars=[d(7)],
   )
-  assert d(1) in disqualified  # pending ingest
+  assert d(1) not in disqualified  # pending ingest no longer disqualifies
   assert d(2) in disqualified  # inflight append
   assert d(3) in disqualified  # remaining raw on disk
   assert d(4) in disqualified  # non-empty append cache
@@ -4201,10 +4215,8 @@ def test_find_immediate_day_close_candidates_orders_oldest_first(tmp_path):
       tgz_archive_dir=str(daily_dir),
       candidate_tar_paths=[tar_new, tar_old],
       disqualified_daily_tars=set(),
-      pending_stats_paths=pending,
-      max_sort_epoch_by_tar={
-          os.path.normpath(tar_old): day1_epoch,
-          os.path.normpath(tar_new): day2_epoch,
+      unprocessed_by_tar={
+          os.path.normpath(tar_new): pending,
       },
       local_tz=timezone.utc,
   )
@@ -4221,8 +4233,7 @@ def test_find_immediate_day_close_candidates_skips_disqualified(tmp_path):
       tgz_archive_dir=str(daily_dir),
       candidate_tar_paths=[tar_path],
       disqualified_daily_tars={os.path.normpath(tar_path)},
-      pending_stats_paths=[],
-      max_sort_epoch_by_tar={os.path.normpath(tar_path): day_epoch},
+      unprocessed_by_tar={},
       local_tz=timezone.utc,
   )
   assert result == []
@@ -4241,9 +4252,187 @@ def test_find_immediate_day_close_candidates_skips_tar_dropped_phase(tmp_path, m
       tgz_archive_dir=str(daily_dir),
       candidate_tar_paths=[tar_path],
       disqualified_daily_tars=set(),
-      pending_stats_paths=[],
-      max_sort_epoch_by_tar={os.path.normpath(tar_path): day_epoch},
+      unprocessed_by_tar={},
       local_tz=timezone.utc,
       day_phases={os.path.normpath(tar_path): {"phase": "tar_dropped"}},
   )
   assert result == []
+
+
+def test_find_immediate_day_close_candidates_requires_unprocessed_map(tmp_path):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = str(daily_dir / "2020-01-01.tar")
+  open(tar_path, "wb").close()
+  assert find_immediate_day_close_candidates(
+      tgz_archive_dir=str(daily_dir),
+      candidate_tar_paths=[tar_path],
+      disqualified_daily_tars=set(),
+      unprocessed_by_tar=None,
+      local_tz=timezone.utc,
+  ) == []
+
+
+def test_augment_unprocessed_by_tar_with_pending_paths(tmp_path):
+  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+      augment_unprocessed_by_tar_with_pending_paths,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+  open(tar_path, "wb").close()
+  day_epoch = int(datetime(2020, 1, 1, 12, tzinfo=timezone.utc).timestamp())
+  pending_path = "/raw/host.hpc/%d" % day_epoch
+  augmented = augment_unprocessed_by_tar_with_pending_paths(
+      {},
+      pending_stats_paths=[pending_path],
+      tgz_archive_dir=str(daily_dir),
+      checkpoint_paths=set(),
+  )
+  assert augmented[tar_path] == [pending_path]
+
+
+def test_build_unprocessed_raw_by_daily_tar_subtracts_checkpoint(tmp_path):
+  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+      build_unprocessed_raw_by_daily_tar,
+      load_checkpoint_path_set,
+  )
+
+  host = tmp_path / "n.integration.test"
+  host.mkdir()
+  day = date(2021, 3, 15)
+  ts = int(datetime(day.year, day.month, day.day, 10, tzinfo=timezone.utc).timestamp())
+  seg = host / str(ts)
+  seg.write_text("%d job1 cn001\nline\n" % ts)
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = str(daily_dir / "2021-03-15.tar")
+  open(tar_path, "wb").close()
+  checkpoint_path = tmp_path / ".sync_timedb_state.json"
+  checkpoint_path.write_text(
+      json.dumps([{"path": str(seg), "size": seg.stat().st_size,
+                   "mtime": int(seg.stat().st_mtime)}])
+  )
+  assert str(seg) in load_checkpoint_path_set(str(checkpoint_path))
+  unprocessed = build_unprocessed_raw_by_daily_tar(
+      str(tmp_path),
+      ".integration.test",
+      str(daily_dir),
+      checkpoint_path=str(checkpoint_path),
+  )
+  assert unprocessed.get(os.path.normpath(tar_path), []) == []
+
+
+def test_find_immediate_day_close_uses_checkpoint_not_pending(tmp_path):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = str(daily_dir / "2020-01-01.tar")
+  open(tar_path, "wb").close()
+  day_epoch = int(datetime(2020, 1, 1, 12, tzinfo=timezone.utc).timestamp())
+  pending_same_day = ["/raw/host.hpc/%d" % day_epoch]
+  result = find_immediate_day_close_candidates(
+      tgz_archive_dir=str(daily_dir),
+      candidate_tar_paths=[tar_path],
+      disqualified_daily_tars=set(),
+      unprocessed_by_tar={},
+      local_tz=timezone.utc,
+  )
+  assert result == [os.path.normpath(tar_path)]
+  result_blocked = find_immediate_day_close_candidates(
+      tgz_archive_dir=str(daily_dir),
+      candidate_tar_paths=[tar_path],
+      disqualified_daily_tars=set(),
+      unprocessed_by_tar={os.path.normpath(tar_path): pending_same_day},
+      local_tz=timezone.utc,
+  )
+  assert result_blocked == []
+
+
+def test_classify_day_close_candidates_reports_reasons(tmp_path):
+  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+      classify_day_close_candidates,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+  open(tar_path, "wb").close()
+  entries = classify_day_close_candidates(
+      tgz_archive_dir=str(daily_dir),
+      unprocessed_by_tar={tar_path: ["/raw/x"]},
+      disqualification_reasons={
+          tar_path: {"checkpoint_incomplete", "inflight_append_path"},
+      },
+      local_tz=timezone.utc,
+  )
+  by_tar = {e["tar_path"]: e for e in entries}
+  assert by_tar[tar_path]["status"] == "disqualified"
+  assert "checkpoint_incomplete" in by_tar[tar_path]["reasons"]
+
+
+def test_log_day_close_candidate_report_omits_skipped_no_work(capsys, monkeypatch):
+  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+      log_day_close_candidate_report,
+  )
+
+  import hpcperfstats.conf_parser as cfg_mod
+
+  monkeypatch.setattr(cfg_mod, "get_sync_day_close_candidate_report", lambda: True)
+  log_day_close_candidate_report(
+      [{
+          "tar_path": "/arch/2020-01-01.tar",
+          "status": "skipped_no_work",
+          "reasons": [],
+          "unprocessed": 0,
+          "phase": "tar_dropped",
+      }],
+      reason="test",
+  )
+  assert "day_close candidate" not in capsys.readouterr().out
+
+
+def test_log_day_close_candidate_report_logs_queued_and_disqualified(capsys, monkeypatch):
+  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+      log_day_close_candidate_report,
+  )
+
+  import hpcperfstats.conf_parser as cfg_mod
+
+  monkeypatch.setattr(cfg_mod, "get_sync_day_close_candidate_report", lambda: True)
+  log_day_close_candidate_report(
+      [
+          {
+              "tar_path": "/arch/2020-01-01.tar",
+              "status": "queued",
+              "reasons": ["scheduled_enqueue"],
+              "unprocessed": 0,
+              "phase": "",
+          },
+          {
+              "tar_path": "/arch/2020-01-02.tar",
+              "status": "disqualified",
+              "reasons": ["checkpoint_incomplete"],
+              "unprocessed": 2,
+              "phase": "",
+          },
+      ],
+      reason="test",
+  )
+  out = capsys.readouterr().out
+  assert "day_close candidate report reason=test queued=1 disqualified=1" in out
+  assert "status=queued" in out
+  assert "status=disqualified" in out
+  assert "skipped_no_work" not in out
+
+
+def test_log_day_close_candidate_report_silent_when_empty(capsys, monkeypatch):
+  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+      log_day_close_candidate_report,
+  )
+
+  import hpcperfstats.conf_parser as cfg_mod
+
+  monkeypatch.setattr(cfg_mod, "get_sync_day_close_candidate_report", lambda: True)
+  log_day_close_candidate_report([], reason="test")
+  assert "day_close candidate report" not in capsys.readouterr().out

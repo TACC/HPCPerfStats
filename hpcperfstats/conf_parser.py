@@ -163,6 +163,11 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_startup_tar_seal_preflight"),
     ("PIPELINE", "sync_startup_tar_seal_budget_seconds"),
     ("PIPELINE", "sync_startup_tar_seal_days_per_slice"),
+    ("PIPELINE", "sync_day_close_candidate_report"),
+    ("PIPELINE", "sync_startup_day_close_preflight"),
+    ("PIPELINE", "sync_startup_day_close_budget_seconds"),
+    ("PIPELINE", "sync_startup_day_close_days_per_slice"),
+    ("PIPELINE", "sync_day_close_async_workers"),
     ("PIPELINE", "sync_day_close_raw_removal_preflight"),
     ("PIPELINE", "sync_day_close_raw_removal_verify_budget_seconds"),
     ("PIPELINE", "sync_day_close_raw_removal_max_deletes_per_pass"),
@@ -2297,6 +2302,52 @@ def get_sync_startup_tar_seal_days_per_slice():
   return max(
       1,
       _pipeline_getint("sync_startup_tar_seal_days_per_slice", fallback=1),
+  )
+
+
+def get_sync_day_close_candidate_report():
+  """Log day-close candidate report (queued/disqualified only; default on)."""
+  _ensure_cfg_loaded()
+  return _parse_bool(
+      _pipeline_get("sync_day_close_candidate_report", fallback="yes"),
+  )
+
+
+def get_sync_startup_day_close_preflight():
+  """Enable startup checkpoint-driven async DAY_CLOSE (default on)."""
+  _ensure_cfg_loaded()
+  return _parse_bool(
+      _pipeline_get("sync_startup_day_close_preflight", fallback="yes"),
+  )
+
+
+def get_sync_startup_day_close_budget_seconds():
+  """Wall-clock budget per startup day-close discover slice (default 300s)."""
+  _ensure_cfg_loaded()
+  return max(
+      1.0,
+      float(_pipeline_get(
+          "sync_startup_day_close_budget_seconds",
+          fallback="300",
+      )),
+  )
+
+
+def get_sync_startup_day_close_days_per_slice():
+  """Max calendar days submitted per startup day-close slice (default 1)."""
+  _ensure_cfg_loaded()
+  return max(
+      1,
+      _pipeline_getint("sync_startup_day_close_days_per_slice", fallback=1),
+  )
+
+
+def get_sync_day_close_async_workers():
+  """Worker threads for async DAY_CLOSE seal/raw/tar pipeline (default 1)."""
+  _ensure_cfg_loaded()
+  return max(
+      1,
+      _pipeline_getint("sync_day_close_async_workers", fallback=1),
   )
 
 

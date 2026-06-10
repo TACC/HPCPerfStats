@@ -1,0 +1,58 @@
+---
+description: Startup checkpoint-driven async DAY_CLOSE for sync_timedb
+alwaysApply: false
+---
+
+# sync_timedb startup day-close contract
+
+When **`sync_startup_day_close_preflight=yes`** (default), the supervisor starts a **single-flight** background discover thread (`sync_timedb.py [thread:startup-day-close-preflight]`) in parallel with ingest. Ingest does **not** wait on completion.
+
+## Canonical modules
+
+| Concern | Location |
+|---|---|
+| Discover + submit | `hpcperfstats/dbload/sync_timedb_startup_day_close.py` → `StartupDayClosePreflight` |
+| Async seal/raw/tar worker | `hpcperfstats/dbload/sync_timedb_async_day_close.py` → `AsyncDayCloseCoordinator` |
+| Checkpoint subtract + classify | `load_checkpoint_path_set`, `build_unprocessed_raw_by_daily_tar`, `days_ingest_complete_by_checkpoint`, `classify_day_close_candidates` in `sync_timedb_archive_helpers.py` |
+| Manifest | `{archive_data_dir}/.sync_timedb_startup_day_close.json` |
+| Checkpoint | `{archive_data_dir}/.sync_timedb_state.json` (same path/size/mtime fingerprint as supervisor restart) |
+
+## Eligibility (startup discover)
+
+1. Bucket **closed** raw by first timestamp → `build_archive_mapping`.
+2. Subtract checkpoint paths (`load_checkpoint_path_set`).
+3. For each calendar day with **zero** unprocessed mapped raw **and** cold-path work still needed (`daily_tar_needs_day_close_work`), call `AsyncDayCloseCoordinator.submit_day_close(..., reason=startup_checkpoint_complete)`.
+
+**Not** gated on global `pending_stats_files` length.
+
+## INI knobs
+
+- `sync_startup_day_close_preflight` (default yes)
+- `sync_startup_day_close_budget_seconds` (default 300)
+- `sync_startup_day_close_days_per_slice` (default 1)
+- `sync_day_close_async_workers` (default 1)
+- `sync_day_close_candidate_report` (default yes) — log **queued/disqualified only**; `skipped_no_work` silent; no report when both counts zero
+
+## Operator log (candidate report)
+
+```
+janitor: day_close candidate report reason=startup_checkpoint_discover queued=N disqualified=M
+janitor: day_close candidate tar=… status=queued|disqualified reasons=… unprocessed=N phase=…
+```
+
+## Coordination
+
+- **`StartupTarSealPreflight`** must skip days with active/submitted async day-close (`has_async_day_close_for_tar`) to avoid double seal. See **`sync-timedb-startup-tar-seal-contract.mdc`**.
+- Janitor **`DAY_CLOSE`** debt submits to the same coordinator (no sync zstd on janitor thread). See **`sync-timedb-archive-janitor-contract.mdc`**.
+
+## Tests
+
+- `hpcperfstats/tests/test_sync_timedb_startup_day_close.py`
+- `hpcperfstats/tests/test_sync_timedb_supervisor.py` (`test_supervisor_starts_ingest_without_waiting_for_startup_day_close`)
+- Archive/janitor/async helpers in `test_sync_timedb_archive.py`, `test_sync_timedb_janitor.py`
+
+## Overlap
+
+- **`sync-timedb-archive-janitor-contract.mdc`** — scheduled/immediate enqueue + async execution.
+- **`sync-timedb-db-before-archive-contract.mdc`** — raw delete still DB-gated in `DayRawRemovalCoordinator`.
+- **`process-title-and-pool-labels.mdc`** — `set_daemon_thread_title("", script_name=..., role=...)` on discover and async worker threads.

@@ -10,7 +10,7 @@ import tarfile
 import tempfile
 import time
 from collections import OrderedDict, defaultdict
-from datetime import datetime, time as dt_time, timedelta
+from datetime import date, datetime, time as dt_time, timedelta
 
 import hpcperfstats.conf_parser as cfg
 from hpcperfstats.dbload.archive_compress import (
@@ -233,19 +233,26 @@ def find_immediate_day_close_candidates(
     tgz_archive_dir,
     candidate_tar_paths,
     disqualified_daily_tars,
-    pending_stats_paths,
-    max_sort_epoch_by_tar,
+    pending_stats_paths=None,
+    unprocessed_by_tar=None,
+    max_sort_epoch_by_tar=None,
     local_tz,
     now=None,
     day_phases=None,
     first_timestamp_by_path=None,
 ):
-  """Return oldest-first daily ``.tar`` paths eligible for immediate ``DAY_CLOSE``."""
+  """Return oldest-first daily ``.tar`` paths eligible for immediate ``DAY_CLOSE``.
+
+  Eligibility uses checkpoint subtraction (``unprocessed_by_tar``) rather than
+  the global ingest queue when ``unprocessed_by_tar`` is provided.
+  """
+  del pending_stats_paths, max_sort_epoch_by_tar, first_timestamp_by_path
   if not tgz_archive_dir:
     return []
+  if unprocessed_by_tar is None:
+    return []
   disqualified = _normalize_daily_tar_path_set(disqualified_daily_tars)
-  fmap = first_timestamp_by_path or {}
-  epoch_by_tar = max_sort_epoch_by_tar or {}
+  unprocessed = unprocessed_by_tar
   seen = set()
   ranked = []
   for tar_path in candidate_tar_paths or ():
@@ -255,24 +262,147 @@ def find_immediate_day_close_candidates(
     seen.add(tar_norm)
     if tar_norm in disqualified:
       continue
+    if unprocessed.get(tar_norm):
+      continue
     day_date = calendar_date_from_daily_tar_path(tar_norm)
     if day_date is None:
       continue
     if not daily_tar_seal_calendar_eligible(tar_norm, local_tz, now=now):
       continue
-    if not ingest_stream_past_calendar_day(
-        day_date,
-        pending_stats_paths=pending_stats_paths,
-        max_sort_epoch_for_day=epoch_by_tar.get(tar_norm),
-        first_timestamp_by_path=fmap,
-    ):
+    if not daily_tar_needs_day_close_work(tar_norm, day_phases=day_phases):
       continue
-    if _day_phase_at_least_hints(day_phases, tar_norm, "tar_dropped"):
-      if not (os.path.isfile(tar_norm) and tar_day_dirty_by_mtime(tar_norm)):
-        continue
     ranked.append((day_date, tar_norm))
   ranked.sort(key=lambda item: item[0])
   return [tar_norm for _, tar_norm in ranked]
+
+
+_DAY_CLOSE_DISQUALIFY_CODES = frozenset({
+    "inflight_append_path",
+    "pending_append_cache",
+    "in_flight_archive_job",
+    "pending_archive_task",
+    "unmapped_closed_raw",
+    "checkpoint_incomplete",
+    "calendar_grace",
+    "not_enqueued",
+})
+
+
+def classify_day_close_candidates(
+    *,
+    tgz_archive_dir,
+    remaining_raw_by_gz=None,
+    unprocessed_by_tar=None,
+    disqualification_reasons=None,
+    day_phases=None,
+    local_tz=None,
+    now=None,
+    async_in_progress_tars=None,
+    debt_heap_tars=None,
+    newly_queued_tars=None,
+    queued_reason="scheduled_enqueue",
+):
+  """Classify day-close universe into queued/disqualified/skipped_no_work entries."""
+  if not tgz_archive_dir:
+    return []
+  unprocessed = unprocessed_by_tar or {}
+  disq = disqualification_reasons or {}
+  async_active = _normalize_daily_tar_path_set(async_in_progress_tars)
+  debt_tars = _normalize_daily_tar_path_set(debt_heap_tars)
+  newly_queued = _normalize_daily_tar_path_set(newly_queued_tars)
+  universe = set()
+  for tar_path in iter_daily_tar_paths(tgz_archive_dir):
+    universe.add(os.path.normpath(tar_path))
+  for tar_path in (remaining_raw_by_gz or {}):
+    universe.add(os.path.normpath(daily_tar_path_from_compressed(tar_path)))
+  universe |= set(unprocessed.keys())
+  universe |= set(disq.keys())
+  universe |= async_active | debt_tars | newly_queued
+  ranked = sorted(universe, key=_calendar_date_from_tar_sort_key)
+  entries = []
+  for tar_norm in ranked:
+    reasons = set(disq.get(tar_norm, set()))
+    unprocessed_count = len(unprocessed.get(tar_norm, ()))
+    phase_name = _day_phase_name_from_hints(day_phases, tar_norm) or ""
+    needs_work = daily_tar_needs_day_close_work(
+        tar_norm,
+        day_phases=day_phases,
+        remaining_raw_by_gz=remaining_raw_by_gz,
+    )
+    if not needs_work:
+      entries.append({
+          "tar_path": tar_norm,
+          "status": "skipped_no_work",
+          "reasons": sorted(reasons),
+          "unprocessed": unprocessed_count,
+          "phase": phase_name,
+      })
+      continue
+    blocking = reasons & _DAY_CLOSE_DISQUALIFY_CODES
+    if tar_norm in async_active:
+      status = "queued"
+      reasons = set(reasons)
+      reasons.add("async_in_progress")
+    elif tar_norm in newly_queued:
+      status = "queued"
+      reasons = set(reasons)
+      reasons.discard("not_enqueued")
+      reasons.add(queued_reason or "scheduled_enqueue")
+    elif tar_norm in debt_tars:
+      status = "queued"
+      reasons = set(reasons)
+      reasons.add("already_in_debt_heap")
+    elif blocking:
+      status = "disqualified"
+    elif unprocessed_count > 0:
+      status = "disqualified"
+      reasons = set(reasons)
+      reasons.add("checkpoint_incomplete")
+    else:
+      status = "disqualified"
+      reasons = set(reasons)
+      reasons.add("not_enqueued")
+    entries.append({
+        "tar_path": tar_norm,
+        "status": status,
+        "reasons": sorted(reasons),
+        "unprocessed": unprocessed_count,
+        "phase": phase_name,
+    })
+  return entries
+
+
+def log_day_close_candidate_report(
+    entries,
+    *,
+    reason,
+    log_fn=log_print,
+):
+  """Log queued/disqualified day-close candidates only (silent skipped_no_work)."""
+  if not cfg.get_sync_day_close_candidate_report():
+    return
+  queued = [e for e in entries if e.get("status") == "queued"]
+  disqualified = [e for e in entries if e.get("status") == "disqualified"]
+  if not queued and not disqualified:
+    return
+  log_fn(
+      "janitor: day_close candidate report reason=%s queued=%d disqualified=%d"
+      % (reason, len(queued), len(disqualified)),
+      flush=True,
+  )
+  for entry in queued + disqualified:
+    log_fn(
+        "janitor: day_close candidate tar=%s status=%s reasons=%s "
+        "unprocessed=%d phase=%s"
+        % (
+            entry.get("tar_path"),
+            entry.get("status"),
+            ",".join(entry.get("reasons") or ()),
+            int(entry.get("unprocessed") or 0),
+            entry.get("phase") or "",
+        ),
+        flush=True,
+    )
 
 
 def effective_keep_uncompressed_tar(tar_path, *, local_tz, now=None):
@@ -724,6 +854,252 @@ def quarantine_unparsable_closed_raw_paths(
   return moved
 
 
+def _checkpoint_entry_fingerprint(path):
+  """Return ``{size, mtime}`` for restart-safe checkpoint matching."""
+  try:
+    return {"size": int(os.path.getsize(path)), "mtime": int(os.path.getmtime(path))}
+  except OSError:
+    return None
+
+
+def _load_checkpoint_entries(checkpoint_path):
+  """Load checkpoint JSON list entries (path/size/mtime); return [] on invalid."""
+  try:
+    with open(checkpoint_path, encoding="utf-8") as handle:
+      raw = json.load(handle)
+  except (OSError, ValueError, TypeError, json.JSONDecodeError):
+    return []
+  if not isinstance(raw, list):
+    return []
+  entries = []
+  for item in raw:
+    if not isinstance(item, dict):
+      continue
+    path = item.get("path")
+    size = item.get("size")
+    mtime = item.get("mtime")
+    if not isinstance(path, str):
+      continue
+    try:
+      size = int(size)
+      mtime = int(mtime)
+    except (TypeError, ValueError):
+      continue
+    entries.append({"path": path, "size": size, "mtime": mtime})
+  return entries
+
+
+def load_checkpoint_path_set(checkpoint_path):
+  """Return paths present in checkpoint whose on-disk size/mtime still match."""
+  matched = set()
+  for entry in _load_checkpoint_entries(checkpoint_path):
+    fp = _checkpoint_entry_fingerprint(entry["path"])
+    if fp is None:
+      continue
+    if fp["size"] == entry["size"] and fp["mtime"] == entry["mtime"]:
+      matched.add(entry["path"])
+  return matched
+
+
+def build_unprocessed_raw_by_daily_tar(
+    archive_data_dir,
+    host_name_ext,
+    tgz_archive_dir,
+    *,
+    checkpoint_path=None,
+    checkpoint_paths=None,
+    first_timestamp_by_path=None,
+):
+  """Map daily ``.tar`` paths to mapped closed raw not in the ingest checkpoint."""
+  if checkpoint_paths is None:
+    checkpoint_paths = (
+        load_checkpoint_path_set(checkpoint_path) if checkpoint_path else set()
+    )
+  else:
+    checkpoint_paths = set(checkpoint_paths or ())
+  closed_paths = collect_stats_files_in_range(
+      archive_data_dir,
+      "all",
+      None,
+      host_name_ext,
+      force_full_scan=True,
+  )
+  mapping = build_archive_mapping(
+      closed_paths,
+      tgz_archive_dir,
+      first_timestamp_by_path=first_timestamp_by_path,
+  )
+  unprocessed_by_tar = {}
+  for gz_key, stats_paths in mapping.items():
+    tar_norm = os.path.normpath(daily_tar_path_from_compressed(gz_key))
+    unprocessed = [p for p in stats_paths if p not in checkpoint_paths]
+    if unprocessed:
+      unprocessed_by_tar[tar_norm] = list(unprocessed)
+  return unprocessed_by_tar
+
+
+def augment_unprocessed_by_tar_with_pending_paths(
+    unprocessed_by_tar,
+    *,
+    pending_stats_paths,
+    tgz_archive_dir,
+    checkpoint_path=None,
+    checkpoint_paths=None,
+    first_timestamp_by_path=None,
+):
+  """Union pending ingest paths not in checkpoint into ``unprocessed_by_tar``."""
+  if checkpoint_paths is None:
+    checkpoint_paths = (
+        load_checkpoint_path_set(checkpoint_path) if checkpoint_path else set()
+    )
+  else:
+    checkpoint_paths = set(checkpoint_paths or ())
+  result = {
+      os.path.normpath(tar_path): list(paths)
+      for tar_path, paths in (unprocessed_by_tar or {}).items()
+  }
+  for stats_path in pending_stats_paths or ():
+    if stats_path in checkpoint_paths:
+      continue
+    tar_path = daily_tar_path_for_stats_path(
+        stats_path,
+        tgz_archive_dir,
+        first_ts=(first_timestamp_by_path or {}).get(stats_path),
+    )
+    if not tar_path:
+      continue
+    tar_norm = os.path.normpath(tar_path)
+    bucket = result.setdefault(tar_norm, [])
+    if stats_path not in bucket:
+      bucket.append(stats_path)
+  return result
+
+
+def day_close_queued_reason_for_report_reason(reason):
+  """Map janitor/startup report ``reason`` to classify queued-reason code."""
+  reason_text = str(reason or "")
+  if reason_text.startswith("day_ingest_complete"):
+    return "day_ingest_complete_checkpoint"
+  if reason_text in ("startup", "startup_checkpoint_discover"):
+    return "startup_checkpoint_complete"
+  return "scheduled_enqueue"
+
+
+def daily_tar_needs_day_close_work(
+    tar_path,
+    *,
+    day_phases=None,
+    remaining_raw_by_gz=None,
+):
+  """True when cold-path seal/raw/tar work may still be required for ``tar_path``."""
+  tar_norm = os.path.normpath(str(tar_path or ""))
+  if not tar_norm:
+    return False
+  if not _day_phase_at_least_hints(day_phases, tar_norm, "tar_dropped"):
+    return True
+  if os.path.isfile(tar_norm) and tar_day_dirty_by_mtime(tar_norm):
+    return True
+  zst_path, _gz_path = compressed_sibling_paths(tar_norm)
+  if remaining_raw_by_gz and daily_gz_has_remaining_raw_stats(
+      zst_path, remaining_raw_by_gz):
+    return True
+  return False
+
+
+def days_ingest_complete_by_checkpoint(
+    unprocessed_by_tar,
+    *,
+    tgz_archive_dir,
+    day_phases=None,
+    remaining_raw_by_gz=None,
+    local_tz=None,
+    now=None,
+):
+  """Oldest-first daily ``.tar`` paths with zero unprocessed mapped raw and work left."""
+  if not tgz_archive_dir:
+    return []
+  ranked = []
+  seen = set()
+  universe = set(unprocessed_by_tar or ())
+  for tar_path in iter_daily_tar_paths(tgz_archive_dir):
+    universe.add(os.path.normpath(tar_path))
+  for tar_norm in sorted(universe, key=lambda p: _calendar_date_from_tar_sort_key(p)):
+    if tar_norm in seen:
+      continue
+    seen.add(tar_norm)
+    if unprocessed_by_tar.get(tar_norm):
+      continue
+    if not daily_tar_needs_day_close_work(
+        tar_norm,
+        day_phases=day_phases,
+        remaining_raw_by_gz=remaining_raw_by_gz,
+    ):
+      continue
+    day_date = calendar_date_from_daily_tar_path(tar_norm)
+    if day_date is None:
+      continue
+    if local_tz is not None and not daily_tar_seal_calendar_eligible(
+        tar_norm, local_tz, now=now):
+      continue
+    ranked.append((day_date, tar_norm))
+  ranked.sort(key=lambda item: item[0])
+  return [tar_norm for _, tar_norm in ranked]
+
+
+def _calendar_date_from_tar_sort_key(tar_path):
+  day = calendar_date_from_daily_tar_path(tar_path)
+  if day is not None:
+    return day
+  return date.max
+
+
+def build_disqualification_reasons_by_tar(
+    *,
+    tgz_archive_dir,
+    inflight_paths=None,
+    pending_append_by_daily_tar=None,
+    in_flight_archive_tars=None,
+    pending_archive_task_tars=None,
+    unmapped_closed_raw_tars=None,
+    unprocessed_by_tar=None,
+    local_tz=None,
+    now=None,
+    first_timestamp_by_path=None,
+):
+  """Return ``{tar_path: set[reason_code]}`` for day-close candidate reporting."""
+  reasons = defaultdict(set)
+  for tar_path in _normalize_daily_tar_path_set(in_flight_archive_tars):
+    reasons[tar_path].add("in_flight_archive_job")
+  for tar_path in _normalize_daily_tar_path_set(pending_archive_task_tars):
+    reasons[tar_path].add("pending_archive_task")
+  for tar_path, paths in (pending_append_by_daily_tar or {}).items():
+    if paths:
+      reasons[os.path.normpath(tar_path)].add("pending_append_cache")
+  for stats_path in inflight_paths or ():
+    tar_path = daily_tar_path_for_stats_path(
+        stats_path,
+        tgz_archive_dir,
+        first_ts=(first_timestamp_by_path or {}).get(stats_path),
+    )
+    if tar_path:
+      reasons[os.path.normpath(tar_path)].add("inflight_append_path")
+  for tar_path in _normalize_daily_tar_path_set(unmapped_closed_raw_tars):
+    reasons[tar_path].add("unmapped_closed_raw")
+  if unprocessed_by_tar:
+    for tar_path, paths in unprocessed_by_tar.items():
+      if paths:
+        reasons[os.path.normpath(tar_path)].add("checkpoint_incomplete")
+  if local_tz is not None:
+    for tar_path in list(reasons.keys()):
+      if not daily_tar_seal_calendar_eligible(tar_path, local_tz, now=now):
+        reasons[tar_path].add("calendar_grace")
+    for tar_path in iter_daily_tar_paths(tgz_archive_dir or ""):
+      tar_norm = os.path.normpath(tar_path)
+      if not daily_tar_seal_calendar_eligible(tar_norm, local_tz, now=now):
+        reasons[tar_norm].add("calendar_grace")
+  return {tar: set(codes) for tar, codes in reasons.items()}
+
+
 def build_seal_disqualified_daily_tars(
     *,
     tgz_archive_dir,
@@ -738,32 +1114,26 @@ def build_seal_disqualified_daily_tars(
 ):
   """Union of daily ``.tar`` paths the janitor must not seal/verify/remove.
 
-  See plan ``Per-day disqualification (complete set)``. Pure function over already
-  snapshotted supervisor state so it can be recomputed cheaply before each
-  mutating step under ``archive_state_lock``.
+  Ingest-queue ``pending_stats_paths`` is intentionally excluded (checkpoint
+  drives startup/immediate day-close eligibility instead).
   """
-  disqualified = set()
-  disqualified |= _normalize_daily_tar_path_set(in_flight_archive_tars)
-  disqualified |= _normalize_daily_tar_path_set(pending_archive_task_tars)
-  disqualified |= daily_tar_paths_for_stats_paths(
-      inflight_paths, tgz_archive_dir, first_timestamp_by_path,
+  del pending_stats_paths  # legacy callers may still pass; ignored
+  reasons = build_disqualification_reasons_by_tar(
+      tgz_archive_dir=tgz_archive_dir,
+      inflight_paths=inflight_paths,
+      pending_append_by_daily_tar=pending_append_by_daily_tar,
+      in_flight_archive_tars=in_flight_archive_tars,
+      pending_archive_task_tars=pending_archive_task_tars,
+      unmapped_closed_raw_tars=unmapped_closed_raw_tars,
+      first_timestamp_by_path=first_timestamp_by_path,
   )
-  if pending_append_by_daily_tar:
-    disqualified |= {
-        os.path.normpath(tar_path)
-        for tar_path, paths in pending_append_by_daily_tar.items()
-        if paths
-    }
-  disqualified |= daily_tar_paths_for_stats_paths(
-      pending_stats_paths, tgz_archive_dir, first_timestamp_by_path,
-  )
+  disqualified = set(reasons.keys())
   if remaining_raw_by_gz:
     for gz_key, stats_paths in remaining_raw_by_gz.items():
       if stats_paths:
         disqualified.add(
             os.path.normpath(daily_tar_path_from_compressed(gz_key))
         )
-  disqualified |= _normalize_daily_tar_path_set(unmapped_closed_raw_tars)
   return frozenset(disqualified)
 
 

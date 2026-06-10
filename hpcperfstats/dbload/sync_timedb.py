@@ -81,8 +81,10 @@ from hpcperfstats.shutdown_utils import (
     sleep_until_shutdown,
 )
 from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+    augment_unprocessed_by_tar_with_pending_paths,
     build_archive_mapping,
     build_seal_disqualified_daily_tars,
+    build_unprocessed_raw_by_daily_tar,
     collect_days_with_unmapped_closed_raw,
     daily_tar_path_for_stats_path,
     daily_tar_path_from_compressed,
@@ -106,6 +108,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     stats_path_ingest_sort_epoch,
     verify_tar_archive_readable,
 )
+from hpcperfstats.dbload.sync_timedb_async_day_close import AsyncDayCloseCoordinator
 from hpcperfstats.file_locking import file_write_lock
 from hpcperfstats.dbload.sync_timedb_archive_dispatch import ArchiveDispatchCoordinator
 from hpcperfstats.dbload.sync_timedb_archive_janitor import ArchiveJanitor
@@ -113,6 +116,9 @@ from hpcperfstats.dbload.sync_timedb_day_raw_removal import DayRawRemovalCoordin
 from hpcperfstats.dbload.sync_timedb_startup_raw_removal import (
     PHASE_VERIFICATION_COMPLETE,
     StartupRawRemovalPreflight,
+)
+from hpcperfstats.dbload.sync_timedb_startup_day_close import (
+    StartupDayClosePreflight,
 )
 from hpcperfstats.dbload.sync_timedb_startup_tar_seal import (
     StartupTarSealPreflight,
@@ -1662,8 +1668,10 @@ def run_sync_timedb_supervisor_loop(
       }
 
   startup_preflight = None
+  startup_day_close = None
   startup_tar_seal = None
   day_raw_removal = None
+  async_day_close = None
   delete_phase_active = False
   day_close_rescan_pending = False
   chunk_in_progress = False
@@ -1699,13 +1707,42 @@ def run_sync_timedb_supervisor_loop(
     return set(build_seal_disqualified_daily_tars(
         tgz_archive_dir=tgz_archive_dir,
         remaining_raw_by_gz=None,
-        pending_stats_paths=captured["pending_stats_paths"],
         inflight_paths=captured["inflight_paths"],
         pending_append_by_daily_tar=captured["pending_append_by_daily_tar"],
         in_flight_archive_tars=captured["in_flight_archive_tars"],
         pending_archive_task_tars=captured["pending_archive_task_tars"],
         unmapped_closed_raw_tars=set(unmapped or ()),
     ))
+
+  def _get_unmapped_closed_raw_tars():
+    with archive_janitor._accrual_snapshot_lock:
+      snap = archive_janitor._accrual_snapshot
+    if snap is not None:
+      return set(collect_days_with_unmapped_closed_raw(
+          snap.closed_paths, snap.mapping, tgz_archive_dir) or ())
+    return set(get_unmapped_closed_raw_daily_tars_cached(
+        directory,
+        host_name_ext,
+        tgz_archive_dir,
+        log_fn=log_print,
+    ) or ())
+
+  def _build_day_close_candidate_inputs():
+    captured = _capture_disqualification_inputs()
+    captured["unmapped_closed_raw_tars"] = _get_unmapped_closed_raw_tars()
+    unprocessed_by_tar = build_unprocessed_raw_by_daily_tar(
+        directory,
+        host_name_ext,
+        tgz_archive_dir,
+        checkpoint_path=checkpoint_path,
+    )
+    captured["unprocessed_by_tar"] = augment_unprocessed_by_tar_with_pending_paths(
+        unprocessed_by_tar,
+        pending_stats_paths=captured["pending_stats_paths"],
+        tgz_archive_dir=tgz_archive_dir,
+        checkpoint_path=checkpoint_path,
+    )
+    return captured
 
   def _has_active_append_for_tar(tar_path: str) -> bool:
     captured = _capture_disqualification_inputs()
@@ -1735,16 +1772,25 @@ def run_sync_timedb_supervisor_loop(
   def _maybe_enqueue_immediate_day_close(*, context: str):
     if not tgz_archive_dir:
       return
-    captured = _capture_disqualification_inputs()
     disqualified = _janitor_disqualified_daily_tars()
     with archive_janitor._hints_state_lock:
       day_phases = dict(archive_janitor._day_phases)
+    unprocessed_by_tar = augment_unprocessed_by_tar_with_pending_paths(
+        build_unprocessed_raw_by_daily_tar(
+            directory,
+            host_name_ext,
+            tgz_archive_dir,
+            checkpoint_path=checkpoint_path,
+        ),
+        pending_stats_paths=list(pending_stats_files),
+        tgz_archive_dir=tgz_archive_dir,
+        checkpoint_path=checkpoint_path,
+    )
     candidates = find_immediate_day_close_candidates(
         tgz_archive_dir=tgz_archive_dir,
         candidate_tar_paths=list(max_ingest_sort_epoch_by_tar.keys()),
         disqualified_daily_tars=disqualified,
-        pending_stats_paths=captured["pending_stats_paths"],
-        max_sort_epoch_by_tar=max_ingest_sort_epoch_by_tar,
+        unprocessed_by_tar=unprocessed_by_tar,
         local_tz=archive_janitor.local_tz,
         day_phases=day_phases,
     )
@@ -2043,6 +2089,16 @@ def run_sync_timedb_supervisor_loop(
       ingest_ready_fn=stats_file_head_ingested_in_db,
       process_title=SYNC_TIMEDB_PROCESS_TITLE,
   )
+  async_day_close = AsyncDayCloseCoordinator(
+      archive_data_dir=directory,
+      host_name_ext=host_name_ext,
+      tgz_archive_dir=tgz_archive_dir,
+      local_tz=local_timezone,
+      log_fn=log_print,
+      get_disqualified_daily_tars=_janitor_disqualified_daily_tars,
+      day_raw_removal_coordinator=day_raw_removal,
+      process_title=SYNC_TIMEDB_PROCESS_TITLE,
+  )
   archive_janitor = ArchiveJanitor(
       archive_data_dir=directory,
       host_name_ext=host_name_ext,
@@ -2060,8 +2116,23 @@ def run_sync_timedb_supervisor_loop(
       ingest_ready_fn=stats_file_head_ingested_in_db,
       archive_stats_files_fn=archive_stats_files,
       day_raw_removal_coordinator=day_raw_removal,
+      async_day_close_coordinator=async_day_close,
+      get_day_close_candidate_inputs=_build_day_close_candidate_inputs,
       process_title=SYNC_TIMEDB_PROCESS_TITLE,
   )
+
+  def _on_async_day_phase(tar_norm, phase):
+    nonlocal day_close_rescan_pending
+    from hpcperfstats.dbload.sync_timedb_archive_maint import day_phase_hint_entry
+    with archive_janitor._hints_state_lock:
+      archive_janitor._day_phases[os.path.normpath(tar_norm)] = (
+          day_phase_hint_entry(tar_norm, phase)
+      )
+    if phase == "tar_dropped":
+      day_close_rescan_pending = True
+      archive_janitor.signal_work_available()
+
+  async_day_close.on_day_phase = _on_async_day_phase
 
   def _on_day_close_pipeline_complete(_tar_path):
     nonlocal day_close_rescan_pending
@@ -2122,6 +2193,19 @@ def run_sync_timedb_supervisor_loop(
         process_title=SYNC_TIMEDB_PROCESS_TITLE,
     )
     startup_preflight.start_async_verify()
+    startup_day_close = StartupDayClosePreflight(
+        archive_data_dir=directory,
+        host_name_ext=host_name_ext,
+        tgz_archive_dir=tgz_archive_dir,
+        local_tz=local_timezone,
+        log_fn=log_print,
+        async_day_close=async_day_close,
+        get_disqualification_inputs=_capture_disqualification_inputs,
+        get_unmapped_closed_raw_tars=_get_unmapped_closed_raw_tars,
+        day_phases=lambda: dict(archive_janitor._day_phases),
+        process_title=SYNC_TIMEDB_PROCESS_TITLE,
+    )
+    startup_day_close.start_async_discover_and_close()
     startup_tar_seal = StartupTarSealPreflight(
         archive_data_dir=directory,
         host_name_ext=host_name_ext,
@@ -2129,6 +2213,10 @@ def run_sync_timedb_supervisor_loop(
         local_tz=local_timezone,
         log_fn=log_print,
         has_active_append_for_tar=_has_active_append_for_tar,
+        has_async_day_close_for_tar=lambda tar: (
+            os.path.normpath(tar)
+            in async_day_close.active_or_submitted_tar_paths()
+        ),
         process_title=SYNC_TIMEDB_PROCESS_TITLE,
     )
     startup_tar_seal.start_async_seal()
@@ -2701,8 +2789,12 @@ def run_sync_timedb_supervisor_loop(
     chunk_in_progress = False
     if startup_preflight is not None:
       startup_preflight.shutdown(wait=True)
+    if startup_day_close is not None:
+      startup_day_close.shutdown(wait=True)
     if startup_tar_seal is not None:
       startup_tar_seal.shutdown(wait=True)
+    if async_day_close is not None:
+      async_day_close.shutdown(wait=True)
     if day_raw_removal is not None:
       day_raw_removal.shutdown(wait=True)
     archive_janitor.shutdown(wait=True)

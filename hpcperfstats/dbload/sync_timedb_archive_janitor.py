@@ -19,9 +19,12 @@ from hpcperfstats.dbload.archive_compress import compressed_sibling_paths
 from hpcperfstats.file_locking import cleanup_stale_fnctl_lock_sidecars
 from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     atomic_seal_tar_to_zst,
+    build_disqualification_reasons_by_tar,
     build_remaining_raw_for_daily_tar,
     build_remaining_raw_stats_by_daily_gz,
     calendar_date_from_daily_tar_path,
+    classify_day_close_candidates,
+    day_close_queued_reason_for_report_reason,
     daily_gz_has_remaining_raw_stats,
     daily_tar_path_from_compressed,
     daily_tar_seal_calendar_eligible,
@@ -29,6 +32,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     drop_legacy_gz_if_equivalent_to_zst,
     effective_keep_uncompressed_tar,
     iter_daily_tar_paths,
+    log_day_close_candidate_report,
     remove_verified_archived_raw_files,
     remove_verified_uncompressed_daily_tars,
     tar_day_dirty_by_mtime,
@@ -140,6 +144,8 @@ class ArchiveJanitor:
       ingest_ready_fn=None,
       archive_stats_files_fn=None,
       day_raw_removal_coordinator=None,
+      async_day_close_coordinator=None,
+      get_day_close_candidate_inputs=None,
       process_title: str = "sync_timedb.py",
   ):
     self.archive_data_dir = archive_data_dir
@@ -155,6 +161,8 @@ class ArchiveJanitor:
     self.ingest_ready_fn = ingest_ready_fn
     self.archive_stats_files_fn = archive_stats_files_fn
     self.day_raw_removal_coordinator = day_raw_removal_coordinator
+    self.async_day_close_coordinator = async_day_close_coordinator
+    self.get_day_close_candidate_inputs = get_day_close_candidate_inputs
     self.process_title = process_title
     self._allow_tick_chaining = True
 
@@ -479,13 +487,25 @@ class ArchiveJanitor:
       day_date = _calendar_date_from_daily_tar(tar_norm) or date.max
       candidates.append((day_date, tar_norm))
     if not candidates:
+      self._log_day_close_candidate_report(
+          reason=reason,
+          remaining_raw_by_gz=remaining,
+          newly_queued_tars=set(),
+      )
       return
     candidates.sort(key=lambda item: item[0])
+    newly_queued = set()
     with self._debt_lock:
       for _, tar_norm in candidates:
         self._enqueue_day_close_locked(tar_norm, persist=False)
+        newly_queued.add(tar_norm)
       self._trim_heap_to_max_entries_locked()
     self._persist_hints()
+    self._log_day_close_candidate_report(
+        reason=reason,
+        remaining_raw_by_gz=remaining,
+        newly_queued_tars=newly_queued,
+    )
     self.log_fn(
         "janitor: day_close scheduled reason=%s days=%d debt_depth=%d"
         % (reason, len(candidates), self.debt_depth()),
@@ -514,6 +534,11 @@ class ArchiveJanitor:
         % (reason, tar_norm, self.debt_depth()),
         flush=True,
     )
+    self._log_day_close_candidate_report(
+        reason="day_ingest_complete:%s" % reason,
+        remaining_raw_by_gz=None,
+        newly_queued_tars={tar_norm},
+    )
     return True
 
   def enqueue_immediate_day_close_many(self, tar_paths, *, reason: str):
@@ -522,6 +547,7 @@ class ArchiveJanitor:
       return
     disqualified = set(self.get_disqualified_daily_tars())
     enqueued = 0
+    newly_queued = set()
     with self._debt_lock:
       for tar_path in tar_paths:
         tar_norm = os.path.normpath(tar_path) if tar_path else ""
@@ -534,8 +560,14 @@ class ArchiveJanitor:
         ):
           continue
         self._enqueue_day_close_locked(tar_norm, persist=False)
+        newly_queued.add(tar_norm)
         enqueued += 1
       self._trim_heap_to_max_entries_locked()
+    self._log_day_close_candidate_report(
+        reason="day_ingest_complete:%s" % reason,
+        remaining_raw_by_gz=None,
+        newly_queued_tars=newly_queued,
+    )
     if not enqueued:
       return
     self._persist_hints()
@@ -773,6 +805,63 @@ class ArchiveJanitor:
         self.signal_work_available()
       self._tick_depth = max(0, self._tick_depth - 1)
 
+  def _debt_heap_tar_paths(self) -> Set[str]:
+    with self._debt_lock:
+      return {
+          os.path.normpath(debt.tar_path)
+          for debt in self._debt_heap
+          if debt.kind == DebtKind.DAY_CLOSE
+      }
+
+  def _log_day_close_candidate_report(
+      self,
+      *,
+      reason: str,
+      remaining_raw_by_gz=None,
+      newly_queued_tars=None,
+  ) -> None:
+    if self.get_day_close_candidate_inputs is None:
+      return
+    try:
+      inputs = self.get_day_close_candidate_inputs()
+    except Exception:
+      return
+    if not isinstance(inputs, dict):
+      return
+    disq_reasons = build_disqualification_reasons_by_tar(
+        tgz_archive_dir=self.tgz_archive_dir,
+        inflight_paths=inputs.get("inflight_paths"),
+        pending_append_by_daily_tar=inputs.get("pending_append_by_daily_tar"),
+        in_flight_archive_tars=inputs.get("in_flight_archive_tars"),
+        pending_archive_task_tars=inputs.get("pending_archive_task_tars"),
+        unmapped_closed_raw_tars=inputs.get("unmapped_closed_raw_tars"),
+        unprocessed_by_tar=inputs.get("unprocessed_by_tar"),
+        local_tz=self.local_tz,
+    )
+    with self._hints_state_lock:
+      day_phases = dict(self._day_phases)
+    async_active = set()
+    coord = self.async_day_close_coordinator
+    if coord is not None:
+      async_active = coord.active_or_submitted_tar_paths()
+    entries = classify_day_close_candidates(
+        tgz_archive_dir=self.tgz_archive_dir,
+        remaining_raw_by_gz=remaining_raw_by_gz,
+        unprocessed_by_tar=inputs.get("unprocessed_by_tar"),
+        disqualification_reasons=disq_reasons,
+        day_phases=day_phases,
+        local_tz=self.local_tz,
+        async_in_progress_tars=async_active,
+        debt_heap_tars=self._debt_heap_tar_paths(),
+        newly_queued_tars=newly_queued_tars or set(),
+        queued_reason=day_close_queued_reason_for_report_reason(reason),
+    )
+    log_day_close_candidate_report(
+        entries,
+        reason=reason,
+        log_fn=self.log_fn,
+    )
+
   def _process_debt_item(
       self,
       debt: DayDebt,
@@ -782,6 +871,20 @@ class ArchiveJanitor:
       disqualified: Set[str],
   ) -> bool:
     if debt.kind == DebtKind.DAY_CLOSE:
+      coord = self.async_day_close_coordinator
+      if coord is not None:
+        tar_norm = os.path.normpath(debt.tar_path)
+        if coord.is_complete(tar_norm):
+          with self._hints_state_lock:
+            self._day_phases[tar_norm] = day_phase_hint_entry(tar_norm, "tar_dropped")
+          return True
+        coord.submit_day_close(tar_norm, reason="janitor_debt")
+        if coord.is_complete(tar_norm):
+          with self._hints_state_lock:
+            self._day_phases[tar_norm] = day_phase_hint_entry(tar_norm, "tar_dropped")
+          return True
+        self._enqueue_day_close(tar_norm, persist=False)
+        return False
       return self._close_one_day(
           debt.tar_path,
           snapshot=snapshot,

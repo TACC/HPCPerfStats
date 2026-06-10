@@ -134,6 +134,7 @@ class StartupTarSealPreflight:
       local_tz,
       log_fn,
       has_active_append_for_tar: Callable[[str], bool],
+      has_async_day_close_for_tar: Optional[Callable[[str], bool]] = None,
       process_title: str = "sync_timedb.py",
   ):
     self.archive_data_dir = archive_data_dir
@@ -142,6 +143,7 @@ class StartupTarSealPreflight:
     self.local_tz = local_tz
     self.log_fn = log_fn
     self.has_active_append_for_tar = has_active_append_for_tar
+    self.has_async_day_close_for_tar = has_async_day_close_for_tar
     self.process_title = process_title
     self._manifest_path = manifest_path(archive_data_dir)
     self._lock = threading.Lock()
@@ -306,6 +308,17 @@ class StartupTarSealPreflight:
       if self.has_active_append_for_tar(tar_norm):
         self._record_entry(tar_norm, "skipped_active_append", "active_append")
         skip_counts["active_append"] = skip_counts.get("active_append", 0) + 1
+        continue
+      if (
+          self.has_async_day_close_for_tar is not None
+          and self.has_async_day_close_for_tar(tar_norm)
+      ):
+        self._record_entry(
+            tar_norm,
+            "skipped_async_day_close",
+            "async_day_close_submitted",
+        )
+        skip_counts["async_day_close"] = skip_counts.get("async_day_close", 0) + 1
         continue
       pending.append(tar_norm)
     self._touch_manifest_progress(

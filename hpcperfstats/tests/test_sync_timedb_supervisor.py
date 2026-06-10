@@ -3069,6 +3069,7 @@ def test_supervisor_startup_empty_queue_no_duplicate_drain_pass(
 
 def _supervisor_startup_preflight_patches(monkeypatch, preflight_obj):
   import hpcperfstats.dbload.sync_timedb_startup_raw_removal as preflight_mod
+  import hpcperfstats.dbload.sync_timedb_startup_day_close as day_close_mod
   import hpcperfstats.dbload.sync_timedb_startup_tar_seal as tar_seal_mod
 
   class _FakePreflight:
@@ -3077,6 +3078,21 @@ def _supervisor_startup_preflight_patches(monkeypatch, preflight_obj):
 
     def __getattr__(self, name):
       return getattr(self._delegate, name)
+
+  class _DoneDayClose:
+    enabled = False
+
+    def __init__(self, **_kwargs):
+      pass
+
+    def discover_done(self):
+      return True
+
+    def start_async_discover_and_close(self):
+      return None
+
+    def shutdown(self, wait=True):
+      del wait
 
   class _DoneTarSeal:
     enabled = False
@@ -3095,6 +3111,8 @@ def _supervisor_startup_preflight_patches(monkeypatch, preflight_obj):
 
   monkeypatch.setattr(preflight_mod, "StartupRawRemovalPreflight", _FakePreflight)
   monkeypatch.setattr(st, "StartupRawRemovalPreflight", _FakePreflight)
+  monkeypatch.setattr(day_close_mod, "StartupDayClosePreflight", _DoneDayClose)
+  monkeypatch.setattr(st, "StartupDayClosePreflight", _DoneDayClose)
   monkeypatch.setattr(tar_seal_mod, "StartupTarSealPreflight", _DoneTarSeal)
   monkeypatch.setattr(st, "StartupTarSealPreflight", _DoneTarSeal)
 
@@ -3345,6 +3363,7 @@ def _supervisor_day_raw_removal_patches(monkeypatch, coord_obj):
 
 def _supervisor_startup_preflight_disabled(monkeypatch):
   import hpcperfstats.dbload.sync_timedb_startup_raw_removal as preflight_mod
+  import hpcperfstats.dbload.sync_timedb_startup_day_close as day_close_mod
   import hpcperfstats.dbload.sync_timedb_startup_tar_seal as tar_seal_mod
 
   class _DonePreflight:
@@ -3371,6 +3390,21 @@ def _supervisor_startup_preflight_disabled(monkeypatch):
     def shutdown(self, wait=True):
       del wait
 
+  class _DoneDayClose:
+    enabled = False
+
+    def __init__(self, **_kwargs):
+      pass
+
+    def discover_done(self):
+      return True
+
+    def start_async_discover_and_close(self):
+      return None
+
+    def shutdown(self, wait=True):
+      del wait
+
   class _DoneTarSeal:
     enabled = False
 
@@ -3386,8 +3420,22 @@ def _supervisor_startup_preflight_disabled(monkeypatch):
     def shutdown(self, wait=True):
       del wait
 
+  import hpcperfstats.dbload.sync_timedb_async_day_close as async_dc_mod
+
+  def _noop_async_day_close(self, tar_norm, reason):
+    del reason
+    self._set_entry_status(tar_norm, "complete")
+    self._notify_phase(tar_norm, "tar_dropped")
+
+  monkeypatch.setattr(
+      async_dc_mod.AsyncDayCloseCoordinator,
+      "_run_day_close",
+      _noop_async_day_close,
+  )
   monkeypatch.setattr(preflight_mod, "StartupRawRemovalPreflight", _DonePreflight)
   monkeypatch.setattr(st, "StartupRawRemovalPreflight", _DonePreflight)
+  monkeypatch.setattr(day_close_mod, "StartupDayClosePreflight", _DoneDayClose)
+  monkeypatch.setattr(st, "StartupDayClosePreflight", _DoneDayClose)
   monkeypatch.setattr(tar_seal_mod, "StartupTarSealPreflight", _DoneTarSeal)
   monkeypatch.setattr(st, "StartupTarSealPreflight", _DoneTarSeal)
 
@@ -3398,6 +3446,7 @@ def test_supervisor_starts_ingest_without_waiting_for_tar_seal(monkeypatch):
   tar_seal_started = {"value": False}
 
   import hpcperfstats.dbload.sync_timedb_startup_raw_removal as preflight_mod
+  import hpcperfstats.dbload.sync_timedb_startup_day_close as day_close_mod
   import hpcperfstats.dbload.sync_timedb_startup_tar_seal as tar_seal_mod
 
   class _DoneRawPreflight:
@@ -3419,6 +3468,21 @@ def test_supervisor_starts_ingest_without_waiting_for_tar_seal(monkeypatch):
       return set()
 
     def start_async_verify(self):
+      return None
+
+    def shutdown(self, wait=True):
+      del wait
+
+  class _DoneDayClose:
+    enabled = False
+
+    def __init__(self, **_kwargs):
+      pass
+
+    def discover_done(self):
+      return True
+
+    def start_async_discover_and_close(self):
       return None
 
     def shutdown(self, wait=True):
@@ -3454,6 +3518,8 @@ def test_supervisor_starts_ingest_without_waiting_for_tar_seal(monkeypatch):
 
     monkeypatch.setattr(preflight_mod, "StartupRawRemovalPreflight", _DoneRawPreflight)
     monkeypatch.setattr(st, "StartupRawRemovalPreflight", _DoneRawPreflight)
+    monkeypatch.setattr(day_close_mod, "StartupDayClosePreflight", _DoneDayClose)
+    monkeypatch.setattr(st, "StartupDayClosePreflight", _DoneDayClose)
     monkeypatch.setattr(tar_seal_mod, "StartupTarSealPreflight", _SlowTarSeal)
     monkeypatch.setattr(st, "StartupTarSealPreflight", _SlowTarSeal)
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
@@ -3472,6 +3538,106 @@ def test_supervisor_starts_ingest_without_waiting_for_tar_seal(monkeypatch):
         "/tmp/archive", "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
 
     assert tar_seal_started["value"] is True
+    assert ingest_calls["n"] >= 1
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_supervisor_starts_ingest_without_waiting_for_startup_day_close(monkeypatch):
+  shutdown_requested[0] = False
+  ingest_calls = {"n": 0}
+  day_close_started = {"value": False}
+
+  import hpcperfstats.dbload.sync_timedb_startup_raw_removal as preflight_mod
+  import hpcperfstats.dbload.sync_timedb_startup_day_close as day_close_mod
+  import hpcperfstats.dbload.sync_timedb_startup_tar_seal as tar_seal_mod
+
+  class _DoneRawPreflight:
+    enabled = False
+
+    def __init__(self, **_kwargs):
+      pass
+
+    def delete_phase_done(self):
+      return True
+
+    def needs_delete_phase(self):
+      return False
+
+    def paths_pending_startup_delete(self):
+      return set()
+
+    def consumed_paths(self):
+      return set()
+
+    def start_async_verify(self):
+      return None
+
+    def shutdown(self, wait=True):
+      del wait
+
+  class _DoneTarSeal:
+    enabled = False
+
+    def __init__(self, **_kwargs):
+      pass
+
+    def start_async_seal(self):
+      return None
+
+    def shutdown(self, wait=True):
+      del wait
+
+  class _SlowDayClose:
+    enabled = True
+
+    def __init__(self, **_kwargs):
+      pass
+
+    def discover_done(self):
+      return False
+
+    def start_async_discover_and_close(self):
+      day_close_started["value"] = True
+
+    def shutdown(self, wait=True):
+      del wait
+
+  try:
+    target = "/fake/statsA"
+
+    def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
+      ingest_calls["n"] += 1
+      if ingest_calls["n"] == 1:
+        return [target]
+      shutdown_requested[0] = True
+      return []
+
+    def fake_add(_lock, path, _contents=None):
+      return (path, True, True, 0.0)
+
+    monkeypatch.setattr(preflight_mod, "StartupRawRemovalPreflight", _DoneRawPreflight)
+    monkeypatch.setattr(st, "StartupRawRemovalPreflight", _DoneRawPreflight)
+    monkeypatch.setattr(day_close_mod, "StartupDayClosePreflight", _SlowDayClose)
+    monkeypatch.setattr(st, "StartupDayClosePreflight", _SlowDayClose)
+    monkeypatch.setattr(tar_seal_mod, "StartupTarSealPreflight", _DoneTarSeal)
+    monkeypatch.setattr(st, "StartupTarSealPreflight", _DoneTarSeal)
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "add_stats_file_to_db", fake_add)
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "chunk_size", 1)
+    monkeypatch.setattr(st, "rescan_every_chunks", 100)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp/daily")
+    monkeypatch.setattr(
+        st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
+
+    st.run_sync_timedb_supervisor_loop(
+        "/tmp/archive", "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
+
+    assert day_close_started["value"] is True
     assert ingest_calls["n"] >= 1
   finally:
     shutdown_requested[0] = False
@@ -3622,6 +3788,7 @@ def _supervisor_two_day_ingest_patches(
   monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
   monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
   monkeypatch.setattr(st.cfg, "get_sync_ingest_chunk_size", lambda: 1)
+  monkeypatch.setattr(st.cfg, "get_sync_day_close_candidate_report", lambda: False)
   monkeypatch.setattr(st, "rescan_every_chunks", rescan_every_chunks)
   monkeypatch.setattr(st, "close_old_connections", lambda: None)
   monkeypatch.setattr(st.connections, "close_all", lambda: None)
@@ -3630,6 +3797,16 @@ def _supervisor_two_day_ingest_patches(
       st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
   monkeypatch.setattr(
       archive_helpers, "build_archive_mapping", lambda *_a, **_k: ({}, {}))
+  monkeypatch.setattr(
+      st,
+      "build_unprocessed_raw_by_daily_tar",
+      lambda *_a, **_k: {},
+  )
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor,
+      "signal_work_available",
+      lambda self: None,
+  )
   if immediate_spy is not None:
     original_enqueue = janitor_mod.ArchiveJanitor.enqueue_immediate_day_close
 
@@ -3679,30 +3856,26 @@ def test_supervisor_enqueues_immediate_day_close_on_day_drain(monkeypatch, tmp_p
 def test_supervisor_does_not_immediate_day_close_mid_day(monkeypatch, tmp_path):
   shutdown_requested[0] = False
   immediate_events = []
-  original_find = st.find_immediate_day_close_candidates
-  day_epoch1 = int(datetime(2020, 1, 1, 10, tzinfo=timezone.utc).timestamp())
-  day_epoch2 = int(datetime(2020, 1, 1, 11, tzinfo=timezone.utc).timestamp())
-  path_day2 = "/fake/stats/%d" % day_epoch2
-
-  def find_then_stop_while_same_day_pending(**kwargs):
-    pending = kwargs.get("pending_stats_paths") or []
-    if path_day2 in pending:
-      shutdown_requested[0] = True
-    return original_find(**kwargs)
-
   try:
+    day_epoch1 = int(datetime(2020, 1, 1, 10, tzinfo=timezone.utc).timestamp())
+    day_epoch2 = int(datetime(2020, 1, 1, 11, tzinfo=timezone.utc).timestamp())
+    path_day1 = "/fake/stats/%d" % day_epoch1
+    path_day2 = "/fake/stats/%d" % day_epoch2
     archive_dir, daily_dir = _supervisor_two_day_ingest_patches(
         monkeypatch,
         tmp_path,
-        paths=[
-            "/fake/stats/%d" % day_epoch1,
-            path_day2,
-        ],
+        paths=[path_day1, path_day2],
         immediate_spy=lambda tar, reason: immediate_events.append(
             (os.path.normpath(tar), reason)),
     )
-    monkeypatch.setattr(
-        st, "find_immediate_day_close_candidates", find_then_stop_while_same_day_pending)
+    original_add = st.add_stats_file_to_db
+
+    def stop_after_first_ingest(_lock, path, **_k):
+      if path == path_day1:
+        shutdown_requested[0] = True
+      return original_add(_lock, path, **_k)
+
+    monkeypatch.setattr(st, "add_stats_file_to_db", stop_after_first_ingest)
     tar_day1 = os.path.normpath(os.path.join(daily_dir, "2020-01-01.tar"))
     open(tar_day1, "wb").close()
 
@@ -3895,6 +4068,7 @@ def test_immediate_day_close_on_idle_finalize_without_chunk(monkeypatch, tmp_pat
     monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
     monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
     monkeypatch.setattr(st.cfg, "get_sync_ingest_chunk_size", lambda: 1)
+    monkeypatch.setattr(st.cfg, "get_sync_day_close_candidate_report", lambda: False)
     monkeypatch.setattr(st, "rescan_every_chunks", 100)
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
@@ -3903,6 +4077,16 @@ def test_immediate_day_close_on_idle_finalize_without_chunk(monkeypatch, tmp_pat
         st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
     monkeypatch.setattr(
         archive_helpers, "build_archive_mapping", lambda *_a, **_k: ({}, {}))
+    monkeypatch.setattr(
+        st,
+        "build_unprocessed_raw_by_daily_tar",
+        lambda *_a, **_k: {},
+    )
+    monkeypatch.setattr(
+        janitor_mod.ArchiveJanitor,
+        "signal_work_available",
+        lambda self: None,
+    )
     original_enqueue = janitor_mod.ArchiveJanitor.enqueue_immediate_day_close
 
     def spy_enqueue(self, tar_path, *, reason):

@@ -108,6 +108,23 @@ def test_startup_tar_seal_calls_atomic_seal_and_drops_tar(tmp_path, monkeypatch)
   assert entry["status"] == "sealed"
 
 
+def test_startup_tar_seal_skips_day_close_submitted_day(tmp_path, monkeypatch):
+  day = date(2022, 6, 4)
+  tar_path, _zst = _make_quiescent_tar(tmp_path, day)
+  preflight = _make_preflight(
+      tmp_path,
+      has_async_day_close_for_tar=lambda tar: (
+          os.path.normpath(tar) == os.path.normpath(tar_path)
+      ),
+  )
+  monkeypatch.setattr(cfg, "get_sync_startup_tar_seal_days_per_slice", lambda: 10)
+  monkeypatch.setattr(cfg, "get_sync_startup_tar_seal_budget_seconds", lambda: 60.0)
+  pending = preflight._discover_pending_tar_paths()
+  assert os.path.normpath(tar_path) not in pending
+  entry = preflight._manifest.get("entries", {}).get(os.path.normpath(tar_path))
+  assert entry.get("reason") == "async_day_close_submitted"
+
+
 def test_startup_tar_seal_skips_day_with_inflight_append(tmp_path, monkeypatch):
   day = date(2022, 6, 4)
   tar_path, _zst = _make_quiescent_tar(tmp_path, day)

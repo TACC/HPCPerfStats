@@ -1297,6 +1297,39 @@ def test_enqueue_immediate_day_close_many_signals_once(tmp_path):
   assert signal_count["n"] == 1
 
 
+def test_enqueue_immediate_day_close_many_logs_candidate_report(tmp_path, monkeypatch):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = str(daily_dir / "2020-01-01.tar")
+  open(tar_path, "wb").close()
+  log_lines = []
+
+  def _log(msg, **kwargs):
+    log_lines.append(str(msg))
+
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      log_fn=_log,
+      get_day_close_candidate_inputs=lambda: {
+          "inflight_paths": set(),
+          "pending_append_by_daily_tar": {},
+          "in_flight_archive_tars": set(),
+          "pending_archive_task_tars": set(),
+          "unmapped_closed_raw_tars": set(),
+          "unprocessed_by_tar": {},
+      },
+  )
+  monkeypatch.setattr(
+      janitor_mod.cfg,
+      "get_sync_day_close_candidate_report",
+      lambda: True,
+  )
+  janitor.enqueue_immediate_day_close_many([tar_path], reason="bulk")
+  report_lines = [line for line in log_lines if "day_close candidate" in line]
+  assert any("queued=1" in line for line in report_lines)
+  assert any("day_ingest_complete_checkpoint" in line for line in report_lines)
+
+
 def test_janitor_chains_ticks_while_debt_remains(monkeypatch, tmp_path):
   signal_count = {"n": 0}
   janitor = _make_janitor(tgz_archive_dir=str(tmp_path))
@@ -1376,3 +1409,81 @@ def test_janitor_does_not_chain_when_mid_tick_only_requeues_disqualified(monkeyp
   janitor._run_tick_body()
   assert janitor.debt_depth() == 1
   assert signal_count["n"] == 0
+
+
+def test_janitor_day_close_submits_async_not_sync_seal(monkeypatch, tmp_path):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = str(daily_dir / "2020-01-01.tar")
+  open(tar_path, "wb").close()
+  seal_calls = []
+  submit_calls = []
+
+  class _FakeCoord:
+    def is_complete(self, _tar):
+      return False
+
+    def submit_day_close(self, tar, *, reason):
+      submit_calls.append((tar, reason))
+      return True
+
+  monkeypatch.setattr(
+      janitor_mod,
+      "atomic_seal_tar_to_zst",
+      lambda *args, **kwargs: seal_calls.append(1),
+  )
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      async_day_close_coordinator=_FakeCoord(),
+  )
+  debt = DayDebt(
+      sort_index=_debt_sort_key(DebtKind.DAY_CLOSE, tar_path),
+      kind=DebtKind.DAY_CLOSE,
+      tar_path=tar_path,
+  )
+  result = janitor._process_debt_item(
+      debt,
+      snapshot=None,
+      validation_cache={},
+      disqualified=set(),
+  )
+  assert seal_calls == []
+  assert submit_calls == [(os.path.normpath(tar_path), "janitor_debt")]
+  assert result is False
+
+
+def test_enqueue_scheduled_day_close_logs_candidate_report(tmp_path, monkeypatch):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = str(daily_dir / "2020-01-01.tar")
+  open(tar_path, "wb").close()
+  log_lines = []
+
+  def _log(msg, **kwargs):
+    log_lines.append(str(msg))
+
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      log_fn=_log,
+      get_day_close_candidate_inputs=lambda: {
+          "inflight_paths": set(),
+          "pending_append_by_daily_tar": {},
+          "in_flight_archive_tars": set(),
+          "pending_archive_task_tars": set(),
+          "unmapped_closed_raw_tars": set(),
+          "unprocessed_by_tar": {os.path.normpath(tar_path): ["/raw/x"]},
+      },
+  )
+  monkeypatch.setattr(
+      janitor_mod.cfg,
+      "get_sync_day_close_candidate_report",
+      lambda: True,
+  )
+  monkeypatch.setattr(
+      janitor_mod,
+      "build_remaining_raw_stats_by_daily_gz",
+      lambda *args, **kwargs: {},
+  )
+  janitor.enqueue_scheduled_day_close(reason="test")
+  report_lines = [line for line in log_lines if "day_close candidate" in line]
+  assert any("disqualified" in line for line in report_lines)
