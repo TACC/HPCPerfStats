@@ -1,9 +1,11 @@
 ---
 description: Keep analysis metrics/plots aligned with monitor host_data types and roofline peak tables
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Monitor ↔ Analysis Architecture Sync
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 HPCPerfStats ingests **`host_data.type`** values produced by the monitor executable (`HPCPerfStats/monitor/` → RabbitMQ → `listend.py`). Analysis uses **canonical** names from the current monitor; **legacy** names remain in separate modules for historical `host_data` (dual-read).
 

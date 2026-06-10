@@ -1,7 +1,7 @@
 ---
 description: Django and Python guidance for backend code
 globs: **/*.py
-alwaysApply: true
+alwaysApply: false
 ---
 
 You are an expert in Python, Django, and scalable web application development.

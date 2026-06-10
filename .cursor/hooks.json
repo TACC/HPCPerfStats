@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "hooks": {
+    "stop": [
+      {
+        "command": ".cursor/hooks/check-close-gate.py",
+        "loop_limit": 3,
+        "timeout": 15
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": ".cursor/hooks/check-edit-triggered-rules.py",
+        "matcher": "Write|StrReplace|EditNotebook",
+        "timeout": 10
+      },
+      {
+        "command": ".cursor/hooks/check-new-rule-router.py",
+        "matcher": "Write|StrReplace",
+        "timeout": 10
+      }
+    ]
+  }
+}

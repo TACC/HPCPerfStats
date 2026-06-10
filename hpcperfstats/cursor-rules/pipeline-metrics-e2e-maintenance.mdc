@@ -1,9 +1,11 @@
 ---
 description: Keep pipeline metrics E2E aligned with metrics and ingest changes
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Pipeline Metrics E2E Maintenance
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 When changing metrics behavior, metric catalog entries, or ingest payload/typing
 that can affect derived metrics, update:

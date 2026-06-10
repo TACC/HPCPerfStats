@@ -1,0 +1,37 @@
+# Cursor rules layout
+
+## Always-on (5 files — ~400 lines total)
+
+Loaded every agent turn. Keep these short; do not add more `alwaysApply: true` files without removing another.
+
+| File | Role |
+|------|------|
+| `agent-discipline-core.mdc` | **Control plane** — pre-close checklist, task router, when to Read domain rules |
+| `plan-completion-gate.mdc` | Close sequence (senior review + self-review) |
+| `every-error-regression-test.mdc` | Regression test law for fixes |
+| `workspace-guardrails.mdc` | `monitor/` read-only, compose wiring |
+| `workspace-layout-and-python-env.mdc` | `.venv` path, rules directory |
+
+## Domain rules (~70 files — `alwaysApply: false`)
+
+**Mandatory when triggered**, not optional. Agents must use the **Read** tool on matching rules from the router in `agent-discipline-core.mdc` before editing trigger paths.
+
+Adding a new domain rule (same task, non-optional):
+
+1. Default `alwaysApply: false`
+2. Add `globs:` when file patterns are stable
+3. **Dual registration** — add trigger row in `agent-discipline-core.mdc` **and** matching `ROUTER_ENTRIES` in `.cursor/hooks/hook_task_router.py` (same task)
+4. Do **not** duplicate close-gate or testing law (link instead)
+5. Cursor hook `postToolUse` → `check-new-rule-router.py` reminds the agent if step 3 was skipped for `agent-discipline-core.mdc`
+
+## Cursor hooks
+
+Committed under `HPCPerfStats/.cursor/` (symlink from workspace `.cursor/`). See `.cursor/hooks/README.md`.
+
+- **`stop`** — close-gate headings, auto-triggered rule dispatch, **Read before first edit**, invalid-N/A rejection, ≥3 edge-case bullets (`loop_limit: 3`)
+- **`postToolUse`** — `check-edit-triggered-rules.py` warns mid-turn when an edit triggers unread domain rules
+- **`postToolUse`** — enforces router registration for new `cursor-rules/*.mdc`
+
+## Authoritative path
+
+Edit `hpcperfstats/cursor-rules/*.mdc` (symlinked from workspace `.cursor/rules/`).

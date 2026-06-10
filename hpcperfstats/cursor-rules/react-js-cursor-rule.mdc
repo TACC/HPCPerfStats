@@ -1,7 +1,7 @@
 ---
 description: React and JavaScript frontend standards
 globs: **/*.{js,jsx,html,css}
-alwaysApply: true
+alwaysApply: false
 ---
 You are an expert in Web Development using the JavaScript, Node.js, React, React Router, React SPA, Bootstrap CSS, 
 

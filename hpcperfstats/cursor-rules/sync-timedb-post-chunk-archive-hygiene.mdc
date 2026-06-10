@@ -1,9 +1,12 @@
 ---
 description: Keep sync_timedb post-chunk archive hygiene non-blocking, per-day, and loss-safe
-alwaysApply: true
+alwaysApply: false
+globs: hpcperfstats/dbload/sync_timedb*.py
 ---
 
 # sync_timedb post-chunk archive hygiene
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 **Superseded by `sync-timedb-archive-janitor-contract.mdc`.** Post-chunk hygiene (`_schedule_post_chunk_hygiene` / `_run_post_chunk_hygiene_body`) was removed; chunk-end `archive_janitor.signal_work_available()` plus the janitor debt queue owns the same seal → raw → `.tar` order off the supervisor thread.
 

@@ -1,9 +1,12 @@
 ---
 description: This workspace uses Colima for Docker; use compose-backed tests when Colima is running.
-alwaysApply: true
+alwaysApply: false
+globs: docker-compose*.yaml
 ---
 
 # Colima Docker Runtime (this environment)
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 On the **primary developer machine** for this workspace, container workloads run through **Colima** (macOS Virtualization.Framework), not Docker Desktop.
 

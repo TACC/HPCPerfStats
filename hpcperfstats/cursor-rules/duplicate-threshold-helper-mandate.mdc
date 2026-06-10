@@ -1,9 +1,11 @@
 ---
 description: LAW — three or more copies of the same logic require a shared helper in the same task
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Duplicate Threshold: Helper Is Mandatory
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 **Project law:** If the **same substantive logic** appears in **more than two places** (i.e. **three or more** call sites, files, or blocks), you **must** introduce a **shared helper** (function, method, small module, React component/hook, constant map, or other single canonical implementation) **in the same task** that introduces or discovers the third copy. Leaving four-plus scattered copies is not acceptable.
 

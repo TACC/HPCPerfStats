@@ -1,9 +1,12 @@
 ---
 description: Require compose-backed workflows for DB/Redis/RabbitMQ-affecting changes
-alwaysApply: true
+alwaysApply: false
+globs: docker-compose*.yaml
 ---
 
 # Compose Required For Data-Service Changes
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 When a task changes behavior or configuration that touches PostgreSQL/Timescale, Redis, RabbitMQ, or code paths that depend on compose-network hostnames (`db`, `redis`, `rabbitmq`), validation must run through Docker Compose workflows.
 

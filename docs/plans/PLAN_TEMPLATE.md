@@ -2,7 +2,7 @@
 
 One-line overview of the outcome.
 
-**Governed by:** `plan-template-enforcement.mdc`, `plan-creation-contract.mdc`, `plan-completion-gate.mdc`, `implementation-review-workflow.mdc`.
+**Governed by:** `agent-discipline-core.mdc` (always-on), `plan-completion-gate.mdc`, `plan-creation-contract.mdc` (plan authoring), `implementation-review-workflow.mdc`.
 
 **Applies to:** pre-code chat plans, committed design docs in `docs/plans/`, monitor **Consumer follow-up plan** sections, and Cursor Plan mode output.
 
@@ -20,13 +20,11 @@ Use any of these when you want the agent to follow this template and the close g
 
 The agent must read this file, include **Final code review** and **Post-implementation review** sections, and add the **`post-implementation-review`** todo last. See **`plan-template-enforcement.mdc`** and **`plan-completion-gate.mdc`**.
 
-**Do not mark implementation done** until plan YAML todos are synced (`status: completed` for every finished step—status-only plan edits are allowed even when plan prose must not change), **`post-implementation-review`** is complete: (1) senior final code review on the diff and affected workflows finds no unfixed gaps, and (2) structured chat self-review is delivered (**Why it works**, **Edge cases**, **Convention check**). See **`plan-completion-gate.mdc`** → *Plan YAML todo sync*.
+**Do not mark implementation done** until the **close sequence** is complete (see **`plan-completion-gate.mdc`** → *Blocking close gate*): (1) **Agent rule dispatch** — list triggered **`*.mdc`** rules Read or N/A, (2) senior final code review on the diff and affected workflows finds no unfixed gaps, and (3) structured chat self-review is delivered (**Why it works**, **Edge cases**, **Convention check**). This applies to **all non-trivial code changes**, not only plan-driven work. **When implementing a plan:** also sync plan YAML todos (`status: completed` for every finished step—status-only plan edits are allowed even when plan prose must not change) and complete **`post-implementation-review`**.
 
-### Recommended Cursor User Rule (optional, highest signal)
+### Recommended Cursor User Rule (paste first in Settings → Rules → User Rules)
 
-Paste into **Cursor Settings → Rules → User Rules**:
-
-> Every implementation plan must follow plan-creation-contract.mdc and docs/plans/PLAN_TEMPLATE.md, including the post-implementation-review todo and the Final code review (senior pass on diff + workflow) + Post-implementation review sections. Sync each completed plan todo to status: completed in the plan YAML as you go. Do not mark done until plan YAML todos are synced and both close-sequence steps in plan-completion-gate.mdc are complete.
+> BLOCKING CLOSE GATE (every code change, not only plans): Before any final message that says the work is done/fixed/ready/complete, include in order: (1) ## Final code review (senior engineer pass) — senior diff + workflow review, fix gaps; (2) ## Post-implementation review with ### Why it works, ### Edge cases (≥3), ### Convention check. Forbidden without both: marking todos completed; "done"/"complete"/"ready to ship". Plan work: also sync plan YAML todos per plan-completion-gate.mdc. If I reply "Close gate incomplete", redo the full sequence. Exceptions: answer-only; typo/comment-only with no behavior change.
 
 ---
 

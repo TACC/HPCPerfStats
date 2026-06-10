@@ -1,10 +1,12 @@
 ---
 description: Enforce correct Django migration numbering and dependencies
 globs: **/migrations/*.py
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Django Migration Numbering
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 - Before creating a new migration file, inspect existing migration filenames in that app and find the highest numeric prefix.
 - Name the new migration with the next integer prefix (zero-padded to 4 digits), never by guessing.

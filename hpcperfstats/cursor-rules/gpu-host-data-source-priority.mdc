@@ -1,9 +1,11 @@
 ---
 description: Keep GPU job-detail metrics aligned with monitor host_data source precedence
-alwaysApply: true
+alwaysApply: false
 ---
 
 # GPU host_data source priority
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 GPU-derived job-detail fields (including `gpu_count` and utilization summaries) must follow monitor-emitted `host_data.type` contracts and a deterministic source precedence.
 

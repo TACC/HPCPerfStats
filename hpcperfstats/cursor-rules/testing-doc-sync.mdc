@@ -1,9 +1,11 @@
 ---
 description: Keep docs/TESTING.md synced with testing changes
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Testing Documentation Sync
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 When test behavior, test scope, or test execution workflow changes, update
 `HPCPerfStats/docs/TESTING.md` in the same task.

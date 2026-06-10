@@ -1,9 +1,11 @@
 ---
 description: Keep pipeline endpoint Playwright matrix synced with Django routes
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Pipeline Endpoint Matrix Drift Guard
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 When changing Django URL routes, API endpoint behavior, or route-level auth/status
 contracts used by pipeline endpoint smoke tests, update:

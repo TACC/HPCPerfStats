@@ -1,11 +1,14 @@
 ---
-description: Hard gate — every plan uses PLAN_TEMPLATE.md; no task close without senior final code review and post-implementation-review
-alwaysApply: true
+description: Hard gate — PLAN_TEMPLATE for plans; close sequence (senior review + self-review) for every non-trivial code change
+alwaysApply: false
+globs: docs/plans/**
 ---
 
 # Plan Template And Close Enforcement
 
-Agents must not treat plan structure or post-implementation review as optional under time pressure. This rule is the **short enforcement reminder**; detail lives in **`plan-creation-contract.mdc`**, **`plan-completion-gate.mdc`**, and **`docs/plans/PLAN_TEMPLATE.md`**.
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+Agents must not treat plan structure or the **close sequence** as optional under time pressure—**including bugfixes and hotfixes with no plan file**. This rule is the **short enforcement reminder**; detail lives in **`plan-creation-contract.mdc`**, **`plan-completion-gate.mdc`**, **`implementation-review-workflow.mdc`**, and **`docs/plans/PLAN_TEMPLATE.md`**.
 
 ## Every implementation plan must include
 
@@ -37,22 +40,25 @@ Unless they explicitly request a **narrow exception** (answer-only, trivial typo
 - “Implement this plan” / attached plan file / Cursor Plan todos
 - “Plan mode” output for non-trivial implementation work
 
-## When implementing or closing
+## When implementing or closing (all code changes)
 
-**During implementation:** per **`plan-completion-gate.mdc`** → *Plan YAML todo sync*, update each finished plan todo to `status: completed` in the plan frontmatter (status-only edits allowed even when plan prose must not change). Use the **same todo ids** as the plan YAML in `TodoWrite`.
+Per **`plan-completion-gate.mdc`** → *Blocking close gate*, every **non-trivial code change** must end with three required chat sections (**Agent rule dispatch**, **Final code review (senior engineer pass)**, **Post-implementation review**) in the **same final turn**—not only plan-driven work.
 
-Per **`plan-completion-gate.mdc`** and **`implementation-review-workflow.mdc`**, run the **close sequence** in order in the **same final turn** that reports implementation done:
+**During plan implementation:** per **`plan-completion-gate.mdc`** → *Plan YAML todo sync*, update each finished plan todo to `status: completed` in the plan frontmatter (status-only edits allowed even when plan prose must not change). Use the **same todo ids** as the plan YAML in `TodoWrite`.
 
-1. **Final code review (senior engineer pass)** — review the full diff and every workflow the change touches; fix anything a senior reviewer would block on merge; re-run relevant tests.
-2. **Structured chat self-review** — after step 1 is clean, write **Why it works**, **Edge cases** (≥3 realistic failure modes), and **Convention check** (tests, triggered rules, layer wiring, **`test_runs/`** logging; confirm senior pass had no unfixed gaps).
+**Close sequence order:**
 
-**Do not mark the task, plan, or todos done** until plan YAML todos are synced, **`post-implementation-review`** is complete (both close steps), and no plan todo is wrongly left `pending`. If step 2 surfaces a new gap, return to step 1 before close.
+1. **Agent rule dispatch** — list triggered **`*.mdc`** rules Read (or **N/A** with reason); see **`agent-discipline-core.mdc`** task router.
+2. **Final code review (senior engineer pass)** — review the full diff and every workflow the change touches; fix anything a senior reviewer would block on merge; re-run relevant tests.
+3. **Structured chat self-review** — after step 2 is clean, write **Why it works**, **Edge cases** (≥3 realistic failure modes), and **Convention check** (tests, triggered rules, layer wiring, **`test_runs/`** logging; confirm senior pass had no unfixed gaps).
 
-## Recommended Cursor User Rule (paste in Settings → Rules)
+**Do not mark the task, plan, or todos done** until all close steps are complete (and, when a plan is active, plan YAML todos are synced and **`post-implementation-review`** is complete). If step 3 surfaces a new gap, return to step 2 before close.
 
-For highest signal across sessions, the user may also add this **User Rule**:
+## Recommended Cursor User Rule (paste in Settings → Rules → User Rules)
 
-> Every implementation plan must follow plan-creation-contract.mdc and docs/plans/PLAN_TEMPLATE.md, including the post-implementation-review todo and the Final code review (senior pass on diff + workflow) + Post-implementation review sections. Sync each completed plan todo to status: completed in the plan YAML as you go. Do not mark done until plan YAML todos are synced and both close-sequence steps in plan-completion-gate.mdc are complete.
+Paste as the **first** user rule for highest signal:
+
+> Follow `agent-discipline-core.mdc` pre-close checklist every code change. BLOCKING CLOSE GATE: before "done/fixed/complete", include (1) ## Agent rule dispatch — list Read triggered `hpcperfstats/cursor-rules/*.mdc` files or N/A, (2) ## Final code review (senior engineer pass), (3) ## Post-implementation review (Why it works, Edge cases ≥3, Convention check). Read triggered rules before editing matching paths. If I reply "Close gate incomplete" or "Rule not read: <name>", redo without argument.
 
 ## Overlap
 

@@ -1,9 +1,11 @@
 ---
 description: Keep researcher job-detail documentation synchronized with metrics/plots/tabs and include explicit user value rationale for every data surface
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Researcher Job Detail Documentation Sync
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 When job-detail data shown to users changes, update:
 `HPCPerfStats/docs/using-the-website-as-a-researcher.md`

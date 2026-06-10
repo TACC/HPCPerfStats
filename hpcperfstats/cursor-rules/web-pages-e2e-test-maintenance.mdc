@@ -1,9 +1,12 @@
 ---
 description: Keep web pages end-to-end coverage current
-alwaysApply: true
+alwaysApply: false
+globs: hpcperfstats/site/**/*
 ---
 
 # Web Pages E2E Test Maintenance
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 When changing any web-facing page, route, or rendered HTML/SPA behavior, update
 both:

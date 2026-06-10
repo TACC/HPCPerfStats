@@ -1,9 +1,11 @@
 ---
 description: No third-party asset CDNs in production; CDNs allowed only in tests
-alwaysApply: true
+alwaysApply: false
 ---
 
 # No CDN For Production Assets
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 ## Policy
 

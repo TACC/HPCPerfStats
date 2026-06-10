@@ -1,9 +1,11 @@
 ---
 description: Keep local compose DB lifecycle ready for web tests
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Local Compose DB Lifecycle For Web Tests
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 When changing compose, config, startup, or migration behavior that affects local
 web/DB availability, keep local runtime and data lifecycle consistent for UI tests.

@@ -1,9 +1,11 @@
 ---
 description: How job-level Bokeh plots are cached (Redis + DB artifacts, metrics prewarm, invalidation)
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Job Plot Artifacts And Caching
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 ## User-facing contract
 

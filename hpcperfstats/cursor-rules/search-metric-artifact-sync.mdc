@@ -1,9 +1,11 @@
 ---
 description: Keep Extended Search aligned with metrics, artifacts, and database-backed search contracts
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Search, Metrics, Artifacts, And Database Sync
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 When changing any job search parameter, derived metric, prewarmed artifact/table, or database-backed filter that users can search on, update the full Extended Search contract in the same task.
 

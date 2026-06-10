@@ -1,9 +1,11 @@
 ---
 description: New update_metrics-derived data types must gate the starting job candidate list
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Update Metrics Job Listing And New Data Types
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 ## When this applies
 

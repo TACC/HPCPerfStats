@@ -1,9 +1,11 @@
 ---
 description: Checklist for correctness and completeness changes that affect runtime logic
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Logic Change Checklist
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 Use this checklist for every correctness/completeness change that affects runtime logic.
 

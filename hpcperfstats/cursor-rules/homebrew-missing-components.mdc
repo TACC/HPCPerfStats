@@ -1,9 +1,11 @@
 ---
 description: Install missing components with Homebrew
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Homebrew Installation Guidance
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 - If required system packages/tools are missing, install them using Homebrew.
 - Always invoke Homebrew commands as: `arch -arm64 brew <args>`

@@ -1,9 +1,11 @@
 ---
 description: Canonical testing pyramid, patterns, and pre-merge verification for HPCPerfStats
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Testing Best Practices
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 Canonical testing guidance for backend (pytest), frontend (Vitest/RTL), and E2E (Playwright/compose). Complements `test-first-discipline.mdc`, `every-error-regression-test.mdc`, and layer-specific rules below.
 

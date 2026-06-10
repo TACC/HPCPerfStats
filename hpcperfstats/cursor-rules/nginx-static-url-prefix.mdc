@@ -1,9 +1,12 @@
 ---
 description: Production /static/ is served only by nginx; Django must not serve STATIC_URL
-alwaysApply: true
+alwaysApply: false
+globs: services-conf/nginx*
 ---
 
 # Nginx-Only `/static/` URL Prefix
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 ## Production contract
 

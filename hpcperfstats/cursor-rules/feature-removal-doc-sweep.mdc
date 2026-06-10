@@ -1,9 +1,11 @@
 ---
 description: Removing user-visible features requires doc and artifact sweep in the same task
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Feature Removal Documentation Sweep
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 When **removing** a plot module, API field, SPA tab, or analysis surface that users or operators could discover in docs, sweep related prose in the same task.
 

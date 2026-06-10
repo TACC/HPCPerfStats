@@ -1,9 +1,12 @@
 ---
 description: Web-facing changes must pass full web E2E workflow before completion
-alwaysApply: true
+alwaysApply: false
+globs: hpcperfstats/site/frontend/**/*
 ---
 
 # Web Pages Full E2E Completion Gate
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 ## Trigger
 

@@ -1,19 +1,35 @@
 ---
-description: Agent must not close implementation tasks without final code review and structured post-code self-review in chat
+description: Hard gate — no task close without senior final code review and structured post-code self-review (all non-trivial code changes, not only plans)
 alwaysApply: true
 ---
 
 # Plan Completion Gate
 
-When the user asks to **implement a plan** (attached plan file, `docs/plans/`, or Cursor Plan todos), the agent must treat **post-implementation review** as a deliverable—not optional prose after tests pass.
+Part of the always-on set in **`agent-discipline-core.mdc`** (pre-close checklist item 1–2). Applies to **every non-trivial code change**—bugfixes, hotfixes, refactors, and plan-driven work—not only when the user asks to **implement a plan**. Treat the **close sequence** as a deliverable, not optional prose after tests pass.
 
 **Hard gate:** **Do not mark the task, plan, or any todo done** until:
 
-1. **Plan YAML todos synced** — every plan frontmatter todo that is finished shows `status: completed` (see **Plan YAML todo sync** below),
-2. **Final code review** (senior-engineer pass on the diff and affected workflows) finds no unfixed gaps, and
-3. The **`post-implementation-review`** todo is complete and the three chat sections in step 2 below are written.
+1. **Final code review** (senior-engineer pass on the diff and affected workflows) finds no unfixed gaps,
+2. **Structured chat self-review** (step 2 below) is written in the **same final turn**, and
+3. **When implementing a plan:** plan YAML todos synced (`status: completed` for every finished step; see **Plan YAML todo sync** below) and the **`post-implementation-review`** todo is complete.
 
 See **`plan-template-enforcement.mdc`** for request phrasing and PLAN_TEMPLATE alignment.
+
+## Blocking close gate (required chat headings)
+
+Before any final message that reports work **done**, **fixed**, **ready**, or **complete**, the agent **must** include these sections **in order**:
+
+1. **`## Agent rule dispatch`** — Pre-close checklist **#5** in **`agent-discipline-core.mdc`**: list every triggered **`hpcperfstats/cursor-rules/*.mdc`** file you **Read** (tool) **before the first edit** in the turn, or **`N/A`** only when edited paths did not trigger domain rules. The Cursor **`stop`** hook auto-detects triggered rules from edited paths (via **`hook_task_router.py`**), rejects invalid **`N/A`**, requires dispatch listing, verifies **Read** tool calls (always-on rules exempt), and requires **≥3** edge-case bullets.
+2. **`## Final code review (senior engineer pass)`** — Senior Software Engineer review of the **full diff** and **every workflow touched**; checklist-style findings; **fix gaps before close**.
+3. **`## Post-implementation review`** with subsections **`### Why it works`**, **`### Edge cases`** (≥3 realistic failure modes), **`### Convention check`**.
+
+**Forbidden without all sections above:** marking todos completed; phrases like “done”, “complete”, “ready to ship”, “fix is in tree”, “task is finished”.
+
+**User enforcement:** if the user replies **`Close gate incomplete`**, redo the full close sequence without argument.
+
+**Cursor hook:** project `stop` hook `.cursor/hooks/check-close-gate.py` auto-submits the same follow-up when a code-changing turn ends without required headings (`loop_limit: 3`). See `.cursor/hooks/README.md`.
+
+**Narrow exceptions:** answer-only questions with no code; trivial typo/comment-only edits with no behavioral contract.
 
 ## Plan YAML todo sync (during implementation)
 
@@ -30,7 +46,11 @@ Committed design docs under **`docs/plans/`** marked read-only by the user: same
 
 ## Close sequence (mandatory order)
 
-Run both steps in the **same final turn** that reports implementation done, **before** marking todos complete.
+Same content as **Blocking close gate** above, expanded. Run all steps in the **same final turn** that reports implementation done, **before** marking todos complete.
+
+### 0. Agent rule dispatch
+
+Per **`agent-discipline-core.mdc`** task router: for each triggered domain rule, confirm you **Read** it before editing. In chat, under **`## Agent rule dispatch`**, list basenames (for example `sync-timedb-archive-janitor-contract.mdc`) or state **`N/A`** when the diff touched no router trigger paths. The Cursor **`stop`** hook rejects an empty dispatch section and emits **`Rule not read: <name>`** when a listed domain rule has no **Read** tool call on that `.mdc` in the transcript for this turn.
 
 ### 1. Final code review (senior engineer pass)
 

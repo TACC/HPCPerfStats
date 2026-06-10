@@ -1,8 +1,10 @@
 ---
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Exhaustive Error-Path Analysis Before Fixes
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 When investigating a specific error signature (traceback, assertion, log message, incorrect output), do not patch only the first matching location.
 

@@ -1,9 +1,12 @@
 ---
 description: Plan before coding, ask when context is missing, and self-review every implementation
-alwaysApply: true
+alwaysApply: false
+globs: hpcperfstats/cursor-rules/**/*.mdc
 ---
 
 # Implementation Review Workflow
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 Act as a senior architect and meticulous reviewer. Do not shortcut investigation or invent missing context.
 

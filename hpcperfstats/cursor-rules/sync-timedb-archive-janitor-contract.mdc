@@ -1,9 +1,12 @@
 ---
 description: Archive janitor cold path for sync_timedb (continuous ingest, time-sliced micro-batches)
-alwaysApply: true
+alwaysApply: false
+globs: hpcperfstats/dbload/sync_timedb*.py
 ---
 
 # sync_timedb archive janitor contract
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 `sync_timedb` separates **hot path** (supervisor: discover → ingest → dispatch append) from **cold path** (`ArchiveJanitor` thread: seal → validate → raw delete → `.tar` drop via day-debt micro-batches). Continuous ingest must not depend on idle windows or blocking supervisor maintenance.
 

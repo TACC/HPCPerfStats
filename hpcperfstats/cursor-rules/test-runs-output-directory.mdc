@@ -1,9 +1,11 @@
 ---
 description: Local test run logs and runtime artifacts go under test_runs/ (gitignored)
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Test Runs Output Directory
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 Ephemeral **test execution artifacts** and **runtime verification notes** belong under **`HPCPerfStats/test_runs/`** (git checkout root with `pyproject.toml`). Do **not** add new run logs or local-only runtime reports under **`docs/`**.
 

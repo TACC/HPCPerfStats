@@ -1,9 +1,11 @@
 ---
 description: Refactor and deduplication priorities (less code, simplicity, branches, merge surface)
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Refactor And Deduplication Priorities
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 ## Mandatory deduplication threshold
 

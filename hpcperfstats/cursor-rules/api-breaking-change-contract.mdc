@@ -1,9 +1,11 @@
 ---
 description: API HTTP/status and route contract changes require client and doc sync
-alwaysApply: true
+alwaysApply: false
 ---
 
 # API Breaking-Change Contract
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 When changing **machine API** behavior visible to scripts, API keys, or external tools, treat it as a breaking contract change—not an SPA-only tweak.
 

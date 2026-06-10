@@ -1,9 +1,11 @@
 ---
 description: Verify XALT facts against upstream sources
-alwaysApply: true
+alwaysApply: false
 ---
 
 # XALT Correctness Checks
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 - Whenever the assistant deals with `XALT` (setup, configuration, environment variables, linker wrapping, tracking behavior, CLI/config keys, or troubleshooting), verify correctness against:
   - https://github.com/xalt/
   - https://xalt.readthedocs.org/

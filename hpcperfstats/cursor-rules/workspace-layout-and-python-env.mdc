@@ -37,6 +37,7 @@ Do **not** treat `HPCPerfStats/HPCPerfStats/` alone as “project root” for `.
 - **Authoritative rules directory:** `HPCPerfStats/hpcperfstats/cursor-rules/*.mdc` (inside the git repo).
 - Workspace **`.cursor/rules`** should point at that directory (symlink), so Cursor loads the same files.
 - **Do not** maintain a second copy under `HPCPerfStats/.cursor/rules/` — that bypasses the symlink and splits the rule set.
+- **New or changed domain rules:** register in **both** `agent-discipline-core.mdc` (task router) and `.cursor/hooks/hook_task_router.py` in the same task — see **`agent-discipline-core.mdc`** → *Creating or changing domain rules*.
 
 ## Host Python and pip (agents)
 

@@ -1,13 +1,16 @@
 ---
 description: Mandatory structure, testing, and completion bar for every implementation plan
-alwaysApply: true
+alwaysApply: false
+globs: docs/plans/**
 ---
 
 # Plan Creation Contract
 
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
 Applies to **every plan**: pre-code chat plans, **`docs/plans/`** design docs, monitor **Consumer follow-up plan** sections, and Cursor Plan mode output.
 
-**Authoring entrypoint:** read and match **`docs/plans/PLAN_TEMPLATE.md`**. **`plan-template-enforcement.mdc`** restates the non-skippable close gate (senior final code review + structured chat self-review + **`post-implementation-review`** todo).
+**Authoring entrypoint:** read and match **`docs/plans/PLAN_TEMPLATE.md`**. **`plan-template-enforcement.mdc`** and **`plan-completion-gate.mdc`** restate the non-skippable **close sequence** (senior final code review + structured chat self-review) for **all non-trivial code changes**; plan YAML + **`post-implementation-review`** todo when implementing a plan.
 
 ## Grounding (no guessing)
 
@@ -28,11 +31,12 @@ Applies to **every plan**: pre-code chat plans, **`docs/plans/`** design docs, m
 3. **Testing** — every behavior change must include at least one **regression test and/or unit test** at the narrowest layer that proves the contract. Cite existing test modules or name new ones. For fixes, follow **`every-error-regression-test.mdc`** and **`test-first-discipline.mdc`**.
 4. **Implementation** — what will change (files/layers). Omit for answer-only or doc-only work with no logic change.
 5. **Cursor rules** — enshrine modalities, best practices, contracts, and failure modes that should guide future work:
-   - When this plan introduces or clarifies a **recurring** pattern (layer wiring, config contract, test workflow, safety invariant, domain modality), **add or update** a focused **`.mdc`** rule in **`hpcperfstats/cursor-rules/`** (authoritative; symlinked from **`.cursor/rules/`**). Monitor-only patterns belong in **`monitor/cursor-rules/`** when they do not apply repo-wide.
-   - **Prefer updating** an existing rule over creating a duplicate; cross-link related rules in an **Overlap** section.
-   - Keep rules narrow and actionable; base content on **verified facts** from this plan, not assumptions.
-   - If nothing merits a new or updated rule, state **no rule change needed** with one sentence of rationale.
-   - If rule scope or wording is unclear, **ask the user** before writing the **`.mdc`** text.
+ - When this plan introduces or clarifies a **recurring** pattern (layer wiring, config contract, test workflow, safety invariant, domain modality), **add or update** a focused **`.mdc`** rule in **`hpcperfstats/cursor-rules/`** (authoritative; symlinked from **`.cursor/rules/`**). Monitor-only patterns belong in **`monitor/cursor-rules/`** when they do not apply repo-wide.
+ - **Every new or re-scoped domain rule** must be registered in the **task router** in **`agent-discipline-core.mdc`** in the **same task** (`agent-discipline-core.mdc` → *Creating or changing domain rules*). Default **`alwaysApply: false`**; add **`globs:`** when possible.
+ - **Prefer updating** an existing rule over creating a duplicate; cross-link related rules in an **Overlap** section.
+ - Keep rules narrow and actionable; base content on **verified facts** from this plan, not assumptions.
+ - If nothing merits a new or updated rule, state **no rule change needed** with one sentence of rationale.
+ - If rule scope or wording is unclear, **ask the user** before writing the **`.mdc`** text.
 6. **Final code review (mandatory last step)** — at implementation close, act as a **Senior Software Engineer**. Review the **full diff** and every **workflow the change touches** (callers, tests, compose runners, config and docs sync, cross-layer wiring—not only files edited). Look for:
    - correctness and behavior regressions
    - performance regressions

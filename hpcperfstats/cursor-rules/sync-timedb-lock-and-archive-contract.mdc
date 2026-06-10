@@ -1,9 +1,12 @@
 ---
 description: Keep sync_timedb lock lifecycle and archival recovery behavior consistent
-alwaysApply: true
+alwaysApply: false
+globs: hpcperfstats/dbload/sync_timedb*.py
 ---
 
 # sync_timedb lock and archive contract
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 When changing ingest/archive paths under `hpcperfstats/dbload/sync_timedb.py`, `sync_timedb_archive_helpers.py`, `sync_timedb_parsing.py`, and shared lock helpers (`hpcperfstats/file_locking.py`), preserve these behavior contracts.
 

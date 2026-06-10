@@ -1,9 +1,12 @@
 ---
 description: Single-flight canonical startup archive snapshot for sync_timedb prefights
-alwaysApply: true
+alwaysApply: false
+globs: hpcperfstats/dbload/sync_timedb*.py
 ---
 
 # sync_timedb canonical startup archive scan
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 At supervisor boot, **one** `collect_stats_files_in_range` (+ one head-metadata pass via `build_archive_maintenance_snapshot`) must be shared by janitor maintenance and all startup prefights. Do not let each subsystem walk the full raw tree independently.
 

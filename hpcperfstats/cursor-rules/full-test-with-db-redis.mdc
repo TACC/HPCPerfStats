@@ -1,9 +1,12 @@
 ---
 description: Run full tests with Docker db and redis
-alwaysApply: true
+alwaysApply: false
+globs: tests/run_*_workflow.sh
 ---
 
 # Full Test Workflow (DB + Redis)
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 When asked to run "full tests" for this workspace, use the Docker Compose networked workflow so the `db` and `redis` hostnames resolve correctly.
 

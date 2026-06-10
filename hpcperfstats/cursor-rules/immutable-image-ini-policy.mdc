@@ -1,9 +1,11 @@
 ---
 description: Enforce immutable-image policy for hpcperfstats.ini (no runtime bind mounts)
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Immutable Image INI Policy
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 This repository uses an immutable-image deployment policy for `hpcperfstats.ini`.
 

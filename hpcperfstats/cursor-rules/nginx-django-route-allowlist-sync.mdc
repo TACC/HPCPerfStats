@@ -1,9 +1,12 @@
 ---
 description: Keep nginx Gunicorn allowlist synced with Django root URLconf (proxy-only paths)
-alwaysApply: true
+alwaysApply: false
+globs: services-conf/nginx*
 ---
 
 # Nginx Django Route Allowlist Sync
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 Production **`proxy`** nginx answers **`/static/`**, **`/media/`**, SPA shells under **`/machine/`** and **`/pub/`**, and **`/favicon.ico`** without involving Gunicorn. Every **other** request either matches an explicit **Gunicorn allowlist** in **`services-conf/nginx-static-files.conf`** or nginx returns **404** immediately.
 

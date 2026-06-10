@@ -1,9 +1,11 @@
 ---
 description: Prefer minimal operator edits and avoid docker-compose.yaml churn in install docs
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Minimal Compose Install Footprint
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 ## Goal
 

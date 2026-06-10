@@ -1,10 +1,12 @@
 ---
 description: Concurrency, metrics, and service-config safety checks
 globs: **/*.{py,yaml,yml,conf}
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Runtime Resource And Metrics Safety
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 - For concurrency/resource failures (threads, worker pools, BLAS/OpenMP), centralize tunables in configuration and apply them consistently across runtime entry points.
 - For metrics and plotting logic, use deterministic, database-backed aggregation and invalidation checks; do not rely on ad-hoc in-memory recomputation for persisted/user-visible results.

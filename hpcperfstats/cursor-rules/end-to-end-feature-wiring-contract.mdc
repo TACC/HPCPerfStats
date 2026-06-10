@@ -1,9 +1,11 @@
 ---
 description: When adding or changing data/features, wire all affected layers and tests together
-alwaysApply: true
+alwaysApply: false
 ---
 
 # End-To-End Feature Wiring Contract
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 For any new metric, counter, summary field, route behavior, or user-visible plot/table value, treat implementation as a multi-layer contract change, not a single-file patch.
 

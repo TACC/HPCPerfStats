@@ -1,9 +1,11 @@
 ---
 description: Keep README installation/operator setup aligned with deploy and compose changes
-alwaysApply: true
+alwaysApply: false
 ---
 
 # README Installation Instructions Sync
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 Operator-facing setup lives primarily in **`HPCPerfStats/README.md`** under **Installation** and adjacent deployment sections (Compose stack, nginx, data volumes, cluster syslog, `hpcperfstats.ini`, supervisor/rsync). When a change would leave those instructions wrong, incomplete, or unsafe to follow on a fresh deploy, update **`README.md` in the same task**—**before** considering the change complete (same PR / same agent task). Do not land code or compose edits that alter the setup story without updating the README.
 

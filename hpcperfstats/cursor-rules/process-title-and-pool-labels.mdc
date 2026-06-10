@@ -1,9 +1,11 @@
 ---
 description: Process and thread titles for supervisor daemons and pool workers; never overwrite gunicorn titles
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Process Title And Pool Labels
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 Supervisor/batch daemons (`sync_timedb`, `update_metrics`, `listend`, etc.) must label **main**, **process-pool worker**, and **helper thread** roles in `top`/`ps` without clobbering **gunicorn** worker titles.
 

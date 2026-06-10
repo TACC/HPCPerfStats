@@ -1,9 +1,12 @@
 ---
 description: Require DB head-timestamp ingest check before sync_timedb tar append or raw file removal
-alwaysApply: true
+alwaysApply: false
+globs: hpcperfstats/dbload/sync_timedb*.py
 ---
 
 # sync_timedb DB-before-archive contract
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 When changing ingest, archive, or raw-stats removal under `hpcperfstats/dbload/sync_timedb.py`, `sync_timedb_archive_helpers.py`, or `sync_timedb_ingest_readiness.py`, preserve the DB readiness gate.
 

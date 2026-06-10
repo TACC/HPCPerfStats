@@ -1,9 +1,11 @@
 ---
 description: Implementation defaults for traceback fixes and runtime/performance changes
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Bugfix And Perf Change Playbook
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 When the task is a traceback fix, timeout fix, memory/runtime reduction, or operational reliability issue, follow this implementation playbook.
 

@@ -1,9 +1,11 @@
 ---
 description: Enforce test-first discipline for all code changes
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Test-First Discipline
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 Treat every non-trivial change as test-first work.
 
