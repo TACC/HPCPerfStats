@@ -1,26 +1,48 @@
 ---
-description: Agent must not close implementation tasks without structured post-code self-review in chat
+description: Agent must not close implementation tasks without final code review and structured post-code self-review in chat
 alwaysApply: true
 ---
 
 # Plan Completion Gate
 
-When the user asks to **implement a plan** (attached plan file, `docs/plans/`, or Cursor Plan todos), the agent must treat **post-implementation self-review** as a deliverable—not optional prose after tests pass.
+When the user asks to **implement a plan** (attached plan file, `docs/plans/`, or Cursor Plan todos), the agent must treat **post-implementation review** as a deliverable—not optional prose after tests pass.
 
-**Hard gate:** **Do not mark the task, plan, or any todo done** until the **`post-implementation-review`** todo is complete and the three chat sections below are written. See **`plan-template-enforcement.mdc`** for request phrasing and PLAN_TEMPLATE alignment.
+**Hard gate:** **Do not mark the task, plan, or any todo done** until:
 
-## Before marking the task or todos complete
+1. **Final code review** (senior-engineer pass on the diff and affected workflows) finds no unfixed gaps, and
+2. The **`post-implementation-review`** todo is complete and the three chat sections in step 2 below are written.
 
-In the **same final turn** that reports implementation done, include these three headings (per **`implementation-review-workflow.mdc`**):
+See **`plan-template-enforcement.mdc`** for request phrasing and PLAN_TEMPLATE alignment.
+
+## Close sequence (mandatory order)
+
+Run both steps in the **same final turn** that reports implementation done, **before** marking todos complete.
+
+### 1. Final code review (senior engineer pass)
+
+Act as a **Senior Software Engineer**. Review the **full diff** and every **workflow the change touches**—callers, tests, compose runners, config and docs sync, cross-layer wiring—not only the files edited.
+
+Look for:
+
+- correctness and behavior regressions
+- performance regressions
+- missing components (tests, docs, registry or drift guards, API client or tools updates, nginx or route sync when applicable)
+- edge cases not covered by tests
+- anything else a senior reviewer would block on merge
+
+**Fix anything found** and re-run relevant tests. Do not proceed to step 2 or mark todos complete while open review items remain.
+
+Aligns with **`plan-creation-contract.mdc`** step 6 and **`docs/plans/PLAN_TEMPLATE.md`** → *Final code review*.
+
+### 2. Structured chat self-review
+
+After the senior pass is clean, write these three headings in chat (per **`implementation-review-workflow.mdc`**):
 
 1. **Why it works** — one short paragraph tying the diff to the plan and upstream contracts (API, ingest, config, cache, tests).
 2. **Edge cases** — at least **three** realistic failure modes still possible (concurrency, stale state, partial ingest, auth, missing fixtures, operator misconfig).
-3. **Convention check** — naming, imports, test placement, docs/`test_runs/` logging, and every **triggered** workspace rule (cite rule names when non-obvious).
+3. **Convention check** — naming, imports, test placement, docs/`test_runs/` logging, every **triggered** workspace rule (cite rule names when non-obvious), and confirmation that the senior review pass found no unfixed gaps.
 
-In the self-review look for new edge cases and performance regressions.
-
-If self-review finds a gap, **fix it before** marking todos complete or telling the user the task is done.
-
+If writing the chat sections surfaces a new gap, return to step 1, fix, re-test, then update the chat sections.
 
 ## Plan todos (mandatory last item)
 
@@ -28,11 +50,11 @@ Every implementation plan YAML must include a final todo:
 
 ```yaml
 - id: post-implementation-review
-  content: "Structured self-review in chat (why it works, edge cases, convention check); fix gaps before close"
+  content: "Final senior code review (diff + workflow) clean; structured self-review in chat (why it works, edge cases, convention check)"
   status: pending
 ```
 
-Do not mark this todo **completed** until the three sections above are written in chat (or the task is a narrow exception below).
+Do not mark this todo **completed** until **both** close-sequence steps above are done (or a narrow exception below applies).
 
 ## Runtime logic changes
 
@@ -51,6 +73,6 @@ When behavior changes, also run **`logic-change-checklist.mdc`** mentally and co
 ## Overlap
 
 - **`plan-template-enforcement.mdc`** — short always-on reminder: PLAN_TEMPLATE shape, request phrasing, no close before **`post-implementation-review`**.
-- **`plan-creation-contract.mdc`** — plan authoring structure and **`PLAN_TEMPLATE.md`**.
-- **`implementation-review-workflow.mdc`** — pre-code plan + post-code review content.
+- **`plan-creation-contract.mdc`** — plan authoring structure and **`PLAN_TEMPLATE.md`**; step 6 *Final code review* is implemented here as close-sequence step 1.
+- **`implementation-review-workflow.mdc`** — pre-code plan + post-code review content; close-sequence step 2 matches its three chat sections.
 - **`every-error-regression-test.mdc`** — fixes require a regression test before close.

@@ -25,9 +25,11 @@ Immediately after **`StartupRawRemovalPreflight.start_async_verify()`** and **`S
 | **Eligibility** | `.tar` on disk; `is_daily_tar_sealed_dirty`; closed raw grouped by daily tar via **filesystem scan only** (filename epoch / mtime — no parallel head-metadata read); `daily_tar_seal_calendar_eligible` |
 | **Skip** | Active append for that daily tar only; days with active/submitted **`AsyncDayCloseCoordinator`** work (`has_async_day_close_for_tar`); not full janitor disqualification |
 | **Action** | `atomic_seal_tar_to_zst` + `effective_keep_uncompressed_tar`; `invalidate_daily_archive_members_cache` on success |
-| **Resume** | Manifest `{archive_data_dir}/.sync_timedb_startup_tar_seal.json`; `phase=done` is set only when **no dirty** daily `.tar` remain. If discover finds zero eligible days but dirty tars still exist (skipped raw/append/grace), the pass **retries** on later slices and on restart |
+| **Resume** | Manifest `{archive_data_dir}/.sync_timedb_startup_tar_seal.json`; **`phase=done` means tar-seal scope is exhausted** (no actionable pending tars), **not** “no dirty `.tar` on disk”. Days blocked by closed raw / async day-close are recorded as manifest skips; janitor **`DAY_CLOSE`** clears raw later. Full rediscover when interval elapsed and live/coordinator remaining signature changes; **`interval <= 0`** disables periodic rediscover after initial discover (tests only — no **0.25s** poll loop after `phase=done`). |
+| **Completion log** | Use `blocked_skips`, `blocked_remaining_raw`, `blocked_async_day_close` — not `blocked_by_day_close` for all skip reasons. |
+| **Canonical scan** | Derive `remaining_by_tar` from **`StartupArchiveScanCoordinator`** snapshot when available (`sync-timedb-canonical-startup-archive-scan.mdc`); one full collect per pass, not a **0.25s** rescan loop. |
 
-INI tunables ( `[PIPELINE]` ): `sync_startup_tar_seal_budget_seconds` (default **300**), `sync_startup_tar_seal_days_per_slice` (default **1**).
+INI tunables ( `[PIPELINE]` ): `sync_startup_tar_seal_budget_seconds` (default **300**), `sync_startup_tar_seal_days_per_slice` (default **1**), `sync_startup_tar_seal_rediscover_interval_seconds` (default **600**), `sync_startup_snapshot_wait_seconds` (default **300**, min **120**).
 
 ## Forbidden patterns
 

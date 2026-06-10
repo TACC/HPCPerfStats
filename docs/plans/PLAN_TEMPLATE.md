@@ -20,13 +20,13 @@ Use any of these when you want the agent to follow this template and the close g
 
 The agent must read this file, include **Final code review** and **Post-implementation review** sections, and add the **`post-implementation-review`** todo last. See **`plan-template-enforcement.mdc`** and **`plan-completion-gate.mdc`**.
 
-**Do not mark implementation done** until the **`post-implementation-review`** todo is complete and the agent has delivered structured chat self-review (**Why it works**, **Edge cases**, **Convention check**).
+**Do not mark implementation done** until **`post-implementation-review`** is complete: (1) senior final code review on the diff and affected workflows finds no unfixed gaps, and (2) structured chat self-review is delivered (**Why it works**, **Edge cases**, **Convention check**).
 
 ### Recommended Cursor User Rule (optional, highest signal)
 
 Paste into **Cursor Settings → Rules → User Rules**:
 
-> Every implementation plan must follow plan-creation-contract.mdc and docs/plans/PLAN_TEMPLATE.md, including the post-implementation-review todo and the Final code review + Post-implementation review sections. Do not mark done until post-implementation-review is complete.
+> Every implementation plan must follow plan-creation-contract.mdc and docs/plans/PLAN_TEMPLATE.md, including the post-implementation-review todo and the Final code review (senior pass on diff + workflow) + Post-implementation review sections. Do not mark done until both close-sequence steps in plan-completion-gate.mdc are complete.
 
 ---
 
@@ -44,7 +44,7 @@ todos:
     status: pending
   # … one todo per major step …
   - id: post-implementation-review
-    content: "Structured self-review in chat (why it works, edge cases, convention check); fix gaps before close"
+    content: "Final senior code review (diff + workflow) clean; structured self-review in chat (why it works, edge cases, convention check)"
     status: pending
 isProject: false
 ---
@@ -164,31 +164,34 @@ State in the monitor summary: **consumer plan attached** or **no consumer change
 
 ## Final code review (mandatory before implementation close)
 
-Per `plan-creation-contract.mdc` step 6 — review for:
+Per `plan-creation-contract.mdc` step 6 and `plan-completion-gate.mdc` close-sequence **step 1** — act as a **Senior Software Engineer**. Review the **full diff** and every **workflow the change touches** (callers, tests, compose runners, config and docs sync, cross-layer wiring—not only files edited).
 
-- [ ] New edge cases not covered by tests
-- [ ] Correctness regressions
+- [ ] Correctness and behavior regressions
 - [ ] Performance regressions
-- [ ] Test gaps (wrong layer, missing compose tier, missing drift guard)
+- [ ] Missing components (tests, docs, registry or drift guards, API client or tools updates, nginx or route sync when applicable)
+- [ ] Edge cases not covered by tests
+- [ ] Anything else a senior reviewer would block on merge
 
-**Fix anything found** and re-run relevant tests. Work is **not complete** while open review items remain.
+**Fix anything found** and re-run relevant tests. Do not proceed to post-implementation chat self-review or mark todos complete while open review items remain.
 
 ## Post-implementation review (required before close)
 
-Per `plan-completion-gate.mdc` and `implementation-review-workflow.mdc`.
+Per `plan-completion-gate.mdc` close-sequence **step 2** and `implementation-review-workflow.mdc` — **after** final code review is clean.
 
 The implementing agent writes these **in chat** when closing the task (not only checkboxes here):
 
 - [ ] **Why it works** — one paragraph, contracts cited
 - [ ] **Edge cases** — ≥3 realistic failure modes named
-- [ ] **Convention check** — tests, triggered rules, layer wiring, `test_runs/` logging
+- [ ] **Convention check** — tests, triggered rules, layer wiring, `test_runs/` logging; senior review pass had no unfixed gaps
 
 Additional gates:
 
 - [ ] Regression tests for any fixed/discovered errors (`every-error-regression-test.mdc`)
 - [ ] Test run logged under `test_runs/` when tests executed (`test-runs-output-directory.mdc`)
 - [ ] Runtime logic: `logic-change-checklist.mdc` satisfied (if applicable)
-- [ ] `post-implementation-review` todo completed **last**
+- [ ] `post-implementation-review` todo completed **last** (both close-sequence steps done)
+
+If chat self-review surfaces a new gap, return to final code review, fix, re-test, then update the chat sections.
 
 ## Completion bar
 
@@ -196,8 +199,8 @@ Work described by this plan is **not complete** until:
 
 - Tests added or extended and **executed** (or blockers documented per `test-first-discipline.mdc`)
 - Cursor rules step done (rule added/updated, or explicit no-rule rationale)
-- Final code review done with no unfixed findings
-- Structured chat self-review delivered (`plan-completion-gate.mdc`)
+- **Final code review** (senior-engineer pass on diff and affected workflows) done with no unfixed findings
+- Structured chat self-review delivered (`plan-completion-gate.mdc` step 2)
 - Conclusions trace to **verified facts**
 
 ## Narrow exceptions

@@ -20,18 +20,26 @@ Narrow exceptions: one-line typo/format fixes, pure documentation edits with no 
 
 ## After writing code
 
-Immediately self-review every implementation in the same turn:
+In the **same final turn** that reports implementation done, run this close sequence **before** marking the task done (full detail in **`plan-completion-gate.mdc`** when implementing a plan; same spirit for all non-trivial implementation):
+
+### 1. Final code review (senior engineer pass)
+
+Act as a **Senior Software Engineer**. Review the **full diff** and every **workflow the change touches**—callers, tests, compose runners, config and docs sync, cross-layer wiring—not only the files edited. Look for regressions, performance issues, missing components, untested edge cases, and anything else you would block on merge. **Fix anything found** and re-run relevant tests. Do not proceed to step 2 while open review items remain.
+
+### 2. Structured self-review in chat
+
+After the senior pass is clean, write:
 
 1. **Why it works** — one short paragraph tying the change to the plan and the contracts it satisfies.
-2. **Edge cases** — name realistic failure modes the code may still miss (empty input, concurrency, stale cache, auth boundaries, missing fixtures, etc.).
-3. **Convention check** — confirm naming, imports, test placement, and layer wiring match this codebase and triggered workspace rules (for example `test-first-discipline.mdc`, `end-to-end-feature-wiring-contract.mdc`, framework-specific cursor rules).
+2. **Edge cases** — name realistic failure modes the code may still miss (empty input, concurrency, stale cache, auth boundaries, missing fixtures, etc.); at least **three** when closing a plan per **`plan-completion-gate.mdc`**.
+3. **Convention check** — confirm naming, imports, test placement, layer wiring, and triggered workspace rules (for example `test-first-discipline.mdc`, `end-to-end-feature-wiring-contract.mdc`, framework-specific cursor rules); confirm the senior review pass had no unfixed gaps.
 
-If self-review finds a gap, fix it before marking the task done.
+If step 2 surfaces a new gap, return to step 1, fix, re-test, then update the chat sections.
 
 ## Overlap
 
 - **`plan-template-enforcement.mdc`** — always-on reminder: use **`PLAN_TEMPLATE.md`**, no task close before **`post-implementation-review`**.
-- **`plan-completion-gate.mdc`** — when implementing a plan, the three post-code sections above must appear in the closing chat message; **`post-implementation-review`** todo must be last.
+- **`plan-completion-gate.mdc`** — when implementing a plan, close-sequence steps 1 and 2 above are mandatory; **`post-implementation-review`** todo must be last.
 - **`plan-creation-contract.mdc`** — mandatory plan structure (facts, best practices, tests, final code review as last step); applies to all plan output including chat and **`docs/plans/`**; template at **`docs/plans/PLAN_TEMPLATE.md`**.
 - **`logic-change-checklist.mdc`** — deeper contract/invariant/failure-mode checklist for runtime logic changes; use after the pre-code plan when behavior changes.
 - **`bugfix-and-perf-change-playbook.mdc`** — root-cause-first defaults for tracebacks and perf/reliability work.

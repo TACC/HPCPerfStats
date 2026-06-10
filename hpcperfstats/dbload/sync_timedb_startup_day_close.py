@@ -43,9 +43,12 @@ def _new_manifest() -> Dict[str, Any]:
       "started_at": time.time(),
       "completed_at": None,
       "submitted_count": 0,
+      "discover_slice_count": 0,
       "last_progress": "",
       "last_progress_at": None,
       "entries": {},
+      "pending_eligible": [],
+      "pending_retry": [],
   }
 
 
@@ -59,6 +62,9 @@ def _load_manifest(path: str) -> Dict[str, Any]:
     return _new_manifest()
   payload.setdefault("version", MANIFEST_VERSION)
   payload.setdefault("entries", {})
+  payload.setdefault("pending_eligible", [])
+  payload.setdefault("pending_retry", [])
+  payload.setdefault("discover_slice_count", 0)
   return payload
 
 
@@ -96,6 +102,8 @@ class StartupDayClosePreflight:
       get_disqualification_inputs: Callable[[], Dict[str, Any]],
       get_unmapped_closed_raw_tars: Callable[[], Set[str]],
       day_phases: Callable[[], Dict[str, Any]],
+      get_startup_snapshot: Optional[Callable[[], Any]] = None,
+      get_accrual_remaining_raw_by_gz: Optional[Callable[[], Optional[Dict]]] = None,
       process_title: str = "sync_timedb.py",
   ):
     self.archive_data_dir = archive_data_dir
@@ -107,6 +115,8 @@ class StartupDayClosePreflight:
     self.get_disqualification_inputs = get_disqualification_inputs
     self.get_unmapped_closed_raw_tars = get_unmapped_closed_raw_tars
     self.day_phases = day_phases
+    self.get_startup_snapshot = get_startup_snapshot
+    self.get_accrual_remaining_raw_by_gz = get_accrual_remaining_raw_by_gz
     self.process_title = process_title
     self._manifest_path = manifest_path(archive_data_dir)
     self._checkpoint_path = os.path.join(
@@ -185,26 +195,53 @@ class StartupDayClosePreflight:
         self._manifest["last_progress_detail"] = detail
       _save_manifest(self._manifest_path, self._manifest)
 
-  def _discover_loop(self) -> None:
-    set_daemon_thread_title(
-        "",
-        script_name=self.process_title,
-        role="startup-day-close-preflight",
+  def _resolve_snapshot(self):
+    getter = self.get_startup_snapshot
+    if getter is None:
+      return None
+    try:
+      return getter()
+    except Exception:
+      return None
+
+  def _resolve_remaining_raw_by_gz(self, snapshot, slice_index: int):
+    if slice_index >= 1:
+      accrual_getter = self.get_accrual_remaining_raw_by_gz
+      if accrual_getter is not None:
+        try:
+          accrual_remaining = accrual_getter()
+        except Exception:
+          accrual_remaining = None
+        if accrual_remaining is not None:
+          return dict(accrual_remaining)
+    return build_remaining_raw_stats_by_daily_gz(
+        self.archive_data_dir,
+        self.host_name_ext,
+        self.tgz_archive_dir,
+        maintenance_snapshot=snapshot,
     )
+
+  def _discover_slice(self) -> bool:
+    """Run one discover+submit slice. Return False when discover loop should stop."""
     budget_s = cfg.get_sync_startup_day_close_budget_seconds()
     days_per_slice = cfg.get_sync_startup_day_close_days_per_slice()
-    slice_t0 = time.time()
-    self._touch_manifest("discover_begin")
+    scan_warn_s = cfg.get_sync_startup_day_close_scan_budget_seconds()
+    scan_t0 = time.time()
+    self._touch_manifest("discover_slice_begin")
     if self.log_fn:
       self.log_fn(
-          "sync_timedb: startup day close discover begin",
+          "sync_timedb: startup day close discover slice begin",
           flush=True,
       )
+    with self._lock:
+      slice_index = int(self._manifest.get("discover_slice_count", 0))
+    snapshot = self._resolve_snapshot()
     unprocessed_by_tar = build_unprocessed_raw_by_daily_tar(
         self.archive_data_dir,
         self.host_name_ext,
         self.tgz_archive_dir,
         checkpoint_path=self._checkpoint_path,
+        maintenance_snapshot=snapshot,
     )
     captured = self.get_disqualification_inputs()
     unprocessed_by_tar = augment_unprocessed_by_tar_with_pending_paths(
@@ -212,12 +249,26 @@ class StartupDayClosePreflight:
         pending_stats_paths=captured.get("pending_stats_paths"),
         tgz_archive_dir=self.tgz_archive_dir,
         checkpoint_path=self._checkpoint_path,
+        first_timestamp_by_path=(
+            snapshot.first_timestamp_by_path if snapshot is not None else None
+        ),
     )
-    remaining = build_remaining_raw_stats_by_daily_gz(
-        self.archive_data_dir,
-        self.host_name_ext,
-        self.tgz_archive_dir,
-    )
+    remaining = self._resolve_remaining_raw_by_gz(snapshot, slice_index)
+    scan_elapsed = time.time() - scan_t0
+    if scan_warn_s > 0 and scan_elapsed >= scan_warn_s and self.log_fn:
+      self.log_fn(
+          "sync_timedb: startup day close discover scans slow elapsed_s=%.3f "
+          "warn_threshold_s=%.0f"
+          % (scan_elapsed, scan_warn_s),
+          flush=True,
+      )
+    if self.log_fn:
+      self.log_fn(
+          "sync_timedb: startup day close discover: scans elapsed_s=%.3f"
+          % scan_elapsed,
+          flush=True,
+      )
+    submit_t0 = time.time()
     phases = self.day_phases()
     eligible = days_ingest_complete_by_checkpoint(
         unprocessed_by_tar,
@@ -226,6 +277,19 @@ class StartupDayClosePreflight:
         remaining_raw_by_gz=remaining,
         local_tz=self.local_tz,
     )
+    with self._lock:
+      pending_resume = list(self._manifest.get("pending_eligible") or [])
+      pending_retry = list(self._manifest.get("pending_retry") or [])
+    if pending_resume or pending_retry:
+      eligible_set = set(eligible)
+      ordered: List[str] = []
+      seen: Set[str] = set()
+      for tar_list in (pending_retry, pending_resume, eligible):
+        for tar_norm in tar_list:
+          if tar_norm in eligible_set and tar_norm not in seen:
+            ordered.append(tar_norm)
+            seen.add(tar_norm)
+      eligible = ordered
     disq_reasons = build_disqualification_reasons_by_tar(
         tgz_archive_dir=self.tgz_archive_dir,
         inflight_paths=captured.get("inflight_paths"),
@@ -236,30 +300,64 @@ class StartupDayClosePreflight:
         unprocessed_by_tar=unprocessed_by_tar,
         local_tz=self.local_tz,
     )
+    if self.log_fn:
+      self.log_fn(
+          "sync_timedb: startup day close discover: eligible=%d"
+          % len(eligible),
+          flush=True,
+      )
     submitted: List[str] = []
-    for tar_norm in eligible:
+    skipped_disqualified = 0
+    deferred_eligible: List[str] = []
+    retry_next_slice: List[str] = []
+    for tar_norm in sorted(eligible, key=_tar_sort_key):
       if shutdown_requested[0]:
         break
-      if time.time() - slice_t0 >= budget_s:
-        break
-      if len(submitted) >= days_per_slice:
-        break
-      if tar_norm in self.async_day_close.get_disqualified_daily_tars():
+      if time.time() - submit_t0 >= budget_s:
+        deferred_eligible.append(tar_norm)
         continue
-      if self.async_day_close.submit_day_close(
+      if len(submitted) >= days_per_slice:
+        deferred_eligible.append(tar_norm)
+        continue
+      disq = self.async_day_close.get_disqualified_daily_tars()
+      if tar_norm in disq:
+        skipped_disqualified += 1
+        retry_next_slice.append(tar_norm)
+        if self.log_fn:
+          self.log_fn(
+              "sync_timedb: startup day close submit skip tar=%s reason=%s"
+              % (tar_norm, "disqualified"),
+              flush=True,
+          )
+        continue
+      if not self.async_day_close.submit_day_close(
           tar_norm,
           reason="startup_checkpoint_complete",
       ):
-        submitted.append(tar_norm)
-        with self._lock:
-          self._manifest.setdefault("entries", {})[tar_norm] = {
-              "tar_path": tar_norm,
-              "status": "submitted",
-              "reason": "startup_checkpoint_complete",
-          }
-          self._manifest["submitted_count"] = int(
-              self._manifest.get("submitted_count", 0)) + 1
-          _save_manifest(self._manifest_path, self._manifest)
+        skipped_disqualified += 1
+        retry_next_slice.append(tar_norm)
+        if self.log_fn:
+          self.log_fn(
+              "sync_timedb: startup day close submit skip tar=%s reason=%s"
+              % (tar_norm, "submit_returned_false"),
+              flush=True,
+          )
+        continue
+      submitted.append(tar_norm)
+      with self._lock:
+        self._manifest.setdefault("entries", {})[tar_norm] = {
+            "tar_path": tar_norm,
+            "status": "submitted",
+            "reason": "startup_checkpoint_complete",
+        }
+        self._manifest["submitted_count"] = int(
+            self._manifest.get("submitted_count", 0)) + 1
+        _save_manifest(self._manifest_path, self._manifest)
+    with self._lock:
+      self._manifest["pending_eligible"] = deferred_eligible
+      self._manifest["pending_retry"] = retry_next_slice
+      self._manifest["discover_slice_count"] = slice_index + 1
+      _save_manifest(self._manifest_path, self._manifest)
     report_entries = classify_day_close_candidates(
         tgz_archive_dir=self.tgz_archive_dir,
         remaining_raw_by_gz=remaining,
@@ -276,14 +374,69 @@ class StartupDayClosePreflight:
         reason="startup_checkpoint_discover",
         log_fn=self.log_fn,
     )
-    self._touch_manifest("discover_done", detail="submitted=%d" % len(submitted))
-    with self._lock:
-      self._manifest["phase"] = PHASE_DONE
-      self._manifest["completed_at"] = time.time()
-      _save_manifest(self._manifest_path, self._manifest)
     if self.log_fn:
       self.log_fn(
-          "sync_timedb: startup day close discover done submitted=%d"
-          % len(submitted),
+          "sync_timedb: startup day close discover slice: submitted=%d "
+          "skipped_disqualified=%d deferred=%d retry=%d"
+          % (
+              len(submitted),
+              skipped_disqualified,
+              len(deferred_eligible),
+              len(retry_next_slice),
+          ),
           flush=True,
       )
+    self._touch_manifest(
+        "discover_slice_done",
+        detail="submitted=%d deferred=%d" % (len(submitted), len(deferred_eligible)),
+    )
+    has_deferrals = (
+        len(deferred_eligible) > 0
+        or len(retry_next_slice) > 0
+    )
+    return has_deferrals and not shutdown_requested[0]
+
+  def _discover_loop(self) -> None:
+    set_daemon_thread_title(
+        "",
+        script_name=self.process_title,
+        role="startup-day-close-preflight",
+    )
+    self._touch_manifest("discover_begin")
+    if self.log_fn:
+      self.log_fn(
+          "sync_timedb: startup day close discover begin",
+          flush=True,
+      )
+    try:
+      while not shutdown_requested[0]:
+        has_more = self._discover_slice()
+        if not has_more:
+          break
+        time.sleep(1.0)
+    finally:
+      with self._lock:
+        pending_eligible = list(self._manifest.get("pending_eligible") or [])
+        pending_retry = list(self._manifest.get("pending_retry") or [])
+        shutting_down = shutdown_requested[0]
+        if shutting_down and (pending_eligible or pending_retry):
+          self._manifest["phase"] = PHASE_DISCOVERING
+          self._manifest.pop("completed_at", None)
+        else:
+          self._manifest["phase"] = PHASE_DONE
+          self._manifest["completed_at"] = time.time()
+          self._manifest["pending_eligible"] = []
+          self._manifest["pending_retry"] = []
+        _save_manifest(self._manifest_path, self._manifest)
+      if self.log_fn:
+        self.log_fn(
+            "sync_timedb: startup day close discover done submitted=%d "
+            "shutdown=%s pending_eligible=%d pending_retry=%d"
+            % (
+                int(self._manifest.get("submitted_count", 0)),
+                shutdown_requested[0],
+                len(self._manifest.get("pending_eligible") or []),
+                len(self._manifest.get("pending_retry") or []),
+            ),
+            flush=True,
+        )

@@ -141,6 +141,40 @@ def test_tick_raw_remove_uses_allow_auto_seal_false(monkeypatch):
   assert captured.get("allow_auto_seal") is False
 
 
+def test_janitor_tick_debt_budget_excludes_scheduled_maintenance_pass(
+    monkeypatch, tmp_path,
+):
+  janitor = _make_janitor(tgz_archive_dir=str(tmp_path))
+  janitor._enqueue_debt(DebtKind.DAY_CLOSE, str(tmp_path / "2026-01-01.tar"), persist=False)
+  processed = {"n": 0}
+  time_values = iter([100.0, 100.0, 100.0, 200.0, 200.0])
+
+  def fake_time():
+    try:
+      return next(time_values)
+    except StopIteration:
+      return 200.0
+
+  def slow_maintenance(*_a, **_k):
+    return None
+
+  def fake_process(_debt, **_kwargs):
+    processed["n"] += 1
+    return True
+
+  monkeypatch.setattr(janitor_mod.time, "time", fake_time)
+  monkeypatch.setattr(janitor_mod, "close_old_connections", lambda: None)
+  monkeypatch.setattr(janitor_mod, "cleanup_stale_fnctl_lock_sidecars", lambda *_a, **_k: 0)
+  monkeypatch.setattr(janitor, "run_scheduled_maintenance_pass", slow_maintenance)
+  with janitor._maintenance_pass_lock:
+    janitor._pending_maintenance_pass_reason = "startup"
+  monkeypatch.setattr(janitor, "_process_debt_item", fake_process)
+  monkeypatch.setattr(janitor_mod.cfg, "get_archive_janitor_budget_seconds", lambda: 30.0)
+  monkeypatch.setattr(janitor_mod.cfg, "get_archive_janitor_days_per_tick", lambda: 3)
+  janitor._run_tick_body()
+  assert processed["n"] >= 1
+
+
 def test_janitor_tick_budget_interrupt_requeues_remaining_debt(monkeypatch, tmp_path):
   zst = tmp_path / "2026-01-01.tar.zst"
   zst.write_bytes(b"zst")
@@ -1420,12 +1454,19 @@ def test_janitor_day_close_submits_async_not_sync_seal(monkeypatch, tmp_path):
   submit_calls = []
 
   class _FakeCoord:
+    def __init__(self):
+      self._active = set()
+
     def is_complete(self, _tar):
       return False
 
     def submit_day_close(self, tar, *, reason):
       submit_calls.append((tar, reason))
+      self._active.add(os.path.normpath(tar))
       return True
+
+    def active_or_submitted_tar_paths(self):
+      return set(self._active)
 
   monkeypatch.setattr(
       janitor_mod,

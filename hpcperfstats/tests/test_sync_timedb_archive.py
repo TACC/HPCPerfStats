@@ -4091,6 +4091,46 @@ def test_replace_corrupt_tar_does_not_clobber_concurrent_append(monkeypatch, tmp
   assert "appended.txt" in names
 
 
+def test_unmapped_disqualify_uses_coordinator_after_accrual_trim(monkeypatch):
+  """Trimmed accrual ``closed_paths=[]`` must not hide unmapped; coordinator wins."""
+  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+      resolve_unmapped_closed_raw_daily_tars,
+  )
+
+  archive_dir = "/arch"
+  unmapped_day = datetime(2024, 5, 2, 2, 0, 0)
+  unmapped_path = "/raw/host/%d" % int(unmapped_day.timestamp())
+  coord_snap = ArchiveMaintenanceSnapshot(
+      closed_paths=[unmapped_path],
+      mapping={},
+  )
+  accrual_snap = ArchiveMaintenanceSnapshot(
+      closed_paths=[],
+      mapping={},
+  )
+  collect_calls = {"n": 0}
+
+  def boom_collect(*_a, **_k):
+    collect_calls["n"] += 1
+    return frozenset()
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_helpers."
+      "get_unmapped_closed_raw_daily_tars_cached",
+      boom_collect,
+  )
+  result = resolve_unmapped_closed_raw_daily_tars(
+      coordinator_snapshot=coord_snap,
+      accrual_snapshot=accrual_snap,
+      archive_data_dir="/raw",
+      host_name_ext="cluster.test",
+      tgz_archive_dir=archive_dir,
+  )
+  assert os.path.normpath("/arch/2024-05-02.tar") in result
+  assert collect_calls["n"] == 0
+
+
 def test_collect_days_with_unmapped_closed_raw_buckets_unmapped_only():
   archive_dir = "/arch"
   mapped_day = datetime(2024, 5, 1, 2, 0, 0)
@@ -4367,8 +4407,60 @@ def test_classify_day_close_candidates_reports_reasons(tmp_path):
       local_tz=timezone.utc,
   )
   by_tar = {e["tar_path"]: e for e in entries}
-  assert by_tar[tar_path]["status"] == "disqualified"
+  assert by_tar[tar_path]["status"] == "waiting_on_ingest"
   assert "checkpoint_incomplete" in by_tar[tar_path]["reasons"]
+
+
+def test_classify_day_close_waiting_on_ingest_vs_eligible_deferred(tmp_path):
+  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+      classify_day_close_candidates,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  waiting_tar = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+  deferred_tar = os.path.normpath(str(daily_dir / "2020-01-02.tar"))
+  open(waiting_tar, "wb").close()
+  open(deferred_tar, "wb").close()
+  entries = classify_day_close_candidates(
+      tgz_archive_dir=str(daily_dir),
+      unprocessed_by_tar={waiting_tar: ["/raw/x"]},
+      disqualification_reasons={},
+      local_tz=timezone.utc,
+  )
+  by_tar = {e["tar_path"]: e for e in entries}
+  assert by_tar[waiting_tar]["status"] == "waiting_on_ingest"
+  assert by_tar[deferred_tar]["status"] == "eligible_deferred"
+
+
+def test_build_remaining_raw_accepts_snapshot_no_nested_collect(monkeypatch, tmp_path):
+  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+      build_remaining_raw_stats_by_daily_gz,
+  )
+  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+
+  collect_calls = {"n": 0}
+
+  def boom_collect(*_a, **_k):
+    collect_calls["n"] += 1
+    return []
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_helpers.collect_stats_files_in_range",
+      boom_collect,
+  )
+  snapshot = ArchiveMaintenanceSnapshot(
+      closed_paths=[],
+      remaining_raw_by_gz={str(tmp_path / "2020-01-01.tar.zst"): ["/raw/a"]},
+  )
+  result = build_remaining_raw_stats_by_daily_gz(
+      str(tmp_path),
+      "cluster.test",
+      str(tmp_path / "daily"),
+      maintenance_snapshot=snapshot,
+  )
+  assert collect_calls["n"] == 0
+  assert result == snapshot.remaining_raw_by_gz
 
 
 def test_log_day_close_candidate_report_omits_skipped_no_work(capsys, monkeypatch):
@@ -4411,7 +4503,7 @@ def test_log_day_close_candidate_report_logs_queued_and_disqualified(capsys, mon
           },
           {
               "tar_path": "/arch/2020-01-02.tar",
-              "status": "disqualified",
+              "status": "waiting_on_ingest",
               "reasons": ["checkpoint_incomplete"],
               "unprocessed": 2,
               "phase": "",
@@ -4420,9 +4512,12 @@ def test_log_day_close_candidate_report_logs_queued_and_disqualified(capsys, mon
       reason="test",
   )
   out = capsys.readouterr().out
-  assert "day_close candidate report reason=test queued=1 disqualified=1" in out
+  assert (
+      "day_close candidate report reason=test queued=1 "
+      "waiting_on_ingest=1 eligible_deferred=0 disqualified=0"
+  ) in out
   assert "status=queued" in out
-  assert "status=disqualified" in out
+  assert "status=waiting_on_ingest" in out
   assert "skipped_no_work" not in out
 
 

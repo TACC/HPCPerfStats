@@ -89,11 +89,10 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     build_archive_mapping,
     build_seal_disqualified_daily_tars,
     build_unprocessed_raw_by_daily_tar,
-    collect_days_with_unmapped_closed_raw,
+    resolve_unmapped_closed_raw_daily_tars,
     daily_tar_path_for_stats_path,
     daily_tar_path_from_compressed,
     find_immediate_day_close_candidates,
-    get_unmapped_closed_raw_daily_tars_cached,
     daily_tar_paths_for_archive_job_tasks,
     daily_tar_paths_for_stats_paths,
     daily_tar_paths_from_pending_archive_tasks,
@@ -126,6 +125,9 @@ from hpcperfstats.dbload.sync_timedb_startup_day_close import (
 )
 from hpcperfstats.dbload.sync_timedb_startup_tar_seal import (
     StartupTarSealPreflight,
+)
+from hpcperfstats.dbload.sync_timedb_startup_archive_scan import (
+    StartupArchiveScanCoordinator,
 )
 from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
     ArchiveMembersRedisUnavailableError,
@@ -1957,21 +1959,27 @@ def run_sync_timedb_supervisor_loop(
       skip_paths |= day_raw_removal.paths_pending_delete()
     return skip_paths
 
+  startup_archive_scan = None
+
+  def _resolve_unmapped_closed_raw_tars():
+    coord_snap = (
+        startup_archive_scan.get_snapshot()
+        if startup_archive_scan is not None else None
+    )
+    with archive_janitor._accrual_snapshot_lock:
+      accrual_snap = archive_janitor._accrual_snapshot
+    return resolve_unmapped_closed_raw_daily_tars(
+        coordinator_snapshot=coord_snap,
+        accrual_snapshot=accrual_snap,
+        archive_data_dir=directory,
+        host_name_ext=host_name_ext,
+        tgz_archive_dir=tgz_archive_dir,
+        log_fn=log_print,
+    )
+
   def _janitor_disqualified_daily_tars():
     captured = _capture_disqualification_inputs()
-    unmapped = set()
-    with archive_janitor._accrual_snapshot_lock:
-      snap = archive_janitor._accrual_snapshot
-    if snap is not None:
-      unmapped = collect_days_with_unmapped_closed_raw(
-          snap.closed_paths, snap.mapping, tgz_archive_dir)
-    else:
-      unmapped = get_unmapped_closed_raw_daily_tars_cached(
-          directory,
-          host_name_ext,
-          tgz_archive_dir,
-          log_fn=log_print,
-      )
+    unmapped = _resolve_unmapped_closed_raw_tars()
     return set(build_seal_disqualified_daily_tars(
         tgz_archive_dir=tgz_archive_dir,
         remaining_raw_by_gz=None,
@@ -1983,17 +1991,7 @@ def run_sync_timedb_supervisor_loop(
     ))
 
   def _get_unmapped_closed_raw_tars():
-    with archive_janitor._accrual_snapshot_lock:
-      snap = archive_janitor._accrual_snapshot
-    if snap is not None:
-      return set(collect_days_with_unmapped_closed_raw(
-          snap.closed_paths, snap.mapping, tgz_archive_dir) or ())
-    return set(get_unmapped_closed_raw_daily_tars_cached(
-        directory,
-        host_name_ext,
-        tgz_archive_dir,
-        log_fn=log_print,
-    ) or ())
+    return _resolve_unmapped_closed_raw_tars()
 
   def _build_day_close_candidate_inputs():
     captured = _capture_disqualification_inputs()
@@ -2369,6 +2367,52 @@ def run_sync_timedb_supervisor_loop(
       day_raw_removal_coordinator=day_raw_removal,
       process_title=SYNC_TIMEDB_PROCESS_TITLE,
   )
+  startup_archive_scan = StartupArchiveScanCoordinator(
+      archive_data_dir=directory,
+      host_name_ext=host_name_ext,
+      tgz_archive_dir=tgz_archive_dir,
+      log_fn=log_print,
+  )
+
+  def _get_startup_snapshot():
+    snap = startup_archive_scan.get_snapshot()
+    if snap is not None:
+      return snap
+    return startup_archive_scan.wait_for_snapshot(allow_build=True)
+
+  def _startup_closed_paths_for_rescan():
+    snap = startup_archive_scan.get_snapshot()
+    if snap is None or not snap.closed_paths:
+      return None
+    return list(snap.closed_paths)
+
+  def _get_accrual_remaining_raw_by_gz():
+    with archive_janitor._accrual_snapshot_lock:
+      snap = archive_janitor._accrual_snapshot
+    if snap is None or not snap.remaining_raw_by_gz:
+      return None
+    return dict(snap.remaining_raw_by_gz)
+
+  def _rescan_pending_with_progress():
+    rescan_t0 = time.time()
+    log_print("sync_timedb: pending rescan begin", flush=True)
+    _get_startup_snapshot()
+    paths = rescan_pending_stats_files(
+        directory,
+        startdate,
+        enddate,
+        host_name_ext,
+        processed_files | inflight_archive_paths,
+        host_scan_hints=host_scan_hints,
+        startup_closed_paths=_startup_closed_paths_for_rescan(),
+    )
+    log_print(
+        "sync_timedb: pending rescan done pending=%d elapsed_s=%.3f"
+        % (len(paths), time.time() - rescan_t0),
+        flush=True,
+    )
+    return paths
+
   archive_janitor = ArchiveJanitor(
       archive_data_dir=directory,
       host_name_ext=host_name_ext,
@@ -2390,6 +2434,7 @@ def run_sync_timedb_supervisor_loop(
       get_day_close_candidate_inputs=_build_day_close_candidate_inputs,
       get_tree_rss_bytes=lambda: read_sync_timedb_tree_rss_bytes(
           ingest_pool, db_writer_pool, archive_pool),
+      startup_snapshot_coordinator=startup_archive_scan,
       process_title=SYNC_TIMEDB_PROCESS_TITLE,
   )
 
@@ -2452,6 +2497,7 @@ def run_sync_timedb_supervisor_loop(
   try:
     _ensure_daily_archive_dir_exists()
     log_print("sync_timedb: maintenance pass reason=startup", flush=True)
+    startup_archive_scan.note_startup_maintenance_pending()
     archive_janitor.signal_scheduled_maintenance_pass(reason="startup")
     archive_janitor.enqueue_startup_debt()
     startup_preflight = StartupRawRemovalPreflight(
@@ -2462,6 +2508,7 @@ def run_sync_timedb_supervisor_loop(
         get_disqualified_daily_tars=_janitor_disqualified_daily_tars,
         get_quarantine_skip_paths=_get_quarantine_skip_paths,
         ingest_ready_fn=stats_file_head_ingested_in_db,
+        get_startup_snapshot=_get_startup_snapshot,
         process_title=SYNC_TIMEDB_PROCESS_TITLE,
     )
     startup_preflight.start_async_verify()
@@ -2475,6 +2522,8 @@ def run_sync_timedb_supervisor_loop(
         get_disqualification_inputs=_capture_disqualification_inputs,
         get_unmapped_closed_raw_tars=_get_unmapped_closed_raw_tars,
         day_phases=lambda: dict(archive_janitor._day_phases),
+        get_startup_snapshot=_get_startup_snapshot,
+        get_accrual_remaining_raw_by_gz=_get_accrual_remaining_raw_by_gz,
         process_title=SYNC_TIMEDB_PROCESS_TITLE,
     )
     startup_day_close.start_async_discover_and_close()
@@ -2489,6 +2538,7 @@ def run_sync_timedb_supervisor_loop(
             os.path.normpath(tar)
             in async_day_close.active_or_submitted_tar_paths()
         ),
+        get_startup_snapshot=_get_startup_snapshot,
         process_title=SYNC_TIMEDB_PROCESS_TITLE,
     )
     startup_tar_seal.start_async_seal()
@@ -2503,14 +2553,7 @@ def run_sync_timedb_supervisor_loop(
         if isinstance(host_scan_hints, dict):
           host_scan_hints.pop(path, None)
       pending_stats_files = _cap_pending_stats_files_list(
-          rescan_pending_stats_files(
-              directory,
-              startdate,
-              enddate,
-              host_name_ext,
-              processed_files | inflight_archive_paths,
-              host_scan_hints=host_scan_hints,
-          ),
+          _rescan_pending_with_progress(),
           ingest_queue_max,
       )
       log_print(
@@ -2558,14 +2601,7 @@ def run_sync_timedb_supervisor_loop(
         _finalize_archive_slots_if_needed(force=True, context="pre_rescan")
         _maybe_enqueue_immediate_day_close(context="idle_finalize")
         pending_stats_files = _cap_pending_stats_files_list(
-            rescan_pending_stats_files(
-                directory,
-                startdate,
-                enddate,
-                host_name_ext,
-                processed_files | inflight_archive_paths,
-                host_scan_hints=host_scan_hints,
-            ),
+            _rescan_pending_with_progress(),
             ingest_queue_max,
         )
         if pending_stats_files:
@@ -2581,14 +2617,7 @@ def run_sync_timedb_supervisor_loop(
           continue
         archive_janitor.signal_work_available()
         pending_stats_files = _cap_pending_stats_files_list(
-            rescan_pending_stats_files(
-                directory,
-                startdate,
-                enddate,
-                host_name_ext,
-                processed_files | inflight_archive_paths,
-                host_scan_hints=host_scan_hints,
-            ),
+            _rescan_pending_with_progress(),
             ingest_queue_max,
         )
         if pending_stats_files:

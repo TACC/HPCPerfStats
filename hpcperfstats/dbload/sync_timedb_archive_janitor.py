@@ -31,6 +31,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     dedupe_tar_keep_largest_file_per_member,
     drop_legacy_gz_if_equivalent_to_zst,
     effective_keep_uncompressed_tar,
+    invalidate_unmapped_disqualify_cache,
     iter_daily_tar_paths,
     log_day_close_candidate_report,
     remove_verified_archived_raw_files,
@@ -147,6 +148,7 @@ class ArchiveJanitor:
       async_day_close_coordinator=None,
       get_day_close_candidate_inputs=None,
       get_tree_rss_bytes=None,
+      startup_snapshot_coordinator=None,
       process_title: str = "sync_timedb.py",
   ):
     self.archive_data_dir = archive_data_dir
@@ -165,6 +167,7 @@ class ArchiveJanitor:
     self.async_day_close_coordinator = async_day_close_coordinator
     self.get_day_close_candidate_inputs = get_day_close_candidate_inputs
     self.get_tree_rss_bytes = get_tree_rss_bytes
+    self.startup_snapshot_coordinator = startup_snapshot_coordinator
     self.process_title = process_title
     self._allow_tick_chaining = True
 
@@ -397,14 +400,25 @@ class ArchiveJanitor:
     if not self.tgz_archive_dir:
       return
     snap_t0 = time.time()
-    snapshot = build_archive_maintenance_snapshot(
-        self.archive_data_dir,
-        self.host_name_ext,
-        self.tgz_archive_dir,
-        log_fn=self.log_fn,
-    )
+    coord = self.startup_snapshot_coordinator
+    if coord is not None:
+      coord.begin_build()
+    try:
+      snapshot = build_archive_maintenance_snapshot(
+          self.archive_data_dir,
+          self.host_name_ext,
+          self.tgz_archive_dir,
+          log_fn=self.log_fn,
+      )
+    except Exception:
+      if coord is not None:
+        coord.abort_build()
+      raise
     with self._accrual_snapshot_lock:
       self._accrual_snapshot = snapshot
+    if coord is not None:
+      coord.publish(snapshot, from_janitor=True)
+      invalidate_unmapped_disqualify_cache()
     self._persist_hints(
         paths_hint=snapshot_paths_hint_entries(
             snapshot.closed_paths,
@@ -429,10 +443,8 @@ class ArchiveJanitor:
         return
       closed_count = len(snapshot.closed_paths)
       snapshot.closed_paths = []
-      snapshot.first_timestamp_by_path.clear()
       snapshot.head_identity_by_path.clear()
       snapshot.head_read_stats.clear()
-      snapshot.mapping.clear()
       snapshot.ready_paths.clear()
     if closed_count:
       self.log_fn(
@@ -474,10 +486,13 @@ class ArchiveJanitor:
     if not self.tgz_archive_dir or not os.path.isdir(self.tgz_archive_dir):
       return
     disqualified = set(self.get_disqualified_daily_tars())
+    with self._accrual_snapshot_lock:
+      accrual_snapshot = self._accrual_snapshot
     remaining = build_remaining_raw_stats_by_daily_gz(
         self.archive_data_dir,
         self.host_name_ext,
         self.tgz_archive_dir,
+        maintenance_snapshot=accrual_snapshot,
     )
     seen = set()
     candidates = []
@@ -724,12 +739,16 @@ class ArchiveJanitor:
 
       budget_s, max_days = self._effective_tick_limits()
       tick_t0 = time.time()
+      maintenance_pass_s = 0.0
       pass_reason = None
       with self._maintenance_pass_lock:
         pass_reason = self._pending_maintenance_pass_reason
         self._pending_maintenance_pass_reason = None
       if pass_reason:
+        maint_t0 = time.time()
         self.run_scheduled_maintenance_pass(reason=pass_reason)
+        maintenance_pass_s = time.time() - maint_t0
+      debt_tick_t0 = time.time()
       disqualified = set(self.get_disqualified_daily_tars())
       self._consume_dedupe_hints(disqualified)
       self._tick_remaining_raw_cache = {}
@@ -744,17 +763,30 @@ class ArchiveJanitor:
           )
       with self._debt_lock:
         work_items = self._pop_eligible_debt_locked(disqualified, max_days)
+      debt_popped = len(work_items)
       if not work_items:
+        self._ticks_completed += 1
+        self.log_fn(
+            "Archive janitor tick done days=0 debt_remaining=%d duration_s=%.3f "
+            "maintenance_pass_s=%.3f debt_popped=0 async_submitted=0 days_completed=0"
+            % (
+                self.debt_depth(),
+                time.time() - tick_t0,
+                maintenance_pass_s,
+            ),
+            flush=True,
+        )
         return
 
       validation_cache = {"hits": 0, "misses": 0}
       with self._accrual_snapshot_lock:
         snapshot = self._accrual_snapshot
       days_processed = 0
+      async_submitted = 0
       tick_mutated = False
 
       for i, debt in enumerate(work_items):
-        if time.time() - tick_t0 >= budget_s:
+        if time.time() - debt_tick_t0 >= budget_s:
           self._budget_throttled_count += 1
           self._requeue_unprocessed_work(work_items, i)
           tick_mutated = True
@@ -767,12 +799,15 @@ class ArchiveJanitor:
           if debt.tar_path in disqualified:
             self._enqueue_debt(debt.kind, debt.tar_path, persist=False)
             continue
+          tick_stats = {"async_submitted": 0}
           success = self._process_debt_item(
               debt,
               snapshot=snapshot,
               validation_cache=validation_cache,
               disqualified=disqualified,
+              tick_stats=tick_stats,
           )
+          async_submitted += int(tick_stats.get("async_submitted") or 0)
           processed_index = i + 1
           tick_mutated = True
           tick_made_progress = True
@@ -807,8 +842,18 @@ class ArchiveJanitor:
 
       self._ticks_completed += 1
       self.log_fn(
-          "Archive janitor tick done days=%d debt_remaining=%d duration_s=%.3f"
-          % (days_processed, self.debt_depth(), time.time() - tick_t0),
+          "Archive janitor tick done days=%d debt_remaining=%d duration_s=%.3f "
+          "maintenance_pass_s=%.3f debt_popped=%d async_submitted=%d "
+          "days_completed=%d"
+          % (
+              days_processed,
+              self.debt_depth(),
+              time.time() - tick_t0,
+              maintenance_pass_s,
+              debt_popped,
+              async_submitted,
+              days_processed,
+          ),
           flush=True,
       )
     except Exception as exc:
@@ -897,6 +942,7 @@ class ArchiveJanitor:
       snapshot,
       validation_cache,
       disqualified: Set[str],
+      tick_stats=None,
   ) -> bool:
     if debt.kind == DebtKind.DAY_CLOSE:
       coord = self.async_day_close_coordinator
@@ -906,7 +952,16 @@ class ArchiveJanitor:
           with self._hints_state_lock:
             self._day_phases[tar_norm] = day_phase_hint_entry(tar_norm, "tar_dropped")
           return True
+        was_active = tar_norm in coord.active_or_submitted_tar_paths()
         coord.submit_day_close(tar_norm, reason="janitor_debt")
+        if (
+            tick_stats is not None
+            and not was_active
+            and tar_norm in coord.active_or_submitted_tar_paths()
+        ):
+          tick_stats["async_submitted"] = int(
+              tick_stats.get("async_submitted") or 0
+          ) + 1
         if coord.is_complete(tar_norm):
           with self._hints_state_lock:
             self._day_phases[tar_norm] = day_phase_hint_entry(tar_norm, "tar_dropped")

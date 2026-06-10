@@ -92,3 +92,256 @@ def test_startup_day_close_enqueues_async_for_checkpoint_complete_day(
   assert submitted[0][1] == "startup_checkpoint_complete"
   assert preflight.phase() == PHASE_DONE
   assert os.path.isfile(manifest_path(str(tmp_path)))
+
+
+def test_startup_day_close_budget_applies_after_scans_not_before(
+    tmp_path, monkeypatch,
+):
+  day = date(2022, 7, 2)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2022-07-02.tar"))
+  open(tar_path, "wb").close()
+  checkpoint_path = tmp_path / ".sync_timedb_state.json"
+  checkpoint_path.write_text(
+      json.dumps([{
+          "path": str(seg),
+          "size": seg.stat().st_size,
+          "mtime": int(seg.stat().st_mtime),
+      }])
+  )
+  submitted = []
+
+  class _FakeCoord:
+    def get_disqualified_daily_tars(self):
+      return set()
+
+    def submit_day_close(self, tar_path, *, reason):
+      submitted.append(os.path.normpath(tar_path))
+      return True
+
+    def active_or_submitted_tar_paths(self):
+      return set(submitted)
+
+  scan_started = {"t": None}
+
+  def slow_unprocessed(*_a, **_k):
+    if scan_started["t"] is None:
+      scan_started["t"] = __import__("time").time()
+      __import__("time").sleep(0.05)
+    return {}
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_startup_day_close."
+      "build_unprocessed_raw_by_daily_tar",
+      slow_unprocessed,
+  )
+  monkeypatch.setattr(cfg, "get_sync_startup_day_close_budget_seconds", lambda: 60.0)
+  monkeypatch.setattr(cfg, "get_sync_startup_day_close_days_per_slice", lambda: 5)
+  monkeypatch.setattr(cfg, "get_sync_day_close_candidate_report", lambda: False)
+  monkeypatch.setattr(cfg, "get_sync_startup_day_close_scan_budget_seconds", lambda: 0.0)
+
+  preflight = _make_preflight(tmp_path, _FakeCoord())
+  preflight._discover_loop()
+  assert submitted == [tar_path]
+
+
+def test_startup_day_close_uses_accrual_snapshot_when_present(
+    tmp_path, monkeypatch,
+):
+  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+
+  collect_calls = {"n": 0}
+
+  def boom_collect(*_a, **_k):
+    collect_calls["n"] += 1
+    return []
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_startup_day_close."
+      "build_unprocessed_raw_by_daily_tar",
+      lambda *_a, maintenance_snapshot=None, **_k: (
+          collect_calls.update({"used_snapshot": maintenance_snapshot is not None}) or {}
+      ),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_startup_day_close."
+      "build_remaining_raw_stats_by_daily_gz",
+      lambda *_a, maintenance_snapshot=None, **_k: {},
+  )
+  monkeypatch.setattr(cfg, "get_sync_day_close_candidate_report", lambda: False)
+
+  snapshot = ArchiveMaintenanceSnapshot(closed_paths=[], mapping={})
+  preflight = _make_preflight(
+      tmp_path,
+      MagicMock(
+          get_disqualified_daily_tars=lambda: set(),
+          submit_day_close=lambda *_a, **_k: False,
+          active_or_submitted_tar_paths=lambda: set(),
+      ),
+      get_startup_snapshot=lambda: snapshot,
+  )
+  preflight._discover_slice()
+  assert collect_calls.get("used_snapshot") is True
+  assert collect_calls["n"] == 0
+
+
+def test_startup_day_close_shutdown_preserves_pending_eligible(
+    tmp_path, monkeypatch,
+):
+  day_a = date(2022, 7, 10)
+  day_b = date(2022, 7, 11)
+  for d in (day_a, day_b):
+    seg = _make_closed_segment(tmp_path, "cluster.integration.test", d)
+    daily_dir = tmp_path / "daily"
+    daily_dir.mkdir(exist_ok=True)
+    tar_path = os.path.normpath(str(daily_dir / ("%s.tar" % d.isoformat())))
+    open(tar_path, "wb").close()
+    checkpoint_path = tmp_path / ".sync_timedb_state.json"
+    checkpoint_path.write_text(
+        json.dumps([{
+            "path": str(seg),
+            "size": seg.stat().st_size,
+            "mtime": int(seg.stat().st_mtime),
+        }])
+    )
+
+  submitted = []
+
+  class _FakeCoord:
+    def get_disqualified_daily_tars(self):
+      return set()
+
+    def submit_day_close(self, tar_path, *, reason):
+      submitted.append(os.path.normpath(tar_path))
+      return True
+
+    def active_or_submitted_tar_paths(self):
+      return set(submitted)
+
+  monkeypatch.setattr(cfg, "get_sync_startup_day_close_budget_seconds", lambda: 60.0)
+  monkeypatch.setattr(cfg, "get_sync_startup_day_close_days_per_slice", lambda: 1)
+  monkeypatch.setattr(cfg, "get_sync_day_close_candidate_report", lambda: False)
+
+  preflight = _make_preflight(tmp_path, _FakeCoord())
+  preflight._manifest["pending_eligible"] = [
+      os.path.normpath(str(tmp_path / "daily" / "2022-07-11.tar")),
+  ]
+
+  import hpcperfstats.shutdown_utils as shutdown_utils
+
+  original = shutdown_utils.shutdown_requested[0]
+  try:
+    shutdown_utils.shutdown_requested[0] = True
+    preflight._discover_loop()
+  finally:
+    shutdown_utils.shutdown_requested[0] = original
+
+  assert preflight.phase() != PHASE_DONE
+  with open(manifest_path(str(tmp_path)), encoding="utf-8") as handle:
+    saved = json.load(handle)
+  assert saved.get("pending_eligible")
+
+
+def test_startup_day_close_multi_slice_submits_until_cap(
+    tmp_path, monkeypatch,
+):
+  days = [date(2022, 7, 20), date(2022, 7, 21), date(2022, 7, 22)]
+  tar_paths = []
+  checkpoint_entries = []
+  for d in days:
+    seg = _make_closed_segment(tmp_path, "cluster.integration.test", d)
+    daily_dir = tmp_path / "daily"
+    daily_dir.mkdir(exist_ok=True)
+    tar_path = os.path.normpath(str(daily_dir / ("%s.tar" % d.isoformat())))
+    open(tar_path, "wb").close()
+    tar_paths.append(tar_path)
+    checkpoint_entries.append({
+        "path": str(seg),
+        "size": seg.stat().st_size,
+        "mtime": int(seg.stat().st_mtime),
+    })
+  (tmp_path / ".sync_timedb_state.json").write_text(json.dumps(checkpoint_entries))
+
+  submitted = []
+
+  class _FakeCoord:
+    def get_disqualified_daily_tars(self):
+      return set()
+
+    def submit_day_close(self, tar_path, *, reason):
+      submitted.append(os.path.normpath(tar_path))
+      return True
+
+    def active_or_submitted_tar_paths(self):
+      return set(submitted)
+
+  monkeypatch.setattr(cfg, "get_sync_startup_day_close_budget_seconds", lambda: 120.0)
+  monkeypatch.setattr(cfg, "get_sync_startup_day_close_days_per_slice", lambda: 1)
+  monkeypatch.setattr(cfg, "get_sync_day_close_candidate_report", lambda: False)
+
+  original_eligible = (
+      "hpcperfstats.dbload.sync_timedb_startup_day_close."
+      "days_ingest_complete_by_checkpoint"
+  )
+
+  def shrinking_eligible(*_a, **_k):
+    return [t for t in tar_paths if t not in submitted]
+
+  monkeypatch.setattr(original_eligible, shrinking_eligible)
+
+  preflight = _make_preflight(tmp_path, _FakeCoord())
+  assert preflight._discover_slice() is True
+  assert len(submitted) == 1
+  assert preflight._discover_slice() is True
+  assert len(submitted) == 2
+  assert not preflight._discover_slice()
+  assert len(submitted) == 3
+  assert preflight.phase() != PHASE_DONE
+
+
+def test_startup_day_close_retries_after_disqualification_clears(
+    tmp_path, monkeypatch,
+):
+  day = date(2022, 7, 30)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2022-07-30.tar"))
+  open(tar_path, "wb").close()
+  (tmp_path / ".sync_timedb_state.json").write_text(
+      json.dumps([{
+          "path": str(seg),
+          "size": seg.stat().st_size,
+          "mtime": int(seg.stat().st_mtime),
+      }])
+  )
+  submitted = []
+  disq = {tar_path}
+
+  class _FakeCoord:
+    def get_disqualified_daily_tars(self):
+      return set(disq)
+
+    def submit_day_close(self, tar_path, *, reason):
+      submitted.append(os.path.normpath(tar_path))
+      return True
+
+    def active_or_submitted_tar_paths(self):
+      return set(submitted)
+
+  monkeypatch.setattr(cfg, "get_sync_startup_day_close_budget_seconds", lambda: 60.0)
+  monkeypatch.setattr(cfg, "get_sync_startup_day_close_days_per_slice", lambda: 5)
+  monkeypatch.setattr(cfg, "get_sync_day_close_candidate_report", lambda: False)
+
+  preflight = _make_preflight(tmp_path, _FakeCoord())
+  assert preflight._discover_slice() is True
+  assert not submitted
+  with open(manifest_path(str(tmp_path)), encoding="utf-8") as handle:
+    saved = json.load(handle)
+  assert tar_path in (saved.get("pending_retry") or [])
+
+  disq.clear()
+  assert preflight._discover_slice() is False
+  assert submitted == [tar_path]

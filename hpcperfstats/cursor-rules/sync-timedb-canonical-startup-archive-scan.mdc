@@ -1,0 +1,51 @@
+---
+description: Single-flight canonical startup archive snapshot for sync_timedb prefights
+alwaysApply: true
+---
+
+# sync_timedb canonical startup archive scan
+
+At supervisor boot, **one** `collect_stats_files_in_range` (+ one head-metadata pass via `build_archive_maintenance_snapshot`) must be shared by janitor maintenance and all startup prefights. Do not let each subsystem walk the full raw tree independently.
+
+## Canonical modules
+
+| Concern | Location |
+|---|---|
+| Single-flight coordinator | `hpcperfstats/dbload/sync_timedb_startup_archive_scan.py` → `StartupArchiveScanCoordinator` |
+| Deep copy helper | `copy_archive_maintenance_snapshot` in same module |
+| Snapshot builder | `build_archive_maintenance_snapshot` in `sync_timedb_archive_maint.py` |
+| Janitor publish | `ArchiveJanitor.run_scheduled_maintenance_pass` → `begin_build()` → build → `publish(..., from_janitor=True)` → `invalidate_unmapped_disqualify_cache()` before accrual trim |
+| Unmapped resolve | `resolve_unmapped_closed_raw_daily_tars` in `sync_timedb_archive_helpers.py` (coordinator → accrual if `closed_paths` non-empty → TTL collect) |
+| Supervisor wiring | `run_sync_timedb_supervisor_loop` in `sync_timedb.py` → `note_startup_maintenance_pending`, `_get_startup_snapshot`, `_rescan_pending_with_progress` |
+
+## Required behavior
+
+- **Janitor** calls `begin_build()` before `build_archive_maintenance_snapshot`; `abort_build()` on build failure; `publish` in success path.
+- **Preflights** call `wait_for_snapshot()` (never returns `None`); block until published snapshot or single-flight fallback build after **`sync_startup_snapshot_wait_seconds`** (default **300**, min **120**).
+- **`note_startup_maintenance_pending()`** from supervisor on `signal_scheduled_maintenance_pass(reason=startup)` extends effective wait so prefights do not timeout-fallback while janitor builds.
+- While `_building` is true, waiters **must not** start parallel collects.
+- **Publish deep-copies** `mapping` / `remaining_raw_by_gz` list values via `copy_archive_maintenance_snapshot` — trim clears heavy lists on accrual object only; coordinator retains `closed_paths` for unmapped disqualify.
+- **Derive, do not rescan:** startup day-close, tar-seal, raw removal, `enqueue_scheduled_day_close` remaining map, and first supervisor `rescan_pending_stats_files` (when range is full tree) use the shared snapshot.
+- **`build_remaining_raw_stats_by_daily_gz`** must accept `maintenance_snapshot=` and **never** nest `build_archive_maintenance_snapshot` when provided.
+- **Supervisor ingest** does not block on snapshot wait; prefights run on background threads. `_rescan_pending_with_progress` may wait inside the rescan helper only.
+
+## Forbidden patterns
+
+- Parallel full-tree `collect_stats_files_in_range` at boot from janitor + each preflight + first rescan.
+- `wait_or_build_snapshot` / `wait_for_snapshot` returning `None` to consumers.
+- Janitor `build_archive_maintenance_snapshot` without `begin_build()` / `publish()` coordinator wiring.
+- Nested `with self._lock` while holding `Condition` lock (same non-reentrant lock).
+- Tight-loop tar-seal rediscover (see **`sync-timedb-startup-tar-seal-contract.mdc`**).
+- Mutating the coordinator-published snapshot in place during janitor trim.
+
+## Tests
+
+- `hpcperfstats/tests/test_sync_timedb_startup_archive_scan.py`
+- `test_build_remaining_raw_accepts_snapshot_no_nested_collect` in `test_sync_timedb_archive.py`
+- `test_unmapped_disqualify_uses_coordinator_after_accrual_trim` in `test_sync_timedb_archive.py`
+- `test_startup_day_close_uses_accrual_snapshot_when_present` in `test_sync_timedb_startup_day_close.py`
+
+## Overlap
+
+- **`sync-timedb-archive-janitor-contract.mdc`** — maintenance pass publishes snapshot; debt budget uses `debt_tick_t0` after maintenance.
+- **`sync-timedb-startup-day-close-contract.mdc`**, **`sync-timedb-startup-tar-seal-contract.mdc`**, **`runtime-resource-and-metrics-safety.mdc`**.

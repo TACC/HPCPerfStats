@@ -105,6 +105,7 @@ class StartupRawRemovalPreflight:
       get_disqualified_daily_tars: Callable[[], Set[str]],
       get_quarantine_skip_paths: Callable[[], Set[str]],
       ingest_ready_fn: Optional[Callable[[str], bool]] = None,
+      get_startup_snapshot: Optional[Callable[[], Any]] = None,
       process_title: str = "sync_timedb.py",
   ):
     self.archive_data_dir = archive_data_dir
@@ -114,6 +115,7 @@ class StartupRawRemovalPreflight:
     self.get_disqualified_daily_tars = get_disqualified_daily_tars
     self.get_quarantine_skip_paths = get_quarantine_skip_paths
     self.ingest_ready_fn = ingest_ready_fn
+    self.get_startup_snapshot = get_startup_snapshot
     self.process_title = process_title
     self._manifest_path = manifest_path(archive_data_dir)
     self._lock = threading.Lock()
@@ -270,14 +272,26 @@ class StartupRawRemovalPreflight:
       _save_manifest(self._manifest_path, self._manifest)
     return deleted
 
-  def _discover_pending_gz_paths(self) -> List[str]:
+  def _resolve_snapshot_mapping(self):
+    getter = self.get_startup_snapshot
+    if getter is not None:
+      try:
+        snapshot = getter()
+      except Exception:
+        snapshot = None
+      if snapshot is not None:
+        return snapshot.mapping, list(snapshot.closed_paths or ())
     closed_paths = collect_stats_files_in_range(
         self.archive_data_dir,
         "all",
         None,
         self.host_name_ext,
     )
-    if not closed_paths:
+    return build_archive_mapping(closed_paths, self.tgz_archive_dir), closed_paths
+
+  def _discover_pending_gz_paths(self) -> List[str]:
+    mapping, closed_paths = self._resolve_snapshot_mapping()
+    if not closed_paths and not mapping:
       return []
     skip_paths = set(self.get_quarantine_skip_paths() or ())
     disqualified_tars = {
@@ -290,7 +304,8 @@ class StartupRawRemovalPreflight:
       if path in skip_paths:
         continue
       eligible_paths.append(path)
-    mapping = build_archive_mapping(eligible_paths, self.tgz_archive_dir)
+    if not mapping:
+      mapping = build_archive_mapping(eligible_paths, self.tgz_archive_dir)
     pending = []
     for gz_path, stats_paths in sorted(mapping.items()):
       if detect_compressed_format(gz_path) is None:
@@ -400,15 +415,7 @@ class StartupRawRemovalPreflight:
     days_per_slice = cfg.get_sync_startup_raw_removal_verify_days_per_slice()
     slice_started = time.time()
     processed_days = 0
-    mapping = build_archive_mapping(
-        collect_stats_files_in_range(
-            self.archive_data_dir,
-            "all",
-            None,
-            self.host_name_ext,
-        ),
-        self.tgz_archive_dir,
-    )
+    mapping, _closed_paths = self._resolve_snapshot_mapping()
     while pending and processed_days < days_per_slice:
       if shutdown_requested[0]:
         return False

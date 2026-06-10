@@ -174,6 +174,9 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_startup_day_close_preflight"),
     ("PIPELINE", "sync_startup_day_close_budget_seconds"),
     ("PIPELINE", "sync_startup_day_close_days_per_slice"),
+    ("PIPELINE", "sync_startup_snapshot_wait_seconds"),
+    ("PIPELINE", "sync_startup_tar_seal_rediscover_interval_seconds"),
+    ("PIPELINE", "sync_startup_day_close_scan_budget_seconds"),
     ("PIPELINE", "sync_day_close_async_workers"),
     ("PIPELINE", "sync_day_close_raw_removal_preflight"),
     ("PIPELINE", "sync_day_close_raw_removal_verify_budget_seconds"),
@@ -2396,6 +2399,42 @@ def get_sync_startup_day_close_days_per_slice():
   return max(
       1,
       _pipeline_getint("sync_startup_day_close_days_per_slice", fallback=1),
+  )
+
+
+def get_sync_startup_snapshot_wait_seconds():
+  """Max wait for canonical startup archive snapshot before single-flight build."""
+  _ensure_cfg_loaded()
+  return max(
+      120.0,
+      float(_pipeline_get(
+          "sync_startup_snapshot_wait_seconds",
+          fallback="300",
+      )),
+  )
+
+
+def get_sync_startup_tar_seal_rediscover_interval_seconds():
+  """Safety-net full rediscover interval for startup tar-seal (0 = tight loop)."""
+  _ensure_cfg_loaded()
+  return max(
+      0.0,
+      float(_pipeline_get(
+          "sync_startup_tar_seal_rediscover_interval_seconds",
+          fallback="600",
+      )),
+  )
+
+
+def get_sync_startup_day_close_scan_budget_seconds():
+  """Optional warn threshold for startup day-close scan phase (0 = disabled)."""
+  _ensure_cfg_loaded()
+  return max(
+      0.0,
+      float(_pipeline_get(
+          "sync_startup_day_close_scan_budget_seconds",
+          fallback="0",
+      )),
   )
 
 

@@ -282,9 +282,7 @@ _DAY_CLOSE_DISQUALIFY_CODES = frozenset({
     "in_flight_archive_job",
     "pending_archive_task",
     "unmapped_closed_raw",
-    "checkpoint_incomplete",
     "calendar_grace",
-    "not_enqueued",
 })
 
 
@@ -352,16 +350,14 @@ def classify_day_close_candidates(
       status = "queued"
       reasons = set(reasons)
       reasons.add("already_in_debt_heap")
-    elif blocking:
-      status = "disqualified"
     elif unprocessed_count > 0:
-      status = "disqualified"
+      status = "waiting_on_ingest"
       reasons = set(reasons)
       reasons.add("checkpoint_incomplete")
-    else:
+    elif blocking:
       status = "disqualified"
-      reasons = set(reasons)
-      reasons.add("not_enqueued")
+    else:
+      status = "eligible_deferred"
     entries.append({
         "tar_path": tar_norm,
         "status": status,
@@ -378,19 +374,22 @@ def log_day_close_candidate_report(
     reason,
     log_fn=log_print,
 ):
-  """Log queued/disqualified day-close candidates only (silent skipped_no_work)."""
+  """Log day-close candidates (silent skipped_no_work)."""
   if not cfg.get_sync_day_close_candidate_report():
     return
   queued = [e for e in entries if e.get("status") == "queued"]
+  waiting = [e for e in entries if e.get("status") == "waiting_on_ingest"]
+  deferred = [e for e in entries if e.get("status") == "eligible_deferred"]
   disqualified = [e for e in entries if e.get("status") == "disqualified"]
-  if not queued and not disqualified:
+  if not queued and not waiting and not deferred and not disqualified:
     return
   log_fn(
-      "janitor: day_close candidate report reason=%s queued=%d disqualified=%d"
-      % (reason, len(queued), len(disqualified)),
+      "janitor: day_close candidate report reason=%s queued=%d "
+      "waiting_on_ingest=%d eligible_deferred=%d disqualified=%d"
+      % (reason, len(queued), len(waiting), len(deferred), len(disqualified)),
       flush=True,
   )
-  for entry in queued + disqualified:
+  for entry in queued + waiting + deferred + disqualified:
     log_fn(
         "janitor: day_close candidate tar=%s status=%s reasons=%s "
         "unprocessed=%d phase=%s"
@@ -637,6 +636,36 @@ def invalidate_unmapped_disqualify_cache():
   _UNMAPPED_DISQUALIFY_CACHE["at"] = 0.0
   _UNMAPPED_DISQUALIFY_CACHE["key"] = None
   _UNMAPPED_DISQUALIFY_CACHE["tars"] = frozenset()
+
+
+def resolve_unmapped_closed_raw_daily_tars(
+    *,
+    coordinator_snapshot=None,
+    accrual_snapshot=None,
+    archive_data_dir,
+    host_name_ext,
+    tgz_archive_dir,
+    log_fn=log_print,
+):
+  """Prefer coordinator ``closed_paths``; accrual only when non-empty; else TTL collect."""
+  if coordinator_snapshot is not None and coordinator_snapshot.closed_paths:
+    return set(collect_days_with_unmapped_closed_raw(
+        coordinator_snapshot.closed_paths,
+        coordinator_snapshot.mapping,
+        tgz_archive_dir,
+    ) or ())
+  if accrual_snapshot is not None and accrual_snapshot.closed_paths:
+    return set(collect_days_with_unmapped_closed_raw(
+        accrual_snapshot.closed_paths,
+        accrual_snapshot.mapping,
+        tgz_archive_dir,
+    ) or ())
+  return set(get_unmapped_closed_raw_daily_tars_cached(
+      archive_data_dir,
+      host_name_ext,
+      tgz_archive_dir,
+      log_fn=log_fn,
+  ) or ())
 
 
 def _load_unparsable_raw_manifest(path):
@@ -909,6 +938,7 @@ def build_unprocessed_raw_by_daily_tar(
     checkpoint_path=None,
     checkpoint_paths=None,
     first_timestamp_by_path=None,
+    maintenance_snapshot=None,
 ):
   """Map daily ``.tar`` paths to mapped closed raw not in the ingest checkpoint."""
   if checkpoint_paths is None:
@@ -917,18 +947,23 @@ def build_unprocessed_raw_by_daily_tar(
     )
   else:
     checkpoint_paths = set(checkpoint_paths or ())
-  closed_paths = collect_stats_files_in_range(
-      archive_data_dir,
-      "all",
-      None,
-      host_name_ext,
-      force_full_scan=True,
-  )
-  mapping = build_archive_mapping(
-      closed_paths,
-      tgz_archive_dir,
-      first_timestamp_by_path=first_timestamp_by_path,
-  )
+  if maintenance_snapshot is not None:
+    mapping = maintenance_snapshot.mapping
+    if first_timestamp_by_path is None:
+      first_timestamp_by_path = maintenance_snapshot.first_timestamp_by_path
+  else:
+    closed_paths = collect_stats_files_in_range(
+        archive_data_dir,
+        "all",
+        None,
+        host_name_ext,
+        force_full_scan=True,
+    )
+    mapping = build_archive_mapping(
+        closed_paths,
+        tgz_archive_dir,
+        first_timestamp_by_path=first_timestamp_by_path,
+    )
   unprocessed_by_tar = {}
   for gz_key, stats_paths in mapping.items():
     tar_norm = os.path.normpath(daily_tar_path_from_compressed(gz_key))
@@ -2507,6 +2542,8 @@ def build_remaining_raw_stats_by_daily_gz(
     archive_data_dir,
     host_name_ext,
     tgz_archive_dir,
+    *,
+    maintenance_snapshot=None,
 ):
   """Map each daily ``.tar.zst`` to closed raw stats paths still on disk for that day.
 
@@ -2518,6 +2555,8 @@ def build_remaining_raw_stats_by_daily_gz(
   Files with no parseable first timestamp are omitted from the mapping and do not
   block removal (same as archival bootstrap).
   """
+  if maintenance_snapshot is not None:
+    return dict(maintenance_snapshot.remaining_raw_by_gz or {})
   from hpcperfstats.dbload.sync_timedb_archive_maint import (
       build_archive_maintenance_snapshot,
   )
@@ -2532,17 +2571,34 @@ def build_remaining_raw_stats_by_daily_gz(
   return snapshot.remaining_raw_by_gz
 
 
+def remaining_raw_paths_by_daily_tar_from_snapshot(
+    maintenance_snapshot,
+    tgz_archive_dir,
+):
+  """Derive daily ``.tar``-keyed closed raw paths from a maintenance snapshot."""
+  result = {}
+  for gz_key, paths in (maintenance_snapshot.remaining_raw_by_gz or {}).items():
+    if not paths:
+      continue
+    tar_norm = os.path.normpath(daily_tar_path_from_compressed(gz_key))
+    result[tar_norm] = list(paths)
+  return result
+
+
 def build_remaining_raw_for_daily_tar(
     archive_data_dir,
     host_name_ext,
     tgz_archive_dir,
     tar_path,
+    *,
+    maintenance_snapshot=None,
 ):
   """Day-scoped ``remaining_raw_by_gz`` for one daily ``.tar`` path."""
   full = build_remaining_raw_stats_by_daily_gz(
       archive_data_dir,
       host_name_ext,
       tgz_archive_dir,
+      maintenance_snapshot=maintenance_snapshot,
   )
   tar_norm = os.path.normpath(tar_path)
   scoped = {}
@@ -3832,6 +3888,7 @@ def rescan_pending_stats_files(
     processed_files,
     host_scan_hints=None,
     full_rescan_every=10,
+    startup_closed_paths=None,
 ):
   """Return oldest-first files still pending after excluding processed files."""
   should_force_full = True
@@ -3842,14 +3899,22 @@ def rescan_pending_stats_files(
     host_scan_hints["__rescan_count__"] = int(
         host_scan_hints.get("__rescan_count__", 0)
     ) + 1
-  discovered_files = collect_stats_files_in_range(
-      directory,
-      startdate,
-      enddate,
-      host_name_ext,
-      host_scan_hints=host_scan_hints,
-      force_full_scan=should_force_full,
-  )
+  if (
+      should_force_full
+      and startup_closed_paths is not None
+      and startdate in ("all", None, "")
+      and enddate in (None, "")
+  ):
+    discovered_files = list(startup_closed_paths)
+  else:
+    discovered_files = collect_stats_files_in_range(
+        directory,
+        startdate,
+        enddate,
+        host_name_ext,
+        host_scan_hints=host_scan_hints,
+        force_full_scan=should_force_full,
+    )
   if isinstance(processed_files, set):
     exclude = processed_files
   else:

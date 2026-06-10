@@ -197,20 +197,24 @@ def test_manifest_persists_under_archive_dir(tmp_path):
   assert os.path.isfile(manifest_path(str(tmp_path)))
 
 
-def test_seal_slice_retries_when_all_skipped_but_dirty_tar_remains(
+def test_tar_seal_idle_stops_when_only_remaining_raw_skips(
     tmp_path, monkeypatch,
 ):
   day = date(2022, 6, 7)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
   tar_path, _zst = _make_quiescent_tar(tmp_path, day)
-  preflight = _make_preflight(
-      tmp_path,
-      has_active_append_for_tar=lambda _tar: True,
-  )
+  preflight = _make_preflight(tmp_path)
+  preflight._remaining_by_tar = {os.path.normpath(tar_path): [str(seg)]}
   monkeypatch.setattr(cfg, "get_sync_startup_tar_seal_days_per_slice", lambda: 1)
   monkeypatch.setattr(cfg, "get_sync_startup_tar_seal_budget_seconds", lambda: 30.0)
+  monkeypatch.setattr(
+      cfg,
+      "get_sync_startup_tar_seal_rediscover_interval_seconds",
+      lambda: 600.0,
+  )
 
-  assert preflight._seal_slice() is False
-  assert preflight.phase() == PHASE_SEALING
+  assert preflight._seal_slice() is True
+  assert preflight.phase() == PHASE_DONE
   assert os.path.isfile(tar_path)
 
 
@@ -237,3 +241,67 @@ def test_start_async_seal_resumes_when_manifest_done_but_dirty_tar_remains(
       "thread_running",
       PHASE_DONE,
   )
+
+
+def test_tar_seal_rediscover_respects_interval(tmp_path, monkeypatch):
+  day = date(2022, 6, 9)
+  _make_quiescent_tar(tmp_path, day)
+  preflight = _make_preflight(tmp_path)
+  monkeypatch.setattr(
+      cfg,
+      "get_sync_startup_tar_seal_rediscover_interval_seconds",
+      lambda: 600.0,
+  )
+  discover_calls = {"n": 0}
+  original = preflight._discover_pending_tar_paths
+
+  def counting_discover(**kwargs):
+    discover_calls["n"] += 1
+    return original(**kwargs)
+
+  monkeypatch.setattr(preflight, "_discover_pending_tar_paths", counting_discover)
+  preflight._discover_complete = True
+  preflight._last_full_discover_at = __import__("time").time()
+  preflight._remaining_signature = preflight._remaining_signature_key(
+      preflight._resolve_remaining_by_tar(),
+  )
+  assert preflight._needs_full_rediscover() is False
+  discover_calls["n"] = 0
+  assert preflight._needs_full_rediscover() is False
+  assert discover_calls["n"] == 0
+
+
+def test_tar_seal_blocked_skip_log_labels(tmp_path, monkeypatch, capsys):
+  day = date(2022, 6, 10)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, _zst = _make_quiescent_tar(tmp_path, day, member_seg=seg)
+  log_lines = []
+
+  def capture_log(msg, **kwargs):
+    log_lines.append(str(msg))
+
+  preflight = _make_preflight(tmp_path, log_fn=capture_log)
+  monkeypatch.setattr(cfg, "get_sync_startup_tar_seal_days_per_slice", lambda: 1)
+  monkeypatch.setattr(cfg, "get_sync_startup_tar_seal_budget_seconds", lambda: 30.0)
+  monkeypatch.setattr(
+      cfg,
+      "get_sync_startup_tar_seal_rediscover_interval_seconds",
+      lambda: 600.0,
+  )
+  preflight._discover_complete = True
+  preflight._last_full_discover_at = __import__("time").time()
+  preflight._remaining_by_tar = {os.path.normpath(tar_path): [str(seg)]}
+  preflight._remaining_signature = preflight._remaining_signature_key(
+      preflight._remaining_by_tar,
+  )
+
+  assert preflight._seal_slice() is True
+  complete_lines = [
+      line for line in log_lines
+      if "startup tar seal pass complete" in line
+  ]
+  assert complete_lines
+  assert "blocked_skips=" in complete_lines[-1]
+  assert "blocked_remaining_raw=" in complete_lines[-1]
+  assert "blocked_async_day_close=" in complete_lines[-1]
+  assert "blocked_by_day_close" not in complete_lines[-1]
