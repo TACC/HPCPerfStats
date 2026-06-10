@@ -208,6 +208,17 @@ def parse_stats_file_path(stats_file):
   return None, None
 
 
+STREAM_PARSE_LINE_BATCH = 50000
+
+
+def stats_file_size_bytes(stats_file):
+  """Return on-disk size in bytes (0 when missing or unreadable)."""
+  try:
+    return int(os.path.getsize(stats_file))
+  except OSError:
+    return 0
+
+
 def load_stats_file_lines(stats_file, stats_file_contents=None):
   if stats_file_contents is not None:
     return stats_file_contents, None
@@ -217,6 +228,26 @@ def load_stats_file_lines(stats_file, stats_file_contents=None):
         return fd.readlines(), None
   except FileNotFoundError:
     return None, "Stats file disappeared: %s" % stats_file
+  finally:
+    lock_path = "%s%s" % (stats_file, LOCK_SUFFIX)
+    try:
+      os.remove(lock_path)
+    except OSError:
+      pass
+
+
+def iter_stats_file_lines(stats_file):
+  """Yield lines from a stats file under the read lock (streaming)."""
+  try:
+    with file_read_lock_wait(stats_file):
+      with open(stats_file, "r") as fd:
+        while True:
+          line = fd.readline()
+          if not line:
+            break
+          yield line
+  except FileNotFoundError:
+    return
   finally:
     lock_path = "%s%s" % (stats_file, LOCK_SUFFIX)
     try:
@@ -241,7 +272,13 @@ def parse_first_timestamp_line(lines):
   return (None, None, None)
 
 
-def find_processing_start_index(lines, itimes_set):
+def _timestamp_present_for_duplicate(itimes_set, timestamp_present, unix_second):
+  if timestamp_present is not None:
+    return bool(timestamp_present(unix_second))
+  return int(unix_second) in itimes_set
+
+
+def find_processing_start_index(lines, itimes_set, timestamp_present=None):
   start_idx = -1
   last_idx = 0
   need_archival = True
@@ -253,12 +290,140 @@ def find_processing_start_index(lines, itimes_set):
       continue
     if s[0].isdigit():
       t, _jid, _host = s.split()
-      if int(float(t)) not in itimes_set:
+      if not _timestamp_present_for_duplicate(
+          itimes_set, timestamp_present, int(float(t))):
         start_idx = last_idx
         need_archival = True
         break
       last_idx = i
   return start_idx, need_archival
+
+
+def find_processing_start_index_streaming(
+    stats_file,
+    itimes_set,
+    *,
+    timestamp_present=None,
+):
+  """Scan a stats file without loading it into memory."""
+  start_idx = -1
+  last_idx = 0
+  line_idx = 0
+  for line in iter_stats_file_lines(stats_file):
+    if not line:
+      line_idx += 1
+      continue
+    s = line.lstrip()
+    if not s:
+      line_idx += 1
+      continue
+    if s[0].isdigit():
+      t, _jid, _host = s.split()
+      if not _timestamp_present_for_duplicate(
+          itimes_set, timestamp_present, int(float(t))):
+        start_idx = last_idx
+        return start_idx, True
+      last_idx = line_idx
+    line_idx += 1
+  return start_idx, True
+
+
+def parse_first_timestamp_line_streaming(stats_file):
+  """Return first digit-leading stats line identity without ``readlines()``."""
+  for line in iter_stats_file_lines(stats_file):
+    if not line:
+      continue
+    s = line.lstrip()
+    if not s:
+      continue
+    if s[0].isdigit():
+      try:
+        t, jid, host = s.split()
+        return (t, jid, host)
+      except Exception:
+        pass
+  return (None, None, None)
+
+
+class IncrementalStatsParser:
+  """Stateful parser for chunked/streaming stats-file ingest."""
+
+  def __init__(self, start_idx=0, exclude_types_list=None):
+    self.start_idx = int(start_idx)
+    self.exclude_types_list = (
+        exclude_types_list if exclude_types_list is not None else exclude_types
+    )
+    self._line_index = 0
+    self.schema = {}
+    self.schema_fast = {}
+    self.stats = []
+    self.proc_stats = []
+    self.insert = False
+    self.line_ctx = {"tags": None, "tags2": None}
+
+  def feed_line(self, line):
+    i = self._line_index
+    self._line_index += 1
+    if not line:
+      return
+    s = line.lstrip()
+    if not s:
+      return
+
+    if s[0].isalpha() and self.insert:
+      typ, dev, vals = s.split(maxsplit=2)
+      vals = vals.split()
+      if typ in self.exclude_types_list:
+        return
+
+      if typ in ("proc", "host_proc"):
+        proc_name = (s.split()[1]).split("/")[0]
+        self.proc_stats.append({**self.line_ctx["tags2"], "proc": proc_name})
+        return
+
+      if typ not in self.schema:
+        return
+
+      tier_marker = None
+      if vals and vals[0] in _TIER_MARKERS:
+        tier_marker = vals[0]
+        vals = vals[1:]
+
+      if tier_marker == "@fast":
+        if schema_needs_legacy_hardware_decode(typ, self.schema[typ]):
+          return
+        schema_keys = self.schema_fast.get(typ, [])
+        use_legacy = False
+      else:
+        schema_keys = self.schema[typ]
+        use_legacy = schema_needs_legacy_hardware_decode(typ, self.schema[typ])
+
+      vals_dict = _vals_dict_from_line(
+          typ, self.schema, schema_keys, vals, use_legacy, dev=dev)
+      if vals_dict is None:
+        return
+
+      out_typ = legacy_parsing.legacy_output_type(typ) if use_legacy else typ
+      rec = {**self.line_ctx["tags"], "type": out_typ, "dev": dev}
+      _append_stats_rows(self.stats, rec, vals_dict)
+
+    elif i >= self.start_idx and s[0].isdigit():
+      t, jid, host = s.split()
+      self.insert = True
+      self.line_ctx["tags"] = {"time": float(t), "host": host}
+      self.line_ctx["tags2"] = {"time": float(t), "host": host, "jid": jid}
+    elif s[0] == "!":
+      label, events = s.split(maxsplit=1)
+      typ, events = label[1:], events.split()
+      self.schema[typ] = events
+      self.schema_fast[typ] = _fast_schema_keys(events)
+
+  def feed_lines(self, lines):
+    for line in lines:
+      self.feed_line(line)
+
+  def finish(self):
+    return self.stats, self.proc_stats
 
 
 def parse_stats_lines(lines, start_idx, eventmaps_by_type=None, exclude_types_list=None):
@@ -268,71 +433,47 @@ def parse_stats_lines(lines, start_idx, eventmaps_by_type=None, exclude_types_li
   eventmaps_by_type is ignored (kept for API compat); detection is automatic.
   """
   del eventmaps_by_type  # noqa: F841 — auto-detect legacy vs canonical
-  exclude_types_list = exclude_types_list if exclude_types_list is not None else exclude_types
+  parser = IncrementalStatsParser(start_idx, exclude_types_list)
+  parser.feed_lines(lines)
+  return parser.finish()
 
-  schema = {}
-  schema_fast = {}
-  stats = []
-  proc_stats = []
-  insert = False
-  line_ctx = {"tags": None, "tags2": None}
 
-  for i, line in enumerate(lines):
-    if not line:
-      continue
-    s = line.lstrip()
-    if not s:
-      continue
-
-    if s[0].isalpha() and insert:
-      typ, dev, vals = s.split(maxsplit=2)
-      vals = vals.split()
-      if typ in exclude_types_list:
-        continue
-
-      if typ in ("proc", "host_proc"):
-        proc_name = (s.split()[1]).split("/")[0]
-        proc_stats.append({**line_ctx["tags2"], "proc": proc_name})
-        continue
-
-      if typ not in schema:
-        continue
-
-      tier_marker = None
-      if vals and vals[0] in _TIER_MARKERS:
-        tier_marker = vals[0]
-        vals = vals[1:]
-
-      if tier_marker == "@fast":
-        if schema_needs_legacy_hardware_decode(typ, schema[typ]):
-          continue
-        schema_keys = schema_fast.get(typ, [])
-        use_legacy = False
-      else:
-        schema_keys = schema[typ]
-        use_legacy = schema_needs_legacy_hardware_decode(typ, schema[typ])
-
-      vals_dict = _vals_dict_from_line(
-          typ, schema, schema_keys, vals, use_legacy, dev=dev)
-      if vals_dict is None:
-        continue
-
-      out_typ = legacy_parsing.legacy_output_type(typ) if use_legacy else typ
-      rec = {**line_ctx["tags"], "type": out_typ, "dev": dev}
-      _append_stats_rows(stats, rec, vals_dict)
-
-    elif i >= start_idx and s[0].isdigit():
-      t, jid, host = s.split()
-      insert = True
-      line_ctx["tags"] = {"time": float(t), "host": host}
-      line_ctx["tags2"] = {"time": float(t), "host": host, "jid": jid}
-    elif s[0] == "!":
-      label, events = s.split(maxsplit=1)
-      typ, events = label[1:], events.split()
-      schema[typ] = events
-      schema_fast[typ] = _fast_schema_keys(events)
-
-  return stats, proc_stats
+def parse_stats_file_streaming(
+    stats_file,
+    *,
+    start_line_idx=0,
+    parse_start_idx=0,
+    batch_size=STREAM_PARSE_LINE_BATCH,
+    exclude_types_list=None,
+):
+  """Parse a large stats file in bounded batches without ``readlines()``."""
+  parser = IncrementalStatsParser(parse_start_idx, exclude_types_list)
+  try:
+    with file_read_lock_wait(stats_file):
+      with open(stats_file, "r") as fd:
+        for _ in range(int(start_line_idx)):
+          if not fd.readline():
+            return parser.finish()
+        while True:
+          batch = []
+          for _ in range(int(batch_size)):
+            line = fd.readline()
+            if not line:
+              break
+            batch.append(line)
+          if not batch:
+            break
+          parser.feed_lines(batch)
+          del batch
+  except FileNotFoundError:
+    return [], []
+  finally:
+    lock_path = "%s%s" % (stats_file, LOCK_SUFFIX)
+    try:
+      os.remove(lock_path)
+    except OSError:
+      pass
+  return parser.finish()
 
 
 def build_stats_dataframes(stats_list, proc_stats_list):

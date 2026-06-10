@@ -14,7 +14,9 @@ from hpcperfstats.dbload.sync_timedb_parsing import (
     map_hardware_counter_vals,
     parse_first_timestamp_line,
     parse_stats_file_path,
+    parse_stats_file_streaming,
     parse_stats_lines,
+    stats_file_size_bytes,
 )
 
 
@@ -615,3 +617,28 @@ def test_sync_timedb_parsing_with_real_sample_produces_deltas_and_arc():
   assert not deltas_df.empty
   assert {"delta", "arc", "time", "host"}.issubset(deltas_df.columns)
   assert "jid" not in deltas_df.columns
+
+
+def test_parse_stats_file_streaming_matches_readlines_path(tmp_path):
+  """Streaming parse must match in-memory parse for the same fixture."""
+  stats_file = tmp_path / "host.example.com" / "1709123456"
+  stats_file.parent.mkdir(parents=True)
+  body = (
+      "1709123456 job1 host.example.com\n"
+      "!cpu user sys\n"
+      "1709123457 job1 host.example.com\n"
+      "cpu 0 100 200\n"
+  )
+  stats_file.write_text(body, encoding="utf-8")
+  lines, err = load_stats_file_lines(str(stats_file))
+  assert err is None
+  expected_stats, expected_proc = parse_stats_lines(lines, 0)
+  stream_stats, stream_proc = parse_stats_file_streaming(str(stats_file))
+  assert stream_stats == expected_stats
+  assert stream_proc == expected_proc
+
+
+def test_stats_file_size_bytes_reads_file(tmp_path):
+  stats_file = tmp_path / "seg"
+  stats_file.write_text("x", encoding="utf-8")
+  assert stats_file_size_bytes(str(stats_file)) == 1

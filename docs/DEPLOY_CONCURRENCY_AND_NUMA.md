@@ -62,15 +62,24 @@ Progress and resume state persist in **`.sync_archive_maint_hints.json`** (versi
 
 ## OOM and `sync_timedb` process tree
 
-Kernel OOM may kill the **`sync_timedb.py [main]`** supervisor before proactive RSS limits trigger. Spawn pool workers (`[worker:ingest-pool]`, `[worker:archive-pool]`, etc.) used to survive as orphans and leave ingest/archive in an indeterminate state.
+Kernel OOM may kill an ingest pool worker (`[worker:ingest-pool]`) with a **transient multi‑GiB anon spike** while parsing giant raw segments (`readlines()` on multi‑GiB–28 GiB files). **`sync_supervisor_rss_limit_mb`** checks **supervisor `/proc/self` only** — it does not see worker RSS. Spawn pool workers used to survive as orphans when the supervisor died first; **`PR_SET_PDEATHSIG`** addresses that case.
 
 | Mitigation | Role |
 |------------|------|
 | **`PR_SET_PDEATHSIG` (SIGKILL)** on pool workers | Workers exit when the supervisor dies so **supervisord** can restart a clean tree |
-| **`sync_supervisor_rss_limit_mb`** / **`sync_supervisor_rss_check_interval_s`** | Exit **137** before kernel OOM when RSS is trending over limit |
+| **`pipeline` `mem_limit` / `memswap_limit`** (Compose) | Cgroup cap before host global OOM on swapless hosts; **128 GiB** is a reasonable default on **192 GiB** RAM (see `docker-compose.app.yaml.example`) |
+| **`sync_ingest_max_file_read_bytes`** (default **512 MiB**) | Stream-parse larger segments instead of **`readlines()`** |
+| **`sync_ingest_imap_inflight_cap`** + **`sync_pool_process_cap`** | Limit concurrent giant-file parses until streaming is deployed |
+| **`sync_ingest_pool_maxtasksperchild`** (default **50**) | Recycle worker pandas/Django heap between files |
+| **`sync_process_tree_rss_limit_mb`** / **`sync_process_tree_rss_exit_mb`** | Defer chunks or exit **137** on **supervisor + pool worker** RSS |
+| **`sync_supervisor_rss_limit_mb`** | Supervisor-only fail-fast (legacy; insufficient alone for worker spikes) |
 | **`abort_if_pool_workers_dead`** | Parent exits **137** when a worker is OOM-killed first (fail-fast vs hang) |
 
-Tune RSS limits for your container memory cap; grep kernel logs for `oom-kill` + `sync_timedb.py` and correlate with `pending_stats` / janitor debt in application logs.
+**Catch-up INI starting points** (until backlog of multi‑GiB segments clears): `sync_pool_process_cap=12–16`, `sync_ingest_chunk_size=8–16`, optional `sync_startup_tar_seal_preflight=no` / `sync_startup_day_close_preflight=no` to reduce cold-path CPU overlap.
+
+**Forensics checklist:** inside the pipeline container read `memory.max`, `memory.current`, `memory.peak`, `memory.events` (`oom_kill`); `ps -eo pid,rss:10,cmd` for `[worker:ingest-pool]` vs `[main]`; `find` largest raw stats paths. Log a short packet under **`test_runs/`** when investigating.
+
+Tune tree RSS limits to ~**70–80%** of the pipeline cgroup cap; grep kernel logs for `oom-kill` + `sync_timedb.py` and correlate with `pending_stats` / janitor debt in application logs.
 
 ## Archive recovery (operators)
 

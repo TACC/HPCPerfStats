@@ -301,6 +301,8 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
    For memory-constrained deployments, start with the conservative baseline values documented in `hpcperfstats.ini.example`, then scale up gradually after observing stable DB checkpoints and container RSS headroom.
 
+   **`pipeline` memory cap (`docker-compose.app.yaml`):** on hosts with **~192 GiB RAM and no swap**, set **`mem_limit: 128g`** and **`memswap_limit: 128g`** on the **`pipeline`** service so ingest spikes cgroup-OOM inside the container before starving **`db`**/**`web`**. After changing limits, recreate the container (`docker compose up -d --force-recreate pipeline`) and verify **`memory.max`** inside the cgroup is numeric (not `max`). Pair with **`[PIPELINE]`** RSS knobs documented in **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** § OOM.
+
 6. **Supervisord and rsync:**
 
    ```bash

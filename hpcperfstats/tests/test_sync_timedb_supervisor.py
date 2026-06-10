@@ -10,9 +10,24 @@ from unittest.mock import MagicMock, patch
 import hpcperfstats.dbload.sync_timedb as st
 import hpcperfstats.dbload.sync_timedb_archive_helpers as archive_helpers
 import hpcperfstats.dbload.sync_timedb_archive_janitor as janitor_mod
+import hpcperfstats.dbload.sync_timedb_async_day_close as async_day_close_mod
 import pandas as pd
 import pytest
 from hpcperfstats.shutdown_utils import shutdown_requested
+
+
+def _fake_map_async_result(value):
+  """``AsyncResult`` double with ``ready()`` for ``ArchiveDispatchCoordinator``."""
+
+  class _R:
+    def ready(self):
+      return True
+
+    def get(self, timeout=None):
+      del timeout
+      return value() if callable(value) else value
+
+  return _R()
 
 
 class _FakeIngestPool:
@@ -50,12 +65,7 @@ class _FakeArchivePool:
 
   def map_async(self, fn, items):
     del fn, items
-
-    class _R:
-      def get(self):
-        return None
-
-    return _R()
+    return _fake_map_async_result(None)
 
 
 class _FakeArchivePoolPending:
@@ -67,12 +77,7 @@ class _FakeArchivePoolPending:
 
   def map_async(self, fn, items):
     del fn, items
-
-    class _R:
-      def get(self):
-        return None
-
-    return _R()
+    return _fake_map_async_result(None)
 
 
 class _FakeArchivePoolRetry:
@@ -83,15 +88,7 @@ class _FakeArchivePoolRetry:
     del fn, items
     self.calls += 1
     result = [False] if self.calls == 1 else [True]
-
-    class _R:
-      def __init__(self, value):
-        self.value = value
-
-      def get(self):
-        return self.value
-
-    return _R(result)
+    return _fake_map_async_result(result)
 
 
 def _empty_maintenance_snapshot(*_a, **_k):
@@ -137,6 +134,29 @@ def _default_startup_daily_tar_count(monkeypatch):
   monkeypatch.setattr(janitor_mod, "save_archive_maint_hints", lambda *_a, **_k: None)
   monkeypatch.setattr(st, "ThreadPoolExecutor", _InlineThreadPoolExecutor)
   monkeypatch.setattr(janitor_mod, "ThreadPoolExecutor", _InlineThreadPoolExecutor)
+  monkeypatch.setattr(st.cfg, "get_sync_day_close_raw_removal_preflight", lambda: False)
+  monkeypatch.setattr(
+      async_day_close_mod.AsyncDayCloseCoordinator,
+      "submit_day_close",
+      lambda self, tar_path, *, reason: bool(tar_path),
+  )
+  monkeypatch.setattr(
+      async_day_close_mod.AsyncDayCloseCoordinator,
+      "is_complete",
+      lambda self, tar_path: bool(tar_path),
+  )
+  monkeypatch.setattr(
+      async_day_close_mod.AsyncDayCloseCoordinator,
+      "active_or_submitted_tar_paths",
+      lambda self: set(),
+  )
+  _orig_janitor_init = janitor_mod.ArchiveJanitor.__init__
+
+  def _janitor_init_no_tick_chain(self, *args, **kwargs):
+    _orig_janitor_init(self, *args, **kwargs)
+    self._allow_tick_chaining = False
+
+  monkeypatch.setattr(janitor_mod.ArchiveJanitor, "__init__", _janitor_init_no_tick_chain)
   monkeypatch.setattr(janitor_mod, "build_remaining_raw_stats_by_daily_gz", lambda *a, **k: {})
   monkeypatch.setattr(archive_helpers, "build_remaining_raw_stats_by_daily_gz", lambda *a, **k: {})
   monkeypatch.setattr(janitor_mod, "build_remaining_raw_for_daily_tar", lambda *a, **k: {})
@@ -1011,7 +1031,11 @@ def test_rescan_excludes_inflight_archive_paths(monkeypatch):
       return (path, True, True, 0.0)
 
     class _NeverDone:
-      def get(self):
+      def ready(self):
+        return False
+
+      def get(self, timeout=None):
+        del timeout
         return None
 
     class _ArchivePool:
@@ -1221,12 +1245,7 @@ def test_retry_queue_dispatch_uses_retry_at_order_not_insertion(monkeypatch):
     class _ArchivePoolOrder:
       def map_async(self, _fn, items):
         dispatched.append(list(items))
-
-        class _R:
-          def get(self):
-            return [True for _ in items]
-
-        return _R()
+        return _fake_map_async_result([True for _ in items])
 
     st.run_sync_timedb_supervisor_loop(
         "/tmp/archive",
@@ -1349,11 +1368,7 @@ def test_archive_dispatch_by_tgz_groups_respects_archive_queue_max(monkeypatch):
     class _ArchivePoolCapture:
       def map_async(self, _fn, items):
         dispatched.append(list(items))
-
-        class _R:
-          def get(self):
-            return [True for _ in items]
-        return _R()
+        return _fake_map_async_result([True for _ in items])
 
     mapping = {
         "/tmp/2026-03-03.tar.gz": ["/tmp/c"],
@@ -1673,11 +1688,7 @@ def test_dead_letter_replay_runs_before_idle_sleep(monkeypatch):
 
       def map_async(self, _fn, _items):
         self.calls += 1
-
-        class _R:
-          def get(self):
-            return [True]
-        return _R()
+        return _fake_map_async_result([True])
 
     ap = _ArchivePoolReplay()
     st.run_sync_timedb_supervisor_loop(
@@ -2030,11 +2041,7 @@ def test_empty_primary_mapping_falls_back_to_mtime_archive(monkeypatch, tmp_path
       def map_async(self, _fn, items):
         archive_calls["n"] += 1
         archive_calls["items"].append(items)
-
-        class _R:
-          def get(self):
-            return [True for _ in items]
-        return _R()
+        return _fake_map_async_result([True for _ in items])
 
     st.run_sync_timedb_supervisor_loop(
         str(tmp_path),
@@ -2087,10 +2094,7 @@ def test_finally_path_finalizes_inflight_archive(monkeypatch, tmp_path):
 
     class _ArchivePoolDone:
       def map_async(self, _fn, _items):
-        class _R:
-          def get(self):
-            return [True]
-        return _R()
+        return _fake_map_async_result([True])
 
     with pytest.raises(RuntimeError):
       st.run_sync_timedb_supervisor_loop(
@@ -2141,16 +2145,8 @@ def test_archive_result_mismatch_retries_unmatched(monkeypatch, tmp_path):
 
       def map_async(self, _fn, _items):
         self.calls += 1
-
-        class _R:
-          def __init__(self, call_no):
-            self.call_no = call_no
-
-          def get(self):
-            if self.call_no == 1:
-              return []
-            return [True]
-        return _R(self.calls)
+        call_no = self.calls
+        return _fake_map_async_result([] if call_no == 1 else [True])
 
     ap = _ArchivePoolMismatch()
     st.run_sync_timedb_supervisor_loop(
@@ -2656,6 +2652,63 @@ def test_maybe_exit_on_supervisor_rss_limit_exits_137(monkeypatch, tmp_path):
   assert excinfo.value.code == 137
 
 
+def test_maybe_apply_tree_rss_governor_exits_on_exit_cap(monkeypatch):
+  monkeypatch.setattr(st.cfg, "get_sync_process_tree_rss_limit_mb", lambda: 0)
+  monkeypatch.setattr(st.cfg, "get_sync_process_tree_rss_exit_mb", lambda: 1)
+  monkeypatch.setattr(st.cfg, "get_sync_process_tree_rss_check_every_n_chunks", lambda: 1)
+  monkeypatch.setattr(
+      st,
+      "read_sync_timedb_tree_rss_bytes",
+      lambda *_a, **_k: 2 * 1024 * 1024,
+  )
+  with pytest.raises(SystemExit) as excinfo:
+    st._maybe_apply_tree_rss_governor(1, object(), None, object())
+  assert excinfo.value.code == 137
+
+
+def test_effective_ingest_imap_inflight_cap_respects_ini(monkeypatch):
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_imap_inflight_cap", lambda: 4)
+  assert st._effective_ingest_imap_inflight_cap(24, 100) == 4
+
+
+def test_spawn_pool_recycle_kwargs_when_maxtasks_set(monkeypatch):
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_pool_maxtasksperchild", lambda: 25)
+  assert st._spawn_pool_recycle_kwargs() == {"maxtasksperchild": 25}
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_pool_maxtasksperchild", lambda: 0)
+  assert st._spawn_pool_recycle_kwargs() == {}
+
+
+def test_streaming_parse_path_avoids_readlines(monkeypatch, tmp_path):
+  stats_file = tmp_path / "host.example.com" / "1709123456"
+  stats_file.parent.mkdir(parents=True)
+  stats_file.write_text(
+      "1709123456 job1 host.example.com\n"
+      "!cpu user sys\n"
+      "1709123457 job1 host.example.com\n"
+      "cpu 0 100 200\n",
+      encoding="utf-8",
+  )
+  readlines_calls = {"n": 0}
+  orig_load = st.load_stats_file_lines
+
+  def _counting_load(path, contents=None):
+    readlines_calls["n"] += 1
+    return orig_load(path, contents)
+
+  monkeypatch.setattr(st, "stats_file_size_bytes", lambda _p: 600 * 1024 * 1024)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_max_file_read_bytes", lambda: 512 * 1024 * 1024)
+  monkeypatch.setattr(st, "load_stats_file_lines", _counting_load)
+  monkeypatch.setattr(st, "stats_file_is_active_segment", lambda _p: False)
+  monkeypatch.setattr(st, "head_timestamp_present_in_db", lambda *_a, **_k: False)
+  monkeypatch.setattr(st, "raw_stats_path_needs_tar_append", lambda *_a, **_k: False)
+  monkeypatch.setattr(st, "compute_deltas_and_arc", lambda df: df)
+  monkeypatch.setattr(st, "build_stats_dataframes", lambda s, p: (pd.DataFrame(s), pd.DataFrame(p)))
+
+  result = st._parse_stats_file_payload_impl(str(stats_file))
+  assert readlines_calls["n"] == 0
+  assert result[3] is True
+
+
 def test_sync_worker_db_task_closes_connections(monkeypatch):
   close_calls = []
   monkeypatch.setattr(st, "close_old_connections", lambda: close_calls.append("close_old"))
@@ -2694,7 +2747,7 @@ def test_host_recent_timestamps_cached_skips_oversized_cache_entry(monkeypatch):
 
   monkeypatch.setattr(st.host_data.objects, "filter", _fake_filter)
   result = st._host_recent_timestamps_cached(host, ts_low, ts_high)
-  assert len(result) == 5
+  assert result is st._HOST_ITIMES_SET_OVERFLOW
   assert key not in st._HOST_ITIMES_CACHE
   st._host_recent_timestamps_cached(host, ts_low, ts_high)
   assert filter_calls["count"] == 2

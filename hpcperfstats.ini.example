@@ -296,7 +296,7 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # sync_checkpoint_flush_batch_size = 100
 
 # Max DB timestamps cached per duplicate-detection window (default 100000).
-# sync_host_itimes_cache_max_timestamps_per_entry = 100000
+# sync_host_itimes_cache_max_timestamps_per_entry = 20000
 
 # Poll interval for sync_timedb pool waits seconds (default 5).
 # sync_pool_poll_timeout_s = 5
@@ -357,6 +357,27 @@ daily_archive_dir = %(data_dir)s/daily_archive
 
 # Check supervisor RSS every N ingest chunks (default 1).
 # sync_supervisor_rss_check_every_n_chunks = 1
+
+# Process-tree RSS defer limit MiB (supervisor + pool workers); 0 off (default 0).
+# sync_process_tree_rss_limit_mb = 0
+
+# Check process-tree RSS every N ingest chunks (default 1).
+# sync_process_tree_rss_check_every_n_chunks = 1
+
+# Hard exit when process-tree RSS exceeds MiB; 0 off (default 0).
+# sync_process_tree_rss_exit_mb = 0
+
+# Max stats file size for readlines fast path; larger files stream-parse (default 512 MiB).
+# sync_ingest_max_file_read_bytes = 536870912
+
+# Max concurrent imap tasks per chunk; 0 means pool size (default 0).
+# sync_ingest_imap_inflight_cap = 0
+
+# Recycle ingest/archive pool workers after N files; 0 unlimited (default 50).
+# sync_ingest_pool_maxtasksperchild = 50
+
+# Optional global seal concurrency cap; 0 unlimited (default 0).
+# sync_cold_path_max_concurrent_seals = 0
 
 # DB-writer pool size as fraction of ingest pool (default 0.80).
 # sync_db_writer_pool_multiplier = 0.80

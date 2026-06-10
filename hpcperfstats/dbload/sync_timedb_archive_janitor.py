@@ -146,6 +146,7 @@ class ArchiveJanitor:
       day_raw_removal_coordinator=None,
       async_day_close_coordinator=None,
       get_day_close_candidate_inputs=None,
+      get_tree_rss_bytes=None,
       process_title: str = "sync_timedb.py",
   ):
     self.archive_data_dir = archive_data_dir
@@ -163,6 +164,7 @@ class ArchiveJanitor:
     self.day_raw_removal_coordinator = day_raw_removal_coordinator
     self.async_day_close_coordinator = async_day_close_coordinator
     self.get_day_close_candidate_inputs = get_day_close_candidate_inputs
+    self.get_tree_rss_bytes = get_tree_rss_bytes
     self.process_title = process_title
     self._allow_tick_chaining = True
 
@@ -417,6 +419,27 @@ class ArchiveJanitor:
         flush=True,
     )
     self.enqueue_scheduled_day_close(reason=reason)
+    self._trim_accrual_snapshot_memory()
+
+  def _trim_accrual_snapshot_memory(self):
+    """Release large snapshot lists after hints are persisted on disk."""
+    with self._accrual_snapshot_lock:
+      snapshot = self._accrual_snapshot
+      if snapshot is None:
+        return
+      closed_count = len(snapshot.closed_paths)
+      snapshot.closed_paths = []
+      snapshot.first_timestamp_by_path.clear()
+      snapshot.head_identity_by_path.clear()
+      snapshot.head_read_stats.clear()
+      snapshot.mapping.clear()
+      snapshot.ready_paths.clear()
+    if closed_count:
+      self.log_fn(
+          "janitor: accrual snapshot trimmed released_closed_paths=%d"
+          % closed_count,
+          flush=True,
+      )
 
   def _calendar_today_local(self):
     return datetime.now(self.local_tz).date()
@@ -625,6 +648,11 @@ class ArchiveJanitor:
     return budget, max_days
 
   def _rss_over_limit(self) -> bool:
+    tree_limit_mb = cfg.get_sync_process_tree_rss_limit_mb()
+    if tree_limit_mb > 0 and self.get_tree_rss_bytes is not None:
+      rss_bytes = int(self.get_tree_rss_bytes())
+      if rss_bytes > 0:
+        return rss_bytes > int(tree_limit_mb) * 1024 * 1024
     limit_mb = cfg.get_sync_supervisor_rss_limit_mb()
     if limit_mb <= 0:
       return False

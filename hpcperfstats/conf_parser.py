@@ -124,6 +124,13 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_ingest_chunk_size"),
     ("PIPELINE", "sync_supervisor_rss_limit_mb"),
     ("PIPELINE", "sync_supervisor_rss_check_every_n_chunks"),
+    ("PIPELINE", "sync_process_tree_rss_limit_mb"),
+    ("PIPELINE", "sync_process_tree_rss_check_every_n_chunks"),
+    ("PIPELINE", "sync_process_tree_rss_exit_mb"),
+    ("PIPELINE", "sync_ingest_max_file_read_bytes"),
+    ("PIPELINE", "sync_ingest_imap_inflight_cap"),
+    ("PIPELINE", "sync_ingest_pool_maxtasksperchild"),
+    ("PIPELINE", "sync_cold_path_max_concurrent_seals"),
     ("PIPELINE", "sync_db_writer_pool_multiplier"),
     ("PIPELINE", "sync_db_writer_pool_cap"),
     ("PIPELINE", "sync_adaptive_dispatch_enabled"),
@@ -2067,6 +2074,49 @@ def get_sync_supervisor_rss_check_every_n_chunks():
   return max(1, _pipeline_getint("sync_supervisor_rss_check_every_n_chunks", fallback=1))
 
 
+def get_sync_process_tree_rss_limit_mb():
+  """Process-tree RSS defer limit in MiB; 0 disables backpressure (default 0)."""
+  _ensure_cfg_loaded()
+  return max(0, _pipeline_getint("sync_process_tree_rss_limit_mb", fallback=0))
+
+
+def get_sync_process_tree_rss_check_every_n_chunks():
+  """Check process-tree RSS every N ingest chunks (default 1)."""
+  _ensure_cfg_loaded()
+  return max(1, _pipeline_getint("sync_process_tree_rss_check_every_n_chunks", fallback=1))
+
+
+def get_sync_process_tree_rss_exit_mb():
+  """Hard exit when process-tree RSS exceeds MiB; 0 disables (default 0)."""
+  _ensure_cfg_loaded()
+  return max(0, _pipeline_getint("sync_process_tree_rss_exit_mb", fallback=0))
+
+
+def get_sync_ingest_max_file_read_bytes():
+  """Max stats file size for ``readlines()`` fast path (default 512 MiB)."""
+  _ensure_cfg_loaded()
+  default = 512 * 1024 * 1024
+  return max(0, _pipeline_getint("sync_ingest_max_file_read_bytes", fallback=default))
+
+
+def get_sync_ingest_imap_inflight_cap():
+  """Max concurrent imap tasks per chunk; 0 means pool size (default 0)."""
+  _ensure_cfg_loaded()
+  return max(0, _pipeline_getint("sync_ingest_imap_inflight_cap", fallback=0))
+
+
+def get_sync_ingest_pool_maxtasksperchild():
+  """Recycle ingest/archive pool workers after N tasks; 0 unlimited (default 50)."""
+  _ensure_cfg_loaded()
+  return max(0, _pipeline_getint("sync_ingest_pool_maxtasksperchild", fallback=50))
+
+
+def get_sync_cold_path_max_concurrent_seals():
+  """Optional global seal concurrency cap; 0 unlimited (default 0)."""
+  _ensure_cfg_loaded()
+  return max(0, _pipeline_getint("sync_cold_path_max_concurrent_seals", fallback=0))
+
+
 def get_sync_db_writer_pool_multiplier():
   """DB-writer pool size multiplier relative to ingest pool."""
   _ensure_cfg_loaded()
@@ -2163,7 +2213,14 @@ def get_conf_parser_defaults_audit_snapshot():
           "sync_archive_retry_backoff_base_seconds": 1.0,
           "sync_archive_retry_backoff_max_seconds": 60.0,
           "sync_checkpoint_flush_batch_size": 100,
-          "sync_host_itimes_cache_max_timestamps_per_entry": 100000,
+          "sync_host_itimes_cache_max_timestamps_per_entry": 20000,
+          "sync_ingest_max_file_read_bytes": 536870912,
+          "sync_ingest_imap_inflight_cap": 0,
+          "sync_ingest_pool_maxtasksperchild": 50,
+          "sync_process_tree_rss_limit_mb": 0,
+          "sync_process_tree_rss_check_every_n_chunks": 1,
+          "sync_process_tree_rss_exit_mb": 0,
+          "sync_cold_path_max_concurrent_seals": 0,
           "parallel_db_prefetch_max": 4,
           "db_conn_max_age": 90,
           "db_statement_timeout_ms": 120000,

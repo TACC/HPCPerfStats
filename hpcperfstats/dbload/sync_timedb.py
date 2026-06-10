@@ -66,7 +66,11 @@ from hpcperfstats.dbload.multiprocessing_pool_health import (
     imap_unordered_watch_pool,
     terminate_pool_bounded,
 )
-from hpcperfstats.process_memory import read_process_rss_bytes
+from hpcperfstats.process_memory import (
+    format_tree_rss_breakdown_mb,
+    read_process_rss_bytes,
+    read_sync_timedb_tree_rss_bytes,
+)
 from hpcperfstats.dbload.archive_compress import (
     compressed_sibling_paths,
     daily_compressed_path_for_date,
@@ -152,10 +156,14 @@ from hpcperfstats.dbload.sync_timedb_parsing import (
     compute_deltas_and_arc,
     exclude_types,
     find_processing_start_index,
+    find_processing_start_index_streaming,
     load_stats_file_lines,
     parse_first_timestamp_line,
+    parse_first_timestamp_line_streaming,
     parse_stats_file_path,
+    parse_stats_file_streaming,
     parse_stats_lines,
+    stats_file_size_bytes,
 )
 from hpcperfstats.site.machine.models import host_data, proc_data
 
@@ -318,6 +326,47 @@ def _imap_ingest_pool(
       ),
   )
 
+
+def _effective_ingest_imap_inflight_cap(thread_count, path_count):
+  cap = cfg.get_sync_ingest_imap_inflight_cap()
+  if cap <= 0:
+    cap = thread_count
+  return max(1, min(int(path_count), int(thread_count), int(cap)))
+
+
+def _imap_ingest_paths_batched(
+    pool,
+    fn,
+    paths,
+    *,
+    thread_count,
+    context,
+    tracker,
+    chunk_counter,
+    pending_count,
+):
+  """Cap concurrent imap tasks below full chunk size for RSS safety."""
+  inflight_cap = _effective_ingest_imap_inflight_cap(thread_count, len(paths))
+  for offset in range(0, len(paths), inflight_cap):
+    subpaths = paths[offset:offset + inflight_cap]
+    for item in _imap_ingest_pool(
+        pool,
+        fn,
+        subpaths,
+        context=context,
+        tracker=tracker,
+        chunk_counter=chunk_counter,
+        pending_count=pending_count,
+    ):
+      yield item
+
+
+def _spawn_pool_recycle_kwargs():
+  maxtasks = cfg.get_sync_ingest_pool_maxtasksperchild()
+  if maxtasks > 0:
+    return {"maxtasksperchild": int(maxtasks)}
+  return {}
+
 # Set to 1/yes/true so ingest runs in the parent process (no spawn pool). Required
 # for pytest-django: pool workers would reconnect with default [DEFAULT] dbname instead
 # of the test database created for the session.
@@ -334,6 +383,11 @@ _HOST_ITIMES_CACHE = {}
 _HOST_ITIMES_CACHE_REFRESH_SECONDS = 20
 _HOST_ITIMES_CACHE_MAX_ENTRIES = 2000
 _HOST_ITIMES_CACHE_MAX_TIMESTAMPS_PER_ENTRY = 100000
+_HOST_ITIMES_SET_OVERFLOW = object()
+_HOST_SECOND_PRESENT_CACHE = {}
+_HOST_SECOND_PRESENT_CACHE_TTL_S = 60
+_HOST_SECOND_PRESENT_CACHE_MAX_ENTRIES = 50000
+_TREE_RSS_DEFER_SLEEP_SECONDS = 5.0
 
 tgz_archive_dir = cfg.get_daily_archive_dir_path()
 
@@ -453,6 +507,75 @@ def _maybe_exit_on_supervisor_rss_limit(chunk_counter):
       flush=True,
   )
   raise SystemExit(137)
+
+
+def _maybe_wait_tree_rss_before_chunk(ingest_pool, db_writer_pool, archive_pool):
+  """Defer starting a new chunk while the process tree is over the RSS cap."""
+  limit_mb = cfg.get_sync_process_tree_rss_limit_mb()
+  if limit_mb <= 0:
+    return
+  limit_bytes = int(limit_mb) * 1024 * 1024
+  for attempt in range(60):
+    tree_bytes = read_sync_timedb_tree_rss_bytes(
+        ingest_pool, db_writer_pool, archive_pool)
+    if tree_bytes <= 0 or tree_bytes <= limit_bytes:
+      return
+    if attempt == 0:
+      breakdown = format_tree_rss_breakdown_mb(
+          ingest_pool, db_writer_pool, archive_pool)
+      log_print(
+          "sync_timedb tree RSS %.1f MiB exceeds limit %d MiB "
+          "(supervisor=%.1f ingest=%.1f db_writer=%.1f archive=%.1f); "
+          "deferring chunk dispatch"
+          % (
+              breakdown["tree_total_mb"],
+              limit_mb,
+              breakdown["supervisor_mb"],
+              breakdown["ingest_pool_mb"],
+              breakdown["db_writer_pool_mb"],
+              breakdown["archive_pool_mb"],
+          ),
+          flush=True,
+      )
+    time.sleep(_TREE_RSS_DEFER_SLEEP_SECONDS)
+
+
+def _maybe_apply_tree_rss_governor(
+    chunk_counter,
+    ingest_pool,
+    db_writer_pool,
+    archive_pool,
+):
+  """Tree RSS backpressure and optional hard exit after each chunk."""
+  every_n = cfg.get_sync_process_tree_rss_check_every_n_chunks()
+  if int(chunk_counter) % every_n != 0:
+    return
+  exit_mb = cfg.get_sync_process_tree_rss_exit_mb()
+  limit_mb = cfg.get_sync_process_tree_rss_limit_mb()
+  if exit_mb <= 0 and limit_mb <= 0:
+    _maybe_exit_on_supervisor_rss_limit(chunk_counter)
+    return
+  tree_bytes = read_sync_timedb_tree_rss_bytes(
+      ingest_pool, db_writer_pool, archive_pool)
+  if exit_mb > 0 and tree_bytes > int(exit_mb) * 1024 * 1024:
+    breakdown = format_tree_rss_breakdown_mb(
+        ingest_pool, db_writer_pool, archive_pool)
+    log_print(
+        "ERROR: sync_timedb process tree RSS %.1f MiB exceeds exit cap %d MiB "
+        "(supervisor=%.1f ingest=%.1f db_writer=%.1f archive=%.1f); exiting"
+        % (
+            breakdown["tree_total_mb"],
+            exit_mb,
+            breakdown["supervisor_mb"],
+            breakdown["ingest_pool_mb"],
+            breakdown["db_writer_pool_mb"],
+            breakdown["archive_pool_mb"],
+        ),
+        flush=True,
+    )
+    raise SystemExit(137)
+  if limit_mb <= 0:
+    _maybe_exit_on_supervisor_rss_limit(chunk_counter)
 
 
 def _prior_day_tars_from_archive_mapping(ar_file_mapping, *, local_tz):
@@ -663,6 +786,9 @@ def _host_recent_timestamps_cached(hostname, ts_low, ts_high):
     if dt.tzinfo is None:
       dt = dt.replace(tzinfo=timezone.utc)
     itimes_set.add(int(dt.timestamp()))
+    max_timestamps = cfg.get_sync_host_itimes_cache_max_timestamps_per_entry()
+    if len(itimes_set) > max_timestamps:
+      return _HOST_ITIMES_SET_OVERFLOW
   max_timestamps = cfg.get_sync_host_itimes_cache_max_timestamps_per_entry()
   if len(itimes_set) <= max_timestamps:
     _HOST_ITIMES_CACHE[key] = {"times": tuple(itimes_set), "checked_at": now}
@@ -683,10 +809,45 @@ def _pick_write_lock_for_path(lock_or_locks, stats_file):
   return lock_or_locks
 
 
+def _host_timestamp_second_present_in_db(host, unix_second):
+  """Per-(host, second) exists probe when host_itimes cache overflows."""
+  key = (str(host).strip(), int(unix_second))
+  now = time.time()
+  cached = _HOST_SECOND_PRESENT_CACHE.get(key)
+  if cached and (now - cached[1] <= _HOST_SECOND_PRESENT_CACHE_TTL_S):
+    return cached[0]
+  ts_low = datetime.fromtimestamp(int(unix_second), tz=timezone.utc)
+  ts_high = ts_low + timedelta(seconds=1)
+  present = host_data.objects.filter(
+      host=key[0],
+      time__gte=ts_low,
+      time__lt=ts_high,
+  ).exists()
+  _HOST_SECOND_PRESENT_CACHE[key] = (present, now)
+  if len(_HOST_SECOND_PRESENT_CACHE) > _HOST_SECOND_PRESENT_CACHE_MAX_ENTRIES:
+    oldest = sorted(
+        _HOST_SECOND_PRESENT_CACHE.keys(),
+        key=lambda k: _HOST_SECOND_PRESENT_CACHE[k][1],
+    )[:1000]
+    for drop_key in oldest:
+      _HOST_SECOND_PRESENT_CACHE.pop(drop_key, None)
+  return present
+
+
 def _reset_sync_runtime_caches():
   """Clear per-process ingest caches between sync_timedb sessions."""
   reset_sync_ingest_readiness_caches()
   _HOST_ITIMES_CACHE.clear()
+  _HOST_SECOND_PRESENT_CACHE.clear()
+
+
+def _should_stream_stats_file(stats_file, stats_file_contents):
+  if stats_file_contents is not None:
+    return False
+  max_bytes = cfg.get_sync_ingest_max_file_read_bytes()
+  if max_bytes <= 0:
+    return False
+  return stats_file_size_bytes(stats_file) > max_bytes
 
 
 def _invalidate_jid_caches(stats, proc_stats):
@@ -824,6 +985,109 @@ def _parse_stats_file_payload(stats_file, stats_file_contents=None):
     return (stats_file, None, False, False, exc.elapsed_s)
 
 
+def _duplicate_window_start_index(
+    stats_file,
+    *,
+    host,
+    timestamp_utc,
+    lines=None,
+):
+  """Return (start_idx, need_archival) for duplicate detection."""
+  ts_low = timestamp_utc - timedelta(hours=48)
+  ts_high = timestamp_utc + timedelta(hours=72)
+  itimes_set = _host_recent_timestamps_cached(host, ts_low, ts_high)
+  timestamp_present = None
+  if itimes_set is _HOST_ITIMES_SET_OVERFLOW:
+    itimes_set = None
+    timestamp_present = (
+        lambda unix_second: _host_timestamp_second_present_in_db(host, unix_second)
+    )
+  if lines is not None:
+    return find_processing_start_index(
+        lines,
+        itimes_set,
+        timestamp_present=timestamp_present,
+    )
+  return find_processing_start_index_streaming(
+      stats_file,
+      itimes_set,
+      timestamp_present=timestamp_present,
+  )
+
+
+def _parse_stats_file_payload_impl_streaming(stats_file):
+  """Bounded-memory parse path for segments larger than ``sync_ingest_max_file_read_bytes``."""
+  parse_t0 = time.time()
+
+  def _parse_elapsed():
+    return time.time() - parse_t0
+
+  with _sync_worker_db_task():
+    try:
+      t, _jid, host = parse_first_timestamp_line_streaming(stats_file)
+      if t is None:
+        log_print("initial timestamp not found")
+        return _parse_failure_after_quarantine(
+            stats_file, _parse_elapsed(), error_detail="initial timestamp not found",
+        )
+      if not host:
+        log_print("initial host not found in %s" % stats_file)
+        return _parse_failure_after_quarantine(
+            stats_file, _parse_elapsed(), error_detail="initial host not found",
+        )
+      host = str(host).strip()
+      timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
+      head_present = head_timestamp_present_in_db(host, timestamp_utc)
+      if not head_present:
+        start_line_idx = 0
+        need_archival = True
+      else:
+        start_idx, need_archival = _duplicate_window_start_index(
+            stats_file,
+            host=host,
+            timestamp_utc=timestamp_utc,
+        )
+        if start_idx == -1:
+          log_print("No missing timestamps found for %s" % stats_file)
+          need_archival = raw_stats_path_needs_tar_append(
+              stats_file,
+              tgz_archive_dir,
+              first_ts=t,
+          )
+          return (stats_file, None, need_archival, True, _parse_elapsed())
+        start_line_idx = int(start_idx)
+      try:
+        stats_list, proc_stats_list = parse_stats_file_streaming(
+            stats_file,
+            start_line_idx=start_line_idx,
+            parse_start_idx=0,
+            exclude_types_list=exclude_types,
+        )
+      except Exception as e:
+        log_print("error: process data failed: ", str(e))
+        log_print("Possibly corrupt file: %s" % stats_file)
+        return _parse_failure_after_quarantine(
+            stats_file, _parse_elapsed(), error_detail=str(e),
+        )
+      stats, proc_stats = build_stats_dataframes(stats_list, proc_stats_list)
+      del stats_list
+      del proc_stats_list
+      if stats.empty and proc_stats.empty:
+        if DEBUG:
+          log_print("Unable to process stats file %s" % stats_file)
+        return _parse_failure_after_quarantine(
+            stats_file, _parse_elapsed(), error_detail="empty stats and proc_stats",
+        )
+      stats = compute_deltas_and_arc(stats)
+      return (stats_file, (stats, proc_stats), need_archival, True, _parse_elapsed())
+    except FileNotFoundError:
+      load_err = "Stats file disappeared: %s" % stats_file
+      log_print(load_err)
+      return _parse_failure_after_quarantine(
+          stats_file, _parse_elapsed(), error_detail=load_err,
+      )
+
+
 def _parse_stats_file_payload_impl(stats_file, stats_file_contents=None):
   """Implementation for :func:`_parse_stats_file_payload` (parse stage only)."""
   lines = None
@@ -842,6 +1106,8 @@ def _parse_stats_file_payload_impl(stats_file, stats_file_contents=None):
         if DEBUG:
           log_print("Skipping active segment (still linked to current): %s" % stats_file)
         return (stats_file, None, False, False, _parse_elapsed())
+      if _should_stream_stats_file(stats_file, stats_file_contents):
+        return _parse_stats_file_payload_impl_streaming(stats_file)
       lines, load_err = load_stats_file_lines(stats_file, stats_file_contents)
       if load_err is not None:
         log_print(load_err)
@@ -866,10 +1132,12 @@ def _parse_stats_file_payload_impl(stats_file, stats_file_contents=None):
         # New file head is not in DB yet; it still needs archival post-ingest.
         start_idx, need_archival = 0, True
       else:
-        ts_low = timestamp_utc - timedelta(hours=48)
-        ts_high = timestamp_utc + timedelta(hours=72)
-        itimes_set = _host_recent_timestamps_cached(host, ts_low, ts_high)
-        start_idx, need_archival = find_processing_start_index(lines, itimes_set)
+        start_idx, need_archival = _duplicate_window_start_index(
+            stats_file,
+            host=host,
+            timestamp_utc=timestamp_utc,
+            lines=lines,
+        )
       if start_idx == -1:
         log_print("No missing timestamps found for %s" % stats_file)
         need_archival = raw_stats_path_needs_tar_append(
@@ -2055,6 +2323,7 @@ def run_sync_timedb_supervisor_loop(
         processes=thread_count,
         initializer=apply_pool_worker_process_title,
         initargs=(SYNC_TIMEDB_PROCESS_TITLE, ingest_pool_kind),
+        **_spawn_pool_recycle_kwargs(),
     )
     if use_split_db_writer_pipeline:
       db_writer_processes = cfg.get_sync_db_writer_pool_processes(
@@ -2063,6 +2332,7 @@ def run_sync_timedb_supervisor_loop(
           processes=db_writer_processes,
           initializer=apply_pool_worker_process_title,
           initargs=(SYNC_TIMEDB_PROCESS_TITLE, "db-writer-pool"),
+          **_spawn_pool_recycle_kwargs(),
       )
     elif db_writer_combined_task:
       log_print(
@@ -2118,6 +2388,8 @@ def run_sync_timedb_supervisor_loop(
       day_raw_removal_coordinator=day_raw_removal,
       async_day_close_coordinator=async_day_close,
       get_day_close_candidate_inputs=_build_day_close_candidate_inputs,
+      get_tree_rss_bytes=lambda: read_sync_timedb_tree_rss_bytes(
+          ingest_pool, db_writer_pool, archive_pool),
       process_title=SYNC_TIMEDB_PROCESS_TITLE,
   )
 
@@ -2354,6 +2626,8 @@ def run_sync_timedb_supervisor_loop(
       while pending_stats_files:
         if _maybe_handle_startup_raw_removal_delete_phase():
           continue
+        _maybe_wait_tree_rss_before_chunk(
+            ingest_pool, db_writer_pool, archive_pool)
         _maybe_apply_day_close_rescan()
         idle_since_empty_queue = None
         _finalize_archive_slots_if_needed(
@@ -2405,10 +2679,11 @@ def run_sync_timedb_supervisor_loop(
             else:
               parse_paths = [task.path for task in parse_envelopes]
               parse_tracker = _IngestPoolInFlightTracker(parse_paths)
-              parse_results_iter = _imap_ingest_pool(
+              parse_results_iter = _imap_ingest_paths_batched(
                   ingest_pool,
                   _parse_stats_file_payload,
                   parse_paths,
+                  thread_count=thread_count,
                   context="sync_timedb ingest parse pool",
                   tracker=parse_tracker,
                   chunk_counter=chunk_counter,
@@ -2503,10 +2778,11 @@ def run_sync_timedb_supervisor_loop(
               results_iter = iter(())
             else:
               combined_tracker = _IngestPoolInFlightTracker(stats_files_chunk)
-              results_iter = _imap_ingest_pool(
+              results_iter = _imap_ingest_paths_batched(
                   ingest_pool,
                   add_combined,
                   stats_files_chunk,
+                  thread_count=thread_count,
                   context="sync_timedb ingest pool",
                   tracker=combined_tracker,
                   chunk_counter=chunk_counter,
@@ -2557,10 +2833,11 @@ def run_sync_timedb_supervisor_loop(
               results_iter = iter(())
             else:
               ingest_tracker = _IngestPoolInFlightTracker(stats_files_chunk)
-              results_iter = _imap_ingest_pool(
+              results_iter = _imap_ingest_paths_batched(
                   ingest_pool,
                   add_stats_file,
                   stats_files_chunk,
+                  thread_count=thread_count,
                   context="sync_timedb ingest pool",
                   tracker=ingest_tracker,
                   chunk_counter=chunk_counter,
@@ -2717,7 +2994,8 @@ def run_sync_timedb_supervisor_loop(
               flush=True,
           )
         chunk_counter += 1
-        _maybe_exit_on_supervisor_rss_limit(chunk_counter)
+        _maybe_apply_tree_rss_governor(
+            chunk_counter, ingest_pool, db_writer_pool, archive_pool)
 
         _dispatch_due_archive_retries()
         chunk_in_progress = False
@@ -2912,6 +3190,7 @@ def run_sync_timedb_supervisor_from_parsed(run_once, startdate, enddate):
         processes=archive_thread_count,
         initializer=apply_pool_worker_process_title,
         initargs=(SYNC_TIMEDB_PROCESS_TITLE, "archive-pool"),
+        **_spawn_pool_recycle_kwargs(),
     ) as archive_pool:
       run_sync_timedb_supervisor_loop(
           directory,
