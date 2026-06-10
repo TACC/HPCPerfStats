@@ -16,19 +16,34 @@ from __future__ import annotations
 
 import multiprocessing
 import os
+import signal
 import time
 
 from hpcperfstats.print_utils import log_print
+
+# Consecutive recycle-grace polls per pool (keyed by ``id(pool)``).
+_RECYCLE_GRACE_POLLS_BY_POOL = {}
 
 
 class MultiprocessingWorkerExitError(RuntimeError):
   """Raised when a pool worker process is no longer alive."""
 
-  def __init__(self, message, *, dead_pids, context="", exit_code=137):
+  def __init__(
+      self,
+      message,
+      *,
+      dead_pids,
+      context="",
+      exit_code=137,
+      likely_cause="",
+      diagnostics=None,
+  ):
     super().__init__(message)
     self.dead_pids = tuple(int(p) for p in dead_pids if p is not None)
     self.context = str(context or "")
     self.exit_code = int(exit_code)
+    self.likely_cause = str(likely_cause or "")
+    self.diagnostics = dict(diagnostics or {})
 
 
 class MultiprocessingPoolStallError(MultiprocessingWorkerExitError):
@@ -40,6 +55,13 @@ def get_sync_pool_poll_timeout_s():
   import hpcperfstats.conf_parser as cfg
 
   return cfg.get_sync_pool_poll_timeout_s()
+
+
+def get_sync_pool_worker_recycle_grace_polls():
+  """Consecutive dead-worker polls to tolerate ``maxtasksperchild`` recycle."""
+  import hpcperfstats.conf_parser as cfg
+
+  return cfg.get_sync_pool_worker_recycle_grace_polls()
 
 
 def iter_pool_worker_processes(pool):
@@ -61,6 +83,13 @@ def dead_pool_worker_pids(pool):
   return [pid for pid in dead if pid is not None]
 
 
+def _iter_dead_pool_worker_processes(pool):
+  for proc in iter_pool_worker_processes(pool):
+    is_alive_fn = getattr(proc, "is_alive", None)
+    if callable(is_alive_fn) and not is_alive_fn():
+      yield proc
+
+
 def alive_pool_worker_count(pool):
   """Return count of pool worker processes still alive."""
   alive = 0
@@ -71,15 +100,169 @@ def alive_pool_worker_count(pool):
   return alive
 
 
-def abort_if_pool_workers_dead(pool, *, context=""):
+def _process_exitcode_signal_name(exitcode):
+  if exitcode is None:
+    return "unknown"
+  if exitcode == 0:
+    return "none"
+  if exitcode < 0:
+    try:
+      return signal.Signals(-exitcode).name
+    except (ValueError, AttributeError):
+      return "SIG%d" % (-exitcode)
+  return "exit_%d" % exitcode
+
+
+def _infer_likely_cause(dead_workers, cgroup_events):
+  if not dead_workers:
+    return "unknown"
+  oom_kill = int(cgroup_events.get("oom_kill", 0) or 0)
+  exitcodes = [worker.get("exitcode") for worker in dead_workers]
+  if all(code == 0 for code in exitcodes):
+    return "recycle"
+  if any(code == -9 for code in exitcodes):
+    return "sigkill" if oom_kill > 0 else "sigkill_non_cgroup"
+  if any(code is not None and code > 0 for code in exitcodes):
+    return "worker_exception"
+  return "unknown"
+
+
+def _is_maxtasksperchild_recycle_in_progress(pool, dead_procs):
+  """True when dead workers look like normal ``maxtasksperchild`` replacement."""
+  if not dead_procs:
+    return False
+  workers = list(iter_pool_worker_processes(pool))
+  total = len(workers)
+  alive = alive_pool_worker_count(pool)
+  if alive <= 0 or alive < total - len(dead_procs):
+    return False
+  for proc in dead_procs:
+    if getattr(proc, "exitcode", None) != 0:
+      return False
+  return True
+
+
+def describe_dead_pool_workers(pool, *, pool_health_context=None):
+  """Build operator-facing diagnostics for dead pool workers."""
+  from hpcperfstats.process_memory import (
+      format_tree_rss_breakdown_mb,
+      read_cgroup_memory_current_bytes,
+      read_cgroup_memory_events,
+      read_cgroup_memory_max_bytes,
+  )
+
+  ctx = pool_health_context or {}
+  ingest_pool = ctx.get("ingest_pool")
+  db_writer_pool = ctx.get("db_writer_pool")
+  archive_pool = ctx.get("archive_pool")
+  in_flight_sample = list(ctx.get("in_flight_sample") or ())
+
+  dead_workers = []
+  for proc in _iter_dead_pool_worker_processes(pool):
+    pid = getattr(proc, "pid", None)
+    exitcode = getattr(proc, "exitcode", None)
+    dead_workers.append({
+        "pid": pid,
+        "exitcode": exitcode,
+        "signal": _process_exitcode_signal_name(exitcode),
+    })
+
+  alive = alive_pool_worker_count(pool)
+  total = alive + len(dead_workers)
+  cgroup_events = read_cgroup_memory_events()
+  cgroup_current = read_cgroup_memory_current_bytes()
+  cgroup_max = read_cgroup_memory_max_bytes()
+  tree = format_tree_rss_breakdown_mb(ingest_pool, db_writer_pool, archive_pool)
+  likely_cause = _infer_likely_cause(dead_workers, cgroup_events)
+
+  diagnostics = {
+      "dead_workers": dead_workers,
+      "alive_workers": alive,
+      "total_workers": total,
+      "cgroup_oom_kill": int(cgroup_events.get("oom_kill", 0) or 0),
+      "cgroup_memory_current_mb": cgroup_current / (1024.0 * 1024.0),
+      "cgroup_memory_max_mb": (
+          None if cgroup_max is None else cgroup_max / (1024.0 * 1024.0)
+      ),
+      "tree_total_mb": tree.get("tree_total_mb"),
+      "supervisor_mb": tree.get("supervisor_mb"),
+      "ingest_pool_mb": tree.get("ingest_pool_mb"),
+      "db_writer_pool_mb": tree.get("db_writer_pool_mb"),
+      "archive_pool_mb": tree.get("archive_pool_mb"),
+      "in_flight_sample": in_flight_sample,
+      "likely_cause": likely_cause,
+  }
+  return diagnostics
+
+
+def _format_pool_worker_death_diagnostics(context, diagnostics):
+  dead_workers = diagnostics.get("dead_workers") or []
+  dead_pids = [w.get("pid") for w in dead_workers if w.get("pid") is not None]
+  return (
+      "context=%s likely_cause=%s dead_pids=%s dead_workers=%s "
+      "alive_workers=%s/%s cgroup_oom_kill=%s "
+      "cgroup_memory_current_mb=%.1f cgroup_memory_max_mb=%s "
+      "tree_total_mb=%.1f in_flight_sample=%s"
+      % (
+          context or "unknown",
+          diagnostics.get("likely_cause") or "unknown",
+          dead_pids,
+          dead_workers,
+          diagnostics.get("alive_workers"),
+          diagnostics.get("total_workers"),
+          diagnostics.get("cgroup_oom_kill"),
+          float(diagnostics.get("cgroup_memory_current_mb") or 0.0),
+          diagnostics.get("cgroup_memory_max_mb"),
+          float(diagnostics.get("tree_total_mb") or 0.0),
+          diagnostics.get("in_flight_sample") or [],
+      )
+  )
+
+
+def _reset_recycle_grace(pool):
+  _RECYCLE_GRACE_POLLS_BY_POOL.pop(id(pool), None)
+
+
+def abort_if_pool_workers_dead(pool, *, context="", pool_health_context=None):
   """Raise ``MultiprocessingWorkerExitError`` when any pool worker has exited."""
-  dead = dead_pool_worker_pids(pool)
-  if not dead:
+  dead_procs = list(_iter_dead_pool_worker_processes(pool))
+  if not dead_procs:
+    _reset_recycle_grace(pool)
     return
+
+  diagnostics = describe_dead_pool_workers(
+      pool,
+      pool_health_context=pool_health_context,
+  )
+  dead = [w.get("pid") for w in diagnostics.get("dead_workers") or () if w.get("pid")]
+
+  if _is_maxtasksperchild_recycle_in_progress(pool, dead_procs):
+    grace_limit = get_sync_pool_worker_recycle_grace_polls()
+    pool_key = id(pool)
+    grace_used = _RECYCLE_GRACE_POLLS_BY_POOL.get(pool_key, 0) + 1
+    if grace_used <= grace_limit:
+      _RECYCLE_GRACE_POLLS_BY_POOL[pool_key] = grace_used
+      log_print(
+          "INFO: pool worker recycle in progress %s grace_poll=%d/%d"
+          % (
+              _format_pool_worker_death_diagnostics(context, diagnostics),
+              grace_used,
+              grace_limit,
+          ),
+          flush=True,
+      )
+      return
+
+  _reset_recycle_grace(pool)
   message = (
       "Multiprocessing pool worker no longer alive; "
       "dead_pids=%s context=%s"
       % (dead, context or "unknown")
+  )
+  log_print(
+      "ERROR: pool worker death diagnostics: %s"
+      % _format_pool_worker_death_diagnostics(context, diagnostics),
+      flush=True,
   )
   log_print("ERROR: %s" % message, flush=True)
   raise MultiprocessingWorkerExitError(
@@ -87,6 +270,8 @@ def abort_if_pool_workers_dead(pool, *, context=""):
       dead_pids=dead,
       context=context,
       exit_code=137,
+      likely_cause=diagnostics.get("likely_cause") or "unknown",
+      diagnostics=diagnostics,
   )
 
 
@@ -169,6 +354,7 @@ def imap_unordered_watch_pool(
     poll_timeout_s=None,
     context="",
     on_stall_warning=None,
+    pool_health_context=None,
 ):
   """Like ``pool.imap_unordered`` but abort when a worker dies (OOM-safe)."""
   if pool is None:
@@ -184,9 +370,25 @@ def imap_unordered_watch_pool(
   except TypeError:
     iterator = pool.imap_unordered(fn, iterable)
   iterator_next = getattr(iterator, "next", None)
+  health_ctx = dict(pool_health_context or ())
+  if health_ctx.get("active_pool") is None:
+    health_ctx["active_pool"] = pool
+
+  def _abort_pool_health():
+    ctx = dict(health_ctx)
+    if ctx.get("in_flight_sample") is None:
+      sample_fn = ctx.get("in_flight_sample_fn")
+      if callable(sample_fn):
+        ctx["in_flight_sample"] = sample_fn()
+    abort_if_pool_workers_dead(
+        pool,
+        context=context,
+        pool_health_context=ctx,
+    )
+
   if not callable(iterator_next):
     for item in iterator:
-      abort_if_pool_workers_dead(pool, context=context)
+      _abort_pool_health()
       yield item
     return
   import hpcperfstats.conf_parser as cfg
@@ -196,7 +398,7 @@ def imap_unordered_watch_pool(
   warned_thresholds = set()
   consecutive_timeouts = 0
   while True:
-    abort_if_pool_workers_dead(pool, context=context)
+    _abort_pool_health()
     try:
       item = iterator_next(timeout=poll_timeout_s)
     except StopIteration:
@@ -253,6 +455,7 @@ def async_result_get_watch_pool(
     *,
     poll_timeout_s=None,
     context="",
+    pool_health_context=None,
 ):
   """Like ``AsyncResult.get()`` but abort when a pool worker dies."""
   if async_result is None:
@@ -266,7 +469,11 @@ def async_result_get_watch_pool(
   if not callable(get_fn):
     return None
   while True:
-    abort_if_pool_workers_dead(pool, context=context)
+    abort_if_pool_workers_dead(
+        pool,
+        context=context,
+        pool_health_context=pool_health_context,
+    )
     try:
       try:
         return get_fn(timeout=poll_timeout_s)
@@ -283,9 +490,22 @@ def hard_exit_pool_worker_error(exc: MultiprocessingWorkerExitError) -> None:
   ``sys.exit`` can block while non-daemon threads (for example async DAY_CLOSE
   seal) finish; stall/OOM exit handlers must use ``os._exit`` instead.
   """
+  likely_cause = getattr(exc, "likely_cause", "") or ""
+  diagnostics = getattr(exc, "diagnostics", None) or {}
+  extra = ""
+  if likely_cause or diagnostics:
+    extra = " " + _format_pool_worker_death_diagnostics(
+        getattr(exc, "context", "") or "unknown",
+        diagnostics,
+    )
   log_print(
-      "Pool worker exit: hard exit code=%d context=%s"
-      % (exc.exit_code, exc.context or "unknown"),
+      "Pool worker exit: hard exit code=%d context=%s likely_cause=%s%s"
+      % (
+          exc.exit_code,
+          exc.context or "unknown",
+          likely_cause or "unknown",
+          extra,
+      ),
       flush=True,
   )
   os._exit(int(exc.exit_code))

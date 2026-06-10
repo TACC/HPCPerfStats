@@ -106,6 +106,7 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_host_itimes_cache_max_timestamps_per_entry"),
     ("PIPELINE", "sync_pool_poll_timeout_s"),
     ("PIPELINE", "sync_pool_stall_abort_after_timeouts"),
+    ("PIPELINE", "sync_pool_worker_recycle_grace_polls"),
     ("PIPELINE", "sync_ingest_per_file_timeout_s"),
     ("PIPELINE", "sync_archive_members_cache_enabled"),
     ("PIPELINE", "sync_archive_members_cache_max_entries"),
@@ -1594,6 +1595,18 @@ def get_sync_pool_stall_abort_after_timeouts():
     return 120
 
 
+def get_sync_pool_worker_recycle_grace_polls():
+  """Polls to tolerate dead workers with exitcode 0 during maxtasksperchild recycle."""
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        0,
+        int(_pipeline_get("sync_pool_worker_recycle_grace_polls", fallback="2")),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 2
+
+
 def get_sync_pool_poll_timeout_s():
   """Poll interval for sync_timedb pool waits (worker-death / OOM detection)."""
   env = os.environ.get("HPCPERFSTATS_SYNC_POOL_POLL_TIMEOUT_S", "").strip()
@@ -2233,6 +2246,7 @@ def get_conf_parser_defaults_audit_snapshot():
           "sync_ingest_max_file_read_bytes": 536870912,
           "sync_ingest_imap_inflight_cap": 0,
           "sync_ingest_pool_maxtasksperchild": 50,
+          "sync_pool_worker_recycle_grace_polls": 2,
           "sync_process_tree_rss_limit_mb": 0,
           "sync_process_tree_rss_check_every_n_chunks": 1,
           "sync_process_tree_rss_exit_mb": 0,

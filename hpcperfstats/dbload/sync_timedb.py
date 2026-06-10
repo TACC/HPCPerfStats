@@ -360,9 +360,20 @@ def _imap_ingest_pool(
     thread_count,
     chunk_counter,
     pending_count,
+    ingest_pool=None,
+    db_writer_pool=None,
+    archive_pool=None,
 ):
   if pool is None:
     return iter(())
+  pool_health_context = {
+      "ingest_pool": ingest_pool if ingest_pool is not None else pool,
+      "db_writer_pool": db_writer_pool,
+      "archive_pool": archive_pool,
+      "in_flight_sample_fn": (
+          tracker.sample_in_flight if tracker is not None else None
+      ),
+  }
   return imap_unordered_watch_pool(
       pool,
       fn,
@@ -375,6 +386,7 @@ def _imap_ingest_pool(
           chunk_counter=chunk_counter,
           pending_count=pending_count,
       ),
+      pool_health_context=pool_health_context,
   )
 
 
@@ -395,6 +407,9 @@ def _imap_ingest_paths_batched(
     tracker,
     chunk_counter,
     pending_count,
+    ingest_pool=None,
+    db_writer_pool=None,
+    archive_pool=None,
 ):
   """Cap concurrent imap tasks below full chunk size for RSS safety."""
   inflight_cap = _effective_ingest_imap_inflight_cap(thread_count, len(paths))
@@ -409,6 +424,9 @@ def _imap_ingest_paths_batched(
         thread_count=thread_count,
         chunk_counter=chunk_counter,
         pending_count=pending_count,
+        ingest_pool=ingest_pool,
+        db_writer_pool=db_writer_pool,
+        archive_pool=archive_pool,
     ):
       yield item
 
@@ -676,6 +694,8 @@ def _drain_db_write_tasks(
     chunk_ingest_finished,
     pending_total,
     chunk_counter=0,
+    ingest_pool=None,
+    archive_pool=None,
 ):
   """Write queued parse payloads and return updated finished count."""
   if not parse_tasks:
@@ -701,6 +721,9 @@ def _drain_db_write_tasks(
         tracker=write_tracker,
         chunk_counter=chunk_counter,
         pending_count=pending_total,
+        ingest_pool=ingest_pool,
+        db_writer_pool=db_writer_pool,
+        archive_pool=archive_pool,
     )
   try:
     for result in write_results_iter:
@@ -2808,6 +2831,9 @@ def run_sync_timedb_supervisor_loop(
                   tracker=parse_tracker,
                   chunk_counter=chunk_counter,
                   pending_count=len(pending_stats_files),
+                  ingest_pool=ingest_pool,
+                  db_writer_pool=db_writer_pool,
+                  archive_pool=archive_pool,
               )
             for parsed in parse_results_iter:
               stats_fname, payload, need_archival, ingest_ok, parse_elapsed_s = parsed
@@ -2845,6 +2871,8 @@ def run_sync_timedb_supervisor_loop(
                     chunk_ingest_finished=chunk_ingest_finished,
                     pending_total=len(pending_stats_files),
                     chunk_counter=chunk_counter,
+                    ingest_pool=ingest_pool,
+                    archive_pool=archive_pool,
                 )
           except MultiprocessingWorkerExitError as exc:
             pool_worker_exit = True
@@ -2878,6 +2906,8 @@ def run_sync_timedb_supervisor_loop(
                   chunk_ingest_finished=chunk_ingest_finished,
                   pending_total=len(pending_stats_files),
                   chunk_counter=chunk_counter,
+                  ingest_pool=ingest_pool,
+                  archive_pool=archive_pool,
               )
             except MultiprocessingWorkerExitError as exc:
               pool_worker_exit = True
@@ -2922,6 +2952,9 @@ def run_sync_timedb_supervisor_loop(
                   tracker=combined_tracker,
                   chunk_counter=chunk_counter,
                   pending_count=len(pending_stats_files),
+                  ingest_pool=ingest_pool,
+                  db_writer_pool=db_writer_pool,
+                  archive_pool=archive_pool,
               )
             for result in results_iter:
               ingest_ok = True
@@ -2981,6 +3014,9 @@ def run_sync_timedb_supervisor_loop(
                   tracker=ingest_tracker,
                   chunk_counter=chunk_counter,
                   pending_count=len(pending_stats_files),
+                  ingest_pool=ingest_pool,
+                  db_writer_pool=db_writer_pool,
+                  archive_pool=archive_pool,
               )
             for result in results_iter:
               ingest_ok = True

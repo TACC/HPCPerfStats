@@ -11,6 +11,15 @@ from hpcperfstats.dbload import multiprocessing_pool_health as mph
 
 class _DeadWorker:
   pid = 4242
+  exitcode = -9
+
+  def is_alive(self):
+    return False
+
+
+class _RecycledWorker:
+  pid = 4242
+  exitcode = 0
 
   def is_alive(self):
     return False
@@ -269,3 +278,112 @@ def test_hard_exit_pool_worker_error_uses_os_exit(monkeypatch):
   mph.hard_exit_pool_worker_error(exc)
   assert exit_codes == [124]
   assert any("hard exit code=124" in line for line in logs)
+
+
+def test_abort_recycle_grace_tolerates_exitcode_zero(monkeypatch):
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.multiprocessing_pool_health.get_sync_pool_worker_recycle_grace_polls",
+      lambda: 2,
+  )
+  pool = SimpleNamespace(_pool=[_RecycledWorker(), _AliveWorker()])
+  mph.abort_if_pool_workers_dead(pool, context="recycle_test")
+  mph.abort_if_pool_workers_dead(pool, context="recycle_test")
+  with pytest.raises(mph.MultiprocessingWorkerExitError) as excinfo:
+    mph.abort_if_pool_workers_dead(pool, context="recycle_test")
+  assert excinfo.value.exit_code == 137
+  assert excinfo.value.likely_cause == "recycle"
+
+
+def test_abort_recycle_grace_logs_info_not_error(monkeypatch):
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.multiprocessing_pool_health.get_sync_pool_worker_recycle_grace_polls",
+      lambda: 2,
+  )
+  logs = []
+  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  pool = SimpleNamespace(_pool=[_RecycledWorker(), _AliveWorker()])
+  mph.abort_if_pool_workers_dead(pool, context="recycle_log")
+  assert any("INFO: pool worker recycle in progress" in line for line in logs)
+  assert not any("ERROR: pool worker death diagnostics" in line for line in logs)
+
+
+def test_abort_sigkill_logs_diagnostics_with_non_cgroup_hint(monkeypatch):
+  logs = []
+  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  monkeypatch.setattr(
+      "hpcperfstats.process_memory.read_cgroup_memory_events",
+      lambda: {"oom_kill": 0},
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.process_memory.read_cgroup_memory_current_bytes",
+      lambda: 33205403648,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.process_memory.read_cgroup_memory_max_bytes",
+      lambda: 137438953472,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.process_memory.format_tree_rss_breakdown_mb",
+      lambda *a, **k: {"tree_total_mb": 31.0, "supervisor_mb": 1.0,
+                       "ingest_pool_mb": 20.0, "db_writer_pool_mb": 5.0,
+                       "archive_pool_mb": 5.0},
+  )
+  pool = SimpleNamespace(_pool=[_DeadWorker()])
+  with pytest.raises(mph.MultiprocessingWorkerExitError) as excinfo:
+    mph.abort_if_pool_workers_dead(pool, context="sigkill_test")
+  assert excinfo.value.likely_cause == "sigkill_non_cgroup"
+  assert any("ERROR: pool worker death diagnostics" in line for line in logs)
+  assert any("likely_cause=sigkill_non_cgroup" in line for line in logs)
+
+
+def test_abort_sigkill_with_cgroup_oom_reports_sigkill(monkeypatch):
+  monkeypatch.setattr(
+      "hpcperfstats.process_memory.read_cgroup_memory_events",
+      lambda: {"oom_kill": 3},
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.process_memory.read_cgroup_memory_current_bytes",
+      lambda: 100,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.process_memory.read_cgroup_memory_max_bytes",
+      lambda: 1000,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.process_memory.format_tree_rss_breakdown_mb",
+      lambda *a, **k: {"tree_total_mb": 1.0, "supervisor_mb": 1.0,
+                       "ingest_pool_mb": 0.0, "db_writer_pool_mb": 0.0,
+                       "archive_pool_mb": 0.0},
+  )
+  pool = SimpleNamespace(_pool=[_DeadWorker()])
+  with pytest.raises(mph.MultiprocessingWorkerExitError) as excinfo:
+    mph.abort_if_pool_workers_dead(pool, context="cgroup_oom")
+  assert excinfo.value.likely_cause == "sigkill"
+
+
+def test_describe_dead_pool_workers_includes_in_flight_sample(monkeypatch):
+  monkeypatch.setattr(
+      "hpcperfstats.process_memory.read_cgroup_memory_events",
+      lambda: {"oom_kill": 0},
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.process_memory.read_cgroup_memory_current_bytes",
+      lambda: 0,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.process_memory.read_cgroup_memory_max_bytes",
+      lambda: None,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.process_memory.format_tree_rss_breakdown_mb",
+      lambda *a, **k: {"tree_total_mb": 0.0, "supervisor_mb": 0.0,
+                       "ingest_pool_mb": 0.0, "db_writer_pool_mb": 0.0,
+                       "archive_pool_mb": 0.0},
+  )
+  pool = SimpleNamespace(_pool=[_RecycledWorker(), _AliveWorker()])
+  diag = mph.describe_dead_pool_workers(
+      pool,
+      pool_health_context={"in_flight_sample": ["/pending/a"]},
+  )
+  assert diag["in_flight_sample"] == ["/pending/a"]
+  assert diag["likely_cause"] == "recycle"

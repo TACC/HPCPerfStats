@@ -53,6 +53,37 @@ def read_cgroup_memory_max_bytes():
   return _read_cgroup_memory_file("memory.max")
 
 
+def _read_cgroup_memory_events_raw():
+  """Return raw ``memory.events`` text (empty when unavailable)."""
+  for path in (
+      "/sys/fs/cgroup/memory.events",
+      "/sys/fs/cgroup/memory/memory.events",
+  ):
+    try:
+      with open(path, "r", encoding="utf-8") as fh:
+        return fh.read()
+    except OSError:
+      continue
+  return ""
+
+
+def read_cgroup_memory_events():
+  """Parse cgroup v2 ``memory.events`` counters (empty dict when unavailable)."""
+  events = {}
+  for line in _read_cgroup_memory_events_raw().splitlines():
+    line = line.strip()
+    if not line:
+      continue
+    parts = line.split()
+    if len(parts) < 2:
+      continue
+    try:
+      events[parts[0]] = int(parts[1])
+    except ValueError:
+      continue
+  return events
+
+
 def sum_pool_worker_rss_bytes(pool):
   """Sum ``VmRSS`` for alive workers in a multiprocessing pool."""
   total = 0

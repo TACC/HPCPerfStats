@@ -2374,9 +2374,16 @@ def test_ingest_pool_worker_exit_propagates_from_supervisor(monkeypatch):
   fake_rescan.calls = 0
 
   def failing_watch_pool(
-      pool, fn, iterable, *, context="", poll_timeout_s=None, on_stall_warning=None,
+      pool,
+      fn,
+      iterable,
+      *,
+      context="",
+      poll_timeout_s=None,
+      on_stall_warning=None,
+      pool_health_context=None,
   ):
-    del pool, fn, iterable, context, poll_timeout_s, on_stall_warning
+    del pool, fn, iterable, context, poll_timeout_s, on_stall_warning, pool_health_context
     raise MultiprocessingWorkerExitError(
         "worker dead",
         dead_pids=(999,),

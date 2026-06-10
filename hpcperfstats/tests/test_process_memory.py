@@ -43,6 +43,22 @@ def test_read_cgroup_memory_current_bytes_parses_file(monkeypatch):
   assert pm.read_cgroup_memory_current_bytes() == 4096
 
 
+def test_read_cgroup_memory_events_from_raw(monkeypatch):
+  monkeypatch.setattr(
+      pm,
+      "_read_cgroup_memory_events_raw",
+      lambda: "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n",
+  )
+  assert pm.read_cgroup_memory_events() == {
+      "low": 0,
+      "high": 0,
+      "max": 0,
+      "oom": 0,
+      "oom_kill": 0,
+      "oom_group_kill": 0,
+  }
+
+
 def test_format_tree_rss_breakdown_mb(monkeypatch):
   monkeypatch.setattr(pm, "read_process_rss_bytes", lambda pid=None: 10 * 1024 * 1024)
   monkeypatch.setattr(pm, "sum_pool_worker_rss_bytes", lambda pool: 20 * 1024 * 1024)

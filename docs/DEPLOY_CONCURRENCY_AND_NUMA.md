@@ -84,6 +84,28 @@ Kernel OOM may kill an ingest pool worker (`[worker:ingest-pool]`) with a **tran
 
 **Forensics checklist:** inside the pipeline container read `memory.max`, `memory.current`, `memory.peak`, `memory.events` (`oom_kill`); `ps -eo pid,rss:10,cmd` for `[worker:ingest-pool]` vs `[main]`; `find` largest raw stats paths. Log a short packet under **`test_runs/`** when investigating.
 
+**Docker/cgroup OOM vs kernel OOM:** cgroup kills often leave **host `dmesg` empty**. Inside the pipeline container:
+
+```bash
+docker compose exec pipeline sh -c '
+  echo "=== memory.events ==="
+  cat /sys/fs/cgroup/memory.events 2>/dev/null || cat /sys/fs/cgroup/memory.events
+  echo "=== memory.current / max / peak ==="
+  for f in memory.current memory.max memory.peak; do
+    printf "%s: " "$f"; cat /sys/fs/cgroup/$f 2>/dev/null || echo n/a
+  done
+'
+```
+
+| `memory.events` field | Meaning |
+|-----------------------|---------|
+| `oom_kill` | Processes SIGKILL'd by the **container memory cgroup** (non-zero ⇒ Docker/cgroup OOM in this container lifetime) |
+| `oom` / `oom_group_kill` | Related cgroup OOM counters |
+
+Also: `docker inspect <pipeline_container> --format '{{.State.OOMKilled}}'` (main PID only). **`memory.events` counters reset** when the container is recreated — compare `StartedAt` and historical `docker events` if investigating a past incident.
+
+**Pool worker death diagnostics (exit 137):** when a worker dies, `sync_timedb` logs **`ERROR: pool worker death diagnostics:`** with `likely_cause`, `dead_workers` (pid/exitcode/signal), `alive_workers`, `cgroup_oom_kill`, tree RSS breakdown, and `in_flight_sample`. **`likely_cause=recycle`** with exitcode **0** is a normal **`maxtasksperchild`** replacement; **`sync_pool_worker_recycle_grace_polls`** (default **2**) avoids exit **137** during brief recycle windows. Genuine SIGKILL with `cgroup_oom_kill=0` is logged as **`sigkill_non_cgroup`**.
+
 Tune tree RSS limits to ~**70–80%** of the pipeline cgroup cap; grep kernel logs for `oom-kill` + `sync_timedb.py` and correlate with `pending_stats` / janitor debt in application logs.
 
 ## Archive recovery (operators)
@@ -226,7 +248,7 @@ The background **`ArchiveJanitor`** processes up to **`archive_janitor_days_per_
 
 **Pool stall guard (exit 124):** When `imap_unordered_watch_pool` sees **N** consecutive poll timeouts with **no** completed task while all workers are still alive, it raises `MultiprocessingPoolStallError` and `sync_timedb` exits with status **124**. Default wall time is `sync_pool_stall_abort_after_timeouts` × `sync_pool_poll_timeout_s` (**120** × **5s** ≈ **10 minutes**). Logs include an **`ERROR: Pool imap stalled`** line before exit, plus **`WARN: pool imap stall progress`** at 50%/75% of the abort threshold with **`pool_workers_alive`**, **`in_flight_day_hint`**, **`in_flight_sample`**, and a hint when **`sync_ingest_per_file_timeout_s=0`**. After stall, **`Pool workers terminated context=…`** explains why ingest pool children disappear from `ps` while `[main]` may linger briefly.
 
-**Exit 137 vs 124:** Exit **137** (`MultiprocessingWorkerExitError`) means a pool worker was **no longer alive** when the supervisor polled finalize/`get()`—it is **not** proof of kernel OOM. A prior ingest stall may terminate pools and, without teardown guards, a forced archive finalize in `finally` could mask the intended **124** with **137**; current code skips finalize when `pool_worker_exit` is set after stall/worker death and uses **`shutdown(wait=False)`** on startup prefights/async day-close when exiting after pool fatal.
+**Exit 137 vs 124:** Exit **137** (`MultiprocessingWorkerExitError`) means a pool worker was **no longer alive** when the supervisor polled finalize/`get()`—it is **not** proof of kernel or Docker OOM (see diagnostics log and cgroup checklist above). Benign **`maxtasksperchild`** recycle (worker exitcode **0**, other workers alive) is tolerated for **`sync_pool_worker_recycle_grace_polls`** poll cycles before fatal exit. A prior ingest stall may terminate pools and, without teardown guards, a forced archive finalize in `finally` could mask the intended **124** with **137**; current code skips finalize when `pool_worker_exit` is set after stall/worker death and uses **`shutdown(wait=False)`** on startup prefights/async day-close when exiting after pool fatal.
 
 **Startup snapshot (preflights):** Raw-removal, day-close, and tar-seal prefights call **`wait_for_snapshot(allow_build=False)`** only—they wait on the janitor publish and never trigger a second full-tree `build_archive_maintenance_snapshot`. Supervisor **`_rescan_pending_with_progress`** alone may fallback-build after **`sync_startup_snapshot_wait_seconds`**.
 
@@ -236,6 +258,7 @@ The background **`ArchiveJanitor`** processes up to **`archive_janitor_days_per_
 |------|---------|--------|
 | `sync_pool_poll_timeout_s` | 5 | Poll interval between imap progress checks |
 | `sync_pool_stall_abort_after_timeouts` | 120 | Consecutive timeouts before exit **124** |
+| `sync_pool_worker_recycle_grace_polls` | 2 | Polls to tolerate dead workers with exitcode 0 during `maxtasksperchild` recycle before exit **137** |
 | `sync_ingest_per_file_timeout_s` | 900 | Wall-clock cap per ingest worker task (`0` disables); on expiry the file returns `ingest_ok=False` for retry instead of blocking the chunk |
 | `sync_archive_members_cache_enabled` | yes | Per-process L1 cache on ingest duplicate-check path |
 | `sync_archive_members_cache_max_entries` | 64 | Max cached days per ingest/archive worker process |
