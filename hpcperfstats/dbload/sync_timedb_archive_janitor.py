@@ -24,6 +24,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     build_remaining_raw_stats_by_daily_gz,
     calendar_date_from_daily_tar_path,
     classify_day_close_candidates,
+    daily_tar_eligible_for_day_close_submit,
     day_close_queued_reason_for_report_reason,
     daily_gz_has_remaining_raw_stats,
     daily_tar_path_from_compressed,
@@ -432,7 +433,19 @@ class ArchiveJanitor:
         % (len(snapshot.closed_paths), time.time() - snap_t0),
         flush=True,
     )
-    self.enqueue_scheduled_day_close(reason=reason)
+    with self._accrual_snapshot_lock:
+      accrual_snapshot = self._accrual_snapshot
+    remaining = build_remaining_raw_stats_by_daily_gz(
+        self.archive_data_dir,
+        self.host_name_ext,
+        self.tgz_archive_dir,
+        maintenance_snapshot=accrual_snapshot,
+    )
+    self._log_day_close_candidate_report(
+        reason=reason,
+        remaining_raw_by_gz=remaining,
+        newly_queued_tars=set(),
+    )
     self._trim_accrual_snapshot_memory()
 
   def _trim_accrual_snapshot_memory(self):
@@ -550,69 +563,114 @@ class ArchiveJanitor:
         flush=True,
     )
 
+  def _submit_eligible_async_day_close(
+      self,
+      tar_norm: str,
+      *,
+      reason: str,
+      disqualified: Optional[Set[str]] = None,
+  ) -> bool:
+    """Submit async ``DAY_CLOSE`` when checkpoint-complete eligibility passes."""
+    tar_norm = os.path.normpath(tar_norm or "")
+    if not tar_norm:
+      return False
+    coord = self.async_day_close_coordinator
+    if coord is None:
+      return False
+    inputs = {}
+    if self.get_day_close_candidate_inputs is not None:
+      try:
+        inputs = self.get_day_close_candidate_inputs() or {}
+      except Exception:
+        inputs = {}
+    if disqualified is None:
+      disqualified = set(self.get_disqualified_daily_tars())
+    with self._hints_state_lock:
+      day_phases = dict(self._day_phases)
+    with self._accrual_snapshot_lock:
+      accrual_snapshot = self._accrual_snapshot
+    remaining = build_remaining_raw_stats_by_daily_gz(
+        self.archive_data_dir,
+        self.host_name_ext,
+        self.tgz_archive_dir,
+        maintenance_snapshot=accrual_snapshot,
+    )
+    eligible, skip_reason = daily_tar_eligible_for_day_close_submit(
+        tar_norm,
+        unprocessed_by_tar=inputs.get("unprocessed_by_tar"),
+        disqualified_daily_tars=disqualified,
+        day_phases=day_phases,
+        remaining_raw_by_gz=remaining,
+        local_tz=self.local_tz,
+    )
+    if not eligible:
+      if skip_reason and self.log_fn:
+        self.log_fn(
+            "janitor: day_close submit skip tar=%s reason=%s"
+            % (tar_norm, skip_reason),
+            flush=True,
+        )
+      return False
+    submitted = coord.submit_day_close(
+        tar_norm,
+        reason=reason,
+        disqualified_daily_tars=disqualified,
+    )
+    if submitted and self.log_fn:
+      self.log_fn(
+          "janitor: async day_close submit tar=%s reason=%s"
+          % (tar_norm, reason),
+          flush=True,
+      )
+    return submitted
+
   def enqueue_immediate_day_close(self, tar_path: str, *, reason: str) -> bool:
-    """Enqueue ``DAY_CLOSE`` when hot-path ingest+append for a day is quiescent."""
+    """Submit async ``DAY_CLOSE`` when ingest checkpoint is complete for the day."""
     tar_norm = os.path.normpath(tar_path) if tar_path else ""
     if not tar_norm:
       return False
-    disqualified = set(self.get_disqualified_daily_tars())
-    if not self._day_needs_scheduled_close(
+    submit_reason = "day_ingest_complete:%s" % reason
+    submitted = self._submit_eligible_async_day_close(
         tar_norm,
-        remaining_raw_by_gz=None,
-        disqualified=disqualified,
-    ):
-      return False
-    with self._debt_lock:
-      self._enqueue_day_close_locked(tar_norm, persist=False)
-      self._trim_heap_to_max_entries_locked()
-    self._persist_hints()
-    self.log_fn(
-        "janitor: day_close immediate reason=day_ingest_complete:%s tar=%s "
-        "debt_depth=%d"
-        % (reason, tar_norm, self.debt_depth()),
-        flush=True,
+        reason=submit_reason,
     )
-    self._log_day_close_candidate_report(
-        reason="day_ingest_complete:%s" % reason,
-        remaining_raw_by_gz=None,
-        newly_queued_tars={tar_norm},
-    )
-    return True
+    if submitted:
+      self._log_day_close_candidate_report(
+          reason=submit_reason,
+          remaining_raw_by_gz=None,
+          newly_queued_tars={tar_norm},
+      )
+    return submitted
 
   def enqueue_immediate_day_close_many(self, tar_paths, *, reason: str):
-    """Bulk immediate ``DAY_CLOSE`` enqueue (oldest-first list); one wake signal."""
+    """Bulk async ``DAY_CLOSE`` submit (oldest-first list); one wake signal."""
     if not tar_paths:
       return
     disqualified = set(self.get_disqualified_daily_tars())
-    enqueued = 0
+    submit_reason = "day_ingest_complete:%s" % reason
+    submitted = 0
     newly_queued = set()
-    with self._debt_lock:
-      for tar_path in tar_paths:
-        tar_norm = os.path.normpath(tar_path) if tar_path else ""
-        if not tar_norm:
-          continue
-        if not self._day_needs_scheduled_close(
-            tar_norm,
-            remaining_raw_by_gz=None,
-            disqualified=disqualified,
-        ):
-          continue
-        self._enqueue_day_close_locked(tar_norm, persist=False)
+    for tar_path in tar_paths:
+      tar_norm = os.path.normpath(tar_path) if tar_path else ""
+      if not tar_norm:
+        continue
+      if self._submit_eligible_async_day_close(
+          tar_norm,
+          reason=submit_reason,
+          disqualified=disqualified,
+      ):
         newly_queued.add(tar_norm)
-        enqueued += 1
-      self._trim_heap_to_max_entries_locked()
+        submitted += 1
     self._log_day_close_candidate_report(
-        reason="day_ingest_complete:%s" % reason,
+        reason=submit_reason,
         remaining_raw_by_gz=None,
         newly_queued_tars=newly_queued,
     )
-    if not enqueued:
+    if not submitted:
       return
-    self._persist_hints()
     self.log_fn(
-        "janitor: day_close immediate reason=day_ingest_complete:%s days=%d "
-        "debt_depth=%d"
-        % (reason, enqueued, self.debt_depth()),
+        "janitor: async day_close bulk submit reason=%s days=%d"
+        % (submit_reason, submitted),
         flush=True,
     )
     self.signal_work_available()
@@ -644,7 +702,11 @@ class ArchiveJanitor:
       tar_norm = os.path.normpath(tar_path)
       if tar_norm in disqualified:
         continue
-      self._enqueue_day_close(tar_norm)
+      self._submit_eligible_async_day_close(
+          tar_norm,
+          reason="dedupe_hint",
+          disqualified=disqualified,
+      )
 
   def _effective_tick_limits(self):
     budget = float(cfg.get_archive_janitor_budget_seconds())
@@ -957,10 +1019,10 @@ class ArchiveJanitor:
             self._day_phases[tar_norm] = day_phase_hint_entry(tar_norm, "tar_dropped")
           return True
         was_active = tar_norm in coord.active_or_submitted_tar_paths()
-        coord.submit_day_close(
+        self._submit_eligible_async_day_close(
             tar_norm,
             reason="janitor_debt",
-            disqualified_daily_tars=disqualified,
+            disqualified=disqualified,
         )
         if (
             tick_stats is not None

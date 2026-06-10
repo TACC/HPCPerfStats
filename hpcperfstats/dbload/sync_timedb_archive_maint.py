@@ -84,14 +84,10 @@ def _host_dir_fingerprint(host_dir: str) -> Optional[Tuple[int, int]]:
 def load_archive_maint_hints(archive_data_dir: str) -> Optional[Dict[str, Any]]:
   if not cfg.get_sync_archive_maint_hints():
     return None
+  from hpcperfstats.dbload.sync_timedb_persistence import load_persistence_document
+
   path = maint_hints_path(archive_data_dir)
-  if not os.path.isfile(path):
-    return None
-  try:
-    with open(path, "r", encoding="utf-8") as handle:
-      data = json.load(handle)
-  except (OSError, json.JSONDecodeError):
-    return None
+  data = load_persistence_document(path, "archive_maint_hints", default=None)
   if not isinstance(data, dict):
     return None
   version = data.get("version")
@@ -209,6 +205,8 @@ def save_archive_maint_hints(
   if not cfg.get_sync_archive_maint_hints():
     return
   path = maint_hints_path(archive_data_dir)
+  from hpcperfstats.dbload.sync_timedb_persistence import save_persistence_document
+
   payload = {
       "version": _MAINT_HINTS_VERSION,
       "host_dirs": host_dirs,
@@ -217,17 +215,7 @@ def save_archive_maint_hints(
       "day_phases": day_phases or {},
       "debt_queue": list(debt_queue or []),
   }
-  tmp_path = "%s.tmp" % path
-  try:
-    with open(tmp_path, "w", encoding="utf-8") as handle:
-      json.dump(payload, handle, separators=(",", ":"), sort_keys=True)
-    os.replace(tmp_path, path)
-  except OSError:
-    try:
-      if os.path.exists(tmp_path):
-        os.remove(tmp_path)
-    except OSError:
-      pass
+  save_persistence_document(path, "archive_maint_hints", payload)
 
 
 def _split_paths_by_hints(

@@ -11,6 +11,7 @@ if str(HOOK_DIR) not in sys.path:
 
 from hpc_hook_lib import (  # noqa: E402
     emit_json,
+    find_hook_task_router_file,
     find_router_file,
     load_json_stdin,
     rule_file_needs_router_entry,
@@ -53,19 +54,33 @@ def main() -> int:
         return 0
 
     router_text = router.read_text(encoding="utf-8", errors="replace")
-    if rule_listed_in_router(router_text, basename):
+    in_core_router = rule_listed_in_router(router_text, basename)
+    hook_router = find_hook_task_router_file()
+    in_hook_router = False
+    if hook_router is not None:
+        hook_text = hook_router.read_text(encoding="utf-8", errors="replace")
+        in_hook_router = rule_listed_in_router(hook_text, basename)
+    if in_core_router and in_hook_router:
         emit_json({})
         return 0
 
+    missing: list[str] = []
+    if not in_core_router:
+        missing.append("agent-discipline-core.mdc task router")
+    if hook_router is None:
+        missing.append("hook_task_router.py (file not found)")
+    elif not in_hook_router:
+        missing.append("hook_task_router.py ROUTER_ENTRIES")
     emit_json(
         {
             "additional_context": (
                 f"MANDATORY (agent-discipline-core.mdc): new/updated rule `{basename}` "
-                "is not referenced in the task router. In the same task, add a row to "
-                "`agent-discipline-core.mdc` (trigger paths → Read this rule), a matching "
-                "`ROUTER_ENTRIES` row in `.cursor/hooks/hook_task_router.py`, and a "
-                "one-line note in `RULES_README.md` if policy changes. "
-                "Do not mark the task done until both routers list this file."
+                f"is not fully dual-registered. Missing: {', '.join(missing)}. "
+                "In the same task, add a row to `agent-discipline-core.mdc` "
+                "(trigger paths → Read this rule), a matching `ROUTER_ENTRIES` row in "
+                "`.cursor/hooks/hook_task_router.py`, and a one-line note in "
+                "`RULES_README.md` if policy changes. Verify both routers in "
+                "Final code review before close."
             ),
         },
     )

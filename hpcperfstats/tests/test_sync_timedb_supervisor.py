@@ -274,6 +274,45 @@ def test_supervisor_wires_ingest_ready_fn_into_day_raw_removal(monkeypatch, tmp_
     shutdown_requested[0] = False
 
 
+def test_supervisor_calls_ensure_persistence_contract_at_startup(monkeypatch, tmp_path):
+  shutdown_requested[0] = False
+  contract_calls = []
+  try:
+    archive_dir = tmp_path / "archive"
+    daily_dir = tmp_path / "daily"
+    archive_dir.mkdir()
+    daily_dir.mkdir()
+
+    def spy_contract(directory, *, log_fn=None):
+      contract_calls.append(directory)
+      return False
+
+    def fake_rescan(*_a, **_k):
+      shutdown_requested[0] = True
+      return []
+
+    monkeypatch.setattr(st, "ensure_persistence_contract", spy_contract)
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "tgz_archive_dir", str(daily_dir))
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+
+    st.run_sync_timedb_supervisor_loop(
+        str(archive_dir),
+        "all",
+        None,
+        ".hpc",
+        object(),
+        _FakeArchivePool(),
+        run_once=True,
+    )
+
+    assert contract_calls == [str(archive_dir)]
+  finally:
+    shutdown_requested[0] = False
+
+
 def test_normalize_archive_groups_by_tgz_sorts_and_copies_paths():
   mapping = {
       "/tmp/2026-03-02.tar.gz": ["/tmp/p2", "/tmp/p1"],

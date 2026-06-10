@@ -42,6 +42,7 @@ Applies to **every plan**: pre-code chat plans, **`docs/plans/`** design docs, m
    - performance regressions
    - missing components (tests, docs, registry or drift guards, API client or tools updates, nginx or route sync when applicable)
    - edge cases not covered by tests
+   - **new or re-triggered domain rules** wired into **both** `agent-discipline-core.mdc` (task router) and `.cursor/hooks/hook_task_router.py` (`ROUTER_ENTRIES`) in the same task (`agent-discipline-core.mdc` → *Creating or changing domain rules*)
    - anything else a senior reviewer would block on merge  
    **Fix anything found** and re-run relevant tests. Do not deliver structured chat self-review or mark todos complete while open review items remain. Execution detail: **`plan-completion-gate.mdc`** close-sequence step 1.
 

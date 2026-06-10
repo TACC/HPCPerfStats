@@ -251,3 +251,51 @@ def test_stale_manifest_recovery_on_coordinator_init(tmp_path, monkeypatch):
   assert entry.get("detail") == "stale_manifest_recovery"
   assert tar_norm not in coord.active_or_submitted_tar_paths()
   assert any("stale manifest recovery" in line for line in logs)
+
+
+@pytest.mark.django_db(databases=[])
+def test_is_complete_false_when_manifest_complete_but_raw_remains(tmp_path, monkeypatch):
+  archive_dir = str(tmp_path / "archive")
+  daily_dir = str(tmp_path / "daily")
+  os.makedirs(archive_dir)
+  os.makedirs(daily_dir)
+  tar_norm = os.path.normpath(os.path.join(daily_dir, "2026-04-15.tar"))
+  zst_path = os.path.normpath(os.path.join(daily_dir, "2026-04-15.tar.zst"))
+  open(tar_norm, "wb").close()
+  open(zst_path, "wb").close()
+  raw_path = "/raw/still-present"
+  monkeypatch.setattr(
+      async_dc_mod,
+      "build_remaining_raw_for_daily_tar",
+      lambda *_a, **_k: {zst_path: [raw_path]},
+  )
+  coord = async_dc_mod.AsyncDayCloseCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=daily_dir,
+      local_tz=None,
+      log_fn=lambda *_a, **_kw: None,
+      get_disqualified_daily_tars=lambda: set(),
+  )
+  coord._set_entry_status(tar_norm, "complete", completed_at=time.time())
+  assert coord.is_complete(tar_norm) is False
+
+
+@pytest.mark.django_db(databases=[])
+def test_submit_day_close_honors_submit_eligible_fn(tmp_path):
+  archive_dir = str(tmp_path / "archive")
+  daily_dir = str(tmp_path / "daily")
+  os.makedirs(archive_dir)
+  os.makedirs(daily_dir)
+  tar_path = os.path.join(daily_dir, "2020-01-01.tar")
+  open(tar_path, "wb").close()
+  coord = async_dc_mod.AsyncDayCloseCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=daily_dir,
+      local_tz=None,
+      log_fn=lambda *_a, **_kw: None,
+      get_disqualified_daily_tars=lambda: set(),
+      submit_eligible_fn=lambda _tar: (False, "checkpoint_incomplete"),
+  )
+  assert coord.submit_day_close(tar_path, reason="test") is False

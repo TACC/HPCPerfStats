@@ -22,6 +22,7 @@ ROUTER_ENTRIES: list[RouterEntry] = [
             "hpcperfstats/dbload/multiprocessing_pool_health.py",
         ],
         "rules": [
+            "sync-timedb-persistence-contract.mdc",
             "sync-timedb-archive-janitor-contract.mdc",
             "sync-timedb-db-before-archive-contract.mdc",
             "sync-timedb-lock-and-archive-contract.mdc",
@@ -168,6 +169,7 @@ ROUTER_ENTRIES: list[RouterEntry] = [
         ],
         "rules": [
             "plan-creation-contract.mdc",
+            "plan-template-enforcement.mdc",
         ],
     },
     {
@@ -188,6 +190,8 @@ ROUTER_ENTRIES: list[RouterEntry] = [
         ],
         "rules": [
             "agent-discipline-core.mdc",
+            "implementation-review-workflow.mdc",
+            "plan-template-enforcement.mdc",
         ],
     },
 ]

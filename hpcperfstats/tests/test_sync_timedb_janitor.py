@@ -119,8 +119,7 @@ def test_run_scheduled_maintenance_pass_refreshes_snapshot_and_enqueues(
   janitor.run_scheduled_maintenance_pass(reason="test")
   with janitor._accrual_snapshot_lock:
     assert janitor._accrual_snapshot is snapshot
-  assert janitor.debt_depth() == 1
-  assert {d.kind for d in janitor._debt_heap} == {DebtKind.DAY_CLOSE}
+  assert janitor.debt_depth() == 0
 
 
 def test_tick_raw_remove_uses_allow_auto_seal_false(monkeypatch):
@@ -1298,15 +1297,36 @@ def test_enqueue_immediate_day_close_respects_disqualified(monkeypatch, tmp_path
   assert janitor.debt_depth() == 0
 
 
-def test_enqueue_immediate_day_close_enqueues_eligible_day(tmp_path):
+def test_enqueue_immediate_day_close_submits_async_when_eligible(tmp_path):
   daily_dir = tmp_path / "daily"
   daily_dir.mkdir()
   tar_path = str(daily_dir / "2020-01-01.tar")
   open(tar_path, "wb").close()
-  janitor = _make_janitor(tgz_archive_dir=str(daily_dir))
+  submit_calls = []
+
+  class _FakeCoord:
+    def submit_day_close(self, tar, *, reason, disqualified_daily_tars=None):
+      submit_calls.append((tar, reason))
+      return True
+
+    def active_or_submitted_tar_paths(self):
+      return set()
+
+    def entry_progress_snapshot(self, _tar_path):
+      return {}
+
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      async_day_close_coordinator=_FakeCoord(),
+      get_day_close_candidate_inputs=lambda: {
+          "unprocessed_by_tar": {},
+      },
+  )
   assert janitor.enqueue_immediate_day_close(tar_path, reason="chunk_end")
-  assert janitor.debt_depth() == 1
-  assert janitor._debt_heap[0].kind == DebtKind.DAY_CLOSE
+  assert janitor.debt_depth() == 0
+  assert submit_calls == [
+      (os.path.normpath(tar_path), "day_ingest_complete:chunk_end"),
+  ]
 
 
 def test_enqueue_immediate_day_close_many_signals_once(tmp_path):
@@ -1326,8 +1346,24 @@ def test_enqueue_immediate_day_close_many_signals_once(tmp_path):
     return real_signal()
 
   janitor.signal_work_available = counting_signal
+  submit_calls = []
+
+  class _FakeCoord:
+    def submit_day_close(self, tar, *, reason, disqualified_daily_tars=None):
+      submit_calls.append(tar)
+      return True
+
+    def active_or_submitted_tar_paths(self):
+      return set()
+
+    def entry_progress_snapshot(self, _tar_path):
+      return {}
+
+  janitor.async_day_close_coordinator = _FakeCoord()
+  janitor.get_day_close_candidate_inputs = lambda: {"unprocessed_by_tar": {}}
   janitor.enqueue_immediate_day_close_many(tar_paths, reason="bulk")
-  assert janitor.debt_depth() == 2
+  assert janitor.debt_depth() == 0
+  assert len(submit_calls) == 2
   assert signal_count["n"] == 1
 
 
@@ -1476,6 +1512,7 @@ def test_janitor_day_close_submits_async_not_sync_seal(monkeypatch, tmp_path):
   janitor = _make_janitor(
       tgz_archive_dir=str(daily_dir),
       async_day_close_coordinator=_FakeCoord(),
+      get_day_close_candidate_inputs=lambda: {"unprocessed_by_tar": {}},
   )
   debt = DayDebt(
       sort_index=_debt_sort_key(DebtKind.DAY_CLOSE, tar_path),
@@ -1496,7 +1533,7 @@ def test_janitor_day_close_submits_async_not_sync_seal(monkeypatch, tmp_path):
   assert result is False
 
 
-def test_enqueue_scheduled_day_close_logs_candidate_report(tmp_path, monkeypatch):
+def test_run_scheduled_maintenance_pass_logs_candidate_report_only(tmp_path, monkeypatch):
   daily_dir = tmp_path / "daily"
   daily_dir.mkdir()
   tar_path = str(daily_dir / "2020-01-01.tar")
@@ -1528,6 +1565,15 @@ def test_enqueue_scheduled_day_close_logs_candidate_report(tmp_path, monkeypatch
       "build_remaining_raw_stats_by_daily_gz",
       lambda *args, **kwargs: {},
   )
-  janitor.enqueue_scheduled_day_close(reason="test")
+  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+
+  snapshot = ArchiveMaintenanceSnapshot(closed_paths=[], remaining_raw_by_gz={})
+  monkeypatch.setattr(
+      janitor_mod,
+      "build_archive_maintenance_snapshot",
+      lambda *_a, **_k: snapshot,
+  )
+  janitor.run_scheduled_maintenance_pass(reason="test")
+  assert janitor.debt_depth() == 0
   report_lines = [line for line in log_lines if "day_close candidate" in line]
   assert any("disqualified" in line for line in report_lines)

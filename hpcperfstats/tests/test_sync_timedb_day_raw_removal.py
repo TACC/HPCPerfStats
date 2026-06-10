@@ -182,6 +182,24 @@ def test_raw_removal_progress_summary_reports_pending_delete(tmp_path):
   assert summary["pending_delete"] >= 1
 
 
+def test_done_manifest_resets_when_retryable_skips_remain_on_disk(tmp_path):
+  day = datetime(2022, 6, 9)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, _zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
+  state = coord._get_or_create_day(tar_path)
+  state._verify_body()
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["completed_at"] = time.time()
+  assert state.delete_phase_done()
+  assert state._needs_retry_after_ingest()
+  state._reset_for_reverify()
+  assert state.phase() == PHASE_VERIFYING
+  assert state._manifest.get("verified_count", 0) == 0
+  assert seg.is_file()
+
+
 def test_pipeline_verify_budget_exhausted_logs_warning(tmp_path, monkeypatch):
   day = datetime(2022, 6, 8)
   tar_path = str(tmp_path / "daily" / "2022-06-08.tar")

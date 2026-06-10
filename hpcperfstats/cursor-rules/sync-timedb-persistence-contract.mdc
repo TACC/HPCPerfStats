@@ -1,0 +1,68 @@
+---
+description: Versioned persistence API and sidecar registry for sync_timedb operator artifacts
+alwaysApply: false
+globs: hpcperfstats/dbload/sync_timedb*.py
+---
+
+# sync_timedb Persistence Contract
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+All operator sidecars under `{archive_data_dir}` share one versioned persistence API.
+
+## Canonical module
+
+| Concern | Location |
+|---|---|
+| Contract version, registry, reset | `hpcperfstats/dbload/sync_timedb_persistence.py` |
+| Startup gate | `ensure_persistence_contract()` in `run_sync_timedb_supervisor_loop` |
+
+## Contract file
+
+`{archive_data_dir}/.sync_timedb_persistence.json`:
+
+```json
+{"contract_version": 2, "written_at": 1710000000.0}
+```
+
+**Startup:** if missing or `contract_version != SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION`, call `reset_sync_timedb_persistence()` (unlink all registered artifacts), write fresh contract, proceed with empty in-memory state.
+
+## Registered artifacts (`PERSISTENCE_ARTIFACT_REGISTRY`)
+
+| Kind | Path |
+|---|---|
+| `ingest_checkpoint` | `.sync_timedb_state.json` (envelope with `entries`) |
+| `archive_dead_letter` | `.sync_timedb_dead_letter.json` |
+| `archive_maint_hints` | `.sync_archive_maint_hints.json` |
+| `async_day_close` | `.sync_timedb_async_day_close.json` |
+| `startup_day_close` | `.sync_timedb_startup_day_close.json` |
+| `startup_tar_seal` | `.sync_timedb_startup_tar_seal.json` |
+| `startup_raw_removal` | `.sync_timedb_startup_raw_removal.json` |
+| `day_raw_removal_dir` | `.sync_timedb_day_raw_removal/` |
+| `unparsable_raw` | `.sync_timedb_unparsable_raw.json` |
+
+**API:** `load_persistence_document(path, kind)` / `save_persistence_document(path, kind, payload)` — no ad-hoc JSON load/save for registered kinds in `dbload/`.
+
+## Bump policy
+
+Increment `SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION` in the **same PR** as any change to:
+
+- day-close submit eligibility (`daily_tar_eligible_for_day_close_submit`)
+- checkpoint processed semantics
+- raw-removal manifest phases / retryable skip reasons
+- async `complete` / filesystem truth
+- maint hints debt/day_phases interpretation
+- DB-head/delete gate behavior affecting persisted skip reasons
+
+Add or extend `test_sync_timedb_persistence.py` and `test_sync_timedb_persistence_artifact_registry` drift guard.
+
+## Operator notes
+
+- Contract bump triggers one-time full reprocess on next startup (intentional); manual `.sync_*` delete is not required.
+- Log lines: `sync_timedb: persistence contract vN active` / `persistence reset old=M new=N`.
+
+## Overlap
+
+- **`sync-timedb-archive-janitor-contract.mdc`** — day-close timing; scheduled pass no longer accrues `DAY_CLOSE` debt.
+- **`sync-timedb-db-before-archive-contract.mdc`** — head-ingest gate and manifest retry semantics.
+- **`runtime-resource-and-metrics-safety.mdc`** — ingest/archive orchestration safety.

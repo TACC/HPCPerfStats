@@ -251,6 +251,22 @@ def test_router_from_rule_path():
   assert router.is_file()
 
 
+def test_rule_dual_registration_issues_flags_orphan_rule():
+  orphan_path = str(RULES_DIR / "orphan-test-rule-contract.mdc")
+  issues = lib.rule_dual_registration_issues([orphan_path])
+  assert any("agent-discipline-core.mdc task router" in issue for issue in issues)
+  assert any("hook_task_router.py ROUTER_ENTRIES" in issue for issue in issues)
+
+
+def test_rule_dual_registration_issues_passes_for_registered_rule():
+  registered_path = str(RULES_DIR / "testing-best-practices.mdc")
+  assert lib.rule_dual_registration_issues([registered_path]) == []
+
+
+def test_rule_dual_registration_issues_skips_non_rule_paths():
+  assert lib.rule_dual_registration_issues([HOOK_LIB_PATH]) == []
+
+
 def _minimal_plan_markdown() -> str:
   return (
       "## Problem and facts\n\nfacts\n"

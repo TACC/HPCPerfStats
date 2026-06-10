@@ -13,9 +13,10 @@ When **`sync_startup_day_close_preflight=yes`** (default), the supervisor starts
 |---|---|
 | Discover + submit | `hpcperfstats/dbload/sync_timedb_startup_day_close.py` → `StartupDayClosePreflight` |
 | Async seal/raw/tar worker | `hpcperfstats/dbload/sync_timedb_async_day_close.py` → `AsyncDayCloseCoordinator` |
-| Checkpoint subtract + classify | `load_checkpoint_path_set`, `build_unprocessed_raw_by_daily_tar`, `days_ingest_complete_by_checkpoint`, `classify_day_close_candidates` in `sync_timedb_archive_helpers.py` |
+| Checkpoint subtract + classify | `load_checkpoint_path_set`, `build_unprocessed_raw_by_daily_tar`, `days_ingest_complete_by_checkpoint`, `daily_tar_eligible_for_day_close_submit`, `classify_day_close_candidates` in `sync_timedb_archive_helpers.py` |
+| Persistence API | `sync_timedb_persistence.py` — checkpoint/manifest load/save via `load_persistence_document` / `save_persistence_document`; contract bump resets sidecars (`sync-timedb-persistence-contract.mdc`) |
 | Manifest | `{archive_data_dir}/.sync_timedb_startup_day_close.json` |
-| Checkpoint | `{archive_data_dir}/.sync_timedb_state.json` (same path/size/mtime fingerprint as supervisor restart) |
+| Checkpoint | `{archive_data_dir}/.sync_timedb_state.json` (envelope with `entries`; same path/size/mtime fingerprint as supervisor restart) |
 
 ## Eligibility (startup discover)
 

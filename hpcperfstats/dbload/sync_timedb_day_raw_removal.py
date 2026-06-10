@@ -20,6 +20,10 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     remove_verified_uncompressed_daily_tars,
     stats_file_is_active_segment,
 )
+from hpcperfstats.dbload.sync_timedb_persistence import (
+    load_persistence_document,
+    save_persistence_document,
+)
 from hpcperfstats.file_locking import file_write_lock
 from hpcperfstats.process_title import set_daemon_thread_title
 from hpcperfstats.shutdown_utils import shutdown_requested
@@ -31,6 +35,17 @@ PHASE_VERIFYING = "verifying"
 PHASE_VERIFICATION_COMPLETE = "verification_complete"
 PHASE_DELETING = "deleting"
 PHASE_DONE = "done"
+
+RETRYABLE_SKIP_REASONS = frozenset({
+    "not_head_ingested",
+    "not_in_sealed_archive",
+    "size_mismatch",
+})
+RETRYABLE_SKIP_STATUSES = frozenset({
+    "skipped_not_head_ingested",
+    "skipped_not_in_archive",
+    "skipped_size_mismatch",
+})
 
 
 def day_removal_manifest_dir(archive_data_dir: str) -> str:
@@ -67,11 +82,7 @@ def _new_manifest(tar_path: str) -> Dict[str, Any]:
 
 
 def _load_manifest(path: str, tar_path: str) -> Dict[str, Any]:
-  try:
-    with open(path, encoding="utf-8") as handle:
-      payload = json.load(handle)
-  except (OSError, json.JSONDecodeError, TypeError, ValueError):
-    return _new_manifest(tar_path)
+  payload = load_persistence_document(path, "day_raw_removal", default=None)
   if not isinstance(payload, dict):
     return _new_manifest(tar_path)
   payload.setdefault("version", MANIFEST_VERSION)
@@ -81,22 +92,7 @@ def _load_manifest(path: str, tar_path: str) -> Dict[str, Any]:
 
 
 def _save_manifest(path: str, payload: Dict[str, Any]) -> None:
-  parent = os.path.dirname(path)
-  try:
-    os.makedirs(parent, exist_ok=True)
-  except OSError:
-    pass
-  tmp_path = "%s.tmp" % path
-  try:
-    with open(tmp_path, "w", encoding="utf-8") as handle:
-      json.dump(payload, handle, separators=(",", ":"), sort_keys=True)
-    os.replace(tmp_path, path)
-  except OSError:
-    try:
-      if os.path.exists(tmp_path):
-        os.remove(tmp_path)
-    except OSError:
-      pass
+  save_persistence_document(path, "day_raw_removal", payload)
 
 
 def _entry_fingerprint(entry: Dict[str, Any]) -> Optional[Dict[str, int]]:
@@ -152,6 +148,59 @@ class _DayRawRemovalState:
 
   def delete_phase_done(self) -> bool:
     return self.phase() == PHASE_DONE
+
+  def _closed_raw_paths_on_disk(self) -> List[str]:
+    remaining = build_remaining_raw_for_daily_tar(
+        self.archive_data_dir,
+        self.host_name_ext,
+        self.tgz_archive_dir,
+        self.tar_path,
+    )
+    paths: List[str] = []
+    for raw_list in (remaining or {}).values():
+      paths.extend(raw_list or [])
+    return paths
+
+  def _entry_is_retryable_skip(self, entry: Dict[str, Any]) -> bool:
+    if not isinstance(entry, dict):
+      return False
+    reason = str(entry.get("reason") or "")
+    status = str(entry.get("status") or "")
+    return (
+        reason in RETRYABLE_SKIP_REASONS
+        or status in RETRYABLE_SKIP_STATUSES
+    )
+
+  def _needs_retry_after_ingest(self) -> bool:
+    if self.phase() != PHASE_DONE:
+      return False
+    with self._lock:
+      entries = dict(self._manifest.get("entries", {}))
+    for path in self._closed_raw_paths_on_disk():
+      if not os.path.isfile(path):
+        continue
+      entry = entries.get(path)
+      if entry is None or self._entry_is_retryable_skip(entry):
+        return True
+    return False
+
+  def _reset_for_reverify(self) -> None:
+    with self._lock:
+      self._manifest = _new_manifest(self.tar_path)
+      _save_manifest(self._manifest_path, self._manifest)
+
+  def _all_closed_raw_terminal_or_gone(self) -> bool:
+    with self._lock:
+      entries = dict(self._manifest.get("entries", {}))
+    for path in self._closed_raw_paths_on_disk():
+      if not os.path.isfile(path):
+        continue
+      entry = entries.get(path)
+      if entry is None:
+        return False
+      if self._entry_is_retryable_skip(entry):
+        return False
+    return True
 
   def progress_summary(self) -> Dict[str, Any]:
     with self._lock:
@@ -355,6 +404,11 @@ class _DayRawRemovalState:
       ]
       raw_delete_complete = not remaining
     if raw_delete_complete:
+      if not self._all_closed_raw_terminal_or_gone():
+        with self._lock:
+          self._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
+          _save_manifest(self._manifest_path, self._manifest)
+        return deleted
       remaining_raw = build_remaining_raw_for_daily_tar(
           self.archive_data_dir,
           self.host_name_ext,
@@ -505,7 +559,10 @@ class DayRawRemovalCoordinator:
   def _pipeline_body(self, state: _DayRawRemovalState) -> None:
     close_old_connections()
     if state.delete_phase_done():
-      return
+      if state._needs_retry_after_ingest():
+        state._reset_for_reverify()
+      else:
+        return
     verify_started = time.time()
     verify_budget = cfg.get_sync_day_close_raw_removal_verify_budget_seconds()
     if not state.verification_complete():
@@ -573,7 +630,10 @@ class DayRawRemovalCoordinator:
       return
     state = self._get_or_create_day(tar_path)
     if state.delete_phase_done():
-      return
+      if state._needs_retry_after_ingest():
+        state._reset_for_reverify()
+      else:
+        return
     if state._pipeline_future is not None and not state._pipeline_future.done():
       return
     executor = self._ensure_executor()

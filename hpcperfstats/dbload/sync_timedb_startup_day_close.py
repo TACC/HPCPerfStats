@@ -22,6 +22,10 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     log_day_close_candidate_report,
 )
 from hpcperfstats.dbload.sync_timedb_async_day_close import AsyncDayCloseCoordinator
+from hpcperfstats.dbload.sync_timedb_persistence import (
+    load_persistence_document,
+    save_persistence_document,
+)
 from hpcperfstats.process_title import set_daemon_thread_title
 from hpcperfstats.shutdown_utils import shutdown_requested
 
@@ -53,11 +57,7 @@ def _new_manifest() -> Dict[str, Any]:
 
 
 def _load_manifest(path: str) -> Dict[str, Any]:
-  try:
-    with open(path, encoding="utf-8") as handle:
-      payload = json.load(handle)
-  except (OSError, json.JSONDecodeError, TypeError, ValueError):
-    return _new_manifest()
+  payload = load_persistence_document(path, "startup_day_close", default=None)
   if not isinstance(payload, dict):
     return _new_manifest()
   payload.setdefault("version", MANIFEST_VERSION)
@@ -69,17 +69,7 @@ def _load_manifest(path: str) -> Dict[str, Any]:
 
 
 def _save_manifest(path: str, payload: Dict[str, Any]) -> None:
-  tmp_path = "%s.tmp" % path
-  try:
-    with open(tmp_path, "w", encoding="utf-8") as handle:
-      json.dump(payload, handle, separators=(",", ":"), sort_keys=True)
-    os.replace(tmp_path, path)
-  except OSError:
-    try:
-      if os.path.exists(tmp_path):
-        os.remove(tmp_path)
-    except OSError:
-      pass
+  save_persistence_document(path, "startup_day_close", payload)
 
 
 def _tar_sort_key(tar_path: str) -> date:

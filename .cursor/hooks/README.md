@@ -14,9 +14,9 @@ ln -sf ../HPCPerfStats/.cursor/hooks .cursor/hooks
 
 | Event | Script | Behavior |
 |-------|--------|----------|
-| `stop` | `check-close-gate.py` | After **file edits** or **`CreatePlan`**, if the assistant closes without required headings (including **Agent rule dispatch** with listed `*.mdc` or N/A), plan body sections (when `CreatePlan` was used), or **Read** proof for listed rules / `PLAN_TEMPLATE.md`, auto-submit `Close gate incomplete` follow-up (max 3 loops) |
+| `stop` | `check-close-gate.py` | After **file edits** or **`CreatePlan`**, if the assistant closes without required headings (including **Agent rule dispatch** with listed `*.mdc` or N/A), **rule dual-registration** when `cursor-rules/*.mdc` was edited, plan body sections (when `CreatePlan` was used), or **Read** proof for listed rules / `PLAN_TEMPLATE.md`, auto-submit `Close gate incomplete` follow-up (max 3 loops) |
 | `postToolUse` | `check-edit-triggered-rules.py` | After `Write`/`StrReplace`/`EditNotebook`/`CreatePlan`, inject context if triggered domain rules or plan-authoring reads (`plan-creation-contract.mdc`, `PLAN_TEMPLATE.md`) are missing before the first closeable tool call |
-| `postToolUse` | `check-new-rule-router.py` | After `Write`/`StrReplace` on `cursor-rules/*.mdc`, inject context if `agent-discipline-core.mdc` router omits the new rule |
+| `postToolUse` | `check-new-rule-router.py` | After `Write`/`StrReplace` on `cursor-rules/*.mdc`, inject context if `agent-discipline-core.mdc` or `hook_task_router.py` omits the new rule |
 
 ## Verify
 

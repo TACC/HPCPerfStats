@@ -138,10 +138,22 @@ def find_router_file(workspace_roots: Iterable[str], *, rule_path: str = "") -> 
                 base / "hpcperfstats" / "cursor-rules" / "agent-discipline-core.mdc",
             ]
         )
+    hook_dir = Path(__file__).resolve().parent
+    candidates.extend(
+        [
+            hook_dir.parent / "hpcperfstats" / "cursor-rules" / "agent-discipline-core.mdc",
+            hook_dir.parent.parent / "HPCPerfStats" / "hpcperfstats" / "cursor-rules" / "agent-discipline-core.mdc",
+        ],
+    )
     for candidate in candidates:
         if candidate.is_file():
             return candidate
     return None
+
+
+def find_hook_task_router_file() -> Path | None:
+    candidate = Path(__file__).resolve().parent / "hook_task_router.py"
+    return candidate if candidate.is_file() else None
 
 
 def load_json_stdin() -> dict:
@@ -556,12 +568,48 @@ def edge_cases_issues(assistant_text: str) -> list[str]:
     return []
 
 
+def rule_dual_registration_issues(work_paths: list[str]) -> list[str]:
+    issues: list[str] = []
+    seen: set[str] = set()
+    for path in work_paths:
+        needs_entry, basename = rule_file_needs_router_entry(path)
+        if not needs_entry or basename in seen:
+            continue
+        seen.add(basename)
+        router = find_router_file([], rule_path=path)
+        if router is None:
+            issues.append(
+                f"Rule dual registration: `{basename}` — agent-discipline-core.mdc not found",
+            )
+            continue
+        router_text = router.read_text(encoding="utf-8", errors="replace")
+        if not rule_listed_in_router(router_text, basename):
+            issues.append(
+                f"Rule dual registration: `{basename}` missing from "
+                "agent-discipline-core.mdc task router",
+            )
+        hook_router = find_hook_task_router_file()
+        if hook_router is None:
+            issues.append(
+                f"Rule dual registration: `{basename}` — hook_task_router.py not found",
+            )
+            continue
+        hook_text = hook_router.read_text(encoding="utf-8", errors="replace")
+        if not rule_listed_in_router(hook_text, basename):
+            issues.append(
+                f"Rule dual registration: `{basename}` missing from "
+                "hook_task_router.py ROUTER_ENTRIES",
+            )
+    return issues
+
+
 def close_gate_issues(*, assistant_text: str, transcript_rows: list[dict]) -> list[str]:
     issues = missing_close_gate_sections(assistant_text)
     work_paths = extract_work_paths(transcript_rows)
     issues.extend(triggered_rule_dispatch_issues(assistant_text, work_paths))
     required_rules = domain_rules_required(assistant_text, work_paths)
     issues.extend(domain_rule_read_issues(required_rules, transcript_rows))
+    issues.extend(rule_dual_registration_issues(work_paths))
     issues.extend(edge_cases_issues(assistant_text))
     if turn_had_create_plan(transcript_rows):
         plan_markdown = extract_create_plan_markdown(transcript_rows)

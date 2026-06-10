@@ -26,6 +26,10 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     stats_file_is_active_segment,
 )
 from hpcperfstats.process_title import set_daemon_thread_title
+from hpcperfstats.dbload.sync_timedb_persistence import (
+    load_persistence_document,
+    save_persistence_document,
+)
 from hpcperfstats.shutdown_utils import shutdown_requested
 
 MANIFEST_BASENAME = ".sync_timedb_startup_tar_seal.json"
@@ -54,11 +58,7 @@ def _new_manifest() -> Dict[str, Any]:
 
 
 def _load_manifest(path: str) -> Dict[str, Any]:
-  try:
-    with open(path, encoding="utf-8") as handle:
-      payload = json.load(handle)
-  except (OSError, json.JSONDecodeError, TypeError, ValueError):
-    return _new_manifest()
+  payload = load_persistence_document(path, "startup_tar_seal", default=None)
   if not isinstance(payload, dict):
     return _new_manifest()
   payload.setdefault("version", MANIFEST_VERSION)
@@ -68,17 +68,7 @@ def _load_manifest(path: str) -> Dict[str, Any]:
 
 
 def _save_manifest(path: str, payload: Dict[str, Any]) -> None:
-  tmp_path = "%s.tmp" % path
-  try:
-    with open(tmp_path, "w", encoding="utf-8") as handle:
-      json.dump(payload, handle, separators=(",", ":"), sort_keys=True)
-    os.replace(tmp_path, path)
-  except OSError:
-    try:
-      if os.path.exists(tmp_path):
-        os.remove(tmp_path)
-    except OSError:
-      pass
+  save_persistence_document(path, "startup_tar_seal", payload)
 
 
 def _tar_sort_key(tar_path: str) -> date:

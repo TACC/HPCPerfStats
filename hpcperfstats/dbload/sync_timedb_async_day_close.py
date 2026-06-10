@@ -25,6 +25,10 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     remove_verified_uncompressed_daily_tars,
     tar_has_duplicate_file_members,
 )
+from hpcperfstats.dbload.sync_timedb_persistence import (
+    load_persistence_document,
+    save_persistence_document,
+)
 from hpcperfstats.process_title import set_daemon_thread_title
 from hpcperfstats.shutdown_utils import shutdown_requested, sleep_until_shutdown
 
@@ -46,11 +50,7 @@ def _new_manifest() -> Dict[str, Any]:
 
 
 def _load_manifest(path: str) -> Dict[str, Any]:
-  try:
-    with open(path, encoding="utf-8") as handle:
-      payload = json.load(handle)
-  except (OSError, json.JSONDecodeError, TypeError, ValueError):
-    return _new_manifest()
+  payload = load_persistence_document(path, "async_day_close", default=None)
   if not isinstance(payload, dict):
     return _new_manifest()
   payload.setdefault("version", MANIFEST_VERSION)
@@ -59,17 +59,7 @@ def _load_manifest(path: str) -> Dict[str, Any]:
 
 
 def _save_manifest(path: str, payload: Dict[str, Any]) -> None:
-  tmp_path = "%s.tmp" % path
-  try:
-    with open(tmp_path, "w", encoding="utf-8") as handle:
-      json.dump(payload, handle, separators=(",", ":"), sort_keys=True)
-    os.replace(tmp_path, path)
-  except OSError:
-    try:
-      if os.path.exists(tmp_path):
-        os.remove(tmp_path)
-    except OSError:
-      pass
+  save_persistence_document(path, "async_day_close", payload)
 
 
 class AsyncDayCloseCoordinator:
@@ -86,6 +76,7 @@ class AsyncDayCloseCoordinator:
       get_disqualified_daily_tars: Callable[[], Set[str]],
       day_raw_removal_coordinator=None,
       on_day_phase: Optional[Callable[[str, str], None]] = None,
+      submit_eligible_fn: Optional[Callable[[str], tuple]] = None,
       process_title: str = "sync_timedb.py",
   ):
     self.archive_data_dir = archive_data_dir
@@ -96,6 +87,7 @@ class AsyncDayCloseCoordinator:
     self.get_disqualified_daily_tars = get_disqualified_daily_tars
     self.day_raw_removal_coordinator = day_raw_removal_coordinator
     self.on_day_phase = on_day_phase
+    self.submit_eligible_fn = submit_eligible_fn
     self.process_title = process_title
     self._manifest_path = manifest_path(archive_data_dir)
     self._lock = threading.Lock()
@@ -182,11 +174,30 @@ class AsyncDayCloseCoordinator:
           active.add(os.path.normpath(tar_norm))
       return active
 
+  def _day_close_filesystem_complete(self, tar_norm: str) -> bool:
+    tar_norm = os.path.normpath(tar_norm or "")
+    if not tar_norm:
+      return False
+    zst_path, gz_path = compressed_sibling_paths(tar_norm)
+    remaining = build_remaining_raw_for_daily_tar(
+        self.archive_data_dir,
+        self.host_name_ext,
+        self.tgz_archive_dir,
+        tar_norm,
+    )
+    if daily_gz_has_remaining_raw_stats(zst_path, {zst_path: remaining}):
+      return False
+    if os.path.isfile(tar_norm):
+      return False
+    return os.path.isfile(zst_path) or os.path.isfile(gz_path)
+
   def is_complete(self, tar_path: str) -> bool:
     tar_norm = os.path.normpath(tar_path or "")
     with self._lock:
       entry = self._manifest.get("entries", {}).get(tar_norm)
-      return isinstance(entry, dict) and entry.get("status") == "complete"
+      if not isinstance(entry, dict) or entry.get("status") != "complete":
+        return False
+    return self._day_close_filesystem_complete(tar_norm)
 
   def submit_day_close(
       self,
@@ -211,6 +222,19 @@ class AsyncDayCloseCoordinator:
         disqualified = disqualified_daily_tars
       if tar_norm in disqualified:
         return False
+      if self.submit_eligible_fn is not None:
+        try:
+          eligible, skip_reason = self.submit_eligible_fn(tar_norm)
+        except Exception:
+          eligible, skip_reason = False, "submit_eligible_error"
+        if not eligible:
+          if skip_reason:
+            self.log_fn(
+                "janitor: async day_close submit skip tar=%s reason=%s"
+                % (tar_norm, skip_reason),
+                flush=True,
+            )
+          return False
       entry = self._manifest.setdefault("entries", {}).get(tar_norm)
       if isinstance(entry, dict) and entry.get("status") == "complete":
         return True
@@ -352,6 +376,9 @@ class AsyncDayCloseCoordinator:
         if not coord.delete_phase_done(tar_norm):
           self._set_entry_status(tar_norm, "deferred", detail="raw_removal")
           return
+        if not self._day_close_filesystem_complete(tar_norm):
+          self._set_entry_status(tar_norm, "deferred", detail="raw_remains")
+          return
         self._notify_phase(tar_norm, "tar_dropped")
         self._set_entry_status(
             tar_norm,
@@ -362,6 +389,9 @@ class AsyncDayCloseCoordinator:
         return
       if not self._tar_drop_day(tar_norm):
         self._set_entry_status(tar_norm, "deferred", detail="tar_drop")
+        return
+      if not self._day_close_filesystem_complete(tar_norm):
+        self._set_entry_status(tar_norm, "deferred", detail="raw_remains")
         return
       self._notify_phase(tar_norm, "tar_dropped")
       self._set_entry_status(tar_norm, "complete", completed_at=time.time())

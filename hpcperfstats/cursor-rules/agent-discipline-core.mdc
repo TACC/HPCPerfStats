@@ -31,6 +31,7 @@ Answer **YES** or **N/A (one-line reason)** for each row. If any row is **NO**, 
 | 5 | **Triggered domain rules** below were **Read** (Read tool on the `.mdc` path) before editing — list them under **`## Agent rule dispatch`** at close; hook verifies Read calls for listed domain rules |
 | 6 | **Compose workflows** run when DB/Redis/RabbitMQ/ingest semantics changed (`compose-required-for-data-services-changes.mdc`) |
 | 7 | **Plan YAML** todos synced if implementing a plan (`plan-completion-gate.mdc`) |
+| 8 | **New/re-triggered domain rules** dual-registered in **both** this file (task router) and `.cursor/hooks/hook_task_router.py` (`ROUTER_ENTRIES`) — verify in **Final code review** when the diff touches `cursor-rules/*.mdc` |
 
 User may reply **`Close gate incomplete`** — redo the full close sequence without argument.
 
@@ -42,7 +43,7 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 
 | Trigger paths | Read these rules |
 |---------------|------------------|
-| `hpcperfstats/dbload/sync_timedb*.py`, `sync_timedb_*.py`, `multiprocessing_pool_health.py` | `sync-timedb-archive-janitor-contract.mdc`, `sync-timedb-db-before-archive-contract.mdc`, `sync-timedb-lock-and-archive-contract.mdc`, `runtime-resource-and-metrics-safety.mdc` |
+| `hpcperfstats/dbload/sync_timedb*.py`, `sync_timedb_*.py`, `multiprocessing_pool_health.py` | `sync-timedb-persistence-contract.mdc`, `sync-timedb-archive-janitor-contract.mdc`, `sync-timedb-db-before-archive-contract.mdc`, `sync-timedb-lock-and-archive-contract.mdc`, `runtime-resource-and-metrics-safety.mdc` |
 | Startup day-close / tar seal / archive scan | `sync-timedb-startup-day-close-contract.mdc`, `sync-timedb-startup-tar-seal-contract.mdc`, `sync-timedb-canonical-startup-archive-scan.mdc` |
 | Ingest pool + sealed archive / Redis members | `sync-timedb-ingest-pool-io-coordination.mdc` |
 | `hpcperfstats/analysis/metrics/` | `runtime-resource-and-metrics-safety.mdc`, `pipeline-metrics-e2e-maintenance.mdc`, `update-metrics-job-listing-new-data-type.mdc` |
@@ -74,12 +75,19 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 | `services-conf/nginx*` | `nginx-static-url-prefix.mdc`, `nginx-django-route-allowlist-sync.mdc` |
 | `HPCPerfStats/README.md` or workspace-root `README.md` only (not other `README.md` paths) | `readme-installation-sync.mdc` |
 | `docs/TESTING.md`, test runners | `testing-doc-sync.mdc` |
+| `.cursor/hooks/*`, `hpcperfstats/tests/test_cursor_hooks.py` | `testing-best-practices.mdc` |
+
+### Cursor rules (domain rule authoring)
+
+| Trigger paths | Read these rules |
+|---------------|------------------|
+| `hpcperfstats/cursor-rules/*.mdc` | `agent-discipline-core.mdc`, `implementation-review-workflow.mdc` |
 
 ### Plans (only when authoring or implementing a plan)
 
 | Trigger | Read |
 |---------|------|
-| User asks for a plan / Cursor Plan / `docs/plans/` | `plan-creation-contract.mdc`, `docs/plans/PLAN_TEMPLATE.md` |
+| User asks for a plan / Cursor Plan / `docs/plans/` | `plan-creation-contract.mdc`, `plan-template-enforcement.mdc`, `docs/plans/PLAN_TEMPLATE.md` |
 | Pre-code planning | `implementation-review-workflow.mdc` |
 
 **Hooks (same close discipline as implementation):** `CreatePlan` counts as closeable work. **`stop`** enforces chat close headings plus `PLAN_TEMPLATE.md` sections inside the plan body and **Read before `CreatePlan`** for `plan-creation-contract.mdc`, `PLAN_TEMPLATE.md`, and domain rules referenced in the plan. **`postToolUse`** warns mid-turn when those reads are missing.

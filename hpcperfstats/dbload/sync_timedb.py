@@ -89,7 +89,9 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     augment_unprocessed_by_tar_with_pending_paths,
     build_archive_mapping,
     build_seal_disqualified_daily_tars,
+    build_remaining_raw_stats_by_daily_gz,
     build_unprocessed_raw_by_daily_tar,
+    daily_tar_eligible_for_day_close_submit,
     resolve_unmapped_closed_raw_daily_tars,
     daily_tar_path_for_stats_path,
     daily_tar_path_from_compressed,
@@ -152,6 +154,11 @@ from hpcperfstats.dbload.sync_timedb_ingest_readiness import (
     head_timestamp_present_in_db,
     reset_sync_ingest_readiness_caches,
     stats_file_head_ingested_in_db,
+)
+from hpcperfstats.dbload.sync_timedb_persistence import (
+    ensure_persistence_contract,
+    load_persistence_document,
+    save_persistence_document,
 )
 from hpcperfstats.dbload.sync_timedb_parsing import (
     EVENTMAPS_BY_TYPE,
@@ -769,8 +776,8 @@ def _transition_file_state(file_states, path, new_state):
 
 
 def _load_dead_letter_entries(path):
-  raw = _load_json_list(path)
-  if raw is None:
+  raw = load_persistence_document(path, "archive_dead_letter", default=[])
+  if not isinstance(raw, list):
     return []
   out = []
   for item in raw:
@@ -806,7 +813,7 @@ def _save_dead_letter_entries(path, entries):
         "paths": list(item.get("paths", [])),
         "attempt": int(task.attempt),
     })
-  _save_json_atomic(path, payload)
+  save_persistence_document(path, "archive_dead_letter", payload)
 
 
 def _host_recent_timestamps_cached(hostname, ts_low, ts_high):
@@ -1333,9 +1340,9 @@ def _add_stats_file_to_db_impl(lock, stats_file, stats_file_contents=None):
 
 
 def _load_sync_checkpoint(state_path):
-  """Load checkpoint entries from JSON list, returning [] on invalid content."""
-  raw = _load_json_list(state_path)
-  if raw is None:
+  """Load checkpoint entries from persistence envelope, returning [] on invalid."""
+  raw = load_persistence_document(state_path, "ingest_checkpoint", default=[])
+  if not isinstance(raw, list):
     return []
   entries = []
   for item in raw:
@@ -1356,8 +1363,12 @@ def _load_sync_checkpoint(state_path):
 
 
 def _save_sync_checkpoint(state_path, completed_entries):
-  """Atomically save checkpoint entries."""
-  _save_json_atomic(state_path, list(completed_entries))
+  """Atomically save checkpoint entries via persistence API."""
+  save_persistence_document(
+      state_path,
+      "ingest_checkpoint",
+      list(completed_entries),
+  )
 
 
 def _load_json_list(path):
@@ -2104,11 +2115,16 @@ def run_sync_timedb_supervisor_loop(
         local_tz=archive_janitor.local_tz,
         day_phases=day_phases,
     )
-    enqueued_any = False
+    submitted_any = False
+    disqualified = _janitor_disqualified_daily_tars()
     for tar_path in candidates:
-      if archive_janitor.enqueue_immediate_day_close(tar_path, reason=context):
-        enqueued_any = True
-    if enqueued_any:
+      if async_day_close.submit_day_close(
+          tar_path,
+          reason="day_ingest_complete:%s" % context,
+          disqualified_daily_tars=disqualified,
+      ):
+        submitted_any = True
+    if submitted_any:
       archive_janitor.signal_work_available()
 
   def _apply_archive_finalize_results(deferred_paths, results):
@@ -2342,6 +2358,8 @@ def run_sync_timedb_supervisor_loop(
   checkpoint_path = os.path.join(directory, SYNC_TIMEDB_CHECKPOINT_BASENAME)
   dead_letter_path = os.path.join(directory, SYNC_TIMEDB_DEAD_LETTER_BASENAME)
 
+  ensure_persistence_contract(directory, log_fn=log_print)
+
   for entry in _load_sync_checkpoint(checkpoint_path):
     fp = _path_fingerprint(entry["path"])
     if fp is None:
@@ -2501,6 +2519,27 @@ def run_sync_timedb_supervisor_loop(
       day_close_rescan_pending = True
       archive_janitor.signal_work_available()
 
+  def _async_day_close_submit_eligible(tar_norm):
+    captured = _build_day_close_candidate_inputs()
+    with archive_janitor._hints_state_lock:
+      day_phases = dict(archive_janitor._day_phases)
+    remaining = _get_accrual_remaining_raw_by_gz()
+    if remaining is None:
+      remaining = build_remaining_raw_stats_by_daily_gz(
+          directory,
+          host_name_ext,
+          tgz_archive_dir,
+      )
+    return daily_tar_eligible_for_day_close_submit(
+        tar_norm,
+        unprocessed_by_tar=captured.get("unprocessed_by_tar"),
+        disqualified_daily_tars=_janitor_disqualified_daily_tars(),
+        day_phases=day_phases,
+        remaining_raw_by_gz=remaining,
+        local_tz=local_timezone,
+    )
+
+  async_day_close.submit_eligible_fn = _async_day_close_submit_eligible
   async_day_close.on_day_phase = _on_async_day_phase
 
   def _on_day_close_pipeline_complete(_tar_path):

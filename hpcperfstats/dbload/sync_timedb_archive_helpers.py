@@ -228,6 +228,39 @@ def ingest_stream_past_calendar_day(
   return min_pending > max_sort_epoch_for_day
 
 
+def daily_tar_eligible_for_day_close_submit(
+    tar_norm,
+    *,
+    unprocessed_by_tar,
+    disqualified_daily_tars,
+    day_phases=None,
+    remaining_raw_by_gz=None,
+    local_tz=None,
+    now=None,
+):
+  """Return ``(eligible, skip_reason)`` for async ``DAY_CLOSE`` submit."""
+  tar_norm = os.path.normpath(str(tar_norm or ""))
+  if not tar_norm:
+    return False, "invalid_tar_path"
+  if unprocessed_by_tar is None:
+    return False, "missing_unprocessed_map"
+  if unprocessed_by_tar.get(tar_norm):
+    return False, "checkpoint_incomplete"
+  disqualified = _normalize_daily_tar_path_set(disqualified_daily_tars)
+  if tar_norm in disqualified:
+    return False, "disqualified"
+  if local_tz is not None and not daily_tar_seal_calendar_eligible(
+      tar_norm, local_tz, now=now):
+    return False, "calendar_grace"
+  if not daily_tar_needs_day_close_work(
+      tar_norm,
+      day_phases=day_phases,
+      remaining_raw_by_gz=remaining_raw_by_gz,
+  ):
+    return False, "no_work"
+  return True, ""
+
+
 def find_immediate_day_close_candidates(
     *,
     tgz_archive_dir,
@@ -240,6 +273,7 @@ def find_immediate_day_close_candidates(
     now=None,
     day_phases=None,
     first_timestamp_by_path=None,
+    remaining_raw_by_gz=None,
 ):
   """Return oldest-first daily ``.tar`` paths eligible for immediate ``DAY_CLOSE``.
 
@@ -251,8 +285,6 @@ def find_immediate_day_close_candidates(
     return []
   if unprocessed_by_tar is None:
     return []
-  disqualified = _normalize_daily_tar_path_set(disqualified_daily_tars)
-  unprocessed = unprocessed_by_tar
   seen = set()
   ranked = []
   for tar_path in candidate_tar_paths or ():
@@ -260,16 +292,19 @@ def find_immediate_day_close_candidates(
     if not tar_norm or tar_norm in seen:
       continue
     seen.add(tar_norm)
-    if tar_norm in disqualified:
-      continue
-    if unprocessed.get(tar_norm):
+    eligible, _reason = daily_tar_eligible_for_day_close_submit(
+        tar_norm,
+        unprocessed_by_tar=unprocessed_by_tar,
+        disqualified_daily_tars=disqualified_daily_tars,
+        day_phases=day_phases,
+        remaining_raw_by_gz=remaining_raw_by_gz,
+        local_tz=local_tz,
+        now=now,
+    )
+    if not eligible:
       continue
     day_date = calendar_date_from_daily_tar_path(tar_norm)
     if day_date is None:
-      continue
-    if not daily_tar_seal_calendar_eligible(tar_norm, local_tz, now=now):
-      continue
-    if not daily_tar_needs_day_close_work(tar_norm, day_phases=day_phases):
       continue
     ranked.append((day_date, tar_norm))
   ranked.sort(key=lambda item: item[0])
@@ -696,24 +731,18 @@ def resolve_unmapped_closed_raw_daily_tars(
 
 
 def _load_unparsable_raw_manifest(path):
-  try:
-    with open(path, "r", encoding="utf-8") as fh:
-      raw = json.load(fh)
-  except (OSError, ValueError, TypeError):
-    return []
+  from hpcperfstats.dbload.sync_timedb_persistence import load_persistence_document
+
+  raw = load_persistence_document(path, "unparsable_raw", default=[])
   if not isinstance(raw, list):
     return []
   return [item for item in raw if isinstance(item, dict)]
 
 
 def _save_unparsable_raw_manifest_atomic(path, entries):
-  parent = os.path.dirname(str(path))
-  if parent:
-    os.makedirs(parent, exist_ok=True)
-  tmp_path = "%s.tmp" % path
-  with open(tmp_path, "w", encoding="utf-8") as fh:
-    json.dump(entries, fh)
-  os.replace(tmp_path, path)
+  from hpcperfstats.dbload.sync_timedb_persistence import save_persistence_document
+
+  save_persistence_document(path, "unparsable_raw", list(entries or []))
 
 
 def _quarantined_original_paths_from_manifest(manifest_entries):
@@ -919,12 +948,10 @@ def _checkpoint_entry_fingerprint(path):
 
 
 def _load_checkpoint_entries(checkpoint_path):
-  """Load checkpoint JSON list entries (path/size/mtime); return [] on invalid."""
-  try:
-    with open(checkpoint_path, encoding="utf-8") as handle:
-      raw = json.load(handle)
-  except (OSError, ValueError, TypeError, json.JSONDecodeError):
-    return []
+  """Load checkpoint entries (path/size/mtime); return [] on invalid."""
+  from hpcperfstats.dbload.sync_timedb_persistence import load_persistence_document
+
+  raw = load_persistence_document(checkpoint_path, "ingest_checkpoint", default=[])
   if not isinstance(raw, list):
     return []
   entries = []
@@ -1076,6 +1103,7 @@ def days_ingest_complete_by_checkpoint(
     remaining_raw_by_gz=None,
     local_tz=None,
     now=None,
+    disqualified_daily_tars=None,
 ):
   """Oldest-first daily ``.tar`` paths with zero unprocessed mapped raw and work left."""
   if not tgz_archive_dir:
@@ -1089,19 +1117,19 @@ def days_ingest_complete_by_checkpoint(
     if tar_norm in seen:
       continue
     seen.add(tar_norm)
-    if unprocessed_by_tar.get(tar_norm):
-      continue
-    if not daily_tar_needs_day_close_work(
+    eligible, _reason = daily_tar_eligible_for_day_close_submit(
         tar_norm,
+        unprocessed_by_tar=unprocessed_by_tar,
+        disqualified_daily_tars=disqualified_daily_tars or (),
         day_phases=day_phases,
         remaining_raw_by_gz=remaining_raw_by_gz,
-    ):
+        local_tz=local_tz,
+        now=now,
+    )
+    if not eligible:
       continue
     day_date = calendar_date_from_daily_tar_path(tar_norm)
     if day_date is None:
-      continue
-    if local_tz is not None and not daily_tar_seal_calendar_eligible(
-        tar_norm, local_tz, now=now):
       continue
     ranked.append((day_date, tar_norm))
   ranked.sort(key=lambda item: item[0])

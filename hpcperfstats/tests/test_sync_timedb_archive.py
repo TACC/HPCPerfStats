@@ -4333,6 +4333,33 @@ def test_augment_unprocessed_by_tar_with_pending_paths(tmp_path):
   assert augmented[tar_path] == [pending_path]
 
 
+def test_daily_tar_eligible_for_day_close_submit_requires_checkpoint_complete(tmp_path):
+  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+      daily_tar_eligible_for_day_close_submit,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2021-03-15.tar"))
+  open(tar_path, "wb").close()
+  eligible, reason = daily_tar_eligible_for_day_close_submit(
+      tar_path,
+      unprocessed_by_tar={tar_path: ["/raw/pending"]},
+      disqualified_daily_tars=set(),
+      local_tz=timezone.utc,
+  )
+  assert not eligible
+  assert reason == "checkpoint_incomplete"
+  eligible, reason = daily_tar_eligible_for_day_close_submit(
+      tar_path,
+      unprocessed_by_tar={tar_path: []},
+      disqualified_daily_tars=set(),
+      local_tz=timezone.utc,
+  )
+  assert eligible
+  assert reason == ""
+
+
 def test_build_unprocessed_raw_by_daily_tar_subtracts_checkpoint(tmp_path):
   from hpcperfstats.dbload.sync_timedb_archive_helpers import (
       build_unprocessed_raw_by_daily_tar,
