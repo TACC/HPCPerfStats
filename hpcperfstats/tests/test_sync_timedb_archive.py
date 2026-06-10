@@ -182,7 +182,9 @@ def test_verify_tar_gz_zstd_pipe_uses_helpers_thread_count(monkeypatch, tmp_path
     recorded.append(cmd)
     return orig_popen(*args, **kwargs)
 
-  monkeypatch.setattr(helpers.subprocess, "Popen", _wrap_popen)
+  import hpcperfstats.dbload.zstd_cli as zstd_cli
+
+  monkeypatch.setattr(zstd_cli.subprocess, "Popen", _wrap_popen)
   monkeypatch.setattr(helpers, "get_archive_zstd_thread_count", lambda: 13)
   assert verify_tar_archive_readable(str(gz))
   zstd_cmds = [

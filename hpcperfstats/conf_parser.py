@@ -152,6 +152,7 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "archive_zstd_nice"),
     ("PIPELINE", "archive_zstd_ionice_class"),
     ("PIPELINE", "archive_zstd_ionice_level"),
+    ("PIPELINE", "archive_zstd_drop_page_cache"),
     ("PIPELINE", "archive_seal_parallel_workers"),
     ("PIPELINE", "archive_maintenance_interval_seconds"),
     ("PIPELINE", "archive_maintenance_max_defer_seconds"),
@@ -559,6 +560,14 @@ def get_archive_zstd_ionice_level():
       legacy_sections=("PORTAL",),
   )
   return max(0, min(7, int(raw)))
+
+
+def get_archive_zstd_drop_page_cache():
+  """Linux posix_fadvise hints around archive zstd I/O (default on)."""
+  _ensure_cfg_loaded()
+  return _parse_bool(
+      _pipeline_get("archive_zstd_drop_page_cache", fallback="yes"),
+  )
 
 
 def get_archive_seal_parallel_workers():

@@ -84,6 +84,26 @@ def test_get_archive_zstd_priority_defaults(temp_ini, monkeypatch):
   assert cfg.get_archive_zstd_ionice_class() == 2
   assert cfg.get_archive_zstd_ionice_level() == 6
   assert cfg.get_archive_seal_parallel_workers() == 4
+  assert cfg.get_archive_zstd_drop_page_cache() is True
+
+
+def test_get_archive_zstd_drop_page_cache_opt_out(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_archive_zstd_drop_page_cache() is True
+
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+      "daily_archive_dir = /tmp",
+      "daily_archive_dir = /tmp\narchive_zstd_drop_page_cache = no",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  importlib.reload(cfg)
+  assert cfg.get_archive_zstd_drop_page_cache() is False
 
 
 def test_get_archive_zstd_threads_default_and_override(temp_ini, monkeypatch):

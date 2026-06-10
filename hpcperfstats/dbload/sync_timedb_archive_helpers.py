@@ -26,14 +26,13 @@ from hpcperfstats.dbload.archive_compress import (
 )
 from hpcperfstats.dbload.zstd_cli import (
     decompress_compressed_to_tar,
-    wrap_archive_zstd_cmd,
+    zstd_compressed_archive_pipe_readable,
     zstd_decompress_stdout,
-    zstd_executable,
+    zstd_drop_page_cache_for_paths,
     zstd_gzip_decompress_stdout,
     zstd_gzip_supported,
     zstd_compress_tar_to_file,
     zstd_test,
-    zstd_thread_cli_args,
 )
 from hpcperfstats.dbload.sync_timedb_parsing import parse_first_timestamp_line
 from hpcperfstats.file_locking import (
@@ -1437,64 +1436,6 @@ def _tar_list_executable():
   return shutil.which("tar") or "/bin/tar"
 
 
-def _tar_readable_via_decompress_tar_pipe(decompress_cmd, tar_bin):
-  """Full list scan: ``decompress -c | tar tf -`` (both must exit 0)."""
-  p_decomp = subprocess.Popen(
-      decompress_cmd,
-      stdout=subprocess.PIPE,
-      stderr=subprocess.DEVNULL,
-  )
-  try:
-    p_tar = subprocess.Popen(
-        [tar_bin, "tf", "-"],
-        stdin=p_decomp.stdout,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-  except Exception:
-    p_decomp.kill()
-    try:
-      p_decomp.wait(timeout=30)
-    except (OSError, subprocess.SubprocessError):
-      pass
-    raise
-  if p_decomp.stdout is not None:
-    p_decomp.stdout.close()
-  p_tar.communicate()
-  decomp_rc = p_decomp.wait()
-  return p_tar.returncode == 0 and decomp_rc == 0
-
-
-def _tar_gz_readable_via_zstd_gzip_tar_pipe(gz_path, tar_bin, num_threads):
-  if not zstd_gzip_supported():
-    return False
-  cmd = wrap_archive_zstd_cmd([
-      zstd_executable(),
-      "-d",
-      "--format=gzip",
-      "-c",
-      *zstd_thread_cli_args(num_threads),
-      "-q",
-      gz_path,
-  ])
-  return _tar_readable_via_decompress_tar_pipe(cmd, tar_bin)
-
-
-def _tar_zst_readable_via_zstd_tar_pipe(zst_path, tar_bin, num_threads):
-  if not shutil.which("zstd"):
-    return False
-  cmd = wrap_archive_zstd_cmd([
-      zstd_executable(),
-      "-d",
-      "-c",
-      *zstd_thread_cli_args(num_threads),
-      "-q",
-      zst_path,
-  ])
-  return _tar_readable_via_decompress_tar_pipe(cmd, tar_bin)
-
-
 @contextlib.contextmanager
 def _open_tarfile_for_read(path, num_threads, *, apply_priority_wrap=True):
   """Open a tar or compressed daily archive for sequential reads."""
@@ -1541,12 +1482,11 @@ def verify_tar_archive_readable(tar_path):
   tar_bin = _tar_list_executable()
   try:
     with file_read_lock_wait(tar_path):
-      if tar_path.endswith(DAILY_ARCHIVE_ZST_SUFFIX) and shutil.which("zstd"):
-        return _tar_zst_readable_via_zstd_tar_pipe(
-            tar_path, tar_bin, get_archive_zstd_thread_count())
-      if tar_path.endswith(DAILY_ARCHIVE_GZ_SUFFIX) and zstd_gzip_supported():
-        return _tar_gz_readable_via_zstd_gzip_tar_pipe(
-            tar_path, tar_bin, get_archive_zstd_thread_count())
+      if detect_compressed_format(tar_path) in ("zst", "gz"):
+        return zstd_compressed_archive_pipe_readable(
+            tar_path,
+            get_archive_zstd_thread_count(),
+        )
       result = subprocess.run(
           [tar_bin, "tf", tar_path],
           capture_output=True,
@@ -3337,6 +3277,7 @@ def atomic_seal_tar_to_zst(
       )
   else:
     try:
+      zstd_drop_page_cache_for_paths(tar_path)
       with file_write_lock(tar_path):
         os.remove(tar_path)
       if log_fn:

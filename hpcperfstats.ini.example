@@ -437,6 +437,11 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # zstd compression level 1-19 for .tar.zst (default 7; benchmark before raising above 9).
 # archive_zstd_level = 7
 
+# Linux-only: posix_fadvise SEQUENTIAL/DONTNEED around archive zstd subprocess I/O to
+# encourage early page-cache eviction after one-shot seal/decompress/integrity reads.
+# Default yes when omitted; set no only for A/B tuning or debugging.
+# archive_zstd_drop_page_cache = yes
+
 # Deprecated: ignored by sync_timedb (day-close runs at startup + every rescan_every_chunks).
 # archive_maintenance_interval_seconds = 28800
 

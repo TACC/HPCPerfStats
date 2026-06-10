@@ -6,6 +6,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 from collections.abc import Iterator
 from typing import BinaryIO
 
@@ -19,6 +20,55 @@ from hpcperfstats.print_utils import log_print
 
 _GZIP_FORMAT = ("--format=gzip",)
 _PRIORITY_TOOLS_WARNED = False
+
+
+def _page_cache_hints_enabled() -> bool:
+  if sys.platform != "linux":
+    return False
+  if not hasattr(os, "posix_fadvise"):
+    return False
+  from hpcperfstats import conf_parser as cfg_mod
+
+  return cfg_mod.get_archive_zstd_drop_page_cache()
+
+
+def _advise_path(path: str, advice: int) -> None:
+  if not path or not _page_cache_hints_enabled():
+    return
+  try:
+    fd = os.open(path, os.O_RDONLY)
+  except OSError:
+    return
+  try:
+    os.posix_fadvise(fd, 0, 0, advice)
+  except (OSError, AttributeError):
+    pass
+  finally:
+    os.close(fd)
+
+
+def _advise_sequential_read(path: str) -> None:
+  if not _page_cache_hints_enabled():
+    return
+  _advise_path(path, os.POSIX_FADV_SEQUENTIAL)
+
+
+def _advise_drop_cache(path: str) -> None:
+  if not _page_cache_hints_enabled():
+    return
+  _advise_path(path, os.POSIX_FADV_DONTNEED)
+
+
+def zstd_drop_page_cache_for_paths(*paths: str) -> None:
+  """Drop Linux page cache for archive paths after one-shot zstd I/O."""
+  if not _page_cache_hints_enabled():
+    return
+  seen: set[str] = set()
+  for path in paths:
+    if not path or path in seen:
+      continue
+    seen.add(path)
+    _advise_drop_cache(path)
 
 
 def zstd_executable() -> str:
@@ -106,6 +156,91 @@ def _maybe_wrap_zstd_cmd(cmd: list[str], *, apply_priority_wrap: bool) -> list[s
   return list(cmd)
 
 
+def _tar_list_executable() -> str:
+  return shutil.which("tar") or "/bin/tar"
+
+
+def _tar_readable_via_decompress_tar_pipe(
+    decompress_cmd: list[str],
+    tar_bin: str,
+    *,
+    input_path: str | None = None,
+) -> bool:
+  """Full list scan: ``decompress -c | tar tf -`` (both must exit 0)."""
+  if input_path:
+    _advise_sequential_read(input_path)
+  p_decomp = subprocess.Popen(
+      decompress_cmd,
+      stdout=subprocess.PIPE,
+      stderr=subprocess.DEVNULL,
+  )
+  try:
+    p_tar = subprocess.Popen(
+        [tar_bin, "tf", "-"],
+        stdin=p_decomp.stdout,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+  except Exception:
+    p_decomp.kill()
+    try:
+      p_decomp.wait(timeout=30)
+    except (OSError, subprocess.SubprocessError):
+      pass
+    raise
+  if p_decomp.stdout is not None:
+    p_decomp.stdout.close()
+  p_tar.communicate()
+  decomp_rc = p_decomp.wait()
+  ok = p_tar.returncode == 0 and decomp_rc == 0
+  if input_path and ok:
+    _advise_drop_cache(input_path)
+  return ok
+
+
+def zstd_compressed_archive_pipe_readable(
+    compressed_path: str,
+    thread_count: int,
+    *,
+    apply_priority_wrap: bool = True,
+) -> bool:
+  """Return True when ``zstd -d -c | tar tf -`` succeeds for a sealed daily archive."""
+  if not os.path.isfile(compressed_path):
+    return False
+  tar_bin = _tar_list_executable()
+  if compressed_path.endswith(DAILY_ARCHIVE_ZST_SUFFIX) and shutil.which("zstd"):
+    cmd = _maybe_wrap_zstd_cmd([
+        zstd_executable(),
+        "-d",
+        "-c",
+        *_thread_args(thread_count),
+        "-q",
+        compressed_path,
+    ], apply_priority_wrap=apply_priority_wrap)
+    return _tar_readable_via_decompress_tar_pipe(
+        cmd,
+        tar_bin,
+        input_path=compressed_path,
+    )
+  if compressed_path.endswith(DAILY_ARCHIVE_GZ_SUFFIX) and zstd_gzip_supported():
+    cmd = _maybe_wrap_zstd_cmd([
+        zstd_executable(),
+        "-d",
+        "--format=gzip",
+        "-c",
+        *_thread_args(thread_count),
+        "-q",
+        compressed_path,
+    ], apply_priority_wrap=apply_priority_wrap)
+    return _tar_readable_via_decompress_tar_pipe(
+        cmd,
+        tar_bin,
+        input_path=compressed_path,
+    )
+  return False
+
+
 def _run_zstd(cmd: list[str], *, apply_priority_wrap: bool = True, **kwargs):
   return subprocess.run(
       _maybe_wrap_zstd_cmd(cmd, apply_priority_wrap=apply_priority_wrap),
@@ -126,7 +261,8 @@ def _popen_zstd(
 
 
 def _verify_uncompressed_tar_readable(tar_path: str) -> bool:
-  tar_bin = shutil.which("tar") or "/bin/tar"
+  tar_bin = _tar_list_executable()
+  _advise_sequential_read(tar_path)
   try:
     result = subprocess.run(
         [tar_bin, "tf", tar_path],
@@ -134,9 +270,12 @@ def _verify_uncompressed_tar_readable(tar_path: str) -> bool:
         text=True,
         check=False,
     )
-    return result.returncode == 0
+    ok = result.returncode == 0
   except (OSError, subprocess.SubprocessError):
-    return False
+    ok = False
+  if ok:
+    _advise_drop_cache(tar_path)
+  return ok
 
 
 def _decompress_to_path(
@@ -145,6 +284,7 @@ def _decompress_to_path(
     thread_count: int,
 ) -> None:
   fmt = detect_compressed_format(compressed_path)
+  _advise_sequential_read(compressed_path)
   cmd = [
       zstd_executable(),
       "-d",
@@ -169,6 +309,7 @@ def _decompress_to_path(
         output=result.stdout,
         stderr=result.stderr,
     )
+  zstd_drop_page_cache_for_paths(compressed_path, output_path)
 
 
 def decompress_compressed_to_tar(
@@ -180,6 +321,12 @@ def decompress_compressed_to_tar(
 ) -> bool:
   """Decompress to a verified sibling ``.tar``; unlink compressed only on success."""
   if not compressed_path or not os.path.isfile(compressed_path):
+    return False
+  pipe_preflight_ok = zstd_compressed_archive_pipe_readable(
+      compressed_path,
+      thread_count,
+  )
+  if not pipe_preflight_ok:
     return False
   tmp_path = "%s.decomp.tmp" % tar_path
   try:
@@ -196,13 +343,6 @@ def decompress_compressed_to_tar(
     except OSError:
       pass
     return False
-  if not _verify_uncompressed_tar_readable(tmp_path):
-    try:
-      if os.path.exists(tmp_path):
-        os.remove(tmp_path)
-    except OSError:
-      pass
-    return False
   try:
     with file_write_lock(tar_path):
       os.replace(tmp_path, tar_path)
@@ -213,6 +353,7 @@ def decompress_compressed_to_tar(
     except OSError:
       pass
     return False
+  zstd_drop_page_cache_for_paths(compressed_path, tar_path)
   if remove_compressed:
     try:
       with file_write_lock(compressed_path):
@@ -236,7 +377,10 @@ def _decompress_stdout(
     cmd: list[str],
     *,
     apply_priority_wrap: bool = True,
+    input_path: str | None = None,
 ) -> Iterator[BinaryIO]:
+  if input_path:
+    _advise_sequential_read(input_path)
   proc = _popen_zstd(
       cmd,
       stdout=subprocess.PIPE,
@@ -249,6 +393,8 @@ def _decompress_stdout(
   finally:
     proc.stdout.close()
     _wait_decompress_proc(proc, cmd)
+    if input_path:
+      _advise_drop_cache(input_path)
 
 
 def zstd_decompress_verbose(
@@ -280,7 +426,11 @@ def zstd_decompress_stdout(
       "-q",
       zst_path,
   ]
-  with _decompress_stdout(cmd, apply_priority_wrap=apply_priority_wrap) as stdout:
+  with _decompress_stdout(
+      cmd,
+      apply_priority_wrap=apply_priority_wrap,
+      input_path=zst_path,
+  ) as stdout:
     yield stdout
 
 
@@ -290,6 +440,7 @@ def zstd_test(
     *,
     apply_priority_wrap: bool = True,
 ) -> subprocess.CompletedProcess:
+  _advise_sequential_read(zst_path)
   cmd = [
       zstd_executable(),
       "-t",
@@ -310,6 +461,7 @@ def zstd_test(
         result.args,
         stderr=result.stderr,
     )
+  _advise_drop_cache(zst_path)
   return result
 
 
@@ -343,11 +495,16 @@ def zstd_gzip_decompress_stdout(
       "-q",
       gz_path,
   ]
-  with _decompress_stdout(cmd, apply_priority_wrap=apply_priority_wrap) as stdout:
+  with _decompress_stdout(
+      cmd,
+      apply_priority_wrap=apply_priority_wrap,
+      input_path=gz_path,
+  ) as stdout:
     yield stdout
 
 
 def zstd_gzip_test(gz_path: str, thread_count: int) -> subprocess.CompletedProcess:
+  _advise_sequential_read(gz_path)
   cmd = [
       zstd_executable(),
       "-t",
@@ -363,6 +520,7 @@ def zstd_gzip_test(gz_path: str, thread_count: int) -> subprocess.CompletedProce
         result.args,
         stderr=result.stderr,
     )
+  _advise_drop_cache(gz_path)
   return result
 
 
@@ -377,6 +535,7 @@ def zstd_compress_tar_to_file(
     tar_bytes = os.path.getsize(tar_path)
   except OSError:
     tar_bytes = 0
+  _advise_sequential_read(tar_path)
   cmd = [
       zstd_executable(),
       *_thread_args(thread_count),
@@ -394,3 +553,4 @@ def zstd_compress_tar_to_file(
         result.args,
         stderr=result.stderr,
     )
+  zstd_drop_page_cache_for_paths(tar_path, zst_path)
