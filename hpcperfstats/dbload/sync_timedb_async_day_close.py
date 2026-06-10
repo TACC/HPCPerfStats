@@ -308,10 +308,10 @@ class AsyncDayCloseCoordinator:
       return bool(os.path.isfile(zst_path) or os.path.isfile(gz_path))
     remaining_raw_by_gz = {
         zst_path: build_remaining_raw_for_daily_tar(
-            tar_norm,
             self.archive_data_dir,
             self.host_name_ext,
             self.tgz_archive_dir,
+            tar_norm,
         ),
     }
     keep_tar = effective_keep_uncompressed_tar(
@@ -344,10 +344,10 @@ class AsyncDayCloseCoordinator:
   def _tar_drop_day(self, tar_norm: str) -> bool:
     remaining_raw_by_gz = {
         compressed_sibling_paths(tar_norm)[0]: build_remaining_raw_for_daily_tar(
-            tar_norm,
             self.archive_data_dir,
             self.host_name_ext,
             self.tgz_archive_dir,
+            tar_norm,
         ),
     }
     zst_path, _gz_path = compressed_sibling_paths(tar_norm)
