@@ -304,8 +304,8 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Consecutive pool poll timeouts with no imap result before exit 124 (default 120).
 # sync_pool_stall_abort_after_timeouts = 120
 
-# Per ingest pool task wall-clock cap seconds; 0 disables (default 0).
-# sync_ingest_per_file_timeout_s = 0
+# Per ingest pool task wall-clock cap seconds; 0 disables (default 900).
+# sync_ingest_per_file_timeout_s = 900
 
 # Cache daily tar member maps per worker on DB-complete ingest checks (default yes).
 # sync_archive_members_cache_enabled = yes

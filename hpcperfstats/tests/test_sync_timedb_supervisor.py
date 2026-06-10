@@ -2364,7 +2364,7 @@ def test_ingest_pool_worker_exit_propagates_from_supervisor(monkeypatch):
   monkeypatch.setattr(
       st,
       "terminate_pool_bounded",
-      lambda pool: terminate_calls.append(pool) or True,
+      lambda pool, **kwargs: terminate_calls.append(pool) or True,
   )
 
   class _Pool:
@@ -2460,7 +2460,7 @@ def test_stall_teardown_preserves_exit_124_not_137(monkeypatch):
   monkeypatch.setattr(
       st,
       "terminate_pool_bounded",
-      lambda pool: True,
+      lambda pool, **kwargs: True,
   )
 
   class _Pool:
@@ -2496,6 +2496,122 @@ def test_stall_teardown_preserves_exit_124_not_137(monkeypatch):
     archive_pool.__exit__(None, None, None)
   assert excinfo.value.exit_code == 124
   assert get_watch_calls == []
+
+
+def test_stall_teardown_uses_nonblocking_preflight_shutdown(monkeypatch):
+  from hpcperfstats.dbload.multiprocessing_pool_health import (
+      MultiprocessingPoolStallError,
+  )
+  from hpcperfstats.dbload.sync_timedb_startup_day_close import (
+      StartupDayClosePreflight,
+  )
+  from hpcperfstats.dbload.sync_timedb_startup_raw_removal import (
+      StartupRawRemovalPreflight,
+  )
+  from hpcperfstats.dbload.sync_timedb_startup_tar_seal import (
+      StartupTarSealPreflight,
+  )
+
+  shutdown_requested[0] = False
+  target = "/fake/stats-stall-shutdown"
+  shutdown_waits = []
+
+  def track_shutdown(cls_name):
+    original = None
+
+    def wrapper(self, wait=True):
+      shutdown_waits.append((cls_name, wait))
+      if original is not None:
+        return original(self, wait=wait)
+
+    return wrapper, original
+
+  for cls_name, cls in (
+      ("startup_raw", StartupRawRemovalPreflight),
+      ("startup_day_close", StartupDayClosePreflight),
+      ("startup_tar_seal", StartupTarSealPreflight),
+  ):
+    wrapper, _ = track_shutdown(cls_name)
+    monkeypatch.setattr(cls, "shutdown", wrapper)
+
+  janitor_shutdown = []
+
+  def janitor_shutdown_track(self, wait=True):
+    janitor_shutdown.append(wait)
+
+  monkeypatch.setattr(st.ArchiveJanitor, "shutdown", janitor_shutdown_track)
+
+  def fake_rescan(*_a, **_k):
+    if fake_rescan.calls == 0:
+      fake_rescan.calls += 1
+      return [target]
+    return []
+  fake_rescan.calls = 0
+
+  def stall_watch_pool(
+      pool, fn, iterable, *, context="", poll_timeout_s=None, on_stall_warning=None,
+  ):
+    del pool, fn, iterable, context, poll_timeout_s, on_stall_warning
+    raise MultiprocessingPoolStallError(
+        "pool imap stalled",
+        dead_pids=(),
+        context="sync_timedb ingest pool",
+        exit_code=124,
+    )
+
+  monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+  monkeypatch.setattr(st, "imap_unordered_watch_pool", stall_watch_pool)
+  monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (target, True, True, 0.0))
+  monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: False)
+  monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: False)
+  monkeypatch.setattr(st.cfg, "get_sync_db_writer_combined_task", lambda: False)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_chunk_size", lambda: 1000)
+  monkeypatch.setattr(st.cfg, "get_sync_supervisor_rss_limit_mb", lambda: 0)
+  monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+  monkeypatch.setattr(st, "build_archive_mapping", lambda *_a, **_k: {})
+  monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
+  monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+  monkeypatch.setattr(
+      st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+  monkeypatch.setattr(st, "close_old_connections", lambda: None)
+  monkeypatch.setattr(st.connections, "close_all", lambda: None)
+  monkeypatch.setattr(st, "terminate_pool_bounded", lambda pool, **kwargs: True)
+
+  class _Pool:
+    pass
+
+  ingest_pool = _Pool()
+
+  class _SpawnCtx:
+    def Pool(self, *args, **kwargs):
+      del args, kwargs
+      return ingest_pool
+
+  monkeypatch.setattr(
+      st.multiprocessing,
+      "get_context",
+      lambda _name: _SpawnCtx(),
+  )
+
+  archive_pool = _FakeArchivePool()
+  archive_pool.__enter__()
+  try:
+    with pytest.raises(MultiprocessingPoolStallError):
+      st.run_sync_timedb_supervisor_loop(
+          "/tmp/archive",
+          "all",
+          None,
+          ".hpc",
+          object(),
+          archive_pool,
+          run_once=True,
+      )
+  finally:
+    archive_pool.__exit__(None, None, None)
+
+  assert shutdown_waits
+  assert all(wait is False for _name, wait in shutdown_waits)
+  assert janitor_shutdown == [False]
 
 
 def test_finalize_invalidates_members_cache(monkeypatch):

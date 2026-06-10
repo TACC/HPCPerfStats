@@ -310,86 +310,98 @@ class StartupDayClosePreflight:
     skipped_disqualified = 0
     deferred_eligible: List[str] = []
     retry_next_slice: List[str] = []
-    for tar_norm in sorted(eligible, key=_tar_sort_key):
-      if shutdown_requested[0]:
-        break
-      if time.time() - submit_t0 >= budget_s:
-        deferred_eligible.append(tar_norm)
-        continue
-      if len(submitted) >= days_per_slice:
-        deferred_eligible.append(tar_norm)
-        continue
-      disq = self.async_day_close.get_disqualified_daily_tars()
-      if tar_norm in disq:
-        skipped_disqualified += 1
-        retry_next_slice.append(tar_norm)
-        if self.log_fn:
-          self.log_fn(
-              "sync_timedb: startup day close submit skip tar=%s reason=%s"
-              % (tar_norm, "disqualified"),
-              flush=True,
-          )
-        continue
-      if not self.async_day_close.submit_day_close(
-          tar_norm,
-          reason="startup_checkpoint_complete",
-      ):
-        skipped_disqualified += 1
-        retry_next_slice.append(tar_norm)
-        if self.log_fn:
-          self.log_fn(
-              "sync_timedb: startup day close submit skip tar=%s reason=%s"
-              % (tar_norm, "submit_returned_false"),
-              flush=True,
-          )
-        continue
-      submitted.append(tar_norm)
-      with self._lock:
-        self._manifest.setdefault("entries", {})[tar_norm] = {
-            "tar_path": tar_norm,
-            "status": "submitted",
-            "reason": "startup_checkpoint_complete",
-        }
-        self._manifest["submitted_count"] = int(
-            self._manifest.get("submitted_count", 0)) + 1
-        _save_manifest(self._manifest_path, self._manifest)
-    with self._lock:
-      self._manifest["pending_eligible"] = deferred_eligible
-      self._manifest["pending_retry"] = retry_next_slice
-      self._manifest["discover_slice_count"] = slice_index + 1
-      _save_manifest(self._manifest_path, self._manifest)
-    report_entries = classify_day_close_candidates(
-        tgz_archive_dir=self.tgz_archive_dir,
-        remaining_raw_by_gz=remaining,
-        unprocessed_by_tar=unprocessed_by_tar,
-        disqualification_reasons=disq_reasons,
-        day_phases=phases,
-        local_tz=self.local_tz,
-        async_in_progress_tars=self.async_day_close.active_or_submitted_tar_paths(),
-        newly_queued_tars=set(submitted),
-        queued_reason="startup_checkpoint_complete",
-    )
-    log_day_close_candidate_report(
-        report_entries,
-        reason="startup_checkpoint_discover",
-        log_fn=self.log_fn,
-    )
+    disq_t0 = time.time()
+    disqualified = set(self.async_day_close.get_disqualified_daily_tars())
+    disq_elapsed_s = time.time() - disq_t0
     if self.log_fn:
       self.log_fn(
-          "sync_timedb: startup day close discover slice: submitted=%d "
-          "skipped_disqualified=%d deferred=%d retry=%d"
-          % (
-              len(submitted),
-              skipped_disqualified,
-              len(deferred_eligible),
-              len(retry_next_slice),
-          ),
+          "sync_timedb: startup day close discover_slice: disqualified_n=%d "
+          "disq_elapsed_s=%.3f"
+          % (len(disqualified), disq_elapsed_s),
           flush=True,
       )
-    self._touch_manifest(
-        "discover_slice_done",
-        detail="submitted=%d deferred=%d" % (len(submitted), len(deferred_eligible)),
-    )
+    try:
+      for tar_norm in sorted(eligible, key=_tar_sort_key):
+        if shutdown_requested[0]:
+          break
+        if time.time() - submit_t0 >= budget_s:
+          deferred_eligible.append(tar_norm)
+          continue
+        if len(submitted) >= days_per_slice:
+          deferred_eligible.append(tar_norm)
+          continue
+        if tar_norm in disqualified:
+          skipped_disqualified += 1
+          retry_next_slice.append(tar_norm)
+          if self.log_fn:
+            self.log_fn(
+                "sync_timedb: startup day close submit skip tar=%s reason=%s"
+                % (tar_norm, "disqualified"),
+                flush=True,
+            )
+          continue
+        if not self.async_day_close.submit_day_close(
+            tar_norm,
+            reason="startup_checkpoint_complete",
+            disqualified_daily_tars=disqualified,
+        ):
+          skipped_disqualified += 1
+          retry_next_slice.append(tar_norm)
+          if self.log_fn:
+            self.log_fn(
+                "sync_timedb: startup day close submit skip tar=%s reason=%s"
+                % (tar_norm, "submit_returned_false"),
+                flush=True,
+            )
+          continue
+        submitted.append(tar_norm)
+        with self._lock:
+          self._manifest.setdefault("entries", {})[tar_norm] = {
+              "tar_path": tar_norm,
+              "status": "submitted",
+              "reason": "startup_checkpoint_complete",
+          }
+          self._manifest["submitted_count"] = int(
+              self._manifest.get("submitted_count", 0)) + 1
+          _save_manifest(self._manifest_path, self._manifest)
+      report_entries = classify_day_close_candidates(
+          tgz_archive_dir=self.tgz_archive_dir,
+          remaining_raw_by_gz=remaining,
+          unprocessed_by_tar=unprocessed_by_tar,
+          disqualification_reasons=disq_reasons,
+          day_phases=phases,
+          local_tz=self.local_tz,
+          async_in_progress_tars=self.async_day_close.active_or_submitted_tar_paths(),
+          newly_queued_tars=set(submitted),
+          queued_reason="startup_checkpoint_complete",
+      )
+      log_day_close_candidate_report(
+          report_entries,
+          reason="startup_checkpoint_discover",
+          log_fn=self.log_fn,
+      )
+    finally:
+      with self._lock:
+        self._manifest["pending_eligible"] = deferred_eligible
+        self._manifest["pending_retry"] = retry_next_slice
+        self._manifest["discover_slice_count"] = slice_index + 1
+        _save_manifest(self._manifest_path, self._manifest)
+      if self.log_fn:
+        self.log_fn(
+            "sync_timedb: startup day close discover slice: submitted=%d "
+            "skipped_disqualified=%d deferred=%d retry=%d"
+            % (
+                len(submitted),
+                skipped_disqualified,
+                len(deferred_eligible),
+                len(retry_next_slice),
+            ),
+            flush=True,
+        )
+      self._touch_manifest(
+          "discover_slice_done",
+          detail="submitted=%d deferred=%d" % (len(submitted), len(deferred_eligible)),
+      )
     has_deferrals = (
         len(deferred_eligible) > 0
         or len(retry_next_slice) > 0

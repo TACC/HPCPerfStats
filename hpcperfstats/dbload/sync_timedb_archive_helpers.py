@@ -1867,6 +1867,8 @@ def _member_match_via_redis_or_sealed_point(
     )
 
   if client.exists(keys.lock_key):
+    if populate_degraded_is_set(keys, client=client):
+      _raise_if_ingest_day_skipped(keys, sealed_path, client)
     return wait_for_member_match(
         keys, member_name, expected_size, sealed_path=sealed_path,
     )

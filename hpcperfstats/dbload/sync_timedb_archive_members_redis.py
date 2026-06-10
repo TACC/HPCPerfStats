@@ -409,6 +409,8 @@ def _check_populate_wait_limits(
     if (time.monotonic() - last_progress_monotonic) >= float(
         _populate_stall_seconds(),
     ):
+      if populate_degraded_is_set(keys, client=client):
+        _raise_if_archive_day_ingest_skip(keys, sealed_path, client)
       raise ArchiveMembersRedisUnavailableError(
           "Archive members populate stalled (no progress for %ss): %s"
           % (_populate_stall_seconds(), keys.hash_key),

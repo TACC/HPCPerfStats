@@ -53,6 +53,11 @@ def test_dead_pool_worker_pids_detects_exited_worker():
   assert mph.dead_pool_worker_pids(pool) == [4242]
 
 
+def test_alive_pool_worker_count():
+  pool = SimpleNamespace(_pool=[_DeadWorker(), _AliveWorker()])
+  assert mph.alive_pool_worker_count(pool) == 1
+
+
 def test_abort_if_pool_workers_dead_raises():
   pool = SimpleNamespace(_pool=[_DeadWorker()])
   with pytest.raises(mph.MultiprocessingWorkerExitError) as excinfo:
@@ -224,3 +229,21 @@ def test_close_pool_bounded_closes_alive_workers():
   assert mph.close_pool_bounded(pool, timeout_s=0.1) is True
   assert pool.closed is True
   assert pool.terminated is False
+
+
+def test_terminate_pool_bounded_logs_context(monkeypatch):
+  logs = []
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.multiprocessing_pool_health.log_print",
+      lambda msg, flush=False: logs.append(msg),
+  )
+
+  class _TermPool:
+    _pool = [_AliveWorker()]
+
+    def terminate(self):
+      for worker in self._pool:
+        worker.join()
+
+  mph.terminate_pool_bounded(_TermPool(), context="ingest_pool")
+  assert any("Pool workers terminated" in line and "ingest_pool" in line for line in logs)

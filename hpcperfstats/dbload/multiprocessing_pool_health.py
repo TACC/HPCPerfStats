@@ -61,6 +61,16 @@ def dead_pool_worker_pids(pool):
   return [pid for pid in dead if pid is not None]
 
 
+def alive_pool_worker_count(pool):
+  """Return count of pool worker processes still alive."""
+  alive = 0
+  for proc in iter_pool_worker_processes(pool):
+    is_alive_fn = getattr(proc, "is_alive", None)
+    if callable(is_alive_fn) and is_alive_fn():
+      alive += 1
+  return alive
+
+
 def abort_if_pool_workers_dead(pool, *, context=""):
   """Raise ``MultiprocessingWorkerExitError`` when any pool worker has exited."""
   dead = dead_pool_worker_pids(pool)
@@ -99,14 +109,20 @@ def _wait_pool_processes_bounded(active_pool, timeout_s):
   return len(alive) == 0, alive
 
 
-def terminate_pool_bounded(active_pool, timeout_s=30.0):
+def terminate_pool_bounded(active_pool, timeout_s=30.0, *, context=""):
   """Terminate a pool and wait briefly so shutdown does not hang after worker death."""
   if active_pool is None:
     return True
+  alive_before = alive_pool_worker_count(active_pool)
   try:
     active_pool.terminate()
   except Exception:
     pass
+  log_print(
+      "Pool workers terminated context=%s workers_before=%d"
+      % (context or "pool", alive_before),
+      flush=True,
+  )
   all_done, alive = _wait_pool_processes_bounded(active_pool, timeout_s)
   if not all_done:
     log_print(

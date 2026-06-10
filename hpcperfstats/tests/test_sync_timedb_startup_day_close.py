@@ -74,7 +74,7 @@ def test_startup_day_close_enqueues_async_for_checkpoint_complete_day(
     def get_disqualified_daily_tars(self):
       return set()
 
-    def submit_day_close(self, tar_path, *, reason):
+    def submit_day_close(self, tar_path, *, reason, disqualified_daily_tars=None):
       submitted.append((os.path.normpath(tar_path), reason))
       return True
 
@@ -117,7 +117,7 @@ def test_startup_day_close_budget_applies_after_scans_not_before(
     def get_disqualified_daily_tars(self):
       return set()
 
-    def submit_day_close(self, tar_path, *, reason):
+    def submit_day_close(self, tar_path, *, reason, disqualified_daily_tars=None):
       submitted.append(os.path.normpath(tar_path))
       return True
 
@@ -213,7 +213,7 @@ def test_startup_day_close_shutdown_preserves_pending_eligible(
     def get_disqualified_daily_tars(self):
       return set()
 
-    def submit_day_close(self, tar_path, *, reason):
+    def submit_day_close(self, tar_path, *, reason, disqualified_daily_tars=None):
       submitted.append(os.path.normpath(tar_path))
       return True
 
@@ -270,7 +270,7 @@ def test_startup_day_close_multi_slice_submits_until_cap(
     def get_disqualified_daily_tars(self):
       return set()
 
-    def submit_day_close(self, tar_path, *, reason):
+    def submit_day_close(self, tar_path, *, reason, disqualified_daily_tars=None):
       submitted.append(os.path.normpath(tar_path))
       return True
 
@@ -324,7 +324,7 @@ def test_startup_day_close_retries_after_disqualification_clears(
     def get_disqualified_daily_tars(self):
       return set(disq)
 
-    def submit_day_close(self, tar_path, *, reason):
+    def submit_day_close(self, tar_path, *, reason, disqualified_daily_tars=None):
       submitted.append(os.path.normpath(tar_path))
       return True
 
@@ -345,3 +345,52 @@ def test_startup_day_close_retries_after_disqualification_clears(
   disq.clear()
   assert preflight._discover_slice() is False
   assert submitted == [tar_path]
+
+
+def test_startup_day_close_disqualify_once_per_slice(tmp_path, monkeypatch):
+  """get_disqualified_daily_tars is amortized to one call per discover slice."""
+  days = [date(2022, 8, d) for d in range(1, 13)]
+  tar_paths = []
+  checkpoint_entries = []
+  for d in days:
+    seg = _make_closed_segment(tmp_path, "cluster.integration.test", d)
+    daily_dir = tmp_path / "daily"
+    daily_dir.mkdir(exist_ok=True)
+    tar_path = os.path.normpath(str(daily_dir / ("%s.tar" % d.isoformat())))
+    open(tar_path, "wb").close()
+    tar_paths.append(tar_path)
+    checkpoint_entries.append({
+        "path": str(seg),
+        "size": seg.stat().st_size,
+        "mtime": int(seg.stat().st_mtime),
+    })
+  (tmp_path / ".sync_timedb_state.json").write_text(json.dumps(checkpoint_entries))
+
+  disq_calls = {"n": 0}
+
+  class _FakeCoord:
+    def get_disqualified_daily_tars(self):
+      disq_calls["n"] += 1
+      return set()
+
+    def submit_day_close(self, tar_path, *, reason, disqualified_daily_tars=None):
+      return True
+
+    def active_or_submitted_tar_paths(self):
+      return set()
+
+  monkeypatch.setattr(cfg, "get_sync_startup_day_close_budget_seconds", lambda: 120.0)
+  monkeypatch.setattr(cfg, "get_sync_startup_day_close_days_per_slice", lambda: 12)
+  monkeypatch.setattr(cfg, "get_sync_day_close_candidate_report", lambda: False)
+
+  preflight = _make_preflight(tmp_path, _FakeCoord())
+  log_fn = preflight.log_fn
+  preflight._discover_slice()
+  assert disq_calls["n"] == 1
+  slice_logs = [
+      str(call.args[0])
+      for call in log_fn.call_args_list
+      if call.args and "discover_slice:" in str(call.args[0])
+  ]
+  assert any("disqualified_n=0" in line for line in slice_logs)
+  assert any("discover slice: submitted=" in str(call.args[0]) for call in log_fn.call_args_list if call.args)

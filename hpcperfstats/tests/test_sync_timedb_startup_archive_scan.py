@@ -158,3 +158,46 @@ def test_startup_single_archive_scan_shared_across_preflights(monkeypatch):
   assert collect_calls["n"] == 0
   assert len(snapshots) == 3
   assert all(s.closed_paths == ["/janitor/publish"] for s in snapshots)
+
+
+def test_preflight_wait_never_fallback_builds(monkeypatch):
+  """Preflight-style wait (allow_build=False) must not run fallback collect."""
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_startup_archive_scan.cfg."
+      "get_sync_startup_snapshot_wait_seconds",
+      lambda: 0.2,
+  )
+  collect_calls = {"n": 0}
+
+  def fallback_build():
+    collect_calls["n"] += 1
+    return _make_snapshot()
+
+  coord = StartupArchiveScanCoordinator(
+      archive_data_dir="/tmp",
+      host_name_ext="cluster.test",
+      tgz_archive_dir="/tmp/daily",
+  )
+  coord.note_startup_maintenance_pending()
+  coord.begin_build()
+
+  result = {"snap": None, "error": None}
+
+  def preflight_wait():
+    try:
+      result["snap"] = coord.wait_for_snapshot(
+          allow_build=False,
+          build_fn=fallback_build,
+      )
+    except Exception as exc:
+      result["error"] = exc
+
+  thread = threading.Thread(target=preflight_wait)
+  thread.start()
+  time.sleep(0.05)
+  assert collect_calls["n"] == 0
+  coord.publish(_make_snapshot(closed_paths=["/janitor/only"]), from_janitor=True)
+  thread.join(timeout=3.0)
+  assert result["error"] is None
+  assert result["snap"] is not None
+  assert collect_calls["n"] == 0

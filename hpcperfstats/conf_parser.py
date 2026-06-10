@@ -1729,7 +1729,7 @@ def get_sync_ingest_per_file_timeout_s():
   try:
     return max(
         0.0,
-        float(_pipeline_get("sync_ingest_per_file_timeout_s", fallback="0")),
+        float(_pipeline_get("sync_ingest_per_file_timeout_s", fallback="900")),
     )
   except (TypeError, ValueError, OverflowError):
     return 0.0

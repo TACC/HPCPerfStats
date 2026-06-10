@@ -139,7 +139,13 @@ class AsyncDayCloseCoordinator:
       entry = self._manifest.get("entries", {}).get(tar_norm)
       return isinstance(entry, dict) and entry.get("status") == "complete"
 
-  def submit_day_close(self, tar_path: str, *, reason: str) -> bool:
+  def submit_day_close(
+      self,
+      tar_path: str,
+      *,
+      reason: str,
+      disqualified_daily_tars=None,
+  ) -> bool:
     """Submit async DAY_CLOSE for ``tar_path`` (single-flight per tar)."""
     tar_norm = os.path.normpath(tar_path or "")
     if not tar_norm:
@@ -150,7 +156,11 @@ class AsyncDayCloseCoordinator:
       future = self._futures.get(tar_norm)
       if future is not None and not future.done():
         return True
-      if tar_norm in self.get_disqualified_daily_tars():
+      if disqualified_daily_tars is None:
+        disqualified = self.get_disqualified_daily_tars()
+      else:
+        disqualified = disqualified_daily_tars
+      if tar_norm in disqualified:
         return False
       entry = self._manifest.setdefault("entries", {}).get(tar_norm)
       if isinstance(entry, dict) and entry.get("status") == "complete":

@@ -25,7 +25,9 @@ When **`sync_startup_day_close_preflight=yes`** (default), the supervisor starts
 4. Multi-slice discover until `pending_eligible` and `pending_retry` empty; manifest `phase=done` only then (not on SIGTERM with deferrals).
 5. Transient disqualification skips enqueue `pending_retry`; next slice retries when `tar not in get_disqualified_daily_tars()`.
 6. Slice 2+ refresh `remaining_raw_by_gz` from janitor accrual when present, else coordinator snapshot.
-7. For each checkpoint-complete day with work left, `submit_day_close(..., reason=startup_checkpoint_complete)`; log submit skips.
+7. **One** `get_disqualified_daily_tars()` per discover slice (before submit loop); pass precomputed set into `submit_day_close(..., disqualified_daily_tars=)` to avoid a second full recompute under `async_day_close._lock`.
+8. Slice telemetry: `discover_slice: disqualified_n=… disq_elapsed_s=…` and `discover slice: submitted=…` in `try/finally` (always emitted even when candidate report is slow).
+9. For each checkpoint-complete day with work left, `submit_day_close(..., reason=startup_checkpoint_complete)`; log submit skips.
 
 **Not** gated on global `pending_stats_files` length.
 

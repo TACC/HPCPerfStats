@@ -61,6 +61,7 @@ from hpcperfstats.dbload.db_unavailable import (
 from hpcperfstats.dbload.io_helpers import host_data_instance_from_stats_row
 from hpcperfstats.dbload.multiprocessing_pool_health import (
     MultiprocessingWorkerExitError,
+    alive_pool_worker_count,
     async_result_get_watch_pool,
     close_pool_bounded,
     imap_unordered_watch_pool,
@@ -281,13 +282,46 @@ def _log_ingest_per_file_timeout(exc):
   )
 
 
-def _make_ingest_stall_warning_fn(tracker, *, chunk_counter, pending_count):
+def _calendar_day_hint_from_paths(paths):
+  """Best-effort calendar day from first in-flight stats path filename epoch."""
+  for path in paths or ():
+    if not path:
+      continue
+    base = os.path.basename(str(path))
+    if base.isdigit():
+      try:
+        return datetime.fromtimestamp(
+            int(base), tz=timezone.utc,
+        ).strftime("%Y-%m-%d")
+      except (TypeError, ValueError, OSError, OverflowError):
+        pass
+  return ""
+
+
+def _make_ingest_stall_warning_fn(
+    tracker,
+    *,
+    pool,
+    thread_count,
+    chunk_counter,
+    pending_count,
+):
   def on_stall_warning(consecutive, abort_after, poll_timeout_s, context):
     sample = tracker.sample_in_flight() if tracker is not None else []
+    alive_workers = alive_pool_worker_count(pool)
+    pool_workers = int(thread_count) if thread_count else alive_workers
+    day_hint = _calendar_day_hint_from_paths(sample)
+    timeout_s = _resolve_sync_ingest_per_file_timeout_s()
+    timeout_hint = (
+        " sync_ingest_per_file_timeout_s=0 (disabled)"
+        if timeout_s <= 0.0
+        else ""
+    )
     log_print(
         "WARN: pool imap stall progress consecutive_timeouts=%d/%d "
         "poll_timeout_s=%.3f estimated_stall_s=%.1f context=%s chunk=%d "
-        "pending=%d in_flight_sample=%s"
+        "pending=%d pool_workers_alive=%d/%d in_flight_n=%d "
+        "in_flight_day_hint=%s in_flight_sample=%s%s"
         % (
             consecutive,
             abort_after,
@@ -296,7 +330,12 @@ def _make_ingest_stall_warning_fn(tracker, *, chunk_counter, pending_count):
             context or "pool",
             int(chunk_counter),
             int(pending_count),
+            alive_workers,
+            pool_workers,
+            len(sample),
+            day_hint or "-",
             sample,
+            timeout_hint,
         ),
         flush=True,
     )
@@ -311,6 +350,7 @@ def _imap_ingest_pool(
     *,
     context,
     tracker,
+    thread_count,
     chunk_counter,
     pending_count,
 ):
@@ -323,6 +363,8 @@ def _imap_ingest_pool(
       context=context,
       on_stall_warning=_make_ingest_stall_warning_fn(
           tracker,
+          pool=pool,
+          thread_count=thread_count,
           chunk_counter=chunk_counter,
           pending_count=pending_count,
       ),
@@ -357,6 +399,7 @@ def _imap_ingest_paths_batched(
         subpaths,
         context=context,
         tracker=tracker,
+        thread_count=thread_count,
         chunk_counter=chunk_counter,
         pending_count=pending_count,
     ):
@@ -607,9 +650,10 @@ def _reraise_or_handle_pool_worker_exit(
 ):
   """Terminate ingest/archive pools and re-raise worker death."""
   if isinstance(exc, MultiprocessingWorkerExitError):
-    terminate_pool_bounded(ingest_pool)
-    terminate_pool_bounded(db_writer_pool)
-    terminate_pool_bounded(archive_pool)
+    ctx = getattr(exc, "context", "") or "pool_worker_exit"
+    terminate_pool_bounded(ingest_pool, context=ctx)
+    terminate_pool_bounded(db_writer_pool, context=ctx)
+    terminate_pool_bounded(archive_pool, context=ctx)
     raise
   raise exc
 
@@ -2374,7 +2418,15 @@ def run_sync_timedb_supervisor_loop(
       log_fn=log_print,
   )
 
-  def _get_startup_snapshot():
+  def _wait_startup_snapshot_for_preflight():
+    """Preflights wait on janitor publish only; never trigger fallback collect."""
+    snap = startup_archive_scan.get_snapshot()
+    if snap is not None:
+      return snap
+    return startup_archive_scan.wait_for_snapshot(allow_build=False)
+
+  def _get_startup_snapshot_for_rescan():
+    """Supervisor rescan may single-flight fallback-build after wait timeout."""
     snap = startup_archive_scan.get_snapshot()
     if snap is not None:
       return snap
@@ -2396,7 +2448,7 @@ def run_sync_timedb_supervisor_loop(
   def _rescan_pending_with_progress():
     rescan_t0 = time.time()
     log_print("sync_timedb: pending rescan begin", flush=True)
-    _get_startup_snapshot()
+    _get_startup_snapshot_for_rescan()
     paths = rescan_pending_stats_files(
         directory,
         startdate,
@@ -2508,7 +2560,7 @@ def run_sync_timedb_supervisor_loop(
         get_disqualified_daily_tars=_janitor_disqualified_daily_tars,
         get_quarantine_skip_paths=_get_quarantine_skip_paths,
         ingest_ready_fn=stats_file_head_ingested_in_db,
-        get_startup_snapshot=_get_startup_snapshot,
+        get_startup_snapshot=_wait_startup_snapshot_for_preflight,
         process_title=SYNC_TIMEDB_PROCESS_TITLE,
     )
     startup_preflight.start_async_verify()
@@ -2522,7 +2574,7 @@ def run_sync_timedb_supervisor_loop(
         get_disqualification_inputs=_capture_disqualification_inputs,
         get_unmapped_closed_raw_tars=_get_unmapped_closed_raw_tars,
         day_phases=lambda: dict(archive_janitor._day_phases),
-        get_startup_snapshot=_get_startup_snapshot,
+        get_startup_snapshot=_wait_startup_snapshot_for_preflight,
         get_accrual_remaining_raw_by_gz=_get_accrual_remaining_raw_by_gz,
         process_title=SYNC_TIMEDB_PROCESS_TITLE,
     )
@@ -2538,7 +2590,7 @@ def run_sync_timedb_supervisor_loop(
             os.path.normpath(tar)
             in async_day_close.active_or_submitted_tar_paths()
         ),
-        get_startup_snapshot=_get_startup_snapshot,
+        get_startup_snapshot=_wait_startup_snapshot_for_preflight,
         process_title=SYNC_TIMEDB_PROCESS_TITLE,
     )
     startup_tar_seal.start_async_seal()
@@ -2755,11 +2807,17 @@ def run_sync_timedb_supervisor_loop(
                     pending_total=len(pending_stats_files),
                     chunk_counter=chunk_counter,
                 )
-          except MultiprocessingWorkerExitError:
+          except MultiprocessingWorkerExitError as exc:
             pool_worker_exit = True
-            terminate_pool_bounded(ingest_pool)
-            terminate_pool_bounded(db_writer_pool)
-            terminate_pool_bounded(archive_pool)
+            terminate_pool_bounded(
+                ingest_pool, context=getattr(exc, "context", "") or "ingest_parse",
+            )
+            terminate_pool_bounded(
+                db_writer_pool, context=getattr(exc, "context", "") or "ingest_parse",
+            )
+            terminate_pool_bounded(
+                archive_pool, context=getattr(exc, "context", "") or "ingest_parse",
+            )
             raise
           except DatabaseUnavailableExit:
             raise
@@ -2782,11 +2840,20 @@ def run_sync_timedb_supervisor_loop(
                   pending_total=len(pending_stats_files),
                   chunk_counter=chunk_counter,
               )
-            except MultiprocessingWorkerExitError:
+            except MultiprocessingWorkerExitError as exc:
               pool_worker_exit = True
-              terminate_pool_bounded(ingest_pool)
-              terminate_pool_bounded(db_writer_pool)
-              terminate_pool_bounded(archive_pool)
+              terminate_pool_bounded(
+                  ingest_pool,
+                  context=getattr(exc, "context", "") or "ingest_db_writer",
+              )
+              terminate_pool_bounded(
+                  db_writer_pool,
+                  context=getattr(exc, "context", "") or "ingest_db_writer",
+              )
+              terminate_pool_bounded(
+                  archive_pool,
+                  context=getattr(exc, "context", "") or "ingest_db_writer",
+              )
               raise
             except DatabaseUnavailableExit:
               raise
@@ -2838,10 +2905,14 @@ def run_sync_timedb_supervisor_loop(
                 remaining = len(pending_stats_files) - chunk_ingest_finished - 1
                 chunk_ingest_finished += 1
                 _log_sync_timedb_ingest_completed(stats_fname, elapsed_s, remaining)
-          except MultiprocessingWorkerExitError:
+          except MultiprocessingWorkerExitError as exc:
             pool_worker_exit = True
-            terminate_pool_bounded(ingest_pool)
-            terminate_pool_bounded(archive_pool)
+            terminate_pool_bounded(
+                ingest_pool, context=getattr(exc, "context", "") or "ingest_combined",
+            )
+            terminate_pool_bounded(
+                archive_pool, context=getattr(exc, "context", "") or "ingest_combined",
+            )
             raise
           except DatabaseUnavailableExit:
             raise
@@ -2893,10 +2964,14 @@ def run_sync_timedb_supervisor_loop(
                 remaining = len(pending_stats_files) - chunk_ingest_finished - 1
                 chunk_ingest_finished += 1
                 _log_sync_timedb_ingest_completed(stats_fname, elapsed_s, remaining)
-          except MultiprocessingWorkerExitError:
+          except MultiprocessingWorkerExitError as exc:
             pool_worker_exit = True
-            terminate_pool_bounded(ingest_pool)
-            terminate_pool_bounded(archive_pool)
+            terminate_pool_bounded(
+                ingest_pool, context=getattr(exc, "context", "") or "ingest_pool",
+            )
+            terminate_pool_bounded(
+                archive_pool, context=getattr(exc, "context", "") or "ingest_pool",
+            )
             raise
           except DatabaseUnavailableExit:
             raise
@@ -3094,17 +3169,18 @@ def run_sync_timedb_supervisor_loop(
       connections.close_all()
   finally:
     chunk_in_progress = False
+    preflight_shutdown_wait = not pool_worker_exit
     if startup_preflight is not None:
-      startup_preflight.shutdown(wait=True)
+      startup_preflight.shutdown(wait=preflight_shutdown_wait)
     if startup_day_close is not None:
-      startup_day_close.shutdown(wait=True)
+      startup_day_close.shutdown(wait=preflight_shutdown_wait)
     if startup_tar_seal is not None:
-      startup_tar_seal.shutdown(wait=True)
+      startup_tar_seal.shutdown(wait=preflight_shutdown_wait)
     if async_day_close is not None:
-      async_day_close.shutdown(wait=True)
+      async_day_close.shutdown(wait=preflight_shutdown_wait)
     if day_raw_removal is not None:
-      day_raw_removal.shutdown(wait=True)
-    archive_janitor.shutdown(wait=True)
+      day_raw_removal.shutdown(wait=preflight_shutdown_wait)
+    archive_janitor.shutdown(wait=not pool_worker_exit)
     if not pool_worker_exit:
       _finalize_archive_slots_if_needed(force=True)
     else:
