@@ -147,6 +147,46 @@ def test_startup_day_close_budget_applies_after_scans_not_before(
   assert submitted == [tar_path]
 
 
+def test_startup_discover_backoff_skips_scan_when_async_saturated(
+    tmp_path, monkeypatch,
+):
+  scan_calls = {"n": 0}
+
+  def counting_unprocessed(*_a, **_k):
+    scan_calls["n"] += 1
+    return {}
+
+  class _SaturatedCoord:
+    def get_disqualified_daily_tars(self):
+      return set()
+
+    def submit_day_close(self, *_a, **_k):
+      raise AssertionError("submit should not run when saturated")
+
+    def active_or_submitted_tar_paths(self):
+      return {"/arch/2026-04-15.tar"}
+
+    def entry_progress_snapshot(self, _tar):
+      return {}
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_startup_day_close."
+      "build_unprocessed_raw_by_daily_tar",
+      counting_unprocessed,
+  )
+  monkeypatch.setattr(cfg, "get_sync_day_close_max_inflight", lambda: 1)
+  monkeypatch.setattr(cfg, "get_sync_day_close_candidate_report", lambda: False)
+
+  preflight = _make_preflight(tmp_path, _SaturatedCoord())
+  with preflight._lock:
+    preflight._manifest["pending_eligible"] = ["/arch/2026-04-22.tar"]
+    preflight._manifest["pending_retry"] = []
+  has_more = preflight._discover_slice()
+  assert has_more is True
+  assert scan_calls["n"] == 0
+  assert preflight._manifest.get("last_progress") == "discover_backoff_async_saturated"
+
+
 def test_startup_day_close_uses_accrual_snapshot_when_present(
     tmp_path, monkeypatch,
 ):
@@ -280,6 +320,7 @@ def test_startup_day_close_multi_slice_submits_until_cap(
   monkeypatch.setattr(cfg, "get_sync_startup_day_close_budget_seconds", lambda: 120.0)
   monkeypatch.setattr(cfg, "get_sync_startup_day_close_days_per_slice", lambda: 1)
   monkeypatch.setattr(cfg, "get_sync_day_close_candidate_report", lambda: False)
+  monkeypatch.setattr(cfg, "get_sync_day_close_max_inflight", lambda: 10)
 
   original_eligible = (
       "hpcperfstats.dbload.sync_timedb_startup_day_close."

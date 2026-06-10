@@ -11,7 +11,7 @@
     "postToolUse": [
       {
         "command": ".cursor/hooks/check-edit-triggered-rules.py",
-        "matcher": "Write|StrReplace|EditNotebook",
+        "matcher": "Write|StrReplace|EditNotebook|CreatePlan",
         "timeout": 10
       },
       {

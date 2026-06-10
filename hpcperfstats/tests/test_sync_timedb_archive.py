@@ -4521,6 +4521,39 @@ def test_log_day_close_candidate_report_logs_queued_and_disqualified(capsys, mon
   assert "skipped_no_work" not in out
 
 
+def test_log_day_close_candidate_report_includes_async_progress(capsys, monkeypatch):
+  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+      log_day_close_candidate_report,
+  )
+
+  import hpcperfstats.conf_parser as cfg_mod
+
+  monkeypatch.setattr(cfg_mod, "get_sync_day_close_candidate_report", lambda: True)
+
+  def progress(_tar):
+    return {
+        "last_progress": "raw_removal",
+        "last_progress_age_s": 123.0,
+    }
+
+  log_day_close_candidate_report(
+      [
+          {
+              "tar_path": "/arch/2026-04-15.tar",
+              "status": "queued",
+              "reasons": ["async_in_progress"],
+              "unprocessed": 0,
+              "phase": "",
+          },
+      ],
+      reason="test",
+      async_progress_fn=progress,
+  )
+  out = capsys.readouterr().out
+  assert "async_last_progress=raw_removal" in out
+  assert "async_age_s=123" in out
+
+
 def test_log_day_close_candidate_report_silent_when_empty(capsys, monkeypatch):
   from hpcperfstats.dbload.sync_timedb_archive_helpers import (
       log_day_close_candidate_report,

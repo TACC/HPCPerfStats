@@ -929,10 +929,14 @@ class ArchiveJanitor:
         newly_queued_tars=newly_queued_tars or set(),
         queued_reason=day_close_queued_reason_for_report_reason(reason),
     )
+    async_progress_fn = None
+    if coord is not None:
+      async_progress_fn = coord.entry_progress_snapshot
     log_day_close_candidate_report(
         entries,
         reason=reason,
         log_fn=self.log_fn,
+        async_progress_fn=async_progress_fn,
     )
 
   def _process_debt_item(

@@ -82,6 +82,8 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 | User asks for a plan / Cursor Plan / `docs/plans/` | `plan-creation-contract.mdc`, `docs/plans/PLAN_TEMPLATE.md` |
 | Pre-code planning | `implementation-review-workflow.mdc` |
 
+**Hooks (same close discipline as implementation):** `CreatePlan` counts as closeable work. **`stop`** enforces chat close headings plus `PLAN_TEMPLATE.md` sections inside the plan body and **Read before `CreatePlan`** for `plan-creation-contract.mdc`, `PLAN_TEMPLATE.md`, and domain rules referenced in the plan. **`postToolUse`** warns mid-turn when those reads are missing.
+
 ## Implementation habits (short)
 
 - **Test-first** for behavior changes: `test-first-discipline.mdc`, `testing-best-practices.mdc`

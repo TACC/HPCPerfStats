@@ -10,6 +10,54 @@ EDIT_TOOL_NAMES = frozenset(
     {"Write", "StrReplace", "EditNotebook", "Delete", "ApplyPatch"},
 )
 
+PLAN_TOOL_NAMES = frozenset({"CreatePlan"})
+
+PLAN_TEMPLATE_READ_SUFFIX = "docs/plans/PLAN_TEMPLATE.md"
+
+PLAN_AUTHORING_REQUIRED_MDC = ("plan-creation-contract.mdc",)
+
+PLAN_CONTENT_SECTIONS = (
+    (
+        re.compile(r"##\s*(?:\d+\.\s*)?Problem and facts", re.I),
+        "## Problem and facts",
+    ),
+    (
+        re.compile(r"##\s*(?:\d+\.\s*)?Approach", re.I),
+        "## Approach",
+    ),
+    (
+        re.compile(r"##\s*(?:\d+\.\s*)?Testing", re.I),
+        "## Testing",
+    ),
+    (
+        re.compile(
+            r"##\s*(?:\d+\.\s*)?(?:Implementation|Implementation touch list)",
+            re.I,
+        ),
+        "## Implementation",
+    ),
+    (
+        re.compile(r"##\s*(?:\d+\.\s*)?Cursor rules", re.I),
+        "## Cursor rules / docs sync",
+    ),
+    (
+        re.compile(r"##\s*Final code review", re.I),
+        "## Final code review (mandatory before implementation close)",
+    ),
+    (
+        re.compile(r"id:\s*post-implementation-review\b", re.I),
+        "post-implementation-review todo",
+    ),
+)
+
+PLAN_CLOSE_RE = re.compile(
+    r"\b("
+    r"plan (is )?ready|created (a )?plan|present(ing)? (the )?plan|"
+    r"confirm the plan|review the plan|plan (authored|delivered)"
+    r")\b",
+    re.I,
+)
+
 AGENT_RULE_DISPATCH_LABEL = "## Agent rule dispatch"
 AGENT_RULE_DISPATCH_DETAIL_LABEL = (
     "## Agent rule dispatch (list Read *.mdc rules or N/A with reason)"
@@ -134,6 +182,64 @@ def last_turn_rows(rows: list[dict]) -> list[dict]:
     return rows[last_user_idx + 1 :]
 
 
+def create_plan_payload_from_tool_part(part: dict) -> dict | None:
+    if not isinstance(part, dict):
+        return None
+    tool_name = None
+    payload = None
+    if part.get("type") == "tool_use":
+        tool_name = part.get("name")
+        payload = part.get("input") or {}
+    elif part.get("type") == "tool_call":
+        tool_name = part.get("tool_name") or part.get("name")
+        payload = part.get("input") or part.get("arguments") or {}
+    if tool_name not in PLAN_TOOL_NAMES or not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def is_create_plan_tool_part(part: dict) -> bool:
+    return create_plan_payload_from_tool_part(part) is not None
+
+
+def extract_create_plan_markdown(rows: list[dict]) -> str:
+    chunks: list[str] = []
+    for row in rows:
+        message = row.get("message") or {}
+        for part in message.get("content") or []:
+            payload = create_plan_payload_from_tool_part(part)
+            if not payload:
+                continue
+            plan_text = payload.get("plan") or payload.get("content") or ""
+            if plan_text:
+                chunks.append(str(plan_text))
+    return "\n".join(chunks)
+
+
+def paths_from_plan_markdown(text: str) -> list[str]:
+    paths: list[str] = []
+    seen: set[str] = set()
+    patterns = (
+        re.compile(r"`([^`\n]+\.(?:py|mdc|md|ya?ml|jsx?|sh))`", re.I),
+        re.compile(r"\]\(([^)\n]+\.(?:py|mdc|md|ya?ml|jsx?|sh))\)", re.I),
+    )
+    for pattern in patterns:
+        for match in pattern.finditer(text or ""):
+            raw = match.group(1).strip()
+            if not raw or raw in seen:
+                continue
+            seen.add(raw)
+            paths.append(raw)
+    return paths
+
+
+def is_plan_template_read_path(path: str) -> bool:
+    normalized = (path or "").replace("\\", "/")
+    return normalized.endswith(PLAN_TEMPLATE_READ_SUFFIX) or normalized.endswith(
+        "PLAN_TEMPLATE.md",
+    )
+
+
 def edit_path_from_tool_part(part: dict) -> str | None:
     if not isinstance(part, dict):
         return None
@@ -167,6 +273,19 @@ def turn_had_edits(rows: list[dict]) -> bool:
     return False
 
 
+def turn_had_create_plan(rows: list[dict]) -> bool:
+    for row in rows:
+        message = row.get("message") or {}
+        for part in message.get("content") or []:
+            if is_create_plan_tool_part(part):
+                return True
+    return False
+
+
+def turn_had_closeable_work(rows: list[dict]) -> bool:
+    return turn_had_edits(rows) or turn_had_create_plan(rows)
+
+
 def extract_edited_paths(rows: list[dict]) -> list[str]:
     paths: list[str] = []
     seen: set[str] = set()
@@ -177,6 +296,16 @@ def extract_edited_paths(rows: list[dict]) -> list[str]:
             if path and path not in seen:
                 seen.add(path)
                 paths.append(path)
+    return paths
+
+
+def extract_work_paths(rows: list[dict]) -> list[str]:
+    paths = extract_edited_paths(rows)
+    seen = set(paths)
+    for plan_path in paths_from_plan_markdown(extract_create_plan_markdown(rows)):
+        if plan_path not in seen:
+            seen.add(plan_path)
+            paths.append(plan_path)
     return paths
 
 
@@ -195,6 +324,15 @@ def first_edit_event_index(rows: list[dict]) -> int | None:
         if is_edit_tool_part(part):
             return event_idx
     return None
+
+
+def first_closeable_event_index(rows: list[dict]) -> int | None:
+    first: int | None = None
+    for event_idx, part in iter_tool_parts(rows):
+        if is_edit_tool_part(part) or is_create_plan_tool_part(part):
+            if first is None or event_idx < first:
+                first = event_idx
+    return first
 
 
 def read_event_indices_for_rule(rows: list[dict], rule_basename: str) -> list[int]:
@@ -349,8 +487,49 @@ def triggered_rule_dispatch_issues(
     return issues
 
 
+def plan_template_read_event_indices(rows: list[dict]) -> list[int]:
+    indices: list[int] = []
+    for event_idx, part in iter_tool_parts(rows):
+        path = read_path_from_tool_part(part)
+        if path and is_plan_template_read_path(path):
+            indices.append(event_idx)
+    return indices
+
+
+def plan_template_read_issues(transcript_rows: list[dict]) -> list[str]:
+    first_closeable = first_closeable_event_index(transcript_rows)
+    read_indices = plan_template_read_event_indices(transcript_rows)
+    if not read_indices:
+        return ["PLAN_TEMPLATE.md not read via Read tool"]
+    if first_closeable is not None and min(read_indices) > first_closeable:
+        return ["PLAN_TEMPLATE.md read after CreatePlan"]
+    return []
+
+
+def plan_authoring_required_mdc_rules(work_paths: list[str]) -> list[str]:
+    triggered_rules_for_paths = _import_triggered_rules_for_paths()
+    seen: dict[str, str] = {}
+    for rule in [*PLAN_AUTHORING_REQUIRED_MDC, *triggered_rules_for_paths(work_paths)]:
+        key = rule.lower()
+        if key in READ_VERIFY_EXEMPT_MDC:
+            continue
+        if key not in seen:
+            seen[key] = rule
+    return list(seen.values())
+
+
+def plan_content_issues(plan_markdown: str) -> list[str]:
+    if not (plan_markdown or "").strip():
+        return ["CreatePlan body missing or empty"]
+    missing: list[str] = []
+    for pattern, label in PLAN_CONTENT_SECTIONS:
+        if not pattern.search(plan_markdown):
+            missing.append(label)
+    return missing
+
+
 def domain_rule_read_issues(required_rules: list[str], transcript_rows: list[dict]) -> list[str]:
-    first_edit = first_edit_event_index(transcript_rows)
+    first_closeable = first_closeable_event_index(transcript_rows)
     issues: list[str] = []
     for rule in sorted(required_rules, key=str.lower):
         if rule.lower() in READ_VERIFY_EXEMPT_MDC:
@@ -358,8 +537,8 @@ def domain_rule_read_issues(required_rules: list[str], transcript_rows: list[dic
         read_indices = read_event_indices_for_rule(transcript_rows, rule)
         if not read_indices:
             issues.append(f"Rule not read: {rule}")
-        elif first_edit is not None and min(read_indices) > first_edit:
-            issues.append(f"Rule read after first edit: {rule}")
+        elif first_closeable is not None and min(read_indices) > first_closeable:
+            issues.append(f"Rule read after first edit/plan: {rule}")
     return issues
 
 
@@ -379,11 +558,18 @@ def edge_cases_issues(assistant_text: str) -> list[str]:
 
 def close_gate_issues(*, assistant_text: str, transcript_rows: list[dict]) -> list[str]:
     issues = missing_close_gate_sections(assistant_text)
-    edited_paths = extract_edited_paths(transcript_rows)
-    issues.extend(triggered_rule_dispatch_issues(assistant_text, edited_paths))
-    required_rules = domain_rules_required(assistant_text, edited_paths)
+    work_paths = extract_work_paths(transcript_rows)
+    issues.extend(triggered_rule_dispatch_issues(assistant_text, work_paths))
+    required_rules = domain_rules_required(assistant_text, work_paths)
     issues.extend(domain_rule_read_issues(required_rules, transcript_rows))
     issues.extend(edge_cases_issues(assistant_text))
+    if turn_had_create_plan(transcript_rows):
+        plan_markdown = extract_create_plan_markdown(transcript_rows)
+        for label in plan_content_issues(plan_markdown):
+            issues.append(f"Plan content missing: {label}")
+        issues.extend(plan_template_read_issues(transcript_rows))
+        plan_required = plan_authoring_required_mdc_rules(work_paths)
+        issues.extend(domain_rule_read_issues(plan_required, transcript_rows))
     return issues
 
 
@@ -408,6 +594,24 @@ def looks_like_implementation_close(text: str, had_edits: bool) -> bool:
     if had_edits and re.search(r"\b(approve for merge|merge blocker|self-review)\b", text, re.I):
         return True
     return False
+
+
+def looks_like_plan_close(text: str, had_plan: bool) -> bool:
+    if not had_plan:
+        return False
+    if COMPLETION_RE.search(text or ""):
+        return True
+    if PLAN_CLOSE_RE.search(text or ""):
+        return True
+    if re.search(r"##\s*Agent rule dispatch", text or "", re.I):
+        return True
+    return False
+
+
+def looks_like_task_close(text: str, *, had_edits: bool, had_plan: bool) -> bool:
+    if looks_like_implementation_close(text, had_edits):
+        return True
+    return looks_like_plan_close(text, had_plan)
 
 
 def rule_file_needs_router_entry(file_path: str) -> tuple[bool, str]:

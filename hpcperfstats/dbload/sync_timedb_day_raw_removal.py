@@ -153,6 +153,22 @@ class _DayRawRemovalState:
   def delete_phase_done(self) -> bool:
     return self.phase() == PHASE_DONE
 
+  def progress_summary(self) -> Dict[str, Any]:
+    with self._lock:
+      entries = self._manifest.get("entries", {})
+      pending_delete = 0
+      for entry in entries.values():
+        if not isinstance(entry, dict):
+          continue
+        if entry.get("status") == "verified" and not entry.get("deleted"):
+          pending_delete += 1
+      return {
+          "phase": str(self._manifest.get("phase") or ""),
+          "verified_count": int(self._manifest.get("verified_count", 0)),
+          "pending_delete": pending_delete,
+          "deleted_count": int(self._manifest.get("deleted_count", 0)),
+      }
+
   def paths_pending_delete(self) -> Set[str]:
     with self._lock:
       pending = set()
@@ -426,6 +442,28 @@ class DayRawRemovalCoordinator:
   def delete_phase_done(self, tar_path: str) -> bool:
     return self._get_or_create_day(tar_path).delete_phase_done()
 
+  def raw_removal_progress_summary(self, tar_path: str) -> Dict[str, Any]:
+    tar_norm = os.path.normpath(tar_path or "")
+    with self._days_lock:
+      state = self._days.get(tar_norm)
+    if state is None:
+      return {
+          "phase": "",
+          "verified_count": 0,
+          "pending_delete": 0,
+          "deleted_count": 0,
+      }
+    return state.progress_summary()
+
+  def pipeline_future_done(self, tar_path: str) -> bool:
+    tar_norm = os.path.normpath(tar_path or "")
+    with self._days_lock:
+      state = self._days.get(tar_norm)
+    if state is None:
+      return True
+    future = state._pipeline_future
+    return future is None or future.done()
+
   def paths_pending_delete(self) -> Set[str]:
     pending: Set[str] = set()
     with self._days_lock:
@@ -478,7 +516,24 @@ class DayRawRemovalCoordinator:
         if state.verification_complete():
           break
         time.sleep(0.1)
-    if shutdown_requested[0] or not state.verification_complete():
+    if shutdown_requested[0]:
+      return
+    if not state.verification_complete():
+      summary = state.progress_summary()
+      if self.log_fn:
+        self.log_fn(
+            "Day raw removal verify budget exhausted day=%s phase=%s "
+            "verified=%d pending_delete=%d"
+            % (
+                state.day_date.isoformat(),
+                summary.get("phase"),
+                int(summary.get("verified_count", 0)),
+                int(summary.get("pending_delete", 0)),
+            ),
+            flush=True,
+        )
+      with state._lock:
+        _save_manifest(state._manifest_path, state._manifest)
       return
     state.begin_deleting()
     while not shutdown_requested[0] and not state.delete_phase_done():
@@ -486,6 +541,21 @@ class DayRawRemovalCoordinator:
       if state.delete_phase_done():
         break
       time.sleep(0.05)
+    if not state.delete_phase_done() and not shutdown_requested[0]:
+      summary = state.progress_summary()
+      if self.log_fn:
+        self.log_fn(
+            "Day raw removal delete incomplete day=%s phase=%s "
+            "verified=%d pending_delete=%d deleted=%d"
+            % (
+                state.day_date.isoformat(),
+                summary.get("phase"),
+                int(summary.get("verified_count", 0)),
+                int(summary.get("pending_delete", 0)),
+                int(summary.get("deleted_count", 0)),
+            ),
+            flush=True,
+        )
     if state.delete_phase_done() and self.on_pipeline_complete is not None:
       try:
         self.on_pipeline_complete(state.tar_path)

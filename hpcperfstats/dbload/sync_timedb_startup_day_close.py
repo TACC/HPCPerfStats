@@ -223,6 +223,33 @@ class StartupDayClosePreflight:
 
   def _discover_slice(self) -> bool:
     """Run one discover+submit slice. Return False when discover loop should stop."""
+    max_inflight = cfg.get_sync_day_close_max_inflight()
+    active_count = len(self.async_day_close.active_or_submitted_tar_paths())
+    if active_count >= max_inflight:
+      self._touch_manifest(
+          "discover_backoff_async_saturated",
+          detail="active=%d max=%d" % (active_count, max_inflight),
+      )
+      with self._lock:
+        pending_eligible = list(self._manifest.get("pending_eligible") or [])
+        pending_retry = list(self._manifest.get("pending_retry") or [])
+        self._manifest["last_slice_backoff"] = True
+        _save_manifest(self._manifest_path, self._manifest)
+      if self.log_fn:
+        self.log_fn(
+            "sync_timedb: startup day close discover backoff async saturated "
+            "active=%d max=%d pending_eligible=%d pending_retry=%d"
+            % (
+                active_count,
+                max_inflight,
+                len(pending_eligible),
+                len(pending_retry),
+            ),
+            flush=True,
+        )
+      has_deferrals = bool(pending_eligible or pending_retry)
+      return has_deferrals and not shutdown_requested[0]
+
     budget_s = cfg.get_sync_startup_day_close_budget_seconds()
     days_per_slice = cfg.get_sync_startup_day_close_days_per_slice()
     scan_warn_s = cfg.get_sync_startup_day_close_scan_budget_seconds()
@@ -330,6 +357,9 @@ class StartupDayClosePreflight:
         if len(submitted) >= days_per_slice:
           deferred_eligible.append(tar_norm)
           continue
+        if len(self.async_day_close.active_or_submitted_tar_paths()) >= max_inflight:
+          deferred_eligible.append(tar_norm)
+          continue
         if tar_norm in disqualified:
           skipped_disqualified += 1
           retry_next_slice.append(tar_norm)
@@ -379,12 +409,23 @@ class StartupDayClosePreflight:
           report_entries,
           reason="startup_checkpoint_discover",
           log_fn=self.log_fn,
+          async_progress_fn=getattr(
+              self.async_day_close,
+              "entry_progress_snapshot",
+              None,
+          ),
       )
     finally:
       with self._lock:
         self._manifest["pending_eligible"] = deferred_eligible
         self._manifest["pending_retry"] = retry_next_slice
         self._manifest["discover_slice_count"] = slice_index + 1
+        slice_backoff = (
+            len(submitted) == 0
+            and len(self.async_day_close.active_or_submitted_tar_paths())
+            >= max_inflight
+        )
+        self._manifest["last_slice_backoff"] = slice_backoff
         _save_manifest(self._manifest_path, self._manifest)
       if self.log_fn:
         self.log_fn(
@@ -425,7 +466,14 @@ class StartupDayClosePreflight:
         has_more = self._discover_slice()
         if not has_more:
           break
-        time.sleep(1.0)
+        with self._lock:
+          use_backoff = bool(self._manifest.get("last_slice_backoff"))
+        sleep_s = (
+            cfg.get_sync_startup_day_close_backoff_seconds()
+            if use_backoff
+            else 1.0
+        )
+        time.sleep(sleep_s)
     finally:
       with self._lock:
         pending_eligible = list(self._manifest.get("pending_eligible") or [])

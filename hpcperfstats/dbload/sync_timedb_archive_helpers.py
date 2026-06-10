@@ -373,6 +373,7 @@ def log_day_close_candidate_report(
     *,
     reason,
     log_fn=log_print,
+    async_progress_fn=None,
 ):
   """Log day-close candidates (silent skipped_no_work)."""
   if not cfg.get_sync_day_close_candidate_report():
@@ -390,15 +391,41 @@ def log_day_close_candidate_report(
       flush=True,
   )
   for entry in queued + waiting + deferred + disqualified:
+    reasons = list(entry.get("reasons") or ())
+    async_suffix = ""
+    if (
+        async_progress_fn is not None
+        and entry.get("status") == "queued"
+        and "async_in_progress" in reasons
+    ):
+      tar_path = entry.get("tar_path")
+      if tar_path:
+        try:
+          progress = async_progress_fn(tar_path) or {}
+        except Exception:
+          progress = {}
+        last_progress = progress.get("last_progress") or ""
+        age_s = progress.get("last_progress_age_s")
+        if last_progress or age_s is not None:
+          age_text = (
+              "%.0f" % float(age_s)
+              if age_s is not None
+              else ""
+          )
+          async_suffix = " async_last_progress=%s async_age_s=%s" % (
+              last_progress,
+              age_text,
+          )
     log_fn(
         "janitor: day_close candidate tar=%s status=%s reasons=%s "
-        "unprocessed=%d phase=%s"
+        "unprocessed=%d phase=%s%s"
         % (
             entry.get("tar_path"),
             entry.get("status"),
-            ",".join(entry.get("reasons") or ()),
+            ",".join(reasons),
             int(entry.get("unprocessed") or 0),
             entry.get("phase") or "",
+            async_suffix,
         ),
         flush=True,
     )

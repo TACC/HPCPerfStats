@@ -166,3 +166,35 @@ def test_start_async_day_pipeline_completes_verify_and_delete(tmp_path, monkeypa
   assert coord.phase(tar_path) == PHASE_DONE
   assert not seg.is_file()
   assert completed == [os.path.normpath(tar_path)]
+
+
+def test_raw_removal_progress_summary_reports_pending_delete(tmp_path):
+  day = datetime(2022, 6, 7)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, _zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path)
+  coord.start_async_verify(tar_path)
+  state = coord._get_or_create_day(tar_path)
+  state._pipeline_future.result(timeout=10.0)
+  summary = coord.raw_removal_progress_summary(tar_path)
+  assert summary["phase"] == PHASE_VERIFICATION_COMPLETE
+  assert summary["verified_count"] >= 1
+  assert summary["pending_delete"] >= 1
+
+
+def test_pipeline_verify_budget_exhausted_logs_warning(tmp_path, monkeypatch):
+  day = datetime(2022, 6, 8)
+  tar_path = str(tmp_path / "daily" / "2022-06-08.tar")
+  (tmp_path / "daily").mkdir(exist_ok=True)
+  open(tar_path, "wb").close()
+  log_fn = MagicMock()
+  coord = _make_coordinator(tmp_path, log_fn=log_fn)
+  state = coord._get_or_create_day(tar_path)
+
+  monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_verify_budget_seconds", lambda: 0.01)
+  monkeypatch.setattr(state, "verification_complete", lambda: False)
+  monkeypatch.setattr(state, "_verify_body", lambda: None)
+
+  coord._pipeline_body(state)
+  messages = [str(call.args[0]) for call in log_fn.call_args_list]
+  assert any("Day raw removal verify budget exhausted" in msg for msg in messages)

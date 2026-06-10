@@ -28,8 +28,8 @@ Adding a new domain rule (same task, non-optional):
 
 Committed under `HPCPerfStats/.cursor/` (symlink from workspace `.cursor/`). See `.cursor/hooks/README.md`.
 
-- **`stop`** — close-gate headings, auto-triggered rule dispatch, **Read before first edit**, invalid-N/A rejection, ≥3 edge-case bullets (`loop_limit: 3`)
-- **`postToolUse`** — `check-edit-triggered-rules.py` warns mid-turn when an edit triggers unread domain rules
+- **`stop`** — close-gate headings after file edits **or `CreatePlan`**, auto-triggered rule dispatch, **Read before first edit/plan**, plan body `PLAN_TEMPLATE.md` sections when `CreatePlan` was used, invalid-N/A rejection, ≥3 edge-case bullets (`loop_limit: 3`)
+- **`postToolUse`** — `check-edit-triggered-rules.py` warns mid-turn when an edit or **`CreatePlan`** triggers unread domain rules or missing `plan-creation-contract.mdc` / `PLAN_TEMPLATE.md` reads
 - **`postToolUse`** — enforces router registration for new `cursor-rules/*.mdc`
 
 ## Authoritative path

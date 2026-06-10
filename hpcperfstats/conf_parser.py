@@ -178,6 +178,10 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_startup_tar_seal_rediscover_interval_seconds"),
     ("PIPELINE", "sync_startup_day_close_scan_budget_seconds"),
     ("PIPELINE", "sync_day_close_async_workers"),
+    ("PIPELINE", "sync_day_close_max_inflight"),
+    ("PIPELINE", "sync_day_close_raw_removal_wait_seconds"),
+    ("PIPELINE", "sync_day_close_async_stale_seconds"),
+    ("PIPELINE", "sync_startup_day_close_backoff_seconds"),
     ("PIPELINE", "sync_day_close_raw_removal_preflight"),
     ("PIPELINE", "sync_day_close_raw_removal_verify_budget_seconds"),
     ("PIPELINE", "sync_day_close_raw_removal_max_deletes_per_pass"),
@@ -2475,6 +2479,48 @@ def get_sync_day_close_raw_removal_max_deletes_per_pass():
     return max(0, int(raw))
   except (TypeError, ValueError):
     return 0
+
+
+def get_sync_day_close_raw_removal_wait_seconds():
+  """Max wall-clock wait in async DAY_CLOSE for day raw removal (default 3600; 0=unbounded)."""
+  _ensure_cfg_loaded()
+  raw = _pipeline_get("sync_day_close_raw_removal_wait_seconds", fallback="3600")
+  try:
+    return max(0.0, float(raw))
+  except (TypeError, ValueError):
+    return 3600.0
+
+
+def get_sync_day_close_max_inflight():
+  """Max concurrent async DAY_CLOSE jobs (default sync_day_close_async_workers)."""
+  _ensure_cfg_loaded()
+  raw = _pipeline_get("sync_day_close_max_inflight", fallback="")
+  if raw is None or str(raw).strip() == "":
+    return get_sync_day_close_async_workers()
+  try:
+    return max(1, int(raw))
+  except (TypeError, ValueError):
+    return get_sync_day_close_async_workers()
+
+
+def get_sync_startup_day_close_backoff_seconds():
+  """Sleep between startup discover slices when async pool saturated (default 30)."""
+  _ensure_cfg_loaded()
+  raw = _pipeline_get("sync_startup_day_close_backoff_seconds", fallback="30")
+  try:
+    return max(1.0, float(raw))
+  except (TypeError, ValueError):
+    return 30.0
+
+
+def get_sync_day_close_async_stale_seconds():
+  """Recover stale async DAY_CLOSE manifest entries on startup (default 7200; 0=off)."""
+  _ensure_cfg_loaded()
+  raw = _pipeline_get("sync_day_close_async_stale_seconds", fallback="7200")
+  try:
+    return max(0.0, float(raw))
+  except (TypeError, ValueError):
+    return 7200.0
 
 
 def get_sync_archive_max_inflight_jobs():

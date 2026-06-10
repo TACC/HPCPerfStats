@@ -123,7 +123,7 @@ def test_domain_rule_read_issues_flags_read_after_first_edit():
       },
   ]
   issues = lib.domain_rule_read_issues(["testing-best-practices.mdc"], rows)
-  assert issues == ["Rule read after first edit: testing-best-practices.mdc"]
+  assert issues == ["Rule read after first edit/plan: testing-best-practices.mdc"]
 
 
 def test_triggered_rule_dispatch_rejects_na_when_edits_trigger_rules():
@@ -249,6 +249,213 @@ def test_router_from_rule_path():
   assert router is not None
   assert router.name == "agent-discipline-core.mdc"
   assert router.is_file()
+
+
+def _minimal_plan_markdown() -> str:
+  return (
+      "## Problem and facts\n\nfacts\n"
+      "## Approach\n\nsteps\n"
+      "## Testing\n\ntests\n"
+      "## Implementation\n\nfiles\n"
+      "## Cursor rules / docs sync\n\nno rule change\n"
+      "## Final code review (mandatory before implementation close)\n\nreview\n"
+      "---\n"
+      "todos:\n"
+      "  - id: post-implementation-review\n"
+      "    content: review\n"
+      "    status: pending\n"
+  )
+
+
+def test_turn_had_create_plan_detects_create_plan_tool():
+  rows = [
+      {
+          "role": "assistant",
+          "message": {
+              "content": [
+                  {
+                      "type": "tool_use",
+                      "name": "CreatePlan",
+                      "input": {"plan": _minimal_plan_markdown()},
+                  },
+              ],
+          },
+      },
+  ]
+  assert lib.turn_had_create_plan(lib.last_turn_rows(rows)) is True
+  assert lib.turn_had_closeable_work(lib.last_turn_rows(rows)) is True
+
+
+def test_plan_content_issues_detects_missing_sections():
+  issues = lib.plan_content_issues("## Approach\n\nonly approach")
+  assert any("Problem and facts" in item for item in issues)
+  assert any("post-implementation-review todo" in item for item in issues)
+
+
+def test_paths_from_plan_markdown_extracts_backtick_paths():
+  text = "Touch [`hpcperfstats/dbload/sync_timedb_async_day_close.py`](path)"
+  paths = lib.paths_from_plan_markdown(text)
+  assert "hpcperfstats/dbload/sync_timedb_async_day_close.py" in paths
+
+
+def test_plan_template_read_issues_requires_read_before_create_plan():
+  rows = [
+      {
+          "role": "assistant",
+          "message": {
+              "content": [
+                  {
+                      "type": "tool_use",
+                      "name": "CreatePlan",
+                      "input": {"plan": _minimal_plan_markdown()},
+                  },
+              ],
+          },
+      },
+  ]
+  assert lib.plan_template_read_issues(rows) == [
+      "PLAN_TEMPLATE.md not read via Read tool",
+  ]
+
+
+def test_looks_like_plan_close_when_dispatch_present():
+  assert lib.looks_like_plan_close(
+      "## Agent rule dispatch\n\nRead: plan-creation-contract.mdc\n",
+      had_plan=True,
+  )
+
+
+def test_close_gate_issues_flags_plan_content_and_reads():
+  plan_md = _minimal_plan_markdown()
+  assistant_text = (
+      "## Agent rule dispatch\n\n"
+      "Read: plan-creation-contract.mdc\n"
+      "## Final code review (senior engineer pass)\n\nok\n"
+      "## Post-implementation review\n\n"
+      "### Why it works\n\nok\n"
+      "### Edge cases\n\n- a\n- b\n- c\n"
+      "### Convention check\n\nok\n"
+      "\n\nPlan is ready for your review."
+  )
+  rows = [
+      {
+          "role": "assistant",
+          "message": {
+              "content": [
+                  {
+                      "type": "tool_use",
+                      "name": "CreatePlan",
+                      "input": {"plan": plan_md},
+                  },
+                  {"type": "text", "text": assistant_text},
+              ],
+          },
+      },
+  ]
+  issues = lib.close_gate_issues(assistant_text=assistant_text, transcript_rows=rows)
+  assert "PLAN_TEMPLATE.md not read via Read tool" in issues
+  assert "Rule not read: plan-creation-contract.mdc" in issues
+
+
+def test_check_close_gate_emits_followup_for_create_plan(tmp_path):
+  transcript = tmp_path / "plan.jsonl"
+  transcript.write_text(
+      json.dumps(
+          {
+              "role": "user",
+              "message": {"content": [{"type": "text", "text": "create a plan"}]},
+          },
+      )
+      + "\n"
+      + json.dumps(
+          {
+              "role": "assistant",
+              "message": {
+                  "content": [
+                      {
+                          "type": "tool_use",
+                          "name": "CreatePlan",
+                          "input": {"plan": "## Approach\n\nonly"},
+                      },
+                      {
+                          "type": "text",
+                          "text": "Plan is ready for your review.",
+                      },
+                  ],
+              },
+          },
+      )
+      + "\n",
+      encoding="utf-8",
+  )
+  payload = {
+      "status": "completed",
+      "loop_count": 0,
+      "transcript_path": str(transcript),
+  }
+  script = HOOKS_DIR / "check-close-gate.py"
+  proc = subprocess.run(
+      [sys.executable, str(script)],
+      input=json.dumps(payload),
+      capture_output=True,
+      text=True,
+      check=False,
+  )
+  assert proc.returncode == 0
+  data = json.loads(proc.stdout.strip())
+  assert "followup_message" in data
+  assert "Close gate incomplete" in data["followup_message"]
+  assert "PLAN_TEMPLATE.md" in data["followup_message"]
+
+
+def test_check_edit_triggered_rules_create_plan_requires_reads(tmp_path):
+  transcript = tmp_path / "plan.jsonl"
+  transcript.write_text(
+      json.dumps(
+          {
+              "role": "assistant",
+              "message": {
+                  "content": [
+                      {
+                          "type": "tool_use",
+                          "name": "CreatePlan",
+                          "input": {
+                              "plan": (
+                                  "## Implementation\n\n"
+                                  "`hpcperfstats/dbload/sync_timedb_async_day_close.py`\n"
+                              ),
+                          },
+                      },
+                  ],
+              },
+          },
+      )
+      + "\n",
+      encoding="utf-8",
+  )
+  payload = {
+      "tool_name": "CreatePlan",
+      "tool_input": {
+          "plan": (
+              "## Implementation\n\n"
+              "`hpcperfstats/dbload/sync_timedb_async_day_close.py`\n"
+          ),
+      },
+      "transcript_path": str(transcript),
+  }
+  script = HOOKS_DIR / "check-edit-triggered-rules.py"
+  proc = subprocess.run(
+      [sys.executable, str(script)],
+      input=json.dumps(payload),
+      capture_output=True,
+      text=True,
+      check=False,
+  )
+  assert proc.returncode == 0
+  data = json.loads(proc.stdout.strip())
+  assert "additional_context" in data
+  assert "plan-creation-contract.mdc" in data["additional_context"]
+  assert "PLAN_TEMPLATE.md" in data["additional_context"]
 
 
 def test_turn_had_edits_detects_write_tool():
@@ -381,4 +588,6 @@ def test_check_close_gate_emits_followup_for_read_after_edit(tmp_path):
   assert proc.returncode == 0
   data = json.loads(proc.stdout.strip())
   assert "followup_message" in data
-  assert "Rule read after first edit: testing-best-practices.mdc" in data["followup_message"]
+  assert "Rule read after first edit/plan: testing-best-practices.mdc" in data[
+      "followup_message"
+  ]

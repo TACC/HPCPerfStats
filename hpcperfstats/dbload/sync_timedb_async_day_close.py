@@ -102,6 +102,55 @@ class AsyncDayCloseCoordinator:
     self._manifest = _load_manifest(self._manifest_path)
     self._futures: Dict[str, Any] = {}
     self._executor: Optional[ThreadPoolExecutor] = None
+    self._recover_stale_manifest_entries()
+
+  def _recover_stale_manifest_entries(self) -> None:
+    stale_s = cfg.get_sync_day_close_async_stale_seconds()
+    if stale_s <= 0:
+      return
+    now = time.time()
+    recovered: list[str] = []
+    with self._lock:
+      for tar_norm, entry in list(self._manifest.get("entries", {}).items()):
+        if not isinstance(entry, dict):
+          continue
+        if entry.get("status") not in ("submitted", "sealing", "raw_removal"):
+          continue
+        future = self._futures.get(tar_norm)
+        if future is not None and not future.done():
+          continue
+        last_at = entry.get("last_progress_at") or entry.get("submitted_at")
+        if last_at is None:
+          continue
+        if now - float(last_at) < stale_s:
+          continue
+        entry["status"] = "deferred"
+        entry["detail"] = "stale_manifest_recovery"
+        entry["recovered_at"] = now
+        recovered.append(os.path.normpath(tar_norm))
+      if recovered:
+        _save_manifest(self._manifest_path, self._manifest)
+    for tar_norm in recovered:
+      self.log_fn(
+          "janitor: async day_close stale manifest recovery tar=%s" % tar_norm,
+          flush=True,
+      )
+
+  def entry_progress_snapshot(self, tar_path: str) -> Dict[str, Any]:
+    tar_norm = os.path.normpath(tar_path or "")
+    with self._lock:
+      entry = self._manifest.get("entries", {}).get(tar_norm)
+      if not isinstance(entry, dict):
+        return {}
+      last_at = entry.get("last_progress_at") or entry.get("submitted_at")
+      age_s = None
+      if last_at is not None:
+        age_s = max(0.0, time.time() - float(last_at))
+      return {
+          "status": str(entry.get("status") or ""),
+          "last_progress": str(entry.get("last_progress") or ""),
+          "last_progress_age_s": age_s,
+      }
 
   def _ensure_executor(self) -> ThreadPoolExecutor:
     if self._executor is None:
@@ -249,9 +298,56 @@ class AsyncDayCloseCoordinator:
         self._touch_manifest("raw_removal", tar_norm=tar_norm)
         self._set_entry_status(tar_norm, "raw_removal")
         coord.start_async_day_pipeline(tar_norm)
+        wait_budget_s = cfg.get_sync_day_close_raw_removal_wait_seconds()
+        wait_started = time.time()
+        last_progress_log = wait_started
+        pipeline_rekick_done = False
         while not shutdown_requested[0]:
           if coord.delete_phase_done(tar_norm):
             break
+          now = time.time()
+          if wait_budget_s > 0 and now - wait_started >= wait_budget_s:
+            summary = coord.raw_removal_progress_summary(tar_norm)
+            self.log_fn(
+                "janitor: async day_close raw_removal stall tar=%s "
+                "wait_s=%.0f phase=%s verified=%d pending_delete=%d"
+                % (
+                    tar_norm,
+                    wait_budget_s,
+                    summary.get("phase"),
+                    int(summary.get("verified_count", 0)),
+                    int(summary.get("pending_delete", 0)),
+                ),
+                flush=True,
+            )
+            self._set_entry_status(
+                tar_norm,
+                "deferred",
+                detail="raw_removal_timeout",
+            )
+            return
+          if now - last_progress_log >= 60.0:
+            summary = coord.raw_removal_progress_summary(tar_norm)
+            self.log_fn(
+                "janitor: async day_close raw_removal wait tar=%s "
+                "elapsed_s=%.0f phase=%s verified=%d pending_delete=%d"
+                % (
+                    tar_norm,
+                    now - wait_started,
+                    summary.get("phase"),
+                    int(summary.get("verified_count", 0)),
+                    int(summary.get("pending_delete", 0)),
+                ),
+                flush=True,
+            )
+            last_progress_log = now
+          if (
+              not pipeline_rekick_done
+              and coord.pipeline_future_done(tar_norm)
+              and not coord.delete_phase_done(tar_norm)
+          ):
+            coord.start_async_day_pipeline(tar_norm)
+            pipeline_rekick_done = True
           sleep_until_shutdown(0.5)
         if not coord.delete_phase_done(tar_norm):
           self._set_entry_status(tar_norm, "deferred", detail="raw_removal")

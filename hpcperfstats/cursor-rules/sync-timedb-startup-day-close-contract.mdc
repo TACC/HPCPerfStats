@@ -39,12 +39,15 @@ When **`sync_startup_day_close_preflight=yes`** (default), the supervisor starts
 - `sync_startup_snapshot_wait_seconds` (default 300, min 120)
 - `sync_startup_day_close_scan_budget_seconds` (optional warn-only)
 - `sync_day_close_async_workers` (default 1)
+- `sync_day_close_max_inflight` (default = `sync_day_close_async_workers`) — skip expensive discover scan and defer submits when `active_or_submitted_tar_paths()` ≥ cap
+- `sync_startup_day_close_backoff_seconds` (default 30) — sleep between discover slices when last slice submitted 0 due to async saturation (replaces 1s tight loop)
 - `sync_day_close_candidate_report` (default yes) — `queued` / `waiting_on_ingest` / `eligible_deferred` / `disqualified`; `skipped_no_work` silent
 
 ## Operator log (candidate report)
 
 ```
 janitor: day_close candidate report reason=startup_checkpoint_discover queued=N waiting_on_ingest=W eligible_deferred=D disqualified=M
+sync_timedb: startup day close discover backoff async saturated active=N max=M …
 sync_timedb: startup day close discover: scans elapsed_s=…
 sync_timedb: startup day close submit skip tar=… reason=…
 ```
