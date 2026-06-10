@@ -1460,8 +1460,8 @@ def test_janitor_day_close_submits_async_not_sync_seal(monkeypatch, tmp_path):
     def is_complete(self, _tar):
       return False
 
-    def submit_day_close(self, tar, *, reason):
-      submit_calls.append((tar, reason))
+    def submit_day_close(self, tar, *, reason, disqualified_daily_tars=None):
+      submit_calls.append((tar, reason, disqualified_daily_tars))
       self._active.add(os.path.normpath(tar))
       return True
 
@@ -1482,14 +1482,17 @@ def test_janitor_day_close_submits_async_not_sync_seal(monkeypatch, tmp_path):
       kind=DebtKind.DAY_CLOSE,
       tar_path=tar_path,
   )
+  disqualified = {os.path.normpath("/other/2020-01-02.tar")}
   result = janitor._process_debt_item(
       debt,
       snapshot=None,
       validation_cache={},
-      disqualified=set(),
+      disqualified=disqualified,
   )
   assert seal_calls == []
-  assert submit_calls == [(os.path.normpath(tar_path), "janitor_debt")]
+  assert submit_calls == [
+      (os.path.normpath(tar_path), "janitor_debt", disqualified),
+  ]
   assert result is False
 
 

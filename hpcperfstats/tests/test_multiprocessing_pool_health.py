@@ -247,3 +247,25 @@ def test_terminate_pool_bounded_logs_context(monkeypatch):
 
   mph.terminate_pool_bounded(_TermPool(), context="ingest_pool")
   assert any("Pool workers terminated" in line and "ingest_pool" in line for line in logs)
+
+
+def test_hard_exit_pool_worker_error_uses_os_exit(monkeypatch):
+  exit_codes = []
+  logs = []
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.multiprocessing_pool_health.log_print",
+      lambda msg, flush=False: logs.append(msg),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.multiprocessing_pool_health.os._exit",
+      lambda code: exit_codes.append(code),
+  )
+  exc = mph.MultiprocessingPoolStallError(
+      "pool imap stalled",
+      dead_pids=(),
+      context="sync_timedb ingest pool",
+      exit_code=124,
+  )
+  mph.hard_exit_pool_worker_error(exc)
+  assert exit_codes == [124]
+  assert any("hard exit code=124" in line for line in logs)

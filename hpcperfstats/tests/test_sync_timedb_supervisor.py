@@ -2511,6 +2511,9 @@ def test_stall_teardown_uses_nonblocking_preflight_shutdown(monkeypatch):
   from hpcperfstats.dbload.sync_timedb_startup_tar_seal import (
       StartupTarSealPreflight,
   )
+  from hpcperfstats.dbload.sync_timedb_async_day_close import (
+      AsyncDayCloseCoordinator,
+  )
 
   shutdown_requested[0] = False
   target = "/fake/stats-stall-shutdown"
@@ -2540,6 +2543,17 @@ def test_stall_teardown_uses_nonblocking_preflight_shutdown(monkeypatch):
     janitor_shutdown.append(wait)
 
   monkeypatch.setattr(st.ArchiveJanitor, "shutdown", janitor_shutdown_track)
+
+  async_shutdown_waits = []
+
+  def async_shutdown_track(self, wait=True):
+    async_shutdown_waits.append(wait)
+
+  monkeypatch.setattr(
+      AsyncDayCloseCoordinator,
+      "shutdown",
+      async_shutdown_track,
+  )
 
   def fake_rescan(*_a, **_k):
     if fake_rescan.calls == 0:
@@ -2612,6 +2626,7 @@ def test_stall_teardown_uses_nonblocking_preflight_shutdown(monkeypatch):
   assert shutdown_waits
   assert all(wait is False for _name, wait in shutdown_waits)
   assert janitor_shutdown == [False]
+  assert async_shutdown_waits == [False]
 
 
 def test_finalize_invalidates_members_cache(monkeypatch):

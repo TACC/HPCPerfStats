@@ -953,7 +953,11 @@ class ArchiveJanitor:
             self._day_phases[tar_norm] = day_phase_hint_entry(tar_norm, "tar_dropped")
           return True
         was_active = tar_norm in coord.active_or_submitted_tar_paths()
-        coord.submit_day_close(tar_norm, reason="janitor_debt")
+        coord.submit_day_close(
+            tar_norm,
+            reason="janitor_debt",
+            disqualified_daily_tars=disqualified,
+        )
         if (
             tick_stats is not None
             and not was_active

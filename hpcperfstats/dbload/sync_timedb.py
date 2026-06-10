@@ -3354,7 +3354,11 @@ if __name__ == '__main__':
   except DatabaseUnavailableExit:
     sys.exit(2)
   except MultiprocessingWorkerExitError as exc:
-    sys.exit(exc.exit_code)
+    from hpcperfstats.dbload.multiprocessing_pool_health import (
+        hard_exit_pool_worker_error,
+    )
+
+    hard_exit_pool_worker_error(exc)
   finally:
     # Best-effort cleanup + parent notification when SIGTERM is received.
     if sigterm_received["value"]:

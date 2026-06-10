@@ -275,3 +275,17 @@ def async_result_get_watch_pool(
         return get_fn()
     except multiprocessing.TimeoutError:
       continue
+
+
+def hard_exit_pool_worker_error(exc: MultiprocessingWorkerExitError) -> None:
+  """Exit immediately after pool worker failure (do not wait on helper threads).
+
+  ``sys.exit`` can block while non-daemon threads (for example async DAY_CLOSE
+  seal) finish; stall/OOM exit handlers must use ``os._exit`` instead.
+  """
+  log_print(
+      "Pool worker exit: hard exit code=%d context=%s"
+      % (exc.exit_code, exc.context or "unknown"),
+      flush=True,
+  )
+  os._exit(int(exc.exit_code))

@@ -238,7 +238,11 @@ if __name__ == '__main__':
   except DatabaseUnavailableExit:
     sys.exit(2)
   except MultiprocessingWorkerExitError as exc:
+    from hpcperfstats.dbload.multiprocessing_pool_health import (
+        hard_exit_pool_worker_error,
+    )
+
     log_print("sync_timedb_archive exiting after pool worker death: %s" % exc, flush=True)
-    sys.exit(exc.exit_code)
+    hard_exit_pool_worker_error(exc)
   if shutdown_requested[0]:
     sys.exit(143)

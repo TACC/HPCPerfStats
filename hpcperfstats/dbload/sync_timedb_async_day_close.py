@@ -171,7 +171,7 @@ class AsyncDayCloseCoordinator:
           "reason": reason,
           "submitted_at": time.time(),
       }
-      self._touch_manifest("submitted", tar_norm=tar_norm)
+      self._touch_manifest_locked("submitted", tar_norm=tar_norm)
       executor = self._ensure_executor()
       future = executor.submit(self._run_day_close, tar_norm, reason)
       future.add_done_callback(lambda f, t=tar_norm: self._on_future_done(t, f))
@@ -182,16 +182,20 @@ class AsyncDayCloseCoordinator:
     )
     return True
 
+  def _touch_manifest_locked(self, stage: str, *, tar_norm: str = "") -> None:
+    """Update manifest progress fields and persist. Caller must hold ``self._lock``."""
+    self._manifest["last_progress"] = stage
+    self._manifest["last_progress_at"] = time.time()
+    if tar_norm:
+      entry = self._manifest.setdefault("entries", {}).setdefault(tar_norm, {})
+      if isinstance(entry, dict):
+        entry["last_progress"] = stage
+        entry["last_progress_at"] = time.time()
+    _save_manifest(self._manifest_path, self._manifest)
+
   def _touch_manifest(self, stage: str, *, tar_norm: str = "") -> None:
     with self._lock:
-      self._manifest["last_progress"] = stage
-      self._manifest["last_progress_at"] = time.time()
-      if tar_norm:
-        entry = self._manifest.setdefault("entries", {}).setdefault(tar_norm, {})
-        if isinstance(entry, dict):
-          entry["last_progress"] = stage
-          entry["last_progress_at"] = time.time()
-      _save_manifest(self._manifest_path, self._manifest)
+      self._touch_manifest_locked(stage, tar_norm=tar_norm)
 
   def _set_entry_status(self, tar_norm: str, status: str, **extra) -> None:
     with self._lock:
