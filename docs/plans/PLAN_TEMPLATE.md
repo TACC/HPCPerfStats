@@ -20,19 +20,19 @@ Use any of these when you want the agent to follow this template and the close g
 
 The agent must read this file, include **Final code review** and **Post-implementation review** sections, and add the **`post-implementation-review`** todo last. See **`plan-template-enforcement.mdc`** and **`plan-completion-gate.mdc`**.
 
-**Do not mark implementation done** until **`post-implementation-review`** is complete: (1) senior final code review on the diff and affected workflows finds no unfixed gaps, and (2) structured chat self-review is delivered (**Why it works**, **Edge cases**, **Convention check**).
+**Do not mark implementation done** until plan YAML todos are synced (`status: completed` for every finished step—status-only plan edits are allowed even when plan prose must not change), **`post-implementation-review`** is complete: (1) senior final code review on the diff and affected workflows finds no unfixed gaps, and (2) structured chat self-review is delivered (**Why it works**, **Edge cases**, **Convention check**). See **`plan-completion-gate.mdc`** → *Plan YAML todo sync*.
 
 ### Recommended Cursor User Rule (optional, highest signal)
 
 Paste into **Cursor Settings → Rules → User Rules**:
 
-> Every implementation plan must follow plan-creation-contract.mdc and docs/plans/PLAN_TEMPLATE.md, including the post-implementation-review todo and the Final code review (senior pass on diff + workflow) + Post-implementation review sections. Do not mark done until both close-sequence steps in plan-completion-gate.mdc are complete.
+> Every implementation plan must follow plan-creation-contract.mdc and docs/plans/PLAN_TEMPLATE.md, including the post-implementation-review todo and the Final code review (senior pass on diff + workflow) + Post-implementation review sections. Sync each completed plan todo to status: completed in the plan YAML as you go. Do not mark done until plan YAML todos are synced and both close-sequence steps in plan-completion-gate.mdc are complete.
 
 ---
 
 ## Cursor Plan frontmatter (optional)
 
-Use when authoring in Cursor Plan mode. Do **not** edit committed plan files the user marked read-only.
+Use when authoring in Cursor Plan mode. Do **not** edit committed plan files the user marked read-only (except **status-only** todo updates on the active implementation checklist per **`plan-completion-gate.mdc`**).
 
 ```yaml
 ---
@@ -199,6 +199,7 @@ Work described by this plan is **not complete** until:
 
 - Tests added or extended and **executed** (or blockers documented per `test-first-discipline.mdc`)
 - Cursor rules step done (rule added/updated, or explicit no-rule rationale)
+- Plan YAML todos synced (`status: completed` for every finished step, or explicit deferral documented)
 - **Final code review** (senior-engineer pass on diff and affected workflows) done with no unfixed findings
 - Structured chat self-review delivered (`plan-completion-gate.mdc` step 2)
 - Conclusions trace to **verified facts**

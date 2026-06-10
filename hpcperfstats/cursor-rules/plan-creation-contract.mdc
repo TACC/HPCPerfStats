@@ -78,6 +78,7 @@ A plan — and the work it describes — is **not complete** until:
 
 - tests are added or extended and executed (or blockers documented per **`test-first-discipline.mdc`**),
 - the Cursor rules step is done (rule added/updated, or explicit no-rule rationale),
+- plan YAML todos are synced (`status: completed` per **`plan-completion-gate.mdc`** → *Plan YAML todo sync*),
 - **final code review** (senior-engineer pass on diff and affected workflows) is done with no unfixed findings,
 - **`post-implementation-review`** todo is completed only after structured chat self-review is delivered,
 - conclusions trace to verified facts.

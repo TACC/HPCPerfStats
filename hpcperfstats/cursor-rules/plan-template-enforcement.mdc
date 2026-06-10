@@ -39,18 +39,20 @@ Unless they explicitly request a **narrow exception** (answer-only, trivial typo
 
 ## When implementing or closing
 
+**During implementation:** per **`plan-completion-gate.mdc`** → *Plan YAML todo sync*, update each finished plan todo to `status: completed` in the plan frontmatter (status-only edits allowed even when plan prose must not change). Use the **same todo ids** as the plan YAML in `TodoWrite`.
+
 Per **`plan-completion-gate.mdc`** and **`implementation-review-workflow.mdc`**, run the **close sequence** in order in the **same final turn** that reports implementation done:
 
 1. **Final code review (senior engineer pass)** — review the full diff and every workflow the change touches; fix anything a senior reviewer would block on merge; re-run relevant tests.
 2. **Structured chat self-review** — after step 1 is clean, write **Why it works**, **Edge cases** (≥3 realistic failure modes), and **Convention check** (tests, triggered rules, layer wiring, **`test_runs/`** logging; confirm senior pass had no unfixed gaps).
 
-**Do not mark the task, plan, or todos done** until **`post-implementation-review`** is complete (both steps). If step 2 surfaces a new gap, return to step 1 before close.
+**Do not mark the task, plan, or todos done** until plan YAML todos are synced, **`post-implementation-review`** is complete (both close steps), and no plan todo is wrongly left `pending`. If step 2 surfaces a new gap, return to step 1 before close.
 
 ## Recommended Cursor User Rule (paste in Settings → Rules)
 
 For highest signal across sessions, the user may also add this **User Rule**:
 
-> Every implementation plan must follow plan-creation-contract.mdc and docs/plans/PLAN_TEMPLATE.md, including the post-implementation-review todo and the Final code review (senior pass on diff + workflow) + Post-implementation review sections. Do not mark done until both close-sequence steps in plan-completion-gate.mdc are complete.
+> Every implementation plan must follow plan-creation-contract.mdc and docs/plans/PLAN_TEMPLATE.md, including the post-implementation-review todo and the Final code review (senior pass on diff + workflow) + Post-implementation review sections. Sync each completed plan todo to status: completed in the plan YAML as you go. Do not mark done until plan YAML todos are synced and both close-sequence steps in plan-completion-gate.mdc are complete.
 
 ## Overlap
 

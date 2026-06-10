@@ -9,10 +9,24 @@ When the user asks to **implement a plan** (attached plan file, `docs/plans/`, o
 
 **Hard gate:** **Do not mark the task, plan, or any todo done** until:
 
-1. **Final code review** (senior-engineer pass on the diff and affected workflows) finds no unfixed gaps, and
-2. The **`post-implementation-review`** todo is complete and the three chat sections in step 2 below are written.
+1. **Plan YAML todos synced** — every plan frontmatter todo that is finished shows `status: completed` (see **Plan YAML todo sync** below),
+2. **Final code review** (senior-engineer pass on the diff and affected workflows) finds no unfixed gaps, and
+3. The **`post-implementation-review`** todo is complete and the three chat sections in step 2 below are written.
 
 See **`plan-template-enforcement.mdc`** for request phrasing and PLAN_TEMPLATE alignment.
+
+## Plan YAML todo sync (during implementation)
+
+The **plan file frontmatter** (for example `.cursor/plans/*.plan.md`) is what the **Plan UI** shows. Session `TodoWrite` alone does **not** update that UI.
+
+**When implementing a plan:**
+
+1. **Canonical ids** — read todo `id` values from the plan YAML at task start; use those **exact** ids in `TodoWrite` (do not invent aliases like `rules-docs-minimal` when the plan says `rules-docs-sync`).
+2. **On each step complete** — when work for a plan todo is done, set that todo’s `status: completed` in the plan frontmatter **in the same turn** (status-only edit).
+3. **“Do not edit the plan”** — when the user forbids plan edits, that means **do not change plan prose, scope, or approach**; **status-only** frontmatter updates remain **required** unless the user explicitly forbids all plan file writes.
+4. **Before task close** — verify no plan todo remains `status: pending` except items the user explicitly deferred; if any are still pending, either finish them or state the deferral in chat—do not claim the plan is complete.
+
+Committed design docs under **`docs/plans/`** marked read-only by the user: same status-only rule applies only when that file is the active implementation checklist; otherwise sync the Cursor Plan file attached to the task.
 
 ## Close sequence (mandatory order)
 
@@ -64,6 +78,7 @@ When behavior changes, also run **`logic-change-checklist.mdc`** mentally and co
 
 - Executed tests reported with pass/fail; blockers documented per **`test-first-discipline.mdc`**.
 - Run artifacts under **`test_runs/`**, not **`docs/`**, per **`test-runs-output-directory.mdc`**.
+- Plan frontmatter: all implementation todos `status: completed` (or explicit deferral documented) before reporting done.
 
 ## Narrow exceptions
 
