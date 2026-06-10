@@ -2466,9 +2466,16 @@ def test_stall_teardown_preserves_exit_124_not_137(monkeypatch):
   fake_rescan.calls = 0
 
   def stall_watch_pool(
-      pool, fn, iterable, *, context="", poll_timeout_s=None, on_stall_warning=None,
+      pool,
+      fn,
+      iterable,
+      *,
+      context="",
+      poll_timeout_s=None,
+      on_stall_warning=None,
+      pool_health_context=None,
   ):
-    del pool, fn, iterable, context, poll_timeout_s, on_stall_warning
+    del pool, fn, iterable, context, poll_timeout_s, on_stall_warning, pool_health_context
     raise MultiprocessingPoolStallError(
         "pool imap stalled",
         dead_pids=(),
@@ -2609,9 +2616,16 @@ def test_stall_teardown_uses_nonblocking_preflight_shutdown(monkeypatch):
   fake_rescan.calls = 0
 
   def stall_watch_pool(
-      pool, fn, iterable, *, context="", poll_timeout_s=None, on_stall_warning=None,
+      pool,
+      fn,
+      iterable,
+      *,
+      context="",
+      poll_timeout_s=None,
+      on_stall_warning=None,
+      pool_health_context=None,
   ):
-    del pool, fn, iterable, context, poll_timeout_s, on_stall_warning
+    del pool, fn, iterable, context, poll_timeout_s, on_stall_warning, pool_health_context
     raise MultiprocessingPoolStallError(
         "pool imap stalled",
         dead_pids=(),
@@ -2747,9 +2761,16 @@ def test_combined_db_writer_task_uses_single_pool_path(monkeypatch):
   watch_calls = []
 
   def capture_watch(
-      pool, fn, iterable, *, context="", poll_timeout_s=None, on_stall_warning=None,
+      pool,
+      fn,
+      iterable,
+      *,
+      context="",
+      poll_timeout_s=None,
+      on_stall_warning=None,
+      pool_health_context=None,
   ):
-    del pool, poll_timeout_s, on_stall_warning
+    del pool, poll_timeout_s, on_stall_warning, pool_health_context
     paths = list(iterable)
     watch_calls.append((fn, context, paths))
     return (fn(path) for path in paths)
