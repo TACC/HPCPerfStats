@@ -36,7 +36,7 @@ All operator sidecars under `{archive_data_dir}` share one versioned persistence
 | `archive_maint_hints` | `.sync_archive_maint_hints.json` |
 | `async_day_close` | `.sync_timedb_async_day_close.json` |
 | `startup_day_close` | `.sync_timedb_startup_day_close.json` |
-| `startup_tar_seal` | `.sync_timedb_startup_tar_seal.json` |
+| `startup_tar_seal` | `.sync_timedb_startup_tar_seal.json` (**legacy** — loader removed; orphan sidecar inert after upgrade) |
 | `startup_raw_removal` | `.sync_timedb_startup_raw_removal.json` |
 | `day_raw_removal_dir` | `.sync_timedb_day_raw_removal/` |
 | `unparsable_raw` | `.sync_timedb_unparsable_raw.json` |

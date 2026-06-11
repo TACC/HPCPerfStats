@@ -19,6 +19,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     calendar_date_from_daily_tar_path,
     classify_day_close_candidates,
     days_ingest_complete_by_checkpoint,
+    days_quiescent_tar_needs_day_close_at_startup,
     log_day_close_candidate_report,
 )
 from hpcperfstats.dbload.sync_timedb_async_day_close import AsyncDayCloseCoordinator
@@ -297,16 +298,6 @@ class StartupDayClosePreflight:
     with self._lock:
       pending_resume = list(self._manifest.get("pending_eligible") or [])
       pending_retry = list(self._manifest.get("pending_retry") or [])
-    if pending_resume or pending_retry:
-      eligible_set = set(eligible)
-      ordered: List[str] = []
-      seen: Set[str] = set()
-      for tar_list in (pending_retry, pending_resume, eligible):
-        for tar_norm in tar_list:
-          if tar_norm in eligible_set and tar_norm not in seen:
-            ordered.append(tar_norm)
-            seen.add(tar_norm)
-      eligible = ordered
     disq_reasons = build_disqualification_reasons_by_tar(
         tgz_archive_dir=self.tgz_archive_dir,
         inflight_paths=captured.get("inflight_paths"),
@@ -317,19 +308,59 @@ class StartupDayClosePreflight:
         unprocessed_by_tar=unprocessed_by_tar,
         local_tz=self.local_tz,
     )
+    disq_t0 = time.time()
+    disqualified = set(self.async_day_close.get_disqualified_daily_tars())
+    disq_elapsed_s = time.time() - disq_t0
+    quiescent_eligible = days_quiescent_tar_needs_day_close_at_startup(
+        unprocessed_by_tar,
+        tgz_archive_dir=self.tgz_archive_dir,
+        checkpoint_complete_eligible=eligible,
+        remaining_raw_by_gz=remaining,
+        day_phases=phases,
+        local_tz=self.local_tz,
+        disqualified_daily_tars=disqualified,
+        archive_data_dir=self.archive_data_dir,
+        host_name_ext=self.host_name_ext,
+        maintenance_snapshot=snapshot,
+    )
+    checkpoint_set = set(eligible)
+    all_eligible_set = checkpoint_set | set(quiescent_eligible)
+    reason_by_tar = {
+        tar_norm: "startup_checkpoint_complete" for tar_norm in eligible
+    }
+    for tar_norm in quiescent_eligible:
+      reason_by_tar.setdefault(tar_norm, "startup_quiescent_tar")
+    submit_pairs: List[tuple[str, str]] = []
+    seen_submit: Set[str] = set()
+
+    def _append_submit_tar(tar_norm: str) -> None:
+      if tar_norm in seen_submit:
+        return
+      reason = reason_by_tar.get(tar_norm)
+      if not reason or tar_norm not in all_eligible_set:
+        return
+      seen_submit.add(tar_norm)
+      submit_pairs.append((tar_norm, reason))
+
+    if pending_resume or pending_retry:
+      for tar_list in (pending_retry, pending_resume, eligible, quiescent_eligible):
+        for tar_norm in tar_list:
+          _append_submit_tar(tar_norm)
+    else:
+      for tar_norm in sorted(eligible, key=_tar_sort_key):
+        _append_submit_tar(tar_norm)
+      for tar_norm in sorted(quiescent_eligible, key=_tar_sort_key):
+        _append_submit_tar(tar_norm)
     if self.log_fn:
       self.log_fn(
-          "sync_timedb: startup day close discover: eligible=%d"
-          % len(eligible),
+          "sync_timedb: startup day close discover: eligible=%d quiescent_eligible=%d"
+          % (len(eligible), len(quiescent_eligible)),
           flush=True,
       )
     submitted: List[str] = []
     skipped_disqualified = 0
     deferred_eligible: List[str] = []
     retry_next_slice: List[str] = []
-    disq_t0 = time.time()
-    disqualified = set(self.async_day_close.get_disqualified_daily_tars())
-    disq_elapsed_s = time.time() - disq_t0
     if self.log_fn:
       self.log_fn(
           "sync_timedb: startup day close discover_slice: disqualified_n=%d "
@@ -338,7 +369,7 @@ class StartupDayClosePreflight:
           flush=True,
       )
     try:
-      for tar_norm in sorted(eligible, key=_tar_sort_key):
+      for tar_norm, submit_reason in submit_pairs:
         if shutdown_requested[0]:
           break
         if time.time() - submit_t0 >= budget_s:
@@ -362,7 +393,7 @@ class StartupDayClosePreflight:
           continue
         if not self.async_day_close.submit_day_close(
             tar_norm,
-            reason="startup_checkpoint_complete",
+            reason=submit_reason,
             disqualified_daily_tars=disqualified,
         ):
           skipped_disqualified += 1
@@ -379,7 +410,7 @@ class StartupDayClosePreflight:
           self._manifest.setdefault("entries", {})[tar_norm] = {
               "tar_path": tar_norm,
               "status": "submitted",
-              "reason": "startup_checkpoint_complete",
+              "reason": submit_reason,
           }
           self._manifest["submitted_count"] = int(
               self._manifest.get("submitted_count", 0)) + 1
@@ -393,7 +424,7 @@ class StartupDayClosePreflight:
           local_tz=self.local_tz,
           async_in_progress_tars=self.async_day_close.active_or_submitted_tar_paths(),
           newly_queued_tars=set(submitted),
-          queued_reason="startup_checkpoint_complete",
+          queued_reason="startup_checkpoint_discover",
       )
       log_day_close_candidate_report(
           report_entries,

@@ -156,6 +156,27 @@ def find_hook_task_router_file() -> Path | None:
     return candidate if candidate.is_file() else None
 
 
+def resolve_cursor_rule_path(rule_basename: str) -> Path | None:
+    """Return on-disk path for a domain rule basename, or None when retired/deleted."""
+    name = Path(rule_basename or "").name
+    if not name.endswith(".mdc"):
+        return None
+    hook_dir = Path(__file__).resolve().parent
+    candidates = [
+        hook_dir.parent / "HPCPerfStats" / "hpcperfstats" / "cursor-rules" / name,
+        hook_dir.parent / "hpcperfstats" / "cursor-rules" / name,
+        hook_dir.parent.parent / "HPCPerfStats" / "hpcperfstats" / "cursor-rules" / name,
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def cursor_rule_file_exists(rule_basename: str) -> bool:
+    return resolve_cursor_rule_path(rule_basename) is not None
+
+
 def load_json_stdin() -> dict:
     raw = __import__("sys").stdin.read()
     if not raw.strip():
@@ -546,6 +567,8 @@ def domain_rule_read_issues(required_rules: list[str], transcript_rows: list[dic
     for rule in sorted(required_rules, key=str.lower):
         if rule.lower() in READ_VERIFY_EXEMPT_MDC:
             continue
+        if not cursor_rule_file_exists(rule):
+            continue
         read_indices = read_event_indices_for_rule(transcript_rows, rule)
         if not read_indices:
             issues.append(f"Rule not read: {rule}")
@@ -574,6 +597,8 @@ def rule_dual_registration_issues(work_paths: list[str]) -> list[str]:
     for path in work_paths:
         needs_entry, basename = rule_file_needs_router_entry(path)
         if not needs_entry or basename in seen:
+            continue
+        if not cursor_rule_file_exists(basename):
             continue
         seen.add(basename)
         router = find_router_file([], rule_path=path)

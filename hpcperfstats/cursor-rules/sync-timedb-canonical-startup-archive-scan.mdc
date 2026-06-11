@@ -29,7 +29,7 @@ At supervisor boot, **one** `collect_stats_files_in_range` (+ one head-metadata 
 - **`note_startup_maintenance_pending()`** from supervisor on `signal_scheduled_maintenance_pass(reason=startup)` extends effective wait so prefights do not timeout-fallback while janitor builds.
 - While `_building` is true, waiters **must not** start parallel collects.
 - **Publish deep-copies** `mapping` / `remaining_raw_by_gz` list values via `copy_archive_maintenance_snapshot` — trim clears heavy lists on accrual object only; coordinator retains `closed_paths` for unmapped disqualify.
-- **Derive, do not rescan:** startup day-close, tar-seal, raw removal, `enqueue_scheduled_day_close` remaining map, and first supervisor `rescan_pending_stats_files` (when range is full tree) use the shared snapshot.
+- **Derive, do not rescan:** startup day-close, raw removal, `enqueue_scheduled_day_close` remaining map, and first supervisor `rescan_pending_stats_files` (when range is full tree) use the shared snapshot.
 - **`build_remaining_raw_stats_by_daily_gz`** must accept `maintenance_snapshot=` and **never** nest `build_archive_maintenance_snapshot` when provided.
 - **Supervisor ingest** does not block on snapshot wait; prefights run on background threads. `_rescan_pending_with_progress` may wait inside the rescan helper only.
 
@@ -39,7 +39,7 @@ At supervisor boot, **one** `collect_stats_files_in_range` (+ one head-metadata 
 - `wait_or_build_snapshot` / `wait_for_snapshot` returning `None` to consumers.
 - Janitor `build_archive_maintenance_snapshot` without `begin_build()` / `publish()` coordinator wiring.
 - Nested `with self._lock` while holding `Condition` lock (same non-reentrant lock).
-- Tight-loop tar-seal rediscover (see **`sync-timedb-startup-tar-seal-contract.mdc`**).
+- Tight-loop startup day-close discover when async pool saturated (use **`sync_startup_day_close_backoff_seconds`**).
 - Mutating the coordinator-published snapshot in place during janitor trim.
 
 ## Tests
@@ -52,4 +52,4 @@ At supervisor boot, **one** `collect_stats_files_in_range` (+ one head-metadata 
 ## Overlap
 
 - **`sync-timedb-archive-janitor-contract.mdc`** — maintenance pass publishes snapshot; debt budget uses `debt_tick_t0` after maintenance.
-- **`sync-timedb-startup-day-close-contract.mdc`**, **`sync-timedb-startup-tar-seal-contract.mdc`**, **`runtime-resource-and-metrics-safety.mdc`**.
+- **`sync-timedb-startup-day-close-contract.mdc`**, **`runtime-resource-and-metrics-safety.mdc`**.

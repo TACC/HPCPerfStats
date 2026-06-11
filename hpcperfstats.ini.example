@@ -484,14 +484,8 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Max deletes per gated startup delete pass; 0 = unlimited during delete window (default 0).
 # sync_startup_raw_removal_max_deletes_per_pass = 0
 
-# Startup async seal + drop for quiescent daily .tar (no closed raw on disk; default yes).
-# sync_startup_tar_seal_preflight = yes
-
-# Wall-clock budget per startup tar-seal slice (default 300 seconds).
-# sync_startup_tar_seal_budget_seconds = 300
-
-# Max calendar days sealed per startup tar-seal slice (default 1).
-# sync_startup_tar_seal_days_per_slice = 1
+# Block first ingest until startup day-close discover and deletion drain idle (default yes).
+# sync_startup_drain_day_close_before_ingest = yes
 
 # Startup checkpoint-driven async DAY_CLOSE for ingest-complete calendar days (default yes).
 # sync_startup_day_close_preflight = yes
@@ -504,9 +498,6 @@ daily_archive_dir = %(data_dir)s/daily_archive
 
 # Max wait for canonical startup archive snapshot before single-flight build (default 300s; min 120).
 # sync_startup_snapshot_wait_seconds = 300
-
-# Safety-net full rediscover interval for startup tar-seal (default 600s; 0 = tight loop for tests).
-# sync_startup_tar_seal_rediscover_interval_seconds = 600
 
 # Optional warn threshold when startup day-close scan phase is slow (0 = disabled).
 # sync_startup_day_close_scan_budget_seconds = 0

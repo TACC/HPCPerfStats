@@ -607,3 +607,20 @@ def test_check_close_gate_emits_followup_for_read_after_edit(tmp_path):
   assert "Rule read after first edit/plan: testing-best-practices.mdc" in data[
       "followup_message"
   ]
+
+
+def test_domain_rule_read_issues_skips_deleted_rule():
+  issues = lib.domain_rule_read_issues(
+      ["sync-timedb-startup-tar-seal-contract.mdc"],
+      [],
+  )
+  assert issues == []
+
+
+def test_rule_dual_registration_skips_deleted_rule():
+  deleted_path = (
+      "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
+      "sync-timedb-startup-tar-seal-contract.mdc"
+  )
+  issues = lib.rule_dual_registration_issues([deleted_path])
+  assert issues == []

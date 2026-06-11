@@ -5,7 +5,7 @@ alwaysApply: false
 
 # sync_timedb startup day-close contract
 
-When **`sync_startup_day_close_preflight=yes`** (default), the supervisor starts a **single-flight** background discover thread (`sync_timedb.py [thread:startup-day-close-preflight]`) in parallel with ingest. Ingest does **not** wait on completion.
+When **`sync_startup_day_close_preflight=yes`** (default), the supervisor starts a **single-flight** background discover thread (`sync_timedb.py [thread:startup-day-close-preflight]`). When **`sync_startup_drain_day_close_before_ingest=yes`** (default), the supervisor **blocks first rescan/ingest** until startup day-close discover, async DAY_CLOSE workers, startup raw-removal deletes, and day-close raw deletes are idle (one-time gate; disable drain INI to restore parallel ingest).
 
 ## Canonical modules
 
@@ -13,7 +13,7 @@ When **`sync_startup_day_close_preflight=yes`** (default), the supervisor starts
 |---|---|
 | Discover + submit | `hpcperfstats/dbload/sync_timedb_startup_day_close.py` → `StartupDayClosePreflight` |
 | Async seal/raw/tar worker | `hpcperfstats/dbload/sync_timedb_async_day_close.py` → `AsyncDayCloseCoordinator` |
-| Checkpoint subtract + classify | `load_checkpoint_path_set`, `build_unprocessed_raw_by_daily_tar`, `days_ingest_complete_by_checkpoint`, `daily_tar_eligible_for_day_close_submit`, `classify_day_close_candidates` in `sync_timedb_archive_helpers.py` |
+| Checkpoint subtract + classify | `load_checkpoint_path_set`, `build_unprocessed_raw_by_daily_tar`, `days_ingest_complete_by_checkpoint`, `days_quiescent_tar_needs_day_close_at_startup`, `daily_tar_eligible_for_day_close_submit`, `classify_day_close_candidates` in `sync_timedb_archive_helpers.py` |
 | Persistence API | `sync_timedb_persistence.py` — checkpoint/manifest load/save via `load_persistence_document` / `save_persistence_document`; contract bump resets sidecars (`sync-timedb-persistence-contract.mdc`) |
 | Manifest | `{archive_data_dir}/.sync_timedb_startup_day_close.json` |
 | Checkpoint | `{archive_data_dir}/.sync_timedb_state.json` (envelope with `entries`; same path/size/mtime fingerprint as supervisor restart) |
@@ -28,13 +28,26 @@ When **`sync_startup_day_close_preflight=yes`** (default), the supervisor starts
 6. Slice 2+ refresh `remaining_raw_by_gz` from janitor accrual when present, else coordinator snapshot.
 7. **One** `get_disqualified_daily_tars()` per discover slice (before submit loop); pass precomputed set into `submit_day_close(..., disqualified_daily_tars=)` to avoid a second full recompute under `async_day_close._lock`.
 8. Slice telemetry: `discover_slice: disqualified_n=… disq_elapsed_s=…` and `discover slice: submitted=…` in `try/finally` (always emitted even when candidate report is slow).
-9. For each checkpoint-complete day with work left, `submit_day_close(..., reason=startup_checkpoint_complete)`; log submit skips.
+9. **Checkpoint-complete** days: `submit_day_close(..., reason=startup_checkpoint_complete)`.
+10. **Filesystem-quiescent** dirty `.tar` days (no closed raw on disk; stale `unprocessed_by_tar` entries with no on-disk paths): `submit_day_close(..., reason=startup_quiescent_tar)` via `days_quiescent_tar_needs_day_close_at_startup`. **Never** submit quiescent when any unprocessed path still exists on disk (`os.path.isfile`).
 
 **Not** gated on global `pending_stats_files` length.
+
+## Startup drain gate
+
+When **`sync_startup_drain_day_close_before_ingest=yes`**, before the first rescan/ingest the supervisor polls until all of:
+
+- `StartupDayClosePreflight.discover_done()` (when enabled)
+- `AsyncDayCloseCoordinator.active_or_submitted_tar_paths()` empty
+- `StartupRawRemovalPreflight.delete_phase_done()` (when enabled)
+- `DayRawRemovalCoordinator.any_needs_delete_phase()` false (when enabled)
+
+Delete phases are driven via `_maybe_handle_raw_removal_delete_phase()` during the drain loop. On exit, `_post_startup_raw_removal_rescan()` runs when startup raw removal finished. **`startup_ingest_gate_cleared`** is one-time; mid-run day-close deletes do not re-gate ingest.
 
 ## INI knobs
 
 - `sync_startup_day_close_preflight` (default yes)
+- `sync_startup_drain_day_close_before_ingest` (default yes)
 - `sync_startup_day_close_budget_seconds` (default 300) — applies to **submit** loop after scans
 - `sync_startup_day_close_days_per_slice` (default 1)
 - `sync_startup_snapshot_wait_seconds` (default 300, min 120)
@@ -48,6 +61,9 @@ When **`sync_startup_day_close_preflight=yes`** (default), the supervisor starts
 
 ```
 janitor: day_close candidate report reason=startup_checkpoint_discover queued=N waiting_on_ingest=W eligible_deferred=D disqualified=M
+sync_timedb: startup day close discover: eligible=N quiescent_eligible=Q
+sync_timedb: startup day-close drain waiting discover=… async_active=… startup_raw=… day_raw_delete=…
+sync_timedb: startup day-close and deletion drain complete; ingest may begin
 sync_timedb: startup day close discover backoff async saturated active=N max=M …
 sync_timedb: startup day close discover: scans elapsed_s=…
 sync_timedb: startup day close submit skip tar=… reason=…
@@ -55,13 +71,12 @@ sync_timedb: startup day close submit skip tar=… reason=…
 
 ## Coordination
 
-- **`StartupTarSealPreflight`** must skip days with active/submitted async day-close (`has_async_day_close_for_tar`) to avoid double seal. See **`sync-timedb-startup-tar-seal-contract.mdc`**.
 - Janitor **`DAY_CLOSE`** debt submits to the same coordinator (no sync zstd on janitor thread). See **`sync-timedb-archive-janitor-contract.mdc`**.
 
 ## Tests
 
-- `hpcperfstats/tests/test_sync_timedb_startup_day_close.py`
-- `hpcperfstats/tests/test_sync_timedb_supervisor.py` (`test_supervisor_starts_ingest_without_waiting_for_startup_day_close`)
+- `hpcperfstats/tests/test_sync_timedb_startup_day_close.py` (checkpoint-complete + quiescent submit)
+- `hpcperfstats/tests/test_sync_timedb_supervisor.py` (`test_supervisor_waits_for_startup_day_close_drain_before_ingest`, `test_supervisor_startup_drain_disabled_allows_parallel_ingest`)
 - Archive/janitor/async helpers in `test_sync_timedb_archive.py`, `test_sync_timedb_janitor.py`
 
 ## Overlap

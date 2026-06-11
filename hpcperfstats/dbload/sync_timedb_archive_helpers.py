@@ -1070,6 +1070,8 @@ def day_close_queued_reason_for_report_reason(reason):
     return "day_ingest_complete_checkpoint"
   if reason_text in ("startup", "startup_checkpoint_discover"):
     return "startup_checkpoint_complete"
+  if reason_text == "startup_quiescent_tar":
+    return "startup_quiescent_tar"
   return "scheduled_enqueue"
 
 
@@ -1124,6 +1126,139 @@ def days_ingest_complete_by_checkpoint(
         remaining_raw_by_gz=remaining_raw_by_gz,
         local_tz=local_tz,
         now=now,
+    )
+    if not eligible:
+      continue
+    day_date = calendar_date_from_daily_tar_path(tar_norm)
+    if day_date is None:
+      continue
+    ranked.append((day_date, tar_norm))
+  ranked.sort(key=lambda item: item[0])
+  return [tar_norm for _, tar_norm in ranked]
+
+
+def unprocessed_tar_paths_still_on_disk(unprocessed_by_tar, tar_norm):
+  """True when any checkpoint-unprocessed path for ``tar_norm`` still exists."""
+  tar_key = os.path.normpath(str(tar_norm or ""))
+  for path in (unprocessed_by_tar or {}).get(tar_key, ()) or ():
+    if os.path.isfile(path):
+      return True
+  return False
+
+
+def daily_tar_filesystem_quiescent(
+    tar_norm,
+    remaining_raw_by_gz,
+    *,
+    archive_data_dir=None,
+    host_name_ext=None,
+    tgz_archive_dir=None,
+    maintenance_snapshot=None,
+):
+  """True when no closed raw stats remain on disk for ``tar_norm``."""
+  tar_norm = os.path.normpath(str(tar_norm or ""))
+  if not tar_norm:
+    return False
+  zst_path, _gz_path = compressed_sibling_paths(tar_norm)
+  if daily_gz_has_remaining_raw_stats(zst_path, remaining_raw_by_gz or {}):
+    return False
+  if archive_data_dir and host_name_ext and tgz_archive_dir:
+    scoped = build_remaining_raw_for_daily_tar(
+        archive_data_dir,
+        host_name_ext,
+        tgz_archive_dir,
+        tar_norm,
+        maintenance_snapshot=maintenance_snapshot,
+    )
+    for paths in scoped.values():
+      if paths:
+        return False
+  return True
+
+
+def daily_tar_eligible_for_quiescent_day_close_submit(
+    tar_norm,
+    *,
+    unprocessed_by_tar,
+    disqualified_daily_tars,
+    remaining_raw_by_gz=None,
+    day_phases=None,
+    local_tz=None,
+    now=None,
+    archive_data_dir=None,
+    host_name_ext=None,
+    tgz_archive_dir=None,
+    maintenance_snapshot=None,
+):
+  """Return ``(eligible, skip_reason)`` for quiescent startup DAY_CLOSE submit."""
+  tar_norm = os.path.normpath(str(tar_norm or ""))
+  if not tar_norm:
+    return False, "invalid_tar_path"
+  if unprocessed_tar_paths_still_on_disk(unprocessed_by_tar, tar_norm):
+    return False, "checkpoint_incomplete"
+  if not daily_tar_filesystem_quiescent(
+      tar_norm,
+      remaining_raw_by_gz,
+      archive_data_dir=archive_data_dir,
+      host_name_ext=host_name_ext,
+      tgz_archive_dir=tgz_archive_dir,
+      maintenance_snapshot=maintenance_snapshot,
+  ):
+    return False, "filesystem_not_quiescent"
+  disqualified = _normalize_daily_tar_path_set(disqualified_daily_tars)
+  if tar_norm in disqualified:
+    return False, "disqualified"
+  if local_tz is not None and not daily_tar_seal_calendar_eligible(
+      tar_norm, local_tz, now=now):
+    return False, "calendar_grace"
+  if not daily_tar_needs_day_close_work(
+      tar_norm,
+      day_phases=day_phases,
+      remaining_raw_by_gz=remaining_raw_by_gz,
+  ):
+    return False, "no_work"
+  return True, ""
+
+
+def days_quiescent_tar_needs_day_close_at_startup(
+    unprocessed_by_tar,
+    *,
+    tgz_archive_dir,
+    checkpoint_complete_eligible,
+    remaining_raw_by_gz=None,
+    day_phases=None,
+    local_tz=None,
+    now=None,
+    disqualified_daily_tars=None,
+    archive_data_dir=None,
+    host_name_ext=None,
+    maintenance_snapshot=None,
+):
+  """Oldest-first quiescent dirty ``.tar`` paths outside checkpoint-complete set."""
+  if not tgz_archive_dir:
+    return []
+  skip = _normalize_daily_tar_path_set(checkpoint_complete_eligible)
+  ranked = []
+  seen = set()
+  universe = set(unprocessed_by_tar or ())
+  for tar_path in iter_daily_tar_paths(tgz_archive_dir):
+    universe.add(os.path.normpath(tar_path))
+  for tar_norm in sorted(universe, key=_calendar_date_from_tar_sort_key):
+    if tar_norm in seen or tar_norm in skip:
+      continue
+    seen.add(tar_norm)
+    eligible, _reason = daily_tar_eligible_for_quiescent_day_close_submit(
+        tar_norm,
+        unprocessed_by_tar=unprocessed_by_tar,
+        disqualified_daily_tars=disqualified_daily_tars or (),
+        remaining_raw_by_gz=remaining_raw_by_gz,
+        day_phases=day_phases,
+        local_tz=local_tz,
+        now=now,
+        archive_data_dir=archive_data_dir,
+        host_name_ext=host_name_ext,
+        tgz_archive_dir=tgz_archive_dir,
+        maintenance_snapshot=maintenance_snapshot,
     )
     if not eligible:
       continue

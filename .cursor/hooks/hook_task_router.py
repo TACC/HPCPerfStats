@@ -36,7 +36,6 @@ ROUTER_ENTRIES: list[RouterEntry] = [
         ],
         "rules": [
             "sync-timedb-startup-day-close-contract.mdc",
-            "sync-timedb-startup-tar-seal-contract.mdc",
             "sync-timedb-canonical-startup-archive-scan.mdc",
         ],
     },

@@ -435,3 +435,80 @@ def test_startup_day_close_disqualify_once_per_slice(tmp_path, monkeypatch):
   ]
   assert any("disqualified_n=0" in line for line in slice_logs)
   assert any("discover slice: submitted=" in str(call.args[0]) for call in log_fn.call_args_list if call.args)
+
+
+def test_startup_day_close_submits_quiescent_tar_with_stale_unprocessed(
+    tmp_path,
+    monkeypatch,
+):
+  day = date(2022, 8, 1)
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / (day.isoformat() + ".tar")))
+  open(tar_path, "wb").close()
+  stale_path = str(tmp_path / "stale-missing.raw")
+  submitted = []
+
+  class _FakeCoord:
+    def get_disqualified_daily_tars(self):
+      return set()
+
+    def submit_day_close(self, tar_path, *, reason, disqualified_daily_tars=None):
+      submitted.append((os.path.normpath(tar_path), reason))
+      return True
+
+    def active_or_submitted_tar_paths(self):
+      return {t for t, _ in submitted}
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_startup_day_close."
+      "build_unprocessed_raw_by_daily_tar",
+      lambda *a, **k: {tar_path: [stale_path]},
+  )
+  monkeypatch.setattr(cfg, "get_sync_startup_day_close_budget_seconds", lambda: 60.0)
+  monkeypatch.setattr(cfg, "get_sync_startup_day_close_days_per_slice", lambda: 5)
+  monkeypatch.setattr(cfg, "get_sync_day_close_candidate_report", lambda: False)
+
+  preflight = _make_preflight(tmp_path, _FakeCoord())
+  preflight._discover_loop()
+  assert submitted
+  assert submitted[0][0] == tar_path
+  assert submitted[0][1] == "startup_quiescent_tar"
+
+
+def test_startup_day_close_skips_quiescent_when_unprocessed_still_on_disk(
+    tmp_path,
+    monkeypatch,
+):
+  day = date(2022, 8, 2)
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / (day.isoformat() + ".tar")))
+  open(tar_path, "wb").close()
+  on_disk_path = tmp_path / "still-there.raw"
+  on_disk_path.write_text("raw")
+  submitted = []
+
+  class _FakeCoord:
+    def get_disqualified_daily_tars(self):
+      return set()
+
+    def submit_day_close(self, tar_path, *, reason, disqualified_daily_tars=None):
+      submitted.append((os.path.normpath(tar_path), reason))
+      return True
+
+    def active_or_submitted_tar_paths(self):
+      return {t for t, _ in submitted}
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_startup_day_close."
+      "build_unprocessed_raw_by_daily_tar",
+      lambda *a, **k: {tar_path: [str(on_disk_path)]},
+  )
+  monkeypatch.setattr(cfg, "get_sync_startup_day_close_budget_seconds", lambda: 60.0)
+  monkeypatch.setattr(cfg, "get_sync_startup_day_close_days_per_slice", lambda: 5)
+  monkeypatch.setattr(cfg, "get_sync_day_close_candidate_report", lambda: False)
+
+  preflight = _make_preflight(tmp_path, _FakeCoord())
+  preflight._discover_loop()
+  assert not submitted

@@ -5,6 +5,8 @@
 
 **Cold path (``ArchiveJanitor`` thread):** day-debt queue consumed in time-sliced micro-batches (``archive_janitor_budget_seconds`` / ``archive_janitor_days_per_tick``). Snapshot/hints refresh and ``DAY_CLOSE`` scheduling run at supervisor startup, every ``rescan_every_chunks`` ingest chunks (default 10), and when the ingest queue drains to zero after chunk processing—all on the janitor thread. Per-day lock cleanup (once per tick), dedupe-before-seal, seal → async verify (``DayRawRemovalCoordinator``) with ingest-thread batched delete, or incremental raw/tar when preflight is off; DB head-ingest gate and disqualification union unchanged. Progress persists in ``.sync_archive_maint_hints.json`` v2 (``debt_queue``, ``day_phases``).
 
+**Startup prefights:** ``StartupRawRemovalPreflight`` and ``StartupDayClosePreflight`` (checkpoint-complete + filesystem-quiescent ``startup_quiescent_tar`` submit). Default ``sync_startup_drain_day_close_before_ingest=yes`` blocks first ingest until startup day-close and deletion idle.
+
 Append and raw delete stay DB-gated when ``sync_archive_require_db_head_ingest=yes``. Finalize uses soft defer (``allow_defer``) under ingest backlog instead of blocking the supervisor.
 
 When the ingest queue is empty, rescans for new stats files. After a rescan still finds nothing pending, it sleeps ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` (default 30s) and exits the loop iteration (continuous mode repeats).
@@ -128,9 +130,6 @@ from hpcperfstats.dbload.sync_timedb_startup_raw_removal import (
 )
 from hpcperfstats.dbload.sync_timedb_startup_day_close import (
     StartupDayClosePreflight,
-)
-from hpcperfstats.dbload.sync_timedb_startup_tar_seal import (
-    StartupTarSealPreflight,
 )
 from hpcperfstats.dbload.sync_timedb_startup_archive_scan import (
     StartupArchiveScanCoordinator,
@@ -2161,7 +2160,6 @@ def run_sync_timedb_supervisor_loop(
 
   startup_preflight = None
   startup_day_close = None
-  startup_tar_seal = None
   day_raw_removal = None
   async_day_close = None
   delete_phase_active = False
@@ -2785,21 +2783,82 @@ def run_sync_timedb_supervisor_loop(
         process_title=SYNC_TIMEDB_PROCESS_TITLE,
     )
     startup_day_close.start_async_discover_and_close()
-    startup_tar_seal = StartupTarSealPreflight(
-        archive_data_dir=directory,
-        host_name_ext=host_name_ext,
-        tgz_archive_dir=tgz_archive_dir,
-        local_tz=local_timezone,
-        log_fn=log_print,
-        has_active_append_for_tar=_has_active_append_for_tar,
-        has_async_day_close_for_tar=lambda tar: (
-            os.path.normpath(tar)
-            in async_day_close.active_or_submitted_tar_paths()
-        ),
-        get_startup_snapshot=_wait_startup_snapshot_for_preflight,
-        process_title=SYNC_TIMEDB_PROCESS_TITLE,
+
+    startup_ingest_gate_cleared = (
+        not cfg.get_sync_startup_drain_day_close_before_ingest()
     )
-    startup_tar_seal.start_async_seal()
+    startup_drain_last_log = 0.0
+
+    def _startup_day_close_deletion_pending():
+      if startup_day_close is not None and startup_day_close.enabled:
+        if not startup_day_close.discover_done():
+          return True
+      if async_day_close is not None:
+        if async_day_close.active_or_submitted_tar_paths():
+          return True
+      if startup_preflight is not None and startup_preflight.enabled:
+        if not startup_preflight.delete_phase_done():
+          return True
+      if day_raw_removal is not None and day_raw_removal.enabled:
+        if day_raw_removal.any_needs_delete_phase():
+          return True
+      return False
+
+    def _maybe_log_startup_drain_wait():
+      nonlocal startup_drain_last_log
+      now = time.time()
+      if now - startup_drain_last_log < 30.0:
+        return
+      startup_drain_last_log = now
+      discover_pending = (
+          startup_day_close is not None
+          and startup_day_close.enabled
+          and not startup_day_close.discover_done()
+      )
+      async_active = (
+          len(async_day_close.active_or_submitted_tar_paths())
+          if async_day_close is not None
+          else 0
+      )
+      raw_pending = (
+          startup_preflight is not None
+          and startup_preflight.enabled
+          and not startup_preflight.delete_phase_done()
+      )
+      day_delete_pending = (
+          day_raw_removal is not None
+          and day_raw_removal.enabled
+          and day_raw_removal.any_needs_delete_phase()
+      )
+      log_print(
+          "sync_timedb: startup day-close drain waiting discover=%s async_active=%d "
+          "startup_raw=%s day_raw_delete=%s"
+          % (discover_pending, async_active, raw_pending, day_delete_pending),
+          flush=True,
+      )
+
+    def _drain_startup_day_close_and_deletion_if_needed():
+      nonlocal startup_ingest_gate_cleared
+      if startup_ingest_gate_cleared:
+        return False
+      if not _startup_day_close_deletion_pending():
+        if (
+            startup_preflight is not None
+            and startup_preflight.enabled
+            and startup_preflight.delete_phase_done()
+        ):
+          _post_startup_raw_removal_rescan()
+        log_print(
+            "sync_timedb: startup day-close and deletion drain complete; ingest may begin",
+            flush=True,
+        )
+        startup_ingest_gate_cleared = True
+        return False
+      if _maybe_handle_raw_removal_delete_phase():
+        return True
+      _maybe_log_startup_drain_wait()
+      sleep_until_shutdown(0.25)
+      return True
 
     def _post_startup_raw_removal_rescan():
       nonlocal pending_stats_files
@@ -2874,6 +2933,8 @@ def run_sync_timedb_supervisor_loop(
       return _apply_day_close_raw_removal_deletes()
 
     while not shutdown_requested[0]:
+      if _drain_startup_day_close_and_deletion_if_needed():
+        continue
       if _maybe_handle_raw_removal_delete_phase():
         continue
       _maybe_apply_day_close_rescan()
@@ -3427,8 +3488,6 @@ def run_sync_timedb_supervisor_loop(
       startup_preflight.shutdown(wait=preflight_shutdown_wait)
     if startup_day_close is not None:
       startup_day_close.shutdown(wait=preflight_shutdown_wait)
-    if startup_tar_seal is not None:
-      startup_tar_seal.shutdown(wait=preflight_shutdown_wait)
     if async_day_close is not None:
       async_day_close.shutdown(wait=preflight_shutdown_wait)
     if day_raw_removal is not None:
