@@ -79,6 +79,12 @@ _LEGACY_DAY_PIPELINE_KINDS = frozenset({
     DebtKind.TAR_DROP,
 })
 
+_SCHEDULED_DAY_CLOSE_SUBMIT_REASONS = frozenset({
+    "startup",
+    "every_n_chunks",
+    "ingest_queue_empty",
+})
+
 _DEBT_PRIORITY = {
     DebtKind.DAY_CLOSE: 0,
     DebtKind.SEAL_PRIOR_DAY: 0,
@@ -446,6 +452,16 @@ class ArchiveJanitor:
         remaining_raw_by_gz=remaining,
         newly_queued_tars=set(),
     )
+    newly_queued = self._submit_scheduled_day_close_from_snapshot(
+        reason=reason,
+        remaining_raw_by_gz=remaining,
+    )
+    if newly_queued:
+      self._log_day_close_candidate_report(
+          reason=reason,
+          remaining_raw_by_gz=remaining,
+          newly_queued_tars=newly_queued,
+      )
     self._trim_accrual_snapshot_memory()
 
   def _trim_accrual_snapshot_memory(self):
@@ -1000,6 +1016,77 @@ class ArchiveJanitor:
         log_fn=self.log_fn,
         async_progress_fn=async_progress_fn,
     )
+
+  def _submit_scheduled_day_close_from_snapshot(
+      self,
+      *,
+      reason: str,
+      remaining_raw_by_gz,
+  ) -> Set[str]:
+    """Submit async DAY_CLOSE for ``eligible_deferred`` days on scheduled passes."""
+    if reason not in _SCHEDULED_DAY_CLOSE_SUBMIT_REASONS:
+      return set()
+    coord = self.async_day_close_coordinator
+    if coord is None:
+      return set()
+    try:
+      inputs = self.get_day_close_candidate_inputs() or {}
+    except Exception:
+      inputs = {}
+    if not isinstance(inputs, dict):
+      inputs = {}
+    disq_reasons = build_disqualification_reasons_by_tar(
+        tgz_archive_dir=self.tgz_archive_dir,
+        inflight_paths=inputs.get("inflight_paths"),
+        pending_append_by_daily_tar=inputs.get("pending_append_by_daily_tar"),
+        in_flight_archive_tars=inputs.get("in_flight_archive_tars"),
+        pending_archive_task_tars=inputs.get("pending_archive_task_tars"),
+        unmapped_closed_raw_tars=inputs.get("unmapped_closed_raw_tars"),
+        unprocessed_by_tar=inputs.get("unprocessed_by_tar"),
+        local_tz=self.local_tz,
+    )
+    with self._hints_state_lock:
+      day_phases = dict(self._day_phases)
+    entries = classify_day_close_candidates(
+        tgz_archive_dir=self.tgz_archive_dir,
+        remaining_raw_by_gz=remaining_raw_by_gz,
+        unprocessed_by_tar=inputs.get("unprocessed_by_tar"),
+        disqualification_reasons=disq_reasons,
+        day_phases=day_phases,
+        local_tz=self.local_tz,
+        async_in_progress_tars=coord.active_or_submitted_tar_paths(),
+        debt_heap_tars=self._debt_heap_tar_paths(),
+        newly_queued_tars=set(),
+    )
+    deferred = [
+        entry for entry in entries
+        if entry.get("status") == "eligible_deferred"
+    ]
+    deferred.sort(
+        key=lambda entry: calendar_date_from_daily_tar_path(entry["tar_path"])
+        or date.max,
+    )
+    newly_queued: Set[str] = set()
+    disqualified = set(self.get_disqualified_daily_tars())
+    max_inflight = cfg.get_sync_day_close_max_inflight()
+    submit_reason = "scheduled_%s" % reason
+    for entry in deferred:
+      if len(coord.active_or_submitted_tar_paths()) >= max_inflight:
+        break
+      tar_norm = os.path.normpath(entry["tar_path"])
+      if self._submit_eligible_async_day_close(
+          tar_norm,
+          reason=submit_reason,
+          disqualified=disqualified,
+      ):
+        newly_queued.add(tar_norm)
+    if newly_queued:
+      self.log_fn(
+          "janitor: scheduled day_close submit reason=%s days=%d"
+          % (reason, len(newly_queued)),
+          flush=True,
+      )
+    return newly_queued
 
   def _process_debt_item(
       self,

@@ -124,8 +124,81 @@ class StartupDayClosePreflight:
     with self._lock:
       return str(self._manifest.get("phase") or PHASE_DISCOVERING)
 
+  def pending_deferral_count(self) -> int:
+    with self._lock:
+      pending_eligible = self._manifest.get("pending_eligible") or []
+      pending_retry = self._manifest.get("pending_retry") or []
+      return len(pending_eligible) + len(pending_retry)
+
   def discover_done(self) -> bool:
-    return self.phase() == PHASE_DONE
+    with self._lock:
+      if self._manifest.get("phase") != PHASE_DONE:
+        return False
+      if self._manifest.get("pending_eligible") or self._manifest.get("pending_retry"):
+        return False
+    return True
+
+  def _needs_boot_reconcile(self) -> bool:
+    """True when a prior ``phase=done`` manifest still has unsubmitted eligible work."""
+    with self._lock:
+      if self._manifest.get("pending_eligible") or self._manifest.get("pending_retry"):
+        return True
+    snapshot = self._resolve_snapshot()
+    if snapshot is None:
+      return True
+    unprocessed_by_tar = build_unprocessed_raw_by_daily_tar(
+        self.archive_data_dir,
+        self.host_name_ext,
+        self.tgz_archive_dir,
+        checkpoint_path=self._checkpoint_path,
+        maintenance_snapshot=snapshot,
+    )
+    captured = self.get_disqualification_inputs()
+    unprocessed_by_tar = augment_unprocessed_by_tar_with_pending_paths(
+        unprocessed_by_tar,
+        pending_stats_paths=captured.get("pending_stats_paths"),
+        tgz_archive_dir=self.tgz_archive_dir,
+        checkpoint_path=self._checkpoint_path,
+        first_timestamp_by_path=(
+            snapshot.first_timestamp_by_path if snapshot is not None else None
+        ),
+    )
+    remaining = build_remaining_raw_stats_by_daily_gz(
+        self.archive_data_dir,
+        self.host_name_ext,
+        self.tgz_archive_dir,
+        maintenance_snapshot=snapshot,
+    )
+    phases = self.day_phases()
+    eligible = days_ingest_complete_by_checkpoint(
+        unprocessed_by_tar,
+        tgz_archive_dir=self.tgz_archive_dir,
+        day_phases=phases,
+        remaining_raw_by_gz=remaining,
+        local_tz=self.local_tz,
+    )
+    disqualified = set(self.async_day_close.get_disqualified_daily_tars())
+    quiescent_eligible = days_quiescent_tar_needs_day_close_at_startup(
+        unprocessed_by_tar,
+        tgz_archive_dir=self.tgz_archive_dir,
+        checkpoint_complete_eligible=eligible,
+        remaining_raw_by_gz=remaining,
+        day_phases=phases,
+        local_tz=self.local_tz,
+        disqualified_daily_tars=disqualified,
+        archive_data_dir=self.archive_data_dir,
+        host_name_ext=self.host_name_ext,
+        maintenance_snapshot=snapshot,
+    )
+    async_active = self.async_day_close.active_or_submitted_tar_paths()
+    for tar_norm in set(eligible) | set(quiescent_eligible):
+      tar_norm = os.path.normpath(tar_norm)
+      if tar_norm in async_active:
+        continue
+      if self.async_day_close.is_complete(tar_norm):
+        continue
+      return True
+    return False
 
   def start_async_discover_and_close(self) -> None:
     if not self.enabled:
@@ -135,14 +208,27 @@ class StartupDayClosePreflight:
             flush=True,
         )
       return
+    resume_from_done = False
     with self._lock:
-      if self._manifest.get("phase") == PHASE_DONE:
+      phase_done = self._manifest.get("phase") == PHASE_DONE
+    if phase_done:
+      if not self._needs_boot_reconcile():
         if self.log_fn:
           self.log_fn(
               "sync_timedb: startup day close skipped (discover already done)",
               flush=True,
           )
         return
+      resume_from_done = True
+    with self._lock:
+      if resume_from_done and self.log_fn:
+        self.log_fn(
+            "sync_timedb: startup day close boot reconcile resuming discover",
+            flush=True,
+        )
+      if resume_from_done:
+        self._manifest["phase"] = PHASE_DISCOVERING
+        self._manifest.pop("completed_at", None)
       if not self._manifest.get("started_at"):
         self._manifest["started_at"] = time.time()
       self._manifest["phase"] = PHASE_DISCOVERING
@@ -501,6 +587,9 @@ class StartupDayClosePreflight:
         pending_retry = list(self._manifest.get("pending_retry") or [])
         shutting_down = shutdown_requested[0]
         if shutting_down and (pending_eligible or pending_retry):
+          self._manifest["phase"] = PHASE_DISCOVERING
+          self._manifest.pop("completed_at", None)
+        elif pending_eligible or pending_retry:
           self._manifest["phase"] = PHASE_DISCOVERING
           self._manifest.pop("completed_at", None)
         else:

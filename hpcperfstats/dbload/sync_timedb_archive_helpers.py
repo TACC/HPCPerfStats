@@ -1800,43 +1800,65 @@ def _store_daily_archive_members_cache(compressed_path, members):
   _trim_daily_archive_members_cache()
 
 
+def _daily_archive_member_match_via_redis_l2(
+    canonical,
+    compressed_path,
+    member_name,
+    expected_size,
+):
+  """Ingest duplicate-check via Redis L2 before local tar scan.
+
+  Returns ``None`` when Redis is disabled or the caller should fall back to a
+  mutable ``.tar`` scan (no sealed archive and Redis map not warm).
+  """
+  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+      archive_members_redis_enabled,
+      build_archive_members_redis_keys,
+      get_archive_members_redis_client,
+      redis_lookup_full_members,
+      redis_members_cache_is_fully_warm,
+  )
+
+  if not archive_members_redis_enabled():
+    return None
+  cache_key = _daily_archive_members_cache_key(canonical)
+  keys = build_archive_members_redis_keys(cache_key)
+  cached = redis_lookup_full_members(keys)
+  if cached is not None:
+    _store_daily_archive_members_cache(canonical, cached)
+    return cached.get(member_name) == expected_size
+  sealed_path = _resolve_sealed_daily_archive_path(compressed_path)
+  if sealed_path is None:
+    if redis_members_cache_is_fully_warm(keys):
+      return False
+    return None
+  client = get_archive_members_redis_client(required=True)
+  return _member_match_via_redis_or_sealed_point(
+      canonical,
+      cache_key,
+      keys,
+      sealed_path,
+      member_name,
+      expected_size,
+      client=client,
+  )
+
+
 def daily_archive_has_member_with_size(compressed_path, member_name, expected_size):
   """True when the daily archive contains ``member_name`` with exact byte size."""
   members = _lookup_daily_archive_members_cache(compressed_path)
   if members is not None:
     return members.get(member_name) == expected_size
   canonical = normalize_daily_compressed_path(compressed_path)
-  tar_path = daily_tar_path_from_compressed(canonical)
-  if os.path.isfile(tar_path):
-    members = get_existing_archive_members_for_daily_archive(compressed_path)
-    return members.get(member_name) == expected_size
   try:
-    from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
-        archive_members_redis_enabled,
-        build_archive_members_redis_keys,
-        get_archive_members_redis_client,
-        redis_lookup_full_members,
+    redis_match = _daily_archive_member_match_via_redis_l2(
+        canonical,
+        compressed_path,
+        member_name,
+        expected_size,
     )
-    if archive_members_redis_enabled():
-      cache_key = _daily_archive_members_cache_key(canonical)
-      keys = build_archive_members_redis_keys(cache_key)
-      cached = redis_lookup_full_members(keys)
-      if cached is not None:
-        _store_daily_archive_members_cache(canonical, cached)
-        return cached.get(member_name) == expected_size
-      sealed_path = _resolve_sealed_daily_archive_path(compressed_path)
-      if sealed_path is None:
-        return False
-      client = get_archive_members_redis_client(required=True)
-      return _member_match_via_redis_or_sealed_point(
-          canonical,
-          cache_key,
-          keys,
-          sealed_path,
-          member_name,
-          expected_size,
-          client=client,
-      )
+    if redis_match is not None:
+      return redis_match
   except Exception:
     raise
   members = get_existing_archive_members_for_daily_archive(compressed_path)
@@ -2368,8 +2390,9 @@ def _populate_redis_members_from_sealed_scan(sealed_path, cache_key):
 def get_existing_archive_members_for_daily_archive(archive_compressed_path):
   """File member sizes for a daily ``.tar.zst`` or legacy ``.tar.gz``.
 
-  Prefers sibling ``.tar`` when present (mutable / post-append). Otherwise
-  reads members directly from the sealed archive.
+  When Redis L2 is enabled, prefer a warm Redis member map before scanning a
+  sibling ``.tar`` (ingest duplicate-check must not N× parallel tar reads).
+  When Redis is disabled or cold and ``.tar`` exists, scan the mutable tar.
   """
   canonical = normalize_daily_compressed_path(archive_compressed_path)
   cached = _lookup_daily_archive_members_cache(canonical)
@@ -2377,6 +2400,45 @@ def get_existing_archive_members_for_daily_archive(archive_compressed_path):
     return cached
   cache_key = _daily_archive_members_cache_key(canonical)
   tar_path = daily_tar_path_from_compressed(canonical)
+  sealed_path = _resolve_sealed_daily_archive_path(archive_compressed_path)
+  try:
+    from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+        ArchiveMembersRedisUnavailableError,
+        archive_members_redis_enabled,
+        build_archive_members_redis_keys,
+        get_archive_day_ingest_skip,
+        get_archive_members_redis_client,
+        populate_degraded_is_set,
+        redis_lookup_full_members,
+        wait_for_complete_members,
+    )
+    if archive_members_redis_enabled():
+      keys = build_archive_members_redis_keys(cache_key)
+      members = redis_lookup_full_members(keys)
+      if members is not None:
+        _store_daily_archive_members_cache(canonical, members)
+        return dict(members)
+      if sealed_path is not None:
+        client = get_archive_members_redis_client(required=True)
+        if client.exists(keys.lock_key):
+          members = wait_for_complete_members(keys, sealed_path=sealed_path)
+        elif populate_degraded_is_set(keys, client=client):
+          if get_archive_day_ingest_skip(keys, client=client) is not None:
+            return {}
+          raise ArchiveMembersRedisUnavailableError(
+              "archive members Redis populate degraded for %s without day skip"
+              % keys.day_token,
+          )
+        else:
+          members = _populate_redis_members_from_sealed_scan(
+              sealed_path,
+              cache_key,
+          )
+        if members is not None:
+          _store_daily_archive_members_cache(canonical, members)
+          return dict(members)
+  except Exception:
+    raise
   if os.path.isfile(tar_path):
     members = get_existing_archive_members(tar_path)
     _store_daily_archive_members_cache(canonical, members)
@@ -2399,46 +2461,8 @@ def get_existing_archive_members_for_daily_archive(archive_compressed_path):
           flush=True,
       )
     return members
-  sealed_path = _resolve_sealed_daily_archive_path(archive_compressed_path)
   if sealed_path is None:
     return {}
-  try:
-    from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
-        archive_members_redis_enabled,
-        build_archive_members_redis_keys,
-        get_archive_members_redis_client,
-        populate_degraded_is_set,
-        redis_lookup_full_members,
-        wait_for_complete_members,
-    )
-    if archive_members_redis_enabled():
-      keys = build_archive_members_redis_keys(cache_key)
-      members = redis_lookup_full_members(keys)
-      if members is None:
-        client = get_archive_members_redis_client(required=True)
-        if client.exists(keys.lock_key):
-          members = wait_for_complete_members(keys, sealed_path=sealed_path)
-        elif populate_degraded_is_set(keys, client=client):
-          from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
-              ArchiveMembersRedisUnavailableError,
-              get_archive_day_ingest_skip,
-          )
-          if get_archive_day_ingest_skip(keys, client=client) is not None:
-            return {}
-          raise ArchiveMembersRedisUnavailableError(
-              "archive members Redis populate degraded for %s without day skip"
-              % keys.day_token,
-          )
-        else:
-          members = _populate_redis_members_from_sealed_scan(
-              sealed_path,
-              cache_key,
-          )
-      if members is not None:
-        _store_daily_archive_members_cache(canonical, members)
-        return dict(members)
-  except Exception:
-    raise
   if archive_members_redis_enabled():
     from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
         ArchiveMembersRedisUnavailableError,

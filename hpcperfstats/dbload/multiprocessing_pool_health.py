@@ -294,6 +294,54 @@ def _wait_pool_processes_bounded(active_pool, timeout_s):
   return len(alive) == 0, alive
 
 
+def _reap_pool_worker_pids(pool, *, timeout_s=5.0, context=""):
+  """Reap terminated pool workers so zombies do not accumulate under the supervisor."""
+  if pool is None:
+    return
+  pids = [
+      getattr(proc, "pid", None)
+      for proc in iter_pool_worker_processes(pool)
+      if getattr(proc, "pid", None) is not None
+  ]
+  if not pids:
+    return
+  deadline = time.monotonic() + max(0.1, float(timeout_s))
+  reaped = []
+  for pid in pids:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+      break
+    try:
+      waited_pid, status = os.waitpid(int(pid), os.WNOHANG)
+      if waited_pid == int(pid):
+        reaped.append(int(pid))
+        continue
+    except ChildProcessError:
+      reaped.append(int(pid))
+      continue
+    except OSError:
+      continue
+    wait_deadline = time.monotonic() + min(remaining, 0.5)
+    while time.monotonic() < wait_deadline:
+      try:
+        waited_pid, _status = os.waitpid(int(pid), os.WNOHANG)
+        if waited_pid == int(pid):
+          reaped.append(int(pid))
+          break
+      except ChildProcessError:
+        reaped.append(int(pid))
+        break
+      except OSError:
+        break
+      time.sleep(0.05)
+  if reaped:
+    log_print(
+        "Pool worker reap context=%s pids=%s"
+        % (context or "pool", reaped),
+        flush=True,
+    )
+
+
 def _sigkill_pool_worker_pids(pids, *, context=""):
   killed = []
   for pid in pids or ():
@@ -315,6 +363,19 @@ def _sigkill_pool_worker_pids(pids, *, context=""):
       os.waitpid(int(pid), os.WNOHANG)
     except (ChildProcessError, OSError):
       pass
+  # Blocking reap for defunct children SIGKILL may leave until waitpid runs.
+  deadline = time.monotonic() + 2.0
+  for pid in killed:
+    while time.monotonic() < deadline:
+      try:
+        waited_pid, _status = os.waitpid(int(pid), os.WNOHANG)
+        if waited_pid == int(pid):
+          break
+      except ChildProcessError:
+        break
+      except OSError:
+        break
+      time.sleep(0.05)
 
 
 def terminate_pool_bounded(active_pool, timeout_s=30.0, *, context=""):
@@ -345,6 +406,7 @@ def terminate_pool_bounded(active_pool, timeout_s=30.0, *, context=""):
           % (context or "pool", alive),
           flush=True,
       )
+  _reap_pool_worker_pids(active_pool, timeout_s=min(5.0, float(timeout_s)), context=context)
   return all_done
 
 

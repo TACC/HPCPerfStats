@@ -512,3 +512,72 @@ def test_startup_day_close_skips_quiescent_when_unprocessed_still_on_disk(
   preflight = _make_preflight(tmp_path, _FakeCoord())
   preflight._discover_loop()
   assert not submitted
+
+
+def test_discover_done_false_while_pending_eligible(tmp_path):
+  preflight = _make_preflight(
+      tmp_path,
+      MagicMock(
+          get_disqualified_daily_tars=lambda: set(),
+          submit_day_close=lambda *_a, **_k: True,
+          active_or_submitted_tar_paths=lambda: set(),
+          is_complete=lambda _tar: False,
+      ),
+  )
+  tar_path = os.path.normpath(str(tmp_path / "daily" / "2022-09-01.tar"))
+  with preflight._lock:
+    preflight._manifest["phase"] = PHASE_DONE
+    preflight._manifest["pending_eligible"] = [tar_path]
+  assert preflight.discover_done() is False
+
+
+def test_boot_reconcile_resumes_when_phase_done_and_eligible_remain(
+    tmp_path,
+    monkeypatch,
+):
+  from hpcperfstats.dbload.sync_timedb_startup_day_close import (
+      _save_manifest,
+  )
+
+  day = date(2026, 4, 22)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2026-04-22.tar"))
+  open(tar_path, "wb").close()
+  (tmp_path / ".sync_timedb_state.json").write_text(
+      json.dumps([{
+          "path": str(seg),
+          "size": seg.stat().st_size,
+          "mtime": int(seg.stat().st_mtime),
+      }])
+  )
+  submitted = []
+
+  class _FakeCoord:
+    def get_disqualified_daily_tars(self):
+      return set()
+
+    def submit_day_close(self, tar_path, *, reason, disqualified_daily_tars=None):
+      submitted.append((os.path.normpath(tar_path), reason))
+      return True
+
+    def active_or_submitted_tar_paths(self):
+      return {t for t, _ in submitted}
+
+    def is_complete(self, _tar_path):
+      return False
+
+  monkeypatch.setattr(cfg, "get_sync_startup_day_close_budget_seconds", lambda: 60.0)
+  monkeypatch.setattr(cfg, "get_sync_startup_day_close_days_per_slice", lambda: 5)
+  monkeypatch.setattr(cfg, "get_sync_day_close_candidate_report", lambda: False)
+
+  preflight = _make_preflight(tmp_path, _FakeCoord())
+  preflight._manifest["phase"] = PHASE_DONE
+  preflight._manifest["completed_at"] = 1.0
+  _save_manifest(preflight._manifest_path, preflight._manifest)
+  assert preflight._needs_boot_reconcile() is True
+  preflight.start_async_discover_and_close()
+  preflight._discover_future.result(timeout=30)
+  assert submitted
+  assert submitted[0][0] == tar_path

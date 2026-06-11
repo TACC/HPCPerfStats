@@ -23,7 +23,7 @@ When **`sync_startup_day_close_preflight=yes`** (default), the supervisor starts
 1. Wait for or derive **`StartupArchiveScanCoordinator`** snapshot (`sync-timedb-canonical-startup-archive-scan.mdc`); **no nested full collect** in `build_remaining_raw_stats_by_daily_gz`.
 2. Subtract checkpoint paths on snapshot mapping (`build_unprocessed_raw_by_daily_tar(..., maintenance_snapshot=)`).
 3. **Submit budget starts after scans** (`submit_t0` reset post unprocessed+remaining build).
-4. Multi-slice discover until `pending_eligible` and `pending_retry` empty; manifest `phase=done` only then (not on SIGTERM with deferrals).
+4. Multi-slice discover until `pending_eligible` and `pending_retry` empty; manifest `phase=done` only then (not on SIGTERM with deferrals). **`phase=done` is resumable on restart:** when manifest says done but checkpoint-complete or quiescent days still need async DAY_CLOSE, **`_needs_boot_reconcile()`** resets to **`discovering`** and reruns discover (do not skip solely because manifest says done).
 5. Transient disqualification skips enqueue `pending_retry`; next slice retries when `tar not in get_disqualified_daily_tars()`.
 6. Slice 2+ refresh `remaining_raw_by_gz` from janitor accrual when present, else coordinator snapshot.
 7. **One** `get_disqualified_daily_tars()` per discover slice (before submit loop); pass precomputed set into `submit_day_close(..., disqualified_daily_tars=)` to avoid a second full recompute under `async_day_close._lock`.
@@ -72,11 +72,12 @@ sync_timedb: startup day close submit skip tar=… reason=…
 ## Coordination
 
 - Janitor **`DAY_CLOSE`** debt submits to the same coordinator (no sync zstd on janitor thread). See **`sync-timedb-archive-janitor-contract.mdc`**.
+- **`run_scheduled_maintenance_pass`** with `reason=startup|every_n_chunks|ingest_queue_empty` must **submit** async DAY_CLOSE for **`eligible_deferred`** days (via `_submit_scheduled_day_close_from_snapshot`), not only log the candidate report. Report-only passes use other reason strings.
 
 ## Tests
 
-- `hpcperfstats/tests/test_sync_timedb_startup_day_close.py` (checkpoint-complete + quiescent submit)
-- `hpcperfstats/tests/test_sync_timedb_supervisor.py` (`test_supervisor_waits_for_startup_day_close_drain_before_ingest`, `test_supervisor_startup_drain_disabled_allows_parallel_ingest`)
+- `hpcperfstats/tests/test_sync_timedb_startup_day_close.py` (checkpoint-complete + quiescent submit, boot reconcile when `phase=done`, `discover_done` false while `pending_eligible`)
+- `hpcperfstats/tests/test_sync_timedb_supervisor.py` (`test_supervisor_waits_for_startup_day_close_drain_before_ingest`, `test_supervisor_blocks_ingest_when_phase_done_pending_eligible`, `test_supervisor_startup_drain_disabled_allows_parallel_ingest`)
 - Archive/janitor/async helpers in `test_sync_timedb_archive.py`, `test_sync_timedb_janitor.py`
 
 ## Overlap

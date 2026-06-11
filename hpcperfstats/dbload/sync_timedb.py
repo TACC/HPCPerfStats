@@ -863,9 +863,18 @@ def _handle_pool_worker_exit_fatal(
 ):
   """Terminate pools and ``os._exit`` — do not unwind through pool context managers."""
   ctx = getattr(exc, "context", "") or "pool_worker_exit"
-  terminate_pool_bounded(ingest_pool, context=ctx)
-  terminate_pool_bounded(db_writer_pool, context=ctx)
-  terminate_pool_bounded(archive_pool, context=ctx)
+  pools_done = (
+      terminate_pool_bounded(ingest_pool, context=ctx),
+      terminate_pool_bounded(db_writer_pool, context=ctx),
+      terminate_pool_bounded(archive_pool, context=ctx),
+  )
+  if not all(pools_done):
+    log_print(
+        "Pool worker exit: terminate incomplete context=%s pools_done=%s; "
+        "hard exit anyway"
+        % (ctx, pools_done),
+        flush=True,
+    )
   hard_exit_pool_worker_error(exc)
 
 
@@ -2914,6 +2923,11 @@ def run_sync_timedb_supervisor_loop(
           and startup_day_close.enabled
           and not startup_day_close.discover_done()
       )
+      pending_eligible = (
+          startup_day_close.pending_deferral_count()
+          if startup_day_close is not None and startup_day_close.enabled
+          else 0
+      )
       async_active = (
           len(async_day_close.active_or_submitted_tar_paths())
           if async_day_close is not None
@@ -2930,9 +2944,15 @@ def run_sync_timedb_supervisor_loop(
           and day_raw_removal.any_needs_delete_phase()
       )
       log_print(
-          "sync_timedb: startup day-close drain waiting discover=%s async_active=%d "
-          "startup_raw=%s day_raw_delete=%s"
-          % (discover_pending, async_active, raw_pending, day_delete_pending),
+          "sync_timedb: startup day-close drain waiting discover=%s "
+          "pending_eligible=%d async_active=%d startup_raw=%s day_raw_delete=%s"
+          % (
+              discover_pending,
+              pending_eligible,
+              async_active,
+              raw_pending,
+              day_delete_pending,
+          ),
           flush=True,
       )
 

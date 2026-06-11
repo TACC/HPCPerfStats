@@ -1573,7 +1573,64 @@ def test_run_scheduled_maintenance_pass_logs_candidate_report_only(tmp_path, mon
       "build_archive_maintenance_snapshot",
       lambda *_a, **_k: snapshot,
   )
-  janitor.run_scheduled_maintenance_pass(reason="test")
+  janitor.run_scheduled_maintenance_pass(reason="diagnostic_report_only")
   assert janitor.debt_depth() == 0
   report_lines = [line for line in log_lines if "day_close candidate" in line]
   assert any("disqualified" in line for line in report_lines)
+
+
+def test_run_scheduled_maintenance_pass_submits_eligible_deferred_on_startup(
+    tmp_path, monkeypatch,
+):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2020-01-05.tar"))
+  open(tar_path, "wb").close()
+  submitted = []
+
+  class _FakeCoord:
+    def active_or_submitted_tar_paths(self):
+      return set(submitted)
+
+    def submit_day_close(self, tar_path, *, reason, disqualified_daily_tars=None):
+      submitted.append(os.path.normpath(tar_path))
+      return True
+
+    def is_complete(self, _tar_path):
+      return False
+
+    def entry_progress_snapshot(self, _tar_path):
+      return None
+
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      async_day_close_coordinator=_FakeCoord(),
+      get_day_close_candidate_inputs=lambda: {
+          "inflight_paths": set(),
+          "pending_append_by_daily_tar": {},
+          "in_flight_archive_tars": set(),
+          "pending_archive_task_tars": set(),
+          "unmapped_closed_raw_tars": set(),
+          "unprocessed_by_tar": {},
+      },
+  )
+  monkeypatch.setattr(
+      janitor_mod.cfg,
+      "get_sync_day_close_candidate_report",
+      lambda: False,
+  )
+  monkeypatch.setattr(
+      janitor_mod,
+      "build_remaining_raw_stats_by_daily_gz",
+      lambda *args, **kwargs: {},
+  )
+  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+
+  snapshot = ArchiveMaintenanceSnapshot(closed_paths=[], remaining_raw_by_gz={})
+  monkeypatch.setattr(
+      janitor_mod,
+      "build_archive_maintenance_snapshot",
+      lambda *_a, **_k: snapshot,
+  )
+  janitor.run_scheduled_maintenance_pass(reason="startup")
+  assert submitted == [tar_path]

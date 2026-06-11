@@ -3949,6 +3949,141 @@ def test_single_member_early_exit_finds_match(
   assert scan_calls["n"] == 0
 
 
+def test_daily_archive_has_member_prefers_redis_when_tar_and_sealed_exist(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+      build_archive_members_redis_keys,
+      store_complete_members_in_redis,
+  )
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import FakeRedis
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  member_name = "host.vista.tacc.utexas.edu/raw"
+  inner = tmp_path / "raw.txt"
+  inner.write_text("data")
+  tar_path = daily_dir / "2026-05-20.tar"
+  with tarfile.open(tar_path, "w:") as tf:
+    tf.add(str(inner), arcname=member_name)
+  sealed = daily_dir / "2026-05-20.tar.gz"
+  with tarfile.open(sealed, "w:gz") as tf:
+    tf.add(str(inner), arcname=member_name)
+  sealed_str = str(sealed)
+  cache_key = helpers._daily_archive_members_cache_key(
+      helpers.normalize_daily_compressed_path(sealed_str),
+  )
+  keys = build_archive_members_redis_keys(cache_key)
+  fake_redis = FakeRedis()
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: fake_redis,
+  )
+  store_complete_members_in_redis(
+      keys,
+      {member_name: 4},
+      saw_duplicates=False,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
+  )
+  tar_scan_calls = {"n": 0}
+  original_get_members = helpers.get_existing_archive_members
+
+  def counting_tar_scan(path):
+    tar_scan_calls["n"] += 1
+    return original_get_members(path)
+
+  monkeypatch.setattr(
+      helpers, "get_existing_archive_members", counting_tar_scan,
+  )
+  assert helpers.daily_archive_has_member_with_size(
+      sealed_str, member_name, 4,
+  ) is True
+  assert tar_scan_calls["n"] == 0
+
+
+def test_concurrent_duplicate_check_avoids_parallel_tar_scans_with_redis_warm(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  import threading
+
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+      build_archive_members_redis_keys,
+      store_complete_members_in_redis,
+  )
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import FakeRedis
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  member_name = "host.vista.tacc.utexas.edu/raw"
+  inner = tmp_path / "raw.txt"
+  inner.write_text("data")
+  tar_path = daily_dir / "2026-05-20.tar"
+  with tarfile.open(tar_path, "w:") as tf:
+    tf.add(str(inner), arcname=member_name)
+  sealed = daily_dir / "2026-05-20.tar.gz"
+  with tarfile.open(sealed, "w:gz") as tf:
+    tf.add(str(inner), arcname=member_name)
+  sealed_str = str(sealed)
+  cache_key = helpers._daily_archive_members_cache_key(
+      helpers.normalize_daily_compressed_path(sealed_str),
+  )
+  keys = build_archive_members_redis_keys(cache_key)
+  fake_redis = FakeRedis()
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: fake_redis,
+  )
+  store_complete_members_in_redis(
+      keys,
+      {member_name: 4},
+      saw_duplicates=False,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
+  )
+  tar_scan_calls = {"n": 0}
+  lock = threading.Lock()
+  original_get_members = helpers.get_existing_archive_members
+
+  def counting_tar_scan(path):
+    with lock:
+      tar_scan_calls["n"] += 1
+    return original_get_members(path)
+
+  monkeypatch.setattr(
+      helpers, "get_existing_archive_members", counting_tar_scan,
+  )
+  errors = []
+
+  def worker():
+    try:
+      helpers.daily_archive_has_member_with_size(
+          sealed_str, member_name, 4,
+      )
+    except Exception as exc:
+      errors.append(exc)
+
+  threads = [threading.Thread(target=worker) for _ in range(8)]
+  for thread in threads:
+    thread.start()
+  for thread in threads:
+    thread.join()
+  assert not errors
+  assert tar_scan_calls["n"] == 0
+
+
 def test_invalidate_daily_archive_members_cache_forces_rescan(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):

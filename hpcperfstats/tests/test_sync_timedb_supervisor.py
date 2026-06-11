@@ -3975,6 +3975,108 @@ def test_supervisor_waits_for_startup_day_close_drain_before_ingest(monkeypatch)
     shutdown_requested[0] = False
 
 
+def test_supervisor_blocks_ingest_when_phase_done_pending_eligible(monkeypatch):
+  """Stale manifest phase=done with pending eligible must keep ingest gate closed."""
+  shutdown_requested[0] = False
+  rescan_calls = {"n": 0}
+  ingest_calls = {"n": 0}
+
+  import hpcperfstats.dbload.sync_timedb_startup_raw_removal as preflight_mod
+  import hpcperfstats.dbload.sync_timedb_startup_day_close as day_close_mod
+
+  class _DoneRawPreflight:
+    enabled = False
+
+    def __init__(self, **_kwargs):
+      pass
+
+    def delete_phase_done(self):
+      return True
+
+    def needs_delete_phase(self):
+      return False
+
+    def paths_pending_startup_delete(self):
+      return set()
+
+    def consumed_paths(self):
+      return set()
+
+    def start_async_verify(self):
+      return None
+
+    def shutdown(self, wait=True):
+      del wait
+
+  class _PhaseDonePendingEligible:
+    enabled = True
+
+    def __init__(self, **_kwargs):
+      pass
+
+    def phase(self):
+      return day_close_mod.PHASE_DONE
+
+    def discover_done(self):
+      return False
+
+    def pending_deferral_count(self):
+      return 2
+
+    def start_async_discover_and_close(self):
+      pass
+
+    def shutdown(self, wait=True):
+      del wait
+
+  def fake_sleep(_seconds):
+    fake_sleep.calls += 1
+    if fake_sleep.calls > 3:
+      shutdown_requested[0] = True
+  fake_sleep.calls = 0
+
+  try:
+    target = "/fake/statsA"
+
+    def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
+      rescan_calls["n"] += 1
+      return [target]
+
+    def fake_add(_lock, path, _contents=None):
+      ingest_calls["n"] += 1
+      return (path, True, True, 0.0)
+
+    monkeypatch.setattr(preflight_mod, "StartupRawRemovalPreflight", _DoneRawPreflight)
+    monkeypatch.setattr(st, "StartupRawRemovalPreflight", _DoneRawPreflight)
+    monkeypatch.setattr(day_close_mod, "StartupDayClosePreflight", _PhaseDonePendingEligible)
+    monkeypatch.setattr(st, "StartupDayClosePreflight", _PhaseDonePendingEligible)
+    monkeypatch.setattr(
+        st.cfg,
+        "get_sync_startup_drain_day_close_before_ingest",
+        lambda: True,
+    )
+    monkeypatch.setattr(st, "sleep_until_shutdown", fake_sleep)
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "add_stats_file_to_db", fake_add)
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "chunk_size", 1)
+    monkeypatch.setattr(st, "rescan_every_chunks", 100)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp/daily")
+    monkeypatch.setattr(
+        st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
+
+    st.run_sync_timedb_supervisor_loop(
+        "/tmp/archive", "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
+
+    assert rescan_calls["n"] == 0
+    assert ingest_calls["n"] == 0
+  finally:
+    shutdown_requested[0] = False
+
+
 def test_supervisor_startup_drain_disabled_allows_parallel_ingest(monkeypatch):
   shutdown_requested[0] = False
   ingest_calls = {"n": 0}
