@@ -294,6 +294,29 @@ def _wait_pool_processes_bounded(active_pool, timeout_s):
   return len(alive) == 0, alive
 
 
+def _sigkill_pool_worker_pids(pids, *, context=""):
+  killed = []
+  for pid in pids or ():
+    if pid is None:
+      continue
+    try:
+      os.kill(int(pid), signal.SIGKILL)
+      killed.append(int(pid))
+    except OSError:
+      continue
+  if killed:
+    log_print(
+        "Pool terminate SIGKILL context=%s pids=%s"
+        % (context or "pool", killed),
+        flush=True,
+    )
+  for pid in killed:
+    try:
+      os.waitpid(int(pid), os.WNOHANG)
+    except (ChildProcessError, OSError):
+      pass
+
+
 def terminate_pool_bounded(active_pool, timeout_s=30.0, *, context=""):
   """Terminate a pool and wait briefly so shutdown does not hang after worker death."""
   if active_pool is None:
@@ -314,6 +337,14 @@ def terminate_pool_bounded(active_pool, timeout_s=30.0, *, context=""):
         "Pool terminate timeout; lingering_workers=%s" % alive,
         flush=True,
     )
+    _sigkill_pool_worker_pids(alive, context=context)
+    all_done, alive = _wait_pool_processes_bounded(active_pool, timeout_s)
+    if not all_done and alive:
+      log_print(
+          "Pool terminate still lingering after SIGKILL context=%s workers=%s"
+          % (context or "pool", alive),
+          flush=True,
+      )
   return all_done
 
 

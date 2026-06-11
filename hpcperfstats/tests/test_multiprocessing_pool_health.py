@@ -299,6 +299,43 @@ def test_terminate_pool_bounded_logs_context(monkeypatch):
   assert any("Pool workers terminated" in line and "ingest_pool" in line for line in logs)
 
 
+class _StubbornWorker:
+  pid = 5555
+
+  def is_alive(self):
+    return True
+
+  def join(self, timeout=None):
+    del timeout
+
+
+def test_terminate_pool_bounded_sigkill_after_timeout(monkeypatch):
+  logs = []
+  killed = []
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.multiprocessing_pool_health.log_print",
+      lambda msg, flush=False: logs.append(msg),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.multiprocessing_pool_health.os.kill",
+      lambda pid, sig: killed.append((pid, sig)),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.multiprocessing_pool_health.os.waitpid",
+      lambda pid, flags: (pid, 0),
+  )
+
+  class _StubbornPool:
+    _pool = [_StubbornWorker()]
+
+    def terminate(self):
+      pass
+
+  mph.terminate_pool_bounded(_StubbornPool(), timeout_s=0.01, context="ingest_pool")
+  assert any("Pool terminate SIGKILL" in line and "5555" in line for line in logs)
+  assert (5555, mph.signal.SIGKILL) in killed
+
+
 def test_hard_exit_pool_worker_error_uses_os_exit(monkeypatch):
   exit_codes = []
   logs = []

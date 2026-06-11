@@ -35,6 +35,7 @@ from collections import deque
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import date as date_cls
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from functools import partial
@@ -66,6 +67,7 @@ from hpcperfstats.dbload.multiprocessing_pool_health import (
     alive_pool_worker_count,
     async_result_get_watch_pool,
     close_pool_bounded,
+    hard_exit_pool_worker_error,
     imap_unordered_watch_pool,
     terminate_pool_bounded,
 )
@@ -112,6 +114,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     quarantine_ingest_failed_raw_path,
     raw_stats_path_needs_tar_append,
     rescan_pending_stats_files,
+    set_archive_members_invalidation_hook,
     should_seal_daily_tar,
     stats_file_is_active_segment,
     stats_path_ingest_sort_epoch,
@@ -142,7 +145,9 @@ from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
     archive_members_populate_shows_progress_for_day,
     archive_members_redis_enabled,
     build_archive_members_redis_keys,
+    describe_archive_members_populate_redis_for_day,
     redis_lookup_full_members,
+    redis_members_cache_is_fully_warm,
     reset_ingest_task_deadline_monotonic,
     set_ingest_task_deadline_monotonic,
 )
@@ -329,7 +334,7 @@ def _unique_daily_compressed_archives_for_paths(paths, tgz_archive_dir):
   return unique
 
 
-def _prewarm_archive_members_redis_for_chunk(paths):
+def _prewarm_archive_members_redis_for_days(day_items):
   """Single-flight populate on supervisor before imap when Redis L2 is cold."""
   if not archive_members_redis_enabled():
     return
@@ -341,17 +346,25 @@ def _prewarm_archive_members_redis_for_chunk(paths):
       ArchiveDayIngestSkipError,
   )
 
-  for compressed, day_token in _unique_daily_compressed_archives_for_paths(
-      paths, tgz_archive_dir,
-  ).items():
+  for compressed, day_token in day_items or ():
     canonical = normalize_daily_compressed_path(compressed)
     cache_key = _daily_archive_members_cache_key(canonical)
     keys = build_archive_members_redis_keys(cache_key)
-    if redis_lookup_full_members(keys) is not None:
+    if redis_members_cache_is_fully_warm(keys):
+      log_print(
+          "INFO: archive members prewarm skip day=%s reason=redis_warm"
+          % day_token,
+          flush=True,
+      )
       continue
     sealed_path = _resolve_sealed_daily_archive_path(canonical)
     tar_path = daily_tar_path_from_compressed(canonical)
     if sealed_path is None and not os.path.isfile(tar_path):
+      log_print(
+          "INFO: archive members prewarm skip day=%s reason=no_daily_archive"
+          % day_token,
+          flush=True,
+      )
       continue
     log_print(
         "Prewarming archive members Redis for day=%s sealed=%s"
@@ -361,7 +374,31 @@ def _prewarm_archive_members_redis_for_chunk(paths):
     try:
       get_existing_archive_members_for_daily_archive(canonical)
     except ArchiveDayIngestSkipError:
-      pass
+      log_print(
+          "INFO: archive members prewarm skip day=%s reason=day_ingest_skip"
+          % day_token,
+          flush=True,
+      )
+    except ArchiveMembersRedisUnavailableError as exc:
+      _exit_on_archive_members_redis_unavailable(exc)
+
+
+def _prewarm_archive_members_redis_for_day_token(day_token):
+  if not day_token:
+    return
+  try:
+    day_date = date_cls.fromisoformat(day_token)
+  except ValueError:
+    return
+  compressed = daily_compressed_path_for_date(tgz_archive_dir, day_date)
+  _prewarm_archive_members_redis_for_days([(compressed, day_token)])
+
+
+def _prewarm_archive_members_redis_for_chunk(paths):
+  """Single-flight populate on supervisor before imap when Redis L2 is cold."""
+  _prewarm_archive_members_redis_for_days(
+      list(_unique_daily_compressed_archives_for_paths(paths, tgz_archive_dir).items()),
+  )
 
 
 def _calendar_day_hint_from_paths(paths):
@@ -399,11 +436,17 @@ def _make_ingest_stall_warning_fn(
         if timeout_s <= 0.0
         else ""
     )
+    redis_hint = ""
+    if day_hint:
+      redis_hint = " " + describe_archive_members_populate_redis_for_day(
+          day_hint,
+          tgz_archive_dir,
+      )
     log_print(
         "WARN: pool imap stall progress consecutive_timeouts=%d/%d "
         "poll_timeout_s=%.3f estimated_stall_s=%.1f context=%s chunk=%d "
         "pending=%d pool_workers_alive=%d/%d in_flight_n=%d "
-        "in_flight_day_hint=%s in_flight_sample=%s%s"
+        "in_flight_day_hint=%s in_flight_sample=%s%s%s"
         % (
             consecutive,
             abort_after,
@@ -418,6 +461,7 @@ def _make_ingest_stall_warning_fn(
             day_hint or "-",
             sample,
             timeout_hint,
+            redis_hint,
         ),
         flush=True,
     )
@@ -443,9 +487,13 @@ def _make_ingest_stall_poll_fn(tracker, progress_state):
         tgz_archive_dir,
         progress_state=progress_state,
     ):
+      redis_snapshot = describe_archive_members_populate_redis_for_day(
+          day_hint,
+          tgz_archive_dir,
+      )
       log_print(
-          "WARN: pool imap stall deferred: Redis populate active for day=%s"
-          % day_hint,
+          "WARN: pool imap stall deferred: Redis populate active for day=%s (%s)"
+          % (day_hint, redis_snapshot),
           flush=True,
       )
       return True
@@ -804,6 +852,21 @@ def _prior_day_tars_from_archive_mapping(ar_file_mapping, *, local_tz):
     if day_date < today_local:
       chunk_tars.add(tar_path)
   return chunk_tars
+
+
+def _handle_pool_worker_exit_fatal(
+    exc,
+    *,
+    ingest_pool=None,
+    db_writer_pool=None,
+    archive_pool=None,
+):
+  """Terminate pools and ``os._exit`` — do not unwind through pool context managers."""
+  ctx = getattr(exc, "context", "") or "pool_worker_exit"
+  terminate_pool_bounded(ingest_pool, context=ctx)
+  terminate_pool_bounded(db_writer_pool, context=ctx)
+  terminate_pool_bounded(archive_pool, context=ctx)
+  hard_exit_pool_worker_error(exc)
 
 
 def _reraise_or_handle_pool_worker_exit(
@@ -2165,6 +2228,7 @@ def run_sync_timedb_supervisor_loop(
   delete_phase_active = False
   day_close_rescan_pending = False
   chunk_in_progress = False
+  active_chunk_ingest_tracker = None
   max_ingest_sort_epoch_by_tar: dict[str, int] = {}
 
   def _get_quarantine_skip_paths():
@@ -2675,6 +2739,9 @@ def run_sync_timedb_supervisor_loop(
 
   def _on_async_day_phase(tar_norm, phase):
     nonlocal day_close_rescan_pending
+    from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+        calendar_date_from_daily_tar_path,
+    )
     from hpcperfstats.dbload.sync_timedb_archive_maint import day_phase_hint_entry
     with archive_janitor._hints_state_lock:
       archive_janitor._day_phases[os.path.normpath(tar_norm)] = (
@@ -2683,6 +2750,21 @@ def run_sync_timedb_supervisor_loop(
     if phase == "tar_dropped":
       day_close_rescan_pending = True
       archive_janitor.signal_work_available()
+    elif phase == "sealed" and chunk_in_progress:
+      day_date = calendar_date_from_daily_tar_path(tar_norm)
+      if day_date is not None:
+        day_token = day_date.isoformat()
+        tracker = active_chunk_ingest_tracker
+        if tracker is not None:
+          day_hint = _calendar_day_hint_from_paths(tracker.sample_in_flight())
+          if day_hint and day_hint != day_token:
+            return
+        log_print(
+            "INFO: re-prewarm archive members Redis after seal day=%s"
+            % day_token,
+            flush=True,
+        )
+        _prewarm_archive_members_redis_for_day_token(day_token)
 
   def _async_day_close_submit_eligible(tar_norm):
     captured = _build_day_close_candidate_inputs()
@@ -2706,6 +2788,23 @@ def run_sync_timedb_supervisor_loop(
 
   async_day_close.submit_eligible_fn = _async_day_close_submit_eligible
   async_day_close.on_day_phase = _on_async_day_phase
+
+  def _archive_members_invalidation_hook(_canonical, day_token):
+    if not chunk_in_progress or not day_token:
+      return
+    tracker = active_chunk_ingest_tracker
+    if tracker is not None:
+      day_hint = _calendar_day_hint_from_paths(tracker.sample_in_flight())
+      if day_hint and day_hint != day_token:
+        return
+    log_print(
+        "INFO: re-prewarm archive members Redis after cache invalidation day=%s"
+        % day_token,
+        flush=True,
+    )
+    _prewarm_archive_members_redis_for_day_token(day_token)
+
+  set_archive_members_invalidation_hook(_archive_members_invalidation_hook)
 
   def _on_day_close_pipeline_complete(_tar_path):
     nonlocal day_close_rescan_pending
@@ -3038,6 +3137,7 @@ def run_sync_timedb_supervisor_loop(
         files_to_be_archived = []
         successful_paths = []
         chunk_ingest_finished = 0
+        active_chunk_ingest_tracker = None
 
         _prewarm_archive_members_redis_for_chunk(stats_files_chunk)
 
@@ -3061,6 +3161,7 @@ def run_sync_timedb_supervisor_loop(
             else:
               parse_paths = [task.path for task in parse_envelopes]
               parse_tracker = _IngestPoolInFlightTracker(parse_paths)
+              active_chunk_ingest_tracker = parse_tracker
               parse_results_iter = _imap_ingest_paths_batched(
                   ingest_pool,
                   _parse_stats_file_payload,
@@ -3115,16 +3216,12 @@ def run_sync_timedb_supervisor_loop(
                 )
           except MultiprocessingWorkerExitError as exc:
             pool_worker_exit = True
-            terminate_pool_bounded(
-                ingest_pool, context=getattr(exc, "context", "") or "ingest_parse",
+            _handle_pool_worker_exit_fatal(
+                exc,
+                ingest_pool=ingest_pool,
+                db_writer_pool=db_writer_pool,
+                archive_pool=archive_pool,
             )
-            terminate_pool_bounded(
-                db_writer_pool, context=getattr(exc, "context", "") or "ingest_parse",
-            )
-            terminate_pool_bounded(
-                archive_pool, context=getattr(exc, "context", "") or "ingest_parse",
-            )
-            raise
           except DatabaseUnavailableExit:
             raise
           except Exception as exc:
@@ -3150,19 +3247,12 @@ def run_sync_timedb_supervisor_loop(
               )
             except MultiprocessingWorkerExitError as exc:
               pool_worker_exit = True
-              terminate_pool_bounded(
-                  ingest_pool,
-                  context=getattr(exc, "context", "") or "ingest_db_writer",
+              _handle_pool_worker_exit_fatal(
+                  exc,
+                  ingest_pool=ingest_pool,
+                  db_writer_pool=db_writer_pool,
+                  archive_pool=archive_pool,
               )
-              terminate_pool_bounded(
-                  db_writer_pool,
-                  context=getattr(exc, "context", "") or "ingest_db_writer",
-              )
-              terminate_pool_bounded(
-                  archive_pool,
-                  context=getattr(exc, "context", "") or "ingest_db_writer",
-              )
-              raise
             except DatabaseUnavailableExit:
               raise
             except Exception as exc:
@@ -3182,6 +3272,7 @@ def run_sync_timedb_supervisor_loop(
               results_iter = iter(())
             else:
               combined_tracker = _IngestPoolInFlightTracker(stats_files_chunk)
+              active_chunk_ingest_tracker = combined_tracker
               results_iter = _imap_ingest_paths_batched(
                   ingest_pool,
                   add_combined,
@@ -3218,13 +3309,12 @@ def run_sync_timedb_supervisor_loop(
                 _log_sync_timedb_ingest_completed(stats_fname, elapsed_s, remaining)
           except MultiprocessingWorkerExitError as exc:
             pool_worker_exit = True
-            terminate_pool_bounded(
-                ingest_pool, context=getattr(exc, "context", "") or "ingest_combined",
+            _handle_pool_worker_exit_fatal(
+                exc,
+                ingest_pool=ingest_pool,
+                db_writer_pool=db_writer_pool,
+                archive_pool=archive_pool,
             )
-            terminate_pool_bounded(
-                archive_pool, context=getattr(exc, "context", "") or "ingest_combined",
-            )
-            raise
           except DatabaseUnavailableExit:
             raise
           except ArchiveMembersRedisUnavailableError as exc:
@@ -3244,6 +3334,7 @@ def run_sync_timedb_supervisor_loop(
               results_iter = iter(())
             else:
               ingest_tracker = _IngestPoolInFlightTracker(stats_files_chunk)
+              active_chunk_ingest_tracker = ingest_tracker
               results_iter = _imap_ingest_paths_batched(
                   ingest_pool,
                   add_stats_file,
@@ -3280,13 +3371,12 @@ def run_sync_timedb_supervisor_loop(
                 _log_sync_timedb_ingest_completed(stats_fname, elapsed_s, remaining)
           except MultiprocessingWorkerExitError as exc:
             pool_worker_exit = True
-            terminate_pool_bounded(
-                ingest_pool, context=getattr(exc, "context", "") or "ingest_pool",
+            _handle_pool_worker_exit_fatal(
+                exc,
+                ingest_pool=ingest_pool,
+                db_writer_pool=db_writer_pool,
+                archive_pool=archive_pool,
             )
-            terminate_pool_bounded(
-                archive_pool, context=getattr(exc, "context", "") or "ingest_pool",
-            )
-            raise
           except DatabaseUnavailableExit:
             raise
           except ArchiveMembersRedisUnavailableError as exc:
@@ -3417,6 +3507,7 @@ def run_sync_timedb_supervisor_loop(
 
         _dispatch_due_archive_retries()
         chunk_in_progress = False
+        active_chunk_ingest_tracker = None
 
         if chunk_counter % rescan_every_chunks == 0:
           _finalize_archive_slots_if_needed(
@@ -3483,6 +3574,7 @@ def run_sync_timedb_supervisor_loop(
       connections.close_all()
   finally:
     chunk_in_progress = False
+    active_chunk_ingest_tracker = None
     preflight_shutdown_wait = not pool_worker_exit
     if startup_preflight is not None:
       startup_preflight.shutdown(wait=preflight_shutdown_wait)

@@ -632,6 +632,19 @@ def test_wait_for_member_match_respects_ingest_deadline(_redis_test_env, tmp_pat
     reset_ingest_task_deadline_monotonic(token)
 
 
+def test_redis_members_cache_is_fully_warm_requires_nonempty_hash(_redis_test_env, tmp_path):
+  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+      redis_members_cache_is_fully_warm,
+  )
+
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  assert redis_members_cache_is_fully_warm(keys, client=_redis_test_env) is False
+  _redis_test_env.set(keys.complete_key, "1")
+  assert redis_members_cache_is_fully_warm(keys, client=_redis_test_env) is False
+  _redis_test_env.hset(keys.hash_key, mapping={"host/a": "1"})
+  assert redis_members_cache_is_fully_warm(keys, client=_redis_test_env) is True
+
+
 def test_archive_members_populate_shows_progress_for_day(_redis_test_env, tmp_path):
   from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
       archive_members_populate_shows_progress_for_day,
@@ -653,6 +666,57 @@ def test_archive_members_populate_shows_progress_for_day(_redis_test_env, tmp_pa
       str(tmp_path),
       progress_state=state,
   ) is False
+
+
+def test_archive_members_populate_shows_progress_with_stale_progress_ts(
+    _redis_test_env,
+    tmp_path,
+):
+  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+      archive_members_populate_shows_progress_for_day,
+  )
+
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  _redis_test_env.set(keys.lock_key, "tok:1", ex=30)
+  _redis_test_env.set(keys.complete_key, "0")
+  _redis_test_env.set(keys.progress_key, str(time.time() - 10000))
+  assert archive_members_populate_shows_progress_for_day(
+      "2026-05-09",
+      str(tmp_path),
+  ) is True
+
+
+def test_process_is_alive_treats_zombie_as_dead(monkeypatch):
+  import hpcperfstats.dbload.sync_timedb_archive_members_redis as redis_mod
+
+  monkeypatch.setattr(redis_mod.os, "kill", lambda pid, sig: None)
+  monkeypatch.setattr(redis_mod, "_process_is_zombie", lambda pid: True)
+  assert redis_mod._process_is_alive(4242) is False
+
+
+def test_stale_populate_lock_released_when_owner_zombie(
+    _redis_test_env,
+    tmp_path,
+    monkeypatch,
+):
+  import hpcperfstats.dbload.sync_timedb_archive_members_redis as redis_mod
+
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  zombie_pid = 424242
+  _redis_test_env.set(keys.lock_key, "tok:%d" % zombie_pid, ex=30)
+  _redis_test_env.set(keys.complete_key, "0")
+  _redis_test_env.set(keys.progress_key, str(time.time() - 1000))
+  monkeypatch.setattr(redis_mod.os, "kill", lambda pid, sig: None)
+  monkeypatch.setattr(redis_mod, "_process_is_zombie", lambda pid: pid == zombie_pid)
+  released = redis_mod._check_populate_wait_limits(
+      _redis_test_env,
+      keys,
+      started_monotonic=time.monotonic() - 10,
+      last_progress_monotonic=time.monotonic() - 10,
+  )
+  assert released is True
+  assert _redis_test_env.exists(keys.lock_key) == 0
+  assert _redis_test_env.get(keys.progress_key) is None
 
 
 def test_stream_logs_generic_failure(tmp_path, capsys, monkeypatch):

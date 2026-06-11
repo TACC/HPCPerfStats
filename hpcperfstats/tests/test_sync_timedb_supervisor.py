@@ -1934,7 +1934,7 @@ def test_chunk_prewarm_populates_redis_before_imap(monkeypatch, tmp_path):
   calls = []
   monkeypatch.setattr(st, "archive_members_redis_enabled", lambda: True)
   monkeypatch.setattr(st, "tgz_archive_dir", str(tgz_dir))
-  monkeypatch.setattr(st, "redis_lookup_full_members", lambda keys: None)
+  monkeypatch.setattr(st, "redis_members_cache_is_fully_warm", lambda keys: False)
   monkeypatch.setattr(
       st,
       "get_existing_archive_members_for_daily_archive",
@@ -1942,6 +1942,70 @@ def test_chunk_prewarm_populates_redis_before_imap(monkeypatch, tmp_path):
   )
   st._prewarm_archive_members_redis_for_chunk(paths)
   assert len(calls) == 1
+
+
+def test_prewarm_runs_when_redis_complete_with_empty_hash(monkeypatch, tmp_path, capsys):
+  tgz_dir = tmp_path / "daily"
+  tgz_dir.mkdir()
+  sealed = tgz_dir / "2026-05-20.tar.zst"
+  sealed.write_bytes(b"zst")
+  paths = ["/archive/host.hpc/1779274402"]
+  calls = []
+  monkeypatch.setattr(st, "archive_members_redis_enabled", lambda: True)
+  monkeypatch.setattr(st, "tgz_archive_dir", str(tgz_dir))
+  monkeypatch.setattr(st, "redis_members_cache_is_fully_warm", lambda keys: False)
+  monkeypatch.setattr(
+      st,
+      "get_existing_archive_members_for_daily_archive",
+      lambda canonical: calls.append(canonical) or {"host/a": 1},
+  )
+  st._prewarm_archive_members_redis_for_chunk(paths)
+  assert len(calls) == 1
+  assert "Prewarming archive members Redis" in capsys.readouterr().out
+
+
+def test_prewarm_skips_when_redis_fully_warm(monkeypatch, tmp_path, capsys):
+  tgz_dir = tmp_path / "daily"
+  tgz_dir.mkdir()
+  (tgz_dir / "2026-05-20.tar.zst").write_bytes(b"zst")
+  paths = ["/archive/host.hpc/1779274402"]
+  monkeypatch.setattr(st, "archive_members_redis_enabled", lambda: True)
+  monkeypatch.setattr(st, "tgz_archive_dir", str(tgz_dir))
+  monkeypatch.setattr(st, "redis_members_cache_is_fully_warm", lambda keys: True)
+  monkeypatch.setattr(
+      st,
+      "get_existing_archive_members_for_daily_archive",
+      lambda canonical: (_ for _ in ()).throw(AssertionError("should not populate")),
+  )
+  st._prewarm_archive_members_redis_for_chunk(paths)
+  assert "reason=redis_warm" in capsys.readouterr().out
+
+
+def test_invalidation_hook_can_trigger_reprewarm(monkeypatch, tmp_path):
+  prewarm_days = []
+  monkeypatch.setattr(
+      st,
+      "_prewarm_archive_members_redis_for_day_token",
+      lambda day_token: prewarm_days.append(day_token),
+  )
+
+  def _hook(_canonical, day_token):
+    if day_token:
+      st._prewarm_archive_members_redis_for_day_token(day_token)
+
+  archive_helpers.set_archive_members_invalidation_hook(_hook)
+  try:
+    zst = tmp_path / "2026-05-20.tar.zst"
+    zst.write_bytes(b"sealed")
+    archive_helpers.invalidate_daily_archive_members_cache(str(zst))
+    assert prewarm_days == ["2026-05-20"]
+  finally:
+    archive_helpers.reset_archive_members_invalidation_hook_for_tests()
+
+
+def _reraise_pool_worker_fatal(exc, **kwargs):
+  del kwargs
+  raise exc
 
 
 def _parse_payload_quarantine_fixture(monkeypatch, tmp_path, *, lines, parse_side_effect=None):
@@ -2474,6 +2538,7 @@ def test_ingest_pool_worker_exit_propagates_from_supervisor(monkeypatch):
       "terminate_pool_bounded",
       lambda pool, **kwargs: terminate_calls.append(pool) or True,
   )
+  monkeypatch.setattr(st, "_handle_pool_worker_exit_fatal", _reraise_pool_worker_fatal)
 
   class _Pool:
     pass
@@ -2578,6 +2643,7 @@ def test_stall_teardown_preserves_exit_124_not_137(monkeypatch):
       "terminate_pool_bounded",
       lambda pool, **kwargs: True,
   )
+  monkeypatch.setattr(st, "_handle_pool_worker_exit_fatal", _reraise_pool_worker_fatal)
 
   class _Pool:
     pass
@@ -2612,6 +2678,96 @@ def test_stall_teardown_preserves_exit_124_not_137(monkeypatch):
     archive_pool.__exit__(None, None, None)
   assert excinfo.value.exit_code == 124
   assert get_watch_calls == []
+
+
+def test_supervisor_stall_hard_exits_before_archive_pool_context(monkeypatch):
+  from hpcperfstats.dbload.multiprocessing_pool_health import (
+      MultiprocessingPoolStallError,
+  )
+
+  shutdown_requested[0] = False
+  target = "/fake/stats-stall-hard-exit"
+  exit_codes = []
+
+  def fake_rescan(*_a, **_k):
+    if fake_rescan.calls == 0:
+      fake_rescan.calls += 1
+      return [target]
+    return []
+  fake_rescan.calls = 0
+
+  def stall_watch_pool(
+      pool,
+      fn,
+      iterable,
+      *,
+      context="",
+      poll_timeout_s=None,
+      on_stall_warning=None,
+      on_stall_poll=None,
+      pool_health_context=None,
+  ):
+    del pool, fn, iterable, context, poll_timeout_s, on_stall_warning, on_stall_poll, pool_health_context
+    raise MultiprocessingPoolStallError(
+        "pool imap stalled",
+        dead_pids=(),
+        context="sync_timedb ingest pool",
+        exit_code=124,
+    )
+
+  monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+  monkeypatch.setattr(st, "imap_unordered_watch_pool", stall_watch_pool)
+  monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (target, True, True, 0.0))
+  monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: False)
+  monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: False)
+  monkeypatch.setattr(st.cfg, "get_sync_db_writer_combined_task", lambda: False)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_chunk_size", lambda: 1000)
+  monkeypatch.setattr(st.cfg, "get_sync_supervisor_rss_limit_mb", lambda: 0)
+  monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+  monkeypatch.setattr(st, "build_archive_mapping", lambda *_a, **_k: {})
+  monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
+  monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+  monkeypatch.setattr(
+      st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+  monkeypatch.setattr(st, "close_old_connections", lambda: None)
+  monkeypatch.setattr(st.connections, "close_all", lambda: None)
+  monkeypatch.setattr(st, "terminate_pool_bounded", lambda pool, **kwargs: True)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.multiprocessing_pool_health.os._exit",
+      lambda code: exit_codes.append(code),
+  )
+
+  class _Pool:
+    pass
+
+  ingest_pool = _Pool()
+
+  class _SpawnCtx:
+    def Pool(self, *args, **kwargs):
+      del args, kwargs
+      return ingest_pool
+
+  monkeypatch.setattr(
+      st.multiprocessing,
+      "get_context",
+      lambda _name: _SpawnCtx(),
+  )
+
+  archive_pool = _FakeArchivePool()
+  archive_pool.__enter__()
+  try:
+    st.run_sync_timedb_supervisor_loop(
+        "/tmp/archive",
+        "all",
+        None,
+        ".hpc",
+        object(),
+        archive_pool,
+        run_once=True,
+    )
+  finally:
+    archive_pool.__exit__(None, None, None)
+  assert exit_codes == [124]
 
 
 def test_stall_teardown_uses_nonblocking_preflight_shutdown(monkeypatch):
@@ -2710,6 +2866,7 @@ def test_stall_teardown_uses_nonblocking_preflight_shutdown(monkeypatch):
   monkeypatch.setattr(st, "close_old_connections", lambda: None)
   monkeypatch.setattr(st.connections, "close_all", lambda: None)
   monkeypatch.setattr(st, "terminate_pool_bounded", lambda pool, **kwargs: True)
+  monkeypatch.setattr(st, "_handle_pool_worker_exit_fatal", _reraise_pool_worker_fatal)
 
   class _Pool:
     pass

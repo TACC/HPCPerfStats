@@ -294,6 +294,19 @@ def _parse_populate_lock_owner_pid(lock_value) -> Optional[int]:
     return None
 
 
+def _process_is_zombie(pid: int) -> bool:
+  """Return True when ``pid`` exists as a zombie (state Z in ``/proc``)."""
+  try:
+    with open("/proc/%d/stat" % int(pid), "r", encoding="ascii") as proc_stat:
+      stat_line = proc_stat.read()
+  except OSError:
+    return False
+  rparen = stat_line.rfind(")")
+  if rparen < 0 or rparen + 2 >= len(stat_line):
+    return False
+  return stat_line[rparen + 2] == "Z"
+
+
 def _process_is_alive(pid: int) -> bool:
   try:
     os.kill(pid, 0)
@@ -302,6 +315,8 @@ def _process_is_alive(pid: int) -> bool:
   except PermissionError:
     return True
   except OSError:
+    return False
+  if _process_is_zombie(pid):
     return False
   return True
 
@@ -436,6 +451,25 @@ def redis_lookup_full_members(keys: ArchiveMembersRedisKeys) -> Optional[dict]:
     return None
   client = get_archive_members_redis_client(required=True)
   return _hgetall_members(client, keys)
+
+
+def redis_members_cache_is_fully_warm(
+    keys: ArchiveMembersRedisKeys,
+    *,
+    client=None,
+) -> bool:
+  """True only when Redis reports ``complete=1`` with a non-empty member HASH.
+
+  ``complete=1`` with an empty HASH is treated as **not warm** so supervisor
+  prewarm re-populates stale or partial cache entries before ingest workers run.
+  """
+  if not archive_members_redis_enabled():
+    return False
+  if client is None:
+    client = get_archive_members_redis_client(required=True)
+  if client.get(keys.complete_key) != "1":
+    return False
+  return _hash_member_count(client, keys) > 0
 
 
 def _release_populate_lock(client, keys: ArchiveMembersRedisKeys, lock_value: str):
@@ -763,13 +797,58 @@ def wait_for_complete_members(
     time.sleep(_wait_poll_seconds())
 
 
+def describe_archive_members_populate_redis_for_day(
+    day_token: str,
+    tgz_archive_dir: str,
+) -> str:
+  """One-line Redis populate snapshot for operator stall diagnostics."""
+  if not archive_members_redis_enabled() or not day_token or not tgz_archive_dir:
+    return "redis_populate=disabled"
+  try:
+    day_date = date_cls.fromisoformat(day_token)
+  except ValueError:
+    return "redis_populate=invalid_day"
+  from hpcperfstats.dbload.archive_compress import daily_compressed_path_for_date
+  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+      _daily_archive_members_cache_key,
+      normalize_daily_compressed_path,
+  )
+
+  compressed = daily_compressed_path_for_date(tgz_archive_dir, day_date)
+  canonical = normalize_daily_compressed_path(compressed)
+  cache_key = _daily_archive_members_cache_key(canonical)
+  keys = build_archive_members_redis_keys(cache_key)
+  client = get_archive_members_redis_client(required=False)
+  if client is None:
+    return "redis_populate=unavailable"
+  complete = client.get(keys.complete_key)
+  lock = bool(client.exists(keys.lock_key))
+  hlen = _hash_member_count(client, keys)
+  degraded = populate_degraded_is_set(keys, client=client)
+  day_skip = get_archive_day_ingest_skip(keys, client=client) is not None
+  return (
+      "redis_populate lock=%d complete=%s hlen=%d degraded=%d day_skip=%d"
+      % (
+          int(lock),
+          complete if complete is not None else "-",
+          hlen,
+          int(degraded),
+          int(day_skip),
+      )
+  )
+
+
 def archive_members_populate_shows_progress_for_day(
     day_token: str,
     tgz_archive_dir: str,
     *,
     progress_state=None,
 ) -> bool:
-  """True when Redis shows an active populate for ``day_token`` with recent progress."""
+  """True when Redis shows an active populate for ``day_token``.
+
+  Defers supervisor imap stall abort while a populate lock is held and
+  ``complete != 1``, even when progress timestamps are briefly stale.
+  """
   if not archive_members_redis_enabled() or not day_token or not tgz_archive_dir:
     return False
   try:
@@ -791,8 +870,8 @@ def archive_members_populate_shows_progress_for_day(
     return False
   if client.get(keys.complete_key) == "1":
     return False
-  if not client.exists(keys.lock_key):
-    return False
+  if client.exists(keys.lock_key):
+    return True
   progress_ts = _read_populate_progress_ts(client, keys)
   hlen = _hash_member_count(client, keys)
   now = time.time()

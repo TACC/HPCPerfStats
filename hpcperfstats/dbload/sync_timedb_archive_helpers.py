@@ -1681,11 +1681,40 @@ def clear_daily_archive_members_cache():
   _LOGGED_ARCHIVE_DAY_INGEST_SKIP.clear()
 
 
+_ARCHIVE_MEMBERS_INVALIDATION_HOOK = None
+
+
+def set_archive_members_invalidation_hook(hook):
+  """Register supervisor callback after L1/Redis member cache invalidation."""
+  global _ARCHIVE_MEMBERS_INVALIDATION_HOOK
+  _ARCHIVE_MEMBERS_INVALIDATION_HOOK = hook
+
+
+def reset_archive_members_invalidation_hook_for_tests():
+  """Clear invalidation hook (unit tests)."""
+  global _ARCHIVE_MEMBERS_INVALIDATION_HOOK
+  _ARCHIVE_MEMBERS_INVALIDATION_HOOK = None
+
+
+def _notify_archive_members_invalidation(canonical, day_token=None):
+  hook = _ARCHIVE_MEMBERS_INVALIDATION_HOOK
+  if hook is None:
+    return
+  try:
+    hook(canonical, day_token)
+  except Exception:
+    pass
+
+
 def invalidate_daily_archive_members_cache(compressed_path):
   """Drop cached member maps for a daily archive (append, seal, identity change)."""
   if not compressed_path:
     return
   canonical = normalize_daily_compressed_path(compressed_path)
+  day_date = calendar_date_from_daily_tar_path(
+      daily_tar_path_from_compressed(canonical),
+  )
+  day_token = day_date.isoformat() if day_date is not None else None
   drop_keys = [
       key for key in _DAILY_ARCHIVE_MEMBERS_CACHE if key[0] == canonical
   ]
@@ -1704,6 +1733,7 @@ def invalidate_daily_archive_members_cache(compressed_path):
         invalidate_archive_members_redis(_daily_archive_members_cache_key(canonical))
   except Exception:
     pass
+  _notify_archive_members_invalidation(canonical, day_token)
 
 
 def _daily_archive_members_cache_enabled():
