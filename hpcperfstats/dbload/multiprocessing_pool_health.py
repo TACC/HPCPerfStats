@@ -354,6 +354,7 @@ def imap_unordered_watch_pool(
     poll_timeout_s=None,
     context="",
     on_stall_warning=None,
+    on_stall_poll=None,
     pool_health_context=None,
 ):
   """Like ``pool.imap_unordered`` but abort when a worker dies (OOM-safe)."""
@@ -404,7 +405,21 @@ def imap_unordered_watch_pool(
     except StopIteration:
       break
     except multiprocessing.TimeoutError:
-      consecutive_timeouts += 1
+      deferred = False
+      if on_stall_poll is not None:
+        ctx = dict(health_ctx)
+        if ctx.get("in_flight_sample") is None:
+          sample_fn = ctx.get("in_flight_sample_fn")
+          if callable(sample_fn):
+            ctx["in_flight_sample"] = sample_fn()
+        try:
+          deferred = bool(on_stall_poll(consecutive_timeouts, context, ctx))
+        except Exception:
+          deferred = False
+      if deferred:
+        consecutive_timeouts = 0
+      else:
+        consecutive_timeouts += 1
       for threshold in warn_thresholds:
         if (
             consecutive_timeouts >= threshold

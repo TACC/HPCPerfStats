@@ -614,6 +614,47 @@ def test_populate_lock_renewed_on_flush(_redis_test_env, tmp_path):
   assert lock_expires
 
 
+def test_wait_for_member_match_respects_ingest_deadline(_redis_test_env, tmp_path):
+  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+      IngestArchiveLookupBudgetExceededError,
+      reset_ingest_task_deadline_monotonic,
+      set_ingest_task_deadline_monotonic,
+  )
+
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  _redis_test_env.set(keys.lock_key, "tok:999999997", ex=30)
+  _redis_test_env.set(keys.complete_key, "0")
+  token = set_ingest_task_deadline_monotonic(time.monotonic() - 1.0)
+  try:
+    with pytest.raises(IngestArchiveLookupBudgetExceededError):
+      wait_for_member_match(keys, "missing/member", 99)
+  finally:
+    reset_ingest_task_deadline_monotonic(token)
+
+
+def test_archive_members_populate_shows_progress_for_day(_redis_test_env, tmp_path):
+  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+      archive_members_populate_shows_progress_for_day,
+  )
+
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  _redis_test_env.set(keys.lock_key, "tok:1", ex=30)
+  _redis_test_env.set(keys.complete_key, "0")
+  _redis_test_env.set(keys.progress_key, str(time.time()))
+  state = {}
+  assert archive_members_populate_shows_progress_for_day(
+      "2026-05-09",
+      str(tmp_path),
+      progress_state=state,
+  ) is True
+  _redis_test_env.set(keys.complete_key, "1")
+  assert archive_members_populate_shows_progress_for_day(
+      "2026-05-09",
+      str(tmp_path),
+      progress_state=state,
+  ) is False
+
+
 def test_stream_logs_generic_failure(tmp_path, capsys, monkeypatch):
   from contextlib import contextmanager
 

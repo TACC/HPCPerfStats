@@ -1922,6 +1922,28 @@ def test_exit_handler_distinguishes_stall_from_connection(monkeypatch, capsys):
   assert "requires a reachable Redis" not in stall_out
 
 
+def test_chunk_prewarm_populates_redis_before_imap(monkeypatch, tmp_path):
+  tgz_dir = tmp_path / "daily"
+  tgz_dir.mkdir()
+  sealed = tgz_dir / "2026-05-20.tar.zst"
+  sealed.write_bytes(b"zst")
+  paths = [
+      "/archive/host.hpc/1779274402",
+      "/archive/host.hpc/1779274235",
+  ]
+  calls = []
+  monkeypatch.setattr(st, "archive_members_redis_enabled", lambda: True)
+  monkeypatch.setattr(st, "tgz_archive_dir", str(tgz_dir))
+  monkeypatch.setattr(st, "redis_lookup_full_members", lambda keys: None)
+  monkeypatch.setattr(
+      st,
+      "get_existing_archive_members_for_daily_archive",
+      lambda canonical: calls.append(canonical) or {"m": 1},
+  )
+  st._prewarm_archive_members_redis_for_chunk(paths)
+  assert len(calls) == 1
+
+
 def _parse_payload_quarantine_fixture(monkeypatch, tmp_path, *, lines, parse_side_effect=None):
   archive_dir = tmp_path / "archive"
   host_dir = archive_dir / "host.hpc"
@@ -2420,9 +2442,10 @@ def test_ingest_pool_worker_exit_propagates_from_supervisor(monkeypatch):
       context="",
       poll_timeout_s=None,
       on_stall_warning=None,
+      on_stall_poll=None,
       pool_health_context=None,
   ):
-    del pool, fn, iterable, context, poll_timeout_s, on_stall_warning, pool_health_context
+    del pool, fn, iterable, context, poll_timeout_s, on_stall_warning, on_stall_poll, pool_health_context
     raise MultiprocessingWorkerExitError(
         "worker dead",
         dead_pids=(999,),
@@ -2512,9 +2535,10 @@ def test_stall_teardown_preserves_exit_124_not_137(monkeypatch):
       context="",
       poll_timeout_s=None,
       on_stall_warning=None,
+      on_stall_poll=None,
       pool_health_context=None,
   ):
-    del pool, fn, iterable, context, poll_timeout_s, on_stall_warning, pool_health_context
+    del pool, fn, iterable, context, poll_timeout_s, on_stall_warning, on_stall_poll, pool_health_context
     raise MultiprocessingPoolStallError(
         "pool imap stalled",
         dead_pids=(),
@@ -2662,9 +2686,10 @@ def test_stall_teardown_uses_nonblocking_preflight_shutdown(monkeypatch):
       context="",
       poll_timeout_s=None,
       on_stall_warning=None,
+      on_stall_poll=None,
       pool_health_context=None,
   ):
-    del pool, fn, iterable, context, poll_timeout_s, on_stall_warning, pool_health_context
+    del pool, fn, iterable, context, poll_timeout_s, on_stall_warning, on_stall_poll, pool_health_context
     raise MultiprocessingPoolStallError(
         "pool imap stalled",
         dead_pids=(),
@@ -2807,9 +2832,10 @@ def test_combined_db_writer_task_uses_single_pool_path(monkeypatch):
       context="",
       poll_timeout_s=None,
       on_stall_warning=None,
+      on_stall_poll=None,
       pool_health_context=None,
   ):
-    del pool, poll_timeout_s, on_stall_warning, pool_health_context
+    del pool, poll_timeout_s, on_stall_warning, on_stall_poll, pool_health_context
     paths = list(iterable)
     watch_calls.append((fn, context, paths))
     return (fn(path) for path in paths)

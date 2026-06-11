@@ -101,6 +101,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     daily_tar_paths_from_pending_archive_tasks,
     filter_files_to_add_to_archive,
     get_existing_archive_members,
+    get_existing_archive_members_for_daily_archive,
     invalidate_daily_archive_members_cache,
     iter_daily_tar_paths,
     replace_corrupt_tar_from_compressed_backup,
@@ -113,6 +114,8 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     stats_file_is_active_segment,
     stats_path_ingest_sort_epoch,
     verify_tar_archive_readable,
+    _derive_stats_path_date,
+    normalize_daily_compressed_path,
 )
 from hpcperfstats.dbload.sync_timedb_async_day_close import AsyncDayCloseCoordinator
 from hpcperfstats.file_locking import file_write_lock
@@ -136,6 +139,13 @@ from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
     ArchiveMembersPopulateStalledError,
     ArchiveMembersRedisConnectionError,
     ArchiveMembersRedisUnavailableError,
+    IngestArchiveLookupBudgetExceededError,
+    archive_members_populate_shows_progress_for_day,
+    archive_members_redis_enabled,
+    build_archive_members_redis_keys,
+    redis_lookup_full_members,
+    reset_ingest_task_deadline_monotonic,
+    set_ingest_task_deadline_monotonic,
 )
 
 # Supervisor tests monkeypatch these names; cold-path maintenance lives in ArchiveJanitor.
@@ -255,32 +265,41 @@ def _resolve_sync_ingest_per_file_timeout_s():
 def _run_ingest_timed(stats_file, stage, fn):
   """Run ingest worker body with optional Unix wall-clock cap."""
   timeout_s = _resolve_sync_ingest_per_file_timeout_s()
-  if timeout_s <= 0.0:
-    return fn()
-  if not hasattr(signal, "SIGALRM"):
-    return fn()
-
-  path_label = str(stats_file)
-  t0 = time.monotonic()
-
-  def _handler(signum, frame):
-    del signum, frame
-    raise IngestPerFileTimeoutError(path_label, stage, time.monotonic() - t0)
-
-  previous = signal.getsignal(signal.SIGALRM)
-  signal.signal(signal.SIGALRM, _handler)
+  deadline_token = None
+  if timeout_s > 0.0:
+    deadline_token = set_ingest_task_deadline_monotonic(
+        time.monotonic() + timeout_s,
+    )
   try:
-    if hasattr(signal, "setitimer"):
-      signal.setitimer(signal.ITIMER_REAL, timeout_s)
-    else:
-      signal.alarm(max(1, int(timeout_s)))
-    return fn()
+    if timeout_s <= 0.0:
+      return fn()
+    if not hasattr(signal, "SIGALRM"):
+      return fn()
+
+    path_label = str(stats_file)
+    t0 = time.monotonic()
+
+    def _handler(signum, frame):
+      del signum, frame
+      raise IngestPerFileTimeoutError(path_label, stage, time.monotonic() - t0)
+
+    previous = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, _handler)
+    try:
+      if hasattr(signal, "setitimer"):
+        signal.setitimer(signal.ITIMER_REAL, timeout_s)
+      else:
+        signal.alarm(max(1, int(timeout_s)))
+      return fn()
+    finally:
+      if hasattr(signal, "setitimer"):
+        signal.setitimer(signal.ITIMER_REAL, 0)
+      else:
+        signal.alarm(0)
+      signal.signal(signal.SIGALRM, previous)
   finally:
-    if hasattr(signal, "setitimer"):
-      signal.setitimer(signal.ITIMER_REAL, 0)
-    else:
-      signal.alarm(0)
-    signal.signal(signal.SIGALRM, previous)
+    if deadline_token is not None:
+      reset_ingest_task_deadline_monotonic(deadline_token)
 
 
 def _log_ingest_per_file_timeout(exc):
@@ -289,6 +308,61 @@ def _log_ingest_per_file_timeout(exc):
       % (exc.path, exc.elapsed_s, exc.stage),
       flush=True,
   )
+
+
+def _log_ingest_archive_lookup_budget_exceeded(exc):
+  log_print(
+      "ERROR: ingest archive lookup budget exceeded: %s"
+      % exc,
+      flush=True,
+  )
+
+
+def _unique_daily_compressed_archives_for_paths(paths, tgz_archive_dir):
+  """Map canonical daily ``.tar.zst`` paths to ISO day tokens for chunk paths."""
+  unique = {}
+  for path in paths or ():
+    file_date = _derive_stats_path_date(path)
+    if file_date is None:
+      continue
+    compressed = daily_compressed_path_for_date(tgz_archive_dir, file_date)
+    unique[compressed] = file_date.isoformat()
+  return unique
+
+
+def _prewarm_archive_members_redis_for_chunk(paths):
+  """Single-flight populate on supervisor before imap when Redis L2 is cold."""
+  if not archive_members_redis_enabled():
+    return
+  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+      _daily_archive_members_cache_key,
+      _resolve_sealed_daily_archive_path,
+  )
+  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+      ArchiveDayIngestSkipError,
+  )
+
+  for compressed, day_token in _unique_daily_compressed_archives_for_paths(
+      paths, tgz_archive_dir,
+  ).items():
+    canonical = normalize_daily_compressed_path(compressed)
+    cache_key = _daily_archive_members_cache_key(canonical)
+    keys = build_archive_members_redis_keys(cache_key)
+    if redis_lookup_full_members(keys) is not None:
+      continue
+    sealed_path = _resolve_sealed_daily_archive_path(canonical)
+    tar_path = daily_tar_path_from_compressed(canonical)
+    if sealed_path is None and not os.path.isfile(tar_path):
+      continue
+    log_print(
+        "Prewarming archive members Redis for day=%s sealed=%s"
+        % (day_token, sealed_path or tar_path),
+        flush=True,
+    )
+    try:
+      get_existing_archive_members_for_daily_archive(canonical)
+    except ArchiveDayIngestSkipError:
+      pass
 
 
 def _calendar_day_hint_from_paths(paths):
@@ -352,6 +426,35 @@ def _make_ingest_stall_warning_fn(
   return on_stall_warning
 
 
+def _make_ingest_stall_poll_fn(tracker, progress_state):
+  """Defer pool imap stall abort while Redis populate shows progress."""
+
+  def on_stall_poll(consecutive, context, pool_health_context):
+    del consecutive, context
+    sample = []
+    if tracker is not None:
+      sample = tracker.sample_in_flight()
+    elif pool_health_context.get("in_flight_sample"):
+      sample = pool_health_context["in_flight_sample"]
+    day_hint = _calendar_day_hint_from_paths(sample)
+    if not day_hint:
+      return False
+    if archive_members_populate_shows_progress_for_day(
+        day_hint,
+        tgz_archive_dir,
+        progress_state=progress_state,
+    ):
+      log_print(
+          "WARN: pool imap stall deferred: Redis populate active for day=%s"
+          % day_hint,
+          flush=True,
+      )
+      return True
+    return False
+
+  return on_stall_poll
+
+
 def _imap_ingest_pool(
     pool,
     fn,
@@ -365,9 +468,12 @@ def _imap_ingest_pool(
     ingest_pool=None,
     db_writer_pool=None,
     archive_pool=None,
+    stall_poll_state=None,
 ):
   if pool is None:
     return iter(())
+  if stall_poll_state is None:
+    stall_poll_state = {}
   pool_health_context = {
       "ingest_pool": ingest_pool if ingest_pool is not None else pool,
       "db_writer_pool": db_writer_pool,
@@ -388,6 +494,7 @@ def _imap_ingest_pool(
           chunk_counter=chunk_counter,
           pending_count=pending_count,
       ),
+      on_stall_poll=_make_ingest_stall_poll_fn(tracker, stall_poll_state),
       pool_health_context=pool_health_context,
   )
 
@@ -415,6 +522,7 @@ def _imap_ingest_paths_batched(
 ):
   """Cap concurrent imap tasks below full chunk size for RSS safety."""
   inflight_cap = _effective_ingest_imap_inflight_cap(thread_count, len(paths))
+  stall_poll_state = {}
   for offset in range(0, len(paths), inflight_cap):
     subpaths = paths[offset:offset + inflight_cap]
     for item in _imap_ingest_pool(
@@ -429,6 +537,7 @@ def _imap_ingest_paths_batched(
         ingest_pool=ingest_pool,
         db_writer_pool=db_writer_pool,
         archive_pool=archive_pool,
+        stall_poll_state=stall_poll_state,
     ):
       yield item
 
@@ -1091,6 +1200,9 @@ def _parse_stats_file_payload(stats_file, stats_file_contents=None):
   except IngestPerFileTimeoutError as exc:
     _log_ingest_per_file_timeout(exc)
     return (stats_file, None, False, False, exc.elapsed_s)
+  except IngestArchiveLookupBudgetExceededError as exc:
+    _log_ingest_archive_lookup_budget_exceeded(exc)
+    return (stats_file, None, False, False, 0.0)
 
 
 def _duplicate_window_start_index(
@@ -2865,6 +2977,8 @@ def run_sync_timedb_supervisor_loop(
         files_to_be_archived = []
         successful_paths = []
         chunk_ingest_finished = 0
+
+        _prewarm_archive_members_redis_for_chunk(stats_files_chunk)
 
         k = 0
         active_workers = 0

@@ -1,12 +1,14 @@
 """Redis L2 for daily archive member maps (single-flight populate, incremental HASH)."""
 from __future__ import annotations
 
+import contextvars
 import os
 import secrets
 import threading
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import date as date_cls
 from typing import Callable, Dict, Optional
 
 from hpcperfstats import conf_parser as cfg
@@ -35,6 +37,38 @@ class ArchiveMembersRedisConnectionError(ArchiveMembersRedisUnavailableError):
 
 class ArchiveMembersPopulateStalledError(ArchiveMembersRedisUnavailableError):
   """Raised when populate lock is held but shows no progress within stall limits."""
+
+
+class IngestArchiveLookupBudgetExceededError(TimeoutError):
+  """Raised when Redis archive duplicate-check exceeds ingest per-file budget."""
+
+
+_ingest_task_deadline_monotonic = contextvars.ContextVar(
+    "ingest_task_deadline_monotonic",
+    default=None,
+)
+
+
+def set_ingest_task_deadline_monotonic(deadline):
+  """Set monotonic deadline for ingest worker archive lookups (ContextVar)."""
+  return _ingest_task_deadline_monotonic.set(deadline)
+
+
+def reset_ingest_task_deadline_monotonic(token):
+  _ingest_task_deadline_monotonic.reset(token)
+
+
+def get_ingest_task_deadline_monotonic():
+  return _ingest_task_deadline_monotonic.get()
+
+
+def _raise_if_ingest_deadline_exceeded():
+  deadline = get_ingest_task_deadline_monotonic()
+  if deadline is not None and time.monotonic() >= float(deadline):
+    raise IngestArchiveLookupBudgetExceededError(
+        "ingest archive lookup budget exceeded (deadline_monotonic=%s)"
+        % deadline,
+    )
 
 
 class ArchiveDayIngestSkipError(RuntimeError):
@@ -484,6 +518,7 @@ def _check_populate_wait_limits(
     sealed_path="",
 ) -> bool:
   """Return True when a stale populate lock was released for retry."""
+  _raise_if_ingest_deadline_exceeded()
   _raise_if_archive_day_ingest_skip(keys, sealed_path, client)
   max_seconds = _populate_max_seconds()
   if max_seconds > 0 and (time.monotonic() - started_monotonic) >= max_seconds:
@@ -562,6 +597,7 @@ def populate_archive_members_redis(
 
     def _on_member(name: str, size: int):
       nonlocal saw_duplicates, last_heartbeat_monotonic
+      _raise_if_ingest_deadline_exceeded()
       last_heartbeat_monotonic = _maybe_populate_heartbeat(
           client, keys, last_heartbeat_monotonic,
       )
@@ -642,6 +678,7 @@ def wait_for_member_match(
   last_progress_monotonic = started
 
   while True:
+    _raise_if_ingest_deadline_exceeded()
     _raise_if_archive_day_ingest_skip(keys, sealed_path, client)
     complete = client.get(keys.complete_key)
     raw_size = client.hget(keys.hash_key, member_name)
@@ -696,6 +733,7 @@ def wait_for_complete_members(
   last_progress_monotonic = started
 
   while True:
+    _raise_if_ingest_deadline_exceeded()
     _raise_if_archive_day_ingest_skip(keys, sealed_path, client)
     members = _hgetall_members(client, keys)
     if members is not None:
@@ -723,6 +761,54 @@ def wait_for_complete_members(
       last_hlen = _hash_member_count(client, keys)
 
     time.sleep(_wait_poll_seconds())
+
+
+def archive_members_populate_shows_progress_for_day(
+    day_token: str,
+    tgz_archive_dir: str,
+    *,
+    progress_state=None,
+) -> bool:
+  """True when Redis shows an active populate for ``day_token`` with recent progress."""
+  if not archive_members_redis_enabled() or not day_token or not tgz_archive_dir:
+    return False
+  try:
+    day_date = date_cls.fromisoformat(day_token)
+  except ValueError:
+    return False
+  from hpcperfstats.dbload.archive_compress import daily_compressed_path_for_date
+  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+      _daily_archive_members_cache_key,
+      normalize_daily_compressed_path,
+  )
+
+  compressed = daily_compressed_path_for_date(tgz_archive_dir, day_date)
+  canonical = normalize_daily_compressed_path(compressed)
+  cache_key = _daily_archive_members_cache_key(canonical)
+  keys = build_archive_members_redis_keys(cache_key)
+  client = get_archive_members_redis_client(required=False)
+  if client is None:
+    return False
+  if client.get(keys.complete_key) == "1":
+    return False
+  if not client.exists(keys.lock_key):
+    return False
+  progress_ts = _read_populate_progress_ts(client, keys)
+  hlen = _hash_member_count(client, keys)
+  now = time.time()
+  if progress_ts is not None and (now - progress_ts) < float(_populate_stall_seconds()):
+    return True
+  if progress_state is not None:
+    prev = progress_state.get(day_token)
+    if prev is not None:
+      if hlen > prev.get("hlen", -1):
+        progress_state[day_token] = {"hlen": hlen, "progress_ts": progress_ts}
+        return True
+      if progress_ts is not None and progress_ts != prev.get("progress_ts"):
+        progress_state[day_token] = {"hlen": hlen, "progress_ts": progress_ts}
+        return True
+    progress_state[day_token] = {"hlen": hlen, "progress_ts": progress_ts}
+  return False
 
 
 def store_complete_members_in_redis(

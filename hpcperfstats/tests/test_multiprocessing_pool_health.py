@@ -233,6 +233,47 @@ def test_imap_stall_warning_callback(monkeypatch):
   assert warnings[-1][0] == 4
 
 
+class _DeferStallPool:
+  """Pool whose imap iterator times out until ``release_after`` poll attempts."""
+
+  def __init__(self, release_after=5):
+    self.release_after = release_after
+
+  def imap_unordered(self, fn, iterable, chunksize=1):
+    del fn, chunksize
+    items = iter(iterable)
+    release_after = self.release_after
+
+    class _Iterator:
+      def __init__(self):
+        self._timeouts = 0
+
+      def next(self, timeout=None):
+        del timeout
+        self._timeouts += 1
+        if self._timeouts >= release_after:
+          return next(items)
+        raise multiprocessing.TimeoutError
+
+    return _Iterator()
+
+
+def test_imap_stall_counter_resets_during_redis_populate_progress(monkeypatch):
+  monkeypatch.setattr(
+      "hpcperfstats.conf_parser.get_sync_pool_stall_abort_after_timeouts",
+      lambda: 2,
+  )
+  pool = _DeferStallPool(release_after=5)
+  iterator = mph.imap_unordered_watch_pool(
+      pool,
+      lambda x: x,
+      [42],
+      poll_timeout_s=0.01,
+      on_stall_poll=lambda *_a, **_k: True,
+  )
+  assert next(iterator) == 42
+
+
 def test_close_pool_bounded_closes_alive_workers():
   pool = _CloseablePool([_AliveWorker()])
   assert mph.close_pool_bounded(pool, timeout_s=0.1) is True
