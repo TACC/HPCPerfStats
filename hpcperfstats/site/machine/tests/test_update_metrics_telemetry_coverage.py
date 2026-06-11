@@ -1,6 +1,7 @@
 """Regression tests for window-coverage metrics readiness (dual-edge margins)."""
 
 import os
+import threading
 from datetime import datetime, timedelta, timezone as dt_timezone
 from types import SimpleNamespace
 
@@ -164,6 +165,11 @@ def test_filter_jids_with_samples_after_end_uses_window_coverage(monkeypatch):
       um,
       "_in_window_min_max_by_job_rows",
       lambda jobs: {"739342": (first, last)},
+  )
+  monkeypatch.setattr(
+      um,
+      "persist_window_coverage_gate_failure",
+      lambda *args, **kwargs: False,
   )
   assert um._filter_jids_with_samples_after_end(["739342"]) == []
 
@@ -374,3 +380,146 @@ def test_compute_metrics_uses_passed_bounds_without_second_host_aggregate(monkey
   assert aggregate_calls[0] == 0
   assert payload["telemetry_first_time"] == t_first
   assert payload["telemetry_last_time"] == t_last
+
+
+@pytest.mark.machine_unit_mock
+def test_persist_window_coverage_gate_failure_writes_insufficient_catalog(monkeypatch):
+  from hpcperfstats.analysis.metrics.metrics import (
+      INSUFFICIENT_DATA_FOR_METRICS_PROCESSING,
+      persist_window_coverage_gate_failure,
+  )
+
+  deleted = []
+  persisted = {}
+
+  class _MdQs:
+    def filter(self, **kwargs):
+      return self
+
+    def delete(self):
+      deleted.append(True)
+      return (0, {})
+
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.metrics.metrics._gate_failure_catalog_already_clean",
+      lambda _jid: False,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.metrics.metrics.metrics_data.objects",
+      SimpleNamespace(filter=lambda **kw: _MdQs()),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.metrics.metrics.job_data.objects",
+      SimpleNamespace(filter=lambda **kw: SimpleNamespace(first=lambda: None)),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.site.machine.cache_utils.invalidate_job_plot_cache_keys_for_jids",
+      lambda jids: None,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.site.machine.cache_utils.invalidate_jid_derived_cache_keys",
+      lambda jids: None,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.site.machine.job_plot_artifacts.get_live_distinct_time_count_for_jid",
+      lambda _jid: 7,
+  )
+
+  def _capture_batch(rows, distinct_n, **kwargs):
+    persisted["rows"] = list(rows)
+    persisted["distinct_n"] = distinct_n
+    persisted["kwargs"] = kwargs
+
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.metrics.metrics._persist_metrics_batch",
+      _capture_batch,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.metrics.metrics.job_metrics_catalog_entries",
+      lambda: [{"type": "cpu", "metric": "avg_cpuusage", "units": "#cores"}],
+  )
+
+  assert persist_window_coverage_gate_failure("gate_j1") is True
+  assert deleted
+  assert len(persisted["rows"]) == 1
+  assert persisted["rows"][0]["no_data_reason"] == INSUFFICIENT_DATA_FOR_METRICS_PROCESSING
+  assert persisted["rows"][0]["value"] is None
+  assert persisted["distinct_n"] == 7
+
+
+@pytest.mark.machine_unit_mock
+def test_persist_window_coverage_gate_failure_idempotent_skip(monkeypatch):
+  from hpcperfstats.analysis.metrics.metrics import persist_window_coverage_gate_failure
+
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.metrics.metrics._gate_failure_catalog_already_clean",
+      lambda _jid: True,
+  )
+  called = {"delete": False}
+
+  class _MdQs:
+    def filter(self, **kwargs):
+      return self
+
+    def delete(self):
+      called["delete"] = True
+      return (0, {})
+
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.metrics.metrics.metrics_data.objects",
+      SimpleNamespace(filter=lambda **kw: _MdQs()),
+  )
+  assert persist_window_coverage_gate_failure("gate_j2") is False
+  assert called["delete"] is False
+
+
+@pytest.mark.machine_unit_mock
+def test_maybe_persist_window_coverage_gate_failure_on_start_edge(monkeypatch):
+  _patch_coverage_on(monkeypatch)
+  calls = []
+  monkeypatch.setattr(
+      um,
+      "persist_window_coverage_gate_failure",
+      lambda jid, **kw: calls.append((jid, kw)) or True,
+  )
+  start = datetime(2025, 1, 1, 10, 0, 0, tzinfo=dt_timezone.utc)
+  end = datetime(2025, 1, 1, 12, 0, 0, tzinfo=dt_timezone.utc)
+  first = start + timedelta(minutes=15)
+  last = end - timedelta(minutes=5)
+  stats = {"gate_failure_persisted_jids": 0}
+  lock = threading.Lock()
+  um._maybe_persist_window_coverage_gate_failure(
+      "gate_j3",
+      start,
+      end,
+      first,
+      last,
+      stats=stats,
+      scheduler_shared_lock=lock,
+  )
+  assert calls
+  assert calls[0][0] == "gate_j3"
+  assert stats["gate_failure_persisted_jids"] == 1
+
+
+@pytest.mark.machine_unit_mock
+def test_maybe_persist_window_coverage_gate_failure_noop_when_ready(monkeypatch):
+  _patch_coverage_on(monkeypatch)
+  calls = []
+  monkeypatch.setattr(
+      um,
+      "persist_window_coverage_gate_failure",
+      lambda jid, **kw: calls.append(jid) or True,
+  )
+  start = datetime(2025, 1, 1, 10, 0, 0, tzinfo=dt_timezone.utc)
+  end = datetime(2025, 1, 1, 12, 0, 0, tzinfo=dt_timezone.utc)
+  first = start + timedelta(minutes=5)
+  last = end - timedelta(minutes=5)
+  um._maybe_persist_window_coverage_gate_failure(
+      "gate_j4",
+      start,
+      end,
+      first,
+      last,
+  )
+  assert calls == []

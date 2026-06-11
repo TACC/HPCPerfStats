@@ -197,6 +197,8 @@ Jobs with long monitor prolog gaps (telemetry begins hours after Slurm start) st
 
 **Permanent defer / stall watchdog:** jobs whose telemetry never reaches both margins (for example multi-hour prolog gaps with default 600s margins) remain in the deferred-not-ready map with 10s retries, then quarantine intervals — they are not dropped from candidacy while still in range. Large historical backfills of such jobs increase readiness-thread DB load and can keep compute workers idle; disable the gate or reduce margins for emergency backfill, and watch scheduler stall metrics.
 
+**Gate failure stamp:** when the coverage gate fails (`start_ok=False` or `end_ok=False`), **`update_metrics`** removes persisted metrics rows and plot/detail artifacts for that job, writes the full metrics catalog with **`no_data_reason = "Insufficient Data For Metrics Processing"`**, and keeps the job in the daily candidate list (via **`gate_failure_recheck`** in **`_jobs_queryset`**) on every scheduler run until margins pass and **`Metrics.run`** succeeds. **`live_distinct_needs_refresh`** provides a secondary re-admission path when ingest adds new in-window sample times. Pre-existing jobs with numeric metrics from before this behavior need **`--rerun`** or live-distinct/fingerprint drift to enter the gate-failure path.
+
 **Performance:** readiness batches dedupe host aggregates across jobs sharing the same window; precomputed bounds are passed into **`Metrics.run`** to avoid a second in-window aggregate during persist.
 
 ## Observability

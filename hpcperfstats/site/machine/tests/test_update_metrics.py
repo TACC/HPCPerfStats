@@ -398,6 +398,21 @@ def test_jobs_queryset_annotates_artifact_only_candidate(monkeypatch):
   assert "job_detail_artifact" in sql
 
 
+@pytest.mark.django_db(databases=[])
+def test_jobs_queryset_includes_gate_failure_recheck(monkeypatch):
+  from hpcperfstats.analysis.metrics.metrics import (
+      INSUFFICIENT_DATA_FOR_METRICS_PROCESSING,
+  )
+
+  _patch_connections_vendor(monkeypatch, "postgresql")
+  update_metrics._expected_job_metrics_row_count.cache_clear()
+  d = datetime(2025, 4, 10, 15, 30, 0)
+  qs = update_metrics._jobs_queryset(d, 300, rerun=False)
+  sql = str(qs.query)
+  assert INSUFFICIENT_DATA_FOR_METRICS_PROCESSING in sql
+  assert "no_data_reason" in sql.lower()
+
+
 def test_expected_job_metrics_row_count_cached(monkeypatch):
   """_expected_job_metrics_row_count calls catalog size at most once per process."""
   calls = []

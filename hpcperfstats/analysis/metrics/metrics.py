@@ -449,6 +449,7 @@ NO_SIMPLE_SAMPLES_MSG = (
     "No host_data samples for this metric in the job window"
 )
 METRIC_NOT_COMPUTED_YET = "Metric not computed"
+INSUFFICIENT_DATA_FOR_METRICS_PROCESSING = "Insufficient Data For Metrics Processing"
 
 # Persisted with ``compute_metrics`` (ORM GPU aggregates; same definition as job_detail).
 _GPU_JOB_DETAIL_CATALOG = (
@@ -2230,6 +2231,79 @@ def build_job_metrics_display_list(job):
   # Job detail UI: show catalog metrics with values or other reasons first; missing rows last.
   out.sort(key=lambda r: r.get("no_data_reason") == METRIC_NOT_COMPUTED_YET)
   return out
+
+
+def _gate_failure_catalog_already_clean(jid):
+  """True when jid already has a full insufficient gate-failure catalog and no artifacts."""
+  expected = expected_job_metric_row_count()
+  qs = metrics_data.objects.filter(jid_id=jid)
+  if qs.count() != expected:
+    return False
+  if qs.filter(value__isnull=False).exists():
+    return False
+  if qs.exclude(no_data_reason=INSUFFICIENT_DATA_FOR_METRICS_PROCESSING).exists():
+    return False
+  from hpcperfstats.site.machine.models import job_detail_artifact, job_plot_artifact
+
+  if job_plot_artifact.objects.filter(jid_id=jid).exists():
+    return False
+  if job_detail_artifact.objects.filter(jid_id=jid).exists():
+    return False
+  return True
+
+
+def persist_window_coverage_gate_failure(
+    jid,
+    *,
+    telemetry_first_time=None,
+    telemetry_last_time=None,
+    distinct_time_count=None,
+):
+  """Remove stale metrics/plots and persist full catalog with gate-failure reason.
+
+  Returns True when a write occurred; False when idempotent skip or invalid jid.
+  """
+  jid = str(jid or "").strip()
+  if not jid:
+    return False
+  if _gate_failure_catalog_already_clean(jid):
+    return False
+
+  from hpcperfstats.site.machine.cache_utils import (
+      invalidate_jid_derived_cache_keys,
+      invalidate_job_plot_cache_keys_for_jids,
+  )
+  from hpcperfstats.site.machine.job_plot_artifacts import (
+      get_live_distinct_time_count_for_jid,
+  )
+
+  invalidate_job_plot_cache_keys_for_jids([jid])
+  invalidate_jid_derived_cache_keys([jid])
+
+  if distinct_time_count is None:
+    distinct_time_count = get_live_distinct_time_count_for_jid(jid)
+
+  metrics_data.objects.filter(jid_id=jid).delete()
+  job_obj = job_data.objects.filter(pk=jid).first()
+  job_ref = job_obj if job_obj is not None else jid
+  rows = [
+      {
+          "jid": job_ref,
+          "type": entry["type"],
+          "metric": entry["metric"],
+          "units": entry["units"],
+          "value": None,
+          "no_data_reason": INSUFFICIENT_DATA_FOR_METRICS_PROCESSING,
+      }
+      for entry in job_metrics_catalog_entries()
+  ]
+  _persist_metrics_batch(
+      rows,
+      distinct_time_count,
+      telemetry_first_time=telemetry_first_time,
+      telemetry_last_time=telemetry_last_time,
+  )
+  return True
 
 
 ###########

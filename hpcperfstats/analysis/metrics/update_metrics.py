@@ -49,7 +49,11 @@ from hpcperfstats.analysis.metrics import metrics
 from hpcperfstats.analysis.metrics.live_host_sample_count import (
     live_distinct_host_time_count_expression,
 )
-from hpcperfstats.analysis.metrics.metrics import expected_job_metric_row_count
+from hpcperfstats.analysis.metrics.metrics import (
+    INSUFFICIENT_DATA_FOR_METRICS_PROCESSING,
+    expected_job_metric_row_count,
+    persist_window_coverage_gate_failure,
+)
 from hpcperfstats.analysis.metrics.db_retry import run_with_db_retry
 from hpcperfstats.dbload.db_unavailable import (
     DatabaseUnavailableExit,
@@ -337,6 +341,7 @@ def _new_scheduler_stats():
       "proxy_checked_chunks": 0,
       "proxy_rejected_jids": 0,
       "proxy_not_ready_jids": 0,
+      "gate_failure_persisted_jids": 0,
       "strict_not_ready_jids": 0,
       "strict_ready_jids": 0,
       "strict_cooldown_skips": 0,
@@ -1134,6 +1139,13 @@ def _jobs_queryset(date, min_time, rerun):
   need_metrics = Q(md_count__lt=expected) | Q(stale_null__gt=0)
   artifact_only = Q(pk__isnull=True)
   maybe_live_distinct = Q(md_count__gte=expected) & Q(stale_null=0)
+  gate_failure_recheck = maybe_live_distinct & Exists(
+      metrics_data.objects.filter(
+          jid_id=OuterRef("jid"),
+          no_data_reason=INSUFFICIENT_DATA_FOR_METRICS_PROCESSING,
+      )
+  )
+  need_metrics |= gate_failure_recheck
   # PostgreSQL only: re-run when host_data has more per-host sample times (sum
   # of COUNT(DISTINCT time) per host) than at last metrics persist (same window
   # + FQDN host list as jid_table).
@@ -1441,6 +1453,46 @@ def _log_metrics_deferred_coverage_once(jid, reason):
   )
 
 
+def _maybe_persist_window_coverage_gate_failure(
+    jid,
+    start_time,
+    end_time,
+    min_t,
+    max_t,
+    *,
+    reason=None,
+    stats=None,
+    scheduler_shared_lock=None,
+):
+  """Persist insufficient catalog when window-coverage gate fails (start or end edge)."""
+  if not cfg.get_metrics_readiness_require_window_coverage():
+    return False
+  if start_time is None or end_time is None:
+    return False
+  if reason is None:
+    _ready, reason = evaluate_job_window_coverage_ready(
+        start_time,
+        end_time,
+        min_t,
+        max_t,
+    )
+  else:
+    _ready = bool(reason.get("start_ok")) and bool(reason.get("end_ok"))
+  if _ready:
+    return False
+  if reason.get("start_ok") and reason.get("end_ok"):
+    return False
+  wrote = persist_window_coverage_gate_failure(
+      jid,
+      telemetry_first_time=min_t,
+      telemetry_last_time=max_t,
+  )
+  if wrote and stats is not None and scheduler_shared_lock is not None:
+    with scheduler_shared_lock:
+      stats["gate_failure_persisted_jids"] += 1
+  return wrote
+
+
 def _legacy_all_hosts_sample_after_end(end_time, hosts, latest_by_host):
   if end_time is None or not hosts:
     return False
@@ -1595,7 +1647,13 @@ def _ready_jids_from_job_rows(jobs):
   return ready
 
 
-def _ready_jids_and_bounds_from_job_rows(jobs, *, precomputed_bounds_by_jid=None):
+def _ready_jids_and_bounds_from_job_rows(
+    jobs,
+    *,
+    precomputed_bounds_by_jid=None,
+    stats=None,
+    scheduler_shared_lock=None,
+):
   """Return ``(ready_jids, bounds_by_jid)`` for pre-fetched job rows."""
   if not jobs:
     return [], {}
@@ -1628,6 +1686,16 @@ def _ready_jids_and_bounds_from_job_rows(jobs, *, precomputed_bounds_by_jid=None
         ready.append(jid)
       else:
         _log_metrics_deferred_coverage_once(jid, reason)
+        _maybe_persist_window_coverage_gate_failure(
+            jid,
+            start_time,
+            end_time,
+            min_t,
+            max_t,
+            reason=reason,
+            stats=stats,
+            scheduler_shared_lock=scheduler_shared_lock,
+        )
     return ready, bounds_by_jid
 
   unique_hosts = set()
@@ -1665,7 +1733,12 @@ def _filter_jids_with_samples_after_end(jids):
   return ready
 
 
-def _filter_jids_with_samples_after_end_and_bounds(jids):
+def _filter_jids_with_samples_after_end_and_bounds(
+    jids,
+    *,
+    stats=None,
+    scheduler_shared_lock=None,
+):
   """Like :func:`_filter_jids_with_samples_after_end` but also return bounds map."""
   if not jids:
     return [], {}
@@ -1675,7 +1748,11 @@ def _filter_jids_with_samples_after_end_and_bounds(jids):
       .order_by("jid")
       .values("jid", "start_time", "end_time", "host_list")
   )
-  return _ready_jids_and_bounds_from_job_rows(jobs)
+  return _ready_jids_and_bounds_from_job_rows(
+      jobs,
+      stats=stats,
+      scheduler_shared_lock=scheduler_shared_lock,
+  )
 
 
 def _strict_host_list_coverage_bucket(
@@ -2044,6 +2121,19 @@ def _fill_ready_queue(
       jid = candidate.jid
       if jid not in reject_set:
         continue
+      if cfg.get_metrics_readiness_require_window_coverage():
+        row = chunk_job_by_jid.get(jid)
+        if row is not None:
+          min_t, max_t = (chunk_bounds_by_jid or {}).get(jid, (None, None))
+          _maybe_persist_window_coverage_gate_failure(
+              jid,
+              row.get("start_time"),
+              row.get("end_time"),
+              min_t,
+              max_t,
+              stats=stats,
+              scheduler_shared_lock=scheduler_shared_lock,
+          )
       if on_not_ready_jid is not None:
         on_not_ready_jid(jid, candidate)
       with scheduler_shared_lock:
@@ -2092,11 +2182,15 @@ def _fill_ready_queue(
               ready_list, bounds_by_jid = _ready_jids_and_bounds_from_job_rows(
                   jobs_for_strict,
                   precomputed_bounds_by_jid=chunk_bounds_by_jid,
+                  stats=stats,
+                  scheduler_shared_lock=scheduler_shared_lock,
               )
             else:
               ready_list, bounds_by_jid = (
                   _filter_jids_with_samples_after_end_and_bounds(
-                      [candidate.jid for candidate in work]
+                      [candidate.jid for candidate in work],
+                      stats=stats,
+                      scheduler_shared_lock=scheduler_shared_lock,
                   )
               )
       except (OperationalError, DatabaseError) as exc:
@@ -3226,6 +3320,7 @@ def update_metrics_for_dates(dates, rerun=False):
               "strict_check_timeouts": stats["strict_check_timeouts"],
               "strict_check_avg_latency_ms": stats["strict_check_avg_latency_ms"],
               "proxy_not_ready_jids": stats["proxy_not_ready_jids"],
+              "gate_failure_persisted_jids": stats["gate_failure_persisted_jids"],
               "strict_not_ready_jids": stats["strict_not_ready_jids"],
               "strict_ready_jids": stats["strict_ready_jids"],
               "strict_cooldown_skips": stats["strict_cooldown_skips"],
@@ -3677,6 +3772,7 @@ def update_metrics_for_dates(dates, rerun=False):
             "proxy_checked_chunks": stats["proxy_checked_chunks"],
             "proxy_rejected_jids": stats["proxy_rejected_jids"],
             "proxy_not_ready_jids": stats["proxy_not_ready_jids"],
+            "gate_failure_persisted_jids": stats["gate_failure_persisted_jids"],
             "strict_not_ready_jids": stats["strict_not_ready_jids"],
             "strict_ready_jids": stats["strict_ready_jids"],
             "strict_cooldown_skips": stats["strict_cooldown_skips"],
