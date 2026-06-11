@@ -44,10 +44,48 @@ class ApiClient:
     return urljoin(self.base_url, path.lstrip("/"))
 
   @staticmethod
-  def _is_same_origin(source_url: str, target_url: str) -> bool:
-    src = urlparse(source_url)
-    dst = urlparse(target_url)
-    return (src.scheme, src.netloc) == (dst.scheme, dst.netloc)
+  def _default_port_for_scheme(scheme: str) -> int:
+    if scheme == "https":
+      return 443
+    if scheme == "http":
+      return 80
+    return 0
+
+  @classmethod
+  def _origin_parts(cls, url: str) -> tuple[str, str, int]:
+    """Return (scheme_lower, hostname_lower, port) with default ports filled for http/https."""
+    p = urlparse(url)
+    scheme = (p.scheme or "").lower()
+    host = (p.hostname or "").lower().rstrip(".")
+    port = p.port
+    if port is None and scheme in ("http", "https"):
+      port = cls._default_port_for_scheme(scheme)
+    elif port is None:
+      port = 0
+    return (scheme, host, port)
+
+  @classmethod
+  def _is_safe_post_redirect(cls, source_url: str, target_url: str) -> bool:
+    """True if we may re-POST to target after a redirect from source.
+
+    Allows strict same-origin (normalized host and port) and a single hop
+    http://host → https://host when both use default ports, so sites that
+    redirect HTTP to HTTPS do not trip the cross-origin guard.
+    """
+    s_scheme, s_host, s_port = cls._origin_parts(source_url)
+    t_scheme, t_host, t_port = cls._origin_parts(target_url)
+    if not s_host or not t_host or s_host != t_host:
+      return False
+    if (s_scheme, s_port) == (t_scheme, t_port):
+      return True
+    if (
+        s_scheme == "http"
+        and s_port == 80
+        and t_scheme == "https"
+        and t_port == 443
+    ):
+      return True
+    return False
 
   def _headers(self, base: Optional[dict[str, str]] = None) -> dict[str, str]:
     return apply_api_key_header(dict(base or {}), self.api_key)
@@ -89,7 +127,7 @@ class ApiClient:
         location = resp.headers.get("Location")
         if location:
           redirect_url = urljoin(url, location)
-          if not self._is_same_origin(url, redirect_url):
+          if not self._is_safe_post_redirect(url, redirect_url):
             return ApiResult(ok=False, status_code=resp.status_code, error=f"Cross-origin redirect blocked: {redirect_url}")
           resp = self.session.post(
               redirect_url,

@@ -26,6 +26,10 @@ base_url = http://localhost:8000/api/
 
 For a deployed portal, use the real base URL, e.g. `https://stats.cluster.domain.edu/api/`.
 
+## REST paths (contract with the server)
+
+`ApiClient` accepts relative paths under the configured `base_url`. When the Django app adds or renames machine API routes, update this client (and its tests) in the same change as the server. **Canonical route list:** `hpcperfstats/site/machine/api_urls.py` in the main HPCPerfStats repository (`urlpatterns`).
+
 ## API key
 
 Both tools authenticate with an API key. Keys are created in the HPCPerfStats web UI (e.g. `/api-key/` or `/login_prompt` after signing in).
@@ -62,7 +66,7 @@ hpcperfstats-jobstats --insecure 12345
 
 ### hpcperfstats-sacct-gen
 
-Runs `sacct` for a date range and POSTs the pipe-delimited output to the HPCPerfStats ingest endpoint. Used on a login node or host that has Slurm and network access to the portal. The API stores the data using the same logic as the portal’s sync_acct (staff API key required).
+Runs `sacct` for a date range and POSTs the pipe-delimited output to the HPCPerfStats ingest endpoint. Used on a login node or host that has Slurm and network access to the portal. The API stores the data using the same logic as the portal’s sync_acct and also writes `{acct_path}/YYYY-MM-DD.txt` for scheduled `sync_acct.py` reingest. The API returns HTTP 409 when a POST would replace an on-disk file with fewer lines (staff API key required).
 
 ```bash
 # Ingest today only (default)

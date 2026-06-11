@@ -4,7 +4,14 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from hpcperfstats_tools.sacct_gen import send_to_api
+from hpcperfstats_tools.sacct_gen import SACCT_FIELDS, send_to_api
+
+
+def test_sacct_fields_includes_reqtres_and_alloctres_without_duplicate_reqtres():
+    fields = [f.strip() for f in SACCT_FIELDS.split(",")]
+    assert fields.count("reqtres") == 1
+    assert "alloctres" in fields
+    assert len(fields) == len(set(fields))
 
 
 def test_send_to_api_follows_same_origin_redirect():

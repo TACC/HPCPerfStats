@@ -37,7 +37,7 @@ def _daterange(start_date: datetime, end_date: datetime, inclusive_end: bool = F
 SACCT_FIELDS = (
     "jobid,jobidraw,cluster,partition,qos,account,group,gid,user,uid,"
     "submit,eligible,start,end,elapsed,exitcode,state,nnodes,ncpus,reqcpus,"
-    "reqmem,reqtres,reqtres,timelimit,nodelist,jobname"
+    "reqmem,reqtres,alloctres,timelimit,nodelist,jobname"
 )
 
 
