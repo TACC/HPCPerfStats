@@ -517,7 +517,7 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Max concurrent async DAY_CLOSE jobs (default = sync_day_close_async_workers).
 # sync_day_close_max_inflight = 1
 
-# Wall-clock wait in async DAY_CLOSE for day raw removal after seal (default 3600s; 0 = unbounded).
+# Wall-clock wait in async DAY_CLOSE for day raw removal verify after seal (default 3600s; 0 = unbounded).
 # sync_day_close_raw_removal_wait_seconds = 3600
 
 # Recover stale async DAY_CLOSE manifest entries on coordinator init (default 7200s; 0 = off).

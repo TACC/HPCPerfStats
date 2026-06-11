@@ -1137,17 +1137,21 @@ class ArchiveJanitor:
     if self._day_close_raw_removal_enabled():
       coord = self.day_raw_removal_coordinator
       self.log_fn(
-          "janitor: day_close async_pipeline start tar=%s" % tar_norm,
+          "janitor: day_close async_verify start tar=%s" % tar_norm,
           flush=True,
       )
-      coord.start_async_day_pipeline(tar_norm)
-      if not coord.delete_phase_done(tar_norm):
+      coord.start_async_verify(tar_norm)
+      if not coord.verification_complete(tar_norm):
         self._enqueue_day_close(tar_norm, persist=False)
         self._persist_hints()
         return False
-      with self._hints_state_lock:
-        self._day_phases[tar_norm] = day_phase_hint_entry(tar_norm, "tar_dropped")
-      return True
+      if coord.delete_phase_done(tar_norm):
+        with self._hints_state_lock:
+          self._day_phases[tar_norm] = day_phase_hint_entry(tar_norm, "tar_dropped")
+        return True
+      self._enqueue_day_close(tar_norm, persist=False)
+      self._persist_hints()
+      return False
     if not self._day_phase_at_least(tar_norm, "raw_removed"):
       if not self._raw_remove_one_day(
           tar_norm,

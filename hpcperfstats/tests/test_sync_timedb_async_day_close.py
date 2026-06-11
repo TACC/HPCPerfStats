@@ -152,7 +152,7 @@ def test_tar_drop_day_build_remaining_raw_uses_archive_dir_not_tar_path(
 
 
 @pytest.mark.django_db(databases=[])
-def test_run_day_close_raw_removal_wait_times_out_and_defers(tmp_path, monkeypatch):
+def test_run_day_close_raw_removal_verify_wait_times_out_and_defers(tmp_path, monkeypatch):
   archive_dir = str(tmp_path / "archive")
   daily_dir = str(tmp_path / "daily")
   os.makedirs(archive_dir)
@@ -165,10 +165,10 @@ def test_run_day_close_raw_removal_wait_times_out_and_defers(tmp_path, monkeypat
     enabled = True
     start_calls = 0
 
-    def start_async_day_pipeline(self, _tar_path):
+    def start_async_verify(self, _tar_path):
       self.start_calls += 1
 
-    def delete_phase_done(self, _tar_path):
+    def verification_complete(self, _tar_path):
       return False
 
     def pipeline_future_done(self, _tar_path):
@@ -204,9 +204,54 @@ def test_run_day_close_raw_removal_wait_times_out_and_defers(tmp_path, monkeypat
   entry = manifest.get("entries", {}).get(tar_norm)
   assert isinstance(entry, dict)
   assert entry.get("status") == "deferred"
-  assert entry.get("detail") == "raw_removal_timeout"
-  assert any("raw_removal stall" in line for line in logs)
+  assert entry.get("detail") == "raw_removal_verify_timeout"
+  assert any("verify stall" in line for line in logs)
   assert fake_raw.start_calls >= 2
+
+
+@pytest.mark.django_db(databases=[])
+def test_run_day_close_sets_raw_delete_pending_after_verify(tmp_path, monkeypatch):
+  archive_dir = str(tmp_path / "archive")
+  daily_dir = str(tmp_path / "daily")
+  os.makedirs(archive_dir)
+  os.makedirs(daily_dir)
+  tar_norm = os.path.normpath(os.path.join(daily_dir, "2026-04-15.tar"))
+  open(tar_norm, "wb").close()
+
+  class _FakeRawCoord:
+    enabled = True
+
+    def start_async_verify(self, _tar_path):
+      return None
+
+    def verification_complete(self, _tar_path):
+      return True
+
+    def pipeline_future_done(self, _tar_path):
+      return True
+
+    def raw_removal_progress_summary(self, _tar_path):
+      return {"phase": "verification_complete", "verified_count": 1, "pending_delete": 1}
+
+  monkeypatch.setattr(async_dc_mod.cfg, "get_sync_day_close_async_workers", lambda: 1)
+  monkeypatch.setattr(async_dc_mod.cfg, "get_sync_day_close_raw_removal_wait_seconds", lambda: 60.0)
+  monkeypatch.setattr(async_dc_mod, "sleep_until_shutdown", lambda _s: None)
+
+  coord = async_dc_mod.AsyncDayCloseCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=daily_dir,
+      local_tz=None,
+      log_fn=lambda *_a, **_kw: None,
+      get_disqualified_daily_tars=lambda: set(),
+      day_raw_removal_coordinator=_FakeRawCoord(),
+  )
+  with mock.patch.object(coord, "_seal_day", return_value=True):
+    coord._run_day_close(tar_norm, "test")
+
+  entry = async_dc_mod._load_manifest(coord._manifest_path)["entries"][tar_norm]
+  assert entry.get("status") == "raw_delete_pending"
+  assert tar_norm not in coord.active_or_submitted_tar_paths()
 
 
 @pytest.mark.django_db(databases=[])

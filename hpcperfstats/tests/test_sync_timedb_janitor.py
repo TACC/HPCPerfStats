@@ -1110,7 +1110,7 @@ def test_day_close_with_preflight_skips_incremental_raw_tar(monkeypatch, tmp_pat
     verify_calls["n"] += 1
     coord._get_or_create_day(tar)._verify_body()
 
-  monkeypatch.setattr(coord, "start_async_day_pipeline", _sync_verify)
+  monkeypatch.setattr(coord, "start_async_verify", _sync_verify)
   janitor._run_tick_body()
   assert raw_calls["n"] == 0
   assert verify_calls["n"] == 1

@@ -2505,7 +2505,7 @@ def get_sync_day_close_raw_removal_max_deletes_per_pass():
 
 
 def get_sync_day_close_raw_removal_wait_seconds():
-  """Max wall-clock wait in async DAY_CLOSE for day raw removal (default 3600; 0=unbounded)."""
+  """Max wall-clock wait in async DAY_CLOSE for verify after seal (default 3600; 0=unbounded)."""
   _ensure_cfg_loaded()
   raw = _pipeline_get("sync_day_close_raw_removal_wait_seconds", fallback="3600")
   try:

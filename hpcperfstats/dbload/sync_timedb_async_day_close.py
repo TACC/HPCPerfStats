@@ -191,6 +191,20 @@ class AsyncDayCloseCoordinator:
       return False
     return os.path.isfile(zst_path) or os.path.isfile(gz_path)
 
+  def finalize_complete_if_filesystem(self, tar_path: str) -> bool:
+    """Mark async DAY_CLOSE complete when filesystem truth holds."""
+    tar_norm = os.path.normpath(tar_path or "")
+    if not tar_norm or not self._day_close_filesystem_complete(tar_norm):
+      return False
+    self._notify_phase(tar_norm, "tar_dropped")
+    self._set_entry_status(
+        tar_norm,
+        "complete",
+        completed_at=time.time(),
+    )
+    self._touch_manifest("complete", tar_norm=tar_norm)
+    return True
+
   def is_complete(self, tar_path: str) -> bool:
     tar_norm = os.path.normpath(tar_path or "")
     with self._lock:
@@ -321,19 +335,19 @@ class AsyncDayCloseCoordinator:
       if coord is not None and bool(getattr(coord, "enabled", False)):
         self._touch_manifest("raw_removal", tar_norm=tar_norm)
         self._set_entry_status(tar_norm, "raw_removal")
-        coord.start_async_day_pipeline(tar_norm)
+        coord.start_async_verify(tar_norm)
         wait_budget_s = cfg.get_sync_day_close_raw_removal_wait_seconds()
         wait_started = time.time()
         last_progress_log = wait_started
-        pipeline_rekick_done = False
+        verify_rekick_done = False
         while not shutdown_requested[0]:
-          if coord.delete_phase_done(tar_norm):
+          if coord.verification_complete(tar_norm):
             break
           now = time.time()
           if wait_budget_s > 0 and now - wait_started >= wait_budget_s:
             summary = coord.raw_removal_progress_summary(tar_norm)
             self.log_fn(
-                "janitor: async day_close raw_removal stall tar=%s "
+                "janitor: async day_close raw_removal verify stall tar=%s "
                 "wait_s=%.0f phase=%s verified=%d pending_delete=%d"
                 % (
                     tar_norm,
@@ -347,13 +361,13 @@ class AsyncDayCloseCoordinator:
             self._set_entry_status(
                 tar_norm,
                 "deferred",
-                detail="raw_removal_timeout",
+                detail="raw_removal_verify_timeout",
             )
             return
           if now - last_progress_log >= 60.0:
             summary = coord.raw_removal_progress_summary(tar_norm)
             self.log_fn(
-                "janitor: async day_close raw_removal wait tar=%s "
+                "janitor: async day_close raw_removal verify wait tar=%s "
                 "elapsed_s=%.0f phase=%s verified=%d pending_delete=%d"
                 % (
                     tar_norm,
@@ -366,26 +380,18 @@ class AsyncDayCloseCoordinator:
             )
             last_progress_log = now
           if (
-              not pipeline_rekick_done
+              not verify_rekick_done
               and coord.pipeline_future_done(tar_norm)
-              and not coord.delete_phase_done(tar_norm)
+              and not coord.verification_complete(tar_norm)
           ):
-            coord.start_async_day_pipeline(tar_norm)
-            pipeline_rekick_done = True
+            coord.start_async_verify(tar_norm)
+            verify_rekick_done = True
           sleep_until_shutdown(0.5)
-        if not coord.delete_phase_done(tar_norm):
-          self._set_entry_status(tar_norm, "deferred", detail="raw_removal")
+        if not coord.verification_complete(tar_norm):
+          self._set_entry_status(tar_norm, "deferred", detail="raw_removal_verify")
           return
-        if not self._day_close_filesystem_complete(tar_norm):
-          self._set_entry_status(tar_norm, "deferred", detail="raw_remains")
-          return
-        self._notify_phase(tar_norm, "tar_dropped")
-        self._set_entry_status(
-            tar_norm,
-            "complete",
-            completed_at=time.time(),
-        )
-        self._touch_manifest("complete", tar_norm=tar_norm)
+        self._set_entry_status(tar_norm, "raw_delete_pending")
+        self._touch_manifest("raw_delete_pending", tar_norm=tar_norm)
         return
       if not self._tar_drop_day(tar_norm):
         self._set_entry_status(tar_norm, "deferred", detail="tar_drop")

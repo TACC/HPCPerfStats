@@ -150,7 +150,7 @@ def test_day_raw_removal_start_async_verify_eventually_completes(tmp_path):
   assert coord.phase(tar_path) == PHASE_VERIFICATION_COMPLETE
 
 
-def test_start_async_day_pipeline_completes_verify_and_delete(tmp_path, monkeypatch):
+def test_start_async_day_pipeline_alias_runs_verify_only(tmp_path, monkeypatch):
   day = datetime(2022, 6, 6)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
   tar_path, _zst = _seal_day(tmp_path, seg, day)
@@ -163,9 +163,27 @@ def test_start_async_day_pipeline_completes_verify_and_delete(tmp_path, monkeypa
   coord.start_async_day_pipeline(tar_path)
   state = coord._get_or_create_day(tar_path)
   state._pipeline_future.result(timeout=10.0)
+  assert coord.phase(tar_path) == PHASE_VERIFICATION_COMPLETE
+  assert seg.is_file()
+  assert completed == []
+  coord.begin_deleting(tar_path)
+  coord.apply_batch_delete(tar_path)
   assert coord.phase(tar_path) == PHASE_DONE
   assert not seg.is_file()
   assert completed == [os.path.normpath(tar_path)]
+
+
+def test_days_needing_delete_oldest_first_sorted(tmp_path):
+  (tmp_path / "daily").mkdir(exist_ok=True)
+  tar_old = os.path.normpath(str(tmp_path / "daily" / "2022-06-01.tar"))
+  tar_new = os.path.normpath(str(tmp_path / "daily" / "2022-06-03.tar"))
+  open(tar_old, "wb").close()
+  open(tar_new, "wb").close()
+  coord = _make_coordinator(tmp_path)
+  for tar_path in (tar_new, tar_old):
+    state = coord._get_or_create_day(tar_path)
+    state._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
+  assert coord.days_needing_delete_oldest_first() == [tar_old, tar_new]
 
 
 def test_raw_removal_progress_summary_reports_pending_delete(tmp_path):
@@ -200,6 +218,50 @@ def test_done_manifest_resets_when_retryable_skips_remain_on_disk(tmp_path):
   assert seg.is_file()
 
 
+def test_skip_stuck_older_day_allows_younger_delete_in_one_pass(tmp_path, monkeypatch):
+  day_old = datetime(2022, 6, 10)
+  day_young = datetime(2022, 6, 11)
+  seg_old = _make_closed_segment(tmp_path, "cluster.integration.test", day_old)
+  seg_young = _make_closed_segment(tmp_path, "cluster.integration.test", day_young)
+  tar_old, _zst_old = _seal_day(tmp_path, seg_old, day_old)
+  tar_young, _zst_young = _seal_day(tmp_path, seg_young, day_young)
+  coord = _make_coordinator(tmp_path)
+  monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0)
+  coord._get_or_create_day(tar_old)._verify_body()
+  coord._get_or_create_day(tar_young)._verify_body()
+  coord.begin_deleting(tar_old)
+  coord.begin_deleting(tar_young)
+
+  original_remove = os.remove
+
+  def _selective_remove(path):
+    if os.path.normpath(str(path)) == os.path.normpath(str(seg_old)):
+      raise OSError("simulated stuck delete")
+    original_remove(path)
+
+  monkeypatch.setattr(os, "remove", _selective_remove)
+
+  pass_log = []
+  for tar_path in coord.days_needing_delete_oldest_first():
+    deleted = coord.apply_batch_delete(tar_path)
+    pass_log.append((tar_path, deleted))
+    if (
+        deleted == 0
+        and coord.needs_delete_phase(tar_path)
+        and not coord.delete_phase_done(tar_path)
+    ):
+      continue
+
+  assert pass_log[0][0] == os.path.normpath(tar_old)
+  assert pass_log[0][1] == 0
+  assert pass_log[1][0] == os.path.normpath(tar_young)
+  assert pass_log[1][1] == 1
+  assert coord.delete_phase_done(tar_young)
+  assert not coord.delete_phase_done(tar_old)
+  assert seg_old.is_file()
+  assert not seg_young.is_file()
+
+
 def test_pipeline_verify_budget_exhausted_logs_warning(tmp_path, monkeypatch):
   day = datetime(2022, 6, 8)
   tar_path = str(tmp_path / "daily" / "2022-06-08.tar")
@@ -213,6 +275,6 @@ def test_pipeline_verify_budget_exhausted_logs_warning(tmp_path, monkeypatch):
   monkeypatch.setattr(state, "verification_complete", lambda: False)
   monkeypatch.setattr(state, "_verify_body", lambda: None)
 
-  coord._pipeline_body(state)
+  coord._verify_pipeline_body(state)
   messages = [str(call.args[0]) for call in log_fn.call_args_list]
   assert any("Day raw removal verify budget exhausted" in msg for msg in messages)

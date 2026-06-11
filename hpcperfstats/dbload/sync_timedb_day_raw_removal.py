@@ -1,4 +1,4 @@
-"""Per-day post-seal raw removal: async verify+delete pipeline per calendar day."""
+"""Per-day post-seal raw removal: async verify; ingest-thread batched delete."""
 from __future__ import annotations
 
 import json
@@ -540,23 +540,28 @@ class DayRawRemovalCoordinator:
     return any(s.needs_delete_phase() and not s.delete_phase_done() for s in states)
 
   def oldest_day_needing_delete(self) -> Optional[str]:
+    days = self.days_needing_delete_oldest_first()
+    return days[0] if days else None
+
+  def days_needing_delete_oldest_first(self) -> List[str]:
     candidates = []
     with self._days_lock:
       states = list(self._days.values())
     for state in states:
       if state.needs_delete_phase() and not state.delete_phase_done():
         candidates.append((state.day_date, state.tar_path))
-    if not candidates:
-      return None
     candidates.sort(key=lambda item: item[0])
-    return candidates[0][1]
+    return [tar_path for _day_date, tar_path in candidates]
+
+  def verified_paths_pending_delete(self, tar_path: str) -> Set[str]:
+    return self._get_or_create_day(tar_path).paths_pending_delete()
 
   def _ensure_executor(self) -> ThreadPoolExecutor:
     if self._executor is None:
       self._executor = ThreadPoolExecutor(max_workers=1)
     return self._executor
 
-  def _pipeline_body(self, state: _DayRawRemovalState) -> None:
+  def _verify_pipeline_body(self, state: _DayRawRemovalState) -> None:
     close_old_connections()
     if state.delete_phase_done():
       if state._needs_retry_after_ingest():
@@ -591,41 +596,27 @@ class DayRawRemovalCoordinator:
         )
       with state._lock:
         _save_manifest(state._manifest_path, state._manifest)
-      return
-    state.begin_deleting()
-    while not shutdown_requested[0] and not state.delete_phase_done():
-      state.apply_batch_delete()
-      if state.delete_phase_done():
-        break
-      time.sleep(0.05)
-    if not state.delete_phase_done() and not shutdown_requested[0]:
-      summary = state.progress_summary()
-      if self.log_fn:
-        self.log_fn(
-            "Day raw removal delete incomplete day=%s phase=%s "
-            "verified=%d pending_delete=%d deleted=%d"
-            % (
-                state.day_date.isoformat(),
-                summary.get("phase"),
-                int(summary.get("verified_count", 0)),
-                int(summary.get("pending_delete", 0)),
-                int(summary.get("deleted_count", 0)),
-            ),
-            flush=True,
-        )
-    if state.delete_phase_done() and self.on_pipeline_complete is not None:
-      try:
-        self.on_pipeline_complete(state.tar_path)
-      except Exception:
-        if self.log_fn:
-          self.log_fn(
-              "Day raw removal on_complete failed day=%s"
-              % state.day_date.isoformat(),
-              flush=True,
-          )
 
-  def start_async_day_pipeline(self, tar_path: str) -> None:
-    """Run verify then delete for one calendar day on a background thread."""
+  def _submit_async_verify(self, state: _DayRawRemovalState) -> None:
+    if state._pipeline_future is not None and not state._pipeline_future.done():
+      return
+    executor = self._ensure_executor()
+
+    def _run():
+      set_daemon_thread_title(
+          "",
+          script_name=self.process_title,
+          role="day-raw-removal-verify",
+      )
+      try:
+        self._verify_pipeline_body(state)
+      finally:
+        close_old_connections()
+
+    state._pipeline_future = executor.submit(_run)
+
+  def start_async_verify(self, tar_path: str) -> None:
+    """Run verify for one calendar day on a background thread (production path)."""
     if not self.enabled:
       return
     state = self._get_or_create_day(tar_path)
@@ -634,52 +625,35 @@ class DayRawRemovalCoordinator:
         state._reset_for_reverify()
       else:
         return
-    if state._pipeline_future is not None and not state._pipeline_future.done():
-      return
-    executor = self._ensure_executor()
-
-    def _run():
-      set_daemon_thread_title(
-          "",
-          script_name=self.process_title,
-          role="day-raw-removal-pipeline",
-      )
-      try:
-        self._pipeline_body(state)
-      finally:
-        close_old_connections()
-
-    state._pipeline_future = executor.submit(_run)
-
-  def start_async_verify(self, tar_path: str) -> None:
-    """Legacy entry: verify-only slice (tests); production uses start_async_day_pipeline."""
-    if not self.enabled:
-      return
-    state = self._get_or_create_day(tar_path)
     if state.verification_complete():
       return
-    if state._pipeline_future is not None and not state._pipeline_future.done():
+    self._submit_async_verify(state)
+
+  def start_async_day_pipeline(self, tar_path: str) -> None:
+    """Backward-compatible alias: verify-only async (delete on supervisor thread)."""
+    self.start_async_verify(tar_path)
+
+  def _notify_delete_complete(self, tar_path: str) -> None:
+    if self.on_pipeline_complete is None:
       return
-    executor = self._ensure_executor()
-
-    def _run():
-      set_daemon_thread_title(
-          "",
-          script_name=self.process_title,
-          role="day-raw-removal-preflight",
-      )
-      try:
-        state._verify_body()
-      finally:
-        close_old_connections()
-
-    state._pipeline_future = executor.submit(_run)
+    try:
+      self.on_pipeline_complete(tar_path)
+    except Exception:
+      if self.log_fn:
+        self.log_fn(
+            "Day raw removal on_complete failed tar=%s" % tar_path,
+            flush=True,
+        )
 
   def begin_deleting(self, tar_path: str) -> None:
     self._get_or_create_day(tar_path).begin_deleting()
 
   def apply_batch_delete(self, tar_path: str) -> int:
-    return self._get_or_create_day(tar_path).apply_batch_delete()
+    state = self._get_or_create_day(tar_path)
+    deleted = state.apply_batch_delete()
+    if state.delete_phase_done():
+      self._notify_delete_complete(tar_path)
+    return deleted
 
   def shutdown(self, wait: bool = True) -> None:
     executor = self._executor

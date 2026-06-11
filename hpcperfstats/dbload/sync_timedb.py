@@ -3,7 +3,7 @@
 
 **Hot path (supervisor thread):** discover → ingest → checkpoint → dispatch append (up to ``sync_archive_max_inflight_jobs`` disjoint daily-tar slots). Ingest never blocks on seal, zstd, raw delete, or uncompressed ``.tar`` removal.
 
-**Cold path (``ArchiveJanitor`` thread):** day-debt queue consumed in time-sliced micro-batches (``archive_janitor_budget_seconds`` / ``archive_janitor_days_per_tick``). Snapshot/hints refresh and ``DAY_CLOSE`` scheduling run at supervisor startup, every ``rescan_every_chunks`` ingest chunks (default 10), and when the ingest queue drains to zero after chunk processing—all on the janitor thread. Per-day lock cleanup (once per tick), dedupe-before-seal, seal → async verify+delete (``DayRawRemovalCoordinator``) or incremental raw/tar when preflight is off; DB head-ingest gate and disqualification union unchanged. Progress persists in ``.sync_archive_maint_hints.json`` v2 (``debt_queue``, ``day_phases``).
+**Cold path (``ArchiveJanitor`` thread):** day-debt queue consumed in time-sliced micro-batches (``archive_janitor_budget_seconds`` / ``archive_janitor_days_per_tick``). Snapshot/hints refresh and ``DAY_CLOSE`` scheduling run at supervisor startup, every ``rescan_every_chunks`` ingest chunks (default 10), and when the ingest queue drains to zero after chunk processing—all on the janitor thread. Per-day lock cleanup (once per tick), dedupe-before-seal, seal → async verify (``DayRawRemovalCoordinator``) with ingest-thread batched delete, or incremental raw/tar when preflight is off; DB head-ingest gate and disqualification union unchanged. Progress persists in ``.sync_archive_maint_hints.json`` v2 (``debt_queue``, ``day_phases``).
 
 Append and raw delete stay DB-gated when ``sync_archive_require_db_head_ingest=yes``. Finalize uses soft defer (``allow_defer``) under ingest backlog instead of blocking the supervisor.
 
@@ -2676,29 +2676,61 @@ def run_sync_timedb_supervisor_loop(
           flush=True,
       )
 
-    def _maybe_handle_startup_raw_removal_delete_phase():
-      nonlocal delete_phase_active, pending_stats_files
-      if startup_preflight is None or not startup_preflight.enabled:
+    def _finalize_day_close_raw_removal_delete(tar_norm):
+      if async_day_close is not None:
+        async_day_close.finalize_complete_if_filesystem(os.path.normpath(tar_norm))
+      archive_janitor.signal_work_available()
+
+    def _apply_day_close_raw_removal_deletes():
+      """One ingest-gated pass over pending days (oldest-first; skip stuck per batch)."""
+      nonlocal delete_phase_active
+      if day_raw_removal is None or not day_raw_removal.enabled:
         return False
-      if startup_preflight.delete_phase_done():
-        return False
-      if startup_preflight.needs_delete_phase():
-        delete_phase_active = True
-      if not delete_phase_active:
+      if not day_raw_removal.any_needs_delete_phase():
         return False
       if chunk_in_progress:
         sleep_until_shutdown(0.1)
         return True
-      if startup_preflight.phase() == PHASE_VERIFICATION_COMPLETE:
-        startup_preflight.begin_deleting()
-      startup_preflight.apply_deletes_from_manifest()
-      if startup_preflight.delete_phase_done():
-        delete_phase_active = False
-        _post_startup_raw_removal_rescan()
-      return True
+      delete_phase_active = True
+      for tar_norm in day_raw_removal.days_needing_delete_oldest_first():
+        if day_raw_removal.phase(tar_norm) == PHASE_VERIFICATION_COMPLETE:
+          day_raw_removal.begin_deleting(tar_norm)
+        deleted = day_raw_removal.apply_batch_delete(tar_norm)
+        if day_raw_removal.delete_phase_done(tar_norm):
+          _finalize_day_close_raw_removal_delete(tar_norm)
+          continue
+        if (
+            deleted == 0
+            and day_raw_removal.needs_delete_phase(tar_norm)
+            and not day_raw_removal.delete_phase_done(tar_norm)
+        ):
+          continue
+      delete_phase_active = False
+      _maybe_apply_day_close_rescan()
+      return False
+
+    def _maybe_handle_raw_removal_delete_phase():
+      nonlocal delete_phase_active, pending_stats_files
+      if startup_preflight is not None and startup_preflight.enabled:
+        if not startup_preflight.delete_phase_done():
+          if startup_preflight.needs_delete_phase():
+            delete_phase_active = True
+          if delete_phase_active:
+            if chunk_in_progress:
+              sleep_until_shutdown(0.1)
+              return True
+            if startup_preflight.phase() == PHASE_VERIFICATION_COMPLETE:
+              startup_preflight.begin_deleting()
+            startup_preflight.apply_deletes_from_manifest()
+            if startup_preflight.delete_phase_done():
+              delete_phase_active = False
+              _post_startup_raw_removal_rescan()
+            else:
+              return True
+      return _apply_day_close_raw_removal_deletes()
 
     while not shutdown_requested[0]:
-      if _maybe_handle_startup_raw_removal_delete_phase():
+      if _maybe_handle_raw_removal_delete_phase():
         continue
       _maybe_apply_day_close_rescan()
 
@@ -2767,7 +2799,7 @@ def run_sync_timedb_supervisor_loop(
           break
 
       while pending_stats_files:
-        if _maybe_handle_startup_raw_removal_delete_phase():
+        if _maybe_handle_raw_removal_delete_phase():
           continue
         _maybe_wait_tree_rss_before_chunk(
             ingest_pool, db_writer_pool, archive_pool)
