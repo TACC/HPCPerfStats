@@ -12,6 +12,8 @@ import pytest
 
 from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
     ArchiveDayIngestSkipError,
+    ArchiveMembersPopulateStalledError,
+    ArchiveMembersRedisConnectionError,
     ArchiveMembersRedisUnavailableError,
     build_archive_members_redis_keys,
     clear_dedupe_hint,
@@ -532,10 +534,66 @@ def test_wait_for_member_waits_until_complete(_redis_test_env, tmp_path):
 
 def test_wait_for_member_stalls_without_progress(_redis_test_env, tmp_path):
   keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
-  _redis_test_env.set(keys.lock_key, "tok", ex=30)
+  _redis_test_env.set(keys.lock_key, "tok:%d" % os.getpid(), ex=30)
   _redis_test_env.set(keys.complete_key, "0")
-  with pytest.raises(ArchiveMembersRedisUnavailableError, match="stalled"):
+  with pytest.raises(ArchiveMembersPopulateStalledError, match="stalled"):
     wait_for_member_match(keys, "missing/member", 99)
+
+
+def test_populate_slow_scan_heartbeats_prevent_waiter_stall(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_members_redis"
+      "._populate_heartbeat_seconds",
+      lambda: 0.05,
+  )
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+
+  def _slow_scan(on_member):
+    for idx in range(4):
+      time.sleep(1.5)
+      on_member("member/%d" % idx, idx + 1)
+    return True, False
+
+  result = {"ok": None, "exc": None}
+
+  def _waiter():
+    try:
+      result["ok"] = wait_for_member_match(keys, "member/3", 4)
+    except ArchiveMembersRedisUnavailableError as exc:
+      result["exc"] = exc
+
+  t_scan = threading.Thread(
+      target=lambda: populate_archive_members_redis(keys, _slow_scan),
+  )
+  t_wait = threading.Thread(target=_waiter)
+  t_scan.start()
+  time.sleep(0.1)
+  t_wait.start()
+  t_wait.join(timeout=12)
+  t_scan.join(timeout=12)
+  assert result["exc"] is None
+  assert result["ok"] is True
+
+
+def test_stale_populate_lock_released_when_owner_dead(_redis_test_env, tmp_path):
+  import hpcperfstats.dbload.sync_timedb_archive_members_redis as redis_mod
+
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  dead_pid = 999999997
+  _redis_test_env.set(keys.lock_key, "tok:%d" % dead_pid, ex=30)
+  _redis_test_env.set(keys.complete_key, "0")
+  _redis_test_env.set(keys.progress_key, str(time.time() - 1000))
+  released = redis_mod._check_populate_wait_limits(
+      _redis_test_env,
+      keys,
+      started_monotonic=time.monotonic() - 10,
+      last_progress_monotonic=time.monotonic() - 10,
+  )
+  assert released is True
+  assert _redis_test_env.exists(keys.lock_key) == 0
+  assert _redis_test_env.get(keys.progress_key) is None
 
 
 def test_populate_lock_renewed_on_flush(_redis_test_env, tmp_path):

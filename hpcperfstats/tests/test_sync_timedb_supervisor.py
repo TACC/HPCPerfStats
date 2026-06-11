@@ -1883,6 +1883,45 @@ def test_sync_timedb_exits_on_redis_unavailable_during_ingest(monkeypatch):
     shutdown_requested[0] = False
 
 
+def test_exit_handler_distinguishes_stall_from_connection(monkeypatch, capsys):
+  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+      ArchiveMembersPopulateStalledError,
+      ArchiveMembersRedisConnectionError,
+  )
+
+  monkeypatch.setattr(st.cfg, "get_redis_location", lambda: "redis://redis:6379/1")
+
+  with pytest.raises(SystemExit) as excinfo:
+    st._exit_on_archive_members_redis_unavailable(
+        ArchiveMembersRedisConnectionError("Redis unreachable"),
+    )
+  assert excinfo.value.code == 1
+  connection_out = capsys.readouterr().out
+  assert "requires a reachable Redis" in connection_out
+  assert "populate stalled or timed out" not in connection_out
+
+  fake_client = type("_FakeRedisClient", (), {
+      "ping": lambda self: True,
+  })()
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: fake_client,
+  )
+
+  with pytest.raises(SystemExit) as excinfo:
+    st._exit_on_archive_members_redis_unavailable(
+        ArchiveMembersPopulateStalledError(
+            "Archive members populate stalled (no progress for 120s): hash",
+        ),
+    )
+  assert excinfo.value.code == 1
+  stall_out = capsys.readouterr().out
+  assert "populate stalled or timed out" in stall_out
+  assert "is reachable" in stall_out
+  assert "requires a reachable Redis" not in stall_out
+
+
 def _parse_payload_quarantine_fixture(monkeypatch, tmp_path, *, lines, parse_side_effect=None):
   archive_dir = tmp_path / "archive"
   host_dir = archive_dir / "host.hpc"

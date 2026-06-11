@@ -133,6 +133,8 @@ from hpcperfstats.dbload.sync_timedb_startup_archive_scan import (
     StartupArchiveScanCoordinator,
 )
 from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+    ArchiveMembersPopulateStalledError,
+    ArchiveMembersRedisConnectionError,
     ArchiveMembersRedisUnavailableError,
 )
 
@@ -463,13 +465,43 @@ tgz_archive_dir = cfg.get_daily_archive_dir_path()
 
 
 def _exit_on_archive_members_redis_unavailable(exc):
-  """Fatal exit when Redis L2 is required but unavailable during ingest."""
+  """Fatal exit when Redis L2 contract fails during ingest or startup."""
   log_print("ERROR: %s" % exc, flush=True)
-  log_print(
-      "ERROR: sync_archive_members_redis_enabled=yes requires a reachable "
-      "Redis at [CACHE] redis_location.",
-      flush=True,
-  )
+  if isinstance(exc, ArchiveMembersRedisConnectionError):
+    log_print(
+        "ERROR: sync_archive_members_redis_enabled=yes requires a reachable "
+        "Redis at [CACHE] redis_location.",
+        flush=True,
+    )
+  elif isinstance(exc, ArchiveMembersPopulateStalledError):
+    redis_reachable = False
+    try:
+      from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+          get_archive_members_redis_client,
+      )
+      client = get_archive_members_redis_client(required=False)
+      if client is not None:
+        client.ping()
+        redis_reachable = True
+    except Exception:
+      redis_reachable = False
+    if redis_reachable:
+      log_print(
+          "ERROR: archive members populate stalled or timed out "
+          "(Redis at [CACHE] redis_location=%s is reachable)."
+          % cfg.get_redis_location(),
+          flush=True,
+      )
+    else:
+      log_print(
+          "ERROR: archive members populate stalled or timed out.",
+          flush=True,
+      )
+  else:
+    log_print(
+        "ERROR: archive members Redis L2 contract failed.",
+        flush=True,
+    )
   sys.exit(1)
 
 
