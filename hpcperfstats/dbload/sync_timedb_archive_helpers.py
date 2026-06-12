@@ -1815,7 +1815,7 @@ def _daily_archive_member_match_via_redis_l2(
       archive_members_redis_enabled,
       build_archive_members_redis_keys,
       get_archive_members_redis_client,
-      redis_lookup_full_members,
+      redis_member_match_when_warm,
       redis_members_cache_is_fully_warm,
   )
 
@@ -1823,10 +1823,23 @@ def _daily_archive_member_match_via_redis_l2(
     return None
   cache_key = _daily_archive_members_cache_key(canonical)
   keys = build_archive_members_redis_keys(cache_key)
-  cached = redis_lookup_full_members(keys)
-  if cached is not None:
-    _store_daily_archive_members_cache(canonical, cached)
-    return cached.get(member_name) == expected_size
+  client = get_archive_members_redis_client(required=True)
+  from hpcperfstats.dbload.sync_timedb_ingest_worker_diagnostics import (
+      update_worker_substage,
+  )
+
+  update_worker_substage(
+      "archive_member_lookup",
+      lookup_mode="hget",
+  )
+  warm_match = redis_member_match_when_warm(
+      keys,
+      member_name,
+      expected_size,
+      client=client,
+  )
+  if warm_match is not None:
+    return warm_match
   sealed_path = _resolve_sealed_daily_archive_path(compressed_path)
   if sealed_path is None:
     if redis_members_cache_is_fully_warm(keys):
@@ -2031,6 +2044,14 @@ def _member_match_via_redis_or_sealed_point(
   expected_size = int(expected_size)
   _raise_if_ingest_day_skipped(keys, sealed_path, client)
 
+  from hpcperfstats.dbload.sync_timedb_ingest_worker_diagnostics import (
+      update_worker_substage,
+  )
+
+  update_worker_substage(
+      "archive_member_lookup",
+      lookup_mode="hget",
+  )
   raw_size = client.hget(keys.hash_key, member_name)
   if raw_size is not None:
     size = int(raw_size)
@@ -2051,10 +2072,18 @@ def _member_match_via_redis_or_sealed_point(
   if client.exists(keys.lock_key):
     if populate_degraded_is_set(keys, client=client):
       _raise_if_ingest_day_skipped(keys, sealed_path, client)
+    update_worker_substage(
+        "archive_member_lookup",
+        lookup_mode="redis_wait",
+    )
     return wait_for_member_match(
         keys, member_name, expected_size, sealed_path=sealed_path,
     )
 
+  update_worker_substage(
+      "archive_member_lookup",
+      lookup_mode="sealed_populate",
+  )
   try:
     members = _populate_redis_members_from_sealed_scan(sealed_path, cache_key)
     _store_daily_archive_members_cache(canonical, members)

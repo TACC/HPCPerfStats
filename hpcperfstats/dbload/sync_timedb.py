@@ -122,6 +122,14 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     _derive_stats_path_date,
     normalize_daily_compressed_path,
 )
+from hpcperfstats.dbload.sync_timedb_ingest_worker_diagnostics import (
+    apply_ingest_pool_worker_init,
+    clear_worker_stage,
+    format_worker_stages_snapshot,
+    prune_stale_worker_stages,
+    record_worker_stage,
+    update_worker_substage,
+)
 from hpcperfstats.dbload.sync_timedb_async_day_close import AsyncDayCloseCoordinator
 from hpcperfstats.file_locking import file_write_lock
 from hpcperfstats.dbload.sync_timedb_archive_dispatch import ArchiveDispatchCoordinator
@@ -150,6 +158,7 @@ from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
     redis_members_cache_is_fully_warm,
     reset_ingest_task_deadline_monotonic,
     set_ingest_task_deadline_monotonic,
+    _raise_if_ingest_deadline_exceeded,
 )
 
 # Supervisor tests monkeypatch these names; cold-path maintenance lives in ArchiveJanitor.
@@ -274,6 +283,7 @@ def _run_ingest_timed(stats_file, stage, fn):
     deadline_token = set_ingest_task_deadline_monotonic(
         time.monotonic() + timeout_s,
     )
+  record_worker_stage(stats_file, stage)
   try:
     if timeout_s <= 0.0:
       return fn()
@@ -304,6 +314,7 @@ def _run_ingest_timed(stats_file, stage, fn):
   finally:
     if deadline_token is not None:
       reset_ingest_task_deadline_monotonic(deadline_token)
+    clear_worker_stage()
 
 
 def _log_ingest_per_file_timeout(exc):
@@ -336,8 +347,9 @@ def _unique_daily_compressed_archives_for_paths(paths, tgz_archive_dir):
 
 def _prewarm_archive_members_redis_for_days(day_items):
   """Single-flight populate on supervisor before imap when Redis L2 is cold."""
+  summary_parts = []
   if not archive_members_redis_enabled():
-    return
+    return "-"
   from hpcperfstats.dbload.sync_timedb_archive_helpers import (
       _daily_archive_members_cache_key,
       _resolve_sealed_daily_archive_path,
@@ -351,20 +363,12 @@ def _prewarm_archive_members_redis_for_days(day_items):
     cache_key = _daily_archive_members_cache_key(canonical)
     keys = build_archive_members_redis_keys(cache_key)
     if redis_members_cache_is_fully_warm(keys):
-      log_print(
-          "INFO: archive members prewarm skip day=%s reason=redis_warm"
-          % day_token,
-          flush=True,
-      )
+      summary_parts.append("%s:redis_warm" % day_token)
       continue
     sealed_path = _resolve_sealed_daily_archive_path(canonical)
     tar_path = daily_tar_path_from_compressed(canonical)
     if sealed_path is None and not os.path.isfile(tar_path):
-      log_print(
-          "INFO: archive members prewarm skip day=%s reason=no_daily_archive"
-          % day_token,
-          flush=True,
-      )
+      summary_parts.append("%s:no_daily_archive" % day_token)
       continue
     log_print(
         "Prewarming archive members Redis for day=%s sealed=%s"
@@ -373,14 +377,12 @@ def _prewarm_archive_members_redis_for_days(day_items):
     )
     try:
       get_existing_archive_members_for_daily_archive(canonical)
+      summary_parts.append("%s:prewarmed" % day_token)
     except ArchiveDayIngestSkipError:
-      log_print(
-          "INFO: archive members prewarm skip day=%s reason=day_ingest_skip"
-          % day_token,
-          flush=True,
-      )
+      summary_parts.append("%s:day_ingest_skip" % day_token)
     except ArchiveMembersRedisUnavailableError as exc:
       _exit_on_archive_members_redis_unavailable(exc)
+  return ",".join(summary_parts) if summary_parts else "-"
 
 
 def _prewarm_archive_members_redis_for_day_token(day_token):
@@ -396,9 +398,11 @@ def _prewarm_archive_members_redis_for_day_token(day_token):
 
 def _prewarm_archive_members_redis_for_chunk(paths):
   """Single-flight populate on supervisor before imap when Redis L2 is cold."""
-  _prewarm_archive_members_redis_for_days(
+  summary = _prewarm_archive_members_redis_for_days(
       list(_unique_daily_compressed_archives_for_paths(paths, tgz_archive_dir).items()),
   )
+  log_print("INFO: chunk prewarm days=%s" % summary, flush=True)
+  return summary
 
 
 def _calendar_day_hint_from_paths(paths):
@@ -417,6 +421,168 @@ def _calendar_day_hint_from_paths(paths):
   return ""
 
 
+def _distinct_calendar_days_from_paths(paths, max_days=8):
+  days = []
+  seen = set()
+  for path in paths or ():
+    day = _calendar_day_hint_from_paths([path])
+    if not day or day in seen:
+      continue
+    seen.add(day)
+    days.append(day)
+    if len(days) >= max(1, int(max_days)):
+      break
+  return days
+
+
+def _in_flight_file_meta_from_paths(paths, max_n=10):
+  parts = []
+  for path in (paths or [])[: max(0, int(max_n))]:
+    if not path:
+      continue
+    base = os.path.basename(str(path))
+    try:
+      size_bytes = os.path.getsize(path)
+    except OSError:
+      size_bytes = -1
+    parts.append("%s:%d" % (base, int(size_bytes)))
+  return ",".join(parts) if parts else "-"
+
+
+class IngestStallDiagnostics:
+  """Supervisor-thread state included on pool imap stall WARN/ERROR lines."""
+
+  def __init__(self):
+    self.last_imap_completion_monotonic = None
+    self.ingest_pipeline = "combined"
+    self.imap_batch_cap = 0
+    self.chunk_batch_size = 0
+    self.current_imap_batch_size = 0
+    self.async_day_close = None
+    self.worker_registry = None
+    self.chunk_prewarm_summary = "-"
+
+  def note_imap_completion(self):
+    self.last_imap_completion_monotonic = time.monotonic()
+
+  def seconds_since_last_imap_completion(self):
+    last = self.last_imap_completion_monotonic
+    if last is None:
+      return -1.0
+    return max(0.0, time.monotonic() - float(last))
+
+  def format_async_day_close_detail(self):
+    coord = self.async_day_close
+    if coord is None:
+      return "0 detail=-"
+    try:
+      active = coord.active_or_submitted_tar_paths()
+    except Exception:
+      return "0 detail=unavailable"
+    details = []
+    for tar_path in sorted(active)[:8]:
+      snap = coord.entry_progress_snapshot(tar_path) or {}
+      age_s = snap.get("last_progress_age_s")
+      age_text = "%.0f" % float(age_s) if age_s is not None else ""
+      details.append(
+          "%s:%s:%s:%s"
+          % (
+              os.path.basename(str(tar_path)),
+              snap.get("status") or "",
+              snap.get("last_progress") or "",
+              age_text,
+          )
+      )
+    detail = ";".join(details) if details else "-"
+    return "%d detail=%s" % (len(active), detail)
+
+
+def _ingest_stall_defer_state(day_hint, progress_state):
+  if not day_hint:
+    return False, "no_day_hint"
+  if archive_members_populate_shows_progress_for_day(
+      day_hint,
+      tgz_archive_dir,
+      progress_state=progress_state,
+  ):
+    return True, "redis_populate_active"
+  if archive_members_redis_enabled():
+    try:
+      day_date = date_cls.fromisoformat(day_hint)
+      compressed = daily_compressed_path_for_date(tgz_archive_dir, day_date)
+      from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+          _daily_archive_members_cache_key,
+      )
+      cache_key = _daily_archive_members_cache_key(
+          normalize_daily_compressed_path(compressed),
+      )
+      keys = build_archive_members_redis_keys(cache_key)
+      if redis_members_cache_is_fully_warm(keys):
+        return False, "redis_warm"
+    except (ValueError, TypeError):
+      pass
+  return False, "redis_populate_inactive"
+
+
+def _format_redis_populate_for_in_flight_days(paths, max_days=3):
+  days = _distinct_calendar_days_from_paths(paths, max_days=max_days)
+  if not days:
+    return ""
+  parts = [
+      "%s{%s}"
+      % (day, describe_archive_members_populate_redis_for_day(day, tgz_archive_dir))
+      for day in days
+  ]
+  return " redis_by_day=" + " ".join(parts)
+
+
+def _build_ingest_stall_log_suffix(
+    *,
+    sample,
+    day_hint,
+    stall_diagnostics,
+    progress_state,
+    alive_workers,
+    consecutive,
+    poll_timeout_s,
+):
+  defer_on, defer_reason = _ingest_stall_defer_state(day_hint, progress_state)
+  timeout_s = _resolve_sync_ingest_per_file_timeout_s()
+  diag = stall_diagnostics or IngestStallDiagnostics()
+  worker_registry = diag.worker_registry
+  if worker_registry is not None:
+    prune_stale_worker_stages(worker_registry, max_age_s=900.0)
+  worker_stages = format_worker_stages_snapshot(worker_registry)
+  since_last = diag.seconds_since_last_imap_completion()
+  since_text = "%.1f" % since_last if since_last >= 0.0 else "-"
+  overlap_mode = cfg.get_pipeline_overlap_mode()
+  return (
+      " sync_ingest_per_file_timeout_s=%s stall_defer=%s defer_reason=%s"
+      " imap_batch_cap=%d chunk_batch=%d imap_batch=%d"
+      " distinct_in_flight_days=%s in_flight_file_meta=%s"
+      " seconds_since_last_imap_completion=%s ingest_pipeline=%s"
+      " pipeline_overlap_mode=%s async_day_close=%s chunk_prewarm=%s"
+      " worker_stages=%s%s"
+      % (
+          timeout_s,
+          "on" if defer_on else "off",
+          defer_reason,
+          int(diag.imap_batch_cap or 0),
+          int(diag.chunk_batch_size or 0),
+          int(diag.current_imap_batch_size or len(sample)),
+          ",".join(_distinct_calendar_days_from_paths(sample)) or "-",
+          _in_flight_file_meta_from_paths(sample),
+          since_text,
+          diag.ingest_pipeline or "combined",
+          overlap_mode,
+          diag.format_async_day_close_detail(),
+          diag.chunk_prewarm_summary or "-",
+          worker_stages,
+          _format_redis_populate_for_in_flight_days(sample),
+      )
+  )
+
+
 def _make_ingest_stall_warning_fn(
     tracker,
     *,
@@ -424,20 +590,25 @@ def _make_ingest_stall_warning_fn(
     thread_count,
     chunk_counter,
     pending_count,
+    stall_diagnostics=None,
+    progress_state=None,
 ):
   def on_stall_warning(consecutive, abort_after, poll_timeout_s, context):
     sample = tracker.sample_in_flight() if tracker is not None else []
     alive_workers = alive_pool_worker_count(pool)
     pool_workers = int(thread_count) if thread_count else alive_workers
     day_hint = _calendar_day_hint_from_paths(sample)
-    timeout_s = _resolve_sync_ingest_per_file_timeout_s()
-    timeout_hint = (
-        " sync_ingest_per_file_timeout_s=0 (disabled)"
-        if timeout_s <= 0.0
-        else ""
+    extra = _build_ingest_stall_log_suffix(
+        sample=sample,
+        day_hint=day_hint,
+        stall_diagnostics=stall_diagnostics,
+        progress_state=progress_state or {},
+        alive_workers=alive_workers,
+        consecutive=consecutive,
+        poll_timeout_s=poll_timeout_s,
     )
     redis_hint = ""
-    if day_hint:
+    if day_hint and "redis_by_day=" not in extra:
       redis_hint = " " + describe_archive_members_populate_redis_for_day(
           day_hint,
           tgz_archive_dir,
@@ -460,8 +631,8 @@ def _make_ingest_stall_warning_fn(
             len(sample),
             day_hint or "-",
             sample,
-            timeout_hint,
             redis_hint,
+            extra,
         ),
         flush=True,
     )
@@ -469,31 +640,40 @@ def _make_ingest_stall_warning_fn(
   return on_stall_warning
 
 
-def _make_ingest_stall_poll_fn(tracker, progress_state):
+def _make_ingest_stall_poll_fn(tracker, progress_state, stall_diagnostics=None):
   """Defer pool imap stall abort while Redis populate shows progress."""
 
   def on_stall_poll(consecutive, context, pool_health_context):
-    del consecutive, context
+    del context
     sample = []
     if tracker is not None:
       sample = tracker.sample_in_flight()
     elif pool_health_context.get("in_flight_sample"):
       sample = pool_health_context["in_flight_sample"]
     day_hint = _calendar_day_hint_from_paths(sample)
-    if not day_hint:
-      return False
-    if archive_members_populate_shows_progress_for_day(
-        day_hint,
-        tgz_archive_dir,
-        progress_state=progress_state,
-    ):
+    defer_on, defer_reason = _ingest_stall_defer_state(day_hint, progress_state)
+    if defer_on:
       redis_snapshot = describe_archive_members_populate_redis_for_day(
           day_hint,
           tgz_archive_dir,
       )
+      worker_stages = format_worker_stages_snapshot(
+          getattr(stall_diagnostics, "worker_registry", None)
+          if stall_diagnostics is not None
+          else None,
+      )
       log_print(
-          "WARN: pool imap stall deferred: Redis populate active for day=%s (%s)"
-          % (day_hint, redis_snapshot),
+          "WARN: pool imap stall deferred: Redis populate active for day=%s (%s) "
+          "consecutive_timeouts=%d in_flight_n=%d estimated_stall_s=%.1f "
+          "worker_stages=%s"
+          % (
+              day_hint,
+              redis_snapshot,
+              int(consecutive),
+              len(sample),
+              consecutive * float(cfg.get_sync_pool_poll_timeout_s()),
+              worker_stages,
+          ),
           flush=True,
       )
       return True
@@ -516,11 +696,18 @@ def _imap_ingest_pool(
     db_writer_pool=None,
     archive_pool=None,
     stall_poll_state=None,
+    stall_diagnostics=None,
 ):
   if pool is None:
     return iter(())
   if stall_poll_state is None:
     stall_poll_state = {}
+  if stall_diagnostics is not None:
+    stall_diagnostics.current_imap_batch_size = len(paths or ())
+    stall_diagnostics.imap_batch_cap = _effective_ingest_imap_inflight_cap(
+        thread_count,
+        len(paths or ()),
+    )
   pool_health_context = {
       "ingest_pool": ingest_pool if ingest_pool is not None else pool,
       "db_writer_pool": db_writer_pool,
@@ -529,7 +716,7 @@ def _imap_ingest_pool(
           tracker.sample_in_flight if tracker is not None else None
       ),
   }
-  return imap_unordered_watch_pool(
+  iterator = imap_unordered_watch_pool(
       pool,
       fn,
       paths,
@@ -540,10 +727,33 @@ def _imap_ingest_pool(
           thread_count=thread_count,
           chunk_counter=chunk_counter,
           pending_count=pending_count,
+          stall_diagnostics=stall_diagnostics,
+          progress_state=stall_poll_state,
       ),
-      on_stall_poll=_make_ingest_stall_poll_fn(tracker, stall_poll_state),
+      on_stall_poll=_make_ingest_stall_poll_fn(
+          tracker, stall_poll_state, stall_diagnostics=stall_diagnostics,
+      ),
       pool_health_context=pool_health_context,
+      on_stall_fatal_summary=(
+          lambda consecutive, abort_after, poll_timeout_s, ctx: _build_ingest_stall_log_suffix(
+              sample=tracker.sample_in_flight() if tracker is not None else [],
+              day_hint=_calendar_day_hint_from_paths(
+                  tracker.sample_in_flight() if tracker is not None else [],
+              ),
+              stall_diagnostics=stall_diagnostics,
+              progress_state=stall_poll_state,
+              alive_workers=alive_pool_worker_count(pool),
+              consecutive=consecutive,
+              poll_timeout_s=poll_timeout_s,
+          )
+          if tracker is not None or stall_diagnostics is not None
+          else ""
+      ),
   )
+  for item in iterator:
+    if stall_diagnostics is not None:
+      stall_diagnostics.note_imap_completion()
+    yield item
 
 
 def _effective_ingest_imap_inflight_cap(thread_count, path_count):
@@ -566,6 +776,7 @@ def _imap_ingest_paths_batched(
     ingest_pool=None,
     db_writer_pool=None,
     archive_pool=None,
+    stall_diagnostics=None,
 ):
   """Cap concurrent imap tasks below full chunk size for RSS safety."""
   inflight_cap = _effective_ingest_imap_inflight_cap(thread_count, len(paths))
@@ -585,6 +796,7 @@ def _imap_ingest_paths_batched(
         db_writer_pool=db_writer_pool,
         archive_pool=archive_pool,
         stall_poll_state=stall_poll_state,
+        stall_diagnostics=stall_diagnostics,
     ):
       yield item
 
@@ -908,6 +1120,7 @@ def _drain_db_write_tasks(
     chunk_counter=0,
     ingest_pool=None,
     archive_pool=None,
+    stall_diagnostics=None,
 ):
   """Write queued parse payloads and return updated finished count."""
   if not parse_tasks:
@@ -936,6 +1149,7 @@ def _drain_db_write_tasks(
         ingest_pool=ingest_pool,
         db_writer_pool=db_writer_pool,
         archive_pool=archive_pool,
+        stall_diagnostics=stall_diagnostics,
     )
   try:
     for result in write_results_iter:
@@ -949,7 +1163,9 @@ def _drain_db_write_tasks(
           files_to_be_archived.append(stats_fname)
         remaining = pending_total - chunk_ingest_finished - 1
         chunk_ingest_finished += 1
-        _log_sync_timedb_ingest_completed(stats_fname, elapsed_s, remaining)
+        _log_sync_timedb_ingest_completed(
+            stats_fname, elapsed_s, remaining, stage="write",
+        )
   except MultiprocessingWorkerExitError:
     raise
   return chunk_ingest_finished
@@ -1159,6 +1375,7 @@ def _invalidate_jid_caches(stats, proc_stats):
 
 def _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archival=True):
   """Persist parsed payload into DB using fixed-size batches and lock sharding."""
+  update_worker_substage("db_write")
   write_lock = _pick_write_lock_for_path(lock, stats_file)
   try:
     try:
@@ -1227,10 +1444,11 @@ def _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archiva
   return (stats_file, need_archival, True)
 
 
-def _log_sync_timedb_ingest_completed(stats_fname, elapsed_s, remaining):
+def _log_sync_timedb_ingest_completed(stats_fname, elapsed_s, remaining, *, stage=None):
+  stage_suffix = " stage=%s" % stage if stage else ""
   log_print(
-      "Completed file %s - processed in %.1fs - %d remaining to process."
-      % (stats_fname, float(elapsed_s), remaining),
+      "Completed file %s - processed in %.1fs - %d remaining to process.%s"
+      % (stats_fname, float(elapsed_s), remaining, stage_suffix),
       flush=True,
   )
 
@@ -1290,9 +1508,30 @@ def _duplicate_window_start_index(
   timestamp_present = None
   if itimes_set is _HOST_ITIMES_SET_OVERFLOW:
     itimes_set = None
-    timestamp_present = (
-        lambda unix_second: _host_timestamp_second_present_in_db(host, unix_second)
-    )
+    overflow_logged = {"done": False}
+    probe_count = {"n": 0}
+    max_overflow_probes = cfg.get_sync_host_itimes_cache_max_timestamps_per_entry()
+
+    def _timestamp_present_with_budget(unix_second):
+      probe_count["n"] += 1
+      if probe_count["n"] == 1 and not overflow_logged["done"]:
+        log_print(
+            "WARN: duplicate scan itimes_set overflow path=%s host=%s"
+            % (stats_file, host),
+            flush=True,
+        )
+        overflow_logged["done"] = True
+      if probe_count["n"] % 100 == 0:
+        _raise_if_ingest_deadline_exceeded()
+      if probe_count["n"] > max_overflow_probes:
+        raise IngestArchiveLookupBudgetExceededError(
+            "itimes overflow DB probe budget exceeded path=%s probes=%d"
+            % (stats_file, probe_count["n"]),
+        )
+      update_worker_substage("itimes_overflow_db")
+      return _host_timestamp_second_present_in_db(host, unix_second)
+
+    timestamp_present = _timestamp_present_with_budget
   if lines is not None:
     return find_processing_start_index(
         lines,
@@ -2574,6 +2813,11 @@ def run_sync_timedb_supervisor_loop(
   use_split_db_writer_pipeline = (
       db_writer_enabled and not db_writer_combined_task
   )
+  stall_diagnostics = IngestStallDiagnostics()
+  if use_split_db_writer_pipeline:
+    stall_diagnostics.ingest_pipeline = "split_parse_write"
+  else:
+    stall_diagnostics.ingest_pipeline = "combined"
   chunk_size = cfg.get_sync_ingest_chunk_size()
   processed_files = set()
   file_states = {}
@@ -2613,14 +2857,21 @@ def run_sync_timedb_supervisor_loop(
     _enqueue_archive_task(entry)
 
   if not _sync_timedb_ingest_inline_requested():
+    diagnostics_manager = multiprocessing.Manager()
+    worker_diagnostics_registry = diagnostics_manager.dict()
+    stall_diagnostics.worker_registry = worker_diagnostics_registry
     if use_split_db_writer_pipeline:
       ingest_pool_kind = "ingest-parse-pool"
     else:
       ingest_pool_kind = "ingest-pool"
     ingest_pool = multiprocessing.get_context('spawn').Pool(
         processes=thread_count,
-        initializer=apply_pool_worker_process_title,
-        initargs=(SYNC_TIMEDB_PROCESS_TITLE, ingest_pool_kind),
+        initializer=apply_ingest_pool_worker_init,
+        initargs=(
+            SYNC_TIMEDB_PROCESS_TITLE,
+            ingest_pool_kind,
+            worker_diagnostics_registry,
+        ),
         **_spawn_pool_recycle_kwargs(),
     )
     if use_split_db_writer_pipeline:
@@ -2628,8 +2879,12 @@ def run_sync_timedb_supervisor_loop(
           ingest_processes=thread_count)
       db_writer_pool = multiprocessing.get_context('spawn').Pool(
           processes=db_writer_processes,
-          initializer=apply_pool_worker_process_title,
-          initargs=(SYNC_TIMEDB_PROCESS_TITLE, "db-writer-pool"),
+          initializer=apply_ingest_pool_worker_init,
+          initargs=(
+              SYNC_TIMEDB_PROCESS_TITLE,
+              "db-writer-pool",
+              worker_diagnostics_registry,
+          ),
           **_spawn_pool_recycle_kwargs(),
       )
     elif db_writer_combined_task:
@@ -2667,6 +2922,7 @@ def run_sync_timedb_supervisor_loop(
       day_raw_removal_coordinator=day_raw_removal,
       process_title=SYNC_TIMEDB_PROCESS_TITLE,
   )
+  stall_diagnostics.async_day_close = async_day_close
   startup_archive_scan = StartupArchiveScanCoordinator(
       archive_data_dir=directory,
       host_name_ext=host_name_ext,
@@ -3159,7 +3415,10 @@ def run_sync_timedb_supervisor_loop(
         chunk_ingest_finished = 0
         active_chunk_ingest_tracker = None
 
-        _prewarm_archive_members_redis_for_chunk(stats_files_chunk)
+        stall_diagnostics.chunk_batch_size = len(stats_files_chunk)
+        stall_diagnostics.chunk_prewarm_summary = (
+            _prewarm_archive_members_redis_for_chunk(stats_files_chunk)
+        )
 
         k = 0
         active_workers = 0
@@ -3194,6 +3453,7 @@ def run_sync_timedb_supervisor_loop(
                   ingest_pool=ingest_pool,
                   db_writer_pool=db_writer_pool,
                   archive_pool=archive_pool,
+                  stall_diagnostics=stall_diagnostics,
               )
             for parsed in parse_results_iter:
               stats_fname, payload, need_archival, ingest_ok, parse_elapsed_s = parsed
@@ -3210,7 +3470,9 @@ def run_sync_timedb_supervisor_loop(
                   files_to_be_archived.append(stats_fname)
                 remaining = len(pending_stats_files) - chunk_ingest_finished - 1
                 chunk_ingest_finished += 1
-                _log_sync_timedb_ingest_completed(stats_fname, parse_elapsed_s, remaining)
+                _log_sync_timedb_ingest_completed(
+                    stats_fname, parse_elapsed_s, remaining, stage="parse",
+                )
                 continue
               parse_tasks.append(
                   DBWriteTask(
@@ -3233,6 +3495,7 @@ def run_sync_timedb_supervisor_loop(
                     chunk_counter=chunk_counter,
                     ingest_pool=ingest_pool,
                     archive_pool=archive_pool,
+                    stall_diagnostics=stall_diagnostics,
                 )
           except MultiprocessingWorkerExitError as exc:
             pool_worker_exit = True
@@ -3264,6 +3527,7 @@ def run_sync_timedb_supervisor_loop(
                   chunk_counter=chunk_counter,
                   ingest_pool=ingest_pool,
                   archive_pool=archive_pool,
+                  stall_diagnostics=stall_diagnostics,
               )
             except MultiprocessingWorkerExitError as exc:
               pool_worker_exit = True
@@ -3305,6 +3569,7 @@ def run_sync_timedb_supervisor_loop(
                   ingest_pool=ingest_pool,
                   db_writer_pool=db_writer_pool,
                   archive_pool=archive_pool,
+                  stall_diagnostics=stall_diagnostics,
               )
             for result in results_iter:
               ingest_ok = True
@@ -3326,7 +3591,9 @@ def run_sync_timedb_supervisor_loop(
                   files_to_be_archived.append(stats_fname)
                 remaining = len(pending_stats_files) - chunk_ingest_finished - 1
                 chunk_ingest_finished += 1
-                _log_sync_timedb_ingest_completed(stats_fname, elapsed_s, remaining)
+                _log_sync_timedb_ingest_completed(
+                    stats_fname, elapsed_s, remaining, stage="ingest",
+                )
           except MultiprocessingWorkerExitError as exc:
             pool_worker_exit = True
             _handle_pool_worker_exit_fatal(
@@ -3367,6 +3634,7 @@ def run_sync_timedb_supervisor_loop(
                   ingest_pool=ingest_pool,
                   db_writer_pool=db_writer_pool,
                   archive_pool=archive_pool,
+                  stall_diagnostics=stall_diagnostics,
               )
             for result in results_iter:
               ingest_ok = True
@@ -3388,7 +3656,9 @@ def run_sync_timedb_supervisor_loop(
                   files_to_be_archived.append(stats_fname)
                 remaining = len(pending_stats_files) - chunk_ingest_finished - 1
                 chunk_ingest_finished += 1
-                _log_sync_timedb_ingest_completed(stats_fname, elapsed_s, remaining)
+                _log_sync_timedb_ingest_completed(
+                    stats_fname, elapsed_s, remaining, stage="ingest",
+                )
           except MultiprocessingWorkerExitError as exc:
             pool_worker_exit = True
             _handle_pool_worker_exit_fatal(

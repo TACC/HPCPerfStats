@@ -354,6 +354,27 @@ def test_redis_unavailable_raises_when_enabled(monkeypatch):
     get_archive_members_redis_client(required=True)
 
 
+def test_redis_member_match_when_warm_uses_hget(_redis_test_env, tmp_path):
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  store_complete_members_in_redis(keys, {"host/a": 10, "host/b": 20})
+  hgetall_calls = {"n": 0}
+  original_hgetall = _redis_test_env.hgetall
+
+  def counting_hgetall(key):
+    hgetall_calls["n"] += 1
+    return original_hgetall(key)
+
+  _redis_test_env.hgetall = counting_hgetall
+  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+      redis_member_match_when_warm,
+  )
+
+  assert redis_member_match_when_warm(keys, "host/a", 10) is True
+  assert redis_member_match_when_warm(keys, "host/a", 9) is False
+  assert redis_member_match_when_warm(keys, "missing", 1) is False
+  assert hgetall_calls["n"] == 0
+
+
 def test_invalidate_clears_redis_key(_redis_test_env, tmp_path):
   cache_key = _sample_cache_key(tmp_path)
   keys = build_archive_members_redis_keys(cache_key)

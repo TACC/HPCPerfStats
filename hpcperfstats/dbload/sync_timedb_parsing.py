@@ -283,6 +283,16 @@ def find_processing_start_index(lines, itimes_set, timestamp_present=None):
   last_idx = 0
   need_archival = True
   for i, line in enumerate(lines):
+    if i and i % 1000 == 0:
+      from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+          _raise_if_ingest_deadline_exceeded,
+      )
+      from hpcperfstats.dbload.sync_timedb_ingest_worker_diagnostics import (
+          update_worker_substage,
+      )
+
+      update_worker_substage("duplicate_scan_lines")
+      _raise_if_ingest_deadline_exceeded()
     if not line:
       continue
     s = line.lstrip()
@@ -306,10 +316,21 @@ def find_processing_start_index_streaming(
     timestamp_present=None,
 ):
   """Scan a stats file without loading it into memory."""
+  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+      _raise_if_ingest_deadline_exceeded,
+  )
+  from hpcperfstats.dbload.sync_timedb_ingest_worker_diagnostics import (
+      update_worker_substage,
+  )
+
+  update_worker_substage("duplicate_scan_streaming")
   start_idx = -1
   last_idx = 0
   line_idx = 0
   for line in iter_stats_file_lines(stats_file):
+    if line_idx and line_idx % 1000 == 0:
+      update_worker_substage("duplicate_scan_streaming")
+      _raise_if_ingest_deadline_exceeded()
     if not line:
       line_idx += 1
       continue

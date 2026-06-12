@@ -233,6 +233,34 @@ def test_imap_stall_warning_callback(monkeypatch):
   assert warnings[-1][0] == 4
 
 
+def test_imap_stall_fatal_summary_appended_to_error(monkeypatch):
+  monkeypatch.setattr(
+      "hpcperfstats.conf_parser.get_sync_pool_stall_abort_after_timeouts",
+      lambda: 2,
+  )
+  logs = []
+  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+
+  def on_stall_fatal_summary(consecutive, abort_after, poll_timeout_s, context):
+    del consecutive, abort_after, poll_timeout_s, context
+    return " diagnostics_summary=worker_stages=-"
+
+  pool = _BlockingPool()
+  iterator = mph.imap_unordered_watch_pool(
+      pool,
+      lambda x: x,
+      [1],
+      poll_timeout_s=0.01,
+      context="test_fatal_summary",
+      on_stall_fatal_summary=on_stall_fatal_summary,
+  )
+  with pytest.raises(mph.MultiprocessingPoolStallError):
+    next(iterator)
+  error_lines = [line for line in logs if "ERROR:" in line and "Pool imap stalled" in line]
+  assert error_lines
+  assert "diagnostics_summary=worker_stages=-" in error_lines[-1]
+
+
 class _DeferStallPool:
   """Pool whose imap iterator times out until ``release_after`` poll attempts."""
 

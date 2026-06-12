@@ -4008,6 +4008,65 @@ def test_daily_archive_has_member_prefers_redis_when_tar_and_sealed_exist(
   assert tar_scan_calls["n"] == 0
 
 
+def test_warm_duplicate_check_uses_hget_not_hgetall(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+      build_archive_members_redis_keys,
+      store_complete_members_in_redis,
+  )
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import FakeRedis
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  member_name = "host.vista.tacc.utexas.edu/raw"
+  sealed = daily_dir / "2026-05-20.tar.gz"
+  sealed.write_bytes(b"gz")
+  sealed_str = str(sealed)
+  cache_key = helpers._daily_archive_members_cache_key(
+      helpers.normalize_daily_compressed_path(sealed_str),
+  )
+  keys = build_archive_members_redis_keys(cache_key)
+  fake_redis = FakeRedis()
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: fake_redis,
+  )
+  store_complete_members_in_redis(
+      keys,
+      {member_name: 4, "other/member": 99},
+      saw_duplicates=False,
+  )
+  hgetall_calls = {"n": 0}
+  hget_calls = {"n": 0}
+  original_hgetall = fake_redis.hgetall
+  original_hget = fake_redis.hget
+
+  def counting_hgetall(key):
+    hgetall_calls["n"] += 1
+    return original_hgetall(key)
+
+  def counting_hget(key, field):
+    hget_calls["n"] += 1
+    return original_hget(key, field)
+
+  fake_redis.hgetall = counting_hgetall
+  fake_redis.hget = counting_hget
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
+  )
+  assert helpers.daily_archive_has_member_with_size(
+      sealed_str, member_name, 4,
+  ) is True
+  assert hget_calls["n"] >= 1
+  assert hgetall_calls["n"] == 0
+
+
 def test_concurrent_duplicate_check_avoids_parallel_tar_scans_with_redis_warm(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):

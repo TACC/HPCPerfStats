@@ -453,6 +453,38 @@ def redis_lookup_full_members(keys: ArchiveMembersRedisKeys) -> Optional[dict]:
   return _hgetall_members(client, keys)
 
 
+def redis_member_match_when_warm(
+    keys: ArchiveMembersRedisKeys,
+    member_name: str,
+    expected_size,
+    *,
+    client=None,
+) -> Optional[bool]:
+  """Point ``HGET`` duplicate-check when Redis L2 is fully warm.
+
+  Returns ``None`` when the HASH is not warm (caller uses populate / sealed path).
+  When warm, returns ``True``/``False`` using the same size semantics as
+  ``_member_match_via_redis_or_sealed_point`` for a single ``HGET``.
+  """
+  if not archive_members_redis_enabled():
+    return None
+  if client is None:
+    client = get_archive_members_redis_client(required=True)
+  if not redis_members_cache_is_fully_warm(keys, client=client):
+    return None
+  expected_size = int(expected_size)
+  raw_size = client.hget(keys.hash_key, member_name)
+  if raw_size is not None:
+    size = int(raw_size)
+    if size == expected_size:
+      return True
+    if size > expected_size:
+      return False
+  if client.get(keys.complete_key) == "1":
+    return False
+  return None
+
+
 def redis_members_cache_is_fully_warm(
     keys: ArchiveMembersRedisKeys,
     *,

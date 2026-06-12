@@ -448,6 +448,7 @@ def imap_unordered_watch_pool(
     context="",
     on_stall_warning=None,
     on_stall_poll=None,
+    on_stall_fatal_summary=None,
     pool_health_context=None,
 ):
   """Like ``pool.imap_unordered`` but abort when a worker dies (OOM-safe)."""
@@ -538,7 +539,18 @@ def imap_unordered_watch_pool(
                 estimated_stall_s,
             )
         )
-        log_print("ERROR: %s" % message, flush=True)
+        fatal_extra = ""
+        if on_stall_fatal_summary is not None:
+          try:
+            fatal_extra = on_stall_fatal_summary(
+                consecutive_timeouts,
+                stall_abort_after,
+                poll_timeout_s,
+                context,
+            ) or ""
+          except Exception:
+            fatal_extra = ""
+        log_print("ERROR: %s%s" % (message, fatal_extra), flush=True)
         if on_stall_warning is not None:
           on_stall_warning(
               consecutive_timeouts,

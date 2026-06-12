@@ -453,8 +453,29 @@ class AsyncDayCloseCoordinator:
         tar_norm,
         local_tz=self.local_tz,
     )
+    async_inflight = len(self.active_or_submitted_tar_paths())
+    async_max = max(
+        cfg.get_sync_day_close_async_workers(),
+        cfg.get_sync_startup_day_close_max_inflight(),
+    )
+    tar_size_bytes = -1
+    try:
+      tar_size_bytes = os.path.getsize(tar_norm)
+    except OSError:
+      pass
     self.log_fn(
-        "janitor: async day_close seal start tar=%s" % tar_norm,
+        "janitor: async day_close seal start tar=%s async_inflight=%d/%d "
+        "zstd_threads=%s ionice=c%s-n%s nice=%s tar_size_bytes=%d"
+        % (
+            tar_norm,
+            async_inflight,
+            async_max,
+            cfg.get_archive_zstd_threads(),
+            cfg.get_archive_zstd_ionice_class(),
+            cfg.get_archive_zstd_ionice_level(),
+            cfg.get_archive_zstd_nice(),
+            int(tar_size_bytes),
+        ),
         flush=True,
     )
     atomic_seal_tar_to_zst(
