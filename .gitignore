@@ -85,8 +85,10 @@ test_runs/*
 !test_runs/README.md
 
 # -----------------------------------------------------------------------------
-# Frontend build output (Vite → ../hpcperfstats_site/static/frontend). Never commit.
+# Frontend build output (Next.js export → copy-next-export.mjs → static/frontend).
+# Orval client under hpcperfstats/site/frontend/src/api/generated/ is gitignored
+# (run npm run generate:api before typecheck/test/build). Never commit static tree.
 # Produce locally: cd hpcperfstats/site/frontend && npm ci && npm run build
-# Docker: Dockerfile frontend-builder runs npm run build and copies this tree into the image.
+# Docker: Dockerfile frontend-builder runs npm run build and copies into the image.
 # -----------------------------------------------------------------------------
 hpcperfstats/site/hpcperfstats_site/static/frontend/

@@ -155,7 +155,21 @@ cd hpcperfstats/site/frontend && npm ci
 
 The SPA bundles Bokeh via **`@bokeh/bokehjs`** in `package.json`; keep its version aligned with the **`bokeh==…`** pin in `pyproject.toml` so `json_item` embeds stay compatible.
 
-**Bootswatch** (Spacelab) is imported from **`bootswatch`** in the Vite bundle (same CSS stack as the rest of `/machine/`).
+**Bootswatch** (Spacelab) is imported from **`bootswatch`** in the Next.js bundle (same CSS stack as the rest of `/machine/`).
+
+**Frontend stack:** Next.js 15 App Router (static export), strict TypeScript, TanStack Query, Orval (from committed `hpcperfstats/site/openapi/openapi.yaml`), React Hook Form + Zod. Build:
+
+```bash
+cd hpcperfstats/site/frontend && npm ci && npm run build
+```
+
+Regenerate API client after OpenAPI changes:
+
+```bash
+cd hpcperfstats/site && python manage.py spectacular --file openapi/openapi.yaml --format openapi
+cd hpcperfstats/site/frontend && npm run generate:api
+pytest hpcperfstats/site/machine/tests/test_openapi_schema_drift.py
+```
 
 ### 3. Full compose-backed gate (Django DB, Playwright browser E2E, live Redis)
 
@@ -254,7 +268,7 @@ Prove correctness at the **narrowest** layer first; escalate only when mocks can
 ### Colocation and drift guards
 
 - **Python:** `test_*.py` beside modules or under `hpcperfstats/tests/` for daemons. New modules need a test file in the same task.
-- **Frontend:** `*.test.{js,jsx}` colocated under `hpcperfstats/site/frontend/src/`.
+- **Frontend:** `*.test.{ts,tsx}` colocated under `hpcperfstats/site/frontend/src/`.
 - Cross-layer registries (routes, metric labels, extended-search params) need **drift tests** that fail when source and consumer lists diverge.
 
 ### Refactor for testability

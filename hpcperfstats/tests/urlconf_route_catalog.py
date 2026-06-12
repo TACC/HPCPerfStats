@@ -30,6 +30,7 @@ EXPECTED_ROUTE_TEMPLATES: FrozenSet[str] = frozenset({
     "api/jobs/histograms/",
     "api/pub/cluster-dashboard/",
     "api/sacct/ingest/",
+    "api/schema/",
     "api/session/",
     "api/session/drop-staff/",
     "api/user-api-key/",

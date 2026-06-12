@@ -1,0 +1,151 @@
+"""Apply drf-spectacular ``@extend_schema`` metadata to machine API views."""
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
+
+from . import openapi_serializers as os
+
+
+def _auth_responses():
+    return {
+        401: OpenApiResponse(response=os.ErrorDetailSerializer, description="Authentication required"),
+        403: OpenApiResponse(response=os.ErrorDetailSerializer, description="Forbidden"),
+    }
+
+
+SESSION_SCHEMA = extend_schema(
+    tags=["session"],
+    responses={200: os.SessionInfoSerializer, **_auth_responses()},
+)
+
+USER_API_KEY_SCHEMA = extend_schema(
+    tags=["session"],
+    responses={200: os.UserApiKeySerializer, **_auth_responses()},
+)
+
+USER_API_KEY_ROTATE_SCHEMA = extend_schema(
+    tags=["session"],
+    request=None,
+    responses={200: os.UserApiKeySerializer, **_auth_responses()},
+)
+
+DROP_STAFF_SCHEMA = extend_schema(
+    tags=["session"],
+    request=None,
+    responses={200: os.DropStaffResponseSerializer, **_auth_responses()},
+)
+
+INVALIDATE_CACHE_SCHEMA = extend_schema(
+    tags=["admin"],
+    request=os.InvalidateCacheRequestSerializer,
+    responses={
+        200: os.InvalidateCacheResponseSerializer,
+        400: OpenApiResponse(response=os.ErrorDetailSerializer),
+        **_auth_responses(),
+    },
+)
+
+HOME_OPTIONS_SCHEMA = extend_schema(
+    tags=["home"],
+    responses={200: os.HomeOptionsSerializer, **_auth_responses()},
+)
+
+JOB_LIST_SCHEMA = extend_schema(
+    tags=["jobs"],
+    parameters=[
+        OpenApiParameter(name="page", type=int, location=OpenApiParameter.QUERY),
+        OpenApiParameter(name="sort", type=str, location=OpenApiParameter.QUERY),
+        OpenApiParameter(name="order", type=str, location=OpenApiParameter.QUERY),
+        OpenApiParameter(name="username", type=str, location=OpenApiParameter.QUERY),
+        OpenApiParameter(name="account", type=str, location=OpenApiParameter.QUERY),
+        OpenApiParameter(name="queue", type=str, location=OpenApiParameter.QUERY),
+        OpenApiParameter(name="host", type=str, location=OpenApiParameter.QUERY),
+        OpenApiParameter(name="year", type=int, location=OpenApiParameter.QUERY),
+        OpenApiParameter(name="date", type=str, location=OpenApiParameter.QUERY),
+    ],
+    responses={200: os.JobListResponseSerializer, **_auth_responses()},
+)
+
+JOB_LIST_HISTOGRAMS_SCHEMA = extend_schema(
+    tags=["jobs"],
+    parameters=[
+        OpenApiParameter(name="group", type=str, location=OpenApiParameter.QUERY, required=True),
+        OpenApiParameter(name="metric", type=str, location=OpenApiParameter.QUERY),
+    ],
+    responses={200: os.JobListResponseSerializer, **_auth_responses()},
+)
+
+JOB_DETAIL_SCHEMA = extend_schema(
+    tags=["jobs"],
+    parameters=[
+        OpenApiParameter(name="light", type=int, location=OpenApiParameter.QUERY),
+    ],
+    responses={200: os.JobDetailResponseSerializer, **_auth_responses()},
+)
+
+JOB_PLOTS_SCHEMA = extend_schema(
+    tags=["jobs"],
+    parameters=[
+        OpenApiParameter(name="plot", type=str, location=OpenApiParameter.QUERY),
+        OpenApiParameter(name="zoom", type=str, location=OpenApiParameter.QUERY),
+        OpenApiParameter(name="progressive", type=str, location=OpenApiParameter.QUERY),
+    ],
+    responses={200: os.JobPlotsResponseSerializer, **_auth_responses()},
+)
+
+TYPE_DETAIL_SCHEMA = extend_schema(
+    tags=["jobs"],
+    responses={200: os.TypeDetailResponseSerializer, **_auth_responses()},
+)
+
+HOST_PLOT_SCHEMA = extend_schema(
+    tags=["hosts"],
+    parameters=[
+        OpenApiParameter(name="host", type=str, location=OpenApiParameter.QUERY),
+        OpenApiParameter(name="start", type=str, location=OpenApiParameter.QUERY),
+        OpenApiParameter(name="end", type=str, location=OpenApiParameter.QUERY),
+    ],
+    responses={200: os.HostPlotResponseSerializer, **_auth_responses()},
+)
+
+ADMIN_MONITOR_SCHEMA = extend_schema(
+    tags=["admin"],
+    parameters=[
+        OpenApiParameter(name="section", type=str, location=OpenApiParameter.QUERY, required=True),
+        OpenApiParameter(name="refresh", type=str, location=OpenApiParameter.QUERY),
+    ],
+    responses={200: os.AdminMonitorResponseSerializer, **_auth_responses()},
+)
+
+JOB_MONITOR_SCHEMA = extend_schema(
+    tags=["monitor"],
+    parameters=[
+        OpenApiParameter(name="days", type=int, location=OpenApiParameter.QUERY),
+    ],
+    responses={200: os.JobMonitorResponseSerializer, **_auth_responses()},
+)
+
+JOB_MONITOR_GPU_SCHEMA = extend_schema(
+    tags=["monitor"],
+    parameters=[
+        OpenApiParameter(name="username", type=str, location=OpenApiParameter.QUERY, required=True),
+        OpenApiParameter(name="days", type=int, location=OpenApiParameter.QUERY),
+    ],
+    responses={200: os.JobMonitorGpuResponseSerializer, **_auth_responses()},
+)
+
+SACCT_INGEST_SCHEMA = extend_schema(
+    tags=["admin"],
+    parameters=[
+        OpenApiParameter(name="date", type=str, location=OpenApiParameter.QUERY),
+    ],
+    request=None,
+    responses={
+        200: os.SacctIngestResponseSerializer,
+        **_auth_responses(),
+    },
+)
+
+PUBLIC_CLUSTER_DASHBOARD_SCHEMA = extend_schema(
+    tags=["public"],
+    auth=[],
+    responses={200: os.PublicClusterDashboardSerializer},
+)

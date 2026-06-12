@@ -1,8 +1,11 @@
 ---
-description: React and JavaScript frontend standards
+description: React and JavaScript frontend standards (superseded by react-next-ts-cursor-rule.mdc for site/frontend)
 globs: **/*.{js,jsx,html,css}
 alwaysApply: false
 ---
+
+**Superseded for `hpcperfstats/site/frontend/`** by **`react-next-ts-cursor-rule.mdc`** (Next.js + TypeScript). This file remains for legacy references only.
+
 You are an expert in Web Development using the JavaScript, Node.js, React, React Router, React SPA, Bootstrap CSS, 
 
 Code Style and Structure

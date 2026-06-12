@@ -1,0 +1,945 @@
+openapi: 3.0.3
+info:
+  title: HPCPerfStats API
+  version: '3.0'
+  description: REST API for the HPCPerfStats machine SPA and public dashboards.
+paths:
+  /api/admin_monitor/:
+    get:
+      operationId: admin_monitor_retrieve
+      description: |-
+        Staff-only: HPCPerfStats Monitor data (host timestamps, cache/Redis, RabbitMQ, TimescaleDB stats).
+
+        Supports a lightweight, per-section API via the optional 'section' query
+        param:
+        - ?section=hosts      -> {"host_stats": [...]}
+        - ?section=rabbitmq_hosts -> {"rabbitmq_host_stats": [...]}
+        - ?section=cache      -> {"cache_stats": {...}}
+        - ?section=rabbitmq   -> {"rabbitmq_stats": {...}}
+        - ?section=timescaledb -> {"timescaledb_stats": {...}}
+        - ?section=xalt      -> {"xalt_stats": {...}}
+        - omitted/other       -> {"host_stats": [...], "rabbitmq_host_stats": [...],
+                                  "cache_stats": {...}, "rabbitmq_stats": {...},
+                                  "timescaledb_stats": {...}, "xalt_stats": {...}}
+      parameters:
+      - in: query
+        name: refresh
+        schema:
+          type: string
+      - in: query
+        name: section
+        schema:
+          type: string
+        required: true
+      tags:
+      - admin
+      security:
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminMonitorResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Forbidden
+  /api/cache/invalidate-page/:
+    post:
+      operationId: cache_invalidate_page_create
+      description: |-
+        Invalidate cache entries associated with the provided page path.
+
+        Deletes Django ``@cache_page`` / ``dynamic_cache_page`` rows via ``cache.delete``
+        (correct key prefix/versioning), then raw Redis ``SCAN`` for keys whose names
+        embed the same URL MD5 as Django's cache layer (covers ``Vary`` variants).
+
+        For any ``/machine`` or ``/machine/...`` path, also targets ``/api/home/`` and
+        drops ``home_options`` ORM cache keys (dates, metrics list, queues, states,
+        site newest job end). Works without a raw Redis client (LocMem): ORM + Django
+        cache deletes still run.
+      tags:
+      - admin
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InvalidateCacheRequestRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/InvalidateCacheRequestRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/InvalidateCacheRequestRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvalidateCacheResponse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Forbidden
+  /api/home/:
+    get:
+      operationId: home_retrieve
+      description: 'Return options for search form: date_list, metrics, queues, states,
+        machine_name.'
+      tags:
+      - home
+      security:
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HomeOptions'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Forbidden
+  /api/host_plot/:
+    get:
+      operationId: host_plot_retrieve
+      description: Return Bokeh plot_item for a single host and time range (GET host,
+        end_time__gte, end_time__lte).
+      parameters:
+      - in: query
+        name: end
+        schema:
+          type: string
+      - in: query
+        name: host
+        schema:
+          type: string
+      - in: query
+        name: start
+        schema:
+          type: string
+      tags:
+      - hosts
+      security:
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostPlotResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Forbidden
+  /api/job_monitor/:
+    get:
+      operationId: job_monitor_retrieve
+      description: |-
+        Staff-only: aggregate job failure statistics per user over a recent window.
+
+        The window is controlled by the optional ?days=N query parameter (integer).
+        N is clamped to [1, 365]. If missing or invalid, defaults to 30 days.
+
+        Returns rows of:
+        - username
+        - total_jobs: number of jobs run
+        - failed_jobs: number of jobs with state OUT_OF_MEMORY or FAILED
+        - failed_rate: percentage of failed jobs (0–100), sorted descending.
+        GPU fields are intentionally omitted from this initial endpoint so the page
+        can render quickly; per-user GPU stats are fetched asynchronously from
+        job_monitor_gpu_for_user.
+      parameters:
+      - in: query
+        name: days
+        schema:
+          type: integer
+      tags:
+      - monitor
+      security:
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobMonitorResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Forbidden
+  /api/job_monitor/gpu/:
+    get:
+      operationId: job_monitor_gpu_retrieve
+      description: Staff-only per-user GPU rollup for Job Monitor async row updates.
+      parameters:
+      - in: query
+        name: days
+        schema:
+          type: integer
+      - in: query
+        name: username
+        schema:
+          type: string
+        required: true
+      tags:
+      - monitor
+      security:
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobMonitorGpuResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Forbidden
+  /api/jobs/:
+    get:
+      operationId: jobs_retrieve
+      description: Paginated job list only (histograms via separate job_list_histograms
+        endpoint).
+      parameters:
+      - in: query
+        name: account
+        schema:
+          type: string
+      - in: query
+        name: date
+        schema:
+          type: string
+      - in: query
+        name: host
+        schema:
+          type: string
+      - in: query
+        name: order
+        schema:
+          type: string
+      - in: query
+        name: page
+        schema:
+          type: integer
+      - in: query
+        name: queue
+        schema:
+          type: string
+      - in: query
+        name: sort
+        schema:
+          type: string
+      - in: query
+        name: username
+        schema:
+          type: string
+      - in: query
+        name: year
+        schema:
+          type: integer
+      tags:
+      - jobs
+      security:
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobListResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Forbidden
+  /api/jobs/{jid}/{type_name}/:
+    get:
+      operationId: jobs_retrieve_3
+      description: 'Type detail: Bokeh json_item (tplot_item), stats_data, schema.'
+      parameters:
+      - in: path
+        name: jid
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: type_name
+        schema:
+          type: string
+        required: true
+      tags:
+      - jobs
+      security:
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TypeDetailResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Forbidden
+  /api/jobs/{id}/:
+    get:
+      operationId: jobs_retrieve_2
+      description: 'Single job detail: metadata, host_list, fsio, xalt, schema, URLs
+        (plots via separate job_plots endpoint).'
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      - in: query
+        name: light
+        schema:
+          type: integer
+      tags:
+      - jobs
+      security:
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobDetailResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Forbidden
+  /api/jobs/{id}/plots/:
+    get:
+      operationId: jobs_plots_retrieve
+      description: |-
+        Job-level plots grouped by shared jid_table input.
+
+        Returns Bokeh json_items and availability reasons for:
+        - Summary plot
+        - Roofline
+        - GPU roofline
+
+        Query params:
+        - plot: omit or ``all`` for all three; or one of summary_plot, roofline, gpu_roofline.
+        - zoom: ``1`` for zoom layout (single-plot requests only).
+        - progressive: ``1`` with plot=all (no zoom): HTTP 200 with ``status`` partial/ready and
+          only completed plot fields included while others are listed in ``loading_plots``;
+          avoids 202 while still using one endpoint and shared background tasks.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      - in: query
+        name: plot
+        schema:
+          type: string
+      - in: query
+        name: progressive
+        schema:
+          type: string
+      - in: query
+        name: zoom
+        schema:
+          type: string
+      tags:
+      - jobs
+      security:
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobPlotsResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Forbidden
+  /api/jobs/histograms/:
+    get:
+      operationId: jobs_histograms_retrieve
+      description: |-
+        Return Bokeh histograms for the job list, loaded incrementally.
+
+        This endpoint supports per-plot loading for metric histograms. The caller
+        must provide a 'group' query parameter:
+
+        - group=metric&metric=<name>: return a single metric histogram (thumb and
+          full) for the given metric name.
+
+        Example:
+          /api/jobs/histograms/?end_time__date=2024-01-01&group=metric&metric=runtime
+      parameters:
+      - in: query
+        name: group
+        schema:
+          type: string
+        required: true
+      - in: query
+        name: metric
+        schema:
+          type: string
+      tags:
+      - jobs
+      security:
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobListResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Forbidden
+  /api/pub/cluster-dashboard/:
+    get:
+      operationId: pub_cluster_dashboard_retrieve
+      description: Bundle every persisted expansion-factor histogram artifact for
+        the public cluster dashboard.
+      tags:
+      - public
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicClusterDashboard'
+          description: ''
+  /api/sacct/ingest/:
+    post:
+      operationId: sacct_ingest_create
+      description: |-
+        Ingest pipe-delimited sacct output into job_data using sync_acct logic.
+
+        Requires authentication (API key or session) and staff. Request body must be
+        raw pipe-delimited sacct output (same format as sacct -P -o ...). Query
+        param date=YYYY-MM-DD is required (the date of the data being ingested) to
+        compute which jobs are already in the DB.
+      parameters:
+      - in: query
+        name: date
+        schema:
+          type: string
+      tags:
+      - admin
+      security:
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SacctIngestResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Forbidden
+  /api/session/:
+    get:
+      operationId: session_retrieve
+      description: Return current session state for SPA (logged_in, username, is_staff).
+      tags:
+      - session
+      security:
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionInfo'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Forbidden
+  /api/session/drop-staff/:
+    post:
+      operationId: session_drop_staff_create
+      description: Remove staff access for the current authenticated session only.
+      tags:
+      - session
+      security:
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DropStaffResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Forbidden
+  /api/user-api-key/:
+    get:
+      operationId: user_api_key_retrieve
+      description: Return API key visibility for the OAuth session (create key if
+        none exists).
+      tags:
+      - session
+      security:
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserApiKey'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Forbidden
+  /api/user-api-key/rotate/:
+    post:
+      operationId: user_api_key_rotate_create
+      description: Revoke active keys for this user and return a newly minted raw
+        key.
+      tags:
+      - session
+      security:
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserApiKey'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Forbidden
+components:
+  schemas:
+    AdminMonitorResponse:
+      type: object
+      properties:
+        section:
+          type: string
+        data: {}
+      required:
+      - data
+    DropStaffResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+        is_staff:
+          type: boolean
+      required:
+      - is_staff
+      - message
+      - ok
+    ErrorDetail:
+      type: object
+      properties:
+        detail:
+          type: string
+        error:
+          type: string
+        login_url:
+          type: string
+    HomeOptions:
+      type: object
+      properties:
+        machine_name:
+          type: string
+        year_list:
+          type: array
+          items:
+            type: integer
+        date_list: {}
+        metrics: {}
+        queues:
+          type: array
+          items:
+            type: string
+        states:
+          type: array
+          items:
+            type: string
+      required:
+      - date_list
+      - machine_name
+      - metrics
+      - queues
+      - states
+      - year_list
+    HostPlotResponse:
+      type: object
+      properties:
+        plot: {}
+      required:
+      - plot
+    InvalidateCacheRequestRequest:
+      type: object
+      properties:
+        page_path:
+          type: string
+          minLength: 1
+      required:
+      - page_path
+    InvalidateCacheResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        page_path:
+          type: string
+        deleted_keys:
+          type: integer
+        scanned_keys:
+          type: integer
+        matched_sample:
+          type: array
+          items:
+            type: string
+        truncated_scan:
+          type: boolean
+      required:
+      - deleted_keys
+      - ok
+      - page_path
+    JobDetailResponse:
+      type: object
+      properties:
+        job: {}
+        metrics: {}
+        gpu: {}
+        fsio: {}
+      required:
+      - job
+    JobListEntry:
+      type: object
+      properties:
+        jid:
+          type: string
+        submit_time:
+          type: string
+          format: date-time
+          nullable: true
+        start_time:
+          type: string
+          format: date-time
+          nullable: true
+        end_time:
+          type: string
+          format: date-time
+          nullable: true
+        runtime:
+          type: number
+          format: double
+          nullable: true
+        timelimit:
+          type: number
+          format: double
+          nullable: true
+        node_hrs:
+          type: number
+          format: double
+          nullable: true
+        nhosts:
+          type: integer
+          nullable: true
+        ncores:
+          type: integer
+          nullable: true
+        username:
+          type: string
+        account:
+          type: string
+        sample_count:
+          type: integer
+        queue:
+          type: string
+        state:
+          type: string
+        QOS:
+          type: string
+        jobname:
+          type: string
+        host_list:
+          type: string
+        performance:
+          $ref: '#/components/schemas/JobPerformance'
+        color:
+          type: string
+      required:
+      - jid
+    JobListResponse:
+      type: object
+      properties:
+        nj:
+          type: integer
+        job_list:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobListEntry'
+        filter_summary: {}
+        histograms: {}
+    JobMonitorGpuResponse:
+      type: object
+      properties:
+        data: {}
+      required:
+      - data
+    JobMonitorResponse:
+      type: object
+      properties:
+        data: {}
+      required:
+      - data
+    JobPerformance:
+      type: object
+      properties:
+        labels:
+          type: array
+          items:
+            type: string
+        tone:
+          type: string
+        sort_rank:
+          type: integer
+    JobPlotsResponse:
+      type: object
+      properties:
+        plots: {}
+        progressive: {}
+      required:
+      - plots
+    PublicClusterDashboard:
+      type: object
+      properties:
+        status:
+          type: string
+        machine_name:
+          type: string
+        expansion_factors: {}
+        monthly_metrics: {}
+    SacctIngestResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+        detail:
+          type: string
+    SessionInfo:
+      type: object
+      properties:
+        logged_in:
+          type: boolean
+        username:
+          type: string
+        is_staff:
+          type: boolean
+        machine_name:
+          type: string
+      required:
+      - is_staff
+      - logged_in
+      - machine_name
+      - username
+    TypeDetailResponse:
+      type: object
+      properties:
+        host_data: {}
+        metrics: {}
+      required:
+      - host_data
+    UserApiKey:
+      type: object
+      properties:
+        username:
+          type: string
+        raw_key:
+          type: string
+          nullable: true
+        key_prefix:
+          type: string
+      required:
+      - key_prefix
+      - username
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: sessionid

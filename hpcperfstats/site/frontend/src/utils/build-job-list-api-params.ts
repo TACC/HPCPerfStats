@@ -1,0 +1,26 @@
+/** Merge query-string params with JobList route params (path segments). */
+export function buildJobListApiParams(
+  searchParams: URLSearchParams,
+  routeParams: Record<string, string | string[] | undefined>,
+): Record<string, string> {
+  const params: Record<string, string> = {
+    ...Object.fromEntries(searchParams.entries()),
+  };
+  const pick = (key: string) => {
+    const value = routeParams[key];
+    return typeof value === "string" ? value : undefined;
+  };
+  const year = pick("year");
+  const date = pick("date");
+  const username = pick("username");
+  const account = pick("account");
+  const queue = pick("queue");
+  const host = pick("host");
+  if (year) params.end_time__date = year;
+  if (date) params.end_time__date = date;
+  if (username) params.username = username;
+  if (account) params.account = account;
+  if (queue) params.queue = queue;
+  if (host) params.host = host;
+  return params;
+}

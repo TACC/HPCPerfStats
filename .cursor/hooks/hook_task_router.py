@@ -114,8 +114,22 @@ ROUTER_ENTRIES: list[RouterEntry] = [
             "hpcperfstats/site/frontend/*",
         ],
         "rules": [
-            "react-js-cursor-rule.mdc",
+            "react-next-ts-cursor-rule.mdc",
             "testing-best-practices.mdc",
+        ],
+    },
+    {
+        "id": "openapi_orval",
+        "patterns": [
+            "hpcperfstats/site/openapi/*",
+            "hpcperfstats/site/machine/openapi_schema.py",
+            "hpcperfstats/site/machine/openapi_serializers.py",
+            "hpcperfstats/site/frontend/orval.config.ts",
+            "hpcperfstats/site/frontend/src/api/*",
+        ],
+        "rules": [
+            "openapi-orval-sync.mdc",
+            "api-breaking-change-contract.mdc",
         ],
     },
     {

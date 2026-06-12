@@ -1,9 +1,12 @@
 """URL routing for machine REST API."""
 from django.urls import path
+from drf_spectacular.views import SpectacularAPIView
+
 from . import api
 from . import public_api
 
 urlpatterns = [
+    path("schema/", SpectacularAPIView.as_view(), name="schema"),
     path("session/", api.session_info),
     path("user-api-key/", api.user_api_key_status),
     path("user-api-key/rotate/", api.user_api_key_rotate),

@@ -383,6 +383,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 INSTALLED_APPS = (
     "rest_framework",
+    "drf_spectacular",
     "corsheaders",
     "hpcperfstats.site.machine",
     "hpcperfstats.site.xalt",
@@ -405,6 +406,7 @@ REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
         "hpcperfstats.site.machine.renderers.SafeJSONRenderer",
     ],
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_THROTTLE_CLASSES": [
         "hpcperfstats.site.machine.throttles.AuthenticatedUserOrApiKeyThrottle",
     ],
@@ -427,6 +429,14 @@ REST_FRAMEWORK = {
             os.environ.get("API_THROTTLE_PUBLIC_MONTHLY_METRICS_RATE", "240/min"),
         ),
     },
+}
+SPECTACULAR_SETTINGS = {
+    "TITLE": "HPCPerfStats API",
+    "DESCRIPTION": "REST API for the HPCPerfStats machine SPA and public dashboards.",
+    "VERSION": "3.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "SCHEMA_PATH_PREFIX": "/api/",
+    "COMPONENT_SPLIT_REQUEST": True,
 }
 # CORS: same-origin plus explicit trusted frontends only.
 CORS_ALLOW_CREDENTIALS = True

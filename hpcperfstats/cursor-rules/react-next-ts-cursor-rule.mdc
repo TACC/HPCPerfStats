@@ -1,0 +1,40 @@
+---
+description: Next.js App Router, TypeScript, TanStack Query, Orval, and RHF+Zod frontend standards
+globs:
+  - "**/hpcperfstats/site/frontend/**"
+alwaysApply: false
+---
+
+# React / Next.js / TypeScript Frontend
+
+**Activation:** triggered when editing `hpcperfstats/site/frontend/**`.
+
+## Stack
+
+- **Next.js 15 App Router** with `output: 'export'` (static export; nginx serves `/machine/` and `/pub/` shells).
+- **Strict TypeScript** — `strict: true` in `tsconfig.json`; avoid `any`; use generated OpenAPI types where available.
+- **TanStack Query** — server state via Orval-generated hooks; do not add ad hoc `useEffect`+`fetch` for API data unless Orval lacks an endpoint.
+- **Orval** — client generated from committed `hpcperfstats/site/openapi/openapi.yaml`; custom mutator in `src/api/fetch-mutator.ts` (credentials, CSRF, 401 redirect).
+- **Forms** — React Hook Form + Zod schemas (`src/schemas/` or colocated `*-schema.ts`); mirror validation in Zod + drift tests.
+- **Bokeh** — `'use client'` only; embed via `BokehEmbed`; see **`bokeh-layout-surface-split.mdc`**.
+
+## Conventions
+
+- Components: PascalCase `.tsx` under `src/components/` or `src/views/`.
+- Non-components: kebab-case `.ts` under `src/utils/`, `src/hooks/`.
+- App routes: `app/machine/**`, `app/pub/**`; dynamic client routing may use catch-all `[[...slug]]` with pathname-based view selection.
+- Tests: colocated `*.test.ts(x)` or `src/views/__tests__/`; Vitest + RTL + jest-axe for page shells.
+
+## API changes
+
+When Django API shapes or routes change:
+
+1. Regenerate `openapi.yaml` (`manage.py spectacular --file … --format openapi`).
+2. Run `npm run generate:api` in frontend.
+3. Fix drift test `test_openapi_schema_drift.py`.
+4. See **`openapi-orval-sync.mdc`**.
+
+## Overlap
+
+- **`openapi-orval-sync.mdc`** — OpenAPI commit + Orval regen workflow.
+- **`bokeh-layout-surface-split.mdc`**, **`no-cdn-in-production.mdc`**, **`testing-best-practices.mdc`**.

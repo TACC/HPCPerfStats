@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-_JS_REL = Path("hpcperfstats/site/frontend/src/config/publicRobotsAllowPrefixes.js")
+_JS_REL = Path("hpcperfstats/site/frontend/src/config/publicRobotsAllowPrefixes.ts")
 
 
 def _repo_root_from(start: Path) -> Path:

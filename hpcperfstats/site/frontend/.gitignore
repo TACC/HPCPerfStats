@@ -1,6 +1,22 @@
+# Vitest coverage
 coverage/
 
-# Default Vite outDir is ../hpcperfstats_site/static/frontend (see vite.config.js);
-# that tree is ignored from the repo root. These cover alternate local output paths.
+# Orval client (npm run generate:api). Hand-written: orval.config.ts,
+# src/api/fetch-mutator.ts, src/api/index.ts. Directory kept via generated/.gitignore.
+src/api/generated/**
+!src/api/generated/.gitignore
+
+# Next.js build and static export (npm run build → out/, then copy-next-export.mjs)
+.next/
+out/
+
+# Next / TypeScript tooling output
+next-env.d.ts
+*.tsbuildinfo
+
+# Legacy Vite local output (Next export uses out/ above)
 dist/
 .vite/
+
+# Local env overrides
+.env*.local

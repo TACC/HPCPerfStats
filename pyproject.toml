@@ -41,6 +41,7 @@ dependencies = [
   "tzdata",
   "redis==8.0.0",
   "djangorestframework",
+  "drf-spectacular>=0.28.0",
   "django-cors-headers",
   "setproctitle",
 ]

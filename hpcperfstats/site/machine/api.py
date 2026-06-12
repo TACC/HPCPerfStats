@@ -47,6 +47,24 @@ class _JSONResponse(Response):
 from .bokeh_plot_layout import _apply_zoom_layout_to_json_item
 from .bokeh_embed import new_spa_embedded_figure
 from .cache_middleware import dynamic_cache_page
+from .openapi_schema import (
+    ADMIN_MONITOR_SCHEMA,
+    DROP_STAFF_SCHEMA,
+    HOME_OPTIONS_SCHEMA,
+    HOST_PLOT_SCHEMA,
+    INVALIDATE_CACHE_SCHEMA,
+    JOB_DETAIL_SCHEMA,
+    JOB_LIST_HISTOGRAMS_SCHEMA,
+    JOB_LIST_SCHEMA,
+    JOB_MONITOR_GPU_SCHEMA,
+    JOB_MONITOR_SCHEMA,
+    JOB_PLOTS_SCHEMA,
+    SACCT_INGEST_SCHEMA,
+    SESSION_SCHEMA,
+    TYPE_DETAIL_SCHEMA,
+    USER_API_KEY_ROTATE_SCHEMA,
+    USER_API_KEY_SCHEMA,
+)
 from .cache_utils import (
     KEY_ADMIN_CACHE_STATS,
     KEY_ADMIN_RMQ_STATS,
@@ -1157,6 +1175,7 @@ def _get_recent_rabbitmq_host_stats():
     return host_stats
 
 
+@SESSION_SCHEMA
 @api_view(["GET"])
 def session_info(request):
     """Return current session state for SPA (logged_in, username, is_staff)."""
@@ -1171,6 +1190,7 @@ def session_info(request):
     })
 
 
+@USER_API_KEY_SCHEMA
 @api_view(["GET"])
 def user_api_key_status(request):
     """Return API key visibility for the OAuth session (create key if none exists)."""
@@ -1199,6 +1219,7 @@ def user_api_key_status(request):
     })
 
 
+@USER_API_KEY_ROTATE_SCHEMA
 @api_view(["POST"])
 @authentication_classes([SessionAuthentication])
 def user_api_key_rotate(request):
@@ -1231,6 +1252,7 @@ def user_api_key_rotate(request):
     })
 
 
+@DROP_STAFF_SCHEMA
 @api_view(["POST"])
 def drop_staff_for_session(request):
     """Remove staff access for the current authenticated session only."""
@@ -1253,6 +1275,7 @@ def drop_staff_for_session(request):
     )
 
 
+@INVALIDATE_CACHE_SCHEMA
 @api_view(["POST"])
 def invalidate_cache_for_page(request):
     """Invalidate cache entries associated with the provided page path.
@@ -1339,6 +1362,7 @@ def invalidate_cache_for_page(request):
     )
 
 
+@HOME_OPTIONS_SCHEMA
 @dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
 def home_options(request):
@@ -1654,6 +1678,7 @@ def _job_list_metric_hist_pair(df, metric_name, label, display_title, thumb_wh, 
     return p_thumb, p_full
 
 
+@JOB_LIST_HISTOGRAMS_SCHEMA
 @dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
 @throttle_classes([ExpensiveReadThrottle])
@@ -1771,6 +1796,7 @@ def job_list_histograms(request):
     )
 
 
+@JOB_LIST_SCHEMA
 @dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
 @throttle_classes([ExpensiveReadThrottle])
@@ -1867,6 +1893,7 @@ def job_list(request):
     })
 
 
+@JOB_DETAIL_SCHEMA
 @api_view(["GET"])
 @throttle_classes([ExpensiveReadThrottle])
 def job_detail(request, pk):
@@ -2094,6 +2121,7 @@ def job_detail(request, pk):
     return Response(payload)
 
 
+@JOB_PLOTS_SCHEMA
 @api_view(["GET"])
 @throttle_classes([ExpensiveReadThrottle])
 def job_plots(request, pk):
@@ -2429,6 +2457,7 @@ def job_plots(request, pk):
     return Response(payload)
 
 
+@TYPE_DETAIL_SCHEMA
 @dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
 @throttle_classes([ExpensiveReadThrottle])
@@ -2466,6 +2495,7 @@ def type_detail(request, jid, type_name):
     return Response(detail_payload)
 
 
+@HOST_PLOT_SCHEMA
 @dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
 @throttle_classes([ExpensiveReadThrottle])
@@ -2684,6 +2714,7 @@ def _get_xalt_jid_coverage(days=3, missing_limit=200, chunk_size=1000):
         close_old_connections()
 
 
+@ADMIN_MONITOR_SCHEMA
 @api_view(["GET"])
 @throttle_classes([ExpensiveReadThrottle])
 def admin_monitor(request):
@@ -2797,6 +2828,7 @@ def admin_monitor(request):
     )
 
 
+@JOB_MONITOR_SCHEMA
 @dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
 @throttle_classes([ExpensiveReadThrottle])
@@ -2886,6 +2918,7 @@ def job_monitor(request):
     )
 
 
+@JOB_MONITOR_GPU_SCHEMA
 @api_view(["GET"])
 @throttle_classes([ExpensiveReadThrottle])
 def job_monitor_gpu_for_user(request):
@@ -2979,6 +3012,7 @@ def job_monitor_gpu_for_user(request):
     return Response(result)
 
 
+@SACCT_INGEST_SCHEMA
 @api_view(["POST"])
 @throttle_classes([StaffIngestThrottle])
 def sacct_ingest(request):

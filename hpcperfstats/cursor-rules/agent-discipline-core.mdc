@@ -62,7 +62,9 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 
 | Trigger paths | Read these rules |
 |---------------|------------------|
-| `hpcperfstats/site/frontend/` | `react-js-cursor-rule.mdc`, `testing-best-practices.mdc` |
+| `hpcperfstats/site/frontend/` | `react-next-ts-cursor-rule.mdc`, `testing-best-practices.mdc` |
+| `hpcperfstats/site/openapi/`, `orval.config.ts`, `src/api/` | `openapi-orval-sync.mdc` |
+| `hpcperfstats/site/machine/api.py`, `openapi_schema.py`, `openapi_serializers.py` | `openapi-orval-sync.mdc`, `api-breaking-change-contract.mdc` |
 | Job Detail, Extended Search, metadata | `search-metric-artifact-sync.mdc`, `variable-metadata-cross-source-sync.mdc`, `researcher-job-detail-doc-sync.mdc` |
 | Plots / Bokeh embed | `job-plot-artifacts-caching.mdc`, `bokeh-layout-surface-split.mdc`, `no-scientific-notation-web.mdc` |
 | Web-facing pages | `web-pages-e2e-test-maintenance.mdc`, `web-pages-full-e2e-completion-gate.mdc` |

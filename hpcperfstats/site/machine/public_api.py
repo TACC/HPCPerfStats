@@ -1,10 +1,12 @@
 """Anonymous read-only JSON endpoints for `/pub/` dashboards (pre-warmed artifacts only)."""
 
 import hpcperfstats.conf_parser as cfg
+from drf_spectacular.utils import extend_schema
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from hpcperfstats.site.machine.openapi_schema import PUBLIC_CLUSTER_DASHBOARD_SCHEMA
 from hpcperfstats.site.machine.public_metrics_artifacts import (
     assemble_public_monthly_metrics_bundle,
 )
@@ -22,6 +24,7 @@ class PublicClusterDashboardAggregateView(APIView):
   renderer_classes = [SafeJSONRenderer]
   parser_classes = []
 
+  @PUBLIC_CLUSTER_DASHBOARD_SCHEMA
   def get(self, request):
     bundle = assemble_public_monthly_metrics_bundle()
     payload = dict(bundle) if isinstance(bundle, dict) else bundle

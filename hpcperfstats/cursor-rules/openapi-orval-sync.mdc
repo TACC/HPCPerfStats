@@ -1,0 +1,35 @@
+---
+description: Keep committed OpenAPI, drf-spectacular annotations, and Orval client in sync
+globs:
+  - "**/hpcperfstats/site/openapi/**"
+  - "**/hpcperfstats/site/machine/api.py"
+  - "**/hpcperfstats/site/machine/public_api.py"
+  - "**/hpcperfstats/site/machine/openapi_*.py"
+  - "**/hpcperfstats/site/frontend/orval.config.ts"
+  - "**/hpcperfstats/site/frontend/src/api/**"
+alwaysApply: false
+---
+
+# OpenAPI + Orval Sync
+
+**Activation:** when SPA-facing API routes, serializers, or frontend API client change.
+
+## Required actions (same task)
+
+1. **Annotate** FBVs/CBVs with `@extend_schema` (see `openapi_schema.py` / `openapi_serializers.py`).
+2. **Regenerate committed schema:**
+   ```bash
+   cd hpcperfstats/site && python manage.py spectacular \
+     --file openapi/openapi.yaml --format openapi
+   ```
+3. **Regenerate frontend client:**
+   ```bash
+   cd hpcperfstats/site/frontend && npm run generate:api
+   ```
+4. **Run drift test:** `pytest hpcperfstats/site/machine/tests/test_openapi_schema_drift.py`
+5. **Run frontend tests** touching API mocks after hook signature changes.
+
+## Overlap
+
+- **`api-breaking-change-contract.mdc`** — HTTP/status/route semantics + `hpcperfstats-tools`.
+- **`react-next-ts-cursor-rule.mdc`** — frontend consumption patterns.
