@@ -174,7 +174,7 @@ def test_startup_discover_backoff_skips_scan_when_async_saturated(
       "build_unprocessed_raw_by_daily_tar",
       counting_unprocessed,
   )
-  monkeypatch.setattr(cfg, "get_sync_day_close_max_inflight", lambda: 1)
+  monkeypatch.setattr(cfg, "get_sync_startup_day_close_max_inflight", lambda: 1)
   monkeypatch.setattr(cfg, "get_sync_day_close_candidate_report", lambda: False)
 
   preflight = _make_preflight(tmp_path, _SaturatedCoord())
@@ -185,6 +185,66 @@ def test_startup_discover_backoff_skips_scan_when_async_saturated(
   assert has_more is True
   assert scan_calls["n"] == 0
   assert preflight._manifest.get("last_progress") == "discover_backoff_async_saturated"
+
+
+def test_startup_discover_submits_up_to_startup_max_inflight_per_slice(
+    tmp_path, monkeypatch,
+):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tars = []
+  for day_num in range(7, 13):
+    tar = os.path.normpath(str(daily_dir / ("2022-07-%02d.tar" % day_num)))
+    open(tar, "wb").close()
+    tars.append(tar)
+
+  submitted = []
+
+  class _FakeCoord:
+    def get_disqualified_daily_tars(self):
+      return set()
+
+    def submit_day_close(self, tar_path, *, reason, disqualified_daily_tars=None):
+      submitted.append(os.path.normpath(tar_path))
+      return True
+
+    def active_or_submitted_tar_paths(self):
+      return set(submitted)
+
+    def entry_progress_snapshot(self, _tar):
+      return {}
+
+  monkeypatch.setattr(cfg, "get_sync_startup_day_close_max_inflight", lambda: 4)
+  monkeypatch.setattr(cfg, "get_sync_startup_day_close_days_per_slice", lambda: 4)
+  monkeypatch.setattr(cfg, "get_sync_startup_day_close_budget_seconds", lambda: 300.0)
+  monkeypatch.setattr(cfg, "get_sync_day_close_candidate_report", lambda: False)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_startup_day_close."
+      "build_unprocessed_raw_by_daily_tar",
+      lambda *_a, **_k: {},
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_startup_day_close."
+      "build_remaining_raw_stats_by_daily_gz",
+      lambda *_a, **_k: {},
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_startup_day_close."
+      "days_ingest_complete_by_checkpoint",
+      lambda *_a, **_k: list(tars),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_startup_day_close."
+      "days_quiescent_tar_needs_day_close_at_startup",
+      lambda *_a, **_k: [],
+  )
+
+  preflight = _make_preflight(tmp_path, _FakeCoord())
+  preflight._discover_slice()
+  assert len(submitted) == 4
+  with preflight._lock:
+    pending = list(preflight._manifest.get("pending_eligible") or [])
+  assert len(pending) == 2
 
 
 def test_startup_day_close_uses_accrual_snapshot_when_present(

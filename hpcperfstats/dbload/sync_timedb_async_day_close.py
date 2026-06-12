@@ -146,7 +146,10 @@ class AsyncDayCloseCoordinator:
 
   def _ensure_executor(self) -> ThreadPoolExecutor:
     if self._executor is None:
-      workers = cfg.get_sync_day_close_async_workers()
+      workers = max(
+          cfg.get_sync_day_close_async_workers(),
+          cfg.get_sync_startup_day_close_max_inflight(),
+      )
       self._executor = ThreadPoolExecutor(
           max_workers=workers,
           thread_name_prefix="async-day-close",

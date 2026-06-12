@@ -493,8 +493,11 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Wall-clock budget per startup day-close discover slice (default 300 seconds).
 # sync_startup_day_close_budget_seconds = 300
 
-# Max calendar days submitted per startup day-close slice (default 1).
-# sync_startup_day_close_days_per_slice = 1
+# Max calendar days submitted per startup day-close slice (default = startup max inflight).
+# sync_startup_day_close_days_per_slice = 4
+
+# Max concurrent async DAY_CLOSE during startup drain (default = archive_seal_parallel_workers).
+# sync_startup_day_close_max_inflight = 4
 
 # Max wait for canonical startup archive snapshot before single-flight build (default 300s; min 120).
 # sync_startup_snapshot_wait_seconds = 300

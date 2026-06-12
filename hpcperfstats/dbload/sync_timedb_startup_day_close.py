@@ -300,7 +300,7 @@ class StartupDayClosePreflight:
 
   def _discover_slice(self) -> bool:
     """Run one discover+submit slice. Return False when discover loop should stop."""
-    max_inflight = cfg.get_sync_day_close_max_inflight()
+    max_inflight = cfg.get_sync_startup_day_close_max_inflight()
     active_count = len(self.async_day_close.active_or_submitted_tar_paths())
     if active_count >= max_inflight:
       self._touch_manifest(

@@ -1068,7 +1068,10 @@ class ArchiveJanitor:
     )
     newly_queued: Set[str] = set()
     disqualified = set(self.get_disqualified_daily_tars())
-    max_inflight = cfg.get_sync_day_close_max_inflight()
+    if reason == "startup":
+      max_inflight = cfg.get_sync_startup_day_close_max_inflight()
+    else:
+      max_inflight = cfg.get_sync_day_close_max_inflight()
     submit_reason = "scheduled_%s" % reason
     for entry in deferred:
       if len(coord.active_or_submitted_tar_paths()) >= max_inflight:

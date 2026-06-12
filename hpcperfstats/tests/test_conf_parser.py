@@ -1262,7 +1262,8 @@ def test_archive_janitor_and_dispatch_defaults(temp_ini, monkeypatch):
   assert cfg.get_sync_day_close_candidate_report() is True
   assert cfg.get_sync_startup_day_close_preflight() is True
   assert cfg.get_sync_startup_day_close_budget_seconds() == 300.0
-  assert cfg.get_sync_startup_day_close_days_per_slice() == 1
+  assert cfg.get_sync_startup_day_close_max_inflight() == cfg.get_archive_seal_parallel_workers()
+  assert cfg.get_sync_startup_day_close_days_per_slice() == cfg.get_sync_startup_day_close_max_inflight()
   assert cfg.get_sync_day_close_async_workers() == 1
   assert cfg.get_sync_day_close_max_inflight() == 1
   assert cfg.get_sync_day_close_raw_removal_wait_seconds() == 3600.0

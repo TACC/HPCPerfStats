@@ -174,6 +174,7 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_startup_day_close_preflight"),
     ("PIPELINE", "sync_startup_day_close_budget_seconds"),
     ("PIPELINE", "sync_startup_day_close_days_per_slice"),
+    ("PIPELINE", "sync_startup_day_close_max_inflight"),
     ("PIPELINE", "sync_startup_snapshot_wait_seconds"),
     ("PIPELINE", "sync_startup_day_close_scan_budget_seconds"),
     ("PIPELINE", "sync_day_close_async_workers"),
@@ -2396,13 +2397,27 @@ def get_sync_startup_day_close_budget_seconds():
   )
 
 
-def get_sync_startup_day_close_days_per_slice():
-  """Max calendar days submitted per startup day-close slice (default 1)."""
+def get_sync_startup_day_close_max_inflight():
+  """Max concurrent async DAY_CLOSE during startup drain (default archive_seal_parallel_workers)."""
   _ensure_cfg_loaded()
-  return max(
-      1,
-      _pipeline_getint("sync_startup_day_close_days_per_slice", fallback=1),
-  )
+  raw = _pipeline_get("sync_startup_day_close_max_inflight", fallback="")
+  if raw is None or str(raw).strip() == "":
+    return get_archive_seal_parallel_workers()
+  try:
+    return max(1, int(raw))
+  except (TypeError, ValueError):
+    return get_archive_seal_parallel_workers()
+
+
+def get_sync_startup_day_close_days_per_slice():
+  """Max calendar days submitted per startup day-close slice (default startup max inflight)."""
+  _ensure_cfg_loaded()
+  if _pipeline_has_option("sync_startup_day_close_days_per_slice"):
+    return max(
+        1,
+        _pipeline_getint("sync_startup_day_close_days_per_slice", fallback=1),
+    )
+  return get_sync_startup_day_close_max_inflight()
 
 
 def get_sync_startup_snapshot_wait_seconds():

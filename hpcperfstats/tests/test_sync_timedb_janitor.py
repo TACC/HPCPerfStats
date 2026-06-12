@@ -1634,3 +1634,77 @@ def test_run_scheduled_maintenance_pass_submits_eligible_deferred_on_startup(
   )
   janitor.run_scheduled_maintenance_pass(reason="startup")
   assert submitted == [tar_path]
+
+
+def test_run_scheduled_maintenance_startup_uses_startup_max_inflight(
+    tmp_path, monkeypatch,
+):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  deferred_tars = []
+  for day in ("2020-01-05", "2020-01-06", "2020-01-07"):
+    tar_path = os.path.normpath(str(daily_dir / ("%s.tar" % day)))
+    open(tar_path, "wb").close()
+    deferred_tars.append(tar_path)
+  submitted = []
+
+  class _FakeCoord:
+    def active_or_submitted_tar_paths(self):
+      return set(submitted)
+
+    def submit_day_close(self, tar_path, *, reason, disqualified_daily_tars=None):
+      submitted.append(os.path.normpath(tar_path))
+      return True
+
+    def is_complete(self, _tar_path):
+      return False
+
+    def entry_progress_snapshot(self, _tar_path):
+      return None
+
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      async_day_close_coordinator=_FakeCoord(),
+      get_day_close_candidate_inputs=lambda: {
+          "inflight_paths": set(),
+          "pending_append_by_daily_tar": {},
+          "in_flight_archive_tars": set(),
+          "pending_archive_task_tars": set(),
+          "unmapped_closed_raw_tars": set(),
+          "unprocessed_by_tar": {},
+      },
+  )
+  monkeypatch.setattr(
+      janitor_mod.cfg,
+      "get_sync_day_close_candidate_report",
+      lambda: False,
+  )
+  monkeypatch.setattr(janitor_mod.cfg, "get_sync_startup_day_close_max_inflight", lambda: 3)
+  monkeypatch.setattr(janitor_mod.cfg, "get_sync_day_close_max_inflight", lambda: 1)
+  monkeypatch.setattr(
+      janitor_mod,
+      "build_remaining_raw_stats_by_daily_gz",
+      lambda *args, **kwargs: {},
+  )
+  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+
+  snapshot = ArchiveMaintenanceSnapshot(closed_paths=[], remaining_raw_by_gz={})
+  monkeypatch.setattr(
+      janitor_mod,
+      "build_archive_maintenance_snapshot",
+      lambda *_a, **_k: snapshot,
+  )
+  monkeypatch.setattr(
+      janitor_mod,
+      "classify_day_close_candidates",
+      lambda **_k: [
+          {"tar_path": t, "status": "eligible_deferred", "reasons": [], "unprocessed": 0}
+          for t in deferred_tars
+      ],
+  )
+  janitor.run_scheduled_maintenance_pass(reason="startup")
+  assert len(submitted) == 3
+
+  submitted.clear()
+  janitor.run_scheduled_maintenance_pass(reason="every_n_chunks")
+  assert len(submitted) == 1
