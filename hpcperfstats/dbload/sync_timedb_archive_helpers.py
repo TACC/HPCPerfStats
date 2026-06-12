@@ -1063,6 +1063,50 @@ def augment_unprocessed_by_tar_with_pending_paths(
   return result
 
 
+def daily_tar_path_for_calendar_day(tgz_archive_dir, calendar_day_iso):
+  """Return normalized daily ``.tar`` path for ``YYYY-MM-DD``."""
+  day = str(calendar_day_iso or "").strip()
+  if not day or not tgz_archive_dir:
+    return ""
+  return os.path.normpath(os.path.join(tgz_archive_dir, day + ".tar"))
+
+
+def calendar_days_checkpoint_ingest_complete(
+    candidate_calendar_days,
+    *,
+    archive_data_dir,
+    host_name_ext,
+    tgz_archive_dir,
+    checkpoint_path=None,
+    pending_stats_paths=None,
+    maintenance_snapshot=None,
+):
+  """Return sorted ISO days with no checkpoint-unprocessed closed raw on disk."""
+  if not candidate_calendar_days:
+    return []
+  unprocessed_by_tar = build_unprocessed_raw_by_daily_tar(
+      archive_data_dir,
+      host_name_ext,
+      tgz_archive_dir,
+      checkpoint_path=checkpoint_path,
+      maintenance_snapshot=maintenance_snapshot,
+  )
+  unprocessed_by_tar = augment_unprocessed_by_tar_with_pending_paths(
+      unprocessed_by_tar,
+      pending_stats_paths=pending_stats_paths,
+      tgz_archive_dir=tgz_archive_dir,
+      checkpoint_path=checkpoint_path,
+  )
+  complete = []
+  for day_iso in sorted(str(day) for day in candidate_calendar_days):
+    tar_norm = daily_tar_path_for_calendar_day(tgz_archive_dir, day_iso)
+    if not tar_norm:
+      continue
+    if not unprocessed_tar_paths_still_on_disk(unprocessed_by_tar, tar_norm):
+      complete.append(day_iso)
+  return complete
+
+
 def day_close_queued_reason_for_report_reason(reason):
   """Map janitor/startup report ``reason`` to classify queued-reason code."""
   reason_text = str(reason or "")

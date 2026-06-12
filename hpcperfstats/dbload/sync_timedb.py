@@ -95,6 +95,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     build_seal_disqualified_daily_tars,
     build_remaining_raw_stats_by_daily_gz,
     build_unprocessed_raw_by_daily_tar,
+    calendar_days_checkpoint_ingest_complete,
     daily_tar_eligible_for_day_close_submit,
     resolve_unmapped_closed_raw_daily_tars,
     daily_tar_path_for_stats_path,
@@ -1474,6 +1475,36 @@ def _completed_ingest_calendar_days(*, chunk_paths, pending_before, pending_afte
     return []
   still_pending = _calendar_days_touched_by_paths(pending_after)
   return sorted(day for day in touched if day not in still_pending)
+
+
+def _calendar_days_ingest_complete_for_heavy_pass(
+    *,
+    chunk_paths,
+    pending_before,
+    pending_after,
+    archive_data_dir,
+    host_name_ext,
+    tgz_archive_dir,
+    checkpoint_path,
+    maintenance_snapshot=None,
+):
+  """Calendar days eligible for ``day_ingest_complete`` heavy maintenance."""
+  pending_drained = _completed_ingest_calendar_days(
+      chunk_paths=chunk_paths,
+      pending_before=pending_before,
+      pending_after=pending_after,
+  )
+  if not pending_drained:
+    return []
+  return calendar_days_checkpoint_ingest_complete(
+      pending_drained,
+      archive_data_dir=archive_data_dir,
+      host_name_ext=host_name_ext,
+      tgz_archive_dir=tgz_archive_dir,
+      checkpoint_path=checkpoint_path,
+      pending_stats_paths=pending_after,
+      maintenance_snapshot=maintenance_snapshot,
+  )
 
 
 def _invalidate_jid_caches(stats, proc_stats):
@@ -3141,6 +3172,9 @@ def run_sync_timedb_supervisor_loop(
       return 0
     return active_chunk_ingest_tracker.in_flight_count()
 
+  def _get_chunk_in_progress():
+    return bool(chunk_in_progress)
+
   archive_janitor = ArchiveJanitor(
       archive_data_dir=directory,
       host_name_ext=host_name_ext,
@@ -3164,6 +3198,7 @@ def run_sync_timedb_supervisor_loop(
           ingest_pool, db_writer_pool, archive_pool),
       startup_snapshot_coordinator=startup_archive_scan,
       get_ingest_pool_in_flight_count=_get_ingest_pool_in_flight_count,
+      get_chunk_in_progress=_get_chunk_in_progress,
       process_title=SYNC_TIMEDB_PROCESS_TITLE,
   )
 
@@ -3985,7 +4020,6 @@ def run_sync_timedb_supervisor_loop(
             chunk_counter, ingest_pool, db_writer_pool, archive_pool)
 
         _dispatch_due_archive_retries()
-        chunk_in_progress = False
         active_chunk_ingest_tracker = None
 
         if chunk_counter % rescan_every_chunks == 0:
@@ -4026,11 +4060,29 @@ def run_sync_timedb_supervisor_loop(
             context="end_of_batch",
         )
         _maybe_enqueue_immediate_day_close(context="chunk_end")
-        completed_ingest_days = _completed_ingest_calendar_days(
+        with archive_janitor._accrual_snapshot_lock:
+          accrual_for_day_complete = archive_janitor._accrual_snapshot
+        pending_drained_days = _completed_ingest_calendar_days(
             chunk_paths=stats_files_chunk,
             pending_before=pending_paths_before_chunk,
             pending_after=pending_stats_files,
         )
+        completed_ingest_days = _calendar_days_ingest_complete_for_heavy_pass(
+            chunk_paths=stats_files_chunk,
+            pending_before=pending_paths_before_chunk,
+            pending_after=pending_stats_files,
+            archive_data_dir=directory,
+            host_name_ext=host_name_ext,
+            tgz_archive_dir=tgz_archive_dir,
+            checkpoint_path=checkpoint_path,
+            maintenance_snapshot=accrual_for_day_complete,
+        )
+        if pending_drained_days and not completed_ingest_days:
+          log_print(
+              "sync_timedb: day ingest complete heavy pass skipped "
+              "(checkpoint incomplete for touched days)",
+              flush=True,
+          )
         if completed_ingest_days:
           heavy_reason = "day_ingest_complete:" + ",".join(completed_ingest_days)
           log_print(
@@ -4040,6 +4092,8 @@ def run_sync_timedb_supervisor_loop(
           )
           archive_janitor.signal_scheduled_maintenance_pass(reason=heavy_reason)
           archive_janitor.signal_work_available()
+
+        chunk_in_progress = False
 
       _persist_dead_letters_if_needed(force=True)
       _flush_checkpoint_if_needed(force=True)

@@ -33,7 +33,7 @@ At supervisor boot, **one** `collect_stats_files_in_range` (+ one head-metadata 
 - **`build_remaining_raw_stats_by_daily_gz`** must accept `maintenance_snapshot=` and **never** nest `build_archive_maintenance_snapshot` when provided.
 - **Supervisor first ingest** blocks until **`StartupArchiveScanCoordinator.wait_for_startup_maintenance_idle()`** after day-close/deletion drain — janitor **`run_heavy_maintenance_pass(reason=startup)`** must finish (including remaining-map + candidate report), not only coordinator publish. On idle wait timeout with a published snapshot, log once and proceed; without snapshot, keep waiting.
 - **Preflights** run on background threads; `_rescan_pending_with_progress` may wait inside the rescan helper only.
-- **Heavy maintenance defer:** `run_heavy_maintenance_pass` re-queues when **`get_ingest_pool_in_flight_count()`** > 0 (light passes unchanged).
+- **Heavy maintenance defer:** `run_heavy_maintenance_pass` re-queues when **`get_chunk_in_progress()`** or **`get_ingest_pool_in_flight_count()`** > 0 (light passes unchanged). Supervisor keeps **`chunk_in_progress`** true through chunk archive finalize and **`day_ingest_complete` heavy signal** scheduling.
 
 ## Forbidden patterns
 

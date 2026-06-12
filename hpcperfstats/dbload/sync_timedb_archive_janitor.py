@@ -174,6 +174,7 @@ class ArchiveJanitor:
       get_tree_rss_bytes=None,
       startup_snapshot_coordinator=None,
       get_ingest_pool_in_flight_count=None,
+      get_chunk_in_progress=None,
       process_title: str = "sync_timedb.py",
   ):
     self.archive_data_dir = archive_data_dir
@@ -196,6 +197,7 @@ class ArchiveJanitor:
     self.get_ingest_pool_in_flight_count = (
         get_ingest_pool_in_flight_count or (lambda: 0)
     )
+    self.get_chunk_in_progress = get_chunk_in_progress or (lambda: False)
     self.process_title = process_title
     self._allow_tick_chaining = True
 
@@ -478,16 +480,25 @@ class ArchiveJanitor:
         coord.mark_startup_heavy_maintenance_finished()
       return
     in_flight = int(self.get_ingest_pool_in_flight_count() or 0)
-    if in_flight > 0:
+    chunk_active = bool(self.get_chunk_in_progress())
+    if chunk_active or in_flight > 0:
+      defer_reason = (
+          "chunk_in_progress" if chunk_active else "ingest_in_flight"
+      )
       self.log_fn(
-          "janitor: heavy maintenance deferred reason=ingest_in_flight n=%d "
+          "janitor: heavy maintenance deferred reason=%s n=%d "
           "maintenance_reason=%s"
-          % (in_flight, reason),
+          % (
+              defer_reason,
+              in_flight if defer_reason == "ingest_in_flight" else 1,
+              reason,
+          ),
           flush=True,
       )
       self.signal_scheduled_maintenance_pass(reason=reason)
       return
     startup_pass = reason == "startup" and coord is not None
+    day_ingest_complete_pass = str(reason).startswith("day_ingest_complete:")
     if startup_pass:
       coord.mark_startup_heavy_maintenance_started()
     snap_t0 = time.time()
@@ -502,6 +513,23 @@ class ArchiveJanitor:
           self.log_fn(
               "janitor: heavy startup adopted coordinator snapshot "
               "closed_paths=%d" % len(snapshot.closed_paths),
+              flush=True,
+          )
+      if snapshot is None and day_ingest_complete_pass:
+        with self._accrual_snapshot_lock:
+          existing_accrual = self._accrual_snapshot
+        if existing_accrual is not None and (
+            existing_accrual.closed_paths or existing_accrual.mapping
+        ):
+          snapshot = copy_archive_maintenance_snapshot(existing_accrual)
+          adopted = True
+          self.log_fn(
+              "janitor: heavy day_ingest_complete adopted accrual snapshot "
+              "closed_paths=%d mapping_groups=%d"
+              % (
+                  len(snapshot.closed_paths),
+                  len(snapshot.mapping or {}),
+              ),
               flush=True,
           )
       if snapshot is None:

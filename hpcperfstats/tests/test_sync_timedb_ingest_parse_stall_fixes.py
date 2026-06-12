@@ -151,6 +151,91 @@ def test_completed_ingest_calendar_days_skips_same_day_pending():
   assert days == []
 
 
+def test_calendar_days_checkpoint_ingest_complete_requires_empty_unprocessed(
+    monkeypatch, tmp_path,
+):
+  from hpcperfstats.dbload import sync_timedb_archive_helpers as helpers
+
+  tgz = tmp_path / "daily"
+  tgz.mkdir()
+  tar_norm = helpers.daily_tar_path_for_calendar_day(str(tgz), "2020-01-01")
+  raw_path = str(tmp_path / "host.example" / "1577836800")
+  os.makedirs(os.path.dirname(raw_path), exist_ok=True)
+  with open(raw_path, "w") as fd:
+    fd.write("x")
+
+  monkeypatch.setattr(
+      helpers,
+      "build_unprocessed_raw_by_daily_tar",
+      lambda *a, **k: {tar_norm: [raw_path]},
+  )
+  monkeypatch.setattr(
+      helpers,
+      "augment_unprocessed_by_tar_with_pending_paths",
+      lambda unprocessed, **k: unprocessed,
+  )
+  assert helpers.calendar_days_checkpoint_ingest_complete(
+      ["2020-01-01"],
+      archive_data_dir=str(tmp_path),
+      host_name_ext=".example",
+      tgz_archive_dir=str(tgz),
+  ) == []
+
+  monkeypatch.setattr(
+      helpers,
+      "build_unprocessed_raw_by_daily_tar",
+      lambda *a, **k: {},
+  )
+  assert helpers.calendar_days_checkpoint_ingest_complete(
+      ["2020-01-01"],
+      archive_data_dir=str(tmp_path),
+      host_name_ext=".example",
+      tgz_archive_dir=str(tgz),
+  ) == ["2020-01-01"]
+
+
+def test_calendar_days_ingest_complete_for_heavy_pass_gates_on_checkpoint(
+    monkeypatch, tmp_path,
+):
+  chunk = ["/data/h/1577836800"]
+  pending_before = ["/data/h/1577836800", "/data/h/1577923200"]
+  pending_after = ["/data/h/1577923200"]
+  tgz = tmp_path / "daily"
+  tgz.mkdir()
+
+  monkeypatch.setattr(
+      st,
+      "calendar_days_checkpoint_ingest_complete",
+      lambda candidate_days, **kw: (
+          [] if candidate_days else []
+      ),
+  )
+  assert st._calendar_days_ingest_complete_for_heavy_pass(
+      chunk_paths=chunk,
+      pending_before=pending_before,
+      pending_after=pending_after,
+      archive_data_dir=str(tmp_path),
+      host_name_ext=".example",
+      tgz_archive_dir=str(tgz),
+      checkpoint_path=str(tmp_path / "state.json"),
+  ) == []
+
+  monkeypatch.setattr(
+      st,
+      "calendar_days_checkpoint_ingest_complete",
+      lambda candidate_days, **kw: list(candidate_days),
+  )
+  assert st._calendar_days_ingest_complete_for_heavy_pass(
+      chunk_paths=chunk,
+      pending_before=pending_before,
+      pending_after=pending_after,
+      archive_data_dir=str(tmp_path),
+      host_name_ext=".example",
+      tgz_archive_dir=str(tgz),
+      checkpoint_path=str(tmp_path / "state.json"),
+  ) == ["2020-01-01"]
+
+
 def _make_janitor(tmp_path):
   from unittest.mock import MagicMock
 
@@ -227,7 +312,37 @@ def test_heavy_snapshot_startup_adopts_coordinator(monkeypatch, tmp_path):
     assert janitor._accrual_snapshot.closed_paths == ["/tmp/raw-a"]
 
 
-def test_heavy_snapshot_on_day_ingest_complete_builds(monkeypatch, tmp_path):
+def test_heavy_day_ingest_complete_adopts_accrual_snapshot(monkeypatch, tmp_path):
+  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  janitor = _make_janitor(tmp_path)
+  accrual = ArchiveMaintenanceSnapshot(
+      closed_paths=["/tmp/raw-b"],
+      remaining_raw_by_gz={},
+      mapping={"/daily/2020-01-01.tar.zst": ["/tmp/raw-b"]},
+      ready_paths=set(),
+      first_timestamp_by_path={},
+      head_identity_by_path={},
+  )
+  with janitor._accrual_snapshot_lock:
+    janitor._accrual_snapshot = accrual
+  build_calls = {"n": 0}
+
+  def counting_build(*_a, **_k):
+    build_calls["n"] += 1
+    raise AssertionError("heavy collect should not run")
+
+  monkeypatch.setattr(janitor_mod, "build_archive_maintenance_snapshot", counting_build)
+  monkeypatch.setattr(janitor, "_log_day_close_candidate_report", lambda **_k: None)
+  monkeypatch.setattr(janitor, "_submit_scheduled_day_close_from_snapshot", lambda **_k: set())
+  monkeypatch.setattr(janitor, "_trim_accrual_snapshot_memory", lambda: None)
+  janitor.run_heavy_maintenance_pass(reason="day_ingest_complete:2020-01-01")
+  assert build_calls["n"] == 0
+
+
+def test_heavy_day_ingest_complete_collects_when_no_accrual(monkeypatch, tmp_path):
   from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
 
   daily_dir = tmp_path / "daily"
@@ -266,6 +381,29 @@ def test_heavy_maintenance_deferred_when_ingest_in_flight(monkeypatch, tmp_path)
   daily_dir.mkdir()
   janitor = _make_janitor(tmp_path)
   janitor.get_ingest_pool_in_flight_count = lambda: 4
+  build_calls = {"n": 0}
+  signal_calls = []
+
+  def counting_build(*_a, **_k):
+    build_calls["n"] += 1
+    raise AssertionError("heavy collect should not run")
+
+  monkeypatch.setattr(janitor_mod, "build_archive_maintenance_snapshot", counting_build)
+  monkeypatch.setattr(
+      janitor,
+      "signal_scheduled_maintenance_pass",
+      lambda *, reason: signal_calls.append(reason),
+  )
+  janitor.run_heavy_maintenance_pass(reason="day_ingest_complete:2020-01-01")
+  assert build_calls["n"] == 0
+  assert signal_calls == ["day_ingest_complete:2020-01-01"]
+
+
+def test_heavy_maintenance_deferred_when_chunk_in_progress(monkeypatch, tmp_path):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  janitor = _make_janitor(tmp_path)
+  janitor.get_chunk_in_progress = lambda: True
   build_calls = {"n": 0}
   signal_calls = []
 
