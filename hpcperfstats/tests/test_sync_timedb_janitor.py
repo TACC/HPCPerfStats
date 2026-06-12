@@ -116,7 +116,7 @@ def test_run_scheduled_maintenance_pass_refreshes_snapshot_and_enqueues(
       "build_archive_maintenance_snapshot",
       lambda *_a, **_k: snapshot,
   )
-  janitor.run_scheduled_maintenance_pass(reason="test")
+  janitor.run_heavy_maintenance_pass(reason="startup")
   with janitor._accrual_snapshot_lock:
     assert janitor._accrual_snapshot is snapshot
   assert janitor.debt_depth() == 0

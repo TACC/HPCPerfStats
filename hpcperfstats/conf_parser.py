@@ -129,6 +129,7 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_process_tree_rss_check_every_n_chunks"),
     ("PIPELINE", "sync_process_tree_rss_exit_mb"),
     ("PIPELINE", "sync_ingest_max_file_read_bytes"),
+    ("PIPELINE", "sync_ingest_stream_duplicate_scan_bytes"),
     ("PIPELINE", "sync_ingest_imap_inflight_cap"),
     ("PIPELINE", "sync_ingest_pool_maxtasksperchild"),
     ("PIPELINE", "sync_cold_path_max_concurrent_seals"),
@@ -1582,15 +1583,15 @@ def get_sync_pool_stall_abort_after_timeouts():
     try:
       return max(1, int(env))
     except (TypeError, ValueError, OverflowError):
-      return 120
+      return 192
   _ensure_cfg_loaded()
   try:
     return max(
         1,
-        int(_pipeline_get("sync_pool_stall_abort_after_timeouts", fallback="120")),
+        int(_pipeline_get("sync_pool_stall_abort_after_timeouts", fallback="192")),
     )
   except (TypeError, ValueError, OverflowError):
-    return 120
+    return 192
 
 
 def get_sync_pool_worker_recycle_grace_polls():
@@ -2126,6 +2127,13 @@ def get_sync_ingest_max_file_read_bytes():
   return max(0, _pipeline_getint("sync_ingest_max_file_read_bytes", fallback=default))
 
 
+def get_sync_ingest_stream_duplicate_scan_bytes():
+  """Route duplicate scan through streaming path above this size (default 8 MiB)."""
+  _ensure_cfg_loaded()
+  default = 8 * 1024 * 1024
+  return max(0, _pipeline_getint("sync_ingest_stream_duplicate_scan_bytes", fallback=default))
+
+
 def get_sync_ingest_imap_inflight_cap():
   """Max concurrent imap tasks per chunk; 0 means pool size (default 0)."""
   _ensure_cfg_loaded()
@@ -2242,6 +2250,7 @@ def get_conf_parser_defaults_audit_snapshot():
           "sync_checkpoint_flush_batch_size": 100,
           "sync_host_itimes_cache_max_timestamps_per_entry": 20000,
           "sync_ingest_max_file_read_bytes": 536870912,
+          "sync_ingest_stream_duplicate_scan_bytes": 8388608,
           "sync_ingest_imap_inflight_cap": 0,
           "sync_ingest_pool_maxtasksperchild": 50,
           "sync_pool_worker_recycle_grace_polls": 2,

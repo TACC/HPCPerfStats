@@ -13,7 +13,19 @@ def set_worker_diagnostics_registry(registry):
 
 
 def get_worker_diagnostics_registry():
-  return _registry
+  return _resolve_registry()
+
+
+def _resolve_registry():
+  registry = _registry
+  if registry is not None:
+    return registry
+  try:
+    from multiprocessing import current_process
+
+    return getattr(current_process(), "_hpc_worker_diagnostics_registry", None)
+  except Exception:
+    return None
 
 
 def apply_ingest_pool_worker_init(script_name, pool_kind, registry):
@@ -21,10 +33,16 @@ def apply_ingest_pool_worker_init(script_name, pool_kind, registry):
 
   apply_pool_worker_process_title(script_name, pool_kind)
   set_worker_diagnostics_registry(registry)
+  try:
+    from multiprocessing import current_process
+
+    current_process()._hpc_worker_diagnostics_registry = registry
+  except Exception:
+    pass
 
 
 def record_worker_stage(path, stage, *, substage=None, lookup_mode=None):
-  registry = _registry
+  registry = _resolve_registry()
   if registry is None:
     return
   payload = {
@@ -36,24 +54,29 @@ def record_worker_stage(path, stage, *, substage=None, lookup_mode=None):
     payload["substage"] = str(substage)
   if lookup_mode:
     payload["lookup_mode"] = str(lookup_mode)
+  pid = str(os.getpid())
   try:
-    registry[str(os.getpid())] = payload
+    registry[pid] = payload
   except Exception:
-    pass
+    try:
+      registry.update({pid: payload})
+    except Exception:
+      pass
 
 
 def clear_worker_stage():
-  registry = _registry
+  registry = _resolve_registry()
   if registry is None:
     return
+  pid = str(os.getpid())
   try:
-    registry.pop(str(os.getpid()), None)
+    registry.pop(pid, None)
   except Exception:
     pass
 
 
 def update_worker_substage(substage, **extra):
-  registry = _registry
+  registry = _resolve_registry()
   if registry is None:
     return
   pid = str(os.getpid())
@@ -68,6 +91,15 @@ def update_worker_substage(substage, **extra):
     registry[pid] = entry
   except Exception:
     pass
+
+
+def count_worker_registry_entries(registry):
+  if registry is None:
+    return 0
+  try:
+    return len(registry)
+  except Exception:
+    return 0
 
 
 def format_worker_stages_snapshot(registry, *, max_entries=16):

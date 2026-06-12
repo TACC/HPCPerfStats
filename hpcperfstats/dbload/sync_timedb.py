@@ -125,6 +125,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
 from hpcperfstats.dbload.sync_timedb_ingest_worker_diagnostics import (
     apply_ingest_pool_worker_init,
     clear_worker_stage,
+    count_worker_registry_entries,
     format_worker_stages_snapshot,
     prune_stale_worker_stages,
     record_worker_stage,
@@ -195,6 +196,8 @@ from hpcperfstats.dbload.sync_timedb_parsing import (
     load_stats_file_lines,
     parse_first_timestamp_line,
     parse_first_timestamp_line_streaming,
+    parse_last_timestamp_line,
+    parse_last_timestamp_line_streaming,
     parse_stats_file_path,
     parse_stats_file_streaming,
     parse_stats_lines,
@@ -553,16 +556,21 @@ def _build_ingest_stall_log_suffix(
   if worker_registry is not None:
     prune_stale_worker_stages(worker_registry, max_age_s=900.0)
   worker_stages = format_worker_stages_snapshot(worker_registry)
+  registry_n = count_worker_registry_entries(worker_registry)
+  in_flight_n = len(sample or ())
   since_last = diag.seconds_since_last_imap_completion()
   since_text = "%.1f" % since_last if since_last >= 0.0 else "-"
   overlap_mode = cfg.get_pipeline_overlap_mode()
+  registry_gap = ""
+  if registry_n < in_flight_n:
+    registry_gap = " worker_registry_gap=%d" % (in_flight_n - registry_n)
   return (
       " sync_ingest_per_file_timeout_s=%s stall_defer=%s defer_reason=%s"
       " imap_batch_cap=%d chunk_batch=%d imap_batch=%d"
       " distinct_in_flight_days=%s in_flight_file_meta=%s"
       " seconds_since_last_imap_completion=%s ingest_pipeline=%s"
       " pipeline_overlap_mode=%s async_day_close=%s chunk_prewarm=%s"
-      " worker_stages=%s%s"
+      " worker_registry_n=%d in_flight_n=%d worker_stages=%s%s%s"
       % (
           timeout_s,
           "on" if defer_on else "off",
@@ -577,7 +585,10 @@ def _build_ingest_stall_log_suffix(
           overlap_mode,
           diag.format_async_day_close_detail(),
           diag.chunk_prewarm_summary or "-",
+          registry_n,
+          in_flight_n,
           worker_stages,
+          registry_gap,
           _format_redis_populate_for_in_flight_days(sample),
       )
   )
@@ -1348,10 +1359,64 @@ def _reset_sync_runtime_caches():
 def _should_stream_stats_file(stats_file, stats_file_contents):
   if stats_file_contents is not None:
     return False
+  size = stats_file_size_bytes(stats_file)
   max_bytes = cfg.get_sync_ingest_max_file_read_bytes()
-  if max_bytes <= 0:
-    return False
-  return stats_file_size_bytes(stats_file) > max_bytes
+  if max_bytes > 0 and size > max_bytes:
+    return True
+  stream_dup_bytes = cfg.get_sync_ingest_stream_duplicate_scan_bytes()
+  if stream_dup_bytes > 0 and size > stream_dup_bytes:
+    return True
+  return False
+
+
+def _timestamp_second_present_for_duplicate(host, unix_second, timestamp_utc):
+  """Return whether ``unix_second`` for ``host`` is present in DB or warm itimes."""
+  ts_low = timestamp_utc - timedelta(hours=48)
+  ts_high = timestamp_utc + timedelta(hours=72)
+  itimes_set = _host_recent_timestamps_cached(host, ts_low, ts_high)
+  if itimes_set is _HOST_ITIMES_SET_OVERFLOW:
+    return _host_timestamp_second_present_in_db(host, unix_second)
+  return int(unix_second) in itimes_set
+
+
+def _try_db_complete_head_tail_fast_path(
+    stats_file,
+    host,
+    head_timestamp_utc,
+    *,
+    lines=None,
+):
+  """When head and tail seconds are in DB, skip full duplicate scan (returns start_idx=-1)."""
+  if lines is not None:
+    tail_t, _tail_jid, tail_host = parse_last_timestamp_line(lines)
+  else:
+    tail_t, _tail_jid, tail_host = parse_last_timestamp_line_streaming(stats_file)
+  if tail_t is None:
+    return None
+  tail_host = str(tail_host or host).strip()
+  tail_unix = int(float(tail_t))
+  tail_ts_utc = datetime.fromtimestamp(tail_unix, tz=timezone.utc)
+  if not _timestamp_second_present_for_duplicate(tail_host, tail_unix, tail_ts_utc):
+    return None
+  return -1, True
+
+
+def _calendar_days_touched_by_paths(paths):
+  days = set()
+  for path in paths or ():
+    day = _calendar_day_hint_from_paths([path])
+    if day:
+      days.add(day)
+  return days
+
+
+def _completed_ingest_calendar_days(*, chunk_paths, pending_before, pending_after):
+  """Calendar days with no remaining pending ingest paths after this chunk."""
+  touched = _calendar_days_touched_by_paths(list(chunk_paths) + list(pending_before))
+  if not touched:
+    return []
+  still_pending = _calendar_days_touched_by_paths(pending_after)
+  return sorted(day for day in touched if day not in still_pending)
 
 
 def _invalidate_jid_caches(stats, proc_stats):
@@ -1572,11 +1637,17 @@ def _parse_stats_file_payload_impl_streaming(stats_file):
         start_line_idx = 0
         need_archival = True
       else:
-        start_idx, need_archival = _duplicate_window_start_index(
-            stats_file,
-            host=host,
-            timestamp_utc=timestamp_utc,
+        fast = _try_db_complete_head_tail_fast_path(
+            stats_file, host, timestamp_utc,
         )
+        if fast is not None:
+          start_idx, need_archival = fast
+        else:
+          start_idx, need_archival = _duplicate_window_start_index(
+              stats_file,
+              host=host,
+              timestamp_utc=timestamp_utc,
+          )
         if start_idx == -1:
           log_print("No missing timestamps found for %s" % stats_file)
           need_archival = raw_stats_path_needs_tar_append(
@@ -1662,12 +1733,18 @@ def _parse_stats_file_payload_impl(stats_file, stats_file_contents=None):
         # New file head is not in DB yet; it still needs archival post-ingest.
         start_idx, need_archival = 0, True
       else:
-        start_idx, need_archival = _duplicate_window_start_index(
-            stats_file,
-            host=host,
-            timestamp_utc=timestamp_utc,
-            lines=lines,
+        fast = _try_db_complete_head_tail_fast_path(
+            stats_file, host, timestamp_utc, lines=lines,
         )
+        if fast is not None:
+          start_idx, need_archival = fast
+        else:
+          start_idx, need_archival = _duplicate_window_start_index(
+              stats_file,
+              host=host,
+              timestamp_utc=timestamp_utc,
+              lines=lines,
+          )
       if start_idx == -1:
         log_print("No missing timestamps found for %s" % stats_file)
         need_archival = raw_stats_path_needs_tar_append(
@@ -2860,6 +2937,7 @@ def run_sync_timedb_supervisor_loop(
     diagnostics_manager = multiprocessing.Manager()
     worker_diagnostics_registry = diagnostics_manager.dict()
     stall_diagnostics.worker_registry = worker_diagnostics_registry
+    stall_diagnostics.diagnostics_manager = diagnostics_manager
     if use_split_db_writer_pipeline:
       ingest_pool_kind = "ingest-parse-pool"
     else:
@@ -3405,6 +3483,7 @@ def run_sync_timedb_supervisor_loop(
           )
         target_chunk_size = min(chunk_size, ingest_queue_high)
         had_pending_before_chunk = bool(pending_stats_files)
+        pending_paths_before_chunk = list(pending_stats_files)
         stats_files_chunk = pending_stats_files[:target_chunk_size]
         if not stats_files_chunk:
           continue
@@ -3837,6 +3916,20 @@ def run_sync_timedb_supervisor_loop(
             context="end_of_batch",
         )
         _maybe_enqueue_immediate_day_close(context="chunk_end")
+        completed_ingest_days = _completed_ingest_calendar_days(
+            chunk_paths=stats_files_chunk,
+            pending_before=pending_paths_before_chunk,
+            pending_after=pending_stats_files,
+        )
+        if completed_ingest_days:
+          heavy_reason = "day_ingest_complete:" + ",".join(completed_ingest_days)
+          log_print(
+              "sync_timedb: heavy maintenance pass reason=%s"
+              % heavy_reason,
+              flush=True,
+          )
+          archive_janitor.signal_scheduled_maintenance_pass(reason=heavy_reason)
+          archive_janitor.signal_work_available()
 
       _persist_dead_letters_if_needed(force=True)
       _flush_checkpoint_if_needed(force=True)

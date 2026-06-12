@@ -301,8 +301,8 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Poll interval for sync_timedb pool waits seconds (default 5).
 # sync_pool_poll_timeout_s = 5
 
-# Consecutive pool poll timeouts with no imap result before exit 124 (default 120).
-# sync_pool_stall_abort_after_timeouts = 120
+# Consecutive pool poll timeouts with no imap result before exit 124 (default 192 ≈ 960s at 5s poll; keep above sync_ingest_per_file_timeout_s).
+# sync_pool_stall_abort_after_timeouts = 192
 
 # Polls to tolerate maxtasksperchild worker recycle before exit 137 (default 2).
 # sync_pool_worker_recycle_grace_polls = 2
@@ -372,6 +372,9 @@ daily_archive_dir = %(data_dir)s/daily_archive
 
 # Max stats file size for readlines fast path; larger files stream-parse (default 512 MiB).
 # sync_ingest_max_file_read_bytes = 536870912
+
+# Route duplicate scan through streaming path above this size (default 8 MiB).
+# sync_ingest_stream_duplicate_scan_bytes = 8388608
 
 # Max concurrent imap tasks per chunk; 0 means pool size (default 0).
 # sync_ingest_imap_inflight_cap = 0

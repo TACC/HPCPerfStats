@@ -901,7 +901,7 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_archive_retry_backoff_base_seconds() == 1.0
   assert cfg.get_sync_archive_retry_backoff_max_seconds() == 60.0
   assert cfg.get_sync_checkpoint_flush_batch_size() == 100
-  assert cfg.get_sync_pool_stall_abort_after_timeouts() == 120
+  assert cfg.get_sync_pool_stall_abort_after_timeouts() == 192
   assert cfg.get_sync_pool_poll_timeout_s() == 5.0
   assert cfg.get_sync_ingest_per_file_timeout_s() == 900.0
   assert cfg.get_sync_archive_members_cache_enabled() is True

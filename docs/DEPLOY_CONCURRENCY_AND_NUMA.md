@@ -248,7 +248,7 @@ The background **`ArchiveJanitor`** processes up to **`archive_janitor_days_per_
 
 **Validation read locks:** parallel raw-remove validation defaults to **`sync_archive_validation_max_workers=2`** (INI `[PIPELINE]`). Raise only when append/read-lock contention is acceptable.
 
-**Pool stall guard (exit 124):** When `imap_unordered_watch_pool` sees **N** consecutive poll timeouts with **no** completed task while all workers are still alive, it raises `MultiprocessingPoolStallError` and `sync_timedb` exits with status **124**. Default wall time is `sync_pool_stall_abort_after_timeouts` × `sync_pool_poll_timeout_s` (**120** × **5s** ≈ **10 minutes**). Logs include an **`ERROR: Pool imap stalled`** line (with optional **`diagnostics_summary=`** suffix mirroring the WARN fields) before exit, plus **`WARN: pool imap stall progress`** at 50%/75% of the abort threshold. Stall diagnostics (grep these on the next incident):
+**Pool stall guard (exit 124):** When `imap_unordered_watch_pool` sees **N** consecutive poll timeouts with **no** completed task while all workers are still alive, it raises `MultiprocessingPoolStallError` and `sync_timedb` exits with status **124**. Default wall time is `sync_pool_stall_abort_after_timeouts` × `sync_pool_poll_timeout_s` (**192** × **5s** ≈ **16 minutes**). Keep this product **above** `sync_ingest_per_file_timeout_s` (default **900s**) so per-file budget errors release workers before exit **124**. Logs include an **`ERROR: Pool imap stalled`** line (with optional **`diagnostics_summary=`** suffix mirroring the WARN fields) before exit, plus **`WARN: pool imap stall progress`** at 50%/75% of the abort threshold. Stall diagnostics (grep these on the next incident):
 
 | Field | Meaning |
 |-------|---------|
@@ -262,7 +262,12 @@ The background **`ArchiveJanitor`** processes up to **`archive_janitor_days_per_
 | `async_day_close` | Active async DAY_CLOSE seals (`tar:status:last_progress:age_s`) |
 | `chunk_prewarm` | One-line chunk prewarm summary (`INFO: chunk prewarm days=…`) |
 | `worker_stages` | `pid:stage:basename:age_s` from ingest workers (includes `archive_member_lookup:hget`, `duplicate_scan_streaming`, `itimes_overflow_db`, `db_write`) |
+| `worker_registry_n` / `worker_registry_gap` | Registry entries vs `in_flight_n` (gap > 0 means missing worker stage wiring) |
 | `redis_by_day` | Per-day Redis populate snapshot when multiple days in flight |
+
+**Parse-stage stall (DB-complete large raw):** When `head_timestamp_present_in_db` is true but the file is multi‑MiB, ingest used to `readlines()` the entire segment and run a full duplicate scan before any deadline checkpoint — workers stayed in top-level **`parse`** (no `duplicate_scan_streaming` substage) until pool abort. Mitigations: **head+tail DB probe** skips the duplicate scan when both seconds are present; **`sync_ingest_stream_duplicate_scan_bytes`** (default **8 MiB**) routes duplicate detection through the streaming path; **`load_stats_file_lines` / `iter_stats_file_lines`** honor the monotonic ingest deadline every 1000 lines / 1 MiB read.
+
+**Archive maintenance I/O:** Full-tree `build_archive_maintenance_snapshot` runs on **heavy** passes only — **`reason=startup`** (adopts the coordinator snapshot when already published; never a second 500s+ collect) and **`reason=day_ingest_complete:<YYYY-MM-DD>`** when a calendar day has no remaining pending ingest paths. **`every_n_chunks`** and **`ingest_queue_empty`** trigger **light** passes (candidate report + async submit from existing accrual; no tree walk).
 
 Chunk handlers call **`hard_exit_pool_worker_error`** (`os._exit`) immediately after bounded pool terminate — not after `archive_pool` context-manager join. **`Pool workers terminated context=…`** and optional **`Pool terminate SIGKILL`** explain ingest pool teardown.
 
@@ -279,9 +284,10 @@ Chunk handlers call **`hard_exit_pool_worker_error`** (`os._exit`) immediately a
 | Knob | Default | Effect |
 |------|---------|--------|
 | `sync_pool_poll_timeout_s` | 5 | Poll interval between imap progress checks |
-| `sync_pool_stall_abort_after_timeouts` | 120 | Consecutive timeouts before exit **124** |
+| `sync_pool_stall_abort_after_timeouts` | 192 | Consecutive timeouts before exit **124** (keep × `sync_pool_poll_timeout_s` > `sync_ingest_per_file_timeout_s`) |
 | `sync_pool_worker_recycle_grace_polls` | 2 | Polls to tolerate dead workers with exitcode 0 during `maxtasksperchild` recycle before exit **137** |
 | `sync_ingest_per_file_timeout_s` | 900 | Wall-clock cap per ingest worker task (`0` disables); on expiry the file returns `ingest_ok=False` for retry instead of blocking the chunk |
+| `sync_ingest_stream_duplicate_scan_bytes` | 8388608 | Route duplicate scan through streaming path above this size (even when below `sync_ingest_max_file_read_bytes`) |
 | `sync_archive_members_cache_enabled` | yes | Per-process L1 cache on ingest duplicate-check path |
 | `sync_archive_members_cache_max_entries` | 64 | Max cached days per ingest/archive worker process |
 | `sync_archive_members_redis_enabled` | yes | Cross-worker Redis HASH + single-flight populate (ingest + bulk/janitor) |

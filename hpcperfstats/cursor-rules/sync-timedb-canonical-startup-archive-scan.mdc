@@ -17,13 +17,13 @@ At supervisor boot, **one** `collect_stats_files_in_range` (+ one head-metadata 
 | Single-flight coordinator | `hpcperfstats/dbload/sync_timedb_startup_archive_scan.py` → `StartupArchiveScanCoordinator` |
 | Deep copy helper | `copy_archive_maintenance_snapshot` in same module |
 | Snapshot builder | `build_archive_maintenance_snapshot` in `sync_timedb_archive_maint.py` |
-| Janitor publish | `ArchiveJanitor.run_scheduled_maintenance_pass` → `begin_build()` → build → `publish(..., from_janitor=True)` → `invalidate_unmapped_disqualify_cache()` before accrual trim |
+| Janitor publish | `ArchiveJanitor.run_heavy_maintenance_pass(reason=startup)` → adopt `coordinator.get_snapshot()` via `copy_archive_maintenance_snapshot` when already published, else `begin_build()` → build → `publish(..., from_janitor=True)` → `invalidate_unmapped_disqualify_cache()` before accrual trim |
 | Unmapped resolve | `resolve_unmapped_closed_raw_daily_tars` in `sync_timedb_archive_helpers.py` (coordinator → accrual if `closed_paths` non-empty → TTL collect) |
 | Supervisor wiring | `run_sync_timedb_supervisor_loop` in `sync_timedb.py` → `note_startup_maintenance_pending`, `_wait_startup_snapshot_for_preflight`, `_get_startup_snapshot_for_rescan`, `_rescan_pending_with_progress` |
 
 ## Required behavior
 
-- **Janitor** calls `begin_build()` before `build_archive_maintenance_snapshot`; `abort_build()` on build failure; `publish` in success path.
+- **Janitor** `run_heavy_maintenance_pass(reason=startup)` adopts an already-published coordinator snapshot when present; otherwise calls `begin_build()` before `build_archive_maintenance_snapshot`; `abort_build()` on build failure; `publish` in success path.
 - **Preflights** call `wait_for_snapshot(allow_build=False)` via `_wait_startup_snapshot_for_preflight` (never returns `None`); block until janitor publish only—**must not** fallback-build.
 - **Supervisor rescan** (`_get_startup_snapshot_for_rescan`) may single-flight fallback-build after **`sync_startup_snapshot_wait_seconds`** (default **300**, min **120**).
 - **`note_startup_maintenance_pending()`** from supervisor on `signal_scheduled_maintenance_pass(reason=startup)` extends effective wait so prefights do not timeout-fallback while janitor builds.

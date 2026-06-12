@@ -52,6 +52,9 @@ from hpcperfstats.dbload.sync_timedb_archive_maint import (
 )
 from hpcperfstats.process_memory import read_process_rss_bytes
 from hpcperfstats.process_title import set_daemon_thread_title
+from hpcperfstats.dbload.sync_timedb_startup_archive_scan import (
+    copy_archive_maintenance_snapshot,
+)
 
 _LOCK_CLEANUP_TAR_SENTINEL = "__lock_cleanup__"
 
@@ -84,6 +87,20 @@ _SCHEDULED_DAY_CLOSE_SUBMIT_REASONS = frozenset({
     "every_n_chunks",
     "ingest_queue_empty",
 })
+
+
+def _is_heavy_maintenance_reason(reason: str) -> bool:
+  if not reason:
+    return False
+  if reason == "startup":
+    return True
+  return str(reason).startswith("day_ingest_complete:")
+
+
+def _scheduled_day_close_submit_allowed(reason: str) -> bool:
+  if reason in _SCHEDULED_DAY_CLOSE_SUBMIT_REASONS:
+    return True
+  return str(reason).startswith("day_ingest_complete:")
 
 _DEBT_PRIORITY = {
     DebtKind.DAY_CLOSE: 0,
@@ -399,44 +416,111 @@ class ArchiveJanitor:
   def signal_scheduled_maintenance_pass(self, *, reason: str):
     """Queue snapshot+hints+day_close scan on the janitor thread (non-blocking)."""
     with self._maintenance_pass_lock:
-      self._pending_maintenance_pass_reason = reason
+      pending = self._pending_maintenance_pass_reason
+      if _is_heavy_maintenance_reason(reason):
+        self._pending_maintenance_pass_reason = reason
+      elif not _is_heavy_maintenance_reason(pending or ""):
+        self._pending_maintenance_pass_reason = reason
     self.signal_work_available()
 
   def run_scheduled_maintenance_pass(self, *, reason: str):
-    """Janitor-thread: refresh snapshot/hints and enqueue eligible DAY_CLOSE debt."""
+    """Janitor-thread: light or heavy maintenance depending on ``reason``."""
+    if _is_heavy_maintenance_reason(reason):
+      self.run_heavy_maintenance_pass(reason=reason)
+    else:
+      self.run_light_maintenance_pass(reason=reason)
+
+  def run_light_maintenance_pass(self, *, reason: str):
+    """Refresh candidate report from accrual only; no full-tree collect."""
+    if not self.tgz_archive_dir:
+      return
+    with self._accrual_snapshot_lock:
+      accrual_snapshot = self._accrual_snapshot
+    remaining = build_remaining_raw_stats_by_daily_gz(
+        self.archive_data_dir,
+        self.host_name_ext,
+        self.tgz_archive_dir,
+        maintenance_snapshot=accrual_snapshot,
+    )
+    self.log_fn(
+        "janitor: light maintenance pass reason=%s accrual_closed_paths=%d"
+        % (
+            reason,
+            len(accrual_snapshot.closed_paths) if accrual_snapshot else 0,
+        ),
+        flush=True,
+    )
+    self._log_day_close_candidate_report(
+        reason=reason,
+        remaining_raw_by_gz=remaining,
+        newly_queued_tars=set(),
+    )
+    newly_queued = self._submit_scheduled_day_close_from_snapshot(
+        reason=reason,
+        remaining_raw_by_gz=remaining,
+    )
+    if newly_queued:
+      self._log_day_close_candidate_report(
+          reason=reason,
+          remaining_raw_by_gz=remaining,
+          newly_queued_tars=newly_queued,
+      )
+
+  def run_heavy_maintenance_pass(self, *, reason: str):
+    """Janitor-thread: full snapshot refresh (startup adopt or collect)."""
     if not self.tgz_archive_dir:
       return
     snap_t0 = time.time()
     coord = self.startup_snapshot_coordinator
-    if coord is not None:
-      coord.begin_build()
-    try:
-      snapshot = build_archive_maintenance_snapshot(
-          self.archive_data_dir,
-          self.host_name_ext,
-          self.tgz_archive_dir,
-          log_fn=self.log_fn,
-      )
-    except Exception:
+    snapshot = None
+    adopted = False
+    if reason == "startup" and coord is not None:
+      existing = coord.get_snapshot()
+      if existing is not None:
+        snapshot = copy_archive_maintenance_snapshot(existing)
+        adopted = True
+        self.log_fn(
+            "janitor: heavy startup adopted coordinator snapshot "
+            "closed_paths=%d" % len(snapshot.closed_paths),
+            flush=True,
+        )
+    if snapshot is None:
       if coord is not None:
-        coord.abort_build()
-      raise
+        coord.begin_build()
+      try:
+        snapshot = build_archive_maintenance_snapshot(
+            self.archive_data_dir,
+            self.host_name_ext,
+            self.tgz_archive_dir,
+            log_fn=self.log_fn,
+        )
+      except Exception:
+        if coord is not None:
+          coord.abort_build()
+        raise
+      if coord is not None:
+        coord.publish(snapshot, from_janitor=True)
+        invalidate_unmapped_disqualify_cache()
     with self._accrual_snapshot_lock:
       self._accrual_snapshot = snapshot
-    if coord is not None:
-      coord.publish(snapshot, from_janitor=True)
-      invalidate_unmapped_disqualify_cache()
-    self._persist_hints(
-        paths_hint=snapshot_paths_hint_entries(
-            snapshot.closed_paths,
-            snapshot.first_timestamp_by_path,
-            snapshot.head_identity_by_path,
-        ),
-        host_dirs_hint=snapshot_host_dirs_from_paths(snapshot.closed_paths),
-    )
+    if not adopted:
+      self._persist_hints(
+          paths_hint=snapshot_paths_hint_entries(
+              snapshot.closed_paths,
+              snapshot.first_timestamp_by_path,
+              snapshot.head_identity_by_path,
+          ),
+          host_dirs_hint=snapshot_host_dirs_from_paths(snapshot.closed_paths),
+      )
     self.log_fn(
-        "janitor: snapshot refreshed closed_paths=%d duration_s=%.3f"
-        % (len(snapshot.closed_paths), time.time() - snap_t0),
+        "janitor: heavy snapshot refreshed reason=%s closed_paths=%d "
+        "duration_s=%.3f adopted=%s"
+        % (
+            reason,
+            len(snapshot.closed_paths),
+            time.time() - snap_t0,
+            "yes" if adopted else "no",
+        ),
         flush=True,
     )
     with self._accrual_snapshot_lock:
@@ -1024,7 +1108,7 @@ class ArchiveJanitor:
       remaining_raw_by_gz,
   ) -> Set[str]:
     """Submit async DAY_CLOSE for ``eligible_deferred`` days on scheduled passes."""
-    if reason not in _SCHEDULED_DAY_CLOSE_SUBMIT_REASONS:
+    if not _scheduled_day_close_submit_allowed(reason):
       return set()
     coord = self.async_day_close_coordinator
     if coord is None:

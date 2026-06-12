@@ -219,13 +219,43 @@ def stats_file_size_bytes(stats_file):
     return 0
 
 
+_READ_LOOP_DEADLINE_EVERY_LINES = 1000
+_READ_LOOP_DEADLINE_EVERY_BYTES = 1 << 20
+
+
+def _maybe_raise_ingest_read_deadline(line_idx, bytes_read):
+  if line_idx and line_idx % _READ_LOOP_DEADLINE_EVERY_LINES == 0:
+    from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+        _raise_if_ingest_deadline_exceeded,
+    )
+
+    _raise_if_ingest_deadline_exceeded()
+  if bytes_read and bytes_read % _READ_LOOP_DEADLINE_EVERY_BYTES == 0:
+    from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+        _raise_if_ingest_deadline_exceeded,
+    )
+
+    _raise_if_ingest_deadline_exceeded()
+
+
 def load_stats_file_lines(stats_file, stats_file_contents=None):
   if stats_file_contents is not None:
     return stats_file_contents, None
+  lines = []
+  bytes_read = 0
   try:
     with file_read_lock_wait(stats_file):
       with open(stats_file, "r") as fd:
-        return fd.readlines(), None
+        line_idx = 0
+        while True:
+          line = fd.readline()
+          if not line:
+            break
+          lines.append(line)
+          line_idx += 1
+          bytes_read += len(line)
+          _maybe_raise_ingest_read_deadline(line_idx, bytes_read)
+    return lines, None
   except FileNotFoundError:
     return None, "Stats file disappeared: %s" % stats_file
   finally:
@@ -241,10 +271,15 @@ def iter_stats_file_lines(stats_file):
   try:
     with file_read_lock_wait(stats_file):
       with open(stats_file, "r") as fd:
+        line_idx = 0
+        bytes_read = 0
         while True:
           line = fd.readline()
           if not line:
             break
+          line_idx += 1
+          bytes_read += len(line)
+          _maybe_raise_ingest_read_deadline(line_idx, bytes_read)
           yield line
   except FileNotFoundError:
     return
@@ -268,6 +303,74 @@ def parse_first_timestamp_line(lines):
         t, jid, host = s.split()
         return (t, jid, host)
     except Exception:
+      pass
+  return (None, None, None)
+
+
+def parse_last_timestamp_line(lines):
+  """Return last digit-leading stats line identity from an in-memory line list."""
+  for line in reversed(lines or ()):
+    if not line:
+      continue
+    try:
+      s = line.lstrip()
+      if not s:
+        continue
+      if s[0].isdigit():
+        t, jid, host = s.split()
+        return (t, jid, host)
+    except Exception:
+      pass
+  return (None, None, None)
+
+
+def parse_last_timestamp_line_streaming(stats_file, *, tail_read_bytes=65536):
+  """Return last digit-leading stats line identity without a full-file scan."""
+  try:
+    size = os.path.getsize(stats_file)
+  except OSError:
+    return (None, None, None)
+  if size <= 0:
+    return (None, None, None)
+  chunk_size = max(4096, int(tail_read_bytes))
+  carry = b""
+  try:
+    with file_read_lock_wait(stats_file):
+      with open(stats_file, "rb") as fd:
+        offset = size
+        while offset > 0:
+          read_size = min(chunk_size, offset)
+          offset -= read_size
+          fd.seek(offset)
+          block = fd.read(read_size) + carry
+          parts = block.split(b"\n")
+          if offset > 0:
+            carry = parts[0]
+            parts = parts[1:]
+          else:
+            carry = b""
+          for raw in reversed(parts):
+            if not raw:
+              continue
+            try:
+              line = raw.decode("utf-8", errors="replace")
+            except Exception:
+              continue
+            s = line.lstrip()
+            if not s or not s[0].isdigit():
+              continue
+            try:
+              t, jid, host = s.split()
+              return (t, jid, host)
+            except Exception:
+              pass
+  except FileNotFoundError:
+    return (None, None, None)
+  finally:
+    lock_path = "%s%s" % (stats_file, LOCK_SUFFIX)
+    try:
+      os.remove(lock_path)
+    except OSError:
       pass
   return (None, None, None)
 
