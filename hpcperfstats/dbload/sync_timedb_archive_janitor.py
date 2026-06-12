@@ -173,6 +173,7 @@ class ArchiveJanitor:
       get_day_close_candidate_inputs=None,
       get_tree_rss_bytes=None,
       startup_snapshot_coordinator=None,
+      get_ingest_pool_in_flight_count=None,
       process_title: str = "sync_timedb.py",
   ):
     self.archive_data_dir = archive_data_dir
@@ -192,6 +193,9 @@ class ArchiveJanitor:
     self.get_day_close_candidate_inputs = get_day_close_candidate_inputs
     self.get_tree_rss_bytes = get_tree_rss_bytes
     self.startup_snapshot_coordinator = startup_snapshot_coordinator
+    self.get_ingest_pool_in_flight_count = (
+        get_ingest_pool_in_flight_count or (lambda: 0)
+    )
     self.process_title = process_title
     self._allow_tick_chaining = True
 
@@ -468,85 +472,104 @@ class ArchiveJanitor:
 
   def run_heavy_maintenance_pass(self, *, reason: str):
     """Janitor-thread: full snapshot refresh (startup adopt or collect)."""
-    if not self.tgz_archive_dir:
-      return
-    snap_t0 = time.time()
     coord = self.startup_snapshot_coordinator
+    if not self.tgz_archive_dir:
+      if reason == "startup" and coord is not None:
+        coord.mark_startup_heavy_maintenance_finished()
+      return
+    in_flight = int(self.get_ingest_pool_in_flight_count() or 0)
+    if in_flight > 0:
+      self.log_fn(
+          "janitor: heavy maintenance deferred reason=ingest_in_flight n=%d "
+          "maintenance_reason=%s"
+          % (in_flight, reason),
+          flush=True,
+      )
+      self.signal_scheduled_maintenance_pass(reason=reason)
+      return
+    startup_pass = reason == "startup" and coord is not None
+    if startup_pass:
+      coord.mark_startup_heavy_maintenance_started()
+    snap_t0 = time.time()
     snapshot = None
     adopted = False
-    if reason == "startup" and coord is not None:
-      existing = coord.get_snapshot()
-      if existing is not None:
-        snapshot = copy_archive_maintenance_snapshot(existing)
-        adopted = True
-        self.log_fn(
-            "janitor: heavy startup adopted coordinator snapshot "
-            "closed_paths=%d" % len(snapshot.closed_paths),
-            flush=True,
-        )
-    if snapshot is None:
-      if coord is not None:
-        coord.begin_build()
-      try:
-        snapshot = build_archive_maintenance_snapshot(
-            self.archive_data_dir,
-            self.host_name_ext,
-            self.tgz_archive_dir,
-            log_fn=self.log_fn,
-        )
-      except Exception:
+    try:
+      if reason == "startup" and coord is not None:
+        existing = coord.get_snapshot()
+        if existing is not None:
+          snapshot = copy_archive_maintenance_snapshot(existing)
+          adopted = True
+          self.log_fn(
+              "janitor: heavy startup adopted coordinator snapshot "
+              "closed_paths=%d" % len(snapshot.closed_paths),
+              flush=True,
+          )
+      if snapshot is None:
         if coord is not None:
-          coord.abort_build()
-        raise
-      if coord is not None:
-        coord.publish(snapshot, from_janitor=True)
-        invalidate_unmapped_disqualify_cache()
-    with self._accrual_snapshot_lock:
-      self._accrual_snapshot = snapshot
-    if not adopted:
-      self._persist_hints(
-          paths_hint=snapshot_paths_hint_entries(
-              snapshot.closed_paths,
-              snapshot.first_timestamp_by_path,
-              snapshot.head_identity_by_path,
+          coord.begin_build()
+        try:
+          snapshot = build_archive_maintenance_snapshot(
+              self.archive_data_dir,
+              self.host_name_ext,
+              self.tgz_archive_dir,
+              log_fn=self.log_fn,
+          )
+        except Exception:
+          if coord is not None:
+            coord.abort_build()
+          raise
+        if coord is not None:
+          coord.publish(snapshot, from_janitor=True)
+          invalidate_unmapped_disqualify_cache()
+      with self._accrual_snapshot_lock:
+        self._accrual_snapshot = snapshot
+      if not adopted:
+        self._persist_hints(
+            paths_hint=snapshot_paths_hint_entries(
+                snapshot.closed_paths,
+                snapshot.first_timestamp_by_path,
+                snapshot.head_identity_by_path,
+            ),
+            host_dirs_hint=snapshot_host_dirs_from_paths(snapshot.closed_paths),
+        )
+      self.log_fn(
+          "janitor: heavy snapshot refreshed reason=%s closed_paths=%d "
+          "duration_s=%.3f adopted=%s"
+          % (
+              reason,
+              len(snapshot.closed_paths),
+              time.time() - snap_t0,
+              "yes" if adopted else "no",
           ),
-          host_dirs_hint=snapshot_host_dirs_from_paths(snapshot.closed_paths),
+          flush=True,
       )
-    self.log_fn(
-        "janitor: heavy snapshot refreshed reason=%s closed_paths=%d "
-        "duration_s=%.3f adopted=%s"
-        % (
-            reason,
-            len(snapshot.closed_paths),
-            time.time() - snap_t0,
-            "yes" if adopted else "no",
-        ),
-        flush=True,
-    )
-    with self._accrual_snapshot_lock:
-      accrual_snapshot = self._accrual_snapshot
-    remaining = build_remaining_raw_stats_by_daily_gz(
-        self.archive_data_dir,
-        self.host_name_ext,
-        self.tgz_archive_dir,
-        maintenance_snapshot=accrual_snapshot,
-    )
-    self._log_day_close_candidate_report(
-        reason=reason,
-        remaining_raw_by_gz=remaining,
-        newly_queued_tars=set(),
-    )
-    newly_queued = self._submit_scheduled_day_close_from_snapshot(
-        reason=reason,
-        remaining_raw_by_gz=remaining,
-    )
-    if newly_queued:
+      with self._accrual_snapshot_lock:
+        accrual_snapshot = self._accrual_snapshot
+      remaining = build_remaining_raw_stats_by_daily_gz(
+          self.archive_data_dir,
+          self.host_name_ext,
+          self.tgz_archive_dir,
+          maintenance_snapshot=accrual_snapshot,
+      )
       self._log_day_close_candidate_report(
           reason=reason,
           remaining_raw_by_gz=remaining,
-          newly_queued_tars=newly_queued,
+          newly_queued_tars=set(),
       )
-    self._trim_accrual_snapshot_memory()
+      newly_queued = self._submit_scheduled_day_close_from_snapshot(
+          reason=reason,
+          remaining_raw_by_gz=remaining,
+      )
+      if newly_queued:
+        self._log_day_close_candidate_report(
+            reason=reason,
+            remaining_raw_by_gz=remaining,
+            newly_queued_tars=newly_queued,
+        )
+      self._trim_accrual_snapshot_memory()
+    finally:
+      if startup_pass and coord is not None:
+        coord.mark_startup_heavy_maintenance_finished()
 
   def _trim_accrual_snapshot_memory(self):
     """Release large snapshot lists after hints are persisted on disk."""

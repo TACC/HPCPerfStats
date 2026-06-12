@@ -376,6 +376,9 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Route duplicate scan through streaming path above this size (default 8 MiB).
 # sync_ingest_stream_duplicate_scan_bytes = 8388608
 
+# Tail timestamp lines probed before full duplicate scan on large head-present files (default 500).
+# sync_ingest_db_complete_tail_window_lines = 500
+
 # Max concurrent imap tasks per chunk; 0 means pool size (default 0).
 # sync_ingest_imap_inflight_cap = 0
 

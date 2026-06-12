@@ -130,6 +130,7 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_process_tree_rss_exit_mb"),
     ("PIPELINE", "sync_ingest_max_file_read_bytes"),
     ("PIPELINE", "sync_ingest_stream_duplicate_scan_bytes"),
+    ("PIPELINE", "sync_ingest_db_complete_tail_window_lines"),
     ("PIPELINE", "sync_ingest_imap_inflight_cap"),
     ("PIPELINE", "sync_ingest_pool_maxtasksperchild"),
     ("PIPELINE", "sync_cold_path_max_concurrent_seals"),
@@ -2134,6 +2135,15 @@ def get_sync_ingest_stream_duplicate_scan_bytes():
   return max(0, _pipeline_getint("sync_ingest_stream_duplicate_scan_bytes", fallback=default))
 
 
+def get_sync_ingest_db_complete_tail_window_lines():
+  """Tail timestamp lines to probe before full duplicate scan on large files."""
+  _ensure_cfg_loaded()
+  return max(
+      1,
+      _pipeline_getint("sync_ingest_db_complete_tail_window_lines", fallback=500),
+  )
+
+
 def get_sync_ingest_imap_inflight_cap():
   """Max concurrent imap tasks per chunk; 0 means pool size (default 0)."""
   _ensure_cfg_loaded()
@@ -2251,6 +2261,7 @@ def get_conf_parser_defaults_audit_snapshot():
           "sync_host_itimes_cache_max_timestamps_per_entry": 20000,
           "sync_ingest_max_file_read_bytes": 536870912,
           "sync_ingest_stream_duplicate_scan_bytes": 8388608,
+          "sync_ingest_db_complete_tail_window_lines": 500,
           "sync_ingest_imap_inflight_cap": 0,
           "sync_ingest_pool_maxtasksperchild": 50,
           "sync_pool_worker_recycle_grace_polls": 2,

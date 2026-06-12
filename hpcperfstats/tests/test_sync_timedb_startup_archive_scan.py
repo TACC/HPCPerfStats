@@ -201,3 +201,59 @@ def test_preflight_wait_never_fallback_builds(monkeypatch):
   assert result["error"] is None
   assert result["snap"] is not None
   assert collect_calls["n"] == 0
+
+
+def test_startup_heavy_maintenance_lifecycle():
+  coord = StartupArchiveScanCoordinator(
+      archive_data_dir="/tmp",
+      host_name_ext="cluster.test",
+      tgz_archive_dir="/tmp/daily",
+  )
+  coord.note_startup_maintenance_pending()
+  assert not coord.is_startup_heavy_maintenance_idle()
+  coord.mark_startup_heavy_maintenance_started()
+  assert not coord.is_startup_heavy_maintenance_idle()
+  coord.mark_startup_heavy_maintenance_finished()
+  assert coord.is_startup_heavy_maintenance_idle()
+
+
+def test_publish_does_not_clear_startup_heavy_gate():
+  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+
+  coord = StartupArchiveScanCoordinator(
+      archive_data_dir="/tmp",
+      host_name_ext="cluster.test",
+      tgz_archive_dir="/tmp/daily",
+  )
+  coord.note_startup_maintenance_pending()
+  empty = ArchiveMaintenanceSnapshot(
+      closed_paths=[],
+      remaining_raw_by_gz={},
+      mapping={},
+      ready_paths=set(),
+  )
+  coord.publish(empty, from_janitor=True)
+  assert not coord.is_startup_heavy_maintenance_idle()
+  coord.mark_startup_heavy_maintenance_finished()
+  assert coord.is_startup_heavy_maintenance_idle()
+
+
+def test_wait_for_startup_maintenance_idle_unblocks_on_finish():
+  coord = StartupArchiveScanCoordinator(
+      archive_data_dir="/tmp",
+      host_name_ext="cluster.test",
+      tgz_archive_dir="/tmp/daily",
+  )
+  coord.note_startup_maintenance_pending()
+  coord.mark_startup_heavy_maintenance_started()
+  result = {"idle": None}
+
+  def finish():
+    time.sleep(0.05)
+    coord.mark_startup_heavy_maintenance_finished()
+
+  thread = threading.Thread(target=finish)
+  thread.start()
+  result["idle"] = coord.wait_for_startup_maintenance_idle(timeout_s=5.0)
+  thread.join(timeout=3.0)
+  assert result["idle"] is True

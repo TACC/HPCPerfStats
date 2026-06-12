@@ -326,6 +326,11 @@ def parse_last_timestamp_line(lines):
 
 def parse_last_timestamp_line_streaming(stats_file, *, tail_read_bytes=65536):
   """Return last digit-leading stats line identity without a full-file scan."""
+  from hpcperfstats.dbload.sync_timedb_ingest_worker_diagnostics import (
+      update_worker_substage,
+  )
+
+  update_worker_substage("parse:tail")
   try:
     size = os.path.getsize(stats_file)
   except OSError:
@@ -454,6 +459,11 @@ def find_processing_start_index_streaming(
 
 def parse_first_timestamp_line_streaming(stats_file):
   """Return first digit-leading stats line identity without ``readlines()``."""
+  from hpcperfstats.dbload.sync_timedb_ingest_worker_diagnostics import (
+      update_worker_substage,
+  )
+
+  update_worker_substage("parse:head")
   for line in iter_stats_file_lines(stats_file):
     if not line:
       continue
@@ -467,6 +477,90 @@ def parse_first_timestamp_line_streaming(stats_file):
       except Exception:
         pass
   return (None, None, None)
+
+
+def _collect_tail_timestamp_lines(stats_file, *, max_lines, tail_read_bytes=65536):
+  """Collect up to ``max_lines`` digit-leading lines from the file tail (newest first)."""
+  try:
+    size = os.path.getsize(stats_file)
+  except OSError:
+    return []
+  if size <= 0 or max_lines <= 0:
+    return []
+  chunk_size = max(4096, int(tail_read_bytes))
+  carry = b""
+  collected = []
+  offset = size
+  try:
+    with file_read_lock_wait(stats_file):
+      with open(stats_file, "rb") as fd:
+        while offset > 0 and len(collected) < max_lines:
+          read_size = min(chunk_size, offset)
+          offset -= read_size
+          fd.seek(offset)
+          block = fd.read(read_size) + carry
+          parts = block.split(b"\n")
+          if offset > 0:
+            carry = parts[0]
+            parts = parts[1:]
+          else:
+            carry = b""
+          for raw in reversed(parts):
+            if len(collected) >= max_lines:
+              break
+            if not raw:
+              continue
+            try:
+              line = raw.decode("utf-8", errors="replace")
+            except Exception:
+              continue
+            s = line.lstrip()
+            if not s or not s[0].isdigit():
+              continue
+            collected.append(line)
+  except FileNotFoundError:
+    return []
+  finally:
+    lock_path = "%s%s" % (stats_file, LOCK_SUFFIX)
+    try:
+      os.remove(lock_path)
+    except OSError:
+      pass
+  return collected
+
+
+def tail_window_timestamps_all_present_streaming(
+    stats_file,
+    itimes_set,
+    *,
+    timestamp_present=None,
+    max_lines=None,
+):
+  """True when every timestamp in the tail window is already present in DB/cache."""
+  import hpcperfstats.conf_parser as cfg
+  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+      _raise_if_ingest_deadline_exceeded,
+  )
+  from hpcperfstats.dbload.sync_timedb_ingest_worker_diagnostics import (
+      update_worker_substage,
+  )
+
+  if max_lines is None:
+    max_lines = cfg.get_sync_ingest_db_complete_tail_window_lines()
+  update_worker_substage("parse:tail_window")
+  lines = _collect_tail_timestamp_lines(stats_file, max_lines=max_lines)
+  if not lines:
+    return False
+  for line in lines:
+    _raise_if_ingest_deadline_exceeded()
+    s = line.lstrip()
+    if not s or not s[0].isdigit():
+      continue
+    t, _jid, _host = s.split()
+    if not _timestamp_present_for_duplicate(
+        itimes_set, timestamp_present, int(float(t))):
+      return False
+  return True
 
 
 class IncrementalStatsParser:

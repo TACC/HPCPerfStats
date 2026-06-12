@@ -31,7 +31,9 @@ At supervisor boot, **one** `collect_stats_files_in_range` (+ one head-metadata 
 - **Publish deep-copies** `mapping` / `remaining_raw_by_gz` list values via `copy_archive_maintenance_snapshot` — trim clears heavy lists on accrual object only; coordinator retains `closed_paths` for unmapped disqualify.
 - **Derive, do not rescan:** startup day-close, raw removal, `enqueue_scheduled_day_close` remaining map, and first supervisor `rescan_pending_stats_files` (when range is full tree) use the shared snapshot.
 - **`build_remaining_raw_stats_by_daily_gz`** must accept `maintenance_snapshot=` and **never** nest `build_archive_maintenance_snapshot` when provided.
-- **Supervisor ingest** does not block on snapshot wait; prefights run on background threads. `_rescan_pending_with_progress` may wait inside the rescan helper only.
+- **Supervisor first ingest** blocks until **`StartupArchiveScanCoordinator.wait_for_startup_maintenance_idle()`** after day-close/deletion drain — janitor **`run_heavy_maintenance_pass(reason=startup)`** must finish (including remaining-map + candidate report), not only coordinator publish. On idle wait timeout with a published snapshot, log once and proceed; without snapshot, keep waiting.
+- **Preflights** run on background threads; `_rescan_pending_with_progress` may wait inside the rescan helper only.
+- **Heavy maintenance defer:** `run_heavy_maintenance_pass` re-queues when **`get_ingest_pool_in_flight_count()`** > 0 (light passes unchanged).
 
 ## Forbidden patterns
 

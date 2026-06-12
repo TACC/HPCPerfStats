@@ -163,6 +163,23 @@ def _default_startup_daily_tar_count(monkeypatch):
   monkeypatch.setattr(archive_helpers, "build_remaining_raw_for_daily_tar", lambda *a, **k: {})
   monkeypatch.setattr(janitor_mod, "iter_daily_tar_paths", lambda *a, **k: [])
 
+  from hpcperfstats.dbload.sync_timedb_startup_archive_scan import (
+      StartupArchiveScanCoordinator,
+  )
+
+  _orig_wait_idle = StartupArchiveScanCoordinator.wait_for_startup_maintenance_idle
+
+  def _fast_wait_idle(self, *, timeout_s=None):
+    if timeout_s is None:
+      timeout_s = 5.0
+    return _orig_wait_idle(self, timeout_s=timeout_s)
+
+  monkeypatch.setattr(
+      StartupArchiveScanCoordinator,
+      "wait_for_startup_maintenance_idle",
+      _fast_wait_idle,
+  )
+
 
 def test_periodic_maintenance_always_runs_gated_tar_removal(monkeypatch, tmp_path):
   """Janitor debt accrual and ticks invoke remove_verified_uncompressed_daily_tars."""
@@ -4073,6 +4090,62 @@ def test_supervisor_blocks_ingest_when_phase_done_pending_eligible(monkeypatch):
 
     assert rescan_calls["n"] == 0
     assert ingest_calls["n"] == 0
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_supervisor_startup_blocks_ingest_until_maintenance_idle(monkeypatch):
+  """Ingest must not run until janitor startup heavy maintenance pass completes (Fix A)."""
+  shutdown_requested[0] = False
+  ingest_calls = {"n": 0}
+  heavy_pass_calls = {"n": 0}
+  _orig_heavy = janitor_mod.ArchiveJanitor.run_heavy_maintenance_pass
+
+  def track_heavy_pass(self, *, reason):
+    heavy_pass_calls["n"] += 1
+    assert ingest_calls["n"] == 0
+    return _orig_heavy(self, reason=reason)
+
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor,
+      "run_heavy_maintenance_pass",
+      track_heavy_pass,
+  )
+
+  try:
+    target = "/fake/statsA"
+
+    def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
+      if fake_rescan.calls == 0:
+        fake_rescan.calls += 1
+        return [target]
+      shutdown_requested[0] = True
+      return []
+
+    fake_rescan.calls = 0
+
+    def fake_add(_lock, path, _contents=None):
+      ingest_calls["n"] += 1
+      return (path, True, True, 0.0)
+
+    monkeypatch.setattr(st.cfg, "get_sync_startup_drain_day_close_before_ingest", lambda: False)
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "add_stats_file_to_db", fake_add)
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "chunk_size", 1)
+    monkeypatch.setattr(st, "rescan_every_chunks", 100)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp/daily")
+    monkeypatch.setattr(
+        st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
+
+    st.run_sync_timedb_supervisor_loop(
+        "/tmp/archive", "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
+
+    assert heavy_pass_calls["n"] >= 1
+    assert ingest_calls["n"] == 1
   finally:
     shutdown_requested[0] = False
 

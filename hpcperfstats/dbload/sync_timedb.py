@@ -129,6 +129,7 @@ from hpcperfstats.dbload.sync_timedb_ingest_worker_diagnostics import (
     format_worker_stages_snapshot,
     prune_stale_worker_stages,
     record_worker_stage,
+    seed_dispatch_worker_stages,
     update_worker_substage,
 )
 from hpcperfstats.dbload.sync_timedb_async_day_close import AsyncDayCloseCoordinator
@@ -202,6 +203,7 @@ from hpcperfstats.dbload.sync_timedb_parsing import (
     parse_stats_file_streaming,
     parse_stats_lines,
     stats_file_size_bytes,
+    tail_window_timestamps_all_present_streaming,
 )
 from hpcperfstats.site.machine.models import host_data, proc_data
 
@@ -273,12 +275,15 @@ class _IngestPoolInFlightTracker:
   def sample_in_flight(self, max_n=10):
     return sorted(self._pending)[: max(0, int(max_n))]
 
+  def in_flight_count(self):
+    return len(self._pending)
+
 
 def _resolve_sync_ingest_per_file_timeout_s():
   return float(cfg.get_sync_ingest_per_file_timeout_s())
 
 
-def _run_ingest_timed(stats_file, stage, fn):
+def _run_ingest_timed(stats_file, stage, fn, *, enable_sigalrm=True):
   """Run ingest worker body with optional Unix wall-clock cap."""
   timeout_s = _resolve_sync_ingest_per_file_timeout_s()
   deadline_token = None
@@ -288,9 +293,7 @@ def _run_ingest_timed(stats_file, stage, fn):
     )
   record_worker_stage(stats_file, stage)
   try:
-    if timeout_s <= 0.0:
-      return fn()
-    if not hasattr(signal, "SIGALRM"):
+    if timeout_s <= 0.0 or not enable_sigalrm or not hasattr(signal, "SIGALRM"):
       return fn()
 
     path_label = str(stats_file)
@@ -792,8 +795,14 @@ def _imap_ingest_paths_batched(
   """Cap concurrent imap tasks below full chunk size for RSS safety."""
   inflight_cap = _effective_ingest_imap_inflight_cap(thread_count, len(paths))
   stall_poll_state = {}
+  dispatch_registry = (
+      stall_diagnostics.worker_registry
+      if stall_diagnostics is not None
+      else None
+  )
   for offset in range(0, len(paths), inflight_cap):
     subpaths = paths[offset:offset + inflight_cap]
+    seed_dispatch_worker_stages(dispatch_registry, subpaths)
     for item in _imap_ingest_pool(
         pool,
         fn,
@@ -1401,6 +1410,54 @@ def _try_db_complete_head_tail_fast_path(
   return -1, True
 
 
+def _try_db_complete_tail_window_fast_path(
+    stats_file,
+    host,
+    timestamp_utc,
+    *,
+    itimes_set=None,
+    timestamp_present=None,
+):
+  """Bounded tail-line probe for large head-present files before full duplicate scan."""
+  stream_thresh = cfg.get_sync_ingest_stream_duplicate_scan_bytes()
+  if stream_thresh <= 0:
+    return None
+  if stats_file_size_bytes(stats_file) <= stream_thresh:
+    return None
+  update_worker_substage("parse:tail_window")
+  if itimes_set is None and timestamp_present is None:
+    ts_low = timestamp_utc - timedelta(hours=48)
+    ts_high = timestamp_utc + timedelta(hours=72)
+    itimes_set = _host_recent_timestamps_cached(host, ts_low, ts_high)
+    if itimes_set is _HOST_ITIMES_SET_OVERFLOW:
+      itimes_set = None
+      probe_count = {"n": 0}
+      max_overflow_probes = cfg.get_sync_host_itimes_cache_max_timestamps_per_entry()
+
+      def _timestamp_present_with_budget(unix_second):
+        probe_count["n"] += 1
+        if probe_count["n"] % 100 == 0:
+          _raise_if_ingest_deadline_exceeded()
+        if probe_count["n"] > max_overflow_probes:
+          raise IngestArchiveLookupBudgetExceededError(
+              "itimes overflow DB probe budget exceeded path=%s probes=%d"
+              % (stats_file, probe_count["n"]),
+          )
+        update_worker_substage("itimes_overflow_db")
+        return _host_timestamp_second_present_in_db(host, unix_second)
+
+      timestamp_present = _timestamp_present_with_budget
+  if (
+      tail_window_timestamps_all_present_streaming(
+          stats_file,
+          itimes_set,
+          timestamp_present=timestamp_present,
+      )
+  ):
+    return -1, True
+  return None
+
+
 def _calendar_days_touched_by_paths(paths):
   days = set()
   for path in paths or ():
@@ -1538,18 +1595,25 @@ def _parse_failure_after_quarantine(stats_file, parse_elapsed, error_detail=None
   return (stats_file, None, False, False, parse_elapsed)
 
 
-def _parse_stats_file_payload(stats_file, stats_file_contents=None):
+def _parse_stats_file_payload(stats_file, stats_file_contents=None, *, use_ingest_timer=True):
   """Parse stats file into payload for deferred DB writer stage.
 
   Returns (stats_file, payload, need_archival, ingest_ok, parse_elapsed_s).
   """
+  impl = lambda: _parse_stats_file_payload_impl(
+      stats_file, stats_file_contents=stats_file_contents,
+  )
+  if not use_ingest_timer:
+    try:
+      return impl()
+    except IngestArchiveLookupBudgetExceededError as exc:
+      _log_ingest_archive_lookup_budget_exceeded(exc)
+      return (stats_file, None, False, False, 0.0)
   try:
     return _run_ingest_timed(
         stats_file,
         "parse",
-        lambda: _parse_stats_file_payload_impl(
-            stats_file, stats_file_contents=stats_file_contents
-        ),
+        impl,
     )
   except IngestPerFileTimeoutError as exc:
     _log_ingest_per_file_timeout(exc)
@@ -1643,11 +1707,17 @@ def _parse_stats_file_payload_impl_streaming(stats_file):
         if fast is not None:
           start_idx, need_archival = fast
         else:
-          start_idx, need_archival = _duplicate_window_start_index(
-              stats_file,
-              host=host,
-              timestamp_utc=timestamp_utc,
+          tail_fast = _try_db_complete_tail_window_fast_path(
+              stats_file, host, timestamp_utc,
           )
+          if tail_fast is not None:
+            start_idx, need_archival = tail_fast
+          else:
+            start_idx, need_archival = _duplicate_window_start_index(
+                stats_file,
+                host=host,
+                timestamp_utc=timestamp_utc,
+            )
         if start_idx == -1:
           log_print("No missing timestamps found for %s" % stats_file)
           need_archival = raw_stats_path_needs_tar_append(
@@ -1739,12 +1809,18 @@ def _parse_stats_file_payload_impl(stats_file, stats_file_contents=None):
         if fast is not None:
           start_idx, need_archival = fast
         else:
-          start_idx, need_archival = _duplicate_window_start_index(
-              stats_file,
-              host=host,
-              timestamp_utc=timestamp_utc,
-              lines=lines,
+          tail_fast = _try_db_complete_tail_window_fast_path(
+              stats_file, host, timestamp_utc,
           )
+          if tail_fast is not None:
+            start_idx, need_archival = tail_fast
+          else:
+            start_idx, need_archival = _duplicate_window_start_index(
+                stats_file,
+                host=host,
+                timestamp_utc=timestamp_utc,
+                lines=lines,
+            )
       if start_idx == -1:
         log_print("No missing timestamps found for %s" % stats_file)
         need_archival = raw_stats_path_needs_tar_append(
@@ -1856,6 +1932,9 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
   except IngestPerFileTimeoutError as exc:
     _log_ingest_per_file_timeout(exc)
     return (stats_file, False, False, exc.elapsed_s)
+  except IngestArchiveLookupBudgetExceededError as exc:
+    _log_ingest_archive_lookup_budget_exceeded(exc)
+    return (stats_file, False, False, 0.0)
 
 
 def _add_stats_file_to_db_impl(lock, stats_file, stats_file_contents=None):
@@ -1867,7 +1946,9 @@ def _add_stats_file_to_db_impl(lock, stats_file, stats_file_contents=None):
   with _sync_worker_db_task():
     try:
       stats_file, payload, need_archival, ingest_ok, _parse_elapsed = _parse_stats_file_payload(
-          stats_file, stats_file_contents=stats_file_contents
+          stats_file,
+          stats_file_contents=stats_file_contents,
+          use_ingest_timer=False,
       )
       if not ingest_ok:
         return (stats_file, need_archival, False, time.time() - t0)
@@ -3055,6 +3136,11 @@ def run_sync_timedb_supervisor_loop(
     )
     return paths
 
+  def _get_ingest_pool_in_flight_count():
+    if active_chunk_ingest_tracker is None:
+      return 0
+    return active_chunk_ingest_tracker.in_flight_count()
+
   archive_janitor = ArchiveJanitor(
       archive_data_dir=directory,
       host_name_ext=host_name_ext,
@@ -3077,6 +3163,7 @@ def run_sync_timedb_supervisor_loop(
       get_tree_rss_bytes=lambda: read_sync_timedb_tree_rss_bytes(
           ingest_pool, db_writer_pool, archive_pool),
       startup_snapshot_coordinator=startup_archive_scan,
+      get_ingest_pool_in_flight_count=_get_ingest_pool_in_flight_count,
       process_title=SYNC_TIMEDB_PROCESS_TITLE,
   )
 
@@ -3229,6 +3316,7 @@ def run_sync_timedb_supervisor_loop(
     startup_ingest_gate_cleared = (
         not cfg.get_sync_startup_drain_day_close_before_ingest()
     )
+    startup_day_close_drain_complete = startup_ingest_gate_cleared
     startup_drain_last_log = 0.0
 
     def _startup_day_close_deletion_pending():
@@ -3291,27 +3379,49 @@ def run_sync_timedb_supervisor_loop(
       )
 
     def _drain_startup_day_close_and_deletion_if_needed():
-      nonlocal startup_ingest_gate_cleared
+      nonlocal startup_ingest_gate_cleared, startup_day_close_drain_complete
       if startup_ingest_gate_cleared:
         return False
-      if not _startup_day_close_deletion_pending():
-        if (
-            startup_preflight is not None
-            and startup_preflight.enabled
-            and startup_preflight.delete_phase_done()
-        ):
-          _post_startup_raw_removal_rescan()
-        log_print(
-            "sync_timedb: startup day-close and deletion drain complete; ingest may begin",
-            flush=True,
-        )
-        startup_ingest_gate_cleared = True
-        return False
-      if _maybe_handle_raw_removal_delete_phase():
-        return True
-      _maybe_log_startup_drain_wait()
-      sleep_until_shutdown(0.25)
-      return True
+      if not startup_day_close_drain_complete:
+        if not _startup_day_close_deletion_pending():
+          if (
+              startup_preflight is not None
+              and startup_preflight.enabled
+              and startup_preflight.delete_phase_done()
+          ):
+            _post_startup_raw_removal_rescan()
+          log_print(
+              "sync_timedb: startup day-close and deletion drain complete",
+              flush=True,
+          )
+          startup_day_close_drain_complete = True
+        else:
+          if _maybe_handle_raw_removal_delete_phase():
+            return True
+          _maybe_log_startup_drain_wait()
+          sleep_until_shutdown(0.25)
+          return True
+      if not startup_archive_scan.is_startup_heavy_maintenance_idle():
+        if not startup_archive_scan.wait_for_startup_maintenance_idle():
+          if startup_archive_scan.get_snapshot() is None:
+            log_print(
+                "WARN: startup maintenance idle wait timed out with no "
+                "coordinator snapshot; delaying ingest",
+                flush=True,
+            )
+            sleep_until_shutdown(1.0)
+            return True
+          log_print(
+              "WARN: startup maintenance idle wait timed out; proceeding "
+              "with coordinator snapshot only",
+              flush=True,
+          )
+      log_print(
+          "sync_timedb: startup maintenance idle; ingest may begin",
+          flush=True,
+      )
+      startup_ingest_gate_cleared = True
+      return False
 
     def _post_startup_raw_removal_rescan():
       nonlocal pending_stats_files

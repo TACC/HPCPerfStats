@@ -56,11 +56,15 @@ class StartupArchiveScanCoordinator:
     self._builder_count = 0
     self._published_by_janitor = False
     self._startup_maintenance_pending = False
+    self._startup_heavy_gate_active = False
+    self._startup_heavy_maintenance_in_progress = False
+    self._startup_heavy_maintenance_finished = False
 
   def note_startup_maintenance_pending(self) -> None:
     """Supervisor signals janitor startup maintenance before first publish."""
     with self._cond:
       self._startup_maintenance_pending = True
+      self._startup_heavy_gate_active = True
       self._cond.notify_all()
 
   def begin_build(self) -> None:
@@ -86,6 +90,48 @@ class StartupArchiveScanCoordinator:
   def get_snapshot(self) -> Optional[ArchiveMaintenanceSnapshot]:
     with self._lock:
       return self._snapshot
+
+  def mark_startup_heavy_maintenance_started(self) -> None:
+    """Janitor ``run_heavy_maintenance_pass(reason=startup)`` entry."""
+    with self._cond:
+      self._startup_heavy_maintenance_in_progress = True
+      self._cond.notify_all()
+
+  def mark_startup_heavy_maintenance_finished(self) -> None:
+    """Janitor startup heavy pass complete (snapshot publish + candidate report)."""
+    with self._cond:
+      self._startup_heavy_maintenance_in_progress = False
+      self._startup_heavy_maintenance_finished = True
+      self._startup_maintenance_pending = False
+      self._startup_heavy_gate_active = False
+      self._cond.notify_all()
+
+  def is_startup_heavy_maintenance_idle(self) -> bool:
+    with self._lock:
+      return self._is_startup_heavy_maintenance_idle_locked()
+
+  def _is_startup_heavy_maintenance_idle_locked(self) -> bool:
+    if not self._startup_heavy_gate_active:
+      return True
+    return self._startup_heavy_maintenance_finished
+
+  def wait_for_startup_maintenance_idle(self, *, timeout_s: Optional[float] = None) -> bool:
+    """Block until janitor startup heavy pass finishes; False on timeout."""
+    if timeout_s is None:
+      timeout_s = max(
+          600.0,
+          float(cfg.get_sync_startup_snapshot_wait_seconds()) * 4.0,
+      )
+    wait_t0 = time.time()
+    while True:
+      with self._cond:
+        if self._is_startup_heavy_maintenance_idle_locked():
+          return True
+        elapsed = time.time() - wait_t0
+        if elapsed >= float(timeout_s):
+          return False
+        remaining = max(0.05, float(timeout_s) - elapsed)
+        self._cond.wait(timeout=min(1.0, remaining))
 
   def _effective_wait_timeout_s_locked(self, wait_t0: float) -> float:
     """Caller must hold ``self._cond`` lock (same as ``self._lock``)."""

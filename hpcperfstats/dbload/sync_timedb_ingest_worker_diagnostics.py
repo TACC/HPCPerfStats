@@ -75,6 +75,34 @@ def clear_worker_stage():
     pass
 
 
+def seed_dispatch_worker_stages(registry, paths):
+  """Supervisor-side placeholders until pool workers record real stages."""
+  if registry is None:
+    return
+  now = time.monotonic()
+  for path in paths or ():
+    if not path:
+      continue
+    key = "dispatch:%s" % os.path.normpath(path)
+    try:
+      registry[key] = {
+          "path": str(path),
+          "stage": "dispatched",
+          "t0": now,
+      }
+    except Exception:
+      try:
+        registry.update({
+            key: {
+                "path": str(path),
+                "stage": "dispatched",
+                "t0": now,
+            },
+        })
+      except Exception:
+        pass
+
+
 def update_worker_substage(substage, **extra):
   registry = _resolve_registry()
   if registry is None:

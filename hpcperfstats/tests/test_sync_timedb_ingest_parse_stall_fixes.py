@@ -259,3 +259,123 @@ def test_is_heavy_maintenance_reason():
   assert janitor_mod._is_heavy_maintenance_reason("startup") is True
   assert janitor_mod._is_heavy_maintenance_reason("day_ingest_complete:2020-01-01") is True
   assert janitor_mod._is_heavy_maintenance_reason("every_n_chunks") is False
+
+
+def test_heavy_maintenance_deferred_when_ingest_in_flight(monkeypatch, tmp_path):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  janitor = _make_janitor(tmp_path)
+  janitor.get_ingest_pool_in_flight_count = lambda: 4
+  build_calls = {"n": 0}
+  signal_calls = []
+
+  def counting_build(*_a, **_k):
+    build_calls["n"] += 1
+    raise AssertionError("heavy collect should not run")
+
+  monkeypatch.setattr(janitor_mod, "build_archive_maintenance_snapshot", counting_build)
+  monkeypatch.setattr(
+      janitor,
+      "signal_scheduled_maintenance_pass",
+      lambda *, reason: signal_calls.append(reason),
+  )
+  janitor.run_heavy_maintenance_pass(reason="day_ingest_complete:2020-01-01")
+  assert build_calls["n"] == 0
+  assert signal_calls == ["day_ingest_complete:2020-01-01"]
+
+
+def test_combined_ingest_uses_single_parse_timer(monkeypatch, tmp_path):
+  stats_file = str(tmp_path / "host.example" / "1700000300")
+  _write_stats_file(stats_file, 5)
+  alarm_calls = {"n": 0}
+  original_setitimer = None
+  if hasattr(__import__("signal"), "setitimer"):
+    import signal as signal_mod
+
+    original_setitimer = signal_mod.setitimer
+
+    def counting_setitimer(which, seconds, interval=0.0):
+      if which == signal_mod.ITIMER_REAL and seconds > 0:
+        alarm_calls["n"] += 1
+      return original_setitimer(which, seconds, interval)
+
+    monkeypatch.setattr(signal_mod, "setitimer", counting_setitimer)
+
+  class _FakeSyncWorkerDbTask:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *_a):
+      return False
+
+  class _FakeLock:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *_a):
+      return False
+
+  monkeypatch.setattr(st, "_sync_worker_db_task", lambda: _FakeSyncWorkerDbTask())
+  monkeypatch.setattr(st, "stats_file_is_active_segment", lambda _p: False)
+  monkeypatch.setattr(st, "head_timestamp_present_in_db", lambda _h, _t: True)
+  monkeypatch.setattr(
+      st, "_timestamp_second_present_for_duplicate", lambda _h, _s, _t: True,
+  )
+  monkeypatch.setattr(st, "raw_stats_path_needs_tar_append", lambda *_a, **_k: False)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_max_file_read_bytes", lambda: 512 * 1024 * 1024)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_stream_duplicate_scan_bytes", lambda: 0)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 900.0)
+  monkeypatch.setattr(st, "_write_stats_payload_to_db", lambda *_a, **_k: (_a[1], False, True))
+
+  st.add_stats_file_to_db(_FakeLock(), stats_file)
+  if original_setitimer is not None:
+    assert alarm_calls["n"] == 1
+
+
+def test_tail_window_skips_full_duplicate_scan(tmp_path, monkeypatch):
+  stats_file = str(tmp_path / "host.example" / "1700000400")
+  _write_stats_file(stats_file, 4000)
+  duplicate_calls = {"n": 0}
+
+  class _FakeSyncWorkerDbTask:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *_a):
+      return False
+
+  def fake_duplicate(*_a, **_k):
+    duplicate_calls["n"] += 1
+    return 0, True
+
+  monkeypatch.setattr(st, "_sync_worker_db_task", lambda: _FakeSyncWorkerDbTask())
+  monkeypatch.setattr(st, "stats_file_is_active_segment", lambda _p: False)
+  monkeypatch.setattr(st, "head_timestamp_present_in_db", lambda _h, _t: True)
+  monkeypatch.setattr(
+      st, "_try_db_complete_head_tail_fast_path", lambda *_a, **_k: None,
+  )
+  monkeypatch.setattr(st, "_host_recent_timestamps_cached", lambda *_a, **_k: set())
+  monkeypatch.setattr(
+      st,
+      "tail_window_timestamps_all_present_streaming",
+      lambda *_a, **_k: True,
+  )
+  monkeypatch.setattr(st, "_duplicate_window_start_index", fake_duplicate)
+  monkeypatch.setattr(st, "raw_stats_path_needs_tar_append", lambda *_a, **_k: False)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_max_file_read_bytes", lambda: 512 * 1024 * 1024)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_stream_duplicate_scan_bytes", lambda: 100_000)
+
+  result = st._parse_stats_file_payload_impl_streaming(stats_file)
+  assert duplicate_calls["n"] == 0
+  assert result[3] is True
+
+
+def test_seed_dispatch_worker_stages_increases_registry_count():
+  from hpcperfstats.dbload.sync_timedb_ingest_worker_diagnostics import (
+      count_worker_registry_entries,
+      seed_dispatch_worker_stages,
+  )
+
+  registry = {}
+  seed_dispatch_worker_stages(registry, ["/a/1", "/b/2"])
+  assert count_worker_registry_entries(registry) == 2
