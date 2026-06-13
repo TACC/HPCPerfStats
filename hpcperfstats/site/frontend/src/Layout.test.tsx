@@ -53,7 +53,7 @@ describe("Layout", () => {
       is_staff: true,
     });
     await user.click(screen.getByRole("button", { name: "Staff actions" }));
-    expect(screen.getByRole("menuitem", { name: "HPCPerfStats Monitor" })).toBeInTheDocument();
+    expect(await screen.findByText("HPCPerfStats Monitor")).toBeInTheDocument();
     firstRender.unmount();
 
     renderLayout({ logged_in: true, username: "bob", is_staff: false });
@@ -80,9 +80,7 @@ describe("Layout", () => {
     render(<SessionHarness />);
 
     await user.click(screen.getByRole("button", { name: "Staff actions" }));
-    await user.click(
-      screen.getByRole("menuitem", { name: "Disable Staff Permissions" }),
-    );
+    await user.click(await screen.findByText("Disable Staff Permissions"));
 
     expect(api.dropStaffForSession).toHaveBeenCalledTimes(1);
     expect(api.getSession).toHaveBeenCalledTimes(1);

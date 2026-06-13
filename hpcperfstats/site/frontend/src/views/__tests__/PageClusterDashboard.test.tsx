@@ -113,14 +113,14 @@ describe("PageClusterDashboard", () => {
       "href",
       "#pub-dashboard-monthly",
     );
-    expect(screen.getByRole("link", { name: "Monthly" })).toHaveClass("h4");
-    expect(screen.getByRole("link", { name: "Monthly" })).not.toHaveClass("small");
+    expect(screen.getByRole("link", { name: "Monthly" })).toHaveClass("text-xl");
+    expect(screen.getByRole("link", { name: "Monthly" })).not.toHaveClass("text-sm");
     expect(screen.getByRole("link", { name: "Yearly" })).toHaveAttribute(
       "href",
       "#pub-dashboard-yearly",
     );
-    expect(screen.getByRole("link", { name: "Yearly" })).toHaveClass("h4");
-    expect(screen.getByRole("link", { name: "Yearly" })).not.toHaveClass("small");
+    expect(screen.getByRole("link", { name: "Yearly" })).toHaveClass("text-xl");
+    expect(screen.getByRole("link", { name: "Yearly" })).not.toHaveClass("text-sm");
     expect(
       screen.queryByText(
         "Public cluster dashboards built from pre-warmed aggregates (no live heavy queries).",

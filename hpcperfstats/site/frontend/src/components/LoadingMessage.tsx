@@ -8,12 +8,11 @@ export type LoadingMessageProps = {
 export default function LoadingMessage({ message = "Loading…" }: LoadingMessageProps) {
   return (
     <div
-      className="container text-center"
-      style={{ padding: "2rem" }}
+      className="mx-auto w-full max-w-7xl px-4 py-8 text-center text-muted-foreground"
       role="status"
       aria-live="polite"
     >
-      <span className="text-muted">{message}</span>
+      {message}
     </div>
   );
 }

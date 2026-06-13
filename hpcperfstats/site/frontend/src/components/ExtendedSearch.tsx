@@ -1,7 +1,19 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
-import { useMemo } from "react";
-import { useForm } from "react-hook-form";
+import { useMemo, type ReactNode } from "react";
+import { Controller, useForm } from "react-hook-form";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 import BannerErrorMessage from "./BannerErrorMessage";
 import LoadingMessage from "./LoadingMessage";
 import { VariableInfoLabel } from "./VariableInfoLabel";
@@ -40,11 +52,11 @@ function normalizeStringArray(value: unknown): string[] {
   return value.filter((item): item is string => typeof item === "string");
 }
 
-function SearchFieldLabel({ parameterName, className = "form-label d-block" }: SearchFieldLabelProps) {
+function SearchFieldLabel({ parameterName, className }: SearchFieldLabelProps) {
   const definition = getExtendedSearchParameterDefinition(parameterName);
   if (!definition) return null;
   return (
-    <span className={className} id={`${definition.htmlId}-label`}>
+    <span className={cn("block text-sm font-medium", className)} id={`${definition.htmlId}-label`}>
       <VariableInfoLabel
         variableName={definition.metadataKey}
         labelText={definition.label}
@@ -56,6 +68,27 @@ function SearchFieldLabel({ parameterName, className = "form-label d-block" }: S
 
 function ariaLabelledBy(htmlId: string): { "aria-labelledby": string } {
   return { "aria-labelledby": `${htmlId}-label` };
+}
+
+type FieldRowProps = {
+  label: ReactNode;
+  children: ReactNode;
+  labelClassName?: string;
+  fieldClassName?: string;
+};
+
+function FieldRow({
+  label,
+  children,
+  labelClassName = "md:col-span-2",
+  fieldClassName = "md:col-span-4",
+}: FieldRowProps) {
+  return (
+    <div className="mb-2 grid grid-cols-1 gap-2 md:grid-cols-12 md:items-start">
+      <div className={cn("md:col-span-12", labelClassName)}>{label}</div>
+      <div className={cn("md:col-span-12", fieldClassName)}>{children}</div>
+    </div>
+  );
 }
 
 type ExtendedSearchProps = { onClose?: () => void };
@@ -72,6 +105,7 @@ export default function ExtendedSearch({ onClose }: ExtendedSearchProps) {
     register,
     handleSubmit,
     reset,
+    control,
     formState: { errors },
   } = useForm<ExtendedSearchFormInput>({
     resolver: zodResolver(schema),
@@ -108,14 +142,15 @@ export default function ExtendedSearch({ onClose }: ExtendedSearchProps) {
         >
           Extended search
         </span>
-        <button
+        <Button
           type="button"
-          className="btn btn-outline-secondary btn-sm"
+          variant="outline"
+          size="sm"
           onClick={onClose}
           aria-label="Close extended search"
         >
           Close
-        </button>
+        </Button>
       </div>
     ) : null;
 
@@ -157,7 +192,7 @@ export default function ExtendedSearch({ onClose }: ExtendedSearchProps) {
         {header}
         <BannerErrorMessage
           message={error}
-          className="text-danger"
+          variant="inline"
           style={{ padding: "0.5rem 0" }}
         />
       </div>
@@ -170,21 +205,17 @@ export default function ExtendedSearch({ onClose }: ExtendedSearchProps) {
   function ariaErrorProps(htmlId: string) {
     if (!invalidFieldIds.has(htmlId)) return {};
     return {
-      "aria-invalid": true,
+      "aria-invalid": true as const,
       "aria-describedby": `${EXTENDED_SEARCH_ERROR_SUMMARY_ID} ${htmlId}-feedback`,
     };
-  }
-
-  function fieldClass(htmlId: string, base = "form-control form-control-sm") {
-    return invalidFieldIds.has(htmlId) ? `${base} is-invalid` : base;
   }
 
   function fieldFeedback(htmlId: string) {
     if (!invalidFieldIds.has(htmlId)) return null;
     return (
-      <div id={`${htmlId}-feedback`} className="invalid-feedback d-block">
+      <p id={`${htmlId}-feedback`} className="mt-1 text-sm text-destructive">
         Check this value.
-      </div>
+      </p>
     );
   }
 
@@ -192,72 +223,71 @@ export default function ExtendedSearch({ onClose }: ExtendedSearchProps) {
     reset({});
   }
 
+  const compactInputClass = "h-7 text-sm";
+
   return (
     <div className="extended-search-panel">
       {header}
       <form id="extended-search-form" onSubmit={handleSubmit(onValidSubmit)} noValidate>
         {submitErrors.length > 0 ? (
-          <div
-            id={EXTENDED_SEARCH_ERROR_SUMMARY_ID}
-            className="alert alert-danger py-2 small"
-            role="alert"
-          >
-            <ul className="mb-0 ps-3">
-              {submitErrors.map((msg) => (
-                <li key={msg}>{msg}</li>
-              ))}
-            </ul>
-          </div>
+          <Alert variant="destructive" id={EXTENDED_SEARCH_ERROR_SUMMARY_ID} className="mb-2 py-2">
+            <AlertDescription>
+              <ul className="mb-0 list-disc pl-5 text-sm">
+                {submitErrors.map((msg) => (
+                  <li key={msg}>{msg}</li>
+                ))}
+              </ul>
+            </AlertDescription>
+          </Alert>
         ) : null}
-        <p className="text-muted small mb-1">
+        <p className="mb-1 text-sm text-muted-foreground">
           Search fields are combined (AND). Job ID opens one job (same as Find Job in the header).
         </p>
-        <div className="row mb-2">
-          <div className="col-12 col-md-2">
-            <SearchFieldLabel parameterName="jid" />
-          </div>
-          <div className="col-12 col-md-4">
-            <input
-              id="ext-jid"
-              type="text"
-              className={fieldClass("ext-jid")}
-              placeholder="Same as Find Job in header"
-              autoComplete="off"
-              {...register("jid")}
-              {...ariaLabelledBy("ext-jid")}
-              {...ariaErrorProps("ext-jid")}
-            />
-            {fieldFeedback("ext-jid")}
-          </div>
-        </div>
-        <fieldset className="border-0 p-0 mb-3">
-          <legend className="h6">Job end time</legend>
-          <p className="text-muted small">
+        <FieldRow
+          label={<SearchFieldLabel parameterName="jid" />}
+          fieldClassName="md:col-span-4"
+          labelClassName="md:col-span-2"
+        >
+          <Input
+            id="ext-jid"
+            type="text"
+            className={compactInputClass}
+            placeholder="Same as Find Job in header"
+            autoComplete="off"
+            {...register("jid")}
+            {...ariaLabelledBy("ext-jid")}
+            {...ariaErrorProps("ext-jid")}
+          />
+          {fieldFeedback("ext-jid")}
+        </FieldRow>
+        <fieldset className="mb-3 border-0 p-0">
+          <legend className="text-base font-semibold">Job end time</legend>
+          <p className="text-sm text-muted-foreground">
             Filters use when the job finished (end time), not when it started.
           </p>
-          <div className="row">
-            <div className="col-12 col-md-2">
+          <div className="mb-2 grid grid-cols-1 gap-2 md:grid-cols-12 md:items-start">
+            <div className="md:col-span-2">
               <SearchFieldLabel parameterName="end_time__gte" />
             </div>
-            <div className="col-12 col-md-2">
-              <input
+            <div className="md:col-span-2">
+              <Input
                 id="ext-end-time-gte"
                 type="date"
-                className={fieldClass("ext-end-time-gte")}
+                className={compactInputClass}
                 {...register("end_time__gte")}
                 {...ariaLabelledBy("ext-end-time-gte")}
                 {...ariaErrorProps("ext-end-time-gte")}
               />
               {fieldFeedback("ext-end-time-gte")}
             </div>
-            <div className="col-12 col-md-2">
+            <div className="md:col-span-2">
               <SearchFieldLabel parameterName="end_time__lte" />
             </div>
-            <div className="col-12 col-md-2">
-              <input
+            <div className="md:col-span-2">
+              <Input
                 id="ext-end-time-lte"
                 type="date"
-                className={fieldClass("ext-end-time-lte")}
+                className={compactInputClass}
                 {...register("end_time__lte")}
                 {...ariaLabelledBy("ext-end-time-lte")}
                 {...ariaErrorProps("ext-end-time-lte")}
@@ -266,98 +296,108 @@ export default function ExtendedSearch({ onClose }: ExtendedSearchProps) {
             </div>
           </div>
         </fieldset>
-        <div className="row">
-          <div className="col-12 col-md-2">
-            <SearchFieldLabel parameterName="host" />
-          </div>
-          <div className="col-12 col-md-6">
-            <input
-              type="text"
-              className={fieldClass("ext-host")}
-              id="ext-host"
-              {...register("host")}
-              {...ariaLabelledBy("ext-host")}
-            />
-            <p className="text-muted small mb-0 mt-1">
-              Host plus earliest job end date opens the host time-series plot, not the job list.
-            </p>
-          </div>
-        </div>
-        <div className="row">
-          <div className="col-12 col-md-2">
-            <SearchFieldLabel parameterName="username" />
-          </div>
-          <div className="col-12 col-md-2">
-            <input
-              type="text"
-              className="form-control form-control-sm"
-              id="ext-username"
-              {...register("username")}
-              {...ariaLabelledBy("ext-username")}
-            />
-          </div>
-        </div>
-        <div className="row">
-          <div className="col-12 col-md-2">
-            <SearchFieldLabel parameterName="account__icontains" />
-          </div>
-          <div className="col-12 col-md-2">
-            <input
-              type="text"
-              className="form-control form-control-sm"
-              id="ext-account"
-              {...register("account__icontains")}
-              {...ariaLabelledBy("ext-account")}
-            />
-          </div>
-        </div>
-        <div className="row">
-          <div className="col-12 col-md-2">
-            <SearchFieldLabel parameterName="state" />
-          </div>
-          <div className="col-12 col-md-2">
-            <select
-              className="form-select form-select-sm"
-              id="ext-state"
-              {...register("state")}
-              {...ariaLabelledBy("ext-state")}
-            >
-              <option value="">Any state</option>
-              {states.map((s) => (
-                <option key={s}>{s}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <div className="row">
-          <div className="col-12 col-md-2">
-            <SearchFieldLabel parameterName="queue" />
-          </div>
-          <div className="col-12 col-md-2">
-            <select
-              className="form-select form-select-sm"
-              id="ext-queue"
-              {...register("queue")}
-              {...ariaLabelledBy("ext-queue")}
-            >
-              <option value="">Any queue</option>
-              {queues.map((q) => (
-                <option key={q}>{q}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <fieldset className="border-0 p-0 mb-3">
-          <legend className="h5">Search on Resources</legend>
-          <div className="row">
-            <div className="col-12 col-md-2">
+        <FieldRow label={<SearchFieldLabel parameterName="host" />} fieldClassName="md:col-span-6">
+          <Input
+            type="text"
+            className={compactInputClass}
+            id="ext-host"
+            {...register("host")}
+            {...ariaLabelledBy("ext-host")}
+          />
+          <p className="mb-0 mt-1 text-sm text-muted-foreground">
+            Host plus earliest job end date opens the host time-series plot, not the job list.
+          </p>
+        </FieldRow>
+        <FieldRow label={<SearchFieldLabel parameterName="username" />} fieldClassName="md:col-span-2">
+          <Input
+            type="text"
+            className={compactInputClass}
+            id="ext-username"
+            {...register("username")}
+            {...ariaLabelledBy("ext-username")}
+          />
+        </FieldRow>
+        <FieldRow
+          label={<SearchFieldLabel parameterName="account__icontains" />}
+          fieldClassName="md:col-span-2"
+        >
+          <Input
+            type="text"
+            className={compactInputClass}
+            id="ext-account"
+            {...register("account__icontains")}
+            {...ariaLabelledBy("ext-account")}
+          />
+        </FieldRow>
+        <FieldRow label={<SearchFieldLabel parameterName="state" />} fieldClassName="md:col-span-2">
+          <Controller
+            name="state"
+            control={control}
+            render={({ field }) => (
+              <Select
+                value={field.value && field.value !== "" ? field.value : "__any__"}
+                onValueChange={(value) => field.onChange(value === "__any__" ? "" : value)}
+              >
+                <SelectTrigger
+                  id="ext-state"
+                  size="sm"
+                  className="w-full"
+                  {...ariaLabelledBy("ext-state")}
+                >
+                  <SelectValue placeholder="Any state" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__any__">Any state</SelectItem>
+                  {states.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {s}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          />
+        </FieldRow>
+        <FieldRow label={<SearchFieldLabel parameterName="queue" />} fieldClassName="md:col-span-2">
+          <Controller
+            name="queue"
+            control={control}
+            render={({ field }) => (
+              <Select
+                value={field.value && field.value !== "" ? field.value : "__any__"}
+                onValueChange={(value) => field.onChange(value === "__any__" ? "" : value)}
+              >
+                <SelectTrigger
+                  id="ext-queue"
+                  size="sm"
+                  className="w-full"
+                  {...ariaLabelledBy("ext-queue")}
+                >
+                  <SelectValue placeholder="Any queue" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__any__">Any queue</SelectItem>
+                  {queues.map((q) => (
+                    <SelectItem key={q} value={q}>
+                      {q}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          />
+        </FieldRow>
+        <fieldset className="mb-3 border-0 p-0">
+          <legend className="text-base font-semibold">Search on Resources</legend>
+          <div className="mb-2 grid grid-cols-1 gap-2 md:grid-cols-12 md:items-start">
+            <div className="md:col-span-2">
               <SearchFieldLabel parameterName="runtime__gte" />
             </div>
-            <div className="col-12 col-md-2">
-              <input
+            <div className="md:col-span-2">
+              <Input
                 id="ext-runtime-gte"
                 type="text"
-                className={fieldClass("ext-runtime-gte")}
+                className={compactInputClass}
                 {...register("runtime__gte")}
                 placeholder="min seconds"
                 {...ariaLabelledBy("ext-runtime-gte")}
@@ -365,14 +405,14 @@ export default function ExtendedSearch({ onClose }: ExtendedSearchProps) {
               />
               {fieldFeedback("ext-runtime-gte")}
             </div>
-            <div className="col-12 col-md-2">
+            <div className="md:col-span-2">
               <SearchFieldLabel parameterName="runtime__lte" />
             </div>
-            <div className="col-12 col-md-2">
-              <input
+            <div className="md:col-span-2">
+              <Input
                 id="ext-runtime-lte"
                 type="text"
-                className={fieldClass("ext-runtime-lte")}
+                className={compactInputClass}
                 {...register("runtime__lte")}
                 placeholder="max seconds"
                 {...ariaLabelledBy("ext-runtime-lte")}
@@ -381,15 +421,15 @@ export default function ExtendedSearch({ onClose }: ExtendedSearchProps) {
               {fieldFeedback("ext-runtime-lte")}
             </div>
           </div>
-          <div className="row">
-            <div className="col-12 col-md-2">
+          <div className="mb-2 grid grid-cols-1 gap-2 md:grid-cols-12 md:items-start">
+            <div className="md:col-span-2">
               <SearchFieldLabel parameterName="nhosts__gte" />
             </div>
-            <div className="col-12 col-md-2">
-              <input
+            <div className="md:col-span-2">
+              <Input
                 id="ext-nhosts-gte"
                 type="text"
-                className={fieldClass("ext-nhosts-gte")}
+                className={compactInputClass}
                 {...register("nhosts__gte")}
                 placeholder="min nodes"
                 {...ariaLabelledBy("ext-nhosts-gte")}
@@ -397,14 +437,14 @@ export default function ExtendedSearch({ onClose }: ExtendedSearchProps) {
               />
               {fieldFeedback("ext-nhosts-gte")}
             </div>
-            <div className="col-12 col-md-2">
+            <div className="md:col-span-2">
               <SearchFieldLabel parameterName="nhosts__lte" />
             </div>
-            <div className="col-12 col-md-2">
-              <input
+            <div className="md:col-span-2">
+              <Input
                 id="ext-nhosts-lte"
                 type="text"
-                className={fieldClass("ext-nhosts-lte")}
+                className={compactInputClass}
                 {...register("nhosts__lte")}
                 placeholder="max nodes"
                 {...ariaLabelledBy("ext-nhosts-lte")}
@@ -413,15 +453,15 @@ export default function ExtendedSearch({ onClose }: ExtendedSearchProps) {
               {fieldFeedback("ext-nhosts-lte")}
             </div>
           </div>
-          <div className="row">
-            <div className="col-12 col-md-2">
+          <div className="mb-2 grid grid-cols-1 gap-2 md:grid-cols-12 md:items-start">
+            <div className="md:col-span-2">
               <SearchFieldLabel parameterName="node_hrs__gte" />
             </div>
-            <div className="col-12 col-md-2">
-              <input
+            <div className="md:col-span-2">
+              <Input
                 id="ext-node-hrs-gte"
                 type="text"
-                className={fieldClass("ext-node-hrs-gte")}
+                className={compactInputClass}
                 {...register("node_hrs__gte")}
                 placeholder="min node-hrs"
                 {...ariaLabelledBy("ext-node-hrs-gte")}
@@ -429,14 +469,14 @@ export default function ExtendedSearch({ onClose }: ExtendedSearchProps) {
               />
               {fieldFeedback("ext-node-hrs-gte")}
             </div>
-            <div className="col-12 col-md-2">
+            <div className="md:col-span-2">
               <SearchFieldLabel parameterName="node_hrs__lte" />
             </div>
-            <div className="col-12 col-md-2">
-              <input
+            <div className="md:col-span-2">
+              <Input
                 id="ext-node-hrs-lte"
                 type="text"
-                className={fieldClass("ext-node-hrs-lte")}
+                className={compactInputClass}
                 {...register("node_hrs__lte")}
                 placeholder="max node-hrs"
                 {...ariaLabelledBy("ext-node-hrs-lte")}
@@ -446,34 +486,34 @@ export default function ExtendedSearch({ onClose }: ExtendedSearchProps) {
             </div>
           </div>
         </fieldset>
-        <fieldset className="border-0 p-0 mb-3">
-          <legend className="h5">Search on Derived Metrics</legend>
+        <fieldset className="mb-3 border-0 p-0">
+          <legend className="text-base font-semibold">Search on Derived Metrics</legend>
           {metrics.map((m: ExtendedSearchMetricOption, idx: number) => (
-            <div className="row" key={m.metric}>
-              <div className="col-12 col-md-2">
-                <span className="form-label d-block" id={`ext-metric-name-${idx}`}>
+            <div className="mb-2 grid grid-cols-1 gap-2 md:grid-cols-12 md:items-start" key={m.metric}>
+              <div className="md:col-span-2">
+                <span className="block text-sm font-medium" id={`ext-metric-name-${idx}`}>
                   <VariableInfoLabel
                     variableName={m.metric}
                     labelText={getJobMetricShortLabel(m.metric)}
                     enableHelp
                   />{" "}
-                  <span className="text-muted small">
+                  <span className="text-sm text-muted-foreground">
                     ({m.metric}, {m.units})
                   </span>
                 </span>
               </div>
-              <div className="col-12 col-md-2">
-                <label
+              <div className="md:col-span-2">
+                <Label
                   id={`ext-metric-${idx}-gte-label`}
                   htmlFor={`ext-metric-${idx}-gte`}
-                  className="visually-hidden"
+                  className="sr-only"
                 >
                   {m.metric} minimum ({m.units})
-                </label>
-                <input
+                </Label>
+                <Input
                   id={`ext-metric-${idx}-gte`}
                   type="text"
-                  className={fieldClass(`ext-metric-${idx}-gte`)}
+                  className={compactInputClass}
                   {...register(`metrics_${m.metric}__gte`)}
                   placeholder={`Min ${m.units}`}
                   aria-labelledby={`ext-metric-name-${idx} ext-metric-${idx}-gte-label`}
@@ -481,18 +521,18 @@ export default function ExtendedSearch({ onClose }: ExtendedSearchProps) {
                 />
                 {fieldFeedback(`ext-metric-${idx}-gte`)}
               </div>
-              <div className="col-12 col-md-2">
-                <label
+              <div className="md:col-span-2">
+                <Label
                   id={`ext-metric-${idx}-lte-label`}
                   htmlFor={`ext-metric-${idx}-lte`}
-                  className="visually-hidden"
+                  className="sr-only"
                 >
                   {m.metric} maximum ({m.units})
-                </label>
-                <input
+                </Label>
+                <Input
                   id={`ext-metric-${idx}-lte`}
                   type="text"
-                  className={fieldClass(`ext-metric-${idx}-lte`)}
+                  className={compactInputClass}
                   {...register(`metrics_${m.metric}__lte`)}
                   placeholder={`Max ${m.units}`}
                   aria-labelledby={`ext-metric-name-${idx} ext-metric-${idx}-lte-label`}
@@ -504,12 +544,12 @@ export default function ExtendedSearch({ onClose }: ExtendedSearchProps) {
           ))}
         </fieldset>
         <div className="extended-search-actions">
-          <button type="submit" className="btn btn-primary btn-sm">
+          <Button type="submit" size="sm">
             Search
-          </button>
-          <button type="button" className="btn btn-outline-secondary btn-sm" onClick={handleClearForm}>
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={handleClearForm}>
             Clear all
-          </button>
+          </Button>
         </div>
       </form>
     </div>

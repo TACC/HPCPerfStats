@@ -4,6 +4,15 @@ import type { UserApiKey } from "@/api/generated/models/userApiKey";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import LoadingMessage from "../components/LoadingMessage";
 import { api } from "@/api";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 import { copyToClipboard } from "../utils/copy-to-clipboard";
 
@@ -100,58 +109,64 @@ export default function PageApiKey() {
 
   return (
     <>
-      <a href="#api-key-main" className="visually-hidden visually-hidden-focusable">
+      <a
+        href="#api-key-main"
+        className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:rounded focus:bg-background focus:px-3 focus:py-2 focus:ring-2 focus:ring-ring"
+      >
         Skip to main content
       </a>
       <div
         id="api-key-page-announce"
-        className="visually-hidden"
+        className="sr-only"
         ref={announceRef}
         aria-live="polite"
         aria-atomic="true"
       />
-      <div className="container page-api-key-container">
+      <div className="page-api-key-container mx-auto max-w-3xl px-4">
         <p className="mb-3">
-          <Link href="/" className="link-primary">
+          <Link href="/" className="text-primary hover:underline">
             Back to HPCPerfStats
           </Link>
         </p>
         <main id="api-key-main">
-          <div className="card shadow-sm">
-            <div className="card-body">
-              <h1 className="h3 card-title">HPCPerfStats API key</h1>
+          <Card className="shadow-sm">
+            <CardHeader>
+              <CardTitle className="text-xl">HPCPerfStats API key</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
               <p>
                 Signed in as: <strong>{username}</strong>
               </p>
               {error ? (
-                <div className="alert alert-warning" role="status">
-                  {error}
-                </div>
+                <Alert role="status" className="border-amber-200 bg-amber-50 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
               ) : null}
               {rawKey ? (
                 <>
                   <p>Your API key for programmatic access is:</p>
-                  <div className="api-key-row d-flex flex-wrap align-items-center gap-2 mt-2">
+                  <div className="api-key-row mt-2 flex flex-wrap items-center gap-2">
                     <code
                       ref={keyRef}
                       id="api-key-value"
-                      className="api-key-code-block d-inline-block"
+                      className="api-key-code-block inline-block rounded-md bg-muted px-2 py-1 font-mono text-sm"
                     >
                       {rawKey}
                     </code>
-                    <button
+                    <Button
                       type="button"
                       id="copy-api-key"
-                      className="btn btn-outline-secondary btn-sm"
+                      variant="outline"
+                      size="sm"
                       aria-label="Copy API key"
                       onClick={() => void handleCopy()}
                     >
                       Copy
-                    </button>
+                    </Button>
                   </div>
                   <div
                     id="api-key-copy-status"
-                    className="api-key-copy-status mt-1 small text-muted"
+                    className="api-key-copy-status mt-1 text-sm text-muted-foreground"
                     aria-live="polite"
                   >
                     {copyStatus}
@@ -164,15 +179,15 @@ export default function PageApiKey() {
                 <>
                   <p>You already have an active API key, and for security it cannot be shown again.</p>
                   <p>
-                    Active key prefix: <code>{keyPrefix}</code>
+                    Active key prefix: <code className="rounded bg-muted px-1 py-0.5 font-mono text-sm">{keyPrefix}</code>
                   </p>
                   <p>Use your saved copy, or rotate to generate a new key.</p>
                 </>
               )}
               <p className="mt-3">
-                Store this key securely. You can use it with the <code>hpcperfstats-jobstats</code> and{" "}
-                <code>hpcperfstats-sacct-gen</code> tools (from the hpcperfstats-tools package) by passing{" "}
-                <code>--api-key</code> or using the cached key in <code>~/.hpcperfstats-api</code>.
+                Store this key securely. You can use it with the <code className="rounded bg-muted px-1 py-0.5 font-mono text-sm">hpcperfstats-jobstats</code> and{" "}
+                <code className="rounded bg-muted px-1 py-0.5 font-mono text-sm">hpcperfstats-sacct-gen</code> tools (from the hpcperfstats-tools package) by passing{" "}
+                <code className="rounded bg-muted px-1 py-0.5 font-mono text-sm">--api-key</code> or using the cached key in <code className="rounded bg-muted px-1 py-0.5 font-mono text-sm">~/.hpcperfstats-api</code>.
               </p>
               <form
                 className="mt-4"
@@ -180,20 +195,21 @@ export default function PageApiKey() {
                 aria-describedby={rotateHelpId}
                 onSubmit={(e) => void handleRotate(e)}
               >
-                <p id={rotateHelpId} className="small text-muted mb-2">
+                <p id={rotateHelpId} className="mb-2 text-sm text-muted-foreground">
                   This revokes your current key and creates a replacement. Confirm before submitting.
                 </p>
-                <button
+                <Button
                   type="submit"
-                  className="btn btn-warning"
+                  variant="secondary"
                   id="api-key-rotate-submit"
                   disabled={rotating}
+                  className={cn(rotating && "opacity-70")}
                 >
                   {rotating ? "Working…" : "Invalidate and Create New Key"}
-                </button>
+                </Button>
               </form>
-            </div>
-          </div>
+            </CardContent>
+          </Card>
         </main>
       </div>
     </>

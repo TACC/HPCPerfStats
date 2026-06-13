@@ -1,4 +1,6 @@
 import type { CSSProperties, ReactNode } from "react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { cn } from "@/lib/utils";
 
 export type BannerErrorMessageProps = {
   message: ReactNode;
@@ -16,18 +18,22 @@ export default function BannerErrorMessage({
 }: BannerErrorMessageProps) {
   if (variant === "inline") {
     return (
-      <div className={className ?? "text-danger"} style={style} role="alert">
-        {message}
-      </div>
+      <Alert
+        variant="destructive"
+        className={cn("border-none bg-transparent p-0 shadow-none", className)}
+        style={style}
+      >
+        <AlertDescription className="text-destructive">{message}</AlertDescription>
+      </Alert>
     );
   }
   return (
-    <div
-      className={className ?? "container text-danger"}
+    <Alert
+      variant="destructive"
+      className={cn("mx-auto w-full max-w-7xl px-4", className)}
       style={style}
-      role="alert"
     >
-      Error: {message}
-    </div>
+      <AlertDescription className="text-destructive">Error: {message}</AlertDescription>
+    </Alert>
   );
 }

@@ -73,7 +73,7 @@ describe("VariableInfoLabel", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: /help: avg_cpuusage/i }));
     const panel = screen.getByTestId("variable-info-tooltip");
-    expect(panel.querySelector("hr.variable-info-tooltip-sep")).toBeTruthy();
+    expect(panel.querySelector(".variable-info-tooltip-sep")).toBeTruthy();
     expect(panel).toHaveTextContent(/parallel efficiency|OpenMP|MPI/i);
   });
 });

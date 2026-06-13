@@ -1,0 +1,41 @@
+---
+description: Shadcn/ui + Tailwind CSS frontend styling conventions; no Bootstrap reintroduction
+globs:
+  - "**/hpcperfstats/site/frontend/**"
+alwaysApply: false
+---
+
+# Shadcn/ui Frontend
+
+**Activation:** triggered when editing `hpcperfstats/site/frontend/**` UI markup or styling.
+
+## Stack (styling)
+
+- **Shadcn/ui v4** (`base-nova` style) with **Tailwind CSS v4** (`@tailwindcss/postcss`).
+- **Base UI** primitives under `src/components/ui/` — add via `npx shadcn@latest add <component>`.
+- **Icons:** `lucide-react` (bundled; no CDN).
+- **Font:** self-hosted **Inter** via `@fontsource/inter` in `app/layout.tsx`.
+- **Theme tokens:** Shadcn CSS variables in `src/globals.css`; use `var(--background)`, `var(--border)`, etc. in residual `src/index.css` behavioral rules.
+
+## Conventions
+
+- **Do not** reintroduce Bootstrap, Bootswatch, or Sass SCSS theme imports.
+- **Class merging:** `cn()` from `@/lib/utils` for conditional Tailwind classes.
+- **New UI primitives:** prefer Shadcn components in `src/components/ui/` over raw `<div>` + ad hoc ARIA for menus, dialogs, tabs, selects.
+- **Forms:** Shadcn `Input`/`Label`/`Select` with existing **RHF + Zod**; use `Controller` for selects.
+- **Accessibility:** preserve focus traps (`useFocusTrap`), keyboard tab hooks, dialog/backdrop semantics on Extended Search and layout shells.
+- **Residual global CSS:** `src/index.css` is for cross-cutting **behavior** (sticky headers, histogram popover, admin-monitor sections) — not Bootstrap look-alikes.
+
+## Adding components
+
+```bash
+cd hpcperfstats/site/frontend && npx shadcn@latest add button input tabs -y
+```
+
+Update `components.json` only via Shadcn CLI; keep `@/` aliases aligned with `tsconfig.json`.
+
+## Overlap
+
+- **`react-next-ts-cursor-rule.mdc`** — Next.js, Orval, RHF, test layout.
+- **`no-cdn-in-production.mdc`** — self-hosted fonts/icons only.
+- **`frontend-a11y-regression.mdc`** — jest-axe + Playwright on page shells after markup changes.

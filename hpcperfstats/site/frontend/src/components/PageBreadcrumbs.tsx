@@ -1,4 +1,13 @@
 import Link from "next/link";
+import { Fragment } from "react";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
+import { cn } from "@/lib/utils";
 
 export type BreadcrumbItem = {
   label: string;
@@ -12,25 +21,29 @@ export type PageBreadcrumbsProps = {
 export default function PageBreadcrumbs({ items }: PageBreadcrumbsProps) {
   if (!items?.length) return null;
   return (
-    <nav className="mb-2" aria-label="Breadcrumb">
-      <ol className="breadcrumb small mb-0">
+    <Breadcrumb aria-label="Breadcrumb" className="mb-2">
+      <BreadcrumbList className="text-sm">
         {items.map((item, index) => {
           const isLast = index === items.length - 1;
           return (
-            <li
-              key={`${item.label}-${index}`}
-              className={`breadcrumb-item${isLast ? " active" : ""}`}
-              aria-current={isLast ? "page" : undefined}
-            >
-              {!isLast && item.to ? (
-                <Link href={item.to}>{item.label}</Link>
-              ) : (
-                item.label
-              )}
-            </li>
+            <Fragment key={`${item.label}-${index}`}>
+              {index > 0 ? <BreadcrumbSeparator /> : null}
+              <BreadcrumbItem
+                className={cn(isLast && "active")}
+                aria-current={isLast ? "page" : undefined}
+              >
+                {!isLast && item.to ? (
+                  <BreadcrumbLink render={<Link href={item.to} />}>{item.label}</BreadcrumbLink>
+                ) : isLast ? (
+                  <span className="font-normal text-foreground">{item.label}</span>
+                ) : (
+                  item.label
+                )}
+              </BreadcrumbItem>
+            </Fragment>
           );
         })}
-      </ol>
-    </nav>
+      </BreadcrumbList>
+    </Breadcrumb>
   );
 }

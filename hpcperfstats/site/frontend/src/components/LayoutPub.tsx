@@ -1,7 +1,10 @@
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
+import { Menu } from "lucide-react";
 import { useRouteFocusMain } from "../utils/useRouteFocusMain";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 const PUB_LOGIN_PROMPT_HREF = `/login_prompt?next=${encodeURIComponent("/machine/")}`;
 
@@ -19,56 +22,70 @@ export default function LayoutPub({ machineName, children }: LayoutPubProps) {
   }, [pathname]);
 
   return (
-    <div className="container-fluid">
-      <a href="#main-content" className="visually-hidden visually-hidden-focusable">
+    <div className="w-full px-4 lg:px-6">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:z-[12000] focus:m-2 focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:ring-2 focus:ring-ring"
+      >
         Skip to main content
       </a>
-      <nav
-        className="navbar navbar-expand-lg navbar-light bg-light navbar-pub-site"
+      <header
+        className="site-header site-header-pub border-b bg-muted/40"
+        role="navigation"
         aria-label="Primary"
       >
-        <div className="container-fluid">
-          <Link href="/pub/cluster-dashboard" className="navbar-brand navbar-header-logo">
+        <div className="relative flex flex-wrap items-start gap-3 py-3 lg:pb-4">
+          <Link
+            href="/pub/cluster-dashboard"
+            className="site-header-logo flex shrink-0 items-center py-1 lg:min-h-[4.75rem]"
+          >
             <img
               src="/media/logo.png"
               alt="TACC — HPCPerfStats home"
-              className="navbar-logo-img"
+              className="h-12 w-auto max-h-[3.25rem] object-contain lg:h-full lg:max-h-[3.25rem]"
             />
           </Link>
-          <button
+          <Button
             type="button"
-            className="navbar-toggler"
+            variant="outline"
+            size="icon-sm"
+            className="ml-auto lg:hidden"
             onClick={() => setNavOpen((o) => !o)}
             aria-expanded={navOpen}
             aria-controls="navbar-main-pub"
             aria-label="Toggle navigation"
           >
-            <span className="navbar-toggler-icon" />
-          </button>
+            <Menu className="size-4" />
+          </Button>
           <div
             id="navbar-main-pub"
-            className={`collapse navbar-collapse ${navOpen ? "show" : ""}`}
+            className={cn(
+              "site-header-nav w-full basis-full lg:flex lg:flex-1 lg:items-start lg:justify-end",
+              navOpen ? "flex flex-col gap-3 border-t pt-3" : "hidden lg:flex",
+            )}
           >
-            <div className="navbar-brand flex-grow-1 text-center navbar-brand-center">
-              <div className="navbar-pub-site-title">HPCPerfStats</div>
-              <div className="text-muted small navbar-pub-site-subtitle">
+            <div className="site-header-brand mx-auto flex min-h-[5rem] max-w-[min(48vw,680px)] flex-col items-center justify-center gap-0.5 text-center lg:absolute lg:left-1/2 lg:-translate-x-1/2">
+              <div className="text-xl font-semibold text-foreground">HPCPerfStats</div>
+              <div className="text-sm text-muted-foreground">
                 a job-level resource usage monitoring tool
               </div>
               {machineName ? (
-                <div className="navbar-brand-cluster">{machineName}</div>
+                <div className="site-header-cluster text-[1.05em] text-muted-foreground">
+                  {machineName}
+                </div>
               ) : null}
             </div>
-            <div className="navbar-actions ms-auto">
-              <div className="navbar-actions-row navbar-actions-row-priority">
-                <a href={PUB_LOGIN_PROMPT_HREF} className="btn btn-outline-secondary btn-sm">
+            <div className="site-header-actions flex w-full flex-col items-stretch gap-2 lg:max-w-[min(42vw,520px)] lg:items-end">
+              <div className="flex flex-wrap items-center justify-start gap-2 lg:justify-end">
+                <Button variant="outline" size="sm" render={<a href={PUB_LOGIN_PROMPT_HREF} />}>
                   Login to see individual job data
-                </a>
+                </Button>
               </div>
             </div>
           </div>
         </div>
-      </nav>
-      <main id="main-content" className="mt-4" tabIndex={-1}>
+      </header>
+      <main id="main-content" className="mt-4 outline-none" tabIndex={-1}>
         {children}
       </main>
     </div>

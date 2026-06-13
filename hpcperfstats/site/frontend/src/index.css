@@ -1,7 +1,4 @@
-body {
-  margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-}
+@import "./globals.css";
 
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -12,11 +9,6 @@ body {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
-}
-
-:focus-visible {
-  outline: 2px solid #0a58ca;
-  outline-offset: 2px;
 }
 
 .collapsible-section-chevron {
@@ -36,11 +28,10 @@ body {
   position: sticky;
   top: 0;
   z-index: 2;
-  background-color: #fff;
-  box-shadow: 0 1px 0 #dee2e6;
+  background-color: var(--background);
+  box-shadow: 0 1px 0 var(--border);
 }
 
-/* Variable help marker (Job Detail only via component prop) */
 .variable-info-label {
   display: inline-flex;
   align-items: baseline;
@@ -58,7 +49,11 @@ body {
   align-items: baseline;
 }
 .variable-info-help {
-  display: inline;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
   margin: 0;
   padding: 0;
   border: none;
@@ -66,216 +61,36 @@ body {
   font: inherit;
   font-size: 0.72em;
   font-weight: 600;
-  color: #0d6efd; /* Bootstrap primary blue */
+  color: var(--primary);
   cursor: pointer;
   vertical-align: baseline;
   line-height: 1;
   user-select: none;
 }
-.variable-info-help:focus-visible {
-  outline: 2px solid #0a58ca;
-  outline-offset: 2px;
-}
-/* Panel is portaled to document.body; top/left set in JS for viewport clamping */
-.variable-info-tooltip {
-  min-width: min(420px, calc(100vw - 16px));
-  max-width: min(560px, calc(100vw - 16px));
-  padding: 0.35rem 0.5rem;
-  border-radius: 4px;
-  border: 1px solid rgba(0, 0, 0, 0.15);
-  background: #fff;
-  color: #111;
-  font-size: 0.85rem;
-  font-weight: 400;
-  line-height: 1.35;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.15);
-  white-space: normal;
-  box-sizing: border-box;
-}
-.variable-info-tooltip-portal {
-  position: fixed;
-  z-index: 12050;
-  margin: 0;
-}
-.variable-info-tooltip .variable-info-tooltip-sep {
-  margin: 0.5rem 0;
-  border: 0;
-  border-top: 1px solid rgba(0, 0, 0, 0.12);
-  opacity: 1;
-}
-.variable-info-tooltip-researcher-use {
-  display: block;
-  color: #333;
-}
-.navbar {
+
+.site-header {
   position: relative;
 }
-/* Centered title */
-.navbar-brand.navbar-brand-center {
-  min-width: 0;
-  text-align: center;
-  color: inherit;
-}
-@media (min-width: 992px) {
-  .navbar-expand-lg .container-fluid {
-    position: relative;
-    /* Room below the absolutely centered title/cluster so wrapped text does not sit on the navbar edge */
-    padding-bottom: 0.5rem;
-  }
-  .navbar-expand-lg .navbar-collapse {
-    display: flex !important;
-    justify-content: flex-end;
-    align-items: start;
-    width: 100%;
+@media (min-width: 1024px) {
+  .site-header-nav {
     position: static;
   }
-  .navbar-brand.navbar-brand-center {
+  .site-header-brand {
     position: absolute;
     left: 50%;
     transform: translateX(-50%);
-    margin: 0;
-    max-width: min(48vw, 680px);
     overflow-wrap: anywhere;
     word-break: break-word;
   }
-  .navbar-actions {
-    justify-self: end;
-    max-width: min(42vw, 520px);
-  }
-  .navbar-staff-message {
+  .site-header-staff-message {
     width: 100%;
     text-align: left;
     overflow-wrap: anywhere;
   }
 }
-.navbar-header a,
-.navbar-form {
-  position: relative;
-  z-index: 1;
-}
 
-/* Logo container: match navbar height so logo can fill it; re-enable clicks (navbar-brand has pointer-events: none) */
-.navbar-header-logo {
-  display: flex;
-  align-items: center;
-  min-height: 50px;
-  padding: 4px 0;
-  pointer-events: auto;
-}
-.navbar-header-logo a {
-  display: flex;
-  align-items: center;
-  height: 100%;
-  min-height: 42px;
-}
-.navbar-logo-img {
-  height: 100%;
-  width: auto;
-  max-height: 42px;
-  object-fit: contain;
-}
-
-.navbar-brand-cluster {
-  font-size: 0.95em;
-  color: #495057;
-  margin-bottom: 0;
-  padding-bottom: 0.5rem;
-  line-height: 1.35;
-}
-
-/* /pub/ shell: navbar taller than logo and room for title, tagline, and cluster name */
-.navbar-pub-site .container-fluid {
-  padding-top: 0.5rem;
-  padding-bottom: 0.85rem;
-}
-.navbar-pub-site .navbar-header-logo {
-  min-height: 4.75rem;
-}
-.navbar-pub-site .navbar-header-logo a {
-  min-height: 4.25rem;
-}
-.navbar-pub-site .navbar-logo-img {
-  max-height: 3.25rem;
-}
-.navbar-pub-site .navbar-pub-site-title {
-  font-size: 1.25rem;
-  font-weight: 600;
-  color: #000;
-  line-height: 1.25;
-}
-.navbar-pub-site .navbar-pub-site-subtitle {
-  line-height: 1.25;
-  margin-top: 0.1rem;
-  margin-bottom: 0.1rem;
-}
-.navbar-pub-site .navbar-brand-cluster {
-  font-size: 1.05rem;
-  line-height: 1.25;
-  margin: 0.1rem 0 0;
-  padding-bottom: 0;
-}
-.navbar-pub-site .navbar-brand.navbar-brand-center {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.1rem;
+.site-header-pub .site-header-brand {
   min-height: 5rem;
-  margin-top: 0;
-  margin-bottom: 0;
-}
-@media (min-width: 992px) {
-  .navbar-pub-site.navbar-expand-lg .navbar-brand.navbar-brand-center {
-    min-height: 5rem;
-  }
-}
-
-/* Topbar actions: consistent hitbox height for all buttons and links */
-.navbar-actions {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0.5rem;
-  min-width: 0;
-}
-.navbar-actions .dropdown {
-  position: relative;
-}
-.navbar-actions-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-height: 34px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-.navbar-staff-message {
-  max-width: 100%;
-}
-.navbar-actions .btn,
-.navbar-actions a.btn {
-  min-height: 34px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0.25rem 0.5rem;
-  box-sizing: border-box;
-}
-.navbar-actions .form-control-sm {
-  min-height: 34px;
-  box-sizing: border-box;
-}
-.navbar-actions form {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  min-height: 34px;
-}
-.navbar-actions .form-group {
-  margin-bottom: 0;
-}
-.navbar-actions .form-group .form-control {
-  min-height: 34px;
 }
 
 .extended-search-backdrop {
@@ -287,7 +102,7 @@ body {
   justify-content: center;
   padding: 0.5rem 0 0;
   overflow-y: auto;
-  background: rgba(0, 0, 0, 0.35);
+  background: rgb(0 0 0 / 35%);
 }
 
 .extended-search-collapse {
@@ -295,43 +110,24 @@ body {
   z-index: 1041;
   width: 100%;
   max-width: 100%;
-  background: #f8f9fa;
-  border-bottom: 1px solid #dee2e6;
+  background: var(--muted);
+  border-bottom: 1px solid var(--border);
   padding: 1rem 1.5rem;
   margin-bottom: 0;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 4px 24px rgb(0 0 0 / 12%);
 }
 
 .extended-search-panel .extended-search-actions {
   position: sticky;
   bottom: 0;
-  background: #f8f9fa;
+  background: var(--muted);
   padding-top: 0.75rem;
   margin-top: 0.5rem;
-  border-top: 1px solid #dee2e6;
+  border-top: 1px solid var(--border);
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
   align-items: center;
-}
-
-.variable-info-help {
-  min-width: 2.75rem;
-  min-height: 2.75rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.job-list-table-busy {
-  opacity: 0.55;
-  pointer-events: none;
-}
-
-.job-detail-tab-scroll {
-  overflow-x: auto;
-  flex-wrap: nowrap;
-  scrollbar-width: thin;
 }
 
 .extended-search-panel .extended-search-header {
@@ -345,20 +141,20 @@ body {
   font-weight: 600;
 }
 
-.extended-search-panel .row {
-  margin-bottom: 0.5rem;
+.job-list-table-busy {
+  opacity: 0.55;
+  pointer-events: none;
 }
 
-.extended-search-panel h5 {
-  margin-top: 0.75rem;
-  margin-bottom: 0.5rem;
-  font-size: 1rem;
+.job-detail-tab-scroll {
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  scrollbar-width: thin;
 }
 
-/* HPCPerfStats Monitor collapsible sections */
 .admin-monitor-section {
-  border: 1px solid #dee2e6;
-  border-radius: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   margin-bottom: 1rem;
 }
 .admin-monitor-section-header {
@@ -370,21 +166,21 @@ body {
   font-size: 1rem;
   font-weight: 600;
   text-align: left;
-  background: #f8f9fa;
+  background: var(--muted);
   border: none;
-  border-radius: 4px 4px 0 0;
+  border-radius: var(--radius) var(--radius) 0 0;
   cursor: pointer;
 }
 .admin-monitor-section-header:hover {
-  background: #e9ecef;
+  background: var(--accent);
 }
 .admin-monitor-section-chevron {
   font-size: 0.75rem;
-  color: #6c757d;
+  color: var(--muted-foreground);
 }
 .admin-monitor-section-body {
   padding: 0.75rem 1rem;
-  border-top: 1px solid #dee2e6;
+  border-top: 1px solid var(--border);
 }
 .admin-monitor-section-body[hidden] {
   display: none;
@@ -400,49 +196,21 @@ body {
 .admin-monitor-metrics {
   margin-bottom: 0.75rem;
   padding-bottom: 0.5rem;
-  border-bottom: 1px solid #dee2e6;
+  border-bottom: 1px solid var(--border);
 }
 
-/* Host last-seen freshness badge colors (ok = fresh → gt_week = very stale) */
-.badge-freshness-ok {
-  background-color: #198754;
-  color: #fff;
-}
-.badge-freshness-gt_10min {
-  background-color: #0dcaf0;
-  color: #000;
-}
-.badge-freshness-gt_hour {
-  background-color: #fd7e14;
-  color: #000;
-}
-.badge-freshness-gt_day {
-  background-color: #dc3545;
-  color: #fff;
-}
-.badge-freshness-gt_week {
-  background-color: #212529;
-  color: #fff;
-}
+.badge-freshness-ok { background-color: #198754; color: #fff; }
+.badge-freshness-gt_10min { background-color: #0dcaf0; color: #000; }
+.badge-freshness-gt_hour { background-color: #fd7e14; color: #000; }
+.badge-freshness-gt_day { background-color: #dc3545; color: #fff; }
+.badge-freshness-gt_week { background-color: #212529; color: #fff; }
 
-/* Table row background by freshness (same semantic colors) */
-.tr-freshness-ok {
-  background-color: rgba(25, 135, 84, 0.12);
-}
-.tr-freshness-gt_10min {
-  background-color: rgba(13, 202, 240, 0.15);
-}
-.tr-freshness-gt_hour {
-  background-color: rgba(253, 126, 20, 0.15);
-}
-.tr-freshness-gt_day {
-  background-color: rgba(220, 53, 69, 0.15);
-}
-.tr-freshness-gt_week {
-  background-color: rgba(33, 37, 41, 0.1);
-}
+.tr-freshness-ok { background-color: rgb(25 135 84 / 12%); }
+.tr-freshness-gt_10min { background-color: rgb(13 202 240 / 15%); }
+.tr-freshness-gt_hour { background-color: rgb(253 126 20 / 15%); }
+.tr-freshness-gt_day { background-color: rgb(220 53 69 / 15%); }
+.tr-freshness-gt_week { background-color: rgb(33 37 41 / 10%); }
 
-/* Histogram thumbnails: popover shows full plot on hover */
 .histogram-thumbnail-backdrop {
   position: fixed;
   inset: 0;
@@ -451,7 +219,7 @@ body {
   align-items: center;
   justify-content: center;
   padding: 1rem;
-  background: rgba(0, 0, 0, 0.35);
+  background: rgb(0 0 0 / 35%);
 }
 
 .histogram-thumbnail-popover {
@@ -459,10 +227,10 @@ body {
   z-index: 1050;
   max-width: calc(100vw - 2rem);
   padding: 12px;
-  background: #fff;
-  border: 1px solid #dee2e6;
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 15%);
   pointer-events: auto;
 }
 .histogram-thumbnail-popover-title {
@@ -483,17 +251,17 @@ body {
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
-  border: 1px solid #dee2e6;
-  border-radius: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   overflow: hidden;
-  background-color: #f8f9fa;
+  background-color: var(--muted);
 }
 .histogram-thumbnail-actions {
   display: flex;
   justify-content: center;
   padding: 0.35rem 0.5rem;
-  background-color: #fff;
-  border-top: 1px solid #dee2e6;
+  background-color: var(--background);
+  border-top: 1px solid var(--border);
 }
 .histogram-thumbnail-popover-plot {
   position: relative;
@@ -513,7 +281,6 @@ body {
   align-items: center;
   justify-content: flex-start;
 }
-
 .histogram-desktop-title {
   font-weight: 600;
   font-size: 0.95rem;
@@ -521,8 +288,6 @@ body {
   text-align: center;
   max-width: 280px;
 }
-
-/* Job list thumb: fill fixed-height box so Bokeh measures a non-zero slot (flex + IO defer off). */
 .histogram-thumbnail-shell {
   display: flex;
   flex-direction: column;
@@ -537,7 +302,6 @@ body {
   min-height: 34px;
 }
 .histogram-thumbnail-shell .histogram-thumbnail-bokeh {
-  /* Avoid flex min-height:0 shrinking the plot slot to an unpaintable box */
   flex: 1 1 auto;
   align-self: stretch;
   width: 100%;
@@ -564,43 +328,24 @@ body {
   max-width: 100% !important;
 }
 
-/* Browse home + job list (narrow): tab row sticks to viewport top while scrolling */
 .search-browse-tabs,
 .job-list-view-tabs {
   position: sticky;
   top: 0;
   z-index: 1015;
-  background-color: var(--bs-body-bg, #fff);
+  background-color: var(--background);
   padding-top: 0.25rem;
 }
 
-/* Job detail: Job data inner tabs (Bootstrap nav-tabs look) */
 .job-detail-analysis-tabs {
   position: sticky;
   top: 0;
   z-index: 1015;
-  background-color: var(--bs-body-bg, #fff);
+  background-color: var(--background);
   padding-top: 0.35rem;
-  border-bottom: 1px solid var(--bs-border-color, #dee2e6);
-}
-.job-detail-analysis-tabs .nav-link {
-  border: 1px solid transparent;
-  border-top-left-radius: var(--bs-border-radius, 0.375rem);
-  border-top-right-radius: var(--bs-border-radius, 0.375rem);
-  margin-bottom: -1px;
-}
-.job-detail-analysis-tabs .nav-link:hover {
-  border-color: var(--bs-border-color, #dee2e6) var(--bs-border-color, #dee2e6)
-    transparent;
-}
-.job-detail-analysis-tabs .nav-link.active {
-  color: var(--bs-body-color, #212529);
-  background-color: var(--bs-body-bg, #fff);
-  border-color: var(--bs-border-color, #dee2e6) var(--bs-border-color, #dee2e6)
-    transparent;
+  border-bottom: 1px solid var(--border);
 }
 
-/* Job detail: metrics tab — two columns from lg breakpoint when multiple rows */
 .job-detail-metrics-two-col .job-detail-metrics-table {
   width: 100%;
 }
@@ -618,12 +363,11 @@ body {
   max-width: 100%;
 }
 .job-detail-metric-units {
-  color: var(--bs-secondary-color);
+  color: var(--muted-foreground);
   font-weight: 400;
   white-space: nowrap;
 }
 
-/* Job detail: host-level Bokeh (one plot per tab, width-stretched) */
 .job-detail-plots-intro {
   max-width: 36rem;
   margin-left: auto;
@@ -652,7 +396,6 @@ body {
   min-height: 340px;
 }
 
-/* Job list pagination: react-paginate + First/Last */
 .pagination-wrapper {
   display: flex;
   flex-wrap: wrap;
@@ -667,7 +410,7 @@ body {
 }
 .pagination-wrapper .pagination-first.disabled,
 .pagination-wrapper .pagination-last.disabled {
-  color: #6c757d;
+  color: var(--muted-foreground);
   cursor: default;
 }
 .pagination {
@@ -688,17 +431,9 @@ body {
   padding: 0.25rem 0.5rem;
   box-sizing: border-box;
 }
-
-.search-home .pagination .page-link {
-  min-width: 2.75rem;
-  min-height: 2.75rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
 .pagination li.disabled span,
 .pagination li.disabled a {
-  color: #6c757d;
+  color: var(--muted-foreground);
   cursor: default;
 }
 .pagination li.active span,
@@ -706,7 +441,6 @@ body {
   font-weight: 600;
 }
 
-/* Search home: spacing and collapsible date list */
 .search-home {
   padding-bottom: 1.5rem;
 }
@@ -719,41 +453,34 @@ body {
 .search-calendar-section h4 {
   margin-bottom: 0.5rem;
 }
-
 .search-month-jump-select {
   max-width: min(100%, 20rem);
 }
-
 .search-calendar-months {
   display: flex;
   flex-direction: column;
   gap: 1rem;
 }
-
 .search-calendar-month-card {
-  border: 1px solid var(--bs-border-color, #dee2e6);
-  border-radius: 0.375rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 0.75rem 1rem;
-  background-color: var(--bs-body-bg, #fff);
+  background-color: var(--background);
 }
-
 .search-calendar-month-header {
   margin-bottom: 0.65rem;
   padding-bottom: 0.5rem;
-  border-bottom: 1px solid var(--bs-border-color, #dee2e6);
+  border-bottom: 1px solid var(--border);
 }
-
 .search-calendar-month-title {
   font-weight: 600;
   font-size: 1.05rem;
-  color: var(--bs-body-color, #212529);
+  color: var(--foreground);
   text-decoration: none;
 }
-
 .search-calendar-month-title:hover {
   text-decoration: underline;
 }
-
 .search-calendar-day-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(2.65rem, 1fr));
@@ -762,11 +489,9 @@ body {
   padding: 0;
   margin: 0;
 }
-
 .search-calendar-day-cell {
   min-width: 0;
 }
-
 .search-calendar-day-link {
   display: flex;
   align-items: center;
@@ -778,17 +503,16 @@ body {
   font-weight: 500;
   text-align: center;
   text-decoration: none;
-  color: var(--bs-body-color, #212529);
-  border: 1px solid var(--bs-border-color, #dee2e6);
-  border-radius: 0.25rem;
-  background-color: var(--bs-secondary-bg, #f8f9fa);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background-color: var(--muted);
   box-sizing: border-box;
 }
-
 .search-calendar-day-link:hover {
-  background-color: var(--bs-primary-bg-subtle, #cfe2ff);
-  border-color: var(--bs-primary, #0d6efd);
-  color: var(--bs-primary-text-emphasis, #052c65);
+  background-color: var(--accent);
+  border-color: var(--primary);
+  color: var(--primary);
 }
 
 @media (min-width: 576px) {
@@ -797,7 +521,6 @@ body {
     gap: 0.45rem 0.5rem;
   }
 }
-
 @media (min-width: 992px) {
   .search-calendar-day-grid {
     grid-template-columns: repeat(auto-fill, minmax(3rem, 1fr));
@@ -805,41 +528,21 @@ body {
   }
 }
 
-/* ========== Mobile view (all browsable pages) ========== */
 @media (max-width: 991.98px) {
-  .navbar-collapse {
-    padding-top: 0.75rem;
-    border-top: 1px solid rgba(0, 0, 0, 0.08);
-  }
-  .navbar-brand-center {
+  .site-header-brand {
     margin-bottom: 0.5rem;
   }
-  .navbar-actions {
-    flex-direction: column;
-    align-items: stretch;
+  .site-header-actions {
     width: 100%;
   }
-  .navbar-actions-row {
-    flex-wrap: wrap;
-    justify-content: flex-start;
-  }
-  .navbar-staff-message {
+  .site-header-staff-message {
     width: 100%;
     text-align: left;
-  }
-  .navbar-actions-row .form-group {
-    flex: 1;
-    min-width: 120px;
-  }
-  .navbar-actions-row form {
-    flex-wrap: wrap;
   }
   main.mt-4 {
     padding-left: env(safe-area-inset-left, 0);
     padding-right: env(safe-area-inset-right, 0);
   }
-
-  /* Sit below sticky Jobs/Charts tabs (tabs z-index 1015) */
   .job-list-table-wrapper thead th {
     top: 3.5rem;
     z-index: 1010;
@@ -847,26 +550,14 @@ body {
 }
 
 @media (max-width: 767.98px) {
-  .container-fluid {
-    padding-left: max(0.5rem, env(safe-area-inset-left));
-    padding-right: max(0.5rem, env(safe-area-inset-right));
-  }
-  .table-responsive {
-    -webkit-overflow-scrolling: touch;
-    margin-left: -0.5rem;
-    margin-right: -0.5rem;
-    padding-left: 0.5rem;
-    padding-right: 0.5rem;
-  }
-  .table-responsive .table {
+  .overflow-x-auto table {
     font-size: 0.875rem;
   }
-  .table-responsive .table th,
-  .table-responsive .table td {
+  .overflow-x-auto table th,
+  .overflow-x-auto table td {
     padding: 0.35rem 0.25rem;
     white-space: nowrap;
   }
-  /* Generic plot embeds (Bokeh): prevent horizontal overflow */
   .bokeh-embed-wrapper {
     max-width: 100%;
     overflow-x: auto;
@@ -880,7 +571,6 @@ body {
   .bokeh-embed canvas {
     max-width: 100% !important;
   }
-  /* Histogram: on mobile we show full plot only (no popover), single column */
   .histogram-thumbnails-grid {
     grid-template-columns: 1fr;
     gap: 12px;
@@ -899,31 +589,22 @@ body {
     width: 100%;
     min-height: 280px;
     max-height: min(400px, 50vh);
-    border: 1px solid #dee2e6;
-    border-radius: 4px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
     overflow: auto;
-    background: #fff;
+    background: var(--background);
   }
   .histogram-mobile-plot .bokeh-embed-wrapper {
     min-height: 280px;
     width: 100%;
   }
-  /* Extended search: form rows stack */
-  .extended-search-panel .row {
-    margin-bottom: 0.5rem;
-  }
-  .extended-search-panel .row > [class*="col-"] {
-    margin-bottom: 0.25rem;
-  }
   .extended-search-collapse {
     padding: 0.75rem 0.5rem;
   }
-  /* Admin monitor section header text wraps */
   .admin-monitor-section-header {
     flex-wrap: wrap;
     font-size: 0.95rem;
   }
-  /* Pagination: compact on mobile */
   .pagination-wrapper {
     flex-wrap: wrap;
     margin: 0.5rem 0;
@@ -944,7 +625,6 @@ body {
   }
 }
 
-/* API key page (/machine/api-key) */
 .page-api-key-container {
   max-width: 640px;
 }
@@ -956,20 +636,7 @@ body {
 .api-key-copy-status {
   min-height: 1.25em;
 }
-@media (prefers-color-scheme: dark) {
-  .api-key-code-block {
-    background: #2b3035 !important;
-    color: #e9ecef;
-  }
-}
-@media (max-width: 480px) {
-  .page-api-key-container {
-    padding-left: 0.75rem;
-    padding-right: 0.75rem;
-  }
-}
 
-/* Safe area for notched devices */
 @supports (padding: env(safe-area-inset-bottom)) {
   body {
     padding-bottom: env(safe-area-inset-bottom);

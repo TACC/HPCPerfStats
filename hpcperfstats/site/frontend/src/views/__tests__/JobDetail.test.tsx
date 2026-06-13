@@ -233,7 +233,7 @@ describe("JobDetail", () => {
     expect(getJobPlotsSpy).not.toHaveBeenCalled();
   });
 
-  it("uses a valid bootstrap column class for log link container", async () => {
+  it("does not use invalid legacy column class for log link container", async () => {
     vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(
       minimalJobDetailResponse
     );

@@ -7,8 +7,7 @@ describe("BannerErrorMessage", () => {
     render(<BannerErrorMessage message="bad" />);
     const el = screen.getByRole("alert");
     expect(el).toHaveTextContent("Error: bad");
-    expect(el.className).toContain("container");
-    expect(el.className).toContain("text-danger");
+    expect(el).toHaveAttribute("data-slot", "alert");
   });
 
   it("inline variant renders full message without Error prefix", () => {

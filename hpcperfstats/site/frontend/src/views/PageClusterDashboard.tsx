@@ -2,6 +2,8 @@ import { useId, useState } from "react";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import BokehPlotWithLimitation from "../components/BokehPlotWithLimitation";
 import LoadingMessage from "../components/LoadingMessage";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { usePubDashboardBundle } from "../pub-dashboard-bundle-context";
 import type {
   PubDashboardBundle,
@@ -60,15 +62,15 @@ function SectionExpansionFactor({ bundle }: SectionExpansionFactorProps) {
     const keys = Object.keys(payloadMap).sort().reverse();
     if (!keys.length) {
       return (
-        <p className="text-muted mb-0">
+        <p className="mb-0 text-muted-foreground">
           No histogram data for this grouping yet.
         </p>
       );
     }
     return (
       <div className="mb-4">
-        <p className="small text-muted mb-2">{histogramCaption}</p>
-        <p className="small text-muted mb-3">{axisHint}</p>
+        <p className="mb-2 text-sm text-muted-foreground">{histogramCaption}</p>
+        <p className="mb-3 text-sm text-muted-foreground">{axisHint}</p>
         {keys.map((k) => {
           const block = payloadMap[k];
           const safeDomId = String(k).replace(/[^a-zA-Z0-9_-]+/g, "-");
@@ -80,9 +82,9 @@ function SectionExpansionFactor({ bundle }: SectionExpansionFactorProps) {
             ? Math.max(1, ...counts.map((c: unknown) => Number(c) || 0))
             : 1;
           return (
-            <div key={k} className="mb-4 border rounded p-3 bg-light">
-              <div className="fw-semibold mb-2">{k}</div>
-              <div className="small text-muted mb-2">
+            <div key={k} className="mb-4 rounded-lg border bg-muted/40 p-3">
+              <div className="mb-2 font-semibold">{k}</div>
+              <div className="mb-2 text-sm text-muted-foreground">
                 definition: {block.expansion_factor_definition || "—"}
               </div>
               {block.bokeh_histogram_json_item ? (
@@ -97,7 +99,7 @@ function SectionExpansionFactor({ bundle }: SectionExpansionFactorProps) {
                 </div>
               ) : null}
               {!block.bokeh_histogram_json_item ? (
-                <div className="d-flex flex-column gap-1">
+                <div className="flex flex-col gap-1">
                   {counts.map((cntRaw: unknown, idx: number) => {
                     const lo = edges[idx];
                     const hi = idx + 1 < edges.length ? edges[idx + 1] : null;
@@ -108,24 +110,26 @@ function SectionExpansionFactor({ bundle }: SectionExpansionFactorProps) {
                         ? `[${formatDecimalStandard(lo)}, ${formatDecimalStandard(hi)})`
                         : `≥ ${formatDecimalStandard(lo)}`;
                     return (
-                      <div key={`${k}-${idx}`} className="d-flex align-items-center gap-2">
-                        <div className="small flex-shrink-0" style={{ width: "14rem" }}>
+                      <div key={`${k}-${idx}`} className="flex items-center gap-2">
+                        <div className="w-56 shrink-0 text-sm">
                           {labelRight}
                         </div>
-                        <div className="flex-grow-1">
-                          <div className="progress" style={{ height: "1.1rem" }}>
+                        <div className="min-w-0 flex-1">
+                          <div
+                            className="h-[1.1rem] overflow-hidden rounded-full bg-muted"
+                            role="progressbar"
+                            aria-valuenow={cnt}
+                            aria-valuemin={0}
+                            aria-valuemax={maxCount}
+                            aria-label={`${labelRight}: ${cnt} jobs`}
+                          >
                             <div
-                              className="progress-bar"
-                              role="progressbar"
+                              className="h-full rounded-full bg-primary/70"
                               style={{ width: `${widthPct}%` }}
-                              aria-valuenow={cnt}
-                              aria-valuemin={0}
-                              aria-valuemax={maxCount}
-                              aria-label={`${labelRight}: ${cnt} jobs`}
                             />
                           </div>
                         </div>
-                        <div className="small flex-shrink-0 text-end" style={{ width: "3rem" }}>
+                        <div className="w-12 shrink-0 text-end text-sm">
                           {cnt}
                         </div>
                       </div>
@@ -142,7 +146,7 @@ function SectionExpansionFactor({ bundle }: SectionExpansionFactorProps) {
 
   return (
     <section aria-labelledby={panelIntroId}>
-      <p id={panelIntroId} className="text-muted">
+      <p id={panelIntroId} className="text-muted-foreground">
         Scheduler-centric expansion factor aggregates precomputed offline from accounting timestamps.
         Yearly views summarize distributions of{" "}
         <strong>weekly mean expansion factor</strong> values (ISO weeks). Monthly views summarize
@@ -150,9 +154,9 @@ function SectionExpansionFactor({ bundle }: SectionExpansionFactorProps) {
       </p>
 
       <div id="pub-dashboard-yearly" className="pt-2">
-        <div className="d-flex flex-wrap align-items-baseline justify-content-between gap-2 border-bottom pb-2 mb-3">
-          <h3 className="h4 mb-0">Yearly</h3>
-          <a href="#pub-dashboard-monthly" className="h4 mb-0 text-decoration-underline">
+        <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2 border-b pb-2">
+          <h3 className="mb-0 text-xl font-semibold">Yearly</h3>
+          <a href="#pub-dashboard-monthly" className="mb-0 text-xl font-semibold underline">
             Monthly
           </a>
         </div>
@@ -167,11 +171,11 @@ function SectionExpansionFactor({ bundle }: SectionExpansionFactorProps) {
       <hr className="my-5 border-2 opacity-50" />
 
       <div id="pub-dashboard-monthly">
-        <div className="d-flex flex-wrap align-items-baseline justify-content-between gap-2 border-bottom pb-2 mb-3">
-          <a href="#pub-dashboard-yearly" className="h4 mb-0 text-decoration-underline">
+        <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2 border-b pb-2">
+          <a href="#pub-dashboard-yearly" className="mb-0 text-xl font-semibold underline">
             Yearly
           </a>
-          <h3 className="h4 mb-0">Monthly</h3>
+          <h3 className="mb-0 text-xl font-semibold">Monthly</h3>
         </div>
         {renderHist(
           monthly,
@@ -186,38 +190,21 @@ function SectionExpansionFactor({ bundle }: SectionExpansionFactorProps) {
 
 function ClusterDashboardTabs({ bundle }: ClusterDashboardTabsProps) {
   const [activeTab, setActiveTab] = useState(CLUSTER_DASH_TAB_EXPANSION);
-  const tabExpansionId = useId();
-  const panelExpansionId = useId();
 
   return (
-    <div>
-      <ul className="nav nav-tabs mb-0" role="tablist">
-        <li className="nav-item" role="presentation">
-          <button
-            type="button"
-            role="tab"
-            id={tabExpansionId}
-            className={`nav-link ${activeTab === CLUSTER_DASH_TAB_EXPANSION ? "active" : ""}`}
-            aria-selected={activeTab === CLUSTER_DASH_TAB_EXPANSION}
-            aria-controls={panelExpansionId}
-            tabIndex={activeTab === CLUSTER_DASH_TAB_EXPANSION ? 0 : -1}
-            onClick={() => setActiveTab(CLUSTER_DASH_TAB_EXPANSION)}
-          >
-            Expansion factors
-          </button>
-        </li>
-      </ul>
-      <div
-        id={panelExpansionId}
-        role="tabpanel"
-        aria-labelledby={tabExpansionId}
-        className="tab-pane border border-top-0 rounded-bottom bg-white p-3 p-md-4"
+    <Tabs value={activeTab} onValueChange={setActiveTab}>
+      <TabsList variant="line" className="mb-0 w-full justify-start rounded-none border-b bg-transparent p-0">
+        <TabsTrigger value={CLUSTER_DASH_TAB_EXPANSION} className="rounded-none">
+          Expansion factors
+        </TabsTrigger>
+      </TabsList>
+      <TabsContent
+        value={CLUSTER_DASH_TAB_EXPANSION}
+        className="rounded-b-lg border border-t-0 bg-background p-3 md:p-4"
       >
-        {activeTab === CLUSTER_DASH_TAB_EXPANSION ? (
-          <SectionExpansionFactor bundle={bundle} />
-        ) : null}
-      </div>
-    </div>
+        <SectionExpansionFactor bundle={bundle} />
+      </TabsContent>
+    </Tabs>
   );
 }
 
@@ -229,9 +216,9 @@ export default function PageClusterDashboard() {
     bundle && typeof bundle === "object" ? (bundle as PubDashboardBundle) : null;
 
   return (
-    <div className="container py-4">
+    <div className="container mx-auto px-4 py-4">
       <header className="mb-4">
-        <h1 className="h3">Dashboard</h1>
+        <h1 className="text-xl font-semibold">Dashboard</h1>
       </header>
 
       {error ? <BannerErrorMessage message={error} /> : null}
@@ -239,13 +226,13 @@ export default function PageClusterDashboard() {
       {loading ? (
         <LoadingMessage message="Loading cluster dashboard…" />
       ) : typedBundle == null ? null : typedBundle.status !== "ready" ? (
-        <div className="alert alert-info" role="status">
-          <div className="fw-semibold">Dashboard warming</div>
-          <div className="small">
+        <Alert role="status" className="border-sky-200 bg-sky-50 text-sky-950 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-100">
+          <AlertTitle>Dashboard warming</AlertTitle>
+          <AlertDescription className="text-sm">
             {typedBundle.detail || "metrics_not_ready"} —{" "}
             {typedBundle.retry_hint || "check_back_later"}
-          </div>
-        </div>
+          </AlertDescription>
+        </Alert>
       ) : (
         <ClusterDashboardTabs bundle={typedBundle} />
       )}

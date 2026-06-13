@@ -5,6 +5,18 @@ import type { JobMonitorRow } from "@/types/view-models";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import LoadingMessage from "../components/LoadingMessage";
 import SortableTableHeader from "../components/SortableTableHeader";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { formatDecimalStandard } from "../utils/formatDecimal";
 import {
   JOB_MONITOR_GPU_NO_DATA_ROW,
@@ -65,6 +77,9 @@ function getApiErrorMessage(error: unknown, fallback: string): string {
   }
   return fallback;
 }
+
+const sortHeaderClassName =
+  "job-monitor-sort-header h-auto p-0 text-left font-medium text-foreground no-underline hover:no-underline";
 
 export default function JobMonitor() {
   useDocumentTitle("Job failure monitor");
@@ -165,7 +180,6 @@ export default function JobMonitor() {
     const bv = jobMonitorSortComparable(b, sortKey);
     if (av < bv) return sortDir === "asc" ? -1 : 1;
     if (av > bv) return sortDir === "asc" ? 1 : -1;
-    // Tiebreaker by username
     const au = (a.username || "").toLowerCase();
     const bu = (b.username || "").toLowerCase();
     if (au < bu) return -1;
@@ -175,13 +189,13 @@ export default function JobMonitor() {
 
   return (
     <>
-      <h1 className="h2 mb-3">Job failure monitor</h1>
-      <p className="text-muted mb-3">
+      <h1 className="mb-3 text-2xl font-semibold tracking-tight">Job failure monitor</h1>
+      <p className="mb-3 text-muted-foreground">
         Aggregated job outcomes by user for the last {windowDays} days. Only users
         who have run more than {windowDays / 2} jobs in this window are included.
       </p>
       <form
-        className="row g-2 align-items-center mb-3"
+        className="mb-3 flex flex-wrap items-end gap-3"
         onSubmit={(e) => {
           e.preventDefault();
           const n = parseInt(inputDays, 10);
@@ -197,166 +211,157 @@ export default function JobMonitor() {
           loadData(n);
         }}
       >
-        <div className="col-auto">
-          <label htmlFor="job-monitor-days" className="col-form-label">
-            Window (days):
-          </label>
-        </div>
-        <div className="col-auto">
-          <input
+        <div className="space-y-1">
+          <Label htmlFor="job-monitor-days">Window (days):</Label>
+          <Input
             id="job-monitor-days"
             type="number"
             min="1"
             max="365"
-            className="form-control form-control-sm"
+            className="w-24"
             value={inputDays}
             onChange={(e) => setInputDays(e.target.value)}
           />
         </div>
-        <div className="col-auto">
-          <button type="submit" className="btn btn-outline-secondary btn-sm">
-            Apply
-          </button>
-        </div>
+        <Button type="submit" variant="outline" size="sm">
+          Apply
+        </Button>
       </form>
       {loading && <LoadingMessage message="Loading job monitor data…" />}
       {error && !loading && (
         <BannerErrorMessage
           variant="inline"
-          className="text-danger mb-3"
+          className="mb-3 text-destructive"
           message={`Error loading job monitor data: ${error}`}
         />
       )}
       {!loading && !error && (
-        <div className="table-responsive">
-          <table className="table table-sm table-bordered">
-            <caption className="visually-hidden">
-              Job outcomes by user for the last {windowDays} days
-            </caption>
-            <thead>
-              <tr>
-                <SortableTableHeader
-                  column="username"
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={onSort}
-                  buttonClassName="btn btn-link btn-sm p-0 text-start text-decoration-none job-monitor-sort-header text-dark"
-                >
-                  User
-                </SortableTableHeader>
-                <SortableTableHeader
-                  column="total_jobs"
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={onSort}
-                  buttonClassName="btn btn-link btn-sm p-0 text-start text-decoration-none job-monitor-sort-header text-dark"
-                >
-                  Number of jobs
-                </SortableTableHeader>
-                <SortableTableHeader
-                  column="failed_jobs"
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={onSort}
-                  buttonClassName="btn btn-link btn-sm p-0 text-start text-decoration-none job-monitor-sort-header text-dark"
-                >
-                  Number of failed jobs
-                </SortableTableHeader>
-                <SortableTableHeader
-                  column="failed_rate"
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={onSort}
-                  buttonClassName="btn btn-link btn-sm p-0 text-start text-decoration-none job-monitor-sort-header text-dark"
-                >
-                  % failed
-                </SortableTableHeader>
-                <SortableTableHeader
-                  column="timedout_jobs"
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={onSort}
-                  buttonClassName="btn btn-link btn-sm p-0 text-start text-decoration-none job-monitor-sort-header text-dark"
-                >
-                  Number of timed out jobs
-                </SortableTableHeader>
-                <SortableTableHeader
-                  column="timedout_rate"
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={onSort}
-                  buttonClassName="btn btn-link btn-sm p-0 text-start text-decoration-none job-monitor-sort-header text-dark"
-                >
-                  % timed out
-                </SortableTableHeader>
-                <SortableTableHeader
-                  column="gpu_count_total"
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={onSort}
-                  buttonClassName="btn btn-link btn-sm p-0 text-start text-decoration-none job-monitor-sort-header text-dark"
-                >
-                  Total GPUs Allocated
-                </SortableTableHeader>
-                <SortableTableHeader
-                  column="gpu_active_total"
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={onSort}
-                  buttonClassName="btn btn-link btn-sm p-0 text-start text-decoration-none job-monitor-sort-header text-dark"
-                >
-                  Number of GPUs Active
-                </SortableTableHeader>
-                <SortableTableHeader
-                  column="gpu_active_percentage"
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={onSort}
-                  buttonClassName="btn btn-link btn-sm p-0 text-start text-decoration-none job-monitor-sort-header text-dark"
-                >
-                  Percentage of GPUs Active
-                </SortableTableHeader>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedRows.map((row) => (
-                <tr key={row.username || "(unknown)"}>
-                  <td>
-                    {row.username ? (
-                      <Link href={`/machine/username/${encodeURIComponent(row.username)}/`}>
-                        {row.username}
-                      </Link>
-                    ) : (
-                      "(unknown)"
-                    )}
-                  </td>
-                  <td>{formatDecimalStandard(row.total_jobs)}</td>
-                  <td>{formatDecimalStandard(row.failed_jobs)}</td>
-                  <td>{formatDecimalStandard(row.failed_rate)}</td>
-                  <td>{formatDecimalStandard(row.timedout_jobs)}</td>
-                  <td>{formatDecimalStandard(row.timedout_rate)}</td>
-                  <td>{formatGpuValue(row.gpu_count_total, row.gpuLoadingState)}</td>
-                  <td>{formatGpuValue(row.gpu_active_total, row.gpuLoadingState)}</td>
-                  <td>
-                    {formatGpuPercentValue(
-                      row.gpu_active_percentage,
-                      row.gpuLoadingState,
-                    )}
-                  </td>
-                </tr>
-              ))}
-              {rows.length === 0 && (
-                <tr>
-                  <td colSpan={9} className="text-center text-muted">
-                    No jobs found in the selected time window.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        <Table className="border text-sm">
+          <TableCaption className="sr-only">
+            Job outcomes by user for the last {windowDays} days
+          </TableCaption>
+          <TableHeader>
+            <TableRow>
+              <SortableTableHeader
+                column="username"
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onSort={onSort}
+                buttonClassName={sortHeaderClassName}
+              >
+                User
+              </SortableTableHeader>
+              <SortableTableHeader
+                column="total_jobs"
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onSort={onSort}
+                buttonClassName={sortHeaderClassName}
+              >
+                Number of jobs
+              </SortableTableHeader>
+              <SortableTableHeader
+                column="failed_jobs"
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onSort={onSort}
+                buttonClassName={sortHeaderClassName}
+              >
+                Number of failed jobs
+              </SortableTableHeader>
+              <SortableTableHeader
+                column="failed_rate"
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onSort={onSort}
+                buttonClassName={sortHeaderClassName}
+              >
+                % failed
+              </SortableTableHeader>
+              <SortableTableHeader
+                column="timedout_jobs"
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onSort={onSort}
+                buttonClassName={sortHeaderClassName}
+              >
+                Number of timed out jobs
+              </SortableTableHeader>
+              <SortableTableHeader
+                column="timedout_rate"
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onSort={onSort}
+                buttonClassName={sortHeaderClassName}
+              >
+                % timed out
+              </SortableTableHeader>
+              <SortableTableHeader
+                column="gpu_count_total"
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onSort={onSort}
+                buttonClassName={sortHeaderClassName}
+              >
+                Total GPUs Allocated
+              </SortableTableHeader>
+              <SortableTableHeader
+                column="gpu_active_total"
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onSort={onSort}
+                buttonClassName={sortHeaderClassName}
+              >
+                Number of GPUs Active
+              </SortableTableHeader>
+              <SortableTableHeader
+                column="gpu_active_percentage"
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onSort={onSort}
+                buttonClassName={sortHeaderClassName}
+              >
+                Percentage of GPUs Active
+              </SortableTableHeader>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {sortedRows.map((row) => (
+              <TableRow key={row.username || "(unknown)"}>
+                <TableCell>
+                  {row.username ? (
+                    <Link href={`/machine/username/${encodeURIComponent(row.username)}/`} className="text-primary hover:underline">
+                      {row.username}
+                    </Link>
+                  ) : (
+                    "(unknown)"
+                  )}
+                </TableCell>
+                <TableCell>{formatDecimalStandard(row.total_jobs)}</TableCell>
+                <TableCell>{formatDecimalStandard(row.failed_jobs)}</TableCell>
+                <TableCell>{formatDecimalStandard(row.failed_rate)}</TableCell>
+                <TableCell>{formatDecimalStandard(row.timedout_jobs)}</TableCell>
+                <TableCell>{formatDecimalStandard(row.timedout_rate)}</TableCell>
+                <TableCell>{formatGpuValue(row.gpu_count_total, row.gpuLoadingState)}</TableCell>
+                <TableCell>{formatGpuValue(row.gpu_active_total, row.gpuLoadingState)}</TableCell>
+                <TableCell>
+                  {formatGpuPercentValue(
+                    row.gpu_active_percentage,
+                    row.gpuLoadingState,
+                  )}
+                </TableCell>
+              </TableRow>
+            ))}
+            {rows.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={9} className="text-center text-muted-foreground">
+                  No jobs found in the selected time window.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
       )}
     </>
   );
 }
-

@@ -1,7 +1,0 @@
-// Spacelab theme: Open Sans is self-hosted via src/fonts/open-sans.css + @fontsource (Vite → static/frontend/assets).
-// Bootswatch uses $web-font-path with @if; use false so the packaged Google Fonts @import is skipped (see no-cdn-in-production.mdc).
-$web-font-path: false;
-
-@import "bootswatch/dist/spacelab/variables";
-@import "bootstrap/scss/bootstrap";
-@import "bootswatch/dist/spacelab/bootswatch";

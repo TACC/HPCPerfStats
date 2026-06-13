@@ -78,13 +78,13 @@ export default function HostDetail() {
           { label: `${hostName} utilization` },
         ]}
       />
-      <h1 className="h2 mb-3">{hostName} utilization</h1>
-      <p className="text-muted mb-2">
+      <h1 className="mb-3 text-2xl font-semibold tracking-tight">{hostName} utilization</h1>
+      <p className="mb-2 text-muted-foreground">
         Time range: {formatDateTime(data.end_time__gte)} —{" "}
         {data.end_time__lte === "now()" ? "Now" : formatDateTime(data.end_time__lte)}
       </p>
       <p className="mb-3">
-        <Link href={`/machine/host/${encodeURIComponent(hostName)}/`}>
+        <Link href={`/machine/host/${encodeURIComponent(hostName)}/`} className="text-primary hover:underline">
           View jobs that ran on this host
         </Link>
       </p>

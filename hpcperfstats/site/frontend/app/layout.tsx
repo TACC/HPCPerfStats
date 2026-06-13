@@ -1,10 +1,10 @@
 import type { Metadata, Viewport } from "next";
 import AppProviders from "./providers";
-import "@fontsource/open-sans/latin-400.css";
-import "@fontsource/open-sans/latin-400-italic.css";
-import "@fontsource/open-sans/latin-700.css";
-import "@fontsource/open-sans/latin-700-italic.css";
-import "@/bootswatch-spacelab.scss";
+import "@fontsource/inter/latin-400.css";
+import "@fontsource/inter/latin-500.css";
+import "@fontsource/inter/latin-600.css";
+import "@fontsource/inter/latin-700.css";
+import "@/globals.css";
 import "@/index.css";
 
 export const metadata: Metadata = {
@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#446e9b",
+  themeColor: "#09090b",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

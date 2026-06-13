@@ -115,6 +115,7 @@ ROUTER_ENTRIES: list[RouterEntry] = [
         ],
         "rules": [
             "react-next-ts-cursor-rule.mdc",
+            "shadcn-ui-frontend.mdc",
             "testing-best-practices.mdc",
         ],
     },

@@ -28,10 +28,23 @@ function regexpEscape(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function getFieldByLabel(label) {
+  const namePattern = new RegExp(`^${regexpEscape(label)}`, "i");
+  const combobox = screen.queryByRole("combobox", { name: namePattern });
+  if (combobox) return combobox;
+  const textbox = screen.queryByRole("textbox", { name: namePattern });
+  if (textbox) return textbox;
+  return screen.getByLabelText(namePattern);
+}
+
 async function submitField(label, value) {
   const user = userEvent.setup();
-  const field = screen.getByLabelText(`${label}?`);
-  if (field.tagName === "SELECT") {
+  const field = getFieldByLabel(label);
+  const role = field.getAttribute("role");
+  if (role === "combobox" || field.tagName === "BUTTON") {
+    await user.click(field);
+    await user.click(screen.getByRole("option", { name: value }));
+  } else if (field.tagName === "SELECT") {
     await user.selectOptions(field, value);
   } else {
     await user.clear(field);
@@ -68,7 +81,7 @@ describe("ExtendedSearch", () => {
   it("navigates to job detail when Job ID is submitted", async () => {
     const user = userEvent.setup();
     renderExtendedSearch(<ExtendedSearch onClose={vi.fn()} />);
-    await user.type(screen.getByLabelText(/job id/i), "991");
+    await user.type(screen.getByRole("textbox", { name: /job id/i }), "991");
     await user.click(screen.getByRole("button", { name: /^search$/i }));
     expect(lastRouterPushUrl().pathname).toBe("/machine/job/991/");
   });
@@ -151,8 +164,8 @@ describe("ExtendedSearch", () => {
     const user = userEvent.setup();
     renderExtendedSearch(<ExtendedSearch onClose={vi.fn()} />);
 
-    await user.type(screen.getByLabelText("Host?"), "n001.cluster.example");
-    await user.type(screen.getByLabelText(/Earliest job end date/i), "2024-01-01");
+    await user.type(getFieldByLabel("Host"), "n001.cluster.example");
+    await user.type(getFieldByLabel("Earliest job end date"), "2024-01-01");
     await user.click(screen.getByRole("button", { name: /^search$/i }));
 
     const url = parsedLocation();

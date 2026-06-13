@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ComponentProps, ReactNode } from "react";
+import { cn } from "@/lib/utils";
 import { machineHref } from "@/utils/routes";
 
 type NavLinkProps = Omit<ComponentProps<typeof Link>, "href"> & {
@@ -10,6 +11,16 @@ type NavLinkProps = Omit<ComponentProps<typeof Link>, "href"> & {
   activeClassName?: string;
   children: ReactNode;
 };
+
+const LEGACY_ACTIVE_CLASS = "active";
+const DEFAULT_ACTIVE_TAILWIND = "font-semibold text-primary underline-offset-4";
+
+function resolveActiveClassName(activeClassName?: string) {
+  if (!activeClassName || activeClassName === LEGACY_ACTIVE_CLASS) {
+    return DEFAULT_ACTIVE_TAILWIND;
+  }
+  return activeClassName;
+}
 
 export default function NavLink({
   to,
@@ -25,9 +36,14 @@ export default function NavLink({
   const isActive =
     normalizedPath === normalizedHref ||
     (normalizedHref !== "/machine/" && normalizedPath.startsWith(normalizedHref));
-  const mergedClass = [className, isActive ? activeClassName : null].filter(Boolean).join(" ");
+
   return (
-    <Link href={href} className={mergedClass || undefined} {...rest}>
+    <Link
+      href={href}
+      className={cn(className, isActive && resolveActiveClassName(activeClassName))}
+      aria-current={isActive ? "page" : undefined}
+      {...rest}
+    >
       {children}
     </Link>
   );

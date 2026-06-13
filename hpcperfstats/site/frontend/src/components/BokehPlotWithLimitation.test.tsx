@@ -16,7 +16,7 @@ describe("BokehPlotWithLimitation", () => {
     const describedBy = region.getAttribute("aria-describedby");
     expect(describedBy).toBeTruthy();
     const description = document.getElementById(describedBy);
-    expect(description).toHaveClass("visually-hidden");
+    expect(description).toHaveClass("sr-only");
     expect(description?.textContent).toMatch(/assistive technology/i);
   });
 });

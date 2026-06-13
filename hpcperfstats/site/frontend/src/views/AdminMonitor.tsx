@@ -8,6 +8,11 @@ import type {
 } from "@/types/view-models";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import LoadingMessage from "../components/LoadingMessage";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
+import { Table } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 import { useTableSort, type TableSortState } from "../hooks/useTableSort";
 import { createAdminMonitorSectionLoader } from "../utils/create-admin-monitor-section-loader";
 import { copyToClipboard } from "../utils/copy-to-clipboard";
@@ -27,11 +32,11 @@ const BADGE_MAP: Record<
   FreshnessBucket,
   { label: string; class: string }
 > = {
-  ok: { label: "OK (≤ 10 minutes)", class: "badge badge-freshness-ok" },
-  gt_10min: { label: "> 10 minutes", class: "badge badge-freshness-gt_10min" },
-  gt_hour: { label: "> 1 hour", class: "badge badge-freshness-gt_hour" },
-  gt_day: { label: "> 1 day", class: "badge badge-freshness-gt_day" },
-  gt_week: { label: "> 1 week", class: "badge badge-freshness-gt_week" },
+  ok: { label: "OK (≤ 10 minutes)", class: "badge-freshness-ok" },
+  gt_10min: { label: "> 10 minutes", class: "badge-freshness-gt_10min" },
+  gt_hour: { label: "> 1 hour", class: "badge-freshness-gt_hour" },
+  gt_day: { label: "> 1 day", class: "badge-freshness-gt_day" },
+  gt_week: { label: "> 1 week", class: "badge-freshness-gt_week" },
 };
 
 const ROW_CLASS: Record<FreshnessBucket, string> = {
@@ -344,12 +349,14 @@ export default function AdminMonitor() {
 
   return (
     <>
-      <h1 className="h2 mb-3">HPCPerfStats Monitor</h1>
+      <h1 className="mb-3 text-2xl font-semibold tracking-tight">HPCPerfStats Monitor</h1>
 
       <div className="admin-monitor-section">
-        <button
+        <Button
           type="button"
-          className="btn btn-outline-secondary btn-sm admin-monitor-section-header"
+          variant="outline"
+          size="sm"
+          className="admin-monitor-section-header h-auto w-full justify-start font-semibold"
           onClick={() => setHostTimeExpanded((e) => !e)}
           aria-expanded={hostTimeExpanded}
           aria-controls="admin-monitor-host-time"
@@ -358,7 +365,7 @@ export default function AdminMonitor() {
             {hostTimeExpanded ? "▼" : "▶"}
           </span>
           {`Most recent host data timestamps in database${hostHeaderSummary}`}
-        </button>
+        </Button>
         <div
           id="admin-monitor-host-time"
           className="admin-monitor-section-body"
@@ -367,14 +374,16 @@ export default function AdminMonitor() {
           aria-label="Most recent host data timestamps in database"
         >
           <div className="admin-monitor-action-row">
-            <button
+            <Button
               type="button"
-              className="btn btn-outline-secondary btn-sm admin-monitor-refresh-button"
+              variant="outline"
+              size="sm"
+              className="admin-monitor-refresh-button"
               onClick={() => loadHostStats(true)}
               disabled={hostLoading}
             >
               Refresh Data
-            </button>
+            </Button>
           </div>
           {hostLoading && <LoadingMessage message="Loading host timestamps…" />}
           {hostError && !hostLoading && (
@@ -385,43 +394,46 @@ export default function AdminMonitor() {
           )}
           {!hostLoading && !hostError && (
             <>
-              <div className="d-flex flex-wrap align-items-center mb-2">
-                <p className="mb-1 me-3">
+              <div className="mb-2 flex flex-wrap items-center">
+                <p className="mb-1 mr-3">
                   Status buckets:{" "}
-                  <span className="badge badge-freshness-ok">OK (≤ 10 minutes)</span>{" "}
-                  <span className="badge badge-freshness-gt_10min">{"> 10 minutes"}</span>{" "}
-                  <span className="badge badge-freshness-gt_hour">{"> 1 hour"}</span>{" "}
-                  <span className="badge badge-freshness-gt_day">{"> 1 day"}</span>{" "}
-                  <span className="badge badge-freshness-gt_week">{"> 1 week"}</span>
+                  <Badge className="badge-freshness-ok">OK (≤ 10 minutes)</Badge>{" "}
+                  <Badge className="badge-freshness-gt_10min">{"> 10 minutes"}</Badge>{" "}
+                  <Badge className="badge-freshness-gt_hour">{"> 1 hour"}</Badge>{" "}
+                  <Badge className="badge-freshness-gt_day">{"> 1 day"}</Badge>{" "}
+                  <Badge className="badge-freshness-gt_week">{"> 1 week"}</Badge>
                 </p>
-                <button
+                <Button
                   type="button"
-                  className="btn btn-outline-secondary btn-sm ms-auto"
+                  variant="outline"
+                  size="sm"
+                  className="ms-auto"
                   disabled={!nonRespondingHosts36}
                   onClick={handleCopyNonResponding36}
                 >
                   Non Responding Hosts - 36 Hours
-                </button>
+                </Button>
               </div>
-              <div className="table-responsive">
-                <table className="table table-sm table-bordered">
-                <caption className="visually-hidden">
+              <Table className="border text-sm">
+                <caption className="sr-only">
                   Monitor agents reporting host data. Sort by host, last timestamp, or
                   status freshness using the column header buttons.
                 </caption>
                 <thead>
                   <tr>
                     <th scope="col" aria-sort={tableSortAriaSort("host", hostSort.column, hostSort.direction)}>
-                      <button
+                      <Button
                         type="button"
-                        className="btn btn-link btn-sm p-0"
+                        variant="link"
+                        size="sm"
+                        className="h-auto p-0 font-inherit"
                         onClick={() => handleHostSort("host")}
                       >
                         Host{" "}
                         {tableSortColumnArrow("host", hostSort.column, hostSort.direction, {
                           leadingSpace: false,
                         })}
-                      </button>
+                      </Button>
                     </th>
                     <th
                       scope="col"
@@ -431,9 +443,11 @@ export default function AdminMonitor() {
                         hostSort.direction,
                       )}
                     >
-                      <button
+                      <Button
                         type="button"
-                        className="btn btn-link btn-sm p-0"
+                        variant="link"
+                        size="sm"
+                        className="h-auto p-0 font-inherit"
                         onClick={() => handleHostSort("last_time")}
                       >
                         Last Timestamp{" "}
@@ -443,22 +457,24 @@ export default function AdminMonitor() {
                           hostSort.direction,
                           { leadingSpace: false },
                         )}
-                      </button>
+                      </Button>
                     </th>
                     <th
                       scope="col"
                       aria-sort={tableSortAriaSort("status", hostSort.column, hostSort.direction)}
                     >
-                      <button
+                      <Button
                         type="button"
-                        className="btn btn-link btn-sm p-0"
+                        variant="link"
+                        size="sm"
+                        className="h-auto p-0 font-inherit"
                         onClick={() => handleHostSort("status")}
                       >
                         Status{" "}
                         {tableSortColumnArrow("status", hostSort.column, hostSort.direction, {
                           leadingSpace: false,
                         })}
-                      </button>
+                      </Button>
                     </th>
                   </tr>
                 </thead>
@@ -474,7 +490,7 @@ export default function AdminMonitor() {
                         <td>{row.host}</td>
                         <td>{formatHostTime(row.last_time)}</td>
                         <td>
-                          <span className={`badge ${badge.class}`}>{badge.label}</span>
+                          <Badge className={badge.class}>{badge.label}</Badge>
                         </td>
                       </tr>
                     );
@@ -487,17 +503,18 @@ export default function AdminMonitor() {
                     </tr>
                   )}
                 </tbody>
-                </table>
-              </div>
+                </Table>
             </>
           )}
         </div>
       </div>
 
       <div className="admin-monitor-section">
-        <button
+        <Button
           type="button"
-          className="btn btn-outline-secondary btn-sm admin-monitor-section-header"
+          variant="outline"
+          size="sm"
+          className="admin-monitor-section-header h-auto w-full justify-start font-semibold"
           onClick={() => setXaltExpanded((e) => !e)}
           aria-expanded={xaltExpanded}
           aria-controls="admin-monitor-xalt-coverage"
@@ -506,7 +523,7 @@ export default function AdminMonitor() {
             {xaltExpanded ? "▼" : "▶"}
           </span>
           {`XALT job coverage (last 3 days)${xaltHeaderSummary}`}
-        </button>
+        </Button>
         <div
           id="admin-monitor-xalt-coverage"
           className="admin-monitor-section-body"
@@ -515,14 +532,16 @@ export default function AdminMonitor() {
           aria-label="XALT job coverage (last 3 days)"
         >
           <div className="admin-monitor-action-row">
-            <button
+            <Button
               type="button"
-              className="btn btn-outline-secondary btn-sm admin-monitor-refresh-button"
+              variant="outline"
+              size="sm"
+              className="admin-monitor-refresh-button"
               onClick={() => loadXaltStats(true)}
               disabled={xaltLoading}
             >
               Refresh Data
-            </button>
+            </Button>
           </div>
           {xaltLoading && <LoadingMessage message="Loading XALT coverage…" />}
           {xaltError && !xaltLoading && (
@@ -536,25 +555,25 @@ export default function AdminMonitor() {
               {xaltStats.error && (
                 <BannerErrorMessage
                   variant="inline"
-                  className="text-danger mb-2"
+                  className="mb-2 text-destructive"
                   message={xaltStats.error}
                 />
               )}
               {!xaltStats.error && (
                 <>
-                  <div className="mb-2 text-muted">
+                  <div className="mb-2 text-muted-foreground">
                     Total JIDs: {String(xaltStats.total_jids ?? "—")} · Found with
                     XALT: {String(xaltStats.jids_with_xalt_data ?? "—")} · Missing:{" "}
                     {String(xaltStats.jids_missing_xalt_data ?? "—")}
                   </div>
 
-                  <div className="d-flex flex-wrap align-items-center mb-2 gap-2">
-                    <label className="form-label mb-0 me-2" htmlFor="xaltListMode">
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <Label className="mb-0 mr-2 font-normal" htmlFor="xaltListMode">
                       Show list:
-                    </label>
+                    </Label>
                     <select
                       id="xaltListMode"
-                      className="form-select form-select-sm"
+                      className="h-7 rounded-lg border border-input bg-transparent px-2.5 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
                       value={xaltListMode}
                       onChange={(e) => setXaltListMode(e.target.value)}
                     >
@@ -568,9 +587,8 @@ export default function AdminMonitor() {
                   </div>
 
                   {xaltListMode === "missing" && (xaltStats.jids_missing_xalt_data ?? 0) > 0 && (
-                    <div className="table-responsive">
-                      <table className="table table-sm table-bordered">
-                        <caption className="visually-hidden">
+                    <Table className="border text-sm">
+                        <caption className="sr-only">
                           Job IDs from the last three days that are missing XALT coverage.
                           List may be truncated.
                         </caption>
@@ -590,14 +608,14 @@ export default function AdminMonitor() {
                           {(!Array.isArray(xaltStats.missing_jids) ||
                             xaltStats.missing_jids.length === 0) && (
                             <tr>
-                              <td className="text-muted text-center">
+                              <td className="text-muted-foreground text-center">
                                 No missing JIDs listed.
                               </td>
                             </tr>
                           )}
                           {xaltStats.missing_jids_truncated && (
                             <tr>
-                              <td className="text-muted">
+                              <td className="text-muted-foreground">
                                 Showing first{" "}
                                 {String(
                                   xaltStats.missing_jids_limit ?? "—"
@@ -607,14 +625,12 @@ export default function AdminMonitor() {
                             </tr>
                           )}
                         </tbody>
-                      </table>
-                    </div>
+                      </Table>
                   )}
 
                   {xaltListMode === "found" && (xaltStats.jids_with_xalt_data ?? 0) > 0 && (
-                    <div className="table-responsive">
-                      <table className="table table-sm table-bordered">
-                        <caption className="visually-hidden">
+                    <Table className="border text-sm">
+                        <caption className="sr-only">
                           Job IDs from the last three days that have XALT coverage. List may
                           be truncated.
                         </caption>
@@ -634,34 +650,33 @@ export default function AdminMonitor() {
                           {(!Array.isArray(xaltStats.found_jids) ||
                             xaltStats.found_jids.length === 0) && (
                             <tr>
-                              <td className="text-muted text-center">
+                              <td className="text-muted-foreground text-center">
                                 No found JIDs listed.
                               </td>
                             </tr>
                           )}
                           {xaltStats.found_jids_truncated && (
                             <tr>
-                              <td className="text-muted">
+                              <td className="text-muted-foreground">
                                 Showing first{" "}
                                 {String(xaltStats.found_jids_limit ?? "—")} found JIDs.
                               </td>
                             </tr>
                           )}
                         </tbody>
-                      </table>
-                    </div>
+                      </Table>
                   )}
 
                   {xaltListMode === "missing" &&
                     xaltStats.jids_missing_xalt_data === 0 && (
-                      <div className="text-success">
+                      <div className="text-green-600">
                         All JIDs in the last 3 days have corresponding XALT data.
                       </div>
                     )}
 
                   {xaltListMode === "found" &&
                     xaltStats.jids_with_xalt_data === 0 && (
-                      <div className="text-danger">
+                      <div className="text-destructive">
                         No JIDs in the last 3 days have corresponding XALT data.
                       </div>
                     )}
@@ -670,15 +685,17 @@ export default function AdminMonitor() {
             </>
           )}
           {!xaltLoading && !xaltError && !xaltStats && (
-            <div className="text-muted">No XALT coverage statistics available.</div>
+            <div className="text-muted-foreground">No XALT coverage statistics available.</div>
           )}
         </div>
       </div>
 
       <div className="admin-monitor-section">
-        <button
+        <Button
           type="button"
-          className="btn btn-outline-secondary btn-sm admin-monitor-section-header"
+          variant="outline"
+          size="sm"
+          className="admin-monitor-section-header h-auto w-full justify-start font-semibold"
           onClick={() => setRabbitHostTimeExpanded((e) => !e)}
           aria-expanded={rabbitHostTimeExpanded}
           aria-controls="admin-monitor-rabbit-host-time"
@@ -687,7 +704,7 @@ export default function AdminMonitor() {
             {rabbitHostTimeExpanded ? "▼" : "▶"}
           </span>
           {`Most recent host data timestamps in RabbitMQ${rabbitHostHeaderSummary}`}
-        </button>
+        </Button>
         <div
           id="admin-monitor-rabbit-host-time"
           className="admin-monitor-section-body"
@@ -696,14 +713,16 @@ export default function AdminMonitor() {
           aria-label="Most recent host data timestamps in RabbitMQ"
         >
           <div className="admin-monitor-action-row">
-            <button
+            <Button
               type="button"
-              className="btn btn-outline-secondary btn-sm admin-monitor-refresh-button"
+              variant="outline"
+              size="sm"
+              className="admin-monitor-refresh-button"
               onClick={() => loadRabbitHostStats(true)}
               disabled={rabbitHostLoading}
             >
               Refresh Data
-            </button>
+            </Button>
           </div>
           {rabbitHostLoading && (
             <LoadingMessage message="Loading RabbitMQ host timestamps…" />
@@ -715,9 +734,8 @@ export default function AdminMonitor() {
             />
           )}
           {!rabbitHostLoading && !rabbitHostError && (
-            <div className="table-responsive">
-              <table className="table table-sm table-bordered">
-                <caption className="visually-hidden">
+            <Table className="border text-sm">
+                <caption className="sr-only">
                   Hosts seen via RabbitMQ and their last data timestamps. Sort by host, last
                   timestamp, or status freshness using the column header buttons.
                 </caption>
@@ -731,9 +749,11 @@ export default function AdminMonitor() {
                         rabbitHostSort.direction,
                       )}
                     >
-                      <button
+                      <Button
                         type="button"
-                        className="btn btn-link btn-sm p-0"
+                        variant="link"
+                        size="sm"
+                        className="h-auto p-0 font-inherit"
                         onClick={() => handleRabbitHostSort("host")}
                       >
                         Host{" "}
@@ -743,7 +763,7 @@ export default function AdminMonitor() {
                           rabbitHostSort.direction,
                           { leadingSpace: false },
                         )}
-                      </button>
+                      </Button>
                     </th>
                     <th
                       scope="col"
@@ -753,9 +773,11 @@ export default function AdminMonitor() {
                         rabbitHostSort.direction,
                       )}
                     >
-                      <button
+                      <Button
                         type="button"
-                        className="btn btn-link btn-sm p-0"
+                        variant="link"
+                        size="sm"
+                        className="h-auto p-0 font-inherit"
                         onClick={() => handleRabbitHostSort("last_time")}
                       >
                         Last Timestamp{" "}
@@ -765,7 +787,7 @@ export default function AdminMonitor() {
                           rabbitHostSort.direction,
                           { leadingSpace: false },
                         )}
-                      </button>
+                      </Button>
                     </th>
                     <th
                       scope="col"
@@ -775,9 +797,11 @@ export default function AdminMonitor() {
                         rabbitHostSort.direction,
                       )}
                     >
-                      <button
+                      <Button
                         type="button"
-                        className="btn btn-link btn-sm p-0"
+                        variant="link"
+                        size="sm"
+                        className="h-auto p-0 font-inherit"
                         onClick={() => handleRabbitHostSort("status")}
                       >
                         Status{" "}
@@ -787,7 +811,7 @@ export default function AdminMonitor() {
                           rabbitHostSort.direction,
                           { leadingSpace: false },
                         )}
-                      </button>
+                      </Button>
                     </th>
                   </tr>
                 </thead>
@@ -803,7 +827,7 @@ export default function AdminMonitor() {
                         <td>{row.host}</td>
                         <td>{formatHostTime(row.last_time)}</td>
                         <td>
-                          <span className={`badge ${badge.class}`}>{badge.label}</span>
+                          <Badge className={badge.class}>{badge.label}</Badge>
                         </td>
                       </tr>
                     );
@@ -816,16 +840,17 @@ export default function AdminMonitor() {
                     </tr>
                   )}
                 </tbody>
-              </table>
-            </div>
+              </Table>
           )}
         </div>
       </div>
 
       <div className="admin-monitor-section">
-        <button
+        <Button
           type="button"
-          className="btn btn-outline-secondary btn-sm admin-monitor-section-header"
+          variant="outline"
+          size="sm"
+          className="admin-monitor-section-header h-auto w-full justify-start font-semibold"
           onClick={() => setTimescaledbExpanded((e) => !e)}
           aria-expanded={timescaledbExpanded}
           aria-controls="admin-monitor-timescaledb-stats"
@@ -834,7 +859,7 @@ export default function AdminMonitor() {
             {timescaledbExpanded ? "▼" : "▶"}
           </span>
           TimescaleDB statistics
-        </button>
+        </Button>
         <div
           id="admin-monitor-timescaledb-stats"
           className="admin-monitor-section-body"
@@ -843,14 +868,16 @@ export default function AdminMonitor() {
           aria-label="TimescaleDB statistics"
         >
           <div className="admin-monitor-action-row">
-            <button
+            <Button
               type="button"
-              className="btn btn-outline-secondary btn-sm admin-monitor-refresh-button"
+              variant="outline"
+              size="sm"
+              className="admin-monitor-refresh-button"
               onClick={() => loadTimescaledbStats(true)}
               disabled={timescaledbLoading}
             >
               Refresh Data
-            </button>
+            </Button>
           </div>
           {timescaledbLoading && (
             <LoadingMessage message="Loading TimescaleDB statistics…" />
@@ -862,9 +889,8 @@ export default function AdminMonitor() {
             />
           )}
           {!timescaledbLoading && !timescaledbError && timescaledbStats && (
-            <div className="table-responsive">
-              <table className="table table-sm table-bordered">
-              <caption className="visually-hidden">
+            <Table className="border text-sm">
+              <caption className="sr-only">
                 TimescaleDB database and hypertable size statistics.
               </caption>
               <tbody>
@@ -906,25 +932,26 @@ export default function AdminMonitor() {
                     ([, value]) => value !== null && value !== undefined
                   ).length === 0) && (
                   <tr>
-                    <td colSpan={2} className="text-muted">
+                    <td colSpan={2} className="text-muted-foreground">
                       No TimescaleDB statistics available.
                     </td>
                   </tr>
                 )}
               </tbody>
-              </table>
-            </div>
+              </Table>
           )}
           {!timescaledbLoading && !timescaledbError && !timescaledbStats && (
-            <div className="text-muted">No TimescaleDB statistics available.</div>
+            <div className="text-muted-foreground">No TimescaleDB statistics available.</div>
           )}
         </div>
       </div>
 
       <div className="admin-monitor-section">
-        <button
+        <Button
           type="button"
-          className="btn btn-outline-secondary btn-sm admin-monitor-section-header"
+          variant="outline"
+          size="sm"
+          className="admin-monitor-section-header h-auto w-full justify-start font-semibold"
           onClick={() => setCacheExpanded((e) => !e)}
           aria-expanded={cacheExpanded}
           aria-controls="admin-monitor-cache-stats"
@@ -933,7 +960,7 @@ export default function AdminMonitor() {
             {cacheExpanded ? "▼" : "▶"}
           </span>
           Cache / Redis statistics
-        </button>
+        </Button>
         <div
           id="admin-monitor-cache-stats"
           className="admin-monitor-section-body"
@@ -942,14 +969,16 @@ export default function AdminMonitor() {
           aria-label="Cache and Redis statistics"
         >
           <div className="admin-monitor-action-row">
-            <button
+            <Button
               type="button"
-              className="btn btn-outline-secondary btn-sm admin-monitor-refresh-button"
+              variant="outline"
+              size="sm"
+              className="admin-monitor-refresh-button"
               onClick={() => loadCacheStats(true)}
               disabled={cacheLoading}
             >
               Refresh Data
-            </button>
+            </Button>
           </div>
           {cacheLoading && <LoadingMessage message="Loading cache statistics…" />}
           {cacheError && !cacheLoading && (
@@ -959,9 +988,8 @@ export default function AdminMonitor() {
             />
           )}
           {!cacheLoading && !cacheError && cacheStats && Object.keys(cacheStats).length > 0 && (
-            <div className="table-responsive">
-              <table className="table table-sm table-bordered">
-              <caption className="visually-hidden">
+            <Table className="border text-sm">
+              <caption className="sr-only">
                 Cache and Redis key statistics for the application.
               </caption>
               <tbody>
@@ -983,19 +1011,20 @@ export default function AdminMonitor() {
                   );
                 })}
               </tbody>
-              </table>
-            </div>
+              </Table>
           )}
           {!cacheLoading && !cacheError && (!cacheStats || Object.keys(cacheStats).length === 0) && (
-            <div className="text-muted">No cache statistics available.</div>
+            <div className="text-muted-foreground">No cache statistics available.</div>
           )}
         </div>
       </div>
 
       <div className="admin-monitor-section">
-        <button
+        <Button
           type="button"
-          className="btn btn-outline-secondary btn-sm admin-monitor-section-header"
+          variant="outline"
+          size="sm"
+          className="admin-monitor-section-header h-auto w-full justify-start font-semibold"
           onClick={() => setRabbitExpanded((e) => !e)}
           aria-expanded={rabbitExpanded}
           aria-controls="admin-monitor-rabbitmq-stats"
@@ -1004,7 +1033,7 @@ export default function AdminMonitor() {
             {rabbitExpanded ? "▼" : "▶"}
           </span>
           RabbitMQ statistics
-        </button>
+        </Button>
         <div
           id="admin-monitor-rabbitmq-stats"
           className="admin-monitor-section-body"
@@ -1013,14 +1042,16 @@ export default function AdminMonitor() {
           aria-label="RabbitMQ statistics"
         >
           <div className="admin-monitor-action-row">
-            <button
+            <Button
               type="button"
-              className="btn btn-outline-secondary btn-sm admin-monitor-refresh-button"
+              variant="outline"
+              size="sm"
+              className="admin-monitor-refresh-button"
               onClick={() => loadRabbitStats(true)}
               disabled={rabbitLoading}
             >
               Refresh Data
-            </button>
+            </Button>
           </div>
           {rabbitLoading && (
             <LoadingMessage message="Loading RabbitMQ statistics…" />
@@ -1036,13 +1067,12 @@ export default function AdminMonitor() {
               {rabbitStats.error && (
                 <BannerErrorMessage
                   variant="inline"
-                  className="text-danger mb-2"
+                  className="mb-2 text-destructive"
                   message={`RabbitMQ reported an error: ${rabbitStats.error}`}
                 />
               )}
-              <div className="table-responsive">
-                <table className="table table-sm table-bordered">
-                <caption className="visually-hidden">
+              <Table className="border text-sm">
+                <caption className="sr-only">
                   RabbitMQ queue depth, consumer, and message volume statistics.
                 </caption>
                 <tbody>
@@ -1081,20 +1111,19 @@ export default function AdminMonitor() {
                       ([key, value]) => value !== null && value !== undefined
                     ).length === 0) && (
                     <tr>
-                      <td colSpan={2} className="text-muted">
+                      <td colSpan={2} className="text-muted-foreground">
                         No RabbitMQ statistics available.
                       </td>
                     </tr>
                   )}
                 </tbody>
-                </table>
-              </div>
+                </Table>
             </>
           )}
           {!rabbitLoading &&
             !rabbitError &&
             !rabbitStats && (
-              <div className="text-muted">No RabbitMQ statistics available.</div>
+              <div className="text-muted-foreground">No RabbitMQ statistics available.</div>
             )}
         </div>
       </div>

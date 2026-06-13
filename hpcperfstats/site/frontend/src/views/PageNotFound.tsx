@@ -1,17 +1,19 @@
 import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 
 export default function PageNotFound() {
   useDocumentTitle("Page not found");
   return (
-    <div role="alert">
-      <h1 className="h2 mb-3">Page not found</h1>
-      <p className="text-muted">
+    <Alert>
+      <h1 className="text-2xl font-semibold tracking-tight">Page not found</h1>
+      <AlertDescription className="text-muted-foreground">
         That address is not part of HPCPerfStats. Check the URL or return to browse jobs.
-      </p>
-      <Link href="/" className="btn btn-primary btn-sm">
+      </AlertDescription>
+      <Button size="sm" className="mt-3" render={<Link href="/" />}>
         Browse jobs
-      </Link>
-    </div>
+      </Button>
+    </Alert>
   );
 }

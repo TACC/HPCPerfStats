@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import type { SortDirection } from "../utils/table-sort-a11y";
 import {
   tableSortAriaSort,
@@ -20,14 +22,16 @@ export default function SortableTableHeader({
   sortKey,
   sortDir,
   onSort,
-  buttonClassName = "btn btn-link btn-sm p-0",
+  buttonClassName,
   children,
 }: SortableTableHeaderProps) {
   return (
     <th scope="col" aria-sort={tableSortAriaSort(column, sortKey, sortDir)}>
-      <button
+      <Button
         type="button"
-        className={buttonClassName}
+        variant="link"
+        size="sm"
+        className={cn("h-auto p-0 font-inherit", buttonClassName)}
         aria-label={tableSortButtonAriaLabel(
           typeof children === "string" ? children : column,
           column,
@@ -38,7 +42,7 @@ export default function SortableTableHeader({
       >
         {children}
         {tableSortColumnArrow(column, sortKey, sortDir, { leadingSpace: false })}
-      </button>
+      </Button>
     </th>
   );
 }

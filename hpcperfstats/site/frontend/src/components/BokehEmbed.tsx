@@ -1,4 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import type { BokehEmbedProps } from "@/types/bokeh";
 import { useSession } from "../session-context";
 import {
@@ -546,27 +548,27 @@ export default function BokehEmbed({
     >
       <span>{message}</span>
       {isUnavailable && detailsMessage && canViewErrorDetails ? (
-        <div className="bokeh-plot-error-detail-controls mt-2 d-flex flex-column align-items-center gap-2 w-100">
-          <button
+        <div className="bokeh-plot-error-detail-controls mt-2 flex w-full flex-col items-center gap-2">
+          <Button
             type="button"
-            className="btn btn-link btn-sm p-0"
+            variant="link"
+            size="sm"
+            className="h-auto p-0"
             aria-expanded={errorDetailsOpen}
             aria-controls={errorDetailsPanelId}
             onClick={() => setErrorDetailsOpen((o) => !o)}
           >
             {errorDetailsOpen ? "Hide plot error details" : "Show plot error details"}
-          </button>
+          </Button>
           {errorDetailsOpen ? (
             <div
               id={errorDetailsPanelId}
               role="region"
               aria-label="Plot error details"
-              className="bokeh-plot-error-detail-panel w-100 text-start border rounded p-2 small"
+              className={cn(
+                "bokeh-plot-error-detail-panel w-full max-w-[520px] rounded-md border border-border bg-background p-2 text-left text-sm text-foreground",
+              )}
               style={{
-                maxWidth: 520,
-                backgroundColor: "#fff",
-                color: "#111",
-                borderColor: "#ced4da",
                 whiteSpace: "normal",
                 wordBreak: "break-word",
               }}
@@ -574,16 +576,12 @@ export default function BokehEmbed({
               {detailsMessage}
             </div>
           ) : null}
-          <div className="d-inline-flex align-items-center gap-2 flex-wrap justify-content-center">
-            <button
-              type="button"
-              className="btn btn-outline-secondary btn-sm"
-              onClick={handleCopyDetails}
-            >
+          <div className="inline-flex flex-wrap items-center justify-center gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={handleCopyDetails}>
               Copy error detail
-            </button>
+            </Button>
             {copyStatus ? (
-              <span className="small" aria-live="polite">
+              <span className="text-sm" aria-live="polite">
                 {copyStatus}
               </span>
             ) : null}

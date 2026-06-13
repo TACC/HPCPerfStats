@@ -14,9 +14,9 @@ describe("LayoutPub", () => {
 
     expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
     expect(screen.getByText("HPCPerfStats")).toBeInTheDocument();
-    expect(screen.getByText("cluster.test")).toHaveClass("navbar-brand-cluster");
+    expect(screen.getByText("cluster.test")).toHaveClass("site-header-cluster");
     expect(screen.getByText("a job-level resource usage monitoring tool")).toHaveClass(
-      "navbar-pub-site-subtitle",
+      "text-muted-foreground",
     );
     expect(screen.getByText("page body")).toBeInTheDocument();
 

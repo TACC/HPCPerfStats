@@ -6,6 +6,20 @@ import ReactPaginate from "react-paginate";
 import { api } from "@/api";
 import type { JobListEntry } from "@/api/generated/models/jobListEntry";
 import type { JobListData, JobListHistogramEntry, MetricHistStatusMap } from "@/types/view-models";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import HistogramThumbnails from "../components/HistogramThumbnails";
 import JobListFilterSummary from "../components/JobListFilterSummary";
@@ -114,11 +128,28 @@ const makeColumn = (
 });
 
 function performanceToneToBadgeClass(tone?: string | null): string {
-  if (tone === "success") return "badge text-bg-success";
-  if (tone === "warning") return "badge text-bg-warning";
-  if (tone === "info") return "badge text-bg-info";
-  return "badge text-bg-secondary";
+  if (tone === "success") return "bg-green-600 text-white hover:bg-green-600";
+  if (tone === "warning") return "bg-amber-500 text-black hover:bg-amber-500";
+  if (tone === "info") return "bg-sky-500 text-white hover:bg-sky-500";
+  return "";
 }
+
+const listViewTabTriggerClass = (isActive: boolean) =>
+  cn(
+    "inline-flex items-center justify-center rounded-t-md border border-transparent px-3 py-1.5 text-sm font-medium -mb-px transition-colors",
+    "hover:border-border hover:border-b-transparent",
+    isActive && "border-border border-b-transparent bg-background text-foreground",
+  );
+
+const paginateLinkClass = cn(
+  buttonVariants({ variant: "outline", size: "sm" }),
+  "min-h-11 min-w-11 inline-flex items-center justify-center",
+);
+
+const paginateActiveLinkClass = cn(
+  buttonVariants({ variant: "default", size: "sm" }),
+  "min-h-11 min-w-11 inline-flex items-center justify-center",
+);
 
 function buildJobListTitle({ error, loading, data, routeCtx }: BuildJobListTitleArgs): string {
   if (error) return routeCtx ? `Job list · ${routeCtx}` : "Job list";
@@ -295,29 +326,23 @@ export default function JobList() {
   if (initialLoading && !data) {
     return (
       <div className="job-list-skeleton" aria-busy="true">
-        <span className="visually-hidden" role="status" aria-label="Loading job list">
+        <span className="sr-only" role="status" aria-label="Loading job list">
           Loading job list
         </span>
-        <div className="placeholder-glow mb-3">
-          <span className="placeholder col-8 col-md-6" style={{ height: "2rem" }} />
-        </div>
-        <div className="placeholder-glow mb-3">
-          <span className="placeholder col-12" style={{ height: "4rem" }} />
-        </div>
-        <div className="table-responsive">
-          <table className="table table-sm table-bordered">
-            <caption className="visually-hidden">Loading</caption>
-            <tbody>
-              {[1, 2, 3, 4, 5].map((i) => (
-                <tr key={i}>
-                  <td colSpan={6}>
-                    <span className="placeholder col-12" />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <Skeleton className="mb-3 h-8 w-2/3" />
+        <Skeleton className="mb-3 h-16 w-full" />
+        <Table className="border text-sm">
+          <TableCaption className="sr-only">Loading</TableCaption>
+          <TableBody>
+            {[1, 2, 3, 4, 5].map((i) => (
+              <TableRow key={i}>
+                <TableCell colSpan={6}>
+                  <Skeleton className="h-4 w-full" />
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       </div>
     );
   }
@@ -446,13 +471,14 @@ export default function JobList() {
         data-testid={`job-list-pagination-${positionId}`}
       >
         {page > 1 ? (
-          <Link href={`${pathname}?${paginationQuery(1)}`}
-            className="pagination-first"
+          <Link
+            href={`${pathname}?${paginationQuery(1)}`}
+            className={cn(paginateLinkClass, "pagination-first")}
           >
             First
           </Link>
         ) : (
-          <span className="pagination-first disabled" aria-hidden="true">
+          <span className="pagination-first disabled text-muted-foreground" aria-hidden="true">
             First
           </span>
         )}
@@ -469,27 +495,29 @@ export default function JobList() {
           breakLabel="..."
           pageRangeDisplayed={5}
           marginPagesDisplayed={1}
-          containerClassName="pagination"
+          containerClassName="pagination flex flex-wrap gap-2"
           pageClassName="page-item"
-          pageLinkClassName="page-link"
+          pageLinkClassName={paginateLinkClass}
           previousClassName="page-item"
-          previousLinkClassName="page-link"
+          previousLinkClassName={paginateLinkClass}
           nextClassName="page-item"
-          nextLinkClassName="page-link"
+          nextLinkClassName={paginateLinkClass}
           breakClassName="page-item"
-          breakLinkClassName="page-link"
+          breakLinkClassName={paginateLinkClass}
           activeClassName="active"
+          activeLinkClassName={paginateActiveLinkClass}
           disabledClassName="disabled"
           renderOnZeroPageCount={null}
         />
         {page < num_pages ? (
-          <Link href={`${pathname}?${paginationQuery(num_pages)}`}
-            className="pagination-last"
+          <Link
+            href={`${pathname}?${paginationQuery(num_pages)}`}
+            className={cn(paginateLinkClass, "pagination-last")}
           >
             Last
           </Link>
         ) : (
-          <span className="pagination-last disabled" aria-hidden="true">
+          <span className="pagination-last disabled text-muted-foreground" aria-hidden="true">
             Last
           </span>
         )}
@@ -502,24 +530,24 @@ export default function JobList() {
   return (
     <>
       <PageBreadcrumbs items={breadcrumbItems} />
-      <h1 className="h2 mb-3">{qname}</h1>
+      <h1 className="mb-3 text-2xl font-semibold tracking-tight">{qname}</h1>
       {pageSummary ? (
-        <p className="text-muted small mb-2 job-list-page-summary">{pageSummary}</p>
+        <p className="job-list-page-summary mb-2 text-sm text-muted-foreground">{pageSummary}</p>
       ) : null}
       <JobListFilterSummary lines={filterSummaryLines} />
-      <h2 className="h5 mb-1">{JOB_LIST_TABLE_HEADERS.jobCount} = {nj}</h2>
+      <h2 className="mb-1 text-lg font-medium">{JOB_LIST_TABLE_HEADERS.jobCount} = {nj}</h2>
       {tableBusy ? (
-        <p className="text-muted small" role="status" aria-live="polite">
+        <p className="text-sm text-muted-foreground" role="status" aria-live="polite">
           Updating job list…
         </p>
       ) : null}
       {totalNodeHours != null && (
-        <p className="mb-3 text-muted small">
+        <p className="mb-3 text-sm text-muted-foreground">
           Total node hours (all matching jobs): {formatDecimalStandard(totalNodeHours)}
         </p>
       )}
       {isStaff && queueWaitMeanHours != null ? (
-        <p className="mb-3 text-muted small">
+        <p className="mb-3 text-sm text-muted-foreground">
           Mean queue wait (all matching jobs): {formatDecimalStandard(queueWaitMeanHours)} hours
         </p>
       ) : null}
@@ -532,7 +560,7 @@ export default function JobList() {
         aria-label="Distributions for this job selection"
         hidden={!isLgUp && listViewTab !== "charts"}
       >
-        <h2 className="h5 mb-2">Distributions for this job selection</h2>
+        <h2 className="mb-2 text-lg font-medium">Distributions for this job selection</h2>
         <div className="text-center">
           {metricNames.map((metric) => {
             const status = metricHistStatus[metric] || {
@@ -551,34 +579,36 @@ export default function JobList() {
             );
           })}
           {histogramsFinishedLoading && failedHistogramLabels.length > 0 ? (
-            <div
-              className="alert alert-warning small mt-2 mx-auto text-start"
-              style={{ maxWidth: 520 }}
+            <Alert
+              className="mx-auto mt-2 max-w-[520px] border-amber-200 bg-amber-50 text-left text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"
               role="status"
               aria-live="polite"
             >
-              <p className="mb-2">
-                Some histograms could not be loaded ({failedHistogramLabels.join(", ")}).
-                The job list below is unchanged.
-              </p>
-              <button
-                type="button"
-                className="btn btn-outline-secondary btn-sm"
-                onClick={() => setHistogramReloadKey((k) => k + 1)}
-              >
-                Retry histograms
-              </button>
-            </div>
+              <AlertDescription className="text-sm">
+                <p className="mb-2">
+                  Some histograms could not be loaded ({failedHistogramLabels.join(", ")}).
+                  The job list below is unchanged.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setHistogramReloadKey((k) => k + 1)}
+                >
+                  Retry histograms
+                </Button>
+              </AlertDescription>
+            </Alert>
           ) : null}
           {distributionPlotsVisible && histogramsFinishedLoading && histograms?.length === 0 ? (
-            <p className="text-muted small">No distribution data for this selection.</p>
+            <p className="text-sm text-muted-foreground">No distribution data for this selection.</p>
           ) : null}
           {distributionPlotsVisible ? (
             <HistogramThumbnails histograms={histograms} />
           ) : null}
         </div>
-        <p className="small text-center mt-2 mb-0">
-          <a href="#job-list-table" onClick={handleBackToJobTable}>
+        <p className="mt-2 mb-0 text-center text-sm">
+          <a href="#job-list-table" onClick={handleBackToJobTable} className="text-primary hover:underline">
             Continue to job table
           </a>
         </p>
@@ -586,42 +616,38 @@ export default function JobList() {
 
       {!isLgUp && (
         <div className="job-list-view-tabs mb-2">
-          <ul
-            className="nav nav-tabs job-detail-tab-scroll"
+          <div
+            className="job-detail-tab-scroll flex border-b"
             role="tablist"
             aria-label="Jobs list and charts"
           >
-            <li className="nav-item" role="presentation">
-              <button
-                type="button"
-                id={tabJobsId}
-                role="tab"
-                className={`nav-link ${listViewTab === "jobs" ? "active" : ""}`}
-                aria-selected={listViewTab === "jobs"}
-                aria-controls="job-list-tabpanel-jobs"
-                tabIndex={listViewTab === "jobs" ? 0 : -1}
-                onClick={() => setListViewTab("jobs")}
-                onKeyDown={(e) => handleListViewTabKeyDown(e, tabJobsId)}
-              >
-                Jobs
-              </button>
-            </li>
-            <li className="nav-item" role="presentation">
-              <button
-                type="button"
-                id={tabChartsId}
-                role="tab"
-                className={`nav-link ${listViewTab === "charts" ? "active" : ""}`}
-                aria-selected={listViewTab === "charts"}
-                aria-controls="job-list-distributions"
-                tabIndex={listViewTab === "charts" ? 0 : -1}
-                onClick={() => setListViewTab("charts")}
-                onKeyDown={(e) => handleListViewTabKeyDown(e, tabChartsId)}
-              >
-                Charts
-              </button>
-            </li>
-          </ul>
+            <button
+              type="button"
+              id={tabJobsId}
+              role="tab"
+              className={listViewTabTriggerClass(listViewTab === "jobs")}
+              aria-selected={listViewTab === "jobs"}
+              aria-controls="job-list-tabpanel-jobs"
+              tabIndex={listViewTab === "jobs" ? 0 : -1}
+              onClick={() => setListViewTab("jobs")}
+              onKeyDown={(e) => handleListViewTabKeyDown(e, tabJobsId)}
+            >
+              Jobs
+            </button>
+            <button
+              type="button"
+              id={tabChartsId}
+              role="tab"
+              className={listViewTabTriggerClass(listViewTab === "charts")}
+              aria-selected={listViewTab === "charts"}
+              aria-controls="job-list-distributions"
+              tabIndex={listViewTab === "charts" ? 0 : -1}
+              onClick={() => setListViewTab("charts")}
+              onKeyDown={(e) => handleListViewTabKeyDown(e, tabChartsId)}
+            >
+              Charts
+            </button>
+          </div>
         </div>
       )}
 
@@ -634,110 +660,115 @@ export default function JobList() {
       {renderPaginationNav("top")}
 
       <div
-        className={`table-responsive job-list-table-wrapper${tableBusy ? " job-list-table-busy" : ""}`}
+        className={cn(
+          "job-list-table-wrapper",
+          tableBusy && "job-list-table-busy",
+        )}
         id="job-list-table"
         aria-busy={tableBusy}
       >
-        <table className="table table-sm table-bordered">
-          <caption className="visually-hidden">
+        <Table className="border text-sm">
+          <TableCaption className="sr-only">
             Job list for {qname}. {nj} jobs.
-          </caption>
-          <thead>
-            <tr>
+          </TableCaption>
+          <TableHeader>
+            <TableRow>
               {columns.map(({ label, field, sortable }) => (
-              <th key={field} scope="col" aria-sort={ariaSortForField(field, sortable)}>
+              <TableHead key={field} scope="col" aria-sort={ariaSortForField(field, sortable)}>
                 {sortable ? (
-                  <Link href={sortLink(field)}>
+                  <Link href={sortLink(field)} className="text-primary hover:underline">
                     {label}
                     {sortIndicator(field)}
                   </Link>
                 ) : (
                   label
                 )}
-              </th>
+              </TableHead>
             ))}
-          </tr>
-        </thead>
-        <tbody>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {job_list.length === 0 ? (
-            <tr>
-              <td colSpan={columns.length} className="text-center text-muted py-4">
+            <TableRow>
+              <TableCell colSpan={columns.length} className="py-4 text-center text-muted-foreground">
                 No jobs match these filters.{" "}
                 {filterSummaryLines.length > 0 ? (
-                  <button
+                  <Button
                     type="button"
-                    className="btn btn-link btn-sm p-0 align-baseline"
+                    variant="link"
+                    size="sm"
+                    className="h-auto p-0 align-baseline"
                     onClick={openExtendedSearch}
                   >
                     Modify search
-                  </button>
+                  </Button>
                 ) : null}
-              </td>
-            </tr>
+              </TableCell>
+            </TableRow>
           ) : null}
           {job_list.map((job) => (
-            <tr key={job.jid}>
-              <td>
-                <Link href={`/machine/job/${job.jid}/`}>{job.jid}</Link>
-              </td>
+            <TableRow key={job.jid}>
+              <TableCell>
+                <Link href={`/machine/job/${job.jid}/`} className="text-primary hover:underline">{job.jid}</Link>
+              </TableCell>
               {isStaff ? (
-                <td>{formatDecimalStandard(job.sample_count)}</td>
+                <TableCell>{formatDecimalStandard(job.sample_count)}</TableCell>
               ) : null}
-              <td>
+              <TableCell>
                 {job.performance ? (
-                  <span
+                  <Badge
                     className={performanceToneToBadgeClass(job.performance.tone)}
                     aria-label={
                       job.performance.aria_label || job.performance.label || "Performance status"
                     }
                   >
                     {job.performance.label}
-                  </span>
+                  </Badge>
                 ) : (
-                  <span className="badge text-bg-secondary" aria-label="Performance status unknown">
+                  <Badge variant="secondary" aria-label="Performance status unknown">
                     —
-                  </span>
+                  </Badge>
                 )}
-              </td>
-              <td>
+              </TableCell>
+              <TableCell>
                 {job.username ? (
-                  <Link href={`/machine/username/${encodeURIComponent(job.username)}/`}>{job.username}</Link>
+                  <Link href={`/machine/username/${encodeURIComponent(job.username)}/`} className="text-primary hover:underline">{job.username}</Link>
                 ) : (
                   "unknown"
                 )}
-              </td>
-              <td>
+              </TableCell>
+              <TableCell>
                 {job.account ? (
-                  <Link href={`/machine/account/${encodeURIComponent(job.account)}/`}>{job.account}</Link>
+                  <Link href={`/machine/account/${encodeURIComponent(job.account)}/`} className="text-primary hover:underline">{job.account}</Link>
                 ) : (
                   "None"
                 )}
-              </td>
-              <td>{formatDateTime(job.start_time)}</td>
-              <td>{formatDateTime(job.end_time)}</td>
-              <td>{formatDecimalStandard(job.runtime)}</td>
-              <td>
+              </TableCell>
+              <TableCell>{formatDateTime(job.start_time)}</TableCell>
+              <TableCell>{formatDateTime(job.end_time)}</TableCell>
+              <TableCell>{formatDecimalStandard(job.runtime)}</TableCell>
+              <TableCell>
                 {job.queue ? (
-                  <Link href={`/machine/queue/${encodeURIComponent(job.queue)}/`}>{job.queue}</Link>
+                  <Link href={`/machine/queue/${encodeURIComponent(job.queue)}/`} className="text-primary hover:underline">{job.queue}</Link>
                 ) : (
                   ""
                 )}
-              </td>
-              <td>{job.state}</td>
-              <td>{formatDecimalStandard(job.ncores)}</td>
-              <td>{formatDecimalStandard(job.nhosts)}</td>
-              <td>{formatDecimalStandard(job.node_hrs)}</td>
-              <td>{job.jobname}</td>
-            </tr>
+              </TableCell>
+              <TableCell>{job.state}</TableCell>
+              <TableCell>{formatDecimalStandard(job.ncores)}</TableCell>
+              <TableCell>{formatDecimalStandard(job.nhosts)}</TableCell>
+              <TableCell>{formatDecimalStandard(job.node_hrs)}</TableCell>
+              <TableCell>{job.jobname}</TableCell>
+            </TableRow>
           ))}
-        </tbody>
-        </table>
+        </TableBody>
+        </Table>
       </div>
 
       {renderPaginationNav("bottom")}
 
-      <p className="small mt-2 mb-0">
-        <a href="#job-list-distributions" onClick={handleJumpToDistributions}>
+      <p className="mt-2 mb-0 text-sm">
+        <a href="#job-list-distributions" onClick={handleJumpToDistributions} className="text-primary hover:underline">
           Jump to histograms for this list
         </a>
       </p>

@@ -19,7 +19,7 @@ export default function BokehPlotWithLimitation({
   const plotDescId = plotDescIdProp ?? `${id}-plot-desc`;
   return (
     <div className={hostClassName}>
-      <p id={plotDescId} className="visually-hidden">
+      <p id={plotDescId} className="sr-only">
         {BOKEH_PLOT_LIMITATION_TEXT}
       </p>
       <BokehEmbed

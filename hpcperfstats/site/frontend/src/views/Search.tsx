@@ -3,6 +3,9 @@ import Link from "next/link";
 import { useId, useMemo, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import LoadingMessage from "../components/LoadingMessage";
+import { buttonVariants } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 import { useHomeOptions } from "../hooks/use-home-options";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 import { useArrowKeyTabs } from "../hooks/useArrowKeyTabs";
@@ -19,6 +22,16 @@ type BrowseTabButtonProps = {
   onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
   children: ReactNode;
 };
+
+const browseTabTriggerClass = (isActive: boolean) =>
+  cn(
+    "inline-flex items-center justify-center rounded-t-md border border-transparent px-3 py-1.5 text-sm font-medium -mb-px transition-colors",
+    "hover:border-border hover:border-b-transparent",
+    isActive && "border-border border-b-transparent bg-background text-foreground",
+  );
+
+const nativeSelectClassName =
+  "h-7 max-w-48 rounded-lg border border-input bg-transparent px-2.5 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30";
 
 function isDateTuple(value: unknown): value is DateTuple {
   return (
@@ -57,7 +70,7 @@ function BrowseTabButton({ isActive, id, panelId, onClick, onKeyDown, children }
   return (
     <button
       type="button"
-      className={`nav-link ${isActive ? "active" : ""}`}
+      className={browseTabTriggerClass(isActive)}
       id={id}
       role="tab"
       aria-selected={isActive}
@@ -100,31 +113,35 @@ export default function Search() {
   const yearList = normalizeYearList(options?.year_list);
   const dateList = normalizeDateList(options?.date_list);
 
+  const yearLinkClass = cn(
+    buttonVariants({ variant: "outline", size: "sm" }),
+    "min-h-11 min-w-11 inline-flex items-center justify-center",
+  );
+
   const yearBrowsePrimary =
     yearList.length > 0 ? (
       yearList.length > 12 ? (
         <>
           <nav aria-label="Recent years" className="mb-3">
-            <ul className="pagination pagination-sm flex-wrap mb-0">
+            <ul className="pagination flex flex-wrap gap-2">
               {yearList.slice(0, 8).map((year) => (
-                <li className="page-item" key={year}>
-                  <Link className="page-link" href={`/machine/year/${year}/`}>
+                <li key={year}>
+                  <Link className={yearLinkClass} href={`/machine/year/${year}/`}>
                     {year}
                   </Link>
                 </li>
               ))}
             </ul>
           </nav>
-          <details className="search-quick-jump border rounded px-3 py-2 mb-3">
-            <summary className="fw-medium small">Quick jump — all years</summary>
+          <details className="search-quick-jump mb-3 rounded-lg border px-3 py-2">
+            <summary className="cursor-pointer text-sm font-medium">Quick jump — all years</summary>
             <div className="mt-2 pb-1">
-              <label htmlFor="search-year-jump" className="form-label small mb-1">
+              <Label htmlFor="search-year-jump" className="mb-1 text-xs font-normal">
                 Jump to year
-              </label>
+              </Label>
               <select
                 id="search-year-jump"
-                className="form-select form-select-sm"
-                style={{ maxWidth: "12rem" }}
+                className={nativeSelectClassName}
                 defaultValue=""
                 onChange={(e) => {
                   const y = e.target.value;
@@ -140,7 +157,7 @@ export default function Search() {
                   </option>
                 ))}
               </select>
-              <p className="text-muted small mb-0 mt-2">
+              <p className="mt-2 mb-0 text-sm text-muted-foreground">
                 Shortcuts above show recent years; use the menu for any year.
               </p>
             </div>
@@ -148,10 +165,10 @@ export default function Search() {
         </>
       ) : (
         <nav aria-label="Year list" className="mb-4">
-          <ul className="pagination pagination-sm flex-wrap">
+          <ul className="pagination flex flex-wrap gap-2">
             {yearList.map((year) => (
-              <li className="page-item" key={year}>
-                <Link className="page-link" href={`/machine/year/${year}/`}>
+              <li key={year}>
+                <Link className={yearLinkClass} href={`/machine/year/${year}/`}>
                   {year}
                 </Link>
               </li>
@@ -160,19 +177,19 @@ export default function Search() {
         </nav>
       )
     ) : (
-      <p className="text-muted mb-4">No job data available.</p>
+      <p className="mb-4 text-muted-foreground">No job data available.</p>
     );
 
   const calendarBrowsePrimary =
     dateList.length > 0 ? (
       <>
-        <div className="search-month-jump border rounded px-3 py-2 mb-3">
-          <label htmlFor="search-month-jump-select" className="form-label small mb-1">
+        <div className="search-month-jump mb-3 rounded-lg border px-3 py-2">
+          <Label htmlFor="search-month-jump-select" className="mb-1 text-xs font-normal">
             Jump to month
-          </label>
+          </Label>
           <select
             id="search-month-jump-select"
-            className="form-select form-select-sm search-month-jump-select"
+            className={cn(nativeSelectClassName, "search-month-jump-select w-full max-w-md")}
             defaultValue=""
             onChange={(e) => {
               const month = e.target.value;
@@ -230,47 +247,43 @@ export default function Search() {
         </div>
       </>
     ) : (
-      <p className="text-muted">No job data available</p>
+      <p className="text-muted-foreground">No job data available</p>
     );
 
   return (
     <div className="search-home">
-      <h1 className="h2 mb-3">Browse jobs by time</h1>
-      <p className="text-muted small mb-3">
+      <h1 className="mb-3 text-2xl font-semibold tracking-tight">Browse jobs by time</h1>
+      <p className="mb-3 text-sm text-muted-foreground">
         Open a year or calendar day to see job lists. If you already know a job ID, use{" "}
         <strong>Find Job</strong> in the header; for richer filters, use{" "}
         <strong>Extended search</strong>.
       </p>
 
       <div className="search-browse-tabs mb-3">
-        <ul className="nav nav-tabs" role="tablist">
-          <li className="nav-item" role="presentation">
-            <BrowseTabButton
-              isActive={browseTab === "calendar"}
-              id={tabCalendarId}
-              panelId={panelCalendarId}
-              onClick={() => setBrowseTab("calendar")}
-              onKeyDown={(e: KeyboardEvent<HTMLButtonElement>) =>
-                handleBrowseTabKeyDown(e, tabCalendarId)
-              }
-            >
-              Calendar
-            </BrowseTabButton>
-          </li>
-          <li className="nav-item" role="presentation">
-            <BrowseTabButton
-              isActive={browseTab === "year"}
-              id={tabYearId}
-              panelId={panelYearId}
-              onClick={() => setBrowseTab("year")}
-              onKeyDown={(e: KeyboardEvent<HTMLButtonElement>) =>
-                handleBrowseTabKeyDown(e, tabYearId)
-              }
-            >
-              By year
-            </BrowseTabButton>
-          </li>
-        </ul>
+        <div className="flex border-b" role="tablist">
+          <BrowseTabButton
+            isActive={browseTab === "calendar"}
+            id={tabCalendarId}
+            panelId={panelCalendarId}
+            onClick={() => setBrowseTab("calendar")}
+            onKeyDown={(e: KeyboardEvent<HTMLButtonElement>) =>
+              handleBrowseTabKeyDown(e, tabCalendarId)
+            }
+          >
+            Calendar
+          </BrowseTabButton>
+          <BrowseTabButton
+            isActive={browseTab === "year"}
+            id={tabYearId}
+            panelId={panelYearId}
+            onClick={() => setBrowseTab("year")}
+            onKeyDown={(e: KeyboardEvent<HTMLButtonElement>) =>
+              handleBrowseTabKeyDown(e, tabYearId)
+            }
+          >
+            By year
+          </BrowseTabButton>
+        </div>
       </div>
 
       <section
@@ -280,7 +293,7 @@ export default function Search() {
         className="search-home-section search-calendar-section"
         hidden={browseTab !== "calendar"}
       >
-        <h2 className="visually-hidden">Browse by calendar</h2>
+        <h2 className="sr-only">Browse by calendar</h2>
         {calendarBrowsePrimary}
       </section>
 
@@ -291,7 +304,7 @@ export default function Search() {
         className="search-home-section"
         hidden={browseTab !== "year"}
       >
-        <h2 className="visually-hidden">Browse by year</h2>
+        <h2 className="sr-only">Browse by year</h2>
         {yearBrowsePrimary}
       </section>
     </div>

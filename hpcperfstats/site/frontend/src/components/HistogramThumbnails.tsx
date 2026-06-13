@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useLayoutEffect, useCallback, useId } from
 import { createPortal } from "react-dom";
 import type { BokehJsonItem } from "@/types/bokeh";
 import type { JobListHistogramEntry } from "@/types/view-models";
+import { Button } from "@/components/ui/button";
 import BokehPlotWithLimitation from "./BokehPlotWithLimitation";
 import LoadingMessage from "./LoadingMessage";
 import { useFocusTrap } from "../hooks/useFocusTrap";
@@ -183,10 +184,12 @@ function HistogramThumbnail({
         >
           <div id={popoverTitleId} className="histogram-thumbnail-popover-title">
             <span className="histogram-thumbnail-popover-title-text">{safeTitle}</span>
-            <button
+            <Button
               ref={closeButtonRef}
               type="button"
-              className="btn btn-outline-secondary btn-sm histogram-thumbnail-close"
+              variant="outline"
+              size="sm"
+              className="histogram-thumbnail-close"
               onClick={(e) => {
                 e.stopPropagation();
                 collapseExpanded();
@@ -194,7 +197,7 @@ function HistogramThumbnail({
               aria-label="Close full size view"
             >
               Close
-            </button>
+            </Button>
           </div>
           <div
             ref={popoverPlotRef}
@@ -249,16 +252,18 @@ function HistogramThumbnail({
           />
         </div>
         <div className="histogram-thumbnail-actions">
-          <button
+          <Button
             ref={thumbActivatorRef}
             type="button"
+            variant="outline"
+            size="sm"
             aria-label={`${safeTitle}: enlarge chart`}
             aria-expanded={expanded}
-            className="btn btn-outline-secondary btn-sm histogram-thumbnail-enlarge"
+            className="histogram-thumbnail-enlarge"
             onClick={handleThumbActivate}
           >
             Enlarge chart
-          </button>
+          </Button>
         </div>
       </div>
       {popover && document.body ? createPortal(popover, document.body) : null}

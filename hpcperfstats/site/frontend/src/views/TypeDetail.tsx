@@ -9,6 +9,15 @@ import BannerErrorMessage from "../components/BannerErrorMessage";
 import BokehPlotWithLimitation from "../components/BokehPlotWithLimitation";
 import LoadingMessage from "../components/LoadingMessage";
 import PageBreadcrumbs from "../components/PageBreadcrumbs";
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { buildAsyncPageTitle } from "../utils/async-page-title";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 
@@ -76,12 +85,14 @@ export default function TypeDetail() {
         ]}
       />
       <p className="mb-2">
-        <Link href={`/machine/job/${jobid}/`}>Back to job {jobid}</Link>
+        <Link href={`/machine/job/${jobid}/`} className="text-primary hover:underline">
+          Back to job {jobid}
+        </Link>
       </p>
-      <h1 className="h2 mb-3">
+      <h1 className="mb-3 text-2xl font-semibold tracking-tight">
         Job {jobid} / Type {type_name}
       </h1>
-      <h2 className="h5 mb-2">Rates Aggregated over devices</h2>
+      <h2 className="mb-2 text-lg font-medium">Rates Aggregated over devices</h2>
       <div className="graphs">
         <BokehPlotWithLimitation
           item={tplot_item}
@@ -90,41 +101,37 @@ export default function TypeDetail() {
           unavailableReason={tplot_unavailable_reason}
         />
       </div>
-      <h2 className="h5 mb-2 mt-4">Counts Aggregated over devices and hosts</h2>
+      <h2 className="mt-4 mb-2 text-lg font-medium">Counts Aggregated over devices and hosts</h2>
       {stats_data.length === 0 ? (
-        <p className="text-muted">No counter samples for this type on this job.</p>
+        <p className="text-muted-foreground">No counter samples for this type on this job.</p>
       ) : (
-        <>
-          <div className="table-responsive">
-            <table className="table table-sm table-bordered">
-              <caption className="visually-hidden">
-                Counts aggregated over devices and hosts for job {jobid}
-              </caption>
-              <thead>
-                <tr>
-                  <th scope="col">record</th>
-                  {schema.map((key) => (
-                    <th key={key} scope="col">
-                      {key}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {stats_data.map(([time, values], i) => (
-                  <tr key={i}>
-                    <th scope="row">{time}</th>
-                    {values.map((v, j) => (
-                      <td key={j}>
-                        {typeof v === "number" ? formatDecimalStandard(v) : String(v)}
-                      </td>
-                    ))}
-                  </tr>
+        <Table className="border text-sm">
+          <TableCaption className="sr-only">
+            Counts aggregated over devices and hosts for job {jobid}
+          </TableCaption>
+          <TableHeader>
+            <TableRow>
+              <TableHead scope="col">record</TableHead>
+              {schema.map((key) => (
+                <TableHead key={key} scope="col">
+                  {key}
+                </TableHead>
+              ))}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {stats_data.map(([time, values], i) => (
+              <TableRow key={i}>
+                <TableHead scope="row">{time}</TableHead>
+                {values.map((v, j) => (
+                  <TableCell key={j}>
+                    {typeof v === "number" ? formatDecimalStandard(v) : String(v)}
+                  </TableCell>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        </>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       )}
     </>
   );

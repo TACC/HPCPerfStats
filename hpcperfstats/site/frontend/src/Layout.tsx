@@ -14,12 +14,24 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
+import { Menu } from "lucide-react";
 import { api } from "@/api";
 import type { ApiErrorBody } from "@/types/view-models";
 import LoadingMessage from "./components/LoadingMessage";
 import { ExtendedSearchLayoutContext } from "./context/extended-search-layout-context";
 import { useFocusTrap } from "./hooks/useFocusTrap";
 import type { SessionData } from "./session-context";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
 
 const ExtendedSearch = lazy(() => import("./components/ExtendedSearch"));
 import { useRouteFocusMain } from "./utils/useRouteFocusMain";
@@ -61,13 +73,9 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
   const [staffMessage, setStaffMessage] = useState("");
   const [isDroppingStaff, setIsDroppingStaff] = useState(false);
   const [isInvalidatingCache, setIsInvalidatingCache] = useState(false);
-  const [staffMenuOpen, setStaffMenuOpen] = useState(false);
-  const staffMenuRef = useRef<HTMLDivElement | null>(null);
-  const staffMenuPanelRef = useRef<HTMLUListElement | null>(null);
   const extendedSearchPanelRef = useRef<HTMLDivElement | null>(null);
   const extendedSearchToggleRef = useRef<HTMLButtonElement | null>(null);
   useFocusTrap(extendedSearchPanelRef, extendedSearchOpen);
-  useFocusTrap(staffMenuPanelRef, staffMenuOpen);
 
   const closeExtendedSearch = useCallback(() => {
     setExtendedSearchOpen(false);
@@ -91,34 +99,6 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
       closeExtendedSearch();
     }
   }
-
-  useEffect(() => {
-    if (!staffMenuOpen) return;
-    function handlePointerDown(event: MouseEvent) {
-      const target = event.target;
-      if (
-        staffMenuRef.current &&
-        target instanceof Node &&
-        !staffMenuRef.current.contains(target)
-      ) {
-        setStaffMenuOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [staffMenuOpen]);
-
-  useEffect(() => {
-    if (!staffMenuOpen) return;
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        setStaffMenuOpen(false);
-        document.getElementById("staff-actions-menu-button")?.focus();
-      }
-    }
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [staffMenuOpen]);
 
   useEffect(() => {
     if (!extendedSearchOpen) return;
@@ -148,7 +128,7 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
     return () => window.cancelAnimationFrame(id);
   }, [extendedSearchOpen]);
 
-  async function handleDropStaffForSession() {
+  async function handleDropStaffForSession(closeMenu?: () => void) {
     if (isDroppingStaff) return;
     if (
       !window.confirm(
@@ -180,11 +160,11 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
       );
     } finally {
       setIsDroppingStaff(false);
-      setStaffMenuOpen(false);
+      closeMenu?.();
     }
   }
 
-  async function handleInvalidateCacheForPage() {
+  async function handleInvalidateCacheForPage(closeMenu?: () => void) {
     if (isInvalidatingCache) return;
     const pagePathForCache =
       typeof window !== "undefined" && window.location.pathname
@@ -213,60 +193,72 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
       setStaffMessage(getErrorMessage(error, "Unable to invalidate cache for this page."));
     } finally {
       setIsInvalidatingCache(false);
-      setStaffMenuOpen(false);
+      closeMenu?.();
     }
   }
 
   const staffMenuBusy = isDroppingStaff || isInvalidatingCache;
 
   return (
-    <div className="container-fluid">
-      <a href="#main-content" className="visually-hidden visually-hidden-focusable">
+    <div className="w-full px-4 lg:px-6">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:z-[12000] focus:m-2 focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:ring-2 focus:ring-ring"
+      >
         Skip to main content
       </a>
-      <nav
-        className="navbar navbar-expand-lg navbar-light bg-light"
-        aria-label="Primary"
-      >
-        <div className="container-fluid">
-          <Link href="/" className="navbar-brand navbar-header-logo">
+      <header className="site-header border-b bg-muted/40" role="navigation" aria-label="Primary">
+        <div className="relative flex flex-wrap items-start gap-3 py-2 lg:pb-3">
+          <Link
+            href="/"
+            className="site-header-logo flex shrink-0 items-center py-1 lg:min-h-[50px]"
+          >
             <img
               src="/media/logo.png"
               alt="TACC — HPCPerfStats home"
-              className="navbar-logo-img"
+              className="h-10 w-auto max-h-[42px] object-contain lg:h-full"
             />
           </Link>
-          <button
+          <Button
             type="button"
-            className="navbar-toggler"
+            variant="outline"
+            size="icon-sm"
+            className="ml-auto lg:hidden"
             onClick={() => setNavOpen((o) => !o)}
             aria-expanded={navOpen}
             aria-controls="navbar-main"
             aria-label="Toggle navigation"
           >
-            <span className="navbar-toggler-icon" />
-          </button>
+            <Menu className="size-4" />
+          </Button>
           <div
             id="navbar-main"
-            className={`collapse navbar-collapse ${navOpen ? "show" : ""}`}
+            className={cn(
+              "site-header-nav w-full basis-full lg:flex lg:flex-1 lg:items-start lg:justify-end",
+              navOpen ? "flex flex-col gap-3 border-t pt-3" : "hidden lg:flex",
+            )}
           >
-            <Link href="/"
-              className="navbar-brand flex-grow-1 text-center navbar-brand-center text-decoration-none"
+            <Link
+              href="/"
+              className="site-header-brand mx-auto flex max-w-[min(48vw,680px)] flex-col items-center text-center no-underline lg:absolute lg:left-1/2 lg:-translate-x-1/2"
             >
-              <div style={{ fontSize: "1.1em", fontWeight: 600, color: "black" }}>
-                HPCPerfStats
+              <div className="text-lg font-semibold text-foreground">HPCPerfStats</div>
+              <div className="text-sm text-muted-foreground">
+                a job-level resource usage monitoring tool
               </div>
-              <div className="text-muted small">a job-level resource usage monitoring tool</div>
-              {machineName && (
-                <div className="navbar-brand-cluster">{machineName}</div>
-              )}
+              {machineName ? (
+                <div className="site-header-cluster text-[0.95em] text-muted-foreground">
+                  {machineName}
+                </div>
+              ) : null}
             </Link>
-            <div className="navbar-actions ms-auto">
-              <div className="navbar-actions-row navbar-actions-row-priority">
-                <button
+            <div className="site-header-actions flex w-full flex-col items-stretch gap-2 lg:max-w-[min(42vw,520px)] lg:items-end">
+              <div className="flex flex-wrap items-center justify-start gap-2 lg:justify-end">
+                <Button
                   ref={extendedSearchToggleRef}
                   type="button"
-                  className="btn btn-outline-secondary btn-sm"
+                  variant="outline"
+                  size="sm"
                   onClick={() =>
                     setExtendedSearchOpen((o) => {
                       const next = !o;
@@ -282,10 +274,11 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
                   aria-controls="extended-search-collapse"
                 >
                   {extendedSearchOpen ? "Hide extended search" : "Extended search"}
-                </button>
+                </Button>
                 <form
                   role="search"
                   aria-label="Find job by ID"
+                  className="flex min-h-[34px] flex-wrap items-center gap-1.5"
                   onSubmit={(e: FormEvent<HTMLFormElement>) => {
                     e.preventDefault();
                     const formData = new FormData(e.currentTarget);
@@ -298,197 +291,167 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
                     router.push(`/machine/job/${jid}/`);
                   }}
                 >
-                  <div className="form-group">
-                    <label htmlFor="navbar-jid-search" className="visually-hidden">
-                      Job ID search
-                    </label>
-                    <input
-                      id="navbar-jid-search"
-                      type="text"
-                      className={`form-control form-control-sm${findJobError ? " is-invalid" : ""}`}
-                      name="jid"
-                      placeholder="Job ID"
-                      title="Quick open by job ID (use Extended search for filters)"
-                      autoComplete="off"
-                      aria-invalid={findJobError ? true : undefined}
-                      aria-describedby={findJobError ? "navbar-jid-error" : undefined}
-                    />
-                    {findJobError ? (
-                      <div id="navbar-jid-error" className="invalid-feedback d-block small">
-                        {findJobError}
-                      </div>
-                    ) : null}
-                  </div>
-                  <button type="submit" className="btn btn-outline-secondary btn-sm">
+                  <label htmlFor="navbar-jid-search" className="sr-only">
+                    Job ID search
+                  </label>
+                  <Input
+                    id="navbar-jid-search"
+                    type="text"
+                    className="h-[34px] min-w-[120px] flex-1 sm:max-w-[160px]"
+                    name="jid"
+                    placeholder="Job ID"
+                    title="Quick open by job ID (use Extended search for filters)"
+                    autoComplete="off"
+                    aria-invalid={findJobError ? true : undefined}
+                    aria-describedby={findJobError ? "navbar-jid-error" : undefined}
+                  />
+                  {findJobError ? (
+                    <p id="navbar-jid-error" className="w-full text-xs text-destructive">
+                      {findJobError}
+                    </p>
+                  ) : null}
+                  <Button type="submit" variant="outline" size="sm">
                     Find Job
-                  </button>
+                  </Button>
                 </form>
               </div>
-              <div className="d-none d-lg-flex navbar-actions-row">
-                {session?.is_staff && (
-                  <div className="dropdown" ref={staffMenuRef}>
-                    <button
-                      type="button"
-                      className="btn btn-outline-secondary btn-sm dropdown-toggle"
-                      id="staff-actions-menu-button"
-                      aria-expanded={staffMenuOpen}
-                      aria-haspopup="true"
-                      aria-label="Staff actions"
-                      disabled={staffMenuBusy}
-                      onClick={() => setStaffMenuOpen((o) => !o)}
+              <div className="max-lg:hidden flex flex-wrap items-center justify-end gap-2">
+                {session?.is_staff ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      render={
+                        <Button
+                          id="staff-actions-menu-button"
+                          variant="outline"
+                          size="sm"
+                          disabled={staffMenuBusy}
+                          aria-label="Staff actions"
+                        />
+                      }
                     >
                       Staff actions
-                    </button>
-                    {staffMenuOpen ? (
-                      <ul
-                        ref={staffMenuPanelRef}
-                        className="dropdown-menu dropdown-menu-end show"
-                        role="menu"
-                        aria-labelledby="staff-actions-menu-button"
-                        style={{ position: "absolute", zIndex: 1080 }}
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-56">
+                      <DropdownMenuItem
+                        onClick={() => {
+                          setMoreMenuOpen(false);
+                          router.push("/machine/job_monitor/");
+                        }}
                       >
-                        <li>
-                          <NavLink to="/job_monitor"
-                            className="dropdown-item"
-                            role="menuitem"
-                            onClick={() => {
-                              setStaffMenuOpen(false);
-                              setMoreMenuOpen(false);
-                            }}
-                          >
-                            Job Failure Monitor
-                          </NavLink>
-                        </li>
-                        <li>
-                          <NavLink to="/admin_monitor"
-                            className="dropdown-item"
-                            role="menuitem"
-                            onClick={() => {
-                              setStaffMenuOpen(false);
-                              setMoreMenuOpen(false);
-                            }}
-                          >
-                            HPCPerfStats Monitor
-                          </NavLink>
-                        </li>
-                        <li>
-                          <hr className="dropdown-divider" />
-                        </li>
-                        <li>
-                          <button
-                            type="button"
-                            className="dropdown-item text-danger"
-                            role="menuitem"
-                            disabled={staffMenuBusy}
-                            onClick={() => void handleDropStaffForSession()}
-                          >
-                            Disable Staff Permissions
-                          </button>
-                        </li>
-                        <li>
-                          <button
-                            type="button"
-                            className="dropdown-item"
-                            role="menuitem"
-                            disabled={staffMenuBusy}
-                            onClick={() => void handleInvalidateCacheForPage()}
-                          >
-                            Invalidate Cache For Page
-                          </button>
-                        </li>
-                      </ul>
-                    ) : null}
-                  </div>
-                )}
-                <NavLink to="/api-key"
-                  className="btn btn-outline-secondary btn-sm"
-                  activeClassName="active"
-                >
-                  API key
+                        Job Failure Monitor
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => {
+                          setMoreMenuOpen(false);
+                          router.push("/machine/admin_monitor/");
+                        }}
+                      >
+                        HPCPerfStats Monitor
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        variant="destructive"
+                        disabled={staffMenuBusy}
+                        onClick={() => void handleDropStaffForSession()}
+                      >
+                        Disable Staff Permissions
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        disabled={staffMenuBusy}
+                        onClick={() => void handleInvalidateCacheForPage()}
+                      >
+                        Invalidate Cache For Page
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : null}
+                <NavLink to="/api-key" className="inline-flex">
+                  <Button variant="outline" size="sm" type="button">
+                    API key
+                  </Button>
                 </NavLink>
-                <a href="/machine/logout/" className="btn btn-outline-secondary btn-sm">
+                <Button variant="outline" size="sm" render={<a href="/machine/logout/" />}>
                   Logout
-                </a>
+                </Button>
               </div>
-              <div className="d-lg-none w-100 mt-1">
-                <button
+              <div className="w-full lg:hidden">
+                <Button
                   type="button"
-                  className="btn btn-outline-secondary btn-sm w-100"
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
                   aria-expanded={moreMenuOpen}
                   aria-controls="navbar-more-menu"
                   onClick={() => setMoreMenuOpen((o) => !o)}
                 >
                   {moreMenuOpen ? "Hide account menu" : "Account and tools"}
-                </button>
+                </Button>
                 {moreMenuOpen ? (
                   <div
                     id="navbar-more-menu"
-                    className="d-flex flex-column gap-1 align-items-stretch mt-2"
+                    className="mt-2 flex flex-col gap-1"
                     role="group"
                     aria-label="Account and staff tools"
                   >
                     {session?.is_staff ? (
                       <>
-                        <NavLink to="/job_monitor"
-                          className="btn btn-outline-secondary btn-sm text-start"
-                          onClick={() => setMoreMenuOpen(false)}
-                        >
-                          Job Failure Monitor
+                        <NavLink to="/job_monitor" onClick={() => setMoreMenuOpen(false)}>
+                          <Button variant="outline" size="sm" className="w-full justify-start">
+                            Job Failure Monitor
+                          </Button>
                         </NavLink>
-                        <NavLink to="/admin_monitor"
-                          className="btn btn-outline-secondary btn-sm text-start"
-                          onClick={() => setMoreMenuOpen(false)}
-                        >
-                          HPCPerfStats Monitor
+                        <NavLink to="/admin_monitor" onClick={() => setMoreMenuOpen(false)}>
+                          <Button variant="outline" size="sm" className="w-full justify-start">
+                            HPCPerfStats Monitor
+                          </Button>
                         </NavLink>
-                        <button
+                        <Button
                           type="button"
-                          className="btn btn-outline-danger btn-sm text-start"
+                          variant="destructive"
+                          size="sm"
+                          className="w-full justify-start"
                           disabled={staffMenuBusy}
                           onClick={() => void handleDropStaffForSession()}
                         >
                           Disable Staff Permissions
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                           type="button"
-                          className="btn btn-outline-secondary btn-sm text-start"
+                          variant="outline"
+                          size="sm"
+                          className="w-full justify-start"
                           disabled={staffMenuBusy}
                           onClick={() => void handleInvalidateCacheForPage()}
                         >
                           Invalidate Cache For Page
-                        </button>
+                        </Button>
                       </>
                     ) : null}
-                    <Link href="/machine/api-key/"
-                      className="btn btn-outline-secondary btn-sm"
-                      onClick={() => setMoreMenuOpen(false)}
-                    >
-                      API key
+                    <Link href="/machine/api-key/" onClick={() => setMoreMenuOpen(false)}>
+                      <Button variant="outline" size="sm" className="w-full">
+                        API key
+                      </Button>
                     </Link>
-                    <a
-                      href="/machine/logout/"
-                      className="btn btn-outline-secondary btn-sm"
-                      onClick={() => setMoreMenuOpen(false)}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                      render={<a href="/machine/logout/" onClick={() => setMoreMenuOpen(false)} />}
                     >
                       Logout
-                    </a>
+                    </Button>
                   </div>
                 ) : null}
               </div>
-              {staffMessage && (
-                <div
-                  id="staff-message"
-                  className="alert alert-info py-1 px-2 mb-0 navbar-staff-message"
-                  role="status"
-                  aria-live="polite"
-                >
-                  {staffMessage}
-                </div>
-              )}
+              {staffMessage ? (
+                <Alert id="staff-message" className="site-header-staff-message py-1" role="status">
+                  <AlertDescription aria-live="polite">{staffMessage}</AlertDescription>
+                </Alert>
+              ) : null}
             </div>
           </div>
         </div>
-      </nav>
+      </header>
       {extendedSearchOpen ? (
         <div
           className="extended-search-backdrop"
@@ -513,7 +476,7 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
           </div>
         </div>
       ) : null}
-      <main id="main-content" className="mt-4" tabIndex={-1}>
+      <main id="main-content" className="mt-4 outline-none" tabIndex={-1}>
         <ExtendedSearchLayoutContext.Provider value={extendedSearchLayoutValue}>
           {children}
         </ExtendedSearchLayoutContext.Provider>

@@ -1,3 +1,6 @@
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { useExtendedSearchLayout } from "../context/extended-search-layout-context";
 
 type JobListFilterSummaryProps = {
@@ -13,28 +16,30 @@ export default function JobListFilterSummary({
   if (!lines.length) return null;
 
   return (
-    <div
-      className={`job-list-filter-summary alert alert-light border small mb-3 ${className}`.trim()}
+    <Alert
       role="region"
       aria-label="Active search filters"
+      className={cn("mb-3 border bg-muted/30 text-sm", className)}
     >
-      <div className="d-flex flex-wrap align-items-start justify-content-between gap-2">
-        <div>
-          <p className="mb-1 fw-medium">Active filters</p>
-          <ul className="mb-0 ps-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <AlertDescription className="text-foreground">
+          <AlertTitle className="mb-1 text-sm font-medium">Active filters</AlertTitle>
+          <ul className="mb-0 list-disc pl-5">
             {lines.map((line) => (
               <li key={line}>{line}</li>
             ))}
           </ul>
-        </div>
-        <button
+        </AlertDescription>
+        <Button
           type="button"
-          className="btn btn-outline-primary btn-sm flex-shrink-0"
+          variant="outline"
+          size="sm"
+          className="shrink-0"
           onClick={openExtendedSearch}
         >
           Modify search
-        </button>
+        </Button>
       </div>
-    </div>
+    </Alert>
   );
 }

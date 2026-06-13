@@ -12,6 +12,7 @@ alwaysApply: false
 ## Stack
 
 - **Next.js 15 App Router** with `output: 'export'` (static export; nginx serves `/machine/` and `/pub/` shells).
+- **Shadcn/ui + Tailwind CSS v4** — components in `src/components/ui/`; theme in `src/globals.css`; see **`shadcn-ui-frontend.mdc`**.
 - **Strict TypeScript** — `strict: true` in `tsconfig.json`; avoid `any`; use generated OpenAPI types where available.
 - **TanStack Query** — server state via Orval-generated hooks; do not add ad hoc `useEffect`+`fetch` for API data unless Orval lacks an endpoint.
 - **Orval** — client generated from committed `hpcperfstats/site/openapi/openapi.yaml`; custom mutator in `src/api/fetch-mutator.ts` (credentials, CSRF, 401 redirect).
@@ -37,4 +38,4 @@ When Django API shapes or routes change:
 ## Overlap
 
 - **`openapi-orval-sync.mdc`** — OpenAPI commit + Orval regen workflow.
-- **`bokeh-layout-surface-split.mdc`**, **`no-cdn-in-production.mdc`**, **`testing-best-practices.mdc`**.
+- **`shadcn-ui-frontend.mdc`**, **`bokeh-layout-surface-split.mdc`**, **`no-cdn-in-production.mdc`**, **`testing-best-practices.mdc`**.

@@ -12,9 +12,6 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: false,
   },
-  sassOptions: {
-    includePaths: [path.join(__dirname, "node_modules")],
-  },
   webpack(config) {
     config.module.rules.push({
       test: /node_modules[\\/]@bokeh[\\/].*(customjs|slick\.grid)\.js$/,
