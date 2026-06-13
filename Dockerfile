@@ -4,7 +4,7 @@ RUN apk add bash
 WORKDIR /home/hpcperfstats
 COPY --chown=node:node . .
 WORKDIR /home/hpcperfstats/hpcperfstats/site/frontend
-# Vite and @vitejs/plugin-react are devDependencies; they must be present to build.
+# Vite and @vitejs/plugin-react are devDependencies used by Vitest; they must be present to build.
 RUN /bin/bash -o pipefail -c "npm ci && npm run build"
 WORKDIR /home/hpcperfstats
 RUN /bin/bash -o pipefail -c "\
