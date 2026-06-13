@@ -138,7 +138,7 @@ def _default_startup_daily_tar_count(monkeypatch):
   monkeypatch.setattr(
       async_day_close_mod.AsyncDayCloseCoordinator,
       "submit_day_close",
-      lambda self, tar_path, *, reason: bool(tar_path),
+      lambda self, tar_path, *, reason, disqualified_daily_tars=None: bool(tar_path),
   )
   monkeypatch.setattr(
       async_day_close_mod.AsyncDayCloseCoordinator,
@@ -3937,6 +3937,9 @@ def test_supervisor_waits_for_startup_day_close_drain_before_ingest(monkeypatch)
     def discover_done(self):
       return False
 
+    def pending_deferral_count(self):
+      return 0
+
     def start_async_discover_and_close(self):
       day_close_started["value"] = True
 
@@ -4191,6 +4194,9 @@ def test_supervisor_startup_drain_disabled_allows_parallel_ingest(monkeypatch):
     def discover_done(self):
       return False
 
+    def pending_deferral_count(self):
+      return 0
+
     def start_async_discover_and_close(self):
       day_close_started["value"] = True
 
@@ -4408,6 +4414,21 @@ def _supervisor_two_day_ingest_patches(
     return []
 
   _supervisor_startup_preflight_disabled(monkeypatch)
+  monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
+  monkeypatch.setattr(
+      st.cfg,
+      "get_sync_startup_drain_day_close_before_ingest",
+      lambda: False,
+  )
+  from hpcperfstats.dbload.sync_timedb_startup_archive_scan import (
+      StartupArchiveScanCoordinator,
+  )
+
+  monkeypatch.setattr(
+      StartupArchiveScanCoordinator,
+      "wait_for_snapshot",
+      lambda self, *, allow_build=False: None,
+  )
   monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
   monkeypatch.setattr(
       st,
@@ -4432,21 +4453,29 @@ def _supervisor_two_day_ingest_patches(
       lambda *_a, **_k: {},
   )
   monkeypatch.setattr(
+      archive_helpers,
+      "build_unprocessed_raw_by_daily_tar",
+      lambda *_a, **_k: {},
+  )
+  monkeypatch.setattr(
+      st,
+      "days_ingest_complete_by_checkpoint",
+      lambda *_a, **_k: [],
+  )
+  monkeypatch.setattr(
       janitor_mod.ArchiveJanitor,
       "signal_work_available",
       lambda self: None,
   )
   if immediate_spy is not None:
-    original_enqueue = janitor_mod.ArchiveJanitor.enqueue_immediate_day_close
-
-    def spy_enqueue(self, tar_path, *, reason):
+    def spy_submit(self, tar_path, *, reason, disqualified_daily_tars=None):
       immediate_spy(tar_path, reason)
-      return original_enqueue(self, tar_path, reason=reason)
+      return bool(tar_path)
 
     monkeypatch.setattr(
-        janitor_mod.ArchiveJanitor,
-        "enqueue_immediate_day_close",
-        spy_enqueue,
+        async_day_close_mod.AsyncDayCloseCoordinator,
+        "submit_day_close",
+        spy_submit,
     )
   return str(archive_dir), str(daily_dir)
 
@@ -4469,13 +4498,18 @@ def test_supervisor_enqueues_immediate_day_close_on_day_drain(monkeypatch, tmp_p
     )
     tar_day1 = os.path.normpath(os.path.join(daily_dir, "2020-01-01.tar"))
     open(tar_day1, "wb").close()
+    monkeypatch.setattr(
+        st,
+        "days_ingest_complete_by_checkpoint",
+        lambda _unprocessed, **kwargs: [tar_day1],
+    )
 
     st.run_sync_timedb_supervisor_loop(
         archive_dir, "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
 
     chunk_end_hits = [
         event for event in immediate_events
-        if event[0] == tar_day1 and event[1] == "chunk_end"
+        if event[0] == tar_day1 and event[1] == "day_ingest_complete:chunk_end"
     ]
     assert chunk_end_hits
   finally:
@@ -4513,7 +4547,7 @@ def test_supervisor_does_not_immediate_day_close_mid_day(monkeypatch, tmp_path):
 
     chunk_end_hits = [
         event for event in immediate_events
-        if event[0] == tar_day1 and event[1] == "chunk_end"
+        if event[0] == tar_day1 and event[1] == "day_ingest_complete:chunk_end"
     ]
     assert not chunk_end_hits
   finally:
@@ -4538,13 +4572,18 @@ def test_supervisor_day_close_at_most_one_batch_late(monkeypatch, tmp_path):
     )
     tar_day1 = os.path.normpath(os.path.join(daily_dir, "2020-01-01.tar"))
     open(tar_day1, "wb").close()
+    monkeypatch.setattr(
+        st,
+        "days_ingest_complete_by_checkpoint",
+        lambda _unprocessed, **kwargs: [tar_day1],
+    )
 
     st.run_sync_timedb_supervisor_loop(
         archive_dir, "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
 
     chunk_end_indices = [
         idx for idx, event in enumerate(immediate_events)
-        if event[0] == tar_day1 and event[1] == "chunk_end"
+        if event[0] == tar_day1 and event[1] == "day_ingest_complete:chunk_end"
     ]
     assert chunk_end_indices
     assert chunk_end_indices[0] <= 1
@@ -4555,11 +4594,11 @@ def test_supervisor_day_close_at_most_one_batch_late(monkeypatch, tmp_path):
 def test_supervisor_checks_day_close_every_batch(monkeypatch, tmp_path):
   shutdown_requested[0] = False
   find_calls = []
-  original_find = archive_helpers.find_immediate_day_close_candidates
+  original_scan = archive_helpers.days_ingest_complete_by_checkpoint
 
-  def counting_find(**kwargs):
+  def counting_scan(unprocessed_by_tar, **kwargs):
     find_calls.append(1)
-    return original_find(**kwargs)
+    return original_scan(unprocessed_by_tar, **kwargs)
 
   try:
     day1_epoch = int(datetime(2020, 1, 1, 12, tzinfo=timezone.utc).timestamp())
@@ -4572,12 +4611,116 @@ def test_supervisor_checks_day_close_every_batch(monkeypatch, tmp_path):
             "/fake/stats/%d" % day2_epoch,
         ],
     )
-    monkeypatch.setattr(st, "find_immediate_day_close_candidates", counting_find)
+    monkeypatch.setattr(st, "days_ingest_complete_by_checkpoint", counting_scan)
 
     st.run_sync_timedb_supervisor_loop(
         archive_dir, "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
 
     assert len(find_calls) >= 2
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_immediate_day_close_submits_checkpoint_complete_not_chunk_touched_only(
+    monkeypatch,
+    tmp_path,
+):
+  shutdown_requested[0] = False
+  submitted = []
+  try:
+    day1_epoch = int(datetime(2020, 1, 1, 12, tzinfo=timezone.utc).timestamp())
+    day2_epoch = int(datetime(2020, 1, 2, 12, tzinfo=timezone.utc).timestamp())
+    archive_dir, daily_dir = _supervisor_two_day_ingest_patches(
+        monkeypatch,
+        tmp_path,
+        paths=["/fake/stats/%d" % day2_epoch],
+    )
+    tar_day1 = os.path.normpath(os.path.join(daily_dir, "2020-01-01.tar"))
+    tar_day2 = os.path.normpath(os.path.join(daily_dir, "2020-01-02.tar"))
+    open(tar_day1, "wb").close()
+    open(tar_day2, "wb").close()
+
+    def fake_unprocessed(*_args, **_kwargs):
+      return {tar_day2: ["/fake/stats/pending-day2"]}
+
+    monkeypatch.setattr(st, "build_unprocessed_raw_by_daily_tar", fake_unprocessed)
+    monkeypatch.setattr(
+        archive_helpers,
+        "build_unprocessed_raw_by_daily_tar",
+        fake_unprocessed,
+    )
+    monkeypatch.setattr(
+        st,
+        "days_ingest_complete_by_checkpoint",
+        lambda _unprocessed, **_kwargs: [tar_day1],
+    )
+    monkeypatch.setattr(
+        async_day_close_mod.AsyncDayCloseCoordinator,
+        "submit_day_close",
+        lambda self, tar_path, *, reason, disqualified_daily_tars=None: (
+            submitted.append((os.path.normpath(tar_path), reason)) or True
+        ),
+    )
+    monkeypatch.setattr(
+        async_day_close_mod.AsyncDayCloseCoordinator,
+        "is_complete",
+        lambda self, _tar_path: False,
+    )
+
+    st.run_sync_timedb_supervisor_loop(
+        archive_dir, "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
+
+    chunk_end = [
+        item for item in submitted
+        if item[0] == tar_day1 and item[1] == "day_ingest_complete:chunk_end"
+    ]
+    assert chunk_end
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_day_close_unprocessed_build_passes_accrual_snapshot(monkeypatch, tmp_path):
+  shutdown_requested[0] = False
+  seen_snapshots = []
+  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+
+  fake_accrual = ArchiveMaintenanceSnapshot(
+      closed_paths=[],
+      mapping={},
+      remaining_raw_by_gz={},
+      ready_paths=set(),
+  )
+  _orig_janitor_init = janitor_mod.ArchiveJanitor.__init__
+
+  def janitor_init_with_accrual(self, *args, **kwargs):
+    _orig_janitor_init(self, *args, **kwargs)
+    with self._accrual_snapshot_lock:
+      self._accrual_snapshot = fake_accrual
+
+  def recording_unprocessed(*_args, **kwargs):
+    seen_snapshots.append(kwargs.get("maintenance_snapshot"))
+    return {}
+
+  try:
+    day_epoch = int(datetime(2020, 1, 1, 12, tzinfo=timezone.utc).timestamp())
+    archive_dir, daily_dir = _supervisor_two_day_ingest_patches(
+        monkeypatch,
+        tmp_path,
+        paths=["/fake/stats/%d" % day_epoch],
+    )
+    monkeypatch.setattr(janitor_mod.ArchiveJanitor, "__init__", janitor_init_with_accrual)
+    monkeypatch.setattr(st, "build_unprocessed_raw_by_daily_tar", recording_unprocessed)
+    monkeypatch.setattr(
+        archive_helpers,
+        "build_unprocessed_raw_by_daily_tar",
+        recording_unprocessed,
+    )
+    open(os.path.join(daily_dir, "2020-01-01.tar"), "wb").close()
+
+    st.run_sync_timedb_supervisor_loop(
+        archive_dir, "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
+
+    assert fake_accrual in seen_snapshots
   finally:
     shutdown_requested[0] = False
 
@@ -4610,12 +4753,18 @@ def test_immediate_day_close_coexists_with_startup_scheduled_pass(monkeypatch, t
         spy_scheduled,
     )
     open(os.path.join(daily_dir, "2020-01-01.tar"), "wb").close()
+    tar_day1 = os.path.normpath(os.path.join(daily_dir, "2020-01-01.tar"))
+    monkeypatch.setattr(
+        st,
+        "days_ingest_complete_by_checkpoint",
+        lambda _unprocessed, **kwargs: [tar_day1],
+    )
 
     st.run_sync_timedb_supervisor_loop(
         archive_dir, "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
 
     assert "startup" in scheduled_reasons
-    assert "chunk_end" in immediate_events
+    assert "day_ingest_complete:chunk_end" in immediate_events
   finally:
     shutdown_requested[0] = False
 
@@ -4648,12 +4797,18 @@ def test_chunk_10_immediate_check_after_boundary_finalize(monkeypatch, tmp_path)
         spy_scheduled,
     )
     open(os.path.join(daily_dir, "2020-01-01.tar"), "wb").close()
+    tar_day1 = os.path.normpath(os.path.join(daily_dir, "2020-01-01.tar"))
+    monkeypatch.setattr(
+        st,
+        "days_ingest_complete_by_checkpoint",
+        lambda _unprocessed, **kwargs: [tar_day1],
+    )
 
     st.run_sync_timedb_supervisor_loop(
         archive_dir, "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
 
     chunk_end_idx = next(
-        (idx for idx, item in enumerate(order) if item == "chunk_end"), None)
+        (idx for idx, item in enumerate(order) if item == "day_ingest_complete:chunk_end"), None)
     scheduled_idx = next(
         (idx for idx, item in enumerate(order)
          if item.startswith("scheduled:every_n_chunks")),
@@ -4670,67 +4825,31 @@ def test_immediate_day_close_on_idle_finalize_without_chunk(monkeypatch, tmp_pat
   shutdown_requested[0] = False
   immediate_reasons = []
   try:
-    archive_dir = tmp_path / "archive"
-    daily_dir = tmp_path / "daily"
-    archive_dir.mkdir()
-    daily_dir.mkdir()
     day1_epoch = int(datetime(2020, 1, 1, 12, tzinfo=timezone.utc).timestamp())
     path_day1 = "/fake/stats/%d" % day1_epoch
-    tar_day1 = os.path.join(daily_dir, "2020-01-01.tar")
+    archive_dir, daily_dir = _supervisor_two_day_ingest_patches(
+        monkeypatch,
+        tmp_path,
+        paths=[],
+        immediate_spy=lambda _tar, reason: immediate_reasons.append(reason),
+    )
+    tar_day1 = os.path.normpath(os.path.join(daily_dir, "2020-01-01.tar"))
     open(tar_day1, "wb").close()
+    monkeypatch.setattr(
+        st,
+        "days_ingest_complete_by_checkpoint",
+        lambda _unprocessed, **kwargs: [tar_day1],
+    )
 
     def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
-      if fake_rescan.calls == 0:
-        fake_rescan.calls += 1
-        return [path_day1]
       shutdown_requested[0] = True
       return []
 
-    fake_rescan.calls = 0
-    _supervisor_startup_preflight_disabled(monkeypatch)
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
-    monkeypatch.setattr(
-        st,
-        "add_stats_file_to_db",
-        lambda _lock, path, **_k: (path, True, True, 0.0),
-    )
-    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
-    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
-    monkeypatch.setattr(st.cfg, "get_sync_ingest_chunk_size", lambda: 1)
-    monkeypatch.setattr(st.cfg, "get_sync_day_close_candidate_report", lambda: False)
-    monkeypatch.setattr(st, "rescan_every_chunks", 100)
-    monkeypatch.setattr(st, "close_old_connections", lambda: None)
-    monkeypatch.setattr(st.connections, "close_all", lambda: None)
-    monkeypatch.setattr(st, "tgz_archive_dir", str(daily_dir))
-    monkeypatch.setattr(
-        st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
-    monkeypatch.setattr(
-        archive_helpers, "build_archive_mapping", lambda *_a, **_k: ({}, {}))
-    monkeypatch.setattr(
-        st,
-        "build_unprocessed_raw_by_daily_tar",
-        lambda *_a, **_k: {},
-    )
-    monkeypatch.setattr(
-        janitor_mod.ArchiveJanitor,
-        "signal_work_available",
-        lambda self: None,
-    )
-    original_enqueue = janitor_mod.ArchiveJanitor.enqueue_immediate_day_close
-
-    def spy_enqueue(self, tar_path, *, reason):
-      immediate_reasons.append(reason)
-      return original_enqueue(self, tar_path, reason=reason)
-
-    monkeypatch.setattr(
-        janitor_mod.ArchiveJanitor,
-        "enqueue_immediate_day_close",
-        spy_enqueue,
-    )
 
     st.run_sync_timedb_supervisor_loop(
         str(archive_dir), "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
 
-    assert "idle_finalize" in immediate_reasons
+    assert "day_ingest_complete:idle_finalize" in immediate_reasons
   finally:
     shutdown_requested[0] = False

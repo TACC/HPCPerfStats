@@ -100,7 +100,8 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     resolve_unmapped_closed_raw_daily_tars,
     daily_tar_path_for_stats_path,
     daily_tar_path_from_compressed,
-    find_immediate_day_close_candidates,
+    calendar_date_from_daily_tar_path,
+    days_ingest_complete_by_checkpoint,
     daily_tar_paths_for_archive_job_tasks,
     daily_tar_paths_for_stats_paths,
     daily_tar_paths_from_pending_archive_tasks,
@@ -2714,20 +2715,30 @@ def run_sync_timedb_supervisor_loop(
   def _get_unmapped_closed_raw_tars():
     return _resolve_unmapped_closed_raw_tars()
 
-  def _build_day_close_candidate_inputs():
-    captured = _capture_disqualification_inputs()
-    captured["unmapped_closed_raw_tars"] = _get_unmapped_closed_raw_tars()
+  def _get_accrual_maintenance_snapshot():
+    with archive_janitor._accrual_snapshot_lock:
+      return archive_janitor._accrual_snapshot
+
+  def _build_unprocessed_by_tar_for_day_close(*, pending_stats_paths):
     unprocessed_by_tar = build_unprocessed_raw_by_daily_tar(
         directory,
         host_name_ext,
         tgz_archive_dir,
         checkpoint_path=checkpoint_path,
+        maintenance_snapshot=_get_accrual_maintenance_snapshot(),
     )
-    captured["unprocessed_by_tar"] = augment_unprocessed_by_tar_with_pending_paths(
+    return augment_unprocessed_by_tar_with_pending_paths(
         unprocessed_by_tar,
-        pending_stats_paths=captured["pending_stats_paths"],
+        pending_stats_paths=pending_stats_paths,
         tgz_archive_dir=tgz_archive_dir,
         checkpoint_path=checkpoint_path,
+    )
+
+  def _build_day_close_candidate_inputs():
+    captured = _capture_disqualification_inputs()
+    captured["unmapped_closed_raw_tars"] = _get_unmapped_closed_raw_tars()
+    captured["unprocessed_by_tar"] = _build_unprocessed_by_tar_for_day_close(
+        pending_stats_paths=captured["pending_stats_paths"],
     )
     return captured
 
@@ -2756,30 +2767,63 @@ def run_sync_timedb_supervisor_loop(
       if prev is None or epoch > prev:
         max_ingest_sort_epoch_by_tar[tar_norm] = epoch
 
+  def _log_checkpoint_day_close_chunk_progress(
+      *,
+      unprocessed_by_tar,
+      checkpoint_deferred_archive=0,
+  ):
+    if not cfg.get_sync_day_close_candidate_report():
+      return
+    ranked = []
+    for tar_path in iter_daily_tar_paths(tgz_archive_dir):
+      tar_norm = os.path.normpath(tar_path)
+      unprocessed = (unprocessed_by_tar or {}).get(tar_norm, ()) or ()
+      on_disk = sum(1 for path in unprocessed if os.path.isfile(path))
+      day_date = calendar_date_from_daily_tar_path(tar_norm)
+      if day_date is None:
+        continue
+      ranked.append((day_date, tar_norm, on_disk))
+    ranked.sort(key=lambda item: item[0])
+    parts = []
+    for day_date, tar_norm, on_disk in ranked[:3]:
+      parts.append(
+          "%s unprocessed=%d checkpoint_complete=%s"
+          % (
+              day_date.isoformat(),
+              on_disk,
+              "yes" if on_disk == 0 else "no",
+          ),
+      )
+    if parts:
+      log_print(
+          "sync_timedb: checkpoint day-close progress oldest_days=%s"
+          % "; ".join(parts),
+          flush=True,
+      )
+    if checkpoint_deferred_archive:
+      log_print(
+          "sync_timedb: checkpoint deferred archive finalize count=%d"
+          % checkpoint_deferred_archive,
+          flush=True,
+      )
+
   def _maybe_enqueue_immediate_day_close(*, context: str):
     if not tgz_archive_dir:
       return
     disqualified = _janitor_disqualified_daily_tars()
     with archive_janitor._hints_state_lock:
       day_phases = dict(archive_janitor._day_phases)
-    unprocessed_by_tar = augment_unprocessed_by_tar_with_pending_paths(
-        build_unprocessed_raw_by_daily_tar(
-            directory,
-            host_name_ext,
-            tgz_archive_dir,
-            checkpoint_path=checkpoint_path,
-        ),
+    unprocessed_by_tar = _build_unprocessed_by_tar_for_day_close(
         pending_stats_paths=list(pending_stats_files),
-        tgz_archive_dir=tgz_archive_dir,
-        checkpoint_path=checkpoint_path,
     )
-    candidates = find_immediate_day_close_candidates(
+    remaining_raw_by_gz = _get_accrual_remaining_raw_by_gz()
+    candidates = days_ingest_complete_by_checkpoint(
+        unprocessed_by_tar,
         tgz_archive_dir=tgz_archive_dir,
-        candidate_tar_paths=list(max_ingest_sort_epoch_by_tar.keys()),
-        disqualified_daily_tars=disqualified,
-        unprocessed_by_tar=unprocessed_by_tar,
-        local_tz=archive_janitor.local_tz,
         day_phases=day_phases,
+        remaining_raw_by_gz=remaining_raw_by_gz,
+        local_tz=archive_janitor.local_tz,
+        disqualified_daily_tars=disqualified,
     )
     submitted_any = False
     disqualified = _janitor_disqualified_daily_tars()
@@ -4060,6 +4104,13 @@ def run_sync_timedb_supervisor_loop(
             context="end_of_batch",
         )
         _maybe_enqueue_immediate_day_close(context="chunk_end")
+        unprocessed_for_progress = _build_unprocessed_by_tar_for_day_close(
+            pending_stats_paths=list(pending_stats_files),
+        )
+        _log_checkpoint_day_close_chunk_progress(
+            unprocessed_by_tar=unprocessed_for_progress,
+            checkpoint_deferred_archive=len(deferred_paths),
+        )
         with archive_janitor._accrual_snapshot_lock:
           accrual_for_day_complete = archive_janitor._accrual_snapshot
         pending_drained_days = _completed_ingest_calendar_days(

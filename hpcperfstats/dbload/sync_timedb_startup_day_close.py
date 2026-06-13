@@ -143,9 +143,11 @@ class StartupDayClosePreflight:
     with self._lock:
       if self._manifest.get("pending_eligible") or self._manifest.get("pending_retry"):
         return True
+    async_active = self.async_day_close.active_or_submitted_tar_paths()
+    for tar_norm in async_active:
+      if not self.async_day_close.is_complete(tar_norm):
+        return True
     snapshot = self._resolve_snapshot()
-    if snapshot is None:
-      return True
     unprocessed_by_tar = build_unprocessed_raw_by_daily_tar(
         self.archive_data_dir,
         self.host_name_ext,

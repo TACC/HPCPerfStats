@@ -641,3 +641,32 @@ def test_boot_reconcile_resumes_when_phase_done_and_eligible_remain(
   preflight._discover_future.result(timeout=30)
   assert submitted
   assert submitted[0][0] == tar_path
+
+
+def test_boot_reconcile_when_phase_done_and_async_still_incomplete(
+    tmp_path,
+    monkeypatch,
+):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2026-04-22.tar"))
+  open(tar_path, "wb").close()
+
+  class _FakeCoord:
+    def get_disqualified_daily_tars(self):
+      return set()
+
+    def submit_day_close(self, *_a, **_k):
+      return True
+
+    def active_or_submitted_tar_paths(self):
+      return {tar_path}
+
+    def is_complete(self, _tar_path):
+      return False
+
+  monkeypatch.setattr(cfg, "get_sync_day_close_candidate_report", lambda: False)
+  preflight = _make_preflight(tmp_path, _FakeCoord())
+  preflight._manifest["phase"] = PHASE_DONE
+  preflight._manifest["completed_at"] = 1.0
+  assert preflight._needs_boot_reconcile() is True
