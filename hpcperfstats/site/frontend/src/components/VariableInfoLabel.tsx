@@ -4,8 +4,10 @@ import { useId, useState, useEffect, type ReactNode } from "react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
-import { useDelayedHoverState } from "@/hooks/use-delayed-hover-state";
 import { getVariableTooltipContent } from "../utils/variableMetadata";
+
+const HELP_HOVER_OPEN_DELAY_MS = 150;
+const HELP_HOVER_CLOSE_DELAY_MS = 150;
 
 type VariableInfoLabelProps = {
   variableName: string;
@@ -28,8 +30,6 @@ export function VariableInfoLabel({
   const tooltipBody = enableHelp ? getVariableTooltipContent(variableName) : null;
   const panelId = useId();
   const [pinnedOpen, setPinnedOpen] = useState(false);
-  const { hoverOpen, onHoverEnter, onHoverLeave } = useDelayedHoverState();
-  const showTooltip = pinnedOpen || hoverOpen;
 
   useEffect(() => {
     if (!pinnedOpen) return;
@@ -59,24 +59,22 @@ export function VariableInfoLabel({
       <span className="variable-info-label-text">{text}</span>
       {suffixBeforeHelp}
       <Popover
-        open={showTooltip}
+        open={pinnedOpen ? true : undefined}
         onOpenChange={(next) => {
           if (!next) setPinnedOpen(false);
         }}
+        modal={false}
       >
-        <span
-          className="variable-info-help-wrap"
-          onMouseEnter={onHoverEnter}
-          onMouseLeave={onHoverLeave}
-          onFocus={onHoverEnter}
-          onBlur={onHoverLeave}
-        >
+        <span className="variable-info-help-wrap">
           <PopoverTrigger
             nativeButton
+            openOnHover={!pinnedOpen}
+            delay={HELP_HOVER_OPEN_DELAY_MS}
+            closeDelay={HELP_HOVER_CLOSE_DELAY_MS}
             className="variable-info-help"
             data-testid="variable-info-help"
-            aria-expanded={showTooltip}
-            aria-controls={showTooltip ? panelId : undefined}
+            aria-expanded={pinnedOpen}
+            aria-controls={pinnedOpen ? panelId : undefined}
             aria-label={`Help: ${variableName}`}
             onClick={() => setPinnedOpen((prev) => !prev)}
           >
@@ -89,11 +87,10 @@ export function VariableInfoLabel({
           data-testid="variable-info-tooltip"
           aria-label={`${variableName} description`}
           sideOffset={2}
+          disablePointerDismissal={pinnedOpen}
           className={cn(
             "variable-info-tooltip variable-info-tooltip-portal w-auto max-w-[min(560px,calc(100vw-16px))] min-w-[min(420px,calc(100vw-16px))] p-2 text-sm font-normal",
           )}
-          onMouseEnter={onHoverEnter}
-          onMouseLeave={onHoverLeave}
         >
           <span className="variable-info-tooltip-definition">{description}</span>
           {researcherUse ? (

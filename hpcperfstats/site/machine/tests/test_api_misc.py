@@ -427,9 +427,50 @@ class TestHomeOptions:
     keys = [item[0] for item in data["date_list"]]
     assert "2024-01" in keys
     assert "2023-12" in keys
-    assert data["metrics"] == sample_metrics
+    assert data["metrics"] == [{"type": "", "metric": "runtime", "units": "hours"}]
     assert data["queues"] == ["normal"]
     assert data["states"] == ["RUNNING"]
+
+  def test_home_options_normalizes_legacy_cached_metrics(self):
+    """Legacy cached metrics rows without type still satisfy OpenAPI HomeMetricOption."""
+    from hpcperfstats.site.machine import api
+
+    request = RequestFactory().get("/api/home/")
+
+    class _Future:
+      def __init__(self, val):
+        self._val = val
+
+      def result(self):
+        return self._val
+
+    def _submit(_fn, *_args, **_kwargs):
+      return _Future(_args[-1]())
+
+    mock_exec = MagicMock()
+    mock_exec.submit.side_effect = _submit
+    legacy_metrics = [{"metric": "runtime", "units": "hours"}]
+
+    with patch.object(api, "_require_auth", return_value=None), patch.object(
+        api, "_get_small_executor", return_value=mock_exec
+    ), patch.object(api.cfg, "get_host_name_ext", return_value="cluster"), patch.object(
+        api, "cached_orm", side_effect=lambda _k, _t, fn: fn()
+    ), patch.object(
+        api, "job_metrics_catalog_entries", return_value=legacy_metrics
+    ):
+      mock_job_data = MagicMock()
+      mock_job_data.objects.dates.return_value = []
+      mock_job_data.objects.distinct.return_value.values_list.return_value = []
+      (
+          mock_job_data.objects.exclude.return_value.distinct.return_value.values_list.return_value
+      ) = []
+      with patch.object(api, "job_data", mock_job_data):
+        response = api.home_options(request)
+
+    assert response.status_code == 200
+    assert response.data["metrics"] == [
+        {"type": "", "metric": "runtime", "units": "hours"},
+    ]
 
 
 @pytest.mark.django_db(databases=[])

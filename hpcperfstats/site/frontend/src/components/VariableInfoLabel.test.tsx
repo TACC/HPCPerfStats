@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { VariableInfoLabel } from "./VariableInfoLabel";
 
@@ -69,7 +69,7 @@ describe("VariableInfoLabel", () => {
     );
     const label = screen.getByText("Average effective CPU frequency").closest(".variable-info-label");
     expect(label).toBeTruthy();
-    const children = Array.from(label.children).map((el) => el.className);
+    const children = Array.from(label!.children).map((el) => el.className);
     expect(children[0]).toBe("variable-info-label-text");
     expect(children[1]).toBe("job-detail-metric-units");
     expect(children[2]).toBe("variable-info-help-wrap");
@@ -98,19 +98,28 @@ describe("VariableInfoLabel", () => {
     expect(panel).toHaveTextContent(/GPU utilization/i);
   });
 
-  it("closes help panel once after debounced hover leave", async () => {
+  it("configures Base UI hover open on help trigger when not pinned", () => {
     render(
       <VariableInfoLabel variableName="utilization" labelText="utilization" enableHelp />,
     );
-    const helpWrap = screen.getByTestId("variable-info-help").closest(".variable-info-help-wrap");
-    expect(helpWrap).toBeTruthy();
-    fireEvent.mouseEnter(helpWrap!);
+    const help = screen.getByRole("button", { name: /help: utilization/i });
+    expect(help).toHaveAttribute("aria-haspopup", "dialog");
+    fireEvent.click(help);
+    expect(help).toHaveAttribute("aria-expanded", "true");
+    const panel = screen.getByTestId("variable-info-tooltip");
+    expect(panel).toHaveAttribute("data-open");
+    fireEvent.click(help);
+    expect(help).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("closes pinned help panel on Escape", async () => {
+    render(
+      <VariableInfoLabel variableName="utilization" labelText="utilization" enableHelp />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /help: utilization/i }));
     const panel = await screen.findByTestId("variable-info-tooltip");
     expect(panel).toHaveAttribute("data-open");
-    fireEvent.mouseLeave(helpWrap!);
-    act(() => {
-      vi.advanceTimersByTime(120);
-    });
+    fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.getByRole("button", { name: /help: utilization/i })).toHaveAttribute(
       "aria-expanded",
       "false",

@@ -1378,6 +1378,25 @@ def invalidate_cache_for_page(request):
     )
 
 
+def _normalize_home_metrics(metrics):
+    """Ensure home_options metrics rows match HomeMetricOption OpenAPI shape."""
+    out = []
+    for row in metrics or []:
+        if not isinstance(row, dict):
+            continue
+        out.append({
+            "type": str(row.get("type") or ""),
+            "metric": str(row.get("metric") or ""),
+            "units": str(row.get("units") or ""),
+        })
+    return out
+
+
+def _normalize_home_string_list(values):
+    """Coerce truthy queue/state labels to strings for SPA Zod validation."""
+    return [str(v) for v in (values or []) if v]
+
+
 @HOME_OPTIONS_SCHEMA
 @dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
@@ -1437,12 +1456,12 @@ def home_options(request):
     year_list = sorted(year_set, reverse=True)
 
     return Response({
-        "machine_name": cfg.get_host_name_ext(),
+        "machine_name": str(cfg.get_host_name_ext() or ""),
         "year_list": year_list,
         "date_list": sorted(month_dict.items(), reverse=True),
-        "metrics": list(metrics) if metrics else [],
-        "queues": [q for q in (queues or []) if q],
-        "states": [s for s in (states or []) if s],
+        "metrics": _normalize_home_metrics(metrics),
+        "queues": _normalize_home_string_list(queues),
+        "states": _normalize_home_string_list(states),
     })
 
 
