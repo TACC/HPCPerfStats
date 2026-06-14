@@ -109,9 +109,51 @@ def test_warn_if_pool_stall_wall_below_ingest_timeout_max(monkeypatch, capsys):
   monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 14400.0)
   st._warn_if_pool_stall_wall_below_ingest_timeout_max()
   out = capsys.readouterr().out
-  assert "WARN: sync_pool stall wall" in out
+  assert "WARN: sync_pool stall ceiling wall" in out
   assert "sync_ingest_per_file_timeout_max_s=14400s" in out
-  assert "sync_pool_stall_abort_after_timeouts to at least 2881" in out
+  assert "sync_pool_stall_abort_after_timeouts ceiling to at least 2881" in out
+
+
+def test_stall_abort_polls_for_batch_small_files(monkeypatch, tmp_path):
+  _default_timeout_getters(monkeypatch)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 2881)
+  small = tmp_path / "small"
+  small.write_bytes(b"x" * 1024)
+  monkeypatch.setattr(st, "stats_file_size_bytes", lambda _p: 1024)
+  polls = st._stall_abort_polls_for_batch([str(small)])
+  assert polls == 181
+
+
+def test_stall_abort_polls_for_batch_large_file(monkeypatch, tmp_path):
+  _default_timeout_getters(monkeypatch)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 2881)
+  size_bytes = _mib_bytes(5120)
+  large = tmp_path / "large"
+  large.write_bytes(b"x" * min(size_bytes, 65536))
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb.stats_file_size_bytes",
+      lambda _p: size_bytes,
+  )
+  expected_timeout = st.resolve_ingest_per_file_timeout_s(str(large))
+  polls = st._stall_abort_polls_for_batch([str(large)])
+  assert expected_timeout == 14400.0
+  assert polls == int(expected_timeout / 5.0) + 1
+
+
+def test_stall_abort_polls_respects_ini_ceiling(monkeypatch, tmp_path):
+  _default_timeout_getters(monkeypatch)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 100)
+  size_bytes = _mib_bytes(5120)
+  large = tmp_path / "large"
+  large.write_bytes(b"x")
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb.stats_file_size_bytes",
+      lambda _p: size_bytes,
+  )
+  assert st._stall_abort_polls_for_batch([str(large)]) == 100
 
 
 def test_raise_if_ingest_per_file_deadline_uses_effective_timeout(monkeypatch):

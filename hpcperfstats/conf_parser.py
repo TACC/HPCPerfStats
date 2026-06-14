@@ -1580,7 +1580,11 @@ def get_sync_archive_validation_max_workers():
 
 
 def get_sync_pool_stall_abort_after_timeouts():
-  """Consecutive pool poll timeouts without progress before aborting imap wait."""
+  """Maximum consecutive pool poll timeouts before aborting imap wait (ceiling).
+
+  Per-batch abort counts are computed from the largest resolved per-file ingest
+  budget in the current imap sub-batch and clamped to this ceiling.
+  """
   env = os.environ.get("HPCPERFSTATS_SYNC_POOL_STALL_ABORT_AFTER_TIMEOUTS", "").strip()
   if env:
     try:

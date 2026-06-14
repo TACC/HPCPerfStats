@@ -233,6 +233,31 @@ def test_imap_stall_warning_callback(monkeypatch):
   assert warnings[-1][0] == 4
 
 
+def test_imap_unordered_watch_pool_honors_stall_abort_override(monkeypatch):
+  monkeypatch.setattr(
+      "hpcperfstats.conf_parser.get_sync_pool_stall_abort_after_timeouts",
+      lambda: 100,
+  )
+  warnings = []
+
+  def on_stall_warning(consecutive, abort_after, poll_timeout_s, context):
+    warnings.append((consecutive, abort_after))
+
+  pool = _BlockingPool()
+  iterator = mph.imap_unordered_watch_pool(
+      pool,
+      lambda x: x,
+      [1],
+      poll_timeout_s=0.01,
+      stall_abort_after_timeouts=2,
+      context="test_override",
+      on_stall_warning=on_stall_warning,
+  )
+  with pytest.raises(mph.MultiprocessingPoolStallError):
+    next(iterator)
+  assert warnings[-1] == (2, 2)
+
+
 def test_imap_stall_fatal_summary_appended_to_error(monkeypatch):
   monkeypatch.setattr(
       "hpcperfstats.conf_parser.get_sync_pool_stall_abort_after_timeouts",

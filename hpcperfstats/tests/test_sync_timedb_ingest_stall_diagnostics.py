@@ -78,6 +78,9 @@ def test_build_ingest_stall_log_suffix_includes_defer_and_pipeline(monkeypatch):
       st, "_ingest_stall_defer_state", lambda _day, _state, **kwargs: (False, "redis_warm"),
   )
   diag = st.IngestStallDiagnostics()
+  diag.current_imap_batch_max_timeout_s = 900.0
+  diag.dynamic_stall_abort_after_polls = 181
+  diag.dynamic_stall_wall_s = 905.0
   diag.ingest_pipeline = "split_parse_write"
   diag.imap_batch_cap = 10
   diag.chunk_batch_size = 200
@@ -100,6 +103,9 @@ def test_build_ingest_stall_log_suffix_includes_defer_and_pipeline(monkeypatch):
   assert "pipeline_overlap_mode=ingest_priority" in suffix
   assert "chunk_prewarm=2026-05-20:redis_warm" in suffix
   assert "imap_batch_cap=10" in suffix
+  assert "batch_max_ingest_timeout_s=900.0" in suffix
+  assert "dynamic_stall_abort_after=181" in suffix
+  assert "dynamic_stall_wall_s=905" in suffix
 
 
 def test_ingest_stall_defer_state_no_day_hint():
@@ -124,6 +130,7 @@ def test_ingest_stall_defer_long_budget_when_effective_exceeds_stall_wall(monkey
   }
   diag = st.IngestStallDiagnostics()
   diag.worker_registry = registry
+  diag.current_imap_batch_max_timeout_s = 900.0
   defer_on, reason = st._ingest_stall_defer_state(
       "",
       {},
@@ -134,7 +141,7 @@ def test_ingest_stall_defer_long_budget_when_effective_exceeds_stall_wall(monkey
   assert reason == "long_ingest_budget"
 
 
-def test_ingest_stall_defer_long_budget_off_when_stall_exceeds_effective(monkeypatch):
+def test_ingest_stall_defer_long_budget_off_when_effective_matches_batch(monkeypatch):
   import time
 
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
@@ -150,6 +157,7 @@ def test_ingest_stall_defer_long_budget_off_when_stall_exceeds_effective(monkeyp
   }
   diag = st.IngestStallDiagnostics()
   diag.worker_registry = registry
+  diag.current_imap_batch_max_timeout_s = 900.0
   defer_on, reason = st._ingest_stall_defer_state(
       "",
       {},

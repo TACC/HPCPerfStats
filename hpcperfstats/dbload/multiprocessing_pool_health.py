@@ -445,6 +445,7 @@ def imap_unordered_watch_pool(
     iterable,
     *,
     poll_timeout_s=None,
+    stall_abort_after_timeouts=None,
     context="",
     on_stall_warning=None,
     on_stall_poll=None,
@@ -488,7 +489,10 @@ def imap_unordered_watch_pool(
     return
   import hpcperfstats.conf_parser as cfg
 
-  stall_abort_after = cfg.get_sync_pool_stall_abort_after_timeouts()
+  if stall_abort_after_timeouts is None:
+    stall_abort_after = cfg.get_sync_pool_stall_abort_after_timeouts()
+  else:
+    stall_abort_after = max(1, int(stall_abort_after_timeouts))
   warn_thresholds = _stall_warning_thresholds(stall_abort_after)
   warned_thresholds = set()
   consecutive_timeouts = 0

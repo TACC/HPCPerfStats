@@ -306,6 +306,36 @@ def resolve_ingest_per_file_timeout_s(stats_file):
   return max(base, scaled)
 
 
+def _max_ingest_per_file_timeout_for_paths(paths):
+  """Largest resolved per-file ingest budget for a set of stats paths."""
+  floor_s = float(cfg.get_sync_ingest_per_file_timeout_s())
+  if floor_s <= 0.0:
+    return 0.0
+  best = floor_s
+  for path in paths or ():
+    if not path:
+      continue
+    resolved = resolve_ingest_per_file_timeout_s(path)
+    if resolved > best:
+      best = resolved
+  return best
+
+
+def _stall_abort_polls_for_batch(paths):
+  """Poll-timeout abort count for current imap sub-batch (floor .. INI ceiling)."""
+  poll_s = float(cfg.get_sync_pool_poll_timeout_s())
+  ceiling_polls = int(cfg.get_sync_pool_stall_abort_after_timeouts())
+  if poll_s <= 0.0:
+    return max(1, ceiling_polls)
+  floor_s = float(cfg.get_sync_ingest_per_file_timeout_s())
+  batch_max_s = _max_ingest_per_file_timeout_for_paths(paths)
+  if batch_max_s <= 0.0:
+    batch_max_s = floor_s if floor_s > 0.0 else poll_s
+  dynamic_polls = int(batch_max_s / poll_s) + 1
+  min_polls = int(floor_s / poll_s) + 1 if floor_s > 0.0 else 1
+  return max(1, min(ceiling_polls, max(min_polls, dynamic_polls)))
+
+
 def _log_long_ingest_timeout_budget_if_needed(stats_file, timeout_s):
   if timeout_s < INGEST_PER_FILE_TIMEOUT_LOG_MIN_S:
     return
@@ -537,6 +567,9 @@ class IngestStallDiagnostics:
     self.imap_batch_cap = 0
     self.chunk_batch_size = 0
     self.current_imap_batch_size = 0
+    self.current_imap_batch_max_timeout_s = 0.0
+    self.dynamic_stall_abort_after_polls = 0
+    self.dynamic_stall_wall_s = 0.0
     self.async_day_close = None
     self.worker_registry = None
     self.chunk_prewarm_summary = "-"
@@ -577,6 +610,7 @@ class IngestStallDiagnostics:
 
 
 def _pool_stall_wall_seconds():
+  """INI ceiling stall wall (maximum across batches)."""
   poll_s = float(cfg.get_sync_pool_poll_timeout_s())
   abort_n = int(cfg.get_sync_pool_stall_abort_after_timeouts())
   if poll_s <= 0.0:
@@ -584,8 +618,19 @@ def _pool_stall_wall_seconds():
   return poll_s * abort_n
 
 
+def _dynamic_stall_wall_seconds(stall_diagnostics):
+  """Active imap sub-batch stall wall, or INI ceiling when unset."""
+  if stall_diagnostics is not None:
+    dynamic_wall = float(
+        getattr(stall_diagnostics, "dynamic_stall_wall_s", 0.0) or 0.0,
+    )
+    if dynamic_wall > 0.0:
+      return dynamic_wall
+  return _pool_stall_wall_seconds()
+
+
 def _ingest_stall_defer_long_budget(stall_diagnostics, consecutive_timeouts):
-  """Defer imap stall abort while in-flight workers remain within per-file budget."""
+  """Defer when worker registry budget exceeds batch precompute (safety net)."""
   if stall_diagnostics is None:
     return False, ""
   effective = _max_effective_ingest_timeout_from_registry(
@@ -593,8 +638,10 @@ def _ingest_stall_defer_long_budget(stall_diagnostics, consecutive_timeouts):
   )
   if effective is None:
     return False, ""
-  stall_wall = _pool_stall_wall_seconds()
-  if stall_wall <= 0.0 or effective <= stall_wall:
+  batch_max_s = float(
+      getattr(stall_diagnostics, "current_imap_batch_max_timeout_s", 0.0) or 0.0,
+  )
+  if batch_max_s <= 0.0 or effective <= batch_max_s:
     return False, ""
   poll_s = float(cfg.get_sync_pool_poll_timeout_s())
   estimated_stall_s = int(consecutive_timeouts) * poll_s
@@ -688,10 +735,10 @@ def _warn_if_pool_stall_wall_below_ingest_timeout_max():
     return
   min_abort = int(max_per_file / poll_s) + 1
   log_print(
-      "WARN: sync_pool stall wall %.0fs (abort=%d poll=%.0fs) is not above "
-      "sync_ingest_per_file_timeout_max_s=%.0fs; raise "
-      "sync_pool_stall_abort_after_timeouts to at least %d "
-      "(wall %.0fs at current poll)"
+      "WARN: sync_pool stall ceiling wall %.0fs (abort=%d poll=%.0fs) is not "
+      "above sync_ingest_per_file_timeout_max_s=%.0fs; raise "
+      "sync_pool_stall_abort_after_timeouts ceiling to at least %d "
+      "(wall %.0fs at current poll; per-batch abort is dynamic from largest file)"
       % (
           stall_wall_s,
           abort_n,
@@ -741,10 +788,14 @@ def _build_ingest_stall_log_suffix(
   registry_gap = ""
   if registry_n < in_flight_n:
     registry_gap = " worker_registry_gap=%d" % (in_flight_n - registry_n)
+  batch_max_s = float(getattr(diag, "current_imap_batch_max_timeout_s", 0.0) or 0.0)
+  dynamic_abort = int(getattr(diag, "dynamic_stall_abort_after_polls", 0) or 0)
+  dynamic_wall = float(getattr(diag, "dynamic_stall_wall_s", 0.0) or 0.0)
   return (
       " sync_ingest_per_file_timeout_s=%s sync_ingest_per_file_timeout_max_s=%s"
-      " effective_ingest_timeout_s=%s stall_defer=%s defer_reason=%s"
-      " imap_batch_cap=%d chunk_batch=%d imap_batch=%d"
+      " batch_max_ingest_timeout_s=%.1f dynamic_stall_abort_after=%d"
+      " dynamic_stall_wall_s=%.0f effective_ingest_timeout_s=%s"
+      " stall_defer=%s defer_reason=%s imap_batch_cap=%d chunk_batch=%d imap_batch=%d"
       " distinct_in_flight_days=%s in_flight_file_meta=%s"
       " seconds_since_last_imap_completion=%s ingest_pipeline=%s"
       " pipeline_overlap_mode=%s async_day_close=%s chunk_prewarm=%s"
@@ -752,6 +803,9 @@ def _build_ingest_stall_log_suffix(
       % (
           floor_timeout_s,
           max_timeout_s,
+          batch_max_s,
+          dynamic_abort,
+          dynamic_wall,
           effective_text,
           "on" if defer_on else "off",
           defer_reason,
@@ -862,14 +916,20 @@ def _make_ingest_stall_poll_fn(tracker, progress_state, stall_diagnostics=None):
             if stall_diagnostics is not None
             else None,
         )
+        batch_max_s = float(
+            getattr(stall_diagnostics, "current_imap_batch_max_timeout_s", 0.0)
+            if stall_diagnostics is not None
+            else 0.0,
+        )
         log_print(
             "WARN: pool imap stall deferred: long ingest budget "
-            "effective_ingest_timeout_s=%.1f stall_wall_s=%.0f "
-            "consecutive_timeouts=%d estimated_stall_s=%.1f in_flight_n=%d "
-            "worker_stages=%s"
+            "effective_ingest_timeout_s=%.1f batch_max_ingest_timeout_s=%.1f "
+            "dynamic_stall_wall_s=%.0f consecutive_timeouts=%d "
+            "estimated_stall_s=%.1f in_flight_n=%d worker_stages=%s"
             % (
                 effective or 0.0,
-                _pool_stall_wall_seconds(),
+                batch_max_s,
+                _dynamic_stall_wall_seconds(stall_diagnostics),
                 int(consecutive),
                 estimated_stall_s,
                 len(sample),
@@ -927,12 +987,19 @@ def _imap_ingest_pool(
     return iter(())
   if stall_poll_state is None:
     stall_poll_state = {}
+  batch_abort = _stall_abort_polls_for_batch(paths)
+  poll_s = float(cfg.get_sync_pool_poll_timeout_s())
   if stall_diagnostics is not None:
     stall_diagnostics.current_imap_batch_size = len(paths or ())
     stall_diagnostics.imap_batch_cap = _effective_ingest_imap_inflight_cap(
         thread_count,
         len(paths or ()),
     )
+    stall_diagnostics.current_imap_batch_max_timeout_s = (
+        _max_ingest_per_file_timeout_for_paths(paths)
+    )
+    stall_diagnostics.dynamic_stall_abort_after_polls = batch_abort
+    stall_diagnostics.dynamic_stall_wall_s = batch_abort * poll_s
   pool_health_context = {
       "ingest_pool": ingest_pool if ingest_pool is not None else pool,
       "db_writer_pool": db_writer_pool,
@@ -946,6 +1013,7 @@ def _imap_ingest_pool(
       fn,
       paths,
       context=context,
+      stall_abort_after_timeouts=batch_abort,
       on_stall_warning=_make_ingest_stall_warning_fn(
           tracker,
           pool=pool,
