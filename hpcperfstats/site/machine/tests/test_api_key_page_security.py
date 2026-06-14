@@ -164,3 +164,41 @@ class TestSessionMutatingPostCsrf:
     )
     assert response.status_code == 403
     assert response.json()["detail"] == "CSRF token missing"
+
+  def test_sacct_ingest_accepts_staff_api_key_without_csrf(self):
+    """hpcperfstats-tools sacct_gen posts with X-API-Key only (no CSRF cookie)."""
+    from hpcperfstats.site.machine import api
+
+    client = Client()
+    key_obj = SimpleNamespace(username="pipeline", is_staff=True)
+    with patch.object(api.ApiKey, "hash_raw_key", return_value="hashed"), patch.object(
+        api.ApiKey.objects, "get", return_value=key_obj
+    ), patch.object(api, "persist_accounting_daily_file"), patch.object(
+        api.job_data.objects, "filter"
+    ) as mock_filter:
+      mock_filter.return_value.values_list.return_value.iterator.return_value = iter([])
+      response = client.post(
+          "/api/sacct/ingest/?date=2024-01-01",
+          data="",
+          content_type="text/plain",
+          HTTP_X_API_KEY="a" * 64,
+      )
+    assert response.status_code == 200
+    assert response.json()["inserted"] == 0
+
+  def test_sacct_ingest_rejects_non_staff_api_key_without_csrf(self):
+    from hpcperfstats.site.machine import api
+
+    client = Client()
+    key_obj = SimpleNamespace(username="reader", is_staff=False)
+    with patch.object(api.ApiKey, "hash_raw_key", return_value="hashed"), patch.object(
+        api.ApiKey.objects, "get", return_value=key_obj
+    ):
+      response = client.post(
+          "/api/sacct/ingest/?date=2024-01-01",
+          data="body",
+          content_type="text/plain",
+          HTTP_X_API_KEY="b" * 64,
+      )
+    assert response.status_code == 403
+    assert response.json()["error"] == "Staff access required"

@@ -499,12 +499,18 @@ def _require_staff(request):
 def _require_csrf_for_session_post(request):
     """Return 403 JSON when a browser session POST lacks X-CSRFToken."""
     django_request = getattr(request, "_request", request)
-    if django_request.method in ("POST", "PUT", "PATCH", "DELETE"):
-        if not django_request.META.get("HTTP_X_CSRFTOKEN"):
-            return Response(
-                {"detail": "CSRF token missing"},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+    if django_request.method not in ("POST", "PUT", "PATCH", "DELETE"):
+        return None
+    # CLI/API-key clients (e.g. hpcperfstats-tools sacct_gen) are not browser
+    # sessions; CSRF does not apply when a valid API key is presented.
+    api_key = _get_api_key_from_request(request)
+    if api_key and _api_key_valid(api_key) is not None:
+        return None
+    if not django_request.META.get("HTTP_X_CSRFTOKEN"):
+        return Response(
+            {"detail": "CSRF token missing"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
     return None
 
 
