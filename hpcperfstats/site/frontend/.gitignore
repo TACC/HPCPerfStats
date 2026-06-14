@@ -2,9 +2,11 @@
 coverage/
 
 # Orval client (npm run generate:api). Hand-written: orval.config.ts,
-# src/api/fetch-mutator.ts, src/api/index.ts. Directory kept via generated/.gitignore.
+# src/api/fetch-mutator.ts, src/api/index.ts. Directories kept via generated*/.gitignore.
 src/api/generated/**
 !src/api/generated/.gitignore
+src/api/generated-zod/**
+!src/api/generated-zod/.gitignore
 
 # Next.js build and static export (npm run build → out/, then copy-next-export.mjs)
 .next/

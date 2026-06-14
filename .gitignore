@@ -36,6 +36,8 @@ tacc_stats.egg-info/
 stats.x
 bin/
 lib/
+!hpcperfstats/site/frontend/src/lib/
+!hpcperfstats/site/frontend/src/lib/**
 build/
 .build/
 doc/

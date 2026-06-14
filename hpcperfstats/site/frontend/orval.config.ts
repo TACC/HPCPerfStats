@@ -3,21 +3,6 @@ import { defineConfig } from "orval";
 const input = "../openapi/openapi.yaml";
 
 export default defineConfig({
-  hpcperfstats: {
-    input,
-    output: {
-      mode: "tags-split",
-      target: "./src/api/generated",
-      schemas: "./src/api/generated/models",
-      client: "react-query",
-      override: {
-        mutator: {
-          path: "./src/api/fetch-mutator.ts",
-          name: "customFetch",
-        },
-      },
-    },
-  },
   hpcperfstatsZod: {
     input,
     output: {
@@ -33,6 +18,21 @@ export default defineConfig({
             param: true,
             header: true,
           },
+        },
+      },
+    },
+  },
+  hpcperfstats: {
+    input,
+    output: {
+      mode: "tags-split",
+      target: "./src/api/generated",
+      schemas: "./src/api/generated/models",
+      client: "react-query",
+      override: {
+        mutator: {
+          path: "./src/api/fetch-mutator.ts",
+          name: "customFetch",
         },
       },
     },

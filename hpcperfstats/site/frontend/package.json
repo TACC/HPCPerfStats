@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "next dev",
-    "generate:api": "orval",
+    "generate:api": "orval --project hpcperfstatsZod && orval --project hpcperfstats",
     "typecheck": "tsc --noEmit",
     "build": "npm run generate:api && next build && node scripts/copy-next-export.mjs && node scripts/generate-robots-txt.mjs",
     "build:with-bokeh-playwright-smoke": "next build && node scripts/copy-next-export.mjs && node scripts/generate-robots-txt.mjs",
