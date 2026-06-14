@@ -1,3 +1,4 @@
+import { keepPreviousData } from "@tanstack/react-query";
 import { useCallback, useEffect, useState } from "react";
 import { useJobsRetrieve2 } from "@/api/generated/jobs/jobs";
 import type { JobDetailResponse } from "@/api/generated/models/jobDetailResponse";
@@ -11,7 +12,12 @@ export function useJobDetailQuery(pk: string) {
   const detailQuery = useJobsRetrieve2(
     pk,
     deferParam ? { defer: deferParam } : undefined,
-    { query: { enabled: !!pk } },
+    {
+      query: {
+        enabled: !!pk,
+        placeholderData: keepPreviousData,
+      },
+    },
   );
 
   useEffect(() => {
@@ -20,8 +26,12 @@ export function useJobDetailQuery(pk: string) {
 
   const data = (detailQuery.data ?? null) as JobDetailResponse | null;
   const error = detailQuery.error;
-  const loading = detailQuery.isLoading;
-  const detailsLoading = detailQuery.isFetching && !detailQuery.data && !detailQuery.isError;
+  const initialLoading = detailQuery.isLoading && !detailQuery.data;
+  const detailsLoading =
+    detailQuery.isFetching &&
+    !detailQuery.isError &&
+    !!detailQuery.data &&
+    deferParam !== INITIAL_DEFER;
   const detailFetchWarning = detailQuery.isError;
 
   const loadFullDetail = useCallback(() => {
@@ -37,7 +47,7 @@ export function useJobDetailQuery(pk: string) {
     error: error
       ? getStatusAwareErrorMessage(error, getErrorMessage(error, "Request failed"))
       : null,
-    loading,
+    initialLoading,
     detailsLoading,
     detailFetchWarning,
     deferParam,

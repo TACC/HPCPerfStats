@@ -1,5 +1,5 @@
 import { useSearchParams } from "next/navigation";
-import Link from "next/link";
+import { TextLink } from "@/components/TextLink";
 import { useMemo } from "react";
 import type { BokehJsonItem } from "@/types/bokeh";
 import PageBreadcrumbs from "../components/PageBreadcrumbs";
@@ -71,9 +71,9 @@ export default function HostDetail() {
         {data.end_time__lte === "now()" ? "Now" : formatDateTime(data.end_time__lte)}
       </p>
       <p className="mb-3">
-        <Link href={`/machine/host/${encodeURIComponent(hostName)}/`} className="text-primary hover:underline">
+        <TextLink href={`/machine/host/${encodeURIComponent(hostName)}/`}>
           View jobs that ran on this host
-        </Link>
+        </TextLink>
       </p>
       <div className="graphs">
         <BokehPlotWithLimitation

@@ -1,7 +1,7 @@
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { MouseEvent } from "react";
+import { TextLink, textLinkClassName } from "@/components/TextLink";
 import type { JobListEntry } from "@/api/generated/models/jobListEntry";
 import type { JobListData } from "@/types/view-models";
 import { useJobListQuery } from "@/hooks/use-job-list";
@@ -561,7 +561,7 @@ export default function JobList() {
           ) : null}
         </div>
         <p className="mt-2 mb-0 text-center text-sm">
-          <a href="#job-list-table" onClick={handleBackToJobTable} className="text-primary hover:underline">
+          <a href="#job-list-table" onClick={handleBackToJobTable} className={textLinkClassName()}>
             Continue to job table
           </a>
         </p>
@@ -608,10 +608,10 @@ export default function JobList() {
               {columns.map(({ label, field, sortable }) => (
               <TableHead key={field} scope="col" aria-sort={ariaSortForField(field, sortable)}>
                 {sortable ? (
-                  <Link href={sortLink(field)} className="text-primary hover:underline">
+                  <TextLink href={sortLink(field)}>
                     {label}
                     {sortIndicator(field)}
-                  </Link>
+                  </TextLink>
                 ) : (
                   label
                 )}
@@ -641,7 +641,7 @@ export default function JobList() {
           {job_list.map((job) => (
             <TableRow key={job.jid}>
               <TableCell>
-                <Link href={`/machine/job/${job.jid}/`} className="text-primary hover:underline">{job.jid}</Link>
+                <TextLink href={`/machine/job/${job.jid}/`}>{job.jid}</TextLink>
               </TableCell>
               {isStaff ? (
                 <TableCell>{formatDecimalStandard(job.sample_count)}</TableCell>
@@ -664,14 +664,14 @@ export default function JobList() {
               </TableCell>
               <TableCell>
                 {job.username ? (
-                  <Link href={`/machine/username/${encodeURIComponent(job.username)}/`} className="text-primary hover:underline">{job.username}</Link>
+                  <TextLink href={`/machine/username/${encodeURIComponent(job.username)}/`}>{job.username}</TextLink>
                 ) : (
                   "unknown"
                 )}
               </TableCell>
               <TableCell>
                 {job.account ? (
-                  <Link href={`/machine/account/${encodeURIComponent(job.account)}/`} className="text-primary hover:underline">{job.account}</Link>
+                  <TextLink href={`/machine/account/${encodeURIComponent(job.account)}/`}>{job.account}</TextLink>
                 ) : (
                   "None"
                 )}
@@ -681,7 +681,7 @@ export default function JobList() {
               <TableCell>{formatDecimalStandard(job.runtime)}</TableCell>
               <TableCell>
                 {job.queue ? (
-                  <Link href={`/machine/queue/${encodeURIComponent(job.queue)}/`} className="text-primary hover:underline">{job.queue}</Link>
+                  <TextLink href={`/machine/queue/${encodeURIComponent(job.queue)}/`}>{job.queue}</TextLink>
                 ) : (
                   ""
                 )}
@@ -700,7 +700,7 @@ export default function JobList() {
       {renderPaginationNav("bottom")}
 
       <p className="mt-2 mb-0 text-sm">
-        <a href="#job-list-distributions" onClick={handleJumpToDistributions} className="text-primary hover:underline">
+        <a href="#job-list-distributions" onClick={handleJumpToDistributions} className={textLinkClassName()}>
           Jump to histograms for this list
         </a>
       </p>

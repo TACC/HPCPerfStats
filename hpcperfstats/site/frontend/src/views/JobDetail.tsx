@@ -1,7 +1,7 @@
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
-import Link from "next/link";
 import { memo, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import { TextLink } from "@/components/TextLink";
 import { useJobDetailQuery } from "@/hooks/use-job-detail";
 import { useJobPlotsQuery } from "@/hooks/use-job-plots";
 import type { BokehJsonItem } from "@/types/bokeh";
@@ -172,7 +172,7 @@ function renderJobEntityLink(
   to: string,
   fallbackText: string,
 ): ReactNode {
-  return value ? <Link href={to}>{value}</Link> : fallbackText;
+  return value ? <TextLink href={to}>{value}</TextLink> : fallbackText;
 }
 
 const PlotPanel = memo(function PlotPanel({
@@ -214,7 +214,7 @@ export default function JobDetail() {
   const {
     data: jobDetailData,
     error,
-    loading,
+    initialLoading,
     detailsLoading,
     detailFetchWarning,
     loadFullDetail,
@@ -227,7 +227,7 @@ export default function JobDetail() {
     : "metrics";
   const plotsEnabled =
     !!pk &&
-    !loading &&
+    !initialLoading &&
     !error &&
     !!data &&
     (analysisTab === "summary" || analysisTab === "roofline");
@@ -237,7 +237,7 @@ export default function JobDetail() {
   );
 
   useEffect(() => {
-    if (!pk || loading) return;
+    if (!pk || initialLoading) return;
     if (analysisTab === "multiprecisionMix") {
       loadDetailWithoutDeferParts(["xalt", "proc"]);
     } else if (analysisTab === "processes" || analysisTab === "execHosts") {
@@ -245,7 +245,7 @@ export default function JobDetail() {
     } else if (analysisTab === "device") {
       loadFullDetail();
     }
-  }, [analysisTab, pk, loading, loadFullDetail, loadDetailWithoutDeferParts]);
+  }, [analysisTab, pk, initialLoading, loadFullDetail, loadDetailWithoutDeferParts]);
 
   function setAnalysisTab(tab: JobAnalysisTab): void {
     const next = searchParamsWithTab(
@@ -258,9 +258,9 @@ export default function JobDetail() {
     router.replace(href);
   }
 
-  useDocumentTitle(buildJobDetailTitle({ error, loading, data, pk }));
+  useDocumentTitle(buildJobDetailTitle({ error, loading: initialLoading, data, pk }));
 
-  if (loading) {
+  if (initialLoading) {
     return (
       <div className="job-detail-skeleton" aria-busy="true">
         <span className="sr-only" role="status" aria-label="Loading job detail">
@@ -358,16 +358,18 @@ export default function JobDetail() {
     return list.map((obj) => (
       <TableRow key={obj.metric}>
         <TableHead scope="row">
-          <span className="inline-flex max-w-full flex-wrap items-baseline gap-x-1 gap-y-[0.15rem]">
-            <VariableInfoLabel
-              variableName={obj.metric}
-              labelText={getJobMetricShortLabel(obj.metric)}
-              enableHelp
-            />
-            {obj.units ? (
-              <span className="font-normal whitespace-nowrap text-muted-foreground">[{obj.units}]</span>
-            ) : null}
-          </span>
+          <VariableInfoLabel
+            variableName={obj.metric}
+            labelText={getJobMetricShortLabel(obj.metric)}
+            enableHelp
+            suffixBeforeHelp={
+              obj.units ? (
+                <span className="font-normal whitespace-nowrap text-muted-foreground">
+                  [{obj.units}]
+                </span>
+              ) : null
+            }
+          />
         </TableHead>
         <TableCell className={obj.value != null && obj.value !== "" ? "" : "text-muted-foreground"}>
           {formatJobMetricCell(obj, isStaff)}
@@ -561,7 +563,7 @@ export default function JobDetail() {
               <TableBody>
                 <TableRow>
                   <TableCell>
-                    <Link href={`/machine/job/${job.jid}/`} className="text-primary hover:underline">{job.jid}</Link>
+                    <TextLink href={`/machine/job/${job.jid}/`}>{job.jid}</TextLink>
                   </TableCell>
                   <TableCell>
                     {renderJobEntityLink(
@@ -994,7 +996,7 @@ export default function JobDetail() {
                       {Object.entries(schema).map(([type_name, event]) => (
                         <TableRow key={type_name}>
                           <TableCell>
-                            <Link href={`/machine/job/${job.jid}/${type_name}/`}>{type_name}</Link>
+                            <TextLink href={`/machine/job/${job.jid}/${type_name}/`}>{type_name}</TextLink>
                           </TableCell>
                           <TableCell className="text-left">
                             {Array.isArray(event)

@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { TextLink } from "@/components/TextLink";
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import LoadingMessage from "../components/LoadingMessage";
@@ -100,9 +100,9 @@ export default function PageApiKey() {
       />
       <div className="mx-auto max-w-[640px] px-4">
         <p className="mb-3">
-          <Link href="/machine/" className="text-primary hover:underline">
+          <TextLink href="/machine/">
             Back to HPCPerfStats
-          </Link>
+          </TextLink>
         </p>
         <main id="api-key-main">
           <Card className="shadow-sm">

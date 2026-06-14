@@ -132,4 +132,26 @@ describe("TypeDetail", () => {
     expect(screen.getByRole("button", { name: "Show plot error details" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy error detail" })).toBeInTheDocument();
   });
+
+  it("links back to the job Device data tab", async () => {
+    setTypeDetailQueryMock({
+      data: {
+        type_name: "cpu",
+        jobid: "12345",
+        tplot_item: null,
+        tplot_unavailable_reason: "No data",
+        stats_data: [],
+        schema: [],
+      },
+    });
+
+    renderTypeDetail();
+
+    await waitFor(() => {
+      expect(screen.getByRole("link", { name: /back to job 12345/i })).toHaveAttribute(
+        "href",
+        "/machine/job/12345?tab=device",
+      );
+    });
+  });
 });

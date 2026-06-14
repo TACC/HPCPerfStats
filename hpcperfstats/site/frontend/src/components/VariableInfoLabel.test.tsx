@@ -58,6 +58,15 @@ describe("VariableInfoLabel", () => {
     expect(panel.classList.contains("variable-info-tooltip-portal")).toBe(true);
   });
 
+  it("renders superscript help trigger close to label text", () => {
+    render(
+      <VariableInfoLabel variableName="avg_cpuusage" labelText="avg_cpuusage" enableHelp />,
+    );
+    const help = screen.getByTestId("variable-info-help");
+    expect(help).toHaveClass("align-super");
+    expect(help).not.toHaveClass("min-h-11");
+  });
+
   it("renders suffix before the help control when suffixBeforeHelp is set", () => {
     render(
       <VariableInfoLabel

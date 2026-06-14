@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { TextLink } from "@/components/TextLink";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { JobMonitorRow } from "@/types/view-models";
@@ -303,9 +303,9 @@ export default function JobMonitor() {
               >
                 <TableCell>
                   {row.username ? (
-                    <Link href={`/machine/username/${encodeURIComponent(row.username)}/`} className="text-primary hover:underline">
+                    <TextLink href={`/machine/username/${encodeURIComponent(row.username)}/`}>
                       {row.username}
-                    </Link>
+                    </TextLink>
                   ) : (
                     "(unknown)"
                   )}

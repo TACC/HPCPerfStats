@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import JobDetail, {
   jobPlotEntryEqual,
@@ -8,7 +8,7 @@ import JobDetail, {
 import { useJobDetailQuery } from "@/hooks/use-job-detail";
 import { useJobPlotsQuery } from "@/hooks/use-job-plots";
 import { axeSeriousViolations } from "../../axe-test-utils";
-import { resetNextNavigationMock } from "../../test-utils/next-navigation-state";
+import { nextNavigationMock, resetNextNavigationMock } from "../../test-utils/next-navigation-state";
 import { renderWithProviders } from "@/test-utils/render-with-providers";
 import { VALID_BOKEH_JSON_ITEM } from "@/test-utils/bokeh-fixtures";
 import {
@@ -96,7 +96,7 @@ function setJobDetailQueryMock(
   vi.mocked(useJobDetailQuery).mockReturnValue({
     data: null,
     error: null,
-    loading: false,
+    initialLoading: false,
     detailsLoading: false,
     detailFetchWarning: false,
     deferParam: "xalt,proc,multiprecision",
@@ -227,7 +227,7 @@ describe("JobDetail", () => {
   });
 
   it("shows loading indicator while job detail is fetching", () => {
-    setJobDetailQueryMock({ loading: true, data: null });
+    setJobDetailQueryMock({ initialLoading: true, data: null });
 
     renderJobDetail();
     expect(
@@ -236,7 +236,7 @@ describe("JobDetail", () => {
   });
 
   it("loads job detail page without plots on default metrics tab", async () => {
-    setJobDetailQueryMock({ data: minimalJobDetailResponse, loading: false });
+    setJobDetailQueryMock({ data: minimalJobDetailResponse, initialLoading: false });
     setJobPlotsQueryMock({
       plots: createEmptyJobPlotsState(true),
       plotsLoading: true,
@@ -252,7 +252,7 @@ describe("JobDetail", () => {
   });
 
   it("disables plot query when job detail fails", async () => {
-    setJobDetailQueryMock({ data: null, error: "Job not found", loading: false });
+    setJobDetailQueryMock({ data: null, error: "Job not found", initialLoading: false });
 
     renderJobDetail();
 
@@ -579,6 +579,55 @@ describe("JobDetail", () => {
     await waitFor(() => {
       expect(document.querySelectorAll(".bokeh-embed-wrapper").length).toBe(2);
     });
+  });
+
+  it("styles entity and device type links with TextLink classes", async () => {
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        job_data: {
+          ...minimalJobDetailResponse.job_data,
+          queue: "normal",
+        },
+        schema: { cpu: ["ctr_a"] },
+      },
+    });
+
+    renderJobDetail("12345", { is_staff: false }, "tab=device");
+
+    await waitFor(() => {
+      expect(screen.getByRole("link", { name: "normal" })).toHaveClass("text-link");
+    });
+    expect(screen.getByRole("link", { name: "cpu" })).toHaveClass("underline");
+  });
+
+  it("updates URL when Device data tab is selected", async () => {
+    setJobDetailQueryMock({ data: minimalJobDetailResponse });
+    renderJobDetail("12345");
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "Device data" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Device data" }));
+
+    expect(nextNavigationMock.router.replace).toHaveBeenCalledWith(
+      expect.stringMatching(/tab=device/),
+    );
+  });
+
+  it("deep-links to Device data without full-page skeleton when data exists", async () => {
+    setJobDetailQueryMock({ data: minimalJobDetailResponse, initialLoading: false });
+    renderJobDetail("12345", { is_staff: false }, "tab=device");
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: /job 12345/i })).toBeInTheDocument();
+    });
+    expect(screen.queryByLabelText("Loading job detail")).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Device data" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 });
 

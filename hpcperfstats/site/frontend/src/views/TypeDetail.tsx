@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { TextLink } from "@/components/TextLink";
 import type { BokehJsonItem } from "@/types/bokeh";
 import type { TypeDetailData } from "@/types/view-models";
 import { formatDecimalStandard } from "../utils/formatDecimal";
@@ -66,9 +66,9 @@ export default function TypeDetail() {
         ]}
       />
       <p className="mb-2">
-        <Link href={`/machine/job/${jobid}/`} className="text-primary hover:underline">
+        <TextLink href={`/machine/job/${jobid}/?tab=device`}>
           Back to job {jobid}
-        </Link>
+        </TextLink>
       </p>
       <h1 className="mb-3 text-2xl font-semibold tracking-tight">
         Job {jobid} / Type {type_name}
