@@ -1,11 +1,11 @@
-import { useId, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import BannerErrorMessage from "../components/BannerErrorMessage";
-import BokehPlotWithLimitation from "../components/BokehPlotWithLimitation";
+import LazyExpansionHistogram from "@/components/LazyExpansionHistogram";
 import LoadingMessage from "../components/LoadingMessage";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { usePubDashboardBundle } from "../pub-dashboard-bundle-context";
+import { usePubDashboard } from "../hooks/use-pub-dashboard";
 import type {
   PubDashboardBundle,
   PubDashboardExpansionFactorSection,
@@ -13,7 +13,6 @@ import type {
   PubDashboardHistogramMap,
 } from "../types/view-models";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
-import { formatDecimalStandard } from "../utils/formatDecimal";
 
 const CLUSTER_DASH_TAB_EXPANSION = "expansion-factors";
 
@@ -39,29 +38,73 @@ function asHistogramMap(value: unknown): PubDashboardHistogramMap {
   );
 }
 
-function asExpansionFactorSection(value: unknown): PubDashboardExpansionFactorSection {
+function asExpansionFactorSection(value: unknown): PubDashboardExpansionFactorSection & {
+  monthly_period_keys?: string[];
+  yearly_period_keys?: string[];
+} {
   if (!isRecord(value)) return {};
   return {
     monthly_daily_histograms: asHistogramMap(value.monthly_daily_histograms),
     yearly_weekly_histograms: asHistogramMap(value.yearly_weekly_histograms),
+    monthly_period_keys: Array.isArray(value.monthly_period_keys)
+      ? value.monthly_period_keys.filter((k): k is string => typeof k === "string")
+      : undefined,
+    yearly_period_keys: Array.isArray(value.yearly_period_keys)
+      ? value.yearly_period_keys.filter((k): k is string => typeof k === "string")
+      : undefined,
   };
+}
+
+function periodKeysForGrouping(
+  efSection: ReturnType<typeof asExpansionFactorSection>,
+  grouping: "yearly" | "monthly",
+): string[] {
+  if (grouping === "yearly") {
+    if (efSection.yearly_period_keys?.length) {
+      return [...efSection.yearly_period_keys].sort().reverse();
+    }
+    return Object.keys(efSection.yearly_weekly_histograms ?? {}).sort().reverse();
+  }
+  if (efSection.monthly_period_keys?.length) {
+    return [...efSection.monthly_period_keys].sort().reverse();
+  }
+  return Object.keys(efSection.monthly_daily_histograms ?? {}).sort().reverse();
+}
+
+function inlineBlockForPeriod(
+  efSection: ReturnType<typeof asExpansionFactorSection>,
+  grouping: "yearly" | "monthly",
+  periodKey: string,
+): PubDashboardHistogramBlock | null {
+  const map =
+    grouping === "yearly"
+      ? efSection.yearly_weekly_histograms
+      : efSection.monthly_daily_histograms;
+  const block = map?.[periodKey];
+  return block ?? null;
 }
 
 function SectionExpansionFactor({ bundle }: SectionExpansionFactorProps) {
   const sections = isRecord(bundle.sections) ? bundle.sections : {};
   const efSection = asExpansionFactorSection(sections.expansion_factor);
-  const monthly = efSection.monthly_daily_histograms ?? {};
-  const yearly = efSection.yearly_weekly_histograms ?? {};
   const panelIntroId = useId();
   const [activeGrouping, setActiveGrouping] = useState<"yearly" | "monthly">("yearly");
 
-  const renderHist = (
-    payloadMap: PubDashboardHistogramMap,
+  const yearlyKeys = useMemo(
+    () => periodKeysForGrouping(efSection, "yearly"),
+    [efSection],
+  );
+  const monthlyKeys = useMemo(
+    () => periodKeysForGrouping(efSection, "monthly"),
+    [efSection],
+  );
+
+  const renderHistList = (
+    keys: string[],
+    grouping: "yearly" | "monthly",
     axisHint: string,
-    groupingKey: string,
     histogramCaption: string,
   ) => {
-    const keys = Object.keys(payloadMap).sort().reverse();
     if (!keys.length) {
       return (
         <p className="mb-0 text-muted-foreground">
@@ -73,75 +116,15 @@ function SectionExpansionFactor({ bundle }: SectionExpansionFactorProps) {
       <div className="mb-4">
         <p className="mb-2 text-sm text-muted-foreground">{histogramCaption}</p>
         <p className="mb-3 text-sm text-muted-foreground">{axisHint}</p>
-        {keys.map((k) => {
-          const block = payloadMap[k];
-          const safeDomId = String(k).replace(/[^a-zA-Z0-9_-]+/g, "-");
-          const edges = Array.isArray(block.histogram_bin_edges)
-            ? block.histogram_bin_edges
-            : [];
-          const counts = Array.isArray(block.histogram_counts) ? block.histogram_counts : [];
-          const maxCount = counts.length
-            ? Math.max(1, ...counts.map((c: unknown) => Number(c) || 0))
-            : 1;
-          return (
-            <div key={k} className="mb-4 rounded-lg border bg-muted/40 p-3">
-              <div className="mb-2 font-semibold">{k}</div>
-              <div className="mb-2 text-sm text-muted-foreground">
-                definition: {block.expansion_factor_definition || "—"}
-              </div>
-              {block.bokeh_histogram_json_item ? (
-                <div className="mb-3">
-                  <BokehPlotWithLimitation
-                    item={block.bokeh_histogram_json_item}
-                    id={`pub-expansion-factor-${groupingKey}-${safeDomId}`}
-                    plotName={`Expansion factor histogram for ${k}`}
-                    embedAriaLabel={`Expansion factor histogram for ${k}`}
-                    embedMinHeightPx={320}
-                  />
-                </div>
-              ) : null}
-              {!block.bokeh_histogram_json_item ? (
-                <div className="flex flex-col gap-1">
-                  {counts.map((cntRaw: unknown, idx: number) => {
-                    const lo = edges[idx];
-                    const hi = idx + 1 < edges.length ? edges[idx + 1] : null;
-                    const cnt = Number(cntRaw) || 0;
-                    const widthPct = (cnt / maxCount) * 100;
-                    const labelRight =
-                      hi !== null
-                        ? `[${formatDecimalStandard(lo)}, ${formatDecimalStandard(hi)})`
-                        : `≥ ${formatDecimalStandard(lo)}`;
-                    return (
-                      <div key={`${k}-${idx}`} className="flex items-center gap-2">
-                        <div className="w-56 shrink-0 text-sm">
-                          {labelRight}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div
-                            className="h-[1.1rem] overflow-hidden rounded-full bg-muted"
-                            role="progressbar"
-                            aria-valuenow={cnt}
-                            aria-valuemin={0}
-                            aria-valuemax={maxCount}
-                            aria-label={`${labelRight}: ${cnt} jobs`}
-                          >
-                            <div
-                              className="h-full rounded-full bg-primary/70"
-                              style={{ width: `${widthPct}%` }}
-                            />
-                          </div>
-                        </div>
-                        <div className="w-12 shrink-0 text-end text-sm">
-                          {cnt}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </div>
-          );
-        })}
+        {keys.map((periodKey) => (
+          <LazyExpansionHistogram
+            key={`${grouping}-${periodKey}`}
+            grouping={grouping}
+            periodKey={periodKey}
+            histogramCaption={histogramCaption}
+            initialBlock={inlineBlockForPeriod(efSection, grouping, periodKey)}
+          />
+        ))}
       </div>
     );
   };
@@ -168,10 +151,10 @@ function SectionExpansionFactor({ bundle }: SectionExpansionFactorProps) {
           </Button>
         </div>
         {activeGrouping === "yearly"
-          ? renderHist(
-              yearly,
+          ? renderHistList(
+              yearlyKeys,
+              "yearly",
               "Each chart lists calendar years; buckets are ISO weeks inside that year.",
-              "year",
               "Histogram of weekly mean expansion factor.",
             )
           : null}
@@ -192,10 +175,10 @@ function SectionExpansionFactor({ bundle }: SectionExpansionFactorProps) {
           <h3 className="mb-0 text-xl font-semibold">Monthly</h3>
         </div>
         {activeGrouping === "monthly"
-          ? renderHist(
-              monthly,
+          ? renderHistList(
+              monthlyKeys,
+              "monthly",
               "Each chart lists completed-job calendar months.",
-              "month",
               "Histogram of daily mean expansion factor.",
             )
           : null}
@@ -226,7 +209,7 @@ function ClusterDashboardTabs({ bundle }: ClusterDashboardTabsProps) {
 
 export default function PageClusterDashboard() {
   useDocumentTitle("Cluster dashboard — public");
-  const { loading, bundle, error: loadError } = usePubDashboardBundle();
+  const { loading, bundle, error: loadError } = usePubDashboard();
   const error = loadError || null;
   const typedBundle =
     bundle && typeof bundle === "object" ? (bundle as PubDashboardBundle) : null;

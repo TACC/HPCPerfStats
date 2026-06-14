@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import type { JobMonitorRow } from "@/types/view-models";
 import { getErrorMessage } from "@/api/get-error-message";
 import { useJobMonitorQuery } from "@/hooks/use-job-monitor";
@@ -134,6 +135,14 @@ export default function JobMonitor() {
     });
   }, [rows, sortKey, sortDir]);
 
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: sortedRows.length,
+    getScrollElement: () => tableScrollRef.current,
+    estimateSize: () => 44,
+    overscan: 10,
+  });
+
   return (
     <>
       <h1 className="mb-3 text-2xl font-semibold tracking-tight">Job failure monitor</h1>
@@ -183,7 +192,8 @@ export default function JobMonitor() {
         />
       )}
       {!loading && !error && (
-        <Table className="border text-sm">
+        <div ref={tableScrollRef} className="max-h-[70vh] overflow-auto rounded-md border">
+        <Table className="border-0 text-sm">
           <TableCaption className="sr-only">
             Job outcomes by user for the last {windowDays} days
           </TableCaption>
@@ -272,9 +282,25 @@ export default function JobMonitor() {
               </SortableTableHeader>
             </TableRow>
           </TableHeader>
-          <TableBody>
-            {sortedRows.map((row) => (
-              <TableRow key={row.username || "(unknown)"}>
+          <TableBody
+            style={{
+              height: sortedRows.length ? `${rowVirtualizer.getTotalSize()}px` : undefined,
+              position: "relative",
+            }}
+          >
+            {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+              const row = sortedRows[virtualRow.index];
+              return (
+              <TableRow
+                key={row.username || `(unknown-${virtualRow.index})`}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  transform: `translateY(${virtualRow.start}px)`,
+                }}
+              >
                 <TableCell>
                   {row.username ? (
                     <Link href={`/machine/username/${encodeURIComponent(row.username)}/`} className="text-primary hover:underline">
@@ -298,7 +324,8 @@ export default function JobMonitor() {
                   )}
                 </TableCell>
               </TableRow>
-            ))}
+              );
+            })}
             {rows.length === 0 && (
               <TableRow>
                 <TableCell colSpan={9} className="text-center text-muted-foreground">
@@ -308,6 +335,7 @@ export default function JobMonitor() {
             )}
           </TableBody>
         </Table>
+        </div>
       )}
     </>
   );

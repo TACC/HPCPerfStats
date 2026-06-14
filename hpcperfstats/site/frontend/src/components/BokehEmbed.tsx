@@ -6,8 +6,10 @@ import { useSession } from "../session-context";
 import {
   DEFAULT_INTERSECTION_ROOT_MARGIN,
   DEFAULT_INTERSECTION_THRESHOLD,
+  BOKEH_EMBED_LOCK_SHARDS,
   defaultDeferEmbedUntilVisible,
   defaultEmbedSettleAfterIdleMs,
+  bokehEmbedLockShard,
   delayMs,
   isVitestLike,
 } from "../utils/bokeh-embed-defaults";
@@ -96,14 +98,18 @@ function whenBokehReady(timeoutMs = 10000, options: WhenBokehReadyOptions = {}) 
  * ``embed_item`` resolves, and defer synthetic ``resize`` (see
  * ``maximizeEmbeddedPlot``).
  */
-let bokehEmbedChain: Promise<void> = Promise.resolve();
+let bokehEmbedChains: Promise<void>[] = Array.from(
+  { length: BOKEH_EMBED_LOCK_SHARDS },
+  () => Promise.resolve(),
+);
 
-function withBokehEmbedLock(run: () => void | Promise<void>) {
-  const next = bokehEmbedChain.then(
+function withBokehEmbedLock(embedId: string, run: () => void | Promise<void>) {
+  const shard = bokehEmbedLockShard(embedId);
+  const next = bokehEmbedChains[shard].then(
     () => Promise.resolve().then(run),
     () => Promise.resolve().then(run),
   );
-  bokehEmbedChain = next.then(
+  bokehEmbedChains[shard] = next.then(
     () => undefined,
     () => undefined,
   );
@@ -394,7 +400,7 @@ export default function BokehEmbed({
 
     let cancelled = false;
     const bokehWait = new AbortController();
-    withBokehEmbedLock(() => {
+    withBokehEmbedLock(id, () => {
       if (cancelled) return;
       return ensureBokehLoaded()
         .then(() => whenBokehReady(10000, { signal: bokehWait.signal }))

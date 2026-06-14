@@ -13,6 +13,13 @@ import { useDocumentTitle } from "@/utils/useDocumentTitle";
 
 applyBokehResizeObserverDeferral();
 
+const PLACEHOLDER_SESSION: SessionData = {
+  logged_in: true,
+  username: "",
+  is_staff: false,
+  machine_name: "",
+};
+
 function sessionFromApi(data: SessionInfo): SessionData {
   return {
     logged_in: data.logged_in,
@@ -20,17 +27,6 @@ function sessionFromApi(data: SessionInfo): SessionData {
     is_staff: data.is_staff,
     machine_name: data.machine_name,
   };
-}
-
-function SessionGateLayout({ message, title }: { message: string; title: string }) {
-  useDocumentTitle(title);
-  return (
-    <>
-      <main id="main-content" tabIndex={-1}>
-        <LoadingMessage message={message} />
-      </main>
-    </>
-  );
 }
 
 export default function MachineLayout({ children }: { children: React.ReactNode }) {
@@ -62,18 +58,28 @@ export default function MachineLayout({ children }: { children: React.ReactNode 
     window.location.replace(target);
   }, [isLoading, session]);
 
-  if (isLoading) {
-    return <SessionGateLayout message="Loading session…" title="Loading session" />;
+  useDocumentTitle(
+    isLoading ? "Loading session" : !session?.logged_in ? "Redirecting to sign in" : " ",
+  );
+
+  if (!isLoading && !session?.logged_in) {
+    return (
+      <main id="main-content" tabIndex={-1}>
+        <LoadingMessage message="Redirecting to sign in…" />
+      </main>
+    );
   }
 
-  if (!session?.logged_in) {
-    return <SessionGateLayout message="Redirecting to sign in…" title="Redirecting to sign in" />;
-  }
+  const layoutSession = session ?? PLACEHOLDER_SESSION;
 
   return (
-    <SessionContext.Provider value={session}>
-      <Layout session={session} onSessionChange={handleSessionChange}>
-        {children}
+    <SessionContext.Provider value={layoutSession}>
+      <Layout session={layoutSession} onSessionChange={handleSessionChange}>
+        {isLoading ? (
+          <LoadingMessage message="Loading session…" />
+        ) : (
+          children
+        )}
       </Layout>
     </SessionContext.Provider>
   );

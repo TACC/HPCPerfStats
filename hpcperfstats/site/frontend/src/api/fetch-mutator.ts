@@ -91,9 +91,23 @@ export async function customFetch<T>(
 }
 
 /** Anonymous public cluster dashboard — credentials omitted. */
-export async function fetchPubClusterDashboard<T = unknown>(): Promise<T> {
+export async function fetchPubClusterDashboard<T = unknown>(
+  params?: Record<string, unknown>,
+): Promise<T> {
   return customFetch<T>(
-    { url: "/api/pub/cluster-dashboard/", method: "GET" },
+    { url: "/api/pub/cluster-dashboard/", method: "GET", params },
     { credentials: "omit" },
   );
+}
+
+/** Lazy-load one expansion-factor histogram period. */
+export async function fetchPubExpansionPeriod<T = unknown>(
+  grouping: "yearly" | "monthly",
+  period: string,
+): Promise<T> {
+  return fetchPubClusterDashboard<T>({
+    section: "expansion_factor",
+    grouping,
+    period,
+  });
 }

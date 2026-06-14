@@ -3,7 +3,7 @@ import { getErrorMessage } from "@/api/get-error-message";
 
 /** Loads anonymous `/api/pub/cluster-dashboard/` bundle for public dashboards. */
 export function usePubDashboard() {
-  const { data, error, isLoading, refetch } = usePubClusterDashboardRetrieve({
+  const { data, error, isLoading, refetch } = usePubClusterDashboardRetrieve(undefined, {
     request: { credentials: "omit" },
   });
   return {

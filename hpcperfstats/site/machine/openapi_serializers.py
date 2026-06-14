@@ -227,6 +227,13 @@ class JobListHistogramResponseSerializer(serializers.Serializer):
     plot_unavailable_reason = serializers.CharField(required=False, allow_null=True)
 
 
+class JobListHistogramBatchResponseSerializer(serializers.Serializer):
+    """Batch histogram envelope from job_list_histograms_batch."""
+
+    nj = serializers.IntegerField(required=False)
+    histograms = JobListHistogramResponseSerializer(many=True, required=False)
+
+
 class TypeDetailResponseSerializer(serializers.Serializer):
     type_name = serializers.CharField(required=False)
     jobid = serializers.CharField(required=False)

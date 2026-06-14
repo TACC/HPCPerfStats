@@ -20,6 +20,18 @@ export function defaultEmbedSettleAfterIdleMs() {
   return isVitestLike() ? 0 : 24;
 }
 
+/** Parallel Bokeh embed pipelines (shard by embed id to reduce head-of-line blocking). */
+export const BOKEH_EMBED_LOCK_SHARDS = 4;
+
+export function bokehEmbedLockShard(embedId: string): number {
+  const id = embedId || "default";
+  let hash = 0;
+  for (let i = 0; i < id.length; i += 1) {
+    hash = (hash + id.charCodeAt(i)) % BOKEH_EMBED_LOCK_SHARDS;
+  }
+  return hash;
+}
+
 export const DEFAULT_INTERSECTION_ROOT_MARGIN = "100px 0px";
 
 export const DEFAULT_INTERSECTION_THRESHOLD = 0.01;

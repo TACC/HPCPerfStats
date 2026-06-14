@@ -264,7 +264,8 @@ paths:
   /api/job_monitor/gpu/:
     get:
       operationId: job_monitor_gpu_retrieve
-      description: Staff-only per-user GPU rollup for Job Monitor async row updates.
+      description: Staff-only GPU rollup for Job Monitor (single ``username`` or batch
+        ``usernames``).
       parameters:
       - in: query
         name: days
@@ -274,7 +275,11 @@ paths:
         name: username
         schema:
           type: string
-        required: true
+      - in: query
+        name: usernames
+        schema:
+          type: string
+        description: Comma-separated usernames for batch GPU rollup
       tags:
       - monitor
       security:
@@ -470,6 +475,11 @@ paths:
       description: 'Single job detail: metadata, host_list, fsio, xalt, schema, URLs
         (plots via separate job_plots endpoint).'
       parameters:
+      - in: query
+        name: defer
+        schema:
+          type: string
+        description: 'Comma-separated: xalt, proc, multiprecision'
       - in: path
         name: id
         schema:
@@ -706,11 +716,97 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Server error
+  /api/jobs/histograms/batch/:
+    get:
+      operationId: jobs_histograms_batch_retrieve
+      description: |-
+        Return multiple metric histograms in one response (single dataframe build).
+
+        Query param ``metrics`` is comma-separated (default: runtime,nhosts,queue_wait).
+      parameters:
+      - in: query
+        name: metrics
+        schema:
+          type: string
+        description: 'Comma-separated metric names (default: runtime,nhosts,queue_wait)'
+      tags:
+      - jobs
+      security:
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobListHistogramBatchResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Forbidden
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Not found
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Payload too large
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Too many requests
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Server error
   /api/pub/cluster-dashboard/:
     get:
       operationId: pub_cluster_dashboard_retrieve
-      description: Bundle every persisted expansion-factor histogram artifact for
-        the public cluster dashboard.
+      description: 'Public cluster dashboard: meta by default; lazy period or full
+        bundle via query params.'
+      parameters:
+      - in: query
+        name: full
+        schema:
+          type: integer
+        description: 1 to return legacy full bundle
+      - in: query
+        name: grouping
+        schema:
+          type: string
+      - in: query
+        name: period
+        schema:
+          type: string
+      - in: query
+        name: section
+        schema:
+          type: string
+        description: Lazy section (expansion_factor)
       tags:
       - public
       responses:
@@ -1266,6 +1362,16 @@ components:
           type: string
       required:
       - jid
+    JobListHistogramBatchResponse:
+      type: object
+      description: Batch histogram envelope from job_list_histograms_batch.
+      properties:
+        nj:
+          type: integer
+        histograms:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobListHistogramResponse'
     JobListHistogramEnvelope:
       type: object
       description: Histogram metadata without embedded Bokeh plot_item payloads.

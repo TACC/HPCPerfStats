@@ -245,6 +245,78 @@ def test_job_list_queryset_filters_derived_metrics_from_prewarmed_metrics_data()
 
 
 @pytest.mark.django_db
+def test_job_list_queryset_multi_metric_filters_do_not_inflate_count():
+    """Two metric filters must not duplicate rows (count equals distinct matching jids)."""
+    if connection.vendor != "postgresql":
+        pytest.skip("job_data.host_list ArrayField is PostgreSQL-specific in this project")
+
+    now = timezone.now()
+    high_freq = job_data.objects.create(
+        jid="joblist-metric-dup-high",
+        submit_time=now,
+        start_time=now,
+        end_time=now,
+        runtime=60.0,
+        username="metric-dup-user",
+        host_list=["m1.example.com"],
+    )
+    low_freq = job_data.objects.create(
+        jid="joblist-metric-dup-low",
+        submit_time=now,
+        start_time=now,
+        end_time=now,
+        runtime=60.0,
+        username="metric-dup-user",
+        host_list=["m1.example.com"],
+    )
+    metrics_data.objects.create(
+        jid=high_freq,
+        type="pmc",
+        metric="avg_freq",
+        units="GHz",
+        value=3.0,
+    )
+    metrics_data.objects.create(
+        jid=high_freq,
+        type="pmc",
+        metric="avg_cpi",
+        units="",
+        value=0.5,
+    )
+    metrics_data.objects.create(
+        jid=low_freq,
+        type="pmc",
+        metric="avg_freq",
+        units="GHz",
+        value=1.0,
+    )
+    metrics_data.objects.create(
+        jid=low_freq,
+        type="pmc",
+        metric="avg_cpi",
+        units="",
+        value=2.0,
+    )
+
+    factory = RequestFactory()
+    request = factory.get(
+        "/api/jobs/",
+        {
+            "username": "metric-dup-user",
+            "metrics_avg_freq__gte": "2.0",
+            "metrics_avg_cpi__lte": "1.0",
+        },
+    )
+    request.session = {"username": "admin", "is_staff": True}
+
+    qs, _fields, cur_metrics, _order = _build_job_list_queryset_from_request(request)
+
+    assert cur_metrics == {"avg_freq__gte": "2.0", "avg_cpi__lte": "1.0"}
+    assert qs.count() == 1
+    assert list(qs.values_list("jid", flat=True)) == ["joblist-metric-dup-high"]
+
+
+@pytest.mark.django_db
 def test_job_list_queryset_ignores_unsupported_derived_metric_operators():
     if connection.vendor != "postgresql":
         pytest.skip("job_data.host_list ArrayField is PostgreSQL-specific in this project")

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useState } from "react";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import LoadingMessage from "../components/LoadingMessage";
-import { buttonVariants } from "@/components/ui/button";
+import { buttonVariants, Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -55,11 +55,14 @@ function toMonthSlug(value: unknown): string {
   return String(value || "").replace(/[^a-zA-Z0-9_-]/g, "-");
 }
 
+const SEARCH_CALENDAR_MONTHS_INITIAL = 12;
+
 export default function Search() {
   const router = useRouter();
   const { options, error, loading } = useHomeOptions();
   const [browseTab, setBrowseTab] = useState<BrowseTab>("calendar");
   const [monthJumpValue, setMonthJumpValue] = useState("");
+  const [visibleMonthCount, setVisibleMonthCount] = useState(SEARCH_CALENDAR_MONTHS_INITIAL);
 
   useDocumentTitle(loading ? "Loading browse" : "Browse jobs by time");
 
@@ -68,6 +71,8 @@ export default function Search() {
 
   const yearList = normalizeYearList(options?.year_list);
   const dateList = normalizeDateList(options?.date_list);
+  const visibleDateList = dateList.slice(0, visibleMonthCount);
+  const hasMoreMonths = dateList.length > visibleMonthCount;
 
   const yearLinkClass = cn(
     buttonVariants({ variant: "outline", size: "sm" }),
@@ -168,7 +173,7 @@ export default function Search() {
           </Select>
         </div>
         <div className="flex flex-col gap-4">
-          {dateList.map(([month, dates]) => {
+          {visibleDateList.map(([month, dates]) => {
             const monthSlug = toMonthSlug(month);
             return (
               <section
@@ -206,6 +211,22 @@ export default function Search() {
             );
           })}
         </div>
+        {hasMoreMonths ? (
+          <div className="mt-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                setVisibleMonthCount((count) =>
+                  Math.min(dateList.length, count + SEARCH_CALENDAR_MONTHS_INITIAL),
+                )
+              }
+            >
+              Load more months ({dateList.length - visibleMonthCount} remaining)
+            </Button>
+          </div>
+        ) : null}
       </>
     ) : (
       <p className="text-muted-foreground">No job data available</p>
@@ -232,12 +253,12 @@ export default function Search() {
 
         <TabsContent value="calendar" className="search-home-section mt-3 [&_h4]:mb-2 max-md:[&_h4]:text-[1.1rem]">
           <h2 className="sr-only">Browse by calendar</h2>
-          {calendarBrowsePrimary}
+          {browseTab === "calendar" ? calendarBrowsePrimary : null}
         </TabsContent>
 
         <TabsContent value="year" className="mb-0 mt-3 last:mb-0">
           <h2 className="sr-only">Browse by year</h2>
-          {yearBrowsePrimary}
+          {browseTab === "year" ? yearBrowsePrimary : null}
         </TabsContent>
       </Tabs>
     </div>

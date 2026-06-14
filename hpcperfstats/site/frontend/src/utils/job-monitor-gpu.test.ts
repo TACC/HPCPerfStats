@@ -31,14 +31,23 @@ describe("mergeJobMonitorGpuPatches", () => {
 });
 
 describe("fetchJobMonitorGpuPatches", () => {
-  it("returns one patch per username", async () => {
-    vi.mocked(jobMonitorGpuRetrieve).mockResolvedValue({ has_data: false });
+  it("uses batch usernames param for multiple rows", async () => {
+    vi.mocked(jobMonitorGpuRetrieve).mockResolvedValue({
+      results: [
+        { username: "a", has_data: false },
+        { username: "b", has_data: false },
+      ],
+    });
     const patches = await fetchJobMonitorGpuPatches(
       [{ username: "a" }, { username: "b" }],
       30,
     );
     expect(patches.size).toBe(2);
-    expect(jobMonitorGpuRetrieve).toHaveBeenCalledTimes(2);
+    expect(jobMonitorGpuRetrieve).toHaveBeenCalledTimes(1);
+    expect(jobMonitorGpuRetrieve).toHaveBeenCalledWith({
+      usernames: "a,b",
+      days: 30,
+    });
   });
 });
 

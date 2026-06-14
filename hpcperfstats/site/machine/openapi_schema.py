@@ -101,10 +101,33 @@ JOB_LIST_HISTOGRAMS_SCHEMA = extend_schema(
     },
 )
 
+JOB_LIST_HISTOGRAMS_BATCH_SCHEMA = extend_schema(
+    tags=["jobs"],
+    parameters=[
+        OpenApiParameter(
+            name="metrics",
+            type=str,
+            location=OpenApiParameter.QUERY,
+            description="Comma-separated metric names (default: runtime,nhosts,queue_wait)",
+        ),
+    ],
+    responses={
+        200: os.JobListHistogramBatchResponseSerializer,
+        **_auth_responses(),
+        **_common_error_responses(),
+    },
+)
+
 JOB_DETAIL_SCHEMA = extend_schema(
     tags=["jobs"],
     parameters=[
         OpenApiParameter(name="light", type=int, location=OpenApiParameter.QUERY),
+        OpenApiParameter(
+            name="defer",
+            type=str,
+            location=OpenApiParameter.QUERY,
+            description="Comma-separated: xalt, proc, multiprecision",
+        ),
     ],
     responses={
         200: os.JobDetailResponseSerializer,
@@ -174,7 +197,13 @@ JOB_MONITOR_SCHEMA = extend_schema(
 JOB_MONITOR_GPU_SCHEMA = extend_schema(
     tags=["monitor"],
     parameters=[
-        OpenApiParameter(name="username", type=str, location=OpenApiParameter.QUERY, required=True),
+        OpenApiParameter(name="username", type=str, location=OpenApiParameter.QUERY),
+        OpenApiParameter(
+            name="usernames",
+            type=str,
+            location=OpenApiParameter.QUERY,
+            description="Comma-separated usernames for batch GPU rollup",
+        ),
         OpenApiParameter(name="days", type=int, location=OpenApiParameter.QUERY),
     ],
     responses={200: os.JobMonitorGpuResponseSerializer, **_auth_responses()},
@@ -196,5 +225,21 @@ SACCT_INGEST_SCHEMA = extend_schema(
 PUBLIC_CLUSTER_DASHBOARD_SCHEMA = extend_schema(
     tags=["public"],
     auth=[],
+    parameters=[
+        OpenApiParameter(
+            name="section",
+            type=str,
+            location=OpenApiParameter.QUERY,
+            description="Lazy section (expansion_factor)",
+        ),
+        OpenApiParameter(name="grouping", type=str, location=OpenApiParameter.QUERY),
+        OpenApiParameter(name="period", type=str, location=OpenApiParameter.QUERY),
+        OpenApiParameter(
+            name="full",
+            type=int,
+            location=OpenApiParameter.QUERY,
+            description="1 to return legacy full bundle",
+        ),
+    ],
     responses={200: os.PublicClusterDashboardSerializer},
 )

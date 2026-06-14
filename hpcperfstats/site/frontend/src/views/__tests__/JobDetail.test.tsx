@@ -99,8 +99,10 @@ function setJobDetailQueryMock(
     loading: false,
     detailsLoading: false,
     detailFetchWarning: false,
-    refetchLight: vi.fn(),
-    refetchFull: vi.fn(),
+    deferParam: "xalt,proc,multiprecision",
+    loadFullDetail: vi.fn(),
+    loadDetailWithoutDeferParts: vi.fn(),
+    refetchDetail: vi.fn(),
     ...overrides,
   });
 }
@@ -233,7 +235,7 @@ describe("JobDetail", () => {
     ).toBeInTheDocument();
   });
 
-  it("loads job detail page before plots and requests plots after detail resolves", async () => {
+  it("loads job detail page without plots on default metrics tab", async () => {
     setJobDetailQueryMock({ data: minimalJobDetailResponse, loading: false });
     setJobPlotsQueryMock({
       plots: createEmptyJobPlotsState(true),
@@ -246,8 +248,7 @@ describe("JobDetail", () => {
       expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
     });
     expect(screen.getAllByText("testjob").length).toBeGreaterThanOrEqual(1);
-    expect(useJobPlotsQuery).toHaveBeenCalledWith("12345", true);
-    expect(screen.getByText("Loading job plots…")).toBeInTheDocument();
+    expect(useJobPlotsQuery).toHaveBeenCalledWith("12345", false);
   });
 
   it("disables plot query when job detail fails", async () => {

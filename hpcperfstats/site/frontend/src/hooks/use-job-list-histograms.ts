@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { jobsHistogramsRetrieve } from "@/api/generated/jobs/jobs";
+import { jobsHistogramsBatchRetrieve } from "@/api/generated/jobs/jobs";
 import { HISTOGRAM_EMBED_VERSION } from "@/api-paths";
 import type { JobListHistogramEntry, MetricHistStatusMap } from "@/types/view-models";
 import { normalizeJobListHistogramEntry } from "@/utils/normalize-job-list-histogram-entry";
@@ -13,6 +13,8 @@ export const JOB_LIST_HISTOGRAM_METRICS: readonly MetricName[] = [
   "queue_wait",
 ];
 
+const BATCH_METRICS_PARAM = JOB_LIST_HISTOGRAM_METRICS.join(",");
+
 function createInitialMetricStatus(
   loading: boolean,
 ): MetricHistStatusMap {
@@ -22,54 +24,14 @@ function createInitialMetricStatus(
   }, {});
 }
 
-type MetricLoadResult = {
-  metric: MetricName;
-  entry: JobListHistogramEntry | null;
-  error: string | null;
-};
-
-async function loadHistogramMetric(
-  metric: MetricName,
-  params: Record<string, string>,
-  signal: AbortSignal,
-): Promise<MetricLoadResult> {
-  try {
-    const histParams = {
-      ...params,
-      group: "metric",
-      metric,
-      _histogram_embed_v: HISTOGRAM_EMBED_VERSION,
-    };
-    const metricData = await jobsHistogramsRetrieve(histParams, undefined, signal);
-    if (!metricData) {
-      return { metric, entry: null, error: null };
-    }
-    return {
-      metric,
-      entry: normalizeJobListHistogramEntry(
-        metricData as Parameters<typeof normalizeJobListHistogramEntry>[0],
-        metric,
-      ),
-      error: null,
-    };
-  } catch (err) {
-    const message =
-      err instanceof Error
-        ? err.message
-        : `Failed to load ${metric} histogram for this job list.`;
-    console.warn(`Failed to load job list histogram for metric '${metric}':`, err);
-    return { metric, entry: null, error: message };
-  }
-}
-
-function metricStatusFromResults(results: MetricLoadResult[]): MetricHistStatusMap {
-  return results.reduce<MetricHistStatusMap>((acc, { metric, error }) => {
-    acc[metric] = { loading: false, error };
+function metricStatusFromBatchError(message: string): MetricHistStatusMap {
+  return JOB_LIST_HISTOGRAM_METRICS.reduce<MetricHistStatusMap>((acc, metric) => {
+    acc[metric] = { loading: false, error: message };
     return acc;
-  }, createInitialMetricStatus(false));
+  }, {});
 }
 
-/** Loads metric histogram embeds for the current job list filter params. */
+/** Loads metric histogram embeds for the current job list filter params (single batch API). */
 export function useJobListHistograms(
   listApiParams: Record<string, string>,
   reloadKey = 0,
@@ -92,18 +54,58 @@ export function useJobListHistograms(
     setMetricHistStatus(createInitialMetricStatus(true));
 
     const loadHistograms = async () => {
-      const results = await Promise.all(
-        JOB_LIST_HISTOGRAM_METRICS.map((metric) =>
-          loadHistogramMetric(metric, listApiParams, controller.signal),
-        ),
-      );
-      if (controller.signal.aborted) return;
-      setMetricHistStatus(metricStatusFromResults(results));
-      setHistograms(
-        results
-          .map((result) => result.entry)
-          .filter((entry): entry is JobListHistogramEntry => entry != null),
-      );
+      try {
+        const batchParams = {
+          ...listApiParams,
+          metrics: BATCH_METRICS_PARAM,
+          _histogram_embed_v: HISTOGRAM_EMBED_VERSION,
+        };
+        const batchData = await jobsHistogramsBatchRetrieve(
+          batchParams,
+          undefined,
+          controller.signal,
+        );
+        if (controller.signal.aborted) return;
+
+        const rows = Array.isArray(batchData?.histograms) ? batchData.histograms : [];
+        const nextStatus = createInitialMetricStatus(false);
+        const entries: JobListHistogramEntry[] = [];
+        const loadedMetrics = new Set<MetricName>();
+
+        for (const row of rows) {
+          const metric = String(row?.metric || "") as MetricName;
+          if (!JOB_LIST_HISTOGRAM_METRICS.includes(metric)) continue;
+          const entry = normalizeJobListHistogramEntry(
+            row as Parameters<typeof normalizeJobListHistogramEntry>[0],
+            metric,
+          );
+          if (!entry) continue;
+          entries.push(entry);
+          loadedMetrics.add(metric);
+          nextStatus[metric] = { loading: false, error: null };
+        }
+
+        for (const metric of JOB_LIST_HISTOGRAM_METRICS) {
+          if (!loadedMetrics.has(metric)) {
+            nextStatus[metric] = {
+              loading: false,
+              error: `No histogram data for ${metric}.`,
+            };
+          }
+        }
+
+        setMetricHistStatus(nextStatus);
+        setHistograms(entries.length ? entries : null);
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        const message =
+          err instanceof Error
+            ? err.message
+            : "Failed to load histograms for this job list.";
+        console.warn("Failed to load job list histogram batch:", err);
+        setMetricHistStatus(metricStatusFromBatchError(message));
+        setHistograms(null);
+      }
     };
 
     void loadHistograms();

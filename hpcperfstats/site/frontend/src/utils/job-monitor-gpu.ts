@@ -7,8 +7,6 @@ const JOB_MONITOR_GPU_SORT_KEYS = new Set([
   "gpu_active_total",
 ]);
 
-export const JOB_MONITOR_GPU_FETCH_CONCURRENCY = 8;
-
 export const JOB_MONITOR_GPU_NO_DATA_ROW = {
   gpu_count_total: null,
   gpu_active_total: null,
@@ -21,6 +19,11 @@ type JobMonitorGpuApiResponse = {
   gpu_count_total?: unknown;
   gpu_active_total?: unknown;
   gpu_active_percentage?: unknown;
+  username?: unknown;
+};
+
+type JobMonitorGpuBatchResponse = {
+  results?: JobMonitorGpuApiResponse[];
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -55,40 +58,54 @@ export async function fetchJobMonitorGpuPatchForUsername(
   }
 }
 
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  concurrency: number,
-  mapper: (item: T) => Promise<R>,
-): Promise<R[]> {
-  if (items.length === 0) return [];
-  const limit = Math.max(1, concurrency);
-  const results: R[] = new Array(items.length);
-  let nextIndex = 0;
-
-  async function worker() {
-    while (nextIndex < items.length) {
-      const index = nextIndex;
-      nextIndex += 1;
-      results[index] = await mapper(items[index]);
-    }
-  }
-
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
-  return results;
-}
-
-/** Fetch GPU patches for monitor rows with bounded concurrency (one map, one setState in callers). */
+/** Batch GPU rollup via ``usernames`` query param (one HTTP request). */
 export async function fetchJobMonitorGpuPatches(
   rows: Array<{ username?: string }>,
   days: number | undefined,
-  options?: { concurrency?: number },
 ): Promise<Map<string, Record<string, unknown>>> {
-  const concurrency = options?.concurrency ?? JOB_MONITOR_GPU_FETCH_CONCURRENCY;
-  const usernames = rows.map((row) => String(row.username || ""));
-  const pairs = await mapWithConcurrency(usernames, concurrency, async (username) => {
-    const patch = await fetchJobMonitorGpuPatchForUsername(username, days);
-    return [username, patch] as const;
-  });
+  const usernames = rows.map((row) => String(row.username || "")).filter(Boolean);
+  if (usernames.length === 0) {
+    return new Map();
+  }
+
+  if (usernames.length === 1) {
+    const patch = await fetchJobMonitorGpuPatchForUsername(usernames[0], days);
+    return new Map([[usernames[0], patch]]);
+  }
+
+  try {
+    const batchRes = await jobMonitorGpuRetrieve({
+      usernames: usernames.join(","),
+      days,
+    });
+
+    if (
+      batchRes &&
+      typeof batchRes === "object" &&
+      "results" in batchRes &&
+      Array.isArray((batchRes as JobMonitorGpuBatchResponse).results)
+    ) {
+      const pairs = (batchRes as JobMonitorGpuBatchResponse).results!.map((row) => {
+        const username = String(row?.username || "");
+        return [username, gpuPatchFromResponse(row)] as const;
+      });
+      return new Map(pairs);
+    }
+
+    if (isRecord(batchRes) && "username" in batchRes) {
+      const username = String((batchRes as JobMonitorGpuApiResponse).username || "");
+      return new Map([[username, gpuPatchFromResponse(batchRes)]]);
+    }
+  } catch {
+    // Fall through to per-user fetches on batch failure.
+  }
+
+  const pairs = await Promise.all(
+    usernames.map(async (username) => {
+      const patch = await fetchJobMonitorGpuPatchForUsername(username, days);
+      return [username, patch] as const;
+    }),
+  );
   return new Map(pairs);
 }
 

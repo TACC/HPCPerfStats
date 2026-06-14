@@ -2,6 +2,7 @@
 from unittest.mock import ANY, MagicMock, patch
 
 import pandas as pd
+import pytest
 from django.test import RequestFactory, override_settings
 
 class TestJobListHistogramsView:
@@ -206,6 +207,61 @@ def test_metric_group_invalid_json_payload_is_replaced_with_unavailable_reason()
     assert data["plot_unavailable_reason"] == (
         "No histogram data available for metric 'runtime' in this query."
     )
+
+
+@pytest.mark.django_db(databases=[])
+def test_job_list_histograms_rejects_when_nj_exceeds_cap():
+    from hpcperfstats.site.machine.api import JOB_LIST_HISTOGRAM_MAX_NJ, job_list_histograms
+
+    factory = RequestFactory()
+    request = factory.get(
+        "/api/jobs/histograms/",
+        {"group": "metric", "metric": "runtime"},
+    )
+    request.session = {"username": "admin", "is_staff": True}
+
+    with patch("hpcperfstats.site.machine.api.check_for_tokens", return_value=True), patch(
+        "hpcperfstats.site.machine.api._build_histogram_queryset",
+        return_value=(MagicMock(), JOB_LIST_HISTOGRAM_MAX_NJ + 1, {}, {}),
+    ):
+        response = job_list_histograms(request)
+
+    assert response.status_code == 413
+    data = response.json()
+    assert data["error"] == "histogram_job_count_exceeded"
+
+
+@pytest.mark.django_db(databases=[])
+def test_job_list_histograms_batch_returns_multiple_metrics():
+    from hpcperfstats.site.machine.api import job_list_histograms_batch
+
+    factory = RequestFactory()
+    request = factory.get(
+        "/api/jobs/histograms/batch/",
+        {"metrics": "runtime,nhosts"},
+    )
+    request.session = {"username": "admin", "is_staff": True}
+
+    mock_df = MagicMock()
+    with patch("hpcperfstats.site.machine.api.check_for_tokens", return_value=True), patch(
+        "hpcperfstats.site.machine.api._build_histogram_queryset",
+        return_value=(MagicMock(), 2, {}, {}),
+    ), patch(
+        "hpcperfstats.site.machine.api._build_histogram_dataframe",
+        return_value=(mock_df, [("runtime", "hours"), ("nhosts", "# nodes")], ["j1", "j2"]),
+    ), patch(
+        "hpcperfstats.site.machine.api._build_metric_histogram_payload",
+        side_effect=[
+            {"metric": "runtime", "nj": 2},
+            {"metric": "nhosts", "nj": 2},
+        ],
+    ):
+        response = job_list_histograms_batch(request)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["nj"] == 2
+    assert len(data["histograms"]) == 2
 
 
 class TestJobListNoHistogramsInResponse:

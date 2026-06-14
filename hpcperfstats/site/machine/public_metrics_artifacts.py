@@ -560,6 +560,65 @@ def refresh_public_expansion_factor_artifacts_safe() -> None:
     logger.exception("public metrics artifact refresh failed")
 
 
+HOST_PLOT_MAX_WINDOW_DAYS = 7
+
+
+def assemble_public_dashboard_meta_bundle() -> Dict[str, Any]:
+  """Return dashboard status and period keys without decompressing histogram payloads."""
+  monthly_keys = list(
+      public_metrics_artifact.objects.filter(
+          scope=PUBLIC_EF_MONTH_DAILY, rebuild_required=False
+      )
+      .order_by("period_key")
+      .values_list("period_key", flat=True)
+  )
+  yearly_keys = list(
+      public_metrics_artifact.objects.filter(
+          scope=PUBLIC_EF_YEAR_WEEKLY, rebuild_required=False
+      )
+      .order_by("period_key")
+      .values_list("period_key", flat=True)
+  )
+  ready = bool(monthly_keys or yearly_keys)
+  return {
+      "status": "ready" if ready else "loading",
+      "detail": None if ready else "dashboard_metrics_not_ready",
+      "retry_hint": None if ready else "retry_after_pipeline_refresh",
+      "schema_version": APP_PUBLIC_METRICS_SCHEMA_VERSION,
+      "sections": {
+          "expansion_factor": {
+              "monthly_period_keys": monthly_keys,
+              "yearly_period_keys": yearly_keys,
+          },
+      },
+  }
+
+
+def load_public_expansion_factor_period(grouping: str, period_key: str) -> Optional[Dict[str, Any]]:
+  """Load one expansion-factor histogram block for ``grouping`` (monthly|yearly)."""
+  grouping_norm = (grouping or "").strip().lower()
+  if grouping_norm == "monthly":
+    scope = PUBLIC_EF_MONTH_DAILY
+  elif grouping_norm == "yearly":
+    scope = PUBLIC_EF_YEAR_WEEKLY
+  else:
+    return None
+  period = (period_key or "").strip()
+  if not period:
+    return None
+  row = (
+      public_metrics_artifact.objects.filter(
+          scope=scope,
+          period_key=period,
+          rebuild_required=False,
+      )
+      .first()
+  )
+  if row is None:
+    return None
+  return decompress_public_payload(row)
+
+
 def assemble_public_monthly_metrics_bundle() -> Dict[str, Any]:
   """Merge persisted artifacts into one JSON-safe bundle for the public API.
 

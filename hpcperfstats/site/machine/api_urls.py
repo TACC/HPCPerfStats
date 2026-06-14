@@ -14,6 +14,7 @@ urlpatterns = [
     path("cache/invalidate-page/", api.invalidate_cache_for_page),
     path("home/", api.home_options),
     path("jobs/", api.job_list),
+    path("jobs/histograms/batch/", api.job_list_histograms_batch),
     path("jobs/histograms/", api.job_list_histograms),
     path("jobs/<str:pk>/", api.job_detail),
     path("jobs/<str:pk>/plots/", api.job_plots),

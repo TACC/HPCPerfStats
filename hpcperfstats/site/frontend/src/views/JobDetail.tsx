@@ -1,6 +1,6 @@
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useJobDetailQuery } from "@/hooks/use-job-detail";
 import { useJobPlotsQuery } from "@/hooks/use-job-plots";
@@ -217,6 +217,8 @@ export default function JobDetail() {
     loading,
     detailsLoading,
     detailFetchWarning,
+    loadFullDetail,
+    loadDetailWithoutDeferParts,
   } = useJobDetailQuery(pk);
   const data = jobDetailData as JobDetailViewData | null;
   const rawTab = readTabFromSearchParams(searchParams, "tab", "metrics");
@@ -233,6 +235,17 @@ export default function JobDetail() {
     pk,
     plotsEnabled,
   );
+
+  useEffect(() => {
+    if (!pk || loading) return;
+    if (analysisTab === "multiprecisionMix") {
+      loadDetailWithoutDeferParts(["xalt", "proc"]);
+    } else if (analysisTab === "processes" || analysisTab === "execHosts") {
+      loadDetailWithoutDeferParts(["multiprecision"]);
+    } else if (analysisTab === "device") {
+      loadFullDetail();
+    }
+  }, [analysisTab, pk, loading, loadFullDetail, loadDetailWithoutDeferParts]);
 
   function setAnalysisTab(tab: JobAnalysisTab): void {
     const next = searchParamsWithTab(

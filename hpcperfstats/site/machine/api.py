@@ -55,6 +55,7 @@ from .openapi_schema import (
     HOST_PLOT_SCHEMA,
     INVALIDATE_CACHE_SCHEMA,
     JOB_DETAIL_SCHEMA,
+    JOB_LIST_HISTOGRAMS_BATCH_SCHEMA,
     JOB_LIST_HISTOGRAMS_SCHEMA,
     JOB_LIST_SCHEMA,
     JOB_MONITOR_GPU_SCHEMA,
@@ -153,8 +154,11 @@ def site_response_cache_timeout(request):
     return get_site_content_cache_timeout()
 
 _JOB_LIST_QUERY_FIELD_EXCLUDES_BASE = ("page", "order_by")
-_JOB_LIST_QUERY_FIELD_EXCLUDES_HISTOGRAM = ("group", "metric", "_histogram_embed_v")
+_JOB_LIST_QUERY_FIELD_EXCLUDES_HISTOGRAM = ("group", "metric", "metrics", "_histogram_embed_v")
 _JOB_LIST_METRIC_FILTER_OPS_ALLOWED = frozenset({"gte", "lte"})
+JOB_LIST_HISTOGRAM_MAX_NJ = 5000
+JOB_LIST_HISTOGRAM_BATCH_METRICS_DEFAULT = ("runtime", "nhosts", "queue_wait")
+HOST_PLOT_MAX_WINDOW_DAYS = 7
 
 
 def _get_admin_host_stats_statement_timeout_ms():
@@ -358,7 +362,9 @@ def _compute_job_gpu_stats(job, j, job_cache_timeout, include_gpu_count=True):
 from django.db.models import (
     Case,
     Count,
+    Exists,
     IntegerField,
+    OuterRef,
     Sum,
     Q,
     F,
@@ -569,6 +575,28 @@ def _job_times_as_local(start_time, end_time):
     return start_time.astimezone(local_timezone), end_time.astimezone(local_timezone)
 
 
+def _apply_job_list_metric_filters(queryset, cur_metrics):
+    """Apply derived-metric filters without JOIN row inflation (EXISTS per metric)."""
+    for key, val in cur_metrics.items():
+        if "__" not in key:
+            logger.warning("Ignoring malformed metrics filter key %r", key)
+            continue
+        name, op = key.split("__", 1)
+        if not name or not op:
+            logger.warning("Ignoring malformed metrics filter key %r", key)
+            continue
+        if op not in _JOB_LIST_METRIC_FILTER_OPS_ALLOWED:
+            logger.warning("Ignoring unsupported metrics filter key %r", key)
+            continue
+        metric_match = metrics_data.objects.filter(
+            jid_id=OuterRef("jid"),
+            metric=name,
+            **{f"value__{op}": val},
+        )
+        queryset = queryset.filter(Exists(metric_match))
+    return queryset
+
+
 def _build_job_list_queryset_from_request(request, extra_excluded_fields=(), annotate_all=False):
     """Build filtered ordered queryset and parsed filter maps for job list endpoints."""
     fields = request.GET.dict()
@@ -594,23 +622,7 @@ def _build_job_list_queryset_from_request(request, extra_excluded_fields=(), ann
         for k, v in fields.items()
         if k.split("_", 1)[0] == "metrics"
     }
-    for key, val in cur_metrics.items():
-        if "__" not in key:
-            logger.warning("Ignoring malformed metrics filter key %r", key)
-            continue
-        name, op = key.split("__", 1)
-        if not name or not op:
-            logger.warning("Ignoring malformed metrics filter key %r", key)
-            continue
-        if op not in _JOB_LIST_METRIC_FILTER_OPS_ALLOWED:
-            logger.warning("Ignoring unsupported metrics filter key %r", key)
-            continue
-        queryset = queryset.filter(
-            **{
-                "metrics_data_set__metric": name,
-                "metrics_data_set__value__" + op: val,
-            }
-        )
+    queryset = _apply_job_list_metric_filters(queryset, cur_metrics)
     if order_by.lstrip("-") == "metrics_distinct_time_count":
         # Keep blank sample counts at the end for both sort directions so
         # "largest sample count first" behaves as users expect.
@@ -1719,6 +1731,72 @@ def _job_list_metric_hist_pair(df, metric_name, label, display_title, thumb_wh, 
     return p_thumb, p_full
 
 
+def _histogram_nj_over_cap_response(nj, metric_name=None):
+    """413 when job count exceeds histogram materialization cap."""
+    detail = (
+        f"Too many jobs ({nj}) for histogram generation; "
+        f"maximum is {JOB_LIST_HISTOGRAM_MAX_NJ}. Narrow your filters."
+    )
+    body = {
+        "error": "histogram_job_count_exceeded",
+        "detail": detail,
+        "nj": nj,
+        "max_nj": JOB_LIST_HISTOGRAM_MAX_NJ,
+    }
+    if metric_name:
+        body["metric"] = metric_name
+    return _JSONResponse(body, status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+
+
+def _parse_histogram_batch_metric_names(raw_metrics):
+    """Parse comma-separated metric names for batch histogram endpoint."""
+    if not raw_metrics:
+        return list(JOB_LIST_HISTOGRAM_BATCH_METRICS_DEFAULT)
+    names = [part.strip() for part in str(raw_metrics).split(",") if part.strip()]
+    return names or list(JOB_LIST_HISTOGRAM_BATCH_METRICS_DEFAULT)
+
+
+def _build_metric_histogram_payload(
+    df,
+    hist_metrics,
+    metric_name,
+    nj,
+    thumb_wh=(280, 200),
+    full_wh=(600, 400),
+):
+    """Build one metric histogram envelope (thumb + full Bokeh json_items)."""
+    label = None
+    for m, lbl in hist_metrics:
+        if m == metric_name:
+            label = lbl
+            break
+    if label is None:
+        return None
+    display_title = JOB_HIST_DISPLAY_NAMES.get(metric_name, metric_name)
+    p_thumb, p_full = _job_list_metric_hist_pair(
+        df,
+        metric_name,
+        label,
+        display_title,
+        thumb_wh,
+        full_wh,
+    )
+    thumb_item = _sanitize_hist_plot_item(p_thumb)
+    full_item = _sanitize_hist_plot_item(p_full)
+    unavailable = None
+    if thumb_item is None or full_item is None:
+        unavailable = f"No histogram data available for metric '{metric_name}' in this query."
+    return {
+        "group": "metric",
+        "metric": metric_name,
+        "nj": nj,
+        "title": display_title,
+        "plot_item_thumb": thumb_item,
+        "plot_item_full": full_item,
+        "plot_unavailable_reason": unavailable,
+    }
+
+
 @JOB_LIST_HISTOGRAMS_SCHEMA
 @dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
@@ -1750,6 +1828,9 @@ def job_list_histograms(request):
         )
 
     job_list_qs, nj, fields, cur_metrics = _build_histogram_queryset(request)
+    if nj > JOB_LIST_HISTOGRAM_MAX_NJ:
+        metric_name = (request.GET.get("metric") or "").strip() or None
+        return _histogram_nj_over_cap_response(nj, metric_name=metric_name)
     if nj == 0:
         # Preserve a consistent shape even when no jobs match the filter.
         if group == "metric":
@@ -1773,9 +1854,6 @@ def job_list_histograms(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    THUMB_WIDTH, THUMB_HEIGHT = 280, 200
-    FULL_WIDTH, FULL_HEIGHT = 600, 400
-
     if group == "metric":
         metric_name = (request.GET.get("metric") or "").strip()
         if not metric_name:
@@ -1788,12 +1866,10 @@ def job_list_histograms(request):
             )
 
         df, hist_metrics, _ = _build_histogram_dataframe(job_list_qs, cur_metrics)
-        label = None
-        for m, lbl in hist_metrics:
-            if m == metric_name:
-                label = lbl
-                break
-        if label is None:
+        payload = _build_metric_histogram_payload(
+            df, hist_metrics, metric_name, nj
+        )
+        if payload is None:
             return Response(
                 {
                     "error": f"Metric '{metric_name}' is not available for this query.",
@@ -1801,32 +1877,7 @@ def job_list_histograms(request):
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
-        display_title = JOB_HIST_DISPLAY_NAMES.get(metric_name, metric_name)
-        p_thumb, p_full = _job_list_metric_hist_pair(
-            df,
-            metric_name,
-            label,
-            display_title,
-            (THUMB_WIDTH, THUMB_HEIGHT),
-            (FULL_WIDTH, FULL_HEIGHT),
-        )
-        thumb_item = _sanitize_hist_plot_item(p_thumb)
-        full_item = _sanitize_hist_plot_item(p_full)
-
-        return _JSONResponse(
-            {
-                "group": "metric",
-                "metric": metric_name,
-                "nj": nj,
-                "title": display_title,
-                "plot_item_thumb": thumb_item,
-                "plot_item_full": full_item,
-                "plot_unavailable_reason": None
-                if (thumb_item is not None and full_item is not None)
-                else f"No histogram data available for metric '{metric_name}' in this query.",
-            }
-        )
+        return _JSONResponse(payload)
 
     return _JSONResponse(
         {
@@ -1835,6 +1886,37 @@ def job_list_histograms(request):
         },
         status=status.HTTP_400_BAD_REQUEST,
     )
+
+
+@JOB_LIST_HISTOGRAMS_BATCH_SCHEMA
+@dynamic_cache_page(site_response_cache_timeout)
+@api_view(["GET"])
+@throttle_classes([ExpensiveReadThrottle])
+def job_list_histograms_batch(request):
+    """
+    Return multiple metric histograms in one response (single dataframe build).
+
+    Query param ``metrics`` is comma-separated (default: runtime,nhosts,queue_wait).
+    """
+    err = _require_auth(request)
+    if err is not None:
+        return err
+
+    job_list_qs, nj, _fields, cur_metrics = _build_histogram_queryset(request)
+    if nj > JOB_LIST_HISTOGRAM_MAX_NJ:
+        return _histogram_nj_over_cap_response(nj)
+    if nj == 0:
+        return _JSONResponse({"nj": 0, "histograms": []})
+
+    metric_names = _parse_histogram_batch_metric_names(request.GET.get("metrics"))
+    df, hist_metrics, _ = _build_histogram_dataframe(job_list_qs, cur_metrics)
+    histograms = []
+    for metric_name in metric_names:
+        payload = _build_metric_histogram_payload(df, hist_metrics, metric_name, nj)
+        if payload is not None:
+            histograms.append(payload)
+
+    return _JSONResponse({"nj": nj, "histograms": histograms})
 
 
 @JOB_LIST_SCHEMA
@@ -1934,6 +2016,16 @@ def job_list(request):
     })
 
 
+def _parse_job_detail_defer_set(request):
+    """Parse ``defer=xalt,proc,multiprecision``; ``light=1`` implies defer xalt+proc."""
+    defer_raw = (request.GET.get("defer") or "").strip()
+    defer_set = {part.strip().lower() for part in defer_raw.split(",") if part.strip()}
+    light_mode = str(request.GET.get("light", "")).lower() in ("1", "true", "yes")
+    if light_mode:
+        defer_set |= {"xalt", "proc"}
+    return defer_set
+
+
 @JOB_DETAIL_SCHEMA
 @api_view(["GET"])
 @throttle_classes([ExpensiveReadThrottle])
@@ -1954,7 +2046,7 @@ def job_detail(request, pk):
 
     j = jid_table.jid_table(job.jid)
     host_list = j.acct_host_list
-    light_mode = str(request.GET.get("light", "")).lower() in ("1", "true", "yes")
+    defer_set = _parse_job_detail_defer_set(request)
 
     def _fetch_xalt():
         close_old_connections()
@@ -2061,11 +2153,13 @@ def job_detail(request, pk):
     schema = detail_payload.get("schema") or {}
     proc_list = []
 
-    tasks = [("proc_list", _fetch_proc_list)]
-    if (not light_mode) and cfg.get_xalt_user() != "":
+    tasks = []
+    if "proc" not in defer_set:
+        tasks.append(("proc_list", _fetch_proc_list))
+    if "xalt" not in defer_set and cfg.get_xalt_user() != "":
         tasks.append(("xalt", _fetch_xalt))
 
-    if not light_mode and tasks:
+    if tasks:
         JOB_DETAIL_MAX_WAIT_SECONDS = 25  # Keep job_detail responsive vs proxy timeouts.
         executor = _get_small_executor()
         future_to_key = {executor.submit(fn): key for key, fn in tasks}
@@ -2089,14 +2183,6 @@ def job_detail(request, pk):
                     proc_list = result or []
             except Exception:
                 pass
-    else:
-        # Light mode: skip heavy parallel tasks (XALT, schema, fsio, etc.) so
-        # the response returns quickly and the React UI can render first.
-        gpu_active = gpu_utilization_max = gpu_utilization_mean = gpu_count = None
-        xalt_payload = None
-        fsio = {}
-        schema = {}
-        proc_list = []
 
     xalt_data = {
         "exec_path": xalt_payload["exec_path"] if xalt_payload else [],
@@ -2152,11 +2238,16 @@ def job_detail(request, pk):
         "metrics_list": metrics_list,
         "proc_list": proc_list,
         "derived_data_status": "ready" if detail_payload else "loading",
-        "multiprecision_cpu_plot_item": multiprecision_payload.get("cpu_plot_item"),
-        "multiprecision_cpu_unavailable_reason": multiprecision_payload.get("cpu_unavailable_reason"),
-        "multiprecision_gpu_plot_item": multiprecision_payload.get("gpu_plot_item"),
-        "multiprecision_gpu_unavailable_reason": multiprecision_payload.get("gpu_unavailable_reason"),
     }
+    if "multiprecision" not in defer_set:
+        payload["multiprecision_cpu_plot_item"] = multiprecision_payload.get("cpu_plot_item")
+        payload["multiprecision_cpu_unavailable_reason"] = multiprecision_payload.get(
+            "cpu_unavailable_reason"
+        )
+        payload["multiprecision_gpu_plot_item"] = multiprecision_payload.get("gpu_plot_item")
+        payload["multiprecision_gpu_unavailable_reason"] = multiprecision_payload.get(
+            "gpu_unavailable_reason"
+        )
     if request.session.get("is_staff", False):
         payload["staff_metrics_distinct_time_count"] = job.metrics_distinct_time_count
 
@@ -2582,6 +2673,17 @@ def host_plot(request):
     start_dt = start_dt.astimezone(local_timezone)
     end_dt = end_dt.astimezone(local_timezone)
 
+    max_window = timedelta(days=HOST_PLOT_MAX_WINDOW_DAYS)
+    if end_dt - start_dt > max_window:
+        return Response(
+            {
+                "error": "time_range_too_large",
+                "detail": f"Maximum host plot window is {HOST_PLOT_MAX_WINDOW_DAYS} days.",
+                "max_window_days": HOST_PLOT_MAX_WINDOW_DAYS,
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
     def _host_plot_fn():
         try:
             ht = HostDataProvider(host_fqdn, start_dt, end_dt)
@@ -2964,15 +3066,15 @@ def job_monitor(request):
 @api_view(["GET"])
 @throttle_classes([ExpensiveReadThrottle])
 def job_monitor_gpu_for_user(request):
-    """Staff-only per-user GPU rollup for Job Monitor async row updates."""
+    """Staff-only GPU rollup for Job Monitor (single ``username`` or batch ``usernames``)."""
     err = _require_staff(request)
     if err is not None:
         return err
 
-    username = str((request.GET.get("username") or "").strip())
-    if not username:
+    usernames = _parse_job_monitor_gpu_usernames(request)
+    if not usernames:
         return Response(
-            {"error": "Missing required query param: username"},
+            {"error": "Missing required query param: username or usernames"},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
@@ -2983,8 +3085,32 @@ def job_monitor_gpu_for_user(request):
     window_days = max(1, min(days_param, 365))
     now = timezone.now()
     start_time = now - timedelta(days=window_days)
-    cache_key = make_cache_key("JOB_MONITOR_GPU_USER", window_days, username)
     site_ttl = get_site_content_cache_timeout()
+
+    if len(usernames) == 1:
+        result = _compute_job_monitor_gpu_for_username(
+            usernames[0], window_days, start_time, site_ttl
+        )
+        return Response(result)
+
+    results = [
+        _compute_job_monitor_gpu_for_username(username, window_days, start_time, site_ttl)
+        for username in usernames
+    ]
+    return Response({"results": results})
+
+
+def _parse_job_monitor_gpu_usernames(request):
+    """Return username list from ``username`` or comma-separated ``usernames``."""
+    batch_raw = (request.GET.get("usernames") or "").strip()
+    if batch_raw:
+        return [part.strip() for part in batch_raw.split(",") if part.strip()]
+    single = (request.GET.get("username") or "").strip()
+    return [single] if single else []
+
+
+def _compute_job_monitor_gpu_for_username(username, window_days, start_time, site_ttl):
+    """GPU rollup for one user from persisted metrics_data only (no host_data fallback)."""
 
     def _compute_user_gpu():
         gpu_count_total = None
@@ -3004,33 +3130,6 @@ def job_monitor_gpu_for_user(request):
                 gpu_active_total = int(ag_a["s"])
             if ag_c["s"] is not None:
                 gpu_count_total = int(ag_c["s"])
-        else:
-            # Pre-backfill: no persisted GPU detail rows for this user/window.
-            jobs_for_gpu = list(
-                job_data.objects.filter(end_time__gte=start_time, username=username).only(
-                    "jid", "username", "start_time", "end_time", "host_list"
-                )
-            )
-            for job in jobs_for_gpu:
-                try:
-                    w_start, w_end, acct = jid_table.gpu_acct_window_for_job_data(job)
-                    j = SimpleNamespace(
-                        start_time=w_start, end_time=w_end, acct_host_list=acct
-                    )
-                    gpu_active, _gpu_max, _gpu_mean, per_job_gpu_count = (
-                        _compute_job_gpu_stats(
-                            job,
-                            j,
-                            site_ttl,
-                            include_gpu_count=False,
-                        )
-                    )
-                except Exception:
-                    continue
-                if per_job_gpu_count is not None:
-                    gpu_count_total = (gpu_count_total or 0) + int(per_job_gpu_count)
-                if gpu_active is not None:
-                    gpu_active_total = (gpu_active_total or 0) + int(gpu_active)
         gpu_active_percentage = None
         if (
             gpu_count_total is not None
@@ -3050,8 +3149,8 @@ def job_monitor_gpu_for_user(request):
             "has_data": has_data,
         }
 
-    result = cached_orm(cache_key, site_ttl, _compute_user_gpu)
-    return Response(result)
+    cache_key = make_cache_key("JOB_MONITOR_GPU_USER", window_days, username)
+    return cached_orm(cache_key, site_ttl, _compute_user_gpu)
 
 
 @SACCT_INGEST_SCHEMA

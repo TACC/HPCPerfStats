@@ -221,7 +221,7 @@ export default function JobList() {
 
   const jobListData = data as JobListApiResponse | null;
 
-  const histogramsEnabled = isLgUp || listViewTab === "charts";
+  const histogramsEnabled = listViewTab === "charts";
   const { histograms, metricHistStatus } = useJobListHistograms(
     listApiParams,
     histogramReloadKey,
