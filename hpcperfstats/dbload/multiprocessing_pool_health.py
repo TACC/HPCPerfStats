@@ -573,6 +573,189 @@ def imap_unordered_watch_pool(
     yield item
 
 
+def imap_sliding_window_watch_pool(
+    pool,
+    fn,
+    paths,
+    *,
+    max_inflight,
+    poll_timeout_s=None,
+    stall_abort_polls_fn=None,
+    context="",
+    on_stall_warning=None,
+    on_stall_poll=None,
+    on_stall_fatal_summary=None,
+    pool_health_context=None,
+    on_in_flight_change=None,
+):
+  """Dispatch pool work with at most ``max_inflight`` concurrent ``apply_async`` tasks.
+
+  Refills idle worker slots from ``paths`` in FIFO order (sliding window). Stall
+  abort threshold is recomputed from the current in-flight path set on each poll
+  when ``stall_abort_polls_fn`` is provided.
+  """
+  if pool is None:
+    return iter(())
+  path_list = list(paths or ())
+  if not path_list:
+    return iter(())
+  poll_timeout_s = (
+      get_sync_pool_poll_timeout_s()
+      if poll_timeout_s is None
+      else max(0.05, float(poll_timeout_s))
+  )
+  max_inflight = max(1, int(max_inflight))
+  health_ctx = dict(pool_health_context or ())
+  if health_ctx.get("active_pool") is None:
+    health_ctx["active_pool"] = pool
+
+  def _abort_pool_health():
+    ctx = dict(health_ctx)
+    if ctx.get("in_flight_sample") is None:
+      sample_fn = ctx.get("in_flight_sample_fn")
+      if callable(sample_fn):
+        ctx["in_flight_sample"] = sample_fn()
+    abort_if_pool_workers_dead(
+        pool,
+        context=context,
+        pool_health_context=ctx,
+    )
+
+  import hpcperfstats.conf_parser as cfg
+
+  default_stall_abort = cfg.get_sync_pool_stall_abort_after_timeouts()
+  path_iter = iter(path_list)
+  pending_async = {}
+  consecutive_timeouts = 0
+  warned_thresholds = set()
+  stall_abort_after = max(1, int(default_stall_abort))
+  warn_thresholds = _stall_warning_thresholds(stall_abort_after)
+
+  def _in_flight_paths():
+    return list(pending_async.values())
+
+  def _update_stall_abort_from_in_flight():
+    nonlocal stall_abort_after, warn_thresholds
+    in_flight = _in_flight_paths()
+    if callable(stall_abort_polls_fn):
+      if in_flight:
+        stall_abort_after = max(1, int(stall_abort_polls_fn(in_flight)))
+      else:
+        stall_abort_after = max(1, int(default_stall_abort))
+    warn_thresholds = _stall_warning_thresholds(stall_abort_after)
+    if callable(on_in_flight_change):
+      on_in_flight_change(in_flight)
+
+  def _submit_until_cap():
+    apply_async = getattr(pool, "apply_async", None)
+    if not callable(apply_async):
+      raise RuntimeError("pool missing apply_async for sliding window dispatch")
+    while len(pending_async) < max_inflight:
+      try:
+        path = next(path_iter)
+      except StopIteration:
+        break
+      async_result = apply_async(fn, (path,))
+      pending_async[async_result] = path
+
+  def _handle_stall_poll():
+    nonlocal consecutive_timeouts
+    deferred = False
+    if on_stall_poll is not None:
+      ctx = dict(health_ctx)
+      if ctx.get("in_flight_sample") is None:
+        sample_fn = ctx.get("in_flight_sample_fn")
+        if callable(sample_fn):
+          ctx["in_flight_sample"] = sample_fn()
+      try:
+        deferred = bool(on_stall_poll(consecutive_timeouts, context, ctx))
+      except Exception:
+        deferred = False
+    if deferred:
+      consecutive_timeouts = 0
+    else:
+      consecutive_timeouts += 1
+    for threshold in warn_thresholds:
+      if (
+          consecutive_timeouts >= threshold
+          and threshold not in warned_thresholds
+          and on_stall_warning is not None
+      ):
+        warned_thresholds.add(threshold)
+        on_stall_warning(
+            consecutive_timeouts,
+            stall_abort_after,
+            poll_timeout_s,
+            context,
+        )
+    if consecutive_timeouts >= stall_abort_after:
+      estimated_stall_s = consecutive_timeouts * poll_timeout_s
+      message = (
+          "Pool imap stalled after %d consecutive poll timeouts "
+          "(context=%s poll_timeout_s=%.3f estimated_stall_s=%.1f)"
+          % (
+              consecutive_timeouts,
+              context or "pool",
+              poll_timeout_s,
+              estimated_stall_s,
+          )
+      )
+      fatal_extra = ""
+      if on_stall_fatal_summary is not None:
+        try:
+          fatal_extra = on_stall_fatal_summary(
+              consecutive_timeouts,
+              stall_abort_after,
+              poll_timeout_s,
+              context,
+          ) or ""
+        except Exception:
+          fatal_extra = ""
+      log_print("ERROR: %s%s" % (message, fatal_extra), flush=True)
+      if on_stall_warning is not None:
+        on_stall_warning(
+            consecutive_timeouts,
+            stall_abort_after,
+            poll_timeout_s,
+            context,
+        )
+      raise MultiprocessingPoolStallError(
+          message,
+          dead_pids=[],
+          context=context,
+          exit_code=124,
+      )
+
+  _submit_until_cap()
+  _update_stall_abort_from_in_flight()
+
+  while pending_async:
+    _abort_pool_health()
+    _update_stall_abort_from_in_flight()
+    completed = [
+        async_result
+        for async_result in list(pending_async)
+        if getattr(async_result, "ready", lambda: False)()
+    ]
+    if completed:
+      for async_result in completed:
+        path = pending_async.pop(async_result)
+        get_fn = getattr(async_result, "get", None)
+        if not callable(get_fn):
+          raise RuntimeError("async result missing get()")
+        try:
+          item = get_fn(timeout=0)
+        except TypeError:
+          item = get_fn()
+        consecutive_timeouts = 0
+        _submit_until_cap()
+        _update_stall_abort_from_in_flight()
+        yield item
+      continue
+    _handle_stall_poll()
+    time.sleep(poll_timeout_s)
+
+
 def async_result_get_watch_pool(
     async_result,
     pool,

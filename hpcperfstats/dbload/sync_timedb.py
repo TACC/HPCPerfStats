@@ -68,8 +68,14 @@ from hpcperfstats.dbload.multiprocessing_pool_health import (
     async_result_get_watch_pool,
     close_pool_bounded,
     hard_exit_pool_worker_error,
+    imap_sliding_window_watch_pool,
     imap_unordered_watch_pool,
     terminate_pool_bounded,
+)
+from hpcperfstats.dbload.sync_timedb_ingest_timeout import (
+    max_ingest_per_file_timeout_for_paths as _max_ingest_per_file_timeout_for_paths,
+    resolve_ingest_per_file_timeout_s,
+    stall_abort_polls_for_paths as _stall_abort_polls_for_batch,
 )
 from hpcperfstats.process_memory import (
     format_tree_rss_breakdown_mb,
@@ -252,7 +258,6 @@ LOCK_WAIT_LOG_THRESHOLD_SECONDS = 30.0
 FINALIZE_POLL_TIMEOUT_SECONDS = 0.05
 
 INGEST_PER_FILE_TIMEOUT_LOG_MIN_S = 1800.0
-_INGEST_TIMEOUT_MIB_BYTES = 1024 * 1024
 
 
 class IngestPerFileTimeoutError(TimeoutError):
@@ -287,53 +292,6 @@ class _IngestPoolInFlightTracker:
 
   def in_flight_count(self):
     return len(self._pending)
-
-
-def resolve_ingest_per_file_timeout_s(stats_file):
-  """Size-proportional wall-clock budget for one ingest worker task."""
-  base = float(cfg.get_sync_ingest_per_file_timeout_s())
-  if base <= 0.0:
-    return 0.0
-  size = stats_file_size_bytes(stats_file)
-  if size <= 0:
-    return base
-  mib = (size + (_INGEST_TIMEOUT_MIB_BYTES - 1)) // _INGEST_TIMEOUT_MIB_BYTES
-  per_mib = float(cfg.get_sync_ingest_per_file_timeout_s_per_mib())
-  cap = float(cfg.get_sync_ingest_per_file_timeout_max_s())
-  scaled = base + float(mib) * per_mib
-  if cap > 0.0:
-    scaled = min(scaled, cap)
-  return max(base, scaled)
-
-
-def _max_ingest_per_file_timeout_for_paths(paths):
-  """Largest resolved per-file ingest budget for a set of stats paths."""
-  floor_s = float(cfg.get_sync_ingest_per_file_timeout_s())
-  if floor_s <= 0.0:
-    return 0.0
-  best = floor_s
-  for path in paths or ():
-    if not path:
-      continue
-    resolved = resolve_ingest_per_file_timeout_s(path)
-    if resolved > best:
-      best = resolved
-  return best
-
-
-def _stall_abort_polls_for_batch(paths):
-  """Poll-timeout abort count for current imap sub-batch (floor .. INI ceiling)."""
-  poll_s = float(cfg.get_sync_pool_poll_timeout_s())
-  ceiling_polls = int(cfg.get_sync_pool_stall_abort_after_timeouts())
-  if poll_s <= 0.0:
-    return max(1, ceiling_polls)
-  floor_s = float(cfg.get_sync_ingest_per_file_timeout_s())
-  batch_max_s = _max_ingest_per_file_timeout_for_paths(paths)
-  if batch_max_s <= 0.0:
-    batch_max_s = floor_s if floor_s > 0.0 else poll_s
-  dynamic_polls = int(batch_max_s / poll_s) + 1
-  min_polls = int(floor_s / poll_s) + 1 if floor_s > 0.0 else 1
-  return max(1, min(ceiling_polls, max(min_polls, dynamic_polls)))
 
 
 def _log_long_ingest_timeout_budget_if_needed(stats_file, timeout_s):
@@ -567,6 +525,7 @@ class IngestStallDiagnostics:
     self.imap_batch_cap = 0
     self.chunk_batch_size = 0
     self.current_imap_batch_size = 0
+    self.current_imap_in_flight = 0
     self.current_imap_batch_max_timeout_s = 0.0
     self.dynamic_stall_abort_after_polls = 0
     self.dynamic_stall_wall_s = 0.0
@@ -1056,6 +1015,19 @@ def _effective_ingest_imap_inflight_cap(thread_count, path_count):
   return max(1, min(int(path_count), int(thread_count), int(cap)))
 
 
+def _update_sliding_window_stall_diagnostics(stall_diagnostics, in_flight_paths, inflight_cap):
+  if stall_diagnostics is None:
+    return
+  poll_s = float(cfg.get_sync_pool_poll_timeout_s())
+  batch_max_s = _max_ingest_per_file_timeout_for_paths(in_flight_paths)
+  batch_abort = _stall_abort_polls_for_batch(in_flight_paths or ())
+  stall_diagnostics.current_imap_in_flight = len(in_flight_paths or ())
+  stall_diagnostics.current_imap_batch_max_timeout_s = batch_max_s
+  stall_diagnostics.dynamic_stall_abort_after_polls = batch_abort
+  stall_diagnostics.dynamic_stall_wall_s = batch_abort * poll_s
+  stall_diagnostics.imap_batch_cap = inflight_cap
+
+
 def _imap_ingest_paths_batched(
     pool,
     fn,
@@ -1071,7 +1043,7 @@ def _imap_ingest_paths_batched(
     archive_pool=None,
     stall_diagnostics=None,
 ):
-  """Cap concurrent imap tasks below full chunk size for RSS safety."""
+  """Cap concurrent pool tasks below full chunk size for RSS safety (sliding window)."""
   inflight_cap = _effective_ingest_imap_inflight_cap(thread_count, len(paths))
   stall_poll_state = {}
   dispatch_registry = (
@@ -1079,28 +1051,70 @@ def _imap_ingest_paths_batched(
       if stall_diagnostics is not None
       else None
   )
-  for offset in range(0, len(paths), inflight_cap):
-    subpaths = paths[offset:offset + inflight_cap]
-    seed_dispatch_worker_stages(dispatch_registry, subpaths)
-    for item in _imap_ingest_pool(
-        pool,
-        fn,
-        subpaths,
-        context=context,
-        tracker=tracker,
-        thread_count=thread_count,
-        chunk_counter=chunk_counter,
-        pending_count=pending_count,
-        ingest_pool=ingest_pool,
-        db_writer_pool=db_writer_pool,
-        archive_pool=archive_pool,
-        stall_poll_state=stall_poll_state,
-        stall_diagnostics=stall_diagnostics,
-    ):
-      completed_path = _imap_ingest_result_path(item)
-      if dispatch_registry is not None and completed_path:
-        clear_dispatch_worker_stages(dispatch_registry, [completed_path])
-      yield item
+  if stall_diagnostics is not None:
+    stall_diagnostics.current_imap_batch_size = len(paths or ())
+  if dispatch_registry is not None:
+    seed_dispatch_worker_stages(dispatch_registry, paths)
+  pool_health_context = {
+      "ingest_pool": ingest_pool if ingest_pool is not None else pool,
+      "db_writer_pool": db_writer_pool,
+      "archive_pool": archive_pool,
+      "in_flight_sample_fn": (
+          tracker.sample_in_flight if tracker is not None else None
+      ),
+  }
+
+  def _on_in_flight_change(in_flight_paths):
+    _update_sliding_window_stall_diagnostics(
+        stall_diagnostics,
+        in_flight_paths,
+        inflight_cap,
+    )
+
+  iterator = imap_sliding_window_watch_pool(
+      pool,
+      fn,
+      paths,
+      max_inflight=inflight_cap,
+      context=context,
+      stall_abort_polls_fn=_stall_abort_polls_for_batch,
+      on_in_flight_change=_on_in_flight_change,
+      on_stall_warning=_make_ingest_stall_warning_fn(
+          tracker,
+          pool=pool,
+          thread_count=thread_count,
+          chunk_counter=chunk_counter,
+          pending_count=pending_count,
+          stall_diagnostics=stall_diagnostics,
+          progress_state=stall_poll_state,
+      ),
+      on_stall_poll=_make_ingest_stall_poll_fn(
+          tracker, stall_poll_state, stall_diagnostics=stall_diagnostics,
+      ),
+      pool_health_context=pool_health_context,
+      on_stall_fatal_summary=(
+          lambda consecutive, abort_after, poll_timeout_s, ctx: _build_ingest_stall_log_suffix(
+              sample=tracker.sample_in_flight() if tracker is not None else [],
+              day_hint=_calendar_day_hint_from_paths(
+                  tracker.sample_in_flight() if tracker is not None else [],
+              ),
+              stall_diagnostics=stall_diagnostics,
+              progress_state=stall_poll_state,
+              alive_workers=alive_pool_worker_count(pool),
+              consecutive=consecutive,
+              poll_timeout_s=poll_timeout_s,
+          )
+          if tracker is not None or stall_diagnostics is not None
+          else ""
+      ),
+  )
+  for item in iterator:
+    if stall_diagnostics is not None:
+      stall_diagnostics.note_imap_completion()
+    completed_path = _imap_ingest_result_path(item)
+    if dispatch_registry is not None and completed_path:
+      clear_dispatch_worker_stages(dispatch_registry, [completed_path])
+    yield item
 
 
 def _spawn_pool_recycle_kwargs():

@@ -576,3 +576,186 @@ def test_describe_dead_pool_workers_includes_in_flight_sample(monkeypatch):
   )
   assert diag["in_flight_sample"] == ["/pending/a"]
   assert diag["likely_cause"] == "recycle"
+
+
+class _ManualAsyncResult:
+  def __init__(self, pool, fn, path):
+    self._pool = pool
+    self._fn = fn
+    self._path = path
+    self._ready = False
+    self._result = None
+    pool.inflight[self] = path
+    pool.peak = max(pool.peak, len(pool.inflight))
+    pool.submit_count += 1
+
+  def ready(self):
+    return self._ready
+
+  def get(self, timeout=None):
+    del timeout
+    if not self._ready:
+      raise multiprocessing.TimeoutError()
+    return self._result
+
+  def finish(self):
+    self._result = self._fn(self._path)
+    self._ready = True
+    self._pool.inflight.pop(self, None)
+
+
+class _ManualPool:
+  def __init__(self):
+    self.inflight = {}
+    self.peak = 0
+    self.submit_count = 0
+    self._pool = [_AliveWorker()]
+
+  def apply_async(self, fn, args=()):
+    return _ManualAsyncResult(self, fn, args[0])
+
+
+def test_imap_sliding_window_watch_pool_refills_before_prior_batch_drains():
+  import threading
+
+  pool = _ManualPool()
+  paths = [
+      "slow0",
+      "fast1",
+      "fast2",
+      "fast3",
+      "slow4",
+      "fast5",
+      "fast6",
+      "fast7",
+  ]
+  gen = mph.imap_sliding_window_watch_pool(
+      pool,
+      lambda path: path,
+      paths,
+      max_inflight=4,
+      poll_timeout_s=0.01,
+      stall_abort_polls_fn=lambda in_flight: 10000,
+      context="test_sliding_refill",
+  )
+  results = []
+  errors = []
+
+  def consumer():
+    try:
+      for item in gen:
+        results.append(item)
+    except Exception as exc:
+      errors.append(exc)
+
+  thread = threading.Thread(target=consumer, daemon=True)
+  thread.start()
+  deadline = time.monotonic() + 2.0
+  while pool.submit_count < 4 and time.monotonic() < deadline:
+    time.sleep(0.005)
+  assert pool.submit_count == 4
+  fast_first_batch = [
+      ar for ar, path in pool.inflight.items() if path.startswith("fast")
+  ]
+  assert len(fast_first_batch) == 3
+  for ar in fast_first_batch:
+    ar.finish()
+  deadline = time.monotonic() + 2.0
+  while pool.submit_count < 7 and time.monotonic() < deadline:
+    time.sleep(0.005)
+  assert pool.submit_count >= 7
+  assert pool.peak == 4
+  deadline = time.monotonic() + 5.0
+  while len(results) < len(paths) and time.monotonic() < deadline:
+    for ar in list(pool.inflight):
+      ar.finish()
+    time.sleep(0.01)
+  thread.join(timeout=2.0)
+  assert not errors
+  assert sorted(results) == sorted(paths)
+
+
+def test_imap_sliding_window_watch_pool_peak_concurrency():
+  pool = _ManualPool()
+  paths = [f"path{i}" for i in range(20)]
+  gen = mph.imap_sliding_window_watch_pool(
+      pool,
+      lambda path: path,
+      paths,
+      max_inflight=4,
+      poll_timeout_s=0.01,
+      stall_abort_polls_fn=lambda in_flight: 10000,
+  )
+  results = []
+  import threading
+
+  def consumer():
+    for item in gen:
+      results.append(item)
+
+  thread = threading.Thread(target=consumer, daemon=True)
+  thread.start()
+  time.sleep(0.02)
+  assert pool.peak == 4
+  deadline = time.monotonic() + 2.0
+  while (pool.inflight or len(results) < len(paths)) and time.monotonic() < deadline:
+    for ar in list(pool.inflight):
+      ar.finish()
+    time.sleep(0.005)
+  thread.join(timeout=2.0)
+  assert len(results) == len(paths)
+  assert pool.peak == 4
+
+
+def test_imap_sliding_window_recomputes_stall_abort_for_in_flight(monkeypatch):
+  from hpcperfstats.dbload import sync_timedb_ingest_timeout as timeout_mod
+
+  monkeypatch.setattr(
+      "hpcperfstats.conf_parser.get_sync_pool_poll_timeout_s",
+      lambda: 5.0,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.conf_parser.get_sync_pool_stall_abort_after_timeouts",
+      lambda: 2881,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.conf_parser.get_sync_ingest_per_file_timeout_s",
+      lambda: 900.0,
+  )
+  monkeypatch.setattr(
+      timeout_mod,
+      "resolve_ingest_per_file_timeout_s",
+      lambda path: 900.0 if "small" in path else 7200.0,
+  )
+
+  recorded = []
+
+  def _polls_fn(in_flight):
+    value = timeout_mod.stall_abort_polls_for_paths(in_flight)
+    recorded.append((list(in_flight), value))
+    return value
+
+  pool = _ManualPool()
+  paths = ["large0", "small1", "small2", "small3"]
+  gen = mph.imap_sliding_window_watch_pool(
+      pool,
+      lambda path: path,
+      paths,
+      max_inflight=2,
+      poll_timeout_s=0.01,
+      stall_abort_polls_fn=_polls_fn,
+  )
+  import threading
+
+  thread = threading.Thread(target=lambda: list(gen), daemon=True)
+  thread.start()
+  time.sleep(0.02)
+  assert recorded
+  large_polls = timeout_mod.stall_abort_polls_for_paths(["large0"])
+  small_polls = timeout_mod.stall_abort_polls_for_paths(["small1"])
+  assert large_polls > small_polls
+  assert any(polls >= large_polls for _paths, polls in recorded if "large0" in _paths)
+  for ar in list(pool.inflight):
+    ar.finish()
+  thread.join(timeout=2.0)
+

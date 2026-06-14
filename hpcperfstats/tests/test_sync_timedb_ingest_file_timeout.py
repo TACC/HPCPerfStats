@@ -7,10 +7,16 @@ import math
 import pytest
 
 from hpcperfstats.dbload import sync_timedb as st
+from hpcperfstats.dbload import sync_timedb_ingest_timeout as ingest_timeout_mod
 
 
 def _mib_bytes(mib):
   return int(mib) * 1024 * 1024
+
+
+def _patch_stats_file_size_bytes(monkeypatch, fn):
+  monkeypatch.setattr(st, "stats_file_size_bytes", fn)
+  monkeypatch.setattr(ingest_timeout_mod, "stats_file_size_bytes", fn)
 
 
 def _default_timeout_getters(monkeypatch):
@@ -42,7 +48,7 @@ def test_resolve_ingest_per_file_timeout_s_table(
   stats_file = tmp_path / "segment"
   if size_bytes > 0:
     stats_file.write_bytes(b"x" * size_bytes)
-  monkeypatch.setattr(st, "stats_file_size_bytes", lambda _p: size_bytes)
+  _patch_stats_file_size_bytes(monkeypatch, lambda _p: size_bytes)
   resolved = st.resolve_ingest_per_file_timeout_s(str(stats_file))
   assert math.isclose(resolved, expected_timeout, rel_tol=0, abs_tol=0.05)
 
@@ -51,7 +57,7 @@ def test_resolve_ingest_per_file_timeout_s_disabled_when_floor_zero(monkeypatch,
   monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 0.0)
   stats_file = tmp_path / "segment"
   stats_file.write_bytes(b"x" * _mib_bytes(5120))
-  monkeypatch.setattr(st, "stats_file_size_bytes", lambda _p: _mib_bytes(5120))
+  _patch_stats_file_size_bytes(monkeypatch, lambda _p: _mib_bytes(5120))
   assert st.resolve_ingest_per_file_timeout_s(str(stats_file)) == 0.0
 
 
@@ -59,7 +65,7 @@ def test_run_ingest_timed_uses_resolved_timeout(monkeypatch, tmp_path):
   _default_timeout_getters(monkeypatch)
   stats_file = tmp_path / "segment"
   stats_file.write_bytes(b"x" * _mib_bytes(5120))
-  monkeypatch.setattr(st, "stats_file_size_bytes", lambda _p: _mib_bytes(5120))
+  _patch_stats_file_size_bytes(monkeypatch, lambda _p: _mib_bytes(5120))
   seen = []
 
   def fake_setitimer(which, seconds):
@@ -79,7 +85,7 @@ def test_long_timeout_budget_logs_warning(monkeypatch, tmp_path, capsys):
   stats_file = tmp_path / "segment"
   size_bytes = _mib_bytes(512)
   stats_file.write_bytes(b"x" * size_bytes)
-  monkeypatch.setattr(st, "stats_file_size_bytes", lambda _p: size_bytes)
+  _patch_stats_file_size_bytes(monkeypatch, lambda _p: size_bytes)
   monkeypatch.setattr(st, "record_worker_stage", lambda *_a, **_k: None)
   monkeypatch.setattr(st, "update_worker_substage", lambda *_a, **_k: None)
 
@@ -120,7 +126,7 @@ def test_stall_abort_polls_for_batch_small_files(monkeypatch, tmp_path):
   monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 2881)
   small = tmp_path / "small"
   small.write_bytes(b"x" * 1024)
-  monkeypatch.setattr(st, "stats_file_size_bytes", lambda _p: 1024)
+  _patch_stats_file_size_bytes(monkeypatch, lambda _p: 1024)
   polls = st._stall_abort_polls_for_batch([str(small)])
   assert polls == 181
 
@@ -132,10 +138,7 @@ def test_stall_abort_polls_for_batch_large_file(monkeypatch, tmp_path):
   size_bytes = _mib_bytes(5120)
   large = tmp_path / "large"
   large.write_bytes(b"x" * min(size_bytes, 65536))
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb.stats_file_size_bytes",
-      lambda _p: size_bytes,
-  )
+  _patch_stats_file_size_bytes(monkeypatch, lambda _p: size_bytes)
   expected_timeout = st.resolve_ingest_per_file_timeout_s(str(large))
   polls = st._stall_abort_polls_for_batch([str(large)])
   assert expected_timeout == 14400.0
@@ -149,10 +152,7 @@ def test_stall_abort_polls_respects_ini_ceiling(monkeypatch, tmp_path):
   size_bytes = _mib_bytes(5120)
   large = tmp_path / "large"
   large.write_bytes(b"x")
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb.stats_file_size_bytes",
-      lambda _p: size_bytes,
-  )
+  _patch_stats_file_size_bytes(monkeypatch, lambda _p: size_bytes)
   assert st._stall_abort_polls_for_batch([str(large)]) == 100
 
 
