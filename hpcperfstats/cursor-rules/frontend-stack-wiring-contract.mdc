@@ -1,0 +1,119 @@
+---
+description: Keep SPA routing, thin hooks, Orval clients, and response-schema-registry wired together
+globs:
+  - "**/hpcperfstats/site/frontend/src/hooks/**"
+  - "**/hpcperfstats/site/frontend/src/views/**"
+  - "**/hpcperfstats/site/frontend/src/components/**"
+  - "**/hpcperfstats/site/frontend/app/**"
+  - "**/hpcperfstats/site/frontend/src/utils/machine-route-params.ts"
+  - "**/hpcperfstats/site/frontend/src/api/response-schema-registry.ts"
+  - "**/hpcperfstats/site/frontend/src/api/fetch-mutator.ts"
+  - "**/hpcperfstats/site/frontend/src/api/parse-api-response*"
+  - "**/hpcperfstats/site/frontend/scripts/audit-wire-drift.mts"
+  - "**/hpcperfstats/site/frontend/src/test-utils/**"
+alwaysApply: false
+---
+
+# Frontend Stack Wiring Contract
+
+**Activation:** when adding or changing SPA routes, views, thin hooks, Orval usage, or API validation boundaries.
+
+## Stack layers (must stay connected)
+
+```text
+Django view Response
+  → openapi_serializers.py + @extend_schema
+  → openapi/openapi.yaml
+  → npm run generate:api
+       ├─ src/api/generated/**     (TanStack Query hooks)
+       └─ src/api/generated-zod/** (Zod response schemas)
+  → fetch-mutator.ts customFetch
+  → parse-api-response.ts
+  → response-schema-registry.ts
+  → thin hook (src/hooks/use-*.ts)
+  → view/component (src/views/**, src/components/**)
+  → machine-route-client.tsx + machine-route-params.ts (routing)
+```
+
+Wire drift in **any** hop breaks runtime validation, stale UI, or untested routes. Fix upstream contracts first; do not bypass layers.
+
+## Canonical view → hook → API map
+
+Update this table mentally when adding surfaces. Each row must have all columns wired in the same task.
+
+| View (`MachineRouteView`) | Thin hook(s) | Orval / API route(s) |
+|---------------------------|--------------|----------------------|
+| `search` | `useHomeOptions` | `GET /api/home/` |
+| `jobList` | `useJobListQuery`, `useJobListHistograms` | `GET /api/jobs/`, `GET /api/jobs/histograms/` |
+| `jobDetail` | `useJobDetailQuery`, `useJobPlotsQuery` | `GET /api/jobs/{pk}/`, `GET /api/jobs/{pk}/plots/` |
+| `typeDetail` | `useTypeDetailQuery` | `GET /api/jobs/{jid}/{typeName}/` |
+| `hostDetail` | `useHostPlotQuery` | `GET /api/host_plot/` |
+| `adminMonitor` | `useAdminMonitorSectionQuery` | `GET /api/admin_monitor/` |
+| `jobMonitor` | `useJobMonitorQuery` | `GET /api/job_monitor/`, `GET /api/job_monitor/gpu/` |
+| `pageApiKey` | `useUserApiKey` | `GET /api/user-api-key/`, `POST /api/user-api-key/rotate/` |
+
+Shared chrome (layout, session, extended search) also uses `useHomeOptions`, session Orval hooks, and routes registered in `response-schema-registry.ts`.
+
+## Law
+
+1. **Views consume thin hooks only** — do not call `@/api/generated/**` directly from `src/views/**` except through a colocated thin hook in `src/hooks/`. Do not add new usage of the legacy `src/api/index.ts` facade.
+2. **Thin hooks wrap Orval** — map generated hook results to view-friendly `{ data, error, loading }` shapes; keep TanStack Query options in the hook, not the view.
+3. **Routing is canonical** — `/machine/**` views read `useMachineRouteParams().flatParams` and `view`; every new `MachineRouteView` needs `parseMachineSlug`, `matchMachineView` in `machine-route-client.tsx`, and a pathname test in `machine-route-client.test.tsx`.
+4. **Validation registry is mandatory** — any JSON validated by `customFetch` must resolve in `response-schema-registry.ts` (exact key or dynamic matcher). Unregistered routes skip Zod and hide wire drift.
+5. **Tests mock at the same layer the view uses** — view tests mock thin hooks (`@/hooks/use-*`); hook unit tests mock `@/api/generated/**`. Do not mock `fetch` or `customFetch` in view tests when a thin hook exists.
+6. **Shared test infra** — use `renderWithProviders` and `configureNextNavigationFromPath` for route-aware views; use `bokeh-fixtures.ts` for Bokeh surfaces.
+
+## Required actions (same task)
+
+### New `/machine/**` view or route segment
+
+1. Extend `MachineRouteView` + `parseMachineSlug` in `machine-route-params.ts` (and unit tests).
+2. Add case to `matchMachineView` + import view in `machine-route-client.tsx`.
+3. Add pathname case to `machine-route-client.test.tsx` (and `machine-route-params.test.ts` when slug parsing changes).
+4. Wire thin hook(s) + view; add `src/views/__tests__/<View>.test.tsx` mocking hooks.
+5. If the view fetches new JSON, complete **`openapi-spa-wire-validation-contract.mdc`** (OpenAPI, registry, wire tests).
+
+### New or changed API consumed by SPA
+
+1. **`openapi-orval-sync.mdc`** — regenerate `openapi.yaml` + `npm run generate:api`.
+2. Register Zod in `response-schema-registry.ts` (exact or dynamic matcher aligned with Orval schema import).
+3. Add or extend thin hook; migrate view to the hook if it called generated client directly.
+4. **`openapi-spa-wire-validation-contract.mdc`** — Python wire contract + `parse-api-response.test.ts` case.
+5. Add or update row in `scripts/audit-wire-drift.mts` for the same route + wire example.
+6. Run `npx tsx scripts/audit-wire-drift.mts` (expect all aligned) and affected Vitest.
+7. If adding tests under `app/**`, ensure `vitest.config.ts` `test.include` covers them.
+
+### Hook signature or loading/error shape change
+
+1. Update every importing view and component.
+2. Update view tests and hook tests (`use-*.test.ts(x)`) in the same task.
+3. Re-run Vitest for touched `src/views/__tests__/` and `src/hooks/`.
+
+## Drift guards (run when touching wiring)
+
+| Guard | Command / file |
+|-------|----------------|
+| Registry route keys | `src/api/response-schema-registry.test.ts` |
+| OpenAPI ↔ yaml | `pytest …/test_openapi_schema_drift.py` |
+| Wire JSON ↔ Zod | `pytest …/test_*openapi_wire_contract*.py`, `parse-api-response.test.ts` |
+| Full registry audit | `npx tsx scripts/audit-wire-drift.mts` |
+| Route → view | `machine-route-client.test.tsx`, `machine-route-params.test.ts` |
+
+Keep **`audit-wire-drift.mts`** case list in sync with `EXACT_RESPONSE_SCHEMAS` and dynamic matchers in `response-schema-registry.ts`.
+
+## Forbidden shortcuts
+
+- Skipping `response-schema-registry.ts` because Orval generated the client.
+- Weakening or bypassing `parseApiResponse` / Zod to silence validation errors.
+- Reading legacy `useParams()` keys in views instead of `useMachineRouteParams().flatParams`.
+- View tests that mock `@/api/generated/**` when the view imports a thin hook (tests pass but hook wiring regresses).
+- Adding API data fetching with raw `fetch` or `useEffect` when Orval exposes the endpoint.
+
+## Overlap
+
+- **`end-to-end-feature-wiring-contract.mdc`** — multi-layer backend + frontend feature changes.
+- **`openapi-orval-sync.mdc`** — OpenAPI commit and Orval regen workflow.
+- **`openapi-spa-wire-validation-contract.mdc`** — wire JSON vs OpenAPI vs Zod validation.
+- **`react-next-ts-cursor-rule.mdc`** — stack conventions and parse boundary.
+- **`testing-best-practices.mdc`** — RTL, mock layers, pre-merge matrix.
+- **`web-pages-e2e-test-maintenance.mdc`** — Playwright when user-visible flows change.

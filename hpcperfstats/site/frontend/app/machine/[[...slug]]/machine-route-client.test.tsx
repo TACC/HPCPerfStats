@@ -1,7 +1,8 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import MachineRouteClient from "./machine-route-client";
+import MachineRouteClient, { matchMachineView } from "./machine-route-client";
 import { configureNextNavigationFromPath } from "@/test-utils/next-navigation-state";
+import type { MachineRouteView } from "@/utils/machine-route-params";
 
 vi.mock("@/views/Search", () => ({
   default: () => <div data-testid="view-search">Search</div>,
@@ -49,5 +50,28 @@ describe("MachineRouteClient", () => {
     configureNextNavigationFromPath("/machine/job/991/");
     render(<MachineRouteClient />);
     expect(screen.getByTestId("view-job-detail")).toBeInTheDocument();
+  });
+});
+
+const ROUTED_VIEWS: { view: MachineRouteView; testId: string }[] = [
+  { view: "search", testId: "view-search" },
+  { view: "jobList", testId: "view-job-list" },
+  { view: "jobDetail", testId: "view-job-detail" },
+  { view: "typeDetail", testId: "view-type-detail" },
+  { view: "hostDetail", testId: "view-host-detail" },
+  { view: "adminMonitor", testId: "view-admin-monitor" },
+  { view: "jobMonitor", testId: "view-job-monitor" },
+  { view: "pageApiKey", testId: "view-api-key" },
+];
+
+describe("matchMachineView", () => {
+  it.each(ROUTED_VIEWS)("maps $view to the expected view component", ({ view, testId }) => {
+    render(matchMachineView(view));
+    expect(screen.getByTestId(testId)).toBeInTheDocument();
+  });
+
+  it("falls back to PageNotFound for unknown views", () => {
+    render(matchMachineView("notFound"));
+    expect(screen.getByTestId("view-not-found")).toBeInTheDocument();
   });
 });

@@ -14,6 +14,7 @@ For any new metric, counter, summary field, route behavior, or user-visible plot
 - Update **source/contract layer** first (monitor payload assumptions, ingest typing, DB shape, route contract, or existing API schema).
 - Update **backend assembly layer** next (analysis aggregation, API serializers/builders, caching/invalidation hooks).
 - Update **frontend render layer** (React consumer, labels/tooltips, no-data surfaces, formatting policy).
+- Update **frontend stack wiring** per **`frontend-stack-wiring-contract.mdc`** when the change adds routes, hooks, or Orval-backed API usage.
 - Update **test coverage** in the same task:
  - unit tests for transformation/priority logic,
  - API tests for response shape and fallback behavior,
@@ -37,4 +38,5 @@ For any new metric, counter, summary field, route behavior, or user-visible plot
 ## Overlap
 
 - Complements `monitor-analysis-architecture-sync.mdc`, `variable-metadata-*.mdc`, `job-plot-artifacts-caching.mdc`, `web-pages-e2e-test-maintenance.mdc`, and pipeline E2E maintenance rules.
+- Complements **`frontend-stack-wiring-contract.mdc`** for SPA route, hook, and registry connections.
 - Complements **`update-metrics-job-listing-new-data-type.mdc`** when the feature adds `update_metrics`-driven work that must also update job candidate selection.

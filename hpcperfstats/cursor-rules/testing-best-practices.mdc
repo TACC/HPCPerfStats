@@ -52,7 +52,7 @@ Examples: `urlconf_route_catalog.py`, `extended-search-validation.test.js`, `job
 
 ## Frontend testing patterns
 
-- **RTL:** prefer `renderWithProviders` from `src/test-utils/render-with-providers.tsx` (QueryClient + optional `SessionContext`); mock **Orval-generated hooks** (`@/api/generated/**`) or thin domain hooks (`use-home-options`, `use-job-list`, etc.) instead of spying on the legacy `api/index.ts` facade when the view under test already uses generated clients.
+- **RTL:** prefer `renderWithProviders` from `src/test-utils/render-with-providers.tsx` (QueryClient + optional `SessionContext`); mock **Orval-generated hooks** (`@/api/generated/**`) or thin domain hooks (`use-home-options`, `use-job-list`, etc.) instead of spying on the legacy `api/index.ts` facade when the view under test already uses generated clients. Match mock layer to view imports per **`frontend-stack-wiring-contract.mdc`**.
 - **Pure utils:** table-driven cases; no DOM when unnecessary.
 - **Bokeh:** mock `bokehInit.js` + `window.Bokeh`; use `bokeh-embed-defaults.js` test overrides.
 - **a11y:** `jest-axe` serious/critical on primary shells; Playwright for full-page regressions.

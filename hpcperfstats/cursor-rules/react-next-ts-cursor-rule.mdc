@@ -41,4 +41,5 @@ When Django API shapes or routes change:
 ## Overlap
 
 - **`openapi-orval-sync.mdc`** — OpenAPI commit + Orval regen workflow.
+- **`frontend-stack-wiring-contract.mdc`** — view → thin hook → registry wiring and route tests.
 - **`shadcn-ui-frontend.mdc`**, **`bokeh-layout-surface-split.mdc`**, **`no-cdn-in-production.mdc`**, **`testing-best-practices.mdc`**.

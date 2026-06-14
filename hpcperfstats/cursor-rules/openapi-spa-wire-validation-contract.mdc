@@ -62,5 +62,6 @@ Apply the same discipline to **job detail** (`job_data` extends list entry field
 ## Overlap
 
 - **`openapi-orval-sync.mdc`** — regen commands and drift test
+- **`frontend-stack-wiring-contract.mdc`** — thin hook + view + registry wiring for registry routes
 - **`api-breaking-change-contract.mdc`** — intentional HTTP/route/status contract changes
 - **`every-error-regression-test.mdc`** — every fixed validation failure needs a wire or parse-api-response test

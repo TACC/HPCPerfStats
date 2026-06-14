@@ -117,6 +117,7 @@ ROUTER_ENTRIES: list[RouterEntry] = [
             "react-next-ts-cursor-rule.mdc",
             "shadcn-ui-frontend.mdc",
             "testing-best-practices.mdc",
+            "frontend-stack-wiring-contract.mdc",
         ],
     },
     {
@@ -132,6 +133,7 @@ ROUTER_ENTRIES: list[RouterEntry] = [
         "rules": [
             "openapi-orval-sync.mdc",
             "openapi-spa-wire-validation-contract.mdc",
+            "frontend-stack-wiring-contract.mdc",
             "api-breaking-change-contract.mdc",
         ],
     },

@@ -31,9 +31,11 @@ alwaysApply: false
 6. **Run frontend tests** touching API mocks after hook signature changes.
 7. **Parse registry:** when adding endpoints, register Zod response schemas in `src/api/response-schema-registry.ts` (or regenerate if codegen adds a registry).
 8. **`orval.config.ts`:** keep `override.zod.dateTimeOptions: { local: true, offset: true }` for DRF datetimes.
+9. **Stack wiring:** per **`frontend-stack-wiring-contract.mdc`** — thin hook, view, registry, and audit script updated together.
 
 ## Overlap
 
 - **`openapi-spa-wire-validation-contract.mdc`** — wire JSON must match OpenAPI serializers; runtime Zod validation tests
+- **`frontend-stack-wiring-contract.mdc`** — routing, thin hooks, registry, and test mock layers stay connected
 - **`api-breaking-change-contract.mdc`** — HTTP/status/route semantics + `hpcperfstats-tools`.
 - **`react-next-ts-cursor-rule.mdc`** — frontend consumption patterns.

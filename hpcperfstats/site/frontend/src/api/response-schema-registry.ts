@@ -69,6 +69,9 @@ const EXACT_RESPONSE_SCHEMAS: Record<string, ZodSchema> = {
   "GET /api/pub/cluster-dashboard/": pubClusterDashboardRetrieveResponse,
 };
 
+/** Exposed for wiring drift tests (frontend-stack-wiring-contract.mdc). */
+export const EXACT_RESPONSE_SCHEMA_ROUTES = Object.keys(EXACT_RESPONSE_SCHEMAS);
+
 export function resolveResponseSchema(method: string, url: string): ZodSchema | null {
   const upper = method.toUpperCase();
   const path = normalizeApiPath(url);
