@@ -62,6 +62,7 @@ JOB_LIST_NULLABLE_WIRE_EXAMPLE = {
             "state": None,
             "QOS": None,
             "jobname": None,
+            "sample_count": None,
             "host_list": ["n003.cluster.example"],
             "performance": {
                 "label": "Summary available",

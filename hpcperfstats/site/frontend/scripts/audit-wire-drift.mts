@@ -101,6 +101,7 @@ const cases: Case[] = [
           state: null,
           QOS: null,
           jobname: null,
+          sample_count: null,
           host_list: ["n001"],
           performance: { label: "OK", tone: "success", aria_label: "OK", sort_rank: 0 },
         },

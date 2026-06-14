@@ -181,6 +181,7 @@ describe("parse-api-response", () => {
           state: null,
           QOS: null,
           jobname: null,
+          sample_count: null,
           host_list: ["n003.cluster.example"],
           performance: {
             label: "Summary available",
@@ -198,5 +199,6 @@ describe("parse-api-response", () => {
     const parsed = parseApiResponse<typeof payload>("GET", "/api/jobs/", payload);
     expect(parsed.job_list?.[0]?.account).toBeNull();
     expect(parsed.job_list?.[0]?.queue).toBeNull();
+    expect(parsed.job_list?.[0]?.sample_count).toBeNull();
   });
 });

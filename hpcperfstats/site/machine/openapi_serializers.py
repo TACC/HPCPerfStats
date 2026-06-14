@@ -96,7 +96,7 @@ class JobListEntrySerializer(serializers.Serializer):
     ncores = serializers.IntegerField(allow_null=True, required=False)
     username = serializers.CharField(required=False)
     account = serializers.CharField(required=False, allow_null=True)
-    sample_count = serializers.IntegerField(required=False)
+    sample_count = serializers.IntegerField(required=False, allow_null=True)
     queue = serializers.CharField(required=False, allow_null=True)
     state = serializers.CharField(required=False, allow_null=True)
     QOS = serializers.CharField(required=False, allow_null=True)
