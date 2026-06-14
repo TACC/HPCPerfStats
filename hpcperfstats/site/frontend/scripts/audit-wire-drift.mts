@@ -216,6 +216,7 @@ const cases: Case[] = [
       multiprecision_cpu_unavailable_reason: null,
       multiprecision_gpu_unavailable_reason: null,
       derived_data_status: "ready",
+      staff_metrics_distinct_time_count: null,
     },
   },
   {

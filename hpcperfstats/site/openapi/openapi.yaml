@@ -1288,6 +1288,7 @@ components:
           nullable: true
         staff_metrics_distinct_time_count:
           type: integer
+          nullable: true
     JobListAggregates:
       type: object
       properties:

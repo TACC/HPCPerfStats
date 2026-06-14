@@ -77,8 +77,8 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 |---------------|------------------|
 | `docker-compose*.yaml`, `tests/run_*_workflow.sh` | `colima-docker-runtime.mdc`, `compose-required-for-data-services-changes.mdc`, `docker-compose-non-unit-testing.mdc` |
 | `services-conf/nginx*` | `nginx-static-url-prefix.mdc`, `nginx-django-route-allowlist-sync.mdc` |
-| `HPCPerfStats/README.md` or workspace-root `README.md` only (not other `README.md` paths) | `readme-installation-sync.mdc` |
-| `docs/TESTING.md`, test runners | `testing-doc-sync.mdc` |
+| `HPCPerfStats/README.md` or workspace-root `README.md` only (not other `README.md` paths) | `readme-installation-sync.mdc`, `compose-operator-terminal-commands.mdc` |
+| `docs/TESTING.md`, test runners | `testing-doc-sync.mdc`, `compose-operator-terminal-commands.mdc` |
 | `.cursor/hooks/*`, `hpcperfstats/tests/test_cursor_hooks.py` | `testing-best-practices.mdc` |
 
 ### Cursor rules (domain rule authoring)
@@ -91,8 +91,9 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 
 | Trigger | Read |
 |---------|------|
-| User asks for a plan / Cursor Plan / `docs/plans/` | `plan-creation-contract.mdc`, `plan-template-enforcement.mdc`, `docs/plans/PLAN_TEMPLATE.md` |
+| User asks for a plan / Cursor Plan / `docs/plans/` | `plan-creation-contract.mdc`, `plan-template-enforcement.mdc`, `compose-operator-terminal-commands.mdc`, `docs/plans/PLAN_TEMPLATE.md` |
 | Pre-code planning | `implementation-review-workflow.mdc` |
+| Plan or change blocked — operator must run terminal commands for facts | `compose-operator-terminal-commands.mdc` |
 
 **Hooks (same close discipline as implementation):** `CreatePlan` counts as closeable work. **`stop`** enforces chat close headings plus `PLAN_TEMPLATE.md` sections inside the plan body and **Read before `CreatePlan`** for `plan-creation-contract.mdc`, `PLAN_TEMPLATE.md`, and domain rules referenced in the plan. **`postToolUse`** warns mid-turn when those reads are missing.
 
@@ -102,6 +103,7 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 - **3+ duplicate logic** → shared helper: `duplicate-threshold-helper-mandate.mdc`
 - **Multi-layer features** → wire all layers: `end-to-end-feature-wiring-contract.mdc`
 - **Run compose** on this machine via **Colima** when rules require it—do not skip after one `docker` failure
+- **Operator terminal commands** (plans, blocked diagnostics): `compose-operator-terminal-commands.mdc` — one copy/paste block per Compose service
 
 ## Creating or changing domain rules (mandatory)
 

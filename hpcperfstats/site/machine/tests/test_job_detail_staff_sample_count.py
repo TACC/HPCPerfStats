@@ -78,6 +78,28 @@ def test_job_detail_includes_staff_metrics_distinct_time_count_for_staff():
   assert response.data["staff_metrics_distinct_time_count"] == 12_345
 
 
+def test_job_detail_includes_null_staff_metrics_distinct_time_count_for_staff():
+  from hpcperfstats.site.machine import api
+
+  jid = "test-staff-sample-count-null"
+  factory = RequestFactory()
+  request = factory.get(f"/api/jobs/{jid}/")
+  request.session = {"username": "u1", "is_staff": True}
+
+  ctx = _patch_job_detail_for_staff_count(api, jid, None)
+
+  with ThreadPoolExecutor(max_workers=4) as executor:
+    with ExitStack() as stack:
+      stack.enter_context(patch.object(api, "_get_small_executor", return_value=executor))
+      for cm in ctx:
+        stack.enter_context(cm)
+      response = api.job_detail(request, jid)
+
+  assert response.status_code == 200
+  assert "staff_metrics_distinct_time_count" in response.data
+  assert response.data["staff_metrics_distinct_time_count"] is None
+
+
 def test_job_detail_omits_staff_metrics_distinct_time_count_for_non_staff():
   from hpcperfstats.site.machine import api
 

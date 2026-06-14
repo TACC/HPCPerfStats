@@ -76,3 +76,15 @@ def test_job_detail_wire_with_numeric_metric_value_matches_openapi_serializers()
 def test_job_detail_wire_with_null_metric_value_matches_openapi_serializers():
     ser = JobDetailResponseSerializer(data=JOB_DETAIL_WIRE_NULL_METRICS)
     assert ser.is_valid(), ser.errors
+
+
+JOB_DETAIL_WIRE_NULL_STAFF_SAMPLE_COUNT = {
+    **JOB_DETAIL_WIRE_BASE,
+    "staff_metrics_distinct_time_count": None,
+}
+
+
+@pytest.mark.django_db(databases=[])
+def test_job_detail_wire_with_null_staff_metrics_distinct_time_count_matches_openapi_serializers():
+    ser = JobDetailResponseSerializer(data=JOB_DETAIL_WIRE_NULL_STAFF_SAMPLE_COUNT)
+    assert ser.is_valid(), ser.errors

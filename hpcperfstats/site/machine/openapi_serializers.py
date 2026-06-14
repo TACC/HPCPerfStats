@@ -187,7 +187,9 @@ class JobDetailResponseSerializer(serializers.Serializer):
     multiprecision_gpu_unavailable_reason = serializers.CharField(
         required=False, allow_null=True
     )
-    staff_metrics_distinct_time_count = serializers.IntegerField(required=False)
+    staff_metrics_distinct_time_count = serializers.IntegerField(
+        required=False, allow_null=True
+    )
 
 
 class JobPlotsResponseSerializer(serializers.Serializer):

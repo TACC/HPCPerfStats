@@ -169,6 +169,7 @@ ROUTER_ENTRIES: list[RouterEntry] = [
         ],
         "rules": [
             "readme-installation-sync.mdc",
+            "compose-operator-terminal-commands.mdc",
         ],
     },
     {
@@ -178,6 +179,7 @@ ROUTER_ENTRIES: list[RouterEntry] = [
         ],
         "rules": [
             "testing-doc-sync.mdc",
+            "compose-operator-terminal-commands.mdc",
         ],
     },
     {
@@ -188,6 +190,7 @@ ROUTER_ENTRIES: list[RouterEntry] = [
         "rules": [
             "plan-creation-contract.mdc",
             "plan-template-enforcement.mdc",
+            "compose-operator-terminal-commands.mdc",
         ],
     },
     {

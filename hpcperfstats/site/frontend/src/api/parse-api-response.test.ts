@@ -92,6 +92,15 @@ describe("parse-api-response", () => {
     expect(parseApiResponse("GET", "/api/jobs/123/", wire)).toEqual(wire);
   });
 
+  it("accepts job detail with null staff_metrics_distinct_time_count for staff", () => {
+    const wire = {
+      job_data: { jid: "745354" },
+      derived_data_status: "ready",
+      staff_metrics_distinct_time_count: null,
+    };
+    expect(parseApiResponse("GET", "/api/jobs/745354/", wire)).toEqual(wire);
+  });
+
   it("accepts type detail artifact wire keys", () => {
     const wire = {
       type_name: "cpu",

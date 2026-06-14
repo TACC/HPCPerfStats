@@ -1,0 +1,82 @@
+---
+description: Operator diagnostic commands in plans and chat must be docker-compose copy/paste blocks per service
+alwaysApply: false
+globs: docs/plans/**,docs/TESTING.md,HPCPerfStats/README.md
+---
+
+# Compose Operator Terminal Commands
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Also **Read** when a plan or implementation is **blocked** and you need the operator to run terminal commands to gather facts (logs, DB rows, Redis keys, queue depth, config inside a service).
+
+When a **plan**, **implementation**, or **diagnostic step** needs more information from a terminal and the agent cannot run it locally, give the operator **copy/paste-ready** commands that run **inside the correct Compose service** — not bare host commands that assume `db` / `redis` / Django settings resolve on the Mac.
+
+## Mandatory format
+
+1. **Working directory** — state once that commands run from the git checkout containing `docker-compose.yaml` (typically `HPCPerfStats/`).
+2. **One block per service** — if multiple commands target the same container (`web`, `db`, `redis`, `rabbitmq`, `pipeline`, `proxy`), **combine them into a single command** (chain with `&&`, or wrap in `sh -lc '…'` / `bash -lc '…'`).
+3. **Copy/paste** — each service gets **one fenced `bash` block** the operator can run as-is; label the block with the **service name** and **what output to paste back**.
+4. **Prefer `exec` on a running stack** — `docker compose exec <service> …` when services are already up; use `docker compose run --rm <service> …` only for one-off tasks that do not need the full running stack.
+5. **Do not split** — avoid numbered micro-steps like “run A, then run B, then run C” on the same service when they can be one block.
+
+## Service mapping (default)
+
+| Need | Service | Example shell |
+|------|---------|---------------|
+| Django / pytest / manage.py / app Python | `web` | `docker compose exec web bash -lc '…'` |
+| PostgreSQL / Timescale | `db` | `docker compose exec db psql -h localhost -U hpcperfstats -c "…"` |
+| Redis | `redis` | `docker compose exec redis redis-cli …` |
+| RabbitMQ | `rabbitmq` | `docker compose exec rabbitmq rabbitmqctl …` |
+| Ingest / sync_timedb / pipeline data | `pipeline` | `docker compose exec pipeline su hpcperfstats -c '…'` |
+| nginx / proxy logs | `proxy` | `docker compose logs proxy --tail=200` |
+
+Match **`README.md`** *Useful commands* and **`readme-installation-sync.mdc`** (`docker compose exec <service>` over hardcoded container names).
+
+## Examples
+
+**Bad** — host assumes compose DNS; three separate pastes for one service:
+
+```bash
+python3 -m pytest hpcperfstats/site/machine/tests/test_foo.py -q
+cd HPCPerfStats && python hpcperfstats/site/manage.py shell -c "…"
+psql -h db -U hpcperfstats -c "SELECT 1"
+```
+
+**Good** — one paste per service:
+
+```bash
+cd HPCPerfStats
+
+docker compose exec web bash -lc '
+python -m pytest hpcperfstats/site/machine/tests/test_foo.py -q &&
+python hpcperfstats/site/manage.py shell -c "from machine.models import Job; print(Job.objects.count())"
+'
+
+docker compose exec db psql -h localhost -U hpcperfstats -c "SELECT COUNT(*) FROM machine_job;"
+```
+
+**Good** — logs + in-container check combined:
+
+```bash
+cd HPCPerfStats
+
+docker compose logs pipeline --tail=100 && \
+docker compose exec pipeline su hpcperfstats -c 'ls -la /opt/hpcperfstats_data/archive 2>/dev/null | tail -5'
+```
+
+## Narrow exceptions (host is OK)
+
+- **Colima / Docker availability** — `colima status`, `DOCKER_HOST`, `docker info` per **`colima-docker-runtime.mdc`**.
+- **Starting or stopping the stack** — `docker compose up`, `down`, `logs` without `exec` (see **`README.md`**).
+- **Committed workflow scripts** — point operators at `tests/run_*_workflow.sh` instead of re-deriving long `compose_test` invocations when a script already encodes the overlay (`docker-compose-non-unit-testing.mdc`).
+
+## Plans and blocked work
+
+- In **`docs/plans/`** and Cursor Plan output, put operator verification under a heading such as **Operator commands (copy/paste)** with service-labeled blocks and **expected output** to return.
+- When blocked on missing operator facts, **do not guess** — ask for the paste using this format (`plan-creation-contract.mdc` → *Grounding*).
+
+## Overlap
+
+- **`colima-docker-runtime.mdc`** — host Docker/Colima setup before compose commands.
+- **`docker-compose-non-unit-testing.mdc`** — agents run `tests/run_*_workflow.sh`; operators doing the same follow those scripts or the one-block `compose_test` pattern inside them.
+- **`readme-installation-sync.mdc`** — long-lived operator docs in `README.md` / `docs/TESTING.md` use the same `docker compose exec` shape.
+- **`workspace-layout-and-python-env.mdc`** — host `.venv` is for agent-side unit work, not operator production diagnostics.

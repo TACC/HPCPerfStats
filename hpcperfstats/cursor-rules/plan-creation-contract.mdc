@@ -17,6 +17,7 @@ Applies to **every plan**: pre-code chat plans, **`docs/plans/`** design docs, m
 - Base every claim on **verified facts** from the repo (code, tests, logs, committed docs) — not assumptions.
 - Read callers, tests, and applicable workspace rules before stating current behavior or scope.
 - If a requirement, API, config key, acceptance criterion, or best-practice choice is unclear: **ask the user**; **do not guess** or invent context.
+- When the operator must run terminal commands to supply facts, use **`compose-operator-terminal-commands.mdc`**: one copy/paste block per Compose service, combined commands per container.
 
 ## Industry best practices
 
