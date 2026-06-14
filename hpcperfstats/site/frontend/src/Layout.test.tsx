@@ -164,6 +164,9 @@ describe("Layout", () => {
     const view = renderLayout({ logged_in: true, username: "alice", is_staff: false });
     await user.click(screen.getByRole("button", { name: /extended search/i }));
     expect(await screen.findByRole("dialog", { name: /extended search/i })).toBeInTheDocument();
+    const backdrop = screen.getByTestId("extended-search-backdrop");
+    expect(backdrop).toHaveClass("overflow-y-auto");
+    expect(document.querySelector('[data-slot="dialog"]')).toBeNull();
     expect(await axeSeriousViolations(view.container)).toEqual([]);
   });
 });

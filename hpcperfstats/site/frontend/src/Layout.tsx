@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -31,10 +32,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
-  Dialog,
-  DialogContent,
-} from "@/components/ui/dialog";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -42,6 +39,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { useFocusTrap } from "./hooks/useFocusTrap";
 
 const ExtendedSearch = lazy(() => import("./components/ExtendedSearch"));
 import { useRouteFocusMain } from "./utils/useRouteFocusMain";
@@ -75,6 +73,8 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
   const [isDroppingStaff, setIsDroppingStaff] = useState(false);
   const [isInvalidatingCache, setIsInvalidatingCache] = useState(false);
   const extendedSearchToggleRef = useRef<HTMLButtonElement | null>(null);
+  const extendedSearchPanelRef = useRef<HTMLDivElement | null>(null);
+  useFocusTrap(extendedSearchPanelRef, extendedSearchOpen);
 
   const closeExtendedSearch = useCallback(() => {
     setExtendedSearchOpen(false);
@@ -92,6 +92,24 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
     () => ({ openExtendedSearch }),
     [openExtendedSearch],
   );
+
+  function handleExtendedSearchBackdropClick(event: ReactMouseEvent<HTMLDivElement>) {
+    if (event.target === event.currentTarget) {
+      closeExtendedSearch();
+    }
+  }
+
+  useEffect(() => {
+    if (!extendedSearchOpen) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeExtendedSearch();
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [extendedSearchOpen, closeExtendedSearch]);
 
   useEffect(() => {
     if (!extendedSearchOpen) return;
@@ -427,32 +445,28 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
           </div>
         </div>
       </header>
-      <Dialog
-        open={extendedSearchOpen}
-        onOpenChange={(open) => {
-          if (open) {
-            setExtendedSearchOpen(true);
-            setNavOpen(false);
-          } else {
-            closeExtendedSearch();
-          }
-        }}
-      >
-        <DialogContent
-          id="extended-search-collapse"
-          showCloseButton={false}
-          overlayClassName="bg-black/35"
-          aria-labelledby="extended-search-dialog-title"
-          className={cn(
-            "top-2 left-0 right-0 w-full max-w-full translate-x-0 translate-y-0",
-            "rounded-none border-0 border-b bg-muted p-4 px-6 shadow-lg ring-0 sm:max-w-full",
-          )}
+      {extendedSearchOpen ? (
+        <div
+          className="fixed inset-0 z-[var(--z-modal-backdrop)] flex items-start justify-center overflow-y-auto bg-black/35 pt-2"
+          role="presentation"
+          data-testid="extended-search-backdrop"
+          onClick={handleExtendedSearchBackdropClick}
         >
-          <Suspense fallback={<LoadingMessage message="Loading search…" />}>
-            <ExtendedSearch onClose={closeExtendedSearch} />
-          </Suspense>
-        </DialogContent>
-      </Dialog>
+          <div
+            ref={extendedSearchPanelRef}
+            id="extended-search-collapse"
+            className="relative z-[calc(var(--z-modal-backdrop)+1)] w-full max-w-full border-b border-border bg-muted px-6 py-4 shadow-lg"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="extended-search-dialog-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Suspense fallback={<LoadingMessage message="Loading search…" />}>
+              <ExtendedSearch onClose={closeExtendedSearch} />
+            </Suspense>
+          </div>
+        </div>
+      ) : null}
       <main
         id="main-content"
         className="mt-4 outline-none max-lg:pl-[max(0px,env(safe-area-inset-left))] max-lg:pr-[max(0px,env(safe-area-inset-right))]"
