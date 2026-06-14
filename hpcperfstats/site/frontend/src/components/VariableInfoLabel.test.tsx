@@ -76,4 +76,17 @@ describe("VariableInfoLabel", () => {
     expect(panel.querySelector(".variable-info-tooltip-sep")).toBeTruthy();
     expect(panel).toHaveTextContent(/parallel efficiency|OpenMP|MPI/i);
   });
+
+  it("shows help popover above sticky analysis tabs", async () => {
+    render(
+      <div className="job-detail-analysis-tabs">
+        <VariableInfoLabel variableName="utilization" labelText="utilization" enableHelp />
+      </div>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /help: utilization/i }));
+    const panel = await screen.findByTestId("variable-info-tooltip");
+    expect(panel).toHaveAttribute("data-open");
+    expect(document.body.contains(panel)).toBe(true);
+    expect(panel).toHaveTextContent(/GPU utilization/i);
+  });
 });

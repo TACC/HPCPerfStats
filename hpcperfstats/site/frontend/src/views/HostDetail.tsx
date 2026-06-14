@@ -1,4 +1,4 @@
-import { useParams, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { BokehJsonItem } from "@/types/bokeh";
@@ -9,17 +9,13 @@ import BannerErrorMessage from "../components/BannerErrorMessage";
 import BokehPlotWithLimitation from "../components/BokehPlotWithLimitation";
 import LoadingMessage from "../components/LoadingMessage";
 import { formatDateTime } from "../utils/formatDateTime";
+import { useMachineRouteParams } from "../hooks/use-machine-route-params";
 import { buildAsyncPageTitle } from "../utils/async-page-title";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 
-function routeParamString(value: string | string[] | undefined): string {
-  if (Array.isArray(value)) return value[0] ?? "";
-  return value ?? "";
-}
-
 export default function HostDetail() {
-  const params = useParams();
-  const host = routeParamString(params.host);
+  const { flatParams } = useMachineRouteParams();
+  const host = flatParams.host ?? "";
   const searchParams = useSearchParams();
   const [data, setData] = useState<HostDetailData | null>(null);
   const [error, setError] = useState<string | null>(null);

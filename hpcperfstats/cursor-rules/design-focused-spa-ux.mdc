@@ -40,6 +40,19 @@ HPCPerfStats serves researchers and operators who expect clear hierarchy, honest
 - Shareable primary tabs sync to **`?tab=`** or **`?view=`** (`sync-tab-search-param.js`).
 - Unknown SPA routes render **`PageNotFound`**, not a silent redirect home.
 
+## Static export routing
+
+- Under `output: 'export'`, nginx `try_files` serves `/machine/index.html` for deep links; the server-baked `slug` prop on catch-all pages is **not** authoritative after client navigation.
+- **`useMachineRouteParams()`** (or `parseMachineSlug` / `parseMachinePathname`) is the canonical source for `/machine/**` view selection and flat route params (`date`, `year`, `pk`, `jid`, `typeName`, `host`, list keys).
+- Never rely on `useParams()` flat keys alone when the catch-all shape is `{ slug: string[] }`; tests must set `params.slug` via `configureNextNavigationFromPath`.
+
+## Overlay z-index scale
+
+- In-page sticky chrome (browse tabs, job-detail analysis tabs): **`--z-sticky-inpage`** (10) — beats page content only.
+- Modal backdrops (extended search, histogram thumbnail): **`--z-modal-backdrop`** (1040).
+- Portaled floating UI (Shadcn popover, dropdown, select): **`--z-floating-overlay`** / `z-[1050]` — must paint above backdrops and sticky in-page layers.
+- When adding new portaled overlays, grep for `z-50` and legacy `z-index: 1015` debt; extend `overlay-z-index.test.ts` if the contract changes.
+
 ## Forms
 
 - Validation: `aria-invalid` plus Bootstrap **`is-invalid`** and field feedback.

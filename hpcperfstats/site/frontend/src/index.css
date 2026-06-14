@@ -96,7 +96,7 @@
 .extended-search-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1040;
+  z-index: var(--z-modal-backdrop);
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -214,7 +214,7 @@
 .histogram-thumbnail-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1040;
+  z-index: var(--z-modal-backdrop);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -224,7 +224,7 @@
 
 .histogram-thumbnail-popover {
   position: relative;
-  z-index: 1050;
+  z-index: var(--z-floating-overlay);
   max-width: calc(100vw - 2rem);
   padding: 12px;
   background: var(--background);
@@ -332,7 +332,7 @@
 .job-list-view-tabs {
   position: sticky;
   top: 0;
-  z-index: 1015;
+  z-index: var(--z-sticky-inpage);
   background-color: var(--background);
   padding-top: 0.25rem;
 }
@@ -340,7 +340,7 @@
 .job-detail-analysis-tabs {
   position: sticky;
   top: 0;
-  z-index: 1015;
+  z-index: var(--z-sticky-inpage);
   background-color: var(--background);
   padding-top: 0.35rem;
   border-bottom: 1px solid var(--border);

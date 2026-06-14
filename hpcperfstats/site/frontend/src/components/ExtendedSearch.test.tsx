@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ExtendedSearch from "./ExtendedSearch";
@@ -43,7 +43,8 @@ async function submitField(label, value) {
   const role = field.getAttribute("role");
   if (role === "combobox" || field.tagName === "BUTTON") {
     await user.click(field);
-    await user.click(screen.getByRole("option", { name: value }));
+    const option = await screen.findByRole("option", { name: value });
+    await user.click(option);
   } else if (field.tagName === "SELECT") {
     await user.selectOptions(field, value);
   } else {
@@ -172,5 +173,18 @@ describe("ExtendedSearch", () => {
     expect(url.pathname).toBe("/machine/host/n001.cluster.example/plot/");
     expect(url.searchParams.get("end_time__gte")).toBe("2024-01-01");
     expect(url.searchParams.get("end_time__lte")).toBe("now()");
+  });
+
+  it("shows variable help popover above extended search backdrop", async () => {
+    renderExtendedSearch(
+      <div className="extended-search-backdrop" data-testid="extended-search-shell">
+        <ExtendedSearch onClose={vi.fn()} />
+      </div>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /help: host/i }));
+    const panel = await screen.findByTestId("variable-info-tooltip");
+    expect(panel).toHaveAttribute("data-open");
+    expect(document.body.contains(panel)).toBe(true);
+    expect(panel).toHaveTextContent(/host/i);
   });
 });

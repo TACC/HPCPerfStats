@@ -90,4 +90,15 @@ describe("Search", () => {
     );
     expect(screen.getAllByText(/no job data available/i).length).toBeGreaterThan(0);
   });
+
+  it("links calendar days to date job list routes", () => {
+    render(
+      <>
+        <Search />
+      </>,
+    );
+    expect(
+      screen.getByRole("link", { name: /open jobs for january 2024, day 15/i }),
+    ).toHaveAttribute("href", "/machine/date/2024-01-15");
+  });
 });

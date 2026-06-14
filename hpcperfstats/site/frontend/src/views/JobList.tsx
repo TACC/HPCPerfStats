@@ -1,4 +1,4 @@
-import { useRouter, useParams, usePathname, useSearchParams } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useId, useMemo, useState } from "react";
 import type { Dispatch, MouseEvent, SetStateAction } from "react";
@@ -46,12 +46,12 @@ import {
 } from "../utils/sync-tab-search-param";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 import { useArrowKeyTabs } from "../hooks/useArrowKeyTabs";
+import { useMachineRouteParams } from "../hooks/use-machine-route-params";
 import {
   jobListPageHumanSummary,
   jobListRouteTitleContext,
 } from "../utils/job-list-route-title-context";
 
-type RouteParams = Record<string, string | string[] | undefined>;
 type MetricName = "runtime" | "nhosts" | "queue_wait";
 type SortDirection = "asc" | "desc";
 type JobPerformanceBadge = {
@@ -212,7 +212,7 @@ export default function JobList() {
   const session = useSession();
   const isStaff = !!session?.is_staff;
   const searchParams = useSearchParams();
-  const paramsFromRoute = useParams() as RouteParams;
+  const { flatParams: paramsFromRoute } = useMachineRouteParams();
   const pathname = usePathname();
   const router = useRouter();
   const metricNames: MetricName[] = ["runtime", "nhosts", "queue_wait"];

@@ -49,6 +49,9 @@
 
 :root {
   --radius: 0.625rem;
+  --z-sticky-inpage: 10;
+  --z-modal-backdrop: 1040;
+  --z-floating-overlay: 1050;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);

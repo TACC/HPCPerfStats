@@ -24,7 +24,8 @@ alwaysApply: false
 
 - Components: PascalCase `.tsx` under `src/components/` or `src/views/`.
 - Non-components: kebab-case `.ts` under `src/utils/`, `src/hooks/`.
-- App routes: `app/machine/**`, `app/pub/**`; dynamic client routing may use catch-all `[[...slug]]` with pathname-based view selection.
+- App routes: `app/machine/**`, `app/pub/**`; dynamic client routing uses catch-all `[[...slug]]` with **client pathname/slug** view selection (`useMachineRouteParams()` in `src/hooks/use-machine-route-params.ts`).
+- `/machine/**` views must read flat route params from `useMachineRouteParams().flatParams`, not raw `useParams()` legacy keys.
 - Tests: colocated `*.test.ts(x)` or `src/views/__tests__/`; Vitest + RTL + jest-axe for page shells.
 
 ## API changes

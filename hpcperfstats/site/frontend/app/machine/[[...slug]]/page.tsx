@@ -10,11 +10,6 @@ export function generateStaticParams() {
   ];
 }
 
-export default async function MachineCatchAllPage({
-  params,
-}: {
-  params: Promise<{ slug?: string[] }>;
-}) {
-  const { slug } = await params;
-  return <MachineRouteClient slug={slug} />;
+export default function MachineCatchAllPage() {
+  return <MachineRouteClient />;
 }

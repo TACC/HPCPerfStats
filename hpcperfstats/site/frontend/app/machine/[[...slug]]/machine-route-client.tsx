@@ -9,31 +9,34 @@ import AdminMonitor from "@/views/AdminMonitor";
 import JobMonitor from "@/views/JobMonitor";
 import PageApiKey from "@/views/PageApiKey";
 import PageNotFound from "@/views/PageNotFound";
+import { useMachineRouteParams } from "@/hooks/use-machine-route-params";
+import type { MachineRouteView } from "@/utils/machine-route-params";
 
-function matchMachineView(slug: string[] | undefined) {
-  const parts = slug ?? [];
-  if (parts.length === 0) return <Search />;
-  if (parts.length === 1) {
-    if (parts[0] === "jobs") return <JobList />;
-    if (parts[0] === "admin_monitor") return <AdminMonitor />;
-    if (parts[0] === "job_monitor") return <JobMonitor />;
-    if (parts[0] === "api-key") return <PageApiKey />;
+export function matchMachineView(view: MachineRouteView) {
+  switch (view) {
+    case "search":
+      return <Search />;
+    case "jobList":
+      return <JobList />;
+    case "jobDetail":
+      return <JobDetail />;
+    case "typeDetail":
+      return <TypeDetail />;
+    case "hostDetail":
+      return <HostDetail />;
+    case "adminMonitor":
+      return <AdminMonitor />;
+    case "jobMonitor":
+      return <JobMonitor />;
+    case "pageApiKey":
+      return <PageApiKey />;
+    default:
+      return <PageNotFound />;
   }
-  if (parts.length === 2) {
-    const [head] = parts;
-    if (head === "job") return <JobDetail />;
-    if (head === "year") return <JobList />;
-    if (head === "date") return <JobList />;
-    if (head === "username") return <JobList />;
-    if (head === "account") return <JobList />;
-    if (head === "queue") return <JobList />;
-    if (head === "host") return <JobList />;
-  }
-  if (parts.length === 3 && parts[0] === "job") return <TypeDetail />;
-  if (parts.length === 3 && parts[0] === "host" && parts[2] === "plot") return <HostDetail />;
-  return <PageNotFound />;
 }
 
-export default function MachineRouteClient({ slug }: { slug?: string[] }) {
-  return matchMachineView(slug);
+/** Client pathname/slug is authoritative under static export (nginx serves home shell for deep links). */
+export default function MachineRouteClient() {
+  const { view } = useMachineRouteParams();
+  return matchMachineView(view);
 }

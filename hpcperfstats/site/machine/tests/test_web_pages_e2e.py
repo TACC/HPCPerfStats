@@ -44,6 +44,7 @@ class TestWebPagesEndToEnd:
         "/machine/job/123/?tab=multiprecisionMix",
         "/machine/job/123/cpu/",
         "/machine/year/2020/",
+        "/machine/date/2024-01-15/",
         "/machine/host/node1/plot/",
         "/machine/admin_monitor/",
         "/machine/job_monitor/",

@@ -62,6 +62,11 @@ def test_browser_flow_for_web_pages():
           "/machine/jobs/",
           "/machine/job/123/",
           "/machine/job/123/cpu/",
+          "/machine/year/2020/",
+          "/machine/date/2024-01-15/",
+          "/machine/host/node1/plot/",
+          "/machine/admin_monitor/",
+          "/machine/job_monitor/",
           "/pub/",
           "/pub/cluster-dashboard",
       ):

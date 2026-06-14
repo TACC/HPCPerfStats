@@ -1,4 +1,3 @@
-import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { BokehJsonItem } from "@/types/bokeh";
@@ -18,18 +17,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useMachineRouteParams } from "../hooks/use-machine-route-params";
 import { buildAsyncPageTitle } from "../utils/async-page-title";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 
-function routeParamString(value: string | string[] | undefined): string {
-  if (Array.isArray(value)) return value[0] ?? "";
-  return value ?? "";
-}
-
 export default function TypeDetail() {
-  const params = useParams();
-  const jid = routeParamString(params.jid);
-  const typeName = routeParamString(params.typeName);
+  const { flatParams } = useMachineRouteParams();
+  const jid = flatParams.jid ?? "";
+  const typeName = flatParams.typeName ?? "";
   const [data, setData] = useState<TypeDetailData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);

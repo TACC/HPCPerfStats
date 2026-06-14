@@ -1,4 +1,8 @@
 import { vi } from "vitest";
+import {
+  parseMachinePathname,
+  parseMachineSlug,
+} from "@/utils/machine-route-params";
 
 type RouteParams = Record<string, string | string[] | undefined>;
 type NavigationListener = () => void;
@@ -14,10 +18,17 @@ function notifyNextNavigation(): void {
   for (const listener of navigationListeners) listener();
 }
 
+function machineParamsFromPathname(pathname: string): RouteParams {
+  const slug = parseMachinePathname(pathname);
+  const { flatParams } = parseMachineSlug(slug);
+  return { slug, ...flatParams };
+}
+
 function applyNavigationHref(href: string): void {
   const url = new URL(href, "http://hpcperfstats.test");
   nextNavigationMock.pathname = url.pathname;
   nextNavigationMock.searchParams = new URLSearchParams(url.searchParams);
+  nextNavigationMock.params = machineParamsFromPathname(url.pathname);
   notifyNextNavigation();
 }
 
@@ -53,9 +64,11 @@ export function resetNextNavigationMock(
     params?: RouteParams;
   } = {},
 ): void {
-  nextNavigationMock.pathname = overrides.pathname ?? "/machine/jobs/";
+  const pathname = overrides.pathname ?? "/machine/jobs/";
+  nextNavigationMock.pathname = pathname;
   nextNavigationMock.searchParams = overrides.searchParams ?? new URLSearchParams();
-  nextNavigationMock.params = overrides.params ?? {};
+  nextNavigationMock.params =
+    overrides.params ?? machineParamsFromPathname(pathname);
   nextNavigationMock.router.push.mockClear();
   nextNavigationMock.router.replace.mockClear();
   attachRouterMocks();
@@ -69,24 +82,10 @@ export function configureNextNavigationFromPath(path: string): void {
     pathname = pathname.endsWith("/") ? `/machine${pathname}` : `/machine${pathname}/`;
   }
 
-  const params: RouteParams = {};
-  const hostMatch = pathname.match(/\/host\/([^/]+)\/plot/);
-  if (hostMatch) params.host = decodeURIComponent(hostMatch[1]);
-  const yearMatch = pathname.match(/\/year\/([^/]+)/);
-  if (yearMatch) params.year = yearMatch[1];
-  const typeMatch = pathname.match(/\/job\/([^/]+)\/([^/]+)/);
-  if (typeMatch) {
-    params.jid = typeMatch[1];
-    params.typeName = typeMatch[2];
-  } else {
-    const jobMatch = pathname.match(/\/job\/([^/]+)/);
-    if (jobMatch) params.pk = jobMatch[1];
-  }
-
   resetNextNavigationMock({
     pathname,
     searchParams: url.searchParams,
-    params,
+    params: machineParamsFromPathname(pathname),
   });
   notifyNextNavigation();
 }

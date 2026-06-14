@@ -1,4 +1,4 @@
-import { useRouter, useParams, usePathname, useSearchParams } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useCallback, useEffect, memo, useId, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, ReactNode } from "react";
@@ -41,6 +41,7 @@ import {
   searchParamsWithTab,
 } from "../utils/sync-tab-search-param";
 import { useArrowKeyTabs } from "../hooks/useArrowKeyTabs";
+import { useMachineRouteParams } from "../hooks/use-machine-route-params";
 
 type JobAnalysisTab =
   | "metrics"
@@ -136,11 +137,6 @@ const JOB_DETAIL_ANALYSIS_TABS: ReadonlySet<JobAnalysisTab> = new Set([
   "execHosts",
   "device",
 ]);
-
-function routeParamString(value: string | string[] | undefined): string {
-  if (Array.isArray(value)) return value[0] ?? "";
-  return value ?? "";
-}
 
 function formatJobMetricCell(obj: JobMetricCell, isStaff: boolean): string {
   if (obj.value != null && obj.value !== "") {
@@ -326,8 +322,8 @@ export function jobPlotStatesEqual(
 export default function JobDetail() {
   const session = useSession();
   const isStaff = !!session?.is_staff;
-  const params = useParams<Record<string, string | string[] | undefined>>();
-  const pk = routeParamString(params.pk);
+  const { flatParams } = useMachineRouteParams();
+  const pk = flatParams.pk ?? "";
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();

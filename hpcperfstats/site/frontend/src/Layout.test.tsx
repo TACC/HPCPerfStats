@@ -78,6 +78,27 @@ describe("Layout", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows all four staff menu items above page chrome", async () => {
+    const user = userEvent.setup();
+    renderLayout({
+      logged_in: true,
+      username: "alice",
+      is_staff: true,
+    });
+    await user.click(screen.getByRole("button", { name: "Staff actions" }));
+    const items = await screen.findAllByRole("menuitem");
+    expect(items).toHaveLength(4);
+    expect(items.map((item) => item.textContent?.trim())).toEqual([
+      "Job Failure Monitor",
+      "HPCPerfStats Monitor",
+      "Disable Staff Permissions",
+      "Invalidate Cache For Page",
+    ]);
+    for (const item of items) {
+      expect(item).toBeVisible();
+    }
+  });
+
   it("demotes staff session and displays login notice", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     mutateAsync.mockResolvedValue({
