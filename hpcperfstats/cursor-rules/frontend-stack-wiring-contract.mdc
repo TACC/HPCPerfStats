@@ -109,6 +109,12 @@ Keep **`audit-wire-drift.mts`** case list in sync with `EXACT_RESPONSE_SCHEMAS` 
 - View tests that mock `@/api/generated/**` when the view imports a thin hook (tests pass but hook wiring regresses).
 - Adding API data fetching with raw `fetch` or `useEffect` when Orval exposes the endpoint.
 
+## SPA performance / manual-fetch hooks
+
+- **Unstable hook deps:** Never pass inline array/object literals from views into manual-fetch hook dependency arrays (regression: `JobList` histogram refetch loop). Export stable module-level constants from the hook (`JOB_LIST_HISTOGRAM_METRICS`) or memoize in the view with `useMemo`.
+- **Manual-fetch hooks** (`useJobListHistograms`, `useJobPlotsQuery`, and similar `useEffect`+Orval retrieve patterns) must ship colocated `use-*.test.ts` with **fetch/call-count guards** (one wave per stable input; no refetch on benign rerender).
+- **Parallel per-item `setState` in hooks** must batch into one update after `Promise.all` (or equivalent) so parent views do not re-render in a loop while fetches are in flight.
+
 ## Overlap
 
 - **`end-to-end-feature-wiring-contract.mdc`** — multi-layer backend + frontend feature changes.

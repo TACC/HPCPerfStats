@@ -6,30 +6,33 @@ import { normalizeJobListHistogramEntry } from "@/utils/normalize-job-list-histo
 
 export type MetricName = "runtime" | "nhosts" | "queue_wait";
 
-const DEFAULT_METRICS: MetricName[] = ["runtime", "nhosts", "queue_wait"];
+/** Stable default metric list — do not pass inline arrays from views (refetch loop). */
+export const JOB_LIST_HISTOGRAM_METRICS: readonly MetricName[] = [
+  "runtime",
+  "nhosts",
+  "queue_wait",
+];
 
-function createInitialMetricStatus(metricNames: MetricName[]): MetricHistStatusMap {
-  return metricNames.reduce<MetricHistStatusMap>((acc, metric) => {
-    acc[metric] = { loading: false, error: null };
+function createInitialMetricStatus(
+  loading: boolean,
+): MetricHistStatusMap {
+  return JOB_LIST_HISTOGRAM_METRICS.reduce<MetricHistStatusMap>((acc, metric) => {
+    acc[metric] = { loading, error: null };
     return acc;
   }, {});
 }
 
-async function loadHistogramForMetric({
-  metric,
-  params,
-  setMetricHistStatus,
-  signal,
-}: {
+type MetricLoadResult = {
   metric: MetricName;
-  params: Record<string, string>;
-  setMetricHistStatus: React.Dispatch<React.SetStateAction<MetricHistStatusMap>>;
-  signal: AbortSignal;
-}): Promise<JobListHistogramEntry | null> {
-  setMetricHistStatus((prev) => ({
-    ...prev,
-    [metric]: { loading: true, error: null },
-  }));
+  entry: JobListHistogramEntry | null;
+  error: string | null;
+};
+
+async function loadHistogramMetric(
+  metric: MetricName,
+  params: Record<string, string>,
+  signal: AbortSignal,
+): Promise<MetricLoadResult> {
   try {
     const histParams = {
       ...params,
@@ -38,67 +41,74 @@ async function loadHistogramForMetric({
       _histogram_embed_v: HISTOGRAM_EMBED_VERSION,
     };
     const metricData = await jobsHistogramsRetrieve(histParams, undefined, signal);
-    if (!metricData) return null;
-    setMetricHistStatus((prev) => ({
-      ...prev,
-      [metric]: { loading: false, error: null },
-    }));
-    return normalizeJobListHistogramEntry(
-      metricData as Parameters<typeof normalizeJobListHistogramEntry>[0],
+    if (!metricData) {
+      return { metric, entry: null, error: null };
+    }
+    return {
       metric,
-    );
+      entry: normalizeJobListHistogramEntry(
+        metricData as Parameters<typeof normalizeJobListHistogramEntry>[0],
+        metric,
+      ),
+      error: null,
+    };
   } catch (err) {
     const message =
       err instanceof Error
         ? err.message
         : `Failed to load ${metric} histogram for this job list.`;
     console.warn(`Failed to load job list histogram for metric '${metric}':`, err);
-    setMetricHistStatus((prev) => ({
-      ...prev,
-      [metric]: {
-        loading: false,
-        error: message,
-      },
-    }));
-    return null;
+    return { metric, entry: null, error: message };
   }
+}
+
+function metricStatusFromResults(results: MetricLoadResult[]): MetricHistStatusMap {
+  return results.reduce<MetricHistStatusMap>((acc, { metric, error }) => {
+    acc[metric] = { loading: false, error };
+    return acc;
+  }, createInitialMetricStatus(false));
 }
 
 /** Loads metric histogram embeds for the current job list filter params. */
 export function useJobListHistograms(
   listApiParams: Record<string, string>,
   reloadKey = 0,
-  metricNames: MetricName[] = DEFAULT_METRICS,
+  enabled = true,
 ) {
   const [histograms, setHistograms] = useState<JobListHistogramEntry[] | null>(null);
   const [metricHistStatus, setMetricHistStatus] = useState<MetricHistStatusMap>(() =>
-    createInitialMetricStatus(metricNames),
+    createInitialMetricStatus(false),
   );
 
   useEffect(() => {
+    if (!enabled) {
+      setHistograms(null);
+      setMetricHistStatus(createInitialMetricStatus(false));
+      return;
+    }
+
     const controller = new AbortController();
     setHistograms(null);
-    setMetricHistStatus(createInitialMetricStatus(metricNames));
+    setMetricHistStatus(createInitialMetricStatus(true));
 
     const loadHistograms = async () => {
-      const metricPromises = metricNames.map((metric) =>
-        loadHistogramForMetric({
-          metric,
-          params: listApiParams,
-          setMetricHistStatus,
-          signal: controller.signal,
-        }),
+      const results = await Promise.all(
+        JOB_LIST_HISTOGRAM_METRICS.map((metric) =>
+          loadHistogramMetric(metric, listApiParams, controller.signal),
+        ),
       );
-      const metricResults = await Promise.all(metricPromises);
       if (controller.signal.aborted) return;
+      setMetricHistStatus(metricStatusFromResults(results));
       setHistograms(
-        metricResults.filter((entry): entry is JobListHistogramEntry => entry != null),
+        results
+          .map((result) => result.entry)
+          .filter((entry): entry is JobListHistogramEntry => entry != null),
       );
     };
 
     void loadHistograms();
     return () => controller.abort();
-  }, [listApiParams, reloadKey, metricNames]);
+  }, [listApiParams, reloadKey, enabled]);
 
   return { histograms, metricHistStatus, setMetricHistStatus };
 }

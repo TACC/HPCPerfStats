@@ -219,15 +219,20 @@ export default function JobDetail() {
     detailFetchWarning,
   } = useJobDetailQuery(pk);
   const data = jobDetailData as JobDetailViewData | null;
-  const plotsEnabled = !!pk && !loading && !error && !!data;
-  const { plots, plotsLoading, plotsFetchFailed, retryJobPlots } = useJobPlotsQuery(
-    pk,
-    plotsEnabled,
-  );
   const rawTab = readTabFromSearchParams(searchParams, "tab", "metrics");
   const analysisTab: JobAnalysisTab = JOB_DETAIL_ANALYSIS_TABS.has(rawTab as JobAnalysisTab)
     ? (rawTab as JobAnalysisTab)
     : "metrics";
+  const plotsEnabled =
+    !!pk &&
+    !loading &&
+    !error &&
+    !!data &&
+    (analysisTab === "summary" || analysisTab === "roofline");
+  const { plots, plotsLoading, plotsFetchFailed, retryJobPlots } = useJobPlotsQuery(
+    pk,
+    plotsEnabled,
+  );
 
   function setAnalysisTab(tab: JobAnalysisTab): void {
     const next = searchParamsWithTab(

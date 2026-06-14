@@ -3,6 +3,7 @@ import BannerErrorMessage from "../components/BannerErrorMessage";
 import BokehPlotWithLimitation from "../components/BokehPlotWithLimitation";
 import LoadingMessage from "../components/LoadingMessage";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { usePubDashboardBundle } from "../pub-dashboard-bundle-context";
 import type {
@@ -52,6 +53,7 @@ function SectionExpansionFactor({ bundle }: SectionExpansionFactorProps) {
   const monthly = efSection.monthly_daily_histograms ?? {};
   const yearly = efSection.yearly_weekly_histograms ?? {};
   const panelIntroId = useId();
+  const [activeGrouping, setActiveGrouping] = useState<"yearly" | "monthly">("yearly");
 
   const renderHist = (
     payloadMap: PubDashboardHistogramMap,
@@ -156,33 +158,47 @@ function SectionExpansionFactor({ bundle }: SectionExpansionFactorProps) {
       <div id="pub-dashboard-yearly" className="pt-2">
         <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2 border-b pb-2">
           <h3 className="mb-0 text-xl font-semibold">Yearly</h3>
-          <a href="#pub-dashboard-monthly" className="mb-0 text-xl font-semibold underline">
+          <Button
+            type="button"
+            variant="link"
+            className="mb-0 h-auto p-0 text-xl font-semibold underline"
+            onClick={() => setActiveGrouping("monthly")}
+          >
             Monthly
-          </a>
+          </Button>
         </div>
-        {renderHist(
-          yearly,
-          "Each chart lists calendar years; buckets are ISO weeks inside that year.",
-          "year",
-          "Histogram of weekly mean expansion factor.",
-        )}
+        {activeGrouping === "yearly"
+          ? renderHist(
+              yearly,
+              "Each chart lists calendar years; buckets are ISO weeks inside that year.",
+              "year",
+              "Histogram of weekly mean expansion factor.",
+            )
+          : null}
       </div>
 
       <hr className="my-5 border-2 opacity-50" />
 
       <div id="pub-dashboard-monthly">
         <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2 border-b pb-2">
-          <a href="#pub-dashboard-yearly" className="mb-0 text-xl font-semibold underline">
+          <Button
+            type="button"
+            variant="link"
+            className="mb-0 h-auto p-0 text-xl font-semibold underline"
+            onClick={() => setActiveGrouping("yearly")}
+          >
             Yearly
-          </a>
+          </Button>
           <h3 className="mb-0 text-xl font-semibold">Monthly</h3>
         </div>
-        {renderHist(
-          monthly,
-          "Each chart lists completed-job calendar months.",
-          "month",
-          "Histogram of daily mean expansion factor.",
-        )}
+        {activeGrouping === "monthly"
+          ? renderHist(
+              monthly,
+              "Each chart lists completed-job calendar months.",
+              "month",
+              "Histogram of daily mean expansion factor.",
+            )
+          : null}
       </div>
     </section>
   );

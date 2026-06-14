@@ -277,4 +277,17 @@ describe("BokehEmbed", () => {
     await waitFor(() => expect(embedItem).toHaveBeenCalledTimes(2));
     expect(maxConcurrent).toBe(1);
   });
+
+  it("does not call embed_item after unmount aborts the embed pipeline", async () => {
+    const embedItem = vi.fn(() => Promise.resolve(embedViewsWithIdleDoc()));
+    delete window.Bokeh;
+
+    const { unmount } = renderBokehEmbed(
+      <BokehEmbed item={VALID_BOKEH_JSON_ITEM} id="bokeh-unmount-abort" plotName="Unmount" />,
+    );
+
+    unmount();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(embedItem).not.toHaveBeenCalled();
+  });
 });

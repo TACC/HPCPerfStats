@@ -121,6 +121,8 @@ const HOST_STATUS_ORDER: Record<FreshnessBucket, number> = {
   gt_week: 4,
 };
 
+const ADMIN_MONITOR_HOST_PAGE_SIZE = 150;
+
 function compareAdminMonitorHostRows(
   a: AdminMonitorHostRow,
   b: AdminMonitorHostRow,
@@ -160,6 +162,8 @@ export default function AdminMonitor() {
   const [rabbitRefreshSeq, setRabbitRefreshSeq] = useState(0);
   const [timescaledbRefreshSeq, setTimescaledbRefreshSeq] = useState(0);
   const [xaltRefreshSeq, setXaltRefreshSeq] = useState(0);
+  const [hostTablePage, setHostTablePage] = useState(1);
+  const [rabbitHostTablePage, setRabbitHostTablePage] = useState(1);
   const { sort: hostSort, onSort: handleHostSort } = useTableSort("host", "asc", "asc");
   const {
     sort: rabbitHostSort,
@@ -241,11 +245,13 @@ export default function AdminMonitor() {
   });
 
   // Only show fully qualified hostnames (contain a dot) in the UI.
-  const fqdnHostStats = (hostStats ?? []).filter(
-    (row) => row.host && row.host.includes(".")
+  const fqdnHostStats = useMemo(
+    () => (hostStats ?? []).filter((row) => row.host && row.host.includes(".")),
+    [hostStats],
   );
-  const fqdnRabbitHostStats = (rabbitHostStats ?? []).filter(
-    (row) => row.host && row.host.includes(".")
+  const fqdnRabbitHostStats = useMemo(
+    () => (rabbitHostStats ?? []).filter((row) => row.host && row.host.includes(".")),
+    [rabbitHostStats],
   );
 
   // Build comma-separated list of FQDNs not seen in the past 36 hours when the
@@ -315,6 +321,15 @@ export default function AdminMonitor() {
       ),
     [fqdnHostStats, hostSort],
   );
+  const hostTablePageCount = Math.max(
+    1,
+    Math.ceil(sortedHostStats.length / ADMIN_MONITOR_HOST_PAGE_SIZE),
+  );
+  const paginatedHostStats = useMemo(() => {
+    const page = Math.min(hostTablePage, hostTablePageCount);
+    const start = (page - 1) * ADMIN_MONITOR_HOST_PAGE_SIZE;
+    return sortedHostStats.slice(start, start + ADMIN_MONITOR_HOST_PAGE_SIZE);
+  }, [sortedHostStats, hostTablePage, hostTablePageCount]);
   const sortedRabbitHostStats = useMemo(
     () =>
       [...fqdnRabbitHostStats].sort((a, b) =>
@@ -322,6 +337,15 @@ export default function AdminMonitor() {
       ),
     [fqdnRabbitHostStats, rabbitHostSort],
   );
+  const rabbitHostTablePageCount = Math.max(
+    1,
+    Math.ceil(sortedRabbitHostStats.length / ADMIN_MONITOR_HOST_PAGE_SIZE),
+  );
+  const paginatedRabbitHostStats = useMemo(() => {
+    const page = Math.min(rabbitHostTablePage, rabbitHostTablePageCount);
+    const start = (page - 1) * ADMIN_MONITOR_HOST_PAGE_SIZE;
+    return sortedRabbitHostStats.slice(start, start + ADMIN_MONITOR_HOST_PAGE_SIZE);
+  }, [sortedRabbitHostStats, rabbitHostTablePage, rabbitHostTablePageCount]);
 
   const formatHostTime = (value: string | null | undefined) => {
     if (!value) return "—";
@@ -453,7 +477,7 @@ export default function AdminMonitor() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {sortedHostStats.map((row, i) => {
+                  {paginatedHostStats.map((row, i) => {
                     const badge =
                       BADGE_MAP[(row.age_bucket as FreshnessBucket) || "gt_week"] ||
                       BADGE_MAP.gt_week;
@@ -478,6 +502,45 @@ export default function AdminMonitor() {
                   )}
                 </TableBody>
                 </Table>
+                {hostTablePageCount > 1 ? (
+                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+                    <span className="text-muted-foreground">
+                      Showing{" "}
+                      {(Math.min(hostTablePage, hostTablePageCount) - 1) *
+                        ADMIN_MONITOR_HOST_PAGE_SIZE +
+                        1}
+                      –
+                      {Math.min(
+                        Math.min(hostTablePage, hostTablePageCount) *
+                          ADMIN_MONITOR_HOST_PAGE_SIZE,
+                        sortedHostStats.length,
+                      )}{" "}
+                      of {sortedHostStats.length} hosts
+                    </span>
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={hostTablePage <= 1}
+                        onClick={() => setHostTablePage((p) => Math.max(1, p - 1))}
+                      >
+                        Previous
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={hostTablePage >= hostTablePageCount}
+                        onClick={() =>
+                          setHostTablePage((p) => Math.min(hostTablePageCount, p + 1))
+                        }
+                      >
+                        Next
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
             </>
           )}
       </AdminMonitorCollapsibleSection>
@@ -681,6 +744,7 @@ export default function AdminMonitor() {
             />
           )}
           {!rabbitHostLoading && !rabbitHostError && (
+            <>
             <Table className="border text-sm">
                 <TableCaption className="sr-only">
                   Hosts seen via RabbitMQ and their last data timestamps. Sort by host, last
@@ -763,7 +827,7 @@ export default function AdminMonitor() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {sortedRabbitHostStats.map((row, i) => {
+                  {paginatedRabbitHostStats.map((row, i) => {
                     const badge =
                       BADGE_MAP[(row.age_bucket as FreshnessBucket) || "gt_week"] ||
                       BADGE_MAP.gt_week;
@@ -788,6 +852,48 @@ export default function AdminMonitor() {
                   )}
                 </TableBody>
               </Table>
+              {rabbitHostTablePageCount > 1 ? (
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+                  <span className="text-muted-foreground">
+                    Showing{" "}
+                    {(Math.min(rabbitHostTablePage, rabbitHostTablePageCount) - 1) *
+                      ADMIN_MONITOR_HOST_PAGE_SIZE +
+                      1}
+                    –
+                    {Math.min(
+                      Math.min(rabbitHostTablePage, rabbitHostTablePageCount) *
+                        ADMIN_MONITOR_HOST_PAGE_SIZE,
+                      sortedRabbitHostStats.length,
+                    )}{" "}
+                    of {sortedRabbitHostStats.length} hosts
+                  </span>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={rabbitHostTablePage <= 1}
+                      onClick={() => setRabbitHostTablePage((p) => Math.max(1, p - 1))}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={rabbitHostTablePage >= rabbitHostTablePageCount}
+                      onClick={() =>
+                        setRabbitHostTablePage((p) =>
+                          Math.min(rabbitHostTablePageCount, p + 1),
+                        )
+                      }
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+            </>
           )}
       </AdminMonitorCollapsibleSection>
 

@@ -1,6 +1,5 @@
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { jobMonitorGpuRetrieve } from "@/api/generated/monitor/monitor";
+import { useEffect, useMemo, useState } from "react";
 import type { JobMonitorRow } from "@/types/view-models";
 import { getErrorMessage } from "@/api/get-error-message";
 import { useJobMonitorQuery } from "@/hooks/use-job-monitor";
@@ -21,9 +20,9 @@ import {
 } from "@/components/ui/table";
 import { formatDecimalStandard } from "../utils/formatDecimal";
 import {
-  JOB_MONITOR_GPU_NO_DATA_ROW,
+  fetchJobMonitorGpuPatches,
   jobMonitorSortComparable,
-  patchJobMonitorGpuRowByUsername,
+  mergeJobMonitorGpuPatches,
 } from "../utils/job-monitor-gpu";
 import { useTableSort } from "../hooks/useTableSort";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
@@ -46,13 +45,6 @@ type JobMonitorViewRow = JobMonitorRow & {
 type JobMonitorApiResponse = {
   results?: unknown;
   window_days?: unknown;
-};
-
-type JobMonitorGpuResponse = {
-  has_data?: unknown;
-  gpu_count_total?: unknown;
-  gpu_active_total?: unknown;
-  gpu_active_percentage?: unknown;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -105,47 +97,6 @@ export default function JobMonitor() {
     return formatted === "N/A" ? "N/A" : `${formatted}%`;
   };
 
-  const loadGpuRowsAsync = (rowsData: JobMonitorViewRow[], daysForWindow?: number) => {
-    (rowsData || []).forEach((row) => {
-      const username = String(row.username || "");
-      if (!username) {
-        setRows((prev) =>
-          patchJobMonitorGpuRowByUsername(
-            prev,
-            username,
-            JOB_MONITOR_GPU_NO_DATA_ROW,
-          ) as JobMonitorViewRow[],
-        );
-        return;
-      }
-      void jobMonitorGpuRetrieve({ username, days: daysForWindow })
-        .then((gpuRes) => {
-          const gpu = (isRecord(gpuRes) ? gpuRes : {}) as JobMonitorGpuResponse;
-          const hasData = gpu.has_data === true;
-          const patch = hasData
-            ? {
-                gpu_count_total: gpu.gpu_count_total,
-                gpu_active_total: gpu.gpu_active_total,
-                gpu_active_percentage: gpu.gpu_active_percentage,
-                gpuLoadingState: "loaded" as const,
-              }
-            : JOB_MONITOR_GPU_NO_DATA_ROW;
-          setRows((prev) =>
-            patchJobMonitorGpuRowByUsername(prev, username, patch) as JobMonitorViewRow[],
-          );
-        })
-        .catch(() => {
-          setRows((prev) =>
-            patchJobMonitorGpuRowByUsername(
-              prev,
-              username,
-              JOB_MONITOR_GPU_NO_DATA_ROW,
-            ) as JobMonitorViewRow[],
-          );
-        });
-    });
-  };
-
   useEffect(() => {
     if (!data) return;
     const typed = data as JobMonitorApiResponse;
@@ -157,20 +108,31 @@ export default function JobMonitor() {
       setWindowDays(typed.window_days);
       setInputDays(String(typed.window_days));
     }
-    loadGpuRowsAsync(nextRows, days);
-  }, [data]);
 
-  const sortedRows = [...rows].sort((a, b) => {
-    const av = jobMonitorSortComparable(a, sortKey);
-    const bv = jobMonitorSortComparable(b, sortKey);
-    if (av < bv) return sortDir === "asc" ? -1 : 1;
-    if (av > bv) return sortDir === "asc" ? 1 : -1;
-    const au = (a.username || "").toLowerCase();
-    const bu = (b.username || "").toLowerCase();
-    if (au < bu) return -1;
-    if (au > bu) return 1;
-    return 0;
-  });
+    let cancelled = false;
+    void fetchJobMonitorGpuPatches(nextRows, days).then((patches) => {
+      if (cancelled) return;
+      setRows((prev) => mergeJobMonitorGpuPatches(prev, patches) as JobMonitorViewRow[]);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [data, windowDays]);
+
+  const sortedRows = useMemo(() => {
+    return [...rows].sort((a, b) => {
+      const av = jobMonitorSortComparable(a, sortKey);
+      const bv = jobMonitorSortComparable(b, sortKey);
+      if (av < bv) return sortDir === "asc" ? -1 : 1;
+      if (av > bv) return sortDir === "asc" ? 1 : -1;
+      const au = (a.username || "").toLowerCase();
+      const bu = (b.username || "").toLowerCase();
+      if (au < bu) return -1;
+      if (au > bu) return 1;
+      return 0;
+    });
+  }, [rows, sortKey, sortDir]);
 
   return (
     <>

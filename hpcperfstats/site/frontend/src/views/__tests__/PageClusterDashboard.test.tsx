@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import PageClusterDashboard from "../PageClusterDashboard";
 import { PubDashboardBundleContext } from "../../pub-dashboard-bundle-context";
 
@@ -79,7 +80,8 @@ describe("PageClusterDashboard", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders expansion factors tab with yearly before monthly and Bokeh stubs", async () => {
+  it("lazy-mounts yearly histograms first; monthly after user switches grouping", async () => {
+    const user = userEvent.setup();
     renderWithPubContext({
       loading: false,
       bundle: mockReadyBundle,
@@ -92,66 +94,17 @@ describe("PageClusterDashboard", () => {
       ).toBeInTheDocument();
     });
 
-    expect(global.fetch).not.toHaveBeenCalled();
+    expect(screen.getByTestId("bokeh-pub-expansion-factor-year-2098")).toBeInTheDocument();
+    expect(screen.getByTestId("bokeh-pub-expansion-factor-year-2099")).toBeInTheDocument();
+    expect(screen.queryByTestId("bokeh-pub-expansion-factor-month-2099-01")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("bokeh-pub-expansion-factor-month-2100-02")).not.toBeInTheDocument();
 
-    await waitFor(() => {
-      expect(
-        screen.getByRole("tab", { name: /expansion factors/i }),
-      ).toBeInTheDocument();
-    });
+    await user.click(screen.getByRole("button", { name: "Monthly" }));
 
-    const yearly = screen.getByRole("heading", { level: 3, name: "Yearly" });
-    const monthly = screen.getByRole("heading", { level: 3, name: "Monthly" });
-    expect(
-      yearly.compareDocumentPosition(monthly) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(
-      monthly.compareDocumentPosition(yearly) & Node.DOCUMENT_POSITION_PRECEDING,
-    ).toBeTruthy();
-
-    expect(screen.getByRole("link", { name: "Monthly" })).toHaveAttribute(
-      "href",
-      "#pub-dashboard-monthly",
-    );
-    expect(screen.getByRole("link", { name: "Monthly" })).toHaveClass("text-xl");
-    expect(screen.getByRole("link", { name: "Monthly" })).not.toHaveClass("text-sm");
-    expect(screen.getByRole("link", { name: "Yearly" })).toHaveAttribute(
-      "href",
-      "#pub-dashboard-yearly",
-    );
-    expect(screen.getByRole("link", { name: "Yearly" })).toHaveClass("text-xl");
-    expect(screen.getByRole("link", { name: "Yearly" })).not.toHaveClass("text-sm");
-    expect(
-      screen.queryByText(
-        "Public cluster dashboards built from pre-warmed aggregates (no live heavy queries).",
-      ),
-    ).not.toBeInTheDocument();
-
-    const yearKey2099 = screen.getByText("2099");
-    const yearKey2098 = screen.getByText("2098");
-    expect(
-      yearKey2099.compareDocumentPosition(yearKey2098) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-
-    const monthKey210002 = screen.getByText("2100-02");
-    const monthKey209901 = screen.getByText("2099-01");
-    expect(
-      monthKey210002.compareDocumentPosition(monthKey209901) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-
-    await waitFor(() => {
-      expect(screen.getByTestId("bokeh-pub-expansion-factor-year-2098")).toBeInTheDocument();
-    });
-    await waitFor(() => {
-      expect(screen.getByTestId("bokeh-pub-expansion-factor-year-2099")).toBeInTheDocument();
-    });
-    await waitFor(() => {
-      expect(screen.getByTestId("bokeh-pub-expansion-factor-month-2099-01")).toBeInTheDocument();
-    });
     await waitFor(() => {
       expect(screen.getByTestId("bokeh-pub-expansion-factor-month-2100-02")).toBeInTheDocument();
     });
-    expect(screen.queryAllByRole("progressbar")).toHaveLength(0);
+    expect(screen.queryByTestId("bokeh-pub-expansion-factor-year-2098")).not.toBeInTheDocument();
   });
 
   it("shows loading state while bundle is pending", () => {

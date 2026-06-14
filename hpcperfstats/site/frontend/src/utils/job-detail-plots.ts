@@ -99,11 +99,9 @@ export function jobPlotEntryEqual(
   if (p.plotItem === q.plotItem) return true;
   if (p.plotItem == null && q.plotItem == null) return true;
   if (p.plotItem == null || q.plotItem == null) return false;
-  try {
-    return JSON.stringify(p.plotItem) === JSON.stringify(q.plotItem);
-  } catch {
-    return false;
-  }
+  const left = p.plotItem as Record<string, unknown>;
+  const right = q.plotItem as Record<string, unknown>;
+  return left.root_id === right.root_id && left.target_id === right.target_id;
 }
 
 export function jobPlotStatesEqual(

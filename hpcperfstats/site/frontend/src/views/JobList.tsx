@@ -5,7 +5,11 @@ import type { MouseEvent } from "react";
 import type { JobListEntry } from "@/api/generated/models/jobListEntry";
 import type { JobListData } from "@/types/view-models";
 import { useJobListQuery } from "@/hooks/use-job-list";
-import { useJobListHistograms } from "@/hooks/use-job-list-histograms";
+import {
+  JOB_LIST_HISTOGRAM_METRICS,
+  useJobListHistograms,
+  type MetricName,
+} from "@/hooks/use-job-list-histograms";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -56,7 +60,6 @@ import {
   jobListRouteTitleContext,
 } from "../utils/job-list-route-title-context";
 
-type MetricName = "runtime" | "nhosts" | "queue_wait";
 type SortDirection = "asc" | "desc";
 type JobPerformanceBadge = {
   tone?: string | null;
@@ -182,7 +185,6 @@ export default function JobList() {
   const { flatParams: paramsFromRoute } = useMachineRouteParams();
   const pathname = usePathname();
   const router = useRouter();
-  const metricNames: MetricName[] = ["runtime", "nhosts", "queue_wait"];
   const [histogramReloadKey, setHistogramReloadKey] = useState(0);
   const { openExtendedSearch } = useExtendedSearchLayout();
   const listViewTab = readTabFromSearchParams(searchParams, "view", "jobs");
@@ -219,10 +221,11 @@ export default function JobList() {
 
   const jobListData = data as JobListApiResponse | null;
 
+  const histogramsEnabled = isLgUp || listViewTab === "charts";
   const { histograms, metricHistStatus } = useJobListHistograms(
     listApiParams,
     histogramReloadKey,
-    metricNames,
+    histogramsEnabled,
   );
 
   function setListViewTab(tab: "jobs" | "charts") {
@@ -343,7 +346,7 @@ export default function JobList() {
     return tableSortAriaSort(field, sortColumn, sortDirection) ?? "none";
   };
 
-  const allMetricHistsDone = metricNames.every(
+  const allMetricHistsDone = JOB_LIST_HISTOGRAM_METRICS.every(
     (m) => !metricHistStatus[m]?.loading,
   );
   const histogramsFinishedLoading = allMetricHistsDone;
@@ -353,7 +356,7 @@ export default function JobList() {
     nhosts: "Node count",
     queue_wait: "Queue wait",
   };
-  metricNames.forEach((metric) => {
+  JOB_LIST_HISTOGRAM_METRICS.forEach((metric) => {
     if (metricHistStatus[metric]?.error) {
       failedHistogramLabels.push(labelMap[metric] || metric);
     }
@@ -512,7 +515,7 @@ export default function JobList() {
       >
         <h2 className="mb-2 text-lg font-medium">Distributions for this job selection</h2>
         <div className="text-center">
-          {metricNames.map((metric) => {
+          {JOB_LIST_HISTOGRAM_METRICS.map((metric) => {
             const status = metricHistStatus[metric] || {
               loading: false,
               error: null,

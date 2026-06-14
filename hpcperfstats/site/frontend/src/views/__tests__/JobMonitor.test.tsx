@@ -143,4 +143,29 @@ describe("JobMonitor", () => {
       ).toBeInTheDocument();
     });
   });
+
+  it("loads GPU data with one API call per user (bounded fan-out)", async () => {
+    setJobMonitorQueryMock({
+      data: {
+        window_days: 30,
+        results: [
+          { username: "alice", total_jobs: 10, failed_jobs: 1, failed_rate: 10 },
+          { username: "bob", total_jobs: 20, failed_jobs: 2, failed_rate: 10 },
+          { username: "carol", total_jobs: 30, failed_jobs: 3, failed_rate: 10 },
+        ],
+      },
+    });
+    vi.mocked(jobMonitorGpuRetrieve).mockResolvedValue({
+      has_data: false,
+    });
+
+    renderWithProviders(<JobMonitor />);
+
+    await waitFor(() => {
+      expect(jobMonitorGpuRetrieve).toHaveBeenCalledTimes(3);
+    });
+    expect(jobMonitorGpuRetrieve).toHaveBeenCalledWith({ username: "alice", days: 30 });
+    expect(jobMonitorGpuRetrieve).toHaveBeenCalledWith({ username: "bob", days: 30 });
+    expect(jobMonitorGpuRetrieve).toHaveBeenCalledWith({ username: "carol", days: 30 });
+  });
 });

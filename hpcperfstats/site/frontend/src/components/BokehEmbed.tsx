@@ -394,8 +394,9 @@ export default function BokehEmbed({
 
     let cancelled = false;
     const bokehWait = new AbortController();
-    withBokehEmbedLock(() =>
-      ensureBokehLoaded()
+    withBokehEmbedLock(() => {
+      if (cancelled) return;
+      return ensureBokehLoaded()
         .then(() => whenBokehReady(10000, { signal: bokehWait.signal }))
         .then(() => {
           if (cancelled || !containerRef.current) return;
@@ -474,8 +475,8 @@ export default function BokehEmbed({
         .catch((err) => {
           if (cancelled || err?.name === "AbortError") return;
           failEmbed(err?.message || "Bokeh JS did not load in time");
-        }),
-    );
+        });
+    });
 
     return () => {
       cancelled = true;

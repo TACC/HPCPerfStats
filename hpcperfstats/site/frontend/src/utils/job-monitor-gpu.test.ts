@@ -1,9 +1,46 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   JOB_MONITOR_GPU_NO_DATA_ROW,
+  fetchJobMonitorGpuPatches,
   jobMonitorSortComparable,
+  mergeJobMonitorGpuPatches,
   patchJobMonitorGpuRowByUsername,
 } from "./job-monitor-gpu";
+
+vi.mock("@/api/generated/monitor/monitor", () => ({
+  jobMonitorGpuRetrieve: vi.fn(),
+}));
+
+import { jobMonitorGpuRetrieve } from "@/api/generated/monitor/monitor";
+
+describe("mergeJobMonitorGpuPatches", () => {
+  it("applies all username patches in one pass", () => {
+    const prev = [
+      { username: "alice", gpuLoadingState: "loading" },
+      { username: "bob", gpuLoadingState: "loading" },
+    ];
+    const patches = new Map<string, Record<string, unknown>>([
+      ["alice", { gpu_count_total: 2, gpuLoadingState: "loaded" }],
+      ["bob", JOB_MONITOR_GPU_NO_DATA_ROW],
+    ]);
+    const next = mergeJobMonitorGpuPatches(prev, patches);
+    expect(next[0].gpu_count_total).toBe(2);
+    expect(next[0].gpuLoadingState).toBe("loaded");
+    expect(next[1].gpuLoadingState).toBe("no_data");
+  });
+});
+
+describe("fetchJobMonitorGpuPatches", () => {
+  it("returns one patch per username", async () => {
+    vi.mocked(jobMonitorGpuRetrieve).mockResolvedValue({ has_data: false });
+    const patches = await fetchJobMonitorGpuPatches(
+      [{ username: "a" }, { username: "b" }],
+      30,
+    );
+    expect(patches.size).toBe(2);
+    expect(jobMonitorGpuRetrieve).toHaveBeenCalledTimes(2);
+  });
+});
 
 describe("patchJobMonitorGpuRowByUsername", () => {
   it("patches only rows with empty string username when raw username is empty", () => {

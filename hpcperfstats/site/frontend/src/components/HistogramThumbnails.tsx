@@ -138,7 +138,6 @@ function HistogramThumbnail({
             id={fullId}
             plotName={safeTitle}
             unavailableReason={unavailableReason}
-            deferEmbedUntilVisible={false}
             intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
             wrapperClassName="min-h-[280px] w-full"
           />
@@ -165,9 +164,8 @@ function HistogramThumbnail({
             unavailableReason={unavailableReason}
             embedMinHeightPx={THUMB_SIZE.height}
             maximizeInContainer="width"
-            deferEmbedUntilVisible={false}
-            wrapperClassName="min-h-px w-full min-w-0 flex-1 self-stretch overflow-visible [&_.bokeh-embed-wrapper]:w-full [&_.bokeh-embed-wrapper]:max-w-full [&_.bokeh-embed-wrapper]:min-w-0 [&_.bokeh-embed-wrapper]:overflow-visible [&_.bokeh-embed]:box-border [&_.bokeh-embed]:min-h-[180px] [&_.bokeh-embed]:w-full [&_.bokeh-embed]:max-w-full [&_.bokeh-embed]:min-w-0 [&_.bokeh-embed]:overflow-visible [&_.bokeh-embed_.bk-root]:max-w-full!"
             intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
+            wrapperClassName="min-h-px w-full min-w-0 flex-1 self-stretch overflow-visible [&_.bokeh-embed-wrapper]:w-full [&_.bokeh-embed-wrapper]:max-w-full [&_.bokeh-embed-wrapper]:min-w-0 [&_.bokeh-embed-wrapper]:overflow-visible [&_.bokeh-embed]:box-border [&_.bokeh-embed]:min-h-[180px] [&_.bokeh-embed]:w-full [&_.bokeh-embed]:max-w-full [&_.bokeh-embed]:min-w-0 [&_.bokeh-embed]:overflow-visible [&_.bokeh-embed_.bk-root]:max-w-full!"
           />
         </div>
         <div className="histogram-thumbnail-actions flex justify-center border-t border-border bg-background px-2 py-[0.35rem]">
