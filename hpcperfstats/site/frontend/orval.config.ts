@@ -11,6 +11,10 @@ export default defineConfig({
       client: "zod",
       override: {
         zod: {
+          dateTimeOptions: {
+            local: true,
+            offset: true,
+          },
           generate: {
             response: true,
             body: true,

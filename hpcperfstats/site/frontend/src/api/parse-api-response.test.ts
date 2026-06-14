@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { parseApiResponse } from "@/api/parse-api-response";
 import { resolveResponseSchema } from "@/api/response-schema-registry";
 import { homeRetrieveResponse } from "@/api/generated-zod/home/home";
+import { jobsRetrieveResponse } from "@/api/generated-zod/jobs/jobs";
 import * as isDevEnvironmentModule from "@/utils/is-dev-environment";
 
 const validHomePayload = {
@@ -66,5 +67,33 @@ describe("parse-api-response", () => {
     expect(() => parseApiResponse("GET", "/api/home/", legacyPayload)).toThrow(
       "API response validation failed: GET /api/home/",
     );
+  });
+
+  it("accepts job list datetimes without timezone suffix (DRF default)", () => {
+    const payload = {
+      nj: 1,
+      job_list: [
+        {
+          jid: "j1",
+          submit_time: "2024-01-01T00:00:00",
+          start_time: "2024-01-01T00:00:00",
+          end_time: "2024-01-01T01:00:00",
+          runtime: 3600,
+          performance: {
+            label: "Summary available",
+            tone: "success",
+            sort_rank: 0,
+          },
+        },
+      ],
+      filter_summary: { nj: 1, filter_text: "Jobs" },
+      aggregates: { total_node_hours: 64 },
+      pagination: { page: 1, num_pages: 1 },
+    };
+    expect(jobsRetrieveResponse.safeParse(payload).success).toBe(true);
+    const parsed = parseApiResponse<typeof payload>("GET", "/api/jobs/", payload);
+    expect(parsed.nj).toBe(1);
+    expect(parsed.job_list?.[0]?.jid).toBe("j1");
+    expect(parsed.job_list?.[0]?.end_time).toBe("2024-01-01T01:00:00");
   });
 });
