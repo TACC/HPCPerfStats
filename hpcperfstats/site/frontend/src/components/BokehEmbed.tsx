@@ -319,6 +319,7 @@ export default function BokehEmbed({
   intersectionRootMargin = DEFAULT_INTERSECTION_ROOT_MARGIN,
   intersectionThreshold = DEFAULT_INTERSECTION_THRESHOLD,
   embedSettleAfterIdleMs,
+  embedAllowed = true,
 }: BokehEmbedProps) {
   const session = useSession();
   const canViewErrorDetails = !!session?.is_staff;
@@ -392,7 +393,7 @@ export default function BokehEmbed({
   }, [item, id, useViewportGate, intersectionRootMargin, intersectionThreshold]);
 
   useEffect(() => {
-    if (!item || !viewportAllowsEmbed) return;
+    if (!item || !viewportAllowsEmbed || !embedAllowed) return;
     if (!parseBokehJsonItem(item)) {
       failEmbed("Plot payload was invalid; data is unavailable.");
       return;
@@ -490,7 +491,16 @@ export default function BokehEmbed({
       const el = typeof document !== "undefined" ? document.getElementById(id) : null;
       disposeBokehViewsForTarget(el);
     };
-  }, [item, id, onPlotReadyChange, maximizeMode, viewportAllowsEmbed, effectiveSettleMs]);
+  }, [item, id, onPlotReadyChange, maximizeMode, viewportAllowsEmbed, effectiveSettleMs, embedAllowed]);
+
+  useEffect(() => {
+    if (embedAllowed) return;
+    setPlotReady(false);
+    setLoadFailed(false);
+    setFailureReason(null);
+    setErrorDetailsOpen(false);
+    if (onPlotReadyChange) onPlotReadyChange(false);
+  }, [embedAllowed, onPlotReadyChange]);
 
   useEffect(() => {
     if (!plotReady || !maximizeMode) return;
@@ -519,8 +529,13 @@ export default function BokehEmbed({
   const isUnavailable = !isLoading && showPlaceholder;
   let message;
   if (isLoading) {
-    // Plot is present but still being rendered; show a per-plot loading message.
     message = plotName ? `Loading ${plotName}…` : "Loading plot…";
+  } else if (loadFailed && failureReason) {
+    message = failureReason;
+  } else if (isUnavailable && unavailableReason) {
+    message = unavailableReason;
+  } else if (isUnavailable) {
+    message = "Unavailable — Data not available.";
   } else {
     message = "Unavailable — Data not available.";
   }
@@ -544,7 +559,7 @@ export default function BokehEmbed({
       role="status"
     >
       <span>{message}</span>
-      {isUnavailable && detailsMessage && canViewErrorDetails ? (
+      {isUnavailable && detailsMessage && canViewErrorDetails && detailsMessage !== message ? (
         <div className="bokeh-plot-error-detail-controls mt-2 flex w-full flex-col items-center gap-2">
           <Button
             type="button"

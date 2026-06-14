@@ -26,6 +26,8 @@ type HistogramThumbnailProps = {
 
 type HistogramThumbnailsProps = {
   histograms?: JobListHistogramEntry[] | null;
+  /** When false, Bokeh embed waits until the distributions panel is visible. */
+  embedAllowed?: boolean;
 };
 
 function useIsMobile() {
@@ -51,7 +53,8 @@ function HistogramThumbnail({
   plotItemThumb,
   plotItemFull,
   unavailableReason,
-}: HistogramThumbnailProps) {
+  embedAllowed = true,
+}: HistogramThumbnailProps & { embedAllowed?: boolean }) {
   const isMobile = useIsMobile();
   const [expanded, setExpanded] = useState(false);
   const [hasOpened, setHasOpened] = useState(false);
@@ -138,6 +141,7 @@ function HistogramThumbnail({
             id={fullId}
             plotName={safeTitle}
             unavailableReason={unavailableReason}
+            embedAllowed={embedAllowed}
             intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
             wrapperClassName="min-h-[280px] w-full"
           />
@@ -150,11 +154,11 @@ function HistogramThumbnail({
     <div className="histogram-thumbnail-wrapper flex flex-col items-center justify-start">
       <div className="histogram-desktop-title mb-[0.35rem] max-w-[280px] text-center text-[0.95rem] font-semibold">{safeTitle}</div>
       <div
-        className="histogram-thumbnail-card box-border flex flex-col overflow-hidden rounded-[var(--radius)] border border-border bg-muted"
+        className="histogram-thumbnail-card box-border flex flex-col overflow-visible rounded-[var(--radius)] border border-border bg-muted"
         style={{ width: THUMB_SIZE.width }}
       >
         <div
-          className="histogram-thumbnail-shell relative box-border flex min-w-0 flex-col items-center overflow-visible border-0! bg-muted"
+          className="histogram-thumbnail-shell relative box-border flex min-w-0 flex-col items-center overflow-auto border-0! bg-muted"
           style={{ height: THUMB_SIZE.height }}
         >
           <BokehPlotWithLimitation
@@ -162,6 +166,7 @@ function HistogramThumbnail({
             id={thumbId}
             plotName={safeTitle}
             unavailableReason={unavailableReason}
+            embedAllowed={embedAllowed}
             embedMinHeightPx={THUMB_SIZE.height}
             maximizeInContainer="width"
             intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
@@ -213,6 +218,7 @@ function HistogramThumbnail({
                 id={fullId}
                 plotName={`${safeTitle} (full)`}
                 unavailableReason={unavailableReason}
+                embedAllowed={embedAllowed}
                 maximizeInContainer="width"
                 deferEmbedUntilVisible={false}
                 intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
@@ -225,7 +231,10 @@ function HistogramThumbnail({
   );
 }
 
-export default function HistogramThumbnails({ histograms }: HistogramThumbnailsProps) {
+export default function HistogramThumbnails({
+  histograms,
+  embedAllowed = true,
+}: HistogramThumbnailsProps) {
   if (!histograms) {
     return (
       <div className="flex min-h-[120px] items-center justify-center rounded border border-dashed border-border bg-muted p-3 text-muted-foreground">
@@ -254,6 +263,7 @@ export default function HistogramThumbnails({ histograms }: HistogramThumbnailsP
           plotItemThumb={h.plot_item_thumb}
           plotItemFull={h.plot_item_full}
           unavailableReason={h.plot_unavailable_reason}
+          embedAllowed={embedAllowed}
         />
       ))}
     </section>

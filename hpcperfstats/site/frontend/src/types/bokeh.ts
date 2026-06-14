@@ -20,6 +20,8 @@ export type BokehEmbedProps = {
   intersectionRootMargin?: string;
   intersectionThreshold?: number;
   embedSettleAfterIdleMs?: number;
+  /** When false, defer Bokeh embed until the plot container is visible in layout. */
+  embedAllowed?: boolean;
 };
 
 export type BokehPlotWithLimitationProps = BokehEmbedProps & {

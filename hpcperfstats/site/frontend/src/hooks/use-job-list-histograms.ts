@@ -1,10 +1,17 @@
 import { useEffect, useState } from "react";
 import { jobsHistogramsBatchRetrieve } from "@/api/generated/jobs/jobs";
+import { ApiError } from "@/api/api-error";
 import { HISTOGRAM_EMBED_VERSION } from "@/api-paths";
 import type { JobListHistogramEntry, MetricHistStatusMap } from "@/types/view-models";
 import { normalizeJobListHistogramEntry } from "@/utils/normalize-job-list-histogram-entry";
 
 export type MetricName = "runtime" | "nhosts" | "queue_wait";
+
+export type JobListHistogramSampleMeta = {
+  nj: number | null;
+  histogramNj: number | null;
+  histogramSampled: boolean;
+};
 
 /** Stable default metric list — do not pass inline arrays from views (refetch loop). */
 export const JOB_LIST_HISTOGRAM_METRICS: readonly MetricName[] = [
@@ -31,6 +38,19 @@ function metricStatusFromBatchError(message: string): MetricHistStatusMap {
   }, {});
 }
 
+function batchErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    const detail =
+      typeof err.body.detail === "string" && err.body.detail.trim()
+        ? err.body.detail.trim()
+        : "";
+    if (detail) return detail;
+    return err.message;
+  }
+  if (err instanceof Error && err.message.trim()) return err.message;
+  return "Failed to load histograms for this job list.";
+}
+
 /** Loads metric histogram embeds for the current job list filter params (single batch API). */
 export function useJobListHistograms(
   listApiParams: Record<string, string>,
@@ -41,17 +61,27 @@ export function useJobListHistograms(
   const [metricHistStatus, setMetricHistStatus] = useState<MetricHistStatusMap>(() =>
     createInitialMetricStatus(false),
   );
+  const [batchError, setBatchError] = useState<string | null>(null);
+  const [sampleMeta, setSampleMeta] = useState<JobListHistogramSampleMeta>({
+    nj: null,
+    histogramNj: null,
+    histogramSampled: false,
+  });
 
   useEffect(() => {
     if (!enabled) {
       setHistograms(null);
       setMetricHistStatus(createInitialMetricStatus(false));
+      setBatchError(null);
+      setSampleMeta({ nj: null, histogramNj: null, histogramSampled: false });
       return;
     }
 
     const controller = new AbortController();
     setHistograms(null);
     setMetricHistStatus(createInitialMetricStatus(true));
+    setBatchError(null);
+    setSampleMeta({ nj: null, histogramNj: null, histogramSampled: false });
 
     const loadHistograms = async () => {
       try {
@@ -71,6 +101,13 @@ export function useJobListHistograms(
         const nextStatus = createInitialMetricStatus(false);
         const entries: JobListHistogramEntry[] = [];
         const loadedMetrics = new Set<MetricName>();
+
+        setSampleMeta({
+          nj: typeof batchData?.nj === "number" ? batchData.nj : null,
+          histogramNj:
+            typeof batchData?.histogram_nj === "number" ? batchData.histogram_nj : null,
+          histogramSampled: batchData?.histogram_sampled === true,
+        });
 
         for (const row of rows) {
           const metric = String(row?.metric || "") as MetricName;
@@ -96,15 +133,15 @@ export function useJobListHistograms(
 
         setMetricHistStatus(nextStatus);
         setHistograms(entries.length ? entries : null);
+        setBatchError(null);
       } catch (err) {
         if (controller.signal.aborted) return;
-        const message =
-          err instanceof Error
-            ? err.message
-            : "Failed to load histograms for this job list.";
+        const message = batchErrorMessage(err);
         console.warn("Failed to load job list histogram batch:", err);
         setMetricHistStatus(metricStatusFromBatchError(message));
+        setBatchError(message);
         setHistograms(null);
+        setSampleMeta({ nj: null, histogramNj: null, histogramSampled: false });
       }
     };
 
@@ -112,5 +149,5 @@ export function useJobListHistograms(
     return () => controller.abort();
   }, [listApiParams, reloadKey, enabled]);
 
-  return { histograms, metricHistStatus, setMetricHistStatus };
+  return { histograms, metricHistStatus, batchError, sampleMeta, setMetricHistStatus };
 }

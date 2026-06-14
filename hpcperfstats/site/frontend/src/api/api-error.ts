@@ -25,9 +25,15 @@ export class ApiError extends Error {
 }
 
 export function extractApiErrorMessage(body: ApiErrorBody, status: number): string {
-  if (typeof body.error === "string" && body.error.trim()) return body.error;
-  if (typeof body.detail === "string" && body.detail.trim()) return body.detail;
-  if (typeof body.message === "string" && body.message.trim()) return body.message;
+  const detail = typeof body.detail === "string" ? body.detail.trim() : "";
+  const error = typeof body.error === "string" ? body.error.trim() : "";
+  const message = typeof body.message === "string" ? body.message.trim() : "";
+
+  if (detail && (!error || detail.length > error.length || error.includes("_"))) {
+    return detail;
+  }
+  if (error) return error;
+  if (message) return message;
   return `HTTP ${status}`;
 }
 

@@ -9,6 +9,7 @@ import {
 } from "../src/api/generated-zod/admin/admin";
 import { homeRetrieveResponse } from "../src/api/generated-zod/home/home";
 import {
+  jobsHistogramsBatchRetrieveResponse,
   jobsHistogramsRetrieveResponse,
   jobsPlotsRetrieveResponse,
   jobsRetrieve2Response,
@@ -116,10 +117,34 @@ const cases: Case[] = [
       group: "metric",
       metric: "runtime",
       nj: 10,
+      histogram_nj: 10,
+      histogram_sampled: false,
       title: "Runtime",
       plot_item_thumb: { type: "plot" },
       plot_item_full: { type: "plot" },
       plot_unavailable_reason: null,
+    },
+  },
+  {
+    route: "GET /api/jobs/histograms/batch/",
+    schema: jobsHistogramsBatchRetrieveResponse,
+    wire: {
+      nj: 12000,
+      histogram_nj: 5000,
+      histogram_sampled: true,
+      histograms: [
+        {
+          group: "metric",
+          metric: "runtime",
+          nj: 12000,
+          histogram_nj: 5000,
+          histogram_sampled: true,
+          title: "Number of jobs by cpu hours",
+          plot_item_thumb: { type: "plot" },
+          plot_item_full: { type: "plot" },
+          plot_unavailable_reason: null,
+        },
+      ],
     },
   },
   {

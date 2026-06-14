@@ -13,9 +13,13 @@ vi.mock("@/hooks/use-job-list", () => ({
   useJobListQuery: vi.fn(),
 }));
 
-vi.mock("@/hooks/use-job-list-histograms", () => ({
-  useJobListHistograms: vi.fn(),
-}));
+vi.mock("@/hooks/use-job-list-histograms", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/hooks/use-job-list-histograms")>();
+  return {
+    ...actual,
+    useJobListHistograms: vi.fn(),
+  };
+});
 
 const defaultMetricHistStatus: MetricHistStatusMap = {
   runtime: { loading: false, error: null },
@@ -42,6 +46,8 @@ function setJobListHistogramsMock(
   vi.mocked(useJobListHistograms).mockReturnValue({
     histograms: null,
     metricHistStatus: defaultMetricHistStatus,
+    batchError: null,
+    sampleMeta: { nj: null, histogramNj: null, histogramSampled: false },
     setMetricHistStatus: vi.fn(),
     ...overrides,
   });
@@ -85,6 +91,57 @@ describe("JobList", () => {
 
     renderJobList();
     expect(screen.getByRole("status", { name: /loading job list/i })).toBeInTheDocument();
+  });
+
+  it("enables histogram fetch on desktop layout without charts tab", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      configurable: true,
+      value: vi.fn().mockImplementation((query) => ({
+        matches: query.includes("min-width: 992px"),
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+
+    renderJobList("/jobs");
+
+    await waitFor(() => {
+      expect(vi.mocked(useJobListHistograms)).toHaveBeenCalled();
+    });
+    const lastCall = vi.mocked(useJobListHistograms).mock.calls.at(-1);
+    expect(lastCall?.[2]).toBe(true);
+  });
+
+  it("shows histogram batch error text in the alert", async () => {
+    setJobListQueryMock({ data:{
+      job_list: [],
+      nj: 0,
+      aggregates: {},
+      qname: "Jobs",
+      order_by: "-end_time",
+      pagination: { page: 1, num_pages: 1 },
+    } });
+    setJobListHistogramsMock({
+      metricHistStatus: {
+        runtime: { loading: false, error: "Server unavailable." },
+        nhosts: { loading: false, error: "Server unavailable." },
+        queue_wait: { loading: false, error: "Server unavailable." },
+      },
+      batchError: "Server unavailable.",
+    });
+
+    renderJobList("/jobs?view=charts");
+
+    await waitFor(() => {
+      expect(screen.getByText(/Some histograms could not be loaded/i)).toBeInTheDocument();
+    });
+    expect(screen.getByText("Server unavailable.")).toBeInTheDocument();
   });
 
   it("renders basic job list data", async () => {
@@ -352,9 +409,9 @@ describe("JobList", () => {
         {
           metric: "runtime",
           title: "Runtime",
-          plotItemThumb: VALID_BOKEH_JSON_ITEM,
-          plotItemFull: VALID_BOKEH_JSON_ITEM,
-          plotUnavailableReason: null,
+          plot_item_thumb: VALID_BOKEH_JSON_ITEM,
+          plot_item_full: VALID_BOKEH_JSON_ITEM,
+          plot_unavailable_reason: null,
         },
       ],
     });
@@ -423,9 +480,9 @@ describe("JobList", () => {
         {
           metric: "runtime",
           title: "Runtime",
-          plotItemThumb: VALID_BOKEH_JSON_ITEM,
-          plotItemFull: VALID_BOKEH_JSON_ITEM,
-          plotUnavailableReason: null,
+          plot_item_thumb: VALID_BOKEH_JSON_ITEM,
+          plot_item_full: VALID_BOKEH_JSON_ITEM,
+          plot_unavailable_reason: null,
         },
       ],
     });
@@ -628,9 +685,9 @@ describe("JobList", () => {
         {
           metric: "runtime",
           title: "Runtime",
-          plotItemThumb: null,
-          plotItemFull: null,
-          plotUnavailableReason:
+          plot_item_thumb: null,
+          plot_item_full: null,
+          plot_unavailable_reason:
             "No histogram data available for metric 'runtime' in this query.",
         },
       ],
@@ -642,7 +699,9 @@ describe("JobList", () => {
       expect(screen.getByText("Jobs = 0")).toBeInTheDocument();
     });
     expect(
-      screen.getAllByText("Unavailable — Data not available.").length,
+      screen.getAllByText(
+        "No histogram data available for metric 'runtime' in this query.",
+      ).length,
     ).toBeGreaterThan(0);
     expect(
       screen.queryByRole("button", { name: "Show plot error details" }),

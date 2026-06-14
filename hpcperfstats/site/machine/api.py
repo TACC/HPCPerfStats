@@ -156,6 +156,8 @@ def site_response_cache_timeout(request):
 _JOB_LIST_QUERY_FIELD_EXCLUDES_BASE = ("page", "order_by")
 _JOB_LIST_QUERY_FIELD_EXCLUDES_HISTOGRAM = ("group", "metric", "metrics", "_histogram_embed_v")
 _JOB_LIST_METRIC_FILTER_OPS_ALLOWED = frozenset({"gte", "lte"})
+# When nj exceeds this threshold, histogram endpoints plot a deterministic jid-ordered sample
+# of this many jobs (memory-safe; full nj is still returned as ``nj`` in the response).
 JOB_LIST_HISTOGRAM_MAX_NJ = 5000
 JOB_LIST_HISTOGRAM_BATCH_METRICS_DEFAULT = ("runtime", "nhosts", "queue_wait")
 HOST_PLOT_MAX_WINDOW_DAYS = 7
@@ -1731,21 +1733,47 @@ def _job_list_metric_hist_pair(df, metric_name, label, display_title, thumb_wh, 
     return p_thumb, p_full
 
 
-def _histogram_nj_over_cap_response(nj, metric_name=None):
-    """413 when job count exceeds histogram materialization cap."""
-    detail = (
-        f"Too many jobs ({nj}) for histogram generation; "
-        f"maximum is {JOB_LIST_HISTOGRAM_MAX_NJ}. Narrow your filters."
-    )
-    body = {
-        "error": "histogram_job_count_exceeded",
-        "detail": detail,
+def _sample_histogram_job_ids(job_list_qs, nj, sample_size=None):
+    """Deterministic evenly spaced jid sample for large histogram queries."""
+    target = sample_size if sample_size is not None else JOB_LIST_HISTOGRAM_MAX_NJ
+    if nj <= target:
+        return None
+    stride = max(1, nj // target)
+    sampled = []
+    for index, jid in enumerate(
+        job_list_qs.order_by("jid").values_list("jid", flat=True).iterator(chunk_size=2000)
+    ):
+        if index % stride != 0:
+            continue
+        sampled.append(jid)
+        if len(sampled) >= target:
+            break
+    return sampled
+
+
+def _histogram_queryset_for_plotting(job_list_qs, nj, sample_size=None):
+    """
+    Return (plot_qs, histogram_nj, histogram_sampled) for dataframe materialization.
+
+    ``histogram_nj`` is the number of jobs actually plotted; ``nj`` (caller count) may be larger.
+    """
+    target = sample_size if sample_size is not None else JOB_LIST_HISTOGRAM_MAX_NJ
+    if nj <= target:
+        return job_list_qs, nj, False
+    sampled_jids = _sample_histogram_job_ids(job_list_qs, nj, sample_size=target)
+    if not sampled_jids:
+        return job_list_qs.none(), 0, True
+    plot_qs = job_list_qs.filter(jid__in=sampled_jids)
+    return plot_qs, len(sampled_jids), True
+
+
+def _histogram_response_meta(nj, histogram_nj, histogram_sampled):
+    """Shared histogram envelope fields (batch + single metric responses)."""
+    return {
         "nj": nj,
-        "max_nj": JOB_LIST_HISTOGRAM_MAX_NJ,
+        "histogram_nj": histogram_nj,
+        "histogram_sampled": histogram_sampled,
     }
-    if metric_name:
-        body["metric"] = metric_name
-    return _JSONResponse(body, status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
 
 
 def _parse_histogram_batch_metric_names(raw_metrics):
@@ -1828,9 +1856,8 @@ def job_list_histograms(request):
         )
 
     job_list_qs, nj, fields, cur_metrics = _build_histogram_queryset(request)
-    if nj > JOB_LIST_HISTOGRAM_MAX_NJ:
-        metric_name = (request.GET.get("metric") or "").strip() or None
-        return _histogram_nj_over_cap_response(nj, metric_name=metric_name)
+    plot_qs, histogram_nj, histogram_sampled = _histogram_queryset_for_plotting(job_list_qs, nj)
+    hist_meta = _histogram_response_meta(nj, histogram_nj, histogram_sampled)
     if nj == 0:
         # Preserve a consistent shape even when no jobs match the filter.
         if group == "metric":
@@ -1839,7 +1866,7 @@ def job_list_histograms(request):
                 {
                     "group": "metric",
                     "metric": metric_name or None,
-                    "nj": 0,
+                    **hist_meta,
                     "title": JOB_HIST_DISPLAY_NAMES.get(metric_name, metric_name),
                     "plot_item_thumb": None,
                     "plot_item_full": None,
@@ -1865,7 +1892,7 @@ def job_list_histograms(request):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        df, hist_metrics, _ = _build_histogram_dataframe(job_list_qs, cur_metrics)
+        df, hist_metrics, _ = _build_histogram_dataframe(plot_qs, cur_metrics)
         payload = _build_metric_histogram_payload(
             df, hist_metrics, metric_name, nj
         )
@@ -1877,6 +1904,7 @@ def job_list_histograms(request):
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        payload.update(hist_meta)
         return _JSONResponse(payload)
 
     return _JSONResponse(
@@ -1903,20 +1931,20 @@ def job_list_histograms_batch(request):
         return err
 
     job_list_qs, nj, _fields, cur_metrics = _build_histogram_queryset(request)
-    if nj > JOB_LIST_HISTOGRAM_MAX_NJ:
-        return _histogram_nj_over_cap_response(nj)
+    plot_qs, histogram_nj, histogram_sampled = _histogram_queryset_for_plotting(job_list_qs, nj)
+    hist_meta = _histogram_response_meta(nj, histogram_nj, histogram_sampled)
     if nj == 0:
-        return _JSONResponse({"nj": 0, "histograms": []})
+        return _JSONResponse({**hist_meta, "histograms": []})
 
     metric_names = _parse_histogram_batch_metric_names(request.GET.get("metrics"))
-    df, hist_metrics, _ = _build_histogram_dataframe(job_list_qs, cur_metrics)
+    df, hist_metrics, _ = _build_histogram_dataframe(plot_qs, cur_metrics)
     histograms = []
     for metric_name in metric_names:
         payload = _build_metric_histogram_payload(df, hist_metrics, metric_name, nj)
         if payload is not None:
             histograms.append(payload)
 
-    return _JSONResponse({"nj": nj, "histograms": histograms})
+    return _JSONResponse({**hist_meta, "histograms": histograms})
 
 
 @JOB_LIST_SCHEMA

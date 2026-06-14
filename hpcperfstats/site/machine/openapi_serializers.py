@@ -221,6 +221,8 @@ class JobListHistogramResponseSerializer(serializers.Serializer):
     group = serializers.CharField(required=False)
     metric = serializers.CharField(required=False, allow_null=True)
     nj = serializers.IntegerField(required=False)
+    histogram_nj = serializers.IntegerField(required=False)
+    histogram_sampled = serializers.BooleanField(required=False)
     title = serializers.CharField(required=False, allow_blank=True)
     plot_item_thumb = serializers.JSONField(required=False, allow_null=True)
     plot_item_full = serializers.JSONField(required=False, allow_null=True)
@@ -231,6 +233,8 @@ class JobListHistogramBatchResponseSerializer(serializers.Serializer):
     """Batch histogram envelope from job_list_histograms_batch."""
 
     nj = serializers.IntegerField(required=False)
+    histogram_nj = serializers.IntegerField(required=False)
+    histogram_sampled = serializers.BooleanField(required=False)
     histograms = JobListHistogramResponseSerializer(many=True, required=False)
 
 

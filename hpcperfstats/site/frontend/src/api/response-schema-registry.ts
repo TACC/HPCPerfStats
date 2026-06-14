@@ -10,6 +10,7 @@ import {
 } from "./generated-zod/admin/admin";
 import { homeRetrieveResponse } from "./generated-zod/home/home";
 import {
+  jobsHistogramsBatchRetrieveResponse,
   jobsHistogramsRetrieveResponse,
   jobsPlotsRetrieveResponse,
   jobsRetrieve2Response,
@@ -62,6 +63,7 @@ const EXACT_RESPONSE_SCHEMAS: Record<string, ZodSchema> = {
   "GET /api/home/": homeRetrieveResponse,
   "GET /api/jobs/": jobsRetrieveResponse,
   "GET /api/jobs/histograms/": jobsHistogramsRetrieveResponse,
+  "GET /api/jobs/histograms/batch/": jobsHistogramsBatchRetrieveResponse,
   "GET /api/host_plot/": hostPlotRetrieveResponse,
   "GET /api/admin_monitor/": adminMonitorRetrieveResponse,
   "GET /api/job_monitor/gpu/": jobMonitorGpuRetrieveResponse,

@@ -122,12 +122,36 @@ describe("parse-api-response", () => {
       group: "metric",
       metric: "runtime",
       nj: 5,
+      histogram_nj: 5,
+      histogram_sampled: false,
       title: "Runtime",
       plot_item_thumb: { type: "plot" },
       plot_item_full: { type: "plot" },
       plot_unavailable_reason: null,
     };
     expect(parseApiResponse("GET", "/api/jobs/histograms/", wire)).toEqual(wire);
+  });
+
+  it("accepts job list histogram batch envelope", () => {
+    const wire = {
+      nj: 12000,
+      histogram_nj: 5000,
+      histogram_sampled: true,
+      histograms: [
+        {
+          group: "metric",
+          metric: "runtime",
+          nj: 12000,
+          histogram_nj: 5000,
+          histogram_sampled: true,
+          title: "Runtime",
+          plot_item_thumb: { type: "plot" },
+          plot_item_full: { type: "plot" },
+          plot_unavailable_reason: null,
+        },
+      ],
+    };
+    expect(parseApiResponse("GET", "/api/jobs/histograms/batch/", wire)).toEqual(wire);
   });
 
   it("validates pub cluster dashboard bundle", () => {

@@ -221,8 +221,8 @@ export default function JobList() {
 
   const jobListData = data as JobListApiResponse | null;
 
-  const histogramsEnabled = listViewTab === "charts";
-  const { histograms, metricHistStatus } = useJobListHistograms(
+  const histogramsEnabled = isLgUp || listViewTab === "charts";
+  const { histograms, metricHistStatus, batchError, sampleMeta } = useJobListHistograms(
     listApiParams,
     histogramReloadKey,
     histogramsEnabled,
@@ -361,6 +361,16 @@ export default function JobList() {
       failedHistogramLabels.push(labelMap[metric] || metric);
     }
   });
+  const firstFailedMetric = JOB_LIST_HISTOGRAM_METRICS.find((m) => metricHistStatus[m]?.error);
+  const histogramErrorMessage =
+    batchError ||
+    (firstFailedMetric ? metricHistStatus[firstFailedMetric]?.error : null);
+  const histogramSampleFootnote =
+    sampleMeta.histogramSampled &&
+    sampleMeta.histogramNj != null &&
+    sampleMeta.nj != null
+      ? `Histograms use ${formatDecimalStandard(sampleMeta.histogramNj)} of ${formatDecimalStandard(sampleMeta.nj)} matching jobs.`
+      : null;
 
   const pageSummary = jobListPageHumanSummary(paramsFromRoute);
 
@@ -537,11 +547,16 @@ export default function JobList() {
               role="status"
               aria-live="polite"
             >
-              <AlertDescription className="text-sm">
+              <AlertDescription className="text-sm break-words">
                 <p className="mb-2">
                   Some histograms could not be loaded ({failedHistogramLabels.join(", ")}).
                   The job list below is unchanged.
                 </p>
+                {histogramErrorMessage ? (
+                  <p className="mb-2 whitespace-normal break-words text-amber-950 dark:text-amber-100">
+                    {histogramErrorMessage}
+                  </p>
+                ) : null}
                 <Button
                   type="button"
                   variant="outline"
@@ -556,8 +571,11 @@ export default function JobList() {
           {distributionPlotsVisible && histogramsFinishedLoading && histograms?.length === 0 ? (
             <p className="text-sm text-muted-foreground">No distribution data for this selection.</p>
           ) : null}
+          {histogramSampleFootnote ? (
+            <p className="mb-2 text-sm text-muted-foreground">{histogramSampleFootnote}</p>
+          ) : null}
           {distributionPlotsVisible ? (
-            <HistogramThumbnails histograms={histograms} />
+            <HistogramThumbnails histograms={histograms} embedAllowed={distributionPlotsVisible} />
           ) : null}
         </div>
         <p className="mt-2 mb-0 text-center text-sm">

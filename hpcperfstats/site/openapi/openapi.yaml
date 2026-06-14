@@ -1368,6 +1368,10 @@ components:
       properties:
         nj:
           type: integer
+        histogram_nj:
+          type: integer
+        histogram_sampled:
+          type: boolean
         histograms:
           type: array
           items:
@@ -1396,6 +1400,10 @@ components:
           nullable: true
         nj:
           type: integer
+        histogram_nj:
+          type: integer
+        histogram_sampled:
+          type: boolean
         title:
           type: string
         plot_item_thumb:
