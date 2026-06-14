@@ -22,6 +22,8 @@ export const JOB_LIST_HISTOGRAM_METRICS: readonly MetricName[] = [
 
 const BATCH_METRICS_PARAM = JOB_LIST_HISTOGRAM_METRICS.join(",");
 
+const NO_JOBS_MATCHED_MESSAGE = "No jobs matched this query.";
+
 function createInitialMetricStatus(
   loading: boolean,
 ): MetricHistStatusMap {
@@ -109,6 +111,13 @@ export function useJobListHistograms(
           histogramSampled: batchData?.histogram_sampled === true,
         });
 
+        if (batchData?.nj === 0 && rows.length === 0) {
+          setMetricHistStatus(metricStatusFromBatchError(NO_JOBS_MATCHED_MESSAGE));
+          setBatchError(NO_JOBS_MATCHED_MESSAGE);
+          setHistograms(null);
+          return;
+        }
+
         for (const row of rows) {
           const metric = String(row?.metric || "") as MetricName;
           if (!JOB_LIST_HISTOGRAM_METRICS.includes(metric)) continue;
@@ -119,7 +128,16 @@ export function useJobListHistograms(
           if (!entry) continue;
           entries.push(entry);
           loadedMetrics.add(metric);
-          nextStatus[metric] = { loading: false, error: null };
+          const hasPlot =
+            entry.plot_item_thumb != null || entry.plot_item_full != null;
+          const unavailableReason = entry.plot_unavailable_reason?.trim() || null;
+          if (hasPlot) {
+            nextStatus[metric] = { loading: false, error: null };
+          } else if (unavailableReason) {
+            nextStatus[metric] = { loading: false, error: unavailableReason };
+          } else {
+            nextStatus[metric] = { loading: false, error: null };
+          }
         }
 
         for (const metric of JOB_LIST_HISTOGRAM_METRICS) {

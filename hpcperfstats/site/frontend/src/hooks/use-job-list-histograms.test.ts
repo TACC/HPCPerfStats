@@ -11,6 +11,14 @@ import { jobsHistogramsBatchRetrieve } from "@/api/generated/jobs/jobs";
 
 const STABLE_PARAMS = { page: "1", order_by: "-end_time" };
 
+const VALID_BOKEH_THUMB = {
+  root_id: "p1001",
+  doc: {
+    root_ids: ["p1001"],
+    roots: [{ id: "p1001", type: "object", name: "GridPlot" }],
+  },
+};
+
 function mockBatchResponse(overrides: Record<string, unknown> = {}) {
   return {
     nj: 3,
@@ -19,21 +27,24 @@ function mockBatchResponse(overrides: Record<string, unknown> = {}) {
     histograms: [
       {
         metric: "runtime",
-        histogram_bin_edges: [0, 1],
-        histogram_counts: [1],
-        bokeh_histogram_json_item: { root_id: "runtime", target_id: "runtime", doc: {}, version: "3.0.0" },
+        title: "Runtime",
+        plot_item_thumb: VALID_BOKEH_THUMB,
+        plot_item_full: VALID_BOKEH_THUMB,
+        plot_unavailable_reason: null,
       },
       {
         metric: "nhosts",
-        histogram_bin_edges: [0, 1],
-        histogram_counts: [1],
-        bokeh_histogram_json_item: { root_id: "nhosts", target_id: "nhosts", doc: {}, version: "3.0.0" },
+        title: "Node count",
+        plot_item_thumb: VALID_BOKEH_THUMB,
+        plot_item_full: VALID_BOKEH_THUMB,
+        plot_unavailable_reason: null,
       },
       {
         metric: "queue_wait",
-        histogram_bin_edges: [0, 1],
-        histogram_counts: [1],
-        bokeh_histogram_json_item: { root_id: "queue_wait", target_id: "queue_wait", doc: {}, version: "3.0.0" },
+        title: "Queue wait",
+        plot_item_thumb: VALID_BOKEH_THUMB,
+        plot_item_full: VALID_BOKEH_THUMB,
+        plot_unavailable_reason: null,
       },
     ],
     ...overrides,
@@ -125,5 +136,62 @@ describe("useJobListHistograms", () => {
     expect(result.current.metricHistStatus.runtime.error).toBe(
       "Too many jobs for histogram generation.",
     );
+  });
+
+  it("maps legacy nj=0 empty batch to no-jobs message", async () => {
+    vi.mocked(jobsHistogramsBatchRetrieve).mockResolvedValue({
+      nj: 0,
+      histogram_nj: 0,
+      histogram_sampled: false,
+      histograms: [],
+    });
+
+    const { result } = renderHook(() => useJobListHistograms(STABLE_PARAMS, 0, true));
+
+    await waitFor(() => {
+      expect(result.current.batchError).toBe("No jobs matched this query.");
+    });
+    expect(result.current.metricHistStatus.runtime.error).toBe(
+      "No jobs matched this query.",
+    );
+  });
+
+  it("surfaces plot_unavailable_reason on metric status when plots are null", async () => {
+    vi.mocked(jobsHistogramsBatchRetrieve).mockResolvedValue({
+      nj: 2,
+      histogram_nj: 2,
+      histogram_sampled: false,
+      histograms: [
+        {
+          metric: "runtime",
+          title: "Runtime",
+          plot_item_thumb: null,
+          plot_item_full: null,
+          plot_unavailable_reason:
+            "No histogram data available for metric 'runtime' in this query.",
+        },
+        {
+          metric: "nhosts",
+          title: "Node count",
+          plot_item_thumb: VALID_BOKEH_THUMB,
+          plot_item_full: VALID_BOKEH_THUMB,
+          plot_unavailable_reason: null,
+        },
+        {
+          metric: "queue_wait",
+          title: "Queue wait",
+          plot_item_thumb: VALID_BOKEH_THUMB,
+          plot_item_full: VALID_BOKEH_THUMB,
+          plot_unavailable_reason: null,
+        },
+      ],
+    });
+
+    const { result } = renderHook(() => useJobListHistograms(STABLE_PARAMS, 0, true));
+
+    await waitFor(() => {
+      expect(result.current.metricHistStatus.runtime.error).toContain("runtime");
+    });
+    expect(result.current.metricHistStatus.nhosts.error).toBeNull();
   });
 });

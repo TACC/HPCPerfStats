@@ -1352,6 +1352,8 @@ def invalidate_cache_for_page(request):
         path_variants.add("/api/home/")
         invalidate_home_options_query_cache()
 
+    _expand_path_variants_for_job_list_api_cache(path_variants, normalized_path)
+
     paths_sorted = sorted(path_variants)
     digests = _full_page_cache_url_digests_for_request_paths(request, paths_sorted)
 
@@ -1577,6 +1579,22 @@ JOB_HIST_DISPLAY_NAMES = {
     "nhosts": "Number of jobs by number of nodes",
     "queue_wait": "Number of jobs by queue wait time",
 }
+JOB_LIST_HISTOGRAM_NO_JOBS_REASON = "No jobs matched this query."
+_JOB_LIST_API_CACHE_PATHS = (
+    "/api/jobs/",
+    "/api/jobs/histograms/",
+    "/api/jobs/histograms/batch/",
+)
+_JOB_LIST_MACHINE_BROWSE_PREFIXES = (
+    "/machine/jobs",
+    "/machine/year/",
+    "/machine/date/",
+    "/machine/month/",
+    "/machine/user/",
+    "/machine/account/",
+    "/machine/queue/",
+    "/machine/host/",
+)
 
 
 def _build_histogram_queryset(request):
@@ -1599,6 +1617,7 @@ def _build_histogram_queryset(request):
         return job_list_qs, nj, fields, cur_metrics
     except Exception:
         # Database unavailable or other error: behave as if no jobs matched.
+        logger.exception("job_list_histograms: _build_histogram_queryset failed")
         return job_data.objects.none(), 0, {}, {}
 
 
@@ -1784,6 +1803,69 @@ def _parse_histogram_batch_metric_names(raw_metrics):
     return names or list(JOB_LIST_HISTOGRAM_BATCH_METRICS_DEFAULT)
 
 
+def _histogram_metric_unavailable_stub(metric_name, nj, unavailable_reason):
+    """Batch/single histogram envelope when plots are unavailable."""
+    display_title = JOB_HIST_DISPLAY_NAMES.get(metric_name, metric_name)
+    return {
+        "group": "metric",
+        "metric": metric_name,
+        "nj": nj,
+        "title": display_title,
+        "plot_item_thumb": None,
+        "plot_item_full": None,
+        "plot_unavailable_reason": unavailable_reason,
+    }
+
+
+def _build_histogram_batch_entries(metric_names, nj, plot_qs, cur_metrics):
+    """Return one histogram envelope per requested metric (never omit names)."""
+    if nj == 0:
+        return [
+            _histogram_metric_unavailable_stub(
+                metric_name, nj, JOB_LIST_HISTOGRAM_NO_JOBS_REASON
+            )
+            for metric_name in metric_names
+        ]
+
+    df, hist_metrics, _ = _build_histogram_dataframe(plot_qs, cur_metrics)
+    histograms = []
+    for metric_name in metric_names:
+        payload = _build_metric_histogram_payload(df, hist_metrics, metric_name, nj)
+        if payload is not None:
+            histograms.append(payload)
+            continue
+        histograms.append(
+            _histogram_metric_unavailable_stub(
+                metric_name,
+                nj,
+                f"Metric '{metric_name}' is not available for this query.",
+            )
+        )
+    return histograms
+
+
+def _machine_path_targets_job_list_api_cache(normalized_path):
+    """True when SPA browse routes load GET /api/jobs/ or histogram batch APIs."""
+    if normalized_path == "/machine/jobs":
+        return True
+    if normalized_path.startswith("/machine/jobs/"):
+        return False
+    return any(
+        normalized_path.startswith(prefix)
+        for prefix in _JOB_LIST_MACHINE_BROWSE_PREFIXES
+        if prefix != "/machine/jobs"
+    )
+
+
+def _expand_path_variants_for_job_list_api_cache(path_variants, normalized_path):
+    """Also purge job list + histogram API cache rows for job browse pages."""
+    if not _machine_path_targets_job_list_api_cache(normalized_path):
+        return
+    for api_path in _JOB_LIST_API_CACHE_PATHS:
+        path_variants.add(api_path.rstrip("/") or "/")
+        path_variants.add(api_path if api_path.endswith("/") else f"{api_path}/")
+
+
 def _build_metric_histogram_payload(
     df,
     hist_metrics,
@@ -1933,17 +2015,8 @@ def job_list_histograms_batch(request):
     job_list_qs, nj, _fields, cur_metrics = _build_histogram_queryset(request)
     plot_qs, histogram_nj, histogram_sampled = _histogram_queryset_for_plotting(job_list_qs, nj)
     hist_meta = _histogram_response_meta(nj, histogram_nj, histogram_sampled)
-    if nj == 0:
-        return _JSONResponse({**hist_meta, "histograms": []})
-
     metric_names = _parse_histogram_batch_metric_names(request.GET.get("metrics"))
-    df, hist_metrics, _ = _build_histogram_dataframe(plot_qs, cur_metrics)
-    histograms = []
-    for metric_name in metric_names:
-        payload = _build_metric_histogram_payload(df, hist_metrics, metric_name, nj)
-        if payload is not None:
-            histograms.append(payload)
-
+    histograms = _build_histogram_batch_entries(metric_names, nj, plot_qs, cur_metrics)
     return _JSONResponse({**hist_meta, "histograms": histograms})
 
 

@@ -144,6 +144,32 @@ describe("JobList", () => {
     expect(screen.getByText("Server unavailable.")).toBeInTheDocument();
   });
 
+  it("shows no-jobs histogram message in the alert", async () => {
+    setJobListQueryMock({ data:{
+      job_list: [],
+      nj: 0,
+      aggregates: {},
+      qname: "Jobs",
+      order_by: "-end_time",
+      pagination: { page: 1, num_pages: 1 },
+    } });
+    setJobListHistogramsMock({
+      metricHistStatus: {
+        runtime: { loading: false, error: "No jobs matched this query." },
+        nhosts: { loading: false, error: "No jobs matched this query." },
+        queue_wait: { loading: false, error: "No jobs matched this query." },
+      },
+      batchError: "No jobs matched this query.",
+    });
+
+    renderJobList("/jobs?view=charts");
+
+    await waitFor(() => {
+      expect(screen.getByText(/Some histograms could not be loaded/i)).toBeInTheDocument();
+    });
+    expect(screen.getByText("No jobs matched this query.")).toBeInTheDocument();
+  });
+
   it("renders basic job list data", async () => {
     setJobListQueryMock({ data:{
       job_list: [

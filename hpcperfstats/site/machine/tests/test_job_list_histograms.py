@@ -354,6 +354,112 @@ def test_job_list_histograms_batch_returns_multiple_metrics():
     assert len(data["histograms"]) == 2
 
 
+@pytest.mark.machine_unit_mock
+def test_batch_nj_zero_returns_stub_per_requested_metric():
+    from hpcperfstats.site.machine.api import (
+        JOB_LIST_HISTOGRAM_NO_JOBS_REASON,
+        job_list_histograms_batch,
+    )
+
+    factory = RequestFactory()
+    request = factory.get(
+        "/api/jobs/histograms/batch/",
+        {"metrics": "runtime,nhosts,queue_wait"},
+    )
+    request.session = {"username": "admin", "is_staff": True}
+
+    with patch("hpcperfstats.site.machine.api.check_for_tokens", return_value=True), patch(
+        "hpcperfstats.site.machine.api._build_histogram_queryset",
+        return_value=(MagicMock(), 0, {}, {}),
+    ):
+        response = job_list_histograms_batch(request)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["nj"] == 0
+    assert len(data["histograms"]) == 3
+    metrics = {row["metric"] for row in data["histograms"]}
+    assert metrics == {"runtime", "nhosts", "queue_wait"}
+    for row in data["histograms"]:
+        assert row["plot_item_thumb"] is None
+        assert row["plot_item_full"] is None
+        assert row["plot_unavailable_reason"] == JOB_LIST_HISTOGRAM_NO_JOBS_REASON
+
+
+@pytest.mark.machine_unit_mock
+def test_batch_never_omits_requested_metric_when_payload_builder_returns_none():
+    from hpcperfstats.site.machine.api import job_list_histograms_batch
+
+    factory = RequestFactory()
+    request = factory.get(
+        "/api/jobs/histograms/batch/",
+        {"metrics": "runtime,unknown_metric"},
+    )
+    request.session = {"username": "admin", "is_staff": True}
+
+    mock_df = MagicMock()
+    with patch("hpcperfstats.site.machine.api.check_for_tokens", return_value=True), patch(
+        "hpcperfstats.site.machine.api._build_histogram_queryset",
+        return_value=(MagicMock(), 2, {}, {}),
+    ), patch(
+        "hpcperfstats.site.machine.api._build_histogram_dataframe",
+        return_value=(mock_df, [("runtime", "hours")], ["j1", "j2"]),
+    ), patch(
+        "hpcperfstats.site.machine.api._build_metric_histogram_payload",
+        side_effect=[
+            {"metric": "runtime", "nj": 2, "plot_item_thumb": {"root_id": "1"}},
+            None,
+        ],
+    ):
+        response = job_list_histograms_batch(request)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["histograms"]) == 2
+    assert data["histograms"][0]["metric"] == "runtime"
+    assert data["histograms"][1]["metric"] == "unknown_metric"
+    assert "not available" in data["histograms"][1]["plot_unavailable_reason"]
+
+
+@pytest.mark.machine_unit_mock
+def test_invalidate_job_browse_path_also_targets_job_list_api_cache():
+    """Staff purge of job browse SPA routes must drop /api/jobs/ histogram cache rows."""
+    from hpcperfstats.site.machine import api
+
+    factory = RequestFactory()
+    request = factory.post(
+        "/api/cache/invalidate-page/",
+        {"page_path": "/machine/date/2026-06"},
+        content_type="application/json",
+    )
+    request.session = {"username": "alice", "is_staff": True}
+    request.META["HTTP_HOST"] = "testserver"
+
+    mock_client = MagicMock()
+    mock_client.scan_iter.return_value = iter([])
+
+    with patch("hpcperfstats.site.machine.api._require_auth", return_value=None), patch(
+        "hpcperfstats.site.machine.api._require_csrf_for_session_post",
+        return_value=None,
+    ), patch(
+        "hpcperfstats.site.machine.api._get_redis_cache_client",
+        return_value=mock_client,
+    ), patch(
+        "hpcperfstats.site.machine.api._delete_django_cache_page_entries_for_request",
+    ) as mock_delete_django, patch(
+        "hpcperfstats.site.machine.api._full_page_cache_url_digests_for_request_paths",
+        return_value=set(),
+    ), patch(
+        "hpcperfstats.site.machine.api.invalidate_home_options_query_cache",
+    ):
+        response = api.invalidate_cache_for_page(request)
+
+    assert response.status_code == 200
+    deleted_paths = mock_delete_django.call_args[0][1]
+    assert "/api/jobs/" in deleted_paths
+    assert "/api/jobs/histograms/batch/" in deleted_paths
+
+
 class TestJobListNoHistogramsInResponse:
     """Ensure job_list response no longer includes script/div."""
 
