@@ -16,6 +16,10 @@ Loaded every agent turn. Keep these short; do not add more `alwaysApply: true` f
 
 **Mandatory when triggered**, not optional. Agents must use the **Read** tool on matching rules from the router in `agent-discipline-core.mdc` before editing trigger paths.
 
+Notable contracts (see filename in `hpcperfstats/cursor-rules/`):
+
+- **`openapi-spa-wire-validation-contract.mdc`** — OpenAPI serializers must match live Django JSON validated by Orval Zod in `parseApiResponse`; wire contract tests required (`test_*_openapi_wire_contract.py`).
+
 Adding a new domain rule (same task, non-optional):
 
 1. Default `alwaysApply: false`

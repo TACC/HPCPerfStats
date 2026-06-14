@@ -125,11 +125,13 @@ ROUTER_ENTRIES: list[RouterEntry] = [
             "hpcperfstats/site/openapi/*",
             "hpcperfstats/site/machine/openapi_schema.py",
             "hpcperfstats/site/machine/openapi_serializers.py",
+            "hpcperfstats/site/machine/tests/test_*openapi_wire_contract*.py",
             "hpcperfstats/site/frontend/orval.config.ts",
             "hpcperfstats/site/frontend/src/api/*",
         ],
         "rules": [
             "openapi-orval-sync.mdc",
+            "openapi-spa-wire-validation-contract.mdc",
             "api-breaking-change-contract.mdc",
         ],
     },

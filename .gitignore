@@ -1,4 +1,4 @@
-# ProtonDrive / cloud-sync conflict sidecars (never commit; not source of truth)
+# Cloud-sync conflict sidecars (never commit; not source of truth)
 *Edit conflict*
 
 *.lock

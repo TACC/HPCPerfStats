@@ -95,7 +95,7 @@ JOB_LIST_HISTOGRAMS_SCHEMA = extend_schema(
         OpenApiParameter(name="metric", type=str, location=OpenApiParameter.QUERY),
     ],
     responses={
-        200: os.JobListResponseSerializer,
+        200: os.JobListHistogramResponseSerializer,
         **_auth_responses(),
         **_common_error_responses(),
     },

@@ -76,8 +76,11 @@ class HomeOptionsSerializer(serializers.Serializer):
 
 
 class JobPerformanceSerializer(serializers.Serializer):
-    labels = serializers.ListField(child=serializers.CharField(), required=False)
+    """Job list performance column from job_list_performance.summarize_performance."""
+
+    label = serializers.CharField(required=False)
     tone = serializers.CharField(required=False)
+    aria_label = serializers.CharField(required=False)
     sort_rank = serializers.IntegerField(required=False)
 
 
@@ -98,14 +101,23 @@ class JobListEntrySerializer(serializers.Serializer):
     state = serializers.CharField(required=False)
     QOS = serializers.CharField(required=False)
     jobname = serializers.CharField(required=False)
-    host_list = serializers.CharField(required=False)
+    host_list = serializers.ListField(child=serializers.CharField(), required=False)
     performance = JobPerformanceSerializer(required=False)
     color = serializers.CharField(required=False)
 
 
-class JobListFilterSummarySerializer(serializers.Serializer):
-    nj = serializers.IntegerField(required=False)
-    filter_text = serializers.CharField(required=False, allow_blank=True)
+class JobListAggregatesSerializer(serializers.Serializer):
+    total_node_hours = serializers.FloatField(required=False)
+    queue_wait_mean_hours = serializers.FloatField(required=False)
+
+
+class JobListPaginationSerializer(serializers.Serializer):
+    page = serializers.IntegerField(required=False)
+    num_pages = serializers.IntegerField(required=False)
+    has_previous = serializers.BooleanField(required=False)
+    has_next = serializers.BooleanField(required=False)
+    previous_page_number = serializers.IntegerField(required=False, allow_null=True)
+    next_page_number = serializers.IntegerField(required=False, allow_null=True)
 
 
 class JobListHistogramEnvelopeSerializer(serializers.Serializer):
@@ -120,8 +132,13 @@ class JobListHistogramEnvelopeSerializer(serializers.Serializer):
 class JobListResponseSerializer(serializers.Serializer):
     nj = serializers.IntegerField(required=False)
     job_list = JobListEntrySerializer(many=True, required=False)
-    filter_summary = JobListFilterSummarySerializer(required=False)
+    filter_summary = serializers.ListField(child=serializers.CharField(), required=False)
     histograms = serializers.DictField(child=JobListHistogramEnvelopeSerializer(), required=False)
+    aggregates = JobListAggregatesSerializer(required=False)
+    pagination = JobListPaginationSerializer(required=False)
+    qname = serializers.CharField(required=False)
+    order_by = serializers.CharField(required=False)
+    current_path = serializers.CharField(required=False, allow_null=True)
 
 
 class JobDetailJobSerializer(JobListEntrySerializer):
@@ -144,22 +161,70 @@ class JobDetailResponseSerializer(serializers.Serializer):
     fsio = serializers.JSONField(required=False)
     xalt_data = serializers.DictField(required=False)
     schema = serializers.DictField(required=False)
-    proc_list = serializers.ListField(child=serializers.DictField(), required=False)
+    proc_list = serializers.ListField(child=serializers.CharField(), required=False)
     derived_data_status = serializers.CharField(required=False)
     client_url = serializers.CharField(required=False, allow_null=True)
     server_url = serializers.CharField(required=False, allow_null=True)
-    multiprecision_cpu_plot_item = serializers.JSONField(required=False)
-    multiprecision_gpu_plot_item = serializers.JSONField(required=False)
+    gpu_active = serializers.IntegerField(required=False, allow_null=True)
+    gpu_utilization_max = serializers.FloatField(required=False, allow_null=True)
+    gpu_utilization_mean = serializers.FloatField(required=False, allow_null=True)
+    gpu_count = serializers.IntegerField(required=False, allow_null=True)
+    multiprecision_cpu_plot_item = serializers.JSONField(required=False, allow_null=True)
+    multiprecision_cpu_unavailable_reason = serializers.CharField(
+        required=False, allow_null=True
+    )
+    multiprecision_gpu_plot_item = serializers.JSONField(required=False, allow_null=True)
+    multiprecision_gpu_unavailable_reason = serializers.CharField(
+        required=False, allow_null=True
+    )
+    staff_metrics_distinct_time_count = serializers.IntegerField(required=False)
 
 
 class JobPlotsResponseSerializer(serializers.Serializer):
-    plots = serializers.JSONField()
-    progressive = serializers.JSONField(required=False)
+    """Legacy plot keys returned by job_plots (summary, roofline, GPU roofline)."""
+
+    mscript = serializers.CharField(required=False, allow_blank=True)
+    mdiv = serializers.CharField(required=False, allow_blank=True)
+    mplot_item = serializers.JSONField(required=False, allow_null=True)
+    mplot_unavailable_reason = serializers.CharField(required=False, allow_null=True)
+    rscript = serializers.CharField(required=False, allow_blank=True)
+    rdiv = serializers.CharField(required=False, allow_blank=True)
+    rplot_item = serializers.JSONField(required=False, allow_null=True)
+    rplot_unavailable_reason = serializers.CharField(required=False, allow_null=True)
+    grscript = serializers.CharField(required=False, allow_blank=True)
+    grdiv = serializers.CharField(required=False, allow_blank=True)
+    grplot_item = serializers.JSONField(required=False, allow_null=True)
+    grplot_unavailable_reason = serializers.CharField(required=False, allow_null=True)
+    status = serializers.CharField(required=False)
+    detail = serializers.CharField(required=False)
+    retry_after_seconds = serializers.IntegerField(required=False)
+    loading_plots = serializers.ListField(child=serializers.CharField(), required=False)
+    progressive = serializers.BooleanField(required=False)
+    plot = serializers.CharField(required=False)
+    plot_item = serializers.JSONField(required=False, allow_null=True)
+    unavailable_reason = serializers.CharField(required=False, allow_null=True)
+
+
+class JobListHistogramResponseSerializer(serializers.Serializer):
+    """Per-metric histogram envelope from job_list_histograms."""
+
+    group = serializers.CharField(required=False)
+    metric = serializers.CharField(required=False, allow_null=True)
+    nj = serializers.IntegerField(required=False)
+    title = serializers.CharField(required=False, allow_blank=True)
+    plot_item_thumb = serializers.JSONField(required=False, allow_null=True)
+    plot_item_full = serializers.JSONField(required=False, allow_null=True)
+    plot_unavailable_reason = serializers.CharField(required=False, allow_null=True)
 
 
 class TypeDetailResponseSerializer(serializers.Serializer):
-    host_data = serializers.JSONField()
-    metrics = serializers.JSONField(required=False)
+    type_name = serializers.CharField(required=False)
+    jobid = serializers.CharField(required=False)
+    tplot_item = serializers.JSONField(required=False, allow_null=True)
+    tplot_unavailable_reason = serializers.CharField(required=False, allow_null=True)
+    stats_data = serializers.ListField(child=serializers.JSONField(), required=False)
+    schema = serializers.ListField(child=serializers.JSONField(), required=False)
+    status = serializers.CharField(required=False)
 
 
 class HostPlotResponseSerializer(serializers.Serializer):
@@ -170,30 +235,45 @@ class HostPlotResponseSerializer(serializers.Serializer):
     end_time__lte = serializers.CharField()
 
 
+class AdminMonitorHostStatSerializer(serializers.Serializer):
+    host = serializers.CharField(required=False, allow_blank=True)
+    last_time = serializers.CharField(required=False, allow_null=True)
+    age_bucket = serializers.CharField(required=False, allow_blank=True)
+
+
 class AdminMonitorResponseSerializer(serializers.Serializer):
-    section = serializers.CharField(required=False)
-    data = serializers.JSONField()
+    """Section keys at top level; only one or a combined bundle is present per request."""
+
+    host_stats = AdminMonitorHostStatSerializer(many=True, required=False)
+    rabbitmq_host_stats = AdminMonitorHostStatSerializer(many=True, required=False)
+    cache_stats = serializers.DictField(required=False)
+    rabbitmq_stats = serializers.DictField(required=False)
+    timescaledb_stats = serializers.DictField(required=False)
+    xalt_stats = serializers.DictField(required=False)
 
 
 class JobMonitorRowSerializer(serializers.Serializer):
     username = serializers.CharField(required=False, allow_blank=True)
-    jobs = serializers.IntegerField(required=False)
-    node_hours = serializers.FloatField(required=False)
-    avg_wait = serializers.FloatField(required=False, allow_null=True)
+    total_jobs = serializers.IntegerField(required=False)
+    failed_jobs = serializers.IntegerField(required=False)
+    failed_rate = serializers.FloatField(required=False)
+    timedout_jobs = serializers.IntegerField(required=False)
+    timedout_rate = serializers.FloatField(required=False)
 
 
 class JobMonitorResponseSerializer(serializers.Serializer):
-    data = JobMonitorRowSerializer(many=True)
-
-
-class JobMonitorGpuRowSerializer(serializers.Serializer):
-    username = serializers.CharField(required=False, allow_blank=True)
-    gpu_jobs = serializers.IntegerField(required=False)
-    gpu_node_hours = serializers.FloatField(required=False)
+    window_days = serializers.IntegerField(required=False)
+    start_time = serializers.CharField(required=False)
+    end_time = serializers.CharField(required=False)
+    results = JobMonitorRowSerializer(many=True, required=False)
 
 
 class JobMonitorGpuResponseSerializer(serializers.Serializer):
-    data = JobMonitorGpuRowSerializer(many=True)
+    username = serializers.CharField(required=False, allow_blank=True)
+    gpu_count_total = serializers.IntegerField(required=False, allow_null=True)
+    gpu_active_total = serializers.IntegerField(required=False, allow_null=True)
+    gpu_active_percentage = serializers.FloatField(required=False, allow_null=True)
+    has_data = serializers.BooleanField(required=False)
 
 
 class SacctIngestResponseSerializer(serializers.Serializer):

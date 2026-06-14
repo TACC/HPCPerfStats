@@ -27,10 +27,13 @@ alwaysApply: false
    cd hpcperfstats/site/frontend && npm run generate:api
    ```
 4. **Run drift test:** `pytest hpcperfstats/site/machine/tests/test_openapi_schema_drift.py`
-5. **Run frontend tests** touching API mocks after hook signature changes.
-6. **Parse registry:** when adding endpoints, register Zod response schemas in `src/api/response-schema-registry.ts` (or regenerate if codegen adds a registry).
+5. **Wire contract:** per **`openapi-spa-wire-validation-contract.mdc`** — representative `test_*_openapi_wire_contract.py` + `parse-api-response.test.ts` for registry routes
+6. **Run frontend tests** touching API mocks after hook signature changes.
+7. **Parse registry:** when adding endpoints, register Zod response schemas in `src/api/response-schema-registry.ts` (or regenerate if codegen adds a registry).
+8. **`orval.config.ts`:** keep `override.zod.dateTimeOptions: { local: true, offset: true }` for DRF datetimes.
 
 ## Overlap
 
+- **`openapi-spa-wire-validation-contract.mdc`** — wire JSON must match OpenAPI serializers; runtime Zod validation tests
 - **`api-breaking-change-contract.mdc`** — HTTP/status/route semantics + `hpcperfstats-tools`.
 - **`react-next-ts-cursor-rule.mdc`** — frontend consumption patterns.

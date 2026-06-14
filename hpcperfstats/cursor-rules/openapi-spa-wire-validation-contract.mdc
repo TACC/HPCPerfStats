@@ -1,0 +1,66 @@
+---
+description: OpenAPI serializers must match live SPA JSON; wire contract tests lock Orval Zod validation
+globs:
+  - "**/hpcperfstats/site/machine/openapi_serializers.py"
+  - "**/hpcperfstats/site/machine/openapi_schema.py"
+  - "**/hpcperfstats/site/openapi/**"
+  - "**/hpcperfstats/site/frontend/src/api/parse-api-response*"
+  - "**/hpcperfstats/site/frontend/src/api/response-schema-registry.ts"
+  - "**/hpcperfstats/site/frontend/orval.config.ts"
+  - "**/hpcperfstats/site/machine/tests/test_*openapi_wire_contract*.py"
+alwaysApply: false
+---
+
+# OpenAPI SPA Wire Validation Contract
+
+**Activation:** when SPA-facing API response JSON, OpenAPI serializers, Orval Zod schemas, or `parseApiResponse` validation changes.
+
+## Why this rule exists
+
+The SPA validates **live HTTP JSON** in `customFetch` → `parseApiResponse` against Orval-generated Zod from committed OpenAPI. **`test_openapi_schema_drift.py` only proves spectacular matches `openapi.yaml`** — it does **not** prove the YAML matches what Django actually returns.
+
+Failure mode (2026-06): `GET /api/jobs/` threw `API response validation failed` because `openapi_serializers.py` documented wrong shapes while `job_list` returned `JobListSerializer` output.
+
+## Law
+
+1. **`openapi_serializers.py` documents the wire JSON** returned by the view’s `Response(...)`, not an alternate or simplified shape.
+2. If the view uses a **different serializer** than the OpenAPI entry (for example `JobListSerializer` vs `JobListEntrySerializer`), that is a defect until OpenAPI matches runtime output.
+3. **Do not** “fix” validation by weakening Zod, skipping `parseApiResponse`, or patching generated files. Fix the OpenAPI source, regenerate, and add a wire contract test.
+4. **Orval `dateTimeOptions`** in `orval.config.ts` must stay `{ local: true, offset: true }` so DRF naive ISO datetimes (`2024-01-01T12:00:00`) and offset forms both validate.
+
+## Required actions (same task)
+
+When adding or changing JSON fields on an endpoint registered in `response-schema-registry.ts`:
+
+1. **Compare wire vs OpenAPI** — inspect the view + runtime serializer (`.data` from a representative row, fixture, or compose-backed test); update `openapi_serializers.py` field types to match (arrays vs strings, nested objects vs lists, nullable).
+2. **Wire contract test (Python)** — add or extend `hpcperfstats/site/machine/tests/test_<feature>_openapi_wire_contract.py`:
+   - Build a **representative dict** copied from real API output (not invented from OpenAPI).
+   - Assert `SomeResponseSerializer(data=wire).is_valid()` with a clear failure message.
+   - Canonical example: `test_job_list_openapi_wire_contract.py` + `JOB_LIST_WIRE_EXAMPLE`.
+3. **Regenerate** OpenAPI + Orval per **`openapi-orval-sync.mdc`** (`openapi.yaml`, `npm run generate:api`).
+4. **Frontend regression** — add or update a case in `parse-api-response.test.ts` for routes in `response-schema-registry.ts` using the same wire example.
+5. **Run** `pytest hpcperfstats/site/machine/tests/test_openapi_schema_drift.py` and the new wire contract test; run affected Vitest (`parse-api-response.test.ts` minimum).
+
+## Known drift traps (job list family)
+
+| Wire field | Actual Django shape | Wrong OpenAPI guess |
+|------------|---------------------|---------------------|
+| `job_list[].host_list` | `string[]` (`ArrayField`) | `string` |
+| `filter_summary` | `string[]` from `build_job_list_qname_and_filter_summary` | `{ nj, filter_text }` object |
+| `job_list[].performance` | `{ label, tone, aria_label, sort_rank }` from `summarize_performance` | `{ labels[], tone, sort_rank }` |
+| Top-level extras | `aggregates`, `pagination`, `qname`, `order_by`, `current_path` on `job_list` | Omitted from schema |
+
+Apply the same discipline to **job detail** (`job_data` extends list entry fields), histograms, and any new Orval-backed route.
+
+## New SPA endpoint checklist
+
+- `@extend_schema` response → `openapi_serializers.py` entry
+- Register Zod in `response-schema-registry.ts`
+- Wire contract test + `parse-api-response.test.ts` case
+- Drift test green after regen
+
+## Overlap
+
+- **`openapi-orval-sync.mdc`** — regen commands and drift test
+- **`api-breaking-change-contract.mdc`** — intentional HTTP/route/status contract changes
+- **`every-error-regression-test.mdc`** — every fixed validation failure needs a wire or parse-api-response test

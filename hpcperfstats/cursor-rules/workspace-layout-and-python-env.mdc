@@ -26,6 +26,16 @@ Example shape:
 
 Do **not** treat `HPCPerfStats/HPCPerfStats/` alone as “project root” for `.venv`; the venv one level **above** that folder is canonical.
 
+## Cloud backup mirrors (not source of truth)
+
+Some machines keep a **cloud-sync mirror** under `Library/CloudStorage/` (for example Proton Drive). That tree is **backup only** — do **not** use it for:
+
+- `pip install -e`, editable imports, or `manage.py spectacular`
+- Host `pytest`, scripts, or agent edits
+- Resolving “which checkout is canonical” when paths disagree
+
+**Always** use the Cursor **workspace root** checkout: `<workspace_root>/HPCPerfStats/`. If editable install or shebangs point at a mirror path, reinstall from the workspace root (see *Host Python and pip* below) rather than copying files into the mirror.
+
 ## Single `.venv` policy (mandatory)
 
 - Exactly one local virtualenv is allowed: `<workspace_root>/.venv`.
@@ -51,6 +61,7 @@ cd "<workspace_root>/HPCPerfStats" && "<workspace_root>/.venv/bin/pip3" install 
 ```
 
 - **Forbidden unless the user explicitly asks:** creating ad hoc envs under `/tmp`, `python -m venv` in random paths, `pip install --break-system-packages` on the system interpreter, using **`.venv/bin/python`** or bare **`python`** for host-side runs, or implying there is no usable venv when `<workspace_root>/.venv/bin/python3` works.
+- If editable imports or `bin/*` shebangs resolve under `Library/CloudStorage/` (cloud backup mirror), recreate the venv at `<workspace_root>/.venv` with `python3.12 -m venv --clear` and reinstall editables from `<workspace_root>/HPCPerfStats` — do not sync code into the mirror.
 
 If `<workspace_root>/.venv` is missing or `python3` cannot be restored, **ask** whether to create/repair it at that path only; do not silently use another location.
 

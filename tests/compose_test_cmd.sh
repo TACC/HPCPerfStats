@@ -11,7 +11,7 @@ compose_repo_root() {
   cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd
 }
 
-# virtiofs bind mounts from ProtonDrive/cloud-sync paths can deny listdir/open in
+# virtiofs bind mounts from cloud-sync paths (CloudStorage, iCloud, etc.) can deny listdir/open in
 # the Linux VM (pip, bash, cp all hit EPERM). Rsync to a host work tree first,
 # then bind-mount that tree (not the cloud-sync checkout). Default work copy:
 # $HOME/.cache/hpcperfstats-compose (Colima shares $HOME into the VM). macOS /tmp
@@ -111,7 +111,7 @@ compose_prepare_bind_mount() {
   fi
   if [[ -z "$use_work_copy" ]]; then
     case "$repo_root" in
-      *ProtonDrive*|*CloudStorage*|*iCloud*)
+      *CloudStorage*|*iCloud*)
         use_work_copy=1
         ;;
     esac
@@ -181,7 +181,7 @@ compose_test() {
 }
 
 # Run tests/*_inner.sh inside the web container.
-# Stream the script from the host via stdin: virtiofs bind mounts (e.g. ProtonDrive)
+# Stream the script from the host via stdin: virtiofs bind mounts on cloud-sync paths
 # can return EPERM when the container opens .sh paths on the mount for read/exec.
 compose_run_inner_script() {
   local inner_rel="$1"
