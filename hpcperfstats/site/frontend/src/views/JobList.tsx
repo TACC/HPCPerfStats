@@ -1,8 +1,7 @@
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Dispatch, MouseEvent, SetStateAction } from "react";
-import ReactPaginate from "react-paginate";
 import { jobsHistogramsRetrieve } from "@/api/generated/jobs/jobs";
 import type { JobListEntry } from "@/api/generated/models/jobListEntry";
 import type { JobListData, JobListHistogramEntry, MetricHistStatusMap } from "@/types/view-models";
@@ -21,6 +20,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+} from "@/components/ui/pagination";
 import { cn } from "@/lib/utils";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import HistogramThumbnails from "../components/HistogramThumbnails";
@@ -45,7 +52,6 @@ import {
   searchParamsWithTab,
 } from "../utils/sync-tab-search-param";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
-import { useArrowKeyTabs } from "../hooks/useArrowKeyTabs";
 import { useMachineRouteParams } from "../hooks/use-machine-route-params";
 import {
   jobListPageHumanSummary,
@@ -137,13 +143,6 @@ function performanceToneToBadgeClass(tone?: string | null): string {
   return "";
 }
 
-const listViewTabTriggerClass = (isActive: boolean) =>
-  cn(
-    "inline-flex items-center justify-center rounded-t-md border border-transparent px-3 py-1.5 text-sm font-medium -mb-px transition-colors",
-    "hover:border-border hover:border-b-transparent",
-    isActive && "border-border border-b-transparent bg-background text-foreground",
-  );
-
 const paginateLinkClass = cn(
   buttonVariants({ variant: "outline", size: "sm" }),
   "min-h-11 min-w-11 inline-flex items-center justify-center",
@@ -153,6 +152,36 @@ const paginateActiveLinkClass = cn(
   buttonVariants({ variant: "default", size: "sm" }),
   "min-h-11 min-w-11 inline-flex items-center justify-center",
 );
+
+function buildPaginationItems(
+  currentPage: number,
+  totalPages: number,
+  pageRangeDisplayed = 5,
+  marginPagesDisplayed = 1,
+): Array<number | "ellipsis"> {
+  if (totalPages <= 1) return [];
+
+  const items: number[] = [];
+  for (let i = 1; i <= totalPages; i += 1) {
+    const nearCurrent = i >= currentPage - Math.floor(pageRangeDisplayed / 2)
+      && i <= currentPage + Math.floor(pageRangeDisplayed / 2);
+    const inMargin = i <= marginPagesDisplayed || i > totalPages - marginPagesDisplayed;
+    if (nearCurrent || inMargin) {
+      items.push(i);
+    }
+  }
+
+  const withEllipsis: Array<number | "ellipsis"> = [];
+  let previous: number | undefined;
+  for (const pageNumber of items) {
+    if (previous !== undefined && pageNumber - previous > 1) {
+      withEllipsis.push("ellipsis");
+    }
+    withEllipsis.push(pageNumber);
+    previous = pageNumber;
+  }
+  return withEllipsis;
+}
 
 function buildJobListTitle({ error, loading, data, routeCtx }: BuildJobListTitleArgs): string {
   if (error) return routeCtx ? `Job list · ${routeCtx}` : "Job list";
@@ -228,17 +257,6 @@ export default function JobList() {
   const listViewTab = readTabFromSearchParams(searchParams, "view", "jobs");
   const [isLgUp, setIsLgUp] = useState(() =>
     typeof window !== "undefined" && window.matchMedia("(min-width: 992px)").matches,
-  );
-  const tabJobsId = useId();
-  const tabChartsId = useId();
-  const listViewTabButtonIds = useMemo(() => [tabJobsId, tabChartsId], [tabJobsId, tabChartsId]);
-  const activeListViewTabButtonId = listViewTab === "charts" ? tabChartsId : tabJobsId;
-  const handleListViewTabKeyDown = useArrowKeyTabs(
-    listViewTabButtonIds,
-    activeListViewTabButtonId,
-    (nextTabButtonId) => {
-      setListViewTab(nextTabButtonId === tabChartsId ? "charts" : "jobs");
-    },
   );
 
   useEffect(() => {
@@ -462,9 +480,10 @@ export default function JobList() {
   // the job table so users can navigate from either end of long lists.
   const renderPaginationNav = (positionId: "top" | "bottom") => {
     if (!(num_pages > 1)) return null;
+    const pageItems = buildPaginationItems(page, num_pages);
     return (
-      <nav
-        className="pagination-wrapper"
+      <Pagination
+        className="pagination-wrapper mx-0 w-full max-w-none justify-start gap-2"
         aria-label={`Job list pagination (${positionId})`}
         data-testid={`job-list-pagination-${positionId}`}
       >
@@ -476,37 +495,60 @@ export default function JobList() {
             First
           </Link>
         ) : (
-          <span className="pagination-first disabled text-muted-foreground" aria-hidden="true">
+          <span className="pagination-first text-muted-foreground" aria-hidden="true">
             First
           </span>
         )}
-        <ReactPaginate
-          forcePage={page - 1}
-          pageCount={num_pages}
-          onPageChange={({ selected }: { selected: number }) =>
-            router.push(`${pathname}?${paginationQuery(selected + 1)}`)
-          }
-          previousLabel="«"
-          nextLabel="»"
-          previousAriaLabel="Previous page"
-          nextAriaLabel="Next page"
-          breakLabel="..."
-          pageRangeDisplayed={5}
-          marginPagesDisplayed={1}
-          containerClassName="pagination flex flex-wrap gap-2"
-          pageClassName="page-item"
-          pageLinkClassName={paginateLinkClass}
-          previousClassName="page-item"
-          previousLinkClassName={paginateLinkClass}
-          nextClassName="page-item"
-          nextLinkClassName={paginateLinkClass}
-          breakClassName="page-item"
-          breakLinkClassName={paginateLinkClass}
-          activeClassName="active"
-          activeLinkClassName={paginateActiveLinkClass}
-          disabledClassName="disabled"
-          renderOnZeroPageCount={null}
-        />
+        <PaginationContent className="flex flex-wrap gap-2">
+          <PaginationItem>
+            {page > 1 ? (
+              <PaginationLink
+                href={`${pathname}?${paginationQuery(page - 1)}`}
+                className={paginateLinkClass}
+                aria-label="Previous page"
+              >
+                «
+              </PaginationLink>
+            ) : (
+              <span className={cn(paginateLinkClass, "pointer-events-none opacity-50")} aria-hidden="true">
+                «
+              </span>
+            )}
+          </PaginationItem>
+          {pageItems.map((item, index) =>
+            item === "ellipsis" ? (
+              <PaginationItem key={`ellipsis-${positionId}-${index}`}>
+                <PaginationEllipsis />
+              </PaginationItem>
+            ) : (
+              <PaginationItem key={`page-${item}`}>
+                <PaginationLink
+                  href={`${pathname}?${paginationQuery(item)}`}
+                  isActive={item === page}
+                  className={item === page ? paginateActiveLinkClass : paginateLinkClass}
+                  aria-label={`Page ${item}`}
+                >
+                  {item}
+                </PaginationLink>
+              </PaginationItem>
+            ),
+          )}
+          <PaginationItem>
+            {page < num_pages ? (
+              <PaginationLink
+                href={`${pathname}?${paginationQuery(page + 1)}`}
+                className={paginateLinkClass}
+                aria-label="Next page"
+              >
+                »
+              </PaginationLink>
+            ) : (
+              <span className={cn(paginateLinkClass, "pointer-events-none opacity-50")} aria-hidden="true">
+                »
+              </span>
+            )}
+          </PaginationItem>
+        </PaginationContent>
         {page < num_pages ? (
           <Link
             href={`${pathname}?${paginationQuery(num_pages)}`}
@@ -515,11 +557,11 @@ export default function JobList() {
             Last
           </Link>
         ) : (
-          <span className="pagination-last disabled text-muted-foreground" aria-hidden="true">
+          <span className="pagination-last text-muted-foreground" aria-hidden="true">
             Last
           </span>
         )}
-      </nav>
+      </Pagination>
     );
   };
 
@@ -553,7 +595,6 @@ export default function JobList() {
       <section
         id="job-list-distributions"
         role={isLgUp ? undefined : "tabpanel"}
-        aria-labelledby={isLgUp ? undefined : tabChartsId}
         className="job-list-distributions mb-4"
         aria-label="Distributions for this job selection"
         hidden={!isLgUp && listViewTab !== "charts"}
@@ -613,46 +654,25 @@ export default function JobList() {
       </section>
 
       {!isLgUp && (
-        <div className="job-list-view-tabs mb-2">
-          <div
-            className="job-detail-tab-scroll flex border-b"
-            role="tablist"
+        <Tabs
+          value={listViewTab}
+          onValueChange={(value) => setListViewTab(value as "jobs" | "charts")}
+          className="job-list-view-tabs mb-2"
+        >
+          <TabsList
+            variant="line"
+            className="job-detail-tab-scroll w-full justify-start"
             aria-label="Jobs list and charts"
           >
-            <button
-              type="button"
-              id={tabJobsId}
-              role="tab"
-              className={listViewTabTriggerClass(listViewTab === "jobs")}
-              aria-selected={listViewTab === "jobs"}
-              aria-controls="job-list-tabpanel-jobs"
-              tabIndex={listViewTab === "jobs" ? 0 : -1}
-              onClick={() => setListViewTab("jobs")}
-              onKeyDown={(e) => handleListViewTabKeyDown(e, tabJobsId)}
-            >
-              Jobs
-            </button>
-            <button
-              type="button"
-              id={tabChartsId}
-              role="tab"
-              className={listViewTabTriggerClass(listViewTab === "charts")}
-              aria-selected={listViewTab === "charts"}
-              aria-controls="job-list-distributions"
-              tabIndex={listViewTab === "charts" ? 0 : -1}
-              onClick={() => setListViewTab("charts")}
-              onKeyDown={(e) => handleListViewTabKeyDown(e, tabChartsId)}
-            >
-              Charts
-            </button>
-          </div>
-        </div>
+            <TabsTrigger value="jobs">Jobs</TabsTrigger>
+            <TabsTrigger value="charts">Charts</TabsTrigger>
+          </TabsList>
+        </Tabs>
       )}
 
       <div
         id="job-list-tabpanel-jobs"
         role={isLgUp ? undefined : "tabpanel"}
-        aria-labelledby={isLgUp ? undefined : tabJobsId}
         hidden={!isLgUp && listViewTab !== "jobs"}
       >
       {renderPaginationNav("top")}

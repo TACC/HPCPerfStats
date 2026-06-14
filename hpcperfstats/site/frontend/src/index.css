@@ -11,19 +11,6 @@
   }
 }
 
-.collapsible-section-chevron {
-  display: inline-block;
-  transition: transform 0.2s ease;
-}
-.collapsible-section-chevron-open {
-  transform: rotate(90deg);
-}
-@media (prefers-reduced-motion: reduce) {
-  .collapsible-section-chevron {
-    transition: none;
-  }
-}
-
 .job-list-table-wrapper thead th {
   position: sticky;
   top: 0;
@@ -91,30 +78,6 @@
 
 .site-header-pub .site-header-brand {
   min-height: 5rem;
-}
-
-.extended-search-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-modal-backdrop);
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 0.5rem 0 0;
-  overflow-y: auto;
-  background: rgb(0 0 0 / 35%);
-}
-
-.extended-search-collapse {
-  position: relative;
-  z-index: 1041;
-  width: 100%;
-  max-width: 100%;
-  background: var(--muted);
-  border-bottom: 1px solid var(--border);
-  padding: 1rem 1.5rem;
-  margin-bottom: 0;
-  box-shadow: 0 4px 24px rgb(0 0 0 / 12%);
 }
 
 .extended-search-panel .extended-search-actions {
@@ -199,54 +162,6 @@
   border-bottom: 1px solid var(--border);
 }
 
-.badge-freshness-ok { background-color: #198754; color: #fff; }
-.badge-freshness-gt_10min { background-color: #0dcaf0; color: #000; }
-.badge-freshness-gt_hour { background-color: #fd7e14; color: #000; }
-.badge-freshness-gt_day { background-color: #dc3545; color: #fff; }
-.badge-freshness-gt_week { background-color: #212529; color: #fff; }
-
-.tr-freshness-ok { background-color: rgb(25 135 84 / 12%); }
-.tr-freshness-gt_10min { background-color: rgb(13 202 240 / 15%); }
-.tr-freshness-gt_hour { background-color: rgb(253 126 20 / 15%); }
-.tr-freshness-gt_day { background-color: rgb(220 53 69 / 15%); }
-.tr-freshness-gt_week { background-color: rgb(33 37 41 / 10%); }
-
-.histogram-thumbnail-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-modal-backdrop);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1rem;
-  background: rgb(0 0 0 / 35%);
-}
-
-.histogram-thumbnail-popover {
-  position: relative;
-  z-index: var(--z-floating-overlay);
-  max-width: calc(100vw - 2rem);
-  padding: 12px;
-  background: var(--background);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 15%);
-  pointer-events: auto;
-}
-.histogram-thumbnail-popover-title {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  font-weight: 600;
-  margin-bottom: 8px;
-  font-size: 1rem;
-}
-.histogram-thumbnail-popover-title-text {
-  flex: 1 1 auto;
-  min-width: 0;
-}
 .histogram-thumbnail-card {
   display: flex;
   flex-direction: column;
@@ -407,38 +322,6 @@
 .pagination-wrapper .pagination-last {
   display: inline-block;
   padding: 0.25rem 0.5rem;
-}
-.pagination-wrapper .pagination-first.disabled,
-.pagination-wrapper .pagination-last.disabled {
-  color: var(--muted-foreground);
-  cursor: default;
-}
-.pagination {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  list-style: none;
-  padding-left: 0;
-  margin: 0;
-}
-.pagination li a,
-.pagination li span {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 2.75rem;
-  min-height: 2.75rem;
-  padding: 0.25rem 0.5rem;
-  box-sizing: border-box;
-}
-.pagination li.disabled span,
-.pagination li.disabled a {
-  color: var(--muted-foreground);
-  cursor: default;
-}
-.pagination li.active span,
-.pagination li.active a {
-  font-weight: 600;
 }
 
 .search-home {

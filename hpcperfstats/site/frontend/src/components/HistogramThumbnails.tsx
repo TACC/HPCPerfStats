@@ -1,11 +1,15 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useId } from "react";
-import { createPortal } from "react-dom";
 import type { BokehJsonItem } from "@/types/bokeh";
 import type { JobListHistogramEntry } from "@/types/view-models";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import BokehPlotWithLimitation from "./BokehPlotWithLimitation";
 import LoadingMessage from "./LoadingMessage";
-import { useFocusTrap } from "../hooks/useFocusTrap";
 
 const THUMB_SIZE = { width: 280, height: 200 };
 /** Slightly larger prefetch margin than BokehEmbed default so off-screen thumbs start loading sooner. */
@@ -53,19 +57,13 @@ function HistogramThumbnail({
   const [hasOpened, setHasOpened] = useState(false);
   const [popoverLayoutReady, setPopoverLayoutReady] = useState(false);
   const thumbActivatorRef = useRef<HTMLButtonElement | null>(null);
-  const popoverRef = useRef<HTMLDivElement | null>(null);
   const popoverPlotRef = useRef<HTMLDivElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const domSuffix = useId().replace(/:/g, "");
   const safeTitle = title || "Histogram";
 
-  const showPopover = !isMobile && expanded;
-  const trapPopoverFocus = !isMobile && expanded && showPopover;
-  useFocusTrap(popoverRef, trapPopoverFocus);
-
   const thumbId = `hist-thumb-${index}-${domSuffix}`;
   const fullId = `hist-full-${index}-${domSuffix}`;
-  const popoverTitleId = `hist-popover-title-${index}-${domSuffix}`;
 
   const collapseExpanded = useCallback(() => {
     setExpanded(false);
@@ -79,41 +77,25 @@ function HistogramThumbnail({
     setHasOpened(true);
   };
 
-  useEffect(() => {
-    if (!expanded || isMobile) return;
-    const main = document.getElementById("main-content");
-    if (main) {
-      main.inert = true;
+  const handleDialogOpenChange = (open: boolean) => {
+    if (open) {
+      setExpanded(true);
+      setHasOpened(true);
+      return;
     }
-    return () => {
-      if (main) {
-        main.inert = false;
-      }
-    };
-  }, [expanded, isMobile]);
+    collapseExpanded();
+  };
 
   useEffect(() => {
-    if (!expanded || !showPopover || isMobile) return;
+    if (!expanded || isMobile) return;
     const id = window.requestAnimationFrame(() => {
       closeButtonRef.current?.focus();
     });
     return () => window.cancelAnimationFrame(id);
-  }, [expanded, showPopover, isMobile]);
-
-  useEffect(() => {
-    if (!expanded) return;
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        collapseExpanded();
-      }
-    }
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [expanded, collapseExpanded]);
+  }, [expanded, isMobile]);
 
   useLayoutEffect(() => {
-    if (!expanded || !showPopover || isMobile) {
+    if (!expanded || isMobile) {
       setPopoverLayoutReady(false);
       return;
     }
@@ -143,7 +125,7 @@ function HistogramThumbnail({
       window.cancelAnimationFrame(raf1);
       if (raf2 != null) window.cancelAnimationFrame(raf2);
     };
-  }, [expanded, showPopover, isMobile]);
+  }, [expanded, isMobile]);
 
   /* Mobile: full histogram only, no popover, container sized for viewport */
   if (isMobile) {
@@ -164,67 +146,6 @@ function HistogramThumbnail({
     );
   }
 
-  const popover =
-    showPopover && typeof document !== "undefined" ? (
-      <div
-        className="histogram-thumbnail-backdrop"
-        role="presentation"
-        onClick={collapseExpanded}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") collapseExpanded();
-        }}
-      >
-        <div
-          ref={popoverRef}
-          className="histogram-thumbnail-popover"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby={popoverTitleId}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div id={popoverTitleId} className="histogram-thumbnail-popover-title">
-            <span className="histogram-thumbnail-popover-title-text">{safeTitle}</span>
-            <Button
-              ref={closeButtonRef}
-              type="button"
-              variant="outline"
-              size="sm"
-              className="histogram-thumbnail-close"
-              onClick={(e) => {
-                e.stopPropagation();
-                collapseExpanded();
-              }}
-              aria-label="Close full size view"
-            >
-              Close
-            </Button>
-          </div>
-          <div
-            ref={popoverPlotRef}
-            className="histogram-thumbnail-popover-plot"
-            style={{
-              height: 400,
-              backgroundColor: "#fff",
-              border: "1px solid #dee2e6",
-              borderRadius: 4,
-            }}
-          >
-            {hasOpened && popoverLayoutReady ? (
-              <BokehPlotWithLimitation
-                item={plotItemFull}
-                id={fullId}
-                plotName={`${safeTitle} (full)`}
-                unavailableReason={unavailableReason}
-                maximizeInContainer="width"
-                deferEmbedUntilVisible={false}
-                intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
-              />
-            ) : null}
-          </div>
-        </div>
-      </div>
-    ) : null;
-
   return (
     <div className="histogram-thumbnail-wrapper">
       <div className="histogram-desktop-title">{safeTitle}</div>
@@ -233,11 +154,8 @@ function HistogramThumbnail({
         style={{ width: THUMB_SIZE.width }}
       >
         <div
-          className="histogram-thumbnail histogram-thumbnail-shell"
-          style={{
-            height: THUMB_SIZE.height,
-            backgroundColor: "#f8f9fa",
-          }}
+          className="histogram-thumbnail histogram-thumbnail-shell bg-muted"
+          style={{ height: THUMB_SIZE.height }}
         >
           <BokehPlotWithLimitation
             item={plotItemThumb}
@@ -266,7 +184,44 @@ function HistogramThumbnail({
           </Button>
         </div>
       </div>
-      {popover && document.body ? createPortal(popover, document.body) : null}
+      <Dialog open={expanded} onOpenChange={handleDialogOpenChange}>
+        <DialogContent
+          showCloseButton={false}
+          overlayClassName="bg-black/35"
+          className="max-w-[calc(100vw-2rem)] sm:max-w-4xl"
+        >
+          <DialogHeader className="flex-row flex-wrap items-center justify-between gap-2 space-y-0">
+            <DialogTitle className="min-w-0 flex-1 text-base">{safeTitle}</DialogTitle>
+            <Button
+              ref={closeButtonRef}
+              type="button"
+              variant="outline"
+              size="sm"
+              className="histogram-thumbnail-close shrink-0"
+              onClick={collapseExpanded}
+              aria-label="Close full size view"
+            >
+              Close
+            </Button>
+          </DialogHeader>
+          <div
+            ref={popoverPlotRef}
+            className="histogram-thumbnail-popover-plot h-[400px] rounded border border-border bg-background"
+          >
+            {hasOpened && popoverLayoutReady ? (
+              <BokehPlotWithLimitation
+                item={plotItemFull}
+                id={fullId}
+                plotName={`${safeTitle} (full)`}
+                unavailableReason={unavailableReason}
+                maximizeInContainer="width"
+                deferEmbedUntilVisible={false}
+                intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
+              />
+            ) : null}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -274,19 +229,7 @@ function HistogramThumbnail({
 export default function HistogramThumbnails({ histograms }: HistogramThumbnailsProps) {
   if (!histograms) {
     return (
-      <div
-        style={{
-          minHeight: 120,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          color: "#666",
-          backgroundColor: "#f8f9fa",
-          border: "1px dashed #dee2e6",
-          borderRadius: 4,
-          padding: 12,
-        }}
-      >
+      <div className="flex min-h-[120px] items-center justify-center rounded border border-dashed border-border bg-muted p-3 text-muted-foreground">
         <LoadingMessage message="Loading histograms…" />
       </div>
     );
@@ -298,14 +241,11 @@ export default function HistogramThumbnails({ histograms }: HistogramThumbnailsP
 
   return (
     <section
-      className="histogram-thumbnails-grid"
-      aria-label="Histogram charts for this job list"
+      className="histogram-thumbnails-grid grid justify-center gap-4"
       style={{
-        display: "grid",
         gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-        gap: 16,
-        justifyContent: "center",
       }}
+      aria-label="Histogram charts for this job list"
     >
       {histograms.map((h: JobListHistogramEntry, i: number) => (
         <HistogramThumbnail

@@ -1,37 +1,26 @@
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { useId, useMemo, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { useState } from "react";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import LoadingMessage from "../components/LoadingMessage";
 import { buttonVariants } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { useHomeOptions } from "../hooks/use-home-options";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
-import { useArrowKeyTabs } from "../hooks/useArrowKeyTabs";
 
 type BrowseTab = "calendar" | "year";
 type DateTuple = [string, string];
 type DateListEntry = [string, DateTuple[]];
-
-type BrowseTabButtonProps = {
-  isActive: boolean;
-  id: string;
-  panelId: string;
-  onClick: (event: MouseEvent<HTMLButtonElement>) => void;
-  onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
-  children: ReactNode;
-};
-
-const browseTabTriggerClass = (isActive: boolean) =>
-  cn(
-    "inline-flex items-center justify-center rounded-t-md border border-transparent px-3 py-1.5 text-sm font-medium -mb-px transition-colors",
-    "hover:border-border hover:border-b-transparent",
-    isActive && "border-border border-b-transparent bg-background text-foreground",
-  );
-
-const nativeSelectClassName =
-  "h-7 max-w-48 rounded-lg border border-input bg-transparent px-2.5 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30";
 
 function isDateTuple(value: unknown): value is DateTuple {
   return (
@@ -66,44 +55,11 @@ function toMonthSlug(value: unknown): string {
   return String(value || "").replace(/[^a-zA-Z0-9_-]/g, "-");
 }
 
-function BrowseTabButton({ isActive, id, panelId, onClick, onKeyDown, children }: BrowseTabButtonProps) {
-  return (
-    <button
-      type="button"
-      className={browseTabTriggerClass(isActive)}
-      id={id}
-      role="tab"
-      aria-selected={isActive}
-      aria-controls={panelId}
-      tabIndex={isActive ? 0 : -1}
-      onClick={onClick}
-      onKeyDown={onKeyDown}
-    >
-      {children}
-    </button>
-  );
-}
-
 export default function Search() {
   const router = useRouter();
   const { options, error, loading } = useHomeOptions();
   const [browseTab, setBrowseTab] = useState<BrowseTab>("calendar");
-  const tabYearId = useId();
-  const tabCalendarId = useId();
-  const panelYearId = useId();
-  const panelCalendarId = useId();
-  const browseTabButtonIds = useMemo(
-    () => [tabCalendarId, tabYearId],
-    [tabCalendarId, tabYearId],
-  );
-  const activeBrowseTabButtonId = browseTab === "year" ? tabYearId : tabCalendarId;
-  const handleBrowseTabKeyDown = useArrowKeyTabs(
-    browseTabButtonIds,
-    activeBrowseTabButtonId,
-    (nextTabButtonId) => {
-      setBrowseTab(nextTabButtonId === tabYearId ? "year" : "calendar");
-    },
-  );
+  const [monthJumpValue, setMonthJumpValue] = useState("");
 
   useDocumentTitle(loading ? "Loading browse" : "Browse jobs by time");
 
@@ -123,7 +79,7 @@ export default function Search() {
       yearList.length > 12 ? (
         <>
           <nav aria-label="Recent years" className="mb-3">
-            <ul className="pagination flex flex-wrap gap-2">
+            <ul className="flex flex-wrap gap-2">
               {yearList.slice(0, 8).map((year) => (
                 <li key={year}>
                   <Link className={yearLinkClass} href={`/machine/year/${year}/`}>
@@ -133,39 +89,39 @@ export default function Search() {
               ))}
             </ul>
           </nav>
-          <details className="search-quick-jump mb-3 rounded-lg border px-3 py-2">
-            <summary className="cursor-pointer text-sm font-medium">Quick jump — all years</summary>
-            <div className="mt-2 pb-1">
+          <Collapsible className="search-quick-jump mb-3 rounded-lg border px-3 py-2">
+            <CollapsibleTrigger className="cursor-pointer text-left text-sm font-medium">
+              Quick jump — all years
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-2 pb-1">
               <Label htmlFor="search-year-jump" className="mb-1 text-xs font-normal">
                 Jump to year
               </Label>
-              <select
-                id="search-year-jump"
-                className={nativeSelectClassName}
-                defaultValue=""
-                onChange={(e) => {
-                  const y = e.target.value;
-                  if (y) router.push(`/machine/year/${y}/`);
+              <Select
+                onValueChange={(year) => {
+                  if (year) router.push(`/machine/year/${year}/`);
                 }}
               >
-                <option value="" disabled>
-                  Select year…
-                </option>
-                {yearList.map((year) => (
-                  <option key={year} value={year}>
-                    {year}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger id="search-year-jump" className="h-7 max-w-48">
+                  <SelectValue placeholder="Select year…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {yearList.map((year) => (
+                    <SelectItem key={year} value={String(year)}>
+                      {year}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <p className="mt-2 mb-0 text-sm text-muted-foreground">
                 Shortcuts above show recent years; use the menu for any year.
               </p>
-            </div>
-          </details>
+            </CollapsibleContent>
+          </Collapsible>
         </>
       ) : (
         <nav aria-label="Year list" className="mb-4">
-          <ul className="pagination flex flex-wrap gap-2">
+          <ul className="flex flex-wrap gap-2">
             {yearList.map((year) => (
               <li key={year}>
                 <Link className={yearLinkClass} href={`/machine/year/${year}/`}>
@@ -187,61 +143,63 @@ export default function Search() {
           <Label htmlFor="search-month-jump-select" className="mb-1 text-xs font-normal">
             Jump to month
           </Label>
-          <select
-            id="search-month-jump-select"
-            className={cn(nativeSelectClassName, "search-month-jump-select w-full max-w-md")}
-            defaultValue=""
-            onChange={(e) => {
-              const month = e.target.value;
+          <Select
+            value={monthJumpValue}
+            onValueChange={(month) => {
               if (!month) return;
-              const el = document.getElementById(
-                `search-month-${toMonthSlug(month)}`,
-              );
+              const el = document.getElementById(`search-month-${toMonthSlug(month)}`);
               el?.scrollIntoView({ block: "start" });
-              e.target.selectedIndex = 0;
+              setMonthJumpValue("");
             }}
           >
-            <option value="" disabled>
-              Select month…
-            </option>
-            {dateList.map(([month]) => (
-              <option key={month} value={month}>
-                {month}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger
+              id="search-month-jump-select"
+              className="search-month-jump-select h-7 w-full max-w-md"
+            >
+              <SelectValue placeholder="Select month…" />
+            </SelectTrigger>
+            <SelectContent>
+              {dateList.map(([month]) => (
+                <SelectItem key={month} value={month}>
+                  {month}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <div className="search-calendar-months">
           {dateList.map(([month, dates]) => {
             const monthSlug = toMonthSlug(month);
             return (
-            <section
-              className="search-calendar-month-card"
-              key={month}
-              id={`search-month-${monthSlug}`}
-              aria-labelledby={`search-month-heading-${monthSlug}`}
-            >
-              <div className="search-calendar-month-header">
-                <Link className="search-calendar-month-title"
-                  id={`search-month-heading-${monthSlug}`}
-                  href={`/machine/date/${month}/`}
-                >
-                  {month}
-                </Link>
-              </div>
-              <ul className="search-calendar-day-grid" role="list">
-                {dates.map(([dateStr, day]) => (
-                  <li key={dateStr} className="search-calendar-day-cell" role="listitem">
-                    <Link className="search-calendar-day-link"
-                      href={`/machine/date/${dateStr}/`}
-                      aria-label={`Open jobs for ${month}, day ${day}`}
-                    >
-                      {day}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </section>
+              <section
+                className="search-calendar-month-card"
+                key={month}
+                id={`search-month-${monthSlug}`}
+                aria-labelledby={`search-month-heading-${monthSlug}`}
+              >
+                <div className="search-calendar-month-header">
+                  <Link
+                    className="search-calendar-month-title"
+                    id={`search-month-heading-${monthSlug}`}
+                    href={`/machine/date/${month}/`}
+                  >
+                    {month}
+                  </Link>
+                </div>
+                <ul className="search-calendar-day-grid" role="list">
+                  {dates.map(([dateStr, day]) => (
+                    <li key={dateStr} className="search-calendar-day-cell" role="listitem">
+                      <Link
+                        className="search-calendar-day-link"
+                        href={`/machine/date/${dateStr}/`}
+                        aria-label={`Open jobs for ${month}, day ${day}`}
+                      >
+                        {day}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </section>
             );
           })}
         </div>
@@ -259,54 +217,26 @@ export default function Search() {
         <strong>Extended search</strong>.
       </p>
 
-      <div className="search-browse-tabs mb-3">
-        <div className="flex border-b" role="tablist">
-          <BrowseTabButton
-            isActive={browseTab === "calendar"}
-            id={tabCalendarId}
-            panelId={panelCalendarId}
-            onClick={() => setBrowseTab("calendar")}
-            onKeyDown={(e: KeyboardEvent<HTMLButtonElement>) =>
-              handleBrowseTabKeyDown(e, tabCalendarId)
-            }
-          >
-            Calendar
-          </BrowseTabButton>
-          <BrowseTabButton
-            isActive={browseTab === "year"}
-            id={tabYearId}
-            panelId={panelYearId}
-            onClick={() => setBrowseTab("year")}
-            onKeyDown={(e: KeyboardEvent<HTMLButtonElement>) =>
-              handleBrowseTabKeyDown(e, tabYearId)
-            }
-          >
-            By year
-          </BrowseTabButton>
-        </div>
-      </div>
-
-      <section
-        id={panelCalendarId}
-        role="tabpanel"
-        aria-labelledby={tabCalendarId}
-        className="search-home-section search-calendar-section"
-        hidden={browseTab !== "calendar"}
+      <Tabs
+        value={browseTab}
+        onValueChange={(value) => setBrowseTab(value as BrowseTab)}
+        className="search-browse-tabs mb-3"
       >
-        <h2 className="sr-only">Browse by calendar</h2>
-        {calendarBrowsePrimary}
-      </section>
+        <TabsList variant="line" className="w-full justify-start">
+          <TabsTrigger value="calendar">Calendar</TabsTrigger>
+          <TabsTrigger value="year">By year</TabsTrigger>
+        </TabsList>
 
-      <section
-        id={panelYearId}
-        role="tabpanel"
-        aria-labelledby={tabYearId}
-        className="search-home-section"
-        hidden={browseTab !== "year"}
-      >
-        <h2 className="sr-only">Browse by year</h2>
-        {yearBrowsePrimary}
-      </section>
+        <TabsContent value="calendar" className="search-home-section search-calendar-section mt-3">
+          <h2 className="sr-only">Browse by calendar</h2>
+          {calendarBrowsePrimary}
+        </TabsContent>
+
+        <TabsContent value="year" className="search-home-section mt-3">
+          <h2 className="sr-only">Browse by year</h2>
+          {yearBrowsePrimary}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ExtendedSearch from "./ExtendedSearch";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import * as useHomeOptionsModule from "../hooks/use-home-options";
 import { axeSeriousViolations } from "../axe-test-utils";
 import { EXTENDED_SEARCH_PARAMETER_DEFINITIONS } from "../utils/extended-search-parameters";
@@ -177,9 +178,11 @@ describe("ExtendedSearch", () => {
 
   it("shows variable help popover above extended search backdrop", async () => {
     renderExtendedSearch(
-      <div className="extended-search-backdrop" data-testid="extended-search-shell">
-        <ExtendedSearch onClose={vi.fn()} />
-      </div>,
+      <Dialog open>
+        <DialogContent showCloseButton={false} overlayClassName="bg-black/35" data-testid="extended-search-shell">
+          <ExtendedSearch onClose={vi.fn()} />
+        </DialogContent>
+      </Dialog>,
     );
     fireEvent.click(screen.getByRole("button", { name: /help: host/i }));
     const panel = await screen.findByTestId("variable-info-tooltip");

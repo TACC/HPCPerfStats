@@ -5,6 +5,25 @@ import HistogramThumbnails from "./HistogramThumbnails";
 import { SessionContext } from "../session-context";
 import { axeSeriousViolations } from "../axe-test-utils";
 
+vi.mock("../bokehInit", () => ({
+  ensureBokehLoaded: vi.fn(() => Promise.resolve(globalThis.window?.Bokeh)),
+}));
+
+const VALID_BOKEH_ITEM = {
+  doc: {
+    root_ids: ["p1001"],
+    roots: [{ id: "p1001", type: "object", name: "GridPlot" }],
+  },
+};
+
+function embedViewsWithIdleDoc() {
+  const doc = {
+    is_idle: true,
+    idle: { connect: vi.fn(), disconnect: vi.fn() },
+  };
+  return { roots: [{ model: { document: doc } }] };
+}
+
 function renderHistograms(ui) {
   return render(
     <SessionContext.Provider
@@ -37,17 +56,16 @@ describe("HistogramThumbnails", () => {
       })),
     });
 
-    const embedItem = vi.fn().mockResolvedValue(undefined);
+    const embedItem = vi.fn().mockResolvedValue(embedViewsWithIdleDoc());
     window.Bokeh = { embed: { embed_item: embedItem } };
 
-    const item = { doc: {}, root_ids: ["r1"] };
     renderHistograms(
       <HistogramThumbnails
         histograms={[
           {
             title: "Jobs by queue",
-            plot_item_thumb: item,
-            plot_item_full: item,
+            plot_item_thumb: VALID_BOKEH_ITEM,
+            plot_item_full: VALID_BOKEH_ITEM,
           },
         ]}
       />,
@@ -80,17 +98,16 @@ describe("HistogramThumbnails", () => {
       })),
     });
 
-    const embedItem = vi.fn().mockResolvedValue(undefined);
+    const embedItem = vi.fn().mockResolvedValue(embedViewsWithIdleDoc());
     window.Bokeh = { embed: { embed_item: embedItem } };
 
-    const item = { doc: {}, root_ids: ["r1"] };
     renderHistograms(
       <HistogramThumbnails
         histograms={[
           {
             title: "Jobs by queue",
-            plot_item_thumb: item,
-            plot_item_full: item,
+            plot_item_thumb: VALID_BOKEH_ITEM,
+            plot_item_full: VALID_BOKEH_ITEM,
           },
         ]}
       />,
@@ -121,17 +138,16 @@ describe("HistogramThumbnails", () => {
       })),
     });
 
-    const embedItem = vi.fn().mockResolvedValue(undefined);
+    const embedItem = vi.fn().mockResolvedValue(embedViewsWithIdleDoc());
     window.Bokeh = { embed: { embed_item: embedItem } };
 
-    const item = { doc: {}, root_ids: ["r1"] };
     renderHistograms(
       <HistogramThumbnails
         histograms={[
           {
             title: "Jobs by queue",
-            plot_item_thumb: item,
-            plot_item_full: item,
+            plot_item_thumb: VALID_BOKEH_ITEM,
+            plot_item_full: VALID_BOKEH_ITEM,
           },
         ]}
       />,
@@ -168,15 +184,15 @@ describe("HistogramThumbnails", () => {
       })),
     });
 
-    window.Bokeh = { embed: { embed_item: vi.fn().mockResolvedValue(undefined) } };
+    window.Bokeh = { embed: { embed_item: vi.fn().mockResolvedValue(embedViewsWithIdleDoc()) } };
 
     const { container } = renderHistograms(
       <HistogramThumbnails
         histograms={[
           {
             title: "Jobs by queue",
-            plot_item_thumb: { doc: {}, root_ids: ["r1"] },
-            plot_item_full: { doc: {}, root_ids: ["r1"] },
+            plot_item_thumb: VALID_BOKEH_ITEM,
+            plot_item_full: VALID_BOKEH_ITEM,
           },
         ]}
       />,

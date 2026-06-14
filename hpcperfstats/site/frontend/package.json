@@ -30,7 +30,6 @@
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-hook-form": "^7.57.0",
-    "react-paginate": "^8.3.0",
     "shadcn": "^4.11.0",
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4.3.1",

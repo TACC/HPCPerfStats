@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { ChevronRight } from "lucide-react";
 import type {
   AdminMonitorHostRow,
   AdminMonitorSectionResponse,
@@ -10,7 +11,15 @@ import LoadingMessage from "../components/LoadingMessage";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Table } from "@/components/ui/table";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import { useTableSort, type TableSortState } from "../hooks/useTableSort";
 import { createAdminMonitorSectionLoader } from "../utils/create-admin-monitor-section-loader";
@@ -29,22 +38,72 @@ function formatAdminMonitorNumericStatistic(value: unknown) {
 
 const BADGE_MAP: Record<
   FreshnessBucket,
-  { label: string; class: string }
+  { label: string; className: string }
 > = {
-  ok: { label: "OK (≤ 10 minutes)", class: "badge-freshness-ok" },
-  gt_10min: { label: "> 10 minutes", class: "badge-freshness-gt_10min" },
-  gt_hour: { label: "> 1 hour", class: "badge-freshness-gt_hour" },
-  gt_day: { label: "> 1 day", class: "badge-freshness-gt_day" },
-  gt_week: { label: "> 1 week", class: "badge-freshness-gt_week" },
+  ok: { label: "OK (≤ 10 minutes)", className: "bg-emerald-600 text-white hover:bg-emerald-600" },
+  gt_10min: { label: "> 10 minutes", className: "bg-cyan-400 text-black hover:bg-cyan-400" },
+  gt_hour: { label: "> 1 hour", className: "bg-orange-500 text-black hover:bg-orange-500" },
+  gt_day: { label: "> 1 day", className: "bg-red-600 text-white hover:bg-red-600" },
+  gt_week: { label: "> 1 week", className: "bg-zinc-900 text-white hover:bg-zinc-900" },
 };
 
 const ROW_CLASS: Record<FreshnessBucket, string> = {
-  ok: "tr-freshness-ok",
-  gt_10min: "tr-freshness-gt_10min",
-  gt_hour: "tr-freshness-gt_hour",
-  gt_day: "tr-freshness-gt_day",
-  gt_week: "tr-freshness-gt_week",
+  ok: "bg-emerald-600/10",
+  gt_10min: "bg-cyan-400/15",
+  gt_hour: "bg-orange-500/15",
+  gt_day: "bg-red-600/15",
+  gt_week: "bg-zinc-900/10",
 };
+
+type AdminMonitorCollapsibleSectionProps = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  panelId: string;
+  ariaLabel: string;
+  title: ReactNode;
+  children: ReactNode;
+};
+
+function AdminMonitorCollapsibleSection({
+  open,
+  onOpenChange,
+  panelId,
+  ariaLabel,
+  title,
+  children,
+}: AdminMonitorCollapsibleSectionProps) {
+  return (
+    <Collapsible open={open} onOpenChange={onOpenChange} className="admin-monitor-section">
+      <CollapsibleTrigger
+        render={
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="admin-monitor-section-header h-auto w-full justify-start font-semibold"
+          />
+        }
+      >
+        <ChevronRight
+          className={cn(
+            "admin-monitor-section-chevron size-3 shrink-0 transition-transform",
+            open && "rotate-90",
+          )}
+          aria-hidden
+        />
+        {title}
+      </CollapsibleTrigger>
+      <CollapsibleContent
+        id={panelId}
+        className="admin-monitor-section-body"
+        role="region"
+        aria-label={ariaLabel}
+      >
+        {children}
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
 
 const HOST_STATUS_ORDER: Record<FreshnessBucket, number> = {
   ok: 0,
@@ -344,28 +403,13 @@ export default function AdminMonitor() {
     <>
       <h1 className="mb-3 text-2xl font-semibold tracking-tight">HPCPerfStats Monitor</h1>
 
-      <div className="admin-monitor-section">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="admin-monitor-section-header h-auto w-full justify-start font-semibold"
-          onClick={() => setHostTimeExpanded((e) => !e)}
-          aria-expanded={hostTimeExpanded}
-          aria-controls="admin-monitor-host-time"
-        >
-          <span className="admin-monitor-section-chevron" aria-hidden>
-            {hostTimeExpanded ? "▼" : "▶"}
-          </span>
-          {`Most recent host data timestamps in database${hostHeaderSummary}`}
-        </Button>
-        <div
-          id="admin-monitor-host-time"
-          className="admin-monitor-section-body"
-          hidden={!hostTimeExpanded}
-          role="region"
-          aria-label="Most recent host data timestamps in database"
-        >
+      <AdminMonitorCollapsibleSection
+        open={hostTimeExpanded}
+        onOpenChange={setHostTimeExpanded}
+        panelId="admin-monitor-host-time"
+        ariaLabel="Most recent host data timestamps in database"
+        title={`Most recent host data timestamps in database${hostHeaderSummary}`}
+      >
           <div className="admin-monitor-action-row">
             <Button
               type="button"
@@ -390,11 +434,11 @@ export default function AdminMonitor() {
               <div className="mb-2 flex flex-wrap items-center">
                 <p className="mb-1 mr-3">
                   Status buckets:{" "}
-                  <Badge className="badge-freshness-ok">OK (≤ 10 minutes)</Badge>{" "}
-                  <Badge className="badge-freshness-gt_10min">{"> 10 minutes"}</Badge>{" "}
-                  <Badge className="badge-freshness-gt_hour">{"> 1 hour"}</Badge>{" "}
-                  <Badge className="badge-freshness-gt_day">{"> 1 day"}</Badge>{" "}
-                  <Badge className="badge-freshness-gt_week">{"> 1 week"}</Badge>
+                  {(Object.keys(BADGE_MAP) as FreshnessBucket[]).map((key) => (
+                    <Badge key={key} className={BADGE_MAP[key].className}>
+                      {BADGE_MAP[key].label}
+                    </Badge>
+                  ))}
                 </p>
                 <Button
                   type="button"
@@ -483,7 +527,7 @@ export default function AdminMonitor() {
                         <td>{row.host}</td>
                         <td>{formatHostTime(row.last_time)}</td>
                         <td>
-                          <Badge className={badge.class}>{badge.label}</Badge>
+                          <Badge className={badge.className}>{badge.label}</Badge>
                         </td>
                       </tr>
                     );
@@ -499,31 +543,15 @@ export default function AdminMonitor() {
                 </Table>
             </>
           )}
-        </div>
-      </div>
+      </AdminMonitorCollapsibleSection>
 
-      <div className="admin-monitor-section">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="admin-monitor-section-header h-auto w-full justify-start font-semibold"
-          onClick={() => setXaltExpanded((e) => !e)}
-          aria-expanded={xaltExpanded}
-          aria-controls="admin-monitor-xalt-coverage"
-        >
-          <span className="admin-monitor-section-chevron" aria-hidden>
-            {xaltExpanded ? "▼" : "▶"}
-          </span>
-          {`XALT job coverage (last 3 days)${xaltHeaderSummary}`}
-        </Button>
-        <div
-          id="admin-monitor-xalt-coverage"
-          className="admin-monitor-section-body"
-          hidden={!xaltExpanded}
-          role="region"
-          aria-label="XALT job coverage (last 3 days)"
-        >
+      <AdminMonitorCollapsibleSection
+        open={xaltExpanded}
+        onOpenChange={setXaltExpanded}
+        panelId="admin-monitor-xalt-coverage"
+        ariaLabel="XALT job coverage (last 3 days)"
+        title={`XALT job coverage (last 3 days)${xaltHeaderSummary}`}
+      >
           <div className="admin-monitor-action-row">
             <Button
               type="button"
@@ -564,19 +592,24 @@ export default function AdminMonitor() {
                     <Label className="mb-0 mr-2 font-normal" htmlFor="xaltListMode">
                       Show list:
                     </Label>
-                    <select
-                      id="xaltListMode"
-                      className="h-7 rounded-lg border border-input bg-transparent px-2.5 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                    <Select
                       value={xaltListMode}
-                      onChange={(e) => setXaltListMode(e.target.value)}
+                      onValueChange={(value) => {
+                        if (value) setXaltListMode(value);
+                      }}
                     >
-                      <option value="missing">
-                        Missing JIDs ({String(xaltStats.jids_missing_xalt_data ?? 0)})
-                      </option>
-                      <option value="found">
-                        Found JIDs ({String(xaltStats.jids_with_xalt_data ?? 0)})
-                      </option>
-                    </select>
+                      <SelectTrigger id="xaltListMode" className="h-7 w-auto max-w-md">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="missing">
+                          Missing JIDs ({String(xaltStats.jids_missing_xalt_data ?? 0)})
+                        </SelectItem>
+                        <SelectItem value="found">
+                          Found JIDs ({String(xaltStats.jids_with_xalt_data ?? 0)})
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
 
                   {xaltListMode === "missing" && (xaltStats.jids_missing_xalt_data ?? 0) > 0 && (
@@ -680,31 +713,15 @@ export default function AdminMonitor() {
           {!xaltLoading && !xaltError && !xaltStats && (
             <div className="text-muted-foreground">No XALT coverage statistics available.</div>
           )}
-        </div>
-      </div>
+      </AdminMonitorCollapsibleSection>
 
-      <div className="admin-monitor-section">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="admin-monitor-section-header h-auto w-full justify-start font-semibold"
-          onClick={() => setRabbitHostTimeExpanded((e) => !e)}
-          aria-expanded={rabbitHostTimeExpanded}
-          aria-controls="admin-monitor-rabbit-host-time"
-        >
-          <span className="admin-monitor-section-chevron" aria-hidden>
-            {rabbitHostTimeExpanded ? "▼" : "▶"}
-          </span>
-          {`Most recent host data timestamps in RabbitMQ${rabbitHostHeaderSummary}`}
-        </Button>
-        <div
-          id="admin-monitor-rabbit-host-time"
-          className="admin-monitor-section-body"
-          hidden={!rabbitHostTimeExpanded}
-          role="region"
-          aria-label="Most recent host data timestamps in RabbitMQ"
-        >
+      <AdminMonitorCollapsibleSection
+        open={rabbitHostTimeExpanded}
+        onOpenChange={setRabbitHostTimeExpanded}
+        panelId="admin-monitor-rabbit-host-time"
+        ariaLabel="Most recent host data timestamps in RabbitMQ"
+        title={`Most recent host data timestamps in RabbitMQ${rabbitHostHeaderSummary}`}
+      >
           <div className="admin-monitor-action-row">
             <Button
               type="button"
@@ -820,7 +837,7 @@ export default function AdminMonitor() {
                         <td>{row.host}</td>
                         <td>{formatHostTime(row.last_time)}</td>
                         <td>
-                          <Badge className={badge.class}>{badge.label}</Badge>
+                          <Badge className={badge.className}>{badge.label}</Badge>
                         </td>
                       </tr>
                     );
@@ -835,31 +852,15 @@ export default function AdminMonitor() {
                 </tbody>
               </Table>
           )}
-        </div>
-      </div>
+      </AdminMonitorCollapsibleSection>
 
-      <div className="admin-monitor-section">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="admin-monitor-section-header h-auto w-full justify-start font-semibold"
-          onClick={() => setTimescaledbExpanded((e) => !e)}
-          aria-expanded={timescaledbExpanded}
-          aria-controls="admin-monitor-timescaledb-stats"
-        >
-          <span className="admin-monitor-section-chevron" aria-hidden>
-            {timescaledbExpanded ? "▼" : "▶"}
-          </span>
-          TimescaleDB statistics
-        </Button>
-        <div
-          id="admin-monitor-timescaledb-stats"
-          className="admin-monitor-section-body"
-          hidden={!timescaledbExpanded}
-          role="region"
-          aria-label="TimescaleDB statistics"
-        >
+      <AdminMonitorCollapsibleSection
+        open={timescaledbExpanded}
+        onOpenChange={setTimescaledbExpanded}
+        panelId="admin-monitor-timescaledb-stats"
+        ariaLabel="TimescaleDB statistics"
+        title="TimescaleDB statistics"
+      >
           <div className="admin-monitor-action-row">
             <Button
               type="button"
@@ -936,31 +937,15 @@ export default function AdminMonitor() {
           {!timescaledbLoading && !timescaledbError && !timescaledbStats && (
             <div className="text-muted-foreground">No TimescaleDB statistics available.</div>
           )}
-        </div>
-      </div>
+      </AdminMonitorCollapsibleSection>
 
-      <div className="admin-monitor-section">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="admin-monitor-section-header h-auto w-full justify-start font-semibold"
-          onClick={() => setCacheExpanded((e) => !e)}
-          aria-expanded={cacheExpanded}
-          aria-controls="admin-monitor-cache-stats"
-        >
-          <span className="admin-monitor-section-chevron" aria-hidden>
-            {cacheExpanded ? "▼" : "▶"}
-          </span>
-          Cache / Redis statistics
-        </Button>
-        <div
-          id="admin-monitor-cache-stats"
-          className="admin-monitor-section-body"
-          hidden={!cacheExpanded}
-          role="region"
-          aria-label="Cache and Redis statistics"
-        >
+      <AdminMonitorCollapsibleSection
+        open={cacheExpanded}
+        onOpenChange={setCacheExpanded}
+        panelId="admin-monitor-cache-stats"
+        ariaLabel="Cache and Redis statistics"
+        title="Cache / Redis statistics"
+      >
           <div className="admin-monitor-action-row">
             <Button
               type="button"
@@ -1009,31 +994,15 @@ export default function AdminMonitor() {
           {!cacheLoading && !cacheError && (!cacheStats || Object.keys(cacheStats).length === 0) && (
             <div className="text-muted-foreground">No cache statistics available.</div>
           )}
-        </div>
-      </div>
+      </AdminMonitorCollapsibleSection>
 
-      <div className="admin-monitor-section">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="admin-monitor-section-header h-auto w-full justify-start font-semibold"
-          onClick={() => setRabbitExpanded((e) => !e)}
-          aria-expanded={rabbitExpanded}
-          aria-controls="admin-monitor-rabbitmq-stats"
-        >
-          <span className="admin-monitor-section-chevron" aria-hidden>
-            {rabbitExpanded ? "▼" : "▶"}
-          </span>
-          RabbitMQ statistics
-        </Button>
-        <div
-          id="admin-monitor-rabbitmq-stats"
-          className="admin-monitor-section-body"
-          hidden={!rabbitExpanded}
-          role="region"
-          aria-label="RabbitMQ statistics"
-        >
+      <AdminMonitorCollapsibleSection
+        open={rabbitExpanded}
+        onOpenChange={setRabbitExpanded}
+        panelId="admin-monitor-rabbitmq-stats"
+        ariaLabel="RabbitMQ statistics"
+        title="RabbitMQ statistics"
+      >
           <div className="admin-monitor-action-row">
             <Button
               type="button"
@@ -1118,8 +1087,7 @@ export default function AdminMonitor() {
             !rabbitStats && (
               <div className="text-muted-foreground">No RabbitMQ statistics available.</div>
             )}
-        </div>
-      </div>
+      </AdminMonitorCollapsibleSection>
     </>
   );
 }

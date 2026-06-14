@@ -10,8 +10,6 @@ import {
   useRef,
   useState,
   type FormEvent,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -27,11 +25,14 @@ import {
 import { getApiBody, getErrorMessage } from "@/api/get-error-message";
 import LoadingMessage from "./components/LoadingMessage";
 import { ExtendedSearchLayoutContext } from "./context/extended-search-layout-context";
-import { useFocusTrap } from "./hooks/useFocusTrap";
 import type { SessionData } from "./session-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  Dialog,
+  DialogContent,
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -71,9 +72,7 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
   const [staffMessage, setStaffMessage] = useState("");
   const [isDroppingStaff, setIsDroppingStaff] = useState(false);
   const [isInvalidatingCache, setIsInvalidatingCache] = useState(false);
-  const extendedSearchPanelRef = useRef<HTMLDivElement | null>(null);
   const extendedSearchToggleRef = useRef<HTMLButtonElement | null>(null);
-  useFocusTrap(extendedSearchPanelRef, extendedSearchOpen);
 
   const closeExtendedSearch = useCallback(() => {
     setExtendedSearchOpen(false);
@@ -91,24 +90,6 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
     () => ({ openExtendedSearch }),
     [openExtendedSearch],
   );
-
-  function handleExtendedSearchBackdropClick(event: ReactMouseEvent<HTMLDivElement>) {
-    if (event.target === event.currentTarget) {
-      closeExtendedSearch();
-    }
-  }
-
-  useEffect(() => {
-    if (!extendedSearchOpen) return;
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        closeExtendedSearch();
-      }
-    }
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [extendedSearchOpen, closeExtendedSearch]);
 
   useEffect(() => {
     if (!extendedSearchOpen) return;
@@ -446,30 +427,32 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
           </div>
         </div>
       </header>
-      {extendedSearchOpen ? (
-        <div
-          className="extended-search-backdrop"
-          role="presentation"
-          onClick={handleExtendedSearchBackdropClick}
-          onKeyDown={(e: ReactKeyboardEvent<HTMLDivElement>) => {
-            if (e.key === "Escape") closeExtendedSearch();
-          }}
+      <Dialog
+        open={extendedSearchOpen}
+        onOpenChange={(open) => {
+          if (open) {
+            setExtendedSearchOpen(true);
+            setNavOpen(false);
+          } else {
+            closeExtendedSearch();
+          }
+        }}
+      >
+        <DialogContent
+          id="extended-search-collapse"
+          showCloseButton={false}
+          overlayClassName="bg-black/35"
+          aria-labelledby="extended-search-dialog-title"
+          className={cn(
+            "top-2 left-0 right-0 w-full max-w-full translate-x-0 translate-y-0",
+            "rounded-none border-0 border-b bg-muted p-4 px-6 shadow-lg ring-0 sm:max-w-full",
+          )}
         >
-          <div
-            ref={extendedSearchPanelRef}
-            id="extended-search-collapse"
-            className="extended-search-collapse"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="extended-search-dialog-title"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <Suspense fallback={<LoadingMessage message="Loading search…" />}>
-              <ExtendedSearch onClose={closeExtendedSearch} />
-            </Suspense>
-          </div>
-        </div>
-      ) : null}
+          <Suspense fallback={<LoadingMessage message="Loading search…" />}>
+            <ExtendedSearch onClose={closeExtendedSearch} />
+          </Suspense>
+        </DialogContent>
+      </Dialog>
       <main id="main-content" className="mt-4 outline-none" tabIndex={-1}>
         <ExtendedSearchLayoutContext.Provider value={extendedSearchLayoutValue}>
           {children}

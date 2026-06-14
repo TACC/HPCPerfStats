@@ -267,19 +267,13 @@ function maximizeEmbeddedPlot(targetId: string, mode: "stretch_both" | "stretch_
   }
 }
 
-const PLACEHOLDER_STYLE: CSSProperties = {
-  minHeight: 120,
-  display: "flex",
-  flexDirection: "column",
-  alignItems: "center",
-  justifyContent: "center",
-  color: "#666",
-  backgroundColor: "#f8f9fa",
-  border: "1px dashed #dee2e6",
-  borderRadius: 4,
-  padding: 12,
-  textAlign: "center",
-};
+const PLACEHOLDER_CLASS =
+  "bokeh-plot-unavailable flex min-h-[120px] flex-col items-center justify-center rounded border border-dashed border-border bg-muted p-3 text-center text-muted-foreground";
+
+const PLACEHOLDER_OVERLAY_CLASS = cn(
+  PLACEHOLDER_CLASS,
+  "absolute inset-0 z-[1] box-border min-h-full",
+);
 
 /** Min height for the Bokeh root while embedding; avoids zero-size layout. */
 const BOKEH_EMBED_MIN_HEIGHT_PX = 280;
@@ -289,14 +283,6 @@ const BOKEH_EMBED_MIN_HEIGHT_PX = 280;
  * display:none, layout width/height are zero and the canvas often stays blank.
  * Keep the target in normal flow and cover it with a placeholder overlay until ready.
  */
-const PLACEHOLDER_OVERLAY_STYLE: CSSProperties = {
-  ...PLACEHOLDER_STYLE,
-  position: "absolute",
-  inset: 0,
-  zIndex: 1,
-  minHeight: "100%",
-  boxSizing: "border-box",
-};
 
 /**
  * Injects Bokeh plot from API.
@@ -544,10 +530,9 @@ export default function BokehEmbed({
       setCopyStatus("Copy failed");
     }
   };
-  const renderPlaceholder = (style: CSSProperties) => (
+  const renderPlaceholder = (className: string) => (
     <div
-      className="bokeh-plot-unavailable"
-      style={style}
+      className={className}
       aria-live="polite"
       role="status"
     >
@@ -596,8 +581,8 @@ export default function BokehEmbed({
     </div>
   );
 
-  const placeholder = renderPlaceholder(PLACEHOLDER_STYLE);
-  const placeholderOverlay = renderPlaceholder(PLACEHOLDER_OVERLAY_STYLE);
+  const placeholder = renderPlaceholder(PLACEHOLDER_CLASS);
+  const placeholderOverlay = renderPlaceholder(PLACEHOLDER_OVERLAY_CLASS);
 
   const plotTargetLayoutStyle = hasData
     ? {

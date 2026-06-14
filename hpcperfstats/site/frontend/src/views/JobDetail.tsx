@@ -1,7 +1,7 @@
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { useCallback, useEffect, memo, useId, useMemo, useRef, useState } from "react";
-import type { CSSProperties, KeyboardEvent, ReactNode } from "react";
+import { useCallback, useEffect, memo, useMemo, useRef, useState } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { api } from "@/api";
 import { useJobDetailQuery } from "@/hooks/use-job-detail";
 import type { BokehJsonItem } from "@/types/bokeh";
@@ -26,6 +26,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import { formatDateTime } from "../utils/formatDateTime";
 import { formatDecimalStandard } from "../utils/formatDecimal";
@@ -40,7 +42,6 @@ import {
   readTabFromSearchParams,
   searchParamsWithTab,
 } from "../utils/sync-tab-search-param";
-import { useArrowKeyTabs } from "../hooks/useArrowKeyTabs";
 import { useMachineRouteParams } from "../hooks/use-machine-route-params";
 
 type JobAnalysisTab =
@@ -233,13 +234,6 @@ function createEmptyJobPlotsState(loading: boolean): JobPlotsState {
   }, {});
 }
 
-const analysisTabTriggerClass = (isActive: boolean) =>
-  cn(
-    "inline-flex items-center justify-center rounded-t-md border border-transparent px-3 py-1.5 text-sm font-medium -mb-px transition-colors",
-    "hover:border-border hover:border-b-transparent",
-    isActive && "border-border border-b-transparent bg-background text-foreground",
-  );
-
 /** Maps React plot keys to `job_plots` batch payload fields (plot=all). */
 const JOB_PLOTS_BATCH_FIELDS: Record<JobPlotConfigKey, PlotBatchFields> = {
   summary_plot: { item: "mplot_item", reason: "mplot_unavailable_reason" },
@@ -354,74 +348,6 @@ export default function JobDetail() {
     const href = qs ? `${pathname}?${qs}` : pathname;
     router.replace(href);
   }
-  const tabMetricsId = useId();
-  const tabProcessesId = useId();
-  const tabExecHostsId = useId();
-  const tabDeviceId = useId();
-  const tabPlotSummaryId = useId();
-  const tabPlotRooflineId = useId();
-  const tabMultiprecisionMixId = useId();
-
-  const plotTabDomIds: Record<"summary" | "roofline", string> = {
-    summary: tabPlotSummaryId,
-    roofline: tabPlotRooflineId,
-  };
-
-  const analysisTabButtonIds = useMemo(
-    () => [
-      tabMetricsId,
-      tabPlotSummaryId,
-      tabPlotRooflineId,
-      tabMultiprecisionMixId,
-      tabProcessesId,
-      tabExecHostsId,
-      tabDeviceId,
-    ],
-    [
-      tabMetricsId,
-      tabPlotSummaryId,
-      tabPlotRooflineId,
-      tabMultiprecisionMixId,
-      tabProcessesId,
-      tabExecHostsId,
-      tabDeviceId,
-    ],
-  );
-
-  const analysisTabIdToKey = useMemo<Record<string, JobAnalysisTab>>(
-    () => ({
-      [tabMetricsId]: "metrics",
-      [tabPlotSummaryId]: "summary",
-      [tabPlotRooflineId]: "roofline",
-      [tabMultiprecisionMixId]: "multiprecisionMix",
-      [tabProcessesId]: "processes",
-      [tabExecHostsId]: "execHosts",
-      [tabDeviceId]: "device",
-    }),
-    [
-      tabMetricsId,
-      tabPlotSummaryId,
-      tabPlotRooflineId,
-      tabMultiprecisionMixId,
-      tabProcessesId,
-      tabExecHostsId,
-      tabDeviceId,
-    ],
-  );
-
-  const activeAnalysisTabButtonId = useMemo(() => {
-    const entry = Object.entries(analysisTabIdToKey).find(([, key]) => key === analysisTab);
-    return entry ? entry[0] : tabMetricsId;
-  }, [analysisTab, analysisTabIdToKey, tabMetricsId]);
-
-  const handleAnalysisTabKeyDown = useArrowKeyTabs(
-    analysisTabButtonIds,
-    activeAnalysisTabButtonId,
-    (nextTabButtonId: string) => {
-      const nextKey = analysisTabIdToKey[nextTabButtonId];
-      if (nextKey) setAnalysisTab(nextKey);
-    },
-  );
 
   useDocumentTitle(buildJobDetailTitle({ error, loading, data, pk }));
 
@@ -764,11 +690,12 @@ export default function JobDetail() {
         <h2 id="job-detail-scheduling-heading" className="sr-only">
           Full scheduling record
         </h2>
-        <details className="job-detail-scheduling-details rounded-lg border px-3 py-2">
-          <summary className="cursor-pointer font-semibold">
+        <Collapsible className="job-detail-scheduling-details rounded-lg border px-3 py-2">
+          <CollapsibleTrigger className="cursor-pointer text-left font-semibold">
             Full scheduling record
             <span className="text-sm font-normal text-muted-foreground"> — all accounting columns</span>
-          </summary>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
           <Table className="job-detail-compact-table mt-2 border text-sm">
               <TableCaption className="sr-only">
                 Full scheduling record for job {job.jid}
@@ -850,7 +777,8 @@ export default function JobDetail() {
                 </TableRow>
               </TableBody>
           </Table>
-        </details>
+          </CollapsibleContent>
+        </Collapsible>
       </section>
 
       <section id="job-detail-resources" className="mb-4" aria-labelledby="job-detail-resources-heading">
@@ -962,103 +890,23 @@ export default function JobDetail() {
         <h2 id="job-detail-analysis-heading" className="text-lg font-medium">
           Job data
         </h2>
-        <div
-          className="job-detail-analysis-tabs job-detail-tab-scroll mb-0 flex border-b"
-          role="tablist"
-          aria-label="Job data views"
+        <Tabs
+          value={analysisTab}
+          onValueChange={(value) => setAnalysisTab(value as JobAnalysisTab)}
         >
-            <button
-              type="button"
-              className={analysisTabTriggerClass(analysisTab === "metrics")}
-              id={tabMetricsId}
-              role="tab"
-              aria-selected={analysisTab === "metrics"}
-              aria-controls="job-detail-panel-metrics"
-              tabIndex={analysisTab === "metrics" ? 0 : -1}
-              onClick={() => setAnalysisTab("metrics")}
-              onKeyDown={(e: KeyboardEvent<HTMLButtonElement>) => handleAnalysisTabKeyDown(e, tabMetricsId)}
-            >
-              Metrics
-            </button>
-            <button
-              type="button"
-              className={analysisTabTriggerClass(analysisTab === "summary")}
-              id={plotTabDomIds.summary}
-              role="tab"
-              aria-selected={analysisTab === "summary"}
-              aria-controls="job-detail-panel-plot-summary"
-              tabIndex={analysisTab === "summary" ? 0 : -1}
-              onClick={() => setAnalysisTab("summary")}
-              onKeyDown={(e: KeyboardEvent<HTMLButtonElement>) => handleAnalysisTabKeyDown(e, plotTabDomIds.summary)}
-            >
-              Summary plot
-            </button>
-            <button
-              type="button"
-              className={analysisTabTriggerClass(analysisTab === "roofline")}
-              id={plotTabDomIds.roofline}
-              role="tab"
-              aria-selected={analysisTab === "roofline"}
-              aria-controls="job-detail-panel-plot-roofline"
-              tabIndex={analysisTab === "roofline" ? 0 : -1}
-              onClick={() => setAnalysisTab("roofline")}
-              onKeyDown={(e: KeyboardEvent<HTMLButtonElement>) => handleAnalysisTabKeyDown(e, plotTabDomIds.roofline)}
-            >
-              Roofline
-            </button>
-            <button
-              type="button"
-              className={analysisTabTriggerClass(analysisTab === "multiprecisionMix")}
-              id={tabMultiprecisionMixId}
-              role="tab"
-              aria-selected={analysisTab === "multiprecisionMix"}
-              aria-controls="job-detail-panel-multiprecision-mix"
-              tabIndex={analysisTab === "multiprecisionMix" ? 0 : -1}
-              onClick={() => setAnalysisTab("multiprecisionMix")}
-              onKeyDown={(e: KeyboardEvent<HTMLButtonElement>) => handleAnalysisTabKeyDown(e, tabMultiprecisionMixId)}
-            >
-              Multiprecision Mix
-            </button>
-            <button
-              type="button"
-              className={analysisTabTriggerClass(analysisTab === "processes")}
-              id={tabProcessesId}
-              role="tab"
-              aria-selected={analysisTab === "processes"}
-              aria-controls="job-detail-panel-processes"
-              tabIndex={analysisTab === "processes" ? 0 : -1}
-              onClick={() => setAnalysisTab("processes")}
-              onKeyDown={(e: KeyboardEvent<HTMLButtonElement>) => handleAnalysisTabKeyDown(e, tabProcessesId)}
-            >
-              Processes
-            </button>
-            <button
-              type="button"
-              className={analysisTabTriggerClass(analysisTab === "execHosts")}
-              id={tabExecHostsId}
-              role="tab"
-              aria-selected={analysisTab === "execHosts"}
-              aria-controls="job-detail-panel-exec-hosts"
-              tabIndex={analysisTab === "execHosts" ? 0 : -1}
-              onClick={() => setAnalysisTab("execHosts")}
-              onKeyDown={(e: KeyboardEvent<HTMLButtonElement>) => handleAnalysisTabKeyDown(e, tabExecHostsId)}
-            >
-              Execution and hosts
-            </button>
-            <button
-              type="button"
-              className={analysisTabTriggerClass(analysisTab === "device")}
-              id={tabDeviceId}
-              role="tab"
-              aria-selected={analysisTab === "device"}
-              aria-controls="job-detail-panel-device"
-              tabIndex={analysisTab === "device" ? 0 : -1}
-              onClick={() => setAnalysisTab("device")}
-              onKeyDown={(e: KeyboardEvent<HTMLButtonElement>) => handleAnalysisTabKeyDown(e, tabDeviceId)}
-            >
-              Device data
-            </button>
-        </div>
+          <TabsList
+            variant="line"
+            className="job-detail-analysis-tabs job-detail-tab-scroll mb-0 w-full justify-start overflow-x-auto"
+            aria-label="Job data views"
+          >
+            <TabsTrigger value="metrics">Metrics</TabsTrigger>
+            <TabsTrigger value="summary">Summary plot</TabsTrigger>
+            <TabsTrigger value="roofline">Roofline</TabsTrigger>
+            <TabsTrigger value="multiprecisionMix">Multiprecision Mix</TabsTrigger>
+            <TabsTrigger value="processes">Processes</TabsTrigger>
+            <TabsTrigger value="execHosts">Execution and hosts</TabsTrigger>
+            <TabsTrigger value="device">Device data</TabsTrigger>
+          </TabsList>
         <div className="job-detail-analysis-panel rounded-b-lg border border-t-0 bg-background p-3">
           {plotsLoading ? (
             <p className="mb-2 text-sm text-muted-foreground" role="status">
@@ -1075,24 +923,20 @@ export default function JobDetail() {
               </AlertDescription>
             </Alert>
           ) : null}
-          <div
+          <TabsContent
+            value="summary"
             id="job-detail-panel-plot-summary"
-            role="tabpanel"
-            aria-labelledby={plotTabDomIds.summary}
-            className="job-detail-single-plot-pane"
-            hidden={analysisTab !== "summary"}
+            className="job-detail-single-plot-pane mt-0"
           >
             {renderSinglePlotPanel(
               plotConfigByKey.summary_plot,
               analysisTab === "summary",
             )}
-          </div>
-          <div
+          </TabsContent>
+          <TabsContent
+            value="roofline"
             id="job-detail-panel-plot-roofline"
-            role="tabpanel"
-            aria-labelledby={plotTabDomIds.roofline}
-            className="job-detail-single-plot-pane"
-            hidden={analysisTab !== "roofline"}
+            className="job-detail-single-plot-pane mt-0"
           >
             <p className="mb-2 text-sm text-muted-foreground">CPU and GPU roofline charts for this job.</p>
             {renderSinglePlotPanel(
@@ -1103,13 +947,8 @@ export default function JobDetail() {
               plotConfigByKey.gpu_roofline,
               analysisTab === "roofline",
             )}
-          </div>
-          <div
-            id="job-detail-panel-metrics"
-            role="tabpanel"
-            aria-labelledby={tabMetricsId}
-            hidden={analysisTab !== "metrics"}
-          >
+          </TabsContent>
+          <TabsContent value="metrics" id="job-detail-panel-metrics" className="mt-0">
             {detailsLoading ? (
               <p className="text-muted-foreground mb-0">Loading job-level metrics…</p>
             ) : !metrics_list.length ? (
@@ -1139,13 +978,11 @@ export default function JobDetail() {
                 </div>
               </div>
             )}
-          </div>
-          <div
+          </TabsContent>
+          <TabsContent
+            value="multiprecisionMix"
             id="job-detail-panel-multiprecision-mix"
-            role="tabpanel"
-            aria-labelledby={tabMultiprecisionMixId}
-            className="job-detail-single-plot-pane"
-            hidden={analysisTab !== "multiprecisionMix"}
+            className="job-detail-single-plot-pane mt-0"
           >
             <div className="grid gap-3 lg:grid-cols-2">
               <div>
@@ -1193,43 +1030,33 @@ export default function JobDetail() {
                 </div>
               </div>
             </div>
-          </div>
-          <div
-            id="job-detail-panel-processes"
-            role="tabpanel"
-            aria-labelledby={tabProcessesId}
-            hidden={analysisTab !== "processes"}
-          >
+          </TabsContent>
+          <TabsContent value="processes" id="job-detail-panel-processes" className="mt-0">
             {detailsLoading ? (
               <p className="text-muted-foreground mb-0">Loading processes…</p>
             ) : !(proc_list || []).length ? (
               <p className="text-muted-foreground mb-0">Data not available.</p>
             ) : (
               <Table className="border text-sm">
-                  <caption className="sr-only">
-                    Processes recorded for job {job.jid}
-                  </caption>
-                  <thead>
-                    <tr>
-                      <th scope="col">Process</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(proc_list || []).map((proc, i) => (
-                      <tr key={i}>
-                        <td>{proc}</td>
-                      </tr>
-                    ))}
-                  </tbody>
+                <TableCaption className="sr-only">
+                  Processes recorded for job {job.jid}
+                </TableCaption>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead scope="col">Process</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(proc_list || []).map((proc, i) => (
+                    <TableRow key={i}>
+                      <TableCell>{proc}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
               </Table>
             )}
-          </div>
-          <div
-            id="job-detail-panel-exec-hosts"
-            role="tabpanel"
-            aria-labelledby={tabExecHostsId}
-            hidden={analysisTab !== "execHosts"}
-          >
+          </TabsContent>
+          <TabsContent value="execHosts" id="job-detail-panel-exec-hosts" className="mt-0">
             <h3 className="text-base font-medium">Execution parameters</h3>
             {detailsLoading ? (
               <p className="text-muted-foreground">Loading execution parameters…</p>
@@ -1323,13 +1150,8 @@ export default function JobDetail() {
                   </tbody>
               </Table>
             )}
-          </div>
-          <div
-            id="job-detail-panel-device"
-            role="tabpanel"
-            aria-labelledby={tabDeviceId}
-            hidden={analysisTab !== "device"}
-          >
+          </TabsContent>
+          <TabsContent value="device" id="job-detail-panel-device" className="mt-0">
             <div className="text-center text-md-start">
               {detailsLoading ? (
                 <p className="text-muted-foreground mb-0" role="status">
@@ -1356,7 +1178,7 @@ export default function JobDetail() {
                           <td>
                             <Link href={`/machine/job/${job.jid}/${type_name}/`}>{type_name}</Link>
                           </td>
-                          <td style={{ textAlign: "left" }}>
+                          <td className="text-left">
                             {Array.isArray(event)
                               ? event.map((ev, i) => (
                                   <span key={ev}>
@@ -1376,8 +1198,9 @@ export default function JobDetail() {
                   </Table>
               )}
             </div>
-          </div>
+          </TabsContent>
         </div>
+        </Tabs>
       </section>
     </>
   );
