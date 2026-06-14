@@ -60,7 +60,11 @@ export function VariableInfoLabel({
       {suffixBeforeHelp}
       <Popover
         open={pinnedOpen ? true : undefined}
-        onOpenChange={(next) => {
+        onOpenChange={(next, details) => {
+          if (!next && pinnedOpen) {
+            details.cancel();
+            return;
+          }
           if (!next) setPinnedOpen(false);
         }}
         modal={false}
@@ -87,7 +91,6 @@ export function VariableInfoLabel({
           data-testid="variable-info-tooltip"
           aria-label={`${variableName} description`}
           sideOffset={2}
-          disablePointerDismissal={pinnedOpen}
           className={cn(
             "variable-info-tooltip variable-info-tooltip-portal w-auto max-w-[min(560px,calc(100vw-16px))] min-w-[min(420px,calc(100vw-16px))] p-2 text-sm font-normal",
           )}

@@ -17,7 +17,7 @@ alwaysApply: false
 - **TanStack Query** — server state via Orval-generated hooks; do not add ad hoc `useEffect`+`fetch` for API data unless Orval lacks an endpoint.
 - **Orval** — client generated from committed `hpcperfstats/site/openapi/openapi.yaml`; custom mutator in `src/api/fetch-mutator.ts` (credentials, CSRF, `ApiError` on non-2xx, 401 redirect).
 - **Parse boundary** — success JSON validated in `parse-api-response.ts` / `response-schema-registry.ts`; prefer thin hooks in `src/hooks/` over the legacy `api/index.ts` facade. Use `isDevEnvironment()` from `src/utils/is-dev-environment.ts` for dev-only logging — never raw `import.meta.env.DEV` (undefined in Next static export bundles). Validation failures throw `Error` messages that include `METHOD /api/path/` for operator diagnosis.
-- **VariableInfoLabel help** — use Base UI `PopoverTrigger` `openOnHover` + `delay`/`closeDelay` for hover; click toggles pinned open with `modal={false}` and `disablePointerDismissal` when pinned. Do not add custom debounced hover state that fights controlled `open`.
+- **VariableInfoLabel help** — use Base UI `PopoverTrigger` `openOnHover` + `delay`/`closeDelay` for hover; click toggles pinned open with `modal={false}`. When pinned, call `details.cancel()` in `Popover` `onOpenChange` to ignore outside dismiss. Do not add custom debounced hover state that fights controlled `open`.
 - **Forms** — React Hook Form + Zod schemas (`src/schemas/` or colocated `*-schema.ts`); mirror validation in Zod + drift tests.
 - **Bokeh** — `'use client'` only; embed via `BokehEmbed`; see **`bokeh-layout-surface-split.mdc`**.
 
