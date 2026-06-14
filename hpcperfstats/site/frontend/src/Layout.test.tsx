@@ -131,12 +131,11 @@ describe("Layout", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("exposes skip link to main content", async () => {
+  it("does not render a skip link to main content", async () => {
     const view = renderLayout({ logged_in: true, username: "alice", is_staff: false });
-    expect(screen.getByRole("link", { name: "Skip to main content" })).toHaveAttribute(
-      "href",
-      "#main-content",
-    );
+    expect(
+      screen.queryByRole("link", { name: /skip to main content/i }),
+    ).not.toBeInTheDocument();
     expect(await axeSeriousViolations(view.container)).toEqual([]);
   });
 

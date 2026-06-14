@@ -23,12 +23,6 @@ export default function LayoutPub({ machineName, children }: LayoutPubProps) {
 
   return (
     <div className="w-full px-4 lg:px-6">
-      <a
-        href="#main-content"
-        className="sr-only focus:not-sr-only focus:absolute focus:z-[12000] focus:m-2 focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:ring-2 focus:ring-ring"
-      >
-        Skip to main content
-      </a>
       <header
         className="site-header site-header-pub border-b bg-muted/40"
         role="navigation"

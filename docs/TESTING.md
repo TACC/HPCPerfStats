@@ -539,7 +539,7 @@ Treat the following as a **release gate** alongside automated tests: run through
 
 **Standalone pages**
 
-- `/machine/api-key` (React): skip link, `<main>`, confirm before key rotation, live region when a new key is shown.
+- `/machine/api-key` (React): `<main>`, confirm before key rotation, live region when a new key is shown.
 - Django **admin**: branding includes a link back to `/machine/`.
 
 ## Compose CPU pinning script (Linux hosts)

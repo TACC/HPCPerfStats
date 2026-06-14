@@ -26,9 +26,6 @@ function SessionGateLayout({ message, title }: { message: string; title: string 
   useDocumentTitle(title);
   return (
     <>
-      <a href="#main-content" className="visually-hidden visually-hidden-focusable">
-        Skip to main content
-      </a>
       <main id="main-content" tabIndex={-1}>
         <LoadingMessage message={message} />
       </main>

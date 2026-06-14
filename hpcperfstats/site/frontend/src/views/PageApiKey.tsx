@@ -91,12 +91,6 @@ export default function PageApiKey() {
 
   return (
     <>
-      <a
-        href="#api-key-main"
-        className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:rounded focus:bg-background focus:px-3 focus:py-2 focus:ring-2 focus:ring-ring"
-      >
-        Skip to main content
-      </a>
       <div
         id="api-key-page-announce"
         className="sr-only"

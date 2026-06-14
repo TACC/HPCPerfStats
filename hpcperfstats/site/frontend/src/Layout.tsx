@@ -201,12 +201,6 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
 
   return (
     <div className="w-full px-4 lg:px-6">
-      <a
-        href="#main-content"
-        className="sr-only focus:not-sr-only focus:absolute focus:z-[12000] focus:m-2 focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:ring-2 focus:ring-ring"
-      >
-        Skip to main content
-      </a>
       <header className="site-header border-b bg-muted/40" role="navigation" aria-label="Primary">
         <div className="relative flex flex-wrap items-start gap-3 py-2 lg:pb-3">
           <Link

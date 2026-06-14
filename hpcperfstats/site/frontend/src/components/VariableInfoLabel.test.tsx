@@ -1,8 +1,16 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { VariableInfoLabel } from "./VariableInfoLabel";
 
 describe("VariableInfoLabel", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("renders a help marker when metadata exists", () => {
     render(
       <VariableInfoLabel
@@ -88,5 +96,24 @@ describe("VariableInfoLabel", () => {
     expect(panel).toHaveAttribute("data-open");
     expect(document.body.contains(panel)).toBe(true);
     expect(panel).toHaveTextContent(/GPU utilization/i);
+  });
+
+  it("closes help panel once after debounced hover leave", async () => {
+    render(
+      <VariableInfoLabel variableName="utilization" labelText="utilization" enableHelp />,
+    );
+    const helpWrap = screen.getByTestId("variable-info-help").closest(".variable-info-help-wrap");
+    expect(helpWrap).toBeTruthy();
+    fireEvent.mouseEnter(helpWrap!);
+    const panel = await screen.findByTestId("variable-info-tooltip");
+    expect(panel).toHaveAttribute("data-open");
+    fireEvent.mouseLeave(helpWrap!);
+    act(() => {
+      vi.advanceTimersByTime(120);
+    });
+    expect(screen.getByRole("button", { name: /help: utilization/i })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
   });
 });

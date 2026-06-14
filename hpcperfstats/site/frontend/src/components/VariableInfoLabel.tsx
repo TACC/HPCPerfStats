@@ -4,6 +4,7 @@ import { useId, useState, useEffect, type ReactNode } from "react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
+import { useDelayedHoverState } from "@/hooks/use-delayed-hover-state";
 import { getVariableTooltipContent } from "../utils/variableMetadata";
 
 type VariableInfoLabelProps = {
@@ -26,21 +27,21 @@ export function VariableInfoLabel({
   const text = labelText != null ? labelText : variableName;
   const tooltipBody = enableHelp ? getVariableTooltipContent(variableName) : null;
   const panelId = useId();
-  const [open, setOpen] = useState(false);
-  const [hoverOpen, setHoverOpen] = useState(false);
-  const showTooltip = open || hoverOpen;
+  const [pinnedOpen, setPinnedOpen] = useState(false);
+  const { hoverOpen, onHoverEnter, onHoverLeave } = useDelayedHoverState();
+  const showTooltip = pinnedOpen || hoverOpen;
 
   useEffect(() => {
-    if (!open) return;
+    if (!pinnedOpen) return;
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
         e.preventDefault();
-        setOpen(false);
+        setPinnedOpen(false);
       }
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open]);
+  }, [pinnedOpen]);
 
   if (!tooltipBody) {
     return (
@@ -57,13 +58,18 @@ export function VariableInfoLabel({
     <span className="variable-info-label">
       <span className="variable-info-label-text">{text}</span>
       {suffixBeforeHelp}
-      <Popover open={showTooltip} onOpenChange={setOpen}>
+      <Popover
+        open={showTooltip}
+        onOpenChange={(next) => {
+          if (!next) setPinnedOpen(false);
+        }}
+      >
         <span
           className="variable-info-help-wrap"
-          onMouseEnter={() => setHoverOpen(true)}
-          onMouseLeave={() => setHoverOpen(false)}
-          onFocus={() => setHoverOpen(true)}
-          onBlur={() => setHoverOpen(false)}
+          onMouseEnter={onHoverEnter}
+          onMouseLeave={onHoverLeave}
+          onFocus={onHoverEnter}
+          onBlur={onHoverLeave}
         >
           <PopoverTrigger
             nativeButton
@@ -72,6 +78,7 @@ export function VariableInfoLabel({
             aria-expanded={showTooltip}
             aria-controls={showTooltip ? panelId : undefined}
             aria-label={`Help: ${variableName}`}
+            onClick={() => setPinnedOpen((prev) => !prev)}
           >
             ?
           </PopoverTrigger>
@@ -81,11 +88,12 @@ export function VariableInfoLabel({
           role="region"
           data-testid="variable-info-tooltip"
           aria-label={`${variableName} description`}
+          sideOffset={2}
           className={cn(
             "variable-info-tooltip variable-info-tooltip-portal w-auto max-w-[min(560px,calc(100vw-16px))] min-w-[min(420px,calc(100vw-16px))] p-2 text-sm font-normal",
           )}
-          onMouseEnter={() => setHoverOpen(true)}
-          onMouseLeave={() => setHoverOpen(false)}
+          onMouseEnter={onHoverEnter}
+          onMouseLeave={onHoverLeave}
         >
           <span className="variable-info-tooltip-definition">{description}</span>
           {researcherUse ? (

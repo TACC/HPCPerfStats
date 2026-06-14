@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isDevEnvironment } from "@/utils/is-dev-environment";
 
 export const apiErrorBodySchema = z
   .object({
@@ -38,7 +39,7 @@ export function parseApiErrorBody(payload: unknown, status: number): ApiError {
       : payload && typeof payload === "object"
         ? (payload as ApiErrorBody)
         : {};
-  if (import.meta.env.DEV && !parsed.success) {
+  if (isDevEnvironment() && !parsed.success) {
     // eslint-disable-next-line no-console
     console.warn("API error body failed schema validation", parsed.error.flatten());
   }

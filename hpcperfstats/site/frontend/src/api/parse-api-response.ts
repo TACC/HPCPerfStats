@@ -2,6 +2,7 @@
  * Runtime validation for Orval-generated API responses at the customFetch boundary.
  */
 import { resolveResponseSchema } from "./response-schema-registry";
+import { isDevEnvironment } from "@/utils/is-dev-environment";
 
 export function parseApiResponse<T>(
   method: string,
@@ -12,7 +13,7 @@ export function parseApiResponse<T>(
   if (!schema) return payload as T;
   const parsed = schema.safeParse(payload);
   if (!parsed.success) {
-    if (import.meta.env.DEV) {
+    if (isDevEnvironment()) {
       // eslint-disable-next-line no-console
       console.error("API response validation failed", parsed.error.flatten());
     }

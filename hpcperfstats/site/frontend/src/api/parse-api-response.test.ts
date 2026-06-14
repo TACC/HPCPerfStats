@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { parseApiResponse } from "@/api/parse-api-response";
 import { resolveResponseSchema } from "@/api/response-schema-registry";
+import * as isDevEnvironmentModule from "@/utils/is-dev-environment";
 
 describe("parse-api-response", () => {
   it("resolves admin monitor schema without ReferenceError", () => {
@@ -23,5 +24,14 @@ describe("parse-api-response", () => {
   it("passes through unmapped success payloads", () => {
     const payload = { custom: true };
     expect(parseApiResponse("GET", "/api/unknown/", payload)).toBe(payload);
+  });
+
+  it("throws validation error without ReferenceError when dev env is unavailable", () => {
+    vi.spyOn(isDevEnvironmentModule, "isDevEnvironment").mockReturnValue(false);
+    expect(() =>
+      parseApiResponse("GET", "/api/pub/cluster-dashboard/", {
+        machine_name: 123,
+      }),
+    ).toThrow("API response validation failed");
   });
 });
