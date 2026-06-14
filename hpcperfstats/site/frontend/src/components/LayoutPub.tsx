@@ -23,11 +23,7 @@ export default function LayoutPub({ machineName, children }: LayoutPubProps) {
 
   return (
     <div className="w-full px-4 lg:px-6">
-      <header
-        className="site-header site-header-pub border-b bg-muted/40"
-        role="navigation"
-        aria-label="Primary"
-      >
+      <header className="relative border-b bg-muted/40" role="navigation" aria-label="Primary">
         <div className="relative flex flex-wrap items-start gap-3 py-3 lg:pb-4">
           <Link
             href="/pub/cluster-dashboard"
@@ -54,11 +50,11 @@ export default function LayoutPub({ machineName, children }: LayoutPubProps) {
           <div
             id="navbar-main-pub"
             className={cn(
-              "site-header-nav w-full basis-full lg:flex lg:flex-1 lg:items-start lg:justify-end",
+              "w-full basis-full lg:static lg:flex lg:flex-1 lg:items-start lg:justify-end",
               navOpen ? "flex flex-col gap-3 border-t pt-3" : "hidden lg:flex",
             )}
           >
-            <div className="site-header-brand mx-auto flex min-h-[5rem] max-w-[min(48vw,680px)] flex-col items-center justify-center gap-0.5 text-center lg:absolute lg:left-1/2 lg:-translate-x-1/2">
+            <div className="mx-auto flex min-h-20 max-w-[min(48vw,680px)] flex-col items-center justify-center gap-0.5 break-words text-center lg:absolute lg:left-1/2 lg:-translate-x-1/2">
               <div className="text-xl font-semibold text-foreground">HPCPerfStats</div>
               <div className="text-sm text-muted-foreground">
                 a job-level resource usage monitoring tool
@@ -69,7 +65,7 @@ export default function LayoutPub({ machineName, children }: LayoutPubProps) {
                 </div>
               ) : null}
             </div>
-            <div className="site-header-actions flex w-full flex-col items-stretch gap-2 lg:max-w-[min(42vw,520px)] lg:items-end">
+            <div className="flex w-full flex-col items-stretch gap-2 max-lg:w-full lg:max-w-[min(42vw,520px)] lg:items-end">
               <div className="flex flex-wrap items-center justify-start gap-2 lg:justify-end">
                 <Button variant="outline" size="sm" render={<a href={PUB_LOGIN_PROMPT_HREF} />}>
                   Login to see individual job data

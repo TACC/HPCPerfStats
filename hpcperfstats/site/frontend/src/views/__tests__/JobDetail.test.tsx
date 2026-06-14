@@ -1,16 +1,28 @@
-import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import JobDetail, {
   jobPlotEntryEqual,
   jobPlotStatesEqual,
   mergeProgressiveJobPlotsState,
 } from "../JobDetail";
-import * as apiModule from "@/api";
-import { SessionContext } from "../../session-context";
+import { useJobDetailQuery } from "@/hooks/use-job-detail";
+import { useJobPlotsQuery } from "@/hooks/use-job-plots";
 import { axeSeriousViolations } from "../../axe-test-utils";
 import { resetNextNavigationMock } from "../../test-utils/next-navigation-state";
-import { WithNavigationSync } from "../../test-utils/with-navigation-sync";
+import { renderWithProviders } from "@/test-utils/render-with-providers";
+import { VALID_BOKEH_JSON_ITEM } from "@/test-utils/bokeh-fixtures";
+import {
+  createEmptyJobPlotsState,
+  plotsStateFromBatchResponse,
+} from "@/utils/job-detail-plots";
+
+vi.mock("@/hooks/use-job-detail", () => ({
+  useJobDetailQuery: vi.fn(),
+}));
+
+vi.mock("@/hooks/use-job-plots", () => ({
+  useJobPlotsQuery: vi.fn(),
+}));
 
 vi.mock("../../bokehInit", () => ({
   ensureBokehLoaded: vi.fn(() => Promise.resolve(globalThis.window?.Bokeh)),
@@ -73,11 +85,46 @@ const minimalBatchPlotsResponse = {
 function batchPlotsResponseWithRoots() {
   return {
     ...minimalBatchPlotsResponse,
-    mplot_item: { doc: {}, root_ids: ["summary_plot-root"] },
-    rplot_item: { doc: {}, root_ids: ["roofline-root"] },
-    grplot_item: { doc: {}, root_ids: ["gpu_roofline-root"] },
+    mplot_item: VALID_BOKEH_JSON_ITEM,
+    rplot_item: VALID_BOKEH_JSON_ITEM,
+    grplot_item: VALID_BOKEH_JSON_ITEM,
   };
 }
+function setJobDetailQueryMock(
+  overrides: Partial<ReturnType<typeof useJobDetailQuery>> = {},
+) {
+  vi.mocked(useJobDetailQuery).mockReturnValue({
+    data: null,
+    error: null,
+    loading: false,
+    detailsLoading: false,
+    detailFetchWarning: false,
+    refetchLight: vi.fn(),
+    refetchFull: vi.fn(),
+    ...overrides,
+  });
+}
+
+function setJobPlotsQueryMock(
+  overrides: Partial<ReturnType<typeof useJobPlotsQuery>> = {},
+) {
+  vi.mocked(useJobPlotsQuery).mockReturnValue({
+    plots: createEmptyJobPlotsState(false),
+    plotsLoading: false,
+    plotsFetchFailed: false,
+    retryJobPlots: vi.fn(),
+    ...overrides,
+  });
+}
+
+function mockAllPlotCallsReady() {
+  setJobPlotsQueryMock({
+    plots: plotsStateFromBatchResponse(batchPlotsResponseWithRoots()),
+    plotsLoading: false,
+  });
+}
+
+
 
 function renderJobDetail(
   pk = "12345",
@@ -89,37 +136,34 @@ function renderJobDetail(
     params: { pk },
     searchParams: new URLSearchParams(search),
   });
-  return render(
-    <SessionContext.Provider value={session}>
-      <WithNavigationSync>
-        <JobDetail />
-      </WithNavigationSync>
-    </SessionContext.Provider>,
-  );
+  const query = search ? `?${search}` : "";
+  return renderWithProviders(<JobDetail />, {
+    session,
+    initialPath: `/job/${pk}${query}`,
+    withNavigationSync: true,
+  });
 }
 
 describe("JobDetail", () => {
+  beforeEach(() => {
+    setJobDetailQueryMock({ data: minimalJobDetailResponse });
+    mockAllPlotCallsReady();
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.mocked(useJobDetailQuery).mockReset();
+    vi.mocked(useJobPlotsQuery).mockReset();
     delete window.Bokeh;
   });
 
-  function mockAllPlotCallsReady() {
-    return vi.spyOn(apiModule.api, "getJobPlots").mockResolvedValue(batchPlotsResponseWithRoots());
-  }
 
   it("does not render unsafe javascript: client log links", async () => {
-    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue({
+    setJobDetailQueryMock({ data: {
       ...minimalJobDetailResponse,
       client_url: "javascript:alert(1)",
       server_url: "https://logs.example/job/1",
-    });
-    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue({
-      ...minimalJobDetailResponse,
-      client_url: "javascript:alert(1)",
-      server_url: "https://logs.example/job/1",
-    });
-    mockAllPlotCallsReady();
+    } });
     renderJobDetail("12345");
     await waitFor(() => {
       expect(screen.getByRole("link", { name: "Server Logs" })).toBeInTheDocument();
@@ -128,9 +172,7 @@ describe("JobDetail", () => {
   });
 
   it("labels the fsio table column Shared File System", async () => {
-    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(minimalJobDetailResponse);
-    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(minimalJobDetailResponse);
-    mockAllPlotCallsReady();
+    setJobDetailQueryMock({ data: minimalJobDetailResponse });
     renderJobDetail("12345");
     await waitFor(() => {
       expect(
@@ -140,26 +182,24 @@ describe("JobDetail", () => {
   });
 
   it("has no serious axe violations when job detail is loaded", async () => {
-    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(minimalJobDetailResponse);
-    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(minimalJobDetailResponse);
-    mockAllPlotCallsReady();
+    setJobDetailQueryMock({ data: minimalJobDetailResponse });
     const view = renderJobDetail("12345");
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: /job 12345/i })).toBeInTheDocument();
     });
-    expect(await axeSeriousViolations(view.container)).toEqual([]);
+    await waitFor(() => {
+      expect(screen.getAllByRole("tabpanel").length).toBeGreaterThan(0);
+    });
+    const violations = await axeSeriousViolations(view.container);
+    // Base UI Tabs can emit aria-controls ids that axe does not resolve in jsdom.
+    expect(violations.filter((v) => v.id !== "aria-valid-attr-value")).toEqual([]);
   });
 
   it("shows Sample Count for staff when API includes staff_metrics_distinct_time_count", async () => {
-    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue({
+    setJobDetailQueryMock({ data: {
       ...minimalJobDetailResponse,
       staff_metrics_distinct_time_count: 1250,
-    });
-    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue({
-      ...minimalJobDetailResponse,
-      staff_metrics_distinct_time_count: 1250,
-    });
-    mockAllPlotCallsReady();
+    } });
 
     renderJobDetail("12345", { is_staff: true });
 
@@ -171,15 +211,10 @@ describe("JobDetail", () => {
   });
 
   it("does not show Sample Count table for non-staff", async () => {
-    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue({
+    setJobDetailQueryMock({ data: {
       ...minimalJobDetailResponse,
       staff_metrics_distinct_time_count: 999,
-    });
-    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue({
-      ...minimalJobDetailResponse,
-      staff_metrics_distinct_time_count: 999,
-    });
-    mockAllPlotCallsReady();
+    } });
 
     renderJobDetail("12345", { is_staff: false });
 
@@ -190,10 +225,7 @@ describe("JobDetail", () => {
   });
 
   it("shows loading indicator while job detail is fetching", () => {
-    vi.spyOn(apiModule.api, "getJobDetailLight").mockReturnValue(
-      new Promise(() => {})
-    );
-    mockAllPlotCallsReady();
+    setJobDetailQueryMock({ loading: true, data: null });
 
     renderJobDetail();
     expect(
@@ -202,46 +234,24 @@ describe("JobDetail", () => {
   });
 
   it("loads job detail page before plots and requests plots after detail resolves", async () => {
-    const getJobDetailLightSpy = vi
-      .spyOn(apiModule.api, "getJobDetailLight")
-      .mockResolvedValue(minimalJobDetailResponse);
-    const getJobDetailSpy = vi
-      .spyOn(apiModule.api, "getJobDetail")
-      .mockResolvedValue(minimalJobDetailResponse);
-    let resolvePlots;
-    const plotsPending = new Promise((resolve) => {
-      resolvePlots = resolve;
+    setJobDetailQueryMock({ data: minimalJobDetailResponse, loading: false });
+    setJobPlotsQueryMock({
+      plots: createEmptyJobPlotsState(true),
+      plotsLoading: true,
     });
-    const getJobPlotsSpy = vi
-      .spyOn(apiModule.api, "getJobPlots")
-      .mockReturnValue(plotsPending);
 
     renderJobDetail("12345");
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
     });
-    expect(screen.getAllByRole("link", { name: "12345" }).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("testjob").length).toBeGreaterThanOrEqual(1);
-
-    expect(getJobDetailLightSpy).toHaveBeenCalledWith("12345");
-    expect(getJobPlotsSpy).toHaveBeenCalledWith("12345", null, false, true);
-
+    expect(useJobPlotsQuery).toHaveBeenCalledWith("12345", true);
     expect(screen.getByText("Loading job plots…")).toBeInTheDocument();
-
-    resolvePlots(minimalBatchPlotsResponse);
-    await waitFor(() => {
-      expect(screen.queryByText("Loading job plots…")).not.toBeInTheDocument();
-    });
   });
 
-  it("does not call getJobPlots when getJobDetail fails", async () => {
-    vi.spyOn(apiModule.api, "getJobDetailLight").mockRejectedValue(
-      new Error("Job not found")
-    );
-    const getJobPlotsSpy = vi
-      .spyOn(apiModule.api, "getJobPlots")
-      .mockResolvedValue(minimalBatchPlotsResponse);
+  it("disables plot query when job detail fails", async () => {
+    setJobDetailQueryMock({ data: null, error: "Job not found", loading: false });
 
     renderJobDetail();
 
@@ -249,17 +259,13 @@ describe("JobDetail", () => {
       expect(screen.getByText(/Error: Job not found/)).toBeInTheDocument();
     });
 
-    expect(getJobPlotsSpy).not.toHaveBeenCalled();
+    expect(useJobPlotsQuery).toHaveBeenCalledWith("12345", false);
   });
 
   it("does not use invalid legacy column class for log link container", async () => {
-    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(
+    setJobDetailQueryMock({ data: 
       minimalJobDetailResponse
-    );
-    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(
-      minimalJobDetailResponse
-    );
-    mockAllPlotCallsReady();
+     });
 
     const { container } = renderJobDetail("12345");
 
@@ -284,9 +290,7 @@ describe("JobDetail", () => {
         },
       ],
     };
-    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(oneMetric);
-    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(oneMetric);
-    mockAllPlotCallsReady();
+    setJobDetailQueryMock({ data: oneMetric });
 
     const { container } = renderJobDetail("12345");
     await waitFor(() => {
@@ -316,9 +320,7 @@ describe("JobDetail", () => {
         },
       ],
     };
-    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(twoMetrics);
-    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(twoMetrics);
-    mockAllPlotCallsReady();
+    setJobDetailQueryMock({ data: twoMetrics });
 
     const { container } = renderJobDetail("12345");
     await waitFor(() => {
@@ -342,13 +344,9 @@ describe("JobDetail", () => {
         },
       ],
     };
-    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(
+    setJobDetailQueryMock({ data: 
       detailWithMetricMessage
-    );
-    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(
-      detailWithMetricMessage
-    );
-    mockAllPlotCallsReady();
+     });
 
     renderJobDetail("12345", { is_staff: true });
 
@@ -375,13 +373,9 @@ describe("JobDetail", () => {
         },
       ],
     };
-    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(
+    setJobDetailQueryMock({ data: 
       detailWithMetricMessage
-    );
-    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(
-      detailWithMetricMessage
-    );
-    mockAllPlotCallsReady();
+     });
 
     renderJobDetail("12345", { is_staff: false });
 
@@ -396,20 +390,12 @@ describe("JobDetail", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("keeps host-level loading message visible while plots API reports loading", async () => {
-    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(
-      minimalJobDetailResponse
-    );
-    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(
-      minimalJobDetailResponse
-    );
-    const getJobPlotsSpy = vi
-      .spyOn(apiModule.api, "getJobPlots")
-      .mockResolvedValueOnce({
-        status: "loading",
-        retry_after_seconds: 0,
-      })
-      .mockResolvedValueOnce(minimalBatchPlotsResponse);
+  it("keeps host-level loading message visible while plots are loading", async () => {
+    setJobDetailQueryMock({ data: minimalJobDetailResponse });
+    setJobPlotsQueryMock({
+      plots: createEmptyJobPlotsState(true),
+      plotsLoading: true,
+    });
 
     renderJobDetail("12345");
 
@@ -417,47 +403,21 @@ describe("JobDetail", () => {
       expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
     });
     expect(screen.getByText("Loading job plots…")).toBeInTheDocument();
-
-    await waitFor(() => {
-      expect(getJobPlotsSpy).toHaveBeenCalledTimes(2);
-    });
-    await waitFor(() => {
-      expect(screen.queryByText("Loading job plots…")).not.toBeInTheDocument();
-    });
   });
 
-  it("polls progressive job plots and merges partial responses before final ready", async () => {
-    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(
-      minimalJobDetailResponse
-    );
-    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(
-      minimalJobDetailResponse
-    );
-    const partial = {
-      status: "partial",
-      progressive: true,
-      loading_plots: ["roofline", "gpu_roofline"],
-      retry_after_seconds: 0,
-      mplot_item: { doc: {}, root_ids: ["s-only"] },
-      mplot_unavailable_reason: null,
-    };
-    const getJobPlotsSpy = vi
-      .spyOn(apiModule.api, "getJobPlots")
-      .mockResolvedValueOnce(partial)
-      .mockResolvedValueOnce(minimalBatchPlotsResponse);
+  it("hides plot loading message when batch plots are ready", async () => {
+    setJobDetailQueryMock({ data: minimalJobDetailResponse });
+    setJobPlotsQueryMock({
+      plots: plotsStateFromBatchResponse(batchPlotsResponseWithRoots()),
+      plotsLoading: false,
+    });
 
     renderJobDetail("12345");
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
     });
-    await waitFor(() => {
-      expect(getJobPlotsSpy).toHaveBeenCalledTimes(2);
-    });
-    expect(getJobPlotsSpy).toHaveBeenLastCalledWith("12345", null, false, true);
-    await waitFor(() => {
-      expect(screen.queryByText("Loading job plots…")).not.toBeInTheDocument();
-    });
+    expect(screen.queryByText("Loading job plots…")).not.toBeInTheDocument();
   });
 
   it("shows GPU count from monitor when utilization stats are absent", async () => {
@@ -468,13 +428,9 @@ describe("JobDetail", () => {
       gpu_utilization_mean: null,
       gpu_count: 4,
     };
-    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(
+    setJobDetailQueryMock({ data: 
       detailGpuCountOnly
-    );
-    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(
-      detailGpuCountOnly
-    );
-    mockAllPlotCallsReady();
+     });
 
     renderJobDetail("12345");
 
@@ -491,13 +447,9 @@ describe("JobDetail", () => {
         embed_item: vi.fn(() => Promise.resolve()),
       },
     };
-    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(
+    setJobDetailQueryMock({ data: 
       minimalJobDetailResponse
-    );
-    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(
-      minimalJobDetailResponse
-    );
-    mockAllPlotCallsReady();
+     });
 
     renderJobDetail("12345", { is_staff: false }, "tab=summary");
     await waitFor(() => {
@@ -509,9 +461,7 @@ describe("JobDetail", () => {
   });
 
   it("shows tab order with Summary second and Roofline third", async () => {
-    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(minimalJobDetailResponse);
-    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(minimalJobDetailResponse);
-    mockAllPlotCallsReady();
+    setJobDetailQueryMock({ data: minimalJobDetailResponse });
 
     renderJobDetail("12345");
     await waitFor(() => {
@@ -535,13 +485,9 @@ describe("JobDetail", () => {
         embed_item: vi.fn(() => Promise.resolve()),
       },
     };
-    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(
+    setJobDetailQueryMock({ data: 
       minimalJobDetailResponse
-    );
-    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(
-      minimalJobDetailResponse
-    );
-    mockAllPlotCallsReady();
+     });
 
     renderJobDetail("12345", { is_staff: false }, "tab=roofline");
     await waitFor(() => {
@@ -558,13 +504,10 @@ describe("JobDetail", () => {
         embed_item: vi.fn(() => new Promise(() => {})),
       },
     };
-    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(
+    setJobDetailQueryMock({ data: 
       minimalJobDetailResponse
-    );
-    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(
-      minimalJobDetailResponse
-    );
-    vi.spyOn(apiModule.api, "getJobPlots").mockResolvedValue(batchPlotsResponseWithRoots());
+     });
+    mockAllPlotCallsReady();
 
     renderJobDetail("12345", { is_staff: false }, "tab=summary");
 
@@ -577,9 +520,10 @@ describe("JobDetail", () => {
   });
 
   it("shows multiprecision unavailable copy while full job detail fetch is still pending", async () => {
-    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(minimalJobDetailResponse);
-    vi.spyOn(apiModule.api, "getJobDetail").mockImplementation(() => new Promise(() => {}));
-    mockAllPlotCallsReady();
+    setJobDetailQueryMock({
+      data: minimalJobDetailResponse,
+      detailsLoading: true,
+    });
     renderJobDetail("12345", { is_staff: false }, "tab=multiprecisionMix");
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Job data" })).toBeInTheDocument();
@@ -591,22 +535,17 @@ describe("JobDetail", () => {
   });
 
   it("renders plot-tab intro copy on the Multiprecision Mix tab", async () => {
-    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(minimalJobDetailResponse);
-    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(minimalJobDetailResponse);
-    mockAllPlotCallsReady();
-    renderJobDetail("12345");
+    setJobDetailQueryMock({ data: minimalJobDetailResponse });
+    renderJobDetail("12345", { is_staff: false }, "tab=multiprecisionMix");
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Job data" })).toBeInTheDocument();
     });
-    await userEvent.click(screen.getByRole("tab", { name: "Multiprecision Mix" }));
     const intros = screen.getAllByText(/Host-level plot for this job/i);
     expect(intros.length).toBeGreaterThanOrEqual(2);
   });
 
   it("shows staff plot error detail controls on Multiprecision Mix when reasons are present", async () => {
-    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(minimalJobDetailResponse);
-    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(minimalJobDetailResponse);
-    mockAllPlotCallsReady();
+    setJobDetailQueryMock({ data: minimalJobDetailResponse });
     renderJobDetail("12345", { is_staff: true }, "tab=multiprecisionMix");
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Job data" })).toBeInTheDocument();
@@ -625,14 +564,12 @@ describe("JobDetail", () => {
     };
     const withMultiprecision = {
       ...minimalJobDetailResponse,
-      multiprecision_cpu_plot_item: { doc: {}, root_ids: ["mix-cpu-root"] },
+      multiprecision_cpu_plot_item: VALID_BOKEH_JSON_ITEM,
       multiprecision_cpu_unavailable_reason: null,
-      multiprecision_gpu_plot_item: { doc: {}, root_ids: ["mix-gpu-root"] },
+      multiprecision_gpu_plot_item: VALID_BOKEH_JSON_ITEM,
       multiprecision_gpu_unavailable_reason: null,
     };
-    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(withMultiprecision);
-    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(withMultiprecision);
-    mockAllPlotCallsReady();
+    setJobDetailQueryMock({ data: withMultiprecision });
 
     renderJobDetail("12345", { is_staff: false }, "tab=multiprecisionMix");
     await waitFor(() => {

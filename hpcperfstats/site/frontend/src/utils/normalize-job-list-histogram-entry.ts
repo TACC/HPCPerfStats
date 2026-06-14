@@ -77,7 +77,18 @@ function hasDeclaredRootInDoc(value: BokehDocNode) {
 }
 
 function isValidBokehJsonItem(value: unknown): value is BokehJsonItem {
-  return parseBokehJsonItem(value) != null;
+  if (!value || typeof value !== "object") return false;
+  const node = value as BokehDocNode;
+  const hasTopLevelRootRef =
+    (typeof node.root_id === "string" && node.root_id.trim().length > 0) ||
+    (typeof node.root_id === "number" && Number.isFinite(node.root_id)) ||
+    (Array.isArray(node.root_ids) && node.root_ids.length > 0);
+
+  if (hasTopLevelRootRef) {
+    return hasDeclaredRootInDoc(node);
+  }
+  if (parseBokehJsonItem(value) != null) return true;
+  return hasDeclaredRootInDoc(node);
 }
 
 /** Normalize queue or metric histogram API payloads for the job list sidecar. */

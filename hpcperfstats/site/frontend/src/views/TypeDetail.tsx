@@ -1,9 +1,7 @@
 import Link from "next/link";
-import { useEffect, useState } from "react";
 import type { BokehJsonItem } from "@/types/bokeh";
 import type { TypeDetailData } from "@/types/view-models";
 import { formatDecimalStandard } from "../utils/formatDecimal";
-import { api } from "@/api";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import BokehPlotWithLimitation from "../components/BokehPlotWithLimitation";
 import LoadingMessage from "../components/LoadingMessage";
@@ -20,14 +18,13 @@ import {
 import { useMachineRouteParams } from "../hooks/use-machine-route-params";
 import { buildAsyncPageTitle } from "../utils/async-page-title";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
+import { useTypeDetailQuery } from "@/hooks/use-type-detail";
 
 export default function TypeDetail() {
   const { flatParams } = useMachineRouteParams();
   const jid = flatParams.jid ?? "";
   const typeName = flatParams.typeName ?? "";
-  const [data, setData] = useState<TypeDetailData | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { data, error, loading } = useTypeDetailQuery(jid, typeName);
 
   const typeLabel = data?.type_name || typeName;
   useDocumentTitle(
@@ -39,17 +36,6 @@ export default function TypeDetail() {
       fallbackTitle: "Type detail",
     }),
   );
-
-  useEffect(() => {
-    if (!jid || !typeName) return;
-    api
-      .getTypeDetail(jid, typeName)
-      .then((resp) => setData(resp as TypeDetailData))
-      .catch((e: unknown) =>
-        setError(e instanceof Error ? e.message : "Request failed"),
-      )
-      .finally(() => setLoading(false));
-  }, [jid, typeName]);
 
   if (loading) return <LoadingMessage message="Loading type detail…" />;
   if (error) return <BannerErrorMessage message={error} />;

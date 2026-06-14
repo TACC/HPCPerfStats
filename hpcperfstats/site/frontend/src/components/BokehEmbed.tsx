@@ -593,10 +593,10 @@ export default function BokehEmbed({
       }
     : {};
 
-  const wrapperClass =
-    wrapperClassName && String(wrapperClassName).trim()
-      ? `bokeh-embed-wrapper ${wrapperClassName.trim()}`
-      : "bokeh-embed-wrapper";
+  const wrapperClass = cn(
+    "bokeh-embed-wrapper max-md:max-w-full max-md:overflow-x-auto max-md:[-webkit-overflow-scrolling:touch]",
+    wrapperClassName && String(wrapperClassName).trim(),
+  );
 
   const regionLabel =
     embedAriaLabel ??
@@ -622,7 +622,11 @@ export default function BokehEmbed({
         }}
       >
         {overlayActive ? placeholderOverlay : null}
-        <div id={id} className="bokeh-embed" style={plotTargetLayoutStyle} />
+        <div
+          id={id}
+          className="bokeh-embed max-md:max-w-full max-md:[&_.bk-root]:max-w-full! max-md:[&_canvas]:max-w-full! max-md:[&_svg]:max-w-full!"
+          style={plotTargetLayoutStyle}
+        />
       </div>
     );
   }

@@ -1,14 +1,13 @@
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { useCallback, useEffect, memo, useMemo, useRef, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
-import { api } from "@/api";
+import { memo, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import { useJobDetailQuery } from "@/hooks/use-job-detail";
+import { useJobPlotsQuery } from "@/hooks/use-job-plots";
 import type { BokehJsonItem } from "@/types/bokeh";
 import type {
   JobDetailData,
   JobMetricCell,
-  JobPlotBatchResponse,
   JobPlotsState,
 } from "@/types/view-models";
 import BannerErrorMessage from "../components/BannerErrorMessage";
@@ -34,7 +33,6 @@ import { formatDecimalStandard } from "../utils/formatDecimal";
 import { isSafeHttpUrl } from "../utils/safe-external-url";
 import { useSession } from "../session-context";
 import { VariableInfoLabel } from "../components/VariableInfoLabel";
-import { scheduleJobPlotsRetry } from "../utils/job-plots-polling";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 import PageBreadcrumbs from "../components/PageBreadcrumbs";
 import { getJobMetricShortLabel } from "../utils/jobMetricDisplayLabels";
@@ -43,6 +41,16 @@ import {
   searchParamsWithTab,
 } from "../utils/sync-tab-search-param";
 import { useMachineRouteParams } from "../hooks/use-machine-route-params";
+import { JOB_PLOT_CONFIGS } from "@/utils/job-detail-plots";
+
+const JOB_DETAIL_COMPACT_TABLE_CLASS =
+  "border text-sm [&_td]:px-[0.45rem] [&_td]:py-[0.2rem] [&_td]:align-middle [&_td]:leading-[1.3] [&_th]:px-[0.45rem] [&_th]:py-[0.2rem] [&_th]:align-middle [&_th]:leading-[1.3]";
+
+export {
+  mergeProgressiveJobPlotsState,
+  jobPlotEntryEqual,
+  jobPlotStatesEqual,
+} from "@/utils/job-detail-plots";
 
 type JobAnalysisTab =
   | "metrics"
@@ -53,12 +61,7 @@ type JobAnalysisTab =
   | "execHosts"
   | "device";
 
-type JobPlotConfig = {
-  key: "summary_plot" | "roofline" | "gpu_roofline";
-  panelKey: "summary" | "roofline-cpu" | "roofline-gpu";
-  idPrefix: string;
-  plotName: string;
-};
+type JobPlotConfig = (typeof JOB_PLOT_CONFIGS)[number];
 
 type JobPlotConfigKey = JobPlotConfig["key"];
 
@@ -127,8 +130,6 @@ type PlotPanelInfo = {
   unavailableReason: string | null;
 };
 
-type PlotBatchFields = { item: string; reason: string };
-
 const JOB_DETAIL_ANALYSIS_TABS: ReadonlySet<JobAnalysisTab> = new Set([
   "metrics",
   "summary",
@@ -183,7 +184,7 @@ const PlotPanel = memo(function PlotPanel({
 }: PlotPanelProps) {
   const plotDescId = `${id}-plot-desc`;
   return (
-    <div className="job-detail-plot-embed-host">
+    <div className="relative min-w-0 w-full">
       <p id={plotDescId} className="sr-only">
         Interactive performance chart. Scales to the available width. Numerical detail may not be read
         by assistive technology.
@@ -194,124 +195,13 @@ const PlotPanel = memo(function PlotPanel({
         plotName={plotName}
         unavailableReason={unavailableReason}
         isLoadingExternal={isLoading}
-        wrapperClassName="job-detail-plot-embed"
+        wrapperClassName="job-detail-plot-embed w-full min-w-0 min-h-[340px]"
         ariaDescribedBy={plotDescId}
         maximizeInContainer="width"
       />
     </div>
   );
 });
-
-const JOB_PLOT_CONFIGS: ReadonlyArray<JobPlotConfig> = [
-  {
-    key: "summary_plot",
-    panelKey: "summary",
-    idPrefix: "job-mscript",
-    plotName: "Summary plot",
-  },
-  {
-    key: "roofline",
-    panelKey: "roofline-cpu",
-    idPrefix: "job-roofline",
-    plotName: "CPU Roofline",
-  },
-  {
-    key: "gpu_roofline",
-    panelKey: "roofline-gpu",
-    idPrefix: "job-gpu-roofline",
-    plotName: "GPU Roofline (PCIe/NvLink)",
-  },
-];
-
-function createEmptyJobPlotsState(loading: boolean): JobPlotsState {
-  return JOB_PLOT_CONFIGS.reduce<JobPlotsState>((acc, config) => {
-    acc[config.key] = {
-      loading,
-      plotItem: null,
-      unavailableReason: null,
-    };
-    return acc;
-  }, {});
-}
-
-/** Maps React plot keys to `job_plots` batch payload fields (plot=all). */
-const JOB_PLOTS_BATCH_FIELDS: Record<JobPlotConfigKey, PlotBatchFields> = {
-  summary_plot: { item: "mplot_item", reason: "mplot_unavailable_reason" },
-  roofline: { item: "rplot_item", reason: "rplot_unavailable_reason" },
-  gpu_roofline: { item: "grplot_item", reason: "grplot_unavailable_reason" },
-};
-
-function plotsStateFromBatchResponse(resp: JobPlotBatchResponse): JobPlotsState {
-  return JOB_PLOT_CONFIGS.reduce<JobPlotsState>((acc, config) => {
-    const fields = JOB_PLOTS_BATCH_FIELDS[config.key];
-    acc[config.key] = {
-      loading: false,
-      plotItem: (resp[fields.item] as BokehJsonItem | null | undefined) ?? null,
-      unavailableReason: (resp[fields.reason] as string | null | undefined) ?? null,
-    };
-    return acc;
-  }, {});
-}
-
-/** Merge a progressive `job_plots` partial payload into existing per-plot state. */
-export function mergeProgressiveJobPlotsState(
-  prevPlots: JobPlotsState | null,
-  resp: JobPlotBatchResponse,
-): JobPlotsState {
-  const loadingSet = new Set(resp.loading_plots ?? []);
-  return JOB_PLOT_CONFIGS.reduce<JobPlotsState>((acc, config) => {
-    const fields = JOB_PLOTS_BATCH_FIELDS[config.key];
-    const previous = prevPlots?.[config.key] ?? {
-      loading: true,
-      plotItem: null,
-      unavailableReason: null,
-    };
-    if (loadingSet.has(config.key)) {
-      acc[config.key] = {
-        loading: true,
-        plotItem: previous.plotItem,
-        unavailableReason: previous.unavailableReason,
-      };
-      return acc;
-    }
-    if (Object.hasOwn(resp, fields.item)) {
-      acc[config.key] = {
-        loading: false,
-        plotItem: (resp[fields.item] as BokehJsonItem | null | undefined) ?? null,
-        unavailableReason: (resp[fields.reason] as string | null | undefined) ?? null,
-      };
-      return acc;
-    }
-    acc[config.key] = { ...previous, loading: true };
-    return acc;
-  }, {});
-}
-
-export function jobPlotEntryEqual(
-  p: JobPlotsState[string] | null | undefined,
-  q: JobPlotsState[string] | null | undefined,
-): boolean {
-  if (p === q) return true;
-  if (!p || !q) return false;
-  if (p.loading !== q.loading || p.unavailableReason !== q.unavailableReason) return false;
-  if (p.plotItem === q.plotItem) return true;
-  if (p.plotItem == null && q.plotItem == null) return true;
-  if (p.plotItem == null || q.plotItem == null) return false;
-  try {
-    return JSON.stringify(p.plotItem) === JSON.stringify(q.plotItem);
-  } catch {
-    return false;
-  }
-}
-
-export function jobPlotStatesEqual(
-  a: JobPlotsState | null | undefined,
-  b: JobPlotsState | null | undefined,
-): boolean {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  return JOB_PLOT_CONFIGS.every((cfg) => jobPlotEntryEqual(a[cfg.key], b[cfg.key]));
-}
 
 export default function JobDetail() {
   const session = useSession();
@@ -329,10 +219,11 @@ export default function JobDetail() {
     detailFetchWarning,
   } = useJobDetailQuery(pk);
   const data = jobDetailData as JobDetailViewData | null;
-  const [plots, setPlots] = useState<JobPlotsState | null>(null);
-  const [plotsLoading, setPlotsLoading] = useState(true);
-  const [plotsFetchFailed, setPlotsFetchFailed] = useState(false);
-  const plotsFetchGenRef = useRef(0);
+  const plotsEnabled = !!pk && !loading && !error && !!data;
+  const { plots, plotsLoading, plotsFetchFailed, retryJobPlots } = useJobPlotsQuery(
+    pk,
+    plotsEnabled,
+  );
   const rawTab = readTabFromSearchParams(searchParams, "tab", "metrics");
   const analysisTab: JobAnalysisTab = JOB_DETAIL_ANALYSIS_TABS.has(rawTab as JobAnalysisTab)
     ? (rawTab as JobAnalysisTab)
@@ -350,97 +241,6 @@ export default function JobDetail() {
   }
 
   useDocumentTitle(buildJobDetailTitle({ error, loading, data, pk }));
-
-  const fetchAllJobPlotsWithPolling = useCallback(
-    async (cancelledCheck: () => boolean): Promise<void> => {
-      let keepLoading = false;
-      try {
-        const plotResponse = (await api.getJobPlots(pk, null, false, true)) as JobPlotBatchResponse;
-        if (cancelledCheck()) return;
-
-        if (plotResponse?.status === "loading") {
-          keepLoading = true;
-          scheduleJobPlotsRetry(
-            () => fetchAllJobPlotsWithPolling(cancelledCheck),
-            plotResponse.retry_after_seconds,
-            cancelledCheck,
-          );
-          return;
-        }
-
-        if (plotResponse?.status === "partial" && plotResponse?.progressive) {
-          keepLoading = true;
-          setPlotsFetchFailed(false);
-          setPlots((prev) => {
-            const merged = mergeProgressiveJobPlotsState(prev, plotResponse);
-            return jobPlotStatesEqual(prev, merged) ? prev : merged;
-          });
-          scheduleJobPlotsRetry(
-            () => fetchAllJobPlotsWithPolling(cancelledCheck),
-            plotResponse.retry_after_seconds,
-            cancelledCheck,
-          );
-          return;
-        }
-
-        if (
-          plotResponse &&
-          typeof plotResponse === "object" &&
-          Object.hasOwn(plotResponse, "mplot_item")
-        ) {
-          setPlotsFetchFailed(false);
-          setPlots((prev) => {
-            const next = plotsStateFromBatchResponse(plotResponse);
-            return jobPlotStatesEqual(prev, next) ? prev : next;
-          });
-        } else {
-          setPlots(createEmptyJobPlotsState(false));
-        }
-      } catch {
-        if (cancelledCheck()) return;
-        setPlotsFetchFailed(true);
-        setPlots(createEmptyJobPlotsState(false));
-      } finally {
-        if (cancelledCheck() || keepLoading) return;
-        setPlotsLoading(false);
-      }
-    },
-    [pk],
-  );
-
-  const retryJobPlots = useCallback(() => {
-    setPlotsFetchFailed(false);
-    setPlotsLoading(true);
-    setPlots(createEmptyJobPlotsState(true));
-    plotsFetchGenRef.current += 1;
-    const gen = plotsFetchGenRef.current;
-    void fetchAllJobPlotsWithPolling(() => plotsFetchGenRef.current !== gen);
-  }, [fetchAllJobPlotsWithPolling]);
-
-  useEffect(() => {
-    if (!pk || loading || error || !data) return;
-
-    let cancelled = false;
-    const cancelledCheck = (): boolean => cancelled;
-
-    setPlots(null);
-    setPlotsLoading(true);
-    setPlotsFetchFailed(false);
-    setPlots(createEmptyJobPlotsState(true));
-    void fetchAllJobPlotsWithPolling(cancelledCheck);
-
-    return () => {
-      cancelled = true;
-    };
-  }, [pk, loading, error, data, fetchAllJobPlotsWithPolling]);
-
-  useEffect(() => {
-    if (!plots) return;
-    const anyPlotReady = JOB_PLOT_CONFIGS.some(
-      (config) => plots?.[config.key] && plots[config.key].loading === false
-    );
-    if (anyPlotReady) setPlotsLoading(false);
-  }, [plots]);
 
   if (loading) {
     return (
@@ -484,9 +284,9 @@ export default function JobDetail() {
     staff_metrics_distinct_time_count: staffMetricsDistinctTimeCount,
   } = detailData;
 
-  const gpuStatsTableCellStyle: { label: CSSProperties; value: CSSProperties } = {
-    label: { border: "1px solid lightgrey" },
-    value: { border: "1px solid lightgrey", textAlign: "right" },
+  const gpuStatsTableCellClass = {
+    label: "border border-border",
+    value: "border border-border text-right",
   };
   const gpuStatsRows = [
     {
@@ -538,23 +338,23 @@ export default function JobDetail() {
 
   function metricTableRows(list: JobMetricRow[]): ReactNode {
     return list.map((obj) => (
-      <tr key={obj.metric}>
-        <th scope="row">
-          <span className="job-detail-metric-name">
+      <TableRow key={obj.metric}>
+        <TableHead scope="row">
+          <span className="inline-flex max-w-full flex-wrap items-baseline gap-x-1 gap-y-[0.15rem]">
             <VariableInfoLabel
               variableName={obj.metric}
               labelText={getJobMetricShortLabel(obj.metric)}
               enableHelp
             />
             {obj.units ? (
-              <span className="job-detail-metric-units">[{obj.units}]</span>
+              <span className="font-normal whitespace-nowrap text-muted-foreground">[{obj.units}]</span>
             ) : null}
           </span>
-        </th>
-        <td className={obj.value != null && obj.value !== "" ? "" : "text-muted-foreground"}>
+        </TableHead>
+        <TableCell className={obj.value != null && obj.value !== "" ? "" : "text-muted-foreground"}>
           {formatJobMetricCell(obj, isStaff)}
-        </td>
-      </tr>
+        </TableCell>
+      </TableRow>
     ));
   }
 
@@ -563,9 +363,9 @@ export default function JobDetail() {
     const panel = plotPanels.find((p) => p.key === config.panelKey);
     if (!panel) return null;
     return (
-      <div key={config.key} className="job-detail-single-plot-host mb-3 w-full">
+      <div key={config.key} className="mb-3 w-full min-w-0 box-border">
         <h3 className="text-base font-medium">{config.plotName}</h3>
-        <p className="job-detail-plots-intro mb-2 text-sm text-muted-foreground">
+        <p className="job-detail-plots-intro mb-2 max-w-[36rem] text-sm text-muted-foreground">
           Host-level plot for this job. Loads progressively; chart width follows the panel below.
         </p>
         {isTabActive ? (
@@ -696,7 +496,7 @@ export default function JobDetail() {
             <span className="text-sm font-normal text-muted-foreground"> — all accounting columns</span>
           </CollapsibleTrigger>
           <CollapsibleContent>
-          <Table className="job-detail-compact-table mt-2 border text-sm">
+          <Table className={cn(JOB_DETAIL_COMPACT_TABLE_CLASS, "mt-2")}>
               <TableCaption className="sr-only">
                 Full scheduling record for job {job.jid}
               </TableCaption>
@@ -787,53 +587,53 @@ export default function JobDetail() {
         </h2>
         <div className="max-w-4xl">
             <Table className="border text-sm">
-                <caption className="sr-only">
+                <TableCaption className="sr-only">
                   Shared file system I/O for job {job.jid}
-                </caption>
-                <thead>
-                  <tr>
-                    <th scope="col">Shared File System</th>
-                    <th scope="col">MB Read</th>
-                    <th scope="col">MB Written</th>
-                    <th scope="col">Peak MB/s</th>
-                    <th scope="col">Peak IOPS</th>
-                  </tr>
-                </thead>
-                <tbody>
+                </TableCaption>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead scope="col">Shared File System</TableHead>
+                    <TableHead scope="col">MB Read</TableHead>
+                    <TableHead scope="col">MB Written</TableHead>
+                    <TableHead scope="col">Peak MB/s</TableHead>
+                    <TableHead scope="col">Peak IOPS</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {detailsLoading ? (
-                    <tr>
-                      <td colSpan={5} className="text-muted-foreground">
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-muted-foreground">
                         Loading shared file system data…
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ) : Object.keys(fsio).length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="text-muted-foreground">
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-muted-foreground">
                         Data not available.
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ) : (
                     Object.entries(fsio).map(([key, val]) => (
-                      <tr key={key}>
-                        <td>{key}</td>
-                        <td>{formatDecimalStandard((val as Array<number | null>)[0])}</td>
-                        <td>{formatDecimalStandard((val as Array<number | null>)[1])}</td>
-                        <td>
+                      <TableRow key={key}>
+                        <TableCell>{key}</TableCell>
+                        <TableCell>{formatDecimalStandard((val as Array<number | null>)[0])}</TableCell>
+                        <TableCell>{formatDecimalStandard((val as Array<number | null>)[1])}</TableCell>
+                        <TableCell>
                           {(val as Array<number | null>)[2] != null &&
                           !Number.isNaN((val as Array<number | null>)[2])
                             ? formatDecimalStandard((val as Array<number | null>)[2])
                             : "—"}
-                        </td>
-                        <td>
+                        </TableCell>
+                        <TableCell>
                           {(val as Array<number | null>)[3] != null &&
                           !Number.isNaN((val as Array<number | null>)[3])
                             ? formatDecimalStandard((val as Array<number | null>)[3])
                             : "—"}
-                        </td>
-                      </tr>
+                        </TableCell>
+                      </TableRow>
                     ))
                   )}
-                </tbody>
+                </TableBody>
             </Table>
         </div>
         {(detailsLoading || gpu_active != null || gpu_count != null) && (
@@ -847,10 +647,10 @@ export default function JobDetail() {
                 <TableBody>
                   {gpuStatsRows.map((row) => (
                     <TableRow key={row.key}>
-                      <TableCell style={gpuStatsTableCellStyle.label}>
+                      <TableCell className={gpuStatsTableCellClass.label}>
                         <b>{row.label}</b>
                       </TableCell>
-                      <TableCell style={gpuStatsTableCellStyle.value}>{row.value}</TableCell>
+                      <TableCell className={gpuStatsTableCellClass.value}>{row.value}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -896,7 +696,7 @@ export default function JobDetail() {
         >
           <TabsList
             variant="line"
-            className="job-detail-analysis-tabs job-detail-tab-scroll mb-0 w-full justify-start overflow-x-auto"
+            className="sticky top-0 z-[var(--z-sticky-inpage)] mb-0 w-full justify-start overflow-x-auto border-b border-border bg-background pt-[0.35rem] [scrollbar-width:thin] flex-nowrap"
             aria-label="Job data views"
           >
             <TabsTrigger value="metrics">Metrics</TabsTrigger>
@@ -926,7 +726,7 @@ export default function JobDetail() {
           <TabsContent
             value="summary"
             id="job-detail-panel-plot-summary"
-            className="job-detail-single-plot-pane mt-0"
+            className="job-detail-single-plot-pane mt-0 [&_.job-detail-plots-intro]:mx-0 [&_.job-detail-plots-intro]:max-w-none [&_.job-detail-plots-intro]:text-start"
           >
             {renderSinglePlotPanel(
               plotConfigByKey.summary_plot,
@@ -936,7 +736,7 @@ export default function JobDetail() {
           <TabsContent
             value="roofline"
             id="job-detail-panel-plot-roofline"
-            className="job-detail-single-plot-pane mt-0"
+            className="job-detail-single-plot-pane mt-0 [&_.job-detail-plots-intro]:mx-0 [&_.job-detail-plots-intro]:max-w-none [&_.job-detail-plots-intro]:text-start"
           >
             <p className="mb-2 text-sm text-muted-foreground">CPU and GPU roofline charts for this job.</p>
             {renderSinglePlotPanel(
@@ -954,26 +754,26 @@ export default function JobDetail() {
             ) : !metrics_list.length ? (
               <p className="text-muted-foreground mb-0">Data not available.</p>
             ) : metricsTableRight.length === 0 ? (
-              <Table className="job-detail-metrics-table job-detail-compact-table mb-0 border text-sm">
-                  <caption className="sr-only">Job-level metrics for job {job.jid}</caption>
-                  <tbody>{metricTableRows(metricsTableLeft)}</tbody>
+              <Table className={cn(JOB_DETAIL_COMPACT_TABLE_CLASS, "job-detail-metrics-table mb-0 w-full")}>
+                  <TableCaption className="sr-only">Job-level metrics for job {job.jid}</TableCaption>
+                  <TableBody>{metricTableRows(metricsTableLeft)}</TableBody>
               </Table>
             ) : (
-              <div className="grid gap-3 job-detail-metrics-two-col lg:grid-cols-2">
+              <div className="job-detail-metrics-two-col grid gap-3 lg:grid-cols-2">
                 <div>
-                  <Table className="job-detail-metrics-table job-detail-compact-table mb-0 border text-sm">
-                      <caption className="sr-only">
+                  <Table className={cn(JOB_DETAIL_COMPACT_TABLE_CLASS, "job-detail-metrics-table mb-0 w-full")}>
+                      <TableCaption className="sr-only">
                         Job-level metrics for job {job.jid} (column 1)
-                      </caption>
-                      <tbody>{metricTableRows(metricsTableLeft)}</tbody>
+                      </TableCaption>
+                      <TableBody>{metricTableRows(metricsTableLeft)}</TableBody>
                   </Table>
                 </div>
                 <div>
-                  <Table className="job-detail-metrics-table job-detail-compact-table mb-0 border text-sm">
-                      <caption className="sr-only">
+                  <Table className={cn(JOB_DETAIL_COMPACT_TABLE_CLASS, "job-detail-metrics-table mb-0 w-full")}>
+                      <TableCaption className="sr-only">
                         Job-level metrics for job {job.jid} (column 2)
-                      </caption>
-                      <tbody>{metricTableRows(metricsTableRight)}</tbody>
+                      </TableCaption>
+                      <TableBody>{metricTableRows(metricsTableRight)}</TableBody>
                   </Table>
                 </div>
               </div>
@@ -982,13 +782,13 @@ export default function JobDetail() {
           <TabsContent
             value="multiprecisionMix"
             id="job-detail-panel-multiprecision-mix"
-            className="job-detail-single-plot-pane mt-0"
+            className="job-detail-single-plot-pane mt-0 [&_.job-detail-plots-intro]:mx-0 [&_.job-detail-plots-intro]:max-w-none [&_.job-detail-plots-intro]:text-start"
           >
             <div className="grid gap-3 lg:grid-cols-2">
               <div>
-                <div className="job-detail-single-plot-host mb-3 w-full">
+                <div className="mb-3 w-full min-w-0 box-border">
                   <h3 className="text-base font-medium">CPU Multiprecision Mix</h3>
-                  <p className="job-detail-plots-intro mb-2 text-sm text-muted-foreground">
+                  <p className="job-detail-plots-intro mb-2 max-w-[36rem] text-sm text-muted-foreground">
                     Host-level plot for this job. Loads progressively; chart width follows the panel
                     below.
                   </p>
@@ -1008,9 +808,9 @@ export default function JobDetail() {
                 </div>
               </div>
               <div>
-                <div className="job-detail-single-plot-host mb-3 w-full">
+                <div className="mb-3 w-full min-w-0 box-border">
                   <h3 className="text-base font-medium">GPU Multiprecision Mix</h3>
-                  <p className="job-detail-plots-intro mb-2 text-sm text-muted-foreground">
+                  <p className="job-detail-plots-intro mb-2 max-w-[36rem] text-sm text-muted-foreground">
                     Host-level plot for this job. Loads progressively; chart width follows the panel
                     below.
                   </p>
@@ -1063,13 +863,13 @@ export default function JobDetail() {
             ) : (
               <>
                 <Table className="border text-sm">
-                  <caption className="sr-only">
+                  <TableCaption className="sr-only">
                     Execution parameters for job {job.jid}
-                  </caption>
-                  <tbody>
-                    <tr>
-                      <th scope="row">Executable Path</th>
-                      <td>
+                  </TableCaption>
+                  <TableBody>
+                    <TableRow>
+                      <TableHead scope="row">Executable Path</TableHead>
+                      <TableCell>
                         {(xalt_data.exec_path || []).length === 0 ? (
                           <span className="text-muted-foreground">Data not available.</span>
                         ) : (
@@ -1080,11 +880,11 @@ export default function JobDetail() {
                             </span>
                           ))
                         )}
-                      </td>
-                    </tr>
-                    <tr>
-                      <th scope="row">Working Directory</th>
-                      <td>
+                      </TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableHead scope="row">Working Directory</TableHead>
+                      <TableCell>
                         {(xalt_data.cwd || []).length === 0 ? (
                           <span className="text-muted-foreground">Data not available.</span>
                         ) : (
@@ -1095,36 +895,36 @@ export default function JobDetail() {
                             </span>
                           ))
                         )}
-                      </td>
-                    </tr>
-                  </tbody>
+                      </TableCell>
+                    </TableRow>
+                  </TableBody>
                 </Table>
                 <Table className="mt-2 border text-sm">
-                  <caption className="sr-only">
+                  <TableCaption className="sr-only">
                     Modules and libraries for job {job.jid}
-                  </caption>
-                  <thead>
-                    <tr>
-                      <th scope="col">Module</th>
-                      <th scope="col">Library</th>
-                    </tr>
-                  </thead>
-                  <tbody>
+                  </TableCaption>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead scope="col">Module</TableHead>
+                      <TableHead scope="col">Library</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
                     {(xalt_data.libset || []).length === 0 ? (
-                      <tr>
-                        <td colSpan={2} className="text-muted-foreground">
+                      <TableRow>
+                        <TableCell colSpan={2} className="text-muted-foreground">
                           Data not available.
-                        </td>
-                      </tr>
+                        </TableCell>
+                      </TableRow>
                     ) : (
                       (xalt_data.libset || []).map((item: XaltLibsetEntry, i: number) => (
-                        <tr key={i}>
-                          <td>{item[1] === "none" ? "system" : item[1]}</td>
-                          <td>{item[0]}</td>
-                        </tr>
+                        <TableRow key={i}>
+                          <TableCell>{item[1] === "none" ? "system" : item[1]}</TableCell>
+                          <TableCell>{item[0]}</TableCell>
+                        </TableRow>
                       ))
                     )}
-                  </tbody>
+                  </TableBody>
                 </Table>
               </>
             )}
@@ -1133,21 +933,21 @@ export default function JobDetail() {
               <p className="text-muted-foreground mb-0">Data not available.</p>
             ) : (
               <Table className="border text-sm">
-                  <caption className="sr-only">
+                  <TableCaption className="sr-only">
                     Execution hosts for job {job.jid}
-                  </caption>
-                  <thead>
-                    <tr>
-                      <th scope="col">Host</th>
-                    </tr>
-                  </thead>
-                  <tbody>
+                  </TableCaption>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead scope="col">Host</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
                     {host_list.map((host, i) => (
-                      <tr key={i}>
-                        <td>{host}</td>
-                      </tr>
+                      <TableRow key={i}>
+                        <TableCell>{host}</TableCell>
+                      </TableRow>
                     ))}
-                  </tbody>
+                  </TableBody>
               </Table>
             )}
           </TabsContent>
@@ -1162,23 +962,23 @@ export default function JobDetail() {
                   Data not available.
                 </p>
               ) : (
-                  <Table className="job-detail-compact-table border text-sm">
-                    <caption className="sr-only">
+                  <Table className={JOB_DETAIL_COMPACT_TABLE_CLASS}>
+                    <TableCaption className="sr-only">
                       Device types and events for job {job.jid}
-                    </caption>
-                    <thead>
-                      <tr>
-                        <th scope="col">Type Name</th>
-                        <th scope="col">Recorded Performance Events</th>
-                      </tr>
-                    </thead>
-                    <tbody>
+                    </TableCaption>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead scope="col">Type Name</TableHead>
+                        <TableHead scope="col">Recorded Performance Events</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
                       {Object.entries(schema).map(([type_name, event]) => (
-                        <tr key={type_name}>
-                          <td>
+                        <TableRow key={type_name}>
+                          <TableCell>
                             <Link href={`/machine/job/${job.jid}/${type_name}/`}>{type_name}</Link>
-                          </td>
-                          <td className="text-left">
+                          </TableCell>
+                          <TableCell className="text-left">
                             {Array.isArray(event)
                               ? event.map((ev, i) => (
                                   <span key={ev}>
@@ -1191,10 +991,10 @@ export default function JobDetail() {
                                   </span>
                                 ))
                               : String(event)}
-                          </td>
-                        </tr>
+                          </TableCell>
+                        </TableRow>
                       ))}
-                    </tbody>
+                    </TableBody>
                   </Table>
               )}
             </div>

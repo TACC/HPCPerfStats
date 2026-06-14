@@ -163,7 +163,11 @@ class TypeDetailResponseSerializer(serializers.Serializer):
 
 
 class HostPlotResponseSerializer(serializers.Serializer):
-    plot = serializers.JSONField()
+    host = serializers.CharField()
+    plot_item = serializers.JSONField(allow_null=True)
+    plot_unavailable_reason = serializers.CharField(allow_null=True, required=False)
+    end_time__gte = serializers.CharField()
+    end_time__lte = serializers.CharField()
 
 
 class AdminMonitorResponseSerializer(serializers.Serializer):

@@ -1,49 +1,88 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { vi } from "vitest";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import AdminMonitor from "../AdminMonitor";
-import * as apiModule from "@/api";
+import { useAdminMonitorSectionQuery } from "@/hooks/use-admin-monitor-section";
+import { renderWithProviders } from "@/test-utils/render-with-providers";
+
+vi.mock("@/hooks/use-admin-monitor-section", () => ({
+  useAdminMonitorSectionQuery: vi.fn(),
+}));
+
+function mockSectionQuery(
+  sectionResponses: Record<
+    string,
+    { data?: unknown; error?: string | null; loading?: boolean }
+  >,
+) {
+  vi.mocked(useAdminMonitorSectionQuery).mockImplementation(
+    ({ section, enabled, pickResponse, refreshSeq }) => {
+      if (!enabled) {
+        return { data: null, error: null, loading: false, refetch: vi.fn() };
+      }
+      const fixture = sectionResponses[section];
+      if (!fixture) {
+        return { data: null, error: null, loading: false, refetch: vi.fn() };
+      }
+      const raw =
+        section === "hosts"
+          ? { host_stats: fixture.data }
+          : section === "rabbitmq_hosts"
+            ? { rabbitmq_host_stats: fixture.data }
+            : section === "cache"
+              ? { cache_stats: fixture.data }
+              : section === "rabbitmq"
+                ? { rabbitmq_stats: fixture.data }
+                : section === "timescaledb"
+                  ? { timescaledb_stats: fixture.data }
+                  : section === "xalt"
+                    ? { xalt_stats: fixture.data }
+                    : {};
+      return {
+        data: pickResponse(raw as never),
+        error: fixture.error ?? null,
+        loading: fixture.loading ?? false,
+        refetch: vi.fn(),
+        refreshSeq,
+      };
+    },
+  );
+}
 
 describe("AdminMonitor", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.mocked(useAdminMonitorSectionQuery).mockReset();
   });
 
   it("renders heading", () => {
-    render(<AdminMonitor />);
-    expect(
-      screen.getByText("HPCPerfStats Monitor")
-    ).toBeInTheDocument();
+    mockSectionQuery({});
+    renderWithProviders(<AdminMonitor />);
+    expect(screen.getByText("HPCPerfStats Monitor")).toBeInTheDocument();
   });
 
   it("loads host stats when section is expanded", async () => {
-    vi.spyOn(apiModule.api, "getAdminMonitorSection").mockImplementation(
-      async (section) => {
-        if (section === "hosts") {
-          return {
-            host_stats: [
-              {
-                host: "node1.example.com",
-                last_time: "2024-01-01T00:00:00Z",
-                age_bucket: "ok",
-              },
-            ],
-          };
-        }
-        return {};
-      }
+    mockSectionQuery({
+      hosts: {
+        data: [
+          {
+            host: "node1.example.com",
+            last_time: "2024-01-01T00:00:00Z",
+            age_bucket: "ok",
+          },
+        ],
+      },
+    });
+
+    renderWithProviders(<AdminMonitor />);
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Most recent host data timestamps in database/i,
+      }),
     );
 
-    render(<AdminMonitor />);
-
-    const button = screen.getByRole("button", {
-      name: /Most recent host data timestamps in database/i,
-    });
-    fireEvent.click(button);
-
     await waitFor(() => {
-      expect(
-        screen.getByText("node1.example.com")
-      ).toBeInTheDocument();
+      expect(screen.getByText("node1.example.com")).toBeInTheDocument();
     });
 
     const hostHeader = screen.getByRole("columnheader", { name: /Host\b/i });
@@ -51,54 +90,50 @@ describe("AdminMonitor", () => {
   });
 
   it("loads rabbitmq host stats when section is expanded", async () => {
-    vi.spyOn(apiModule.api, "getAdminMonitorSection").mockImplementation(
-      async (section) => {
-        if (section === "rabbitmq_hosts") {
-          return {
-            rabbitmq_host_stats: [
-              {
-                host: "node2.example.com",
-                last_time: "2024-01-01T00:00:00Z",
-                age_bucket: "ok",
-              },
-            ],
-          };
-        }
-        return {};
-      }
-    );
-
-    render(<AdminMonitor />);
-
-    const button = screen.getByRole("button", {
-      name: /Most recent host data timestamps in RabbitMQ/i,
+    mockSectionQuery({
+      rabbitmq_hosts: {
+        data: [
+          {
+            host: "node2.example.com",
+            last_time: "2024-01-01T00:00:00Z",
+            age_bucket: "ok",
+          },
+        ],
+      },
     });
-    fireEvent.click(button);
+
+    renderWithProviders(<AdminMonitor />);
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Most recent host data timestamps in RabbitMQ/i,
+      }),
+    );
 
     await waitFor(() => {
       expect(screen.getByText("node2.example.com")).toBeInTheDocument();
     });
   });
 
-  it("refresh button refetches section data with refresh option", async () => {
-    const getSectionSpy = vi
-      .spyOn(apiModule.api, "getAdminMonitorSection")
-      .mockResolvedValue({
-        host_stats: [
+  it("refresh button increments refreshSeq for the hosts section", async () => {
+    mockSectionQuery({
+      hosts: {
+        data: [
           {
             host: "node3.example.com",
             last_time: "2024-01-01T00:00:00Z",
             age_bucket: "ok",
           },
         ],
-      });
+      },
+    });
 
-    render(<AdminMonitor />);
+    renderWithProviders(<AdminMonitor />);
 
     fireEvent.click(
       screen.getByRole("button", {
         name: /Most recent host data timestamps in database/i,
-      })
+      }),
     );
 
     await waitFor(() => {
@@ -108,8 +143,9 @@ describe("AdminMonitor", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Refresh Data" })[0]);
 
     await waitFor(() => {
-      expect(getSectionSpy).toHaveBeenCalledWith("hosts", { refresh: true });
+      expect(useAdminMonitorSectionQuery).toHaveBeenCalledWith(
+        expect.objectContaining({ section: "hosts", refreshSeq: 1, enabled: true }),
+      );
     });
   });
 });
-

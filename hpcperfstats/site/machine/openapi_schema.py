@@ -138,11 +138,14 @@ TYPE_DETAIL_SCHEMA = extend_schema(
 )
 
 HOST_PLOT_SCHEMA = extend_schema(
+    summary="Host utilization plot",
     tags=["hosts"],
     parameters=[
-        OpenApiParameter(name="host", type=str, location=OpenApiParameter.QUERY),
-        OpenApiParameter(name="start", type=str, location=OpenApiParameter.QUERY),
-        OpenApiParameter(name="end", type=str, location=OpenApiParameter.QUERY),
+        OpenApiParameter(name="start", type=str, location=OpenApiParameter.QUERY, exclude=True),
+        OpenApiParameter(name="end", type=str, location=OpenApiParameter.QUERY, exclude=True),
+        OpenApiParameter(name="host", type=str, location=OpenApiParameter.QUERY, required=True),
+        OpenApiParameter(name="end_time__gte", type=str, location=OpenApiParameter.QUERY, required=True),
+        OpenApiParameter(name="end_time__lte", type=str, location=OpenApiParameter.QUERY, required=False),
     ],
     responses={200: os.HostPlotResponseSerializer, **_auth_responses()},
 )

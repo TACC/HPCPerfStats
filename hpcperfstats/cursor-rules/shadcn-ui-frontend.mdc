@@ -15,16 +15,17 @@ alwaysApply: false
 - **Base UI** primitives under `src/components/ui/` — add via `npx shadcn@latest add <component>`.
 - **Icons:** `lucide-react` (bundled; no CDN).
 - **Font:** self-hosted **Inter** via `@fontsource/inter` in `app/layout.tsx`.
-- **Theme tokens:** Shadcn CSS variables in `src/globals.css`; use `var(--background)`, `var(--border)`, etc. in residual `src/index.css` behavioral rules.
+- **Theme tokens:** Shadcn CSS variables in `src/globals.css`; style surfaces with Tailwind utilities and `cn()` using semantic tokens (`bg-background`, `border-border`, `text-muted-foreground`, etc.).
 
 ## Conventions
 
 - **Do not** reintroduce Bootstrap, Bootswatch, or Sass SCSS theme imports.
 - **Class merging:** `cn()` from `@/lib/utils` for conditional Tailwind classes.
 - **New UI primitives:** prefer Shadcn components in `src/components/ui/` over raw `<div>` + ad hoc ARIA for menus, dialogs, tabs, selects.
+- **Tables inside `Table`:** use `TableHeader` / `TableBody` / `TableRow` / `TableHead` / `TableCell` — not raw `<thead>` / `<tr>` / `<td>`.
 - **Forms:** Shadcn `Input`/`Label`/`Select` with existing **RHF + Zod**; use `Controller` for selects.
 - **Accessibility:** preserve focus traps (`useFocusTrap`), keyboard tab hooks, dialog/backdrop semantics on Extended Search and layout shells.
-- **Residual global CSS:** `src/index.css` is for cross-cutting **behavior** (sticky headers, histogram popover, admin-monitor sections) — not Bootstrap look-alikes.
+- **No residual `src/index.css`:** page and feature styling belongs in colocated Tailwind/`cn()` on owning components. `globals.css` holds theme tokens, base layer, `prefers-reduced-motion`, and safe-area insets only.
 
 ## Adding components
 

@@ -98,7 +98,7 @@ export default function PageApiKey() {
         aria-live="polite"
         aria-atomic="true"
       />
-      <div className="page-api-key-container mx-auto max-w-3xl px-4">
+      <div className="mx-auto max-w-[640px] px-4">
         <p className="mb-3">
           <Link href="/" className="text-primary hover:underline">
             Back to HPCPerfStats
@@ -125,7 +125,7 @@ export default function PageApiKey() {
                     <code
                       ref={keyRef}
                       id="api-key-value"
-                      className="api-key-code-block inline-block rounded-md bg-muted px-2 py-1 font-mono text-sm"
+                      className="inline-block break-all rounded-md bg-muted px-2 py-[0.35rem] font-mono text-sm [overflow-wrap:anywhere]"
                     >
                       {rawKey}
                     </code>
@@ -142,7 +142,7 @@ export default function PageApiKey() {
                   </div>
                   <div
                     id="api-key-copy-status"
-                    className="api-key-copy-status mt-1 text-sm text-muted-foreground"
+                    className="mt-1 min-h-[1.25em] text-sm text-muted-foreground"
                     aria-live="polite"
                   >
                     {copyStatus}

@@ -1,29 +1,70 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, it, vi } from "vitest";
 import { axeSeriousViolations } from "../../axe-test-utils";
 import JobList from "../JobList";
-import * as apiModule from "@/api";
-import { SessionContext } from "../../session-context";
-import { configureNextNavigationFromPath, nextNavigationMock } from "../../test-utils/next-navigation-state";
-import { WithNavigationSync } from "../../test-utils/with-navigation-sync";
+import { useJobListQuery } from "@/hooks/use-job-list";
+import { useJobListHistograms } from "@/hooks/use-job-list-histograms";
+import { renderWithProviders } from "@/test-utils/render-with-providers";
+import { nextNavigationMock } from "../../test-utils/next-navigation-state";
+import { VALID_BOKEH_JSON_ITEM } from "@/test-utils/bokeh-fixtures";
+import type { MetricHistStatusMap } from "@/types/view-models";
+
+vi.mock("@/hooks/use-job-list", () => ({
+  useJobListQuery: vi.fn(),
+}));
+
+vi.mock("@/hooks/use-job-list-histograms", () => ({
+  useJobListHistograms: vi.fn(),
+}));
+
+const defaultMetricHistStatus: MetricHistStatusMap = {
+  runtime: { loading: false, error: null },
+  nhosts: { loading: false, error: null },
+  queue_wait: { loading: false, error: null },
+};
+
+function setJobListQueryMock(
+  overrides: Partial<ReturnType<typeof useJobListQuery>> = {},
+) {
+  vi.mocked(useJobListQuery).mockReturnValue({
+    data: null,
+    error: null,
+    initialLoading: false,
+    tableBusy: false,
+    refetch: vi.fn(),
+    ...overrides,
+  });
+}
+
+function setJobListHistogramsMock(
+  overrides: Partial<ReturnType<typeof useJobListHistograms>> = {},
+) {
+  vi.mocked(useJobListHistograms).mockReturnValue({
+    histograms: null,
+    metricHistStatus: defaultMetricHistStatus,
+    setMetricHistStatus: vi.fn(),
+    ...overrides,
+  });
+}
 
 function renderJobList(initialPath = "/jobs", session = { is_staff: false }) {
-  configureNextNavigationFromPath(initialPath);
-  return render(
-    <SessionContext.Provider value={session}>
-      <WithNavigationSync>
-        <JobList />
-      </WithNavigationSync>
-    </SessionContext.Provider>,
-  );
+  return renderWithProviders(<JobList />, {
+    session,
+    initialPath,
+    withNavigationSync: true,
+  });
 }
 
 describe("JobList", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.mocked(useJobListQuery).mockReset();
+    vi.mocked(useJobListHistograms).mockReset();
   });
 
   beforeEach(() => {
+    setJobListQueryMock();
+    setJobListHistogramsMock();
     Object.defineProperty(window, "matchMedia", {
       writable: true,
       value: vi.fn().mockImplementation((query) => ({
@@ -40,17 +81,14 @@ describe("JobList", () => {
   });
 
   it("shows loading indicator while fetching", () => {
-    vi.spyOn(apiModule.api, "getJobList").mockReturnValue(
-      new Promise(() => {})
-    );
-    vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
+    setJobListQueryMock({ initialLoading: true });
 
     renderJobList();
     expect(screen.getByRole("status", { name: /loading job list/i })).toBeInTheDocument();
   });
 
   it("renders basic job list data", async () => {
-    vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
+    setJobListQueryMock({ data:{
       job_list: [
         {
           jid: 1,
@@ -78,9 +116,8 @@ describe("JobList", () => {
       qname: "Jobs",
       order_by: "-end_time",
       pagination: { page: 1, num_pages: 1 },
-    });
+    } });
 
-    vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
 
     const view = renderJobList();
 
@@ -100,7 +137,7 @@ describe("JobList", () => {
   });
 
   it("shows Sample Count as the second column for staff users", async () => {
-    vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
+    setJobListQueryMock({ data:{
       job_list: [
         {
           jid: 1,
@@ -129,10 +166,9 @@ describe("JobList", () => {
       qname: "Jobs",
       order_by: "-end_time",
       pagination: { page: 1, num_pages: 1 },
-    });
-    vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
+    } });
 
-    renderJobList(["/jobs"], { is_staff: true });
+    renderJobList("/jobs", { is_staff: true });
 
     await waitFor(() => {
       expect(screen.getByText("Jobs = 1")).toBeInTheDocument();
@@ -143,7 +179,7 @@ describe("JobList", () => {
   });
 
   it("shows mean queue wait for staff when aggregates include it", async () => {
-    vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
+    setJobListQueryMock({ data:{
       job_list: [
         {
           jid: 1,
@@ -175,10 +211,9 @@ describe("JobList", () => {
       qname: "Jobs",
       order_by: "-end_time",
       pagination: { page: 1, num_pages: 1 },
-    });
-    vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
+    } });
 
-    renderJobList(["/jobs"], { is_staff: true });
+    renderJobList("/jobs", { is_staff: true });
 
     await waitFor(() => {
       expect(screen.getByText(/Mean queue wait \(all matching jobs\):/)).toBeInTheDocument();
@@ -187,7 +222,7 @@ describe("JobList", () => {
   });
 
   it("does not show queue wait summary lines for non-staff even if aggregates would include them", async () => {
-    vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
+    setJobListQueryMock({ data:{
       job_list: [
         {
           jid: 1,
@@ -218,10 +253,9 @@ describe("JobList", () => {
       qname: "Jobs",
       order_by: "-end_time",
       pagination: { page: 1, num_pages: 1 },
-    });
-    vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
+    } });
 
-    renderJobList(["/jobs"], { is_staff: false });
+    renderJobList("/jobs", { is_staff: false });
 
     await waitFor(() => {
       expect(screen.getByText("Jobs = 1")).toBeInTheDocument();
@@ -230,7 +264,7 @@ describe("JobList", () => {
   });
 
   it("hides Sample Count column for non-staff users", async () => {
-    vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
+    setJobListQueryMock({ data:{
       job_list: [
         {
           jid: 1,
@@ -258,10 +292,9 @@ describe("JobList", () => {
       qname: "Jobs",
       order_by: "-end_time",
       pagination: { page: 1, num_pages: 1 },
-    });
-    vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
+    } });
 
-    renderJobList(["/jobs"], { is_staff: false });
+    renderJobList("/jobs", { is_staff: false });
 
     await waitFor(() => {
       expect(screen.getByText("Jobs = 1")).toBeInTheDocument();
@@ -285,7 +318,7 @@ describe("JobList", () => {
       })),
     });
 
-    vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
+    setJobListQueryMock({ data:{
       job_list: [
         {
           jid: 1,
@@ -313,18 +346,17 @@ describe("JobList", () => {
       qname: "Jobs",
       order_by: "-end_time",
       pagination: { page: 1, num_pages: 1 },
-    });
-    vi.spyOn(apiModule.api, "getJobMetricHistogram").mockImplementation((_, metric) => {
-      if (metric === "runtime") {
-        return Promise.resolve({
+    } });
+    setJobListHistogramsMock({
+      histograms: [
+        {
           metric: "runtime",
           title: "Runtime",
-          plot_item_thumb: { doc: {}, root_ids: ["thumb-root"] },
-          plot_item_full: { doc: {}, root_ids: ["full-root"] },
-          plot_unavailable_reason: null,
-        });
-      }
-      return Promise.resolve(null);
+          plotItemThumb: VALID_BOKEH_JSON_ITEM,
+          plotItemFull: VALID_BOKEH_JSON_ITEM,
+          plotUnavailableReason: null,
+        },
+      ],
     });
 
     const view = renderJobList();
@@ -378,20 +410,24 @@ describe("JobList", () => {
       })),
     });
 
-    vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
+    setJobListQueryMock({ data:{
       job_list: [],
       nj: 0,
       aggregates: {},
       qname: "Jobs",
       order_by: "-end_time",
       pagination: { page: 1, num_pages: 1 },
-    });
-    vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue({
-      metric: "runtime",
-      title: "Runtime",
-      plot_item_thumb: { doc: {}, root_ids: ["thumb-root"] },
-      plot_item_full: { doc: {}, root_ids: ["full-root"] },
-      plot_unavailable_reason: null,
+    } });
+    setJobListHistogramsMock({
+      histograms: [
+        {
+          metric: "runtime",
+          title: "Runtime",
+          plotItemThumb: VALID_BOKEH_JSON_ITEM,
+          plotItemFull: VALID_BOKEH_JSON_ITEM,
+          plotUnavailableReason: null,
+        },
+      ],
     });
 
     const view = renderJobList("/jobs?view=charts");
@@ -403,15 +439,14 @@ describe("JobList", () => {
   });
 
   it("shows human summary for year route", async () => {
-    vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
+    setJobListQueryMock({ data:{
       job_list: [],
       nj: 0,
       aggregates: {},
       qname: "Jobs in year 2024",
       order_by: "-end_time",
       pagination: { page: 1, num_pages: 1 },
-    });
-    vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
+    } });
 
     renderJobList("/year/2024");
 
@@ -421,7 +456,7 @@ describe("JobList", () => {
   });
 
   it("renders pagination controls at the top and the bottom when multiple pages exist", async () => {
-    vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
+    setJobListQueryMock({ data:{
       job_list: [
         {
           jid: 1,
@@ -449,8 +484,7 @@ describe("JobList", () => {
       qname: "Jobs",
       order_by: "-end_time",
       pagination: { page: 1, num_pages: 5 },
-    });
-    vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
+    } });
 
     renderJobList();
 
@@ -467,15 +501,14 @@ describe("JobList", () => {
   });
 
   it("does not render any pagination control when only a single page exists", async () => {
-    vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
+    setJobListQueryMock({ data:{
       job_list: [],
       nj: 0,
       aggregates: {},
       qname: "Jobs",
       order_by: "-end_time",
       pagination: { page: 1, num_pages: 1 },
-    });
-    vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
+    } });
 
     renderJobList();
 
@@ -513,16 +546,17 @@ describe("JobList", () => {
       };
     }
 
-    function mockJobListWithOrderBy(orderBy) {
-      vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
-        job_list: [jobRow()],
-        nj: 1,
-        aggregates: { total_node_hours: 64 },
-        qname: "Jobs",
-        order_by: orderBy,
-        pagination: { page: 1, num_pages: 1 },
+    function mockJobListWithOrderBy(orderBy: string) {
+      setJobListQueryMock({
+        data: {
+          job_list: [jobRow()],
+          nj: 1,
+          aggregates: { total_node_hours: 64 },
+          qname: "Jobs",
+          order_by: orderBy,
+          pagination: { page: 1, num_pages: 1 },
+        },
       });
-      vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
     }
 
     function getOrderByFromHref(link) {
@@ -533,7 +567,7 @@ describe("JobList", () => {
 
     it("first click on Sample Count sorts descending (largest first)", async () => {
       mockJobListWithOrderBy("-end_time");
-      renderJobList(["/jobs"], { is_staff: true });
+      renderJobList("/jobs", { is_staff: true });
 
       await waitFor(() => {
         expect(screen.getByText("Jobs = 1")).toBeInTheDocument();
@@ -545,7 +579,7 @@ describe("JobList", () => {
 
     it("first click on Performance Data sorts so Summary available is first (ascending)", async () => {
       mockJobListWithOrderBy("-end_time");
-      renderJobList(["/jobs"], { is_staff: false });
+      renderJobList("/jobs", { is_staff: false });
 
       await waitFor(() => {
         expect(screen.getByText("Jobs = 1")).toBeInTheDocument();
@@ -581,21 +615,25 @@ describe("JobList", () => {
   });
 
   it("hides histogram unavailable details and copy for non-staff users", async () => {
-    vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
+    setJobListQueryMock({ data:{
       job_list: [],
       nj: 0,
       aggregates: {},
       qname: "Jobs",
       order_by: "-end_time",
       pagination: { page: 1, num_pages: 1 },
-    });
-    vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue({
-      metric: "runtime",
-      title: "Runtime",
-      plot_item_thumb: null,
-      plot_item_full: null,
-      plot_unavailable_reason:
-        "No histogram data available for metric 'runtime' in this query.",
+    } });
+    setJobListHistogramsMock({
+      histograms: [
+        {
+          metric: "runtime",
+          title: "Runtime",
+          plotItemThumb: null,
+          plotItemFull: null,
+          plotUnavailableReason:
+            "No histogram data available for metric 'runtime' in this query.",
+        },
+      ],
     });
 
     renderJobList();
@@ -627,15 +665,14 @@ describe("JobList", () => {
       })),
     });
 
-    vi.spyOn(apiModule.api, "getJobList").mockResolvedValue({
+    setJobListQueryMock({ data:{
       job_list: [],
       nj: 0,
       aggregates: {},
       qname: "Jobs",
       order_by: "-end_time",
       pagination: { page: 1, num_pages: 1 },
-    });
-    vi.spyOn(apiModule.api, "getJobMetricHistogram").mockResolvedValue(null);
+    } });
 
     renderJobList();
 

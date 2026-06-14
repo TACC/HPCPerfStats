@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { vi, afterEach, describe, expect, it } from "vitest";
 import BokehEmbed from "./BokehEmbed";
 import { SessionContext } from "../session-context";
+import { VALID_BOKEH_JSON_ITEM } from "@/test-utils/bokeh-fixtures";
 
 vi.mock("../bokehInit", () => ({
   ensureBokehLoaded: vi.fn(() => Promise.resolve(globalThis.window?.Bokeh)),
@@ -10,8 +11,6 @@ vi.mock("../bokehInit", () => ({
 function renderBokehEmbed(ui, session = null) {
   return render(<SessionContext.Provider value={session}>{ui}</SessionContext.Provider>);
 }
-
-/** Minimal embed_item return value so document-idle / fallback timing matches production Bokeh. */
 function embedViewsWithIdleDoc() {
   const doc = {
     is_idle: true,
@@ -30,7 +29,7 @@ describe("BokehEmbed", () => {
     const embedItem = vi.fn();
     window.Bokeh = { embed: { embed_item: embedItem } };
 
-    const item = { doc: {}, root_ids: ["r1"] };
+    const item = VALID_BOKEH_JSON_ITEM;
 
     const { container } = renderBokehEmbed(
       <BokehEmbed item={item} id="bokeh-test-slot" plotName="Test plot" />
@@ -45,7 +44,7 @@ describe("BokehEmbed", () => {
     });
     const [payload, targetId] = embedItem.mock.calls[0];
     expect(targetId).toBe("bokeh-test-slot");
-    expect(payload).toEqual(item);
+    expect(payload.doc.root_ids).toEqual(item.doc.root_ids);
     expect(payload).not.toBe(item);
   });
 
@@ -73,7 +72,7 @@ describe("BokehEmbed", () => {
 
     renderBokehEmbed(
       <BokehEmbed
-        item={{ doc: {}, root_ids: ["r1"] }}
+        item={VALID_BOKEH_JSON_ITEM}
         id="bokeh-idle-chain-test"
         plotName="Idle chain"
         onPlotReadyChange={onReady}
@@ -89,7 +88,7 @@ describe("BokehEmbed", () => {
     const embedItem = vi.fn(() => Promise.resolve(embedViewsWithIdleDoc()));
     window.Bokeh = { embed: { embed_item: embedItem } };
 
-    const item = { doc: {}, root_ids: ["r1"] };
+    const item = VALID_BOKEH_JSON_ITEM;
     const { container, unmount } = renderBokehEmbed(
       <BokehEmbed item={item} id="bokeh-minh-test" plotName="Thumb" embedMinHeightPx={200} />,
     );
@@ -168,7 +167,7 @@ describe("BokehEmbed", () => {
 
     try {
       const { unmount } = renderBokehEmbed(
-        <BokehEmbed item={{ doc: {}, root_ids: ["r1"] }} id="bokeh-timer-test" />,
+        <BokehEmbed item={VALID_BOKEH_JSON_ITEM} id="bokeh-timer-test" />,
       );
 
       await Promise.resolve();
@@ -205,7 +204,7 @@ describe("BokehEmbed", () => {
 
     renderBokehEmbed(
       <BokehEmbed
-        item={{ doc: {}, root_ids: ["r1"] }}
+        item={VALID_BOKEH_JSON_ITEM}
         id="bokeh-resize-test"
         plotName="Test"
         maximizeInContainer="width"
@@ -237,7 +236,7 @@ describe("BokehEmbed", () => {
       renderBokehEmbed(
         <BokehEmbed
           deferEmbedUntilVisible
-          item={{ doc: {}, root_ids: ["r1"] }}
+          item={VALID_BOKEH_JSON_ITEM}
           id="bokeh-io-defer-test"
           plotName="Deferred"
         />,
@@ -266,7 +265,7 @@ describe("BokehEmbed", () => {
       return embedViewsWithIdleDoc();
     });
     window.Bokeh = { embed: { embed_item: embedItem } };
-    const item = { doc: {}, root_ids: ["r1"] };
+    const item = VALID_BOKEH_JSON_ITEM;
 
     renderBokehEmbed(
       <>

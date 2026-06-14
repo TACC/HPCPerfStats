@@ -154,7 +154,7 @@ export default function Search() {
           >
             <SelectTrigger
               id="search-month-jump-select"
-              className="search-month-jump-select h-7 w-full max-w-md"
+              className="h-7 w-full max-w-[min(100%,20rem)]"
             >
               <SelectValue placeholder="Select month…" />
             </SelectTrigger>
@@ -167,30 +167,33 @@ export default function Search() {
             </SelectContent>
           </Select>
         </div>
-        <div className="search-calendar-months">
+        <div className="flex flex-col gap-4">
           {dateList.map(([month, dates]) => {
             const monthSlug = toMonthSlug(month);
             return (
               <section
-                className="search-calendar-month-card"
+                className="rounded-[var(--radius)] border border-border bg-background p-3 sm:px-4 max-md:p-[0.65rem_0.75rem]"
                 key={month}
                 id={`search-month-${monthSlug}`}
                 aria-labelledby={`search-month-heading-${monthSlug}`}
               >
-                <div className="search-calendar-month-header">
+                <div className="mb-[0.65rem] border-b border-border pb-2">
                   <Link
-                    className="search-calendar-month-title"
+                    className="text-[1.05rem] font-semibold text-foreground no-underline hover:underline"
                     id={`search-month-heading-${monthSlug}`}
                     href={`/machine/date/${month}/`}
                   >
                     {month}
                   </Link>
                 </div>
-                <ul className="search-calendar-day-grid" role="list">
+                <ul
+                  className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(2.65rem,1fr))] gap-x-[0.45rem] gap-y-2 p-0 sm:grid-cols-[repeat(auto-fill,minmax(2.85rem,1fr))] sm:gap-x-2 lg:max-w-[42rem] lg:grid-cols-[repeat(auto-fill,minmax(3rem,1fr))] max-md:grid-cols-[repeat(auto-fill,minmax(2.4rem,1fr))] max-md:gap-[0.35rem]"
+                  role="list"
+                >
                   {dates.map(([dateStr, day]) => (
-                    <li key={dateStr} className="search-calendar-day-cell" role="listitem">
+                    <li key={dateStr} className="min-w-0" role="listitem">
                       <Link
-                        className="search-calendar-day-link"
+                        className="box-border flex min-h-10 w-full items-center justify-center rounded-[var(--radius-sm)] border border-border bg-muted px-[0.35rem] py-1 text-center text-[0.9rem] font-medium text-foreground no-underline hover:border-primary hover:bg-accent hover:text-primary max-md:min-h-[2.35rem] max-md:text-[0.85rem]"
                         href={`/machine/date/${dateStr}/`}
                         aria-label={`Open jobs for ${month}, day ${day}`}
                       >
@@ -209,7 +212,7 @@ export default function Search() {
     );
 
   return (
-    <div className="search-home">
+    <div className="pb-6">
       <h1 className="mb-3 text-2xl font-semibold tracking-tight">Browse jobs by time</h1>
       <p className="mb-3 text-sm text-muted-foreground">
         Open a year or calendar day to see job lists. If you already know a job ID, use{" "}
@@ -220,19 +223,19 @@ export default function Search() {
       <Tabs
         value={browseTab}
         onValueChange={(value) => setBrowseTab(value as BrowseTab)}
-        className="search-browse-tabs mb-3"
+        className="sticky top-0 z-[var(--z-sticky-inpage)] mb-3 bg-background pt-1"
       >
         <TabsList variant="line" className="w-full justify-start">
           <TabsTrigger value="calendar">Calendar</TabsTrigger>
           <TabsTrigger value="year">By year</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="calendar" className="search-home-section search-calendar-section mt-3">
+        <TabsContent value="calendar" className="search-home-section mt-3 [&_h4]:mb-2 max-md:[&_h4]:text-[1.1rem]">
           <h2 className="sr-only">Browse by calendar</h2>
           {calendarBrowsePrimary}
         </TabsContent>
 
-        <TabsContent value="year" className="search-home-section mt-3">
+        <TabsContent value="year" className="mb-0 mt-3 last:mb-0">
           <h2 className="sr-only">Browse by year</h2>
           {yearBrowsePrimary}
         </TabsContent>

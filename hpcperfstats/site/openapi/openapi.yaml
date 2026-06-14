@@ -178,19 +178,22 @@ paths:
       operationId: host_plot_retrieve
       description: Return Bokeh plot_item for a single host and time range (GET host,
         end_time__gte, end_time__lte).
+      summary: Host utilization plot
       parameters:
       - in: query
-        name: end
+        name: end_time__gte
+        schema:
+          type: string
+        required: true
+      - in: query
+        name: end_time__lte
         schema:
           type: string
       - in: query
         name: host
         schema:
           type: string
-      - in: query
-        name: start
-        schema:
-          type: string
+        required: true
       tags:
       - hosts
       security:
@@ -989,9 +992,22 @@ components:
     HostPlotResponse:
       type: object
       properties:
-        plot: {}
+        host:
+          type: string
+        plot_item:
+          nullable: true
+        plot_unavailable_reason:
+          type: string
+          nullable: true
+        end_time__gte:
+          type: string
+        end_time__lte:
+          type: string
       required:
-      - plot
+      - end_time__gte
+      - end_time__lte
+      - host
+      - plot_item
     InvalidateCacheRequestRequest:
       type: object
       properties:

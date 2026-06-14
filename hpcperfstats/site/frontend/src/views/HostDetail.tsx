@@ -1,10 +1,8 @@
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import type { BokehJsonItem } from "@/types/bokeh";
-import type { HostDetailData } from "@/types/view-models";
 import PageBreadcrumbs from "../components/PageBreadcrumbs";
-import { api } from "@/api";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import BokehPlotWithLimitation from "../components/BokehPlotWithLimitation";
 import LoadingMessage from "../components/LoadingMessage";
@@ -12,14 +10,26 @@ import { formatDateTime } from "../utils/formatDateTime";
 import { useMachineRouteParams } from "../hooks/use-machine-route-params";
 import { buildAsyncPageTitle } from "../utils/async-page-title";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
+import { useHostPlotQuery } from "@/hooks/use-host-plot";
 
 export default function HostDetail() {
   const { flatParams } = useMachineRouteParams();
   const host = flatParams.host ?? "";
   const searchParams = useSearchParams();
-  const [data, setData] = useState<HostDetailData | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+
+  const plotParams = useMemo(() => {
+    if (!host) return null;
+    let end_time__gte = searchParams.get("end_time__gte") || "";
+    const end_time__lte = searchParams.get("end_time__lte") || "now()";
+    if (!end_time__gte) {
+      const d = new Date();
+      d.setDate(d.getDate() - 1);
+      end_time__gte = d.toISOString().slice(0, 19);
+    }
+    return { host, end_time__gte, end_time__lte };
+  }, [host, searchParams]);
+
+  const { data, error, loading } = useHostPlotQuery(plotParams);
 
   useDocumentTitle(
     buildAsyncPageTitle({
@@ -31,25 +41,6 @@ export default function HostDetail() {
       fallbackTitle: host ? `Host ${host}` : "Host plot",
     }),
   );
-
-  useEffect(() => {
-    if (!host) return;
-    let end_time__gte = searchParams.get("end_time__gte") || "";
-    const end_time__lte = searchParams.get("end_time__lte") || "now()";
-    if (!end_time__gte) {
-      const d = new Date();
-      d.setDate(d.getDate() - 1);
-      end_time__gte = d.toISOString().slice(0, 19);
-    }
-    setLoading(true);
-    api
-      .getHostPlot({ host, end_time__gte, end_time__lte })
-      .then((resp) => setData(resp as HostDetailData))
-      .catch((e: unknown) =>
-        setError(e instanceof Error ? e.message : "Request failed"),
-      )
-      .finally(() => setLoading(false));
-  }, [host, searchParams]);
 
   if (loading) return <LoadingMessage message="Loading host plot…" />;
   if (error) return <BannerErrorMessage message={error} />;

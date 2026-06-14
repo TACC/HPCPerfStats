@@ -1,44 +1,57 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import TypeDetail from "../TypeDetail";
-import * as apiModule from "@/api";
-import { SessionContext } from "../../session-context";
-import { configureNextNavigationFromPath } from "../../test-utils/next-navigation-state";
+import { useTypeDetailQuery } from "@/hooks/use-type-detail";
+import { renderWithProviders } from "@/test-utils/render-with-providers";
+import { VALID_BOKEH_JSON_ITEM } from "@/test-utils/bokeh-fixtures";
+
+vi.mock("@/hooks/use-type-detail", () => ({
+  useTypeDetailQuery: vi.fn(),
+}));
 
 vi.mock("../bokehInit", () => ({
   ensureBokehLoaded: vi.fn(() => Promise.resolve(globalThis.window?.Bokeh)),
 }));
 
+function setTypeDetailQueryMock(
+  overrides: Partial<ReturnType<typeof useTypeDetailQuery>> = {},
+) {
+  vi.mocked(useTypeDetailQuery).mockReturnValue({
+    data: null,
+    error: null,
+    loading: false,
+    ...overrides,
+  });
+}
+
 function renderTypeDetail(path = "/job/12345/cpu", session = { is_staff: false }) {
-  configureNextNavigationFromPath(path);
-  return render(
-    <SessionContext.Provider value={session}>
-      <TypeDetail />
-    </SessionContext.Provider>,
-  );
+  return renderWithProviders(<TypeDetail />, { session, initialPath: path });
 }
 
 describe("TypeDetail", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.mocked(useTypeDetailQuery).mockReset();
     delete window.Bokeh;
   });
 
   it("shows loading while type detail is fetched", () => {
-    vi.spyOn(apiModule.api, "getTypeDetail").mockReturnValue(new Promise(() => {}));
+    setTypeDetailQueryMock({ loading: true });
     renderTypeDetail();
     expect(screen.getByText(/loading type detail/i)).toBeInTheDocument();
   });
 
   it("shows plot unavailable message without details for non-staff", async () => {
-    vi.spyOn(apiModule.api, "getTypeDetail").mockResolvedValue({
-      type_name: "cpu",
-      jobid: "12345",
-      tplot_item: null,
-      tplot_unavailable_reason:
-        "No device-level samples found for this job/type in host_data.",
-      stats_data: [],
-      schema: [],
+    setTypeDetailQueryMock({
+      data: {
+        type_name: "cpu",
+        jobid: "12345",
+        tplot_item: null,
+        tplot_unavailable_reason:
+          "No device-level samples found for this job/type in host_data.",
+        stats_data: [],
+        schema: [],
+      },
     });
 
     renderTypeDetail();
@@ -53,7 +66,7 @@ describe("TypeDetail", () => {
   });
 
   it("shows a banner when the API request fails", async () => {
-    vi.spyOn(apiModule.api, "getTypeDetail").mockRejectedValue(new Error("Type detail failed"));
+    setTypeDetailQueryMock({ error: "Type detail failed" });
     renderTypeDetail();
     await waitFor(() => {
       expect(screen.getByRole("alert")).toHaveTextContent(/type detail failed/i);
@@ -62,17 +75,28 @@ describe("TypeDetail", () => {
 
   it("embeds the type plot and renders counter stats when data is available", async () => {
     const embedItem = vi.fn(() => ({
-      roots: [{ model: { document: { is_idle: true, idle: { connect: vi.fn(), disconnect: vi.fn() } } } }],
+      roots: [
+        {
+          model: {
+            document: {
+              is_idle: true,
+              idle: { connect: vi.fn(), disconnect: vi.fn() },
+            },
+          },
+        },
+      ],
     }));
     window.Bokeh = { embed: { embed_item: embedItem } };
 
-    vi.spyOn(apiModule.api, "getTypeDetail").mockResolvedValue({
-      type_name: "cpu",
-      jobid: "12345",
-      tplot_item: { doc: {}, root_ids: ["type-root"] },
-      tplot_unavailable_reason: null,
-      stats_data: [["t0", [10, 20]]],
-      schema: ["ctr_a", "ctr_b"],
+    setTypeDetailQueryMock({
+      data: {
+        type_name: "cpu",
+        jobid: "12345",
+        tplot_item: VALID_BOKEH_JSON_ITEM,
+        tplot_unavailable_reason: null,
+        stats_data: [["t0", [10, 20]]],
+        schema: ["ctr_a", "ctr_b"],
+      },
     });
 
     renderTypeDetail();
@@ -88,14 +112,16 @@ describe("TypeDetail", () => {
   });
 
   it("shows staff plot error detail controls when the plot is unavailable", async () => {
-    vi.spyOn(apiModule.api, "getTypeDetail").mockResolvedValue({
-      type_name: "cpu",
-      jobid: "12345",
-      tplot_item: null,
-      tplot_unavailable_reason:
-        "No device-level samples found for this job/type in host_data.",
-      stats_data: [],
-      schema: [],
+    setTypeDetailQueryMock({
+      data: {
+        type_name: "cpu",
+        jobid: "12345",
+        tplot_item: null,
+        tplot_unavailable_reason:
+          "No device-level samples found for this job/type in host_data.",
+        stats_data: [],
+        schema: [],
+      },
     });
 
     renderTypeDetail("/job/12345/cpu", { is_staff: true });

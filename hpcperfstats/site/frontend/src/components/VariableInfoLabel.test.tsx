@@ -21,7 +21,7 @@ describe("VariableInfoLabel", () => {
     );
     expect(screen.getByText("avg_cpuusage")).toBeInTheDocument();
     expect(screen.getByTestId("variable-info-help")).toHaveTextContent("?");
-    expect(screen.getByText("avg_cpuusage").closest(".variable-info-label")).toBeTruthy();
+    expect(screen.getByText("avg_cpuusage").closest(".inline-flex")).toBeTruthy();
   });
 
   it("does not render a help marker unless enabled", () => {
@@ -67,12 +67,12 @@ describe("VariableInfoLabel", () => {
         suffixBeforeHelp={<span className="job-detail-metric-units">[GHz]</span>}
       />,
     );
-    const label = screen.getByText("Average effective CPU frequency").closest(".variable-info-label");
+    const label = screen.getByText("Average effective CPU frequency").closest(".inline-flex");
     expect(label).toBeTruthy();
     const children = Array.from(label!.children).map((el) => el.className);
-    expect(children[0]).toBe("variable-info-label-text");
+    expect(children[0]).toBe("min-w-0");
     expect(children[1]).toBe("job-detail-metric-units");
-    expect(children[2]).toBe("variable-info-help-wrap");
+    expect(children[2]).toBe("inline-flex shrink-0 items-baseline");
   });
 
   it("renders a separator between definition and researcher guidance when both exist", () => {

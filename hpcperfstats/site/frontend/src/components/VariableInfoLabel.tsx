@@ -55,8 +55,8 @@ export function VariableInfoLabel({
   const { description, researcherUse } = tooltipBody;
 
   return (
-    <span className="variable-info-label">
-      <span className="variable-info-label-text">{text}</span>
+    <span className="inline-flex max-w-full flex-wrap items-baseline gap-[0.1rem] leading-[1.3]">
+      <span className="min-w-0">{text}</span>
       {suffixBeforeHelp}
       <Popover
         open={pinnedOpen ? true : undefined}
@@ -69,13 +69,13 @@ export function VariableInfoLabel({
         }}
         modal={false}
       >
-        <span className="variable-info-help-wrap">
+        <span className="inline-flex shrink-0 items-baseline">
           <PopoverTrigger
             nativeButton
             openOnHover={!pinnedOpen}
             delay={HELP_HOVER_OPEN_DELAY_MS}
             closeDelay={HELP_HOVER_CLOSE_DELAY_MS}
-            className="variable-info-help"
+            className="inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center border-0 bg-transparent p-0 align-baseline text-[0.72em] font-semibold leading-none text-primary select-none"
             data-testid="variable-info-help"
             aria-expanded={pinnedOpen}
             aria-controls={pinnedOpen ? panelId : undefined}

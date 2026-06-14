@@ -1,12 +1,11 @@
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import type { Dispatch, MouseEvent, SetStateAction } from "react";
-import { jobsHistogramsRetrieve } from "@/api/generated/jobs/jobs";
+import type { MouseEvent } from "react";
 import type { JobListEntry } from "@/api/generated/models/jobListEntry";
-import type { JobListData, JobListHistogramEntry, MetricHistStatusMap } from "@/types/view-models";
-import { HISTOGRAM_EMBED_VERSION } from "@/api-paths";
+import type { JobListData } from "@/types/view-models";
 import { useJobListQuery } from "@/hooks/use-job-list";
+import { useJobListHistograms } from "@/hooks/use-job-list-histograms";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -43,7 +42,6 @@ import {
   isExtendedSearchJobsRoute,
 } from "../utils/job-list-filter-summary";
 import { buildJobListBreadcrumbs } from "../utils/job-list-breadcrumbs";
-import { normalizeJobListHistogramEntry } from "../utils/normalize-job-list-histogram-entry";
 import { useSession } from "../session-context";
 import { JOB_LIST_TABLE_HEADERS } from "../utils/site-field-labels";
 import { tableSortAriaSort } from "../utils/table-sort-a11y";
@@ -84,24 +82,11 @@ type JobListApiResponse = Omit<JobListData, "job_list" | "filter_summary"> & {
   qname?: string;
   nj?: number;
 };
-type HistogramApiEntry = Record<string, unknown> & {
-  title?: string;
-  metric?: string;
-  plot_item_thumb?: unknown;
-  plot_item_full?: unknown;
-  plot_unavailable_reason?: string | null;
-};
 type BuildJobListTitleArgs = {
   error: string | null;
   loading: boolean;
   data: Pick<JobListApiResponse, "qname"> | null;
   routeCtx: string;
-};
-type LoadHistogramArgs = {
-  metric: MetricName;
-  params: Record<string, string>;
-  setMetricHistStatus: Dispatch<SetStateAction<MetricHistStatusMap>>;
-  signal?: AbortSignal;
 };
 type SortField =
   | "jid"
@@ -190,53 +175,6 @@ function buildJobListTitle({ error, loading, data, routeCtx }: BuildJobListTitle
   return routeCtx ? `Job list · ${routeCtx}` : "Job list";
 }
 
-async function loadHistogramForMetric({
-  metric,
-  params,
-  setMetricHistStatus,
-  signal,
-}: LoadHistogramArgs): Promise<JobListHistogramEntry | null> {
-  setMetricHistStatus((prev) => ({
-    ...prev,
-    [metric]: { loading: true, error: null },
-  }));
-  try {
-    const histParams = {
-      ...params,
-      group: "metric",
-      metric,
-      _histogram_embed_v: HISTOGRAM_EMBED_VERSION,
-    };
-    const metricData = (await jobsHistogramsRetrieve(
-      histParams,
-      undefined,
-      signal,
-    )) as HistogramApiEntry | null;
-    if (!metricData) return null;
-    setMetricHistStatus((prev) => ({
-      ...prev,
-      [metric]: { loading: false, error: null },
-    }));
-    return normalizeJobListHistogramEntry(metricData, metric);
-  } catch (err) {
-    const message =
-      err instanceof Error
-        ? err.message
-        : `Failed to load ${metric} histogram for this job list.`;
-    // Metric-specific failures should not break other histograms.
-    // eslint-disable-next-line no-console
-    console.warn(`Failed to load job list histogram for metric '${metric}':`, err);
-    setMetricHistStatus((prev) => ({
-      ...prev,
-      [metric]: {
-        loading: false,
-        error: message,
-      },
-    }));
-    return null;
-  }
-}
-
 export default function JobList() {
   const session = useSession();
   const isStaff = !!session?.is_staff;
@@ -245,13 +183,6 @@ export default function JobList() {
   const pathname = usePathname();
   const router = useRouter();
   const metricNames: MetricName[] = ["runtime", "nhosts", "queue_wait"];
-  const [histograms, setHistograms] = useState<JobListHistogramEntry[] | null>(null);
-  const createInitialMetricStatus = (): MetricHistStatusMap =>
-    metricNames.reduce<MetricHistStatusMap>((acc, metric) => {
-      acc[metric] = { loading: false, error: null };
-      return acc;
-    }, {});
-  const [metricHistStatus, setMetricHistStatus] = useState<MetricHistStatusMap>(createInitialMetricStatus);
   const [histogramReloadKey, setHistogramReloadKey] = useState(0);
   const { openExtendedSearch } = useExtendedSearchLayout();
   const listViewTab = readTabFromSearchParams(searchParams, "view", "jobs");
@@ -288,41 +219,17 @@ export default function JobList() {
 
   const jobListData = data as JobListApiResponse | null;
 
+  const { histograms, metricHistStatus } = useJobListHistograms(
+    listApiParams,
+    histogramReloadKey,
+    metricNames,
+  );
+
   function setListViewTab(tab: "jobs" | "charts") {
     const next = searchParamsWithTab(searchParams, "view", tab === "jobs" ? null : tab);
     const qs = next.toString();
     router.replace(qs ? `${pathname}?${qs}` : pathname);
   }
-
-  useEffect(() => {
-    const params = listApiParams;
-    const controller = new AbortController();
-
-    setHistograms(null);
-    setMetricHistStatus(createInitialMetricStatus());
-
-    const loadHistograms = async () => {
-      const metricPromises = metricNames.map((metric) =>
-        loadHistogramForMetric({
-          metric,
-          params,
-          setMetricHistStatus,
-          signal: controller.signal,
-        }),
-      );
-
-      const metricResults = await Promise.all(metricPromises);
-      if (controller.signal.aborted) return;
-      const metricHistograms = metricResults.filter(
-        (entry): entry is JobListHistogramEntry => entry != null,
-      );
-
-      setHistograms(metricHistograms);
-    };
-
-    void loadHistograms();
-    return () => controller.abort();
-  }, [listApiParams, histogramReloadKey]);
 
   const routeCtx = jobListRouteTitleContext(paramsFromRoute, asURLSearchParams);
   const documentTitleSegment = buildJobListTitle({
@@ -483,19 +390,21 @@ export default function JobList() {
     const pageItems = buildPaginationItems(page, num_pages);
     return (
       <Pagination
-        className="pagination-wrapper mx-0 w-full max-w-none justify-start gap-2"
+        className="mx-0 my-3 flex w-full max-w-none flex-wrap items-center justify-start gap-2 max-md:my-2"
         aria-label={`Job list pagination (${positionId})`}
         data-testid={`job-list-pagination-${positionId}`}
       >
         {page > 1 ? (
-          <Link
+          <PaginationLink
             href={`${pathname}?${paginationQuery(1)}`}
-            className={cn(paginateLinkClass, "pagination-first")}
+            size="default"
+            className={paginateLinkClass}
+            aria-label="First page"
           >
             First
-          </Link>
+          </PaginationLink>
         ) : (
-          <span className="pagination-first text-muted-foreground" aria-hidden="true">
+          <span className="text-muted-foreground" aria-hidden="true">
             First
           </span>
         )}
@@ -550,14 +459,16 @@ export default function JobList() {
           </PaginationItem>
         </PaginationContent>
         {page < num_pages ? (
-          <Link
+          <PaginationLink
             href={`${pathname}?${paginationQuery(num_pages)}`}
-            className={cn(paginateLinkClass, "pagination-last")}
+            size="default"
+            className={paginateLinkClass}
+            aria-label="Last page"
           >
             Last
-          </Link>
+          </PaginationLink>
         ) : (
-          <span className="pagination-last text-muted-foreground" aria-hidden="true">
+          <span className="text-muted-foreground" aria-hidden="true">
             Last
           </span>
         )}
@@ -657,11 +568,11 @@ export default function JobList() {
         <Tabs
           value={listViewTab}
           onValueChange={(value) => setListViewTab(value as "jobs" | "charts")}
-          className="job-list-view-tabs mb-2"
+          className="sticky top-0 z-[var(--z-sticky-inpage)] mb-2 bg-background pt-1"
         >
           <TabsList
             variant="line"
-            className="job-detail-tab-scroll w-full justify-start"
+            className="w-full justify-start overflow-x-auto [scrollbar-width:thin] flex-nowrap"
             aria-label="Jobs list and charts"
           >
             <TabsTrigger value="jobs">Jobs</TabsTrigger>
@@ -679,8 +590,8 @@ export default function JobList() {
 
       <div
         className={cn(
-          "job-list-table-wrapper",
-          tableBusy && "job-list-table-busy",
+          tableBusy && "pointer-events-none opacity-55",
+          "max-md:[&_table]:text-sm max-md:[&_td]:whitespace-nowrap max-md:[&_td]:px-1 max-md:[&_td]:py-[0.35rem] max-md:[&_th]:whitespace-nowrap max-md:[&_th]:px-1 max-md:[&_th]:py-[0.35rem]",
         )}
         id="job-list-table"
         aria-busy={tableBusy}
@@ -689,7 +600,7 @@ export default function JobList() {
           <TableCaption className="sr-only">
             Job list for {qname}. {nj} jobs.
           </TableCaption>
-          <TableHeader>
+          <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-[2] [&_th]:bg-background [&_th]:shadow-[0_1px_0_var(--border)] max-lg:[&_th]:top-14 max-lg:[&_th]:z-[1010]">
             <TableRow>
               {columns.map(({ label, field, sortable }) => (
               <TableHead key={field} scope="col" aria-sort={ariaSortForField(field, sortable)}>

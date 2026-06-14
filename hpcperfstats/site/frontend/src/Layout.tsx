@@ -14,14 +14,15 @@ import {
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Menu } from "lucide-react";
-import { api } from "@/api";
 import {
   getHomeRetrieveQueryKey,
 } from "@/api/generated/home/home";
 import {
   getSessionRetrieveQueryKey,
+  getSessionRetrieveQueryOptions,
   useSessionDropStaffCreate,
 } from "@/api/generated/session/session";
+import { useCacheInvalidatePageCreate } from "@/api/generated/admin/admin";
 import { getApiBody, getErrorMessage } from "@/api/get-error-message";
 import LoadingMessage from "./components/LoadingMessage";
 import { ExtendedSearchLayoutContext } from "./context/extended-search-layout-context";
@@ -56,6 +57,7 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
   const pathname = usePathname();
   const queryClient = useQueryClient();
   const dropStaffMutation = useSessionDropStaffCreate();
+  const invalidateCacheMutation = useCacheInvalidatePageCreate();
   const machineName =
     session && typeof session.machine_name === "string" ? session.machine_name : "";
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
@@ -121,7 +123,7 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
     try {
       const response = await dropStaffMutation.mutateAsync();
       await queryClient.invalidateQueries({ queryKey: getSessionRetrieveQueryKey() });
-      const refreshedSession = await api.getSession();
+      const refreshedSession = await queryClient.fetchQuery(getSessionRetrieveQueryOptions());
       if (typeof onSessionChange === "function") {
         onSessionChange(
           refreshedSession && typeof refreshedSession === "object"
@@ -160,12 +162,10 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
     setIsInvalidatingCache(true);
     setStaffMessage("");
     try {
-      const response = await api.invalidateCacheForPage(pagePathForCache);
-      const responseBody =
-        response && typeof response === "object"
-          ? (response as Record<string, unknown>)
-          : {};
-      const deletedCount = Number(responseBody.deleted_keys || 0);
+      const response = await invalidateCacheMutation.mutateAsync({
+        data: { page_path: pagePathForCache },
+      });
+      const deletedCount = Number(response.deleted_keys || 0);
       setStaffMessage(
         `Invalidated ${deletedCount} cache key${deletedCount === 1 ? "" : "s"} for ${pagePathForCache}.`,
       );
@@ -182,7 +182,7 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
 
   return (
     <div className="w-full px-4 lg:px-6">
-      <header className="site-header border-b bg-muted/40" role="navigation" aria-label="Primary">
+      <header className="relative border-b bg-muted/40" role="navigation" aria-label="Primary">
         <div className="relative flex flex-wrap items-start gap-3 py-2 lg:pb-3">
           <Link
             href="/"
@@ -209,13 +209,13 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
           <div
             id="navbar-main"
             className={cn(
-              "site-header-nav w-full basis-full lg:flex lg:flex-1 lg:items-start lg:justify-end",
+              "w-full basis-full lg:static lg:flex lg:flex-1 lg:items-start lg:justify-end",
               navOpen ? "flex flex-col gap-3 border-t pt-3" : "hidden lg:flex",
             )}
           >
             <Link
               href="/"
-              className="site-header-brand mx-auto flex max-w-[min(48vw,680px)] flex-col items-center text-center no-underline lg:absolute lg:left-1/2 lg:-translate-x-1/2"
+              className="mx-auto flex max-w-[min(48vw,680px)] flex-col items-center break-words text-center no-underline max-lg:mb-2 lg:absolute lg:left-1/2 lg:-translate-x-1/2"
             >
               <div className="text-lg font-semibold text-foreground">HPCPerfStats</div>
               <div className="text-sm text-muted-foreground">
@@ -227,7 +227,7 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
                 </div>
               ) : null}
             </Link>
-            <div className="site-header-actions flex w-full flex-col items-stretch gap-2 lg:max-w-[min(42vw,520px)] lg:items-end">
+            <div className="flex w-full flex-col items-stretch gap-2 max-lg:w-full lg:max-w-[min(42vw,520px)] lg:items-end">
               <div className="flex flex-wrap items-center justify-start gap-2 lg:justify-end">
                 <Button
                   ref={extendedSearchToggleRef}
@@ -419,7 +419,7 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
                 ) : null}
               </div>
               {staffMessage ? (
-                <Alert id="staff-message" className="site-header-staff-message py-1" role="status">
+                <Alert id="staff-message" className="w-full break-words py-1 text-left" role="status">
                   <AlertDescription aria-live="polite">{staffMessage}</AlertDescription>
                 </Alert>
               ) : null}
@@ -453,7 +453,11 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
           </Suspense>
         </DialogContent>
       </Dialog>
-      <main id="main-content" className="mt-4 outline-none" tabIndex={-1}>
+      <main
+        id="main-content"
+        className="mt-4 outline-none max-lg:pl-[max(0px,env(safe-area-inset-left))] max-lg:pr-[max(0px,env(safe-area-inset-right))]"
+        tabIndex={-1}
+      >
         <ExtendedSearchLayoutContext.Provider value={extendedSearchLayoutValue}>
           {children}
         </ExtendedSearchLayoutContext.Provider>

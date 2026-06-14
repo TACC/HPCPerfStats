@@ -2531,8 +2531,8 @@ def type_detail(request, jid, type_name):
     return Response(detail_payload)
 
 
-@HOST_PLOT_SCHEMA
 @dynamic_cache_page(site_response_cache_timeout)
+@HOST_PLOT_SCHEMA
 @api_view(["GET"])
 @throttle_classes([ExpensiveReadThrottle])
 def host_plot(request):

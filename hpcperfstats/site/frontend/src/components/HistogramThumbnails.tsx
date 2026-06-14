@@ -130,9 +130,9 @@ function HistogramThumbnail({
   /* Mobile: full histogram only, no popover, container sized for viewport */
   if (isMobile) {
     return (
-      <div className="histogram-thumbnail-wrapper histogram-mobile">
-        <div className="histogram-mobile-title">{safeTitle}</div>
-        <div className="histogram-mobile-plot">
+      <div className="flex w-full max-w-full flex-col justify-stretch">
+        <div className="mb-2 text-base font-semibold max-md:mb-2">{safeTitle}</div>
+        <div className="max-h-[min(400px,50vh)] min-h-[280px] w-full overflow-auto rounded-[var(--radius)] border border-border bg-background max-md:max-h-[min(400px,50vh)]">
           <BokehPlotWithLimitation
             item={plotItemFull}
             id={fullId}
@@ -140,6 +140,7 @@ function HistogramThumbnail({
             unavailableReason={unavailableReason}
             deferEmbedUntilVisible={false}
             intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
+            wrapperClassName="min-h-[280px] w-full"
           />
         </div>
       </div>
@@ -147,14 +148,14 @@ function HistogramThumbnail({
   }
 
   return (
-    <div className="histogram-thumbnail-wrapper">
-      <div className="histogram-desktop-title">{safeTitle}</div>
+    <div className="histogram-thumbnail-wrapper flex flex-col items-center justify-start">
+      <div className="histogram-desktop-title mb-[0.35rem] max-w-[280px] text-center text-[0.95rem] font-semibold">{safeTitle}</div>
       <div
-        className="histogram-thumbnail-card"
+        className="histogram-thumbnail-card box-border flex flex-col overflow-hidden rounded-[var(--radius)] border border-border bg-muted"
         style={{ width: THUMB_SIZE.width }}
       >
         <div
-          className="histogram-thumbnail histogram-thumbnail-shell bg-muted"
+          className="histogram-thumbnail-shell relative box-border flex min-w-0 flex-col items-center overflow-visible border-0! bg-muted"
           style={{ height: THUMB_SIZE.height }}
         >
           <BokehPlotWithLimitation
@@ -165,11 +166,11 @@ function HistogramThumbnail({
             embedMinHeightPx={THUMB_SIZE.height}
             maximizeInContainer="width"
             deferEmbedUntilVisible={false}
-            wrapperClassName="histogram-thumbnail-bokeh"
+            wrapperClassName="min-h-px w-full min-w-0 flex-1 self-stretch overflow-visible [&_.bokeh-embed-wrapper]:w-full [&_.bokeh-embed-wrapper]:max-w-full [&_.bokeh-embed-wrapper]:min-w-0 [&_.bokeh-embed-wrapper]:overflow-visible [&_.bokeh-embed]:box-border [&_.bokeh-embed]:min-h-[180px] [&_.bokeh-embed]:w-full [&_.bokeh-embed]:max-w-full [&_.bokeh-embed]:min-w-0 [&_.bokeh-embed]:overflow-visible [&_.bokeh-embed_.bk-root]:max-w-full!"
             intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
           />
         </div>
-        <div className="histogram-thumbnail-actions">
+        <div className="histogram-thumbnail-actions flex justify-center border-t border-border bg-background px-2 py-[0.35rem]">
           <Button
             ref={thumbActivatorRef}
             type="button"
@@ -177,7 +178,7 @@ function HistogramThumbnail({
             size="sm"
             aria-label={`${safeTitle}: enlarge chart`}
             aria-expanded={expanded}
-            className="histogram-thumbnail-enlarge"
+            className="histogram-thumbnail-enlarge min-h-[34px]"
             onClick={handleThumbActivate}
           >
             Enlarge chart
@@ -206,7 +207,7 @@ function HistogramThumbnail({
           </DialogHeader>
           <div
             ref={popoverPlotRef}
-            className="histogram-thumbnail-popover-plot h-[400px] rounded border border-border bg-background"
+            className="histogram-thumbnail-popover-plot relative box-border h-[400px] w-[600px] max-w-full rounded border border-border bg-background [&_.bokeh-embed-wrapper]:min-h-[400px] [&_.bokeh-embed-wrapper]:w-full [&_.bokeh-embed-wrapper]:max-w-full [&_.bokeh-embed-wrapper]:min-w-0"
           >
             {hasOpened && popoverLayoutReady ? (
               <BokehPlotWithLimitation
@@ -241,7 +242,7 @@ export default function HistogramThumbnails({ histograms }: HistogramThumbnailsP
 
   return (
     <section
-      className="histogram-thumbnails-grid grid justify-center gap-4"
+      className="histogram-thumbnails-grid grid justify-center gap-4 max-md:grid-cols-1 max-md:gap-3"
       style={{
         gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
       }}

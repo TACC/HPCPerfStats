@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useAdminMonitorSectionQuery } from "@/hooks/use-admin-monitor-section";
 import { ChevronRight } from "lucide-react";
 import type {
   AdminMonitorHostRow,
@@ -18,11 +19,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Table } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import { useTableSort, type TableSortState } from "../hooks/useTableSort";
-import { createAdminMonitorSectionLoader } from "../utils/create-admin-monitor-section-loader";
 import { copyToClipboard } from "../utils/copy-to-clipboard";
 import { formatDecimalStandard } from "../utils/formatDecimal";
 import { tableSortAriaSort, tableSortColumnArrow } from "../utils/table-sort-a11y";
@@ -73,20 +81,20 @@ function AdminMonitorCollapsibleSection({
   children,
 }: AdminMonitorCollapsibleSectionProps) {
   return (
-    <Collapsible open={open} onOpenChange={onOpenChange} className="admin-monitor-section">
+    <Collapsible open={open} onOpenChange={onOpenChange} className="mb-4 rounded-[var(--radius)] border border-border">
       <CollapsibleTrigger
         render={
           <Button
             type="button"
             variant="outline"
             size="sm"
-            className="admin-monitor-section-header h-auto w-full justify-start font-semibold"
+            className="h-auto w-full justify-start rounded-t-[var(--radius)] rounded-b-none border-0 bg-muted px-3 py-2 font-semibold hover:bg-accent max-md:flex-wrap max-md:text-[0.95rem]"
           />
         }
       >
         <ChevronRight
           className={cn(
-            "admin-monitor-section-chevron size-3 shrink-0 transition-transform",
+            "size-3 shrink-0 text-muted-foreground transition-transform",
             open && "rotate-90",
           )}
           aria-hidden
@@ -95,7 +103,7 @@ function AdminMonitorCollapsibleSection({
       </CollapsibleTrigger>
       <CollapsibleContent
         id={panelId}
-        className="admin-monitor-section-body"
+        className="border-t border-border px-3 py-2 sm:px-4"
         role="region"
         aria-label={ariaLabel}
       >
@@ -145,171 +153,100 @@ export default function AdminMonitor() {
   const [cacheExpanded, setCacheExpanded] = useState(false);
   const [rabbitExpanded, setRabbitExpanded] = useState(false);
   const [timescaledbExpanded, setTimescaledbExpanded] = useState(false);
-  const [hostStats, setHostStats] = useState<AdminMonitorHostRow[]>([]);
+  const [xaltExpanded, setXaltExpanded] = useState(false);
+  const [hostRefreshSeq, setHostRefreshSeq] = useState(0);
+  const [rabbitHostRefreshSeq, setRabbitHostRefreshSeq] = useState(0);
+  const [cacheRefreshSeq, setCacheRefreshSeq] = useState(0);
+  const [rabbitRefreshSeq, setRabbitRefreshSeq] = useState(0);
+  const [timescaledbRefreshSeq, setTimescaledbRefreshSeq] = useState(0);
+  const [xaltRefreshSeq, setXaltRefreshSeq] = useState(0);
   const { sort: hostSort, onSort: handleHostSort } = useTableSort("host", "asc", "asc");
-  const [hostLoading, setHostLoading] = useState(false);
-  const [hostError, setHostError] = useState<string | null>(null);
-  const [hostRequested, setHostRequested] = useState(false);
-  const [rabbitHostStats, setRabbitHostStats] = useState<AdminMonitorHostRow[]>([]);
   const {
     sort: rabbitHostSort,
     onSort: handleRabbitHostSort,
   } = useTableSort("host", "asc", "asc");
-  const [rabbitHostLoading, setRabbitHostLoading] = useState(false);
-  const [rabbitHostError, setRabbitHostError] = useState<string | null>(null);
-  const [rabbitHostRequested, setRabbitHostRequested] = useState(false);
-  const [cacheStats, setCacheStats] = useState<Record<string, unknown> | null>(null);
-  const [cacheLoading, setCacheLoading] = useState(false);
-  const [cacheError, setCacheError] = useState<string | null>(null);
-  const [cacheRequested, setCacheRequested] = useState(false);
-  const [rabbitStats, setRabbitStats] = useState<Record<string, unknown> | null>(null);
-  const [rabbitLoading, setRabbitLoading] = useState(false);
-  const [rabbitError, setRabbitError] = useState<string | null>(null);
-  const [rabbitRequested, setRabbitRequested] = useState(false);
-  const [timescaledbStats, setTimescaledbStats] = useState<Record<string, unknown> | null>(null);
-  const [timescaledbLoading, setTimescaledbLoading] = useState(false);
-  const [timescaledbError, setTimescaledbError] = useState<string | null>(null);
-  const [timescaledbRequested, setTimescaledbRequested] = useState(false);
-  const [xaltExpanded, setXaltExpanded] = useState(false);
-  const [xaltStats, setXaltStats] = useState<AdminMonitorXaltStats | null>(null);
-  const [xaltLoading, setXaltLoading] = useState(false);
-  const [xaltError, setXaltError] = useState<string | null>(null);
-  const [xaltRequested, setXaltRequested] = useState(false);
   const [xaltListMode, setXaltListMode] = useState("missing");
   const [nonRespondingHosts36, setNonRespondingHosts36] = useState("");
 
+  const {
+    data: hostStats,
+    error: hostError,
+    loading: hostLoading,
+  } = useAdminMonitorSectionQuery({
+    section: "hosts",
+    enabled: hostTimeExpanded,
+    refreshSeq: hostRefreshSeq,
+    pickResponse: (res: AdminMonitorSectionResponse) =>
+      (res.host_stats as AdminMonitorHostRow[] | undefined) || [],
+  });
+
+  const {
+    data: rabbitHostStats,
+    error: rabbitHostError,
+    loading: rabbitHostLoading,
+  } = useAdminMonitorSectionQuery({
+    section: "rabbitmq_hosts",
+    enabled: rabbitHostTimeExpanded,
+    refreshSeq: rabbitHostRefreshSeq,
+    pickResponse: (res: AdminMonitorSectionResponse) =>
+      (res.rabbitmq_host_stats as AdminMonitorHostRow[] | undefined) || [],
+  });
+
+  const {
+    data: cacheStats,
+    error: cacheError,
+    loading: cacheLoading,
+  } = useAdminMonitorSectionQuery({
+    section: "cache",
+    enabled: cacheExpanded,
+    refreshSeq: cacheRefreshSeq,
+    pickResponse: (res: AdminMonitorSectionResponse) =>
+      (res.cache_stats as Record<string, unknown> | null | undefined) || null,
+  });
+
+  const {
+    data: rabbitStats,
+    error: rabbitError,
+    loading: rabbitLoading,
+  } = useAdminMonitorSectionQuery({
+    section: "rabbitmq",
+    enabled: rabbitExpanded,
+    refreshSeq: rabbitRefreshSeq,
+    pickResponse: (res: AdminMonitorSectionResponse) =>
+      (res.rabbitmq_stats as Record<string, unknown> | null | undefined) || null,
+  });
+
+  const {
+    data: timescaledbStats,
+    error: timescaledbError,
+    loading: timescaledbLoading,
+  } = useAdminMonitorSectionQuery({
+    section: "timescaledb",
+    enabled: timescaledbExpanded,
+    refreshSeq: timescaledbRefreshSeq,
+    pickResponse: (res: AdminMonitorSectionResponse) =>
+      (res.timescaledb_stats as Record<string, unknown> | null | undefined) || null,
+  });
+
+  const {
+    data: xaltStats,
+    error: xaltError,
+    loading: xaltLoading,
+  } = useAdminMonitorSectionQuery({
+    section: "xalt",
+    enabled: xaltExpanded,
+    refreshSeq: xaltRefreshSeq,
+    pickResponse: (res: AdminMonitorSectionResponse) =>
+      (res.xalt_stats as AdminMonitorXaltStats | null | undefined) || null,
+  });
+
   // Only show fully qualified hostnames (contain a dot) in the UI.
-  const fqdnHostStats = hostStats.filter(
+  const fqdnHostStats = (hostStats ?? []).filter(
     (row) => row.host && row.host.includes(".")
   );
-  const fqdnRabbitHostStats = rabbitHostStats.filter(
+  const fqdnRabbitHostStats = (rabbitHostStats ?? []).filter(
     (row) => row.host && row.host.includes(".")
   );
-
-  const loadHostStats = useMemo(
-    () =>
-      createAdminMonitorSectionLoader({
-        section: "hosts",
-        pickResponse: (res: AdminMonitorSectionResponse) =>
-          (res.host_stats as AdminMonitorHostRow[] | undefined) || [],
-        setLoading: setHostLoading,
-        setError: setHostError,
-        setData: setHostStats,
-      }),
-    [],
-  );
-
-  const loadRabbitHostStats = useMemo(
-    () =>
-      createAdminMonitorSectionLoader({
-        section: "rabbitmq_hosts",
-        pickResponse: (res: AdminMonitorSectionResponse) =>
-          (res.rabbitmq_host_stats as AdminMonitorHostRow[] | undefined) || [],
-        setLoading: setRabbitHostLoading,
-        setError: setRabbitHostError,
-        setData: setRabbitHostStats,
-      }),
-    [],
-  );
-
-  const loadCacheStats = useMemo(
-    () =>
-      createAdminMonitorSectionLoader({
-        section: "cache",
-        pickResponse: (res: AdminMonitorSectionResponse) =>
-          (res.cache_stats as Record<string, unknown> | null | undefined) || null,
-        setLoading: setCacheLoading,
-        setError: setCacheError,
-        setData: setCacheStats,
-      }),
-    [],
-  );
-
-  const loadRabbitStats = useMemo(
-    () =>
-      createAdminMonitorSectionLoader({
-        section: "rabbitmq",
-        pickResponse: (res: AdminMonitorSectionResponse) =>
-          (res.rabbitmq_stats as Record<string, unknown> | null | undefined) || null,
-        setLoading: setRabbitLoading,
-        setError: setRabbitError,
-        setData: setRabbitStats,
-      }),
-    [],
-  );
-
-  const loadTimescaledbStats = useMemo(
-    () =>
-      createAdminMonitorSectionLoader({
-        section: "timescaledb",
-        pickResponse: (res: AdminMonitorSectionResponse) =>
-          (res.timescaledb_stats as Record<string, unknown> | null | undefined) || null,
-        setLoading: setTimescaledbLoading,
-        setError: setTimescaledbError,
-        setData: setTimescaledbStats,
-      }),
-    [],
-  );
-
-  const loadXaltStats = useMemo(
-    () =>
-      createAdminMonitorSectionLoader({
-        section: "xalt",
-        pickResponse: (res: AdminMonitorSectionResponse) =>
-          (res.xalt_stats as AdminMonitorXaltStats | null | undefined) || null,
-        setLoading: setXaltLoading,
-        setError: setXaltError,
-        setData: setXaltStats,
-      }),
-    [],
-  );
-
-  // Lazily load section payloads when each block is first expanded.
-  useEffect(() => {
-    if (hostTimeExpanded && !hostRequested) {
-      setHostRequested(true);
-      loadHostStats();
-    }
-    if (rabbitHostTimeExpanded && !rabbitHostRequested) {
-      setRabbitHostRequested(true);
-      loadRabbitHostStats();
-    }
-    if (cacheExpanded && !cacheRequested) {
-      setCacheRequested(true);
-      loadCacheStats();
-    }
-    if (rabbitExpanded && !rabbitRequested) {
-      setRabbitRequested(true);
-      loadRabbitStats();
-    }
-    if (timescaledbExpanded && !timescaledbRequested) {
-      setTimescaledbRequested(true);
-      loadTimescaledbStats();
-    }
-    if (xaltExpanded && !xaltRequested) {
-      setXaltRequested(true);
-      loadXaltStats();
-    }
-  }, [
-    hostTimeExpanded,
-    hostRequested,
-    loadHostStats,
-    rabbitHostTimeExpanded,
-    rabbitHostRequested,
-    loadRabbitHostStats,
-    cacheExpanded,
-    cacheRequested,
-    loadCacheStats,
-    rabbitExpanded,
-    rabbitRequested,
-    loadRabbitStats,
-    timescaledbExpanded,
-    timescaledbRequested,
-    loadTimescaledbStats,
-    xaltExpanded,
-    xaltRequested,
-    loadXaltStats,
-  ]);
 
   // Build comma-separated list of FQDNs not seen in the past 36 hours when the
   // host section is open and hostStats are available.
@@ -410,13 +347,13 @@ export default function AdminMonitor() {
         ariaLabel="Most recent host data timestamps in database"
         title={`Most recent host data timestamps in database${hostHeaderSummary}`}
       >
-          <div className="admin-monitor-action-row">
+          <div className="mb-2 flex justify-end">
             <Button
               type="button"
               variant="outline"
               size="sm"
-              className="admin-monitor-refresh-button"
-              onClick={() => loadHostStats(true)}
+              className="min-w-[110px]"
+              onClick={() => setHostRefreshSeq((s) => s + 1)}
               disabled={hostLoading}
             >
               Refresh Data
@@ -452,13 +389,13 @@ export default function AdminMonitor() {
                 </Button>
               </div>
               <Table className="border text-sm">
-                <caption className="sr-only">
+                <TableCaption className="sr-only">
                   Monitor agents reporting host data. Sort by host, last timestamp, or
                   status freshness using the column header buttons.
-                </caption>
-                <thead>
-                  <tr>
-                    <th scope="col" aria-sort={tableSortAriaSort("host", hostSort.column, hostSort.direction)}>
+                </TableCaption>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead scope="col" aria-sort={tableSortAriaSort("host", hostSort.column, hostSort.direction)}>
                       <Button
                         type="button"
                         variant="link"
@@ -471,8 +408,8 @@ export default function AdminMonitor() {
                           leadingSpace: false,
                         })}
                       </Button>
-                    </th>
-                    <th
+                    </TableHead>
+                    <TableHead
                       scope="col"
                       aria-sort={tableSortAriaSort(
                         "last_time",
@@ -495,8 +432,8 @@ export default function AdminMonitor() {
                           { leadingSpace: false },
                         )}
                       </Button>
-                    </th>
-                    <th
+                    </TableHead>
+                    <TableHead
                       scope="col"
                       aria-sort={tableSortAriaSort("status", hostSort.column, hostSort.direction)}
                     >
@@ -512,10 +449,10 @@ export default function AdminMonitor() {
                           leadingSpace: false,
                         })}
                       </Button>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {sortedHostStats.map((row, i) => {
                     const badge =
                       BADGE_MAP[(row.age_bucket as FreshnessBucket) || "gt_week"] ||
@@ -523,23 +460,23 @@ export default function AdminMonitor() {
                     const rowClass =
                       ROW_CLASS[(row.age_bucket as FreshnessBucket) || "gt_week"] || "";
                     return (
-                      <tr key={row.host + i} className={rowClass}>
-                        <td>{row.host}</td>
-                        <td>{formatHostTime(row.last_time)}</td>
-                        <td>
+                      <TableRow key={row.host + i} className={rowClass}>
+                        <TableCell>{row.host}</TableCell>
+                        <TableCell>{formatHostTime(row.last_time)}</TableCell>
+                        <TableCell>
                           <Badge className={badge.className}>{badge.label}</Badge>
-                        </td>
-                      </tr>
+                        </TableCell>
+                      </TableRow>
                     );
                   })}
                   {fqdnHostStats.length === 0 && (
-                    <tr>
-                      <td colSpan={3} className="text-center">
+                    <TableRow>
+                      <TableCell colSpan={3} className="text-center">
                         No host data available.
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   )}
-                </tbody>
+                </TableBody>
                 </Table>
             </>
           )}
@@ -552,13 +489,13 @@ export default function AdminMonitor() {
         ariaLabel="XALT job coverage (last 3 days)"
         title={`XALT job coverage (last 3 days)${xaltHeaderSummary}`}
       >
-          <div className="admin-monitor-action-row">
+          <div className="mb-2 flex justify-end">
             <Button
               type="button"
               variant="outline"
               size="sm"
-              className="admin-monitor-refresh-button"
-              onClick={() => loadXaltStats(true)}
+              className="min-w-[110px]"
+              onClick={() => setXaltRefreshSeq((s) => s + 1)}
               disabled={xaltLoading}
             >
               Refresh Data
@@ -614,82 +551,82 @@ export default function AdminMonitor() {
 
                   {xaltListMode === "missing" && (xaltStats.jids_missing_xalt_data ?? 0) > 0 && (
                     <Table className="border text-sm">
-                        <caption className="sr-only">
+                        <TableCaption className="sr-only">
                           Job IDs from the last three days that are missing XALT coverage.
                           List may be truncated.
-                        </caption>
-                        <thead>
-                          <tr>
-                            <th scope="col">Missing JIDs (truncated)</th>
-                          </tr>
-                        </thead>
-                        <tbody>
+                        </TableCaption>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead scope="col">Missing JIDs (truncated)</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
                           {Array.isArray(xaltStats.missing_jids) &&
                             xaltStats.missing_jids.length > 0 &&
                             xaltStats.missing_jids.map((jid, i) => (
-                              <tr key={`${jid}-${i}`}>
-                                <td>{jid}</td>
-                              </tr>
+                              <TableRow key={`${jid}-${i}`}>
+                                <TableCell>{jid}</TableCell>
+                              </TableRow>
                             ))}
                           {(!Array.isArray(xaltStats.missing_jids) ||
                             xaltStats.missing_jids.length === 0) && (
-                            <tr>
-                              <td className="text-muted-foreground text-center">
+                            <TableRow>
+                              <TableCell className="text-muted-foreground text-center">
                                 No missing JIDs listed.
-                              </td>
-                            </tr>
+                              </TableCell>
+                            </TableRow>
                           )}
                           {xaltStats.missing_jids_truncated && (
-                            <tr>
-                              <td className="text-muted-foreground">
+                            <TableRow>
+                              <TableCell className="text-muted-foreground">
                                 Showing first{" "}
                                 {String(
                                   xaltStats.missing_jids_limit ?? "—"
                                 )}{" "}
                                 missing JIDs.
-                              </td>
-                            </tr>
+                              </TableCell>
+                            </TableRow>
                           )}
-                        </tbody>
+                        </TableBody>
                       </Table>
                   )}
 
                   {xaltListMode === "found" && (xaltStats.jids_with_xalt_data ?? 0) > 0 && (
                     <Table className="border text-sm">
-                        <caption className="sr-only">
+                        <TableCaption className="sr-only">
                           Job IDs from the last three days that have XALT coverage. List may
                           be truncated.
-                        </caption>
-                        <thead>
-                          <tr>
-                            <th scope="col">Found JIDs (truncated)</th>
-                          </tr>
-                        </thead>
-                        <tbody>
+                        </TableCaption>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead scope="col">Found JIDs (truncated)</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
                           {Array.isArray(xaltStats.found_jids) &&
                             xaltStats.found_jids.length > 0 &&
                             xaltStats.found_jids.map((jid, i) => (
-                              <tr key={`${jid}-${i}`}>
-                                <td>{jid}</td>
-                              </tr>
+                              <TableRow key={`${jid}-${i}`}>
+                                <TableCell>{jid}</TableCell>
+                              </TableRow>
                             ))}
                           {(!Array.isArray(xaltStats.found_jids) ||
                             xaltStats.found_jids.length === 0) && (
-                            <tr>
-                              <td className="text-muted-foreground text-center">
+                            <TableRow>
+                              <TableCell className="text-muted-foreground text-center">
                                 No found JIDs listed.
-                              </td>
-                            </tr>
+                              </TableCell>
+                            </TableRow>
                           )}
                           {xaltStats.found_jids_truncated && (
-                            <tr>
-                              <td className="text-muted-foreground">
+                            <TableRow>
+                              <TableCell className="text-muted-foreground">
                                 Showing first{" "}
                                 {String(xaltStats.found_jids_limit ?? "—")} found JIDs.
-                              </td>
-                            </tr>
+                              </TableCell>
+                            </TableRow>
                           )}
-                        </tbody>
+                        </TableBody>
                       </Table>
                   )}
 
@@ -722,13 +659,13 @@ export default function AdminMonitor() {
         ariaLabel="Most recent host data timestamps in RabbitMQ"
         title={`Most recent host data timestamps in RabbitMQ${rabbitHostHeaderSummary}`}
       >
-          <div className="admin-monitor-action-row">
+          <div className="mb-2 flex justify-end">
             <Button
               type="button"
               variant="outline"
               size="sm"
-              className="admin-monitor-refresh-button"
-              onClick={() => loadRabbitHostStats(true)}
+              className="min-w-[110px]"
+              onClick={() => setRabbitHostRefreshSeq((s) => s + 1)}
               disabled={rabbitHostLoading}
             >
               Refresh Data
@@ -745,13 +682,13 @@ export default function AdminMonitor() {
           )}
           {!rabbitHostLoading && !rabbitHostError && (
             <Table className="border text-sm">
-                <caption className="sr-only">
+                <TableCaption className="sr-only">
                   Hosts seen via RabbitMQ and their last data timestamps. Sort by host, last
                   timestamp, or status freshness using the column header buttons.
-                </caption>
-                <thead>
-                  <tr>
-                    <th
+                </TableCaption>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead
                       scope="col"
                       aria-sort={tableSortAriaSort(
                         "host",
@@ -774,8 +711,8 @@ export default function AdminMonitor() {
                           { leadingSpace: false },
                         )}
                       </Button>
-                    </th>
-                    <th
+                    </TableHead>
+                    <TableHead
                       scope="col"
                       aria-sort={tableSortAriaSort(
                         "last_time",
@@ -798,8 +735,8 @@ export default function AdminMonitor() {
                           { leadingSpace: false },
                         )}
                       </Button>
-                    </th>
-                    <th
+                    </TableHead>
+                    <TableHead
                       scope="col"
                       aria-sort={tableSortAriaSort(
                         "status",
@@ -822,10 +759,10 @@ export default function AdminMonitor() {
                           { leadingSpace: false },
                         )}
                       </Button>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {sortedRabbitHostStats.map((row, i) => {
                     const badge =
                       BADGE_MAP[(row.age_bucket as FreshnessBucket) || "gt_week"] ||
@@ -833,23 +770,23 @@ export default function AdminMonitor() {
                     const rowClass =
                       ROW_CLASS[(row.age_bucket as FreshnessBucket) || "gt_week"] || "";
                     return (
-                      <tr key={row.host + i} className={rowClass}>
-                        <td>{row.host}</td>
-                        <td>{formatHostTime(row.last_time)}</td>
-                        <td>
+                      <TableRow key={row.host + i} className={rowClass}>
+                        <TableCell>{row.host}</TableCell>
+                        <TableCell>{formatHostTime(row.last_time)}</TableCell>
+                        <TableCell>
                           <Badge className={badge.className}>{badge.label}</Badge>
-                        </td>
-                      </tr>
+                        </TableCell>
+                      </TableRow>
                     );
                   })}
                   {fqdnRabbitHostStats.length === 0 && (
-                    <tr>
-                      <td colSpan={3} className="text-center">
+                    <TableRow>
+                      <TableCell colSpan={3} className="text-center">
                         No RabbitMQ host data available.
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   )}
-                </tbody>
+                </TableBody>
               </Table>
           )}
       </AdminMonitorCollapsibleSection>
@@ -861,13 +798,13 @@ export default function AdminMonitor() {
         ariaLabel="TimescaleDB statistics"
         title="TimescaleDB statistics"
       >
-          <div className="admin-monitor-action-row">
+          <div className="mb-2 flex justify-end">
             <Button
               type="button"
               variant="outline"
               size="sm"
-              className="admin-monitor-refresh-button"
-              onClick={() => loadTimescaledbStats(true)}
+              className="min-w-[110px]"
+              onClick={() => setTimescaledbRefreshSeq((s) => s + 1)}
               disabled={timescaledbLoading}
             >
               Refresh Data
@@ -884,10 +821,10 @@ export default function AdminMonitor() {
           )}
           {!timescaledbLoading && !timescaledbError && timescaledbStats && (
             <Table className="border text-sm">
-              <caption className="sr-only">
+              <TableCaption className="sr-only">
                 TimescaleDB database and hypertable size statistics.
-              </caption>
-              <tbody>
+              </TableCaption>
+              <TableBody>
                 {(() => {
                   const LABELS = {
                     database_name: "Database name",
@@ -911,27 +848,27 @@ export default function AdminMonitor() {
                         timescaledbStats[key] !== undefined
                     )
                     .map(([key, label]) => (
-                      <tr key={key}>
-                        <th scope="row">{label}</th>
-                        <td>
+                      <TableRow key={key}>
+                        <TableHead scope="row">{label}</TableHead>
+                        <TableCell>
                           {typeof timescaledbStats[key] === "number"
                             ? formatAdminMonitorNumericStatistic(timescaledbStats[key])
                             : String(timescaledbStats[key])}
-                        </td>
-                      </tr>
+                        </TableCell>
+                      </TableRow>
                     ));
                 })()}
                 {(!timescaledbStats ||
                   Object.entries(timescaledbStats).filter(
                     ([, value]) => value !== null && value !== undefined
                   ).length === 0) && (
-                  <tr>
-                    <td colSpan={2} className="text-muted-foreground">
+                  <TableRow>
+                    <TableCell colSpan={2} className="text-muted-foreground">
                       No TimescaleDB statistics available.
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 )}
-              </tbody>
+              </TableBody>
               </Table>
           )}
           {!timescaledbLoading && !timescaledbError && !timescaledbStats && (
@@ -946,13 +883,13 @@ export default function AdminMonitor() {
         ariaLabel="Cache and Redis statistics"
         title="Cache / Redis statistics"
       >
-          <div className="admin-monitor-action-row">
+          <div className="mb-2 flex justify-end">
             <Button
               type="button"
               variant="outline"
               size="sm"
-              className="admin-monitor-refresh-button"
-              onClick={() => loadCacheStats(true)}
+              className="min-w-[110px]"
+              onClick={() => setCacheRefreshSeq((s) => s + 1)}
               disabled={cacheLoading}
             >
               Refresh Data
@@ -967,10 +904,10 @@ export default function AdminMonitor() {
           )}
           {!cacheLoading && !cacheError && cacheStats && Object.keys(cacheStats).length > 0 && (
             <Table className="border text-sm">
-              <caption className="sr-only">
+              <TableCaption className="sr-only">
                 Cache and Redis key statistics for the application.
-              </caption>
-              <tbody>
+              </TableCaption>
+              <TableBody>
                 {Object.entries(cacheStats).map(([key, value]) => {
                   let displayValue;
                   if (key === "most_used_cached_keys" && Array.isArray(value)) {
@@ -982,13 +919,13 @@ export default function AdminMonitor() {
                     displayValue = formatAdminMonitorNumericStatistic(value);
                   }
                   return (
-                    <tr key={key}>
-                      <th scope="row">{key}</th>
-                      <td>{displayValue}</td>
-                    </tr>
+                    <TableRow key={key}>
+                      <TableHead scope="row">{key}</TableHead>
+                      <TableCell>{displayValue}</TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
+              </TableBody>
               </Table>
           )}
           {!cacheLoading && !cacheError && (!cacheStats || Object.keys(cacheStats).length === 0) && (
@@ -1003,13 +940,13 @@ export default function AdminMonitor() {
         ariaLabel="RabbitMQ statistics"
         title="RabbitMQ statistics"
       >
-          <div className="admin-monitor-action-row">
+          <div className="mb-2 flex justify-end">
             <Button
               type="button"
               variant="outline"
               size="sm"
-              className="admin-monitor-refresh-button"
-              onClick={() => loadRabbitStats(true)}
+              className="min-w-[110px]"
+              onClick={() => setRabbitRefreshSeq((s) => s + 1)}
               disabled={rabbitLoading}
             >
               Refresh Data
@@ -1034,10 +971,10 @@ export default function AdminMonitor() {
                 />
               )}
               <Table className="border text-sm">
-                <caption className="sr-only">
+                <TableCaption className="sr-only">
                   RabbitMQ queue depth, consumer, and message volume statistics.
-                </caption>
-                <tbody>
+                </TableCaption>
+                <TableBody>
                   {(() => {
                     const LABELS: Record<string, string> = {
                       queue: "Queue",
@@ -1062,23 +999,23 @@ export default function AdminMonitor() {
                     return Object.entries(rabbitStats)
                       .filter(([key, value]) => key in LABELS && value !== null && value !== undefined)
                       .map(([key, value]) => (
-                        <tr key={key}>
-                          <th scope="row">{LABELS[key]}</th>
-                          <td>{formatAdminMonitorNumericStatistic(value)}</td>
-                        </tr>
+                        <TableRow key={key}>
+                          <TableHead scope="row">{LABELS[key]}</TableHead>
+                          <TableCell>{formatAdminMonitorNumericStatistic(value)}</TableCell>
+                        </TableRow>
                       ));
                   })()}
                   {(!rabbitStats ||
                     Object.entries(rabbitStats).filter(
                       ([key, value]) => value !== null && value !== undefined
                     ).length === 0) && (
-                    <tr>
-                      <td colSpan={2} className="text-muted-foreground">
+                    <TableRow>
+                      <TableCell colSpan={2} className="text-muted-foreground">
                         No RabbitMQ statistics available.
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   )}
-                </tbody>
+                </TableBody>
                 </Table>
             </>
           )}

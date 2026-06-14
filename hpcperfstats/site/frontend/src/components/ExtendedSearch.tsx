@@ -134,9 +134,9 @@ export default function ExtendedSearch({ onClose }: ExtendedSearchProps) {
 
   const header =
     onClose ? (
-      <div className="extended-search-header">
+      <div className="mb-3 flex items-center justify-between">
         <span
-          className="extended-search-title"
+          className="font-semibold"
           id="extended-search-dialog-title"
           tabIndex={-1}
         >
@@ -180,7 +180,7 @@ export default function ExtendedSearch({ onClose }: ExtendedSearchProps) {
 
   if (loading) {
     return (
-      <div className="extended-search-panel">
+      <div>
         {header}
         <LoadingMessage message="Loading search options…" />
       </div>
@@ -188,7 +188,7 @@ export default function ExtendedSearch({ onClose }: ExtendedSearchProps) {
   }
   if (error) {
     return (
-      <div className="extended-search-panel">
+      <div>
         {header}
         <BannerErrorMessage
           message={error}
@@ -226,7 +226,7 @@ export default function ExtendedSearch({ onClose }: ExtendedSearchProps) {
   const compactInputClass = "h-7 text-sm";
 
   return (
-    <div className="extended-search-panel">
+    <div>
       {header}
       <form id="extended-search-form" onSubmit={handleSubmit(onValidSubmit)} noValidate>
         {submitErrors.length > 0 ? (
@@ -543,7 +543,7 @@ export default function ExtendedSearch({ onClose }: ExtendedSearchProps) {
             </div>
           ))}
         </fieldset>
-        <div className="extended-search-actions">
+        <div className="sticky bottom-0 mt-2 flex flex-wrap items-center gap-2 border-t border-border bg-muted pt-3">
           <Button type="submit" size="sm">
             Search
           </Button>
