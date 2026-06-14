@@ -103,6 +103,20 @@ def seed_dispatch_worker_stages(registry, paths):
         pass
 
 
+def clear_dispatch_worker_stages(registry, paths):
+  """Remove supervisor ``dispatch:`` placeholders when imap returns a path."""
+  if registry is None:
+    return
+  for path in paths or ():
+    if not path:
+      continue
+    key = "dispatch:%s" % os.path.normpath(path)
+    try:
+      registry.pop(key, None)
+    except Exception:
+      pass
+
+
 def update_worker_substage(substage, **extra):
   registry = _resolve_registry()
   if registry is None:

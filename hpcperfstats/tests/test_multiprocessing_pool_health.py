@@ -386,20 +386,20 @@ def test_hard_exit_pool_worker_error_uses_os_exit(monkeypatch):
   assert any("hard exit code=124" in line for line in logs)
 
 
-def test_handle_pool_worker_exit_fatal_hard_exits_when_terminate_incomplete(monkeypatch):
+def test_handle_pool_worker_exit_fatal_hard_exits_without_terminate(monkeypatch):
   import hpcperfstats.dbload.sync_timedb as st
 
   exit_codes = []
-  logs = []
+  terminate_calls = []
 
-  def capture_log(msg, flush=False):
-    logs.append(msg)
-
-  monkeypatch.setattr(st, "log_print", capture_log)
-  monkeypatch.setattr(st, "terminate_pool_bounded", lambda *_a, **_k: False)
+  monkeypatch.setattr(
+      st,
+      "terminate_pool_bounded",
+      lambda *_a, **_k: terminate_calls.append(True) or False,
+  )
   monkeypatch.setattr(
       "hpcperfstats.dbload.multiprocessing_pool_health.log_print",
-      capture_log,
+      lambda msg, flush=False: None,
   )
   monkeypatch.setattr(
       "hpcperfstats.dbload.multiprocessing_pool_health.os._exit",
@@ -413,7 +413,35 @@ def test_handle_pool_worker_exit_fatal_hard_exits_when_terminate_incomplete(monk
   )
   st._handle_pool_worker_exit_fatal(exc, ingest_pool=object())
   assert exit_codes == [124]
-  assert any("hard exit anyway" in line for line in logs)
+  assert terminate_calls == []
+
+
+def test_handle_pool_worker_exit_fatal_hard_exits_when_terminate_would_block(monkeypatch):
+  """Regression: production limbo when terminate ran before os._exit(124)."""
+  import hpcperfstats.dbload.sync_timedb as st
+
+  exit_codes = []
+  terminate_started = []
+
+  def blocking_terminate(*_a, **_k):
+    terminate_started.append(True)
+    time.sleep(3600)
+    return False
+
+  monkeypatch.setattr(st, "terminate_pool_bounded", blocking_terminate)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.multiprocessing_pool_health.os._exit",
+      lambda code: exit_codes.append(code),
+  )
+  exc = mph.MultiprocessingPoolStallError(
+      "pool imap stalled",
+      dead_pids=(),
+      context="sync_timedb ingest pool",
+      exit_code=124,
+  )
+  st._handle_pool_worker_exit_fatal(exc, ingest_pool=object())
+  assert exit_codes == [124]
+  assert terminate_started == []
 
 
 def test_abort_recycle_grace_tolerates_exitcode_zero(monkeypatch):

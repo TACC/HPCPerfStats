@@ -126,6 +126,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
 )
 from hpcperfstats.dbload.sync_timedb_ingest_worker_diagnostics import (
     apply_ingest_pool_worker_init,
+    clear_dispatch_worker_stages,
     clear_worker_stage,
     count_worker_registry_entries,
     format_worker_stages_snapshot,
@@ -158,6 +159,7 @@ from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
     archive_members_redis_enabled,
     build_archive_members_redis_keys,
     describe_archive_members_populate_redis_for_day,
+    get_ingest_task_deadline_monotonic,
     redis_lookup_full_members,
     redis_members_cache_is_fully_warm,
     reset_ingest_task_deadline_monotonic,
@@ -283,6 +285,23 @@ class _IngestPoolInFlightTracker:
 
 def _resolve_sync_ingest_per_file_timeout_s():
   return float(cfg.get_sync_ingest_per_file_timeout_s())
+
+
+def _raise_if_ingest_per_file_deadline_exceeded(stats_file, stage):
+  """Monotonic deadline check for DB phases SIGALRM cannot interrupt."""
+  deadline = get_ingest_task_deadline_monotonic()
+  if deadline is None:
+    return
+  if time.monotonic() >= float(deadline):
+    timeout_s = _resolve_sync_ingest_per_file_timeout_s()
+    elapsed_s = timeout_s if timeout_s > 0.0 else max(0.0, time.monotonic() - float(deadline))
+    raise IngestPerFileTimeoutError(str(stats_file), stage, elapsed_s)
+
+
+def _imap_ingest_result_path(result):
+  if isinstance(result, (tuple, list)) and result:
+    return result[0]
+  return None
 
 
 def _run_ingest_timed(stats_file, stage, fn, *, enable_sigalrm=True):
@@ -820,6 +839,9 @@ def _imap_ingest_paths_batched(
         stall_poll_state=stall_poll_state,
         stall_diagnostics=stall_diagnostics,
     ):
+      completed_path = _imap_ingest_result_path(item)
+      if dispatch_registry is not None and completed_path:
+        clear_dispatch_worker_stages(dispatch_registry, [completed_path])
       yield item
 
 
@@ -1095,20 +1117,8 @@ def _handle_pool_worker_exit_fatal(
     db_writer_pool=None,
     archive_pool=None,
 ):
-  """Terminate pools and ``os._exit`` — do not unwind through pool context managers."""
-  ctx = getattr(exc, "context", "") or "pool_worker_exit"
-  pools_done = (
-      terminate_pool_bounded(ingest_pool, context=ctx),
-      terminate_pool_bounded(db_writer_pool, context=ctx),
-      terminate_pool_bounded(archive_pool, context=ctx),
-  )
-  if not all(pools_done):
-    log_print(
-        "Pool worker exit: terminate incomplete context=%s pools_done=%s; "
-        "hard exit anyway"
-        % (ctx, pools_done),
-        flush=True,
-    )
+  """``os._exit`` immediately — do not wait on pool terminate or context managers."""
+  del ingest_pool, db_writer_pool, archive_pool
   hard_exit_pool_worker_error(exc)
 
 
@@ -1535,6 +1545,7 @@ def _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archiva
     try:
       proc_it = proc_stats.itertuples(index=False)
       while True:
+        _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_proc")
         batch = list(itertools.islice(proc_it, bulk_create_batch_size))
         if not batch:
           break
@@ -1545,6 +1556,7 @@ def _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archiva
         write_lock.acquire()
         lock_wait = time.time() - lock_wait_t0
         _log_db_lock_wait("proc", stats_file, lock_wait)
+        _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_proc")
         try:
           proc_data.objects.bulk_create(proc_objs, ignore_conflicts=True)
         finally:
@@ -1569,6 +1581,7 @@ def _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archiva
         )
         stats_it = stats.itertuples(index=False)
         while True:
+          _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_host")
           batch = list(itertools.islice(stats_it, bulk_create_batch_size))
           if not batch:
             break
@@ -1577,6 +1590,7 @@ def _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archiva
           write_lock.acquire()
           lock_wait = time.time() - lock_wait_t0
           _log_db_lock_wait("host", stats_file, lock_wait)
+          _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_host")
           try:
             host_data.objects.bulk_create(host_objs, ignore_conflicts=True)
           finally:
@@ -1953,6 +1967,7 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
   seconds for the attempted ingest path. Uses lock for DB writes.
 
     """
+  record_worker_stage(stats_file, "ingest", substage="worker_entry")
   try:
     return _run_ingest_timed(
         stats_file,
@@ -4299,15 +4314,18 @@ def run_sync_timedb_supervisor_from_parsed(run_once, startdate, enddate):
         initargs=(SYNC_TIMEDB_PROCESS_TITLE, "archive-pool"),
         **_spawn_pool_recycle_kwargs(),
     ) as archive_pool:
-      run_sync_timedb_supervisor_loop(
-          directory,
-          startdate,
-          enddate,
-          host_name_ext,
-          manager_lock,
-          archive_pool,
-          run_once=run_once,
-      )
+      try:
+        run_sync_timedb_supervisor_loop(
+            directory,
+            startdate,
+            enddate,
+            host_name_ext,
+            manager_lock,
+            archive_pool,
+            run_once=run_once,
+        )
+      except MultiprocessingWorkerExitError as exc:
+        hard_exit_pool_worker_error(exc)
 
     if DEBUG:
       log_print("sync_timedb finished")
