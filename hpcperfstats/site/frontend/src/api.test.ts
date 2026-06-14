@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import api from "@/api";
+import { ApiError } from "@/api/api-error";
+import { fetchPubClusterDashboard } from "@/api/fetch-mutator";
 
 describe("api client", () => {
   const originalFetch = global.fetch;
@@ -101,6 +103,63 @@ describe("api client", () => {
       json: async () => ({ detail: "bad request" }),
     });
     await expect(api.getSession()).rejects.toThrow("bad request");
+  });
+
+  it("throws ApiError with status and body.error on 403", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      status: 403,
+      ok: false,
+      json: async () => ({ error: "Forbidden action" }),
+    });
+    await expect(api.getSession()).rejects.toMatchObject({
+      message: "Forbidden action",
+      status: 403,
+      body: { error: "Forbidden action" },
+    });
+    await expect(api.getSession()).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it("throws ApiError with status 500", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      status: 500,
+      ok: false,
+      json: async () => ({ detail: "Server exploded" }),
+    });
+    await expect(api.getHomeOptions()).rejects.toMatchObject({
+      status: 500,
+      message: "Server exploded",
+    });
+  });
+
+  it("fetchPubClusterDashboard validates response shape", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      status: 200,
+      ok: true,
+      json: async () => ({ machine_name: false }),
+    });
+    await expect(fetchPubClusterDashboard()).rejects.toThrow(
+      "API response validation failed",
+    );
+  });
+
+  it("fetchPubClusterDashboard returns parsed bundle on success", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      status: 200,
+      ok: true,
+      json: async () => ({
+        machine_name: "test-cluster",
+        expansion_factors: {},
+      }),
+    });
+    const bundle = await fetchPubClusterDashboard();
+    expect(bundle).toEqual({
+      machine_name: "test-cluster",
+      expansion_factors: {},
+    });
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/pub/cluster-dashboard/",
+      expect.objectContaining({ credentials: "omit" }),
+    );
   });
 
   it("getJobPlots builds query string for progressive and zoom", async () => {

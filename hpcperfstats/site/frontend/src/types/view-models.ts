@@ -93,6 +93,8 @@ export type TypeDetailData = Record<string, unknown> & {
 export type ApiErrorBody = {
   message?: string;
   detail?: string;
+  error?: string;
+  login_url?: string;
 };
 
 export type PubDashboardHistogramBlock = {

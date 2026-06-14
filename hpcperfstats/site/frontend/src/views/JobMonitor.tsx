@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { api } from "@/api";
+import { jobMonitorGpuRetrieve } from "@/api/generated/monitor/monitor";
 import type { JobMonitorRow } from "@/types/view-models";
+import { getErrorMessage } from "@/api/get-error-message";
+import { useJobMonitorQuery } from "@/hooks/use-job-monitor";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import LoadingMessage from "../components/LoadingMessage";
 import SortableTableHeader from "../components/SortableTableHeader";
@@ -71,13 +73,6 @@ function normalizeJobMonitorRows(rawRows: unknown): JobMonitorViewRow[] {
   });
 }
 
-function getApiErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof Error && typeof error.message === "string" && error.message.trim()) {
-    return error.message;
-  }
-  return fallback;
-}
-
 const sortHeaderClassName =
   "job-monitor-sort-header h-auto p-0 text-left font-medium text-foreground no-underline hover:no-underline";
 
@@ -87,8 +82,11 @@ export default function JobMonitor() {
   const [rows, setRows] = useState<JobMonitorViewRow[]>([]);
   const [windowDays, setWindowDays] = useState(30);
   const [inputDays, setInputDays] = useState("30");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const { data, error: queryError, loading } = useJobMonitorQuery(windowDays);
+  const error =
+    validationError ??
+    (queryError ? getErrorMessage(queryError, "Unable to load job monitor data.") : null);
   const { sort, onSort } = useTableSort("failed_rate", "desc", "desc");
   const sortKey = sort.column;
   const sortDir = sort.direction;
@@ -120,7 +118,7 @@ export default function JobMonitor() {
         );
         return;
       }
-      (api.getJobMonitorGpuForUser(username, daysForWindow) as Promise<unknown>)
+      void jobMonitorGpuRetrieve({ username, days: daysForWindow })
         .then((gpuRes) => {
           const gpu = (isRecord(gpuRes) ? gpuRes : {}) as JobMonitorGpuResponse;
           const hasData = gpu.has_data === true;
@@ -148,32 +146,19 @@ export default function JobMonitor() {
     });
   };
 
-  const loadData = (daysOverride?: number) => {
-    setLoading(true);
-    setError(null);
-    (api.getJobMonitor(daysOverride) as Promise<unknown>)
-      .then((res) => {
-        const typed = (isRecord(res) ? res : {}) as JobMonitorApiResponse;
-        const nextRows = normalizeJobMonitorRows(typed.results);
-        setRows(nextRows);
-        if (typeof typed.window_days === "number") {
-          setWindowDays(typed.window_days);
-          setInputDays(String(typed.window_days));
-          loadGpuRowsAsync(nextRows, typed.window_days);
-        } else {
-          loadGpuRowsAsync(nextRows, daysOverride);
-        }
-      })
-      .catch((e: unknown) =>
-        setError(getApiErrorMessage(e, "Unable to load job monitor data.")),
-      )
-      .finally(() => setLoading(false));
-  };
-
   useEffect(() => {
-    loadData(undefined);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (!data) return;
+    const typed = data as JobMonitorApiResponse;
+    const nextRows = normalizeJobMonitorRows(typed.results);
+    setRows(nextRows);
+    const days =
+      typeof typed.window_days === "number" ? typed.window_days : windowDays;
+    if (typeof typed.window_days === "number") {
+      setWindowDays(typed.window_days);
+      setInputDays(String(typed.window_days));
+    }
+    loadGpuRowsAsync(nextRows, days);
+  }, [data]);
 
   const sortedRows = [...rows].sort((a, b) => {
     const av = jobMonitorSortComparable(a, sortKey);
@@ -200,15 +185,15 @@ export default function JobMonitor() {
           e.preventDefault();
           const n = parseInt(inputDays, 10);
           if (!Number.isFinite(n)) {
-            setError("Days must be a number between 1 and 365.");
+            setValidationError("Days must be a number between 1 and 365.");
             return;
           }
           if (n < 1 || n > 365) {
-            setError("Days must be between 1 and 365.");
+            setValidationError("Days must be between 1 and 365.");
             return;
           }
-          setError(null);
-          loadData(n);
+          setValidationError(null);
+          setWindowDays(n);
         }}
       >
         <div className="space-y-1">

@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { api } from "@/api";
 import type {
   AdminMonitorHostRow,
   AdminMonitorSectionResponse,
@@ -137,7 +136,6 @@ export default function AdminMonitor() {
         setLoading: setHostLoading,
         setError: setHostError,
         setData: setHostStats,
-        apiClient: api,
       }),
     [],
   );
@@ -151,7 +149,6 @@ export default function AdminMonitor() {
         setLoading: setRabbitHostLoading,
         setError: setRabbitHostError,
         setData: setRabbitHostStats,
-        apiClient: api,
       }),
     [],
   );
@@ -165,7 +162,6 @@ export default function AdminMonitor() {
         setLoading: setCacheLoading,
         setError: setCacheError,
         setData: setCacheStats,
-        apiClient: api,
       }),
     [],
   );
@@ -179,7 +175,6 @@ export default function AdminMonitor() {
         setLoading: setRabbitLoading,
         setError: setRabbitError,
         setData: setRabbitStats,
-        apiClient: api,
       }),
     [],
   );
@@ -193,7 +188,6 @@ export default function AdminMonitor() {
         setLoading: setTimescaledbLoading,
         setError: setTimescaledbError,
         setData: setTimescaledbStats,
-        apiClient: api,
       }),
     [],
   );
@@ -207,7 +201,6 @@ export default function AdminMonitor() {
         setLoading: setXaltLoading,
         setError: setXaltError,
         setData: setXaltStats,
-        apiClient: api,
       }),
     [],
   );

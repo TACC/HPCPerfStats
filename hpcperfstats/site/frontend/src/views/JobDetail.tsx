@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useCallback, useEffect, memo, useId, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, ReactNode } from "react";
 import { api } from "@/api";
+import { useJobDetailQuery } from "@/hooks/use-job-detail";
 import type { BokehJsonItem } from "@/types/bokeh";
 import type {
   JobDetailData,
@@ -330,13 +331,16 @@ export default function JobDetail() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
-  const [data, setData] = useState<JobDetailData | null>(null);
+  const {
+    data: jobDetailData,
+    error,
+    loading,
+    detailsLoading,
+    detailFetchWarning,
+  } = useJobDetailQuery(pk);
+  const data = jobDetailData as JobDetailViewData | null;
   const [plots, setPlots] = useState<JobPlotsState | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
   const [plotsLoading, setPlotsLoading] = useState(true);
-  const [detailsLoading, setDetailsLoading] = useState(false);
-  const [detailFetchWarning, setDetailFetchWarning] = useState(false);
   const [plotsFetchFailed, setPlotsFetchFailed] = useState(false);
   const plotsFetchGenRef = useRef(0);
   const rawTab = readTabFromSearchParams(searchParams, "tab", "metrics");
@@ -492,58 +496,21 @@ export default function JobDetail() {
   }, [fetchAllJobPlotsWithPolling]);
 
   useEffect(() => {
-    if (!pk) return;
+    if (!pk || loading || error || !data) return;
 
     let cancelled = false;
     const cancelledCheck = (): boolean => cancelled;
 
-    setError(null);
-    setData(null);
     setPlots(null);
-    setLoading(true);
     setPlotsLoading(true);
-    setDetailsLoading(false);
-    setDetailFetchWarning(false);
     setPlotsFetchFailed(false);
-
-    api
-      .getJobDetailLight(pk)
-      .then((jobLightData) => {
-        if (cancelled) return;
-        setData(jobLightData as JobDetailData);
-        setLoading(false);
-        setDetailsLoading(true);
-        setPlots(createEmptyJobPlotsState(true));
-        setPlotsLoading(true);
-        void fetchAllJobPlotsWithPolling(cancelledCheck);
-
-        api
-          .getJobDetail(pk)
-          .then((jobFullData) => {
-            if (cancelled) return;
-            setData(jobFullData as JobDetailData);
-            setDetailFetchWarning(false);
-          })
-          .catch(() => {
-            if (cancelled) return;
-            setDetailFetchWarning(true);
-          })
-          .finally(() => {
-            if (cancelled) return;
-            setDetailsLoading(false);
-          });
-      })
-      .catch((e: unknown) => {
-        if (cancelled) return;
-        setError(e instanceof Error ? e.message : "Request failed");
-        setPlotsLoading(false);
-        setLoading(false);
-      });
+    setPlots(createEmptyJobPlotsState(true));
+    void fetchAllJobPlotsWithPolling(cancelledCheck);
 
     return () => {
       cancelled = true;
     };
-  }, [pk, fetchAllJobPlotsWithPolling]);
+  }, [pk, loading, error, data, fetchAllJobPlotsWithPolling]);
 
   useEffect(() => {
     if (!plots) return;

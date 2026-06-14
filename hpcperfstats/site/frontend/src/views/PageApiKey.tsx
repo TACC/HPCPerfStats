@@ -1,9 +1,7 @@
 import Link from "next/link";
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
-import type { UserApiKey } from "@/api/generated/models/userApiKey";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import LoadingMessage from "../components/LoadingMessage";
-import { api } from "@/api";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,45 +11,32 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { useUserApiKey } from "@/hooks/use-user-api-key";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 import { copyToClipboard } from "../utils/copy-to-clipboard";
 
 export default function PageApiKey() {
   const rotateHelpId = useId();
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [username, setUsername] = useState("");
-  const [rawKey, setRawKey] = useState<string | null>(null);
-  const [keyPrefix, setKeyPrefix] = useState("");
+  const {
+    data,
+    error: loadError,
+    loading,
+    rotate,
+    rotating,
+    rotateError,
+    refetch,
+  } = useUserApiKey();
   const [copyStatus, setCopyStatus] = useState("");
-  const [rotating, setRotating] = useState(false);
+  const [actionError, setActionError] = useState("");
   const keyRef = useRef<HTMLElement | null>(null);
   const announceRef = useRef<HTMLDivElement | null>(null);
 
+  const username = data?.username || "";
+  const rawKey = data?.raw_key || null;
+  const keyPrefix = data?.key_prefix || "";
+  const error = actionError || loadError || rotateError || "";
+
   useDocumentTitle("API key");
-
-  const applyApiKeyPayload = (data: UserApiKey) => {
-    setUsername(data.username || "");
-    setRawKey(data.raw_key || null);
-    setKeyPrefix(data.key_prefix || "");
-  };
-
-  const loadStatus = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const data = await api.getUserApiKey();
-      applyApiKeyPayload(data as UserApiKey);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Unable to load API key status.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadStatus();
-  }, [loadStatus]);
 
   useEffect(() => {
     if (!rawKey) return;
@@ -86,16 +71,13 @@ export default function PageApiKey() {
     ) {
       return;
     }
-    setRotating(true);
-    setError("");
+    setActionError("");
     setCopyStatus("");
     try {
-      const data = await api.rotateUserApiKey();
-      applyApiKeyPayload(data as UserApiKey);
+      await rotate();
+      await refetch();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Unable to rotate API key.");
-    } finally {
-      setRotating(false);
+      setActionError(e instanceof Error ? e.message : "Unable to rotate API key.");
     }
   }
 

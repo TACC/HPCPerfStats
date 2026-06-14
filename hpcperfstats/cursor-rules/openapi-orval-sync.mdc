@@ -28,6 +28,7 @@ alwaysApply: false
    ```
 4. **Run drift test:** `pytest hpcperfstats/site/machine/tests/test_openapi_schema_drift.py`
 5. **Run frontend tests** touching API mocks after hook signature changes.
+6. **Parse registry:** when adding endpoints, register Zod response schemas in `src/api/response-schema-registry.ts` (or regenerate if codegen adds a registry).
 
 ## Overlap
 

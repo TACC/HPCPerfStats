@@ -1,25 +1,33 @@
 import { describe, expect, it, vi } from "vitest";
 import { createAdminMonitorSectionLoader } from "./create-admin-monitor-section-loader";
 
+vi.mock("@/api/generated/admin/admin", () => ({
+  adminMonitorRetrieve: vi.fn(),
+}));
+
+import { adminMonitorRetrieve } from "@/api/generated/admin/admin";
+
 describe("createAdminMonitorSectionLoader", () => {
   it("loads section, picks response, clears loading", async () => {
     const setLoading = vi.fn();
     const setError = vi.fn();
     const setData = vi.fn();
-    const getAdminMonitorSection = vi.fn().mockResolvedValue({ foo: [1] });
+    vi.mocked(adminMonitorRetrieve).mockResolvedValue({ foo: [1] });
     const load = createAdminMonitorSectionLoader({
       section: "hosts",
       pickResponse: (res) => res.foo,
       setLoading,
       setError,
       setData,
-      apiClient: { getAdminMonitorSection },
     });
     const done = load(false);
     expect(setLoading).toHaveBeenCalledWith(true);
     expect(setError).toHaveBeenCalledWith(null);
     await done;
-    expect(getAdminMonitorSection).toHaveBeenCalledWith("hosts", { refresh: false });
+    expect(adminMonitorRetrieve).toHaveBeenCalledWith({
+      section: "hosts",
+      refresh: undefined,
+    });
     expect(setData).toHaveBeenCalledWith([1]);
     expect(setLoading).toHaveBeenLastCalledWith(false);
   });
@@ -28,17 +36,19 @@ describe("createAdminMonitorSectionLoader", () => {
     const setLoading = vi.fn();
     const setError = vi.fn();
     const setData = vi.fn();
-    const getAdminMonitorSection = vi.fn().mockRejectedValue(new Error("net"));
+    vi.mocked(adminMonitorRetrieve).mockRejectedValue(new Error("net"));
     const load = createAdminMonitorSectionLoader({
       section: "cache",
       pickResponse: () => null,
       setLoading,
       setError,
       setData,
-      apiClient: { getAdminMonitorSection },
     });
     await load(true);
-    expect(getAdminMonitorSection).toHaveBeenCalledWith("cache", { refresh: true });
+    expect(adminMonitorRetrieve).toHaveBeenCalledWith({
+      section: "cache",
+      refresh: "1",
+    });
     expect(setError).toHaveBeenCalledWith("net");
     expect(setLoading).toHaveBeenLastCalledWith(false);
   });

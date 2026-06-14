@@ -2,6 +2,7 @@
  * Orval mutator: session cookie auth, CSRF header, 401 → login_prompt redirect.
  */
 
+import { ApiError, parseApiErrorBody } from "./api-error";
 import { parseApiResponse } from "./parse-api-response";
 
 export type ErrorType<T> = T;
@@ -63,11 +64,13 @@ export async function customFetch<T>(
   const res = await fetch(buildUrl(url, params), {
     ...options,
     method,
-    credentials: "include",
+    credentials: options.credentials ?? "include",
     headers,
     body: data !== undefined ? JSON.stringify(data) : options.body,
     signal: signal ?? options.signal,
   });
+
+  const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
 
   if (res.status === 401) {
     const next = encodeURIComponent(
@@ -78,34 +81,19 @@ export async function customFetch<T>(
     if (typeof window !== "undefined") {
       window.location.href = next ? `/login_prompt?next=${next}` : "/login_prompt";
     }
-    throw new Error("Unauthorized");
+    throw new ApiError("Unauthorized", 401, parseApiErrorBody(payload, 401).body);
   }
 
-  const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) {
-    const message =
-      (typeof payload.error === "string" && payload.error) ||
-      (typeof payload.detail === "string" && payload.detail) ||
-      `HTTP ${res.status}`;
-    throw new Error(message);
+    throw parseApiErrorBody(payload, res.status);
   }
   return parseApiResponse<T>(upperMethod, url, payload);
 }
 
 /** Anonymous public cluster dashboard — credentials omitted. */
 export async function fetchPubClusterDashboard<T = unknown>(): Promise<T> {
-  const res = await fetch("/api/pub/cluster-dashboard/", {
-    method: "GET",
-    headers: { Accept: "application/json" },
-    credentials: "omit",
-  });
-  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!res.ok) {
-    const message =
-      (typeof data.detail === "string" && data.detail) ||
-      (typeof data.error === "string" && data.error) ||
-      `HTTP ${res.status}`;
-    throw new Error(message);
-  }
-  return data as T;
+  return customFetch<T>(
+    { url: "/api/pub/cluster-dashboard/", method: "GET" },
+    { credentials: "omit" },
+  );
 }

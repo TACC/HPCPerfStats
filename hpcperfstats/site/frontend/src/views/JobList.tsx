@@ -1,11 +1,13 @@
 import { useRouter, useParams, usePathname, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import type { Dispatch, MouseEvent, SetStateAction } from "react";
 import ReactPaginate from "react-paginate";
-import { api } from "@/api";
+import { jobsHistogramsRetrieve } from "@/api/generated/jobs/jobs";
 import type { JobListEntry } from "@/api/generated/models/jobListEntry";
 import type { JobListData, JobListHistogramEntry, MetricHistStatusMap } from "@/types/view-models";
+import { HISTOGRAM_EMBED_VERSION } from "@/api-paths";
+import { useJobListQuery } from "@/hooks/use-job-list";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -93,6 +95,7 @@ type LoadHistogramArgs = {
   metric: MetricName;
   params: Record<string, string>;
   setMetricHistStatus: Dispatch<SetStateAction<MetricHistStatusMap>>;
+  signal?: AbortSignal;
 };
 type SortField =
   | "jid"
@@ -162,13 +165,24 @@ async function loadHistogramForMetric({
   metric,
   params,
   setMetricHistStatus,
+  signal,
 }: LoadHistogramArgs): Promise<JobListHistogramEntry | null> {
   setMetricHistStatus((prev) => ({
     ...prev,
     [metric]: { loading: true, error: null },
   }));
   try {
-    const metricData = (await api.getJobMetricHistogram(params, metric)) as HistogramApiEntry | null;
+    const histParams = {
+      ...params,
+      group: "metric",
+      metric,
+      _histogram_embed_v: HISTOGRAM_EMBED_VERSION,
+    };
+    const metricData = (await jobsHistogramsRetrieve(
+      histParams,
+      undefined,
+      signal,
+    )) as HistogramApiEntry | null;
     if (!metricData) return null;
     setMetricHistStatus((prev) => ({
       ...prev,
@@ -201,20 +215,15 @@ export default function JobList() {
   const paramsFromRoute = useParams() as RouteParams;
   const pathname = usePathname();
   const router = useRouter();
-  const [data, setData] = useState<JobListApiResponse | null>(null);
-  const [histograms, setHistograms] = useState<JobListHistogramEntry[] | null>(null);
   const metricNames: MetricName[] = ["runtime", "nhosts", "queue_wait"];
+  const [histograms, setHistograms] = useState<JobListHistogramEntry[] | null>(null);
   const createInitialMetricStatus = (): MetricHistStatusMap =>
     metricNames.reduce<MetricHistStatusMap>((acc, metric) => {
       acc[metric] = { loading: false, error: null };
       return acc;
     }, {});
   const [metricHistStatus, setMetricHistStatus] = useState<MetricHistStatusMap>(createInitialMetricStatus);
-  const [error, setError] = useState<string | null>(null);
-  const [initialLoading, setInitialLoading] = useState(true);
-  const [tableBusy, setTableBusy] = useState(false);
   const [histogramReloadKey, setHistogramReloadKey] = useState(0);
-  const prevSearchKeyRef = useRef("");
   const { openExtendedSearch } = useExtendedSearchLayout();
   const listViewTab = readTabFromSearchParams(searchParams, "view", "jobs");
   const [isLgUp, setIsLgUp] = useState(() =>
@@ -247,6 +256,20 @@ export default function JobList() {
     [searchParams],
   );
 
+  const listApiParams = useMemo(
+    () => buildJobListApiParams(asURLSearchParams, paramsFromRoute),
+    [asURLSearchParams, paramsFromRoute],
+  );
+
+  const {
+    data,
+    error,
+    initialLoading,
+    tableBusy,
+  } = useJobListQuery(listApiParams);
+
+  const jobListData = data as JobListApiResponse | null;
+
   function setListViewTab(tab: "jobs" | "charts") {
     const next = searchParamsWithTab(searchParams, "view", tab === "jobs" ? null : tab);
     const qs = next.toString();
@@ -254,50 +277,24 @@ export default function JobList() {
   }
 
   useEffect(() => {
-    const params = buildJobListApiParams(asURLSearchParams, paramsFromRoute);
-    const curr = new URLSearchParams(searchParams);
-    const prev = new URLSearchParams(prevSearchKeyRef.current);
-    curr.delete("page");
-    curr.delete("view");
-    prev.delete("page");
-    prev.delete("view");
-    const pageOnly =
-      prevSearchKeyRef.current !== "" &&
-      curr.toString() === prev.toString() &&
-      data != null;
-    prevSearchKeyRef.current = searchParams.toString();
+    const params = listApiParams;
+    const controller = new AbortController();
 
-    if (pageOnly) {
-      setTableBusy(true);
-    } else {
-      setInitialLoading(true);
-      setData(null);
-    }
-    setError(null);
-    // Load job list first so the table renders quickly
-    api
-      .getJobList(params)
-      .then((listData) => {
-        setData(listData as JobListApiResponse);
-      })
-      .catch((e: unknown) =>
-        setError(e instanceof Error ? e.message : "Failed to load job list."),
-      )
-      .finally(() => {
-        setInitialLoading(false);
-        setTableBusy(false);
-      });
-
-    // Then load histograms separately so they don't block the list
     setHistograms(null);
     setMetricHistStatus(createInitialMetricStatus());
 
     const loadHistograms = async () => {
       const metricPromises = metricNames.map((metric) =>
-        loadHistogramForMetric({ metric, params, setMetricHistStatus })
+        loadHistogramForMetric({
+          metric,
+          params,
+          setMetricHistStatus,
+          signal: controller.signal,
+        }),
       );
 
       const metricResults = await Promise.all(metricPromises);
+      if (controller.signal.aborted) return;
       const metricHistograms = metricResults.filter(
         (entry): entry is JobListHistogramEntry => entry != null,
       );
@@ -305,25 +302,26 @@ export default function JobList() {
       setHistograms(metricHistograms);
     };
 
-    loadHistograms();
-  }, [searchParams, paramsFromRoute, histogramReloadKey, asURLSearchParams]);
+    void loadHistograms();
+    return () => controller.abort();
+  }, [listApiParams, histogramReloadKey]);
 
   const routeCtx = jobListRouteTitleContext(paramsFromRoute, asURLSearchParams);
   const documentTitleSegment = buildJobListTitle({
     error,
     loading: initialLoading,
-    data,
+    data: jobListData,
     routeCtx,
   });
   useDocumentTitle(documentTitleSegment);
 
   const filterSummaryLines = isExtendedSearchJobsRoute(pathname)
     ? buildJobListFilterSummaryLines(asURLSearchParams)
-    : data?.filter_summary?.length
-      ? data.filter_summary
+    : jobListData?.filter_summary?.length
+      ? jobListData.filter_summary
       : [];
 
-  if (initialLoading && !data) {
+  if (initialLoading && !jobListData) {
     return (
       <div className="job-list-skeleton" aria-busy="true">
         <span className="sr-only" role="status" aria-label="Loading job list">
@@ -347,7 +345,7 @@ export default function JobList() {
     );
   }
   if (error) return <BannerErrorMessage message={error} />;
-  if (!data) return null;
+  if (!jobListData) return null;
 
   const {
     job_list = [],
@@ -357,7 +355,7 @@ export default function JobList() {
     qname,
     order_by: responseOrderBy = "-end_time",
     pagination = {},
-  } = data;
+  } = jobListData;
   const totalNodeHours = aggregates.total_node_hours;
   const queueWaitMeanHours = aggregates.queue_wait_mean_hours;
   const page = pagination.page ?? 1;

@@ -15,7 +15,8 @@ alwaysApply: false
 - **Shadcn/ui + Tailwind CSS v4** — components in `src/components/ui/`; theme in `src/globals.css`; see **`shadcn-ui-frontend.mdc`**.
 - **Strict TypeScript** — `strict: true` in `tsconfig.json`; avoid `any`; use generated OpenAPI types where available.
 - **TanStack Query** — server state via Orval-generated hooks; do not add ad hoc `useEffect`+`fetch` for API data unless Orval lacks an endpoint.
-- **Orval** — client generated from committed `hpcperfstats/site/openapi/openapi.yaml`; custom mutator in `src/api/fetch-mutator.ts` (credentials, CSRF, 401 redirect).
+- **Orval** — client generated from committed `hpcperfstats/site/openapi/openapi.yaml`; custom mutator in `src/api/fetch-mutator.ts` (credentials, CSRF, `ApiError` on non-2xx, 401 redirect).
+- **Parse boundary** — success JSON validated in `parse-api-response.ts` / `response-schema-registry.ts`; prefer thin hooks in `src/hooks/` over the legacy `api/index.ts` facade.
 - **Forms** — React Hook Form + Zod schemas (`src/schemas/` or colocated `*-schema.ts`); mirror validation in Zod + drift tests.
 - **Bokeh** — `'use client'` only; embed via `BokehEmbed`; see **`bokeh-layout-surface-split.mdc`**.
 

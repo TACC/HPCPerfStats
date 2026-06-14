@@ -14,9 +14,17 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Menu } from "lucide-react";
 import { api } from "@/api";
-import type { ApiErrorBody } from "@/types/view-models";
+import {
+  getHomeRetrieveQueryKey,
+} from "@/api/generated/home/home";
+import {
+  getSessionRetrieveQueryKey,
+  useSessionDropStaffCreate,
+} from "@/api/generated/session/session";
+import { getApiBody, getErrorMessage } from "@/api/get-error-message";
 import LoadingMessage from "./components/LoadingMessage";
 import { ExtendedSearchLayoutContext } from "./context/extended-search-layout-context";
 import { useFocusTrap } from "./hooks/useFocusTrap";
@@ -42,21 +50,11 @@ type LayoutProps = {
   children: ReactNode;
 };
 
-function getApiBody(value: unknown): ApiErrorBody {
-  return value && typeof value === "object" ? (value as ApiErrorBody) : {};
-}
-
-function getErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof Error && error.message.trim()) return error.message;
-  const body = getApiBody(error);
-  if (typeof body.message === "string" && body.message.trim()) return body.message;
-  if (typeof body.detail === "string" && body.detail.trim()) return body.detail;
-  return fallback;
-}
-
 export default function Layout({ session, onSessionChange, children }: LayoutProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const queryClient = useQueryClient();
+  const dropStaffMutation = useSessionDropStaffCreate();
   const machineName =
     session && typeof session.machine_name === "string" ? session.machine_name : "";
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
@@ -140,7 +138,8 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
     setIsDroppingStaff(true);
     setStaffMessage("");
     try {
-      const response = await api.dropStaffForSession();
+      const response = await dropStaffMutation.mutateAsync();
+      await queryClient.invalidateQueries({ queryKey: getSessionRetrieveQueryKey() });
       const refreshedSession = await api.getSession();
       if (typeof onSessionChange === "function") {
         onSessionChange(
@@ -189,6 +188,7 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
       setStaffMessage(
         `Invalidated ${deletedCount} cache key${deletedCount === 1 ? "" : "s"} for ${pagePathForCache}.`,
       );
+      void queryClient.invalidateQueries({ queryKey: getHomeRetrieveQueryKey() });
     } catch (error: unknown) {
       setStaffMessage(getErrorMessage(error, "Unable to invalidate cache for this page."));
     } finally {

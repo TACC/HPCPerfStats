@@ -11,6 +11,26 @@ def _auth_responses():
     }
 
 
+def _common_error_responses():
+    """Document frequent non-success statuses (envelope unchanged: error/detail keys)."""
+    return {
+        404: OpenApiResponse(response=os.ErrorDetailSerializer, description="Not found"),
+        409: OpenApiResponse(response=os.ErrorDetailSerializer, description="Conflict"),
+        413: OpenApiResponse(response=os.ErrorDetailSerializer, description="Payload too large"),
+        429: OpenApiResponse(response=os.ErrorDetailSerializer, description="Too many requests"),
+        500: OpenApiResponse(response=os.ErrorDetailSerializer, description="Server error"),
+    }
+
+
+def _async_loading_responses():
+    return {
+        202: OpenApiResponse(
+            response=os.JobPlotsResponseSerializer,
+            description="Plots still generating; retry after retry_after_seconds",
+        ),
+    }
+
+
 SESSION_SCHEMA = extend_schema(
     tags=["session"],
     responses={200: os.SessionInfoSerializer, **_auth_responses()},
@@ -61,7 +81,11 @@ JOB_LIST_SCHEMA = extend_schema(
         OpenApiParameter(name="year", type=int, location=OpenApiParameter.QUERY),
         OpenApiParameter(name="date", type=str, location=OpenApiParameter.QUERY),
     ],
-    responses={200: os.JobListResponseSerializer, **_auth_responses()},
+    responses={
+        200: os.JobListResponseSerializer,
+        **_auth_responses(),
+        **_common_error_responses(),
+    },
 )
 
 JOB_LIST_HISTOGRAMS_SCHEMA = extend_schema(
@@ -70,7 +94,11 @@ JOB_LIST_HISTOGRAMS_SCHEMA = extend_schema(
         OpenApiParameter(name="group", type=str, location=OpenApiParameter.QUERY, required=True),
         OpenApiParameter(name="metric", type=str, location=OpenApiParameter.QUERY),
     ],
-    responses={200: os.JobListResponseSerializer, **_auth_responses()},
+    responses={
+        200: os.JobListResponseSerializer,
+        **_auth_responses(),
+        **_common_error_responses(),
+    },
 )
 
 JOB_DETAIL_SCHEMA = extend_schema(
@@ -78,7 +106,11 @@ JOB_DETAIL_SCHEMA = extend_schema(
     parameters=[
         OpenApiParameter(name="light", type=int, location=OpenApiParameter.QUERY),
     ],
-    responses={200: os.JobDetailResponseSerializer, **_auth_responses()},
+    responses={
+        200: os.JobDetailResponseSerializer,
+        **_auth_responses(),
+        **_common_error_responses(),
+    },
 )
 
 JOB_PLOTS_SCHEMA = extend_schema(
@@ -88,12 +120,21 @@ JOB_PLOTS_SCHEMA = extend_schema(
         OpenApiParameter(name="zoom", type=str, location=OpenApiParameter.QUERY),
         OpenApiParameter(name="progressive", type=str, location=OpenApiParameter.QUERY),
     ],
-    responses={200: os.JobPlotsResponseSerializer, **_auth_responses()},
+    responses={
+        200: os.JobPlotsResponseSerializer,
+        **_auth_responses(),
+        **_common_error_responses(),
+        **_async_loading_responses(),
+    },
 )
 
 TYPE_DETAIL_SCHEMA = extend_schema(
     tags=["jobs"],
-    responses={200: os.TypeDetailResponseSerializer, **_auth_responses()},
+    responses={
+        200: os.TypeDetailResponseSerializer,
+        **_auth_responses(),
+        **_common_error_responses(),
+    },
 )
 
 HOST_PLOT_SCHEMA = extend_schema(
@@ -112,7 +153,11 @@ ADMIN_MONITOR_SCHEMA = extend_schema(
         OpenApiParameter(name="section", type=str, location=OpenApiParameter.QUERY, required=True),
         OpenApiParameter(name="refresh", type=str, location=OpenApiParameter.QUERY),
     ],
-    responses={200: os.AdminMonitorResponseSerializer, **_auth_responses()},
+    responses={
+        200: os.AdminMonitorResponseSerializer,
+        **_auth_responses(),
+        **_common_error_responses(),
+    },
 )
 
 JOB_MONITOR_SCHEMA = extend_schema(
@@ -141,6 +186,7 @@ SACCT_INGEST_SCHEMA = extend_schema(
     responses={
         200: os.SacctIngestResponseSerializer,
         **_auth_responses(),
+        **_common_error_responses(),
     },
 )
 

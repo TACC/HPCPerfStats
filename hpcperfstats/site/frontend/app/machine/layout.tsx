@@ -1,6 +1,9 @@
 "use client";
 
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { getSessionRetrieveQueryKey } from "@/api/generated/session/session";
+import type { SessionInfo } from "@/api/generated/models/sessionInfo";
 import { applyBokehResizeObserverDeferral } from "@/patch-resize-observer-for-bokeh";
 import { useSessionRetrieve } from "@/api/generated/session/session";
 import Layout from "@/Layout";
@@ -9,6 +12,15 @@ import { SessionContext, type SessionData } from "@/session-context";
 import { useDocumentTitle } from "@/utils/useDocumentTitle";
 
 applyBokehResizeObserverDeferral();
+
+function sessionFromApi(data: SessionInfo): SessionData {
+  return {
+    logged_in: data.logged_in,
+    username: data.username,
+    is_staff: data.is_staff,
+    machine_name: data.machine_name,
+  };
+}
 
 function SessionGateLayout({ message, title }: { message: string; title: string }) {
   useDocumentTitle(title);
@@ -25,18 +37,25 @@ function SessionGateLayout({ message, title }: { message: string; title: string 
 }
 
 export default function MachineLayout({ children }: { children: React.ReactNode }) {
+  const queryClient = useQueryClient();
   const { data: sessionData, isLoading, isError } = useSessionRetrieve();
 
   const session: SessionData | null = sessionData
-    ? {
-        logged_in: sessionData.logged_in,
-        username: sessionData.username,
-        is_staff: sessionData.is_staff,
-        machine_name: sessionData.machine_name,
-      }
+    ? sessionFromApi(sessionData)
     : isError
       ? null
       : null;
+
+  const handleSessionChange = useCallback(
+    (next: SessionData | null) => {
+      if (next) {
+        queryClient.setQueryData(getSessionRetrieveQueryKey(), next);
+      } else {
+        void queryClient.invalidateQueries({ queryKey: getSessionRetrieveQueryKey() });
+      }
+    },
+    [queryClient],
+  );
 
   useEffect(() => {
     if (isLoading) return;
@@ -56,7 +75,7 @@ export default function MachineLayout({ children }: { children: React.ReactNode 
 
   return (
     <SessionContext.Provider value={session}>
-      <Layout session={session} onSessionChange={() => {}}>
+      <Layout session={session} onSessionChange={handleSessionChange}>
         {children}
       </Layout>
     </SessionContext.Provider>

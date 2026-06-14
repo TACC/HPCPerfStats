@@ -1,10 +1,13 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { vi } from "vitest";
 import { axeSeriousViolations } from "./axe-test-utils";
 import Layout from "./Layout";
 import { api } from "@/api";
+
+const mutateAsync = vi.fn();
 
 vi.mock("./hooks/use-home-options", () => ({
   useHomeOptions: vi.fn(() => ({
@@ -14,13 +17,27 @@ vi.mock("./hooks/use-home-options", () => ({
   })),
 }));
 
+vi.mock("@/api/generated/session/session", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/api/generated/session/session")>();
+  return {
+    ...actual,
+    useSessionDropStaffCreate: () => ({
+      mutateAsync,
+      isPending: false,
+    }),
+  };
+});
+
+function renderWithProviders(ui: ReactNode) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
+
 function renderLayout(session, onSessionChange = vi.fn()) {
-  return render(
-    <>
-      <Layout session={session} onSessionChange={onSessionChange}>
-        <div>Child content</div>
-      </Layout>
-    </>,
+  return renderWithProviders(
+    <Layout session={session} onSessionChange={onSessionChange}>
+      <div>Child content</div>
+    </Layout>,
   );
 }
 
@@ -32,17 +49,16 @@ function SessionHarness() {
   });
 
   return (
-    <>
-      <Layout session={session} onSessionChange={setSession}>
-        <div>Child content</div>
-      </Layout>
-    </>
+    <Layout session={session} onSessionChange={setSession}>
+      <div>Child content</div>
+    </Layout>
   );
 }
 
 describe("Layout", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    mutateAsync.mockReset();
   });
 
   it("shows staff actions menu only for staff sessions", async () => {
@@ -64,7 +80,7 @@ describe("Layout", () => {
 
   it("demotes staff session and displays login notice", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    vi.spyOn(api, "dropStaffForSession").mockResolvedValue({
+    mutateAsync.mockResolvedValue({
       ok: true,
       message:
         "Staff access removed for this session. Log out and log back in to restore staff access.",
@@ -77,12 +93,12 @@ describe("Layout", () => {
     });
 
     const user = userEvent.setup();
-    render(<SessionHarness />);
+    renderWithProviders(<SessionHarness />);
 
     await user.click(screen.getByRole("button", { name: "Staff actions" }));
     await user.click(await screen.findByText("Disable Staff Permissions"));
 
-    expect(api.dropStaffForSession).toHaveBeenCalledTimes(1);
+    expect(mutateAsync).toHaveBeenCalledTimes(1);
     expect(api.getSession).toHaveBeenCalledTimes(1);
     expect(
       await screen.findByText(
