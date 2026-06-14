@@ -1,0 +1,4 @@
+# Orval Zod output — do not commit. Regenerate from committed openapi.yaml:
+#   cd hpcperfstats/site/frontend && npm run generate:api
+*
+!.gitignore

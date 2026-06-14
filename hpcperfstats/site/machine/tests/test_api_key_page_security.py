@@ -3,9 +3,14 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
 from django.test import Client
 
 from hpcperfstats.site.machine.models import ApiKey
+
+from .csrf_test_utils import csrf_headers
+
+pytestmark = pytest.mark.django_db(databases=[])
 
 
 def _csrf_headers(client):
@@ -111,3 +116,51 @@ class TestUserApiKeyApiSecurity:
     """Raw key in JSON is the one-time display value; DB stores hash via model helper."""
     raw = "a" * 64
     assert ApiKey.hash_raw_key(raw) != raw
+
+
+class TestSessionMutatingPostCsrf:
+  """Regression: all browser-mutable session POST endpoints require X-CSRFToken."""
+
+  def _staff_session(self, client):
+    session = client.session
+    session["access_token"] = "token"
+    session["username"] = "alice"
+    session["is_staff"] = True
+    session.save()
+    return session
+
+  def test_drop_staff_requires_csrf_header(self):
+    client = Client()
+    self._staff_session(client)
+    response = client.post("/api/session/drop-staff/")
+    assert response.status_code == 403
+    assert response.json()["detail"] == "CSRF token missing"
+
+  def test_drop_staff_succeeds_with_csrf_header(self):
+    client = Client()
+    self._staff_session(client)
+    response = client.post("/api/session/drop-staff/", **csrf_headers())
+    assert response.status_code == 200
+    assert response.json()["is_staff"] is False
+
+  def test_invalidate_cache_requires_csrf_header(self):
+    client = Client()
+    self._staff_session(client)
+    response = client.post(
+        "/api/cache/invalidate-page/",
+        data='{"page_path": "/machine/jobs/"}',
+        content_type="application/json",
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"] == "CSRF token missing"
+
+  def test_sacct_ingest_requires_csrf_header(self):
+    client = Client()
+    self._staff_session(client)
+    response = client.post(
+        "/api/sacct/ingest/?date=2024-01-01",
+        data="jid|user|acct",
+        content_type="text/plain",
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"] == "CSRF token missing"

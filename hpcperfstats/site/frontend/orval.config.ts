@@ -1,8 +1,10 @@
 import { defineConfig } from "orval";
 
+const input = "../openapi/openapi.yaml";
+
 export default defineConfig({
   hpcperfstats: {
-    input: "../openapi/openapi.yaml",
+    input,
     output: {
       mode: "tags-split",
       target: "./src/api/generated",
@@ -12,6 +14,25 @@ export default defineConfig({
         mutator: {
           path: "./src/api/fetch-mutator.ts",
           name: "customFetch",
+        },
+      },
+    },
+  },
+  hpcperfstatsZod: {
+    input,
+    output: {
+      mode: "tags-split",
+      target: "./src/api/generated-zod",
+      client: "zod",
+      override: {
+        zod: {
+          generate: {
+            response: true,
+            body: true,
+            query: true,
+            param: true,
+            header: true,
+          },
         },
       },
     },

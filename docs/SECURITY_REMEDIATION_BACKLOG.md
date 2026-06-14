@@ -28,6 +28,10 @@ Prioritized follow-ups from [SECURITY_AUDIT.md](SECURITY_AUDIT.md). Update this 
 | API key pepper decision | Deferred by policy (optional); current SHA-256 + high-entropy key design retained and documented. |
 | Bandit B608 review posture | Keep as ongoing review requirement when SQL helper modules change; no user-controlled identifiers accepted. |
 | Anonymous public metrics JSON | **`GET /api/pub/cluster-dashboard/`** is AllowAny + **`PublicClusterDashboardThrottle`** (`public_cluster_dashboard` rate; legacy env `API_THROTTLE_PUBLIC_MONTHLY_METRICS_RATE` falls back if unset); payloads are pre-warmed aggregates only—extend abuse review if new `/api/pub/**` routes ship. |
+| CSRF server parity (F10) | `_require_csrf_for_session_post` on staff/session POST routes; `@ensure_csrf_cookie` on `session_info`; `CSRF_TRUSTED_ORIGINS` aligned with CORS; client mutator fail-closed; Django + Vitest regression tests. |
+| Runtime API validation (F11) | Orval `@orval/zod` dual output (`generated-zod/`) + `parseApiResponse` in `customFetch`; `bokehJsonItemSchema` at Bokeh embed boundaries. |
+| URL href safety (F12) | `isSafeHttpUrl` + `encodeURIComponent` on Job Detail entity/external links; Vitest coverage. |
+| Bokeh CSP staging (F5) | Path-scoped CSP middleware; report-only without `unsafe-eval`; CustomJS hovers/ticks replaced with Python pre-formatting in analysis plots. |
 
 ## History
 
@@ -36,4 +40,4 @@ Prioritized follow-ups from [SECURITY_AUDIT.md](SECURITY_AUDIT.md). Update this 
 | 2026-05-06 | Initial backlog; marked CSP report fix done. |
 | 2026-05-06 | Closed all P0/P1 items from initial memo and moved them to Done with implementation notes. |
 | 2026-05-07 | Anonymous public metrics Done row aligned with **`/api/pub/cluster-dashboard/`** throttle + legacy env fallback. |
-| 2026-06-05 | Re-audit: production deps clean; added optional P2 for local audit workflow vs `docker-compose.app.yaml` overlay (F9). |
+| 2026-06-13 | Done rows for F10–F12 and partial F5 Bokeh CSP remediation. |

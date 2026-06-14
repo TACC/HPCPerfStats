@@ -2,6 +2,8 @@
  * Orval mutator: session cookie auth, CSRF header, 401 → login_prompt redirect.
  */
 
+import { parseApiResponse } from "./parse-api-response";
+
 export type ErrorType<T> = T;
 
 export type OrvalRequestConfig = {
@@ -42,7 +44,14 @@ export async function customFetch<T>(
   options: RequestInit = {},
 ): Promise<T> {
   const { url, method, params, data, headers: configHeaders, signal } = config;
+  const upperMethod = (method || "GET").toUpperCase();
   const csrfToken = getCookie("csrftoken");
+  if (
+    ["POST", "PUT", "PATCH", "DELETE"].includes(upperMethod) &&
+    !csrfToken
+  ) {
+    throw new Error("CSRF token missing");
+  }
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Accept: "application/json",
@@ -80,7 +89,7 @@ export async function customFetch<T>(
       `HTTP ${res.status}`;
     throw new Error(message);
   }
-  return payload as T;
+  return parseApiResponse<T>(upperMethod, url, payload);
 }
 
 /** Anonymous public cluster dashboard — credentials omitted. */

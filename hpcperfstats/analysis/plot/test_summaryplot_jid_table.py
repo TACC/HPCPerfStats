@@ -555,7 +555,6 @@ def test_summaryplot_uses_job_window_for_x_range():
 def test_summaryplot_plot_metric_keeps_utc_epoch_for_data_and_x_range():
   """Summary metric plots pass UTC instants to Bokeh for both data and x_range."""
   from bokeh.models import HoverTool, Range1d
-  from bokeh.models.tools import CustomJSHover
   from bokeh.util.serialization import convert_datetime_type
 
   t0 = pd.Timestamp("2024-06-01 10:00:00+00:00")
@@ -595,10 +594,10 @@ def test_summaryplot_plot_metric_keeps_utc_epoch_for_data_and_x_range():
       for tool in plot.tools
       if isinstance(tool, HoverTool)
       and isinstance(tool.tooltips, str)
-      and "@cpu{custom}" in tool.tooltips
+      and "@cpu_plain" in tool.tooltips
   ][0]
-  assert isinstance(hover.formatters["@time"], CustomJSHover)
-  assert "@time{custom}" in hover.tooltips
+  assert hover.formatters == {}
+  assert "@_hover_time" in hover.tooltips
 
 
 def test_summaryplot_orders_cpu_then_gpu_then_ibbw():

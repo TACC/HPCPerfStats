@@ -15,7 +15,7 @@ from hpcperfstats.analysis.gen.utils import (
     INTEL_CORE_PMC_TYPES_ORDERED,
     INTEL_FP_ARITH_ALL_EVENTS,
     INTEL_LEGACY_SSE_FLOP_EVENTS,
-    new_plain_number_hover_formatter,
+    format_plain_decimal,
 )
 from hpcperfstats.monitor_naming.resolve import (
     amd_df_type_names,
@@ -66,8 +66,8 @@ def _hover_tooltip_html_roofline_job():
     <div style="padding-bottom:6px; margin-bottom:6px; border-bottom:1px solid #d0d7de;">
       <div><strong>Line:</strong> Job</div>
       <div><strong>host:</strong> @host</div>
-      <div><strong>AI (FLOP/byte):</strong> @ai{custom}</div>
-      <div><strong>Perf (GFLOP/s):</strong> @perf{custom}</div>
+      <div><strong>AI (FLOP/byte):</strong> @ai_plain</div>
+      <div><strong>Perf (GFLOP/s):</strong> @perf_plain</div>
       <div><strong>time:</strong> @time</div>
     </div>
   """
@@ -374,7 +374,16 @@ def _build_roofline_figure(
     ai_curve.extend(flat_ai)
     perf_curve.extend([peak_flops_gf] * len(flat_ai))
 
-    source = ColumnDataSource(dict(ai=ai, perf=perf, host=host, time=time_vals))
+    source = ColumnDataSource(
+        dict(
+            ai=ai,
+            perf=perf,
+            host=host,
+            time=time_vals,
+            ai_plain=[format_plain_decimal(v) for v in ai],
+            perf_plain=[format_plain_decimal(v) for v in perf],
+        ),
+    )
     roof_source = ColumnDataSource(dict(ai=ai_curve, perf=perf_curve))
 
     # No legend; identify series by hovering (popup shows line name).
@@ -382,11 +391,8 @@ def _build_roofline_figure(
         tooltips=[("Line", "Roofline")],
         renderers=[],  # set after line is added
     )
-    hover_num_ai = new_plain_number_hover_formatter()
-    hover_num_perf = new_plain_number_hover_formatter()
     hover_job = HoverTool(
         tooltips=_hover_tooltip_html_roofline_job(),
-        formatters={"@ai": hover_num_ai, "@perf": hover_num_perf},
         renderers=[],  # set after circle is added
     )
     p = figure(

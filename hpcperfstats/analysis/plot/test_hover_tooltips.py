@@ -2,7 +2,6 @@
 import html
 import pandas as pd
 from bokeh.models import HoverTool
-from bokeh.models.tools import CustomJSHover
 
 from hpcperfstats.analysis.plot.devplot import DevPlot
 from hpcperfstats.analysis.plot.roofline import _build_roofline_figure
@@ -39,14 +38,13 @@ def test_summaryplot_hover_uses_html_with_separators():
   })
 
   plot = sp.plot_metric(df, "cpu", "CPU Usage [#cores]")
-  hover = _get_series_hover_tool(plot, "@cpu{custom}")
+  hover = _get_series_hover_tool(plot, "@cpu_plain")
 
   assert isinstance(hover.tooltips, str)
   assert "border-bottom" in hover.tooltips
-  assert "@time{custom}" in hover.tooltips
-  assert "@cpu{custom}" in hover.tooltips
-  assert isinstance(hover.formatters["@time"], CustomJSHover)
-  assert isinstance(hover.formatters["@cpu"], CustomJSHover)
+  assert "@_hover_time" in hover.tooltips
+  assert "@cpu_plain" in hover.tooltips
+  assert hover.formatters == {}
   assert len(hover.renderers) == 1
 
   help_hovers = [
@@ -105,14 +103,13 @@ def test_devplot_hover_uses_html_with_separators():
   })
 
   plot = dp.plot_metric(df, "MBW_CHANNEL_0", "GB/s")
-  hover = _get_series_hover_tool(plot, "@MBW_CHANNEL_0{custom}")
+  hover = _get_series_hover_tool(plot, "@MBW_CHANNEL_0_plain")
 
   assert isinstance(hover.tooltips, str)
   assert "border-bottom" in hover.tooltips
-  assert "@time{custom}" in hover.tooltips
-  assert "@MBW_CHANNEL_0{custom}" in hover.tooltips
-  assert isinstance(hover.formatters["@time"], CustomJSHover)
-  assert isinstance(hover.formatters["@MBW_CHANNEL_0"], CustomJSHover)
+  assert "@_hover_time" in hover.tooltips
+  assert "@MBW_CHANNEL_0_plain" in hover.tooltips
+  assert hover.formatters == {}
   assert len(hover.renderers) == 2
 
 
@@ -133,13 +130,12 @@ def test_roofline_job_hover_uses_html_with_separators():
   tools = [tool for tool in plot.tools if isinstance(tool, HoverTool)]
   job_hovers = [
       hover for hover in tools
-      if isinstance(hover.tooltips, str) and "@ai{custom}" in hover.tooltips
+      if isinstance(hover.tooltips, str) and "@ai_plain" in hover.tooltips
   ]
   assert len(job_hovers) == 1
   hover = job_hovers[0]
 
   assert "border-bottom" in hover.tooltips
-  assert "@perf{custom}" in hover.tooltips
+  assert "@perf_plain" in hover.tooltips
   assert "@host" in hover.tooltips
-  assert isinstance(hover.formatters["@ai"], CustomJSHover)
-  assert isinstance(hover.formatters["@perf"], CustomJSHover)
+  assert hover.formatters == {}

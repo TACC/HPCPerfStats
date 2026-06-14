@@ -12,6 +12,7 @@ import {
   isVitestLike,
 } from "../utils/bokeh-embed-defaults";
 import { prepareBokehJsonItemForEmbed } from "../utils/remap-bokeh-json-item-ids";
+import { parseBokehJsonItem } from "@/schemas/api/bokeh-json-item-schema";
 import { waitForBokehEmbedDocumentIdle } from "../utils/bokeh-when-document-idle";
 import { ensureBokehLoaded } from "../bokehInit";
 
@@ -400,6 +401,10 @@ export default function BokehEmbed({
 
   useEffect(() => {
     if (!item || !viewportAllowsEmbed) return;
+    if (!parseBokehJsonItem(item)) {
+      failEmbed("Plot payload was invalid; data is unavailable.");
+      return;
+    }
 
     let cancelled = false;
     const bokehWait = new AbortController();

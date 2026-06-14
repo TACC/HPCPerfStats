@@ -55,11 +55,14 @@ No high-severity issues. Production-code medium B608 locations (2026-06-05): `an
 | F2 | Medium | AuthN | `check_for_tokens` now enforces session idle/absolute limits, periodic token validation, and refresh-token fallback. | **Fixed** |
 | F3 | Medium | Abuse | DRF throttles added for authenticated baseline + expensive routes + staff ingest; `sacct_ingest` now enforces app-level request-size limit. | **Fixed** |
 | F4 | Medium | Config | `CORS_ALLOWED_ORIGINS` now parses env and fails fast in production if unset or using dev localhost origins. | **Fixed** |
-| F5 | Low | CSP | Enforced CSP includes `unsafe-inline` / `unsafe-eval` for Bokeh; accepted tradeoff—documented in project rules. | Accepted risk |
+| F5 | Low | CSP | Enforced CSP still includes `unsafe-eval` on Bokeh-heavy routes (`/api/jobs/`, `/api/host_plot/`); strict CSP (no `unsafe-eval`) on `/login_prompt`, `/pub/`, and other non-Bokeh API shells. Report-only policy omits `unsafe-eval` to stage tightening. CustomJS removed from plot pipeline (Python pre-formatted hovers). | **Partially mitigated** |
 | F6 | Medium | Observability | `/csp-report/` returned **403** for browser-style POSTs when CSRF checks apply (no CSRF token on CSP reports). | **Fixed** (csrf_exempt + body cap; tests) |
 | F7 | Low | API keys | Stored as SHA-256 of high-entropy raw key; consider a pepper if policy requires. | Open (optional) |
 | F8 | Low | Subprocess/SQL | Ingest/archive uses subprocess and raw SQL with parameters; keep arguments non-user-controlled. | Ongoing review |
 | F9 | Low | Operations | Local `run_security_audit_workflow.sh` can fail when gitignored `docker-compose.app.yaml` is present without `hpcperfstatsdata` host path; CI path unaffected. | Open (workflow hardening optional) |
+| F10 | Medium | CSRF | Session-authenticated POST endpoints (`drop-staff`, `invalidate-cache`, `sacct_ingest`, `user-api-key/rotate`) now share `_require_csrf_for_session_post`; `session_info` sets `csrftoken` via `@ensure_csrf_cookie`; client mutator fails closed without cookie. | **Fixed** |
+| F11 | Medium | Input validation | Orval `@orval/zod` response parsing at `customFetch` boundary; hand-written `bokehJsonItemSchema` at embed boundaries. | **Fixed** |
+| F12 | Low | XSS (href) | `isSafeHttpUrl` guards `client_url` / `server_url` in Job Detail; entity paths use `encodeURIComponent`. | **Fixed** |
 
 ## Positive controls (summary)
 
@@ -88,4 +91,4 @@ No high-severity issues. Production-code medium B608 locations (2026-06-05): `an
 | 2026-05-07 | **`/pub/monthly-metrics`** and **`GET /api/pub/monthly-metrics/`** rebranded to **`/pub/cluster-dashboard`** and **`GET /api/pub/cluster-dashboard/`** (throttle scope **`public_cluster_dashboard`**; legacy env **`API_THROTTLE_PUBLIC_MONTHLY_METRICS_RATE`** still honored as fallback). |
 | 2026-05-07 | **`robots.txt`**: nginx serves a Vite-built static file; Allow-list registry is **`publicRobotsAllowPrefixes.js`** (edge headers in **`nginx-edge-security-headers.inc`**). |
 | 2026-06-05 | Scheduled re-audit: production-image **pip-audit** clean; **npm audit** clean; bandit unchanged (6 prod B608); dependency floors bumped in **`pyproject.toml`**; documented local compose-overlay audit workflow caveat (F9). |
-| 2026-06-12 | Frontend npm re-audit after Next.js migration: baseline **19** advisories → **0** via lockfile refresh + **`overrides`**; Vitest 278 passed, `npm run build` green; see **`test_runs/npm_audit_remediation_2026-06-12.md`**. |
+| 2026-06-13 | Frontend + API security remediation: F10 CSRF parity, F11 Orval Zod + Bokeh structural validation, F12 URL href guards; F5 CSP path-scoped + CustomJS removal (partial). |

@@ -7,20 +7,16 @@ paths:
   /api/admin_monitor/:
     get:
       operationId: admin_monitor_retrieve
-      description: |-
-        Staff-only: HPCPerfStats Monitor data (host timestamps, cache/Redis, RabbitMQ, TimescaleDB stats).
-
-        Supports a lightweight, per-section API via the optional 'section' query
-        param:
-        - ?section=hosts      -> {"host_stats": [...]}
-        - ?section=rabbitmq_hosts -> {"rabbitmq_host_stats": [...]}
-        - ?section=cache      -> {"cache_stats": {...}}
-        - ?section=rabbitmq   -> {"rabbitmq_stats": {...}}
-        - ?section=timescaledb -> {"timescaledb_stats": {...}}
-        - ?section=xalt      -> {"xalt_stats": {...}}
-        - omitted/other       -> {"host_stats": [...], "rabbitmq_host_stats": [...],
-                                  "cache_stats": {...}, "rabbitmq_stats": {...},
-                                  "timescaledb_stats": {...}, "xalt_stats": {...}}
+      description: "Staff-only: HPCPerfStats Monitor data (host timestamps, cache/Redis,\
+        \ RabbitMQ, TimescaleDB stats).\n\nSupports a lightweight, per-section API\
+        \ via the optional 'section' query\nparam:\n- ?section=hosts      -> {\"host_stats\"\
+        : [...]}\n- ?section=rabbitmq_hosts -> {\"rabbitmq_host_stats\": [...]}\n\
+        - ?section=cache      -> {\"cache_stats\": {...}}\n- ?section=rabbitmq   ->\
+        \ {\"rabbitmq_stats\": {...}}\n- ?section=timescaledb -> {\"timescaledb_stats\"\
+        : {...}}\n- ?section=xalt      -> {\"xalt_stats\": {...}}\n- omitted/other\
+        \       -> {\"host_stats\": [...], \"rabbitmq_host_stats\": [...],\n     \
+        \                     \"cache_stats\": {...}, \"rabbitmq_stats\": {...},\n\
+        \                          \"timescaledb_stats\": {...}, \"xalt_stats\": {...}}"
       parameters:
       - in: query
         name: refresh
@@ -58,17 +54,24 @@ paths:
   /api/cache/invalidate-page/:
     post:
       operationId: cache_invalidate_page_create
-      description: |-
-        Invalidate cache entries associated with the provided page path.
+      description: 'Invalidate cache entries associated with the provided page path.
+
 
         Deletes Django ``@cache_page`` / ``dynamic_cache_page`` rows via ``cache.delete``
-        (correct key prefix/versioning), then raw Redis ``SCAN`` for keys whose names
-        embed the same URL MD5 as Django's cache layer (covers ``Vary`` variants).
 
-        For any ``/machine`` or ``/machine/...`` path, also targets ``/api/home/`` and
+        (correct key prefix/versioning), then raw Redis ``SCAN`` for keys whose names
+
+        embed the same URL MD5 as Django''s cache layer (covers ``Vary`` variants).
+
+
+        For any ``/machine`` or ``/machine/...`` path, also targets ``/api/home/``
+        and
+
         drops ``home_options`` ORM cache keys (dates, metrics list, queues, states,
+
         site newest job end). Works without a raw Redis client (LocMem): ORM + Django
-        cache deletes still run.
+
+        cache deletes still run.'
       tags:
       - admin
       requestBody:
@@ -185,20 +188,30 @@ paths:
   /api/job_monitor/:
     get:
       operationId: job_monitor_retrieve
-      description: |-
-        Staff-only: aggregate job failure statistics per user over a recent window.
+      description: 'Staff-only: aggregate job failure statistics per user over a recent
+        window.
+
 
         The window is controlled by the optional ?days=N query parameter (integer).
+
         N is clamped to [1, 365]. If missing or invalid, defaults to 30 days.
 
+
         Returns rows of:
+
         - username
+
         - total_jobs: number of jobs run
+
         - failed_jobs: number of jobs with state OUT_OF_MEMORY or FAILED
+
         - failed_rate: percentage of failed jobs (0–100), sorted descending.
+
         GPU fields are intentionally omitted from this initial endpoint so the page
+
         can render quickly; per-user GPU stats are fetched asynchronously from
-        job_monitor_gpu_for_user.
+
+        job_monitor_gpu_for_user.'
       parameters:
       - in: query
         name: days
@@ -413,20 +426,14 @@ paths:
   /api/jobs/{id}/plots/:
     get:
       operationId: jobs_plots_retrieve
-      description: |-
-        Job-level plots grouped by shared jid_table input.
-
-        Returns Bokeh json_items and availability reasons for:
-        - Summary plot
-        - Roofline
-        - GPU roofline
-
-        Query params:
-        - plot: omit or ``all`` for all three; or one of summary_plot, roofline, gpu_roofline.
-        - zoom: ``1`` for zoom layout (single-plot requests only).
-        - progressive: ``1`` with plot=all (no zoom): HTTP 200 with ``status`` partial/ready and
-          only completed plot fields included while others are listed in ``loading_plots``;
-          avoids 202 while still using one endpoint and shared background tasks.
+      description: "Job-level plots grouped by shared jid_table input.\n\nReturns\
+        \ Bokeh json_items and availability reasons for:\n- Summary plot\n- Roofline\n\
+        - GPU roofline\n\nQuery params:\n- plot: omit or ``all`` for all three; or\
+        \ one of summary_plot, roofline, gpu_roofline.\n- zoom: ``1`` for zoom layout\
+        \ (single-plot requests only).\n- progressive: ``1`` with plot=all (no zoom):\
+        \ HTTP 200 with ``status`` partial/ready and\n  only completed plot fields\
+        \ included while others are listed in ``loading_plots``;\n  avoids 202 while\
+        \ still using one endpoint and shared background tasks."
       parameters:
       - in: path
         name: id
@@ -472,17 +479,11 @@ paths:
   /api/jobs/histograms/:
     get:
       operationId: jobs_histograms_retrieve
-      description: |-
-        Return Bokeh histograms for the job list, loaded incrementally.
-
-        This endpoint supports per-plot loading for metric histograms. The caller
-        must provide a 'group' query parameter:
-
-        - group=metric&metric=<name>: return a single metric histogram (thumb and
-          full) for the given metric name.
-
-        Example:
-          /api/jobs/histograms/?end_time__date=2024-01-01&group=metric&metric=runtime
+      description: "Return Bokeh histograms for the job list, loaded incrementally.\n\
+        \nThis endpoint supports per-plot loading for metric histograms. The caller\n\
+        must provide a 'group' query parameter:\n\n- group=metric&metric=<name>: return\
+        \ a single metric histogram (thumb and\n  full) for the given metric name.\n\
+        \nExample:\n  /api/jobs/histograms/?end_time__date=2024-01-01&group=metric&metric=runtime"
       parameters:
       - in: query
         name: group
@@ -534,13 +535,18 @@ paths:
   /api/sacct/ingest/:
     post:
       operationId: sacct_ingest_create
-      description: |-
-        Ingest pipe-delimited sacct output into job_data using sync_acct logic.
+      description: 'Ingest pipe-delimited sacct output into job_data using sync_acct
+        logic.
 
-        Requires authentication (API key or session) and staff. Request body must be
+
+        Requires authentication (API key or session) and staff. Request body must
+        be
+
         raw pipe-delimited sacct output (same format as sacct -P -o ...). Query
+
         param date=YYYY-MM-DD is required (the date of the data being ingested) to
-        compute which jobs are already in the DB.
+
+        compute which jobs are already in the DB.'
       parameters:
       - in: query
         name: date
@@ -716,6 +722,19 @@ components:
           type: string
         login_url:
           type: string
+    HomeMetricOption:
+      type: object
+      properties:
+        type:
+          type: string
+        metric:
+          type: string
+        units:
+          type: string
+      required:
+      - metric
+      - type
+      - units
     HomeOptions:
       type: object
       properties:
@@ -725,8 +744,17 @@ components:
           type: array
           items:
             type: integer
-        date_list: {}
-        metrics: {}
+        date_list:
+          type: array
+          items:
+            type: array
+            items: {}
+            maxItems: 2
+            minItems: 2
+        metrics:
+          type: array
+          items:
+            $ref: '#/components/schemas/HomeMetricOption'
         queues:
           type: array
           items:
@@ -777,15 +805,111 @@ components:
       - deleted_keys
       - ok
       - page_path
+    JobDetailJob:
+      type: object
+      description: Job detail primary job_data row (extends list entry fields).
+      properties:
+        jid:
+          type: string
+        submit_time:
+          type: string
+          format: date-time
+          nullable: true
+        start_time:
+          type: string
+          format: date-time
+          nullable: true
+        end_time:
+          type: string
+          format: date-time
+          nullable: true
+        runtime:
+          type: number
+          format: double
+          nullable: true
+        timelimit:
+          type: number
+          format: double
+          nullable: true
+        node_hrs:
+          type: number
+          format: double
+          nullable: true
+        nhosts:
+          type: integer
+          nullable: true
+        ncores:
+          type: integer
+          nullable: true
+        username:
+          type: string
+        account:
+          type: string
+        sample_count:
+          type: integer
+        queue:
+          type: string
+        state:
+          type: string
+        QOS:
+          type: string
+        jobname:
+          type: string
+        host_list:
+          type: string
+        performance:
+          $ref: '#/components/schemas/JobPerformance'
+        color:
+          type: string
+        derived_data_status:
+          type: string
+        client_url:
+          type: string
+          nullable: true
+        server_url:
+          type: string
+          nullable: true
+      required:
+      - jid
     JobDetailResponse:
       type: object
       properties:
-        job: {}
+        job_data:
+          $ref: '#/components/schemas/JobDetailJob'
+        host_list:
+          type: array
+          items:
+            type: string
+        metrics_list:
+          type: array
+          items:
+            type: object
+            additionalProperties:
+              type: string
         metrics: {}
         gpu: {}
         fsio: {}
-      required:
-      - job
+        xalt_data:
+          type: object
+          additionalProperties: {}
+        schema:
+          type: object
+          additionalProperties: {}
+        proc_list:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+        derived_data_status:
+          type: string
+        client_url:
+          type: string
+          nullable: true
+        server_url:
+          type: string
+          nullable: true
+        multiprecision_cpu_plot_item: {}
+        multiprecision_gpu_plot_item: {}
     JobListEntry:
       type: object
       properties:
@@ -843,6 +967,26 @@ components:
           type: string
       required:
       - jid
+    JobListFilterSummary:
+      type: object
+      properties:
+        nj:
+          type: integer
+        filter_text:
+          type: string
+    JobListHistogramEnvelope:
+      type: object
+      description: Histogram metadata without embedded Bokeh plot_item payloads.
+      properties:
+        title:
+          type: string
+        metric:
+          type: string
+        queue:
+          type: string
+        unavailable_reason:
+          type: string
+          nullable: true
     JobListResponse:
       type: object
       properties:
@@ -852,20 +996,54 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/JobListEntry'
-        filter_summary: {}
-        histograms: {}
+        filter_summary:
+          $ref: '#/components/schemas/JobListFilterSummary'
+        histograms:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/JobListHistogramEnvelope'
     JobMonitorGpuResponse:
       type: object
       properties:
-        data: {}
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobMonitorGpuRow'
       required:
       - data
+    JobMonitorGpuRow:
+      type: object
+      properties:
+        username:
+          type: string
+        gpu_jobs:
+          type: integer
+        gpu_node_hours:
+          type: number
+          format: double
     JobMonitorResponse:
       type: object
       properties:
-        data: {}
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobMonitorRow'
       required:
       - data
+    JobMonitorRow:
+      type: object
+      properties:
+        username:
+          type: string
+        jobs:
+          type: integer
+        node_hours:
+          type: number
+          format: double
+        avg_wait:
+          type: number
+          format: double
+          nullable: true
     JobPerformance:
       type: object
       properties:
@@ -891,8 +1069,20 @@ components:
           type: string
         machine_name:
           type: string
-        expansion_factors: {}
-        monthly_metrics: {}
+        expansion_factors:
+          type: object
+          additionalProperties: {}
+        monthly_metrics:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublicClusterMetricBlock'
+    PublicClusterMetricBlock:
+      type: object
+      properties:
+        title:
+          type: string
+        bokeh_histogram_json_item:
+          nullable: true
     SacctIngestResponse:
       type: object
       properties:

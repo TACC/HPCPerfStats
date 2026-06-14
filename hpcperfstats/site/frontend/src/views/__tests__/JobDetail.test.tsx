@@ -108,6 +108,25 @@ describe("JobDetail", () => {
     return vi.spyOn(apiModule.api, "getJobPlots").mockResolvedValue(batchPlotsResponseWithRoots());
   }
 
+  it("does not render unsafe javascript: client log links", async () => {
+    vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue({
+      ...minimalJobDetailResponse,
+      client_url: "javascript:alert(1)",
+      server_url: "https://logs.example/job/1",
+    });
+    vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue({
+      ...minimalJobDetailResponse,
+      client_url: "javascript:alert(1)",
+      server_url: "https://logs.example/job/1",
+    });
+    mockAllPlotCallsReady();
+    renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByRole("link", { name: "Server Logs" })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("link", { name: "Client Logs" })).not.toBeInTheDocument();
+  });
+
   it("labels the fsio table column Shared File System", async () => {
     vi.spyOn(apiModule.api, "getJobDetailLight").mockResolvedValue(minimalJobDetailResponse);
     vi.spyOn(apiModule.api, "getJobDetail").mockResolvedValue(minimalJobDetailResponse);

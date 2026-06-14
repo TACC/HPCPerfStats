@@ -28,6 +28,7 @@ import {
 import { cn } from "@/lib/utils";
 import { formatDateTime } from "../utils/formatDateTime";
 import { formatDecimalStandard } from "../utils/formatDecimal";
+import { isSafeHttpUrl } from "../utils/safe-external-url";
 import { useSession } from "../session-context";
 import { VariableInfoLabel } from "../components/VariableInfoLabel";
 import { scheduleJobPlotsRetry } from "../utils/job-plots-polling";
@@ -740,13 +741,21 @@ export default function JobDetail() {
               <div>
                 <div className="text-muted-foreground">User</div>
                 <div>
-                  {renderJobEntityLink(job.username, `/username/${job.username}/`, "Unknown")}
+                  {renderJobEntityLink(
+                    job.username,
+                    `/username/${encodeURIComponent(String(job.username ?? ""))}/`,
+                    "Unknown"
+                  )}
                 </div>
               </div>
               <div>
                 <div className="text-muted-foreground">Project</div>
                 <div>
-                  {renderJobEntityLink(job.account, `/account/${job.account}/`, "None")}
+                  {renderJobEntityLink(
+                    job.account,
+                    `/account/${encodeURIComponent(String(job.account ?? ""))}/`,
+                    "None"
+                  )}
                 </div>
               </div>
               <div>
@@ -847,10 +856,18 @@ export default function JobDetail() {
                     <Link href={`/machine/job/${job.jid}/`} className="text-primary hover:underline">{job.jid}</Link>
                   </TableCell>
                   <TableCell>
-                    {renderJobEntityLink(job.username, `/username/${job.username}/`, "Unknown")}
+                    {renderJobEntityLink(
+                      job.username,
+                      `/username/${encodeURIComponent(String(job.username ?? ""))}/`,
+                      "Unknown"
+                    )}
                   </TableCell>
                   <TableCell>
-                    {renderJobEntityLink(job.account, `/account/${job.account}/`, "None")}
+                    {renderJobEntityLink(
+                      job.account,
+                      `/account/${encodeURIComponent(String(job.account ?? ""))}/`,
+                      "None"
+                    )}
                   </TableCell>
                   <TableCell>{formatDateTime(job.start_time)}</TableCell>
                   <TableCell>{formatDateTime(job.end_time)}</TableCell>
@@ -951,9 +968,9 @@ export default function JobDetail() {
           </div>
         )}
         <div className="mt-2 flex flex-wrap gap-2">
-          {client_url && (
+          {isSafeHttpUrl(client_url) && (
             <a
-              href={client_url}
+              href={client_url!}
               target="_blank"
               rel="noopener noreferrer"
               className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
@@ -961,9 +978,9 @@ export default function JobDetail() {
               Client Logs
             </a>
           )}
-          {server_url && (
+          {isSafeHttpUrl(server_url) && (
             <a
-              href={server_url}
+              href={server_url!}
               target="_blank"
               rel="noopener noreferrer"
               className={cn(buttonVariants({ variant: "outline", size: "sm" }))}

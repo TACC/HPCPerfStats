@@ -9,6 +9,8 @@ from django.test import RequestFactory
 
 from hpcperfstats.site.machine import api as api_module
 
+from .csrf_test_utils import csrf_headers
+
 _COMPOSE = os.environ.get("HPCPERFSTATS_COMPOSE_NETWORK", "").strip().lower() in (
     "1",
     "yes",
@@ -73,6 +75,7 @@ def test_invalidate_cache_for_page_deletes_matching_key():
         "/api/cache/invalidate-page/",
         {"page_path": path},
         content_type="application/json",
+        **csrf_headers(),
     )
     request.session = {
         "access_token": "t",

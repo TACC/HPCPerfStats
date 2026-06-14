@@ -1,4 +1,5 @@
 import type { BokehJsonItem } from "@/types/bokeh";
+import { parseBokehJsonItem } from "@/schemas/api/bokeh-json-item-schema";
 import type { JobListHistogramEntry } from "@/types/view-models";
 
 type HistogramApiEntry = Record<string, unknown> & {
@@ -76,10 +77,7 @@ function hasDeclaredRootInDoc(value: BokehDocNode) {
 }
 
 function isValidBokehJsonItem(value: unknown): value is BokehJsonItem {
-  if (!value || typeof value !== "object") return false;
-  const node = value as BokehDocNode;
-  if (!node.doc || typeof node.doc !== "object") return false;
-  return hasDeclaredRootInDoc(node);
+  return parseBokehJsonItem(value) != null;
 }
 
 /** Normalize queue or metric histogram API payloads for the job list sidecar. */

@@ -12,6 +12,8 @@ import pytest
 from django.test import RequestFactory, override_settings
 from rest_framework.test import APIRequestFactory
 
+from .csrf_test_utils import csrf_headers
+
 pytestmark = pytest.mark.django_db(databases=[])
 
 _API_COVERAGE_GAP_SETTINGS = {
@@ -180,10 +182,20 @@ class TestUserApiKeyRotateView:
 
 
 class TestDropStaffForSessionView:
-    def test_requires_staff(self):
+    def test_requires_csrf_for_post(self):
         from hpcperfstats.site.machine import api
 
         request = RequestFactory().post("/api/session/drop-staff/")
+        request.session = {"is_staff": True}
+        with patch.object(api, "_require_staff", return_value=None):
+            response = api.drop_staff_for_session(request)
+        assert response.status_code == 403
+        assert "CSRF" in response.data["detail"]
+
+    def test_requires_staff(self):
+        from hpcperfstats.site.machine import api
+
+        request = RequestFactory().post("/api/session/drop-staff/", **csrf_headers())
         request.session = {"is_staff": False}
         with patch.object(api, "_require_staff") as mock_staff:
             mock_staff.return_value = api.Response({"error": "no"}, status=403)
@@ -193,7 +205,7 @@ class TestDropStaffForSessionView:
     def test_clears_staff_flag(self):
         from hpcperfstats.site.machine import api
 
-        request = RequestFactory().post("/api/session/drop-staff/")
+        request = RequestFactory().post("/api/session/drop-staff/", **csrf_headers())
         request.session = {"is_staff": True}
         with patch.object(api, "_require_staff", return_value=None):
             response = api.drop_staff_for_session(request)
@@ -1941,7 +1953,7 @@ class TestDropStaffSessionModifiedClosure:
         from django.contrib.sessions.backends.base import SessionBase
         from hpcperfstats.site.machine import api
 
-        request = RequestFactory().post("/api/drop-staff/")
+        request = RequestFactory().post("/api/drop-staff/", **csrf_headers())
         session = SessionBase()
         session["is_staff"] = True
         request.session = session
@@ -1961,6 +1973,7 @@ class TestInvalidateCachePageClosure:
             "/api/cache/invalidate-page/",
             {"page_path": "/machine/jobs/"},
             format="json",
+            HTTP_X_CSRFTOKEN="test-csrf-token",
         )
         request.session = {"is_staff": True}
 

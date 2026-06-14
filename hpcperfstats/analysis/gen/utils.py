@@ -7,10 +7,12 @@ import warnings
 
 from bokeh.models import (
     BasicTickFormatter,
-    CustomJSHover,
-    CustomJSTickFormatter,
+    DatetimeTickFormatter,
     LinearAxis,
 )
+import math
+from zoneinfo import ZoneInfo
+
 import numpy as np
 import pandas as pd
 
@@ -265,72 +267,56 @@ def clean_dataframe(df):
   return df
 
 
-def _tz_aware_bokeh_local_time_js(input_var):
-  """JS snippet: format Bokeh UTC epoch ms as local 12-hour time using ``tz`` arg."""
-  return f"""
-// Bokeh datetimes are milliseconds since epoch. Render labels in tz.
-const dt = new Date({input_var})
+def format_plain_decimal(value, precision=2):
+  """Format a numeric value without scientific notation for Bokeh hovers."""
+  if value is None or value == "":
+    return ""
+  try:
+    number = float(value)
+  except (TypeError, ValueError):
+    return str(value)
+  if not math.isfinite(number):
+    return str(value)
+  return f"{number:,.{precision}f}"
 
-function pad2(n) {{ return (n < 10) ? ("0" + n) : ("" + n) }}
 
-try {{
-  const parts = new Intl.DateTimeFormat('en-CA', {{
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: true,
-  }}).formatToParts(dt)
+def format_cluster_hover_datetime(value):
+  """Format Bokeh datetime or epoch-ms in the configured cluster timezone."""
+  if value is None or value == "":
+    return ""
+  if isinstance(value, (int, float)) and math.isfinite(value):
+    ts = pd.Timestamp(value, unit="ms", tz="UTC")
+  else:
+    ts = pd.Timestamp(value)
+    if ts.tzinfo is None:
+      ts = ts.tz_localize("UTC")
+  local = ts.tz_convert(ZoneInfo(local_timezone))
+  formatted = local.strftime("%I:%M %p")
+  if formatted.startswith("0"):
+    formatted = formatted[1:]
+  return formatted
 
-  const out = {{}}
-  for (const p of parts) out[p.type] = p.value
-  return `${{out.hour}}:${{out.minute}} ${{out.dayPeriod}}`
-}} catch (e) {{
-  // Fallback: UTC without Intl timezone support or invalid tz name.
-  return `${{pad2(dt.getUTCHours())}}:${{pad2(dt.getUTCMinutes())}}`
-}}
-""".strip()
+
+def add_hover_plain_columns(df, numeric_cols, time_col="time"):
+  """Add pre-formatted hover columns so HoverTool does not need CustomJS."""
+  out = df.copy()
+  if time_col in out.columns:
+    out["_hover_time"] = out[time_col].map(format_cluster_hover_datetime)
+  for col in numeric_cols:
+    if col in out.columns:
+      out[f"{col}_plain"] = out[col].map(format_plain_decimal)
+  return out
 
 
 def tz_aware_bokeh_tick_formatter():
-  """Return a fresh CustomJSTickFormatter that renders datetime ticks in the configured timezone. Must return a new instance per plot/document.
-
-    """
-  # Must return a fresh model per plot/document (Bokeh models cannot be shared
-  # across documents, e.g. across separate web requests).
-  return CustomJSTickFormatter(
-      args={"tz": local_timezone},
-      code=_tz_aware_bokeh_local_time_js("tick"),
+  """Datetime axis labels via Bokeh built-in formatter (no CustomJS / unsafe-eval)."""
+  return DatetimeTickFormatter(
+      hours="%I:%M %p",
+      minutes="%I:%M %p",
+      hourmin="%I:%M %p",
+      days="%m/%d",
+      months="%b %Y",
   )
-
-
-def new_tz_aware_bokeh_datetime_hover_formatter():
-  """Hover tooltip time fields in configured tz, 12-hour am/pm (new instance per HoverTool)."""
-  return CustomJSHover(
-      args={"tz": local_timezone},
-      code=_tz_aware_bokeh_local_time_js("value"),
-  )
-
-
-# JavaScript: decimal (non-scientific) strings for Bokeh hovers and log-axis ticks.
-_PLAIN_NUMBER_HOVER_JS = """
-const v = value;
-if (v == null || v === "") return "";
-const n = typeof v === "number" ? v : Number(v);
-if (Number.isFinite(n))
-  return new Intl.NumberFormat("en-US", {notation: "standard", minimumFractionDigits: 2, maximumFractionDigits: 2}).format(n);
-return String(v);
-"""
-
-_PLAIN_LOG_TICK_JS = """
-const t = tick;
-if (t == null || t === "") return "";
-const n = typeof t === "number" ? t : Number(t);
-if (!Number.isFinite(n)) return String(t);
-return new Intl.NumberFormat("en-US", {notation: "standard", minimumFractionDigits: 2, maximumFractionDigits: 2}).format(n);
-"""
 
 
 def new_plain_linear_tick_formatter():
@@ -339,13 +325,8 @@ def new_plain_linear_tick_formatter():
 
 
 def new_plain_log_tick_formatter():
-  """Log-scale tick labels as plain decimals (avoids 10^n style from default log formatter)."""
-  return CustomJSTickFormatter(code=_PLAIN_LOG_TICK_JS.strip())
-
-
-def new_plain_number_hover_formatter():
-  """Hover tooltip numeric fields without scientific notation (new instance per HoverTool)."""
-  return CustomJSHover(code=_PLAIN_NUMBER_HOVER_JS.strip())
+  """Log-scale tick labels without scientific notation (built-in BasicTickFormatter)."""
+  return BasicTickFormatter(use_scientific=False, precision=2)
 
 
 def set_linear_axes_plain_numeric(plot):

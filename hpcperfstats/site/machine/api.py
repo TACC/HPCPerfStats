@@ -18,7 +18,7 @@ from rest_framework.decorators import api_view, authentication_classes, throttle
 from rest_framework.response import Response
 
 from django.conf import settings
-from django.views.decorators.csrf import csrf_protect
+from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
 from django.core.cache import cache
 from django.db import connection, close_old_connections, transaction
 from django.test import RequestFactory
@@ -28,6 +28,7 @@ from django.utils.cache import (
     get_cache_key,
 )
 import os
+import urllib.parse
 from types import SimpleNamespace
 
 logger = logging.getLogger(__name__)
@@ -492,6 +493,18 @@ def _require_staff(request):
             {"error": "Staff access required"},
             status=status.HTTP_403_FORBIDDEN,
         )
+    return None
+
+
+def _require_csrf_for_session_post(request):
+    """Return 403 JSON when a browser session POST lacks X-CSRFToken."""
+    django_request = getattr(request, "_request", request)
+    if django_request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        if not django_request.META.get("HTTP_X_CSRFTOKEN"):
+            return Response(
+                {"detail": "CSRF token missing"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
     return None
 
 
@@ -1175,6 +1188,7 @@ def _get_recent_rabbitmq_host_stats():
     return host_stats
 
 
+@ensure_csrf_cookie
 @SESSION_SCHEMA
 @api_view(["GET"])
 def session_info(request):
@@ -1224,13 +1238,9 @@ def user_api_key_status(request):
 @authentication_classes([SessionAuthentication])
 def user_api_key_rotate(request):
     """Revoke active keys for this user and return a newly minted raw key."""
-    django_request = getattr(request, "_request", request)
-    if django_request.method in ("POST", "PUT", "PATCH", "DELETE"):
-        if not django_request.META.get("HTTP_X_CSRFTOKEN"):
-            return Response(
-                {"detail": "CSRF token missing"},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+    csrf_err = _require_csrf_for_session_post(request)
+    if csrf_err is not None:
+        return csrf_err
     if not check_for_tokens(request):
         return Response(
             {"detail": "Authentication required", "login_url": "/login_prompt"},
@@ -1256,6 +1266,9 @@ def user_api_key_rotate(request):
 @api_view(["POST"])
 def drop_staff_for_session(request):
     """Remove staff access for the current authenticated session only."""
+    csrf_err = _require_csrf_for_session_post(request)
+    if csrf_err is not None:
+        return csrf_err
     err = _require_staff(request)
     if err is not None:
         return err
@@ -1289,6 +1302,9 @@ def invalidate_cache_for_page(request):
     site newest job end). Works without a raw Redis client (LocMem): ORM + Django
     cache deletes still run.
     """
+    csrf_err = _require_csrf_for_session_post(request)
+    if csrf_err is not None:
+        return csrf_err
     err = _require_staff(request)
     if err is not None:
         return err
@@ -2072,9 +2088,10 @@ def job_detail(request, pk):
 
     urlstring = "https://scribe.tacc.utexas.edu/en-US/app/search/search?q=search%20"
     if host_list:
-        hoststring = urlstring + "%20host%3D" + host_list[0] + cfg.get_host_name_ext()
+        first_host = urllib.parse.quote(host_list[0] + cfg.get_host_name_ext(), safe="")
+        hoststring = urlstring + "%20host%3D" + first_host
         for host in host_list[1:]:
-            hoststring += "%20OR%20%20host%3D" + host + "*"
+            hoststring += "%20OR%20%20host%3D" + urllib.parse.quote(host + "*", safe="")
     else:
         hoststring = urlstring
     serverstring = urlstring + "%20mds*%20OR%20%20oss*"
@@ -3023,6 +3040,9 @@ def sacct_ingest(request):
     param date=YYYY-MM-DD is required (the date of the data being ingested) to
     compute which jobs are already in the DB.
     """
+    csrf_err = _require_csrf_for_session_post(request)
+    if csrf_err is not None:
+        return csrf_err
     err = _require_staff(request)
     if err is not None:
         return err

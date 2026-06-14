@@ -442,6 +442,7 @@ SPECTACULAR_SETTINGS = {
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = _parse_cors_allowed_origins()
 _validate_cors_allowed_origins(CORS_ALLOWED_ORIGINS)
+CSRF_TRUSTED_ORIGINS = list(CORS_ALLOWED_ORIGINS)
 
 SESSION_SERIALIZER = 'django.contrib.sessions.serializers.JSONSerializer'
 SESSION_ENGINE = 'django.contrib.sessions.backends.file'

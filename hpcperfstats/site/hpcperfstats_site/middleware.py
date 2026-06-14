@@ -33,15 +33,30 @@ DEFAULT_CSP = (
   "img-src 'self' data:; "
   "font-src 'self' data:; "
   "style-src 'self' 'unsafe-inline'; "
-  # Bokeh CustomJS (e.g. CustomJSTickFormatter, CustomJSHover) compiles snippets
-  # with the Function constructor during embed; summary and other plots need this.
+  # Bokeh embed on /machine/* may still require unsafe-eval until all CustomJS is gone.
   "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
   "connect-src 'self'; "
   "upgrade-insecure-requests; "
   "report-uri /csp-report/;"
 )
 
-# Stricter report-only policy used to stage future tightening.
+# Strict CSP without unsafe-eval for non-Bokeh shells (login, public dashboards).
+DEFAULT_CSP_STRICT = (
+  "default-src 'self'; "
+  "base-uri 'self'; "
+  "object-src 'none'; "
+  "frame-ancestors 'self'; "
+  "form-action 'self'; "
+  "img-src 'self' data:; "
+  "font-src 'self' data:; "
+  "style-src 'self' 'unsafe-inline'; "
+  "script-src 'self' 'unsafe-inline'; "
+  "connect-src 'self'; "
+  "upgrade-insecure-requests; "
+  "report-uri /csp-report/;"
+)
+
+# Stricter report-only policy used to stage future tightening (no unsafe-eval).
 DEFAULT_CSP_REPORT_ONLY = (
   "default-src 'self'; "
   "base-uri 'self'; "
@@ -51,12 +66,30 @@ DEFAULT_CSP_REPORT_ONLY = (
   "img-src 'self' data:; "
   "font-src 'self' data:; "
   "style-src 'self' 'unsafe-inline'; "
-  # Match enforced policy for Bokeh-embedded plots (avoids report-only noise).
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+  "script-src 'self' 'unsafe-inline'; "
   "connect-src 'self'; "
   "upgrade-insecure-requests; "
   "report-uri /csp-report/;"
 )
+
+# Paths that embed Bokeh and keep relaxed script-src (unsafe-eval) for now.
+_BOKEH_RELAXED_CSP_PREFIXES = (
+  "/machine/",
+  "/api/jobs/",
+  "/api/host_plot/",
+)
+
+
+def _csp_for_request(request: HttpRequest) -> str:
+  """Return enforced CSP for this path (strict on login/public shells)."""
+  path = request.path or ""
+  if path.startswith("/login_prompt") or path == "/pub/" or path.startswith("/pub/"):
+    return DEFAULT_CSP_STRICT
+  if any(path.startswith(prefix) for prefix in _BOKEH_RELAXED_CSP_PREFIXES):
+    return DEFAULT_CSP
+  if path.startswith("/api/"):
+    return DEFAULT_CSP_STRICT
+  return DEFAULT_CSP_STRICT
 
 
 class ProfileMiddleware:
@@ -139,7 +172,7 @@ class DefaultSecurityHeadersMiddleware:
     if "Cross-Origin-Opener-Policy" not in response:
       response["Cross-Origin-Opener-Policy"] = DEFAULT_COOP
     if "Content-Security-Policy" not in response:
-      response["Content-Security-Policy"] = DEFAULT_CSP
+      response["Content-Security-Policy"] = _csp_for_request(request)
     if "Content-Security-Policy-Report-Only" not in response:
       response["Content-Security-Policy-Report-Only"] = DEFAULT_CSP_REPORT_ONLY
 

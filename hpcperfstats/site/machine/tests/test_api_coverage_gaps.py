@@ -12,6 +12,8 @@ import pytest
 from django.test import RequestFactory as DjangoRequestFactory, override_settings
 from rest_framework.test import APIRequestFactory
 
+from .csrf_test_utils import csrf_headers
+
 pytestmark = pytest.mark.django_db(databases=[])
 
 _API_COVERAGE_GAP_SETTINGS = {
@@ -34,7 +36,7 @@ def _api_coverage_gap_settings():
 def _plain_post(path, body: bytes):
   """POST with raw body (sacct-style); pass bare HttpRequest into ``@api_view``."""
   return DjangoRequestFactory().post(
-      path, data=body, content_type="text/plain"
+      path, data=body, content_type="text/plain", **csrf_headers()
   )
 
 
@@ -68,6 +70,7 @@ class TestInvalidateCacheForPage:
         "/api/cache/invalidate-page/",
         {"page_path": "/machine/"},
         format="json",
+        HTTP_X_CSRFTOKEN="test-csrf-token",
     )
     denied = api.Response({"detail": "no"}, status=403)
     with patch.object(api, "_require_staff", return_value=denied):
@@ -78,7 +81,12 @@ class TestInvalidateCacheForPage:
     from hpcperfstats.site.machine import api
 
     factory = APIRequestFactory()
-    request = factory.post("/api/cache/invalidate-page/", {}, format="json")
+    request = factory.post(
+        "/api/cache/invalidate-page/",
+        {},
+        format="json",
+        HTTP_X_CSRFTOKEN="test-csrf-token",
+    )
     with patch.object(api, "_require_staff", return_value=None):
       response = api.invalidate_cache_for_page(request)
     assert response.status_code == 400
@@ -92,6 +100,7 @@ class TestInvalidateCacheForPage:
         "/api/cache/invalidate-page/",
         {"page_path": "jobs"},
         format="json",
+        HTTP_X_CSRFTOKEN="test-csrf-token",
     )
     request.META["HTTP_HOST"] = "testserver"
     with patch.object(api, "_require_staff", return_value=None), patch.object(
@@ -109,6 +118,7 @@ class TestInvalidateCacheForPage:
         "/api/cache/invalidate-page/",
         {"page_path": "/machine"},
         format="json",
+        HTTP_X_CSRFTOKEN="test-csrf-token",
     )
     request.META["HTTP_HOST"] = "testserver"
 

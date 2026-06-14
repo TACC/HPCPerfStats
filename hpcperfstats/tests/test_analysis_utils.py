@@ -83,32 +83,36 @@ def test_queryset_to_dataframe_empty_iter_with_values_select():
   assert len(out) == 0
 
 
-def test_tz_aware_bokeh_tick_formatter_returns_formatter():
-  """tz_aware_bokeh_tick_formatter returns a Bokeh CustomJSTickFormatter with tz in args."""
+def test_tz_aware_bokeh_tick_formatter_returns_datetime_formatter():
+  """tz_aware_bokeh_tick_formatter uses built-in DatetimeTickFormatter (no CustomJS)."""
+  from bokeh.models import DatetimeTickFormatter
+
   from hpcperfstats.analysis.gen.utils import tz_aware_bokeh_tick_formatter
-  from bokeh.models import CustomJSTickFormatter
 
   formatter = tz_aware_bokeh_tick_formatter()
-  assert isinstance(formatter, CustomJSTickFormatter)
-  assert "tz" in formatter.args
-  assert formatter.code is not None
-  assert "tick" in formatter.code
-  assert "hour12: true" in formatter.code
+  assert isinstance(formatter, DatetimeTickFormatter)
 
 
-def test_tz_aware_bokeh_datetime_hover_formatter_returns_formatter():
-  """Hover time formatter uses configured tz and 12-hour am/pm like axis ticks."""
-  from bokeh.models.tools import CustomJSHover
+def test_format_plain_decimal_avoids_scientific():
+  from hpcperfstats.analysis.gen.utils import format_plain_decimal
 
-  from hpcperfstats.analysis.gen.utils import new_tz_aware_bokeh_datetime_hover_formatter
+  assert format_plain_decimal(1234567.8) == "1,234,567.80"
+  assert format_plain_decimal(0.00012) == "0.00"
 
-  formatter = new_tz_aware_bokeh_datetime_hover_formatter()
-  assert isinstance(formatter, CustomJSHover)
-  assert "tz" in formatter.args
-  assert formatter.code is not None
-  assert "value" in formatter.code
-  assert "hour12: true" in formatter.code
-  assert "timeZone: tz" in formatter.code
+
+def test_add_hover_plain_columns_adds_formatted_fields():
+  import pandas as pd
+
+  from hpcperfstats.analysis.gen.utils import add_hover_plain_columns
+
+  df = pd.DataFrame({
+      "time": [pd.Timestamp("2024-01-01 12:30:00+00:00")],
+      "cpu": [1.5],
+  })
+  out = add_hover_plain_columns(df, ["cpu"])
+  assert "_hover_time" in out.columns
+  assert "cpu_plain" in out.columns
+  assert out.loc[0, "cpu_plain"] == "1.50"
 
 
 def test_plain_linear_tick_formatter_disables_scientific():

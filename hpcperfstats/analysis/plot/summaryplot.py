@@ -28,9 +28,10 @@ from hpcperfstats.analysis.gen.utils import (
     CHA_TYPENAME_PRIORITY,
     INTEL_FP_ARITH_DOUBLE_EVENTS,
     INTEL_FP_ARITH_SINGLE_EVENTS,
+    add_hover_plain_columns,
+    format_plain_decimal,
+    format_cluster_hover_datetime,
     non_degenerate_y_range_for_series,
-    new_plain_number_hover_formatter,
-    new_tz_aware_bokeh_datetime_hover_formatter,
     set_linear_axes_plain_numeric,
     tz_aware_bokeh_tick_formatter,
 )
@@ -844,8 +845,6 @@ def plot_hardware_error_rates_figure(jt, x_range):
   plot.xaxis.formatter = tz_aware_bokeh_tick_formatter()
 
   palette = d3["Category10"][10]
-  num_hover = new_plain_number_hover_formatter()
-  time_hover = new_tz_aware_bokeh_datetime_hover_formatter()
   line_renderers = []
   for i, col in enumerate(value_cols):
     sub = merged[["time", col]].dropna()
@@ -853,7 +852,14 @@ def plot_hardware_error_rates_figure(jt, x_range):
       continue
     xi, yi = _step_polyline_xy(sub["time"], sub[col])
     color = palette[i % len(palette)]
-    src = ColumnDataSource(data={"x": xi, "y": yi})
+    src = ColumnDataSource(
+        data={
+            "x": xi,
+            "y": yi,
+            "x_plain": [format_cluster_hover_datetime(v) for v in xi],
+            "y_plain": [format_plain_decimal(v) for v in yi],
+        },
+    )
     ln = plot.line("x", "y", source=src, line_width=1.5, color=color, legend_label=col)
     line_renderers.append(ln)
     plot.add_tools(
@@ -861,10 +867,9 @@ def plot_hardware_error_rates_figure(jt, x_range):
             renderers=[ln],
             tooltips=[
                 ("Series", col),
-                ("Time", "@x{custom}"),
-                ("Rate [#/s]", "@y{0.000}"),
+                ("Time", "@x_plain"),
+                ("Rate [#/s]", "@y_plain"),
             ],
-            formatters={"@x": time_hover, "@y": num_hover},
         )
     )
   if line_renderers:
@@ -959,7 +964,11 @@ class SummaryPlot():
         line_width=1.5,
     )
 
-    scatter_df = df.dropna(subset=[metric]).sort_values(["host", "time"])
+    scatter_df = add_hover_plain_columns(
+        df.dropna(subset=[metric]).sort_values(["host", "time"]),
+        [metric],
+        time_col="time",
+    )
     scatter_source = ColumnDataSource(scatter_df)
     factors = [str(h) for h in self.host_list]
     palette = _cycled_d3_category20_palette(len(factors))
@@ -973,15 +982,9 @@ class SummaryPlot():
         alpha=0.9,
     )
 
-    num_hover = new_plain_number_hover_formatter()
-    time_hover = new_tz_aware_bokeh_datetime_hover_formatter()
     plot.add_tools(
         HoverTool(
             tooltips=hover_tooltip_html_host_time_value(label_text, metric),
-            formatters={
-                "@time": time_hover,
-                f"@{metric}": num_hover,
-            },
             renderers=[scatter],
         )
     )

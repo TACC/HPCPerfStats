@@ -13,6 +13,8 @@ import pytest
 from django.test import RequestFactory
 from hpcperfstats.site.machine.models import ApiKey
 
+from .csrf_test_utils import csrf_headers
+
 
 @pytest.mark.django_db(databases=[])
 class TestAdminMonitorRefresh:
@@ -200,7 +202,7 @@ class TestDropStaffForSession:
     from hpcperfstats.site.machine import api
 
     factory = RequestFactory()
-    request = factory.post("/api/session/drop-staff/")
+    request = factory.post("/api/session/drop-staff/", **csrf_headers())
 
     with patch("hpcperfstats.site.machine.api._require_auth") as mock_auth:
       mock_auth.return_value = api.Response({"detail": "unauthorized"}, status=401)
@@ -212,7 +214,7 @@ class TestDropStaffForSession:
     from hpcperfstats.site.machine import api
 
     factory = RequestFactory()
-    request = factory.post("/api/session/drop-staff/")
+    request = factory.post("/api/session/drop-staff/", **csrf_headers())
     request.session = {"username": "alice", "is_staff": False}
 
     with patch("hpcperfstats.site.machine.api._require_auth", return_value=None):
@@ -225,7 +227,7 @@ class TestDropStaffForSession:
     from hpcperfstats.site.machine import api
 
     factory = RequestFactory()
-    request = factory.post("/api/session/drop-staff/")
+    request = factory.post("/api/session/drop-staff/", **csrf_headers())
     request.session = {"username": "alice", "is_staff": True}
 
     with patch("hpcperfstats.site.machine.api._require_auth", return_value=None):
@@ -249,6 +251,7 @@ class TestInvalidateCacheForPage:
         "/api/cache/invalidate-page/",
         {"page_path": "/machine/jobs"},
         content_type="application/json",
+        **csrf_headers(),
     )
     request.session = {"username": "alice", "is_staff": False}
 
@@ -266,6 +269,7 @@ class TestInvalidateCacheForPage:
         "/api/cache/invalidate-page/",
         {"page_path": "/machine/jobs"},
         content_type="application/json",
+        **csrf_headers(),
     )
     request.session = {"username": "alice", "is_staff": True}
 
@@ -310,6 +314,7 @@ class TestInvalidateCacheForPage:
         "/api/cache/invalidate-page/",
         {"page_path": "/machine/"},
         content_type="application/json",
+        **csrf_headers(),
     )
     request.session = {"username": "alice", "is_staff": True}
     request.META["HTTP_HOST"] = "testserver"
@@ -336,6 +341,7 @@ class TestInvalidateCacheForPage:
         "/api/cache/invalidate-page/",
         {"page_path": "/other/page"},
         content_type="application/json",
+        **csrf_headers(),
     )
     request.session = {"username": "alice", "is_staff": True}
     request.META["HTTP_HOST"] = "testserver"

@@ -24,10 +24,20 @@ describe("api client", () => {
     global.fetch = vi.fn().mockResolvedValue({
       status: 200,
       ok: true,
-      json: async () => ({ logged_in: true }),
+      json: async () => ({
+        logged_in: true,
+        username: "alice",
+        is_staff: false,
+        machine_name: "test-cluster",
+      }),
     });
     const data = await api.getSession();
-    expect(data).toEqual({ logged_in: true });
+    expect(data).toEqual({
+      logged_in: true,
+      username: "alice",
+      is_staff: false,
+      machine_name: "test-cluster",
+    });
     expect(fetch).toHaveBeenCalledWith(
       "/api/session/",
       expect.objectContaining({
@@ -45,11 +55,32 @@ describe("api client", () => {
     global.fetch = vi.fn().mockResolvedValue({
       status: 200,
       ok: true,
-      json: async () => ({}),
+      json: async () => ({
+        logged_in: false,
+        username: "",
+        is_staff: false,
+        machine_name: "test-cluster",
+      }),
     });
     await api.getSession();
     const headers = fetch.mock.calls[0][1].headers;
     expect(headers["X-CSRFToken"] || headers.get?.("X-CSRFToken")).toBe("abc123");
+  });
+
+  it("throws when mutating without csrftoken cookie", async () => {
+    document.cookie = "csrftoken=; Max-Age=0; path=/";
+    global.fetch = vi.fn();
+    await expect(api.rotateUserApiKey()).rejects.toThrow("CSRF token missing");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("throws when session response fails schema validation", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      status: 200,
+      ok: true,
+      json: async () => ({ logged_in: "not-a-boolean" }),
+    });
+    await expect(api.getSession()).rejects.toThrow("API response validation failed");
   });
 
   it("redirects to login_prompt on 401", async () => {

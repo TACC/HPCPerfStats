@@ -16,10 +16,9 @@ from bokeh.plotting import figure
 from pandas import to_datetime
 
 from hpcperfstats.analysis.gen.utils import (
+    add_hover_plain_columns,
     clean_dataframe,
     non_degenerate_y_range_for_series,
-    new_plain_number_hover_formatter,
-    new_tz_aware_bokeh_datetime_hover_formatter,
     set_linear_axes_plain_numeric,
     tz_aware_bokeh_tick_formatter,
 )
@@ -60,11 +59,11 @@ class DevPlot:
     set_linear_axes_plain_numeric(plot)
     plot.xaxis.formatter = tz_aware_bokeh_tick_formatter()
 
-    num_hover = new_plain_number_hover_formatter()
-    time_hover = new_tz_aware_bokeh_datetime_hover_formatter()
     circle_renderers = []
     for h in self.host_list:
-      source = ColumnDataSource(df[df.host == h])
+      source = ColumnDataSource(
+          add_hover_plain_columns(df[df.host == h], [event], time_col="time"),
+      )
       plot.add_glyph(
           source,
           Step(x="time", y=event, mode="before", line_color=self.hc[h]),
@@ -85,10 +84,6 @@ class DevPlot:
     plot.add_tools(
         HoverTool(
             tooltips=hover_tooltip_html_host_time_value(event, event),
-            formatters={
-                "@time": time_hover,
-                f"@{event}": num_hover,
-            },
             renderers=circle_renderers,
         )
     )
