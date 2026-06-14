@@ -179,7 +179,15 @@ const cases: Case[] = [
       gpu_utilization_max: 95.0,
       gpu_utilization_mean: 80.0,
       gpu_count: 4,
-      metrics_list: [{ metric: "runtime", label: "Runtime", units: "s" }],
+      metrics_list: [
+        {
+          type: "cpu",
+          metric: "avg_cpuusage",
+          units: "#cores",
+          value: 2.25,
+          no_data_reason: null,
+        },
+      ],
       multiprecision_cpu_unavailable_reason: null,
       multiprecision_gpu_unavailable_reason: null,
       derived_data_status: "ready",

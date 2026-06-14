@@ -53,7 +53,15 @@ JOB_DETAIL_WIRE = {
     "gpu_utilization_max": 95.0,
     "gpu_utilization_mean": 80.0,
     "gpu_count": 4,
-    "metrics_list": [{"metric": "runtime", "label": "Runtime", "units": "s"}],
+    "metrics_list": [
+        {
+            "type": "cpu",
+            "metric": "avg_cpuusage",
+            "units": "#cores",
+            "value": 2.25,
+            "no_data_reason": None,
+        },
+    ],
     "xalt_data": {"exec_path": [], "cwd": [], "libset": []},
     "fsio": {},
     "schema": {},

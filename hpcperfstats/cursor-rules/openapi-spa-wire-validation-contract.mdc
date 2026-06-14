@@ -54,6 +54,13 @@ When adding or changing JSON fields on an endpoint registered in `response-schem
 
 Apply the same discipline to **job detail** (`job_data` extends list entry fields), histograms, and any new Orval-backed route.
 
+## Known drift traps (job detail family)
+
+| Wire field | Actual Django shape | Wrong OpenAPI guess |
+|------------|---------------------|---------------------|
+| `metrics_list[]` | `{ type, metric, units, value: number\|null, no_data_reason: string\|null }` from `build_job_metrics_display_list` | `Dict[str, string]` / `zod.record(string, string)` → Zod rejects numeric `value` |
+| `job_data.*` nullable columns | Same as job list (`account`, `queue`, `sample_count`, …) | See job list traps above |
+
 ## New SPA endpoint checklist
 
 - `@extend_schema` response → `openapi_serializers.py` entry

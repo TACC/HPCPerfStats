@@ -1144,9 +1144,7 @@ components:
         metrics_list:
           type: array
           items:
-            type: object
-            additionalProperties:
-              type: string
+            $ref: '#/components/schemas/JobMetricRow'
         metrics: {}
         gpu: {}
         fsio: {}
@@ -1344,6 +1342,25 @@ components:
         order_by:
           type: string
         current_path:
+          type: string
+          nullable: true
+    JobMetricRow:
+      type: object
+      description: One row from build_job_metrics_display_list (metrics_data catalog
+        + value).
+      properties:
+        type:
+          type: string
+        metric:
+          type: string
+        units:
+          type: string
+          nullable: true
+        value:
+          type: number
+          format: double
+          nullable: true
+        no_data_reason:
           type: string
           nullable: true
     JobMonitorGpuResponse:

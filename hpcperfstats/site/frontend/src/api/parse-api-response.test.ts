@@ -58,6 +58,40 @@ describe("parse-api-response", () => {
     expect(parseApiResponse("GET", "/api/jobs/123/", wire)).toEqual(wire);
   });
 
+  it("accepts job detail metrics_list with numeric metric value", () => {
+    const wire = {
+      job_data: { jid: "737412" },
+      metrics_list: [
+        {
+          type: "cpu",
+          metric: "avg_cpuusage",
+          units: "#cores",
+          value: 2.25,
+          no_data_reason: null,
+        },
+      ],
+      derived_data_status: "ready",
+    };
+    expect(parseApiResponse("GET", "/api/jobs/737412/", wire)).toEqual(wire);
+  });
+
+  it("accepts job detail metrics_list with null metric value and no_data_reason", () => {
+    const wire = {
+      job_data: { jid: "123" },
+      metrics_list: [
+        {
+          type: "mem",
+          metric: "mem_hwm",
+          units: "GiB",
+          value: null,
+          no_data_reason: "No usable memory telemetry for high-water mark",
+        },
+      ],
+      derived_data_status: "ready",
+    };
+    expect(parseApiResponse("GET", "/api/jobs/123/", wire)).toEqual(wire);
+  });
+
   it("accepts type detail artifact wire keys", () => {
     const wire = {
       type_name: "cpu",

@@ -149,11 +149,21 @@ class JobDetailJobSerializer(JobListEntrySerializer):
     server_url = serializers.CharField(required=False, allow_null=True)
 
 
+class JobMetricRowSerializer(serializers.Serializer):
+    """One row from build_job_metrics_display_list (metrics_data catalog + value)."""
+
+    type = serializers.CharField(required=False, allow_blank=True)
+    metric = serializers.CharField(required=False, allow_blank=True)
+    units = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    value = serializers.FloatField(required=False, allow_null=True)
+    no_data_reason = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+
 class JobDetailResponseSerializer(serializers.Serializer):
     job_data = JobDetailJobSerializer(required=False)
     host_list = serializers.ListField(child=serializers.CharField(), required=False)
     metrics_list = serializers.ListField(
-        child=serializers.DictField(child=serializers.CharField(allow_blank=True)),
+        child=JobMetricRowSerializer(),
         required=False,
     )
     metrics = serializers.JSONField(required=False)
