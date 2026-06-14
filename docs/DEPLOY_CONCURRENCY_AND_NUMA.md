@@ -248,13 +248,15 @@ The background **`ArchiveJanitor`** processes up to **`archive_janitor_days_per_
 
 **Validation read locks:** parallel raw-remove validation defaults to **`sync_archive_validation_max_workers=2`** (INI `[PIPELINE]`). Raise only when append/read-lock contention is acceptable.
 
-**Pool stall guard (exit 124):** When `imap_unordered_watch_pool` sees **N** consecutive poll timeouts with **no** completed task while all workers are still alive, it raises `MultiprocessingPoolStallError` and `sync_timedb` exits with status **124**. Default wall time is `sync_pool_stall_abort_after_timeouts` × `sync_pool_poll_timeout_s` (**192** × **5s** ≈ **16 minutes**). Keep this product **above** `sync_ingest_per_file_timeout_s` (default **900s**) so per-file budget errors release workers before exit **124**. Logs include an **`ERROR: Pool imap stalled`** line (with optional **`diagnostics_summary=`** suffix mirroring the WARN fields) before exit, plus **`WARN: pool imap stall progress`** at 50%/75% of the abort threshold. Stall diagnostics (grep these on the next incident):
+**Pool stall guard (exit 124):** When `imap_unordered_watch_pool` sees **N** consecutive poll timeouts with **no** completed task while all workers are still alive, it raises `MultiprocessingPoolStallError` and `sync_timedb` exits with status **124**. Default wall time is `sync_pool_stall_abort_after_timeouts` × `sync_pool_poll_timeout_s` (**192** × **5s** ≈ **960s**). Keep this product **above** `sync_ingest_per_file_timeout_max_s` (default **14400s** = 4h), not merely the floor `sync_ingest_per_file_timeout_s` (**900s**). At startup, when stall wall ≤ max, the supervisor logs a **WARN** recommending a higher `sync_pool_stall_abort_after_timeouts` (for example **≥ 3000** at 5s poll → **15000s**). Per-file budgets are **size-proportional**: `clamp(floor + ceil_mib(size) × per_mib, floor, max)` with defaults mapping **5 GiB → max**. Workers log **WARN: ingest per-file timeout budget** when resolved budget **≥ 1800s** (30 minutes). On expiry the file returns `ingest_ok=False` for retry instead of blocking the chunk. Logs include an **`ERROR: Pool imap stalled`** line (with optional **`diagnostics_summary=`** suffix mirroring the WARN fields) before exit, plus **`WARN: pool imap stall progress`** at 50%/75% of the abort threshold. Stall diagnostics (grep these on the next incident):
 
 | Field | Meaning |
 |-------|---------|
 | `pool_workers_alive` / `in_flight_n` | Alive workers vs imap tasks not yet returned |
 | `stall_defer` / `defer_reason` | Why populate defer did or did not reset the stall counter (`redis_warm`, `redis_populate_active`, `no_day_hint`) |
-| `sync_ingest_per_file_timeout_s` | Per-file budget (compare to `estimated_stall_s`) |
+| `sync_ingest_per_file_timeout_s` | Per-file budget floor (compare to `effective_ingest_timeout_s` on stragglers) |
+| `sync_ingest_per_file_timeout_max_s` | Per-file budget ceiling (stall product must exceed this) |
+| `effective_ingest_timeout_s` | Max resolved budget from worker registry (`-` if unknown) |
 | `imap_batch_cap` / `chunk_batch` / `imap_batch` | Why `in_flight_n` may be ≪ chunk size |
 | `distinct_in_flight_days` / `in_flight_file_meta` | Calendar days and file sizes in the stall sample |
 | `seconds_since_last_imap_completion` | Time since last imap yield (`-` = none yet this chunk) |
@@ -286,9 +288,11 @@ Chunk handlers call **`hard_exit_pool_worker_error`** (`os._exit`) immediately a
 | Knob | Default | Effect |
 |------|---------|--------|
 | `sync_pool_poll_timeout_s` | 5 | Poll interval between imap progress checks |
-| `sync_pool_stall_abort_after_timeouts` | 192 | Consecutive timeouts before exit **124** (keep × `sync_pool_poll_timeout_s` > `sync_ingest_per_file_timeout_s`) |
+| `sync_pool_stall_abort_after_timeouts` | 192 | Consecutive timeouts before exit **124** (keep × `sync_pool_poll_timeout_s` > `sync_ingest_per_file_timeout_max_s`; default 960s < 14400s — raise abort count on multi‑GiB sites) |
 | `sync_pool_worker_recycle_grace_polls` | 2 | Polls to tolerate dead workers with exitcode 0 during `maxtasksperchild` recycle before exit **137** |
-| `sync_ingest_per_file_timeout_s` | 900 | Wall-clock cap per ingest worker task (`0` disables); on expiry the file returns `ingest_ok=False` for retry instead of blocking the chunk |
+| `sync_ingest_per_file_timeout_s` | 900 | Floor seconds for size-proportional per-file ingest budget (`0` disables) |
+| `sync_ingest_per_file_timeout_s_per_mib` | 13500/5120 | Added seconds per ceiling MiB (default maps 5 GiB → max) |
+| `sync_ingest_per_file_timeout_max_s` | 14400 | Ceiling seconds (4h) for any file; no hard file-size reject |
 | `sync_ingest_stream_duplicate_scan_bytes` | 8388608 | Route duplicate scan through streaming path above this size (even when below `sync_ingest_max_file_read_bytes`) |
 | `sync_ingest_db_complete_tail_window_lines` | 500 | Tail timestamp lines probed before full duplicate scan on large head-present files |
 | `sync_archive_members_cache_enabled` | yes | Per-process L1 cache on ingest duplicate-check path |
@@ -304,7 +308,7 @@ Chunk handlers call **`hard_exit_pool_worker_error`** (`os._exit`) immediately a
 
 Duplicate file members detected during populate set a Redis **`dedupe_hint`**; the archive janitor enqueues **`DAY_CLOSE`** (inline `.tar` dedupe or sealed-only `dedupe_sealed_daily_archive` last resort).
 
-For large DB sites with slow duplicate-detection or bulk writes, prefer enabling **`sync_ingest_per_file_timeout_s`** (for example **900**) so one straggler path does not hold the whole chunk until the pool stall abort. Raising only `sync_pool_stall_abort_after_timeouts` prolongs hangs without identifying the path. Catch-up mitigations for sealed-only archives: **`archive_keep_uncompressed_tar=yes`**, tune **`sync_ingest_pool_processes`**, and rely on Redis **single-flight populate** warming the day map (not N parallel `zstd` per worker). Ingest-time DLO quarantine for permanently corrupt raw is separate from exit **124**.
+For large DB sites with slow duplicate-detection or bulk writes, rely on **size-proportional** per-file budgets (`sync_ingest_per_file_timeout_s` floor + `sync_ingest_per_file_timeout_s_per_mib`, capped by `sync_ingest_per_file_timeout_max_s`) so one multi‑GiB straggler does not hit the flat floor and retry forever. Raise **`sync_pool_stall_abort_after_timeouts`** together with **`sync_ingest_per_file_timeout_max_s`** when increasing the ceiling. Raising only the stall abort count without aligning max timeout prolongs exit **124** on legit long-budget workers. Catch-up mitigations for sealed-only archives: **`archive_keep_uncompressed_tar=yes`**, tune **`sync_ingest_pool_processes`**, and rely on Redis **single-flight populate** warming the day map (not N parallel `zstd` per worker). Ingest-time DLO quarantine for permanently corrupt raw is separate from exit **124**.
 
 **Unmapped closed raw:** when ingest backlog prevents full accrual snapshots, the supervisor unions a cached unmapped-closed-raw scan into janitor disqualification so `.tar` drop cannot proceed while unparseable closed raw remains on disk.
 

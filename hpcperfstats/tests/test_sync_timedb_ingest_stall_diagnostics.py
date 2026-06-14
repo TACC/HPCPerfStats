@@ -45,23 +45,31 @@ def test_raise_if_ingest_per_file_deadline_exceeded_raises(monkeypatch):
 
   from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
       reset_ingest_task_deadline_monotonic,
+      reset_ingest_task_effective_timeout_s,
       set_ingest_task_deadline_monotonic,
+      set_ingest_task_effective_timeout_s,
   )
 
   monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 900.0)
-  token = set_ingest_task_deadline_monotonic(time.monotonic() - 1.0)
+  deadline_token = set_ingest_task_deadline_monotonic(time.monotonic() - 1.0)
+  effective_token = set_ingest_task_effective_timeout_s(900.0)
   try:
     with pytest.raises(st.IngestPerFileTimeoutError) as excinfo:
       st._raise_if_ingest_per_file_deadline_exceeded("/tmp/f", "db_write_host")
     assert excinfo.value.stage == "db_write_host"
     assert excinfo.value.path == "/tmp/f"
+    assert excinfo.value.elapsed_s == 900.0
   finally:
-    reset_ingest_task_deadline_monotonic(token)
+    reset_ingest_task_effective_timeout_s(effective_token)
+    reset_ingest_task_deadline_monotonic(deadline_token)
 
 
 def test_build_ingest_stall_log_suffix_includes_defer_and_pipeline(monkeypatch):
   monkeypatch.setattr(
       st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 900.0,
+  )
+  monkeypatch.setattr(
+      st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 14400.0,
   )
   monkeypatch.setattr(
       st.cfg, "get_pipeline_overlap_mode", lambda: "ingest_priority",
@@ -86,6 +94,8 @@ def test_build_ingest_stall_log_suffix_includes_defer_and_pipeline(monkeypatch):
   )
   assert "stall_defer=off defer_reason=redis_warm" in suffix
   assert "sync_ingest_per_file_timeout_s=900.0" in suffix
+  assert "sync_ingest_per_file_timeout_max_s=14400.0" in suffix
+  assert "effective_ingest_timeout_s=-" in suffix
   assert "ingest_pipeline=split_parse_write" in suffix
   assert "pipeline_overlap_mode=ingest_priority" in suffix
   assert "chunk_prewarm=2026-05-20:redis_warm" in suffix
@@ -106,12 +116,14 @@ def test_build_ingest_stall_log_suffix_includes_worker_registry_counts(monkeypat
           "path": "/data/host.example/1700000000",
           "stage": "parse",
           "substage": "duplicate_scan_streaming",
+          "timeout_s": "5183.0",
           "t0": time.monotonic(),
       },
   }
   diag = st.IngestStallDiagnostics()
   diag.worker_registry = registry
   monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 900.0)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 14400.0)
   monkeypatch.setattr(st.cfg, "get_pipeline_overlap_mode", lambda: "balanced")
   monkeypatch.setattr(st, "_ingest_stall_defer_state", lambda _d, _s: (False, "redis_warm"))
   suffix = st._build_ingest_stall_log_suffix(
@@ -129,4 +141,5 @@ def test_build_ingest_stall_log_suffix_includes_worker_registry_counts(monkeypat
   assert "worker_registry_n=1" in suffix
   assert "in_flight_n=2" in suffix
   assert "worker_registry_gap=1" in suffix
+  assert "effective_ingest_timeout_s=5183.0" in suffix
   assert "duplicate_scan_streaming" in suffix

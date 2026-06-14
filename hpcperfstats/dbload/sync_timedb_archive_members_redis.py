@@ -48,6 +48,11 @@ _ingest_task_deadline_monotonic = contextvars.ContextVar(
     default=None,
 )
 
+_ingest_task_effective_timeout_s = contextvars.ContextVar(
+    "ingest_task_effective_timeout_s",
+    default=None,
+)
+
 
 def set_ingest_task_deadline_monotonic(deadline):
   """Set monotonic deadline for ingest worker archive lookups (ContextVar)."""
@@ -60,6 +65,19 @@ def reset_ingest_task_deadline_monotonic(token):
 
 def get_ingest_task_deadline_monotonic():
   return _ingest_task_deadline_monotonic.get()
+
+
+def set_ingest_task_effective_timeout_s(timeout_s):
+  """Resolved per-file ingest budget for this worker task (ContextVar)."""
+  return _ingest_task_effective_timeout_s.set(timeout_s)
+
+
+def reset_ingest_task_effective_timeout_s(token):
+  _ingest_task_effective_timeout_s.reset(token)
+
+
+def get_ingest_task_effective_timeout_s():
+  return _ingest_task_effective_timeout_s.get()
 
 
 def _raise_if_ingest_deadline_exceeded():

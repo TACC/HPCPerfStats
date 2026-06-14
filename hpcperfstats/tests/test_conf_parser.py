@@ -904,6 +904,10 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_pool_stall_abort_after_timeouts() == 192
   assert cfg.get_sync_pool_poll_timeout_s() == 5.0
   assert cfg.get_sync_ingest_per_file_timeout_s() == 900.0
+  assert cfg.get_sync_ingest_per_file_timeout_max_s() == 14400.0
+  assert cfg.get_sync_ingest_per_file_timeout_s_per_mib() == pytest.approx(
+      13500.0 / 5120.0,
+  )
   assert cfg.get_sync_archive_members_cache_enabled() is True
   assert cfg.get_sync_archive_members_cache_max_entries() == 64
   assert cfg.get_sync_archive_members_redis_enabled() is True
@@ -929,6 +933,8 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
       "sync_pool_stall_abort_after_timeouts = 90\n"
       "sync_pool_poll_timeout_s = 2.5\n"
       "sync_ingest_per_file_timeout_s = 900\n"
+      "sync_ingest_per_file_timeout_max_s = 7200\n"
+      "sync_ingest_per_file_timeout_s_per_mib = 1.0\n"
       "sync_archive_members_cache_enabled = no\n"
       "sync_archive_members_cache_max_entries = 32\n"
       "sync_archive_members_redis_enabled = no\n"
@@ -953,6 +959,8 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_pool_stall_abort_after_timeouts() == 90
   assert cfg.get_sync_pool_poll_timeout_s() == 2.5
   assert cfg.get_sync_ingest_per_file_timeout_s() == 900.0
+  assert cfg.get_sync_ingest_per_file_timeout_max_s() == 7200.0
+  assert cfg.get_sync_ingest_per_file_timeout_s_per_mib() == 1.0
   assert cfg.get_sync_archive_members_cache_enabled() is False
   assert cfg.get_sync_archive_members_cache_max_entries() == 32
   assert cfg.get_sync_archive_members_redis_enabled() is False

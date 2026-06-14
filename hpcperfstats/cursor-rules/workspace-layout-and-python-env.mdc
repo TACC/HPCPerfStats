@@ -28,6 +28,11 @@ Do **not** treat `HPCPerfStats/HPCPerfStats/` alone as “project root” for `.
 
 ## Cloud backup mirrors (not source of truth)
 
+On this machine the Proton Drive mirror is **backup only** (not live):
+
+- **Live:** `/Users/sharrell/cursor-projects/HPCPerfStats/` — see `CANONICAL_WORKSPACE.md` at that workspace root.
+- **Backup:** `/Users/sharrell/Library/CloudStorage/ProtonDrive-stephen@teknikal.org-folder/UT/Cursor-Projects/HPCPerfStats/` — see `BACKUP_ONLY.md`.
+
 Some machines keep a **cloud-sync mirror** under `Library/CloudStorage/` (for example Proton Drive). That tree is **backup only** — do **not** use it for:
 
 - `pip install -e`, editable imports, or `manage.py spectacular`

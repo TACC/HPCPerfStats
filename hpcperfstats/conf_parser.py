@@ -108,6 +108,8 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_pool_stall_abort_after_timeouts"),
     ("PIPELINE", "sync_pool_worker_recycle_grace_polls"),
     ("PIPELINE", "sync_ingest_per_file_timeout_s"),
+    ("PIPELINE", "sync_ingest_per_file_timeout_max_s"),
+    ("PIPELINE", "sync_ingest_per_file_timeout_s_per_mib"),
     ("PIPELINE", "sync_archive_members_cache_enabled"),
     ("PIPELINE", "sync_archive_members_cache_max_entries"),
     ("PIPELINE", "sync_archive_members_redis_enabled"),
@@ -1744,7 +1746,7 @@ def get_sync_archive_members_redis_max_payload_bytes():
 
 
 def get_sync_ingest_per_file_timeout_s():
-  """Wall-clock cap per ingest pool task in seconds (0 = disabled)."""
+  """Wall-clock floor per ingest pool task in seconds (0 = disabled)."""
   env = os.environ.get("HPCPERFSTATS_SYNC_INGEST_PER_FILE_TIMEOUT_S", "").strip()
   if env:
     try:
@@ -1759,6 +1761,57 @@ def get_sync_ingest_per_file_timeout_s():
     )
   except (TypeError, ValueError, OverflowError):
     return 0.0
+
+
+# 5 GiB × per_mib + floor reaches max at default slope (13500/5120 s per MiB).
+_SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S_DEFAULT = 14400.0
+_SYNC_INGEST_PER_FILE_TIMEOUT_S_PER_MIB_DEFAULT = 13500.0 / 5120.0
+
+
+def get_sync_ingest_per_file_timeout_max_s():
+  """Ceiling for size-proportional per-file ingest timeout (0 = no ceiling)."""
+  env = os.environ.get(
+      "HPCPERFSTATS_SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S", "",
+  ).strip()
+  if env:
+    try:
+      return max(0.0, float(env))
+    except (TypeError, ValueError, OverflowError):
+      return 0.0
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        0.0,
+        float(_pipeline_get(
+            "sync_ingest_per_file_timeout_max_s",
+            fallback=str(int(_SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S_DEFAULT)),
+        )),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return _SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S_DEFAULT
+
+
+def get_sync_ingest_per_file_timeout_s_per_mib():
+  """Added seconds per ceiling MiB for size-proportional ingest timeout."""
+  env = os.environ.get(
+      "HPCPERFSTATS_SYNC_INGEST_PER_FILE_TIMEOUT_S_PER_MIB", "",
+  ).strip()
+  if env:
+    try:
+      return max(0.0, float(env))
+    except (TypeError, ValueError, OverflowError):
+      return 0.0
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        0.0,
+        float(_pipeline_get(
+            "sync_ingest_per_file_timeout_s_per_mib",
+            fallback=str(_SYNC_INGEST_PER_FILE_TIMEOUT_S_PER_MIB_DEFAULT),
+        )),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return _SYNC_INGEST_PER_FILE_TIMEOUT_S_PER_MIB_DEFAULT
 
 
 def get_metrics_run_stall_timeout_s():

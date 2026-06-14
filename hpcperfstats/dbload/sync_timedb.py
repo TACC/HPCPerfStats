@@ -160,10 +160,13 @@ from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
     build_archive_members_redis_keys,
     describe_archive_members_populate_redis_for_day,
     get_ingest_task_deadline_monotonic,
+    get_ingest_task_effective_timeout_s,
     redis_lookup_full_members,
     redis_members_cache_is_fully_warm,
     reset_ingest_task_deadline_monotonic,
+    reset_ingest_task_effective_timeout_s,
     set_ingest_task_deadline_monotonic,
+    set_ingest_task_effective_timeout_s,
     _raise_if_ingest_deadline_exceeded,
 )
 
@@ -248,9 +251,12 @@ EMPTY_QUEUE_RESCAN_SLEEP_SECONDS = 30
 LOCK_WAIT_LOG_THRESHOLD_SECONDS = 30.0
 FINALIZE_POLL_TIMEOUT_SECONDS = 0.05
 
+INGEST_PER_FILE_TIMEOUT_LOG_MIN_S = 1800.0
+_INGEST_TIMEOUT_MIB_BYTES = 1024 * 1024
+
 
 class IngestPerFileTimeoutError(TimeoutError):
-  """Raised when one ingest pool task exceeds ``sync_ingest_per_file_timeout_s``."""
+  """Raised when one ingest pool task exceeds its resolved per-file budget."""
 
   def __init__(self, path, stage, elapsed_s):
     self.path = str(path)
@@ -283,8 +289,37 @@ class _IngestPoolInFlightTracker:
     return len(self._pending)
 
 
-def _resolve_sync_ingest_per_file_timeout_s():
-  return float(cfg.get_sync_ingest_per_file_timeout_s())
+def resolve_ingest_per_file_timeout_s(stats_file):
+  """Size-proportional wall-clock budget for one ingest worker task."""
+  base = float(cfg.get_sync_ingest_per_file_timeout_s())
+  if base <= 0.0:
+    return 0.0
+  size = stats_file_size_bytes(stats_file)
+  if size <= 0:
+    return base
+  mib = (size + (_INGEST_TIMEOUT_MIB_BYTES - 1)) // _INGEST_TIMEOUT_MIB_BYTES
+  per_mib = float(cfg.get_sync_ingest_per_file_timeout_s_per_mib())
+  cap = float(cfg.get_sync_ingest_per_file_timeout_max_s())
+  scaled = base + float(mib) * per_mib
+  if cap > 0.0:
+    scaled = min(scaled, cap)
+  return max(base, scaled)
+
+
+def _log_long_ingest_timeout_budget_if_needed(stats_file, timeout_s):
+  if timeout_s < INGEST_PER_FILE_TIMEOUT_LOG_MIN_S:
+    return
+  size_bytes = stats_file_size_bytes(stats_file)
+  log_print(
+      "WARN: ingest per-file timeout budget path=%s size_bytes=%s timeout_s=%.1f"
+      % (stats_file, size_bytes, timeout_s),
+      flush=True,
+  )
+  update_worker_substage(
+      "long_timeout_budget",
+      timeout_s="%.1f" % timeout_s,
+      size_bytes=str(size_bytes),
+  )
 
 
 def _raise_if_ingest_per_file_deadline_exceeded(stats_file, stage):
@@ -293,8 +328,16 @@ def _raise_if_ingest_per_file_deadline_exceeded(stats_file, stage):
   if deadline is None:
     return
   if time.monotonic() >= float(deadline):
-    timeout_s = _resolve_sync_ingest_per_file_timeout_s()
-    elapsed_s = timeout_s if timeout_s > 0.0 else max(0.0, time.monotonic() - float(deadline))
+    effective = get_ingest_task_effective_timeout_s()
+    if effective is not None and float(effective) > 0.0:
+      timeout_s = float(effective)
+    else:
+      timeout_s = float(cfg.get_sync_ingest_per_file_timeout_s())
+    elapsed_s = (
+        timeout_s
+        if timeout_s > 0.0
+        else max(0.0, time.monotonic() - float(deadline))
+    )
     raise IngestPerFileTimeoutError(str(stats_file), stage, elapsed_s)
 
 
@@ -306,13 +349,16 @@ def _imap_ingest_result_path(result):
 
 def _run_ingest_timed(stats_file, stage, fn, *, enable_sigalrm=True):
   """Run ingest worker body with optional Unix wall-clock cap."""
-  timeout_s = _resolve_sync_ingest_per_file_timeout_s()
+  timeout_s = resolve_ingest_per_file_timeout_s(stats_file)
   deadline_token = None
+  effective_token = None
   if timeout_s > 0.0:
+    effective_token = set_ingest_task_effective_timeout_s(timeout_s)
     deadline_token = set_ingest_task_deadline_monotonic(
         time.monotonic() + timeout_s,
     )
   record_worker_stage(stats_file, stage)
+  _log_long_ingest_timeout_budget_if_needed(stats_file, timeout_s)
   try:
     if timeout_s <= 0.0 or not enable_sigalrm or not hasattr(signal, "SIGALRM"):
       return fn()
@@ -322,7 +368,11 @@ def _run_ingest_timed(stats_file, stage, fn, *, enable_sigalrm=True):
 
     def _handler(signum, frame):
       del signum, frame
-      raise IngestPerFileTimeoutError(path_label, stage, time.monotonic() - t0)
+      raise IngestPerFileTimeoutError(
+          path_label,
+          stage,
+          time.monotonic() - t0,
+      )
 
     previous = signal.getsignal(signal.SIGALRM)
     signal.signal(signal.SIGALRM, _handler)
@@ -339,6 +389,8 @@ def _run_ingest_timed(stats_file, stage, fn, *, enable_sigalrm=True):
         signal.alarm(0)
       signal.signal(signal.SIGALRM, previous)
   finally:
+    if effective_token is not None:
+      reset_ingest_task_effective_timeout_s(effective_token)
     if deadline_token is not None:
       reset_ingest_task_deadline_monotonic(deadline_token)
     clear_worker_stage()
@@ -563,6 +615,56 @@ def _format_redis_populate_for_in_flight_days(paths, max_days=3):
   return " redis_by_day=" + " ".join(parts)
 
 
+def _max_effective_ingest_timeout_from_registry(registry):
+  if registry is None:
+    return None
+  best = None
+  try:
+    items = registry.items()
+  except Exception:
+    return None
+  for _pid, raw in items:
+    if not isinstance(raw, dict):
+      continue
+    raw_timeout = raw.get("timeout_s")
+    if raw_timeout is None:
+      continue
+    try:
+      value = float(raw_timeout)
+    except (TypeError, ValueError):
+      continue
+    if best is None or value > best:
+      best = value
+  return best
+
+
+def _warn_if_pool_stall_wall_below_ingest_timeout_max():
+  poll_s = float(cfg.get_sync_pool_poll_timeout_s())
+  abort_n = int(cfg.get_sync_pool_stall_abort_after_timeouts())
+  max_per_file = float(cfg.get_sync_ingest_per_file_timeout_max_s())
+  if max_per_file <= 0.0 or poll_s <= 0.0:
+    return
+  stall_wall_s = poll_s * abort_n
+  if stall_wall_s > max_per_file:
+    return
+  min_abort = int(max_per_file / poll_s) + 1
+  log_print(
+      "WARN: sync_pool stall wall %.0fs (abort=%d poll=%.0fs) is not above "
+      "sync_ingest_per_file_timeout_max_s=%.0fs; raise "
+      "sync_pool_stall_abort_after_timeouts to at least %d "
+      "(wall %.0fs at current poll)"
+      % (
+          stall_wall_s,
+          abort_n,
+          poll_s,
+          max_per_file,
+          min_abort,
+          min_abort * poll_s,
+      ),
+      flush=True,
+  )
+
+
 def _build_ingest_stall_log_suffix(
     *,
     sample,
@@ -574,13 +676,20 @@ def _build_ingest_stall_log_suffix(
     poll_timeout_s,
 ):
   defer_on, defer_reason = _ingest_stall_defer_state(day_hint, progress_state)
-  timeout_s = _resolve_sync_ingest_per_file_timeout_s()
+  floor_timeout_s = float(cfg.get_sync_ingest_per_file_timeout_s())
+  max_timeout_s = float(cfg.get_sync_ingest_per_file_timeout_max_s())
   diag = stall_diagnostics or IngestStallDiagnostics()
   worker_registry = diag.worker_registry
   if worker_registry is not None:
     prune_stale_worker_stages(worker_registry, max_age_s=900.0)
   worker_stages = format_worker_stages_snapshot(worker_registry)
   registry_n = count_worker_registry_entries(worker_registry)
+  effective_timeout_s = _max_effective_ingest_timeout_from_registry(worker_registry)
+  effective_text = (
+      "%.1f" % effective_timeout_s
+      if effective_timeout_s is not None
+      else "-"
+  )
   in_flight_n = len(sample or ())
   since_last = diag.seconds_since_last_imap_completion()
   since_text = "%.1f" % since_last if since_last >= 0.0 else "-"
@@ -589,14 +698,17 @@ def _build_ingest_stall_log_suffix(
   if registry_n < in_flight_n:
     registry_gap = " worker_registry_gap=%d" % (in_flight_n - registry_n)
   return (
-      " sync_ingest_per_file_timeout_s=%s stall_defer=%s defer_reason=%s"
+      " sync_ingest_per_file_timeout_s=%s sync_ingest_per_file_timeout_max_s=%s"
+      " effective_ingest_timeout_s=%s stall_defer=%s defer_reason=%s"
       " imap_batch_cap=%d chunk_batch=%d imap_batch=%d"
       " distinct_in_flight_days=%s in_flight_file_meta=%s"
       " seconds_since_last_imap_completion=%s ingest_pipeline=%s"
       " pipeline_overlap_mode=%s async_day_close=%s chunk_prewarm=%s"
       " worker_registry_n=%d in_flight_n=%d worker_stages=%s%s%s"
       % (
-          timeout_s,
+          floor_timeout_s,
+          max_timeout_s,
+          effective_text,
           "on" if defer_on else "off",
           defer_reason,
           int(diag.imap_batch_cap or 0),
@@ -4261,6 +4373,8 @@ def run_sync_timedb_supervisor_from_parsed(run_once, startdate, enddate):
     verify_archive_members_redis_startup()
   except ArchiveMembersRedisUnavailableError as exc:
     _exit_on_archive_members_redis_unavailable(exc)
+
+  _warn_if_pool_stall_wall_below_ingest_timeout_max()
 
   directory = cfg.get_archive_dir_path()
 

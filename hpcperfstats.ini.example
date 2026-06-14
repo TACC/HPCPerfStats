@@ -301,14 +301,21 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Poll interval for sync_timedb pool waits seconds (default 5).
 # sync_pool_poll_timeout_s = 5
 
-# Consecutive pool poll timeouts with no imap result before exit 124 (default 192 ≈ 960s at 5s poll; keep above sync_ingest_per_file_timeout_s).
+# Consecutive pool poll timeouts with no imap result before exit 124 (default 192 ≈ 960s at 5s poll; keep above sync_ingest_per_file_timeout_max_s).
 # sync_pool_stall_abort_after_timeouts = 192
 
 # Polls to tolerate maxtasksperchild worker recycle before exit 137 (default 2).
 # sync_pool_worker_recycle_grace_polls = 2
 
-# Per ingest pool task wall-clock cap seconds; 0 disables (default 900).
+# Per ingest pool task wall-clock floor seconds; 0 disables all per-file timeouts (default 900).
 # sync_ingest_per_file_timeout_s = 900
+
+# Size-proportional ingest timeout: resolved = clamp(floor + ceil_mib(size) * per_mib, floor, max).
+# Default per_mib (13500/5120) maps 5 GiB to max; larger files cap at max (no file-size reject).
+# sync_ingest_per_file_timeout_s_per_mib = 2.63671875
+
+# Ceiling seconds for size-proportional per-file ingest timeout (default 14400 = 4h).
+# sync_ingest_per_file_timeout_max_s = 14400
 
 # Cache daily tar member maps per worker on DB-complete ingest checks (default yes).
 # sync_archive_members_cache_enabled = yes
