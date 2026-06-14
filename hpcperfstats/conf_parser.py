@@ -1586,15 +1586,15 @@ def get_sync_pool_stall_abort_after_timeouts():
     try:
       return max(1, int(env))
     except (TypeError, ValueError, OverflowError):
-      return 192
+      return 2881
   _ensure_cfg_loaded()
   try:
     return max(
         1,
-        int(_pipeline_get("sync_pool_stall_abort_after_timeouts", fallback="192")),
+        int(_pipeline_get("sync_pool_stall_abort_after_timeouts", fallback="2881")),
     )
   except (TypeError, ValueError, OverflowError):
-    return 192
+    return 2881
 
 
 def get_sync_pool_worker_recycle_grace_polls():

@@ -75,7 +75,7 @@ def test_build_ingest_stall_log_suffix_includes_defer_and_pipeline(monkeypatch):
       st.cfg, "get_pipeline_overlap_mode", lambda: "ingest_priority",
   )
   monkeypatch.setattr(
-      st, "_ingest_stall_defer_state", lambda _day, _state: (False, "redis_warm"),
+      st, "_ingest_stall_defer_state", lambda _day, _state, **kwargs: (False, "redis_warm"),
   )
   diag = st.IngestStallDiagnostics()
   diag.ingest_pipeline = "split_parse_write"
@@ -108,6 +108,58 @@ def test_ingest_stall_defer_state_no_day_hint():
   assert reason == "no_day_hint"
 
 
+def test_ingest_stall_defer_long_budget_when_effective_exceeds_stall_wall(monkeypatch):
+  import time
+
+  monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 192)
+  registry = {
+      "1001": {
+          "path": "/data/host.example/1700000000",
+          "stage": "parse",
+          "substage": "head",
+          "timeout_s": "14400.0",
+          "t0": time.monotonic(),
+      },
+  }
+  diag = st.IngestStallDiagnostics()
+  diag.worker_registry = registry
+  defer_on, reason = st._ingest_stall_defer_state(
+      "",
+      {},
+      stall_diagnostics=diag,
+      consecutive_timeouts=100,
+  )
+  assert defer_on is True
+  assert reason == "long_ingest_budget"
+
+
+def test_ingest_stall_defer_long_budget_off_when_stall_exceeds_effective(monkeypatch):
+  import time
+
+  monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 192)
+  registry = {
+      "1001": {
+          "path": "/data/host.example/1700000000",
+          "stage": "parse",
+          "substage": "head",
+          "timeout_s": "900.0",
+          "t0": time.monotonic(),
+      },
+  }
+  diag = st.IngestStallDiagnostics()
+  diag.worker_registry = registry
+  defer_on, reason = st._ingest_stall_defer_state(
+      "",
+      {},
+      stall_diagnostics=diag,
+      consecutive_timeouts=200,
+  )
+  assert defer_on is False
+  assert reason == "no_day_hint"
+
+
 def test_build_ingest_stall_log_suffix_includes_worker_registry_counts(monkeypatch):
   import time
 
@@ -125,7 +177,9 @@ def test_build_ingest_stall_log_suffix_includes_worker_registry_counts(monkeypat
   monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 900.0)
   monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 14400.0)
   monkeypatch.setattr(st.cfg, "get_pipeline_overlap_mode", lambda: "balanced")
-  monkeypatch.setattr(st, "_ingest_stall_defer_state", lambda _d, _s: (False, "redis_warm"))
+  monkeypatch.setattr(
+      st, "_ingest_stall_defer_state", lambda _d, _s, **kwargs: (False, "redis_warm"),
+  )
   suffix = st._build_ingest_stall_log_suffix(
       sample=[
           "/data/host.example/1700000000",

@@ -576,7 +576,46 @@ class IngestStallDiagnostics:
     return "%d detail=%s" % (len(active), detail)
 
 
-def _ingest_stall_defer_state(day_hint, progress_state):
+def _pool_stall_wall_seconds():
+  poll_s = float(cfg.get_sync_pool_poll_timeout_s())
+  abort_n = int(cfg.get_sync_pool_stall_abort_after_timeouts())
+  if poll_s <= 0.0:
+    return 0.0
+  return poll_s * abort_n
+
+
+def _ingest_stall_defer_long_budget(stall_diagnostics, consecutive_timeouts):
+  """Defer imap stall abort while in-flight workers remain within per-file budget."""
+  if stall_diagnostics is None:
+    return False, ""
+  effective = _max_effective_ingest_timeout_from_registry(
+      getattr(stall_diagnostics, "worker_registry", None),
+  )
+  if effective is None:
+    return False, ""
+  stall_wall = _pool_stall_wall_seconds()
+  if stall_wall <= 0.0 or effective <= stall_wall:
+    return False, ""
+  poll_s = float(cfg.get_sync_pool_poll_timeout_s())
+  estimated_stall_s = int(consecutive_timeouts) * poll_s
+  if estimated_stall_s < effective:
+    return True, "long_ingest_budget"
+  return False, ""
+
+
+def _ingest_stall_defer_state(
+    day_hint,
+    progress_state,
+    *,
+    stall_diagnostics=None,
+    consecutive_timeouts=0,
+):
+  defer_on, defer_reason = _ingest_stall_defer_long_budget(
+      stall_diagnostics,
+      consecutive_timeouts,
+  )
+  if defer_on:
+    return True, defer_reason
   if not day_hint:
     return False, "no_day_hint"
   if archive_members_populate_shows_progress_for_day(
@@ -675,7 +714,12 @@ def _build_ingest_stall_log_suffix(
     consecutive,
     poll_timeout_s,
 ):
-  defer_on, defer_reason = _ingest_stall_defer_state(day_hint, progress_state)
+  defer_on, defer_reason = _ingest_stall_defer_state(
+      day_hint,
+      progress_state,
+      stall_diagnostics=stall_diagnostics,
+      consecutive_timeouts=consecutive,
+  )
   floor_timeout_s = float(cfg.get_sync_ingest_per_file_timeout_s())
   max_timeout_s = float(cfg.get_sync_ingest_per_file_timeout_max_s())
   diag = stall_diagnostics or IngestStallDiagnostics()
@@ -798,8 +842,42 @@ def _make_ingest_stall_poll_fn(tracker, progress_state, stall_diagnostics=None):
     elif pool_health_context.get("in_flight_sample"):
       sample = pool_health_context["in_flight_sample"]
     day_hint = _calendar_day_hint_from_paths(sample)
-    defer_on, defer_reason = _ingest_stall_defer_state(day_hint, progress_state)
+    defer_on, defer_reason = _ingest_stall_defer_state(
+        day_hint,
+        progress_state,
+        stall_diagnostics=stall_diagnostics,
+        consecutive_timeouts=consecutive,
+    )
     if defer_on:
+      poll_s = float(cfg.get_sync_pool_poll_timeout_s())
+      estimated_stall_s = consecutive * poll_s
+      if defer_reason == "long_ingest_budget":
+        effective = _max_effective_ingest_timeout_from_registry(
+            getattr(stall_diagnostics, "worker_registry", None)
+            if stall_diagnostics is not None
+            else None,
+        )
+        worker_stages = format_worker_stages_snapshot(
+            getattr(stall_diagnostics, "worker_registry", None)
+            if stall_diagnostics is not None
+            else None,
+        )
+        log_print(
+            "WARN: pool imap stall deferred: long ingest budget "
+            "effective_ingest_timeout_s=%.1f stall_wall_s=%.0f "
+            "consecutive_timeouts=%d estimated_stall_s=%.1f in_flight_n=%d "
+            "worker_stages=%s"
+            % (
+                effective or 0.0,
+                _pool_stall_wall_seconds(),
+                int(consecutive),
+                estimated_stall_s,
+                len(sample),
+                worker_stages,
+            ),
+            flush=True,
+        )
+        return True
       redis_snapshot = describe_archive_members_populate_redis_for_day(
           day_hint,
           tgz_archive_dir,
