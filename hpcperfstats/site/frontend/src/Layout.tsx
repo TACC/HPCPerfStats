@@ -59,6 +59,12 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
   const machineName =
     session && typeof session.machine_name === "string" ? session.machine_name : "";
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [extendedSearchOpen, setExtendedSearchOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
+  const [findJobError, setFindJobError] = useState("");
+  const [staffMessage, setStaffMessage] = useState("");
+  const [isDroppingStaff, setIsDroppingStaff] = useState(false);
+  const [isInvalidatingCache, setIsInvalidatingCache] = useState(false);
   useRouteFocusMain(pathname);
   useEffect(() => {
     setMoreMenuOpen(false);
@@ -66,12 +72,6 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
     setExtendedSearchOpen(false);
     setFindJobError("");
   }, [pathname]);
-  const [extendedSearchOpen, setExtendedSearchOpen] = useState(false);
-  const [navOpen, setNavOpen] = useState(false);
-  const [findJobError, setFindJobError] = useState("");
-  const [staffMessage, setStaffMessage] = useState("");
-  const [isDroppingStaff, setIsDroppingStaff] = useState(false);
-  const [isInvalidatingCache, setIsInvalidatingCache] = useState(false);
   const extendedSearchToggleRef = useRef<HTMLButtonElement | null>(null);
   const extendedSearchPanelRef = useRef<HTMLDivElement | null>(null);
   useFocusTrap(extendedSearchPanelRef, extendedSearchOpen);
@@ -203,7 +203,7 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
       <header className="relative border-b bg-muted/40" role="navigation" aria-label="Primary">
         <div className="relative flex flex-wrap items-start gap-3 py-2 lg:pb-3">
           <Link
-            href="/"
+            href="/machine/"
             className="site-header-logo flex shrink-0 items-center py-1 lg:min-h-[50px]"
           >
             <img
@@ -232,7 +232,7 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
             )}
           >
             <Link
-              href="/"
+              href="/machine/"
               className="mx-auto flex max-w-[min(48vw,680px)] flex-col items-center break-words text-center no-underline max-lg:mb-2 lg:absolute lg:left-1/2 lg:-translate-x-1/2"
             >
               <div className="text-lg font-semibold text-foreground">HPCPerfStats</div>

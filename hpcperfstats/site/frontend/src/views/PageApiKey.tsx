@@ -100,7 +100,7 @@ export default function PageApiKey() {
       />
       <div className="mx-auto max-w-[640px] px-4">
         <p className="mb-3">
-          <Link href="/" className="text-primary hover:underline">
+          <Link href="/machine/" className="text-primary hover:underline">
             Back to HPCPerfStats
           </Link>
         </p>

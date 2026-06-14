@@ -164,4 +164,39 @@ describe("parse-api-response", () => {
     expect(parsed.job_list?.[0]?.host_list).toEqual(["n001.cluster.example"]);
     expect(parsed.filter_summary).toEqual(["Queue: normal"]);
   });
+
+  it("accepts nullable account, queue, state, QOS, and jobname on job list entries", () => {
+    const payload = {
+      nj: 1,
+      job_list: [
+        {
+          jid: "99999",
+          submit_time: "2024-06-01T12:00:00",
+          start_time: "2024-06-01T12:05:00",
+          end_time: "2024-06-01T14:00:00",
+          runtime: 6900,
+          username: "bob",
+          account: null,
+          queue: null,
+          state: null,
+          QOS: null,
+          jobname: null,
+          host_list: ["n003.cluster.example"],
+          performance: {
+            label: "Summary available",
+            tone: "success",
+            aria_label: "Performance: Summary available",
+            sort_rank: 0,
+          },
+        },
+      ],
+      filter_summary: ["User: bob"],
+      aggregates: { total_node_hours: 12 },
+      pagination: { page: 1, num_pages: 1 },
+    };
+    expect(jobsRetrieveResponse.safeParse(payload).success).toBe(true);
+    const parsed = parseApiResponse<typeof payload>("GET", "/api/jobs/", payload);
+    expect(parsed.job_list?.[0]?.account).toBeNull();
+    expect(parsed.job_list?.[0]?.queue).toBeNull();
+  });
 });

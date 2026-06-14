@@ -39,7 +39,17 @@ export function useFocusTrap(
 
       const first = nodes[0];
       const last = nodes[nodes.length - 1];
-      const cur = document.activeElement;
+      const cur = document.activeElement as HTMLElement | null;
+
+      // Only trap when focus is already inside the panel or wrapping from last→first.
+      if (cur && !root.contains(cur) && e.shiftKey) {
+        return;
+      }
+      if (cur && !root.contains(cur) && !e.shiftKey) {
+        first.focus();
+        e.preventDefault();
+        return;
+      }
 
       e.preventDefault();
       if (e.shiftKey) {

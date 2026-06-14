@@ -36,6 +36,7 @@ HPCPerfStats serves researchers and operators who expect clear hierarchy, honest
 
 ## Wayfinding
 
+- Machine SPA home is **`/machine/`** (search view). Header/logo and “home” links must use **`href="/machine/"`**, not **`href="/"`** — Django `/` is redirect-only; static export has no `/index.txt` RSC payload at site root (nginx 404 + Next prefetch noise).
 - Deep pages include **breadcrumbs** (`PageBreadcrumbs`) or explicit **Back to job** links on type/host drill-downs.
 - Shareable primary tabs sync to **`?tab=`** or **`?view=`** (`sync-tab-search-param.js`).
 - Unknown SPA routes render **`PageNotFound`**, not a silent redirect home.

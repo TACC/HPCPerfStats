@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { screen } from "@testing-library/react";
+import { screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import { axeSeriousViolations } from "./axe-test-utils";
@@ -9,6 +9,7 @@ import {
   createTestQueryClient,
   renderWithProviders,
 } from "./test-utils/render-with-providers";
+import { nextNavigationMock } from "./test-utils/next-navigation-state";
 
 const mutateAsync = vi.fn();
 const invalidateMutateAsync = vi.fn();
@@ -168,5 +169,66 @@ describe("Layout", () => {
     expect(backdrop).toHaveClass("overflow-y-auto");
     expect(document.querySelector('[data-slot="dialog"]')).toBeNull();
     expect(await axeSeriousViolations(view.container)).toEqual([]);
+  });
+
+  it("links header home controls to /machine/ not site root", () => {
+    renderLayout({ logged_in: true, username: "alice", is_staff: false });
+    const homeLinks = screen.getAllByRole("link", { name: /hpcperfstats/i });
+    expect(homeLinks.length).toBeGreaterThan(0);
+    for (const link of homeLinks) {
+      const href = link.getAttribute("href");
+      expect(href).toMatch(/^\/machine\/?$/);
+      expect(href).not.toBe("/");
+    }
+  });
+
+  it("closes extended search on Escape and restores focus to toggle", async () => {
+    const user = userEvent.setup();
+    renderLayout({ logged_in: true, username: "alice", is_staff: false });
+    const toggle = screen.getByRole("button", { name: /extended search/i });
+    await user.click(toggle);
+    expect(await screen.findByRole("dialog", { name: /extended search/i })).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: /extended search/i })).not.toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(toggle).toHaveFocus();
+    });
+  });
+
+  it("closes extended search when backdrop is clicked", async () => {
+    const user = userEvent.setup();
+    renderLayout({ logged_in: true, username: "alice", is_staff: false });
+    await user.click(screen.getByRole("button", { name: /extended search/i }));
+    expect(await screen.findByRole("dialog", { name: /extended search/i })).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("extended-search-backdrop"));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: /extended search/i })).not.toBeInTheDocument();
+    });
+  });
+
+  it("closes extended search when pathname changes", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <Layout session={{ logged_in: true, username: "alice", is_staff: false }}>
+        <div>Child content</div>
+      </Layout>,
+      { withNavigationSync: true, initialPath: "/machine/jobs/" },
+    );
+    await user.click(screen.getByRole("button", { name: /extended search/i }));
+    expect(await screen.findByRole("dialog", { name: /extended search/i })).toBeInTheDocument();
+
+    await act(async () => {
+      await nextNavigationMock.router.push("/machine/");
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: /extended search/i })).not.toBeInTheDocument();
+    });
   });
 });

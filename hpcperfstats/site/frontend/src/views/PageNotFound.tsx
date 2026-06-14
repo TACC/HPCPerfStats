@@ -11,7 +11,7 @@ export default function PageNotFound() {
       <AlertDescription className="text-muted-foreground">
         That address is not part of HPCPerfStats. Check the URL or return to browse jobs.
       </AlertDescription>
-      <Button size="sm" className="mt-3" render={<Link href="/" />}>
+      <Button size="sm" className="mt-3" render={<Link href="/machine/" />}>
         Browse jobs
       </Button>
     </Alert>

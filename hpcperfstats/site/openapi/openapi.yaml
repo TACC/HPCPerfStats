@@ -1098,16 +1098,21 @@ components:
           type: string
         account:
           type: string
+          nullable: true
         sample_count:
           type: integer
         queue:
           type: string
+          nullable: true
         state:
           type: string
+          nullable: true
         QOS:
           type: string
+          nullable: true
         jobname:
           type: string
+          nullable: true
         host_list:
           type: array
           items:
@@ -1236,16 +1241,21 @@ components:
           type: string
         account:
           type: string
+          nullable: true
         sample_count:
           type: integer
         queue:
           type: string
+          nullable: true
         state:
           type: string
+          nullable: true
         QOS:
           type: string
+          nullable: true
         jobname:
           type: string
+          nullable: true
         host_list:
           type: array
           items:

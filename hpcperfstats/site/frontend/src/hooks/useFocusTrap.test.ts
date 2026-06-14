@@ -20,14 +20,25 @@ describe("useFocusTrap", () => {
     removeSpy.mockRestore();
   });
 
-  it("does not register when inactive", () => {
+  it("does not trap Tab when container has no focusables", () => {
     const addSpy = vi.spyOn(document, "addEventListener");
     const ref = { current: document.createElement("div") };
+    const preventDefault = vi.fn();
 
-    const { unmount } = renderHook(() => useFocusTrap(ref, false));
+    renderHook(() => useFocusTrap(ref, true));
 
-    expect(addSpy).not.toHaveBeenCalledWith("keydown", expect.any(Function), true);
-    unmount();
+    const handler = addSpy.mock.calls.find(
+      (call) => call[0] === "keydown" && call[2] === true,
+    )?.[1] as EventListener | undefined;
+    expect(handler).toBeDefined();
+
+    handler?.({
+      key: "Tab",
+      preventDefault,
+    } as unknown as KeyboardEvent);
+
+    expect(preventDefault).not.toHaveBeenCalled();
+
     addSpy.mockRestore();
   });
 });

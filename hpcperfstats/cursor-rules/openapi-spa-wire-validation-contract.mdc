@@ -48,6 +48,7 @@ When adding or changing JSON fields on an endpoint registered in `response-schem
 | `job_list[].host_list` | `string[]` (`ArrayField`) | `string` |
 | `filter_summary` | `string[]` from `build_job_list_qname_and_filter_summary` | `{ nj, filter_text }` object |
 | `job_list[].performance` | `{ label, tone, aria_label, sort_rank }` from `summarize_performance` | `{ labels[], tone, sort_rank }` |
+| `job_list[].account`, `queue`, `state`, `QOS`, `jobname` | JSON `null` when DB columns are null (`blank=True, null=True`) | `string` without `nullable: true` → Zod rejects `null` |
 | Top-level extras | `aggregates`, `pagination`, `qname`, `order_by`, `current_path` on `job_list` | Omitted from schema |
 
 Apply the same discipline to **job detail** (`job_data` extends list entry fields), histograms, and any new Orval-backed route.

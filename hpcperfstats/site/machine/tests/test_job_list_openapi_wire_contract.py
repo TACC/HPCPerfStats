@@ -45,7 +45,43 @@ JOB_LIST_WIRE_EXAMPLE = {
 }
 
 
+# Nullable job_data columns emit JSON null in JobListSerializer output.
+JOB_LIST_NULLABLE_WIRE_EXAMPLE = {
+    **JOB_LIST_WIRE_EXAMPLE,
+    "nj": 1,
+    "job_list": [
+        {
+            "jid": "99999",
+            "submit_time": "2024-06-01T12:00:00",
+            "start_time": "2024-06-01T12:05:00",
+            "end_time": "2024-06-01T14:00:00",
+            "runtime": 6900.0,
+            "username": "bob",
+            "account": None,
+            "queue": None,
+            "state": None,
+            "QOS": None,
+            "jobname": None,
+            "host_list": ["n003.cluster.example"],
+            "performance": {
+                "label": "Summary available",
+                "tone": "success",
+                "aria_label": "Performance: Summary available",
+                "sort_rank": 0,
+            },
+            "color": "#6c757d",
+        },
+    ],
+}
+
+
 @pytest.mark.django_db(databases=[])
 def test_job_list_wire_example_matches_openapi_serializers():
     ser = JobListResponseSerializer(data=JOB_LIST_WIRE_EXAMPLE)
+    assert ser.is_valid(), ser.errors
+
+
+@pytest.mark.django_db(databases=[])
+def test_job_list_nullable_wire_fields_match_openapi_serializers():
+    ser = JobListResponseSerializer(data=JOB_LIST_NULLABLE_WIRE_EXAMPLE)
     assert ser.is_valid(), ser.errors

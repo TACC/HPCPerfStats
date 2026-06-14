@@ -4,12 +4,30 @@ import { afterEach, beforeEach, expect, vi } from "vitest";
 import { attachRouterMocks, resetNextNavigationMock } from "./test-utils/next-navigation-state";
 
 vi.mock("next/navigation", async () => {
-  const { nextNavigationMock } = await import("./test-utils/next-navigation-state");
+  const React = await import("react");
+  const { nextNavigationMock, subscribeNextNavigation } = await import(
+    "./test-utils/next-navigation-state"
+  );
   return {
     useRouter: () => nextNavigationMock.router,
-    usePathname: () => nextNavigationMock.pathname,
-    useSearchParams: () => nextNavigationMock.searchParams,
-    useParams: () => nextNavigationMock.params,
+    usePathname: () =>
+      React.useSyncExternalStore(
+        subscribeNextNavigation,
+        () => nextNavigationMock.pathname,
+        () => nextNavigationMock.pathname,
+      ),
+    useSearchParams: () =>
+      React.useSyncExternalStore(
+        subscribeNextNavigation,
+        () => nextNavigationMock.searchParams,
+        () => nextNavigationMock.searchParams,
+      ),
+    useParams: () =>
+      React.useSyncExternalStore(
+        subscribeNextNavigation,
+        () => nextNavigationMock.params,
+        () => nextNavigationMock.params,
+      ),
     redirect: vi.fn(),
   };
 });
