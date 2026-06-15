@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
-"""Load stats from existing .tar archives into the database. Workers read from
-tar by (path, member_name) so the main process never holds file contents.
+"""Load stats from sealed daily archives (``.tar.zst`` / legacy ``.tar.gz``) into the database.
 
-Ingest uses Django ORM bulk paths via ``sync_timedb.add_stats_file_to_db`` (not
-raw SQL). Heavy ``sync_timedb`` / DB driver imports are deferred until a worker
-actually writes so lightweight imports (e.g. tests that only chunk tar tasks)
-do not load the database stack.
+Operator backfill tool: reads **only** sealed archives via in-memory zstd→tar streaming.
+Uncompressed ``YYYY-MM-DD.tar`` is never opened; unsealed days are skipped.
 
-``sync_timedb_archive_helpers`` transitively imports numpy/pandas; without a low
-BLAS/OpenMP thread cap, each process tries to spawn many pthreads and
-multiprocessing ``spawn`` workers can hit ``Resource temporarily unavailable`` in
-containers. Defaults are applied below before those imports (override via env).
+CLI (explicit dates required):
+  sync_timedb_archive.py YYYY-MM-DD              # single sealed day
+  sync_timedb_archive.py YYYY-MM-DD YYYY-MM-DD   # inclusive range
+  sync_timedb_archive.py all                     # all sealed days under daily_archive_dir
+  sync_timedb_archive.py /path/to/day.tar.zst    # explicit sealed path(s)
 
+Ingest uses Django ORM bulk paths via ``sync_timedb.add_stats_file_to_db``. Heavy
+``sync_timedb`` / DB driver imports are deferred until a worker writes.
+
+``sync_timedb_archive_helpers`` transitively imports numpy/pandas; BLAS/OpenMP
+thread caps are applied before those imports (override via env).
 """
-import io
-import itertools
 import multiprocessing
 import os
+import re
 import sys
-import tarfile
 import time
 
 _BLAS_THREAD_ENV_KEYS = (
@@ -31,10 +32,7 @@ _BLAS_THREAD_ENV_KEYS = (
 
 
 def _configure_blas_thread_env():
-  """Cap BLAS/OpenMP worker threads before numpy is first imported.
-
-  Uses setdefault so operator-provided env wins. Safe to call repeatedly.
-  """
+  """Cap BLAS/OpenMP worker threads before numpy is first imported."""
   for key in _BLAS_THREAD_ENV_KEYS:
     os.environ.setdefault(key, "1")
 
@@ -48,9 +46,19 @@ from hpcperfstats.process_title import (
     set_daemon_process_title,
 )
 import hpcperfstats.conf_parser as cfg
-from hpcperfstats.file_locking import file_read_lock_wait
 from hpcperfstats.print_utils import log_print
-from hpcperfstats.dbload.sync_timedb_archive_helpers import iter_tar_file_tasks
+from hpcperfstats.dbload.archive_compress import (
+    DAILY_ARCHIVE_GZ_SUFFIX,
+    DAILY_ARCHIVE_ZST_SUFFIX,
+    detect_compressed_format,
+)
+from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+    STREAM_ARCHIVE_TASK,
+    collect_sealed_daily_archive_paths_in_range,
+    iter_archive_ingest_tasks,
+    iter_sealed_daily_archive_member_lines,
+    resolve_sealed_archive_path_for_ingest,
+)
 from hpcperfstats.dbload.db_unavailable import (
     DatabaseUnavailableExit,
     is_database_unavailable_error,
@@ -64,84 +72,166 @@ from hpcperfstats.dbload.multiprocessing_pool_health import (
 )
 from hpcperfstats.shutdown_utils import shutdown_requested
 
+_DATE_ARG_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_USAGE = (
+    "usage: sync_timedb_archive.py <YYYY-MM-DD> [YYYY-MM-DD] | all | "
+    "<path.tar.zst> | <path.tar.gz>"
+)
+
 
 def _archive_worker_process_count():
-  """Archive ingest pool size: half of ``get_sync_ingest_pool_processes()``, min 1."""
-  return max(1, cfg.get_sync_ingest_pool_processes() // 2)
+  """Archive ingest pool size (default 4); matches ``get_sync_archive_pool_processes``."""
+  return cfg.get_sync_archive_pool_processes()
 
 
-thread_count = _archive_worker_process_count()
-TAR_TASK_CHUNK_SIZE = 50
-
-
-def _process_tar_member(lock, tar_path, member_name):
-  """Open tar, extract one member, pass contents to add_stats_file_to_db.
-  Keeps file contents only in the worker process."""
-  _configure_blas_thread_env()
-  log_print("extracting %s from %s" % (member_name, tar_path))
-  with file_read_lock_wait(tar_path):
-    with tarfile.open(tar_path, 'r') as tar:
-      member = tar.getmember(member_name)
-      f = tar.extractfile(member)
-      if f is None:
-        return  # directories / unsupported entries
-      # Build list of lines by iterating to avoid holding full decoded string in memory
-      wrapper = io.TextIOWrapper(f, encoding="utf-8")
-      content = list(wrapper)
-      wrapper.detach()
-  # Defer sync_timedb import until after tar I/O so DB connections and the
-  # backend driver are not loaded for idle workers or lightweight module imports.
-  from django.db import close_old_connections
-  from django.db.utils import DatabaseError, OperationalError
-
-  from hpcperfstats.django_bootstrap import ensure_django
-  from hpcperfstats.dbload.sync_timedb import add_stats_file_to_db
-
-  ensure_django()
-  close_old_connections()
-  try:
-    add_stats_file_to_db(lock, member_name, content)
-  except DatabaseUnavailableExit:
-    raise
-  except (OperationalError, DatabaseError) as exc:
-    if is_database_unavailable_error(exc):
-      log_and_raise_database_unavailable(
-          exc, context="sync_timedb_archive worker"
-      )
-    raise
-
-
-def _process_tar_member_task(task_args):
-  """Ingest one tar member; ``task_args`` is ``(lock, tar_path, member_name)``.
-
-  Must live at module scope: ``multiprocessing`` spawn workers re-import this
-  module and cannot unpickle nested functions defined under ``__main__``.
-  """
-  lock, tar_path, member_name = task_args
-  _process_tar_member(lock, tar_path, member_name)
-
-
-def _iter_tar_tasks_chunked(tar_files, chunk_size=TAR_TASK_CHUNK_SIZE):
-  """Yield (tar_path, member_name) tasks in bounded chunks."""
-  if chunk_size < 1:
-    chunk_size = 1
-  tasks_iter = itertools.chain.from_iterable(
-      iter_tar_file_tasks(path) for path in tar_files
+def _log_archive_ingest_startup(sealed_days, skipped_tar_only):
+  log_print(
+      "sync_timedb_archive: pool_processes=%d zstd_threads=%s "
+      "ionice=c%s-n%s nice=%s sealed_days=%d skipped_tar_only=%d "
+      "max_concurrent_sealed=%d"
+      % (
+          _archive_worker_process_count(),
+          cfg.get_archive_zstd_threads(),
+          cfg.get_archive_zstd_ionice_class(),
+          cfg.get_archive_zstd_ionice_level(),
+          cfg.get_archive_zstd_nice(),
+          sealed_days,
+          skipped_tar_only,
+          cfg.get_sync_timedb_archive_max_concurrent_sealed_days(),
+      ),
+      flush=True,
   )
-  while True:
-    chunk = list(itertools.islice(tasks_iter, chunk_size))
-    if not chunk:
-      break
-    yield chunk
 
 
-def _process_tar_chunk_interruptibly(pool, worker, chunk, on_result):
+def parse_sync_timedb_archive_argv(argv):
+  """Parse argv into ``(mode, startdate, enddate, path_args)``.
+
+  ``mode`` is ``'date'`` or ``'paths'``. For ``'date'``, ``startdate`` is
+  ``datetime`` or ``'all'``; ``enddate`` is ``datetime`` or ``None`` (all/range).
+  """
+  if len(argv) < 2:
+    raise SystemExit(_USAGE)
+  args = list(argv[1:])
+  if args[0] == "all":
+    if len(args) > 1:
+      raise SystemExit(_USAGE)
+    return "date", "all", None, []
+
+  if len(args) <= 2 and all(_DATE_ARG_RE.match(a) for a in args):
+    from datetime import datetime
+
+    start = datetime.strptime(args[0], "%Y-%m-%d")
+    if len(args) == 1:
+      return "date", start, start, []
+    end = datetime.strptime(args[1], "%Y-%m-%d")
+    return "date", start, end, []
+
+  for path in args:
+    base = os.path.basename(path)
+    if base.endswith(".tar") and not (
+        base.endswith(DAILY_ARCHIVE_ZST_SUFFIX)
+        or base.endswith(DAILY_ARCHIVE_GZ_SUFFIX)
+    ):
+      raise SystemExit(
+          "sync_timedb_archive requires sealed archive (.tar.zst or .tar.gz): %s"
+          % path,
+      )
+    if detect_compressed_format(path) not in ("zst", "gz"):
+      raise SystemExit(
+          "sync_timedb_archive requires sealed archive path: %s" % path,
+      )
+  return "paths", None, None, args
+
+
+def _resolve_sealed_paths_from_argv(mode, startdate, enddate, path_args):
+  daily_dir = cfg.get_daily_archive_dir_path()
+  if mode == "date":
+    sealed_paths, skipped = collect_sealed_daily_archive_paths_in_range(
+        daily_dir,
+        startdate,
+        enddate,
+    )
+    return sealed_paths, skipped
+  sealed_paths = []
+  skipped = 0
+  for path in path_args:
+    sealed = resolve_sealed_archive_path_for_ingest(path, daily_dir)
+    if sealed:
+      sealed_paths.append(sealed)
+    else:
+      skipped += 1
+  return sealed_paths, skipped
+
+
+def _process_stream_archive(lock, sealed_path):
+  """Stream one sealed archive and ingest each member (in-memory zstd pipe)."""
+  _configure_blas_thread_env()
+  log_print("streaming sealed archive %s" % sealed_path, flush=True)
+  add_stats = None
+  ensure_django = None
+  close_old_connections = None
+  DatabaseError = None
+  OperationalError = None
+
+  for member_name, content in iter_sealed_daily_archive_member_lines(sealed_path):
+    if add_stats is None:
+      from django.db import close_old_connections as _close
+      from django.db.utils import DatabaseError as _DBErr
+      from django.db.utils import OperationalError as _OpErr
+
+      from hpcperfstats.django_bootstrap import ensure_django as _ensure
+      from hpcperfstats.dbload.sync_timedb import add_stats_file_to_db as _add
+
+      close_old_connections = _close
+      DatabaseError = _DBErr
+      OperationalError = _OpErr
+      ensure_django = _ensure
+      add_stats = _add
+      ensure_django()
+      close_old_connections()
+
+    try:
+      add_stats(lock, member_name, content)
+    except DatabaseUnavailableExit:
+      raise
+    except (OperationalError, DatabaseError) as exc:
+      if is_database_unavailable_error(exc):
+        log_and_raise_database_unavailable(
+            exc, context="sync_timedb_archive worker",
+        )
+      raise
+    finally:
+      del content
+
+
+def _process_stream_archive_task(task_args):
+  """Ingest one sealed archive; ``task_args`` is ``(lock, sealed_path)``.
+
+  Module scope for ``multiprocessing`` spawn pickling.
+  """
+  lock, sealed_path = task_args
+  _process_stream_archive(lock, sealed_path)
+
+
+def _iter_stream_tasks_chunked(sealed_paths, chunk_size=None):
+  """Yield bounded chunks of ``(STREAM_ARCHIVE_TASK, sealed_path)`` tasks."""
+  if chunk_size is None:
+    chunk_size = cfg.get_sync_timedb_archive_max_concurrent_sealed_days()
+  chunk_size = max(1, int(chunk_size))
+  tasks = list(iter_archive_ingest_tasks(sealed_paths, cfg.get_daily_archive_dir_path()))
+  for off in range(0, len(tasks), chunk_size):
+    yield tasks[off : off + chunk_size]
+
+
+def _process_task_chunk_interruptibly(pool, worker, chunk_locked, on_result):
   """Process one task chunk while allowing shutdown checks between completions."""
+  if not chunk_locked:
+    return
   try:
     for result in imap_unordered_watch_pool(
         pool,
         worker,
-        chunk,
+        chunk_locked,
         context="sync_timedb_archive pool",
     ):
       on_result(result)
@@ -153,12 +243,12 @@ def _process_tar_chunk_interruptibly(pool, worker, chunk, on_result):
     raise
   except Exception as exc:
     reraise_database_unavailable_chain(
-        exc, context="sync_timedb_archive pool"
+        exc, context="sync_timedb_archive pool",
     )
     raise
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
   _configure_blas_thread_env()
 
   from django.db import close_old_connections, connections
@@ -174,20 +264,22 @@ if __name__ == '__main__':
     ensure_django()
     database_startup()
     _reset_sync_runtime_caches()
-    # Parent only needed the DB for startup diagnostics; drop connections before
-    # workers run so the server is not charged an extra idle session per archive run.
     close_old_connections()
     connections.close_all()
 
-    tar_files = sys.argv[1:]
+    mode, startdate, enddate, path_args = parse_sync_timedb_archive_argv(sys.argv)
+    sealed_paths, skipped_tar_only = _resolve_sealed_paths_from_argv(
+        mode, startdate, enddate, path_args,
+    )
+    _log_archive_ingest_startup(len(sealed_paths), skipped_tar_only)
 
-    start = time.time()
+    if not sealed_paths:
+      log_print("sync_timedb_archive: no sealed archives to ingest", flush=True)
+      sys.exit(0)
 
-    for tar_file_name in tar_files:
-      log_print(tar_file_name)
+    for sealed_path in sealed_paths:
+      log_print(sealed_path, flush=True)
 
-    # Spawn workers receive tasks via pickle; plain ``ctx.Lock()`` is not picklable.
-    # Match ``sync_timedb.run_sync_timedb_supervisor_from_parsed``: Manager proxies.
     manager = multiprocessing.Manager()
     try:
       lock_shards = max(1, int(cfg.get_sync_write_lock_shards()))
@@ -199,22 +291,21 @@ if __name__ == '__main__':
             "Using %d sync_timedb_archive write-lock shards" % lock_shards,
             flush=True,
         )
-      ctx = multiprocessing.get_context('spawn')
+      ctx = multiprocessing.get_context("spawn")
       pool = ctx.Pool(
           processes=_archive_worker_process_count(),
           initializer=apply_pool_worker_process_title,
-          initargs=(SYNC_TIMEDB_ARCHIVE_PROCESS_TITLE, "tar-member-pool"),
+          initargs=(SYNC_TIMEDB_ARCHIVE_PROCESS_TITLE, "sealed-archive-pool"),
       )
       try:
-        # Process in chunks so SIGTERM can exit between chunks and memory stays bounded.
-        for chunk in _iter_tar_tasks_chunked(tar_files, TAR_TASK_CHUNK_SIZE):
+        for chunk in _iter_stream_tasks_chunked(sealed_paths):
           if shutdown_requested[0]:
-            log_print("Exiting due to SIGTERM")
+            log_print("Exiting due to SIGTERM", flush=True)
             break
-          chunk_locked = [(manager_lock, p, m) for p, m in chunk]
-          _process_tar_chunk_interruptibly(
+          chunk_locked = [(manager_lock, p) for _kind, p in chunk]
+          _process_task_chunk_interruptibly(
               pool,
-              _process_tar_member_task,
+              _process_stream_archive_task,
               chunk_locked,
               lambda _result: None,
           )
@@ -242,7 +333,10 @@ if __name__ == '__main__':
         hard_exit_pool_worker_error,
     )
 
-    log_print("sync_timedb_archive exiting after pool worker death: %s" % exc, flush=True)
+    log_print(
+        "sync_timedb_archive exiting after pool worker death: %s" % exc,
+        flush=True,
+    )
     hard_exit_pool_worker_error(exc)
   if shutdown_requested[0]:
     sys.exit(143)

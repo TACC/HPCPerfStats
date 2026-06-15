@@ -99,6 +99,7 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_overprovision_metrics_multiplier"),
     ("PIPELINE", "sync_ingest_queue_max_size"),
     ("PIPELINE", "sync_archive_queue_max_size"),
+    ("PIPELINE", "sync_timedb_archive_max_concurrent_sealed_days"),
     ("PIPELINE", "sync_archive_retry_max_attempts"),
     ("PIPELINE", "sync_archive_retry_backoff_base_seconds"),
     ("PIPELINE", "sync_archive_retry_backoff_max_seconds"),
@@ -1089,10 +1090,7 @@ def get_archive_pool_process_cap():
 
 
 def get_sync_ingest_pool_processes():
-  """Worker count for ``sync_timedb`` after ``sync_pool_process_cap``.
-
-  ``sync_timedb_archive`` uses half this count (minimum one process).
-  """
+  """Worker count for ``sync_timedb`` after ``sync_pool_process_cap``."""
   if get_sync_enable_cpuset_priority_budget():
     raw = derive_pipeline_cpuset_priority_budget()["sync_ingest_cap"]
   else:
@@ -1101,12 +1099,23 @@ def get_sync_ingest_pool_processes():
 
 
 def get_sync_archive_pool_processes():
-  """Archive pool size in ``sync_timedb`` (default 4, capped by ``archive_pool_process_cap``)."""
+  """Archive pool size in ``sync_timedb`` and ``sync_timedb_archive`` (default 4)."""
   if get_sync_enable_cpuset_priority_budget():
     raw = derive_pipeline_cpuset_priority_budget()["sync_archive_cap"]
   else:
     raw = 4
   return _apply_sync_pool_cap(raw, get_archive_pool_process_cap())
+
+
+def get_sync_timedb_archive_max_concurrent_sealed_days():
+  """Max concurrent sealed-day stream workers in ``sync_timedb_archive`` (default 1)."""
+  _ensure_cfg_loaded()
+  raw = _pipeline_getint(
+      "sync_timedb_archive_max_concurrent_sealed_days",
+      fallback=1,
+  )
+  pool_cap = max(1, int(get_sync_archive_pool_processes()))
+  return max(1, min(pool_cap, raw))
 
 
 def _budget_ratio(name, fallback):

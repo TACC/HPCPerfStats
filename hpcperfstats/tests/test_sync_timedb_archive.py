@@ -1,4 +1,5 @@
 """Unit tests for sync_timedb archive helpers and main-block helpers (no Django)."""
+import contextlib
 import io
 import json
 import os
@@ -20,6 +21,7 @@ from hpcperfstats.dbload.archive_compress import (
 )
 from hpcperfstats.dbload.zstd_cli import zstd_executable, zstd_gzip_supported
 from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+    STREAM_ARCHIVE_TASK,
     atomic_seal_tar_to_zst,
     compare_compressed_archive_members,
     drop_legacy_gz_if_equivalent_to_zst,
@@ -35,6 +37,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     daily_tar_paths_from_pending_archive_tasks,
     collect_lock_sidecar_stats,
     collect_stats_files_in_range,
+    collect_sealed_daily_archive_paths_in_range,
     dedupe_tar_keep_largest_file_per_member,
     filter_files_to_add_to_archive,
     find_immediate_day_close_candidates,
@@ -45,6 +48,9 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     get_file_member_sizes_from_gzip_archive,
     get_stats_chunk,
     get_tar_file_tasks,
+    iter_daily_sealed_archive_calendar_days,
+    iter_archive_ingest_tasks,
+    iter_sealed_daily_archive_member_lines,
     iter_tar_file_tasks,
     get_tar_member_name,
     get_verified_files_to_remove,
@@ -58,6 +64,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     replace_corrupt_tar_from_compressed_backup,
     rescan_pending_stats_files,
     resolve_preferred_archive_path_for_read,
+    resolve_sealed_archive_path_for_ingest,
     seal_dirty_daily_archives,
     should_seal_daily_tar,
     stats_file_is_active_segment,
@@ -65,7 +72,10 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     tar_has_duplicate_file_members,
     verify_tar_archive_readable,
 )
-from hpcperfstats.dbload.sync_timedb_archive import _iter_tar_tasks_chunked
+from hpcperfstats.dbload.sync_timedb_archive import (
+    _iter_stream_tasks_chunked,
+    parse_sync_timedb_archive_argv,
+)
 import hpcperfstats.dbload.sync_timedb_archive as sta
 from hpcperfstats.dbload.sync_timedb import archive_stats_files
 from hpcperfstats.dbload.sync_timedb_parsing import parse_first_timestamp_line
@@ -927,31 +937,43 @@ def test_get_tar_file_tasks_prefers_uncompressed_tar_when_both_exist(tmp_path):
   assert "from-gz.txt" not in names
 
 
-def test_iter_tar_tasks_chunked_streams_without_accumulating(monkeypatch):
-  """Task chunk iterator yields bounded chunks from multiple tar inputs."""
-  by_tar = {
-      "a.tar": [("a.tar", "m1"), ("a.tar", "m2"), ("a.tar", "m3")],
-      "b.tar": [("b.tar", "m1")],
-  }
+def test_iter_stream_tasks_chunked_respects_concurrency(monkeypatch):
+  """Stream task chunks are bounded by max concurrent sealed days."""
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive.iter_tar_file_tasks",
-      lambda tar_path: iter(by_tar.get(tar_path, [])),
+      sta.cfg,
+      "get_sync_timedb_archive_max_concurrent_sealed_days",
+      lambda: 2,
   )
-  chunks = list(_iter_tar_tasks_chunked(["a.tar", "b.tar"], chunk_size=2))
+  monkeypatch.setattr(
+      sta.cfg,
+      "get_daily_archive_dir_path",
+      lambda: "/daily",
+  )
+  monkeypatch.setattr(
+      sta,
+      "iter_archive_ingest_tasks",
+      lambda paths, daily_archive_dir="": [
+          (STREAM_ARCHIVE_TASK, p) for p in paths
+      ],
+  )
+  chunks = list(
+      _iter_stream_tasks_chunked(
+          ["/a.tar.zst", "/b.tar.zst", "/c.tar.zst"],
+          chunk_size=2,
+      ),
+  )
   assert chunks == [
-      [("a.tar", "m1"), ("a.tar", "m2")],
-      [("a.tar", "m3"), ("b.tar", "m1")],
+      [(STREAM_ARCHIVE_TASK, "/a.tar.zst"), (STREAM_ARCHIVE_TASK, "/b.tar.zst")],
+      [(STREAM_ARCHIVE_TASK, "/c.tar.zst")],
   ]
 
 
-def test_archive_worker_process_count_halves_sync_ingest(monkeypatch):
-  """Archive multiprocessing pool uses half of the configured sync ingest worker cap."""
-  monkeypatch.setattr(sta.cfg, "get_sync_ingest_pool_processes", lambda: 10)
-  assert sta._archive_worker_process_count() == 5
-  monkeypatch.setattr(sta.cfg, "get_sync_ingest_pool_processes", lambda: 3)
-  assert sta._archive_worker_process_count() == 1
-  monkeypatch.setattr(sta.cfg, "get_sync_ingest_pool_processes", lambda: 1)
-  assert sta._archive_worker_process_count() == 1
+def test_archive_worker_process_count_uses_sync_archive_pool(monkeypatch):
+  """Archive multiprocessing pool uses get_sync_archive_pool_processes (default 4)."""
+  monkeypatch.setattr(sta.cfg, "get_sync_archive_pool_processes", lambda: 4)
+  assert sta._archive_worker_process_count() == 4
+  monkeypatch.setattr(sta.cfg, "get_sync_archive_pool_processes", lambda: 2)
+  assert sta._archive_worker_process_count() == 2
 
 
 def test_get_tar_file_tasks_restores_corrupt_tar_from_gz(monkeypatch, tmp_path):
@@ -2640,23 +2662,23 @@ def test_process_tar_chunk_stops_when_shutdown_requested():
       results.append(item)
       shutdown_requested[0] = True
 
-    sta._process_tar_chunk_interruptibly(
-        _FakePool(), lambda x: x, [("a", "m1"), ("a", "m2")], _capture)
+    sta._process_task_chunk_interruptibly(
+        _FakePool(), lambda x: x, [("lock", "/a.tar.zst")], _capture)
     assert results == ["first"]
   finally:
     shutdown_requested[0] = False
 
 
-def test_process_tar_member_task_spawn_picklable():
-  """Spawn Pool workers must unpickle the worker callable (regression guard)."""
+def test_process_stream_archive_task_spawn_picklable():
+  """Spawn Pool workers must unpickle the stream worker callable."""
   from multiprocessing.reduction import ForkingPickler
   import multiprocessing
 
-  ForkingPickler.dumps(sta._process_tar_member_task)
+  ForkingPickler.dumps(sta._process_stream_archive_task)
   mgr = multiprocessing.Manager()
   try:
     lock = mgr.Lock()
-    ForkingPickler.dumps((lock, "/tmp/x.tar", "member"))
+    ForkingPickler.dumps((lock, "/tmp/x.tar.zst"))
   finally:
     mgr.shutdown()
 
@@ -2665,6 +2687,220 @@ def test_configure_blas_thread_env_idempotent():
   """Caps BLAS/OpenMP threads before numpy (avoids pthread EAGAIN under spawn)."""
   sta._configure_blas_thread_env()
   sta._configure_blas_thread_env()
+
+
+# --- sync_timedb_archive sealed-only backfill ---
+
+
+def _write_sealed_daily_archive(
+    tmp_path,
+    day="2024-03-01",
+    member_name="stats/host.txt",
+    body="1000 sample line\n",
+    *,
+    keep_tar=False,
+):
+  if not shutil.which("zstd"):
+    pytest.skip("zstd not on PATH")
+  tar_p = tmp_path / ("%s.tar" % day)
+  zst_p = tmp_path / ("%s.tar.zst" % day)
+  inner = tmp_path / "inner.txt"
+  inner.write_text(body)
+  with tarfile.open(tar_p, "w") as tf:
+    tf.add(str(inner), arcname=member_name)
+  atomic_seal_tar_to_zst(
+      str(tar_p),
+      str(zst_p),
+      num_threads=1,
+      compress_level=6,
+      keep_uncompressed_tar=keep_tar,
+      log_fn=None,
+  )
+  return str(zst_p), str(tar_p)
+
+
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_resolve_sealed_archive_path_prefers_zst(tmp_path):
+  zst_p, tar_p = _write_sealed_daily_archive(tmp_path, keep_tar=True)
+  gz_p = str(tmp_path / "2024-03-01.tar.gz")
+  with tarfile.open(gz_p, "w:gz") as tf:
+    tf.add(str(tmp_path / "inner.txt"), arcname="other.txt")
+  assert resolve_sealed_archive_path_for_ingest(zst_p) == zst_p
+  assert resolve_sealed_archive_path_for_ingest(tar_p, str(tmp_path)) == zst_p
+
+
+def test_resolve_sealed_archive_path_none_when_tar_only(tmp_path):
+  tar_p = tmp_path / "2024-03-02.tar"
+  tar_p.write_text("unsealed")
+  assert resolve_sealed_archive_path_for_ingest(str(tar_p), str(tmp_path)) is None
+
+
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_iter_sealed_daily_archive_member_lines_zst_only(tmp_path):
+  zst_p, tar_p = _write_sealed_daily_archive(
+      tmp_path,
+      day="2024-03-03",
+      member_name="host/stats.txt",
+      body="payload-line\n",
+      keep_tar=False,
+  )
+  assert not os.path.isfile(tar_p)
+  members = list(iter_sealed_daily_archive_member_lines(zst_p))
+  assert len(members) == 1
+  assert members[0][0] == "host/stats.txt"
+  assert members[0][1] == ["payload-line\n"]
+
+
+def test_iter_archive_ingest_tasks_one_stream_per_sealed_day(tmp_path, monkeypatch):
+  if not shutil.which("zstd"):
+    pytest.skip("zstd not on PATH")
+  zst_p, _tar_p = _write_sealed_daily_archive(tmp_path, day="2024-03-04")
+  tar_only = tmp_path / "2024-03-05.tar"
+  tar_only.write_text("x")
+  tasks = list(
+      iter_archive_ingest_tasks(
+          [zst_p, str(tar_only)],
+          str(tmp_path),
+      ),
+  )
+  assert tasks == [(STREAM_ARCHIVE_TASK, zst_p)]
+
+
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_collect_sealed_paths_skips_tar_only_day(tmp_path):
+  _write_sealed_daily_archive(tmp_path, day="2024-03-06")
+  (tmp_path / "2024-03-07.tar").write_text("unsealed")
+  start = datetime(2024, 3, 6)
+  end = datetime(2024, 3, 7)
+  paths, skipped = collect_sealed_daily_archive_paths_in_range(
+      str(tmp_path),
+      start,
+      end,
+  )
+  assert len(paths) == 1
+  assert paths[0].endswith("2024-03-06.tar.zst")
+  assert skipped == 1
+
+
+def test_parse_sync_timedb_archive_argv_single_day():
+  mode, start, end, paths = parse_sync_timedb_archive_argv(
+      ["sync_timedb_archive.py", "2024-01-15"],
+  )
+  assert mode == "date"
+  assert start == datetime(2024, 1, 15)
+  assert end == start
+  assert paths == []
+
+
+def test_parse_sync_timedb_archive_argv_all():
+  mode, start, end, paths = parse_sync_timedb_archive_argv(
+      ["sync_timedb_archive.py", "all"],
+  )
+  assert mode == "date"
+  assert start == "all"
+  assert end is None
+  assert paths == []
+
+
+def test_parse_argv_rejects_plain_tar_path():
+  with pytest.raises(SystemExit):
+    parse_sync_timedb_archive_argv(
+        ["sync_timedb_archive.py", "/data/2024-01-01.tar"],
+    )
+
+
+def test_parse_argv_empty_usage():
+  with pytest.raises(SystemExit):
+    parse_sync_timedb_archive_argv(["sync_timedb_archive.py"])
+
+
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_process_stream_archive_task_ingests_all_members(monkeypatch, tmp_path):
+  zst_p, _tar_p = _write_sealed_daily_archive(
+      tmp_path,
+      day="2024-03-08",
+      member_name="m1.txt",
+      body="a\n",
+  )
+  calls = []
+
+  class _Lock:
+    pass
+
+  def fake_add(lock, member_name, content):
+    calls.append((member_name, list(content)))
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb.add_stats_file_to_db",
+      fake_add,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.django_bootstrap.ensure_django",
+      lambda: None,
+  )
+  monkeypatch.setattr(
+      "django.db.close_old_connections",
+      lambda: None,
+  )
+  sta._process_stream_archive_task((_Lock(), zst_p))
+  assert calls == [("m1.txt", ["a\n"])]
+
+
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_ingest_does_not_write_decompress_artifacts(monkeypatch, tmp_path):
+  zst_p, _tar_p = _write_sealed_daily_archive(tmp_path, day="2024-03-09")
+  before = set(os.listdir(tmp_path))
+  decompress_calls = []
+
+  def _spy_decompress(*args, **kwargs):
+    decompress_calls.append(args)
+    return False
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb_archive_helpers.decompress_compressed_to_tar",
+      _spy_decompress,
+  )
+  list(iter_sealed_daily_archive_member_lines(zst_p))
+  after = set(os.listdir(tmp_path))
+  assert decompress_calls == []
+  new_files = after - before
+  assert not any(
+      name.endswith(".tar") and not name.endswith((".tar.zst", ".tar.gz"))
+      for name in new_files
+  )
+  assert all(name.endswith(".fnctl.lock") for name in new_files)
+
+
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_sealed_stream_uses_zstd_priority_wrap(monkeypatch, tmp_path):
+  zst_p, _tar_p = _write_sealed_daily_archive(tmp_path, day="2024-03-10")
+  wrap_calls = []
+  from hpcperfstats.dbload import sync_timedb_archive_helpers as helpers
+
+  real_open = helpers._open_tarfile_for_read
+
+  @contextlib.contextmanager
+  def _spy_open(path, num_threads, *, apply_priority_wrap=True):
+    wrap_calls.append(apply_priority_wrap)
+    with real_open(
+        path, num_threads, apply_priority_wrap=apply_priority_wrap,
+    ) as tf:
+      yield tf
+
+  monkeypatch.setattr(helpers, "_open_tarfile_for_read", _spy_open)
+  list(iter_sealed_daily_archive_member_lines(zst_p))
+  assert wrap_calls == [True]
+
+
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_stream_archive_skips_oversize_member(monkeypatch, tmp_path):
+  zst_p, _tar_p = _write_sealed_daily_archive(tmp_path, day="2024-03-11")
+  monkeypatch.setattr(
+      "hpcperfstats.conf_parser.get_sync_ingest_max_file_read_bytes",
+      lambda: 4,
+  )
+  members = list(iter_sealed_daily_archive_member_lines(zst_p))
+  assert members == []
 
 
 # --- legacy daily .tar.gz -> .tar.zst migration ---

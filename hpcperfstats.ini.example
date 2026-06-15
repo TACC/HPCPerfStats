@@ -241,6 +241,9 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Cap sync_timedb archive pool processes when set.
 # archive_pool_process_cap =
 
+# Max concurrent sealed-day streams for sync_timedb_archive backfill (default 1).
+# sync_timedb_archive_max_concurrent_sealed_days = 1
+
 # Enable cpuset-aware S/A/M budget for sync and metrics (default yes).
 # sync_enable_cpuset_priority_budget = yes
 

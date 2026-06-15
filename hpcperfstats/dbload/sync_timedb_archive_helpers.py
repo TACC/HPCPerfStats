@@ -1531,7 +1531,11 @@ def build_seal_disqualified_daily_tars(
 
 
 _DAILY_TAR_BASENAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.tar$")
+_DAILY_ZST_BASENAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.tar\.zst$")
 _DAILY_GZ_BASENAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.tar\.gz$")
+_DAILY_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+STREAM_ARCHIVE_TASK = "stream_archive"
 
 MIGRATE_GZ_STATUS_CONVERTED = "converted"
 MIGRATE_GZ_STATUS_DROPPED_ONLY = "dropped_only"
@@ -3285,6 +3289,163 @@ def resolve_preferred_archive_path_for_read(path):
   if os.path.isfile(tar_path):
     return tar_path
   return path
+
+
+def resolve_sealed_archive_path_for_ingest(archive_path_or_day, daily_archive_dir=""):
+  """Return on-disk sealed path (``.tar.zst`` or legacy ``.tar.gz``) for ingest.
+
+  Never returns uncompressed ``.tar``. Returns ``None`` when only ``.tar`` exists
+  or the day/path is missing (``sync_timedb_archive`` sealed-only backfill).
+  """
+  token = str(archive_path_or_day or "").strip()
+  if not token:
+    return None
+  fmt = detect_compressed_format(token)
+  if fmt in ("zst", "gz"):
+    return _resolve_sealed_daily_archive_path(token)
+  if _DAILY_ISO_DATE_RE.fullmatch(token):
+    if not daily_archive_dir:
+      return None
+    ref_tar = daily_tar_path_for_calendar_day(daily_archive_dir, token)
+  else:
+    ref_tar = daily_tar_path_from_compressed(token)
+  canonical = normalize_daily_compressed_path(ref_tar)
+  sealed = _resolve_sealed_daily_archive_path(canonical)
+  if sealed:
+    return sealed
+  if os.path.isfile(ref_tar):
+    return None
+  return None
+
+
+def iter_sealed_daily_archive_member_lines(sealed_path):
+  """Yield ``(member_name, lines)`` from a sealed daily archive via in-memory zstd stream.
+
+  Does not read uncompressed ``.tar`` or write decompress artifacts to disk.
+  """
+  fmt = detect_compressed_format(sealed_path)
+  if fmt not in ("zst", "gz"):
+    raise ValueError(
+        "sync_timedb_archive requires sealed archive (.tar.zst or .tar.gz): %s"
+        % sealed_path,
+    )
+  if not os.path.isfile(sealed_path):
+    raise FileNotFoundError(sealed_path)
+  max_bytes = cfg.get_sync_ingest_max_file_read_bytes()
+  with file_read_lock_wait(sealed_path):
+    with _open_tarfile_for_read(
+        sealed_path,
+        get_archive_zstd_thread_count(),
+        apply_priority_wrap=True,
+    ) as archive_tar:
+      for member_info in _iter_tar_members(archive_tar):
+        if not member_info.isfile():
+          continue
+        if max_bytes > 0 and member_info.size > max_bytes:
+          log_print(
+              "sync_timedb_archive: skip oversize member %s (%d bytes > %d)"
+              % (member_info.name, member_info.size, max_bytes),
+              flush=True,
+          )
+          continue
+        fobj = archive_tar.extractfile(member_info)
+        if fobj is None:
+          continue
+        raw = fobj.read()
+        if not raw:
+          content = []
+        else:
+          text = raw.decode("utf-8")
+          if text.endswith("\n"):
+            content = text.splitlines(keepends=True)
+          else:
+            lines = text.splitlines(keepends=True)
+            content = lines if lines else [text]
+        yield member_info.name, content
+
+
+def iter_archive_ingest_tasks(archive_paths, daily_archive_dir=""):
+  """Yield ``(STREAM_ARCHIVE_TASK, sealed_path)`` for resolved sealed archives."""
+  seen = set()
+  for path in archive_paths or []:
+    sealed = resolve_sealed_archive_path_for_ingest(path, daily_archive_dir)
+    if not sealed:
+      log_print(
+          "sync_timedb_archive: skipped_tar_only (no sealed archive): %s"
+          % path,
+          flush=True,
+      )
+      continue
+    norm = os.path.normpath(sealed)
+    if norm in seen:
+      continue
+    seen.add(norm)
+    yield (STREAM_ARCHIVE_TASK, sealed)
+
+
+def iter_daily_sealed_archive_calendar_days(daily_archive_dir):
+  """Yield ``date`` objects for days with ``.tar.zst`` or legacy ``.tar.gz`` on disk."""
+  if not daily_archive_dir or not os.path.isdir(daily_archive_dir):
+    return
+  day_tokens = set()
+  try:
+    names = os.listdir(daily_archive_dir)
+  except OSError:
+    return
+  for name in names:
+    if _DAILY_ZST_BASENAME_RE.match(name) or _DAILY_GZ_BASENAME_RE.match(name):
+      day_tokens.add(name[:10])
+  for day_str in sorted(day_tokens):
+    try:
+      yield datetime.strptime(day_str, "%Y-%m-%d").date()
+    except ValueError:
+      continue
+
+
+def collect_sealed_daily_archive_paths_in_range(
+    daily_archive_dir,
+    startdate,
+    enddate,
+):
+  """Return ``(sealed_paths, skipped_tar_only_count)`` for the date range.
+
+  ``startdate`` may be ``'all'`` to scan every sealed day under ``daily_archive_dir``.
+  Calendar-day ranges are inclusive on both ends.
+  """
+  from hpcperfstats.dbload.date_utils import daterange
+
+  paths = []
+  skipped_tar_only = 0
+  if startdate == "all":
+    for day in iter_daily_sealed_archive_calendar_days(daily_archive_dir):
+      sealed = resolve_sealed_archive_path_for_ingest(
+          day.strftime("%Y-%m-%d"),
+          daily_archive_dir,
+      )
+      if sealed:
+        paths.append(sealed)
+    return paths, skipped_tar_only
+
+  start_dt = startdate
+  end_dt = enddate
+  if isinstance(start_dt, date) and not isinstance(start_dt, datetime):
+    start_dt = datetime.combine(start_dt, datetime.min.time())
+  if isinstance(end_dt, date) and not isinstance(end_dt, datetime):
+    end_dt = datetime.combine(end_dt, datetime.min.time())
+
+  for day_dt in daterange(start_dt, end_dt, inclusive_end=True):
+    day_iso = day_dt.strftime("%Y-%m-%d")
+    ref_tar = daily_tar_path_for_calendar_day(daily_archive_dir, day_iso)
+    sealed = resolve_sealed_archive_path_for_ingest(day_iso, daily_archive_dir)
+    if sealed:
+      paths.append(sealed)
+    elif os.path.isfile(ref_tar):
+      skipped_tar_only += 1
+      log_print(
+          "sync_timedb_archive: skipped_tar_only (unsealed day): %s" % ref_tar,
+          flush=True,
+      )
+  return paths, skipped_tar_only
 
 
 def _compressed_backup_and_uncompressed_targets(open_path):
