@@ -35,6 +35,9 @@ import { cn } from "@/lib/utils";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import HistogramThumbnails from "../components/HistogramThumbnails";
 import JobListFilterSummary from "../components/JobListFilterSummary";
+import JobListHeaderFilters, {
+  type JobListFilterOptions,
+} from "../components/JobListHeaderFilters";
 import LoadingMessage from "../components/LoadingMessage";
 import PageBreadcrumbs from "../components/PageBreadcrumbs";
 import { useExtendedSearchLayout } from "../context/extended-search-layout-context";
@@ -72,6 +75,7 @@ type JobListRow = Omit<JobListEntry, "performance"> & {
 type JobListApiResponse = Omit<JobListData, "job_list" | "filter_summary"> & {
   job_list?: JobListRow[];
   filter_summary?: string[];
+  filter_options?: JobListFilterOptions | null;
   aggregates?: {
     total_node_hours?: number | null;
     queue_wait_mean_hours?: number | null;
@@ -498,6 +502,11 @@ export default function JobList() {
       {pageSummary ? (
         <p className="job-list-page-summary mb-2 text-sm text-muted-foreground">{pageSummary}</p>
       ) : null}
+      <JobListHeaderFilters
+        filterOptions={jobListData?.filter_options}
+        loading={initialLoading && !jobListData}
+        routeParams={paramsFromRoute}
+      />
       <JobListFilterSummary lines={filterSummaryLines} />
       <h2 className="mb-1 text-lg font-medium">{JOB_LIST_TABLE_HEADERS.jobCount} = {nj}</h2>
       {tableBusy ? (

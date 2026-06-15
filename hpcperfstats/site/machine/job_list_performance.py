@@ -19,6 +19,24 @@ MONITORING_GAPS_MIN_DISTINCT_TIMES = 5
 # Jobs shorter than this (seconds) with no metrics rows get a specific label (same sort_rank).
 SHORT_RUNTIME_NO_METRICS_SECONDS = 120.0
 
+# Canonical performance status labels keyed by sort_rank (header filter + filter_options).
+PERFORMANCE_STATUS_BY_SORT_RANK = (
+    (0, "Summary available"),
+    (1, "Not summarized yet"),
+    (2, "Monitoring gaps"),
+    (3, "Job too short or too few samples"),
+    (4, "Not enough samples to summarize"),
+    (5, "Too short to measure"),
+)
+
+
+def performance_status_label(sort_rank):
+    """Return display label for a performance_sort_rank integer."""
+    for rank, label in PERFORMANCE_STATUS_BY_SORT_RANK:
+        if rank == sort_rank:
+            return label
+    return str(sort_rank)
+
 
 def summarize_performance(
     *,

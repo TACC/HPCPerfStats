@@ -120,6 +120,27 @@ class JobListPaginationSerializer(serializers.Serializer):
     next_page_number = serializers.IntegerField(required=False, allow_null=True)
 
 
+class JobListPerformanceStatusOptionSerializer(serializers.Serializer):
+    sort_rank = serializers.IntegerField()
+    label = serializers.CharField()
+
+
+class JobListFilterOptionsTruncatedSerializer(serializers.Serializer):
+    usernames = serializers.BooleanField(required=False)
+    accounts = serializers.BooleanField(required=False)
+    queues = serializers.BooleanField(required=False)
+    states = serializers.BooleanField(required=False)
+
+
+class JobListFilterOptionsSerializer(serializers.Serializer):
+    usernames = serializers.ListField(child=serializers.CharField(), required=False)
+    accounts = serializers.ListField(child=serializers.CharField(), required=False)
+    queues = serializers.ListField(child=serializers.CharField(), required=False)
+    states = serializers.ListField(child=serializers.CharField(), required=False)
+    performance_statuses = JobListPerformanceStatusOptionSerializer(many=True, required=False)
+    truncated = JobListFilterOptionsTruncatedSerializer(required=False)
+
+
 class JobListHistogramEnvelopeSerializer(serializers.Serializer):
     """Histogram metadata without embedded Bokeh plot_item payloads."""
 
@@ -133,6 +154,7 @@ class JobListResponseSerializer(serializers.Serializer):
     nj = serializers.IntegerField(required=False)
     job_list = JobListEntrySerializer(many=True, required=False)
     filter_summary = serializers.ListField(child=serializers.CharField(), required=False)
+    filter_options = JobListFilterOptionsSerializer(required=False, allow_null=True)
     histograms = serializers.DictField(child=JobListHistogramEnvelopeSerializer(), required=False)
     aggregates = JobListAggregatesSerializer(required=False)
     pagination = JobListPaginationSerializer(required=False)

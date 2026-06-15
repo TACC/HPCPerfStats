@@ -108,6 +108,19 @@ const cases: Case[] = [
         },
       ],
       filter_summary: ["User: alice"],
+      filter_options: {
+        usernames: ["alice"],
+        accounts: ["proj"],
+        queues: ["normal"],
+        states: ["COMPLETED"],
+        performance_statuses: [{ sort_rank: 0, label: "Summary available" }],
+        truncated: {
+          usernames: false,
+          accounts: false,
+          queues: false,
+          states: false,
+        },
+      },
     },
   },
   {

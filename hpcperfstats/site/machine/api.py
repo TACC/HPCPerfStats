@@ -125,12 +125,15 @@ from .models import ApiKey, host_data, job_data, metrics_data
 from .oauth2 import check_for_tokens
 from .throttles import ExpensiveReadThrottle, StaffIngestThrottle
 from .query_utils import (
+    apply_job_list_header_acct_multi_filters,
     expand_month_date_to_range,
     get_job_list_order_by,
     normalize_job_list_query_params,
+    parse_job_list_performance_sort_ranks,
     partition_job_list_acct_filters,
 )
 from .job_list_filter_summary import build_job_list_qname_and_filter_summary
+from .job_list_filter_options import build_job_list_filter_options
 from .job_list_performance import annotate_job_list_performance_fields
 from .job_list_queue_wait import aggregate_queue_wait_seconds_stats, queue_wait_hours_series
 from .serializers import JobListSerializer
@@ -153,7 +156,7 @@ def site_response_cache_timeout(request):
     """Per-request TTL for @dynamic_cache_page (site-aware)."""
     return get_site_content_cache_timeout()
 
-_JOB_LIST_QUERY_FIELD_EXCLUDES_BASE = ("page", "order_by")
+_JOB_LIST_QUERY_FIELD_EXCLUDES_BASE = ("page", "order_by", "performance_sort_rank")
 _JOB_LIST_QUERY_FIELD_EXCLUDES_HISTOGRAM = ("group", "metric", "metrics", "_histogram_embed_v")
 _JOB_LIST_METRIC_FILTER_OPS_ALLOWED = frozenset({"gte", "lte"})
 # When nj exceeds this threshold, histogram endpoints plot a deterministic jid-ordered sample
@@ -599,10 +602,31 @@ def _apply_job_list_metric_filters(queryset, cur_metrics):
     return queryset
 
 
-def _build_job_list_queryset_from_request(request, extra_excluded_fields=(), annotate_all=False):
+def _apply_job_list_performance_sort_rank_filter(queryset, fields):
+    """Filter annotated queryset by comma-separated performance_sort_rank values."""
+    raw = (fields or {}).get("performance_sort_rank")
+    if not raw:
+        return queryset
+    ranks = parse_job_list_performance_sort_ranks(raw)
+    if not ranks:
+        return queryset
+    if len(ranks) == 1:
+        return queryset.filter(performance_sort_rank=ranks[0])
+    return queryset.filter(performance_sort_rank__in=ranks)
+
+
+def _build_job_list_queryset_from_request(
+    request,
+    extra_excluded_fields=(),
+    annotate_all=False,
+    exclude_header_dimension=None,
+):
     """Build filtered ordered queryset and parsed filter maps for job list endpoints."""
     fields = request.GET.dict()
     fields = {k: v for k, v in fields.items() if v}
+    if exclude_header_dimension:
+        fields = dict(fields)
+        fields.pop(exclude_header_dimension, None)
     fields = normalize_job_list_query_params(fields)
     fields = expand_month_date_to_range(fields)
     excluded_fields = set(_JOB_LIST_QUERY_FIELD_EXCLUDES_BASE) | set(extra_excluded_fields)
@@ -612,13 +636,15 @@ def _build_job_list_queryset_from_request(request, extra_excluded_fields=(), ann
         if k.split("_", 1)[0] != "metrics" and k not in excluded_fields
     }
     order_by = get_job_list_order_by(fields) or "-end_time"
+    acct_data, header_multi_kwargs = apply_job_list_header_acct_multi_filters(acct_data)
     acct_kwargs, host_val = partition_job_list_acct_filters(acct_data)
-    queryset = job_data.objects.filter(**acct_kwargs)
+    queryset = job_data.objects.filter(**acct_kwargs, **header_multi_kwargs)
     if host_val:
         queryset = queryset.filter(host_list__contains=[host_val])
     queryset = _apply_non_staff_job_visibility(queryset, request)
     if annotate_all or order_by.lstrip("-") == "performance_sort_rank":
         queryset = annotate_job_list_performance_fields(queryset)
+    queryset = _apply_job_list_performance_sort_rank_filter(queryset, fields)
     cur_metrics = {
         k.split("_", 1)[1]: v
         for k, v in fields.items()
@@ -2048,6 +2074,20 @@ def job_list(request):
 
     qname, filter_summary = build_job_list_qname_and_filter_summary(fields)
 
+    def _options_builder(req, exclude_header_dimension=None):
+        return _build_job_list_queryset_from_request(
+            req,
+            extra_excluded_fields=_JOB_LIST_QUERY_FIELD_EXCLUDES_HISTOGRAM,
+            annotate_all=True,
+            exclude_header_dimension=exclude_header_dimension,
+        )
+
+    try:
+        filter_options = build_job_list_filter_options(request, _options_builder)
+    except Exception:
+        logger.exception("job_list: build_job_list_filter_options failed")
+        filter_options = None
+
     if nj == 0:
         return Response({
             "job_list": [],
@@ -2056,6 +2096,7 @@ def job_list(request):
             "current_path": request.get_full_path() if "?" in request.get_full_path() else None,
             "qname": qname,
             "filter_summary": filter_summary,
+            "filter_options": filter_options,
             "order_by": order_by,
             "pagination": {
                 "page": 1,
@@ -2105,6 +2146,7 @@ def job_list(request):
         "current_path": current_path,
         "qname": qname,
         "filter_summary": filter_summary,
+        "filter_options": filter_options,
         "order_by": order_by,
         "pagination": {
             "page": page.number,

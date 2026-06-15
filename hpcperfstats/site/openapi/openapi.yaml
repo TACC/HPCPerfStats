@@ -314,8 +314,9 @@ paths:
         name: account
         schema:
           type: string
+        description: Comma-separated project/account names (exact match, OR).
       - in: query
-        name: date
+        name: end_time__date
         schema:
           type: string
       - in: query
@@ -323,7 +324,7 @@ paths:
         schema:
           type: string
       - in: query
-        name: order
+        name: order_by
         schema:
           type: string
       - in: query
@@ -331,21 +332,25 @@ paths:
         schema:
           type: integer
       - in: query
+        name: performance_sort_rank
+        schema:
+          type: string
+        description: Comma-separated performance status ranks 0–5 (OR).
+      - in: query
         name: queue
         schema:
           type: string
+        description: Comma-separated queue names (OR).
       - in: query
-        name: sort
+        name: state
         schema:
           type: string
+        description: Comma-separated job states (OR).
       - in: query
         name: username
         schema:
           type: string
-      - in: query
-        name: year
-        schema:
-          type: integer
+        description: Comma-separated usernames (OR within dimension).
       tags:
       - jobs
       security:
@@ -1363,6 +1368,42 @@ components:
           type: string
       required:
       - jid
+    JobListFilterOptions:
+      type: object
+      properties:
+        usernames:
+          type: array
+          items:
+            type: string
+        accounts:
+          type: array
+          items:
+            type: string
+        queues:
+          type: array
+          items:
+            type: string
+        states:
+          type: array
+          items:
+            type: string
+        performance_statuses:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobListPerformanceStatusOption'
+        truncated:
+          $ref: '#/components/schemas/JobListFilterOptionsTruncated'
+    JobListFilterOptionsTruncated:
+      type: object
+      properties:
+        usernames:
+          type: boolean
+        accounts:
+          type: boolean
+        queues:
+          type: boolean
+        states:
+          type: boolean
     JobListHistogramBatchResponse:
       type: object
       description: Batch histogram envelope from job_list_histograms_batch.
@@ -1431,6 +1472,16 @@ components:
         next_page_number:
           type: integer
           nullable: true
+    JobListPerformanceStatusOption:
+      type: object
+      properties:
+        sort_rank:
+          type: integer
+        label:
+          type: string
+      required:
+      - label
+      - sort_rank
     JobListResponse:
       type: object
       properties:
@@ -1444,6 +1495,10 @@ components:
           type: array
           items:
             type: string
+        filter_options:
+          allOf:
+          - $ref: '#/components/schemas/JobListFilterOptions'
+          nullable: true
         histograms:
           type: object
           additionalProperties:

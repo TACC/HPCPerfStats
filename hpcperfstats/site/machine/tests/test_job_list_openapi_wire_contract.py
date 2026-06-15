@@ -5,6 +5,8 @@ import pytest
 
 from hpcperfstats.site.machine.openapi_serializers import JobListResponseSerializer
 
+pytestmark = pytest.mark.machine_unit_mock
+
 # Representative GET /api/jobs/ payload from JobListSerializer + job_list view fields.
 JOB_LIST_WIRE_EXAMPLE = {
     "nj": 5,
@@ -30,6 +32,19 @@ JOB_LIST_WIRE_EXAMPLE = {
         },
     ],
     "filter_summary": ["Queue: normal", "User: alice"],
+    "filter_options": {
+        "usernames": ["alice"],
+        "accounts": ["proj"],
+        "queues": ["normal"],
+        "states": ["COMPLETED"],
+        "performance_statuses": [{"sort_rank": 0, "label": "Summary available"}],
+        "truncated": {
+            "usernames": False,
+            "accounts": False,
+            "queues": False,
+            "states": False,
+        },
+    },
     "qname": "Filtered jobs",
     "order_by": "-end_time",
     "current_path": "/api/jobs/?queue=normal&username=alice",

@@ -59,6 +59,65 @@ def get_job_list_order_by(fields):
     return f"-{field}" if desc else field
 
 
+# Header toolbar multi-select filters (comma-separated query values, OR within dimension).
+JOB_LIST_HEADER_MULTI_VALUE_FIELDS = frozenset({"username", "account", "queue", "state"})
+
+
+def parse_job_list_multi_value_field(raw):
+    """Split comma-separated filter values; strip, drop empties, dedupe preserving order."""
+    if raw is None:
+        return []
+    if not isinstance(raw, str):
+        raw = str(raw)
+    seen = set()
+    out = []
+    for part in raw.split(","):
+        token = part.strip()
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        out.append(token)
+    return out
+
+
+def parse_job_list_performance_sort_ranks(raw):
+    """Parse comma-separated performance_sort_rank tokens (0–5); drop invalid."""
+    ranks = []
+    seen = set()
+    for token in parse_job_list_multi_value_field(raw):
+        try:
+            rank = int(token)
+        except (TypeError, ValueError):
+            continue
+        if rank < 0 or rank > 5 or rank in seen:
+            continue
+        seen.add(rank)
+        ranks.append(rank)
+    return ranks
+
+
+def job_list_multi_value_orm_kwargs(field_name, values):
+    """Map one or more string values to exact or ``__in`` ORM kwargs."""
+    if not values:
+        return {}
+    if len(values) == 1:
+        return {field_name: values[0]}
+    return {f"{field_name}__in": values}
+
+
+def apply_job_list_header_acct_multi_filters(acct_data):
+    """Pop header multi-value keys from *acct_data*; return (remaining, ORM kwargs)."""
+    data = dict(acct_data)
+    kwargs = {}
+    for field in JOB_LIST_HEADER_MULTI_VALUE_FIELDS:
+        raw = data.pop(field, None)
+        if raw in (None, ""):
+            continue
+        values = parse_job_list_multi_value_field(raw)
+        kwargs.update(job_list_multi_value_orm_kwargs(field, values))
+    return data, kwargs
+
+
 def partition_job_list_acct_filters(acct_data):
     """Return (allowed_kwarg_dict, host_value) for job list ORM filters.
 
