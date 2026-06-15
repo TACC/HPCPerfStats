@@ -55,6 +55,10 @@ class _FakeFailedIngestPool:
     for path in chunk:
       yield (path, False, False)
 
+  def apply_async(self, fn, args=(), kwds=None):
+    del kwds
+    return _fake_map_async_result(lambda: fn(*args))
+
 
 class _FakeArchivePool:
   def __enter__(self):
@@ -973,6 +977,9 @@ def test_failed_ingest_is_not_marked_processed(monkeypatch):
 
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
     monkeypatch.setattr(st, "sleep_until_shutdown", fake_sleep)
+    _supervisor_startup_preflight_disabled(monkeypatch)
+    monkeypatch.setattr(
+        st.cfg, "get_sync_startup_drain_day_close_before_ingest", lambda: False)
     monkeypatch.setattr(st, "build_archive_mapping", lambda *a, **k: {})
     monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
     monkeypatch.setattr(
@@ -4851,5 +4858,424 @@ def test_immediate_day_close_on_idle_finalize_without_chunk(monkeypatch, tmp_pat
         str(archive_dir), "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
 
     assert "day_ingest_complete:idle_finalize" in immediate_reasons
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_supervisor_failed_ingest_requeues_at_pending_head(monkeypatch, tmp_path):
+  shutdown_requested[0] = False
+  ingest_order = []
+  try:
+    fail_path = "/fake/stats/fail"
+    ok_path = "/fake/stats/ok"
+
+    def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
+      if not ingest_order:
+        return [fail_path, ok_path]
+      shutdown_requested[0] = True
+      return []
+
+    fail_attempts = {"n": 0}
+
+    def fake_add(_lock, path, **_k):
+      ingest_order.append(path)
+      if path == fail_path:
+        fail_attempts["n"] += 1
+        if fail_attempts["n"] == 1:
+          return (path, True, False, 0.0)
+      return (path, True, True, 0.0)
+
+    archive_dir, _daily_dir = _supervisor_two_day_ingest_patches(
+        monkeypatch,
+        tmp_path,
+        paths=[fail_path, ok_path],
+    )
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "add_stats_file_to_db", fake_add)
+    monkeypatch.setattr(st.cfg, "get_sync_ingest_chunk_size", lambda: 1)
+    monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: False)
+
+    st.run_sync_timedb_supervisor_loop(
+        str(archive_dir), "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
+
+    assert ingest_order[:2] == [fail_path, fail_path]
+    assert ok_path in ingest_order
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_supervisor_startup_tail_ingest_runs_during_drain(monkeypatch, tmp_path, capsys):
+  shutdown_requested[0] = False
+  tail_submit = {"tar": None}
+  try:
+    import hpcperfstats.dbload.sync_timedb_startup_raw_removal as preflight_mod
+    import hpcperfstats.dbload.sync_timedb_startup_day_close as day_close_mod
+
+    archive_dir = tmp_path / "archive"
+    daily_dir = tmp_path / "daily"
+    archive_dir.mkdir()
+    daily_dir.mkdir()
+    tar_norm = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+    open(tar_norm, "wb").close()
+    raw_path = str(tmp_path / "raw_tail")
+    open(raw_path, "wb").close()
+
+    class _DoneRawPreflight:
+      enabled = False
+
+      def __init__(self, **_kwargs):
+        pass
+
+      def delete_phase_done(self):
+        return True
+
+      def paths_pending_startup_delete(self):
+        return set()
+
+      def consumed_paths(self):
+        return set()
+
+      def start_async_verify(self):
+        return None
+
+      def shutdown(self, wait=True):
+        del wait
+
+    class _DoneDayClose:
+      enabled = True
+
+      def __init__(self, **_kwargs):
+        pass
+
+      def discover_done(self):
+        return True
+
+      def pending_deferral_count(self):
+        return 0
+
+      def start_async_discover_and_close(self):
+        return None
+
+      def shutdown(self, wait=True):
+        del wait
+
+    monkeypatch.setattr(preflight_mod, "StartupRawRemovalPreflight", _DoneRawPreflight)
+    monkeypatch.setattr(st, "StartupRawRemovalPreflight", _DoneRawPreflight)
+    monkeypatch.setattr(day_close_mod, "StartupDayClosePreflight", _DoneDayClose)
+    monkeypatch.setattr(st, "StartupDayClosePreflight", _DoneDayClose)
+    monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        st.cfg, "get_sync_startup_drain_day_close_before_ingest", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_sync_startup_tail_ingest_enabled", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_sync_startup_tail_ingest_max_files", lambda: 100)
+    monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: False)
+    monkeypatch.setattr(st.cfg, "get_sync_day_close_candidate_report", lambda: False)
+    monkeypatch.setattr(st, "tgz_archive_dir", str(daily_dir))
+    monkeypatch.setattr(st, "rescan_every_chunks", 100)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(
+        st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
+    tail_state = {"unprocessed": {tar_norm: [raw_path]}}
+
+    def live_unprocessed(*_a, **_k):
+      return dict(tail_state["unprocessed"])
+
+    def fake_add(_lock, path, **_k):
+      tail_state["unprocessed"] = {}
+      return (path, True, True, 0.0)
+
+    monkeypatch.setattr(
+        st, "add_stats_file_to_db", fake_add)
+    monkeypatch.setattr(
+        archive_helpers, "build_archive_mapping", lambda *_a, **_k: ({}))
+    monkeypatch.setattr(
+        st,
+        "build_live_unprocessed_by_tar_for_reconcile",
+        live_unprocessed,
+    )
+    monkeypatch.setattr(
+        st, "rescan_pending_stats_files", lambda *_a, **_k: (shutdown_requested.__setitem__(0, True) or []))
+    monkeypatch.setattr(
+        async_day_close_mod.AsyncDayCloseCoordinator,
+        "active_or_submitted_tar_paths",
+        lambda self: set(),
+    )
+    monkeypatch.setattr(
+        async_day_close_mod.AsyncDayCloseCoordinator,
+        "submit_day_close",
+        lambda self, tar_path, *, reason, disqualified_daily_tars=None: (
+            tail_submit.__setitem__("tar", os.path.normpath(tar_path)) or True
+        ),
+    )
+    from hpcperfstats.dbload.sync_timedb_startup_archive_scan import (
+        StartupArchiveScanCoordinator,
+    )
+
+    monkeypatch.setattr(
+        StartupArchiveScanCoordinator,
+        "is_startup_heavy_maintenance_idle",
+        lambda self: True,
+    )
+    monkeypatch.setattr(
+        StartupArchiveScanCoordinator,
+        "wait_for_startup_maintenance_idle",
+        lambda self: True,
+    )
+    monkeypatch.setattr(
+        StartupArchiveScanCoordinator,
+        "get_snapshot",
+        lambda self: None,
+    )
+    monkeypatch.setattr(
+        StartupArchiveScanCoordinator,
+        "wait_for_snapshot",
+        lambda self, *, allow_build=False: None,
+    )
+    monkeypatch.setattr(
+        janitor_mod.ArchiveJanitor,
+        "signal_work_available",
+        lambda self: None,
+    )
+    monkeypatch.setattr(
+        janitor_mod.ArchiveJanitor,
+        "shutdown",
+        lambda self, wait=True: None,
+    )
+    monkeypatch.setattr(st, "ensure_persistence_contract", lambda *_a, **_k: None)
+
+    st.run_sync_timedb_supervisor_loop(
+        str(archive_dir), "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
+
+    out = capsys.readouterr().out
+    assert "startup tail ingest begin" in out
+    assert tail_submit["tar"] == tar_norm
+  finally:
+    shutdown_requested[0] = False
+
+
+def _startup_tail_drain_patches(monkeypatch, tmp_path, *, live_unprocessed_fn, max_files=100):
+  """Shared mocks for startup tail ingest supervisor drain tests."""
+  import hpcperfstats.dbload.sync_timedb_startup_raw_removal as preflight_mod
+  import hpcperfstats.dbload.sync_timedb_startup_day_close as day_close_mod
+  from hpcperfstats.dbload.sync_timedb_startup_archive_scan import (
+      StartupArchiveScanCoordinator,
+  )
+
+  archive_dir = tmp_path / "archive"
+  daily_dir = tmp_path / "daily"
+  archive_dir.mkdir(exist_ok=True)
+  daily_dir.mkdir(exist_ok=True)
+
+  class _DoneRawPreflight:
+    enabled = False
+
+    def __init__(self, **_kwargs):
+      pass
+
+    def delete_phase_done(self):
+      return True
+
+    def paths_pending_startup_delete(self):
+      return set()
+
+    def consumed_paths(self):
+      return set()
+
+    def start_async_verify(self):
+      return None
+
+    def shutdown(self, wait=True):
+      del wait
+
+  class _DoneDayClose:
+    enabled = True
+
+    def __init__(self, **_kwargs):
+      pass
+
+    def discover_done(self):
+      return True
+
+    def pending_deferral_count(self):
+      return 0
+
+    def start_async_discover_and_close(self):
+      return None
+
+    def shutdown(self, wait=True):
+      del wait
+
+  monkeypatch.setattr(preflight_mod, "StartupRawRemovalPreflight", _DoneRawPreflight)
+  monkeypatch.setattr(st, "StartupRawRemovalPreflight", _DoneRawPreflight)
+  monkeypatch.setattr(day_close_mod, "StartupDayClosePreflight", _DoneDayClose)
+  monkeypatch.setattr(st, "StartupDayClosePreflight", _DoneDayClose)
+  monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
+  monkeypatch.setattr(st.cfg, "get_sync_startup_drain_day_close_before_ingest", lambda: True)
+  monkeypatch.setattr(st.cfg, "get_sync_startup_tail_ingest_enabled", lambda: True)
+  monkeypatch.setattr(st.cfg, "get_sync_startup_tail_ingest_max_files", lambda: max_files)
+  monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: False)
+  monkeypatch.setattr(st.cfg, "get_sync_day_close_candidate_report", lambda: False)
+  monkeypatch.setattr(st, "tgz_archive_dir", str(daily_dir))
+  monkeypatch.setattr(st, "rescan_every_chunks", 100)
+  monkeypatch.setattr(st, "close_old_connections", lambda: None)
+  monkeypatch.setattr(st.connections, "close_all", lambda: None)
+  monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+  monkeypatch.setattr(st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
+  monkeypatch.setattr(st, "add_stats_file_to_db", lambda _lock, path, **_k: (path, True, True, 0.0))
+  monkeypatch.setattr(archive_helpers, "build_archive_mapping", lambda *_a, **_k: ({}))
+  monkeypatch.setattr(st, "build_live_unprocessed_by_tar_for_reconcile", live_unprocessed_fn)
+  monkeypatch.setattr(
+      st, "rescan_pending_stats_files",
+      lambda *_a, **_k: (shutdown_requested.__setitem__(0, True) or []))
+  monkeypatch.setattr(
+      async_day_close_mod.AsyncDayCloseCoordinator,
+      "active_or_submitted_tar_paths",
+      lambda self: set(),
+  )
+  monkeypatch.setattr(
+      StartupArchiveScanCoordinator,
+      "is_startup_heavy_maintenance_idle",
+      lambda self: True,
+  )
+  monkeypatch.setattr(
+      StartupArchiveScanCoordinator,
+      "wait_for_startup_maintenance_idle",
+      lambda self: True,
+  )
+  monkeypatch.setattr(
+      StartupArchiveScanCoordinator,
+      "get_snapshot",
+      lambda self: None,
+  )
+  monkeypatch.setattr(
+      StartupArchiveScanCoordinator,
+      "wait_for_snapshot",
+      lambda self, *, allow_build=False: None,
+  )
+  monkeypatch.setattr(janitor_mod.ArchiveJanitor, "signal_work_available", lambda self: None)
+  monkeypatch.setattr(janitor_mod.ArchiveJanitor, "shutdown", lambda self, wait=True: None)
+  monkeypatch.setattr(st, "ensure_persistence_contract", lambda *_a, **_k: None)
+  return archive_dir, daily_dir
+
+
+def test_supervisor_startup_tail_ingest_skips_above_max_files(
+    monkeypatch, tmp_path, capsys):
+  shutdown_requested[0] = False
+  try:
+    daily_dir = tmp_path / "daily"
+    daily_dir.mkdir()
+    tar_norm = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+    open(tar_norm, "wb").close()
+    many_paths = []
+    for i in range(150):
+      p = tmp_path / ("raw_%d" % i)
+      p.write_bytes(b"x")
+      many_paths.append(str(p))
+
+    def live_unprocessed(*_a, **_k):
+      return {tar_norm: many_paths}
+
+    archive_dir, _ = _startup_tail_drain_patches(
+        monkeypatch, tmp_path, live_unprocessed_fn=live_unprocessed, max_files=100)
+    st.run_sync_timedb_supervisor_loop(
+        str(archive_dir), "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
+    out = capsys.readouterr().out
+    assert "startup tail ingest skip" in out
+    assert "above_max_files" in out
+    assert "startup tail ingest begin" not in out
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_supervisor_startup_tail_ingest_loops_two_small_days(
+    monkeypatch, tmp_path, capsys):
+  shutdown_requested[0] = False
+  tail_state = {"cleared": set()}
+
+  try:
+    daily_dir = tmp_path / "daily"
+    daily_dir.mkdir()
+    tar_day1 = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+    tar_day2 = os.path.normpath(str(daily_dir / "2020-01-02.tar"))
+    open(tar_day1, "wb").close()
+    open(tar_day2, "wb").close()
+    paths_day1 = []
+    paths_day2 = []
+    for i in range(5):
+      p = tmp_path / ("d1_%d" % i)
+      p.write_bytes(b"a")
+      paths_day1.append(str(p))
+    for i in range(28):
+      p = tmp_path / ("d2_%d" % i)
+      p.write_bytes(b"b")
+      paths_day2.append(str(p))
+    submitted = []
+
+    def live_unprocessed(*_a, **_k):
+      remaining = {}
+      if tar_day1 not in tail_state["cleared"]:
+        remaining[tar_day1] = list(paths_day1)
+      if tar_day2 not in tail_state["cleared"]:
+        remaining[tar_day2] = list(paths_day2)
+      return remaining
+
+    def fake_add(_lock, path, **_k):
+      if path in paths_day1:
+        tail_state["cleared"].add(tar_day1)
+      if path in paths_day2:
+        tail_state["cleared"].add(tar_day2)
+      return (path, True, True, 0.0)
+
+    archive_dir, _ = _startup_tail_drain_patches(
+        monkeypatch, tmp_path, live_unprocessed_fn=live_unprocessed, max_files=100)
+    monkeypatch.setattr(st, "add_stats_file_to_db", fake_add)
+    monkeypatch.setattr(
+        async_day_close_mod.AsyncDayCloseCoordinator,
+        "submit_day_close",
+        lambda self, tar_path, *, reason, disqualified_daily_tars=None: (
+            submitted.append(os.path.normpath(tar_path)) or True
+        ),
+    )
+    st.run_sync_timedb_supervisor_loop(
+        str(archive_dir), "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
+    out = capsys.readouterr().out
+    assert out.count("startup tail ingest begin") == 2
+    assert tar_day1 in submitted
+    assert tar_day2 in submitted
+    assert submitted.index(tar_day1) < submitted.index(tar_day2)
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_supervisor_reconcile_prepends_oldest_blocked_before_chunk(
+    monkeypatch, tmp_path):
+  shutdown_requested[0] = False
+  ingest_order = []
+  try:
+    tar_norm = os.path.normpath(str(tmp_path / "daily" / "2020-01-01.tar"))
+    blocked_path = str(tmp_path / "blocked_raw")
+    open(blocked_path, "wb").close()
+    other_path = "/fake/stats/other"
+
+    def live_unprocessed(*_a, **_k):
+      return {tar_norm: [blocked_path]}
+
+    archive_dir, daily_dir = _supervisor_two_day_ingest_patches(
+        monkeypatch, tmp_path, paths=[other_path])
+    open(os.path.join(str(daily_dir), "2020-01-01.tar"), "wb").close()
+    monkeypatch.setattr(st, "build_live_unprocessed_by_tar_for_reconcile", live_unprocessed)
+    monkeypatch.setattr(st.cfg, "get_sync_ingest_chunk_size", lambda: 2)
+
+    def fake_add(_lock, path, **_k):
+      ingest_order.append(path)
+      return (path, True, True, 0.0)
+
+    monkeypatch.setattr(st, "add_stats_file_to_db", fake_add)
+    st.run_sync_timedb_supervisor_loop(
+        str(archive_dir), "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
+    assert ingest_order[0] == blocked_path
+    assert other_path in ingest_order
   finally:
     shutdown_requested[0] = False

@@ -174,6 +174,8 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_startup_raw_removal_verify_days_per_slice"),
     ("PIPELINE", "sync_startup_raw_removal_max_deletes_per_pass"),
     ("PIPELINE", "sync_startup_drain_day_close_before_ingest"),
+    ("PIPELINE", "sync_startup_tail_ingest_enabled"),
+    ("PIPELINE", "sync_startup_tail_ingest_max_files"),
     ("PIPELINE", "sync_day_close_candidate_report"),
     ("PIPELINE", "sync_startup_day_close_preflight"),
     ("PIPELINE", "sync_startup_day_close_budget_seconds"),
@@ -2444,6 +2446,20 @@ def get_sync_startup_drain_day_close_before_ingest():
   return _parse_bool(
       _pipeline_get("sync_startup_drain_day_close_before_ingest", fallback="yes"),
   )
+
+
+def get_sync_startup_tail_ingest_enabled():
+  """Run targeted ingest for small checkpoint-blocked tails during startup drain."""
+  _ensure_cfg_loaded()
+  return _parse_bool(
+      _pipeline_get("sync_startup_tail_ingest_enabled", fallback="yes"),
+  )
+
+
+def get_sync_startup_tail_ingest_max_files():
+  """Max on-disk unprocessed paths per calendar day for startup tail ingest."""
+  _ensure_cfg_loaded()
+  return max(1, _pipeline_getint("sync_startup_tail_ingest_max_files", fallback=100))
 
 
 def get_sync_day_close_candidate_report():

@@ -98,6 +98,7 @@ from hpcperfstats.shutdown_utils import (
 from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     augment_unprocessed_by_tar_with_pending_paths,
     build_archive_mapping,
+    build_live_unprocessed_by_tar_for_reconcile,
     build_seal_disqualified_daily_tars,
     build_remaining_raw_stats_by_daily_gz,
     build_unprocessed_raw_by_daily_tar,
@@ -108,6 +109,10 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     daily_tar_path_from_compressed,
     calendar_date_from_daily_tar_path,
     days_ingest_complete_by_checkpoint,
+    oldest_checkpoint_blocked_tar,
+    on_disk_unprocessed_paths_for_tar,
+    prepend_checkpoint_blocked_paths_to_pending,
+    unprocessed_tar_paths_still_on_disk,
     daily_tar_paths_for_archive_job_tasks,
     daily_tar_paths_for_stats_paths,
     daily_tar_paths_from_pending_archive_tasks,
@@ -3295,6 +3300,272 @@ def run_sync_timedb_supervisor_loop(
     except OSError:
       pass
 
+  def _invalidate_host_scan_hints_for_paths(paths):
+    if not isinstance(host_scan_hints, dict):
+      return
+    for path in paths or ():
+      host_dir = os.path.dirname(path)
+      host_scan_hints.pop(host_dir, None)
+
+  def _live_unprocessed_by_tar_for_reconcile():
+    return build_live_unprocessed_by_tar_for_reconcile(
+        directory,
+        host_name_ext,
+        tgz_archive_dir,
+        checkpoint_path=checkpoint_path,
+        pending_stats_paths=list(pending_stats_files),
+    )
+
+  def _cap_pending_after_rescan(paths):
+    unprocessed = _live_unprocessed_by_tar_for_reconcile()
+    tar_norm = oldest_checkpoint_blocked_tar(
+        unprocessed, tgz_archive_dir=tgz_archive_dir)
+    blocked = (
+        on_disk_unprocessed_paths_for_tar(unprocessed, tar_norm)
+        if tar_norm else []
+    )
+    return _cap_pending_stats_files_list(
+        prepend_checkpoint_blocked_paths_to_pending(
+            paths,
+            blocked,
+            exclude=processed_files | inflight_archive_paths,
+        ),
+        ingest_queue_max,
+    )
+
+  def _reconcile_pending_with_oldest_checkpoint_blocked():
+    nonlocal pending_stats_files
+    pending_stats_files = _cap_pending_after_rescan(pending_stats_files)
+
+  def _advance_pending_after_chunk(stats_files_chunk, successful_paths):
+    nonlocal pending_stats_files
+    successful_set = set(successful_paths)
+    failed_chunk_paths = [
+        path for path in stats_files_chunk if path not in successful_set
+    ]
+    if failed_chunk_paths:
+      _invalidate_host_scan_hints_for_paths(failed_chunk_paths)
+    tail = pending_stats_files[len(stats_files_chunk):]
+    if failed_chunk_paths:
+      pending_stats_files = prepend_checkpoint_blocked_paths_to_pending(
+          tail,
+          failed_chunk_paths,
+          exclude=processed_files | inflight_archive_paths,
+      )
+    else:
+      pending_stats_files = tail
+
+  def _ingest_paths_on_supervisor_thread(paths):
+    """Bounded short ingest for startup tail (runs on supervisor thread)."""
+    successful_paths = []
+    files_to_be_archived = []
+    for path in paths:
+      if use_split_db_writer_pipeline:
+        stats_fname, payload, need_archival, ingest_ok, _parse_elapsed = (
+            _parse_stats_file_payload(path)
+        )
+        if not ingest_ok:
+          continue
+        if payload is None:
+          _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
+          successful_paths.append(stats_fname)
+          if should_archive and need_archival:
+            files_to_be_archived.append(stats_fname)
+          continue
+        stats, proc_stats = payload
+        stats_fname, need_archival, ingest_ok = _write_stats_payload_to_db(
+            manager_lock,
+            stats_fname,
+            stats,
+            proc_stats,
+            need_archival=need_archival,
+        )
+        if not ingest_ok:
+          continue
+        _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
+        successful_paths.append(stats_fname)
+        if should_archive and need_archival:
+          files_to_be_archived.append(stats_fname)
+      elif db_writer_combined_task:
+        stats_fname, need_archival, ingest_ok, _elapsed = (
+            _ingest_parse_and_write_file(manager_lock, path)
+        )
+        if not ingest_ok:
+          continue
+        _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
+        successful_paths.append(stats_fname)
+        if should_archive and need_archival:
+          files_to_be_archived.append(stats_fname)
+      else:
+        stats_fname, need_archival, ingest_ok, _elapsed = add_stats_file_to_db(
+            manager_lock, path)
+        if not ingest_ok:
+          continue
+        _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
+        successful_paths.append(stats_fname)
+        if should_archive and need_archival:
+          files_to_be_archived.append(stats_fname)
+    return successful_paths, files_to_be_archived
+
+  def _finalize_ingest_archive_batch(
+      successful_paths,
+      files_to_be_archived,
+      *,
+      context_label,
+  ):
+    nonlocal checkpoint_dirty_count
+    if files_to_be_archived:
+      _ensure_daily_archive_dir_exists()
+    ar_file_mapping = build_archive_mapping(
+        files_to_be_archived,
+        tgz_archive_dir,
+    )
+    if not ar_file_mapping and files_to_be_archived:
+      ar_file_mapping = _build_fallback_archive_mapping_by_mtime(
+          files_to_be_archived,
+          tgz_archive_dir,
+      )
+    _finalize_archive_slots_if_needed(force=False)
+    archived_candidates = set(files_to_be_archived)
+    immediate_paths = [
+        p for p in successful_paths if p not in archived_candidates
+    ]
+    deferred_paths = [p for p in successful_paths if p in archived_candidates]
+    for p in immediate_paths:
+      _transition_file_state(file_states, p, SyncFileState.ARCHIVED)
+      added = _add_processed_path(
+          p, processed_files, processed_files_order, checkpoint_entries,
+          checkpoint_path, file_states=file_states)
+      if added:
+        checkpoint_dirty_count += 1
+    _flush_checkpoint_if_needed()
+    if ar_file_mapping:
+      archive_items_all = _normalize_archive_groups_by_tgz(ar_file_mapping)
+      with archive_state_lock:
+        inflight_archive_paths.update(deferred_paths)
+      _track_pending_append_groups(archive_items_all)
+      for p in deferred_paths:
+        _transition_file_state(file_states, p, SyncFileState.ARCHIVE_QUEUED)
+      def _enqueue_overflow_item(item):
+        _enqueue_archive_task({
+            "task": ArchiveTask(archive_info=item, attempt=1),
+            "paths": list(item[1]),
+            "retry_at": time.time(),
+        })
+        for p in item[1]:
+          _transition_file_state(file_states, p, SyncFileState.ARCHIVE_QUEUED)
+
+      archive_dispatch.dispatch_disjoint_items(
+          archive_items_all,
+          archive_queue_max=archive_queue_max,
+          build_deferred_paths_fn=_build_deferred_paths_for_items,
+          track_pending_append_fn=_track_pending_append_groups,
+          transition_queued_fn=lambda p: _transition_file_state(
+              file_states, p, SyncFileState.ARCHIVE_QUEUED),
+          enqueue_overflow_fn=_enqueue_overflow_item,
+      )
+      _dispatch_due_archive_retries()
+    elif deferred_paths:
+      log_print(
+          "Deferring processed marker for %d file(s): archival mapping missing"
+          % len(deferred_paths),
+          flush=True,
+      )
+    _finalize_archive_slots_if_needed(
+        force=True,
+        allow_defer=False,
+        context=context_label,
+    )
+    _dispatch_due_archive_retries()
+    _flush_checkpoint_if_needed(force=True)
+
+  def _run_ingest_archive_paths_batch(paths, context_label):
+    successful_paths, files_to_be_archived = _ingest_paths_on_supervisor_thread(
+        paths)
+    _finalize_ingest_archive_batch(
+        successful_paths,
+        files_to_be_archived,
+        context_label=context_label,
+    )
+    successful_set = set(successful_paths)
+    failed_paths = [path for path in paths if path not in successful_set]
+    if failed_paths:
+      _invalidate_host_scan_hints_for_paths(failed_paths)
+    return successful_paths, failed_paths
+
+  def _run_startup_tail_ingest_once():
+    nonlocal chunk_in_progress
+    if not cfg.get_sync_startup_tail_ingest_enabled():
+      return False
+    if chunk_in_progress:
+      return False
+    max_files = max(1, int(cfg.get_sync_startup_tail_ingest_max_files()))
+    _get_startup_snapshot_for_rescan()
+    unprocessed = _live_unprocessed_by_tar_for_reconcile()
+    tar_norm = oldest_checkpoint_blocked_tar(
+        unprocessed, tgz_archive_dir=tgz_archive_dir)
+    if not tar_norm:
+      return False
+    paths = on_disk_unprocessed_paths_for_tar(unprocessed, tar_norm)
+    if not paths:
+      return False
+    day_date = calendar_date_from_daily_tar_path(tar_norm)
+    day_iso = day_date.isoformat() if day_date is not None else tar_norm
+    if len(paths) > max_files:
+      log_print(
+          "sync_timedb: startup tail ingest skip day=%s paths=%d "
+          "reason=above_max_files max=%d"
+          % (day_iso, len(paths), max_files),
+          flush=True,
+      )
+      return False
+    log_print(
+        "sync_timedb: startup tail ingest begin day=%s paths=%d max=%d"
+        % (day_iso, len(paths), max_files),
+        flush=True,
+    )
+    chunk_in_progress = True
+    try:
+      successful_paths, failed_paths = _run_ingest_archive_paths_batch(
+          paths, "startup_tail_ingest")
+    finally:
+      chunk_in_progress = False
+    unprocessed_after = _live_unprocessed_by_tar_for_reconcile()
+    checkpoint_complete = not unprocessed_tar_paths_still_on_disk(
+        unprocessed_after, tar_norm)
+    log_print(
+        "sync_timedb: startup tail ingest complete day=%s ingested=%d "
+        "failed=%d checkpoint_complete=%s"
+        % (
+            day_iso,
+            len(successful_paths),
+            len(failed_paths),
+            "yes" if checkpoint_complete else "no",
+        ),
+        flush=True,
+    )
+    if failed_paths:
+      log_print(
+          "sync_timedb: startup tail ingest failed_paths=%d"
+          % len(failed_paths),
+          flush=True,
+      )
+    _maybe_enqueue_immediate_day_close(context="startup_tail_ingest")
+    if checkpoint_complete and async_day_close is not None:
+      disqualified = _janitor_disqualified_daily_tars()
+      if async_day_close.submit_day_close(
+          tar_norm,
+          reason="startup_tail_ingest",
+          disqualified_daily_tars=disqualified,
+      ):
+        log_print(
+            "sync_timedb: startup tail ingest submitted day_close tar=%s"
+            % tar_norm,
+            flush=True,
+        )
+        archive_janitor.signal_work_available()
+    return True
+
   log_print(
       "sync_timedb: day_close schedule startup + every %d ingest chunks + "
       "on ingest queue drain + each ingest batch (calendar-day drain); "
@@ -3618,7 +3889,7 @@ def run_sync_timedb_supervisor_loop(
       file_states.pop(path, None)
       if isinstance(host_scan_hints, dict):
         host_scan_hints.pop(path, None)
-    pending_stats_files = _cap_pending_stats_files_list(
+    pending_stats_files = _cap_pending_after_rescan(
         rescan_pending_stats_files(
             directory,
             startdate,
@@ -3627,7 +3898,6 @@ def run_sync_timedb_supervisor_loop(
             processed_files | inflight_archive_paths,
             host_scan_hints=host_scan_hints,
         ),
-        ingest_queue_max,
     )
     day_close_rescan_pending = False
     log_print(
@@ -3749,6 +4019,11 @@ def run_sync_timedb_supervisor_loop(
       if startup_ingest_gate_cleared:
         return False
       if not startup_day_close_drain_complete:
+        if _maybe_handle_raw_removal_delete_phase():
+          return True
+        if _run_startup_tail_ingest_once():
+          sleep_until_shutdown(0.25)
+          return True
         if not _startup_day_close_deletion_pending():
           if (
               startup_preflight is not None
@@ -3762,8 +4037,6 @@ def run_sync_timedb_supervisor_loop(
           )
           startup_day_close_drain_complete = True
         else:
-          if _maybe_handle_raw_removal_delete_phase():
-            return True
           _maybe_log_startup_drain_wait()
           sleep_until_shutdown(0.25)
           return True
@@ -3798,9 +4071,8 @@ def run_sync_timedb_supervisor_loop(
         file_states.pop(path, None)
         if isinstance(host_scan_hints, dict):
           host_scan_hints.pop(path, None)
-      pending_stats_files = _cap_pending_stats_files_list(
+      pending_stats_files = _cap_pending_after_rescan(
           _rescan_pending_with_progress(),
-          ingest_queue_max,
       )
       log_print(
           "Startup raw removal preflight done; rescanned pending=%d"
@@ -3880,9 +4152,8 @@ def run_sync_timedb_supervisor_loop(
           )
         _finalize_archive_slots_if_needed(force=True, context="pre_rescan")
         _maybe_enqueue_immediate_day_close(context="idle_finalize")
-        pending_stats_files = _cap_pending_stats_files_list(
+        pending_stats_files = _cap_pending_after_rescan(
             _rescan_pending_with_progress(),
-            ingest_queue_max,
         )
         if pending_stats_files:
           for p in pending_stats_files:
@@ -3896,9 +4167,8 @@ def run_sync_timedb_supervisor_loop(
           worker_idle_loops = 0
           continue
         archive_janitor.signal_work_available()
-        pending_stats_files = _cap_pending_stats_files_list(
+        pending_stats_files = _cap_pending_after_rescan(
             _rescan_pending_with_progress(),
-            ingest_queue_max,
         )
         if pending_stats_files:
           idle_since_empty_queue = None
@@ -3957,6 +4227,7 @@ def run_sync_timedb_supervisor_loop(
               % (len(pending_stats_files), ingest_queue_high),
               flush=True,
           )
+        _reconcile_pending_with_oldest_checkpoint_blocked()
         target_chunk_size = min(chunk_size, ingest_queue_high)
         had_pending_before_chunk = bool(pending_stats_files)
         pending_paths_before_chunk = list(pending_stats_files)
@@ -4339,7 +4610,7 @@ def run_sync_timedb_supervisor_loop(
 
         _record_ingest_sort_epochs_for_paths(
             [p for p in stats_files_chunk if p in set(successful_paths)])
-        pending_stats_files = pending_stats_files[len(stats_files_chunk):]
+        _advance_pending_after_chunk(stats_files_chunk, successful_paths)
         if len(pending_stats_files) <= ingest_queue_low:
           log_print(
               "Ingest pending at/below low watermark pending=%d low=%d"
@@ -4367,7 +4638,7 @@ def run_sync_timedb_supervisor_loop(
               reason="every_n_chunks",
           )
           archive_janitor.signal_work_available()
-          pending_stats_files = _cap_pending_stats_files_list(
+          pending_stats_files = _cap_pending_after_rescan(
               rescan_pending_stats_files(
                   directory,
                   startdate,
@@ -4376,7 +4647,6 @@ def run_sync_timedb_supervisor_loop(
                   processed_files | inflight_archive_paths,
                   host_scan_hints=host_scan_hints,
               ),
-              ingest_queue_max,
           )
           log_print(
               "Rescanned after %d chunks; pending files (oldest first): %d"

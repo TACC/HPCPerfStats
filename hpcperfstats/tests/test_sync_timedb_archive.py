@@ -3112,9 +3112,10 @@ def test_quarantine_ingest_failed_raw_path_valid_head_corrupt_body(tmp_path):
   manifest = json.loads(
       (archive_dir / helpers.SYNC_TIMEDB_UNPARSABLE_RAW_MANIFEST_BASENAME).read_text()
   )
-  assert len(manifest) == 1
-  assert manifest[0]["reason"] == helpers.INGEST_PARSE_FAILED_QUARANTINE_REASON
-  assert "unpack" in manifest[0]["error_detail"]
+  entries = manifest["entries"] if isinstance(manifest, dict) else manifest
+  assert len(entries) == 1
+  assert entries[0]["reason"] == helpers.INGEST_PARSE_FAILED_QUARANTINE_REASON
+  assert "unpack" in entries[0]["error_detail"]
 
 
 def test_quarantine_unparsable_closed_raw_moves_file_and_writes_manifest(tmp_path):
@@ -4444,9 +4445,10 @@ def test_find_immediate_day_close_candidates_orders_oldest_first(tmp_path):
   tar_new = str(daily_dir / "2020-01-02.tar")
   open(tar_old, "wb").close()
   open(tar_new, "wb").close()
-  day1_epoch = int(datetime(2020, 1, 1, 12, tzinfo=timezone.utc).timestamp())
   day2_epoch = int(datetime(2020, 1, 2, 12, tzinfo=timezone.utc).timestamp())
-  pending = ["/raw/host.hpc/%d" % day2_epoch]
+  pending_path = tmp_path / "raw_day2"
+  pending_path.write_text("stats")
+  pending = [str(pending_path)]
   result = find_immediate_day_close_candidates(
       tgz_archive_dir=str(daily_dir),
       candidate_tar_paths=[tar_new, tar_old],
@@ -4538,14 +4540,24 @@ def test_daily_tar_eligible_for_day_close_submit_requires_checkpoint_complete(tm
   daily_dir.mkdir()
   tar_path = os.path.normpath(str(daily_dir / "2021-03-15.tar"))
   open(tar_path, "wb").close()
+  raw_path = tmp_path / "raw_pending"
+  raw_path.write_text("x")
   eligible, reason = daily_tar_eligible_for_day_close_submit(
       tar_path,
-      unprocessed_by_tar={tar_path: ["/raw/pending"]},
+      unprocessed_by_tar={tar_path: [str(raw_path)]},
       disqualified_daily_tars=set(),
       local_tz=timezone.utc,
   )
   assert not eligible
   assert reason == "checkpoint_incomplete"
+  eligible, reason = daily_tar_eligible_for_day_close_submit(
+      tar_path,
+      unprocessed_by_tar={tar_path: ["/raw/ghost_only"]},
+      disqualified_daily_tars=set(),
+      local_tz=timezone.utc,
+  )
+  assert eligible
+  assert reason == ""
   eligible, reason = daily_tar_eligible_for_day_close_submit(
       tar_path,
       unprocessed_by_tar={tar_path: []},
@@ -4593,7 +4605,11 @@ def test_find_immediate_day_close_uses_checkpoint_not_pending(tmp_path):
   tar_path = str(daily_dir / "2020-01-01.tar")
   open(tar_path, "wb").close()
   day_epoch = int(datetime(2020, 1, 1, 12, tzinfo=timezone.utc).timestamp())
-  pending_same_day = ["/raw/host.hpc/%d" % day_epoch]
+  host_dir = tmp_path / "host.hpc"
+  host_dir.mkdir()
+  raw_path = str(host_dir / str(day_epoch))
+  open(raw_path, "wb").close()
+  pending_same_day = [raw_path]
   result = find_immediate_day_close_candidates(
       tgz_archive_dir=str(daily_dir),
       candidate_tar_paths=[tar_path],
@@ -4621,9 +4637,11 @@ def test_classify_day_close_candidates_reports_reasons(tmp_path):
   daily_dir.mkdir()
   tar_path = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
   open(tar_path, "wb").close()
+  raw_path = tmp_path / "raw_x"
+  raw_path.write_text("x")
   entries = classify_day_close_candidates(
       tgz_archive_dir=str(daily_dir),
-      unprocessed_by_tar={tar_path: ["/raw/x"]},
+      unprocessed_by_tar={tar_path: [str(raw_path)]},
       disqualification_reasons={
           tar_path: {"checkpoint_incomplete", "inflight_append_path"},
       },
@@ -4645,9 +4663,11 @@ def test_classify_day_close_waiting_on_ingest_vs_eligible_deferred(tmp_path):
   deferred_tar = os.path.normpath(str(daily_dir / "2020-01-02.tar"))
   open(waiting_tar, "wb").close()
   open(deferred_tar, "wb").close()
+  raw_waiting = tmp_path / "raw_waiting"
+  raw_waiting.write_text("x")
   entries = classify_day_close_candidates(
       tgz_archive_dir=str(daily_dir),
-      unprocessed_by_tar={waiting_tar: ["/raw/x"]},
+      unprocessed_by_tar={waiting_tar: [str(raw_waiting)]},
       disqualification_reasons={},
       local_tz=timezone.utc,
   )
@@ -4787,3 +4807,62 @@ def test_log_day_close_candidate_report_silent_when_empty(capsys, monkeypatch):
   monkeypatch.setattr(cfg_mod, "get_sync_day_close_candidate_report", lambda: True)
   log_day_close_candidate_report([], reason="test")
   assert "day_close candidate report" not in capsys.readouterr().out
+
+
+def test_prepend_checkpoint_blocked_paths_to_pending_dedupes_and_orders():
+  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+      prepend_checkpoint_blocked_paths_to_pending,
+  )
+
+  pending = ["/b", "/c"]
+  blocked = ["/a", "/b"]
+  merged = prepend_checkpoint_blocked_paths_to_pending(
+      pending,
+      blocked,
+      exclude={"/x"},
+  )
+  assert merged == ["/a", "/b", "/c"]
+
+
+def test_oldest_checkpoint_blocked_tar_returns_oldest_on_disk_day(tmp_path):
+  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+      oldest_checkpoint_blocked_tar,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_old = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+  tar_new = os.path.normpath(str(daily_dir / "2020-01-02.tar"))
+  open(tar_old, "wb").close()
+  open(tar_new, "wb").close()
+  raw_old = tmp_path / "old"
+  raw_new = tmp_path / "new"
+  raw_old.write_text("a")
+  raw_new.write_text("b")
+  unprocessed = {
+      tar_new: [str(raw_new)],
+      tar_old: [str(raw_old)],
+  }
+  assert oldest_checkpoint_blocked_tar(
+      unprocessed, tgz_archive_dir=str(daily_dir)) == tar_old
+
+
+def test_classify_ghost_unprocessed_becomes_eligible_deferred(tmp_path):
+  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+      classify_day_close_candidates,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+  open(tar_path, "wb").close()
+  entries = classify_day_close_candidates(
+      tgz_archive_dir=str(daily_dir),
+      unprocessed_by_tar={tar_path: ["/ghost/only"]},
+      disqualification_reasons={},
+      local_tz=timezone.utc,
+  )
+  by_tar = {e["tar_path"]: e for e in entries}
+  assert by_tar[tar_path]["status"] == "eligible_deferred"
+  assert by_tar[tar_path]["unprocessed"] == 0
+  assert by_tar[tar_path]["unprocessed_list"] == 1

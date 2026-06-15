@@ -533,7 +533,7 @@ def test_startup_day_close_submits_quiescent_tar_with_stale_unprocessed(
   preflight._discover_loop()
   assert submitted
   assert submitted[0][0] == tar_path
-  assert submitted[0][1] == "startup_quiescent_tar"
+  assert submitted[0][1] == "startup_checkpoint_complete"
 
 
 def test_startup_day_close_skips_quiescent_when_unprocessed_still_on_disk(
