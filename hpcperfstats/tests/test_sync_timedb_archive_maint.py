@@ -147,20 +147,20 @@ def test_build_head_ingest_ready_set_dedupes_db_lookups(monkeypatch, tmp_path):
       _write_stats_segment(host_dir, ts),
       _write_stats_segment(host_dir, ts + 1),
   ]
-  head_identity = {
-      paths[0]: ("cn001", ts),
-      paths[1]: ("cn001", ts),
+  sampled = {
+      paths[0]: {"cn001": {ts}},
+      paths[1]: {"cn001": {ts}},
   }
   calls = {"n": 0}
 
-  def _present(hostname, timestamp_utc):
-    del hostname, timestamp_utc
+  def _all_present(host, seconds):
+    del host, seconds
     calls["n"] += 1
     return True
 
   monkeypatch.setattr(cfg, "get_sync_archive_require_db_head_ingest", lambda: True)
-  monkeypatch.setattr(readiness, "head_timestamp_present_in_db", _present)
-  ready = readiness.build_head_ingest_ready_set(paths, head_identity, log_fn=None)
+  monkeypatch.setattr(readiness, "host_timestamp_seconds_all_present", _all_present)
+  ready = readiness.build_head_ingest_ready_set(paths, sampled, log_fn=None)
   assert paths[0] in ready
   assert paths[1] in ready
   assert calls["n"] == 1

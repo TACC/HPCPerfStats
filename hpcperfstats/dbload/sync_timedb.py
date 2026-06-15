@@ -196,6 +196,7 @@ def remove_verified_archived_raw_files(*args, **kwargs):
 def remove_verified_uncompressed_daily_tars(*args, **kwargs):
   raise RuntimeError(
       "remove_verified_uncompressed_daily_tars is janitor-only; supervisor must not call this")
+from hpcperfstats.dbload import sync_timedb_host_itimes
 from hpcperfstats.dbload.sync_timedb_ingest_readiness import (
     filter_paths_head_ingested,
     head_timestamp_present_in_db,
@@ -1129,8 +1130,7 @@ def _imap_ingest_paths_batched(
 
 def _clear_ingest_worker_file_caches():
   """Drop per-process ingest caches after a file (safe when worker recycles)."""
-  _HOST_ITIMES_CACHE.clear()
-  _HOST_SECOND_PRESENT_CACHE.clear()
+  sync_timedb_host_itimes.reset_host_itimes_caches()
 
 
 def _release_ingest_worker_heap():
@@ -1200,14 +1200,13 @@ def _sync_timedb_ingest_inline_requested():
 # Rows per bulk_create batch to limit peak memory per worker (see sync_bulk_create_batch_size).
 def bulk_create_batch_size():
   return cfg.get_sync_bulk_create_batch_size()
-_HOST_ITIMES_CACHE = {}
-_HOST_ITIMES_CACHE_REFRESH_SECONDS = 20
-_HOST_ITIMES_CACHE_MAX_ENTRIES = 2000
-_HOST_ITIMES_CACHE_MAX_TIMESTAMPS_PER_ENTRY = 100000
-_HOST_ITIMES_SET_OVERFLOW = object()
-_HOST_SECOND_PRESENT_CACHE = {}
-_HOST_SECOND_PRESENT_CACHE_TTL_S = 60
-_HOST_SECOND_PRESENT_CACHE_MAX_ENTRIES = 50000
+_HOST_ITIMES_CACHE = sync_timedb_host_itimes._HOST_ITIMES_CACHE
+_HOST_ITIMES_CACHE_REFRESH_SECONDS = sync_timedb_host_itimes._HOST_ITIMES_CACHE_REFRESH_SECONDS
+_HOST_ITIMES_CACHE_MAX_ENTRIES = sync_timedb_host_itimes._HOST_ITIMES_CACHE_MAX_ENTRIES
+_HOST_ITIMES_SET_OVERFLOW = sync_timedb_host_itimes.HOST_ITIMES_SET_OVERFLOW
+_HOST_SECOND_PRESENT_CACHE = sync_timedb_host_itimes._HOST_SECOND_PRESENT_CACHE
+_HOST_SECOND_PRESENT_CACHE_TTL_S = sync_timedb_host_itimes._HOST_SECOND_PRESENT_CACHE_TTL_S
+_HOST_SECOND_PRESENT_CACHE_MAX_ENTRIES = sync_timedb_host_itimes._HOST_SECOND_PRESENT_CACHE_MAX_ENTRIES
 _TREE_RSS_DEFER_SLEEP_SECONDS = 5.0
 
 tgz_archive_dir = cfg.get_daily_archive_dir_path()
@@ -1637,42 +1636,8 @@ def _save_dead_letter_entries(path, entries):
 
 
 def _host_recent_timestamps_cached(hostname, ts_low, ts_high):
-  """Return cached host timestamp set for duplicate detection window."""
-  key = (hostname, int(ts_low.timestamp()), int(ts_high.timestamp()))
-  now = time.time()
-  cached = _HOST_ITIMES_CACHE.get(key)
-  if cached and (now - cached["checked_at"] <= _HOST_ITIMES_CACHE_REFRESH_SECONDS):
-    return set(cached["times"])
-  itimes_set = set()
-  qs_times = (
-      host_data.objects.filter(
-          host=hostname,
-          time__gte=ts_low,
-          time__lt=ts_high,
-      )
-      .values_list("time", flat=True)
-      .distinct()
-  )
-  for dt in qs_times.iterator():
-    if dt is None:
-      continue
-    if dt.tzinfo is None:
-      dt = dt.replace(tzinfo=timezone.utc)
-    itimes_set.add(int(dt.timestamp()))
-    max_timestamps = cfg.get_sync_host_itimes_cache_max_timestamps_per_entry()
-    if len(itimes_set) > max_timestamps:
-      return _HOST_ITIMES_SET_OVERFLOW
-  max_timestamps = cfg.get_sync_host_itimes_cache_max_timestamps_per_entry()
-  if len(itimes_set) <= max_timestamps:
-    _HOST_ITIMES_CACHE[key] = {"times": tuple(itimes_set), "checked_at": now}
-  if len(_HOST_ITIMES_CACHE) > _HOST_ITIMES_CACHE_MAX_ENTRIES:
-    oldest_keys = sorted(
-        _HOST_ITIMES_CACHE.keys(),
-        key=lambda k: _HOST_ITIMES_CACHE[k]["checked_at"],
-    )[:100]
-    for drop_key in oldest_keys:
-      _HOST_ITIMES_CACHE.pop(drop_key, None)
-  return itimes_set
+  return sync_timedb_host_itimes.host_recent_timestamps_cached(
+      hostname, ts_low, ts_high)
 
 
 def _pick_write_lock_for_path(lock_or_locks, stats_file):
@@ -1683,35 +1648,14 @@ def _pick_write_lock_for_path(lock_or_locks, stats_file):
 
 
 def _host_timestamp_second_present_in_db(host, unix_second):
-  """Per-(host, second) exists probe when host_itimes cache overflows."""
-  key = (str(host).strip(), int(unix_second))
-  now = time.time()
-  cached = _HOST_SECOND_PRESENT_CACHE.get(key)
-  if cached and (now - cached[1] <= _HOST_SECOND_PRESENT_CACHE_TTL_S):
-    return cached[0]
-  ts_low = datetime.fromtimestamp(int(unix_second), tz=timezone.utc)
-  ts_high = ts_low + timedelta(seconds=1)
-  present = host_data.objects.filter(
-      host=key[0],
-      time__gte=ts_low,
-      time__lt=ts_high,
-  ).exists()
-  _HOST_SECOND_PRESENT_CACHE[key] = (present, now)
-  if len(_HOST_SECOND_PRESENT_CACHE) > _HOST_SECOND_PRESENT_CACHE_MAX_ENTRIES:
-    oldest = sorted(
-        _HOST_SECOND_PRESENT_CACHE.keys(),
-        key=lambda k: _HOST_SECOND_PRESENT_CACHE[k][1],
-    )[:1000]
-    for drop_key in oldest:
-      _HOST_SECOND_PRESENT_CACHE.pop(drop_key, None)
-  return present
+  return sync_timedb_host_itimes.host_timestamp_second_present_in_db(
+      host, unix_second)
 
 
 def _reset_sync_runtime_caches():
   """Clear per-process ingest caches between sync_timedb sessions."""
   reset_sync_ingest_readiness_caches()
-  _HOST_ITIMES_CACHE.clear()
-  _HOST_SECOND_PRESENT_CACHE.clear()
+  sync_timedb_host_itimes.reset_host_itimes_caches()
 
 
 def _should_stream_stats_file(stats_file, stats_file_contents):

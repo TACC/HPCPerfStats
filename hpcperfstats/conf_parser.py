@@ -2117,6 +2117,11 @@ def get_sync_bulk_create_batch_size():
   return max(1, _pipeline_getint("sync_bulk_create_batch_size", fallback=10000))
 
 
+def get_sync_archive_db_ingest_gate_sample_stride():
+  """Strided archive gate sample interval: sync_bulk_create_batch_size // 2 (min 1)."""
+  return max(1, get_sync_bulk_create_batch_size() // 2)
+
+
 def get_sync_host_itimes_cache_max_timestamps_per_entry():
   """Max distinct DB timestamps cached per host window in sync_timedb (default 100000)."""
   _ensure_cfg_loaded()
@@ -2660,7 +2665,7 @@ def get_sync_archive_worker_stall_seconds():
 
 
 def get_sync_archive_require_db_head_ingest():
-  """Require head timestamp in host_data before tar append or raw stats removal."""
+  """Require strided timestamp samples in host_data before tar append or raw removal."""
   _ensure_cfg_loaded()
   return _parse_bool(
       _pipeline_get("sync_archive_require_db_head_ingest", fallback="yes"),

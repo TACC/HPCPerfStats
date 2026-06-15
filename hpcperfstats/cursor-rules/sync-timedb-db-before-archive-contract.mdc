@@ -1,5 +1,5 @@
 ---
-description: Require DB head-timestamp ingest check before sync_timedb tar append or raw file removal
+description: Require DB sampled-timestamp ingest check before sync_timedb tar append or raw file removal
 alwaysApply: false
 globs: hpcperfstats/dbload/sync_timedb*.py
 ---
@@ -16,19 +16,19 @@ When changing ingest, archive, or raw-stats removal under `hpcperfstats/dbload/s
 - No production path may **append** a raw monitor stats file to a daily `.tar` or **delete** that raw file from the archive tree unless **`stats_file_head_ingested_in_db`** returns true.
 - Canonical implementation: **`hpcperfstats/dbload/sync_timedb_ingest_readiness.py`**.
 
-## Definition: head ingested
+## Definition: sample ingested
 
-- Read only until the first digit-leading stats line (minimal I/O).
-- **Head ingested** = at least one **`host_data`** row for that line's host with `time` in the **same Unix second** as the head line (monitor emits fractional seconds; ingest stores subsecond `time` values — do not use exact `time=` equality on the truncated second).
+- One streaming pass collects **sampled** digit-leading timestamp lines: stride = **`sync_bulk_create_batch_size // 2`** (default batch 10000 → stride 5000 → lines 1, 5001, 10001, …) plus **always the last timestamp at EOF**.
+- **Sample ingested** = for every sampled line, at least one **`host_data`** row for that line's **hostname token** with `time` in the **same Unix second** (monitor fractional seconds; do not use exact `time=` equality).
 - **`host` must be the hostname token from the stats file line** (same field written to `host_data.host` during ingest). Do **not** use the archive path's parent directory name (often FQDN) for the DB lookup.
-- Canonical helper: `read_stats_file_head_identity` in `sync_timedb_archive_helpers.py` (used by ingest readiness and `sync_timedb_ingest_readiness.py`).
-- **Limitation:** partial ingest (head in DB, tail missing) may still pass. Do not strengthen to full-file checks without an explicit product decision and performance review.
+- Canonical collector: `collect_stats_file_sampled_timestamp_identities_streaming` in `sync_timedb_parsing.py`.
+- **Limitation:** gaps **between** stride sample points may be missing in DB and still pass; **last timestamp must be present** (tail-only partial ingest fails).
+- **Emergency override:** **`sync_archive_require_db_head_ingest = no`** disables the gate (log once).
 
 ## Performance
 
-- One cached `exists()` per `(host, unix_second)` using `time__gte` / `time__lt` on that second (TTL ~60s, bounded cache).
+- One streaming pass per file for sample collection; **one itimes range query per host** (maintenance: per distinct host per tick) via `sync_timedb_host_itimes.host_sampled_timestamp_seconds_all_present`; in-memory membership for all sample seconds; overflow → cached per-second exists (same as ingest duplicate scan).
 - Path result cache keyed by `(path, mtime, size)` (TTL ~60s) for maintenance rescans.
-- No full-file parse or `readlines()` for the gate.
 - Archive pool workers call `close_old_connections()` at gate entry.
 
 ## Entry points (keep in sync when adding paths)
@@ -41,7 +41,7 @@ When changing ingest, archive, or raw-stats removal under `hpcperfstats/dbload/s
 | `remove_verified_archived_raw_files` raw removal | `ingest_ready_fn` after archive member/size match |
 | `ArchiveJanitor` raw removal (`_raw_remove_one_day`) | `ingest_ready_fn=stats_file_head_ingested_in_db`; `allow_auto_seal=False` so validation never triggers a second `atomic_seal_tar_to_zst` |
 | `StartupRawRemovalPreflight` verify + gated delete (`sync_timedb_startup_raw_removal.py`) | `classify_removable_raw_paths_for_daily_gz` with `allow_auto_seal=False`; `stats_file_head_ingested_in_db` when gate enabled; manifest at `{archive_data_dir}/.sync_timedb_startup_raw_removal.json` |
-| `DayRawRemovalCoordinator` async verify + supervisor delete (`sync_timedb_day_raw_removal.py`) | per-day manifest `{archive_data_dir}/.sync_timedb_day_raw_removal/YYYY-MM-DD.json`; same classify contract; **verify on background thread**, **`apply_batch_delete` on supervisor** at chunk boundaries (oldest-first; skip stuck day per batch); `on_pipeline_complete` on `phase=done`. **`phase=done`** only when no closed raw remains or only terminal skips; retryable skips (`not_head_ingested`, `not_in_sealed_archive`, `size_mismatch`) reset manifest for re-verify after ingest catches up — do not treat frozen `done` with `verified=0` as terminal. |
+| `DayRawRemovalCoordinator` async verify + supervisor delete (`sync_timedb_day_raw_removal.py`) | per-day manifest `{archive_data_dir}/.sync_timedb_day_raw_removal/YYYY-MM-DD.json`; same classify contract; **verify on background thread**, **`apply_batch_delete` on supervisor** at chunk boundaries (oldest-first; skip stuck day per batch); `on_pipeline_complete` on `phase=done`. **`phase=done`** only when no closed raw remains or only terminal skips; retryable skips (`not_sample_ingested`, legacy `not_head_ingested`, `not_in_sealed_archive`, `size_mismatch`) reset manifest for re-verify after ingest catches up — do not treat frozen `done` with `verified=0` as terminal. |
 | Production wiring | `ingest_ready_fn=stats_file_head_ingested_in_db` passed into `ArchiveJanitor` and `StartupRawRemovalPreflight` from `run_sync_timedb_supervisor_loop` |
 
 Out of scope for the DB gate: `remove_verified_uncompressed_daily_tars` (`.tar` only), tar dedupe/seal/recovery without raw stats paths.
@@ -65,17 +65,13 @@ Closed raw segments that **cannot be ingested** (missing head, load error, `pars
 ## Tar removal vs DB gate
 
 - **Append / raw delete:** `stats_file_head_ingested_in_db` (when `sync_archive_require_db_head_ingest` is on).
-- **Uncompressed `.tar` unlink (scheduled):** filesystem gate via `build_remaining_raw_stats_by_daily_gz` — counts **all** closed raw segments mapped to that daily archive, including segments not yet head-ingested. Not-yet-ingested files therefore block `.tar` removal until they are gone from disk (typically after ingest + verified raw removal), even though the DB gate prevented earlier delete/append.
+- **Uncompressed `.tar` unlink (scheduled):** filesystem gate via `build_remaining_raw_stats_by_daily_gz` — counts **all** closed raw segments mapped to that daily archive, including segments not yet sample-ingested. Not-yet-ingested files therefore block `.tar` removal until they are gone from disk (typically after ingest + verified raw removal), even though the DB gate prevented earlier delete/append.
 - **Uncompressed `.tar` unlink:** janitor `TAR_DROP` debt only when sealed valid and `remaining_raw_by_gz` has no closed raw for that day (`force_remove_uncompressed_tar=False`). Raw delete/append DB gate unchanged.
 - Maintenance order in janitor ticks: seal (if debt) → validate/raw remove (DB-gated) → `.tar` drop (filesystem-gated).
 
 ## Ordering
 
-Startup enqueues janitor debt (mtime scan) without blocking ingest. With the gate enabled, not-yet-ingested files are skipped for tar append and raw delete until a later pass after ingest inserts the head row; they still block `.tar` removal via `remaining_raw_by_gz`.
-
-## Emergency override
-
-- **`sync_archive_require_db_head_ingest = no`** in ini disables the gate (log once). Use only for operator recovery; do not ship disabled by default.
+Startup enqueues janitor debt (mtime scan) without blocking ingest. With the gate enabled, not-yet-ingested files are skipped for tar append and raw delete until a later pass after ingest inserts sampled rows; they still block `.tar` removal via `remaining_raw_by_gz`.
 
 ## Tests
 

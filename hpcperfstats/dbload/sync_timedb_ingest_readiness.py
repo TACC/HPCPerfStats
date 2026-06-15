@@ -1,18 +1,20 @@
 """DB ingest-readiness checks before sync_timedb archives or deletes raw stats files.
 
-Head-ingested means the first stats timestamp line's host has at least one ``host_data``
-row in the same Unix second as that line. The monitor emits fractional seconds
-(``1773864970.470903``) but ingest stores subsecond ``time`` values; the gate must
-not use an exact ``time=`` match on the truncated second boundary.
+When ``sync_archive_require_db_head_ingest=yes``, closed segments must have every
+**sampled** timestamp line present in ``host_data`` for the hostname token on that
+line (stride = ``sync_bulk_create_batch_size // 2``, plus the last timestamp at EOF).
+The monitor emits fractional seconds; ingest stores subsecond ``time`` values — probes
+use Unix-second windows, not exact ``time=`` equality.
 """
 import os
 import time
 from datetime import datetime, timedelta, timezone
 
 import hpcperfstats.conf_parser as cfg
-from hpcperfstats.dbload.sync_timedb_archive_helpers import (
-    read_stats_file_head_identity,
-    stats_file_is_active_segment,
+from hpcperfstats.dbload import sync_timedb_host_itimes
+from hpcperfstats.dbload.sync_timedb_archive_helpers import stats_file_is_active_segment
+from hpcperfstats.dbload.sync_timedb_parsing import (
+    collect_stats_file_sampled_timestamp_identities_streaming,
 )
 
 _HEAD_DB_CACHE = {}
@@ -91,8 +93,24 @@ def head_timestamp_present_in_db(hostname, timestamp_utc):
   return present
 
 
+def host_timestamp_seconds_all_present(host, unix_seconds):
+  """Return whether every sampled Unix second for ``host`` exists in ``host_data``."""
+  return sync_timedb_host_itimes.host_sampled_timestamp_seconds_all_present(
+      host, unix_seconds)
+
+
+def sampled_identities_ready_in_db(sampled_by_host):
+  """Return True when every host's sampled seconds pass the batched DB gate."""
+  if not sampled_by_host:
+    return False
+  for host, seconds in sampled_by_host.items():
+    if not host_timestamp_seconds_all_present(host, seconds):
+      return False
+  return True
+
+
 def archive_db_head_ingest_gate_enabled():
-  """Whether tar append and raw removal require head timestamp in DB."""
+  """Whether tar append and raw removal require sampled timestamps in DB."""
   return bool(cfg.get_sync_archive_require_db_head_ingest())
 
 
@@ -109,7 +127,7 @@ def _log_gate_disabled_once(log_fn):
 
 
 def stats_file_head_ingested_in_db(path, *, log_fn=None):
-  """Return True when the file's head timestamp exists in host_data for its host."""
+  """Return True when every sampled timestamp for the closed segment exists in DB."""
   from hpcperfstats.dbload.sync_timedb import _sync_worker_db_task
 
   with _sync_worker_db_task():
@@ -126,20 +144,26 @@ def stats_file_head_ingested_in_db(path, *, log_fn=None):
       return bool(path_cached["ready"])
 
     ready = False
-    if stats_file_is_active_segment(path):
-      ready = False
-    else:
-      host, timestamp_utc = read_stats_file_head_identity(path)
-      if host is not None and timestamp_utc is not None:
-        ready = head_timestamp_present_in_db(host, timestamp_utc)
+    if not stats_file_is_active_segment(path):
+      stride = cfg.get_sync_archive_db_ingest_gate_sample_stride()
+      sampled_by_host = collect_stats_file_sampled_timestamp_identities_streaming(
+          path,
+          sample_stride=stride,
+      )
+      ready = sampled_identities_ready_in_db(sampled_by_host)
 
     _PATH_READY_CACHE[fp] = {"ready": bool(ready), "checked_at": now}
     _trim_path_ready_cache()
     return ready
 
 
-def build_head_ingest_ready_set(closed_paths, head_identity_by_path, *, log_fn=None):
-  """Return paths whose ``(host, unix_second)`` head identity exists in ``host_data``."""
+def build_head_ingest_ready_set(
+    closed_paths,
+    sampled_timestamp_identities_by_path,
+    *,
+    log_fn=None,
+):
+  """Return paths whose sampled ``(host, unix_second)`` sets all exist in ``host_data``."""
   from hpcperfstats.dbload.sync_timedb import _sync_worker_db_task
 
   with _sync_worker_db_task():
@@ -147,43 +171,54 @@ def build_head_ingest_ready_set(closed_paths, head_identity_by_path, *, log_fn=N
       _log_gate_disabled_once(log_fn)
       return set(closed_paths or [])
 
-    unique_keys = set()
-    path_by_key = {}
+    seconds_by_host = {}
+    path_samples = {}
     for path in closed_paths or []:
       if stats_file_is_active_segment(path):
         continue
-      ident = head_identity_by_path.get(path)
-      if ident is None:
+      sampled = sampled_timestamp_identities_by_path.get(path)
+      if not sampled:
         continue
-      host, unix_second = ident
-      key = (host, unix_second)
-      unique_keys.add(key)
-      path_by_key.setdefault(key, []).append(path)
+      path_samples[path] = sampled
+      for host, seconds in sampled.items():
+        seconds_by_host.setdefault(host, set()).update(seconds)
 
-    ready_keys = set()
-    for host, unix_second in unique_keys:
-      ts_start = datetime.fromtimestamp(unix_second, tz=timezone.utc)
-      ts_end = ts_start + timedelta(seconds=1)
-      if head_timestamp_present_in_db(host, ts_start):
-        ready_keys.add((host, unix_second))
+    host_ok = {
+        host: host_timestamp_seconds_all_present(host, seconds)
+        for host, seconds in seconds_by_host.items()
+    }
 
     ready_paths = set()
-    for key in ready_keys:
-      for path in path_by_key.get(key, []):
+    for path, sampled in path_samples.items():
+      if all(host_ok.get(host, False) for host in sampled):
         ready_paths.add(path)
     return ready_paths
 
 
-def filter_paths_head_ingested(paths, *, log_fn=None, head_identity_by_path=None):
+def filter_paths_head_ingested(
+    paths,
+    *,
+    log_fn=None,
+    sampled_timestamp_identities_by_path=None,
+    head_identity_by_path=None,
+):
   """Return ``(ready_paths, skipped_paths)`` using batched or per-path gate."""
-  if head_identity_by_path is not None:
+  if head_identity_by_path is not None and sampled_timestamp_identities_by_path is None:
+    sampled_timestamp_identities_by_path = {
+        path: {host: {unix_second}}
+        for path, (host, unix_second) in head_identity_by_path.items()
+    }
+  if sampled_timestamp_identities_by_path is not None:
     ready_set = build_head_ingest_ready_set(
-        paths, head_identity_by_path, log_fn=log_fn)
+        paths,
+        sampled_timestamp_identities_by_path,
+        log_fn=log_fn,
+    )
     ready = [p for p in paths if p in ready_set]
     skipped = [p for p in paths if p not in ready_set]
     if skipped and log_fn is not None:
       log_fn(
-          "Archive/delete gate: skipped %d path(s) without head timestamp in DB"
+          "Archive/delete gate: skipped %d path(s) without sampled timestamps in DB"
           % len(skipped),
           flush=True,
       )
@@ -198,7 +233,7 @@ def filter_paths_head_ingested(paths, *, log_fn=None, head_identity_by_path=None
       skipped.append(path)
   if skipped and log_fn is not None:
     log_fn(
-        "Archive/delete gate: skipped %d path(s) without head timestamp in DB"
+        "Archive/delete gate: skipped %d path(s) without sampled timestamps in DB"
         % len(skipped),
         flush=True,
     )

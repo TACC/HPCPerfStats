@@ -299,6 +299,7 @@ sync_pool_process_cap = 8
 # sync_checkpoint_flush_batch_size = 100
 
 # host_data/proc_data bulk_create batch size and incremental parse flush threshold (default 10000).
+# Also drives archive DB gate sample stride (batch_size // 2 timestamp lines, plus last line at EOF).
 # sync_bulk_create_batch_size = 10000
 
 # Max DB timestamps cached per duplicate-detection window (default 100000).
@@ -426,7 +427,8 @@ sync_ingest_malloc_trim_after_file = yes
 # Ingest-first durability semantics: checkpoint after DB even if append fails (default yes).
 # sync_enable_ingest_first_durability_mode = yes
 
-# Require head host_data row before tar append or raw delete (default yes).
+# Require strided timestamp samples in host_data before tar append or raw delete (default yes).
+# Sample stride = sync_bulk_create_batch_size // 2; always includes last timestamp line at EOF.
 # sync_archive_require_db_head_ingest = yes
 
 # Persist archive maintenance hints for faster restarts (default yes).

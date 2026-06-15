@@ -2718,7 +2718,7 @@ def classify_removable_raw_paths_for_members(
   for stats_path in stats_paths:
     if ingest_ready_fn is not None and not ingest_ready_fn(stats_path):
       results.append(
-          (stats_path, "skipped_not_head_ingested", "not_head_ingested"))
+          (stats_path, "skipped_not_sample_ingested", "not_sample_ingested"))
       continue
     removable = get_verified_files_to_remove([stats_path], members)
     if stats_path in removable:
@@ -2786,7 +2786,7 @@ def remove_verified_archived_raw_files(
   the same and yields sizes from the gzip archive only; the two maps must match.
   Then deletes raw paths that match a member name and size.
 
-  When ``ingest_ready_fn`` is set (production: head timestamp in ``host_data``),
+  When ``ingest_ready_fn`` is set (production: sampled timestamps in ``host_data``),
   bootstrap and removal apply only to paths for which it returns true.
 
   Scans all closed segments under ``archive_data_dir`` (same rules as ingest).
@@ -2857,7 +2857,7 @@ def remove_verified_archived_raw_files(
       elif (not os.path.isfile(archive_path) and not os.path.isfile(tar_path)
             and stats_paths and not bootstrap_ready and log_fn):
         log_fn(
-            "Skipping bootstrap for %s: %d path(s) without head timestamp in DB"
+            "Skipping bootstrap for %s: %d path(s) without sampled timestamps in DB"
             % (archive_path, len(stats_paths)),
             flush=True,
         )

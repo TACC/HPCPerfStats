@@ -36,6 +36,9 @@ class ArchiveMaintenanceSnapshot:
   closed_paths: list
   first_timestamp_by_path: Dict[str, str] = field(default_factory=dict)
   head_identity_by_path: Dict[str, Tuple[str, int]] = field(default_factory=dict)
+  sampled_timestamp_identities_by_path: Dict[str, Dict[str, Set[int]]] = field(
+      default_factory=dict,
+  )
   mapping: Dict[str, list] = field(default_factory=dict)
   remaining_raw_by_gz: Dict[str, list] = field(default_factory=dict)
   ready_paths: Set[str] = field(default_factory=set)
@@ -291,6 +294,78 @@ def _read_head_metadata_one(path: str) -> Tuple[str, Optional[str], Optional[str
   return path, first_ts, str(host).strip(), unix_second
 
 
+def _read_sampled_identities_one(path, *, sample_stride):
+  from hpcperfstats.process_title import set_daemon_thread_title
+  from hpcperfstats.dbload.sync_timedb_parsing import (
+      collect_stats_file_sampled_timestamp_identities_streaming,
+  )
+
+  set_daemon_thread_title("", script_name="sync_timedb.py", role="archive-discovery")
+  try:
+    sampled = collect_stats_file_sampled_timestamp_identities_streaming(
+        path,
+        sample_stride=sample_stride,
+    )
+  except Exception:
+    return path, None
+  if not sampled:
+    return path, None
+  return path, sampled
+
+
+def collect_sampled_timestamp_identities_for_paths(
+    paths,
+    *,
+    sample_stride=None,
+    log_fn=log_print,
+) -> Tuple[Dict[str, Dict[str, Set[int]]], Dict[str, int]]:
+  """Build per-path sampled host→seconds maps; parallel read for large path lists."""
+  stride = sample_stride
+  if stride is None:
+    stride = cfg.get_sync_archive_db_ingest_gate_sample_stride()
+  sampled_by_path: Dict[str, Dict[str, Set[int]]] = {}
+  errors = 0
+  started = time.time()
+  path_list = list(paths or [])
+  workers = _get_archive_discovery_worker_count(len(path_list)) if path_list else 0
+  if path_list:
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+      futures = {
+          executor.submit(_read_sampled_identities_one, path, sample_stride=stride): path
+          for path in path_list
+      }
+      for future in as_completed(futures):
+        try:
+          path, sampled = future.result()
+        except Exception:
+          errors += 1
+          continue
+        if sampled is None:
+          errors += 1
+          continue
+        sampled_by_path[path] = sampled
+  stats = {
+      "paths": len(path_list),
+      "read": len(path_list),
+      "workers": workers if path_list else 0,
+      "errors": errors,
+      "elapsed_s": int(time.time() - started),
+  }
+  if log_fn and path_list:
+    log_fn(
+        "Sampled timestamp metadata: paths=%d read=%d workers=%d errors=%d elapsed_s=%d"
+        % (
+            stats["paths"],
+            stats["read"],
+            stats["workers"],
+            stats["errors"],
+            stats["elapsed_s"],
+        ),
+        flush=True,
+    )
+  return sampled_by_path, stats
+
+
 def collect_head_metadata_for_paths(
     paths,
     *,
@@ -378,6 +453,10 @@ def build_archive_maintenance_snapshot(
       collect_head_metadata_for_paths(
           closed_paths, hints_data=hints_data, log_fn=log_fn)
   )
+  sampled_timestamp_identities_by_path, sample_read_stats = (
+      collect_sampled_timestamp_identities_for_paths(
+          closed_paths, log_fn=log_fn)
+  )
   mapping = build_archive_mapping(
       closed_paths,
       tgz_archive_dir,
@@ -387,15 +466,22 @@ def build_archive_maintenance_snapshot(
   ready_paths: Set[str] = set()
   if build_ready_set:
     ready_paths = build_head_ingest_ready_set(
-        closed_paths, head_identity_by_path, log_fn=log_fn)
+        closed_paths,
+        sampled_timestamp_identities_by_path,
+        log_fn=log_fn,
+    )
   return ArchiveMaintenanceSnapshot(
       closed_paths=closed_paths,
       first_timestamp_by_path=first_timestamp_by_path,
       head_identity_by_path=head_identity_by_path,
+      sampled_timestamp_identities_by_path=sampled_timestamp_identities_by_path,
       mapping=mapping,
       remaining_raw_by_gz=remaining_raw_by_gz,
       ready_paths=ready_paths,
-      head_read_stats=head_read_stats,
+      head_read_stats={
+          **head_read_stats,
+          "sample_read_errors": sample_read_stats.get("errors", 0),
+      },
   )
 
 

@@ -112,7 +112,7 @@ def test_startup_preflight_db_gate_excludes_not_head_ingested(tmp_path, monkeypa
 
   assert preflight._verify_slice()
   entry = preflight._manifest["entries"][str(seg)]
-  assert entry["status"] == "skipped_not_head_ingested"
+  assert entry["status"] == "skipped_not_sample_ingested"
   verified = [
       e for e in preflight._manifest["entries"].values()
       if e.get("status") == "verified"

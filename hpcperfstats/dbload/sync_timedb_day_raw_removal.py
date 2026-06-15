@@ -37,11 +37,13 @@ PHASE_DELETING = "deleting"
 PHASE_DONE = "done"
 
 RETRYABLE_SKIP_REASONS = frozenset({
+    "not_sample_ingested",
     "not_head_ingested",
     "not_in_sealed_archive",
     "size_mismatch",
 })
 RETRYABLE_SKIP_STATUSES = frozenset({
+    "skipped_not_sample_ingested",
     "skipped_not_head_ingested",
     "skipped_not_in_archive",
     "skipped_size_mismatch",

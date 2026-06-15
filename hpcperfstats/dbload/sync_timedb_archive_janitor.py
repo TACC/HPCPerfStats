@@ -608,6 +608,7 @@ class ArchiveJanitor:
       closed_count = len(snapshot.closed_paths)
       snapshot.closed_paths = []
       snapshot.head_identity_by_path.clear()
+      snapshot.sampled_timestamp_identities_by_path.clear()
       snapshot.head_read_stats.clear()
       snapshot.ready_paths.clear()
     if closed_count:
