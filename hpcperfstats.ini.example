@@ -235,8 +235,8 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # End edge tolerance seconds (default 600): MAX(time) in window must be >= end - margin.
 # metrics_readiness_end_margin_seconds = 600
 
-# Cap sync_timedb ingest pool processes when set.
-# sync_pool_process_cap =
+# Cap sync_timedb ingest pool processes (default 8 on 128 GiB cgroup hosts; raise to uncap).
+sync_pool_process_cap = 8
 
 # Cap sync_timedb archive pool processes when set.
 # archive_pool_process_cap =
@@ -372,8 +372,8 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Check supervisor RSS every N ingest chunks (default 1).
 # sync_supervisor_rss_check_every_n_chunks = 1
 
-# Process-tree RSS defer limit MiB (supervisor + pool workers); 0 off (default 0).
-# sync_process_tree_rss_limit_mb = 0
+# Process-tree RSS defer limit MiB (supervisor + pool workers); 0 off (default 96000).
+sync_process_tree_rss_limit_mb = 96000
 
 # Check process-tree RSS every N ingest chunks (default 1).
 # sync_process_tree_rss_check_every_n_chunks = 1
@@ -393,8 +393,11 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Max concurrent imap tasks per chunk; 0 means pool size (default 0).
 # sync_ingest_imap_inflight_cap = 0
 
-# Recycle ingest/archive pool workers after N files; 0 unlimited (default 50).
-# sync_ingest_pool_maxtasksperchild = 50
+# Recycle ingest/archive pool workers after N files; 0 unlimited (default 1).
+sync_ingest_pool_maxtasksperchild = 1
+
+# Return freed worker heap to OS after each ingest task on Linux (default yes).
+sync_ingest_malloc_trim_after_file = yes
 
 # Optional global seal concurrency cap; 0 unlimited (default 0).
 # sync_cold_path_max_concurrent_seals = 0
@@ -503,6 +506,12 @@ daily_archive_dir = %(data_dir)s/daily_archive
 
 # Block first ingest until startup day-close discover and deletion drain idle (default yes).
 # sync_startup_drain_day_close_before_ingest = yes
+
+# During startup drain, ingest checkpoint-blocked tail paths per day (default yes).
+# sync_startup_tail_ingest_enabled = yes
+
+# Max on-disk unprocessed paths per day for startup tail ingest (default 100).
+# sync_startup_tail_ingest_max_files = 100
 
 # Startup checkpoint-driven async DAY_CLOSE for ingest-complete calendar days (default yes).
 # sync_startup_day_close_preflight = yes

@@ -749,8 +749,11 @@ def compute_deltas_and_arc(stats_df):
     stats_df = DataFrame(columns=gcols + ["value", "delta"])
   else:
     stats_df = concat(parts, ignore_index=True)
+    del parts
 
   stats_df = stats_df.sort_values(by=["host", "type", "event", "time"])
+  del nv_df
+  del rest_df
   deltat = stats_df.groupby(["host", "type", "event"])["time"].diff()
   _dy = stats_df["delta"].to_numpy(dtype=np.float64, copy=False)
   _dt = deltat.to_numpy(dtype=np.float64, copy=False)

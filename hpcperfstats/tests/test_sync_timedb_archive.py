@@ -2751,6 +2751,29 @@ def test_iter_sealed_daily_archive_member_lines_zst_only(tmp_path):
   assert members[0][1] == ["payload-line\n"]
 
 
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_iter_sealed_daily_archive_member_paths_spools_to_disk(tmp_path):
+  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+      iter_sealed_daily_archive_member_paths,
+  )
+
+  zst_p, _tar_p = _write_sealed_daily_archive(
+      tmp_path,
+      day="2024-03-12",
+      member_name="host.example/stats.txt",
+      body="payload-line\n",
+  )
+  spool = str(tmp_path / "spool")
+  members = list(iter_sealed_daily_archive_member_paths(zst_p, spool_dir=spool))
+  assert len(members) == 1
+  assert members[0][0] == "host.example/stats.txt"
+  member_path = members[0][1]
+  assert os.path.isfile(member_path)
+  assert member_path.startswith(spool)
+  with open(member_path, "r", encoding="utf-8") as fh:
+    assert fh.read() == "payload-line\n"
+
+
 def test_iter_archive_ingest_tasks_one_stream_per_sealed_day(tmp_path, monkeypatch):
   if not shutil.which("zstd"):
     pytest.skip("zstd not on PATH")
@@ -2827,12 +2850,16 @@ def test_process_stream_archive_task_ingests_all_members(monkeypatch, tmp_path):
   class _Lock:
     pass
 
-  def fake_add(lock, member_name, content):
-    calls.append((member_name, list(content)))
+  def fake_add(lock, member_path, stats_file_contents=None):
+    calls.append((member_path, stats_file_contents))
 
   monkeypatch.setattr(
       "hpcperfstats.dbload.sync_timedb.add_stats_file_to_db",
       fake_add,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb._release_ingest_worker_heap",
+      lambda: None,
   )
   monkeypatch.setattr(
       "hpcperfstats.django_bootstrap.ensure_django",
@@ -2843,7 +2870,11 @@ def test_process_stream_archive_task_ingests_all_members(monkeypatch, tmp_path):
       lambda: None,
   )
   sta._process_stream_archive_task((_Lock(), zst_p))
-  assert calls == [("m1.txt", ["a\n"])]
+  assert len(calls) == 1
+  member_path, contents = calls[0]
+  assert contents is None
+  assert "m1.txt" in member_path
+  assert not os.path.isfile(member_path)
 
 
 @pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")

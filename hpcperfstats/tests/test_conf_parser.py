@@ -1070,6 +1070,10 @@ def test_conf_parser_defaults_audit_snapshot(temp_ini, monkeypatch):
   assert "stability" in snapshot
   assert snapshot["sync_throughput"]["sync_budget_ingest_ratio"] == 0.60
   assert snapshot["stability"]["parallel_db_prefetch_max"] == 4
+  assert snapshot["stability"]["sync_ingest_pool_maxtasksperchild"] == 1
+  assert snapshot["stability"]["sync_ingest_malloc_trim_after_file"] == "yes"
+  assert snapshot["stability"]["sync_pool_process_cap"] == 8
+  assert snapshot["stability"]["sync_process_tree_rss_limit_mb"] == 96000
 
 
 def test_get_syslog_allow_from_ipv4_networks_empty_default(temp_ini, monkeypatch):

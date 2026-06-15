@@ -136,6 +136,7 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_ingest_db_complete_tail_window_lines"),
     ("PIPELINE", "sync_ingest_imap_inflight_cap"),
     ("PIPELINE", "sync_ingest_pool_maxtasksperchild"),
+    ("PIPELINE", "sync_ingest_malloc_trim_after_file"),
     ("PIPELINE", "sync_cold_path_max_concurrent_seals"),
     ("PIPELINE", "sync_db_writer_pool_multiplier"),
     ("PIPELINE", "sync_db_writer_pool_cap"),
@@ -1075,7 +1076,7 @@ def get_sync_pool_process_cap():
   _ensure_cfg_loaded()
   if _pipeline_has_option("sync_pool_process_cap"):
     return _pipeline_getint("sync_pool_process_cap", fallback=1)
-  return None
+  return 8
 
 
 def get_archive_pool_process_cap():
@@ -2172,9 +2173,9 @@ def get_sync_supervisor_rss_check_every_n_chunks():
 
 
 def get_sync_process_tree_rss_limit_mb():
-  """Process-tree RSS defer limit in MiB; 0 disables backpressure (default 0)."""
+  """Process-tree RSS defer limit in MiB; 0 disables backpressure (default 96000)."""
   _ensure_cfg_loaded()
-  return max(0, _pipeline_getint("sync_process_tree_rss_limit_mb", fallback=0))
+  return max(0, _pipeline_getint("sync_process_tree_rss_limit_mb", fallback=96000))
 
 
 def get_sync_process_tree_rss_check_every_n_chunks():
@@ -2219,9 +2220,17 @@ def get_sync_ingest_imap_inflight_cap():
 
 
 def get_sync_ingest_pool_maxtasksperchild():
-  """Recycle ingest/archive pool workers after N tasks; 0 unlimited (default 50)."""
+  """Recycle ingest/archive pool workers after N tasks; 0 unlimited (default 1)."""
   _ensure_cfg_loaded()
-  return max(0, _pipeline_getint("sync_ingest_pool_maxtasksperchild", fallback=50))
+  return max(0, _pipeline_getint("sync_ingest_pool_maxtasksperchild", fallback=1))
+
+
+def get_sync_ingest_malloc_trim_after_file():
+  """After each ingest pool task on Linux, gc.collect() and malloc_trim(0) (default yes)."""
+  _ensure_cfg_loaded()
+  return _parse_bool(
+      _pipeline_get("sync_ingest_malloc_trim_after_file", fallback="yes"),
+  )
 
 
 def get_sync_cold_path_max_concurrent_seals():
@@ -2331,9 +2340,11 @@ def get_conf_parser_defaults_audit_snapshot():
           "sync_ingest_stream_duplicate_scan_bytes": 8388608,
           "sync_ingest_db_complete_tail_window_lines": 500,
           "sync_ingest_imap_inflight_cap": 0,
-          "sync_ingest_pool_maxtasksperchild": 50,
+          "sync_ingest_pool_maxtasksperchild": 1,
+          "sync_ingest_malloc_trim_after_file": "yes",
+          "sync_pool_process_cap": 8,
           "sync_pool_worker_recycle_grace_polls": 2,
-          "sync_process_tree_rss_limit_mb": 0,
+          "sync_process_tree_rss_limit_mb": 96000,
           "sync_process_tree_rss_check_every_n_chunks": 1,
           "sync_process_tree_rss_exit_mb": 0,
           "sync_cold_path_max_concurrent_seals": 0,

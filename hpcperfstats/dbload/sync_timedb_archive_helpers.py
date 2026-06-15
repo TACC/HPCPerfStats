@@ -3364,6 +3364,87 @@ def iter_sealed_daily_archive_member_lines(sealed_path):
         yield member_info.name, content
 
 
+def _archive_ingest_spool_root(spool_dir=None, *, sealed_path=None):
+  """Directory for spooling sealed tar members to disk (path-only ingest)."""
+  if spool_dir:
+    root = spool_dir
+  elif sealed_path:
+    root = os.path.join(
+        os.path.dirname(os.path.abspath(sealed_path)),
+        ".sync_archive_ingest_spool",
+    )
+  else:
+    base = cfg.get_archive_dir_path() or cfg.get_daily_archive_dir_path()
+    if not base:
+      import tempfile
+      base = tempfile.gettempdir()
+    root = os.path.join(base, ".sync_archive_ingest_spool")
+  os.makedirs(root, exist_ok=True)
+  return root
+
+
+def _member_spool_relative_path(member_name):
+  """Return a relative path with host/filename shape for ``parse_stats_file_path``."""
+  member_name = member_name.lstrip("/").replace("\\", "/")
+  parts = member_name.split("/")
+  if len(parts) >= 2:
+    return member_name
+  return os.path.join("_archive", member_name)
+
+
+def iter_sealed_daily_archive_member_paths(sealed_path, spool_dir=None):
+  """Yield ``(member_name, path_on_disk)`` for path-only ingest (enables streaming parse).
+
+  Each tar member is spooled under ``spool_dir`` (or ``.sync_archive_ingest_spool``).
+  Callers must remove ``path_on_disk`` after ingest.
+  """
+  fmt = detect_compressed_format(sealed_path)
+  if fmt not in ("zst", "gz"):
+    raise ValueError(
+        "sync_timedb_archive requires sealed archive (.tar.zst or .tar.gz): %s"
+        % sealed_path,
+    )
+  if not os.path.isfile(sealed_path):
+    raise FileNotFoundError(sealed_path)
+  max_bytes = cfg.get_sync_ingest_max_file_read_bytes()
+  spool_root = _archive_ingest_spool_root(spool_dir, sealed_path=sealed_path)
+  with file_read_lock_wait(sealed_path):
+    with _open_tarfile_for_read(
+        sealed_path,
+        get_archive_zstd_thread_count(),
+        apply_priority_wrap=True,
+    ) as archive_tar:
+      for member_info in _iter_tar_members(archive_tar):
+        if not member_info.isfile():
+          continue
+        if max_bytes > 0 and member_info.size > max_bytes:
+          log_print(
+              "sync_timedb_archive: skip oversize member %s (%d bytes > %d)"
+              % (member_info.name, member_info.size, max_bytes),
+              flush=True,
+          )
+          continue
+        fobj = archive_tar.extractfile(member_info)
+        if fobj is None:
+          continue
+        rel_path = _member_spool_relative_path(member_info.name)
+        dest = os.path.join(spool_root, rel_path)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        try:
+          with open(dest, "wb") as out:
+            while True:
+              chunk = fobj.read(1 << 20)
+              if not chunk:
+                break
+              out.write(chunk)
+        finally:
+          try:
+            fobj.close()
+          except Exception:
+            pass
+        yield member_info.name, dest
+
+
 def iter_archive_ingest_tasks(archive_paths, daily_archive_dir=""):
   """Yield ``(STREAM_ARCHIVE_TASK, sealed_path)`` for resolved sealed archives."""
   seen = set()

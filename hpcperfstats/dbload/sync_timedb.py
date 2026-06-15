@@ -16,6 +16,8 @@ CLI: no args or ``YYYY-MM-DD`` range uses a sliding window (see ``days_to_proces
 DB access is process-safe: pool workers use close_old_connections() at task start and connections.close_all() at task end so connections do not linger between files. Writes are serialized with a shared lock.
 
 """
+import ctypes
+import gc
 import itertools
 import heapq
 import json
@@ -1122,6 +1124,60 @@ def _imap_ingest_paths_batched(
     yield item
 
 
+def _clear_ingest_worker_file_caches():
+  """Drop per-process ingest caches after a file (safe when worker recycles)."""
+  _HOST_ITIMES_CACHE.clear()
+  _HOST_SECOND_PRESENT_CACHE.clear()
+
+
+def _release_ingest_worker_heap():
+  """Return parse heap to the OS on Linux when ``sync_ingest_malloc_trim_after_file``."""
+  _clear_ingest_worker_file_caches()
+  if not cfg.get_sync_ingest_malloc_trim_after_file():
+    return
+  gc.collect()
+  try:
+    libc = ctypes.CDLL("libc.so.6")
+    libc.malloc_trim(0)
+  except (OSError, AttributeError):
+    pass
+
+
+def _worker_rss_mib():
+  rss_bytes = read_process_rss_bytes()
+  if rss_bytes <= 0:
+    return 0.0
+  return round(rss_bytes / (1024 * 1024), 1)
+
+
+def _log_ingest_worker_file_completion(
+    stats_file,
+    *,
+    elapsed_s,
+    parse_elapsed_s=None,
+    stats_rows=None,
+    proc_rows=None,
+    stage=None,
+):
+  """Worker-side per-file completion log (size, rows, RSS)."""
+  size_bytes = stats_file_size_bytes(stats_file)
+  parts = [
+      "ingest file completed path=%s" % stats_file,
+      "size_bytes=%d" % size_bytes,
+      "elapsed_s=%.1f" % float(elapsed_s),
+      "worker_rss_mib=%.1f" % _worker_rss_mib(),
+  ]
+  if parse_elapsed_s is not None:
+    parts.append("parse_elapsed_s=%.1f" % float(parse_elapsed_s))
+  if stats_rows is not None:
+    parts.append("stats_rows=%d" % int(stats_rows))
+  if proc_rows is not None:
+    parts.append("proc_rows=%d" % int(proc_rows))
+  if stage:
+    parts.append("stage=%s" % stage)
+  log_print(" ".join(parts), flush=True)
+
+
 def _spawn_pool_recycle_kwargs():
   maxtasks = cfg.get_sync_ingest_pool_maxtasksperchild()
   if maxtasks > 0:
@@ -1891,9 +1947,11 @@ def _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archiva
 
 def _log_sync_timedb_ingest_completed(stats_fname, elapsed_s, remaining, *, stage=None):
   stage_suffix = " stage=%s" % stage if stage else ""
+  size_bytes = stats_file_size_bytes(stats_fname)
   log_print(
-      "Completed file %s - processed in %.1fs - %d remaining to process.%s"
-      % (stats_fname, float(elapsed_s), remaining, stage_suffix),
+      "Completed file %s - processed in %.1fs - %d remaining to process "
+      "size_bytes=%d%s"
+      % (stats_fname, float(elapsed_s), remaining, size_bytes, stage_suffix),
       flush=True,
   )
 
@@ -1944,6 +2002,8 @@ def _parse_stats_file_payload(stats_file, stats_file_contents=None, *, use_inges
   except IngestArchiveLookupBudgetExceededError as exc:
     _log_ingest_archive_lookup_budget_exceeded(exc)
     return (stats_file, None, False, False, 0.0)
+  finally:
+    _release_ingest_worker_heap()
 
 
 def _duplicate_window_start_index(
@@ -2051,6 +2111,7 @@ def _parse_stats_file_payload_impl_streaming(stats_file):
           return (stats_file, None, need_archival, True, _parse_elapsed())
         start_line_idx = int(start_idx)
       try:
+        update_worker_substage("parse:accumulate")
         stats_list, proc_stats_list = parse_stats_file_streaming(
             stats_file,
             start_line_idx=start_line_idx,
@@ -2063,6 +2124,7 @@ def _parse_stats_file_payload_impl_streaming(stats_file):
         return _parse_failure_after_quarantine(
             stats_file, _parse_elapsed(), error_detail=str(e),
         )
+      update_worker_substage("parse:dataframes")
       stats, proc_stats = build_stats_dataframes(stats_list, proc_stats_list)
       del stats_list
       del proc_stats_list
@@ -2072,6 +2134,7 @@ def _parse_stats_file_payload_impl_streaming(stats_file):
         return _parse_failure_after_quarantine(
             stats_file, _parse_elapsed(), error_detail="empty stats and proc_stats",
         )
+      update_worker_substage("parse:deltas_arc")
       stats = compute_deltas_and_arc(stats)
       return (stats_file, (stats, proc_stats), need_archival, True, _parse_elapsed())
     except FileNotFoundError:
@@ -2154,6 +2217,7 @@ def _parse_stats_file_payload_impl(stats_file, stats_file_contents=None):
         return (stats_file, None, need_archival, True, _parse_elapsed())
       lines = lines[start_idx:]
       try:
+        update_worker_substage("parse:accumulate")
         stats_list, proc_stats_list = parse_stats_lines(
             lines,
             0,
@@ -2166,6 +2230,7 @@ def _parse_stats_file_payload_impl(stats_file, stats_file_contents=None):
         return _parse_failure_after_quarantine(
             stats_file, _parse_elapsed(), error_detail=str(e),
         )
+      update_worker_substage("parse:dataframes")
       stats, proc_stats = build_stats_dataframes(stats_list, proc_stats_list)
       del stats_list
       del proc_stats_list
@@ -2175,6 +2240,7 @@ def _parse_stats_file_payload_impl(stats_file, stats_file_contents=None):
         return _parse_failure_after_quarantine(
             stats_file, _parse_elapsed(), error_detail="empty stats and proc_stats",
         )
+      update_worker_substage("parse:deltas_arc")
       stats = compute_deltas_and_arc(stats)
       return (stats_file, (stats, proc_stats), need_archival, True, _parse_elapsed())
     finally:
@@ -2227,6 +2293,7 @@ def _db_writer_worker_impl(lock, db_task):
         del stats
       if proc_stats is not None:
         del proc_stats
+      _release_ingest_worker_heap()
 
 
 def _ingest_parse_and_write_file(lock, stats_file, stats_file_contents=None):
@@ -2259,6 +2326,8 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
   except IngestArchiveLookupBudgetExceededError as exc:
     _log_ingest_archive_lookup_budget_exceeded(exc)
     return (stats_file, False, False, 0.0)
+  finally:
+    _release_ingest_worker_heap()
 
 
 def _add_stats_file_to_db_impl(lock, stats_file, stats_file_contents=None):
@@ -2279,10 +2348,22 @@ def _add_stats_file_to_db_impl(lock, stats_file, stats_file_contents=None):
       if payload is None:
         return (stats_file, need_archival, True, time.time() - t0)
       stats, proc_stats = payload
+      stats_rows = len(stats)
+      proc_rows = len(proc_stats)
       stats_file, need_archival, ingest_ok = _write_stats_payload_to_db(
           lock, stats_file, stats, proc_stats, need_archival=need_archival
       )
-      return (stats_file, need_archival, ingest_ok, time.time() - t0)
+      elapsed = time.time() - t0
+      if ingest_ok:
+        _log_ingest_worker_file_completion(
+            stats_file,
+            elapsed_s=elapsed,
+            parse_elapsed_s=_parse_elapsed,
+            stats_rows=stats_rows,
+            proc_rows=proc_rows,
+            stage="ingest",
+        )
+      return (stats_file, need_archival, ingest_ok, elapsed)
     except (OperationalError, DatabaseError) as exc:
       if is_database_unavailable_error(exc):
         log_and_raise_database_unavailable(

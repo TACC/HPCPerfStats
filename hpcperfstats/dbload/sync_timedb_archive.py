@@ -56,7 +56,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     STREAM_ARCHIVE_TASK,
     collect_sealed_daily_archive_paths_in_range,
     iter_archive_ingest_tasks,
-    iter_sealed_daily_archive_member_lines,
+    iter_sealed_daily_archive_member_paths,
     resolve_sealed_archive_path_for_ingest,
 )
 from hpcperfstats.dbload.db_unavailable import (
@@ -163,8 +163,15 @@ def _resolve_sealed_paths_from_argv(mode, startdate, enddate, path_args):
   return sealed_paths, skipped
 
 
+def _archive_spawn_pool_recycle_kwargs():
+  maxtasks = cfg.get_sync_ingest_pool_maxtasksperchild()
+  if maxtasks > 0:
+    return {"maxtasksperchild": int(maxtasks)}
+  return {}
+
+
 def _process_stream_archive(lock, sealed_path):
-  """Stream one sealed archive and ingest each member (in-memory zstd pipe)."""
+  """Stream one sealed archive and ingest each member via path-only spool."""
   _configure_blas_thread_env()
   log_print("streaming sealed archive %s" % sealed_path, flush=True)
   add_stats = None
@@ -172,26 +179,31 @@ def _process_stream_archive(lock, sealed_path):
   close_old_connections = None
   DatabaseError = None
   OperationalError = None
+  release_heap = None
 
-  for member_name, content in iter_sealed_daily_archive_member_lines(sealed_path):
+  for member_name, member_path in iter_sealed_daily_archive_member_paths(sealed_path):
     if add_stats is None:
       from django.db import close_old_connections as _close
       from django.db.utils import DatabaseError as _DBErr
       from django.db.utils import OperationalError as _OpErr
 
       from hpcperfstats.django_bootstrap import ensure_django as _ensure
-      from hpcperfstats.dbload.sync_timedb import add_stats_file_to_db as _add
+      from hpcperfstats.dbload.sync_timedb import (
+          add_stats_file_to_db as _add,
+          _release_ingest_worker_heap as _release,
+      )
 
       close_old_connections = _close
       DatabaseError = _DBErr
       OperationalError = _OpErr
       ensure_django = _ensure
       add_stats = _add
+      release_heap = _release
       ensure_django()
       close_old_connections()
 
     try:
-      add_stats(lock, member_name, content)
+      add_stats(lock, member_path)
     except DatabaseUnavailableExit:
       raise
     except (OperationalError, DatabaseError) as exc:
@@ -201,7 +213,18 @@ def _process_stream_archive(lock, sealed_path):
         )
       raise
     finally:
-      del content
+      if release_heap is not None:
+        release_heap()
+      try:
+        os.remove(member_path)
+      except OSError:
+        pass
+      parent = os.path.dirname(member_path)
+      try:
+        if parent and os.path.isdir(parent) and not os.listdir(parent):
+          os.rmdir(parent)
+      except OSError:
+        pass
 
 
 def _process_stream_archive_task(task_args):
@@ -296,6 +319,7 @@ if __name__ == "__main__":
           processes=_archive_worker_process_count(),
           initializer=apply_pool_worker_process_title,
           initargs=(SYNC_TIMEDB_ARCHIVE_PROCESS_TITLE, "sealed-archive-pool"),
+          **_archive_spawn_pool_recycle_kwargs(),
       )
       try:
         for chunk in _iter_stream_tasks_chunked(sealed_paths):
