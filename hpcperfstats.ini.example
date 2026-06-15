@@ -298,6 +298,9 @@ sync_pool_process_cap = 8
 # Processed-file checkpoint writes per batch (default 100).
 # sync_checkpoint_flush_batch_size = 100
 
+# host_data/proc_data bulk_create batch size and incremental parse flush threshold (default 10000).
+# sync_bulk_create_batch_size = 10000
+
 # Max DB timestamps cached per duplicate-detection window (default 100000).
 # sync_host_itimes_cache_max_timestamps_per_entry = 20000
 

@@ -209,8 +209,10 @@ from hpcperfstats.dbload.sync_timedb_persistence import (
 )
 from hpcperfstats.dbload.sync_timedb_parsing import (
     EVENTMAPS_BY_TYPE,
+    DeltaCarryState,
     build_stats_dataframes,
     compute_deltas_and_arc,
+    compute_deltas_and_arc_chunk,
     exclude_types,
     find_processing_start_index,
     find_processing_start_index_streaming,
@@ -221,6 +223,7 @@ from hpcperfstats.dbload.sync_timedb_parsing import (
     parse_last_timestamp_line_streaming,
     parse_stats_file_path,
     parse_stats_file_streaming,
+    parse_stats_file_streaming_incremental,
     parse_stats_lines,
     stats_file_size_bytes,
     tail_window_timestamps_all_present_streaming,
@@ -1194,8 +1197,9 @@ def _sync_timedb_ingest_inline_requested():
   return os.environ.get(_SYNC_TIMEDB_INGEST_INLINE_ENV, "").strip().lower() in (
       "1", "yes", "true")
 
-# Rows per bulk_create batch to limit peak memory per worker
-bulk_create_batch_size = 10000
+# Rows per bulk_create batch to limit peak memory per worker (see sync_bulk_create_batch_size).
+def bulk_create_batch_size():
+  return cfg.get_sync_bulk_create_batch_size()
 _HOST_ITIMES_CACHE = {}
 _HOST_ITIMES_CACHE_REFRESH_SECONDS = 20
 _HOST_ITIMES_CACHE_MAX_ENTRIES = 2000
@@ -1879,7 +1883,7 @@ def _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archiva
       proc_it = proc_stats.itertuples(index=False)
       while True:
         _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_proc")
-        batch = list(itertools.islice(proc_it, bulk_create_batch_size))
+        batch = list(itertools.islice(proc_it, bulk_create_batch_size()))
         if not batch:
           break
         proc_objs = [
@@ -1915,7 +1919,7 @@ def _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archiva
         stats_it = stats.itertuples(index=False)
         while True:
           _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_host")
-          batch = list(itertools.islice(stats_it, bulk_create_batch_size))
+          batch = list(itertools.islice(stats_it, bulk_create_batch_size()))
           if not batch:
             break
           host_objs = [host_data_instance_from_stats_row(row) for row in batch]
@@ -2057,6 +2061,61 @@ def _duplicate_window_start_index(
   )
 
 
+def _resolve_streaming_ingest_start(stats_file, parse_elapsed_fn):
+  """Duplicate scan for streaming-eligible segments.
+
+  Returns ``(True, early_return)`` when parse can be skipped (including failures
+  encoded as a 5-tuple), or ``(False, (start_line_idx, need_archival))`` when
+  parsing should proceed.
+  """
+  t, _jid, host = parse_first_timestamp_line_streaming(stats_file)
+  if t is None:
+    log_print("initial timestamp not found")
+    return (
+        True,
+        _parse_failure_after_quarantine(
+            stats_file, parse_elapsed_fn(), error_detail="initial timestamp not found",
+        ),
+    )
+  if not host:
+    log_print("initial host not found in %s" % stats_file)
+    return (
+        True,
+        _parse_failure_after_quarantine(
+            stats_file, parse_elapsed_fn(), error_detail="initial host not found",
+        ),
+    )
+  host = str(host).strip()
+  timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
+  head_present = head_timestamp_present_in_db(host, timestamp_utc)
+  if not head_present:
+    return False, (0, True)
+  fast = _try_db_complete_head_tail_fast_path(stats_file, host, timestamp_utc)
+  if fast is not None:
+    start_idx, need_archival = fast
+  else:
+    tail_fast = _try_db_complete_tail_window_fast_path(
+        stats_file, host, timestamp_utc,
+    )
+    if tail_fast is not None:
+      start_idx, need_archival = tail_fast
+    else:
+      start_idx, need_archival = _duplicate_window_start_index(
+          stats_file,
+          host=host,
+          timestamp_utc=timestamp_utc,
+      )
+  if start_idx == -1:
+    log_print("No missing timestamps found for %s" % stats_file)
+    need_archival = raw_stats_path_needs_tar_append(
+        stats_file,
+        tgz_archive_dir,
+        first_ts=t,
+    )
+    return True, (stats_file, None, need_archival, True, parse_elapsed_fn())
+  return False, (int(start_idx), need_archival)
+
+
 def _parse_stats_file_payload_impl_streaming(stats_file):
   """Bounded-memory parse path for segments larger than ``sync_ingest_max_file_read_bytes``."""
   parse_t0 = time.time()
@@ -2066,50 +2125,10 @@ def _parse_stats_file_payload_impl_streaming(stats_file):
 
   with _sync_worker_db_task():
     try:
-      t, _jid, host = parse_first_timestamp_line_streaming(stats_file)
-      if t is None:
-        log_print("initial timestamp not found")
-        return _parse_failure_after_quarantine(
-            stats_file, _parse_elapsed(), error_detail="initial timestamp not found",
-        )
-      if not host:
-        log_print("initial host not found in %s" % stats_file)
-        return _parse_failure_after_quarantine(
-            stats_file, _parse_elapsed(), error_detail="initial host not found",
-        )
-      host = str(host).strip()
-      timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
-      head_present = head_timestamp_present_in_db(host, timestamp_utc)
-      if not head_present:
-        start_line_idx = 0
-        need_archival = True
-      else:
-        fast = _try_db_complete_head_tail_fast_path(
-            stats_file, host, timestamp_utc,
-        )
-        if fast is not None:
-          start_idx, need_archival = fast
-        else:
-          tail_fast = _try_db_complete_tail_window_fast_path(
-              stats_file, host, timestamp_utc,
-          )
-          if tail_fast is not None:
-            start_idx, need_archival = tail_fast
-          else:
-            start_idx, need_archival = _duplicate_window_start_index(
-                stats_file,
-                host=host,
-                timestamp_utc=timestamp_utc,
-            )
-        if start_idx == -1:
-          log_print("No missing timestamps found for %s" % stats_file)
-          need_archival = raw_stats_path_needs_tar_append(
-              stats_file,
-              tgz_archive_dir,
-              first_ts=t,
-          )
-          return (stats_file, None, need_archival, True, _parse_elapsed())
-        start_line_idx = int(start_idx)
+      done, result = _resolve_streaming_ingest_start(stats_file, _parse_elapsed)
+      if done:
+        return result
+      start_line_idx, need_archival = result
       try:
         update_worker_substage("parse:accumulate")
         stats_list, proc_stats_list = parse_stats_file_streaming(
@@ -2143,6 +2162,104 @@ def _parse_stats_file_payload_impl_streaming(stats_file):
       return _parse_failure_after_quarantine(
           stats_file, _parse_elapsed(), error_detail=load_err,
       )
+
+
+def _add_stats_file_to_db_streaming_incremental(lock, stats_file, t0):
+  """Parse → DB → parse loop for large segments (combined ingest only)."""
+  parse_t0 = time.time()
+  carry = DeltaCarryState()
+  total_stats_rows = 0
+  total_proc_rows = 0
+  need_archival = True
+  ingest_ok = True
+  flush_rows = bulk_create_batch_size()
+
+  def _parse_elapsed():
+    return time.time() - parse_t0
+
+  def _on_chunk(stats_list, proc_stats_list):
+    nonlocal need_archival, ingest_ok, total_stats_rows, total_proc_rows
+    update_worker_substage("parse:dataframes")
+    stats_chunk, proc_chunk = build_stats_dataframes(stats_list, proc_stats_list)
+    del stats_list
+    del proc_stats_list
+    if stats_chunk.empty and proc_chunk.empty:
+      del stats_chunk
+      del proc_chunk
+      return
+    update_worker_substage("parse:deltas_arc")
+    stats_chunk = compute_deltas_and_arc_chunk(stats_chunk, carry=carry)
+    chunk_stats_rows = len(stats_chunk)
+    chunk_proc_rows = len(proc_chunk)
+    stats_file_local, need_archival, chunk_ok = _write_stats_payload_to_db(
+        lock,
+        stats_file,
+        stats_chunk,
+        proc_chunk,
+        need_archival=need_archival,
+    )
+    del stats_chunk
+    del proc_chunk
+    if not chunk_ok:
+      ingest_ok = False
+    else:
+      total_stats_rows += chunk_stats_rows
+      total_proc_rows += chunk_proc_rows
+    _release_ingest_worker_heap()
+
+  with _sync_worker_db_task():
+    try:
+      done, result = _resolve_streaming_ingest_start(stats_file, _parse_elapsed)
+      if done:
+        _stats_file, _payload, need_archival, early_ok, _early_parse_elapsed = result
+        if not early_ok:
+          return (_stats_file, need_archival, False, time.time() - t0)
+        if _payload is None:
+          return (_stats_file, need_archival, True, time.time() - t0)
+      else:
+        start_line_idx, need_archival = result
+        try:
+          update_worker_substage("parse:accumulate")
+          parse_stats_file_streaming_incremental(
+              stats_file,
+              start_line_idx=start_line_idx,
+              parse_start_idx=0,
+              flush_rows=flush_rows,
+              on_chunk=_on_chunk,
+              exclude_types_list=exclude_types,
+          )
+        except Exception as e:
+          log_print("error: process data failed: ", str(e))
+          log_print("Possibly corrupt file: %s" % stats_file)
+          _stats_file, _payload, _need, early_ok, _ = _parse_failure_after_quarantine(
+              stats_file, _parse_elapsed(), error_detail=str(e),
+          )
+          return (_stats_file, _need, False, time.time() - t0)
+        if total_stats_rows == 0 and total_proc_rows == 0:
+          if DEBUG:
+            log_print("Unable to process stats file %s" % stats_file)
+          _stats_file, _payload, _need, early_ok, _ = _parse_failure_after_quarantine(
+              stats_file, _parse_elapsed(), error_detail="empty stats and proc_stats",
+          )
+          return (_stats_file, _need, False, time.time() - t0)
+      elapsed = time.time() - t0
+      if ingest_ok:
+        _log_ingest_worker_file_completion(
+            stats_file,
+            elapsed_s=elapsed,
+            parse_elapsed_s=_parse_elapsed(),
+            stats_rows=total_stats_rows,
+            proc_rows=total_proc_rows,
+            stage="ingest",
+        )
+      return (stats_file, need_archival, ingest_ok, elapsed)
+    except FileNotFoundError:
+      load_err = "Stats file disappeared: %s" % stats_file
+      log_print(load_err)
+      _stats_file, _payload, _need, early_ok, _ = _parse_failure_after_quarantine(
+          stats_file, _parse_elapsed(), error_detail=load_err,
+      )
+      return (_stats_file, _need, False, time.time() - t0)
 
 
 def _parse_stats_file_payload_impl(stats_file, stats_file_contents=None):
@@ -2336,6 +2453,10 @@ def _add_stats_file_to_db_impl(lock, stats_file, stats_file_contents=None):
   proc_stats = None
   payload = None
   t0 = time.time()
+  if _should_stream_stats_file(stats_file, stats_file_contents):
+    return _add_stats_file_to_db_streaming_incremental(
+        lock, stats_file, t0,
+    )
   with _sync_worker_db_task():
     try:
       stats_file, payload, need_archival, ingest_ok, _parse_elapsed = _parse_stats_file_payload(
@@ -4562,7 +4683,7 @@ def run_sync_timedb_supervisor_loop(
                 active_workers,
                 len(pending_stats_files),
                 chunk_size,
-                bulk_create_batch_size,
+                bulk_create_batch_size(),
             ),
             flush=True,
         )

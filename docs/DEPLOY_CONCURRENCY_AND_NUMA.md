@@ -72,6 +72,7 @@ Kernel OOM may kill an ingest pool worker (`[worker:ingest-pool]`) with a **tran
 | **`PR_SET_PDEATHSIG` (SIGKILL)** on pool workers | Workers exit when the supervisor dies so **supervisord** can restart a clean tree |
 | **`pipeline` `mem_limit` / `memswap_limit`** (Compose) | Cgroup cap before host global OOM on swapless hosts; **128 GiB** is a reasonable default on **192 GiB** RAM (see `docker-compose.app.yaml.example`) |
 | **`sync_ingest_max_file_read_bytes`** (default **512 MiB**) | Stream-parse larger segments instead of **`readlines()`** |
+| **`sync_bulk_create_batch_size`** (default **10000**) | Combined ingest: flush parse → delta/arc → **`bulk_create`** every N stats rows (complete time sample first); same knob sizes DB write batches |
 | **`sync_ingest_imap_inflight_cap`** + **`sync_pool_process_cap`** (default **8**) | Cap **concurrent** in-flight ingest tasks and live pool width (RSS guard for giant-file parse); chunk dispatch uses a **sliding window** so freed worker slots immediately pull the next oldest pending file — not sequential fixed sub-batches |
 | **`sync_ingest_pool_maxtasksperchild`** (default **1**) | Recycle worker after **every** file — drops idle pandas/Django heap (primary fix when one multi‑GiB file remains) |
 | **`sync_ingest_malloc_trim_after_file`** (default **yes**) | Linux **`gc.collect()`** + **`malloc_trim(0)`** after each ingest pool task |
@@ -299,6 +300,7 @@ Chunk handlers call **`hard_exit_pool_worker_error`** (`os._exit`) immediately a
 | `sync_ingest_per_file_timeout_s_per_mib` | 13500/5120 | Added seconds per ceiling MiB (default maps 5 GiB → max) |
 | `sync_ingest_per_file_timeout_max_s` | 14400 | Ceiling seconds (4h) for any file; no hard file-size reject |
 | `sync_ingest_stream_duplicate_scan_bytes` | 8388608 | Route duplicate scan through streaming path above this size (even when below `sync_ingest_max_file_read_bytes`) |
+| `sync_bulk_create_batch_size` | 10000 | Incremental parse flush threshold (combined ingest) and `host_data`/`proc_data` `bulk_create` batch size |
 | `sync_ingest_db_complete_tail_window_lines` | 500 | Tail timestamp lines probed before full duplicate scan on large head-present files |
 | `sync_archive_members_cache_enabled` | yes | Per-process L1 cache on ingest duplicate-check path |
 | `sync_archive_members_cache_max_entries` | 64 | Max cached days per ingest/archive worker process |

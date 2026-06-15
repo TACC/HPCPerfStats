@@ -2111,6 +2111,12 @@ def get_sync_checkpoint_flush_batch_size():
   return max(1, _pipeline_getint("sync_checkpoint_flush_batch_size", fallback=100))
 
 
+def get_sync_bulk_create_batch_size():
+  """Rows per host_data/proc_data bulk_create batch and incremental parse flush (default 10000)."""
+  _ensure_cfg_loaded()
+  return max(1, _pipeline_getint("sync_bulk_create_batch_size", fallback=10000))
+
+
 def get_sync_host_itimes_cache_max_timestamps_per_entry():
   """Max distinct DB timestamps cached per host window in sync_timedb (default 100000)."""
   _ensure_cfg_loaded()
