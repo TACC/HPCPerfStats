@@ -1,6 +1,13 @@
+import { useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
+import { ChevronDownIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Skeleton } from "@/components/ui/skeleton";
 import FilterMultiCombobox from "@/components/FilterMultiCombobox";
 import { cn } from "@/lib/utils";
@@ -8,6 +15,7 @@ import {
   JOB_LIST_TABLE_HEADERS,
   PROJECT_FIELD_LABEL,
 } from "@/utils/site-field-labels";
+import { majorJobStateLabel } from "@/utils/job-list-state-groups";
 import {
   applyHeaderFilterChange,
   clearAllHeaderFilters,
@@ -118,6 +126,7 @@ export default function JobListHeaderFilters({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const selectedUser = readHeaderFilterSet(searchParams, routeParams, "username");
   const selectedProject = readHeaderFilterSet(searchParams, routeParams, "account");
@@ -125,13 +134,14 @@ export default function JobListHeaderFilters({
   const selectedState = parseHeaderFilterSet(searchParams, "state");
   const selectedPerformance = parseHeaderFilterSet(searchParams, "performance_sort_rank");
 
-  const hasAnyHeaderFilter =
+  const activeFilterCount =
     selectedUser.size +
-      selectedProject.size +
-      selectedQueue.size +
-      selectedState.size +
-      selectedPerformance.size >
-    0;
+    selectedProject.size +
+    selectedQueue.size +
+    selectedState.size +
+    selectedPerformance.size;
+
+  const hasAnyHeaderFilter = activeFilterCount > 0;
 
   function applyToggle(key: JobListHeaderFilterKey, value: string, current: Set<string>) {
     applyHeaderFilterChange({
@@ -150,128 +160,164 @@ export default function JobListHeaderFilters({
       text: row.label || String(row.sort_rank ?? ""),
     })) ?? [];
 
+  const stateOptions =
+    filterOptions?.states?.map((stateKey) => ({
+      value: stateKey,
+      text: majorJobStateLabel(stateKey),
+    })) ?? [];
+
+  const filterGrid = (
+    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <FilterChipRow
+        label={JOB_LIST_TABLE_HEADERS.performanceData}
+        options={performanceOptions}
+        selected={selectedPerformance}
+        disabled={loading}
+        valueKey="performance_sort_rank"
+        onToggle={(value) => applyToggle("performance_sort_rank", value, selectedPerformance)}
+        onClear={() =>
+          clearHeaderFilterDimension({
+            router,
+            pathname,
+            searchParams,
+            routeParams,
+            key: "performance_sort_rank",
+          })
+        }
+      />
+      <FilterMultiCombobox
+        id="job-list-filter-user"
+        label={JOB_LIST_TABLE_HEADERS.user}
+        options={filterOptions?.usernames ?? []}
+        selected={selectedUser}
+        disabled={loading}
+        truncated={filterOptions?.truncated?.usernames}
+        onToggle={(value) => applyToggle("username", value, selectedUser)}
+        onClear={() =>
+          clearHeaderFilterDimension({
+            router,
+            pathname,
+            searchParams,
+            routeParams,
+            key: "username",
+          })
+        }
+      />
+      <FilterMultiCombobox
+        id="job-list-filter-project"
+        label={PROJECT_FIELD_LABEL}
+        options={filterOptions?.accounts ?? []}
+        selected={selectedProject}
+        disabled={loading}
+        truncated={filterOptions?.truncated?.accounts}
+        onToggle={(value) => applyToggle("account", value, selectedProject)}
+        onClear={() =>
+          clearHeaderFilterDimension({
+            router,
+            pathname,
+            searchParams,
+            routeParams,
+            key: "account",
+          })
+        }
+      />
+      <FilterChipRow
+        label={JOB_LIST_TABLE_HEADERS.queue}
+        options={(filterOptions?.queues ?? []).map((queue) => ({ value: queue, text: queue }))}
+        selected={selectedQueue}
+        disabled={loading}
+        valueKey="queue"
+        onToggle={(value) => applyToggle("queue", value, selectedQueue)}
+        onClear={() =>
+          clearHeaderFilterDimension({
+            router,
+            pathname,
+            searchParams,
+            routeParams,
+            key: "queue",
+          })
+        }
+      />
+      <FilterChipRow
+        label="Status"
+        options={stateOptions}
+        selected={selectedState}
+        disabled={loading}
+        valueKey="state"
+        onToggle={(value) => applyToggle("state", value, selectedState)}
+        onClear={() =>
+          clearHeaderFilterDimension({
+            router,
+            pathname,
+            searchParams,
+            routeParams,
+            key: "state",
+          })
+        }
+      />
+    </div>
+  );
+
   if (loading && !filterOptions) {
     return (
-      <Card className="mb-4 border bg-card/50 shadow-none">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base font-medium">Refine this list</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {Array.from({ length: 5 }).map((_, index) => (
-            <Skeleton key={index} className="h-16 w-full" />
-          ))}
-        </CardContent>
-      </Card>
+      <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen} className="mb-4">
+        <Card className="border bg-card/50 shadow-none">
+          <CardHeader className="pb-2">
+            <CollapsibleTrigger className="flex w-full cursor-pointer items-center justify-between gap-2 text-left">
+              <span className="text-base font-medium">Refine this list</span>
+              <ChevronDownIcon
+                className={cn("size-4 shrink-0 transition-transform", filtersOpen && "rotate-180")}
+                aria-hidden
+              />
+            </CollapsibleTrigger>
+          </CardHeader>
+          <CollapsibleContent>
+            <CardContent className="pt-0">
+              {Array.from({ length: 5 }).map((_, index) => (
+                <Skeleton key={index} className="mb-4 h-16 w-full last:mb-0" />
+              ))}
+            </CardContent>
+          </CollapsibleContent>
+        </Card>
+      </Collapsible>
     );
   }
 
   return (
-    <Card className="mb-4 border bg-card/50 shadow-none">
-      <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-        <CardTitle className="text-base font-medium">Refine this list</CardTitle>
-        {hasAnyHeaderFilter ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="text-xs"
-            onClick={() =>
-              clearAllHeaderFilters({ router, pathname, searchParams, routeParams })
-            }
-          >
-            Clear header filters
-          </Button>
-        ) : null}
-      </CardHeader>
-      <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <FilterChipRow
-          label={JOB_LIST_TABLE_HEADERS.performanceData}
-          options={performanceOptions}
-          selected={selectedPerformance}
-          disabled={loading}
-          valueKey="performance_sort_rank"
-          onToggle={(value) => applyToggle("performance_sort_rank", value, selectedPerformance)}
-          onClear={() =>
-            clearHeaderFilterDimension({
-              router,
-              pathname,
-              searchParams,
-              routeParams,
-              key: "performance_sort_rank",
-            })
-          }
-        />
-        <FilterMultiCombobox
-          id="job-list-filter-user"
-          label={JOB_LIST_TABLE_HEADERS.user}
-          options={filterOptions?.usernames ?? []}
-          selected={selectedUser}
-          disabled={loading}
-          truncated={filterOptions?.truncated?.usernames}
-          onToggle={(value) => applyToggle("username", value, selectedUser)}
-          onClear={() =>
-            clearHeaderFilterDimension({
-              router,
-              pathname,
-              searchParams,
-              routeParams,
-              key: "username",
-            })
-          }
-        />
-        <FilterMultiCombobox
-          id="job-list-filter-project"
-          label={PROJECT_FIELD_LABEL}
-          options={filterOptions?.accounts ?? []}
-          selected={selectedProject}
-          disabled={loading}
-          truncated={filterOptions?.truncated?.accounts}
-          onToggle={(value) => applyToggle("account", value, selectedProject)}
-          onClear={() =>
-            clearHeaderFilterDimension({
-              router,
-              pathname,
-              searchParams,
-              routeParams,
-              key: "account",
-            })
-          }
-        />
-        <FilterChipRow
-          label={JOB_LIST_TABLE_HEADERS.queue}
-          options={(filterOptions?.queues ?? []).map((queue) => ({ value: queue, text: queue }))}
-          selected={selectedQueue}
-          disabled={loading}
-          valueKey="queue"
-          onToggle={(value) => applyToggle("queue", value, selectedQueue)}
-          onClear={() =>
-            clearHeaderFilterDimension({
-              router,
-              pathname,
-              searchParams,
-              routeParams,
-              key: "queue",
-            })
-          }
-        />
-        <FilterChipRow
-          label="Status"
-          options={(filterOptions?.states ?? []).map((state) => ({ value: state, text: state }))}
-          selected={selectedState}
-          disabled={loading}
-          valueKey="state"
-          onToggle={(value) => applyToggle("state", value, selectedState)}
-          onClear={() =>
-            clearHeaderFilterDimension({
-              router,
-              pathname,
-              searchParams,
-              routeParams,
-              key: "state",
-            })
-          }
-        />
-      </CardContent>
-    </Card>
+    <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen} className="mb-4">
+      <Card className="border bg-card/50 shadow-none">
+        <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+          <CollapsibleTrigger className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left">
+            <span className="text-base font-medium">Refine this list</span>
+            {!filtersOpen && hasAnyHeaderFilter ? (
+              <span className="text-xs font-normal text-muted-foreground">({activeFilterCount})</span>
+            ) : null}
+            <ChevronDownIcon
+              className={cn(
+                "ml-auto size-4 shrink-0 transition-transform",
+                filtersOpen && "rotate-180",
+              )}
+              aria-hidden
+            />
+          </CollapsibleTrigger>
+          {filtersOpen && hasAnyHeaderFilter ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="shrink-0 text-xs"
+              onClick={() =>
+                clearAllHeaderFilters({ router, pathname, searchParams, routeParams })
+              }
+            >
+              Clear header filters
+            </Button>
+          ) : null}
+        </CardHeader>
+        <CollapsibleContent>
+          <CardContent className="pt-0">{filterGrid}</CardContent>
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
   );
 }

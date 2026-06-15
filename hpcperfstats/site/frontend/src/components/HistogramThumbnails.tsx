@@ -59,7 +59,9 @@ function HistogramThumbnail({
   const [expanded, setExpanded] = useState(false);
   const [hasOpened, setHasOpened] = useState(false);
   const [popoverLayoutReady, setPopoverLayoutReady] = useState(false);
+  const [thumbLayoutReady, setThumbLayoutReady] = useState(false);
   const thumbActivatorRef = useRef<HTMLButtonElement | null>(null);
+  const thumbShellRef = useRef<HTMLDivElement | null>(null);
   const popoverPlotRef = useRef<HTMLDivElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const domSuffix = useId().replace(/:/g, "");
@@ -130,6 +132,39 @@ function HistogramThumbnail({
     };
   }, [expanded, isMobile]);
 
+  useLayoutEffect(() => {
+    if (isMobile) {
+      setThumbLayoutReady(false);
+      return;
+    }
+    function measure() {
+      const node = thumbShellRef.current;
+      return !!(node && node.offsetWidth > 0 && node.offsetHeight > 0);
+    }
+    if (measure()) {
+      setThumbLayoutReady(true);
+      return;
+    }
+    setThumbLayoutReady(false);
+    let cancelled = false;
+    let raf2: number | null = null;
+    const raf1 = window.requestAnimationFrame(() => {
+      if (cancelled) return;
+      if (measure()) {
+        setThumbLayoutReady(true);
+        return;
+      }
+      raf2 = window.requestAnimationFrame(() => {
+        if (!cancelled) setThumbLayoutReady(true);
+      });
+    });
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(raf1);
+      if (raf2 != null) window.cancelAnimationFrame(raf2);
+    };
+  }, [isMobile, plotItemThumb]);
+
   /* Mobile: full histogram only, no popover, container sized for viewport */
   if (isMobile) {
     return (
@@ -158,20 +193,25 @@ function HistogramThumbnail({
         style={{ width: THUMB_SIZE.width }}
       >
         <div
-          className="histogram-thumbnail-shell relative box-border flex min-w-0 flex-col items-center overflow-auto border-0! bg-muted"
-          style={{ height: THUMB_SIZE.height }}
+          ref={thumbShellRef}
+          className="histogram-thumbnail-shell relative box-border flex h-[200px] w-[280px] min-w-0 flex-col items-center overflow-auto border-0! bg-muted"
         >
-          <BokehPlotWithLimitation
-            item={plotItemThumb}
-            id={thumbId}
-            plotName={safeTitle}
-            unavailableReason={unavailableReason}
-            embedAllowed={embedAllowed}
-            embedMinHeightPx={THUMB_SIZE.height}
-            maximizeInContainer="width"
-            intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
-            wrapperClassName="min-h-px w-full min-w-0 flex-1 self-stretch overflow-visible [&_.bokeh-embed-wrapper]:w-full [&_.bokeh-embed-wrapper]:max-w-full [&_.bokeh-embed-wrapper]:min-w-0 [&_.bokeh-embed-wrapper]:overflow-visible [&_.bokeh-embed]:box-border [&_.bokeh-embed]:min-h-[180px] [&_.bokeh-embed]:w-full [&_.bokeh-embed]:max-w-full [&_.bokeh-embed]:min-w-0 [&_.bokeh-embed]:overflow-visible [&_.bokeh-embed_.bk-root]:max-w-full!"
-          />
+          {thumbLayoutReady && embedAllowed ? (
+            <BokehPlotWithLimitation
+              item={plotItemThumb}
+              id={thumbId}
+              plotName={safeTitle}
+              unavailableReason={unavailableReason}
+              embedAllowed={embedAllowed}
+              embedMinHeightPx={THUMB_SIZE.height}
+              maximizeInContainer="width"
+              deferEmbedUntilVisible={false}
+              intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
+              wrapperClassName="h-[200px] w-[280px] min-h-[200px] min-w-0 overflow-visible [&_.bokeh-embed-wrapper]:h-full [&_.bokeh-embed-wrapper]:w-full [&_.bokeh-embed-wrapper]:max-w-full [&_.bokeh-embed-wrapper]:min-w-0 [&_.bokeh-embed-wrapper]:overflow-visible [&_.bokeh-embed]:box-border [&_.bokeh-embed]:h-full [&_.bokeh-embed]:min-h-[200px] [&_.bokeh-embed]:w-full [&_.bokeh-embed]:max-w-full [&_.bokeh-embed]:min-w-0 [&_.bokeh-embed]:overflow-visible [&_.bokeh-embed_.bk-root]:max-w-full!"
+            />
+          ) : (
+            <LoadingMessage message={`Loading ${safeTitle.toLowerCase()}…`} />
+          )}
         </div>
         <div className="histogram-thumbnail-actions flex justify-center border-t border-border bg-background px-2 py-[0.35rem]">
           <Button

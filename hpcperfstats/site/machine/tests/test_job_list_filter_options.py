@@ -31,7 +31,14 @@ def test_build_job_list_filter_options_facets_per_dimension():
         calls.append(exclude_header_dimension)
         qs = MagicMock()
         qs.exclude.return_value = qs
-        qs.values_list.return_value.distinct.return_value.order_by.return_value = ["a"]
+        if exclude_header_dimension == "state":
+            qs.values_list.return_value.distinct.return_value = [
+                "COMPLETED",
+                "CANCELLED by 123",
+                "RUNNING",
+            ]
+        else:
+            qs.values_list.return_value.distinct.return_value.order_by.return_value = ["a"]
         return qs, {}, {}, "-end_time"
 
     request = MagicMock()
@@ -39,4 +46,5 @@ def test_build_job_list_filter_options_facets_per_dimension():
 
     assert set(calls) == {"username", "account", "queue", "state", "performance_sort_rank"}
     assert options["usernames"] == ["a"]
+    assert options["states"] == ["completed", "canceled"]
     assert options["truncated"]["usernames"] is False

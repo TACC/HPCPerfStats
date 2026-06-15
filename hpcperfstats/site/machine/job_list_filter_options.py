@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from .job_list_performance import PERFORMANCE_STATUS_BY_SORT_RANK, performance_status_label
+from .job_list_state_groups import major_state_options_from_raw
 
 JOB_LIST_FILTER_OPTIONS_MAX = 200
 
@@ -9,7 +10,6 @@ _HEADER_STRING_DIMENSIONS = (
     ("usernames", "username"),
     ("accounts", "account"),
     ("queues", "queue"),
-    ("states", "state"),
 )
 
 
@@ -27,6 +27,17 @@ def _distinct_string_values(queryset, orm_field, cap=JOB_LIST_FILTER_OPTIONS_MAX
     if truncated:
         values = values[:cap]
     return values, truncated
+
+
+def _distinct_major_state_keys(queryset):
+    """Return major terminal state group keys present in *queryset* (max four)."""
+    raw_states = (
+        queryset.exclude(state__isnull=True)
+        .exclude(state="")
+        .values_list("state", flat=True)
+        .distinct()
+    )
+    return major_state_options_from_raw(raw_states)
 
 
 def build_job_list_filter_options(request, build_queryset_from_request):
@@ -59,6 +70,12 @@ def build_job_list_filter_options(request, build_queryset_from_request):
         values, is_truncated = _distinct_string_values(qs, orm_field)
         options[response_key] = values
         truncated[response_key] = is_truncated
+
+    state_qs, _fields, _cur, _order = build_queryset_from_request(
+        request,
+        exclude_header_dimension="state",
+    )
+    options["states"] = _distinct_major_state_keys(state_qs)
 
     perf_qs, _fields, _cur, _order = build_queryset_from_request(
         request,

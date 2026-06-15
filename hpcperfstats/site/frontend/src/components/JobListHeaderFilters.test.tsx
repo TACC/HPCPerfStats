@@ -17,7 +17,7 @@ const filterOptions = {
   usernames: ["alice", "bob"],
   accounts: ["projA"],
   queues: ["normal", "debug"],
-  states: ["COMPLETED", "RUNNING"],
+  states: ["completed", "canceled"],
   performance_statuses: [
     { sort_rank: 0, label: "Summary available" },
     { sort_rank: 2, label: "Monitoring gaps" },
@@ -37,22 +37,48 @@ describe("JobListHeaderFilters", () => {
     pathname = "/machine/jobs/";
   });
 
-  it("toggles queue chip on and off via router.replace", async () => {
+  it("starts collapsed and expands to show filter chips", async () => {
     const user = userEvent.setup();
     render(
       <JobListHeaderFilters filterOptions={filterOptions} routeParams={{}} />,
     );
 
+    expect(screen.queryByRole("button", { name: "normal" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /refine this list/i }));
+
+    expect(screen.getByRole("button", { name: "normal" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Completed" })).toBeInTheDocument();
+  });
+
+  it("shows active filter count when collapsed", () => {
+    searchParams = new URLSearchParams("queue=normal&state=completed");
+    render(
+      <JobListHeaderFilters filterOptions={filterOptions} routeParams={{}} />,
+    );
+
+    expect(screen.getByText("(2)")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "normal" })).not.toBeInTheDocument();
+  });
+
+  it("toggles queue chip on and off via router.replace", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <JobListHeaderFilters filterOptions={filterOptions} routeParams={{}} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /refine this list/i }));
     await user.click(screen.getByRole("button", { name: "normal" }));
     expect(replace).toHaveBeenCalledTimes(1);
     let href = replace.mock.calls[0]?.[0] as string;
     expect(href).toContain("queue=normal");
 
     searchParams = new URLSearchParams("queue=normal");
-    render(
-      <JobListHeaderFilters filterOptions={filterOptions} routeParams={{}} />,
-    );
-    await user.click(screen.getAllByRole("button", { name: "normal" })[1]);
+    rerender(<JobListHeaderFilters filterOptions={filterOptions} routeParams={{}} />);
+    if (!screen.queryByRole("button", { name: "normal" })) {
+      await user.click(screen.getByRole("button", { name: /refine this list/i }));
+    }
+    await user.click(screen.getByRole("button", { name: "normal" }));
     expect(replace).toHaveBeenCalledTimes(2);
     href = replace.mock.calls[1]?.[0] as string;
     expect(href).not.toContain("queue=");
@@ -65,6 +91,7 @@ describe("JobListHeaderFilters", () => {
       <JobListHeaderFilters filterOptions={filterOptions} routeParams={{}} />,
     );
 
+    await user.click(screen.getByRole("button", { name: /refine this list/i }));
     await user.click(screen.getByRole("button", { name: "debug" }));
     expect(replace).toHaveBeenCalledTimes(1);
     const href = replace.mock.calls[0]?.[0] as string;
@@ -74,11 +101,12 @@ describe("JobListHeaderFilters", () => {
 
   it("clears a dimension when Clear is clicked", async () => {
     const user = userEvent.setup();
-    searchParams = new URLSearchParams("state=COMPLETED,RUNNING");
+    searchParams = new URLSearchParams("state=completed,canceled");
     render(
       <JobListHeaderFilters filterOptions={filterOptions} routeParams={{}} />,
     );
 
+    await user.click(screen.getByRole("button", { name: /refine this list/i }));
     await user.click(screen.getByRole("button", { name: "Clear" }));
     expect(replace).toHaveBeenCalledTimes(1);
     const href = replace.mock.calls[0]?.[0] as string;

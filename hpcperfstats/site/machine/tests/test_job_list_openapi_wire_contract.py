@@ -36,7 +36,7 @@ JOB_LIST_WIRE_EXAMPLE = {
         "usernames": ["alice"],
         "accounts": ["proj"],
         "queues": ["normal"],
-        "states": ["COMPLETED"],
+        "states": ["completed"],
         "performance_statuses": [{"sort_rank": 0, "label": "Summary available"}],
         "truncated": {
             "usernames": False,

@@ -1,5 +1,6 @@
 """Human-readable job list titles and filter summaries for extended search."""
 from .job_list_performance import performance_status_label
+from .job_list_state_groups import major_state_label, parse_major_state_filter_keys
 from .query_utils import (
     parse_job_list_multi_value_field,
     parse_job_list_performance_sort_ranks,
@@ -52,9 +53,13 @@ def build_job_list_qname_and_filter_summary(fields):
             lines.append(account_line.replace("Project:", "Project contains:", 1))
         else:
             lines.append(account_line)
-    state_line = _multi_value_summary_line("State", fields.get("state"))
-    if state_line:
-        lines.append(state_line)
+    state_keys = parse_major_state_filter_keys(fields.get("state"))
+    if state_keys:
+        labels = [major_state_label(key) for key in state_keys]
+        if len(labels) == 1:
+            lines.append(f"Status: {labels[0]}")
+        else:
+            lines.append(f"Status: {', '.join(labels)}")
     perf_ranks = parse_job_list_performance_sort_ranks(fields.get("performance_sort_rank"))
     if perf_ranks:
         labels = [performance_status_label(rank) for rank in perf_ranks]

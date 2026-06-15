@@ -156,12 +156,9 @@ def site_response_cache_timeout(request):
     """Per-request TTL for @dynamic_cache_page (site-aware)."""
     return get_site_content_cache_timeout()
 
-_JOB_LIST_QUERY_FIELD_EXCLUDES_BASE = ("page", "order_by", "performance_sort_rank")
+_JOB_LIST_QUERY_FIELD_EXCLUDES_BASE = ("page", "order_by", "performance_sort_rank", "state")
 _JOB_LIST_QUERY_FIELD_EXCLUDES_HISTOGRAM = ("group", "metric", "metrics", "_histogram_embed_v")
 _JOB_LIST_METRIC_FILTER_OPS_ALLOWED = frozenset({"gte", "lte"})
-# When nj exceeds this threshold, histogram endpoints plot a deterministic jid-ordered sample
-# of this many jobs (memory-safe; full nj is still returned as ``nj`` in the response).
-JOB_LIST_HISTOGRAM_MAX_NJ = 5000
 JOB_LIST_HISTOGRAM_BATCH_METRICS_DEFAULT = ("runtime", "nhosts", "queue_wait")
 HOST_PLOT_MAX_WINDOW_DAYS = 7
 
@@ -615,6 +612,16 @@ def _apply_job_list_performance_sort_rank_filter(queryset, fields):
     return queryset.filter(performance_sort_rank__in=ranks)
 
 
+def _apply_job_list_major_state_filter(queryset, fields):
+    """Filter queryset by comma-separated major terminal state group keys."""
+    from .job_list_state_groups import major_state_q, parse_major_state_filter_keys
+
+    keys = parse_major_state_filter_keys((fields or {}).get("state"))
+    if not keys:
+        return queryset
+    return queryset.filter(major_state_q(keys))
+
+
 def _build_job_list_queryset_from_request(
     request,
     extra_excluded_fields=(),
@@ -645,6 +652,7 @@ def _build_job_list_queryset_from_request(
     if annotate_all or order_by.lstrip("-") == "performance_sort_rank":
         queryset = annotate_job_list_performance_fields(queryset)
     queryset = _apply_job_list_performance_sort_rank_filter(queryset, fields)
+    queryset = _apply_job_list_major_state_filter(queryset, fields)
     cur_metrics = {
         k.split("_", 1)[1]: v
         for k, v in fields.items()
@@ -1778,38 +1786,14 @@ def _job_list_metric_hist_pair(df, metric_name, label, display_title, thumb_wh, 
     return p_thumb, p_full
 
 
-def _sample_histogram_job_ids(job_list_qs, nj, sample_size=None):
-    """Deterministic evenly spaced jid sample for large histogram queries."""
-    target = sample_size if sample_size is not None else JOB_LIST_HISTOGRAM_MAX_NJ
-    if nj <= target:
-        return None
-    stride = max(1, nj // target)
-    sampled = []
-    for index, jid in enumerate(
-        job_list_qs.order_by("jid").values_list("jid", flat=True).iterator(chunk_size=2000)
-    ):
-        if index % stride != 0:
-            continue
-        sampled.append(jid)
-        if len(sampled) >= target:
-            break
-    return sampled
-
-
 def _histogram_queryset_for_plotting(job_list_qs, nj, sample_size=None):
     """
     Return (plot_qs, histogram_nj, histogram_sampled) for dataframe materialization.
 
-    ``histogram_nj`` is the number of jobs actually plotted; ``nj`` (caller count) may be larger.
+    Uses the full matching job queryset (no sampling cap).
     """
-    target = sample_size if sample_size is not None else JOB_LIST_HISTOGRAM_MAX_NJ
-    if nj <= target:
-        return job_list_qs, nj, False
-    sampled_jids = _sample_histogram_job_ids(job_list_qs, nj, sample_size=target)
-    if not sampled_jids:
-        return job_list_qs.none(), 0, True
-    plot_qs = job_list_qs.filter(jid__in=sampled_jids)
-    return plot_qs, len(sampled_jids), True
+    del sample_size  # retained for call-site compatibility
+    return job_list_qs, nj, False
 
 
 def _histogram_response_meta(nj, histogram_nj, histogram_sampled):

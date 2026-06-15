@@ -1,0 +1,95 @@
+"""Host unit tests for job list histogram plotting (no 5k sampling cap)."""
+from unittest.mock import MagicMock, patch
+
+import pandas as pd
+import pytest
+from django.test import RequestFactory
+
+pytestmark = pytest.mark.machine_unit_mock
+
+
+def test_job_list_histograms_uses_full_nj_when_large():
+    from hpcperfstats.site.machine.api import job_list_histograms
+
+    factory = RequestFactory()
+    request = factory.get(
+        "/api/jobs/histograms/",
+        {"group": "metric", "metric": "runtime"},
+    )
+    request.session = {"username": "admin", "is_staff": True}
+    mock_df = pd.DataFrame({"runtime": [1.0]}, index=["1"])
+    over_nj = 12000
+    plot_qs = MagicMock()
+
+    with patch("hpcperfstats.site.machine.api.check_for_tokens", return_value=True), patch(
+        "hpcperfstats.site.machine.api._build_histogram_queryset",
+        return_value=(MagicMock(), over_nj, {}, {}),
+    ), patch(
+        "hpcperfstats.site.machine.api._histogram_queryset_for_plotting",
+        return_value=(plot_qs, over_nj, False),
+    ) as mock_plot_qs, patch(
+        "hpcperfstats.site.machine.api._build_histogram_dataframe",
+        return_value=(mock_df, [("runtime", "hours")], ["1"]),
+    ), patch(
+        "hpcperfstats.site.machine.api._job_list_metric_hist_pair",
+        return_value=(MagicMock(), MagicMock()),
+    ), patch(
+        "hpcperfstats.site.machine.api._sanitize_hist_plot_item",
+        return_value={"doc": {"roots": [{"id": "r1"}]}, "root_id": "r1"},
+    ):
+        response = job_list_histograms(request)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["nj"] == over_nj
+    assert data["histogram_nj"] == over_nj
+    assert data["histogram_sampled"] is False
+    mock_plot_qs.assert_called_once()
+
+
+def test_histogram_queryset_for_plotting_returns_full_queryset():
+    from hpcperfstats.site.machine.api import _histogram_queryset_for_plotting
+
+    qs = MagicMock()
+    plot_qs, histogram_nj, histogram_sampled = _histogram_queryset_for_plotting(qs, 10000)
+    assert plot_qs is qs
+    assert histogram_nj == 10000
+    assert histogram_sampled is False
+
+
+def test_job_list_histograms_batch_uses_full_nj_when_large():
+    from hpcperfstats.site.machine.api import job_list_histograms_batch
+
+    factory = RequestFactory()
+    request = factory.get(
+        "/api/jobs/histograms/batch/",
+        {"metrics": "runtime,nhosts"},
+    )
+    request.session = {"username": "admin", "is_staff": True}
+    over_nj = 7500
+
+    mock_df = MagicMock()
+    with patch("hpcperfstats.site.machine.api.check_for_tokens", return_value=True), patch(
+        "hpcperfstats.site.machine.api._build_histogram_queryset",
+        return_value=(MagicMock(), over_nj, {}, {}),
+    ), patch(
+        "hpcperfstats.site.machine.api._histogram_queryset_for_plotting",
+        return_value=(MagicMock(), over_nj, False),
+    ), patch(
+        "hpcperfstats.site.machine.api._build_histogram_dataframe",
+        return_value=(mock_df, [("runtime", "hours"), ("nhosts", "# nodes")], ["j1"]),
+    ), patch(
+        "hpcperfstats.site.machine.api._build_metric_histogram_payload",
+        side_effect=[
+            {"metric": "runtime", "nj": over_nj},
+            {"metric": "nhosts", "nj": over_nj},
+        ],
+    ):
+        response = job_list_histograms_batch(request)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["nj"] == over_nj
+    assert data["histogram_nj"] == over_nj
+    assert data["histogram_sampled"] is False
+    assert len(data["histograms"]) == 2

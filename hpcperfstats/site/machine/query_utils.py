@@ -60,7 +60,7 @@ def get_job_list_order_by(fields):
 
 
 # Header toolbar multi-select filters (comma-separated query values, OR within dimension).
-JOB_LIST_HEADER_MULTI_VALUE_FIELDS = frozenset({"username", "account", "queue", "state"})
+JOB_LIST_HEADER_MULTI_VALUE_FIELDS = frozenset({"username", "account", "queue"})
 
 
 def parse_job_list_multi_value_field(raw):

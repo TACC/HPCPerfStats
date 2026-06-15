@@ -211,6 +211,46 @@ describe("HistogramThumbnails", () => {
     expect(card).toBeTruthy();
     expect(shell.style.width).toBe("");
     expect(shell).toHaveClass("histogram-thumbnail-shell");
+    expect(shell).toHaveClass("h-[200px]");
+    expect(shell).toHaveClass("w-[280px]");
+  });
+
+  it("does not show zero-size embed failure in the thumbnail shell", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      configurable: true,
+      value: vi.fn().mockImplementation((query) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+
+    const embedItem = vi.fn().mockResolvedValue(embedViewsWithIdleDoc());
+    window.Bokeh = { embed: { embed_item: embedItem } };
+
+    renderHistograms(
+      <HistogramThumbnails
+        embedAllowed
+        histograms={[
+          {
+            title: "Jobs by queue",
+            plot_item_thumb: VALID_BOKEH_ITEM,
+            plot_item_full: VALID_BOKEH_ITEM,
+          },
+        ]}
+      />,
+    );
+
+    await waitFor(() => expect(embedItem).toHaveBeenCalled());
+    expect(
+      screen.queryByText(/chart container stayed at zero size/i),
+    ).not.toBeInTheDocument();
   });
 
   it("has no serious axe violations for thumbnail and open popover", async () => {

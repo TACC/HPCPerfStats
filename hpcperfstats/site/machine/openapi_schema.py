@@ -95,7 +95,7 @@ JOB_LIST_SCHEMA = extend_schema(
             name="state",
             type=str,
             location=OpenApiParameter.QUERY,
-            description="Comma-separated job states (OR).",
+            description="Comma-separated major terminal status group keys (OR): completed, failed, canceled, preempted.",
         ),
         OpenApiParameter(
             name="performance_sort_rank",

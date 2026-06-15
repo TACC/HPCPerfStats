@@ -226,7 +226,7 @@ export default function JobList() {
   const jobListData = data as JobListApiResponse | null;
 
   const histogramsEnabled = isLgUp || listViewTab === "charts";
-  const { histograms, metricHistStatus, batchError, sampleMeta } = useJobListHistograms(
+  const { histograms, metricHistStatus, batchError } = useJobListHistograms(
     listApiParams,
     histogramReloadKey,
     histogramsEnabled,
@@ -369,13 +369,6 @@ export default function JobList() {
   const histogramErrorMessage =
     batchError ||
     (firstFailedMetric ? metricHistStatus[firstFailedMetric]?.error : null);
-  const histogramSampleFootnote =
-    sampleMeta.histogramSampled &&
-    sampleMeta.histogramNj != null &&
-    sampleMeta.nj != null
-      ? `Histograms use ${formatDecimalStandard(sampleMeta.histogramNj)} of ${formatDecimalStandard(sampleMeta.nj)} matching jobs.`
-      : null;
-
   const pageSummary = jobListPageHumanSummary(paramsFromRoute);
 
   function handleJumpToDistributions(event: MouseEvent<HTMLAnchorElement>) {
@@ -502,11 +495,6 @@ export default function JobList() {
       {pageSummary ? (
         <p className="job-list-page-summary mb-2 text-sm text-muted-foreground">{pageSummary}</p>
       ) : null}
-      <JobListHeaderFilters
-        filterOptions={jobListData?.filter_options}
-        loading={initialLoading && !jobListData}
-        routeParams={paramsFromRoute}
-      />
       <JobListFilterSummary lines={filterSummaryLines} />
       <h2 className="mb-1 text-lg font-medium">{JOB_LIST_TABLE_HEADERS.jobCount} = {nj}</h2>
       {tableBusy ? (
@@ -580,9 +568,6 @@ export default function JobList() {
           {distributionPlotsVisible && histogramsFinishedLoading && histograms?.length === 0 ? (
             <p className="text-sm text-muted-foreground">No distribution data for this selection.</p>
           ) : null}
-          {histogramSampleFootnote ? (
-            <p className="mb-2 text-sm text-muted-foreground">{histogramSampleFootnote}</p>
-          ) : null}
           {distributionPlotsVisible ? (
             <HistogramThumbnails histograms={histograms} embedAllowed={distributionPlotsVisible} />
           ) : null}
@@ -593,6 +578,12 @@ export default function JobList() {
           </a>
         </p>
       </section>
+
+      <JobListHeaderFilters
+        filterOptions={jobListData?.filter_options}
+        loading={initialLoading && !jobListData}
+        routeParams={paramsFromRoute}
+      />
 
       {!isLgUp && (
         <Tabs
