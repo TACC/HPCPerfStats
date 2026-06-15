@@ -71,6 +71,34 @@ def test_build_job_list_queryset_applies_major_state_filter():
     assert "state__istartswith" in str(chain.filter.call_args)
 
 
+def test_build_job_list_queryset_applies_timeout_state_filter():
+    from hpcperfstats.site.machine import api
+
+    factory = RequestFactory()
+    request = factory.get("/api/jobs/", {"state": "timeout"})
+    request.session = {"username": "admin", "is_staff": True}
+
+    chain = MagicMock()
+    chain.filter.return_value = chain
+    chain.order_by.return_value = chain
+
+    with patch.object(api.job_data.objects, "filter", return_value=chain), patch.object(
+        api, "_apply_non_staff_job_visibility", side_effect=lambda qs, _r: qs
+    ), patch.object(
+        api, "normalize_job_list_query_params", side_effect=lambda f: f
+    ), patch.object(
+        api, "expand_month_date_to_range", side_effect=lambda f: f
+    ), patch.object(
+        api, "get_job_list_order_by", return_value="-end_time"
+    ), patch.object(
+        api, "annotate_job_list_performance_fields", return_value=chain
+    ):
+        api._build_job_list_queryset_from_request(request, annotate_all=True)
+
+    assert chain.filter.called
+    assert "TIMEOUT" in str(chain.filter.call_args)
+
+
 def test_build_job_list_queryset_applies_multi_username_filter():
     from hpcperfstats.site.machine import api
 

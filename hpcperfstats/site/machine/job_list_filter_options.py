@@ -30,7 +30,7 @@ def _distinct_string_values(queryset, orm_field, cap=JOB_LIST_FILTER_OPTIONS_MAX
 
 
 def _distinct_major_state_keys(queryset):
-    """Return major terminal state group keys present in *queryset* (max four)."""
+    """Return major terminal state group keys present in *queryset* (max five)."""
     raw_states = (
         queryset.exclude(state__isnull=True)
         .exclude(state="")

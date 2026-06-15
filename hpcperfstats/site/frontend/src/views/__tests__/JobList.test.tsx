@@ -35,6 +35,7 @@ function setJobListQueryMock(
     error: null,
     initialLoading: false,
     tableBusy: false,
+    jobsFetching: false,
     refetch: vi.fn(),
     ...overrides,
   });
@@ -48,6 +49,7 @@ function setJobListHistogramsMock(
     metricHistStatus: defaultMetricHistStatus,
     batchError: null,
     sampleMeta: { nj: null, histogramNj: null, histogramSampled: false },
+    histogramsUpdating: false,
     setMetricHistStatus: vi.fn(),
     ...overrides,
   });
@@ -91,6 +93,71 @@ describe("JobList", () => {
 
     renderJobList();
     expect(screen.getByRole("status", { name: /loading job list/i })).toBeInTheDocument();
+  });
+
+  it("does not block table pointer events while tableBusy", async () => {
+    setJobListQueryMock({
+      tableBusy: true,
+      data: {
+        job_list: [
+          {
+            jid: 1,
+            performance: {
+              label: "Summary available",
+              tone: "success",
+              aria_label: "Performance: Summary available",
+              sort_rank: 0,
+            },
+            username: "alice",
+            account: "acct",
+            start_time: "2024-01-01T00:00:00Z",
+            end_time: "2024-01-01T01:00:00Z",
+            runtime: 3600,
+            queue: "normal",
+            jobname: "job1",
+            state: "COMPLETED",
+            ncores: 32,
+            nhosts: 2,
+            node_hrs: 64,
+          },
+        ],
+        nj: 1,
+        aggregates: { total_node_hours: 64 },
+        qname: "Jobs",
+        order_by: "-end_time",
+        pagination: { page: 1, num_pages: 1 },
+      },
+    });
+
+    renderJobList();
+
+    await waitFor(() => {
+      expect(screen.getByText("Jobs = 1")).toBeInTheDocument();
+    });
+    const table = document.getElementById("job-list-table");
+    expect(table).toBeTruthy();
+    expect(table?.className).not.toContain("pointer-events-none");
+    expect(table).toHaveAttribute("aria-busy", "true");
+  });
+
+  it("shows updating distributions banner while histograms refresh", async () => {
+    setJobListQueryMock({
+      data: {
+        job_list: [],
+        nj: 10,
+        aggregates: {},
+        qname: "Jobs",
+        order_by: "-end_time",
+        pagination: { page: 1, num_pages: 1 },
+      },
+    });
+    setJobListHistogramsMock({ histogramsUpdating: true });
+
+    renderJobList();
+
+    await waitFor(() => {
+      expect(screen.getByText("Updating distributions…")).toBeInTheDocument();
+    });
   });
 
   it("enables histogram fetch on desktop layout without charts tab", async () => {

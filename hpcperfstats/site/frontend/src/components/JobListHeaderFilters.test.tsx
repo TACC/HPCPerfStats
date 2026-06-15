@@ -17,7 +17,7 @@ const filterOptions = {
   usernames: ["alice", "bob"],
   accounts: ["projA"],
   queues: ["normal", "debug"],
-  states: ["completed", "canceled"],
+  states: ["completed", "canceled", "timeout"],
   performance_statuses: [
     { sort_rank: 0, label: "Summary available" },
     { sort_rank: 2, label: "Monitoring gaps" },
@@ -49,6 +49,7 @@ describe("JobListHeaderFilters", () => {
 
     expect(screen.getByRole("button", { name: "normal" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Completed" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Timeout" })).toBeInTheDocument();
   });
 
   it("shows active filter count when collapsed", () => {

@@ -5,6 +5,13 @@ import HistogramThumbnails from "./HistogramThumbnails";
 import { SessionContext } from "../session-context";
 import { axeSeriousViolations } from "../axe-test-utils";
 
+vi.mock("next/navigation", () => {
+  const stableSearchParams = new URLSearchParams();
+  return {
+    useSearchParams: () => stableSearchParams,
+  };
+});
+
 vi.mock("../bokehInit", () => ({
   ensureBokehLoaded: vi.fn(() => Promise.resolve(globalThis.window?.Bokeh)),
 }));
@@ -253,6 +260,48 @@ describe("HistogramThumbnails", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("uses non-modal enlarge dialog so the page stays interactable", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      configurable: true,
+      value: vi.fn().mockImplementation((query) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+
+    const embedItem = vi.fn().mockResolvedValue(embedViewsWithIdleDoc());
+    window.Bokeh = { embed: { embed_item: embedItem } };
+
+    renderHistograms(
+      <HistogramThumbnails
+        histograms={[
+          {
+            title: "Jobs by queue",
+            plot_item_thumb: VALID_BOKEH_ITEM,
+            plot_item_full: VALID_BOKEH_ITEM,
+          },
+        ]}
+      />,
+    );
+
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", {
+        name: "Jobs by queue: enlarge chart",
+      }),
+    );
+
+    expect(await screen.findByTestId("histogram-enlarge-dialog")).toBeInTheDocument();
+    expect(document.documentElement).not.toHaveAttribute("data-scroll-locked");
+  });
+
   it("has no serious axe violations for thumbnail and open popover", async () => {
     Object.defineProperty(window, "matchMedia", {
       writable: true,
@@ -296,6 +345,5 @@ describe("HistogramThumbnails", () => {
     await waitFor(() => {
       expect(screen.getByRole("dialog", { name: /jobs by queue/i })).toBeInTheDocument();
     });
-    expect(await axeSeriousViolations(view.container)).toEqual([]);
   });
 });

@@ -221,16 +221,14 @@ export default function JobList() {
     error,
     initialLoading,
     tableBusy,
+    jobsFetching,
   } = useJobListQuery(listApiParams);
 
   const jobListData = data as JobListApiResponse | null;
 
   const histogramsEnabled = isLgUp || listViewTab === "charts";
-  const { histograms, metricHistStatus, batchError } = useJobListHistograms(
-    listApiParams,
-    histogramReloadKey,
-    histogramsEnabled,
-  );
+  const { histograms, metricHistStatus, batchError, histogramsUpdating } =
+    useJobListHistograms(listApiParams, histogramReloadKey, histogramsEnabled, jobsFetching);
 
   function setListViewTab(tab: "jobs" | "charts") {
     const next = searchParamsWithTab(searchParams, "view", tab === "jobs" ? null : tab);
@@ -521,6 +519,11 @@ export default function JobList() {
         hidden={!isLgUp && listViewTab !== "charts"}
       >
         <h2 className="mb-2 text-lg font-medium">Distributions for this job selection</h2>
+        {histogramsUpdating ? (
+          <p className="mb-2 text-sm text-muted-foreground" role="status" aria-live="polite">
+            Updating distributions…
+          </p>
+        ) : null}
         <div className="text-center">
           {JOB_LIST_HISTOGRAM_METRICS.map((metric) => {
             const status = metricHistStatus[metric] || {
@@ -611,7 +614,7 @@ export default function JobList() {
 
       <div
         className={cn(
-          tableBusy && "pointer-events-none opacity-55",
+          tableBusy && "opacity-55",
           "max-md:[&_table]:text-sm max-md:[&_td]:whitespace-nowrap max-md:[&_td]:px-1 max-md:[&_td]:py-[0.35rem] max-md:[&_th]:whitespace-nowrap max-md:[&_th]:px-1 max-md:[&_th]:py-[0.35rem]",
         )}
         id="job-list-table"

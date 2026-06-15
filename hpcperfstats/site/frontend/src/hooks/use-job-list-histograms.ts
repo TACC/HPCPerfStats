@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { jobsHistogramsBatchRetrieve } from "@/api/generated/jobs/jobs";
 import { ApiError } from "@/api/api-error";
 import { HISTOGRAM_EMBED_VERSION } from "@/api-paths";
@@ -23,6 +23,15 @@ export const JOB_LIST_HISTOGRAM_METRICS: readonly MetricName[] = [
 const BATCH_METRICS_PARAM = JOB_LIST_HISTOGRAM_METRICS.join(",");
 
 const NO_JOBS_MATCHED_MESSAGE = "No jobs matched this query.";
+
+/** Debounce filter-driven histogram batch refetch so rapid chip toggles do not pile up. */
+export const JOB_LIST_HISTOGRAM_DEBOUNCE_MS = 450;
+
+const NO_JOBS_META: JobListHistogramSampleMeta = {
+  nj: null,
+  histogramNj: null,
+  histogramSampled: false,
+};
 
 function createInitialMetricStatus(
   loading: boolean,
@@ -53,37 +62,46 @@ function batchErrorMessage(err: unknown): string {
   return "Failed to load histograms for this job list.";
 }
 
+/** Stable serialized key for effect dependencies (avoids object-identity refetch loops). */
+export function serializeJobListApiParams(params: Record<string, string>): string {
+  const keys = Object.keys(params).sort();
+  return keys.map((key) => `${key}=${params[key]}`).join("&");
+}
+
 /** Loads metric histogram embeds for the current job list filter params (single batch API). */
 export function useJobListHistograms(
   listApiParams: Record<string, string>,
   reloadKey = 0,
   enabled = true,
+  jobsFetching = false,
 ) {
+  const paramsKey = useMemo(
+    () => serializeJobListApiParams(listApiParams),
+    [listApiParams],
+  );
+
   const [histograms, setHistograms] = useState<JobListHistogramEntry[] | null>(null);
   const [metricHistStatus, setMetricHistStatus] = useState<MetricHistStatusMap>(() =>
     createInitialMetricStatus(false),
   );
   const [batchError, setBatchError] = useState<string | null>(null);
-  const [sampleMeta, setSampleMeta] = useState<JobListHistogramSampleMeta>({
-    nj: null,
-    histogramNj: null,
-    histogramSampled: false,
-  });
+  const [sampleMeta, setSampleMeta] = useState<JobListHistogramSampleMeta>(NO_JOBS_META);
+  const [histogramsUpdating, setHistogramsUpdating] = useState(false);
 
   useEffect(() => {
     if (!enabled) {
       setHistograms(null);
       setMetricHistStatus(createInitialMetricStatus(false));
       setBatchError(null);
-      setSampleMeta({ nj: null, histogramNj: null, histogramSampled: false });
+      setSampleMeta(NO_JOBS_META);
+      setHistogramsUpdating(false);
       return;
     }
 
+    setHistogramsUpdating(true);
+
     const controller = new AbortController();
-    setHistograms(null);
-    setMetricHistStatus(createInitialMetricStatus(true));
-    setBatchError(null);
-    setSampleMeta({ nj: null, histogramNj: null, histogramSampled: false });
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
     const loadHistograms = async () => {
       try {
@@ -115,6 +133,7 @@ export function useJobListHistograms(
           setMetricHistStatus(metricStatusFromBatchError(NO_JOBS_MATCHED_MESSAGE));
           setBatchError(NO_JOBS_MATCHED_MESSAGE);
           setHistograms(null);
+          setHistogramsUpdating(false);
           return;
         }
 
@@ -152,6 +171,7 @@ export function useJobListHistograms(
         setMetricHistStatus(nextStatus);
         setHistograms(entries.length ? entries : null);
         setBatchError(null);
+        setHistogramsUpdating(false);
       } catch (err) {
         if (controller.signal.aborted) return;
         const message = batchErrorMessage(err);
@@ -159,13 +179,28 @@ export function useJobListHistograms(
         setMetricHistStatus(metricStatusFromBatchError(message));
         setBatchError(message);
         setHistograms(null);
-        setSampleMeta({ nj: null, histogramNj: null, histogramSampled: false });
+        setSampleMeta(NO_JOBS_META);
+        setHistogramsUpdating(false);
       }
     };
 
-    void loadHistograms();
-    return () => controller.abort();
-  }, [listApiParams, reloadKey, enabled]);
+    debounceTimer = setTimeout(() => {
+      if (jobsFetching) return;
+      void loadHistograms();
+    }, JOB_LIST_HISTOGRAM_DEBOUNCE_MS);
 
-  return { histograms, metricHistStatus, batchError, sampleMeta, setMetricHistStatus };
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      controller.abort();
+    };
+  }, [paramsKey, reloadKey, enabled, jobsFetching, listApiParams]);
+
+  return {
+    histograms,
+    metricHistStatus,
+    batchError,
+    sampleMeta,
+    histogramsUpdating,
+    setMetricHistStatus,
+  };
 }

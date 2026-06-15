@@ -23,7 +23,7 @@ pytestmark = pytest.mark.machine_unit_mock
         ("FAILED", "failed"),
         ("OUT_OF_MEMORY", "failed"),
         ("NODE_FAIL", "failed"),
-        ("TIMEOUT", "failed"),
+        ("TIMEOUT", "timeout"),
         ("PREEMPTED", "preempted"),
         ("RUNNING", None),
         ("PENDING", None),
@@ -54,3 +54,15 @@ def test_major_state_q_canceled_matches_prefix():
 
 def test_major_state_label():
     assert major_state_label("canceled") == "Canceled"
+    assert major_state_label("timeout") == "Timeout"
+
+
+def test_major_state_q_timeout_matches_exact_and_suffix():
+    q = major_state_q(["timeout"])
+    q_str = str(q)
+    assert "TIMEOUT" in q_str
+
+
+def test_major_state_options_from_raw_includes_timeout():
+    options = major_state_options_from_raw(["TIMEOUT", "FAILED"])
+    assert options == ["failed", "timeout"]

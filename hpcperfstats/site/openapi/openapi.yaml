@@ -345,7 +345,7 @@ paths:
         name: state
         schema:
           type: string
-        description: 'Comma-separated major terminal status group keys (OR): completed, failed, canceled, preempted.'
+        description: 'Comma-separated major terminal status group keys (OR): completed, failed, canceled, preempted, timeout.'
       - in: query
         name: username
         schema:

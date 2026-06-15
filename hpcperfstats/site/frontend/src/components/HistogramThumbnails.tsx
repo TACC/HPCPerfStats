@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useId } from "react";
+import { useSearchParams } from "next/navigation";
 import type { BokehJsonItem } from "@/types/bokeh";
 import type { JobListHistogramEntry } from "@/types/view-models";
 import { Button } from "@/components/ui/button";
@@ -56,6 +57,7 @@ function HistogramThumbnail({
   embedAllowed = true,
 }: HistogramThumbnailProps & { embedAllowed?: boolean }) {
   const isMobile = useIsMobile();
+  const searchParams = useSearchParams();
   const [expanded, setExpanded] = useState(false);
   const [hasOpened, setHasOpened] = useState(false);
   const [popoverLayoutReady, setPopoverLayoutReady] = useState(false);
@@ -90,6 +92,12 @@ function HistogramThumbnail({
     }
     collapseExpanded();
   };
+
+  useEffect(() => {
+    setExpanded(false);
+    setHasOpened(false);
+    setPopoverLayoutReady(false);
+  }, [searchParams.toString()]);
 
   useEffect(() => {
     if (!expanded || isMobile) return;
@@ -228,11 +236,12 @@ function HistogramThumbnail({
           </Button>
         </div>
       </div>
-      <Dialog open={expanded} onOpenChange={handleDialogOpenChange}>
+      <Dialog modal={false} open={expanded} onOpenChange={handleDialogOpenChange}>
         <DialogContent
           showCloseButton={false}
-          overlayClassName="bg-black/35"
+          overlayClassName="pointer-events-none bg-black/20"
           className="max-w-[calc(100vw-2rem)] sm:max-w-4xl"
+          data-testid="histogram-enlarge-dialog"
         >
           <DialogHeader className="flex-row flex-wrap items-center justify-between gap-2 space-y-0">
             <DialogTitle className="min-w-0 flex-1 text-base">{safeTitle}</DialogTitle>
@@ -263,7 +272,9 @@ function HistogramThumbnail({
                 deferEmbedUntilVisible={false}
                 intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
               />
-            ) : null}
+            ) : (
+              <LoadingMessage message={`Loading ${safeTitle.toLowerCase()}…`} />
+            )}
           </div>
         </DialogContent>
       </Dialog>

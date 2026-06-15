@@ -1,7 +1,10 @@
-import { renderHook, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/api/api-error";
-import { useJobListHistograms } from "./use-job-list-histograms";
+import {
+  JOB_LIST_HISTOGRAM_DEBOUNCE_MS,
+  useJobListHistograms,
+} from "./use-job-list-histograms";
 
 vi.mock("@/api/generated/jobs/jobs", () => ({
   jobsHistogramsBatchRetrieve: vi.fn(),
@@ -51,9 +54,20 @@ function mockBatchResponse(overrides: Record<string, unknown> = {}) {
   };
 }
 
+async function advanceDebounce() {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(JOB_LIST_HISTOGRAM_DEBOUNCE_MS);
+  });
+}
+
 describe("useJobListHistograms", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
   afterEach(() => {
     vi.mocked(jobsHistogramsBatchRetrieve).mockReset();
+    vi.useRealTimers();
   });
 
   it("uses batch endpoint once per stable filter (no refetch loop)", async () => {
@@ -67,6 +81,8 @@ describe("useJobListHistograms", () => {
       },
     );
 
+    await advanceDebounce();
+
     await waitFor(() => {
       expect(jobsHistogramsBatchRetrieve).toHaveBeenCalledTimes(1);
     });
@@ -77,9 +93,51 @@ describe("useJobListHistograms", () => {
     expect(jobsHistogramsBatchRetrieve).toHaveBeenCalledTimes(1);
   });
 
+  it("debounces rapid filter param changes into one batch call", async () => {
+    vi.mocked(jobsHistogramsBatchRetrieve).mockResolvedValue(mockBatchResponse());
+
+    const { rerender } = renderHook(
+      ({ params }) => useJobListHistograms(params, 0, true),
+      { initialProps: { params: STABLE_PARAMS } },
+    );
+
+    rerender({ params: { ...STABLE_PARAMS, queue: "normal" } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(JOB_LIST_HISTOGRAM_DEBOUNCE_MS - 100);
+    });
+    rerender({ params: { ...STABLE_PARAMS, queue: "debug" } });
+    await advanceDebounce();
+
+    await waitFor(() => {
+      expect(jobsHistogramsBatchRetrieve).toHaveBeenCalledTimes(1);
+    });
+    expect(jobsHistogramsBatchRetrieve.mock.calls[0]?.[0]).toMatchObject({
+      queue: "debug",
+    });
+  });
+
+  it("waits for jobsFetching to settle before batch fetch", async () => {
+    vi.mocked(jobsHistogramsBatchRetrieve).mockResolvedValue(mockBatchResponse());
+
+    const { rerender } = renderHook(
+      ({ jobsFetching }) => useJobListHistograms(STABLE_PARAMS, 0, true, jobsFetching),
+      { initialProps: { jobsFetching: true } },
+    );
+
+    await advanceDebounce();
+    expect(jobsHistogramsBatchRetrieve).not.toHaveBeenCalled();
+
+    rerender({ jobsFetching: false });
+    await advanceDebounce();
+
+    await waitFor(() => {
+      expect(jobsHistogramsBatchRetrieve).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("does not fetch when disabled", async () => {
     renderHook(() => useJobListHistograms(STABLE_PARAMS, 0, false));
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await advanceDebounce();
     expect(jobsHistogramsBatchRetrieve).not.toHaveBeenCalled();
   });
 
@@ -91,11 +149,14 @@ describe("useJobListHistograms", () => {
       { initialProps: { reloadKey: 0 } },
     );
 
+    await advanceDebounce();
+
     await waitFor(() => {
       expect(jobsHistogramsBatchRetrieve).toHaveBeenCalledTimes(1);
     });
 
     rerender({ reloadKey: 1 });
+    await advanceDebounce();
 
     await waitFor(() => {
       expect(jobsHistogramsBatchRetrieve).toHaveBeenCalledTimes(2);
@@ -112,6 +173,8 @@ describe("useJobListHistograms", () => {
     );
 
     const { result } = renderHook(() => useJobListHistograms(STABLE_PARAMS, 0, true));
+
+    await advanceDebounce();
 
     await waitFor(() => {
       expect(result.current.sampleMeta.histogramSampled).toBe(true);
@@ -130,6 +193,8 @@ describe("useJobListHistograms", () => {
 
     const { result } = renderHook(() => useJobListHistograms(STABLE_PARAMS, 0, true));
 
+    await advanceDebounce();
+
     await waitFor(() => {
       expect(result.current.batchError).toBe("Too many jobs for histogram generation.");
     });
@@ -147,6 +212,8 @@ describe("useJobListHistograms", () => {
     });
 
     const { result } = renderHook(() => useJobListHistograms(STABLE_PARAMS, 0, true));
+
+    await advanceDebounce();
 
     await waitFor(() => {
       expect(result.current.batchError).toBe("No jobs matched this query.");
@@ -189,9 +256,39 @@ describe("useJobListHistograms", () => {
 
     const { result } = renderHook(() => useJobListHistograms(STABLE_PARAMS, 0, true));
 
+    await advanceDebounce();
+
     await waitFor(() => {
       expect(result.current.metricHistStatus.runtime.error).toContain("runtime");
     });
     expect(result.current.metricHistStatus.nhosts.error).toBeNull();
+  });
+
+  it("sets histogramsUpdating while a debounced fetch is pending", async () => {
+    vi.mocked(jobsHistogramsBatchRetrieve).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(() => resolve(mockBatchResponse()), 100);
+        }),
+    );
+
+    const { result, rerender } = renderHook(
+      ({ params }) => useJobListHistograms(params, 0, true),
+      { initialProps: { params: STABLE_PARAMS } },
+    );
+
+    expect(result.current.histogramsUpdating).toBe(true);
+
+    rerender({ params: { ...STABLE_PARAMS, queue: "normal" } });
+    expect(result.current.histogramsUpdating).toBe(true);
+
+    await advanceDebounce();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+
+    await waitFor(() => {
+      expect(result.current.histogramsUpdating).toBe(false);
+    });
   });
 });

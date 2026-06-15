@@ -192,6 +192,7 @@ export default function JobListHeaderFilters({
         selected={selectedUser}
         disabled={loading}
         truncated={filterOptions?.truncated?.usernames}
+        panelOpen={filtersOpen}
         onToggle={(value) => applyToggle("username", value, selectedUser)}
         onClear={() =>
           clearHeaderFilterDimension({
@@ -210,6 +211,7 @@ export default function JobListHeaderFilters({
         selected={selectedProject}
         disabled={loading}
         truncated={filterOptions?.truncated?.accounts}
+        panelOpen={filtersOpen}
         onToggle={(value) => applyToggle("account", value, selectedProject)}
         onClear={() =>
           clearHeaderFilterDimension({

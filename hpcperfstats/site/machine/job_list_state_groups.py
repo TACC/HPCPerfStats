@@ -10,9 +10,10 @@ MAJOR_JOB_STATE_GROUPS = (
     ("failed", "Failed"),
     ("canceled", "Canceled"),
     ("preempted", "Preempted"),
+    ("timeout", "Timeout"),
 )
 
-_FAILED_BASE_TOKENS = frozenset({"FAILED", "OUT_OF_MEMORY", "NODE_FAIL", "TIMEOUT"})
+_FAILED_BASE_TOKENS = frozenset({"FAILED", "OUT_OF_MEMORY", "NODE_FAIL"})
 _VALID_MAJOR_STATE_KEYS = frozenset(key for key, _label in MAJOR_JOB_STATE_GROUPS)
 
 
@@ -29,6 +30,8 @@ def classify_job_state(raw):
         return None
     if token == "COMPLETED":
         return "completed"
+    if token == "TIMEOUT":
+        return "timeout"
     if token in _FAILED_BASE_TOKENS:
         return "failed"
     if token.startswith("CANCEL"):
@@ -70,6 +73,8 @@ def _major_state_q_for_key(key):
         return Q(state__istartswith="CANCEL")
     if key == "preempted":
         return Q(state__istartswith="PREEMPT")
+    if key == "timeout":
+        return Q(state__iexact="TIMEOUT") | Q(state__istartswith="TIMEOUT+")
     return Q(pk__in=[])
 
 

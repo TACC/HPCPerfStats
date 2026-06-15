@@ -26,6 +26,21 @@ describe("useJobListQuery", () => {
     expect(result.current.tableBusy).toBe(false);
   });
 
+  it("exposes jobsFetching from isFetching", () => {
+    vi.mocked(useJobsRetrieve).mockReturnValue({
+      data: { nj: 2 },
+      error: null,
+      isLoading: false,
+      isFetching: true,
+      refetch: vi.fn(),
+    } as ReturnType<typeof useJobsRetrieve>);
+
+    const { result } = renderHook(() => useJobListQuery({ page: "1" }));
+
+    expect(result.current.jobsFetching).toBe(true);
+    expect(result.current.tableBusy).toBe(true);
+  });
+
   it("surfaces fetch errors", () => {
     vi.mocked(useJobsRetrieve).mockReturnValue({
       data: undefined,

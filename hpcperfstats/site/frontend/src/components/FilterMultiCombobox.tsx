@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, ChevronsUpDown } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,8 @@ type FilterMultiComboboxProps = {
   selected: Set<string>;
   disabled?: boolean;
   truncated?: boolean;
+  /** When false, close any open popover (e.g. parent collapsible closed). */
+  panelOpen?: boolean;
   onToggle: (value: string) => void;
   onClear: () => void;
 };
@@ -23,11 +25,19 @@ export default function FilterMultiCombobox({
   selected,
   disabled = false,
   truncated = false,
+  panelOpen = true,
   onToggle,
   onClear,
 }: FilterMultiComboboxProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    if (!panelOpen) {
+      setOpen(false);
+      setQuery("");
+    }
+  }, [panelOpen]);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();

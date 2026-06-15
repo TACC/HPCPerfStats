@@ -4,6 +4,7 @@ export const MAJOR_JOB_STATE_LABELS: Record<string, string> = {
   failed: "Failed",
   canceled: "Canceled",
   preempted: "Preempted",
+  timeout: "Timeout",
 };
 
 export function majorJobStateLabel(key: string): string {

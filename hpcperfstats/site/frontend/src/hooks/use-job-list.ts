@@ -14,6 +14,7 @@ export function useJobListQuery(params: Record<string, string>) {
     error: error ? getErrorMessage(error, "Failed to load job list.") : null,
     initialLoading: isLoading && !data,
     tableBusy: isFetching && !isLoading,
+    jobsFetching: isFetching,
     refetch,
   };
 }
