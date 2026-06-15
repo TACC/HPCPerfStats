@@ -71,8 +71,11 @@ docker compose exec pipeline su hpcperfstats -c 'ls -la /opt/hpcperfstats_data/a
 
 ## Plans and blocked work
 
-- In **`docs/plans/`** and Cursor Plan output, put operator verification under a heading such as **Operator commands (copy/paste)** with service-labeled blocks and **expected output** to return.
-- When blocked on missing operator facts, **do not guess** — ask for the paste using this format (`plan-creation-contract.mdc` → *Grounding*).
+- In **`docs/plans/`** and Cursor Plan output, put operator commands under **Operator commands (copy/paste)** with service-labeled blocks and **expected output** to return.
+- **Proactively request read-only pastes** during planning when logs, RSS, cgroup stats, file sizes, or DB/Redis facts would improve root-cause analysis or fix design — **no redeploy required** (`deploy-ini-with-code-no-phase-zero.mdc`).
+- Also use commands when **blocked** mid-implementation or for **post-deploy verification** after a release redeploy.
+- **Do not** use command blocks to ask for production **INI edits or container restart** before code ships — that is a redeploy, not data gathering.
+- When facts are missing and would change the plan, **do not guess** — ask for the paste (`plan-creation-contract.mdc` → *Grounding*).
 
 ## Overlap
 
@@ -80,3 +83,4 @@ docker compose exec pipeline su hpcperfstats -c 'ls -la /opt/hpcperfstats_data/a
 - **`docker-compose-non-unit-testing.mdc`** — agents run `tests/run_*_workflow.sh`; operators doing the same follow those scripts or the one-block `compose_test` pattern inside them.
 - **`readme-installation-sync.mdc`** — long-lived operator docs in `README.md` / `docs/TESTING.md` use the same `docker compose exec` shape.
 - **`workspace-layout-and-python-env.mdc`** — host `.venv` is for agent-side unit work, not operator production diagnostics.
+- **`deploy-ini-with-code-no-phase-zero.mdc`** — read-only operator data gathering anytime; INI change + restart only with code redeploy.

@@ -21,6 +21,7 @@ Notable contracts (see filename in `hpcperfstats/cursor-rules/`):
 - **`openapi-spa-wire-validation-contract.mdc`** — OpenAPI serializers must match live Django JSON validated by Orval Zod in `parseApiResponse`; wire contract tests required (`test_*_openapi_wire_contract.py`).
 - **`frontend-stack-wiring-contract.mdc`** — SPA routing, thin hooks, `response-schema-registry.ts`, and test mock layers must stay wired; see view → hook → API map and drift guards.
 - **`compose-operator-terminal-commands.mdc`** — plans and blocked diagnostics: operator commands as one copy/paste `docker compose exec` block per service.
+- **`deploy-ini-with-code-no-phase-zero.mdc`** — no pre-code INI redeploy; proactive read-only operator data gathering for plans.
 
 Adding a new domain rule (same task, non-optional):
 

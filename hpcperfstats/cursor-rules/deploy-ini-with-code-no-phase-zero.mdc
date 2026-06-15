@@ -1,0 +1,54 @@
+---
+description: No pre-code INI redeploy; proactively ask for read-only operator data (exec/logs) to improve plans
+alwaysApply: false
+globs: docs/plans/**,hpcperfstats.ini.example,docs/DEPLOY*.md
+---
+
+# Deploy INI With Code — No Pre-Code INI Redeploy
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Applies to **plan authoring**, **`hpcperfstats.ini.example`**, and **operator deploy docs** (`docs/DEPLOY*.md`).
+
+## Two different operator actions
+
+| Action | Redeploy? | In plans |
+|--------|-----------|----------|
+| **Read-only data gathering** — `docker compose exec`, `logs`, `ps`, `grep` ini, `stat` paths, `psql`, `redis-cli` | **No** | **Encouraged** — ask for extra paste when it sharpens facts, root cause, or fix design (`compose-operator-terminal-commands.mdc`) |
+| **INI edit + pipeline/container restart** | **Yes** — same work as shipping new code | **Forbidden as a pre-code step** — bundle with the code release |
+
+Changing production `hpcperfstats.ini` and recreating the pipeline container **is a redeploy**, not a lightweight workaround. Do **not** ask the operator to redeploy (INI or image) **before** gathering data or **before** code that needs that INI is available.
+
+## Law (INI / redeploy only)
+
+**Do not** add a plan step that asks the operator to hand-edit production `hpcperfstats.ini` and restart/recreate the pipeline **before** the matching code ships.
+
+On this project, **redeploying with a new INI vs new code is the same amount of work** (image rebuild or operator copy of `hpcperfstats.ini` into the image context + container recreate). Splitting “INI now, code later” does not reduce operator burden.
+
+## Required plan shape
+
+1. **Single deploy wave** — code changes + **new `conf_parser` fallbacks** + **active `hpcperfstats.ini.example` lines** ship together (not commented recommendations).
+2. **`hpcperfstats.ini.example`** — **uncommented** defaults matching getter `fallback=` values for new/changed `[PIPELINE]` knobs in the **same task** as getters and behavior (`hpcperfstats-ini-format.mdc`, `immutable-image-ini-policy.mdc`).
+3. **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** / **`README.md`** (when install steps change) — keys to set on **next** pipeline redeploy after pulling the release.
+4. **Operator commands (copy/paste)** — use **`compose-operator-terminal-commands.mdc`**:
+   - **During planning / investigation** — request read-only pastes (logs, RSS, cgroup, file `stat`, DB counts) **without** asking for redeploy; **do not guess** when paste would improve the plan.
+   - **After release redeploy** — verify cgroup headroom, RSS, logs.
+   - **When blocked** on missing facts mid-implementation.
+
+## Forbidden in plans
+
+- “Apply these INI changes immediately before code deploy” or “restart pipeline with new INI first”
+- A dedicated todo whose only deliverable is operator INI edits + redeploy ahead of implementation
+- Implying INI patches or container restart are faster than waiting for the release artifact
+- Skipping operator data requests when read-only `exec`/`logs` would materially improve grounding
+
+## Allowed
+
+- Recommended INI values in example + DEPLOY prose, applied on **the same redeploy** as the fix.
+- Runtime-only env overrides when the project already documents them (rare; cite the doc).
+- Any number of **read-only** diagnostic command blocks before implementation.
+
+## Overlap
+
+- **`immutable-image-ini-policy.mdc`** — production ini is baked in the image, not bind-mounted.
+- **`compose-operator-terminal-commands.mdc`** — copy/paste blocks; proactive planning data gathering + post-deploy verification.
+- **`plan-creation-contract.mdc`** — plan structure and grounding; ask, do not guess.
+- **`readme-installation-sync.mdc`** — operator install/redeploy steps when wiring changes.

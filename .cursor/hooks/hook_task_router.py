@@ -191,6 +191,19 @@ ROUTER_ENTRIES: list[RouterEntry] = [
             "plan-creation-contract.mdc",
             "plan-template-enforcement.mdc",
             "compose-operator-terminal-commands.mdc",
+            "deploy-ini-with-code-no-phase-zero.mdc",
+        ],
+    },
+    {
+        "id": "deploy_ini_redeploy",
+        "patterns": [
+            "hpcperfstats.ini.example",
+            "docs/DEPLOY_CONCURRENCY_AND_NUMA.md",
+        ],
+        "rules": [
+            "deploy-ini-with-code-no-phase-zero.mdc",
+            "immutable-image-ini-policy.mdc",
+            "hpcperfstats-ini-format.mdc",
         ],
     },
     {

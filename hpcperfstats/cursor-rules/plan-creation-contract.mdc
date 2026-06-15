@@ -17,7 +17,7 @@ Applies to **every plan**: pre-code chat plans, **`docs/plans/`** design docs, m
 - Base every claim on **verified facts** from the repo (code, tests, logs, committed docs) — not assumptions.
 - Read callers, tests, and applicable workspace rules before stating current behavior or scope.
 - If a requirement, API, config key, acceptance criterion, or best-practice choice is unclear: **ask the user**; **do not guess** or invent context.
-- When the operator must run terminal commands to supply facts, use **`compose-operator-terminal-commands.mdc`**: one copy/paste block per Compose service, combined commands per container.
+- When the operator must run terminal commands to supply facts, use **`compose-operator-terminal-commands.mdc`**: one copy/paste block per Compose service. Read-only `exec`/`logs` need **no redeploy**; request them proactively when they improve the plan (`deploy-ini-with-code-no-phase-zero.mdc`).
 
 ## Industry best practices
 
@@ -28,7 +28,7 @@ Applies to **every plan**: pre-code chat plans, **`docs/plans/`** design docs, m
 ## Required plan steps (in order)
 
 1. **Problem and facts** — constraints, verified current behavior, affected layers.
-2. **Approach** — ordered steps with trade-offs tied to the best-practice callouts above.
+2. **Approach** — ordered steps with trade-offs tied to the best-practice callouts above. **Do not** ask for production INI edits or pipeline restart before code (that is a redeploy). **Do** ask for read-only operator pastes when they improve grounding (`deploy-ini-with-code-no-phase-zero.mdc`, `compose-operator-terminal-commands.mdc`).
 3. **Testing** — every behavior change must include at least one **regression test and/or unit test** at the narrowest layer that proves the contract. Cite existing test modules or name new ones. For fixes, follow **`every-error-regression-test.mdc`** and **`test-first-discipline.mdc`**.
 4. **Implementation** — what will change (files/layers). Omit for answer-only or doc-only work with no logic change.
 5. **Cursor rules** — enshrine modalities, best practices, contracts, and failure modes that should guide future work:
@@ -104,3 +104,4 @@ A plan — and the work it describes — is **not complete** until:
 - **`monitor-consumer-side-plan.mdc`** — consumer handoff plans must include testing and final review sections.
 - **`test-runs-output-directory.mdc`** — committed **`docs/plans/`** hold design baselines; run artifacts stay under **`test_runs/`**.
 - **`chat-analysis-for-rules.mdc`** — on-demand transcript mining for rule ideas; this rule requires enshrining patterns discovered during implementation plans in the same task when clear.
+- **`deploy-ini-with-code-no-phase-zero.mdc`** — redeploy INI + code together; no Phase 0 operator-only INI steps in plans.
