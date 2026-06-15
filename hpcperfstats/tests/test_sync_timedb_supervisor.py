@@ -5249,6 +5249,79 @@ def test_supervisor_startup_tail_ingest_loops_two_small_days(
     shutdown_requested[0] = False
 
 
+def test_supervisor_startup_tail_ingest_uses_imap_and_prewarm_when_pool_present(
+    monkeypatch, tmp_path, capsys):
+  shutdown_requested[0] = False
+  imap_calls = []
+  prewarm_calls = []
+  tail_state = {"unprocessed": {}}
+  try:
+    daily_dir = tmp_path / "daily"
+    daily_dir.mkdir()
+    tar_norm = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+    open(tar_norm, "wb").close()
+    raw_paths = []
+    for i in range(3):
+      p = tmp_path / ("raw_%d" % i)
+      p.write_bytes(b"x")
+      raw_paths.append(str(p))
+    tail_state["unprocessed"] = {tar_norm: list(raw_paths)}
+
+    def live_unprocessed(*_a, **_k):
+      return dict(tail_state["unprocessed"])
+
+    def fake_get_context(name):
+      assert name == "spawn"
+
+      class _Ctx:
+        def Pool(self, processes=None, **kwargs):
+          del processes, kwargs
+          return _FakeIngestPool()
+
+      return _Ctx()
+
+    class _FakeManager:
+      def dict(self):
+        return {}
+
+    def spy_imap(pool, fn, paths, **kwargs):
+      del pool, fn
+      imap_calls.append({
+          "paths": list(paths),
+          "context": kwargs.get("context"),
+      })
+      for path in paths:
+        yield (path, True, True, 0.0)
+      tail_state["unprocessed"] = {}
+
+    def spy_prewarm(paths):
+      prewarm_calls.append(list(paths))
+      return {}
+
+    archive_dir, _ = _startup_tail_drain_patches(
+        monkeypatch, tmp_path, live_unprocessed_fn=live_unprocessed, max_files=100)
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: False)
+    monkeypatch.setattr(st.multiprocessing, "get_context", fake_get_context)
+    monkeypatch.setattr(st.multiprocessing, "Manager", lambda: _FakeManager())
+    monkeypatch.setattr(st, "_imap_ingest_paths_batched", spy_imap)
+    monkeypatch.setattr(st, "_prewarm_archive_members_redis_for_chunk", spy_prewarm)
+    monkeypatch.setattr(
+        st, "add_stats_file_to_db",
+        lambda _lock, path, **_k: (path, True, True, 0.0))
+
+    st.run_sync_timedb_supervisor_loop(
+        str(archive_dir), "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
+
+    out = capsys.readouterr().out
+    assert "startup tail ingest begin" in out
+    assert len(imap_calls) == 1
+    assert imap_calls[0]["paths"] == raw_paths
+    assert imap_calls[0]["context"] == "sync_timedb startup_tail_ingest"
+    assert prewarm_calls == [raw_paths]
+  finally:
+    shutdown_requested[0] = False
+
+
 def test_supervisor_reconcile_prepends_oldest_blocked_before_chunk(
     monkeypatch, tmp_path):
   shutdown_requested[0] = False

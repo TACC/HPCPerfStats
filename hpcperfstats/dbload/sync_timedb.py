@@ -3407,6 +3407,229 @@ def run_sync_timedb_supervisor_loop(
           files_to_be_archived.append(stats_fname)
     return successful_paths, files_to_be_archived
 
+  def _ingest_explicit_path_batch(
+      paths,
+      *,
+      context_label,
+      pending_total,
+      batch_chunk_counter,
+  ):
+    """Ingest an explicit path list via pool imap or supervisor-thread fallback."""
+    nonlocal pool_worker_exit, active_chunk_ingest_tracker
+
+    successful_paths = []
+    files_to_be_archived = []
+    chunk_ingest_finished = 0
+    active_chunk_ingest_tracker = None
+
+    stall_diagnostics.chunk_batch_size = len(paths)
+    stall_diagnostics.chunk_prewarm_summary = (
+        _prewarm_archive_members_redis_for_chunk(paths)
+    )
+
+    k = 0
+    active_workers = 0
+    imap_context = "sync_timedb %s" % context_label
+
+    if _sync_timedb_ingest_inline_requested() or ingest_pool is None:
+      try:
+        inline_successful, inline_archived = _ingest_paths_on_supervisor_thread(
+            paths)
+        return inline_successful, inline_archived, active_workers, k
+      finally:
+        active_chunk_ingest_tracker = None
+
+    try:
+      if use_split_db_writer_pipeline:
+        parse_tasks = deque()
+        writer_stage_batch_size = _db_writer_stage_batch_size(
+            len(paths),
+            ingest_queue_high,
+        )
+        parse_envelopes = [ParseTask(path=path) for path in paths]
+        parse_tracker = None
+        parse_paths = [task.path for task in parse_envelopes]
+        parse_tracker = _IngestPoolInFlightTracker(parse_paths)
+        active_chunk_ingest_tracker = parse_tracker
+        parse_results_iter = _imap_ingest_paths_batched(
+            ingest_pool,
+            _parse_stats_file_payload,
+            parse_paths,
+            thread_count=thread_count,
+            context=imap_context,
+            tracker=parse_tracker,
+            chunk_counter=batch_chunk_counter,
+            pending_count=pending_total,
+            ingest_pool=ingest_pool,
+            db_writer_pool=db_writer_pool,
+            archive_pool=archive_pool,
+            stall_diagnostics=stall_diagnostics,
+        )
+        for parsed in parse_results_iter:
+          stats_fname, payload, need_archival, ingest_ok, parse_elapsed_s = parsed
+          if parse_tracker is not None:
+            parse_tracker.complete(stats_fname)
+          k += 1
+          active_workers = max(active_workers, min(thread_count, k))
+          if not ingest_ok:
+            continue
+          if payload is None:
+            _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
+            successful_paths.append(stats_fname)
+            if should_archive and need_archival:
+              files_to_be_archived.append(stats_fname)
+            remaining = pending_total - chunk_ingest_finished - 1
+            chunk_ingest_finished += 1
+            _log_sync_timedb_ingest_completed(
+                stats_fname, parse_elapsed_s, remaining, stage="parse",
+            )
+            continue
+          parse_tasks.append(
+              DBWriteTask(
+                  path=stats_fname,
+                  payload=payload,
+                  need_archival=need_archival,
+                  parse_elapsed_s=parse_elapsed_s,
+              ))
+          _transition_file_state(file_states, stats_fname, SyncFileState.PARSED)
+          if len(parse_tasks) >= writer_stage_batch_size:
+            chunk_ingest_finished = _drain_db_write_tasks(
+                parse_tasks=parse_tasks,
+                manager_lock=manager_lock,
+                db_writer_pool=db_writer_pool,
+                file_states=file_states,
+                successful_paths=successful_paths,
+                files_to_be_archived=files_to_be_archived,
+                chunk_ingest_finished=chunk_ingest_finished,
+                pending_total=pending_total,
+                chunk_counter=batch_chunk_counter,
+                ingest_pool=ingest_pool,
+                archive_pool=archive_pool,
+                stall_diagnostics=stall_diagnostics,
+            )
+        if parse_tasks:
+          chunk_ingest_finished = _drain_db_write_tasks(
+              parse_tasks=parse_tasks,
+              manager_lock=manager_lock,
+              db_writer_pool=db_writer_pool,
+              file_states=file_states,
+              successful_paths=successful_paths,
+              files_to_be_archived=files_to_be_archived,
+              chunk_ingest_finished=chunk_ingest_finished,
+              pending_total=pending_total,
+              chunk_counter=batch_chunk_counter,
+              ingest_pool=ingest_pool,
+              archive_pool=archive_pool,
+              stall_diagnostics=stall_diagnostics,
+          )
+      elif db_writer_combined_task:
+        add_combined = partial(_ingest_parse_and_write_file, manager_lock)
+        combined_tracker = _IngestPoolInFlightTracker(paths)
+        active_chunk_ingest_tracker = combined_tracker
+        results_iter = _imap_ingest_paths_batched(
+            ingest_pool,
+            add_combined,
+            paths,
+            thread_count=thread_count,
+            context=imap_context,
+            tracker=combined_tracker,
+            chunk_counter=batch_chunk_counter,
+            pending_count=pending_total,
+            ingest_pool=ingest_pool,
+            db_writer_pool=db_writer_pool,
+            archive_pool=archive_pool,
+            stall_diagnostics=stall_diagnostics,
+        )
+        for result in results_iter:
+          ingest_ok = True
+          elapsed_s = 0.0
+          if len(result) >= 4:
+            stats_fname, need_archival, ingest_ok, elapsed_s = result[:4]
+          elif len(result) >= 3:
+            stats_fname, need_archival, ingest_ok = result[:3]
+          else:
+            stats_fname, need_archival = result
+          if combined_tracker is not None:
+            combined_tracker.complete(stats_fname)
+          k += 1
+          active_workers = max(active_workers, min(thread_count, k))
+          if ingest_ok:
+            _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
+            successful_paths.append(stats_fname)
+            if should_archive and need_archival:
+              files_to_be_archived.append(stats_fname)
+            remaining = pending_total - chunk_ingest_finished - 1
+            chunk_ingest_finished += 1
+            _log_sync_timedb_ingest_completed(
+                stats_fname, elapsed_s, remaining, stage="ingest",
+            )
+      else:
+        add_stats_file = partial(add_stats_file_to_db, manager_lock)
+        ingest_tracker = _IngestPoolInFlightTracker(paths)
+        active_chunk_ingest_tracker = ingest_tracker
+        results_iter = _imap_ingest_paths_batched(
+            ingest_pool,
+            add_stats_file,
+            paths,
+            thread_count=thread_count,
+            context=imap_context,
+            tracker=ingest_tracker,
+            chunk_counter=batch_chunk_counter,
+            pending_count=pending_total,
+            ingest_pool=ingest_pool,
+            db_writer_pool=db_writer_pool,
+            archive_pool=archive_pool,
+            stall_diagnostics=stall_diagnostics,
+        )
+        for result in results_iter:
+          ingest_ok = True
+          elapsed_s = 0.0
+          if len(result) >= 4:
+            stats_fname, need_archival, ingest_ok, elapsed_s = result[:4]
+          elif len(result) >= 3:
+            stats_fname, need_archival, ingest_ok = result[:3]
+          else:
+            stats_fname, need_archival = result
+          if ingest_tracker is not None:
+            ingest_tracker.complete(stats_fname)
+          k += 1
+          active_workers = max(active_workers, min(thread_count, k))
+          if ingest_ok:
+            _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
+            successful_paths.append(stats_fname)
+            if should_archive and need_archival:
+              files_to_be_archived.append(stats_fname)
+            remaining = pending_total - chunk_ingest_finished - 1
+            chunk_ingest_finished += 1
+            _log_sync_timedb_ingest_completed(
+                stats_fname, elapsed_s, remaining, stage="ingest",
+            )
+    except MultiprocessingWorkerExitError as exc:
+      pool_worker_exit = True
+      _handle_pool_worker_exit_fatal(
+          exc,
+          ingest_pool=ingest_pool,
+          db_writer_pool=db_writer_pool,
+          archive_pool=archive_pool,
+      )
+    except DatabaseUnavailableExit:
+      raise
+    except ArchiveMembersRedisUnavailableError as exc:
+      _exit_on_archive_members_redis_unavailable(exc)
+    except Exception as exc:
+      if use_split_db_writer_pipeline:
+        error_context = "sync_timedb ingest parse pool"
+      elif db_writer_combined_task:
+        error_context = "sync_timedb ingest pool"
+      else:
+        error_context = "sync_timedb ingest pool"
+      reraise_database_unavailable_chain(exc, context=error_context)
+      raise
+    finally:
+      active_chunk_ingest_tracker = None
+
+    return successful_paths, files_to_be_archived, active_workers, k
+
   def _finalize_ingest_archive_batch(
       successful_paths,
       files_to_be_archived,
@@ -3480,8 +3703,14 @@ def run_sync_timedb_supervisor_loop(
     _flush_checkpoint_if_needed(force=True)
 
   def _run_ingest_archive_paths_batch(paths, context_label):
-    successful_paths, files_to_be_archived = _ingest_paths_on_supervisor_thread(
-        paths)
+    successful_paths, files_to_be_archived, _active_workers, _k = (
+        _ingest_explicit_path_batch(
+            paths,
+            context_label=context_label,
+            pending_total=len(paths),
+            batch_chunk_counter=0,
+        )
+    )
     _finalize_ingest_archive_batch(
         successful_paths,
         files_to_be_archived,
@@ -4236,272 +4465,14 @@ def run_sync_timedb_supervisor_loop(
           continue
 
         chunk_in_progress = True
-        files_to_be_archived = []
-        successful_paths = []
-        chunk_ingest_finished = 0
-        active_chunk_ingest_tracker = None
-
-        stall_diagnostics.chunk_batch_size = len(stats_files_chunk)
-        stall_diagnostics.chunk_prewarm_summary = (
-            _prewarm_archive_members_redis_for_chunk(stats_files_chunk)
+        successful_paths, files_to_be_archived, active_workers, k = (
+            _ingest_explicit_path_batch(
+                stats_files_chunk,
+                context_label="ingest chunk",
+                pending_total=len(pending_stats_files),
+                batch_chunk_counter=chunk_counter,
+            )
         )
-
-        k = 0
-        active_workers = 0
-        if use_split_db_writer_pipeline:
-          parse_tasks = deque()
-          writer_stage_batch_size = _db_writer_stage_batch_size(
-              target_chunk_size,
-              ingest_queue_high,
-          )
-          parse_envelopes = [ParseTask(path=path) for path in stats_files_chunk]
-          parse_tracker = None
-          try:
-            if _sync_timedb_ingest_inline_requested():
-              parse_results_iter = (
-                  _parse_stats_file_payload(task.path) for task in parse_envelopes
-              )
-            elif ingest_pool is None:
-              parse_results_iter = iter(())
-            else:
-              parse_paths = [task.path for task in parse_envelopes]
-              parse_tracker = _IngestPoolInFlightTracker(parse_paths)
-              active_chunk_ingest_tracker = parse_tracker
-              parse_results_iter = _imap_ingest_paths_batched(
-                  ingest_pool,
-                  _parse_stats_file_payload,
-                  parse_paths,
-                  thread_count=thread_count,
-                  context="sync_timedb ingest parse pool",
-                  tracker=parse_tracker,
-                  chunk_counter=chunk_counter,
-                  pending_count=len(pending_stats_files),
-                  ingest_pool=ingest_pool,
-                  db_writer_pool=db_writer_pool,
-                  archive_pool=archive_pool,
-                  stall_diagnostics=stall_diagnostics,
-              )
-            for parsed in parse_results_iter:
-              stats_fname, payload, need_archival, ingest_ok, parse_elapsed_s = parsed
-              if parse_tracker is not None:
-                parse_tracker.complete(stats_fname)
-              k += 1
-              active_workers = max(active_workers, min(thread_count, k))
-              if not ingest_ok:
-                continue
-              if payload is None:
-                _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
-                successful_paths.append(stats_fname)
-                if should_archive and need_archival:
-                  files_to_be_archived.append(stats_fname)
-                remaining = len(pending_stats_files) - chunk_ingest_finished - 1
-                chunk_ingest_finished += 1
-                _log_sync_timedb_ingest_completed(
-                    stats_fname, parse_elapsed_s, remaining, stage="parse",
-                )
-                continue
-              parse_tasks.append(
-                  DBWriteTask(
-                      path=stats_fname,
-                      payload=payload,
-                      need_archival=need_archival,
-                      parse_elapsed_s=parse_elapsed_s,
-                  ))
-              _transition_file_state(file_states, stats_fname, SyncFileState.PARSED)
-              if len(parse_tasks) >= writer_stage_batch_size:
-                chunk_ingest_finished = _drain_db_write_tasks(
-                    parse_tasks=parse_tasks,
-                    manager_lock=manager_lock,
-                    db_writer_pool=db_writer_pool,
-                    file_states=file_states,
-                    successful_paths=successful_paths,
-                    files_to_be_archived=files_to_be_archived,
-                    chunk_ingest_finished=chunk_ingest_finished,
-                    pending_total=len(pending_stats_files),
-                    chunk_counter=chunk_counter,
-                    ingest_pool=ingest_pool,
-                    archive_pool=archive_pool,
-                    stall_diagnostics=stall_diagnostics,
-                )
-          except MultiprocessingWorkerExitError as exc:
-            pool_worker_exit = True
-            _handle_pool_worker_exit_fatal(
-                exc,
-                ingest_pool=ingest_pool,
-                db_writer_pool=db_writer_pool,
-                archive_pool=archive_pool,
-            )
-          except DatabaseUnavailableExit:
-            raise
-          except Exception as exc:
-            reraise_database_unavailable_chain(
-                exc, context="sync_timedb ingest parse pool"
-            )
-            raise
-
-          if parse_tasks:
-            try:
-              chunk_ingest_finished = _drain_db_write_tasks(
-                  parse_tasks=parse_tasks,
-                  manager_lock=manager_lock,
-                  db_writer_pool=db_writer_pool,
-                  file_states=file_states,
-                  successful_paths=successful_paths,
-                  files_to_be_archived=files_to_be_archived,
-                  chunk_ingest_finished=chunk_ingest_finished,
-                  pending_total=len(pending_stats_files),
-                  chunk_counter=chunk_counter,
-                  ingest_pool=ingest_pool,
-                  archive_pool=archive_pool,
-                  stall_diagnostics=stall_diagnostics,
-              )
-            except MultiprocessingWorkerExitError as exc:
-              pool_worker_exit = True
-              _handle_pool_worker_exit_fatal(
-                  exc,
-                  ingest_pool=ingest_pool,
-                  db_writer_pool=db_writer_pool,
-                  archive_pool=archive_pool,
-              )
-            except DatabaseUnavailableExit:
-              raise
-            except Exception as exc:
-              reraise_database_unavailable_chain(
-                  exc, context="sync_timedb ingest db_writer pool"
-              )
-              raise
-        elif db_writer_combined_task:
-          add_combined = partial(_ingest_parse_and_write_file, manager_lock)
-          combined_tracker = None
-          try:
-            if _sync_timedb_ingest_inline_requested():
-              results_iter = (
-                  add_combined(path) for path in stats_files_chunk
-              )
-            elif ingest_pool is None:
-              results_iter = iter(())
-            else:
-              combined_tracker = _IngestPoolInFlightTracker(stats_files_chunk)
-              active_chunk_ingest_tracker = combined_tracker
-              results_iter = _imap_ingest_paths_batched(
-                  ingest_pool,
-                  add_combined,
-                  stats_files_chunk,
-                  thread_count=thread_count,
-                  context="sync_timedb ingest pool",
-                  tracker=combined_tracker,
-                  chunk_counter=chunk_counter,
-                  pending_count=len(pending_stats_files),
-                  ingest_pool=ingest_pool,
-                  db_writer_pool=db_writer_pool,
-                  archive_pool=archive_pool,
-                  stall_diagnostics=stall_diagnostics,
-              )
-            for result in results_iter:
-              ingest_ok = True
-              elapsed_s = 0.0
-              if len(result) >= 4:
-                stats_fname, need_archival, ingest_ok, elapsed_s = result[:4]
-              elif len(result) >= 3:
-                stats_fname, need_archival, ingest_ok = result[:3]
-              else:
-                stats_fname, need_archival = result
-              if combined_tracker is not None:
-                combined_tracker.complete(stats_fname)
-              k += 1
-              active_workers = max(active_workers, min(thread_count, k))
-              if ingest_ok:
-                _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
-                successful_paths.append(stats_fname)
-                if should_archive and need_archival:
-                  files_to_be_archived.append(stats_fname)
-                remaining = len(pending_stats_files) - chunk_ingest_finished - 1
-                chunk_ingest_finished += 1
-                _log_sync_timedb_ingest_completed(
-                    stats_fname, elapsed_s, remaining, stage="ingest",
-                )
-          except MultiprocessingWorkerExitError as exc:
-            pool_worker_exit = True
-            _handle_pool_worker_exit_fatal(
-                exc,
-                ingest_pool=ingest_pool,
-                db_writer_pool=db_writer_pool,
-                archive_pool=archive_pool,
-            )
-          except DatabaseUnavailableExit:
-            raise
-          except ArchiveMembersRedisUnavailableError as exc:
-            _exit_on_archive_members_redis_unavailable(exc)
-          except Exception as exc:
-            reraise_database_unavailable_chain(
-                exc, context="sync_timedb ingest pool"
-            )
-            raise
-        else:
-          add_stats_file = partial(add_stats_file_to_db, manager_lock)
-          ingest_tracker = None
-          try:
-            if _sync_timedb_ingest_inline_requested():
-              results_iter = (add_stats_file(path) for path in stats_files_chunk)
-            elif ingest_pool is None:
-              results_iter = iter(())
-            else:
-              ingest_tracker = _IngestPoolInFlightTracker(stats_files_chunk)
-              active_chunk_ingest_tracker = ingest_tracker
-              results_iter = _imap_ingest_paths_batched(
-                  ingest_pool,
-                  add_stats_file,
-                  stats_files_chunk,
-                  thread_count=thread_count,
-                  context="sync_timedb ingest pool",
-                  tracker=ingest_tracker,
-                  chunk_counter=chunk_counter,
-                  pending_count=len(pending_stats_files),
-                  ingest_pool=ingest_pool,
-                  db_writer_pool=db_writer_pool,
-                  archive_pool=archive_pool,
-                  stall_diagnostics=stall_diagnostics,
-              )
-            for result in results_iter:
-              ingest_ok = True
-              elapsed_s = 0.0
-              if len(result) >= 4:
-                stats_fname, need_archival, ingest_ok, elapsed_s = result[:4]
-              elif len(result) >= 3:
-                stats_fname, need_archival, ingest_ok = result[:3]
-              else:
-                stats_fname, need_archival = result
-              if ingest_tracker is not None:
-                ingest_tracker.complete(stats_fname)
-              k += 1
-              active_workers = max(active_workers, min(thread_count, k))
-              if ingest_ok:
-                _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
-                successful_paths.append(stats_fname)
-                if should_archive and need_archival:
-                  files_to_be_archived.append(stats_fname)
-                remaining = len(pending_stats_files) - chunk_ingest_finished - 1
-                chunk_ingest_finished += 1
-                _log_sync_timedb_ingest_completed(
-                    stats_fname, elapsed_s, remaining, stage="ingest",
-                )
-          except MultiprocessingWorkerExitError as exc:
-            pool_worker_exit = True
-            _handle_pool_worker_exit_fatal(
-                exc,
-                ingest_pool=ingest_pool,
-                db_writer_pool=db_writer_pool,
-                archive_pool=archive_pool,
-            )
-          except DatabaseUnavailableExit:
-            raise
-          except ArchiveMembersRedisUnavailableError as exc:
-            _exit_on_archive_members_redis_unavailable(exc)
-          except Exception as exc:
-            reraise_database_unavailable_chain(
-                exc, context="sync_timedb ingest pool"
-            )
-            raise
 
         log_print("loading time", time.time() - ingest_t0)
         log_print(

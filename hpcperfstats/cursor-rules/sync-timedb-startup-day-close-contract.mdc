@@ -46,13 +46,13 @@ Delete phases are driven via `_maybe_handle_raw_removal_delete_phase()` during t
 
 ## Startup tail ingest (≤100 files)
 
-When **`sync_startup_tail_ingest_enabled=yes`**, each startup drain iteration (before drain-complete) may run **`_run_startup_tail_ingest_once`**: live-scan oldest calendar day with on-disk checkpoint-unprocessed paths; when count ≤ **`sync_startup_tail_ingest_max_files`**, ingest **only those paths** on the supervisor thread, archive finalize, flush checkpoint, submit async **`DAY_CLOSE`**, then repeat for the next oldest day. Days with > max paths skip tail ingest (main ingest + pending reconcile handle them). Logs: **`sync_timedb: startup tail ingest begin|complete|skip|submitted day_close`**.
+When **`sync_startup_tail_ingest_enabled=yes`**, each startup drain iteration (before drain-complete) may run **`_run_startup_tail_ingest_once`**: live-scan oldest calendar day with on-disk checkpoint-unprocessed paths; when count ≤ **`sync_startup_tail_ingest_max_files`**, ingest **only those paths** via the **ingest pool imap sliding-window path** (same as main ingest; **`HPCPERFSTATS_SYNC_TIMEDB_INGEST_INLINE=1`** forces supervisor-thread serial ingest for tests), archive finalize, flush checkpoint, submit async **`DAY_CLOSE`**, then repeat for the **next oldest day** (cross-day tail remains serial: one calendar day per drain iteration). Days with > max paths skip tail ingest (main ingest + pending reconcile handle them). Logs: **`sync_timedb: startup tail ingest begin|complete|skip|submitted day_close`**.
 
 ## INI knobs
 
 - `sync_startup_day_close_preflight` (default yes)
 - `sync_startup_drain_day_close_before_ingest` (default yes)
-- `sync_startup_tail_ingest_enabled` (default yes) — during startup drain, run bounded supervisor-thread ingest for checkpoint-blocked tails before main ingest gate clears
+- `sync_startup_tail_ingest_enabled` (default yes) — during startup drain, run bounded pool imap ingest for checkpoint-blocked tails before main ingest gate clears
 - `sync_startup_tail_ingest_max_files` (default 100) — max on-disk unprocessed paths per calendar day eligible for startup tail ingest; older blocked days loop until gap cleared or count exceeds max
 - `sync_startup_day_close_budget_seconds` (default 300) — applies to **submit** loop after scans
 - `sync_startup_day_close_max_inflight` (default = `archive_seal_parallel_workers`, typically 4) — startup discover + janitor `reason=startup` submit cap; backoff when `active_or_submitted_tar_paths()` ≥ cap
