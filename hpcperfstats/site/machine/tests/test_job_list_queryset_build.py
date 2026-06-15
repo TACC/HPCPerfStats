@@ -1,6 +1,7 @@
 """Regression: job list queryset must tolerate search params and stray GET keys."""
 
 from datetime import timedelta
+from unittest.mock import MagicMock, patch
 
 import pytest
 from django.db import connection
@@ -330,3 +331,51 @@ def test_job_list_queryset_ignores_unsupported_derived_metric_operators():
 
     assert cur_metrics == {"avg_freq__contains": "2"}
     assert qs.count() == 2
+
+
+@pytest.mark.machine_unit_mock
+def test_bare_metrics_batch_param_does_not_break_queryset_build():
+    """Histogram batch ``metrics=runtime,...`` must not collide with metric filter parsing."""
+    from hpcperfstats.site.machine import api
+    from hpcperfstats.site.machine.api import _JOB_LIST_QUERY_FIELD_EXCLUDES_HISTOGRAM
+
+    factory = RequestFactory()
+    request = factory.get(
+        "/api/jobs/histograms/batch/",
+        {
+            "metrics": "runtime,nhosts,queue_wait",
+            "end_time__date": "2026-06",
+        },
+    )
+    request.session = {"username": "admin", "is_staff": True}
+
+    chain = MagicMock()
+    chain.count.return_value = 2
+    chain.filter.return_value = chain
+    chain.order_by.return_value = chain
+
+    with patch.object(api.job_data.objects, "filter", return_value=chain), patch.object(
+        api, "_apply_non_staff_job_visibility", side_effect=lambda qs, _r: qs
+    ), patch.object(
+        api, "normalize_job_list_query_params", side_effect=lambda f: f
+    ), patch.object(
+        api, "expand_month_date_to_range", side_effect=lambda f: f
+    ), patch.object(
+        api, "get_job_list_order_by", return_value="-end_time"
+    ), patch.object(
+        api, "partition_job_list_acct_filters", return_value=({}, None)
+    ), patch.object(
+        api, "annotate_job_list_performance_fields", return_value=chain
+    ):
+        qs, _fields, cur_metrics, _order = api._build_job_list_queryset_from_request(
+            request,
+            extra_excluded_fields=_JOB_LIST_QUERY_FIELD_EXCLUDES_HISTOGRAM,
+            annotate_all=True,
+        )
+        _hist_qs, nj, _fields2, cur_metrics2 = api._build_histogram_queryset(request)
+
+    assert cur_metrics == {}
+    assert cur_metrics2 == {}
+    assert nj == 2
+    assert nj == qs.count()
+    assert nj == _hist_qs.count()

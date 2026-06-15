@@ -460,6 +460,92 @@ def test_invalidate_job_browse_path_also_targets_job_list_api_cache():
     assert "/api/jobs/histograms/batch/" in deleted_paths
 
 
+@pytest.mark.machine_unit_mock
+def test_histogram_queryset_nj_matches_job_list_with_batch_metrics_param():
+    """Batch histogram ``metrics=`` param must not force nj=0 when jobs match the filter."""
+    from hpcperfstats.site.machine import api
+    from hpcperfstats.site.machine.api import (
+        JOB_LIST_HISTOGRAM_NO_JOBS_REASON,
+        job_list,
+        job_list_histograms_batch,
+    )
+
+    factory = RequestFactory()
+    params = {
+        "end_time__date": "2026-06",
+        "username": "parity-user",
+        "metrics": "runtime,nhosts,queue_wait",
+        "_histogram_embed_v": "9",
+    }
+    list_request = factory.get("/api/jobs/", params)
+    list_request.session = {"username": "admin", "is_staff": True}
+    batch_request = factory.get("/api/jobs/histograms/batch/", params)
+    batch_request.session = {"username": "admin", "is_staff": True}
+
+    chain = MagicMock()
+    chain.count.return_value = 2
+    chain.filter.return_value = chain
+    chain.order_by.return_value = chain
+    chain.aggregate.return_value = {"total_node_hours": 0.0}
+    page = MagicMock()
+    page.number = 1
+    page.has_previous.return_value = False
+    page.has_next.return_value = False
+    page.object_list = []
+    paginator = MagicMock()
+    paginator.num_pages = 1
+    paginator.page.return_value = page
+
+    with patch.object(api.job_data.objects, "filter", return_value=chain), patch.object(
+        api, "_apply_non_staff_job_visibility", side_effect=lambda qs, _r: qs
+    ), patch.object(
+        api, "normalize_job_list_query_params", side_effect=lambda f: f
+    ), patch.object(
+        api, "expand_month_date_to_range", side_effect=lambda f: f
+    ), patch.object(
+        api, "get_job_list_order_by", return_value="-end_time"
+    ), patch.object(
+        api, "partition_job_list_acct_filters", return_value=({"username": "parity-user"}, None)
+    ), patch.object(
+        api, "annotate_job_list_performance_fields", return_value=chain
+    ), patch.object(
+        api, "build_job_list_qname_and_filter_summary", return_value=("", [])
+    ), patch.object(
+        api, "aggregate_queue_wait_seconds_stats", return_value={"mean_wait_s": None}
+    ), patch.object(api, "Paginator", return_value=paginator), patch.object(
+        api, "JobListSerializer", return_value=MagicMock(data=[])
+    ), patch(
+        "hpcperfstats.site.machine.api.check_for_tokens", return_value=True
+    ), patch.object(
+        api,
+        "_build_metric_histogram_payload",
+        side_effect=lambda _df, _hm, metric, nj: {
+            "metric": metric,
+            "nj": nj,
+            "plot_item_thumb": {"root_id": "1"},
+            "plot_item_full": {"root_id": "2"},
+        },
+    ), patch.object(
+        api,
+        "_build_histogram_dataframe",
+        return_value=(MagicMock(), [("runtime", "hours")], ["j1", "j2"]),
+    ):
+        list_response = job_list(list_request)
+        batch_response = job_list_histograms_batch(batch_request)
+
+    assert list_response.status_code == 200
+    assert batch_response.status_code == 200
+    list_data = list_response.data
+    batch_data = batch_response.data
+    assert list_data["nj"] == 2
+    assert batch_data["nj"] == list_data["nj"]
+    assert len(batch_data["histograms"]) == 3
+    for row in batch_data["histograms"]:
+        reason = row.get("plot_unavailable_reason")
+        assert reason != JOB_LIST_HISTOGRAM_NO_JOBS_REASON
+        assert row.get("plot_item_thumb") is not None or reason is None
+
+
 class TestJobListNoHistogramsInResponse:
     """Ensure job_list response no longer includes script/div."""
 

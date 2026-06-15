@@ -186,6 +186,6 @@ describe("api client", () => {
     const metricUrl = fetch.mock.calls[0][0];
     expect(metricUrl).toContain("group=metric");
     expect(metricUrl).toContain("metric=runtime");
-    expect(metricUrl).toContain("_histogram_embed_v=8");
+    expect(metricUrl).toContain("_histogram_embed_v=9");
   });
 });

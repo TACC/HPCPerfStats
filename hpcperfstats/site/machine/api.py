@@ -622,7 +622,7 @@ def _build_job_list_queryset_from_request(request, extra_excluded_fields=(), ann
     cur_metrics = {
         k.split("_", 1)[1]: v
         for k, v in fields.items()
-        if k.split("_", 1)[0] == "metrics"
+        if k.startswith("metrics_")
     }
     queryset = _apply_job_list_metric_filters(queryset, cur_metrics)
     if order_by.lstrip("-") == "metrics_distinct_time_count":
