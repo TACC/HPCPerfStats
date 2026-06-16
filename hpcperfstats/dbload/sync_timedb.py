@@ -25,6 +25,11 @@ import math
 import multiprocessing
 from contextlib import contextmanager
 import os
+
+from hpcperfstats.dbload.blas_thread_env import configure_blas_thread_env
+
+configure_blas_thread_env()
+
 import shutil
 import signal
 import tempfile

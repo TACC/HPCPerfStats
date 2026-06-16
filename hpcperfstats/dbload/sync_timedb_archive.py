@@ -22,22 +22,15 @@ import re
 import sys
 import time
 
-_BLAS_THREAD_ENV_KEYS = (
-    "OPENBLAS_NUM_THREADS",
-    "OMP_NUM_THREADS",
-    "MKL_NUM_THREADS",
-    "NUMEXPR_NUM_THREADS",
-    "VECLIB_MAXIMUM_THREADS",
-)
+from hpcperfstats.dbload.blas_thread_env import configure_blas_thread_env
 
 
 def _configure_blas_thread_env():
   """Cap BLAS/OpenMP worker threads before numpy is first imported."""
-  for key in _BLAS_THREAD_ENV_KEYS:
-    os.environ.setdefault(key, "1")
+  configure_blas_thread_env()
 
 
-_configure_blas_thread_env()
+configure_blas_thread_env()
 
 SYNC_TIMEDB_ARCHIVE_PROCESS_TITLE = "sync_timedb_archive.py"
 

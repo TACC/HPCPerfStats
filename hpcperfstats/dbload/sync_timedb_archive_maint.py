@@ -12,12 +12,13 @@ import json
 import multiprocessing
 import os
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterator, Optional, Set, Tuple
 
 import hpcperfstats.conf_parser as cfg
+from hpcperfstats.dbload.blas_thread_env import apply_archive_metadata_pool_worker_init
 from hpcperfstats.dbload.multiprocessing_pool_health import imap_unordered_watch_pool
-from hpcperfstats.process_title import apply_pool_worker_process_title
 from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     build_archive_mapping,
     collect_stats_files_in_range,
@@ -78,28 +79,69 @@ def _metadata_pool_recycle_kwargs():
   return {}
 
 
-def _iter_archive_metadata_pool(fn, tasks, *, context: str) -> Iterator:
-  """Run metadata worker tasks via spawn pool imap or inline serial fallback."""
+def _inline_metadata_pool_run(fn, tasks, *, context):
+  del context
+  for task in tasks or ():
+    yield fn(task)
+
+
+def _spawn_metadata_pool_run(pool, fn, tasks, *, context):
+  task_list = list(tasks or ())
+  if not task_list:
+    return iter(())
+  return imap_unordered_watch_pool(
+      pool,
+      fn,
+      task_list,
+      context=context,
+  )
+
+
+@contextmanager
+def _archive_metadata_pool_session(*, max_tasks: int):
+  """One spawn pool for head + sampled metadata passes within a snapshot build."""
+  max_tasks = int(max_tasks or 0)
+  if max_tasks <= 0 or _archive_metadata_inline_requested():
+    yield _inline_metadata_pool_run
+    return
+  workers = _get_archive_discovery_worker_count(max_tasks)
+  with multiprocessing.get_context("spawn").Pool(
+      processes=workers,
+      initializer=apply_archive_metadata_pool_worker_init,
+      initargs=(_ARCHIVE_METADATA_POOL_SCRIPT, _ARCHIVE_METADATA_POOL_KIND),
+      **_metadata_pool_recycle_kwargs(),
+  ) as pool:
+    def pool_run(fn, tasks, *, context):
+      return _spawn_metadata_pool_run(pool, fn, tasks, context=context)
+
+    yield pool_run
+
+
+def _iter_archive_metadata_pool(
+    fn,
+    tasks,
+    *,
+    context: str,
+    pool_run=None,
+) -> Iterator:
+  """Run metadata worker tasks via shared pool, ad-hoc pool, or inline serial fallback."""
   task_list = list(tasks or ())
   if not task_list:
     return
+  if pool_run is not None:
+    yield from pool_run(fn, task_list, context=context)
+    return
   if _archive_metadata_inline_requested():
-    for task in task_list:
-      yield fn(task)
+    yield from _inline_metadata_pool_run(fn, task_list, context=context)
     return
   workers = _get_archive_discovery_worker_count(len(task_list))
   with multiprocessing.get_context("spawn").Pool(
       processes=workers,
-      initializer=apply_pool_worker_process_title,
+      initializer=apply_archive_metadata_pool_worker_init,
       initargs=(_ARCHIVE_METADATA_POOL_SCRIPT, _ARCHIVE_METADATA_POOL_KIND),
       **_metadata_pool_recycle_kwargs(),
   ) as pool:
-    yield from imap_unordered_watch_pool(
-        pool,
-        fn,
-        task_list,
-        context=context,
-    )
+    yield from _spawn_metadata_pool_run(pool, fn, task_list, context=context)
 
 
 def _maybe_log_parallel_task_progress(
@@ -383,6 +425,7 @@ def collect_sampled_timestamp_identities_for_paths(
     *,
     sample_stride=None,
     log_fn=log_print,
+    pool_run=None,
 ) -> Tuple[Dict[str, Dict[str, Set[int]]], Dict[str, int]]:
   """Build per-path sampled host→seconds maps; parallel read for large path lists."""
   stride = sample_stride
@@ -409,6 +452,7 @@ def collect_sampled_timestamp_identities_for_paths(
         _read_sampled_identities_task,
         tasks,
         context="archive metadata sampled",
+        pool_run=pool_run,
     ):
       if sampled is None:
         errors += 1
@@ -451,6 +495,7 @@ def collect_head_metadata_for_paths(
     *,
     hints_data=None,
     log_fn=log_print,
+    pool_run=None,
 ) -> Tuple[Dict[str, str], Dict[str, Tuple[str, int]], Dict[str, int]]:
   """Build first_timestamp and head_identity maps; parallel read for ``needs_read``."""
   first_ts_hinted, head_hinted, needs_read, _host_dirs = _split_paths_by_hints(
@@ -477,6 +522,7 @@ def collect_head_metadata_for_paths(
         _read_head_metadata_one,
         needs_read,
         context="archive metadata head",
+        pool_run=pool_run,
     ):
       if first_ts is None or host is None or unix_second is None:
         errors += 1
@@ -545,22 +591,36 @@ def build_archive_maintenance_snapshot(
   hints_data = load_archive_maint_hints(archive_data_dir)
   closed_paths = collect_stats_files_in_range(
       archive_data_dir, "all", None, host_name_ext)
-  first_timestamp_by_path, head_identity_by_path, head_read_stats = (
-      collect_head_metadata_for_paths(
-          closed_paths, hints_data=hints_data, log_fn=log_fn)
-  )
-  if cfg.sync_archive_db_ingest_gate_uses_sample_mode():
-    sampled_timestamp_identities_by_path, sample_read_stats = (
-        collect_sampled_timestamp_identities_for_paths(
-            closed_paths, log_fn=log_fn)
+  _first_ts_hinted, _head_hinted, needs_read, _host_dirs = _split_paths_by_hints(
+      list(closed_paths), hints_data)
+  sample_mode = cfg.sync_archive_db_ingest_gate_uses_sample_mode()
+  max_pool_tasks = len(needs_read)
+  if sample_mode:
+    max_pool_tasks = max(max_pool_tasks, len(closed_paths))
+  with _archive_metadata_pool_session(max_tasks=max_pool_tasks) as pool_run:
+    first_timestamp_by_path, head_identity_by_path, head_read_stats = (
+        collect_head_metadata_for_paths(
+            closed_paths,
+            hints_data=hints_data,
+            log_fn=log_fn,
+            pool_run=pool_run,
+        )
     )
-    gate_identities_by_path = sampled_timestamp_identities_by_path
-  else:
-    sampled_timestamp_identities_by_path = {}
-    sample_read_stats = {"errors": 0}
-    gate_identities_by_path = head_identity_as_gate_identities(
-        head_identity_by_path,
-    )
+    if sample_mode:
+      sampled_timestamp_identities_by_path, sample_read_stats = (
+          collect_sampled_timestamp_identities_for_paths(
+              closed_paths,
+              log_fn=log_fn,
+              pool_run=pool_run,
+          )
+      )
+      gate_identities_by_path = sampled_timestamp_identities_by_path
+    else:
+      sampled_timestamp_identities_by_path = {}
+      sample_read_stats = {"errors": 0}
+      gate_identities_by_path = head_identity_as_gate_identities(
+          head_identity_by_path,
+      )
   mapping = build_archive_mapping(
       closed_paths,
       tgz_archive_dir,

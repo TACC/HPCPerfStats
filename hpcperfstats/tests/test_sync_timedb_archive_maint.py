@@ -347,3 +347,52 @@ def test_metadata_inline_fallback_skips_pool(monkeypatch):
   )
   maint.collect_head_metadata_for_paths(["/a"], hints_data=None, log_fn=None)
   assert pool_calls["n"] == 0
+
+
+def test_build_snapshot_reuses_single_metadata_pool(monkeypatch, tmp_path):
+  import multiprocessing
+
+  pool_enter = {"n": 0}
+
+  class FakePool:
+    def __init__(self, *args, **kwargs):
+      del args, kwargs
+
+    def __enter__(self):
+      pool_enter["n"] += 1
+      return self
+
+    def __exit__(self, *args):
+      del args
+      return False
+
+  def fake_get_context(_method):
+    class Ctx:
+      Pool = FakePool
+
+    return Ctx()
+
+  def _recording_imap(pool, fn, tasks, *, context, **kwargs):
+    del pool, context, kwargs
+    for task in tasks:
+      yield fn(task)
+
+  monkeypatch.delenv(maint._ARCHIVE_METADATA_INLINE_ENV, raising=False)
+  monkeypatch.setattr(multiprocessing, "get_context", fake_get_context)
+  monkeypatch.setattr(maint, "imap_unordered_watch_pool", _recording_imap)
+  monkeypatch.setattr(cfg, "get_sync_archive_maint_hints", lambda: False)
+  monkeypatch.setattr(cfg, "get_sync_archive_db_ingest_gate_mode", lambda: "sample")
+  monkeypatch.setattr(cfg, "get_sync_pool_process_cap", lambda: 2)
+  monkeypatch.setattr(
+      readiness,
+      "build_head_ingest_ready_set",
+      lambda closed, identities, **kw: set(),
+  )
+  arch_suffix = "cluster.maint.singlepool"
+  host = tmp_path / ("n." + arch_suffix)
+  _write_stats_segment(host, 1700000500)
+  tgz = tmp_path / "daily"
+  tgz.mkdir()
+  maint.build_archive_maintenance_snapshot(
+      str(tmp_path), arch_suffix, str(tgz), log_fn=None)
+  assert pool_enter["n"] == 1

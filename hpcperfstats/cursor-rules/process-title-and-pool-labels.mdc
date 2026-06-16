@@ -52,6 +52,8 @@ Use a **distinct, stable `pool_kind`** per pool type in the same script (e.g. `i
 
    Do not use nested closures for `initializer` (`spawn` must pickle it). ``Pool`` calls ``initializer(*initargs)``, so pass two positional args in ``initargs``, not a single nested tuple.
 
+   Archive metadata pool: use **`apply_archive_metadata_pool_worker_init`** from **`blas_thread_env.py`** (BLAS cap + title), not bare **`apply_pool_worker_process_title`**.
+
 4. **Daemon threads only:** `set_daemon_thread_title(..., script_name="….py", role="…")`. Never change the **process** title for threads.
 5. **Gunicorn request paths:** do not add process or thread titles in `site.machine.api`, plot builders invoked per-request under gunicorn, or other WSGI hot paths unless product explicitly revisits that policy.
 6. **Tests:** extend [`hpcperfstats/tests/test_process_title.py`](hpcperfstats/tests/test_process_title.py) when adding pools or import paths that could affect gunicorn titles.
