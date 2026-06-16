@@ -1,6 +1,7 @@
 # Build frontend assets in a dedicated node stage.
 FROM node:26.3.0-alpine3.23 AS frontend-builder
 RUN apk add bash
+ENV NEXT_TELEMETRY_DISABLED=1
 WORKDIR /home/hpcperfstats
 COPY --chown=node:node . .
 WORKDIR /home/hpcperfstats/hpcperfstats/site/frontend
