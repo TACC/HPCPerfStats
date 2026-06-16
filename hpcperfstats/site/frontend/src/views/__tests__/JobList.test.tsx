@@ -909,11 +909,12 @@ describe("JobList", () => {
 
     await waitFor(() => {
       expect(
-        screen.getAllByText(
-          "No histogram data available for metric 'runtime' in this query.",
-        ).length,
+        screen.getAllByText("Unavailable — Data not available.").length,
       ).toBeGreaterThan(0);
     });
+    expect(
+      screen.queryByText("No histogram data available for metric 'runtime' in this query."),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Show plot error details" }),
     ).not.toBeInTheDocument();

@@ -104,35 +104,35 @@ describe("BokehEmbed", () => {
     unmount();
   });
 
-  it("shows unavailable reason directly for staff when reason is provided", () => {
+  it("shows generic unavailable copy for non-staff when reason is provided", () => {
+    const reason = "Missing CPI counters in host_data";
     renderBokehEmbed(
-      <BokehEmbed
-        plotName="Heatmap"
-        unavailableReason="Missing CPI counters in host_data"
-      />,
-      { logged_in: true, username: "alice", is_staff: true },
+      <BokehEmbed plotName="Heatmap" unavailableReason={reason} />,
+      { is_staff: false },
     );
 
-    expect(screen.getByText("Missing CPI counters in host_data")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Show plot error details" }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("hides error detail UI for non-staff users", () => {
-    renderBokehEmbed(
-      <BokehEmbed
-        plotName="Heatmap"
-        unavailableReason="Missing CPI counters in host_data"
-      />,
-      { is_staff: false }
-    );
-
-    expect(screen.getByText("Missing CPI counters in host_data")).toBeInTheDocument();
+    expect(screen.getByText("Unavailable — Data not available.")).toBeInTheDocument();
+    expect(screen.queryByText(reason)).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Show plot error details" }),
     ).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Copy error detail" })).not.toBeInTheDocument();
+  });
+
+  it("shows staff plot error detail controls when reason is provided", () => {
+    const reason = "Missing CPI counters in host_data";
+    renderBokehEmbed(
+      <BokehEmbed plotName="Heatmap" unavailableReason={reason} />,
+      { logged_in: true, username: "alice", is_staff: true },
+    );
+
+    expect(screen.getByText("Unavailable — Data not available.")).toBeInTheDocument();
+    expect(screen.queryByText(reason)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show plot error details" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy error detail" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show plot error details" }));
+    expect(screen.getByText(reason)).toBeInTheDocument();
   });
 
   it("shows loading message while external plot query is still running", () => {

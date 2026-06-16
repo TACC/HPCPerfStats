@@ -533,7 +533,7 @@ export default function BokehEmbed({
   } else if (loadFailed && failureReason) {
     message = failureReason;
   } else if (isUnavailable && unavailableReason) {
-    message = unavailableReason;
+    message = "Unavailable — Data not available.";
   } else if (isUnavailable) {
     message = "Unavailable — Data not available.";
   } else {

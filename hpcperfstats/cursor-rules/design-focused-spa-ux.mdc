@@ -27,6 +27,7 @@ HPCPerfStats serves researchers and operators who expect clear hierarchy, honest
 - **Interactive-ready law:** see **`interactive-ready-controls.mdc`** — hide or skeleton until ready; shown controls must accept clicks immediately; no `pointer-events-none` on table/pagination parents during `tableBusy`.
 - Do not show Bokeh **Unavailable** while a section is still loading; pass `isLoading` / `detailsLoading` into `BokehEmbed`.
 - Distinguish **no data** (`unavailableReason`), **loading** (`LoadingMessage` / skeleton), and **transient failure** (warning + **Retry** when async fetch fails).
+- Unavailable Bokeh plots: generic public **`Unavailable — Data not available.`** status; staff expandable API reason — **`job-detail-analysis-tab-consistency.mdc`**.
 - Job list pagination: avoid full-page skeleton when only `page` or `order_by` changes; use `tableBusy` overlay.
 
 ## Overlays (extended search)
