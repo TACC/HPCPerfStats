@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, Suspense } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getSessionRetrieveQueryKey } from "@/api/generated/session/session";
 import type { SessionInfo } from "@/api/generated/models/sessionInfo";
@@ -26,7 +26,7 @@ function sessionFromApi(data: SessionInfo): SessionData {
     logged_in: data.logged_in,
     username: data.username,
     is_staff: data.is_staff,
-    machine_name: data.machine_name,
+    machine_name: data.machine_name ?? SITE_MACHINE_NAME,
   };
 }
 
@@ -59,8 +59,9 @@ export default function MachineLayout({ children }: { children: React.ReactNode 
     window.location.replace(target);
   }, [isLoading, session]);
 
+  const loadingTitle = SITE_MACHINE_NAME.trim() || "HPCPerfStats";
   useDocumentTitle(
-    isLoading ? "Loading session" : !session?.logged_in ? "Redirecting to sign in" : " ",
+    isLoading ? loadingTitle : !session?.logged_in ? "Redirecting to sign in" : " ",
   );
 
   if (!isLoading && !session?.logged_in) {
@@ -77,10 +78,19 @@ export default function MachineLayout({ children }: { children: React.ReactNode 
     <SessionContext.Provider value={layoutSession}>
       <Layout session={layoutSession} onSessionChange={handleSessionChange}>
         {isLoading ? (
-          <LoadingMessage message="Loading session…" />
-        ) : (
-          children
-        )}
+          <span className="sr-only" role="status" aria-live="polite">
+            Loading session…
+          </span>
+        ) : null}
+        <Suspense
+          fallback={
+            <span className="sr-only" role="status" aria-live="polite">
+              Loading page…
+            </span>
+          }
+        >
+          {children}
+        </Suspense>
       </Layout>
     </SessionContext.Provider>
   );

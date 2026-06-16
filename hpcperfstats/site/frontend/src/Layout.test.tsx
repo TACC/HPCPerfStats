@@ -256,4 +256,14 @@ describe("Layout", () => {
     expect(screen.getByText("Live Cluster")).toBeInTheDocument();
     expect(screen.queryByText("Fractal")).not.toBeInTheDocument();
   });
+
+  it("hides staff actions while placeholder session has is_staff false", () => {
+    renderLayout({
+      logged_in: true,
+      username: "",
+      is_staff: false,
+      machine_name: "",
+    });
+    expect(screen.queryByRole("button", { name: "Staff actions" })).not.toBeInTheDocument();
+  });
 });

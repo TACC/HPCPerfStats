@@ -12,7 +12,8 @@ class SessionInfoSerializer(serializers.Serializer):
     logged_in = serializers.BooleanField()
     username = serializers.CharField()
     is_staff = serializers.BooleanField()
-    machine_name = serializers.CharField()
+    # Optional in schema: SPA uses build-time site-identity.ts; field still sent for compatibility.
+    machine_name = serializers.CharField(required=False)
 
 
 class UserApiKeySerializer(serializers.Serializer):

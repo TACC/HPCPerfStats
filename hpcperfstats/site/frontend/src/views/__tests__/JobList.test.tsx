@@ -114,6 +114,17 @@ describe("JobList", () => {
     expect(screen.getByRole("table")).toBeInTheDocument();
   });
 
+  it("shows table headers during initial load with placeholder session", () => {
+    setJobListQueryMock({ initialLoading: true });
+    renderWithProviders(<JobList />, {
+      session: { logged_in: true, username: "", is_staff: false, machine_name: "" },
+      initialPath: "/jobs",
+      withNavigationSync: true,
+    });
+    expect(screen.getByRole("columnheader", { name: /job id/i })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: /sample count/i })).not.toBeInTheDocument();
+  });
+
   it("does not block table pointer events while tableBusy", async () => {
     setJobListQueryMock({
       tableBusy: true,

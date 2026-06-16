@@ -3,6 +3,7 @@ import { parseApiResponse } from "@/api/parse-api-response";
 import { resolveResponseSchema } from "@/api/response-schema-registry";
 import { homeRetrieveResponse } from "@/api/generated-zod/home/home";
 import { jobsRetrieveResponse } from "@/api/generated-zod/jobs/jobs";
+import { sessionRetrieveResponse } from "@/api/generated-zod/session/session";
 import * as isDevEnvironmentModule from "@/utils/is-dev-environment";
 
 const validHomePayload = {
@@ -189,6 +190,28 @@ describe("parse-api-response", () => {
     expect(homeRetrieveResponse.safeParse(validHomePayload).success).toBe(true);
     const parsed = parseApiResponse("GET", "/api/home/", validHomePayload);
     expect(parsed).toEqual(validHomePayload);
+  });
+
+  it("accepts session payload without machine_name", () => {
+    const payload = {
+      logged_in: true,
+      username: "alice",
+      is_staff: false,
+    };
+    expect(sessionRetrieveResponse.safeParse(payload).success).toBe(true);
+    const parsed = parseApiResponse("GET", "/api/session/", payload);
+    expect(parsed).toEqual(payload);
+  });
+
+  it("accepts session payload with machine_name", () => {
+    const payload = {
+      logged_in: true,
+      username: "alice",
+      is_staff: true,
+      machine_name: "cluster.test",
+    };
+    expect(sessionRetrieveResponse.safeParse(payload).success).toBe(true);
+    expect(parseApiResponse("GET", "/api/session/", payload)).toEqual(payload);
   });
 
   it("rejects legacy home metrics missing type with route in error message", () => {

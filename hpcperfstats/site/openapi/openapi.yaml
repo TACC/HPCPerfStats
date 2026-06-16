@@ -1801,7 +1801,6 @@ components:
       required:
       - is_staff
       - logged_in
-      - machine_name
       - username
     TypeDetailResponse:
       type: object
