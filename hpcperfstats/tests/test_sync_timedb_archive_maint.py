@@ -1,7 +1,6 @@
 """Tests for archive maintenance snapshot, hints, and parallel head metadata."""
 from datetime import datetime, timezone
 import json
-import multiprocessing
 import os
 
 import pytest
@@ -263,12 +262,11 @@ def test_sampled_metadata_logs_begin_and_progress(monkeypatch):
   paths = ["/fake/path/%d" % i for i in range(5001)]
   logs = []
 
-  def _fake_read(task):
-    path, _stride = task
+  def _fake_read(path, *, sample_stride):
+    del sample_stride
     return path, {"host": {1700000000}}
 
-  monkeypatch.setenv(maint._ARCHIVE_METADATA_INLINE_ENV, "1")
-  monkeypatch.setattr(maint, "_read_sampled_identities_task", _fake_read)
+  monkeypatch.setattr(maint, "_read_sampled_identities_one", _fake_read)
   monkeypatch.setattr(cfg, "get_sync_pool_process_cap", lambda: 4)
   monkeypatch.setattr(cfg, "get_sync_archive_db_ingest_gate_sample_stride", lambda: 5000)
   maint.collect_sampled_timestamp_identities_for_paths(
@@ -288,7 +286,6 @@ def test_head_metadata_logs_begin_and_progress_for_large_read_set(monkeypatch):
   def _fake_read(path):
     return path, "1700000000", "cn001", 1700000000
 
-  monkeypatch.setenv(maint._ARCHIVE_METADATA_INLINE_ENV, "1")
   monkeypatch.setattr(maint, "_read_head_metadata_one", _fake_read)
   monkeypatch.setattr(cfg, "get_sync_pool_process_cap", lambda: 4)
   maint.collect_head_metadata_for_paths(
@@ -300,99 +297,3 @@ def test_head_metadata_logs_begin_and_progress_for_large_read_set(monkeypatch):
   assert "Head metadata: begin" in joined
   assert "Head metadata: progress" in joined
   assert "Head metadata: paths=5001" in joined
-
-
-def test_metadata_pool_uses_imap_unordered_watch_pool(monkeypatch):
-  calls = []
-
-  def _recording_imap(pool, fn, tasks, *, context, **kwargs):
-    calls.append(context)
-    for task in tasks:
-      yield fn(task)
-
-  monkeypatch.delenv(maint._ARCHIVE_METADATA_INLINE_ENV, raising=False)
-  monkeypatch.setattr(maint, "imap_unordered_watch_pool", _recording_imap)
-  monkeypatch.setattr(cfg, "get_sync_pool_process_cap", lambda: 2)
-  monkeypatch.setattr(
-      maint,
-      "_read_head_metadata_one",
-      lambda path: (path, "1", "h", 1),
-  )
-  monkeypatch.setattr(
-      maint,
-      "_read_sampled_identities_task",
-      lambda task: (task[0], {"h": {1}}),
-  )
-  maint.collect_head_metadata_for_paths(["/a", "/b"], hints_data=None, log_fn=None)
-  maint.collect_sampled_timestamp_identities_for_paths(["/c"], log_fn=None)
-  assert "archive metadata head" in calls
-  assert "archive metadata sampled" in calls
-
-
-def test_metadata_inline_fallback_skips_pool(monkeypatch):
-  pool_calls = {"n": 0}
-  real_get_context = multiprocessing.get_context
-
-  def _counting_get_context(method):
-    del method
-    pool_calls["n"] += 1
-    return real_get_context("spawn")
-
-  monkeypatch.setenv(maint._ARCHIVE_METADATA_INLINE_ENV, "1")
-  monkeypatch.setattr(multiprocessing, "get_context", _counting_get_context)
-  monkeypatch.setattr(
-      maint,
-      "_read_head_metadata_one",
-      lambda path: (path, "1", "h", 1),
-  )
-  maint.collect_head_metadata_for_paths(["/a"], hints_data=None, log_fn=None)
-  assert pool_calls["n"] == 0
-
-
-def test_build_snapshot_reuses_single_metadata_pool(monkeypatch, tmp_path):
-  import multiprocessing
-
-  pool_enter = {"n": 0}
-
-  class FakePool:
-    def __init__(self, *args, **kwargs):
-      del args, kwargs
-
-    def __enter__(self):
-      pool_enter["n"] += 1
-      return self
-
-    def __exit__(self, *args):
-      del args
-      return False
-
-  def fake_get_context(_method):
-    class Ctx:
-      Pool = FakePool
-
-    return Ctx()
-
-  def _recording_imap(pool, fn, tasks, *, context, **kwargs):
-    del pool, context, kwargs
-    for task in tasks:
-      yield fn(task)
-
-  monkeypatch.delenv(maint._ARCHIVE_METADATA_INLINE_ENV, raising=False)
-  monkeypatch.setattr(multiprocessing, "get_context", fake_get_context)
-  monkeypatch.setattr(maint, "imap_unordered_watch_pool", _recording_imap)
-  monkeypatch.setattr(cfg, "get_sync_archive_maint_hints", lambda: False)
-  monkeypatch.setattr(cfg, "get_sync_archive_db_ingest_gate_mode", lambda: "sample")
-  monkeypatch.setattr(cfg, "get_sync_pool_process_cap", lambda: 2)
-  monkeypatch.setattr(
-      readiness,
-      "build_head_ingest_ready_set",
-      lambda closed, identities, **kw: set(),
-  )
-  arch_suffix = "cluster.maint.singlepool"
-  host = tmp_path / ("n." + arch_suffix)
-  _write_stats_segment(host, 1700000500)
-  tgz = tmp_path / "daily"
-  tgz.mkdir()
-  maint.build_archive_maintenance_snapshot(
-      str(tmp_path), arch_suffix, str(tgz), log_fn=None)
-  assert pool_enter["n"] == 1
