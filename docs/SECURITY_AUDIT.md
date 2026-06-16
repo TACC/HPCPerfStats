@@ -1,6 +1,6 @@
 # Security audit memo (HPCPerfStats)
 
-Internal reference for security posture review. **Last reviewed:** 2026-06-12 (frontend npm re-audit).
+Internal reference for security posture review. **Last reviewed:** 2026-06-15 (frontend npm re-audit).
 
 ## Executive summary
 
@@ -10,7 +10,7 @@ HPCPerfStats combines a Django + DRF backend, session-based OAuth (Tapis) and ha
 
 1. Lightweight threat model: assets (sessions, API keys, DB, ingest payloads), trust boundaries (browser → nginx → Django → data stores), adversaries (anonymous abuse, authenticated users, stolen staff API keys).
 2. **pip-audit** inside the production **web** Docker image (`docker run --rm hpcperfstats pip-audit`, 2026-06-05): **no known vulnerabilities** in installed runtime deps (Django 6.0.6, cryptography 48.0.0, requests 2.34.2, pillow 12.2.0). Host `.venv` freeze (dev/test extras) still reports low-severity **idna** / **pip** advisories not present in the production image.
-3. **npm audit** in `hpcperfstats/site/frontend` (2026-06-12): **0** reported vulnerabilities after Next.js migration lockfile refresh and **`package.json` `overrides`** (`esbuild@^0.28.1`, `postcss@^8.5.15`, `lodash@^4.17.24`). Prior baseline same day: **19** (17 high, 2 moderate) — mostly dev-only `esbuild`/`lodash` transitives plus `next` nested `postcss`.
+3. **npm audit** in `hpcperfstats/site/frontend` (2026-06-15): **0** reported vulnerabilities after **`dompurify@^3.4.10`** and **`js-yaml@^4.2.0`** overrides (plus existing `esbuild` / `postcss` / `lodash` pins). Prior baseline 2026-06-12: **0**; new advisories surfaced **3 moderate** (`dompurify` via `@bokeh/bokehjs`, `js-yaml` via `orval`).
 4. **bandit** (`-ll`, excluding `*/tests/*`) on `hpcperfstats/` (2026-06-05): **no high** findings; **6** medium B608 on SQL fragment builders (same modules as prior review); manual review confirms table/column identifiers come from internal constants, not request input. One B108 on `wsgi.py` `MPLCONFIGDIR=/tmp/` (matplotlib cache path; accepted).
 5. **Security regression tests** (host pytest, 2026-06-05): 9 passed (`test_settings_security`, throttles, API-key page, HTTP headers/cache); 5 compose-backed modules skipped/errored on host (`db` hostname). CI and compose workflows remain the gate for DB-dependent security tests.
 5. Manual review of [`settings.py`](../hpcperfstats/site/hpcperfstats_site/settings.py), [`middleware.py`](../hpcperfstats/site/hpcperfstats_site/middleware.py), [`oauth2.py`](../hpcperfstats/site/machine/oauth2.py), [`api.py`](../hpcperfstats/site/machine/api.py) (auth and staff gates), [`views.py`](../hpcperfstats/site/hpcperfstats_site/views.py) (`csp_report`), nginx templates under [`services-conf/`](../services-conf/), and high-risk patterns (`subprocess`, `cursor.execute`).
@@ -27,7 +27,7 @@ HPCPerfStats combines a Django + DRF backend, session-based OAuth (Tapis) and ha
 | pillow       | 12.2.0          | Clean |
 | gunicorn     | 26.0.0          | Clean |
 
-`pyproject.toml` runtime floors: `Django>=6.0.6,<7`, `requests>=2.34.2`, `cryptography>=48.0.0`, `pillow>=12.2.0`.
+`pyproject.toml` runtime floors: `Django>=6.0.6,<7`, `requests>=2.34.2`, `cryptography>=49.0.0`, `pillow>=12.2.0`.
 
 **Host dev venv** (not shipped): `idna` 3.13 (CVE-2026-45409 → 3.15+), `pip` 26.1.1 (PYSEC-2026-196 → 26.1.2+). Treat as developer-workstation hygiene only.
 
@@ -35,13 +35,17 @@ HPCPerfStats combines a Django + DRF backend, session-based OAuth (Tapis) and ha
 
 ### npm audit (frontend)
 
+**2026-06-15:** 0 vulnerabilities (774 packages audited). Remediation: added **`overrides`** for `dompurify@^3.4.10` (Bokeh transitive XSS advisories) and `js-yaml@^4.2.0` (Orval dev-time YAML parse DoS; `orval@7.21.0` still declares `4.1.1`). `npm ci` and `npm run generate:api` verified clean.
+
 **2026-06-12:** 0 vulnerabilities (577 packages audited). Remediation: `npm` **`overrides`** in [`hpcperfstats/site/frontend/package.json`](../hpcperfstats/site/frontend/package.json) to force patched transitive versions without breaking Orval 7.x / Next 15.x majors. Verification log: [`test_runs/npm_audit_remediation_2026-06-12.md`](../test_runs/npm_audit_remediation_2026-06-12.md).
 
 | Override | Reason |
 |----------|--------|
+| `dompurify@^3.4.10` | GHSA-x4vx-rjvf-j5p4 and related DOMPurify XSS / IN_PLACE bypass advisories (`@bokeh/bokehjs`) |
+| `js-yaml@^4.2.0` | GHSA-h67p-54hq-rp68 merge-key DoS (`orval` codegen) |
 | `esbuild@^0.28.1` | GHSA-gv7w-rqvm-qjhr, GHSA-g7r4-m6w7-qqqr (Orval + Vitest/Vite tree) |
 | `postcss@^8.5.15` | GHSA-qx2v-qp2m-jg93 (Next nested postcss) |
-| `lodash@^4.17.24` | GHSA-r5fr-rjxr-66jc, GHSA-f23m-r3pf-42rh (`@stoplight/spectral-functions` via Orval) |
+| `lodash@^4.18.1` | GHSA-r5fr-rjxr-66jc, GHSA-f23m-r3pf-42rh (`@stoplight/spectral-functions` via Orval) |
 
 ### bandit
 

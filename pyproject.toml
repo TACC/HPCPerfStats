@@ -36,12 +36,12 @@ dependencies = [
   "mysqlclient",
   "gunicorn",
   "requests>=2.34.2",
-  "cryptography>=48.0.0",
+  "cryptography>=49.0.0",
   "pillow>=12.2.0",
   "tzdata",
   "redis==8.0.0",
   "djangorestframework",
-  "drf-spectacular>=0.28.0",
+  "drf-spectacular>=0.29.0",
   "django-cors-headers",
   "setproctitle",
 ]
@@ -55,8 +55,8 @@ test = [
   "psycopg[binary]",
 ]
 dev = [
-  "ruff>=0.15.16",
-  "pylint>=4.0.5",  # optional; Ruff is the primary linter (see docs/TESTING.md)
+  "ruff>=0.15.17",
+  "pylint>=4.0.6",  # optional; Ruff is the primary linter (see docs/TESTING.md)
 ]
 
 [tool.pytest.ini_options]
