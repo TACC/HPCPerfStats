@@ -539,6 +539,7 @@ def build_archive_maintenance_snapshot(
   """One collect pass, head metadata (hints + parallel), mapping, optional ready set."""
   from hpcperfstats.dbload.sync_timedb_ingest_readiness import (
       build_head_ingest_ready_set,
+      head_identity_as_gate_identities,
   )
 
   hints_data = load_archive_maint_hints(archive_data_dir)
@@ -548,10 +549,18 @@ def build_archive_maintenance_snapshot(
       collect_head_metadata_for_paths(
           closed_paths, hints_data=hints_data, log_fn=log_fn)
   )
-  sampled_timestamp_identities_by_path, sample_read_stats = (
-      collect_sampled_timestamp_identities_for_paths(
-          closed_paths, log_fn=log_fn)
-  )
+  if cfg.sync_archive_db_ingest_gate_uses_sample_mode():
+    sampled_timestamp_identities_by_path, sample_read_stats = (
+        collect_sampled_timestamp_identities_for_paths(
+            closed_paths, log_fn=log_fn)
+    )
+    gate_identities_by_path = sampled_timestamp_identities_by_path
+  else:
+    sampled_timestamp_identities_by_path = {}
+    sample_read_stats = {"errors": 0}
+    gate_identities_by_path = head_identity_as_gate_identities(
+        head_identity_by_path,
+    )
   mapping = build_archive_mapping(
       closed_paths,
       tgz_archive_dir,
@@ -562,7 +571,7 @@ def build_archive_maintenance_snapshot(
   if build_ready_set:
     ready_paths = build_head_ingest_ready_set(
         closed_paths,
-        sampled_timestamp_identities_by_path,
+        gate_identities_by_path,
         log_fn=log_fn,
     )
   return ArchiveMaintenanceSnapshot(

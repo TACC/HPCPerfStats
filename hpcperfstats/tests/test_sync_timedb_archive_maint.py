@@ -167,6 +167,64 @@ def test_build_head_ingest_ready_set_dedupes_db_lookups(monkeypatch, tmp_path):
   assert calls["n"] == 1
 
 
+def test_build_archive_maintenance_snapshot_head_mode_skips_sampled_collect(
+    monkeypatch, tmp_path,
+):
+  arch_suffix = "cluster.maint.head"
+  host = tmp_path / ("n." + arch_suffix)
+  seg = _write_stats_segment(host, 1700000500)
+  tgz = tmp_path / "daily"
+  tgz.mkdir()
+  sampled_calls = {"n": 0}
+  real_sampled = maint.collect_sampled_timestamp_identities_for_paths
+
+  def _counting_sampled(*args, **kwargs):
+    sampled_calls["n"] += 1
+    return real_sampled(*args, **kwargs)
+
+  monkeypatch.setattr(cfg, "get_sync_archive_maint_hints", lambda: False)
+  monkeypatch.setattr(cfg, "get_sync_archive_db_ingest_gate_mode", lambda: "head")
+  monkeypatch.setattr(maint, "collect_sampled_timestamp_identities_for_paths", _counting_sampled)
+  monkeypatch.setattr(
+      readiness,
+      "build_head_ingest_ready_set",
+      lambda closed, identities, **kw: set(),
+  )
+  snap = maint.build_archive_maintenance_snapshot(
+      str(tmp_path), arch_suffix, str(tgz), log_fn=None)
+  assert sampled_calls["n"] == 0
+  assert seg in snap.closed_paths
+  assert snap.sampled_timestamp_identities_by_path == {}
+
+
+def test_build_archive_maintenance_snapshot_sample_mode_collects_sampled(
+    monkeypatch, tmp_path,
+):
+  arch_suffix = "cluster.maint.sample"
+  host = tmp_path / ("n." + arch_suffix)
+  _write_stats_segment(host, 1700000500)
+  tgz = tmp_path / "daily"
+  tgz.mkdir()
+  sampled_calls = {"n": 0}
+  real_sampled = maint.collect_sampled_timestamp_identities_for_paths
+
+  def _counting_sampled(*args, **kwargs):
+    sampled_calls["n"] += 1
+    return real_sampled(*args, **kwargs)
+
+  monkeypatch.setattr(cfg, "get_sync_archive_maint_hints", lambda: False)
+  monkeypatch.setattr(cfg, "get_sync_archive_db_ingest_gate_mode", lambda: "sample")
+  monkeypatch.setattr(maint, "collect_sampled_timestamp_identities_for_paths", _counting_sampled)
+  monkeypatch.setattr(
+      readiness,
+      "build_head_ingest_ready_set",
+      lambda closed, identities, **kw: set(),
+  )
+  maint.build_archive_maintenance_snapshot(
+      str(tmp_path), arch_suffix, str(tgz), log_fn=None)
+  assert sampled_calls["n"] == 1
+
+
 def test_build_archive_maintenance_snapshot_once_collects(monkeypatch, tmp_path):
   arch_suffix = "cluster.maint.snap"
   host = tmp_path / ("n." + arch_suffix)

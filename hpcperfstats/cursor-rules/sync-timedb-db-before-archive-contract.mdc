@@ -13,10 +13,18 @@ When changing ingest, archive, or raw-stats removal under `hpcperfstats/dbload/s
 ## Mandatory behavior (when enabled)
 
 - Default **`sync_archive_require_db_head_ingest`** is **on** (`conf_parser.get_sync_archive_require_db_head_ingest()`).
+- Gate depth is **`sync_archive_db_ingest_gate_mode`** (default **`head`**; optional **`sample`**).
 - No production path may **append** a raw monitor stats file to a daily `.tar` or **delete** that raw file from the archive tree unless **`stats_file_head_ingested_in_db`** returns true.
 - Canonical implementation: **`hpcperfstats/dbload/sync_timedb_ingest_readiness.py`**.
 
-## Definition: sample ingested
+## Definition: head ingested (default mode)
+
+- **`sync_archive_db_ingest_gate_mode = head`** (default when omitted): closed segment passes when the **first** digit-leading timestamp line's **hostname token** has at least one **`host_data`** row in the **same Unix second** (monitor fractional seconds; do not use exact `time=` equality).
+- **`host` must be the hostname token from the stats file line** (same field written to `host_data.host` during ingest). Do **not** use the archive path's parent directory name (often FQDN) for the DB lookup.
+- Canonical probe: `read_stats_file_head_identity` + `head_timestamp_present_in_db` in `sync_timedb_ingest_readiness.py`.
+- **Limitation:** middle segments may be missing in DB and still pass when only the head second is present.
+
+## Definition: sample ingested (`sync_archive_db_ingest_gate_mode = sample`)
 
 - One streaming pass collects **sampled** digit-leading timestamp lines: stride = **`sync_bulk_create_batch_size // 2`** (default batch 10000 → stride 5000 → lines 1, 5001, 10001, …) plus **always the last timestamp at EOF**.
 - **Sample ingested** = for every sampled line, at least one **`host_data`** row for that line's **hostname token** with `time` in the **same Unix second** (monitor fractional seconds; do not use exact `time=` equality).
@@ -27,8 +35,9 @@ When changing ingest, archive, or raw-stats removal under `hpcperfstats/dbload/s
 
 ## Performance
 
-- One streaming pass per file for sample collection; **one itimes range query per host** (maintenance: per distinct host per tick) via `sync_timedb_host_itimes.host_sampled_timestamp_seconds_all_present`; in-memory membership for all sample seconds; overflow → cached per-second exists (same as ingest duplicate scan).
-- **Archive metadata discovery** (head + sampled timestamp scans in `build_archive_maintenance_snapshot`) uses a short-lived spawn **`multiprocessing.Pool`** with **`imap_unordered_watch_pool`** (`archive-metadata-pool`), sized by **`get_sync_pool_process_cap()`** only (same INI/env as ingest pool cap). **`HPCPERFSTATS_SYNC_TIMEDB_INGEST_INLINE=1`** forces serial inline reads (tests). Long scans log begin + periodic progress (every 5000 paths or 60s when path count ≥ 1000).
+- **Head mode:** per-path gate reads only the file head; maintenance `ready_paths` reuse `head_identity_by_path` from the head metadata pass (no second full-file scan).
+- **Sample mode:** one streaming pass per file for sample collection; **one itimes range query per host** (maintenance: per distinct host per tick) via `sync_timedb_host_itimes.host_sampled_timestamp_seconds_all_present`; in-memory membership for all sample seconds; overflow → cached per-second exists (same as ingest duplicate scan).
+- **Archive metadata discovery** uses a short-lived spawn **`multiprocessing.Pool`** with **`imap_unordered_watch_pool`** (`archive-metadata-pool`), sized by **`get_sync_pool_process_cap()`** only (same INI/env as ingest pool cap). Head metadata always runs; sampled metadata runs only in **sample** gate mode. **`HPCPERFSTATS_SYNC_TIMEDB_INGEST_INLINE=1`** forces serial inline reads (tests). Long scans log begin + periodic progress (every 5000 paths or 60s when path count ≥ 1000).
 - Path result cache keyed by `(path, mtime, size)` (TTL ~60s) for maintenance rescans.
 - Archive pool workers call `close_old_connections()` at gate entry.
 
@@ -72,7 +81,7 @@ Closed raw segments that **cannot be ingested** (missing head, load error, `pars
 
 ## Ordering
 
-Startup enqueues janitor debt (mtime scan) without blocking ingest. With the gate enabled, not-yet-ingested files are skipped for tar append and raw delete until a later pass after ingest inserts sampled rows; they still block `.tar` removal via `remaining_raw_by_gz`.
+Startup enqueues janitor debt (mtime scan) without blocking ingest. With the gate enabled, not-yet-ingested files are skipped for tar append and raw delete until a later pass after ingest catches up; they still block `.tar` removal via `remaining_raw_by_gz`.
 
 ## Tests
 

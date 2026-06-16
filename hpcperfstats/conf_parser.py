@@ -145,6 +145,7 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_dispatch_archive_backoff_ratio"),
     ("PIPELINE", "sync_dispatch_step_size"),
     ("PIPELINE", "sync_enable_ingest_first_durability_mode"),
+    ("PIPELINE", "sync_archive_db_ingest_gate_mode"),
     ("PIPELINE", "sync_archive_require_db_head_ingest"),
     ("PIPELINE", "sync_archive_maint_hints"),
     ("PIPELINE", "acct_path"),
@@ -2666,8 +2667,24 @@ def get_sync_archive_worker_stall_seconds():
   )
 
 
+def get_sync_archive_db_ingest_gate_mode():
+  """Return archive DB gate depth: ``head`` (first timestamp) or ``sample`` (strided+EOF)."""
+  _ensure_cfg_loaded()
+  raw = str(
+      _pipeline_get("sync_archive_db_ingest_gate_mode", fallback="head"),
+  ).strip().lower()
+  if raw in ("sample", "sampled"):
+    return "sample"
+  return "head"
+
+
+def sync_archive_db_ingest_gate_uses_sample_mode():
+  """True when the archive DB gate uses strided timestamp samples plus EOF last line."""
+  return get_sync_archive_db_ingest_gate_mode() == "sample"
+
+
 def get_sync_archive_require_db_head_ingest():
-  """Require strided timestamp samples in host_data before tar append or raw removal."""
+  """Require DB ingest readiness before tar append or raw removal (depth via gate mode)."""
   _ensure_cfg_loaded()
   return _parse_bool(
       _pipeline_get("sync_archive_require_db_head_ingest", fallback="yes"),
