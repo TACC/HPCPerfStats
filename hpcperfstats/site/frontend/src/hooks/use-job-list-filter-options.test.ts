@@ -69,4 +69,22 @@ describe("useJobListFilterOptions", () => {
       { query: { enabled: false } },
     );
   });
+
+  it("forwards end_time__date from list API params", () => {
+    vi.mocked(useJobsFilterOptionsRetrieve).mockReturnValue({
+      data: { filter_options: { queues: [] } },
+      error: null,
+      isLoading: false,
+      isFetching: false,
+    } as ReturnType<typeof useJobsFilterOptionsRetrieve>);
+
+    renderHook(() =>
+      useJobListFilterOptions({ end_time__date: "2024-01-15", page: "1" }, true),
+    );
+
+    expect(useJobsFilterOptionsRetrieve).toHaveBeenCalledWith(
+      { end_time__date: "2024-01-15", page: "1" },
+      { query: { enabled: true } },
+    );
+  });
 });

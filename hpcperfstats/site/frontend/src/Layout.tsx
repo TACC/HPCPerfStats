@@ -40,6 +40,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { useFocusTrap } from "./hooks/useFocusTrap";
+import { SITE_MACHINE_NAME } from "@/config/site-identity";
 
 const ExtendedSearch = lazy(() => import("./components/ExtendedSearch"));
 import { useRouteFocusMain } from "./utils/useRouteFocusMain";
@@ -56,8 +57,10 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
   const queryClient = useQueryClient();
   const dropStaffMutation = useSessionDropStaffCreate();
   const invalidateCacheMutation = useCacheInvalidatePageCreate();
-  const machineName =
-    session && typeof session.machine_name === "string" ? session.machine_name : "";
+  const machineName = (
+    (session && typeof session.machine_name === "string" ? session.machine_name : "") ||
+    SITE_MACHINE_NAME
+  ).trim();
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [extendedSearchOpen, setExtendedSearchOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);

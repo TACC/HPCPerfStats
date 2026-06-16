@@ -572,6 +572,31 @@ export default function JobList() {
         </p>
       ) : null}
 
+      {isLgUp ? (
+        <Collapsible
+          open={distributionsOpen}
+          onOpenChange={setDistributionsOpen}
+          className="job-list-distributions mb-4"
+        >
+          <section
+            id="job-list-distributions"
+            aria-label="Distributions for this job selection"
+          >
+            <CollapsibleTrigger className="flex w-full cursor-pointer items-center gap-2 text-left">
+              <h2 className="text-lg font-medium">Distributions for this job selection</h2>
+              <ChevronDownIcon
+                className={cn(
+                  "ml-auto size-4 shrink-0 transition-transform",
+                  distributionsOpen && "rotate-180",
+                )}
+                aria-hidden
+              />
+            </CollapsibleTrigger>
+            <CollapsibleContent className="pt-3">{distributionsBody}</CollapsibleContent>
+          </section>
+        </Collapsible>
+      ) : null}
+
       <JobListHeaderFilters
         filterOptions={filterOptions}
         optionsLoading={optionsLoading}
@@ -728,30 +753,7 @@ export default function JobList() {
       </p>
       </div>
 
-      {isLgUp ? (
-        <Collapsible
-          open={distributionsOpen}
-          onOpenChange={setDistributionsOpen}
-          className="job-list-distributions mb-4"
-        >
-          <section
-            id="job-list-distributions"
-            aria-label="Distributions for this job selection"
-          >
-            <CollapsibleTrigger className="flex w-full cursor-pointer items-center gap-2 text-left">
-              <h2 className="text-lg font-medium">Distributions for this job selection</h2>
-              <ChevronDownIcon
-                className={cn(
-                  "ml-auto size-4 shrink-0 transition-transform",
-                  distributionsOpen && "rotate-180",
-                )}
-                aria-hidden
-              />
-            </CollapsibleTrigger>
-            <CollapsibleContent className="pt-3">{distributionsBody}</CollapsibleContent>
-          </section>
-        </Collapsible>
-      ) : (
+      {!isLgUp ? (
         <section
           id="job-list-distributions"
           role="tabpanel"
@@ -767,7 +769,7 @@ export default function JobList() {
             </a>
           </p>
         </section>
-      )}
+      ) : null}
     </>
   );
 }

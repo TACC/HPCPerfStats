@@ -399,6 +399,54 @@ describe("JobList", () => {
     expect(screen.getByText("Summary available")).toBeInTheDocument();
   });
 
+  it("renders desktop distributions above Refine this list", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: query.includes("min-width: 992px"),
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+
+    setJobListQueryMock({
+      data: {
+        job_list: [],
+        nj: 0,
+        qname: "Jobs",
+        order_by: "-end_time",
+        pagination: { page: 1, num_pages: 1 },
+      },
+    });
+    setJobListFilterOptionsMock({
+      filterOptions: {
+        queues: ["normal"],
+        states: ["COMPLETED"],
+        usernames: [],
+        accounts: [],
+        performance_statuses: [],
+      },
+    });
+
+    renderJobList();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /refine this list/i })).toBeInTheDocument();
+    });
+
+    const distributions = document.getElementById("job-list-distributions");
+    const refine = screen.getByRole("button", { name: /refine this list/i });
+    expect(distributions).toBeTruthy();
+    expect(
+      distributions!.compareDocumentPosition(refine) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("shows Sample Count as the second column for staff users", async () => {
     setJobListQueryMock({ data:{
       job_list: [

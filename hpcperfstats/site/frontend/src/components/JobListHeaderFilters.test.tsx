@@ -134,4 +134,20 @@ describe("JobListHeaderFilters", () => {
     await user.click(clearButton);
     expect(replace).toHaveBeenCalledTimes(1);
   });
+
+  it("shows dimension labels while filter options are loading", async () => {
+    const user = userEvent.setup();
+    render(
+      <JobListHeaderFilters filterOptions={null} optionsLoading routeParams={{}} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /refine this list/i }));
+
+    expect(screen.getByText("Performance data")).toBeInTheDocument();
+    expect(screen.getByText("User")).toBeInTheDocument();
+    expect(screen.getByText("Project")).toBeInTheDocument();
+    expect(screen.getByText("Queue")).toBeInTheDocument();
+    expect(screen.getByText("Status")).toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  });
 });

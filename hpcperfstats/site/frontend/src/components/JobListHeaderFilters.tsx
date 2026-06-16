@@ -26,6 +26,14 @@ import {
   type JobListHeaderFilterKey,
 } from "@/utils/job-list-header-filter-params";
 
+export const HEADER_FILTER_DIMENSIONS = [
+  { key: "performance_sort_rank" as const, label: JOB_LIST_TABLE_HEADERS.performanceData },
+  { key: "username" as const, label: JOB_LIST_TABLE_HEADERS.user },
+  { key: "account" as const, label: PROJECT_FIELD_LABEL },
+  { key: "queue" as const, label: JOB_LIST_TABLE_HEADERS.queue },
+  { key: "state" as const, label: "Status" },
+] as const;
+
 export type JobListFilterOptions = {
   usernames?: string[];
   accounts?: string[];
@@ -275,9 +283,18 @@ export default function JobListHeaderFilters({
           </CardHeader>
           <CollapsibleContent>
             <CardContent className="pt-0">
-              {Array.from({ length: 5 }).map((_, index) => (
-                <Skeleton key={index} className="mb-4 h-16 w-full last:mb-0" />
-              ))}
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {HEADER_FILTER_DIMENSIONS.map(({ label }) => (
+                  <div key={label} className="space-y-1.5">
+                    <span className="text-xs font-medium text-muted-foreground">{label}</span>
+                    <div className="flex flex-wrap gap-1.5" aria-hidden>
+                      {Array.from({ length: 4 }).map((_, chipIndex) => (
+                        <Skeleton key={chipIndex} className="h-7 w-16 rounded-md" />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </CardContent>
           </CollapsibleContent>
         </Card>

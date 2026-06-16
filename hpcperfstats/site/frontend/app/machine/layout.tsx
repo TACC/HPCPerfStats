@@ -10,6 +10,7 @@ import Layout from "@/Layout";
 import LoadingMessage from "@/components/LoadingMessage";
 import { SessionContext, type SessionData } from "@/session-context";
 import { useDocumentTitle } from "@/utils/useDocumentTitle";
+import { SITE_MACHINE_NAME } from "@/config/site-identity";
 
 applyBokehResizeObserverDeferral();
 
@@ -17,7 +18,7 @@ const PLACEHOLDER_SESSION: SessionData = {
   logged_in: true,
   username: "",
   is_staff: false,
-  machine_name: "",
+  machine_name: SITE_MACHINE_NAME,
 };
 
 function sessionFromApi(data: SessionInfo): SessionData {

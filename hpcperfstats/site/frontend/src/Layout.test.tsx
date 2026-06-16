@@ -44,6 +44,10 @@ vi.mock("@/api/generated/admin/admin", async (importOriginal) => {
   };
 });
 
+vi.mock("@/config/site-identity", () => ({
+  SITE_MACHINE_NAME: "Fractal",
+}));
+
 function renderLayout(session, onSessionChange = vi.fn()) {
   return renderWithProviders(
     <Layout session={session} onSessionChange={onSessionChange}>
@@ -230,5 +234,26 @@ describe("Layout", () => {
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: /extended search/i })).not.toBeInTheDocument();
     });
+  });
+
+  it("shows build-time cluster name when session machine_name is empty", () => {
+    renderLayout({
+      logged_in: true,
+      username: "alice",
+      is_staff: false,
+      machine_name: "",
+    });
+    expect(screen.getByText("Fractal")).toBeInTheDocument();
+  });
+
+  it("prefers session machine_name over build-time identity", () => {
+    renderLayout({
+      logged_in: true,
+      username: "alice",
+      is_staff: false,
+      machine_name: "Live Cluster",
+    });
+    expect(screen.getByText("Live Cluster")).toBeInTheDocument();
+    expect(screen.queryByText("Fractal")).not.toBeInTheDocument();
   });
 });

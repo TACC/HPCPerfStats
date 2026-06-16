@@ -5,6 +5,7 @@ import { Menu } from "lucide-react";
 import { useRouteFocusMain } from "../utils/useRouteFocusMain";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { SITE_MACHINE_NAME } from "@/config/site-identity";
 
 const PUB_LOGIN_PROMPT_HREF = `/login_prompt?next=${encodeURIComponent("/machine/")}`;
 
@@ -15,6 +16,7 @@ type LayoutPubProps = {
 
 export default function LayoutPub({ machineName, children }: LayoutPubProps) {
   const pathname = usePathname();
+  const displayMachineName = (machineName || SITE_MACHINE_NAME).trim();
   const [navOpen, setNavOpen] = useState(false);
   useRouteFocusMain(pathname);
   useEffect(() => {
@@ -59,9 +61,9 @@ export default function LayoutPub({ machineName, children }: LayoutPubProps) {
               <div className="text-sm text-muted-foreground">
                 a job-level resource usage monitoring tool
               </div>
-              {machineName ? (
+              {displayMachineName ? (
                 <div className="site-header-cluster text-[1.05em] text-muted-foreground">
-                  {machineName}
+                  {displayMachineName}
                 </div>
               ) : null}
             </div>
