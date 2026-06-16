@@ -91,7 +91,6 @@ EXPLICIT_OPTION_SECTION = {
     "acct_path": "PIPELINE",
     "archive_dir": "PIPELINE",
     "daily_archive_dir": "PIPELINE",
-    "sync_archive_discovery_workers": "PIPELINE",
 }
 
 

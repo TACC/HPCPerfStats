@@ -39,7 +39,7 @@ def test_collect_head_metadata_parallel_matches_serial(monkeypatch, tmp_path):
     if host_name and ts is not None:
       serial_identity[path] = (host_name, int(ts.timestamp()))
 
-  monkeypatch.setenv("SYNC_ARCHIVE_DISCOVERY_WORKERS", "2")
+  monkeypatch.setattr(cfg, "get_sync_pool_process_cap", lambda: 2)
   parallel_first, parallel_identity, _stats = maint.collect_head_metadata_for_paths(
       paths, hints_data=None, log_fn=None)
 
@@ -191,3 +191,51 @@ def test_build_archive_maintenance_snapshot_once_collects(monkeypatch, tmp_path)
   assert collect_calls["n"] == 1
   assert seg in snap.closed_paths
   assert seg in snap.first_timestamp_by_path
+
+
+def test_archive_discovery_worker_count_uses_sync_pool_process_cap(monkeypatch):
+  monkeypatch.setattr(cfg, "get_sync_pool_process_cap", lambda: 24)
+  assert maint._get_archive_discovery_worker_count(100) == 24
+  monkeypatch.setattr(cfg, "get_sync_pool_process_cap", lambda: 3)
+  assert maint._get_archive_discovery_worker_count(2) == 2
+
+
+def test_sampled_metadata_logs_begin_and_progress(monkeypatch):
+  paths = ["/fake/path/%d" % i for i in range(5001)]
+  logs = []
+
+  def _fake_read(path, *, sample_stride):
+    del sample_stride
+    return path, {"host": {1700000000}}
+
+  monkeypatch.setattr(maint, "_read_sampled_identities_one", _fake_read)
+  monkeypatch.setattr(cfg, "get_sync_pool_process_cap", lambda: 4)
+  monkeypatch.setattr(cfg, "get_sync_archive_db_ingest_gate_sample_stride", lambda: 5000)
+  maint.collect_sampled_timestamp_identities_for_paths(
+      paths,
+      log_fn=lambda msg, **kw: logs.append(msg),
+  )
+  joined = "\n".join(logs)
+  assert "Sampled timestamp metadata: begin" in joined
+  assert "Sampled timestamp metadata: progress" in joined
+  assert "Sampled timestamp metadata: paths=5001" in joined
+
+
+def test_head_metadata_logs_begin_and_progress_for_large_read_set(monkeypatch):
+  paths = ["/fake/path/%d" % i for i in range(5001)]
+  logs = []
+
+  def _fake_read(path):
+    return path, "1700000000", "cn001", 1700000000
+
+  monkeypatch.setattr(maint, "_read_head_metadata_one", _fake_read)
+  monkeypatch.setattr(cfg, "get_sync_pool_process_cap", lambda: 4)
+  maint.collect_head_metadata_for_paths(
+      paths,
+      hints_data=None,
+      log_fn=lambda msg, **kw: logs.append(msg),
+  )
+  joined = "\n".join(logs)
+  assert "Head metadata: begin" in joined
+  assert "Head metadata: progress" in joined
+  assert "Head metadata: paths=5001" in joined

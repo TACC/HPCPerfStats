@@ -235,7 +235,8 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # End edge tolerance seconds (default 600): MAX(time) in window must be >= end - margin.
 # metrics_readiness_end_margin_seconds = 600
 
-# Cap sync_timedb ingest pool processes (default 8 on 128 GiB cgroup hosts; raise to uncap).
+# Cap sync_timedb ingest pool processes and archive metadata discovery threads
+# (head + sampled DB-gate scans on the janitor thread; default 8 on 128 GiB cgroup hosts).
 sync_pool_process_cap = 8
 
 # Cap sync_timedb archive pool processes when set.
@@ -433,9 +434,6 @@ sync_ingest_malloc_trim_after_file = yes
 
 # Persist archive maintenance hints for faster restarts (default yes).
 # sync_archive_maint_hints = yes
-
-# Max concurrent raw stats head-line reads during maintenance snapshot (default sync_archive_pool_processes).
-# sync_archive_discovery_workers = 8
 
 # Keep uncompressed YYYY-MM-DD.tar after sealing globally (default no).
 # Prior days drop at seal when raw is gone; calendar-today uses grace hours below.

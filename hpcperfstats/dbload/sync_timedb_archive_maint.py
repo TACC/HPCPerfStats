@@ -27,6 +27,9 @@ from hpcperfstats.print_utils import log_print
 
 SYNC_ARCHIVE_MAINT_HINTS_BASENAME = ".sync_archive_maint_hints.json"
 _MAINT_HINTS_VERSION = 2
+_ARCHIVE_METADATA_PROGRESS_MIN_PATHS = 1000
+_ARCHIVE_METADATA_PROGRESS_EVERY_N = 5000
+_ARCHIVE_METADATA_PROGRESS_INTERVAL_S = 60.0
 
 
 @dataclass
@@ -50,17 +53,39 @@ def maint_hints_path(archive_data_dir: str) -> str:
 
 
 def _get_archive_discovery_worker_count(total_tasks: int) -> int:
+  """Parallel head/sampled metadata reads; sole cap is ``get_sync_pool_process_cap()``."""
   if total_tasks <= 0:
     return 1
-  env = os.environ.get("SYNC_ARCHIVE_DISCOVERY_WORKERS", "").strip()
-  if env:
-    try:
-      configured = max(1, int(env))
-    except ValueError:
-      configured = max(1, int(cfg.get_sync_archive_discovery_workers()))
-  else:
-    configured = max(1, int(cfg.get_sync_archive_discovery_workers()))
+  configured = max(1, int(cfg.get_sync_pool_process_cap()))
   return max(1, min(total_tasks, configured))
+
+
+def _maybe_log_parallel_task_progress(
+    *,
+    prefix: str,
+    total: int,
+    done: int,
+    errors: int,
+    started_mono: float,
+    last_progress_mono: float,
+    log_fn,
+) -> float:
+  if total < _ARCHIVE_METADATA_PROGRESS_MIN_PATHS or log_fn is None:
+    return last_progress_mono
+  if done >= total:
+    return last_progress_mono
+  now = time.monotonic()
+  if done > 0 and (
+      done % _ARCHIVE_METADATA_PROGRESS_EVERY_N == 0
+      or (now - last_progress_mono) >= _ARCHIVE_METADATA_PROGRESS_INTERVAL_S
+  ):
+    log_fn(
+        "%s: progress done=%d/%d errors=%d elapsed_s=%d"
+        % (prefix, done, total, errors, int(now - started_mono)),
+        flush=True,
+    )
+    return now
+  return last_progress_mono
 
 
 def _path_fingerprint(path: str) -> Optional[Tuple[int, int]]:
@@ -326,8 +351,18 @@ def collect_sampled_timestamp_identities_for_paths(
   sampled_by_path: Dict[str, Dict[str, Set[int]]] = {}
   errors = 0
   started = time.time()
+  started_mono = time.monotonic()
   path_list = list(paths or [])
   workers = _get_archive_discovery_worker_count(len(path_list)) if path_list else 0
+  total_tasks = len(path_list)
+  if log_fn and total_tasks >= _ARCHIVE_METADATA_PROGRESS_MIN_PATHS:
+    log_fn(
+        "Sampled timestamp metadata: begin paths=%d workers=%d stride=%d"
+        % (total_tasks, workers, stride),
+        flush=True,
+    )
+  last_progress_mono = started_mono
+  done = 0
   if path_list:
     with ThreadPoolExecutor(max_workers=workers) as executor:
       futures = {
@@ -339,11 +374,41 @@ def collect_sampled_timestamp_identities_for_paths(
           path, sampled = future.result()
         except Exception:
           errors += 1
+          done += 1
+          last_progress_mono = _maybe_log_parallel_task_progress(
+              prefix="Sampled timestamp metadata",
+              total=total_tasks,
+              done=done,
+              errors=errors,
+              started_mono=started_mono,
+              last_progress_mono=last_progress_mono,
+              log_fn=log_fn,
+          )
           continue
         if sampled is None:
           errors += 1
+          done += 1
+          last_progress_mono = _maybe_log_parallel_task_progress(
+              prefix="Sampled timestamp metadata",
+              total=total_tasks,
+              done=done,
+              errors=errors,
+              started_mono=started_mono,
+              last_progress_mono=last_progress_mono,
+              log_fn=log_fn,
+          )
           continue
         sampled_by_path[path] = sampled
+        done += 1
+        last_progress_mono = _maybe_log_parallel_task_progress(
+            prefix="Sampled timestamp metadata",
+            total=total_tasks,
+            done=done,
+            errors=errors,
+            started_mono=started_mono,
+            last_progress_mono=last_progress_mono,
+            log_fn=log_fn,
+        )
   stats = {
       "paths": len(path_list),
       "read": len(path_list),
@@ -379,10 +444,20 @@ def collect_head_metadata_for_paths(
   head_identity_by_path: Dict[str, Tuple[str, int]] = dict(head_hinted)
   errors = 0
   started = time.time()
+  started_mono = time.monotonic()
 
   hinted_count = len(first_ts_hinted)
+  read_total = len(needs_read)
   if needs_read:
-    workers = _get_archive_discovery_worker_count(len(needs_read))
+    workers = _get_archive_discovery_worker_count(read_total)
+    if log_fn and read_total >= _ARCHIVE_METADATA_PROGRESS_MIN_PATHS:
+      log_fn(
+          "Head metadata: begin paths=%d read=%d workers=%d"
+          % (len(paths), read_total, workers),
+          flush=True,
+      )
+    last_progress_mono = started_mono
+    done = 0
     with ThreadPoolExecutor(max_workers=workers) as executor:
       futures = {
           executor.submit(_read_head_metadata_one, path): path for path in needs_read
@@ -392,12 +467,42 @@ def collect_head_metadata_for_paths(
           path, first_ts, host, unix_second = future.result()
         except Exception:
           errors += 1
+          done += 1
+          last_progress_mono = _maybe_log_parallel_task_progress(
+              prefix="Head metadata",
+              total=read_total,
+              done=done,
+              errors=errors,
+              started_mono=started_mono,
+              last_progress_mono=last_progress_mono,
+              log_fn=log_fn,
+          )
           continue
         if first_ts is None or host is None or unix_second is None:
           errors += 1
+          done += 1
+          last_progress_mono = _maybe_log_parallel_task_progress(
+              prefix="Head metadata",
+              total=read_total,
+              done=done,
+              errors=errors,
+              started_mono=started_mono,
+              last_progress_mono=last_progress_mono,
+              log_fn=log_fn,
+          )
           continue
         first_timestamp_by_path[path] = first_ts
         head_identity_by_path[path] = (host, unix_second)
+        done += 1
+        last_progress_mono = _maybe_log_parallel_task_progress(
+            prefix="Head metadata",
+            total=read_total,
+            done=done,
+            errors=errors,
+            started_mono=started_mono,
+            last_progress_mono=last_progress_mono,
+            log_fn=log_fn,
+        )
   else:
     workers = 0
 

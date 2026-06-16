@@ -28,6 +28,7 @@ When changing ingest, archive, or raw-stats removal under `hpcperfstats/dbload/s
 ## Performance
 
 - One streaming pass per file for sample collection; **one itimes range query per host** (maintenance: per distinct host per tick) via `sync_timedb_host_itimes.host_sampled_timestamp_seconds_all_present`; in-memory membership for all sample seconds; overflow → cached per-second exists (same as ingest duplicate scan).
+- **Archive metadata discovery** (head + sampled timestamp scans in `build_archive_maintenance_snapshot`) uses a `ThreadPoolExecutor` sized by **`get_sync_pool_process_cap()`** only (same INI/env as ingest pool cap). Long scans log begin + periodic progress (every 5000 paths or 60s when path count ≥ 1000).
 - Path result cache keyed by `(path, mtime, size)` (TTL ~60s) for maintenance rescans.
 - Archive pool workers call `close_old_connections()` at gate entry.
 

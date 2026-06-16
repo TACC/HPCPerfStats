@@ -147,7 +147,6 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_enable_ingest_first_durability_mode"),
     ("PIPELINE", "sync_archive_require_db_head_ingest"),
     ("PIPELINE", "sync_archive_maint_hints"),
-    ("PIPELINE", "sync_archive_discovery_workers"),
     ("PIPELINE", "acct_path"),
     ("PIPELINE", "archive_dir"),
     ("PIPELINE", "daily_archive_dir"),
@@ -1069,7 +1068,10 @@ def _apply_sync_pool_cap(size, cap):
 
 
 def get_sync_pool_process_cap():
-  """If set, caps ``sync_timedb`` main ingest pool. Env ``SYNC_POOL_PROCESS_CAP``."""
+  """Cap ``sync_timedb`` ingest pool and archive metadata discovery thread pool.
+
+  Env ``SYNC_POOL_PROCESS_CAP`` overrides INI ``sync_pool_process_cap``.
+  """
   env = os.environ.get("SYNC_POOL_PROCESS_CAP", "").strip()
   if env:
     return int(env)
@@ -2678,23 +2680,6 @@ def get_sync_archive_maint_hints():
   return _parse_bool(
       _pipeline_get("sync_archive_maint_hints", fallback="yes"),
   )
-
-
-def get_sync_archive_discovery_workers():
-  """Max concurrent raw stats head-line reads during maintenance snapshot."""
-  _ensure_cfg_loaded()
-  raw = _ini_get(
-      "PIPELINE",
-      "sync_archive_discovery_workers",
-      fallback="",
-      legacy_sections=("PORTAL",),
-  )
-  if str(raw).strip():
-    try:
-      return max(1, int(raw))
-    except (TypeError, ValueError):
-      pass
-  return max(1, int(get_sync_archive_pool_processes()))
 
 
 def get_redis_location():
