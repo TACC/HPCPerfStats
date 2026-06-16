@@ -24,10 +24,11 @@ Supervisor/batch daemons (`sync_timedb`, `update_metrics`, `listend`, etc.) must
 |------|---------|
 | Main daemon | `sync_timedb.py [main]` |
 | Pool worker | `sync_timedb.py [worker:ingest-pool]` |
+| Archive metadata pool worker | `sync_timedb.py [worker:archive-metadata-pool]` |
 | Helper thread (daemons only) | `update_metrics.py [thread:prewarm-pool]` |
 | Post-chunk hygiene thread | `sync_timedb.py [thread:archive-post-chunk-hygiene]` |
 
-Use a **distinct, stable `pool_kind`** per pool type in the same script (e.g. `ingest-parse-pool`, `db-writer-pool`, `metrics-pool`, `public-ef-pool`).
+Use a **distinct, stable `pool_kind`** per pool type in the same script (e.g. `ingest-parse-pool`, `db-writer-pool`, `archive-metadata-pool`, `metrics-pool`, `public-ef-pool`).
 
 ## Trigger conditions
 

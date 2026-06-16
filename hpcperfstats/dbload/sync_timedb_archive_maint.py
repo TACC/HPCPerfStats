@@ -9,13 +9,15 @@ re-read on a cache miss.
 from __future__ import annotations
 
 import json
+import multiprocessing
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Any, Dict, Iterator, Optional, Set, Tuple
 
 import hpcperfstats.conf_parser as cfg
+from hpcperfstats.dbload.multiprocessing_pool_health import imap_unordered_watch_pool
+from hpcperfstats.process_title import apply_pool_worker_process_title
 from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     build_archive_mapping,
     collect_stats_files_in_range,
@@ -30,6 +32,10 @@ _MAINT_HINTS_VERSION = 2
 _ARCHIVE_METADATA_PROGRESS_MIN_PATHS = 1000
 _ARCHIVE_METADATA_PROGRESS_EVERY_N = 5000
 _ARCHIVE_METADATA_PROGRESS_INTERVAL_S = 60.0
+_ARCHIVE_METADATA_POOL_SCRIPT = "sync_timedb.py"
+_ARCHIVE_METADATA_POOL_KIND = "archive-metadata-pool"
+# Reuse ingest inline env: spawn pool workers break pytest monkeypatches and test DB.
+_ARCHIVE_METADATA_INLINE_ENV = "HPCPERFSTATS_SYNC_TIMEDB_INGEST_INLINE"
 
 
 @dataclass
@@ -58,6 +64,42 @@ def _get_archive_discovery_worker_count(total_tasks: int) -> int:
     return 1
   configured = max(1, int(cfg.get_sync_pool_process_cap()))
   return max(1, min(total_tasks, configured))
+
+
+def _archive_metadata_inline_requested() -> bool:
+  return os.environ.get(_ARCHIVE_METADATA_INLINE_ENV, "").strip().lower() in (
+      "1", "yes", "true")
+
+
+def _metadata_pool_recycle_kwargs():
+  maxtasks = cfg.get_sync_ingest_pool_maxtasksperchild()
+  if maxtasks > 0:
+    return {"maxtasksperchild": int(maxtasks)}
+  return {}
+
+
+def _iter_archive_metadata_pool(fn, tasks, *, context: str) -> Iterator:
+  """Run metadata worker tasks via spawn pool imap or inline serial fallback."""
+  task_list = list(tasks or ())
+  if not task_list:
+    return
+  if _archive_metadata_inline_requested():
+    for task in task_list:
+      yield fn(task)
+    return
+  workers = _get_archive_discovery_worker_count(len(task_list))
+  with multiprocessing.get_context("spawn").Pool(
+      processes=workers,
+      initializer=apply_pool_worker_process_title,
+      initargs=(_ARCHIVE_METADATA_POOL_SCRIPT, _ARCHIVE_METADATA_POOL_KIND),
+      **_metadata_pool_recycle_kwargs(),
+  ) as pool:
+    yield from imap_unordered_watch_pool(
+        pool,
+        fn,
+        task_list,
+        context=context,
+    )
 
 
 def _maybe_log_parallel_task_progress(
@@ -305,9 +347,6 @@ def _split_paths_by_hints(
 
 
 def _read_head_metadata_one(path: str) -> Tuple[str, Optional[str], Optional[str], Optional[int]]:
-  from hpcperfstats.process_title import set_daemon_thread_title
-
-  set_daemon_thread_title("", script_name="sync_timedb.py", role="archive-discovery")
   try:
     host, timestamp_utc = read_stats_file_head_identity(path)
   except Exception:
@@ -319,13 +358,14 @@ def _read_head_metadata_one(path: str) -> Tuple[str, Optional[str], Optional[str
   return path, first_ts, str(host).strip(), unix_second
 
 
-def _read_sampled_identities_one(path, *, sample_stride):
-  from hpcperfstats.process_title import set_daemon_thread_title
+def _read_sampled_identities_task(
+    task: Tuple[str, int],
+) -> Tuple[str, Optional[Dict[str, Set[int]]]]:
+  path, sample_stride = task
   from hpcperfstats.dbload.sync_timedb_parsing import (
       collect_stats_file_sampled_timestamp_identities_streaming,
   )
 
-  set_daemon_thread_title("", script_name="sync_timedb.py", role="archive-discovery")
   try:
     sampled = collect_stats_file_sampled_timestamp_identities_streaming(
         path,
@@ -364,51 +404,26 @@ def collect_sampled_timestamp_identities_for_paths(
   last_progress_mono = started_mono
   done = 0
   if path_list:
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-      futures = {
-          executor.submit(_read_sampled_identities_one, path, sample_stride=stride): path
-          for path in path_list
-      }
-      for future in as_completed(futures):
-        try:
-          path, sampled = future.result()
-        except Exception:
-          errors += 1
-          done += 1
-          last_progress_mono = _maybe_log_parallel_task_progress(
-              prefix="Sampled timestamp metadata",
-              total=total_tasks,
-              done=done,
-              errors=errors,
-              started_mono=started_mono,
-              last_progress_mono=last_progress_mono,
-              log_fn=log_fn,
-          )
-          continue
-        if sampled is None:
-          errors += 1
-          done += 1
-          last_progress_mono = _maybe_log_parallel_task_progress(
-              prefix="Sampled timestamp metadata",
-              total=total_tasks,
-              done=done,
-              errors=errors,
-              started_mono=started_mono,
-              last_progress_mono=last_progress_mono,
-              log_fn=log_fn,
-          )
-          continue
+    tasks = [(path, stride) for path in path_list]
+    for path, sampled in _iter_archive_metadata_pool(
+        _read_sampled_identities_task,
+        tasks,
+        context="archive metadata sampled",
+    ):
+      if sampled is None:
+        errors += 1
+      else:
         sampled_by_path[path] = sampled
-        done += 1
-        last_progress_mono = _maybe_log_parallel_task_progress(
-            prefix="Sampled timestamp metadata",
-            total=total_tasks,
-            done=done,
-            errors=errors,
-            started_mono=started_mono,
-            last_progress_mono=last_progress_mono,
-            log_fn=log_fn,
-        )
+      done += 1
+      last_progress_mono = _maybe_log_parallel_task_progress(
+          prefix="Sampled timestamp metadata",
+          total=total_tasks,
+          done=done,
+          errors=errors,
+          started_mono=started_mono,
+          last_progress_mono=last_progress_mono,
+          log_fn=log_fn,
+      )
   stats = {
       "paths": len(path_list),
       "read": len(path_list),
@@ -458,51 +473,26 @@ def collect_head_metadata_for_paths(
       )
     last_progress_mono = started_mono
     done = 0
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-      futures = {
-          executor.submit(_read_head_metadata_one, path): path for path in needs_read
-      }
-      for future in as_completed(futures):
-        try:
-          path, first_ts, host, unix_second = future.result()
-        except Exception:
-          errors += 1
-          done += 1
-          last_progress_mono = _maybe_log_parallel_task_progress(
-              prefix="Head metadata",
-              total=read_total,
-              done=done,
-              errors=errors,
-              started_mono=started_mono,
-              last_progress_mono=last_progress_mono,
-              log_fn=log_fn,
-          )
-          continue
-        if first_ts is None or host is None or unix_second is None:
-          errors += 1
-          done += 1
-          last_progress_mono = _maybe_log_parallel_task_progress(
-              prefix="Head metadata",
-              total=read_total,
-              done=done,
-              errors=errors,
-              started_mono=started_mono,
-              last_progress_mono=last_progress_mono,
-              log_fn=log_fn,
-          )
-          continue
+    for path, first_ts, host, unix_second in _iter_archive_metadata_pool(
+        _read_head_metadata_one,
+        needs_read,
+        context="archive metadata head",
+    ):
+      if first_ts is None or host is None or unix_second is None:
+        errors += 1
+      else:
         first_timestamp_by_path[path] = first_ts
         head_identity_by_path[path] = (host, unix_second)
-        done += 1
-        last_progress_mono = _maybe_log_parallel_task_progress(
-            prefix="Head metadata",
-            total=read_total,
-            done=done,
-            errors=errors,
-            started_mono=started_mono,
-            last_progress_mono=last_progress_mono,
-            log_fn=log_fn,
-        )
+      done += 1
+      last_progress_mono = _maybe_log_parallel_task_progress(
+          prefix="Head metadata",
+          total=read_total,
+          done=done,
+          errors=errors,
+          started_mono=started_mono,
+          last_progress_mono=last_progress_mono,
+          log_fn=log_fn,
+      )
   else:
     workers = 0
 
