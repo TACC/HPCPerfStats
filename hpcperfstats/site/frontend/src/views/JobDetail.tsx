@@ -443,7 +443,7 @@ export default function JobDetail() {
                 <div>
                   {renderJobEntityLink(
                     job.queue,
-                    `/queue/${encodeURIComponent(String(job.queue ?? ""))}/`,
+                    `/machine/queue/${encodeURIComponent(String(job.queue ?? ""))}/`,
                     ""
                   )}
                 </div>
@@ -453,7 +453,7 @@ export default function JobDetail() {
                 <div>
                   {renderJobEntityLink(
                     job.username,
-                    `/username/${encodeURIComponent(String(job.username ?? ""))}/`,
+                    `/machine/username/${encodeURIComponent(String(job.username ?? ""))}/`,
                     "Unknown"
                   )}
                 </div>
@@ -463,7 +463,7 @@ export default function JobDetail() {
                 <div>
                   {renderJobEntityLink(
                     job.account,
-                    `/account/${encodeURIComponent(String(job.account ?? ""))}/`,
+                    `/machine/account/${encodeURIComponent(String(job.account ?? ""))}/`,
                     "None"
                   )}
                 </div>
@@ -569,14 +569,14 @@ export default function JobDetail() {
                   <TableCell>
                     {renderJobEntityLink(
                       job.username,
-                      `/username/${encodeURIComponent(String(job.username ?? ""))}/`,
+                      `/machine/username/${encodeURIComponent(String(job.username ?? ""))}/`,
                       "Unknown"
                     )}
                   </TableCell>
                   <TableCell>
                     {renderJobEntityLink(
                       job.account,
-                      `/account/${encodeURIComponent(String(job.account ?? ""))}/`,
+                      `/machine/account/${encodeURIComponent(String(job.account ?? ""))}/`,
                       "None"
                     )}
                   </TableCell>
@@ -587,7 +587,7 @@ export default function JobDetail() {
                   <TableCell>
                     {renderJobEntityLink(
                       job.queue,
-                      `/queue/${encodeURIComponent(String(job.queue ?? ""))}/`,
+                      `/machine/queue/${encodeURIComponent(String(job.queue ?? ""))}/`,
                       ""
                     )}
                   </TableCell>

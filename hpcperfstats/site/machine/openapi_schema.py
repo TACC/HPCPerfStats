@@ -105,9 +105,60 @@ JOB_LIST_SCHEMA = extend_schema(
         ),
         OpenApiParameter(name="host", type=str, location=OpenApiParameter.QUERY),
         OpenApiParameter(name="end_time__date", type=str, location=OpenApiParameter.QUERY),
+        OpenApiParameter(
+            name="include_filter_options",
+            type=int,
+            location=OpenApiParameter.QUERY,
+            description="When 0, omit filter_options from the response (SPA loads them via GET /api/jobs/filter_options/). Default 1.",
+        ),
     ],
     responses={
         200: os.JobListResponseSerializer,
+        **_auth_responses(),
+        **_common_error_responses(),
+    },
+)
+
+JOB_LIST_FILTER_OPTIONS_SCHEMA = extend_schema(
+    tags=["jobs"],
+    parameters=[
+        OpenApiParameter(name="page", type=int, location=OpenApiParameter.QUERY),
+        OpenApiParameter(name="order_by", type=str, location=OpenApiParameter.QUERY),
+        OpenApiParameter(
+            name="username",
+            type=str,
+            location=OpenApiParameter.QUERY,
+            description="Comma-separated usernames (OR within dimension).",
+        ),
+        OpenApiParameter(
+            name="account",
+            type=str,
+            location=OpenApiParameter.QUERY,
+            description="Comma-separated project/account names (exact match, OR).",
+        ),
+        OpenApiParameter(
+            name="queue",
+            type=str,
+            location=OpenApiParameter.QUERY,
+            description="Comma-separated queue names (OR).",
+        ),
+        OpenApiParameter(
+            name="state",
+            type=str,
+            location=OpenApiParameter.QUERY,
+            description="Comma-separated major terminal status group keys (OR).",
+        ),
+        OpenApiParameter(
+            name="performance_sort_rank",
+            type=str,
+            location=OpenApiParameter.QUERY,
+            description="Comma-separated performance status ranks 0–5 (OR).",
+        ),
+        OpenApiParameter(name="host", type=str, location=OpenApiParameter.QUERY),
+        OpenApiParameter(name="end_time__date", type=str, location=OpenApiParameter.QUERY),
+    ],
+    responses={
+        200: os.JobListFilterOptionsResponseSerializer,
         **_auth_responses(),
         **_common_error_responses(),
     },

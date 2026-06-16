@@ -1,10 +1,12 @@
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import type { MouseEvent } from "react";
+import { ChevronDownIcon } from "lucide-react";
 import { TextLink, textLinkClassName } from "@/components/TextLink";
 import type { JobListEntry } from "@/api/generated/models/jobListEntry";
 import type { JobListData } from "@/types/view-models";
 import { useJobListQuery } from "@/hooks/use-job-list";
+import { useJobListFilterOptions } from "@/hooks/use-job-list-filter-options";
 import {
   JOB_LIST_HISTOGRAM_METRICS,
   useJobListHistograms,
@@ -24,6 +26,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   Pagination,
   PaginationContent,
@@ -193,6 +200,7 @@ export default function JobList() {
   const pathname = usePathname();
   const router = useRouter();
   const [histogramReloadKey, setHistogramReloadKey] = useState(0);
+  const [distributionsOpen, setDistributionsOpen] = useState(false);
   const { openExtendedSearch } = useExtendedSearchLayout();
   const listViewTab = readTabFromSearchParams(rawSearchParams, "view", "jobs");
   const [isLgUp, setIsLgUp] = useState(() =>
@@ -226,7 +234,13 @@ export default function JobList() {
 
   const jobListData = data as JobListApiResponse | null;
 
-  const histogramsEnabled = isLgUp || listViewTab === "charts";
+  const { filterOptions, optionsLoading } = useJobListFilterOptions(
+    listApiParams,
+    !initialLoading && !!jobListData,
+  );
+
+  const histogramsEnabled =
+    (!isLgUp && listViewTab === "charts") || (isLgUp && distributionsOpen);
   const { histograms, metricHistStatus, batchError, histogramsUpdating } =
     useJobListHistograms(listApiParams, histogramReloadKey, histogramsEnabled, jobsFetching);
 
@@ -250,41 +264,19 @@ export default function JobList() {
       ? jobListData.filter_summary
       : [];
 
-  if (initialLoading && !jobListData) {
-    return (
-      <div className="job-list-skeleton" aria-busy="true">
-        <span className="sr-only" role="status" aria-label="Loading job list">
-          Loading job list
-        </span>
-        <Skeleton className="mb-3 h-8 w-2/3" />
-        <Skeleton className="mb-3 h-16 w-full" />
-        <Table className="border text-sm">
-          <TableCaption className="sr-only">Loading</TableCaption>
-          <TableBody>
-            {[1, 2, 3, 4, 5].map((i) => (
-              <TableRow key={i}>
-                <TableCell colSpan={6}>
-                  <Skeleton className="h-4 w-full" />
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
-    );
-  }
   if (error) return <BannerErrorMessage message={error} />;
-  if (!jobListData) return null;
+  if (!initialLoading && !jobListData) return null;
+
+  const showTableSkeleton = initialLoading && !jobListData;
 
   const {
     job_list = [],
     nj = 0,
     aggregates = {},
-    current_path,
-    qname,
+    qname = routeCtx || "Job list",
     order_by: responseOrderBy = "-end_time",
     pagination = {},
-  } = jobListData;
+  } = jobListData ?? {};
   const totalNodeHours = aggregates.total_node_hours;
   const queueWaitMeanHours = aggregates.queue_wait_mean_hours;
   const page = pagination.page ?? 1;
@@ -369,8 +361,14 @@ export default function JobList() {
   const pageSummary = jobListPageHumanSummary(paramsFromRoute);
 
   function handleJumpToDistributions(event: MouseEvent<HTMLAnchorElement>) {
-    if (isLgUp) return;
     event.preventDefault();
+    if (isLgUp) {
+      setDistributionsOpen(true);
+      window.requestAnimationFrame(() => {
+        document.getElementById("job-list-distributions")?.scrollIntoView({ block: "start" });
+      });
+      return;
+    }
     setListViewTab("charts");
     window.requestAnimationFrame(() => {
       document.getElementById("job-list-distributions")?.scrollIntoView({ block: "start" });
@@ -485,9 +483,73 @@ export default function JobList() {
 
   const breadcrumbItems = buildJobListBreadcrumbs(paramsFromRoute, qname);
 
+  const distributionsBody = (
+    <>
+      {histogramsUpdating ? (
+        <p className="mb-2 text-sm text-muted-foreground" role="status" aria-live="polite">
+          Updating distributions…
+        </p>
+      ) : null}
+      <div className="text-center">
+        {JOB_LIST_HISTOGRAM_METRICS.map((metric) => {
+          const status = metricHistStatus[metric] || {
+            loading: false,
+            error: null,
+          };
+          const friendlyName = labelMap[metric] || metric;
+          return (
+            <div key={metric}>
+              {status.loading && (
+                <LoadingMessage message={`Loading ${friendlyName.toLowerCase()} histogram…`} />
+              )}
+            </div>
+          );
+        })}
+        {histogramsFinishedLoading && failedHistogramLabels.length > 0 ? (
+          <Alert
+            className="mx-auto mt-2 max-w-[520px] border-amber-200 bg-amber-50 text-left text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"
+            role="status"
+            aria-live="polite"
+          >
+            <AlertDescription className="text-sm break-words">
+              <p className="mb-2">
+                Some histograms could not be loaded ({failedHistogramLabels.join(", ")}).
+                The job list below is unchanged.
+              </p>
+              {histogramErrorMessage ? (
+                <p className="mb-2 whitespace-normal break-words text-amber-950 dark:text-amber-100">
+                  {histogramErrorMessage}
+                </p>
+              ) : null}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setHistogramReloadKey((k) => k + 1)}
+              >
+                Retry histograms
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : null}
+        {distributionPlotsVisible && histogramsFinishedLoading && histograms?.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No distribution data for this selection.</p>
+        ) : null}
+        {distributionPlotsVisible ? (
+          <HistogramThumbnails histograms={histograms} embedAllowed={distributionPlotsVisible} />
+        ) : null}
+      </div>
+    </>
+  );
+
   return (
     <>
       <PageBreadcrumbs items={breadcrumbItems} />
+      {showTableSkeleton ? (
+        <span className="sr-only" role="status" aria-label="Loading job list">
+          Loading job list
+        </span>
+      ) : null}
       <h1 className="mb-3 text-2xl font-semibold tracking-tight">{qname}</h1>
       {pageSummary ? (
         <p className="job-list-page-summary mb-2 text-sm text-muted-foreground">{pageSummary}</p>
@@ -510,80 +572,9 @@ export default function JobList() {
         </p>
       ) : null}
 
-      <section
-        id="job-list-distributions"
-        role={isLgUp ? undefined : "tabpanel"}
-        className="job-list-distributions mb-4"
-        aria-label="Distributions for this job selection"
-        hidden={!isLgUp && listViewTab !== "charts"}
-      >
-        <h2 className="mb-2 text-lg font-medium">Distributions for this job selection</h2>
-        {histogramsUpdating ? (
-          <p className="mb-2 text-sm text-muted-foreground" role="status" aria-live="polite">
-            Updating distributions…
-          </p>
-        ) : null}
-        <div className="text-center">
-          {JOB_LIST_HISTOGRAM_METRICS.map((metric) => {
-            const status = metricHistStatus[metric] || {
-              loading: false,
-              error: null,
-            };
-            const friendlyName = labelMap[metric] || metric;
-            return (
-              <div key={metric}>
-                {status.loading && (
-                  <LoadingMessage
-                    message={`Loading ${friendlyName.toLowerCase()} histogram…`}
-                  />
-                )}
-              </div>
-            );
-          })}
-          {histogramsFinishedLoading && failedHistogramLabels.length > 0 ? (
-            <Alert
-              className="mx-auto mt-2 max-w-[520px] border-amber-200 bg-amber-50 text-left text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"
-              role="status"
-              aria-live="polite"
-            >
-              <AlertDescription className="text-sm break-words">
-                <p className="mb-2">
-                  Some histograms could not be loaded ({failedHistogramLabels.join(", ")}).
-                  The job list below is unchanged.
-                </p>
-                {histogramErrorMessage ? (
-                  <p className="mb-2 whitespace-normal break-words text-amber-950 dark:text-amber-100">
-                    {histogramErrorMessage}
-                  </p>
-                ) : null}
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setHistogramReloadKey((k) => k + 1)}
-                >
-                  Retry histograms
-                </Button>
-              </AlertDescription>
-            </Alert>
-          ) : null}
-          {distributionPlotsVisible && histogramsFinishedLoading && histograms?.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No distribution data for this selection.</p>
-          ) : null}
-          {distributionPlotsVisible ? (
-            <HistogramThumbnails histograms={histograms} embedAllowed={distributionPlotsVisible} />
-          ) : null}
-        </div>
-        <p className="mt-2 mb-0 text-center text-sm">
-          <a href="#job-list-table" onClick={handleBackToJobTable} className={textLinkClassName()}>
-            Continue to job table
-          </a>
-        </p>
-      </section>
-
       <JobListHeaderFilters
-        filterOptions={jobListData?.filter_options}
-        loading={initialLoading && !jobListData}
+        filterOptions={filterOptions}
+        optionsLoading={optionsLoading}
         routeParams={paramsFromRoute}
       />
 
@@ -617,7 +608,7 @@ export default function JobList() {
           "max-md:[&_table]:text-sm max-md:[&_td]:whitespace-nowrap max-md:[&_td]:px-1 max-md:[&_td]:py-[0.35rem] max-md:[&_th]:whitespace-nowrap max-md:[&_th]:px-1 max-md:[&_th]:py-[0.35rem]",
         )}
         id="job-list-table"
-        aria-busy={tableBusy}
+        aria-busy={tableBusy || showTableSkeleton}
       >
         <Table className="border text-sm">
           <TableCaption className="sr-only">
@@ -627,7 +618,7 @@ export default function JobList() {
             <TableRow>
               {columns.map(({ label, field, sortable }) => (
               <TableHead key={field} scope="col" aria-sort={ariaSortForField(field, sortable)}>
-                {sortable ? (
+                {sortable && !showTableSkeleton ? (
                   <TextLink href={sortLink(field)}>
                     {label}
                     {sortIndicator(field)}
@@ -640,7 +631,16 @@ export default function JobList() {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {job_list.length === 0 ? (
+          {showTableSkeleton
+            ? [1, 2, 3, 4, 5].map((i) => (
+                <TableRow key={`skeleton-${i}`}>
+                  <TableCell colSpan={columns.length}>
+                    <Skeleton className="h-4 w-full" />
+                  </TableCell>
+                </TableRow>
+              ))
+            : null}
+          {!showTableSkeleton && job_list.length === 0 ? (
             <TableRow>
               <TableCell colSpan={columns.length} className="py-4 text-center text-muted-foreground">
                 No jobs match these filters.{" "}
@@ -658,7 +658,8 @@ export default function JobList() {
               </TableCell>
             </TableRow>
           ) : null}
-          {job_list.map((job) => (
+          {!showTableSkeleton
+            ? job_list.map((job) => (
             <TableRow key={job.jid}>
               <TableCell>
                 <TextLink href={`/machine/job/${job.jid}/`}>{job.jid}</TextLink>
@@ -712,7 +713,8 @@ export default function JobList() {
               <TableCell>{formatDecimalStandard(job.node_hrs)}</TableCell>
               <TableCell>{job.jobname}</TableCell>
             </TableRow>
-          ))}
+          ))
+            : null}
         </TableBody>
         </Table>
       </div>
@@ -725,6 +727,47 @@ export default function JobList() {
         </a>
       </p>
       </div>
+
+      {isLgUp ? (
+        <Collapsible
+          open={distributionsOpen}
+          onOpenChange={setDistributionsOpen}
+          className="job-list-distributions mb-4"
+        >
+          <section
+            id="job-list-distributions"
+            aria-label="Distributions for this job selection"
+          >
+            <CollapsibleTrigger className="flex w-full cursor-pointer items-center gap-2 text-left">
+              <h2 className="text-lg font-medium">Distributions for this job selection</h2>
+              <ChevronDownIcon
+                className={cn(
+                  "ml-auto size-4 shrink-0 transition-transform",
+                  distributionsOpen && "rotate-180",
+                )}
+                aria-hidden
+              />
+            </CollapsibleTrigger>
+            <CollapsibleContent className="pt-3">{distributionsBody}</CollapsibleContent>
+          </section>
+        </Collapsible>
+      ) : (
+        <section
+          id="job-list-distributions"
+          role="tabpanel"
+          className="job-list-distributions mb-4"
+          aria-label="Distributions for this job selection"
+          hidden={listViewTab !== "charts"}
+        >
+          <h2 className="mb-2 text-lg font-medium">Distributions for this job selection</h2>
+          {distributionsBody}
+          <p className="mt-2 mb-0 text-center text-sm">
+            <a href="#job-list-table" onClick={handleBackToJobTable} className={textLinkClassName()}>
+              Continue to job table
+            </a>
+          </p>
+        </section>
+      )}
     </>
   );
 }

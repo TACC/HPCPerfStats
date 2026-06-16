@@ -42,7 +42,7 @@ export type JobListFilterOptions = {
 
 type JobListHeaderFiltersProps = {
   filterOptions: JobListFilterOptions | null | undefined;
-  loading?: boolean;
+  optionsLoading?: boolean;
   routeParams: Record<string, string | string[] | undefined>;
 };
 
@@ -120,7 +120,7 @@ function FilterChipRow({
 
 export default function JobListHeaderFilters({
   filterOptions,
-  loading = false,
+  optionsLoading = false,
   routeParams,
 }: JobListHeaderFiltersProps) {
   const router = useRouter();
@@ -172,7 +172,7 @@ export default function JobListHeaderFilters({
         label={JOB_LIST_TABLE_HEADERS.performanceData}
         options={performanceOptions}
         selected={selectedPerformance}
-        disabled={loading}
+        disabled={optionsLoading}
         valueKey="performance_sort_rank"
         onToggle={(value) => applyToggle("performance_sort_rank", value, selectedPerformance)}
         onClear={() =>
@@ -190,7 +190,7 @@ export default function JobListHeaderFilters({
         label={JOB_LIST_TABLE_HEADERS.user}
         options={filterOptions?.usernames ?? []}
         selected={selectedUser}
-        disabled={loading}
+        disabled={optionsLoading}
         truncated={filterOptions?.truncated?.usernames}
         panelOpen={filtersOpen}
         onToggle={(value) => applyToggle("username", value, selectedUser)}
@@ -209,7 +209,7 @@ export default function JobListHeaderFilters({
         label={PROJECT_FIELD_LABEL}
         options={filterOptions?.accounts ?? []}
         selected={selectedProject}
-        disabled={loading}
+        disabled={optionsLoading}
         truncated={filterOptions?.truncated?.accounts}
         panelOpen={filtersOpen}
         onToggle={(value) => applyToggle("account", value, selectedProject)}
@@ -227,7 +227,7 @@ export default function JobListHeaderFilters({
         label={JOB_LIST_TABLE_HEADERS.queue}
         options={(filterOptions?.queues ?? []).map((queue) => ({ value: queue, text: queue }))}
         selected={selectedQueue}
-        disabled={loading}
+        disabled={optionsLoading}
         valueKey="queue"
         onToggle={(value) => applyToggle("queue", value, selectedQueue)}
         onClear={() =>
@@ -244,7 +244,7 @@ export default function JobListHeaderFilters({
         label="Status"
         options={stateOptions}
         selected={selectedState}
-        disabled={loading}
+        disabled={optionsLoading}
         valueKey="state"
         onToggle={(value) => applyToggle("state", value, selectedState)}
         onClear={() =>
@@ -260,7 +260,7 @@ export default function JobListHeaderFilters({
     </div>
   );
 
-  if (loading && !filterOptions) {
+  if (optionsLoading && !filterOptions) {
     return (
       <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen} className="mb-4">
         <Card className="border bg-card/50 shadow-none">

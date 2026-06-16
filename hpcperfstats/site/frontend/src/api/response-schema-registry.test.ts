@@ -15,6 +15,7 @@ const EXPECTED_EXACT_ROUTES = [
   "POST /api/sacct/ingest/",
   "GET /api/home/",
   "GET /api/jobs/",
+  "GET /api/jobs/filter_options/",
   "GET /api/jobs/histograms/",
   "GET /api/jobs/histograms/batch/",
   "GET /api/host_plot/",

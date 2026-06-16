@@ -57,6 +57,7 @@ from .openapi_schema import (
     JOB_DETAIL_SCHEMA,
     JOB_LIST_HISTOGRAMS_BATCH_SCHEMA,
     JOB_LIST_HISTOGRAMS_SCHEMA,
+    JOB_LIST_FILTER_OPTIONS_SCHEMA,
     JOB_LIST_SCHEMA,
     JOB_MONITOR_GPU_SCHEMA,
     JOB_MONITOR_SCHEMA,
@@ -1616,6 +1617,7 @@ JOB_HIST_DISPLAY_NAMES = {
 JOB_LIST_HISTOGRAM_NO_JOBS_REASON = "No jobs matched this query."
 _JOB_LIST_API_CACHE_PATHS = (
     "/api/jobs/",
+    "/api/jobs/filter_options/",
     "/api/jobs/histograms/",
     "/api/jobs/histograms/batch/",
 )
@@ -2030,6 +2032,44 @@ def job_list_histograms_batch(request):
     return _JSONResponse({**hist_meta, "histograms": histograms})
 
 
+def _include_filter_options(request):
+    """When false, job_list skips faceted filter_options queryset work (SPA loads options separately)."""
+    raw = request.GET.get("include_filter_options", "1")
+    return str(raw).strip().lower() not in ("0", "false", "no", "off")
+
+
+def _job_list_filter_options_builder():
+    def _options_builder(req, exclude_header_dimension=None):
+        return _build_job_list_queryset_from_request(
+            req,
+            extra_excluded_fields=_JOB_LIST_QUERY_FIELD_EXCLUDES_HISTOGRAM,
+            annotate_all=True,
+            exclude_header_dimension=exclude_header_dimension,
+        )
+
+    return _options_builder
+
+
+def _resolve_job_list_filter_options(request):
+    try:
+        return build_job_list_filter_options(request, _job_list_filter_options_builder())
+    except Exception:
+        logger.exception("job_list: build_job_list_filter_options failed")
+        return None
+
+
+@JOB_LIST_FILTER_OPTIONS_SCHEMA
+@dynamic_cache_page(site_response_cache_timeout)
+@api_view(["GET"])
+@throttle_classes([ExpensiveReadThrottle])
+def job_list_filter_options_view(request):
+    """Faceted header-filter option values for the current job-list selection."""
+    err = _require_auth(request)
+    if err is not None:
+        return err
+    return Response({"filter_options": _resolve_job_list_filter_options(request)})
+
+
 @JOB_LIST_SCHEMA
 @dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
@@ -2058,19 +2098,9 @@ def job_list(request):
 
     qname, filter_summary = build_job_list_qname_and_filter_summary(fields)
 
-    def _options_builder(req, exclude_header_dimension=None):
-        return _build_job_list_queryset_from_request(
-            req,
-            extra_excluded_fields=_JOB_LIST_QUERY_FIELD_EXCLUDES_HISTOGRAM,
-            annotate_all=True,
-            exclude_header_dimension=exclude_header_dimension,
-        )
-
-    try:
-        filter_options = build_job_list_filter_options(request, _options_builder)
-    except Exception:
-        logger.exception("job_list: build_job_list_filter_options failed")
-        filter_options = None
+    filter_options = None
+    if _include_filter_options(request):
+        filter_options = _resolve_job_list_filter_options(request)
 
     if nj == 0:
         return Response({

@@ -8,6 +8,14 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { cn } from "@/lib/utils";
+import { machineHref } from "@/utils/routes";
+
+function breadcrumbHref(to: string): string {
+  if (to.startsWith("/machine") || to.startsWith("/pub")) {
+    return to;
+  }
+  return machineHref(to);
+}
 
 export type BreadcrumbItem = {
   label: string;
@@ -33,7 +41,9 @@ export default function PageBreadcrumbs({ items }: PageBreadcrumbsProps) {
                 aria-current={isLast ? "page" : undefined}
               >
                 {!isLast && item.to ? (
-                  <BreadcrumbLink render={<Link href={item.to} />}>{item.label}</BreadcrumbLink>
+                  <BreadcrumbLink render={<Link href={breadcrumbHref(item.to)} />}>
+                    {item.label}
+                  </BreadcrumbLink>
                 ) : isLast ? (
                   <span className="font-normal text-foreground">{item.label}</span>
                 ) : (

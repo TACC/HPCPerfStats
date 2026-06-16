@@ -3,6 +3,7 @@ import { afterEach, beforeEach, it, vi } from "vitest";
 import { axeSeriousViolations } from "../../axe-test-utils";
 import JobList from "../JobList";
 import { useJobListQuery } from "@/hooks/use-job-list";
+import { useJobListFilterOptions } from "@/hooks/use-job-list-filter-options";
 import { useJobListHistograms } from "@/hooks/use-job-list-histograms";
 import { renderWithProviders } from "@/test-utils/render-with-providers";
 import { nextNavigationMock } from "../../test-utils/next-navigation-state";
@@ -11,6 +12,10 @@ import type { MetricHistStatusMap } from "@/types/view-models";
 
 vi.mock("@/hooks/use-job-list", () => ({
   useJobListQuery: vi.fn(),
+}));
+
+vi.mock("@/hooks/use-job-list-filter-options", () => ({
+  useJobListFilterOptions: vi.fn(),
 }));
 
 vi.mock("@/hooks/use-job-list-histograms", async (importOriginal) => {
@@ -41,6 +46,17 @@ function setJobListQueryMock(
   });
 }
 
+function setJobListFilterOptionsMock(
+  overrides: Partial<ReturnType<typeof useJobListFilterOptions>> = {},
+) {
+  vi.mocked(useJobListFilterOptions).mockReturnValue({
+    filterOptions: null,
+    error: null,
+    optionsLoading: false,
+    ...overrides,
+  });
+}
+
 function setJobListHistogramsMock(
   overrides: Partial<ReturnType<typeof useJobListHistograms>> = {},
 ) {
@@ -67,11 +83,13 @@ describe("JobList", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.mocked(useJobListQuery).mockReset();
+    vi.mocked(useJobListFilterOptions).mockReset();
     vi.mocked(useJobListHistograms).mockReset();
   });
 
   beforeEach(() => {
     setJobListQueryMock();
+    setJobListFilterOptionsMock();
     setJobListHistogramsMock();
     Object.defineProperty(window, "matchMedia", {
       writable: true,
@@ -93,6 +111,7 @@ describe("JobList", () => {
 
     renderJobList();
     expect(screen.getByRole("status", { name: /loading job list/i })).toBeInTheDocument();
+    expect(screen.getByRole("table")).toBeInTheDocument();
   });
 
   it("does not block table pointer events while tableBusy", async () => {
@@ -155,12 +174,14 @@ describe("JobList", () => {
 
     renderJobList();
 
+    fireEvent.click(screen.getByRole("button", { name: /distributions for this job selection/i }));
+
     await waitFor(() => {
       expect(screen.getByText("Updating distributions…")).toBeInTheDocument();
     });
   });
 
-  it("enables histogram fetch on desktop layout without charts tab", async () => {
+  it("does not enable histogram fetch on desktop until distributions are expanded", async () => {
     Object.defineProperty(window, "matchMedia", {
       writable: true,
       configurable: true,
@@ -176,16 +197,91 @@ describe("JobList", () => {
       })),
     });
 
+    setJobListQueryMock({
+      data: {
+        job_list: [],
+        nj: 0,
+        aggregates: {},
+        qname: "Jobs",
+        order_by: "-end_time",
+        pagination: { page: 1, num_pages: 1 },
+      },
+    });
+
     renderJobList("/jobs");
 
     await waitFor(() => {
       expect(vi.mocked(useJobListHistograms)).toHaveBeenCalled();
     });
     const lastCall = vi.mocked(useJobListHistograms).mock.calls.at(-1);
-    expect(lastCall?.[2]).toBe(true);
+    expect(lastCall?.[2]).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: /distributions for this job selection/i }));
+
+    await waitFor(() => {
+      const expandedCall = vi.mocked(useJobListHistograms).mock.calls.at(-1);
+      expect(expandedCall?.[2]).toBe(true);
+    });
+  });
+
+  it("renders table sort links while filter options are still loading", async () => {
+    setJobListQueryMock({
+      data: {
+        job_list: [
+          {
+            jid: 1,
+            performance: {
+              label: "Summary available",
+              tone: "success",
+              aria_label: "Performance: Summary available",
+              sort_rank: 0,
+            },
+            username: "alice",
+            account: "acct",
+            start_time: "2024-01-01T00:00:00Z",
+            end_time: "2024-01-01T01:00:00Z",
+            runtime: 3600,
+            queue: "normal",
+            jobname: "job1",
+            state: "COMPLETED",
+            ncores: 32,
+            nhosts: 2,
+            node_hrs: 64,
+          },
+        ],
+        nj: 1,
+        aggregates: { total_node_hours: 64 },
+        qname: "Jobs",
+        order_by: "-end_time",
+        pagination: { page: 1, num_pages: 1 },
+      },
+    });
+    setJobListFilterOptionsMock({ optionsLoading: true, filterOptions: null });
+
+    renderJobList("/jobs");
+
+    await waitFor(() => {
+      expect(screen.getByRole("link", { name: /Performance data/i })).toBeInTheDocument();
+    });
+    expect(screen.getByRole("table")).toBeInTheDocument();
   });
 
   it("shows histogram batch error text in the alert", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      configurable: true,
+      value: vi.fn().mockImplementation((query) => ({
+        matches: query.includes("min-width: 992px") ? false : true,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+
     setJobListQueryMock({ data:{
       job_list: [],
       nj: 0,
@@ -212,6 +308,21 @@ describe("JobList", () => {
   });
 
   it("shows no-jobs histogram message in the alert", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      configurable: true,
+      value: vi.fn().mockImplementation((query) => ({
+        matches: query.includes("min-width: 992px") ? false : true,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+
     setJobListQueryMock({ data:{
       job_list: [],
       nj: 0,
@@ -275,9 +386,11 @@ describe("JobList", () => {
       expect(screen.getByText("Jobs = 1")).toBeInTheDocument();
     });
     expect(await axeSeriousViolations(view.container)).toEqual([]);
-    expect(screen.getByRole("heading", { name: /distributions for this job selection/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /distributions for this job selection/i }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /jump to histograms/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /continue to job table/i })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /continue to job table/i })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Performance data/i })).toBeInTheDocument();
     const tableHeaders = within(screen.getByRole("table")).getAllByRole("columnheader");
     expect(tableHeaders[tableHeaders.length - 1].textContent.trim()).toBe("name");
@@ -791,11 +904,16 @@ describe("JobList", () => {
     await waitFor(() => {
       expect(screen.getByText("Jobs = 0")).toBeInTheDocument();
     });
-    expect(
-      screen.getAllByText(
-        "No histogram data available for metric 'runtime' in this query.",
-      ).length,
-    ).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: /distributions for this job selection/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.getAllByText(
+          "No histogram data available for metric 'runtime' in this query.",
+        ).length,
+      ).toBeGreaterThan(0);
+    });
     expect(
       screen.queryByRole("button", { name: "Show plot error details" }),
     ).not.toBeInTheDocument();

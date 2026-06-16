@@ -97,12 +97,11 @@ export function useJobListHistograms(
       return;
     }
 
-    setHistogramsUpdating(true);
-
     const controller = new AbortController();
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
     const loadHistograms = async () => {
+      setHistogramsUpdating(true);
       try {
         const batchParams = {
           ...listApiParamsRef.current,

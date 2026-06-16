@@ -298,6 +298,9 @@ describe("useJobListHistograms", () => {
       { initialProps: { params: STABLE_PARAMS } },
     );
 
+    expect(result.current.histogramsUpdating).toBe(false);
+
+    await advanceDebounce();
     expect(result.current.histogramsUpdating).toBe(true);
 
     rerender({ params: { ...STABLE_PARAMS, queue: "normal" } });
@@ -311,5 +314,18 @@ describe("useJobListHistograms", () => {
     await waitFor(() => {
       expect(result.current.histogramsUpdating).toBe(false);
     });
+  });
+
+  it("does not set histogramsUpdating true until debounce fires", async () => {
+    vi.mocked(jobsHistogramsBatchRetrieve).mockResolvedValue(mockBatchResponse());
+
+    const { result } = renderHook(() => useJobListHistograms(STABLE_PARAMS, 0, true));
+
+    expect(result.current.histogramsUpdating).toBe(false);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(JOB_LIST_HISTOGRAM_DEBOUNCE_MS - 1);
+    });
+    expect(result.current.histogramsUpdating).toBe(false);
   });
 });

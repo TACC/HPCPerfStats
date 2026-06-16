@@ -1,12 +1,17 @@
 import { keepPreviousData } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { useJobsRetrieve } from "@/api/generated/jobs/jobs";
 import type { JobsRetrieveParams } from "@/api/generated/models/jobsRetrieveParams";
 import { getErrorMessage } from "@/api/get-error-message";
 
 /** Paginated job list via TanStack Query (histograms loaded separately). */
 export function useJobListQuery(params: Record<string, string>) {
+  const jobsParams = useMemo(
+    () => ({ ...params, include_filter_options: 0 }),
+    [params],
+  );
   const { data, error, isLoading, isFetching, refetch } = useJobsRetrieve(
-    params as JobsRetrieveParams,
+    jobsParams as JobsRetrieveParams,
     { query: { placeholderData: keepPreviousData } },
   );
   return {

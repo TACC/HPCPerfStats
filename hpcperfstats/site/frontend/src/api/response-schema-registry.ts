@@ -12,6 +12,7 @@ import { homeRetrieveResponse } from "./generated-zod/home/home";
 import {
   jobsHistogramsBatchRetrieveResponse,
   jobsHistogramsRetrieveResponse,
+  jobsFilterOptionsRetrieveResponse,
   jobsPlotsRetrieveResponse,
   jobsRetrieve2Response,
   jobsRetrieve3Response,
@@ -62,6 +63,7 @@ const EXACT_RESPONSE_SCHEMAS: Record<string, ZodSchema> = {
   "POST /api/sacct/ingest/": sacctIngestCreateResponse,
   "GET /api/home/": homeRetrieveResponse,
   "GET /api/jobs/": jobsRetrieveResponse,
+  "GET /api/jobs/filter_options/": jobsFilterOptionsRetrieveResponse,
   "GET /api/jobs/histograms/": jobsHistogramsRetrieveResponse,
   "GET /api/jobs/histograms/batch/": jobsHistogramsBatchRetrieveResponse,
   "GET /api/host_plot/": hostPlotRetrieveResponse,

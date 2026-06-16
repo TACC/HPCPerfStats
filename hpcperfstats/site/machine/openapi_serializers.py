@@ -141,6 +141,10 @@ class JobListFilterOptionsSerializer(serializers.Serializer):
     truncated = JobListFilterOptionsTruncatedSerializer(required=False)
 
 
+class JobListFilterOptionsResponseSerializer(serializers.Serializer):
+    filter_options = JobListFilterOptionsSerializer(required=False, allow_null=True)
+
+
 class JobListHistogramEnvelopeSerializer(serializers.Serializer):
     """Histogram metadata without embedded Bokeh plot_item payloads."""
 

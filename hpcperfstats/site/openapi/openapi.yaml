@@ -324,6 +324,12 @@ paths:
         schema:
           type: string
       - in: query
+        name: include_filter_options
+        schema:
+          type: integer
+        description: When 0, omit filter_options from the response (SPA loads them
+          via GET /api/jobs/filter_options/). Default 1.
+      - in: query
         name: order_by
         schema:
           type: string
@@ -345,7 +351,8 @@ paths:
         name: state
         schema:
           type: string
-        description: 'Comma-separated major terminal status group keys (OR): completed, failed, canceled, preempted, timeout.'
+        description: Comma-separated major terminal status group keys (OR) — completed,
+          failed, canceled, preempted, timeout.
       - in: query
         name: username
         schema:
@@ -643,6 +650,106 @@ paths:
               schema:
                 $ref: '#/components/schemas/JobPlotsResponse'
           description: Plots still generating; retry after retry_after_seconds
+  /api/jobs/filter_options/:
+    get:
+      operationId: jobs_filter_options_retrieve
+      description: Faceted header-filter option values for the current job-list selection.
+      parameters:
+      - in: query
+        name: account
+        schema:
+          type: string
+        description: Comma-separated project/account names (exact match, OR).
+      - in: query
+        name: end_time__date
+        schema:
+          type: string
+      - in: query
+        name: host
+        schema:
+          type: string
+      - in: query
+        name: order_by
+        schema:
+          type: string
+      - in: query
+        name: page
+        schema:
+          type: integer
+      - in: query
+        name: performance_sort_rank
+        schema:
+          type: string
+        description: Comma-separated performance status ranks 0–5 (OR).
+      - in: query
+        name: queue
+        schema:
+          type: string
+        description: Comma-separated queue names (OR).
+      - in: query
+        name: state
+        schema:
+          type: string
+        description: Comma-separated major terminal status group keys (OR).
+      - in: query
+        name: username
+        schema:
+          type: string
+        description: Comma-separated usernames (OR within dimension).
+      tags:
+      - jobs
+      security:
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobListFilterOptionsResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Forbidden
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Not found
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Payload too large
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Too many requests
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Server error
   /api/jobs/histograms/:
     get:
       operationId: jobs_histograms_retrieve
@@ -1393,6 +1500,13 @@ components:
             $ref: '#/components/schemas/JobListPerformanceStatusOption'
         truncated:
           $ref: '#/components/schemas/JobListFilterOptionsTruncated'
+    JobListFilterOptionsResponse:
+      type: object
+      properties:
+        filter_options:
+          allOf:
+          - $ref: '#/components/schemas/JobListFilterOptions'
+          nullable: true
     JobListFilterOptionsTruncated:
       type: object
       properties:

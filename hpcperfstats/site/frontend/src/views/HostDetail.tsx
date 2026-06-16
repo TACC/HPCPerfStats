@@ -62,7 +62,7 @@ export default function HostDetail() {
           { label: "Browse", to: "/machine/" },
           {
             label: `Jobs on ${hostName}`,
-            to: `/host/${encodeURIComponent(hostName)}`,
+            to: `/machine/host/${encodeURIComponent(hostName)}/`,
           },
           { label: `${hostName} utilization` },
         ]}

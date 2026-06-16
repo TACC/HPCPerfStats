@@ -11,6 +11,7 @@ import { homeRetrieveResponse } from "../src/api/generated-zod/home/home";
 import {
   jobsHistogramsBatchRetrieveResponse,
   jobsHistogramsRetrieveResponse,
+  jobsFilterOptionsRetrieveResponse,
   jobsPlotsRetrieveResponse,
   jobsRetrieve2Response,
   jobsRetrieve3Response,
@@ -108,6 +109,25 @@ const cases: Case[] = [
         },
       ],
       filter_summary: ["User: alice"],
+      filter_options: {
+        usernames: ["alice"],
+        accounts: ["proj"],
+        queues: ["normal"],
+        states: ["COMPLETED"],
+        performance_statuses: [{ sort_rank: 0, label: "Summary available" }],
+        truncated: {
+          usernames: false,
+          accounts: false,
+          queues: false,
+          states: false,
+        },
+      },
+    },
+  },
+  {
+    route: "GET /api/jobs/filter_options/",
+    schema: jobsFilterOptionsRetrieveResponse,
+    wire: {
       filter_options: {
         usernames: ["alice"],
         accounts: ["proj"],
