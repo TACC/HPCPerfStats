@@ -218,6 +218,7 @@ export default function JobDetail() {
     data: jobDetailData,
     error,
     initialLoading,
+    detailBusy,
     detailsLoading,
     detailFetchWarning,
     loadFullDetail,
@@ -411,6 +412,11 @@ export default function JobDetail() {
         ]}
       />
       <h1 className="mb-3 text-2xl font-semibold tracking-tight">Job {job.jid}</h1>
+      {detailBusy ? (
+        <p className="mb-2 text-sm text-muted-foreground" role="status" aria-live="polite">
+          Updating job detail…
+        </p>
+      ) : null}
       {detailFetchWarning ? (
         <Alert className="mb-3 border-amber-200 bg-amber-50 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100" role="status">
           <AlertDescription className="text-sm">

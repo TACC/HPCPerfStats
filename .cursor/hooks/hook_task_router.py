@@ -118,6 +118,7 @@ ROUTER_ENTRIES: list[RouterEntry] = [
             "shadcn-ui-frontend.mdc",
             "testing-best-practices.mdc",
             "frontend-stack-wiring-contract.mdc",
+            "interactive-ready-controls.mdc",
         ],
     },
     {

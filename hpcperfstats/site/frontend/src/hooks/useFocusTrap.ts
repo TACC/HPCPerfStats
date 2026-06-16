@@ -21,6 +21,7 @@ function listFocusable(container: HTMLElement | null): HTMLElement[] {
 
 /**
  * Keeps Tab / Shift+Tab focus inside `containerRef` while `active` is true.
+ * Only traps when focus is already inside the panel (interactive-ready-controls.mdc).
  */
 export function useFocusTrap(
   containerRef: RefObject<HTMLElement | null>,
@@ -34,36 +35,28 @@ export function useFocusTrap(
       const root = containerRef.current;
       if (!root) return;
 
+      const cur = document.activeElement as HTMLElement | null;
+      if (!cur || !root.contains(cur)) return;
+
       const nodes = listFocusable(root);
       if (nodes.length === 0) return;
 
       const first = nodes[0];
       const last = nodes[nodes.length - 1];
-      const cur = document.activeElement as HTMLElement | null;
-
-      // Only trap when focus is already inside the panel or wrapping from last→first.
-      if (cur && !root.contains(cur) && e.shiftKey) {
-        return;
-      }
-      if (cur && !root.contains(cur) && !e.shiftKey) {
-        first.focus();
-        e.preventDefault();
-        return;
-      }
 
       e.preventDefault();
       if (e.shiftKey) {
-        if (cur === first || !root.contains(cur)) {
+        if (cur === first) {
           last.focus();
         } else {
-          const i = nodes.indexOf(cur as HTMLElement);
+          const i = nodes.indexOf(cur);
           const prev = i <= 0 ? last : nodes[i - 1];
           prev.focus();
         }
-      } else if (cur === last || !root.contains(cur)) {
+      } else if (cur === last) {
         first.focus();
       } else {
-        const i = nodes.indexOf(cur as HTMLElement);
+        const i = nodes.indexOf(cur);
         const next = i < 0 || i >= nodes.length - 1 ? first : nodes[i + 1];
         next.focus();
       }

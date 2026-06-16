@@ -11,17 +11,37 @@ vi.mock("@/hooks/use-admin-monitor-section", () => ({
 function mockSectionQuery(
   sectionResponses: Record<
     string,
-    { data?: unknown; error?: string | null; loading?: boolean }
+    {
+      data?: unknown;
+      error?: string | null;
+      loading?: boolean;
+      initialLoading?: boolean;
+      sectionBusy?: boolean;
+    }
   >,
 ) {
   vi.mocked(useAdminMonitorSectionQuery).mockImplementation(
     ({ section, enabled, pickResponse, refreshSeq }) => {
       if (!enabled) {
-        return { data: null, error: null, loading: false, refetch: vi.fn() };
+        return {
+          data: null,
+          error: null,
+          initialLoading: false,
+          sectionBusy: false,
+          loading: false,
+          refetch: vi.fn(),
+        };
       }
       const fixture = sectionResponses[section];
       if (!fixture) {
-        return { data: null, error: null, loading: false, refetch: vi.fn() };
+        return {
+          data: null,
+          error: null,
+          initialLoading: false,
+          sectionBusy: false,
+          loading: false,
+          refetch: vi.fn(),
+        };
       }
       const raw =
         section === "hosts"
@@ -40,6 +60,9 @@ function mockSectionQuery(
       return {
         data: pickResponse(raw as never),
         error: fixture.error ?? null,
+        initialLoading:
+          fixture.initialLoading ?? (fixture.loading === true && fixture.data == null),
+        sectionBusy: fixture.sectionBusy ?? false,
         loading: fixture.loading ?? false,
         refetch: vi.fn(),
         refreshSeq,
@@ -172,5 +195,28 @@ describe("AdminMonitor", () => {
         expect.objectContaining({ section: "hosts", refreshSeq: 1, enabled: true }),
       );
     });
+  });
+
+  it("omits Refresh Data control while host section is initially loading", async () => {
+    mockSectionQuery({
+      hosts: {
+        data: undefined,
+        initialLoading: true,
+        loading: true,
+      },
+    });
+
+    renderWithProviders(<AdminMonitor />);
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Most recent host data timestamps in database/i,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/Loading host timestamps/i)).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: /Refresh Data/i })).not.toBeInTheDocument();
   });
 });

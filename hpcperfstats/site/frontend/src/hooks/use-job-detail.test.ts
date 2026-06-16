@@ -82,4 +82,20 @@ describe("useJobDetailQuery", () => {
 
     expect(result.current.detailsLoading).toBe(true);
   });
+
+  it("surfaces detailBusy during background refetch with prior data", () => {
+    vi.mocked(useJobsRetrieve2).mockReturnValue({
+      data: { job_data: { jid: 1 } },
+      error: null,
+      isLoading: false,
+      isFetching: true,
+      isError: false,
+      refetch: vi.fn(),
+    } as ReturnType<typeof useJobsRetrieve2>);
+
+    const { result } = renderHook(() => useJobDetailQuery("1"));
+
+    expect(result.current.detailBusy).toBe(true);
+    expect(result.current.initialLoading).toBe(false);
+  });
 });

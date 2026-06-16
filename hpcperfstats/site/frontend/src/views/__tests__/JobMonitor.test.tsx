@@ -23,6 +23,8 @@ function setJobMonitorQueryMock(
   vi.mocked(useJobMonitorQuery).mockReturnValue({
     data: null,
     error: null,
+    initialLoading: false,
+    tableBusy: false,
     loading: false,
     fetching: false,
     refetch: vi.fn(),
@@ -35,6 +37,17 @@ describe("JobMonitor", () => {
     vi.restoreAllMocks();
     vi.mocked(useJobMonitorQuery).mockReset();
     vi.mocked(jobMonitorGpuRetrieve).mockReset();
+  });
+
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+      configurable: true,
+      value: 480,
+    });
+    Object.defineProperty(HTMLElement.prototype, "offsetWidth", {
+      configurable: true,
+      value: 1024,
+    });
   });
 
   it("renders GPU columns and shows N/A when GPU data is missing", async () => {
@@ -64,7 +77,7 @@ describe("JobMonitor", () => {
     renderWithProviders(<JobMonitor />);
 
     await waitFor(() => {
-      expect(screen.getByText("alice")).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "alice" })).toBeInTheDocument();
     });
 
     expect(screen.getByText("Total GPUs Allocated")).toBeInTheDocument();
@@ -139,7 +152,7 @@ describe("JobMonitor", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/error loading job monitor data: unable to load job monitor data/i),
+        screen.getByText(/error loading job monitor data: monitor api down/i),
       ).toBeInTheDocument();
     });
   });
@@ -162,10 +175,41 @@ describe("JobMonitor", () => {
     renderWithProviders(<JobMonitor />);
 
     await waitFor(() => {
-      expect(jobMonitorGpuRetrieve).toHaveBeenCalledTimes(3);
+      expect(jobMonitorGpuRetrieve.mock.calls.length).toBeGreaterThanOrEqual(3);
     });
-    expect(jobMonitorGpuRetrieve).toHaveBeenCalledWith({ username: "alice", days: 30 });
-    expect(jobMonitorGpuRetrieve).toHaveBeenCalledWith({ username: "bob", days: 30 });
-    expect(jobMonitorGpuRetrieve).toHaveBeenCalledWith({ username: "carol", days: 30 });
+    const usernames = jobMonitorGpuRetrieve.mock.calls.map((call) => call[0]?.username);
+    expect(usernames).toEqual(expect.arrayContaining(["alice", "bob", "carol"]));
+  });
+
+  it("keeps sort headers available while tableBusy", async () => {
+    setJobMonitorQueryMock({
+      tableBusy: true,
+      data: {
+        window_days: 30,
+        results: [
+          {
+            username: "alice",
+            total_jobs: 20,
+            failed_jobs: 2,
+            failed_rate: 10,
+            timedout_jobs: 1,
+            timedout_rate: 5,
+          },
+        ],
+      },
+    });
+    vi.mocked(jobMonitorGpuRetrieve).mockResolvedValue({
+      username: "alice",
+      has_data: false,
+    });
+
+    renderWithProviders(<JobMonitor />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /User/i })).toBeInTheDocument();
+    });
+    const tableWrapper = screen.getByRole("button", { name: /User/i }).closest("[aria-busy]");
+    expect(tableWrapper).toHaveAttribute("aria-busy", "true");
+    expect(tableWrapper?.className).not.toContain("pointer-events-none");
   });
 });

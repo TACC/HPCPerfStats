@@ -27,6 +27,7 @@ export function useJobDetailQuery(pk: string) {
   const data = (detailQuery.data ?? null) as JobDetailResponse | null;
   const error = detailQuery.error;
   const initialLoading = detailQuery.isLoading && !detailQuery.data;
+  const detailBusy = detailQuery.isFetching && !detailQuery.isLoading && !!detailQuery.data;
   const detailsLoading =
     detailQuery.isFetching &&
     !detailQuery.isError &&
@@ -48,6 +49,7 @@ export function useJobDetailQuery(pk: string) {
       ? getStatusAwareErrorMessage(error, getErrorMessage(error, "Request failed"))
       : null,
     initialLoading,
+    detailBusy,
     detailsLoading,
     detailFetchWarning,
     deferParam,

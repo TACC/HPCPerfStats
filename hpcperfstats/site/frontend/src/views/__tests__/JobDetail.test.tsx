@@ -97,6 +97,7 @@ function setJobDetailQueryMock(
     data: null,
     error: null,
     initialLoading: false,
+    detailBusy: false,
     detailsLoading: false,
     detailFetchWarning: false,
     deferParam: "xalt,proc,multiprecision",
@@ -533,6 +534,23 @@ describe("JobDetail", () => {
       expect(screen.getAllByText("Unavailable — Data not available.").length).toBeGreaterThanOrEqual(2);
     });
     expect(screen.queryByText(/Loading CPU Multiprecision Mix/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps analysis tabs interactive while detailsLoading", async () => {
+    setJobDetailQueryMock({
+      data: minimalJobDetailResponse,
+      detailsLoading: true,
+    });
+    renderJobDetail("12345", { is_staff: false }, "tab=metrics");
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /Device data/i })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("tab", { name: /Device data/i }));
+    expect(screen.getByRole("tab", { name: /Device data/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 
   it("renders plot-tab intro copy on the Multiprecision Mix tab", async () => {

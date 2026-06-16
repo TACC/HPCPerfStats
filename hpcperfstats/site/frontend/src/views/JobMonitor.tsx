@@ -2,12 +2,12 @@ import { TextLink } from "@/components/TextLink";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { JobMonitorRow } from "@/types/view-models";
-import { getErrorMessage } from "@/api/get-error-message";
 import { useJobMonitorQuery } from "@/hooks/use-job-monitor";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import LoadingMessage from "../components/LoadingMessage";
 import SortableTableHeader from "../components/SortableTableHeader";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -76,16 +76,21 @@ export default function JobMonitor() {
   const [windowDays, setWindowDays] = useState(30);
   const [inputDays, setInputDays] = useState("30");
   const [validationError, setValidationError] = useState<string | null>(null);
-  const { data, error: queryError, loading } = useJobMonitorQuery(windowDays);
-  const error =
-    validationError ??
-    (queryError ? getErrorMessage(queryError, "Unable to load job monitor data.") : null);
+  const {
+    data,
+    error: loadError,
+    initialLoading: hookInitialLoading,
+    loading,
+    tableBusy,
+  } = useJobMonitorQuery(windowDays);
+  const initialLoading = hookInitialLoading ?? loading ?? false;
+  const error = validationError ?? loadError;
   const { sort, onSort } = useTableSort("failed_rate", "desc", "desc");
   const sortKey = sort.column;
   const sortDir = sort.direction;
 
   const formatGpuValue = (value: unknown, loadingState: GpuLoadingState) => {
-    if (loadingState === "loading") return "Loading";
+    if (loadingState === "loading") return "…";
     if (value === null || value === undefined || value === "") return "N/A";
     const n = Number(value);
     if (!Number.isFinite(n)) return "N/A";
@@ -93,7 +98,7 @@ export default function JobMonitor() {
   };
 
   const formatGpuPercentValue = (value: unknown, loadingState: GpuLoadingState) => {
-    if (loadingState === "loading") return "Loading";
+    if (loadingState === "loading") return "…";
     const formatted = formatGpuValue(value, "loaded");
     return formatted === "N/A" ? "N/A" : `${formatted}%`;
   };
@@ -183,15 +188,16 @@ export default function JobMonitor() {
           Apply
         </Button>
       </form>
-      {loading && <LoadingMessage message="Loading job monitor data…" />}
-      {error && !loading && (
+      {initialLoading && <LoadingMessage message="Loading job monitor data…" />}
+      {error && !initialLoading && (
         <BannerErrorMessage
           variant="inline"
           className="mb-3 text-destructive"
           message={`Error loading job monitor data: ${error}`}
         />
       )}
-      {!loading && !error && (
+      {!initialLoading && !error && (
+        <div className={cn(tableBusy && "opacity-55")} aria-busy={tableBusy}>
         <div ref={tableScrollRef} className="max-h-[70vh] overflow-auto rounded-md border">
         <Table className="border-0 text-sm">
           <TableCaption className="sr-only">
@@ -335,6 +341,7 @@ export default function JobMonitor() {
             )}
           </TableBody>
         </Table>
+        </div>
         </div>
       )}
     </>

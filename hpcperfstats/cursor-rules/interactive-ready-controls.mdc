@@ -1,0 +1,65 @@
+---
+description: Show controls only when ready; shown controls must be immediately interactive
+globs:
+  - hpcperfstats/site/frontend/src/**/*
+  - hpcperfstats/site/frontend/app/**
+alwaysApply: false
+---
+
+# Interactive-ready controls
+
+**Activation:** when adding or changing SPA views, loading states, overlays, or thin-hook fetch shapes.
+
+## Law
+
+> If a control is not ready, do not show it. If it is shown, it must be immediately interactive.
+
+## Definitions
+
+- **Control** — link, button, combobox, tab, sort header, pagination link, or form field with submit.
+- **Ready** — backing data/state exists for the control's action; no in-flight fetch blocks the action.
+- **Shown** — visible in the layout (not `hidden`, not zero-size, not inside a collapsed panel the user has not opened).
+
+## Required patterns
+
+1. **First paint, zero data** — full-page `LoadingMessage` / skeleton with **no** interactive chrome (Search, TypeDetail pattern).
+2. **Refetch with prior data** — `keepPreviousData` + `tableBusy` / `sectionBusy`: dim + `aria-busy`, **never** `pointer-events-none` on containers holding links ([`JobList.tsx`](hpcperfstats/site/frontend/src/views/JobList.tsx) test contract).
+3. **Secondary sections** — hide, collapse, or skeleton until ready; fetch on expand/tab (JobList filter options + distributions).
+4. **User-initiated in-flight action** — `disabled` on the **same** button the user clicked (`rotating` on PageApiKey) is allowed.
+5. **Bokeh** — defer embed until section visible (`deferEmbedUntilVisible` default); no Unavailable while `isLoading` ([`design-focused-spa-ux.mdc`](design-focused-spa-ux.mdc), [`job-plot-artifacts-caching.mdc`](job-plot-artifacts-caching.mdc)).
+
+## Forbidden patterns
+
+- `pointer-events-none` on a parent wrapping sort links, table rows, or pagination (except `aria-hidden` decorative spans).
+- Visible combobox/select/button rendered `disabled` while options or section data load — use skeleton rows or omit the control ([`JobListHeaderFilters.tsx`](hpcperfstats/site/frontend/src/components/JobListHeaderFilters.tsx)).
+- Full-page skeleton replacing an already-rendered interactive surface on refetch.
+- Mounting Bokeh into `hidden` or zero-size subtrees.
+- Modal backdrop blocking unrelated page chrome when `modal={false}` — omit overlay ([`dialog.tsx`](hpcperfstats/site/frontend/src/components/ui/dialog.tsx) `showOverlay={false}`).
+- Focus trap stealing Tab when focus is outside the trapped panel ([`useFocusTrap.ts`](hpcperfstats/site/frontend/src/hooks/useFocusTrap.ts)).
+
+## Thin-hook loading shapes
+
+| Flag | Meaning |
+|------|---------|
+| `initialLoading` | `isLoading && !data` — first payload only; may gate full-page skeleton |
+| `tableBusy` / `detailBusy` / `sectionBusy` | `isFetching && !isLoading` with stale data visible — dim only, keep interactive |
+| `optionsLoading` / `sectionInitialLoading` | Scoped to one panel; must not gate entire page |
+
+Reference hooks: [`use-job-list.ts`](hpcperfstats/site/frontend/src/hooks/use-job-list.ts), [`use-job-detail.ts`](hpcperfstats/site/frontend/src/hooks/use-job-detail.ts), [`use-admin-monitor-section.ts`](hpcperfstats/site/frontend/src/hooks/use-admin-monitor-section.ts).
+
+## Reference implementations
+
+- **JobList** — table first; deferred `filter_options`; lazy histograms; `JobList.test.tsx` (`tableBusy` not pointer-blocked).
+- **JobDetail** — `initialLoading` only on first paint; tabs stay mounted during `detailsLoading`; deep-link test in `JobDetail.test.tsx`.
+
+## Tests
+
+- Extend Vitest when changing loading UX: assert shown controls lack blocking `pointer-events-none` on parent containers.
+- Run drift guard: `src/utils/interactive-ready-drift.test.ts`.
+
+## Overlap
+
+- [`design-focused-spa-ux.mdc`](design-focused-spa-ux.mdc) — labels, Bokeh loading vs unavailable, job-list pagination.
+- [`frontend-stack-wiring-contract.mdc`](frontend-stack-wiring-contract.mdc) — view → hook → API map and hook test layer.
+- [`wcag-aa-mobile-web.mdc`](wcag-aa-mobile-web.mdc) — keyboard reachability; focus trap scope.
+- [`job-plot-artifacts-caching.mdc`](job-plot-artifacts-caching.mdc) — Bokeh defer policy on list/dashboard surfaces.

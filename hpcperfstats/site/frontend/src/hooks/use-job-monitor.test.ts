@@ -26,4 +26,19 @@ describe("useJobMonitorQuery", () => {
     );
     expect(result.current.data?.results?.[0]?.username).toBe("alice");
   });
+
+  it("exposes initialLoading and tableBusy for progressive render", () => {
+    vi.mocked(useJobMonitorRetrieve).mockReturnValue({
+      data: { results: [{ username: "alice" }] },
+      error: null,
+      isLoading: false,
+      isFetching: true,
+      refetch: vi.fn(),
+    } as ReturnType<typeof useJobMonitorRetrieve>);
+
+    const { result } = renderHook(() => useJobMonitorQuery(30));
+
+    expect(result.current.initialLoading).toBe(false);
+    expect(result.current.tableBusy).toBe(true);
+  });
 });

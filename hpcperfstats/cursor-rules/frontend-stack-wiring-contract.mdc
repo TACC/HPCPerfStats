@@ -57,7 +57,7 @@ Shared chrome (layout, session, extended search) also uses `useHomeOptions`, ses
 ## Law
 
 1. **Views consume thin hooks only** — do not call `@/api/generated/**` directly from `src/views/**` except through a colocated thin hook in `src/hooks/`. Do not add new usage of the legacy `src/api/index.ts` facade.
-2. **Thin hooks wrap Orval** — map generated hook results to view-friendly `{ data, error, loading }` shapes; keep TanStack Query options in the hook, not the view.
+2. **Thin hooks wrap Orval** — map generated hook results to view-friendly `{ data, error, loading }` shapes; keep TanStack Query options in the hook, not the view. Loading flags must follow **`interactive-ready-controls.mdc`**: `initialLoading` (first paint), `tableBusy` / `sectionBusy` (stale-data refetch), scoped `optionsLoading` for secondary panels.
 3. **Routing is canonical** — `/machine/**` views read `useMachineRouteParams().flatParams` and `view`; every new `MachineRouteView` needs `parseMachineSlug`, `matchMachineView` in `machine-route-client.tsx`, and a pathname test in `machine-route-client.test.tsx`.
 4. **Validation registry is mandatory** — any JSON validated by `customFetch` must resolve in `response-schema-registry.ts` (exact key or dynamic matcher). Unregistered routes skip Zod and hide wire drift.
 5. **Tests mock at the same layer the view uses** — view tests mock thin hooks (`@/hooks/use-*`); hook unit tests mock `@/api/generated/**`. Do not mock `fetch` or `customFetch` in view tests when a thin hook exists.
@@ -98,6 +98,7 @@ Shared chrome (layout, session, extended search) also uses `useHomeOptions`, ses
 | Wire JSON ↔ Zod | `pytest …/test_*openapi_wire_contract*.py`, `parse-api-response.test.ts` |
 | Full registry audit | `npx tsx scripts/audit-wire-drift.mts` |
 | Route → view | `machine-route-client.test.tsx`, `machine-route-params.test.ts` |
+| Interactive-ready controls | `src/utils/interactive-ready-drift.test.ts` |
 
 Keep **`audit-wire-drift.mts`** case list in sync with `EXACT_RESPONSE_SCHEMAS` and dynamic matchers in `response-schema-registry.ts`.
 
@@ -124,4 +125,5 @@ Keep **`audit-wire-drift.mts`** case list in sync with `EXACT_RESPONSE_SCHEMAS` 
 - **`openapi-spa-wire-validation-contract.mdc`** — wire JSON vs OpenAPI vs Zod validation.
 - **`react-next-ts-cursor-rule.mdc`** — stack conventions and parse boundary.
 - **`testing-best-practices.mdc`** — RTL, mock layers, pre-merge matrix.
+- **`interactive-ready-controls.mdc`** — hide/skeleton until ready; shown controls immediately interactive.
 - **`web-pages-e2e-test-maintenance.mdc`** — Playwright when user-visible flows change.

@@ -238,7 +238,7 @@ function HistogramThumbnail({
       <Dialog modal={false} open={expanded} onOpenChange={handleDialogOpenChange}>
         <DialogContent
           showCloseButton={false}
-          overlayClassName="pointer-events-none bg-black/20"
+          showOverlay={false}
           className="max-w-[calc(100vw-2rem)] sm:max-w-4xl"
           data-testid="histogram-enlarge-dialog"
         >

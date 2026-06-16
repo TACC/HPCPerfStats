@@ -24,6 +24,7 @@ HPCPerfStats serves researchers and operators who expect clear hierarchy, honest
 
 ## Loading vs unavailable vs error
 
+- **Interactive-ready law:** see **`interactive-ready-controls.mdc`** — hide or skeleton until ready; shown controls must accept clicks immediately; no `pointer-events-none` on table/pagination parents during `tableBusy`.
 - Do not show Bokeh **Unavailable** while a section is still loading; pass `isLoading` / `detailsLoading` into `BokehEmbed`.
 - Distinguish **no data** (`unavailableReason`), **loading** (`LoadingMessage` / skeleton), and **transient failure** (warning + **Retry** when async fetch fails).
 - Job list pagination: avoid full-page skeleton when only `page` or `order_by` changes; use `tableBusy` overlay.
@@ -76,4 +77,4 @@ HPCPerfStats serves researchers and operators who expect clear hierarchy, honest
 
 ## Overlap
 
-- `react-js-cursor-rule.mdc`, `wcag-aa-mobile-web.mdc`, `search-metric-artifact-sync.mdc`, **`researcher-job-detail-doc-sync.mdc`** when user-visible copy changes — including job-list **filter summary**, **empty results** (200 + in-table message), **Modify search**, job-detail **breadcrumbs**, shareable **`?tab=`** URLs, and partial-load **retry** affordances (update `docs/using-the-website-as-a-researcher.md` §1–§2 in the same task).
+- `react-js-cursor-rule.mdc`, `wcag-aa-mobile-web.mdc`, **`interactive-ready-controls.mdc`**, `search-metric-artifact-sync.mdc`, **`researcher-job-detail-doc-sync.mdc`** when user-visible copy changes — including job-list **filter summary**, **empty results** (200 + in-table message), **Modify search**, job-detail **breadcrumbs**, shareable **`?tab=`** URLs, and partial-load **retry** affordances (update `docs/using-the-website-as-a-researcher.md` §1–§2 in the same task).

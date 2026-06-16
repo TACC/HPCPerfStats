@@ -29,10 +29,17 @@ export function useAdminMonitorSectionQuery<T>({
     },
   );
 
+  const picked = data ? pickResponse(data as unknown as AdminMonitorSectionResponse) : null;
+  const initialLoading = enabled && isLoading && picked == null;
+  const sectionBusy = enabled && isFetching && !isLoading;
+
   return {
-    data: data ? pickResponse(data as unknown as AdminMonitorSectionResponse) : null,
+    data: picked,
     error: error ? getErrorMessage(error, "Request failed") : null,
-    loading: enabled && (isLoading || isFetching),
+    initialLoading,
+    sectionBusy,
+    /** @deprecated Prefer initialLoading / sectionBusy per interactive-ready-controls.mdc */
+    loading: initialLoading || sectionBusy,
     refetch,
   };
 }

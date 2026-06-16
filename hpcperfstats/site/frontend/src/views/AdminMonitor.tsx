@@ -72,6 +72,32 @@ type AdminMonitorCollapsibleSectionProps = {
   children: ReactNode;
 };
 
+function AdminMonitorSectionRefreshButton({
+  initialLoading,
+  sectionBusy,
+  onRefresh,
+}: {
+  initialLoading: boolean;
+  sectionBusy: boolean;
+  onRefresh: () => void;
+}) {
+  if (initialLoading) return null;
+  return (
+    <div className="mb-2 flex justify-end">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="min-w-[110px]"
+        onClick={onRefresh}
+        disabled={sectionBusy}
+      >
+        {sectionBusy ? "Refreshing…" : "Refresh Data"}
+      </Button>
+    </div>
+  );
+}
+
 function AdminMonitorCollapsibleSection({
   open,
   onOpenChange,
@@ -175,7 +201,8 @@ export default function AdminMonitor() {
   const {
     data: hostStats,
     error: hostError,
-    loading: hostLoading,
+    initialLoading: hostInitialLoading,
+    sectionBusy: hostSectionBusy,
   } = useAdminMonitorSectionQuery({
     section: "hosts",
     enabled: hostTimeExpanded,
@@ -187,7 +214,8 @@ export default function AdminMonitor() {
   const {
     data: rabbitHostStats,
     error: rabbitHostError,
-    loading: rabbitHostLoading,
+    initialLoading: rabbitHostInitialLoading,
+    sectionBusy: rabbitHostSectionBusy,
   } = useAdminMonitorSectionQuery({
     section: "rabbitmq_hosts",
     enabled: rabbitHostTimeExpanded,
@@ -199,7 +227,8 @@ export default function AdminMonitor() {
   const {
     data: cacheStats,
     error: cacheError,
-    loading: cacheLoading,
+    initialLoading: cacheInitialLoading,
+    sectionBusy: cacheSectionBusy,
   } = useAdminMonitorSectionQuery({
     section: "cache",
     enabled: cacheExpanded,
@@ -211,7 +240,8 @@ export default function AdminMonitor() {
   const {
     data: rabbitStats,
     error: rabbitError,
-    loading: rabbitLoading,
+    initialLoading: rabbitInitialLoading,
+    sectionBusy: rabbitSectionBusy,
   } = useAdminMonitorSectionQuery({
     section: "rabbitmq",
     enabled: rabbitExpanded,
@@ -223,7 +253,8 @@ export default function AdminMonitor() {
   const {
     data: timescaledbStats,
     error: timescaledbError,
-    loading: timescaledbLoading,
+    initialLoading: timescaledbInitialLoading,
+    sectionBusy: timescaledbSectionBusy,
   } = useAdminMonitorSectionQuery({
     section: "timescaledb",
     enabled: timescaledbExpanded,
@@ -235,7 +266,8 @@ export default function AdminMonitor() {
   const {
     data: xaltStats,
     error: xaltError,
-    loading: xaltLoading,
+    initialLoading: xaltInitialLoading,
+    sectionBusy: xaltSectionBusy,
   } = useAdminMonitorSectionQuery({
     section: "xalt",
     enabled: xaltExpanded,
@@ -257,7 +289,7 @@ export default function AdminMonitor() {
   // Build comma-separated list of FQDNs not seen in the past 36 hours when the
   // host section is open and hostStats are available.
   useEffect(() => {
-    if (!hostTimeExpanded || hostLoading || hostError) return;
+    if (!hostTimeExpanded || hostInitialLoading || hostError) return;
     const cutoffMs = Date.now() - 36 * 60 * 60 * 1000;
     const fqdnSet = new Set();
     for (const row of fqdnHostStats) {
@@ -270,7 +302,7 @@ export default function AdminMonitor() {
     }
     const list = Array.from(fqdnSet).sort().join(",");
     setNonRespondingHosts36(list);
-  }, [hostTimeExpanded, hostLoading, hostError, fqdnHostStats]);
+  }, [hostTimeExpanded, hostInitialLoading, hostError, fqdnHostStats]);
 
   const totalHosts = fqdnHostStats.length;
   const bucketCounts = fqdnHostStats.reduce<Record<string, number>>(
@@ -283,7 +315,7 @@ export default function AdminMonitor() {
   );
 
   const hostHeaderSummary =
-    !hostLoading && !hostError && fqdnHostStats.length > 0
+    !hostInitialLoading && !hostError && fqdnHostStats.length > 0
       ? ` - Total hosts: ${totalHosts} · ${(Object.keys(BADGE_MAP) as FreshnessBucket[])
           .map((key) => `${BADGE_MAP[key].label}: ${bucketCounts[key] ?? 0}`)
           .join(" · ")}`
@@ -298,14 +330,14 @@ export default function AdminMonitor() {
     {},
   );
   const rabbitHostHeaderSummary =
-    !rabbitHostLoading && !rabbitHostError && fqdnRabbitHostStats.length > 0
+    !rabbitHostInitialLoading && !rabbitHostError && fqdnRabbitHostStats.length > 0
       ? ` - Total hosts: ${rabbitHostTotal} · ${(Object.keys(BADGE_MAP) as FreshnessBucket[])
           .map((key) => `${BADGE_MAP[key].label}: ${rabbitHostBucketCounts[key] ?? 0}`)
           .join(" · ")}`
       : "";
 
   const xaltHeaderSummary =
-    !xaltLoading &&
+    !xaltInitialLoading &&
     !xaltError &&
     xaltStats &&
     xaltStats.total_jids !== undefined
@@ -371,26 +403,19 @@ export default function AdminMonitor() {
         ariaLabel="Most recent host data timestamps in database"
         title={`Most recent host data timestamps in database${hostHeaderSummary}`}
       >
-          <div className="mb-2 flex justify-end">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="min-w-[110px]"
-              onClick={() => setHostRefreshSeq((s) => s + 1)}
-              disabled={hostLoading}
-            >
-              Refresh Data
-            </Button>
-          </div>
-          {hostLoading && <LoadingMessage message="Loading host timestamps…" />}
-          {hostError && !hostLoading && (
+          <AdminMonitorSectionRefreshButton
+            initialLoading={hostInitialLoading}
+            sectionBusy={hostSectionBusy}
+            onRefresh={() => setHostRefreshSeq((s) => s + 1)}
+          />
+          {hostInitialLoading && <LoadingMessage message="Loading host timestamps…" />}
+          {hostError && !hostInitialLoading && (
             <BannerErrorMessage
               variant="inline"
               message={`Error loading host data: ${hostError}`}
             />
           )}
-          {!hostLoading && !hostError && (
+          {!hostInitialLoading && !hostError && (
             <>
               <div className="mb-2 flex flex-wrap items-center">
                 <p className="mb-1 mr-3">
@@ -552,26 +577,19 @@ export default function AdminMonitor() {
         ariaLabel="XALT job coverage (last 3 days)"
         title={`XALT job coverage (last 3 days)${xaltHeaderSummary}`}
       >
-          <div className="mb-2 flex justify-end">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="min-w-[110px]"
-              onClick={() => setXaltRefreshSeq((s) => s + 1)}
-              disabled={xaltLoading}
-            >
-              Refresh Data
-            </Button>
-          </div>
-          {xaltLoading && <LoadingMessage message="Loading XALT coverage…" />}
-          {xaltError && !xaltLoading && (
+          <AdminMonitorSectionRefreshButton
+            initialLoading={xaltInitialLoading}
+            sectionBusy={xaltSectionBusy}
+            onRefresh={() => setXaltRefreshSeq((s) => s + 1)}
+          />
+          {xaltInitialLoading && <LoadingMessage message="Loading XALT coverage…" />}
+          {xaltError && !xaltInitialLoading && (
             <BannerErrorMessage
               variant="inline"
               message={`Error loading XALT coverage: ${xaltError}`}
             />
           )}
-          {!xaltLoading && !xaltError && xaltStats && (
+          {!xaltInitialLoading && !xaltError && xaltStats && (
             <>
               {xaltStats.error && (
                 <BannerErrorMessage
@@ -710,7 +728,7 @@ export default function AdminMonitor() {
               )}
             </>
           )}
-          {!xaltLoading && !xaltError && !xaltStats && (
+          {!xaltInitialLoading && !xaltError && !xaltStats && (
             <div className="text-muted-foreground">No XALT coverage statistics available.</div>
           )}
       </AdminMonitorCollapsibleSection>
@@ -722,28 +740,21 @@ export default function AdminMonitor() {
         ariaLabel="Most recent host data timestamps in RabbitMQ"
         title={`Most recent host data timestamps in RabbitMQ${rabbitHostHeaderSummary}`}
       >
-          <div className="mb-2 flex justify-end">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="min-w-[110px]"
-              onClick={() => setRabbitHostRefreshSeq((s) => s + 1)}
-              disabled={rabbitHostLoading}
-            >
-              Refresh Data
-            </Button>
-          </div>
-          {rabbitHostLoading && (
+          <AdminMonitorSectionRefreshButton
+            initialLoading={rabbitHostInitialLoading}
+            sectionBusy={rabbitHostSectionBusy}
+            onRefresh={() => setRabbitHostRefreshSeq((s) => s + 1)}
+          />
+          {rabbitHostInitialLoading && (
             <LoadingMessage message="Loading RabbitMQ host timestamps…" />
           )}
-          {rabbitHostError && !rabbitHostLoading && (
+          {rabbitHostError && !rabbitHostInitialLoading && (
             <BannerErrorMessage
               variant="inline"
               message={`Error loading RabbitMQ host data: ${rabbitHostError}`}
             />
           )}
-          {!rabbitHostLoading && !rabbitHostError && (
+          {!rabbitHostInitialLoading && !rabbitHostError && (
             <>
             <Table className="border text-sm">
                 <TableCaption className="sr-only">
@@ -904,28 +915,21 @@ export default function AdminMonitor() {
         ariaLabel="TimescaleDB statistics"
         title="TimescaleDB statistics"
       >
-          <div className="mb-2 flex justify-end">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="min-w-[110px]"
-              onClick={() => setTimescaledbRefreshSeq((s) => s + 1)}
-              disabled={timescaledbLoading}
-            >
-              Refresh Data
-            </Button>
-          </div>
-          {timescaledbLoading && (
+          <AdminMonitorSectionRefreshButton
+            initialLoading={timescaledbInitialLoading}
+            sectionBusy={timescaledbSectionBusy}
+            onRefresh={() => setTimescaledbRefreshSeq((s) => s + 1)}
+          />
+          {timescaledbInitialLoading && (
             <LoadingMessage message="Loading TimescaleDB statistics…" />
           )}
-          {timescaledbError && !timescaledbLoading && (
+          {timescaledbError && !timescaledbInitialLoading && (
             <BannerErrorMessage
               variant="inline"
               message={`Error loading TimescaleDB stats: ${timescaledbError}`}
             />
           )}
-          {!timescaledbLoading && !timescaledbError && timescaledbStats && (
+          {!timescaledbInitialLoading && !timescaledbError && timescaledbStats && (
             <Table className="border text-sm">
               <TableCaption className="sr-only">
                 TimescaleDB database and hypertable size statistics.
@@ -977,7 +981,7 @@ export default function AdminMonitor() {
               </TableBody>
               </Table>
           )}
-          {!timescaledbLoading && !timescaledbError && !timescaledbStats && (
+          {!timescaledbInitialLoading && !timescaledbError && !timescaledbStats && (
             <div className="text-muted-foreground">No TimescaleDB statistics available.</div>
           )}
       </AdminMonitorCollapsibleSection>
@@ -989,26 +993,19 @@ export default function AdminMonitor() {
         ariaLabel="Cache and Redis statistics"
         title="Cache / Redis statistics"
       >
-          <div className="mb-2 flex justify-end">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="min-w-[110px]"
-              onClick={() => setCacheRefreshSeq((s) => s + 1)}
-              disabled={cacheLoading}
-            >
-              Refresh Data
-            </Button>
-          </div>
-          {cacheLoading && <LoadingMessage message="Loading cache statistics…" />}
-          {cacheError && !cacheLoading && (
+          <AdminMonitorSectionRefreshButton
+            initialLoading={cacheInitialLoading}
+            sectionBusy={cacheSectionBusy}
+            onRefresh={() => setCacheRefreshSeq((s) => s + 1)}
+          />
+          {cacheInitialLoading && <LoadingMessage message="Loading cache statistics…" />}
+          {cacheError && !cacheInitialLoading && (
             <BannerErrorMessage
               variant="inline"
               message={`Error loading cache stats: ${cacheError}`}
             />
           )}
-          {!cacheLoading && !cacheError && cacheStats && Object.keys(cacheStats).length > 0 && (
+          {!cacheInitialLoading && !cacheError && cacheStats && Object.keys(cacheStats).length > 0 && (
             <Table className="border text-sm">
               <TableCaption className="sr-only">
                 Cache and Redis key statistics for the application.
@@ -1034,7 +1031,7 @@ export default function AdminMonitor() {
               </TableBody>
               </Table>
           )}
-          {!cacheLoading && !cacheError && (!cacheStats || Object.keys(cacheStats).length === 0) && (
+          {!cacheInitialLoading && !cacheError && (!cacheStats || Object.keys(cacheStats).length === 0) && (
             <div className="text-muted-foreground">No cache statistics available.</div>
           )}
       </AdminMonitorCollapsibleSection>
@@ -1046,28 +1043,21 @@ export default function AdminMonitor() {
         ariaLabel="RabbitMQ statistics"
         title="RabbitMQ statistics"
       >
-          <div className="mb-2 flex justify-end">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="min-w-[110px]"
-              onClick={() => setRabbitRefreshSeq((s) => s + 1)}
-              disabled={rabbitLoading}
-            >
-              Refresh Data
-            </Button>
-          </div>
-          {rabbitLoading && (
+          <AdminMonitorSectionRefreshButton
+            initialLoading={rabbitInitialLoading}
+            sectionBusy={rabbitSectionBusy}
+            onRefresh={() => setRabbitRefreshSeq((s) => s + 1)}
+          />
+          {rabbitInitialLoading && (
             <LoadingMessage message="Loading RabbitMQ statistics…" />
           )}
-          {rabbitError && !rabbitLoading && (
+          {rabbitError && !rabbitInitialLoading && (
             <BannerErrorMessage
               variant="inline"
               message={`Error loading RabbitMQ stats: ${rabbitError}`}
             />
           )}
-          {!rabbitLoading && !rabbitError && rabbitStats && (
+          {!rabbitInitialLoading && !rabbitError && rabbitStats && (
             <>
               {rabbitStats.error && (
                 <BannerErrorMessage
@@ -1125,7 +1115,7 @@ export default function AdminMonitor() {
                 </Table>
             </>
           )}
-          {!rabbitLoading &&
+          {!rabbitInitialLoading &&
             !rabbitError &&
             !rabbitStats && (
               <div className="text-muted-foreground">No RabbitMQ statistics available.</div>

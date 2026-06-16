@@ -40,6 +40,48 @@ describe("useAdminMonitorSectionQuery", () => {
     expect(result.current.loading).toBe(false);
   });
 
+  it("surfaces initialLoading before first payload", () => {
+    vi.mocked(useAdminMonitorRetrieve).mockReturnValue({
+      data: undefined,
+      error: null,
+      isLoading: true,
+      isFetching: true,
+      refetch: vi.fn(),
+    } as ReturnType<typeof useAdminMonitorRetrieve>);
+
+    const { result } = renderHook(() =>
+      useAdminMonitorSectionQuery({
+        section: "hosts",
+        enabled: true,
+        pickResponse: (res) => res.host_stats,
+      }),
+    );
+
+    expect(result.current.initialLoading).toBe(true);
+    expect(result.current.sectionBusy).toBe(false);
+  });
+
+  it("surfaces sectionBusy during refetch with prior data", () => {
+    vi.mocked(useAdminMonitorRetrieve).mockReturnValue({
+      data: { host_stats: [{ host: "node1.example.com" }] },
+      error: null,
+      isLoading: false,
+      isFetching: true,
+      refetch: vi.fn(),
+    } as ReturnType<typeof useAdminMonitorRetrieve>);
+
+    const { result } = renderHook(() =>
+      useAdminMonitorSectionQuery({
+        section: "hosts",
+        enabled: true,
+        pickResponse: (res) => res.host_stats,
+      }),
+    );
+
+    expect(result.current.initialLoading).toBe(false);
+    expect(result.current.sectionBusy).toBe(true);
+  });
+
   it("passes refresh flag when refreshSeq is positive", () => {
     vi.mocked(useAdminMonitorRetrieve).mockReturnValue({
       data: { cache_stats: { keys: 1 } },
