@@ -4,7 +4,7 @@ export function buildJobListBreadcrumbs(
   routeParams: Record<string, string | string[] | undefined>,
   terminalLabel = "Jobs",
 ): BreadcrumbItem[] {
-  const items: BreadcrumbItem[] = [{ label: "Browse", to: "/" }];
+  const items: BreadcrumbItem[] = [{ label: "Browse", to: "/machine/" }];
   const year = routeParams.year;
   const date = routeParams.date;
   const username = routeParams.username;

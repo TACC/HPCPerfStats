@@ -33,6 +33,10 @@ const filterOptions = {
 describe("JobListHeaderFilters", () => {
   beforeEach(() => {
     replace.mockClear();
+    replace.mockImplementation((href: string) => {
+      const qIndex = href.indexOf("?");
+      searchParams = new URLSearchParams(qIndex >= 0 ? href.slice(qIndex + 1) : "");
+    });
     searchParams = new URLSearchParams();
     pathname = "/machine/jobs/";
   });
@@ -112,5 +116,22 @@ describe("JobListHeaderFilters", () => {
     expect(replace).toHaveBeenCalledTimes(1);
     const href = replace.mock.calls[0]?.[0] as string;
     expect(href).not.toContain("state=");
+  });
+
+  it("double-click Clear header filters triggers a single navigation", async () => {
+    const user = userEvent.setup();
+    searchParams = new URLSearchParams("queue=normal&state=completed");
+    const { rerender } = render(
+      <JobListHeaderFilters filterOptions={filterOptions} routeParams={{}} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /refine this list/i }));
+    const clearButton = screen.getByRole("button", { name: /clear header filters/i });
+    await user.click(clearButton);
+    expect(replace).toHaveBeenCalledTimes(1);
+
+    rerender(<JobListHeaderFilters filterOptions={filterOptions} routeParams={{}} />);
+    await user.click(clearButton);
+    expect(replace).toHaveBeenCalledTimes(1);
   });
 });

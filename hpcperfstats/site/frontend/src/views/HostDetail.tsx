@@ -8,6 +8,7 @@ import BokehPlotWithLimitation from "../components/BokehPlotWithLimitation";
 import LoadingMessage from "../components/LoadingMessage";
 import { formatDateTime } from "../utils/formatDateTime";
 import { useMachineRouteParams } from "../hooks/use-machine-route-params";
+import { useStableSearchParamsKey } from "../hooks/use-stable-search-params";
 import { buildAsyncPageTitle } from "../utils/async-page-title";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 import { useHostPlotQuery } from "@/hooks/use-host-plot";
@@ -16,6 +17,7 @@ export default function HostDetail() {
   const { flatParams } = useMachineRouteParams();
   const host = flatParams.host ?? "";
   const searchParams = useSearchParams();
+  const searchParamsKey = useStableSearchParamsKey();
 
   const plotParams = useMemo(() => {
     if (!host) return null;
@@ -27,7 +29,7 @@ export default function HostDetail() {
       end_time__gte = d.toISOString().slice(0, 19);
     }
     return { host, end_time__gte, end_time__lte };
-  }, [host, searchParams]);
+  }, [host, searchParamsKey]);
 
   const { data, error, loading } = useHostPlotQuery(plotParams);
 
@@ -57,7 +59,7 @@ export default function HostDetail() {
     <>
       <PageBreadcrumbs
         items={[
-          { label: "Browse", to: "/" },
+          { label: "Browse", to: "/machine/" },
           {
             label: `Jobs on ${hostName}`,
             to: `/host/${encodeURIComponent(hostName)}`,

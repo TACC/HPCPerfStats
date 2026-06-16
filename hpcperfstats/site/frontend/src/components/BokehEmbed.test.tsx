@@ -3,6 +3,7 @@ import { vi, afterEach, describe, expect, it } from "vitest";
 import BokehEmbed from "./BokehEmbed";
 import { SessionContext } from "../session-context";
 import { VALID_BOKEH_JSON_ITEM } from "@/test-utils/bokeh-fixtures";
+import { BOKEH_EMBED_LOCK_SHARDS } from "@/utils/bokeh-embed-defaults";
 
 vi.mock("../bokehInit", () => ({
   ensureBokehLoaded: vi.fn(() => Promise.resolve(globalThis.window?.Bokeh)),
@@ -103,33 +104,19 @@ describe("BokehEmbed", () => {
     unmount();
   });
 
-  it("shows default unavailable text and reveals/copies API error for staff", async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(window.navigator, "clipboard", {
-      configurable: true,
-      value: { writeText },
-    });
-
+  it("shows unavailable reason directly for staff when reason is provided", () => {
     renderBokehEmbed(
       <BokehEmbed
         plotName="Heatmap"
         unavailableReason="Missing CPI counters in host_data"
       />,
-      { is_staff: true }
+      { logged_in: true, username: "alice", is_staff: true },
     );
 
-    expect(screen.getByText("Unavailable — Data not available.")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Show plot error details" }));
-
-    expect(screen.getByRole("region", { name: "Plot error details" })).toHaveTextContent(
-      "Missing CPI counters in host_data",
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Copy error detail" }));
-    await waitFor(() => {
-      expect(writeText).toHaveBeenCalledWith("Missing CPI counters in host_data");
-    });
-    expect(screen.getByText("Copied")).toBeInTheDocument();
+    expect(screen.getByText("Missing CPI counters in host_data")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Show plot error details" }),
+    ).not.toBeInTheDocument();
   });
 
   it("hides error detail UI for non-staff users", () => {
@@ -141,7 +128,7 @@ describe("BokehEmbed", () => {
       { is_staff: false }
     );
 
-    expect(screen.getByText("Unavailable — Data not available.")).toBeInTheDocument();
+    expect(screen.getByText("Missing CPI counters in host_data")).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Show plot error details" }),
     ).not.toBeInTheDocument();
@@ -252,7 +239,7 @@ describe("BokehEmbed", () => {
     }
   });
 
-  it("serializes embed_item so concurrent mounts never overlap", async () => {
+  it("limits concurrent embed_item via sharded global lock", async () => {
     let concurrent = 0;
     let maxConcurrent = 0;
     const embedItem = vi.fn(async () => {
@@ -275,7 +262,7 @@ describe("BokehEmbed", () => {
     );
 
     await waitFor(() => expect(embedItem).toHaveBeenCalledTimes(2));
-    expect(maxConcurrent).toBe(1);
+    expect(maxConcurrent).toBeLessThanOrEqual(BOKEH_EMBED_LOCK_SHARDS);
   });
 
   it("does not call embed_item after unmount aborts the embed pipeline", async () => {

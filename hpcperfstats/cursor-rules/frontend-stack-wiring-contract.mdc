@@ -112,7 +112,9 @@ Keep **`audit-wire-drift.mts`** case list in sync with `EXACT_RESPONSE_SCHEMAS` 
 ## SPA performance / manual-fetch hooks
 
 - **Unstable hook deps:** Never pass inline array/object literals from views into manual-fetch hook dependency arrays (regression: `JobList` histogram refetch loop). Export stable module-level constants from the hook (`JOB_LIST_HISTOGRAM_METRICS`) or memoize in the view with `useMemo`.
+- **`searchParams` memo/effect deps:** Use `useStableSearchParamsKey()` / `useStableURLSearchParams()` (or `searchParams.toString()` in dependency arrays), not the Next.js `searchParams` object reference. Enforced by `unstable-search-params-deps.test.ts`.
 - **Manual-fetch hooks** (`useJobListHistograms`, `useJobPlotsQuery`, and similar `useEffect`+Orval retrieve patterns) must ship colocated `use-*.test.ts` with **fetch/call-count guards** (one wave per stable input; no refetch on benign rerender).
+- **Bokeh embed chain:** `BokehEmbed` uses sharded locks (`BOKEH_EMBED_LOCK_SHARDS`) and aborts in-flight work on unmount; avoid `deferEmbedUntilVisible={false}` for multiple simultaneous embeds unless user-gesture driven.
 - **Parallel per-item `setState` in hooks** must batch into one update after `Promise.all` (or equivalent) so parent views do not re-render in a loop while fetches are in flight.
 
 ## Overlap

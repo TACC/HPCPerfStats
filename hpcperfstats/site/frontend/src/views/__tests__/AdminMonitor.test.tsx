@@ -115,6 +115,31 @@ describe("AdminMonitor", () => {
     });
   });
 
+  it("paginates host rows when many FQDN hosts are returned", async () => {
+    const hosts = Array.from({ length: 155 }, (_, index) => ({
+      host: `node${String(index).padStart(3, "0")}.example.com`,
+      last_time: "2024-01-01T00:00:00Z",
+      age_bucket: "ok",
+    }));
+    mockSectionQuery({
+      hosts: { data: hosts },
+    });
+
+    renderWithProviders(<AdminMonitor />);
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Most recent host data timestamps in database/i,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("node000.example.com")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("node154.example.com")).not.toBeInTheDocument();
+    expect(screen.getByText(/of 155 hosts/)).toBeInTheDocument();
+  });
+
   it("refresh button increments refreshSeq for the hosts section", async () => {
     mockSectionQuery({
       hosts: {

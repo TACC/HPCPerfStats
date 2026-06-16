@@ -308,9 +308,10 @@ export default function JobListHeaderFilters({
               variant="ghost"
               size="sm"
               className="shrink-0 text-xs"
-              onClick={() =>
-                clearAllHeaderFilters({ router, pathname, searchParams, routeParams })
-              }
+              onClick={(event) => {
+                event.stopPropagation();
+                clearAllHeaderFilters({ router, pathname, searchParams, routeParams });
+              }}
             >
               Clear header filters
             </Button>

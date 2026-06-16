@@ -1,5 +1,7 @@
 /** URL helpers for job list header multi-select filters (comma-separated query values). */
 
+import { hrefFromPathAndSearch, replacePathIfChanged } from "./replace-path-if-changed";
+
 export const JOB_LIST_HEADER_FILTER_KEYS = [
   "username",
   "account",
@@ -108,6 +110,41 @@ export type ApplyHeaderFilterChangeArgs = {
   nextValues: Set<string>;
 };
 
+export type HeaderFilterHrefArgs = Omit<ApplyHeaderFilterChangeArgs, "key" | "nextValues"> & {
+  mutate?: (params: URLSearchParams) => void;
+};
+
+/** Build target pathname + params for a header filter navigation (exported for tests). */
+export function buildHeaderFilterHref({
+  pathname,
+  searchParams,
+  routeParams,
+  mutate,
+}: HeaderFilterHrefArgs): { targetPath: string; params: URLSearchParams } {
+  let params = mergeRouteParamsIntoSearchParams(searchParams, routeParams);
+  mutate?.(params);
+
+  let targetPath = pathname;
+  if (pathnameUsesRouteFilters(pathname)) {
+    targetPath = "/machine/jobs/";
+  }
+
+  return { targetPath, params };
+}
+
+function navigateHeaderFilterChange(
+  args: HeaderFilterHrefArgs,
+): void {
+  const { targetPath, params } = buildHeaderFilterHref(args);
+  replacePathIfChanged(
+    args.router,
+    targetPath,
+    params,
+    args.pathname,
+    args.searchParams,
+  );
+}
+
 /** Update one header filter dimension in the URL; reset page; normalize browse routes to /machine/jobs/. */
 export function applyHeaderFilterChange({
   router,
@@ -117,22 +154,21 @@ export function applyHeaderFilterChange({
   key,
   nextValues,
 }: ApplyHeaderFilterChangeArgs): void {
-  let params = mergeRouteParamsIntoSearchParams(searchParams, routeParams);
-  const serialized = serializeHeaderFilterSet(nextValues);
-  if (serialized) {
-    params.set(key, serialized);
-  } else {
-    params.delete(key);
-  }
-  params.delete("page");
-
-  let targetPath = pathname;
-  if (pathnameUsesRouteFilters(pathname)) {
-    targetPath = "/machine/jobs/";
-  }
-
-  const qs = params.toString();
-  router.replace(qs ? `${targetPath}?${qs}` : targetPath);
+  navigateHeaderFilterChange({
+    router,
+    pathname,
+    searchParams,
+    routeParams,
+    mutate: (params) => {
+      const serialized = serializeHeaderFilterSet(nextValues);
+      if (serialized) {
+        params.set(key, serialized);
+      } else {
+        params.delete(key);
+      }
+      params.delete("page");
+    },
+  });
 }
 
 export function clearAllHeaderFilters({
@@ -141,20 +177,21 @@ export function clearAllHeaderFilters({
   searchParams,
   routeParams,
 }: Omit<ApplyHeaderFilterChangeArgs, "key" | "nextValues">): void {
-  let params = mergeRouteParamsIntoSearchParams(searchParams, routeParams);
-  for (const key of JOB_LIST_HEADER_FILTER_KEYS) {
-    params.delete(key);
-  }
-  params.delete("page");
-
-  let targetPath = pathname;
-  if (pathnameUsesRouteFilters(pathname)) {
-    targetPath = "/machine/jobs/";
-  }
-
-  const qs = params.toString();
-  router.replace(qs ? `${targetPath}?${qs}` : targetPath);
+  navigateHeaderFilterChange({
+    router,
+    pathname,
+    searchParams,
+    routeParams,
+    mutate: (params) => {
+      for (const key of JOB_LIST_HEADER_FILTER_KEYS) {
+        params.delete(key);
+      }
+      params.delete("page");
+    },
+  });
 }
+
+export { hrefFromPathAndSearch };
 
 export function clearHeaderFilterDimension(
   args: Omit<ApplyHeaderFilterChangeArgs, "nextValues">,

@@ -58,6 +58,8 @@ import {
 } from "../utils/sync-tab-search-param";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 import { useMachineRouteParams } from "../hooks/use-machine-route-params";
+import { useStableURLSearchParams } from "../hooks/use-stable-search-params";
+import { replacePathIfChanged } from "../utils/replace-path-if-changed";
 import {
   jobListPageHumanSummary,
   jobListRouteTitleContext,
@@ -185,13 +187,14 @@ function buildJobListTitle({ error, loading, data, routeCtx }: BuildJobListTitle
 export default function JobList() {
   const session = useSession();
   const isStaff = !!session?.is_staff;
-  const searchParams = useSearchParams();
+  const searchParams = useStableURLSearchParams();
+  const rawSearchParams = useSearchParams();
   const { flatParams: paramsFromRoute } = useMachineRouteParams();
   const pathname = usePathname();
   const router = useRouter();
   const [histogramReloadKey, setHistogramReloadKey] = useState(0);
   const { openExtendedSearch } = useExtendedSearchLayout();
-  const listViewTab = readTabFromSearchParams(searchParams, "view", "jobs");
+  const listViewTab = readTabFromSearchParams(rawSearchParams, "view", "jobs");
   const [isLgUp, setIsLgUp] = useState(() =>
     typeof window !== "undefined" && window.matchMedia("(min-width: 992px)").matches,
   );
@@ -206,10 +209,7 @@ export default function JobList() {
     return () => mq.removeEventListener("change", syncLg);
   }, []);
 
-  const asURLSearchParams = useMemo(
-    () => new URLSearchParams(searchParams.toString()),
-    [searchParams],
-  );
+  const asURLSearchParams = searchParams;
 
   const listApiParams = useMemo(
     () => buildJobListApiParams(asURLSearchParams, paramsFromRoute),
@@ -231,9 +231,8 @@ export default function JobList() {
     useJobListHistograms(listApiParams, histogramReloadKey, histogramsEnabled, jobsFetching);
 
   function setListViewTab(tab: "jobs" | "charts") {
-    const next = searchParamsWithTab(searchParams, "view", tab === "jobs" ? null : tab);
-    const qs = next.toString();
-    router.replace(qs ? `${pathname}?${qs}` : pathname);
+    const next = searchParamsWithTab(rawSearchParams, "view", tab === "jobs" ? null : tab);
+    replacePathIfChanged(router, pathname, next, pathname, searchParams);
   }
 
   const routeCtx = jobListRouteTitleContext(paramsFromRoute, asURLSearchParams);

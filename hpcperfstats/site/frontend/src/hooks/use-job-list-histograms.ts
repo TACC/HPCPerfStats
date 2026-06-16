@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { jobsHistogramsBatchRetrieve } from "@/api/generated/jobs/jobs";
 import { ApiError } from "@/api/api-error";
 import { HISTOGRAM_EMBED_VERSION } from "@/api-paths";
@@ -75,10 +75,9 @@ export function useJobListHistograms(
   enabled = true,
   jobsFetching = false,
 ) {
-  const paramsKey = useMemo(
-    () => serializeJobListApiParams(listApiParams),
-    [listApiParams],
-  );
+  const paramsKey = serializeJobListApiParams(listApiParams);
+  const listApiParamsRef = useRef(listApiParams);
+  listApiParamsRef.current = listApiParams;
 
   const [histograms, setHistograms] = useState<JobListHistogramEntry[] | null>(null);
   const [metricHistStatus, setMetricHistStatus] = useState<MetricHistStatusMap>(() =>
@@ -106,7 +105,7 @@ export function useJobListHistograms(
     const loadHistograms = async () => {
       try {
         const batchParams = {
-          ...listApiParams,
+          ...listApiParamsRef.current,
           metrics: BATCH_METRICS_PARAM,
           _histogram_embed_v: HISTOGRAM_EMBED_VERSION,
         };
@@ -193,7 +192,7 @@ export function useJobListHistograms(
       if (debounceTimer) clearTimeout(debounceTimer);
       controller.abort();
     };
-  }, [paramsKey, reloadKey, enabled, jobsFetching, listApiParams]);
+  }, [paramsKey, reloadKey, enabled, jobsFetching]);
 
   return {
     histograms,

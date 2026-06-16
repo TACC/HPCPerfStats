@@ -41,6 +41,8 @@ import {
   searchParamsWithTab,
 } from "../utils/sync-tab-search-param";
 import { useMachineRouteParams } from "../hooks/use-machine-route-params";
+import { useStableURLSearchParams } from "../hooks/use-stable-search-params";
+import { replacePathIfChanged } from "../utils/replace-path-if-changed";
 import { JOB_PLOT_CONFIGS } from "@/utils/job-detail-plots";
 
 const JOB_DETAIL_COMPACT_TABLE_CLASS =
@@ -208,7 +210,8 @@ export default function JobDetail() {
   const isStaff = !!session?.is_staff;
   const { flatParams } = useMachineRouteParams();
   const pk = flatParams.pk ?? "";
-  const searchParams = useSearchParams();
+  const searchParams = useStableURLSearchParams();
+  const rawSearchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
   const {
@@ -221,7 +224,7 @@ export default function JobDetail() {
     loadDetailWithoutDeferParts,
   } = useJobDetailQuery(pk);
   const data = jobDetailData as JobDetailViewData | null;
-  const rawTab = readTabFromSearchParams(searchParams, "tab", "metrics");
+  const rawTab = readTabFromSearchParams(rawSearchParams, "tab", "metrics");
   const analysisTab: JobAnalysisTab = JOB_DETAIL_ANALYSIS_TABS.has(rawTab as JobAnalysisTab)
     ? (rawTab as JobAnalysisTab)
     : "metrics";
@@ -249,13 +252,11 @@ export default function JobDetail() {
 
   function setAnalysisTab(tab: JobAnalysisTab): void {
     const next = searchParamsWithTab(
-      searchParams,
+      rawSearchParams,
       "tab",
       tab === "metrics" ? null : tab,
     );
-    const qs = next.toString();
-    const href = qs ? `${pathname}?${qs}` : pathname;
-    router.replace(href);
+    replacePathIfChanged(router, pathname, next, pathname, searchParams);
   }
 
   useDocumentTitle(buildJobDetailTitle({ error, loading: initialLoading, data, pk }));
@@ -405,7 +406,7 @@ export default function JobDetail() {
     <>
       <PageBreadcrumbs
         items={[
-          { label: "Browse", to: "/" },
+          { label: "Browse", to: "/machine/" },
           { label: `Job ${job.jid}` },
         ]}
       />

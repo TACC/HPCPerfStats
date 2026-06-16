@@ -15,6 +15,9 @@ describe("PageNotFound", () => {
     expect(
       screen.getByText(/that address is not part of hpcperfstats/i),
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /browse jobs/i })).toHaveAttribute("href", "/");
+    expect(screen.getByRole("link", { name: /browse jobs/i })).toHaveAttribute(
+      "href",
+      "/machine",
+    );
   });
 });

@@ -60,7 +60,7 @@ export default function TypeDetail() {
     <>
       <PageBreadcrumbs
         items={[
-          { label: "Browse", to: "/" },
+          { label: "Browse", to: "/machine/" },
           { label: `Job ${jobid}`, to: `/job/${jobid}` },
           { label: String(type_name) },
         ]}

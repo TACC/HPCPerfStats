@@ -264,6 +264,27 @@ describe("useJobListHistograms", () => {
     expect(result.current.metricHistStatus.nhosts.error).toBeNull();
   });
 
+  it("does not refetch when listApiParams object identity changes but paramsKey is unchanged", async () => {
+    vi.mocked(jobsHistogramsBatchRetrieve).mockResolvedValue(mockBatchResponse());
+
+    const { rerender } = renderHook(
+      ({ params }) => useJobListHistograms(params, 0, true),
+      { initialProps: { params: STABLE_PARAMS } },
+    );
+
+    await advanceDebounce();
+
+    await waitFor(() => {
+      expect(jobsHistogramsBatchRetrieve).toHaveBeenCalledTimes(1);
+    });
+
+    rerender({ params: { ...STABLE_PARAMS } });
+    rerender({ params: { page: "1", order_by: "-end_time" } });
+    await advanceDebounce();
+
+    expect(jobsHistogramsBatchRetrieve).toHaveBeenCalledTimes(1);
+  });
+
   it("sets histogramsUpdating while a debounced fetch is pending", async () => {
     vi.mocked(jobsHistogramsBatchRetrieve).mockImplementation(
       () =>

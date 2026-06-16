@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   applyHeaderFilterChange,
+  clearAllHeaderFilters,
   parseHeaderFilterSet,
   serializeHeaderFilterSet,
   toggleHeaderFilterValue,
@@ -39,5 +40,35 @@ describe("job-list-header-filter-params", () => {
     expect(href).toContain("queue=normal");
     expect(href).toContain("debug");
     expect(href).not.toContain("page=3");
+  });
+
+  it("clearAllHeaderFilters skips replace when filters already cleared", () => {
+    const replace = vi.fn();
+    const args = {
+      router: { replace },
+      pathname: "/machine/jobs/",
+      searchParams: new URLSearchParams("queue=normal&order_by=-end_time"),
+      routeParams: {},
+    };
+    clearAllHeaderFilters(args);
+    expect(replace).toHaveBeenCalledTimes(1);
+    clearAllHeaderFilters({
+      ...args,
+      searchParams: new URLSearchParams("order_by=-end_time"),
+    });
+    expect(replace).toHaveBeenCalledTimes(1);
+  });
+
+  it("applyHeaderFilterChange skips replace when href unchanged", () => {
+    const replace = vi.fn();
+    applyHeaderFilterChange({
+      router: { replace },
+      pathname: "/machine/jobs/",
+      searchParams: new URLSearchParams("queue=normal"),
+      routeParams: {},
+      key: "queue",
+      nextValues: new Set(["normal"]),
+    });
+    expect(replace).not.toHaveBeenCalled();
   });
 });
