@@ -40,7 +40,7 @@ When **`sync_startup_drain_day_close_before_ingest=yes`**, before the first resc
 - `StartupDayClosePreflight.discover_done()` (when enabled)
 - `AsyncDayCloseCoordinator.active_or_submitted_tar_paths()` empty
 - `StartupRawRemovalPreflight.delete_phase_done()` (when enabled)
-- `DayRawRemovalCoordinator.any_needs_delete_phase()` false (when enabled)
+- `DayRawRemovalCoordinator.any_blocks_startup_drain()` false (when enabled) — days in `verification_complete` with only ingest-gated retryable skips on disk do **not** block startup; main ingest clears them after the gate. Mid-run delete driver still uses `any_needs_delete_phase()` via `_apply_day_close_raw_removal_deletes`.
 
 Delete phases are driven via `_maybe_handle_raw_removal_delete_phase()` during the drain loop. On exit, `_post_startup_raw_removal_rescan()` runs when startup raw removal finished. **`startup_ingest_gate_cleared`** is one-time; mid-run day-close deletes do not re-gate ingest.
 
@@ -69,7 +69,7 @@ When **`sync_startup_tail_ingest_enabled=yes`**, each startup drain iteration (b
 ```
 janitor: day_close candidate report reason=startup_checkpoint_discover queued=N waiting_on_ingest=W eligible_deferred=D disqualified=M
 sync_timedb: startup day close discover: eligible=N quiescent_eligible=Q
-sync_timedb: startup day-close drain waiting discover=… async_active=… startup_raw=… day_raw_delete=…
+sync_timedb: startup day-close drain waiting discover=… async_active=… startup_raw=… day_raw_delete=… day_raw_waiting_on_ingest=…
 sync_timedb: startup day-close and deletion drain complete; ingest may begin
 sync_timedb: startup day close discover backoff async saturated active=N max=M …
 sync_timedb: startup day close discover: scans elapsed_s=…
@@ -88,7 +88,7 @@ sync_timedb: startup tail ingest submitted day_close tar=…/YYYY-MM-DD.tar
 ## Tests
 
 - `hpcperfstats/tests/test_sync_timedb_startup_day_close.py` (checkpoint-complete + quiescent submit, boot reconcile when `phase=done`, `discover_done` false while `pending_eligible`)
-- `hpcperfstats/tests/test_sync_timedb_supervisor.py` (`test_supervisor_waits_for_startup_day_close_drain_before_ingest`, `test_supervisor_blocks_ingest_when_phase_done_pending_eligible`, `test_supervisor_startup_drain_disabled_allows_parallel_ingest`, `test_supervisor_failed_ingest_requeues_at_pending_head`, `test_supervisor_startup_tail_ingest_runs_during_drain`)
+- `hpcperfstats/tests/test_sync_timedb_supervisor.py` (`test_supervisor_waits_for_startup_day_close_drain_before_ingest`, `test_supervisor_blocks_ingest_when_phase_done_pending_eligible`, `test_supervisor_startup_drain_disabled_allows_parallel_ingest`, `test_supervisor_failed_ingest_requeues_at_pending_head`, `test_supervisor_startup_tail_ingest_runs_during_drain`, `test_supervisor_startup_drain_completes_when_day_raw_waiting_on_ingest_and_tail_skip`)
 - Archive/janitor/async helpers in `test_sync_timedb_archive.py`, `test_sync_timedb_janitor.py`
 
 ## Overlap

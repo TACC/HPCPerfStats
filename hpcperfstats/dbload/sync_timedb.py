@@ -4346,7 +4346,7 @@ def run_sync_timedb_supervisor_loop(
         if not startup_preflight.delete_phase_done():
           return True
       if day_raw_removal is not None and day_raw_removal.enabled:
-        if day_raw_removal.any_needs_delete_phase():
+        if day_raw_removal.any_blocks_startup_drain():
           return True
       return False
 
@@ -4379,17 +4379,24 @@ def run_sync_timedb_supervisor_loop(
       day_delete_pending = (
           day_raw_removal is not None
           and day_raw_removal.enabled
-          and day_raw_removal.any_needs_delete_phase()
+          and day_raw_removal.any_blocks_startup_drain()
+      )
+      day_raw_waiting_on_ingest = (
+          day_raw_removal.count_days_waiting_on_ingest()
+          if day_raw_removal is not None and day_raw_removal.enabled
+          else 0
       )
       log_print(
           "sync_timedb: startup day-close drain waiting discover=%s "
-          "pending_eligible=%d async_active=%d startup_raw=%s day_raw_delete=%s"
+          "pending_eligible=%d async_active=%d startup_raw=%s "
+          "day_raw_delete=%s day_raw_waiting_on_ingest=%d"
           % (
               discover_pending,
               pending_eligible,
               async_active,
               raw_pending,
               day_delete_pending,
+              day_raw_waiting_on_ingest,
           ),
           flush=True,
       )

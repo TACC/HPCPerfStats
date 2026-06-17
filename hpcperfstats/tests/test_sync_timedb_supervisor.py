@@ -4269,6 +4269,12 @@ def test_supervisor_ingest_proceeds_without_day_close_delete_gate(monkeypatch):
     def any_needs_delete_phase(self):
       return self.block_startup_drain
 
+    def any_blocks_startup_drain(self):
+      return self.block_startup_drain
+
+    def count_days_waiting_on_ingest(self):
+      return 0
+
     def needs_delete_phase(self, tar_norm):
       del tar_norm
       return self.block_startup_drain
@@ -5185,6 +5191,66 @@ def test_supervisor_startup_tail_ingest_skips_above_max_files(
     assert "startup tail ingest skip" in out
     assert "above_max_files" in out
     assert "startup tail ingest begin" not in out
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_supervisor_startup_drain_completes_when_day_raw_waiting_on_ingest_and_tail_skip(
+    monkeypatch, tmp_path, capsys):
+  shutdown_requested[0] = False
+  rescan_calls = {"n": 0}
+
+  class _WaitingOnIngestDayCoord:
+    enabled = True
+
+    def any_blocks_startup_drain(self):
+      return False
+
+    def any_needs_delete_phase(self):
+      return True
+
+    def count_days_waiting_on_ingest(self):
+      return 1
+
+    def days_needing_delete_oldest_first(self):
+      return []
+
+    def consumed_paths(self):
+      return set()
+
+    def shutdown(self, wait=True):
+      del wait
+
+  try:
+    daily_dir = tmp_path / "daily"
+    daily_dir.mkdir()
+    tar_norm = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+    open(tar_norm, "wb").close()
+    many_paths = []
+    for i in range(150):
+      p = tmp_path / ("raw_%d" % i)
+      p.write_bytes(b"x")
+      many_paths.append(str(p))
+
+    def live_unprocessed(*_a, **_k):
+      return {tar_norm: many_paths}
+
+    def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
+      rescan_calls["n"] += 1
+      shutdown_requested[0] = True
+      return []
+
+    archive_dir, _ = _startup_tail_drain_patches(
+        monkeypatch, tmp_path, live_unprocessed_fn=live_unprocessed, max_files=100)
+    _supervisor_day_raw_removal_patches(monkeypatch, _WaitingOnIngestDayCoord())
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    st.run_sync_timedb_supervisor_loop(
+        str(archive_dir), "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
+    out = capsys.readouterr().out
+    assert "startup tail ingest skip" in out
+    assert "startup day-close and deletion drain complete" in out
+    assert "startup maintenance idle; ingest may begin" in out
+    assert rescan_calls["n"] >= 1
   finally:
     shutdown_requested[0] = False
 

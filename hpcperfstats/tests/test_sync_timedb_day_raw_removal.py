@@ -218,6 +218,44 @@ def test_done_manifest_resets_when_retryable_skips_remain_on_disk(tmp_path):
   assert seg.is_file()
 
 
+def test_any_blocks_startup_drain_false_when_only_retryable_skips_remain(tmp_path):
+  day = datetime(2022, 6, 12)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, _zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
+  state = coord._get_or_create_day(tar_path)
+  state._verify_body()
+  assert coord.any_needs_delete_phase()
+  assert not coord.any_blocks_startup_drain()
+  assert state.waiting_on_ingest_at_startup()
+  assert coord.count_days_waiting_on_ingest() == 1
+  state._mark_done_waiting_on_ingest()
+  assert not coord.any_needs_delete_phase()
+  assert not coord.any_blocks_startup_drain()
+  assert coord.count_days_waiting_on_ingest() == 0
+  assert seg.is_file()
+
+
+def test_apply_batch_delete_marks_done_when_only_retryable_skips_remain(
+    tmp_path, monkeypatch,
+):
+  day = datetime(2022, 6, 13)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, _zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
+  monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0)
+  state = coord._get_or_create_day(tar_path)
+  state._verify_body()
+  assert not coord.paths_pending_delete()
+  coord.begin_deleting(tar_path)
+  deleted = coord.apply_batch_delete(tar_path)
+  assert deleted == 0
+  assert coord.phase(tar_path) == PHASE_DONE
+  assert state._needs_retry_after_ingest()
+  assert not coord.any_blocks_startup_drain()
+  assert seg.is_file()
+
+
 def test_skip_stuck_older_day_allows_younger_delete_in_one_pass(tmp_path, monkeypatch):
   day_old = datetime(2022, 6, 10)
   day_young = datetime(2022, 6, 11)

@@ -204,6 +204,75 @@ class _DayRawRemovalState:
         return False
     return True
 
+  def _unmanifested_closed_raw_paths(self) -> List[str]:
+    with self._lock:
+      entries = dict(self._manifest.get("entries", {}))
+    unmanifested: List[str] = []
+    for path in self._closed_raw_paths_on_disk():
+      if not os.path.isfile(path):
+        continue
+      if path not in entries:
+        unmanifested.append(path)
+    return unmanifested
+
+  def _only_waiting_on_ingest_blocks_completion(self) -> bool:
+    if self._unmanifested_closed_raw_paths():
+      return False
+    with self._lock:
+      entries = dict(self._manifest.get("entries", {}))
+    for path in self._closed_raw_paths_on_disk():
+      if not os.path.isfile(path):
+        continue
+      entry = entries.get(path)
+      if entry is None or not self._entry_is_retryable_skip(entry):
+        return False
+    return True
+
+  def _async_verify_in_flight(self) -> bool:
+    future = self._pipeline_future
+    return future is not None and not future.done()
+
+  def blocks_startup_drain(self) -> bool:
+    if self.delete_phase_done():
+      return False
+    if self._async_verify_in_flight():
+      return True
+    if self.phase() == PHASE_VERIFYING:
+      return True
+    if self.paths_pending_delete():
+      return True
+    if self.phase() == PHASE_DELETING:
+      return True
+    return False
+
+  def waiting_on_ingest_at_startup(self) -> bool:
+    return (
+        not self.delete_phase_done()
+        and not self.blocks_startup_drain()
+        and self.needs_delete_phase()
+    )
+
+  def _mark_done_waiting_on_ingest(self) -> None:
+    retryable_count = 0
+    with self._lock:
+      entries = dict(self._manifest.get("entries", {}))
+    for path in self._closed_raw_paths_on_disk():
+      if not os.path.isfile(path):
+        continue
+      entry = entries.get(path)
+      if isinstance(entry, dict) and self._entry_is_retryable_skip(entry):
+        retryable_count += 1
+    with self._lock:
+      self._manifest["phase"] = PHASE_DONE
+      self._manifest["completed_at"] = time.time()
+      _save_manifest(self._manifest_path, self._manifest)
+    if self.log_fn:
+      self.log_fn(
+          "Day raw removal deferring to done (waiting_on_ingest) day=%s retryable=%d"
+          % (self.day_date.isoformat(), retryable_count),
+          flush=True,
+      )
+
   def progress_summary(self) -> Dict[str, Any]:
     with self._lock:
       entries = self._manifest.get("entries", {})
@@ -407,6 +476,14 @@ class _DayRawRemovalState:
       raw_delete_complete = not remaining
     if raw_delete_complete:
       if not self._all_closed_raw_terminal_or_gone():
+        if self._only_waiting_on_ingest_blocks_completion():
+          self._mark_done_waiting_on_ingest()
+          return deleted
+        if self._unmanifested_closed_raw_paths():
+          with self._lock:
+            self._manifest["phase"] = PHASE_VERIFYING
+            _save_manifest(self._manifest_path, self._manifest)
+          return deleted
         with self._lock:
           self._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
           _save_manifest(self._manifest_path, self._manifest)
@@ -541,6 +618,20 @@ class DayRawRemovalCoordinator:
       states = list(self._days.values())
     return any(s.needs_delete_phase() and not s.delete_phase_done() for s in states)
 
+  def any_blocks_startup_drain(self) -> bool:
+    if not self.enabled:
+      return False
+    with self._days_lock:
+      states = list(self._days.values())
+    return any(state.blocks_startup_drain() for state in states)
+
+  def count_days_waiting_on_ingest(self) -> int:
+    if not self.enabled:
+      return 0
+    with self._days_lock:
+      states = list(self._days.values())
+    return sum(1 for state in states if state.waiting_on_ingest_at_startup())
+
   def oldest_day_needing_delete(self) -> Optional[str]:
     days = self.days_needing_delete_oldest_first()
     return days[0] if days else None
@@ -655,6 +746,8 @@ class DayRawRemovalCoordinator:
     deleted = state.apply_batch_delete()
     if state.delete_phase_done():
       self._notify_delete_complete(tar_path)
+    elif state.phase() == PHASE_VERIFYING:
+      self.start_async_verify(tar_path)
     return deleted
 
   def shutdown(self, wait: bool = True) -> None:
