@@ -6,6 +6,7 @@ logfile_maxbytes=0
 [program:hpcperfstats-rabbitmq-listener]
 command=/usr/local/bin/python3 /home/hpcperfstats/hpcperfstats/listend.py
 user=hpcperfstats
+environment=HOME="/home/hpcperfstats",USER="hpcperfstats"
 priority=10
 autorestart=true
 startretries=20
@@ -26,6 +27,7 @@ stderr_logfile_maxbytes=0
 #[program:rsync_data]
 #command=/home/hpcperfstats/services-conf/rsync_data.sh
 #user=hpcperfstats
+#environment=HOME="/home/hpcperfstats",USER="hpcperfstats"
 #autorestart=true
 #stdout_redirect=true
 #stdout_logfile=/dev/fd/1
@@ -39,6 +41,7 @@ stderr_logfile_maxbytes=0
 [program:sync_timedb]
 command=bash -lc 'sleep 20; exec /usr/local/bin/python3 /home/hpcperfstats/hpcperfstats/dbload/sync_timedb.py all'
 user=hpcperfstats
+environment=HOME="/home/hpcperfstats",USER="hpcperfstats"
 priority=20
 autorestart=true
 startretries=20
@@ -54,6 +57,7 @@ stderr_logfile_maxbytes=0
 [program:update_metrics]
 command=bash -lc 'sleep 90; exec /usr/local/bin/python3 /home/hpcperfstats/hpcperfstats/analysis/metrics/update_metrics.py'
 user=hpcperfstats
+environment=HOME="/home/hpcperfstats",USER="hpcperfstats"
 priority=30
 autorestart=true
 startretries=20
@@ -79,6 +83,7 @@ stderr_logfile_maxbytes=0
 [program:seal_syslog_daily]
 command=/usr/local/bin/python3 -m hpcperfstats.seal_syslog_daily
 user=hpcperfstats
+environment=HOME="/home/hpcperfstats",USER="hpcperfstats"
 autorestart=true
 startretries=20
 stdout_redirect=true
