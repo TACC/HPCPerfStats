@@ -95,7 +95,6 @@ from hpcperfstats.dbload.archive_compress import (
     daily_tar_path_from_compressed,
     detect_compressed_format,
 )
-from hpcperfstats.dbload.zstd_cli import decompress_compressed_to_tar
 from hpcperfstats.print_utils import log_print
 from hpcperfstats.shutdown_utils import (
     shutdown_requested,
@@ -129,6 +128,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     invalidate_daily_archive_members_cache,
     iter_daily_tar_paths,
     replace_corrupt_tar_from_compressed_backup,
+    ensure_daily_tar_restored_for_append,
     cap_pending_stats_file_list,
     INGEST_PARSE_FAILED_QUARANTINE_REASON,
     quarantine_ingest_failed_raw_path,
@@ -2628,16 +2628,23 @@ def _decompress_compressed_archive(archive_compressed_path):
     else:
       return False
   tar_path = daily_tar_path_from_compressed(archive_compressed_path)
-  if os.path.isfile(tar_path):
-    return True
   fmt = detect_compressed_format(archive_compressed_path)
   if fmt not in ("zst", "gz"):
-    return False
-  return decompress_compressed_to_tar(
-      archive_compressed_path,
-      tar_path,
-      cfg.get_archive_zstd_threads(),
+    return os.path.isfile(tar_path)
+  return ensure_daily_tar_restored_for_append(
+      tar_path, cfg.get_archive_zstd_threads())
+
+
+def _restore_daily_tar_or_log_failure(archive_tar_fname, *, context):
+  if ensure_daily_tar_restored_for_append(
+      archive_tar_fname, cfg.get_archive_zstd_threads()):
+    return True
+  log_print(
+      "ERROR: could not restore daily tar %s; leaving raw stats files in place: %s"
+      % (context, archive_tar_fname),
+      flush=True,
   )
+  return False
 
 
 def _append_to_tar(tar_path, file_paths):
@@ -2802,9 +2809,13 @@ def _archive_stats_files_body(archive_info):
 
   stats_files_to_tar = filter_files_to_add_to_archive(
       stats_files, existing_members, debug=DEBUG)
+  if stats_files_to_tar:
+    if not _restore_daily_tar_or_log_failure(
+        archive_tar_fname, context="before append"):
+      return False
   try:
     _append_to_tar(archive_tar_fname, stats_files_to_tar)
-  except subprocess.CalledProcessError as exc:
+  except (subprocess.CalledProcessError, RuntimeError) as exc:
     log_print(
         "ERROR: tar append failed for %s (%s); leaving raw stats files in place"
         % (archive_tar_fname, exc),
@@ -2836,9 +2847,12 @@ def _archive_stats_files_body(archive_info):
       to_retry = filter_files_to_add_to_archive(
           stats_files_to_tar, existing_after, debug=DEBUG)
       if to_retry:
+        if not _restore_daily_tar_or_log_failure(
+            archive_tar_fname, context="before retry append"):
+          return False
         try:
           _append_to_tar(archive_tar_fname, to_retry)
-        except subprocess.CalledProcessError as exc:
+        except (subprocess.CalledProcessError, RuntimeError) as exc:
           log_print(
               "ERROR: retry tar append failed for %s (%s); leaving raw stats "
               "files in place" % (archive_tar_fname, exc),

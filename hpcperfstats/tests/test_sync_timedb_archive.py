@@ -306,6 +306,24 @@ def test_replace_corrupt_tar_falls_back_to_gz_when_zst_bad(monkeypatch, tmp_path
   assert str(gz_path) in calls
 
 
+def test_replace_corrupt_tar_returns_false_when_zst_only_restore_fails(
+    monkeypatch, tmp_path,
+):
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "2020-01-03b.tar"
+  zst_path = tmp_path / "2020-01-03b.tar.zst"
+  gz_path = tmp_path / "2020-01-03b.tar.gz"
+  tar_path.write_text("bad")
+  zst_path.write_text("bad-zst")
+
+  monkeypatch.setattr(helpers, "decompress_compressed_to_tar", lambda *a, **k: False)
+  assert not replace_corrupt_tar_from_compressed_backup(
+      str(tar_path), str(zst_path), str(gz_path), 1)
+  assert not tar_path.exists()
+  assert zst_path.is_file()
+
+
 def test_seal_skip_rejects_same_aggregate_different_members(monkeypatch, tmp_path):
   import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
 
@@ -358,6 +376,34 @@ def test_archive_stats_files_returns_false_when_corrupt_tar_restore_fails(monkey
   )
   result = _archive_stats_files_body((gz_path, [str(raw_file)]))
   assert result is False
+
+
+def test_archive_stats_files_returns_false_when_sealed_without_restored_tar(
+    monkeypatch, tmp_path,
+):
+  """Sealed zst with failed restore must not raise through the archive pool worker."""
+  from hpcperfstats.dbload.sync_timedb import _archive_stats_files_body
+
+  raw_file = tmp_path / "1000"
+  raw_file.write_text("1709123456 job1 cn001\n")
+  archive_key = str(tmp_path / "2024-03-02.tar.zst")
+  tar_path = daily_tar_path_from_compressed(archive_key)
+  open(tar_path, "wb").write(b"corrupt")
+  open(archive_key, "wb").write(b"sealed-placeholder")
+
+  _patch_archive_gate_pass(monkeypatch)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb.verify_tar_archive_readable",
+      lambda path: False,
+  )
+  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+
+  monkeypatch.setattr(
+      helpers, "decompress_compressed_to_tar", lambda *a, **k: False)
+
+  result = _archive_stats_files_body((archive_key, [str(raw_file)]))
+  assert result is False
+  assert raw_file.exists()
 
 
 # --- parse_archive_date_from_daily_tar_path ---
@@ -1456,7 +1502,7 @@ def test_archive_stats_files_fail_closed_when_decompress_fails(monkeypatch, tmp_
   _patch_archive_gate_pass(monkeypatch)
   monkeypatch.setattr(
       st,
-      "decompress_compressed_to_tar",
+      "_decompress_compressed_archive",
       lambda *_a, **_k: False,
   )
   append_calls = {"n": 0}
@@ -2597,6 +2643,34 @@ def test_archive_stats_files_does_not_raise_on_append_failure(monkeypatch, tmp_p
   monkeypatch.setattr(st, "_append_to_tar", _boom)
 
   archive_stats_files((archive_key, [str(raw_file)]))
+  assert raw_file.exists()
+
+
+def test_archive_stats_files_does_not_raise_on_fail_closed_append_guard(
+    monkeypatch, tmp_path,
+):
+  """Fail-closed RuntimeError from _append_to_tar returns cleanly for retry."""
+  raw_file = tmp_path / "1000"
+  raw_file.write_text("1709123456 job1 cn001\n")
+  archive_key = str(tmp_path / "2024-03-01b.tar.zst")
+
+  import hpcperfstats.dbload.sync_timedb as st
+
+  _patch_archive_gate_pass(monkeypatch)
+  monkeypatch.setattr(st, "_decompress_compressed_archive", lambda *_a, **_k: True)
+  monkeypatch.setattr(st, "get_existing_archive_members", lambda *_a, **_k: {})
+  monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
+  monkeypatch.setattr(
+      st, "filter_files_to_add_to_archive", lambda files, *_a, **_k: list(files))
+  monkeypatch.setattr(st, "_restore_daily_tar_or_log_failure", lambda *a, **k: True)
+
+  def _fail_closed(*_a, **_k):
+    raise RuntimeError(
+        "refusing to create daily tar while sealed archive exists without "
+        "restored sibling: /daily/2024-03-01b.tar")
+
+  monkeypatch.setattr(st, "_append_to_tar", _fail_closed)
+  assert st.archive_stats_files((archive_key, [str(raw_file)])) is False
   assert raw_file.exists()
 
 

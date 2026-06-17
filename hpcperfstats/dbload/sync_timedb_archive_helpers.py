@@ -2504,13 +2504,34 @@ def validate_sealed_daily_archive_for_raw_removal(
   return result
 
 
+def ensure_daily_tar_restored_for_append(tar_path, zstd_threads):
+  """Return True when sibling ``.tar`` exists or was restored from sealed backup.
+
+  When no sealed ``.tar.zst`` / ``.tar.gz`` sibling exists, returns True so the
+  caller may bootstrap a fresh ``.tar``. Returns False when a sealed sibling
+  remains but restore did not produce ``tar_path``.
+  """
+  if os.path.isfile(tar_path):
+    return True
+  zst_path, gz_path = compressed_sibling_paths(tar_path)
+  if os.path.isfile(zst_path):
+    if decompress_compressed_to_tar(zst_path, tar_path, zstd_threads):
+      return True
+  if os.path.isfile(gz_path):
+    if decompress_compressed_to_tar(gz_path, tar_path, zstd_threads):
+      return True
+  if os.path.isfile(zst_path) or os.path.isfile(gz_path):
+    return False
+  return True
+
+
 def replace_corrupt_tar_from_compressed_backup(
     tar_path,
     zst_path,
     gz_path,
     zstd_threads,
 ):
-  """Remove corrupt ``tar_path``, then restore from ``.zst`` or legacy ``.gz``.
+  """Remove corrupt ``tar_path``, then restore from ``.tar.zst`` or legacy ``.gz``.
 
   Returns True if the filesystem is in a consistent state for the caller to
   append: either ``tar_path`` exists (restored from backup) or both backups
@@ -2525,7 +2546,12 @@ def replace_corrupt_tar_from_compressed_backup(
         if decompress_compressed_to_tar(zst_path, tar_path, zstd_threads):
           return True
       if os.path.isfile(gz_path):
-        return decompress_compressed_to_tar(gz_path, tar_path, zstd_threads)
+        if decompress_compressed_to_tar(gz_path, tar_path, zstd_threads):
+          return True
+      if os.path.isfile(tar_path):
+        return True
+      if os.path.isfile(zst_path) or os.path.isfile(gz_path):
+        return False
       return True
   except OSError:
     return False
