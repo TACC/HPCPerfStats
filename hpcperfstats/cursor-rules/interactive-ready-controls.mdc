@@ -31,6 +31,7 @@ alwaysApply: false
 ## Forbidden patterns
 
 - `pointer-events-none` on a parent wrapping sort links, table rows, or pagination (except `aria-hidden` decorative spans).
+- In-page sticky headers/tabs above **`--z-sticky-inpage`** (10) except portaled modal/floating UI — never reuse modal-tier z-index (e.g. `z-1010`) on table headers.
 - Visible combobox/select/button rendered `disabled` while options or section data load — use skeleton rows or omit the control ([`JobListHeaderFilters.tsx`](hpcperfstats/site/frontend/src/components/JobListHeaderFilters.tsx)).
 - Full-page skeleton replacing an already-rendered interactive surface on refetch.
 - Mounting Bokeh into `hidden` or zero-size subtrees.

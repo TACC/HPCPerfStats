@@ -12,6 +12,7 @@ import {
   bokehEmbedLockShard,
   delayMs,
   isVitestLike,
+  LIST_EMBED_STAGGER_MS,
 } from "../utils/bokeh-embed-defaults";
 import { prepareBokehJsonItemForEmbed } from "../utils/remap-bokeh-json-item-ids";
 import { parseBokehJsonItem } from "@/schemas/api/bokeh-json-item-schema";
@@ -320,6 +321,7 @@ export default function BokehEmbed({
   intersectionThreshold = DEFAULT_INTERSECTION_THRESHOLD,
   embedSettleAfterIdleMs,
   embedAllowed = true,
+  embedStaggerIndex = 0,
 }: BokehEmbedProps) {
   const session = useSession();
   const canViewErrorDetails = !!session?.is_staff;
@@ -332,6 +334,7 @@ export default function BokehEmbed({
     embedSettleAfterIdleMs !== undefined
       ? embedSettleAfterIdleMs
       : defaultEmbedSettleAfterIdleMs();
+  const embedStaggerMs = embedStaggerIndex * LIST_EMBED_STAGGER_MS;
   const [viewportAllowsEmbed, setViewportAllowsEmbed] = useState(false);
   const [plotReady, setPlotReady] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -401,7 +404,11 @@ export default function BokehEmbed({
 
     let cancelled = false;
     const bokehWait = new AbortController();
-    withBokehEmbedLock(id, () => {
+    let staggerTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const runEmbed = () => {
+      if (cancelled) return;
+      withBokehEmbedLock(id, () => {
       if (cancelled) return;
       return ensureBokehLoaded()
         .then(() => whenBokehReady(10000, { signal: bokehWait.signal }))
@@ -484,14 +491,33 @@ export default function BokehEmbed({
           failEmbed(err?.message || "Bokeh JS did not load in time");
         });
     });
+    };
+
+    if (embedStaggerMs > 0) {
+      staggerTimer = setTimeout(runEmbed, embedStaggerMs);
+    } else {
+      runEmbed();
+    }
 
     return () => {
       cancelled = true;
+      if (staggerTimer !== undefined) {
+        clearTimeout(staggerTimer);
+      }
       bokehWait.abort();
       const el = typeof document !== "undefined" ? document.getElementById(id) : null;
       disposeBokehViewsForTarget(el);
     };
-  }, [item, id, onPlotReadyChange, maximizeMode, viewportAllowsEmbed, effectiveSettleMs, embedAllowed]);
+  }, [
+    item,
+    id,
+    onPlotReadyChange,
+    maximizeMode,
+    viewportAllowsEmbed,
+    effectiveSettleMs,
+    embedAllowed,
+    embedStaggerMs,
+  ]);
 
   useEffect(() => {
     if (embedAllowed) return;

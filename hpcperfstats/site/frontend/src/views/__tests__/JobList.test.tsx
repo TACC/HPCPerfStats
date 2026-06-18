@@ -185,12 +185,14 @@ describe("JobList", () => {
 
     renderJobList();
 
+    fireEvent.click(screen.getByRole("button", { name: /distributions for this job selection/i }));
+
     await waitFor(() => {
       expect(screen.getByText("Updating distributions…")).toBeInTheDocument();
     });
   });
 
-  it("enables histogram fetch on desktop when distributions start expanded", async () => {
+  it("enables histogram fetch on desktop when distributions panel is expanded", async () => {
     Object.defineProperty(window, "matchMedia", {
       writable: true,
       configurable: true,
@@ -221,15 +223,53 @@ describe("JobList", () => {
 
     await waitFor(() => {
       const lastCall = vi.mocked(useJobListHistograms).mock.calls.at(-1);
-      expect(lastCall?.[2]).toBe(true);
+      expect(lastCall?.[2]).toBe(false);
     });
 
     fireEvent.click(screen.getByRole("button", { name: /distributions for this job selection/i }));
 
     await waitFor(() => {
-      const collapsedCall = vi.mocked(useJobListHistograms).mock.calls.at(-1);
-      expect(collapsedCall?.[2]).toBe(false);
+      const expandedCall = vi.mocked(useJobListHistograms).mock.calls.at(-1);
+      expect(expandedCall?.[2]).toBe(true);
     });
+  });
+
+  it("uses sticky in-page z-index on table headers, not modal tier", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      configurable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: query.includes("min-width: 992px"),
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+
+    setJobListQueryMock({
+      data: {
+        job_list: [{ jid: "job1", username: "u", account: "p", start_time: "", end_time: "", runtime: 1, queue: "q", state: "COMPLETED", ncores: 1, nhosts: 1, node_hrs: 1 }],
+        nj: 1,
+        aggregates: {},
+        qname: "Jobs",
+        order_by: "-end_time",
+        pagination: { page: 1, num_pages: 1 },
+      },
+    });
+
+    renderJobList();
+
+    await waitFor(() => {
+      expect(screen.getByRole("table")).toBeInTheDocument();
+    });
+
+    const headerRow = screen.getAllByRole("columnheader")[0]?.closest("thead");
+    expect(headerRow?.className).toContain("z-[var(--z-sticky-inpage)]");
+    expect(headerRow?.className).not.toContain("z-[1010]");
   });
 
   it("shows date queue and sort together in active filters after browse normalization", async () => {
@@ -983,6 +1023,8 @@ describe("JobList", () => {
     await waitFor(() => {
       expect(screen.getByText("Jobs = 0")).toBeInTheDocument();
     });
+
+    fireEvent.click(screen.getByRole("button", { name: /distributions for this job selection/i }));
 
     await waitFor(() => {
       expect(

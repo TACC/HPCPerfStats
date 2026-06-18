@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useId } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, usePathname } from "next/navigation";
 import type { BokehJsonItem } from "@/types/bokeh";
 import type { JobListHistogramEntry } from "@/types/view-models";
 import { Button } from "@/components/ui/button";
@@ -57,6 +57,7 @@ function HistogramThumbnail({
   embedAllowed = true,
 }: HistogramThumbnailProps & { embedAllowed?: boolean }) {
   const isMobile = useIsMobile();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const [expanded, setExpanded] = useState(false);
   const [hasOpened, setHasOpened] = useState(false);
@@ -97,7 +98,7 @@ function HistogramThumbnail({
     setExpanded(false);
     setHasOpened(false);
     setPopoverLayoutReady(false);
-  }, [searchParams.toString()]);
+  }, [searchParams.toString(), pathname]);
 
   useEffect(() => {
     if (embedAllowed) return;
@@ -192,6 +193,7 @@ function HistogramThumbnail({
             plotName={safeTitle}
             unavailableReason={unavailableReason}
             embedAllowed={embedAllowed}
+            embedStaggerIndex={index}
             intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
             wrapperClassName="min-h-[280px] w-full"
           />
@@ -204,12 +206,12 @@ function HistogramThumbnail({
     <div className="histogram-thumbnail-wrapper flex flex-col items-center justify-start">
       <div className="histogram-desktop-title mb-[0.35rem] max-w-[280px] text-center text-[0.95rem] font-semibold">{safeTitle}</div>
       <div
-        className="histogram-thumbnail-card box-border flex flex-col overflow-visible rounded-[var(--radius)] border border-border bg-muted"
+        className="histogram-thumbnail-card box-border flex flex-col overflow-hidden rounded-[var(--radius)] border border-border bg-muted"
         style={{ width: THUMB_SIZE.width }}
       >
         <div
           ref={thumbShellRef}
-          className="histogram-thumbnail-shell relative box-border flex h-[200px] w-[280px] min-w-0 flex-col items-center overflow-auto border-0! bg-muted"
+          className="histogram-thumbnail-shell relative box-border flex h-[200px] w-[280px] min-w-0 flex-col items-center overflow-hidden border-0! bg-muted"
         >
           {thumbLayoutReady && embedAllowed ? (
             <BokehPlotWithLimitation
@@ -218,10 +220,11 @@ function HistogramThumbnail({
               plotName={safeTitle}
               unavailableReason={unavailableReason}
               embedAllowed={embedAllowed}
+              embedStaggerIndex={index}
               embedMinHeightPx={THUMB_SIZE.height}
               maximizeInContainer="width"
               intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
-              wrapperClassName="h-[200px] w-[280px] min-h-[200px] min-w-0 overflow-visible [&_.bokeh-embed-wrapper]:h-full [&_.bokeh-embed-wrapper]:w-full [&_.bokeh-embed-wrapper]:max-w-full [&_.bokeh-embed-wrapper]:min-w-0 [&_.bokeh-embed-wrapper]:overflow-visible [&_.bokeh-embed]:box-border [&_.bokeh-embed]:h-full [&_.bokeh-embed]:min-h-[200px] [&_.bokeh-embed]:w-full [&_.bokeh-embed]:max-w-full [&_.bokeh-embed]:min-w-0 [&_.bokeh-embed]:overflow-visible [&_.bokeh-embed_.bk-root]:max-w-full!"
+              wrapperClassName="h-[200px] w-[280px] min-h-[200px] min-w-0 overflow-hidden [&_.bokeh-embed-wrapper]:h-full [&_.bokeh-embed-wrapper]:w-full [&_.bokeh-embed-wrapper]:max-w-full [&_.bokeh-embed-wrapper]:min-w-0 [&_.bokeh-embed-wrapper]:overflow-hidden [&_.bokeh-embed]:box-border [&_.bokeh-embed]:h-full [&_.bokeh-embed]:min-h-[200px] [&_.bokeh-embed]:w-full [&_.bokeh-embed]:max-w-full [&_.bokeh-embed]:min-w-0 [&_.bokeh-embed]:overflow-hidden [&_.bokeh-embed_.bk-root]:max-w-full!"
             />
           ) : (
             <LoadingMessage message={`Loading ${safeTitle.toLowerCase()}…`} />

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type MouseEvent } from "react";
 import { screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
@@ -48,10 +48,10 @@ vi.mock("@/config/site-identity", () => ({
   SITE_MACHINE_NAME: "Fractal",
 }));
 
-function renderLayout(session, onSessionChange = vi.fn()) {
+function renderLayout(session, onSessionChange = vi.fn(), children = <div>Child content</div>) {
   return renderWithProviders(
     <Layout session={session} onSessionChange={onSessionChange}>
-      <div>Child content</div>
+      {children}
     </Layout>,
   );
 }
@@ -203,17 +203,35 @@ describe("Layout", () => {
     });
   });
 
-  it("closes extended search when backdrop is clicked", async () => {
+  it("closes extended search when main content outside the panel is clicked", async () => {
     const user = userEvent.setup();
     renderLayout({ logged_in: true, username: "alice", is_staff: false });
     await user.click(screen.getByRole("button", { name: /extended search/i }));
     expect(await screen.findByRole("dialog", { name: /extended search/i })).toBeInTheDocument();
 
-    await user.click(screen.getByTestId("extended-search-backdrop"));
+    await user.click(screen.getByText("Child content"));
 
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: /extended search/i })).not.toBeInTheDocument();
     });
+  });
+
+  it("keeps main content links clickable while extended search is open", async () => {
+    const user = userEvent.setup();
+    const onJobLinkClick = vi.fn((e: MouseEvent) => e.preventDefault());
+    renderLayout(
+      { logged_in: true, username: "alice", is_staff: false },
+      vi.fn(),
+      <a href="/machine/job/12345/" onClick={onJobLinkClick}>
+        Job 12345
+      </a>,
+    );
+    await user.click(screen.getByRole("button", { name: /extended search/i }));
+    expect(await screen.findByRole("dialog", { name: /extended search/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("link", { name: "Job 12345" }));
+
+    expect(onJobLinkClick).toHaveBeenCalledTimes(1);
   });
 
   it("closes extended search when pathname changes", async () => {

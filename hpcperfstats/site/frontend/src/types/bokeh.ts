@@ -20,6 +20,8 @@ export type BokehEmbedProps = {
   intersectionRootMargin?: string;
   intersectionThreshold?: number;
   embedSettleAfterIdleMs?: number;
+  /** Stagger concurrent list-surface embeds (index × LIST_EMBED_STAGGER_MS). */
+  embedStaggerIndex?: number;
   /** When false, defer Bokeh embed until the plot container is visible in layout. */
   embedAllowed?: boolean;
 };

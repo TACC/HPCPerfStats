@@ -5,12 +5,21 @@ import HistogramThumbnails from "./HistogramThumbnails";
 import { SessionContext } from "../session-context";
 import { axeSeriousViolations } from "../axe-test-utils";
 
-vi.mock("next/navigation", () => {
-  const stableSearchParams = new URLSearchParams();
+const navigationMock = vi.hoisted(() => {
+  let pathname = "/machine/jobs/";
   return {
-    useSearchParams: () => stableSearchParams,
+    getPathname: () => pathname,
+    setPathname: (next: string) => {
+      pathname = next;
+    },
+    searchParams: new URLSearchParams(),
   };
 });
+
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => navigationMock.searchParams,
+  usePathname: () => navigationMock.getPathname(),
+}));
 
 vi.mock("../bokehInit", () => ({
   ensureBokehLoaded: vi.fn(() => Promise.resolve(globalThis.window?.Bokeh)),
@@ -87,6 +96,8 @@ describe("HistogramThumbnails", () => {
         name: "Jobs by queue: enlarge chart",
       }),
     ).toBeInTheDocument();
+    const card = document.querySelector(".histogram-thumbnail-card");
+    expect(card).toHaveClass("overflow-hidden");
   });
 
   it("embeds full histogram in popover after open (thumb then full Bokeh embed)", async () => {
@@ -300,6 +311,63 @@ describe("HistogramThumbnails", () => {
 
     expect(await screen.findByTestId("histogram-enlarge-dialog")).toBeInTheDocument();
     expect(document.documentElement).not.toHaveAttribute("data-scroll-locked");
+  });
+
+  it("closes enlarge dialog when pathname changes", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      configurable: true,
+      value: vi.fn().mockImplementation((query) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+
+    const embedItem = vi.fn().mockResolvedValue(embedViewsWithIdleDoc());
+    window.Bokeh = { embed: { embed_item: embedItem } };
+
+    const { rerender } = renderHistograms(
+      <HistogramThumbnails
+        histograms={[
+          {
+            title: "Jobs by queue",
+            plot_item_thumb: VALID_BOKEH_ITEM,
+            plot_item_full: VALID_BOKEH_ITEM,
+          },
+        ]}
+      />,
+    );
+
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", {
+        name: "Jobs by queue: enlarge chart",
+      }),
+    );
+    expect(await screen.findByTestId("histogram-enlarge-dialog")).toBeInTheDocument();
+
+    navigationMock.setPathname("/machine/");
+    rerender(
+      <HistogramThumbnails
+        histograms={[
+          {
+            title: "Jobs by queue",
+            plot_item_thumb: VALID_BOKEH_ITEM,
+            plot_item_full: VALID_BOKEH_ITEM,
+          },
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("histogram-enlarge-dialog")).not.toBeInTheDocument();
+    });
   });
 
   it("closes enlarge dialog when embedAllowed becomes false", async () => {

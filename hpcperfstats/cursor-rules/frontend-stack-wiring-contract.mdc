@@ -44,7 +44,7 @@ Update this table mentally when adding surfaces. Each row must have all columns 
 | View (`MachineRouteView`) | Thin hook(s) | Orval / API route(s) |
 |---------------------------|--------------|----------------------|
 | `search` | `useHomeOptions` | `GET /api/home/` |
-| `jobList` | `useJobListQuery`, `useJobListFilterOptions`, `useJobListHistograms` | `GET /api/jobs/` (`include_filter_options=0` on critical path), `GET /api/jobs/filter_options/` (deferred header chips), `GET /api/jobs/histograms/batch/` (desktop distributions default open; mobile lazy until Charts tab) |
+| `jobList` | `useJobListQuery`, `useJobListFilterOptions`, `useJobListHistograms` | `GET /api/jobs/` (`include_filter_options=0` on critical path), `GET /api/jobs/filter_options/` (deferred header chips), `GET /api/jobs/histograms/batch/` (desktop distributions default closed until expand; mobile lazy until Charts tab) |
 | `jobDetail` | `useJobDetailQuery`, `useJobPlotsQuery` | `GET /api/jobs/{pk}/`, `GET /api/jobs/{pk}/plots/` |
 | `typeDetail` | `useTypeDetailQuery` | `GET /api/jobs/{jid}/{typeName}/` |
 | `hostDetail` | `useHostPlotQuery` | `GET /api/host_plot/` |

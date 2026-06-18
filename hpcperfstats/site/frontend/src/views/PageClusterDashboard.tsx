@@ -209,7 +209,7 @@ function ClusterDashboardTabs({ bundle }: ClusterDashboardTabsProps) {
 
 export default function PageClusterDashboard() {
   useDocumentTitle("Cluster dashboard — public");
-  const { loading, bundle, error: loadError } = usePubDashboard();
+  const { initialLoading, refetchBusy, bundle, error: loadError } = usePubDashboard();
   const error = loadError || null;
   const typedBundle =
     bundle && typeof bundle === "object" ? (bundle as PubDashboardBundle) : null;
@@ -222,7 +222,7 @@ export default function PageClusterDashboard() {
 
       {error ? <BannerErrorMessage message={error} /> : null}
 
-      {loading ? (
+      {initialLoading ? (
         <LoadingMessage message="Loading cluster dashboard…" />
       ) : typedBundle == null ? null : typedBundle.status !== "ready" ? (
         <Alert role="status" className="border-sky-200 bg-sky-50 text-sky-950 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-100">
@@ -233,7 +233,14 @@ export default function PageClusterDashboard() {
           </AlertDescription>
         </Alert>
       ) : (
-        <ClusterDashboardTabs bundle={typedBundle} />
+        <div className={refetchBusy ? "opacity-55" : undefined} aria-busy={refetchBusy || undefined}>
+          {refetchBusy ? (
+            <p className="mb-2 text-sm text-muted-foreground" role="status" aria-live="polite">
+              Updating dashboard…
+            </p>
+          ) : null}
+          <ClusterDashboardTabs bundle={typedBundle} />
+        </div>
       )}
     </div>
   );

@@ -36,6 +36,9 @@ export const DEFAULT_INTERSECTION_ROOT_MARGIN = "100px 0px";
 
 export const DEFAULT_INTERSECTION_THRESHOLD = 0.01;
 
+/** Delay between concurrent list/dashboard thumbnail embed starts (ms). */
+export const LIST_EMBED_STAGGER_MS = 200;
+
 export function delayMs(ms: number): Promise<void> {
   const n = Number(ms);
   if (!Number.isFinite(n) || n <= 0) {

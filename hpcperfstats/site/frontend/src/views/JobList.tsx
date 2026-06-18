@@ -200,7 +200,7 @@ export default function JobList() {
   const pathname = usePathname();
   const router = useRouter();
   const [histogramReloadKey, setHistogramReloadKey] = useState(0);
-  const [distributionsOpen, setDistributionsOpen] = useState(true);
+  const [distributionsOpen, setDistributionsOpen] = useState(false);
   const { openExtendedSearch } = useExtendedSearchLayout();
   const listViewTab = readTabFromSearchParams(rawSearchParams, "view", "jobs");
   const [isLgUp, setIsLgUp] = useState(() =>
@@ -638,15 +638,16 @@ export default function JobList() {
         className={cn(
           tableBusy && "opacity-55",
           "max-md:[&_table]:text-sm max-md:[&_td]:whitespace-nowrap max-md:[&_td]:px-1 max-md:[&_td]:py-[0.35rem] max-md:[&_th]:whitespace-nowrap max-md:[&_th]:px-1 max-md:[&_th]:py-[0.35rem]",
+          "max-lg:scroll-pt-28",
         )}
         id="job-list-table"
         aria-busy={tableBusy || showTableSkeleton}
       >
-        <Table className="border text-sm">
+        <Table className="border text-sm max-lg:[&_tbody_tr]:scroll-mt-28">
           <TableCaption className="sr-only">
             Job list for {qname}. {nj} jobs.
           </TableCaption>
-          <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-[2] [&_th]:bg-background [&_th]:shadow-[0_1px_0_var(--border)] max-lg:[&_th]:top-14 max-lg:[&_th]:z-[1010]">
+          <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-[var(--z-sticky-inpage)] [&_th]:bg-background [&_th]:shadow-[0_1px_0_var(--border)] max-lg:[&_th]:top-14">
             <TableRow>
               {columns.map(({ label, field, sortable }) => (
               <TableHead key={field} scope="col" aria-sort={ariaSortForField(field, sortable)}>

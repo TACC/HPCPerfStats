@@ -47,6 +47,7 @@ alwaysApply: false
 - **Default:** `deferEmbedUntilVisible` (IntersectionObserver) for every embed unless there is exactly one plot on screen or the embed follows an explicit user gesture (e.g. enlarge dialog).
 - **Never** mount N>1 simultaneous Bokeh embeds with `deferEmbedUntilVisible={false}` on list/dashboard surfaces.
 - **Global lock:** `BokehEmbed` serializes `embed_item` via `bokehEmbedChain`; lazy-mount heavy sections (pub dashboard year/month toggle, job-list charts tab) to avoid stampeding the lock.
+- **List stagger:** pass `embedStaggerIndex` (0, 1, 2, …) on job-list histogram thumbs so embed starts are spaced by `LIST_EMBED_STAGGER_MS` (see `bokeh-embed-defaults.ts`).
 - **Unmount:** abort pending embed pipelines on route/view unmount (`AbortController` + early return in lock callback) so list→detail navigation does not wait behind stale embeds.
 
 ## Overlap

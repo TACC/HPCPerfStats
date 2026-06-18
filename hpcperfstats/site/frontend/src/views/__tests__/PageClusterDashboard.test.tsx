@@ -31,6 +31,8 @@ describe("PageClusterDashboard", () => {
   beforeEach(() => {
     vi.mocked(usePubDashboard).mockReturnValue({
       loading: false,
+      initialLoading: false,
+      refetchBusy: false,
       bundle: mockReadyBundle,
       error: null,
       refetch: vi.fn(),
@@ -66,11 +68,31 @@ describe("PageClusterDashboard", () => {
   it("shows loading state while bundle is pending", () => {
     vi.mocked(usePubDashboard).mockReturnValue({
       loading: true,
+      initialLoading: true,
+      refetchBusy: false,
       bundle: null,
       error: null,
       refetch: vi.fn(),
     });
     render(<PageClusterDashboard />);
     expect(screen.getByText("Loading cluster dashboard…")).toBeInTheDocument();
+  });
+
+  it("keeps dashboard interactive during refetch", async () => {
+    vi.mocked(usePubDashboard).mockReturnValue({
+      loading: false,
+      initialLoading: false,
+      refetchBusy: true,
+      bundle: mockReadyBundle,
+      error: null,
+      refetch: vi.fn(),
+    });
+    render(<PageClusterDashboard />);
+
+    await waitFor(() => {
+      expect(screen.getByText("2099")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Updating dashboard…")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Monthly" })).toBeEnabled();
   });
 });

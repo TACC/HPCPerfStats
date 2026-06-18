@@ -10,7 +10,6 @@ import {
   useRef,
   useState,
   type FormEvent,
-  type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -97,11 +96,18 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
     [openExtendedSearch],
   );
 
-  function handleExtendedSearchBackdropClick(event: ReactMouseEvent<HTMLDivElement>) {
-    if (event.target === event.currentTarget) {
+  useEffect(() => {
+    if (!extendedSearchOpen) return;
+    function onPointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (extendedSearchPanelRef.current?.contains(target)) return;
+      if (extendedSearchToggleRef.current?.contains(target)) return;
       closeExtendedSearch();
     }
-  }
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [extendedSearchOpen, closeExtendedSearch]);
 
   useEffect(() => {
     if (!extendedSearchOpen) return;
@@ -454,19 +460,17 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
       </header>
       {extendedSearchOpen ? (
         <div
-          className="fixed inset-0 z-[var(--z-modal-backdrop)] flex items-start justify-center overflow-y-auto bg-black/35 pt-2"
+          className="pointer-events-none fixed inset-0 z-[var(--z-modal-backdrop)] flex items-start justify-center overflow-y-auto bg-black/35 pt-2"
           role="presentation"
           data-testid="extended-search-backdrop"
-          onClick={handleExtendedSearchBackdropClick}
         >
           <div
             ref={extendedSearchPanelRef}
             id="extended-search-collapse"
-            className="relative z-[calc(var(--z-modal-backdrop)+1)] w-full max-w-full border-b border-border bg-muted px-6 py-4 shadow-lg"
+            className="pointer-events-auto relative z-[calc(var(--z-modal-backdrop)+1)] w-full max-w-full border-b border-border bg-muted px-6 py-4 shadow-lg"
             role="dialog"
             aria-modal="true"
             aria-labelledby="extended-search-dialog-title"
-            onClick={(e) => e.stopPropagation()}
           >
             <Suspense fallback={<LoadingMessage message="Loading search…" />}>
               <ExtendedSearch onClose={closeExtendedSearch} />
