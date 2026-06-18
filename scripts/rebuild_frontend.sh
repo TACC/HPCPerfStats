@@ -319,18 +319,35 @@ copy_tree_via_staged_tar() {
   echo "rebuild_frontend.sh: extracting staged tar into web:${dest} ..."
   docker compose exec -T web bash -lc \
     "rm -rf '${dest}' && mkdir -p '${dest}' && tar -xf '${container_tar}' -C '${dest}' && rm -f '${container_tar}'"
+  verify_container_extract_fingerprint "${dest}" "${dest}"
 }
 
-run_collectstatic_into_volume() {
-  echo "rebuild_frontend.sh: running collectstatic into ${CONTAINER_STATIC_ROOT_FRONTEND} ..."
-  docker compose exec -T web bash -lc \
-    "rm -rf '${CONTAINER_STATIC_ROOT_FRONTEND}' && /usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput"
+verify_container_extract_fingerprint() {
+  local dest="$1"
+  local label="$2"
+  local host_fp container_fp probe="${dest}/machine/index.html"
+
+  host_fp="$(frontend_build_fingerprint "${STATIC_FRONTEND}/machine/index.html")"
+  container_fp="$(
+    docker compose exec -T web bash -lc \
+      "grep -oE 'page-[0-9a-f]+\\.js' '${probe}' 2>/dev/null | head -n 1 || echo unknown"
+  )"
+
+  if [[ "${host_fp}" != "${container_fp}" ]]; then
+    echo "rebuild_frontend.sh: ${label} fingerprint mismatch after extract" >&2
+    echo "  host:      ${host_fp}  (${STATIC_FRONTEND}/machine/index.html)" >&2
+    echo "  container: ${container_fp}  (${probe})" >&2
+    return 1
+  fi
+
+  echo "Verified extract fingerprint for ${label} (${container_fp})"
 }
 
-deploy_frontend_via_collectstatic() {
-  echo "rebuild_frontend.sh: podman-compose deploy — stage image source tree, then collectstatic to nginx volume"
+deploy_frontend_via_staged_volume() {
+  echo "rebuild_frontend.sh: podman-compose — staged tar direct to nginx volume (staticfiles_data)"
+  copy_tree_via_staged_tar "${CONTAINER_STATIC_ROOT_FRONTEND}"
+  echo "rebuild_frontend.sh: syncing image source tree for future image rebuilds ..."
   copy_tree_via_staged_tar "${CONTAINER_STATIC_FRONTEND}"
-  run_collectstatic_into_volume
 }
 
 print_podman_deploy_fallback() {
@@ -338,7 +355,7 @@ print_podman_deploy_fallback() {
 rebuild_frontend.sh: manual podman fallback (from git checkout):
   tar -cf /tmp/hps-frontend.tar -C hpcperfstats/site/hpcperfstats_site/static/frontend .
   podman cp /tmp/hps-frontend.tar hpcperfstats_web_1:/tmp/hps-frontend.tar
-  docker compose exec web bash -lc 'rm -rf ${CONTAINER_STATIC_FRONTEND} && mkdir -p ${CONTAINER_STATIC_FRONTEND} && tar -xf /tmp/hps-frontend.tar -C ${CONTAINER_STATIC_FRONTEND} && rm -f /tmp/hps-frontend.tar && rm -rf ${CONTAINER_STATIC_ROOT_FRONTEND} && /usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput'
+  docker compose exec web bash -lc 'rm -rf ${CONTAINER_STATIC_ROOT_FRONTEND} && mkdir -p ${CONTAINER_STATIC_ROOT_FRONTEND} && tar -xf /tmp/hps-frontend.tar -C ${CONTAINER_STATIC_ROOT_FRONTEND} && rm -f /tmp/hps-frontend.tar'
 EOF
 }
 
@@ -362,8 +379,7 @@ copy_tree_into_container() {
     exit 1
   fi
 
-  # podman-compose: stdin tar / compose cp / direct volume copy are unreliable; stage the
-  # image source tree and refresh STATIC_ROOT/frontend with collectstatic (same as startup).
+  # podman-compose: stage tar, extract with compose exec onto the destination path.
   echo "rebuild_frontend.sh: copying via staged tar + compose exec extract → ${dest}"
   copy_tree_via_staged_tar "${dest}"
 }
@@ -372,7 +388,7 @@ copy_frontend_into_web() {
   cd "${REPO_ROOT}"
 
   if compose_backend_is_podman; then
-    deploy_frontend_via_collectstatic
+    deploy_frontend_via_staged_volume
     return
   fi
 

@@ -15,7 +15,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for fn in copy_frontend_into_web compose_cp_supported web_container_ref verify_container_frontend_matches_host verify_proxy_frontend_matches_web copy_tree_via_staged_tar compose_backend_is_podman deploy_frontend_via_collectstatic; do
+for fn in copy_frontend_into_web compose_cp_supported web_container_ref verify_container_frontend_matches_host verify_proxy_frontend_matches_web copy_tree_via_staged_tar compose_backend_is_podman deploy_frontend_via_staged_volume verify_container_extract_fingerprint; do
   if ! declare -F "${fn}" >/dev/null; then
     echo "expected ${fn} to be defined in rebuild_frontend.sh" >&2
     exit 1
@@ -47,13 +47,18 @@ if ! grep -q 'PROXY_STATIC_ROOT_FRONTEND' "${REBUILD_SCRIPT}"; then
   exit 1
 fi
 
-if ! grep -q 'deploy_frontend_via_collectstatic' "${REBUILD_SCRIPT}"; then
-  echo "expected podman collectstatic deploy path in rebuild_frontend.sh" >&2
+if ! grep -q 'deploy_frontend_via_staged_volume' "${REBUILD_SCRIPT}"; then
+  echo "expected podman staged-volume deploy path in rebuild_frontend.sh" >&2
   exit 1
 fi
 
-if ! grep -q 'run_collectstatic_into_volume' "${REBUILD_SCRIPT}"; then
-  echo "expected collectstatic volume refresh for podman in rebuild_frontend.sh" >&2
+if ! grep -q 'verify_container_extract_fingerprint' "${REBUILD_SCRIPT}"; then
+  echo "expected post-extract fingerprint verify in rebuild_frontend.sh" >&2
+  exit 1
+fi
+
+if grep -q 'deploy_frontend_via_collectstatic' "${REBUILD_SCRIPT}"; then
+  echo "podman hot deploy must not rely on collectstatic (conflict skips leave stale frontend)" >&2
   exit 1
 fi
 
