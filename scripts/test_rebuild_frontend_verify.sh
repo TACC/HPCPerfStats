@@ -15,20 +15,25 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for fn in copy_frontend_into_web compose_cp_supported web_container_id verify_container_frontend_matches_host verify_proxy_frontend_matches_web print_container_deploy_fingerprint; do
+for fn in copy_frontend_into_web compose_cp_supported web_container_id verify_container_frontend_matches_host verify_proxy_frontend_matches_web copy_tree_via_staged_tar compose_backend_is_podman; do
   if ! declare -F "${fn}" >/dev/null; then
     echo "expected ${fn} to be defined in rebuild_frontend.sh" >&2
     exit 1
   fi
 done
 
-if ! grep -q 'copy_tree_via_podman_exec_tar' "${REBUILD_SCRIPT}"; then
-  echo "expected podman exec -i tar deploy path in rebuild_frontend.sh" >&2
+if ! grep -q 'copy_tree_via_staged_tar' "${REBUILD_SCRIPT}"; then
+  echo "expected staged tar deploy path in rebuild_frontend.sh" >&2
   exit 1
 fi
 
-if ! grep -q 'podman exec -i tar →' "${REBUILD_SCRIPT}"; then
-  echo "expected podman exec -i tar as primary podman deploy in rebuild_frontend.sh" >&2
+if ! grep -q 'staged tar + compose exec extract' "${REBUILD_SCRIPT}"; then
+  echo "expected staged tar + compose exec extract message in rebuild_frontend.sh" >&2
+  exit 1
+fi
+
+if ! grep -q 'compose_backend_is_podman' "${REBUILD_SCRIPT}"; then
+  echo "expected podman-compose detection in rebuild_frontend.sh" >&2
   exit 1
 fi
 

@@ -163,7 +163,20 @@ web_container_id() {
   docker compose ps -q web 2>/dev/null | head -n 1
 }
 
+compose_backend_is_podman() {
+  if command -v podman-compose >/dev/null 2>&1; then
+    return 0
+  fi
+  if docker compose version 2>/dev/null | grep -qi podman; then
+    return 0
+  fi
+  return 1
+}
+
 compose_cp_supported() {
+  if compose_backend_is_podman; then
+    return 1
+  fi
   cd "${REPO_ROOT}"
   docker compose cp --help >/dev/null 2>&1
 }
@@ -231,31 +244,65 @@ count_files_in_proxy_container() {
   docker compose exec -T proxy sh -lc "find '${container_dir}' -type f 2>/dev/null | wc -l | tr -d ' '"
 }
 
-reset_container_dir() {
-  local cid="$1"
-  local target_dir="$2"
-  local reset_cmd="rm -rf '${target_dir}' && mkdir -p '${target_dir}'"
-  if [[ -n "${cid}" ]] && podman_cli_available; then
-    podman exec "${cid}" bash -lc "${reset_cmd}"
-  else
-    docker compose exec -T web bash -lc "${reset_cmd}"
+reset_container_dir_via_compose() {
+  local target_dir="$1"
+  docker compose exec -T web bash -lc "rm -rf '${target_dir}' && mkdir -p '${target_dir}'"
+}
+
+copy_host_tar_into_web() {
+  local host_tar="$1"
+  local container_tar="$2"
+  local cid="$3"
+
+  cd "${REPO_ROOT}"
+  if docker compose cp "${host_tar}" "web:${container_tar}" 2>/dev/null; then
+    echo "rebuild_frontend.sh: staged deploy tar → web via compose cp" >&2
+    return 0
   fi
+
+  if [[ -n "${cid}" ]] && podman_cli_available; then
+    podman cp "${host_tar}" "${cid}:${container_tar}"
+    echo "rebuild_frontend.sh: staged deploy tar → web via podman cp" >&2
+    return 0
+  fi
+
+  echo "rebuild_frontend.sh: failed to copy deploy tar into web container" >&2
+  return 1
+}
+
+copy_tree_via_staged_tar() {
+  local dest="$1"
+  local cid host_tar container_tar
+
+  cid="$(web_container_id)"
+  if [[ -z "${cid}" ]]; then
+    echo "rebuild_frontend.sh: web container id not found (is the web service running?)" >&2
+    exit 1
+  fi
+
+  host_tar="$(mktemp /tmp/hps-frontend-deploy.XXXXXX.tar)"
+  container_tar="/tmp/hps-frontend-deploy.${$}.${RANDOM}.tar"
+
+  tar -C "${STATIC_FRONTEND}" -cf "${host_tar}" .
+  if ! copy_host_tar_into_web "${host_tar}" "${container_tar}" "${cid}"; then
+    rm -f "${host_tar}"
+    exit 1
+  fi
+  rm -f "${host_tar}"
+
+  # Extract inside web via compose exec so writes land on the staticfiles_data volume.
+  docker compose exec -T web bash -lc \
+    "rm -rf '${dest}' && mkdir -p '${dest}' && tar -xf '${container_tar}' -C '${dest}' && rm -f '${container_tar}'"
 }
 
 copy_tree_via_compose_cp() {
   local dest="$1"
+  reset_container_dir_via_compose "${dest}"
   docker compose cp "${STATIC_FRONTEND}/." "web:${dest}/"
 }
 
-copy_tree_via_podman_exec_tar() {
-  local cid="$1"
-  local dest="$2"
-  tar -C "${STATIC_FRONTEND}" -cf - . | podman exec -i "${cid}" tar -xf - -C "${dest}"
-}
-
 copy_tree_into_container() {
-  local cid="$1"
-  local dest="$2"
+  local dest="$1"
 
   if compose_cp_supported; then
     echo "rebuild_frontend.sh: copying via docker compose cp → ${dest}" >&2
@@ -264,34 +311,24 @@ copy_tree_into_container() {
   fi
 
   if ! podman_cli_available; then
-    echo "rebuild_frontend.sh: compose cp unavailable and podman not on PATH; cannot deploy into web" >&2
+    echo "rebuild_frontend.sh: podman-compose detected but podman not on PATH; cannot deploy into web" >&2
     exit 1
   fi
 
-  if [[ -z "${cid}" ]]; then
-    echo "rebuild_frontend.sh: web container id not found (is the web service running?)" >&2
-    exit 1
-  fi
-
-  # podman cp can write to the container layer instead of a bind-mounted volume on some
-  # podman-compose setups; streaming tar through podman exec -i targets the mount reliably.
-  echo "rebuild_frontend.sh: copying via podman exec -i tar → ${dest}" >&2
-  reset_container_dir "${cid}" "${dest}"
-  copy_tree_via_podman_exec_tar "${cid}" "${dest}"
+  # podman-compose: stdin tar and direct tree cp are unreliable for named volumes; stage a
+  # tar on /tmp in the container, then extract with compose exec onto the volume mount.
+  echo "rebuild_frontend.sh: copying via staged tar + compose exec extract → ${dest}" >&2
+  copy_tree_via_staged_tar "${dest}"
 }
 
 copy_frontend_into_web() {
   cd "${REPO_ROOT}"
-  local cid
-  cid="$(web_container_id)"
 
   # nginx (proxy) reads STATIC_ROOT/frontend from the shared staticfiles_data volume.
-  reset_container_dir "${cid}" "${CONTAINER_STATIC_ROOT_FRONTEND}"
-  copy_tree_into_container "${cid}" "${CONTAINER_STATIC_ROOT_FRONTEND}"
+  copy_tree_into_container "${CONTAINER_STATIC_ROOT_FRONTEND}"
 
   # Keep image source tree in sync for future collectstatic / container rebuilds.
-  reset_container_dir "${cid}" "${CONTAINER_STATIC_FRONTEND}"
-  copy_tree_into_container "${cid}" "${CONTAINER_STATIC_FRONTEND}"
+  copy_tree_into_container "${CONTAINER_STATIC_FRONTEND}"
 }
 
 sha256_in_web_container() {
@@ -405,6 +442,7 @@ deploy_to_compose() {
   verify_proxy_file_count_matches_web
   print_container_deploy_fingerprint "web STATIC_ROOT" web "${CONTAINER_STATIC_ROOT_FRONTEND}/machine/index.html"
   print_container_deploy_fingerprint "proxy nginx volume" proxy "${PROXY_STATIC_ROOT_FRONTEND}/machine/index.html"
+  print_deploy_fingerprint "host build (expected)" "${STATIC_FRONTEND}/machine/index.html"
 
   echo "Frontend deploy complete. Use the proxy service (ports 80/443), not web:8000 — Gunicorn does not serve /machine/."
   echo "Hard-refresh the browser and confirm the deploy fingerprint above matches page-*.js in DevTools Network."
