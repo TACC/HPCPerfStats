@@ -20,6 +20,35 @@ STATIC_FRONTEND="${REPO_ROOT}/hpcperfstats/site/hpcperfstats_site/static/fronten
 CONTAINER_STATIC_FRONTEND="/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend"
 NODE_IMAGE="node:26.3.0-alpine3.23"
 
+# Next static export shells nginx serves (see services-conf/nginx-static-files.conf).
+REQUIRED_SPA_SHELLS=(
+  "machine/index.html"
+  "pub/index.html"
+)
+
+verify_spa_shells() {
+  local base_dir="$1"
+  local label="${2:-${base_dir}}"
+  local missing=()
+  local rel
+
+  for rel in "${REQUIRED_SPA_SHELLS[@]}"; do
+    if [[ ! -f "${base_dir}/${rel}" ]]; then
+      missing+=("${base_dir}/${rel}")
+    fi
+  done
+
+  if ((${#missing[@]} > 0)); then
+    echo "rebuild_frontend.sh: build did not produce required SPA shell(s) under ${label}:" >&2
+    for path in "${missing[@]}"; do
+      echo "  missing: ${path}" >&2
+    done
+    return 1
+  fi
+
+  echo "Verified SPA shells under ${label}: ${REQUIRED_SPA_SHELLS[*]}"
+}
+
 SKIP_NPM_CI=0
 DEPLOY=1
 DOCKER_BUILD=0
@@ -97,10 +126,7 @@ build_in_docker() {
 }
 
 verify_build_output() {
-  if [[ ! -f "${STATIC_FRONTEND}/index.html" ]]; then
-    echo "rebuild_frontend.sh: build did not produce ${STATIC_FRONTEND}/index.html" >&2
-    exit 1
-  fi
+  verify_spa_shells "${STATIC_FRONTEND}"
   echo "Built frontend static export: ${STATIC_FRONTEND}"
 }
 
@@ -125,12 +151,22 @@ deploy_to_compose() {
 set -euo pipefail
 export STATIC_ROOT="${STATIC_ROOT:-/home/hpcperfstats/staticfiles}"
 /usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput
-index_path="${STATIC_ROOT}/frontend/index.html"
-if [[ ! -f "${index_path}" ]]; then
-  echo "ERROR: collectstatic did not produce expected SPA shell: ${index_path}" >&2
+frontend_root="${STATIC_ROOT}/frontend"
+required=(machine/index.html pub/index.html)
+missing=()
+for rel in "${required[@]}"; do
+  if [[ ! -f "${frontend_root}/${rel}" ]]; then
+    missing+=("${frontend_root}/${rel}")
+  fi
+done
+if ((${#missing[@]} > 0)); then
+  echo "ERROR: collectstatic did not produce required SPA shell(s):" >&2
+  for path in "${missing[@]}"; do
+    echo "  missing: ${path}" >&2
+  done
   exit 1
 fi
-echo "Verified SPA shell in STATIC_ROOT: ${index_path}"
+echo "Verified SPA shells in STATIC_ROOT: ${required[*]}"
 '
 
   echo "Frontend deploy complete. nginx serves updated /static/ and /machine/ assets."
@@ -152,4 +188,6 @@ main() {
   fi
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

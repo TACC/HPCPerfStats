@@ -76,11 +76,19 @@ import django
 django.setup()
 from django.conf import settings
 
-index_path = os.path.join(settings.STATIC_ROOT, "frontend", "index.html")
-if not os.path.isfile(index_path):
-  print(f"ERROR: collectstatic did not produce expected SPA shell: {index_path}", file=sys.stderr)
+required = ("machine/index.html", "pub/index.html")
+frontend_root = os.path.join(settings.STATIC_ROOT, "frontend")
+missing = [
+  os.path.join(frontend_root, rel)
+  for rel in required
+  if not os.path.isfile(os.path.join(frontend_root, rel))
+]
+if missing:
+  print("ERROR: collectstatic did not produce required SPA shell(s):", file=sys.stderr)
+  for path in missing:
+    print(f"  missing: {path}", file=sys.stderr)
   raise SystemExit(1)
-print(f"Verified SPA shell in STATIC_ROOT: {index_path}")
+print("Verified SPA shells in STATIC_ROOT: " + ", ".join(required))
 PY
 
 # Gunicorn workers: WEB_CONCURRENCY overrides; else min(2*base+1, max_gunicorn_workers)
