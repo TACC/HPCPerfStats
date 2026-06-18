@@ -2,29 +2,40 @@
 description: Keep workspace and package cursor-rules trees identical
 globs:
   - .cursor/rules/**
+  - .cursor/hooks/**
   - HPCPerfStats/monitor/cursor-rules/**
 alwaysApply: false
 ---
 
 # Monitor cursor-rules sync
 
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
 This workspace **hard-links** monitor cursor rules between:
 
 | Tree | Role |
 |------|------|
-| **`.cursor/rules/`** | Active for Cursor in this workspace |
+| **`.cursor/rules/`** | Active for Cursor in this workspace (symlink → `monitor/cursor-rules/`) |
 | **`HPCPerfStats/monitor/cursor-rules/`** | Shipped with the monitor package / full-stack checkout |
 
-In **this** checkout, editing either path updates the same inode. In other checkouts they may be separate copies — then you must update **both** trees in one commit.
+**Hooks** (shared with full-stack checkout):
+
+| Tree | Role |
+|------|------|
+| **`.cursor/hooks/`** | Symlink → `HPCPerfStats/.cursor/hooks/` |
+| **`.cursor/hooks.json`** | Symlink → `HPCPerfStats/.cursor/hooks.json` |
+
+In **this** checkout, editing either rules path updates the same inode. In other checkouts they may be separate copies — then you must update **both** trees in one commit.
 
 ## When creating or editing rules
 
 1. Use the same filename in both trees (or rely on hard-links here).
 2. After editing, `diff .cursor/rules/<f> HPCPerfStats/monitor/cursor-rules/<f>` in unfamiliar checkouts.
 3. New monitor-themed rules belong in **both** locations unless workspace-only meta rules.
+4. **Dual registration** — add router row in **`agent-discipline-core.mdc`** and **`MONITOR_ROUTER_ENTRIES`** in **`.cursor/hooks/hook_task_router.py`** in the same task.
 
 ## Related rules index
 
 After adding a rule, add a one-line cross-link in **implementation-workflow-discipline.mdc** (Related rules table) when agents should consult it during implement/verify.
 
-Cross-links: **cursor-rules-maker**, **chat-analysis-for-rules**.
+Cross-links: **cursor-rules-maker**, **chat-analysis-for-rules**, **RULES_README.md**.

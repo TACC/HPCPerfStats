@@ -11,11 +11,27 @@ RULES_DIR = Path(__file__).resolve().parents[1] / "cursor-rules"
 sys.path.insert(0, str(HOOKS_DIR))
 
 import hpc_hook_lib as lib  # noqa: E402
-from hook_task_router import ROUTER_ENTRIES, triggered_rules_for_paths  # noqa: E402
+from hook_task_router import (  # noqa: E402
+    HPCPERFSTATS_ROUTER_ENTRIES,
+    MONITOR_ROUTER_ENTRIES,
+    ROUTER_ENTRIES,
+    detect_rules_profile,
+    profile_rules_dir_label,
+    triggered_rules_for_paths,
+)
 
 RULE_PATH = (
     "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
     "sync-timedb-archive-janitor-contract.mdc"
+)
+MONITOR_RULE_PATH = (
+    "/repo/HPCPerfStats/monitor/cursor-rules/monitor-c-conventions.mdc"
+)
+MONITOR_PLAN_TEMPLATE = (
+    "/repo/HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md"
+)
+MONITOR_GLOBAL_TESTING_PATH = (
+    "/repo/HPCPerfStats/monitor/cursor-rules/global-testing-discipline.mdc"
 )
 HOOK_LIB_PATH = "/repo/HPCPerfStats/.cursor/hooks/hpc_hook_lib.py"
 TESTING_RULE_PATH = (
@@ -162,7 +178,7 @@ def test_edge_cases_issues_requires_three_items():
 def test_close_gate_issues_passes_when_rules_read_before_edit():
   assistant_text = (
       "## Agent rule dispatch\n\n"
-      "Read: testing-best-practices.mdc\n"
+      "Read: testing-best-practices.mdc, global-testing-discipline.mdc\n"
       "## Final code review (senior engineer pass)\n\nok\n"
       "## Post-implementation review\n\n"
       "### Why it works\n\nok\n"
@@ -178,6 +194,11 @@ def test_close_gate_issues_passes_when_rules_read_before_edit():
                       "type": "tool_use",
                       "name": "Read",
                       "input": {"path": TESTING_RULE_PATH},
+                  },
+                  {
+                      "type": "tool_use",
+                      "name": "Read",
+                      "input": {"path": MONITOR_GLOBAL_TESTING_PATH},
                   },
               ],
           },
@@ -282,7 +303,7 @@ def test_rule_dual_registration_issues_flags_orphan_rule(tmp_path):
   )
   issues = lib.rule_dual_registration_issues([str(orphan)])
   assert any("agent-discipline-core.mdc task router" in issue for issue in issues)
-  assert any("hook_task_router.py ROUTER_ENTRIES" in issue for issue in issues)
+  assert any("hook_task_router.py" in issue for issue in issues)
 
 
 def test_rule_dual_registration_issues_passes_for_registered_rule():
@@ -653,3 +674,62 @@ def test_rule_dual_registration_skips_deleted_rule():
   )
   issues = lib.rule_dual_registration_issues([deleted_path])
   assert issues == []
+
+
+def test_triggered_rules_for_monitor_src_path():
+  rules = triggered_rules_for_paths(["HPCPerfStats/monitor/src/stats_set.c"])
+  assert "monitor-c-conventions.mdc" in rules
+  assert "monitor-workspace-contract.mdc" in rules
+
+
+def test_triggered_rules_for_monitor_cursor_rules_path():
+  rules = triggered_rules_for_paths(
+      ["HPCPerfStats/monitor/cursor-rules/plan-completion-gate.mdc"],
+  )
+  assert "agent-discipline-core.mdc" in rules
+  assert "implementation-review-workflow.mdc" in rules
+
+
+def test_resolve_cursor_rule_path_finds_monitor_rules():
+  resolved = lib.resolve_cursor_rule_path("monitor-c-conventions.mdc")
+  assert resolved is not None
+  assert resolved.name == "monitor-c-conventions.mdc"
+  assert "monitor/cursor-rules" in str(resolved).replace("\\", "/")
+
+
+def test_is_plan_template_read_path_accepts_monitor_template():
+  assert lib.is_plan_template_read_path(MONITOR_PLAN_TEMPLATE) is True
+  assert lib.is_plan_template_read_path(
+      "HPCPerfStats/docs/plans/PLAN_TEMPLATE.md",
+  ) is True
+
+
+def test_detect_rules_profile_monitor_symlink(tmp_path):
+  cursor_dir = tmp_path / ".cursor"
+  cursor_dir.mkdir()
+  monitor_rules = tmp_path / "HPCPerfStats" / "monitor" / "cursor-rules"
+  monitor_rules.mkdir(parents=True)
+  (monitor_rules / "agent-discipline-core.mdc").write_text("---\n---\n", encoding="utf-8")
+  (cursor_dir / "rules").symlink_to(monitor_rules)
+  assert detect_rules_profile([str(tmp_path)]) == "monitor"
+  assert profile_rules_dir_label("monitor") == "HPCPerfStats/monitor/cursor-rules"
+
+
+def test_detect_rules_profile_hpcperfstats_symlink(tmp_path):
+  cursor_dir = tmp_path / ".cursor"
+  cursor_dir.mkdir()
+  hps_rules = tmp_path / "HPCPerfStats" / "hpcperfstats" / "cursor-rules"
+  hps_rules.mkdir(parents=True)
+  (hps_rules / "agent-discipline-core.mdc").write_text("---\n---\n", encoding="utf-8")
+  (cursor_dir / "rules").symlink_to(hps_rules)
+  assert detect_rules_profile([str(tmp_path)]) == "hpcperfstats"
+
+
+def test_monitor_router_entries_reference_existing_files():
+  monitor_rules_dir = Path(__file__).resolve().parents[2] / "monitor" / "cursor-rules"
+  for entry in MONITOR_ROUTER_ENTRIES:
+    for rule in entry["rules"]:
+      if rule == "out-of-monitor-hpcperfstats-rules.mdc":
+        continue
+      path = monitor_rules_dir / rule
+      assert path.is_file(), f"missing monitor rule file: {rule} (entry {entry['id']})"

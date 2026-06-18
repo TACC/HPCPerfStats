@@ -1,9 +1,12 @@
 ---
 description: When monitor output changes need consumer work, produce a secondary consumer plan (what + why)
-alwaysApply: true
+alwaysApply: false
+globs: HPCPerfStats/monitor/src/stats*.c,HPCPerfStats/monitor/src/rabbitmq*.c,HPCPerfStats/monitor/src/**/KEYS*.h
 ---
 
 # Monitor: consumer-side secondary plan
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 When a **monitor** change would require updates outside `HPCPerfStats/monitor/` (ingest, dbload, analysis, dashboards), produce a **secondary consumer plan** in the same turn — **before** or **alongside** monitor implementation. Do **not** implement consumer code unless the user explicitly authorizes that path (**monitor-workspace-contract**, **out-of-monitor-hpcperfstats-rules**).
 

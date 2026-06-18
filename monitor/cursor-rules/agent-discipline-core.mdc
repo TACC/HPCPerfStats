@@ -1,0 +1,134 @@
+---
+description: MASTER — non-negotiable discipline + task router; Read triggered domain rules before editing (do not skip)
+alwaysApply: true
+---
+
+# Agent Discipline Core (monitor workspace)
+
+**Why this file exists:** The monitor workspace has **30+** domain rules. Loading all of them every turn causes **attention collapse**—agents skip steps you marked important. This file is the **always-on control plane**. Domain rules are **binding when triggered**; you must **Read** them (tool), not guess.
+
+**Cursor Settings User Rules count equally** with workspace rules. If they conflict on close discipline, follow the **stricter** requirement.
+
+## Always-on companions (read every session)
+
+| Rule | Law |
+|------|-----|
+| **`plan-completion-gate.mdc`** | No "done" without **Final code review (senior engineer pass)** + **Post-implementation review** (all non-trivial code changes) |
+| **`every-error-regression-test.mdc`** | Every fix for a failure needs a regression test before close |
+| **`monitor-workspace-contract.mdc`** | Monitor-only edits under `HPCPerfStats/monitor/`; consumer contract via `listend.py` |
+| **`python-venv-enforcement.mdc`** | Single `<workspace_root>/.venv/bin/python`; edit rules in `HPCPerfStats/monitor/cursor-rules/` |
+| **`out-of-monitor-hpcperfstats-rules.mdc`** | When user authorizes non-monitor edits, load `hpcperfstats/cursor-rules/` for that work |
+
+## Pre-close checklist (verify before final message)
+
+Answer **YES** or **N/A (one-line reason)** for each row. If any row is **NO**, keep working.
+
+| # | Check |
+|---|--------|
+| 1 | **Senior code review** section written (`## Final code review (senior engineer pass)`) |
+| 2 | **Post-implementation review** written (Why it works, ≥3 edge cases, convention check) |
+| 3 | **Regression test** added/updated for every failure/bug fixed (`every-error-regression-test.mdc`) |
+| 4 | **Relevant tests executed** (`make check`, static bundle, cross-compile when applicable); pass/fail reported; log under `test_runs/` if run |
+| 5 | **Triggered domain rules** below were **Read** (Read tool on the `.mdc` path) before editing — list them under **`## Agent rule dispatch`** at close; hook verifies Read calls for listed domain rules |
+| 6 | **Dual verify** run when substantive monitor C changed (`monitor-dual-verify-cross-and-static.mdc`) |
+| 7 | **Plan YAML** todos synced if implementing a plan (`plan-completion-gate.mdc`) |
+| 8 | **New/re-triggered domain rules** dual-registered in **both** this file (task router) and `.cursor/hooks/hook_task_router.py` (`MONITOR_ROUTER_ENTRIES`) — verify in **Final code review** when the diff touches `cursor-rules/*.mdc` |
+
+User may reply **`Close gate incomplete`** — redo the full close sequence without argument.
+
+## Task router — MUST Read before editing
+
+Use the **Read** tool on the listed `HPCPerfStats/monitor/cursor-rules/<file>.mdc` when your diff touches the trigger paths. **Triggered rules are not optional** because they are not `alwaysApply`.
+
+### Monitor C source and collectors
+
+| Trigger paths | Read these rules |
+|---------------|------------------|
+| `HPCPerfStats/monitor/src/**` | `monitor-c-conventions.mdc`, `monitor-jitter-and-fidelity-priority.mdc`, `monitor-c-refactor-standards.mdc` |
+| `HPCPerfStats/monitor/src/*ib*.c`, IB sysfs parsers | `monitor-ib-sysfs-parsing.mdc` |
+| `HPCPerfStats/monitor/src/*dcgm*`, `*gpu*` | `monitor-dcgm-integration.mdc` |
+| DEBUG shm mirror paths | `monitor-debug-shm.mdc` |
+
+### Emit contract, RabbitMQ, schema
+
+| Trigger paths | Read these rules |
+|---------------|------------------|
+| `HPCPerfStats/monitor/src/stats*.c`, `rabbitmq*.c`, `KEYS*.h`, schema emit | `monitor-workspace-contract.mdc`, `monitor-collect-tier-gating.mdc`, `monitor-schema-keys-headers.mdc`, `monitor-rabbitmq-integration-required.mdc`, `monitor-emitted-variable-naming.mdc` |
+| Breaking output / rename / tier markers | `monitor-consumer-schema-migration.mdc`, `monitor-consumer-side-plan.mdc` |
+
+### Build, configure, packaging, scripts
+
+| Trigger paths | Read these rules |
+|---------------|------------------|
+| `HPCPerfStats/monitor/configure.ac`, `Makefile.am`, `src/Makefile.am` | `configure-autoconf-awk-m4.mdc`, `monitor-c-conventions.mdc` |
+| `HPCPerfStats/monitor/scripts/**`, `hpcperfstats.spec` | `monitor-static-build-verification.mdc`, `monitor-dual-verify-cross-and-static.mdc`, `monitor-post-verify-distclean.mdc`, `monitor-version-and-packaging.mdc`, `monitor-local-build-deps.mdc` |
+| `HPCPerfStats/monitor/**` (substantive C/build change) | `global-testing-discipline.mdc` |
+
+### Tests and bugfixes
+
+| Trigger paths | Read these rules |
+|---------------|------------------|
+| `HPCPerfStats/monitor/tests/**` | `monitor-c-testing-standards.mdc`, `monitor-c-new-function-unittests.mdc`, `global-testing-discipline.mdc` |
+| Traceback / runtime error / test failure fix | `traceback-fix-discipline.mdc`, `logic-change-checklist.mdc`, `every-error-regression-test.mdc` |
+
+### Docs and README
+
+| Trigger paths | Read these rules |
+|---------------|------------------|
+| `HPCPerfStats/monitor/README.md`, `tests/README.md` | `monitor-readme-maintenance.mdc` |
+
+### Cursor rules (domain rule authoring)
+
+| Trigger paths | Read these rules |
+|---------------|------------------|
+| `HPCPerfStats/monitor/cursor-rules/*.mdc`, `.cursor/rules/**` | `agent-discipline-core.mdc`, `implementation-review-workflow.mdc`, `plan-template-enforcement.mdc`, `cursor-rules-maker.mdc` |
+| `.cursor/hooks/**`, `test_cursor_hooks.py` | `global-testing-discipline.mdc` |
+
+### Plans (only when authoring or implementing a plan)
+
+| Trigger | Read |
+|---------|------|
+| User asks for a plan / Cursor Plan / `docs/plans/` / `.cursor/plans/` | `plan-creation-contract.mdc`, `plan-template-enforcement.mdc`, `HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md` |
+| Pre-code planning | `implementation-review-workflow.mdc` |
+
+### Authorized non-monitor edits
+
+| Trigger paths | Read these rules |
+|---------------|------------------|
+| `HPCPerfStats/hpcperfstats/**` (when user authorized) | `out-of-monitor-hpcperfstats-rules.mdc` — then Read rules from `hpcperfstats/cursor-rules/` per that file's router |
+
+**Hooks (same close discipline as implementation):** `CreatePlan` counts as closeable work. **`stop`** enforces chat close headings plus `PLAN_TEMPLATE.md` sections inside the plan body and **Read before `CreatePlan`** for `plan-creation-contract.mdc`, `PLAN_TEMPLATE.md`, and domain rules referenced in the plan. **`postToolUse`** warns mid-turn when those reads are missing.
+
+## Implementation habits (short)
+
+- **Test-first** for behavior changes: `test-first-discipline.mdc`, `monitor-c-testing-standards.mdc`
+- **Canonical verify** for monitor C: `build_static_bundle.sh` + `make check` + `cross_compile_test.sh` per **`monitor-dual-verify-cross-and-static.mdc`**
+- **Consumer contract** — read `listend.py` before changing emit shape; attach **Consumer follow-up plan** when needed (`monitor-consumer-side-plan.mdc`)
+- **Scope** — default monitor-only; explicit user override required for `hpcperfstats/` edits
+
+## Creating or changing domain rules (mandatory)
+
+When you **add** a new `HPCPerfStats/monitor/cursor-rules/*.mdc` or materially change triggers for an existing rule:
+
+1. Default **`alwaysApply: false`** — do not add new always-on rules without removing another (see `RULES_README.md`).
+2. Add **`globs:`** when trigger paths are stable file patterns.
+3. Add an **Activation** note at the top (see existing demoted rules).
+4. **Dual registration (same task, non-optional)** — every new or re-triggered domain rule must appear in **both**:
+   - **this file** — task router table above (`Trigger paths` → `Read these rules`);
+   - **`.cursor/hooks/hook_task_router.py`** — matching `MONITOR_ROUTER_ENTRIES` path patterns (close-gate auto-detect + Read-before-edit hooks).
+   A rule missing from either file is **orphaned**; hooks will not dispatch it correctly.
+5. Update **`RULES_README.md`** when policy changes (always-on count, hook behavior, router conventions).
+6. Add a one-line cross-link in **`implementation-workflow-discipline.mdc`** Related rules table when agents should consult the rule during implement/verify.
+
+The Cursor hook `check-new-rule-router.py` injects a reminder if a new `.mdc` is written without a reference in this file; keep **`hook_task_router.py`** in sync manually (see step 4).
+
+## Full rule catalog
+
+All `*.mdc` files live in `HPCPerfStats/monitor/cursor-rules/` (symlinked from `.cursor/rules/`). Index by filename; use the router above to know **when** to Read them.
+
+## Overlap
+
+- **`plan-completion-gate.mdc`** — close sequence detail
+- **`plan-template-enforcement.mdc`** — plan-only reminder (not always-on)
+- **`implementation-workflow-discipline.mdc`** — short pointer table; detail here and in **`implementation-review-workflow.mdc`**
+- Demoted rules remain **mandatory when triggered**; demotion is not deprioritization

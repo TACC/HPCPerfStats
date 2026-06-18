@@ -1,0 +1,67 @@
+---
+description: Hard gate — PLAN_TEMPLATE for plans; close sequence (senior review + self-review) for every non-trivial code change
+alwaysApply: false
+globs: docs/plans/**,HPCPerfStats/monitor/docs/plans/**,.cursor/plans/**
+---
+
+# Plan Template And Close Enforcement
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+Agents must not treat plan structure or the **close sequence** as optional under time pressure—**including bugfixes and hotfixes with no plan file**. This rule is the **short enforcement reminder**; detail lives in **`plan-creation-contract.mdc`**, **`plan-completion-gate.mdc`**, **`implementation-review-workflow.mdc`**, and **`HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md`**.
+
+## Every implementation plan must include
+
+1. All required sections in order per **`plan-creation-contract.mdc`** (Problem and facts → Approach → Testing → Implementation → Cursor rules → Final code review).
+2. **`Final code review (mandatory before implementation close)`** per **`PLAN_TEMPLATE.md`**.
+3. **`Post-implementation review (required before close)`** per **`PLAN_TEMPLATE.md`**.
+4. Final YAML todo:
+
+```yaml
+- id: post-implementation-review
+  content: "Final senior code review (diff + workflow) clean; structured self-review in chat (why it works, edge cases, convention check)"
+  status: pending
+```
+
+Copy the full frontmatter/todo block from **`HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md`** when authoring new plans.
+
+## When the user asks for a plan
+
+Unless they explicitly request a **narrow exception** (answer-only, trivial typo/comment with no behavior change):
+
+1. **Read** **`HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md`** before authoring.
+2. **Match** that structure in chat, Cursor Plan mode, or **`docs/plans/`** commits.
+3. **End** with **`post-implementation-review`** as the **last** todo.
+
+**Treat as full-plan requests** (use PLAN_TEMPLATE + final review sections):
+
+- “Create a plan per PLAN_TEMPLATE.md”
+- “Include final code review per plan-creation-contract”
+- “Implement this plan” / attached plan file / Cursor Plan todos
+- “Plan mode” output for non-trivial implementation work
+
+## When implementing or closing (all code changes)
+
+Per **`plan-completion-gate.mdc`** → *Blocking close gate*, every **non-trivial code change** must end with three required chat sections (**Agent rule dispatch**, **Final code review (senior engineer pass)**, **Post-implementation review**) in the **same final turn**—not only plan-driven work.
+
+**During plan implementation:** per **`plan-completion-gate.mdc`** → *Plan YAML todo sync*, update each finished plan todo to `status: completed` in the plan frontmatter (status-only edits allowed even when plan prose must not change). Use the **same todo ids** as the plan YAML in `TodoWrite`.
+
+**Close sequence order:**
+
+1. **Agent rule dispatch** — list triggered **`*.mdc`** rules Read (or **N/A** with reason); see **`agent-discipline-core.mdc`** task router.
+2. **Final code review (senior engineer pass)** — review the full diff and every workflow the change touches; when `cursor-rules/*.mdc` changed, confirm dual registration in `agent-discipline-core.mdc` and `hook_task_router.py`; fix anything a senior reviewer would block on merge; re-run relevant tests.
+3. **Structured chat self-review** — after step 2 is clean, write **Why it works**, **Edge cases** (≥3 realistic failure modes), and **Convention check** (tests, triggered rules, layer wiring, **`test_runs/`** logging; confirm senior pass had no unfixed gaps).
+
+**Do not mark the task, plan, or todos done** until all close steps are complete (and, when a plan is active, plan YAML todos are synced and **`post-implementation-review`** is complete). If step 3 surfaces a new gap, return to step 2 before close.
+
+## Recommended Cursor User Rule (paste in Settings → Rules → User Rules)
+
+Paste as the **first** user rule for highest signal:
+
+> Follow `agent-discipline-core.mdc` pre-close checklist every code change. BLOCKING CLOSE GATE: before "done/fixed/complete", include (1) ## Agent rule dispatch — list Read triggered `HPCPerfStats/monitor/cursor-rules/*.mdc` files or N/A, (2) ## Final code review (senior engineer pass), (3) ## Post-implementation review (Why it works, Edge cases ≥3, Convention check). Read triggered rules before editing matching paths. If I reply "Close gate incomplete" or "Rule not read: <name>", redo without argument.
+
+## Overlap
+
+- **`plan-creation-contract.mdc`** — mandatory plan authoring structure and completion bar.
+- **`plan-completion-gate.mdc`** — execution gate: senior final code review then structured chat self-review before close.
+- **`implementation-review-workflow.mdc`** — pre-code planning and post-code review content.

@@ -2,7 +2,13 @@
 from __future__ import annotations
 
 import fnmatch
-from typing import Iterable, NotRequired, TypedDict
+from pathlib import Path
+from typing import Iterable, TypedDict
+
+try:
+    from typing import NotRequired
+except ImportError:
+    from typing_extensions import NotRequired
 
 
 class RouterEntry(TypedDict):
@@ -13,7 +19,7 @@ class RouterEntry(TypedDict):
 
 
 # Mirror agent-discipline-core.mdc task router. Update both in the same task when triggers change.
-ROUTER_ENTRIES: list[RouterEntry] = [
+HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
     {
         "id": "sync_timedb_core",
         "patterns": [
@@ -263,11 +269,204 @@ ROUTER_ENTRIES: list[RouterEntry] = [
     },
 ]
 
+# Backward-compatible alias for hpcperfstats-only callers/tests.
+ROUTER_ENTRIES = HPCPERFSTATS_ROUTER_ENTRIES
+
+# Mirror HPCPerfStats/monitor/cursor-rules/agent-discipline-core.mdc task router.
+MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
+    {
+        "id": "monitor_c_src",
+        "patterns": [
+            "HPCPerfStats/monitor/src/**",
+            "monitor/src/**",
+        ],
+        "rules": [
+            "monitor-c-conventions.mdc",
+            "monitor-jitter-and-fidelity-priority.mdc",
+            "monitor-c-refactor-standards.mdc",
+        ],
+    },
+    {
+        "id": "monitor_ib",
+        "patterns": [
+            "HPCPerfStats/monitor/src/*ib*",
+            "monitor/src/*ib*",
+        ],
+        "rules": [
+            "monitor-ib-sysfs-parsing.mdc",
+        ],
+    },
+    {
+        "id": "monitor_gpu_dcgm",
+        "patterns": [
+            "HPCPerfStats/monitor/src/*dcgm*",
+            "HPCPerfStats/monitor/src/*gpu*",
+            "monitor/src/*dcgm*",
+            "monitor/src/*gpu*",
+        ],
+        "rules": [
+            "monitor-dcgm-integration.mdc",
+        ],
+    },
+    {
+        "id": "monitor_debug_shm",
+        "patterns": [
+            "HPCPerfStats/monitor/src/*debug*",
+            "monitor/src/*debug*",
+        ],
+        "rules": [
+            "monitor-debug-shm.mdc",
+        ],
+    },
+    {
+        "id": "monitor_emit_contract",
+        "patterns": [
+            "HPCPerfStats/monitor/src/stats*",
+            "HPCPerfStats/monitor/src/rabbitmq*",
+            "HPCPerfStats/monitor/src/**/KEYS*",
+            "monitor/src/stats*",
+            "monitor/src/rabbitmq*",
+            "monitor/src/**/KEYS*",
+        ],
+        "rules": [
+            "monitor-workspace-contract.mdc",
+            "monitor-collect-tier-gating.mdc",
+            "monitor-schema-keys-headers.mdc",
+            "monitor-rabbitmq-integration-required.mdc",
+            "monitor-emitted-variable-naming.mdc",
+            "monitor-consumer-schema-migration.mdc",
+            "monitor-consumer-side-plan.mdc",
+        ],
+    },
+    {
+        "id": "monitor_build",
+        "patterns": [
+            "HPCPerfStats/monitor/configure.ac",
+            "HPCPerfStats/monitor/Makefile.am",
+            "HPCPerfStats/monitor/src/Makefile.am",
+            "HPCPerfStats/monitor/scripts/**",
+            "monitor/configure.ac",
+            "monitor/Makefile.am",
+            "monitor/src/Makefile.am",
+            "monitor/scripts/**",
+            "configure.ac",
+            "Makefile.am",
+            "scripts/build_static_bundle.sh",
+            "scripts/cross_compile_test.sh",
+        ],
+        "rules": [
+            "monitor-static-build-verification.mdc",
+            "monitor-dual-verify-cross-and-static.mdc",
+            "monitor-post-verify-distclean.mdc",
+            "configure-autoconf-awk-m4.mdc",
+            "monitor-local-build-deps.mdc",
+            "global-testing-discipline.mdc",
+        ],
+    },
+    {
+        "id": "monitor_tests",
+        "patterns": [
+            "HPCPerfStats/monitor/tests/**",
+            "monitor/tests/**",
+        ],
+        "rules": [
+            "monitor-c-testing-standards.mdc",
+            "monitor-c-new-function-unittests.mdc",
+            "global-testing-discipline.mdc",
+            "traceback-fix-discipline.mdc",
+        ],
+    },
+    {
+        "id": "monitor_packaging",
+        "patterns": [
+            "HPCPerfStats/monitor/hpcperfstats.spec",
+            "monitor/hpcperfstats.spec",
+            "hpcperfstats.spec",
+        ],
+        "rules": [
+            "monitor-version-and-packaging.mdc",
+            "monitor-static-build-verification.mdc",
+        ],
+    },
+    {
+        "id": "monitor_readme",
+        "patterns": [
+            "HPCPerfStats/monitor/README.md",
+            "HPCPerfStats/monitor/tests/README.md",
+            "monitor/README.md",
+            "monitor/tests/README.md",
+        ],
+        "rules": [
+            "monitor-readme-maintenance.mdc",
+        ],
+    },
+    {
+        "id": "monitor_cursor_rules",
+        "patterns": [
+            "HPCPerfStats/monitor/cursor-rules/*.mdc",
+            "monitor/cursor-rules/*.mdc",
+        ],
+        "rules": [
+            "agent-discipline-core.mdc",
+            "implementation-review-workflow.mdc",
+            "plan-template-enforcement.mdc",
+            "cursor-rules-maker.mdc",
+        ],
+    },
+    {
+        "id": "monitor_plans",
+        "patterns": [
+            "HPCPerfStats/monitor/docs/plans/*",
+            "monitor/docs/plans/*",
+            ".cursor/plans/*",
+        ],
+        "rules": [
+            "plan-creation-contract.mdc",
+            "plan-template-enforcement.mdc",
+        ],
+    },
+    {
+        "id": "monitor_hooks",
+        "patterns": [
+            ".cursor/hooks/*",
+            ".cursor/hooks.json",
+            "hpcperfstats/tests/test_cursor_hooks.py",
+        ],
+        "rules": [
+            "global-testing-discipline.mdc",
+        ],
+    },
+    {
+        "id": "authorized_hps",
+        "patterns": [
+            "HPCPerfStats/hpcperfstats/**",
+            "hpcperfstats/**",
+        ],
+        "rules": [
+            "out-of-monitor-hpcperfstats-rules.mdc",
+        ],
+    },
+    {
+        "id": "monitor_bugfix",
+        "patterns": [
+            "HPCPerfStats/monitor/src/**",
+            "HPCPerfStats/monitor/tests/**",
+            "monitor/src/**",
+            "monitor/tests/**",
+        ],
+        "rules": [
+            "logic-change-checklist.mdc",
+            "every-error-regression-test.mdc",
+        ],
+    },
+]
+
 
 def normalize_repo_path(path: str) -> str:
     normalized = (path or "").replace("\\", "/").lstrip("/")
     anchors = (
         "hpcperfstats/",
+        "monitor/",
         "services-conf/",
         "tests/",
         "docs/",
@@ -313,17 +512,74 @@ def path_matches_pattern(normalized_path: str, pattern: str) -> bool:
     return False
 
 
-def triggered_rules_for_paths(paths: Iterable[str]) -> list[str]:
+def _rules_from_entries(paths: Iterable[str], entries: list[RouterEntry]) -> list[str]:
     seen: dict[str, str] = {}
     for raw in paths:
         normalized = normalize_repo_path(raw)
         if not normalized:
             continue
-        for entry in ROUTER_ENTRIES:
+        for entry in entries:
             if not entry_matches_path(normalized, entry):
                 continue
             for rule in entry["rules"]:
                 key = rule.lower()
                 if key not in seen:
                     seen[key] = rule
+    return list(seen.values())
+
+
+def detect_rules_profile(workspace_roots: Iterable[str] | None = None) -> str:
+    """Return 'monitor' or 'hpcperfstats' from .cursor/rules symlink or on-disk layout."""
+    roots = list(workspace_roots or [])
+    hook_dir = Path(__file__).resolve().parent
+    checkout_root = hook_dir.parent.parent
+    candidates: list[Path] = []
+    for root in roots:
+        candidates.append(Path(root) / ".cursor" / "rules")
+    candidates.append(checkout_root.parent / ".cursor" / "rules")
+
+    for rules_path in candidates:
+        if not rules_path.exists():
+            continue
+        try:
+            target = str(rules_path.resolve()).replace("\\", "/")
+        except OSError:
+            target = str(rules_path).replace("\\", "/")
+        if "monitor/cursor-rules" in target:
+            return "monitor"
+        if "hpcperfstats/cursor-rules" in target:
+            return "hpcperfstats"
+
+    monitor_core = checkout_root / "monitor" / "cursor-rules" / "agent-discipline-core.mdc"
+    hps_core = checkout_root / "hpcperfstats" / "cursor-rules" / "agent-discipline-core.mdc"
+    if monitor_core.is_file() and not hps_core.is_file():
+        return "monitor"
+    if hps_core.is_file():
+        return "hpcperfstats"
+    return "monitor"
+
+
+def profile_rules_dir_label(profile: str) -> str:
+    if profile == "monitor":
+        return "HPCPerfStats/monitor/cursor-rules"
+    return "hpcperfstats/cursor-rules"
+
+
+def router_entries_for_profile(profile: str) -> list[RouterEntry]:
+    if profile == "monitor":
+        return MONITOR_ROUTER_ENTRIES
+    return HPCPERFSTATS_ROUTER_ENTRIES
+
+
+def triggered_rules_for_paths(
+    paths: Iterable[str],
+    *,
+    workspace_roots: Iterable[str] | None = None,
+) -> list[str]:
+    """Merge monitor + hpcperfstats router hits (cross-edit turns may match both)."""
+    seen: dict[str, str] = {}
+    for rule in _rules_from_entries(paths, MONITOR_ROUTER_ENTRIES):
+        seen[rule.lower()] = rule
+    for rule in _rules_from_entries(paths, HPCPERFSTATS_ROUTER_ENTRIES):
+        seen[rule.lower()] = rule
     return list(seen.values())

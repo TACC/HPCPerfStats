@@ -1,0 +1,42 @@
+---
+description: Local test run logs and runtime artifacts go under test_runs/ (gitignored)
+alwaysApply: false
+---
+
+# Test Runs Output Directory
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+Ephemeral **test execution artifacts** and **runtime verification notes** belong under **`<workspace_root>/test_runs/`** (the directory that contains `.venv/` and `HPCPerfStats/`). Do **not** add new run logs or local-only runtime reports under **`docs/`**.
+
+## What stays committed vs local
+
+| Committed (repo docs) | Local only (`test_runs/`) |
+|-----------------------|---------------------------|
+| **`HPCPerfStats/monitor/docs/plans/`** — design baselines | Dated run summaries, pass/fail tables, agent verification notes |
+| **`HPCPerfStats/monitor/README.md`**, **`tests/README.md`** | Raw stdout from `make check`, `build_static_bundle.sh`, cross-compile |
+| Test source (`tests/test_*.c`, `tests/run_tests.sh`) | `ldd` captures, configure logs from verify passes |
+
+## Required output paths
+
+Create **`test_runs/`** (and subdirs as needed) before writing. Prefer **UTC dates** in filenames.
+
+| Artifact | Canonical path |
+|----------|----------------|
+| Agent or manual verification log (per task/day) | **`test_runs/test_run_log_YYYY-MM-DD.md`** |
+| Static bundle + `make check` transcript | **`test_runs/monitor/build_static_YYYY-MM-DD.log`** |
+| Cross-compile smoke transcript | **`test_runs/monitor/cross_compile_YYYY-MM-DD.log`** |
+| Saved pytest for hook tests | **`test_runs/pytest/`** |
+
+## Agent behavior
+
+When running monitor verification, reporting test outcomes in chat, or closing a task that executed tests:
+
+1. Write or append results to **`test_runs/test_run_log_<date>.md`** (command, exit code, blockers)—not **`docs/`**.
+2. Point users to **`test_runs/`** for local artifacts.
+3. Do not commit contents of **`test_runs/`** (directory should be gitignored; **`test_runs/README.md`** may be committed as policy doc).
+
+## Overlap
+
+- **`plan-creation-contract.mdc`** — committed **`docs/plans/`** docs must follow the plan structure; ephemeral run logs still belong here in **`test_runs/`**.
+- **`global-testing-discipline.mdc`**, **`monitor-static-build-verification.mdc`** — report pass/fail in chat and persist details under **`test_runs/`**.

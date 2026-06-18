@@ -2,10 +2,12 @@
 description: After monitor changes, require static bundle + make check and foreign cross_compile_test success
 globs:
   - HPCPerfStats/monitor/**
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Monitor dual verification (static bundle + cross smoke)
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 After **any substantive change** under **`HPCPerfStats/monitor/`** (C sources, **`configure.ac`**, **`Makefile.am`**, **`tests/`**, **`scripts/build_static_bundle.sh`**, **`scripts/cross_compile_test.sh`**, packaging/spec tied to the monitor build—**not** typo-only comments with zero behavioral impact), do **not** treat the task as complete until **both** of the following succeed on the agent’s runner:
 

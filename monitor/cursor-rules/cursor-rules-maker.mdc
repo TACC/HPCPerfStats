@@ -1,8 +1,10 @@
 ---
 description: How to propose and maintain Cursor rules without silent drift
-globs: **
-alwaysApply: true
+globs: HPCPerfStats/monitor/cursor-rules/**,.cursor/rules/**,.cursor/hooks/**
+alwaysApply: false
 ---
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 # RuleMaker Agent
 
@@ -32,7 +34,16 @@ You are a Senior Architect Agent specializing in structuring projects and managi
 
 ## Rule Format
 
-Use the `.mdc` format with `description`, `globs`, and `alwaysApply` (if needed) at the top.
+Use the `.mdc` format with `description`, `globs`, and `alwaysApply` (usually `false` unless project-wide).
+
+## Dual registration (when saving a new domain rule)
+
+Every new or re-scoped **`HPCPerfStats/monitor/cursor-rules/*.mdc`** must appear in **both**:
+
+1. **`agent-discipline-core.mdc`** — task router table (`Trigger paths` → `Read these rules`)
+2. **`.cursor/hooks/hook_task_router.py`** — matching `MONITOR_ROUTER_ENTRIES` row
+
+See **`RULES_README.md`** and **`monitor-cursor-rules-sync.mdc`**. Hooks enforce dual registration at edit time and close.
 
 ## Trigger Phrase
 

@@ -1,0 +1,43 @@
+---
+description: Mandatory regression test for every discovered defect or failure (non-negotiable)
+alwaysApply: true
+---
+
+# Every Error Requires a Regression Test
+
+This is **non-negotiable project law** for monitor work: **no fix or behavior change that responds to a discovered failure is complete until a test exists that would have caught it** (or that explicitly locks the corrected contract).
+
+## What counts as an “error” here
+
+- Any **traceback**, **uncaught exception**, or **assertion failure** in application code, tests, or tooling that reflects incorrect or fragile behavior you are fixing.
+- Any **failing `make check`** test or contract test you address by changing monitor C — **extend or add tests** in `HPCPerfStats/monitor/tests/`.
+- **User-reported bugs**, **wrong stats output**, **RabbitMQ payload shape errors**, or **regressions**—always add a test that fails on the old behavior and passes after the fix.
+- **CI failures** (`monitor-verify.yaml`) caused by missing coverage for a real contract: stabilize with a deterministic test; do not “fix green” without locking the intended behavior in tests.
+
+## Required outcome before closing the task
+
+1. **Identify the failure signature** (stack line, failing assertion, bad output line).
+2. **Add or update the smallest test** in `tests/test_*.c` that reproduces it or asserts the corrected contract (prefer failing first when feasible).
+3. **Apply the fix**; keep the test green.
+4. **Run** `make check` in `.build-static` (or targeted test binary) per **`global-testing-discipline.mdc`** and **`monitor-static-build-verification.mdc`**.
+
+## Regression examples (monitor)
+
+- **Schema contract:** `tests/test_*_schema_contract.c` — golden lines for `$` schema and sample rows; host token position stable for `listend.py`.
+- **IB port state parser:** `tests/test_*_ib*.c` — inactive/active substring traps per **`monitor-ib-sysfs-parsing.mdc`**.
+- **Tier gating:** contract tests for `@fast`/`@full` and `,R=S` when **`enable_slow_tier`** is on.
+- **Configure/build:** when fixing `configure.ac` probe logic, add or extend tests under `tests/` that lock the intended `configure` outcome where feasible.
+
+## Narrow exceptions (not excuses to skip tests)
+
+- **Pure documentation**, **comments only**, or **cursor-rules-only** changes with no behavior change: no new test required.
+- **External dependency or environment outage** with no code defect: no product regression test; if you add **retry/timeout/guard code**, that code **does** need tests.
+
+## If blocked (build tree, cross toolchain)
+
+Document the blocker in the task, then add the regression test **in the same PR/task** as soon as the blocker is cleared—**do not** treat the fix as finished without the test.
+
+## Overlap
+
+- Strengthens **`traceback-fix-discipline.mdc`** and **`test-first-discipline.mdc`**; when they conflict on wording, **this rule wins** on the requirement that **every addressed error has a regression test**.
+- Aligns with **`monitor-c-new-function-unittests.mdc`** for new C functions.

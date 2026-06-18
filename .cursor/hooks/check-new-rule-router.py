@@ -77,8 +77,9 @@ def main() -> int:
                 f"MANDATORY (agent-discipline-core.mdc): new/updated rule `{basename}` "
                 f"is not fully dual-registered. Missing: {', '.join(missing)}. "
                 "In the same task, add a row to `agent-discipline-core.mdc` "
-                "(trigger paths → Read this rule), a matching `ROUTER_ENTRIES` row in "
-                "`.cursor/hooks/hook_task_router.py`, and a one-line note in "
+                "(trigger paths → Read this rule), a matching row in "
+                "`.cursor/hooks/hook_task_router.py` (`MONITOR_ROUTER_ENTRIES` or "
+                "`HPCPERFSTATS_ROUTER_ENTRIES`), and a one-line note in "
                 "`RULES_README.md` if policy changes. Verify both routers in "
                 "Final code review before close."
             ),

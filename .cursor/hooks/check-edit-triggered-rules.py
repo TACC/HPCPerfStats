@@ -21,6 +21,7 @@ from hpc_hook_lib import (  # noqa: E402
     parse_transcript_lines,
     paths_from_plan_markdown,
     plan_template_read_issues,
+    profile_rules_dir_label,
 )
 from hook_task_router import triggered_rules_for_paths  # noqa: E402
 
@@ -107,6 +108,9 @@ def main() -> int:
         emit_json({})
         return 0
 
+    rules_dir = profile_rules_dir_label(
+        workspace_roots=payload.get("workspace_roots") or [],
+    )
     action = "CreatePlan" if tool_name == "CreatePlan" else "this edit"
     emit_json(
         {
@@ -114,9 +118,10 @@ def main() -> int:
                 "RULE DISPATCH (pre-close): %s triggers domain or plan-authoring "
                 f"rules that must be Read before further work. Issues: "
                 f"{', '.join(issues)}. "
-                "Use the Read tool on each listed hpcperfstats/cursor-rules/*.mdc "
-                "and docs/plans/PLAN_TEMPLATE.md for plan turns, then list them "
-                "under ## Agent rule dispatch at close."
+                f"Use the Read tool on each listed {rules_dir}/*.mdc "
+                "and the workspace PLAN_TEMPLATE.md "
+                "(HPCPerfStats/monitor/docs/plans/ or HPCPerfStats/docs/plans/) "
+                "for plan turns, then list them under ## Agent rule dispatch at close."
             )
             % action,
         },

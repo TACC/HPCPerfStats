@@ -1,9 +1,12 @@
 ---
 description: Root-cause workflow for traceback-driven bug fixes
-alwaysApply: true
+alwaysApply: false
+globs: HPCPerfStats/monitor/src/**,HPCPerfStats/monitor/tests/**
 ---
 
 # Traceback Fix Discipline
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 - When a traceback or runtime error log is provided, identify the **first frame in project-owned code** (any language) and fix the root cause there.
 - Do not implement symptom-only patches in downstream code paths when the upstream cause is actionable.

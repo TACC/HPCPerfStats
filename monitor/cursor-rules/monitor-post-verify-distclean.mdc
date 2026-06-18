@@ -2,10 +2,12 @@
 description: After monitor compile/test/dist verification, run make distclean in the build directory used
 globs:
   - HPCPerfStats/monitor/**
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Monitor: `make distclean` after verification
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 After you successfully run **monitor Autotools** verification in a directory that has a generated **`Makefile`** from **`./configure`**, run **`make distclean`** in **that same directory** before treating the work as done—unless the user explicitly asked to keep the configured tree or you still need that tree in the **same turn** for a follow-up step.
 

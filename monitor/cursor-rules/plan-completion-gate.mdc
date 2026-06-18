@@ -1,0 +1,114 @@
+---
+description: Hard gate — no task close without senior final code review and structured post-code self-review (all non-trivial code changes, not only plans)
+alwaysApply: true
+---
+
+# Plan Completion Gate
+
+Part of the always-on set in **`agent-discipline-core.mdc`** (pre-close checklist item 1–2). Applies to **every non-trivial code change**—bugfixes, hotfixes, refactors, and plan-driven work—not only when the user asks to **implement a plan**. Treat the **close sequence** as a deliverable, not optional prose after tests pass.
+
+**Hard gate:** **Do not mark the task, plan, or any todo done** until:
+
+1. **Final code review** (senior-engineer pass on the diff and affected workflows) finds no unfixed gaps,
+2. **Structured chat self-review** (step 2 below) is written in the **same final turn**, and
+3. **When implementing a plan:** plan YAML todos synced (`status: completed` for every finished step; see **Plan YAML todo sync** below) and the **`post-implementation-review`** todo is complete.
+
+See **`plan-template-enforcement.mdc`** for request phrasing and PLAN_TEMPLATE alignment.
+
+## Blocking close gate (required chat headings)
+
+Before any final message that reports work **done**, **fixed**, **ready**, or **complete**, the agent **must** include these sections **in order**:
+
+1. **`## Agent rule dispatch`** — Pre-close checklist **#5** in **`agent-discipline-core.mdc`**: list every triggered **`HPCPerfStats/monitor/cursor-rules/*.mdc`** file you **Read** (tool) **before the first edit** in the turn, or **`N/A`** only when edited paths did not trigger domain rules. The Cursor **`stop`** hook auto-detects triggered rules from edited paths (via **`hook_task_router.py`**), rejects invalid **`N/A`**, requires dispatch listing, verifies **Read** tool calls (always-on rules exempt), and requires **≥3** edge-case bullets.
+2. **`## Final code review (senior engineer pass)`** — Senior Software Engineer review of the **full diff** and **every workflow touched**; checklist-style findings; **fix gaps before close**.
+3. **`## Post-implementation review`** with subsections **`### Why it works`**, **`### Edge cases`** (≥3 realistic failure modes), **`### Convention check`**.
+
+**Forbidden without all sections above:** marking todos completed; phrases like “done”, “complete”, “ready to ship”, “fix is in tree”, “task is finished”.
+
+**User enforcement:** if the user replies **`Close gate incomplete`**, redo the full close sequence without argument.
+
+**Cursor hook:** project `stop` hook `.cursor/hooks/check-close-gate.py` auto-submits the same follow-up when a code-changing turn ends without required headings (`loop_limit: 3`). See `.cursor/hooks/README.md`.
+
+**Narrow exceptions:** answer-only questions with no code; trivial typo/comment-only edits with no behavioral contract.
+
+## Plan YAML todo sync (during implementation)
+
+The **plan file frontmatter** (for example `.cursor/plans/*.plan.md`) is what the **Plan UI** shows. Session `TodoWrite` alone does **not** update that UI.
+
+**When implementing a plan:**
+
+1. **Canonical ids** — read todo `id` values from the plan YAML at task start; use those **exact** ids in `TodoWrite` (do not invent aliases).
+2. **On each step complete** — when work for a plan todo is done, set that todo’s `status: completed` in the plan frontmatter **in the same turn** (status-only edit).
+3. **“Do not edit the plan”** — when the user forbids plan edits, that means **do not change plan prose, scope, or approach**; **status-only** frontmatter updates remain **required** unless the user explicitly forbids all plan file writes.
+4. **Before task close** — verify no plan todo remains `status: pending` except items the user explicitly deferred; if any are still pending, either finish them or state the deferral in chat—do not claim the plan is complete.
+
+Committed design docs under **`HPCPerfStats/monitor/docs/plans/`** marked read-only by the user: same status-only rule applies only when that file is the active implementation checklist; otherwise sync the Cursor Plan file attached to the task.
+
+## Close sequence (mandatory order)
+
+Same content as **Blocking close gate** above, expanded. Run all steps in the **same final turn** that reports implementation done, **before** marking todos complete.
+
+### 0. Agent rule dispatch
+
+Per **`agent-discipline-core.mdc`** task router: for each triggered domain rule, confirm you **Read** it before editing. In chat, under **`## Agent rule dispatch`**, list basenames (for example `monitor-c-conventions.mdc`) or state **`N/A`** when the diff touched no router trigger paths. The Cursor **`stop`** hook rejects an empty dispatch section and emits **`Rule not read: <name>`** when a listed domain rule has no **Read** tool call on that `.mdc` in the transcript for this turn.
+
+### 1. Final code review (senior engineer pass)
+
+Act as a **Senior Software Engineer**. Review the **full diff** and every **workflow the change touches**—callers, tests, static bundle + cross-compile verification, consumer contract (`listend.py`), config and docs sync—not only the files edited.
+
+Look for:
+
+- correctness and behavior regressions
+- performance regressions (jitter, hot-path work)
+- missing components (tests, docs, contract tests, packaging/spec sync)
+- edge cases not covered by tests
+- **new or re-triggered domain rules** dual-registered in the **same task** — every `HPCPerfStats/monitor/cursor-rules/*.mdc` you added or whose triggers changed must appear in **both** `agent-discipline-core.mdc` (task router table) and `.cursor/hooks/hook_task_router.py` (`MONITOR_ROUTER_ENTRIES`); a rule in only one file is **orphaned** and hooks will not dispatch it (see **`agent-discipline-core.mdc`** → *Creating or changing domain rules*)
+- anything else a senior reviewer would block on merge
+
+**Fix anything found** and re-run relevant tests. Do not proceed to step 2 or mark todos complete while open review items remain.
+
+Aligns with **`plan-creation-contract.mdc`** step 6 and **`HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md`** → *Final code review*.
+
+### 2. Structured chat self-review
+
+After the senior pass is clean, write these three headings in chat (per **`implementation-review-workflow.mdc`**):
+
+1. **Why it works** — one short paragraph tying the diff to the plan and upstream contracts (RabbitMQ payload, listend host token, static build, tests).
+2. **Edge cases** — at least **three** realistic failure modes still possible (collector stall, schema drift, cross-compile gap, consumer mis-parse, operator misconfig).
+3. **Convention check** — naming, module layout, test placement, docs/`test_runs/` logging, every **triggered** workspace rule (cite rule names when non-obvious), and confirmation that the senior review pass found no unfixed gaps.
+
+If writing the chat sections surfaces a new gap, return to step 1, fix, re-test, then update the chat sections.
+
+## Plan todos (mandatory last item)
+
+Every implementation plan YAML must include a final todo:
+
+```yaml
+- id: post-implementation-review
+  content: "Final senior code review (diff + workflow) clean; structured self-review in chat (why it works, edge cases, convention check)"
+  status: pending
+```
+
+Do not mark this todo **completed** until **both** close-sequence steps above are done (or a narrow exception below applies).
+
+## Runtime logic changes
+
+When behavior changes, also run **`logic-change-checklist.mdc`** mentally and confirm in **Convention check**: invariants, failure modes, regression tests, and monitor verify tier match the change.
+
+## Test and artifact bar
+
+- Executed tests reported with pass/fail; blockers documented per **`test-first-discipline.mdc`**.
+- Run artifacts under **`test_runs/`**, not **`docs/`**, per **`test-runs-output-directory.mdc`**.
+- Plan frontmatter: all implementation todos `status: completed` (or explicit deferral documented) before reporting done.
+
+## Narrow exceptions
+
+- Answer-only questions with no code.
+- Trivial typo/comment-only edits with no behavioral contract.
+
+## Overlap
+
+- **`plan-template-enforcement.mdc`** — plan-only reminder: PLAN_TEMPLATE shape, request phrasing, no close before **`post-implementation-review`**.
+- **`plan-creation-contract.mdc`** — plan authoring structure and **`PLAN_TEMPLATE.md`**; step 6 *Final code review* is implemented here as close-sequence step 1.
+- **`implementation-review-workflow.mdc`** — pre-code plan + post-code review content; close-sequence step 2 matches its three chat sections.
+- **`every-error-regression-test.mdc`** — fixes require a regression test before close.

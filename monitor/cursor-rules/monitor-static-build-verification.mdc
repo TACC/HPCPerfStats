@@ -2,10 +2,12 @@
 description: Canonical verification for monitor C/build — static bundle script, not ad-hoc make
 globs:
   - HPCPerfStats/monitor/**
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Monitor verification (canonical)
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 For **HPCPerfStats/monitor** code, dependency wiring, Autotools changes, or **`hpcperfstats.spec`** / packaging edits, **do not** treat simpler checks as sufficient verification:
 

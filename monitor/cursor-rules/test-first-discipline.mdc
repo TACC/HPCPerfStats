@@ -1,0 +1,42 @@
+---
+description: Enforce test-first discipline for monitor code changes
+alwaysApply: false
+---
+
+# Test-First Discipline
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+Treat every non-trivial monitor change as test-first work.
+
+**Hard requirement:** Any work that fixes a discovered defect or failure must also add or extend a regression test per **`every-error-regression-test.mdc`** (that rule takes precedence on “no test, no done”).
+
+## Required workflow
+
+- Before changing behavior, add or update the smallest relevant test in `HPCPerfStats/monitor/tests/` that captures the intended behavior or reproduces the bug.
+- Prefer seeing that test fail first for bug fixes and behavior changes; then implement code changes and make it pass.
+- For refactors, lock existing behavior with tests before simplifying/moving code.
+- If a true test-first sequence is blocked (for example missing configured build tree), document the blocker in the task and add regression coverage immediately after code changes.
+
+## Scope expectations
+
+- Apply this to monitor C sources, `configure.ac`, emit/schema shape, and packaging tied to behavior.
+- Select the narrowest test level that proves correctness first (unit/contract in `tests/test_*.c`); escalate per **`global-testing-discipline.mdc`**.
+- **New C functions** require tests per **`monitor-c-new-function-unittests.mdc`**.
+- Do not mark work complete without running the relevant tests for touched behavior.
+
+## Pre-merge verification matrix (monitor)
+
+| Change touches | Minimum run |
+|----------------|-------------|
+| Pure helper / parser in `src/` | Targeted `tests/test_*.c` via `make check` |
+| Substantive monitor C / Autotools | **`build_static_bundle.sh`** + **`make check`** in `.build-static` |
+| Same + foreign arch risk | Also **`cross_compile_test.sh --force-foreign --fail-fast`** |
+| `hpcperfstats.spec` / version | **`rpmspec -P`**; optional full RPM prep |
+| After successful verify | **`make distclean`** in build dir per **`monitor-post-verify-distclean.mdc`** |
+
+## Integration with implementation workflow
+
+- **`implementation-review-workflow.mdc`** — pre-code planning and post-code self-review; regression coverage and test runs are part of the post-implementation review.
+- **`monitor-c-testing-standards.mdc`** — pyramid, fixtures, contract tests.
+- **`monitor-dual-verify-cross-and-static.mdc`** — dual verify is mandatory for substantive monitor changes.

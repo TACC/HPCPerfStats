@@ -1,9 +1,12 @@
 ---
 description: Always test changes and resolve issues before proceeding
-alwaysApply: true
+alwaysApply: false
+globs: HPCPerfStats/monitor/**,.cursor/hooks/**
 ---
 
 # Testing Discipline
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 Do not assume something is working; run **appropriate** verification after implementing a feature, fixing issues, or making adjustments. If verification fails, stop and fix the issue before treating the work as done.
 

@@ -1,0 +1,46 @@
+---
+description: Checklist for correctness and completeness changes that affect monitor runtime logic
+alwaysApply: false
+---
+
+# Logic Change Checklist
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+Use this checklist for every correctness/completeness change that affects monitor runtime logic.
+
+## Inputs and Contracts
+
+- Identify the upstream contract being changed (sample line shape, `$` schema line, host token position, `st_name`, device id, event key).
+- Document the canonical consumer source: **`HPCPerfStats/hpcperfstats/listend.py`** (read-only) per **`monitor-workspace-contract.mdc`**.
+- Verify cross-layer consistency (monitor emit → listend host extraction → `archive_dir/<host>/current`).
+
+## Invariants
+
+- Define expected invariants before and after change (cadence, tier gating, cumulative vs gauge `E`, schema rotation on `$` messages).
+- Verify no-data and collector-failure fallbacks remain deterministic.
+- Verify config assumptions (`enable_slow_tier`, RabbitMQ exchange, trim rules).
+
+## Failure Modes
+
+- List at least one transient failure scenario (RabbitMQ disconnect, sysfs read failure, LIKWID/DCGM probe failure) and expected fallback.
+- Confirm errors are logged with actionable context and do not silently corrupt emit state.
+- Confirm retry and cooldown behavior is bounded per **`monitor-jitter-and-fidelity-priority.mdc`**.
+
+## Regression Tests
+
+- Add or update targeted unit/contract tests in `HPCPerfStats/monitor/tests/`.
+- For emit/schema changes, include golden contract tests and negative assertions for retired keys.
+- When consumer would break, attach **Consumer follow-up plan** per **`monitor-consumer-side-plan.mdc`** (do not edit consumer without user authorization).
+
+## Validation Runbook
+
+- Run smallest targeted `tests/test_*.c` first via `make check`.
+- Run **`build_static_bundle.sh`** + **`make check`** for substantive C changes.
+- Run **`cross_compile_test.sh`** when architecture/portability risk exists.
+- Record what passed, what was skipped, and residual risks under **`test_runs/`**.
+
+## Overlap
+
+- **`implementation-review-workflow.mdc`** — general plan-before-code and post-implementation self-review; use this checklist when runtime logic changes.
+- Complements **`traceback-fix-discipline.mdc`**, **`monitor-collect-tier-gating.mdc`**, and **`monitor-c-testing-standards.mdc`**.

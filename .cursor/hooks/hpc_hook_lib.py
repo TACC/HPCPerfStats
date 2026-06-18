@@ -14,6 +14,33 @@ PLAN_TOOL_NAMES = frozenset({"CreatePlan"})
 
 PLAN_TEMPLATE_READ_SUFFIX = "docs/plans/PLAN_TEMPLATE.md"
 
+MONITOR_PLAN_TEMPLATE_SUFFIX = "HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md"
+
+HPCPERFSTATS_ROUTER_BASENAMES = frozenset(
+    {
+        "agent-discipline-core.mdc",
+        "plan-completion-gate.mdc",
+        "every-error-regression-test.mdc",
+        "workspace-guardrails.mdc",
+        "workspace-layout-and-python-env.mdc",
+        "RULES_README.md",
+    },
+)
+
+MONITOR_ROUTER_BASENAMES = frozenset(
+    {
+        "agent-discipline-core.mdc",
+        "plan-completion-gate.mdc",
+        "every-error-regression-test.mdc",
+        "monitor-workspace-contract.mdc",
+        "python-venv-enforcement.mdc",
+        "out-of-monitor-hpcperfstats-rules.mdc",
+        "RULES_README.md",
+    },
+)
+
+ROUTER_BASENAMES = HPCPERFSTATS_ROUTER_BASENAMES | MONITOR_ROUTER_BASENAMES
+
 PLAN_AUTHORING_REQUIRED_MDC = ("plan-creation-contract.mdc",)
 
 PLAN_CONTENT_SECTIONS = (
@@ -98,20 +125,11 @@ COMPLETION_RE = re.compile(
     re.I,
 )
 
-ROUTER_BASENAMES = frozenset(
-    {
-        "agent-discipline-core.mdc",
-        "plan-completion-gate.mdc",
-        "every-error-regression-test.mdc",
-        "workspace-guardrails.mdc",
-        "workspace-layout-and-python-env.mdc",
-        "RULES_README.md",
-    },
-)
-
 # Always-on rules are injected every turn; Read tool proof is not required for them.
 READ_VERIFY_EXEMPT_MDC = frozenset(
-    name.lower() for name in ROUTER_BASENAMES if name.endswith(".mdc")
+    name.lower()
+    for name in ROUTER_BASENAMES
+    if name.endswith(".mdc")
 )
 
 DISPATCH_MDC_RE = re.compile(r"([\w.-]+\.mdc)\b", re.I)
@@ -125,6 +143,19 @@ def router_from_rule_path(rule_path: str) -> Path | None:
     return router if router.is_file() else None
 
 
+def _detect_profile(workspace_roots: Iterable[str] | None = None) -> str:
+    from hook_task_router import detect_rules_profile  # noqa: PLC0415
+
+    return detect_rules_profile(workspace_roots)
+
+
+def profile_rules_dir_label(profile: str | None = None, *, workspace_roots: Iterable[str] | None = None) -> str:
+    from hook_task_router import profile_rules_dir_label as _label  # noqa: PLC0415
+
+    resolved = profile or _detect_profile(workspace_roots)
+    return _label(resolved)
+
+
 def find_router_file(workspace_roots: Iterable[str], *, rule_path: str = "") -> Path | None:
     from_rule = router_from_rule_path(rule_path)
     if from_rule is not None:
@@ -134,7 +165,9 @@ def find_router_file(workspace_roots: Iterable[str], *, rule_path: str = "") -> 
         base = Path(root)
         candidates.extend(
             [
+                base / "HPCPerfStats" / "monitor" / "cursor-rules" / "agent-discipline-core.mdc",
                 base / "HPCPerfStats" / "hpcperfstats" / "cursor-rules" / "agent-discipline-core.mdc",
+                base / "monitor" / "cursor-rules" / "agent-discipline-core.mdc",
                 base / "hpcperfstats" / "cursor-rules" / "agent-discipline-core.mdc",
             ]
         )
@@ -142,11 +175,20 @@ def find_router_file(workspace_roots: Iterable[str], *, rule_path: str = "") -> 
     checkout_root = hook_dir.parent.parent
     candidates.extend(
         [
+            checkout_root / "monitor" / "cursor-rules" / "agent-discipline-core.mdc",
             checkout_root / "hpcperfstats" / "cursor-rules" / "agent-discipline-core.mdc",
             hook_dir.parent / "hpcperfstats" / "cursor-rules" / "agent-discipline-core.mdc",
             hook_dir.parent.parent / "HPCPerfStats" / "hpcperfstats" / "cursor-rules" / "agent-discipline-core.mdc",
         ],
     )
+    profile = _detect_profile(workspace_roots)
+    preferred = (
+        checkout_root / "monitor" / "cursor-rules" / "agent-discipline-core.mdc"
+        if profile == "monitor"
+        else checkout_root / "hpcperfstats" / "cursor-rules" / "agent-discipline-core.mdc"
+    )
+    if preferred.is_file():
+        return preferred
     for candidate in candidates:
         if candidate.is_file():
             return candidate
@@ -166,10 +208,13 @@ def resolve_cursor_rule_path(rule_basename: str) -> Path | None:
     hook_dir = Path(__file__).resolve().parent
     checkout_root = hook_dir.parent.parent
     candidates = [
+        checkout_root / "monitor" / "cursor-rules" / name,
         checkout_root / "hpcperfstats" / "cursor-rules" / name,
+        hook_dir.parent / "HPCPerfStats" / "monitor" / "cursor-rules" / name,
         hook_dir.parent / "HPCPerfStats" / "hpcperfstats" / "cursor-rules" / name,
         hook_dir.parent / "hpcperfstats" / "cursor-rules" / name,
         hook_dir.parent.parent / "HPCPerfStats" / "hpcperfstats" / "cursor-rules" / name,
+        hook_dir.parent.parent / "HPCPerfStats" / "monitor" / "cursor-rules" / name,
     ]
     for candidate in candidates:
         if candidate.is_file():
@@ -272,8 +317,12 @@ def paths_from_plan_markdown(text: str) -> list[str]:
 
 def is_plan_template_read_path(path: str) -> bool:
     normalized = (path or "").replace("\\", "/")
-    return normalized.endswith(PLAN_TEMPLATE_READ_SUFFIX) or normalized.endswith(
+    if normalized.endswith(PLAN_TEMPLATE_READ_SUFFIX) or normalized.endswith(
         "PLAN_TEMPLATE.md",
+    ):
+        return True
+    return normalized.endswith(MONITOR_PLAN_TEMPLATE_SUFFIX) or (
+        "monitor/docs/plans/PLAN_TEMPLATE.md" in normalized
     )
 
 
@@ -463,7 +512,14 @@ def read_path_from_tool_part(part: dict) -> str | None:
 
 def is_cursor_rule_read_path(path: str) -> bool:
     normalized = (path or "").replace("\\", "/")
-    return "cursor-rules/" in normalized and normalized.endswith(".mdc")
+    return (
+        "cursor-rules/" in normalized
+        and normalized.endswith(".mdc")
+        and (
+            "monitor/cursor-rules/" in normalized
+            or "hpcperfstats/cursor-rules/" in normalized
+        )
+    )
 
 
 def extract_read_rule_basenames(rows: list[dict]) -> set[str]:
@@ -628,7 +684,7 @@ def rule_dual_registration_issues(work_paths: list[str]) -> list[str]:
         if not rule_listed_in_router(hook_text, basename):
             issues.append(
                 f"Rule dual registration: `{basename}` missing from "
-                "hook_task_router.py ROUTER_ENTRIES",
+                "hook_task_router.py (MONITOR_ROUTER_ENTRIES or HPCPERFSTATS_ROUTER_ENTRIES)",
             )
     return issues
 

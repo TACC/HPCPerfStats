@@ -17,6 +17,7 @@ from hpc_hook_lib import (  # noqa: E402
     load_json_stdin,
     looks_like_task_close,
     parse_transcript_lines,
+    profile_rules_dir_label,
     turn_had_closeable_work,
     turn_had_create_plan,
     turn_had_edits,
@@ -39,6 +40,9 @@ def main() -> int:
     if not transcript_path:
         emit_json({})
         return 0
+
+    workspace_roots = payload.get("workspace_roots") or []
+    rules_dir = profile_rules_dir_label(workspace_roots=workspace_roots)
 
     rows = parse_transcript_lines(transcript_path)
     turn_rows = last_turn_rows(rows)
@@ -66,10 +70,11 @@ def main() -> int:
     if had_plan:
         plan_extra = (
             "\nPlan turns also require CreatePlan body sections per "
-            "docs/plans/PLAN_TEMPLATE.md (Problem and facts, Approach, Testing, "
-            "Implementation, Cursor rules, Final code review, post-implementation-review "
-            "todo) and Read of plan-creation-contract.mdc + PLAN_TEMPLATE.md before "
-            "CreatePlan.\n"
+            f"{rules_dir}/../docs/plans/PLAN_TEMPLATE.md or "
+            "HPCPerfStats/docs/plans/PLAN_TEMPLATE.md (Problem and facts, Approach, "
+            "Testing, Implementation, Cursor rules, Final code review, "
+            "post-implementation-review todo) and Read of plan-creation-contract.mdc + "
+            "PLAN_TEMPLATE.md before CreatePlan.\n"
         )
     followup = (
         "Close gate incomplete (Cursor stop hook). This turn used %s but the "
@@ -77,7 +82,7 @@ def main() -> int:
         "not Read via the Read tool.%s\n\n"
         "Add in order:\n"
         "1. ## Agent rule dispatch — list every triggered "
-        "hpcperfstats/cursor-rules/*.mdc you Read (or N/A only when work did not "
+        f"{rules_dir}/*.mdc you Read (or N/A only when work did not "
         "trigger domain rules). Each listed domain rule needs a Read tool call on "
         "that .mdc path BEFORE the first Write/StrReplace/CreatePlan in this turn. "
         "Auto-triggered rules from edited or plan-referenced paths must appear in "
