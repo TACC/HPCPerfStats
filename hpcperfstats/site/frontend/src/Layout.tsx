@@ -1,4 +1,4 @@
-import { useRouter, usePathname, useSearchParams } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import NavLink from "@/components/NavLink";
 import Link from "next/link";
 import {
@@ -26,6 +26,7 @@ import {
 import { useCacheInvalidatePageCreate } from "@/api/generated/admin/admin";
 import { getApiBody, getErrorMessage } from "@/api/get-error-message";
 import LoadingMessage from "./components/LoadingMessage";
+import LayoutRouteChromeReset from "./components/LayoutRouteChromeReset";
 import { ExtendedSearchLayoutContext } from "./context/extended-search-layout-context";
 import type { SessionData } from "./session-context";
 import { Button } from "@/components/ui/button";
@@ -54,8 +55,6 @@ type LayoutProps = {
 export default function Layout({ session, onSessionChange, children }: LayoutProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const searchParamsKey = searchParams.toString();
   const queryClient = useQueryClient();
   const dropStaffMutation = useSessionDropStaffCreate();
   const invalidateCacheMutation = useCacheInvalidatePageCreate();
@@ -71,12 +70,12 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
   const [isDroppingStaff, setIsDroppingStaff] = useState(false);
   const [isInvalidatingCache, setIsInvalidatingCache] = useState(false);
   useRouteFocusMain(pathname);
-  useEffect(() => {
+  const resetRouteChrome = useCallback(() => {
     setMoreMenuOpen(false);
     setNavOpen(false);
     setExtendedSearchOpen(false);
     setFindJobError("");
-  }, [pathname, searchParamsKey]);
+  }, []);
   const extendedSearchToggleRef = useRef<HTMLButtonElement | null>(null);
   const extendedSearchPanelRef = useRef<HTMLDivElement | null>(null);
   useFocusTrap(extendedSearchPanelRef, extendedSearchOpen);
@@ -205,6 +204,9 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
 
   return (
     <div className="w-full px-4 lg:px-6">
+      <Suspense fallback={null}>
+        <LayoutRouteChromeReset onReset={resetRouteChrome} />
+      </Suspense>
       <header className="relative border-b bg-muted/40" role="navigation" aria-label="Primary">
         <div className="relative flex flex-wrap items-start gap-3 py-2 lg:pb-3">
           <Link
