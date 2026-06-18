@@ -158,9 +158,24 @@ web_service_running() {
   docker compose exec -T web true >/dev/null 2>&1
 }
 
-web_container_id() {
+web_container_ref() {
   cd "${REPO_ROOT}"
-  docker compose ps -q web 2>/dev/null | head -n 1
+  local id name
+  id="$(docker compose ps -q web 2>/dev/null | head -n 1 | tr -d '[:space:]')"
+  if [[ -n "${id}" ]]; then
+    echo "${id}"
+    return
+  fi
+  name="$(docker compose ps --format '{{.Name}}' web 2>/dev/null | head -n 1 | tr -d '[:space:]')"
+  if [[ -n "${name}" ]]; then
+    echo "${name}"
+    return
+  fi
+  echo "hpcperfstats_web_1"
+}
+
+web_container_id() {
+  web_container_ref
 }
 
 compose_backend_is_podman() {
@@ -252,17 +267,21 @@ reset_container_dir_via_compose() {
 copy_host_tar_into_web() {
   local host_tar="$1"
   local container_tar="$2"
-  local cid="$3"
+  local container_ref="$3"
 
   cd "${REPO_ROOT}"
-  if docker compose cp "${host_tar}" "web:${container_tar}" 2>/dev/null; then
-    echo "rebuild_frontend.sh: staged deploy tar → web via compose cp" >&2
+  if compose_backend_is_podman; then
+    if ! podman_cli_available; then
+      echo "rebuild_frontend.sh: podman-compose detected but podman not on PATH" >&2
+      return 1
+    fi
+    podman cp "${host_tar}" "${container_ref}:${container_tar}"
+    echo "rebuild_frontend.sh: staged deploy tar → web via podman cp (${container_ref})"
     return 0
   fi
 
-  if [[ -n "${cid}" ]] && podman_cli_available; then
-    podman cp "${host_tar}" "${cid}:${container_tar}"
-    echo "rebuild_frontend.sh: staged deploy tar → web via podman cp" >&2
+  if docker compose cp "${host_tar}" "web:${container_tar}"; then
+    echo "rebuild_frontend.sh: staged deploy tar → web via compose cp"
     return 0
   fi
 
@@ -270,29 +289,57 @@ copy_host_tar_into_web() {
   return 1
 }
 
+verify_staged_tar_in_web() {
+  local container_tar="$1"
+  docker compose exec -T web bash -lc "test -s '${container_tar}'"
+}
+
 copy_tree_via_staged_tar() {
   local dest="$1"
-  local cid host_tar container_tar
+  local container_ref host_tar container_tar
 
-  cid="$(web_container_id)"
-  if [[ -z "${cid}" ]]; then
-    echo "rebuild_frontend.sh: web container id not found (is the web service running?)" >&2
-    exit 1
-  fi
-
+  container_ref="$(web_container_ref)"
   host_tar="$(mktemp /tmp/hps-frontend-deploy.XXXXXX.tar)"
   container_tar="/tmp/hps-frontend-deploy.${$}.${RANDOM}.tar"
 
+  echo "rebuild_frontend.sh: creating deploy tar from ${STATIC_FRONTEND} ..."
   tar -C "${STATIC_FRONTEND}" -cf "${host_tar}" .
-  if ! copy_host_tar_into_web "${host_tar}" "${container_tar}" "${cid}"; then
+  if ! copy_host_tar_into_web "${host_tar}" "${container_tar}" "${container_ref}"; then
     rm -f "${host_tar}"
     exit 1
   fi
   rm -f "${host_tar}"
 
-  # Extract inside web via compose exec so writes land on the staticfiles_data volume.
+  echo "rebuild_frontend.sh: verifying staged tar in web container ..."
+  if ! verify_staged_tar_in_web "${container_tar}"; then
+    echo "rebuild_frontend.sh: staged tar missing or empty in web: ${container_tar}" >&2
+    exit 1
+  fi
+
+  echo "rebuild_frontend.sh: extracting staged tar into web:${dest} ..."
   docker compose exec -T web bash -lc \
     "rm -rf '${dest}' && mkdir -p '${dest}' && tar -xf '${container_tar}' -C '${dest}' && rm -f '${container_tar}'"
+}
+
+run_collectstatic_into_volume() {
+  echo "rebuild_frontend.sh: running collectstatic into ${CONTAINER_STATIC_ROOT_FRONTEND} ..."
+  docker compose exec -T web bash -lc \
+    "rm -rf '${CONTAINER_STATIC_ROOT_FRONTEND}' && /usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput"
+}
+
+deploy_frontend_via_collectstatic() {
+  echo "rebuild_frontend.sh: podman-compose deploy — stage image source tree, then collectstatic to nginx volume"
+  copy_tree_via_staged_tar "${CONTAINER_STATIC_FRONTEND}"
+  run_collectstatic_into_volume
+}
+
+print_podman_deploy_fallback() {
+  cat <<EOF >&2
+rebuild_frontend.sh: manual podman fallback (from git checkout):
+  tar -cf /tmp/hps-frontend.tar -C hpcperfstats/site/hpcperfstats_site/static/frontend .
+  podman cp /tmp/hps-frontend.tar hpcperfstats_web_1:/tmp/hps-frontend.tar
+  docker compose exec web bash -lc 'rm -rf ${CONTAINER_STATIC_FRONTEND} && mkdir -p ${CONTAINER_STATIC_FRONTEND} && tar -xf /tmp/hps-frontend.tar -C ${CONTAINER_STATIC_FRONTEND} && rm -f /tmp/hps-frontend.tar && rm -rf ${CONTAINER_STATIC_ROOT_FRONTEND} && /usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput'
+EOF
 }
 
 copy_tree_via_compose_cp() {
@@ -315,14 +362,19 @@ copy_tree_into_container() {
     exit 1
   fi
 
-  # podman-compose: stdin tar and direct tree cp are unreliable for named volumes; stage a
-  # tar on /tmp in the container, then extract with compose exec onto the volume mount.
-  echo "rebuild_frontend.sh: copying via staged tar + compose exec extract → ${dest}" >&2
+  # podman-compose: stdin tar / compose cp / direct volume copy are unreliable; stage the
+  # image source tree and refresh STATIC_ROOT/frontend with collectstatic (same as startup).
+  echo "rebuild_frontend.sh: copying via staged tar + compose exec extract → ${dest}"
   copy_tree_via_staged_tar "${dest}"
 }
 
 copy_frontend_into_web() {
   cd "${REPO_ROOT}"
+
+  if compose_backend_is_podman; then
+    deploy_frontend_via_collectstatic
+    return
+  fi
 
   # nginx (proxy) reads STATIC_ROOT/frontend from the shared staticfiles_data volume.
   copy_tree_into_container "${CONTAINER_STATIC_ROOT_FRONTEND}"
@@ -433,6 +485,8 @@ deploy_to_compose() {
     return 0
   fi
 
+  trap 'echo "rebuild_frontend.sh: deploy step failed." >&2; compose_backend_is_podman && print_podman_deploy_fallback; exit 1' ERR
+
   echo "Copying built assets into web:${CONTAINER_STATIC_ROOT_FRONTEND} (nginx staticfiles volume) ..."
   copy_frontend_into_web
   verify_container_frontend_matches_host
@@ -443,6 +497,8 @@ deploy_to_compose() {
   print_container_deploy_fingerprint "web STATIC_ROOT" web "${CONTAINER_STATIC_ROOT_FRONTEND}/machine/index.html"
   print_container_deploy_fingerprint "proxy nginx volume" proxy "${PROXY_STATIC_ROOT_FRONTEND}/machine/index.html"
   print_deploy_fingerprint "host build (expected)" "${STATIC_FRONTEND}/machine/index.html"
+
+  trap - ERR
 
   echo "Frontend deploy complete. Use the proxy service (ports 80/443), not web:8000 — Gunicorn does not serve /machine/."
   echo "Hard-refresh the browser and confirm the deploy fingerprint above matches page-*.js in DevTools Network."

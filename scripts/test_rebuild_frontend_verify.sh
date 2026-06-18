@@ -15,7 +15,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for fn in copy_frontend_into_web compose_cp_supported web_container_id verify_container_frontend_matches_host verify_proxy_frontend_matches_web copy_tree_via_staged_tar compose_backend_is_podman; do
+for fn in copy_frontend_into_web compose_cp_supported web_container_ref verify_container_frontend_matches_host verify_proxy_frontend_matches_web copy_tree_via_staged_tar compose_backend_is_podman deploy_frontend_via_collectstatic; do
   if ! declare -F "${fn}" >/dev/null; then
     echo "expected ${fn} to be defined in rebuild_frontend.sh" >&2
     exit 1
@@ -47,6 +47,16 @@ if ! grep -q 'PROXY_STATIC_ROOT_FRONTEND' "${REBUILD_SCRIPT}"; then
   exit 1
 fi
 
+if ! grep -q 'deploy_frontend_via_collectstatic' "${REBUILD_SCRIPT}"; then
+  echo "expected podman collectstatic deploy path in rebuild_frontend.sh" >&2
+  exit 1
+fi
+
+if ! grep -q 'run_collectstatic_into_volume' "${REBUILD_SCRIPT}"; then
+  echo "expected collectstatic volume refresh for podman in rebuild_frontend.sh" >&2
+  exit 1
+fi
+
 if grep -q 'compose cp unavailable; using tar pipe via exec' "${REBUILD_SCRIPT}"; then
   echo "unexpected broken compose exec tar pipe message in rebuild_frontend.sh" >&2
   exit 1
@@ -54,11 +64,6 @@ fi
 
 if ! grep -q 'CONTAINER_STATIC_ROOT_FRONTEND' "${REBUILD_SCRIPT}"; then
   echo "expected STATIC_ROOT/frontend volume deploy in rebuild_frontend.sh" >&2
-  exit 1
-fi
-
-if grep -q 'collectstatic --noinput' "${REBUILD_SCRIPT}"; then
-  echo "rebuild_frontend.sh should deploy directly to STATIC_ROOT/frontend, not rely on collectstatic" >&2
   exit 1
 fi
 
