@@ -135,6 +135,24 @@ web_service_running() {
   docker compose exec -T web true >/dev/null 2>&1
 }
 
+compose_cp_supported() {
+  cd "${REPO_ROOT}"
+  docker compose cp --help >/dev/null 2>&1
+}
+
+copy_frontend_into_web() {
+  cd "${REPO_ROOT}"
+  if compose_cp_supported; then
+    docker compose cp "${STATIC_FRONTEND}/." "web:${CONTAINER_STATIC_FRONTEND}/"
+    return
+  fi
+  echo "rebuild_frontend.sh: compose cp unavailable; using tar pipe via exec" >&2
+  docker compose exec -T web bash -lc \
+    "rm -rf '${CONTAINER_STATIC_FRONTEND}' && mkdir -p '${CONTAINER_STATIC_FRONTEND}'"
+  tar -C "${STATIC_FRONTEND}" -cf - . \
+    | docker compose exec -T web tar -xf - -C "${CONTAINER_STATIC_FRONTEND}"
+}
+
 deploy_to_compose() {
   cd "${REPO_ROOT}"
   if ! web_service_running; then
@@ -144,7 +162,7 @@ deploy_to_compose() {
   fi
 
   echo "Copying built assets into web:${CONTAINER_STATIC_FRONTEND} ..."
-  docker compose cp "${STATIC_FRONTEND}/." "web:${CONTAINER_STATIC_FRONTEND}/"
+  copy_frontend_into_web
 
   echo "Running collectstatic in web (updates staticfiles_data for nginx) ..."
   docker compose exec -T web bash -lc '

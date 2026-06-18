@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Regression for rebuild_frontend.sh SPA shell verification (Next export layout).
+# Regression for rebuild_frontend.sh SPA shell verification and deploy helpers.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REBUILD_SCRIPT="${SCRIPT_DIR}/rebuild_frontend.sh"
 # shellcheck source=rebuild_frontend.sh
-source "${SCRIPT_DIR}/rebuild_frontend.sh"
+source "${REBUILD_SCRIPT}"
 
 tmpdir=""
 cleanup() {
@@ -13,6 +14,23 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+
+if ! declare -F copy_frontend_into_web >/dev/null; then
+  echo "expected copy_frontend_into_web to be defined in rebuild_frontend.sh" >&2
+  exit 1
+fi
+
+if ! declare -F compose_cp_supported >/dev/null; then
+  echo "expected compose_cp_supported to be defined in rebuild_frontend.sh" >&2
+  exit 1
+fi
+
+if ! grep -q 'compose cp unavailable; using tar pipe via exec' "${REBUILD_SCRIPT}"; then
+  echo "expected tar pipe fallback in rebuild_frontend.sh" >&2
+  exit 1
+fi
+
+echo "test: copy_frontend_into_web and compose_cp_supported are defined"
 
 tmpdir="$(mktemp -d)"
 
