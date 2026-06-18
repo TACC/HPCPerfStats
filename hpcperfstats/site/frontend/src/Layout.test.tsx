@@ -236,6 +236,29 @@ describe("Layout", () => {
     });
   });
 
+  it("closes extended search when searchParams change on the same pathname", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <Layout session={{ logged_in: true, username: "alice", is_staff: false }}>
+        <div>Child content</div>
+      </Layout>,
+      {
+        withNavigationSync: true,
+        initialPath: "/machine/jobs/?order_by=-end_time",
+      },
+    );
+    await user.click(screen.getByRole("button", { name: /extended search/i }));
+    expect(await screen.findByRole("dialog", { name: /extended search/i })).toBeInTheDocument();
+
+    await act(async () => {
+      await nextNavigationMock.router.push("/machine/jobs/?order_by=username");
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: /extended search/i })).not.toBeInTheDocument();
+    });
+  });
+
   it("shows build-time cluster name when session machine_name is empty", () => {
     renderLayout({
       logged_in: true,

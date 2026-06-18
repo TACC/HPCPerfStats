@@ -54,6 +54,7 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 | Trigger paths | Read these rules |
 |---------------|------------------|
 | `hpcperfstats/site/lib/machine/api.py`, serializers, models | `django-python-cursor-rules.mdc`, `end-to-end-feature-wiring-contract.mdc` |
+| `hpcperfstats/site/lib/machine/job_list_filter_summary.py` | `design-focused-spa-ux.mdc` |
 | API routes, status bands, auth | `api-breaking-change-contract.mdc`, `pipeline-endpoint-matrix-drift-guard.mdc` |
 | Migrations | `django-migration-numbering.mdc` |
 | `hpcperfstats.ini`, compose image config | `immutable-image-ini-policy.mdc`, `hpcperfstats-ini-format.mdc` |
@@ -62,7 +63,7 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 
 | Trigger paths | Read these rules |
 |---------------|------------------|
-| `hpcperfstats/site/frontend/` | `react-next-ts-cursor-rule.mdc`, `shadcn-ui-frontend.mdc`, `testing-best-practices.mdc`, `frontend-stack-wiring-contract.mdc`, `interactive-ready-controls.mdc` |
+| `hpcperfstats/site/frontend/` | `react-next-ts-cursor-rule.mdc`, `shadcn-ui-frontend.mdc`, `testing-best-practices.mdc`, `frontend-stack-wiring-contract.mdc`, `interactive-ready-controls.mdc`, `design-focused-spa-ux.mdc` |
 | `hpcperfstats/site/frontend/src/hooks/`, `src/views/`, `app/machine/**`, `src/utils/machine-route-params.ts`, `scripts/audit-wire-drift.mts` | `frontend-stack-wiring-contract.mdc` |
 | `hpcperfstats/site/openapi/`, `orval.config.ts`, `src/api/` | `openapi-orval-sync.mdc`, `openapi-spa-wire-validation-contract.mdc`, `frontend-stack-wiring-contract.mdc` |
 | `hpcperfstats/site/lib/machine/api.py`, `openapi_schema.py`, `openapi_serializers.py` | `openapi-orval-sync.mdc`, `openapi-spa-wire-validation-contract.mdc`, `api-breaking-change-contract.mdc` |

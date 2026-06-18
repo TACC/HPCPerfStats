@@ -34,7 +34,8 @@ const ROUTE_KEY_FOR_FILTER: Partial<Record<JobListHeaderFilterKey, string>> = {
   queue: "queue",
 };
 
-function mergeRouteParamsIntoSearchParams(
+/** Merge browse-route path segments into query params for display and API parity. */
+export function mergeRouteParamsIntoSearchParams(
   searchParams: URLSearchParams,
   routeParams: Record<string, string | string[] | undefined>,
 ): URLSearchParams {

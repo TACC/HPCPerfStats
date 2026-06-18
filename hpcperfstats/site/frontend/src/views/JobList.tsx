@@ -52,10 +52,10 @@ import { formatDateTime } from "../utils/formatDateTime";
 import { formatDecimalStandard } from "../utils/formatDecimal";
 import { buildJobListApiParams } from "../utils/build-job-list-api-params";
 import {
-  buildJobListFilterSummaryLines,
-  isExtendedSearchJobsRoute,
+  buildJobListActiveFilterLines,
 } from "../utils/job-list-filter-summary";
 import { buildJobListBreadcrumbs } from "../utils/job-list-breadcrumbs";
+import { resolveJobListSelectionContext } from "../utils/job-list-selection-context";
 import { useSession } from "../session-context";
 import { JOB_LIST_TABLE_HEADERS } from "../utils/site-field-labels";
 import { tableSortAriaSort } from "../utils/table-sort-a11y";
@@ -200,7 +200,7 @@ export default function JobList() {
   const pathname = usePathname();
   const router = useRouter();
   const [histogramReloadKey, setHistogramReloadKey] = useState(0);
-  const [distributionsOpen, setDistributionsOpen] = useState(false);
+  const [distributionsOpen, setDistributionsOpen] = useState(true);
   const { openExtendedSearch } = useExtendedSearchLayout();
   const listViewTab = readTabFromSearchParams(rawSearchParams, "view", "jobs");
   const [isLgUp, setIsLgUp] = useState(() =>
@@ -249,7 +249,12 @@ export default function JobList() {
     replacePathIfChanged(router, pathname, next, pathname, searchParams);
   }
 
-  const routeCtx = jobListRouteTitleContext(paramsFromRoute, asURLSearchParams);
+  const selectionContext = useMemo(
+    () => resolveJobListSelectionContext(asURLSearchParams, paramsFromRoute),
+    [asURLSearchParams, paramsFromRoute],
+  );
+
+  const routeCtx = jobListRouteTitleContext(selectionContext, asURLSearchParams);
   const documentTitleSegment = buildJobListTitle({
     error,
     loading: initialLoading,
@@ -258,11 +263,13 @@ export default function JobList() {
   });
   useDocumentTitle(documentTitleSegment);
 
-  const filterSummaryLines = isExtendedSearchJobsRoute(pathname)
-    ? buildJobListFilterSummaryLines(asURLSearchParams)
-    : jobListData?.filter_summary?.length
-      ? jobListData.filter_summary
-      : [];
+  const filterSummaryLines = useMemo(() => {
+    const orderBy = asURLSearchParams.get("order_by") || jobListData?.order_by || "-end_time";
+    return buildJobListActiveFilterLines(asURLSearchParams, paramsFromRoute, {
+      orderBy,
+      serverSummary: jobListData?.filter_summary,
+    });
+  }, [asURLSearchParams, paramsFromRoute, jobListData?.order_by, jobListData?.filter_summary]);
 
   if (error) return <BannerErrorMessage message={error} />;
   if (!initialLoading && !jobListData) return null;
@@ -358,7 +365,7 @@ export default function JobList() {
   const histogramErrorMessage =
     batchError ||
     (firstFailedMetric ? metricHistStatus[firstFailedMetric]?.error : null);
-  const pageSummary = jobListPageHumanSummary(paramsFromRoute);
+  const pageSummary = jobListPageHumanSummary(selectionContext);
 
   function handleJumpToDistributions(event: MouseEvent<HTMLAnchorElement>) {
     event.preventDefault();
@@ -481,7 +488,7 @@ export default function JobList() {
     );
   };
 
-  const breadcrumbItems = buildJobListBreadcrumbs(paramsFromRoute, qname);
+  const breadcrumbItems = buildJobListBreadcrumbs(selectionContext, qname);
 
   const distributionsBody = (
     <>

@@ -75,6 +75,13 @@ def build_job_list_qname_and_filter_summary(fields):
     if end_lte:
         lines.append(f"Job ended on or before {end_lte}")
 
+    date_param = (fields.get("end_time__date") or "").strip()
+    if date_param:
+        if len(date_param) == 4 and date_param.isdigit():
+            lines.append(f"Calendar year: {date_param}")
+        else:
+            lines.append(f"Job end date: {date_param}")
+
     for key, op_sym in (
         ("runtime__gte", "Runtime ≥"),
         ("runtime__lte", "Runtime ≤"),

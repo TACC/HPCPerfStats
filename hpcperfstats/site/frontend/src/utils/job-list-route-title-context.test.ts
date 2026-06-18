@@ -13,6 +13,10 @@ describe("jobListPageHumanSummary", () => {
     expect(jobListPageHumanSummary({ year: "2024" })).toContain("calendar year");
   });
 
+  it("describes query-only date slice", () => {
+    expect(jobListPageHumanSummary({ date: "2024-06-01" })).toContain("2024-06-01");
+  });
+
   it("returns null for generic jobs route", () => {
     expect(jobListPageHumanSummary({})).toBeNull();
   });

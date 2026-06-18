@@ -1,40 +1,35 @@
 import type { BreadcrumbItem } from "@/components/PageBreadcrumbs";
+import type { JobListSelectionContext } from "./job-list-selection-context";
 
 export function buildJobListBreadcrumbs(
-  routeParams: Record<string, string | string[] | undefined>,
+  selection: JobListSelectionContext,
   terminalLabel = "Jobs",
 ): BreadcrumbItem[] {
   const items: BreadcrumbItem[] = [{ label: "Browse", to: "/machine/" }];
-  const year = routeParams.year;
-  const date = routeParams.date;
-  const username = routeParams.username;
-  const account = routeParams.account;
-  const queue = routeParams.queue;
-  const host = routeParams.host;
 
-  if (year && typeof year === "string") {
-    items.push({ label: `Year ${year}`, to: `/year/${year}` });
-  } else if (date && typeof date === "string") {
-    items.push({ label: `Date ${date}`, to: `/date/${date}` });
-  } else if (username && typeof username === "string") {
+  if (selection.year) {
+    items.push({ label: `Year ${selection.year}`, to: `/year/${selection.year}` });
+  } else if (selection.date) {
+    items.push({ label: `Date ${selection.date}`, to: `/date/${selection.date}` });
+  } else if (selection.username) {
     items.push({
-      label: `User ${username}`,
-      to: `/username/${encodeURIComponent(username)}`,
+      label: `User ${selection.username}`,
+      to: `/username/${encodeURIComponent(selection.username)}`,
     });
-  } else if (account && typeof account === "string") {
+  } else if (selection.account) {
     items.push({
-      label: `Project ${account}`,
-      to: `/account/${encodeURIComponent(account)}`,
+      label: `Project ${selection.account}`,
+      to: `/account/${encodeURIComponent(selection.account)}`,
     });
-  } else if (queue && typeof queue === "string") {
+  } else if (selection.queue) {
     items.push({
-      label: `Queue ${queue}`,
-      to: `/queue/${encodeURIComponent(queue)}`,
+      label: `Queue ${selection.queue}`,
+      to: `/queue/${encodeURIComponent(selection.queue)}`,
     });
-  } else if (host && typeof host === "string") {
+  } else if (selection.host) {
     items.push({
-      label: `Host ${host}`,
-      to: `/host/${encodeURIComponent(host)}`,
+      label: `Host ${selection.host}`,
+      to: `/host/${encodeURIComponent(selection.host)}`,
     });
   }
   items.push({ label: terminalLabel });

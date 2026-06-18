@@ -36,7 +36,7 @@ HPCPerfStats serves researchers and operators who expect clear hierarchy, honest
 
 - Panel uses `role="dialog"`, `aria-modal="true"`, semi-transparent **backdrop**, click-outside and **Escape** close, focus return to toggle.
 - Call **`onClose`** after successful navigate from extended search.
-- Collapse mobile `navOpen` / `extendedSearchOpen` on route change.
+- Collapse mobile `navOpen` / `extendedSearchOpen` on route change (pathname or query-string navigation).
 
 ## Wayfinding
 

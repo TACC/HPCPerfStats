@@ -27,3 +27,12 @@ def test_filtered_jobs_title_without_queue():
     qname, summary = build_job_list_qname_and_filter_summary({"runtime__gte": "1"})
     assert qname == "Filtered jobs"
     assert summary
+
+
+def test_end_time_date_in_filter_summary():
+    qname, summary = build_job_list_qname_and_filter_summary(
+        {"end_time__date": "2024-01-15", "queue": "normal"}
+    )
+    assert qname == "Jobs for date 2024-01-15"
+    assert any("2024-01-15" in line for line in summary)
+    assert any("normal" in line for line in summary)

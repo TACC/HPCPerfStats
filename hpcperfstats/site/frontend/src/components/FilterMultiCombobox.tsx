@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Check, ChevronsUpDown } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,6 +32,12 @@ export default function FilterMultiCombobox({
 }: FilterMultiComboboxProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const searchParams = useSearchParams();
+
+  useEffect(() => {
+    setOpen(false);
+    setQuery("");
+  }, [searchParams.toString()]);
 
   useEffect(() => {
     if (!panelOpen) {
@@ -69,7 +76,7 @@ export default function FilterMultiCombobox({
           </Button>
         ) : null}
       </div>
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover open={open} onOpenChange={setOpen} modal={false}>
         <PopoverTrigger
           nativeButton
           className={cn(

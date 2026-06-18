@@ -100,6 +100,13 @@ function HistogramThumbnail({
   }, [searchParams.toString()]);
 
   useEffect(() => {
+    if (embedAllowed) return;
+    setExpanded(false);
+    setHasOpened(false);
+    setPopoverLayoutReady(false);
+  }, [embedAllowed]);
+
+  useEffect(() => {
     if (!expanded || isMobile) return;
     const id = window.requestAnimationFrame(() => {
       closeButtonRef.current?.focus();

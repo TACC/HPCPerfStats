@@ -302,6 +302,58 @@ describe("HistogramThumbnails", () => {
     expect(document.documentElement).not.toHaveAttribute("data-scroll-locked");
   });
 
+  it("closes enlarge dialog when embedAllowed becomes false", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      configurable: true,
+      value: vi.fn().mockImplementation((query) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+
+    const embedItem = vi.fn().mockResolvedValue(embedViewsWithIdleDoc());
+    window.Bokeh = { embed: { embed_item: embedItem } };
+
+    const histograms = [
+      {
+        title: "Jobs by queue",
+        plot_item_thumb: VALID_BOKEH_ITEM,
+        plot_item_full: VALID_BOKEH_ITEM,
+      },
+    ];
+
+    const { rerender } = renderHistograms(
+      <HistogramThumbnails embedAllowed histograms={histograms} />,
+    );
+
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", {
+        name: "Jobs by queue: enlarge chart",
+      }),
+    );
+    expect(await screen.findByTestId("histogram-enlarge-dialog")).toBeInTheDocument();
+
+    rerender(
+      <SessionContext.Provider
+        value={{ logged_in: true, is_staff: false, username: "tester" }}
+      >
+        <HistogramThumbnails embedAllowed={false} histograms={histograms} />
+      </SessionContext.Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("histogram-enlarge-dialog")).not.toBeInTheDocument();
+    });
+  });
+
   it("has no serious axe violations for thumbnail and open popover", async () => {
     Object.defineProperty(window, "matchMedia", {
       writable: true,

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildJobListActiveFilterLines,
   buildJobListFilterSummaryLines,
   hasExtendedSearchFilters,
   isExtendedSearchJobsRoute,
@@ -18,9 +19,33 @@ describe("buildJobListFilterSummaryLines", () => {
     expect(lines.some((l) => l.includes("2024-01-01"))).toBe(true);
   });
 
+  it("includes browse end_time__date and sort order", () => {
+    const params = new URLSearchParams({
+      end_time__date: "2024-01-15",
+      queue: "normal",
+    });
+    const lines = buildJobListFilterSummaryLines(params, "-end_time");
+    expect(lines.some((l) => l.includes("2024-01-15"))).toBe(true);
+    expect(lines.some((l) => l.includes("normal"))).toBe(true);
+    expect(lines.some((l) => l.toLowerCase().includes("sort:"))).toBe(true);
+  });
+
   it("includes metric thresholds", () => {
     const params = new URLSearchParams({ metrics_avg_cpuusage__gte: "50" });
     expect(buildJobListFilterSummaryLines(params).length).toBeGreaterThan(0);
+  });
+});
+
+describe("buildJobListActiveFilterLines", () => {
+  it("merges route date into active filters on /jobs query routes", () => {
+    const lines = buildJobListActiveFilterLines(
+      new URLSearchParams("end_time__date=2024-01-15&queue=gpu"),
+      {},
+      { orderBy: "-runtime" },
+    );
+    expect(lines.some((l) => l.includes("2024-01-15"))).toBe(true);
+    expect(lines.some((l) => l.includes("gpu"))).toBe(true);
+    expect(lines.some((l) => l.includes("Sort:"))).toBe(true);
   });
 });
 

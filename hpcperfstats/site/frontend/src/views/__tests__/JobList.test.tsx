@@ -185,14 +185,12 @@ describe("JobList", () => {
 
     renderJobList();
 
-    fireEvent.click(screen.getByRole("button", { name: /distributions for this job selection/i }));
-
     await waitFor(() => {
       expect(screen.getByText("Updating distributions…")).toBeInTheDocument();
     });
   });
 
-  it("does not enable histogram fetch on desktop until distributions are expanded", async () => {
+  it("enables histogram fetch on desktop when distributions start expanded", async () => {
     Object.defineProperty(window, "matchMedia", {
       writable: true,
       configurable: true,
@@ -222,16 +220,38 @@ describe("JobList", () => {
     renderJobList("/jobs");
 
     await waitFor(() => {
-      expect(vi.mocked(useJobListHistograms)).toHaveBeenCalled();
+      const lastCall = vi.mocked(useJobListHistograms).mock.calls.at(-1);
+      expect(lastCall?.[2]).toBe(true);
     });
-    const lastCall = vi.mocked(useJobListHistograms).mock.calls.at(-1);
-    expect(lastCall?.[2]).toBe(false);
 
     fireEvent.click(screen.getByRole("button", { name: /distributions for this job selection/i }));
 
     await waitFor(() => {
-      const expandedCall = vi.mocked(useJobListHistograms).mock.calls.at(-1);
-      expect(expandedCall?.[2]).toBe(true);
+      const collapsedCall = vi.mocked(useJobListHistograms).mock.calls.at(-1);
+      expect(collapsedCall?.[2]).toBe(false);
+    });
+  });
+
+  it("shows date queue and sort together in active filters after browse normalization", async () => {
+    setJobListQueryMock({
+      data: {
+        job_list: [],
+        nj: 0,
+        aggregates: {},
+        qname: "Jobs for date 2024-01-15",
+        order_by: "-runtime",
+        filter_summary: ["Queue: normal"],
+        pagination: { page: 1, num_pages: 1 },
+      },
+    });
+
+    renderJobList("/jobs?end_time__date=2024-01-15&queue=normal&order_by=-runtime");
+
+    await waitFor(() => {
+      const region = screen.getByRole("region", { name: /active search filters/i });
+      expect(within(region).getByText(/Job end date: 2024-01-15/)).toBeInTheDocument();
+      expect(within(region).getByText(/normal/)).toBeInTheDocument();
+      expect(within(region).getByText(/Sort:/)).toBeInTheDocument();
     });
   });
 
@@ -963,8 +983,6 @@ describe("JobList", () => {
     await waitFor(() => {
       expect(screen.getByText("Jobs = 0")).toBeInTheDocument();
     });
-
-    fireEvent.click(screen.getByRole("button", { name: /distributions for this job selection/i }));
 
     await waitFor(() => {
       expect(

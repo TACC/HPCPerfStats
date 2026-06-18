@@ -1,4 +1,4 @@
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import NavLink from "@/components/NavLink";
 import Link from "next/link";
 import {
@@ -54,6 +54,8 @@ type LayoutProps = {
 export default function Layout({ session, onSessionChange, children }: LayoutProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const searchParamsKey = searchParams.toString();
   const queryClient = useQueryClient();
   const dropStaffMutation = useSessionDropStaffCreate();
   const invalidateCacheMutation = useCacheInvalidatePageCreate();
@@ -74,7 +76,7 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
     setNavOpen(false);
     setExtendedSearchOpen(false);
     setFindJobError("");
-  }, [pathname]);
+  }, [pathname, searchParamsKey]);
   const extendedSearchToggleRef = useRef<HTMLButtonElement | null>(null);
   const extendedSearchPanelRef = useRef<HTMLDivElement | null>(null);
   useFocusTrap(extendedSearchPanelRef, extendedSearchOpen);

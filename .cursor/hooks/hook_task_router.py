@@ -68,12 +68,14 @@ ROUTER_ENTRIES: list[RouterEntry] = [
         "id": "django_api",
         "patterns": [
             "hpcperfstats/site/lib/machine/api.py",
+            "hpcperfstats/site/lib/machine/job_list_filter_summary.py",
             "hpcperfstats/site/lib/machine/serializers*",
             "hpcperfstats/site/lib/machine/models*",
         ],
         "rules": [
             "django-python-cursor-rules.mdc",
             "end-to-end-feature-wiring-contract.mdc",
+            "design-focused-spa-ux.mdc",
         ],
     },
     {
@@ -123,6 +125,7 @@ ROUTER_ENTRIES: list[RouterEntry] = [
             "testing-best-practices.mdc",
             "frontend-stack-wiring-contract.mdc",
             "interactive-ready-controls.mdc",
+            "design-focused-spa-ux.mdc",
         ],
     },
     {
