@@ -12,7 +12,7 @@ except ImportError:
 
 
 def _repo_root() -> Path:
-    # hpcperfstats/monitor_naming/load_map.py -> HPCPerfStats/
+    # hpcperfstats/dbload/lib/monitor_naming/load_map.py -> HPCPerfStats/
     return Path(__file__).resolve().parents[2]
 
 

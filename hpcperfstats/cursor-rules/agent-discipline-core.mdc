@@ -46,7 +46,7 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 | `hpcperfstats/dbload/sync_timedb.py`, `sync_timedb_archive.py`, `hpcperfstats/dbload/lib/sync_timedb_*.py`, `dbload/lib/**`, `multiprocessing_pool_health.py` | `sync-timedb-persistence-contract.mdc`, `sync-timedb-archive-janitor-contract.mdc`, `sync-timedb-db-before-archive-contract.mdc`, `sync-timedb-lock-and-archive-contract.mdc`, `runtime-resource-and-metrics-safety.mdc` |
 | Startup day-close / archive scan | `sync-timedb-startup-day-close-contract.mdc`, `sync-timedb-canonical-startup-archive-scan.mdc` |
 | Ingest pool + sealed archive / Redis members | `sync-timedb-ingest-pool-io-coordination.mdc` |
-| `hpcperfstats/analysis/metrics/` | `runtime-resource-and-metrics-safety.mdc`, `pipeline-metrics-e2e-maintenance.mdc`, `update-metrics-job-listing-new-data-type.mdc` |
+| `hpcperfstats/analysis/metrics/` | `runtime-resource-and-metrics-safety.mdc`, `pipeline-metrics-e2e-maintenance.mdc`, `update-metrics-job-listing-new-data-type.mdc`, `update-metrics-batch-resilience.mdc` |
 | Bugfix / traceback / stall / timeout | `bugfix-and-perf-change-playbook.mdc`, `exhaustive-error-path-analysis.mdc`, `logic-change-checklist.mdc` |
 
 ### Django API, backend Python

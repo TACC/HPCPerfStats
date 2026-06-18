@@ -1,5 +1,5 @@
 ---
-description: Where Bokeh layout/UX lives vs Python figure sizing/themes in analysis/plot
+description: Where Bokeh layout/UX lives vs Python figure sizing/themes in analysis/metrics/lib/plot
 globs:
   - "**/hpcperfstats/site/lib/machine/bokeh_plot_layout.py"
   - "**/hpcperfstats/site/frontend/**/*.jsx"

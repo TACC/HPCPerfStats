@@ -35,7 +35,7 @@ When changing `hpcperfstats/analysis/metrics/lib/metrics.py` (`Metrics.run`, `_u
 
 ## Tests (same task)
 
-- `hpcperfstats/analysis/metrics/test_job_for_metrics.py` — `_unwrap`, stall partial return, per-job timeout.
+- `hpcperfstats/analysis/metrics/tests/test_job_for_metrics.py` — `_unwrap`, stall partial return, per-job timeout.
 - `hpcperfstats/site/lib/machine/tests/test_metrics.py` — NaN/`_finite_amax` regressions for affected metrics.
 - `hpcperfstats/site/lib/machine/tests/test_update_metrics.py` — stall exit propagation and statement-timeout restore on closed connections.
 - `hpcperfstats/tests/test_dbload/lib/dbload/lib/conf_parser.py` + `test_hpcperfstats_ini_example.py` when adding/changing INI knobs.

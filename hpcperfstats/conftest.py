@@ -1,4 +1,4 @@
-"""Pytest configuration for hpcperfstats. Sets default HPCPERFSTATS_INI for unit tests; marks site.machine.tests as django_db; provides temp_ini fixture.
+"""Pytest configuration for hpcperfstats. Sets default HPCPERFSTATS_INI for unit tests; marks site/lib/machine/tests with django_db; provides temp_ini fixture.
 
 """
 import os
@@ -17,9 +17,7 @@ _DEFAULT_INI = None
 
 
 def pytest_configure(config):
-  """Set default INI path for tests. Django is configured only by site.machine.tests conftest.
-
-    """
+  """Set default INI path for tests. Django is configured by site/lib/machine/tests conftest when loaded."""
   global _DEFAULT_INI
   if os.environ.get("HPCPERFSTATS_INI"):
     return
@@ -78,13 +76,13 @@ def _django_db_needs_default_database(item):
 
 
 def pytest_collection_modifyitems(config, items):
-  """Mark site.machine.tests with django_db when missing; skip Postgres-backed tests off compose.
+  """Mark site/lib/machine/tests with django_db when missing; skip Postgres-backed tests off compose.
 
-    DB- and Redis-backed integration runs set HPCPERFSTATS_COMPOSE_NETWORK=1 (see
-    tests/run_db_pytest_workflow.sh and tests/run_redis_cache_pytest_workflow.sh).
-    Tests that only need Django settings + mocks use ``django_db(databases=[])``
-    so they still run on the host.
-    """
+  DB- and Redis-backed integration runs set HPCPERFSTATS_COMPOSE_NETWORK=1 (see
+  tests/run_db_pytest_workflow.sh and tests/run_redis_cache_pytest_workflow.sh).
+  Tests that only need Django settings + mocks use ``django_db(databases=[])``
+  so they still run on the host.
+  """
   for item in items:
     path = str(item.fspath).replace("\\", "/")
     if "/site/lib/machine/tests/" in path and not list(item.iter_markers("django_db")):

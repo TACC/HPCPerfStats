@@ -61,6 +61,7 @@ ROUTER_ENTRIES: list[RouterEntry] = [
             "runtime-resource-and-metrics-safety.mdc",
             "pipeline-metrics-e2e-maintenance.mdc",
             "update-metrics-job-listing-new-data-type.mdc",
+            "update-metrics-batch-resilience.mdc",
         ],
     },
     {
@@ -219,6 +220,21 @@ ROUTER_ENTRIES: list[RouterEntry] = [
         ],
         "rules": [
             "testing-best-practices.mdc",
+        ],
+    },
+    {
+        "id": "bokeh_plots",
+        "patterns": [
+            "hpcperfstats/site/lib/machine/bokeh_plot_layout.py",
+            "hpcperfstats/site/frontend/**/*.jsx",
+            "hpcperfstats/site/frontend/**/*.js",
+            "hpcperfstats/analysis/metrics/lib/plot/**",
+            "hpcperfstats/cursor-rules/bokeh-layout-surface-split.mdc",
+        ],
+        "rules": [
+            "job-plot-artifacts-caching.mdc",
+            "bokeh-layout-surface-split.mdc",
+            "no-scientific-notation-web.mdc",
         ],
     },
     {

@@ -107,3 +107,17 @@ def test_pycache_under_package_lib_is_gitignored():
     )
     assert proc.returncode == 0, f"{rel} must be gitignored"
     assert "__pycache__" in proc.stdout or ".pyc" in proc.stdout
+
+
+def test_metrics_tests_live_under_tests_package_only():
+  """Metrics pytest modules must not be colocated beside lib/ or update_metrics.py."""
+  metrics_root = REPO_ROOT / "hpcperfstats" / "analysis" / "metrics"
+  stray = [
+      p.relative_to(metrics_root)
+      for p in metrics_root.rglob("test_*.py")
+      if not (len(p.relative_to(metrics_root).parts) >= 2 and p.relative_to(metrics_root).parts[0] == "tests")
+  ]
+  assert stray == [], f"move metrics tests under analysis/metrics/tests/: {stray}"
+  tests_dir = metrics_root / "tests"
+  assert tests_dir.is_dir()
+  assert any(tests_dir.glob("test_*.py")), "metrics/tests/ must contain pytest modules"

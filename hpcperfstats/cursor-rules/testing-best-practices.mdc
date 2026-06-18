@@ -21,7 +21,8 @@ Canonical testing guidance for backend (pytest), frontend (Vitest/RTL), and E2E 
 
 ## Colocation and naming
 
-- **Python:** `test_*.py` beside module (`analysis/metrics/test_*.py`) or `hpcperfstats/tests/` for cross-cutting daemons. **New modules must get a colocated or paired test file in the same task.**
+- **Python (general):** `test_*.py` beside module for small leaf packages, **`hpcperfstats/tests/`** for cross-cutting daemons, or a dedicated **`tests/`** package under the owning tree when the subtree has many modules (see metrics below). **New modules must get a test file in the same task** (colocated or under that tree's `tests/`).
+- **`analysis/metrics/`:** all pytest modules live under **`hpcperfstats/analysis/metrics/tests/`** only — do **not** add `test_*.py` beside `update_metrics.py`, under `lib/plot/`, or under `lib/gen/`.
 - **Frontend:** `*.test.{js,jsx}` colocated under `hpcperfstats/site/frontend/src/`.
 - Names describe **behavior + outcome**: `test_archive_gz_members_contained_in_zst_rejects_missing_or_wrong_size`.
 

@@ -41,7 +41,7 @@ _FAILURE_SUBSTRINGS = (
     'can\'t access property "is_valid"',
 )
 
-# hpcperfstats/site/machine/tests -> site
+# hpcperfstats/site/lib/machine/tests -> site
 _SITE_DIR = Path(__file__).resolve().parent.parent.parent
 _FIXTURE_DIR = _SITE_DIR / "frontend" / "src" / "test-fixtures"
 _STATIC_FRONTEND_DIR = _SITE_DIR / "hpcperfstats_site" / "static" / "frontend"

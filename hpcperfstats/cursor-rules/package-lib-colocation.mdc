@@ -33,7 +33,7 @@ When adding or moving **any** library module (not an entry script):
 1. **Path** — place under the correct `{parent}/lib/` (see table). Never as a flat sibling of an entry script (`dbload/foo.py`, `conf_parser.py` at package root).
 2. **Imports** — use the **`hpcperfstats.{parent}.lib.{module}`** prefix in product code, tests, and monkeypatch strings (`patch("hpcperfstats.dbload.lib.conf_parser…")`). Entry scripts stay `hpcperfstats.dbload.sync_timedb`, etc.
 3. **Git** — after creating files under a new or existing lib tree, run `git add` on those paths and confirm `git check-ignore -v <path>` exits **non-zero** (see **Git tracking** below). A staged commit must show **`A`** or **`R`**, not delete-only for moved content.
-4. **Tests** — colocate or extend drift guards (`test_package_layout_shims.py`, `test_package_layout_deprecated_paths.py`); add a `git check-ignore` sample if you introduce a **new** lib root.
+4. **Tests** — add or extend tests under **`analysis/metrics/tests/`** only (not beside lib modules); extend drift guards (`test_package_layout_shims.py`, `test_package_layout_deprecated_paths.py`); add a `git check-ignore` sample if you introduce a **new** lib root.
 5. **Docs / router** — update cursor-rules, `docs/TESTING.md`, and compose runner paths when they cite old filesystem locations.
 
 ## New `{parent}/lib/` root (rare)
@@ -105,8 +105,12 @@ Never create `{name}/` package directory beside `{name}.py` in the same folder �
 
 Entry modules **`sync_timedb.py`**, **`sync_acct.py`**, **`sync_timedb_archive.py`**, **`update_metrics.py`**, **`manage.py`**, **`listend.py`** remain at their historical paths.
 
+## Metrics tests layout
+
+All pytest modules for **`analysis/metrics/`** (core metrics, plot, gen, Bokeh embed) live under **`hpcperfstats/analysis/metrics/tests/`** only. Do **not** add `test_*.py` beside `update_metrics.py`, under `lib/plot/`, or under `lib/gen/`. Drift guard: `test_metrics_tests_live_under_tests_package_only` in `test_package_layout_deprecated_paths.py`.
+
 ## Overlap
 
 - **`agent-discipline-core.mdc`** — task router registration for `hpcperfstats/**/lib/**` and `.gitignore` lib negation.
-- **`testing-best-practices.mdc`** — colocated tests beside moved modules.
+- **`testing-best-practices.mdc`** — metrics tests under `analysis/metrics/tests/`; general Python test placement elsewhere.
 - **`django-migration-numbering.mdc`** — new migrations under `site/lib/machine/migrations/`.
