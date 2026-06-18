@@ -15,22 +15,34 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if ! declare -F copy_frontend_into_web >/dev/null; then
-  echo "expected copy_frontend_into_web to be defined in rebuild_frontend.sh" >&2
+for fn in copy_frontend_into_web compose_cp_supported web_container_id verify_container_frontend_matches_host; do
+  if ! declare -F "${fn}" >/dev/null; then
+    echo "expected ${fn} to be defined in rebuild_frontend.sh" >&2
+    exit 1
+  fi
+done
+
+if ! grep -q 'copy_frontend_via_podman_cp' "${REBUILD_SCRIPT}"; then
+  echo "expected podman cp fallback in rebuild_frontend.sh" >&2
   exit 1
 fi
 
-if ! declare -F compose_cp_supported >/dev/null; then
-  echo "expected compose_cp_supported to be defined in rebuild_frontend.sh" >&2
+if ! grep -q 'podman exec -i' "${REBUILD_SCRIPT}"; then
+  echo "expected podman exec -i tar fallback in rebuild_frontend.sh" >&2
   exit 1
 fi
 
-if ! grep -q 'compose cp unavailable; using tar pipe via exec' "${REBUILD_SCRIPT}"; then
-  echo "expected tar pipe fallback in rebuild_frontend.sh" >&2
+if grep -q 'compose cp unavailable; using tar pipe via exec' "${REBUILD_SCRIPT}"; then
+  echo "unexpected broken compose exec tar pipe message in rebuild_frontend.sh" >&2
   exit 1
 fi
 
-echo "test: copy_frontend_into_web and compose_cp_supported are defined"
+if ! grep -q 'rm -rf "\${STATIC_ROOT}/frontend"' "${REBUILD_SCRIPT}"; then
+  echo "expected STATIC_ROOT/frontend refresh before collectstatic" >&2
+  exit 1
+fi
+
+echo "test: deploy helpers and podman fallbacks are defined"
 
 tmpdir="$(mktemp -d)"
 

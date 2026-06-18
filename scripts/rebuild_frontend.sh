@@ -135,22 +135,111 @@ web_service_running() {
   docker compose exec -T web true >/dev/null 2>&1
 }
 
+web_container_id() {
+  cd "${REPO_ROOT}"
+  docker compose ps -q web 2>/dev/null | head -n 1
+}
+
 compose_cp_supported() {
   cd "${REPO_ROOT}"
   docker compose cp --help >/dev/null 2>&1
 }
 
+podman_cli_available() {
+  command -v podman >/dev/null 2>&1
+}
+
+file_sha256() {
+  local path="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "${path}" | awk '{print $1}'
+  else
+    shasum -a 256 "${path}" | awk '{print $1}'
+  fi
+}
+
+reset_container_frontend_source_dir() {
+  local cid="$1"
+  local reset_cmd="rm -rf '${CONTAINER_STATIC_FRONTEND}' && mkdir -p '${CONTAINER_STATIC_FRONTEND}'"
+  if [[ -n "${cid}" ]] && podman_cli_available; then
+    podman exec "${cid}" bash -lc "${reset_cmd}"
+  else
+    docker compose exec -T web bash -lc "${reset_cmd}"
+  fi
+}
+
+copy_frontend_via_compose_cp() {
+  docker compose cp "${STATIC_FRONTEND}/." "web:${CONTAINER_STATIC_FRONTEND}/"
+}
+
+copy_frontend_via_podman_cp() {
+  local cid="$1"
+  podman cp "${STATIC_FRONTEND}/." "${cid}:${CONTAINER_STATIC_FRONTEND}/"
+}
+
+copy_frontend_via_podman_exec_tar() {
+  local cid="$1"
+  tar -C "${STATIC_FRONTEND}" -cf - . | podman exec -i "${cid}" tar -xf - -C "${CONTAINER_STATIC_FRONTEND}"
+}
+
 copy_frontend_into_web() {
   cd "${REPO_ROOT}"
+  local cid
+  cid="$(web_container_id)"
+
   if compose_cp_supported; then
-    docker compose cp "${STATIC_FRONTEND}/." "web:${CONTAINER_STATIC_FRONTEND}/"
+    echo "rebuild_frontend.sh: copying via docker compose cp" >&2
+    copy_frontend_via_compose_cp
     return
   fi
-  echo "rebuild_frontend.sh: compose cp unavailable; using tar pipe via exec" >&2
-  docker compose exec -T web bash -lc \
-    "rm -rf '${CONTAINER_STATIC_FRONTEND}' && mkdir -p '${CONTAINER_STATIC_FRONTEND}'"
-  tar -C "${STATIC_FRONTEND}" -cf - . \
-    | docker compose exec -T web tar -xf - -C "${CONTAINER_STATIC_FRONTEND}"
+
+  if ! podman_cli_available; then
+    echo "rebuild_frontend.sh: compose cp unavailable and podman not on PATH; cannot deploy into web" >&2
+    exit 1
+  fi
+
+  if [[ -z "${cid}" ]]; then
+    echo "rebuild_frontend.sh: web container id not found (is the web service running?)" >&2
+    exit 1
+  fi
+
+  echo "rebuild_frontend.sh: compose cp unavailable; resetting container source dir" >&2
+  reset_container_frontend_source_dir "${cid}"
+
+  if copy_frontend_via_podman_cp "${cid}"; then
+    echo "rebuild_frontend.sh: copied frontend tree via podman cp" >&2
+    return
+  fi
+
+  echo "rebuild_frontend.sh: podman cp failed; trying podman exec -i tar pipe" >&2
+  reset_container_frontend_source_dir "${cid}"
+  copy_frontend_via_podman_exec_tar "${cid}"
+}
+
+verify_container_frontend_matches_host() {
+  local host_probe="${STATIC_FRONTEND}/machine/index.html"
+  local container_probe="${CONTAINER_STATIC_FRONTEND}/machine/index.html"
+  local host_sha container_sha
+
+  host_sha="$(file_sha256 "${host_probe}")"
+  container_sha="$(
+    docker compose exec -T web bash -lc \
+      "if [[ ! -f '${container_probe}' ]]; then exit 2; fi; sha256sum '${container_probe}' | awk '{print \$1}'"
+  )"
+
+  if [[ -z "${container_sha}" ]]; then
+    echo "rebuild_frontend.sh: container frontend probe missing after copy: ${container_probe}" >&2
+    return 1
+  fi
+
+  if [[ "${host_sha}" != "${container_sha}" ]]; then
+    echo "rebuild_frontend.sh: container frontend does not match host after copy" >&2
+    echo "  host:      ${host_sha}  (${host_probe})" >&2
+    echo "  container: ${container_sha}  (${container_probe})" >&2
+    return 1
+  fi
+
+  echo "Verified container frontend matches host (${container_probe})"
 }
 
 deploy_to_compose() {
@@ -163,11 +252,13 @@ deploy_to_compose() {
 
   echo "Copying built assets into web:${CONTAINER_STATIC_FRONTEND} ..."
   copy_frontend_into_web
+  verify_container_frontend_matches_host
 
   echo "Running collectstatic in web (updates staticfiles_data for nginx) ..."
   docker compose exec -T web bash -lc '
 set -euo pipefail
 export STATIC_ROOT="${STATIC_ROOT:-/home/hpcperfstats/staticfiles}"
+rm -rf "${STATIC_ROOT}/frontend"
 /usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput
 frontend_root="${STATIC_ROOT}/frontend"
 required=(machine/index.html pub/index.html)
