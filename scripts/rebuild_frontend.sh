@@ -20,6 +20,7 @@ STATIC_FRONTEND="${REPO_ROOT}/hpcperfstats/site/hpcperfstats_site/static/fronten
 CONTAINER_STATIC_FRONTEND="/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend"
 CONTAINER_STATIC_ROOT="${CONTAINER_STATIC_ROOT:-/home/hpcperfstats/staticfiles}"
 CONTAINER_STATIC_ROOT_FRONTEND="${CONTAINER_STATIC_ROOT}/frontend"
+PROXY_STATIC_ROOT_FRONTEND="/srv/static/frontend"
 NODE_IMAGE="node:26.3.0-alpine3.23"
 
 # Next static export shells nginx serves (see services-conf/nginx-static-files.conf).
@@ -148,6 +149,7 @@ build_in_docker() {
 
 verify_build_output() {
   verify_spa_shells "${STATIC_FRONTEND}"
+  print_deploy_fingerprint "host build" "${STATIC_FRONTEND}/machine/index.html"
   echo "Built frontend static export: ${STATIC_FRONTEND}"
 }
 
@@ -179,6 +181,56 @@ file_sha256() {
   fi
 }
 
+frontend_build_fingerprint() {
+  local index_html="$1"
+  if [[ ! -f "${index_html}" ]]; then
+    echo "unknown"
+    return
+  fi
+  local fingerprint
+  fingerprint="$(grep -oE 'page-[0-9a-f]+\.js' "${index_html}" | head -n 1 || true)"
+  if [[ -n "${fingerprint}" ]]; then
+    echo "${fingerprint}"
+    return
+  fi
+  grep -oE '<!--[^>]{8,}-->' "${index_html}" | head -n 1 | tr -d '<!->' || echo "unknown"
+}
+
+print_deploy_fingerprint() {
+  local label="$1"
+  local index_html="$2"
+  local fingerprint
+  fingerprint="$(frontend_build_fingerprint "${index_html}")"
+  echo "Deploy fingerprint (${label}): ${fingerprint}"
+}
+
+print_container_deploy_fingerprint() {
+  local label="$1"
+  local service="$2"
+  local container_path="$3"
+  local fingerprint
+  fingerprint="$(
+    docker compose exec -T "${service}" sh -lc \
+      "grep -oE 'page-[0-9a-f]+\\.js' '${container_path}' 2>/dev/null | head -n 1 || echo unknown"
+  )"
+  echo "Deploy fingerprint (${label}): ${fingerprint}"
+}
+
+count_files_under() {
+  local root="$1"
+  find "${root}" -type f 2>/dev/null | wc -l | tr -d ' '
+}
+
+count_files_in_web_container() {
+  local container_dir="$1"
+  docker compose exec -T web bash -lc "find '${container_dir}' -type f 2>/dev/null | wc -l | tr -d ' '"
+}
+
+count_files_in_proxy_container() {
+  local container_dir="$1"
+  docker compose exec -T proxy sh -lc "find '${container_dir}' -type f 2>/dev/null | wc -l | tr -d ' '"
+}
+
 reset_container_dir() {
   local cid="$1"
   local target_dir="$2"
@@ -195,19 +247,13 @@ copy_tree_via_compose_cp() {
   docker compose cp "${STATIC_FRONTEND}/." "web:${dest}/"
 }
 
-copy_tree_via_podman_cp() {
-  local cid="$1"
-  local dest="$2"
-  podman cp "${STATIC_FRONTEND}/." "${cid}:${dest}/"
-}
-
 copy_tree_via_podman_exec_tar() {
   local cid="$1"
   local dest="$2"
   tar -C "${STATIC_FRONTEND}" -cf - . | podman exec -i "${cid}" tar -xf - -C "${dest}"
 }
 
-copy_frontend_tree_into_web() {
+copy_tree_into_container() {
   local cid="$1"
   local dest="$2"
 
@@ -227,15 +273,9 @@ copy_frontend_tree_into_web() {
     exit 1
   fi
 
-  echo "rebuild_frontend.sh: compose cp unavailable; resetting ${dest}" >&2
-  reset_container_dir "${cid}" "${dest}"
-
-  if copy_tree_via_podman_cp "${cid}" "${dest}"; then
-    echo "rebuild_frontend.sh: copied frontend tree via podman cp → ${dest}" >&2
-    return
-  fi
-
-  echo "rebuild_frontend.sh: podman cp failed; trying podman exec -i tar pipe → ${dest}" >&2
+  # podman cp can write to the container layer instead of a bind-mounted volume on some
+  # podman-compose setups; streaming tar through podman exec -i targets the mount reliably.
+  echo "rebuild_frontend.sh: copying via podman exec -i tar → ${dest}" >&2
   reset_container_dir "${cid}" "${dest}"
   copy_tree_via_podman_exec_tar "${cid}" "${dest}"
 }
@@ -247,11 +287,23 @@ copy_frontend_into_web() {
 
   # nginx (proxy) reads STATIC_ROOT/frontend from the shared staticfiles_data volume.
   reset_container_dir "${cid}" "${CONTAINER_STATIC_ROOT_FRONTEND}"
-  copy_frontend_tree_into_web "${cid}" "${CONTAINER_STATIC_ROOT_FRONTEND}"
+  copy_tree_into_container "${cid}" "${CONTAINER_STATIC_ROOT_FRONTEND}"
 
   # Keep image source tree in sync for future collectstatic / container rebuilds.
   reset_container_dir "${cid}" "${CONTAINER_STATIC_FRONTEND}"
-  copy_frontend_tree_into_web "${cid}" "${CONTAINER_STATIC_FRONTEND}"
+  copy_tree_into_container "${cid}" "${CONTAINER_STATIC_FRONTEND}"
+}
+
+sha256_in_web_container() {
+  local container_path="$1"
+  docker compose exec -T web bash -lc \
+    "if [[ ! -f '${container_path}' ]]; then exit 2; fi; sha256sum '${container_path}' | awk '{print \$1}'"
+}
+
+sha256_in_proxy_container() {
+  local container_path="$1"
+  docker compose exec -T proxy sh -lc \
+    "if [[ ! -f '${container_path}' ]]; then exit 2; fi; sha256sum '${container_path}' | awk '{print \$1}'"
 }
 
 verify_container_path_matches_host() {
@@ -262,10 +314,7 @@ verify_container_path_matches_host() {
   local host_sha container_sha
 
   host_sha="$(file_sha256 "${host_probe}")"
-  container_sha="$(
-    docker compose exec -T web bash -lc \
-      "if [[ ! -f '${container_probe}' ]]; then exit 2; fi; sha256sum '${container_probe}' | awk '{print \$1}'"
-  )"
+  container_sha="$(sha256_in_web_container "${container_probe}")"
 
   if [[ -z "${container_sha}" ]]; then
     echo "rebuild_frontend.sh: ${label} probe missing after copy: ${container_probe}" >&2
@@ -280,6 +329,59 @@ verify_container_path_matches_host() {
   fi
 
   echo "Verified ${label} matches host (${container_probe})"
+}
+
+verify_container_file_count_matches_host() {
+  local container_dir="$1"
+  local label="$2"
+  local host_count container_count
+
+  host_count="$(count_files_under "${STATIC_FRONTEND}")"
+  container_count="$(count_files_in_web_container "${container_dir}")"
+
+  if [[ "${host_count}" != "${container_count}" ]]; then
+    echo "rebuild_frontend.sh: ${label} file count mismatch (host ${host_count}, web ${container_count})" >&2
+    return 1
+  fi
+
+  echo "Verified ${label} file count matches host (${host_count} files)"
+}
+
+verify_proxy_frontend_matches_web() {
+  local web_probe="${CONTAINER_STATIC_ROOT_FRONTEND}/machine/index.html"
+  local proxy_probe="${PROXY_STATIC_ROOT_FRONTEND}/machine/index.html"
+  local web_sha proxy_sha
+
+  web_sha="$(sha256_in_web_container "${web_probe}")"
+  proxy_sha="$(sha256_in_proxy_container "${proxy_probe}")"
+
+  if [[ -z "${proxy_sha}" ]]; then
+    echo "rebuild_frontend.sh: proxy nginx volume missing ${proxy_probe}" >&2
+    return 1
+  fi
+
+  if [[ "${web_sha}" != "${proxy_sha}" ]]; then
+    echo "rebuild_frontend.sh: proxy nginx volume does not match web STATIC_ROOT" >&2
+    echo "  web:   ${web_sha}  (${web_probe})" >&2
+    echo "  proxy: ${proxy_sha}  (${proxy_probe})" >&2
+    return 1
+  fi
+
+  echo "Verified proxy nginx volume matches web (${proxy_probe})"
+}
+
+verify_proxy_file_count_matches_web() {
+  local web_count proxy_count
+
+  web_count="$(count_files_in_web_container "${CONTAINER_STATIC_ROOT_FRONTEND}")"
+  proxy_count="$(count_files_in_proxy_container "${PROXY_STATIC_ROOT_FRONTEND}")"
+
+  if [[ "${web_count}" != "${proxy_count}" ]]; then
+    echo "rebuild_frontend.sh: proxy file count mismatch (web ${web_count}, proxy ${proxy_count})" >&2
+    return 1
+  fi
+
+  echo "Verified proxy nginx volume file count matches web (${web_count} files)"
 }
 
 verify_container_frontend_matches_host() {
@@ -297,10 +399,15 @@ deploy_to_compose() {
   echo "Copying built assets into web:${CONTAINER_STATIC_ROOT_FRONTEND} (nginx staticfiles volume) ..."
   copy_frontend_into_web
   verify_container_frontend_matches_host
+  verify_container_file_count_matches_host "${CONTAINER_STATIC_ROOT_FRONTEND}" "STATIC_ROOT/frontend (nginx volume)"
   verify_spa_shells_via_compose "${CONTAINER_STATIC_ROOT_FRONTEND}" "STATIC_ROOT/frontend"
+  verify_proxy_frontend_matches_web
+  verify_proxy_file_count_matches_web
+  print_container_deploy_fingerprint "web STATIC_ROOT" web "${CONTAINER_STATIC_ROOT_FRONTEND}/machine/index.html"
+  print_container_deploy_fingerprint "proxy nginx volume" proxy "${PROXY_STATIC_ROOT_FRONTEND}/machine/index.html"
 
-  echo "Frontend deploy complete. nginx serves updated /static/ and /machine/ assets."
-  echo "Pipeline was not restarted. Hard-refresh the browser to load new bundle hashes."
+  echo "Frontend deploy complete. Use the proxy service (ports 80/443), not web:8000 — Gunicorn does not serve /machine/."
+  echo "Hard-refresh the browser and confirm the deploy fingerprint above matches page-*.js in DevTools Network."
 }
 
 main() {
