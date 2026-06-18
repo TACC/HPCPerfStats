@@ -28,7 +28,7 @@ def test_pg_connection_stats_outputs_counts():
   cm.__enter__.return_value = inner
   cm.__exit__.return_value = False
   mock_conn.cursor.return_value = cm
-  path = "hpcperfstats.site.machine.management.commands.pg_connection_stats.connection"
+  path = "hpcperfstats.site.lib.machine.management.commands.pg_connection_stats.connection"
   with patch(path, mock_conn):
     out = StringIO()
     call_command("pg_connection_stats", stdout=out)
@@ -42,7 +42,7 @@ def test_pg_connection_stats_skips_non_postgresql():
 
   mock_conn = MagicMock()
   mock_conn.vendor = "sqlite"
-  path = "hpcperfstats.site.machine.management.commands.pg_connection_stats.connection"
+  path = "hpcperfstats.site.lib.machine.management.commands.pg_connection_stats.connection"
   err = StringIO()
   with patch(path, mock_conn):
     call_command("pg_connection_stats", stderr=err)

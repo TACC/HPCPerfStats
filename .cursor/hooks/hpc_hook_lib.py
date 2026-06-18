@@ -139,8 +139,10 @@ def find_router_file(workspace_roots: Iterable[str], *, rule_path: str = "") -> 
             ]
         )
     hook_dir = Path(__file__).resolve().parent
+    checkout_root = hook_dir.parent.parent
     candidates.extend(
         [
+            checkout_root / "hpcperfstats" / "cursor-rules" / "agent-discipline-core.mdc",
             hook_dir.parent / "hpcperfstats" / "cursor-rules" / "agent-discipline-core.mdc",
             hook_dir.parent.parent / "HPCPerfStats" / "hpcperfstats" / "cursor-rules" / "agent-discipline-core.mdc",
         ],
@@ -162,7 +164,9 @@ def resolve_cursor_rule_path(rule_basename: str) -> Path | None:
     if not name.endswith(".mdc"):
         return None
     hook_dir = Path(__file__).resolve().parent
+    checkout_root = hook_dir.parent.parent
     candidates = [
+        checkout_root / "hpcperfstats" / "cursor-rules" / name,
         hook_dir.parent / "HPCPerfStats" / "hpcperfstats" / "cursor-rules" / name,
         hook_dir.parent / "hpcperfstats" / "cursor-rules" / name,
         hook_dir.parent.parent / "HPCPerfStats" / "hpcperfstats" / "cursor-rules" / name,
@@ -598,7 +602,8 @@ def rule_dual_registration_issues(work_paths: list[str]) -> list[str]:
         needs_entry, basename = rule_file_needs_router_entry(path)
         if not needs_entry or basename in seen:
             continue
-        if not cursor_rule_file_exists(basename):
+        path_obj = Path(path)
+        if not path_obj.is_file() and not cursor_rule_file_exists(basename):
             continue
         seen.add(basename)
         router = find_router_file([], rule_path=path)

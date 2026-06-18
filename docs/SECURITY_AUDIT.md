@@ -13,7 +13,7 @@ HPCPerfStats combines a Django + DRF backend, session-based OAuth (Tapis) and ha
 3. **npm audit** in `hpcperfstats/site/frontend` (2026-06-15): **0** reported vulnerabilities after **`dompurify@^3.4.10`** and **`js-yaml@^4.2.0`** overrides (plus existing `esbuild` / `postcss` / `lodash` pins). Prior baseline 2026-06-12: **0**; new advisories surfaced **3 moderate** (`dompurify` via `@bokeh/bokehjs`, `js-yaml` via `orval`).
 4. **bandit** (`-ll`, excluding `*/tests/*`) on `hpcperfstats/` (2026-06-05): **no high** findings; **6** medium B608 on SQL fragment builders (same modules as prior review); manual review confirms table/column identifiers come from internal constants, not request input. One B108 on `wsgi.py` `MPLCONFIGDIR=/tmp/` (matplotlib cache path; accepted).
 5. **Security regression tests** (host pytest, 2026-06-05): 9 passed (`test_settings_security`, throttles, API-key page, HTTP headers/cache); 5 compose-backed modules skipped/errored on host (`db` hostname). CI and compose workflows remain the gate for DB-dependent security tests.
-5. Manual review of [`settings.py`](../hpcperfstats/site/hpcperfstats_site/settings.py), [`middleware.py`](../hpcperfstats/site/hpcperfstats_site/middleware.py), [`oauth2.py`](../hpcperfstats/site/machine/oauth2.py), [`api.py`](../hpcperfstats/site/machine/api.py) (auth and staff gates), [`views.py`](../hpcperfstats/site/hpcperfstats_site/views.py) (`csp_report`), nginx templates under [`services-conf/`](../services-conf/), and high-risk patterns (`subprocess`, `cursor.execute`).
+5. Manual review of [`settings.py`](../hpcperfstats/site/hpcperfstats_site/settings.py), [`middleware.py`](../hpcperfstats/site/hpcperfstats_site/middleware.py), [`oauth2.py`](../hpcperfstats/site/lib/machine/oauth2.py), [`api.py`](../hpcperfstats/site/lib/machine/api.py) (auth and staff gates), [`views.py`](../hpcperfstats/site/hpcperfstats_site/views.py) (`csp_report`), nginx templates under [`services-conf/`](../services-conf/), and high-risk patterns (`subprocess`, `cursor.execute`).
 
 ## Automated scan snapshot (2026-06-05)
 
@@ -49,7 +49,7 @@ HPCPerfStats combines a Django + DRF backend, session-based OAuth (Tapis) and ha
 
 ### bandit
 
-No high-severity issues. Production-code medium B608 locations (2026-06-05): `analysis/gen/jid_table.py`, `analysis/metrics/live_host_sample_count.py`, `analysis/metrics/update_metrics.py`, `site/machine/artifact_readiness_expressions.py`. Treat as “verify no user-controlled identifiers” when editing those modules.
+No high-severity issues. Production-code medium B608 locations (2026-06-05): `analysis/metrics/lib/gen/jid_table.py`, `analysis/metrics/live_host_sample_count.py`, `analysis/metrics/update_metrics.py`, `site/lib/machine/artifact_readiness_expressions.py`. Treat as “verify no user-controlled identifiers” when editing those modules.
 
 ## Findings table
 

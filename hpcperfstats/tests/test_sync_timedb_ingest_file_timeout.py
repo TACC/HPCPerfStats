@@ -7,7 +7,7 @@ import math
 import pytest
 
 from hpcperfstats.dbload import sync_timedb as st
-from hpcperfstats.dbload import sync_timedb_ingest_timeout as ingest_timeout_mod
+from hpcperfstats.dbload.lib import sync_timedb_ingest_timeout as ingest_timeout_mod
 
 
 def _mib_bytes(mib):
@@ -159,7 +159,7 @@ def test_stall_abort_polls_respects_ini_ceiling(monkeypatch, tmp_path):
 def test_raise_if_ingest_per_file_deadline_uses_effective_timeout(monkeypatch):
   import time
 
-  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       reset_ingest_task_deadline_monotonic,
       reset_ingest_task_effective_timeout_s,
       set_ingest_task_deadline_monotonic,

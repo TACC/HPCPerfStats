@@ -1,4 +1,4 @@
-"""Tests for hpcperfstats.dbload.zstd_cli (no Django)."""
+"""Tests for hpcperfstats.dbload.lib.zstd_cli (no Django)."""
 from __future__ import annotations
 
 import io
@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-from hpcperfstats.dbload.zstd_cli import (
+from hpcperfstats.dbload.lib.zstd_cli import (
     decompress_compressed_to_tar,
     wrap_archive_zstd_cmd,
     zstd_compress_tar_to_file,
@@ -37,11 +37,11 @@ def test_zstd_thread_cli_args_positive():
 
 def test_wrap_archive_zstd_cmd_adds_ionice_and_nice(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.zstd_cli._archive_zstd_priority_settings",
+      "hpcperfstats.dbload.lib.zstd_cli._archive_zstd_priority_settings",
       lambda: (10, 2, 6),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.zstd_cli.shutil.which",
+      "hpcperfstats.dbload.lib.zstd_cli.shutil.which",
       lambda name: "/usr/bin/%s" % name if name in ("ionice", "nice", "zstd") else None,
   )
   wrapped = wrap_archive_zstd_cmd(["/usr/bin/zstd", "-T0", "-q", "x.zst"])
@@ -66,7 +66,7 @@ def test_ingest_member_scan_zstd_without_nice(monkeypatch):
     return proc
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.zstd_cli._popen_zstd",
+      "hpcperfstats.dbload.lib.zstd_cli._popen_zstd",
       _fake_popen,
   )
   with zstd_decompress_stdout("/tmp/day.tar.zst", 0, apply_priority_wrap=False):
@@ -80,7 +80,7 @@ def test_ingest_member_scan_zstd_without_nice(monkeypatch):
 
 def test_wrap_archive_zstd_cmd_skips_when_disabled(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.zstd_cli._archive_zstd_priority_settings",
+      "hpcperfstats.dbload.lib.zstd_cli._archive_zstd_priority_settings",
       lambda: (0, 0, 0),
   )
   base = ["/usr/bin/zstd", "-d", "x.zst"]
@@ -98,7 +98,7 @@ def test_zstd_compress_tar_to_file_uses_t0_when_thread_count_zero(monkeypatch, t
   zst_path = tmp_path / "day.tar.zst"
   tar_path.write_bytes(b"payload")
 
-  with patch("hpcperfstats.dbload.zstd_cli.subprocess.run", side_effect=_fake_run):
+  with patch("hpcperfstats.dbload.lib.zstd_cli.subprocess.run", side_effect=_fake_run):
     zstd_compress_tar_to_file(str(tar_path), str(zst_path), 0, 6)
 
   assert "-T0" in captured[0]
@@ -111,11 +111,11 @@ def test_zstd_gzip_decompress_verbose_invokes_zstd_gzip_format(monkeypatch):
     captured.append(cmd)
     return subprocess.CompletedProcess(cmd, 0, stdout="out\n", stderr="err\n")
 
-  with patch("hpcperfstats.dbload.zstd_cli.shutil.which", return_value=None):
-    with patch("hpcperfstats.dbload.zstd_cli.subprocess.run", side_effect=_fake_run):
-      with patch("hpcperfstats.dbload.zstd_cli.log_print"):
+  with patch("hpcperfstats.dbload.lib.zstd_cli.shutil.which", return_value=None):
+    with patch("hpcperfstats.dbload.lib.zstd_cli.subprocess.run", side_effect=_fake_run):
+      with patch("hpcperfstats.dbload.lib.zstd_cli.log_print"):
         with patch(
-            "hpcperfstats.dbload.zstd_cli.decompress_compressed_to_tar",
+            "hpcperfstats.dbload.lib.zstd_cli.decompress_compressed_to_tar",
             return_value=True,
         ):
           zstd_gzip_decompress_verbose("/tmp/x.tar.gz", 4)
@@ -131,7 +131,7 @@ def test_zstd_decompress_verbose_native_decompress_path(monkeypatch):
     return True
 
   with patch(
-      "hpcperfstats.dbload.zstd_cli.decompress_compressed_to_tar",
+      "hpcperfstats.dbload.lib.zstd_cli.decompress_compressed_to_tar",
       side_effect=_fake_decomp,
   ):
     zstd_decompress_verbose("/tmp/small.tar.zst", 2)
@@ -150,7 +150,7 @@ def test_zstd_compress_tar_to_file_command_shape(monkeypatch, tmp_path):
   zst_path = tmp_path / "day.tar.zst"
   tar_path.write_bytes(b"payload")
 
-  with patch("hpcperfstats.dbload.zstd_cli.subprocess.run", side_effect=_fake_run):
+  with patch("hpcperfstats.dbload.lib.zstd_cli.subprocess.run", side_effect=_fake_run):
     zstd_compress_tar_to_file(str(tar_path), str(zst_path), 2, 6)
 
   assert "-T2" in captured[0]
@@ -165,7 +165,7 @@ def test_zstd_test_command_shape(monkeypatch):
     captured.append(cmd)
     return subprocess.CompletedProcess(cmd, 0)
 
-  with patch("hpcperfstats.dbload.zstd_cli.subprocess.run", side_effect=_fake_run):
+  with patch("hpcperfstats.dbload.lib.zstd_cli.subprocess.run", side_effect=_fake_run):
     zstd_test("/tmp/day.tar.zst", 3)
 
   assert "-T3" in captured[0]
@@ -191,11 +191,11 @@ def test_page_cache_hints_noop_off_linux(monkeypatch, tmp_path):
 
   monkeypatch.setattr(sys, "platform", "darwin")
   monkeypatch.setattr(
-      "hpcperfstats.dbload.zstd_cli._page_cache_hints_enabled",
+      "hpcperfstats.dbload.lib.zstd_cli._page_cache_hints_enabled",
       lambda: False,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.zstd_cli.os.open",
+      "hpcperfstats.dbload.lib.zstd_cli.os.open",
       lambda *a, **k: open_calls.append(a) or 1,
   )
   zstd_drop_page_cache_for_paths(str(path))
@@ -209,11 +209,11 @@ def test_page_cache_hints_invoke_fadvise_on_linux(monkeypatch, tmp_path):
 
   monkeypatch.setattr(sys, "platform", "linux")
   monkeypatch.setattr(
-      "hpcperfstats.dbload.zstd_cli._page_cache_hints_enabled",
+      "hpcperfstats.dbload.lib.zstd_cli._page_cache_hints_enabled",
       lambda: True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.zstd_cli._advise_drop_cache",
+      "hpcperfstats.dbload.lib.zstd_cli._advise_drop_cache",
       lambda p: dropped.append(p),
   )
   zstd_drop_page_cache_for_paths(str(path))
@@ -227,11 +227,11 @@ def test_page_cache_hints_disabled_when_ini_off(monkeypatch, tmp_path):
 
   monkeypatch.setattr(sys, "platform", "linux")
   monkeypatch.setattr(
-      "hpcperfstats.dbload.zstd_cli._page_cache_hints_enabled",
+      "hpcperfstats.dbload.lib.zstd_cli._page_cache_hints_enabled",
       lambda: False,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.zstd_cli.os.open",
+      "hpcperfstats.dbload.lib.zstd_cli.os.open",
       lambda *a, **k: open_calls.append(a) or 1,
   )
   zstd_drop_page_cache_for_paths(str(path))
@@ -246,18 +246,18 @@ def test_zstd_test_applies_page_cache_hints_on_linux(monkeypatch, tmp_path):
   dropped = []
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.zstd_cli._advise_sequential_read",
+      "hpcperfstats.dbload.lib.zstd_cli._advise_sequential_read",
       lambda p: sequential.append(p),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.zstd_cli._advise_drop_cache",
+      "hpcperfstats.dbload.lib.zstd_cli._advise_drop_cache",
       lambda p: dropped.append(p),
   )
 
   def _fake_run(cmd, capture_output, text, check, apply_priority_wrap=True):
     return subprocess.CompletedProcess(cmd, 0)
 
-  with patch("hpcperfstats.dbload.zstd_cli.subprocess.run", side_effect=_fake_run):
+  with patch("hpcperfstats.dbload.lib.zstd_cli.subprocess.run", side_effect=_fake_run):
     zstd_test(str(zst_path), 1)
 
   assert sequential == [str(zst_path)]
@@ -273,11 +273,11 @@ def test_decompress_skips_second_tar_tf_when_pipe_preflight_passes(
 
   verify_calls = []
   monkeypatch.setattr(
-      "hpcperfstats.dbload.zstd_cli.zstd_compressed_archive_pipe_readable",
+      "hpcperfstats.dbload.lib.zstd_cli.zstd_compressed_archive_pipe_readable",
       lambda *a, **k: True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.zstd_cli._verify_uncompressed_tar_readable",
+      "hpcperfstats.dbload.lib.zstd_cli._verify_uncompressed_tar_readable",
       lambda p: verify_calls.append(p) or True,
   )
 
@@ -286,7 +286,7 @@ def test_decompress_skips_second_tar_tf_when_pipe_preflight_passes(
       f.write(b"tar-bytes")
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.zstd_cli._decompress_to_path",
+      "hpcperfstats.dbload.lib.zstd_cli._decompress_to_path",
       _fake_decompress,
   )
 
@@ -307,11 +307,11 @@ def test_decompress_pipe_preflight_failure_skips_materialize(monkeypatch, tmp_pa
 
   decompress_calls = []
   monkeypatch.setattr(
-      "hpcperfstats.dbload.zstd_cli.zstd_compressed_archive_pipe_readable",
+      "hpcperfstats.dbload.lib.zstd_cli.zstd_compressed_archive_pipe_readable",
       lambda *a, **k: False,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.zstd_cli._decompress_to_path",
+      "hpcperfstats.dbload.lib.zstd_cli._decompress_to_path",
       lambda *a, **k: decompress_calls.append(a),
   )
 
@@ -347,7 +347,7 @@ def test_zstd_decompress_stdout_tolerates_sigpipe_after_reader_closes_pipe():
       return -signal.SIGPIPE
 
   with patch(
-      "hpcperfstats.dbload.zstd_cli.subprocess.Popen",
+      "hpcperfstats.dbload.lib.zstd_cli.subprocess.Popen",
       return_value=_FakeProc(),
   ):
     with zstd_decompress_stdout("/tmp/x.zst", 1) as out:
@@ -367,7 +367,7 @@ def test_zstd_gzip_decompress_stdout_streams_gzip_payload(tmp_path):
   gz = tmp_path / "payload.gz"
   with gzip.open(gz, "wb") as f:
     f.write(b"hello-zstd-gzip-stream")
-  from hpcperfstats.dbload.zstd_cli import zstd_gzip_decompress_stdout
+  from hpcperfstats.dbload.lib.zstd_cli import zstd_gzip_decompress_stdout
 
   with zstd_gzip_decompress_stdout(str(gz), 2) as out:
     assert out.read() == b"hello-zstd-gzip-stream"

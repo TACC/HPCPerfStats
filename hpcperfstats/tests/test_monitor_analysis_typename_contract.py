@@ -7,19 +7,19 @@ from pathlib import Path
 
 import pytest
 
-from hpcperfstats.monitor_naming.canonical import (
+from hpcperfstats.dbload.lib.monitor_naming.canonical import (
     AMD_DF_TYPE,
     AMD_PMC_TYPE,
     ARM_IMC_STATS_TYPES,
     INTEL_CORE_PMC_TYPES_ORDERED,
     INTEL_IMC_STATS_TYPES,
 )
-from hpcperfstats.monitor_naming.legacy import (
+from hpcperfstats.dbload.lib.monitor_naming.legacy import (
     INGEST_LEGACY_KNL_IMC_TYPE,
     LEGACY_INTEL_IMC_STATS_TYPES,
     MONITOR_LEGACY_KNL_IMC_TYPE,
 )
-from hpcperfstats.analysis.plot.roofline_peaks import ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS
+from hpcperfstats.analysis.metrics.lib.plot.roofline_peaks import ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS
 
 _RETIRED_KNL_CANONICAL_TYPES = frozenset({
     "intel_x86_pmc_knl",

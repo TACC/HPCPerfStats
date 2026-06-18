@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from hpcperfstats.dbload import sync_timedb as st
-from hpcperfstats.dbload.sync_timedb_parsing import (
+from hpcperfstats.dbload.lib.sync_timedb_parsing import (
     DeltaCarryState,
     build_stats_dataframes,
     compute_deltas_and_arc,
@@ -30,7 +30,7 @@ def _counter_fixture_lines(extra_samples=0):
 
 
 def _stats_list_from_lines(lines, start_idx=0):
-  from hpcperfstats.dbload.sync_timedb_parsing import parse_stats_lines
+  from hpcperfstats.dbload.lib.sync_timedb_parsing import parse_stats_lines
 
   return parse_stats_lines(lines, start_idx)
 

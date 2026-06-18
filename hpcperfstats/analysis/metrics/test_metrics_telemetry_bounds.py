@@ -7,11 +7,11 @@ from types import SimpleNamespace
 import pytest
 from django.utils import timezone
 
-from hpcperfstats.analysis.metrics.metrics import (
+from hpcperfstats.analysis.metrics.lib.metrics import (
     _in_window_telemetry_bounds_for_job,
     _persist_metrics_batch,
 )
-from hpcperfstats.site.machine.models import host_data, job_data, metrics_data
+from hpcperfstats.site.lib.machine.models import host_data, job_data, metrics_data
 
 
 def _compose_network():

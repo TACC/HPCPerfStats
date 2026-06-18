@@ -20,7 +20,10 @@ def main():
   args = list(sys.argv[1:])
   if "--no-django" in args:
     args.remove("--no-django")
-    args.extend(["--ignore=hpcperfstats/site/machine/tests", "-v"])
+    args.extend([
+        "--ignore=hpcperfstats/site/lib/machine/tests",
+        "-v",
+    ])
   else:
     args = args or ["-v", "hpcperfstats"]
   return pytest.main(args)

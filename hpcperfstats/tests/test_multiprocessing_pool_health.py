@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from hpcperfstats.dbload import multiprocessing_pool_health as mph
+from hpcperfstats.dbload.lib import multiprocessing_pool_health as mph
 
 
 class _DeadWorker:
@@ -168,7 +168,7 @@ def test_close_pool_bounded_terminates_when_worker_dead():
 
 def test_imap_unordered_watch_pool_aborts_on_stuck_worker_stall(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.conf_parser.get_sync_pool_stall_abort_after_timeouts",
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_pool_stall_abort_after_timeouts",
       lambda: 2,
   )
   pool = _BlockingPool()
@@ -186,7 +186,7 @@ def test_imap_unordered_watch_pool_aborts_on_stuck_worker_stall(monkeypatch):
 
 def test_imap_stall_logs_before_raise(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.conf_parser.get_sync_pool_stall_abort_after_timeouts",
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_pool_stall_abort_after_timeouts",
       lambda: 2,
   )
   logs = []
@@ -207,7 +207,7 @@ def test_imap_stall_logs_before_raise(monkeypatch):
 
 def test_imap_stall_warning_callback(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.conf_parser.get_sync_pool_stall_abort_after_timeouts",
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_pool_stall_abort_after_timeouts",
       lambda: 4,
   )
   warnings = []
@@ -235,7 +235,7 @@ def test_imap_stall_warning_callback(monkeypatch):
 
 def test_imap_unordered_watch_pool_honors_stall_abort_override(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.conf_parser.get_sync_pool_stall_abort_after_timeouts",
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_pool_stall_abort_after_timeouts",
       lambda: 100,
   )
   warnings = []
@@ -260,7 +260,7 @@ def test_imap_unordered_watch_pool_honors_stall_abort_override(monkeypatch):
 
 def test_imap_stall_fatal_summary_appended_to_error(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.conf_parser.get_sync_pool_stall_abort_after_timeouts",
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_pool_stall_abort_after_timeouts",
       lambda: 2,
   )
   logs = []
@@ -313,7 +313,7 @@ class _DeferStallPool:
 
 def test_imap_stall_counter_resets_during_redis_populate_progress(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.conf_parser.get_sync_pool_stall_abort_after_timeouts",
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_pool_stall_abort_after_timeouts",
       lambda: 2,
   )
   pool = _DeferStallPool(release_after=5)
@@ -337,7 +337,7 @@ def test_close_pool_bounded_closes_alive_workers():
 def test_terminate_pool_bounded_logs_context(monkeypatch):
   logs = []
   monkeypatch.setattr(
-      "hpcperfstats.dbload.multiprocessing_pool_health.log_print",
+      "hpcperfstats.dbload.lib.multiprocessing_pool_health.log_print",
       lambda msg, flush=False: logs.append(msg),
   )
 
@@ -366,15 +366,15 @@ def test_terminate_pool_bounded_sigkill_after_timeout(monkeypatch):
   logs = []
   killed = []
   monkeypatch.setattr(
-      "hpcperfstats.dbload.multiprocessing_pool_health.log_print",
+      "hpcperfstats.dbload.lib.multiprocessing_pool_health.log_print",
       lambda msg, flush=False: logs.append(msg),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.multiprocessing_pool_health.os.kill",
+      "hpcperfstats.dbload.lib.multiprocessing_pool_health.os.kill",
       lambda pid, sig: killed.append((pid, sig)),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.multiprocessing_pool_health.os.waitpid",
+      "hpcperfstats.dbload.lib.multiprocessing_pool_health.os.waitpid",
       lambda pid, flags: (pid, 0),
   )
 
@@ -393,11 +393,11 @@ def test_hard_exit_pool_worker_error_uses_os_exit(monkeypatch):
   exit_codes = []
   logs = []
   monkeypatch.setattr(
-      "hpcperfstats.dbload.multiprocessing_pool_health.log_print",
+      "hpcperfstats.dbload.lib.multiprocessing_pool_health.log_print",
       lambda msg, flush=False: logs.append(msg),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.multiprocessing_pool_health.os._exit",
+      "hpcperfstats.dbload.lib.multiprocessing_pool_health.os._exit",
       lambda code: exit_codes.append(code),
   )
   exc = mph.MultiprocessingPoolStallError(
@@ -423,11 +423,11 @@ def test_handle_pool_worker_exit_fatal_hard_exits_without_terminate(monkeypatch)
       lambda *_a, **_k: terminate_calls.append(True) or False,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.multiprocessing_pool_health.log_print",
+      "hpcperfstats.dbload.lib.multiprocessing_pool_health.log_print",
       lambda msg, flush=False: None,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.multiprocessing_pool_health.os._exit",
+      "hpcperfstats.dbload.lib.multiprocessing_pool_health.os._exit",
       lambda code: exit_codes.append(code),
   )
   exc = mph.MultiprocessingPoolStallError(
@@ -455,7 +455,7 @@ def test_handle_pool_worker_exit_fatal_hard_exits_when_terminate_would_block(mon
 
   monkeypatch.setattr(st, "terminate_pool_bounded", blocking_terminate)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.multiprocessing_pool_health.os._exit",
+      "hpcperfstats.dbload.lib.multiprocessing_pool_health.os._exit",
       lambda code: exit_codes.append(code),
   )
   exc = mph.MultiprocessingPoolStallError(
@@ -471,7 +471,7 @@ def test_handle_pool_worker_exit_fatal_hard_exits_when_terminate_would_block(mon
 
 def test_abort_recycle_grace_tolerates_exitcode_zero(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.multiprocessing_pool_health.get_sync_pool_worker_recycle_grace_polls",
+      "hpcperfstats.dbload.lib.multiprocessing_pool_health.get_sync_pool_worker_recycle_grace_polls",
       lambda: 2,
   )
   pool = SimpleNamespace(_pool=[_RecycledWorker(), _AliveWorker()])
@@ -485,7 +485,7 @@ def test_abort_recycle_grace_tolerates_exitcode_zero(monkeypatch):
 
 def test_abort_recycle_grace_logs_info_not_error(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.multiprocessing_pool_health.get_sync_pool_worker_recycle_grace_polls",
+      "hpcperfstats.dbload.lib.multiprocessing_pool_health.get_sync_pool_worker_recycle_grace_polls",
       lambda: 2,
   )
   logs = []
@@ -500,19 +500,19 @@ def test_abort_sigkill_logs_diagnostics_with_non_cgroup_hint(monkeypatch):
   logs = []
   monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
   monkeypatch.setattr(
-      "hpcperfstats.process_memory.read_cgroup_memory_events",
+      "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_events",
       lambda: {"oom_kill": 0},
   )
   monkeypatch.setattr(
-      "hpcperfstats.process_memory.read_cgroup_memory_current_bytes",
+      "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_current_bytes",
       lambda: 33205403648,
   )
   monkeypatch.setattr(
-      "hpcperfstats.process_memory.read_cgroup_memory_max_bytes",
+      "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_max_bytes",
       lambda: 137438953472,
   )
   monkeypatch.setattr(
-      "hpcperfstats.process_memory.format_tree_rss_breakdown_mb",
+      "hpcperfstats.dbload.lib.process_memory.format_tree_rss_breakdown_mb",
       lambda *a, **k: {"tree_total_mb": 31.0, "supervisor_mb": 1.0,
                        "ingest_pool_mb": 20.0, "db_writer_pool_mb": 5.0,
                        "archive_pool_mb": 5.0},
@@ -527,19 +527,19 @@ def test_abort_sigkill_logs_diagnostics_with_non_cgroup_hint(monkeypatch):
 
 def test_abort_sigkill_with_cgroup_oom_reports_sigkill(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.process_memory.read_cgroup_memory_events",
+      "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_events",
       lambda: {"oom_kill": 3},
   )
   monkeypatch.setattr(
-      "hpcperfstats.process_memory.read_cgroup_memory_current_bytes",
+      "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_current_bytes",
       lambda: 100,
   )
   monkeypatch.setattr(
-      "hpcperfstats.process_memory.read_cgroup_memory_max_bytes",
+      "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_max_bytes",
       lambda: 1000,
   )
   monkeypatch.setattr(
-      "hpcperfstats.process_memory.format_tree_rss_breakdown_mb",
+      "hpcperfstats.dbload.lib.process_memory.format_tree_rss_breakdown_mb",
       lambda *a, **k: {"tree_total_mb": 1.0, "supervisor_mb": 1.0,
                        "ingest_pool_mb": 0.0, "db_writer_pool_mb": 0.0,
                        "archive_pool_mb": 0.0},
@@ -552,19 +552,19 @@ def test_abort_sigkill_with_cgroup_oom_reports_sigkill(monkeypatch):
 
 def test_describe_dead_pool_workers_includes_in_flight_sample(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.process_memory.read_cgroup_memory_events",
+      "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_events",
       lambda: {"oom_kill": 0},
   )
   monkeypatch.setattr(
-      "hpcperfstats.process_memory.read_cgroup_memory_current_bytes",
+      "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_current_bytes",
       lambda: 0,
   )
   monkeypatch.setattr(
-      "hpcperfstats.process_memory.read_cgroup_memory_max_bytes",
+      "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_max_bytes",
       lambda: None,
   )
   monkeypatch.setattr(
-      "hpcperfstats.process_memory.format_tree_rss_breakdown_mb",
+      "hpcperfstats.dbload.lib.process_memory.format_tree_rss_breakdown_mb",
       lambda *a, **k: {"tree_total_mb": 0.0, "supervisor_mb": 0.0,
                        "ingest_pool_mb": 0.0, "db_writer_pool_mb": 0.0,
                        "archive_pool_mb": 0.0},
@@ -708,18 +708,18 @@ def test_imap_sliding_window_watch_pool_peak_concurrency():
 
 
 def test_imap_sliding_window_recomputes_stall_abort_for_in_flight(monkeypatch):
-  from hpcperfstats.dbload import sync_timedb_ingest_timeout as timeout_mod
+  from hpcperfstats.dbload.lib import sync_timedb_ingest_timeout as timeout_mod
 
   monkeypatch.setattr(
-      "hpcperfstats.conf_parser.get_sync_pool_poll_timeout_s",
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_pool_poll_timeout_s",
       lambda: 5.0,
   )
   monkeypatch.setattr(
-      "hpcperfstats.conf_parser.get_sync_pool_stall_abort_after_timeouts",
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_pool_stall_abort_after_timeouts",
       lambda: 2881,
   )
   monkeypatch.setattr(
-      "hpcperfstats.conf_parser.get_sync_ingest_per_file_timeout_s",
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_per_file_timeout_s",
       lambda: 900.0,
   )
   monkeypatch.setattr(

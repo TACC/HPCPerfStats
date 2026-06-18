@@ -1,7 +1,7 @@
 
 import pytest
 
-from hpcperfstats import shutdown_utils
+from hpcperfstats.dbload.lib import shutdown_utils
 
 
 def test_sleep_until_shutdown_returns_early(monkeypatch):

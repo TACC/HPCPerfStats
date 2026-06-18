@@ -15,18 +15,18 @@
   - query/reuse proxy counters from detail/plot paths.
 
 2. Plot prewarm memo telemetry and batched row lookup accounting
-- File: `hpcperfstats/site/machine/job_plot_artifacts.py`
+- File: `hpcperfstats/site/lib/machine/job_plot_artifacts.py`
 - `_JtMemoProxy` now tracks host-time and aggregate cache hit/miss signals.
 - Batched existing-row lookup is counted once per shared context.
 
 3. Detail prewarm metric-reuse accounting
-- File: `hpcperfstats/site/machine/job_detail_artifacts.py`
+- File: `hpcperfstats/site/lib/machine/job_detail_artifacts.py`
 - Tracks whether FSIO/GPU detail payloads were sourced from existing metrics rows or fallback DB aggregation paths.
 
 4. Reuse coverage tests
 - Files:
-  - `hpcperfstats/site/machine/tests/test_update_metrics.py`
-  - `hpcperfstats/site/machine/tests/test_job_plot_artifacts.py`
+  - `hpcperfstats/site/lib/machine/tests/test_update_metrics.py`
+  - `hpcperfstats/site/lib/machine/tests/test_job_plot_artifacts.py`
 - Added tests for shared context flow and memo telemetry behavior.
 
 5. Duplicate-path exception register
@@ -34,12 +34,12 @@
 - Added required registry entries with rationale and re-evaluation dates.
 
 6. Type-detail prewarm skip for fresh artifacts
-- File: `hpcperfstats/site/machine/job_detail_artifacts.py`
+- File: `hpcperfstats/site/lib/machine/job_detail_artifacts.py`
 - Added fingerprint-scoped precheck to skip rebuilding already-fresh `type_detail` artifacts.
 - This reduces repeated per-type DB/plot work for unchanged jobs.
 
 7. Plot aggregate bundle normalization and shared prefetch
-- File: `hpcperfstats/site/machine/job_plot_artifacts.py`
+- File: `hpcperfstats/site/lib/machine/job_plot_artifacts.py`
 - Added normalized aggregate cache keys (event-order-insensitive) and shared aggregate bundle prefetch for common roofline probes.
 
 ## Compose-backed telemetry runs

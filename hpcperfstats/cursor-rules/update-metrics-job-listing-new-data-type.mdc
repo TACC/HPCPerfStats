@@ -19,7 +19,7 @@ Whenever you add **extra persisted or prewarmed computation** for a job that run
 
 ## Tests
 
-- Add or extend **regression tests** in the same task: at minimum **compiled queryset** coverage (e.g. `hpcperfstats/site/machine/tests/test_update_metrics.py`) asserting the new table/SQL/fingerprint appears where appropriate, and—when on PostgreSQL—**fingerprint parity** or integration checks so SQL selection cannot drift from Python helpers.
+- Add or extend **regression tests** in the same task: at minimum **compiled queryset** coverage (e.g. `hpcperfstats/site/lib/machine/tests/test_update_metrics.py`) asserting the new table/SQL/fingerprint appears where appropriate, and—when on PostgreSQL—**fingerprint parity** or integration checks so SQL selection cannot drift from Python helpers.
 
 ## Completion bar
 

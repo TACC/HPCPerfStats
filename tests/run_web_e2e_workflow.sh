@@ -127,7 +127,7 @@ compose_web_repo_bind_mount_args
 compose_test run --rm \
   -e HPCPERFSTATS_COMPOSE_NETWORK=1 \
   "${compose_web_repo_bind_mount_args[@]}" \
-  --entrypoint "sh -lc 'pip install -e \".[test]\"${PLAYWRIGHT_SETUP} && python hpcperfstats/site/manage.py migrate --noinput && python -m pytest -q hpcperfstats/site/machine/tests/test_web_pages_e2e.py hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py hpcperfstats/site/hpcperfstats_site/tests/test_nginx_static_wsgi_contract.py'" \
+  --entrypoint "sh -lc 'pip install -e \".[test]\"${PLAYWRIGHT_SETUP} && python hpcperfstats/site/manage.py migrate --noinput && python -m pytest -q hpcperfstats/site/lib/machine/tests/test_web_pages_e2e.py hpcperfstats/site/lib/machine/tests/test_web_pages_browser_e2e.py hpcperfstats/site/hpcperfstats_site/tests/test_nginx_static_wsgi_contract.py'" \
   web
 
 echo "E2E workflow completed."

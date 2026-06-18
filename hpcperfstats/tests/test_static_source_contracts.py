@@ -42,12 +42,12 @@ _BAD_PLOT_INNER_FORMAT = (
     "rel,needles,forbidden",
     [
       (
-          "analysis/gen/jid_table.py",
+          "analysis/metrics/lib/gen/jid_table.py",
           [_JID_AGG_TAIL, _TYPE_DETAIL_HEAD],
           [],
       ),
       (
-          "site/machine/artifact_readiness_expressions.py",
+          "site/lib/machine/artifact_readiness_expressions.py",
           [_ARTIFACT_NEEDLE],
           [_BAD_PLOT_INNER_FORMAT],
       ),

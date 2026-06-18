@@ -27,9 +27,9 @@
 
 ## Canonical files
 
-- `hpcperfstats/site/machine/api.py`
-- `hpcperfstats/site/machine/cache_utils.py`
-- `hpcperfstats/site/machine/job_plot_artifacts.py`
-- `hpcperfstats/site/machine/job_detail_artifacts.py`
+- `hpcperfstats/site/lib/machine/api.py`
+- `hpcperfstats/site/lib/machine/cache_utils.py`
+- `hpcperfstats/site/lib/machine/job_plot_artifacts.py`
+- `hpcperfstats/site/lib/machine/job_detail_artifacts.py`
 - `hpcperfstats/analysis/metrics/update_metrics.py`
 - `hpcperfstats/dbload/sync_timedb.py`

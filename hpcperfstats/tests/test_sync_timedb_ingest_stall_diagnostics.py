@@ -3,7 +3,7 @@ import os
 import pytest
 
 from hpcperfstats.dbload import sync_timedb as st
-from hpcperfstats.dbload.sync_timedb_ingest_worker_diagnostics import (
+from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
     clear_dispatch_worker_stages,
     seed_dispatch_worker_stages,
 )
@@ -43,7 +43,7 @@ def test_add_stats_file_to_db_records_worker_entry_before_ingest(monkeypatch):
 def test_raise_if_ingest_per_file_deadline_exceeded_raises(monkeypatch):
   import time
 
-  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       reset_ingest_task_deadline_monotonic,
       reset_ingest_task_effective_timeout_s,
       set_ingest_task_deadline_monotonic,

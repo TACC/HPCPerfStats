@@ -6,7 +6,7 @@ alwaysApply: false
 
 # Update Metrics Batch Resilience
 
-When changing `hpcperfstats/analysis/metrics/metrics.py` (`Metrics.run`, `_unwrap`, `_drain_metrics_imap`, `compute_metric` classes) or scheduler batch compute in `update_metrics.py`, preserve the contracts below so one bad or slow job does not wedge the whole batch.
+When changing `hpcperfstats/analysis/metrics/lib/metrics.py` (`Metrics.run`, `_unwrap`, `_drain_metrics_imap`, `compute_metric` classes) or scheduler batch compute in `update_metrics.py`, preserve the contracts below so one bad or slow job does not wedge the whole batch.
 
 ## Worker isolation (`_unwrap`)
 
@@ -36,9 +36,9 @@ When changing `hpcperfstats/analysis/metrics/metrics.py` (`Metrics.run`, `_unwra
 ## Tests (same task)
 
 - `hpcperfstats/analysis/metrics/test_job_for_metrics.py` — `_unwrap`, stall partial return, per-job timeout.
-- `hpcperfstats/site/machine/tests/test_metrics.py` — NaN/`_finite_amax` regressions for affected metrics.
-- `hpcperfstats/site/machine/tests/test_update_metrics.py` — stall exit propagation and statement-timeout restore on closed connections.
-- `hpcperfstats/tests/test_conf_parser.py` + `test_hpcperfstats_ini_example.py` when adding/changing INI knobs.
+- `hpcperfstats/site/lib/machine/tests/test_metrics.py` — NaN/`_finite_amax` regressions for affected metrics.
+- `hpcperfstats/site/lib/machine/tests/test_update_metrics.py` — stall exit propagation and statement-timeout restore on closed connections.
+- `hpcperfstats/tests/test_dbload/lib/dbload/lib/conf_parser.py` + `test_hpcperfstats_ini_example.py` when adding/changing INI knobs.
 
 ## Overlap
 

@@ -32,7 +32,7 @@ alwaysApply: false
 | `hpcperfstats/site/frontend/src/fonts/open-sans.css` | **None** | Imports **`@fontsource/open-sans`** subsets (**latin** + **latin-ext**, 400/700 + italics). Vite copies **woff2/woff** into **`hpcperfstats_site/static/frontend/assets/`** with hashed names; `@font-face` URLs use **`/static/frontend/assets/...`** (same origin as the SPA, served like other built static files). |
 | `hpcperfstats/site/frontend/src/bootswatch-spacelab.scss` | **None** | Spacelab SCSS with **`$web-font-path: false`** so Bootswatch does not emit a Google Fonts **`@import`**. **`$font-family-sans-serif`** still leads with **Open Sans**, satisfied by the Fontsource bundle above. |
 | `hpcperfstats/site/hpcperfstats_site/middleware.py` | **None** for fonts | CSP uses **`font-src 'self' data:`** and **`style-src 'self' 'unsafe-inline'`** without `fonts.googleapis.com` / `fonts.gstatic.com`. |
-| `hpcperfstats/site/machine/tests/test_bokeh_job_list_embed_browser_e2e.py` | **`cdn.jsdelivr.net`** (`@bokeh/bokehjs`) | **Test-only** Playwright embed regression; allowed. |
+| `hpcperfstats/site/lib/machine/tests/test_bokeh_job_list_embed_browser_e2e.py` | **`cdn.jsdelivr.net`** (`@bokeh/bokehjs`) | **Test-only** Playwright embed regression; allowed. |
 | `test_react_spa_view.py` | (assertions) | Asserts served SPA HTML does **not** contain `cdn.pydata.org` or `cdn.jsdelivr.net`. |
 
 No production app source should embed jsDelivr, unpkg, cdnjs, or Bokeh `cdn.pydata.org` scripts. External **API** URLs in Python (e.g. documentation/search links) are not “asset CDNs” for this rule.

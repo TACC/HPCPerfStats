@@ -5,7 +5,7 @@ from datetime import date
 
 import pytest
 
-from hpcperfstats.dbload.archive_compress import (
+from hpcperfstats.dbload.lib.archive_compress import (
     DAILY_ARCHIVE_GZ_SUFFIX,
     DAILY_ARCHIVE_TAR_SUFFIX,
     DAILY_ARCHIVE_ZST_SUFFIX,

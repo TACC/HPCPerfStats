@@ -9,7 +9,7 @@ from unittest import mock
 
 import pytest
 
-from hpcperfstats.dbload import sync_timedb_async_day_close as async_dc_mod
+from hpcperfstats.dbload.lib import sync_timedb_async_day_close as async_dc_mod
 
 
 @pytest.mark.django_db(databases=[])

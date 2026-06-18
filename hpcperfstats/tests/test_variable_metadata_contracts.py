@@ -3,8 +3,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from hpcperfstats.analysis.metrics.metrics import job_metrics_catalog_entries
-from hpcperfstats.analysis.plot.summary_metric_descriptions import (
+from hpcperfstats.analysis.metrics.lib.metrics import job_metrics_catalog_entries
+from hpcperfstats.analysis.metrics.lib.plot.summary_metric_descriptions import (
     SUMMARY_METRIC_DESCRIPTIONS,
     SUMMARY_METRIC_RESEARCHER_USE,
 )

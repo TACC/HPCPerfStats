@@ -14,10 +14,10 @@ import pika
 import redis
 from pika.exceptions import StreamLostError
 
-import hpcperfstats.conf_parser as cfg
-from hpcperfstats.file_locking import file_read_lock_wait, file_write_lock
-from hpcperfstats.print_utils import log_print
-from hpcperfstats.shutdown_utils import send_sigchld_to_parent
+import hpcperfstats.dbload.lib.conf_parser as cfg
+from hpcperfstats.dbload.lib.file_locking import file_read_lock_wait, file_write_lock
+from hpcperfstats.dbload.lib.print_utils import log_print
+from hpcperfstats.dbload.lib.shutdown_utils import send_sigchld_to_parent
 
 DEBUG = cfg.get_debug()
 
@@ -166,7 +166,7 @@ def _enqueue_recent_host_update(host):
 
 def _recent_host_worker():
   """Background worker that writes recent-host timestamps to Redis."""
-  from hpcperfstats.process_title import set_daemon_thread_title
+  from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
 
   set_daemon_thread_title("", script_name="listend.py", role="recent-host-worker")
   while not _recent_host_worker_stop_event.is_set():
@@ -333,7 +333,7 @@ def _idle_monitor():
   Runs every IDLE_CHECK_INTERVAL seconds, but only logs once per
   MESSAGE_WINDOW_SECONDS window.
   """
-  from hpcperfstats.process_title import set_daemon_thread_title
+  from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
 
   set_daemon_thread_title("", script_name="listend.py", role="idle-monitor")
   global _last_idle_report_time
@@ -366,7 +366,7 @@ def _idle_monitor():
 
 
 def main():
-  from hpcperfstats.process_title import set_daemon_process_title
+  from hpcperfstats.dbload.lib.process_title import set_daemon_process_title
 
   set_daemon_process_title(name="listend.py", role="main")
   global _idle_thread_started

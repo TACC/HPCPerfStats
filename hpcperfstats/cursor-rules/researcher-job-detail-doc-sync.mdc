@@ -14,15 +14,15 @@ in the same task.
 ## Trigger conditions
 
 - Changes to job-detail API payload shape or semantics in:
-  - `hpcperfstats/site/machine/api.py` (`job_detail`, `job_plots`, multiprecision/detail artifacts, `metrics_list`, fsio/gpu summary fields, xalt/process/schema sections)
-  - `hpcperfstats/site/machine/job_plot_artifacts.py`
-  - `hpcperfstats/site/machine/job_detail_artifacts.py`
+  - `hpcperfstats/site/lib/machine/api.py` (`job_detail`, `job_plots`, multiprecision/detail artifacts, `metrics_list`, fsio/gpu summary fields, xalt/process/schema sections)
+  - `hpcperfstats/site/lib/machine/job_plot_artifacts.py`
+  - `hpcperfstats/site/lib/machine/job_detail_artifacts.py`
 - Changes to Job Detail frontend tabs/panels/labels in:
   - `hpcperfstats/site/frontend/src/pages/JobDetail.jsx`
   - `hpcperfstats/site/frontend/src/utils/jobMetricDisplayLabels.js`
   - `hpcperfstats/site/frontend/src/utils/variableMetadata*.js`
 - Changes to job metric catalog/meaning in:
-  - `hpcperfstats/analysis/metrics/metrics.py` (`job_metrics_catalog_entries`, metric keys/units/no-data behavior)
+  - `hpcperfstats/analysis/metrics/lib/metrics.py` (`job_metrics_catalog_entries`, metric keys/units/no-data behavior)
 - Any new metric, plot, graph, table, tab, field, or unavailable/no-data behavior visible on the Job Detail page.
 
 ## Required documentation updates

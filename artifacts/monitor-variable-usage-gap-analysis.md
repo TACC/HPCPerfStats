@@ -2,7 +2,7 @@
 
 Static code-derived comparison between monitor-emitted schema keys in `monitor/src` and explicit quoted-key usage in `hpcperfstats/` + `tests/` (excluding `monitor/`).
 
-*Regenerated: 2026-06-04 via `docs/regenerate_monitor_variable_usage_gap_analysis.py`.*
+*Regenerated: 2026-06-17 via `docs/regenerate_monitor_variable_usage_gap_analysis.py`.*
 
 ## 1) Total emitted variables (by type)
 
@@ -14,59 +14,40 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `host_cpu`: emitted **7**, used **5**, unused **2**
 - `host_ib`: emitted **28**, used **15**, unused **13**
 - `host_lnet`: emitted **11**, used **3**, unused **8**
-- `host_mem`: emitted **17**, used **5**, unused **12**
+- `host_mem`: emitted **17**, used **7**, unused **10**
 - `host_net`: emitted **23**, used **17**, unused **6**
 - `host_nfs`: emitted **18**, used **8**, unused **10**
 - `host_numa`: emitted **6**, used **3**, unused **3**
 - `host_opa`: emitted **16**, used **4**, unused **12**
 - `host_proc`: emitted **13**, used **0**, unused **13**
 - `host_ps`: emitted **7**, used **1**, unused **6**
-- `host_roofline_peak`: emitted **8**, used **5**, unused **3**
+- `host_roofline_peak`: emitted **9**, used **6**, unused **3**
 - `host_sysv_shm`: emitted **2**, used **1**, unused **1**
 - `host_tmpfs`: emitted **3**, used **0**, unused **3**
 - `host_vfs`: emitted **3**, used **0**, unused **3**
 - `host_vm`: emitted **27**, used **0**, unused **27**
-- `intel_x86_pcu`: emitted **6**, used **0**, unused **6**
 - `intel_x86_pmc_gpr4`: emitted **24**, used **3**, unused **21**
 - `intel_x86_pmc_gpr8`: emitted **24**, used **3**, unused **21**
 - `intel_x86_rapl`: emitted **4**, used **1**, unused **3**
-- `intel_x86_uncore_cbo_bdw`: emitted **4**, used **0**, unused **4**
-- `intel_x86_uncore_cbo_hsw`: emitted **4**, used **0**, unused **4**
-- `intel_x86_uncore_cbo_ivb`: emitted **4**, used **0**, unused **4**
-- `intel_x86_uncore_cbo_snb`: emitted **4**, used **0**, unused **4**
 - `intel_x86_uncore_cha_skx`: emitted **4**, used **0**, unused **4**
-- `intel_x86_uncore_hau_bdw`: emitted **4**, used **0**, unused **4**
-- `intel_x86_uncore_hau_hsw`: emitted **4**, used **0**, unused **4**
-- `intel_x86_uncore_hau_ivb`: emitted **4**, used **0**, unused **4**
-- `intel_x86_uncore_hau_snb`: emitted **4**, used **0**, unused **4**
-- `intel_x86_uncore_imc_bdw`: emitted **5**, used **2**, unused **3**
-- `intel_x86_uncore_imc_hsw`: emitted **5**, used **2**, unused **3**
-- `intel_x86_uncore_imc_ivb`: emitted **5**, used **2**, unused **3**
+- `intel_x86_uncore_imc_icx`: emitted **2**, used **2**, unused **0**
 - `intel_x86_uncore_imc_skx`: emitted **4**, used **2**, unused **2**
-- `intel_x86_uncore_imc_snb`: emitted **5**, used **2**, unused **3**
-- `intel_x86_uncore_qpi_bdw`: emitted **4**, used **0**, unused **4**
-- `intel_x86_uncore_qpi_hsw`: emitted **4**, used **0**, unused **4**
-- `intel_x86_uncore_qpi_ivb`: emitted **4**, used **0**, unused **4**
-- `intel_x86_uncore_qpi_snb`: emitted **4**, used **0**, unused **4**
-- `intel_x86_uncore_r2pci_bdw`: emitted **4**, used **0**, unused **4**
-- `intel_x86_uncore_r2pci_hsw`: emitted **4**, used **0**, unused **4**
-- `intel_x86_uncore_r2pci_ivb`: emitted **4**, used **0**, unused **4**
-- `intel_x86_uncore_r2pci_snb`: emitted **4**, used **0**, unused **4**
-- `lustre_llite`: emitted **37**, used **28**, unused **9**
+- `intel_x86_uncore_imc_spr`: emitted **4**, used **2**, unused **2**
+- `lustre_llite`: emitted **37**, used **29**, unused **8**
 - `lustre_mdc`: emitted **10**, used **2**, unused **8**
 - `lustre_osc`: emitted **10**, used **3**, unused **7**
 - `nvidia_gpu`: emitted **34**, used **19**, unused **15**
 - `osc`: emitted **10**, used **3**, unused **7**
 
 **Totals**
-- Total monitor types: **51**
-- Total emitted variables: **490**
+- Total monitor types: **32**
+- Total emitted variables: **407**
 - Total explicitly used variables (quoted literals, global): **163**
-- Total unused variables: **327**
+- Total unused variables: **244**
 
 ## 2) Total used variables
 
-- Explicitly used monitor variable keys (quoted literal match in usage scope): **117**
+- Explicitly used monitor variable keys (quoted literal match in usage scope): **121**
 
 ## 3) Exhaustive unused variables grouped by type
 
@@ -135,14 +116,12 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `rx_msgs_dropped`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `tx_msgs`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `host_mem` (12)
+### `host_mem` (10)
 - `anon_huge_pages`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `anon_pages`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `bounce`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `file_pages`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `huge_pages_free`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `huge_pages_total`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `inactive`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `mapped`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `nfs_unstable`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `page_tables`: monitor-emitted telemetry field. **Usefulness:** Low / other
@@ -258,14 +237,6 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `thp_fault_fallback`: monitor-emitted telemetry field. **Usefulness:** Low / memory
 - `thp_split`: monitor-emitted telemetry field. **Usefulness:** Low / memory
 
-### `intel_x86_pcu` (6)
-- `freq_max_power_cycles`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `freq_max_temp_cycles`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `freq_min_io_cycles`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `freq_min_snoop_cycles`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `pcu_ctr0`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `pcu_ctr1`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
 ### `intel_x86_pmc_gpr4` (21)
 - `dtlb_load_misses_miss_causes_a_walk`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `fp_arith_inst_retired_128b_packed_double`: monitor-emitted telemetry field. **Usefulness:** Low / other
@@ -317,133 +288,21 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `pp0_energy`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `pp1_energy`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `intel_x86_uncore_cbo_bdw` (4)
-- `llc_lookup_data_read`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `llc_lookup_write`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `ring_iv_used`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `rx_r_occupancy`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_x86_uncore_cbo_hsw` (4)
-- `llc_lookup_data_read`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `llc_lookup_write`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `ring_iv_used`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `rx_r_occupancy`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_x86_uncore_cbo_ivb` (4)
-- `counter0_occupancy`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `llc_lookup_data_read`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `llc_lookup_write`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `ring_iv_used`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_x86_uncore_cbo_snb` (4)
-- `counter0_occupancy`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `llc_lookup_data_read`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `llc_lookup_write`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `ring_iv_used`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
 ### `intel_x86_uncore_cha_skx` (4)
 - `bypass_cha_imc_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `llc_lookup_data_read_local`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `llc_lookup_write`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `sf_evictions_mes`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `intel_x86_uncore_hau_bdw` (4)
-- `clockticks`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `imc_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `requests_reads`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `requests_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_x86_uncore_hau_hsw` (4)
-- `clockticks`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `imc_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `requests_reads`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `requests_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_x86_uncore_hau_ivb` (4)
-- `clockticks`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `imc_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `requests_reads`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `requests_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_x86_uncore_hau_snb` (4)
-- `clockticks`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `imc_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `requests_reads`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `requests_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_x86_uncore_imc_bdw` (3)
-- `dram_act_count`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `dram_fixed_ctr`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `dram_pre_count_miss`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_x86_uncore_imc_hsw` (3)
-- `dram_act_count`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `dram_fixed_ctr`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `dram_pre_count_miss`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_x86_uncore_imc_ivb` (3)
-- `dram_act_count`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `dram_fixed_ctr`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `dram_pre_count_miss`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
 ### `intel_x86_uncore_imc_skx` (2)
 - `dram_act_count`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `dram_pre_count_miss`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `intel_x86_uncore_imc_snb` (3)
-- `dram_act_count`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `dram_fixed_ctr`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `dram_pre_count_miss`: monitor-emitted telemetry field. **Usefulness:** Low / other
+### `intel_x86_uncore_imc_spr` (2)
+- `hbm_cas_reads`: monitor-emitted telemetry field. **Usefulness:** Low / other
+- `hbm_cas_writes`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
-### `intel_x86_uncore_qpi_bdw` (4)
-- `g1_drs_data`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `g2_ncb_data`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `tx_l_flits_g1_hom`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `tx_l_flits_g1_snp`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_x86_uncore_qpi_hsw` (4)
-- `g1_drs_data`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `g2_ncb_data`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `tx_l_flits_g1_hom`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `tx_l_flits_g1_snp`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_x86_uncore_qpi_ivb` (4)
-- `g1_drs_data`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `g2_ncb_data`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `tx_l_flits_g1_hom`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `tx_l_flits_g1_snp`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_x86_uncore_qpi_snb` (4)
-- `g1_drs_data`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `g2_ncb_data`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `tx_l_flits_g1_hom`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `tx_l_flits_g1_snp`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_x86_uncore_r2pci_bdw` (4)
-- `ring_ad_used_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `ring_ak_used_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `ring_bl_used_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `tx_r_inserts`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_x86_uncore_r2pci_hsw` (4)
-- `ring_ad_used_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `ring_ak_used_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `ring_bl_used_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `tx_r_inserts`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_x86_uncore_r2pci_ivb` (4)
-- `ring_ad_used_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `ring_ak_used_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `ring_bl_used_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `tx_r_inserts`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `intel_x86_uncore_r2pci_snb` (4)
-- `ring_ad_used_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `ring_ak_used_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `ring_bl_used_all`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `tx_r_inserts`: monitor-emitted telemetry field. **Usefulness:** Low / other
-
-### `lustre_llite` (9)
+### `lustre_llite` (8)
 - `dirty_pages_hits`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `dirty_pages_misses`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `getxattr`: monitor-emitted telemetry field. **Usefulness:** Low / other
@@ -452,7 +311,6 @@ Static code-derived comparison between monitor-emitted schema keys in `monitor/s
 - `osc_read`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `osc_write`: monitor-emitted telemetry field. **Usefulness:** Low / other
 - `seek`: monitor-emitted telemetry field. **Usefulness:** Low / other
-- `write`: monitor-emitted telemetry field. **Usefulness:** Low / other
 
 ### `lustre_mdc` (8)
 - `mds_close`: monitor-emitted telemetry field. **Usefulness:** Low / other
@@ -516,12 +374,12 @@ This section is a strict `host_data.type` inventory for variables actively wired
 
 ### `amd64_df`
 - **Used variables:** `MBW_CHANNEL_0`, `MBW_CHANNEL_1`, `MBW_CHANNEL_2`, `MBW_CHANNEL_3`, `MBW_CHANNEL_4`, `MBW_CHANNEL_5`, `MBW_CHANNEL_6`, `MBW_CHANNEL_7`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py` (`avg_mbw`, `dram_bw_node_imbalance`)
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py` (`avg_mbw`, `dram_bw_node_imbalance`)
 - **Figures/metrics/displays:** Job Detail Metrics (`avg_mbw`, `dram_bw_node_imbalance`), Summary plot (`amd_mbw`), CPU roofline memory path
 
 ### `amd64_pmc`
 - **Used variables:** `FLOPS`, `APERF`, `MPERF`, `INST_RETIRED`, `BRANCH_INST_RETIRED`, `BRANCH_INST_RETIRED_MISS`, `DISPATCH_STALL_CYCLES0`, `DISPATCH_STALL_CYCLES1`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py`, summary/roofline/heatmap plot modules
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py`, summary/roofline/heatmap plot modules
 - **Figures/metrics/displays:** Job Detail Metrics (`avg_flops`, `avg_freq`), Summary plot (`amd_flops`, `amd_instr`, `amd_mcycles`, `amd_acycles`)
 
 ### `amd64_rapl`
@@ -531,47 +389,47 @@ This section is a strict `host_data.type` inventory for variables actively wired
 
 ### `amd_gpu`
 - **Used variables:** `gpu_util`, `tensor_active`, `fp16_active`, `fp32_active`, `fp64_active`, `gpu_mem_bw_bytes_rate`, `power_usage`, `clocks_event_reasons`, `gpu_count`, `mem_used_mb`, `mem_util`, `sm_occupancy`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py`, `hpcperfstats/analysis/metrics/gpu_job_detail_summary.py`
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py`, `hpcperfstats/analysis/metrics/lib/gpu_job_detail_summary.py`
 - **Figures/metrics/displays:** Job Detail Metrics (GPU fallback paths), `detail_gpu_*`
 
 ### `arm_imc`
 - **Used variables:** `CAS_READS`, `CAS_WRITES`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py` (`avg_mbw`) and roofline helpers
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py` (`avg_mbw`) and roofline helpers
 - **Figures/metrics/displays:** Job Detail Metrics (`avg_mbw`), CPU roofline memory path
 
 ### `block`
 - **Used variables:** `rd_sectors`, `wr_sectors`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py` (`avg_blockbw`)
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py` (`avg_blockbw`)
 - **Figures/metrics/displays:** Job Detail Metrics (`avg_blockbw`)
 
 ### `cpu`
 - **Used variables:** `user`, `system`, `nice`, `idle`, `irq`, `softirq`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py` (`avg_cpuusage`, `node_imbalance`, `time_imbalance`), summary plot
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py` (`avg_cpuusage`, `node_imbalance`, `time_imbalance`), summary plot
 - **Figures/metrics/displays:** Job Detail Metrics (`avg_cpuusage`, `node_imbalance`, `time_imbalance`), Summary plot (`cpu`)
 
 ### `cpu_counter_metrics`
 - **Used variables:** `ARM_EST_FLOPS`, `ARM_DRAM_BW_BYTES`, `FP_ARITH_INST_RETIRED_SCALAR_DOUBLE`, `FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE`, `FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE`, `FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE`, `FP_ARITH_INST_RETIRED_SCALAR_SINGLE`, `FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE`, `FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE`, `FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE`, `SSE_DOUBLE_SCALAR`, `SSE_DOUBLE_PACKED`, `SIMD_DOUBLE_256`, `APERF`, `MPERF`, `INST_RETIRED`, `DCGM_CPU_POWER_UTIL_W`, `DCGM_CPU_POWER_LIMIT_W`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py`, roofline and node power estimate paths
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py`, roofline and node power estimate paths
 - **Figures/metrics/displays:** Job Detail Metrics (FLOP/vector/frequency/memory/power-derived rows), CPU roofline, Summary power/frequency/counter panels
 
 ### `host_ib`
 - **Used variables:** `port_xmit_data`, `port_rcv_data`, `port_xmit_pkts`, `port_rcv_pkts`, sysfs error counters, `sw_rx_bytes`, `sw_tx_bytes`, `sw_rx_packets`, `sw_tx_packets`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py` (`avg_ibbw`, `avg_packetsize`, `max_fabricbw`, `max_packetrate`, `fabric_node_imbalance`), summary plot hardware error overlay
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py` (`avg_ibbw`, `avg_packetsize`, `max_fabricbw`, `max_packetrate`, `fabric_node_imbalance`), summary plot hardware error overlay
 - **Figures/metrics/displays:** Job Detail Metrics (fabric averages/peaks/imbalance/ratios), Summary plot (`ibbw`, IB error rates)
 
 ### `intel_4pmc3`
 - **Used variables:** `APERF`, `MPERF`, `INST_RETIRED`, `FP_ARITH_INST_RETIRED_SCALAR_DOUBLE`, `FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE`, `FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE`, `FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE`, `FP_ARITH_INST_RETIRED_SCALAR_SINGLE`, `FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE`, `FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE`, `FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE`, `SSE_DOUBLE_SCALAR`, `SSE_DOUBLE_PACKED`, `SIMD_DOUBLE_256`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py`, summary/roofline/heatmap plot modules
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py`, summary/roofline/heatmap plot modules
 - **Figures/metrics/displays:** Job Detail Metrics (FLOP/vector/frequency rows), Summary plot (`flops64b`, `flops32b`, `instr`, `mcycles`, `acycles`, `freq`), CPU roofline and CPU multiprecision
 
 ### `intel_8pmc3`
 - **Used variables:** `APERF`, `MPERF`, `INST_RETIRED`, `FP_ARITH_INST_RETIRED_SCALAR_DOUBLE`, `FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE`, `FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE`, `FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE`, `FP_ARITH_INST_RETIRED_SCALAR_SINGLE`, `FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE`, `FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE`, `FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE`, `SSE_DOUBLE_SCALAR`, `SSE_DOUBLE_PACKED`, `SIMD_DOUBLE_256`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py`, summary/roofline/heatmap plot modules
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py`, summary/roofline/heatmap plot modules
 - **Figures/metrics/displays:** Job Detail Metrics (FLOP/vector/frequency rows), Summary plot (`flops64b`, `flops32b`, `instr`, `mcycles`, `acycles`, `freq`), CPU roofline and CPU multiprecision
 
 ### `intel_bdw_imc`, `intel_hsw_imc`, `intel_ivb_imc`, `intel_snb_imc`, `intel_skx_imc`
 - **Used variables:** `CAS_READS`, `CAS_WRITES`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py` (`avg_mbw`, `dram_bw_node_imbalance`), roofline helpers
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py` (`avg_mbw`, `dram_bw_node_imbalance`), roofline helpers
 - **Figures/metrics/displays:** Job Detail Metrics (`avg_mbw`, `dram_bw_node_imbalance`), Summary (`mbw`), CPU roofline memory path
 
 ### `intel_rapl`
@@ -581,58 +439,58 @@ This section is a strict `host_data.type` inventory for variables actively wired
 
 ### `llite`
 - **Used variables:** `read_bytes`, `write_bytes`, `open`, `close`, `mmap`, `fsync`, `setattr`, `truncate`, `flock`, `getattr`, `statfs`, `alloc_inode`, `setxattr`, `listxattr`, `removexattr`, `readdir`, `create`, `lookup`, `link`, `unlink`, `symlink`, `mkdir`, `rmdir`, `mknod`, `rename`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py`, `hpcperfstats/analysis/metrics/job_detail_fsio.py`, summary plot builders
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py`, `hpcperfstats/analysis/metrics/lib/job_detail_fsio.py`, summary plot builders
 - **Figures/metrics/displays:** Job Detail Metrics (`avg_sharedfs_bw`, `avg_sharedfs_iops`, `max_mds`, FSIO `detail_fsio_llite_*`), Summary (`lustre_read_mb_s`, `lustre_write_mb_s`, `liops`)
 
 ### `lnet`
 - **Used variables:** `tx_bytes`, `rx_bytes`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py` (`max_lnetbw`, `lnet_node_imbalance`)
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py` (`max_lnetbw`, `lnet_node_imbalance`)
 - **Figures/metrics/displays:** Job Detail Metrics (`max_lnetbw`, `lnet_node_imbalance`)
 
 ### `mem`
 - **Used variables:** `MemUsed`, `MemTotal`, `Slab`, `FilePages`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py` (`mem_hwm`), summary plot memory panels
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py` (`mem_hwm`), summary plot memory panels
 - **Figures/metrics/displays:** Job Detail Metrics (`mem_hwm`), Summary (`mem`)
 
 ### `net`
 - **Used variables:** `rx_bytes`, `tx_bytes`, `rx_packets`, `tx_packets`, `rx_errors`, `tx_errors`, `rx_dropped`, `tx_dropped`, `collisions`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py` (`avg_ethbw`, network fallbacks), summary error-rate builders
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py` (`avg_ethbw`, network fallbacks), summary error-rate builders
 - **Figures/metrics/displays:** Job Detail Metrics (`avg_ethbw`, fallback fabric packet/byte rates), Summary (`summary_hardware_error_rates`)
 
 ### `nfs`
 - **Used variables:** `READ_ops`, `WRITE_ops`, `normal_read`, `normal_write`, `direct_read`, `direct_write`, `server_read`, `server_write`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py`, `hpcperfstats/analysis/metrics/job_detail_fsio.py`, summary plot builders
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py`, `hpcperfstats/analysis/metrics/lib/job_detail_fsio.py`, summary plot builders
 - **Figures/metrics/displays:** Job Detail Metrics (`avg_sharedfs_bw`, `avg_sharedfs_iops`, `max_mds`, FSIO `detail_fsio_nfs_*`), Summary (`nfs_read_mb_s`, `nfs_write_mb_s`, `nfs_iops`)
 
 ### `numa`
 - **Used variables:** `numa_miss`, `numa_foreign`, `other_node`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py` (`max_numa_remote_rate`), summary NUMA panel
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py` (`max_numa_remote_rate`), summary NUMA panel
 - **Figures/metrics/displays:** Job Detail Metrics (`max_numa_remote_rate`), Summary (`numa_remote_refs`)
 
 ### `nvidia_gpu`
 - **Used variables:** `gpu_util`, `tensor_active`, `fp16_active`, `fp32_active`, `fp64_active`, `gpu_mem_bw_bytes_rate`, `power_usage`, `sysio_power_usage`, `module_power_usage`, `clocks_event_reasons`, `gpu_io_link_total_bytes`, `mem_used_mb`, `mem_util`, `sm_occupancy`, `gpu_count`, `gpu_flops`, `gpu_mem_read_bytes`, `gpu_mem_write_bytes`, `gpu_mem_total_bytes`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py`, `hpcperfstats/analysis/metrics/gpu_job_detail_summary.py`, summary and roofline plot builders
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py`, `hpcperfstats/analysis/metrics/lib/gpu_job_detail_summary.py`, summary and roofline plot builders
 - **Figures/metrics/displays:** Job Detail Metrics (`avg_gpuutil`, precision/tensor/GPU-link/GPU-power metrics, `detail_gpu_*`, GPU imbalance metrics), Summary GPU panels (`nv_*`), GPU roofline and GPU multiprecision
 
 ### `opa`
 - **Used variables:** `PortXmitData`, `PortRcvData`, `PortXmitPkts`, `PortRcvPkts`, `PortXmitWait`, `SwPortCongestion`, `PortRcvFECN`, `PortRcvBECN`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py` (fabric metrics, congestion metrics, imbalance), summary OPA/error plots
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py` (fabric metrics, congestion metrics, imbalance), summary OPA/error plots
 - **Figures/metrics/displays:** Job Detail Metrics (fabric fallbacks and `max_opa_congestion_rate`), Summary (`opa_wait_cong`, `opa_ecn`, `summary_hardware_error_rates`)
 
 ### `roofline_hw_peak`
 - **Used variables:** `cpu_peak_fp64_flops_per_s`, `cpu_peak_dram_bw_bytes_per_s`, `gpu_peak_fp64_flops_per_s`, `gpu_peak_mem_bw_bytes_per_s`, `gpu_peak_io_link_bw_bytes_per_s`
-- **Where used in code:** `hpcperfstats/analysis/plot/roofline_peaks.py`, roofline plot builders
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/plot/roofline_peaks.py`, roofline plot builders
 - **Figures/metrics/displays:** CPU/GPU roofline peak reference lines
 
 
 ## 6) Where used in codebase (canonical files)
 
-- `hpcperfstats/analysis/metrics/metrics.py`: authoritative mapping from monitor keys to persisted job-level metrics (`metrics_data`) and many Job Detail table rows.
-- `hpcperfstats/analysis/plot/summary_metric_descriptions.py`: canonical summary-plot metric keys and user-facing descriptions for all summary subplot columns.
+- `hpcperfstats/analysis/metrics/lib/metrics.py`: authoritative mapping from monitor keys to persisted job-level metrics (`metrics_data`) and many Job Detail table rows.
+- `hpcperfstats/analysis/metrics/lib/plot/summary_metric_descriptions.py`: canonical summary-plot metric keys and user-facing descriptions for all summary subplot columns.
 - `hpcperfstats/site/frontend/src/utils/variableMetadata.js`: canonical UI tooltip mapping for monitor events, derived metrics, summary metrics, and Job Detail Bokeh plot help keys.
 - `hpcperfstats/site/frontend/src/utils/jobMetricDisplayLabels.js`: short-label mapping for metrics shown in Job Detail metrics table.
-- `hpcperfstats/analysis/metrics/job_detail_fsio.py`: filesystem detail aggregation rows shown on Job Detail.
-- `hpcperfstats/analysis/metrics/gpu_job_detail_summary.py`: GPU aggregate summary rows (`detail_gpu_*`) shown on Job Detail.
+- `hpcperfstats/analysis/metrics/lib/job_detail_fsio.py`: filesystem detail aggregation rows shown on Job Detail.
+- `hpcperfstats/analysis/metrics/lib/gpu_job_detail_summary.py`: GPU aggregate summary rows (`detail_gpu_*`) shown on Job Detail.
 
 ## 7) Figure/metric/display crosswalk for used variables
 

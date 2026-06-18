@@ -17,7 +17,7 @@ GPU-derived job-detail fields (including `gpu_count` and utilization summaries) 
 
 ## Cross-layer consistency
 
-- Keep Django API assembly (`hpcperfstats/site/machine/api.py`) and frontend consumers consistent for default/no-data behavior.
+- Keep Django API assembly (`hpcperfstats/site/lib/machine/api.py`) and frontend consumers consistent for default/no-data behavior.
 - Treat monitor `host_data.type` names as the contract. If monitor naming changes, update analysis/API precedence and tests together.
 - When adding a new GPU summary field, also update user-facing definitions/docs in the same task.
 

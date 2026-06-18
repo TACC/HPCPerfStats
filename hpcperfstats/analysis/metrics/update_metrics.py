@@ -31,7 +31,7 @@ from types import SimpleNamespace
 from datetime import datetime, timedelta
 from collections import defaultdict, deque
 from concurrent.futures import CancelledError, FIRST_COMPLETED, ThreadPoolExecutor, wait
-from hpcperfstats.django_bootstrap import ensure_django
+from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
 
 ensure_django()
 
@@ -44,53 +44,53 @@ from django.db.models.query import QuerySet
 from django.db.models.functions import Coalesce
 from django.db.utils import OperationalError, DatabaseError
 
-import hpcperfstats.conf_parser as cfg
-from hpcperfstats.analysis.metrics import metrics
-from hpcperfstats.analysis.metrics.live_host_sample_count import (
+import hpcperfstats.dbload.lib.conf_parser as cfg
+from hpcperfstats.analysis.metrics.lib import metrics
+from hpcperfstats.analysis.metrics.lib.live_host_sample_count import (
     live_distinct_host_time_count_expression,
 )
-from hpcperfstats.analysis.metrics.metrics import (
+from hpcperfstats.analysis.metrics.lib.metrics import (
     INSUFFICIENT_DATA_FOR_METRICS_PROCESSING,
     expected_job_metric_row_count,
     persist_window_coverage_gate_failure,
 )
-from hpcperfstats.analysis.metrics.db_retry import run_with_db_retry
-from hpcperfstats.dbload.db_unavailable import (
+from hpcperfstats.analysis.metrics.lib.db_retry import run_with_db_retry
+from hpcperfstats.dbload.lib.db_unavailable import (
     DatabaseUnavailableExit,
     is_database_unavailable_error,
     log_and_raise_database_unavailable,
 )
-from hpcperfstats.print_utils import log_print
-from hpcperfstats.dbload.date_utils import log_date_range, parse_start_end_dates
-from hpcperfstats.shutdown_utils import (
+from hpcperfstats.dbload.lib.print_utils import log_print
+from hpcperfstats.dbload.lib.date_utils import log_date_range, parse_start_end_dates
+from hpcperfstats.dbload.lib.shutdown_utils import (
     shutdown_requested,
     send_sigchld_to_parent,
     sleep_until_shutdown,
 )
-from hpcperfstats.site.machine.job_plot_artifacts import (
+from hpcperfstats.site.lib.machine.job_plot_artifacts import (
     JOB_PLOT_KINDS,
     JOB_PLOT_LAYOUT_NORMAL,
     persist_job_plot_artifacts_for_jid,
 )
-from hpcperfstats.site.machine.job_detail_artifacts import (
+from hpcperfstats.site.lib.machine.job_detail_artifacts import (
     ARTIFACT_KIND_JOB_DETAIL,
     ARTIFACT_KIND_MULTIPRECISION_MIX,
     persist_job_detail_artifacts_for_jid,
 )
-from hpcperfstats.site.machine.artifact_readiness_expressions import (
+from hpcperfstats.site.lib.machine.artifact_readiness_expressions import (
     DetailArtifactInputFingerprintHex,
     HostDataSchemaKeyCount,
     PlotArtifactInputFingerprintHex,
     TypeDetailFreshFingerprintRowCount,
 )
-from hpcperfstats.site.machine.models import (
+from hpcperfstats.site.lib.machine.models import (
     host_data,
     job_data,
     job_detail_artifact,
     job_plot_artifact,
     metrics_data,
 )
-from hpcperfstats.site.machine.public_metrics_artifacts import (
+from hpcperfstats.site.lib.machine.public_metrics_artifacts import (
     refresh_public_expansion_factor_artifacts_parallel,
     refresh_public_expansion_factor_artifacts_safe,
 )
@@ -510,7 +510,7 @@ class _PrewarmPipeline:
     return detail_s, plots_s
 
   def _run_one(self, jid):
-    from hpcperfstats.process_title import set_daemon_thread_title
+    from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
 
     set_daemon_thread_title(
         "",
@@ -881,7 +881,7 @@ class _CompletionReporter:
       return self._readiness_error_total
 
   def _run(self):
-    from hpcperfstats.process_title import set_daemon_thread_title
+    from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
 
     set_daemon_thread_title(
         "",
@@ -2318,7 +2318,7 @@ def _start_candidate_rescan_thread(
     return None
 
   def _rescan_loop():
-    from hpcperfstats.process_title import set_daemon_thread_title
+    from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
 
     set_daemon_thread_title(
         "",
@@ -2482,7 +2482,7 @@ def _start_readiness_producer(
 ):
   """Start background producer that fills ready_queue from readiness checks."""
   def _producer_loop():
-    from hpcperfstats.process_title import set_daemon_thread_title
+    from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
 
     set_daemon_thread_title(
         "",
@@ -3930,7 +3930,7 @@ def main(argv=None, sleep_after=None):
   Dates in the parsed range are processed **newest day first**; see module
   docstring for per-day job order.
   """
-  from hpcperfstats.process_title import set_daemon_process_title
+  from hpcperfstats.dbload.lib.process_title import set_daemon_process_title
 
   set_daemon_process_title(name=UPDATE_METRICS_PROCESS_TITLE, role="main")
   if argv is None:

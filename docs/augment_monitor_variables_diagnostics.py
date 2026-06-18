@@ -27,15 +27,15 @@ def path_is_analysis_wired(p: str) -> bool:
     name = p.rsplit("/", 1)[-1]
     if name.startswith("test_"):
         return False
-    if "analysis/metrics/metrics.py" in p:
+    if "analysis/metrics/lib/metrics.py" in p:
         return True
-    if "analysis/gen/node_power_est.py" in p:
+    if "analysis/metrics/lib/gen/node_power_est.py" in p:
         return True
-    if "analysis/gen/utils.py" in p:
+    if "analysis/metrics/lib/gen/utils.py" in p:
         return True
-    if "analysis/plot/" in p:
+    if "analysis/metrics/lib/plot/" in p:
         return True
-    if "site/machine/api.py" in p:
+    if "site/lib/machine/api.py" in p:
         return True
     if "site/frontend/src/" in p and "variableMetadataMonitorEvents.js" not in p:
         if "generate-variable-metadata-monitor-events.py" in p:

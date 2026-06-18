@@ -1,6 +1,6 @@
 ---
 description: Cluster syslog ingest (syslog-ng, ini allowlist, daily seal, logs under data_dir)
-globs: HPCPerfStats/services-conf/syslog-ng.conf,HPCPerfStats/services-conf/supervisord.conf*,HPCPerfStats/services-conf/supervisor_startup.sh,HPCPerfStats/hpcperfstats/conf_parser.py,HPCPerfStats/hpcperfstats/render_syslog_ng_generated.py,HPCPerfStats/hpcperfstats/seal_syslog_daily.py,HPCPerfStats/hpcperfstats.ini.example,HPCPerfStats/README.md,HPCPerfStats/docker-compose.app.yaml*
+globs: HPCPerfStats/services-conf/syslog-ng.conf,HPCPerfStats/services-conf/supervisord.conf*,HPCPerfStats/services-conf/supervisor_startup.sh,HPCPerfStats/hpcperfstats/dbload/lib/conf_parser.py,HPCPerfStats/hpcperfstats/render_syslog_ng_generated.py,HPCPerfStats/hpcperfstats/seal_syslog_daily.py,HPCPerfStats/hpcperfstats.ini.example,HPCPerfStats/README.md,HPCPerfStats/docker-compose.app.yaml*
 alwaysApply: false
 ---
 

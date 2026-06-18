@@ -17,9 +17,11 @@ ROUTER_ENTRIES: list[RouterEntry] = [
     {
         "id": "sync_timedb_core",
         "patterns": [
-            "hpcperfstats/dbload/sync_timedb*.py",
-            "hpcperfstats/dbload/sync_timedb_*.py",
-            "hpcperfstats/dbload/multiprocessing_pool_health.py",
+            "hpcperfstats/dbload/sync_timedb.py",
+            "hpcperfstats/dbload/sync_timedb_archive.py",
+            "hpcperfstats/dbload/lib/**",
+            "hpcperfstats/dbload/lib/sync_timedb_*.py",
+            "hpcperfstats/dbload/lib/multiprocessing_pool_health.py",
         ],
         "rules": [
             "sync-timedb-persistence-contract.mdc",
@@ -32,7 +34,7 @@ ROUTER_ENTRIES: list[RouterEntry] = [
     {
         "id": "sync_timedb_startup",
         "patterns": [
-            "hpcperfstats/dbload/sync_timedb_startup_*.py",
+            "hpcperfstats/dbload/lib/sync_timedb_startup_*.py",
         ],
         "rules": [
             "sync-timedb-startup-day-close-contract.mdc",
@@ -42,8 +44,8 @@ ROUTER_ENTRIES: list[RouterEntry] = [
     {
         "id": "sync_timedb_ingest_pool",
         "patterns": [
-            "hpcperfstats/dbload/sync_timedb_archive_members_redis.py",
-            "hpcperfstats/dbload/sync_timedb_archive_helpers.py",
+            "hpcperfstats/dbload/lib/sync_timedb_archive_members_redis.py",
+            "hpcperfstats/dbload/lib/sync_timedb_archive_helpers.py",
         ],
         "rules": [
             "sync-timedb-ingest-pool-io-coordination.mdc",
@@ -53,6 +55,7 @@ ROUTER_ENTRIES: list[RouterEntry] = [
         "id": "metrics_batch",
         "patterns": [
             "hpcperfstats/analysis/metrics/*",
+            "hpcperfstats/analysis/metrics/lib/**",
         ],
         "rules": [
             "runtime-resource-and-metrics-safety.mdc",
@@ -63,9 +66,9 @@ ROUTER_ENTRIES: list[RouterEntry] = [
     {
         "id": "django_api",
         "patterns": [
-            "hpcperfstats/site/machine/api.py",
-            "hpcperfstats/site/machine/serializers*",
-            "hpcperfstats/site/machine/models*",
+            "hpcperfstats/site/lib/machine/api.py",
+            "hpcperfstats/site/lib/machine/serializers*",
+            "hpcperfstats/site/lib/machine/models*",
         ],
         "rules": [
             "django-python-cursor-rules.mdc",
@@ -89,7 +92,7 @@ ROUTER_ENTRIES: list[RouterEntry] = [
     {
         "id": "migrations",
         "patterns": [
-            "hpcperfstats/site/machine/migrations/*",
+            "hpcperfstats/site/lib/machine/migrations/*",
             "hpcperfstats/site/*/migrations/*",
         ],
         "rules": [
@@ -125,9 +128,9 @@ ROUTER_ENTRIES: list[RouterEntry] = [
         "id": "openapi_orval",
         "patterns": [
             "hpcperfstats/site/openapi/*",
-            "hpcperfstats/site/machine/openapi_schema.py",
-            "hpcperfstats/site/machine/openapi_serializers.py",
-            "hpcperfstats/site/machine/tests/test_*openapi_wire_contract*.py",
+            "hpcperfstats/site/lib/machine/openapi_schema.py",
+            "hpcperfstats/site/lib/machine/openapi_serializers.py",
+            "hpcperfstats/site/lib/machine/tests/test_*openapi_wire_contract*.py",
             "hpcperfstats/site/frontend/orval.config.ts",
             "hpcperfstats/site/frontend/src/api/*",
         ],
@@ -216,6 +219,16 @@ ROUTER_ENTRIES: list[RouterEntry] = [
         ],
         "rules": [
             "testing-best-practices.mdc",
+        ],
+    },
+    {
+        "id": "package_lib_colocation",
+        "patterns": [
+            "hpcperfstats/**/lib/**",
+            ".gitignore",
+        ],
+        "rules": [
+            "package-lib-colocation.mdc",
         ],
     },
     {

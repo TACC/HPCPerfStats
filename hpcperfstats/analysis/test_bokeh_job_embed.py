@@ -1,6 +1,6 @@
 """Unit tests for shared Bokeh embed sizing helpers (no Django)."""
 
-from hpcperfstats.analysis.bokeh_job_embed import figure_embed_kw
+from hpcperfstats.analysis.metrics.lib.bokeh_job_embed import figure_embed_kw
 
 
 def test_figure_embed_kw_sets_stretch_width_and_height():

@@ -3,11 +3,11 @@ from datetime import datetime, timezone
 
 import pytest
 
-import hpcperfstats.conf_parser as cfg
-import hpcperfstats.dbload.sync_timedb_host_itimes as host_itimes
-import hpcperfstats.dbload.sync_timedb_ingest_readiness as readiness
-import hpcperfstats.dbload.sync_timedb_parsing as parsing
-from hpcperfstats.site.machine.models import host_data
+import hpcperfstats.dbload.lib.conf_parser as cfg
+import hpcperfstats.dbload.lib.sync_timedb_host_itimes as host_itimes
+import hpcperfstats.dbload.lib.sync_timedb_ingest_readiness as readiness
+import hpcperfstats.dbload.lib.sync_timedb_parsing as parsing
+from hpcperfstats.site.lib.machine.models import host_data
 
 
 @pytest.fixture(autouse=True)

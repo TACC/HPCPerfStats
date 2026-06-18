@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from hpcperfstats.file_locking import (
+from hpcperfstats.dbload.lib.file_locking import (
     cleanup_stale_fnctl_lock_sidecars,
     file_read_lock_wait,
     file_write_lock,

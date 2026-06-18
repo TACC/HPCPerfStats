@@ -173,7 +173,7 @@ def collect_emitted_by_type(*, include_ingest_aliases: bool = True) -> dict[str,
 
     if include_ingest_aliases:
         # Legacy ingest-decoded aliases (pre-rename downstream); omit for pure monitor inventory.
-        stp = REPO / "hpcperfstats/dbload/sync_timedb_parsing.py"
+        stp = REPO / "hpcperfstats/dbload/lib/sync_timedb_parsing.py"
         if stp.is_file():
             stp_text = stp.read_text(encoding="utf-8", errors="replace")
             for m in re.finditer(
@@ -269,12 +269,12 @@ This section is a strict `host_data.type` inventory for variables actively wired
 
 ### `amd64_df`
 - **Used variables:** `MBW_CHANNEL_0`, `MBW_CHANNEL_1`, `MBW_CHANNEL_2`, `MBW_CHANNEL_3`, `MBW_CHANNEL_4`, `MBW_CHANNEL_5`, `MBW_CHANNEL_6`, `MBW_CHANNEL_7`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py` (`avg_mbw`, `dram_bw_node_imbalance`)
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py` (`avg_mbw`, `dram_bw_node_imbalance`)
 - **Figures/metrics/displays:** Job Detail Metrics (`avg_mbw`, `dram_bw_node_imbalance`), Summary plot (`amd_mbw`), CPU roofline memory path
 
 ### `amd64_pmc`
 - **Used variables:** `FLOPS`, `APERF`, `MPERF`, `INST_RETIRED`, `BRANCH_INST_RETIRED`, `BRANCH_INST_RETIRED_MISS`, `DISPATCH_STALL_CYCLES0`, `DISPATCH_STALL_CYCLES1`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py`, summary/roofline/heatmap plot modules
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py`, summary/roofline/heatmap plot modules
 - **Figures/metrics/displays:** Job Detail Metrics (`avg_flops`, `avg_freq`), Summary plot (`amd_flops`, `amd_instr`, `amd_mcycles`, `amd_acycles`)
 
 ### `amd64_rapl`
@@ -284,47 +284,47 @@ This section is a strict `host_data.type` inventory for variables actively wired
 
 ### `amd_gpu`
 - **Used variables:** `gpu_util`, `tensor_active`, `fp16_active`, `fp32_active`, `fp64_active`, `gpu_mem_bw_bytes_rate`, `power_usage`, `clocks_event_reasons`, `gpu_count`, `mem_used_mb`, `mem_util`, `sm_occupancy`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py`, `hpcperfstats/analysis/metrics/gpu_job_detail_summary.py`
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py`, `hpcperfstats/analysis/metrics/lib/gpu_job_detail_summary.py`
 - **Figures/metrics/displays:** Job Detail Metrics (GPU fallback paths), `detail_gpu_*`
 
 ### `arm_imc`
 - **Used variables:** `CAS_READS`, `CAS_WRITES`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py` (`avg_mbw`) and roofline helpers
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py` (`avg_mbw`) and roofline helpers
 - **Figures/metrics/displays:** Job Detail Metrics (`avg_mbw`), CPU roofline memory path
 
 ### `block`
 - **Used variables:** `rd_sectors`, `wr_sectors`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py` (`avg_blockbw`)
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py` (`avg_blockbw`)
 - **Figures/metrics/displays:** Job Detail Metrics (`avg_blockbw`)
 
 ### `cpu`
 - **Used variables:** `user`, `system`, `nice`, `idle`, `irq`, `softirq`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py` (`avg_cpuusage`, `node_imbalance`, `time_imbalance`), summary plot
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py` (`avg_cpuusage`, `node_imbalance`, `time_imbalance`), summary plot
 - **Figures/metrics/displays:** Job Detail Metrics (`avg_cpuusage`, `node_imbalance`, `time_imbalance`), Summary plot (`cpu`)
 
 ### `cpu_counter_metrics`
 - **Used variables:** `ARM_EST_FLOPS`, `ARM_DRAM_BW_BYTES`, `FP_ARITH_INST_RETIRED_SCALAR_DOUBLE`, `FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE`, `FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE`, `FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE`, `FP_ARITH_INST_RETIRED_SCALAR_SINGLE`, `FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE`, `FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE`, `FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE`, `SSE_DOUBLE_SCALAR`, `SSE_DOUBLE_PACKED`, `SIMD_DOUBLE_256`, `APERF`, `MPERF`, `INST_RETIRED`, `DCGM_CPU_POWER_UTIL_W`, `DCGM_CPU_POWER_LIMIT_W`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py`, roofline and node power estimate paths
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py`, roofline and node power estimate paths
 - **Figures/metrics/displays:** Job Detail Metrics (FLOP/vector/frequency/memory/power-derived rows), CPU roofline, Summary power/frequency/counter panels
 
 ### `host_ib`
 - **Used variables:** `port_xmit_data`, `port_rcv_data`, `port_xmit_pkts`, `port_rcv_pkts`, sysfs error counters, `sw_rx_bytes`, `sw_tx_bytes`, `sw_rx_packets`, `sw_tx_packets`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py` (`avg_ibbw`, `avg_packetsize`, `max_fabricbw`, `max_packetrate`, `fabric_node_imbalance`), summary plot hardware error overlay
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py` (`avg_ibbw`, `avg_packetsize`, `max_fabricbw`, `max_packetrate`, `fabric_node_imbalance`), summary plot hardware error overlay
 - **Figures/metrics/displays:** Job Detail Metrics (fabric averages/peaks/imbalance/ratios), Summary plot (`ibbw`, IB error rates)
 
 ### `intel_4pmc3`
 - **Used variables:** `APERF`, `MPERF`, `INST_RETIRED`, `FP_ARITH_INST_RETIRED_SCALAR_DOUBLE`, `FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE`, `FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE`, `FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE`, `FP_ARITH_INST_RETIRED_SCALAR_SINGLE`, `FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE`, `FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE`, `FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE`, `SSE_DOUBLE_SCALAR`, `SSE_DOUBLE_PACKED`, `SIMD_DOUBLE_256`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py`, summary/roofline/heatmap plot modules
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py`, summary/roofline/heatmap plot modules
 - **Figures/metrics/displays:** Job Detail Metrics (FLOP/vector/frequency rows), Summary plot (`flops64b`, `flops32b`, `instr`, `mcycles`, `acycles`, `freq`), CPU roofline and CPU multiprecision
 
 ### `intel_8pmc3`
 - **Used variables:** `APERF`, `MPERF`, `INST_RETIRED`, `FP_ARITH_INST_RETIRED_SCALAR_DOUBLE`, `FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE`, `FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE`, `FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE`, `FP_ARITH_INST_RETIRED_SCALAR_SINGLE`, `FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE`, `FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE`, `FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE`, `SSE_DOUBLE_SCALAR`, `SSE_DOUBLE_PACKED`, `SIMD_DOUBLE_256`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py`, summary/roofline/heatmap plot modules
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py`, summary/roofline/heatmap plot modules
 - **Figures/metrics/displays:** Job Detail Metrics (FLOP/vector/frequency rows), Summary plot (`flops64b`, `flops32b`, `instr`, `mcycles`, `acycles`, `freq`), CPU roofline and CPU multiprecision
 
 ### `intel_bdw_imc`, `intel_hsw_imc`, `intel_ivb_imc`, `intel_snb_imc`, `intel_skx_imc`
 - **Used variables:** `CAS_READS`, `CAS_WRITES`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py` (`avg_mbw`, `dram_bw_node_imbalance`), roofline helpers
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py` (`avg_mbw`, `dram_bw_node_imbalance`), roofline helpers
 - **Figures/metrics/displays:** Job Detail Metrics (`avg_mbw`, `dram_bw_node_imbalance`), Summary (`mbw`), CPU roofline memory path
 
 ### `intel_rapl`
@@ -334,47 +334,47 @@ This section is a strict `host_data.type` inventory for variables actively wired
 
 ### `llite`
 - **Used variables:** `read_bytes`, `write_bytes`, `open`, `close`, `mmap`, `fsync`, `setattr`, `truncate`, `flock`, `getattr`, `statfs`, `alloc_inode`, `setxattr`, `listxattr`, `removexattr`, `readdir`, `create`, `lookup`, `link`, `unlink`, `symlink`, `mkdir`, `rmdir`, `mknod`, `rename`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py`, `hpcperfstats/analysis/metrics/job_detail_fsio.py`, summary plot builders
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py`, `hpcperfstats/analysis/metrics/lib/job_detail_fsio.py`, summary plot builders
 - **Figures/metrics/displays:** Job Detail Metrics (`avg_sharedfs_bw`, `avg_sharedfs_iops`, `max_mds`, FSIO `detail_fsio_llite_*`), Summary (`lustre_read_mb_s`, `lustre_write_mb_s`, `liops`)
 
 ### `lnet`
 - **Used variables:** `tx_bytes`, `rx_bytes`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py` (`max_lnetbw`, `lnet_node_imbalance`)
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py` (`max_lnetbw`, `lnet_node_imbalance`)
 - **Figures/metrics/displays:** Job Detail Metrics (`max_lnetbw`, `lnet_node_imbalance`)
 
 ### `mem`
 - **Used variables:** `MemUsed`, `MemTotal`, `Slab`, `FilePages`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py` (`mem_hwm`), summary plot memory panels
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py` (`mem_hwm`), summary plot memory panels
 - **Figures/metrics/displays:** Job Detail Metrics (`mem_hwm`), Summary (`mem`)
 
 ### `net`
 - **Used variables:** `rx_bytes`, `tx_bytes`, `rx_packets`, `tx_packets`, `rx_errors`, `tx_errors`, `rx_dropped`, `tx_dropped`, `collisions`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py` (`avg_ethbw`, network fallbacks), summary error-rate builders
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py` (`avg_ethbw`, network fallbacks), summary error-rate builders
 - **Figures/metrics/displays:** Job Detail Metrics (`avg_ethbw`, fallback fabric packet/byte rates), Summary (`summary_hardware_error_rates`)
 
 ### `nfs`
 - **Used variables:** `READ_ops`, `WRITE_ops`, `normal_read`, `normal_write`, `direct_read`, `direct_write`, `server_read`, `server_write`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py`, `hpcperfstats/analysis/metrics/job_detail_fsio.py`, summary plot builders
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py`, `hpcperfstats/analysis/metrics/lib/job_detail_fsio.py`, summary plot builders
 - **Figures/metrics/displays:** Job Detail Metrics (`avg_sharedfs_bw`, `avg_sharedfs_iops`, `max_mds`, FSIO `detail_fsio_nfs_*`), Summary (`nfs_read_mb_s`, `nfs_write_mb_s`, `nfs_iops`)
 
 ### `numa`
 - **Used variables:** `numa_miss`, `numa_foreign`, `other_node`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py` (`max_numa_remote_rate`), summary NUMA panel
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py` (`max_numa_remote_rate`), summary NUMA panel
 - **Figures/metrics/displays:** Job Detail Metrics (`max_numa_remote_rate`), Summary (`numa_remote_refs`)
 
 ### `nvidia_gpu`
 - **Used variables:** `gpu_util`, `tensor_active`, `fp16_active`, `fp32_active`, `fp64_active`, `gpu_mem_bw_bytes_rate`, `power_usage`, `sysio_power_usage`, `module_power_usage`, `clocks_event_reasons`, `gpu_io_link_total_bytes`, `mem_used_mb`, `mem_util`, `sm_occupancy`, `gpu_count`, `gpu_flops`, `gpu_mem_read_bytes`, `gpu_mem_write_bytes`, `gpu_mem_total_bytes`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py`, `hpcperfstats/analysis/metrics/gpu_job_detail_summary.py`, summary and roofline plot builders
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py`, `hpcperfstats/analysis/metrics/lib/gpu_job_detail_summary.py`, summary and roofline plot builders
 - **Figures/metrics/displays:** Job Detail Metrics (`avg_gpuutil`, precision/tensor/GPU-link/GPU-power metrics, `detail_gpu_*`, GPU imbalance metrics), Summary GPU panels (`nv_*`), GPU roofline and GPU multiprecision
 
 ### `opa`
 - **Used variables:** `PortXmitData`, `PortRcvData`, `PortXmitPkts`, `PortRcvPkts`, `PortXmitWait`, `SwPortCongestion`, `PortRcvFECN`, `PortRcvBECN`
-- **Where used in code:** `hpcperfstats/analysis/metrics/metrics.py` (fabric metrics, congestion metrics, imbalance), summary OPA/error plots
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py` (fabric metrics, congestion metrics, imbalance), summary OPA/error plots
 - **Figures/metrics/displays:** Job Detail Metrics (fabric fallbacks and `max_opa_congestion_rate`), Summary (`opa_wait_cong`, `opa_ecn`, `summary_hardware_error_rates`)
 
 ### `roofline_hw_peak`
 - **Used variables:** `cpu_peak_fp64_flops_per_s`, `cpu_peak_dram_bw_bytes_per_s`, `gpu_peak_fp64_flops_per_s`, `gpu_peak_mem_bw_bytes_per_s`, `gpu_peak_io_link_bw_bytes_per_s`
-- **Where used in code:** `hpcperfstats/analysis/plot/roofline_peaks.py`, roofline plot builders
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/plot/roofline_peaks.py`, roofline plot builders
 - **Figures/metrics/displays:** CPU/GPU roofline peak reference lines
 """
 
@@ -382,12 +382,12 @@ This section is a strict `host_data.type` inventory for variables actively wired
 def build_tail() -> str:
     return r"""## 6) Where used in codebase (canonical files)
 
-- `hpcperfstats/analysis/metrics/metrics.py`: authoritative mapping from monitor keys to persisted job-level metrics (`metrics_data`) and many Job Detail table rows.
-- `hpcperfstats/analysis/plot/summary_metric_descriptions.py`: canonical summary-plot metric keys and user-facing descriptions for all summary subplot columns.
+- `hpcperfstats/analysis/metrics/lib/metrics.py`: authoritative mapping from monitor keys to persisted job-level metrics (`metrics_data`) and many Job Detail table rows.
+- `hpcperfstats/analysis/metrics/lib/plot/summary_metric_descriptions.py`: canonical summary-plot metric keys and user-facing descriptions for all summary subplot columns.
 - `hpcperfstats/site/frontend/src/utils/variableMetadata.js`: canonical UI tooltip mapping for monitor events, derived metrics, summary metrics, and Job Detail Bokeh plot help keys.
 - `hpcperfstats/site/frontend/src/utils/jobMetricDisplayLabels.js`: short-label mapping for metrics shown in Job Detail metrics table.
-- `hpcperfstats/analysis/metrics/job_detail_fsio.py`: filesystem detail aggregation rows shown on Job Detail.
-- `hpcperfstats/analysis/metrics/gpu_job_detail_summary.py`: GPU aggregate summary rows (`detail_gpu_*`) shown on Job Detail.
+- `hpcperfstats/analysis/metrics/lib/job_detail_fsio.py`: filesystem detail aggregation rows shown on Job Detail.
+- `hpcperfstats/analysis/metrics/lib/gpu_job_detail_summary.py`: GPU aggregate summary rows (`detail_gpu_*`) shown on Job Detail.
 
 ## 7) Figure/metric/display crosswalk for used variables
 

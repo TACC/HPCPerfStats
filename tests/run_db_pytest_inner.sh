@@ -22,8 +22,8 @@ fi
 IGNORE=()
 if [[ "${DOCKER_PYTEST_SKIP_BROWSER:-0}" == "1" ]]; then
   IGNORE+=(
-    --ignore=hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py
-    --ignore=hpcperfstats/site/machine/tests/test_bokeh_job_list_embed_browser_e2e.py
+    --ignore=hpcperfstats/site/lib/machine/tests/test_web_pages_browser_e2e.py
+    --ignore=hpcperfstats/site/lib/machine/tests/test_bokeh_job_list_embed_browser_e2e.py
   )
 fi
 

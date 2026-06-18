@@ -3,7 +3,7 @@
 import json
 import os
 
-from hpcperfstats.dbload.sync_timedb_archive_maint import (
+from hpcperfstats.dbload.lib.sync_timedb_archive_maint import (
     load_archive_maint_hints,
     maint_hints_path,
     save_archive_maint_hints,
@@ -12,14 +12,14 @@ from hpcperfstats.dbload.sync_timedb_archive_maint import (
 
 def test_save_and_load_hints_v2_round_trip(tmp_path, monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_maint.cfg.get_sync_archive_maint_hints",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_maint.cfg.get_sync_archive_maint_hints",
       lambda: True,
   )
   archive_dir = str(tmp_path / "archive")
   os.makedirs(archive_dir, exist_ok=True)
   tar_path = str(tmp_path / "2026-01-01.tar")
   open(tar_path, "wb").close()
-  from hpcperfstats.dbload.sync_timedb_archive_maint import day_phase_hint_entry
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import day_phase_hint_entry
 
   save_archive_maint_hints(
       archive_dir,
@@ -39,10 +39,10 @@ def test_save_and_load_hints_v2_round_trip(tmp_path, monkeypatch):
 
 def test_validated_days_hint_dropped_when_daily_tar_mtime_changes(tmp_path, monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_maint.cfg.get_sync_archive_maint_hints",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_maint.cfg.get_sync_archive_maint_hints",
       lambda: True,
   )
-  from hpcperfstats.dbload.sync_timedb_archive_maint import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import (
       prune_validated_days_hints,
   )
 
@@ -75,7 +75,7 @@ def test_validated_days_hint_dropped_when_daily_tar_mtime_changes(tmp_path, monk
 
 def test_load_hints_v1_still_supported(tmp_path, monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_maint.cfg.get_sync_archive_maint_hints",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_maint.cfg.get_sync_archive_maint_hints",
       lambda: True,
   )
   archive_dir = str(tmp_path / "archive")

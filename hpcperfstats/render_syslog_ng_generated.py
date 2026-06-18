@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 import sys
 
-from hpcperfstats import conf_parser as cfg
+from hpcperfstats.dbload.lib import conf_parser as cfg
 
 
 def render_syslog_ng_generated_text():
@@ -45,7 +45,7 @@ def render_syslog_ng_generated_text():
 
 
 def main(argv=None):
-  from hpcperfstats.process_title import set_script_process_title
+  from hpcperfstats.dbload.lib.process_title import set_script_process_title
 
   set_script_process_title()
   argv = argv if argv is not None else sys.argv

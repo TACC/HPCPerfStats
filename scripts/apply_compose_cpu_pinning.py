@@ -8,7 +8,7 @@ Writes:
 
 Run on the **Linux deployment host** (needs sysfs for NUMA overrides). Layout uses
 ``min(ini total_cores budget, os.cpu_count())`` and prioritizes **db** and **web**
-(see ``hpcperfstats.compose_cpu_layout``).
+(see ``hpcperfstats.dbload.lib.compose_cpu_layout``).
 
 Examples:
 
@@ -30,9 +30,9 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
   sys.path.insert(0, str(_REPO_ROOT))
 
-from hpcperfstats import conf_parser as cfg  # noqa: E402
-from hpcperfstats.compose_cpu_layout import partition_responsive_cpusets  # noqa: E402
-from hpcperfstats.numa_topology import (  # noqa: E402
+from hpcperfstats.dbload.lib import conf_parser as cfg  # noqa: E402
+from hpcperfstats.dbload.lib.compose_cpu_layout import partition_responsive_cpusets  # noqa: E402
+from hpcperfstats.dbload.lib.numa_topology import (  # noqa: E402
     SYSFS_NODE_ROOT,
     parse_sysfs_numa,
     select_node_pair,

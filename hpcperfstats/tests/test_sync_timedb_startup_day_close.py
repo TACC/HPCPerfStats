@@ -7,8 +7,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import hpcperfstats.conf_parser as cfg
-from hpcperfstats.dbload.sync_timedb_startup_day_close import (
+import hpcperfstats.dbload.lib.conf_parser as cfg
+from hpcperfstats.dbload.lib.sync_timedb_startup_day_close import (
     PHASE_DONE,
     StartupDayClosePreflight,
     manifest_path,
@@ -133,7 +133,7 @@ def test_startup_day_close_budget_applies_after_scans_not_before(
     return {}
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_startup_day_close."
+      "hpcperfstats.dbload.lib.sync_timedb_startup_day_close."
       "build_unprocessed_raw_by_daily_tar",
       slow_unprocessed,
   )
@@ -170,7 +170,7 @@ def test_startup_discover_backoff_skips_scan_when_async_saturated(
       return {}
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_startup_day_close."
+      "hpcperfstats.dbload.lib.sync_timedb_startup_day_close."
       "build_unprocessed_raw_by_daily_tar",
       counting_unprocessed,
   )
@@ -219,22 +219,22 @@ def test_startup_discover_submits_up_to_startup_max_inflight_per_slice(
   monkeypatch.setattr(cfg, "get_sync_startup_day_close_budget_seconds", lambda: 300.0)
   monkeypatch.setattr(cfg, "get_sync_day_close_candidate_report", lambda: False)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_startup_day_close."
+      "hpcperfstats.dbload.lib.sync_timedb_startup_day_close."
       "build_unprocessed_raw_by_daily_tar",
       lambda *_a, **_k: {},
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_startup_day_close."
+      "hpcperfstats.dbload.lib.sync_timedb_startup_day_close."
       "build_remaining_raw_stats_by_daily_gz",
       lambda *_a, **_k: {},
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_startup_day_close."
+      "hpcperfstats.dbload.lib.sync_timedb_startup_day_close."
       "days_ingest_complete_by_checkpoint",
       lambda *_a, **_k: list(tars),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_startup_day_close."
+      "hpcperfstats.dbload.lib.sync_timedb_startup_day_close."
       "days_quiescent_tar_needs_day_close_at_startup",
       lambda *_a, **_k: [],
   )
@@ -250,7 +250,7 @@ def test_startup_discover_submits_up_to_startup_max_inflight_per_slice(
 def test_startup_day_close_uses_accrual_snapshot_when_present(
     tmp_path, monkeypatch,
 ):
-  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
 
   collect_calls = {"n": 0}
 
@@ -259,14 +259,14 @@ def test_startup_day_close_uses_accrual_snapshot_when_present(
     return []
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_startup_day_close."
+      "hpcperfstats.dbload.lib.sync_timedb_startup_day_close."
       "build_unprocessed_raw_by_daily_tar",
       lambda *_a, maintenance_snapshot=None, **_k: (
           collect_calls.update({"used_snapshot": maintenance_snapshot is not None}) or {}
       ),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_startup_day_close."
+      "hpcperfstats.dbload.lib.sync_timedb_startup_day_close."
       "build_remaining_raw_stats_by_daily_gz",
       lambda *_a, maintenance_snapshot=None, **_k: {},
   )
@@ -329,7 +329,7 @@ def test_startup_day_close_shutdown_preserves_pending_eligible(
       os.path.normpath(str(tmp_path / "daily" / "2022-07-11.tar")),
   ]
 
-  import hpcperfstats.shutdown_utils as shutdown_utils
+  import hpcperfstats.dbload.lib.shutdown_utils as shutdown_utils
 
   original = shutdown_utils.shutdown_requested[0]
   try:
@@ -383,7 +383,7 @@ def test_startup_day_close_multi_slice_submits_until_cap(
   monkeypatch.setattr(cfg, "get_sync_day_close_max_inflight", lambda: 10)
 
   original_eligible = (
-      "hpcperfstats.dbload.sync_timedb_startup_day_close."
+      "hpcperfstats.dbload.lib.sync_timedb_startup_day_close."
       "days_ingest_complete_by_checkpoint"
   )
 
@@ -521,7 +521,7 @@ def test_startup_day_close_submits_quiescent_tar_with_stale_unprocessed(
       return {t for t, _ in submitted}
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_startup_day_close."
+      "hpcperfstats.dbload.lib.sync_timedb_startup_day_close."
       "build_unprocessed_raw_by_daily_tar",
       lambda *a, **k: {tar_path: [stale_path]},
   )
@@ -561,7 +561,7 @@ def test_startup_day_close_skips_quiescent_when_unprocessed_still_on_disk(
       return {t for t, _ in submitted}
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_startup_day_close."
+      "hpcperfstats.dbload.lib.sync_timedb_startup_day_close."
       "build_unprocessed_raw_by_daily_tar",
       lambda *a, **k: {tar_path: [str(on_disk_path)]},
   )
@@ -595,7 +595,7 @@ def test_boot_reconcile_resumes_when_phase_done_and_eligible_remain(
     tmp_path,
     monkeypatch,
 ):
-  from hpcperfstats.dbload.sync_timedb_startup_day_close import (
+  from hpcperfstats.dbload.lib.sync_timedb_startup_day_close import (
       _save_manifest,
   )
 

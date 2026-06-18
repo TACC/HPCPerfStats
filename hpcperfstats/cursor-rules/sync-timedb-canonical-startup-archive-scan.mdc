@@ -14,7 +14,7 @@ At supervisor boot, **one** `collect_stats_files_in_range` (+ one head-metadata 
 
 | Concern | Location |
 |---|---|
-| Single-flight coordinator | `hpcperfstats/dbload/sync_timedb_startup_archive_scan.py` → `StartupArchiveScanCoordinator` |
+| Single-flight coordinator | `hpcperfstats/dbload/lib/sync_timedb_startup_archive_scan.py` → `StartupArchiveScanCoordinator` |
 | Deep copy helper | `copy_archive_maintenance_snapshot` in same module |
 | Snapshot builder | `build_archive_maintenance_snapshot` in `sync_timedb_archive_maint.py` |
 | Janitor publish | `ArchiveJanitor.run_heavy_maintenance_pass(reason=startup)` → adopt `coordinator.get_snapshot()` via `copy_archive_maintenance_snapshot` when already published, else `begin_build()` → build → `publish(..., from_janitor=True)` → `invalidate_unmapped_disqualify_cache()` before accrual trim |

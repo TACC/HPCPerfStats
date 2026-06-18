@@ -22,6 +22,7 @@ Notable contracts (see filename in `hpcperfstats/cursor-rules/`):
 - **`frontend-stack-wiring-contract.mdc`** — SPA routing, thin hooks, `response-schema-registry.ts`, and test mock layers must stay wired; see view → hook → API map and drift guards.
 - **`interactive-ready-controls.mdc`** — hide or skeleton until ready; shown controls must be immediately interactive (`initialLoading`, `tableBusy`, lazy sections).
 - **`compose-operator-terminal-commands.mdc`** — plans and blocked diagnostics: operator commands as one copy/paste `docker compose exec` block per service.
+- **`package-lib-colocation.mdc`** — new library modules under flat `{parent}/lib/`; import prefixes; `.gitignore` negation so lib trees are committed; Django migrations stay under `site/lib/machine/`.
 - **`deploy-ini-with-code-no-phase-zero.mdc`** — no pre-code INI redeploy; proactive read-only operator data gathering for plans.
 
 Adding a new domain rule (same task, non-optional):

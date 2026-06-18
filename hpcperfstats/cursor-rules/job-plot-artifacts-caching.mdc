@@ -13,17 +13,17 @@ alwaysApply: false
 
 ## Layers (read order)
 
-1. **Redis (L1)** — keys managed like `JOB_PLOTS_*` in `hpcperfstats/site/machine/api.py`. Very large payloads may be skipped or capped; see **`JOB_PLOT_REDIS_MAX_BYTES`** (default order of ~512 KiB in `job_plot_artifacts.get_job_plot_redis_max_bytes`).
+1. **Redis (L1)** — keys managed like `JOB_PLOTS_*` in `hpcperfstats/site/lib/machine/api.py`. Very large payloads may be skipped or capped; see **`JOB_PLOT_REDIS_MAX_BYTES`** (default order of ~512 KiB in `job_plot_artifacts.get_job_plot_redis_max_bytes`).
 2. **PostgreSQL (L2, durable)** — model **`job_plot_artifact`**: one row per **`(jid, plot_kind, layout)`**. Payload is **gzip-compressed JSON** of the `json_item` dict; encoding constant **`gzip_json`** (`PAYLOAD_ENCODING_GZIP_JSON`).
 
 ## Canonical modules
 
 | Concern | Location |
 |--------|----------|
-| Fingerprint, compress/decompress, upsert, prewarm orchestration | `hpcperfstats/site/machine/job_plot_artifacts.py` |
-| Plot kinds / builders | `JOB_PLOT_KINDS` → `hpcperfstats/analysis/plot` helpers |
-| Zoom layout on models / JSON | `hpcperfstats/site/machine/bokeh_plot_layout.py` |
-| HTTP assembly + Redis | `job_plots` in `hpcperfstats/site/machine/api.py` |
+| Fingerprint, compress/decompress, upsert, prewarm orchestration | `hpcperfstats/site/lib/machine/job_plot_artifacts.py` |
+| Plot kinds / builders | `JOB_PLOT_KINDS` → `hpcperfstats/analysis/metrics/lib/plot` helpers |
+| Zoom layout on models / JSON | `hpcperfstats/site/lib/machine/bokeh_plot_layout.py` |
+| HTTP assembly + Redis | `job_plots` in `hpcperfstats/site/lib/machine/api.py` |
 | Prewarm after metrics | `hpcperfstats/analysis/metrics/update_metrics.py` → `persist_job_plot_artifacts_for_jid` |
 | Invalidate Redis **and** DB rows | `invalidate_job_plot_cache_keys_for_jids` in `cache_utils.py` (ingest / sync paths) |
 
@@ -40,7 +40,7 @@ alwaysApply: false
 
 ## Tests
 
-- Extend `hpcperfstats/site/machine/tests/test_job_plot_artifacts.py` (and related API tests) when changing persist/load, fingerprint, or invalidation behavior.
+- Extend `hpcperfstats/site/lib/machine/tests/test_job_plot_artifacts.py` (and related API tests) when changing persist/load, fingerprint, or invalidation behavior.
 
 ## SPA Bokeh embed budget
 

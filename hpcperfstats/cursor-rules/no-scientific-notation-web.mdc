@@ -12,7 +12,7 @@ Scientific notation (e.g. `1.2e+10`, `1.2E-7`, `10³` / `1e10` style axis labels
 ## Required behavior
 
 - **React / JS**: Do not use `toExponential`, `toPrecision` when the result can show `e`/`E`. Prefer `formatDecimalStandard` from `hpcperfstats/site/frontend/src/utils/formatDecimal.js`, or `Intl.NumberFormat` with `notation: "standard"`.
-- **Bokeh (Python)**: For linear numeric axes and color bars, use `BasicTickFormatter(use_scientific=False)` or `set_linear_axes_plain_numeric` / `new_plain_linear_tick_formatter` from `hpcperfstats/analysis/gen/utils.py`. For log-scale plots, use plain-decimal tick formatting (e.g. `new_plain_log_tick_formatter`), not default log exponent ticks. For hovers, use `new_plain_number_hover_formatter()` and `@field{custom}` where numeric columns are shown—do not rely on default hover numeric formatting for large/small magnitudes.
+- **Bokeh (Python)**: For linear numeric axes and color bars, use `BasicTickFormatter(use_scientific=False)` or `set_linear_axes_plain_numeric` / `new_plain_linear_tick_formatter` from `hpcperfstats/analysis/metrics/lib/gen/utils.py`. For log-scale plots, use plain-decimal tick formatting (e.g. `new_plain_log_tick_formatter`), not default log exponent ticks. For hovers, use `new_plain_number_hover_formatter()` and `@field{custom}` where numeric columns are shown—do not rely on default hover numeric formatting for large/small magnitudes.
 - **Python strings shown to users**: Do not use `%e`, `format(x, "e")`, or `numpy.format_float_scientific` for display. Use fixed-point or decimal/grouped formatting that never emits exponent notation.
 
 ## When adding new plots or numeric UI
@@ -22,4 +22,4 @@ Scientific notation (e.g. `1.2e+10`, `1.2E-7`, `10³` / `1e10` style axis labels
 
 ## Overlap
 
-- Complements `react-js-cursor-rule.mdc` (UI code) and Django plotting under `hpcperfstats/site/` / `hpcperfstats/analysis/plot/`. This rule is the **hard ban** on scientific notation for display; other rules do not relax it.
+- Complements `react-js-cursor-rule.mdc` (UI code) and Django plotting under `hpcperfstats/site/` / `hpcperfstats/analysis/metrics/lib/plot/`. This rule is the **hard ban** on scientific notation for display; other rules do not relax it.

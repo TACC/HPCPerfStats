@@ -161,7 +161,7 @@ It also includes **syslog-ng** (with **`render_syslog_ng_generated`** from **`[S
 
 ### 7.2 Archive layout (listend)
 
-`listend.py` appends monitor payloads under the configured **archive directory**, per host, using a **`current`** file and **`$`-prefixed rotation** semantics. Epoch-named files and hardlink relationships are coordinated so **`sync_timedb`** can avoid racing active writes (see `hpcperfstats/dbload/sync_timedb_archive_helpers.py` and listend tests). This is the **transport/archive contract** documented in `HPCPerfStats/monitor/cursor-rules/monitor-workspace-contract.mdc`.
+`listend.py` appends monitor payloads under the configured **archive directory**, per host, using a **`current`** file and **`$`-prefixed rotation** semantics. Epoch-named files and hardlink relationships are coordinated so **`sync_timedb`** can avoid racing active writes (see `hpcperfstats/dbload/lib/sync_timedb_archive_helpers.py` and listend tests). This is the **transport/archive contract** documented in `HPCPerfStats/monitor/cursor-rules/monitor-workspace-contract.mdc`.
 
 **Cluster syslog (pipeline):** under the same **`data_dir`** bind mount, **`logs/current/`** holds live per-host syslog files (date in the filename), and **`logs/log_archive/`** holds sealed **daily** **`*.tar.gz`** bundles—analogous in operator terms to **`archive_dir`’s `current`** workflow and **`daily_archive`** cold storage, though the on-disk mechanics differ.
 
@@ -182,9 +182,9 @@ The monitor publishes **`host_data.type`** strings (from C `stats_type.st_name` 
 
 Canonical Python references (see `HPCPerfStats/hpcperfstats/cursor-rules/monitor-analysis-architecture-sync.mdc` and `hpcperfstats/analysis/README_ARCH_AGNOSTIC.md`):
 
-- `hpcperfstats/analysis/gen/utils.py` — `INTEL_IMC_STATS_TYPES`, `ARM_IMC_STATS_TYPES`, `INTEL_CORE_PMC_TYPES_ORDERED`, `PMC_TYPENAME_PRIORITY`, etc.
-- `hpcperfstats/analysis/plot/roofline_peaks.py` — peak tables and inference.
-- `hpcperfstats/analysis/plot/roofline.py` — merge logic.
+- `hpcperfstats/analysis/metrics/lib/gen/utils.py` — `INTEL_IMC_STATS_TYPES`, `ARM_IMC_STATS_TYPES`, `INTEL_CORE_PMC_TYPES_ORDERED`, `PMC_TYPENAME_PRIORITY`, etc.
+- `hpcperfstats/analysis/metrics/lib/plot/roofline_peaks.py` — peak tables and inference.
+- `hpcperfstats/analysis/metrics/lib/plot/roofline.py` — merge logic.
 
 ---
 

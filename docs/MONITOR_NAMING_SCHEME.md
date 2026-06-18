@@ -3,7 +3,7 @@
 Canonical rules for **`st_name`** (collector type) and **event keys** emitted by
 `hpcperfstatsd`. Machine-readable renames: [`monitor_variable_rename_map.yaml`](monitor_variable_rename_map.yaml).
 
-Generated: 2026-06-04 (also run `docs/generate_monitor_rename_table.py` after map edits).
+Generated: 2026-06-17 (also run `docs/generate_monitor_rename_table.py` after map edits).
 
 ## Level 1 — collector (`st_name`)
 

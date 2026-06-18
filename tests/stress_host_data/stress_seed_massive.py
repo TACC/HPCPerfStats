@@ -20,12 +20,12 @@ from datetime import timedelta
 from django.db import connection
 from django.utils import timezone as django_tz
 
-from hpcperfstats.analysis.gen.utils import (
+from hpcperfstats.analysis.metrics.lib.gen.utils import (
     INTEL_FP_ARITH_ALL_EVENTS,
     INTEL_FP_ARITH_DOUBLE_EVENTS,
     INTEL_FP_ARITH_SINGLE_EVENTS,
 )
-from hpcperfstats.site.machine.models import host_data, job_data
+from hpcperfstats.site.lib.machine.models import host_data, job_data
 
 
 def stress_jid() -> str:

@@ -5,7 +5,7 @@ export STATIC_ROOT="${STATIC_ROOT:-/home/hpcperfstats/staticfiles}"
 echo "Waiting for Redis..."
 
 REDIS_WAIT_URL=$(
-  /usr/local/bin/python3 -c "from hpcperfstats import conf_parser as cfg; print(cfg.get_redis_location())" 2>/dev/null \
+  /usr/local/bin/python3 -c "from hpcperfstats.dbload.lib import conf_parser as cfg; print(cfg.get_redis_location())" 2>/dev/null \
     || echo "redis://redis:6379/1"
 )
 
@@ -14,7 +14,7 @@ REDIS_PING_TIMEOUT_SECONDS="${REDIS_PING_TIMEOUT_SECONDS:-2}"
 
 /usr/local/bin/python3 -c '
 import sys
-from hpcperfstats.rediswait import wait_for_redis_available
+from hpcperfstats.dbload.lib.rediswait import wait_for_redis_available
 
 wait_for_redis_available(
   sys.argv[1],
@@ -29,11 +29,11 @@ echo "Redis started"
 echo "Waiting for postgres..."
 
 DB_WAIT_HOST=$(
-  /usr/local/bin/python3 -c "from hpcperfstats.dbwait import resolve_postgres_wait_target as f; h,p=f(); print(h)" 2>/dev/null \
+  /usr/local/bin/python3 -c "from hpcperfstats.dbload.lib.dbwait import resolve_postgres_wait_target as f; h,p=f(); print(h)" 2>/dev/null \
   || echo "db"
 )
 DB_WAIT_PORT=$(
-  /usr/local/bin/python3 -c "from hpcperfstats.dbwait import resolve_postgres_wait_target as f; h,p=f(); print(p)" 2>/dev/null \
+  /usr/local/bin/python3 -c "from hpcperfstats.dbload.lib.dbwait import resolve_postgres_wait_target as f; h,p=f(); print(p)" 2>/dev/null \
   || echo "5432"
 )
 
@@ -46,7 +46,7 @@ POSTGRES_CONNECT_TIMEOUT_SECONDS="${POSTGRES_CONNECT_TIMEOUT_SECONDS:-2}"
 # resolution before attempting TCP connect.
 /usr/local/bin/python3 -c '
 import sys
-from hpcperfstats.dbwait import wait_for_host_port_resolution
+from hpcperfstats.dbload.lib.dbwait import wait_for_host_port_resolution
 
 host = sys.argv[1]
 port = sys.argv[2]
@@ -88,7 +88,7 @@ PY
 # when the container sees more CPUs. Default max_gunicorn_workers in ini is 32.
 WORKERS=$(/usr/local/bin/python3 -c "
 import os
-from hpcperfstats import conf_parser as cfg
+from hpcperfstats.dbload.lib import conf_parser as cfg
 override = os.environ.get('WEB_CONCURRENCY', '').strip()
 if override:
     print(max(1, int(override)))
@@ -104,7 +104,7 @@ else:
 if [ -z "${CORS_ALLOWED_ORIGINS:-}" ]; then
   _cors_csv="$(
     /usr/local/bin/python3 -c \
-      "from hpcperfstats import conf_parser as cfg; print(cfg.format_cors_allowed_origins_csv_from_ini())" \
+      "from hpcperfstats.dbload.lib import conf_parser as cfg; print(cfg.format_cors_allowed_origins_csv_from_ini())" \
       2>/dev/null || true
   )"
   if [ -n "${_cors_csv}" ]; then

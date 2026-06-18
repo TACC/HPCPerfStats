@@ -2,8 +2,8 @@
 
 import pytest
 
-from hpcperfstats import conf_parser as cfg
-from hpcperfstats.ini_section_placement import (
+from hpcperfstats.dbload.lib import conf_parser as cfg
+from hpcperfstats.dbload.lib.ini_section_placement import (
     DEFAULT_PINNING_OPTIONS,
     DEFAULT_POSTGRES_OPTIONS,
     PORTAL_WEB_TUNING_OPTIONS,

@@ -7,12 +7,12 @@ import numpy as np
 
 os.environ.setdefault("SECRET_KEY", "test-secret-key-not-for-production")
 
-from hpcperfstats.django_bootstrap import ensure_django
+from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
 
 ensure_django()
 
-from hpcperfstats.analysis.gen.utils import utils as job_utils
-from hpcperfstats.analysis.metrics import metrics
+from hpcperfstats.analysis.metrics.lib.gen.utils import utils as job_utils
+from hpcperfstats.analysis.metrics.lib import metrics
 
 
 def test_per_interval_rate_nan_when_zero_dt():

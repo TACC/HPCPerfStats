@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from hpcperfstats.process_title import (
+from hpcperfstats.dbload.lib.process_title import (
     apply_pool_worker_process_title,
     enable_parent_death_signal,
     format_daemon_process_title,
@@ -122,7 +122,7 @@ def test_set_script_process_title_calls_setproctitle(monkeypatch):
       ),
   )
   monkeypatch.setattr(
-      "hpcperfstats.process_title.running_under_gunicorn",
+      "hpcperfstats.dbload.lib.process_title.running_under_gunicorn",
       lambda: False,
   )
   result = set_script_process_title(name="sync_timedb.py")
@@ -133,7 +133,7 @@ def test_set_script_process_title_calls_setproctitle(monkeypatch):
 def test_set_script_process_title_without_setproctitle(monkeypatch):
   monkeypatch.delitem(sys.modules, "setproctitle", raising=False)
   monkeypatch.setattr(
-      "hpcperfstats.process_title.running_under_gunicorn",
+      "hpcperfstats.dbload.lib.process_title.running_under_gunicorn",
       lambda: False,
   )
   assert set_script_process_title(name="listend.py") == "listend.py [main]"
@@ -147,11 +147,11 @@ def test_apply_pool_worker_process_title(monkeypatch):
     calls.append(title)
 
   monkeypatch.setattr(
-      "hpcperfstats.process_title.running_under_gunicorn",
+      "hpcperfstats.dbload.lib.process_title.running_under_gunicorn",
       lambda: False,
   )
   monkeypatch.setattr(
-      "hpcperfstats.process_title.enable_parent_death_signal",
+      "hpcperfstats.dbload.lib.process_title.enable_parent_death_signal",
       lambda sig=None: pdeath_calls.append(sig),
   )
   monkeypatch.setitem(
@@ -169,7 +169,7 @@ def test_apply_pool_worker_process_title(monkeypatch):
 
 
 def test_enable_parent_death_signal_noop_off_linux(monkeypatch):
-  monkeypatch.setattr("hpcperfstats.process_title.sys.platform", "darwin")
+  monkeypatch.setattr("hpcperfstats.dbload.lib.process_title.sys.platform", "darwin")
   assert enable_parent_death_signal() is False
 
 
@@ -188,7 +188,7 @@ def test_import_sync_acct_does_not_set_process_title(monkeypatch):
       ),
   )
   monkeypatch.setattr(
-      "hpcperfstats.process_title.running_under_gunicorn",
+      "hpcperfstats.dbload.lib.process_title.running_under_gunicorn",
       lambda: False,
   )
   if "hpcperfstats.dbload.sync_acct" in sys.modules:

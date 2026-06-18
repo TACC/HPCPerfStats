@@ -10,15 +10,15 @@ import pytest
 from datetime import timezone as dt_timezone
 from django.utils import timezone as django_timezone
 
-import hpcperfstats.conf_parser as cfg
-from hpcperfstats.analysis.metrics.metrics import (
+import hpcperfstats.dbload.lib.conf_parser as cfg
+from hpcperfstats.analysis.metrics.lib.metrics import (
     expected_job_metric_row_count,
     job_metrics_catalog_entries,
 )
 from hpcperfstats.analysis.metrics.update_metrics import main as update_metrics_main
 from hpcperfstats.dbload.sync_timedb import run_ingest_entire_archive_once_for_tests
 from hpcperfstats.listend_drain import drain_queue_to_archive
-from hpcperfstats.site.machine.models import ApiKey, host_data, job_data, job_plot_artifact, metrics_data
+from hpcperfstats.site.lib.machine.models import ApiKey, host_data, job_data, job_plot_artifact, metrics_data
 
 from .constants import (
     PIPELINE_E2E_API_RAW_KEY,

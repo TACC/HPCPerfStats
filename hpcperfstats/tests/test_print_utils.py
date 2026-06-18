@@ -1,6 +1,6 @@
 import builtins
 
-from hpcperfstats.print_utils import _script_prefix, log_print
+from hpcperfstats.dbload.lib.print_utils import _script_prefix, log_print
 
 
 def test_script_prefix_uses_main_file(monkeypatch):

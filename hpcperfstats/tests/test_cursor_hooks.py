@@ -213,6 +213,27 @@ def test_triggered_rules_for_cursor_hooks_path():
   assert "testing-best-practices.mdc" in rules
 
 
+def test_triggered_rules_sync_timedb_lib_helper_path():
+  rules = triggered_rules_for_paths(
+      ["hpcperfstats/dbload/lib/sync_timedb_async_day_close.py"],
+  )
+  assert "sync-timedb-archive-janitor-contract.mdc" in rules
+
+
+def test_triggered_rules_stale_dbload_helper_path_not_matched():
+  rules = triggered_rules_for_paths(
+      ["hpcperfstats/dbload/sync_timedb_async_day_close.py"],
+  )
+  assert "sync-timedb-archive-janitor-contract.mdc" not in rules
+
+
+def test_resolve_cursor_rule_path_finds_checkout_rules():
+  resolved = lib.resolve_cursor_rule_path("testing-best-practices.mdc")
+  assert resolved is not None
+  assert resolved.name == "testing-best-practices.mdc"
+  assert resolved.is_file()
+
+
 def test_readme_install_not_triggered_for_hooks_readme():
   rules = triggered_rules_for_paths(
       ["/repo/HPCPerfStats/.cursor/hooks/README.md"],
@@ -251,9 +272,15 @@ def test_router_from_rule_path():
   assert router.is_file()
 
 
-def test_rule_dual_registration_issues_flags_orphan_rule():
-  orphan_path = str(RULES_DIR / "orphan-test-rule-contract.mdc")
-  issues = lib.rule_dual_registration_issues([orphan_path])
+def test_rule_dual_registration_issues_flags_orphan_rule(tmp_path):
+  orphan_dir = tmp_path / "cursor-rules"
+  orphan_dir.mkdir()
+  orphan = orphan_dir / "orphan-test-rule-contract.mdc"
+  orphan.write_text(
+      "---\ndescription: hook dual-registration test fixture\n---\n# Orphan\n",
+      encoding="utf-8",
+  )
+  issues = lib.rule_dual_registration_issues([str(orphan)])
   assert any("agent-discipline-core.mdc task router" in issue for issue in issues)
   assert any("hook_task_router.py ROUTER_ENTRIES" in issue for issue in issues)
 
@@ -309,9 +336,11 @@ def test_plan_content_issues_detects_missing_sections():
 
 
 def test_paths_from_plan_markdown_extracts_backtick_paths():
-  text = "Touch [`hpcperfstats/dbload/sync_timedb_async_day_close.py`](path)"
+  text = (
+      "Touch [`hpcperfstats/dbload/lib/sync_timedb_async_day_close.py`](path)"
+  )
   paths = lib.paths_from_plan_markdown(text)
-  assert "hpcperfstats/dbload/sync_timedb_async_day_close.py" in paths
+  assert "hpcperfstats/dbload/lib/sync_timedb_async_day_close.py" in paths
 
 
 def test_plan_template_read_issues_requires_read_before_create_plan():
@@ -438,7 +467,7 @@ def test_check_edit_triggered_rules_create_plan_requires_reads(tmp_path):
                           "input": {
                               "plan": (
                                   "## Implementation\n\n"
-                                  "`hpcperfstats/dbload/sync_timedb_async_day_close.py`\n"
+                                  "`hpcperfstats/dbload/lib/sync_timedb_async_day_close.py`\n"
                               ),
                           },
                       },
@@ -454,7 +483,7 @@ def test_check_edit_triggered_rules_create_plan_requires_reads(tmp_path):
       "tool_input": {
           "plan": (
               "## Implementation\n\n"
-              "`hpcperfstats/dbload/sync_timedb_async_day_close.py`\n"
+              "`hpcperfstats/dbload/lib/sync_timedb_async_day_close.py`\n"
           ),
       },
       "transcript_path": str(transcript),

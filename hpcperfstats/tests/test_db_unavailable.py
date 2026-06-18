@@ -3,8 +3,8 @@
 import pytest
 from django.db.utils import OperationalError
 
-from hpcperfstats.analysis.metrics.db_retry import run_with_db_retry
-from hpcperfstats.dbload.db_unavailable import (
+from hpcperfstats.analysis.metrics.lib.db_retry import run_with_db_retry
+from hpcperfstats.dbload.lib.db_unavailable import (
     DatabaseUnavailableExit,
     is_database_unavailable_error,
     reraise_database_unavailable_chain,

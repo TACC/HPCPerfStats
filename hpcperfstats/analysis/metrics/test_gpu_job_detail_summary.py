@@ -1,7 +1,7 @@
 """Unit tests for gpu_job_detail_summary (ORM aggregate reduction, no DB)."""
 from unittest.mock import MagicMock
 
-from hpcperfstats.analysis.metrics.gpu_job_detail_summary import (
+from hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary import (
     reduce_gpu_agg_to_util_stats,
 )
 
@@ -46,7 +46,7 @@ def test_reduce_list_per_device_host_aware():
 
 
 def test_compute_job_gpu_summary_tuple_delegates(monkeypatch):
-  from hpcperfstats.analysis.metrics import gpu_job_detail_summary as g
+  from hpcperfstats.analysis.metrics.lib import gpu_job_detail_summary as g
 
   j = MagicMock()
 
@@ -67,7 +67,7 @@ def test_compute_job_gpu_summary_tuple_delegates(monkeypatch):
 
 
 def test_compute_job_gpu_summary_tuple_swallows_errors(monkeypatch):
-  from hpcperfstats.analysis.metrics import gpu_job_detail_summary as g
+  from hpcperfstats.analysis.metrics.lib import gpu_job_detail_summary as g
 
   j = MagicMock()
 

@@ -125,8 +125,8 @@ def test_sync_acct_filters_restricted_queue(mock_jd, _notify, _keywords):
   assert created[0].jid == "602"
 
 
-@patch("hpcperfstats.site.machine.cache_utils.warm_job_cache_entries")
-@patch("hpcperfstats.site.machine.cache_utils.invalidate_after_job_data_ingest")
+@patch("hpcperfstats.site.lib.machine.cache_utils.warm_job_cache_entries")
+@patch("hpcperfstats.site.lib.machine.cache_utils.invalidate_after_job_data_ingest")
 def test_notify_job_cache_after_acct_ingest_warms(mock_inv, mock_warm):
   from hpcperfstats.dbload.sync_acct import _notify_job_cache_after_acct_ingest
 

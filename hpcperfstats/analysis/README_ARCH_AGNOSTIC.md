@@ -4,10 +4,10 @@ This note summarizes how CPU/GPU vendors are handled in `hpcperfstats/analysis` 
 
 ## Naming (canonical + dual-read)
 
-- **Canonical typenames/events** live in `hpcperfstats/monitor_naming/canonical.py` (from `docs/monitor_variable_rename_map.yaml`).
-- **Legacy names** (historical `host_data`, CTL/CTR ingest) live in `hpcperfstats/monitor_naming/legacy.py` and `hpcperfstats/dbload/sync_timedb_parsing_legacy.py`.
-- **Analysis probes** use `hpcperfstats/monitor_naming/resolve.py` (canonical first, then legacy).
-- **`analysis/gen/utils.py`** re-exports canonical lists (`INTEL_IMC_STATS_TYPES`, `INTEL_CORE_PMC_TYPES_ORDERED`, etc.).
+- **Canonical typenames/events** live in `hpcperfstats/dbload/lib/monitor_naming/canonical.py` (from `docs/monitor_variable_rename_map.yaml`).
+- **Legacy names** (historical `host_data`, CTL/CTR ingest) live in `hpcperfstats/dbload/lib/monitor_naming/legacy.py` and `hpcperfstats/dbload/lib/sync_timedb_parsing_legacy.py`.
+- **Analysis probes** use `hpcperfstats/dbload/lib/monitor_naming/resolve.py` (canonical first, then legacy).
+- **`analysis/metrics/lib/gen/utils.py`** re-exports canonical lists (`INTEL_IMC_STATS_TYPES`, `INTEL_CORE_PMC_TYPES_ORDERED`, etc.).
 
 ## CPU (AMD, Intel, Grace)
 
@@ -24,7 +24,7 @@ Typenames must match the **shipped** monitor `st_name` values for new ingest. Hi
 
 ### Roofline nominal peaks (`roofline_peaks.py`)
 
-- **File**: `hpcperfstats/analysis/plot/roofline_peaks.py` — `ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS`, `infer_cpu_roofline_peak_flops_and_bw_gbps(jt)`.
+- **File**: `hpcperfstats/analysis/metrics/lib/plot/roofline_peaks.py` — `ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS`, `infer_cpu_roofline_peak_flops_and_bw_gbps(jt)`.
 - **Optional true-roof contract**: `host_roofline_peak` events (`cpu_peak_fp64_flops_per_s`, `cpu_peak_dram_bw_bytes_per_s`, `cpu_peak_hbm_bw_bytes_per_s`, GPU peaks) when present. CPU memory roof bandwidth sums DDR and HBM peaks when HBM is positive.
 - **Intel**: One table row per canonical IMC typename in `INTEL_IMC_STATS_TYPES` (e.g. `intel_x86_uncore_imc_hsw`, `intel_x86_uncore_imc_skx`).
 - **AMD**: `amd_x86_pmc` + `amd_x86_uncore_df` → `amd64_epyc_2s_default` peak row.

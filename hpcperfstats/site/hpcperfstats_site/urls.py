@@ -16,7 +16,7 @@ allowlist or browsers will see **404** from nginx before Django runs. Project ru
 from django.http import HttpResponseRedirect
 from django.urls import include, path
 from django.views.generic import RedirectView
-from hpcperfstats.site.machine.oauth2 import (
+from hpcperfstats.site.lib.machine.oauth2 import (
     login_oauth,
     login_prompt,
     logout,
@@ -27,7 +27,7 @@ from hpcperfstats.site.hpcperfstats_site.views import (
 )
 
 urlpatterns = [
-    path("api/", include("hpcperfstats.site.machine.api_urls")),
+    path("api/", include("hpcperfstats.site.lib.machine.api_urls")),
     path("csp-report/", csp_report, name="csp_report"),
     path("", lambda r: HttpResponseRedirect("/machine/")),
     path(

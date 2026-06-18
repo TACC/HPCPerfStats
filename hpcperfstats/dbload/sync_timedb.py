@@ -26,7 +26,7 @@ import multiprocessing
 from contextlib import contextmanager
 import os
 
-from hpcperfstats.dbload.blas_thread_env import configure_blas_thread_env
+from hpcperfstats.dbload.lib.blas_thread_env import configure_blas_thread_env
 
 configure_blas_thread_env()
 
@@ -46,8 +46,8 @@ from datetime import date as date_cls
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from functools import partial
-from hpcperfstats.django_bootstrap import ensure_django
-from hpcperfstats.process_title import (
+from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
+from hpcperfstats.dbload.lib.process_title import (
     apply_pool_worker_process_title,
     set_daemon_process_title,
     set_daemon_thread_title,
@@ -60,16 +60,16 @@ SYNC_TIMEDB_PROCESS_TITLE = "sync_timedb.py"
 from django.db import IntegrityError, close_old_connections, connections
 from django.db.utils import DatabaseError, OperationalError
 
-import hpcperfstats.conf_parser as cfg
-from hpcperfstats.dbload.date_utils import log_date_range, parse_start_end_dates
-from hpcperfstats.dbload.db_unavailable import (
+import hpcperfstats.dbload.lib.conf_parser as cfg
+from hpcperfstats.dbload.lib.date_utils import log_date_range, parse_start_end_dates
+from hpcperfstats.dbload.lib.db_unavailable import (
     DatabaseUnavailableExit,
     is_database_unavailable_error,
     log_and_raise_database_unavailable,
     reraise_database_unavailable_chain,
 )
-from hpcperfstats.dbload.io_helpers import host_data_instance_from_stats_row
-from hpcperfstats.dbload.multiprocessing_pool_health import (
+from hpcperfstats.dbload.lib.io_helpers import host_data_instance_from_stats_row
+from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
     MultiprocessingWorkerExitError,
     alive_pool_worker_count,
     async_result_get_watch_pool,
@@ -79,29 +79,29 @@ from hpcperfstats.dbload.multiprocessing_pool_health import (
     imap_unordered_watch_pool,
     terminate_pool_bounded,
 )
-from hpcperfstats.dbload.sync_timedb_ingest_timeout import (
+from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import (
     max_ingest_per_file_timeout_for_paths as _max_ingest_per_file_timeout_for_paths,
     resolve_ingest_per_file_timeout_s,
     stall_abort_polls_for_paths as _stall_abort_polls_for_batch,
 )
-from hpcperfstats.process_memory import (
+from hpcperfstats.dbload.lib.process_memory import (
     format_tree_rss_breakdown_mb,
     read_process_rss_bytes,
     read_sync_timedb_tree_rss_bytes,
 )
-from hpcperfstats.dbload.archive_compress import (
+from hpcperfstats.dbload.lib.archive_compress import (
     compressed_sibling_paths,
     daily_compressed_path_for_date,
     daily_tar_path_from_compressed,
     detect_compressed_format,
 )
-from hpcperfstats.print_utils import log_print
-from hpcperfstats.shutdown_utils import (
+from hpcperfstats.dbload.lib.print_utils import log_print
+from hpcperfstats.dbload.lib.shutdown_utils import (
     shutdown_requested,
     send_sigchld_to_parent,
     sleep_until_shutdown,
 )
-from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     augment_unprocessed_by_tar_with_pending_paths,
     build_archive_mapping,
     build_live_unprocessed_by_tar_for_reconcile,
@@ -142,7 +142,7 @@ from hpcperfstats.dbload.sync_timedb_archive_helpers import (
     _derive_stats_path_date,
     normalize_daily_compressed_path,
 )
-from hpcperfstats.dbload.sync_timedb_ingest_worker_diagnostics import (
+from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
     apply_ingest_pool_worker_init,
     clear_dispatch_worker_stages,
     clear_worker_stage,
@@ -153,22 +153,22 @@ from hpcperfstats.dbload.sync_timedb_ingest_worker_diagnostics import (
     seed_dispatch_worker_stages,
     update_worker_substage,
 )
-from hpcperfstats.dbload.sync_timedb_async_day_close import AsyncDayCloseCoordinator
-from hpcperfstats.file_locking import file_write_lock
-from hpcperfstats.dbload.sync_timedb_archive_dispatch import ArchiveDispatchCoordinator
-from hpcperfstats.dbload.sync_timedb_archive_janitor import ArchiveJanitor
-from hpcperfstats.dbload.sync_timedb_day_raw_removal import DayRawRemovalCoordinator
-from hpcperfstats.dbload.sync_timedb_startup_raw_removal import (
+from hpcperfstats.dbload.lib.sync_timedb_async_day_close import AsyncDayCloseCoordinator
+from hpcperfstats.dbload.lib.file_locking import file_write_lock
+from hpcperfstats.dbload.lib.sync_timedb_archive_dispatch import ArchiveDispatchCoordinator
+from hpcperfstats.dbload.lib.sync_timedb_archive_janitor import ArchiveJanitor
+from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import DayRawRemovalCoordinator
+from hpcperfstats.dbload.lib.sync_timedb_startup_raw_removal import (
     PHASE_VERIFICATION_COMPLETE,
     StartupRawRemovalPreflight,
 )
-from hpcperfstats.dbload.sync_timedb_startup_day_close import (
+from hpcperfstats.dbload.lib.sync_timedb_startup_day_close import (
     StartupDayClosePreflight,
 )
-from hpcperfstats.dbload.sync_timedb_startup_archive_scan import (
+from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
     StartupArchiveScanCoordinator,
 )
-from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
     ArchiveMembersPopulateStalledError,
     ArchiveMembersRedisConnectionError,
     ArchiveMembersRedisUnavailableError,
@@ -201,19 +201,19 @@ def remove_verified_archived_raw_files(*args, **kwargs):
 def remove_verified_uncompressed_daily_tars(*args, **kwargs):
   raise RuntimeError(
       "remove_verified_uncompressed_daily_tars is janitor-only; supervisor must not call this")
-from hpcperfstats.dbload import sync_timedb_host_itimes
-from hpcperfstats.dbload.sync_timedb_ingest_readiness import (
+from hpcperfstats.dbload.lib import sync_timedb_host_itimes
+from hpcperfstats.dbload.lib.sync_timedb_ingest_readiness import (
     filter_paths_head_ingested,
     head_timestamp_present_in_db,
     reset_sync_ingest_readiness_caches,
     stats_file_head_ingested_in_db,
 )
-from hpcperfstats.dbload.sync_timedb_persistence import (
+from hpcperfstats.dbload.lib.sync_timedb_persistence import (
     ensure_persistence_contract,
     load_persistence_document,
     save_persistence_document,
 )
-from hpcperfstats.dbload.sync_timedb_parsing import (
+from hpcperfstats.dbload.lib.sync_timedb_parsing import (
     EVENTMAPS_BY_TYPE,
     DeltaCarryState,
     build_stats_dataframes,
@@ -234,7 +234,7 @@ from hpcperfstats.dbload.sync_timedb_parsing import (
     stats_file_size_bytes,
     tail_window_timestamps_all_present_streaming,
 )
-from hpcperfstats.site.machine.models import host_data, proc_data
+from hpcperfstats.site.lib.machine.models import host_data, proc_data
 
 
 # archive toggle
@@ -433,11 +433,11 @@ def _prewarm_archive_members_redis_for_days(day_items):
   summary_parts = []
   if not archive_members_redis_enabled():
     return "-"
-  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       _daily_archive_members_cache_key,
       _resolve_sealed_daily_archive_path,
   )
-  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       ArchiveDayIngestSkipError,
   )
 
@@ -650,7 +650,7 @@ def _ingest_stall_defer_state(
     try:
       day_date = date_cls.fromisoformat(day_hint)
       compressed = daily_compressed_path_for_date(tgz_archive_dir, day_date)
-      from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+      from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
           _daily_archive_members_cache_key,
       )
       cache_key = _daily_archive_members_cache_key(
@@ -1229,7 +1229,7 @@ def _exit_on_archive_members_redis_unavailable(exc):
   elif isinstance(exc, ArchiveMembersPopulateStalledError):
     redis_reachable = False
     try:
-      from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+      from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
           get_archive_members_redis_client,
       )
       client = get_archive_members_redis_client(required=False)
@@ -1806,7 +1806,7 @@ def _calendar_days_ingest_complete_for_heavy_pass(
 
 def _invalidate_jid_caches(stats, proc_stats):
   try:
-    from hpcperfstats.site.machine.cache_utils import (
+    from hpcperfstats.site.lib.machine.cache_utils import (
         invalidate_jid_derived_cache_keys,
         invalidate_job_plot_cache_keys_for_jids,
     )
@@ -4200,10 +4200,10 @@ def run_sync_timedb_supervisor_loop(
 
   def _on_async_day_phase(tar_norm, phase):
     nonlocal day_close_rescan_pending
-    from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+    from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
         calendar_date_from_daily_tar_path,
     )
-    from hpcperfstats.dbload.sync_timedb_archive_maint import day_phase_hint_entry
+    from hpcperfstats.dbload.lib.sync_timedb_archive_maint import day_phase_hint_entry
     with archive_janitor._hints_state_lock:
       archive_janitor._day_phases[os.path.normpath(tar_norm)] = (
           day_phase_hint_entry(tar_norm, phase)
@@ -4939,7 +4939,7 @@ def run_sync_timedb_supervisor_from_parsed(run_once, startdate, enddate):
     sys.exit(1)
 
   try:
-    from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
         ArchiveMembersRedisUnavailableError,
         verify_archive_members_redis_startup,
     )
@@ -5061,7 +5061,7 @@ if __name__ == '__main__':
   except DatabaseUnavailableExit:
     sys.exit(2)
   except MultiprocessingWorkerExitError as exc:
-    from hpcperfstats.dbload.multiprocessing_pool_health import (
+    from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
         hard_exit_pool_worker_error,
     )
 

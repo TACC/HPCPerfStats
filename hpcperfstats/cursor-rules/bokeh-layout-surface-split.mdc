@@ -1,10 +1,10 @@
 ---
 description: Where Bokeh layout/UX lives vs Python figure sizing/themes in analysis/plot
 globs:
-  - "**/hpcperfstats/site/machine/bokeh_plot_layout.py"
+  - "**/hpcperfstats/site/lib/machine/bokeh_plot_layout.py"
   - "**/hpcperfstats/site/frontend/**/*.jsx"
   - "**/hpcperfstats/site/frontend/**/*.js"
-  - "**/hpcperfstats/analysis/plot/**/*.py"
+  - "**/hpcperfstats/analysis/metrics/lib/plot/**/*.py"
 alwaysApply: false
 ---
 
@@ -12,8 +12,8 @@ alwaysApply: false
 
 ## Two layers
 
-1. **SPA + Django-side embed helpers** — Responsive sizing, zoom layout transforms, focus/keyboard behavior around the embed, and job-detail chrome live in **`hpcperfstats/site/machine/bokeh_plot_layout.py`** and the **React** job detail components / CSS. Accessibility for controls **around** plots follows **`wcag-aa-mobile-web.mdc`**.
-2. **Figure construction** — `sizing_mode`, dimensions, themes, glyphs, and data downsampling inside Bokeh **`figure()`** calls live under **`hpcperfstats/analysis/plot/`**. Changing those affects **all** consumers of that plot builder (API, possible admin or batch renders) and is a **larger visual contract** change.
+1. **SPA + Django-side embed helpers** — Responsive sizing, zoom layout transforms, focus/keyboard behavior around the embed, and job-detail chrome live in **`hpcperfstats/site/lib/machine/bokeh_plot_layout.py`** and the **React** job detail components / CSS. Accessibility for controls **around** plots follows **`wcag-aa-mobile-web.mdc`**.
+2. **Figure construction** — `sizing_mode`, dimensions, themes, glyphs, and data downsampling inside Bokeh **`figure()`** calls live under **`hpcperfstats/analysis/metrics/lib/plot/`**. Changing those affects **all** consumers of that plot builder (API, possible admin or batch renders) and is a **larger visual contract** change.
 
 ## SPA `BokehEmbed` (viewport + stagger)
 
@@ -31,7 +31,7 @@ alwaysApply: false
 ## When changing job detail plots
 
 - Prefer **`bokeh_plot_layout.py`** + frontend for **container and zoom UX** without altering core plot semantics.
-- Coordinate **`hpcperfstats/analysis/plot/`** changes with **`job-plot-artifacts-caching.mdc`** (fingerprints / schema version) and any **roofline / monitor type** rules if data shapes change.
+- Coordinate **`hpcperfstats/analysis/metrics/lib/plot/`** changes with **`job-plot-artifacts-caching.mdc`** (fingerprints / schema version) and any **roofline / monitor type** rules if data shapes change.
 
 ## Overlap
 

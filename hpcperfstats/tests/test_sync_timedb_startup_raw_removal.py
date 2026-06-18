@@ -8,14 +8,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import hpcperfstats.conf_parser as cfg
-from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+import hpcperfstats.dbload.lib.conf_parser as cfg
+from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     atomic_seal_tar_to_zst,
     daily_tar_path_from_compressed,
     get_tar_member_name,
     validate_sealed_daily_archive_for_raw_removal,
 )
-from hpcperfstats.dbload.sync_timedb_startup_raw_removal import (
+from hpcperfstats.dbload.lib.sync_timedb_startup_raw_removal import (
     PHASE_DONE,
     PHASE_VERIFICATION_COMPLETE,
     PHASE_VERIFYING,
@@ -177,7 +177,7 @@ def test_verify_slice_persists_manifest_after_each_day(tmp_path, monkeypatch):
 def test_manifest_persists_under_archive_dir(tmp_path):
   preflight = _make_preflight(tmp_path)
   preflight._manifest["phase"] = PHASE_VERIFYING
-  from hpcperfstats.dbload.sync_timedb_startup_raw_removal import _save_manifest
+  from hpcperfstats.dbload.lib.sync_timedb_startup_raw_removal import _save_manifest
 
   _save_manifest(manifest_path(str(tmp_path)), preflight._manifest)
   assert os.path.isfile(manifest_path(str(tmp_path)))

@@ -5,10 +5,10 @@ from datetime import timezone
 import pytest
 
 from hpcperfstats.dbload import sync_timedb as st
-from hpcperfstats.dbload import sync_timedb_archive_janitor as janitor_mod
-from hpcperfstats.dbload import sync_timedb_parsing as parsing
-from hpcperfstats.dbload.sync_timedb_archive_janitor import ArchiveJanitor
-from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+from hpcperfstats.dbload.lib import sync_timedb_archive_janitor as janitor_mod
+from hpcperfstats.dbload.lib import sync_timedb_parsing as parsing
+from hpcperfstats.dbload.lib.sync_timedb_archive_janitor import ArchiveJanitor
+from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
     IngestArchiveLookupBudgetExceededError,
     set_ingest_task_deadline_monotonic,
     reset_ingest_task_deadline_monotonic,
@@ -154,7 +154,7 @@ def test_completed_ingest_calendar_days_skips_same_day_pending():
 def test_calendar_days_checkpoint_ingest_complete_requires_empty_unprocessed(
     monkeypatch, tmp_path,
 ):
-  from hpcperfstats.dbload import sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
 
   tgz = tmp_path / "daily"
   tgz.mkdir()
@@ -273,8 +273,8 @@ def test_janitor_light_pass_on_every_n_chunks_no_heavy(monkeypatch, tmp_path):
 
 
 def test_heavy_snapshot_startup_adopts_coordinator(monkeypatch, tmp_path):
-  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
-  from hpcperfstats.dbload.sync_timedb_startup_archive_scan import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+  from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
       StartupArchiveScanCoordinator,
   )
 
@@ -313,7 +313,7 @@ def test_heavy_snapshot_startup_adopts_coordinator(monkeypatch, tmp_path):
 
 
 def test_heavy_day_ingest_complete_adopts_accrual_snapshot(monkeypatch, tmp_path):
-  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
 
   daily_dir = tmp_path / "daily"
   daily_dir.mkdir()
@@ -343,7 +343,7 @@ def test_heavy_day_ingest_complete_adopts_accrual_snapshot(monkeypatch, tmp_path
 
 
 def test_heavy_day_ingest_complete_collects_when_no_accrual(monkeypatch, tmp_path):
-  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
 
   daily_dir = tmp_path / "daily"
   daily_dir.mkdir()
@@ -509,7 +509,7 @@ def test_tail_window_skips_full_duplicate_scan(tmp_path, monkeypatch):
 
 
 def test_seed_dispatch_worker_stages_increases_registry_count():
-  from hpcperfstats.dbload.sync_timedb_ingest_worker_diagnostics import (
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
       count_worker_registry_entries,
       seed_dispatch_worker_stages,
   )

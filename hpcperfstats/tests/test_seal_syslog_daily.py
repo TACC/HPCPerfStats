@@ -38,7 +38,7 @@ def test_seal_day_writes_tar_and_removes_sources(tmp_path, monkeypatch):
   (cur / "n3.20240103.log").write_text("keep\n", encoding="utf-8")
 
   monkeypatch.setenv("HPCPERFSTATS_INI", str(tmp_path / "t.ini"))
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   import hpcperfstats.seal_syslog_daily as seal
   importlib.reload(cfg)
   importlib.reload(seal)
@@ -69,7 +69,7 @@ def test_seal_day_removes_leftovers_when_valid_tar_exists(tmp_path, monkeypatch)
   (cur / "n1.20240102.log").write_text("orphan\n", encoding="utf-8")
 
   monkeypatch.setenv("HPCPERFSTATS_INI", str(tmp_path / "t.ini"))
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   import hpcperfstats.seal_syslog_daily as seal
   importlib.reload(cfg)
   importlib.reload(seal)

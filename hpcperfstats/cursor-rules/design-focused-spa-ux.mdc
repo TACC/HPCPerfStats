@@ -2,8 +2,8 @@
 description: Design-focused SPA UX contracts (labels, search recap, loading, overlays, wayfinding)
 globs:
   - hpcperfstats/site/frontend/src/**/*
-  - hpcperfstats/site/machine/api.py
-  - hpcperfstats/site/machine/job_list_filter_summary.py
+  - hpcperfstats/site/lib/machine/api.py
+  - hpcperfstats/site/lib/machine/job_list_filter_summary.py
 ---
 
 # Design-Focused SPA UX

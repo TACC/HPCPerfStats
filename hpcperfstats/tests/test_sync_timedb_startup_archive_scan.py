@@ -6,9 +6,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import hpcperfstats.conf_parser as cfg
-from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
-from hpcperfstats.dbload.sync_timedb_startup_archive_scan import (
+import hpcperfstats.dbload.lib.conf_parser as cfg
+from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
     StartupArchiveScanCoordinator,
     copy_archive_maintenance_snapshot,
 )
@@ -46,7 +46,7 @@ def test_publish_deep_copy_isolated_from_mutations():
 
 def test_coordinator_wait_never_returns_none_parallel_build(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_startup_archive_scan.cfg."
+      "hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan.cfg."
       "get_sync_startup_snapshot_wait_seconds",
       lambda: 0.5,
   )
@@ -88,7 +88,7 @@ def test_coordinator_wait_never_returns_none_parallel_build(monkeypatch):
 
 def test_janitor_begin_build_blocks_fallback_collect(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_startup_archive_scan.cfg."
+      "hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan.cfg."
       "get_sync_startup_snapshot_wait_seconds",
       lambda: 0.5,
   )
@@ -122,7 +122,7 @@ def test_janitor_begin_build_blocks_fallback_collect(monkeypatch):
 def test_startup_single_archive_scan_shared_across_preflights(monkeypatch):
   """Three preflight-style waiters share one janitor publish (one collect)."""
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_startup_archive_scan.cfg."
+      "hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan.cfg."
       "get_sync_startup_snapshot_wait_seconds",
       lambda: 3.0,
   )
@@ -163,7 +163,7 @@ def test_startup_single_archive_scan_shared_across_preflights(monkeypatch):
 def test_preflight_wait_never_fallback_builds(monkeypatch):
   """Preflight-style wait (allow_build=False) must not run fallback collect."""
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_startup_archive_scan.cfg."
+      "hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan.cfg."
       "get_sync_startup_snapshot_wait_seconds",
       lambda: 0.2,
   )
@@ -218,7 +218,7 @@ def test_startup_heavy_maintenance_lifecycle():
 
 
 def test_publish_does_not_clear_startup_heavy_gate():
-  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
 
   coord = StartupArchiveScanCoordinator(
       archive_data_dir="/tmp",

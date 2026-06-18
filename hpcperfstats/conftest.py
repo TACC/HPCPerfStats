@@ -87,7 +87,7 @@ def pytest_collection_modifyitems(config, items):
     """
   for item in items:
     path = str(item.fspath).replace("\\", "/")
-    if "/site/machine/tests/" in path and not list(item.iter_markers("django_db")):
+    if "/site/lib/machine/tests/" in path and not list(item.iter_markers("django_db")):
       if item.get_closest_marker("machine_unit_mock"):
         item.add_marker(pytest.mark.django_db(databases=[]))
         continue
@@ -121,7 +121,7 @@ def pytest_collection_modifyitems(config, items):
   )
   for item in items:
     path = str(item.fspath).replace("\\", "/")
-    if "/site/machine/tests/" not in path:
+    if "/site/lib/machine/tests/" not in path:
       continue
     if item.get_closest_marker("machine_unit_mock"):
       continue
@@ -136,7 +136,7 @@ def _archive_members_redis_test_policy(request, monkeypatch):
   mod = getattr(request.node, "module", None)
   mod_name = getattr(mod, "__name__", "") or ""
   if mod_name.endswith("test_sync_timedb_archive_members_redis"):
-    from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
         reset_archive_members_redis_client_for_tests,
     )
     reset_archive_members_redis_client_for_tests()
@@ -144,7 +144,7 @@ def _archive_members_redis_test_policy(request, monkeypatch):
     reset_archive_members_redis_client_for_tests()
     return
   monkeypatch.setattr(
-      "hpcperfstats.conf_parser.get_sync_archive_members_redis_enabled",
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
       lambda: False,
   )
   yield

@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-import hpcperfstats.process_memory as pm
+import hpcperfstats.dbload.lib.process_memory as pm
 
 
 class _FakeProc:

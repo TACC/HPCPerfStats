@@ -8,7 +8,7 @@ import pytest
 def test_wait_for_redis_available_retries_until_ping_success(monkeypatch):
   import redis
 
-  from hpcperfstats import rediswait
+  from hpcperfstats.dbload.lib import rediswait
 
   monkeypatch.setattr(
     rediswait,
@@ -42,7 +42,7 @@ def test_wait_for_redis_available_retries_until_ping_success(monkeypatch):
 def test_wait_for_redis_available_raises_timeout(monkeypatch):
   import redis
 
-  from hpcperfstats import rediswait
+  from hpcperfstats.dbload.lib import rediswait
 
   monkeypatch.setattr(
     rediswait,

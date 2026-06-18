@@ -81,7 +81,7 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
     researcherUse: "Operators use sample count to diagnose sparse or broken sampling.",
   },
 
-  // ===== Job-level derived metrics (hpcperfstats/analysis/metrics/metrics.py catalog) =====
+  // ===== Job-level derived metrics (hpcperfstats/analysis/metrics/lib/metrics.py catalog) =====
   avg_blockbw: {
     description:
       "Average block-device throughput computed from read and write sectors over the job (GB/s).",

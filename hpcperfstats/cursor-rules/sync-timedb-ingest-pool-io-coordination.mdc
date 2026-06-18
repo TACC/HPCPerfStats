@@ -1,6 +1,6 @@
 ---
 description: Ingest pool workers must coordinate before shared sealed-archive I/O
-globs: hpcperfstats/dbload/sync_timedb*.py,hpcperfstats/dbload/sync_timedb_archive_helpers.py,hpcperfstats/dbload/sync_timedb_archive_members_redis.py,hpcperfstats/tests/test_sync_timedb_archive*.py
+globs: hpcperfstats/dbload/sync_timedb*.py,hpcperfstats/dbload/lib/sync_timedb_archive_helpers.py,hpcperfstats/dbload/lib/sync_timedb_archive_members_redis.py,hpcperfstats/tests/test_sync_timedb_archive*.py
 alwaysApply: false
 ---
 

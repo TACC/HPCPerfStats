@@ -1,0 +1,112 @@
+---
+description: Library modules live in flat parent/lib/ next to entry scripts; entry paths never move; git must track lib trees
+alwaysApply: false
+globs: hpcperfstats/**/lib/**,.gitignore
+---
+
+# Package Library Colocation
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+## Layout
+
+- One flat **`{parent}/lib/`** per directory that contains entry scripts.
+- **No script-name subfolders** under `lib/` (not `lib/sync_timedb/` or `lib/update_metrics/`).
+- Functional subpackages are OK (`lib/plot/`, `lib/gen/`, `lib/monitor_naming/`).
+- **Entry script paths never move** (supervisord, `pyproject.toml` `[tool.setuptools] script-files`, `-m` module paths, compose commands).
+
+## Lib roots (canonical)
+
+| Parent | Lib root | Primary owner | Import prefix |
+|--------|----------|---------------|---------------|
+| `hpcperfstats/dbload/` | `dbload/lib/` | `sync_timedb.py` | `hpcperfstats.dbload.lib.*` |
+| `hpcperfstats/analysis/metrics/` | `analysis/metrics/lib/` | `update_metrics.py` | `hpcperfstats.analysis.metrics.lib.*` |
+| `hpcperfstats/` (package root) | `hpcperfstats/lib/` | `listend.py`, syslog `-m` modules | `hpcperfstats.lib.*` |
+| `hpcperfstats/site/` | `site/lib/` | `manage.py` | `hpcperfstats.site.lib.*` |
+
+Shared modules used by multiple scripts live under the **primary owner’s** `lib/` tree; do not duplicate.
+
+## New library modules (same task checklist)
+
+When adding or moving **any** library module (not an entry script):
+
+1. **Path** — place under the correct `{parent}/lib/` (see table). Never as a flat sibling of an entry script (`dbload/foo.py`, `conf_parser.py` at package root).
+2. **Imports** — use the **`hpcperfstats.{parent}.lib.{module}`** prefix in product code, tests, and monkeypatch strings (`patch("hpcperfstats.dbload.lib.conf_parser…")`). Entry scripts stay `hpcperfstats.dbload.sync_timedb`, etc.
+3. **Git** — after creating files under a new or existing lib tree, run `git add` on those paths and confirm `git check-ignore -v <path>` exits **non-zero** (see **Git tracking** below). A staged commit must show **`A`** or **`R`**, not delete-only for moved content.
+4. **Tests** — colocate or extend drift guards (`test_package_layout_shims.py`, `test_package_layout_deprecated_paths.py`); add a `git check-ignore` sample if you introduce a **new** lib root.
+5. **Docs / router** — update cursor-rules, `docs/TESTING.md`, and compose runner paths when they cite old filesystem locations.
+
+## New `{parent}/lib/` root (rare)
+
+If a new entry-script parent needs its own lib tree:
+
+1. Create flat `{parent}/lib/__init__.py` (and subpackages only when functional, e.g. `lib/plot/`).
+2. Add **`.gitignore` negation** (required — see below).
+3. Register in this rule’s lib-root table and in **`test_package_layout_deprecated_paths.py`** (`test_package_lib_paths_not_gitignored` samples).
+4. Add **`pyproject.toml`** `package-data` if the tree ships non-Python assets.
+5. Do **not** add re-export shims at old paths unless a plan explicitly calls for a temporary migration window.
+
+## Django `site/lib/machine`
+
+- Django app code, **migrations**, templates, and tests live under **`hpcperfstats/site/lib/machine/`**.
+- **`MachineConfig.label = "machine"`** — keep the app label; do not rename migrations when moving files.
+- **`INSTALLED_APPS`** → `hpcperfstats.site.lib.machine.apps.MachineConfig`.
+- Filesystem references in shells and docs: `hpcperfstats/site/lib/machine/tests/…`, not `site/machine/…`.
+
+## Git tracking (mandatory)
+
+Root **`.gitignore`** contains a blanket **`lib/`** rule (build-artifact convention). Package lib trees **must** be negated or they will **not** be committed (delete-only commits).
+
+Current negations (keep in sync when adding lib roots):
+
+```gitignore
+lib/
+!hpcperfstats/dbload/lib/
+!hpcperfstats/dbload/lib/**
+!hpcperfstats/analysis/metrics/lib/
+!hpcperfstats/analysis/metrics/lib/**
+!hpcperfstats/site/lib/
+!hpcperfstats/site/lib/**
+!hpcperfstats/lib/
+!hpcperfstats/lib/**
+!hpcperfstats/site/frontend/src/lib/
+!hpcperfstats/site/frontend/src/lib/**
+# Re-ignore bytecode after lib/ negation (negation un-ignores __pycache__/*.pyc).
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+```
+
+**Before closing** any task that creates or moves files under `**/lib/**`:
+
+```bash
+git check-ignore -v hpcperfstats/site/lib/machine/migrations/0001_initial.py  # must fail (not ignored)
+git check-ignore -v hpcperfstats/dbload/lib/__pycache__/foo.cpython-312.pyc  # must succeed (ignored)
+git diff --cached --name-status | rg 'lib/'  # must show A or R, not only D
+git diff --cached --name-only | rg '__pycache__|\.pyc$'  # must be empty
+```
+
+Regression: `test_package_lib_paths_not_gitignored`, `test_pycache_under_package_lib_is_gitignored` in `hpcperfstats/tests/test_package_layout_deprecated_paths.py`.
+
+## Python shadowing
+
+Never create `{name}/` package directory beside `{name}.py` in the same folder — use `{parent}/lib/` instead.
+
+## Forbidden patterns (do not reintroduce)
+
+| Deprecated | Use instead |
+|------------|-------------|
+| `hpcperfstats/conf_parser.py` | `hpcperfstats/dbload/lib/conf_parser.py` |
+| `hpcperfstats/site/machine/` | `hpcperfstats/site/lib/machine/` |
+| `hpcperfstats/analysis/plot/`, `analysis/gen/` | `analysis/metrics/lib/plot/`, `…/lib/gen/` |
+| `hpcperfstats/monitor_naming/` | `hpcperfstats/dbload/lib/monitor_naming/` |
+| `hpcperfstats.dbload.sync_timedb_parsing` (helper) | `hpcperfstats.dbload.lib.sync_timedb_parsing` |
+| `hpcperfstats.analysis.metrics.metrics` (module) | `hpcperfstats.analysis.metrics.lib.metrics` |
+
+Entry modules **`sync_timedb.py`**, **`sync_acct.py`**, **`sync_timedb_archive.py`**, **`update_metrics.py`**, **`manage.py`**, **`listend.py`** remain at their historical paths.
+
+## Overlap
+
+- **`agent-discipline-core.mdc`** — task router registration for `hpcperfstats/**/lib/**` and `.gitignore` lib negation.
+- **`testing-best-practices.mdc`** — colocated tests beside moved modules.
+- **`django-migration-numbering.mdc`** — new migrations under `site/lib/machine/migrations/`.

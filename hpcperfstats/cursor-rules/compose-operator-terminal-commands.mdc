@@ -36,7 +36,7 @@ Match **`README.md`** *Useful commands* and **`readme-installation-sync.mdc`** (
 **Bad** — host assumes compose DNS; three separate pastes for one service:
 
 ```bash
-python3 -m pytest hpcperfstats/site/machine/tests/test_foo.py -q
+python3 -m pytest hpcperfstats/site/lib/machine/tests/test_foo.py -q
 cd HPCPerfStats && python hpcperfstats/site/manage.py shell -c "…"
 psql -h db -U hpcperfstats -c "SELECT 1"
 ```
@@ -47,7 +47,7 @@ psql -h db -U hpcperfstats -c "SELECT 1"
 cd HPCPerfStats
 
 docker compose exec web bash -lc '
-python -m pytest hpcperfstats/site/machine/tests/test_foo.py -q &&
+python -m pytest hpcperfstats/site/lib/machine/tests/test_foo.py -q &&
 python hpcperfstats/site/manage.py shell -c "from machine.models import Job; print(Job.objects.count())"
 '
 

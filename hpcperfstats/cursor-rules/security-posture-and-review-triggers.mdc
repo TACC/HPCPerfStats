@@ -23,7 +23,7 @@ When editing files that affect authentication, authorization, browser security h
 
 - Django **`SECRET_KEY`**, **`DEBUG`**, **`ALLOWED_HOSTS`**, session/cookie flags, **`CORS_*`**, **`REST_FRAMEWORK`**, cache/Redis settings.
 - **Middleware:** CSP, Permissions-Policy, COOP, cache-control, or new security headers.
-- **OAuth / API keys:** [`oauth2.py`](hpcperfstats/site/machine/oauth2.py), [`ApiKey`](hpcperfstats/site/machine/models.py), [`_require_auth`](hpcperfstats/site/machine/api.py) / `_require_staff`, new API routes.
+- **OAuth / API keys:** [`oauth2.py`](hpcperfstats/site/lib/machine/oauth2.py), [`ApiKey`](hpcperfstats/site/lib/machine/models.py), [`_require_auth`](hpcperfstats/site/lib/machine/api.py) / `_require_staff`, new API routes.
 - **Public or unusual HTTP methods:** `csrf_exempt` (justify and bound abuse: size limits, rate limits where appropriate), **`/csp-report/`** (browsers do not send Django CSRF tokens).
 - **nginx / compose:** `client_max_body_size`, TLS versions, proxy headers, secrets in env (no committed credentials).
 - **Dependencies:** `pyproject.toml`, `package.json` / lockfiles — run or schedule **`pip-audit`** and **`npm audit`**; document upgrades that fix CVEs.

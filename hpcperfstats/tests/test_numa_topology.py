@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from hpcperfstats.numa_topology import (
+from hpcperfstats.dbload.lib.numa_topology import (
     NumaNode,
     parse_sysfs_numa,
     select_node_pair,

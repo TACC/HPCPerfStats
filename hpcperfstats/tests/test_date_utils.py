@@ -2,7 +2,7 @@
 from datetime import datetime, timedelta
 
 
-from hpcperfstats.dbload.date_utils import daterange, parse_start_end_dates
+from hpcperfstats.dbload.lib.date_utils import daterange, parse_start_end_dates
 
 
 def test_parse_start_end_dates_from_argv():

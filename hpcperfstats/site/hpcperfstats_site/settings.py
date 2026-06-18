@@ -7,7 +7,7 @@ from datetime import timezone as _datetime_timezone
 
 import django.utils.timezone as _django_utils_timezone
 
-import hpcperfstats.conf_parser as cfg
+import hpcperfstats.dbload.lib.conf_parser as cfg
 
 # Django 5+ removed django.utils.timezone.utc; keep alias for code/tests that still reference it.
 if not hasattr(_django_utils_timezone, "utc"):
@@ -385,7 +385,7 @@ INSTALLED_APPS = (
     "rest_framework",
     "drf_spectacular",
     "corsheaders",
-    "hpcperfstats.site.machine",
+    "hpcperfstats.site.lib.machine.apps.MachineConfig",
     "hpcperfstats.site.xalt",
     "hpcperfstats.site.hpcperfstats_site",
     "django.contrib.auth",
@@ -404,11 +404,11 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_RENDERER_CLASSES": [
-        "hpcperfstats.site.machine.renderers.SafeJSONRenderer",
+        "hpcperfstats.site.lib.machine.renderers.SafeJSONRenderer",
     ],
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_THROTTLE_CLASSES": [
-        "hpcperfstats.site.machine.throttles.AuthenticatedUserOrApiKeyThrottle",
+        "hpcperfstats.site.lib.machine.throttles.AuthenticatedUserOrApiKeyThrottle",
     ],
     "DEFAULT_THROTTLE_RATES": {
         "authenticated_user_or_api_key": os.environ.get(

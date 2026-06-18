@@ -1,6 +1,6 @@
 ---
 description: Format and wiring contract for hpcperfstats.ini and hpcperfstats.ini.example
-globs: HPCPerfStats/hpcperfstats.ini.example,HPCPerfStats/hpcperfstats.ini,HPCPerfStats/hpcperfstats/conf_parser.py,HPCPerfStats/hpcperfstats/ini_section_placement.py
+globs: HPCPerfStats/hpcperfstats.ini.example,HPCPerfStats/hpcperfstats.ini,HPCPerfStats/hpcperfstats/dbload/lib/conf_parser.py,HPCPerfStats/hpcperfstats/dbload/lib/ini_section_placement.py
 alwaysApply: false
 ---
 
@@ -59,15 +59,15 @@ When ambiguous, ask the operator/product owner; do not guess.
 In the **same task**:
 
 1. Classify using the taxonomy above.
-2. Add or update the getter in **`conf_parser.py`** with primary section + legacy fallback in **`_ini_option()`** when migrating keys.
+2. Add or update the getter in **`dbload/lib/dbload/lib/conf_parser.py`** with primary section + legacy fallback in **`_ini_option()`** when migrating keys.
 3. Append **`(section, option)`** to **`INI_OPTION_REGISTRY`**.
 4. Ensure **`ini_section_placement.py`** covers the option (explicit map or prefix rule).
 5. Document the key in **`hpcperfstats.ini.example`** in the correct section and **`[DEFAULT]`** order.
-6. Run **`test_hpcperfstats_ini_example.py`**, **`test_ini_section_placement_contract.py`**, and relevant **`test_conf_parser.py`** cases.
+6. Run **`test_hpcperfstats_ini_example.py`**, **`test_ini_section_placement_contract.py`**, and relevant **`test_dbload/lib/dbload/lib/conf_parser.py`** cases.
 
 ## Registry and drift tests
 
-- **`hpcperfstats/conf_parser.py`** → **`INI_OPTION_REGISTRY`**: every ini-backed `(section, option)` pair.
+- **`hpcperfstats/dbload/lib/dbload/lib/dbload/lib/conf_parser.py`** → **`INI_OPTION_REGISTRY`**: every ini-backed `(section, option)` pair.
 - **`hpcperfstats/ini_section_placement.py`** → **`expected_section()`** / **`validate_registry_sections()`**.
 - **`hpcperfstats/tests/test_hpcperfstats_ini_example.py`**: example documents every registry entry; pinning keys last in `[DEFAULT]`.
 - **`hpcperfstats/tests/test_ini_section_placement_contract.py`**: registry matches placement contract.

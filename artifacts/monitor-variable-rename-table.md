@@ -1,17 +1,17 @@
 # Monitor variable rename table
 
-Generated 2026-06-04 from `docs/monitor_variable_rename_map.yaml`.
+Generated 2026-06-17 from `docs/monitor_variable_rename_map.yaml`.
 
 **Clean break:** no ingest aliases. Downstream must adopt new names.
 
 ## Downstream impact (document-only)
 
-- `hpcperfstats/monitor_naming/canonical.py`
-- `hpcperfstats/monitor_naming/legacy.py`
-- `hpcperfstats/monitor_naming/resolve.py`
-- `hpcperfstats/dbload/sync_timedb_parsing.py`
-- `hpcperfstats/dbload/sync_timedb_parsing_legacy.py`
-- `hpcperfstats/analysis/metrics/metrics.py`
+- `hpcperfstats/dbload/lib/monitor_naming/canonical.py`
+- `hpcperfstats/dbload/lib/monitor_naming/legacy.py`
+- `hpcperfstats/dbload/lib/monitor_naming/resolve.py`
+- `hpcperfstats/dbload/lib/sync_timedb_parsing.py`
+- `hpcperfstats/dbload/lib/sync_timedb_parsing_legacy.py`
+- `hpcperfstats/analysis/metrics/lib/metrics.py`
 - `tests/pipeline_e2e/monitor_payloads.py`
 - `hpcperfstats/site/frontend/src/utils/variableMetadataMonitorEvents.js`
 - `hpcperfstats/site/frontend/src/utils/variableMetadataMonitorEventsLegacy.js`
@@ -43,6 +43,7 @@ Generated 2026-06-04 from `docs/monitor_variable_rename_map.yaml`.
 - `intel_hsw_imc` → `intel_x86_uncore_imc_hsw`
 - `intel_hsw_qpi` → `intel_x86_uncore_qpi_hsw`
 - `intel_hsw_r2pci` → `intel_x86_uncore_r2pci_hsw`
+- `intel_icx_imc` → `intel_x86_uncore_imc_icx`
 - `intel_ivb_cbo` → `intel_x86_uncore_cbo_ivb`
 - `intel_ivb_hau` → `intel_x86_uncore_hau_ivb`
 - `intel_ivb_imc` → `intel_x86_uncore_imc_ivb`
@@ -57,6 +58,7 @@ Generated 2026-06-04 from `docs/monitor_variable_rename_map.yaml`.
 - `intel_snb_imc` → `intel_x86_uncore_imc_snb`
 - `intel_snb_qpi` → `intel_x86_uncore_qpi_snb`
 - `intel_snb_r2pci` → `intel_x86_uncore_r2pci_snb`
+- `intel_spr_imc` → `intel_x86_uncore_imc_spr`
 - `llite` → `lustre_llite`
 - `lnet` → `host_lnet`
 - `mdc` → `lustre_mdc`
@@ -89,6 +91,7 @@ Generated 2026-06-04 from `docs/monitor_variable_rename_map.yaml`.
 - `CAS_WRITES` → `dram_cas_writes`
 - `CPU_CLK_UNHALTED_CORE` → `cycles_unhalted_core`
 - `CPU_CLK_UNHALTED_REF` → `cycles_unhalted_ref`
+- `CPU_PEAK_HBM_BW_BYTES_PER_S` → `cpu_peak_hbm_bw_bytes_per_s`
 - `DCGM_CPU_POWER_LIMIT_W` → `dcgm_cpu_power_limit_w`
 - `DCGM_CPU_POWER_UTIL_W` → `dcgm_cpu_power_util_w`
 - `DISPATCH_STALL_CYCLES0` → `dispatch_stall_cycles0`
@@ -104,6 +107,8 @@ Generated 2026-06-04 from `docs/monitor_variable_rename_map.yaml`.
 - `FIXED_CTR2` → `mperf`
 - `FLOPS` → `fp_ops_retired`
 - `FilePages` → `file_pages`
+- `HBM_CAS_READS` → `hbm_cas_reads`
+- `HBM_CAS_WRITES` → `hbm_cas_writes`
 - `HugePages_Free` → `huge_pages_free`
 - `HugePages_Total` → `huge_pages_total`
 - `INSTR_RETIRED_ANY` → `instr_retired_any`
@@ -160,7 +165,11 @@ Generated 2026-06-04 from `docs/monitor_variable_rename_map.yaml`.
 - `pcie_replay_counter` → `gpu_pcie_replay_counter`
 - `pcie_rx_bytes` → `gpu_pcie_rx_bytes`
 - `pcie_tx_bytes` → `gpu_pcie_tx_bytes`
+- `rx_bytes` → `sw_rx_bytes`
+- `rx_packets` → `sw_rx_packets`
 - `sm_clock` → `gpu_sm_clock`
+- `tx_bytes` → `sw_tx_bytes`
+- `tx_packets` → `sw_tx_packets`
 
 ## Host mem aliases (kernel → emit)
 

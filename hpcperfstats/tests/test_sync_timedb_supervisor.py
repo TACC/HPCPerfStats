@@ -8,12 +8,12 @@ import os
 from unittest.mock import MagicMock, patch
 
 import hpcperfstats.dbload.sync_timedb as st
-import hpcperfstats.dbload.sync_timedb_archive_helpers as archive_helpers
-import hpcperfstats.dbload.sync_timedb_archive_janitor as janitor_mod
-import hpcperfstats.dbload.sync_timedb_async_day_close as async_day_close_mod
+import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as archive_helpers
+import hpcperfstats.dbload.lib.sync_timedb_archive_janitor as janitor_mod
+import hpcperfstats.dbload.lib.sync_timedb_async_day_close as async_day_close_mod
 import pandas as pd
 import pytest
-from hpcperfstats.shutdown_utils import shutdown_requested
+from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
 
 
 def _fake_map_async_result(value):
@@ -96,7 +96,7 @@ class _FakeArchivePoolRetry:
 
 
 def _empty_maintenance_snapshot(*_a, **_k):
-  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
 
   return ArchiveMaintenanceSnapshot(
       closed_paths=[],
@@ -167,7 +167,7 @@ def _default_startup_daily_tar_count(monkeypatch):
   monkeypatch.setattr(archive_helpers, "build_remaining_raw_for_daily_tar", lambda *a, **k: {})
   monkeypatch.setattr(janitor_mod, "iter_daily_tar_paths", lambda *a, **k: [])
 
-  from hpcperfstats.dbload.sync_timedb_startup_archive_scan import (
+  from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
       StartupArchiveScanCoordinator,
   )
 
@@ -193,7 +193,7 @@ def test_periodic_maintenance_always_runs_gated_tar_removal(monkeypatch, tmp_pat
     daily_dir = tmp_path / "daily"
     archive_dir.mkdir()
     daily_dir.mkdir()
-    from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+    from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
 
     tar_removal_calls = []
 
@@ -437,7 +437,7 @@ def test_parse_sync_timedb_argv_once_and_all(monkeypatch):
 
 def test_run_sync_timedb_supervisor_from_parsed_resets_runtime_caches(monkeypatch):
   """Session start clears timestamp caches so stale state never leaks across runs."""
-  import hpcperfstats.dbload.sync_timedb_ingest_readiness as readiness
+  import hpcperfstats.dbload.lib.sync_timedb_ingest_readiness as readiness
 
   readiness._HEAD_DB_CACHE[(("hostA"), 1)] = {"present": True, "checked_at": 1.0}
   st._HOST_ITIMES_CACHE[(("hostA"), 1, 2)] = {"times": (1, 2), "checked_at": 1.0}
@@ -1148,7 +1148,7 @@ def test_pick_write_lock_for_path_uses_stable_sharding():
 
 
 def test_head_timestamp_cache_reuses_recent_lookup(monkeypatch):
-  import hpcperfstats.dbload.sync_timedb_ingest_readiness as readiness
+  import hpcperfstats.dbload.lib.sync_timedb_ingest_readiness as readiness
 
   calls = {"n": 0}
 
@@ -1847,7 +1847,7 @@ def test_parse_stats_file_payload_need_archival_false_on_day_skip(monkeypatch):
 
 
 def test_sync_timedb_exits_on_redis_unavailable_during_ingest(monkeypatch):
-  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       ArchiveMembersRedisUnavailableError,
   )
 
@@ -1882,7 +1882,7 @@ def test_sync_timedb_exits_on_redis_unavailable_during_ingest(monkeypatch):
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
     monkeypatch.setattr(
-        "hpcperfstats.dbload.sync_timedb_archive_members_redis"
+        "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
         ".verify_archive_members_redis_startup",
         lambda: None,
     )
@@ -1908,7 +1908,7 @@ def test_sync_timedb_exits_on_redis_unavailable_during_ingest(monkeypatch):
 
 
 def test_exit_handler_distinguishes_stall_from_connection(monkeypatch, capsys):
-  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       ArchiveMembersPopulateStalledError,
       ArchiveMembersRedisConnectionError,
   )
@@ -1928,7 +1928,7 @@ def test_exit_handler_distinguishes_stall_from_connection(monkeypatch, capsys):
       "ping": lambda self: True,
   })()
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_members_redis"
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
       ".get_archive_members_redis_client",
       lambda required=True: fake_client,
   )
@@ -2419,7 +2419,7 @@ def test_db_writer_stage_batch_size_uses_ini_cap(monkeypatch):
 
 
 def test_cap_pending_stats_files_list_truncates():
-  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       cap_pending_stats_file_list,
   )
 
@@ -2430,7 +2430,7 @@ def test_cap_pending_stats_files_list_truncates():
 
 def test_cap_pending_stats_file_list_retains_oldest_when_truncating():
   """Pending queue cap drops newer paths; oldest-first ingest order is preserved."""
-  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       cap_pending_stats_file_list,
   )
 
@@ -2492,7 +2492,7 @@ def test_supervisor_ingests_oldest_pending_paths_first(monkeypatch):
 
 
 def test_rescan_pending_stats_files_reuses_set_without_copy(monkeypatch):
-  from hpcperfstats.dbload import sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
 
   discovered = ["/pending/1", "/pending/2", "/done/1"]
   monkeypatch.setattr(
@@ -2508,7 +2508,7 @@ def test_rescan_pending_stats_files_reuses_set_without_copy(monkeypatch):
 
 
 def test_ingest_pool_worker_exit_propagates_from_supervisor(monkeypatch):
-  from hpcperfstats.dbload.multiprocessing_pool_health import (
+  from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
       MultiprocessingWorkerExitError,
   )
 
@@ -2601,7 +2601,7 @@ def test_ingest_pool_worker_exit_propagates_from_supervisor(monkeypatch):
 
 
 def test_stall_teardown_preserves_exit_124_not_137(monkeypatch):
-  from hpcperfstats.dbload.multiprocessing_pool_health import (
+  from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
       MultiprocessingPoolStallError,
       MultiprocessingWorkerExitError,
   )
@@ -2705,7 +2705,7 @@ def test_stall_teardown_preserves_exit_124_not_137(monkeypatch):
 
 
 def test_supervisor_stall_hard_exits_before_archive_pool_context(monkeypatch):
-  from hpcperfstats.dbload.multiprocessing_pool_health import (
+  from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
       MultiprocessingPoolStallError,
   )
 
@@ -2757,7 +2757,7 @@ def test_supervisor_stall_hard_exits_before_archive_pool_context(monkeypatch):
   monkeypatch.setattr(st.connections, "close_all", lambda: None)
   monkeypatch.setattr(st, "terminate_pool_bounded", lambda pool, **kwargs: True)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.multiprocessing_pool_health.os._exit",
+      "hpcperfstats.dbload.lib.multiprocessing_pool_health.os._exit",
       lambda code: exit_codes.append(code),
   )
 
@@ -2795,16 +2795,16 @@ def test_supervisor_stall_hard_exits_before_archive_pool_context(monkeypatch):
 
 
 def test_stall_teardown_uses_nonblocking_preflight_shutdown(monkeypatch):
-  from hpcperfstats.dbload.multiprocessing_pool_health import (
+  from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
       MultiprocessingPoolStallError,
   )
-  from hpcperfstats.dbload.sync_timedb_startup_day_close import (
+  from hpcperfstats.dbload.lib.sync_timedb_startup_day_close import (
       StartupDayClosePreflight,
   )
-  from hpcperfstats.dbload.sync_timedb_startup_raw_removal import (
+  from hpcperfstats.dbload.lib.sync_timedb_startup_raw_removal import (
       StartupRawRemovalPreflight,
   )
-  from hpcperfstats.dbload.sync_timedb_async_day_close import (
+  from hpcperfstats.dbload.lib.sync_timedb_async_day_close import (
       AsyncDayCloseCoordinator,
   )
 
@@ -3561,8 +3561,8 @@ def test_supervisor_startup_empty_queue_no_duplicate_drain_pass(
 
 
 def _supervisor_startup_preflight_patches(monkeypatch, preflight_obj):
-  import hpcperfstats.dbload.sync_timedb_startup_raw_removal as preflight_mod
-  import hpcperfstats.dbload.sync_timedb_startup_day_close as day_close_mod
+  import hpcperfstats.dbload.lib.sync_timedb_startup_raw_removal as preflight_mod
+  import hpcperfstats.dbload.lib.sync_timedb_startup_day_close as day_close_mod
 
   class _FakePreflight:
     def __init__(self, **_kwargs):
@@ -3828,7 +3828,7 @@ def test_supervisor_rescans_pending_after_startup_delete_complete(monkeypatch):
 
 
 def _supervisor_day_raw_removal_patches(monkeypatch, coord_obj):
-  import hpcperfstats.dbload.sync_timedb_day_raw_removal as day_mod
+  import hpcperfstats.dbload.lib.sync_timedb_day_raw_removal as day_mod
 
   class _FakeDayCoord:
     def __init__(self, **_kwargs):
@@ -3842,8 +3842,8 @@ def _supervisor_day_raw_removal_patches(monkeypatch, coord_obj):
 
 
 def _supervisor_startup_preflight_disabled(monkeypatch):
-  import hpcperfstats.dbload.sync_timedb_startup_raw_removal as preflight_mod
-  import hpcperfstats.dbload.sync_timedb_startup_day_close as day_close_mod
+  import hpcperfstats.dbload.lib.sync_timedb_startup_raw_removal as preflight_mod
+  import hpcperfstats.dbload.lib.sync_timedb_startup_day_close as day_close_mod
 
   class _DonePreflight:
     enabled = False
@@ -3884,7 +3884,7 @@ def _supervisor_startup_preflight_disabled(monkeypatch):
     def shutdown(self, wait=True):
       del wait
 
-  import hpcperfstats.dbload.sync_timedb_async_day_close as async_dc_mod
+  import hpcperfstats.dbload.lib.sync_timedb_async_day_close as async_dc_mod
 
   def _noop_async_day_close(self, tar_norm, reason):
     del reason
@@ -3908,8 +3908,8 @@ def test_supervisor_waits_for_startup_day_close_drain_before_ingest(monkeypatch)
   ingest_calls = {"n": 0}
   day_close_started = {"value": False}
 
-  import hpcperfstats.dbload.sync_timedb_startup_raw_removal as preflight_mod
-  import hpcperfstats.dbload.sync_timedb_startup_day_close as day_close_mod
+  import hpcperfstats.dbload.lib.sync_timedb_startup_raw_removal as preflight_mod
+  import hpcperfstats.dbload.lib.sync_timedb_startup_day_close as day_close_mod
 
   class _DoneRawPreflight:
     enabled = False
@@ -4008,8 +4008,8 @@ def test_supervisor_blocks_ingest_when_phase_done_pending_eligible(monkeypatch):
   rescan_calls = {"n": 0}
   ingest_calls = {"n": 0}
 
-  import hpcperfstats.dbload.sync_timedb_startup_raw_removal as preflight_mod
-  import hpcperfstats.dbload.sync_timedb_startup_day_close as day_close_mod
+  import hpcperfstats.dbload.lib.sync_timedb_startup_raw_removal as preflight_mod
+  import hpcperfstats.dbload.lib.sync_timedb_startup_day_close as day_close_mod
 
   class _DoneRawPreflight:
     enabled = False
@@ -4165,8 +4165,8 @@ def test_supervisor_startup_drain_disabled_allows_parallel_ingest(monkeypatch):
   ingest_calls = {"n": 0}
   day_close_started = {"value": False}
 
-  import hpcperfstats.dbload.sync_timedb_startup_raw_removal as preflight_mod
-  import hpcperfstats.dbload.sync_timedb_startup_day_close as day_close_mod
+  import hpcperfstats.dbload.lib.sync_timedb_startup_raw_removal as preflight_mod
+  import hpcperfstats.dbload.lib.sync_timedb_startup_day_close as day_close_mod
 
   class _DoneRawPreflight:
     enabled = False
@@ -4433,7 +4433,7 @@ def _supervisor_two_day_ingest_patches(
       "get_sync_startup_drain_day_close_before_ingest",
       lambda: False,
   )
-  from hpcperfstats.dbload.sync_timedb_startup_archive_scan import (
+  from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
       StartupArchiveScanCoordinator,
   )
 
@@ -4695,7 +4695,7 @@ def test_immediate_day_close_submits_checkpoint_complete_not_chunk_touched_only(
 def test_day_close_unprocessed_build_passes_accrual_snapshot(monkeypatch, tmp_path):
   shutdown_requested[0] = False
   seen_snapshots = []
-  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
 
   fake_accrual = ArchiveMaintenanceSnapshot(
       closed_paths=[],
@@ -4914,8 +4914,8 @@ def test_supervisor_startup_tail_ingest_runs_during_drain(monkeypatch, tmp_path,
   shutdown_requested[0] = False
   tail_submit = {"tar": None}
   try:
-    import hpcperfstats.dbload.sync_timedb_startup_raw_removal as preflight_mod
-    import hpcperfstats.dbload.sync_timedb_startup_day_close as day_close_mod
+    import hpcperfstats.dbload.lib.sync_timedb_startup_raw_removal as preflight_mod
+    import hpcperfstats.dbload.lib.sync_timedb_startup_day_close as day_close_mod
 
     archive_dir = tmp_path / "archive"
     daily_dir = tmp_path / "daily"
@@ -5015,7 +5015,7 @@ def test_supervisor_startup_tail_ingest_runs_during_drain(monkeypatch, tmp_path,
             tail_submit.__setitem__("tar", os.path.normpath(tar_path)) or True
         ),
     )
-    from hpcperfstats.dbload.sync_timedb_startup_archive_scan import (
+    from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
         StartupArchiveScanCoordinator,
     )
 
@@ -5063,9 +5063,9 @@ def test_supervisor_startup_tail_ingest_runs_during_drain(monkeypatch, tmp_path,
 
 def _startup_tail_drain_patches(monkeypatch, tmp_path, *, live_unprocessed_fn, max_files=100):
   """Shared mocks for startup tail ingest supervisor drain tests."""
-  import hpcperfstats.dbload.sync_timedb_startup_raw_removal as preflight_mod
-  import hpcperfstats.dbload.sync_timedb_startup_day_close as day_close_mod
-  from hpcperfstats.dbload.sync_timedb_startup_archive_scan import (
+  import hpcperfstats.dbload.lib.sync_timedb_startup_raw_removal as preflight_mod
+  import hpcperfstats.dbload.lib.sync_timedb_startup_day_close as day_close_mod
+  from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
       StartupArchiveScanCoordinator,
   )
 

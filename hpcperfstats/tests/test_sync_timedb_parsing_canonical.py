@@ -1,5 +1,5 @@
 """Canonical monitor stats parsing (semantic event keys, no CTL/CTR)."""
-from hpcperfstats.dbload.sync_timedb_parsing import parse_stats_lines
+from hpcperfstats.dbload.lib.sync_timedb_parsing import parse_stats_lines
 
 
 def test_parse_stats_lines_canonical_intel_pmc_and_imc():

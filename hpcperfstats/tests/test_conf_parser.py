@@ -12,7 +12,7 @@ def test_config_path_from_env(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   # Re-import so conf_parser reads the new env
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_debug() is False
   assert cfg.get_machine_name() == "test"
@@ -35,7 +35,7 @@ def test_get_debug_true(temp_ini, monkeypatch):
   monkeypatch.setenv("SYNC_ENABLE_CPUSET_PRIORITY_BUDGET", "0")
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_debug() is True
 
@@ -44,7 +44,7 @@ def test_get_db_connection_string(temp_ini, monkeypatch):
   """get_db_connection_string returns connection string from PORTAL section."""
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   s = cfg.get_db_connection_string()
   assert "dbname=test" in s
@@ -57,7 +57,7 @@ def test_get_db_connection_string(temp_ini, monkeypatch):
 def test_get_max_gunicorn_workers_cap_default(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_max_gunicorn_workers_cap() == 32
 
@@ -66,7 +66,7 @@ def test_get_worker_thread_count(temp_ini, monkeypatch):
   """get_worker_thread_count uses effective_cores // divisor, clamped to at least 1."""
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   monkeypatch.setattr(cfg.os, "cpu_count", lambda: 64)
   # temp_ini has total_cores = 4 -> effective 4
@@ -78,7 +78,7 @@ def test_get_worker_thread_count(temp_ini, monkeypatch):
 def test_get_archive_zstd_priority_defaults(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_archive_zstd_nice() == 10
   assert cfg.get_archive_zstd_ionice_class() == 2
@@ -90,7 +90,7 @@ def test_get_archive_zstd_priority_defaults(temp_ini, monkeypatch):
 def test_get_archive_zstd_drop_page_cache_opt_out(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_archive_zstd_drop_page_cache() is True
 
@@ -109,7 +109,7 @@ def test_get_archive_zstd_drop_page_cache_opt_out(temp_ini, monkeypatch):
 def test_get_archive_zstd_threads_default_and_override(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_archive_zstd_threads() == 0
 
@@ -128,7 +128,7 @@ def test_get_archive_zstd_threads_default_and_override(temp_ini, monkeypatch):
 def test_get_archive_zstd_level_clamps(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_archive_zstd_level() == 7
 
@@ -148,7 +148,7 @@ def test_get_archive_zstd_level_clamps(temp_ini, monkeypatch):
 def test_get_archive_zstd_threads_and_maintenance_interval(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_archive_zstd_threads() == 0
   assert cfg.get_archive_maintenance_interval_seconds() == 8 * 3600
@@ -173,7 +173,7 @@ def test_get_archive_maintenance_interval_seconds_rejects_nonfinite_and_nonposit
 ):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_archive_maintenance_interval_seconds() == 8 * 3600
 
@@ -206,7 +206,7 @@ def test_get_archive_maintenance_max_defer_seconds_defaults_and_override(
 ):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_archive_maintenance_max_defer_seconds() == 3600.0
 
@@ -227,7 +227,7 @@ def test_get_archive_maintenance_max_defer_seconds_rejects_nonfinite_and_nonposi
 ):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_archive_maintenance_max_defer_seconds() == 3600.0
 
@@ -249,7 +249,7 @@ def test_get_archive_maintenance_max_defer_seconds_rejects_nonfinite_and_nonposi
 def test_get_effective_cores_caps_by_host(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   monkeypatch.setattr(cfg.os, "cpu_count", lambda: 2)
   assert cfg.get_effective_cores() == 2
@@ -258,7 +258,7 @@ def test_get_effective_cores_caps_by_host(temp_ini, monkeypatch):
 def test_get_effective_cores_caps_by_ini(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   monkeypatch.setattr(cfg.os, "cpu_count", lambda: 64)
   assert cfg.get_effective_cores() == 4
@@ -300,7 +300,7 @@ def test_total_cores_defaults_to_40_when_missing(monkeypatch, tmp_path):
       "oauth_base_url = http://localhost\n")
   monkeypatch.setenv("HPCPERFSTATS_INI", str(ini))
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_total_cores() == "40"
   monkeypatch.setattr(cfg.os, "cpu_count", lambda: 4)
@@ -310,7 +310,7 @@ def test_total_cores_defaults_to_40_when_missing(monkeypatch, tmp_path):
 def test_get_metrics_pool_process_count_respects_cap(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   with open(temp_ini) as f:
     content = f.read()
@@ -329,7 +329,7 @@ def test_get_metrics_pool_process_cap_env_override(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   monkeypatch.setenv("METRICS_POOL_PROCESS_CAP", "7")
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_metrics_pool_process_cap() == 7
 
@@ -338,7 +338,7 @@ def test_get_redis_location_default(temp_ini, monkeypatch):
   """get_redis_location returns default when CACHE section missing."""
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_redis_location() == "redis://127.0.0.1:6379/1"
 
@@ -352,7 +352,7 @@ def test_get_redis_location_from_config(temp_ini, monkeypatch):
     f.write(content)
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_redis_location() == "redis://192.168.1.1:6379/2"
 
@@ -368,7 +368,7 @@ def test_get_secret_key_missing(temp_ini, monkeypatch):
     f.write(content)
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_secret_key() is None
 
@@ -384,7 +384,7 @@ def test_get_secret_key_from_config(temp_ini, monkeypatch):
     f.write(content)
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_secret_key() == "my-secret-key-value"
 
@@ -393,7 +393,7 @@ def test_get_local_timezone(temp_ini, monkeypatch):
   """get_local_timezone returns ZoneInfo for DEFAULT.timezone."""
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   from zoneinfo import ZoneInfo
   tz = cfg.get_local_timezone()
@@ -436,7 +436,7 @@ def test_missing_debug_defaults_to_false(monkeypatch, tmp_path):
       "oauth_base_url = http://localhost\n")
   monkeypatch.setenv("HPCPERFSTATS_INI", str(ini))
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
 
   assert cfg.get_debug() is False
@@ -481,7 +481,7 @@ def test_fallback_to_cwd_hpcperfstats_ini(monkeypatch, tmp_path):
   monkeypatch.delenv("HPCPERFSTATS_INI", raising=False)
   monkeypatch.chdir(tmp_path)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
 
   assert cfg.get_rmq_server() == "localhost"
@@ -493,7 +493,7 @@ def test_missing_config_file_raises_helpful_error(monkeypatch, tmp_path):
   missing_ini = tmp_path / "does-not-exist.ini"
   monkeypatch.setenv("HPCPERFSTATS_INI", str(missing_ini))
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
 
   with pytest.raises(FileNotFoundError, match="Unable to locate HPCPerfStats"):
@@ -503,7 +503,7 @@ def test_missing_config_file_raises_helpful_error(monkeypatch, tmp_path):
 def test_parallel_db_prefetch_and_api_defaults(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_parallel_db_prefetch_max_workers() == 4
   assert cfg.get_api_small_executor_max_workers() == 4
@@ -520,7 +520,7 @@ def test_api_small_executor_override(temp_ini, monkeypatch):
     f.write(content)
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_api_small_executor_max_workers() == 3
   assert cfg.get_parallel_db_prefetch_max_workers() == 4
@@ -529,7 +529,7 @@ def test_api_small_executor_override(temp_ini, monkeypatch):
 def test_db_conn_max_age_default(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_db_conn_max_age() == 90
   monkeypatch.setenv("DJANGO_CONN_MAX_AGE", "30")
@@ -540,7 +540,7 @@ def test_db_conn_max_age_default(temp_ini, monkeypatch):
 def test_build_postgres_options_statement_timeout(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   opts = cfg.build_postgres_connection_options()
   assert "options" in opts
@@ -553,7 +553,7 @@ def test_build_postgres_options_disabled_by_env(monkeypatch, temp_ini):
   monkeypatch.setenv("DJANGO_DB_STATEMENT_TIMEOUT_MS", "0")
   monkeypatch.setenv("DJANGO_DB_IDLE_IN_TRANSACTION_TIMEOUT_MS", "0")
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.build_postgres_connection_options() == {}
 
@@ -569,7 +569,7 @@ def test_sync_ingest_pool_respects_cap(temp_ini, monkeypatch):
     f.write(content)
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   monkeypatch.setattr(cfg.os, "cpu_count", lambda: 64)
   assert cfg.get_worker_thread_count(4) == 16
@@ -587,7 +587,7 @@ def test_sync_archive_pool_respects_cap(temp_ini, monkeypatch):
     f.write(content)
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   monkeypatch.setattr(cfg.os, "cpu_count", lambda: 64)
   assert cfg.get_sync_ingest_pool_processes() == 8
@@ -608,7 +608,7 @@ def test_sync_archive_pool_default_is_four_without_cpuset(temp_ini, monkeypatch)
   monkeypatch.setenv("SYNC_ENABLE_CPUSET_PRIORITY_BUDGET", "0")
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   monkeypatch.setattr(cfg.os, "cpu_count", lambda: 64)
   assert cfg.get_sync_archive_pool_processes() == 4
@@ -617,7 +617,7 @@ def test_sync_archive_pool_default_is_four_without_cpuset(temp_ini, monkeypatch)
 def test_cpuset_priority_budget_derivation_defaults(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   monkeypatch.setattr(cfg.os, "cpu_count", lambda: 16)
   budget = cfg.derive_pipeline_cpuset_priority_budget()
@@ -645,7 +645,7 @@ def test_metrics_pool_respects_cpuset_priority_budget(temp_ini, monkeypatch):
     f.write(content)
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   monkeypatch.setattr(cfg.os, "cpu_count", lambda: 20)
   assert cfg.get_metrics_pool_process_count() == 4
@@ -662,7 +662,7 @@ def test_metrics_pool_ingest_priority_overlap_mode(temp_ini, monkeypatch):
     f.write(content)
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   monkeypatch.setattr(cfg.os, "cpu_count", lambda: 20)
   assert cfg.get_metrics_pool_process_count() == 2
@@ -671,7 +671,7 @@ def test_metrics_pool_ingest_priority_overlap_mode(temp_ini, monkeypatch):
 def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
 
   importlib.reload(cfg)
   assert cfg.get_metrics_scheduler_mode() == "global_priority"
@@ -775,7 +775,7 @@ def test_get_metrics_readiness_window_coverage_defaults(temp_ini, monkeypatch):
   """Default coverage gate: require=yes, margins=600s."""
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
 
   importlib.reload(cfg)
   assert cfg.get_metrics_readiness_require_window_coverage() is True
@@ -786,7 +786,7 @@ def test_get_metrics_readiness_window_coverage_defaults(temp_ini, monkeypatch):
 def test_get_metrics_readiness_window_coverage_ini_override(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
 
   importlib.reload(cfg)
   assert cfg.get_metrics_readiness_require_window_coverage() is True
@@ -811,7 +811,7 @@ def test_get_metrics_readiness_window_coverage_ini_override(temp_ini, monkeypatc
 
 
 def test_get_metrics_per_jid_phase_diagnostics_enabled_env(monkeypatch):
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
 
   monkeypatch.delenv("HPCPERFSTATS_METRICS_PER_JID_PHASE_LOG", raising=False)
   assert cfg.get_metrics_per_jid_phase_diagnostics_enabled() is False
@@ -836,7 +836,7 @@ def test_cpuset_priority_budget_overprovision_mode(temp_ini, monkeypatch):
     f.write(content)
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   monkeypatch.setattr(cfg.os, "cpu_count", lambda: 20)
   budget = cfg.derive_pipeline_cpuset_priority_budget()
@@ -848,7 +848,7 @@ def test_cpuset_priority_budget_overprovision_mode(temp_ini, monkeypatch):
 def test_pipeline_cpu_process_buckets_flags(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   buckets = cfg.pipeline_cpu_process_buckets(
       include_browser_phase=True,
@@ -865,7 +865,7 @@ def test_get_large_job_time_sample_sql_mode_defaults_and_env(temp_ini, monkeypat
   monkeypatch.delenv("HPCPERFSTATS_LARGE_JOB_TIME_SQL", raising=False)
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
 
   importlib.reload(cfg)
   assert cfg.get_large_job_time_sample_sql_mode() == "date_bin"
@@ -881,7 +881,7 @@ def test_large_job_numeric_env_invalid_falls_back_to_defaults(temp_ini, monkeypa
   monkeypatch.setenv("HPCPERFSTATS_LARGE_JOB_TIME_BUCKETS", bogus)
   monkeypatch.setenv("HPCPERFSTATS_LARGE_JOB_WINDOW_ROW_COUNT_CACHE_TTL", bogus)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
 
   importlib.reload(cfg)
   assert cfg.get_large_job_host_data_row_threshold() == 1_500_000
@@ -892,7 +892,7 @@ def test_large_job_numeric_env_invalid_falls_back_to_defaults(temp_ini, monkeypa
 def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
 
   importlib.reload(cfg)
   assert cfg.get_sync_ingest_queue_max_size() == 2000
@@ -979,7 +979,7 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
 def test_sync_host_itimes_cache_max_timestamps_per_entry(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
 
   importlib.reload(cfg)
   assert cfg.get_sync_host_itimes_cache_max_timestamps_per_entry() == 100000
@@ -999,7 +999,7 @@ def test_sync_host_itimes_cache_max_timestamps_per_entry(temp_ini, monkeypatch):
 def test_sync_write_lock_shards_auto_scales_to_eight_at_forty_cores(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
 
   with open(temp_ini) as f:
     content = f.read()
@@ -1014,7 +1014,7 @@ def test_sync_write_lock_shards_auto_scales_to_eight_at_forty_cores(temp_ini, mo
 def test_sync_phase2_feature_flags_and_shards(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
 
   importlib.reload(cfg)
   monkeypatch.setattr(cfg.os, "cpu_count", lambda: 16)
@@ -1043,7 +1043,7 @@ def test_sync_phase2_feature_flags_and_shards(temp_ini, monkeypatch):
 def test_sync_db_writer_pool_defaults_and_cap(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_sync_db_writer_pool_processes(ingest_processes=8) == 6
 
@@ -1062,7 +1062,7 @@ def test_sync_db_writer_pool_defaults_and_cap(temp_ini, monkeypatch):
 def test_conf_parser_defaults_audit_snapshot(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   snapshot = cfg.get_conf_parser_defaults_audit_snapshot()
   assert "platform_constraints" in snapshot
@@ -1080,7 +1080,7 @@ def test_conf_parser_defaults_audit_snapshot(temp_ini, monkeypatch):
 def test_get_syslog_allow_from_ipv4_networks_empty_default(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_syslog_allow_from_ipv4_networks() == []
 
@@ -1098,7 +1098,7 @@ def test_get_syslog_allow_from_ipv4_networks_parses_csv(temp_ini, monkeypatch):
     f.write(content)
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_syslog_allow_from_ipv4_networks() == ["10.0.0.0/8", "192.168.1.2/32"]
   assert cfg.get_syslog_listen_tcp() is False
@@ -1113,7 +1113,7 @@ def test_get_syslog_allow_from_ipv4_networks_rejects_invalid(temp_ini, monkeypat
     f.write(content)
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   with pytest.raises(ValueError, match="allow_from"):
     cfg.get_syslog_allow_from_ipv4_networks()
@@ -1128,7 +1128,7 @@ def test_render_syslog_ng_generated_text_allowlist(temp_ini, monkeypatch):
     f.write(content)
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   import hpcperfstats.render_syslog_ng_generated as rsg
   importlib.reload(cfg)
   importlib.reload(rsg)
@@ -1141,7 +1141,7 @@ def test_render_syslog_ng_generated_text_allowlist(temp_ini, monkeypatch):
 def test_format_cors_allowed_origins_csv_from_ini_production(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.format_cors_allowed_origins_csv_from_ini() == "https://test"
 
@@ -1153,7 +1153,7 @@ def test_format_cors_allowed_origins_csv_empty_when_debug(temp_ini, monkeypatch)
   with open(temp_ini, "w") as f:
     f.write(content)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.format_cors_allowed_origins_csv_from_ini() == ""
 
@@ -1165,7 +1165,7 @@ def test_format_cors_allowed_origins_multiple_hosts(temp_ini, monkeypatch):
   with open(temp_ini, "w") as f:
     f.write(content)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.format_cors_allowed_origins_csv_from_ini() == (
       "https://a.example,https://b.example"
@@ -1182,7 +1182,7 @@ def test_format_cors_allowed_origins_respects_scheme_ini(temp_ini, monkeypatch):
   with open(temp_ini, "w") as f:
     f.write(content)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_cors_origin_scheme() == "http"
   assert cfg.format_cors_allowed_origins_csv_from_ini() == "http://legacy.example"
@@ -1198,7 +1198,7 @@ def test_format_cors_allowed_origins_preserves_full_url_token(temp_ini, monkeypa
   with open(temp_ini, "w") as f:
     f.write(content)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.format_cors_allowed_origins_csv_from_ini() == "https://already.example"
 
@@ -1224,7 +1224,7 @@ def test_legacy_portal_fallback_for_dbname(tmp_path, monkeypatch):
   )
   monkeypatch.setenv("HPCPERFSTATS_INI", str(ini))
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_db_name() == "legacydb"
   assert cfg.get_host() == "legacy-host"
@@ -1251,7 +1251,7 @@ def test_legacy_default_fallback_for_moved_pipeline_key(tmp_path, monkeypatch):
   )
   monkeypatch.setenv("HPCPERFSTATS_INI", str(ini))
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_sync_archive_require_db_head_ingest() is False
 
@@ -1259,7 +1259,7 @@ def test_legacy_default_fallback_for_moved_pipeline_key(tmp_path, monkeypatch):
 def test_sync_archive_db_ingest_gate_mode_defaults_and_aliases(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_sync_archive_db_ingest_gate_mode() == "head"
   assert cfg.sync_archive_db_ingest_gate_uses_sample_mode() is False
@@ -1286,7 +1286,7 @@ def test_sync_archive_db_ingest_gate_mode_defaults_and_aliases(temp_ini, monkeyp
 
 def test_archive_janitor_and_dispatch_defaults(temp_ini, monkeypatch):
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_archive_janitor_budget_seconds() == 30.0
   assert cfg.get_archive_janitor_days_per_tick() == 2
@@ -1342,7 +1342,7 @@ def test_legacy_portal_fallback_for_archive_dir(tmp_path, monkeypatch):
   )
   monkeypatch.setenv("HPCPERFSTATS_INI", str(ini))
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_archive_dir_path() == "/legacy/archive"
   assert cfg.get_accounting_path() == "/legacy/acct"

@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pandas as pd
 
-from hpcperfstats.analysis.metrics.job_detail_fsio import (
+from hpcperfstats.analysis.metrics.lib.job_detail_fsio import (
     compute_job_detail_fsio_metric_rows,
     extend_fsio_payload_lists_with_peaks,
     fsio_job_detail_catalog,

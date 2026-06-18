@@ -1,7 +1,7 @@
 ---
 description: Keep variableMetadata in sync when job-level derived metrics change
 globs:
-  - "**/hpcperfstats/analysis/metrics/metrics.py"
+  - "**/hpcperfstats/analysis/metrics/lib/metrics.py"
   - "**/variableMetadata.js"
   - "**/variableMetadata.test.js"
 alwaysApply: false
@@ -9,7 +9,7 @@ alwaysApply: false
 
 # Derived Metrics ↔ Variable Metadata Sync
 
-Job-level metrics shown in the UI are computed in **`hpcperfstats/analysis/metrics/metrics.py`** (`Metrics.simple_metrics_list`, `Metrics.complex_metrics_list`, and `job_metrics_catalog_entries()`). Each **metric** name stored in `metrics_data.metric` should have a tooltip entry in the frontend.
+Job-level metrics shown in the UI are computed in **`hpcperfstats/analysis/metrics/lib/metrics.py`** (`Metrics.simple_metrics_list`, `Metrics.complex_metrics_list`, and `job_metrics_catalog_entries()`). Each **metric** name stored in `metrics_data.metric` should have a tooltip entry in the frontend.
 
 ## Canonical map
 

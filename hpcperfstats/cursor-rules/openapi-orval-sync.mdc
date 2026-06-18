@@ -2,9 +2,9 @@
 description: Keep committed OpenAPI, drf-spectacular annotations, and Orval client in sync
 globs:
   - "**/hpcperfstats/site/openapi/**"
-  - "**/hpcperfstats/site/machine/api.py"
-  - "**/hpcperfstats/site/machine/public_api.py"
-  - "**/hpcperfstats/site/machine/openapi_*.py"
+  - "**/hpcperfstats/site/lib/machine/api.py"
+  - "**/hpcperfstats/site/lib/machine/public_api.py"
+  - "**/hpcperfstats/site/lib/machine/openapi_*.py"
   - "**/hpcperfstats/site/frontend/orval.config.ts"
   - "**/hpcperfstats/site/frontend/src/api/**"
 alwaysApply: false
@@ -26,7 +26,7 @@ alwaysApply: false
    ```bash
    cd hpcperfstats/site/frontend && npm run generate:api
    ```
-4. **Run drift test:** `pytest hpcperfstats/site/machine/tests/test_openapi_schema_drift.py`
+4. **Run drift test:** `pytest hpcperfstats/site/lib/machine/tests/test_openapi_schema_drift.py`
 5. **Wire contract:** per **`openapi-spa-wire-validation-contract.mdc`** — representative `test_*_openapi_wire_contract.py` + `parse-api-response.test.ts` for registry routes
 6. **Run frontend tests** touching API mocks after hook signature changes.
 7. **Parse registry:** when adding endpoints, register Zod response schemas in `src/api/response-schema-registry.ts` (or regenerate if codegen adds a registry).

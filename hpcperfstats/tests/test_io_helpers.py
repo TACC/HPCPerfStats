@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 from types import SimpleNamespace
 
-from hpcperfstats.dbload.io_helpers import (
+from hpcperfstats.dbload.lib.io_helpers import (
     host_data_instance_from_stats_row,
     job_data_instance_from_acct_row,
 )

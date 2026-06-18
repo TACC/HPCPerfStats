@@ -9,9 +9,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import hpcperfstats.conf_parser as cfg
-import hpcperfstats.dbload.sync_timedb_archive_janitor as janitor_mod
-from hpcperfstats.dbload.sync_timedb_archive_janitor import (
+import hpcperfstats.dbload.lib.conf_parser as cfg
+import hpcperfstats.dbload.lib.sync_timedb_archive_janitor as janitor_mod
+from hpcperfstats.dbload.lib.sync_timedb_archive_janitor import (
     ArchiveJanitor,
     DayDebt,
     DebtKind,
@@ -28,14 +28,14 @@ def _day_phase_value(day_phases, tar_path):
 
 
 def _zst_path_for_tar(tar_path):
-  from hpcperfstats.dbload.archive_compress import compressed_sibling_paths
+  from hpcperfstats.dbload.lib.archive_compress import compressed_sibling_paths
 
   zst_path, _gz_path = compressed_sibling_paths(tar_path)
   return zst_path
 
 
 def _mark_day_phase(janitor, tar_path, phase):
-  from hpcperfstats.dbload.sync_timedb_archive_maint import day_phase_hint_entry
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import day_phase_hint_entry
 
   tar_norm = os.path.normpath(tar_path)
   janitor._day_phases[tar_norm] = day_phase_hint_entry(tar_norm, phase)
@@ -96,7 +96,7 @@ def test_debt_queue_payload_serializes_heap_entries():
 def test_run_scheduled_maintenance_pass_refreshes_snapshot_and_enqueues(
     monkeypatch, tmp_path,
 ):
-  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
 
   daily_dir = tmp_path / "daily"
   daily_dir.mkdir()
@@ -246,7 +246,7 @@ def test_janitor_tar_drop_blocks_when_accrual_snapshot_none(monkeypatch, tmp_pat
 
 
 def test_janitor_tar_drop_blocks_when_raw_appears_after_accrual(monkeypatch, tmp_path):
-  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
 
   tar_path = str(tmp_path / "2026-01-01.tar")
   open(tar_path, "wb").close()
@@ -399,11 +399,11 @@ def test_tick_lock_cleanup_runs_before_day_close(monkeypatch, tmp_path):
 def test_janitor_enqueues_day_close_from_dedupe_hint(monkeypatch, tmp_path):
   janitor = _make_janitor(tgz_archive_dir=str(tmp_path))
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_members_redis.archive_members_redis_enabled",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis.archive_members_redis_enabled",
       lambda: True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_members_redis.list_dedupe_hint_day_tokens",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis.list_dedupe_hint_day_tokens",
       lambda client=None: ["2026-05-09"],
   )
   janitor._consume_dedupe_hints(set())
@@ -511,7 +511,7 @@ def test_janitor_effective_tick_limits_burst_at_watermark(monkeypatch):
 
 
 def test_janitor_load_hints_restores_debt_on_init(monkeypatch, tmp_path):
-  from hpcperfstats.dbload.sync_timedb_archive_maint import save_archive_maint_hints
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import save_archive_maint_hints
 
   archive_dir = str(tmp_path / "archive")
   os.makedirs(archive_dir)
@@ -531,7 +531,7 @@ def test_janitor_load_hints_restores_debt_on_init(monkeypatch, tmp_path):
 
 
 def test_load_hints_drops_legacy_lock_cleanup_dedupe_debt(monkeypatch, tmp_path):
-  from hpcperfstats.dbload.sync_timedb_archive_maint import save_archive_maint_hints
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import save_archive_maint_hints
 
   archive_dir = str(tmp_path / "archive")
   os.makedirs(archive_dir)
@@ -642,7 +642,7 @@ def test_janitor_tick_corrupt_tar_recovery_before_raw_remove(monkeypatch, tmp_pa
   """RAW_REMOVE tick wires archive_stats recovery; corrupt tar restore runs without debt loss."""
   import tarfile
 
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   tgz = tmp_path / "daily"
   tgz.mkdir()
@@ -739,7 +739,7 @@ def test_oldest_completed_day_reclaimed_before_newer_days(monkeypatch, tmp_path)
 
 def test_janitor_raw_remove_skips_not_head_ingested_raw(monkeypatch, tmp_path):
   """RAW_REMOVE must not delete raw when ingest_ready_fn returns false."""
-  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
 
   archive_dir = tmp_path / "archive"
   host_dir = archive_dir / "host.hpc"
@@ -812,7 +812,7 @@ def test_janitor_tar_drop_blocked_when_parsable_unmapped_closed_raw(
   raw_path.write_text("%d job1 cn001\n" % day_epoch)
 
   def disqualify():
-    from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+    from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
         collect_days_with_unmapped_closed_raw,
         collect_stats_files_in_range,
     )
@@ -838,7 +838,7 @@ def test_janitor_tar_drop_blocked_when_parsable_unmapped_closed_raw(
   tar_norm = os.path.normpath(tar_path)
   unmapped = disqualify()
   assert tar_norm in unmapped
-  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       is_unparsable_closed_stats_path,
   )
   assert not is_unparsable_closed_stats_path(str(raw_path))
@@ -860,7 +860,7 @@ def test_janitor_tar_drop_blocked_when_parsable_unmapped_closed_raw(
 def test_janitor_tar_drop_proceeds_after_unparsable_quarantine(
     monkeypatch, tmp_path,
 ):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   archive_dir = tmp_path / "archive"
   host_dir = archive_dir / "host.hpc"
@@ -880,7 +880,7 @@ def test_janitor_tar_drop_proceeds_after_unparsable_quarantine(
   )
 
   def disqualify():
-    from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+    from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
         collect_unmapped_closed_raw_daily_tars,
     )
     return collect_unmapped_closed_raw_daily_tars(
@@ -927,7 +927,7 @@ def test_janitor_tick_does_not_scan_unparsable_tree(monkeypatch):
 def test_janitor_raw_remove_deletes_new_closed_raw_after_accrual_snapshot_stale(
     monkeypatch, tmp_path,
 ):
-  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
 
   archive_dir = tmp_path / "archive"
   host_dir = archive_dir / "host.hpc"
@@ -1078,7 +1078,7 @@ def test_enqueue_scheduled_day_close_enqueues_eligible_day(tmp_path):
 
 
 def test_day_close_with_preflight_skips_incremental_raw_tar(monkeypatch, tmp_path):
-  from hpcperfstats.dbload.sync_timedb_day_raw_removal import DayRawRemovalCoordinator
+  from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import DayRawRemovalCoordinator
 
   tar_path = str(tmp_path / "2026-01-01.tar")
   open(tar_path, "wb").close()
@@ -1255,7 +1255,7 @@ def test_close_one_day_seals_despite_remaining_raw_on_disk(monkeypatch, tmp_path
 
 def test_janitor_persist_hints_snapshots_day_phases_under_lock(monkeypatch, tmp_path):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_maint.cfg.get_sync_archive_maint_hints",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_maint.cfg.get_sync_archive_maint_hints",
       lambda: True,
   )
   archive_dir = str(tmp_path / "archive")
@@ -1565,7 +1565,7 @@ def test_run_scheduled_maintenance_pass_logs_candidate_report_only(tmp_path, mon
       "build_remaining_raw_stats_by_daily_gz",
       lambda *args, **kwargs: {},
   )
-  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
 
   snapshot = ArchiveMaintenanceSnapshot(closed_paths=[], remaining_raw_by_gz={})
   monkeypatch.setattr(
@@ -1624,7 +1624,7 @@ def test_run_scheduled_maintenance_pass_submits_eligible_deferred_on_startup(
       "build_remaining_raw_stats_by_daily_gz",
       lambda *args, **kwargs: {},
   )
-  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
 
   snapshot = ArchiveMaintenanceSnapshot(closed_paths=[], remaining_raw_by_gz={})
   monkeypatch.setattr(
@@ -1686,7 +1686,7 @@ def test_run_scheduled_maintenance_startup_uses_startup_max_inflight(
       "build_remaining_raw_stats_by_daily_gz",
       lambda *args, **kwargs: {},
   )
-  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
 
   snapshot = ArchiveMaintenanceSnapshot(closed_paths=[], remaining_raw_by_gz={})
   monkeypatch.setattr(

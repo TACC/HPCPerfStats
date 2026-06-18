@@ -20,12 +20,12 @@ SCHEME_OUT = REPO / "docs" / "MONITOR_NAMING_SCHEME.md"
 TABLE_OUT = REPO / "artifacts" / "monitor-variable-rename-table.md"
 
 DOWNSTREAM = [
-    "hpcperfstats/monitor_naming/canonical.py",
-    "hpcperfstats/monitor_naming/legacy.py",
-    "hpcperfstats/monitor_naming/resolve.py",
-    "hpcperfstats/dbload/sync_timedb_parsing.py",
-    "hpcperfstats/dbload/sync_timedb_parsing_legacy.py",
-    "hpcperfstats/analysis/metrics/metrics.py",
+    "hpcperfstats/dbload/lib/monitor_naming/canonical.py",
+    "hpcperfstats/dbload/lib/monitor_naming/legacy.py",
+    "hpcperfstats/dbload/lib/monitor_naming/resolve.py",
+    "hpcperfstats/dbload/lib/sync_timedb_parsing.py",
+    "hpcperfstats/dbload/lib/sync_timedb_parsing_legacy.py",
+    "hpcperfstats/analysis/metrics/lib/metrics.py",
     "tests/pipeline_e2e/monitor_payloads.py",
     "hpcperfstats/site/frontend/src/utils/variableMetadataMonitorEvents.js",
     "hpcperfstats/site/frontend/src/utils/variableMetadataMonitorEventsLegacy.js",

@@ -1,7 +1,7 @@
 """Reference row density **R_ref** from the checked-in monitor sample file.
 
 Uses the same parse path as ingest: ``parse_stats_lines`` → ``build_stats_dataframes``
-→ ``compute_deltas_and_arc`` (see ``hpcperfstats.dbload.sync_timedb_parsing``).
+→ ``compute_deltas_and_arc`` (see ``hpcperfstats.dbload.lib.sync_timedb_parsing``).
 
 **R_ref** is the number of ``host_data``-shaped rows per (host, time) snapshot after
 collapse (groupby), i.e. one row per distinct (type, dev, event) after transforms.
@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from hpcperfstats.dbload.sync_timedb_parsing import (
+from hpcperfstats.dbload.lib.sync_timedb_parsing import (
     build_stats_dataframes,
     compute_deltas_and_arc,
     load_stats_file_lines,

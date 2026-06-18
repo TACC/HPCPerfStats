@@ -15,7 +15,7 @@ When changing ingest, archive, or raw-stats removal under `hpcperfstats/dbload/s
 - Default **`sync_archive_require_db_head_ingest`** is **on** (`conf_parser.get_sync_archive_require_db_head_ingest()`).
 - Gate depth is **`sync_archive_db_ingest_gate_mode`** (default **`head`**; optional **`sample`**).
 - No production path may **append** a raw monitor stats file to a daily `.tar` or **delete** that raw file from the archive tree unless **`stats_file_head_ingested_in_db`** returns true.
-- Canonical implementation: **`hpcperfstats/dbload/sync_timedb_ingest_readiness.py`**.
+- Canonical implementation: **`hpcperfstats/dbload/lib/sync_timedb_ingest_readiness.py`**.
 
 ## Definition: head ingested (default mode)
 

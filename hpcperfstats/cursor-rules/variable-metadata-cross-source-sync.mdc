@@ -25,8 +25,8 @@ Tooltip and help text for metrics/events live in **several files**. After changi
 | Per-event descriptions | `hpcperfstats/site/frontend/src/utils/generate-variable-metadata-monitor-events.py` (`DESC`, `generic()`, `collect_all_names()` extras) | `variableMetadataMonitorEvents.js` (`MONITOR_EVENT_METADATA`) |
 | Merged UI map | `variableMetadata.js` (`JOB_ACCOUNTING_AND_DERIVED_METADATA`, `SUMMARY_PLOT_METRIC_METADATA`) spread over `MONITOR_EVENT_METADATA` | `VARIABLE_METADATA` / `getDescriptionForVariable` |
 | Job catalog metrics | `metrics.py` + `variableMetadata.js` `JOB_ACCOUNTING_*` | See `variable-metadata-derived-metrics-sync.mdc` |
-| Summary subplot column help | **`variableMetadata.js` → `SUMMARY_PLOT_METRIC_METADATA`** | **`hpcperfstats/analysis/plot/summary_metric_descriptions.py` → `SUMMARY_METRIC_DESCRIPTIONS`** — **same keys, same prose** (see comment at top of `summary_metric_descriptions.py`) |
-| Job Detail Bokeh plot help (roofline, multiprecision, fixed embed keys) | **`variableMetadata.js` → `JOB_DETAIL_BOKEH_PLOT_METADATA`** | **`hpcperfstats/analysis/plot/job_detail_bokeh_plot_descriptions.py` → `JOB_DETAIL_BOKEH_HELP`** — **same keys, same prose** |
+| Summary subplot column help | **`variableMetadata.js` → `SUMMARY_PLOT_METRIC_METADATA`** | **`hpcperfstats/analysis/metrics/lib/plot/summary_metric_descriptions.py` → `SUMMARY_METRIC_DESCRIPTIONS`** — **same keys, same prose** (see comment at top of `summary_metric_descriptions.py`) |
+| Job Detail Bokeh plot help (roofline, multiprecision, fixed embed keys) | **`variableMetadata.js` → `JOB_DETAIL_BOKEH_PLOT_METADATA`** | **`hpcperfstats/analysis/metrics/lib/plot/job_detail_bokeh_plot_descriptions.py` → `JOB_DETAIL_BOKEH_HELP`** — **same keys, same prose** |
 | Operator catalog + diagnostics | Regen scripts (below) | `docs/MONITOR_VARIABLES.md` |
 | Diagnostic bullets for unwired events | `docs/augment_monitor_variables_diagnostics.py` (`diagnostic_for_key`, wiring heuristics) | Inserted into `MONITOR_VARIABLES.md` when augment runs |
 

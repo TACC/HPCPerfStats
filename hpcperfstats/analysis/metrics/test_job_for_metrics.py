@@ -7,8 +7,8 @@ import pandas as pd
 import pytest
 from types import SimpleNamespace
 
-from hpcperfstats.analysis.metrics import metrics
-from hpcperfstats.dbload.multiprocessing_pool_health import MultiprocessingWorkerExitError
+from hpcperfstats.analysis.metrics.lib import metrics
+from hpcperfstats.dbload.lib.multiprocessing_pool_health import MultiprocessingWorkerExitError
 
 
 class _FakeJidTable:

@@ -3,8 +3,8 @@
 import time
 from unittest.mock import MagicMock
 
-import hpcperfstats.conf_parser as cfg
-from hpcperfstats.dbload.sync_timedb_archive_dispatch import (
+import hpcperfstats.dbload.lib.conf_parser as cfg
+from hpcperfstats.dbload.lib.sync_timedb_archive_dispatch import (
     ArchiveDispatchCoordinator,
     ArchiveJobSlot,
 )

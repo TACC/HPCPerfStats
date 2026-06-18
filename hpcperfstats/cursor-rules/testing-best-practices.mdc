@@ -27,7 +27,7 @@ Canonical testing guidance for backend (pytest), frontend (Vitest/RTL), and E2E 
 
 ## Mock boundaries (backend)
 
-- `@pytest.mark.machine_unit_mock` + guards in `site/machine/tests/conftest.py`: no accidental PG on host.
+- `@pytest.mark.machine_unit_mock` + guards in `site/lib/machine/tests/conftest.py`: no accidental PG on host.
 - `django_db(databases=[])` + LocMem cache: API/view tests without compose (see `test_api_coverage_gaps.py`).
 - `HPCPERFSTATS_COMPOSE_NETWORK=1`: real DB tests inside `web` container only.
 - Mock **ORM/querysets**, not business logic under test.
@@ -79,7 +79,7 @@ Examples: `urlconf_route_catalog.py`, `extended-search-validation.test.js`, `job
 ## Module priority for new tests
 
 1. Operational daemons: `sync_timedb`, `update_metrics`, `listend`
-2. User-facing API: `site/machine/api.py` (full line coverage goal)
+2. User-facing API: `site/lib/machine/api.py` (full line coverage goal)
 3. Cross-layer registries: search params, metric labels, routes
 4. Frontend job list/detail/search flows
 5. Secondary pages and chrome components

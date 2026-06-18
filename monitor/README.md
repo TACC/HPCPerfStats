@@ -96,7 +96,7 @@ the `current`-file rotation semantics that `listend.py` relies on.
 
 `@fast`/`@full` sample rows and the `,R=S` schema suffix are a **new monitor
 output contract**. Downstream ingestion in
-`HPCPerfStats/hpcperfstats/dbload/sync_timedb_parsing.py` now strips tier
+`HPCPerfStats/hpcperfstats/dbload/lib/sync_timedb_parsing.py` now strips tier
 markers and zips values against the fast vs full schema subset. Deploy monitor
 and consumer updates together on clusters that ingest sparse rows.
 

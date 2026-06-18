@@ -79,7 +79,7 @@ def test_should_stream_stats_file_for_4_6gib_class_segment(monkeypatch, tmp_path
 def test_conf_parser_ingest_memory_defaults(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
-  import hpcperfstats.conf_parser as cfg
+  import hpcperfstats.dbload.lib.conf_parser as cfg
 
   importlib.reload(cfg)
   assert cfg.get_sync_ingest_pool_maxtasksperchild() == 1

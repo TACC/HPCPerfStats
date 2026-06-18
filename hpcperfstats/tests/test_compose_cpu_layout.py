@@ -2,7 +2,7 @@
 
 import pytest
 
-from hpcperfstats.compose_cpu_layout import partition_responsive_cpusets
+from hpcperfstats.dbload.lib.compose_cpu_layout import partition_responsive_cpusets
 
 
 def _cpus_in_cpuset(s: str) -> set:

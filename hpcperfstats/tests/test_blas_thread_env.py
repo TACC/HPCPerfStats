@@ -1,7 +1,7 @@
 """Tests for BLAS/OpenMP thread caps before numpy under spawn."""
 import os
 
-import hpcperfstats.dbload.blas_thread_env as blas_env
+import hpcperfstats.dbload.lib.blas_thread_env as blas_env
 
 
 def test_configure_blas_thread_env_idempotent(monkeypatch):

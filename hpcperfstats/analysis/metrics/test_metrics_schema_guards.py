@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from hpcperfstats.analysis.metrics import metrics
+from hpcperfstats.analysis.metrics.lib import metrics
 
 
 class _StubUtils:

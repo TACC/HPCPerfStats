@@ -5,10 +5,10 @@ import os
 
 import pytest
 
-import hpcperfstats.conf_parser as cfg
-import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
-import hpcperfstats.dbload.sync_timedb_archive_maint as maint
-import hpcperfstats.dbload.sync_timedb_ingest_readiness as readiness
+import hpcperfstats.dbload.lib.conf_parser as cfg
+import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+import hpcperfstats.dbload.lib.sync_timedb_archive_maint as maint
+import hpcperfstats.dbload.lib.sync_timedb_ingest_readiness as readiness
 
 
 @pytest.fixture(autouse=True)
@@ -106,8 +106,8 @@ def test_atomic_seal_skips_when_tar_and_zst_equivalent(tmp_path):
   import subprocess
   import tarfile
 
-  from hpcperfstats.dbload.sync_timedb_archive_helpers import atomic_seal_tar_to_zst
-  from hpcperfstats.dbload.zstd_cli import zstd_executable
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import atomic_seal_tar_to_zst
+  from hpcperfstats.dbload.lib.zstd_cli import zstd_executable
 
   tar_path = tmp_path / "2021-04-01.tar"
   zst_path = tmp_path / "2021-04-01.tar.zst"

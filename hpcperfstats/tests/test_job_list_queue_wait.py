@@ -3,7 +3,7 @@
 import pandas as pd
 import pytest
 
-from hpcperfstats.site.machine.job_list_queue_wait import queue_wait_hours_series
+from hpcperfstats.site.lib.machine.job_list_queue_wait import queue_wait_hours_series
 
 
 @pytest.mark.parametrize(

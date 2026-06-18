@@ -47,7 +47,7 @@ def _parse_js() -> tuple[dict[str, str], list[str]]:
 
 
 def _event_to_types():
-    from hpcperfstats.dbload.sync_timedb_parsing import EVENTMAPS_BY_TYPE
+    from hpcperfstats.dbload.lib.sync_timedb_parsing import EVENTMAPS_BY_TYPE
 
     event_to_types: dict[str, set[str]] = defaultdict(set)
     for typ, em in EVENTMAPS_BY_TYPE.items():
@@ -94,7 +94,7 @@ def _scan_refs(keys: list[str]) -> dict[str, list[str]]:
     roots = [
         REPO / "hpcperfstats/dbload",
         REPO / "hpcperfstats/analysis",
-        REPO / "hpcperfstats/site/machine",
+        REPO / "hpcperfstats/site/lib/machine",
         REPO / "hpcperfstats/site/frontend/src",
     ]
     files: list[Path] = []
@@ -347,7 +347,7 @@ def _section_for_key(
     if re.fullmatch(r"CTL\d+", k) or re.fullmatch(r"CTR\d+", k) or re.match(r"V[13]_CTL", k) or re.match(r"V[13]_CTR", k):
         lines.append(
             "- **Additional references:** *(schema placeholders; logical event names are persisted after "
-            "`map_hardware_counter_vals` in `dbload/sync_timedb_parsing.py`)*"
+            "`map_hardware_counter_vals` in `dbload/lib/sync_timedb_parsing.py`)*"
         )
         if app or tests:
             lines.append(f"  - String matches also in: {'; '.join(app + tests)}")
@@ -392,9 +392,9 @@ This document catalogs **`host_data.event` names** that the HPCPerfStats monitor
 1. **Monitor** (C sources under `HPCPerfStats/monitor/`) samples counters and prints text lines (`t jid host` timestamps plus `type dev values` rows and `!type` schema lines).
 2. **`hpcperfstats/listend.py`** (`on_message`) appends payloads under the per-host archive directory (RabbitMQ consumer).
 3. **`hpcperfstats/dbload/sync_timedb.py`** (`add_stats_file_to_db`) reads archive files.
-4. **`hpcperfstats/dbload/sync_timedb_parsing.py`** (`parse_stats_lines`, `compute_deltas_and_arc`, `EVENTMAPS_BY_TYPE`) parses lines, maps raw PMC encodings to logical event names, collapses multi-GPU rows, and computes `delta` / `arc`.
+4. **`hpcperfstats/dbload/lib/sync_timedb_parsing.py`** (`parse_stats_lines`, `compute_deltas_and_arc`, `EVENTMAPS_BY_TYPE`) parses lines, maps raw PMC encodings to logical event names, collapses multi-GPU rows, and computes `delta` / `arc`.
 5. **`hpcperfstats/dbload/io_helpers.py`** (`host_data_instance_from_stats_row`) builds ORM rows.
-6. **`hpcperfstats/site/machine/models.py`** (`host_data` model) stores `time`, `host`, `type`, `dev`, `event`, `unit`, `value`, `delta`, `arc`.
+6. **`hpcperfstats/site/lib/machine/models.py`** (`host_data` model) stores `time`, `host`, `type`, `dev`, `event`, `unit`, `value`, `delta`, `arc`.
 7. **Analysis** (`jid_table`, `metrics`, `plot/*`) and **API/SPA** query `host_data` by job window and schema.
 
 ---
@@ -406,14 +406,14 @@ This document catalogs **`host_data.event` names** that the HPCPerfStats monitor
 | Stage | Role | Primary modules |
 |-------|------|-----------------|
 | Transport / archive | Receive monitor payloads, write files | `listend.py` |
-| Parse & normalize | Decode PMC schema, units, deltas, GPU collapse | `dbload/sync_timedb_parsing.py` |
+| Parse & normalize | Decode PMC schema, units, deltas, GPU collapse | `dbload/lib/sync_timedb_parsing.py` |
 | Load into DB | Batch insert `host_data` | `dbload/sync_timedb.py` |
-| Job window & schema | Distinct `(type, event)` for a job’s hosts/times | `analysis/gen/jid_table.py`, `TypeDetailDataProvider`, `HostDataProvider` |
-| Job metrics | Aggregate to `metrics_data` (avg/max/imbalance, etc.) | `analysis/metrics/metrics.py` |
-| Summary plots | Time-series subplots per job | `analysis/plot/summaryplot.py`, `summary_metric_descriptions.py` |
-| Roofline | DRAM CAS + FLOPs for arithmetic intensity | `analysis/plot/roofline.py`, `roofline_peaks.py` |
-| Node power estimate | Combine RAPL / DCGM CPU / GPU power fields | `analysis/gen/node_power_est.py` |
-| API & type detail | JSON for job/host/type explorers | `site/machine/api.py` |
+| Job window & schema | Distinct `(type, event)` for a job’s hosts/times | `analysis/metrics/lib/gen/jid_table.py`, `TypeDetailDataProvider`, `HostDataProvider` |
+| Job metrics | Aggregate to `metrics_data` (avg/max/imbalance, etc.) | `analysis/metrics/lib/metrics.py` |
+| Summary plots | Time-series subplots per job | `analysis/metrics/lib/plot/summaryplot.py`, `summary_metric_descriptions.py` |
+| Roofline | DRAM CAS + FLOPs for arithmetic intensity | `analysis/metrics/lib/plot/roofline.py`, `roofline_peaks.py` |
+| Node power estimate | Combine RAPL / DCGM CPU / GPU power fields | `analysis/metrics/lib/gen/node_power_est.py` |
+| API & type detail | JSON for job/host/type explorers | `site/lib/machine/api.py` |
 | UI tooltips | Human-readable event text | `site/frontend/src/utils/variableMetadata.js` (`getDescriptionForVariable`), `variableMetadataMonitorEvents.js` |
 
 ### By monitor `host_data.type` (`stats_type.st_name`)
@@ -475,7 +475,7 @@ Exact `st_name` values are in `HPCPerfStats/monitor/src/*.c` (grep `.st_name`). 
 
 Every event name below is stored in **`host_data.event`** when the monitor emits it (subject to site `exclude_types` / hardware maps). All such rows flow through the **universal pipeline** in the table above through the ORM model.
 
-The **Additional references** subsection per variable lists repository files that contain a **string literal** with that event name (metrics, plots, tests, metadata). It excludes the generated `variableMetadataMonitorEvents.js` blob and the generator script’s description table, so you see *behavioral* references only. Files named `test_*.py` under `analysis/plot/` are unit tests for plotting even when the path does not contain a `tests/` directory; treat them like other test modules when tracing usage.
+The **Additional references** subsection per variable lists repository files that contain a **string literal** with that event name (metrics, plots, tests, metadata). It excludes the generated `variableMetadataMonitorEvents.js` blob and the generator script’s description table, so you see *behavioral* references only. Files named `test_*.py` under `analysis/metrics/lib/plot/` are unit tests for plotting even when the path does not contain a `tests/` directory; treat them like other test modules when tracing usage.
 
 **PMC note:** `CTL*` / `CTR*` (and some `V*_CTL*` / `V*_CTR*`) names appear in **`!` schema lines** in raw archives; dbload maps them to logical events (for example `INST_RETIRED`) before insert. Those logical names are what appear in `host_data.event` for PMC rows.
 

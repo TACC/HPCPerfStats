@@ -126,8 +126,8 @@ def main(argv=None):
   if args.ini:
     os.environ["HPCPERFSTATS_INI"] = args.ini
 
-  import hpcperfstats.conf_parser as cfg_mod
-  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+  import hpcperfstats.dbload.lib.conf_parser as cfg_mod
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       MIGRATE_GZ_STATUS_CONVERTED,
       MIGRATE_GZ_STATUS_DROPPED_ONLY,
       MIGRATE_GZ_STATUS_FAILED,
@@ -137,8 +137,8 @@ def main(argv=None):
       check_archive_migration_prerequisites,
       migrate_legacy_daily_gz_archives,
   )
-  from hpcperfstats.file_locking import cleanup_stale_fnctl_lock_sidecars
-  from hpcperfstats.print_utils import log_print
+  from hpcperfstats.dbload.lib.file_locking import cleanup_stale_fnctl_lock_sidecars
+  from hpcperfstats.dbload.lib.print_utils import log_print
 
   cfg_mod._ensure_cfg_loaded()
 

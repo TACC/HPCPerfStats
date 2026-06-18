@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
     ArchiveDayIngestSkipError,
     ArchiveMembersPopulateStalledError,
     ArchiveMembersRedisConnectionError,
@@ -168,39 +168,39 @@ def _redis_test_env(request, monkeypatch):
     return
   fake = FakeRedis()
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_members_redis.get_archive_members_redis_client",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis.get_archive_members_redis_client",
       lambda required=True: fake,
   )
   monkeypatch.setattr(
-      "hpcperfstats.conf_parser.get_sync_archive_members_redis_enabled",
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
       lambda: True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.conf_parser.get_sync_archive_members_redis_ttl_seconds",
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_ttl_seconds",
       lambda: 3600,
   )
   monkeypatch.setattr(
-      "hpcperfstats.conf_parser.get_sync_archive_members_redis_populate_lock_seconds",
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_populate_lock_seconds",
       lambda: 5,
   )
   monkeypatch.setattr(
-      "hpcperfstats.conf_parser.get_sync_archive_members_redis_populate_stall_seconds",
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_populate_stall_seconds",
       lambda: 2,
   )
   monkeypatch.setattr(
-      "hpcperfstats.conf_parser.get_sync_archive_members_redis_populate_max_seconds",
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_populate_max_seconds",
       lambda: 0,
   )
   monkeypatch.setattr(
-      "hpcperfstats.conf_parser.get_sync_archive_members_redis_wait_poll_seconds",
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_wait_poll_seconds",
       lambda: 0.01,
   )
   monkeypatch.setattr(
-      "hpcperfstats.conf_parser.get_sync_archive_members_redis_hset_batch_size",
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_hset_batch_size",
       lambda: 2,
   )
   monkeypatch.setattr(
-      "hpcperfstats.conf_parser.get_sync_archive_members_redis_max_payload_bytes",
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_max_payload_bytes",
       lambda: 8388608,
   )
   yield fake
@@ -339,7 +339,7 @@ def test_redis_members_parallel_populate_different_days(_redis_test_env, tmp_pat
 def test_redis_unavailable_raises_when_enabled(monkeypatch):
   reset_archive_members_redis_client_for_tests()
   monkeypatch.setattr(
-      "hpcperfstats.conf_parser.get_sync_archive_members_redis_enabled",
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
       lambda: True,
   )
 
@@ -347,7 +347,7 @@ def test_redis_unavailable_raises_when_enabled(monkeypatch):
     raise ArchiveMembersRedisUnavailableError("down")
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_members_redis.get_archive_members_redis_client",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis.get_archive_members_redis_client",
       _boom,
   )
   with pytest.raises(ArchiveMembersRedisUnavailableError):
@@ -365,7 +365,7 @@ def test_redis_member_match_when_warm_uses_hget(_redis_test_env, tmp_path):
     return original_hgetall(key)
 
   _redis_test_env.hgetall = counting_hgetall
-  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       redis_member_match_when_warm,
   )
 
@@ -402,7 +402,7 @@ def test_populate_redis_members_from_sealed_scan_wires_stream_fn(
     _redis_test_env, tmp_path,
 ):
   """Regression: _stream_compressed_archive_members returns 3-tuple; populate expects 2."""
-  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       _daily_archive_members_cache_key,
       _populate_redis_members_from_sealed_scan,
       normalize_daily_compressed_path,
@@ -497,7 +497,7 @@ def test_wait_for_member_exits_immediately_on_day_skip(_redis_test_env, tmp_path
 def test_stream_re_raises_archive_members_redis_unavailable_from_on_member(
     tmp_path,
 ):
-  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       _stream_compressed_archive_members,
   )
 
@@ -565,7 +565,7 @@ def test_populate_slow_scan_heartbeats_prevent_waiter_stall(
     _redis_test_env, tmp_path, monkeypatch,
 ):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_members_redis"
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
       "._populate_heartbeat_seconds",
       lambda: 0.05,
   )
@@ -599,7 +599,7 @@ def test_populate_slow_scan_heartbeats_prevent_waiter_stall(
 
 
 def test_stale_populate_lock_released_when_owner_dead(_redis_test_env, tmp_path):
-  import hpcperfstats.dbload.sync_timedb_archive_members_redis as redis_mod
+  import hpcperfstats.dbload.lib.sync_timedb_archive_members_redis as redis_mod
 
   keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
   dead_pid = 999999997
@@ -636,7 +636,7 @@ def test_populate_lock_renewed_on_flush(_redis_test_env, tmp_path):
 
 
 def test_wait_for_member_match_respects_ingest_deadline(_redis_test_env, tmp_path):
-  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       IngestArchiveLookupBudgetExceededError,
       reset_ingest_task_deadline_monotonic,
       set_ingest_task_deadline_monotonic,
@@ -654,7 +654,7 @@ def test_wait_for_member_match_respects_ingest_deadline(_redis_test_env, tmp_pat
 
 
 def test_redis_members_cache_is_fully_warm_requires_nonempty_hash(_redis_test_env, tmp_path):
-  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       redis_members_cache_is_fully_warm,
   )
 
@@ -667,7 +667,7 @@ def test_redis_members_cache_is_fully_warm_requires_nonempty_hash(_redis_test_en
 
 
 def test_archive_members_populate_shows_progress_for_day(_redis_test_env, tmp_path):
-  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       archive_members_populate_shows_progress_for_day,
   )
 
@@ -693,7 +693,7 @@ def test_archive_members_populate_shows_progress_with_stale_progress_ts(
     _redis_test_env,
     tmp_path,
 ):
-  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       archive_members_populate_shows_progress_for_day,
   )
 
@@ -708,7 +708,7 @@ def test_archive_members_populate_shows_progress_with_stale_progress_ts(
 
 
 def test_process_is_alive_treats_zombie_as_dead(monkeypatch):
-  import hpcperfstats.dbload.sync_timedb_archive_members_redis as redis_mod
+  import hpcperfstats.dbload.lib.sync_timedb_archive_members_redis as redis_mod
 
   monkeypatch.setattr(redis_mod.os, "kill", lambda pid, sig: None)
   monkeypatch.setattr(redis_mod, "_process_is_zombie", lambda pid: True)
@@ -720,7 +720,7 @@ def test_stale_populate_lock_released_when_owner_zombie(
     tmp_path,
     monkeypatch,
 ):
-  import hpcperfstats.dbload.sync_timedb_archive_members_redis as redis_mod
+  import hpcperfstats.dbload.lib.sync_timedb_archive_members_redis as redis_mod
 
   keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
   zombie_pid = 424242
@@ -743,8 +743,8 @@ def test_stale_populate_lock_released_when_owner_zombie(
 def test_stream_logs_generic_failure(tmp_path, capsys, monkeypatch):
   from contextlib import contextmanager
 
-  from hpcperfstats.dbload import sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       _MemberStreamEarlyExit,
       _stream_compressed_archive_members,
   )

@@ -11,7 +11,7 @@ alwaysApply: false
 
 # Variable Metadata ↔ Monitor Contract
 
-`host_data.event` strings are defined by the HPCPerfStats **monitor** (`HPCPerfStats/monitor/src/*.c` / `*.h` schema `KEYS` macros) and optional ingest renaming (for example AMD DF channels as `MBW_CHANNEL_*` in `hpcperfstats/dbload/sync_timedb_parsing.py`).
+`host_data.event` strings are defined by the HPCPerfStats **monitor** (`HPCPerfStats/monitor/src/*.c` / `*.h` schema `KEYS` macros) and optional ingest renaming (for example AMD DF channels as `MBW_CHANNEL_*` in `hpcperfstats/dbload/lib/sync_timedb_parsing.py`).
 
 ## Canonical UI map
 

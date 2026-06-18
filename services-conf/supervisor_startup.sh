@@ -6,12 +6,12 @@ SLEEP_SECONDS=5                   # delay between checks
 echo "Waiting for postgres..."
 
 DB_WAIT_HOST=$(
-  /usr/local/bin/python3 -c "from hpcperfstats.dbwait import resolve_postgres_wait_target as f; h,p=f(); print(h)" 2>/dev/null \
+  /usr/local/bin/python3 -c "from hpcperfstats.dbload.lib.dbwait import resolve_postgres_wait_target as f; h,p=f(); print(h)" 2>/dev/null \
     || echo "db"
 )
 
 DB_WAIT_PORT=$(
-  /usr/local/bin/python3 -c "from hpcperfstats.dbwait import resolve_postgres_wait_target as f; h,p=f(); print(p)" 2>/dev/null \
+  /usr/local/bin/python3 -c "from hpcperfstats.dbload.lib.dbwait import resolve_postgres_wait_target as f; h,p=f(); print(p)" 2>/dev/null \
     || echo "5432"
 )
 
@@ -24,7 +24,7 @@ POSTGRES_CONNECT_TIMEOUT_SECONDS="${POSTGRES_CONNECT_TIMEOUT_SECONDS:-2}"
 # resolution before attempting TCP connect.
 /usr/local/bin/python3 -c '
 import sys
-from hpcperfstats.dbwait import wait_for_host_port_resolution
+from hpcperfstats.dbload.lib.dbwait import wait_for_host_port_resolution
 
 host = sys.argv[1]
 port = sys.argv[2]
@@ -42,7 +42,7 @@ echo "PostgreSQL started"
 echo "Waiting for Redis..."
 
 REDIS_WAIT_URL=$(
-  /usr/local/bin/python3 -c "from hpcperfstats import conf_parser as cfg; print(cfg.get_redis_location())" 2>/dev/null \
+  /usr/local/bin/python3 -c "from hpcperfstats.dbload.lib import conf_parser as cfg; print(cfg.get_redis_location())" 2>/dev/null \
     || echo "redis://redis:6379/1"
 )
 
@@ -51,7 +51,7 @@ REDIS_PING_TIMEOUT_SECONDS="${REDIS_PING_TIMEOUT_SECONDS:-2}"
 
 /usr/local/bin/python3 -c '
 import sys
-from hpcperfstats.rediswait import wait_for_redis_available
+from hpcperfstats.dbload.lib.rediswait import wait_for_redis_available
 
 wait_for_redis_available(
   sys.argv[1],

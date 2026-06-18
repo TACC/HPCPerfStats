@@ -3,7 +3,7 @@ import warnings
 
 import pandas as pd
 
-from hpcperfstats.dbload.sync_timedb_parsing import (
+from hpcperfstats.dbload.lib.sync_timedb_parsing import (
     _fast_schema_keys,
     _schema_token_is_slow_tier,
     build_stats_dataframes,

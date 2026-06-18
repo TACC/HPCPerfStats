@@ -138,7 +138,7 @@ The issues below are grouped by how directly they can explain “16 jobs process
 ### Critical
 
 1. **Parent-side `_persist_metrics_batch()` can hang indefinitely.**
-   - Files: `hpcperfstats/analysis/metrics/metrics.py`, `hpcperfstats/analysis/metrics/update_metrics.py`
+   - Files: `hpcperfstats/analysis/metrics/lib/metrics.py`, `hpcperfstats/analysis/metrics/update_metrics.py`
    - Why it matters: `_drain_metrics_imap()` records progress before persisting rows, but the 600s worker-stall watchdog does not wrap persistence at all.
    - Why it matches the log: the second batch can appear to stop after one or more worker results if the parent blocks in `bulk_create`, `bulk_update`, or surrounding transaction work.
 
@@ -148,7 +148,7 @@ The issues below are grouped by how directly they can explain “16 jobs process
    - Why it matches the log: repeated identical progress lines with `inflight_jids=16` are fully consistent with a blocked current batch.
 
 3. **Worker DB failures can be converted into `None` payloads and look like success.**
-   - File: `hpcperfstats/analysis/metrics/metrics.py`
+   - File: `hpcperfstats/analysis/metrics/lib/metrics.py`
    - Branch: `_unwrap()` catches repeated `OperationalError`/`DatabaseError`, logs, and returns `None`.
    - Result: `_drain_metrics_imap()` increments `done`, but no per-jid failure is surfaced to the scheduler.
 
@@ -158,7 +158,7 @@ The issues below are grouped by how directly they can explain “16 jobs process
    - Result: jobs whose metrics are already complete still pay full metrics cost if details or plots are stale.
 
 5. **Artifact failure/unavailable paths can permanently reselect jobs.**
-   - Files: `hpcperfstats/site/machine/job_plot_artifacts.py`, `hpcperfstats/site/machine/job_detail_artifacts.py`, `hpcperfstats/analysis/metrics/update_metrics.py`
+   - Files: `hpcperfstats/site/lib/machine/job_plot_artifacts.py`, `hpcperfstats/site/lib/machine/job_detail_artifacts.py`, `hpcperfstats/analysis/metrics/update_metrics.py`
    - Why it matters:
      - `job_plot_artifacts` skips persistence when `plot_item is None`.
      - `job_detail_artifacts` swallows per-type failures.
@@ -166,12 +166,12 @@ The issues below are grouped by how directly they can explain “16 jobs process
    - Result: endless recompute/prewarm churn.
 
 6. **`type_detail` failures are swallowed, and the current code contains a direct failure branch.**
-   - File: `hpcperfstats/site/machine/job_detail_artifacts.py`
+   - File: `hpcperfstats/site/lib/machine/job_detail_artifacts.py`
    - Branch: per-type `TypeDetailDataProvider(...)` and `plots.DevPlot(...)` inside a broad `except Exception`.
    - Result: the jid can look broadly successful while `type_detail` artifacts remain missing forever.
 
 7. **The `/pub` phase is a hard gate with no watchdog equivalent to `Metrics.run`.**
-   - Files: `hpcperfstats/analysis/metrics/update_metrics.py`, `hpcperfstats/site/machine/public_metrics_artifacts.py`
+   - Files: `hpcperfstats/analysis/metrics/update_metrics.py`, `hpcperfstats/site/lib/machine/public_metrics_artifacts.py`
    - Why it matters: `refresh_public_expansion_factor_artifacts_parallel()` uses `pool.imap_unordered(...)` directly with no timeout/poll loop.
    - Result: a stuck `/pub` worker blocks all job compute before it starts.
 
@@ -183,12 +183,12 @@ The issues below are grouped by how directly they can explain “16 jobs process
    - Result: heavy candidate/rescan queries can block for arbitrarily long time.
 
 9. **`_jobs_queryset()` duplicates expensive live-distinct work.**
-   - Files: `hpcperfstats/analysis/metrics/update_metrics.py`, `hpcperfstats/site/machine/artifact_readiness_expressions.py`, `hpcperfstats/analysis/metrics/live_host_sample_count.py`
+   - Files: `hpcperfstats/analysis/metrics/update_metrics.py`, `hpcperfstats/site/lib/machine/artifact_readiness_expressions.py`, `hpcperfstats/analysis/metrics/lib/live_host_sample_count.py`
    - Why it matters: live distinct time count is annotated directly and also embedded into `PlotArtifactInputFingerprintHex`.
    - Result: extra correlated work per candidate row.
 
 10. **`end_time__date` plus `order_by(-end_time, -jid)` is index-sensitive.**
-    - Files: `hpcperfstats/analysis/metrics/update_metrics.py`, `hpcperfstats/site/machine/models.py`
+    - Files: `hpcperfstats/analysis/metrics/update_metrics.py`, `hpcperfstats/site/lib/machine/models.py`
     - Why it matters: day filtering by date-cast is usually less index-friendly than a range predicate, and the keyset order wants a composite order-friendly index.
 
 11. **The rescan thread silently swallows exceptions.**
@@ -201,12 +201,12 @@ The issues below are grouped by how directly they can explain “16 jobs process
     - Why it matters: it replays `_jobs_queryset()` and takes the first `500` jids for every date, even while the producer is already paging that same backlog.
 
 13. **The queue-vs-compute shape is intentionally imbalanced.**
-    - Files: `hpcperfstats/analysis/metrics/update_metrics.py`, `hpcperfstats/conf_parser.py`
+    - Files: `hpcperfstats/analysis/metrics/update_metrics.py`, `hpcperfstats/dbload/lib/dbload/lib/conf_parser.py`
     - Why it matters: `ready_queue_target` defaults high while compute batch cap bottoms out at `16`.
     - Result: thousands of “ready” jobs can accumulate while only one small batch is inflight.
 
 14. **`metrics_scheduler_compute_threads` is parsed but does not control current compute dequeue concurrency.**
-    - Files: `hpcperfstats/conf_parser.py`, `README.md`
+    - Files: `hpcperfstats/dbload/lib/dbload/lib/conf_parser.py`, `README.md`
     - Why it matters: operators can tune a knob that does not affect the actual scheduler bottleneck.
 
 15. **Strict readiness can devolve into expensive per-jid probes after timeout/error.**
@@ -219,20 +219,20 @@ The issues below are grouped by how directly they can explain “16 jobs process
     - Why it matters: if `host_data.jid` is sparse or unreliable, the cheap jid-scoped proxy rejects little and the expensive strict path carries almost all traffic.
 
 17. **Large-job `jid_table` sampling still materializes full distinct-time sets.**
-    - File: `hpcperfstats/analysis/gen/jid_table.py`
+    - File: `hpcperfstats/analysis/metrics/lib/gen/jid_table.py`
     - Branches: `_count_host_data_rows_for_window_cached()`, `_distinct_times_in_window_batched()`, `_strided_distinct_times_for_large_job()`, `_apply_large_job_time_sampling_if_needed()`
     - Result: the “sampled” path still pays large preparatory costs.
 
 18. **`_JobForMetrics` eagerly materializes full host/time/type/event/value dataframes.**
-    - File: `hpcperfstats/analysis/metrics/metrics.py`
+    - File: `hpcperfstats/analysis/metrics/lib/metrics.py`
     - Why it matters: full host-data dataframe load, grouping, pivoting, and NumPy copies can make a handful of jobs monopolize all active workers.
 
 19. **`time_imbalance` is quadratic in time slices.**
-    - File: `hpcperfstats/analysis/metrics/metrics.py`
+    - File: `hpcperfstats/analysis/metrics/lib/metrics.py`
     - Result: jobs with many sampled timestamps can become severe CPU hotspots.
 
 20. **Workers still write `job.host_data_schema_json` directly.**
-    - File: `hpcperfstats/analysis/metrics/metrics.py`
+    - File: `hpcperfstats/analysis/metrics/lib/metrics.py`
     - Result: worker-side DB write latency or locks can stall a worker in a place not described by the “writes happen in main process only” expectation.
 
 21. **`_PrewarmPipeline` backlog is unbounded.**
@@ -244,11 +244,11 @@ The issues below are grouped by how directly they can explain “16 jobs process
     - Why it matters: `drain_some(force=True)` calls `fut.result(timeout=60)` serially across all pending futures.
 
 23. **Plot prewarm constructs `jid_table` and aggregate bundles before checking freshness.**
-    - File: `hpcperfstats/site/machine/job_plot_artifacts.py`
+    - File: `hpcperfstats/site/lib/machine/job_plot_artifacts.py`
     - Result: plot prewarm pays heavy setup cost even when all plot rows are already fresh or when the jid was selected for detail reasons only.
 
 24. **Public EF worker failures are converted into counters rather than a scheduler-visible hard failure.**
-    - File: `hpcperfstats/site/machine/public_metrics_artifacts.py`
+    - File: `hpcperfstats/site/lib/machine/public_metrics_artifacts.py`
     - Result: `/pub` can “finish” in a degraded state and the scheduler moves on.
 
 ### Medium
@@ -263,15 +263,15 @@ The issues below are grouped by how directly they can explain “16 jobs process
     - Result: some snapshots can look internally inconsistent even when no job has been lost.
 
 27. **`pool_reset_confirmed` is optimistic in shared-pool stall recovery.**
-    - File: `hpcperfstats/analysis/metrics/metrics.py`
+    - File: `hpcperfstats/analysis/metrics/lib/metrics.py`
     - Result: logs can claim the pool was reset even when worker termination was not actually verified.
 
 28. **Cache-backed helpers can degrade silently into repeated DB work or block on cache I/O.**
-    - Files: `hpcperfstats/site/machine/cache_utils.py`, `hpcperfstats/analysis/gen/jid_table.py`, GPU/FSIO helpers
+    - Files: `hpcperfstats/site/lib/machine/cache_utils.py`, `hpcperfstats/analysis/metrics/lib/gen/jid_table.py`, GPU/FSIO helpers
     - Result: Redis/cache instability can inflate worker latency without a crisp per-jid failure signal.
 
 29. **Some GPU/FSIO helper failures are treated as no-data rather than explicit failure.**
-    - Files: `hpcperfstats/analysis/metrics/gpu_job_detail_summary.py`, `hpcperfstats/analysis/metrics/job_detail_fsio.py`
+    - Files: `hpcperfstats/analysis/metrics/lib/gpu_job_detail_summary.py`, `hpcperfstats/analysis/metrics/lib/job_detail_fsio.py`
     - Result: silent degradation hides the true failure class and can contribute to artifact churn.
 
 ## Mapping the supplied log to likely branches

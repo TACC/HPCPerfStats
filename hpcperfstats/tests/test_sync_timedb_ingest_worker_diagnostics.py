@@ -1,7 +1,7 @@
 import os
 import time
 
-from hpcperfstats.dbload.sync_timedb_ingest_worker_diagnostics import (
+from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
     apply_ingest_pool_worker_init,
     clear_worker_stage,
     count_worker_registry_entries,

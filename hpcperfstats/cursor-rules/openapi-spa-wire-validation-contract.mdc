@@ -1,13 +1,13 @@
 ---
 description: OpenAPI serializers must match live SPA JSON; wire contract tests lock Orval Zod validation
 globs:
-  - "**/hpcperfstats/site/machine/openapi_serializers.py"
-  - "**/hpcperfstats/site/machine/openapi_schema.py"
+  - "**/hpcperfstats/site/lib/machine/openapi_serializers.py"
+  - "**/hpcperfstats/site/lib/machine/openapi_schema.py"
   - "**/hpcperfstats/site/openapi/**"
   - "**/hpcperfstats/site/frontend/src/api/parse-api-response*"
   - "**/hpcperfstats/site/frontend/src/api/response-schema-registry.ts"
   - "**/hpcperfstats/site/frontend/orval.config.ts"
-  - "**/hpcperfstats/site/machine/tests/test_*openapi_wire_contract*.py"
+  - "**/hpcperfstats/site/lib/machine/tests/test_*openapi_wire_contract*.py"
 alwaysApply: false
 ---
 
@@ -33,13 +33,13 @@ Failure mode (2026-06): `GET /api/jobs/` threw `API response validation failed` 
 When adding or changing JSON fields on an endpoint registered in `response-schema-registry.ts`:
 
 1. **Compare wire vs OpenAPI** — inspect the view + runtime serializer (`.data` from a representative row, fixture, or compose-backed test); update `openapi_serializers.py` field types to match (arrays vs strings, nested objects vs lists, nullable).
-2. **Wire contract test (Python)** — add or extend `hpcperfstats/site/machine/tests/test_<feature>_openapi_wire_contract.py`:
+2. **Wire contract test (Python)** — add or extend `hpcperfstats/site/lib/machine/tests/test_<feature>_openapi_wire_contract.py`:
    - Build a **representative dict** copied from real API output (not invented from OpenAPI).
    - Assert `SomeResponseSerializer(data=wire).is_valid()` with a clear failure message.
    - Canonical example: `test_job_list_openapi_wire_contract.py` + `JOB_LIST_WIRE_EXAMPLE`.
 3. **Regenerate** OpenAPI + Orval per **`openapi-orval-sync.mdc`** (`openapi.yaml`, `npm run generate:api`).
 4. **Frontend regression** — add or update a case in `parse-api-response.test.ts` for routes in `response-schema-registry.ts` using the same wire example.
-5. **Run** `pytest hpcperfstats/site/machine/tests/test_openapi_schema_drift.py` and the new wire contract test; run affected Vitest (`parse-api-response.test.ts` minimum).
+5. **Run** `pytest hpcperfstats/site/lib/machine/tests/test_openapi_schema_drift.py` and the new wire contract test; run affected Vitest (`parse-api-response.test.ts` minimum).
 
 ## Known drift traps (job list family)
 

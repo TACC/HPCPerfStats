@@ -2,7 +2,7 @@
 description: Job summary bandwidth and percentage metrics must stay physically plausible (no huge negatives)
 globs:
   - "**/hpcperfstats/analysis/**/*.py"
-  - "**/hpcperfstats/site/machine/**/*.py"
+  - "**/hpcperfstats/site/lib/machine/**/*.py"
 alwaysApply: false
 ---
 

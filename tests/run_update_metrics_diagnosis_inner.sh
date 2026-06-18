@@ -18,5 +18,5 @@ if [[ -s /tmp/hpcperfstats_pytest_extra_args ]]; then
 fi
 
 exec python -m pytest -v \
-  hpcperfstats/site/machine/tests/test_update_metrics_diagnosis_compose.py \
+  hpcperfstats/site/lib/machine/tests/test_update_metrics_diagnosis_compose.py \
   "${ARGS[@]}" --tb=short

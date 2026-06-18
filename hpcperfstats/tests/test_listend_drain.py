@@ -83,7 +83,7 @@ def test_drain_queue_nacks_on_processing_error(_srv, _q, mock_conn_cls, mock_app
   channel.basic_nack.assert_called_once_with(delivery_tag=1, requeue=True)
 
 
-@patch("hpcperfstats.process_title.set_script_process_title")
+@patch("hpcperfstats.dbload.lib.process_title.set_script_process_title")
 @patch("hpcperfstats.listend_drain.drain_queue_to_archive")
 def test_main_calls_drain(mock_drain, mock_title):
   from hpcperfstats import listend_drain

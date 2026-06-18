@@ -65,7 +65,7 @@ Sum of `phase_totals` keys: **~0.34343 s**.
 
 ### P0
 
-1. **Throughput under skip-prewarm**: prioritize **`metrics_pool_process_cap`** (and worker CPU affinity / host sizing) and validating batched `Metrics.run` in production. References: **`[PIPELINE] metrics_pool_process_cap`** in `hpcperfstats.ini.example`, `hpcperfstats/analysis/metrics/metrics.py` (`Metrics.run`, pool + `_drain_metrics_imap`).
+1. **Throughput under skip-prewarm**: prioritize **`metrics_pool_process_cap`** (and worker CPU affinity / host sizing) and validating batched `Metrics.run` in production. References: **`[PIPELINE] metrics_pool_process_cap`** in `hpcperfstats.ini.example`, `hpcperfstats/analysis/metrics/lib/metrics.py` (`Metrics.run`, pool + `_drain_metrics_imap`).
 2. **Reliability**: batched `imap` occasionally raised **`IndexError`** on short batches; production path now **retries per-job** after logging (same module). Re-run diagnosis if pool/stdlib behavior changes.
 
 ### P1

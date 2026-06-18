@@ -12,7 +12,7 @@ try:
 except ModuleNotFoundError:
   sync_playwright = None
 
-import hpcperfstats.conf_parser as cfg
+import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.tests.urlconf_route_catalog import (
     PipelineHttpEndpointSpec,
     build_pipeline_http_endpoint_specs,

@@ -11,7 +11,7 @@ When **removing** a plot module, API field, SPA tab, or analysis surface that us
 
 ## Trigger conditions
 
-- Deleting plot builders under `hpcperfstats/analysis/plot/` or removing API/SPA consumers.
+- Deleting plot builders under `hpcperfstats/analysis/metrics/lib/plot/` or removing API/SPA consumers.
 - Removing Job Detail tabs, Extended Search fields, or metric catalog entries.
 - Retiring architecture-specific surfaces (for example heatmap, KNL peaks) while leaving related metrics.
 

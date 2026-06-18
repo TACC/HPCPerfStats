@@ -22,7 +22,7 @@ import re
 import sys
 import time
 
-from hpcperfstats.dbload.blas_thread_env import configure_blas_thread_env
+from hpcperfstats.dbload.lib.blas_thread_env import configure_blas_thread_env
 
 
 def _configure_blas_thread_env():
@@ -34,36 +34,36 @@ configure_blas_thread_env()
 
 SYNC_TIMEDB_ARCHIVE_PROCESS_TITLE = "sync_timedb_archive.py"
 
-from hpcperfstats.process_title import (
+from hpcperfstats.dbload.lib.process_title import (
     apply_pool_worker_process_title,
     set_daemon_process_title,
 )
-import hpcperfstats.conf_parser as cfg
-from hpcperfstats.print_utils import log_print
-from hpcperfstats.dbload.archive_compress import (
+import hpcperfstats.dbload.lib.conf_parser as cfg
+from hpcperfstats.dbload.lib.print_utils import log_print
+from hpcperfstats.dbload.lib.archive_compress import (
     DAILY_ARCHIVE_GZ_SUFFIX,
     DAILY_ARCHIVE_ZST_SUFFIX,
     detect_compressed_format,
 )
-from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     STREAM_ARCHIVE_TASK,
     collect_sealed_daily_archive_paths_in_range,
     iter_archive_ingest_tasks,
     iter_sealed_daily_archive_member_paths,
     resolve_sealed_archive_path_for_ingest,
 )
-from hpcperfstats.dbload.db_unavailable import (
+from hpcperfstats.dbload.lib.db_unavailable import (
     DatabaseUnavailableExit,
     is_database_unavailable_error,
     log_and_raise_database_unavailable,
     reraise_database_unavailable_chain,
 )
-from hpcperfstats.dbload.multiprocessing_pool_health import (
+from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
     MultiprocessingWorkerExitError,
     imap_unordered_watch_pool,
     terminate_pool_bounded,
 )
-from hpcperfstats.shutdown_utils import shutdown_requested
+from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
 
 _DATE_ARG_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _USAGE = (
@@ -180,7 +180,7 @@ def _process_stream_archive(lock, sealed_path):
       from django.db.utils import DatabaseError as _DBErr
       from django.db.utils import OperationalError as _OpErr
 
-      from hpcperfstats.django_bootstrap import ensure_django as _ensure
+      from hpcperfstats.dbload.lib.django_bootstrap import ensure_django as _ensure
       from hpcperfstats.dbload.sync_timedb import (
           add_stats_file_to_db as _add,
           _release_ingest_worker_heap as _release,
@@ -269,7 +269,7 @@ if __name__ == "__main__":
 
   from django.db import close_old_connections, connections
 
-  from hpcperfstats.django_bootstrap import ensure_django
+  from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
   from hpcperfstats.dbload.sync_timedb import (
       _reset_sync_runtime_caches,
       database_startup,
@@ -346,7 +346,7 @@ if __name__ == "__main__":
   except DatabaseUnavailableExit:
     sys.exit(2)
   except MultiprocessingWorkerExitError as exc:
-    from hpcperfstats.dbload.multiprocessing_pool_health import (
+    from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
         hard_exit_pool_worker_error,
     )
 

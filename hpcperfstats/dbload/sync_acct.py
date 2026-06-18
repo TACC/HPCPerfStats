@@ -7,7 +7,7 @@ import os
 import sys
 import time
 from datetime import datetime, timedelta, timezone as dt_timezone
-from hpcperfstats.django_bootstrap import ensure_django
+from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
 
 ensure_django()
 
@@ -17,19 +17,19 @@ from django.conf import settings
 from django.db import IntegrityError, close_old_connections, connections
 from pandas import read_csv, to_datetime, to_timedelta
 
-import hpcperfstats.conf_parser as cfg
-from hpcperfstats.dbload.date_utils import (
+import hpcperfstats.dbload.lib.conf_parser as cfg
+from hpcperfstats.dbload.lib.date_utils import (
     log_date_range,
     parse_start_end_dates,
 )
-from hpcperfstats.dbload.io_helpers import job_data_instance_from_acct_row
-from hpcperfstats.file_locking import file_read_lock_wait, file_write_lock
-from hpcperfstats.print_utils import log_print
-from hpcperfstats.shutdown_utils import (
+from hpcperfstats.dbload.lib.io_helpers import job_data_instance_from_acct_row
+from hpcperfstats.dbload.lib.file_locking import file_read_lock_wait, file_write_lock
+from hpcperfstats.dbload.lib.print_utils import log_print
+from hpcperfstats.dbload.lib.shutdown_utils import (
     shutdown_requested,
     sleep_until_shutdown,
 )
-from hpcperfstats.site.machine.models import job_data
+from hpcperfstats.site.lib.machine.models import job_data
 
 local_timezone = dt_timezone.utc
 
@@ -37,7 +37,7 @@ local_timezone = dt_timezone.utc
 def _notify_job_cache_after_acct_ingest(inserted, job_objs=None, inserted_jids=None):
   """Invalidate site/reference caches; optionally warm KEY_JOB after accounting ingest."""
   try:
-    from hpcperfstats.site.machine.cache_utils import (
+    from hpcperfstats.site.lib.machine.cache_utils import (
         get_site_content_cache_timeout,
         invalidate_after_job_data_ingest,
         warm_job_cache_entries,
@@ -266,7 +266,7 @@ def _insert_job_data_individually(df):
 
 
 if __name__ == "__main__":
-  from hpcperfstats.process_title import set_daemon_process_title
+  from hpcperfstats.dbload.lib.process_title import set_daemon_process_title
 
   set_daemon_process_title(name="sync_acct.py", role="main")
   #################################################################

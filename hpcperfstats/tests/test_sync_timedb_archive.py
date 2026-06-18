@@ -13,14 +13,14 @@ from pathlib import Path
 
 import pytest
 
-from hpcperfstats.dbload.archive_compress import (
+from hpcperfstats.dbload.lib.archive_compress import (
     DAILY_ARCHIVE_ZST_SUFFIX,
     archive_gz_members_contained_in_zst,
     daily_tar_path_from_compressed,
     normalize_daily_compressed_path,
 )
-from hpcperfstats.dbload.zstd_cli import zstd_executable, zstd_gzip_supported
-from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+from hpcperfstats.dbload.lib.zstd_cli import zstd_executable, zstd_gzip_supported
+from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     STREAM_ARCHIVE_TASK,
     atomic_seal_tar_to_zst,
     compare_compressed_archive_members,
@@ -78,9 +78,9 @@ from hpcperfstats.dbload.sync_timedb_archive import (
 )
 import hpcperfstats.dbload.sync_timedb_archive as sta
 from hpcperfstats.dbload.sync_timedb import archive_stats_files
-from hpcperfstats.dbload.sync_timedb_parsing import parse_first_timestamp_line
-from hpcperfstats.file_locking import LOCK_SUFFIX
-from hpcperfstats.shutdown_utils import shutdown_requested
+from hpcperfstats.dbload.lib.sync_timedb_parsing import parse_first_timestamp_line
+from hpcperfstats.dbload.lib.file_locking import LOCK_SUFFIX
+from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
 
 
 # --- get_tar_member_name ---
@@ -176,7 +176,7 @@ def test_verify_tar_gz_zstd_pipe_uses_helpers_thread_count(monkeypatch, tmp_path
     pytest.skip("need zstd and tar on PATH")
   if not zstd_gzip_supported():
     pytest.skip("zstd without gzip format support")
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   gz = tmp_path / "probe.tar.gz"
   inner = tmp_path / "x.txt"
@@ -192,7 +192,7 @@ def test_verify_tar_gz_zstd_pipe_uses_helpers_thread_count(monkeypatch, tmp_path
     recorded.append(cmd)
     return orig_popen(*args, **kwargs)
 
-  import hpcperfstats.dbload.zstd_cli as zstd_cli
+  import hpcperfstats.dbload.lib.zstd_cli as zstd_cli
 
   monkeypatch.setattr(zstd_cli.subprocess, "Popen", _wrap_popen)
   monkeypatch.setattr(helpers, "get_archive_zstd_thread_count", lambda: 13)
@@ -213,7 +213,7 @@ def test_get_file_member_sizes_from_gzip_uses_zstd_pipe_when_zstd_present(
 ):
   if not shutil.which("zstd") or not zstd_gzip_supported():
     pytest.skip("zstd gzip support required")
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   gz = tmp_path / "sizes.tar.gz"
   inner = tmp_path / "body.txt"
@@ -252,7 +252,7 @@ def test_replace_corrupt_tar_from_compressed_backup_without_backup_removes_tar(t
 
 
 def test_replace_corrupt_tar_from_compressed_backup_restores_via_zstd(monkeypatch, tmp_path):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   tar_path = tmp_path / "2020-01-02.tar"
   zst_path = tmp_path / "2020-01-02.tar.zst"
@@ -276,7 +276,7 @@ def test_replace_corrupt_tar_from_compressed_backup_restores_via_zstd(monkeypatc
 
 
 def test_replace_corrupt_tar_falls_back_to_gz_when_zst_bad(monkeypatch, tmp_path):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   tar_path = tmp_path / "2020-01-03.tar"
   zst_path = tmp_path / "2020-01-03.tar.zst"
@@ -309,7 +309,7 @@ def test_replace_corrupt_tar_falls_back_to_gz_when_zst_bad(monkeypatch, tmp_path
 def test_replace_corrupt_tar_returns_false_when_zst_only_restore_fails(
     monkeypatch, tmp_path,
 ):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   tar_path = tmp_path / "2020-01-03b.tar"
   zst_path = tmp_path / "2020-01-03b.tar.zst"
@@ -325,7 +325,7 @@ def test_replace_corrupt_tar_returns_false_when_zst_only_restore_fails(
 
 
 def test_seal_skip_rejects_same_aggregate_different_members(monkeypatch, tmp_path):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   tar_path = tmp_path / "2020-01-04.tar"
   zst_path = tmp_path / "2020-01-04.tar.zst"
@@ -396,7 +396,7 @@ def test_archive_stats_files_returns_false_when_sealed_without_restored_tar(
       "hpcperfstats.dbload.sync_timedb.verify_tar_archive_readable",
       lambda path: False,
   )
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   monkeypatch.setattr(
       helpers, "decompress_compressed_to_tar", lambda *a, **k: False)
@@ -433,7 +433,7 @@ def test_archive_gz_members_contained_in_zst_rejects_missing_or_wrong_size():
 
 
 def test_drop_legacy_gz_removes_when_zst_is_superset(monkeypatch, tmp_path):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   gz_path = tmp_path / "2024-03-01.tar.gz"
   zst_path = tmp_path / "2024-03-01.tar.zst"
@@ -453,7 +453,7 @@ def test_drop_legacy_gz_removes_when_zst_is_superset(monkeypatch, tmp_path):
 
 
 def test_drop_legacy_gz_keeps_when_zst_missing_gz_member(monkeypatch, tmp_path):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   gz_path = tmp_path / "2024-03-02.tar.gz"
   zst_path = tmp_path / "2024-03-02.tar.zst"
@@ -471,7 +471,7 @@ def test_drop_legacy_gz_keeps_when_zst_missing_gz_member(monkeypatch, tmp_path):
 
 
 def test_drop_legacy_gz_keeps_when_zst_member_size_differs(monkeypatch, tmp_path):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   gz_path = tmp_path / "2024-03-03.tar.gz"
   zst_path = tmp_path / "2024-03-03.tar.zst"
@@ -515,7 +515,7 @@ def test_is_daily_tar_sealed_dirty_tar_newer_than_zst(tmp_path):
 def test_should_seal_prior_calendar_day_without_waiting_idle(tmp_path, monkeypatch):
   """Dirty archive for a date before *today* seals even if idle_seconds is huge."""
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_helpers.time.time",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.time.time",
       lambda: 1_600_000_000.0,
   )
   tar_p = tmp_path / "2019-12-31.tar"
@@ -532,7 +532,7 @@ def test_should_seal_prior_calendar_day_without_waiting_idle(tmp_path, monkeypat
 def test_should_seal_today_respects_idle(monkeypatch, tmp_path):
   base = 1_700_000_000
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_helpers.time.time",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.time.time",
       lambda: base + 30,
   )
   tar_p = tmp_path / "2024-01-15.tar"
@@ -545,7 +545,7 @@ def test_should_seal_today_respects_idle(monkeypatch, tmp_path):
   assert not should_seal_daily_tar(
       str(tar_p), str(gz_p), idle_seconds=60, today_local_date=today)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_helpers.time.time",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.time.time",
       lambda: base + 120,
   )
   assert should_seal_daily_tar(
@@ -582,7 +582,7 @@ def test_daily_tar_paths_for_archive_job_tasks():
 def test_should_seal_immediately_if_dirty_bypasses_idle(monkeypatch, tmp_path):
   base = 1_700_000_000
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_helpers.time.time",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.time.time",
       lambda: base + 1,
   )
   tar_p = tmp_path / "2024-01-15.tar"
@@ -628,7 +628,7 @@ def test_seal_dirty_daily_archives_continues_after_timeout_on_first_day(
     )
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_helpers.atomic_seal_tar_to_zst",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.atomic_seal_tar_to_zst",
       fake_atomic_seal,
   )
   for day in ("2024-01-10", "2024-01-11"):
@@ -671,7 +671,7 @@ def test_seal_dirty_daily_archives_respects_skip_and_only_scope(
     )
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_helpers.atomic_seal_tar_to_zst",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.atomic_seal_tar_to_zst",
       fake_atomic_seal,
   )
   tar_skip = tmp_path / "2024-01-10.tar"
@@ -797,7 +797,7 @@ def test_build_remaining_raw_stats_by_daily_gz_groups_closed_segments(tmp_path):
 
 def test_atomic_seal_tar_to_zst_passes_thread_count_to_compress_and_test(monkeypatch, tmp_path):
   """zstd compress and zstd -t should use the requested -T count."""
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   tar_path = tmp_path / "2021-03-04.tar"
   zst_path = tmp_path / "2021-03-04.tar.zst"
@@ -834,7 +834,7 @@ def test_atomic_seal_tar_to_zst_passes_thread_count_to_compress_and_test(monkeyp
 
 def test_seal_dirty_daily_archives_seals_multiple_days_in_parallel(monkeypatch, tmp_path):
   """Regression: maintenance seals more than one day concurrently when workers > 1."""
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
   from zoneinfo import ZoneInfo
 
   archive_dir = tmp_path / "daily"
@@ -886,7 +886,7 @@ def test_seal_dirty_daily_archives_seals_multiple_days_in_parallel(monkeypatch, 
 
 
 def test_seal_dirty_daily_archives_isolates_per_day_failures(monkeypatch, tmp_path):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
   from zoneinfo import ZoneInfo
 
   archive_dir = tmp_path / "daily"
@@ -1024,7 +1024,7 @@ def test_archive_worker_process_count_uses_sync_archive_pool(monkeypatch):
 
 def test_get_tar_file_tasks_restores_corrupt_tar_from_gz(monkeypatch, tmp_path):
   """Corrupt tar with sibling .gz is restored via zstd gzip and retried once."""
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   tar_path = str(tmp_path / "broken.tar")
   gz_path = "%s.gz" % tar_path
@@ -1095,7 +1095,7 @@ def test_get_tar_file_tasks_restores_corrupt_tar_from_gz(monkeypatch, tmp_path):
 
 def test_get_tar_file_tasks_raises_when_corrupt_and_no_gz(monkeypatch, tmp_path):
   """Corrupt tar without sibling .gz surfaces the read error."""
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   tar_path = str(tmp_path / "broken.tar")
 
@@ -1120,7 +1120,7 @@ def test_get_tar_file_tasks_raises_when_corrupt_and_no_gz(monkeypatch, tmp_path)
 
 def test_get_tar_file_tasks_raises_when_zstd_restore_fails(monkeypatch, tmp_path):
   """Corrupt tar with .gz still raises when zstd restore fails."""
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   tar_path = str(tmp_path / "broken.tar")
   gz_path = "%s.gz" % tar_path
@@ -1234,7 +1234,7 @@ def test_remove_verified_archived_raw_files_bootstraps_missing_daily_archive(
     tmp_path, monkeypatch,
 ):
   """When neither .tar nor .tar.gz exists, removal pass must call archive before validate."""
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   arch_suffix = "cluster.integration.test"
   host = tmp_path / ("n." + arch_suffix)
@@ -1285,7 +1285,7 @@ def test_remove_verified_archived_raw_files_skips_bootstrap_until_ingest_ready(
     tmp_path, monkeypatch,
 ):
   """Bootstrap must not run when ingest_ready_fn rejects paths."""
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   arch_suffix = "cluster.integration.test"
   host = tmp_path / ("n." + arch_suffix)
@@ -1519,7 +1519,7 @@ def test_archive_stats_files_fail_closed_when_decompress_fails(monkeypatch, tmp_
 
 def test_not_ingested_raw_still_blocks_tar_removal_after_seal(tmp_path, monkeypatch):
   """Scheduled maintenance: filesystem gate blocks .tar removal while raw remains."""
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   arch_suffix = "cluster.integration.test"
   host = tmp_path / ("n." + arch_suffix)
@@ -1594,7 +1594,7 @@ def test_validate_sealed_daily_archive_seals_from_valid_tar_when_zst_missing(tmp
   with tarfile.open(tar_p, "w") as tf:
     tf.add(str(f), arcname="raw.txt")
 
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   seal_calls = {"count": 0}
 
@@ -1610,7 +1610,7 @@ def test_validate_sealed_daily_archive_seals_from_valid_tar_when_zst_missing(tmp
   ):
     del keep_uncompressed_tar, log_fn, remaining_raw_by_gz, force_remove_uncompressed_tar
     seal_calls["count"] += 1
-    from hpcperfstats.dbload.zstd_cli import zstd_compress_tar_to_file, zstd_test
+    from hpcperfstats.dbload.lib.zstd_cli import zstd_compress_tar_to_file, zstd_test
 
     tmp = "%s.tmp" % _zst_path
     zstd_compress_tar_to_file(_tar_path, tmp, num_threads, compress_level)
@@ -1625,7 +1625,7 @@ def test_validate_sealed_daily_archive_seals_from_valid_tar_when_zst_missing(tmp
 
 
 def test_validate_sealed_daily_archive_validation_cache_hits(monkeypatch, tmp_path):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   gz = tmp_path / "2022-02-01.tar.gz"
   f = tmp_path / "cache.txt"
@@ -1660,8 +1660,8 @@ def test_validate_sealed_daily_archive_validation_cache_hits(monkeypatch, tmp_pa
 def test_batch_raw_removal_parallel_validation_counts_misses_once_per_archive(
     monkeypatch, tmp_path,
 ):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
 
   monkeypatch.setattr(helpers, "_get_archive_validation_worker_count", lambda n: 2)
   mapping = {}
@@ -1697,7 +1697,7 @@ def test_batch_raw_removal_parallel_validation_counts_misses_once_per_archive(
 def test_validate_sealed_daily_archive_validation_cache_invalidates_on_mtime_change(
     monkeypatch, tmp_path
 ):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   gz = tmp_path / "2022-02-02.tar.gz"
   f = tmp_path / "stale.txt"
@@ -1747,7 +1747,7 @@ def test_get_file_member_sizes_from_gzip_archive_reads_gz_only(tmp_path):
 
 
 def test_get_archive_validation_worker_count_bounds(monkeypatch):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   monkeypatch.setattr(helpers.cfg, "get_sync_archive_validation_max_workers", lambda: 6)
   monkeypatch.delenv("SYNC_ARCHIVE_VALIDATION_WORKERS", raising=False)
@@ -1762,7 +1762,7 @@ def test_get_archive_validation_worker_count_bounds(monkeypatch):
 def test_remove_verified_archived_raw_files_streaming_apply_follows_completion_order(
     tmp_path, monkeypatch
 ):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   seg_a = tmp_path / "seg_a"
   seg_b = tmp_path / "seg_b"
@@ -1810,7 +1810,7 @@ def test_remove_verified_archived_raw_files_streaming_apply_follows_completion_o
 def test_remove_verified_uncompressed_daily_tars_streaming_apply_order(
     tmp_path, monkeypatch
 ):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   tar_a = tmp_path / "2026-04-21.tar"
   tar_b = tmp_path / "2026-04-22.tar"
@@ -1917,7 +1917,7 @@ def test_dedupe_tar_keep_largest_file_per_member_keeps_largest(tmp_path):
 
 
 def test_dedupe_sealed_daily_archive_last_resort(monkeypatch, tmp_path):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   zst_path = tmp_path / "2026-06-01.tar.zst"
   tar_path = tmp_path / "2026-06-01.tar"
@@ -1945,11 +1945,11 @@ def test_dedupe_sealed_daily_archive_last_resort(monkeypatch, tmp_path):
       lambda *_a, **_k: calls.append("invalidate"),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_members_redis.dedupe_hint_is_set",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis.dedupe_hint_is_set",
       lambda *_a, **_k: True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_members_redis.clear_dedupe_hint",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis.clear_dedupe_hint",
       lambda *_a, **_k: calls.append("clear_hint"),
   )
   assert helpers.dedupe_sealed_daily_archive(str(zst_path), log_fn=None)
@@ -1959,7 +1959,7 @@ def test_dedupe_sealed_daily_archive_last_resort(monkeypatch, tmp_path):
 def test_get_existing_archive_members_uses_redis_l2(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   zst_path = tmp_path / "2026-06-02.tar.zst"
   zst_path.write_bytes(b"z")
@@ -1970,7 +1970,7 @@ def test_get_existing_archive_members_uses_redis_l2(
       helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_members_redis.redis_lookup_full_members",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis.redis_lookup_full_members",
       lambda keys: {"cached/member": 11},
   )
   members = helpers.get_existing_archive_members_for_daily_archive(str(zst_path))
@@ -2488,7 +2488,7 @@ def test_build_archive_mapping_includes_today(tmp_path):
 def test_build_archive_mapping_uses_real_sample_timestamp(monkeypatch, tmp_path):
   """build_archive_mapping should derive archive date from sample content."""
   import datetime as _real_datetime
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   # Make sure the sample's timestamp date is treated as "not today" so we
   # actually get an archive mapping regardless of the current system date.
@@ -2707,7 +2707,7 @@ def test_archive_stats_files_skips_dedupe_in_append_path(monkeypatch, tmp_path):
       st, "filter_files_to_add_to_archive", lambda files, *_a, **_k: list(files))
   monkeypatch.setattr(st, "_append_to_tar", lambda *_a, **_k: None)
 
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   dedupe_calls = {"count": 0}
   monkeypatch.setattr(
@@ -2827,7 +2827,7 @@ def test_iter_sealed_daily_archive_member_lines_zst_only(tmp_path):
 
 @pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
 def test_iter_sealed_daily_archive_member_paths_spools_to_disk(tmp_path):
-  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       iter_sealed_daily_archive_member_paths,
   )
 
@@ -2936,7 +2936,7 @@ def test_process_stream_archive_task_ingests_all_members(monkeypatch, tmp_path):
       lambda: None,
   )
   monkeypatch.setattr(
-      "hpcperfstats.django_bootstrap.ensure_django",
+      "hpcperfstats.dbload.lib.django_bootstrap.ensure_django",
       lambda: None,
   )
   monkeypatch.setattr(
@@ -2962,7 +2962,7 @@ def test_ingest_does_not_write_decompress_artifacts(monkeypatch, tmp_path):
     return False
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_helpers.decompress_compressed_to_tar",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.decompress_compressed_to_tar",
       _spy_decompress,
   )
   list(iter_sealed_daily_archive_member_lines(zst_p))
@@ -2980,7 +2980,7 @@ def test_ingest_does_not_write_decompress_artifacts(monkeypatch, tmp_path):
 def test_sealed_stream_uses_zstd_priority_wrap(monkeypatch, tmp_path):
   zst_p, _tar_p = _write_sealed_daily_archive(tmp_path, day="2024-03-10")
   wrap_calls = []
-  from hpcperfstats.dbload import sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
 
   real_open = helpers._open_tarfile_for_read
 
@@ -3001,7 +3001,7 @@ def test_sealed_stream_uses_zstd_priority_wrap(monkeypatch, tmp_path):
 def test_stream_archive_skips_oversize_member(monkeypatch, tmp_path):
   zst_p, _tar_p = _write_sealed_daily_archive(tmp_path, day="2024-03-11")
   monkeypatch.setattr(
-      "hpcperfstats.conf_parser.get_sync_ingest_max_file_read_bytes",
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_max_file_read_bytes",
       lambda: 4,
   )
   members = list(iter_sealed_daily_archive_member_lines(zst_p))
@@ -3012,7 +3012,7 @@ def test_stream_archive_skips_oversize_member(monkeypatch, tmp_path):
 
 
 def test_iter_daily_gz_paths_skips_locks_and_scratch(tmp_path):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   (tmp_path / "2024-01-01.tar.gz").write_bytes(b"g")
   (tmp_path / "2024-01-02.tar.gz.tmp").write_bytes(b"t")
@@ -3024,7 +3024,7 @@ def test_iter_daily_gz_paths_skips_locks_and_scratch(tmp_path):
 
 
 def test_migrate_one_dropped_only_when_zst_is_superset(monkeypatch, tmp_path):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   gz_path = tmp_path / "2024-03-10.tar.gz"
   zst_path = tmp_path / "2024-03-10.tar.zst"
@@ -3057,7 +3057,7 @@ def test_migrate_one_dropped_only_when_zst_is_superset(monkeypatch, tmp_path):
 
 
 def test_migrate_one_kept_mismatch_when_zst_missing_gz_member(monkeypatch, tmp_path):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   gz_path = tmp_path / "2024-03-11.tar.gz"
   zst_path = tmp_path / "2024-03-11.tar.zst"
@@ -3084,7 +3084,7 @@ def test_migrate_one_kept_mismatch_when_zst_missing_gz_member(monkeypatch, tmp_p
 def test_migrate_one_skipped_locked_on_write_lock_timeout(monkeypatch, tmp_path):
   import contextlib
 
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   gz_path = tmp_path / "2024-03-12.tar.gz"
   gz_path.write_bytes(b"gz")
@@ -3107,7 +3107,7 @@ def test_migrate_one_skipped_locked_on_write_lock_timeout(monkeypatch, tmp_path)
 
 
 def test_migrate_one_gz_only_converts_via_decompress_and_seal(monkeypatch, tmp_path):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   gz_path = tmp_path / "2024-03-13.tar.gz"
   tar_path = tmp_path / "2024-03-13.tar"
@@ -3147,7 +3147,7 @@ def test_migrate_one_gz_only_converts_via_decompress_and_seal(monkeypatch, tmp_p
 
 
 def test_migrate_legacy_dry_run_does_not_mutate(monkeypatch, tmp_path):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   gz_path = tmp_path / "2024-03-14.tar.gz"
   gz_path.write_bytes(b"gz")
@@ -3163,7 +3163,7 @@ def test_migrate_legacy_dry_run_does_not_mutate(monkeypatch, tmp_path):
 
 
 def test_migrate_one_gz_only_avoids_nested_lock_failure(monkeypatch, tmp_path):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   gz_path = tmp_path / "2024-03-15.tar.gz"
   tar_path = tmp_path / "2024-03-15.tar"
@@ -3205,7 +3205,7 @@ def test_migrate_one_gz_only_avoids_nested_lock_failure(monkeypatch, tmp_path):
 
 
 def test_migrate_one_gz_only_uses_tmp_decompress_dir(monkeypatch, tmp_path):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   gz_path = tmp_path / "2024-03-16.tar.gz"
   archive_tar_path = tmp_path / "2024-03-16.tar"
@@ -3276,7 +3276,7 @@ def test_seal_dirty_only_when_no_remaining_raw_defers_day_with_raw(
     )
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_helpers.atomic_seal_tar_to_zst",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.atomic_seal_tar_to_zst",
       fake_atomic_seal,
   )
   tar_with_raw = tmp_path / "2024-01-10.tar"
@@ -3395,8 +3395,8 @@ def test_remove_verified_uncompressed_daily_tars_skips_unmapped_day_via_skip_pat
 
 
 def test_archive_validation_worker_count_respects_max_workers(monkeypatch):
-  import hpcperfstats.conf_parser as cfg
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   monkeypatch.setattr(cfg, "get_sync_archive_validation_max_workers", lambda: 2)
   assert helpers._get_archive_validation_worker_count(8) == 2
@@ -3410,7 +3410,7 @@ def test_collect_unmapped_closed_raw_daily_tars_ignores_unparsable_on_disk(tmp_p
   daily_dir.mkdir()
   raw_path = host_dir / "bad_raw"
   raw_path.write_text("no-timestamp-here\n")
-  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       collect_unmapped_closed_raw_daily_tars,
   )
 
@@ -3423,7 +3423,7 @@ def test_collect_unmapped_closed_raw_daily_tars_ignores_unparsable_on_disk(tmp_p
 def test_quarantine_ingest_failed_raw_path_valid_head_corrupt_body(tmp_path):
   import json
 
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   archive_dir = tmp_path / "archive"
   host_dir = archive_dir / "host.hpc"
@@ -3462,7 +3462,7 @@ def test_quarantine_ingest_failed_raw_path_valid_head_corrupt_body(tmp_path):
 def test_quarantine_unparsable_closed_raw_moves_file_and_writes_manifest(tmp_path):
   import json
 
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   archive_dir = tmp_path / "archive"
   host_dir = archive_dir / "host.hpc"
@@ -3493,7 +3493,7 @@ def test_quarantine_unparsable_closed_raw_moves_file_and_writes_manifest(tmp_pat
 
 
 def test_unparsable_unmapped_does_not_disqualify_day(tmp_path):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   archive_dir = tmp_path / "archive"
   host_dir = archive_dir / "host.hpc"
@@ -3512,7 +3512,7 @@ def test_unparsable_unmapped_does_not_disqualify_day(tmp_path):
 
 
 def test_effective_keep_uncompressed_tar_prior_day_false_today_grace(monkeypatch, tmp_path):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
   from datetime import timezone
 
   daily_dir = tmp_path / "daily"
@@ -3538,7 +3538,7 @@ def test_effective_keep_uncompressed_tar_prior_day_false_today_grace(monkeypatch
 
 
 def test_daily_tar_seal_calendar_eligible_prior_day_and_today_grace(monkeypatch, tmp_path):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
   from datetime import timezone
 
   daily_dir = tmp_path / "daily"
@@ -3620,7 +3620,7 @@ def test_raw_stats_path_needs_tar_append_when_member_size_differs(tmp_path):
 
 @pytest.fixture(autouse=False)
 def _clear_daily_archive_members_cache():
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   helpers.clear_daily_archive_members_cache()
   yield
@@ -3630,7 +3630,7 @@ def _clear_daily_archive_members_cache():
 def test_sealed_archive_member_has_exact_size_early_exit(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   day_gz = tmp_path / "2024-06-11.tar.gz"
   inner_target = tmp_path / "target.txt"
@@ -3665,7 +3665,7 @@ def test_sealed_archive_member_has_exact_size_early_exit(
 def test_daily_archive_has_member_falls_back_when_populate_raises(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
   from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
       FakeRedis,
   )
@@ -3684,7 +3684,7 @@ def test_daily_archive_has_member_falls_back_when_populate_raises(
       helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_members_redis"
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
       ".get_archive_members_redis_client",
       lambda required=True: FakeRedis(),
   )
@@ -3699,7 +3699,7 @@ def test_daily_archive_has_member_falls_back_when_populate_raises(
 def test_ingest_sealed_path_uses_populate_not_parallel_point(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
   from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
       FakeRedis,
   )
@@ -3728,7 +3728,7 @@ def test_ingest_sealed_path_uses_populate_not_parallel_point(
       helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_members_redis"
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
       ".get_archive_members_redis_client",
       lambda required=True: FakeRedis(),
   )
@@ -3750,7 +3750,7 @@ def test_ingest_sealed_single_flight_one_zstd_scan(
 ):
   import threading
 
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
   from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
       FakeRedis,
   )
@@ -3778,11 +3778,11 @@ def test_ingest_sealed_single_flight_one_zstd_scan(
       helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.conf_parser.get_sync_archive_members_redis_populate_lock_seconds",
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_populate_lock_seconds",
       lambda: 30,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_members_redis"
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
       ".get_archive_members_redis_client",
       lambda required=True: fake,
   )
@@ -3826,8 +3826,8 @@ def test_ingest_waiters_no_local_zstd_while_lock_held(
   import threading
   import time
 
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       build_archive_members_redis_keys,
   )
   from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
@@ -3854,7 +3854,7 @@ def test_ingest_waiters_no_local_zstd_while_lock_held(
       helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_members_redis"
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
       ".get_archive_members_redis_client",
       lambda required=True: fake,
   )
@@ -3901,7 +3901,7 @@ def test_ingest_waiters_no_local_zstd_while_lock_held(
 def _compress_bytes_to_zst(payload: bytes, zst_path: Path):
   import subprocess
 
-  from hpcperfstats.dbload.zstd_cli import zstd_executable
+  from hpcperfstats.dbload.lib.zstd_cli import zstd_executable
 
   raw_path = zst_path.with_suffix(".raw")
   raw_path.write_bytes(payload)
@@ -3930,7 +3930,7 @@ def _make_valid_zst_truncated_tar(tmp_path) -> str:
     reason="zstd binary required",
 )
 def test_classify_stream_failure_zst_valid_tar_eof(tmp_path):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   sealed = _make_valid_zst_truncated_tar(tmp_path)
   kind, detail = helpers.classify_sealed_archive_stream_failure(
@@ -3941,7 +3941,7 @@ def test_classify_stream_failure_zst_valid_tar_eof(tmp_path):
 
 
 def test_classify_stream_failure_zst_invalid(tmp_path):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   sealed = tmp_path / "2026-05-09.tar.zst"
   sealed.write_bytes(b"not-valid-zstd")
@@ -3956,8 +3956,8 @@ def test_concurrent_waiters_no_zstd_after_day_skip(
 ):
   import threading
 
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       ArchiveDayIngestSkipError,
       build_archive_members_redis_keys,
       set_archive_day_ingest_skip,
@@ -3986,7 +3986,7 @@ def test_concurrent_waiters_no_zstd_after_day_skip(
       helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_members_redis"
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
       ".get_archive_members_redis_client",
       lambda required=True: fake,
   )
@@ -4028,8 +4028,8 @@ def test_concurrent_waiters_no_zstd_after_day_skip(
 def test_raw_stats_needs_append_false_when_day_skipped(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       ArchiveDayIngestSkipError,
   )
 
@@ -4063,8 +4063,8 @@ def test_get_existing_archive_members_no_local_scan_when_degraded(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
   """Degraded Redis populate without day skip must not fall through to local zstd."""
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       ArchiveMembersRedisUnavailableError,
       build_archive_members_redis_keys,
   )
@@ -4090,7 +4090,7 @@ def test_get_existing_archive_members_no_local_scan_when_degraded(
       helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_members_redis"
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
       ".get_archive_members_redis_client",
       lambda required=True: fake,
   )
@@ -4114,8 +4114,8 @@ def test_get_existing_archive_members_no_local_scan_when_degraded(
 def test_raw_stats_path_needs_tar_append_reraises_redis_unavailable(
     monkeypatch, tmp_path,
 ):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       ArchiveMembersRedisUnavailableError,
   )
 
@@ -4142,7 +4142,7 @@ def test_raw_stats_path_needs_tar_append_reraises_redis_unavailable(
 
 
 def test_ingest_skipped_calendar_days_lru_not_full_clear(monkeypatch):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   helpers._INGEST_SKIPPED_CALENDAR_DAYS.clear()
   monkeypatch.setattr(
@@ -4165,7 +4165,7 @@ def test_ingest_skipped_calendar_days_lru_not_full_clear(monkeypatch):
 def test_daily_archive_members_cache_hit_skips_second_scan(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   day_gz = tmp_path / "2024-06-01.tar.gz"
   inner = tmp_path / "z.txt"
@@ -4195,7 +4195,7 @@ def test_daily_archive_members_cache_hit_skips_second_scan(
 def test_daily_archive_members_cache_invalidates_on_tar_mtime(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   day_tar = tmp_path / "2024-06-02.tar"
   day_gz = tmp_path / "2024-06-02.tar.gz"
@@ -4220,7 +4220,7 @@ def test_daily_archive_members_cache_invalidates_on_tar_mtime(
 def test_raw_stats_needs_append_uses_cache(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   daily_dir = tmp_path / "daily"
   daily_dir.mkdir()
@@ -4259,7 +4259,7 @@ def test_raw_stats_needs_append_uses_cache(
 def test_single_member_early_exit_finds_match(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   day_gz = tmp_path / "2024-06-04.tar.gz"
   inner = tmp_path / "target.txt"
@@ -4294,8 +4294,8 @@ def test_single_member_early_exit_finds_match(
 def test_daily_archive_has_member_prefers_redis_when_tar_and_sealed_exist(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       build_archive_members_redis_keys,
       store_complete_members_in_redis,
   )
@@ -4319,7 +4319,7 @@ def test_daily_archive_has_member_prefers_redis_when_tar_and_sealed_exist(
   keys = build_archive_members_redis_keys(cache_key)
   fake_redis = FakeRedis()
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_members_redis"
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
       ".get_archive_members_redis_client",
       lambda required=True: fake_redis,
   )
@@ -4353,8 +4353,8 @@ def test_daily_archive_has_member_prefers_redis_when_tar_and_sealed_exist(
 def test_warm_duplicate_check_uses_hget_not_hgetall(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       build_archive_members_redis_keys,
       store_complete_members_in_redis,
   )
@@ -4372,7 +4372,7 @@ def test_warm_duplicate_check_uses_hget_not_hgetall(
   keys = build_archive_members_redis_keys(cache_key)
   fake_redis = FakeRedis()
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_members_redis"
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
       ".get_archive_members_redis_client",
       lambda required=True: fake_redis,
   )
@@ -4414,8 +4414,8 @@ def test_concurrent_duplicate_check_avoids_parallel_tar_scans_with_redis_warm(
 ):
   import threading
 
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.sync_timedb_archive_members_redis import (
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       build_archive_members_redis_keys,
       store_complete_members_in_redis,
   )
@@ -4439,7 +4439,7 @@ def test_concurrent_duplicate_check_avoids_parallel_tar_scans_with_redis_warm(
   keys = build_archive_members_redis_keys(cache_key)
   fake_redis = FakeRedis()
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_members_redis"
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
       ".get_archive_members_redis_client",
       lambda required=True: fake_redis,
   )
@@ -4488,7 +4488,7 @@ def test_concurrent_duplicate_check_avoids_parallel_tar_scans_with_redis_warm(
 def test_invalidate_daily_archive_members_cache_forces_rescan(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   day_gz = tmp_path / "2024-06-05.tar.gz"
   inner = tmp_path / "z.txt"
@@ -4516,7 +4516,7 @@ def test_invalidate_daily_archive_members_cache_forces_rescan(
 
 
 def test_prior_day_tar_removed_at_seal_when_keep_false(monkeypatch, tmp_path):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   tar_path = tmp_path / "2026-01-01.tar"
   zst_path = tmp_path / "2026-01-01.tar.zst"
@@ -4544,7 +4544,7 @@ def test_prior_day_tar_removed_at_seal_when_keep_false(monkeypatch, tmp_path):
 
 
 def test_iter_tar_file_tasks_falls_back_to_gz_when_zst_corrupt(monkeypatch, tmp_path):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   tar_path = tmp_path / "2020-01-04.tar"
   zst_path = tmp_path / "2020-01-04.tar.zst"
@@ -4573,7 +4573,7 @@ def test_iter_tar_file_tasks_falls_back_to_gz_when_zst_corrupt(monkeypatch, tmp_
 
 
 def test_validate_sealed_restores_corrupt_tar_before_fail_closed(monkeypatch, tmp_path):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   tar_path = tmp_path / "2020-01-05.tar"
   zst_path = tmp_path / "2020-01-05.tar.zst"
@@ -4605,7 +4605,7 @@ def test_validate_sealed_restores_corrupt_tar_before_fail_closed(monkeypatch, tm
 
 
 def test_replace_corrupt_tar_does_not_clobber_concurrent_append(monkeypatch, tmp_path):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   tar_path = tmp_path / "2020-01-06.tar"
   zst_path = tmp_path / "2020-01-06.tar.zst"
@@ -4631,8 +4631,8 @@ def test_replace_corrupt_tar_does_not_clobber_concurrent_append(monkeypatch, tmp
 
 def test_unmapped_disqualify_uses_coordinator_after_accrual_trim(monkeypatch):
   """Trimmed accrual ``closed_paths=[]`` must not hide unmapped; coordinator wins."""
-  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
-  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       resolve_unmapped_closed_raw_daily_tars,
   )
 
@@ -4654,7 +4654,7 @@ def test_unmapped_disqualify_uses_coordinator_after_accrual_trim(monkeypatch):
     return frozenset()
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_helpers."
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
       "get_unmapped_closed_raw_daily_tars_cached",
       boom_collect,
   )
@@ -4819,7 +4819,7 @@ def test_find_immediate_day_close_candidates_skips_disqualified(tmp_path):
 
 
 def test_find_immediate_day_close_candidates_skips_tar_dropped_phase(tmp_path, monkeypatch):
-  import hpcperfstats.dbload.sync_timedb_archive_helpers as helpers_mod
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers_mod
 
   daily_dir = tmp_path / "daily"
   daily_dir.mkdir()
@@ -4853,7 +4853,7 @@ def test_find_immediate_day_close_candidates_requires_unprocessed_map(tmp_path):
 
 
 def test_augment_unprocessed_by_tar_with_pending_paths(tmp_path):
-  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       augment_unprocessed_by_tar_with_pending_paths,
   )
 
@@ -4873,7 +4873,7 @@ def test_augment_unprocessed_by_tar_with_pending_paths(tmp_path):
 
 
 def test_daily_tar_eligible_for_day_close_submit_requires_checkpoint_complete(tmp_path):
-  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       daily_tar_eligible_for_day_close_submit,
   )
 
@@ -4910,7 +4910,7 @@ def test_daily_tar_eligible_for_day_close_submit_requires_checkpoint_complete(tm
 
 
 def test_build_unprocessed_raw_by_daily_tar_subtracts_checkpoint(tmp_path):
-  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       build_unprocessed_raw_by_daily_tar,
       load_checkpoint_path_set,
   )
@@ -4970,7 +4970,7 @@ def test_find_immediate_day_close_uses_checkpoint_not_pending(tmp_path):
 
 
 def test_classify_day_close_candidates_reports_reasons(tmp_path):
-  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       classify_day_close_candidates,
   )
 
@@ -4994,7 +4994,7 @@ def test_classify_day_close_candidates_reports_reasons(tmp_path):
 
 
 def test_classify_day_close_waiting_on_ingest_vs_eligible_deferred(tmp_path):
-  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       classify_day_close_candidates,
   )
 
@@ -5018,10 +5018,10 @@ def test_classify_day_close_waiting_on_ingest_vs_eligible_deferred(tmp_path):
 
 
 def test_build_remaining_raw_accepts_snapshot_no_nested_collect(monkeypatch, tmp_path):
-  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       build_remaining_raw_stats_by_daily_gz,
   )
-  from hpcperfstats.dbload.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
 
   collect_calls = {"n": 0}
 
@@ -5030,7 +5030,7 @@ def test_build_remaining_raw_accepts_snapshot_no_nested_collect(monkeypatch, tmp
     return []
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb_archive_helpers.collect_stats_files_in_range",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.collect_stats_files_in_range",
       boom_collect,
   )
   snapshot = ArchiveMaintenanceSnapshot(
@@ -5048,11 +5048,11 @@ def test_build_remaining_raw_accepts_snapshot_no_nested_collect(monkeypatch, tmp
 
 
 def test_log_day_close_candidate_report_omits_skipped_no_work(capsys, monkeypatch):
-  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       log_day_close_candidate_report,
   )
 
-  import hpcperfstats.conf_parser as cfg_mod
+  import hpcperfstats.dbload.lib.conf_parser as cfg_mod
 
   monkeypatch.setattr(cfg_mod, "get_sync_day_close_candidate_report", lambda: True)
   log_day_close_candidate_report(
@@ -5069,11 +5069,11 @@ def test_log_day_close_candidate_report_omits_skipped_no_work(capsys, monkeypatc
 
 
 def test_log_day_close_candidate_report_logs_queued_and_disqualified(capsys, monkeypatch):
-  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       log_day_close_candidate_report,
   )
 
-  import hpcperfstats.conf_parser as cfg_mod
+  import hpcperfstats.dbload.lib.conf_parser as cfg_mod
 
   monkeypatch.setattr(cfg_mod, "get_sync_day_close_candidate_report", lambda: True)
   log_day_close_candidate_report(
@@ -5106,11 +5106,11 @@ def test_log_day_close_candidate_report_logs_queued_and_disqualified(capsys, mon
 
 
 def test_log_day_close_candidate_report_includes_async_progress(capsys, monkeypatch):
-  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       log_day_close_candidate_report,
   )
 
-  import hpcperfstats.conf_parser as cfg_mod
+  import hpcperfstats.dbload.lib.conf_parser as cfg_mod
 
   monkeypatch.setattr(cfg_mod, "get_sync_day_close_candidate_report", lambda: True)
 
@@ -5139,11 +5139,11 @@ def test_log_day_close_candidate_report_includes_async_progress(capsys, monkeypa
 
 
 def test_log_day_close_candidate_report_silent_when_empty(capsys, monkeypatch):
-  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       log_day_close_candidate_report,
   )
 
-  import hpcperfstats.conf_parser as cfg_mod
+  import hpcperfstats.dbload.lib.conf_parser as cfg_mod
 
   monkeypatch.setattr(cfg_mod, "get_sync_day_close_candidate_report", lambda: True)
   log_day_close_candidate_report([], reason="test")
@@ -5151,7 +5151,7 @@ def test_log_day_close_candidate_report_silent_when_empty(capsys, monkeypatch):
 
 
 def test_prepend_checkpoint_blocked_paths_to_pending_dedupes_and_orders():
-  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       prepend_checkpoint_blocked_paths_to_pending,
   )
 
@@ -5166,7 +5166,7 @@ def test_prepend_checkpoint_blocked_paths_to_pending_dedupes_and_orders():
 
 
 def test_oldest_checkpoint_blocked_tar_returns_oldest_on_disk_day(tmp_path):
-  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       oldest_checkpoint_blocked_tar,
   )
 
@@ -5189,7 +5189,7 @@ def test_oldest_checkpoint_blocked_tar_returns_oldest_on_disk_day(tmp_path):
 
 
 def test_classify_ghost_unprocessed_becomes_eligible_deferred(tmp_path):
-  from hpcperfstats.dbload.sync_timedb_archive_helpers import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       classify_day_close_candidates,
   )
 

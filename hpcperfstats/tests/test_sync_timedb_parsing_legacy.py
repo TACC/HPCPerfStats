@@ -1,5 +1,5 @@
 """Legacy stats-file CTL/CTR decode (sync_timedb_parsing_legacy)."""
-from hpcperfstats.dbload.sync_timedb_parsing_legacy import (
+from hpcperfstats.dbload.lib.sync_timedb_parsing_legacy import (
     EVENTMAPS_BY_TYPE,
     map_hardware_counter_vals,
 )

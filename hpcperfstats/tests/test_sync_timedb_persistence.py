@@ -6,8 +6,8 @@ import os
 
 import pytest
 
-from hpcperfstats.dbload import sync_timedb_persistence as persist_mod
-from hpcperfstats.dbload.sync_timedb_persistence import (
+from hpcperfstats.dbload.lib import sync_timedb_persistence as persist_mod
+from hpcperfstats.dbload.lib.sync_timedb_persistence import (
     PERSISTENCE_ARTIFACT_REGISTRY,
     SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION,
     ensure_persistence_contract,

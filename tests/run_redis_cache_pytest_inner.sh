@@ -14,6 +14,6 @@ if [[ -s /tmp/hpcperfstats_pytest_extra_args ]]; then
 fi
 
 exec python -m pytest -q \
-  hpcperfstats/site/machine/tests/test_redis_cache_live.py \
+  hpcperfstats/site/lib/machine/tests/test_redis_cache_live.py \
   hpcperfstats/tests/test_sync_timedb_archive_members_redis.py::test_archive_members_redis_populate_single_flight_compose \
   "${ARGS[@]}"

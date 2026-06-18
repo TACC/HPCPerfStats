@@ -54,24 +54,24 @@ import pytest
 from django.db import connection
 from django.utils import timezone as django_timezone
 
-import hpcperfstats.conf_parser as cfg
-from hpcperfstats.analysis.gen import jid_table as jid_table_mod
-from hpcperfstats.analysis.metrics.live_host_sample_count import (
+import hpcperfstats.dbload.lib.conf_parser as cfg
+from hpcperfstats.analysis.metrics.lib.gen import jid_table as jid_table_mod
+from hpcperfstats.analysis.metrics.lib.live_host_sample_count import (
     live_distinct_host_time_count_expression,
 )
-from hpcperfstats.analysis.metrics.metrics import expected_job_metric_row_count
+from hpcperfstats.analysis.metrics.lib.metrics import expected_job_metric_row_count
 from hpcperfstats.analysis.metrics.update_metrics import (
     _latest_sample_time_by_host,
     update_metrics,
 )
-from hpcperfstats.site.machine.cache_utils import invalidate_job_plot_cache_keys_for_jids
-from hpcperfstats.site.machine.job_plot_artifacts import (
+from hpcperfstats.site.lib.machine.cache_utils import invalidate_job_plot_cache_keys_for_jids
+from hpcperfstats.site.lib.machine.job_plot_artifacts import (
     JOB_PLOT_KINDS,
     JOB_PLOT_LAYOUT_NORMAL,
     JOB_PLOT_LAYOUT_ZOOM_V3,
     compute_plot_item_for_kind,
 )
-from hpcperfstats.site.machine.models import host_data, job_data, job_plot_artifact
+from hpcperfstats.site.lib.machine.models import host_data, job_data, job_plot_artifact
 
 from .monitor_sample_density import analyze_monitor_sample_density
 from .stress_profiler import StressProfiler

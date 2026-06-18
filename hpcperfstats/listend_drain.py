@@ -9,9 +9,9 @@ import sys
 
 import pika
 
-import hpcperfstats.conf_parser as cfg
+import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.listend import append_monitor_payload_to_archive
-from hpcperfstats.print_utils import log_print
+from hpcperfstats.dbload.lib.print_utils import log_print
 
 
 def drain_queue_to_archive():
@@ -51,7 +51,7 @@ def drain_queue_to_archive():
 
 
 def main():
-  from hpcperfstats.process_title import set_script_process_title
+  from hpcperfstats.dbload.lib.process_title import set_script_process_title
 
   set_script_process_title()
   drain_queue_to_archive()

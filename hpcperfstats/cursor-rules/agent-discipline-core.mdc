@@ -43,7 +43,7 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 
 | Trigger paths | Read these rules |
 |---------------|------------------|
-| `hpcperfstats/dbload/sync_timedb*.py`, `sync_timedb_*.py`, `multiprocessing_pool_health.py` | `sync-timedb-persistence-contract.mdc`, `sync-timedb-archive-janitor-contract.mdc`, `sync-timedb-db-before-archive-contract.mdc`, `sync-timedb-lock-and-archive-contract.mdc`, `runtime-resource-and-metrics-safety.mdc` |
+| `hpcperfstats/dbload/sync_timedb.py`, `sync_timedb_archive.py`, `hpcperfstats/dbload/lib/sync_timedb_*.py`, `dbload/lib/**`, `multiprocessing_pool_health.py` | `sync-timedb-persistence-contract.mdc`, `sync-timedb-archive-janitor-contract.mdc`, `sync-timedb-db-before-archive-contract.mdc`, `sync-timedb-lock-and-archive-contract.mdc`, `runtime-resource-and-metrics-safety.mdc` |
 | Startup day-close / archive scan | `sync-timedb-startup-day-close-contract.mdc`, `sync-timedb-canonical-startup-archive-scan.mdc` |
 | Ingest pool + sealed archive / Redis members | `sync-timedb-ingest-pool-io-coordination.mdc` |
 | `hpcperfstats/analysis/metrics/` | `runtime-resource-and-metrics-safety.mdc`, `pipeline-metrics-e2e-maintenance.mdc`, `update-metrics-job-listing-new-data-type.mdc` |
@@ -53,7 +53,7 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 
 | Trigger paths | Read these rules |
 |---------------|------------------|
-| `hpcperfstats/site/machine/api.py`, serializers, models | `django-python-cursor-rules.mdc`, `end-to-end-feature-wiring-contract.mdc` |
+| `hpcperfstats/site/lib/machine/api.py`, serializers, models | `django-python-cursor-rules.mdc`, `end-to-end-feature-wiring-contract.mdc` |
 | API routes, status bands, auth | `api-breaking-change-contract.mdc`, `pipeline-endpoint-matrix-drift-guard.mdc` |
 | Migrations | `django-migration-numbering.mdc` |
 | `hpcperfstats.ini`, compose image config | `immutable-image-ini-policy.mdc`, `hpcperfstats-ini-format.mdc` |
@@ -65,8 +65,8 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 | `hpcperfstats/site/frontend/` | `react-next-ts-cursor-rule.mdc`, `shadcn-ui-frontend.mdc`, `testing-best-practices.mdc`, `frontend-stack-wiring-contract.mdc`, `interactive-ready-controls.mdc` |
 | `hpcperfstats/site/frontend/src/hooks/`, `src/views/`, `app/machine/**`, `src/utils/machine-route-params.ts`, `scripts/audit-wire-drift.mts` | `frontend-stack-wiring-contract.mdc` |
 | `hpcperfstats/site/openapi/`, `orval.config.ts`, `src/api/` | `openapi-orval-sync.mdc`, `openapi-spa-wire-validation-contract.mdc`, `frontend-stack-wiring-contract.mdc` |
-| `hpcperfstats/site/machine/api.py`, `openapi_schema.py`, `openapi_serializers.py` | `openapi-orval-sync.mdc`, `openapi-spa-wire-validation-contract.mdc`, `api-breaking-change-contract.mdc` |
-| `hpcperfstats/site/machine/tests/test_*openapi_wire_contract*.py` | `openapi-spa-wire-validation-contract.mdc` |
+| `hpcperfstats/site/lib/machine/api.py`, `openapi_schema.py`, `openapi_serializers.py` | `openapi-orval-sync.mdc`, `openapi-spa-wire-validation-contract.mdc`, `api-breaking-change-contract.mdc` |
+| `hpcperfstats/site/lib/machine/tests/test_*openapi_wire_contract*.py` | `openapi-spa-wire-validation-contract.mdc` |
 | Job Detail, Extended Search, metadata | `search-metric-artifact-sync.mdc`, `variable-metadata-cross-source-sync.mdc`, `researcher-job-detail-doc-sync.mdc` |
 | Plots / Bokeh embed | `job-plot-artifacts-caching.mdc`, `bokeh-layout-surface-split.mdc`, `no-scientific-notation-web.mdc` |
 | Web-facing pages | `web-pages-e2e-test-maintenance.mdc`, `web-pages-full-e2e-completion-gate.mdc` |
@@ -86,6 +86,7 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 | Trigger paths | Read these rules |
 |---------------|------------------|
 | `hpcperfstats/cursor-rules/*.mdc` | `agent-discipline-core.mdc`, `implementation-review-workflow.mdc` |
+| `hpcperfstats/**/lib/**`, `.gitignore` (when editing `lib/` negation lines) | `package-lib-colocation.mdc` |
 
 ### Plans (only when authoring or implementing a plan)
 

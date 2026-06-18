@@ -1,11 +1,11 @@
 """Dual-read helpers for canonical + legacy monitor names."""
 from pathlib import Path
 
-from hpcperfstats.monitor_naming.legacy import (
+from hpcperfstats.dbload.lib.monitor_naming.legacy import (
     INGEST_LEGACY_KNL_IMC_TYPE,
     MONITOR_LEGACY_KNL_IMC_TYPE,
 )
-from hpcperfstats.monitor_naming.resolve import (
+from hpcperfstats.dbload.lib.monitor_naming.resolve import (
     dram_cas_read_write_pairs,
     events_probe_names,
     imc_types_probe_order,
@@ -17,7 +17,7 @@ def test_monitor_variable_rename_map_yaml_drift():
   repo_root = Path(__file__).resolve().parents[2]
   docs_yaml = repo_root / "docs" / "monitor_variable_rename_map.yaml"
   pkg_yaml = (
-      repo_root / "hpcperfstats" / "monitor_naming"
+      repo_root / "hpcperfstats" / "dbload" / "lib" / "monitor_naming"
       / "monitor_variable_rename_map.yaml"
   )
   assert docs_yaml.is_file()

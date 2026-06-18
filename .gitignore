@@ -36,8 +36,20 @@ tacc_stats.egg-info/
 stats.x
 bin/
 lib/
+!hpcperfstats/dbload/lib/
+!hpcperfstats/dbload/lib/**
+!hpcperfstats/analysis/metrics/lib/
+!hpcperfstats/analysis/metrics/lib/**
+!hpcperfstats/site/lib/
+!hpcperfstats/site/lib/**
+!hpcperfstats/lib/
+!hpcperfstats/lib/**
 !hpcperfstats/site/frontend/src/lib/
 !hpcperfstats/site/frontend/src/lib/**
+# Package lib/ negation above un-ignores __pycache__; re-ignore bytecode everywhere.
+**/__pycache__/
+**/*.pyc
+**/*.pyo
 build/
 .build/
 doc/

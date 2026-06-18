@@ -54,7 +54,7 @@ def test_sync_acct_rename_map():
 def test_sacct_gen_daterange():
   """daterange (exclusive end) yields expected number of days."""
   from datetime import datetime, timedelta
-  from hpcperfstats.dbload.date_utils import daterange
+  from hpcperfstats.dbload.lib.date_utils import daterange
   start = datetime(2024, 1, 1)
   end = datetime(2024, 1, 4)
   days = list(daterange(start, end, inclusive_end=False))
@@ -66,7 +66,7 @@ def test_sacct_gen_daterange():
 def test_sacct_gen_daterange_same_day_empty():
   """daterange with start == end (exclusive) yields no days."""
   from datetime import datetime
-  from hpcperfstats.dbload.date_utils import daterange
+  from hpcperfstats.dbload.lib.date_utils import daterange
   d = datetime(2024, 6, 15)
   days = list(daterange(d, d, inclusive_end=False))
   assert len(days) == 0
@@ -75,7 +75,7 @@ def test_sacct_gen_daterange_same_day_empty():
 def test_sacct_gen_daterange_single_day():
   """daterange with end == start+1 day (exclusive) yields one date."""
   from datetime import datetime, timedelta
-  from hpcperfstats.dbload.date_utils import daterange
+  from hpcperfstats.dbload.lib.date_utils import daterange
   start = datetime(2024, 3, 1)
   end = start + timedelta(days=1)
   days = list(daterange(start, end, inclusive_end=False))

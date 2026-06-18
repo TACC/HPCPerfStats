@@ -14,15 +14,15 @@ globs: hpcperfstats/dbload/sync_timedb*.py
 
 | Concern | Location |
 |---|---|
-| Janitor thread, debt queue, ticks | `hpcperfstats/dbload/sync_timedb_archive_janitor.py` → `ArchiveJanitor` |
-| Multi-slot append dispatch | `hpcperfstats/dbload/sync_timedb_archive_dispatch.py` → `ArchiveDispatchCoordinator` |
-| Hints v2 (`day_phases`, `debt_queue`) | `hpcperfstats/dbload/sync_timedb_archive_maint.py` |
+| Janitor thread, debt queue, ticks | `hpcperfstats/dbload/lib/sync_timedb_archive_janitor.py` → `ArchiveJanitor` |
+| Multi-slot append dispatch | `hpcperfstats/dbload/lib/sync_timedb_archive_dispatch.py` → `ArchiveDispatchCoordinator` |
+| Hints v2 (`day_phases`, `debt_queue`) | `hpcperfstats/dbload/lib/sync_timedb_archive_maint.py` |
 | Per-day tar retention / seal calendar policy | `effective_keep_uncompressed_tar`, `daily_tar_seal_calendar_eligible` in `sync_timedb_archive_helpers.py` |
 | DB-complete tar backfill check | `raw_stats_path_needs_tar_append` in `sync_timedb_archive_helpers.py`; wired from `_parse_stats_file_payload` when `start_idx == -1` |
-| Startup raw removal preflight | `hpcperfstats/dbload/sync_timedb_startup_raw_removal.py` → `StartupRawRemovalPreflight` |
-| Startup checkpoint day-close | `hpcperfstats/dbload/sync_timedb_startup_day_close.py` → `StartupDayClosePreflight` (see **`sync-timedb-startup-day-close-contract.mdc`**) |
-| Async DAY_CLOSE workers | `hpcperfstats/dbload/sync_timedb_async_day_close.py` → `AsyncDayCloseCoordinator` |
-| Per-day post-seal raw removal | `hpcperfstats/dbload/sync_timedb_day_raw_removal.py` → `DayRawRemovalCoordinator` |
+| Startup raw removal preflight | `hpcperfstats/dbload/lib/sync_timedb_startup_raw_removal.py` → `StartupRawRemovalPreflight` |
+| Startup checkpoint day-close | `hpcperfstats/dbload/lib/sync_timedb_startup_day_close.py` → `StartupDayClosePreflight` (see **`sync-timedb-startup-day-close-contract.mdc`**) |
+| Async DAY_CLOSE workers | `hpcperfstats/dbload/lib/sync_timedb_async_day_close.py` → `AsyncDayCloseCoordinator` |
+| Per-day post-seal raw removal | `hpcperfstats/dbload/lib/sync_timedb_day_raw_removal.py` → `DayRawRemovalCoordinator` |
 | Supervisor wiring | `hpcperfstats/dbload/sync_timedb.py` → `run_sync_timedb_supervisor_loop` |
 
 ## Startup raw removal preflight (one-shot at process start)

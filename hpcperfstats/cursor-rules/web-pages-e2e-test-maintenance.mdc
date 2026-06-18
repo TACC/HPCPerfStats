@@ -10,8 +10,8 @@ globs: hpcperfstats/site/**/*
 
 When changing any web-facing page, route, or rendered HTML/SPA behavior, update
 both:
-- `HPCPerfStats/hpcperfstats/site/machine/tests/test_web_pages_e2e.py`
-- `HPCPerfStats/hpcperfstats/site/machine/tests/test_web_pages_browser_e2e.py`
+- `HPCPerfStats/hpcperfstats/site/lib/machine/tests/test_web_pages_e2e.py`
+- `HPCPerfStats/hpcperfstats/site/lib/machine/tests/test_web_pages_browser_e2e.py`
 in the same task.
 
 Also follow **`pub-surface-and-robots-sync.mdc`** when changing anonymous **`/pub/`** routes or **`robots.txt`** `Allow` entries.
@@ -57,7 +57,7 @@ Also follow **`pub-surface-and-robots-sync.mdc`** when changing anonymous **`/pu
 
 ## Bokeh job-list `json_item` fixtures (Playwright embed regression)
 
-`HPCPerfStats/hpcperfstats/site/machine/tests/test_bokeh_job_list_embed_browser_e2e.py`
+`HPCPerfStats/hpcperfstats/site/lib/machine/tests/test_bokeh_job_list_embed_browser_e2e.py`
 embeds **committed** Bokeh `json_item` payloads with real BokehJS in Chromium. The
 JSON files live under:
 
@@ -74,8 +74,8 @@ Current files (keep names stable unless the test is updated):
 
 Regenerate and **commit** updated JSON in the **same task** as you change any of:
 
-- `hpcperfstats/site/machine/views.py` → `job_hist` (figure shape, ranges, glyphs).
-- `hpcperfstats/site/machine/api.py` → `_job_list_queue_bar_chart` (ranges, data source, dimensions).
+- `hpcperfstats/site/lib/machine/views.py` → `job_hist` (figure shape, ranges, glyphs).
+- `hpcperfstats/site/lib/machine/api.py` → `_job_list_queue_bar_chart` (ranges, data source, dimensions).
 - Bokeh major/minor used by the SPA (`package.json` `@bokeh/bokehjs`) if the serialized `json_item` schema or the Playwright test’s CDN pin (`test_bokeh_job_list_embed_browser_e2e.py`) changes.
 
 When changing **`_BOKEH_CDN_JS`** or **`@bokeh/bokehjs`**, follow **`bokeh-version-and-vendor-patch-upgrade.mdc`** (JS/Python pin sync, Vitest + Playwright). Run **`npm run build:with-bokeh-playwright-smoke`** in `hpcperfstats/site/frontend` so **`bokeh-playwright-smoke.html`** and hashed **`assets/bokeh-*.js`** exist for the Vite-bundle Playwright test in the same module (default **`npm run build`** does not emit the smoke HTML).
@@ -87,7 +87,7 @@ Also regenerate if the Playwright test’s **failure substrings** or embed harne
 1. Run from the **Django project root** (directory containing `pyproject.toml`), with test extras installed (`pip install -e ".[test]"`).
 2. Set `DJANGO_SETTINGS_MODULE=hpcperfstats.site.hpcperfstats_site.settings`, call `django.setup()`, then build figures and `json_item(plot)` as the test module describes.
 3. Write **pretty or compact JSON** consistently; avoid embedding the literal substring `</script>` inside the serialized JSON body (the HTML harness wraps the payload in `<script type="application/json">`).
-4. Run `pytest hpcperfstats/site/machine/tests/test_bokeh_job_list_embed_browser_e2e.py` (requires `python -m playwright install chromium` and network for the Bokeh CDN).
+4. Run `pytest hpcperfstats/site/lib/machine/tests/test_bokeh_job_list_embed_browser_e2e.py` (requires `python -m playwright install chromium` and network for the Bokeh CDN).
 5. Keep **Python contract tests** in `test_job_hist_bokeh_ranges.py` green in the same change.
 
 Copy-paste commands and a full generator snippet are maintained in `HPCPerfStats/docs/TESTING.md` (web E2E section); update that doc when regeneration steps or paths change (`testing-doc-sync.mdc`).

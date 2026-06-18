@@ -3,8 +3,8 @@ import os
 from collections import namedtuple
 import pandas as pd
 
-from hpcperfstats.dbload.io_helpers import host_data_instance_from_stats_row
-from hpcperfstats.dbload.sync_timedb_parsing import (
+from hpcperfstats.dbload.lib.io_helpers import host_data_instance_from_stats_row
+from hpcperfstats.dbload.lib.sync_timedb_parsing import (
     EVENTMAPS_BY_TYPE,
     build_stats_dataframes,
     compute_deltas_and_arc,
