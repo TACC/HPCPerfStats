@@ -3,8 +3,8 @@
 #
 # Pipeline and web share the hpcperfstats image, but ingest keeps running because this
 # script never rebuilds that image or restarts the pipeline service. Fresh bundles are
-# copied into the running web container and collectstatic updates the shared
-# staticfiles_data volume that nginx (proxy) serves as /static/ and /machine/.
+# copied into the running web container's STATIC_ROOT frontend tree (shared
+# staticfiles_data volume) that nginx (proxy) serves as /static/ and /machine/.
 #
 # Usage (from the git checkout that contains docker-compose.yaml):
 #   ./scripts/rebuild_frontend.sh
@@ -18,6 +18,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 FRONTEND_DIR="${REPO_ROOT}/hpcperfstats/site/frontend"
 STATIC_FRONTEND="${REPO_ROOT}/hpcperfstats/site/hpcperfstats_site/static/frontend"
 CONTAINER_STATIC_FRONTEND="/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend"
+CONTAINER_STATIC_ROOT="${CONTAINER_STATIC_ROOT:-/home/hpcperfstats/staticfiles}"
+CONTAINER_STATIC_ROOT_FRONTEND="${CONTAINER_STATIC_ROOT}/frontend"
 NODE_IMAGE="node:26.3.0-alpine3.23"
 
 # Next static export shells nginx serves (see services-conf/nginx-static-files.conf).
@@ -49,6 +51,25 @@ verify_spa_shells() {
   echo "Verified SPA shells under ${label}: ${REQUIRED_SPA_SHELLS[*]}"
 }
 
+verify_spa_shells_via_compose() {
+  local container_dir="$1"
+  local label="$2"
+  local rel missing=()
+  for rel in "${REQUIRED_SPA_SHELLS[@]}"; do
+    if ! docker compose exec -T web bash -lc "[[ -f '${container_dir}/${rel}' ]]"; then
+      missing+=("${container_dir}/${rel}")
+    fi
+  done
+  if ((${#missing[@]} > 0)); then
+    echo "rebuild_frontend.sh: required SPA shell(s) missing under ${label}:" >&2
+    for path in "${missing[@]}"; do
+      echo "  missing: ${path}" >&2
+    done
+    return 1
+  fi
+  echo "Verified SPA shells under ${label}: ${REQUIRED_SPA_SHELLS[*]}"
+}
+
 SKIP_NPM_CI=0
 DEPLOY=1
 DOCKER_BUILD=0
@@ -58,13 +79,13 @@ usage() {
 Usage: scripts/rebuild_frontend.sh [options]
 
 Build the SPA (npm run build) and, when the compose web service is running, copy
-artifacts into that container and run collectstatic so nginx serves new hashes
+artifacts into web STATIC_ROOT/frontend (nginx volume) so new hashes are served
 immediately. The pipeline service is never stopped or restarted.
 
 Options:
   --skip-npm-ci    Skip "npm ci" before build (use when node_modules is current)
   --docker-build   Build with a Node container instead of host npm
-  --no-deploy      Build only; do not copy into web or run collectstatic
+  --no-deploy      Build only; do not copy into web STATIC_ROOT/frontend
   -h, --help       Show this help
 EOF
 }
@@ -158,9 +179,10 @@ file_sha256() {
   fi
 }
 
-reset_container_frontend_source_dir() {
+reset_container_dir() {
   local cid="$1"
-  local reset_cmd="rm -rf '${CONTAINER_STATIC_FRONTEND}' && mkdir -p '${CONTAINER_STATIC_FRONTEND}'"
+  local target_dir="$2"
+  local reset_cmd="rm -rf '${target_dir}' && mkdir -p '${target_dir}'"
   if [[ -n "${cid}" ]] && podman_cli_available; then
     podman exec "${cid}" bash -lc "${reset_cmd}"
   else
@@ -168,28 +190,30 @@ reset_container_frontend_source_dir() {
   fi
 }
 
-copy_frontend_via_compose_cp() {
-  docker compose cp "${STATIC_FRONTEND}/." "web:${CONTAINER_STATIC_FRONTEND}/"
+copy_tree_via_compose_cp() {
+  local dest="$1"
+  docker compose cp "${STATIC_FRONTEND}/." "web:${dest}/"
 }
 
-copy_frontend_via_podman_cp() {
+copy_tree_via_podman_cp() {
   local cid="$1"
-  podman cp "${STATIC_FRONTEND}/." "${cid}:${CONTAINER_STATIC_FRONTEND}/"
+  local dest="$2"
+  podman cp "${STATIC_FRONTEND}/." "${cid}:${dest}/"
 }
 
-copy_frontend_via_podman_exec_tar() {
+copy_tree_via_podman_exec_tar() {
   local cid="$1"
-  tar -C "${STATIC_FRONTEND}" -cf - . | podman exec -i "${cid}" tar -xf - -C "${CONTAINER_STATIC_FRONTEND}"
+  local dest="$2"
+  tar -C "${STATIC_FRONTEND}" -cf - . | podman exec -i "${cid}" tar -xf - -C "${dest}"
 }
 
-copy_frontend_into_web() {
-  cd "${REPO_ROOT}"
-  local cid
-  cid="$(web_container_id)"
+copy_frontend_tree_into_web() {
+  local cid="$1"
+  local dest="$2"
 
   if compose_cp_supported; then
-    echo "rebuild_frontend.sh: copying via docker compose cp" >&2
-    copy_frontend_via_compose_cp
+    echo "rebuild_frontend.sh: copying via docker compose cp → ${dest}" >&2
+    copy_tree_via_compose_cp "${dest}"
     return
   fi
 
@@ -203,22 +227,38 @@ copy_frontend_into_web() {
     exit 1
   fi
 
-  echo "rebuild_frontend.sh: compose cp unavailable; resetting container source dir" >&2
-  reset_container_frontend_source_dir "${cid}"
+  echo "rebuild_frontend.sh: compose cp unavailable; resetting ${dest}" >&2
+  reset_container_dir "${cid}" "${dest}"
 
-  if copy_frontend_via_podman_cp "${cid}"; then
-    echo "rebuild_frontend.sh: copied frontend tree via podman cp" >&2
+  if copy_tree_via_podman_cp "${cid}" "${dest}"; then
+    echo "rebuild_frontend.sh: copied frontend tree via podman cp → ${dest}" >&2
     return
   fi
 
-  echo "rebuild_frontend.sh: podman cp failed; trying podman exec -i tar pipe" >&2
-  reset_container_frontend_source_dir "${cid}"
-  copy_frontend_via_podman_exec_tar "${cid}"
+  echo "rebuild_frontend.sh: podman cp failed; trying podman exec -i tar pipe → ${dest}" >&2
+  reset_container_dir "${cid}" "${dest}"
+  copy_tree_via_podman_exec_tar "${cid}" "${dest}"
 }
 
-verify_container_frontend_matches_host() {
+copy_frontend_into_web() {
+  cd "${REPO_ROOT}"
+  local cid
+  cid="$(web_container_id)"
+
+  # nginx (proxy) reads STATIC_ROOT/frontend from the shared staticfiles_data volume.
+  reset_container_dir "${cid}" "${CONTAINER_STATIC_ROOT_FRONTEND}"
+  copy_frontend_tree_into_web "${cid}" "${CONTAINER_STATIC_ROOT_FRONTEND}"
+
+  # Keep image source tree in sync for future collectstatic / container rebuilds.
+  reset_container_dir "${cid}" "${CONTAINER_STATIC_FRONTEND}"
+  copy_frontend_tree_into_web "${cid}" "${CONTAINER_STATIC_FRONTEND}"
+}
+
+verify_container_path_matches_host() {
+  local container_dir="$1"
+  local label="$2"
   local host_probe="${STATIC_FRONTEND}/machine/index.html"
-  local container_probe="${CONTAINER_STATIC_FRONTEND}/machine/index.html"
+  local container_probe="${container_dir}/machine/index.html"
   local host_sha container_sha
 
   host_sha="$(file_sha256 "${host_probe}")"
@@ -228,18 +268,22 @@ verify_container_frontend_matches_host() {
   )"
 
   if [[ -z "${container_sha}" ]]; then
-    echo "rebuild_frontend.sh: container frontend probe missing after copy: ${container_probe}" >&2
+    echo "rebuild_frontend.sh: ${label} probe missing after copy: ${container_probe}" >&2
     return 1
   fi
 
   if [[ "${host_sha}" != "${container_sha}" ]]; then
-    echo "rebuild_frontend.sh: container frontend does not match host after copy" >&2
+    echo "rebuild_frontend.sh: ${label} does not match host after copy" >&2
     echo "  host:      ${host_sha}  (${host_probe})" >&2
     echo "  container: ${container_sha}  (${container_probe})" >&2
     return 1
   fi
 
-  echo "Verified container frontend matches host (${container_probe})"
+  echo "Verified ${label} matches host (${container_probe})"
+}
+
+verify_container_frontend_matches_host() {
+  verify_container_path_matches_host "${CONTAINER_STATIC_ROOT_FRONTEND}" "STATIC_ROOT/frontend (nginx volume)"
 }
 
 deploy_to_compose() {
@@ -250,33 +294,10 @@ deploy_to_compose() {
     return 0
   fi
 
-  echo "Copying built assets into web:${CONTAINER_STATIC_FRONTEND} ..."
+  echo "Copying built assets into web:${CONTAINER_STATIC_ROOT_FRONTEND} (nginx staticfiles volume) ..."
   copy_frontend_into_web
   verify_container_frontend_matches_host
-
-  echo "Running collectstatic in web (updates staticfiles_data for nginx) ..."
-  docker compose exec -T web bash -lc '
-set -euo pipefail
-export STATIC_ROOT="${STATIC_ROOT:-/home/hpcperfstats/staticfiles}"
-rm -rf "${STATIC_ROOT}/frontend"
-/usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput
-frontend_root="${STATIC_ROOT}/frontend"
-required=(machine/index.html pub/index.html)
-missing=()
-for rel in "${required[@]}"; do
-  if [[ ! -f "${frontend_root}/${rel}" ]]; then
-    missing+=("${frontend_root}/${rel}")
-  fi
-done
-if ((${#missing[@]} > 0)); then
-  echo "ERROR: collectstatic did not produce required SPA shell(s):" >&2
-  for path in "${missing[@]}"; do
-    echo "  missing: ${path}" >&2
-  done
-  exit 1
-fi
-echo "Verified SPA shells in STATIC_ROOT: ${required[*]}"
-'
+  verify_spa_shells_via_compose "${CONTAINER_STATIC_ROOT_FRONTEND}" "STATIC_ROOT/frontend"
 
   echo "Frontend deploy complete. nginx serves updated /static/ and /machine/ assets."
   echo "Pipeline was not restarted. Hard-refresh the browser to load new bundle hashes."

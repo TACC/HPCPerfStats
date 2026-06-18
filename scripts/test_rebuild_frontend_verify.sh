@@ -22,7 +22,7 @@ for fn in copy_frontend_into_web compose_cp_supported web_container_id verify_co
   fi
 done
 
-if ! grep -q 'copy_frontend_via_podman_cp' "${REBUILD_SCRIPT}"; then
+if ! grep -q 'copy_tree_via_podman_cp' "${REBUILD_SCRIPT}"; then
   echo "expected podman cp fallback in rebuild_frontend.sh" >&2
   exit 1
 fi
@@ -37,8 +37,13 @@ if grep -q 'compose cp unavailable; using tar pipe via exec' "${REBUILD_SCRIPT}"
   exit 1
 fi
 
-if ! grep -q 'rm -rf "\${STATIC_ROOT}/frontend"' "${REBUILD_SCRIPT}"; then
-  echo "expected STATIC_ROOT/frontend refresh before collectstatic" >&2
+if ! grep -q 'CONTAINER_STATIC_ROOT_FRONTEND' "${REBUILD_SCRIPT}"; then
+  echo "expected STATIC_ROOT/frontend volume deploy in rebuild_frontend.sh" >&2
+  exit 1
+fi
+
+if grep -q 'collectstatic --noinput' "${REBUILD_SCRIPT}"; then
+  echo "rebuild_frontend.sh should deploy directly to STATIC_ROOT/frontend, not rely on collectstatic" >&2
   exit 1
 fi
 
