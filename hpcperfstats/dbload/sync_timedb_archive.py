@@ -20,7 +20,6 @@ import multiprocessing
 import os
 import re
 import sys
-import time
 
 from hpcperfstats.dbload.lib.blas_thread_env import configure_blas_thread_env
 
@@ -34,10 +33,7 @@ configure_blas_thread_env()
 
 SYNC_TIMEDB_ARCHIVE_PROCESS_TITLE = "sync_timedb_archive.py"
 
-from hpcperfstats.dbload.lib.process_title import (
-    apply_pool_worker_process_title,
-    set_daemon_process_title,
-)
+from hpcperfstats.dbload.lib.process_title import set_daemon_process_title
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.dbload.lib.print_utils import log_print
 from hpcperfstats.dbload.lib.archive_compress import (
@@ -51,6 +47,15 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     iter_archive_ingest_tasks,
     iter_sealed_daily_archive_member_paths,
     resolve_sealed_archive_path_for_ingest,
+)
+from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import (
+    max_sealed_archive_ingest_budget_for_paths,
+    stall_abort_polls_for_sealed_archives,
+)
+from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+    apply_ingest_pool_worker_init,
+    clear_dispatch_worker_stages,
+    seed_dispatch_worker_stages,
 )
 from hpcperfstats.dbload.lib.db_unavailable import (
     DatabaseUnavailableExit,
@@ -224,9 +229,11 @@ def _process_stream_archive_task(task_args):
   """Ingest one sealed archive; ``task_args`` is ``(lock, sealed_path)``.
 
   Module scope for ``multiprocessing`` spawn pickling.
+  Returns ``sealed_path`` so the supervisor can clear dispatch placeholders.
   """
   lock, sealed_path = task_args
   _process_stream_archive(lock, sealed_path)
+  return sealed_path
 
 
 def _iter_stream_tasks_chunked(sealed_paths, chunk_size=None):
@@ -239,22 +246,129 @@ def _iter_stream_tasks_chunked(sealed_paths, chunk_size=None):
     yield tasks[off : off + chunk_size]
 
 
-def _process_task_chunk_interruptibly(pool, worker, chunk_locked, on_result):
-  """Process one task chunk while allowing shutdown checks between completions."""
+def _sealed_paths_from_chunk_locked(chunk_locked):
+  return [str(sealed_path) for _lock, sealed_path in (chunk_locked or ())]
+
+
+def _prepare_archive_chunk_stall_diagnostics(sealed_paths, stall_diagnostics):
+  poll_s = float(cfg.get_sync_pool_poll_timeout_s())
+  batch_max_s = max_sealed_archive_ingest_budget_for_paths(sealed_paths)
+  batch_abort = stall_abort_polls_for_sealed_archives(sealed_paths)
+  if stall_diagnostics is not None:
+    stall_diagnostics.current_imap_batch_size = len(sealed_paths or ())
+    stall_diagnostics.current_imap_in_flight = len(sealed_paths or ())
+    stall_diagnostics.current_imap_batch_max_timeout_s = batch_max_s
+    stall_diagnostics.dynamic_stall_abort_after_polls = batch_abort
+    stall_diagnostics.dynamic_stall_wall_s = batch_abort * poll_s
+    stall_diagnostics.imap_batch_cap = len(sealed_paths or ())
+    stall_diagnostics.ingest_pipeline = "sealed_archive_backfill"
+  log_print(
+      "sync_timedb_archive: chunk sealed_days=%d sealed_archive_stall_budget_s=%.1f "
+      "dynamic_stall_abort_after=%d dynamic_stall_wall_s=%.0f"
+      % (
+          len(sealed_paths or ()),
+          batch_max_s,
+          batch_abort,
+          batch_abort * poll_s,
+      ),
+      flush=True,
+  )
+  return batch_abort, batch_max_s
+
+
+def _process_task_chunk_interruptibly(
+    pool,
+    worker,
+    chunk_locked,
+    on_result,
+    *,
+    stall_diagnostics=None,
+    stall_poll_state=None,
+    worker_registry=None,
+):
+  """Process one sealed-day chunk with pool stall guards aligned to sync_timedb."""
   if not chunk_locked:
     return
+  from hpcperfstats.dbload.sync_timedb import (
+      IngestStallDiagnostics,
+      _build_ingest_stall_log_suffix,
+      _calendar_day_hint_from_sealed_paths,
+      _distinct_calendar_days_from_sealed_paths,
+      _format_redis_populate_for_sealed_paths,
+      _handle_pool_worker_exit_fatal,
+      _make_ingest_stall_poll_fn,
+      _make_ingest_stall_warning_fn,
+      _prewarm_archive_members_redis_for_sealed_chunk,
+  )
+
+  sealed_paths = _sealed_paths_from_chunk_locked(chunk_locked)
+  if stall_diagnostics is None:
+    stall_diagnostics = IngestStallDiagnostics()
+  if stall_poll_state is None:
+    stall_poll_state = {}
+  if worker_registry is not None:
+    stall_diagnostics.worker_registry = worker_registry
+  stall_diagnostics.active_pool = pool
+  prewarm_summary = _prewarm_archive_members_redis_for_sealed_chunk(sealed_paths)
+  stall_diagnostics.chunk_prewarm_summary = prewarm_summary
+  batch_abort, _batch_max_s = _prepare_archive_chunk_stall_diagnostics(
+      sealed_paths,
+      stall_diagnostics,
+  )
+  seed_dispatch_worker_stages(worker_registry, sealed_paths)
+  in_flight_sample_fn = lambda: list(sealed_paths)
+  pool_health_context = {
+      "active_pool": pool,
+      "in_flight_sample_fn": in_flight_sample_fn,
+  }
   try:
     for result in imap_unordered_watch_pool(
         pool,
         worker,
         chunk_locked,
         context="sync_timedb_archive pool",
+        stall_abort_after_timeouts=batch_abort,
+        on_stall_warning=_make_ingest_stall_warning_fn(
+            None,
+            pool=pool,
+            thread_count=_archive_worker_process_count(),
+            chunk_counter=0,
+            pending_count=len(sealed_paths),
+            stall_diagnostics=stall_diagnostics,
+            progress_state=stall_poll_state,
+            day_hint_from_sample_fn=_calendar_day_hint_from_sealed_paths,
+            distinct_days_from_sample_fn=_distinct_calendar_days_from_sealed_paths,
+            redis_populate_for_sample_fn=_format_redis_populate_for_sealed_paths,
+        ),
+        on_stall_poll=_make_ingest_stall_poll_fn(
+            None,
+            stall_poll_state,
+            stall_diagnostics=stall_diagnostics,
+            day_hint_from_sample_fn=_calendar_day_hint_from_sealed_paths,
+        ),
+        pool_health_context=pool_health_context,
+        on_stall_fatal_summary=(
+            lambda consecutive, abort_after, poll_timeout_s, ctx: _build_ingest_stall_log_suffix(
+                sample=sealed_paths,
+                day_hint=_calendar_day_hint_from_sealed_paths(sealed_paths),
+                stall_diagnostics=stall_diagnostics,
+                progress_state=stall_poll_state,
+                alive_workers=0,
+                consecutive=consecutive,
+                poll_timeout_s=poll_timeout_s,
+                distinct_days_from_sample_fn=_distinct_calendar_days_from_sealed_paths,
+                redis_populate_for_sample_fn=_format_redis_populate_for_sealed_paths,
+            )
+        ),
     ):
+      if result:
+        clear_dispatch_worker_stages(worker_registry, [result])
+      stall_diagnostics.note_imap_completion()
       on_result(result)
       if shutdown_requested[0]:
         break
-  except MultiprocessingWorkerExitError:
-    raise
+  except MultiprocessingWorkerExitError as exc:
+    _handle_pool_worker_exit_fatal(exc)
   except DatabaseUnavailableExit:
     raise
   except Exception as exc:
@@ -271,7 +385,10 @@ if __name__ == "__main__":
 
   from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
   from hpcperfstats.dbload.sync_timedb import (
+      IngestStallDiagnostics,
+      _handle_pool_worker_exit_fatal,
       _reset_sync_runtime_caches,
+      _warn_if_pool_stall_wall_below_ingest_timeout_max,
       database_startup,
   )
 
@@ -280,6 +397,7 @@ if __name__ == "__main__":
     ensure_django()
     database_startup()
     _reset_sync_runtime_caches()
+    _warn_if_pool_stall_wall_below_ingest_timeout_max()
     close_old_connections()
     connections.close_all()
 
@@ -296,13 +414,18 @@ if __name__ == "__main__":
     for sealed_path in sealed_paths:
       log_print(sealed_path, flush=True)
 
-    manager = multiprocessing.Manager()
+    lock_manager = multiprocessing.Manager()
+    diagnostics_manager = multiprocessing.Manager()
     try:
+      worker_diagnostics_registry = diagnostics_manager.dict()
+      stall_diagnostics = IngestStallDiagnostics()
+      stall_diagnostics.worker_registry = worker_diagnostics_registry
+      stall_poll_state = {}
       lock_shards = max(1, int(cfg.get_sync_write_lock_shards()))
       if lock_shards == 1:
-        manager_lock = manager.Lock()
+        manager_lock = lock_manager.Lock()
       else:
-        manager_lock = [manager.Lock() for _ in range(lock_shards)]
+        manager_lock = [lock_manager.Lock() for _ in range(lock_shards)]
         log_print(
             "Using %d sync_timedb_archive write-lock shards" % lock_shards,
             flush=True,
@@ -310,8 +433,12 @@ if __name__ == "__main__":
       ctx = multiprocessing.get_context("spawn")
       pool = ctx.Pool(
           processes=_archive_worker_process_count(),
-          initializer=apply_pool_worker_process_title,
-          initargs=(SYNC_TIMEDB_ARCHIVE_PROCESS_TITLE, "sealed-archive-pool"),
+          initializer=apply_ingest_pool_worker_init,
+          initargs=(
+              SYNC_TIMEDB_ARCHIVE_PROCESS_TITLE,
+              "sealed-archive-pool",
+              worker_diagnostics_registry,
+          ),
           **_archive_spawn_pool_recycle_kwargs(),
       )
       try:
@@ -325,11 +452,13 @@ if __name__ == "__main__":
               _process_stream_archive_task,
               chunk_locked,
               lambda _result: None,
+              stall_diagnostics=stall_diagnostics,
+              stall_poll_state=stall_poll_state,
+              worker_registry=worker_diagnostics_registry,
           )
           if shutdown_requested[0]:
             break
       except MultiprocessingWorkerExitError:
-        terminate_pool_bounded(pool)
         raise
       finally:
         terminate_pool_bounded(pool)
@@ -338,7 +467,8 @@ if __name__ == "__main__":
         except Exception:
           pass
     finally:
-      manager.shutdown()
+      diagnostics_manager.shutdown()
+      lock_manager.shutdown()
     try:
       connections.close_all()
     except Exception:
@@ -346,14 +476,10 @@ if __name__ == "__main__":
   except DatabaseUnavailableExit:
     sys.exit(2)
   except MultiprocessingWorkerExitError as exc:
-    from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
-        hard_exit_pool_worker_error,
-    )
-
     log_print(
         "sync_timedb_archive exiting after pool worker death: %s" % exc,
         flush=True,
     )
-    hard_exit_pool_worker_error(exc)
+    _handle_pool_worker_exit_fatal(exc)
   if shutdown_requested[0]:
     sys.exit(143)

@@ -156,6 +156,36 @@ def test_stall_abort_polls_respects_ini_ceiling(monkeypatch, tmp_path):
   assert st._stall_abort_polls_for_batch([str(large)]) == 100
 
 
+def test_calendar_day_from_sealed_archive_path(tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import (
+      calendar_day_from_sealed_archive_path,
+  )
+
+  assert calendar_day_from_sealed_archive_path(
+      str(tmp_path / "2024-03-15.tar.zst"),
+  ) == "2024-03-15"
+  assert calendar_day_from_sealed_archive_path(
+      str(tmp_path / "2024-03-15.tar.gz"),
+  ) == "2024-03-15"
+
+
+def test_stall_abort_polls_for_sealed_archives_respects_ini_ceiling(monkeypatch, tmp_path):
+  _default_timeout_getters(monkeypatch)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 100)
+  from hpcperfstats.dbload.lib import sync_timedb_ingest_timeout as ingest_timeout_mod
+
+  monkeypatch.setattr(
+      ingest_timeout_mod,
+      "_redis_member_count_for_sealed_day",
+      lambda _day: 500,
+  )
+  sealed = tmp_path / "2024-01-01.tar.zst"
+  sealed.write_bytes(b"x")
+  monkeypatch.setattr(ingest_timeout_mod.os.path, "getsize", lambda _p: 64 * 1024 * 1024)
+  assert ingest_timeout_mod.stall_abort_polls_for_sealed_archives([str(sealed)]) == 100
+
+
 def test_raise_if_ingest_per_file_deadline_uses_effective_timeout(monkeypatch):
   import time
 

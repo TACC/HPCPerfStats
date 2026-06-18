@@ -77,6 +77,7 @@ from hpcperfstats.dbload.sync_timedb_archive import (
     parse_sync_timedb_archive_argv,
 )
 import hpcperfstats.dbload.sync_timedb_archive as sta
+from hpcperfstats.dbload import sync_timedb as st
 from hpcperfstats.dbload.sync_timedb import archive_stats_files
 from hpcperfstats.dbload.lib.sync_timedb_parsing import parse_first_timestamp_line
 from hpcperfstats.dbload.lib.file_locking import LOCK_SUFFIX
@@ -2720,13 +2721,19 @@ def test_archive_stats_files_skips_dedupe_in_append_path(monkeypatch, tmp_path):
   assert dedupe_calls["count"] == 0
 
 
-def test_process_tar_chunk_stops_when_shutdown_requested():
+def test_process_tar_chunk_stops_when_shutdown_requested(monkeypatch):
   """Chunk processing should stop early when shutdown flips true."""
-  class _FakePool:
-    def imap_unordered(self, _worker, _chunk, chunksize=1):
-      del chunksize
-      yield "first"
-      yield "second"
+  def fake_watch_pool(_pool, _worker, chunk, **kwargs):
+    del kwargs
+    for item in chunk:
+      yield item[1]
+
+  monkeypatch.setattr(sta, "imap_unordered_watch_pool", fake_watch_pool)
+  monkeypatch.setattr(
+      st,
+      "_prewarm_archive_members_redis_for_sealed_chunk",
+      lambda _paths: "-",
+  )
 
   shutdown_requested[0] = False
   try:
@@ -2737,8 +2744,13 @@ def test_process_tar_chunk_stops_when_shutdown_requested():
       shutdown_requested[0] = True
 
     sta._process_task_chunk_interruptibly(
-        _FakePool(), lambda x: x, [("lock", "/a.tar.zst")], _capture)
-    assert results == ["first"]
+        object(),
+        lambda x: x,
+        [("lock", "/a.tar.zst")],
+        _capture,
+        worker_registry={},
+    )
+    assert results == ["/a.tar.zst"]
   finally:
     shutdown_requested[0] = False
 

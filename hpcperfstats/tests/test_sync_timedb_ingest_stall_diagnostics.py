@@ -108,6 +108,30 @@ def test_build_ingest_stall_log_suffix_includes_defer_and_pipeline(monkeypatch):
   assert "dynamic_stall_wall_s=905" in suffix
 
 
+def test_ingest_stall_defer_state_worker_progress_active(monkeypatch):
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 900.0)
+  registry = {
+      "4242": {
+          "path": "/data/host.example/1700000000",
+          "stage": "ingest",
+          "substage": "db_write",
+          "t0": __import__("time").monotonic(),
+      },
+  }
+  diag = st.IngestStallDiagnostics()
+  diag.worker_registry = registry
+  diag.ingest_pipeline = "sealed_archive_backfill"
+  defer_on, reason = st._ingest_stall_defer_state(
+      "",
+      {},
+      stall_diagnostics=diag,
+      consecutive_timeouts=500,
+      sample=["/data/daily/2024-01-01.tar.zst"],
+  )
+  assert defer_on is True
+  assert reason == "worker_progress_active"
+
+
 def test_ingest_stall_defer_state_no_day_hint():
   defer_on, reason = st._ingest_stall_defer_state("", {})
   assert defer_on is False

@@ -168,6 +168,76 @@ def format_worker_stages_snapshot(registry, *, max_entries=16):
   return ",".join(parts) if parts else "-"
 
 
+def iter_alive_pool_worker_pids(pool):
+  """Yield string PIDs for alive workers in ``pool``."""
+  if pool is None:
+    return
+  try:
+    from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
+        iter_pool_worker_processes,
+    )
+  except Exception:
+    return
+  for proc in iter_pool_worker_processes(pool):
+    is_alive_fn = getattr(proc, "is_alive", None)
+    if callable(is_alive_fn) and is_alive_fn():
+      pid = getattr(proc, "pid", None)
+      if pid is not None:
+        yield str(pid)
+
+
+def worker_registry_shows_recent_progress(
+    registry,
+    *,
+    pool=None,
+    alive_pids=None,
+    progress_grace_s=None,
+):
+  """True when any alive worker has a registry stage younger than its ingest budget."""
+  if registry is None:
+    return False
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import (
+      resolve_ingest_per_file_timeout_s,
+  )
+
+  floor_s = float(cfg.get_sync_ingest_per_file_timeout_s())
+  if progress_grace_s is None:
+    progress_grace_s = floor_s if floor_s > 0.0 else 900.0
+  else:
+    progress_grace_s = float(progress_grace_s)
+  if alive_pids is None and pool is not None:
+    alive_pids = set(iter_alive_pool_worker_pids(pool))
+  elif alive_pids is not None:
+    alive_pids = {str(pid) for pid in alive_pids}
+  else:
+    alive_pids = set()
+  now = time.monotonic()
+  try:
+    items = list(registry.items())
+  except Exception:
+    return False
+  for pid, raw in items:
+    pid_s = str(pid)
+    if pid_s.startswith("dispatch:"):
+      continue
+    if alive_pids and pid_s not in alive_pids:
+      continue
+    if not isinstance(raw, dict):
+      continue
+    t0 = raw.get("t0")
+    if t0 is None:
+      continue
+    age_s = max(0.0, now - float(t0))
+    path = raw.get("path") or ""
+    budget_s = resolve_ingest_per_file_timeout_s(str(path)) if path else progress_grace_s
+    if budget_s <= 0.0:
+      budget_s = progress_grace_s
+    if age_s < budget_s:
+      return True
+  return False
+
+
 def prune_stale_worker_stages(registry, *, alive_pids=None, max_age_s=3600.0):
   if registry is None:
     return

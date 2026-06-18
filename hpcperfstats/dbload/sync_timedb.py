@@ -80,6 +80,7 @@ from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
     terminate_pool_bounded,
 )
 from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import (
+    calendar_day_from_sealed_archive_path,
     max_ingest_per_file_timeout_for_paths as _max_ingest_per_file_timeout_for_paths,
     resolve_ingest_per_file_timeout_s,
     stall_abort_polls_for_paths as _stall_abort_polls_for_batch,
@@ -152,6 +153,7 @@ from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
     record_worker_stage,
     seed_dispatch_worker_stages,
     update_worker_substage,
+    worker_registry_shows_recent_progress,
 )
 from hpcperfstats.dbload.lib.sync_timedb_async_day_close import AsyncDayCloseCoordinator
 from hpcperfstats.dbload.lib.file_locking import file_write_lock
@@ -488,6 +490,26 @@ def _prewarm_archive_members_redis_for_chunk(paths):
   return summary
 
 
+def _prewarm_archive_members_redis_for_sealed_chunk(sealed_paths):
+  """Prewarm Redis member maps for unique calendar days in a sealed archive chunk."""
+  day_items = []
+  seen = set()
+  for sealed_path in sealed_paths or ():
+    if not sealed_path:
+      continue
+    norm = os.path.normpath(str(sealed_path))
+    if norm in seen:
+      continue
+    seen.add(norm)
+    day_token = calendar_day_from_sealed_archive_path(sealed_path)
+    if not day_token:
+      continue
+    day_items.append((sealed_path, day_token))
+  summary = _prewarm_archive_members_redis_for_days(day_items)
+  log_print("INFO: archive chunk prewarm days=%s" % summary, flush=True)
+  return summary
+
+
 def _calendar_day_hint_from_paths(paths):
   """Best-effort calendar day from first in-flight stats path filename epoch."""
   for path in paths or ():
@@ -502,6 +524,29 @@ def _calendar_day_hint_from_paths(paths):
       except (TypeError, ValueError, OSError, OverflowError):
         pass
   return ""
+
+
+def _calendar_day_hint_from_sealed_paths(sealed_paths):
+  """Best-effort calendar day from sealed daily archive paths."""
+  for path in sealed_paths or ():
+    day = calendar_day_from_sealed_archive_path(path)
+    if day:
+      return day
+  return ""
+
+
+def _distinct_calendar_days_from_sealed_paths(sealed_paths, max_days=8):
+  days = []
+  seen = set()
+  for path in sealed_paths or ():
+    day = calendar_day_from_sealed_archive_path(path)
+    if not day or day in seen:
+      continue
+    seen.add(day)
+    days.append(day)
+    if len(days) >= max(1, int(max_days)):
+      break
+  return days
 
 
 def _distinct_calendar_days_from_paths(paths, max_days=8):
@@ -625,12 +670,23 @@ def _ingest_stall_defer_long_budget(stall_diagnostics, consecutive_timeouts):
   return False, ""
 
 
+def _sample_looks_like_sealed_archives(sample):
+  for path in sample or ():
+    base = os.path.basename(str(path))
+    if base.endswith(".tar.zst") or base.endswith(".tar.gz"):
+      return True
+  return False
+
+
 def _ingest_stall_defer_state(
     day_hint,
     progress_state,
     *,
     stall_diagnostics=None,
     consecutive_timeouts=0,
+    pool=None,
+    sample=None,
+    day_hint_from_sample_fn=None,
 ):
   defer_on, defer_reason = _ingest_stall_defer_long_budget(
       stall_diagnostics,
@@ -638,6 +694,27 @@ def _ingest_stall_defer_state(
   )
   if defer_on:
     return True, defer_reason
+  registry = (
+      getattr(stall_diagnostics, "worker_registry", None)
+      if stall_diagnostics is not None
+      else None
+  )
+  active_pool = pool
+  if active_pool is None and stall_diagnostics is not None:
+    active_pool = getattr(stall_diagnostics, "active_pool", None)
+  pipeline = (
+      getattr(stall_diagnostics, "ingest_pipeline", "")
+      if stall_diagnostics is not None
+      else ""
+  )
+  if pipeline == "sealed_archive_backfill" or _sample_looks_like_sealed_archives(sample):
+    if worker_registry_shows_recent_progress(registry, pool=active_pool):
+      return True, "worker_progress_active"
+  if not day_hint:
+    if callable(day_hint_from_sample_fn) and sample:
+      day_hint = day_hint_from_sample_fn(sample)
+    elif sample:
+      day_hint = _calendar_day_hint_from_sealed_paths(sample)
   if not day_hint:
     return False, "no_day_hint"
   if archive_members_populate_shows_progress_for_day(
@@ -666,6 +743,18 @@ def _ingest_stall_defer_state(
 
 def _format_redis_populate_for_in_flight_days(paths, max_days=3):
   days = _distinct_calendar_days_from_paths(paths, max_days=max_days)
+  if not days:
+    return ""
+  parts = [
+      "%s{%s}"
+      % (day, describe_archive_members_populate_redis_for_day(day, tgz_archive_dir))
+      for day in days
+  ]
+  return " redis_by_day=" + " ".join(parts)
+
+
+def _format_redis_populate_for_sealed_paths(sealed_paths, max_days=3):
+  days = _distinct_calendar_days_from_sealed_paths(sealed_paths, max_days=max_days)
   if not days:
     return ""
   parts = [
@@ -735,12 +824,16 @@ def _build_ingest_stall_log_suffix(
     alive_workers,
     consecutive,
     poll_timeout_s,
+    distinct_days_from_sample_fn=None,
+    redis_populate_for_sample_fn=None,
 ):
   defer_on, defer_reason = _ingest_stall_defer_state(
       day_hint,
       progress_state,
       stall_diagnostics=stall_diagnostics,
       consecutive_timeouts=consecutive,
+      pool=getattr(stall_diagnostics, "active_pool", None),
+      sample=sample,
   )
   floor_timeout_s = float(cfg.get_sync_ingest_per_file_timeout_s())
   max_timeout_s = float(cfg.get_sync_ingest_per_file_timeout_max_s())
@@ -766,6 +859,14 @@ def _build_ingest_stall_log_suffix(
   batch_max_s = float(getattr(diag, "current_imap_batch_max_timeout_s", 0.0) or 0.0)
   dynamic_abort = int(getattr(diag, "dynamic_stall_abort_after_polls", 0) or 0)
   dynamic_wall = float(getattr(diag, "dynamic_stall_wall_s", 0.0) or 0.0)
+  if distinct_days_from_sample_fn is None:
+    distinct_days_fn = _distinct_calendar_days_from_paths
+  else:
+    distinct_days_fn = distinct_days_from_sample_fn
+  if redis_populate_for_sample_fn is None:
+    redis_suffix_fn = _format_redis_populate_for_in_flight_days
+  else:
+    redis_suffix_fn = redis_populate_for_sample_fn
   return (
       " sync_ingest_per_file_timeout_s=%s sync_ingest_per_file_timeout_max_s=%s"
       " batch_max_ingest_timeout_s=%.1f dynamic_stall_abort_after=%d"
@@ -787,7 +888,7 @@ def _build_ingest_stall_log_suffix(
           int(diag.imap_batch_cap or 0),
           int(diag.chunk_batch_size or 0),
           int(diag.current_imap_batch_size or len(sample)),
-          ",".join(_distinct_calendar_days_from_paths(sample)) or "-",
+          ",".join(distinct_days_fn(sample)) or "-",
           _in_flight_file_meta_from_paths(sample),
           since_text,
           diag.ingest_pipeline or "combined",
@@ -798,7 +899,7 @@ def _build_ingest_stall_log_suffix(
           in_flight_n,
           worker_stages,
           registry_gap,
-          _format_redis_populate_for_in_flight_days(sample),
+          redis_suffix_fn(sample),
       )
   )
 
@@ -812,12 +913,18 @@ def _make_ingest_stall_warning_fn(
     pending_count,
     stall_diagnostics=None,
     progress_state=None,
+    day_hint_from_sample_fn=None,
+    distinct_days_from_sample_fn=None,
+    redis_populate_for_sample_fn=None,
 ):
   def on_stall_warning(consecutive, abort_after, poll_timeout_s, context):
     sample = tracker.sample_in_flight() if tracker is not None else []
     alive_workers = alive_pool_worker_count(pool)
     pool_workers = int(thread_count) if thread_count else alive_workers
-    day_hint = _calendar_day_hint_from_paths(sample)
+    if callable(day_hint_from_sample_fn):
+      day_hint = day_hint_from_sample_fn(sample)
+    else:
+      day_hint = _calendar_day_hint_from_paths(sample)
     extra = _build_ingest_stall_log_suffix(
         sample=sample,
         day_hint=day_hint,
@@ -826,6 +933,8 @@ def _make_ingest_stall_warning_fn(
         alive_workers=alive_workers,
         consecutive=consecutive,
         poll_timeout_s=poll_timeout_s,
+        distinct_days_from_sample_fn=distinct_days_from_sample_fn,
+        redis_populate_for_sample_fn=redis_populate_for_sample_fn,
     )
     redis_hint = ""
     if day_hint and "redis_by_day=" not in extra:
@@ -860,7 +969,13 @@ def _make_ingest_stall_warning_fn(
   return on_stall_warning
 
 
-def _make_ingest_stall_poll_fn(tracker, progress_state, stall_diagnostics=None):
+def _make_ingest_stall_poll_fn(
+    tracker,
+    progress_state,
+    stall_diagnostics=None,
+    *,
+    day_hint_from_sample_fn=None,
+):
   """Defer pool imap stall abort while Redis populate shows progress."""
 
   def on_stall_poll(consecutive, context, pool_health_context):
@@ -870,23 +985,30 @@ def _make_ingest_stall_poll_fn(tracker, progress_state, stall_diagnostics=None):
       sample = tracker.sample_in_flight()
     elif pool_health_context.get("in_flight_sample"):
       sample = pool_health_context["in_flight_sample"]
-    day_hint = _calendar_day_hint_from_paths(sample)
+    active_pool = pool_health_context.get("active_pool")
+    if callable(day_hint_from_sample_fn):
+      day_hint = day_hint_from_sample_fn(sample)
+    else:
+      day_hint = _calendar_day_hint_from_paths(sample)
     defer_on, defer_reason = _ingest_stall_defer_state(
         day_hint,
         progress_state,
         stall_diagnostics=stall_diagnostics,
         consecutive_timeouts=consecutive,
+        pool=active_pool,
+        sample=sample,
+        day_hint_from_sample_fn=day_hint_from_sample_fn,
     )
     if defer_on:
       poll_s = float(cfg.get_sync_pool_poll_timeout_s())
       estimated_stall_s = consecutive * poll_s
+      worker_stages = format_worker_stages_snapshot(
+          getattr(stall_diagnostics, "worker_registry", None)
+          if stall_diagnostics is not None
+          else None,
+      )
       if defer_reason == "long_ingest_budget":
         effective = _max_effective_ingest_timeout_from_registry(
-            getattr(stall_diagnostics, "worker_registry", None)
-            if stall_diagnostics is not None
-            else None,
-        )
-        worker_stages = format_worker_stages_snapshot(
             getattr(stall_diagnostics, "worker_registry", None)
             if stall_diagnostics is not None
             else None,
@@ -913,14 +1035,23 @@ def _make_ingest_stall_poll_fn(tracker, progress_state, stall_diagnostics=None):
             flush=True,
         )
         return True
+      if defer_reason == "worker_progress_active":
+        log_print(
+            "WARN: pool imap stall deferred: worker progress active "
+            "consecutive_timeouts=%d in_flight_n=%d estimated_stall_s=%.1f "
+            "worker_stages=%s"
+            % (
+                int(consecutive),
+                len(sample),
+                estimated_stall_s,
+                worker_stages,
+            ),
+            flush=True,
+        )
+        return True
       redis_snapshot = describe_archive_members_populate_redis_for_day(
           day_hint,
           tgz_archive_dir,
-      )
-      worker_stages = format_worker_stages_snapshot(
-          getattr(stall_diagnostics, "worker_registry", None)
-          if stall_diagnostics is not None
-          else None,
       )
       log_print(
           "WARN: pool imap stall deferred: Redis populate active for day=%s (%s) "
