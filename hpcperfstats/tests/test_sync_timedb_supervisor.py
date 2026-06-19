@@ -4978,8 +4978,8 @@ def test_supervisor_startup_tail_ingest_runs_during_drain(monkeypatch, tmp_path,
     class _DoneDayClose:
       enabled = True
 
-      def __init__(self, **_kwargs):
-        pass
+      def __init__(self, **kwargs):
+        self._tail = kwargs.get("tail_ingest_coordinator")
 
       def discover_done(self):
         return True
@@ -4988,7 +4988,8 @@ def test_supervisor_startup_tail_ingest_runs_during_drain(monkeypatch, tmp_path,
         return 0
 
       def start_async_discover_and_close(self):
-        return None
+        if self._tail is not None:
+          self._tail.enqueue_tail_day(tar_norm, [raw_path])
 
       def shutdown(self, wait=True):
         del wait
@@ -5089,7 +5090,39 @@ def test_supervisor_startup_tail_ingest_runs_during_drain(monkeypatch, tmp_path,
     shutdown_requested[0] = False
 
 
-def _startup_tail_drain_patches(monkeypatch, tmp_path, *, live_unprocessed_fn, max_files=100):
+def _make_enqueue_tail_day_close_class(enqueue_fn):
+  """Build a StartupDayClosePreflight fake that enqueues tail work on start."""
+
+  class _EnqueueTailDayClose:
+    enabled = True
+
+    def __init__(self, **kwargs):
+      self._tail = kwargs.get("tail_ingest_coordinator")
+
+    def discover_done(self):
+      return True
+
+    def pending_deferral_count(self):
+      return 0
+
+    def start_async_discover_and_close(self):
+      if self._tail is not None and enqueue_fn is not None:
+        enqueue_fn(self._tail)
+
+    def shutdown(self, wait=True):
+      del wait
+
+  return _EnqueueTailDayClose
+
+
+def _startup_tail_drain_patches(
+    monkeypatch,
+    tmp_path,
+    *,
+    live_unprocessed_fn,
+    max_files=100,
+    enqueue_on_start=None,
+):
   """Shared mocks for startup tail ingest supervisor drain tests."""
   import hpcperfstats.dbload.lib.sync_timedb_startup_raw_removal as preflight_mod
   import hpcperfstats.dbload.lib.sync_timedb_startup_day_close as day_close_mod
@@ -5141,10 +5174,16 @@ def _startup_tail_drain_patches(monkeypatch, tmp_path, *, live_unprocessed_fn, m
     def shutdown(self, wait=True):
       del wait
 
+  day_close_cls = (
+      _make_enqueue_tail_day_close_class(enqueue_on_start)
+      if enqueue_on_start is not None
+      else _DoneDayClose
+  )
+
   monkeypatch.setattr(preflight_mod, "StartupRawRemovalPreflight", _DoneRawPreflight)
   monkeypatch.setattr(st, "StartupRawRemovalPreflight", _DoneRawPreflight)
-  monkeypatch.setattr(day_close_mod, "StartupDayClosePreflight", _DoneDayClose)
-  monkeypatch.setattr(st, "StartupDayClosePreflight", _DoneDayClose)
+  monkeypatch.setattr(day_close_mod, "StartupDayClosePreflight", day_close_cls)
+  monkeypatch.setattr(st, "StartupDayClosePreflight", day_close_cls)
   monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
   monkeypatch.setattr(st.cfg, "get_sync_startup_drain_day_close_before_ingest", lambda: True)
   monkeypatch.setattr(st.cfg, "get_sync_startup_tail_ingest_enabled", lambda: True)
@@ -5212,11 +5251,17 @@ def test_supervisor_startup_tail_ingest_skips_above_max_files(
       return {tar_norm: many_paths}
 
     archive_dir, _ = _startup_tail_drain_patches(
-        monkeypatch, tmp_path, live_unprocessed_fn=live_unprocessed, max_files=100)
+        monkeypatch,
+        tmp_path,
+        live_unprocessed_fn=live_unprocessed,
+        max_files=100,
+        enqueue_on_start=lambda tail: tail.note_deferred_above_max(
+            tar_norm, len(many_paths), 100),
+    )
     st.run_sync_timedb_supervisor_loop(
         str(archive_dir), "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
     out = capsys.readouterr().out
-    assert "startup tail ingest skip" in out
+    assert "startup tail ingest defer" in out
     assert "above_max_files" in out
     assert "startup tail ingest begin" not in out
   finally:
@@ -5269,14 +5314,20 @@ def test_supervisor_startup_drain_completes_when_day_raw_waiting_on_ingest_and_t
       return []
 
     archive_dir, _ = _startup_tail_drain_patches(
-        monkeypatch, tmp_path, live_unprocessed_fn=live_unprocessed, max_files=100)
+        monkeypatch,
+        tmp_path,
+        live_unprocessed_fn=live_unprocessed,
+        max_files=100,
+        enqueue_on_start=lambda tail: tail.note_deferred_above_max(
+            tar_norm, len(many_paths), 100),
+    )
     _supervisor_day_raw_removal_patches(monkeypatch, _WaitingOnIngestDayCoord())
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
     st.run_sync_timedb_supervisor_loop(
         str(archive_dir), "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
     out = capsys.readouterr().out
-    assert "startup tail ingest skip" in out
-    assert "startup day-close and deletion drain complete" in out
+    assert "startup tail ingest defer" in out
+    assert "startup ingest maintenance complete" in out
     assert "startup maintenance idle; ingest may begin" in out
     assert rescan_calls["n"] >= 1
   finally:
@@ -5323,7 +5374,15 @@ def test_supervisor_startup_tail_ingest_loops_two_small_days(
       return (path, True, True, 0.0)
 
     archive_dir, _ = _startup_tail_drain_patches(
-        monkeypatch, tmp_path, live_unprocessed_fn=live_unprocessed, max_files=100)
+        monkeypatch,
+        tmp_path,
+        live_unprocessed_fn=live_unprocessed,
+        max_files=100,
+        enqueue_on_start=lambda tail: (
+            tail.enqueue_tail_day(tar_day1, paths_day1),
+            tail.enqueue_tail_day(tar_day2, paths_day2),
+        ),
+    )
     monkeypatch.setattr(st, "add_stats_file_to_db", fake_add)
     monkeypatch.setattr(
         async_day_close_mod.AsyncDayCloseCoordinator,
@@ -5393,7 +5452,13 @@ def test_supervisor_startup_tail_ingest_uses_imap_and_prewarm_when_pool_present(
       return {}
 
     archive_dir, _ = _startup_tail_drain_patches(
-        monkeypatch, tmp_path, live_unprocessed_fn=live_unprocessed, max_files=100)
+        monkeypatch,
+        tmp_path,
+        live_unprocessed_fn=live_unprocessed,
+        max_files=100,
+        enqueue_on_start=lambda tail: tail.enqueue_tail_day(
+            tar_norm, list(raw_paths)),
+    )
     monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: False)
     monkeypatch.setattr(st.multiprocessing, "get_context", fake_get_context)
     monkeypatch.setattr(st.multiprocessing, "Manager", lambda: _FakeManager())
@@ -5444,5 +5509,166 @@ def test_supervisor_reconcile_prepends_oldest_blocked_before_chunk(
         str(archive_dir), "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
     assert ingest_order[0] == blocked_path
     assert other_path in ingest_order
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_supervisor_gate_clears_with_async_day_close_inflight_after_tail_done(
+    monkeypatch, tmp_path, capsys):
+  shutdown_requested[0] = False
+  rescan_calls = {"n": 0}
+  try:
+    daily_dir = tmp_path / "daily"
+    daily_dir.mkdir()
+    tar_norm = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+    open(tar_norm, "wb").close()
+    raw_path = str(tmp_path / "raw_one")
+    open(raw_path, "wb").close()
+
+    def live_unprocessed(*_a, **_k):
+      return {}
+
+    def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
+      rescan_calls["n"] += 1
+      shutdown_requested[0] = True
+      return []
+
+    archive_dir, _ = _startup_tail_drain_patches(
+        monkeypatch,
+        tmp_path,
+        live_unprocessed_fn=live_unprocessed,
+        enqueue_on_start=lambda tail: tail.enqueue_tail_day(tar_norm, [raw_path]),
+    )
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(
+        async_day_close_mod.AsyncDayCloseCoordinator,
+        "active_or_submitted_tar_paths",
+        lambda self: {tar_norm},
+    )
+    st.run_sync_timedb_supervisor_loop(
+        str(archive_dir), "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
+    out = capsys.readouterr().out
+    assert "startup ingest maintenance complete" in out
+    assert "startup maintenance idle; ingest may begin" in out
+    assert rescan_calls["n"] >= 1
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_supervisor_gate_waits_until_tail_ingest_done(monkeypatch, tmp_path):
+  shutdown_requested[0] = False
+  rescan_calls = {"n": 0}
+  ingest_calls = {"n": 0}
+  try:
+    import hpcperfstats.dbload.lib.sync_timedb_startup_tail_ingest as tail_mod
+
+    class _SlowTailIngest:
+      enabled = True
+
+      def __init__(self, **_kwargs):
+        pass
+
+      def tail_ingest_done(self):
+        return False
+
+      def pending_count(self):
+        return 1
+
+      def start_async_tail_ingest(self):
+        return None
+
+      def shutdown(self, wait=True):
+        del wait
+
+    class _PendingDiscover:
+      enabled = True
+
+      def __init__(self, **_kwargs):
+        pass
+
+      def discover_done(self):
+        return True
+
+      def pending_deferral_count(self):
+        return 0
+
+      def start_async_discover_and_close(self):
+        return None
+
+      def shutdown(self, wait=True):
+        del wait
+
+    def fake_sleep(_seconds):
+      fake_sleep.calls += 1
+      if fake_sleep.calls > 2:
+        shutdown_requested[0] = True
+
+    fake_sleep.calls = 0
+
+    def fake_rescan(*_a, **_k):
+      rescan_calls["n"] += 1
+      return ["/fake/stats/pending"]
+
+    def fake_add(_lock, path, **_k):
+      ingest_calls["n"] += 1
+      return (path, True, True, 0.0)
+
+    import hpcperfstats.dbload.lib.sync_timedb_startup_raw_removal as preflight_mod
+    import hpcperfstats.dbload.lib.sync_timedb_startup_day_close as day_close_mod
+    from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
+        StartupArchiveScanCoordinator,
+    )
+
+    class _DoneRawPreflight:
+      enabled = False
+
+      def __init__(self, **_kwargs):
+        pass
+
+      def delete_phase_done(self):
+        return True
+
+      def start_async_verify(self):
+        return None
+
+      def shutdown(self, wait=True):
+        del wait
+
+    monkeypatch.setattr(tail_mod, "StartupTailIngestCoordinator", _SlowTailIngest)
+    monkeypatch.setattr(st, "StartupTailIngestCoordinator", _SlowTailIngest)
+    monkeypatch.setattr(day_close_mod, "StartupDayClosePreflight", _PendingDiscover)
+    monkeypatch.setattr(st, "StartupDayClosePreflight", _PendingDiscover)
+    monkeypatch.setattr(preflight_mod, "StartupRawRemovalPreflight", _DoneRawPreflight)
+    monkeypatch.setattr(st, "StartupRawRemovalPreflight", _DoneRawPreflight)
+    monkeypatch.setattr(st.cfg, "get_sync_startup_drain_day_close_before_ingest", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_sync_startup_tail_ingest_enabled", lambda: True)
+    monkeypatch.setattr(st, "sleep_until_shutdown", fake_sleep)
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "add_stats_file_to_db", fake_add)
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "chunk_size", 1)
+    monkeypatch.setattr(st, "rescan_every_chunks", 100)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp/daily")
+    monkeypatch.setattr(st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
+    monkeypatch.setattr(
+        StartupArchiveScanCoordinator,
+        "is_startup_heavy_maintenance_idle",
+        lambda self: True,
+    )
+    monkeypatch.setattr(
+        StartupArchiveScanCoordinator,
+        "wait_for_startup_maintenance_idle",
+        lambda self: True,
+    )
+    monkeypatch.setattr(st, "ensure_persistence_contract", lambda *_a, **_k: None)
+
+    st.run_sync_timedb_supervisor_loop(
+        "/tmp/archive", "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
+
+    assert rescan_calls["n"] == 0
+    assert ingest_calls["n"] == 0
   finally:
     shutdown_requested[0] = False

@@ -5,15 +5,16 @@ alwaysApply: false
 
 # sync_timedb startup day-close contract
 
-When **`sync_startup_day_close_preflight=yes`** (default), the supervisor starts a **single-flight** background discover thread (`sync_timedb.py [thread:startup-day-close-preflight]`). When **`sync_startup_drain_day_close_before_ingest=yes`** (default), the supervisor **blocks first rescan/ingest** until startup day-close discover, async DAY_CLOSE workers, startup raw-removal deletes, and day-close raw deletes are idle (one-time gate; disable drain INI to restore parallel ingest).
+When **`sync_startup_day_close_preflight=yes`** (default), the supervisor starts a **single-flight** background discover thread (`sync_timedb.py [thread:startup-day-close-preflight]`). When **`sync_startup_tail_ingest_enabled=yes`** (default), a **pipelined** **`StartupTailIngestCoordinator`** thread (`[thread:startup-tail-ingest]`) consumes tail-eligible day enqueue from each discover slice. When **`sync_startup_drain_day_close_before_ingest=yes`** (default), the supervisor **blocks first rescan/ingest** until startup discover, startup tail ingest, startup raw-removal deletes, and day-close raw deletes that block startup are idle — **not** until async `DAY_CLOSE` workers finish (one-time gate; disable drain INI to restore parallel ingest).
 
 ## Canonical modules
 
 | Concern | Location |
 |---|---|
-| Discover + submit | `hpcperfstats/dbload/lib/sync_timedb_startup_day_close.py` → `StartupDayClosePreflight` |
+| Discover + submit + tail enqueue | `hpcperfstats/dbload/lib/sync_timedb_startup_day_close.py` → `StartupDayClosePreflight` |
+| Pipelined tail ingest consumer | `hpcperfstats/dbload/lib/sync_timedb_startup_tail_ingest.py` → `StartupTailIngestCoordinator` |
 | Async seal/raw/tar worker | `hpcperfstats/dbload/lib/sync_timedb_async_day_close.py` → `AsyncDayCloseCoordinator` |
-| Checkpoint subtract + classify | `load_checkpoint_path_set`, `build_unprocessed_raw_by_daily_tar`, `days_ingest_complete_by_checkpoint`, `days_quiescent_tar_needs_day_close_at_startup`, `daily_tar_eligible_for_day_close_submit`, `classify_day_close_candidates` in `sync_timedb_archive_helpers.py` |
+| Checkpoint subtract + classify | `load_checkpoint_path_set`, `build_unprocessed_raw_by_daily_tar`, `days_ingest_complete_by_checkpoint`, `days_quiescent_tar_needs_day_close_at_startup`, `daily_tar_eligible_for_day_close_submit`, `classify_day_close_candidates`, `tail_eligible_days_from_unprocessed`, `iter_checkpoint_blocked_days_oldest_first` in `sync_timedb_archive_helpers.py` |
 | Persistence API | `sync_timedb_persistence.py` — checkpoint/manifest load/save via `load_persistence_document` / `save_persistence_document`; contract bump resets sidecars (`sync-timedb-persistence-contract.mdc`) |
 | Manifest | `{archive_data_dir}/.sync_timedb_startup_day_close.json` |
 | Checkpoint | `{archive_data_dir}/.sync_timedb_state.json` (envelope with `entries`; same path/size/mtime fingerprint as supervisor restart) |
@@ -33,27 +34,37 @@ When **`sync_startup_day_close_preflight=yes`** (default), the supervisor starts
 
 **Not** gated on global `pending_stats_files` length.
 
+## Pipelined discover → tail ingest
+
+After each discover slice builds `unprocessed_by_tar`:
+
+1. **Enqueue** every oldest-first day with **`1 <= on_disk_paths <= sync_startup_tail_ingest_max_files`** via `StartupTailIngestCoordinator.enqueue_tail_day` (idempotent per tar per boot).
+2. **Defer** days with **`> max_files`** via `note_deferred_above_max` (main ingest handles; log once per tar).
+3. **Tail thread** starts at boot **in parallel** with discover; **does not** wait for `discover_done()` before consuming the first enqueue.
+4. Tail ingest uses the **ingest pool imap sliding-window path** (same as main ingest; **`HPCPERFSTATS_SYNC_TIMEDB_INGEST_INLINE=1`** forces supervisor-thread serial ingest for tests), archive finalize, flush checkpoint, submit async **`DAY_CLOSE`** on checkpoint-complete.
+5. **`tail_ingest_done()`** when **`discover_done()` AND queue empty AND no in-progress day**.
+
+**Only days released by discover slices** may be tail-ingested (tail thread must not live-scan ahead of slice classification).
+
 ## Startup drain gate
 
 When **`sync_startup_drain_day_close_before_ingest=yes`**, before the first rescan/ingest the supervisor polls until all of:
 
 - `StartupDayClosePreflight.discover_done()` (when enabled)
-- `AsyncDayCloseCoordinator.active_or_submitted_tar_paths()` empty
+- `StartupTailIngestCoordinator.tail_ingest_done()` (when enabled)
 - `StartupRawRemovalPreflight.delete_phase_done()` (when enabled)
 - `DayRawRemovalCoordinator.any_blocks_startup_drain()` false (when enabled) — days in `verification_complete` with only ingest-gated retryable skips on disk do **not** block startup; main ingest clears them after the gate. Mid-run delete driver still uses `any_needs_delete_phase()` via `_apply_day_close_raw_removal_deletes`.
 
+**Does not block** on `AsyncDayCloseCoordinator.active_or_submitted_tar_paths()` — main ingest may proceed while async seal/zstd continues.
+
 Delete phases are driven via `_maybe_handle_raw_removal_delete_phase()` during the drain loop. On exit, `_post_startup_raw_removal_rescan()` runs when startup raw removal finished. **`startup_ingest_gate_cleared`** is one-time; mid-run day-close deletes do not re-gate ingest.
-
-## Startup tail ingest (≤100 files)
-
-When **`sync_startup_tail_ingest_enabled=yes`**, each startup drain iteration (before drain-complete) may run **`_run_startup_tail_ingest_once`**: live-scan oldest calendar day with on-disk checkpoint-unprocessed paths; when count ≤ **`sync_startup_tail_ingest_max_files`**, ingest **only those paths** via the **ingest pool imap sliding-window path** (same as main ingest; **`HPCPERFSTATS_SYNC_TIMEDB_INGEST_INLINE=1`** forces supervisor-thread serial ingest for tests), archive finalize, flush checkpoint, submit async **`DAY_CLOSE`**, then repeat for the **next oldest day** (cross-day tail remains serial: one calendar day per drain iteration). Days with > max paths skip tail ingest (main ingest + pending reconcile handle them). Logs: **`sync_timedb: startup tail ingest begin|complete|skip|submitted day_close`**.
 
 ## INI knobs
 
 - `sync_startup_day_close_preflight` (default yes)
 - `sync_startup_drain_day_close_before_ingest` (default yes)
-- `sync_startup_tail_ingest_enabled` (default yes) — during startup drain, run bounded pool imap ingest for checkpoint-blocked tails before main ingest gate clears
-- `sync_startup_tail_ingest_max_files` (default 100) — max on-disk unprocessed paths per calendar day eligible for startup tail ingest; older blocked days loop until gap cleared or count exceeds max
+- `sync_startup_tail_ingest_enabled` (default yes) — pipelined tail ingest thread during startup maintenance
+- `sync_startup_tail_ingest_max_files` (default 100) — max on-disk unprocessed paths per calendar day eligible for startup tail ingest
 - `sync_startup_day_close_budget_seconds` (default 300) — applies to **submit** loop after scans
 - `sync_startup_day_close_max_inflight` (default = `archive_seal_parallel_workers`, typically 4) — startup discover + janitor `reason=startup` submit cap; backoff when `active_or_submitted_tar_paths()` ≥ cap
 - `sync_startup_day_close_days_per_slice` (default = startup max inflight) — max submits per discover slice
@@ -69,15 +80,18 @@ When **`sync_startup_tail_ingest_enabled=yes`**, each startup drain iteration (b
 ```
 janitor: day_close candidate report reason=startup_checkpoint_discover queued=N waiting_on_ingest=W eligible_deferred=D disqualified=M
 sync_timedb: startup day close discover: eligible=N quiescent_eligible=Q
-sync_timedb: startup day-close drain waiting discover=… async_active=… startup_raw=… day_raw_delete=… day_raw_waiting_on_ingest=…
-sync_timedb: startup day-close and deletion drain complete; ingest may begin
+sync_timedb: startup ingest maintenance waiting discover=… pending_eligible=… tail_pending=… tail_queue=… async_active=… startup_raw=… day_raw_delete=… day_raw_waiting_on_ingest=…
+sync_timedb: startup ingest maintenance complete
+sync_timedb: startup maintenance idle; ingest may begin
 sync_timedb: startup day close discover backoff async saturated active=N max=M …
 sync_timedb: startup day close discover: scans elapsed_s=…
 sync_timedb: startup day close submit skip tar=… reason=…
+sync_timedb: startup tail ingest enqueue day=YYYY-MM-DD paths=N
 sync_timedb: startup tail ingest begin day=YYYY-MM-DD paths=N max=100
 sync_timedb: startup tail ingest complete day=… ingested=N failed=N checkpoint_complete=yes|no
-sync_timedb: startup tail ingest skip day=… paths=N reason=above_max_files max=100
+sync_timedb: startup tail ingest defer day=… paths=N reason=above_max_files max=100
 sync_timedb: startup tail ingest submitted day_close tar=…/YYYY-MM-DD.tar
+sync_timedb: startup tail ingest phase complete
 ```
 
 ## Coordination
@@ -87,12 +101,13 @@ sync_timedb: startup tail ingest submitted day_close tar=…/YYYY-MM-DD.tar
 
 ## Tests
 
-- `hpcperfstats/tests/test_sync_timedb_startup_day_close.py` (checkpoint-complete + quiescent submit, boot reconcile when `phase=done`, `discover_done` false while `pending_eligible`)
-- `hpcperfstats/tests/test_sync_timedb_supervisor.py` (`test_supervisor_waits_for_startup_day_close_drain_before_ingest`, `test_supervisor_blocks_ingest_when_phase_done_pending_eligible`, `test_supervisor_startup_drain_disabled_allows_parallel_ingest`, `test_supervisor_failed_ingest_requeues_at_pending_head`, `test_supervisor_startup_tail_ingest_runs_during_drain`, `test_supervisor_startup_drain_completes_when_day_raw_waiting_on_ingest_and_tail_skip`)
+- `hpcperfstats/tests/test_sync_timedb_startup_day_close.py` (checkpoint-complete + quiescent submit, boot reconcile when `phase=done`, `discover_done` false while `pending_eligible`, pipelined tail enqueue)
+- `hpcperfstats/tests/test_sync_timedb_startup_tail_ingest.py` (coordinator queue, ingest before discover_done, phase complete)
+- `hpcperfstats/tests/test_sync_timedb_supervisor.py` (`test_supervisor_waits_for_startup_day_close_drain_before_ingest`, `test_supervisor_blocks_ingest_when_phase_done_pending_eligible`, `test_supervisor_startup_drain_disabled_allows_parallel_ingest`, `test_supervisor_failed_ingest_requeues_at_pending_head`, `test_supervisor_startup_tail_ingest_runs_during_drain`, `test_supervisor_startup_drain_completes_when_day_raw_waiting_on_ingest_and_tail_skip`, gate clear with inflight async)
 - Archive/janitor/async helpers in `test_sync_timedb_archive.py`, `test_sync_timedb_janitor.py`
 
 ## Overlap
 
 - **`sync-timedb-archive-janitor-contract.mdc`** — scheduled/immediate enqueue + async execution.
 - **`sync-timedb-db-before-archive-contract.mdc`** — raw delete still DB-gated in `DayRawRemovalCoordinator`.
-- **`process-title-and-pool-labels.mdc`** — `set_daemon_thread_title("", script_name=..., role=...)` on discover and async worker threads.
+- **`process-title-and-pool-labels.mdc`** — `set_daemon_thread_title("", script_name=..., role=...)` on discover, tail ingest, and async worker threads.

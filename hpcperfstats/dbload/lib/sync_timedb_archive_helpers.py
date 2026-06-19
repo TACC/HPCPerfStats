@@ -1229,6 +1229,63 @@ def on_disk_unprocessed_paths_for_tar(unprocessed_by_tar, tar_norm):
   ]
 
 
+def iter_checkpoint_blocked_days_oldest_first(
+    unprocessed_by_tar,
+    *,
+    tgz_archive_dir,
+):
+  """Yield ``(day_date, tar_norm, on_disk_paths)`` oldest calendar day first."""
+  if not tgz_archive_dir or not unprocessed_by_tar:
+    return
+  ranked = []
+  seen = set()
+  for tar_path in iter_daily_tar_paths(tgz_archive_dir):
+    tar_norm = os.path.normpath(tar_path)
+    if tar_norm in seen:
+      continue
+    seen.add(tar_norm)
+    paths = on_disk_unprocessed_paths_for_tar(unprocessed_by_tar, tar_norm)
+    if not paths:
+      continue
+    day_date = calendar_date_from_daily_tar_path(tar_norm)
+    if day_date is None:
+      continue
+    ranked.append((day_date, tar_norm, paths))
+  for tar_norm in (unprocessed_by_tar or {}):
+    tar_norm = os.path.normpath(str(tar_norm or ""))
+    if not tar_norm or tar_norm in seen:
+      continue
+    paths = on_disk_unprocessed_paths_for_tar(unprocessed_by_tar, tar_norm)
+    if not paths:
+      continue
+    day_date = calendar_date_from_daily_tar_path(tar_norm)
+    if day_date is None:
+      continue
+    ranked.append((day_date, tar_norm, paths))
+  ranked.sort(key=lambda item: item[0])
+  for item in ranked:
+    yield item
+
+
+def tail_eligible_days_from_unprocessed(
+    unprocessed_by_tar,
+    *,
+    tgz_archive_dir,
+    max_files,
+):
+  """Oldest-first ``(tar_norm, paths)`` with ``1 <= len(paths) <= max_files``."""
+  max_files = max(1, int(max_files))
+  result = []
+  for _day, tar_norm, paths in iter_checkpoint_blocked_days_oldest_first(
+      unprocessed_by_tar,
+      tgz_archive_dir=tgz_archive_dir,
+  ):
+    count = len(paths)
+    if 1 <= count <= max_files:
+      result.append((tar_norm, paths))
+  return result
+
+
 def oldest_checkpoint_blocked_tar(unprocessed_by_tar, *, tgz_archive_dir):
   """Return oldest daily ``.tar`` with on-disk checkpoint-unprocessed paths."""
   if not tgz_archive_dir or not unprocessed_by_tar:

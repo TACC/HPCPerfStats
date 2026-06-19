@@ -183,7 +183,7 @@ def test_startup_discover_backoff_skips_scan_when_async_saturated(
     preflight._manifest["pending_retry"] = []
   has_more = preflight._discover_slice()
   assert has_more is True
-  assert scan_calls["n"] == 0
+  assert scan_calls["n"] == 1
   assert preflight._manifest.get("last_progress") == "discover_backoff_async_saturated"
 
 
@@ -670,3 +670,76 @@ def test_boot_reconcile_when_phase_done_and_async_still_incomplete(
   preflight._manifest["phase"] = PHASE_DONE
   preflight._manifest["completed_at"] = 1.0
   assert preflight._needs_boot_reconcile() is True
+
+
+def test_discover_slice_enqueues_tail_eligible_before_done(
+    tmp_path, monkeypatch,
+):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2022-08-01.tar"))
+  open(tar_path, "wb").close()
+  raw_path = tmp_path / "raw_seg"
+  raw_path.write_bytes(b"x")
+  (tmp_path / ".sync_timedb_state.json").write_text(
+      json.dumps([{
+          "path": str(raw_path),
+          "size": raw_path.stat().st_size,
+          "mtime": int(raw_path.stat().st_mtime),
+      }])
+  )
+  enqueued = []
+
+  class _FakeTailCoord:
+    enabled = True
+
+    def enqueue_tail_day(self, tar_norm, paths):
+      enqueued.append((os.path.normpath(tar_norm), list(paths)))
+      return True
+
+    def note_deferred_above_max(self, tar_norm, path_count, max_files):
+      del tar_norm, path_count, max_files
+
+  class _FakeCoord:
+    def get_disqualified_daily_tars(self):
+      return set()
+
+    def submit_day_close(self, tar_path, *, reason, disqualified_daily_tars=None):
+      del tar_path, reason, disqualified_daily_tars
+      return False
+
+    def active_or_submitted_tar_paths(self):
+      return set()
+
+  monkeypatch.setattr(cfg, "get_sync_startup_tail_ingest_max_files", lambda: 100)
+  monkeypatch.setattr(cfg, "get_sync_day_close_candidate_report", lambda: False)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_startup_day_close."
+      "days_ingest_complete_by_checkpoint",
+      lambda *_a, **_k: [],
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_startup_day_close."
+      "days_quiescent_tar_needs_day_close_at_startup",
+      lambda *_a, **_k: [],
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_startup_day_close."
+      "build_unprocessed_raw_by_daily_tar",
+      lambda *_a, **_k: {tar_path: [str(raw_path)]},
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_startup_day_close."
+      "build_remaining_raw_stats_by_daily_gz",
+      lambda *_a, **_k: {},
+  )
+
+  preflight = _make_preflight(
+      tmp_path,
+      _FakeCoord(),
+      tail_ingest_coordinator=_FakeTailCoord(),
+  )
+  assert preflight.discover_done() is False
+  preflight._discover_slice()
+  assert enqueued == [(tar_path, [str(raw_path)])]
+  assert preflight.discover_done() is False

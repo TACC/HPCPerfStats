@@ -5,7 +5,7 @@
 
 **Cold path (``ArchiveJanitor`` thread):** day-debt queue consumed in time-sliced micro-batches (``archive_janitor_budget_seconds`` / ``archive_janitor_days_per_tick``). Snapshot/hints refresh and ``DAY_CLOSE`` scheduling run at supervisor startup, every ``rescan_every_chunks`` ingest chunks (default 10), and when the ingest queue drains to zero after chunk processing—all on the janitor thread. Per-day lock cleanup (once per tick), dedupe-before-seal, seal → async verify (``DayRawRemovalCoordinator``) with ingest-thread batched delete, or incremental raw/tar when preflight is off; DB head-ingest gate and disqualification union unchanged. Progress persists in ``.sync_archive_maint_hints.json`` v2 (``debt_queue``, ``day_phases``).
 
-**Startup prefights:** ``StartupRawRemovalPreflight`` and ``StartupDayClosePreflight`` (checkpoint-complete + filesystem-quiescent ``startup_quiescent_tar`` submit). Default ``sync_startup_drain_day_close_before_ingest=yes`` blocks first ingest until startup day-close and deletion idle.
+**Startup prefights:** ``StartupRawRemovalPreflight`` and ``StartupDayClosePreflight`` (checkpoint-complete + filesystem-quiescent ``startup_quiescent_tar`` submit) run on background threads; ``StartupTailIngestCoordinator`` consumes discover-slice tail enqueue on another thread. Default ``sync_startup_drain_day_close_before_ingest=yes`` blocks first ingest until discover + startup tail ingest + deletion prefights complete (not until async DAY_CLOSE idles).
 
 Append and raw delete stay DB-gated when ``sync_archive_require_db_head_ingest=yes``. Finalize uses soft defer (``allow_defer``) under ingest backlog instead of blocking the supervisor.
 
@@ -166,6 +166,9 @@ from hpcperfstats.dbload.lib.sync_timedb_startup_raw_removal import (
 )
 from hpcperfstats.dbload.lib.sync_timedb_startup_day_close import (
     StartupDayClosePreflight,
+)
+from hpcperfstats.dbload.lib.sync_timedb_startup_tail_ingest import (
+    StartupTailIngestCoordinator,
 )
 from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
     StartupArchiveScanCoordinator,
@@ -3245,6 +3248,7 @@ def run_sync_timedb_supervisor_loop(
 
   startup_preflight = None
   startup_day_close = None
+  startup_tail_ingest = None
   day_raw_removal = None
   async_day_close = None
   delete_phase_active = False
@@ -4014,78 +4018,13 @@ def run_sync_timedb_supervisor_loop(
       _invalidate_host_scan_hints_for_paths(failed_paths)
     return successful_paths, failed_paths
 
-  def _run_startup_tail_ingest_once():
+  def _run_startup_tail_ingest_batch(paths, context_label):
     nonlocal chunk_in_progress
-    if not cfg.get_sync_startup_tail_ingest_enabled():
-      return False
-    if chunk_in_progress:
-      return False
-    max_files = max(1, int(cfg.get_sync_startup_tail_ingest_max_files()))
-    _get_startup_snapshot_for_rescan()
-    unprocessed = _live_unprocessed_by_tar_for_reconcile()
-    tar_norm = oldest_checkpoint_blocked_tar(
-        unprocessed, tgz_archive_dir=tgz_archive_dir)
-    if not tar_norm:
-      return False
-    paths = on_disk_unprocessed_paths_for_tar(unprocessed, tar_norm)
-    if not paths:
-      return False
-    day_date = calendar_date_from_daily_tar_path(tar_norm)
-    day_iso = day_date.isoformat() if day_date is not None else tar_norm
-    if len(paths) > max_files:
-      log_print(
-          "sync_timedb: startup tail ingest skip day=%s paths=%d "
-          "reason=above_max_files max=%d"
-          % (day_iso, len(paths), max_files),
-          flush=True,
-      )
-      return False
-    log_print(
-        "sync_timedb: startup tail ingest begin day=%s paths=%d max=%d"
-        % (day_iso, len(paths), max_files),
-        flush=True,
-    )
     chunk_in_progress = True
     try:
-      successful_paths, failed_paths = _run_ingest_archive_paths_batch(
-          paths, "startup_tail_ingest")
+      return _run_ingest_archive_paths_batch(paths, context_label)
     finally:
       chunk_in_progress = False
-    unprocessed_after = _live_unprocessed_by_tar_for_reconcile()
-    checkpoint_complete = not unprocessed_tar_paths_still_on_disk(
-        unprocessed_after, tar_norm)
-    log_print(
-        "sync_timedb: startup tail ingest complete day=%s ingested=%d "
-        "failed=%d checkpoint_complete=%s"
-        % (
-            day_iso,
-            len(successful_paths),
-            len(failed_paths),
-            "yes" if checkpoint_complete else "no",
-        ),
-        flush=True,
-    )
-    if failed_paths:
-      log_print(
-          "sync_timedb: startup tail ingest failed_paths=%d"
-          % len(failed_paths),
-          flush=True,
-      )
-    _maybe_enqueue_immediate_day_close(context="startup_tail_ingest")
-    if checkpoint_complete and async_day_close is not None:
-      disqualified = _janitor_disqualified_daily_tars()
-      if async_day_close.submit_day_close(
-          tar_norm,
-          reason="startup_tail_ingest",
-          disqualified_daily_tars=disqualified,
-      ):
-        log_print(
-            "sync_timedb: startup tail ingest submitted day_close tar=%s"
-            % tar_norm,
-            flush=True,
-        )
-        archive_janitor.signal_work_available()
-    return True
 
   log_print(
       "sync_timedb: day_close schedule startup + every %d ingest chunks + "
@@ -4454,6 +4393,30 @@ def run_sync_timedb_supervisor_loop(
         process_title=SYNC_TIMEDB_PROCESS_TITLE,
     )
     startup_preflight.start_async_verify()
+    startup_day_close_holder = {"preflight": None}
+    startup_tail_ingest = StartupTailIngestCoordinator(
+        log_fn=log_print,
+        run_ingest_batch=_run_startup_tail_ingest_batch,
+        submit_day_close=lambda tar_norm, reason: (
+            async_day_close.submit_day_close(
+                tar_norm,
+                reason=reason,
+                disqualified_daily_tars=_janitor_disqualified_daily_tars(),
+            )
+            if async_day_close is not None
+            else False
+        ),
+        signal_janitor=lambda: archive_janitor.signal_work_available(),
+        get_startup_snapshot=_get_startup_snapshot_for_rescan,
+        live_unprocessed_by_tar=_live_unprocessed_by_tar_for_reconcile,
+        discover_done_fn=lambda: (
+            startup_day_close_holder["preflight"].discover_done()
+            if startup_day_close_holder["preflight"] is not None
+            and startup_day_close_holder["preflight"].enabled
+            else True
+        ),
+        process_title=SYNC_TIMEDB_PROCESS_TITLE,
+    )
     startup_day_close = StartupDayClosePreflight(
         archive_data_dir=directory,
         host_name_ext=host_name_ext,
@@ -4466,9 +4429,14 @@ def run_sync_timedb_supervisor_loop(
         day_phases=lambda: dict(archive_janitor._day_phases),
         get_startup_snapshot=_wait_startup_snapshot_for_preflight,
         get_accrual_remaining_raw_by_gz=_get_accrual_remaining_raw_by_gz,
+        tail_ingest_coordinator=(
+            startup_tail_ingest if startup_tail_ingest.enabled else None
+        ),
         process_title=SYNC_TIMEDB_PROCESS_TITLE,
     )
+    startup_day_close_holder["preflight"] = startup_day_close
     startup_day_close.start_async_discover_and_close()
+    startup_tail_ingest.start_async_tail_ingest()
 
     startup_ingest_gate_cleared = (
         not cfg.get_sync_startup_drain_day_close_before_ingest()
@@ -4476,12 +4444,12 @@ def run_sync_timedb_supervisor_loop(
     startup_day_close_drain_complete = startup_ingest_gate_cleared
     startup_drain_last_log = 0.0
 
-    def _startup_day_close_deletion_pending():
+    def _startup_ingest_gate_pending():
       if startup_day_close is not None and startup_day_close.enabled:
         if not startup_day_close.discover_done():
           return True
-      if async_day_close is not None:
-        if async_day_close.active_or_submitted_tar_paths():
+      if startup_tail_ingest is not None and startup_tail_ingest.enabled:
+        if not startup_tail_ingest.tail_ingest_done():
           return True
       if startup_preflight is not None and startup_preflight.enabled:
         if not startup_preflight.delete_phase_done():
@@ -4507,6 +4475,16 @@ def run_sync_timedb_supervisor_loop(
           if startup_day_close is not None and startup_day_close.enabled
           else 0
       )
+      tail_pending = (
+          startup_tail_ingest is not None
+          and startup_tail_ingest.enabled
+          and not startup_tail_ingest.tail_ingest_done()
+      )
+      tail_queue = (
+          startup_tail_ingest.pending_count()
+          if startup_tail_ingest is not None and startup_tail_ingest.enabled
+          else 0
+      )
       async_active = (
           len(async_day_close.active_or_submitted_tar_paths())
           if async_day_close is not None
@@ -4528,12 +4506,14 @@ def run_sync_timedb_supervisor_loop(
           else 0
       )
       log_print(
-          "sync_timedb: startup day-close drain waiting discover=%s "
-          "pending_eligible=%d async_active=%d startup_raw=%s "
-          "day_raw_delete=%s day_raw_waiting_on_ingest=%d"
+          "sync_timedb: startup ingest maintenance waiting discover=%s "
+          "pending_eligible=%d tail_pending=%s tail_queue=%d async_active=%d "
+          "startup_raw=%s day_raw_delete=%s day_raw_waiting_on_ingest=%d"
           % (
               discover_pending,
               pending_eligible,
+              tail_pending,
+              tail_queue,
               async_active,
               raw_pending,
               day_delete_pending,
@@ -4549,10 +4529,7 @@ def run_sync_timedb_supervisor_loop(
       if not startup_day_close_drain_complete:
         if _maybe_handle_raw_removal_delete_phase():
           return True
-        if _run_startup_tail_ingest_once():
-          sleep_until_shutdown(0.25)
-          return True
-        if not _startup_day_close_deletion_pending():
+        if not _startup_ingest_gate_pending():
           if (
               startup_preflight is not None
               and startup_preflight.enabled
@@ -4560,7 +4537,7 @@ def run_sync_timedb_supervisor_loop(
           ):
             _post_startup_raw_removal_rescan()
           log_print(
-              "sync_timedb: startup day-close and deletion drain complete",
+              "sync_timedb: startup ingest maintenance complete",
               flush=True,
           )
           startup_day_close_drain_complete = True
@@ -5005,6 +4982,8 @@ def run_sync_timedb_supervisor_loop(
       startup_preflight.shutdown(wait=preflight_shutdown_wait)
     if startup_day_close is not None:
       startup_day_close.shutdown(wait=preflight_shutdown_wait)
+    if startup_tail_ingest is not None:
+      startup_tail_ingest.shutdown(wait=preflight_shutdown_wait)
     if async_day_close is not None:
       async_day_close.shutdown(wait=preflight_shutdown_wait)
     if day_raw_removal is not None:

@@ -7,9 +7,14 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set, TYPE_CHECKING
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
+
+if TYPE_CHECKING:
+  from hpcperfstats.dbload.lib.sync_timedb_startup_tail_ingest import (
+      StartupTailIngestCoordinator,
+  )
 
 from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     augment_unprocessed_by_tar_with_pending_paths,
@@ -20,7 +25,9 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     classify_day_close_candidates,
     days_ingest_complete_by_checkpoint,
     days_quiescent_tar_needs_day_close_at_startup,
+    iter_checkpoint_blocked_days_oldest_first,
     log_day_close_candidate_report,
+    tail_eligible_days_from_unprocessed,
 )
 from hpcperfstats.dbload.lib.sync_timedb_async_day_close import AsyncDayCloseCoordinator
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
@@ -95,6 +102,7 @@ class StartupDayClosePreflight:
       day_phases: Callable[[], Dict[str, Any]],
       get_startup_snapshot: Optional[Callable[[], Any]] = None,
       get_accrual_remaining_raw_by_gz: Optional[Callable[[], Optional[Dict]]] = None,
+      tail_ingest_coordinator: Optional["StartupTailIngestCoordinator"] = None,
       process_title: str = "sync_timedb.py",
   ):
     self.archive_data_dir = archive_data_dir
@@ -108,6 +116,7 @@ class StartupDayClosePreflight:
     self.day_phases = day_phases
     self.get_startup_snapshot = get_startup_snapshot
     self.get_accrual_remaining_raw_by_gz = get_accrual_remaining_raw_by_gz
+    self.tail_ingest_coordinator = tail_ingest_coordinator
     self.process_title = process_title
     self._manifest_path = manifest_path(archive_data_dir)
     self._checkpoint_path = os.path.join(
@@ -300,47 +309,25 @@ class StartupDayClosePreflight:
         maintenance_snapshot=snapshot,
     )
 
-  def _discover_slice(self) -> bool:
-    """Run one discover+submit slice. Return False when discover loop should stop."""
-    max_inflight = cfg.get_sync_startup_day_close_max_inflight()
-    active_count = len(self.async_day_close.active_or_submitted_tar_paths())
-    if active_count >= max_inflight:
-      self._touch_manifest(
-          "discover_backoff_async_saturated",
-          detail="active=%d max=%d" % (active_count, max_inflight),
-      )
-      with self._lock:
-        pending_eligible = list(self._manifest.get("pending_eligible") or [])
-        pending_retry = list(self._manifest.get("pending_retry") or [])
-        self._manifest["last_slice_backoff"] = True
-        _save_manifest(self._manifest_path, self._manifest)
-      if self.log_fn:
-        self.log_fn(
-            "sync_timedb: startup day close discover backoff async saturated "
-            "active=%d max=%d pending_eligible=%d pending_retry=%d"
-            % (
-                active_count,
-                max_inflight,
-                len(pending_eligible),
-                len(pending_retry),
-            ),
-            flush=True,
-        )
-      has_deferrals = bool(pending_eligible or pending_retry)
-      return has_deferrals and not shutdown_requested[0]
+  def _enqueue_tail_eligible_from_unprocessed(self, unprocessed_by_tar) -> None:
+    coordinator = self.tail_ingest_coordinator
+    if coordinator is None or not coordinator.enabled:
+      return
+    max_files = max(1, int(cfg.get_sync_startup_tail_ingest_max_files()))
+    for tar_norm, paths in tail_eligible_days_from_unprocessed(
+        unprocessed_by_tar,
+        tgz_archive_dir=self.tgz_archive_dir,
+        max_files=max_files,
+    ):
+      coordinator.enqueue_tail_day(tar_norm, paths)
+    for _day, tar_norm, paths in iter_checkpoint_blocked_days_oldest_first(
+        unprocessed_by_tar,
+        tgz_archive_dir=self.tgz_archive_dir,
+    ):
+      if len(paths) > max_files:
+        coordinator.note_deferred_above_max(tar_norm, len(paths), max_files)
 
-    budget_s = cfg.get_sync_startup_day_close_budget_seconds()
-    days_per_slice = cfg.get_sync_startup_day_close_days_per_slice()
-    scan_warn_s = cfg.get_sync_startup_day_close_scan_budget_seconds()
-    scan_t0 = time.time()
-    self._touch_manifest("discover_slice_begin")
-    if self.log_fn:
-      self.log_fn(
-          "sync_timedb: startup day close discover slice begin",
-          flush=True,
-      )
-    with self._lock:
-      slice_index = int(self._manifest.get("discover_slice_count", 0))
+  def _build_slice_unprocessed_map(self, slice_index: int):
     snapshot = self._resolve_snapshot()
     unprocessed_by_tar = build_unprocessed_raw_by_daily_tar(
         self.archive_data_dir,
@@ -360,6 +347,26 @@ class StartupDayClosePreflight:
         ),
     )
     remaining = self._resolve_remaining_raw_by_gz(snapshot, slice_index)
+    return snapshot, unprocessed_by_tar, remaining
+
+  def _discover_slice(self) -> bool:
+    """Run one discover+submit slice. Return False when discover loop should stop."""
+    max_inflight = cfg.get_sync_startup_day_close_max_inflight()
+    budget_s = cfg.get_sync_startup_day_close_budget_seconds()
+    days_per_slice = cfg.get_sync_startup_day_close_days_per_slice()
+    scan_warn_s = cfg.get_sync_startup_day_close_scan_budget_seconds()
+    scan_t0 = time.time()
+    self._touch_manifest("discover_slice_begin")
+    if self.log_fn:
+      self.log_fn(
+          "sync_timedb: startup day close discover slice begin",
+          flush=True,
+      )
+    with self._lock:
+      slice_index = int(self._manifest.get("discover_slice_count", 0))
+    snapshot, unprocessed_by_tar, remaining = self._build_slice_unprocessed_map(
+        slice_index,
+    )
     scan_elapsed = time.time() - scan_t0
     if scan_warn_s > 0 and scan_elapsed >= scan_warn_s and self.log_fn:
       self.log_fn(
@@ -374,6 +381,35 @@ class StartupDayClosePreflight:
           % scan_elapsed,
           flush=True,
       )
+    self._enqueue_tail_eligible_from_unprocessed(unprocessed_by_tar)
+    active_count = len(self.async_day_close.active_or_submitted_tar_paths())
+    captured = self.get_disqualification_inputs()
+    if active_count >= max_inflight:
+      self._touch_manifest(
+          "discover_backoff_async_saturated",
+          detail="active=%d max=%d" % (active_count, max_inflight),
+      )
+      with self._lock:
+        pending_eligible = list(self._manifest.get("pending_eligible") or [])
+        pending_retry = list(self._manifest.get("pending_retry") or [])
+        self._manifest["last_slice_backoff"] = True
+        self._manifest["discover_slice_count"] = slice_index + 1
+        _save_manifest(self._manifest_path, self._manifest)
+      if self.log_fn:
+        self.log_fn(
+            "sync_timedb: startup day close discover backoff async saturated "
+            "active=%d max=%d pending_eligible=%d pending_retry=%d"
+            % (
+                active_count,
+                max_inflight,
+                len(pending_eligible),
+                len(pending_retry),
+            ),
+            flush=True,
+        )
+      has_deferrals = bool(pending_eligible or pending_retry)
+      return has_deferrals and not shutdown_requested[0]
+
     submit_t0 = time.time()
     phases = self.day_phases()
     eligible = days_ingest_complete_by_checkpoint(
