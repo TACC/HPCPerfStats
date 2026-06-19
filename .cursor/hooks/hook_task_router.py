@@ -321,6 +321,30 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
     },
     {
+        "id": "monitor_shm_message_correctness",
+        "patterns": [
+            "HPCPerfStats/monitor/scripts/emit_build_capabilities.py",
+            "HPCPerfStats/monitor/scripts/build_message_expectations.py",
+            "HPCPerfStats/monitor/scripts/validate_shm_messages.py",
+            "HPCPerfStats/monitor/scripts/lib/*",
+            "HPCPerfStats/monitor/tests/test_shm_message_correctness.sh",
+            "HPCPerfStats/monitor/tests/expected/shm_*",
+            "HPCPerfStats/monitor/tests/expected/capabilities_*",
+            "HPCPerfStats/monitor/tests/expected/expectations_*",
+            "monitor/scripts/emit_build_capabilities.py",
+            "monitor/scripts/build_message_expectations.py",
+            "monitor/scripts/validate_shm_messages.py",
+            "monitor/scripts/lib/*",
+            "monitor/tests/test_shm_message_correctness.sh",
+            "monitor/tests/expected/shm_*",
+            "monitor/tests/expected/capabilities_*",
+            "monitor/tests/expected/expectations_*",
+        ],
+        "rules": [
+            "monitor-shm-message-correctness.mdc",
+        ],
+    },
+    {
         "id": "monitor_emit_contract",
         "patterns": [
             "HPCPerfStats/monitor/src/stats*",

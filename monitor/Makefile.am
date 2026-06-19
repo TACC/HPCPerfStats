@@ -1,5 +1,11 @@
 SUBDIRS = src tests
 
+.PHONY: capabilities
+capabilities:
+	@cd "$(top_builddir)" && python3 "$(abs_top_srcdir)/scripts/emit_build_capabilities.py" \
+	  --build-dir "$(top_builddir)" \
+	  --tier "$${CAPABILITIES_TIER:-slowtier1}"
+
 # Monitor-specific trees (not created by Autoconf); removed by distclean.
 distclean-local:
 	rm -rf .build-static

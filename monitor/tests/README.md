@@ -27,7 +27,12 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_stats_buffer_rows.c` | `stats_buffer_append_enabled_type_rows` (tier row assembly into `sf_data`) |
 | `test_stats_buffer_collect.c` | `stats_buffer_collect` fast/full tier payloads (`STATS_BUFFER_TEST_SEND_HOOK`; RabbitMQ build) |
 | `test_stats_buffer_debug_shm.c` | DEBUG shm write path (`fast`/`full` overwrite, legacy→full) |
-| `test_debug_shm_emit_golden.c` | Golden regression for assembled `@fast`/`@full` sample payloads via debug shm (`tests/expected/debug_shm_*.txt`; DEBUG + RabbitMQ); also validates per-driver row shape (type/dev/tier/value counts) |
+| `test_debug_shm_emit_golden.c` | Golden regression for assembled `@fast`/`@full` sample payloads via debug shm (`tests/expected/debug_shm_*.txt`; DEBUG + RabbitMQ) |
+| `test_debug_shm_schema_mirror.c` | `schema` shm file + `stats_buffer_debug_shm_schema_wanted` gating (DEBUG) |
+| `test_shm_message_correctness.sh` | Python validator on `tests/expected/synthetic_fixture/`; optional slug goldens (exit 77 skip) |
+| `scripts/emit_build_capabilities.py` | Writes `monitor-build-capabilities.json` + `capability_slug` (`make capabilities`) |
+| `scripts/build_message_expectations.py` | Host probes + shm `schema` → `expectations_<slug>.json` |
+| `scripts/validate_shm_messages.py` | Validates shm `schema`/`fast`/`full` against expectations manifest |
 | `test_stats_runtime_collect.c` | `stats_runtime_collect_cycle`, `stats_schema_key_active_this_phase` |
 | `test_path_collect.c` | `path_collect_single` / `path_collect_list` (`open`/`read` path I/O) |
 | `test_path_read.c` | `path_read_small` / `path_read_alloc` (incl. `PATH_READ_ALLOC_MAX`, NULL guards) |

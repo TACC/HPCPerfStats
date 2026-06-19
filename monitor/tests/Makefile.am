@@ -51,7 +51,7 @@ if CPU_BACKEND_DCGM
 check_PROGRAMS += test_dcgm_pkg_uniq test_cpu_counter_dcgm_util test_cpu_counter_dcgm_publish
 endif
 if RABBITMQ
-check_PROGRAMS += test_monitor_cli test_ring_buffer test_stats_buffer_collect test_stats_buffer_debug_shm test_debug_shm_emit_golden test_monitor_timing
+check_PROGRAMS += test_monitor_cli test_ring_buffer test_stats_buffer_collect test_stats_buffer_debug_shm test_debug_shm_emit_golden test_debug_shm_schema_mirror test_monitor_timing
 endif
 
 TESTS = $(check_PROGRAMS)
@@ -61,13 +61,14 @@ check-local:
 	$(SHELL) '$(srcdir)/test_monitor_configure_help.sh.in'
 	python3 '$(top_srcdir)/scripts/check_emitted_variable_names.py'
 	$(SHELL) '$(top_srcdir)/scripts/check_unsafe_c_patterns.sh'
+	@$(SHELL) '$(srcdir)/test_shm_message_correctness.sh' '$(top_builddir)' || test $$? -eq 77
 if RABBITMQ
 	@if test "x$${RUN_RMQ_INTEGRATION:-0}" = "x1"; then \
 	  $(MAKE) check-rabbitmq-integration; \
 	fi
 endif
 
-EXTRA_DIST = test_monitor_configure_help.sh.in run_tests.sh README.md test_ring_buffer.c test_ring_buffer_stubs.c test_stats_buffer_collect.c test_stats_buffer_collect_stubs.c test_stats_buffer_collect_stubs.h test_debug_shm_emit_fixture.c test_debug_shm_emit_fixture.h test_debug_shm_emit_validate.c test_debug_shm_emit_validate.h test_debug_shm_emit_golden.c expected/debug_shm_fast.txt expected/debug_shm_full.txt test_stats_buffer_rows.c test_stats_runtime_collect.c test_ib_family.c test_ib_mad_backoff.c test_ib_mad_decode.c test_ib_mad_stubs.c test_ib_mad_sw_swap.c test_nvidia_gpu_estimate.c test_roofline_detect_fixture.c test_daemonize.c test_path_open_fail_once.c test_monitor_timing.c test_stats_text_format.c test_arm_aarch64_imc_schema.c test_amd_x86_pmc_schema.c test_rabbitmq_integration.sh rmq_integration_validate.py requirements-rabbitmq-integration.txt scripts/bootstrap_local_rabbitmq.sh scripts/check_unsafe_c_patterns.sh scripts/check_unsafe_c_patterns.allowlist $(top_srcdir)/scripts/check_emitted_variable_names.py
+EXTRA_DIST = test_monitor_configure_help.sh.in run_tests.sh README.md test_ring_buffer.c test_ring_buffer_stubs.c test_stats_buffer_collect.c test_stats_buffer_collect_stubs.c test_stats_buffer_collect_stubs.h test_debug_shm_emit_fixture.c test_debug_shm_emit_fixture.h test_debug_shm_emit_validate.c test_debug_shm_emit_validate.h test_debug_shm_emit_golden.c test_debug_shm_schema_mirror.c test_shm_message_correctness.sh expected/debug_shm_fast.txt expected/debug_shm_full.txt expected/synthetic_fixture/schema expected/synthetic_fixture/fast expected/synthetic_fixture/full expected/synthetic_fixture/monitor-build-capabilities.json expected/synthetic_fixture/expectations_synthetic_debug_tier1.json test_stats_buffer_rows.c test_stats_runtime_collect.c test_ib_family.c test_ib_mad_backoff.c test_ib_mad_decode.c test_ib_mad_stubs.c test_ib_mad_sw_swap.c test_nvidia_gpu_estimate.c test_roofline_detect_fixture.c test_daemonize.c test_path_open_fail_once.c test_monitor_timing.c test_stats_text_format.c test_arm_aarch64_imc_schema.c test_amd_x86_pmc_schema.c test_rabbitmq_integration.sh rmq_integration_validate.py requirements-rabbitmq-integration.txt scripts/bootstrap_local_rabbitmq.sh scripts/check_unsafe_c_patterns.sh scripts/check_unsafe_c_patterns.allowlist $(top_srcdir)/scripts/check_emitted_variable_names.py $(top_srcdir)/scripts/emit_build_capabilities.py $(top_srcdir)/scripts/build_message_expectations.py $(top_srcdir)/scripts/validate_shm_messages.py $(top_srcdir)/scripts/lib/message_parse.py $(top_srcdir)/scripts/lib/row_validate.py $(top_srcdir)/scripts/lib/__init__.py
 
 if RABBITMQ
 .PHONY: check-rabbitmq-integration
@@ -440,6 +441,11 @@ test_debug_shm_emit_golden_SOURCES = \
 	$(top_srcdir)/src/stats_buffer_debug_shm.c
 test_debug_shm_emit_golden_CPPFLAGS = $(AM_CPPFLAGS) -DSTATS_BUFFER_TEST_SEND_HOOK -DSTATS_BUFFER_TEST_TIME_HOOK -DSTATS_BUFFER_TEST_UTS_HOOK
 
+test_debug_shm_schema_mirror_SOURCES = \
+	test_debug_shm_schema_mirror.c \
+	$(top_srcdir)/src/stats_buffer_debug_shm.c \
+	$(top_srcdir)/src/monitor_log.c
+
 test_monitor_timing_SOURCES = \
 	test_monitor_timing.c \
 	$(top_srcdir)/src/monitor_timing.c
@@ -517,5 +523,6 @@ test_ring_buffer_LDADD = $(LDADD)
 test_stats_buffer_collect_LDADD = $(LDADD)
 test_stats_buffer_debug_shm_LDADD = $(LDADD)
 test_debug_shm_emit_golden_LDADD = $(LDADD)
+test_debug_shm_schema_mirror_LDADD = $(LDADD)
 test_monitor_timing_LDADD = $(LDADD) -lm
 endif

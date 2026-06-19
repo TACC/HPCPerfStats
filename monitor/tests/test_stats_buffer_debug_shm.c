@@ -195,7 +195,33 @@ static void test_daemon_write_hdr_gate(void)
   assert(stats_buffer_debug_shm_sample_wanted(1, 1) == 0);
   assert(stats_buffer_debug_shm_sample_wanted(0, 0) == 0);
   assert(stats_buffer_debug_shm_sample_wanted(1, 0) == 0);
+  assert(stats_buffer_debug_shm_schema_wanted(1, 1) == 1);
+  assert(stats_buffer_debug_shm_schema_wanted(0, 1) == 0);
 }
+
+#ifdef DEBUG
+
+static void test_schema_writes_schema_file(void)
+{
+  struct stats_buffer sf;
+  char schema_path[512];
+  char buf[256];
+
+  memset(&sf, 0, sizeof(sf));
+  sf.sf_data = strdup("$hpcperfstats 3.0\n");
+  assert(sf.sf_data != NULL);
+  sf.sf_data_len = strlen(sf.sf_data);
+  sf.sf_data_cap = sf.sf_data_len + 1;
+  stats_buffer_debug_shm_write_payload(&sf, STATS_BUFFER_DEBUG_SHM_PAYLOAD_SCHEMA);
+
+  snprintf(schema_path, sizeof(schema_path), "%s/schema", g_shm_base);
+  assert(path_exists(schema_path));
+  assert(read_file_text(schema_path, buf, sizeof(buf)) > 0);
+  assert(strncmp(buf, "$hpcperfstats", 13) == 0);
+  free(sf.sf_data);
+}
+
+#endif /* DEBUG */
 
 int main(void)
 {
@@ -206,6 +232,7 @@ int main(void)
 #else
   test_daemon_write_hdr_gate();
   assert(setup_shm_dir() == 0);
+  test_schema_writes_schema_file();
   test_second_write_overwrites();
   test_fast_writes_fast_only();
   test_full_writes_full_only();

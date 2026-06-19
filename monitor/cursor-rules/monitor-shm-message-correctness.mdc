@@ -1,0 +1,52 @@
+---
+description: /dev/shm full-message correctness harness — capability slug, validators, goldens
+globs:
+  - HPCPerfStats/monitor/scripts/emit_build_capabilities.py
+  - HPCPerfStats/monitor/scripts/build_message_expectations.py
+  - HPCPerfStats/monitor/scripts/validate_shm_messages.py
+  - HPCPerfStats/monitor/scripts/lib/*
+  - HPCPerfStats/monitor/tests/test_shm_message_correctness.sh
+  - HPCPerfStats/monitor/tests/expected/shm_*
+  - HPCPerfStats/monitor/tests/expected/capabilities_*
+  - HPCPerfStats/monitor/tests/expected/expectations_*
+alwaysApply: false
+---
+
+# Monitor: /dev/shm message correctness
+
+## Scope
+
+- Validates **full outbound monitor payloads** mirrored under `HPCPERFSTATS_DEBUG_SHM_DIR` (`schema`, `fast`, `full`).
+- **Out of scope:** listend, archive files, RabbitMQ consumer path.
+- Requires **DEBUG build** (`--enable-debug`) for live shm capture (**monitor-debug-shm**).
+
+## Capability slug
+
+- Emitted by `scripts/emit_build_capabilities.py` → `<builddir>/monitor-build-capabilities.json`.
+- `make capabilities` in configured build tree; `build_static_bundle.sh` invokes unless `SKIP_CAPABILITIES=1`.
+- Slug tokens (omit absent): `arch`, `ver`, `debug`, `hw`, `ib`, `nvgpu`, `amdgpu`, `lustre`, `opa`, `dcgm|likwid|none`, `slowtier0|slowtier1`.
+- **All fixtures** use slug in filename: `expectations_<slug>.json`, `tests/expected/shm_{schema,fast,full}_<slug>.txt`.
+- Validator **layer 0**: manifest slug must match capabilities JSON; exit 2 on mismatch.
+- CI/integration: **exit 77 skip** when no goldens for live slug — never fall back to generic golden.
+
+## Artifacts
+
+| Local (gitignored) | Committed |
+|--------------------|-----------|
+| `test_runs/monitor/validate_<slug>_*.txt` | `tests/expected/shm_*_<slug>.txt` |
+| `test_runs/monitor/shm_snapshot_<host>_<slug>/` | `scripts/lib/*.py` |
+
+## Data-host runbook
+
+1. `build_static_bundle.sh` with `--enable-debug` → `make -C .build-static capabilities`.
+2. Run daemon; read `schema`/`fast`/`full` from shm.
+3. `build_message_expectations.py --capabilities …` → `expectations_<slug>.json`.
+4. `validate_shm_messages.py` (optional `--spot-check-values`).
+
+## Tests
+
+- C: `test_stats_buffer_debug_shm.c`, `test_debug_shm_schema_mirror.c` (**monitor-debug-shm**).
+- Shell: `test_shm_message_correctness.sh` (slug-aware).
+- Python via repo `.venv` (**python-venv-enforcement**).
+
+Cross-links: **monitor-collect-tier-gating**, **monitor-schema-keys-headers**, **monitor-c-testing-standards**, **test-runs-output-directory**.

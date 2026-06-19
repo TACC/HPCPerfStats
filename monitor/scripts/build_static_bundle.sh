@@ -465,6 +465,10 @@ build_monitor() {
     fi
     ldd "${daemon}" || true
   fi
+  if test "${SKIP_CAPABILITIES:-0}" != "1"; then
+    echo "Emitting monitor-build-capabilities.json"
+    (cd "${MONITOR_DIR}/.build-static" && make capabilities) || true
+  fi
 }
 
 print_notes() {

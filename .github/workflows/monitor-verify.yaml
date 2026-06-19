@@ -36,6 +36,15 @@ jobs:
         working-directory: monitor/.build-static
         run: make check
 
+      - name: Emit build capabilities
+        working-directory: monitor/.build-static
+        run: make capabilities
+
+      - name: Shm message correctness (synthetic fixture; skip 77 if no slug goldens)
+        working-directory: monitor
+        run: |
+          ./tests/test_shm_message_correctness.sh .build-static || test $? -eq 77
+
       - name: distclean static build tree
         working-directory: monitor/.build-static
         run: make distclean

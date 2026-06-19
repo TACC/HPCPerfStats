@@ -1,0 +1,20 @@
+{
+  "capability_slug": "synthetic_debug_tier1",
+  "package_version": "3.0",
+  "host_cpu": "synthetic",
+  "arch": "synthetic",
+  "configure": {
+    "debug": true,
+    "hardware": true,
+    "infiniband": false,
+    "gpu": false,
+    "amd_gpu": false,
+    "lustre": false,
+    "opa": false,
+    "cpu_backend": "none",
+    "slow_tier": "slowtier1"
+  },
+  "compile_features": [],
+  "build_dir": "synthetic",
+  "generated_at": "1970-01-01T00:00:00+00:00"
+}

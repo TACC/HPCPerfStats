@@ -1,0 +1,48 @@
+{
+  "capability_slug": "synthetic_debug_tier1",
+  "compile_capabilities": {
+    "capability_slug": "synthetic_debug_tier1",
+    "package_version": "3.0"
+  },
+  "host_fqdn": "golden_host",
+  "program_version": "3.0",
+  "enable_slow_tier": true,
+  "types": {
+    "emit_extra": {
+      "schema_keys": ["load_1,", "load_5,"],
+      "fast_keys": ["load_1,", "load_5,"],
+      "schema_key_names": ["load_1", "load_5"],
+      "devices": ["dev0"]
+    },
+    "emit_fast": {
+      "schema_keys": ["cycles,E", "instr_retired,E"],
+      "fast_keys": ["cycles,E", "instr_retired,E"],
+      "schema_key_names": ["cycles", "instr_retired"],
+      "devices": ["dev0"]
+    },
+    "emit_mixed": {
+      "schema_keys": ["rx_bytes,E", "tx_bytes,E,R=S", "link_up,E"],
+      "fast_keys": ["rx_bytes,E", "link_up,E"],
+      "schema_key_names": ["rx_bytes", "tx_bytes", "link_up"],
+      "devices": ["dev0"]
+    },
+    "host_mem": {
+      "schema_keys": ["mem_total,U=KB", "mem_free,U=KB", "dirty,U=KB"],
+      "fast_keys": ["mem_total,U=KB", "mem_free,U=KB", "dirty,U=KB"],
+      "schema_key_names": ["mem_total", "mem_free", "dirty"],
+      "devices": ["mem"]
+    },
+    "host_net": {
+      "schema_keys": ["rx_bytes,E,U=B", "tx_bytes,E,U=B", "collisions,E"],
+      "fast_keys": ["rx_bytes,E,U=B", "tx_bytes,E,U=B", "collisions,E"],
+      "schema_key_names": ["rx_bytes", "tx_bytes", "collisions"],
+      "devices": ["eth0"]
+    },
+    "host_ps": {
+      "schema_keys": ["ctxt,E", "processes,E", "load_1,", "load_5,"],
+      "fast_keys": ["ctxt,E", "processes,E", "load_1,", "load_5,"],
+      "schema_key_names": ["ctxt", "processes", "load_1", "load_5"],
+      "devices": ["-"]
+    }
+  }
+}

@@ -121,14 +121,44 @@ See `HPCPerfStats/docs/monitor_variable_rename_map.yaml` for rename-map entries.
 
 ### DEBUG `/dev/shm` mirror (daemon only)
 
-When built with **`--enable-debug`**, the RabbitMQ daemon overwrites the latest
-`@fast` and `@full` sample payloads under **`/dev/shm/hpcperfstatsd-debug/`**
-(files `fast` and `full`). Override the base directory with
-**`HPCPERFSTATS_DEBUG_SHM_DIR`**. Schema/`$` rotation payloads (`write_hdr=1`)
-do not update shm.
+When built with **`--enable-debug`**, the RabbitMQ daemon mirrors the latest **full
+outbound payloads** under **`/dev/shm/hpcperfstatsd-debug/`**:
 
-Payloads contain job id, hostname, and workload metrics — treat as sensitive on
-shared nodes. Files are created mode `0600` under a `0700` directory.
+| File | Content |
+|------|---------|
+| `schema` | Complete `$` rotation payload (`write_hdr=1`) |
+| `fast` | Latest `@fast` sample |
+| `full` | Latest `@full` (or legacy full-width) sample |
+
+Override the base directory with **`HPCPERFSTATS_DEBUG_SHM_DIR`**. Payloads
+contain job id, hostname, and workload metrics — treat as sensitive on shared
+nodes. Files are created mode `0600` under a `0700` directory (atomic `*.tmp` +
+`rename`).
+
+### `/dev/shm` message correctness testing
+
+On a data host with a DEBUG build:
+
+```bash
+cd HPCPerfStats/monitor
+./scripts/build_static_bundle.sh --enable-debug   # or add to configure args
+make -C .build-static capabilities
+# start hpcperfstatsd; wait for schema + fast + full updates under /dev/shm/...
+python3 scripts/build_message_expectations.py \
+  --capabilities .build-static/monitor-build-capabilities.json
+python3 scripts/validate_shm_messages.py \
+  --capabilities .build-static/monitor-build-capabilities.json \
+  --manifest .build-static/expectations_<capability_slug>.json \
+  --shm-dir /dev/shm/hpcperfstatsd-debug
+```
+
+**Capability slug** — `monitor-build-capabilities.json` includes
+`capability_slug` (compile flags + `slowtier0`/`slowtier1`). Golden fixtures
+and expectations must use the same slug in filenames
+(`tests/expected/shm_*_<slug>.txt`, `expectations_<slug>.json`). CI runs
+`tests/test_shm_message_correctness.sh` (synthetic fixture always; live slug
+goldens when present; **exit 77 skip** otherwise). Local run logs belong under
+**`<workspace-root>/test_runs/`** (see **test-runs-output-directory**).
 
 ## Power telemetry (DCGM, RAPL, and interpretation)
 

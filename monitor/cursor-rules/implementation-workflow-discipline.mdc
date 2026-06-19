@@ -31,7 +31,8 @@ Use these during **plan**, **implement**, **self-review**, and **verification** 
 | [monitor-schema-keys-headers.mdc](monitor-schema-keys-headers.mdc) | Shared KEYS headers |
 | [monitor-consumer-schema-migration.mdc](monitor-consumer-schema-migration.mdc) | Breaking output migrations |
 | [monitor-consumer-side-plan.mdc](monitor-consumer-side-plan.mdc) | Consumer handoff plans |
-| [monitor-debug-shm.mdc](monitor-debug-shm.mdc) | DEBUG `/dev/shm` mirror |
+| [monitor-debug-shm.mdc](monitor-debug-shm.mdc) | DEBUG `/dev/shm` mirror (`schema`/`fast`/`full`) |
+| [monitor-shm-message-correctness.mdc](monitor-shm-message-correctness.mdc) | Capability slug, validators, shm goldens |
 | [monitor-ib-sysfs-parsing.mdc](monitor-ib-sysfs-parsing.mdc) | IB port state parsers |
 | [monitor-ci-workflow.mdc](monitor-ci-workflow.mdc) | GitHub `monitor-verify.yaml` |
 | [monitor-cursor-rules-sync.mdc](monitor-cursor-rules-sync.mdc) | Edit both `.cursor/rules/` and `monitor/cursor-rules/` |

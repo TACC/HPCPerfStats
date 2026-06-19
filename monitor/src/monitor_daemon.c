@@ -429,7 +429,9 @@ static void monitor_daemon_collect_to_ring(struct sf_ring_buffer *w, int write_h
     free(sf);
     return;
   }
-  if (!write_hdr)
+  if (stats_buffer_debug_shm_schema_wanted(write_hdr, 1))
+    stats_buffer_debug_shm_write_payload(sf, STATS_BUFFER_DEBUG_SHM_PAYLOAD_SCHEMA);
+  else if (stats_buffer_debug_shm_sample_wanted(write_hdr, 1))
     stats_buffer_debug_shm_write_sample(sf, stats_buffer_payload_row_tier(sf));
   rc = ring_buffer_insert(sf, w, max_buffer_size, allow_ring_buffer_overwrite);
   if (rc < 0) {

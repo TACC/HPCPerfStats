@@ -1,5 +1,5 @@
 ---
-description: DEBUG /dev/shm sample mirror — security, gating, and tests
+description: DEBUG /dev/shm full-message mirror — security, gating, and tests
 globs:
   - HPCPerfStats/monitor/src/stats_buffer_debug_shm.*
   - HPCPerfStats/monitor/src/monitor_daemon.c
@@ -12,19 +12,26 @@ alwaysApply: false
 ## Scope
 
 - **DEBUG builds only** (`--enable-debug`); release uses inline no-ops in `stats_buffer_debug_shm.h`.
-- Updates **`fast`** and **`full`** under `HPCPERFSTATS_DEBUG_SHM_DIR` (default `/dev/shm/hpcperfstatsd-debug`).
+- Mirrors latest full payloads under `HPCPERFSTATS_DEBUG_SHM_DIR` (default `/dev/shm/hpcperfstatsd-debug`):
+  - **`schema`** — complete `$` rotation payload (`write_hdr=1`)
+  - **`fast`** — latest `@fast` sample
+  - **`full`** — latest `@full` (or legacy full-width) sample
 
 ## Implementation
 
 - **Permissions**: directory `0700`, files `0600` (payloads contain jobid, host, metrics).
 - **Atomic write**: tmp + `rename`; log failures via `monitor_log_debug` (do not `(void)` discard).
 - **Env**: copy `HPCPERFSTATS_DEBUG_SHM_DIR` into owned storage — do not retain `getenv()` pointer.
-- **Gating**: use `stats_buffer_debug_shm_sample_wanted(write_hdr, payload_ok)` — only routine samples (`!write_hdr`), not schema/`$` paths.
+- **Gating**:
+  - `stats_buffer_debug_shm_schema_wanted(write_hdr, payload_ok)` → schema file when `write_hdr && payload_ok`
+  - `stats_buffer_debug_shm_sample_wanted(write_hdr, payload_ok)` → sample files when `!write_hdr && payload_ok`
+- **Write API**: `stats_buffer_debug_shm_write_payload(sf, kind)` with `STATS_BUFFER_DEBUG_SHM_PAYLOAD_{SCHEMA,FAST,FULL}`.
 
 ## Tests
 
-- Unit + golden tests under `tests/test_stats_buffer_debug_shm.c`, `test_debug_shm_emit_*`.
-- Assert **`stats_buffer_debug_shm_sample_wanted`** matches daemon behavior.
+- Unit + golden: `tests/test_stats_buffer_debug_shm.c`, `test_debug_shm_emit_*`, `test_debug_shm_schema_mirror.c`.
+- Assert gating helpers match `monitor_daemon_collect_to_ring` behavior.
+- Slug-named goldens: `tests/expected/shm_{schema,fast,full}_<capability_slug>.txt` (**monitor-shm-message-correctness**).
 - Document DEBUG requirement in **`monitor/README.md`** (**monitor-readme-maintenance**).
 
-Cross-links: **monitor-debug-vs-symbols**, **monitor-readme-maintenance**.
+Cross-links: **monitor-debug-vs-symbols**, **monitor-readme-maintenance**, **monitor-shm-message-correctness**.

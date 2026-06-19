@@ -48,6 +48,7 @@ Use the **Read** tool on the listed `HPCPerfStats/monitor/cursor-rules/<file>.md
 | `HPCPerfStats/monitor/src/*ib*.c`, IB sysfs parsers | `monitor-ib-sysfs-parsing.mdc` |
 | `HPCPerfStats/monitor/src/*dcgm*`, `*gpu*` | `monitor-dcgm-integration.mdc` |
 | DEBUG shm mirror paths | `monitor-debug-shm.mdc` |
+| Shm message correctness scripts, slug goldens | `monitor-shm-message-correctness.mdc` |
 
 ### Emit contract, RabbitMQ, schema
 

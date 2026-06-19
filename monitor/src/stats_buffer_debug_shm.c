@@ -1,4 +1,4 @@
-/* stats_buffer_debug_shm.c — overwrite latest @fast/@full samples in shm (DEBUG). */
+/* stats_buffer_debug_shm.c — overwrite latest schema/@fast/@full payloads in shm (DEBUG). */
 #ifdef DEBUG
 
 #include <errno.h>
@@ -49,11 +49,18 @@ void stats_buffer_debug_shm_init(void)
     monitor_log_debug("debug_shm: mkdir %s: %m\n", base);
 }
 
-static const char *stats_buffer_debug_shm_tier_name(enum stats_row_tier tier)
+static const char *stats_buffer_debug_shm_kind_name(enum stats_buffer_debug_shm_payload_kind kind)
 {
-  if (tier == STATS_ROW_FAST)
+  switch (kind) {
+  case STATS_BUFFER_DEBUG_SHM_PAYLOAD_SCHEMA:
+    return "schema";
+  case STATS_BUFFER_DEBUG_SHM_PAYLOAD_FAST:
     return "fast";
-  return "full";
+  case STATS_BUFFER_DEBUG_SHM_PAYLOAD_FULL:
+    return "full";
+  default:
+    return "full";
+  }
 }
 
 static int stats_buffer_debug_shm_write_atomic(const char *final_path,
@@ -88,8 +95,8 @@ static int stats_buffer_debug_shm_write_atomic(const char *final_path,
   return 0;
 }
 
-void stats_buffer_debug_shm_write_sample(const struct stats_buffer *sf,
-					 enum stats_row_tier tier)
+void stats_buffer_debug_shm_write_payload(const struct stats_buffer *sf,
+					  enum stats_buffer_debug_shm_payload_kind kind)
 {
   char final_path[PATH_MAX];
   char tmp_path[PATH_MAX];
@@ -100,7 +107,7 @@ void stats_buffer_debug_shm_write_sample(const struct stats_buffer *sf,
     return;
 
   base = stats_buffer_debug_shm_base_dir();
-  name = stats_buffer_debug_shm_tier_name(tier);
+  name = stats_buffer_debug_shm_kind_name(kind);
   if (snprintf(final_path, sizeof(final_path), "%s/%s", base, name)
       >= (int) sizeof(final_path))
     return;
@@ -110,6 +117,18 @@ void stats_buffer_debug_shm_write_sample(const struct stats_buffer *sf,
   if (stats_buffer_debug_shm_write_atomic(final_path, tmp_path,
 					  sf->sf_data, sf->sf_data_len) < 0)
     monitor_log_debug("debug_shm: write %s: %m\n", final_path);
+}
+
+void stats_buffer_debug_shm_write_sample(const struct stats_buffer *sf,
+					 enum stats_row_tier tier)
+{
+  enum stats_buffer_debug_shm_payload_kind kind;
+
+  if (tier == STATS_ROW_FAST)
+    kind = STATS_BUFFER_DEBUG_SHM_PAYLOAD_FAST;
+  else
+    kind = STATS_BUFFER_DEBUG_SHM_PAYLOAD_FULL;
+  stats_buffer_debug_shm_write_payload(sf, kind);
 }
 
 #endif /* DEBUG */
