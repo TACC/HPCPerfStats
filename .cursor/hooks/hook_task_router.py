@@ -35,6 +35,8 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
             "sync-timedb-db-before-archive-contract.mdc",
             "sync-timedb-lock-and-archive-contract.mdc",
             "runtime-resource-and-metrics-safety.mdc",
+            "bugfix-and-perf-change-playbook.mdc",
+            "test-first-discipline.mdc",
         ],
     },
     {

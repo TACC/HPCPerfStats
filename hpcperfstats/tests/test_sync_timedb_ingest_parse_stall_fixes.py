@@ -24,6 +24,28 @@ def _write_stats_file(path, line_count, *, host="node1", jid="1"):
       fd.write("schema line\n")
 
 
+def test_timestamp_second_present_for_duplicate_uses_per_second_probe(monkeypatch):
+  from datetime import datetime, timezone
+
+  wide_calls = {"n": 0}
+  per_sec_calls = {"n": 0}
+  ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+  def _wide(*_a, **_k):
+    wide_calls["n"] += 1
+    return set()
+
+  def _per_sec(_host, _unix_second):
+    per_sec_calls["n"] += 1
+    return True
+
+  monkeypatch.setattr(st, "_host_recent_timestamps_cached", _wide)
+  monkeypatch.setattr(st, "_host_timestamp_second_present_in_db", _per_sec)
+  assert st._timestamp_second_present_for_duplicate("node1", 1700000000, ts) is True
+  assert wide_calls["n"] == 0
+  assert per_sec_calls["n"] == 1
+
+
 def test_db_complete_head_tail_skips_full_duplicate_scan(tmp_path, monkeypatch):
   stats_file = str(tmp_path / "host.example" / "1700000000")
   _write_stats_file(stats_file, 5000)

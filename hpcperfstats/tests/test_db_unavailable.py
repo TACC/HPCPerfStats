@@ -7,6 +7,7 @@ from hpcperfstats.analysis.metrics.lib.db_retry import run_with_db_retry
 from hpcperfstats.dbload.lib.db_unavailable import (
     DatabaseUnavailableExit,
     is_database_unavailable_error,
+    is_query_bounded_failure_error,
     reraise_database_unavailable_chain,
 )
 
@@ -27,6 +28,18 @@ def test_is_database_unavailable_error_positive(message):
 def test_is_database_unavailable_error_statement_timeout_negative():
   assert not is_database_unavailable_error(
       OperationalError("canceling statement due to statement timeout")
+  )
+
+
+def test_is_query_bounded_failure_error_statement_timeout():
+  assert is_query_bounded_failure_error(
+      OperationalError("canceling statement due to statement timeout")
+  )
+
+
+def test_is_query_bounded_failure_error_connection_refused_negative():
+  assert not is_query_bounded_failure_error(
+      OperationalError("could not connect to server: Connection refused")
   )
 
 

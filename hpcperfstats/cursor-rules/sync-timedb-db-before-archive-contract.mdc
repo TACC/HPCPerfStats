@@ -36,7 +36,9 @@ When changing ingest, archive, or raw-stats removal under `hpcperfstats/dbload/s
 ## Performance
 
 - **Head mode:** per-path gate reads only the file head; maintenance `ready_paths` reuse `head_identity_by_path` from the head metadata pass (no second full-file scan).
-- **Sample mode:** one streaming pass per file for sample collection; **one itimes range query per host** (maintenance: per distinct host per tick) via `sync_timedb_host_itimes.host_sampled_timestamp_seconds_all_present`; in-memory membership for all sample seconds; overflow → cached per-second exists (same as ingest duplicate scan).
+- **Ingest duplicate head/tail fast path:** tail second membership uses **`host_timestamp_second_present_in_db`** (indexed per-second `exists()` + 60s TTL cache), not a wide itimes window scan.
+- **Sample mode:** one streaming pass per file for sample collection; **one itimes range query per host** (maintenance: per distinct host per tick) via `sync_timedb_host_itimes.host_sampled_timestamp_seconds_all_present`; in-memory membership for all sample seconds; overflow (cardinality cap **or** statement/lock timeout on wide scan) → cached per-second exists (same as ingest duplicate scan).
+- **Wide itimes scans:** windows wider than 24h are queried in non-overlapping 24h chunks; statement timeout on any chunk returns overflow without killing the ingest pool worker.
 - **Archive metadata discovery** (head + sampled timestamp scans in `build_archive_maintenance_snapshot`) uses a `ThreadPoolExecutor` sized by **`get_sync_pool_process_cap()`** only (same INI/env as ingest pool cap). Head metadata always runs; sampled metadata runs only in **sample** gate mode. Long scans log begin + periodic progress (every 5000 paths or 60s when path count ≥ 1000).
 - Path result cache keyed by `(path, mtime, size)` (TTL ~60s) for maintenance rescans.
 - Archive pool workers call `close_old_connections()` at gate entry.

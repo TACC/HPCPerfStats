@@ -64,6 +64,14 @@ def _chain_text(exc: BaseException | None) -> str:
   return "\n".join(parts)
 
 
+def is_query_bounded_failure_error(exc: BaseException | None) -> bool:
+  """True when ``exc`` is a statement/lock timeout (bounded query failure, not DB down)."""
+  if exc is None:
+    return False
+  text = _chain_text(exc)
+  return any(m in text for m in _QUERY_BOUNDED_FAILURE_MARKERS)
+
+
 def is_database_unavailable_error(exc: BaseException | None) -> bool:
   """True when ``exc`` indicates the server is down or not accepting sessions."""
   if exc is None:
@@ -71,7 +79,7 @@ def is_database_unavailable_error(exc: BaseException | None) -> bool:
   text = _chain_text(exc)
   if any(marker in text for marker in _DATABASE_UNAVAILABLE_MARKERS):
     return True
-  if any(m in text for m in _QUERY_BOUNDED_FAILURE_MARKERS):
+  if is_query_bounded_failure_error(exc):
     return False
   return False
 

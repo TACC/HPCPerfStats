@@ -1808,13 +1808,9 @@ def _should_stream_stats_file(stats_file, stats_file_contents):
 
 
 def _timestamp_second_present_for_duplicate(host, unix_second, timestamp_utc):
-  """Return whether ``unix_second`` for ``host`` is present in DB or warm itimes."""
-  ts_low = timestamp_utc - timedelta(hours=48)
-  ts_high = timestamp_utc + timedelta(hours=72)
-  itimes_set = _host_recent_timestamps_cached(host, ts_low, ts_high)
-  if itimes_set is _HOST_ITIMES_SET_OVERFLOW:
-    return _host_timestamp_second_present_in_db(host, unix_second)
-  return int(unix_second) in itimes_set
+  """Return whether ``unix_second`` for ``host`` is present in DB (indexed exists probe)."""
+  del timestamp_utc  # kept for call-site stability; wide itimes window not needed here
+  return _host_timestamp_second_present_in_db(host, unix_second)
 
 
 def _try_db_complete_head_tail_fast_path(

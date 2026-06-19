@@ -3194,6 +3194,34 @@ def test_host_recent_timestamps_cached_skips_oversized_cache_entry(monkeypatch):
   assert key not in st._HOST_ITIMES_CACHE
 
 
+def test_host_recent_timestamps_cached_statement_timeout_returns_overflow(monkeypatch):
+  from datetime import timezone
+
+  from django.db.utils import OperationalError
+
+  from hpcperfstats.dbload.lib import sync_timedb_host_itimes as host_itimes
+
+  st._HOST_ITIMES_CACHE.clear()
+  host_itimes._ITIMES_TIMEOUT_WARNED.clear()
+  host = "node1"
+  ts_low = datetime(2026, 1, 1, tzinfo=timezone.utc)
+  ts_high = datetime(2026, 1, 3, tzinfo=timezone.utc)
+
+  class _FakeQS:
+    def values_list(self, *_args, **_kwargs):
+      return self
+
+    def distinct(self):
+      return self
+
+    def iterator(self):
+      raise OperationalError("canceling statement due to statement timeout")
+
+  monkeypatch.setattr(st.host_data.objects, "filter", lambda **_kwargs: _FakeQS())
+  result = st._host_recent_timestamps_cached(host, ts_low, ts_high)
+  assert result is st._HOST_ITIMES_SET_OVERFLOW
+
+
 def test_add_processed_path_prunes_file_states(monkeypatch, tmp_path):
   monkeypatch.setattr(st, "processed_files_max_size", 2)
   processed_files = set()
