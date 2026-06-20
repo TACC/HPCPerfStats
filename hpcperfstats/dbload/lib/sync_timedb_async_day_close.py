@@ -14,6 +14,7 @@ from django.db import close_old_connections
 
 from hpcperfstats.dbload.lib.archive_compress import compressed_sibling_paths
 from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+    _seal_skip_existing_zst_equivalent,
     atomic_seal_tar_to_zst,
     build_remaining_raw_for_daily_tar,
     daily_gz_has_remaining_raw_stats,
@@ -34,6 +35,19 @@ from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested, sleep_unt
 
 MANIFEST_BASENAME = ".sync_timedb_async_day_close.json"
 MANIFEST_VERSION = 1
+
+_ASYNC_DAY_CLOSE_PIPELINE_PENDING_STATUSES = frozenset({
+    "submitted",
+    "sealing",
+    "raw_removal",
+    "raw_delete_pending",
+})
+
+
+def _is_pipeline_pending_entry(entry) -> bool:
+  if not isinstance(entry, dict):
+    return False
+  return str(entry.get("status") or "") in _ASYNC_DAY_CLOSE_PIPELINE_PENDING_STATUSES
 
 
 def manifest_path(archive_data_dir: str) -> str:
@@ -169,11 +183,7 @@ class AsyncDayCloseCoordinator:
         if future is not None and not future.done():
           active.add(tar_norm)
       for tar_norm, entry in self._manifest.get("entries", {}).items():
-        if isinstance(entry, dict) and entry.get("status") in (
-            "submitted",
-            "sealing",
-            "raw_removal",
-        ):
+        if _is_pipeline_pending_entry(entry):
           active.add(os.path.normpath(tar_norm))
       return active
 
@@ -254,6 +264,8 @@ class AsyncDayCloseCoordinator:
           return False
       entry = self._manifest.setdefault("entries", {}).get(tar_norm)
       if isinstance(entry, dict) and entry.get("status") == "complete":
+        return True
+      if _is_pipeline_pending_entry(entry):
         return True
       self._manifest.setdefault("entries", {})[tar_norm] = {
           "tar_path": tar_norm,
@@ -441,6 +453,19 @@ class AsyncDayCloseCoordinator:
         return True
     if not os.path.isfile(tar_norm):
       return bool(os.path.isfile(zst_path) or os.path.isfile(gz_path))
+    num_threads = cfg.get_archive_zstd_threads()
+    if _seal_skip_existing_zst_equivalent(
+        tar_norm,
+        zst_path,
+        num_threads,
+        self.log_fn,
+    ):
+      self.log_fn(
+          "janitor: async day_close seal skipped (zst equivalent) tar=%s"
+          % tar_norm,
+          flush=True,
+      )
+      return True
     remaining_raw_by_gz = {
         zst_path: build_remaining_raw_for_daily_tar(
             self.archive_data_dir,

@@ -251,7 +251,129 @@ def test_run_day_close_sets_raw_delete_pending_after_verify(tmp_path, monkeypatc
 
   entry = async_dc_mod._load_manifest(coord._manifest_path)["entries"][tar_norm]
   assert entry.get("status") == "raw_delete_pending"
-  assert tar_norm not in coord.active_or_submitted_tar_paths()
+  assert tar_norm in coord.active_or_submitted_tar_paths()
+
+
+@pytest.mark.django_db(databases=[])
+def test_submit_day_close_no_resubmit_when_raw_delete_pending(tmp_path, monkeypatch):
+  archive_dir = str(tmp_path / "archive")
+  daily_dir = str(tmp_path / "daily")
+  os.makedirs(archive_dir)
+  os.makedirs(daily_dir)
+  tar_norm = os.path.normpath(os.path.join(daily_dir, "2026-04-15.tar"))
+  open(tar_norm, "wb").close()
+  logs: list[str] = []
+
+  monkeypatch.setattr(async_dc_mod.cfg, "get_sync_day_close_async_workers", lambda: 1)
+
+  coord = async_dc_mod.AsyncDayCloseCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=daily_dir,
+      local_tz=None,
+      log_fn=lambda msg, **_kw: logs.append(str(msg)),
+      get_disqualified_daily_tars=lambda: set(),
+  )
+  coord._set_entry_status(tar_norm, "raw_delete_pending")
+  coord._touch_manifest("raw_delete_pending", tar_norm=tar_norm)
+
+  run_calls = {"count": 0}
+  original_run = coord._run_day_close
+
+  def counting_run(*args, **kwargs):
+    run_calls["count"] += 1
+    return original_run(*args, **kwargs)
+
+  with mock.patch.object(coord, "_run_day_close", side_effect=counting_run):
+    assert coord.submit_day_close(tar_norm, reason="first") is True
+    assert coord.submit_day_close(tar_norm, reason="second") is True
+
+  assert run_calls["count"] == 0
+  submit_logs = [line for line in logs if "async day_close submit" in line]
+  assert len(submit_logs) == 0
+
+
+@pytest.mark.django_db(databases=[])
+def test_stale_manifest_recovery_does_not_recover_raw_delete_pending(tmp_path, monkeypatch):
+  archive_dir = str(tmp_path / "archive")
+  daily_dir = str(tmp_path / "daily")
+  os.makedirs(archive_dir)
+  os.makedirs(daily_dir)
+  tar_norm = os.path.normpath(os.path.join(daily_dir, "2026-04-15.tar"))
+  manifest_file = async_dc_mod.manifest_path(archive_dir)
+  stale_at = time.time() - 10_000
+  with open(manifest_file, "w", encoding="utf-8") as handle:
+    handle.write(
+        json.dumps({
+            "version": 1,
+            "entries": {
+                tar_norm: {
+                    "tar_path": tar_norm,
+                    "status": "raw_delete_pending",
+                    "last_progress": "raw_delete_pending",
+                    "last_progress_at": stale_at,
+                    "submitted_at": stale_at,
+                },
+            },
+        }),
+    )
+  monkeypatch.setattr(async_dc_mod.cfg, "get_sync_day_close_async_stale_seconds", lambda: 60.0)
+  monkeypatch.setattr(async_dc_mod.cfg, "get_sync_day_close_async_workers", lambda: 1)
+
+  coord = async_dc_mod.AsyncDayCloseCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=daily_dir,
+      local_tz=None,
+      log_fn=lambda *_a, **_kw: None,
+      get_disqualified_daily_tars=lambda: set(),
+  )
+
+  entry = async_dc_mod._load_manifest(coord._manifest_path)["entries"][tar_norm]
+  assert entry.get("status") == "raw_delete_pending"
+  assert tar_norm in coord.active_or_submitted_tar_paths()
+
+
+@pytest.mark.django_db(databases=[])
+def test_seal_day_skips_before_seal_start_when_zst_equivalent(tmp_path, monkeypatch):
+  archive_dir = str(tmp_path / "archive")
+  daily_dir = str(tmp_path / "daily")
+  os.makedirs(archive_dir)
+  os.makedirs(daily_dir)
+  tar_norm = os.path.normpath(os.path.join(daily_dir, "2026-04-15.tar"))
+  zst_path = os.path.normpath(os.path.join(daily_dir, "2026-04-15.tar.zst"))
+  open(tar_norm, "wb").close()
+  open(zst_path, "wb").close()
+  logs: list[str] = []
+
+  monkeypatch.setattr(
+      async_dc_mod,
+      "daily_tar_seal_calendar_eligible",
+      lambda *_a, **_k: True,
+  )
+  monkeypatch.setattr(
+      async_dc_mod,
+      "_seal_skip_existing_zst_equivalent",
+      lambda *_a, **_k: True,
+  )
+  monkeypatch.setattr(async_dc_mod.cfg, "get_archive_zstd_threads", lambda: 0)
+
+  def fail_getsize(_path):
+    raise AssertionError("getsize must not run when zst equivalent skip applies")
+
+  monkeypatch.setattr(async_dc_mod.os.path, "getsize", fail_getsize)
+
+  coord = async_dc_mod.AsyncDayCloseCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=daily_dir,
+      local_tz=None,
+      log_fn=lambda msg, **_kw: logs.append(str(msg)),
+      get_disqualified_daily_tars=lambda: set(),
+  )
+  assert coord._seal_day(tar_norm) is True
+  assert not any("seal start" in line for line in logs)
+  assert any("seal skipped (zst equivalent)" in line for line in logs)
 
 
 @pytest.mark.django_db(databases=[])

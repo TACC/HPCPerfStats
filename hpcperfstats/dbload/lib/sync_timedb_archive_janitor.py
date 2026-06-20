@@ -763,18 +763,11 @@ class ArchiveJanitor:
             flush=True,
         )
       return False
-    submitted = coord.submit_day_close(
+    return coord.submit_day_close(
         tar_norm,
         reason=reason,
         disqualified_daily_tars=disqualified,
     )
-    if submitted and self.log_fn:
-      self.log_fn(
-          "janitor: async day_close submit tar=%s reason=%s"
-          % (tar_norm, reason),
-          flush=True,
-      )
-    return submitted
 
   def enqueue_immediate_day_close(self, tar_path: str, *, reason: str) -> bool:
     """Submit async ``DAY_CLOSE`` when ingest checkpoint is complete for the day."""

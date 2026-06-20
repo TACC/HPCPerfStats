@@ -98,13 +98,14 @@ sync_timedb: startup tail ingest phase complete
 
 - Janitor **`DAY_CLOSE`** debt submits to the same coordinator (no sync zstd on janitor thread). See **`sync-timedb-archive-janitor-contract.mdc`**.
 - **`run_scheduled_maintenance_pass`** with `reason=startup|every_n_chunks|ingest_queue_empty` must **submit** async DAY_CLOSE for **`eligible_deferred`** days (via `_submit_scheduled_day_close_from_snapshot`), not only log the candidate report. Report-only passes use other reason strings.
+- **Supervisor delete handoff:** checkpoint-complete days at async manifest **`raw_delete_pending`** must not be re-submitted by startup discover, scheduled maintenance, or `_maybe_enqueue_immediate_day_close`; completion is supervisor **`_apply_day_close_raw_removal_deletes`** → **`finalize_complete_if_filesystem`** (see **`sync-timedb-archive-janitor-contract.mdc`**).
 
 ## Tests
 
 - `hpcperfstats/tests/test_sync_timedb_startup_day_close.py` (checkpoint-complete + quiescent submit, boot reconcile when `phase=done`, `discover_done` false while `pending_eligible`, pipelined tail enqueue)
 - `hpcperfstats/tests/test_sync_timedb_startup_tail_ingest.py` (coordinator queue, ingest before discover_done, phase complete)
 - `hpcperfstats/tests/test_sync_timedb_supervisor.py` (`test_supervisor_waits_for_startup_day_close_drain_before_ingest`, `test_supervisor_blocks_ingest_when_phase_done_pending_eligible`, `test_supervisor_startup_drain_disabled_allows_parallel_ingest`, `test_supervisor_failed_ingest_requeues_at_pending_head`, `test_supervisor_startup_tail_ingest_runs_during_drain`, `test_supervisor_startup_drain_completes_when_day_raw_waiting_on_ingest_and_tail_skip`, gate clear with inflight async)
-- Archive/janitor/async helpers in `test_sync_timedb_archive.py`, `test_sync_timedb_janitor.py`
+- Archive/janitor/async helpers in `test_sync_timedb_archive.py`, `test_sync_timedb_janitor.py`, `test_sync_timedb_async_day_close.py` (including **`raw_delete_pending`** single-flight / no-resubmit)
 
 ## Overlap
 
