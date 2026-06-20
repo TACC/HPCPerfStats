@@ -4502,11 +4502,11 @@ def run_sync_timedb_supervisor_loop(
     startup_drain_last_log = 0.0
 
     def _startup_ingest_gate_pending():
-      if startup_day_close is not None and startup_day_close.enabled:
-        if not startup_day_close.discover_done():
-          return True
       if startup_tail_ingest is not None and startup_tail_ingest.enabled:
         if not startup_tail_ingest.tail_ingest_done():
+          return True
+      if startup_day_close is not None and startup_day_close.enabled:
+        if not startup_day_close.discover_done():
           return True
       if startup_preflight is not None and startup_preflight.enabled:
         if not startup_preflight.delete_phase_done():
@@ -4522,20 +4522,33 @@ def run_sync_timedb_supervisor_loop(
       if now - startup_drain_last_log < 30.0:
         return
       startup_drain_last_log = now
+      tail_pending = (
+          startup_tail_ingest is not None
+          and startup_tail_ingest.enabled
+          and not startup_tail_ingest.tail_ingest_done()
+      )
       discover_pending = (
           startup_day_close is not None
           and startup_day_close.enabled
           and not startup_day_close.discover_done()
       )
       pending_eligible = (
-          startup_day_close.pending_deferral_count()
-          if startup_day_close is not None and startup_day_close.enabled
-          else 0
+          startup_day_close.pending_eligible_count()
+          if startup_day_close is not None
+          and startup_day_close.enabled
+          and hasattr(startup_day_close, "pending_eligible_count")
+          else (
+              startup_day_close.pending_deferral_count()
+              if startup_day_close is not None and startup_day_close.enabled
+              else 0
+          )
       )
-      tail_pending = (
-          startup_tail_ingest is not None
-          and startup_tail_ingest.enabled
-          and not startup_tail_ingest.tail_ingest_done()
+      pending_retry = (
+          startup_day_close.pending_retry_count()
+          if startup_day_close is not None
+          and startup_day_close.enabled
+          and hasattr(startup_day_close, "pending_retry_count")
+          else 0
       )
       tail_queue = (
           startup_tail_ingest.pending_count()
@@ -4563,13 +4576,15 @@ def run_sync_timedb_supervisor_loop(
           else 0
       )
       log_print(
-          "sync_timedb: startup ingest maintenance waiting discover=%s "
-          "pending_eligible=%d tail_pending=%s tail_queue=%d async_active=%d "
-          "startup_raw=%s day_raw_delete=%s day_raw_waiting_on_ingest=%d"
+          "sync_timedb: startup ingest maintenance waiting tail_pending=%s "
+          "discover=%s pending_eligible=%d pending_retry=%d tail_queue=%d "
+          "async_active=%d startup_raw=%s day_raw_delete=%s "
+          "day_raw_waiting_on_ingest=%d"
           % (
+              tail_pending,
               discover_pending,
               pending_eligible,
-              tail_pending,
+              pending_retry,
               tail_queue,
               async_active,
               raw_pending,

@@ -24,8 +24,8 @@ When **`sync_startup_day_close_preflight=yes`** (default), the supervisor starts
 1. Wait for or derive **`StartupArchiveScanCoordinator`** snapshot (`sync-timedb-canonical-startup-archive-scan.mdc`); **no nested full collect** in `build_remaining_raw_stats_by_daily_gz`.
 2. Subtract checkpoint paths on snapshot mapping (`build_unprocessed_raw_by_daily_tar(..., maintenance_snapshot=)`).
 3. **Submit budget starts after scans** (`submit_t0` reset post unprocessed+remaining build).
-4. Multi-slice discover until `pending_eligible` and `pending_retry` empty; manifest `phase=done` only then (not on SIGTERM with deferrals). **`phase=done` is resumable on restart:** when manifest says done but checkpoint-complete or quiescent days still need async DAY_CLOSE, **`_needs_boot_reconcile()`** resets to **`discovering`** and reruns discover (do not skip solely because manifest says done).
-5. Transient disqualification skips enqueue `pending_retry`; next slice retries when `tar not in get_disqualified_daily_tars()`.
+4. Multi-slice discover until **`pending_retry`** empty; manifest **`phase=done`** when no retry deferrals remain ( **`pending_eligible`** from async/budget deferral may remain and is handed off to steady-state chunk/janitor submit). On SIGTERM with **`pending_retry`**, keep **`phase=discovering`**. **`phase=done` is resumable on restart:** when manifest says done but checkpoint-complete or quiescent days still need async DAY_CLOSE, **`_needs_boot_reconcile()`** resets to **`discovering`** and reruns discover (live rescan or **`pending_retry`**; **`pending_eligible` alone** does not force reconcile).
+5. Transient disqualification skips enqueue **`pending_retry`**; next slice retries when `tar not in get_disqualified_daily_tars()`. Async-saturation / budget / per-slice cap deferrals go to **`pending_eligible`** only.
 6. Slice 2+ refresh `remaining_raw_by_gz` from janitor accrual when present, else coordinator snapshot.
 7. **One** `get_disqualified_daily_tars()` per discover slice (before submit loop); pass precomputed set into `submit_day_close(..., disqualified_daily_tars=)` to avoid a second full recompute under `async_day_close._lock`.
 8. Slice telemetry: `discover_slice: disqualified_n=… disq_elapsed_s=…` and `discover slice: submitted=…` in `try/finally` (always emitted even when candidate report is slow).
@@ -38,24 +38,25 @@ When **`sync_startup_day_close_preflight=yes`** (default), the supervisor starts
 
 After each discover slice builds `unprocessed_by_tar`:
 
-1. **Enqueue** every oldest-first day with **`1 <= on_disk_paths <= sync_startup_tail_ingest_max_files`** via `StartupTailIngestCoordinator.enqueue_tail_day` (idempotent per tar per boot).
+1. **Enqueue** every oldest-first day with **`1 <= on_disk_paths <= sync_startup_tail_ingest_max_files`** via `StartupTailIngestCoordinator.enqueue_tail_day` (idempotent per tar per boot) **before** the discover async submit loop in the same slice.
 2. **Defer** days with **`> max_files`** via `note_deferred_above_max` (main ingest handles; log once per tar).
 3. **Tail thread** starts at boot **in parallel** with discover; **does not** wait for `discover_done()` before consuming the first enqueue.
 4. Tail ingest uses the **ingest pool imap sliding-window path** (same as main ingest; **`HPCPERFSTATS_SYNC_TIMEDB_INGEST_INLINE=1`** forces supervisor-thread serial ingest for tests), archive finalize, flush checkpoint, submit async **`DAY_CLOSE`** on checkpoint-complete.
-5. **`tail_ingest_done()`** when **`discover_done()` AND queue empty AND no in-progress day**.
+5. Discover **defers async submit** while **`StartupTailIngestCoordinator.pending_count() > 0`** (tail-first submit priority).
+6. **`tail_ingest_done()`** when **`discover_done()` AND queue empty AND no in-progress day**.
 
 **Only days released by discover slices** may be tail-ingested (tail thread must not live-scan ahead of slice classification).
 
 ## Startup drain gate
 
-When **`sync_startup_drain_day_close_before_ingest=yes`**, before the first rescan/ingest the supervisor polls until all of:
+When **`sync_startup_drain_day_close_before_ingest=yes`**, before the first rescan/ingest the supervisor polls until all of ( **tail checked first** ):
 
-- `StartupDayClosePreflight.discover_done()` (when enabled)
-- `StartupTailIngestCoordinator.tail_ingest_done()` (when enabled)
+- `StartupTailIngestCoordinator.tail_ingest_done()` (when enabled) — **always blocks** main ingest until startup tail queue is drained
+- `StartupDayClosePreflight.discover_done()` (when enabled) — **`phase=done` and `pending_retry` empty**; **`pending_eligible` does not block**
 - `StartupRawRemovalPreflight.delete_phase_done()` (when enabled)
 - `DayRawRemovalCoordinator.any_blocks_startup_drain()` false (when enabled) — days in `verification_complete` with only ingest-gated retryable skips on disk do **not** block startup; main ingest clears them after the gate. Mid-run delete driver still uses `any_needs_delete_phase()` via `_apply_day_close_raw_removal_deletes`.
 
-**Does not block** on `AsyncDayCloseCoordinator.active_or_submitted_tar_paths()` — main ingest may proceed while async seal/zstd continues.
+**Does not block** on `AsyncDayCloseCoordinator.active_or_submitted_tar_paths()` or manifest **`pending_eligible`** — main ingest may proceed while async seal/zstd continues and startup-deferred eligible days are picked up by chunk-end / janitor submit.
 
 Delete phases are driven via `_maybe_handle_raw_removal_delete_phase()` during the drain loop. On exit, `_post_startup_raw_removal_rescan()` runs when startup raw removal finished. **`startup_ingest_gate_cleared`** is one-time; mid-run day-close deletes do not re-gate ingest.
 
@@ -80,7 +81,7 @@ Delete phases are driven via `_maybe_handle_raw_removal_delete_phase()` during t
 ```
 janitor: day_close candidate report reason=startup_checkpoint_discover queued=N waiting_on_ingest=W eligible_deferred=D disqualified=M
 sync_timedb: startup day close discover: eligible=N quiescent_eligible=Q
-sync_timedb: startup ingest maintenance waiting discover=… pending_eligible=… tail_pending=… tail_queue=… async_active=… startup_raw=… day_raw_delete=… day_raw_waiting_on_ingest=…
+sync_timedb: startup ingest maintenance waiting tail_pending=… discover=… pending_eligible=… pending_retry=… tail_queue=… async_active=… startup_raw=… day_raw_delete=… day_raw_waiting_on_ingest=…
 sync_timedb: startup ingest maintenance complete
 sync_timedb: startup maintenance idle; ingest may begin
 sync_timedb: startup day close discover backoff async saturated active=N max=M …
@@ -102,9 +103,9 @@ sync_timedb: startup tail ingest phase complete
 
 ## Tests
 
-- `hpcperfstats/tests/test_sync_timedb_startup_day_close.py` (checkpoint-complete + quiescent submit, boot reconcile when `phase=done`, `discover_done` false while `pending_eligible`, pipelined tail enqueue)
+- `hpcperfstats/tests/test_sync_timedb_startup_day_close.py` (checkpoint-complete + quiescent submit, boot reconcile when `phase=done`, `discover_done` true with `pending_eligible`, false with `pending_retry`, async-saturated loop exit, tail-first submit deferral, pipelined tail enqueue)
 - `hpcperfstats/tests/test_sync_timedb_startup_tail_ingest.py` (coordinator queue, ingest before discover_done, phase complete)
-- `hpcperfstats/tests/test_sync_timedb_supervisor.py` (`test_supervisor_waits_for_startup_day_close_drain_before_ingest`, `test_supervisor_blocks_ingest_when_phase_done_pending_eligible`, `test_supervisor_startup_drain_disabled_allows_parallel_ingest`, `test_supervisor_failed_ingest_requeues_at_pending_head`, `test_supervisor_startup_tail_ingest_runs_during_drain`, `test_supervisor_startup_drain_completes_when_day_raw_waiting_on_ingest_and_tail_skip`, gate clear with inflight async)
+- `hpcperfstats/tests/test_sync_timedb_supervisor.py` (`test_supervisor_waits_for_startup_day_close_drain_before_ingest`, `test_supervisor_opens_ingest_when_discover_done_pending_eligible_only`, `test_supervisor_blocks_ingest_when_pending_retry`, `test_supervisor_startup_drain_disabled_allows_parallel_ingest`, `test_supervisor_failed_ingest_requeues_at_pending_head`, `test_supervisor_startup_tail_ingest_runs_during_drain`, `test_supervisor_startup_drain_completes_when_day_raw_waiting_on_ingest_and_tail_skip`, gate clear with inflight async)
 - Archive/janitor/async helpers in `test_sync_timedb_archive.py`, `test_sync_timedb_janitor.py`, `test_sync_timedb_async_day_close.py` (including **`raw_delete_pending`** single-flight / no-resubmit)
 
 ## Overlap

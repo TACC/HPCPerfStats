@@ -182,7 +182,7 @@ def test_startup_discover_backoff_skips_scan_when_async_saturated(
     preflight._manifest["pending_eligible"] = ["/arch/2026-04-22.tar"]
     preflight._manifest["pending_retry"] = []
   has_more = preflight._discover_slice()
-  assert has_more is True
+  assert has_more is False
   assert scan_calls["n"] == 1
   assert preflight._manifest.get("last_progress") == "discover_backoff_async_saturated"
 
@@ -328,6 +328,9 @@ def test_startup_day_close_shutdown_preserves_pending_eligible(
   preflight._manifest["pending_eligible"] = [
       os.path.normpath(str(tmp_path / "daily" / "2022-07-11.tar")),
   ]
+  preflight._manifest["pending_retry"] = [
+      os.path.normpath(str(tmp_path / "daily" / "2022-07-10.tar")),
+  ]
 
   import hpcperfstats.dbload.lib.shutdown_utils as shutdown_utils
 
@@ -342,6 +345,7 @@ def test_startup_day_close_shutdown_preserves_pending_eligible(
   with open(manifest_path(str(tmp_path)), encoding="utf-8") as handle:
     saved = json.load(handle)
   assert saved.get("pending_eligible")
+  assert saved.get("pending_retry")
 
 
 def test_startup_day_close_multi_slice_submits_until_cap(
@@ -393,13 +397,14 @@ def test_startup_day_close_multi_slice_submits_until_cap(
   monkeypatch.setattr(original_eligible, shrinking_eligible)
 
   preflight = _make_preflight(tmp_path, _FakeCoord())
-  assert preflight._discover_slice() is True
+  assert preflight._discover_slice() is False
   assert len(submitted) == 1
-  assert preflight._discover_slice() is True
+  assert preflight._discover_slice() is False
   assert len(submitted) == 2
   assert not preflight._discover_slice()
   assert len(submitted) == 3
-  assert preflight.phase() != PHASE_DONE
+  preflight._discover_loop()
+  assert preflight.phase() == PHASE_DONE
 
 
 def test_startup_day_close_retries_after_disqualification_clears(
@@ -574,7 +579,7 @@ def test_startup_day_close_skips_quiescent_when_unprocessed_still_on_disk(
   assert not submitted
 
 
-def test_discover_done_false_while_pending_eligible(tmp_path):
+def test_discover_done_true_while_pending_eligible_only(tmp_path):
   preflight = _make_preflight(
       tmp_path,
       MagicMock(
@@ -588,6 +593,25 @@ def test_discover_done_false_while_pending_eligible(tmp_path):
   with preflight._lock:
     preflight._manifest["phase"] = PHASE_DONE
     preflight._manifest["pending_eligible"] = [tar_path]
+    preflight._manifest["pending_retry"] = []
+  assert preflight.discover_done() is True
+
+
+def test_discover_done_false_while_pending_retry(tmp_path):
+  preflight = _make_preflight(
+      tmp_path,
+      MagicMock(
+          get_disqualified_daily_tars=lambda: set(),
+          submit_day_close=lambda *_a, **_k: True,
+          active_or_submitted_tar_paths=lambda: set(),
+          is_complete=lambda _tar: False,
+      ),
+  )
+  tar_path = os.path.normpath(str(tmp_path / "daily" / "2022-09-01.tar"))
+  with preflight._lock:
+    preflight._manifest["phase"] = PHASE_DONE
+    preflight._manifest["pending_eligible"] = []
+    preflight._manifest["pending_retry"] = [tar_path]
   assert preflight.discover_done() is False
 
 
@@ -743,3 +767,158 @@ def test_discover_slice_enqueues_tail_eligible_before_done(
   preflight._discover_slice()
   assert enqueued == [(tar_path, [str(raw_path)])]
   assert preflight.discover_done() is False
+
+
+def test_discover_loop_done_with_async_saturated_pending_eligible(
+    tmp_path, monkeypatch,
+):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_paths = []
+  for day_num in (1, 2, 3):
+    tar = os.path.normpath(str(daily_dir / ("2022-08-%02d.tar" % day_num)))
+    open(tar, "wb").close()
+    tar_paths.append(tar)
+
+  class _SaturatedCoord:
+    def get_disqualified_daily_tars(self):
+      return set()
+
+    def submit_day_close(self, *_a, **_k):
+      raise AssertionError("submit should not run when saturated at slice start")
+
+    def active_or_submitted_tar_paths(self):
+      return set(tar_paths[:2])
+
+    def entry_progress_snapshot(self, _tar):
+      return {}
+
+  monkeypatch.setattr(cfg, "get_sync_startup_day_close_max_inflight", lambda: 2)
+  monkeypatch.setattr(cfg, "get_sync_day_close_candidate_report", lambda: False)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_startup_day_close."
+      "build_unprocessed_raw_by_daily_tar",
+      lambda *_a, **_k: {},
+  )
+
+  preflight = _make_preflight(tmp_path, _SaturatedCoord())
+  with preflight._lock:
+    preflight._manifest["pending_eligible"] = [tar_paths[2]]
+    preflight._manifest["pending_retry"] = []
+  preflight._discover_loop()
+  assert preflight.phase() == PHASE_DONE
+  assert preflight.discover_done() is True
+  assert preflight.pending_eligible_count() == 1
+
+
+def test_discover_defers_submit_while_tail_pending(tmp_path, monkeypatch):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_a = os.path.normpath(str(daily_dir / "2022-08-01.tar"))
+  tar_b = os.path.normpath(str(daily_dir / "2022-08-02.tar"))
+  for tar in (tar_a, tar_b):
+    open(tar, "wb").close()
+
+  submitted = []
+
+  class _FakeTailCoord:
+    enabled = True
+
+    def pending_count(self):
+      return 1
+
+    def enqueue_tail_day(self, *_a, **_k):
+      return True
+
+    def note_deferred_above_max(self, *_a, **_k):
+      return None
+
+  class _FakeCoord:
+    def get_disqualified_daily_tars(self):
+      return set()
+
+    def submit_day_close(self, tar_path, *, reason, disqualified_daily_tars=None):
+      submitted.append(os.path.normpath(tar_path))
+      return True
+
+    def active_or_submitted_tar_paths(self):
+      return set(submitted)
+
+    def entry_progress_snapshot(self, _tar):
+      return {}
+
+  monkeypatch.setattr(cfg, "get_sync_startup_day_close_budget_seconds", lambda: 60.0)
+  monkeypatch.setattr(cfg, "get_sync_startup_day_close_days_per_slice", lambda: 5)
+  monkeypatch.setattr(cfg, "get_sync_day_close_candidate_report", lambda: False)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_startup_day_close."
+      "build_unprocessed_raw_by_daily_tar",
+      lambda *_a, **_k: {},
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_startup_day_close."
+      "build_remaining_raw_stats_by_daily_gz",
+      lambda *_a, **_k: {},
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_startup_day_close."
+      "days_ingest_complete_by_checkpoint",
+      lambda *_a, **_k: [tar_a, tar_b],
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_startup_day_close."
+      "days_quiescent_tar_needs_day_close_at_startup",
+      lambda *_a, **_k: [],
+  )
+
+  preflight = _make_preflight(
+      tmp_path,
+      _FakeCoord(),
+      tail_ingest_coordinator=_FakeTailCoord(),
+  )
+  preflight._discover_slice()
+  assert submitted == []
+  assert preflight.pending_eligible_count() == 2
+
+
+def test_boot_reconcile_false_when_only_pending_eligible_handoff(tmp_path, monkeypatch):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2026-04-22.tar"))
+  open(tar_path, "wb").close()
+
+  class _FakeCoord:
+    def get_disqualified_daily_tars(self):
+      return set()
+
+    def submit_day_close(self, *_a, **_k):
+      return True
+
+    def active_or_submitted_tar_paths(self):
+      return set()
+
+    def is_complete(self, _tar_path):
+      return True
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_startup_day_close."
+      "build_unprocessed_raw_by_daily_tar",
+      lambda *_a, **_k: {},
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_startup_day_close."
+      "days_ingest_complete_by_checkpoint",
+      lambda *_a, **_k: [],
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_startup_day_close."
+      "days_quiescent_tar_needs_day_close_at_startup",
+      lambda *_a, **_k: [],
+  )
+
+  preflight = _make_preflight(tmp_path, _FakeCoord())
+  preflight._manifest["phase"] = PHASE_DONE
+  preflight._manifest["completed_at"] = 1.0
+  preflight._manifest["pending_eligible"] = [tar_path]
+  preflight._manifest["pending_retry"] = []
+  assert preflight._needs_boot_reconcile() is False

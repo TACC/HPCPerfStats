@@ -139,18 +139,26 @@ class StartupDayClosePreflight:
       pending_retry = self._manifest.get("pending_retry") or []
       return len(pending_eligible) + len(pending_retry)
 
+  def pending_eligible_count(self) -> int:
+    with self._lock:
+      return len(self._manifest.get("pending_eligible") or [])
+
+  def pending_retry_count(self) -> int:
+    with self._lock:
+      return len(self._manifest.get("pending_retry") or [])
+
   def discover_done(self) -> bool:
     with self._lock:
       if self._manifest.get("phase") != PHASE_DONE:
         return False
-      if self._manifest.get("pending_eligible") or self._manifest.get("pending_retry"):
+      if self._manifest.get("pending_retry"):
         return False
     return True
 
   def _needs_boot_reconcile(self) -> bool:
-    """True when a prior ``phase=done`` manifest still has unsubmitted eligible work."""
+    """True when a prior ``phase=done`` manifest still needs discover retry or live rescan."""
     with self._lock:
-      if self._manifest.get("pending_eligible") or self._manifest.get("pending_retry"):
+      if self._manifest.get("pending_retry"):
         return True
     async_active = self.async_day_close.active_or_submitted_tar_paths()
     for tar_norm in async_active:
@@ -407,8 +415,7 @@ class StartupDayClosePreflight:
             ),
             flush=True,
         )
-      has_deferrals = bool(pending_eligible or pending_retry)
-      return has_deferrals and not shutdown_requested[0]
+      return bool(pending_retry) and not shutdown_requested[0]
 
     submit_t0 = time.time()
     phases = self.day_phases()
@@ -505,6 +512,14 @@ class StartupDayClosePreflight:
         if len(self.async_day_close.active_or_submitted_tar_paths()) >= max_inflight:
           deferred_eligible.append(tar_norm)
           continue
+        tail_coord = self.tail_ingest_coordinator
+        if (
+            tail_coord is not None
+            and tail_coord.enabled
+            and tail_coord.pending_count() > 0
+        ):
+          deferred_eligible.append(tar_norm)
+          continue
         if tar_norm in disqualified:
           skipped_disqualified += 1
           retry_next_slice.append(tar_norm)
@@ -588,11 +603,7 @@ class StartupDayClosePreflight:
           "discover_slice_done",
           detail="submitted=%d deferred=%d" % (len(submitted), len(deferred_eligible)),
       )
-    has_deferrals = (
-        len(deferred_eligible) > 0
-        or len(retry_next_slice) > 0
-    )
-    return has_deferrals and not shutdown_requested[0]
+    return bool(retry_next_slice) and not shutdown_requested[0]
 
   def _discover_loop(self) -> None:
     set_daemon_thread_title(
@@ -624,17 +635,18 @@ class StartupDayClosePreflight:
         pending_eligible = list(self._manifest.get("pending_eligible") or [])
         pending_retry = list(self._manifest.get("pending_retry") or [])
         shutting_down = shutdown_requested[0]
-        if shutting_down and (pending_eligible or pending_retry):
+        if shutting_down and pending_retry:
           self._manifest["phase"] = PHASE_DISCOVERING
           self._manifest.pop("completed_at", None)
-        elif pending_eligible or pending_retry:
+        elif pending_retry:
           self._manifest["phase"] = PHASE_DISCOVERING
           self._manifest.pop("completed_at", None)
         else:
           self._manifest["phase"] = PHASE_DONE
           self._manifest["completed_at"] = time.time()
-          self._manifest["pending_eligible"] = []
           self._manifest["pending_retry"] = []
+          if not pending_eligible:
+            self._manifest["pending_eligible"] = []
         _save_manifest(self._manifest_path, self._manifest)
       if self.log_fn:
         self.log_fn(
