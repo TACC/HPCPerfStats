@@ -16,6 +16,7 @@ CLI: no args or ``YYYY-MM-DD`` range uses a sliding window (see ``days_to_proces
 DB access is process-safe: pool workers use close_old_connections() at task start and connections.close_all() at task end so connections do not linger between files. Writes are serialized with a shared lock.
 
 """
+import contextvars
 import ctypes
 import gc
 import itertools
@@ -1292,6 +1293,58 @@ def _worker_rss_mib():
   return round(rss_bytes / (1024 * 1024), 1)
 
 
+@dataclass
+class SealedArchiveIngestProgress:
+  """Per-sealed-day file counter for ``sync_timedb_archive`` completion logs."""
+
+  total_files: int
+  completed_files: int = 0
+
+
+_sealed_archive_ingest_progress: contextvars.ContextVar = contextvars.ContextVar(
+    "sealed_archive_ingest_progress",
+    default=None,
+)
+
+
+def set_sealed_archive_ingest_progress(total_files: int) -> None:
+  """Begin sealed-archive member progress (``sync_timedb_archive`` workers only)."""
+  try:
+    total = int(total_files)
+  except (TypeError, ValueError):
+    total = 0
+  _sealed_archive_ingest_progress.set(
+      SealedArchiveIngestProgress(total_files=max(0, total)),
+  )
+
+
+def clear_sealed_archive_ingest_progress() -> None:
+  _sealed_archive_ingest_progress.set(None)
+
+
+def advance_sealed_archive_ingest_progress(count=1) -> None:
+  """Count sealed-archive members done without ingest (for example oversize skips)."""
+  progress = _sealed_archive_ingest_progress.get()
+  if progress is None or progress.total_files <= 0:
+    return
+  try:
+    n = int(count)
+  except (TypeError, ValueError):
+    n = 0
+  if n > 0:
+    progress.completed_files += n
+
+
+def _sealed_archive_ingest_remaining_pair():
+  """Return ``(remaining, total)`` after incrementing completed, or ``None``."""
+  progress = _sealed_archive_ingest_progress.get()
+  if progress is None or progress.total_files <= 0:
+    return None
+  advance_sealed_archive_ingest_progress(1)
+  remaining = max(0, progress.total_files - progress.completed_files)
+  return remaining, progress.total_files
+
+
 def _log_ingest_worker_file_completion(
     stats_file,
     *,
@@ -1317,6 +1370,10 @@ def _log_ingest_worker_file_completion(
     parts.append("proc_rows=%d" % int(proc_rows))
   if stage:
     parts.append("stage=%s" % stage)
+  remaining_pair = _sealed_archive_ingest_remaining_pair()
+  if remaining_pair is not None:
+    remaining, total = remaining_pair
+    parts.append("remaining=%d/%d" % (remaining, total))
   log_print(" ".join(parts), flush=True)
 
 

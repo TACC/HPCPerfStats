@@ -50,6 +50,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
 )
 from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import (
     max_sealed_archive_ingest_budget_for_paths,
+    sealed_archive_member_count_hint,
     stall_abort_polls_for_sealed_archives,
 )
 from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
@@ -178,51 +179,64 @@ def _process_stream_archive(lock, sealed_path):
   DatabaseError = None
   OperationalError = None
   release_heap = None
+  from hpcperfstats.dbload.sync_timedb import (
+      advance_sealed_archive_ingest_progress,
+      clear_sealed_archive_ingest_progress,
+      set_sealed_archive_ingest_progress,
+  )
 
-  for member_name, member_path in iter_sealed_daily_archive_member_paths(sealed_path):
-    if add_stats is None:
-      from django.db import close_old_connections as _close
-      from django.db.utils import DatabaseError as _DBErr
-      from django.db.utils import OperationalError as _OpErr
+  set_sealed_archive_ingest_progress(sealed_archive_member_count_hint(sealed_path))
 
-      from hpcperfstats.dbload.lib.django_bootstrap import ensure_django as _ensure
-      from hpcperfstats.dbload.sync_timedb import (
-          add_stats_file_to_db as _add,
-          _release_ingest_worker_heap as _release,
-      )
+  try:
+    for member_name, member_path in iter_sealed_daily_archive_member_paths(
+        sealed_path,
+        on_member_skipped=advance_sealed_archive_ingest_progress,
+    ):
+      if add_stats is None:
+        from django.db import close_old_connections as _close
+        from django.db.utils import DatabaseError as _DBErr
+        from django.db.utils import OperationalError as _OpErr
 
-      close_old_connections = _close
-      DatabaseError = _DBErr
-      OperationalError = _OpErr
-      ensure_django = _ensure
-      add_stats = _add
-      release_heap = _release
-      ensure_django()
-      close_old_connections()
-
-    try:
-      add_stats(lock, member_path)
-    except DatabaseUnavailableExit:
-      raise
-    except (OperationalError, DatabaseError) as exc:
-      if is_database_unavailable_error(exc):
-        log_and_raise_database_unavailable(
-            exc, context="sync_timedb_archive worker",
+        from hpcperfstats.dbload.lib.django_bootstrap import ensure_django as _ensure
+        from hpcperfstats.dbload.sync_timedb import (
+            add_stats_file_to_db as _add,
+            _release_ingest_worker_heap as _release,
         )
-      raise
-    finally:
-      if release_heap is not None:
-        release_heap()
+
+        close_old_connections = _close
+        DatabaseError = _DBErr
+        OperationalError = _OpErr
+        ensure_django = _ensure
+        add_stats = _add
+        release_heap = _release
+        ensure_django()
+        close_old_connections()
+
       try:
-        os.remove(member_path)
-      except OSError:
-        pass
-      parent = os.path.dirname(member_path)
-      try:
-        if parent and os.path.isdir(parent) and not os.listdir(parent):
-          os.rmdir(parent)
-      except OSError:
-        pass
+        add_stats(lock, member_path)
+      except DatabaseUnavailableExit:
+        raise
+      except (OperationalError, DatabaseError) as exc:
+        if is_database_unavailable_error(exc):
+          log_and_raise_database_unavailable(
+              exc, context="sync_timedb_archive worker",
+          )
+        raise
+      finally:
+        if release_heap is not None:
+          release_heap()
+        try:
+          os.remove(member_path)
+        except OSError:
+          pass
+        parent = os.path.dirname(member_path)
+        try:
+          if parent and os.path.isdir(parent) and not os.listdir(parent):
+            os.rmdir(parent)
+        except OSError:
+          pass
+  finally:
+    clear_sealed_archive_ingest_progress()
 
 
 def _process_stream_archive_task(task_args):

@@ -2860,6 +2860,34 @@ def test_iter_sealed_daily_archive_member_paths_spools_to_disk(tmp_path):
     assert fh.read() == "payload-line\n"
 
 
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_iter_sealed_daily_archive_member_paths_skipped_invokes_callback(
+    tmp_path, monkeypatch,
+):
+  from hpcperfstats.dbload.lib import conf_parser as cfg
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      iter_sealed_daily_archive_member_paths,
+  )
+
+  zst_p, _tar_p = _write_sealed_daily_archive(
+      tmp_path,
+      day="2024-03-13",
+      member_name="host.example/stats.txt",
+      body="payload-line\n",
+  )
+  monkeypatch.setattr(cfg, "get_sync_ingest_max_file_read_bytes", lambda: 1)
+  skipped = []
+  members = list(
+      iter_sealed_daily_archive_member_paths(
+          zst_p,
+          spool_dir=str(tmp_path / "spool"),
+          on_member_skipped=lambda: skipped.append(1),
+      ),
+  )
+  assert members == []
+  assert len(skipped) == 1
+
+
 def test_iter_archive_ingest_tasks_one_stream_per_sealed_day(tmp_path, monkeypatch):
   if not shutil.which("zstd"):
     pytest.skip("zstd not on PATH")

@@ -3475,11 +3475,16 @@ def _member_spool_relative_path(member_name):
   return os.path.join("_archive", member_name)
 
 
-def iter_sealed_daily_archive_member_paths(sealed_path, spool_dir=None):
+def iter_sealed_daily_archive_member_paths(
+    sealed_path,
+    spool_dir=None,
+    on_member_skipped=None,
+):
   """Yield ``(member_name, path_on_disk)`` for path-only ingest (enables streaming parse).
 
   Each tar member is spooled under ``spool_dir`` (or ``.sync_archive_ingest_spool``).
   Callers must remove ``path_on_disk`` after ingest.
+  ``on_member_skipped`` is invoked once per member not yielded (oversize, unreadable).
   """
   fmt = detect_compressed_format(sealed_path)
   if fmt not in ("zst", "gz"):
@@ -3506,9 +3511,13 @@ def iter_sealed_daily_archive_member_paths(sealed_path, spool_dir=None):
               % (member_info.name, member_info.size, max_bytes),
               flush=True,
           )
+          if on_member_skipped is not None:
+            on_member_skipped()
           continue
         fobj = archive_tar.extractfile(member_info)
         if fobj is None:
+          if on_member_skipped is not None:
+            on_member_skipped()
           continue
         rel_path = _member_spool_relative_path(member_info.name)
         dest = os.path.join(spool_root, rel_path)

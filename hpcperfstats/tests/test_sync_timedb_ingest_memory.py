@@ -64,6 +64,57 @@ def test_log_ingest_worker_file_completion_includes_rss_and_rows(monkeypatch, ca
   assert "stats_rows=1200" in out
   assert "proc_rows=34" in out
   assert "parse_elapsed_s=30.0" in out
+  assert "remaining=" not in out
+
+
+def test_log_ingest_worker_file_completion_includes_sealed_archive_remaining(
+    monkeypatch, capsys,
+):
+  monkeypatch.setattr(st, "stats_file_size_bytes", lambda _p: 100)
+  monkeypatch.setattr(st, "_worker_rss_mib", lambda: 200.0)
+  try:
+    st.set_sealed_archive_ingest_progress(5)
+    st._log_ingest_worker_file_completion(
+        "/spool/host/1",
+        elapsed_s=1.0,
+        stats_rows=10,
+        proc_rows=1,
+        stage="ingest",
+    )
+    st._log_ingest_worker_file_completion(
+        "/spool/host/2",
+        elapsed_s=2.0,
+        stats_rows=20,
+        proc_rows=2,
+        stage="ingest",
+    )
+  finally:
+    st.clear_sealed_archive_ingest_progress()
+  out = capsys.readouterr().out
+  assert "remaining=4/5" in out
+  assert "remaining=3/5" in out
+
+
+def test_advance_sealed_archive_ingest_progress_counts_skipped_toward_remaining(
+    monkeypatch, capsys,
+):
+  monkeypatch.setattr(st, "stats_file_size_bytes", lambda _p: 100)
+  monkeypatch.setattr(st, "_worker_rss_mib", lambda: 200.0)
+  try:
+    st.set_sealed_archive_ingest_progress(5)
+    st.advance_sealed_archive_ingest_progress()
+    st.advance_sealed_archive_ingest_progress()
+    st._log_ingest_worker_file_completion(
+        "/spool/host/1",
+        elapsed_s=1.0,
+        stats_rows=10,
+        proc_rows=1,
+        stage="ingest",
+    )
+  finally:
+    st.clear_sealed_archive_ingest_progress()
+  out = capsys.readouterr().out
+  assert "remaining=2/5" in out
 
 
 def test_should_stream_stats_file_for_4_6gib_class_segment(monkeypatch, tmp_path):
