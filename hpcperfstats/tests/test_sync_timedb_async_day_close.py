@@ -466,3 +466,77 @@ def test_submit_day_close_honors_submit_eligible_fn(tmp_path):
       submit_eligible_fn=lambda _tar: (False, "checkpoint_incomplete"),
   )
   assert coord.submit_day_close(tar_path, reason="test") is False
+
+
+@pytest.mark.django_db(databases=[])
+def test_run_day_close_tail_complete_without_reseal_when_sealed_raw_gone(
+    tmp_path, monkeypatch,
+):
+  archive_dir = str(tmp_path / "archive")
+  daily_dir = str(tmp_path / "daily")
+  os.makedirs(archive_dir)
+  os.makedirs(daily_dir)
+  tar_norm = os.path.normpath(os.path.join(daily_dir, "2026-04-15.tar"))
+  zst_path = os.path.normpath(os.path.join(daily_dir, "2026-04-15.tar.zst"))
+  open(tar_norm, "wb").close()
+  open(zst_path, "wb").close()
+  logs: list[str] = []
+  seal_calls = {"count": 0}
+
+  class _FakeRawCoord:
+    enabled = True
+
+    def try_finish_tar_drop_if_ready(self, _tar_path):
+      os.remove(tar_norm)
+      return True
+
+  monkeypatch.setattr(async_dc_mod.cfg, "get_sync_day_close_async_workers", lambda: 1)
+  monkeypatch.setattr(
+      async_dc_mod,
+      "build_remaining_raw_for_daily_tar",
+      lambda *_a, **_k: {},
+  )
+
+  coord = async_dc_mod.AsyncDayCloseCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=daily_dir,
+      local_tz=None,
+      log_fn=lambda msg, **_kw: logs.append(str(msg)),
+      get_disqualified_daily_tars=lambda: set(),
+      day_raw_removal_coordinator=_FakeRawCoord(),
+  )
+
+  def counting_seal(*_a, **_k):
+    seal_calls["count"] += 1
+    return True
+
+  with mock.patch.object(coord, "_seal_day", side_effect=counting_seal):
+    coord._run_day_close(tar_norm, "deferred_resubmit")
+
+  entry = async_dc_mod._load_manifest(coord._manifest_path)["entries"][tar_norm]
+  assert entry.get("status") == "complete"
+  assert seal_calls["count"] == 0
+  assert any("tail only" in line for line in logs)
+  assert not os.path.isfile(tar_norm)
+
+
+@pytest.mark.django_db(databases=[])
+def test_tar_paths_raw_delete_pending_returns_sorted_pending(tmp_path):
+  archive_dir = str(tmp_path / "archive")
+  daily_dir = str(tmp_path / "daily")
+  os.makedirs(archive_dir)
+  os.makedirs(daily_dir)
+  tar_a = os.path.normpath(os.path.join(daily_dir, "2026-04-10.tar"))
+  tar_b = os.path.normpath(os.path.join(daily_dir, "2026-04-12.tar"))
+  coord = async_dc_mod.AsyncDayCloseCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=daily_dir,
+      local_tz=None,
+      log_fn=lambda *_a, **_k: None,
+      get_disqualified_daily_tars=lambda: set(),
+  )
+  coord._set_entry_status(tar_b, "raw_delete_pending")
+  coord._set_entry_status(tar_a, "raw_delete_pending")
+  assert coord.tar_paths_raw_delete_pending() == [tar_a, tar_b]

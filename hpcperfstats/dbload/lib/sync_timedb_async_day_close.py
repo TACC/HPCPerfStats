@@ -187,6 +187,19 @@ class AsyncDayCloseCoordinator:
           active.add(os.path.normpath(tar_norm))
       return active
 
+  def tar_paths_raw_delete_pending(self) -> List[str]:
+    """Daily tars handed off to the supervisor for batched raw delete + tar drop."""
+    pending: List[str] = []
+    with self._lock:
+      for tar_norm, entry in self._manifest.get("entries", {}).items():
+        if not isinstance(entry, dict):
+          continue
+        if entry.get("status") != "raw_delete_pending":
+          continue
+        pending.append(os.path.normpath(tar_norm))
+    pending.sort()
+    return pending
+
   def _day_close_filesystem_complete(self, tar_norm: str) -> bool:
     tar_norm = os.path.normpath(tar_norm or "")
     if not tar_norm:
@@ -198,7 +211,7 @@ class AsyncDayCloseCoordinator:
         self.tgz_archive_dir,
         tar_norm,
     )
-    if daily_gz_has_remaining_raw_stats(zst_path, {zst_path: remaining}):
+    if daily_gz_has_remaining_raw_stats(zst_path, remaining):
       return False
     if os.path.isfile(tar_norm):
       return False
@@ -329,6 +342,38 @@ class AsyncDayCloseCoordinator:
       except Exception:
         pass
 
+  def _try_complete_day_close_tail_without_reseal(self, tar_norm: str) -> bool:
+    """Finish tar drop + complete when sealed and raw are already gone (no re-seal)."""
+    tar_norm = os.path.normpath(tar_norm or "")
+    zst_path, gz_path = compressed_sibling_paths(tar_norm)
+    if not (os.path.isfile(zst_path) or os.path.isfile(gz_path)):
+      return False
+    remaining = build_remaining_raw_for_daily_tar(
+        self.archive_data_dir,
+        self.host_name_ext,
+        self.tgz_archive_dir,
+        tar_norm,
+    )
+    if daily_gz_has_remaining_raw_stats(zst_path, remaining):
+      return False
+    coord = self.day_raw_removal_coordinator
+    if coord is not None and bool(getattr(coord, "enabled", False)):
+      if not coord.try_finish_tar_drop_if_ready(tar_norm):
+        if os.path.isfile(tar_norm):
+          return False
+    elif os.path.isfile(tar_norm) and not self._tar_drop_day(tar_norm):
+      return False
+    if not self._day_close_filesystem_complete(tar_norm):
+      return False
+    self._notify_phase(tar_norm, "tar_dropped")
+    self._set_entry_status(tar_norm, "complete", completed_at=time.time())
+    self._touch_manifest("complete", tar_norm=tar_norm)
+    self.log_fn(
+        "janitor: async day_close complete (tail only) tar=%s" % tar_norm,
+        flush=True,
+    )
+    return True
+
   def _run_day_close(self, tar_norm: str, reason: str) -> None:
     set_daemon_thread_title(
         "",
@@ -339,6 +384,8 @@ class AsyncDayCloseCoordinator:
       close_old_connections()
       if tar_norm in self.get_disqualified_daily_tars():
         self._set_entry_status(tar_norm, "deferred", detail="disqualified")
+        return
+      if self._try_complete_day_close_tail_without_reseal(tar_norm):
         return
       self._touch_manifest("sealing", tar_norm=tar_norm)
       self._set_entry_status(tar_norm, "sealing", reason=reason)
@@ -523,14 +570,12 @@ class AsyncDayCloseCoordinator:
     return False
 
   def _tar_drop_day(self, tar_norm: str) -> bool:
-    remaining_raw_by_gz = {
-        compressed_sibling_paths(tar_norm)[0]: build_remaining_raw_for_daily_tar(
-            self.archive_data_dir,
-            self.host_name_ext,
-            self.tgz_archive_dir,
-            tar_norm,
-        ),
-    }
+    remaining_raw_by_gz = build_remaining_raw_for_daily_tar(
+        self.archive_data_dir,
+        self.host_name_ext,
+        self.tgz_archive_dir,
+        tar_norm,
+    )
     zst_path, _gz_path = compressed_sibling_paths(tar_norm)
     if daily_gz_has_remaining_raw_stats(zst_path, remaining_raw_by_gz):
       return False

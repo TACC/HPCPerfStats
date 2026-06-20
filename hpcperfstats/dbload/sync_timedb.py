@@ -4652,26 +4652,43 @@ def run_sync_timedb_supervisor_loop(
       nonlocal delete_phase_active
       if day_raw_removal is None or not day_raw_removal.enabled:
         return False
-      if not day_raw_removal.any_needs_delete_phase():
+      needs_delete = day_raw_removal.any_needs_delete_phase()
+      needs_tar_drop = day_raw_removal.any_needs_tar_drop_finish()
+      async_tar_drop = (
+          async_day_close.tar_paths_raw_delete_pending()
+          if async_day_close is not None
+          else []
+      )
+      if not needs_delete and not needs_tar_drop and not async_tar_drop:
         return False
-      if chunk_in_progress:
-        sleep_until_shutdown(0.1)
-        return True
-      delete_phase_active = True
-      for tar_norm in day_raw_removal.days_needing_delete_oldest_first():
-        if day_raw_removal.phase(tar_norm) == PHASE_VERIFICATION_COMPLETE:
-          day_raw_removal.begin_deleting(tar_norm)
-        deleted = day_raw_removal.apply_batch_delete(tar_norm)
-        if day_raw_removal.delete_phase_done(tar_norm):
+      if needs_delete:
+        if chunk_in_progress:
+          sleep_until_shutdown(0.1)
+          return True
+        delete_phase_active = True
+        for tar_norm in day_raw_removal.days_needing_delete_oldest_first():
+          if day_raw_removal.phase(tar_norm) == PHASE_VERIFICATION_COMPLETE:
+            day_raw_removal.begin_deleting(tar_norm)
+          deleted = day_raw_removal.apply_batch_delete(tar_norm)
+          if day_raw_removal.delete_phase_done(tar_norm):
+            _finalize_day_close_raw_removal_delete(tar_norm)
+            continue
+          if (
+              deleted == 0
+              and day_raw_removal.needs_delete_phase(tar_norm)
+              and not day_raw_removal.delete_phase_done(tar_norm)
+          ):
+            continue
+        delete_phase_active = False
+      tar_drop_targets: list[str] = []
+      if needs_tar_drop:
+        tar_drop_targets.extend(day_raw_removal.days_needing_tar_drop_oldest_first())
+      for tar_norm in async_tar_drop:
+        if tar_norm not in tar_drop_targets:
+          tar_drop_targets.append(tar_norm)
+      for tar_norm in tar_drop_targets:
+        if day_raw_removal.try_finish_tar_drop_if_ready(tar_norm):
           _finalize_day_close_raw_removal_delete(tar_norm)
-          continue
-        if (
-            deleted == 0
-            and day_raw_removal.needs_delete_phase(tar_norm)
-            and not day_raw_removal.delete_phase_done(tar_norm)
-        ):
-          continue
-      delete_phase_active = False
       _maybe_apply_day_close_rescan()
       return False
 

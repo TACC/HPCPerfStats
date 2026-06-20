@@ -316,3 +316,38 @@ def test_pipeline_verify_budget_exhausted_logs_warning(tmp_path, monkeypatch):
   coord._verify_pipeline_body(state)
   messages = [str(call.args[0]) for call in log_fn.call_args_list]
   assert any("Day raw removal verify budget exhausted" in msg for msg in messages)
+
+
+def test_try_finish_tar_drop_drops_tar_when_raw_gone_and_phase_done(tmp_path):
+  day = datetime(2022, 6, 14)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, _zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
+  state = coord._get_or_create_day(tar_path)
+  state._verify_body()
+  state._mark_done_waiting_on_ingest()
+  assert coord.phase(tar_path) == PHASE_DONE
+  assert os.path.isfile(tar_path)
+  seg.unlink()
+  assert coord.any_needs_tar_drop_finish()
+  assert tar_path in coord.days_needing_tar_drop_oldest_first()
+  assert coord.try_finish_tar_drop_if_ready(tar_path)
+  assert not os.path.isfile(tar_path)
+  assert coord.phase(tar_path) == PHASE_DONE
+
+
+def test_apply_batch_delete_drops_tar_when_retryable_manifest_but_raw_gone(
+    tmp_path, monkeypatch,
+):
+  day = datetime(2022, 6, 15)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, _zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
+  monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0)
+  state = coord._get_or_create_day(tar_path)
+  state._verify_body()
+  seg.unlink()
+  coord.begin_deleting(tar_path)
+  coord.apply_batch_delete(tar_path)
+  assert coord.phase(tar_path) == PHASE_DONE
+  assert not os.path.isfile(tar_path)

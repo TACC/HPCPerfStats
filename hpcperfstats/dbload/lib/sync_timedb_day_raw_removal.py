@@ -17,6 +17,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     build_remaining_raw_for_daily_tar,
     calendar_date_from_daily_tar_path,
     classify_removable_raw_paths_for_daily_gz,
+    daily_gz_has_remaining_raw_stats,
     remove_verified_uncompressed_daily_tars,
     stats_file_is_active_segment,
 )
@@ -162,6 +163,47 @@ class _DayRawRemovalState:
     for raw_list in (remaining or {}).values():
       paths.extend(raw_list or [])
     return paths
+
+  def _has_closed_raw_existing_on_disk(self) -> bool:
+    return any(os.path.isfile(path) for path in self._closed_raw_paths_on_disk())
+
+  def try_finish_tar_drop_if_ready(self) -> bool:
+    """Drop ``.tar`` when sealed and no closed raw files remain on disk."""
+    if not os.path.isfile(self.tar_path):
+      return True
+    zst_path, gz_path = compressed_sibling_paths(self.tar_path)
+    if not (os.path.isfile(zst_path) or os.path.isfile(gz_path)):
+      return False
+    remaining_raw = build_remaining_raw_for_daily_tar(
+        self.archive_data_dir,
+        self.host_name_ext,
+        self.tgz_archive_dir,
+        self.tar_path,
+    )
+    if daily_gz_has_remaining_raw_stats(zst_path, remaining_raw):
+      if self._has_closed_raw_existing_on_disk():
+        return False
+    remove_verified_uncompressed_daily_tars(
+        self.tgz_archive_dir,
+        log_fn=self.log_fn,
+        remaining_raw_by_gz=remaining_raw,
+        force_remove_uncompressed_tar=False,
+        only_daily_tar_paths={self.tar_path},
+    )
+    if os.path.isfile(self.tar_path):
+      return False
+    with self._lock:
+      if self._manifest.get("phase") != PHASE_DONE:
+        self._manifest["phase"] = PHASE_DONE
+        self._manifest["completed_at"] = time.time()
+        _save_manifest(self._manifest_path, self._manifest)
+    if self.log_fn:
+      self.log_fn(
+          "Day raw removal tar drop complete day=%s"
+          % self.day_date.isoformat(),
+          flush=True,
+      )
+    return True
 
   def _entry_is_retryable_skip(self, entry: Dict[str, Any]) -> bool:
     if not isinstance(entry, dict):
@@ -477,8 +519,10 @@ class _DayRawRemovalState:
     if raw_delete_complete:
       if not self._all_closed_raw_terminal_or_gone():
         if self._only_waiting_on_ingest_blocks_completion():
-          self._mark_done_waiting_on_ingest()
-          return deleted
+          if self._has_closed_raw_existing_on_disk():
+            self._mark_done_waiting_on_ingest()
+            return deleted
+          # Retryable skips in manifest but raw already absent; drop tar below.
         if self._unmanifested_closed_raw_paths():
           with self._lock:
             self._manifest["phase"] = PHASE_VERIFYING
@@ -617,6 +661,33 @@ class DayRawRemovalCoordinator:
     with self._days_lock:
       states = list(self._days.values())
     return any(s.needs_delete_phase() and not s.delete_phase_done() for s in states)
+
+  def any_needs_tar_drop_finish(self) -> bool:
+    return bool(self.days_needing_tar_drop_oldest_first())
+
+  def days_needing_tar_drop_oldest_first(self) -> List[str]:
+    candidates = []
+    with self._days_lock:
+      states = list(self._days.values())
+    for state in states:
+      if not os.path.isfile(state.tar_path):
+        continue
+      zst_path, gz_path = compressed_sibling_paths(state.tar_path)
+      if not (os.path.isfile(zst_path) or os.path.isfile(gz_path)):
+        continue
+      if state._has_closed_raw_existing_on_disk():
+        continue
+      candidates.append((state.day_date, state.tar_path))
+    candidates.sort(key=lambda item: item[0])
+    return [tar_path for _day_date, tar_path in candidates]
+
+  def try_finish_tar_drop_if_ready(self, tar_path: str) -> bool:
+    state = self._get_or_create_day(tar_path)
+    if not state.try_finish_tar_drop_if_ready():
+      return False
+    if state.delete_phase_done():
+      self._notify_delete_complete(tar_path)
+    return True
 
   def any_blocks_startup_drain(self) -> bool:
     if not self.enabled:
