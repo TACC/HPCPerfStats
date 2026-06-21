@@ -1395,6 +1395,78 @@ def test_iter_stream_tasks_chunked_respects_concurrency(monkeypatch):
   ]
 
 
+def test_sliding_window_refills_idle_worker_slot(monkeypatch):
+  """Regression: fifth sealed day starts when first of four in-flight completes."""
+  import threading
+  import time
+
+  from hpcperfstats.tests.test_multiprocessing_pool_health import _ManualPool
+
+  monkeypatch.setattr(
+      st,
+      "_prewarm_archive_members_redis_for_sealed_chunk",
+      lambda _paths: "-",
+  )
+  monkeypatch.setattr(
+      sta.cfg,
+      "get_sync_timedb_archive_max_concurrent_sealed_days",
+      lambda: 4,
+  )
+  monkeypatch.setattr(sta.cfg, "get_sync_pool_poll_timeout_s", lambda: 0.01)
+
+  pool = _ManualPool()
+  sealed_paths = [
+      "/daily/slow0.tar.zst",
+      "/daily/fast1.tar.zst",
+      "/daily/fast2.tar.zst",
+      "/daily/fast3.tar.zst",
+      "/daily/slow4.tar.zst",
+  ]
+  tasks_locked = [("lock", path) for path in sealed_paths]
+  results = []
+  errors = []
+
+  def _run():
+    try:
+      sta._process_sealed_tasks_sliding_window(
+          pool,
+          lambda task: task[1],
+          tasks_locked,
+          results.append,
+          worker_registry={},
+      )
+    except Exception as exc:
+      errors.append(exc)
+
+  thread = threading.Thread(target=_run, daemon=True)
+  thread.start()
+  deadline = time.monotonic() + 2.0
+  while pool.submit_count < 4 and time.monotonic() < deadline:
+    time.sleep(0.005)
+  assert pool.submit_count == 4
+  fast_first_batch = [
+      ar
+      for ar, task in pool.inflight.items()
+      if "fast" in task[1]
+  ]
+  assert len(fast_first_batch) == 3
+  for async_result in fast_first_batch:
+    async_result.finish()
+  deadline = time.monotonic() + 2.0
+  while pool.submit_count < 5 and time.monotonic() < deadline:
+    time.sleep(0.005)
+  assert pool.submit_count == 5
+  assert pool.peak == 4
+  deadline = time.monotonic() + 5.0
+  while len(results) < len(sealed_paths) and time.monotonic() < deadline:
+    for async_result in list(pool.inflight):
+      async_result.finish()
+    time.sleep(0.01)
+  thread.join(timeout=2.0)
+  assert not errors
+  assert sorted(results) == sorted(sealed_paths)
+
+
 def test_archive_worker_process_count_uses_sync_archive_pool(monkeypatch):
   """Archive multiprocessing pool uses get_sync_archive_pool_processes (default 4)."""
   monkeypatch.setattr(sta.cfg, "get_sync_archive_pool_processes", lambda: 4)
@@ -3144,13 +3216,13 @@ def test_archive_stats_files_skips_dedupe_in_append_path(monkeypatch, tmp_path):
 
 
 def test_process_tar_chunk_stops_when_shutdown_requested(monkeypatch):
-  """Chunk processing should stop early when shutdown flips true."""
-  def fake_watch_pool(_pool, _worker, chunk, **kwargs):
+  """Sliding-window processing should stop early when shutdown flips true."""
+  def fake_sliding_window(_pool, _worker, tasks, **kwargs):
     del kwargs
-    for item in chunk:
+    for item in tasks:
       yield item[1]
 
-  monkeypatch.setattr(sta, "imap_unordered_watch_pool", fake_watch_pool)
+  monkeypatch.setattr(sta, "imap_sliding_window_watch_pool", fake_sliding_window)
   monkeypatch.setattr(
       st,
       "_prewarm_archive_members_redis_for_sealed_chunk",

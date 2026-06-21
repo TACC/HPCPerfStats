@@ -60,15 +60,20 @@ def test_worker_registry_shows_recent_progress_ignores_dispatch_placeholders():
   assert not worker_registry_shows_recent_progress(registry)
 
 
-def test_archive_chunk_imap_wires_stall_guards(monkeypatch):
+def test_archive_sliding_window_imap_wires_stall_guards(monkeypatch):
   captured = {}
 
-  def fake_watch_pool(pool, fn, iterable, **kwargs):
+  def fake_sliding_window(pool, fn, iterable, **kwargs):
     captured.update(kwargs)
     captured["iterable"] = list(iterable)
     yield sealed
 
-  monkeypatch.setattr(sta, "imap_unordered_watch_pool", fake_watch_pool)
+  monkeypatch.setattr(sta, "imap_sliding_window_watch_pool", fake_sliding_window)
+  monkeypatch.setattr(
+      st.cfg,
+      "get_sync_timedb_archive_max_concurrent_sealed_days",
+      lambda: 4,
+  )
   monkeypatch.setattr(
       st,
       "_prewarm_archive_members_redis_for_sealed_chunk",
@@ -89,7 +94,7 @@ def test_archive_chunk_imap_wires_stall_guards(monkeypatch):
   diag = st.IngestStallDiagnostics()
   diag.worker_registry = registry
   results = []
-  sta._process_task_chunk_interruptibly(
+  sta._process_sealed_tasks_sliding_window(
       object(),
       lambda args: args,
       [("lock", sealed)],
@@ -100,11 +105,19 @@ def test_archive_chunk_imap_wires_stall_guards(monkeypatch):
   )
   assert results == [sealed]
   assert captured["context"] == "sync_timedb_archive pool"
-  assert captured["stall_abort_after_timeouts"] >= 181
+  assert captured["max_inflight"] == 4
+  assert callable(captured["stall_abort_polls_fn"])
+  assert callable(captured["on_in_flight_change"])
   assert callable(captured["on_stall_poll"])
   assert callable(captured["on_stall_warning"])
   assert diag.chunk_prewarm_summary == "2024-01-01:redis_warm"
   assert diag.ingest_pipeline == "sealed_archive_backfill"
+  assert diag.imap_batch_cap == 4
+
+
+def test_archive_chunk_imap_wires_stall_guards(monkeypatch):
+  """Alias entry point still delegates to sliding-window dispatch."""
+  test_archive_sliding_window_imap_wires_stall_guards(monkeypatch)
 
 
 def test_stall_poll_defers_with_active_worker_registry(monkeypatch):

@@ -66,7 +66,7 @@ from hpcperfstats.dbload.lib.db_unavailable import (
 )
 from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
     MultiprocessingWorkerExitError,
-    imap_unordered_watch_pool,
+    imap_sliding_window_watch_pool,
     terminate_pool_bounded,
 )
 from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
@@ -251,7 +251,10 @@ def _process_stream_archive_task(task_args):
 
 
 def _iter_stream_tasks_chunked(sealed_paths, chunk_size=None):
-  """Yield bounded chunks of ``(STREAM_ARCHIVE_TASK, sealed_path)`` tasks."""
+  """Yield bounded chunks of ``(STREAM_ARCHIVE_TASK, sealed_path)`` tasks.
+
+  Legacy helper for tests; main backfill uses sliding-window dispatch instead.
+  """
   if chunk_size is None:
     chunk_size = cfg.get_sync_timedb_archive_max_concurrent_sealed_days()
   chunk_size = max(1, int(chunk_size))
@@ -260,48 +263,66 @@ def _iter_stream_tasks_chunked(sealed_paths, chunk_size=None):
     yield tasks[off : off + chunk_size]
 
 
+def _sealed_paths_from_locked_tasks(tasks_locked):
+  return [str(sealed_path) for _lock, sealed_path in (tasks_locked or ())]
+
+
 def _sealed_paths_from_chunk_locked(chunk_locked):
-  return [str(sealed_path) for _lock, sealed_path in (chunk_locked or ())]
+  return _sealed_paths_from_locked_tasks(chunk_locked)
 
 
-def _prepare_archive_chunk_stall_diagnostics(sealed_paths, stall_diagnostics):
+def _stall_abort_polls_for_sealed_locked_tasks(tasks_locked):
+  return stall_abort_polls_for_sealed_archives(
+      _sealed_paths_from_locked_tasks(tasks_locked),
+  )
+
+
+def _update_archive_sliding_window_stall_diagnostics(
+    stall_diagnostics,
+    in_flight_tasks,
+    max_inflight,
+    *,
+    log_budget=False,
+):
+  sealed_paths = _sealed_paths_from_locked_tasks(in_flight_tasks)
   poll_s = float(cfg.get_sync_pool_poll_timeout_s())
   batch_max_s = max_sealed_archive_ingest_budget_for_paths(sealed_paths)
   batch_abort = stall_abort_polls_for_sealed_archives(sealed_paths)
   if stall_diagnostics is not None:
-    stall_diagnostics.current_imap_batch_size = len(sealed_paths or ())
-    stall_diagnostics.current_imap_in_flight = len(sealed_paths or ())
+    stall_diagnostics.current_imap_in_flight = len(sealed_paths)
     stall_diagnostics.current_imap_batch_max_timeout_s = batch_max_s
     stall_diagnostics.dynamic_stall_abort_after_polls = batch_abort
     stall_diagnostics.dynamic_stall_wall_s = batch_abort * poll_s
-    stall_diagnostics.imap_batch_cap = len(sealed_paths or ())
+    stall_diagnostics.imap_batch_cap = max_inflight
     stall_diagnostics.ingest_pipeline = "sealed_archive_backfill"
-  log_print(
-      "sync_timedb_archive: chunk sealed_days=%d sealed_archive_stall_budget_s=%.1f "
-      "dynamic_stall_abort_after=%d dynamic_stall_wall_s=%.0f"
-      % (
-          len(sealed_paths or ()),
-          batch_max_s,
-          batch_abort,
-          batch_abort * poll_s,
-      ),
-      flush=True,
-  )
+  if log_budget and sealed_paths:
+    log_print(
+        "sync_timedb_archive: in_flight sealed_days=%d "
+        "sealed_archive_stall_budget_s=%.1f "
+        "dynamic_stall_abort_after=%d dynamic_stall_wall_s=%.0f"
+        % (
+            len(sealed_paths),
+            batch_max_s,
+            batch_abort,
+            batch_abort * poll_s,
+        ),
+        flush=True,
+    )
   return batch_abort, batch_max_s
 
 
-def _process_task_chunk_interruptibly(
+def _process_sealed_tasks_sliding_window(
     pool,
     worker,
-    chunk_locked,
+    tasks_locked,
     on_result,
     *,
     stall_diagnostics=None,
     stall_poll_state=None,
     worker_registry=None,
 ):
-  """Process one sealed-day chunk with pool stall guards aligned to sync_timedb."""
-  if not chunk_locked:
+  """Process sealed days with sliding-window pool dispatch (refill on completion)."""
+  if not tasks_locked:
     return
   from hpcperfstats.dbload.sync_timedb import (
       IngestStallDiagnostics,
@@ -315,7 +336,8 @@ def _process_task_chunk_interruptibly(
       _prewarm_archive_members_redis_for_sealed_chunk,
   )
 
-  sealed_paths = _sealed_paths_from_chunk_locked(chunk_locked)
+  all_sealed_paths = _sealed_paths_from_locked_tasks(tasks_locked)
+  max_inflight = cfg.get_sync_timedb_archive_max_concurrent_sealed_days()
   if stall_diagnostics is None:
     stall_diagnostics = IngestStallDiagnostics()
   if stall_poll_state is None:
@@ -323,31 +345,50 @@ def _process_task_chunk_interruptibly(
   if worker_registry is not None:
     stall_diagnostics.worker_registry = worker_registry
   stall_diagnostics.active_pool = pool
-  prewarm_summary = _prewarm_archive_members_redis_for_sealed_chunk(sealed_paths)
-  stall_diagnostics.chunk_prewarm_summary = prewarm_summary
-  batch_abort, _batch_max_s = _prepare_archive_chunk_stall_diagnostics(
-      sealed_paths,
-      stall_diagnostics,
+  stall_diagnostics.current_imap_batch_size = len(all_sealed_paths)
+  log_print(
+      "sync_timedb_archive: sealed_days_total=%d max_inflight=%d"
+      % (len(all_sealed_paths), max_inflight),
+      flush=True,
   )
-  seed_dispatch_worker_stages(worker_registry, sealed_paths)
-  in_flight_sample_fn = lambda: list(sealed_paths)
+  prewarm_summary = _prewarm_archive_members_redis_for_sealed_chunk(all_sealed_paths)
+  stall_diagnostics.chunk_prewarm_summary = prewarm_summary
+  stall_diagnostics.ingest_pipeline = "sealed_archive_backfill"
+  stall_diagnostics.imap_batch_cap = max_inflight
+  seed_dispatch_worker_stages(worker_registry, all_sealed_paths)
+  in_flight_holder = {"paths": []}
+
+  def _in_flight_sample():
+    return list(in_flight_holder["paths"])
+
+  def _on_in_flight_change(in_flight_tasks):
+    in_flight_holder["paths"] = _sealed_paths_from_locked_tasks(in_flight_tasks)
+    _update_archive_sliding_window_stall_diagnostics(
+        stall_diagnostics,
+        in_flight_tasks,
+        max_inflight,
+        log_budget=True,
+    )
+
   pool_health_context = {
       "active_pool": pool,
-      "in_flight_sample_fn": in_flight_sample_fn,
+      "in_flight_sample_fn": _in_flight_sample,
   }
   try:
-    for result in imap_unordered_watch_pool(
+    for result in imap_sliding_window_watch_pool(
         pool,
         worker,
-        chunk_locked,
+        tasks_locked,
+        max_inflight=max_inflight,
         context="sync_timedb_archive pool",
-        stall_abort_after_timeouts=batch_abort,
+        stall_abort_polls_fn=_stall_abort_polls_for_sealed_locked_tasks,
+        on_in_flight_change=_on_in_flight_change,
         on_stall_warning=_make_ingest_stall_warning_fn(
             None,
             pool=pool,
             thread_count=_archive_worker_process_count(),
             chunk_counter=0,
-            pending_count=len(sealed_paths),
+            pending_count=len(all_sealed_paths),
             stall_diagnostics=stall_diagnostics,
             progress_state=stall_poll_state,
             day_hint_from_sample_fn=_calendar_day_hint_from_sealed_paths,
@@ -363,8 +404,8 @@ def _process_task_chunk_interruptibly(
         pool_health_context=pool_health_context,
         on_stall_fatal_summary=(
             lambda consecutive, abort_after, poll_timeout_s, ctx: _build_ingest_stall_log_suffix(
-                sample=sealed_paths,
-                day_hint=_calendar_day_hint_from_sealed_paths(sealed_paths),
+                sample=_in_flight_sample(),
+                day_hint=_calendar_day_hint_from_sealed_paths(_in_flight_sample()),
                 stall_diagnostics=stall_diagnostics,
                 progress_state=stall_poll_state,
                 alive_workers=0,
@@ -390,6 +431,28 @@ def _process_task_chunk_interruptibly(
         exc, context="sync_timedb_archive pool",
     )
     raise
+
+
+def _process_task_chunk_interruptibly(
+    pool,
+    worker,
+    chunk_locked,
+    on_result,
+    *,
+    stall_diagnostics=None,
+    stall_poll_state=None,
+    worker_registry=None,
+):
+  """Backward-compatible alias for tests; delegates to sliding-window dispatch."""
+  return _process_sealed_tasks_sliding_window(
+      pool,
+      worker,
+      chunk_locked,
+      on_result,
+      stall_diagnostics=stall_diagnostics,
+      stall_poll_state=stall_poll_state,
+      worker_registry=worker_registry,
+  )
 
 
 if __name__ == "__main__":
@@ -456,22 +519,24 @@ if __name__ == "__main__":
           **_archive_spawn_pool_recycle_kwargs(),
       )
       try:
-        for chunk in _iter_stream_tasks_chunked(sealed_paths):
-          if shutdown_requested[0]:
-            log_print("Exiting due to SIGTERM", flush=True)
-            break
-          chunk_locked = [(manager_lock, p) for _kind, p in chunk]
-          _process_task_chunk_interruptibly(
-              pool,
-              _process_stream_archive_task,
-              chunk_locked,
-              lambda _result: None,
-              stall_diagnostics=stall_diagnostics,
-              stall_poll_state=stall_poll_state,
-              worker_registry=worker_diagnostics_registry,
-          )
-          if shutdown_requested[0]:
-            break
+        tasks = list(
+            iter_archive_ingest_tasks(
+                sealed_paths,
+                cfg.get_daily_archive_dir_path(),
+            ),
+        )
+        tasks_locked = [(manager_lock, p) for _kind, p in tasks]
+        _process_sealed_tasks_sliding_window(
+            pool,
+            _process_stream_archive_task,
+            tasks_locked,
+            lambda _result: None,
+            stall_diagnostics=stall_diagnostics,
+            stall_poll_state=stall_poll_state,
+            worker_registry=worker_diagnostics_registry,
+        )
+        if shutdown_requested[0]:
+          log_print("Exiting due to SIGTERM", flush=True)
       except MultiprocessingWorkerExitError:
         raise
       finally:
