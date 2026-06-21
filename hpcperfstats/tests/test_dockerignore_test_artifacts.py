@@ -1,4 +1,8 @@
-"""Regression: test-only paths must stay out of the Docker build context."""
+"""Regression: test-only paths must stay out of the Docker build context.
+
+See dockerignore-test-artifacts-sync.mdc — update this module when adding new
+test-only path conventions or .dockerignore baseline patterns.
+"""
 
 from __future__ import annotations
 

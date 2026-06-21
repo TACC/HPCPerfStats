@@ -234,6 +234,11 @@ def test_triggered_rules_for_cursor_hooks_path():
   assert "testing-best-practices.mdc" in rules
 
 
+def test_triggered_rules_for_dockerignore_path():
+  rules = triggered_rules_for_paths(["/repo/HPCPerfStats/.dockerignore"])
+  assert "dockerignore-test-artifacts-sync.mdc" in rules
+
+
 def test_triggered_rules_sync_timedb_lib_helper_path():
   rules = triggered_rules_for_paths(
       ["hpcperfstats/dbload/lib/sync_timedb_async_day_close.py"],

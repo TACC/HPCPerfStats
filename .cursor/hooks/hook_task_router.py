@@ -176,6 +176,17 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
     },
     {
+        "id": "dockerignore_test_artifacts",
+        "patterns": [
+            ".dockerignore",
+            "Dockerfile",
+            "hpcperfstats/tests/test_dockerignore_test_artifacts.py",
+        ],
+        "rules": [
+            "dockerignore-test-artifacts-sync.mdc",
+        ],
+    },
+    {
         "id": "nginx",
         "patterns": [
             "services-conf/nginx*",

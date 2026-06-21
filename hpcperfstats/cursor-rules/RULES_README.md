@@ -25,6 +25,7 @@ Notable contracts (see filename in `hpcperfstats/cursor-rules/`):
 - **`package-lib-colocation.mdc`** — new library modules under flat `{parent}/lib/`; import prefixes; `.gitignore` negation so lib trees are committed; Django migrations stay under `site/lib/machine/`.
 - **`deploy-ini-with-code-no-phase-zero.mdc`** — no pre-code INI redeploy; proactive read-only operator data gathering for plans.
 - **`sync-timedb-parsing-collapse-vectorization.mdc`** — multi-dev metric collapse in `sync_timedb_parsing.py` must use native `groupby.agg` or shared vectorized helpers; forbid `groupby.apply`.
+- **`dockerignore-test-artifacts-sync.mdc`** — `.dockerignore` must exclude test-only paths; keep `test_dockerignore_test_artifacts.py` in sync when test layout changes.
 
 Adding a new domain rule (same task, non-optional):
 
