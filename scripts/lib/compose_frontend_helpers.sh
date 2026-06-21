@@ -440,3 +440,75 @@ wait_for_web_http() {
   echo "timed out waiting for web at ${url}" >&2
   return 1
 }
+
+# Set to 1 when compose_recreate_web_after_image_refresh stopped a running proxy (podman path).
+COMPOSE_PROXY_WAS_RUNNING="${COMPOSE_PROXY_WAS_RUNNING:-0}"
+
+compose_service_running() {
+  local service="$1"
+  cd "${REPO_ROOT}"
+  docker compose ps --status running --services "${service}" 2>/dev/null | grep -qx "${service}"
+}
+
+compose_recreate_web_after_image_refresh() {
+  cd "${REPO_ROOT}"
+  if [[ "${HPCPERFSTATS_SCRIPT_DRY_RUN:-0}" -eq 1 ]]; then
+    if compose_backend_is_podman; then
+      echo "[dry-run] podman: stop proxy; compose rm -sf pipeline web; compose up -d web"
+    else
+      echo "[dry-run] docker compose up -d --force-recreate --no-deps web"
+    fi
+    return 0
+  fi
+
+  if compose_backend_is_podman; then
+    COMPOSE_PROXY_WAS_RUNNING=0
+    if compose_service_running proxy; then
+      COMPOSE_PROXY_WAS_RUNNING=1
+      echo "Stopping proxy (podman: release web container dependency) ..."
+      docker compose stop proxy || true
+    fi
+    echo "Removing stopped pipeline and web containers (podman) ..."
+    docker compose rm -sf pipeline web
+    echo "Starting web with refreshed image ..."
+    docker compose up -d web
+    return 0
+  fi
+
+  echo "Recreating web with refreshed image ..."
+  docker compose up -d --force-recreate --no-deps web
+}
+
+compose_recreate_pipeline_after_image_refresh() {
+  cd "${REPO_ROOT}"
+  if [[ "${HPCPERFSTATS_SCRIPT_DRY_RUN:-0}" -eq 1 ]]; then
+    if compose_backend_is_podman; then
+      echo "[dry-run] podman: compose rm -sf pipeline; compose up -d pipeline"
+    else
+      echo "[dry-run] docker compose up -d --force-recreate --no-deps pipeline"
+    fi
+    return 0
+  fi
+
+  if compose_backend_is_podman; then
+    docker compose rm -sf pipeline 2>/dev/null || true
+    docker compose up -d pipeline
+    return 0
+  fi
+
+  echo "Recreating pipeline with refreshed image ..."
+  docker compose up -d --force-recreate --no-deps pipeline
+}
+
+compose_restore_proxy_if_was_running() {
+  if [[ "${COMPOSE_PROXY_WAS_RUNNING:-0}" -ne 1 ]]; then
+    return 0
+  fi
+  cd "${REPO_ROOT}"
+  if [[ "${HPCPERFSTATS_SCRIPT_DRY_RUN:-0}" -eq 1 ]]; then
+    echo "[dry-run] would start proxy (was running before web recreate)"
+    return 0
+  fi
+  echo "Starting proxy ..."
+  docker compose up -d proxy
+}

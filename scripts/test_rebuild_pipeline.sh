@@ -62,27 +62,62 @@ if ! grep -q 'docker compose stop -t.* pipeline' "${PIPELINE_SCRIPT}"; then
   exit 1
 fi
 
-if ! grep -q 'docker compose stop web' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh must stop web" >&2
+if ! grep -q 'docker compose stop -t.* web' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must stop web with grace timeout" >&2
   exit 1
 fi
 
 pipeline_line="$(grep -n 'docker compose stop.*pipeline' "${PIPELINE_SCRIPT}" | head -n 1 | cut -d: -f1)"
-web_line="$(grep -n 'docker compose stop web' "${PIPELINE_SCRIPT}" | head -n 1 | cut -d: -f1)"
+web_line="$(grep -n 'docker compose stop -t.* web' "${PIPELINE_SCRIPT}" | head -n 1 | cut -d: -f1)"
 if [[ -z "${pipeline_line}" || -z "${web_line}" || "${pipeline_line}" -ge "${web_line}" ]]; then
   echo "rebuild_pipeline.sh must stop pipeline before web (pipeline line ${pipeline_line:-?}, web line ${web_line:-?})" >&2
   exit 1
 fi
 
-if ! grep -q 'docker compose up -d web' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh must start web before pipeline" >&2
+if ! grep -q 'compose_recreate_web_after_image_refresh' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must recreate web via compose_recreate_web_after_image_refresh" >&2
   exit 1
 fi
 
-web_up_line="$(grep -n 'docker compose up -d web' "${PIPELINE_SCRIPT}" | head -n 1 | cut -d: -f1)"
-pipe_up_line="$(grep -n 'docker compose up -d pipeline' "${PIPELINE_SCRIPT}" | head -n 1 | cut -d: -f1)"
-if [[ -z "${web_up_line}" || -z "${pipe_up_line}" || "${web_up_line}" -ge "${pipe_up_line}" ]]; then
-  echo "rebuild_pipeline.sh must start web before pipeline" >&2
+if ! grep -q 'compose_recreate_pipeline_after_image_refresh' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must recreate pipeline via compose_recreate_pipeline_after_image_refresh" >&2
+  exit 1
+fi
+
+if ! grep -q 'compose_restore_proxy_if_was_running' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must restore proxy after web recreate when needed" >&2
+  exit 1
+fi
+
+if ! grep -q 'compose_recreate_web_after_image_refresh' "${HELPERS}"; then
+  echo "compose_frontend_helpers.sh must define compose_recreate_web_after_image_refresh" >&2
+  exit 1
+fi
+
+if ! grep -q 'force-recreate --no-deps web' "${HELPERS}"; then
+  echo "compose_frontend_helpers.sh must force-recreate web on non-podman backends" >&2
+  exit 1
+fi
+
+if ! grep -q 'compose rm -sf pipeline web' "${HELPERS}"; then
+  echo "compose_frontend_helpers.sh must rm pipeline+web on podman before web up" >&2
+  exit 1
+fi
+
+web_recreate_line="$(grep -n 'compose_recreate_web_after_image_refresh' "${PIPELINE_SCRIPT}" | head -n 1 | cut -d: -f1)"
+pipe_recreate_line="$(grep -n 'compose_recreate_pipeline_after_image_refresh' "${PIPELINE_SCRIPT}" | head -n 1 | cut -d: -f1)"
+if [[ -z "${web_recreate_line}" || -z "${pipe_recreate_line}" || "${web_recreate_line}" -ge "${pipe_recreate_line}" ]]; then
+  echo "rebuild_pipeline.sh must recreate web before pipeline" >&2
+  exit 1
+fi
+
+if grep -q 'docker compose up -d web' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must not use bare compose up -d web (use recreate helper)" >&2
+  exit 1
+fi
+
+if grep -q 'docker compose up -d pipeline' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must not use bare compose up -d pipeline (use recreate helper)" >&2
   exit 1
 fi
 
@@ -105,6 +140,16 @@ fi
 source "${HELPERS}"
 if ! declare -F build_web_image_with_target >/dev/null; then
   echo "build_web_image_with_target must be defined in compose_frontend_helpers.sh" >&2
+  exit 1
+fi
+
+if ! declare -F compose_recreate_web_after_image_refresh >/dev/null; then
+  echo "compose_recreate_web_after_image_refresh must be defined in compose_frontend_helpers.sh" >&2
+  exit 1
+fi
+
+if ! declare -F compose_recreate_pipeline_after_image_refresh >/dev/null; then
+  echo "compose_recreate_pipeline_after_image_refresh must be defined in compose_frontend_helpers.sh" >&2
   exit 1
 fi
 

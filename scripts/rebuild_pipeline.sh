@@ -4,7 +4,7 @@
 # web and pipeline share the hpcperfstats image tag. This script stops pipeline and
 # web, builds the hpcperfstats-pipeline-refresh Dockerfile target (preserved frontend
 # tree from the live deployment), then recreates web and pipeline. db, redis,
-# rabbitmq, and proxy are left running; the proxy image is not rebuilt.
+# rabbitmq, and proxy are left running (podman-compose briefly stops proxy while recreating web).
 #
 # Usage (from the git checkout that contains docker-compose.yaml):
 #   ./scripts/rebuild_pipeline.sh
@@ -22,6 +22,7 @@ PIPELINE_BUILD_TARGET="hpcperfstats-pipeline-refresh"
 PRESERVE_FRONTEND_DIR="${REPO_ROOT}/.build/pipeline-rebuild-frontend"
 FRONTEND_BACKUP_TAR=""
 PIPELINE_STOP_TIMEOUT="${HPCPERFSTATS_PIPELINE_STOP_TIMEOUT:-300}"
+WEB_STOP_TIMEOUT="${HPCPERFSTATS_WEB_STOP_TIMEOUT:-120}"
 WEB_WAIT_TIMEOUT="${HPCPERFSTATS_WEB_WAIT_TIMEOUT:-600}"
 
 DRY_RUN=0
@@ -43,6 +44,7 @@ Options:
   --no-start                Stop + build; skip compose up
   --skip-frontend-verify    Skip live SPA shell / fingerprint checks (dev only)
   --pipeline-stop-timeout S Timeout for compose stop pipeline (default 300)
+  Env HPCPERFSTATS_WEB_STOP_TIMEOUT  Grace seconds for compose stop web (default 120)
   -h, --help                Show this help
 EOF
 }
@@ -233,17 +235,19 @@ build_pipeline_image() {
  stop_app_containers() {
   echo "Stopping pipeline (grace ${PIPELINE_STOP_TIMEOUT}s) ..."
   run_cmd docker compose stop -t "${PIPELINE_STOP_TIMEOUT}" pipeline
-  echo "Stopping web ..."
-  run_cmd docker compose stop web
+  echo "Stopping web (grace ${WEB_STOP_TIMEOUT}s) ..."
+  run_cmd docker compose stop -t "${WEB_STOP_TIMEOUT}" web
 }
 
 start_app_containers() {
-  echo "Starting web ..."
-  run_cmd docker compose up -d web
+  export HPCPERFSTATS_SCRIPT_DRY_RUN="${DRY_RUN}"
+  echo "Recreating web on refreshed image ..."
+  compose_recreate_web_after_image_refresh
   if [[ "${DRY_RUN}" -eq 0 ]]; then
     wait_for_web_from_host
   fi
   restore_frontend_volume_if_drifted
+  compose_restore_proxy_if_was_running
   if [[ "${SKIP_FRONTEND_VERIFY}" -eq 0 && "${DRY_RUN}" -eq 0 ]]; then
     verify_spa_shells_via_compose \
       "${CONTAINER_STATIC_ROOT_FRONTEND}" \
@@ -252,8 +256,8 @@ start_app_containers() {
       verify_proxy_frontend_matches_web || true
     fi
   fi
-  echo "Starting pipeline ..."
-  run_cmd docker compose up -d pipeline
+  echo "Recreating pipeline on refreshed image ..."
+  compose_recreate_pipeline_after_image_refresh
 }
 
 cleanup() {
