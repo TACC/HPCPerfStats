@@ -37,8 +37,23 @@ if ! grep -q 'hpcperfstats-pipeline-refresh' "${PIPELINE_SCRIPT}"; then
   exit 1
 fi
 
-if ! grep -q 'docker compose build web --target' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh must build web with explicit --target" >&2
+if ! grep -q 'build_web_image_with_target' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must build via build_web_image_with_target" >&2
+  exit 1
+fi
+
+if ! grep -q 'build_web_image_with_target' "${HELPERS}"; then
+  echo "compose_frontend_helpers.sh must define build_web_image_with_target" >&2
+  exit 1
+fi
+
+if ! grep -q 'compose_backend_is_podman' "${HELPERS}"; then
+  echo "compose_frontend_helpers.sh must detect podman-compose for build --target fallback" >&2
+  exit 1
+fi
+
+if ! grep -qE 'podman build|docker build' "${HELPERS}"; then
+  echo "compose_frontend_helpers.sh must fall back to podman/docker build --target" >&2
   exit 1
 fi
 
@@ -83,6 +98,13 @@ fi
 
 if ! grep -q 'compose_frontend_helpers.sh' "${FRONTEND_SCRIPT}"; then
   echo "rebuild_frontend.sh must source compose_frontend_helpers.sh" >&2
+  exit 1
+fi
+
+# shellcheck source=lib/compose_frontend_helpers.sh
+source "${HELPERS}"
+if ! declare -F build_web_image_with_target >/dev/null; then
+  echo "build_web_image_with_target must be defined in compose_frontend_helpers.sh" >&2
   exit 1
 fi
 

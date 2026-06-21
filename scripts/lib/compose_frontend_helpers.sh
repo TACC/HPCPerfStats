@@ -24,6 +24,52 @@ compose_backend_is_podman() {
   return 1
 }
 
+compose_web_image_name() {
+  cd "${REPO_ROOT}"
+  local name
+  name="$(docker compose config --images web 2>/dev/null | head -n 1 | tr -d '[:space:]')"
+  if [[ -n "${name}" ]]; then
+    echo "${name}"
+    return
+  fi
+  echo "hpcperfstats"
+}
+
+# podman-compose does not forward `compose build --target`; use podman/docker build directly.
+build_web_image_with_target() {
+  local target="$1"
+  local image_name dockerfile
+
+  cd "${REPO_ROOT}"
+  image_name="$(compose_web_image_name)"
+  dockerfile="${REPO_ROOT}/Dockerfile"
+  if [[ ! -f "${dockerfile}" ]]; then
+    echo "build_web_image_with_target: Dockerfile not found at ${dockerfile}" >&2
+    return 1
+  fi
+
+  if compose_backend_is_podman; then
+    local build_cli=(podman build)
+    if ! podman_cli_available; then
+      if command -v docker >/dev/null 2>&1; then
+        build_cli=(docker build)
+      else
+        echo "build_web_image_with_target: podman-compose detected but neither podman nor docker on PATH" >&2
+        return 1
+      fi
+    fi
+    echo "Building ${image_name} target=${target} via ${build_cli[*]} (podman-compose lacks compose build --target) ..."
+    "${build_cli[@]}" \
+      --target "${target}" \
+      -f "${dockerfile}" \
+      -t "${image_name}" \
+      "${REPO_ROOT}"
+    return 0
+  fi
+
+  docker compose build web --target "${target}"
+}
+
 compose_cp_supported() {
   if compose_backend_is_podman; then
     return 1

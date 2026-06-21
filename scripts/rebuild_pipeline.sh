@@ -223,7 +223,11 @@ wait_for_web_from_host() {
 
 build_pipeline_image() {
   echo "Building web image target=${PIPELINE_BUILD_TARGET} (no npm frontend-builder) ..."
-  run_cmd docker compose build web --target "${PIPELINE_BUILD_TARGET}"
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    echo "[dry-run] would build web image target=${PIPELINE_BUILD_TARGET}"
+    return 0
+  fi
+  build_web_image_with_target "${PIPELINE_BUILD_TARGET}"
 }
 
  stop_app_containers() {
