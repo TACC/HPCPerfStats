@@ -431,6 +431,11 @@ class ArchiveJanitor:
 
   def run_scheduled_maintenance_pass(self, *, reason: str):
     """Janitor-thread: light or heavy maintenance depending on ``reason``."""
+    coord = self.async_day_close_coordinator
+    if coord is not None:
+      recover = getattr(coord, "recover_stale_manifest_entries", None)
+      if callable(recover):
+        recover()
     if _is_heavy_maintenance_reason(reason):
       self.run_heavy_maintenance_pass(reason=reason)
     else:
@@ -540,6 +545,7 @@ class ArchiveJanitor:
               self.archive_data_dir,
               self.host_name_ext,
               self.tgz_archive_dir,
+              build_ready_set=False,
               log_fn=self.log_fn,
           )
         except Exception:

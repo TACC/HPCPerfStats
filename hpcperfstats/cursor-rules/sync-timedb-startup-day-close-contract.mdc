@@ -24,13 +24,15 @@ When **`sync_startup_day_close_preflight=yes`** (default), the supervisor starts
 1. Wait for or derive **`StartupArchiveScanCoordinator`** snapshot (`sync-timedb-canonical-startup-archive-scan.mdc`); **no nested full collect** in `build_remaining_raw_stats_by_daily_gz`.
 2. Subtract checkpoint paths on snapshot mapping (`build_unprocessed_raw_by_daily_tar(..., maintenance_snapshot=)`).
 3. **Submit budget starts after scans** (`submit_t0` reset post unprocessed+remaining build).
-4. Multi-slice discover until **`pending_retry`** empty; manifest **`phase=done`** when no retry deferrals remain ( **`pending_eligible`** from async/budget deferral may remain and is handed off to steady-state chunk/janitor submit). On SIGTERM with **`pending_retry`**, keep **`phase=discovering`**. **`phase=done` is resumable on restart:** when manifest says done but checkpoint-complete or quiescent days still need async DAY_CLOSE, **`_needs_boot_reconcile()`** resets to **`discovering`** and reruns discover (live rescan or **`pending_retry`**; **`pending_eligible` alone** does not force reconcile).
-5. Transient disqualification skips enqueue **`pending_retry`**; next slice retries when `tar not in get_disqualified_daily_tars()`. Async-saturation / budget / per-slice cap deferrals go to **`pending_eligible`** only.
-6. Slice 2+ refresh `remaining_raw_by_gz` from janitor accrual when present, else coordinator snapshot.
-7. **One** `get_disqualified_daily_tars()` per discover slice (before submit loop); pass precomputed set into `submit_day_close(..., disqualified_daily_tars=)` to avoid a second full recompute under `async_day_close._lock`.
-8. Slice telemetry: `discover_slice: disqualified_n=… disq_elapsed_s=…` and `discover slice: submitted=…` in `try/finally` (always emitted even when candidate report is slow).
-9. **Checkpoint-complete** days: `submit_day_close(..., reason=startup_checkpoint_complete)`.
-10. **Filesystem-quiescent** dirty `.tar` days (no closed raw on disk; stale `unprocessed_by_tar` entries with no on-disk paths): `submit_day_close(..., reason=startup_quiescent_tar)` via `days_quiescent_tar_needs_day_close_at_startup`. **Never** submit quiescent when any unprocessed path still exists on disk (`os.path.isfile`).
+4. Multi-slice discover until **`pending_retry`** empty; manifest **`phase=done`** when no retry deferrals remain ( **`pending_eligible`** from async/budget deferral may remain and is handed off to steady-state chunk/janitor submit). On SIGTERM with **`pending_retry`**, keep **`phase=discovering`**. **`phase=done` is resumable on restart:** when manifest says done but checkpoint-complete or quiescent days still need async DAY_CLOSE, **`_needs_boot_reconcile()`** resets to **`discovering`** and reruns discover — **except** tars already listed in manifest **`pending_eligible`** (deferred handoff; janitor/steady-state resubmit). **`pending_eligible` alone** does not force reconcile. New eligible tars not in **`pending_eligible`** / async-complete still trigger boot reconcile.
+5. Each discover slice: **`recover_stale_manifest_entries()`** first; if async saturated and **`pending_retry`** empty, **skip** expensive unprocessed scan, exit discover (hand off **`pending_eligible`**). Otherwise build unprocessed map after **`discover_slice_begin`** telemetry.
+6. Transient disqualification skips enqueue **`pending_retry`**; next slice retries when `tar not in get_disqualified_daily_tars()`. Async-saturation / budget / per-slice cap deferrals go to **`pending_eligible`** only.
+7. Slice 2+ refresh `remaining_raw_by_gz` from janitor accrual when present, else coordinator snapshot.
+8. **One** `get_disqualified_daily_tars()` per discover slice (before submit loop); pass precomputed set into `submit_day_close(..., disqualified_daily_tars=)` to avoid a second full recompute under `async_day_close._lock`.
+9. Slice telemetry: `discover_slice: disqualified_n=… disq_elapsed_s=…` and `discover slice: submitted=…` in `try/finally` (always emitted even when candidate report is slow).
+10. **Stall watchdog:** when **`last_progress=discover_slice_begin`** exceeds **`sync_startup_discover_slice_stall_seconds`** (default 900, min 120, 0=off) and **`pending_retry`** empty, force **`phase=done`** (preserve **`pending_eligible`**) so the startup drain gate can clear.
+11. **Checkpoint-complete** days: `submit_day_close(..., reason=startup_checkpoint_complete)`.
+12. **Filesystem-quiescent** dirty `.tar` days (no closed raw on disk; stale `unprocessed_by_tar` entries with no on-disk paths): `submit_day_close(..., reason=startup_quiescent_tar)` via `days_quiescent_tar_needs_day_close_at_startup`. **Never** submit quiescent when any unprocessed path still exists on disk (`os.path.isfile`).
 
 **Not** gated on global `pending_stats_files` length.
 
@@ -74,7 +76,14 @@ Delete phases are driven via `_maybe_handle_raw_removal_delete_phase()` during t
 - `sync_day_close_async_workers` (default 1) — async worker threads; pool size is `max(async_workers, startup max inflight)` at coordinator init
 - `sync_day_close_max_inflight` (default = `sync_day_close_async_workers`) — steady-state janitor/immediate submit cap (not startup discover)
 - `sync_startup_day_close_backoff_seconds` (default 30) — sleep between discover slices when last slice submitted 0 due to async saturation (replaces 1s tight loop)
+- `sync_startup_discover_slice_stall_seconds` (default 900, min 120, 0=off) — force **`phase=done`** when stuck at **`discover_slice_begin`** with empty **`pending_retry`**
 - `sync_day_close_candidate_report` (default yes) — `queued` / `waiting_on_ingest` / `eligible_deferred` / `disqualified`; `skipped_no_work` silent
+
+## Janitor startup snapshot
+
+- **`ArchiveJanitor.run_heavy_maintenance_pass`** calls **`build_archive_maintenance_snapshot(..., build_ready_set=False)`** — startup mapping/unprocessed scans must not run the 162k-path DB head-ingest ready-set pass (coordinator **`StartupArchiveScanCoordinator`** already uses **`build_ready_set=False`**).
+- **`build_archive_maintenance_snapshot`** logs post-head milestones: head metadata complete, mapping built, ready_set skipped/built, snapshot complete.
+- **`run_scheduled_maintenance_pass`** calls **`AsyncDayCloseCoordinator.recover_stale_manifest_entries()`** before light/heavy pass (cheap no-op when nothing stale).
 
 ## Operator log (candidate report)
 
@@ -84,8 +93,13 @@ sync_timedb: startup day close discover: eligible=N quiescent_eligible=Q
 sync_timedb: startup ingest maintenance waiting tail_pending=… discover=… pending_eligible=… pending_retry=… tail_queue=… async_active=… startup_raw=… day_raw_delete=… day_raw_waiting_on_ingest=…
 sync_timedb: startup ingest maintenance complete
 sync_timedb: startup maintenance idle; ingest may begin
-sync_timedb: startup day close discover backoff async saturated active=N max=M …
+sync_timedb: startup day close discover backoff async saturated active=N max=M … (scan skipped)
 sync_timedb: startup day close discover: scans elapsed_s=…
+ERROR: startup discover slice stall … forcing discover done
+Archive maintenance snapshot: head metadata complete …
+Archive maintenance snapshot: mapping built …
+Archive maintenance snapshot: ready_set skipped (build_ready_set=False)
+Archive maintenance snapshot: complete …
 sync_timedb: startup day close submit skip tar=… reason=…
 sync_timedb: startup tail ingest enqueue day=YYYY-MM-DD paths=N
 sync_timedb: startup tail ingest begin day=YYYY-MM-DD paths=N max=100

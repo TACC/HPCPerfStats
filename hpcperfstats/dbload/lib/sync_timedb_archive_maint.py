@@ -552,6 +552,7 @@ def build_archive_maintenance_snapshot(
       head_identity_as_gate_identities,
   )
 
+  snap_t0 = time.time()
   hints_data = load_archive_maint_hints(archive_data_dir)
   closed_paths = collect_stats_files_in_range(
       archive_data_dir, "all", None, host_name_ext)
@@ -559,6 +560,13 @@ def build_archive_maintenance_snapshot(
       collect_head_metadata_for_paths(
           closed_paths, hints_data=hints_data, log_fn=log_fn)
   )
+  if log_fn:
+    log_fn(
+        "Archive maintenance snapshot: head metadata complete paths=%d "
+        "elapsed_s=%.3f"
+        % (len(closed_paths), time.time() - snap_t0),
+        flush=True,
+    )
   if cfg.sync_archive_db_ingest_gate_uses_sample_mode():
     sampled_timestamp_identities_by_path, sample_read_stats = (
         collect_sampled_timestamp_identities_for_paths(
@@ -577,12 +585,36 @@ def build_archive_maintenance_snapshot(
       first_timestamp_by_path=first_timestamp_by_path,
   )
   remaining_raw_by_gz = remaining_raw_by_gz_from_mapping(mapping)
+  if log_fn:
+    log_fn(
+        "Archive maintenance snapshot: mapping built days=%d closed_paths=%d "
+        "elapsed_s=%.3f"
+        % (len(mapping), len(closed_paths), time.time() - snap_t0),
+        flush=True,
+    )
   ready_paths: Set[str] = set()
   if build_ready_set:
+    if log_fn:
+      log_fn(
+          "Archive maintenance snapshot: building head-ingest ready set "
+          "paths=%d" % len(closed_paths),
+          flush=True,
+      )
     ready_paths = build_head_ingest_ready_set(
         closed_paths,
         gate_identities_by_path,
         log_fn=log_fn,
+    )
+  elif log_fn:
+    log_fn(
+        "Archive maintenance snapshot: ready_set skipped (build_ready_set=False)",
+        flush=True,
+    )
+  if log_fn:
+    log_fn(
+        "Archive maintenance snapshot: complete ready_paths=%d elapsed_s=%.3f"
+        % (len(ready_paths), time.time() - snap_t0),
+        flush=True,
     )
   return ArchiveMaintenanceSnapshot(
       closed_paths=closed_paths,

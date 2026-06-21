@@ -110,6 +110,10 @@ class AsyncDayCloseCoordinator:
     self._executor: Optional[ThreadPoolExecutor] = None
     self._recover_stale_manifest_entries()
 
+  def recover_stale_manifest_entries(self) -> None:
+    """Public entry for startup discover slices and maintenance passes."""
+    self._recover_stale_manifest_entries()
+
   def _recover_stale_manifest_entries(self) -> None:
     stale_s = cfg.get_sync_day_close_async_stale_seconds()
     if stale_s <= 0:

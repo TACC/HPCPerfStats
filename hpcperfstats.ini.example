@@ -553,6 +553,9 @@ sync_ingest_malloc_trim_after_file = yes
 # Sleep between startup day-close discover slices when async pool saturated (default 30s).
 # sync_startup_day_close_backoff_seconds = 30
 
+# Force startup discover done when stuck at discover_slice_begin (default 900s; min 120; 0=off).
+# sync_startup_discover_slice_stall_seconds = 900
+
 # Log day-close candidate report (queued/disqualified only; default yes).
 # sync_day_close_candidate_report = yes
 

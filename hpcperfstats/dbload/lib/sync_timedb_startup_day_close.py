@@ -211,9 +211,17 @@ class StartupDayClosePreflight:
         host_name_ext=self.host_name_ext,
         maintenance_snapshot=snapshot,
     )
+    with self._lock:
+      pending_eligible_handoff = {
+          os.path.normpath(p)
+          for p in (self._manifest.get("pending_eligible") or [])
+          if p
+      }
     async_active = self.async_day_close.active_or_submitted_tar_paths()
     for tar_norm in set(eligible) | set(quiescent_eligible):
       tar_norm = os.path.normpath(tar_norm)
+      if tar_norm in pending_eligible_handoff:
+        continue
       if tar_norm in async_active:
         continue
       if self.async_day_close.is_complete(tar_norm):
@@ -359,12 +367,48 @@ class StartupDayClosePreflight:
     remaining = self._resolve_remaining_raw_by_gz(snapshot, slice_index)
     return snapshot, unprocessed_by_tar, remaining
 
+  def _maybe_force_discover_done_on_stall(self) -> bool:
+    """Force ``phase=done`` when a slice hung at ``discover_slice_begin`` too long."""
+    stall_s = cfg.get_sync_startup_discover_slice_stall_seconds()
+    if stall_s <= 0:
+      return False
+    with self._lock:
+      if self._manifest.get("last_progress") != "discover_slice_begin":
+        return False
+      last_at = self._manifest.get("last_progress_at")
+      pending_retry = list(self._manifest.get("pending_retry") or [])
+      pending_eligible_n = len(self._manifest.get("pending_eligible") or [])
+    if not last_at or pending_retry:
+      return False
+    elapsed_s = time.time() - float(last_at)
+    if elapsed_s < stall_s:
+      return False
+    with self._lock:
+      self._manifest["phase"] = PHASE_DONE
+      self._manifest["completed_at"] = time.time()
+      self._manifest["pending_retry"] = []
+      _save_manifest(self._manifest_path, self._manifest)
+    if self.log_fn:
+      self.log_fn(
+          "ERROR: startup discover slice stall elapsed_s=%.0f "
+          "threshold_s=%.0f; forcing discover done "
+          "(pending_eligible=%d)"
+          % (elapsed_s, stall_s, pending_eligible_n),
+          flush=True,
+      )
+    return True
+
   def _discover_slice(self) -> bool:
     """Run one discover+submit slice. Return False when discover loop should stop."""
     max_inflight = cfg.get_sync_startup_day_close_max_inflight()
     budget_s = cfg.get_sync_startup_day_close_budget_seconds()
     days_per_slice = cfg.get_sync_startup_day_close_days_per_slice()
     scan_warn_s = cfg.get_sync_startup_day_close_scan_budget_seconds()
+    self.async_day_close.recover_stale_manifest_entries()
+    with self._lock:
+      slice_index = int(self._manifest.get("discover_slice_count", 0))
+      pending_retry = list(self._manifest.get("pending_retry") or [])
+    active_count = len(self.async_day_close.active_or_submitted_tar_paths())
     scan_t0 = time.time()
     self._touch_manifest("discover_slice_begin")
     if self.log_fn:
@@ -372,8 +416,30 @@ class StartupDayClosePreflight:
           "sync_timedb: startup day close discover slice begin",
           flush=True,
       )
-    with self._lock:
-      slice_index = int(self._manifest.get("discover_slice_count", 0))
+    if active_count >= max_inflight and not pending_retry:
+      self._touch_manifest(
+          "discover_backoff_async_saturated",
+          detail="active=%d max=%d" % (active_count, max_inflight),
+      )
+      with self._lock:
+        pending_eligible = list(self._manifest.get("pending_eligible") or [])
+        self._manifest["last_slice_backoff"] = True
+        self._manifest["discover_slice_count"] = slice_index + 1
+        _save_manifest(self._manifest_path, self._manifest)
+      if self.log_fn:
+        self.log_fn(
+            "sync_timedb: startup day close discover backoff async saturated "
+            "active=%d max=%d pending_eligible=%d pending_retry=%d "
+            "(scan skipped)"
+            % (
+                active_count,
+                max_inflight,
+                len(pending_eligible),
+                len(pending_retry),
+            ),
+            flush=True,
+        )
+      return False
     snapshot, unprocessed_by_tar, remaining = self._build_slice_unprocessed_map(
         slice_index,
     )
@@ -621,6 +687,8 @@ class StartupDayClosePreflight:
       )
     try:
       while not shutdown_requested[0]:
+        if self._maybe_force_discover_done_on_stall():
+          break
         has_more = self._discover_slice()
         if not has_more:
           break

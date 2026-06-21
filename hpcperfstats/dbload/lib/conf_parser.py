@@ -190,6 +190,7 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_day_close_raw_removal_wait_seconds"),
     ("PIPELINE", "sync_day_close_async_stale_seconds"),
     ("PIPELINE", "sync_startup_day_close_backoff_seconds"),
+    ("PIPELINE", "sync_startup_discover_slice_stall_seconds"),
     ("PIPELINE", "sync_day_close_raw_removal_preflight"),
     ("PIPELINE", "sync_day_close_raw_removal_verify_budget_seconds"),
     ("PIPELINE", "sync_day_close_raw_removal_max_deletes_per_pass"),
@@ -2640,6 +2641,19 @@ def get_sync_startup_day_close_backoff_seconds():
     return max(1.0, float(raw))
   except (TypeError, ValueError):
     return 30.0
+
+
+def get_sync_startup_discover_slice_stall_seconds():
+  """Max wall time at discover_slice_begin before forcing phase=done (default 900; 0=off)."""
+  _ensure_cfg_loaded()
+  raw = _pipeline_get("sync_startup_discover_slice_stall_seconds", fallback="900")
+  try:
+    stall_s = float(raw)
+  except (TypeError, ValueError):
+    stall_s = 900.0
+  if stall_s <= 0:
+    return 0.0
+  return max(120.0, stall_s)
 
 
 def get_sync_day_close_async_stale_seconds():

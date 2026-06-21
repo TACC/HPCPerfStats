@@ -122,6 +122,33 @@ def test_run_scheduled_maintenance_pass_refreshes_snapshot_and_enqueues(
   assert janitor.debt_depth() == 0
 
 
+def test_heavy_startup_pass_passes_build_ready_set_false(monkeypatch, tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+
+  captured = {}
+
+  def fake_build(archive_data_dir, host_name_ext, tgz_archive_dir, **kwargs):
+    captured.update(kwargs)
+    return ArchiveMaintenanceSnapshot(
+        closed_paths=["/tmp/raw-a"],
+        remaining_raw_by_gz={},
+        mapping={},
+        ready_paths=set(),
+        first_timestamp_by_path={},
+        head_identity_by_path={},
+    )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  janitor = _make_janitor(tgz_archive_dir=str(daily_dir))
+  janitor.startup_snapshot_coordinator = None
+  monkeypatch.setattr(janitor_mod, "build_archive_maintenance_snapshot", fake_build)
+  monkeypatch.setattr(janitor, "get_ingest_pool_in_flight_count", lambda: 0)
+  monkeypatch.setattr(janitor, "get_chunk_in_progress", lambda: False)
+  janitor.run_heavy_maintenance_pass(reason="startup")
+  assert captured.get("build_ready_set") is False
+
+
 def test_tick_raw_remove_uses_allow_auto_seal_false(monkeypatch):
   captured = {}
   tar_path = "/tmp/2026-01-01.tar"
