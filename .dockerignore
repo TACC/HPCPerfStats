@@ -56,6 +56,7 @@ hpcperfstats/site/frontend/vitest.config.ts
 hpcperfstats/site/frontend/src/playwright-bokeh-bundle-smoke.ts
 hpcperfstats/site/frontend/bokeh-playwright-smoke.html
 hpcperfstats/site/frontend/scripts/fix-tests-next.mjs
+hpcperfstats/site/frontend/README.md
 
 # ---------------------------------------------------------------------------
 # Agent, docs, and local dev-only files (not runtime in container image).
@@ -65,10 +66,8 @@ hpcperfstats/site/frontend/scripts/fix-tests-next.mjs
 hpcperfstats/cursor-rules/
 **/*.mdc
 
-# Operator / design docs (keep root README.md for setuptools — see negation below)
+# Operator / design docs (root README.md kept for setuptools metadata)
 docs/
-*.md
-!README.md
 
 # Compose manifests (built on host; not baked into image layers)
 docker-compose*.yaml

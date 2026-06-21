@@ -23,7 +23,7 @@ Keep these patterns in **`.dockerignore`** unless a deliberate runtime contract 
 | Frontend Vitest / a11y | `**/__tests__/`, `**/*.test.ts`, `**/*.test.tsx`, `**/test-utils/`, `**/test-fixtures/` |
 | Frontend test-only files | `vitest.config.ts`, `setupTests.ts`, `axe-test-utils.ts`, playwright smoke assets |
 | Cursor / agent rules | `hpcperfstats/cursor-rules/`, `**/*.mdc`, `.cursor/` |
-| Docs (not runtime) | `docs/`, `*.md` with `!README.md` for setuptools metadata |
+| Docs (not runtime) | `docs/` |
 | Compose / CI / staging | `docker-compose*.yaml`, `docker-compose*.yaml.example`, `.github/`, `.build/` |
 | Local artifacts | `artifacts/`, `staticfiles/`, `.DS_Store` |
 

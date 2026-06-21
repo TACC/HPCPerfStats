@@ -72,7 +72,8 @@ def _is_excluded(rel_path: str, patterns: list[str]) -> bool:
   excluded = False
   for pattern in patterns:
     if pattern.startswith("!"):
-      if _match_dockerignore(rel, pattern[1:].strip()):
+      neg = pattern[1:].strip().lstrip("/")
+      if rel == neg:
         excluded = False
       continue
     if _match_dockerignore(rel, pattern):
@@ -80,15 +81,32 @@ def _is_excluded(rel_path: str, patterns: list[str]) -> bool:
   return excluded
 
 
+def _is_under_excluded_tree(rel_path: str) -> bool:
+  rel = rel_path.replace("\\", "/").lstrip("./")
+  prefixes = (
+      "node_modules/",
+      ".venv/",
+      ".pytest_cache/",
+      ".cursor/",
+      "test_runs/",
+      "monitor/",
+  )
+  if rel.startswith(prefixes):
+    return True
+  if rel.startswith("tests/") or "/tests/" in f"/{rel}/":
+    return True
+  return False
+
+
 def _looks_like_non_runtime_dev_artifact(rel_path: str) -> bool:
   rel = rel_path.replace("\\", "/").lstrip("./")
-  if rel.startswith("node_modules/") or "/node_modules/" in rel:
+  if _is_under_excluded_tree(rel):
     return False
   if rel.startswith(("hpcperfstats/cursor-rules/", "docs/", ".build/", ".github/", "artifacts/", "staticfiles/")):
     return True
   if rel.endswith(".mdc"):
     return True
-  if rel.endswith(".md") and rel != "README.md":
+  if rel == "hpcperfstats/site/frontend/README.md":
     return True
   name = rel.split("/")[-1]
   if name.startswith("docker-compose") and (
@@ -102,7 +120,7 @@ def _looks_like_non_runtime_dev_artifact(rel_path: str) -> bool:
 
 def _looks_like_test_artifact(rel_path: str) -> bool:
   rel = rel_path.replace("\\", "/").lstrip("./")
-  if rel.startswith("node_modules/") or "/node_modules/" in rel:
+  if _is_under_excluded_tree(rel):
     return False
   parts = rel.split("/")
   if "tests" in parts:
@@ -157,12 +175,11 @@ def test_dockerignore_lists_required_dev_patterns():
       "hpcperfstats/cursor-rules/",
       "**/*.mdc",
       "docs/",
-      "*.md",
-      "!README.md",
       "docker-compose*.yaml",
       ".build/",
       ".github/",
       "artifacts/",
+      "hpcperfstats/site/frontend/README.md",
   )
   for pattern in required:
     assert pattern in content, f"missing .dockerignore pattern: {pattern}"
