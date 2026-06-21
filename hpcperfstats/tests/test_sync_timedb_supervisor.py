@@ -435,6 +435,53 @@ def test_parse_sync_timedb_argv_once_and_all(monkeypatch):
   assert enddate is None
 
 
+def test_parse_sync_timedb_argv_single_date_end_of_that_day(monkeypatch):
+  """One YYYY-MM-DD ingests that calendar day only, not through today."""
+  class _FakeDateTime(datetime):
+    @classmethod
+    def today(cls):
+      return cls(2026, 4, 14, 10, 30, 45)
+
+  monkeypatch.setattr(st, "datetime", _FakeDateTime)
+  run_once, startdate, enddate = st.parse_sync_timedb_argv(
+      ["sync_timedb.py", "2024-01-15"]
+  )
+  assert run_once is False
+  assert startdate == datetime(2024, 1, 15, 0, 0, 0)
+  assert enddate == datetime.combine(datetime(2024, 1, 15).date(), datetime.max.time())
+  assert enddate != datetime(2026, 4, 14, 10, 30, 45)
+
+
+def test_parse_sync_timedb_argv_once_single_date(monkeypatch):
+  class _FakeDateTime(datetime):
+    @classmethod
+    def today(cls):
+      return cls(2026, 4, 14, 10, 30, 45)
+
+  monkeypatch.setattr(st, "datetime", _FakeDateTime)
+  run_once, startdate, enddate = st.parse_sync_timedb_argv(
+      ["sync_timedb.py", "once", "2024-01-15"]
+  )
+  assert run_once is True
+  assert startdate == datetime(2024, 1, 15, 0, 0, 0)
+  assert enddate == datetime.combine(datetime(2024, 1, 15).date(), datetime.max.time())
+
+
+def test_parse_sync_timedb_argv_two_dates_unchanged(monkeypatch):
+  class _FakeDateTime(datetime):
+    @classmethod
+    def today(cls):
+      return cls(2026, 4, 14, 10, 30, 45)
+
+  monkeypatch.setattr(st, "datetime", _FakeDateTime)
+  run_once, startdate, enddate = st.parse_sync_timedb_argv(
+      ["sync_timedb.py", "2024-01-15", "2024-01-20"]
+  )
+  assert run_once is False
+  assert startdate == datetime(2024, 1, 15, 0, 0, 0)
+  assert enddate == datetime(2024, 1, 20, 0, 0, 0)
+
+
 def test_run_sync_timedb_supervisor_from_parsed_resets_runtime_caches(monkeypatch):
   """Session start clears timestamp caches so stale state never leaks across runs."""
   import hpcperfstats.dbload.lib.sync_timedb_ingest_readiness as readiness

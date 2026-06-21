@@ -11,7 +11,7 @@ Append and raw delete stay DB-gated when ``sync_archive_require_db_head_ingest=y
 
 When the ingest queue is empty, rescans for new stats files. After a rescan still finds nothing pending, it sleeps ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` (default 30s) and exits the loop iteration (continuous mode repeats).
 
-CLI: no args or ``YYYY-MM-DD`` range uses a sliding window (see ``days_to_process``). First arg ``all`` scans every host stats dir under ``archive_dir`` (subdirs whose names end with ``DEFAULT.host_name_ext`` from ini). Prefix ``once`` to exit after one idle rescan (no 300s sleep), e.g. ``once all``.
+CLI: no args uses a sliding window (see ``days_to_process``) through now. One ``YYYY-MM-DD`` ingests that calendar day only. Two dates ``YYYY-MM-DD YYYY-MM-DD`` set an explicit range. First arg ``all`` scans every host stats dir under ``archive_dir`` (subdirs whose names end with ``DEFAULT.host_name_ext`` from ini). Prefix ``once`` to exit after one idle rescan (no 300s sleep), e.g. ``once all`` or ``once 2024-01-15``.
 
 DB access is process-safe: pool workers use close_old_connections() at task start and connections.close_all() at task end so connections do not linger between files. Writes are serialized with a shared lock.
 
@@ -5218,6 +5218,18 @@ def parse_sync_timedb_argv(argv):
   default_end = now_local
   startdate, enddate = parse_start_end_dates(
       argv_for_dates, default_start, default_end)
+
+  if (
+      len(argv_for_dates) == 2
+      and argv_for_dates[1] != "all"
+  ):
+    try:
+      single_day = datetime.strptime(argv_for_dates[1], "%Y-%m-%d")
+    except ValueError:
+      pass
+    else:
+      startdate = single_day
+      enddate = datetime.combine(single_day.date(), datetime.max.time())
 
   if len(argv_for_dates) > 1 and argv_for_dates[1] == 'all':
     startdate = 'all'
