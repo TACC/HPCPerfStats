@@ -222,6 +222,14 @@ class ArchiveJanitor:
 
     self._load_hints_state()
 
+  def get_accrual_snapshot_for_reconcile(self):
+    """Return accrual snapshot when mapping is present (steady-state reconcile)."""
+    with self._accrual_snapshot_lock:
+      snap = self._accrual_snapshot
+    if snap is None or not snap.mapping:
+      return None
+    return snap
+
   def _load_hints_state(self):
     prior = load_archive_maint_hints(self.archive_data_dir) or {}
     with self._hints_state_lock:

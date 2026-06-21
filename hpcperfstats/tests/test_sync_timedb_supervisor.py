@@ -4471,6 +4471,170 @@ def test_supervisor_opens_ingest_when_discover_done_pending_eligible_only(
     shutdown_requested[0] = False
 
 
+def test_supervisor_reconcile_cap_uses_coordinator_snapshot_no_live_collect(
+    monkeypatch, capsys,
+):
+  """Startup drain cap must not force_full_scan when coordinator snapshot exists."""
+  shutdown_requested[0] = False
+  collect_calls = {"n": 0}
+
+  import hpcperfstats.dbload.lib.sync_timedb_startup_raw_removal as preflight_mod
+  import hpcperfstats.dbload.lib.sync_timedb_startup_day_close as day_close_mod
+  import hpcperfstats.dbload.lib.sync_timedb_startup_tail_ingest as tail_mod
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+  from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
+      StartupArchiveScanCoordinator,
+  )
+
+  coordinator_snapshot = ArchiveMaintenanceSnapshot(
+      closed_paths=["/tmp/archive/n.test/100"],
+      mapping={"/tmp/daily/2020-01-01.tar.zst": ["/tmp/archive/n.test/100"]},
+      first_timestamp_by_path={"/tmp/archive/n.test/100": 100.0},
+  )
+
+  class _EnabledDoneRawPreflight:
+    enabled = True
+
+    def __init__(self, **_kwargs):
+      pass
+
+    def delete_phase_done(self):
+      return True
+
+    def needs_delete_phase(self):
+      return False
+
+    def paths_pending_startup_delete(self):
+      return set()
+
+    def consumed_paths(self):
+      return set()
+
+    def start_async_verify(self):
+      return None
+
+    def shutdown(self, wait=True):
+      del wait
+
+  class _DoneTailIngest:
+    enabled = True
+
+    def __init__(self, **_kwargs):
+      pass
+
+    def tail_ingest_done(self):
+      return True
+
+    def pending_count(self):
+      return 0
+
+    def start_async_tail_ingest(self):
+      return None
+
+    def shutdown(self, wait=True):
+      del wait
+
+  class _PhaseDoneDiscover:
+    enabled = True
+
+    def __init__(self, **_kwargs):
+      pass
+
+    def phase(self):
+      return day_close_mod.PHASE_DONE
+
+    def discover_done(self):
+      return True
+
+    def pending_deferral_count(self):
+      return 0
+
+    def pending_eligible_count(self):
+      return 0
+
+    def pending_retry_count(self):
+      return 0
+
+    def start_async_discover_and_close(self):
+      pass
+
+    def shutdown(self, wait=True):
+      del wait
+
+  def fake_sleep(_seconds):
+    fake_sleep.calls += 1
+    if fake_sleep.calls > 3:
+      shutdown_requested[0] = True
+  fake_sleep.calls = 0
+
+  def boom_collect(*_a, **_k):
+    collect_calls["n"] += 1
+    return []
+
+  try:
+    target = "/fake/statsA"
+
+    def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
+      return [target]
+
+    def fake_add(_lock, path, _contents=None):
+      shutdown_requested[0] = True
+      return (path, True, True, 0.0)
+
+    monkeypatch.setattr(
+        "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.collect_stats_files_in_range",
+        boom_collect,
+    )
+    monkeypatch.setattr(preflight_mod, "StartupRawRemovalPreflight", _EnabledDoneRawPreflight)
+    monkeypatch.setattr(st, "StartupRawRemovalPreflight", _EnabledDoneRawPreflight)
+    monkeypatch.setattr(day_close_mod, "StartupDayClosePreflight", _PhaseDoneDiscover)
+    monkeypatch.setattr(st, "StartupDayClosePreflight", _PhaseDoneDiscover)
+    monkeypatch.setattr(tail_mod, "StartupTailIngestCoordinator", _DoneTailIngest)
+    monkeypatch.setattr(st, "StartupTailIngestCoordinator", _DoneTailIngest)
+    monkeypatch.setattr(
+        StartupArchiveScanCoordinator,
+        "get_snapshot",
+        lambda self: coordinator_snapshot,
+    )
+    monkeypatch.setattr(
+        StartupArchiveScanCoordinator,
+        "is_startup_heavy_maintenance_idle",
+        lambda self: True,
+    )
+    monkeypatch.setattr(
+        StartupArchiveScanCoordinator,
+        "wait_for_startup_maintenance_idle",
+        lambda self: True,
+    )
+    monkeypatch.setattr(
+        st.cfg,
+        "get_sync_startup_drain_day_close_before_ingest",
+        lambda: True,
+    )
+    monkeypatch.setattr(st, "sleep_until_shutdown", fake_sleep)
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "add_stats_file_to_db", fake_add)
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "chunk_size", 1)
+    monkeypatch.setattr(st, "rescan_every_chunks", 100)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp/daily")
+    monkeypatch.setattr(
+        st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
+
+    st.run_sync_timedb_supervisor_loop(
+        "/tmp/archive", "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
+
+    out = capsys.readouterr().out
+    assert collect_calls["n"] == 0
+    assert "pending reconcile cap begin source=coordinator" in out
+    assert "startup maintenance idle; ingest may begin" in out
+  finally:
+    shutdown_requested[0] = False
+
+
 def test_supervisor_blocks_ingest_when_pending_retry(monkeypatch):
   """Discover retry deferrals must keep the startup ingest gate closed."""
   shutdown_requested[0] = False

@@ -149,6 +149,31 @@ def test_heavy_startup_pass_passes_build_ready_set_false(monkeypatch, tmp_path):
   assert captured.get("build_ready_set") is False
 
 
+def test_get_accrual_snapshot_for_reconcile_returns_mapping(tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+
+  janitor = _make_janitor()
+  snapshot = ArchiveMaintenanceSnapshot(
+      closed_paths=[],
+      mapping={"k": ["/raw/a"]},
+  )
+  with janitor._accrual_snapshot_lock:
+    janitor._accrual_snapshot = snapshot
+  assert janitor.get_accrual_snapshot_for_reconcile() is snapshot
+
+
+def test_get_accrual_snapshot_for_reconcile_none_when_empty_mapping(tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+
+  janitor = _make_janitor()
+  with janitor._accrual_snapshot_lock:
+    janitor._accrual_snapshot = ArchiveMaintenanceSnapshot(
+        closed_paths=[],
+        mapping={},
+    )
+  assert janitor.get_accrual_snapshot_for_reconcile() is None
+
+
 def test_tick_raw_remove_uses_allow_auto_seal_false(monkeypatch):
   captured = {}
   tar_path = "/tmp/2026-01-01.tar"

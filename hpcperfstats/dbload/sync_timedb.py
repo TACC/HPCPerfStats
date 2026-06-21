@@ -3702,16 +3702,51 @@ def run_sync_timedb_supervisor_loop(
       host_dir = os.path.dirname(path)
       host_scan_hints.pop(host_dir, None)
 
+  reconcile_refs = {
+      "ingest_gate_cleared": (
+          not cfg.get_sync_startup_drain_day_close_before_ingest()
+      ),
+      "get_startup_snapshot": lambda: None,
+      "get_accrual_snapshot": lambda: None,
+      "warned_live_reconcile_fallback": False,
+  }
+
+  def _resolve_reconcile_maintenance_snapshot():
+    if not reconcile_refs["ingest_gate_cleared"]:
+      snap = reconcile_refs["get_startup_snapshot"]()
+      if snap is not None:
+        return snap, "coordinator"
+      if not reconcile_refs["warned_live_reconcile_fallback"]:
+        reconcile_refs["warned_live_reconcile_fallback"] = True
+        log_print(
+            "WARN: pending reconcile cap: no startup coordinator snapshot; "
+            "using live scan",
+            flush=True,
+        )
+      return None, "live"
+    accrual = reconcile_refs["get_accrual_snapshot"]()
+    if accrual is not None:
+      return accrual, "accrual"
+    return None, "live"
+
   def _live_unprocessed_by_tar_for_reconcile():
+    snapshot, _source = _resolve_reconcile_maintenance_snapshot()
     return build_live_unprocessed_by_tar_for_reconcile(
         directory,
         host_name_ext,
         tgz_archive_dir,
         checkpoint_path=checkpoint_path,
         pending_stats_paths=list(pending_stats_files),
+        maintenance_snapshot=snapshot,
     )
 
   def _cap_pending_after_rescan(paths):
+    cap_t0 = time.time()
+    _snapshot, source = _resolve_reconcile_maintenance_snapshot()
+    log_print(
+        "sync_timedb: pending reconcile cap begin source=%s" % source,
+        flush=True,
+    )
     unprocessed = _live_unprocessed_by_tar_for_reconcile()
     tar_norm = oldest_checkpoint_blocked_tar(
         unprocessed, tgz_archive_dir=tgz_archive_dir)
@@ -3719,7 +3754,7 @@ def run_sync_timedb_supervisor_loop(
         on_disk_unprocessed_paths_for_tar(unprocessed, tar_norm)
         if tar_norm else []
     )
-    return _cap_pending_stats_files_list(
+    capped = _cap_pending_stats_files_list(
         prepend_checkpoint_blocked_paths_to_pending(
             paths,
             blocked,
@@ -3727,6 +3762,18 @@ def run_sync_timedb_supervisor_loop(
         ),
         ingest_queue_max,
     )
+    log_print(
+        "sync_timedb: pending reconcile cap done elapsed_s=%.3f "
+        "oldest_tar=%s blocked_n=%d capped_pending=%d"
+        % (
+            time.time() - cap_t0,
+            tar_norm or "",
+            len(blocked),
+            len(capped),
+        ),
+        flush=True,
+    )
+    return capped
 
   def _reconcile_pending_with_oldest_checkpoint_blocked():
     nonlocal pending_stats_files
@@ -4362,6 +4409,10 @@ def run_sync_timedb_supervisor_loop(
       get_chunk_in_progress=_get_chunk_in_progress,
       process_title=SYNC_TIMEDB_PROCESS_TITLE,
   )
+  reconcile_refs["get_startup_snapshot"] = startup_archive_scan.get_snapshot
+  reconcile_refs["get_accrual_snapshot"] = (
+      archive_janitor.get_accrual_snapshot_for_reconcile
+  )
 
   def _on_async_day_phase(tar_norm, phase):
     nonlocal day_close_rescan_pending
@@ -4677,6 +4728,7 @@ def run_sync_timedb_supervisor_loop(
           flush=True,
       )
       startup_ingest_gate_cleared = True
+      reconcile_refs["ingest_gate_cleared"] = True
       return False
 
     def _post_startup_raw_removal_rescan():

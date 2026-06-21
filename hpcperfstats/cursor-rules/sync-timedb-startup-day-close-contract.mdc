@@ -107,6 +107,8 @@ sync_timedb: startup tail ingest complete day=… ingested=N failed=N checkpoint
 sync_timedb: startup tail ingest defer day=… paths=N reason=above_max_files max=100
 sync_timedb: startup tail ingest submitted day_close tar=…/YYYY-MM-DD.tar
 sync_timedb: startup tail ingest phase complete
+sync_timedb: pending reconcile cap begin source=coordinator|accrual|live
+sync_timedb: pending reconcile cap done elapsed_s=… oldest_tar=… blocked_n=… capped_pending=…
 ```
 
 ## Coordination

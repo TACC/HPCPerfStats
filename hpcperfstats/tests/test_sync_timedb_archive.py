@@ -5696,6 +5696,76 @@ def test_build_remaining_raw_accepts_snapshot_no_nested_collect(monkeypatch, tmp
   assert result == snapshot.remaining_raw_by_gz
 
 
+def test_live_unprocessed_reconcile_uses_snapshot_no_collect(monkeypatch, tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      build_live_unprocessed_by_tar_for_reconcile,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+
+  collect_calls = {"n": 0}
+
+  def boom_collect(*_a, **_k):
+    collect_calls["n"] += 1
+    return []
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.collect_stats_files_in_range",
+      boom_collect,
+  )
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_norm = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+  raw_path = str(tmp_path / "host.example.com" / "123")
+  snapshot = ArchiveMaintenanceSnapshot(
+      closed_paths=[raw_path],
+      mapping={str(daily_dir / "2020-01-01.tar.zst"): [raw_path]},
+      first_timestamp_by_path={raw_path: 123.0},
+  )
+  result = build_live_unprocessed_by_tar_for_reconcile(
+      str(tmp_path),
+      "example.com",
+      str(daily_dir),
+      checkpoint_paths=set(),
+      maintenance_snapshot=snapshot,
+  )
+  assert collect_calls["n"] == 0
+  assert tar_norm in result
+  assert raw_path in result[tar_norm]
+
+
+def test_live_unprocessed_reconcile_live_path_collects_when_no_snapshot(
+    monkeypatch, tmp_path,
+):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      build_live_unprocessed_by_tar_for_reconcile,
+  )
+
+  collect_calls = {"n": 0}
+
+  def fake_collect(archive_data_dir, start, end, host_name_ext, **kwargs):
+    collect_calls["n"] += 1
+    host_dir = tmp_path / ("n." + host_name_ext)
+    host_dir.mkdir(parents=True, exist_ok=True)
+    seg = host_dir / "100"
+    seg.write_text("100 job1 host\n")
+    return [str(seg)]
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.collect_stats_files_in_range",
+      fake_collect,
+  )
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  build_live_unprocessed_by_tar_for_reconcile(
+      str(tmp_path),
+      "example.com",
+      str(daily_dir),
+      checkpoint_paths=set(),
+      maintenance_snapshot=None,
+  )
+  assert collect_calls["n"] == 1
+
+
 def test_log_day_close_candidate_report_omits_skipped_no_work(capsys, monkeypatch):
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       log_day_close_candidate_report,

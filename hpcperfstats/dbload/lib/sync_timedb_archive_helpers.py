@@ -1413,15 +1413,20 @@ def build_live_unprocessed_by_tar_for_reconcile(
     checkpoint_path=None,
     checkpoint_paths=None,
     pending_stats_paths=None,
+    maintenance_snapshot=None,
 ):
-  """Live-scan unprocessed map for pending reconcile (no maintenance snapshot)."""
+  """Unprocessed map for pending reconcile; live full-tree scan only when no snapshot."""
+  first_timestamp_by_path = None
+  if maintenance_snapshot is not None:
+    first_timestamp_by_path = maintenance_snapshot.first_timestamp_by_path
   unprocessed_by_tar = build_unprocessed_raw_by_daily_tar(
       archive_data_dir,
       host_name_ext,
       tgz_archive_dir,
       checkpoint_path=checkpoint_path,
       checkpoint_paths=checkpoint_paths,
-      maintenance_snapshot=None,
+      first_timestamp_by_path=first_timestamp_by_path,
+      maintenance_snapshot=maintenance_snapshot,
   )
   return augment_unprocessed_by_tar_with_pending_paths(
       unprocessed_by_tar,
@@ -1429,6 +1434,7 @@ def build_live_unprocessed_by_tar_for_reconcile(
       tgz_archive_dir=tgz_archive_dir,
       checkpoint_path=checkpoint_path,
       checkpoint_paths=checkpoint_paths,
+      first_timestamp_by_path=first_timestamp_by_path,
   )
 
 
