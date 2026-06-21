@@ -40,6 +40,16 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
     },
     {
+        "id": "sync_timedb_parsing_collapse",
+        "patterns": [
+            "hpcperfstats/dbload/lib/sync_timedb_parsing.py",
+            "hpcperfstats/tests/test_sync_timedb.py",
+        ],
+        "rules": [
+            "sync-timedb-parsing-collapse-vectorization.mdc",
+        ],
+    },
+    {
         "id": "sync_timedb_startup",
         "patterns": [
             "hpcperfstats/dbload/lib/sync_timedb_startup_*.py",

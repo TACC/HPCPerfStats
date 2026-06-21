@@ -1,0 +1,46 @@
+---
+description: sync_timedb parsing multi-dev metric collapse must use native agg or shared vectorized helpers, never groupby.apply
+alwaysApply: false
+globs:
+  - hpcperfstats/dbload/lib/sync_timedb_parsing.py
+  - hpcperfstats/tests/test_sync_timedb.py
+---
+
+# sync_timedb Parsing Collapse Vectorization
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+Multi-`dev` metric collapse in ingest parse (`_collapse_stats_with_deltas` and helpers) must use the fastest available vectorized path. Per-group `groupby.apply` is a known ~50× regression on GPU ingest workloads.
+
+## Forbidden
+
+- `DataFrame.groupby(...).apply(...)` for multi-`dev` metric collapse in the ingest parse path.
+- Parallel collapse logic in `sync_timedb.py` — all routes go through `_collapse_stats_with_deltas`.
+
+## Required — use the fastest available method
+
+| Collapse need | Required approach |
+|---------------|-------------------|
+| Sum across devs (`min_count=1`) | `_groupby_sum_min_count` |
+| Event-dispatched standard reducers (sum/max/mean) | Partition by event class → `groupby.agg` with native reducers |
+| Bitwise OR (`clocks_event_reasons`) | `_nvidia_bitwise_or_values` on OR slice only |
+| Custom reducer (DCGM cluster-mean, dynamic gap) | `_collapse_dcg_cpu_power_vectorized` — explicit `for key, group in grouped` + NumPy helper, **not** `apply` |
+| New metric type / event class | Extend typed router in `_collapse_stats_with_deltas`; add equivalence test vs apply reference |
+
+## Canonical helpers (`sync_timedb_parsing.py`)
+
+- `_collapse_stats_with_deltas` — single entrypoint
+- `_groupby_sum_min_count` — rest + NVIDIA sum/default slices
+- `_collapse_nvidia_gpu_vectorized` — NVIDIA event-class native aggregations
+- `_collapse_dcg_cpu_power_vectorized` — DCGM explicit group loop
+- `_collapse_nvidia_gpu_group` / `_collapse_dcg_cpu_power_gauge_group` — apply-reference only (tests)
+
+## New collapse behavior
+
+Add or extend an equivalence test (`vectorized` vs apply reference or golden fixture) per `every-error-regression-test.mdc` before merge.
+
+## Overlap
+
+- `bugfix-and-perf-change-playbook.mdc` — perf change verification
+- `duplicate-threshold-helper-mandate.mdc` — shared `_groupby_sum_min_count` for sum paths
+- `runtime-resource-and-metrics-safety.mdc` — ingest hot-path resource discipline

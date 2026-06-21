@@ -6,6 +6,12 @@ import pandas as pd
 from hpcperfstats.dbload.lib.io_helpers import host_data_instance_from_stats_row
 from hpcperfstats.dbload.lib.sync_timedb_parsing import (
     EVENTMAPS_BY_TYPE,
+    _COLLAPSE_GROUP_COLS,
+    _collapse_dcg_cpu_power_gauge_group,
+    _collapse_dcg_cpu_power_vectorized,
+    _collapse_nvidia_gpu_group,
+    _collapse_nvidia_gpu_vectorized,
+    _collapse_stats_with_deltas,
     build_stats_dataframes,
     compute_deltas_and_arc,
     exclude_types,
@@ -527,6 +533,196 @@ def test_compute_deltas_and_arc_nvidia_clocks_event_reasons_bitwise_or():
   result = compute_deltas_and_arc(stats_df)
   assert len(result) == 1
   assert int(result.iloc[0]["value"]) == 7
+
+
+def _collapse_compare_columns():
+  return ["host", "type", "event", "unit", "time", "value", "delta"]
+
+
+def _assert_collapse_frames_equal(actual, expected):
+  cols = _collapse_compare_columns()
+  actual_sorted = actual[cols].sort_values(by=cols).reset_index(drop=True)
+  expected_sorted = expected[cols].sort_values(by=cols).reset_index(drop=True)
+  pd.testing.assert_frame_equal(actual_sorted, expected_sorted, check_dtype=False)
+
+
+def _nvidia_multi_event_fixture():
+  """Post-delta rows spanning NVIDIA event classes and multiple devs."""
+  return pd.DataFrame([
+      {
+          "host": "h", "type": "nvidia_gpu", "dev": "0",
+          "event": "gpu_util", "unit": "#", "time": 100.0, "value": 40.0, "delta": 4.0,
+      },
+      {
+          "host": "h", "type": "nvidia_gpu", "dev": "1",
+          "event": "gpu_util", "unit": "#", "time": 100.0, "value": 50.0, "delta": 5.0,
+      },
+      {
+          "host": "h", "type": "nvidia_gpu", "dev": "0",
+          "event": "temperature", "unit": "C", "time": 100.0, "value": 60.0, "delta": 1.0,
+      },
+      {
+          "host": "h", "type": "nvidia_gpu", "dev": "1",
+          "event": "temperature", "unit": "C", "time": 100.0, "value": 80.0, "delta": 3.0,
+      },
+      {
+          "host": "h", "type": "nvidia_gpu", "dev": "0",
+          "event": "module_power_usage", "unit": "W", "time": 100.0, "value": 400.0, "delta": 10.0,
+      },
+      {
+          "host": "h", "type": "nvidia_gpu", "dev": "1",
+          "event": "module_power_usage", "unit": "W", "time": 100.0, "value": 500.0, "delta": 20.0,
+      },
+      {
+          "host": "h", "type": "nvidia_gpu", "dev": "0",
+          "event": "clocks_event_reasons", "unit": "#", "time": 100.0, "value": 5.0, "delta": 1.0,
+      },
+      {
+          "host": "h", "type": "nvidia_gpu", "dev": "1",
+          "event": "clocks_event_reasons", "unit": "#", "time": 100.0, "value": 2.0, "delta": 2.0,
+      },
+      {
+          "host": "h", "type": "nvidia_gpu", "dev": "0",
+          "event": "custom_metric", "unit": "#", "time": 100.0, "value": 3.0, "delta": 1.0,
+      },
+      {
+          "host": "h", "type": "nvidia_gpu", "dev": "1",
+          "event": "custom_metric", "unit": "#", "time": 100.0, "value": 7.0, "delta": 2.0,
+      },
+  ])
+
+
+def _mixed_collapse_fixture():
+  """Post-delta rows for rest, DCGM, and NVIDIA collapse routes."""
+  rows = []
+  rows.extend([
+      {
+          "host": "h", "type": "host_cpu", "dev": "global",
+          "event": "user", "unit": "#", "time": 100.0, "value": 10.0, "delta": 1.0,
+      },
+      {
+          "host": "h", "type": "host_cpu", "dev": "global",
+          "event": "user", "unit": "#", "time": 100.0, "value": 20.0, "delta": 2.0,
+      },
+  ])
+  for idx, val in enumerate([100.0, 100.0, 100.0, 80.0, 80.0, 80.0]):
+    rows.append({
+        "host": "h",
+        "type": "cpu_counter_metrics",
+        "dev": str(idx),
+        "event": "DCGM_CPU_POWER_UTIL_W",
+        "unit": "W",
+        "time": 100.0,
+        "value": val,
+        "delta": float(idx + 1),
+    })
+  rows.extend(_nvidia_multi_event_fixture().to_dict("records"))
+  return pd.DataFrame(rows)
+
+
+def test_collapse_nvidia_gpu_vectorized_matches_apply_reference():
+  nv_df = _nvidia_multi_event_fixture()
+  gcols = _COLLAPSE_GROUP_COLS
+  expected = (
+      nv_df.groupby(gcols, observed=True)
+      .apply(_collapse_nvidia_gpu_group, include_groups=False)
+      .reset_index()
+  )
+  actual = _collapse_nvidia_gpu_vectorized(nv_df, gcols)
+  _assert_collapse_frames_equal(actual, expected)
+
+
+def test_collapse_dcg_cpu_power_vectorized_matches_apply_reference():
+  rows = []
+  for idx, val in enumerate([100.0, 100.0, 100.0, 80.0, 80.0, 80.0]):
+    rows.append({
+        "host": "h",
+        "type": "cpu_counter_metrics",
+        "dev": str(idx),
+        "event": "DCGM_CPU_POWER_UTIL_W",
+        "unit": "W",
+        "time": 100.0,
+        "value": val,
+        "delta": float((idx + 1) * 10),
+    })
+  ccm_df = pd.DataFrame(rows)
+  gcols = _COLLAPSE_GROUP_COLS
+  expected = (
+      ccm_df.groupby(gcols, observed=True)
+      .apply(_collapse_dcg_cpu_power_gauge_group, include_groups=False)
+      .reset_index()
+  )
+  actual = _collapse_dcg_cpu_power_vectorized(ccm_df, gcols)
+  _assert_collapse_frames_equal(actual, expected)
+
+
+def test_collapse_stats_with_deltas_vectorized_matches_apply_reference():
+  stats_df = _mixed_collapse_fixture()
+  actual = _collapse_stats_with_deltas(stats_df.copy())
+
+  gcols = _COLLAPSE_GROUP_COLS
+  parts = []
+  from hpcperfstats.dbload.lib import sync_timedb_parsing as parsing
+
+  rest_df = stats_df[stats_df["type"] != "nvidia_gpu"]
+  ccm_power_mask = (
+      rest_df["type"].isin(parsing._HOST_CPU_HW_TYPES)
+      & rest_df["event"].isin(parsing._DCGM_CPU_POWER_SOCKET_GAUGE_EVENTS))
+  ccm_power_df = rest_df[ccm_power_mask]
+  rest_other = rest_df[~ccm_power_mask]
+  if not rest_other.empty:
+    parts.append(
+        rest_other.groupby(gcols, observed=True).sum(min_count=1).reset_index()
+    )
+  if not ccm_power_df.empty:
+    parts.append(
+        ccm_power_df.groupby(gcols, observed=True)
+        .apply(_collapse_dcg_cpu_power_gauge_group, include_groups=False)
+        .reset_index()
+    )
+  nv_df = stats_df[stats_df["type"] == "nvidia_gpu"]
+  if not nv_df.empty:
+    parts.append(
+        nv_df.groupby(gcols, observed=True)
+        .apply(_collapse_nvidia_gpu_group, include_groups=False)
+        .reset_index()
+    )
+  expected = pd.concat(parts, ignore_index=True)
+  _assert_collapse_frames_equal(actual, expected)
+
+
+def test_compute_deltas_and_arc_nvidia_unknown_event_sums_across_dev():
+  stats_df = pd.DataFrame([
+      {
+          "host": "h", "type": "nvidia_gpu", "dev": "0",
+          "event": "custom_gpu_metric", "unit": "#", "time": 100.0, "value": 12.0, "wid": 48, "mult": 1,
+      },
+      {
+          "host": "h", "type": "nvidia_gpu", "dev": "1",
+          "event": "custom_gpu_metric", "unit": "#", "time": 100.0, "value": 18.0, "wid": 48, "mult": 1,
+      },
+  ])
+  result = compute_deltas_and_arc(stats_df)
+  assert len(result) == 1
+  assert float(result.iloc[0]["value"]) == 30.0
+
+
+def test_compute_deltas_and_arc_nvidia_sum_all_nan_yields_nan():
+  """All-NaN NVIDIA sum groups collapse to NaN (min_count=1), not zero."""
+  stats_df = pd.DataFrame([
+      {
+          "host": "h", "type": "nvidia_gpu", "dev": "0",
+          "event": "gpu_util", "unit": "#", "time": 100.0, "value": float("nan"), "delta": float("nan"),
+      },
+      {
+          "host": "h", "type": "nvidia_gpu", "dev": "1",
+          "event": "gpu_util", "unit": "#", "time": 100.0, "value": float("nan"), "delta": float("nan"),
+      },
+  ])
+  collapsed = _collapse_nvidia_gpu_vectorized(stats_df, _COLLAPSE_GROUP_COLS)
+  assert len(collapsed) == 1
+  assert pd.isna(collapsed.iloc[0]["value"])
+  assert pd.isna(collapsed.iloc[0]["delta"])
 
 
 def test_host_data_instance_from_stats_row_sets_jid_when_present():

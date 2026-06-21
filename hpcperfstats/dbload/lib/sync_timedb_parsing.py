@@ -118,20 +118,45 @@ def _cluster_mean_sum_sorted(values, gap_threshold):
   return total
 
 
+def _dcg_delta_gap_threshold(dvals):
+  """Dynamic delta clustering gap for DCGM CPU power gauge collapse."""
+  d_gap = 1e-6
+  finite = dvals[np.isfinite(dvals)]
+  if finite.size == 0:
+    return d_gap
+  dabs = np.nanmax(np.abs(finite))
+  if np.isfinite(dabs) and dabs > 0:
+    d_gap = max(1e-9, 0.05 * float(dabs))
+  return d_gap
+
+
 def _collapse_dcg_cpu_power_gauge_group(group):
+  """Apply-reference DCGM collapse; production path uses vectorized helper."""
   vals = group["value"].to_numpy(dtype=np.float64, copy=False)
   dvals = group["delta"].to_numpy(dtype=np.float64, copy=False)
   vtot = _cluster_mean_sum_sorted(vals, 1.0)
-  d_gap = 1e-6
-  if np.any(np.isfinite(dvals)):
-    dabs = np.nanmax(np.abs(dvals[np.isfinite(dvals)]))
-    if np.isfinite(dabs) and dabs > 0:
-      d_gap = max(1e-9, 0.05 * float(dabs))
-  dtot = _cluster_mean_sum_sorted(dvals, d_gap)
+  dtot = _cluster_mean_sum_sorted(dvals, _dcg_delta_gap_threshold(dvals))
   return pd.Series({"value": vtot, "delta": dtot})
 
 
+def _collapse_dcg_cpu_power_vectorized(ccm_df, gcols):
+  """Collapse DCGM CPU power gauges via explicit group loop (not groupby.apply)."""
+  rows = []
+  for key, group in ccm_df.groupby(gcols, observed=True, sort=False):
+    vals = group["value"].to_numpy(dtype=np.float64, copy=False)
+    dvals = group["delta"].to_numpy(dtype=np.float64, copy=False)
+    key_tuple = key if isinstance(key, tuple) else (key,)
+    row = dict(zip(gcols, key_tuple))
+    row["value"] = _cluster_mean_sum_sorted(vals, 1.0)
+    row["delta"] = _cluster_mean_sum_sorted(dvals, _dcg_delta_gap_threshold(dvals))
+    rows.append(row)
+  if not rows:
+    return _empty_delta_arc_frame()
+  return DataFrame(rows)
+
+
 def _collapse_nvidia_gpu_group(group):
+  """Apply-reference NVIDIA collapse; production path uses vectorized helper."""
   key = group.name
   event_name = key[_NVIDIA_GROUP_KEY_EVENT_INDEX] if isinstance(key, tuple) else key
   if event_name in _NVIDIA_GPU_MAX_EVENTS:
@@ -163,6 +188,84 @@ def _collapse_nvidia_gpu_group(group):
       "value": group["value"].sum(min_count=1),
       "delta": group["delta"].sum(min_count=1),
   })
+
+
+_NVIDIA_GPU_KNOWN_EVENTS = frozenset().union(
+    _NVIDIA_GPU_SUM_EVENTS,
+    _NVIDIA_GPU_MAX_EVENTS,
+    _NVIDIA_GPU_MEAN_EVENTS,
+    _NVIDIA_GPU_OR_EVENTS,
+)
+
+
+def _nvidia_bitwise_or_values(series):
+  """Bitwise OR of finite ``clocks_event_reasons`` values within one collapse group."""
+  acc = 0
+  mask64 = (1 << 64) - 1
+  for v in series:
+    if pd.notna(v):
+      acc |= int(v) & mask64
+  return float(acc & mask64)
+
+
+def _groupby_sum_min_count(df, gcols):
+  """Sum value/delta across devs with pandas ``sum(min_count=1)`` NaN semantics."""
+  if df.empty:
+    return _empty_delta_arc_frame()
+  grouped = df.groupby(gcols, observed=True).agg(
+      value=("value", "sum"),
+      delta=("delta", "sum"),
+      _value_n=("value", "count"),
+      _delta_n=("delta", "count"),
+  ).reset_index()
+  grouped["value"] = grouped["value"].where(grouped["_value_n"] > 0)
+  grouped["delta"] = grouped["delta"].where(grouped["_delta_n"] > 0)
+  return grouped.drop(columns=["_value_n", "_delta_n"])
+
+
+def _collapse_nvidia_gpu_vectorized(nv_df, gcols):
+  """Collapse NVIDIA GPU metrics via native groupby aggregations (not groupby.apply)."""
+  parts = []
+  sum_mask = (
+      nv_df["event"].isin(_NVIDIA_GPU_SUM_EVENTS)
+      | ~nv_df["event"].isin(_NVIDIA_GPU_KNOWN_EVENTS))
+  sum_df = nv_df.loc[sum_mask]
+  if not sum_df.empty:
+    parts.append(_groupby_sum_min_count(sum_df, gcols))
+
+  max_df = nv_df.loc[nv_df["event"].isin(_NVIDIA_GPU_MAX_EVENTS)]
+  if not max_df.empty:
+    parts.append(
+        max_df.groupby(gcols, observed=True).agg(
+            value=("value", "max"),
+            delta=("delta", "mean"),
+        ).reset_index()
+    )
+
+  mean_df = nv_df.loc[nv_df["event"].isin(_NVIDIA_GPU_MEAN_EVENTS)]
+  if not mean_df.empty:
+    parts.append(
+        mean_df.groupby(gcols, observed=True).agg(
+            value=("value", "mean"),
+            delta=("delta", "mean"),
+        ).reset_index()
+    )
+
+  or_df = nv_df.loc[nv_df["event"].isin(_NVIDIA_GPU_OR_EVENTS)]
+  if not or_df.empty:
+    or_collapsed = or_df.groupby(gcols, observed=True).agg(
+        value=("value", _nvidia_bitwise_or_values),
+        delta=("delta", "sum"),
+        _delta_n=("delta", "count"),
+    ).reset_index()
+    or_collapsed["delta"] = or_collapsed["delta"].where(or_collapsed["_delta_n"] > 0)
+    parts.append(or_collapsed.drop(columns=["_delta_n"]))
+
+  if not parts:
+    return _empty_delta_arc_frame()
+  if len(parts) == 1:
+    return parts[0]
+  return concat(parts, ignore_index=True)
 
 
 def _vals_dict_from_line(typ, schema, schema_keys, vals, use_legacy_decode, dev=None):
@@ -814,9 +917,8 @@ def _apply_counter_deltas(stats_df, carry=None):
 
 def _collapse_stats_with_deltas(stats_df):
   gcols = _COLLAPSE_GROUP_COLS
-  nv_mask = stats_df["type"] == "nvidia_gpu"
-  nv_df = stats_df[nv_mask]
-  rest_df = stats_df[~nv_mask]
+  nv_df = stats_df[stats_df["type"] == "nvidia_gpu"]
+  rest_df = stats_df[stats_df["type"] != "nvidia_gpu"]
   parts = []
   if not rest_df.empty:
     ccm_power_mask = (
@@ -825,24 +927,15 @@ def _collapse_stats_with_deltas(stats_df):
     ccm_power_df = rest_df[ccm_power_mask]
     rest_other = rest_df[~ccm_power_mask]
     if not rest_other.empty:
-      parts.append(
-          rest_other.groupby(gcols, observed=True).sum(min_count=1).reset_index()
-      )
+      parts.append(_groupby_sum_min_count(rest_other, gcols))
     if not ccm_power_df.empty:
-      ccm_collapsed = ccm_power_df.groupby(
-          gcols, observed=True).apply(_collapse_dcg_cpu_power_gauge_group)
-      ccm_collapsed = ccm_collapsed.reset_index()
-      parts.append(ccm_collapsed)
+      parts.append(_collapse_dcg_cpu_power_vectorized(ccm_power_df, gcols))
   if not nv_df.empty:
-    nv_collapsed = nv_df.groupby(gcols, observed=True).apply(
-        _collapse_nvidia_gpu_group,
-    )
-    nv_collapsed = nv_collapsed.reset_index()
-    parts.append(nv_collapsed)
+    parts.append(_collapse_nvidia_gpu_vectorized(nv_df, gcols))
 
   if not parts:
     return _empty_delta_arc_frame()
-  collapsed = concat(parts, ignore_index=True)
+  collapsed = concat(parts, ignore_index=True) if len(parts) > 1 else parts[0]
   del parts
   return collapsed.sort_values(by=_ARC_GROUP_COLS + ["time"])
 
