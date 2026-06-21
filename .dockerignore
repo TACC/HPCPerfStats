@@ -22,6 +22,9 @@ yarn-error.log*
 tmp/
 temp/
 *.log
-monitor/**/*.o
-monitor/**/*.a
-monitor/**/*.so
+
+# Entire monitor C daemon tree (sources, build artifacts, unit tests)
+monitor/
+
+# All test directories (pytest, e2e, Django/metrics/dbload tests, etc.)
+**/tests/
