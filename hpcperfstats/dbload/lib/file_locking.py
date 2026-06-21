@@ -46,6 +46,33 @@ def _open_lock_file(target_path):
   return open(lock_path, "a+")
 
 
+def _try_open_write_lock_fd(target_path):
+  """Open the sidecar and attempt a non-blocking exclusive flock in one step."""
+  lock_fd = _open_lock_file(target_path)
+  try:
+    flock(lock_fd, LOCK_EX | LOCK_NB)
+  except OSError:
+    try:
+      lock_fd.close()
+    except OSError:
+      pass
+    raise
+  return lock_fd
+
+
+def _refresh_lock_sidecar_mtime(lock_fd):
+  """Refresh sidecar mtime on the held fd (safe if path was unlinked)."""
+  if hasattr(os, "futime"):
+    os.futime(lock_fd.fileno(), None)
+    return
+  lock_path = lock_fd.name
+  if lock_path:
+    try:
+      os.utime(lock_path, None)
+    except FileNotFoundError:
+      pass
+
+
 def _maybe_reset_stale_lock_file(target_path, now, expiry_seconds):
   lock_path = _lock_path(target_path)
   lock_fd = None
@@ -129,15 +156,10 @@ def file_write_lock(target_path,
     now = time.time()
     _maybe_reset_stale_lock_file(target_path, now, expiry_seconds)
     try:
-      lock_fd = _open_lock_file(target_path)
-      flock(lock_fd, LOCK_EX | LOCK_NB)
+      lock_fd = _try_open_write_lock_fd(target_path)
       break
     except OSError as exc:
-      if lock_fd is not None:
-        try:
-          lock_fd.close()
-        except OSError:
-          pass
+      lock_fd = None
       if exc.errno not in (errno.EACCES, errno.EAGAIN):
         raise
       if (now - start) >= timeout_seconds:
@@ -147,7 +169,7 @@ def file_write_lock(target_path,
       time.sleep(POLL_INTERVAL_SECONDS)
 
   try:
-    os.utime(_lock_path(target_path), None)
+    _refresh_lock_sidecar_mtime(lock_fd)
     yield
   finally:
     lock_path = _lock_path(target_path)

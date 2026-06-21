@@ -1,3 +1,4 @@
+import errno
 import os
 import threading
 import time
@@ -8,6 +9,8 @@ from hpcperfstats.dbload.lib.file_locking import (
     cleanup_stale_fnctl_lock_sidecars,
     file_read_lock_wait,
     file_write_lock,
+    _refresh_lock_sidecar_mtime,
+    _try_open_write_lock_fd,
 )
 
 
@@ -229,3 +232,98 @@ def test_file_write_lock_logs_sidecar_cleanup_failures(monkeypatch, tmp_path, ca
 
   captured = capsys.readouterr()
   assert "WARNING: failed to remove lock sidecar" in captured.out
+
+
+def test_file_write_lock_survives_path_utime_enoent(monkeypatch, tmp_path):
+  """Path-based utime on sidecar must not abort write lock after acquisition."""
+  target = tmp_path / "data.tar"
+  target.write_text("x")
+  real_utime = os.utime
+
+  def _utime(path, times):
+    if str(path).endswith(".fnctl.lock"):
+      raise FileNotFoundError(
+          errno.ENOENT, "No such file or directory", str(path)
+      )
+    return real_utime(path, times)
+
+  monkeypatch.setattr(os, "utime", _utime)
+  with file_write_lock(str(target), timeout_seconds=1):
+    pass
+
+
+def test_file_write_lock_refreshes_mtime_via_futime(monkeypatch, tmp_path):
+  target = tmp_path / "data.tar"
+  target.write_text("x")
+  refresh_calls = []
+  real_refresh = _refresh_lock_sidecar_mtime
+
+  def _spy_refresh(lock_fd):
+    refresh_calls.append(lock_fd.fileno())
+    return real_refresh(lock_fd)
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.file_locking._refresh_lock_sidecar_mtime",
+      _spy_refresh,
+  )
+  with file_write_lock(str(target), timeout_seconds=1):
+    pass
+
+  assert len(refresh_calls) == 1
+
+
+def test_refresh_lock_sidecar_mtime_survives_unlinked_path(tmp_path):
+  """Held flock fd remains valid after sidecar path is unlinked."""
+  target = tmp_path / "2026-04-02.tar"
+  target.write_text("x")
+  lock_path = tmp_path / "2026-04-02.tar.fnctl.lock"
+  lock_path.write_text("")
+  lock_fd = open(lock_path, "a+")
+  os.remove(lock_path)
+  from fcntl import LOCK_EX, flock
+
+  flock(lock_fd, LOCK_EX)
+  _refresh_lock_sidecar_mtime(lock_fd)
+  lock_fd.close()
+
+
+def test_file_write_lock_survives_stale_cleanup_during_acquire(tmp_path):
+  """Concurrent stale sidecar cleanup must not break write lock acquisition."""
+  target = tmp_path / "held.tar"
+  target.write_text("x")
+  lock_path = tmp_path / "held.tar.fnctl.lock"
+  lock_path.write_text("")
+  stale_ts = time.time() - (4 * 60 * 60 + 30)
+  os.utime(lock_path, (stale_ts, stale_ts))
+  errors = []
+
+  def _cleanup_loop():
+    for _ in range(50):
+      cleanup_stale_fnctl_lock_sidecars(str(tmp_path))
+      time.sleep(0.001)
+
+  def _acquire_loop():
+    try:
+      for _ in range(50):
+        with file_write_lock(str(target), timeout_seconds=1):
+          time.sleep(0.001)
+    except Exception as exc:
+      errors.append(exc)
+
+  t_cleanup = threading.Thread(target=_cleanup_loop, daemon=True)
+  t_acquire = threading.Thread(target=_acquire_loop, daemon=True)
+  t_cleanup.start()
+  t_acquire.start()
+  t_cleanup.join(timeout=5)
+  t_acquire.join(timeout=5)
+  assert not errors
+
+
+def test_try_open_write_lock_fd_opens_and_locks(tmp_path):
+  target = tmp_path / "data.txt"
+  target.write_text("ok")
+  lock_fd = _try_open_write_lock_fd(str(target))
+  try:
+    assert lock_fd.fileno() >= 0
+  finally:
+    lock_fd.close()
