@@ -59,8 +59,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Python dependencies: cached until pyproject.toml changes.
 COPY --chown=hpcperfstats:hpcperfstats pyproject.toml ./
 RUN /bin/bash -o pipefail -c 'pip install --no-cache-dir --upgrade pip \
-    && deps=$(python3 -c "import shlex, tomllib; from pathlib import Path; deps=tomllib.loads(Path(\"pyproject.toml\").read_text())[\"project\"][\"dependencies\"]; print(\" \".join(shlex.quote(d) for d in deps))") \
-    && pip install --no-cache-dir $deps \
+    && python3 -c "import tomllib; from pathlib import Path; deps=tomllib.loads(Path(\"pyproject.toml\").read_text())[\"project\"][\"dependencies\"]; Path(\"/tmp/requirements.txt\").write_text(\"\\n\".join(deps)+\"\\n\")" \
+    && pip install --no-cache-dir -r /tmp/requirements.txt \
     && pip cache purge'
 
 COPY --chown=hpcperfstats:hpcperfstats . .

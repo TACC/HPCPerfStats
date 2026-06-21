@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import tomllib
 from pathlib import Path
 
 
@@ -20,6 +21,11 @@ def _stage_body(dockerfile: str, stage_name: str) -> str:
   return match.group(1)
 
 
+def _pyproject_runtime_requirements() -> list[str]:
+  pyproject = tomllib.loads((_repo_root() / "pyproject.toml").read_text())
+  return pyproject["project"]["dependencies"]
+
+
 def test_hpcperfstats_base_layers_python_deps_on_pyproject():
   """Application edits must not reinstall pinned PyPI deps unless pyproject.toml changes."""
   dockerfile = (_repo_root() / "Dockerfile").read_text()
@@ -30,14 +36,29 @@ def test_hpcperfstats_base_layers_python_deps_on_pyproject():
       stage,
   )
   assert "tomllib" in stage
-  assert re.search(r"pip install --no-cache-dir \$deps", stage)
+  assert "pip install --no-cache-dir -r /tmp/requirements.txt" in stage
   assert "pip install --no-cache-dir --no-deps ." in stage
+  assert "shlex.quote" not in stage
 
   pyproject_copy_pos = stage.index("pyproject.toml")
-  deps_install_pos = stage.index("pip install --no-cache-dir $deps")
+  deps_install_pos = stage.index("pip install --no-cache-dir -r /tmp/requirements.txt")
   full_copy_pos = stage.index("COPY --chown=hpcperfstats:hpcperfstats . .")
   package_install_pos = stage.index("pip install --no-cache-dir --no-deps .")
   assert pyproject_copy_pos < deps_install_pos < full_copy_pos < package_install_pos
+
+
+def test_pyproject_dependencies_write_valid_pip_requirements_file():
+  """Comma/version pins must not be shell-quoted (regression for Django>=6.0.6,<7.0)."""
+  deps = _pyproject_runtime_requirements()
+  requirements_text = "\n".join(deps) + "\n"
+
+  assert "Django>=6.0.6,<7.0" in requirements_text
+  assert "'Django" not in requirements_text
+  assert '"Django' not in requirements_text
+
+  for line in requirements_text.splitlines():
+    assert line
+    assert line[0] not in "'\""
 
 
 def test_hpcperfstats_child_stages_do_not_reinstall_python_deps():
