@@ -27,13 +27,13 @@ if ! grep -q 'copy_tree_via_staged_tar' "${REBUILD_SCRIPT}"; then
   exit 1
 fi
 
-if ! grep -q 'staged tar + compose exec extract' "${REBUILD_SCRIPT}"; then
-  echo "expected staged tar + compose exec extract message in rebuild_frontend.sh" >&2
+if ! grep -q 'staged tar + compose exec extract' "${REBUILD_SCRIPT}" "${SCRIPT_DIR}/lib/compose_frontend_helpers.sh"; then
+  echo "expected staged tar + compose exec extract message in rebuild_frontend.sh or compose_frontend_helpers.sh" >&2
   exit 1
 fi
 
-if ! grep -q 'compose_backend_is_podman' "${REBUILD_SCRIPT}"; then
-  echo "expected podman-compose detection in rebuild_frontend.sh" >&2
+if ! grep -q 'compose_backend_is_podman' "${REBUILD_SCRIPT}" "${SCRIPT_DIR}/lib/compose_frontend_helpers.sh"; then
+  echo "expected podman-compose detection in rebuild_frontend.sh or compose_frontend_helpers.sh" >&2
   exit 1
 fi
 
@@ -42,8 +42,8 @@ if ! grep -q 'verify_proxy_frontend_matches_web' "${REBUILD_SCRIPT}"; then
   exit 1
 fi
 
-if ! grep -q 'PROXY_STATIC_ROOT_FRONTEND' "${REBUILD_SCRIPT}"; then
-  echo "expected PROXY_STATIC_ROOT_FRONTEND in rebuild_frontend.sh" >&2
+if ! grep -q 'PROXY_STATIC_ROOT_FRONTEND' "${REBUILD_SCRIPT}" "${SCRIPT_DIR}/lib/compose_frontend_helpers.sh"; then
+  echo "expected PROXY_STATIC_ROOT_FRONTEND in rebuild_frontend.sh or compose_frontend_helpers.sh" >&2
   exit 1
 fi
 
@@ -52,8 +52,8 @@ if ! grep -q 'deploy_frontend_via_staged_volume' "${REBUILD_SCRIPT}"; then
   exit 1
 fi
 
-if ! grep -q 'verify_container_extract_fingerprint' "${REBUILD_SCRIPT}"; then
-  echo "expected post-extract fingerprint verify in rebuild_frontend.sh" >&2
+if ! grep -q 'verify_container_extract_fingerprint' "${REBUILD_SCRIPT}" "${SCRIPT_DIR}/lib/compose_frontend_helpers.sh"; then
+  echo "expected post-extract fingerprint verify in rebuild_frontend.sh or compose_frontend_helpers.sh" >&2
   exit 1
 fi
 

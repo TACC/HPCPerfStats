@@ -15,61 +15,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=lib/compose_frontend_helpers.sh
+source "${SCRIPT_DIR}/lib/compose_frontend_helpers.sh"
+
 FRONTEND_DIR="${REPO_ROOT}/hpcperfstats/site/frontend"
 STATIC_FRONTEND="${REPO_ROOT}/hpcperfstats/site/hpcperfstats_site/static/frontend"
-CONTAINER_STATIC_FRONTEND="/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend"
-CONTAINER_STATIC_ROOT="${CONTAINER_STATIC_ROOT:-/home/hpcperfstats/staticfiles}"
-CONTAINER_STATIC_ROOT_FRONTEND="${CONTAINER_STATIC_ROOT}/frontend"
-PROXY_STATIC_ROOT_FRONTEND="/srv/static/frontend"
 NODE_IMAGE="node:26.3.0-alpine3.23"
-
-# Next static export shells nginx serves (see services-conf/nginx-static-files.conf).
-REQUIRED_SPA_SHELLS=(
-  "machine/index.html"
-  "pub/index.html"
-)
-
-verify_spa_shells() {
-  local base_dir="$1"
-  local label="${2:-${base_dir}}"
-  local missing=()
-  local rel
-
-  for rel in "${REQUIRED_SPA_SHELLS[@]}"; do
-    if [[ ! -f "${base_dir}/${rel}" ]]; then
-      missing+=("${base_dir}/${rel}")
-    fi
-  done
-
-  if ((${#missing[@]} > 0)); then
-    echo "rebuild_frontend.sh: build did not produce required SPA shell(s) under ${label}:" >&2
-    for path in "${missing[@]}"; do
-      echo "  missing: ${path}" >&2
-    done
-    return 1
-  fi
-
-  echo "Verified SPA shells under ${label}: ${REQUIRED_SPA_SHELLS[*]}"
-}
-
-verify_spa_shells_via_compose() {
-  local container_dir="$1"
-  local label="$2"
-  local rel missing=()
-  for rel in "${REQUIRED_SPA_SHELLS[@]}"; do
-    if ! docker compose exec -T web bash -lc "[[ -f '${container_dir}/${rel}' ]]"; then
-      missing+=("${container_dir}/${rel}")
-    fi
-  done
-  if ((${#missing[@]} > 0)); then
-    echo "rebuild_frontend.sh: required SPA shell(s) missing under ${label}:" >&2
-    for path in "${missing[@]}"; do
-      echo "  missing: ${path}" >&2
-    done
-    return 1
-  fi
-  echo "Verified SPA shells under ${label}: ${REQUIRED_SPA_SHELLS[*]}"
-}
 
 SKIP_NPM_CI=0
 DEPLOY=1
@@ -140,7 +91,7 @@ build_in_docker() {
     npm_ci_cmd="true"
   fi
   docker run --rm \
-    -v "${REPO_ROOT}:/home/hpcperfstats" \
+    -v "${REPO_ROOT}":/home/hpcperfstats \
     -w /home/hpcperfstats/hpcperfstats/site/frontend \
     -e NEXT_TELEMETRY_DISABLED=1 \
     "${NODE_IMAGE}" \
@@ -148,199 +99,20 @@ build_in_docker() {
 }
 
 verify_build_output() {
-  verify_spa_shells "${STATIC_FRONTEND}"
+  verify_spa_shells "${STATIC_FRONTEND}" "host build"
   print_deploy_fingerprint "host build" "${STATIC_FRONTEND}/machine/index.html"
   echo "Built frontend static export: ${STATIC_FRONTEND}"
 }
 
-web_service_running() {
-  cd "${REPO_ROOT}"
-  docker compose exec -T web true >/dev/null 2>&1
-}
-
-web_container_ref() {
-  cd "${REPO_ROOT}"
-  local id name
-  id="$(docker compose ps -q web 2>/dev/null | head -n 1 | tr -d '[:space:]')"
-  if [[ -n "${id}" ]]; then
-    echo "${id}"
-    return
-  fi
-  name="$(docker compose ps --format '{{.Name}}' web 2>/dev/null | head -n 1 | tr -d '[:space:]')"
-  if [[ -n "${name}" ]]; then
-    echo "${name}"
-    return
-  fi
-  echo "hpcperfstats_web_1"
-}
-
-web_container_id() {
-  web_container_ref
-}
-
-compose_backend_is_podman() {
-  if command -v podman-compose >/dev/null 2>&1; then
-    return 0
-  fi
-  if docker compose version 2>/dev/null | grep -qi podman; then
-    return 0
-  fi
-  return 1
-}
-
-compose_cp_supported() {
-  if compose_backend_is_podman; then
-    return 1
-  fi
-  cd "${REPO_ROOT}"
-  docker compose cp --help >/dev/null 2>&1
-}
-
-podman_cli_available() {
-  command -v podman >/dev/null 2>&1
-}
-
-file_sha256() {
-  local path="$1"
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "${path}" | awk '{print $1}'
-  else
-    shasum -a 256 "${path}" | awk '{print $1}'
-  fi
-}
-
-frontend_build_fingerprint() {
-  local index_html="$1"
-  if [[ ! -f "${index_html}" ]]; then
-    echo "unknown"
-    return
-  fi
-  local fingerprint
-  fingerprint="$(grep -oE 'page-[0-9a-f]+\.js' "${index_html}" | head -n 1 || true)"
-  if [[ -n "${fingerprint}" ]]; then
-    echo "${fingerprint}"
-    return
-  fi
-  grep -oE '<!--[^>]{8,}-->' "${index_html}" | head -n 1 | tr -d '<!->' || echo "unknown"
-}
-
-print_deploy_fingerprint() {
-  local label="$1"
-  local index_html="$2"
-  local fingerprint
-  fingerprint="$(frontend_build_fingerprint "${index_html}")"
-  echo "Deploy fingerprint (${label}): ${fingerprint}"
-}
-
-print_container_deploy_fingerprint() {
-  local label="$1"
-  local service="$2"
-  local container_path="$3"
-  local fingerprint
-  fingerprint="$(
-    docker compose exec -T "${service}" sh -lc \
-      "grep -oE 'page-[0-9a-f]+\\.js' '${container_path}' 2>/dev/null | head -n 1 || echo unknown"
-  )"
-  echo "Deploy fingerprint (${label}): ${fingerprint}"
-}
-
-count_files_under() {
-  local root="$1"
-  find "${root}" -type f 2>/dev/null | wc -l | tr -d ' '
-}
-
-count_files_in_web_container() {
-  local container_dir="$1"
-  docker compose exec -T web bash -lc "find '${container_dir}' -type f 2>/dev/null | wc -l | tr -d ' '"
-}
-
-count_files_in_proxy_container() {
-  local container_dir="$1"
-  docker compose exec -T proxy sh -lc "find '${container_dir}' -type f 2>/dev/null | wc -l | tr -d ' '"
-}
-
-reset_container_dir_via_compose() {
-  local target_dir="$1"
-  docker compose exec -T web bash -lc "rm -rf '${target_dir}' && mkdir -p '${target_dir}'"
-}
-
-copy_host_tar_into_web() {
-  local host_tar="$1"
-  local container_tar="$2"
-  local container_ref="$3"
-
-  cd "${REPO_ROOT}"
-  if compose_backend_is_podman; then
-    if ! podman_cli_available; then
-      echo "rebuild_frontend.sh: podman-compose detected but podman not on PATH" >&2
-      return 1
-    fi
-    podman cp "${host_tar}" "${container_ref}:${container_tar}"
-    echo "rebuild_frontend.sh: staged deploy tar → web via podman cp (${container_ref})"
-    return 0
-  fi
-
-  if docker compose cp "${host_tar}" "web:${container_tar}"; then
-    echo "rebuild_frontend.sh: staged deploy tar → web via compose cp"
-    return 0
-  fi
-
-  echo "rebuild_frontend.sh: failed to copy deploy tar into web container" >&2
-  return 1
-}
-
-verify_staged_tar_in_web() {
-  local container_tar="$1"
-  docker compose exec -T web bash -lc "test -s '${container_tar}'"
-}
-
 copy_tree_via_staged_tar() {
-  local dest="$1"
-  local container_ref host_tar container_tar
-
-  container_ref="$(web_container_ref)"
-  host_tar="$(mktemp /tmp/hps-frontend-deploy.XXXXXX.tar)"
-  container_tar="/tmp/hps-frontend-deploy.${$}.${RANDOM}.tar"
-
-  echo "rebuild_frontend.sh: creating deploy tar from ${STATIC_FRONTEND} ..."
-  tar -C "${STATIC_FRONTEND}" -cf "${host_tar}" .
-  if ! copy_host_tar_into_web "${host_tar}" "${container_tar}" "${container_ref}"; then
-    rm -f "${host_tar}"
-    exit 1
-  fi
-  rm -f "${host_tar}"
-
-  echo "rebuild_frontend.sh: verifying staged tar in web container ..."
-  if ! verify_staged_tar_in_web "${container_tar}"; then
-    echo "rebuild_frontend.sh: staged tar missing or empty in web: ${container_tar}" >&2
-    exit 1
-  fi
-
-  echo "rebuild_frontend.sh: extracting staged tar into web:${dest} ..."
-  docker compose exec -T web bash -lc \
-    "rm -rf '${dest}' && mkdir -p '${dest}' && tar -xf '${container_tar}' -C '${dest}' && rm -f '${container_tar}'"
-  verify_container_extract_fingerprint "${dest}" "${dest}"
+  copy_tree_via_staged_tar_from_dir \
+    "${STATIC_FRONTEND}" \
+    "$1" \
+    "${STATIC_FRONTEND}/machine/index.html"
 }
 
-verify_container_extract_fingerprint() {
-  local dest="$1"
-  local label="$2"
-  local host_fp container_fp probe="${dest}/machine/index.html"
-
-  host_fp="$(frontend_build_fingerprint "${STATIC_FRONTEND}/machine/index.html")"
-  container_fp="$(
-    docker compose exec -T web bash -lc \
-      "grep -oE 'page-[0-9a-f]+\\.js' '${probe}' 2>/dev/null | head -n 1 || echo unknown"
-  )"
-
-  if [[ "${host_fp}" != "${container_fp}" ]]; then
-    echo "rebuild_frontend.sh: ${label} fingerprint mismatch after extract" >&2
-    echo "  host:      ${host_fp}  (${STATIC_FRONTEND}/machine/index.html)" >&2
-    echo "  container: ${container_fp}  (${probe})" >&2
-    return 1
-  fi
-
-  echo "Verified extract fingerprint for ${label} (${container_fp})"
+copy_tree_via_compose_cp() {
+  copy_tree_via_compose_cp_from_dir "$1" "$2"
 }
 
 deploy_frontend_via_staged_volume() {
@@ -348,40 +120,6 @@ deploy_frontend_via_staged_volume() {
   copy_tree_via_staged_tar "${CONTAINER_STATIC_ROOT_FRONTEND}"
   echo "rebuild_frontend.sh: syncing image source tree for future image rebuilds ..."
   copy_tree_via_staged_tar "${CONTAINER_STATIC_FRONTEND}"
-}
-
-print_podman_deploy_fallback() {
-  cat <<EOF >&2
-rebuild_frontend.sh: manual podman fallback (from git checkout):
-  tar -cf /tmp/hps-frontend.tar -C hpcperfstats/site/hpcperfstats_site/static/frontend .
-  podman cp /tmp/hps-frontend.tar hpcperfstats_web_1:/tmp/hps-frontend.tar
-  docker compose exec web bash -lc 'rm -rf ${CONTAINER_STATIC_ROOT_FRONTEND} && mkdir -p ${CONTAINER_STATIC_ROOT_FRONTEND} && tar -xf /tmp/hps-frontend.tar -C ${CONTAINER_STATIC_ROOT_FRONTEND} && rm -f /tmp/hps-frontend.tar'
-EOF
-}
-
-copy_tree_via_compose_cp() {
-  local dest="$1"
-  reset_container_dir_via_compose "${dest}"
-  docker compose cp "${STATIC_FRONTEND}/." "web:${dest}/"
-}
-
-copy_tree_into_container() {
-  local dest="$1"
-
-  if compose_cp_supported; then
-    echo "rebuild_frontend.sh: copying via docker compose cp → ${dest}" >&2
-    copy_tree_via_compose_cp "${dest}"
-    return
-  fi
-
-  if ! podman_cli_available; then
-    echo "rebuild_frontend.sh: podman-compose detected but podman not on PATH; cannot deploy into web" >&2
-    exit 1
-  fi
-
-  # podman-compose: stage tar, extract with compose exec onto the destination path.
-  echo "rebuild_frontend.sh: copying via staged tar + compose exec extract → ${dest}"
-  copy_tree_via_staged_tar "${dest}"
 }
 
 copy_frontend_into_web() {
@@ -393,22 +131,16 @@ copy_frontend_into_web() {
   fi
 
   # nginx (proxy) reads STATIC_ROOT/frontend from the shared staticfiles_data volume.
-  copy_tree_into_container "${CONTAINER_STATIC_ROOT_FRONTEND}"
+  copy_tree_into_container_from_dir \
+    "${STATIC_FRONTEND}" \
+    "${CONTAINER_STATIC_ROOT_FRONTEND}" \
+    "${STATIC_FRONTEND}/machine/index.html"
 
   # Keep image source tree in sync for future collectstatic / container rebuilds.
-  copy_tree_into_container "${CONTAINER_STATIC_FRONTEND}"
-}
-
-sha256_in_web_container() {
-  local container_path="$1"
-  docker compose exec -T web bash -lc \
-    "if [[ ! -f '${container_path}' ]]; then exit 2; fi; sha256sum '${container_path}' | awk '{print \$1}'"
-}
-
-sha256_in_proxy_container() {
-  local container_path="$1"
-  docker compose exec -T proxy sh -lc \
-    "if [[ ! -f '${container_path}' ]]; then exit 2; fi; sha256sum '${container_path}' | awk '{print \$1}'"
+  copy_tree_into_container_from_dir \
+    "${STATIC_FRONTEND}" \
+    "${CONTAINER_STATIC_FRONTEND}" \
+    "${STATIC_FRONTEND}/machine/index.html"
 }
 
 verify_container_path_matches_host() {
@@ -452,45 +184,10 @@ verify_container_file_count_matches_host() {
   echo "Verified ${label} file count matches host (${host_count} files)"
 }
 
-verify_proxy_frontend_matches_web() {
-  local web_probe="${CONTAINER_STATIC_ROOT_FRONTEND}/machine/index.html"
-  local proxy_probe="${PROXY_STATIC_ROOT_FRONTEND}/machine/index.html"
-  local web_sha proxy_sha
-
-  web_sha="$(sha256_in_web_container "${web_probe}")"
-  proxy_sha="$(sha256_in_proxy_container "${proxy_probe}")"
-
-  if [[ -z "${proxy_sha}" ]]; then
-    echo "rebuild_frontend.sh: proxy nginx volume missing ${proxy_probe}" >&2
-    return 1
-  fi
-
-  if [[ "${web_sha}" != "${proxy_sha}" ]]; then
-    echo "rebuild_frontend.sh: proxy nginx volume does not match web STATIC_ROOT" >&2
-    echo "  web:   ${web_sha}  (${web_probe})" >&2
-    echo "  proxy: ${proxy_sha}  (${proxy_probe})" >&2
-    return 1
-  fi
-
-  echo "Verified proxy nginx volume matches web (${proxy_probe})"
-}
-
-verify_proxy_file_count_matches_web() {
-  local web_count proxy_count
-
-  web_count="$(count_files_in_web_container "${CONTAINER_STATIC_ROOT_FRONTEND}")"
-  proxy_count="$(count_files_in_proxy_container "${PROXY_STATIC_ROOT_FRONTEND}")"
-
-  if [[ "${web_count}" != "${proxy_count}" ]]; then
-    echo "rebuild_frontend.sh: proxy file count mismatch (web ${web_count}, proxy ${proxy_count})" >&2
-    return 1
-  fi
-
-  echo "Verified proxy nginx volume file count matches web (${web_count} files)"
-}
-
 verify_container_frontend_matches_host() {
-  verify_container_path_matches_host "${CONTAINER_STATIC_ROOT_FRONTEND}" "STATIC_ROOT/frontend (nginx volume)"
+  verify_container_path_matches_host \
+    "${CONTAINER_STATIC_ROOT_FRONTEND}" \
+    "STATIC_ROOT/frontend (nginx volume)"
 }
 
 deploy_to_compose() {
@@ -506,12 +203,22 @@ deploy_to_compose() {
   echo "Copying built assets into web:${CONTAINER_STATIC_ROOT_FRONTEND} (nginx staticfiles volume) ..."
   copy_frontend_into_web
   verify_container_frontend_matches_host
-  verify_container_file_count_matches_host "${CONTAINER_STATIC_ROOT_FRONTEND}" "STATIC_ROOT/frontend (nginx volume)"
-  verify_spa_shells_via_compose "${CONTAINER_STATIC_ROOT_FRONTEND}" "STATIC_ROOT/frontend"
+  verify_container_file_count_matches_host \
+    "${CONTAINER_STATIC_ROOT_FRONTEND}" \
+    "STATIC_ROOT/frontend (nginx volume)"
+  verify_spa_shells_via_compose \
+    "${CONTAINER_STATIC_ROOT_FRONTEND}" \
+    "STATIC_ROOT/frontend"
   verify_proxy_frontend_matches_web
   verify_proxy_file_count_matches_web
-  print_container_deploy_fingerprint "web STATIC_ROOT" web "${CONTAINER_STATIC_ROOT_FRONTEND}/machine/index.html"
-  print_container_deploy_fingerprint "proxy nginx volume" proxy "${PROXY_STATIC_ROOT_FRONTEND}/machine/index.html"
+  print_container_deploy_fingerprint \
+    "web STATIC_ROOT" \
+    web \
+    "${CONTAINER_STATIC_ROOT_FRONTEND}/machine/index.html"
+  print_container_deploy_fingerprint \
+    "proxy nginx volume" \
+    "proxy" \
+    "${PROXY_STATIC_ROOT_FRONTEND}/machine/index.html"
   print_deploy_fingerprint "host build (expected)" "${STATIC_FRONTEND}/machine/index.html"
 
   trap - ERR

@@ -394,6 +394,8 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 |------|---------|
 | Build and start container stack | `sudo docker compose up --build -d` |
 | Stop and remove containers | `sudo docker compose down` |
+| Rebuild SPA in running stack (no pipeline restart) | `./scripts/rebuild_frontend.sh` |
+| Rebuild web/pipeline image after Python-only changes (preserves live frontend, no npm) | `./scripts/rebuild_pipeline.sh` |
 | Rebuild just the app and keep persistent services running | `docker compose -f docker-compose.app.yaml down && docker compose stop -t 120 db proxy && docker compose start db && docker compose -f docker-compose.app.yaml up --build -d && docker compose start proxy` |
 | View logs  | `sudo docker compose logs` |
 | PostgreSQL shell | `docker compose exec db psql -h localhost -U hpcperfstats` |

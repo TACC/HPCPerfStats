@@ -14,13 +14,13 @@ RUN /bin/bash -o pipefail -c "\
 \"/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend\" \
     ]; then \
       cp -a \
-\"/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend/.\" \
+\"/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend/." \
         /tmp/frontend-static/; \
     fi && \
     rm -rf /home/hpcperfstats/hpcperfstats/site/frontend"
 
-# Runtime image.
-FROM python:3.12.13-trixie
+# Shared Python runtime base (no frontend overlay, no pip install yet).
+FROM python:3.12.13-trixie AS hpcperfstats-base
 
 # Setup users, directories, and required runtime packages.
 RUN /bin/bash -o pipefail -c "useradd -u 901860 -ms /bin/bash hpcperfstats \
@@ -38,11 +38,7 @@ RUN /bin/bash -o pipefail -c "useradd -u 901860 -ms /bin/bash hpcperfstats \
 
 WORKDIR /home/hpcperfstats
 
-# Copy source, then overlay built frontend artifacts from the builder image.
 COPY --chown=hpcperfstats:hpcperfstats . .
-COPY --from=frontend-builder --chown=hpcperfstats:hpcperfstats \
-    /tmp/frontend-static \
-    /home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend
 
 # Cloud-synced checkouts may not preserve host execute bits; compose invokes these
 # scripts directly as container commands.
@@ -66,17 +62,37 @@ RUN /bin/bash -o pipefail -c "printf '%s\n' \
     > /var/lib/hpcperfstats-syslog/generated.conf \
     && chmod 644 /var/lib/hpcperfstats-syslog/generated.conf"
 
-# Set install variables.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_ROOT_USER_ACTION=ignore \
     HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini \
     STATIC_ROOT=/home/hpcperfstats/staticfiles
 
+# Default image: npm-built frontend from frontend-builder.
+FROM hpcperfstats-base AS hpcperfstats-full
+
+COPY --from=frontend-builder --chown=hpcperfstats:hpcperfstats \
+    /tmp/frontend-static \
+    /home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend
+
 # Install Python dependencies and the hpcperfstats package.
 # collectstatic here: fail-fast at image build (and supports runs without a
 # compose volume over STATIC_ROOT). Compose still runs collectstatic on web
 # startup because staticfiles_data masks the image layer at /home/hpcperfstats/staticfiles.
+RUN /bin/bash -o pipefail -c "pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir . \
+    && /usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput \
+    && pip cache purge"
+
+# Pipeline-only refresh: scripts/rebuild_pipeline.sh populates
+# .build/pipeline-rebuild-frontend/ from the live deployment before build.
+FROM hpcperfstats-base AS hpcperfstats-pipeline-refresh
+
+COPY .build/pipeline-rebuild-frontend/ \
+    /home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend/
+RUN chown -R hpcperfstats:hpcperfstats \
+    /home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend
+
 RUN /bin/bash -o pipefail -c "pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir . \
     && /usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput \

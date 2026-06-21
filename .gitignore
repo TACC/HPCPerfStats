@@ -47,6 +47,8 @@ lib/
 !hpcperfstats/lib/**
 !hpcperfstats/site/frontend/src/lib/
 !hpcperfstats/site/frontend/src/lib/**
+!scripts/lib/
+!scripts/lib/**
 # Package lib/ negation above un-ignores __pycache__; re-ignore bytecode everywhere.
 **/__pycache__/
 **/*.pyc
