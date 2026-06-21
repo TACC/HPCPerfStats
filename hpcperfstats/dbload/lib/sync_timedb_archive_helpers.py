@@ -2399,6 +2399,41 @@ def _scan_gzip_archive_members_and_readable(gz_path):
   return _scan_compressed_archive_members_and_readable(gz_path)
 
 
+def _sealed_archive_members_via_redis_or_scan(
+    sealed_path,
+    *,
+    apply_priority_wrap=False,
+):
+  """Return ``(readable, members)`` for sealed-side raw-removal / validation reads.
+
+  When Redis L2 is enabled, use the same single-flight populate path as ingest
+  prewarm and duplicate-check (at most one ``zstd -d -c`` per calendar day).
+  """
+  sealed_path = os.path.normpath(str(sealed_path or ""))
+  if not sealed_path or not os.path.isfile(sealed_path):
+    return False, {}
+  try:
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+        ArchiveDayIngestSkipError,
+        archive_members_redis_enabled,
+    )
+    if archive_members_redis_enabled():
+      try:
+        members = get_existing_archive_members_for_daily_archive(sealed_path)
+      except ArchiveDayIngestSkipError:
+        return False, {}
+      if members is None:
+        return False, {}
+      return True, dict(members)
+  except Exception:
+    raise
+  readable, members = _scan_compressed_archive_members_and_readable(
+      sealed_path,
+      apply_priority_wrap=apply_priority_wrap,
+  )
+  return readable, dict(members or {})
+
+
 def validate_sealed_daily_archive_for_raw_removal(
     archive_compressed_path,
     log_fn=log_print,
@@ -2501,7 +2536,7 @@ def validate_sealed_daily_archive_for_raw_removal(
           log_fn=log_fn,
       )
       sealed_path = zst_path
-      sealed_readable, members_sealed = _scan_compressed_archive_members_and_readable(
+      sealed_readable, members_sealed = _sealed_archive_members_via_redis_or_scan(
           sealed_path,
       )
       if not sealed_readable or members_sealed != members_tar:
@@ -2522,7 +2557,7 @@ def validate_sealed_daily_archive_for_raw_removal(
         )
       return False, None
 
-  sealed_readable, members_sealed = _scan_compressed_archive_members_and_readable(
+  sealed_readable, members_sealed = _sealed_archive_members_via_redis_or_scan(
       sealed_path,
   )
   if not sealed_readable:

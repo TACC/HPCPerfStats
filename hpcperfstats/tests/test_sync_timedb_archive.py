@@ -1637,7 +1637,8 @@ def test_validate_sealed_daily_archive_validation_cache_hits(monkeypatch, tmp_pa
   calls = {"n": 0}
   real_scan = helpers._scan_compressed_archive_members_and_readable
 
-  def wrapped_scan(path):
+  def wrapped_scan(path, **kwargs):
+    del kwargs
     calls["n"] += 1
     return real_scan(path)
 
@@ -1709,10 +1710,13 @@ def test_validate_sealed_daily_archive_validation_cache_invalidates_on_mtime_cha
   calls = {"n": 0}
   real_scan = helpers._scan_compressed_archive_members_and_readable
 
-  def wrapped_scan(path):
+  def wrapped_scan(path, **kwargs):
     calls["n"] += 1
-    return real_scan(path)
+    return real_scan(path, **kwargs)
 
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: False,
+  )
   monkeypatch.setattr(
       helpers, "_scan_compressed_archive_members_and_readable", wrapped_scan)
   cache = {"hits": 0, "misses": 0}
@@ -3860,6 +3864,85 @@ def test_ingest_sealed_single_flight_one_zstd_scan(
   assert results.count(False) == 8
 
 
+def test_validate_sealed_uses_redis_single_flight(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  import threading
+
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
+      FakeRedis,
+  )
+
+  day_gz = tmp_path / "2024-06-13.tar.gz"
+  inner = tmp_path / "raw.txt"
+  inner.write_text("data")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(inner), arcname="host/raw")
+  sealed = str(day_gz)
+  stream_calls = {"n": 0}
+  stream_lock = threading.Lock()
+  original_stream = helpers._stream_compressed_archive_members
+  fake = FakeRedis()
+
+  def _counting_stream(compressed_path, on_member=None, **kwargs):
+    with stream_lock:
+      stream_calls["n"] += 1
+    return original_stream(compressed_path, on_member, **kwargs)
+
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_populate_lock_seconds",
+      lambda: 30,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: fake,
+  )
+  monkeypatch.setattr(
+      helpers, "_stream_compressed_archive_members", _counting_stream,
+  )
+
+  errors = []
+  validate_results = []
+
+  def _validate():
+    try:
+      ok, members = helpers.validate_sealed_daily_archive_for_raw_removal(
+          sealed,
+          log_fn=None,
+      )
+      validate_results.append((ok, members))
+    except Exception as exc:
+      errors.append(exc)
+
+  def _lookup():
+    try:
+      helpers.get_existing_archive_members_for_daily_archive(sealed)
+    except Exception as exc:
+      errors.append(exc)
+
+  threads = [
+      threading.Thread(target=_validate),
+      threading.Thread(target=_lookup),
+  ]
+  for t in threads:
+    t.start()
+  for t in threads:
+    t.join(timeout=10)
+  assert not errors
+  assert stream_calls["n"] == 1
+  assert validate_results
+  assert validate_results[0][0] is True
+  assert validate_results[0][1].get("host/raw") == 4
+
+
 def test_ingest_waiters_no_local_zstd_while_lock_held(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
@@ -4633,7 +4716,7 @@ def test_validate_sealed_restores_corrupt_tar_before_fail_closed(monkeypatch, tm
   monkeypatch.setattr(
       helpers,
       "_scan_compressed_archive_members_and_readable",
-      lambda _path: (True, dict(members)),
+      lambda _path, **kwargs: (True, dict(members)),
   )
   ok, members_out = helpers.validate_sealed_daily_archive_for_raw_removal(
       str(zst_path),

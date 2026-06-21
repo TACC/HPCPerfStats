@@ -224,6 +224,68 @@ def test_redis_members_single_flight_one_scan(_redis_test_env, tmp_path):
   assert m2 == m1
 
 
+def test_invalidate_does_not_drop_lock_during_populate(_redis_test_env, tmp_path):
+  import time
+
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      _populate_lock_is_held,
+      invalidate_archive_members_redis,
+  )
+
+  cache_key = _sample_cache_key(tmp_path)
+  keys = build_archive_members_redis_keys(cache_key)
+  _redis_test_env.set(keys.lock_key, "tok:%d" % os.getpid(), ex=30)
+  _redis_test_env.set(keys.complete_key, "1")
+  _redis_test_env.hset(keys.hash_key, mapping={"host/a": "10"})
+  _redis_test_env.set(keys.progress_key, str(time.time()))
+
+  invalidate_archive_members_redis(cache_key)
+
+  assert _redis_test_env.exists(keys.lock_key)
+  assert _redis_test_env.get(keys.invalidate_pending_key) == "1"
+  assert _redis_test_env.get(keys.complete_key) is None
+  assert _populate_lock_is_held(_redis_test_env, keys)
+
+
+def test_invalidate_drops_lock_when_populate_idle(_redis_test_env, tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      invalidate_archive_members_redis,
+  )
+
+  cache_key = _sample_cache_key(tmp_path)
+  keys = build_archive_members_redis_keys(cache_key)
+  _redis_test_env.set(keys.lock_key, "tok:999999", ex=30)
+  _redis_test_env.set(keys.complete_key, "1")
+
+  invalidate_archive_members_redis(cache_key)
+
+  assert not _redis_test_env.exists(keys.lock_key)
+  assert not _redis_test_env.exists(keys.complete_key)
+
+
+def test_populate_retries_after_invalidate_pending(_redis_test_env, tmp_path):
+  import time
+
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      populate_archive_members_redis,
+  )
+
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  scan_calls = {"n": 0}
+
+  def _scan(on_member):
+    scan_calls["n"] += 1
+    on_member("host/a", 10)
+    if scan_calls["n"] == 1:
+      _redis_test_env.set(keys.invalidate_pending_key, "1", ex=60)
+    return True, False
+
+  members = populate_archive_members_redis(keys, _scan)
+  assert scan_calls["n"] == 2
+  assert members == {"host/a": 10}
+  assert _redis_test_env.get(keys.complete_key) == "1"
+
+
 def test_redis_members_waiter_early_positive_during_scan(_redis_test_env, tmp_path):
   keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
   started = threading.Event()

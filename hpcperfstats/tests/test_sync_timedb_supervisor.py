@@ -2027,6 +2027,30 @@ def test_invalidation_hook_can_trigger_reprewarm(monkeypatch, tmp_path):
     archive_helpers.reset_archive_members_invalidation_hook_for_tests()
 
 
+def test_seal_reprewarm_skipped_when_verify_populates(monkeypatch, capsys):
+  prewarm_days = []
+
+  class _FakeDayRawRemoval:
+    enabled = True
+
+  st._reprewarm_archive_members_after_seal_phase(
+      "2026-05-21",
+      day_raw_removal=_FakeDayRawRemoval(),
+      prewarm_fn=lambda day_token: prewarm_days.append(day_token),
+      log_fn=st.log_print,
+  )
+  assert prewarm_days == []
+  assert "reason=verify_will_populate" in capsys.readouterr().out
+
+  st._reprewarm_archive_members_after_seal_phase(
+      "2026-05-21",
+      day_raw_removal=None,
+      prewarm_fn=lambda day_token: prewarm_days.append(day_token),
+      log_fn=st.log_print,
+  )
+  assert prewarm_days == ["2026-05-21"]
+
+
 def _reraise_pool_worker_fatal(exc, **kwargs):
   del kwargs
   raise exc

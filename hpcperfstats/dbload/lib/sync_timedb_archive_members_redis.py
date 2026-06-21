@@ -21,6 +21,7 @@ _LOCK_PREFIX = "%s:archive_members:lock:v1" % _KEY_PREFIX
 _DEDUPE_HINT_PREFIX = "%s:archive_dedupe_hint:v1" % _KEY_PREFIX
 _DEGRADED_PREFIX = "%s:archive_populate_degraded:v1" % _KEY_PREFIX
 _DAY_SKIP_PREFIX = "%s:archive_day_ingest_skip:v1" % _KEY_PREFIX
+_INVALIDATE_PENDING_PREFIX = "%s:archive_members:invalidate_pending:v1" % _KEY_PREFIX
 _PROGRESS_SUFFIX = ":progress"
 
 _REDIS_CLIENT = None
@@ -110,6 +111,7 @@ class ArchiveMembersRedisKeys:
   complete_key: str
   lock_key: str
   dedupe_hint_key: str
+  invalidate_pending_key: str
 
   @property
   def progress_key(self) -> str:
@@ -154,6 +156,7 @@ def build_archive_members_redis_keys(cache_key) -> ArchiveMembersRedisKeys:
       complete_key="%s:%s" % (_COMPLETE_PREFIX, suffix),
       lock_key="%s:%s" % (_LOCK_PREFIX, suffix),
       dedupe_hint_key="%s:%s" % (_DEDUPE_HINT_PREFIX, day_token),
+      invalidate_pending_key="%s:%s" % (_INVALIDATE_PENDING_PREFIX, suffix),
   )
 
 
@@ -534,6 +537,20 @@ def _release_populate_lock(client, keys: ArchiveMembersRedisKeys, lock_value: st
   client.delete(keys.progress_key)
 
 
+def _populate_lock_is_held(client, keys: ArchiveMembersRedisKeys) -> bool:
+  """True when another populate winner holds ``lock_key``."""
+  lock_value = client.get(keys.lock_key)
+  if not lock_value:
+    return False
+  pid = _parse_populate_lock_owner_pid(lock_value)
+  if pid is not None and not _process_is_alive(pid):
+    return False
+  progress_ts = _read_populate_progress_ts(client, keys)
+  if progress_ts is not None:
+    return True
+  return pid is not None
+
+
 def _try_acquire_populate_lock(client, keys: ArchiveMembersRedisKeys) -> Optional[str]:
   if populate_degraded_is_set(keys, client=client):
     return None
@@ -725,6 +742,10 @@ def populate_archive_members_redis(
         )
       if scan_duplicates:
         saw_duplicates = True
+      if client.get(keys.invalidate_pending_key):
+        client.delete(keys.hash_key, keys.invalidate_pending_key)
+        _release_populate_lock(client, keys, lock_value)
+        continue
       _flush_hset_batch(client, keys, pending_batch, lock_value=lock_value)
       if saw_duplicates and keys.day_token != "unknown":
         client.set(keys.dedupe_hint_key, "1", ex=_redis_ttl_seconds())
@@ -976,15 +997,25 @@ def invalidate_archive_members_redis(cache_key):
   if client is None:
     return
   keys = build_archive_members_redis_keys(cache_key)
-  client.delete(
+  lock_held = _populate_lock_is_held(client, keys)
+  delete_keys = [
       keys.hash_key,
       keys.complete_key,
-      keys.lock_key,
       keys.dedupe_hint_key,
       keys.progress_key,
       keys.degraded_key,
       keys.day_skip_key,
-  )
+  ]
+  if lock_held:
+    ttl = _redis_ttl_seconds()
+    if ttl > 0:
+      client.set(keys.invalidate_pending_key, "1", ex=ttl)
+    else:
+      client.set(keys.invalidate_pending_key, "1")
+  else:
+    delete_keys.append(keys.lock_key)
+    client.delete(keys.invalidate_pending_key)
+  client.delete(*delete_keys)
 
 
 def list_dedupe_hint_day_tokens(client=None) -> list:

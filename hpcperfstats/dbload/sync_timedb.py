@@ -485,6 +485,29 @@ def _prewarm_archive_members_redis_for_day_token(day_token):
   _prewarm_archive_members_redis_for_days([(compressed, day_token)])
 
 
+def _reprewarm_archive_members_after_seal_phase(
+    day_token,
+    *,
+    day_raw_removal,
+    prewarm_fn=_prewarm_archive_members_redis_for_day_token,
+    log_fn=log_print,
+):
+  """Re-prewarm Redis after seal invalidation, unless verify will populate."""
+  if day_raw_removal is not None and day_raw_removal.enabled:
+    log_fn(
+        "INFO: re-prewarm skipped day=%s reason=verify_will_populate"
+        % day_token,
+        flush=True,
+    )
+    return
+  log_fn(
+      "INFO: re-prewarm archive members Redis after seal day=%s"
+      % day_token,
+      flush=True,
+  )
+  prewarm_fn(day_token)
+
+
 def _prewarm_archive_members_redis_for_chunk(paths):
   """Single-flight populate on supervisor before imap when Redis L2 is cold."""
   summary = _prewarm_archive_members_redis_for_days(
@@ -4343,12 +4366,10 @@ def run_sync_timedb_supervisor_loop(
           day_hint = _calendar_day_hint_from_paths(tracker.sample_in_flight())
           if day_hint and day_hint != day_token:
             return
-        log_print(
-            "INFO: re-prewarm archive members Redis after seal day=%s"
-            % day_token,
-            flush=True,
+        _reprewarm_archive_members_after_seal_phase(
+            day_token,
+            day_raw_removal=day_raw_removal,
         )
-        _prewarm_archive_members_redis_for_day_token(day_token)
 
   def _async_day_close_submit_eligible(tar_norm):
     captured = _build_day_close_candidate_inputs()
