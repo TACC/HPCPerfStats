@@ -3910,13 +3910,17 @@ def _seal_skip_existing_zst_equivalent(
     num_threads,
     log_fn,
 ):
-  """Return True when ``zst_path`` is valid and already matches ``tar_path`` (or tar absent)."""
+  """Return ``(skipped, zst_members)`` for seal idempotence and shrink-guard reuse.
+
+  ``zst_members`` is a member map when the sealed archive was readable; ``None`` when
+  skip applies with tar absent, zst missing/unreadable, or members could not be loaded.
+  """
   if not os.path.isfile(zst_path):
-    return False
+    return False, None
   try:
     zstd_test(zst_path, num_threads)
   except (OSError, subprocess.CalledProcessError, RuntimeError):
-    return False
+    return False, None
   if not os.path.isfile(tar_path):
     if log_fn:
       log_fn(
@@ -3924,23 +3928,24 @@ def _seal_skip_existing_zst_equivalent(
           % zst_path,
           flush=True,
       )
-    return True
-  existing_ok, existing_members = _scan_compressed_archive_members_and_readable(
+    return True, None
+  existing_ok, existing_members = _sealed_archive_members_via_redis_or_scan(
       zst_path,
   )
   if not existing_ok:
-    return False
+    return False, None
+  zst_members = dict(existing_members)
   tar_members = get_existing_archive_members(tar_path)
   from hpcperfstats.dbload.lib.archive_compress import archive_member_maps_equivalent
-  if archive_member_maps_equivalent(existing_members, tar_members):
+  if archive_member_maps_equivalent(zst_members, tar_members):
     if log_fn:
       log_fn(
           "Seal skipped: tar and zst already equivalent (members=%d): %s"
           % (len(tar_members), zst_path),
           flush=True,
       )
-    return True
-  return False
+    return True, zst_members
+  return False, zst_members
 
 
 def atomic_seal_tar_to_zst(
@@ -3952,6 +3957,7 @@ def atomic_seal_tar_to_zst(
     log_fn=log_print,
     remaining_raw_by_gz=None,
     force_remove_uncompressed_tar=False,
+    skip_result=None,
 ):
   """Compress ``tar_path`` to ``zst_path`` using temp file, ``zstd -t``, ``os.replace``."""
   if not os.path.isfile(tar_path):
@@ -3960,7 +3966,12 @@ def atomic_seal_tar_to_zst(
     return
   if not shutil.which("zstd"):
     raise RuntimeError("zstd executable not found on PATH")
-  if _seal_skip_existing_zst_equivalent(tar_path, zst_path, num_threads, log_fn):
+  if skip_result is None:
+    skip_result = _seal_skip_existing_zst_equivalent(
+        tar_path, zst_path, num_threads, log_fn,
+    )
+  skipped, zst_members = skip_result
+  if skipped:
     return
   tmp_zst = "%s.tmp" % zst_path
   try:
@@ -3971,10 +3982,14 @@ def atomic_seal_tar_to_zst(
   try:
     with file_write_lock(tar_path):
       if os.path.isfile(zst_path):
-        existing_ok, existing_members = _scan_compressed_archive_members_and_readable(
-            zst_path,
-        )
-        if existing_ok:
+        existing_members = zst_members
+        if existing_members is None:
+          existing_ok, existing_members = (
+              _scan_compressed_archive_members_and_readable(zst_path)
+          )
+          if not existing_ok:
+            existing_members = None
+        if existing_members is not None:
           tar_members = get_existing_archive_members(tar_path)
           if len(existing_members) > len(tar_members):
             if log_fn:

@@ -354,7 +354,7 @@ def test_seal_day_skips_before_seal_start_when_zst_equivalent(tmp_path, monkeypa
   monkeypatch.setattr(
       async_dc_mod,
       "_seal_skip_existing_zst_equivalent",
-      lambda *_a, **_k: True,
+      lambda *_a, **_k: (True, None),
   )
   monkeypatch.setattr(async_dc_mod.cfg, "get_archive_zstd_threads", lambda: 0)
 
@@ -374,6 +374,72 @@ def test_seal_day_skips_before_seal_start_when_zst_equivalent(tmp_path, monkeypa
   assert coord._seal_day(tar_norm) is True
   assert not any("seal start" in line for line in logs)
   assert any("seal skipped (zst equivalent)" in line for line in logs)
+
+
+@pytest.mark.django_db(databases=[])
+def test_seal_day_passes_skip_result_to_atomic_seal(tmp_path, monkeypatch):
+  archive_dir = str(tmp_path / "archive")
+  daily_dir = str(tmp_path / "daily")
+  os.makedirs(archive_dir)
+  os.makedirs(daily_dir)
+  tar_norm = os.path.normpath(os.path.join(daily_dir, "2026-04-20.tar"))
+  zst_path = os.path.normpath(os.path.join(daily_dir, "2026-04-20.tar.zst"))
+  open(tar_norm, "wb").close()
+  open(zst_path, "wb").close()
+  skip_result = (False, {"host/raw": 4})
+  skip_calls = {"n": 0}
+  captured = {}
+
+  def counting_skip(*_a, **_k):
+    skip_calls["n"] += 1
+    return skip_result
+
+  def capture_atomic(*args, **kwargs):
+    captured["skip_result"] = kwargs.get("skip_result")
+    return None
+
+  monkeypatch.setattr(
+      async_dc_mod,
+      "daily_tar_seal_calendar_eligible",
+      lambda *_a, **_k: True,
+  )
+  monkeypatch.setattr(
+      async_dc_mod, "_seal_skip_existing_zst_equivalent", counting_skip,
+  )
+  monkeypatch.setattr(async_dc_mod, "atomic_seal_tar_to_zst", capture_atomic)
+  monkeypatch.setattr(
+      async_dc_mod,
+      "build_remaining_raw_for_daily_tar",
+      lambda *_a, **_k: [],
+  )
+  monkeypatch.setattr(
+      async_dc_mod,
+      "effective_keep_uncompressed_tar",
+      lambda *_a, **_k: True,
+  )
+  monkeypatch.setattr(async_dc_mod.cfg, "get_archive_zstd_threads", lambda: 0)
+  monkeypatch.setattr(async_dc_mod.cfg, "get_archive_zstd_level", lambda: 3)
+  monkeypatch.setattr(async_dc_mod.cfg, "get_sync_day_close_async_workers", lambda: 1)
+  monkeypatch.setattr(
+      async_dc_mod.cfg, "get_sync_startup_day_close_max_inflight", lambda: 1,
+  )
+  monkeypatch.setattr(
+      async_dc_mod,
+      "drop_legacy_gz_if_equivalent_to_zst",
+      lambda *_a, **_k: None,
+  )
+
+  coord = async_dc_mod.AsyncDayCloseCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=daily_dir,
+      local_tz=None,
+      log_fn=lambda msg, **_kw: None,
+      get_disqualified_daily_tars=lambda: set(),
+  )
+  assert coord._seal_day(tar_norm) is True
+  assert skip_calls["n"] == 1
+  assert captured["skip_result"] == skip_result
 
 
 @pytest.mark.django_db(databases=[])

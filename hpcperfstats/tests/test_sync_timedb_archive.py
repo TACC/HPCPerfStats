@@ -338,12 +338,213 @@ def test_seal_skip_rejects_same_aggregate_different_members(monkeypatch, tmp_pat
   monkeypatch.setattr(helpers, "zstd_test", lambda *a, **k: None)
   monkeypatch.setattr(
       helpers,
-      "_scan_compressed_archive_members_and_readable",
-      lambda path: (True, dict(zst_members)),
+      "_sealed_archive_members_via_redis_or_scan",
+      lambda path, **kwargs: (True, dict(zst_members)),
   )
   monkeypatch.setattr(helpers, "get_existing_archive_members", lambda path: dict(tar_members))
-  assert helpers._seal_skip_existing_zst_equivalent(
-      str(tar_path), str(zst_path), 0, log_fn=None) is False
+  skipped, members = helpers._seal_skip_existing_zst_equivalent(
+      str(tar_path), str(zst_path), 0, log_fn=None)
+  assert skipped is False
+  assert members == zst_members
+
+
+def test_atomic_seal_tar_to_zst_shrink_guard_one_zst_scan(monkeypatch, tmp_path):
+  """Shrink guard must not rescan zst when skip_result already has member map."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  if not shutil.which("zstd"):
+    pytest.skip("zstd not on PATH")
+
+  tar_path = tmp_path / "2021-03-08.tar"
+  zst_path = tmp_path / "2021-03-08.tar.zst"
+  a = tmp_path / "a.txt"
+  b = tmp_path / "b.txt"
+  a.write_text("a")
+  b.write_text("bb")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(a), arcname="a.txt")
+    tf.add(str(b), arcname="b.txt")
+  helpers.atomic_seal_tar_to_zst(
+      str(tar_path),
+      str(zst_path),
+      num_threads=1,
+      compress_level=6,
+      keep_uncompressed_tar=True,
+      log_fn=None,
+  )
+  first_size = zst_path.stat().st_size
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(a), arcname="a.txt")
+
+  zst_members = {"a.txt": 1, "b.txt": 2}
+  scan_calls = {"n": 0}
+  real_scan = helpers._scan_compressed_archive_members_and_readable
+
+  def counting_scan(path, **kwargs):
+    scan_calls["n"] += 1
+    return real_scan(path, **kwargs)
+
+  monkeypatch.setattr(
+      helpers, "_scan_compressed_archive_members_and_readable", counting_scan,
+  )
+  monkeypatch.setattr(
+      helpers,
+      "_sealed_archive_members_via_redis_or_scan",
+      lambda *_a, **_k: (True, dict(zst_members)),
+  )
+
+  helpers.atomic_seal_tar_to_zst(
+      str(tar_path),
+      str(zst_path),
+      num_threads=1,
+      compress_level=6,
+      keep_uncompressed_tar=True,
+      log_fn=None,
+  )
+  assert zst_path.stat().st_size == first_size
+  assert scan_calls["n"] == 0
+
+
+def test_seal_skip_uses_redis_helper_not_local_scan(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "2020-01-05.tar"
+  zst_path = tmp_path / "2020-01-05.tar.zst"
+  tar_path.write_text("tar")
+  zst_path.write_text("zst")
+  via_redis_calls = {"n": 0}
+  scan_calls = {"n": 0}
+
+  def _via_redis(path, **kwargs):
+    via_redis_calls["n"] += 1
+    return True, {"m.txt": 1}
+
+  def _forbidden_scan(*_a, **_k):
+    scan_calls["n"] += 1
+    raise AssertionError("seal skip must use coordinated read, not direct scan")
+
+  monkeypatch.setattr(helpers, "zstd_test", lambda *a, **k: None)
+  monkeypatch.setattr(
+      helpers, "_sealed_archive_members_via_redis_or_scan", _via_redis,
+  )
+  monkeypatch.setattr(
+      helpers, "_scan_compressed_archive_members_and_readable", _forbidden_scan,
+  )
+  monkeypatch.setattr(
+      helpers, "get_existing_archive_members", lambda _p: {"m.txt": 1},
+  )
+  skipped, _members = helpers._seal_skip_existing_zst_equivalent(
+      str(tar_path), str(zst_path), 0, log_fn=None,
+  )
+  assert skipped is True
+  assert via_redis_calls["n"] == 1
+  assert scan_calls["n"] == 0
+
+
+def test_seal_skip_redis_single_flight_cold(monkeypatch, tmp_path, _clear_daily_archive_members_cache):
+  import subprocess
+  import threading
+
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import FakeRedis
+
+  if not shutil.which("zstd"):
+    pytest.skip("zstd not on PATH")
+
+  tar_path = tmp_path / "2024-06-20.tar"
+  zst_path = tmp_path / "2024-06-20.tar.zst"
+  inner = tmp_path / "raw.txt"
+  inner.write_text("data")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(inner), arcname="host/raw")
+  subprocess.run(
+      [shutil.which("zstd"), "-q", "-f", str(tar_path), "-o", str(zst_path)],
+      check=True,
+  )
+  stream_calls = {"n": 0}
+  stream_lock = threading.Lock()
+  original_stream = helpers._stream_compressed_archive_members
+  fake = FakeRedis()
+
+  def _counting_stream(compressed_path, on_member=None, **kwargs):
+    with stream_lock:
+      stream_calls["n"] += 1
+    return original_stream(compressed_path, on_member, **kwargs)
+
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_populate_lock_seconds",
+      lambda: 30,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: fake,
+  )
+  monkeypatch.setattr(
+      helpers, "_stream_compressed_archive_members", _counting_stream,
+  )
+  monkeypatch.setattr(helpers, "zstd_test", lambda *a, **k: None)
+
+  errors = []
+  results = []
+
+  def _seal_skip_worker():
+    try:
+      results.append(
+          helpers._seal_skip_existing_zst_equivalent(
+              str(tar_path), str(zst_path), 0, log_fn=None,
+          ),
+      )
+    except Exception as exc:
+      errors.append(exc)
+
+  def _lookup_worker():
+    try:
+      helpers.get_existing_archive_members_for_daily_archive(str(zst_path))
+    except Exception as exc:
+      errors.append(exc)
+
+  threads = [
+      threading.Thread(target=_seal_skip_worker),
+      threading.Thread(target=_lookup_worker),
+  ]
+  for t in threads:
+    t.start()
+  for t in threads:
+    t.join(timeout=10)
+  assert not errors
+  assert stream_calls["n"] == 1
+  assert len(results) == 1
+
+
+def test_seal_skip_propagates_redis_unavailable(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      ArchiveMembersRedisUnavailableError,
+  )
+
+  tar_path = tmp_path / "2020-01-06.tar"
+  zst_path = tmp_path / "2020-01-06.tar.zst"
+  tar_path.write_text("tar")
+  zst_path.write_text("zst")
+
+  def _raise_unavailable(*_a, **_k):
+    raise ArchiveMembersRedisUnavailableError("redis down")
+
+  monkeypatch.setattr(helpers, "zstd_test", lambda *a, **k: None)
+  monkeypatch.setattr(
+      helpers, "_sealed_archive_members_via_redis_or_scan", _raise_unavailable,
+  )
+  with pytest.raises(ArchiveMembersRedisUnavailableError, match="redis down"):
+    helpers._seal_skip_existing_zst_equivalent(
+        str(tar_path), str(zst_path), 0, log_fn=None,
+    )
 
 
 def test_archive_stats_files_returns_false_when_corrupt_tar_restore_fails(monkeypatch, tmp_path):
@@ -4651,7 +4852,7 @@ def test_prior_day_tar_removed_at_seal_when_keep_false(monkeypatch, tmp_path):
 
   monkeypatch.setattr(helpers, "zstd_compress_tar_to_file", fake_compress)
   monkeypatch.setattr(helpers, "zstd_test", lambda *a, **k: None)
-  monkeypatch.setattr(helpers, "_seal_skip_existing_zst_equivalent", lambda *a, **k: False)
+  monkeypatch.setattr(helpers, "_seal_skip_existing_zst_equivalent", lambda *a, **k: (False, None))
   monkeypatch.setattr(helpers, "get_existing_archive_members", lambda _p: {})
   helpers.atomic_seal_tar_to_zst(
       str(tar_path),

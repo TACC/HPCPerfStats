@@ -501,12 +501,13 @@ class AsyncDayCloseCoordinator:
     if not os.path.isfile(tar_norm):
       return bool(os.path.isfile(zst_path) or os.path.isfile(gz_path))
     num_threads = cfg.get_archive_zstd_threads()
-    if _seal_skip_existing_zst_equivalent(
+    skip_result = _seal_skip_existing_zst_equivalent(
         tar_norm,
         zst_path,
         num_threads,
         self.log_fn,
-    ):
+    )
+    if skip_result[0]:
       self.log_fn(
           "janitor: async day_close seal skipped (zst equivalent) tar=%s"
           % tar_norm,
@@ -559,6 +560,7 @@ class AsyncDayCloseCoordinator:
         log_fn=self.log_fn,
         remaining_raw_by_gz=remaining_raw_by_gz,
         force_remove_uncompressed_tar=False,
+        skip_result=skip_result,
     )
     drop_legacy_gz_if_equivalent_to_zst(gz_path, zst_path, log_fn=self.log_fn)
     if os.path.isfile(zst_path) or os.path.isfile(gz_path):
