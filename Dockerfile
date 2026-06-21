@@ -1,23 +1,35 @@
 # Build frontend assets in a dedicated node stage.
+# COPY is scoped to frontend inputs so Python/backend changes do not bust npm layers.
 FROM node:26.3.0-alpine3.23 AS frontend-builder
-RUN apk add bash
+RUN apk add --no-cache bash
 ENV NEXT_TELEMETRY_DISABLED=1
-WORKDIR /home/hpcperfstats
-COPY --chown=node:node . .
+
 WORKDIR /home/hpcperfstats/hpcperfstats/site/frontend
+
+# Dependencies: cached until package-lock.json changes.
+COPY --chown=node:node hpcperfstats/site/frontend/package.json \
+    hpcperfstats/site/frontend/package-lock.json \
+    ./
 # Vite and @vitejs/plugin-react are devDependencies used by Vitest; they must be present to build.
-RUN /bin/bash -o pipefail -c "npm ci && npm run build"
+RUN /bin/bash -o pipefail -c "npm ci"
+
+# OpenAPI (Orval) + site identity ini: cached until spec or ini template changes.
+WORKDIR /home/hpcperfstats
+COPY --chown=node:node hpcperfstats/site/openapi/openapi.yaml \
+    hpcperfstats/site/openapi/
+COPY --chown=node:node hpcperfstats.ini* ./
+
+WORKDIR /home/hpcperfstats/hpcperfstats/site/frontend
+
+# Frontend source: cached until site/frontend changes.
+COPY --chown=node:node hpcperfstats/site/frontend/ ./
+
+RUN /bin/bash -o pipefail -c "npm run build"
+
 WORKDIR /home/hpcperfstats
 RUN /bin/bash -o pipefail -c "\
     mkdir -p /tmp/frontend-static && \
-    if [ -d \
-\"/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend\" \
-    ]; then \
-      cp -a \
-\"/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend/." \
-        /tmp/frontend-static/; \
-    fi && \
-    rm -rf /home/hpcperfstats/hpcperfstats/site/frontend"
+    cp -a hpcperfstats/site/hpcperfstats_site/static/frontend/. /tmp/frontend-static/"
 
 # Shared Python runtime base (no frontend overlay, no pip install yet).
 FROM python:3.12.13-trixie AS hpcperfstats-base
