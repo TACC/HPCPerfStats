@@ -1421,7 +1421,7 @@ class ArchiveJanitor:
         "janitor: day_close seal start tar=%s" % tar_path,
         flush=True,
     )
-    atomic_seal_tar_to_zst(
+    zst_members = atomic_seal_tar_to_zst(
         tar_path,
         zst_path,
         cfg.get_archive_zstd_threads(),
@@ -1431,7 +1431,9 @@ class ArchiveJanitor:
         remaining_raw_by_gz=remaining_raw_by_gz,
         force_remove_uncompressed_tar=False,
     )
-    drop_legacy_gz_if_equivalent_to_zst(gz_path, zst_path, log_fn=self.log_fn)
+    drop_legacy_gz_if_equivalent_to_zst(
+        gz_path, zst_path, log_fn=self.log_fn, zst_members=zst_members,
+    )
     if os.path.isfile(zst_path) or os.path.isfile(gz_path):
       self.log_fn(
           "janitor: day_close seal done tar=%s" % tar_path,

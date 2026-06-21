@@ -496,9 +496,16 @@ class AsyncDayCloseCoordinator:
         os.path.isfile(tar_norm) and tar_has_duplicate_file_members(tar_norm)
     ):
       if not os.path.isfile(tar_norm):
+        drop_legacy_gz_if_equivalent_to_zst(
+            gz_path, zst_path, log_fn=self.log_fn,
+        )
         self._notify_phase(tar_norm, "sealed")
         return True
     if not os.path.isfile(tar_norm):
+      if os.path.isfile(zst_path):
+        drop_legacy_gz_if_equivalent_to_zst(
+            gz_path, zst_path, log_fn=self.log_fn,
+        )
       return bool(os.path.isfile(zst_path) or os.path.isfile(gz_path))
     num_threads = cfg.get_archive_zstd_threads()
     skip_result = _seal_skip_existing_zst_equivalent(
@@ -512,6 +519,12 @@ class AsyncDayCloseCoordinator:
           "janitor: async day_close seal skipped (zst equivalent) tar=%s"
           % tar_norm,
           flush=True,
+      )
+      drop_legacy_gz_if_equivalent_to_zst(
+          gz_path,
+          zst_path,
+          log_fn=self.log_fn,
+          zst_members=skip_result[1],
       )
       return True
     remaining_raw_by_gz = {
@@ -551,7 +564,7 @@ class AsyncDayCloseCoordinator:
         ),
         flush=True,
     )
-    atomic_seal_tar_to_zst(
+    zst_members = atomic_seal_tar_to_zst(
         tar_norm,
         zst_path,
         cfg.get_archive_zstd_threads(),
@@ -562,7 +575,9 @@ class AsyncDayCloseCoordinator:
         force_remove_uncompressed_tar=False,
         skip_result=skip_result,
     )
-    drop_legacy_gz_if_equivalent_to_zst(gz_path, zst_path, log_fn=self.log_fn)
+    drop_legacy_gz_if_equivalent_to_zst(
+        gz_path, zst_path, log_fn=self.log_fn, zst_members=zst_members,
+    )
     if os.path.isfile(zst_path) or os.path.isfile(gz_path):
       self.log_fn(
           "janitor: async day_close seal done tar=%s" % tar_norm,

@@ -2649,6 +2649,24 @@ def replace_corrupt_tar_from_compressed_backup(
     return False
 
 
+def _read_tar_file_member_sizes_unlocked(tar_path):
+  """Read file member name -> max size from ``tar_path`` without a read lock.
+
+  Caller must hold ``file_write_lock(tar_path)`` or otherwise exclude writers.
+  """
+  if not os.path.isfile(tar_path):
+    return {}
+  try:
+    with _open_tarfile_for_read(tar_path, get_archive_zstd_thread_count()) as tf:
+      by_name = defaultdict(list)
+      for m in _iter_tar_members(tf):
+        if m.isfile():
+          by_name[m.name].append(m.size)
+      return {name: max(sizes) for name, sizes in by_name.items()}
+  except Exception:
+    return {}
+
+
 def get_existing_archive_members(tar_path):
   """Read tar at tar_path and return dict of member name -> size for **file** members.
 
@@ -2671,12 +2689,7 @@ def get_existing_archive_members(tar_path):
   members = {}
   try:
     with file_read_lock_wait(tar_path):
-      with _open_tarfile_for_read(tar_path, get_archive_zstd_thread_count()) as tf:
-        by_name = defaultdict(list)
-        for m in _iter_tar_members(tf):
-          if m.isfile():
-            by_name[m.name].append(m.size)
-        members = {name: max(sizes) for name, sizes in by_name.items()}
+      members = _read_tar_file_member_sizes_unlocked(tar_path)
   except Exception:
     return {}
   finally:
@@ -3855,10 +3868,22 @@ def check_archive_migration_prerequisites():
     )
 
 
-def compare_compressed_archive_members(gz_path, zst_path):
+def compare_compressed_archive_members(
+    gz_path,
+    zst_path,
+    *,
+    gz_members=None,
+    zst_members=None,
+):
   """Return ``(gz_contained_in_zst, gz_members, zst_members)`` for migration checks."""
-  gz_ok, gz_members = _scan_compressed_archive_members_and_readable(gz_path)
-  zst_ok, zst_members = _scan_compressed_archive_members_and_readable(zst_path)
+  if gz_members is not None:
+    gz_ok, gz_members = True, dict(gz_members)
+  else:
+    gz_ok, gz_members = _scan_compressed_archive_members_and_readable(gz_path)
+  if zst_members is not None:
+    zst_ok, zst_members = True, dict(zst_members)
+  else:
+    zst_ok, zst_members = _sealed_archive_members_via_redis_or_scan(zst_path)
   if not gz_ok or not zst_ok:
     return False, gz_members, zst_members
   return (
@@ -3868,12 +3893,22 @@ def compare_compressed_archive_members(gz_path, zst_path):
   )
 
 
-def drop_legacy_gz_if_equivalent_to_zst(gz_path, zst_path, log_fn=log_print):
+def drop_legacy_gz_if_equivalent_to_zst(
+    gz_path,
+    zst_path,
+    log_fn=log_print,
+    *,
+    gz_members=None,
+    zst_members=None,
+):
   """Remove legacy ``.tar.gz`` when all gzip members match in ``.tar.zst``."""
   if not os.path.isfile(gz_path) or not os.path.isfile(zst_path):
     return
   gz_contained_in_zst, gz_members, zst_members = compare_compressed_archive_members(
-      gz_path, zst_path,
+      gz_path,
+      zst_path,
+      gz_members=gz_members,
+      zst_members=zst_members,
   )
   if gz_contained_in_zst:
     try:
@@ -3959,11 +3994,14 @@ def atomic_seal_tar_to_zst(
     force_remove_uncompressed_tar=False,
     skip_result=None,
 ):
-  """Compress ``tar_path`` to ``zst_path`` using temp file, ``zstd -t``, ``os.replace``."""
+  """Compress ``tar_path`` to ``zst_path`` using temp file, ``zstd -t``, ``os.replace``.
+
+  Returns a zst member map snapshot when seal skipped or compress succeeded; ``None`` otherwise.
+  """
   if not os.path.isfile(tar_path):
     if os.path.isfile(zst_path):
       _seal_skip_existing_zst_equivalent(tar_path, zst_path, num_threads, log_fn)
-    return
+    return None
   if not shutil.which("zstd"):
     raise RuntimeError("zstd executable not found on PATH")
   if skip_result is None:
@@ -3972,15 +4010,17 @@ def atomic_seal_tar_to_zst(
     )
   skipped, zst_members = skip_result
   if skipped:
-    return
+    return zst_members
   tmp_zst = "%s.tmp" % zst_path
   try:
     if os.path.exists(tmp_zst):
       os.remove(tmp_zst)
   except OSError:
     pass
+  sealed_member_snapshot = None
   try:
     with file_write_lock(tar_path):
+      tar_members = _read_tar_file_member_sizes_unlocked(tar_path)
       if os.path.isfile(zst_path):
         existing_members = zst_members
         if existing_members is None:
@@ -3990,7 +4030,6 @@ def atomic_seal_tar_to_zst(
           if not existing_ok:
             existing_members = None
         if existing_members is not None:
-          tar_members = get_existing_archive_members(tar_path)
           if len(existing_members) > len(tar_members):
             if log_fn:
               log_fn(
@@ -3999,7 +4038,7 @@ def atomic_seal_tar_to_zst(
                   % (len(existing_members), len(tar_members), zst_path),
                   flush=True,
               )
-            return
+            return None
           if sum_member_bytes(existing_members) > sum_member_bytes(tar_members):
             if log_fn:
               log_fn(
@@ -4012,7 +4051,7 @@ def atomic_seal_tar_to_zst(
                   ),
                   flush=True,
               )
-            return
+            return None
       zstd_compress_tar_to_file(
           tar_path,
           tmp_zst,
@@ -4022,6 +4061,7 @@ def atomic_seal_tar_to_zst(
       zstd_test(tmp_zst, num_threads)
       with file_write_lock(zst_path):
         os.replace(tmp_zst, zst_path)
+      sealed_member_snapshot = dict(tar_members)
   except BaseException:
     try:
       if os.path.exists(tmp_zst):
@@ -4055,6 +4095,7 @@ def atomic_seal_tar_to_zst(
         log_fn("Sealed archive removed uncompressed tar: %s" % tar_path, flush=True)
     except OSError:
       pass
+  return sealed_member_snapshot
 
 
 def _get_archive_seal_worker_count(total_candidates):
@@ -4088,7 +4129,7 @@ def _seal_one_daily_tar(
 
   set_daemon_thread_title("", script_name="sync_timedb.py", role="archive-seal")
   try:
-    atomic_seal_tar_to_zst(
+    zst_members = atomic_seal_tar_to_zst(
         tar_path,
         zst_path,
         zstd_threads,
@@ -4098,7 +4139,9 @@ def _seal_one_daily_tar(
         remaining_raw_by_gz=remaining_raw_by_gz,
         force_remove_uncompressed_tar=force_remove_uncompressed_tar,
     )
-    drop_legacy_gz_if_equivalent_to_zst(gz_path, zst_path, log_fn=log_fn)
+    drop_legacy_gz_if_equivalent_to_zst(
+        gz_path, zst_path, log_fn=log_fn, zst_members=zst_members,
+    )
   except (subprocess.CalledProcessError, RuntimeError, TimeoutError) as exc:
     if log_fn:
       log_fn("Seal failed for %s: %s" % (tar_path, exc), flush=True)
@@ -4228,7 +4271,7 @@ def _migrate_one_daily_legacy_gz_locked(
     if not os.path.isfile(seal_tar_path):
       return MIGRATE_GZ_STATUS_FAILED
     try:
-      atomic_seal_tar_to_zst(
+      zst_members = atomic_seal_tar_to_zst(
           seal_tar_path,
           zst_path,
           zstd_threads,
@@ -4246,15 +4289,28 @@ def _migrate_one_daily_legacy_gz_locked(
         )
       return MIGRATE_GZ_STATUS_FAILED
     if os.path.isfile(gz_path):
-      drop_legacy_gz_if_equivalent_to_zst(gz_path, zst_path, log_fn=log_fn)
+      drop_legacy_gz_if_equivalent_to_zst(
+          gz_path,
+          zst_path,
+          log_fn=log_fn,
+          zst_members=zst_members,
+      )
     if os.path.isfile(gz_path):
       return MIGRATE_GZ_STATUS_KEPT_MISMATCH
     return MIGRATE_GZ_STATUS_CONVERTED
 
   if os.path.isfile(zst_path):
-    gz_contained, _, _ = compare_compressed_archive_members(gz_path, zst_path)
+    gz_contained, gz_members, zst_members = compare_compressed_archive_members(
+        gz_path, zst_path,
+    )
     if gz_contained and os.path.isfile(gz_path):
-      drop_legacy_gz_if_equivalent_to_zst(gz_path, zst_path, log_fn=log_fn)
+      drop_legacy_gz_if_equivalent_to_zst(
+          gz_path,
+          zst_path,
+          log_fn=log_fn,
+          gz_members=gz_members,
+          zst_members=zst_members,
+      )
       if os.path.isfile(gz_path):
         return MIGRATE_GZ_STATUS_KEPT_MISMATCH
       return MIGRATE_GZ_STATUS_DROPPED_ONLY

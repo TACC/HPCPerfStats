@@ -650,6 +650,11 @@ def test_drop_legacy_gz_removes_when_zst_is_superset(monkeypatch, tmp_path):
     return True, dict(zst_members)
 
   monkeypatch.setattr(helpers, "_scan_compressed_archive_members_and_readable", _scan)
+  monkeypatch.setattr(
+      helpers,
+      "_sealed_archive_members_via_redis_or_scan",
+      lambda path, **kwargs: _scan(path),
+  )
   drop_legacy_gz_if_equivalent_to_zst(str(gz_path), str(zst_path), log_fn=None)
   assert not gz_path.exists()
 
@@ -668,6 +673,11 @@ def test_drop_legacy_gz_keeps_when_zst_missing_gz_member(monkeypatch, tmp_path):
     return True, {"a.txt": 10}
 
   monkeypatch.setattr(helpers, "_scan_compressed_archive_members_and_readable", _scan)
+  monkeypatch.setattr(
+      helpers,
+      "_sealed_archive_members_via_redis_or_scan",
+      lambda path, **kwargs: _scan(path),
+  )
   drop_legacy_gz_if_equivalent_to_zst(str(gz_path), str(zst_path), log_fn=None)
   assert gz_path.exists()
 
@@ -686,8 +696,154 @@ def test_drop_legacy_gz_keeps_when_zst_member_size_differs(monkeypatch, tmp_path
     return True, {"a.txt": 10, "b.txt": 21, "c.txt": 5}
 
   monkeypatch.setattr(helpers, "_scan_compressed_archive_members_and_readable", _scan)
+  monkeypatch.setattr(
+      helpers,
+      "_sealed_archive_members_via_redis_or_scan",
+      lambda path, **kwargs: _scan(path),
+  )
   drop_legacy_gz_if_equivalent_to_zst(str(gz_path), str(zst_path), log_fn=None)
   assert gz_path.exists()
+
+
+def test_drop_legacy_gz_uses_provided_zst_members_no_zst_scan(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  gz_path = tmp_path / "2024-03-04.tar.gz"
+  zst_path = tmp_path / "2024-03-04.tar.zst"
+  gz_path.write_bytes(b"gz")
+  zst_path.write_bytes(b"zst")
+  zst_members = {"a.txt": 10, "b.txt": 20, "c.txt": 5}
+  zst_scan_calls = {"n": 0}
+
+  def _forbidden_zst(path, **kwargs):
+    zst_scan_calls["n"] += 1
+    return False, {}
+
+  def _scan_gz_only(path, **kwargs):
+    if str(path).endswith(".tar.gz"):
+      return True, {"a.txt": 10, "b.txt": 20}
+    raise AssertionError("zst must not scan when snapshot provided")
+
+  monkeypatch.setattr(
+      helpers, "_sealed_archive_members_via_redis_or_scan", _forbidden_zst,
+  )
+  monkeypatch.setattr(
+      helpers, "_scan_compressed_archive_members_and_readable", _scan_gz_only,
+  )
+  drop_legacy_gz_if_equivalent_to_zst(
+      str(gz_path),
+      str(zst_path),
+      log_fn=None,
+      zst_members=zst_members,
+  )
+  assert zst_scan_calls["n"] == 0
+  assert not gz_path.exists()
+
+
+def test_compare_compressed_members_coordinated_zst_cold(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  gz_path = tmp_path / "2024-06-14.tar.gz"
+  zst_path = tmp_path / "2024-06-14.tar.zst"
+  gz_path.write_bytes(b"gz")
+  zst_path.write_bytes(b"zst")
+  zst_calls = {"n": 0}
+
+  def _sealed(path, **kwargs):
+    zst_calls["n"] += 1
+    return True, {"host/raw": 4, "extra": 5}
+
+  def _scan(path, **kwargs):
+    if str(path).endswith(".tar.gz"):
+      return True, {"host/raw": 4}
+    raise AssertionError("zst must use coordinated read, not direct scan")
+
+  monkeypatch.setattr(
+      helpers, "_sealed_archive_members_via_redis_or_scan", _sealed,
+  )
+  monkeypatch.setattr(
+      helpers, "_scan_compressed_archive_members_and_readable", _scan,
+  )
+  contained, gz_members, zst_members = helpers.compare_compressed_archive_members(
+      str(gz_path),
+      str(zst_path),
+  )
+  assert contained is True
+  assert gz_members == {"host/raw": 4}
+  assert zst_members == {"host/raw": 4, "extra": 5}
+  assert zst_calls["n"] == 1
+
+
+def test_drop_legacy_propagates_redis_unavailable(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      ArchiveMembersRedisUnavailableError,
+  )
+
+  gz_path = tmp_path / "2020-01-07.tar.gz"
+  zst_path = tmp_path / "2020-01-07.tar.zst"
+  gz_path.write_bytes(b"gz")
+  zst_path.write_bytes(b"zst")
+
+  def _raise_unavailable(*_a, **_k):
+    raise ArchiveMembersRedisUnavailableError("redis down")
+
+  monkeypatch.setattr(
+      helpers, "_sealed_archive_members_via_redis_or_scan", _raise_unavailable,
+  )
+  with pytest.raises(ArchiveMembersRedisUnavailableError, match="redis down"):
+    helpers.drop_legacy_gz_if_equivalent_to_zst(
+        str(gz_path), str(zst_path), log_fn=None,
+    )
+
+
+def test_migrate_legacy_gz_drop_reuses_compare_snapshot(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  gz_path = tmp_path / "2024-03-12.tar.gz"
+  zst_path = tmp_path / "2024-03-12.tar.zst"
+  gz_path.write_bytes(b"gz")
+  zst_path.write_bytes(b"zst")
+  compare_calls = {"n": 0}
+  real_compare = helpers.compare_compressed_archive_members
+  drop_snapshots = []
+
+  def _scan(path, **kwargs):
+    if str(path).endswith(".tar.gz"):
+      return True, {"a.txt": 10}
+    return True, {"a.txt": 10, "b.txt": 5}
+
+  def counting_compare(*args, **kwargs):
+    compare_calls["n"] += 1
+    return real_compare(*args, **kwargs)
+
+  def capturing_drop(gz, zst, log_fn=None, **kwargs):
+    drop_snapshots.append(dict(kwargs))
+    gz_path.unlink()
+
+  monkeypatch.setattr(helpers, "_scan_compressed_archive_members_and_readable", _scan)
+  monkeypatch.setattr(
+      helpers,
+      "_sealed_archive_members_via_redis_or_scan",
+      lambda path, **kwargs: _scan(path),
+  )
+  monkeypatch.setattr(
+      helpers, "compare_compressed_archive_members", counting_compare,
+  )
+  monkeypatch.setattr(
+      helpers, "drop_legacy_gz_if_equivalent_to_zst", capturing_drop,
+  )
+  status = helpers.migrate_one_daily_legacy_gz(
+      str(gz_path),
+      zstd_threads=1,
+      compress_level=3,
+      keep_uncompressed_tar=True,
+      log_fn=None,
+  )
+  assert status == helpers.MIGRATE_GZ_STATUS_DROPPED_ONLY
+  assert compare_calls["n"] == 1
+  assert drop_snapshots[0]["gz_members"] == {"a.txt": 10}
+  assert drop_snapshots[0]["zst_members"] == {"a.txt": 10, "b.txt": 5}
 
 
 # --- is_daily_tar_sealed_dirty / should_seal_daily_tar ---
@@ -934,6 +1090,29 @@ def test_atomic_seal_tar_to_zst_creates_valid_zstd(tmp_path):
   )
   assert tar_path.is_file()
   assert not (tmp_path / "2021-03-01.tar.zst.tmp").exists()
+
+
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_atomic_seal_returns_members_after_compress(tmp_path):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "2021-03-10.tar"
+  zst_path = tmp_path / "2021-03-10.tar.zst"
+  member = tmp_path / "c.txt"
+  member.write_text("payload")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(member), arcname="host/raw")
+  expected = helpers.get_existing_archive_members(str(tar_path))
+  returned = helpers.atomic_seal_tar_to_zst(
+      str(tar_path),
+      str(zst_path),
+      num_threads=1,
+      compress_level=6,
+      keep_uncompressed_tar=True,
+      log_fn=None,
+  )
+  assert returned == expected
+  assert zst_path.is_file()
 
 
 @pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
@@ -3282,10 +3461,15 @@ def test_migrate_one_dropped_only_when_zst_is_superset(monkeypatch, tmp_path):
     return True, {"a.txt": 10, "b.txt": 5}
 
   monkeypatch.setattr(helpers, "_scan_compressed_archive_members_and_readable", _scan)
+  monkeypatch.setattr(
+      helpers,
+      "_sealed_archive_members_via_redis_or_scan",
+      lambda path, **kwargs: _scan(path),
+  )
   drop_calls = []
 
-  def _drop(gz, zst, log_fn=None):
-    drop_calls.append((gz, zst))
+  def _drop(gz, zst, log_fn=None, **kwargs):
+    drop_calls.append((gz, zst, kwargs))
     gz_path.unlink()
 
   monkeypatch.setattr(helpers, "drop_legacy_gz_if_equivalent_to_zst", _drop)

@@ -377,6 +377,96 @@ def test_seal_day_skips_before_seal_start_when_zst_equivalent(tmp_path, monkeypa
 
 
 @pytest.mark.django_db(databases=[])
+def test_seal_day_skipped_still_drops_legacy_gz(tmp_path, monkeypatch):
+  archive_dir = str(tmp_path / "archive")
+  daily_dir = str(tmp_path / "daily")
+  os.makedirs(archive_dir)
+  os.makedirs(daily_dir)
+  tar_norm = os.path.normpath(os.path.join(daily_dir, "2026-04-16.tar"))
+  zst_path = os.path.normpath(os.path.join(daily_dir, "2026-04-16.tar.zst"))
+  gz_path = os.path.normpath(os.path.join(daily_dir, "2026-04-16.tar.gz"))
+  open(tar_norm, "wb").close()
+  open(zst_path, "wb").close()
+  open(gz_path, "wb").close()
+  skip_result = (True, {"host/raw": 12})
+  drop_calls = []
+
+  def capture_drop(gz, zst, log_fn=None, **kwargs):
+    drop_calls.append((gz, zst, kwargs))
+
+  monkeypatch.setattr(
+      async_dc_mod,
+      "daily_tar_seal_calendar_eligible",
+      lambda *_a, **_k: True,
+  )
+  monkeypatch.setattr(
+      async_dc_mod,
+      "_seal_skip_existing_zst_equivalent",
+      lambda *_a, **_k: skip_result,
+  )
+  monkeypatch.setattr(
+      async_dc_mod,
+      "drop_legacy_gz_if_equivalent_to_zst",
+      capture_drop,
+  )
+  monkeypatch.setattr(async_dc_mod.cfg, "get_archive_zstd_threads", lambda: 0)
+
+  coord = async_dc_mod.AsyncDayCloseCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=daily_dir,
+      local_tz=None,
+      log_fn=lambda msg, **_kw: None,
+      get_disqualified_daily_tars=lambda: set(),
+  )
+  assert coord._seal_day(tar_norm) is True
+  assert len(drop_calls) == 1
+  assert drop_calls[0][0] == gz_path
+  assert drop_calls[0][1] == zst_path
+  assert drop_calls[0][2]["zst_members"] == skip_result[1]
+
+
+@pytest.mark.django_db(databases=[])
+def test_seal_day_tar_absent_still_drops_legacy_gz(tmp_path, monkeypatch):
+  archive_dir = str(tmp_path / "archive")
+  daily_dir = str(tmp_path / "daily")
+  os.makedirs(archive_dir)
+  os.makedirs(daily_dir)
+  tar_norm = os.path.normpath(os.path.join(daily_dir, "2026-04-17.tar"))
+  zst_path = os.path.normpath(os.path.join(daily_dir, "2026-04-17.tar.zst"))
+  gz_path = os.path.normpath(os.path.join(daily_dir, "2026-04-17.tar.gz"))
+  open(zst_path, "wb").close()
+  open(gz_path, "wb").close()
+  drop_calls = []
+
+  def capture_drop(gz, zst, log_fn=None, **kwargs):
+    drop_calls.append((gz, zst, kwargs))
+
+  monkeypatch.setattr(
+      async_dc_mod,
+      "dedupe_sealed_daily_archive",
+      lambda *_a, **_k: None,
+  )
+  monkeypatch.setattr(
+      async_dc_mod,
+      "drop_legacy_gz_if_equivalent_to_zst",
+      capture_drop,
+  )
+
+  coord = async_dc_mod.AsyncDayCloseCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=daily_dir,
+      local_tz=None,
+      log_fn=lambda msg, **_kw: None,
+      get_disqualified_daily_tars=lambda: set(),
+  )
+  assert coord._seal_day(tar_norm) is True
+  assert len(drop_calls) == 1
+  assert drop_calls[0][0] == gz_path
+
+
+@pytest.mark.django_db(databases=[])
 def test_seal_day_passes_skip_result_to_atomic_seal(tmp_path, monkeypatch):
   archive_dir = str(tmp_path / "archive")
   daily_dir = str(tmp_path / "daily")
