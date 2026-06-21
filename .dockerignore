@@ -26,5 +26,33 @@ temp/
 # Entire monitor C daemon tree (sources, build artifacts, unit tests)
 monitor/
 
-# All test directories (pytest, e2e, Django/metrics/dbload tests, etc.)
+# ---------------------------------------------------------------------------
+# Tests and test-only artifacts (keep Docker build context lean; not runtime).
+# ---------------------------------------------------------------------------
+
+# Pytest trees (hpcperfstats/tests, site/lib/machine/tests, tests/pipeline_e2e, …)
+tests/
 **/tests/
+
+# Local agent/CI test run logs and scratch (see test-runs-output-directory.mdc)
+test_runs/
+
+# Pytest entrypoints outside tests/ directories
+conftest.py
+**/conftest.py
+
+# Shell regression scripts (scripts/rebuild_*.sh remain — those are deploy tools)
+scripts/test_*.sh
+
+# Frontend unit/a11y/playwright sources (Vitest; not part of next build output)
+**/__tests__/
+**/*.test.ts
+**/*.test.tsx
+**/test-utils/
+**/test-fixtures/
+hpcperfstats/site/frontend/src/axe-test-utils.ts
+hpcperfstats/site/frontend/src/setupTests.ts
+hpcperfstats/site/frontend/vitest.config.ts
+hpcperfstats/site/frontend/src/playwright-bokeh-bundle-smoke.ts
+hpcperfstats/site/frontend/bokeh-playwright-smoke.html
+hpcperfstats/site/frontend/scripts/fix-tests-next.mjs
