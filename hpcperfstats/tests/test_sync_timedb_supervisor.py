@@ -3622,6 +3622,182 @@ def test_post_chunk_hygiene_scheduled_and_runs_seal_before_delete(monkeypatch):
     shutdown_requested[0] = False
 
 
+def test_supervisor_runs_startup_maintenance_with_all_flag(monkeypatch):
+  """``startdate=all`` schedules janitor startup maintenance pass."""
+  shutdown_requested[0] = False
+  scheduled_reasons = []
+  try:
+    original = janitor_mod.ArchiveJanitor.signal_scheduled_maintenance_pass
+
+    def spy_scheduled(self, *, reason):
+      scheduled_reasons.append(reason)
+      return original(self, reason=reason)
+
+    monkeypatch.setattr(
+        janitor_mod.ArchiveJanitor,
+        "signal_scheduled_maintenance_pass",
+        spy_scheduled,
+    )
+
+    def fake_rescan(*_a, **_k):
+      shutdown_requested[0] = True
+      return []
+
+    _supervisor_startup_preflight_disabled(monkeypatch)
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+
+    st.run_sync_timedb_supervisor_loop(
+        "/tmp/archive", "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
+
+    assert "startup" in scheduled_reasons
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_supervisor_skips_startup_maintenance_without_all_flag(monkeypatch, capsys):
+  """Date-range runs skip startup maintenance and begin rescan/ingest immediately."""
+  shutdown_requested[0] = False
+  scheduled_reasons = []
+  preflight_inits = []
+  try:
+    import hpcperfstats.dbload.lib.sync_timedb_startup_raw_removal as preflight_mod
+    import hpcperfstats.dbload.lib.sync_timedb_startup_day_close as day_close_mod
+    import hpcperfstats.dbload.lib.sync_timedb_startup_tail_ingest as tail_mod
+
+    original = janitor_mod.ArchiveJanitor.signal_scheduled_maintenance_pass
+
+    def spy_scheduled(self, *, reason):
+      scheduled_reasons.append(reason)
+      return original(self, reason=reason)
+
+    monkeypatch.setattr(
+        janitor_mod.ArchiveJanitor,
+        "signal_scheduled_maintenance_pass",
+        spy_scheduled,
+    )
+
+    class _TrackPreflight:
+      enabled = True
+
+      def __init__(self, **_kwargs):
+        preflight_inits.append("raw")
+
+      def start_async_verify(self):
+        preflight_inits.append("raw_start")
+
+    class _TrackDayClose:
+      enabled = True
+
+      def __init__(self, **_kwargs):
+        preflight_inits.append("day_close")
+
+      def start_async_discover_and_close(self):
+        preflight_inits.append("day_close_start")
+
+    class _TrackTail:
+      enabled = True
+
+      def __init__(self, **_kwargs):
+        preflight_inits.append("tail")
+
+      def start_async_tail_ingest(self):
+        preflight_inits.append("tail_start")
+
+    monkeypatch.setattr(preflight_mod, "StartupRawRemovalPreflight", _TrackPreflight)
+    monkeypatch.setattr(st, "StartupRawRemovalPreflight", _TrackPreflight)
+    monkeypatch.setattr(day_close_mod, "StartupDayClosePreflight", _TrackDayClose)
+    monkeypatch.setattr(st, "StartupDayClosePreflight", _TrackDayClose)
+    monkeypatch.setattr(tail_mod, "StartupTailIngestCoordinator", _TrackTail)
+    monkeypatch.setattr(st, "StartupTailIngestCoordinator", _TrackTail)
+
+    rescan_calls = {"n": 0}
+
+    def fake_rescan(*_a, **_k):
+      rescan_calls["n"] += 1
+      if rescan_calls["n"] == 1:
+        return ["/fake/statsA"]
+      shutdown_requested[0] = True
+      return []
+
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (_a[1], True, True, 0.0))
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+    monkeypatch.setattr(
+        st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
+
+    startdate = datetime(2026, 4, 1)
+    enddate = datetime(2026, 4, 14)
+
+    st.run_sync_timedb_supervisor_loop(
+        "/tmp/archive",
+        startdate,
+        enddate,
+        ".hpc",
+        object(),
+        _FakeArchivePool(),
+        run_once=True,
+    )
+
+    out = capsys.readouterr().out
+    assert "startup" not in scheduled_reasons
+    assert preflight_inits == []
+    assert "startup maintenance skipped" in out
+    assert rescan_calls["n"] >= 1
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_rescan_without_all_skips_startup_snapshot_wait(monkeypatch):
+  """Date-range rescans must not wait on or build the startup archive snapshot."""
+  shutdown_requested[0] = False
+  snapshot_waits = []
+  try:
+    from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
+        StartupArchiveScanCoordinator,
+    )
+
+    original_wait = StartupArchiveScanCoordinator.wait_for_snapshot
+
+    def spy_wait(self, *, allow_build=True, build_fn=None):
+      snapshot_waits.append(allow_build)
+      return original_wait(self, allow_build=allow_build, build_fn=build_fn)
+
+    monkeypatch.setattr(StartupArchiveScanCoordinator, "wait_for_snapshot", spy_wait)
+
+    def fake_rescan(*_a, **_k):
+      shutdown_requested[0] = True
+      return []
+
+    _supervisor_startup_preflight_disabled(monkeypatch)
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", "/tmp")
+
+    st.run_sync_timedb_supervisor_loop(
+        "/tmp/archive",
+        datetime(2026, 4, 1),
+        datetime(2026, 4, 14),
+        ".hpc",
+        object(),
+        _FakeArchivePool(),
+        run_once=True,
+    )
+
+    assert snapshot_waits == []
+  finally:
+    shutdown_requested[0] = False
+
+
 def test_supervisor_module_has_no_live_archive_maintenance_pipeline_calls():
   import inspect
 

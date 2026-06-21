@@ -5,7 +5,7 @@ alwaysApply: false
 
 # sync_timedb startup day-close contract
 
-When **`sync_startup_day_close_preflight=yes`** (default), the supervisor starts a **single-flight** background discover thread (`sync_timedb.py [thread:startup-day-close-preflight]`). When **`sync_startup_tail_ingest_enabled=yes`** (default), a **pipelined** **`StartupTailIngestCoordinator`** thread (`[thread:startup-tail-ingest]`) consumes tail-eligible day enqueue from each discover slice. When **`sync_startup_drain_day_close_before_ingest=yes`** (default), the supervisor **blocks first rescan/ingest** until startup discover, startup tail ingest, startup raw-removal deletes, and day-close raw deletes that block startup are idle — **not** until async `DAY_CLOSE` workers finish (one-time gate; disable drain INI to restore parallel ingest).
+When **`sync_startup_day_close_preflight=yes`** (default) **and CLI `startdate == 'all'`**, the supervisor starts a **single-flight** background discover thread (`sync_timedb.py [thread:startup-day-close-preflight]`). When **`sync_startup_tail_ingest_enabled=yes`** (default), a **pipelined** **`StartupTailIngestCoordinator`** thread (`[thread:startup-tail-ingest]`) consumes tail-eligible day enqueue from each discover slice. When **`sync_startup_drain_day_close_before_ingest=yes`** (default), the supervisor **blocks first rescan/ingest** until startup discover, startup tail ingest, startup raw-removal deletes, and day-close raw deletes that block startup are idle — **not** until async `DAY_CLOSE` workers finish (one-time gate; disable drain INI to restore parallel ingest). Date-range runs without **`all`** skip all startup preflights and the drain gate.
 
 ## Canonical modules
 

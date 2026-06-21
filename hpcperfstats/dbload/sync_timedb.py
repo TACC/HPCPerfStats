@@ -3,9 +3,9 @@
 
 **Hot path (supervisor thread):** discover → ingest → checkpoint → dispatch append (up to ``sync_archive_max_inflight_jobs`` disjoint daily-tar slots). Ingest never blocks on seal, zstd, raw delete, or uncompressed ``.tar`` removal.
 
-**Cold path (``ArchiveJanitor`` thread):** day-debt queue consumed in time-sliced micro-batches (``archive_janitor_budget_seconds`` / ``archive_janitor_days_per_tick``). Snapshot/hints refresh and ``DAY_CLOSE`` scheduling run at supervisor startup, every ``rescan_every_chunks`` ingest chunks (default 10), and when the ingest queue drains to zero after chunk processing—all on the janitor thread. Per-day lock cleanup (once per tick), dedupe-before-seal, seal → async verify (``DayRawRemovalCoordinator``) with ingest-thread batched delete, or incremental raw/tar when preflight is off; DB head-ingest gate and disqualification union unchanged. Progress persists in ``.sync_archive_maint_hints.json`` v2 (``debt_queue``, ``day_phases``).
+**Cold path (``ArchiveJanitor`` thread):** day-debt queue consumed in time-sliced micro-batches (``archive_janitor_budget_seconds`` / ``archive_janitor_days_per_tick``). Snapshot/hints refresh and ``DAY_CLOSE`` scheduling run at supervisor startup (CLI ``all`` only), every ``rescan_every_chunks`` ingest chunks (default 10), and when the ingest queue drains to zero after chunk processing—all on the janitor thread. Per-day lock cleanup (once per tick), dedupe-before-seal, seal → async verify (``DayRawRemovalCoordinator``) with ingest-thread batched delete, or incremental raw/tar when preflight is off; DB head-ingest gate and disqualification union unchanged. Progress persists in ``.sync_archive_maint_hints.json`` v2 (``debt_queue``, ``day_phases``).
 
-**Startup prefights:** ``StartupRawRemovalPreflight`` and ``StartupDayClosePreflight`` (checkpoint-complete + filesystem-quiescent ``startup_quiescent_tar`` submit) run on background threads; ``StartupTailIngestCoordinator`` consumes discover-slice tail enqueue on another thread. Default ``sync_startup_drain_day_close_before_ingest=yes`` blocks first ingest until discover + startup tail ingest + deletion prefights complete (not until async DAY_CLOSE idles).
+**Startup prefights (``all`` only):** when ``startdate == 'all'``, ``StartupRawRemovalPreflight`` and ``StartupDayClosePreflight`` (checkpoint-complete + filesystem-quiescent ``startup_quiescent_tar`` submit) run on background threads; ``StartupTailIngestCoordinator`` consumes discover-slice tail enqueue on another thread. Default ``sync_startup_drain_day_close_before_ingest=yes`` blocks first ingest until discover + startup tail ingest + deletion prefights complete (not until async DAY_CLOSE idles). Date-range runs skip startup maintenance and begin ingest immediately.
 
 Append and raw delete stay DB-gated when ``sync_archive_require_db_head_ingest=yes``. Finalize uses soft defer (``allow_defer``) under ingest backlog instead of blocking the supervisor.
 
@@ -3191,6 +3191,7 @@ def run_sync_timedb_supervisor_loop(
   archive_retry_backoff_max = max(0.0, float(cfg.get_sync_archive_retry_backoff_max_seconds()))
   ingest_first_durability = bool(cfg.get_sync_enable_ingest_first_durability_mode())
   ingest_t0 = time.time()
+  run_startup_maintenance = startdate == "all"
 
   pending_archive_tasks = []
   _archive_heap_seq = itertools.count()
@@ -3704,7 +3705,8 @@ def run_sync_timedb_supervisor_loop(
 
   reconcile_refs = {
       "ingest_gate_cleared": (
-          not cfg.get_sync_startup_drain_day_close_before_ingest()
+          not run_startup_maintenance
+          or not cfg.get_sync_startup_drain_day_close_before_ingest()
       ),
       "get_startup_snapshot": lambda: None,
       "get_accrual_snapshot": lambda: None,
@@ -4358,7 +4360,8 @@ def run_sync_timedb_supervisor_loop(
   def _rescan_pending_with_progress():
     rescan_t0 = time.time()
     log_print("sync_timedb: pending rescan begin", flush=True)
-    _get_startup_snapshot_for_rescan()
+    if run_startup_maintenance:
+      _get_startup_snapshot_for_rescan()
     paths = rescan_pending_stats_files(
         directory,
         startdate,
@@ -4523,73 +4526,88 @@ def run_sync_timedb_supervisor_loop(
     )
     archive_janitor.signal_scheduled_maintenance_pass(reason="ingest_queue_empty")
 
+  startup_preflight = None
+  startup_day_close = None
+  startup_tail_ingest = None
+
   try:
     _ensure_daily_archive_dir_exists()
-    log_print("sync_timedb: maintenance pass reason=startup", flush=True)
-    startup_archive_scan.note_startup_maintenance_pending()
-    archive_janitor.signal_scheduled_maintenance_pass(reason="startup")
-    archive_janitor.enqueue_startup_debt()
-    startup_preflight = StartupRawRemovalPreflight(
-        archive_data_dir=directory,
-        host_name_ext=host_name_ext,
-        tgz_archive_dir=tgz_archive_dir,
-        log_fn=log_print,
-        get_disqualified_daily_tars=_janitor_disqualified_daily_tars,
-        get_quarantine_skip_paths=_get_quarantine_skip_paths,
-        ingest_ready_fn=stats_file_head_ingested_in_db,
-        get_startup_snapshot=_wait_startup_snapshot_for_preflight,
-        process_title=SYNC_TIMEDB_PROCESS_TITLE,
-    )
-    startup_preflight.start_async_verify()
-    startup_day_close_holder = {"preflight": None}
-    startup_tail_ingest = StartupTailIngestCoordinator(
-        log_fn=log_print,
-        run_ingest_batch=_run_startup_tail_ingest_batch,
-        submit_day_close=lambda tar_norm, reason: (
-            async_day_close.submit_day_close(
-                tar_norm,
-                reason=reason,
-                disqualified_daily_tars=_janitor_disqualified_daily_tars(),
-            )
-            if async_day_close is not None
-            else False
-        ),
-        signal_janitor=lambda: archive_janitor.signal_work_available(),
-        get_startup_snapshot=_get_startup_snapshot_for_rescan,
-        live_unprocessed_by_tar=_live_unprocessed_by_tar_for_reconcile,
-        discover_done_fn=lambda: (
-            startup_day_close_holder["preflight"].discover_done()
-            if startup_day_close_holder["preflight"] is not None
-            and startup_day_close_holder["preflight"].enabled
-            else True
-        ),
-        process_title=SYNC_TIMEDB_PROCESS_TITLE,
-    )
-    startup_day_close = StartupDayClosePreflight(
-        archive_data_dir=directory,
-        host_name_ext=host_name_ext,
-        tgz_archive_dir=tgz_archive_dir,
-        local_tz=local_timezone,
-        log_fn=log_print,
-        async_day_close=async_day_close,
-        get_disqualification_inputs=_capture_disqualification_inputs,
-        get_unmapped_closed_raw_tars=_get_unmapped_closed_raw_tars,
-        day_phases=lambda: dict(archive_janitor._day_phases),
-        get_startup_snapshot=_wait_startup_snapshot_for_preflight,
-        get_accrual_remaining_raw_by_gz=_get_accrual_remaining_raw_by_gz,
-        tail_ingest_coordinator=(
-            startup_tail_ingest if startup_tail_ingest.enabled else None
-        ),
-        process_title=SYNC_TIMEDB_PROCESS_TITLE,
-    )
-    startup_day_close_holder["preflight"] = startup_day_close
-    startup_day_close.start_async_discover_and_close()
-    startup_tail_ingest.start_async_tail_ingest()
+    if run_startup_maintenance:
+      log_print("sync_timedb: maintenance pass reason=startup", flush=True)
+      startup_archive_scan.note_startup_maintenance_pending()
+      archive_janitor.signal_scheduled_maintenance_pass(reason="startup")
+      archive_janitor.enqueue_startup_debt()
+      startup_preflight = StartupRawRemovalPreflight(
+          archive_data_dir=directory,
+          host_name_ext=host_name_ext,
+          tgz_archive_dir=tgz_archive_dir,
+          log_fn=log_print,
+          get_disqualified_daily_tars=_janitor_disqualified_daily_tars,
+          get_quarantine_skip_paths=_get_quarantine_skip_paths,
+          ingest_ready_fn=stats_file_head_ingested_in_db,
+          get_startup_snapshot=_wait_startup_snapshot_for_preflight,
+          process_title=SYNC_TIMEDB_PROCESS_TITLE,
+      )
+      startup_preflight.start_async_verify()
+      startup_day_close_holder = {"preflight": None}
+      startup_tail_ingest = StartupTailIngestCoordinator(
+          log_fn=log_print,
+          run_ingest_batch=_run_startup_tail_ingest_batch,
+          submit_day_close=lambda tar_norm, reason: (
+              async_day_close.submit_day_close(
+                  tar_norm,
+                  reason=reason,
+                  disqualified_daily_tars=_janitor_disqualified_daily_tars(),
+              )
+              if async_day_close is not None
+              else False
+          ),
+          signal_janitor=lambda: archive_janitor.signal_work_available(),
+          get_startup_snapshot=_get_startup_snapshot_for_rescan,
+          live_unprocessed_by_tar=_live_unprocessed_by_tar_for_reconcile,
+          discover_done_fn=lambda: (
+              startup_day_close_holder["preflight"].discover_done()
+              if startup_day_close_holder["preflight"] is not None
+              and startup_day_close_holder["preflight"].enabled
+              else True
+          ),
+          process_title=SYNC_TIMEDB_PROCESS_TITLE,
+      )
+      startup_day_close = StartupDayClosePreflight(
+          archive_data_dir=directory,
+          host_name_ext=host_name_ext,
+          tgz_archive_dir=tgz_archive_dir,
+          local_tz=local_timezone,
+          log_fn=log_print,
+          async_day_close=async_day_close,
+          get_disqualification_inputs=_capture_disqualification_inputs,
+          get_unmapped_closed_raw_tars=_get_unmapped_closed_raw_tars,
+          day_phases=lambda: dict(archive_janitor._day_phases),
+          get_startup_snapshot=_wait_startup_snapshot_for_preflight,
+          get_accrual_remaining_raw_by_gz=_get_accrual_remaining_raw_by_gz,
+          tail_ingest_coordinator=(
+              startup_tail_ingest if startup_tail_ingest.enabled else None
+          ),
+          process_title=SYNC_TIMEDB_PROCESS_TITLE,
+      )
+      startup_day_close_holder["preflight"] = startup_day_close
+      startup_day_close.start_async_discover_and_close()
+      startup_tail_ingest.start_async_tail_ingest()
 
-    startup_ingest_gate_cleared = (
-        not cfg.get_sync_startup_drain_day_close_before_ingest()
-    )
-    startup_day_close_drain_complete = startup_ingest_gate_cleared
+      startup_ingest_gate_cleared = (
+          not cfg.get_sync_startup_drain_day_close_before_ingest()
+      )
+      startup_day_close_drain_complete = startup_ingest_gate_cleared
+    else:
+      log_print(
+          "sync_timedb: startup maintenance skipped "
+          "(pass 'all' for full-archive startup pass)",
+          flush=True,
+      )
+      startup_archive_scan.mark_startup_heavy_maintenance_finished()
+      startup_ingest_gate_cleared = True
+      startup_day_close_drain_complete = True
+      reconcile_refs["ingest_gate_cleared"] = True
     startup_drain_last_log = 0.0
 
     def _startup_ingest_gate_pending():
