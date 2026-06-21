@@ -69,9 +69,34 @@ def _is_excluded(rel_path: str, patterns: list[str]) -> bool:
   rel = rel_path.replace("\\", "/").lstrip("./")
   if rel.startswith("monitor/"):
     return True
+  excluded = False
   for pattern in patterns:
+    if pattern.startswith("!"):
+      if _match_dockerignore(rel, pattern[1:].strip()):
+        excluded = False
+      continue
     if _match_dockerignore(rel, pattern):
-      return True
+      excluded = True
+  return excluded
+
+
+def _looks_like_non_runtime_dev_artifact(rel_path: str) -> bool:
+  rel = rel_path.replace("\\", "/").lstrip("./")
+  if rel.startswith("node_modules/") or "/node_modules/" in rel:
+    return False
+  if rel.startswith(("hpcperfstats/cursor-rules/", "docs/", ".build/", ".github/", "artifacts/", "staticfiles/")):
+    return True
+  if rel.endswith(".mdc"):
+    return True
+  if rel.endswith(".md") and rel != "README.md":
+    return True
+  name = rel.split("/")[-1]
+  if name.startswith("docker-compose") and (
+      name.endswith(".yaml") or name.endswith(".yaml.example")
+  ):
+    return True
+  if name == ".DS_Store":
+    return True
   return False
 
 
@@ -126,6 +151,28 @@ def test_dockerignore_lists_required_test_patterns():
     assert pattern in content, f"missing .dockerignore pattern: {pattern}"
 
 
+def test_dockerignore_lists_required_dev_patterns():
+  content = (_repo_root() / ".dockerignore").read_text()
+  required = (
+      "hpcperfstats/cursor-rules/",
+      "**/*.mdc",
+      "docs/",
+      "*.md",
+      "!README.md",
+      "docker-compose*.yaml",
+      ".build/",
+      ".github/",
+      "artifacts/",
+  )
+  for pattern in required:
+    assert pattern in content, f"missing .dockerignore pattern: {pattern}"
+
+
+def test_root_readme_not_excluded_from_docker_build_context():
+  patterns = _dockerignore_patterns(_repo_root())
+  assert not _is_excluded("README.md", patterns)
+
+
 def test_all_test_artifacts_excluded_from_docker_build_context():
   repo_root = _repo_root()
   patterns = _dockerignore_patterns(repo_root)
@@ -142,5 +189,25 @@ def test_all_test_artifacts_excluded_from_docker_build_context():
 
   assert not missing, (
       "test artifacts not covered by .dockerignore (first 20):\n"
+      + "\n".join(missing[:20])
+  )
+
+
+def test_all_non_runtime_dev_artifacts_excluded_from_docker_build_context():
+  repo_root = _repo_root()
+  patterns = _dockerignore_patterns(repo_root)
+  missing: list[str] = []
+
+  for path in repo_root.rglob("*"):
+    if not path.is_file():
+      continue
+    rel = path.relative_to(repo_root).as_posix()
+    if not _looks_like_non_runtime_dev_artifact(rel):
+      continue
+    if not _is_excluded(rel, patterns):
+      missing.append(rel)
+
+  assert not missing, (
+      "non-runtime dev artifacts not covered by .dockerignore (first 20):\n"
       + "\n".join(missing[:20])
   )

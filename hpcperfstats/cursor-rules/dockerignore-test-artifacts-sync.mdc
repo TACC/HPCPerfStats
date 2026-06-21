@@ -1,14 +1,14 @@
 ---
-description: Keep .dockerignore aligned with test-only paths so Docker build context stays lean
+description: Keep .dockerignore aligned with test and dev-only paths so Docker build context stays lean
 globs: HPCPerfStats/.dockerignore,HPCPerfStats/Dockerfile,hpcperfstats/tests/test_dockerignore_test_artifacts.py
 alwaysApply: false
 ---
 
-# Dockerignore Test Artifacts Sync
+# Dockerignore Build Context Sync
 
-**Activation:** triggered when editing **`.dockerignore`**, root **`Dockerfile`** build-context scope, or introducing **new test-only path conventions** (see below).
+**Activation:** triggered when editing **`.dockerignore`**, root **`Dockerfile`** build-context scope, or introducing **new test-only / dev-only path conventions** (see below).
 
-Docker image builds use the git checkout as context (`COPY` in **`Dockerfile`**). Test sources, Vitest trees, pytest fixtures, and local run logs must **not** ship in that context — they inflate uploads, bust layer cache, and are never needed at runtime.
+Docker image builds use the git checkout as context (`COPY` in **`Dockerfile`**). Test sources, agent rules, compose manifests, docs, and local scratch must **not** ship in that context — they inflate uploads, bust layer cache, and are never needed at runtime.
 
 ## Canonical exclusions (baseline)
 
@@ -22,17 +22,21 @@ Keep these patterns in **`.dockerignore`** unless a deliberate runtime contract 
 | Shell regression scripts | `scripts/test_*.sh` (not `scripts/rebuild_*.sh`) |
 | Frontend Vitest / a11y | `**/__tests__/`, `**/*.test.ts`, `**/*.test.tsx`, `**/test-utils/`, `**/test-fixtures/` |
 | Frontend test-only files | `vitest.config.ts`, `setupTests.ts`, `axe-test-utils.ts`, playwright smoke assets |
+| Cursor / agent rules | `hpcperfstats/cursor-rules/`, `**/*.mdc`, `.cursor/` |
+| Docs (not runtime) | `docs/`, `*.md` with `!README.md` for setuptools metadata |
+| Compose / CI / staging | `docker-compose*.yaml`, `docker-compose*.yaml.example`, `.github/`, `.build/` |
+| Local artifacts | `artifacts/`, `staticfiles/`, `.DS_Store` |
 
-**`monitor/`** and **`node_modules/`** remain excluded separately; do not rely on test patterns to cover them.
+**`monitor/`** and **`node_modules/`** remain excluded separately; do not rely on other patterns to cover them.
 
 ## Required actions (same task)
 
-When you **add or move** test-only artifacts or change what the Dockerfile copies:
+When you **add or move** test-only or dev-only artifacts or change what the Dockerfile copies:
 
-1. **Update `.dockerignore`** — add or adjust patterns so new test paths are excluded.
+1. **Update `.dockerignore`** — add or adjust patterns so new paths are excluded.
 2. **Update the regression guard** — extend **`hpcperfstats/tests/test_dockerignore_test_artifacts.py`**:
-   - `_looks_like_test_artifact()` when introducing a new filename, directory, or suffix convention;
-   - `test_dockerignore_lists_required_test_patterns()` `required` tuple when adding a baseline pattern operators must keep.
+   - `_looks_like_test_artifact()` or `_looks_like_non_runtime_dev_artifact()` when introducing a new convention;
+   - `test_dockerignore_lists_required_*_patterns()` `required` tuple when adding a baseline pattern operators must keep.
 3. **Run** host pytest on that module before close:
 
 ```bash
@@ -49,14 +53,17 @@ Read this file in the **same task** when you:
 - Add a **new test directory name** outside `tests/` (for example a new `**/__e2e__/` tree).
 - Add **colocated** `test_*.py` outside existing `tests/` packages.
 - Add frontend files matching new test suffixes (for example `*.spec.ts` if adopted).
-- Narrow **`Dockerfile`** `COPY` scope and discover test paths still enter the context.
+- Add **cursor rules**, **docs**, or other **host-only** trees that should not enter `COPY . .`.
+- Narrow **`Dockerfile`** `COPY` scope and discover non-runtime paths still enter the context.
 
 ## Do not exclude
 
 - Runtime Python under **`hpcperfstats/`** (non-test modules).
 - Frontend production sources consumed by **`npm run build`** (`src/`, `app/`, `scripts/write-site-identity.mjs`, etc.).
 - Committed OpenAPI at **`hpcperfstats/site/openapi/openapi.yaml`** (Orval in **`frontend-builder`**).
-- Deploy scripts: **`scripts/rebuild_frontend.sh`**, **`scripts/rebuild_pipeline.sh`**.
+- Deploy scripts: **`scripts/rebuild_frontend.sh`**, **`scripts/rebuild_pipeline.sh`**, **`services-conf/`**.
+- Root **`README.md`** (referenced by **`pyproject.toml`** for `pip install`).
+- Root **`LICENSE`**, **`pyproject.toml`**, **`hpcperfstats.ini*`**.
 
 ## Overlap
 
