@@ -3111,6 +3111,100 @@ def test_ingest_first_archive_abandoned_after_retries_exhausted(monkeypatch, tmp
   assert os.path.isfile(target)
 
 
+def test_archive_finalize_cardinality_mismatch_retries_unmatched(monkeypatch, tmp_path):
+  shutdown_requested[0] = False
+  logs = []
+  target_a = str(tmp_path / "stats-a.hpc")
+  target_b = str(tmp_path / "stats-b.hpc")
+  open(target_a, "wb").close()
+  open(target_b, "wb").close()
+  archive_a = str(tmp_path / "2026-06-01.tar.gz")
+  archive_b = str(tmp_path / "2026-06-02.tar.gz")
+
+  class _DonePreflight:
+    enabled = False
+
+    def verification_complete(self):
+      return True
+
+    def needs_delete_phase(self):
+      return False
+
+    def delete_phase_done(self):
+      return True
+
+    def paths_pending_startup_delete(self):
+      return set()
+
+    def consumed_paths(self):
+      return set()
+
+    def start_async_verify(self):
+      return None
+
+    def shutdown(self, wait=True):
+      del wait
+
+  _supervisor_startup_preflight_patches(monkeypatch, _DonePreflight())
+  monkeypatch.setattr(st, "ThreadPoolExecutor", _InlineThreadPoolExecutor)
+
+  def fake_rescan(*_a, **_k):
+    if fake_rescan.calls == 0:
+      fake_rescan.calls += 1
+      return [target_a, target_b]
+    shutdown_requested[0] = True
+    return []
+  fake_rescan.calls = 0
+
+  class _ShortResultArchive:
+    def map_async(self, _fn, items):
+      del items
+      return _fake_map_async_result([False])
+
+  monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+  monkeypatch.setattr(
+      st, "add_stats_file_to_db", lambda *_a, **_k: (_a[1], True, True, 0.0),
+  )
+  monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+  monkeypatch.setattr(
+      st,
+      "build_archive_mapping",
+      lambda *_a, **_k: {archive_a: [target_a], archive_b: [target_b]},
+  )
+  monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: False)
+  monkeypatch.setattr(st.cfg, "get_sync_archive_retry_max_attempts", lambda: 3)
+  monkeypatch.setattr(st.cfg, "get_sync_archive_retry_backoff_base_seconds", lambda: 0.0)
+  monkeypatch.setattr(st.cfg, "get_sync_archive_retry_backoff_max_seconds", lambda: 0.0)
+  monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+  monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
+  monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+  monkeypatch.setattr(st, "close_old_connections", lambda: None)
+  monkeypatch.setattr(st.connections, "close_all", lambda: None)
+  monkeypatch.setattr(st, "tgz_archive_dir", str(tmp_path))
+  monkeypatch.setattr(st, "log_print", lambda msg, *a, **kw: logs.append(str(msg)))
+
+  try:
+    st.run_sync_timedb_supervisor_loop(
+        str(tmp_path / "archive"),
+        "all",
+        None,
+        ".hpc",
+        object(),
+        _ShortResultArchive(),
+        run_once=True,
+    )
+  finally:
+    shutdown_requested[0] = False
+
+  mismatch_lines = [
+      line for line in logs
+      if "Archive result cardinality mismatch: deferred=2 results=1" in line
+  ]
+  assert mismatch_lines, logs[-40:]
+  retry_lines = [line for line in logs if "Archive task retry scheduled" in line]
+  assert len(retry_lines) >= 2, retry_lines
+
+
 def test_checkpoint_flush_logs_oserror_and_preserves_dirty(monkeypatch, tmp_path):
   shutdown_requested[0] = False
   logs = []
