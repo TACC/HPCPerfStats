@@ -31,7 +31,7 @@ RUN /bin/bash -o pipefail -c "\
     mkdir -p /tmp/frontend-static && \
     cp -a hpcperfstats/site/hpcperfstats_site/static/frontend/. /tmp/frontend-static/"
 
-# Shared Python runtime base (no frontend overlay, no pip install yet).
+# Shared Python runtime base (no frontend overlay, pip deps layered before full tree).
 FROM python:3.12.13-trixie AS hpcperfstats-base
 
 # Setup users, directories, and required runtime packages.
@@ -49,6 +49,19 @@ RUN /bin/bash -o pipefail -c "useradd -u 901860 -ms /bin/bash hpcperfstats \
     && rm -rf /var/lib/apt/lists/*"
 
 WORKDIR /home/hpcperfstats
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_ROOT_USER_ACTION=ignore \
+    HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini \
+    STATIC_ROOT=/home/hpcperfstats/staticfiles
+
+# Python dependencies: cached until pyproject.toml changes.
+COPY --chown=hpcperfstats:hpcperfstats pyproject.toml ./
+RUN /bin/bash -o pipefail -c 'pip install --no-cache-dir --upgrade pip \
+    && deps=$(python3 -c "import shlex, tomllib; from pathlib import Path; deps=tomllib.loads(Path(\"pyproject.toml\").read_text())[\"project\"][\"dependencies\"]; print(\" \".join(shlex.quote(d) for d in deps))") \
+    && pip install --no-cache-dir $deps \
+    && pip cache purge'
 
 COPY --chown=hpcperfstats:hpcperfstats . .
 
@@ -74,11 +87,8 @@ RUN /bin/bash -o pipefail -c "printf '%s\n' \
     > /var/lib/hpcperfstats-syslog/generated.conf \
     && chmod 644 /var/lib/hpcperfstats-syslog/generated.conf"
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_ROOT_USER_ACTION=ignore \
-    HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini \
-    STATIC_ROOT=/home/hpcperfstats/staticfiles
+# Install the hpcperfstats package (deps already installed above).
+RUN /bin/bash -o pipefail -c "pip install --no-cache-dir --no-deps . && pip cache purge"
 
 # Default image: npm-built frontend from frontend-builder.
 FROM hpcperfstats-base AS hpcperfstats-full
@@ -87,14 +97,10 @@ COPY --from=frontend-builder --chown=hpcperfstats:hpcperfstats \
     /tmp/frontend-static \
     /home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend
 
-# Install Python dependencies and the hpcperfstats package.
 # collectstatic here: fail-fast at image build (and supports runs without a
 # compose volume over STATIC_ROOT). Compose still runs collectstatic on web
 # startup because staticfiles_data masks the image layer at /home/hpcperfstats/staticfiles.
-RUN /bin/bash -o pipefail -c "pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir . \
-    && /usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput \
-    && pip cache purge"
+RUN /bin/bash -o pipefail -c "/usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput"
 
 # Pipeline-only refresh: scripts/rebuild_pipeline.sh populates
 # .build/pipeline-rebuild-frontend/ from the live deployment before build.
@@ -105,7 +111,4 @@ COPY .build/pipeline-rebuild-frontend/ \
 RUN chown -R hpcperfstats:hpcperfstats \
     /home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend
 
-RUN /bin/bash -o pipefail -c "pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir . \
-    && /usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput \
-    && pip cache purge"
+RUN /bin/bash -o pipefail -c "/usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput"

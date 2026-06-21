@@ -1,0 +1,50 @@
+"""Regression: hpcperfstats-* Docker stages must layer pip deps on pyproject.toml only."""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+
+def _repo_root() -> Path:
+  return Path(__file__).resolve().parents[2]
+
+
+def _stage_body(dockerfile: str, stage_name: str) -> str:
+  match = re.search(
+      rf"^FROM .* AS {re.escape(stage_name)}\s*\n(.*?)(?=^FROM |\Z)",
+      dockerfile,
+      flags=re.MULTILINE | re.DOTALL,
+  )
+  assert match, f"{stage_name} stage not found in Dockerfile"
+  return match.group(1)
+
+
+def test_hpcperfstats_base_layers_python_deps_on_pyproject():
+  """Application edits must not reinstall pinned PyPI deps unless pyproject.toml changes."""
+  dockerfile = (_repo_root() / "Dockerfile").read_text()
+  stage = _stage_body(dockerfile, "hpcperfstats-base")
+
+  assert re.search(
+      r"COPY --chown=hpcperfstats:hpcperfstats pyproject\.toml \./",
+      stage,
+  )
+  assert "tomllib" in stage
+  assert re.search(r"pip install --no-cache-dir \$deps", stage)
+  assert "pip install --no-cache-dir --no-deps ." in stage
+
+  pyproject_copy_pos = stage.index("pyproject.toml")
+  deps_install_pos = stage.index("pip install --no-cache-dir $deps")
+  full_copy_pos = stage.index("COPY --chown=hpcperfstats:hpcperfstats . .")
+  package_install_pos = stage.index("pip install --no-cache-dir --no-deps .")
+  assert pyproject_copy_pos < deps_install_pos < full_copy_pos < package_install_pos
+
+
+def test_hpcperfstats_child_stages_do_not_reinstall_python_deps():
+  """hpcperfstats-full and pipeline-refresh inherit base; only collectstatic locally."""
+  dockerfile = (_repo_root() / "Dockerfile").read_text()
+
+  for stage_name in ("hpcperfstats-full", "hpcperfstats-pipeline-refresh"):
+    stage = _stage_body(dockerfile, stage_name)
+    assert "pip install" not in stage, stage_name
+    assert "collectstatic --noinput" in stage, stage_name
