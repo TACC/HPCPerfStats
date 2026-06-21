@@ -221,6 +221,21 @@ class AsyncDayCloseCoordinator:
       return False
     return os.path.isfile(zst_path) or os.path.isfile(gz_path)
 
+  def defer_for_ingest_handoff(self, tar_path: str) -> None:
+    """Release async single-flight when day-close work defers to ingest."""
+    tar_norm = os.path.normpath(tar_path or "")
+    if not tar_norm:
+      return
+    with self._lock:
+      entry = self._manifest.get("entries", {}).get(tar_norm)
+      if not isinstance(entry, dict):
+        return
+      status = str(entry.get("status") or "")
+      if status not in _ASYNC_DAY_CLOSE_PIPELINE_PENDING_STATUSES:
+        return
+    self._set_entry_status(tar_norm, "deferred", detail="waiting_on_ingest")
+    self._touch_manifest("deferred_waiting_on_ingest", tar_norm=tar_norm)
+
   def finalize_complete_if_filesystem(self, tar_path: str) -> bool:
     """Mark async DAY_CLOSE complete when filesystem truth holds."""
     tar_norm = os.path.normpath(tar_path or "")
@@ -455,6 +470,13 @@ class AsyncDayCloseCoordinator:
           sleep_until_shutdown(0.5)
         if not coord.verification_complete(tar_norm):
           self._set_entry_status(tar_norm, "deferred", detail="raw_removal_verify")
+          return
+        if coord.should_handoff_to_ingest(tar_norm):
+          coord.complete_handoff_to_ingest(
+              tar_norm,
+              reason="async_day_close_verify",
+          )
+          self.defer_for_ingest_handoff(tar_norm)
           return
         self._set_entry_status(tar_norm, "raw_delete_pending")
         self._touch_manifest("raw_delete_pending", tar_norm=tar_norm)

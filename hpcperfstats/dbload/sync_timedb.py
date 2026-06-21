@@ -2735,6 +2735,7 @@ def _add_processed_path(
     checkpoint_path,
     *,
     file_states=None,
+    handoff_priority_paths=None,
 ):
   """Record processed path in memory and checkpoint buffer."""
   fp = _path_fingerprint(path)
@@ -2743,6 +2744,8 @@ def _add_processed_path(
   processed_files.add(path)
   processed_files_order.append(path)
   checkpoint_entries.append(fp)
+  if handoff_priority_paths is not None:
+    handoff_priority_paths.discard(path)
   while len(processed_files_order) > processed_files_max_size:
     old_path = processed_files_order.popleft()
     processed_files.discard(old_path)
@@ -2750,6 +2753,50 @@ def _add_processed_path(
       file_states.pop(old_path, None)
   while len(checkpoint_entries) > processed_files_max_size:
     checkpoint_entries.popleft()
+  return True
+
+
+def _remove_processed_path(
+    path,
+    processed_files,
+    processed_files_order,
+    checkpoint_entries,
+    checkpoint_path,
+    *,
+    file_states=None,
+    host_scan_hints=None,
+    persist=True,
+):
+  """Undo checkpoint/processed markers so a path re-enters the ingest loop."""
+  path = str(path)
+  processed_files.discard(path)
+  try:
+    processed_files_order.remove(path)
+  except ValueError:
+    pass
+  fp = _path_fingerprint(path)
+  if fp is not None:
+    kept = deque()
+    for entry in checkpoint_entries:
+      if (
+          entry.get("path") == path
+          and entry.get("size") == fp["size"]
+          and entry.get("mtime") == fp["mtime"]
+      ):
+        continue
+      kept.append(entry)
+    checkpoint_entries.clear()
+    checkpoint_entries.extend(kept)
+  else:
+    kept = deque(entry for entry in checkpoint_entries if entry.get("path") != path)
+    checkpoint_entries.clear()
+    checkpoint_entries.extend(kept)
+  if file_states is not None:
+    file_states[path] = SyncFileState.DISCOVERED
+  if isinstance(host_scan_hints, dict):
+    host_scan_hints.pop(path, None)
+  if persist and checkpoint_path:
+    _save_sync_checkpoint(checkpoint_path, checkpoint_entries)
   return True
 
 
@@ -3538,7 +3585,8 @@ def run_sync_timedb_supervisor_loop(
           _transition_file_state(file_states, p, SyncFileState.ARCHIVED)
           added = _add_processed_path(
               p, processed_files, processed_files_order, checkpoint_entries,
-              checkpoint_path, file_states=file_states)
+              checkpoint_path, file_states=file_states,
+              handoff_priority_paths=handoff_priority_paths)
           if added:
             checkpoint_dirty_count += 1
           _discard_inflight_archive_path(p)
@@ -3584,7 +3632,8 @@ def run_sync_timedb_supervisor_loop(
               _transition_file_state(file_states, p, SyncFileState.ARCHIVED)
               added = _add_processed_path(
                   p, processed_files, processed_files_order, checkpoint_entries,
-                  checkpoint_path, file_states=file_states)
+                  checkpoint_path, file_states=file_states,
+                  handoff_priority_paths=handoff_priority_paths)
               if added:
                 checkpoint_dirty_count += 1
               _discard_inflight_archive_path(p)
@@ -3742,6 +3791,36 @@ def run_sync_timedb_supervisor_loop(
         maintenance_snapshot=snapshot,
     )
 
+  def _apply_handoff_priority_to_pending(pending):
+    if not handoff_priority_paths:
+      return list(pending or ())
+    blocked = sorted(handoff_priority_paths)
+    return prepend_checkpoint_blocked_paths_to_pending(
+        pending,
+        blocked,
+        exclude=inflight_archive_paths,
+    )
+
+  def _cap_pending_stats_with_handoff_priority(paths):
+    if not handoff_priority_paths:
+      return _cap_pending_stats_files_list(paths, ingest_queue_max)
+    merged = _apply_handoff_priority_to_pending(paths)
+    priority_n = len(handoff_priority_paths)
+    tail_budget = max(0, ingest_queue_max - priority_n)
+    if len(merged) <= ingest_queue_max:
+      return merged
+    head = merged[:priority_n]
+    tail = merged[priority_n:]
+    if len(tail) > tail_budget:
+      log_print(
+          "sync_timedb: handoff priority cap handoff_priority_n=%d capped_tail=%d "
+          "pending=%d max=%d"
+          % (priority_n, len(tail) - tail_budget, len(merged), ingest_queue_max),
+          flush=True,
+      )
+      tail = tail[:tail_budget]
+    return head + tail
+
   def _cap_pending_after_rescan(paths):
     cap_t0 = time.time()
     _snapshot, source = _resolve_reconcile_maintenance_snapshot()
@@ -3756,13 +3835,12 @@ def run_sync_timedb_supervisor_loop(
         on_disk_unprocessed_paths_for_tar(unprocessed, tar_norm)
         if tar_norm else []
     )
-    capped = _cap_pending_stats_files_list(
+    capped = _cap_pending_stats_with_handoff_priority(
         prepend_checkpoint_blocked_paths_to_pending(
             paths,
             blocked,
             exclude=processed_files | inflight_archive_paths,
         ),
-        ingest_queue_max,
     )
     log_print(
         "sync_timedb: pending reconcile cap done elapsed_s=%.3f "
@@ -3791,13 +3869,15 @@ def run_sync_timedb_supervisor_loop(
       _invalidate_host_scan_hints_for_paths(failed_chunk_paths)
     tail = pending_stats_files[len(stats_files_chunk):]
     if failed_chunk_paths:
-      pending_stats_files = prepend_checkpoint_blocked_paths_to_pending(
-          tail,
-          failed_chunk_paths,
-          exclude=processed_files | inflight_archive_paths,
+      pending_stats_files = _apply_handoff_priority_to_pending(
+          prepend_checkpoint_blocked_paths_to_pending(
+              tail,
+              failed_chunk_paths,
+              exclude=processed_files | inflight_archive_paths,
+          ),
       )
     else:
-      pending_stats_files = tail
+      pending_stats_files = _apply_handoff_priority_to_pending(tail)
 
   def _ingest_paths_on_supervisor_thread(paths):
     """Bounded short ingest for startup tail (runs on supervisor thread)."""
@@ -4102,7 +4182,8 @@ def run_sync_timedb_supervisor_loop(
       _transition_file_state(file_states, p, SyncFileState.ARCHIVED)
       added = _add_processed_path(
           p, processed_files, processed_files_order, checkpoint_entries,
-          checkpoint_path, file_states=file_states)
+          checkpoint_path, file_states=file_states,
+          handoff_priority_paths=handoff_priority_paths)
       if added:
         checkpoint_dirty_count += 1
     _flush_checkpoint_if_needed()
@@ -4225,6 +4306,7 @@ def run_sync_timedb_supervisor_loop(
   checkpoint_dirty_count = 0
   inflight_archive_paths = set()
   pending_stats_files = []
+  handoff_priority_paths = set()
   chunk_counter = 0
   # Per-day cache of raw paths queued/in-flight for tar append (loss-safe
   # disqualification source for ArchiveJanitor ticks). Mirrors the
@@ -4489,7 +4571,60 @@ def run_sync_timedb_supervisor_loop(
     day_close_rescan_pending = True
     archive_janitor.signal_work_available()
 
+  def _requeue_day_close_handoff_paths(tar_norm, paths, reason):
+    nonlocal pending_stats_files
+    tar_norm = os.path.normpath(str(tar_norm or ""))
+    requeued = []
+    for path in paths or ():
+      if not path or not os.path.isfile(path):
+        continue
+      _remove_processed_path(
+          path,
+          processed_files,
+          processed_files_order,
+          checkpoint_entries,
+          checkpoint_path,
+          file_states=file_states,
+          host_scan_hints=host_scan_hints,
+          persist=False,
+      )
+      handoff_priority_paths.add(path)
+      requeued.append(path)
+    if not requeued:
+      return
+    _flush_checkpoint_if_needed(force=True)
+    if async_day_close is not None:
+      async_day_close.defer_for_ingest_handoff(tar_norm)
+    pending_stats_files = _cap_pending_after_rescan(
+        _apply_handoff_priority_to_pending(pending_stats_files),
+    )
+    log_print(
+        "sync_timedb: day_close handoff requeue day=%s paths=%d reason=%s "
+        "checkpoint_cleared=yes queue_head=yes"
+        % (
+            calendar_date_from_daily_tar_path(tar_norm).isoformat()
+            if calendar_date_from_daily_tar_path(tar_norm) is not None
+            else tar_norm,
+            len(requeued),
+            reason or "",
+        ),
+        flush=True,
+    )
+    archive_janitor.signal_work_available()
+
+  def _recover_startup_day_close_handoffs():
+    nonlocal pending_stats_files
+    if day_raw_removal is None or not day_raw_removal.enabled:
+      return
+    for tar_norm, paths in day_raw_removal.discover_manifest_handoffs():
+      _requeue_day_close_handoff_paths(
+          tar_norm,
+          paths,
+          reason="startup_manifest_handoff",
+      )
+
   day_raw_removal.on_pipeline_complete = _on_day_close_pipeline_complete
+  day_raw_removal.on_handoff_to_ingest = _requeue_day_close_handoff_paths
 
   def _maybe_apply_day_close_rescan():
     nonlocal day_close_rescan_pending, pending_stats_files
@@ -4593,6 +4728,7 @@ def run_sync_timedb_supervisor_loop(
       startup_day_close_holder["preflight"] = startup_day_close
       startup_day_close.start_async_discover_and_close()
       startup_tail_ingest.start_async_tail_ingest()
+      _recover_startup_day_close_handoffs()
 
       startup_ingest_gate_cleared = (
           not cfg.get_sync_startup_drain_day_close_before_ingest()
@@ -5007,7 +5143,8 @@ def run_sync_timedb_supervisor_loop(
           _transition_file_state(file_states, p, SyncFileState.ARCHIVED)
           added = _add_processed_path(
               p, processed_files, processed_files_order, checkpoint_entries,
-              checkpoint_path, file_states=file_states)
+              checkpoint_path, file_states=file_states,
+              handoff_priority_paths=handoff_priority_paths)
           if added:
             checkpoint_dirty_count += 1
         _flush_checkpoint_if_needed()

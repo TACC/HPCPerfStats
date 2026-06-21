@@ -21,6 +21,7 @@ from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
     PHASE_VERIFICATION_COMPLETE,
     PHASE_VERIFYING,
     DayRawRemovalCoordinator,
+    _save_manifest,
     day_removal_manifest_path,
 )
 
@@ -351,3 +352,62 @@ def test_apply_batch_delete_drops_tar_when_retryable_manifest_but_raw_gone(
   coord.apply_batch_delete(tar_path)
   assert coord.phase(tar_path) == PHASE_DONE
   assert not os.path.isfile(tar_path)
+
+
+def test_handoff_paths_when_only_not_in_sealed_archive(tmp_path):
+  day = datetime(2022, 6, 20)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive")
+  with state._lock:
+    state._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
+    state._manifest["skipped_count"] = 1
+  _save_manifest(state._manifest_path, state._manifest)
+  assert state.should_handoff_day_close_to_ingest()
+  assert str(seg) in state.handoff_paths_for_ingest()
+
+
+def test_complete_handoff_marks_done_and_invokes_callback(tmp_path):
+  day = datetime(2022, 6, 21)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  handoffs = []
+
+  def _on_handoff(tar_norm, paths, reason):
+    handoffs.append((tar_norm, list(paths), reason))
+
+  coord = _make_coordinator(
+      tmp_path,
+      ingest_ready_fn=lambda _p: False,
+      on_handoff_to_ingest=_on_handoff,
+  )
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive")
+  with state._lock:
+    state._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
+    state._manifest["skipped_count"] = 1
+  _save_manifest(state._manifest_path, state._manifest)
+  paths = coord.complete_handoff_to_ingest(tar_path, reason="unit_test")
+  assert paths == [str(seg)]
+  assert coord.phase(tar_path) == PHASE_DONE
+  assert handoffs == [(os.path.normpath(tar_path), [str(seg)], "unit_test")]
+
+
+def test_discover_manifest_handoffs_reads_persisted_manifest(tmp_path):
+  day = datetime(2022, 6, 22)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive")
+  with state._lock:
+    state._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
+    state._manifest["skipped_count"] = 1
+  _save_manifest(state._manifest_path, state._manifest)
+  coord2 = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
+  found = coord2.discover_manifest_handoffs()
+  assert len(found) == 1
+  assert found[0][0] == os.path.normpath(tar_path)
+  assert str(seg) in found[0][1]

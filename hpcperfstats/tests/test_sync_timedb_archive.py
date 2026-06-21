@@ -5956,6 +5956,65 @@ def test_prepend_checkpoint_blocked_paths_to_pending_dedupes_and_orders():
   assert merged == ["/a", "/b", "/c"]
 
 
+def test_remove_processed_path_clears_checkpoint_entry(tmp_path):
+  from collections import deque
+
+  from hpcperfstats.dbload import sync_timedb as st_mod
+
+  checkpoint_path = str(tmp_path / ".sync_timedb_state.json")
+  raw_path = str(tmp_path / "host" / "12345")
+  os.makedirs(os.path.dirname(raw_path))
+  with open(raw_path, "w", encoding="utf-8") as fh:
+    fh.write("12345 job1 cn001\nline\n")
+  processed_files = set()
+  processed_files_order = deque()
+  checkpoint_entries = deque()
+  file_states = {}
+  st_mod._add_processed_path(
+      raw_path,
+      processed_files,
+      processed_files_order,
+      checkpoint_entries,
+      checkpoint_path,
+      file_states=file_states,
+  )
+  assert raw_path in processed_files
+  st_mod._remove_processed_path(
+      raw_path,
+      processed_files,
+      processed_files_order,
+      checkpoint_entries,
+      checkpoint_path,
+      file_states=file_states,
+      persist=True,
+  )
+  assert raw_path not in processed_files
+  assert len(checkpoint_entries) == 0
+  assert file_states[raw_path] == st_mod.SyncFileState.DISCOVERED
+  loaded = st_mod._load_sync_checkpoint(checkpoint_path)
+  assert loaded == []
+
+
+def test_handoff_priority_cap_keeps_head_paths(tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      prepend_checkpoint_blocked_paths_to_pending,
+  )
+
+  handoff = ["/h1", "/h2"]
+  pending = ["/t1", "/t2", "/t3", "/t4", "/t5"]
+  merged = prepend_checkpoint_blocked_paths_to_pending(pending, handoff)
+  ingest_queue_max = 4
+  priority_n = len(handoff)
+  tail_budget = max(0, ingest_queue_max - priority_n)
+  head = merged[:priority_n]
+  tail = merged[priority_n:][:tail_budget]
+  capped = head + tail
+  assert capped[:2] == handoff
+  assert len(capped) == ingest_queue_max
+  assert "/t1" in capped
+  assert "/t5" not in capped
+
+
 def test_oldest_checkpoint_blocked_tar_returns_oldest_on_disk_day(tmp_path):
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       oldest_checkpoint_blocked_tar,

@@ -7,7 +7,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from django.db import close_old_connections
@@ -296,6 +296,35 @@ class _DayRawRemovalState:
         and self.needs_delete_phase()
     )
 
+  def handoff_paths_for_ingest(self) -> List[str]:
+    """Closed raw on disk whose manifest entry is missing or retryable."""
+    with self._lock:
+      entries = dict(self._manifest.get("entries", {}))
+    paths: List[str] = []
+    for path in self._closed_raw_paths_on_disk():
+      if not os.path.isfile(path):
+        continue
+      entry = entries.get(path)
+      if entry is None or self._entry_is_retryable_skip(entry):
+        paths.append(path)
+    return paths
+
+  def should_handoff_day_close_to_ingest(self) -> bool:
+    if not self.verification_complete():
+      return False
+    if not self._only_waiting_on_ingest_blocks_completion():
+      return False
+    return bool(self.handoff_paths_for_ingest())
+
+  def complete_handoff_to_ingest(self) -> List[str]:
+    """Mark waiting-on-ingest done when needed; return paths for ingest requeue."""
+    paths = self.handoff_paths_for_ingest()
+    if not paths:
+      return []
+    if not self.delete_phase_done():
+      self._mark_done_waiting_on_ingest()
+    return list(paths)
+
   def _mark_done_waiting_on_ingest(self) -> None:
     retryable_count = 0
     with self._lock:
@@ -577,6 +606,7 @@ class DayRawRemovalCoordinator:
       ingest_ready_fn: Optional[Callable[[str], bool]] = None,
       process_title: str = "sync_timedb.py",
       on_pipeline_complete: Optional[Callable[[str], None]] = None,
+      on_handoff_to_ingest: Optional[Callable[[str, List[str], str], None]] = None,
   ):
     self.archive_data_dir = archive_data_dir
     self.host_name_ext = host_name_ext
@@ -586,6 +616,7 @@ class DayRawRemovalCoordinator:
     self.ingest_ready_fn = ingest_ready_fn
     self.process_title = process_title
     self.on_pipeline_complete = on_pipeline_complete
+    self.on_handoff_to_ingest = on_handoff_to_ingest
     self.enabled = cfg.get_sync_day_close_raw_removal_preflight()
     self._days: Dict[str, _DayRawRemovalState] = {}
     self._days_lock = threading.Lock()
@@ -719,6 +750,71 @@ class DayRawRemovalCoordinator:
     candidates.sort(key=lambda item: item[0])
     return [tar_path for _day_date, tar_path in candidates]
 
+  def should_handoff_to_ingest(self, tar_path: str) -> bool:
+    return self._get_or_create_day(tar_path).should_handoff_day_close_to_ingest()
+
+  def complete_handoff_to_ingest(
+      self,
+      tar_path: str,
+      *,
+      reason: str = "",
+  ) -> List[str]:
+    """Finalize handoff state and invoke ``on_handoff_to_ingest`` when wired."""
+    state = self._get_or_create_day(tar_path)
+    if not state.should_handoff_day_close_to_ingest():
+      return []
+    paths = state.complete_handoff_to_ingest()
+    if not paths:
+      return []
+    tar_norm = os.path.normpath(tar_path)
+    if self.on_handoff_to_ingest is not None:
+      try:
+        self.on_handoff_to_ingest(tar_norm, paths, reason)
+      except Exception:
+        if self.log_fn:
+          self.log_fn(
+              "Day raw removal handoff callback failed tar=%s" % tar_norm,
+              flush=True,
+          )
+    return paths
+
+  def discover_manifest_handoffs(self) -> List[Tuple[str, List[str]]]:
+    """Scan persisted per-day manifests for retryable-only handoff candidates."""
+    if not self.enabled:
+      return []
+    manifest_dir = day_removal_manifest_dir(self.archive_data_dir)
+    if not os.path.isdir(manifest_dir):
+      return []
+    handoffs: List[Tuple[str, List[str]]] = []
+    for fname in sorted(os.listdir(manifest_dir)):
+      if not fname.endswith(".json"):
+        continue
+      day_iso = fname[:-5]
+      try:
+        day_date = date.fromisoformat(day_iso)
+      except ValueError:
+        continue
+      tar_path = os.path.normpath(
+          os.path.join(self.tgz_archive_dir, "%s.tar" % day_date.isoformat()),
+      )
+      if not os.path.isfile(tar_path):
+        zst_path, gz_path = compressed_sibling_paths(tar_path)
+        if not (os.path.isfile(zst_path) or os.path.isfile(gz_path)):
+          continue
+      state = self._get_or_create_day(tar_path)
+      if not state.should_handoff_day_close_to_ingest():
+        continue
+      paths = state.handoff_paths_for_ingest()
+      if paths:
+        handoffs.append((state.tar_path, paths))
+    return handoffs
+
+  def _try_handoff_to_ingest(self, tar_path: str, *, reason: str) -> bool:
+    if not self.enabled or self.on_handoff_to_ingest is None:
+      return False
+    paths = self.complete_handoff_to_ingest(tar_path, reason=reason)
+    return bool(paths)
+
   def verified_paths_pending_delete(self, tar_path: str) -> Set[str]:
     return self._get_or_create_day(tar_path).paths_pending_delete()
 
@@ -762,6 +858,11 @@ class DayRawRemovalCoordinator:
         )
       with state._lock:
         _save_manifest(state._manifest_path, state._manifest)
+      return
+    self._try_handoff_to_ingest(
+        state.tar_path,
+        reason="verify_pipeline_complete",
+    )
 
   def _submit_async_verify(self, state: _DayRawRemovalState) -> None:
     if state._pipeline_future is not None and not state._pipeline_future.done():
@@ -817,7 +918,12 @@ class DayRawRemovalCoordinator:
   def apply_batch_delete(self, tar_path: str) -> int:
     state = self._get_or_create_day(tar_path)
     deleted = state.apply_batch_delete()
-    if state.delete_phase_done():
+    if state.should_handoff_day_close_to_ingest():
+      self.complete_handoff_to_ingest(
+          tar_path,
+          reason="batch_delete_waiting_on_ingest",
+      )
+    elif state.delete_phase_done():
       self._notify_delete_complete(tar_path)
     elif state.phase() == PHASE_VERIFYING:
       self.start_async_verify(tar_path)
