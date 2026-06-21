@@ -1,11 +1,16 @@
 FROM alpine:3.23.4
 
-RUN apk add --no-cache \
-    nginx-mod-http-brotli \
-    netcat-openbsd \
-    python3
+# Pin nginx from Alpine edge main (stable 3.23 lags); bump NGINX_EDGE_VERSION on proxy rebuilds.
+ARG NGINX_EDGE_VERSION=1.30.2-r1
+ARG ALPINE_EDGE_MAIN=https://dl-cdn.alpinelinux.org/alpine/edge/main
 
-RUN apk upgrade nginx --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main
+RUN apk add --no-cache \
+    netcat-openbsd \
+    python3 \
+ && apk add --no-cache \
+    nginx=${NGINX_EDGE_VERSION} \
+    nginx-mod-http-brotli=${NGINX_EDGE_VERSION} \
+    --repository=${ALPINE_EDGE_MAIN}
 
 RUN nginx -v
 
