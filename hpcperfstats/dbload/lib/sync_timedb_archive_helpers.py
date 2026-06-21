@@ -843,24 +843,49 @@ def _quarantine_one_closed_raw_path(
               flush=True,
           )
         return False
-      shutil.move(path_norm, dest_path)
-    entry = {
-        "original_path": path_norm,
-        "quarantined_path": os.path.normpath(dest_path),
-        "quarantined_at": time.time(),
-        "reason": reason,
-    }
-    if error_detail:
-      entry["error_detail"] = str(error_detail)
-    manifest_entries.append(entry)
-    already_quarantined.add(path_norm)
-    if log_fn:
-      log_fn(
-          "Quarantined unparsable raw stats %s -> %s"
-          % (path_norm, dest_path),
-          flush=True,
-      )
-    return True
+      entry = {
+          "original_path": path_norm,
+          "quarantined_path": os.path.normpath(dest_path),
+          "quarantined_at": time.time(),
+          "reason": reason,
+      }
+      if error_detail:
+        entry["error_detail"] = str(error_detail)
+      manifest_entries.append(entry)
+      try:
+        _save_unparsable_raw_manifest_atomic(manifest_path, manifest_entries)
+      except OSError as exc:
+        manifest_entries.pop()
+        if log_fn:
+          log_fn(
+              "Unparsable raw quarantine manifest save failed path=%s: %s"
+              % (path_norm, exc),
+              flush=True,
+          )
+        return False
+      try:
+        shutil.move(path_norm, dest_path)
+      except OSError as exc:
+        manifest_entries.pop()
+        try:
+          _save_unparsable_raw_manifest_atomic(manifest_path, manifest_entries)
+        except OSError:
+          pass
+        if log_fn:
+          log_fn(
+              "Unparsable raw quarantine failed path=%s: %s"
+              % (path_norm, exc),
+              flush=True,
+          )
+        return False
+      already_quarantined.add(path_norm)
+      if log_fn:
+        log_fn(
+            "Quarantined unparsable raw stats %s -> %s"
+            % (path_norm, dest_path),
+            flush=True,
+        )
+      return True
   except OSError as exc:
     if log_fn:
       log_fn(
@@ -900,7 +925,6 @@ def quarantine_ingest_failed_raw_path(
       error_detail=error_detail,
   )
   if handled and len(manifest_entries) > manifest_len_before:
-    _save_unparsable_raw_manifest_atomic(manifest_path, manifest_entries)
     invalidate_unmapped_disqualify_cache()
   return handled
 
@@ -959,6 +983,42 @@ def quarantine_unparsable_closed_raw_paths(
     _save_unparsable_raw_manifest_atomic(manifest_path, manifest_entries)
     invalidate_unmapped_disqualify_cache()
   return moved
+
+
+def raw_stats_path_fingerprint(path):
+  """Return ``{mtime, size}`` ns fingerprint for delete-time identity checks."""
+  try:
+    st = os.stat(path)
+    return {"mtime": int(st.st_mtime_ns), "size": int(st.st_size)}
+  except OSError:
+    return None
+
+
+def delete_raw_stats_path_if_fingerprint_unchanged(
+    path,
+    expected_fp,
+    *,
+    log_fn=log_print,
+):
+  """Delete ``path`` when on-disk fingerprint still matches ``expected_fp``."""
+  current_fp = raw_stats_path_fingerprint(path)
+  if expected_fp is not None and current_fp != expected_fp:
+    if log_fn:
+      log_fn(
+          "Skipping raw delete fingerprint changed path=%s" % path,
+          flush=True,
+      )
+    return False
+  try:
+    with file_write_lock(path):
+      if not os.path.isfile(path):
+        return True
+      os.remove(path)
+    return True
+  except OSError as exc:
+    if log_fn:
+      log_fn("Could not remove %s: %s" % (path, exc), flush=True)
+    return False
 
 
 def _checkpoint_entry_fingerprint(path):
@@ -1936,6 +1996,31 @@ def _notify_archive_members_invalidation(canonical, day_token=None):
     pass
 
 
+def invalidate_after_daily_tar_mutation(
+    daily_tar_or_compressed_path,
+    *,
+    reason=None,
+    log_fn=None,
+):
+  """Canonical hook after mutating a daily archive (append, dedupe, seal, bootstrap).
+
+  Accepts ``YYYY-MM-DD.tar``, ``.tar.zst``, or legacy ``.tar.gz``; invalidates L1
+  and Redis member maps for the canonical daily compressed key.
+  """
+  if not daily_tar_or_compressed_path:
+    return
+  canonical = normalize_daily_compressed_path(
+      os.path.normpath(daily_tar_or_compressed_path),
+  )
+  invalidate_daily_archive_members_cache(canonical)
+  if log_fn and reason:
+    log_fn(
+        "Archive members cache invalidated path=%s reason=%s"
+        % (canonical, reason),
+        flush=True,
+    )
+
+
 def invalidate_daily_archive_members_cache(compressed_path):
   """Drop cached member maps for a daily archive (append, seal, identity change)."""
   if not compressed_path:
@@ -2909,6 +2994,8 @@ def remove_verified_archived_raw_files(
     only_daily_tar_paths=None,
     allow_auto_seal=True,
     max_deletes_per_pass=None,
+    skip_raw_paths=None,
+    require_fingerprint_at_delete=False,
 ):
   """Remove raw stats files only after tar + sealed archive validation.
 
@@ -2947,6 +3034,10 @@ def remove_verified_archived_raw_files(
     if ingest_ready_fn is None:
       return True
     return bool(ingest_ready_fn(path))
+
+  skip_raw_norm = {
+      os.path.normpath(p) for p in (skip_raw_paths or ()) if p
+  }
 
   if not paths:
     return
@@ -3029,6 +3120,8 @@ def remove_verified_archived_raw_files(
       ):
         if status != "verified":
           continue
+        if os.path.normpath(path) in skip_raw_norm:
+          continue
         if (
             max_deletes_per_pass is not None
             and deletes_this_pass >= max_deletes_per_pass
@@ -3039,6 +3132,14 @@ def remove_verified_archived_raw_files(
               "removing stats file (scheduled archive maintenance): " + path,
               flush=True,
           )
+        if require_fingerprint_at_delete:
+          fp = raw_stats_path_fingerprint(path)
+          if not delete_raw_stats_path_if_fingerprint_unchanged(
+              path, fp, log_fn=log_fn,
+          ):
+            continue
+          deletes_this_pass += 1
+          continue
         try:
           with file_write_lock(path):
             os.remove(path)
@@ -3322,6 +3423,11 @@ def dedupe_tar_keep_largest_file_per_member(tar_path, log_fn=log_print):
           pass
         return False
       os.replace(tmp_path, tar_path)
+    invalidate_after_daily_tar_mutation(
+        tar_path,
+        reason="dedupe_tar_keep_largest",
+        log_fn=log_fn,
+    )
     if log_fn:
       log_fn("Deduplicated archive (largest wins per path): %s" % tar_path, flush=True)
     return True
@@ -3395,7 +3501,11 @@ def dedupe_sealed_daily_archive(
           flush=True,
       )
     return False
-  invalidate_daily_archive_members_cache(sealed_path)
+  invalidate_after_daily_tar_mutation(
+      sealed_path,
+      reason="dedupe_sealed_reseal",
+      log_fn=log_fn,
+  )
   try:
     from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
         clear_dedupe_hint,

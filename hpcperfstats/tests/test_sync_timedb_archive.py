@@ -2301,6 +2301,44 @@ def test_dedupe_tar_keep_largest_file_per_member_keeps_largest(tmp_path):
   assert names == ["p/q"]
 
 
+def test_dedupe_tar_invalidates_members_cache(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "2026-06-03.tar"
+  with tarfile.open(tar_path, "w") as tf:
+    _tar_add_bytes(tf, "a", b"x")
+    _tar_add_bytes(tf, "a", b"yy")
+  invalidated = []
+  monkeypatch.setattr(
+      helpers,
+      "invalidate_after_daily_tar_mutation",
+      lambda path, **kw: invalidated.append(path),
+  )
+  assert helpers.dedupe_tar_keep_largest_file_per_member(str(tar_path), log_fn=None)
+  assert invalidated == [str(tar_path)]
+
+
+def test_invalidate_after_daily_tar_mutation_from_tar_path(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "2026-06-04.tar"
+  tar_path.write_bytes(b"")
+  dropped = []
+  monkeypatch.setattr(
+      helpers,
+      "invalidate_daily_archive_members_cache",
+      lambda path: dropped.append(path),
+  )
+  helpers.invalidate_after_daily_tar_mutation(
+      str(tar_path),
+      reason="test",
+      log_fn=None,
+  )
+  assert dropped == [str(tmp_path / "2026-06-04.tar.zst")]
+
+
 def test_dedupe_sealed_daily_archive_last_resort(monkeypatch, tmp_path):
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
@@ -2326,7 +2364,7 @@ def test_dedupe_sealed_daily_archive_last_resort(monkeypatch, tmp_path):
   )
   monkeypatch.setattr(
       helpers,
-      "invalidate_daily_archive_members_cache",
+      "invalidate_after_daily_tar_mutation",
       lambda *_a, **_k: calls.append("invalidate"),
   )
   monkeypatch.setattr(
@@ -3913,12 +3951,115 @@ def test_quarantine_unparsable_closed_raw_moves_file_and_writes_manifest(tmp_pat
   manifest = json.loads(
       (archive_dir / helpers.SYNC_TIMEDB_UNPARSABLE_RAW_MANIFEST_BASENAME).read_text()
   )
-  assert len(manifest) == 1
-  assert manifest[0]["original_path"] == str(raw_path)
-  assert manifest[0]["reason"] == helpers.UNPARSABLE_RAW_QUARANTINE_REASON
+  entries = manifest["entries"] if isinstance(manifest, dict) else manifest
+  assert len(entries) == 1
+  assert entries[0]["original_path"] == str(raw_path)
+  assert entries[0]["reason"] == helpers.UNPARSABLE_RAW_QUARANTINE_REASON
   discovered = helpers.collect_stats_files_in_range(
       str(archive_dir), "all", None, ".hpc")
   assert str(raw_path) not in discovered
+
+
+def test_quarantine_manifest_written_before_move(monkeypatch, tmp_path):
+  import json
+
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  archive_dir = tmp_path / "archive"
+  host_dir = archive_dir / "host.hpc"
+  host_dir.mkdir(parents=True)
+  raw_path = host_dir / "bad_raw"
+  raw_path.write_text("no-timestamp-here\n")
+  manifest_path = archive_dir / helpers.SYNC_TIMEDB_UNPARSABLE_RAW_MANIFEST_BASENAME
+  order = []
+
+  real_move = helpers.shutil.move
+
+  def track_move(src, dst):
+    if manifest_path.is_file():
+      payload = json.loads(manifest_path.read_text())
+      entries = payload.get("entries", payload)
+      order.append("manifest_has_entry" if entries else "manifest_empty")
+    order.append("move")
+    return real_move(src, dst)
+
+  monkeypatch.setattr(helpers.shutil, "move", track_move)
+
+  moved = helpers.quarantine_unparsable_closed_raw_paths(
+      [str(raw_path)],
+      str(archive_dir),
+      log_fn=lambda *_a, **_k: None,
+  )
+  assert moved == 1
+  assert "move" in order
+  assert "manifest_has_entry" in order
+  assert order.index("manifest_has_entry") < order.index("move")
+
+
+def test_remove_verified_skips_delete_when_fingerprint_changes(
+    monkeypatch, tmp_path,
+):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  archive_dir = tmp_path / "archive"
+  tgz_dir = tmp_path / "tgz"
+  tgz_dir.mkdir()
+  host_dir = archive_dir / "host.hpc"
+  host_dir.mkdir(parents=True)
+  raw_path = host_dir / "1000000000"
+  raw_path.write_bytes(b"x" * 5)
+  zst_path = tgz_dir / "2020-01-01.tar.zst"
+  tar_path = tgz_dir / "2020-01-01.tar"
+  member_name = helpers.get_tar_member_name(str(raw_path))
+
+  import tarfile
+
+  with tarfile.open(tar_path, "w") as tf:
+    info = tarfile.TarInfo(name=member_name)
+    info.size = 5
+    tf.addfile(info, fileobj=__import__("io").BytesIO(b"x" * 5))
+
+  monkeypatch.setattr(
+      helpers,
+      "collect_stats_files_in_range",
+      lambda *_a, **_k: [str(raw_path)],
+  )
+  monkeypatch.setattr(
+      helpers,
+      "build_archive_mapping",
+      lambda paths, _tgz: {str(zst_path): list(paths)},
+  )
+  monkeypatch.setattr(
+      helpers,
+      "validate_sealed_daily_archive_for_raw_removal",
+      lambda *_a, **_k: (True, {member_name: 5}),
+  )
+  monkeypatch.setattr(
+      helpers,
+      "_iter_archive_validation_results_stream",
+      lambda paths, **_kw: [(paths[0], True, {member_name: 5})],
+  )
+
+  original_fp = helpers.raw_stats_path_fingerprint
+  calls = {"n": 0}
+
+  def fp_then_change(path):
+    calls["n"] += 1
+    if calls["n"] == 1:
+      return original_fp(path)
+    raw_path.write_bytes(b"yy")
+    return original_fp(path)
+
+  monkeypatch.setattr(helpers, "raw_stats_path_fingerprint", fp_then_change)
+
+  helpers.remove_verified_archived_raw_files(
+      str(archive_dir),
+      ".hpc",
+      str(tgz_dir),
+      log_fn=lambda *_a, **_k: None,
+      require_fingerprint_at_delete=True,
+  )
+  assert raw_path.is_file()
 
 
 def test_unparsable_unmapped_does_not_disqualify_day(tmp_path):

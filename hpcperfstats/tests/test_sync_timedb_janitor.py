@@ -442,6 +442,28 @@ def test_close_one_day_dedupes_before_seal(monkeypatch, tmp_path):
   assert order == ["dedupe", "seal"]
 
 
+def test_janitor_raw_remove_passes_quarantine_skip_and_fingerprint(monkeypatch, tmp_path):
+  tar_path = str(tmp_path / "2020-01-06.tar")
+  open(tar_path, "wb").close()
+  captured = {}
+
+  def capture_remove(*_a, **kwargs):
+    captured.update(kwargs)
+    return None
+
+  janitor = _make_janitor(tgz_archive_dir=str(tmp_path))
+  janitor.get_quarantine_skip_paths = lambda: {"/skip/me"}
+  monkeypatch.setattr(janitor_mod, "remove_verified_archived_raw_files", capture_remove)
+  janitor._raw_remove_one_day(
+      tar_path,
+      snapshot=None,
+      validation_cache={"hits": 0, "misses": 0},
+      disqualified=set(),
+  )
+  assert captured.get("skip_raw_paths") == {"/skip/me"}
+  assert captured.get("require_fingerprint_at_delete") is True
+
+
 def test_janitor_rss_defer_reschedules_tick(monkeypatch):
   janitor = _make_janitor()
   submitted = []

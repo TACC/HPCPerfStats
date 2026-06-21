@@ -87,6 +87,28 @@ def test_ingest_checkpoint_envelope_round_trip(tmp_path):
 
 
 @pytest.mark.django_db(databases=[])
+def test_load_rejects_unsupported_schema_version(tmp_path):
+  path = str(tmp_path / "state.json")
+  with open(path, "w", encoding="utf-8") as handle:
+    json.dump(
+        {
+            "contract_version": SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION,
+            "schema_version": 999,
+            "entries": [{"path": "/x", "size": 1, "mtime": 2}],
+        },
+        handle,
+    )
+  logs = []
+  loaded = load_persistence_document(
+      path,
+      "ingest_checkpoint",
+      log_fn=lambda msg, **_kw: logs.append(str(msg)),
+  )
+  assert loaded == []
+  assert any("reject" in line for line in logs)
+
+
+@pytest.mark.django_db(databases=[])
 def test_reset_sync_timedb_persistence_unlinks_registry_paths(tmp_path):
   archive_dir = str(tmp_path / "archive")
   os.makedirs(archive_dir)

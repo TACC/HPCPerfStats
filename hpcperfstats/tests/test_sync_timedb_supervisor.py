@@ -2959,8 +2959,8 @@ def test_finalize_invalidates_members_cache(monkeypatch):
   invalidated = []
   monkeypatch.setattr(
       st,
-      "invalidate_daily_archive_members_cache",
-      lambda path: invalidated.append(path),
+      "invalidate_after_daily_tar_mutation",
+      lambda path, **kw: invalidated.append(path),
   )
   target = "/tmp/stats-inv"
   archive_compressed = "/tmp/2026-06-01.tar.gz"
@@ -3010,6 +3010,184 @@ def test_finalize_invalidates_members_cache(monkeypatch):
   finally:
     shutdown_requested[0] = False
   assert archive_compressed in invalidated
+
+
+def test_ingest_first_archive_abandoned_after_retries_exhausted(monkeypatch, tmp_path):
+  shutdown_requested[0] = False
+  logs = []
+  target = str(tmp_path / "stats-abandon.hpc")
+  open(target, "wb").close()
+  archive_compressed = str(tmp_path / "2026-06-01.tar.gz")
+  dead_letter_saved = []
+  checkpoint_saved = []
+
+  class _DonePreflight:
+    enabled = False
+
+    def verification_complete(self):
+      return True
+
+    def needs_delete_phase(self):
+      return False
+
+    def delete_phase_done(self):
+      return True
+
+    def paths_pending_startup_delete(self):
+      return set()
+
+    def consumed_paths(self):
+      return set()
+
+    def start_async_verify(self):
+      return None
+
+    def shutdown(self, wait=True):
+      del wait
+
+  _supervisor_startup_preflight_patches(monkeypatch, _DonePreflight())
+  monkeypatch.setattr(st, "ThreadPoolExecutor", _InlineThreadPoolExecutor)
+
+  def fake_rescan(*_a, **_k):
+    if fake_rescan.calls == 0:
+      fake_rescan.calls += 1
+      return [target]
+    shutdown_requested[0] = True
+    return []
+  fake_rescan.calls = 0
+
+  monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+  monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (target, True, True, 0.0))
+  monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+  monkeypatch.setattr(
+      st, "build_archive_mapping", lambda *_a, **_k: {archive_compressed: [target]},
+  )
+  monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: False)
+  monkeypatch.setattr(st.cfg, "get_sync_archive_retry_max_attempts", lambda: 1)
+  monkeypatch.setattr(st.cfg, "get_sync_archive_retry_backoff_base_seconds", lambda: 0.0)
+  monkeypatch.setattr(st.cfg, "get_sync_archive_retry_backoff_max_seconds", lambda: 0.0)
+  monkeypatch.setattr(st.cfg, "get_sync_enable_ingest_first_durability_mode", lambda: True)
+  monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+  monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
+  monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+  monkeypatch.setattr(st, "close_old_connections", lambda: None)
+  monkeypatch.setattr(st.connections, "close_all", lambda: None)
+  monkeypatch.setattr(st, "tgz_archive_dir", str(tmp_path))
+  monkeypatch.setattr(st, "log_print", lambda msg, *a, **kw: logs.append(str(msg)))
+  monkeypatch.setattr(
+      st,
+      "_save_dead_letter_entries",
+      lambda _path, entries: dead_letter_saved.append(list(entries)),
+  )
+  monkeypatch.setattr(
+      st,
+      "_save_sync_checkpoint",
+      lambda _path, entries: checkpoint_saved.append(list(entries)),
+  )
+
+  class _AlwaysFailArchive:
+    def map_async(self, _fn, items):
+      return _fake_map_async_result([False for _ in items])
+
+  try:
+    st.run_sync_timedb_supervisor_loop(
+        str(tmp_path / "archive"),
+        "all",
+        None,
+        ".hpc",
+        object(),
+        _AlwaysFailArchive(),
+        run_once=True,
+    )
+  finally:
+    shutdown_requested[0] = False
+
+  assert any("ingest_first_archive_abandoned_raw" in line for line in logs), logs[-30:]
+  assert any("Archive retries exhausted" in line for line in logs), logs[-30:]
+  assert dead_letter_saved
+  assert checkpoint_saved
+  checkpoint_paths = {entry["path"] for entry in checkpoint_saved[-1]}
+  assert target in checkpoint_paths
+  assert os.path.isfile(target)
+
+
+def test_checkpoint_flush_logs_oserror_and_preserves_dirty(monkeypatch, tmp_path):
+  shutdown_requested[0] = False
+  logs = []
+  flush_calls = {"n": 0}
+
+  def failing_save(_path, _entries):
+    flush_calls["n"] += 1
+    raise OSError(28, "No space left on device")
+
+  target = str(tmp_path / "stats-cp.hpc")
+  open(target, "wb").close()
+
+  class _DonePreflight:
+    enabled = False
+
+    def verification_complete(self):
+      return True
+
+    def needs_delete_phase(self):
+      return False
+
+    def delete_phase_done(self):
+      return True
+
+    def paths_pending_startup_delete(self):
+      return set()
+
+    def consumed_paths(self):
+      return set()
+
+    def start_async_verify(self):
+      return None
+
+    def shutdown(self, wait=True):
+      del wait
+
+  _supervisor_startup_preflight_patches(monkeypatch, _DonePreflight())
+  monkeypatch.setattr(st, "ThreadPoolExecutor", _InlineThreadPoolExecutor)
+
+  def fake_rescan(*_a, **_k):
+    if fake_rescan.calls == 0:
+      fake_rescan.calls += 1
+      return [target]
+    shutdown_requested[0] = True
+    return []
+  fake_rescan.calls = 0
+
+  monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+  monkeypatch.setattr(st, "add_stats_file_to_db", lambda *_a, **_k: (target, False, True, 0.0))
+  monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+  monkeypatch.setattr(st.cfg, "get_sync_enable_db_writer_pipeline", lambda: False)
+  monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+  monkeypatch.setattr(st, "build_archive_mapping", lambda *_a, **_k: {})
+  monkeypatch.setattr(st, "seal_dirty_daily_archives", lambda *a, **k: None)
+  monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
+  monkeypatch.setattr(st, "close_old_connections", lambda: None)
+  monkeypatch.setattr(st.connections, "close_all", lambda: None)
+  monkeypatch.setattr(st, "tgz_archive_dir", str(tmp_path))
+  monkeypatch.setattr(st, "log_print", lambda msg, *a, **kw: logs.append(str(msg)))
+  monkeypatch.setattr(st, "_save_sync_checkpoint", failing_save)
+  monkeypatch.setattr(st, "SYNC_TIMEDB_CHECKPOINT_FLUSH_EVERY_FILES", 1)
+
+  try:
+    st.run_sync_timedb_supervisor_loop(
+        str(tmp_path / "archive"),
+        "all",
+        None,
+        ".hpc",
+        object(),
+        object(),
+        run_once=True,
+    )
+  finally:
+    shutdown_requested[0] = False
+
+  assert flush_calls["n"] >= 1
+  assert any("ERROR: checkpoint flush failed" in line for line in logs)
 
 
 def test_combined_db_writer_task_uses_single_pool_path(monkeypatch):

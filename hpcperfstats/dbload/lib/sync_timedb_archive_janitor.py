@@ -1467,6 +1467,8 @@ class ArchiveJanitor:
         only_daily_tar_paths={tar_path},
         allow_auto_seal=False,
         max_deletes_per_pass=max_paths,
+        skip_raw_paths=self.get_quarantine_skip_paths(),
+        require_fingerprint_at_delete=True,
     )
     self._tick_remaining_raw_cache.pop(os.path.normpath(tar_path), None)
     after_remaining = self._fresh_remaining_raw_by_gz_for_tar(tar_path)

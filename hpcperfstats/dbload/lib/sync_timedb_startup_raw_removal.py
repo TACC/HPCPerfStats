@@ -27,13 +27,15 @@ from hpcperfstats.dbload.lib.sync_timedb_persistence import (
 )
 from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
 
+from hpcperfstats.dbload.lib.sync_timedb_manifest_contract import (
+    PHASE_DELETING,
+    PHASE_DONE,
+    PHASE_VERIFICATION_COMPLETE,
+    PHASE_VERIFYING,
+)
+
 MANIFEST_BASENAME = ".sync_timedb_startup_raw_removal.json"
 MANIFEST_VERSION = 1
-
-PHASE_VERIFYING = "verifying"
-PHASE_VERIFICATION_COMPLETE = "verification_complete"
-PHASE_DELETING = "deleting"
-PHASE_DONE = "done"
 
 
 def manifest_path(archive_data_dir: str) -> str:

@@ -162,6 +162,105 @@ def ensure_persistence_contract(archive_data_dir: str, *, log_fn: LogFn = None) 
   return True
 
 
+def _expected_schema_version(kind: str) -> Optional[int]:
+  if kind == "ingest_checkpoint":
+    return INGEST_CHECKPOINT_SCHEMA_VERSION
+  if kind == "archive_dead_letter":
+    return DEAD_LETTER_SCHEMA_VERSION
+  if kind == "unparsable_raw":
+    return UNPARSABLE_RAW_SCHEMA_VERSION
+  if kind == "archive_maint_hints":
+    return MAINT_HINTS_SCHEMA_VERSION
+  if kind in (
+      "async_day_close",
+      "startup_day_close",
+      "startup_tar_seal",
+      "startup_raw_removal",
+      "day_raw_removal",
+  ):
+    return MANIFEST_SCHEMA_VERSION
+  return None
+
+
+def _validate_envelope(raw: Any, *, kind: str, log_fn: LogFn = None) -> bool:
+  """Return False when envelope schema/version/shape is unsupported."""
+  if raw is None:
+    return False
+  expected = _expected_schema_version(kind)
+  if kind in ("ingest_checkpoint", "archive_dead_letter", "unparsable_raw"):
+    if isinstance(raw, list):
+      return True
+    if not isinstance(raw, dict):
+      return False
+    schema = raw.get("schema_version")
+    if schema is not None and expected is not None:
+      try:
+        if int(schema) != expected:
+          if log_fn:
+            log_fn(
+                "sync_timedb: reject %s schema_version=%s expected=%s"
+                % (kind, schema, expected),
+                flush=True,
+            )
+          return False
+      except (TypeError, ValueError):
+        return False
+    if not isinstance(raw.get("entries"), list):
+      return False
+    return True
+  if kind == "archive_maint_hints":
+    if not isinstance(raw, dict):
+      return False
+    version = raw.get("version")
+    if version is not None and expected is not None:
+      try:
+        if int(version) != expected:
+          if log_fn:
+            log_fn(
+                "sync_timedb: reject archive_maint_hints version=%s expected=%s"
+                % (version, expected),
+                flush=True,
+            )
+          return False
+      except (TypeError, ValueError):
+        return False
+    return True
+  if kind in (
+      "async_day_close",
+      "startup_day_close",
+      "startup_tar_seal",
+      "startup_raw_removal",
+      "day_raw_removal",
+  ):
+    if not isinstance(raw, dict):
+      return False
+    schema = raw.get("schema_version", raw.get("version"))
+    if schema is not None and expected is not None:
+      try:
+        if int(schema) != expected:
+          if log_fn:
+            log_fn(
+                "sync_timedb: reject %s schema_version=%s expected=%s"
+                % (kind, schema, expected),
+                flush=True,
+            )
+          return False
+      except (TypeError, ValueError):
+        return False
+    from hpcperfstats.dbload.lib.sync_timedb_manifest_contract import (
+        validate_manifest_payload,
+    )
+    if not validate_manifest_payload(kind, raw):
+      if log_fn:
+        log_fn(
+            "sync_timedb: reject %s manifest missing required fields" % kind,
+            flush=True,
+        )
+      return False
+    return True
+  return True
+
+
 def _unwrap_envelope(raw: Any, *, kind: str) -> Any:
   if kind == "ingest_checkpoint":
     if isinstance(raw, list):
@@ -206,6 +305,7 @@ def load_persistence_document(
     kind: str,
     *,
     default: Any = None,
+    log_fn: LogFn = None,
 ) -> Any:
   """Load a registered artifact after ``ensure_persistence_contract``."""
   if default is None:
@@ -228,6 +328,8 @@ def load_persistence_document(
   if not path or not os.path.isfile(path):
     return default
   raw = _read_json_file(path)
+  if not _validate_envelope(raw, kind=kind, log_fn=log_fn):
+    return default
   unwrapped = _unwrap_envelope(raw, kind=kind)
   if unwrapped is None:
     return default

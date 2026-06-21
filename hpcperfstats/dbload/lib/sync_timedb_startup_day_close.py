@@ -40,8 +40,10 @@ from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
 MANIFEST_BASENAME = ".sync_timedb_startup_day_close.json"
 MANIFEST_VERSION = 1
 
-PHASE_DISCOVERING = "discovering"
-PHASE_DONE = "done"
+from hpcperfstats.dbload.lib.sync_timedb_manifest_contract import (
+    PHASE_DISCOVERING,
+    PHASE_DONE,
+)
 
 
 def manifest_path(archive_data_dir: str) -> str:

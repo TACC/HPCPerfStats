@@ -32,10 +32,12 @@ from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
 MANIFEST_VERSION = 1
 MANIFEST_SUBDIR = ".sync_timedb_day_raw_removal"
 
-PHASE_VERIFYING = "verifying"
-PHASE_VERIFICATION_COMPLETE = "verification_complete"
-PHASE_DELETING = "deleting"
-PHASE_DONE = "done"
+from hpcperfstats.dbload.lib.sync_timedb_manifest_contract import (
+    PHASE_DELETING,
+    PHASE_DONE,
+    PHASE_VERIFICATION_COMPLETE,
+    PHASE_VERIFYING,
+)
 
 RETRYABLE_SKIP_REASONS = frozenset({
     "not_sample_ingested",

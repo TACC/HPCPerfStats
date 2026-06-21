@@ -127,6 +127,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     filter_files_to_add_to_archive,
     get_existing_archive_members,
     get_existing_archive_members_for_daily_archive,
+    invalidate_after_daily_tar_mutation,
     invalidate_daily_archive_members_cache,
     iter_daily_tar_paths,
     replace_corrupt_tar_from_compressed_backup,
@@ -3076,6 +3077,12 @@ def _archive_stats_files_body(archive_info):
             flush=True,
         )
         return False
+  if stats_files_to_tar:
+    invalidate_after_daily_tar_mutation(
+        archive_fname,
+        reason="tar_append",
+        log_fn=log_print,
+    )
   return True
 
 
@@ -3521,7 +3528,11 @@ def run_sync_timedb_supervisor_loop(
       archive_task = task_payload["task"]
       archive_paths = task_payload["paths"]
       if result:
-        invalidate_daily_archive_members_cache(archive_task.archive_info[0])
+        invalidate_after_daily_tar_mutation(
+            archive_task.archive_info[0],
+            reason="archive_finalize",
+            log_fn=log_print,
+        )
         for p in archive_paths:
           _transition_file_state(file_states, p, SyncFileState.ARCHIVED)
           added = _add_processed_path(
@@ -3673,8 +3684,16 @@ def run_sync_timedb_supervisor_loop(
     try:
       _save_sync_checkpoint(checkpoint_path, checkpoint_entries)
       checkpoint_dirty_count = 0
-    except OSError:
-      pass
+    except OSError as exc:
+      log_print(
+          "ERROR: checkpoint flush failed path=%s errno=%s: %s"
+          % (
+              checkpoint_path,
+              getattr(exc, "errno", ""),
+              exc,
+          ),
+          flush=True,
+      )
 
   def _invalidate_host_scan_hints_for_paths(paths):
     if not isinstance(host_scan_hints, dict):
