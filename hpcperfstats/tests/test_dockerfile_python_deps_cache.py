@@ -69,3 +69,13 @@ def test_hpcperfstats_child_stages_do_not_reinstall_python_deps():
     stage = _stage_body(dockerfile, stage_name)
     assert "pip install" not in stage, stage_name
     assert "collectstatic --noinput" in stage, stage_name
+
+
+def test_hpcperfstats_full_is_last_dockerfile_stage():
+  """Default build target must run frontend-builder (podman-compose ignores build.target)."""
+  dockerfile = (_repo_root() / "Dockerfile").read_text()
+  stages = re.findall(r"^FROM .* AS (\S+)", dockerfile, flags=re.MULTILINE)
+
+  assert stages[-1] == "hpcperfstats-full"
+  assert stages.index("hpcperfstats-pipeline-refresh") < stages.index("hpcperfstats-full")
+  assert "COPY --from=frontend-builder" in _stage_body(dockerfile, "hpcperfstats-full")

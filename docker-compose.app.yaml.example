@@ -2,7 +2,10 @@
 
 services:
   web:
-    build: ./
+    build:
+      context: ./
+      dockerfile: Dockerfile
+      target: hpcperfstats-full
     image: hpcperfstats
     restart: always
     command: /home/hpcperfstats/services-conf/django_startup.sh

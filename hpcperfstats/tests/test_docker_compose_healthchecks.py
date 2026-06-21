@@ -74,4 +74,16 @@ def test_docker_compose_app_uses_configurable_pipeline_ssh_mount():
   for content in (app_content, app_example_content):
     assert "HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini" in content
     assert "./hpcperfstats.ini:/home/hpcperfstats/hpcperfstats.ini:ro" not in content
+    assert "target: hpcperfstats-full" in content
+
+
+def test_docker_compose_app_web_build_uses_hpcperfstats_full_target():
+  """Compose must request full image; rebuild_pipeline.sh uses pipeline-refresh explicitly."""
+  repo_root = Path(__file__).resolve().parents[2]
+  app_compose_path = repo_root / "docker-compose.app.yaml"
+  content = app_compose_path.read_text()
+
+  assert "dockerfile: Dockerfile" in content
+  assert "target: hpcperfstats-full" in content
+  assert content.index("target: hpcperfstats-full") < content.index("image: hpcperfstats")
 

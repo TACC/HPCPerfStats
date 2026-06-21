@@ -48,6 +48,22 @@ RUN /bin/bash -o pipefail -c "useradd -u 901860 -ms /bin/bash hpcperfstats \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*"
 
+# Default syslog-ng allowlist fragment (render overwrites at container start).
+# Keep this self-contained so image builds do not depend on optional files in
+# services-conf/ that may be absent in some checkouts.
+RUN /bin/bash -o pipefail -c "printf '%s\n' \
+    '# Generated fallback (build-time default). Runtime startup rewrites this file.' \
+    'source s_net {' \
+    '       tcp(ip(0.0.0.0) port(514) max-connections (100) log_iw_size(100000)) ;' \
+    '       udp(ip(0.0.0.0) port(514));' \
+    '};' \
+    '' \
+    'filter f_hps_syslog_allow_net {' \
+    '       netmask(0.0.0.0/0);' \
+    '};' \
+    > /var/lib/hpcperfstats-syslog/generated.conf \
+    && chmod 644 /var/lib/hpcperfstats-syslog/generated.conf"
+
 WORKDIR /home/hpcperfstats
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -71,26 +87,25 @@ RUN chmod +x \
     /home/hpcperfstats/services-conf/django_startup.sh \
     /home/hpcperfstats/services-conf/supervisor_startup.sh
 
-# Default syslog-ng allowlist fragment (render overwrites at container start).
-# Keep this self-contained so image builds do not depend on optional files in
-# services-conf/ that may be absent in some checkouts.
-RUN /bin/bash -o pipefail -c "printf '%s\n' \
-    '# Generated fallback (build-time default). Runtime startup rewrites this file.' \
-    'source s_net {' \
-    '       tcp(ip(0.0.0.0) port(514) max-connections (100) log_iw_size(100000)) ;' \
-    '       udp(ip(0.0.0.0) port(514));' \
-    '};' \
-    '' \
-    'filter f_hps_syslog_allow_net {' \
-    '       netmask(0.0.0.0/0);' \
-    '};' \
-    > /var/lib/hpcperfstats-syslog/generated.conf \
-    && chmod 644 /var/lib/hpcperfstats-syslog/generated.conf"
+
 
 # Install the hpcperfstats package (deps already installed above).
 RUN /bin/bash -o pipefail -c "pip install --no-cache-dir --no-deps . && pip cache purge"
 
-# Default image: npm-built frontend from frontend-builder.
+# Pipeline-only refresh: scripts/rebuild_pipeline.sh populates
+# .build/pipeline-rebuild-frontend/ from the live deployment before build.
+# Must appear before hpcperfstats-full: podman-compose often ignores build.target
+# and builds the last stage; rebuild_pipeline.sh passes --target explicitly.
+FROM hpcperfstats-base AS hpcperfstats-pipeline-refresh
+
+COPY .build/pipeline-rebuild-frontend/ \
+    /home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend/
+RUN chown -R hpcperfstats:hpcperfstats \
+    /home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend
+
+RUN /bin/bash -o pipefail -c "/usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput"
+
+# Default image: npm-built frontend from frontend-builder (last stage = default target).
 FROM hpcperfstats-base AS hpcperfstats-full
 
 COPY --from=frontend-builder --chown=hpcperfstats:hpcperfstats \
@@ -100,15 +115,4 @@ COPY --from=frontend-builder --chown=hpcperfstats:hpcperfstats \
 # collectstatic here: fail-fast at image build (and supports runs without a
 # compose volume over STATIC_ROOT). Compose still runs collectstatic on web
 # startup because staticfiles_data masks the image layer at /home/hpcperfstats/staticfiles.
-RUN /bin/bash -o pipefail -c "/usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput"
-
-# Pipeline-only refresh: scripts/rebuild_pipeline.sh populates
-# .build/pipeline-rebuild-frontend/ from the live deployment before build.
-FROM hpcperfstats-base AS hpcperfstats-pipeline-refresh
-
-COPY .build/pipeline-rebuild-frontend/ \
-    /home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend/
-RUN chown -R hpcperfstats:hpcperfstats \
-    /home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend
-
 RUN /bin/bash -o pipefail -c "/usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput"
