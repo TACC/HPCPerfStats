@@ -19,8 +19,8 @@ def _patch_stats_file_size_bytes(monkeypatch, fn):
   monkeypatch.setattr(ingest_timeout_mod, "stats_file_size_bytes", fn)
 
 
-_PER_MIB_DEFAULT = (64800.0 - 900.0) / 30720.0
-_MAX_TIMEOUT_DEFAULT = 64800.0
+_PER_MIB_DEFAULT = (86400.0 - 900.0) / 30720.0
+_MAX_TIMEOUT_DEFAULT = 86400.0
 
 
 def _default_timeout_getters(monkeypatch):
@@ -40,7 +40,7 @@ def _default_timeout_getters(monkeypatch):
     [
         (0, 900.0),
         (_mib_bytes(66), 900.0 + 66.0 * _PER_MIB_DEFAULT),
-        (_mib_bytes(2048), 5160.0),
+        (_mib_bytes(2048), 6600.0),
         (_mib_bytes(512), 900.0 + 512.0 * _PER_MIB_DEFAULT),
         (_mib_bytes(5120), 900.0 + 5120.0 * _PER_MIB_DEFAULT),
         (_mib_bytes(30720), _MAX_TIMEOUT_DEFAULT),
@@ -83,7 +83,7 @@ def test_run_ingest_timed_uses_resolved_timeout(monkeypatch, tmp_path):
   monkeypatch.setattr(st, "_log_long_ingest_timeout_budget_if_needed", lambda *_a, **_k: None)
 
   st._run_ingest_timed(str(stats_file), "parse", lambda: "ok")
-  assert any(math.isclose(value, 64800.0, rel_tol=0, abs_tol=0.01) for value in seen)
+  assert any(math.isclose(value, 86400.0, rel_tol=0, abs_tol=0.01) for value in seen)
 
 
 def test_long_timeout_budget_logs_warning(monkeypatch, tmp_path, capsys):
@@ -128,8 +128,8 @@ def test_warn_if_pool_stall_wall_below_ingest_timeout_max(monkeypatch, capsys):
 
 def test_warn_if_pool_stall_wall_ok_at_shipped_defaults(monkeypatch, capsys):
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
-  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 13000)
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 64800.0)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 17320)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 86400.0)
   st._warn_if_pool_stall_wall_below_ingest_timeout_max()
   assert "WARN: sync_pool stall ceiling wall" not in capsys.readouterr().out
 
@@ -137,7 +137,7 @@ def test_warn_if_pool_stall_wall_ok_at_shipped_defaults(monkeypatch, capsys):
 def test_stall_abort_polls_for_batch_small_files(monkeypatch, tmp_path):
   _default_timeout_getters(monkeypatch)
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
-  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 13000)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 17320)
   small = tmp_path / "small"
   small.write_bytes(b"x" * 1024)
   _patch_stats_file_size_bytes(monkeypatch, lambda _p: 1024)
@@ -148,28 +148,28 @@ def test_stall_abort_polls_for_batch_small_files(monkeypatch, tmp_path):
 def test_stall_abort_polls_for_batch_large_file(monkeypatch, tmp_path):
   _default_timeout_getters(monkeypatch)
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
-  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 13000)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 17320)
   size_bytes = _mib_bytes(30720)
   large = tmp_path / "large"
   large.write_bytes(b"x" * min(size_bytes, 65536))
   _patch_stats_file_size_bytes(monkeypatch, lambda _p: size_bytes)
   expected_timeout = st.resolve_ingest_per_file_timeout_s(str(large))
   polls = st._stall_abort_polls_for_batch([str(large)])
-  assert expected_timeout == 64800.0
+  assert expected_timeout == 86400.0
   assert polls == int(expected_timeout / 5.0) + 1
 
 
 def test_stall_abort_polls_scales_to_30gib_budget(monkeypatch, tmp_path):
   _default_timeout_getters(monkeypatch)
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
-  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 13000)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 17320)
   size_bytes = _mib_bytes(30720)
   giant = tmp_path / "giant30g"
   giant.write_bytes(b"x")
   _patch_stats_file_size_bytes(monkeypatch, lambda _p: size_bytes)
   polls = st._stall_abort_polls_for_batch([str(giant)])
-  assert polls == int(64800.0 / 5.0) + 1
-  assert polls < 13000
+  assert polls == int(86400.0 / 5.0) + 1
+  assert polls < 17320
 
 
 def test_stall_abort_polls_respects_ini_ceiling(monkeypatch, tmp_path):
@@ -239,7 +239,7 @@ def test_giant_trigger_budget_2gib_boundary(monkeypatch, tmp_path):
   monkeypatch.setattr(
       st.cfg,
       "get_sync_ingest_giant_pool_supplement_trigger_budget_s",
-      lambda: 5160.0,
+      lambda: 6600.0,
   )
   under = tmp_path / "under2g"
   at2g = tmp_path / "at2g"

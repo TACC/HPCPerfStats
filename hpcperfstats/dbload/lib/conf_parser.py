@@ -1609,15 +1609,15 @@ def get_sync_pool_stall_abort_after_timeouts():
     try:
       return max(1, int(env))
     except (TypeError, ValueError, OverflowError):
-      return 13000
+      return 17320
   _ensure_cfg_loaded()
   try:
     return max(
         1,
-        int(_pipeline_get("sync_pool_stall_abort_after_timeouts", fallback="13000")),
+        int(_pipeline_get("sync_pool_stall_abort_after_timeouts", fallback="17320")),
     )
   except (TypeError, ValueError, OverflowError):
-    return 13000
+    return 17320
 
 
 def get_sync_pool_worker_recycle_grace_polls():
@@ -1788,7 +1788,7 @@ def get_sync_ingest_per_file_timeout_s():
 
 # 30 GiB × per_mib + floor reaches max at default slope.
 _SYNC_INGEST_PER_FILE_TIMEOUT_REFERENCE_MIB = 30720  # 30 GiB
-_SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S_DEFAULT = 64800.0  # 18h at reference size
+_SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S_DEFAULT = 86400.0  # 24h at reference size
 _SYNC_INGEST_PER_FILE_TIMEOUT_S_PER_MIB_DEFAULT = (
     (_SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S_DEFAULT - 900.0)
     / _SYNC_INGEST_PER_FILE_TIMEOUT_REFERENCE_MIB

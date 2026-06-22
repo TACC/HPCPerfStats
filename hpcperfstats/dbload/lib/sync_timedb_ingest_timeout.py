@@ -1,6 +1,6 @@
 """Per-file ingest timeout and pool stall-abort helpers (shared by sync_timedb and pool dispatch).
 
-Default INI fallbacks map **30 GiB → max** per-file ingest budget (18h at reference size).
+Default INI fallbacks map **30 GiB → max** per-file ingest budget (24h at reference size).
 Operators should tune ``sync_ingest_per_file_timeout_max_s``, ``per_mib``, and
 ``sync_pool_stall_abort_after_timeouts`` together.
 """
