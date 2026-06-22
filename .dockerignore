@@ -64,6 +64,7 @@ hpcperfstats/site/frontend/README.md
 
 # Cursor agent rules (.cursor/ excluded above)
 hpcperfstats/cursor-rules/
+cursor-hooks/
 **/*.mdc
 
 # Operator / design docs (root README.md kept for setuptools metadata)
