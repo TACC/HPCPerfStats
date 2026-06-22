@@ -17,7 +17,7 @@ RUN /bin/bash -o pipefail -c "npm ci"
 WORKDIR /home/hpcperfstats
 COPY --chown=node:node hpcperfstats/site/openapi/openapi.yaml \
     hpcperfstats/site/openapi/
-COPY --chown=node:node hpcperfstats.ini* ./
+COPY --chown=node:node hpcperfstats.ini ./
 
 WORKDIR /home/hpcperfstats/hpcperfstats/site/frontend
 
