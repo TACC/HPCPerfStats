@@ -12,12 +12,23 @@ Applies to **every plan**: pre-code chat plans, **`.cursor/plans/*.plan.md`** (l
 
 **Authoring entrypoint:** read and match **`docs/plans/PLAN_TEMPLATE.md`**. **`plan-template-enforcement.mdc`** and **`plan-completion-gate.mdc`** restate the non-skippable **close sequence** (senior final code review + structured chat self-review) for **all non-trivial code changes**; plan YAML + **`post-implementation-review`** todo when implementing a plan.
 
+## Plan disk authority (chat does not count)
+
+Per **`plan-live-disk-sync.mdc`** — **mandatory for every plan and every plan iteration**:
+
+1. **Write the plan to disk** at **`<workspace_root>/.cursor/plans/<name>.plan.md`** on first creation and **on every turn** that learns facts, receives operator output, changes scope, or completes a step.
+2. **Chat, CreatePlan-only output, and TodoWrite do not count** as plan updates — only **Write** / **StrReplace** to the live plan file counts.
+3. Include **`## Plan disk file`** in the plan body (live path + last-updated date).
+4. When operator commands are needed, maintain **`## Operator discovery`** with **Completed findings** (summaries) and **Pending commands** (one bash block per Compose service); retire commands from Pending when results arrive and record what was asked vs found.
+
+Hooks enforce disk sync and required plan sections on **`CreatePlan`** turns (`cursor-hooks/hpc_hook_lib.py`).
+
 ## Grounding (no guessing)
 
 - Base every claim on **verified facts** from the repo (code, tests, logs, committed docs) — not assumptions.
 - Read callers, tests, and applicable workspace rules before stating current behavior or scope.
 - If a requirement, API, config key, acceptance criterion, or best-practice choice is unclear: **ask the user**; **do not guess** or invent context.
-- When the operator must run terminal commands to supply facts, use **`compose-operator-terminal-commands.mdc`**: one copy/paste block per Compose service. Read-only `exec`/`logs` need **no redeploy**; request them proactively when they improve the plan (`deploy-ini-with-code-no-phase-zero.mdc`).
+- When the operator must run terminal commands to supply facts, use **`compose-operator-terminal-commands.mdc`**: one copy/paste block per Compose service, recorded under **`## Operator discovery`** in the **live plan file** (`plan-live-disk-sync.mdc`). Read-only `exec`/`logs` need **no redeploy**; request them proactively when they improve the plan (`deploy-ini-with-code-no-phase-zero.mdc`).
 
 ## Industry best practices
 
@@ -105,3 +116,4 @@ A plan — and the work it describes — is **not complete** until:
 - **`test-runs-output-directory.mdc`** — committed **`docs/plans/`** hold design baselines; run artifacts stay under **`test_runs/`**.
 - **`chat-analysis-for-rules.mdc`** — on-demand transcript mining for rule ideas; this rule requires enshrining patterns discovered during implementation plans in the same task when clear.
 - **`deploy-ini-with-code-no-phase-zero.mdc`** — redeploy INI + code together; no Phase 0 operator-only INI steps in plans.
+- **`plan-live-disk-sync.mdc`** — live plan file on disk is authority; operator discovery findings table; chat does not count.

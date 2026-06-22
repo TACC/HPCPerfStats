@@ -71,7 +71,8 @@ docker compose exec pipeline su hpcperfstats -c 'ls -la /opt/hpcperfstats_data/a
 
 ## Plans and blocked work
 
-- In **`docs/plans/`** and Cursor Plan output, put operator commands under **Operator commands (copy/paste)** with service-labeled blocks and **expected output** to return.
+- In **`.cursor/plans/*.plan.md`** (live plans), record operator commands under **`## Operator discovery`** → **`### Pending commands`** with service-labeled blocks and **expected output** to return. On results, append **`### Completed findings`** (asked vs found), **remove** the spent command block, and update **Problem and facts** if needed (`plan-live-disk-sync.mdc`).
+- In committed **`docs/plans/`** design baselines, use the same **Operator discovery** shape when the baseline documents operator steps.
 - **Proactively request read-only pastes** during planning when logs, RSS, cgroup stats, file sizes, or DB/Redis facts would improve root-cause analysis or fix design — **no redeploy required** (`deploy-ini-with-code-no-phase-zero.mdc`).
 - Also use commands when **blocked** mid-implementation or for **post-deploy verification** after a release redeploy.
 - **Do not** use command blocks to ask for production **INI edits or container restart** before code ships — that is a redeploy, not data gathering.
@@ -83,4 +84,5 @@ docker compose exec pipeline su hpcperfstats -c 'ls -la /opt/hpcperfstats_data/a
 - **`docker-compose-non-unit-testing.mdc`** — agents run `tests/run_*_workflow.sh`; operators doing the same follow those scripts or the one-block `compose_test` pattern inside them.
 - **`readme-installation-sync.mdc`** — long-lived operator docs in `README.md` / `docs/TESTING.md` use the same `docker compose exec` shape.
 - **`workspace-layout-and-python-env.mdc`** — host `.venv` is for agent-side unit work, not operator production diagnostics.
+- **`plan-live-disk-sync.mdc`** — operator discovery findings table; retire pending blocks when results arrive; disk-only plan authority.
 - **`deploy-ini-with-code-no-phase-zero.mdc`** — read-only operator data gathering anytime; INI change + restart only with code redeploy.

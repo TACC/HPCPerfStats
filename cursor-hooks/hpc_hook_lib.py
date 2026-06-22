@@ -42,9 +42,22 @@ MONITOR_ROUTER_BASENAMES = frozenset(
 
 ROUTER_BASENAMES = HPCPERFSTATS_ROUTER_BASENAMES | MONITOR_ROUTER_BASENAMES
 
-PLAN_AUTHORING_REQUIRED_MDC = ("plan-creation-contract.mdc",)
+PLAN_AUTHORING_REQUIRED_MDC = (
+    "plan-creation-contract.mdc",
+    "plan-live-disk-sync.mdc",
+)
+
+LIVE_PLAN_DISK_SUFFIX = ".cursor/plans/"
 
 PLAN_CONTENT_SECTIONS = (
+    (
+        re.compile(r"##\s*Plan disk file", re.I),
+        "## Plan disk file (authority — chat does not count)",
+    ),
+    (
+        re.compile(r"##\s*Operator discovery", re.I),
+        "## Operator discovery",
+    ),
     (
         re.compile(r"##\s*(?:\d+\.\s*)?Problem and facts", re.I),
         "## Problem and facts",
@@ -394,6 +407,28 @@ def extract_work_paths(rows: list[dict]) -> list[str]:
     return paths
 
 
+def is_live_plan_disk_path(path: str) -> bool:
+    normalized = (path or "").replace("\\", "/")
+    return LIVE_PLAN_DISK_SUFFIX in normalized and normalized.endswith(".plan.md")
+
+
+def turn_had_live_plan_disk_write(rows: list[dict]) -> bool:
+    return any(is_live_plan_disk_path(path) for path in extract_edited_paths(rows))
+
+
+def plan_disk_sync_issues(transcript_rows: list[dict]) -> list[str]:
+    """CreatePlan or plan-close turns must also Write/StrReplace a .cursor/plans/*.plan.md file."""
+    had_create_plan = turn_had_create_plan(transcript_rows)
+    had_disk = turn_had_live_plan_disk_write(transcript_rows)
+    if had_create_plan and not had_disk:
+        return [
+            "Plan not written to disk: Write or StrReplace "
+            "<workspace>/.cursor/plans/*.plan.md required; CreatePlan/chat alone does not count "
+            "(plan-live-disk-sync.mdc)",
+        ]
+    return []
+
+
 def iter_tool_parts(rows: list[dict]) -> Iterable[tuple[int, dict]]:
     for event_idx, row in enumerate(rows):
         if row.get("role") != "assistant":
@@ -701,6 +736,7 @@ def close_gate_issues(*, assistant_text: str, transcript_rows: list[dict]) -> li
         for label in plan_content_issues(plan_markdown):
             issues.append(f"Plan content missing: {label}")
         issues.extend(plan_template_read_issues(transcript_rows))
+        issues.extend(plan_disk_sync_issues(transcript_rows))
         plan_required = plan_authoring_required_mdc_rules(work_paths)
         issues.extend(domain_rule_read_issues(plan_required, transcript_rows))
     return issues

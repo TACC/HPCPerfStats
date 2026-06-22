@@ -1,0 +1,64 @@
+---
+description: Live plan file on disk is the only source of truth — chat and CreatePlan do not count
+alwaysApply: false
+globs: docs/plans/**,.cursor/plans/**
+---
+
+# Plan Live Disk Sync
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match (plan create, plan implement, operator discovery, `.cursor/plans/` edits), **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+## Law (non-negotiable)
+
+1. **Disk is authority** — the live plan at **`<workspace_root>/.cursor/plans/<name>.plan.md`** is the **only** record of plan state, facts, operator results, and todo progress.
+2. **Chat does not count** — summaries, discoveries, command results, approach changes, or todo completions **in agent chat** do **not** advance the plan unless the **same turn** includes a **Write** or **StrReplace** to the live plan file.
+3. **CreatePlan does not count alone** — Cursor **`CreatePlan`** output must be **mirrored or superseded** by a disk write to **`.cursor/plans/*.plan.md`** in the **same turn** before claiming the plan exists or progressed.
+4. **TodoWrite does not count** — session todos and Plan UI YAML are secondary; sync **`status: completed`** in the plan frontmatter on disk when a step finishes (`plan-completion-gate.mdc`).
+5. **Every iteration** — any turn that learns a fact, runs or receives operator output, changes scope, or completes a plan step **must** update the plan file **before** the turn ends.
+
+## Plan disk file section (required in every plan)
+
+Every plan body must include **`## Plan disk file`** near the top with:
+
+- **Live path** — absolute or workspace-relative path ending in `.cursor/plans/<name>.plan.md`
+- **Last updated** — ISO date (YYYY-MM-DD) of the most recent disk edit
+- One line stating chat/CreatePlan are not authoritative
+
+## Operator discovery phase
+
+When facts are missing and the operator must run commands (`compose-operator-terminal-commands.mdc`, `plan-creation-contract.mdc` → *Grounding*):
+
+1. Add or keep **`## Operator discovery`** in the plan with **Status:** `not needed` | `in progress` | `complete`.
+2. **Pending commands** — under **`### Pending commands`**, group by Compose **service**; **one copy/paste `bash` block per service** (chain commands on the same container with `&&` or `sh -lc '…'`). Label each block with service name and what output to paste back.
+3. **Completed findings** — under **`### Completed findings`**, use a table: `# | Service | Asked for | Found | Date`.
+4. **When partial or full results arrive** — in the **same turn**:
+   - append a **Completed findings** row (what was asked, what was found),
+   - **remove** the corresponding command(s) from **Pending commands** (do not leave stale copy/paste blocks),
+   - update **Problem and facts** / **Approach** if the finding changes the plan,
+   - set **Status** to `complete` when no pending commands remain.
+5. **New commands** — add them under **Pending commands** in the **same** **`## Operator discovery`** section; do not start a new ad-hoc phase in chat.
+
+## What to update on disk (same turn)
+
+| Event | Plan sections to update |
+|-------|-------------------------|
+| New fact from code/logs/tests | **Problem and facts**, **Invariants / edge cases** |
+| Operator paste received | **Operator discovery** (findings + pending), **Problem and facts** |
+| Scope or step order change | **Approach**, implementation todos in frontmatter |
+| Test/design decision | **Testing**, **Implementation** |
+| Step finished | frontmatter todo `status: completed`, **Approach** checkboxes if used |
+
+## Forbidden
+
+- Reporting “updated the plan” or “operator found X” in chat **without** a matching disk edit in that turn.
+- Leaving completed operator commands in **Pending commands**.
+- Splitting operator discovery across chat threads without merging results into the plan file.
+- Writing live plans only under **`docs/plans/`** (committed baselines only — live work uses **`.cursor/plans/`**).
+
+## Overlap
+
+- **`plan-creation-contract.mdc`** — plan structure, grounding, completion bar.
+- **`plan-template-enforcement.mdc`** — PLAN_TEMPLATE shape and close gate.
+- **`plan-completion-gate.mdc`** — frontmatter todo sync on disk when implementing.
+- **`compose-operator-terminal-commands.mdc`** — command block format per service.
+- **`deploy-ini-with-code-no-phase-zero.mdc`** — read-only operator gathering anytime; no pre-code INI redeploy.

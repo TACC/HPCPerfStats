@@ -2,7 +2,7 @@
 
 One-line overview of the outcome.
 
-**Governed by:** `agent-discipline-core.mdc` (always-on), `plan-completion-gate.mdc`, `plan-creation-contract.mdc` (plan authoring), `implementation-review-workflow.mdc`.
+**Governed by:** `agent-discipline-core.mdc` (always-on), `plan-completion-gate.mdc`, `plan-creation-contract.mdc` (plan authoring), **`plan-live-disk-sync.mdc`** (disk authority — chat does not count), `implementation-review-workflow.mdc`.
 
 **Applies to:** pre-code chat plans, committed design docs in `docs/plans/`, monitor **Consumer follow-up plan** sections, and Cursor Plan mode output.
 
@@ -18,7 +18,7 @@ Use any of these when you want the agent to follow this template and the close g
 - **“Include final code review per plan-creation-contract”**
 - **“Implement this plan”** (with attached plan or Cursor Plan todos)
 
-The agent must read this file, include **Final code review** and **Post-implementation review** sections, and add the **`post-implementation-review`** todo last. See **`plan-template-enforcement.mdc`** and **`plan-completion-gate.mdc`**.
+The agent must read this file, **Write the plan to** **`.cursor/plans/<name>.plan.md`** (chat and CreatePlan alone do not count — `plan-live-disk-sync.mdc`), include **Plan disk file**, **Final code review**, and **Post-implementation review** sections, and add the **`post-implementation-review`** todo last. See **`plan-template-enforcement.mdc`** and **`plan-completion-gate.mdc`**.
 
 **Do not mark implementation done** until the **close sequence** is complete (see **`plan-completion-gate.mdc`** → *Blocking close gate*): (1) **Agent rule dispatch** — list triggered **`*.mdc`** rules Read or N/A, (2) senior final code review on the diff and affected workflows finds no unfixed gaps, and (3) structured chat self-review is delivered (**Why it works**, **Edge cases**, **Convention check**). This applies to **all non-trivial code changes**, not only plan-driven work. **When implementing a plan:** also sync plan YAML todos (`status: completed` for every finished step—status-only plan edits are allowed even when plan prose must not change) and complete **`post-implementation-review`**.
 
@@ -46,6 +46,48 @@ todos:
     status: pending
 isProject: false
 ---
+```
+
+---
+
+## Plan disk file (authority — chat does not count)
+
+Per **`plan-live-disk-sync.mdc`** — update this block on **every** plan edit.
+
+| Field | Value |
+|-------|-------|
+| **Live path** | `<workspace_root>/.cursor/plans/<short-kebab-name>.plan.md` |
+| **Last updated** | YYYY-MM-DD |
+| **Authority** | Only Write/StrReplace to the live path counts; chat summaries, CreatePlan-only output, and TodoWrite do not. |
+
+---
+
+## Operator discovery
+
+Per **`plan-live-disk-sync.mdc`** and **`compose-operator-terminal-commands.mdc`**.
+
+**Status:** `not needed` | `in progress` | `complete`
+
+When status is **`not needed`**, keep **Completed findings** empty and omit **Pending commands**. When **`in progress`**, maintain both subsections below. When **`complete`**, all rows live under **Completed findings** and **Pending commands** is empty or removed.
+
+### Completed findings
+
+Record every command that has run — **remove** its copy/paste block from Pending when adding a row.
+
+| # | Service | Asked for | Found | Date |
+|---|---------|-----------|-------|------|
+| | | | | |
+
+### Pending commands
+
+**Working directory:** git checkout containing `docker-compose.yaml` (typically `HPCPerfStats/`). **One fenced `bash` block per Compose service** — chain multiple commands on the same service with `&&` or `sh -lc '…'`.
+
+#### `<service>` — `<what output to paste back>`
+
+```bash
+cd HPCPerfStats
+
+docker compose exec <service> …
 ```
 
 ---

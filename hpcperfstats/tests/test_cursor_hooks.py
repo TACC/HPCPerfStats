@@ -331,6 +331,9 @@ def test_rule_dual_registration_issues_skips_non_rule_paths():
 
 def _minimal_plan_markdown() -> str:
   return (
+      "## Plan disk file\n\n"
+      "Live path: .cursor/plans/test.plan.md\n"
+      "## Operator discovery\n\nStatus: not needed\n"
       "## Problem and facts\n\nfacts\n"
       "## Approach\n\nsteps\n"
       "## Testing\n\ntests\n"
@@ -366,8 +369,64 @@ def test_turn_had_create_plan_detects_create_plan_tool():
 
 def test_plan_content_issues_detects_missing_sections():
   issues = lib.plan_content_issues("## Approach\n\nonly approach")
+  assert any("Plan disk file" in item for item in issues)
+  assert any("Operator discovery" in item for item in issues)
   assert any("Problem and facts" in item for item in issues)
   assert any("post-implementation-review todo" in item for item in issues)
+
+
+def test_plan_content_issues_accepts_minimal_plan():
+  assert lib.plan_content_issues(_minimal_plan_markdown()) == []
+
+
+def test_is_live_plan_disk_path():
+  assert lib.is_live_plan_disk_path("/ws/.cursor/plans/foo.plan.md")
+  assert not lib.is_live_plan_disk_path("HPCPerfStats/docs/plans/PLAN_TEMPLATE.md")
+
+
+def test_plan_disk_sync_issues_requires_disk_write_with_create_plan():
+  rows = [
+      {
+          "role": "assistant",
+          "message": {
+              "content": [
+                  {
+                      "type": "tool_use",
+                      "name": "CreatePlan",
+                      "input": {"plan": "plan body"},
+                  },
+              ],
+          },
+      },
+  ]
+  issues = lib.plan_disk_sync_issues(rows)
+  assert any("Plan not written to disk" in item for item in issues)
+
+
+def test_plan_disk_sync_issues_passes_when_disk_write_present():
+  rows = [
+      {
+          "role": "assistant",
+          "message": {
+              "content": [
+                  {
+                      "type": "tool_use",
+                      "name": "CreatePlan",
+                      "input": {"plan": "plan body"},
+                  },
+                  {
+                      "type": "tool_use",
+                      "name": "Write",
+                      "input": {
+                          "path": ".cursor/plans/foo.plan.md",
+                          "contents": _minimal_plan_markdown(),
+                      },
+                  },
+              ],
+          },
+      },
+  ]
+  assert lib.plan_disk_sync_issues(rows) == []
 
 
 def test_paths_from_plan_markdown_extracts_backtick_paths():
@@ -435,6 +494,8 @@ def test_close_gate_issues_flags_plan_content_and_reads():
   issues = lib.close_gate_issues(assistant_text=assistant_text, transcript_rows=rows)
   assert "PLAN_TEMPLATE.md not read via Read tool" in issues
   assert "Rule not read: plan-creation-contract.mdc" in issues
+  assert "Rule not read: plan-live-disk-sync.mdc" in issues
+  assert any("Plan not written to disk" in item for item in issues)
 
 
 def test_check_close_gate_emits_followup_for_create_plan(tmp_path):
@@ -535,6 +596,7 @@ def test_check_edit_triggered_rules_create_plan_requires_reads(tmp_path):
   data = json.loads(proc.stdout.strip())
   assert "additional_context" in data
   assert "plan-creation-contract.mdc" in data["additional_context"]
+  assert "plan-live-disk-sync.mdc" in data["additional_context"]
   assert "PLAN_TEMPLATE.md" in data["additional_context"]
 
 

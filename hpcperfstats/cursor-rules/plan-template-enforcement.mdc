@@ -8,11 +8,20 @@ globs: docs/plans/**,.cursor/plans/**
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-Agents must not treat plan structure or the **close sequence** as optional under time pressure—**including bugfixes and hotfixes with no plan file**. This rule is the **short enforcement reminder**; detail lives in **`plan-creation-contract.mdc`**, **`plan-completion-gate.mdc`**, **`implementation-review-workflow.mdc`**, and **`docs/plans/PLAN_TEMPLATE.md`**.
+Agents must not treat plan structure or the **close sequence** as optional under time pressure—**including bugfixes and hotfixes with no plan file**. This rule is the **short enforcement reminder**; detail lives in **`plan-creation-contract.mdc`**, **`plan-live-disk-sync.mdc`**, **`plan-completion-gate.mdc`**, **`implementation-review-workflow.mdc`**, and **`docs/plans/PLAN_TEMPLATE.md`**.
+
+## Plan disk sync (chat does not count)
+
+Per **`plan-live-disk-sync.mdc`**:
+
+1. **First plan turn** — **Write** the full plan to **`<workspace_root>/.cursor/plans/<name>.plan.md`** (not chat-only, not CreatePlan-only).
+2. **Every later turn** — **Write/StrReplace** that file **before** reporting progress, operator results, or completed todos.
+3. **Operator discovery** — pending commands grouped by Compose service; completed commands become **Completed findings** rows (asked vs found) and are **removed** from Pending.
+4. **Plan UI / TodoWrite** — secondary; frontmatter todo `status` on disk is what the Plan UI should reflect.
 
 ## Every implementation plan must include
 
-1. All required sections in order per **`plan-creation-contract.mdc`** (Problem and facts → Approach → Testing → Implementation → Cursor rules → Final code review).
+1. All required sections in order per **`plan-creation-contract.mdc`** (Plan disk file → Problem and facts → Operator discovery when needed → Approach → Testing → Implementation → Cursor rules → Final code review).
 2. **`Final code review (mandatory before implementation close)`** per **`PLAN_TEMPLATE.md`**.
 3. **`Post-implementation review (required before close)`** per **`PLAN_TEMPLATE.md`**.
 4. Final YAML todo:
@@ -29,9 +38,10 @@ Copy the full frontmatter/todo block from **`docs/plans/PLAN_TEMPLATE.md`** when
 
 Unless they explicitly request a **narrow exception** (answer-only, trivial typo/comment with no behavior change):
 
-1. **Read** **`docs/plans/PLAN_TEMPLATE.md`** before authoring.
-2. **Match** that structure in chat, Cursor Plan mode, or **`docs/plans/`** commits.
-3. **End** with **`post-implementation-review`** as the **last** todo.
+1. **Read** **`docs/plans/PLAN_TEMPLATE.md`** and **`plan-live-disk-sync.mdc`** before authoring.
+2. **Write** the plan to **`.cursor/plans/<name>.plan.md`** in the same turn (CreatePlan or chat alone does not satisfy this).
+3. **Match** PLAN_TEMPLATE structure on disk.
+4. **End** with **`post-implementation-review`** as the **last** todo.
 
 **Treat as full-plan requests** (use PLAN_TEMPLATE + final review sections):
 
@@ -62,6 +72,7 @@ Paste as the **first** user rule for highest signal:
 
 ## Overlap
 
+- **`plan-live-disk-sync.mdc`** — disk authority, operator discovery lifecycle, every-turn updates.
 - **`plan-creation-contract.mdc`** — mandatory plan authoring structure and completion bar.
 - **`plan-completion-gate.mdc`** — execution gate: senior final code review then structured chat self-review before close.
 - **`implementation-review-workflow.mdc`** — pre-code planning and post-code review content.

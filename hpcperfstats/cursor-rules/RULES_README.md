@@ -21,7 +21,8 @@ Notable contracts (see filename in `hpcperfstats/cursor-rules/`):
 - **`openapi-spa-wire-validation-contract.mdc`** — OpenAPI serializers must match live Django JSON validated by Orval Zod in `parseApiResponse`; wire contract tests required (`test_*_openapi_wire_contract.py`).
 - **`frontend-stack-wiring-contract.mdc`** — SPA routing, thin hooks, `response-schema-registry.ts`, and test mock layers must stay wired; see view → hook → API map and drift guards.
 - **`interactive-ready-controls.mdc`** — hide or skeleton until ready; shown controls must be immediately interactive (`initialLoading`, `tableBusy`, lazy sections).
-- **`compose-operator-terminal-commands.mdc`** — plans and blocked diagnostics: operator commands as one copy/paste `docker compose exec` block per service.
+- **`compose-operator-terminal-commands.mdc`** — plans and blocked diagnostics: operator commands as one copy/paste `docker compose exec` block per service; findings recorded on disk per **`plan-live-disk-sync.mdc`**.
+- **`plan-live-disk-sync.mdc`** — live plan file on disk is authority; chat/CreatePlan do not count; operator discovery Completed findings vs Pending commands.
 - **`package-lib-colocation.mdc`** — new library modules under flat `{parent}/lib/`; import prefixes; `.gitignore` negation so lib trees are committed; Django migrations stay under `site/lib/machine/`.
 - **`deploy-ini-with-code-no-phase-zero.mdc`** — no pre-code INI redeploy; proactive read-only operator data gathering for plans.
 - **`sync-timedb-parsing-collapse-vectorization.mdc`** — multi-dev metric collapse in `sync_timedb_parsing.py` must use native `groupby.agg` or shared vectorized helpers; forbid `groupby.apply`.

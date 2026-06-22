@@ -91,7 +91,7 @@ Use the **Read** tool on the listed `HPCPerfStats/monitor/cursor-rules/<file>.md
 
 | Trigger | Read |
 |---------|------|
-| User asks for a plan / Cursor Plan / `docs/plans/` / `.cursor/plans/` | `plan-creation-contract.mdc`, `plan-template-enforcement.mdc`, `HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md` |
+| User asks for a plan / Cursor Plan / `docs/plans/` / `.cursor/plans/` | `plan-creation-contract.mdc`, `plan-live-disk-sync.mdc`, `plan-template-enforcement.mdc`, `HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md` — live plans at **`<workspace_root>/.cursor/plans/*.plan.md`** |
 | Pre-code planning | `implementation-review-workflow.mdc` |
 
 ### Authorized non-monitor edits
@@ -100,7 +100,7 @@ Use the **Read** tool on the listed `HPCPerfStats/monitor/cursor-rules/<file>.md
 |---------------|------------------|
 | `HPCPerfStats/hpcperfstats/**` (when user authorized) | `out-of-monitor-hpcperfstats-rules.mdc` — then Read rules from `hpcperfstats/cursor-rules/` per that file's router |
 
-**Hooks (same close discipline as implementation):** `CreatePlan` counts as closeable work. **`stop`** enforces chat close headings plus `PLAN_TEMPLATE.md` sections inside the plan body and **Read before `CreatePlan`** for `plan-creation-contract.mdc`, `PLAN_TEMPLATE.md`, and domain rules referenced in the plan. **`postToolUse`** warns mid-turn when those reads are missing.
+**Hooks (same close discipline as implementation):** `CreatePlan` counts as closeable work. **`stop`** enforces chat close headings plus `PLAN_TEMPLATE.md` sections inside the plan body, **live plan disk write** to `.cursor/plans/*.plan.md` (`plan-live-disk-sync.mdc`), and **Read before `CreatePlan`** for `plan-creation-contract.mdc`, `plan-live-disk-sync.mdc`, `PLAN_TEMPLATE.md`, and domain rules referenced in the plan. **`postToolUse`** warns mid-turn when those reads are missing.
 
 ## Implementation habits (short)
 

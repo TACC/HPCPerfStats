@@ -238,6 +238,7 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
         "rules": [
             "plan-creation-contract.mdc",
+            "plan-live-disk-sync.mdc",
             "plan-template-enforcement.mdc",
             "compose-operator-terminal-commands.mdc",
             "deploy-ini-with-code-no-phase-zero.mdc",
@@ -499,6 +500,7 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
         "rules": [
             "plan-creation-contract.mdc",
+            "plan-live-disk-sync.mdc",
             "plan-template-enforcement.mdc",
         ],
     },

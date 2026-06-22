@@ -17,7 +17,7 @@ For non-trivial implementation work, plan first:
 1. **Break down the problem** — constraints, required inputs, edge cases, and logical steps in order.
 2. **Ground in the repo** — read surrounding code, callers, tests, and applicable workspace rules; do not assume APIs, config keys, or behavior that you have not verified.
 3. **Ask, do not guess** — if a variable, parameter, requirement, or acceptance criterion is undefined or ambiguous, ask the user for clarification before implementing.
-4. **Share structured reasoning** — for non-trivial tasks, present the plan (or key trade-offs) before the diff so the user can correct direction early. Keep it concise; do not dump raw chain-of-thought.
+4. **Share structured reasoning** — for non-trivial tasks, present the plan (or key trade-offs) before the diff so the user can correct direction early. Keep it concise; do not dump raw chain-of-thought. **Write every plan and every plan update to** **`.cursor/plans/*.plan.md`** — chat does not count (`plan-live-disk-sync.mdc`).
 
 Narrow exceptions: one-line typo/format fixes, pure documentation edits with no logic change, and answer-only questions that do not request code.
 
@@ -43,7 +43,8 @@ If step 2 surfaces a new gap, return to step 1, fix, re-test, then update the ch
 
 - **`plan-template-enforcement.mdc`** — always-on reminder: use **`PLAN_TEMPLATE.md`**, no task close before **`post-implementation-review`**.
 - **`plan-completion-gate.mdc`** — when implementing a plan, close-sequence steps 1 and 2 above are mandatory; **`post-implementation-review`** todo must be last.
-- **`plan-creation-contract.mdc`** — mandatory plan structure (facts, best practices, tests, final code review as last step); applies to all plan output including chat and **`docs/plans/`**; template at **`docs/plans/PLAN_TEMPLATE.md`**.
+- **`plan-live-disk-sync.mdc`** — disk authority; operator discovery lifecycle; every-turn plan file updates.
+- **`plan-creation-contract.mdc`** — mandatory plan structure (facts, best practices, tests, final code review as last step); applies to all plan output; template at **`docs/plans/PLAN_TEMPLATE.md`**.
 - **`logic-change-checklist.mdc`** — deeper contract/invariant/failure-mode checklist for runtime logic changes; use after the pre-code plan when behavior changes.
 - **`bugfix-and-perf-change-playbook.mdc`** — root-cause-first defaults for tracebacks and perf/reliability work.
 - **`test-first-discipline.mdc`** — tests before or with behavior changes; the post-code review must confirm test coverage ran or document blockers.

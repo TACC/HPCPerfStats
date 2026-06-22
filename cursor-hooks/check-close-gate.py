@@ -71,9 +71,11 @@ def main() -> int:
         plan_extra = (
             "\nPlan turns also require CreatePlan body sections per "
             f"{rules_dir}/../docs/plans/PLAN_TEMPLATE.md or "
-            "HPCPerfStats/docs/plans/PLAN_TEMPLATE.md (Problem and facts, Approach, "
-            "Testing, Implementation, Cursor rules, Final code review, "
-            "post-implementation-review todo) and Read of plan-creation-contract.mdc + "
+            "HPCPerfStats/docs/plans/PLAN_TEMPLATE.md (Plan disk file, Operator discovery, "
+            "Problem and facts, Approach, Testing, Implementation, Cursor rules, "
+            "Final code review, post-implementation-review todo), a Write/StrReplace to "
+            ".cursor/plans/*.plan.md in the same turn (plan-live-disk-sync.mdc), and Read of "
+            "plan-creation-contract.mdc + plan-live-disk-sync.mdc + "
             "PLAN_TEMPLATE.md before CreatePlan.\n"
         )
     followup = (
