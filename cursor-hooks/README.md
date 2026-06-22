@@ -1,6 +1,6 @@
 # Cursor hooks (HPCPerfStats + monitor workspace)
 
-Project hooks for Cursor Agent. Cursor loads **`<workspace_root>/.cursor/hooks.json`** (real file, not symlinked).
+Project hooks for Cursor Agent. Cursor loads **`<workspace_root>/.cursor/hooks.json`**, which **symlinks** to the checked-in **`HPCPerfStats/cursor-hooks/hooks.json`**.
 
 ## Workspace `.cursor/` layout
 
@@ -11,7 +11,7 @@ From **workspace root** (contains `.venv/` and `HPCPerfStats/`):
   rules/       → symlink → HPCPerfStats/hpcperfstats/cursor-rules   (full-stack)
             or → symlink → HPCPerfStats/monitor/cursor-rules       (monitor-focused)
   hooks/       → symlink → HPCPerfStats/cursor-hooks
-  hooks.json   → real file (copy from HPCPerfStats/cursor-hooks/hooks.json on setup)
+  hooks.json   → symlink → HPCPerfStats/cursor-hooks/hooks.json
   plans/       → real directory; live *.plan.md (outside git)
 ```
 
@@ -22,12 +22,12 @@ cd "<workspace_root>"
 mkdir -p .cursor/plans
 ln -sf ../HPCPerfStats/hpcperfstats/cursor-rules .cursor/rules
 ln -sf ../HPCPerfStats/cursor-hooks .cursor/hooks
-cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json
+ln -sf ../HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json
 ```
 
 Monitor-focused workspace: symlink `.cursor/rules` to `HPCPerfStats/monitor/cursor-rules` instead.
 
-There is **no** `HPCPerfStats/.cursor/` directory — hooks and rules live in checked-in git paths; only workspace `.cursor/` holds local Cursor metadata.
+There is **no** `HPCPerfStats/.cursor/` directory — hooks and rules live in checked-in git paths; only workspace `.cursor/` holds symlinks and local Cursor metadata (`plans/`).
 
 ## Profile detection
 
@@ -79,6 +79,10 @@ New domain rules must appear in **both**:
 
 See monitor **`RULES_README.md`** or hpcperfstats **`RULES_README.md`** for always-on caps.
 
-## hooks.json sync
+## hooks.json
 
-Edit hook event wiring in **`HPCPerfStats/cursor-hooks/hooks.json`** (checked in), then copy to **`<workspace_root>/.cursor/hooks.json`** so Cursor loads the change.
+Edit **`HPCPerfStats/cursor-hooks/hooks.json`** only (checked in). With **`.cursor/hooks.json`** symlinked there, Cursor picks up changes immediately — no copy step. If a checkout still has a stale real file at `.cursor/hooks.json`, replace it:
+
+```bash
+ln -sf ../HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json
+```

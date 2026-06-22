@@ -23,7 +23,7 @@ This workspace **hard-links** monitor cursor rules between:
 | Tree | Role |
 |------|------|
 | **`.cursor/hooks/`** | Symlink → `HPCPerfStats/cursor-hooks/` |
-| **`.cursor/hooks.json`** | Real file at workspace root (copy from `HPCPerfStats/cursor-hooks/hooks.json`) |
+| **`.cursor/hooks.json`** | Symlink → `HPCPerfStats/cursor-hooks/hooks.json` |
 
 There is **no** `HPCPerfStats/.cursor/` directory. Edit hook scripts in **`HPCPerfStats/cursor-hooks/`** (checked in).
 
@@ -40,4 +40,4 @@ In **this** checkout, editing either rules path updates the same inode. In other
 
 After adding a rule, add a one-line cross-link in **implementation-workflow-discipline.mdc** (Related rules table) when agents should consult it during implement/verify.
 
-Cross-links: **cursor-rules-maker**, **chat-analysis-for-rules**, **RULES_README.md**.
+Cross-links: **cursor-rules-maker**, **chat-analysis-for-rules**, **workspace-single-cursor-directory**, **RULES_README.md**.

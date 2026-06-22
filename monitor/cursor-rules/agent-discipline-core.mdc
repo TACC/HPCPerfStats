@@ -17,6 +17,7 @@ alwaysApply: true
 | **`every-error-regression-test.mdc`** | Every fix for a failure needs a regression test before close |
 | **`monitor-workspace-contract.mdc`** | Monitor-only edits under `HPCPerfStats/monitor/`; consumer contract via `listend.py` |
 | **`python-venv-enforcement.mdc`** | Single `<workspace_root>/.venv/bin/python`; edit rules in `HPCPerfStats/monitor/cursor-rules/` |
+| **`workspace-single-cursor-directory.mdc`** | Exactly one `<workspace_root>/.cursor/`; never `HPCPerfStats/.cursor/` or other nested `.cursor/` |
 | **`out-of-monitor-hpcperfstats-rules.mdc`** | When user authorizes non-monitor edits, load `hpcperfstats/cursor-rules/` for that work |
 
 ## Pre-close checklist (verify before final message)
@@ -83,7 +84,7 @@ Use the **Read** tool on the listed `HPCPerfStats/monitor/cursor-rules/<file>.md
 | Trigger paths | Read these rules |
 |---------------|------------------|
 | `HPCPerfStats/monitor/cursor-rules/*.mdc`, `.cursor/rules/**` | `agent-discipline-core.mdc`, `implementation-review-workflow.mdc`, `plan-template-enforcement.mdc`, `cursor-rules-maker.mdc`, `monitor-cursor-rules-sync.mdc` |
-| `.cursor/rules/**`, `cursor-hooks/**` | `monitor-cursor-rules-sync.mdc` |
+| `.cursor/**`, `HPCPerfStats/.cursor/**`, `cursor-hooks/**` | `monitor-cursor-rules-sync.mdc`, `workspace-single-cursor-directory.mdc` |
 | `cursor-hooks/**`, `test_cursor_hooks.py` | `global-testing-discipline.mdc` |
 
 ### Plans (only when authoring or implementing a plan)

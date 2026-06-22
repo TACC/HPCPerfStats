@@ -37,6 +37,7 @@ Use these during **plan**, **implement**, **self-review**, and **verification** 
 | [monitor-ci-workflow.mdc](monitor-ci-workflow.mdc) | GitHub `monitor-verify.yaml` |
 | [monitor-cursor-rules-sync.mdc](monitor-cursor-rules-sync.mdc) | Edit both `.cursor/rules/` and `monitor/cursor-rules/` |
 | [python-venv-enforcement.mdc](python-venv-enforcement.mdc) | Python tooling: repo `.venv` |
+| [workspace-single-cursor-directory.mdc](workspace-single-cursor-directory.mdc) | Single `<workspace_root>/.cursor/`; symlink layout |
 | [test-first-discipline.mdc](test-first-discipline.mdc) | Test-first workflow |
 | [logic-change-checklist.mdc](logic-change-checklist.mdc) | Runtime logic changes |
 | [test-runs-output-directory.mdc](test-runs-output-directory.mdc) | Run logs under `test_runs/` |

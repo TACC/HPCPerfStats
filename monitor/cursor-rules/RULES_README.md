@@ -1,6 +1,6 @@
 # Monitor cursor rules layout
 
-## Always-on (6 files)
+## Always-on (7 files)
 
 Loaded every agent turn. Keep these short; do not add more `alwaysApply: true` files without removing another.
 
@@ -11,6 +11,7 @@ Loaded every agent turn. Keep these short; do not add more `alwaysApply: true` f
 | `every-error-regression-test.mdc` | Regression test law for fixes |
 | `monitor-workspace-contract.mdc` | Monitor-only scope; RabbitMQ/listend message contract |
 | `python-venv-enforcement.mdc` | `.venv` path |
+| `workspace-single-cursor-directory.mdc` | Exactly one `<workspace_root>/.cursor/`; no nested `.cursor/` under git paths |
 | `out-of-monitor-hpcperfstats-rules.mdc` | Authorized non-monitor work loads `hpcperfstats/cursor-rules/` |
 
 ## Domain rules (~35 files — `alwaysApply: false`)

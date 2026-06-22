@@ -468,12 +468,15 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
     {
         "id": "monitor_cursor_workspace_sync",
         "patterns": [
+            ".cursor/**",
+            "HPCPerfStats/.cursor/**",
             ".cursor/rules/**",
             "cursor-hooks/**",
             "HPCPerfStats/cursor-hooks/**",
         ],
         "rules": [
             "monitor-cursor-rules-sync.mdc",
+            "workspace-single-cursor-directory.mdc",
         ],
     },
     {

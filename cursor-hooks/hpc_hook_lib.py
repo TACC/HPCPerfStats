@@ -34,6 +34,7 @@ MONITOR_ROUTER_BASENAMES = frozenset(
         "every-error-regression-test.mdc",
         "monitor-workspace-contract.mdc",
         "python-venv-enforcement.mdc",
+        "workspace-single-cursor-directory.mdc",
         "out-of-monitor-hpcperfstats-rules.mdc",
         "RULES_README.md",
     },

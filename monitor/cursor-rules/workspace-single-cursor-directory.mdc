@@ -1,0 +1,49 @@
+---
+description: Exactly one .cursor directory at workspace root; never nested under HPCPerfStats or elsewhere
+alwaysApply: true
+---
+
+# Single workspace `.cursor/` directory
+
+**Workspace root** is the directory that contains **both** `.venv/` and `HPCPerfStats/`.
+
+## Law
+
+- **Exactly one** `.cursor/` directory may exist: **`<workspace_root>/.cursor/`**.
+- **Never** create `.cursor/` under `HPCPerfStats/`, `HPCPerfStats/monitor/`, or any other subdirectory — **nowhere else, ever**.
+- If a nested `.cursor/` appears (for example stale `HPCPerfStats/.cursor/`), **remove it** and wire Cursor only through workspace root.
+
+## What lives where
+
+| Path | Role |
+|------|------|
+| **`<workspace_root>/.cursor/`** | Cursor-local metadata only (symlinks to checked-in rules/hooks, live `plans/`) |
+| **`HPCPerfStats/monitor/cursor-rules/`** | Authoritative monitor rule `*.mdc` (workspace `.cursor/rules` symlinks here) |
+| **`HPCPerfStats/cursor-hooks/`** | Authoritative hook scripts (workspace `.cursor/hooks` symlinks here) |
+
+## Required workspace `.cursor/` layout
+
+```text
+<workspace_root>/.cursor/
+  rules/       → symlink → HPCPerfStats/monitor/cursor-rules
+  hooks/       → symlink → HPCPerfStats/cursor-hooks
+  hooks.json   → symlink → HPCPerfStats/cursor-hooks/hooks.json
+  plans/       → real directory (live *.plan.md; outside git)
+```
+
+Setup after clone or when hooks move:
+
+```bash
+cd "<workspace_root>"
+mkdir -p .cursor/plans
+ln -sf ../HPCPerfStats/monitor/cursor-rules .cursor/rules
+ln -sf ../HPCPerfStats/cursor-hooks .cursor/hooks
+ln -sf ../HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json
+```
+
+Full-stack checkouts symlink `.cursor/rules` to `HPCPerfStats/hpcperfstats/cursor-rules` instead.
+
+## Overlap
+
+- **`monitor-cursor-rules-sync.mdc`** — rules/hooks symlink detail and dual registration
+- **`python-venv-enforcement.mdc`** — same workspace root definition (`.venv` sibling of `HPCPerfStats/`)
