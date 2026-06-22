@@ -1,7 +1,7 @@
 ---
 description: Hard gate — PLAN_TEMPLATE for plans; close sequence (senior review + self-review) for every non-trivial code change
 alwaysApply: false
-globs: docs/plans/**
+globs: docs/plans/**,.cursor/plans/**
 ---
 
 # Plan Template And Close Enforcement

@@ -32,7 +32,7 @@ Answer **YES** or **N/A (one-line reason)** for each row. If any row is **NO**, 
 | 5 | **Triggered domain rules** below were **Read** (Read tool on the `.mdc` path) before editing — list them under **`## Agent rule dispatch`** at close; hook verifies Read calls for listed domain rules |
 | 6 | **Dual verify** run when substantive monitor C changed (`monitor-dual-verify-cross-and-static.mdc`) |
 | 7 | **Plan YAML** todos synced if implementing a plan (`plan-completion-gate.mdc`) |
-| 8 | **New/re-triggered domain rules** dual-registered in **both** this file (task router) and `.cursor/hooks/hook_task_router.py` (`MONITOR_ROUTER_ENTRIES`) — verify in **Final code review** when the diff touches `cursor-rules/*.mdc` |
+| 8 | **New/re-triggered domain rules** dual-registered in **both** this file (task router) and `cursor-hooks/hook_task_router.py` (`MONITOR_ROUTER_ENTRIES`) — verify in **Final code review** when the diff touches `cursor-rules/*.mdc` |
 
 User may reply **`Close gate incomplete`** — redo the full close sequence without argument.
 
@@ -82,8 +82,9 @@ Use the **Read** tool on the listed `HPCPerfStats/monitor/cursor-rules/<file>.md
 
 | Trigger paths | Read these rules |
 |---------------|------------------|
-| `HPCPerfStats/monitor/cursor-rules/*.mdc`, `.cursor/rules/**` | `agent-discipline-core.mdc`, `implementation-review-workflow.mdc`, `plan-template-enforcement.mdc`, `cursor-rules-maker.mdc` |
-| `.cursor/hooks/**`, `test_cursor_hooks.py` | `global-testing-discipline.mdc` |
+| `HPCPerfStats/monitor/cursor-rules/*.mdc`, `.cursor/rules/**` | `agent-discipline-core.mdc`, `implementation-review-workflow.mdc`, `plan-template-enforcement.mdc`, `cursor-rules-maker.mdc`, `monitor-cursor-rules-sync.mdc` |
+| `.cursor/rules/**`, `cursor-hooks/**` | `monitor-cursor-rules-sync.mdc` |
+| `cursor-hooks/**`, `test_cursor_hooks.py` | `global-testing-discipline.mdc` |
 
 ### Plans (only when authoring or implementing a plan)
 
@@ -116,7 +117,7 @@ When you **add** a new `HPCPerfStats/monitor/cursor-rules/*.mdc` or materially c
 3. Add an **Activation** note at the top (see existing demoted rules).
 4. **Dual registration (same task, non-optional)** — every new or re-triggered domain rule must appear in **both**:
    - **this file** — task router table above (`Trigger paths` → `Read these rules`);
-   - **`.cursor/hooks/hook_task_router.py`** — matching `MONITOR_ROUTER_ENTRIES` path patterns (close-gate auto-detect + Read-before-edit hooks).
+   - **`cursor-hooks/hook_task_router.py`** — matching `MONITOR_ROUTER_ENTRIES` path patterns (close-gate auto-detect + Read-before-edit hooks).
    A rule missing from either file is **orphaned**; hooks will not dispatch it correctly.
 5. Update **`RULES_README.md`** when policy changes (always-on count, hook behavior, router conventions).
 6. Add a one-line cross-link in **`implementation-workflow-discipline.mdc`** Related rules table when agents should consult the rule during implement/verify.

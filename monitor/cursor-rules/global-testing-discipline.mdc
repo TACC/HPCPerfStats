@@ -1,7 +1,7 @@
 ---
 description: Always test changes and resolve issues before proceeding
 alwaysApply: false
-globs: HPCPerfStats/monitor/**,.cursor/hooks/**
+globs: HPCPerfStats/monitor/**,cursor-hooks/**
 ---
 
 # Testing Discipline

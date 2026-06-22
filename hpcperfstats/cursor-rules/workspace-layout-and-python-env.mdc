@@ -16,12 +16,18 @@ Example shape:
 ```text
 <workspace_root>/
   .venv/                 ← use THIS for python3/pip3 on the host
-  .cursor/rules          ← symlink → HPCPerfStats/hpcperfstats/cursor-rules
+  .cursor/
+    rules/               ← symlink → HPCPerfStats/hpcperfstats/cursor-rules
+    hooks/               ← symlink → HPCPerfStats/cursor-hooks
+    hooks.json           ← real file (copy from cursor-hooks/hooks.json)
+    plans/               ← live Cursor Plan files (*.plan.md); outside git
   HPCPerfStats/          ← cd here for compose, pip install -e, pytest paths in docs
+    cursor-hooks/        ← authoritative hook scripts (edit here; checked in)
     pyproject.toml
     docker-compose.yaml
     hpcperfstats/
-      cursor-rules/      ← authoritative rule *.mdc files (edit here)
+      cursor-rules/      ← authoritative rule *.mdc files (edit here; checked in)
+    docs/plans/          ← PLAN_TEMPLATE + committed design baselines only
 ```
 
 Do **not** treat `HPCPerfStats/HPCPerfStats/` alone as “project root” for `.venv`; the venv one level **above** that folder is canonical.
@@ -47,12 +53,14 @@ Some machines keep a **cloud-sync mirror** under `Library/CloudStorage/` (for ex
 - Any additional `.venv` directories under the workspace (for example `HPCPerfStats/.venv`) are non-canonical and must be removed.
 - If an agent finds multiple `.venv` directories, it must use the root `.venv` and remove the others unless the user explicitly asks to keep them.
 
-## Where to edit Cursor rules
+## Where to edit Cursor rules, plans, and hooks
 
 - **Authoritative rules directory:** `HPCPerfStats/hpcperfstats/cursor-rules/*.mdc` (inside the git repo).
 - Workspace **`.cursor/rules`** should point at that directory (symlink), so Cursor loads the same files.
-- **Do not** maintain a second copy under `HPCPerfStats/.cursor/rules/` — that bypasses the symlink and splits the rule set.
-- **New or changed domain rules:** register in **both** `agent-discipline-core.mdc` (task router) and `.cursor/hooks/hook_task_router.py` in the same task — see **`agent-discipline-core.mdc`** → *Creating or changing domain rules*.
+- **Live Cursor plans:** write `*.plan.md` under **`<workspace_root>/.cursor/plans/`** only — outside git. **`docs/plans/`** is for committed design baselines and `PLAN_TEMPLATE.md`, not live task plans.
+- **Hooks:** authoritative scripts live in `HPCPerfStats/cursor-hooks/` (checked in); workspace **`.cursor/hooks`** symlinks there. **`hooks.json`** is a real file at **`<workspace_root>/.cursor/hooks.json`** — copy from `HPCPerfStats/cursor-hooks/hooks.json` when hook wiring changes.
+- **No nested `.cursor/`:** do not create `HPCPerfStats/.cursor/`; the only `.cursor/` directory is at workspace root.
+- **New or changed domain rules:** register in **both** `agent-discipline-core.mdc` (task router) and `cursor-hooks/hook_task_router.py` in the same task — see **`agent-discipline-core.mdc`** → *Creating or changing domain rules*.
 
 ## Host Python and pip (agents)
 

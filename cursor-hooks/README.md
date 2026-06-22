@@ -1,28 +1,33 @@
 # Cursor hooks (HPCPerfStats + monitor workspace)
 
-Project hooks for Cursor Agent. Cursor loads `.cursor/hooks.json` from the **workspace root**.
+Project hooks for Cursor Agent. Cursor loads **`<workspace_root>/.cursor/hooks.json`** (real file, not symlinked).
 
-## Symlink setup
+## Workspace `.cursor/` layout
 
-### Monitor-focused workspace (`.cursor/rules` → `monitor/cursor-rules/`)
+From **workspace root** (contains `.venv/` and `HPCPerfStats/`):
 
-From workspace root (contains `.venv/` and `HPCPerfStats/`):
-
-```bash
-ln -sf HPCPerfStats/.cursor/hooks.json .cursor/hooks.json
-ln -sf HPCPerfStats/.cursor/hooks .cursor/hooks
+```text
+<workspace_root>/.cursor/
+  rules/       → symlink → HPCPerfStats/hpcperfstats/cursor-rules   (full-stack)
+            or → symlink → HPCPerfStats/monitor/cursor-rules       (monitor-focused)
+  hooks/       → symlink → HPCPerfStats/cursor-hooks
+  hooks.json   → real file (copy from HPCPerfStats/cursor-hooks/hooks.json on setup)
+  plans/       → real directory; live *.plan.md (outside git)
 ```
 
-### Full-stack workspace (`.cursor/rules` → `hpcperfstats/cursor-rules/`)
-
-From workspace root:
+**One-time setup** (full-stack workspace):
 
 ```bash
-ln -sf HPCPerfStats/.cursor/hooks.json .cursor/hooks.json
-ln -sf HPCPerfStats/.cursor/hooks .cursor/hooks
+cd "<workspace_root>"
+mkdir -p .cursor/plans
+ln -sf ../HPCPerfStats/hpcperfstats/cursor-rules .cursor/rules
+ln -sf ../HPCPerfStats/cursor-hooks .cursor/hooks
+cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json
 ```
 
-Both layouts share the **same** hook scripts under `HPCPerfStats/.cursor/hooks/`.
+Monitor-focused workspace: symlink `.cursor/rules` to `HPCPerfStats/monitor/cursor-rules` instead.
+
+There is **no** `HPCPerfStats/.cursor/` directory — hooks and rules live in checked-in git paths; only workspace `.cursor/` holds local Cursor metadata.
 
 ## Profile detection
 
@@ -57,7 +62,7 @@ Plan template paths accepted for Read verification:
 
 ```bash
 echo '{"status":"completed","loop_count":0,"transcript_path":"/path/to/transcript.jsonl","workspace_roots":["/path/to/workspace"]}' | \
-  python3 HPCPerfStats/.cursor/hooks/check-close-gate.py
+  python3 HPCPerfStats/cursor-hooks/check-close-gate.py
 ```
 
 ## Requirements
@@ -73,3 +78,7 @@ New domain rules must appear in **both**:
 2. **`hook_task_router.py`** — `MONITOR_ROUTER_ENTRIES` or `HPCPERFSTATS_ROUTER_ENTRIES`
 
 See monitor **`RULES_README.md`** or hpcperfstats **`RULES_README.md`** for always-on caps.
+
+## hooks.json sync
+
+Edit hook event wiring in **`HPCPerfStats/cursor-hooks/hooks.json`** (checked in), then copy to **`<workspace_root>/.cursor/hooks.json`** so Cursor loads the change.

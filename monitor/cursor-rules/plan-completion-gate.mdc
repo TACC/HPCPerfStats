@@ -27,7 +27,7 @@ Before any final message that reports work **done**, **fixed**, **ready**, or **
 
 **User enforcement:** if the user replies **`Close gate incomplete`**, redo the full close sequence without argument.
 
-**Cursor hook:** project `stop` hook `.cursor/hooks/check-close-gate.py` auto-submits the same follow-up when a code-changing turn ends without required headings (`loop_limit: 3`). See `.cursor/hooks/README.md`.
+**Cursor hook:** project `stop` hook `.cursor/hooks/check-close-gate.py` auto-submits the same follow-up when a code-changing turn ends without required headings (`loop_limit: 3`). See `cursor-hooks/README.md`.
 
 **Narrow exceptions:** answer-only questions with no code; trivial typo/comment-only edits with no behavioral contract.
 
@@ -62,7 +62,7 @@ Look for:
 - performance regressions (jitter, hot-path work)
 - missing components (tests, docs, contract tests, packaging/spec sync)
 - edge cases not covered by tests
-- **new or re-triggered domain rules** dual-registered in the **same task** — every `HPCPerfStats/monitor/cursor-rules/*.mdc` you added or whose triggers changed must appear in **both** `agent-discipline-core.mdc` (task router table) and `.cursor/hooks/hook_task_router.py` (`MONITOR_ROUTER_ENTRIES`); a rule in only one file is **orphaned** and hooks will not dispatch it (see **`agent-discipline-core.mdc`** → *Creating or changing domain rules*)
+- **new or re-triggered domain rules** dual-registered in the **same task** — every `HPCPerfStats/monitor/cursor-rules/*.mdc` you added or whose triggers changed must appear in **both** `agent-discipline-core.mdc` (task router table) and `cursor-hooks/hook_task_router.py` (`MONITOR_ROUTER_ENTRIES`); a rule in only one file is **orphaned** and hooks will not dispatch it (see **`agent-discipline-core.mdc`** → *Creating or changing domain rules*)
 - anything else a senior reviewer would block on merge
 
 **Fix anything found** and re-run relevant tests. Do not proceed to step 2 or mark todos complete while open review items remain.

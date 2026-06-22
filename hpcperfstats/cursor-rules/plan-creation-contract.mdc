@@ -1,14 +1,14 @@
 ---
 description: Mandatory structure, testing, and completion bar for every implementation plan
 alwaysApply: false
-globs: docs/plans/**
+globs: docs/plans/**,.cursor/plans/**
 ---
 
 # Plan Creation Contract
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-Applies to **every plan**: pre-code chat plans, **`docs/plans/`** design docs, monitor **Consumer follow-up plan** sections, and Cursor Plan mode output.
+Applies to **every plan**: pre-code chat plans, **`.cursor/plans/*.plan.md`** (live Cursor Plan UI files), **`docs/plans/`** committed design baselines, monitor **Consumer follow-up plan** sections, and Cursor Plan mode output.
 
 **Authoring entrypoint:** read and match **`docs/plans/PLAN_TEMPLATE.md`**. **`plan-template-enforcement.mdc`** and **`plan-completion-gate.mdc`** restate the non-skippable **close sequence** (senior final code review + structured chat self-review) for **all non-trivial code changes**; plan YAML + **`post-implementation-review`** todo when implementing a plan.
 
@@ -43,7 +43,7 @@ Applies to **every plan**: pre-code chat plans, **`docs/plans/`** design docs, m
    - performance regressions
    - missing components (tests, docs, registry or drift guards, API client or tools updates, nginx or route sync when applicable)
    - edge cases not covered by tests
-   - **new or re-triggered domain rules** wired into **both** `agent-discipline-core.mdc` (task router) and `.cursor/hooks/hook_task_router.py` (`ROUTER_ENTRIES`) in the same task (`agent-discipline-core.mdc` → *Creating or changing domain rules*)
+   - **new or re-triggered domain rules** wired into **both** `agent-discipline-core.mdc` (task router) and `cursor-hooks/hook_task_router.py` (`ROUTER_ENTRIES`) in the same task (`agent-discipline-core.mdc` → *Creating or changing domain rules*)
    - anything else a senior reviewer would block on merge  
    **Fix anything found** and re-run relevant tests. Do not deliver structured chat self-review or mark todos complete while open review items remain. Execution detail: **`plan-completion-gate.mdc`** close-sequence step 1.
 

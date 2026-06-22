@@ -33,7 +33,7 @@ Applies to **every plan**: pre-code chat plans, **`HPCPerfStats/monitor/docs/pla
 4. **Implementation** — what will change (files/layers). Omit for answer-only or doc-only work with no logic change.
 5. **Cursor rules** — enshrine modalities, best practices, contracts, and failure modes that should guide future work:
  - When this plan introduces or clarifies a **recurring** pattern, **add or update** a focused **`.mdc`** rule in **`HPCPerfStats/monitor/cursor-rules/`** (authoritative; symlinked from **`.cursor/rules/`**).
- - **Every new or re-scoped domain rule** must be registered in the **task router** in **`agent-discipline-core.mdc`** in the **same task** and in **`.cursor/hooks/hook_task_router.py`** (`MONITOR_ROUTER_ENTRIES`). Default **`alwaysApply: false`**; add **`globs:`** when possible.
+ - **Every new or re-scoped domain rule** must be registered in the **task router** in **`agent-discipline-core.mdc`** in the **same task** and in **`cursor-hooks/hook_task_router.py`** (`MONITOR_ROUTER_ENTRIES`). Default **`alwaysApply: false`**; add **`globs:`** when possible.
  - **Prefer updating** an existing rule over creating a duplicate; cross-link related rules in an **Overlap** section.
  - Keep rules narrow and actionable; base content on **verified facts** from this plan, not assumptions.
  - If nothing merits a new or updated rule, state **no rule change needed** with one sentence of rationale.
@@ -43,7 +43,7 @@ Applies to **every plan**: pre-code chat plans, **`HPCPerfStats/monitor/docs/pla
    - performance regressions
    - missing components (tests, docs, contract tests, spec/version sync)
    - edge cases not covered by tests
-   - **new or re-triggered domain rules** wired into **both** `agent-discipline-core.mdc` (task router) and `.cursor/hooks/hook_task_router.py` (`MONITOR_ROUTER_ENTRIES`) in the same task
+   - **new or re-triggered domain rules** wired into **both** `agent-discipline-core.mdc` (task router) and `cursor-hooks/hook_task_router.py` (`MONITOR_ROUTER_ENTRIES`) in the same task
    - anything else a senior reviewer would block on merge  
    **Fix anything found** and re-run relevant tests. Do not deliver structured chat self-review or mark todos complete while open review items remain. Execution detail: **`plan-completion-gate.mdc`** close-sequence step 1.
 

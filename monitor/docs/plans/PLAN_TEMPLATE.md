@@ -119,7 +119,7 @@ Omit this section for answer-only or doc-only work with no logic change.
 Per `plan-creation-contract.mdc` step 5:
 
 - **Add or update** a focused `HPCPerfStats/monitor/cursor-rules/*.mdc` when the plan introduces a **recurring** pattern.
-- **Dual register** new domain rules in **`agent-discipline-core.mdc`** and **`.cursor/hooks/hook_task_router.py`** (`MONITOR_ROUTER_ENTRIES`).
+- **Dual register** new domain rules in **`agent-discipline-core.mdc`** and **`cursor-hooks/hook_task_router.py`** (`MONITOR_ROUTER_ENTRIES`).
 - **Prefer updating** an existing rule over duplicating; add an **Overlap** section when cross-linking.
 - Or state **no rule change needed** + one-sentence rationale.
 
@@ -165,7 +165,7 @@ Per `plan-creation-contract.mdc` step 6 and `plan-completion-gate.mdc` close-seq
 - [ ] Performance regressions (jitter, hot-path work)
 - [ ] Missing components (tests, docs, contract tests, spec/version sync)
 - [ ] Edge cases not covered by tests
-- [ ] New or re-triggered `cursor-rules/*.mdc` files dual-registered in **both** `agent-discipline-core.mdc` and `.cursor/hooks/hook_task_router.py` (`MONITOR_ROUTER_ENTRIES`)
+- [ ] New or re-triggered `cursor-rules/*.mdc` files dual-registered in **both** `agent-discipline-core.mdc` and `cursor-hooks/hook_task_router.py` (`MONITOR_ROUTER_ENTRIES`)
 - [ ] Anything else a senior reviewer would block on merge
 
 **Fix anything found** and re-run relevant tests. Do not proceed to post-implementation chat self-review or mark todos complete while open review items remain.

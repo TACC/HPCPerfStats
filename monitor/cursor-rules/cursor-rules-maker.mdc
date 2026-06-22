@@ -1,6 +1,6 @@
 ---
 description: How to propose and maintain Cursor rules without silent drift
-globs: HPCPerfStats/monitor/cursor-rules/**,.cursor/rules/**,.cursor/hooks/**
+globs: HPCPerfStats/monitor/cursor-rules/**,.cursor/rules/**,cursor-hooks/**
 alwaysApply: false
 ---
 
@@ -41,7 +41,7 @@ Use the `.mdc` format with `description`, `globs`, and `alwaysApply` (usually `f
 Every new or re-scoped **`HPCPerfStats/monitor/cursor-rules/*.mdc`** must appear in **both**:
 
 1. **`agent-discipline-core.mdc`** — task router table (`Trigger paths` → `Read these rules`)
-2. **`.cursor/hooks/hook_task_router.py`** — matching `MONITOR_ROUTER_ENTRIES` row
+2. **`cursor-hooks/hook_task_router.py`** — matching `MONITOR_ROUTER_ENTRIES` row
 
 See **`RULES_README.md`** and **`monitor-cursor-rules-sync.mdc`**. Hooks enforce dual registration at edit time and close.
 

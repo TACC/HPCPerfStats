@@ -223,6 +223,7 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         "id": "plans",
         "patterns": [
             "docs/plans/*",
+            ".cursor/plans/*",
         ],
         "rules": [
             "plan-creation-contract.mdc",
@@ -246,7 +247,10 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
     {
         "id": "cursor_hooks",
         "patterns": [
+            "cursor-hooks/*",
+            "HPCPerfStats/cursor-hooks/*",
             ".cursor/hooks/*",
+            "cursor-hooks/hooks.json",
             ".cursor/hooks.json",
             "hpcperfstats/tests/test_cursor_hooks.py",
         ],
@@ -458,6 +462,18 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
             "implementation-review-workflow.mdc",
             "plan-template-enforcement.mdc",
             "cursor-rules-maker.mdc",
+            "monitor-cursor-rules-sync.mdc",
+        ],
+    },
+    {
+        "id": "monitor_cursor_workspace_sync",
+        "patterns": [
+            ".cursor/rules/**",
+            "cursor-hooks/**",
+            "HPCPerfStats/cursor-hooks/**",
+        ],
+        "rules": [
+            "monitor-cursor-rules-sync.mdc",
         ],
     },
     {
@@ -475,7 +491,10 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
     {
         "id": "monitor_hooks",
         "patterns": [
+            "cursor-hooks/*",
+            "HPCPerfStats/cursor-hooks/*",
             ".cursor/hooks/*",
+            "cursor-hooks/hooks.json",
             ".cursor/hooks.json",
             "hpcperfstats/tests/test_cursor_hooks.py",
         ],
@@ -579,7 +598,7 @@ def detect_rules_profile(workspace_roots: Iterable[str] | None = None) -> str:
     """Return 'monitor' or 'hpcperfstats' from .cursor/rules symlink or on-disk layout."""
     roots = list(workspace_roots or [])
     hook_dir = Path(__file__).resolve().parent
-    checkout_root = hook_dir.parent.parent
+    checkout_root = hook_dir.parent
     candidates: list[Path] = []
     for root in roots:
         candidates.append(Path(root) / ".cursor" / "rules")

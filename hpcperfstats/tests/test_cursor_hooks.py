@@ -1,4 +1,4 @@
-"""Unit tests for Cursor hook helpers (.cursor/hooks/hpc_hook_lib.py)."""
+"""Unit tests for Cursor hook helpers (cursor-hooks/hpc_hook_lib.py)."""
 from __future__ import annotations
 
 import json
@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-HOOKS_DIR = Path(__file__).resolve().parents[2] / ".cursor" / "hooks"
+HOOKS_DIR = Path(__file__).resolve().parents[2] / "cursor-hooks"
 RULES_DIR = Path(__file__).resolve().parents[1] / "cursor-rules"
 sys.path.insert(0, str(HOOKS_DIR))
 
@@ -33,7 +33,10 @@ MONITOR_PLAN_TEMPLATE = (
 MONITOR_GLOBAL_TESTING_PATH = (
     "/repo/HPCPerfStats/monitor/cursor-rules/global-testing-discipline.mdc"
 )
-HOOK_LIB_PATH = "/repo/HPCPerfStats/.cursor/hooks/hpc_hook_lib.py"
+MONITOR_CURSOR_SYNC_PATH = (
+    "/repo/HPCPerfStats/monitor/cursor-rules/monitor-cursor-rules-sync.mdc"
+)
+HOOK_LIB_PATH = "/repo/HPCPerfStats/cursor-hooks/hpc_hook_lib.py"
 TESTING_RULE_PATH = (
     "/repo/HPCPerfStats/hpcperfstats/cursor-rules/testing-best-practices.mdc"
 )
@@ -178,7 +181,8 @@ def test_edge_cases_issues_requires_three_items():
 def test_close_gate_issues_passes_when_rules_read_before_edit():
   assistant_text = (
       "## Agent rule dispatch\n\n"
-      "Read: testing-best-practices.mdc, global-testing-discipline.mdc\n"
+      "Read: testing-best-practices.mdc, global-testing-discipline.mdc, "
+      "monitor-cursor-rules-sync.mdc\n"
       "## Final code review (senior engineer pass)\n\nok\n"
       "## Post-implementation review\n\n"
       "### Why it works\n\nok\n"
@@ -199,6 +203,11 @@ def test_close_gate_issues_passes_when_rules_read_before_edit():
                       "type": "tool_use",
                       "name": "Read",
                       "input": {"path": MONITOR_GLOBAL_TESTING_PATH},
+                  },
+                  {
+                      "type": "tool_use",
+                      "name": "Read",
+                      "input": {"path": MONITOR_CURSOR_SYNC_PATH},
                   },
               ],
           },
@@ -262,7 +271,7 @@ def test_resolve_cursor_rule_path_finds_checkout_rules():
 
 def test_readme_install_not_triggered_for_hooks_readme():
   rules = triggered_rules_for_paths(
-      ["/repo/HPCPerfStats/.cursor/hooks/README.md"],
+      ["/repo/HPCPerfStats/cursor-hooks/README.md"],
   )
   assert "readme-installation-sync.mdc" not in rules
 

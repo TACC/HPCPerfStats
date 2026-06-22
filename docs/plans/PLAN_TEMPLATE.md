@@ -168,7 +168,7 @@ Per `plan-creation-contract.mdc` step 6 and `plan-completion-gate.mdc` close-seq
 - [ ] Performance regressions
 - [ ] Missing components (tests, docs, registry or drift guards, API client or tools updates, nginx or route sync when applicable)
 - [ ] Edge cases not covered by tests
-- [ ] New or re-triggered `cursor-rules/*.mdc` files dual-registered in **both** `agent-discipline-core.mdc` (task router) and `.cursor/hooks/hook_task_router.py` (`ROUTER_ENTRIES`)
+- [ ] New or re-triggered `cursor-rules/*.mdc` files dual-registered in **both** `agent-discipline-core.mdc` (task router) and `cursor-hooks/hook_task_router.py` (`ROUTER_ENTRIES`)
 - [ ] Anything else a senior reviewer would block on merge
 
 **Fix anything found** and re-run relevant tests. Do not proceed to post-implementation chat self-review or mark todos complete while open review items remain.

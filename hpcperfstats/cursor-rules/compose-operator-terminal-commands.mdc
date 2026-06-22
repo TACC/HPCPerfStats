@@ -1,7 +1,7 @@
 ---
 description: Operator diagnostic commands in plans and chat must be docker-compose copy/paste blocks per service
 alwaysApply: false
-globs: docs/plans/**,docs/TESTING.md,HPCPerfStats/README.md
+globs: docs/plans/**,.cursor/plans/**,docs/TESTING.md,HPCPerfStats/README.md
 ---
 
 # Compose Operator Terminal Commands

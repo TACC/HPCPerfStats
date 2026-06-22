@@ -2,7 +2,7 @@
 description: Keep workspace and package cursor-rules trees identical
 globs:
   - .cursor/rules/**
-  - .cursor/hooks/**
+  - cursor-hooks/**
   - HPCPerfStats/monitor/cursor-rules/**
 alwaysApply: false
 ---
@@ -22,8 +22,10 @@ This workspace **hard-links** monitor cursor rules between:
 
 | Tree | Role |
 |------|------|
-| **`.cursor/hooks/`** | Symlink → `HPCPerfStats/.cursor/hooks/` |
-| **`.cursor/hooks.json`** | Symlink → `HPCPerfStats/.cursor/hooks.json` |
+| **`.cursor/hooks/`** | Symlink → `HPCPerfStats/cursor-hooks/` |
+| **`.cursor/hooks.json`** | Real file at workspace root (copy from `HPCPerfStats/cursor-hooks/hooks.json`) |
+
+There is **no** `HPCPerfStats/.cursor/` directory. Edit hook scripts in **`HPCPerfStats/cursor-hooks/`** (checked in).
 
 In **this** checkout, editing either rules path updates the same inode. In other checkouts they may be separate copies — then you must update **both** trees in one commit.
 
@@ -32,7 +34,7 @@ In **this** checkout, editing either rules path updates the same inode. In other
 1. Use the same filename in both trees (or rely on hard-links here).
 2. After editing, `diff .cursor/rules/<f> HPCPerfStats/monitor/cursor-rules/<f>` in unfamiliar checkouts.
 3. New monitor-themed rules belong in **both** locations unless workspace-only meta rules.
-4. **Dual registration** — add router row in **`agent-discipline-core.mdc`** and **`MONITOR_ROUTER_ENTRIES`** in **`.cursor/hooks/hook_task_router.py`** in the same task.
+4. **Dual registration** — add router row in **`agent-discipline-core.mdc`** and **`MONITOR_ROUTER_ENTRIES`** in **`cursor-hooks/hook_task_router.py`** in the same task.
 
 ## Related rules index
 

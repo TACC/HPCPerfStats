@@ -31,7 +31,7 @@ Answer **YES** or **N/A (one-line reason)** for each row. If any row is **NO**, 
 | 5 | **Triggered domain rules** below were **Read** (Read tool on the `.mdc` path) before editing — list them under **`## Agent rule dispatch`** at close; hook verifies Read calls for listed domain rules |
 | 6 | **Compose workflows** run when DB/Redis/RabbitMQ/ingest semantics changed (`compose-required-for-data-services-changes.mdc`) |
 | 7 | **Plan YAML** todos synced if implementing a plan (`plan-completion-gate.mdc`) |
-| 8 | **New/re-triggered domain rules** dual-registered in **both** this file (task router) and `.cursor/hooks/hook_task_router.py` (`ROUTER_ENTRIES`) — verify in **Final code review** when the diff touches `cursor-rules/*.mdc` |
+| 8 | **New/re-triggered domain rules** dual-registered in **both** this file (task router) and `cursor-hooks/hook_task_router.py` (`ROUTER_ENTRIES`) — verify in **Final code review** when the diff touches `cursor-rules/*.mdc` |
 
 User may reply **`Close gate incomplete`** — redo the full close sequence without argument.
 
@@ -82,7 +82,7 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 | `services-conf/nginx*` | `nginx-static-url-prefix.mdc`, `nginx-django-route-allowlist-sync.mdc` |
 | `HPCPerfStats/README.md` or workspace-root `README.md` only (not other `README.md` paths) | `readme-installation-sync.mdc`, `compose-operator-terminal-commands.mdc` |
 | `docs/TESTING.md`, test runners | `testing-doc-sync.mdc`, `compose-operator-terminal-commands.mdc` |
-| `.cursor/hooks/*`, `hpcperfstats/tests/test_cursor_hooks.py` | `testing-best-practices.mdc` |
+| `cursor-hooks/*`, `hpcperfstats/tests/test_cursor_hooks.py` | `testing-best-practices.mdc` |
 
 ### Cursor rules (domain rule authoring)
 
@@ -95,7 +95,7 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 
 | Trigger | Read |
 |---------|------|
-| User asks for a plan / Cursor Plan / `docs/plans/` | `plan-creation-contract.mdc`, `plan-template-enforcement.mdc`, `compose-operator-terminal-commands.mdc`, `deploy-ini-with-code-no-phase-zero.mdc`, `docs/plans/PLAN_TEMPLATE.md` |
+| User asks for a plan / Cursor Plan / `.cursor/plans/` | `plan-creation-contract.mdc`, `plan-template-enforcement.mdc`, `compose-operator-terminal-commands.mdc`, `deploy-ini-with-code-no-phase-zero.mdc`, `docs/plans/PLAN_TEMPLATE.md` — write live plans to **`<workspace_root>/.cursor/plans/*.plan.md`**, not `docs/plans/` |
 | `hpcperfstats.ini.example`, `docs/DEPLOY*.md` (INI redeploy guidance) | `deploy-ini-with-code-no-phase-zero.mdc`, `immutable-image-ini-policy.mdc`, `hpcperfstats-ini-format.mdc` |
 | Pre-code planning | `implementation-review-workflow.mdc` |
 | Plan or change blocked — operator must run terminal commands for facts | `compose-operator-terminal-commands.mdc` |
@@ -119,7 +119,7 @@ When you **add** a new `hpcperfstats/cursor-rules/*.mdc` or materially change tr
 3. Add an **Activation** note at the top (see existing demoted rules).
 4. **Dual registration (same task, non-optional)** — every new or re-triggered domain rule must appear in **both**:
    - **this file** — task router table above (`Trigger paths` → `Read these rules`);
-   - **`.cursor/hooks/hook_task_router.py`** — matching `ROUTER_ENTRIES` path patterns (close-gate auto-detect + Read-before-edit hooks).
+   - **`cursor-hooks/hook_task_router.py`** — matching `ROUTER_ENTRIES` path patterns (close-gate auto-detect + Read-before-edit hooks).
    A rule missing from either file is **orphaned**; hooks will not dispatch it correctly.
 5. Update **`RULES_README.md`** when policy changes (always-on count, hook behavior, router conventions).
 6. Plan authoring only: also update **`plan-creation-contract.mdc`** step 5 when the pattern is recurring.

@@ -172,13 +172,13 @@ def find_router_file(workspace_roots: Iterable[str], *, rule_path: str = "") -> 
             ]
         )
     hook_dir = Path(__file__).resolve().parent
-    checkout_root = hook_dir.parent.parent
+    checkout_root = hook_dir.parent
+    workspace_root = checkout_root.parent
     candidates.extend(
         [
             checkout_root / "monitor" / "cursor-rules" / "agent-discipline-core.mdc",
             checkout_root / "hpcperfstats" / "cursor-rules" / "agent-discipline-core.mdc",
-            hook_dir.parent / "hpcperfstats" / "cursor-rules" / "agent-discipline-core.mdc",
-            hook_dir.parent.parent / "HPCPerfStats" / "hpcperfstats" / "cursor-rules" / "agent-discipline-core.mdc",
+            workspace_root / "HPCPerfStats" / "hpcperfstats" / "cursor-rules" / "agent-discipline-core.mdc",
         ],
     )
     profile = _detect_profile(workspace_roots)
@@ -206,15 +206,13 @@ def resolve_cursor_rule_path(rule_basename: str) -> Path | None:
     if not name.endswith(".mdc"):
         return None
     hook_dir = Path(__file__).resolve().parent
-    checkout_root = hook_dir.parent.parent
+    checkout_root = hook_dir.parent
+    workspace_root = checkout_root.parent
     candidates = [
         checkout_root / "monitor" / "cursor-rules" / name,
         checkout_root / "hpcperfstats" / "cursor-rules" / name,
-        hook_dir.parent / "HPCPerfStats" / "monitor" / "cursor-rules" / name,
-        hook_dir.parent / "HPCPerfStats" / "hpcperfstats" / "cursor-rules" / name,
-        hook_dir.parent / "hpcperfstats" / "cursor-rules" / name,
-        hook_dir.parent.parent / "HPCPerfStats" / "hpcperfstats" / "cursor-rules" / name,
-        hook_dir.parent.parent / "HPCPerfStats" / "monitor" / "cursor-rules" / name,
+        workspace_root / "HPCPerfStats" / "monitor" / "cursor-rules" / name,
+        workspace_root / "HPCPerfStats" / "hpcperfstats" / "cursor-rules" / name,
     ]
     for candidate in candidates:
         if candidate.is_file():

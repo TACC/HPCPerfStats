@@ -28,13 +28,13 @@ Adding a new domain rule (same task, non-optional):
 
 1. Default `alwaysApply: false`
 2. Add `globs:` when file patterns are stable
-3. **Dual registration** — add trigger row in `agent-discipline-core.mdc` **and** matching `MONITOR_ROUTER_ENTRIES` in `.cursor/hooks/hook_task_router.py`
+3. **Dual registration** — add trigger row in `agent-discipline-core.mdc` **and** matching `MONITOR_ROUTER_ENTRIES` in `cursor-hooks/hook_task_router.py`
 4. Do **not** duplicate close-gate or testing law (link instead)
 5. Verify dual registration in **Final code review** (`plan-completion-gate.mdc`); Cursor hooks enforce it at edit time and close
 
 ## Cursor hooks
 
-Committed under `HPCPerfStats/.cursor/` (symlink from workspace `.cursor/`). See `.cursor/hooks/README.md`.
+Committed under `HPCPerfStats/cursor-hooks/` (workspace `.cursor/hooks` symlinks there). See `cursor-hooks/README.md`.
 
 - **`stop`** — close-gate headings after file edits **or `CreatePlan`**, rule dispatch, dual-registration when `cursor-rules/*.mdc` edited, plan body `PLAN_TEMPLATE.md` sections, Read-before-edit/plan proof
 - **`postToolUse`** — `check-edit-triggered-rules.py` warns when triggered domain rules or plan reads are missing
