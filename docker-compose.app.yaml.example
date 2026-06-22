@@ -17,8 +17,6 @@ services:
     environment:
       - HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini
       - STATIC_ROOT=/home/hpcperfstats/staticfiles
-    ports:
-      - "${HPCPERFSTATS_WEB_PORT:-8000}:8000"
     volumes:
       - staticfiles_data:/home/hpcperfstats/staticfiles
       - media_data:/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/media
