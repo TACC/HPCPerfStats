@@ -411,3 +411,118 @@ def test_discover_manifest_handoffs_reads_persisted_manifest(tmp_path):
   assert len(found) == 1
   assert found[0][0] == os.path.normpath(tar_path)
   assert str(seg) in found[0][1]
+
+
+def test_should_handoff_manifest_fast_when_phase_done(tmp_path, monkeypatch):
+  day = datetime(2022, 5, 22)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(
+      str(seg),
+      zst,
+      "skipped_not_in_archive",
+      "not_in_sealed_archive",
+  )
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["skipped_count"] = 1
+    state._manifest["completed_at"] = time.time()
+    _save_manifest(state._manifest_path, state._manifest)
+
+  def _fail_full_scan(*_args, **_kwargs):
+    pytest.fail("handoff must not trigger full remaining-raw scan when phase=done")
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+      _fail_full_scan,
+  )
+  assert coord.should_handoff_to_ingest(tar_path)
+  assert state.handoff_paths_for_ingest() == [str(seg)]
+
+
+def test_should_handoff_blocked_when_phase_done_verified_on_disk(tmp_path, monkeypatch):
+  day = datetime(2022, 5, 23)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: True)
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), zst, "verified", "verified")
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["verified_count"] = 1
+    state._manifest["completed_at"] = time.time()
+    _save_manifest(state._manifest_path, state._manifest)
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+      lambda *_a, **_k: pytest.fail("manifest-fast handoff must not need full scan"),
+  )
+  assert not coord.should_handoff_to_ingest(tar_path)
+  assert state.handoff_paths_for_ingest() == []
+
+
+def test_handoff_paths_manifest_fast_many_entries(tmp_path, monkeypatch):
+  day = datetime(2022, 5, 24)
+  host = tmp_path / "n.cluster.integration.test"
+  host.mkdir(parents=True, exist_ok=True)
+  segs = []
+  for hour in range(10):
+    ts = int(datetime(day.year, day.month, day.day, hour, 0, 0).timestamp())
+    seg = host / str(ts)
+    seg.write_text("%d job1 cn001\nline\n" % ts)
+    os.utime(seg, (ts, ts))
+    segs.append(seg)
+  tar_path, zst = _seal_day(tmp_path, segs[0], day)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
+  state = coord._get_or_create_day(tar_path)
+  for seg in segs:
+    state._record_entry(
+        str(seg),
+        zst,
+        "skipped_not_in_archive",
+        "not_in_sealed_archive",
+    )
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["skipped_count"] = len(segs)
+    state._manifest["completed_at"] = time.time()
+    _save_manifest(state._manifest_path, state._manifest)
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+      lambda *_a, **_k: pytest.fail("manifest-fast handoff must not need full scan"),
+  )
+  paths = state.handoff_paths_for_ingest()
+  assert len(paths) == len(segs)
+  assert set(paths) == {str(seg) for seg in segs}
+
+
+def test_build_remaining_uses_snapshot_when_wired(tmp_path, monkeypatch):
+  from types import SimpleNamespace
+
+  day = datetime(2022, 5, 25)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  snapshot = SimpleNamespace(
+      remaining_raw_by_gz={zst: [str(seg)]},
+  )
+  captured = {}
+
+  def _capture_build(*args, **kwargs):
+    captured["maintenance_snapshot"] = kwargs.get("maintenance_snapshot")
+    return {zst: [str(seg)]}
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+      _capture_build,
+  )
+  coord = _make_coordinator(
+      tmp_path,
+      get_maintenance_snapshot=lambda: snapshot,
+  )
+  state = coord._get_or_create_day(tar_path)
+  closed = state._closed_raw_paths_on_disk()
+  assert closed == [str(seg)]
+  assert captured["maintenance_snapshot"] is snapshot

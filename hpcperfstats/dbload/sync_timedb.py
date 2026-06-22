@@ -38,6 +38,7 @@ import subprocess
 import sys
 import threading
 import time
+import types
 import warnings
 from collections import deque
 from collections import defaultdict
@@ -4438,6 +4439,14 @@ def run_sync_timedb_supervisor_loop(
     if snap is None or not snap.remaining_raw_by_gz:
       return None
     return dict(snap.remaining_raw_by_gz)
+
+  def _get_maintenance_snapshot_for_day_raw():
+    remaining = _get_accrual_remaining_raw_by_gz()
+    if remaining is not None:
+      return types.SimpleNamespace(remaining_raw_by_gz=remaining)
+    return startup_archive_scan.get_snapshot()
+
+  day_raw_removal.get_maintenance_snapshot = _get_maintenance_snapshot_for_day_raw
 
   def _rescan_pending_with_progress():
     rescan_t0 = time.time()

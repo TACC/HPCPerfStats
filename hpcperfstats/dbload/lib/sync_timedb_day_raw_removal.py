@@ -119,6 +119,7 @@ class _DayRawRemovalState:
       log_fn,
       get_quarantine_skip_paths: Callable[[], Set[str]],
       ingest_ready_fn: Optional[Callable[[str], bool]] = None,
+      get_maintenance_snapshot: Optional[Callable[[], Any]] = None,
   ):
     self.tar_path = os.path.normpath(tar_path)
     self.archive_data_dir = archive_data_dir
@@ -127,6 +128,7 @@ class _DayRawRemovalState:
     self.log_fn = log_fn
     self.get_quarantine_skip_paths = get_quarantine_skip_paths
     self.ingest_ready_fn = ingest_ready_fn
+    self.get_maintenance_snapshot = get_maintenance_snapshot
     day_date = calendar_date_from_daily_tar_path(self.tar_path)
     if day_date is None:
       raise ValueError("invalid daily tar path: %s" % tar_path)
@@ -154,13 +156,25 @@ class _DayRawRemovalState:
   def delete_phase_done(self) -> bool:
     return self.phase() == PHASE_DONE
 
-  def _closed_raw_paths_on_disk(self) -> List[str]:
-    remaining = build_remaining_raw_for_daily_tar(
+  def _resolve_maintenance_snapshot(self) -> Any:
+    if self.get_maintenance_snapshot is None:
+      return None
+    try:
+      return self.get_maintenance_snapshot()
+    except Exception:
+      return None
+
+  def _build_remaining_raw_for_daily_tar(self) -> Dict[str, List[str]]:
+    return build_remaining_raw_for_daily_tar(
         self.archive_data_dir,
         self.host_name_ext,
         self.tgz_archive_dir,
         self.tar_path,
+        maintenance_snapshot=self._resolve_maintenance_snapshot(),
     )
+
+  def _closed_raw_paths_on_disk(self) -> List[str]:
+    remaining = self._build_remaining_raw_for_daily_tar()
     paths: List[str] = []
     for raw_list in (remaining or {}).values():
       paths.extend(raw_list or [])
@@ -176,12 +190,7 @@ class _DayRawRemovalState:
     zst_path, gz_path = compressed_sibling_paths(self.tar_path)
     if not (os.path.isfile(zst_path) or os.path.isfile(gz_path)):
       return False
-    remaining_raw = build_remaining_raw_for_daily_tar(
-        self.archive_data_dir,
-        self.host_name_ext,
-        self.tgz_archive_dir,
-        self.tar_path,
-    )
+    remaining_raw = self._build_remaining_raw_for_daily_tar()
     if daily_gz_has_remaining_raw_stats(zst_path, remaining_raw):
       if self._has_closed_raw_existing_on_disk():
         return False
@@ -259,7 +268,34 @@ class _DayRawRemovalState:
         unmanifested.append(path)
     return unmanifested
 
+  def _manifest_entries_on_disk(self) -> List[Tuple[str, Dict[str, Any]]]:
+    with self._lock:
+      entries = dict(self._manifest.get("entries", {}))
+    on_disk: List[Tuple[str, Dict[str, Any]]] = []
+    for path, entry in entries.items():
+      if os.path.isfile(path) and isinstance(entry, dict):
+        on_disk.append((path, entry))
+    return on_disk
+
+  def _manifest_retryable_paths_on_disk(self) -> List[str]:
+    return [
+        path
+        for path, entry in self._manifest_entries_on_disk()
+        if self._entry_is_retryable_skip(entry)
+    ]
+
+  def _manifest_only_waiting_on_ingest(self) -> bool:
+    on_disk = self._manifest_entries_on_disk()
+    if not on_disk:
+      return False
+    for _path, entry in on_disk:
+      if not self._entry_is_retryable_skip(entry):
+        return False
+    return True
+
   def _only_waiting_on_ingest_blocks_completion(self) -> bool:
+    if self.delete_phase_done():
+      return self._manifest_only_waiting_on_ingest()
     if self._unmanifested_closed_raw_paths():
       return False
     with self._lock:
@@ -298,6 +334,8 @@ class _DayRawRemovalState:
 
   def handoff_paths_for_ingest(self) -> List[str]:
     """Closed raw on disk whose manifest entry is missing or retryable."""
+    if self.delete_phase_done():
+      return self._manifest_retryable_paths_on_disk()
     with self._lock:
       entries = dict(self._manifest.get("entries", {}))
     paths: List[str] = []
@@ -434,12 +472,7 @@ class _DayRawRemovalState:
       if not self._manifest.get("started_at"):
         self._manifest["started_at"] = time.time()
     zst_path, _gz_path = compressed_sibling_paths(self.tar_path)
-    remaining = build_remaining_raw_for_daily_tar(
-        self.archive_data_dir,
-        self.host_name_ext,
-        self.tgz_archive_dir,
-        self.tar_path,
-    )
+    remaining = self._build_remaining_raw_for_daily_tar()
     raw_paths: List[str] = []
     for paths in (remaining or {}).values():
       raw_paths.extend(paths or [])
@@ -563,12 +596,7 @@ class _DayRawRemovalState:
           self._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
           _save_manifest(self._manifest_path, self._manifest)
         return deleted
-      remaining_raw = build_remaining_raw_for_daily_tar(
-          self.archive_data_dir,
-          self.host_name_ext,
-          self.tgz_archive_dir,
-          self.tar_path,
-      )
+      remaining_raw = self._build_remaining_raw_for_daily_tar()
       remove_verified_uncompressed_daily_tars(
           self.tgz_archive_dir,
           log_fn=self.log_fn,
@@ -607,6 +635,7 @@ class DayRawRemovalCoordinator:
       process_title: str = "sync_timedb.py",
       on_pipeline_complete: Optional[Callable[[str], None]] = None,
       on_handoff_to_ingest: Optional[Callable[[str, List[str], str], None]] = None,
+      get_maintenance_snapshot: Optional[Callable[[], Any]] = None,
   ):
     self.archive_data_dir = archive_data_dir
     self.host_name_ext = host_name_ext
@@ -617,6 +646,7 @@ class DayRawRemovalCoordinator:
     self.process_title = process_title
     self.on_pipeline_complete = on_pipeline_complete
     self.on_handoff_to_ingest = on_handoff_to_ingest
+    self.get_maintenance_snapshot = get_maintenance_snapshot
     self.enabled = cfg.get_sync_day_close_raw_removal_preflight()
     self._days: Dict[str, _DayRawRemovalState] = {}
     self._days_lock = threading.Lock()
@@ -636,6 +666,7 @@ class DayRawRemovalCoordinator:
           log_fn=self.log_fn,
           get_quarantine_skip_paths=self.get_quarantine_skip_paths,
           ingest_ready_fn=self.ingest_ready_fn,
+          get_maintenance_snapshot=self.get_maintenance_snapshot,
       )
       self._days[tar_norm] = state
       return state

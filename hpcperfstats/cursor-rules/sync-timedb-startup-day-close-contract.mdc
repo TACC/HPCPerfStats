@@ -124,12 +124,23 @@ sync_timedb: pending reconcile cap done elapsed_s=… oldest_tar=… blocked_n=�
 - **`run_scheduled_maintenance_pass`** with `reason=startup|every_n_chunks|ingest_queue_empty` must **submit** async DAY_CLOSE for **`eligible_deferred`** days (via `_submit_scheduled_day_close_from_snapshot`), not only log the candidate report. Report-only passes use other reason strings.
 - **Supervisor delete handoff:** checkpoint-complete days at async manifest **`raw_delete_pending`** must not be re-submitted by startup discover, scheduled maintenance, or `_maybe_enqueue_immediate_day_close`; completion is supervisor **`reconcile_supervisor_raw_delete_pending`** → handoff or **`finalize_complete_if_filesystem`** via **`_apply_day_close_raw_removal_deletes`** (see **`sync-timedb-archive-janitor-contract.mdc`**).
 
+## Manifest-fast handoff (`phase=done`)
+
+When per-day raw removal manifest **`phase=done`**, handoff eligibility (`should_handoff_to_ingest`, `handoff_paths_for_ingest`, `_only_waiting_on_ingest_blocks_completion`, `discover_manifest_handoffs`) uses **manifest + `os.path.isfile`** only — **no** nested `build_remaining_raw_stats_by_daily_gz` full collect. This avoids OOM/stall on large archives when async manifest is stuck at **`raw_delete_pending`** but verify already finished.
+
+**Handoff allowed when:** at least one manifest path exists on disk and every on-disk manifest entry is a retryable skip (not verified / pending delete).
+
+**Tar drop unchanged:** `try_finish_tar_drop_if_ready` and other filesystem gates still use `build_remaining_raw_for_daily_tar` with janitor accrual or startup snapshot when wired (`DayRawRemovalCoordinator.get_maintenance_snapshot` from supervisor).
+
+**Unmanifested closed raw** may still exist on disk; handoff requeues known retryable manifest paths and defers async — tar drop stays blocked until filesystem truth clears (see **`sync-timedb-db-before-archive-contract.mdc`**).
+
 ## Tests
 
 - `hpcperfstats/tests/test_sync_timedb_startup_day_close.py` (checkpoint-complete + quiescent submit, boot reconcile when `phase=done`, `discover_done` true with `pending_eligible`, false with `pending_retry`, async-saturated loop exit, tail-first submit deferral, pipelined tail enqueue)
 - `hpcperfstats/tests/test_sync_timedb_startup_tail_ingest.py` (coordinator queue, ingest before discover_done, phase complete)
 - `hpcperfstats/tests/test_sync_timedb_supervisor.py` (`test_supervisor_waits_for_startup_day_close_drain_before_ingest`, `test_supervisor_opens_ingest_when_discover_done_pending_eligible_only`, `test_supervisor_blocks_ingest_when_pending_retry`, `test_supervisor_startup_drain_disabled_allows_parallel_ingest`, `test_supervisor_failed_ingest_requeues_at_pending_head`, `test_supervisor_startup_tail_ingest_runs_during_drain`, `test_supervisor_startup_drain_completes_when_day_raw_waiting_on_ingest_and_tail_skip`, `test_supervisor_startup_drain_blocked_reason_logged`, gate clear with inflight async)
-- Archive/janitor/async helpers in `test_sync_timedb_archive.py`, `test_sync_timedb_janitor.py`, `test_sync_timedb_async_day_close.py` (including **`raw_delete_pending`** single-flight / no-resubmit, stale **`raw_delete_pending`** recovery, **`reconcile_supervisor_raw_delete_pending`** handoff)
+- Archive/janitor/async helpers in `test_sync_timedb_archive.py`, `test_sync_timedb_janitor.py`, `test_sync_timedb_async_day_close.py` (including **`raw_delete_pending`** single-flight / no-resubmit, stale **`raw_delete_pending`** recovery, **`reconcile_supervisor_raw_delete_pending`** handoff, **`test_reconcile_supervisor_raw_delete_pending_handoffs_phase_done`**)
+- `hpcperfstats/tests/test_sync_timedb_day_raw_removal.py` (manifest-fast handoff when **`phase=done`**, snapshot-aware remaining raw, verified-on-disk handoff block)
 
 ## Overlap
 
