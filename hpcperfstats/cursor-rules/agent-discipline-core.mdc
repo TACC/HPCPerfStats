@@ -78,6 +78,7 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 | Trigger paths | Read these rules |
 |---------------|------------------|
 | `docker-compose*.yaml`, `tests/run_*_workflow.sh` | `colima-docker-runtime.mdc`, `compose-required-for-data-services-changes.mdc`, `docker-compose-non-unit-testing.mdc` |
+| `docker-compose.app.yaml`, `docker-compose.app.yaml.example` | `docker-compose-app-example-sync.mdc`, `readme-installation-sync.mdc` |
 | `.dockerignore`, `Dockerfile`, `hpcperfstats/tests/test_dockerignore_test_artifacts.py` | `dockerignore-test-artifacts-sync.mdc` |
 | `services-conf/nginx*` | `nginx-static-url-prefix.mdc`, `nginx-django-route-allowlist-sync.mdc` |
 | `HPCPerfStats/README.md` or workspace-root `README.md` only (not other `README.md` paths) | `readme-installation-sync.mdc`, `compose-operator-terminal-commands.mdc` |

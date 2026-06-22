@@ -176,6 +176,17 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
     },
     {
+        "id": "docker_compose_app_example",
+        "patterns": [
+            "docker-compose.app.yaml",
+            "docker-compose.app.yaml.example",
+        ],
+        "rules": [
+            "docker-compose-app-example-sync.mdc",
+            "readme-installation-sync.mdc",
+        ],
+    },
+    {
         "id": "dockerignore_test_artifacts",
         "patterns": [
             ".dockerignore",

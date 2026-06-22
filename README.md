@@ -236,6 +236,8 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    cp docker-compose.app.yaml.example docker-compose.app.yaml
    ```
 
+   **`docker-compose.app.yaml` is gitignored** — treat **`docker-compose.app.yaml.example`** as the committed operator template. After `cp`, edit only site-specific paths below; any new ports, grace periods, memory caps, or volume wiring must be added to **`.example`** in the repo (see **`hpcperfstats/cursor-rules/docker-compose-app-example-sync.mdc`**) so the next clone gets them.
+
    Edit `docker-compose.app.yaml` and set:
 
    - **pipeline → volumes:** path to a `.ssh` directory with valid keys and permissions  
@@ -311,7 +313,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
    For memory-constrained deployments, start with the conservative baseline values documented in `hpcperfstats.ini.example`, then scale up gradually after observing stable DB checkpoints and container RSS headroom.
 
-   **`pipeline` memory cap (`docker-compose.app.yaml`):** on hosts with **~192 GiB RAM and no swap**, set **`mem_limit: 128g`** and **`memswap_limit: 128g`** on the **`pipeline`** service so ingest spikes cgroup-OOM inside the container before starving **`db`**/**`web`**. After changing limits, recreate the container (`docker compose up -d --force-recreate pipeline`) and verify **`memory.max`** inside the cgroup is numeric (not `max`). Pair with **`[PIPELINE]`** RSS knobs documented in **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** § OOM.
+   **`pipeline` memory cap (`docker-compose.app.yaml`):** on hosts with **~192 GiB RAM and no swap**, set **`mem_limit: 128g`** and **`memswap_limit: 128g`** on the **`pipeline`** service so ingest spikes cgroup-OOM inside the container before starving **`db`**/**`web`**. **`stop_grace_period`** (default **2m** in **`.example`**) allows `sync_timedb` to drain on `docker compose stop`; override with **`HPCPERFSTATS_PIPELINE_STOP_GRACE`**. After changing limits or grace, recreate the container (`docker compose up -d --force-recreate pipeline`) and verify **`memory.max`** inside the cgroup is numeric (not `max`). Pair with **`[PIPELINE]`** RSS knobs documented in **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** § OOM.
 
 6. **Supervisord and rsync:**
 

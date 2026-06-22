@@ -87,3 +87,37 @@ def test_docker_compose_app_web_build_uses_hpcperfstats_full_target():
   assert "target: hpcperfstats-full" in content
   assert content.index("target: hpcperfstats-full") < content.index("image: hpcperfstats")
 
+
+# Operator-facing keys that must stay aligned between the gitignored app overlay
+# and docker-compose.app.yaml.example (see docker-compose-app-example-sync.mdc).
+_OPERATOR_APP_COMPOSE_MARKERS = (
+    "CPU pinning fragments: see docker-compose.yaml",
+    "${HPCPERFSTATS_WEB_PORT:-8000}:8000",
+    "mem_limit: 128g",
+    "memswap_limit: 128g",
+    "${HPCPERFSTATS_PIPELINE_STOP_GRACE:-2m}",
+    "${HPCPERFSTATS_PIPELINE_SSH_DIR:-/tmp/hpcperfstats-pipeline-ssh}:/hpcperfstats/.ssh/:ro",
+    "device: /opt/hpcperfstats_data/",
+)
+
+
+def test_docker_compose_app_example_operator_markers():
+  repo_root = Path(__file__).resolve().parents[2]
+  example_content = (repo_root / "docker-compose.app.yaml.example").read_text()
+  for marker in _OPERATOR_APP_COMPOSE_MARKERS:
+    assert marker in example_content, "example missing operator marker: %s" % marker
+
+
+def test_docker_compose_app_example_operator_parity():
+  """When local docker-compose.app.yaml exists, operator fields must match .example."""
+  repo_root = Path(__file__).resolve().parents[2]
+  app_path = repo_root / "docker-compose.app.yaml"
+  example_path = repo_root / "docker-compose.app.yaml.example"
+  if not app_path.is_file():
+    return
+  app_content = app_path.read_text()
+  example_content = example_path.read_text()
+  for marker in _OPERATOR_APP_COMPOSE_MARKERS:
+    assert marker in app_content, "app yaml missing operator marker: %s" % marker
+    assert marker in example_content, "example missing operator marker: %s" % marker
+

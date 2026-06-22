@@ -1,10 +1,12 @@
 ---
 description: Keep docker-compose.app.yaml.example aligned when docker-compose.app.yaml changes
-globs: HPCPerfStats/docker-compose.app.yaml,HPCPerfStats/docker-compose.app.yaml.example
+globs: docker-compose.app.yaml,docker-compose.app.yaml.example,.gitignore
 alwaysApply: false
 ---
 
 # docker-compose.app.yaml Example Sync
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 Operators bootstrap site compose from a copy/edit flow documented in **`HPCPerfStats/README.md`**:
 
@@ -12,28 +14,59 @@ Operators bootstrap site compose from a copy/edit flow documented in **`HPCPerfS
 cp docker-compose.app.yaml.example docker-compose.app.yaml
 ```
 
-Whenever **`HPCPerfStats/docker-compose.app.yaml`** changes in a way operators would need after `cp`, update **`HPCPerfStats/docker-compose.app.yaml.example` in the same task**.
+**`docker-compose.app.yaml` is gitignored** (see root **`.gitignore`**). The **committed** operator template is **`docker-compose.app.yaml.example`**. Local `docker-compose.app.yaml` is for site-specific paths (`hpcperfstatsdata` device, SSH dir) and optional dev conveniences — but **every non-dev structural change** made in the local file **must** be mirrored into **`.example` in the same task** or the next `cp` will drop it for other operators and fresh clones.
 
-## Trigger conditions
+## Law (non-dev → example)
 
-- Add, remove, or rename **`web`** or **`pipeline`** service fields that belong in the operator template: **`volumes`**, **`ports`**, **`environment`**, **`command`**, **`image`**, **`depends_on`** (between app services), **`networks`** / aliases.
-- Add, remove, or rename top-level **`volumes`** or **`networks`** entries referenced by those services.
-- Change bind-mount targets, named volume names, or **`hpcperfstatsdata`** `driver_opts.device` defaults that the example documents.
+When you change **`docker-compose.app.yaml`** in a way operators need after `cp docker-compose.app.yaml.example docker-compose.app.yaml`, you **must** apply the **same change** to **`docker-compose.app.yaml.example` in the same task**. Do not treat the gitignored file as the only source of truth for deploy wiring.
+
+## Must mirror (operator / deploy contract)
+
+Add, remove, or change these on **`web`** or **`pipeline`** in **both** files:
+
+| Field | Notes |
+|---|---|
+| **`volumes`** | Mount paths, named volumes, env-substituted host paths |
+| **`ports`** | Host-published ports (e.g. web `8000`, pipeline syslog `514`) |
+| **`environment`** | Service env defaults |
+| **`command`**, **`image`**, **`build`** | Startup command and image target |
+| **`mem_limit`**, **`memswap_limit`** | Pipeline cgroup caps |
+| **`stop_grace_period`** | Graceful shutdown window (e.g. `2m` for `sync_timedb` SIGTERM drain) |
+| **`depends_on`** between **`web`** and **`pipeline`** | App-layer ordering |
+| **`networks`** / aliases | Service DNS on `hpcperfstats_net` |
+| Top-level **`volumes`** / **`networks`** | Named volumes and bind `device` defaults documented in README |
+
+Use the same env-var substitution shape in the example when the tracked app file uses it (e.g. `${HPCPERFSTATS_WEB_PORT:-8000}:8000`, `${HPCPERFSTATS_PIPELINE_STOP_GRACE:-2m}`).
+
+## Dev-only (may stay in local `docker-compose.app.yaml` only)
+
+Omit from **`.example`** only when intentional:
+
+| Field | Why dev-only |
+|---|---|
+| **`container_name`** | Fixed names for local scripts; README prefers `docker compose exec <service>` |
+| **`depends_on`** on **`db`** / **`redis`** with health conditions | Infra wiring lives in **`docker-compose.yaml`**; app overlay stays slim |
+| Site-specific bind **`device:`** paths | Operators edit after `cp` per README |
+
+If a field looks dev-only but affects production deploy (ports, grace period, memory caps), **mirror it**.
 
 ## Required behavior
 
-1. Apply the **same structural change** to **`docker-compose.app.yaml.example`** (not only the tracked `docker-compose.app.yaml`).
-2. Keep the example **copy-pasteable**: no site-specific secrets; use documented placeholders and comments already used in the example file.
-3. The example may remain **slimmer** than the tracked file (for example omitting `container_name`, infra `depends_on` on `db`/`redis`, or dev-only overrides) **only when** those omissions are intentional and README still matches how operators run the stack. Do **not** omit new **volume mounts**, **published ports**, or **named volumes** operators need after `cp`.
+1. Edit **`.example` first** when the change is meant for all operators; then copy or align local **`docker-compose.app.yaml`**.
+2. If you edited local **`docker-compose.app.yaml`** first, **backport** operator-facing deltas to **`.example` before closing the task**.
+3. Keep the example **copy-pasteable**: no secrets; use documented placeholders and comments.
+4. Extend **`hpcperfstats/tests/test_docker_compose_healthchecks.py`** parity markers when adding new operator-facing keys.
+5. If install steps change, update **`README.md`** per **`readme-installation-sync.mdc`**.
 
 ## Validation checklist
 
-- Every **`web`** / **`pipeline`** volume mount in the tracked file that operators must have for a correct deploy appears in the example (or README documents an explicit post-`cp` edit).
-- Top-level **`volumes:`** / **`networks:`** blocks stay consistent between the two files for entries the app services use.
-- If the change affects install steps, also update **`README.md`** per **`readme-installation-sync.mdc`**.
+- Every **`web`** / **`pipeline`** volume mount operators need appears in **`.example`** (or README documents a mandatory post-`cp` edit).
+- **`stop_grace_period`**, **`ports`**, and memory limits in local app yaml match **`.example`** unless documented as site-only.
+- Top-level **`volumes:`** / **`networks:`** blocks stay consistent for entries app services use.
+- Run **`test_docker_compose_app_example_operator_parity`** when both files exist locally.
 
 ## Overlap
 
 - **`readme-installation-sync.mdc`** — Installation prose when compose wiring or volume layout changes.
-- **`minimal-compose-install-footprint.mdc`** — prefer example + `cp` over instructing operators to hand-edit tracked compose when both files can carry the default.
+- **`minimal-compose-install-footprint.mdc`** — prefer example + `cp` over hand-editing gitignored app yaml without updating the example.
 - **`local-compose-db-lifecycle-for-web-tests.mdc`** — web test lifecycle when app compose services or mounts change.

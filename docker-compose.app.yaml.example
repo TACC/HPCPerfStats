@@ -1,4 +1,9 @@
 # These are the two containers that contain the web and data processing code
+# CPU pinning fragments: see docker-compose.yaml (includes cpu-pinning.infra + app).
+#
+# Operators: cp this file to docker-compose.app.yaml (gitignored locally).
+# Any non-dev compose change must update this .example in the same task — see
+# hpcperfstats/cursor-rules/docker-compose-app-example-sync.mdc.
 
 services:
   web:
@@ -12,6 +17,8 @@ services:
     environment:
       - HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini
       - STATIC_ROOT=/home/hpcperfstats/staticfiles
+    ports:
+      - "${HPCPERFSTATS_WEB_PORT:-8000}:8000"
     volumes:
       - staticfiles_data:/home/hpcperfstats/staticfiles
       - media_data:/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/media
@@ -28,6 +35,7 @@ services:
     # Tune from host MemTotal minus db, web, redis; 128g fits ~192 GiB hosts with no swap.
     mem_limit: 128g
     memswap_limit: 128g
+    stop_grace_period: ${HPCPERFSTATS_PIPELINE_STOP_GRACE:-2m}
     depends_on:
       - web
     command: /home/hpcperfstats/services-conf/supervisor_startup.sh
@@ -58,4 +66,3 @@ volumes:
 networks:
   hpcperfstats_net:
     name: hpcperfstats_net
-
