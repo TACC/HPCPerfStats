@@ -309,9 +309,9 @@ sync_pool_process_cap = 8
 # Poll interval for sync_timedb pool waits seconds (default 5).
 # sync_pool_poll_timeout_s = 5
 
-# Maximum consecutive pool poll timeouts before exit 124 (ceiling 2881 x 5s ≈ 14405s).
+# Maximum consecutive pool poll timeouts before exit 124 (ceiling 13000 x 5s = 65000s).
 # Per-batch abort is computed from the largest file in the current imap sub-batch (floor .. ceiling).
-# sync_pool_stall_abort_after_timeouts = 2881
+# sync_pool_stall_abort_after_timeouts = 13000
 
 # Polls to tolerate maxtasksperchild worker recycle before exit 137 (default 2).
 # sync_pool_worker_recycle_grace_polls = 2
@@ -320,11 +320,11 @@ sync_pool_process_cap = 8
 # sync_ingest_per_file_timeout_s = 900
 
 # Size-proportional ingest timeout: resolved = clamp(floor + ceil_mib(size) * per_mib, floor, max).
-# Default per_mib (13500/5120) maps 5 GiB to max; larger files cap at max (no file-size reject).
-# sync_ingest_per_file_timeout_s_per_mib = 2.63671875
+# Default per_mib ((64800-900)/30720) maps 30 GiB to max; larger files cap at max (no file-size reject).
+# sync_ingest_per_file_timeout_s_per_mib = 2.080078125
 
-# Ceiling seconds for size-proportional per-file ingest timeout (default 14400 = 4h).
-# sync_ingest_per_file_timeout_max_s = 14400
+# Ceiling seconds for size-proportional per-file ingest timeout (default 64800 = 18h at 30 GiB).
+# sync_ingest_per_file_timeout_max_s = 64800
 
 # Cache daily tar member maps per worker on DB-complete ingest checks (default yes).
 # sync_archive_members_cache_enabled = yes
@@ -397,6 +397,11 @@ sync_process_tree_rss_limit_mb = 96000
 
 # Max concurrent imap tasks per chunk; 0 means pool size (default 0).
 # sync_ingest_imap_inflight_cap = 0
+
+# Backfill idle ingest pool slots with sub-1GiB files from pending tail while >=2GiB giants run.
+# sync_ingest_giant_pool_supplement_enabled = yes
+# sync_ingest_giant_pool_supplement_max_bytes = 1073741824
+# sync_ingest_giant_pool_supplement_trigger_budget_s = 5160
 
 # Recycle ingest/archive pool workers after N files; 0 unlimited (default 1).
 sync_ingest_pool_maxtasksperchild = 1

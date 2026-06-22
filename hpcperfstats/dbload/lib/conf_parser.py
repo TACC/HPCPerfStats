@@ -111,6 +111,9 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_ingest_per_file_timeout_s"),
     ("PIPELINE", "sync_ingest_per_file_timeout_max_s"),
     ("PIPELINE", "sync_ingest_per_file_timeout_s_per_mib"),
+    ("PIPELINE", "sync_ingest_giant_pool_supplement_enabled"),
+    ("PIPELINE", "sync_ingest_giant_pool_supplement_max_bytes"),
+    ("PIPELINE", "sync_ingest_giant_pool_supplement_trigger_budget_s"),
     ("PIPELINE", "sync_archive_members_cache_enabled"),
     ("PIPELINE", "sync_archive_members_cache_max_entries"),
     ("PIPELINE", "sync_archive_members_redis_enabled"),
@@ -1606,15 +1609,15 @@ def get_sync_pool_stall_abort_after_timeouts():
     try:
       return max(1, int(env))
     except (TypeError, ValueError, OverflowError):
-      return 2881
+      return 13000
   _ensure_cfg_loaded()
   try:
     return max(
         1,
-        int(_pipeline_get("sync_pool_stall_abort_after_timeouts", fallback="2881")),
+        int(_pipeline_get("sync_pool_stall_abort_after_timeouts", fallback="13000")),
     )
   except (TypeError, ValueError, OverflowError):
-    return 2881
+    return 13000
 
 
 def get_sync_pool_worker_recycle_grace_polls():
@@ -1783,9 +1786,18 @@ def get_sync_ingest_per_file_timeout_s():
     return 0.0
 
 
-# 5 GiB × per_mib + floor reaches max at default slope (13500/5120 s per MiB).
-_SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S_DEFAULT = 14400.0
-_SYNC_INGEST_PER_FILE_TIMEOUT_S_PER_MIB_DEFAULT = 13500.0 / 5120.0
+# 30 GiB × per_mib + floor reaches max at default slope.
+_SYNC_INGEST_PER_FILE_TIMEOUT_REFERENCE_MIB = 30720  # 30 GiB
+_SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S_DEFAULT = 64800.0  # 18h at reference size
+_SYNC_INGEST_PER_FILE_TIMEOUT_S_PER_MIB_DEFAULT = (
+    (_SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S_DEFAULT - 900.0)
+    / _SYNC_INGEST_PER_FILE_TIMEOUT_REFERENCE_MIB
+)
+# 2 GiB ingest budget at default slope (giant pool supplement trigger).
+_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S_DEFAULT = (
+    900.0 + 2048.0 * _SYNC_INGEST_PER_FILE_TIMEOUT_S_PER_MIB_DEFAULT
+)
+_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES_DEFAULT = 1073741824  # 1 GiB
 
 
 def get_sync_ingest_per_file_timeout_max_s():
@@ -1832,6 +1844,71 @@ def get_sync_ingest_per_file_timeout_s_per_mib():
     )
   except (TypeError, ValueError, OverflowError):
     return _SYNC_INGEST_PER_FILE_TIMEOUT_S_PER_MIB_DEFAULT
+
+
+def get_sync_ingest_giant_pool_supplement_enabled():
+  """Backfill idle ingest pool slots from pending tail while giants run."""
+  env = os.environ.get(
+      "HPCPERFSTATS_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_ENABLED", "",
+  ).strip().lower()
+  if env in ("1", "true", "yes", "on"):
+    return True
+  if env in ("0", "false", "no", "off"):
+    return False
+  _ensure_cfg_loaded()
+  try:
+    return _pipeline_get(
+        "sync_ingest_giant_pool_supplement_enabled",
+        fallback="yes",
+    ).strip().lower() in ("1", "true", "yes", "on")
+  except (TypeError, ValueError, OverflowError):
+    return True
+
+
+def get_sync_ingest_giant_pool_supplement_max_bytes():
+  """Max file size (bytes) eligible for giant-pool supplement dispatch."""
+  env = os.environ.get(
+      "HPCPERFSTATS_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES", "",
+  ).strip()
+  if env:
+    try:
+      return max(1, int(env))
+    except (TypeError, ValueError, OverflowError):
+      return _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES_DEFAULT
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        1,
+        int(_pipeline_get(
+            "sync_ingest_giant_pool_supplement_max_bytes",
+            fallback=str(_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES_DEFAULT),
+        )),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES_DEFAULT
+
+
+def get_sync_ingest_giant_pool_supplement_trigger_budget_s():
+  """Min resolved per-file ingest budget (s) for an in-flight path to count as giant."""
+  env = os.environ.get(
+      "HPCPERFSTATS_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S", "",
+  ).strip()
+  if env:
+    try:
+      return max(0.0, float(env))
+    except (TypeError, ValueError, OverflowError):
+      return _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S_DEFAULT
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        0.0,
+        float(_pipeline_get(
+            "sync_ingest_giant_pool_supplement_trigger_budget_s",
+            fallback=str(int(_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S_DEFAULT)),
+        )),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S_DEFAULT
 
 
 def get_metrics_run_stall_timeout_s():

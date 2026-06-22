@@ -902,12 +902,17 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_archive_retry_backoff_max_seconds() == 60.0
   assert cfg.get_sync_checkpoint_flush_batch_size() == 100
   assert cfg.get_sync_bulk_create_batch_size() == 10000
-  assert cfg.get_sync_pool_stall_abort_after_timeouts() == 2881
+  assert cfg.get_sync_pool_stall_abort_after_timeouts() == 13000
   assert cfg.get_sync_pool_poll_timeout_s() == 5.0
   assert cfg.get_sync_ingest_per_file_timeout_s() == 900.0
-  assert cfg.get_sync_ingest_per_file_timeout_max_s() == 14400.0
+  assert cfg.get_sync_ingest_per_file_timeout_max_s() == 64800.0
   assert cfg.get_sync_ingest_per_file_timeout_s_per_mib() == pytest.approx(
-      13500.0 / 5120.0,
+      (64800.0 - 900.0) / 30720.0,
+  )
+  assert cfg.get_sync_ingest_giant_pool_supplement_enabled() is True
+  assert cfg.get_sync_ingest_giant_pool_supplement_max_bytes() == 1073741824
+  assert cfg.get_sync_ingest_giant_pool_supplement_trigger_budget_s() == pytest.approx(
+      5160.0,
   )
   assert cfg.get_sync_archive_members_cache_enabled() is True
   assert cfg.get_sync_archive_members_cache_max_entries() == 64

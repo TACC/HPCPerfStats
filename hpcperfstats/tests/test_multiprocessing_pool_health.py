@@ -759,3 +759,118 @@ def test_imap_sliding_window_recomputes_stall_abort_for_in_flight(monkeypatch):
     ar.finish()
   thread.join(timeout=2.0)
 
+
+def test_sliding_window_supplements_sub_1g_when_giants_in_flight():
+  pool = _ManualPool()
+  chunk_paths = ["giant0", "giant1"]
+  supplement_calls = []
+
+  def _supplement(slots_needed, in_flight):
+    supplement_calls.append((slots_needed, list(in_flight)))
+    if not any(path.startswith("giant") for path in in_flight):
+      return []
+    return [f"tail{i}" for i in range(slots_needed)]
+
+  gen = mph.imap_sliding_window_watch_pool(
+      pool,
+      lambda path: path,
+      chunk_paths,
+      max_inflight=4,
+      poll_timeout_s=0.01,
+      stall_abort_polls_fn=lambda in_flight: 10000,
+      supplement_paths_fn=_supplement,
+  )
+  import threading
+
+  thread = threading.Thread(target=lambda: list(gen), daemon=True)
+  thread.start()
+  deadline = time.monotonic() + 2.0
+  while pool.submit_count < 4 and time.monotonic() < deadline:
+    time.sleep(0.005)
+  assert pool.submit_count == 4
+  assert supplement_calls
+  dispatched = {path for path in pool.inflight.values()}
+  assert "tail0" in dispatched
+  assert "tail1" in dispatched
+  for ar in list(pool.inflight):
+    ar.finish()
+  deadline = time.monotonic() + 2.0
+  while pool.submit_count < 4 and time.monotonic() < deadline:
+    time.sleep(0.005)
+  thread.join(timeout=2.0)
+
+
+def test_supplement_not_used_while_chunk_paths_remain():
+  pool = _ManualPool()
+  paths = ["chunk0", "chunk1", "chunk2", "chunk3"]
+  supplement_calls = []
+
+  def _supplement(slots_needed, in_flight):
+    supplement_calls.append((slots_needed, list(in_flight)))
+    return ["tail0"]
+
+  gen = mph.imap_sliding_window_watch_pool(
+      pool,
+      lambda path: path,
+      paths,
+      max_inflight=2,
+      poll_timeout_s=0.01,
+      stall_abort_polls_fn=lambda in_flight: 10000,
+      supplement_paths_fn=_supplement,
+  )
+  import threading
+
+  results = []
+
+  def consumer():
+    for item in gen:
+      results.append(item)
+
+  thread = threading.Thread(target=consumer, daemon=True)
+  thread.start()
+  time.sleep(0.02)
+  assert pool.submit_count == 2
+  assert supplement_calls == []
+  deadline = time.monotonic() + 2.0
+  while len(results) < len(paths) and time.monotonic() < deadline:
+    for ar in list(pool.inflight):
+      ar.finish()
+    time.sleep(0.01)
+  thread.join(timeout=2.0)
+  assert len(results) == len(paths)
+
+
+def test_supplement_requires_giant_in_flight():
+  pool = _ManualPool()
+  chunk_paths = ["small0", "small1"]
+  supplement_calls = []
+
+  def _supplement(slots_needed, in_flight):
+    supplement_calls.append((slots_needed, list(in_flight)))
+    return ["tail0"]
+
+  gen = mph.imap_sliding_window_watch_pool(
+      pool,
+      lambda path: path,
+      chunk_paths,
+      max_inflight=4,
+      poll_timeout_s=0.01,
+      stall_abort_polls_fn=lambda in_flight: 10000,
+      supplement_paths_fn=lambda slots, in_flight: (
+          _supplement(slots, in_flight)
+          if any(path.startswith("giant") for path in in_flight)
+          else []
+      ),
+  )
+  import threading
+
+  thread = threading.Thread(target=lambda: list(gen), daemon=True)
+  thread.start()
+  deadline = time.monotonic() + 2.0
+  while pool.submit_count < 2 and time.monotonic() < deadline:
+    time.sleep(0.005)
+  assert supplement_calls == []
+  for ar in list(pool.inflight):
+    ar.finish()
+  thread.join(timeout=2.0)
+

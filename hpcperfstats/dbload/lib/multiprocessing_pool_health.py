@@ -587,12 +587,14 @@ def imap_sliding_window_watch_pool(
     on_stall_fatal_summary=None,
     pool_health_context=None,
     on_in_flight_change=None,
+    supplement_paths_fn=None,
 ):
   """Dispatch pool work with at most ``max_inflight`` concurrent ``apply_async`` tasks.
 
-  Refills idle worker slots from ``paths`` in FIFO order (sliding window). Stall
-  abort threshold is recomputed from the current in-flight path set on each poll
-  when ``stall_abort_polls_fn`` is provided.
+  Refills idle worker slots from ``paths`` in FIFO order (sliding window). When the
+  primary ``paths`` iterator is exhausted, optional ``supplement_paths_fn`` may return
+  additional paths (giant pool supplement). Stall abort threshold is recomputed from
+  the current in-flight path set on each poll when ``stall_abort_polls_fn`` is provided.
   """
   if pool is None:
     return iter(())
@@ -654,7 +656,32 @@ def imap_sliding_window_watch_pool(
       try:
         path = next(path_iter)
       except StopIteration:
-        break
+        if not callable(supplement_paths_fn):
+          break
+        slots_needed = max_inflight - len(pending_async)
+        if slots_needed <= 0:
+          break
+        in_flight = _in_flight_paths()
+        try:
+          supplement_paths = list(
+              supplement_paths_fn(slots_needed, in_flight) or (),
+          )
+        except Exception:
+          supplement_paths = []
+        if not supplement_paths:
+          break
+        path = supplement_paths.pop(0)
+        for extra_path in supplement_paths:
+          if len(pending_async) >= max_inflight:
+            break
+          if not extra_path:
+            continue
+          extra_async = apply_async(fn, (extra_path,))
+          pending_async[extra_async] = extra_path
+      else:
+        async_result = apply_async(fn, (path,))
+        pending_async[async_result] = path
+        continue
       async_result = apply_async(fn, (path,))
       pending_async[async_result] = path
 

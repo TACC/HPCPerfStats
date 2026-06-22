@@ -1,4 +1,9 @@
-"""Per-file ingest timeout and pool stall-abort helpers (shared by sync_timedb and pool dispatch)."""
+"""Per-file ingest timeout and pool stall-abort helpers (shared by sync_timedb and pool dispatch).
+
+Default INI fallbacks map **30 GiB → max** per-file ingest budget (18h at reference size).
+Operators should tune ``sync_ingest_per_file_timeout_max_s``, ``per_mib``, and
+``sync_pool_stall_abort_after_timeouts`` together.
+"""
 
 from __future__ import annotations
 
@@ -70,6 +75,61 @@ def stall_abort_polls_for_paths(paths):
   dynamic_polls = int(batch_max_s / poll_s) + 1
   min_polls = int(floor_s / poll_s) + 1 if floor_s > 0.0 else 1
   return max(1, min(ceiling_polls, max(min_polls, dynamic_polls)))
+
+
+def default_giant_supplement_trigger_budget_s():
+  """Default trigger budget: resolved timeout at 2 GiB under current INI slope."""
+  per_mib = float(cfg.get_sync_ingest_per_file_timeout_s_per_mib())
+  return 900.0 + 2048.0 * per_mib
+
+
+def is_giant_ingest_budget(path, *, trigger_s=None):
+  """True when ``path`` resolved ingest budget meets the giant supplement threshold."""
+  if trigger_s is None:
+    trigger_s = float(cfg.get_sync_ingest_giant_pool_supplement_trigger_budget_s())
+  if trigger_s <= 0.0:
+    return False
+  resolved = resolve_ingest_per_file_timeout_s(path)
+  return resolved >= float(trigger_s)
+
+
+def any_giant_ingest_budget_in_flight(paths, *, trigger_s=None):
+  """True when any in-flight path qualifies as a giant for pool supplement."""
+  if trigger_s is None:
+    trigger_s = float(cfg.get_sync_ingest_giant_pool_supplement_trigger_budget_s())
+  for path in paths or ():
+    if path and is_giant_ingest_budget(path, trigger_s=trigger_s):
+      return True
+  return False
+
+
+def iter_giant_supplement_paths(
+    pending_tail,
+    *,
+    max_bytes=None,
+    limit=None,
+    exclude=None,
+):
+  """Oldest-first pending tail paths under ``max_bytes`` for giant pool supplement."""
+  if max_bytes is None:
+    max_bytes = int(cfg.get_sync_ingest_giant_pool_supplement_max_bytes())
+  exclude_set = set(exclude or ())
+  max_bytes = int(max_bytes)
+  remaining = None if limit is None else max(0, int(limit))
+  for path in pending_tail or ():
+    if not path or path in exclude_set:
+      continue
+    if remaining is not None and remaining <= 0:
+      break
+    try:
+      size = int(stats_file_size_bytes(path))
+    except (TypeError, ValueError, OSError):
+      continue
+    if size <= 0 or size >= max_bytes:
+      continue
+    yield path
+    if remaining is not None:
+      remaining -= 1
 
 
 def calendar_day_from_sealed_archive_path(sealed_path):

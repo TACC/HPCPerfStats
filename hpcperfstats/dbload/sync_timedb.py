@@ -82,7 +82,9 @@ from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
     terminate_pool_bounded,
 )
 from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import (
+    any_giant_ingest_budget_in_flight,
     calendar_day_from_sealed_archive_path,
+    iter_giant_supplement_paths,
     max_ingest_per_file_timeout_for_paths as _max_ingest_per_file_timeout_for_paths,
     resolve_ingest_per_file_timeout_s,
     stall_abort_polls_for_paths as _stall_abort_polls_for_batch,
@@ -310,6 +312,10 @@ class _IngestPoolInFlightTracker:
   def complete(self, path):
     if path:
       self._pending.discard(os.path.normpath(path))
+
+  def note_dispatched(self, path):
+    if path:
+      self._pending.add(os.path.normpath(path))
 
   def sample_in_flight(self, max_n=10):
     return sorted(self._pending)[: max(0, int(max_n))]
@@ -1218,6 +1224,7 @@ def _imap_ingest_paths_batched(
     db_writer_pool=None,
     archive_pool=None,
     stall_diagnostics=None,
+    pending_tail=None,
 ):
   """Cap concurrent pool tasks below full chunk size for RSS safety (sliding window)."""
   inflight_cap = _effective_ingest_imap_inflight_cap(thread_count, len(paths))
@@ -1239,6 +1246,45 @@ def _imap_ingest_paths_batched(
           tracker.sample_in_flight if tracker is not None else None
       ),
   }
+  supplement_log_state = {"logged": False}
+
+  def _giant_pool_supplement_paths_fn(slots_needed, in_flight_paths):
+    if not cfg.get_sync_ingest_giant_pool_supplement_enabled():
+      return []
+    if slots_needed <= 0 or not pending_tail:
+      return []
+    if not any_giant_ingest_budget_in_flight(in_flight_paths):
+      return []
+    exclude = set(in_flight_paths or ())
+    if tracker is not None:
+      exclude.update(tracker.sample_in_flight(max_n=100000))
+    selected = list(
+        iter_giant_supplement_paths(
+            pending_tail,
+            limit=int(slots_needed),
+            exclude=exclude,
+        ),
+    )
+    if not selected:
+      return []
+    if dispatch_registry is not None:
+      seed_dispatch_worker_stages(dispatch_registry, selected)
+    if tracker is not None:
+      for path in selected:
+        tracker.note_dispatched(path)
+    if not supplement_log_state["logged"]:
+      supplement_log_state["logged"] = True
+      log_print(
+          "INFO: sync_timedb: giant pool supplement paths=%d idle_slots=%d "
+          "trigger_budget_s=%.0f"
+          % (
+              len(selected),
+              int(slots_needed),
+              float(cfg.get_sync_ingest_giant_pool_supplement_trigger_budget_s()),
+          ),
+          flush=True,
+      )
+    return selected
 
   def _on_in_flight_change(in_flight_paths):
     _update_sliding_window_stall_diagnostics(
@@ -1255,6 +1301,7 @@ def _imap_ingest_paths_batched(
       context=context,
       stall_abort_polls_fn=_stall_abort_polls_for_batch,
       on_in_flight_change=_on_in_flight_change,
+      supplement_paths_fn=_giant_pool_supplement_paths_fn,
       on_stall_warning=_make_ingest_stall_warning_fn(
           tracker,
           pool=pool,
@@ -3869,6 +3916,8 @@ def run_sync_timedb_supervisor_loop(
     if failed_chunk_paths:
       _invalidate_host_scan_hints_for_paths(failed_chunk_paths)
     tail = pending_stats_files[len(stats_files_chunk):]
+    successful_set = set(successful_paths)
+    tail = [path for path in tail if path not in successful_set]
     if failed_chunk_paths:
       pending_stats_files = _apply_handoff_priority_to_pending(
           prepend_checkpoint_blocked_paths_to_pending(
@@ -3938,6 +3987,7 @@ def run_sync_timedb_supervisor_loop(
       context_label,
       pending_total,
       batch_chunk_counter,
+      pending_tail=None,
   ):
     """Ingest an explicit path list via pool imap or supervisor-thread fallback."""
     nonlocal pool_worker_exit, active_chunk_ingest_tracker
@@ -3989,6 +4039,7 @@ def run_sync_timedb_supervisor_loop(
             db_writer_pool=db_writer_pool,
             archive_pool=archive_pool,
             stall_diagnostics=stall_diagnostics,
+            pending_tail=pending_tail,
         )
         for parsed in parse_results_iter:
           stats_fname, payload, need_archival, ingest_ok, parse_elapsed_s = parsed
@@ -4064,6 +4115,7 @@ def run_sync_timedb_supervisor_loop(
             db_writer_pool=db_writer_pool,
             archive_pool=archive_pool,
             stall_diagnostics=stall_diagnostics,
+            pending_tail=pending_tail,
         )
         for result in results_iter:
           ingest_ok = True
@@ -4105,6 +4157,7 @@ def run_sync_timedb_supervisor_loop(
             db_writer_pool=db_writer_pool,
             archive_pool=archive_pool,
             stall_diagnostics=stall_diagnostics,
+            pending_tail=pending_tail,
         )
         for result in results_iter:
           ingest_ok = True
@@ -5182,6 +5235,7 @@ def run_sync_timedb_supervisor_loop(
                 context_label="ingest chunk",
                 pending_total=len(pending_stats_files),
                 batch_chunk_counter=chunk_counter,
+                pending_tail=pending_stats_files[len(stats_files_chunk):],
             )
         )
 

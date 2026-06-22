@@ -19,26 +19,32 @@ def _patch_stats_file_size_bytes(monkeypatch, fn):
   monkeypatch.setattr(ingest_timeout_mod, "stats_file_size_bytes", fn)
 
 
+_PER_MIB_DEFAULT = (64800.0 - 900.0) / 30720.0
+_MAX_TIMEOUT_DEFAULT = 64800.0
+
+
 def _default_timeout_getters(monkeypatch):
   monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 900.0)
   monkeypatch.setattr(
       st.cfg,
       "get_sync_ingest_per_file_timeout_s_per_mib",
-      lambda: 13500.0 / 5120.0,
+      lambda: _PER_MIB_DEFAULT,
   )
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 14400.0)
+  monkeypatch.setattr(
+      st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: _MAX_TIMEOUT_DEFAULT,
+  )
 
 
 @pytest.mark.parametrize(
     ("size_bytes", "expected_timeout"),
     [
         (0, 900.0),
-        (_mib_bytes(66), 900.0 + 66.0 * (13500.0 / 5120.0)),
-        (_mib_bytes(342), 900.0 + 342.0 * (13500.0 / 5120.0)),
-        (_mib_bytes(512), 2250.0),
-        (_mib_bytes(3482), 900.0 + 3482.0 * (13500.0 / 5120.0)),
-        (_mib_bytes(5120), 14400.0),
-        (_mib_bytes(10240), 14400.0),
+        (_mib_bytes(66), 900.0 + 66.0 * _PER_MIB_DEFAULT),
+        (_mib_bytes(2048), 5160.0),
+        (_mib_bytes(512), 900.0 + 512.0 * _PER_MIB_DEFAULT),
+        (_mib_bytes(5120), 900.0 + 5120.0 * _PER_MIB_DEFAULT),
+        (_mib_bytes(30720), _MAX_TIMEOUT_DEFAULT),
+        (_mib_bytes(35000), _MAX_TIMEOUT_DEFAULT),
     ],
 )
 def test_resolve_ingest_per_file_timeout_s_table(
@@ -47,7 +53,7 @@ def test_resolve_ingest_per_file_timeout_s_table(
   _default_timeout_getters(monkeypatch)
   stats_file = tmp_path / "segment"
   if size_bytes > 0:
-    stats_file.write_bytes(b"x" * size_bytes)
+    stats_file.write_bytes(b"x")
   _patch_stats_file_size_bytes(monkeypatch, lambda _p: size_bytes)
   resolved = st.resolve_ingest_per_file_timeout_s(str(stats_file))
   assert math.isclose(resolved, expected_timeout, rel_tol=0, abs_tol=0.05)
@@ -56,7 +62,7 @@ def test_resolve_ingest_per_file_timeout_s_table(
 def test_resolve_ingest_per_file_timeout_s_disabled_when_floor_zero(monkeypatch, tmp_path):
   monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 0.0)
   stats_file = tmp_path / "segment"
-  stats_file.write_bytes(b"x" * _mib_bytes(5120))
+  stats_file.write_bytes(b"x")
   _patch_stats_file_size_bytes(monkeypatch, lambda _p: _mib_bytes(5120))
   assert st.resolve_ingest_per_file_timeout_s(str(stats_file)) == 0.0
 
@@ -64,8 +70,8 @@ def test_resolve_ingest_per_file_timeout_s_disabled_when_floor_zero(monkeypatch,
 def test_run_ingest_timed_uses_resolved_timeout(monkeypatch, tmp_path):
   _default_timeout_getters(monkeypatch)
   stats_file = tmp_path / "segment"
-  stats_file.write_bytes(b"x" * _mib_bytes(5120))
-  _patch_stats_file_size_bytes(monkeypatch, lambda _p: _mib_bytes(5120))
+  stats_file.write_bytes(b"x")
+  _patch_stats_file_size_bytes(monkeypatch, lambda _p: _mib_bytes(30720))
   seen = []
 
   def fake_setitimer(which, seconds):
@@ -77,14 +83,14 @@ def test_run_ingest_timed_uses_resolved_timeout(monkeypatch, tmp_path):
   monkeypatch.setattr(st, "_log_long_ingest_timeout_budget_if_needed", lambda *_a, **_k: None)
 
   st._run_ingest_timed(str(stats_file), "parse", lambda: "ok")
-  assert any(math.isclose(value, 14400.0, rel_tol=0, abs_tol=0.01) for value in seen)
+  assert any(math.isclose(value, 64800.0, rel_tol=0, abs_tol=0.01) for value in seen)
 
 
 def test_long_timeout_budget_logs_warning(monkeypatch, tmp_path, capsys):
   _default_timeout_getters(monkeypatch)
   stats_file = tmp_path / "segment"
   size_bytes = _mib_bytes(512)
-  stats_file.write_bytes(b"x" * size_bytes)
+  stats_file.write_bytes(b"x")
   _patch_stats_file_size_bytes(monkeypatch, lambda _p: size_bytes)
   monkeypatch.setattr(st, "record_worker_stage", lambda *_a, **_k: None)
   monkeypatch.setattr(st, "update_worker_substage", lambda *_a, **_k: None)
@@ -120,10 +126,18 @@ def test_warn_if_pool_stall_wall_below_ingest_timeout_max(monkeypatch, capsys):
   assert "sync_pool_stall_abort_after_timeouts ceiling to at least 2881" in out
 
 
+def test_warn_if_pool_stall_wall_ok_at_shipped_defaults(monkeypatch, capsys):
+  monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 13000)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 64800.0)
+  st._warn_if_pool_stall_wall_below_ingest_timeout_max()
+  assert "WARN: sync_pool stall ceiling wall" not in capsys.readouterr().out
+
+
 def test_stall_abort_polls_for_batch_small_files(monkeypatch, tmp_path):
   _default_timeout_getters(monkeypatch)
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
-  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 2881)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 13000)
   small = tmp_path / "small"
   small.write_bytes(b"x" * 1024)
   _patch_stats_file_size_bytes(monkeypatch, lambda _p: 1024)
@@ -134,15 +148,28 @@ def test_stall_abort_polls_for_batch_small_files(monkeypatch, tmp_path):
 def test_stall_abort_polls_for_batch_large_file(monkeypatch, tmp_path):
   _default_timeout_getters(monkeypatch)
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
-  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 2881)
-  size_bytes = _mib_bytes(5120)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 13000)
+  size_bytes = _mib_bytes(30720)
   large = tmp_path / "large"
   large.write_bytes(b"x" * min(size_bytes, 65536))
   _patch_stats_file_size_bytes(monkeypatch, lambda _p: size_bytes)
   expected_timeout = st.resolve_ingest_per_file_timeout_s(str(large))
   polls = st._stall_abort_polls_for_batch([str(large)])
-  assert expected_timeout == 14400.0
+  assert expected_timeout == 64800.0
   assert polls == int(expected_timeout / 5.0) + 1
+
+
+def test_stall_abort_polls_scales_to_30gib_budget(monkeypatch, tmp_path):
+  _default_timeout_getters(monkeypatch)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 13000)
+  size_bytes = _mib_bytes(30720)
+  giant = tmp_path / "giant30g"
+  giant.write_bytes(b"x")
+  _patch_stats_file_size_bytes(monkeypatch, lambda _p: size_bytes)
+  polls = st._stall_abort_polls_for_batch([str(giant)])
+  assert polls == int(64800.0 / 5.0) + 1
+  assert polls < 13000
 
 
 def test_stall_abort_polls_respects_ini_ceiling(monkeypatch, tmp_path):
@@ -205,3 +232,46 @@ def test_raise_if_ingest_per_file_deadline_uses_effective_timeout(monkeypatch):
   finally:
     reset_ingest_task_effective_timeout_s(effective_token)
     reset_ingest_task_deadline_monotonic(deadline_token)
+
+
+def test_giant_trigger_budget_2gib_boundary(monkeypatch, tmp_path):
+  _default_timeout_getters(monkeypatch)
+  monkeypatch.setattr(
+      st.cfg,
+      "get_sync_ingest_giant_pool_supplement_trigger_budget_s",
+      lambda: 5160.0,
+  )
+  under = tmp_path / "under2g"
+  at2g = tmp_path / "at2g"
+
+  def _size_for(path):
+    if "at2g" in str(path):
+      return _mib_bytes(2048)
+    return _mib_bytes(2047)
+
+  _patch_stats_file_size_bytes(monkeypatch, _size_for)
+  assert ingest_timeout_mod.is_giant_ingest_budget(str(under)) is False
+  assert ingest_timeout_mod.is_giant_ingest_budget(str(at2g)) is True
+
+
+def test_iter_giant_supplement_paths_skips_at_or_above_max_bytes(monkeypatch, tmp_path):
+  _default_timeout_getters(monkeypatch)
+  monkeypatch.setattr(
+      st.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: 1024,
+  )
+  small = tmp_path / "small"
+  large = tmp_path / "large"
+  small.write_bytes(b"x" * 512)
+  large.write_bytes(b"x" * 2048)
+
+  def _size_for(path):
+    return 512 if "small" in str(path) else 2048
+
+  _patch_stats_file_size_bytes(monkeypatch, _size_for)
+  picked = list(
+      ingest_timeout_mod.iter_giant_supplement_paths(
+          [str(small), str(large)],
+          limit=10,
+      ),
+  )
+  assert picked == [str(small)]
