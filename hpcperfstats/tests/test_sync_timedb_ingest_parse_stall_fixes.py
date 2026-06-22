@@ -79,6 +79,38 @@ def test_db_complete_head_tail_skips_full_duplicate_scan(tmp_path, monkeypatch):
   assert result[3] is True
 
 
+def test_db_complete_head_tail_logs_skip_reason(tmp_path, monkeypatch):
+  stats_file = str(tmp_path / "host.example" / "1700000000")
+  _write_stats_file(stats_file, 5000)
+  logs = []
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb.log_print",
+      lambda *args, **kwargs: logs.append(" ".join(str(a) for a in args)),
+  )
+
+  class _FakeSyncWorkerDbTask:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *_a):
+      return False
+
+  monkeypatch.setattr(st, "_sync_worker_db_task", lambda: _FakeSyncWorkerDbTask())
+  monkeypatch.setattr(st, "stats_file_is_active_segment", lambda _p: False)
+  monkeypatch.setattr(st, "head_timestamp_present_in_db", lambda _h, _t: True)
+  monkeypatch.setattr(
+      st, "_timestamp_second_present_for_duplicate", lambda _h, _s, _t: True,
+  )
+  monkeypatch.setattr(st, "raw_stats_path_needs_tar_append", lambda *_a, **_k: False)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_max_file_read_bytes", lambda: 512 * 1024 * 1024)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_stream_duplicate_scan_bytes", lambda: 0)
+
+  st._parse_stats_file_payload_impl(stats_file)
+  joined = "\n".join(logs)
+  assert "reason=db_complete_head_tail" in joined
+  assert "size_bytes=" in joined
+
+
 def test_db_complete_tail_missing_falls_back_to_full_scan(tmp_path, monkeypatch):
   stats_file = str(tmp_path / "host.example" / "1700000100")
   _write_stats_file(stats_file, 200)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 
 import pytest
 
@@ -17,6 +18,10 @@ def _mib_bytes(mib):
 def _patch_stats_file_size_bytes(monkeypatch, fn):
   monkeypatch.setattr(st, "stats_file_size_bytes", fn)
   monkeypatch.setattr(ingest_timeout_mod, "stats_file_size_bytes", fn)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_parsing.stats_file_size_bytes",
+      fn,
+  )
 
 
 _PER_MIB_DEFAULT = (86400.0 - 900.0) / 30720.0
@@ -275,3 +280,115 @@ def test_iter_giant_supplement_paths_skips_at_or_above_max_bytes(monkeypatch, tm
       ),
   )
   assert picked == [str(small)]
+
+
+def test_ingest_pool_tracker_batch_seen_excludes_redispatch(tmp_path, monkeypatch):
+  monkeypatch.setattr(
+      ingest_timeout_mod.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: 10**9,
+  )
+  tail0 = str(tmp_path / "tail0")
+  tail1 = str(tmp_path / "tail1")
+  chunk0 = str(tmp_path / "chunk0")
+  (tmp_path / "tail0").write_bytes(b"x" * 100)
+  (tmp_path / "tail1").write_bytes(b"x" * 100)
+  (tmp_path / "chunk0").write_bytes(b"x" * 100)
+  tracker = st._IngestPoolInFlightTracker([chunk0])
+  tracker.note_dispatched(tail0)
+  tracker.complete(tail0)
+  assert tracker.in_flight_count() == 1
+  assert os.path.normpath(tail0) in tracker.batch_seen_paths()
+  picked = list(
+      ingest_timeout_mod.iter_giant_supplement_paths(
+          [tail0, tail1],
+          limit=2,
+          exclude=tracker.batch_seen_paths(),
+      ),
+  )
+  assert picked == [tail1]
+
+
+def test_ingest_remaining_count_never_negative():
+  assert st._ingest_remaining_count(100, 150) == 0
+  assert st._ingest_remaining_count(100, 99) == 0
+  assert st._ingest_remaining_count(100, 50) == 49
+
+
+def test_log_sync_timedb_ingest_completed_supplement_annotation(capsys):
+  st._log_sync_timedb_ingest_completed(
+      "/data/tail0",
+      0.3,
+      -5,
+      stage="ingest",
+      supplement=True,
+  )
+  out = capsys.readouterr().out
+  assert "supplement=yes" in out
+  assert "0 remaining to process" in out
+  assert "-5 remaining" not in out
+
+
+def test_giant_supplement_begin_log(monkeypatch, tmp_path, capsys):
+  import threading
+  import time
+
+  from hpcperfstats.tests import test_multiprocessing_pool_health as mph_tests
+
+  pool = mph_tests._ManualPool()
+  tail_path = str(tmp_path / "tail0")
+  (tmp_path / "tail0").write_bytes(b"x" * 100)
+  chunk = ["giant0", "giant1"]
+  _default_timeout_getters(monkeypatch)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_giant_pool_supplement_enabled", lambda: True)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_imap_inflight_cap", lambda: 4)
+  monkeypatch.setattr(st, "_effective_ingest_imap_inflight_cap", lambda _tc, _pc: 4)
+  monkeypatch.setattr(
+      st.cfg, "get_sync_ingest_giant_pool_supplement_trigger_budget_s", lambda: 100.0,
+  )
+  monkeypatch.setattr(
+      st.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: 10**9,
+  )
+  monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 0.01)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 100000)
+
+  def _size_for(path):
+    base = os.path.basename(str(path))
+    if base.startswith("giant"):
+      return _mib_bytes(2048)
+    return 100
+
+  _patch_stats_file_size_bytes(monkeypatch, _size_for)
+  tracker = st._IngestPoolInFlightTracker(chunk)
+  gen = st._imap_ingest_paths_batched(
+      pool,
+      lambda path: path,
+      chunk,
+      thread_count=4,
+      context="test supplement begin",
+      tracker=tracker,
+      chunk_counter=0,
+      pending_count=10,
+      pending_tail=[tail_path],
+  )
+
+  def consumer():
+    list(gen)
+
+  thread = threading.Thread(target=consumer, daemon=True)
+  thread.start()
+  deadline = time.monotonic() + 2.0
+  while pool.submit_count < 3 and time.monotonic() < deadline:
+    time.sleep(0.005)
+  assert pool.submit_count >= 3
+  for ar in list(pool.inflight):
+    if pool.inflight.get(ar) not in chunk:
+      ar.finish()
+  while pool.inflight and time.monotonic() < deadline:
+    for ar in list(pool.inflight):
+      ar.finish()
+    time.sleep(0.01)
+  thread.join(timeout=2.0)
+
+  captured = capsys.readouterr().out
+  assert "giant pool supplement begin" in captured
+  assert "pending_tail_n=" in captured
+  assert "in_flight_giants=" in captured

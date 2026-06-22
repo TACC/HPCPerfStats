@@ -874,3 +874,111 @@ def test_supplement_requires_giant_in_flight():
     ar.finish()
   thread.join(timeout=2.0)
 
+
+def test_imap_sliding_window_waits_for_slow_in_flight():
+  import threading
+
+  pool = _ManualPool()
+  paths = ["giant0"]
+  finished = {"done": False}
+
+  gen = mph.imap_sliding_window_watch_pool(
+      pool,
+      lambda path: path,
+      paths,
+      max_inflight=2,
+      poll_timeout_s=0.01,
+      stall_abort_polls_fn=lambda in_flight: 100000,
+  )
+
+  def consumer():
+    list(gen)
+    finished["done"] = True
+
+  thread = threading.Thread(target=consumer, daemon=True)
+  thread.start()
+  time.sleep(0.05)
+  assert finished["done"] is False
+  assert len(pool.inflight) == 1
+  for ar in list(pool.inflight):
+    ar.finish()
+  thread.join(timeout=2.0)
+  assert finished["done"] is True
+
+
+def test_supplement_dedupe_skips_batch_completed_paths(tmp_path, monkeypatch):
+  from hpcperfstats.dbload.lib import sync_timedb_ingest_timeout as ingest_timeout_mod
+
+  monkeypatch.setattr(
+      ingest_timeout_mod.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: 10**9,
+  )
+  tail0 = str(tmp_path / "tail0")
+  tail1 = str(tmp_path / "tail1")
+  (tmp_path / "tail0").write_bytes(b"x" * 100)
+  (tmp_path / "tail1").write_bytes(b"x" * 100)
+  batch_seen = {tail0}
+  pending_tail = [tail0, tail1]
+  picked = list(
+      ingest_timeout_mod.iter_giant_supplement_paths(
+          pending_tail,
+          limit=2,
+          exclude=batch_seen,
+      ),
+  )
+  assert picked == [tail1]
+
+
+def test_supplement_dedupe_same_path_not_redispatched_in_batch():
+  import threading
+  from hpcperfstats.dbload.lib import sync_timedb_ingest_timeout as ingest_timeout_mod
+
+  pool = _ManualPool()
+  chunk_paths = ["giant0"]
+  batch_seen = set(chunk_paths)
+  dispatch_counts = {"tail0": 0}
+
+  def _supplement(slots_needed, in_flight):
+    exclude = set(in_flight) | batch_seen
+    picked = list(
+        ingest_timeout_mod.iter_giant_supplement_paths(
+            ["tail0", "tail1"],
+            limit=slots_needed,
+            exclude=exclude,
+        ),
+    )
+    for path in picked:
+      batch_seen.add(path)
+      dispatch_counts[path] = dispatch_counts.get(path, 0) + 1
+    return picked
+
+  gen = mph.imap_sliding_window_watch_pool(
+      pool,
+      lambda path: path,
+      chunk_paths,
+      max_inflight=2,
+      poll_timeout_s=0.01,
+      stall_abort_polls_fn=lambda in_flight: 100000,
+      supplement_paths_fn=_supplement,
+  )
+
+  def consumer():
+    for item in gen:
+      if item == "tail0":
+        batch_seen.add("tail0")
+
+  thread = threading.Thread(target=consumer, daemon=True)
+  thread.start()
+  deadline = time.monotonic() + 2.0
+  while pool.submit_count < 2 and time.monotonic() < deadline:
+    time.sleep(0.005)
+  for ar in list(pool.inflight):
+    if pool.inflight.get(ar) != "giant0":
+      ar.finish()
+  deadline = time.monotonic() + 2.0
+  while pool.inflight and time.monotonic() < deadline:
+    for ar in list(pool.inflight):
+      ar.finish()
+    time.sleep(0.01)
+  thread.join(timeout=2.0)
+  assert dispatch_counts.get("tail0", 0) <= 1
+

@@ -84,6 +84,7 @@ from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
 from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import (
     any_giant_ingest_budget_in_flight,
     calendar_day_from_sealed_archive_path,
+    is_giant_ingest_budget,
     iter_giant_supplement_paths,
     max_ingest_per_file_timeout_for_paths as _max_ingest_per_file_timeout_for_paths,
     resolve_ingest_per_file_timeout_s,
@@ -308,14 +309,22 @@ class _IngestPoolInFlightTracker:
         for p in (paths or ())
         if p
     }
+    self._batch_seen = set(self._pending)
 
   def complete(self, path):
-    if path:
-      self._pending.discard(os.path.normpath(path))
+    norm = os.path.normpath(path) if path else None
+    if norm:
+      self._pending.discard(norm)
+      self._batch_seen.add(norm)
 
   def note_dispatched(self, path):
-    if path:
-      self._pending.add(os.path.normpath(path))
+    norm = os.path.normpath(path) if path else None
+    if norm:
+      self._pending.add(norm)
+      self._batch_seen.add(norm)
+
+  def batch_seen_paths(self):
+    return set(self._batch_seen)
 
   def sample_in_flight(self, max_n=10):
     return sorted(self._pending)[: max(0, int(max_n))]
@@ -1248,6 +1257,22 @@ def _imap_ingest_paths_batched(
   }
   supplement_log_state = {"logged": False}
 
+  def _format_giant_in_flight_snapshot(in_flight_paths):
+    entries = []
+    for path in in_flight_paths or ():
+      if not is_giant_ingest_budget(path):
+        continue
+      try:
+        size_bytes = int(stats_file_size_bytes(path))
+      except (TypeError, ValueError, OSError):
+        size_bytes = 0
+      timeout_s = resolve_ingest_per_file_timeout_s(path)
+      entries.append(
+          "%s:%d:%.0fs"
+          % (os.path.basename(str(path)), size_bytes, float(timeout_s)),
+      )
+    return entries
+
   def _giant_pool_supplement_paths_fn(slots_needed, in_flight_paths):
     if not cfg.get_sync_ingest_giant_pool_supplement_enabled():
       return []
@@ -1257,7 +1282,7 @@ def _imap_ingest_paths_batched(
       return []
     exclude = set(in_flight_paths or ())
     if tracker is not None:
-      exclude.update(tracker.sample_in_flight(max_n=100000))
+      exclude.update(tracker.batch_seen_paths())
     selected = list(
         iter_giant_supplement_paths(
             pending_tail,
@@ -1274,11 +1299,20 @@ def _imap_ingest_paths_batched(
         tracker.note_dispatched(path)
     if not supplement_log_state["logged"]:
       supplement_log_state["logged"] = True
+      tail_sample = [
+          os.path.basename(str(path))
+          for path in (pending_tail or ())[:5]
+          if path
+      ]
       log_print(
-          "INFO: sync_timedb: giant pool supplement paths=%d idle_slots=%d "
-          "trigger_budget_s=%.0f"
+          "INFO: sync_timedb: giant pool supplement begin pending_tail_n=%d "
+          "pending_tail_sample=%s in_flight_giants=%s selected=%s "
+          "idle_slots=%d trigger_budget_s=%.0f"
           % (
-              len(selected),
+              len(pending_tail or ()),
+              tail_sample,
+              _format_giant_in_flight_snapshot(in_flight_paths),
+              [os.path.basename(str(path)) for path in selected],
               int(slots_needed),
               float(cfg.get_sync_ingest_giant_pool_supplement_trigger_budget_s()),
           ),
@@ -1757,10 +1791,12 @@ def _drain_db_write_tasks(
     ingest_pool=None,
     archive_pool=None,
     stall_diagnostics=None,
+    chunk_paths_norm=None,
 ):
   """Write queued parse payloads and return updated finished count."""
   if not parse_tasks:
     return chunk_ingest_finished
+  chunk_paths_norm = chunk_paths_norm or set()
   writer_fn = partial(_db_writer_worker, manager_lock)
   task_batch = list(parse_tasks)
   parse_tasks.clear()
@@ -1797,10 +1833,14 @@ def _drain_db_write_tasks(
         successful_paths.append(stats_fname)
         if should_archive and need_archival:
           files_to_be_archived.append(stats_fname)
-        remaining = pending_total - chunk_ingest_finished - 1
+        remaining = _ingest_remaining_count(pending_total, chunk_ingest_finished)
         chunk_ingest_finished += 1
         _log_sync_timedb_ingest_completed(
-            stats_fname, elapsed_s, remaining, stage="write",
+            stats_fname,
+            elapsed_s,
+            remaining,
+            stage="write",
+            supplement=_ingest_path_is_supplement(stats_fname, chunk_paths_norm),
         )
   except MultiprocessingWorkerExitError:
     raise
@@ -2157,13 +2197,52 @@ def _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archiva
   return (stats_file, need_archival, True)
 
 
-def _log_sync_timedb_ingest_completed(stats_fname, elapsed_s, remaining, *, stage=None):
+def _ingest_remaining_count(pending_total, chunk_ingest_finished):
+  return max(0, int(pending_total) - int(chunk_ingest_finished) - 1)
+
+
+def _ingest_path_is_supplement(stats_fname, chunk_paths_norm):
+  norm = os.path.normpath(stats_fname) if stats_fname else None
+  if not norm:
+    return False
+  return norm not in chunk_paths_norm
+
+
+def _log_sync_timedb_ingest_completed(
+    stats_fname,
+    elapsed_s,
+    remaining,
+    *,
+    stage=None,
+    supplement=False,
+):
   stage_suffix = " stage=%s" % stage if stage else ""
+  supplement_suffix = " supplement=yes" if supplement else ""
   size_bytes = stats_file_size_bytes(stats_fname)
+  remaining_count = max(0, int(remaining))
   log_print(
       "Completed file %s - processed in %.1fs - %d remaining to process "
-      "size_bytes=%d%s"
-      % (stats_fname, float(elapsed_s), remaining, size_bytes, stage_suffix),
+      "size_bytes=%d%s%s"
+      % (
+          stats_fname,
+          float(elapsed_s),
+          remaining_count,
+          size_bytes,
+          stage_suffix,
+          supplement_suffix,
+      ),
+      flush=True,
+  )
+
+
+def _log_db_complete_skip(stats_file, reason, *, elapsed_s=None):
+  size_bytes = stats_file_size_bytes(stats_file)
+  elapsed_suffix = (
+      " elapsed_s=%.1f" % float(elapsed_s) if elapsed_s is not None else ""
+  )
+  log_print(
+      "No missing timestamps found for %s reason=%s size_bytes=%d%s"
+      % (stats_file, reason, size_bytes, elapsed_suffix),
       flush=True,
   )
 
@@ -2298,23 +2377,32 @@ def _resolve_streaming_ingest_start(stats_file, parse_elapsed_fn):
   head_present = head_timestamp_present_in_db(host, timestamp_utc)
   if not head_present:
     return False, (0, True)
+  db_complete_reason = None
   fast = _try_db_complete_head_tail_fast_path(stats_file, host, timestamp_utc)
   if fast is not None:
     start_idx, need_archival = fast
+    db_complete_reason = "db_complete_head_tail"
   else:
     tail_fast = _try_db_complete_tail_window_fast_path(
         stats_file, host, timestamp_utc,
     )
     if tail_fast is not None:
       start_idx, need_archival = tail_fast
+      db_complete_reason = "db_complete_tail_window"
     else:
       start_idx, need_archival = _duplicate_window_start_index(
           stats_file,
           host=host,
           timestamp_utc=timestamp_utc,
       )
+      if start_idx == -1:
+        db_complete_reason = "db_complete_full_scan"
   if start_idx == -1:
-    log_print("No missing timestamps found for %s" % stats_file)
+    _log_db_complete_skip(
+        stats_file,
+        db_complete_reason or "db_complete_full_scan",
+        elapsed_s=parse_elapsed_fn(),
+    )
     need_archival = raw_stats_path_needs_tar_append(
         stats_file,
         tgz_archive_dir,
@@ -2513,18 +2601,22 @@ def _parse_stats_file_payload_impl(stats_file, stats_file_contents=None):
       if not head_present:
         # New file head is not in DB yet; it still needs archival post-ingest.
         start_idx, need_archival = 0, True
+        db_complete_reason = None
       else:
+        db_complete_reason = None
         fast = _try_db_complete_head_tail_fast_path(
             stats_file, host, timestamp_utc, lines=lines,
         )
         if fast is not None:
           start_idx, need_archival = fast
+          db_complete_reason = "db_complete_head_tail"
         else:
           tail_fast = _try_db_complete_tail_window_fast_path(
               stats_file, host, timestamp_utc,
           )
           if tail_fast is not None:
             start_idx, need_archival = tail_fast
+            db_complete_reason = "db_complete_tail_window"
           else:
             start_idx, need_archival = _duplicate_window_start_index(
                 stats_file,
@@ -2532,8 +2624,14 @@ def _parse_stats_file_payload_impl(stats_file, stats_file_contents=None):
                 timestamp_utc=timestamp_utc,
                 lines=lines,
             )
+            if start_idx == -1:
+              db_complete_reason = "db_complete_full_scan"
       if start_idx == -1:
-        log_print("No missing timestamps found for %s" % stats_file)
+        _log_db_complete_skip(
+            stats_file,
+            db_complete_reason or "db_complete_full_scan",
+            elapsed_s=_parse_elapsed(),
+        )
         need_archival = raw_stats_path_needs_tar_append(
             stats_file,
             tgz_archive_dir,
@@ -3996,6 +4094,11 @@ def run_sync_timedb_supervisor_loop(
     files_to_be_archived = []
     chunk_ingest_finished = 0
     active_chunk_ingest_tracker = None
+    chunk_paths_norm = {
+        os.path.normpath(path)
+        for path in (paths or ())
+        if path
+    }
 
     stall_diagnostics.chunk_batch_size = len(paths)
     stall_diagnostics.chunk_prewarm_summary = (
@@ -4054,10 +4157,14 @@ def run_sync_timedb_supervisor_loop(
             successful_paths.append(stats_fname)
             if should_archive and need_archival:
               files_to_be_archived.append(stats_fname)
-            remaining = pending_total - chunk_ingest_finished - 1
+            remaining = _ingest_remaining_count(pending_total, chunk_ingest_finished)
             chunk_ingest_finished += 1
             _log_sync_timedb_ingest_completed(
-                stats_fname, parse_elapsed_s, remaining, stage="parse",
+                stats_fname,
+                parse_elapsed_s,
+                remaining,
+                stage="parse",
+                supplement=_ingest_path_is_supplement(stats_fname, chunk_paths_norm),
             )
             continue
           parse_tasks.append(
@@ -4082,6 +4189,7 @@ def run_sync_timedb_supervisor_loop(
                 ingest_pool=ingest_pool,
                 archive_pool=archive_pool,
                 stall_diagnostics=stall_diagnostics,
+                chunk_paths_norm=chunk_paths_norm,
             )
         if parse_tasks:
           chunk_ingest_finished = _drain_db_write_tasks(
@@ -4097,6 +4205,7 @@ def run_sync_timedb_supervisor_loop(
               ingest_pool=ingest_pool,
               archive_pool=archive_pool,
               stall_diagnostics=stall_diagnostics,
+              chunk_paths_norm=chunk_paths_norm,
           )
       elif db_writer_combined_task:
         add_combined = partial(_ingest_parse_and_write_file, manager_lock)
@@ -4135,10 +4244,14 @@ def run_sync_timedb_supervisor_loop(
             successful_paths.append(stats_fname)
             if should_archive and need_archival:
               files_to_be_archived.append(stats_fname)
-            remaining = pending_total - chunk_ingest_finished - 1
+            remaining = _ingest_remaining_count(pending_total, chunk_ingest_finished)
             chunk_ingest_finished += 1
             _log_sync_timedb_ingest_completed(
-                stats_fname, elapsed_s, remaining, stage="ingest",
+                stats_fname,
+                elapsed_s,
+                remaining,
+                stage="ingest",
+                supplement=_ingest_path_is_supplement(stats_fname, chunk_paths_norm),
             )
       else:
         add_stats_file = partial(add_stats_file_to_db, manager_lock)
@@ -4177,10 +4290,14 @@ def run_sync_timedb_supervisor_loop(
             successful_paths.append(stats_fname)
             if should_archive and need_archival:
               files_to_be_archived.append(stats_fname)
-            remaining = pending_total - chunk_ingest_finished - 1
+            remaining = _ingest_remaining_count(pending_total, chunk_ingest_finished)
             chunk_ingest_finished += 1
             _log_sync_timedb_ingest_completed(
-                stats_fname, elapsed_s, remaining, stage="ingest",
+                stats_fname,
+                elapsed_s,
+                remaining,
+                stage="ingest",
+                supplement=_ingest_path_is_supplement(stats_fname, chunk_paths_norm),
             )
     except MultiprocessingWorkerExitError as exc:
       pool_worker_exit = True
