@@ -27,7 +27,7 @@ RUN chmod 755 /usr/local/lib/hpcperfstats-proxy/write_nginx_proxy_allowed_hosts_
 WORKDIR /build
 
 # Prefer the deployment ini when present in the build context; otherwise fall back to the example.
-COPY hpcperfstats.ini* /build/
+COPY hpcperfstats.ini /build/
 
 # Prefer gitignored services-conf/nginx.conf when present; otherwise services-conf/nginx.conf.example.
 COPY services-conf/nginx.conf* /build/
