@@ -384,6 +384,56 @@ def test_stale_manifest_recovery_does_not_recover_raw_delete_pending(tmp_path, m
   monkeypatch.setattr(async_dc_mod.cfg, "get_sync_day_close_async_stale_seconds", lambda: 60.0)
   monkeypatch.setattr(async_dc_mod.cfg, "get_sync_day_close_async_workers", lambda: 1)
 
+  class _HandoffRawCoord:
+    enabled = True
+
+    def should_handoff_to_ingest(self, _tar_path):
+      return True
+
+  coord = async_dc_mod.AsyncDayCloseCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=daily_dir,
+      local_tz=None,
+      log_fn=lambda *_a, **_kw: None,
+      get_disqualified_daily_tars=lambda: set(),
+      day_raw_removal_coordinator=_HandoffRawCoord(),
+  )
+
+  entry = async_dc_mod._load_manifest(coord._manifest_path)["entries"][tar_norm]
+  assert entry.get("status") == "raw_delete_pending"
+  assert tar_norm in coord.active_or_submitted_tar_paths()
+
+
+@pytest.mark.django_db(databases=[])
+def test_stale_manifest_recovery_defers_stale_raw_delete_pending_without_handoff(
+    tmp_path, monkeypatch,
+):
+  archive_dir = str(tmp_path / "archive")
+  daily_dir = str(tmp_path / "daily")
+  os.makedirs(archive_dir)
+  os.makedirs(daily_dir)
+  tar_norm = os.path.normpath(os.path.join(daily_dir, "2026-05-22.tar"))
+  open(tar_norm, "wb").close()
+  stale_at = time.time() - 10_000
+  with open(async_dc_mod.manifest_path(archive_dir), "w", encoding="utf-8") as handle:
+    handle.write(
+        json.dumps({
+            "version": 1,
+            "entries": {
+                tar_norm: {
+                    "tar_path": tar_norm,
+                    "status": "raw_delete_pending",
+                    "last_progress": "raw_delete_pending",
+                    "last_progress_at": stale_at,
+                    "submitted_at": stale_at,
+                },
+            },
+        }),
+    )
+  monkeypatch.setattr(async_dc_mod.cfg, "get_sync_day_close_async_stale_seconds", lambda: 60.0)
+  monkeypatch.setattr(async_dc_mod.cfg, "get_sync_day_close_async_workers", lambda: 1)
+
   coord = async_dc_mod.AsyncDayCloseCoordinator(
       archive_data_dir=archive_dir,
       host_name_ext="",
@@ -394,8 +444,91 @@ def test_stale_manifest_recovery_does_not_recover_raw_delete_pending(tmp_path, m
   )
 
   entry = async_dc_mod._load_manifest(coord._manifest_path)["entries"][tar_norm]
-  assert entry.get("status") == "raw_delete_pending"
-  assert tar_norm in coord.active_or_submitted_tar_paths()
+  assert entry.get("status") == "deferred"
+  assert entry.get("detail") == "stale_raw_delete_pending"
+
+
+@pytest.mark.django_db(databases=[])
+def test_reconcile_supervisor_raw_delete_pending_handoffs(tmp_path, monkeypatch):
+  from datetime import datetime
+
+  from hpcperfstats.tests.test_sync_timedb_day_raw_removal import (
+      _make_closed_segment,
+      _make_coordinator,
+      _seal_day,
+  )
+
+  archive_dir = str(tmp_path / "archive")
+  daily_dir = str(tmp_path / "daily")
+  os.makedirs(archive_dir)
+  os.makedirs(daily_dir)
+  day = datetime(2022, 5, 22)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst_path = _seal_day(tmp_path, seg, day)
+  tar_norm = os.path.normpath(tar_path)
+  day_raw = _make_coordinator(
+      tmp_path,
+      ingest_ready_fn=lambda _p: False,
+  )
+  state = day_raw._get_or_create_day(tar_path)
+  state._record_entry(
+      str(seg),
+      zst_path,
+      "skipped_not_in_sealed_archive",
+      "not_in_sealed_archive",
+  )
+  with state._lock:
+    from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
+        PHASE_VERIFICATION_COMPLETE,
+        _save_manifest,
+    )
+    state._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
+    state._manifest["skipped_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+  assert day_raw.should_handoff_to_ingest(tar_path)
+
+  stale_at = time.time() - 10_000
+  with open(async_dc_mod.manifest_path(archive_dir), "w", encoding="utf-8") as handle:
+    handle.write(
+        json.dumps({
+            "version": 1,
+            "entries": {
+                tar_norm: {
+                    "tar_path": tar_norm,
+                    "status": "raw_delete_pending",
+                    "last_progress": "raw_delete_pending",
+                    "last_progress_at": stale_at,
+                    "submitted_at": stale_at,
+                },
+            },
+        }),
+    )
+  handoff_paths: list[str] = []
+  day_raw.on_handoff_to_ingest = (
+      lambda _tar, paths, _reason: handoff_paths.extend(paths)
+  )
+  logs: list[str] = []
+  monkeypatch.setattr(async_dc_mod.cfg, "get_sync_day_close_async_workers", lambda: 1)
+
+  async_coord = async_dc_mod.AsyncDayCloseCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="cluster.integration.test",
+      tgz_archive_dir=daily_dir,
+      local_tz=None,
+      log_fn=lambda msg, **_kw: logs.append(str(msg)),
+      get_disqualified_daily_tars=lambda: set(),
+      day_raw_removal_coordinator=day_raw,
+  )
+
+  resolved = async_coord.reconcile_supervisor_raw_delete_pending(
+      reason="unit_test",
+  )
+  assert resolved == 1
+  entry = async_dc_mod._load_manifest(async_coord._manifest_path)["entries"][tar_norm]
+  assert entry.get("status") == "deferred"
+  assert entry.get("detail") == "waiting_on_ingest"
+  assert handoff_paths
+  assert any("raw_delete_pending handoff" in line for line in logs)
 
 
 @pytest.mark.django_db(databases=[])

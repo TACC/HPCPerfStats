@@ -4729,6 +4729,10 @@ def run_sync_timedb_supervisor_loop(
       startup_day_close.start_async_discover_and_close()
       startup_tail_ingest.start_async_tail_ingest()
       _recover_startup_day_close_handoffs()
+      if async_day_close is not None:
+        async_day_close.reconcile_supervisor_raw_delete_pending(
+            reason="startup",
+        )
 
       startup_ingest_gate_cleared = (
           not cfg.get_sync_startup_drain_day_close_before_ingest()
@@ -4745,6 +4749,7 @@ def run_sync_timedb_supervisor_loop(
       startup_day_close_drain_complete = True
       reconcile_refs["ingest_gate_cleared"] = True
     startup_drain_last_log = 0.0
+    startup_drain_blocked_last_log = 0.0
 
     def _startup_ingest_gate_pending():
       if startup_tail_ingest is not None and startup_tail_ingest.enabled:
@@ -4839,12 +4844,79 @@ def run_sync_timedb_supervisor_loop(
           flush=True,
       )
 
+    def _startup_drain_block_snapshot(*, delete_driver: bool = False):
+      async_raw = (
+          async_day_close.tar_paths_raw_delete_pending()
+          if async_day_close is not None
+          else []
+      )
+      return {
+          "delete_driver": delete_driver,
+          "async_raw_delete_pending": len(async_raw),
+          "chunk_in_progress": chunk_in_progress,
+          "tail_pending": (
+              startup_tail_ingest is not None
+              and startup_tail_ingest.enabled
+              and not startup_tail_ingest.tail_ingest_done()
+          ),
+          "discover_pending": (
+              startup_day_close is not None
+              and startup_day_close.enabled
+              and not startup_day_close.discover_done()
+          ),
+          "raw_pending": (
+              startup_preflight is not None
+              and startup_preflight.enabled
+              and not startup_preflight.delete_phase_done()
+          ),
+          "day_raw_delete": (
+              day_raw_removal is not None
+              and day_raw_removal.enabled
+              and day_raw_removal.any_blocks_startup_drain()
+          ),
+          "heavy_not_idle": (
+              not startup_archive_scan.is_startup_heavy_maintenance_idle()
+          ),
+          "gate_pending": _startup_ingest_gate_pending(),
+      }
+
+    def _maybe_log_startup_drain_blocked(*, trigger: str, delete_driver: bool = False):
+      nonlocal startup_drain_blocked_last_log
+      now = time.time()
+      if now - startup_drain_blocked_last_log < 30.0:
+        return
+      startup_drain_blocked_last_log = now
+      snap = _startup_drain_block_snapshot(delete_driver=delete_driver)
+      log_print(
+          "sync_timedb: startup drain blocked reason=trigger:%s "
+          "delete_driver=%s async_raw_delete_pending=%d chunk_in_progress=%s "
+          "tail_pending=%s discover_pending=%s raw_pending=%s "
+          "day_raw_delete=%s heavy_not_idle=%s gate_pending=%s"
+          % (
+              trigger,
+              snap["delete_driver"],
+              snap["async_raw_delete_pending"],
+              snap["chunk_in_progress"],
+              snap["tail_pending"],
+              snap["discover_pending"],
+              snap["raw_pending"],
+              snap["day_raw_delete"],
+              snap["heavy_not_idle"],
+              snap["gate_pending"],
+          ),
+          flush=True,
+      )
+
     def _drain_startup_day_close_and_deletion_if_needed():
       nonlocal startup_ingest_gate_cleared, startup_day_close_drain_complete
       if startup_ingest_gate_cleared:
         return False
       if not startup_day_close_drain_complete:
         if _maybe_handle_raw_removal_delete_phase():
+          _maybe_log_startup_drain_blocked(
+              trigger="delete_driver",
+              delete_driver=True,
+          )
           return True
         if not _startup_ingest_gate_pending():
           if (
@@ -4860,9 +4932,11 @@ def run_sync_timedb_supervisor_loop(
           startup_day_close_drain_complete = True
         else:
           _maybe_log_startup_drain_wait()
+          _maybe_log_startup_drain_blocked(trigger="gate_pending")
           sleep_until_shutdown(0.25)
           return True
       if not startup_archive_scan.is_startup_heavy_maintenance_idle():
+        _maybe_log_startup_drain_blocked(trigger="heavy_not_idle")
         if not startup_archive_scan.wait_for_startup_maintenance_idle():
           if startup_archive_scan.get_snapshot() is None:
             log_print(
@@ -4870,6 +4944,7 @@ def run_sync_timedb_supervisor_loop(
                 "coordinator snapshot; delaying ingest",
                 flush=True,
             )
+            _maybe_log_startup_drain_blocked(trigger="heavy_not_idle_no_snapshot")
             sleep_until_shutdown(1.0)
             return True
           log_print(
@@ -4913,6 +4988,10 @@ def run_sync_timedb_supervisor_loop(
       nonlocal delete_phase_active
       if day_raw_removal is None or not day_raw_removal.enabled:
         return False
+      if async_day_close is not None:
+        async_day_close.reconcile_supervisor_raw_delete_pending(
+            reason="delete_pass",
+        )
       needs_delete = day_raw_removal.any_needs_delete_phase()
       needs_tar_drop = day_raw_removal.any_needs_tar_drop_finish()
       async_tar_drop = (
@@ -4925,6 +5004,10 @@ def run_sync_timedb_supervisor_loop(
       if needs_delete:
         if chunk_in_progress:
           sleep_until_shutdown(0.1)
+          _maybe_log_startup_drain_blocked(
+              trigger="chunk_wait_day_raw_delete",
+              delete_driver=True,
+          )
           return True
         delete_phase_active = True
         for tar_norm in day_raw_removal.days_needing_delete_oldest_first():
@@ -4962,6 +5045,10 @@ def run_sync_timedb_supervisor_loop(
           if delete_phase_active:
             if chunk_in_progress:
               sleep_until_shutdown(0.1)
+              _maybe_log_startup_drain_blocked(
+                  trigger="chunk_wait_startup_raw_delete",
+                  delete_driver=True,
+              )
               return True
             if startup_preflight.phase() == PHASE_VERIFICATION_COMPLETE:
               startup_preflight.begin_deleting()
@@ -4970,6 +5057,10 @@ def run_sync_timedb_supervisor_loop(
               delete_phase_active = False
               _post_startup_raw_removal_rescan()
             else:
+              _maybe_log_startup_drain_blocked(
+                  trigger="startup_raw_delete_in_progress",
+                  delete_driver=True,
+              )
               return True
       return _apply_day_close_raw_removal_deletes()
 

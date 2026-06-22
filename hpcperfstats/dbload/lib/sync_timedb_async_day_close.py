@@ -114,17 +114,27 @@ class AsyncDayCloseCoordinator:
     """Public entry for startup discover slices and maintenance passes."""
     self._recover_stale_manifest_entries()
 
+  def _worker_in_flight(self, tar_norm: str) -> bool:
+    tar_norm = os.path.normpath(tar_norm or "")
+    if not tar_norm:
+      return False
+    with self._lock:
+      future = self._futures.get(tar_norm)
+      return future is not None and not future.done()
+
   def _recover_stale_manifest_entries(self) -> None:
     stale_s = cfg.get_sync_day_close_async_stale_seconds()
     if stale_s <= 0:
       return
     now = time.time()
     recovered: list[str] = []
+    finalized: list[str] = []
     with self._lock:
       for tar_norm, entry in list(self._manifest.get("entries", {}).items()):
         if not isinstance(entry, dict):
           continue
-        if entry.get("status") not in ("submitted", "sealing", "raw_removal"):
+        status = str(entry.get("status") or "")
+        if status not in ("submitted", "sealing", "raw_removal", "raw_delete_pending"):
           continue
         future = self._futures.get(tar_norm)
         if future is not None and not future.done():
@@ -134,17 +144,79 @@ class AsyncDayCloseCoordinator:
           continue
         if now - float(last_at) < stale_s:
           continue
+        tar_norm = os.path.normpath(tar_norm)
+        if status == "raw_delete_pending":
+          coord = self.day_raw_removal_coordinator
+          if coord is not None and getattr(coord, "enabled", True):
+            if coord.should_handoff_to_ingest(tar_norm):
+              # Supervisor reconcile must requeue paths; leave manifest until then.
+              continue
+          if self._day_close_filesystem_complete(tar_norm):
+            entry["status"] = "complete"
+            entry["detail"] = "stale_manifest_recovery"
+            entry["completed_at"] = now
+            entry["recovered_at"] = now
+            finalized.append(tar_norm)
+            continue
+          entry["status"] = "deferred"
+          entry["detail"] = "stale_raw_delete_pending"
+          entry["recovered_at"] = now
+          recovered.append(tar_norm)
+          continue
         entry["status"] = "deferred"
         entry["detail"] = "stale_manifest_recovery"
         entry["recovered_at"] = now
-        recovered.append(os.path.normpath(tar_norm))
-      if recovered:
+        recovered.append(tar_norm)
+      if recovered or finalized:
         _save_manifest(self._manifest_path, self._manifest)
     for tar_norm in recovered:
       self.log_fn(
           "janitor: async day_close stale manifest recovery tar=%s" % tar_norm,
           flush=True,
       )
+    for tar_norm in finalized:
+      self.log_fn(
+          "janitor: async day_close stale raw_delete_pending finalized tar=%s"
+          % tar_norm,
+          flush=True,
+      )
+
+  def reconcile_supervisor_raw_delete_pending(self, *, reason: str) -> int:
+    """Hand off retryable raw to ingest or finalize when tar drop cannot finish."""
+    coord = self.day_raw_removal_coordinator
+    resolved = 0
+    for tar_norm in self.tar_paths_raw_delete_pending():
+      if self._worker_in_flight(tar_norm):
+        continue
+      if (
+          coord is not None
+          and getattr(coord, "enabled", True)
+          and coord.should_handoff_to_ingest(tar_norm)
+      ):
+        paths = coord.complete_handoff_to_ingest(
+            tar_norm,
+            reason=reason,
+        )
+        if paths:
+          self.defer_for_ingest_handoff(tar_norm)
+          if self.log_fn:
+            self.log_fn(
+                "sync_timedb: async raw_delete_pending handoff tar=%s paths=%d "
+                "reason=%s"
+                % (tar_norm, len(paths), reason),
+                flush=True,
+            )
+          resolved += 1
+        continue
+      if self.finalize_complete_if_filesystem(tar_norm):
+        if self.log_fn:
+          self.log_fn(
+              "sync_timedb: async raw_delete_pending finalized tar=%s reason=%s"
+              % (tar_norm, reason),
+              flush=True,
+          )
+        resolved += 1
+    return resolved
 
   def entry_progress_snapshot(self, tar_path: str) -> Dict[str, Any]:
     tar_norm = os.path.normpath(tar_path or "")

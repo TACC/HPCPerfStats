@@ -6131,16 +6131,25 @@ def test_supervisor_startup_drain_completes_when_day_raw_waiting_on_ingest_and_t
   class _WaitingOnIngestDayCoord:
     enabled = True
 
+    def discover_manifest_handoffs(self):
+      return []
+
     def any_blocks_startup_drain(self):
       return False
 
     def any_needs_delete_phase(self):
       return True
 
+    def any_needs_tar_drop_finish(self):
+      return False
+
     def count_days_waiting_on_ingest(self):
       return 1
 
     def days_needing_delete_oldest_first(self):
+      return []
+
+    def days_needing_tar_drop_oldest_first(self):
       return []
 
     def consumed_paths(self):
@@ -6185,6 +6194,52 @@ def test_supervisor_startup_drain_completes_when_day_raw_waiting_on_ingest_and_t
     assert "startup ingest maintenance complete" in out
     assert "startup maintenance idle; ingest may begin" in out
     assert rescan_calls["n"] >= 1
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_supervisor_startup_drain_blocked_reason_logged(
+    monkeypatch, tmp_path, capsys):
+  shutdown_requested[0] = False
+
+  class _PendingDiscoverDayClose:
+    enabled = True
+
+    def __init__(self, **_kwargs):
+      pass
+
+    def discover_done(self):
+      return False
+
+    def pending_deferral_count(self):
+      return 0
+
+    def start_async_discover_and_close(self):
+      return None
+
+    def shutdown(self, wait=True):
+      del wait
+
+  try:
+    import hpcperfstats.dbload.lib.sync_timedb_startup_day_close as day_close_mod
+
+    archive_dir, _ = _startup_tail_drain_patches(
+        monkeypatch,
+        tmp_path,
+        live_unprocessed_fn=lambda *_a, **_k: {},
+    )
+    monkeypatch.setattr(day_close_mod, "StartupDayClosePreflight", _PendingDiscoverDayClose)
+    monkeypatch.setattr(st, "StartupDayClosePreflight", _PendingDiscoverDayClose)
+    monkeypatch.setattr(
+        st,
+        "sleep_until_shutdown",
+        lambda *_a, **_k: shutdown_requested.__setitem__(0, True),
+    )
+    st.run_sync_timedb_supervisor_loop(
+        str(archive_dir), "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
+    out = capsys.readouterr().out
+    assert "startup drain blocked reason=" in out
+    assert "gate_pending=True" in out
   finally:
     shutdown_requested[0] = False
 
