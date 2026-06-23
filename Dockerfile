@@ -34,7 +34,7 @@ RUN /bin/bash -o pipefail -c "\
 # Shared Python runtime base (no frontend overlay, pip deps layered before full tree).
 FROM python:3.12.13-trixie AS hpcperfstats-base
 
-# Setup users, directories, and required runtime packages.
+# Setup users, directories, and required runtime and debug packages.
 RUN /bin/bash -o pipefail -c "useradd -u 901860 -ms /bin/bash hpcperfstats \
     && mkdir -p /hpcperfstats /home/hpcperfstats/.ssh \
         /var/lib/hpcperfstats-syslog \
@@ -43,8 +43,9 @@ RUN /bin/bash -o pipefail -c "useradd -u 901860 -ms /bin/bash hpcperfstats \
     && apt-get update -y \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
-       netcat-openbsd supervisor rsync syslog-ng util-linux \
-       vim net-tools lsof zstd nano \
+       supervisor rsync syslog-ng zstd util-linux \
+       net-tools lsof procps gdb strace netcat-openbsd \
+       vim nano \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*"
 
@@ -71,6 +72,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_ROOT_USER_ACTION=ignore \
     HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini \
     STATIC_ROOT=/home/hpcperfstats/staticfiles
+
+# Install for debugging
+RUN /bin/bash -o pipefail -c 'pip install --no-cache-dir py-spy'
 
 # Python dependencies: cached until pyproject.toml changes.
 COPY --chown=hpcperfstats:hpcperfstats pyproject.toml ./

@@ -39,6 +39,9 @@ services:
     command: /home/hpcperfstats/services-conf/supervisor_startup.sh
     environment:
       - HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini
+    # Uncomment if needed for debugging (normal usage should never need this)
+    #cap_add:
+    # - SYS_PTRACE
     ports:
       - 514:514/udp
       - 514:514/tcp
