@@ -73,15 +73,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini \
     STATIC_ROOT=/home/hpcperfstats/staticfiles
 
-# Install for debugging
-RUN /bin/bash -o pipefail -c 'pip install --no-cache-dir py-spy'
-
 # Python dependencies: cached until pyproject.toml changes.
 COPY --chown=hpcperfstats:hpcperfstats pyproject.toml ./
 RUN /bin/bash -o pipefail -c 'pip install --no-cache-dir --upgrade pip \
     && python3 -c "import tomllib; from pathlib import Path; deps=tomllib.loads(Path(\"pyproject.toml\").read_text())[\"project\"][\"dependencies\"]; Path(\"/tmp/requirements.txt\").write_text(\"\\n\".join(deps)+\"\\n\")" \
     && pip install --no-cache-dir -r /tmp/requirements.txt \
     && pip cache purge'
+
+# Install for debugging
+RUN /bin/bash -o pipefail -c 'pip install --no-cache-dir py-spy'
 
 COPY --chown=hpcperfstats:hpcperfstats . .
 
@@ -90,8 +90,6 @@ COPY --chown=hpcperfstats:hpcperfstats . .
 RUN chmod +x \
     /home/hpcperfstats/services-conf/django_startup.sh \
     /home/hpcperfstats/services-conf/supervisor_startup.sh
-
-
 
 # Install the hpcperfstats package (deps already installed above).
 RUN /bin/bash -o pipefail -c "pip install --no-cache-dir --no-deps . && pip cache purge"
