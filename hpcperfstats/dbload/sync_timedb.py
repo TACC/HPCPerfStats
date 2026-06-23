@@ -79,6 +79,7 @@ from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
     hard_exit_pool_worker_error,
     imap_sliding_window_watch_pool,
     imap_unordered_watch_pool,
+    pool_workers_all_idle,
     terminate_pool_bounded,
 )
 from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import (
@@ -732,12 +733,6 @@ def _ingest_stall_defer_state(
     sample=None,
     day_hint_from_sample_fn=None,
 ):
-  defer_on, defer_reason = _ingest_stall_defer_long_budget(
-      stall_diagnostics,
-      consecutive_timeouts,
-  )
-  if defer_on:
-    return True, defer_reason
   registry = (
       getattr(stall_diagnostics, "worker_registry", None)
       if stall_diagnostics is not None
@@ -746,6 +741,20 @@ def _ingest_stall_defer_state(
   active_pool = pool
   if active_pool is None and stall_diagnostics is not None:
     active_pool = getattr(stall_diagnostics, "active_pool", None)
+  sample_list = list(sample or ())
+  if (
+      active_pool is not None
+      and sample_list
+      and pool_workers_all_idle(active_pool)
+      and not worker_registry_shows_recent_progress(registry, pool=active_pool)
+  ):
+    return False, "idle_pool_ghost_inflight"
+  defer_on, defer_reason = _ingest_stall_defer_long_budget(
+      stall_diagnostics,
+      consecutive_timeouts,
+  )
+  if defer_on:
+    return True, defer_reason
   pipeline = (
       getattr(stall_diagnostics, "ingest_pipeline", "")
       if stall_diagnostics is not None
@@ -1327,6 +1336,10 @@ def _imap_ingest_paths_batched(
         inflight_cap,
     )
 
+  def _on_idle_pool_ghost_fatal(pending_paths):
+    if dispatch_registry is not None and pending_paths:
+      clear_dispatch_worker_stages(dispatch_registry, pending_paths)
+
   iterator = imap_sliding_window_watch_pool(
       pool,
       fn,
@@ -1336,6 +1349,7 @@ def _imap_ingest_paths_batched(
       stall_abort_polls_fn=_stall_abort_polls_for_batch,
       on_in_flight_change=_on_in_flight_change,
       supplement_paths_fn=_giant_pool_supplement_paths_fn,
+      on_idle_pool_ghost_fatal=_on_idle_pool_ghost_fatal,
       on_stall_warning=_make_ingest_stall_warning_fn(
           tracker,
           pool=pool,

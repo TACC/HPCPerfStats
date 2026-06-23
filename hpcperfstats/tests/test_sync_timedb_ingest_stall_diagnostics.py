@@ -192,6 +192,67 @@ def test_ingest_stall_defer_long_budget_off_when_effective_matches_batch(monkeyp
   assert reason == "no_day_hint"
 
 
+def test_ingest_stall_defer_state_idle_pool_ghost_suppresses_defer(monkeypatch):
+  import time
+
+  monkeypatch.setattr(st, "pool_workers_all_idle", lambda _pool: True)
+  monkeypatch.setattr(
+      st, "worker_registry_shows_recent_progress", lambda *_a, **_k: False,
+  )
+  monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
+  registry = {
+      "1001": {
+          "path": "/data/host.example/1700000000",
+          "stage": "parse",
+          "substage": "head",
+          "timeout_s": "14400.0",
+          "t0": time.monotonic(),
+      },
+  }
+  diag = st.IngestStallDiagnostics()
+  diag.worker_registry = registry
+  diag.current_imap_batch_max_timeout_s = 900.0
+  defer_on, reason = st._ingest_stall_defer_state(
+      "",
+      {},
+      stall_diagnostics=diag,
+      consecutive_timeouts=50,
+      pool=object(),
+      sample=["/data/host.example/1700000000"],
+  )
+  assert defer_on is False
+  assert reason == "idle_pool_ghost_inflight"
+
+
+def test_ingest_stall_defer_state_long_budget_when_workers_busy(monkeypatch):
+  import time
+
+  monkeypatch.setattr(st, "pool_workers_all_idle", lambda _pool: False)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
+  registry = {
+      "1001": {
+          "path": "/data/host.example/1700000000",
+          "stage": "parse",
+          "substage": "head",
+          "timeout_s": "14400.0",
+          "t0": time.monotonic(),
+      },
+  }
+  diag = st.IngestStallDiagnostics()
+  diag.worker_registry = registry
+  diag.current_imap_batch_max_timeout_s = 900.0
+  defer_on, reason = st._ingest_stall_defer_state(
+      "",
+      {},
+      stall_diagnostics=diag,
+      consecutive_timeouts=100,
+      pool=object(),
+      sample=["/data/host.example/1700000000"],
+  )
+  assert defer_on is True
+  assert reason == "long_ingest_budget"
+
+
 def test_build_ingest_stall_log_suffix_includes_worker_registry_counts(monkeypatch):
   import time
 

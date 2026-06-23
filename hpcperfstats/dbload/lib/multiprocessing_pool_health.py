@@ -100,6 +100,81 @@ def alive_pool_worker_count(pool):
   return alive
 
 
+_IDLE_POOL_GHOST_CONTEXT = "idle_pool_ghost_inflight"
+
+_IDLE_WORKER_WCHAN_EXACT = frozenset({
+    "futex_wait_queue",
+    "futex_wait",
+    "pipe_read",
+    "do_wait",
+    "hrtimer_nanosleep",
+    "wait_woken",
+})
+
+
+def read_process_wchan(pid):
+  """Return kernel wait channel for ``pid``, or None when unavailable."""
+  try:
+    with open("/proc/%d/wchan" % int(pid), encoding="ascii") as proc_wchan:
+      return proc_wchan.read().strip()
+  except OSError:
+    return None
+
+
+def worker_wchan_looks_idle(wchan):
+  """True when ``wchan`` indicates a blocked/idle pool worker (Linux)."""
+  if not wchan or wchan == "0":
+    return False
+  if wchan in _IDLE_WORKER_WCHAN_EXACT:
+    return True
+  if wchan.startswith("futex"):
+    return True
+  if "pipe_read" in wchan:
+    return True
+  return False
+
+
+def pool_workers_all_idle(pool):
+  """True when every alive pool worker's wchan looks idle (Linux ``/proc``)."""
+  alive = 0
+  for proc in iter_pool_worker_processes(pool):
+    is_alive_fn = getattr(proc, "is_alive", None)
+    if not callable(is_alive_fn) or not is_alive_fn():
+      continue
+    pid = getattr(proc, "pid", None)
+    if pid is None:
+      return False
+    wchan = read_process_wchan(pid)
+    if wchan is None:
+      return False
+    if not worker_wchan_looks_idle(wchan):
+      return False
+    alive += 1
+  return alive > 0
+
+
+def format_pool_worker_wchan_sample(pool, *, limit=5):
+  """Return ``pid:wchan`` strings for up to ``limit`` alive pool workers."""
+  entries = []
+  for proc in iter_pool_worker_processes(pool):
+    if len(entries) >= max(1, int(limit)):
+      break
+    is_alive_fn = getattr(proc, "is_alive", None)
+    if not callable(is_alive_fn) or not is_alive_fn():
+      continue
+    pid = getattr(proc, "pid", None)
+    if pid is None:
+      continue
+    wchan = read_process_wchan(pid)
+    entries.append("%s:%s" % (pid, wchan if wchan is not None else "?"))
+  return entries
+
+
+def idle_pool_ghost_abort_polls(stall_abort_after):
+  """Poll count before idle-pool ghost fail-fast (much shorter than giant defer)."""
+  return max(12, min(120, max(1, int(stall_abort_after)) // 20))
+
+
 def _process_exitcode_signal_name(exitcode):
   if exitcode is None:
     return "unknown"
@@ -588,6 +663,7 @@ def imap_sliding_window_watch_pool(
     pool_health_context=None,
     on_in_flight_change=None,
     supplement_paths_fn=None,
+    on_idle_pool_ghost_fatal=None,
 ):
   """Dispatch pool work with at most ``max_inflight`` concurrent ``apply_async`` tasks.
 
@@ -629,6 +705,8 @@ def imap_sliding_window_watch_pool(
   path_iter = iter(path_list)
   pending_async = {}
   consecutive_timeouts = 0
+  polls_since_last_yield = 0
+  idle_pool_warned = False
   warned_thresholds = set()
   stall_abort_after = max(1, int(default_stall_abort))
   warn_thresholds = _stall_warning_thresholds(stall_abort_after)
@@ -753,6 +831,66 @@ def imap_sliding_window_watch_pool(
           exit_code=124,
       )
 
+  def _check_idle_pool_ghost():
+    nonlocal idle_pool_warned
+    if not pending_async:
+      return
+    if not pool_workers_all_idle(pool):
+      return
+    ghost_abort_polls = idle_pool_ghost_abort_polls(stall_abort_after)
+    pending_paths = _in_flight_paths()
+    pending_sample = [
+        os.path.basename(str(path))
+        for path in pending_paths[:5]
+        if path
+    ]
+    wchan_sample = format_pool_worker_wchan_sample(pool)
+    warn_after = max(3, ghost_abort_polls // 4)
+    if (
+        polls_since_last_yield >= warn_after
+        and not idle_pool_warned
+    ):
+      idle_pool_warned = True
+      log_print(
+          "WARN: pool imap waiting pending_async_n=%d workers_idle=yes "
+          "polls_since_yield=%d pending_sample=%s worker_wchan_sample=%s "
+          "context=%s"
+          % (
+              len(pending_async),
+              int(polls_since_last_yield),
+              pending_sample,
+              wchan_sample,
+              context or "pool",
+          ),
+          flush=True,
+      )
+    if polls_since_last_yield < ghost_abort_polls:
+      return
+    message = (
+        "pool imap idle workers with pending async "
+        "(context=%s pending_async_n=%d polls_since_yield=%d "
+        "pending_sample=%s worker_wchan_sample=%s)"
+        % (
+            _IDLE_POOL_GHOST_CONTEXT,
+            len(pending_async),
+            int(polls_since_last_yield),
+            pending_sample,
+            wchan_sample,
+        )
+    )
+    log_print("ERROR: %s" % message, flush=True)
+    if callable(on_idle_pool_ghost_fatal):
+      try:
+        on_idle_pool_ghost_fatal(list(pending_paths))
+      except Exception:
+        pass
+    raise MultiprocessingPoolStallError(
+        message,
+        dead_pids=[],
+        context=_IDLE_POOL_GHOST_CONTEXT,
+        exit_code=124,
+    )
+
   _submit_until_cap()
   _update_stall_abort_from_in_flight()
 
@@ -775,11 +913,15 @@ def imap_sliding_window_watch_pool(
         except TypeError:
           item = get_fn()
         consecutive_timeouts = 0
+        polls_since_last_yield = 0
+        idle_pool_warned = False
         _submit_until_cap()
         _update_stall_abort_from_in_flight()
         yield item
       continue
     _handle_stall_poll()
+    polls_since_last_yield += 1
+    _check_idle_pool_ghost()
     time.sleep(poll_timeout_s)
 
 

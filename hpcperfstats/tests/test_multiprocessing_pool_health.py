@@ -982,3 +982,56 @@ def test_supplement_dedupe_same_path_not_redispatched_in_batch():
   thread.join(timeout=2.0)
   assert dispatch_counts.get("tail0", 0) <= 1
 
+
+def test_pool_workers_all_idle_false_when_wchan_unavailable(monkeypatch):
+  pool = SimpleNamespace(_pool=[_AliveWorker()])
+  monkeypatch.setattr(mph, "read_process_wchan", lambda _pid: None)
+  assert mph.pool_workers_all_idle(pool) is False
+
+
+def test_pool_workers_all_idle_true_for_futex_wchan(monkeypatch):
+  pool = SimpleNamespace(_pool=[_AliveWorker()])
+  monkeypatch.setattr(mph, "read_process_wchan", lambda _pid: "futex_wait_queue")
+  assert mph.pool_workers_all_idle(pool) is True
+
+
+def test_pool_workers_all_idle_false_when_worker_running(monkeypatch):
+  pool = SimpleNamespace(_pool=[_AliveWorker()])
+  monkeypatch.setattr(mph, "read_process_wchan", lambda _pid: "0")
+  assert mph.pool_workers_all_idle(pool) is False
+
+
+def test_idle_pool_ghost_abort_polls_clamped():
+  assert mph.idle_pool_ghost_abort_polls(10000) == 120
+  assert mph.idle_pool_ghost_abort_polls(100) == 12
+  assert mph.idle_pool_ghost_abort_polls(200) == 12
+
+
+def test_imap_sliding_window_idle_pool_ghost_fatal(monkeypatch):
+  monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 3)
+  monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
+  pool = _ManualPool()
+  paths = ["ghost_path"]
+  ghost_fatal = {"called": False, "paths": None}
+
+  def on_fatal(pending_paths):
+    ghost_fatal["called"] = True
+    ghost_fatal["paths"] = list(pending_paths)
+
+  gen = mph.imap_sliding_window_watch_pool(
+      pool,
+      lambda path: path,
+      paths,
+      max_inflight=1,
+      poll_timeout_s=0.01,
+      stall_abort_polls_fn=lambda in_flight: 100000,
+      on_idle_pool_ghost_fatal=on_fatal,
+  )
+  with pytest.raises(mph.MultiprocessingPoolStallError) as excinfo:
+    list(gen)
+  assert excinfo.value.context == mph._IDLE_POOL_GHOST_CONTEXT
+  assert excinfo.value.exit_code == 124
+  assert "idle workers with pending async" in str(excinfo.value)
+  assert ghost_fatal["called"] is True
+  assert ghost_fatal["paths"] == ["ghost_path"]
+
