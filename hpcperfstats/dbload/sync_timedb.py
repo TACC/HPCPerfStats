@@ -4877,6 +4877,7 @@ def run_sync_timedb_supervisor_loop(
   try:
     _ensure_daily_archive_dir_exists()
     if run_startup_maintenance:
+      log_print(cfg.format_sync_timedb_non_default_settings_line(), flush=True)
       log_print("sync_timedb: maintenance pass reason=startup", flush=True)
       startup_archive_scan.note_startup_maintenance_pending()
       archive_janitor.signal_scheduled_maintenance_pass(reason="startup")

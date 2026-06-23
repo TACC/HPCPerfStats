@@ -1352,3 +1352,37 @@ def test_legacy_portal_fallback_for_archive_dir(tmp_path, monkeypatch):
   assert cfg.get_archive_dir_path() == "/legacy/archive"
   assert cfg.get_accounting_path() == "/legacy/acct"
   assert cfg.get_daily_archive_dir_path() == "/legacy/daily"
+
+
+def test_collect_sync_timedb_non_default_settings_reports_ini_overrides(
+    temp_ini, monkeypatch,
+):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  importlib.reload(cfg)
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+      "total_cores = 4",
+      "total_cores = 4\nsync_ingest_queue_max_size = 111",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  importlib.reload(cfg)
+
+  entries = dict(cfg.collect_sync_timedb_non_default_settings())
+  assert entries["sync_ingest_queue_max_size"] == 111
+  assert entries["total_cores"] == 4
+
+
+def test_format_sync_timedb_non_default_settings_line(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  importlib.reload(cfg)
+  line = cfg.format_sync_timedb_non_default_settings_line()
+  assert line.startswith("sync_timedb: non-default settings:")
+  assert "total_cores=4" in line

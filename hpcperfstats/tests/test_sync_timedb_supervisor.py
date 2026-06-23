@@ -3669,7 +3669,7 @@ def test_post_chunk_hygiene_scheduled_and_runs_seal_before_delete(monkeypatch):
     shutdown_requested[0] = False
 
 
-def test_supervisor_runs_startup_maintenance_with_all_flag(monkeypatch):
+def test_supervisor_runs_startup_maintenance_with_all_flag(monkeypatch, capsys):
   """``startdate=all`` schedules janitor startup maintenance pass."""
   shutdown_requested[0] = False
   scheduled_reasons = []
@@ -3701,6 +3701,8 @@ def test_supervisor_runs_startup_maintenance_with_all_flag(monkeypatch):
         "/tmp/archive", "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
 
     assert "startup" in scheduled_reasons
+    out = capsys.readouterr().out
+    assert "sync_timedb: non-default settings:" in out
   finally:
     shutdown_requested[0] = False
 

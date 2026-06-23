@@ -2,10 +2,12 @@
 
 """
 import configparser
+import inspect
 import ipaddress
 import math
 import os
 import re
+from contextlib import contextmanager
 from zoneinfo import ZoneInfo
 
 _DEFAULT_TOTAL_CORES = "40"
@@ -2472,6 +2474,216 @@ def get_conf_parser_defaults_audit_snapshot():
           "db_idle_in_transaction_session_timeout_ms": 300000,
       },
   }
+
+
+_SYNC_TIMEDB_CONFIG_BASELINE_PATH = "<sync_timedb_config_baseline>"
+_SYNC_TIMEDB_CONFIG_BASELINE_PARSER = None
+
+_PIPELINE_PATH_OPTIONS = frozenset({
+    "acct_path",
+    "archive_dir",
+    "daily_archive_dir",
+})
+
+_PIPELINE_DERIVED_AUDIT_SKIP = frozenset({
+    "sync_archive_db_ingest_gate_sample_stride",
+})
+
+_SYNC_TIMEDB_CONFIG_AUDIT_ENV_KEYS = (
+    "ARCHIVE_POOL_PROCESS_CAP",
+    "HPCPERFSTATS_METRICS_COMPUTE_BATCH_MAX_SINGLE_JOB_S",
+    "HPCPERFSTATS_METRICS_COMPUTE_BATCH_MAX_WINDOW_S",
+    "HPCPERFSTATS_METRICS_COMPUTE_BATCH_UNKNOWN_RUNTIME_S",
+    "HPCPERFSTATS_METRICS_COMPUTE_TOTAL_WATCHDOG_S",
+    "HPCPERFSTATS_METRICS_COMPUTE_WATCHDOG_S",
+    "HPCPERFSTATS_METRICS_DEFERRED_NOT_READY_MAX_AGE_S",
+    "HPCPERFSTATS_METRICS_DEFERRED_NOT_READY_MAX_RETRIES",
+    "HPCPERFSTATS_METRICS_DEFERRED_NOT_READY_QUARANTINE_S",
+    "HPCPERFSTATS_METRICS_DEFERRED_NOT_READY_RETRY_S",
+    "HPCPERFSTATS_METRICS_PERSIST_LOCK_TIMEOUT_MS",
+    "HPCPERFSTATS_METRICS_PERSIST_STATEMENT_TIMEOUT_MS",
+    "HPCPERFSTATS_METRICS_PLOT_PREWARM_MODE",
+    "HPCPERFSTATS_METRICS_PREWARM_BACKLOG_CAP",
+    "HPCPERFSTATS_METRICS_PREWARM_BACKPRESSURE_WAIT_S",
+    "HPCPERFSTATS_METRICS_PREWARM_DRAIN_BATCH_BUDGET_MAX_S",
+    "HPCPERFSTATS_METRICS_PREWARM_DRAIN_BATCH_BUDGET_S",
+    "HPCPERFSTATS_METRICS_PREWARM_DRAIN_PER_JOB_S",
+    "HPCPERFSTATS_METRICS_RUN_PER_JOB_TIMEOUT_S",
+    "HPCPERFSTATS_METRICS_RUN_POLL_TIMEOUT_S",
+    "HPCPERFSTATS_METRICS_RUN_STALL_TIMEOUT_S",
+    "HPCPERFSTATS_METRICS_SCHEDULER_MODE",
+    "HPCPERFSTATS_METRICS_SCHEDULER_SKIP_PREWARM",
+    "HPCPERFSTATS_PIPELINE_OVERLAP_MODE",
+    "HPCPERFSTATS_SYNC_ARCHIVE_VALIDATION_MAX_WORKERS",
+    "HPCPERFSTATS_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_ENABLED",
+    "HPCPERFSTATS_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES",
+    "HPCPERFSTATS_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S",
+    "HPCPERFSTATS_SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S",
+    "HPCPERFSTATS_SYNC_INGEST_PER_FILE_TIMEOUT_S",
+    "HPCPERFSTATS_SYNC_INGEST_PER_FILE_TIMEOUT_S_PER_MIB",
+    "HPCPERFSTATS_SYNC_POOL_POLL_TIMEOUT_S",
+    "HPCPERFSTATS_SYNC_POOL_STALL_ABORT_AFTER_TIMEOUTS",
+    "METRICS_POOL_PROCESS_CAP",
+    "SYNC_DB_WRITER_POOL_CAP",
+    "SYNC_ENABLE_CPUSET_PRIORITY_BUDGET",
+    "SYNC_ENABLE_OVERPROVISION_MODE",
+    "SYNC_POOL_PROCESS_CAP",
+    "SYNC_WRITE_LOCK_SHARDS",
+)
+
+
+def _sync_timedb_config_baseline_parser():
+  """Minimal ini with only install paths; all tunables use getter fallbacks."""
+  global _SYNC_TIMEDB_CONFIG_BASELINE_PARSER
+  if _SYNC_TIMEDB_CONFIG_BASELINE_PARSER is not None:
+    return _SYNC_TIMEDB_CONFIG_BASELINE_PARSER
+  parser = configparser.ConfigParser()
+  parser.read_dict({
+      "DEFAULT": {
+          "machine": "baseline",
+          "host_name_ext": "baseline.example",
+          "data_dir": "/data",
+          "server": "baseline",
+          "debug": "no",
+          "secret_key": "baseline",
+          "staff_email_domain": "example",
+          "timezone": "UTC",
+          "total_cores": _DEFAULT_TOTAL_CORES,
+          "engine_name": "django.db.backends.postgresql",
+          "dbname": "baseline",
+          "username": "u",
+          "password": "p",
+          "host": "localhost",
+          "port": "5432",
+      },
+      "PIPELINE": {
+          "acct_path": "/data/accounting",
+          "archive_dir": "/data/archive",
+          "daily_archive_dir": "/data/daily_archive",
+      },
+      "RMQ": {
+          "rmq_server": "localhost",
+          "rmq_queue": "baseline",
+      },
+      "OAUTH2": {
+          "client_id": "id",
+          "client_key": "key",
+          "authorize_url": "http://localhost",
+          "oauth_base_url": "http://localhost",
+      },
+      "XALT": {
+          "xalt_engine": "django.db.backends.postgresql",
+          "xalt_name": "xalt",
+          "xalt_user": "u",
+          "xalt_password": "p",
+          "xalt_host": "localhost",
+      },
+  })
+  _SYNC_TIMEDB_CONFIG_BASELINE_PARSER = parser
+  return parser
+
+
+@contextmanager
+def _cfg_audit_context(parser, path):
+  global cfg, _ACTIVE_CONFIG_PATH
+  saved_cfg, saved_path = cfg, _ACTIVE_CONFIG_PATH
+  cfg, _ACTIVE_CONFIG_PATH = parser, path
+  try:
+    yield
+  finally:
+    cfg, _ACTIVE_CONFIG_PATH = saved_cfg, saved_path
+
+
+@contextmanager
+def _cleared_sync_timedb_config_audit_env():
+  saved = {
+      key: os.environ.pop(key)
+      for key in _SYNC_TIMEDB_CONFIG_AUDIT_ENV_KEYS
+      if key in os.environ
+  }
+  try:
+    yield
+  finally:
+    for key, value in saved.items():
+      os.environ[key] = value
+
+
+def _audit_values_equal(current, baseline):
+  if current is None or baseline is None:
+    return current is baseline
+  if isinstance(current, bool) or isinstance(baseline, bool):
+    return bool(current) == bool(baseline)
+  if isinstance(current, (int, float)) or isinstance(baseline, (int, float)):
+    return abs(float(current) - float(baseline)) < 1e-6
+  return str(current) == str(baseline)
+
+
+def _format_sync_timedb_audit_value(value):
+  if value is None:
+    return "(unset)"
+  if isinstance(value, bool):
+    return "yes" if value else "no"
+  if isinstance(value, float):
+    if value == int(value):
+      return str(int(value))
+    return format(value, ".9g")
+  return str(value)
+
+
+def _iter_sync_timedb_config_audit_getters():
+  yield ("total_cores", get_ini_total_cores_int)
+  yield ("effective_cores", get_effective_cores)
+  yield ("cpuset_pin_min_total_cores", get_cpuset_pin_min_total_cores)
+  yield ("cpuset_pin_min_cores_per_node", get_cpuset_pin_min_cores_per_node)
+  yield ("numa_pin_max_nodes_auto", get_numa_pin_max_nodes_auto)
+  yield ("pin_proxy_in_compose", get_pin_proxy_for_compose)
+  yield ("web_numa_node", get_web_numa_node)
+  yield ("pipeline_numa_node", get_pipeline_numa_node)
+  for _section, option in INI_OPTION_REGISTRY:
+    if _section != "PIPELINE":
+      continue
+    if option in _PIPELINE_PATH_OPTIONS or option in _PIPELINE_DERIVED_AUDIT_SKIP:
+      continue
+    getter_name = f"get_{option}"
+    getter = globals().get(getter_name)
+    if getter is None or not callable(getter):
+      continue
+    if inspect.signature(getter).parameters:
+      continue
+    yield (option, getter)
+  yield (
+      "sync_db_writer_pool_processes",
+      lambda: get_sync_db_writer_pool_processes(
+          ingest_processes=get_sync_ingest_pool_processes(),
+      ),
+  )
+
+
+def collect_sync_timedb_non_default_settings():
+  """Return sorted ``(name, effective_value)`` pairs differing from code defaults."""
+  baseline = _sync_timedb_config_baseline_parser()
+  non_default = []
+  for name, getter in _iter_sync_timedb_config_audit_getters():
+    current = getter()
+    with _cleared_sync_timedb_config_audit_env():
+      with _cfg_audit_context(baseline, _SYNC_TIMEDB_CONFIG_BASELINE_PATH):
+        default = getter()
+    if not _audit_values_equal(current, default):
+      non_default.append((name, current))
+  non_default.sort(key=lambda item: item[0])
+  return non_default
+
+
+def format_sync_timedb_non_default_settings_line():
+  """One-line operator summary for sync_timedb startup logging."""
+  entries = collect_sync_timedb_non_default_settings()
+  if not entries:
+    return "sync_timedb: non-default settings: (none)"
+  parts = [
+      f"{name}={_format_sync_timedb_audit_value(value)}"
+      for name, value in entries
+  ]
+  return "sync_timedb: non-default settings: " + " ".join(parts)
 
 
 def get_sync_enable_ingest_first_durability_mode():
