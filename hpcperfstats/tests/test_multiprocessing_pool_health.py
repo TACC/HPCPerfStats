@@ -1010,6 +1010,8 @@ def test_idle_pool_ghost_abort_polls_clamped():
 def test_imap_sliding_window_idle_pool_ghost_fatal(monkeypatch):
   monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 3)
   monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 0)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
   pool = _ManualPool()
   paths = ["ghost_path"]
   ghost_fatal = {"called": False, "paths": None}
@@ -1034,4 +1036,182 @@ def test_imap_sliding_window_idle_pool_ghost_fatal(monkeypatch):
   assert "idle workers with pending async" in str(excinfo.value)
   assert ghost_fatal["called"] is True
   assert ghost_fatal["paths"] == ["ghost_path"]
+
+
+class _OrphanAsyncResult:
+  """Simulates worker success lost from the result queue (ready() false, get(0) works)."""
+
+  def __init__(self, pool, fn, path):
+    self._pool = pool
+    self._fn = fn
+    self._path = path
+    self._result = fn(path)
+    pool.inflight[self] = path
+    pool.peak = max(pool.peak, len(pool.inflight))
+    pool.submit_count += 1
+
+  def ready(self):
+    return False
+
+  def get(self, timeout=None):
+    if timeout == 0:
+      return self._result
+    raise multiprocessing.TimeoutError()
+
+
+def test_try_collect_async_result_without_ready():
+  pool = _ManualPool()
+  ar = _OrphanAsyncResult(pool, lambda p: p, "orphan_path")
+  assert ar.ready() is False
+  assert mph.try_collect_async_result(ar) == "orphan_path"
+
+
+def test_reconcile_idle_pending_async_collects_orphan():
+  pool = _ManualPool()
+  pending = {_OrphanAsyncResult(pool, lambda p: p, "p1"): "p1"}
+  collected, redispatched = mph.reconcile_idle_pending_async(
+      pool,
+      pending,
+      lambda path: path,
+  )
+  assert redispatched == 0
+  assert collected == [("p1", "p1")]
+  assert not pending
+
+
+def test_reconcile_idle_pending_async_redispatches_stale():
+  pool = _ManualPool()
+  stale = _ManualAsyncResult(pool, lambda p: p, "stale_path")
+  pending = {stale: "stale_path"}
+  redispatch_paths = []
+
+  collected, redispatched = mph.reconcile_idle_pending_async(
+      pool,
+      pending,
+      lambda path: path,
+      on_redispatch=lambda path: redispatch_paths.append(path),
+  )
+  assert collected == []
+  assert redispatched == 1
+  assert redispatch_paths == ["stale_path"]
+  assert len(pending) == 1
+  assert list(pending.values()) == ["stale_path"]
+  assert pool.submit_count == 2
+
+
+def test_reconcile_idle_pending_async_skip_without_redispatch():
+  pool = _ManualPool()
+  stale = _ManualAsyncResult(pool, lambda p: p, "skip_path")
+  pending = {stale: "skip_path"}
+  collected, redispatched = mph.reconcile_idle_pending_async(
+      pool,
+      pending,
+      lambda path: path,
+      resolve_skip_result=lambda path: (path, False, True, 0.0),
+  )
+  assert redispatched == 0
+  assert collected == [("skip_path", ("skip_path", False, True, 0.0))]
+  assert not pending
+  assert pool.submit_count == 1
+
+
+def test_imap_sliding_window_orphan_collect_avoids_ghost_fatal(monkeypatch):
+  monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 3)
+  monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 3)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 100)
+  pool = _ManualPool()
+
+  class _OrphanPool(_ManualPool):
+    def apply_async(self, fn, args=()):
+      return _OrphanAsyncResult(self, fn, args[0])
+
+  pool = _OrphanPool()
+  gen = mph.imap_sliding_window_watch_pool(
+      pool,
+      lambda path: path,
+      ["orphan_path"],
+      max_inflight=1,
+      poll_timeout_s=0.01,
+      stall_abort_polls_fn=lambda in_flight: 100000,
+  )
+  results = list(gen)
+  assert results == ["orphan_path"]
+
+
+def test_imap_sliding_window_reconcile_redispatch_within_budget(monkeypatch):
+  monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 1000)
+  monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 3)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
+  pool = _ManualPool()
+  redispatch_count = {"n": 0}
+
+  def on_redispatch(path):
+    del path
+    redispatch_count["n"] += 1
+
+  gen = mph.imap_sliding_window_watch_pool(
+      pool,
+      lambda path: path,
+      ["stale_path"],
+      max_inflight=1,
+      poll_timeout_s=0.01,
+      stall_abort_polls_fn=lambda in_flight: 100000,
+      on_reconcile_redispatch=on_redispatch,
+  )
+
+  import threading
+
+  def finish_after_redispatch():
+    deadline = time.monotonic() + 2.0
+    while redispatch_count["n"] < 1 and time.monotonic() < deadline:
+      time.sleep(0.005)
+    for ar in list(pool.inflight):
+      ar.finish()
+
+  threading.Thread(target=finish_after_redispatch, daemon=True).start()
+  results = list(gen)
+  assert results == ["stale_path"]
+  assert redispatch_count["n"] >= 1
+
+
+def test_imap_sliding_window_ghost_fatal_after_reconcile_exhausted(monkeypatch):
+  monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 3)
+  monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 1)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
+  pool = _ManualPool()
+  gen = mph.imap_sliding_window_watch_pool(
+      pool,
+      lambda path: path,
+      ["ghost_path"],
+      max_inflight=1,
+      poll_timeout_s=0.01,
+      stall_abort_polls_fn=lambda in_flight: 100000,
+  )
+  with pytest.raises(mph.MultiprocessingPoolStallError) as excinfo:
+    list(gen)
+  assert excinfo.value.context == mph._IDLE_POOL_GHOST_CONTEXT
+
+
+def test_abort_if_pool_workers_dead_recycle_invokes_idle_reconcile(monkeypatch):
+  monkeypatch.setattr(mph, "get_sync_pool_worker_recycle_grace_polls", lambda: 2)
+  reconcile_calls = {"n": 0}
+
+  def reconcile_fn():
+    reconcile_calls["n"] += 1
+
+  pool = SimpleNamespace(_pool=[_RecycledWorker(), _AliveWorker()])
+  ctx = {"idle_reconcile_fn": reconcile_fn}
+  mph.abort_if_pool_workers_dead(pool, context="recycle_reconcile_test", pool_health_context=ctx)
+  assert reconcile_calls["n"] == 1
+  mph.abort_if_pool_workers_dead(pool, context="recycle_reconcile_test", pool_health_context=ctx)
+  assert reconcile_calls["n"] == 2
+  with pytest.raises(mph.MultiprocessingWorkerExitError):
+    mph.abort_if_pool_workers_dead(
+        pool,
+        context="recycle_reconcile_test",
+        pool_health_context=ctx,
+    )
 

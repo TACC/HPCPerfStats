@@ -1340,6 +1340,12 @@ def _imap_ingest_paths_batched(
     if dispatch_registry is not None and pending_paths:
       clear_dispatch_worker_stages(dispatch_registry, pending_paths)
 
+  def _on_reconcile_redispatch(path):
+    if dispatch_registry is not None and path:
+      seed_dispatch_worker_stages(dispatch_registry, [path])
+    if tracker is not None and path:
+      tracker.note_dispatched(path)
+
   iterator = imap_sliding_window_watch_pool(
       pool,
       fn,
@@ -1350,6 +1356,8 @@ def _imap_ingest_paths_batched(
       on_in_flight_change=_on_in_flight_change,
       supplement_paths_fn=_giant_pool_supplement_paths_fn,
       on_idle_pool_ghost_fatal=_on_idle_pool_ghost_fatal,
+      on_reconcile_redispatch=_on_reconcile_redispatch,
+      resolve_reconcile_skip_result=_ingest_reconcile_skip_result,
       on_stall_warning=_make_ingest_stall_warning_fn(
           tracker,
           pool=pool,
@@ -2424,6 +2432,14 @@ def _resolve_streaming_ingest_start(stats_file, parse_elapsed_fn):
     )
     return True, (stats_file, None, need_archival, True, parse_elapsed_fn())
   return False, (int(start_idx), need_archival)
+
+
+def _ingest_reconcile_skip_result(stats_file):
+  """Return an ingest result tuple when DB idempotency says re-dispatch is unnecessary."""
+  done, result = _resolve_streaming_ingest_start(stats_file, lambda: 0.0)
+  if done:
+    return result
+  return None
 
 
 def _parse_stats_file_payload_impl_streaming(stats_file):

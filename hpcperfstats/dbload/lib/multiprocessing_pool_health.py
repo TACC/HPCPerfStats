@@ -64,6 +64,93 @@ def get_sync_pool_worker_recycle_grace_polls():
   return cfg.get_sync_pool_worker_recycle_grace_polls()
 
 
+def get_sync_pool_idle_reconcile_max_rounds():
+  """Redispatch rounds before idle-pool ghost fail-fast."""
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  return cfg.get_sync_pool_idle_reconcile_max_rounds()
+
+
+def get_sync_pool_idle_reconcile_polls_per_round():
+  """Idle polls between orphan-async reconcile redispatch rounds."""
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  return cfg.get_sync_pool_idle_reconcile_polls_per_round()
+
+
+_COLLECT_PENDING = object()
+
+
+def try_collect_async_result(async_result):
+  """Collect a finished task even when ``ready()`` is false (orphan async / H1)."""
+  get_fn = getattr(async_result, "get", None)
+  if not callable(get_fn):
+    return _COLLECT_PENDING
+  try:
+    return get_fn(timeout=0)
+  except multiprocessing.TimeoutError:
+    return _COLLECT_PENDING
+  except TypeError:
+    pass
+  ready_fn = getattr(async_result, "ready", None)
+  if callable(ready_fn) and ready_fn():
+    try:
+      return get_fn()
+    except Exception:
+      return _COLLECT_PENDING
+  return _COLLECT_PENDING
+
+
+def reconcile_idle_pending_async(
+    pool,
+    pending_async,
+    fn,
+    *,
+    apply_async=None,
+    resolve_skip_result=None,
+    on_redispatch=None,
+    allow_redispatch=True,
+):
+  """Collect orphan async results or redispatch stale entries (H1/H2 recovery).
+
+  Mutates ``pending_async`` in place. Returns ``(collected, redispatched_n)``
+  where ``collected`` is a list of ``(path, item)`` tuples.
+  """
+  apply_async_fn = apply_async or getattr(pool, "apply_async", None)
+  if not callable(apply_async_fn):
+    return [], 0
+  collected = []
+  redispatched = 0
+  for async_result, path in list(pending_async.items()):
+    item = try_collect_async_result(async_result)
+    if item is not _COLLECT_PENDING:
+      pending_async.pop(async_result, None)
+      collected.append((path, item))
+      continue
+    skip_item = None
+    if callable(resolve_skip_result):
+      try:
+        skip_item = resolve_skip_result(path)
+      except Exception:
+        skip_item = None
+    if skip_item is not None:
+      pending_async.pop(async_result, None)
+      collected.append((path, skip_item))
+      continue
+    if not allow_redispatch:
+      continue
+    pending_async.pop(async_result, None)
+    new_async = apply_async_fn(fn, (path,))
+    pending_async[new_async] = path
+    redispatched += 1
+    if callable(on_redispatch):
+      try:
+        on_redispatch(path)
+      except Exception:
+        pass
+  return collected, redispatched
+
+
 def iter_pool_worker_processes(pool):
   """Yield worker ``Process`` objects from a ``multiprocessing.Pool``."""
   if pool is None:
@@ -312,6 +399,12 @@ def abort_if_pool_workers_dead(pool, *, context="", pool_health_context=None):
   dead = [w.get("pid") for w in diagnostics.get("dead_workers") or () if w.get("pid")]
 
   if _is_maxtasksperchild_recycle_in_progress(pool, dead_procs):
+    reconcile_fn = (pool_health_context or {}).get("idle_reconcile_fn")
+    if callable(reconcile_fn):
+      try:
+        reconcile_fn()
+      except Exception:
+        pass
     grace_limit = get_sync_pool_worker_recycle_grace_polls()
     pool_key = id(pool)
     grace_used = _RECYCLE_GRACE_POLLS_BY_POOL.get(pool_key, 0) + 1
@@ -664,6 +757,8 @@ def imap_sliding_window_watch_pool(
     on_in_flight_change=None,
     supplement_paths_fn=None,
     on_idle_pool_ghost_fatal=None,
+    on_reconcile_redispatch=None,
+    resolve_reconcile_skip_result=None,
 ):
   """Dispatch pool work with at most ``max_inflight`` concurrent ``apply_async`` tasks.
 
@@ -707,6 +802,11 @@ def imap_sliding_window_watch_pool(
   consecutive_timeouts = 0
   polls_since_last_yield = 0
   idle_pool_warned = False
+  idle_reconcile_rounds = 0
+  idle_polls_since_reconcile = 0
+  reconcile_pending_yields = []
+  max_reconcile_rounds = get_sync_pool_idle_reconcile_max_rounds()
+  polls_per_reconcile_round = get_sync_pool_idle_reconcile_polls_per_round()
   warned_thresholds = set()
   stall_abort_after = max(1, int(default_stall_abort))
   warn_thresholds = _stall_warning_thresholds(stall_abort_after)
@@ -831,6 +931,62 @@ def imap_sliding_window_watch_pool(
           exit_code=124,
       )
 
+  def _attempt_idle_reconcile(*, queue_yields=False):
+    nonlocal idle_reconcile_rounds, idle_polls_since_reconcile
+    nonlocal consecutive_timeouts, polls_since_last_yield, idle_pool_warned
+    if not pending_async or not pool_workers_all_idle(pool):
+      idle_polls_since_reconcile = 0
+      return []
+    collected, redispatched = reconcile_idle_pending_async(
+        pool,
+        pending_async,
+        fn,
+        resolve_skip_result=resolve_reconcile_skip_result,
+        on_redispatch=on_reconcile_redispatch,
+        allow_redispatch=idle_reconcile_rounds < max_reconcile_rounds,
+    )
+    idle_polls_since_reconcile = 0
+    if collected:
+      consecutive_timeouts = 0
+      polls_since_last_yield = 0
+      idle_pool_warned = False
+      idle_reconcile_rounds = 0
+      if queue_yields:
+        reconcile_pending_yields.extend(collected)
+      _submit_until_cap()
+      _update_stall_abort_from_in_flight()
+      return collected
+    if redispatched > 0:
+      idle_reconcile_rounds += 1
+      pending_sample = [
+          os.path.basename(str(path))
+          for path in _in_flight_paths()[:5]
+          if path
+      ]
+      log_print(
+          "INFO: pool imap idle reconcile redispatch round=%d/%d "
+          "redispatched_n=%d pending_async_n=%d pending_sample=%s context=%s"
+          % (
+              int(idle_reconcile_rounds),
+              int(max_reconcile_rounds),
+              int(redispatched),
+              len(pending_async),
+              pending_sample,
+              context or "pool",
+          ),
+          flush=True,
+      )
+      consecutive_timeouts = 0
+      polls_since_last_yield = 0
+      _submit_until_cap()
+      _update_stall_abort_from_in_flight()
+    return []
+
+  def _idle_reconcile_for_recycle():
+    _attempt_idle_reconcile(queue_yields=True)
+
+  health_ctx["idle_reconcile_fn"] = _idle_reconcile_for_recycle
+
   def _check_idle_pool_ghost():
     nonlocal idle_pool_warned
     if not pending_async:
@@ -866,6 +1022,8 @@ def imap_sliding_window_watch_pool(
       )
     if polls_since_last_yield < ghost_abort_polls:
       return
+    if idle_reconcile_rounds < max_reconcile_rounds:
+      return
     message = (
         "pool imap idle workers with pending async "
         "(context=%s pending_async_n=%d polls_since_yield=%d "
@@ -895,8 +1053,37 @@ def imap_sliding_window_watch_pool(
   _update_stall_abort_from_in_flight()
 
   while pending_async:
+    if reconcile_pending_yields:
+      path, item = reconcile_pending_yields.pop(0)
+      del path
+      consecutive_timeouts = 0
+      polls_since_last_yield = 0
+      idle_pool_warned = False
+      idle_reconcile_rounds = 0
+      idle_polls_since_reconcile = 0
+      yield item
+      continue
     _abort_pool_health()
     _update_stall_abort_from_in_flight()
+    orphan_collected = []
+    if pool_workers_all_idle(pool):
+      for async_result in list(pending_async):
+        item = try_collect_async_result(async_result)
+        if item is _COLLECT_PENDING:
+          continue
+        path = pending_async.pop(async_result)
+        orphan_collected.append((path, item))
+    if orphan_collected:
+      for _path, item in orphan_collected:
+        consecutive_timeouts = 0
+        polls_since_last_yield = 0
+        idle_pool_warned = False
+        idle_reconcile_rounds = 0
+        idle_polls_since_reconcile = 0
+        _submit_until_cap()
+        _update_stall_abort_from_in_flight()
+        yield item
+      continue
     completed = [
         async_result
         for async_result in list(pending_async)
@@ -919,6 +1106,21 @@ def imap_sliding_window_watch_pool(
         _update_stall_abort_from_in_flight()
         yield item
       continue
+    if pool_workers_all_idle(pool) and pending_async:
+      idle_polls_since_reconcile += 1
+      if idle_polls_since_reconcile >= polls_per_reconcile_round:
+        reconciled = _attempt_idle_reconcile(queue_yields=False)
+        if reconciled:
+          consecutive_timeouts = 0
+          polls_since_last_yield = 0
+          idle_pool_warned = False
+          idle_reconcile_rounds = 0
+          idle_polls_since_reconcile = 0
+          _submit_until_cap()
+          _update_stall_abort_from_in_flight()
+          for _path, item in reconciled:
+            yield item
+          continue
     _handle_stall_poll()
     polls_since_last_yield += 1
     _check_idle_pool_ghost()

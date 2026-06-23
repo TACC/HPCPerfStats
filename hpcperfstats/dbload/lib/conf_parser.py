@@ -108,6 +108,8 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_pool_poll_timeout_s"),
     ("PIPELINE", "sync_pool_stall_abort_after_timeouts"),
     ("PIPELINE", "sync_pool_worker_recycle_grace_polls"),
+    ("PIPELINE", "sync_pool_idle_reconcile_max_rounds"),
+    ("PIPELINE", "sync_pool_idle_reconcile_polls_per_round"),
     ("PIPELINE", "sync_ingest_per_file_timeout_s"),
     ("PIPELINE", "sync_ingest_per_file_timeout_max_s"),
     ("PIPELINE", "sync_ingest_per_file_timeout_s_per_mib"),
@@ -1630,6 +1632,30 @@ def get_sync_pool_worker_recycle_grace_polls():
     )
   except (TypeError, ValueError, OverflowError):
     return 2
+
+
+def get_sync_pool_idle_reconcile_max_rounds():
+  """Redispatch rounds before idle-pool ghost fail-fast (exit 124 last resort)."""
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        0,
+        int(_pipeline_get("sync_pool_idle_reconcile_max_rounds", fallback="3")),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 3
+
+
+def get_sync_pool_idle_reconcile_polls_per_round():
+  """Idle polls between orphan-async reconcile redispatch rounds."""
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        1,
+        int(_pipeline_get("sync_pool_idle_reconcile_polls_per_round", fallback="4")),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 4
 
 
 def get_sync_pool_poll_timeout_s():

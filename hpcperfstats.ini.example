@@ -316,6 +316,12 @@ sync_pool_process_cap = 8
 # Polls to tolerate maxtasksperchild worker recycle before exit 137 (default 2).
 # sync_pool_worker_recycle_grace_polls = 2
 
+# Idle-pool ghost reconcile: redispatch stale pending_async before exit 124 (default 3 rounds).
+# sync_pool_idle_reconcile_max_rounds = 3
+
+# Idle polls between reconcile redispatch rounds when workers are idle (default 4).
+# sync_pool_idle_reconcile_polls_per_round = 4
+
 # Per ingest pool task wall-clock floor seconds; 0 disables all per-file timeouts (default 900).
 # sync_ingest_per_file_timeout_s = 900
 
