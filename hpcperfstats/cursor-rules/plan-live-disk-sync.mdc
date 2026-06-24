@@ -12,9 +12,10 @@ globs: docs/plans/**,.cursor/plans/**
 
 1. **Disk is authority** — the live plan at **`<workspace_root>/.cursor/plans/<name>.plan.md`** is the **only** record of plan state, facts, operator results, and todo progress.
 2. **Chat does not count** — summaries, discoveries, command results, approach changes, or todo completions **in agent chat** do **not** advance the plan unless the **same turn** includes a **Write** or **StrReplace** to the live plan file.
-3. **CreatePlan does not count alone** — Cursor **`CreatePlan`** output must be **mirrored or superseded** by a disk write to **`.cursor/plans/*.plan.md`** in the **same turn** before claiming the plan exists or ending the turn. Hooks enforce this: **`check-create-plan-disk-sync.py`** (postToolUse) and **`check-close-gate.py`** (stop — unconditional when CreatePlan ran without a disk write).
-4. **TodoWrite does not count** — session todos and Plan UI YAML are secondary; sync **`status: completed`** in the plan frontmatter on disk when a step finishes (`plan-completion-gate.mdc`).
-5. **Every iteration** — any turn that learns a fact, runs or receives operator output, changes scope, or completes a plan step **must** update the plan file **before** the turn ends.
+3. **CreatePlan does not count alone** — Cursor **`CreatePlan`** output must be **mirrored or superseded** by a disk write to **`.cursor/plans/*.plan.md`** in the **same turn** before claiming the plan exists or ending the turn. Hooks enforce this: **`check-create-plan-disk-sync.py`** (postToolUse), **`check-block-until-plan-disk.py`** (preToolUse), and **`check-close-gate.py`** (stop — unconditional when CreatePlan ran without a disk write).
+4. **Plan UI / edit window is not authoritative** — Do **not** open, author, or edit a plan in the **Cursor Plan UI / plan edit window** unless **`<workspace_root>/.cursor/plans/<name>.plan.md` already exists on disk** from a **Write/StrReplace in the same or a prior turn**. **Disk-first:** Write the full plan file, then use Plan UI only as a read-only mirror of disk state — never CreatePlan-only or UI-first authoring (`plan-template-enforcement.mdc`).
+5. **TodoWrite does not count** — session todos and Plan UI YAML are secondary; sync **`status: completed`** in the plan frontmatter on disk when a step finishes (`plan-completion-gate.mdc`).
+6. **Every iteration** — any turn that learns a fact, runs or receives operator output, changes scope, or completes a plan step **must** update the plan file **before** the turn ends.
 
 ## Plan disk file section (required in every plan)
 
@@ -51,6 +52,8 @@ When facts are missing and the operator must run commands (`compose-operator-ter
 ## Forbidden
 
 - Reporting “updated the plan” or “operator found X” in chat **without** a matching disk edit in that turn.
+- **Opening or editing a plan in the Cursor Plan UI / plan edit window** when the live **`.cursor/plans/<name>.plan.md` file does not exist on disk** — write disk first, then open UI if needed.
+- **CreatePlan-only or UI-first authoring** — never treat Plan UI or CreatePlan as the first plan artifact; disk file must exist before Plan UI is used for editing.
 - Leaving completed operator commands in **Pending commands**.
 - Splitting operator discovery across chat threads without merging results into the plan file.
 - Writing live plans only under **`docs/plans/`** (committed baselines only — live work uses **`.cursor/plans/`**).
@@ -60,5 +63,6 @@ When facts are missing and the operator must run commands (`compose-operator-ter
 - **`plan-creation-contract.mdc`** — plan structure, grounding, completion bar.
 - **`plan-template-enforcement.mdc`** — PLAN_TEMPLATE shape and close gate.
 - **`plan-completion-gate.mdc`** — frontmatter todo sync on disk when implementing.
-- **`compose-operator-terminal-commands.mdc`** — command block format per service.
+- **`compose-operator-terminal-commands.mdc`** — command block format per service; INI paths first; filtered service-specific logs.
+- **`operator-command-lessons-learned.mdc`** — update operator-command rules when pastes fail.
 - **`deploy-ini-with-code-no-phase-zero.mdc`** — read-only operator gathering anytime; no pre-code INI redeploy.

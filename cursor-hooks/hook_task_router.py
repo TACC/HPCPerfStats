@@ -242,6 +242,16 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
             "plan-template-enforcement.mdc",
             "compose-operator-terminal-commands.mdc",
             "deploy-ini-with-code-no-phase-zero.mdc",
+            "operator-command-lessons-learned.mdc",
+        ],
+    },
+    {
+        "id": "compose_operator_rule",
+        "patterns": [
+            "hpcperfstats/cursor-rules/compose-operator-terminal-commands.mdc",
+        ],
+        "rules": [
+            "operator-command-lessons-learned.mdc",
         ],
     },
     {

@@ -17,11 +17,11 @@ Applies to **every plan**: pre-code chat plans, **`.cursor/plans/*.plan.md`** (l
 Per **`plan-live-disk-sync.mdc`** — **mandatory for every plan and every plan iteration**:
 
 1. **Write the plan to disk** at **`<workspace_root>/.cursor/plans/<name>.plan.md`** on first creation and **on every turn** that learns facts, receives operator output, changes scope, or completes a step.
-2. **Chat, CreatePlan-only output, and TodoWrite do not count** as plan updates — only **Write** / **StrReplace** to the live plan file counts.
+2. **Chat, CreatePlan-only output, and TodoWrite do not count** as plan updates — only **Write** / **StrReplace** to the live plan file counts. **Do not open or edit the Cursor Plan UI** for a plan that is not already on disk at `.cursor/plans/<name>.plan.md`.
 3. Include **`## Plan disk file`** in the plan body (live path + last-updated date).
-4. When operator commands are needed, maintain **`## Operator discovery`** with **Completed findings** (summaries) and **Pending commands** (one bash block per Compose service); retire commands from Pending when results arrive and record what was asked vs found.
+4. When operator commands are needed, maintain **`## Operator discovery`** with **Completed findings** (summaries) and **Pending commands** (one bash block per Compose service); retire commands from Pending when results arrive and record what was asked vs found. **INI paths first**, **filtered service-specific logs** — see **`compose-operator-terminal-commands.mdc`**. On command failure, update rules per **`operator-command-lessons-learned.mdc`** in the same task.
 
-Hooks enforce disk sync and required plan sections on **`CreatePlan`** turns (`cursor-hooks/hpc_hook_lib.py`).
+Hooks enforce disk sync, **operator-discovery command shape** (`compose-operator-terminal-commands.mdc`), and required **PLAN_TEMPLATE** sections on the **live disk file** at `.cursor/plans/*.plan.md` when a plan turn uses **`CreatePlan`**. **`preToolUse`** denies **`CreatePlan`** until plan-authoring rules are Read and blocks other tools until the disk write lands (`cursor-hooks/hpc_hook_lib.py` — disk authority, not CreatePlan tool body).
 
 ## Grounding (no guessing)
 

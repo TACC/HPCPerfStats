@@ -45,6 +45,9 @@ ROUTER_BASENAMES = HPCPERFSTATS_ROUTER_BASENAMES | MONITOR_ROUTER_BASENAMES
 PLAN_AUTHORING_REQUIRED_MDC = (
     "plan-creation-contract.mdc",
     "plan-live-disk-sync.mdc",
+    "plan-template-enforcement.mdc",
+    "compose-operator-terminal-commands.mdc",
+    "deploy-ini-with-code-no-phase-zero.mdc",
 )
 
 LIVE_PLAN_DISK_SUFFIX = ".cursor/plans/"
@@ -84,6 +87,10 @@ PLAN_CONTENT_SECTIONS = (
     (
         re.compile(r"##\s*Final code review", re.I),
         "## Final code review (mandatory before implementation close)",
+    ),
+    (
+        re.compile(r"##\s*Post-implementation review", re.I),
+        "## Post-implementation review (required before close)",
     ),
     (
         re.compile(r"id:\s*post-implementation-review\b", re.I),
@@ -245,6 +252,20 @@ def load_json_stdin() -> dict:
     return json.loads(raw)
 
 
+def emit_deny(user_message: str, *, agent_message: str | None = None) -> None:
+    emit_json(
+        {
+            "permission": "deny",
+            "user_message": user_message,
+            "agent_message": agent_message or user_message,
+        },
+    )
+
+
+def emit_allow() -> None:
+    emit_json({"permission": "allow"})
+
+
 def emit_json(payload: dict) -> None:
     print(json.dumps(payload))
 
@@ -338,18 +359,34 @@ def is_plan_template_read_path(path: str) -> bool:
     )
 
 
-def edit_path_from_tool_part(part: dict) -> str | None:
+def tool_name_from_tool_part(part: dict) -> str | None:
     if not isinstance(part, dict):
         return None
-    tool_name = None
-    payload = None
     if part.get("type") == "tool_use":
-        tool_name = part.get("name")
+        return part.get("name")
+    if part.get("type") == "tool_call":
+        return part.get("tool_name") or part.get("name")
+    return None
+
+
+def edit_payload_from_tool_part(part: dict) -> dict | None:
+    if not isinstance(part, dict):
+        return None
+    tool_name = tool_name_from_tool_part(part)
+    if tool_name not in EDIT_TOOL_NAMES:
+        return None
+    if part.get("type") == "tool_use":
         payload = part.get("input") or {}
     elif part.get("type") == "tool_call":
-        tool_name = part.get("tool_name") or part.get("name")
         payload = part.get("input") or part.get("arguments") or {}
-    if tool_name not in EDIT_TOOL_NAMES or not isinstance(payload, dict):
+    else:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def edit_path_from_tool_part(part: dict) -> str | None:
+    payload = edit_payload_from_tool_part(part)
+    if not payload:
         return None
     for key in ("path", "file_path", "target_file", "target_notebook"):
         value = payload.get(key)
@@ -397,10 +434,82 @@ def extract_edited_paths(rows: list[dict]) -> list[str]:
     return paths
 
 
-def extract_work_paths(rows: list[dict]) -> list[str]:
+def live_plan_disk_paths_from_rows(rows: list[dict]) -> list[str]:
+    return [path for path in extract_edited_paths(rows) if is_live_plan_disk_path(path)]
+
+
+def resolve_live_plan_disk_path(
+    plan_path: str,
+    workspace_roots: Iterable[str] | None = None,
+) -> Path | None:
+    """Resolve a live plan path to an on-disk file when it exists."""
+    normalized = (plan_path or "").replace("\\", "/")
+    if not is_live_plan_disk_path(normalized):
+        return None
+    direct = Path(normalized)
+    if direct.is_file():
+        return direct
+    hook_dir = Path(__file__).resolve().parent
+    checkout_root = hook_dir.parent
+    workspace_root = checkout_root.parent
+    rel = normalized.lstrip("/")
+    candidates = [Path(root) / rel for root in (workspace_roots or [])]
+    candidates.extend(
+        [
+            workspace_root / rel,
+            checkout_root.parent / rel,
+        ],
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def extract_live_plan_disk_write_contents_from_transcript(rows: list[dict]) -> str:
+    """Plan body from Write tool inputs to live plan paths in this turn."""
+    last_full = ""
+    for row in rows:
+        message = row.get("message") or {}
+        for part in message.get("content") or []:
+            path = edit_path_from_tool_part(part)
+            if not path or not is_live_plan_disk_path(path):
+                continue
+            payload = edit_payload_from_tool_part(part)
+            if not payload:
+                continue
+            if tool_name_from_tool_part(part) != "Write":
+                continue
+            contents = payload.get("contents")
+            if isinstance(contents, str) and contents.strip():
+                last_full = contents
+    return last_full
+
+
+def extract_plan_authority_markdown(
+    rows: list[dict],
+    workspace_roots: Iterable[str] | None = None,
+) -> str:
+    """Authoritative plan body for hook validation — disk file, not CreatePlan tool."""
+    for plan_path in reversed(live_plan_disk_paths_from_rows(rows)):
+        resolved = resolve_live_plan_disk_path(plan_path, workspace_roots)
+        if resolved is not None:
+            text = resolved.read_text(encoding="utf-8", errors="replace")
+            if text.strip():
+                return text
+    return extract_live_plan_disk_write_contents_from_transcript(rows)
+
+
+def extract_work_paths(
+    rows: list[dict],
+    workspace_roots: Iterable[str] | None = None,
+) -> list[str]:
     paths = extract_edited_paths(rows)
     seen = set(paths)
-    for plan_path in paths_from_plan_markdown(extract_create_plan_markdown(rows)):
+    plan_md = extract_plan_authority_markdown(rows, workspace_roots)
+    if not plan_md.strip():
+        plan_md = extract_create_plan_markdown(rows)
+    for plan_path in paths_from_plan_markdown(plan_md):
         if plan_path not in seen:
             seen.add(plan_path)
             paths.append(plan_path)
@@ -474,10 +583,14 @@ def create_plan_disk_sync_post_tool_context(suggested_path: str) -> str:
     """Inject immediately after CreatePlan so the agent writes disk in the same turn."""
     return (
         "PLAN DISK SYNC (mandatory same turn): CreatePlan does NOT satisfy "
-        "plan-live-disk-sync.mdc. Before any user-facing reply or other tools, "
+        "plan-live-disk-sync.mdc. preToolUse will DENY other tools until you "
         "Write or StrReplace the full plan to "
         f"<workspace_root>/{suggested_path} "
-        "(frontmatter todos + PLAN_TEMPLATE sections including ## Plan disk file). "
+        "(frontmatter todos + PLAN_TEMPLATE sections including ## Plan disk file; "
+        "operator commands only under ## Operator discovery → ### Pending commands). "
+        "Read plan-creation-contract.mdc, plan-live-disk-sync.mdc, "
+        "compose-operator-terminal-commands.mdc, deploy-ini-with-code-no-phase-zero.mdc, "
+        "plan-template-enforcement.mdc, and PLAN_TEMPLATE.md first if not already Read. "
         "Chat and CreatePlan alone are not authoritative."
     )
 
@@ -540,6 +653,183 @@ def section_body_after_heading(text: str, heading_match: re.Match[str]) -> str:
     if next_h2:
         return rest[: next_h2.start()]
     return rest
+
+
+def extract_subsection_h3(section_body: str, heading: str) -> str:
+    match = re.search(rf"###\s*{re.escape(heading)}\b", section_body or "", re.I)
+    if not match:
+        return ""
+    rest = section_body[match.end() :]
+    next_h3 = re.search(r"\n###\s+", rest)
+    if next_h3:
+        return rest[: next_h3.start()]
+    return rest
+
+
+OPERATOR_DISCOVERY_STATUS_RE = re.compile(
+    r"\*\*Status:\*\*\s*`?(not needed|in progress|complete)`?",
+    re.I,
+)
+
+
+def extract_operator_discovery_section(plan_markdown: str) -> str:
+    match = re.search(r"##\s*Operator discovery\b", plan_markdown or "", re.I)
+    if not match:
+        return ""
+    return section_body_after_heading(plan_markdown, match)
+
+
+def operator_discovery_status(section_body: str) -> str | None:
+    match = OPERATOR_DISCOVERY_STATUS_RE.search(section_body or "")
+    if not match:
+        return None
+    return match.group(1).lower().replace("`", "").strip()
+
+
+def _pending_has_bash_blocks(text: str) -> bool:
+    return bool(re.search(r"```bash\b", text or "", re.I))
+
+
+def _validate_pending_commands_subsection(pending: str) -> list[str]:
+    if not (pending or "").strip():
+        return ["Operator discovery: ### Pending commands empty while Status in progress"]
+    service_sections = [
+        section.strip()
+        for section in re.split(r"(?=####\s+\S)", pending)
+        if section.strip().startswith("####")
+    ]
+    if not service_sections:
+        return [
+            "Operator discovery: ### Pending commands needs service-labeled "
+            "#### <service> — <what to paste> headers "
+            "(compose-operator-terminal-commands.mdc)",
+        ]
+    issues: list[str] = []
+    for section in service_sections:
+        label_match = re.match(r"####\s*(\S+)", section)
+        if not label_match:
+            continue
+        service = label_match.group(1)
+        if not re.search(r"```bash\b", section, re.I):
+            issues.append(
+                f"Operator discovery: #### {service} missing fenced bash block",
+            )
+            continue
+        bash_match = re.search(r"```bash\s*\n(.*?)```", section, re.S | re.I)
+        if bash_match and not re.search(
+            r"docker\s+compose\s+(exec|run|logs)",
+            bash_match.group(1),
+            re.I,
+        ):
+            issues.append(
+                f"Operator discovery: #### {service} bash block must use "
+                "docker compose exec|run|logs",
+            )
+    return issues
+
+
+def operator_commands_outside_discovery_issues(plan_markdown: str) -> list[str]:
+    """docker compose bash blocks must live under Operator discovery → Pending commands."""
+    od_match = re.search(r"##\s*Operator discovery\b", plan_markdown or "", re.I)
+    if not od_match:
+        return []
+    rest = plan_markdown[od_match.end() :]
+    next_h2 = re.search(r"\n##\s+", rest)
+    od_end = od_match.end() + next_h2.start() if next_h2 else len(plan_markdown)
+    outside = plan_markdown[: od_match.start()] + plan_markdown[od_end:]
+    for block in re.findall(r"```bash\s*\n(.*?)```", outside, re.S | re.I):
+        if re.search(r"docker\s+compose\s+(exec|run|logs)", block, re.I):
+            return [
+                "Operator commands: docker compose blocks must live under "
+                "## Operator discovery → ### Pending commands only "
+                "(compose-operator-terminal-commands.mdc)",
+            ]
+    return []
+
+
+def operator_discovery_issues(plan_markdown: str) -> list[str]:
+    section = extract_operator_discovery_section(plan_markdown)
+    if not section:
+        return []
+    status = operator_discovery_status(section)
+    if status is None:
+        return [
+            "Operator discovery: **Status:** `not needed`|`in progress`|`complete` required",
+        ]
+    issues: list[str] = []
+    has_pending = bool(re.search(r"###\s*Pending commands\b", section, re.I))
+    has_findings = bool(re.search(r"###\s*Completed findings\b", section, re.I))
+    pending_body = extract_subsection_h3(section, "Pending commands")
+
+    if status == "not needed":
+        if has_pending and _pending_has_bash_blocks(pending_body):
+            issues.append(
+                "Operator discovery: Status not needed but Pending commands has bash blocks",
+            )
+        issues.extend(operator_commands_outside_discovery_issues(plan_markdown))
+        return issues
+
+    if status in ("in progress", "complete") and not has_findings:
+        issues.append("Operator discovery: ### Completed findings required")
+
+    if status == "in progress":
+        if not has_pending:
+            issues.append(
+                "Operator discovery: ### Pending commands required when Status in progress",
+            )
+        else:
+            issues.extend(_validate_pending_commands_subsection(pending_body))
+
+    if status == "complete" and has_pending and _pending_has_bash_blocks(pending_body):
+        issues.append(
+            "Operator discovery: Status complete but Pending commands still has bash blocks",
+        )
+
+    issues.extend(operator_commands_outside_discovery_issues(plan_markdown))
+    return issues
+
+
+def turn_create_plan_pending_disk_write(rows: list[dict]) -> bool:
+    """True when CreatePlan ran this turn but no live plan disk write followed it."""
+    seq = 0
+    last_create_seq: int | None = None
+    disk_write_after_create = False
+    for row in rows:
+        if row.get("role") != "assistant":
+            continue
+        for part in (row.get("message") or {}).get("content") or []:
+            if not isinstance(part, dict):
+                continue
+            if is_create_plan_tool_part(part):
+                last_create_seq = seq
+            path = edit_path_from_tool_part(part)
+            if (
+                path
+                and is_live_plan_disk_path(path)
+                and last_create_seq is not None
+                and seq > last_create_seq
+            ):
+                disk_write_after_create = True
+            seq += 1
+    return last_create_seq is not None and not disk_write_after_create
+
+
+def plan_authoring_precreate_read_issues(transcript_rows: list[dict]) -> list[str]:
+    """Required Read tool calls before the first CreatePlan in this turn."""
+    issues = domain_rule_read_issues(list(PLAN_AUTHORING_REQUIRED_MDC), transcript_rows)
+    issues.extend(plan_template_read_issues(transcript_rows))
+    return issues
+
+
+def is_allowed_tool_while_plan_disk_pending(tool_name: str, tool_input: dict) -> bool:
+    if tool_name == "Read":
+        return True
+    if tool_name in ("Write", "StrReplace"):
+        for key in ("path", "file_path", "target_file"):
+            path = tool_input.get(key)
+            if isinstance(path, str) and is_live_plan_disk_path(path):
+                return True
+    return False
 
 
 def dispatch_is_na(body: str) -> bool:
@@ -700,11 +990,12 @@ def plan_authoring_required_mdc_rules(work_paths: list[str]) -> list[str]:
 
 def plan_content_issues(plan_markdown: str) -> list[str]:
     if not (plan_markdown or "").strip():
-        return ["CreatePlan body missing or empty"]
+        return ["Plan disk file missing or empty"]
     missing: list[str] = []
     for pattern, label in PLAN_CONTENT_SECTIONS:
         if not pattern.search(plan_markdown):
             missing.append(label)
+    missing.extend(operator_discovery_issues(plan_markdown))
     return missing
 
 
@@ -776,18 +1067,35 @@ def rule_dual_registration_issues(work_paths: list[str]) -> list[str]:
     return issues
 
 
-def close_gate_issues(*, assistant_text: str, transcript_rows: list[dict]) -> list[str]:
+def plan_authority_content_issues(
+    transcript_rows: list[dict],
+    workspace_roots: Iterable[str] | None = None,
+) -> list[str]:
+    """PLAN_TEMPLATE + operator-discovery gaps in the live disk plan."""
+    if not turn_had_live_plan_disk_write(transcript_rows):
+        return []
+    plan_markdown = extract_plan_authority_markdown(transcript_rows, workspace_roots)
+    return [
+        f"Plan disk content missing: {label}"
+        for label in plan_content_issues(plan_markdown)
+    ]
+
+
+def close_gate_issues(
+    *,
+    assistant_text: str,
+    transcript_rows: list[dict],
+    workspace_roots: Iterable[str] | None = None,
+) -> list[str]:
     issues = missing_close_gate_sections(assistant_text)
-    work_paths = extract_work_paths(transcript_rows)
+    work_paths = extract_work_paths(transcript_rows, workspace_roots)
     issues.extend(triggered_rule_dispatch_issues(assistant_text, work_paths))
     required_rules = domain_rules_required(assistant_text, work_paths)
     issues.extend(domain_rule_read_issues(required_rules, transcript_rows))
     issues.extend(rule_dual_registration_issues(work_paths))
     issues.extend(edge_cases_issues(assistant_text))
     if turn_had_create_plan(transcript_rows):
-        plan_markdown = extract_create_plan_markdown(transcript_rows)
-        for label in plan_content_issues(plan_markdown):
-            issues.append(f"Plan content missing: {label}")
+        issues.extend(plan_authority_content_issues(transcript_rows, workspace_roots))
         issues.extend(plan_template_read_issues(transcript_rows))
         issues.extend(plan_disk_sync_issues(transcript_rows))
         plan_required = plan_authoring_required_mdc_rules(work_paths)

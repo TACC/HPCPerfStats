@@ -14,10 +14,10 @@ Agents must not treat plan structure or the **close sequence** as optional under
 
 Per **`plan-live-disk-sync.mdc`**:
 
-1. **First plan turn** — **Write** the full plan to **`<workspace_root>/.cursor/plans/<name>.plan.md`** (not chat-only, not CreatePlan-only).
+1. **First plan turn** — **Write** the full plan to **`<workspace_root>/.cursor/plans/<name>.plan.md`** (not chat-only, not CreatePlan-only, **not Plan UI / edit window before disk exists**).
 2. **Every later turn** — **Write/StrReplace** that file **before** reporting progress, operator results, or completed todos.
 3. **Operator discovery** — pending commands grouped by Compose service; completed commands become **Completed findings** rows (asked vs found) and are **removed** from Pending.
-4. **Plan UI / TodoWrite** — secondary; frontmatter todo `status` on disk is what the Plan UI should reflect.
+4. **Plan UI / TodoWrite** — secondary mirrors only; **do not open or edit Plan UI until the disk file exists** (`plan-live-disk-sync.mdc`); frontmatter todo `status` on disk is what the Plan UI should reflect.
 
 ## Every implementation plan must include
 
@@ -39,7 +39,7 @@ Copy the full frontmatter/todo block from **`docs/plans/PLAN_TEMPLATE.md`** when
 Unless they explicitly request a **narrow exception** (answer-only, trivial typo/comment with no behavior change):
 
 1. **Read** **`docs/plans/PLAN_TEMPLATE.md`** and **`plan-live-disk-sync.mdc`** before authoring.
-2. **Write** the plan to **`.cursor/plans/<name>.plan.md`** in the same turn (CreatePlan or chat alone does not satisfy this).
+2. **Write** the plan to **`.cursor/plans/<name>.plan.md`** in the same turn (CreatePlan or chat alone does not satisfy this). **Do not** open the Cursor Plan UI / edit window for a plan that is not already on disk at that path.
 3. **Match** PLAN_TEMPLATE structure on disk.
 4. **End** with **`post-implementation-review`** as the **last** todo.
 

@@ -92,6 +92,7 @@ def main() -> int:
     issues = close_gate_issues(
         assistant_text=assistant_text,
         transcript_rows=turn_rows,
+        workspace_roots=workspace_roots,
     )
     if not issues:
         emit_json({})
@@ -101,14 +102,19 @@ def main() -> int:
     plan_extra = ""
     if had_plan:
         plan_extra = (
-            "\nPlan turns also require CreatePlan body sections per "
-            f"{rules_dir}/../docs/plans/PLAN_TEMPLATE.md or "
-            "HPCPerfStats/docs/plans/PLAN_TEMPLATE.md (Plan disk file, Operator discovery, "
+            "\nPlan turns also require PLAN_TEMPLATE sections in the **live disk file** "
+            f"({rules_dir}/../docs/plans/PLAN_TEMPLATE.md or "
+            "HPCPerfStats/docs/plans/PLAN_TEMPLATE.md — Plan disk file, Operator discovery, "
             "Problem and facts, Approach, Testing, Implementation, Cursor rules, "
-            "Final code review, post-implementation-review todo), a Write/StrReplace to "
-            ".cursor/plans/*.plan.md in the same turn (plan-live-disk-sync.mdc), and Read of "
-            "plan-creation-contract.mdc + plan-live-disk-sync.mdc + "
-            "PLAN_TEMPLATE.md before CreatePlan.\n"
+            "Final code review, Post-implementation review, post-implementation-review todo), "
+            "a Write/StrReplace to .cursor/plans/*.plan.md in the same turn "
+            "(plan-live-disk-sync.mdc; hooks validate disk content and operator-discovery "
+            "shape per compose-operator-terminal-commands.mdc, not CreatePlan tool body), "
+            "Read of plan-creation-contract.mdc + plan-live-disk-sync.mdc + "
+            "compose-operator-terminal-commands.mdc + deploy-ini-with-code-no-phase-zero.mdc + "
+            "plan-template-enforcement.mdc + PLAN_TEMPLATE.md before CreatePlan "
+            "(preToolUse denies CreatePlan otherwise), and preToolUse blocks other tools "
+            "after CreatePlan until disk write.\n"
         )
     followup = (
         "Close gate incomplete (Cursor stop hook). This turn used %s but the "

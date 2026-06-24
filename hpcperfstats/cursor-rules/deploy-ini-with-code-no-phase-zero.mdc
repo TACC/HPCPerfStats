@@ -12,7 +12,7 @@ globs: docs/plans/**,hpcperfstats.ini.example,docs/DEPLOY*.md
 
 | Action | Redeploy? | In plans |
 |--------|-----------|----------|
-| **Read-only data gathering** — `docker compose exec`, `logs`, `ps`, `grep` ini, `stat` paths, `psql`, `redis-cli` | **No** | **Encouraged** — ask for extra paste when it sharpens facts, root cause, or fix design (`compose-operator-terminal-commands.mdc`) |
+| **Read-only data gathering** — `docker compose exec`, `logs`, `ps`, `grep` ini, `stat` paths, `psql`, `redis-cli` | **No** | **Encouraged** — resolve paths from INI first (`compose-operator-terminal-commands.mdc`); filtered service-specific logs, not raw pipeline firehose |
 | **INI edit + pipeline/container restart** | **Yes** — same work as shipping new code | **Forbidden as a pre-code step** — bundle with the code release |
 
 Changing production `hpcperfstats.ini` and recreating the pipeline container **is a redeploy**, not a lightweight workaround. Do **not** ask the operator to redeploy (INI or image) **before** gathering data or **before** code that needs that INI is available.
@@ -49,6 +49,7 @@ On this project, **redeploying with a new INI vs new code is the same amount of 
 ## Overlap
 
 - **`immutable-image-ini-policy.mdc`** — production ini is baked in the image, not bind-mounted.
-- **`compose-operator-terminal-commands.mdc`** — copy/paste blocks; proactive planning data gathering + post-deploy verification.
+- **`compose-operator-terminal-commands.mdc`** — copy/paste blocks; INI path resolution; proactive planning data gathering + post-deploy verification.
+- **`operator-command-lessons-learned.mdc`** — when gather commands fail, update operator-command rules in the same task.
 - **`plan-creation-contract.mdc`** — plan structure and grounding; ask, do not guess.
 - **`readme-installation-sync.mdc`** — operator install/redeploy steps when wiring changes.

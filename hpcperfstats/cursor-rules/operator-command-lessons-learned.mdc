@@ -1,0 +1,53 @@
+---
+description: When operator commands fail, update compose-operator rules in the same task — do not repeat broken patterns
+alwaysApply: false
+globs: docs/plans/**,.cursor/plans/**,hpcperfstats/cursor-rules/compose-operator-terminal-commands.mdc
+---
+
+# Operator Command Lessons Learned
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+Applies when **operator discovery** commands fail, return empty/wrong output, or the same broken paste pattern appears in multiple plans.
+
+## Law (non-negotiable)
+
+When an operator reports that a **Pending commands** block failed (wrong path, wrong user, missing overlay file, grep too broad, empty result, permission denied, etc.):
+
+1. **Fix the plan in the same turn** — update **Operator discovery** on disk (`plan-live-disk-sync.mdc`); record what failed in **Completed findings**.
+2. **Update `compose-operator-terminal-commands.mdc` in the same task** — add or extend:
+   - **Anti-pattern** — what failed and why (one line).
+   - **Corrected pattern** — copy/paste block that works on this deployment shape.
+   - Optional **Lessons learned** bullet under the relevant section (logs, INI paths, service choice).
+3. **Do not reuse** the failed command verbatim in future plans — cite the corrected rule text instead.
+
+If the failure reveals a **recurring** gap (not a one-off typo), also add a one-line cross-link in **`deploy-ini-with-code-no-phase-zero.mdc`** or **`hpcperfstats-ini-format.mdc`** when INI/path semantics were wrong.
+
+## What counts as “failed”
+
+- Non-zero exit, `command not found`, wrong container user (`su hpcperfstats` vs root).
+- Path does not exist — especially when the command hardcoded `/hpcperfstats/...` instead of INI-resolved paths.
+- `docker compose logs pipeline --tail=N` without `grep` returned unusable noise and did not answer the hypothesis.
+- Missing `-f docker-compose.app.yaml` (or other overlay) when production uses it.
+- Duplicate command blocks that already failed in an earlier plan for the same site.
+
+## Same-task checklist
+
+| Step | Action |
+|------|--------|
+| 1 | Operator paste or error message captured in plan **Completed findings** |
+| 2 | Pending block removed or replaced with corrected block |
+| 3 | **`compose-operator-terminal-commands.mdc`** updated (anti-pattern + fix) |
+| 4 | New plans use the corrected pattern only |
+
+## Narrow exceptions
+
+- One-off operator typo in the paste (operator ran the wrong block) — fix the plan only; no rule edit required.
+- Environment outage (compose down, disk full) — document blocker in plan; no rule change unless the command shape was wrong.
+
+## Overlap
+
+- **`compose-operator-terminal-commands.mdc`** — authoritative command shape; this rule requires **writing back** failures into that file.
+- **`plan-live-disk-sync.mdc`** — findings and pending updates on disk only.
+- **`deploy-ini-with-code-no-phase-zero.mdc`** — read-only gathering; failures often mean paths should have come from INI first.
+- **`hpcperfstats-ini-format.mdc`** — INI key names and sections for path resolution.

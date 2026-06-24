@@ -1,6 +1,18 @@
 {
   "version": 1,
   "hooks": {
+    "preToolUse": [
+      {
+        "command": ".cursor/hooks/check-pre-create-plan-reads.py",
+        "matcher": "CreatePlan",
+        "timeout": 10
+      },
+      {
+        "command": ".cursor/hooks/check-block-until-plan-disk.py",
+        "matcher": "Write|StrReplace|Shell|Grep|Task|Delete|ApplyPatch|EditNotebook",
+        "timeout": 10
+      }
+    ],
     "stop": [
       {
         "command": ".cursor/hooks/check-close-gate.py",

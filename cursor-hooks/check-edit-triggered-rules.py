@@ -16,10 +16,14 @@ from hpc_hook_lib import (  # noqa: E402
     edit_path_from_tool_part,
     emit_json,
     extract_edited_paths,
+    extract_plan_authority_markdown,
     extract_work_paths,
+    is_live_plan_disk_path,
     load_json_stdin,
     parse_transcript_lines,
     paths_from_plan_markdown,
+    plan_authority_content_issues,
+    plan_content_issues,
     plan_template_read_issues,
     profile_rules_dir_label,
 )
@@ -58,8 +62,9 @@ def edited_path_from_payload(payload: dict) -> str:
 
 def triggered_rules_for_payload(payload: dict) -> list[str]:
     tool_name = tool_name_from_payload(payload)
+    workspace_roots = payload.get("workspace_roots") or []
     rows = parse_transcript_lines(payload.get("transcript_path") or "")
-    work_paths = extract_work_paths(rows)
+    work_paths = extract_work_paths(rows, workspace_roots)
     if tool_name == "CreatePlan":
         plan_text = plan_text_from_payload(payload)
         for plan_path in paths_from_plan_markdown(plan_text):
@@ -99,10 +104,23 @@ def main() -> int:
         emit_json({})
         return 0
 
+    workspace_roots = payload.get("workspace_roots") or []
     rows = parse_transcript_lines(transcript_path)
     issues = domain_rule_read_issues(triggered, rows)
     if tool_name == "CreatePlan":
         issues.extend(plan_template_read_issues(rows))
+        issues.extend(plan_authority_content_issues(rows, workspace_roots))
+    if edited_path and is_live_plan_disk_path(edited_path):
+        tool_input = payload.get("tool_input") or {}
+        inline_contents = ""
+        if isinstance(tool_input, dict) and tool_name == "Write":
+            inline_contents = str(tool_input.get("contents") or "")
+        plan_md = inline_contents.strip() or extract_plan_authority_markdown(
+            rows,
+            workspace_roots,
+        )
+        for label in plan_content_issues(plan_md):
+            issues.append(f"Plan disk content missing: {label}")
 
     if not issues:
         emit_json({})

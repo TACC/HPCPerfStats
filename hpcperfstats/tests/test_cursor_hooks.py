@@ -333,13 +333,14 @@ def _minimal_plan_markdown() -> str:
   return (
       "## Plan disk file\n\n"
       "Live path: .cursor/plans/test.plan.md\n"
-      "## Operator discovery\n\nStatus: not needed\n"
+      "## Operator discovery\n\n**Status:** `not needed`\n"
       "## Problem and facts\n\nfacts\n"
       "## Approach\n\nsteps\n"
       "## Testing\n\ntests\n"
       "## Implementation\n\nfiles\n"
       "## Cursor rules / docs sync\n\nno rule change\n"
       "## Final code review (mandatory before implementation close)\n\nreview\n"
+      "## Post-implementation review (required before close)\n\nreview\n"
       "---\n"
       "todos:\n"
       "  - id: post-implementation-review\n"
@@ -574,6 +575,14 @@ def test_close_gate_issues_flags_plan_content_and_reads():
                       "name": "CreatePlan",
                       "input": {"plan": plan_md},
                   },
+                  {
+                      "type": "tool_use",
+                      "name": "Write",
+                      "input": {
+                          "path": ".cursor/plans/test.plan.md",
+                          "contents": plan_md,
+                      },
+                  },
                   {"type": "text", "text": assistant_text},
               ],
           },
@@ -583,7 +592,317 @@ def test_close_gate_issues_flags_plan_content_and_reads():
   assert "PLAN_TEMPLATE.md not read via Read tool" in issues
   assert "Rule not read: plan-creation-contract.mdc" in issues
   assert "Rule not read: plan-live-disk-sync.mdc" in issues
-  assert any("Plan not written to disk" in item for item in issues)
+  assert not any("Plan disk content missing" in item for item in issues)
+
+
+def test_plan_authority_content_issues_validates_disk_not_create_plan(tmp_path):
+  workspace = tmp_path / "workspace"
+  plan_path = workspace / ".cursor" / "plans" / "gap-test.plan.md"
+  plan_path.parent.mkdir(parents=True)
+  plan_path.write_text("## Approach\n\nonly approach\n", encoding="utf-8")
+  complete_create_plan = _minimal_plan_markdown()
+  rows = [
+      {
+          "role": "assistant",
+          "message": {
+              "content": [
+                  {
+                      "type": "tool_use",
+                      "name": "CreatePlan",
+                      "input": {"plan": complete_create_plan},
+                  },
+                  {
+                      "type": "tool_use",
+                      "name": "Write",
+                      "input": {
+                          "path": str(plan_path),
+                          "contents": "## Approach\n\nonly approach\n",
+                      },
+                  },
+              ],
+          },
+      },
+  ]
+  issues = lib.plan_authority_content_issues(
+      rows,
+      workspace_roots=[str(workspace)],
+  )
+  assert any("Plan disk file" in item for item in issues)
+  assert any("Operator discovery" in item for item in issues)
+  assert any("Post-implementation review" in item for item in issues)
+
+
+def test_plan_authority_content_issues_passes_complete_disk_write():
+  plan_md = _minimal_plan_markdown()
+  rows = [
+      {
+          "role": "assistant",
+          "message": {
+              "content": [
+                  {
+                      "type": "tool_use",
+                      "name": "CreatePlan",
+                      "input": {"plan": "## Approach\n\nstub"},
+                  },
+                  {
+                      "type": "tool_use",
+                      "name": "Write",
+                      "input": {
+                          "path": ".cursor/plans/test.plan.md",
+                          "contents": plan_md,
+                      },
+                  },
+              ],
+          },
+      },
+  ]
+  assert lib.plan_authority_content_issues(rows) == []
+
+
+def test_extract_plan_authority_markdown_prefers_filesystem(tmp_path):
+  workspace = tmp_path / "workspace"
+  plan_path = workspace / ".cursor" / "plans" / "authority.plan.md"
+  plan_path.parent.mkdir(parents=True)
+  on_disk = "## Plan disk file\n\nfrom filesystem\n"
+  plan_path.write_text(on_disk, encoding="utf-8")
+  rows = [
+      {
+          "role": "assistant",
+          "message": {
+              "content": [
+                  {
+                      "type": "tool_use",
+                      "name": "Write",
+                      "input": {
+                          "path": str(plan_path),
+                          "contents": "## Approach\n\ntranscript only\n",
+                      },
+                  },
+              ],
+          },
+      },
+  ]
+  assert "from filesystem" in lib.extract_plan_authority_markdown(
+      rows,
+      workspace_roots=[str(workspace)],
+  )
+
+
+def _operator_in_progress_plan_markdown() -> str:
+  return _minimal_plan_markdown().replace(
+      "## Operator discovery\n\n**Status:** `not needed`\n",
+      (
+          "## Operator discovery\n\n"
+          "**Status:** `in progress`\n\n"
+          "### Completed findings\n\n"
+          "| # | Service | Asked for | Found | Date |\n"
+          "|---|---------|-----------|-------|------|\n\n"
+          "### Pending commands\n\n"
+          "#### pipeline — paste manifest snapshot\n\n"
+          "```bash\n"
+          "cd HPCPerfStats\n\n"
+          "docker compose exec pipeline su hpcperfstats -c 'ls /hpcperfstats/archive'\n"
+          "```\n"
+      ),
+  )
+
+
+def test_operator_discovery_issues_requires_pending_shape_when_in_progress():
+  bad = _minimal_plan_markdown().replace(
+      "## Operator discovery\n\n**Status:** `not needed`\n",
+      "## Operator discovery\n\n**Status:** `in progress`\n",
+  )
+  issues = lib.operator_discovery_issues(bad)
+  assert any("Pending commands" in item for item in issues)
+  assert any("Completed findings" in item for item in issues)
+
+
+def test_operator_discovery_issues_accepts_valid_pending_commands():
+  assert lib.operator_discovery_issues(_operator_in_progress_plan_markdown()) == []
+
+
+def test_operator_discovery_issues_flags_compose_blocks_outside_section():
+  plan = _minimal_plan_markdown() + (
+      "\n## Approach\n\n"
+      "```bash\n"
+      "docker compose exec pipeline bash -lc 'echo hi'\n"
+      "```\n"
+  )
+  issues = lib.operator_discovery_issues(plan)
+  assert any("Operator discovery" in item or "Operator commands" in item for item in issues)
+
+
+def test_turn_create_plan_pending_disk_write():
+  rows = [
+      {
+          "role": "assistant",
+          "message": {
+              "content": [
+                  {
+                      "type": "tool_use",
+                      "name": "CreatePlan",
+                      "input": {"plan": "x"},
+                  },
+                  {
+                      "type": "tool_use",
+                      "name": "Shell",
+                      "input": {"command": "echo hi"},
+                  },
+              ],
+          },
+      },
+  ]
+  assert lib.turn_create_plan_pending_disk_write(rows) is True
+  rows[0]["message"]["content"].append(
+      {
+          "type": "tool_use",
+          "name": "Write",
+          "input": {
+              "path": ".cursor/plans/foo.plan.md",
+              "contents": _minimal_plan_markdown(),
+          },
+      },
+  )
+  assert lib.turn_create_plan_pending_disk_write(rows) is False
+
+
+def test_plan_authoring_precreate_read_issues_requires_reads():
+  rows = [
+      {
+          "role": "assistant",
+          "message": {
+              "content": [
+                  {
+                      "type": "tool_use",
+                      "name": "CreatePlan",
+                      "input": {"plan": "x"},
+                  },
+              ],
+          },
+      },
+  ]
+  issues = lib.plan_authoring_precreate_read_issues(rows)
+  assert any("compose-operator-terminal-commands" in item for item in issues)
+  assert any("PLAN_TEMPLATE" in item for item in issues)
+
+
+def test_check_pre_create_plan_reads_denies_without_reads(tmp_path):
+  transcript = tmp_path / "pre-create.jsonl"
+  transcript.write_text(
+      json.dumps(
+          {
+              "role": "assistant",
+              "message": {
+                  "content": [
+                      {
+                          "type": "tool_use",
+                          "name": "Read",
+                          "input": {"path": "unrelated.txt"},
+                      },
+                  ],
+              },
+          },
+      )
+      + "\n",
+      encoding="utf-8",
+  )
+  payload = {
+      "tool_name": "CreatePlan",
+      "tool_input": {"name": "foo"},
+      "transcript_path": str(transcript),
+  }
+  script = HOOKS_DIR / "check-pre-create-plan-reads.py"
+  proc = subprocess.run(
+      [sys.executable, str(script)],
+      input=json.dumps(payload),
+      capture_output=True,
+      text=True,
+      check=False,
+  )
+  assert proc.returncode == 0
+  data = json.loads(proc.stdout.strip())
+  assert data.get("permission") == "deny"
+  assert "compose-operator-terminal-commands" in data.get("agent_message", "")
+
+
+def test_check_block_until_plan_disk_denies_shell_after_create_plan(tmp_path):
+  transcript = tmp_path / "block-disk.jsonl"
+  transcript.write_text(
+      json.dumps(
+          {
+              "role": "assistant",
+              "message": {
+                  "content": [
+                      {
+                          "type": "tool_use",
+                          "name": "CreatePlan",
+                          "input": {"name": "foo-bar", "plan": "x"},
+                      },
+                  ],
+              },
+          },
+      )
+      + "\n",
+      encoding="utf-8",
+  )
+  payload = {
+      "tool_name": "Shell",
+      "tool_input": {"command": "echo hi"},
+      "transcript_path": str(transcript),
+  }
+  script = HOOKS_DIR / "check-block-until-plan-disk.py"
+  proc = subprocess.run(
+      [sys.executable, str(script)],
+      input=json.dumps(payload),
+      capture_output=True,
+      text=True,
+      check=False,
+  )
+  assert proc.returncode == 0
+  data = json.loads(proc.stdout.strip())
+  assert data.get("permission") == "deny"
+  assert ".cursor/plans/foo-bar.plan.md" in data.get("agent_message", "")
+
+
+def test_check_block_until_plan_disk_allows_plan_write_after_create_plan(tmp_path):
+  transcript = tmp_path / "allow-disk.jsonl"
+  transcript.write_text(
+      json.dumps(
+          {
+              "role": "assistant",
+              "message": {
+                  "content": [
+                      {
+                          "type": "tool_use",
+                          "name": "CreatePlan",
+                          "input": {"name": "foo-bar", "plan": "x"},
+                      },
+                  ],
+              },
+          },
+      )
+      + "\n",
+      encoding="utf-8",
+  )
+  payload = {
+      "tool_name": "Write",
+      "tool_input": {
+          "path": ".cursor/plans/foo-bar.plan.md",
+          "contents": _minimal_plan_markdown(),
+      },
+      "transcript_path": str(transcript),
+  }
+  script = HOOKS_DIR / "check-block-until-plan-disk.py"
+  proc = subprocess.run(
+      [sys.executable, str(script)],
+      input=json.dumps(payload),
+      capture_output=True,
+      text=True,
+      check=False,
+  )
+  assert proc.returncode == 0
+  data = json.loads(proc.stdout.strip())
+  assert data.get("permission") == "allow"
 
 
 def test_check_close_gate_emits_followup_for_create_plan(tmp_path):
@@ -685,6 +1004,8 @@ def test_check_edit_triggered_rules_create_plan_requires_reads(tmp_path):
   assert "additional_context" in data
   assert "plan-creation-contract.mdc" in data["additional_context"]
   assert "plan-live-disk-sync.mdc" in data["additional_context"]
+  assert "compose-operator-terminal-commands.mdc" in data["additional_context"]
+  assert "deploy-ini-with-code-no-phase-zero.mdc" in data["additional_context"]
   assert "PLAN_TEMPLATE.md" in data["additional_context"]
 
 

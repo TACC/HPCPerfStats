@@ -96,12 +96,12 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 
 | Trigger | Read |
 |---------|------|
-| User asks for a plan / Cursor Plan / `.cursor/plans/` | `plan-creation-contract.mdc`, `plan-live-disk-sync.mdc`, `plan-template-enforcement.mdc`, `compose-operator-terminal-commands.mdc`, `deploy-ini-with-code-no-phase-zero.mdc`, `docs/plans/PLAN_TEMPLATE.md` — write live plans to **`<workspace_root>/.cursor/plans/*.plan.md`**, not `docs/plans/` |
+| User asks for a plan / Cursor Plan / `.cursor/plans/` | `plan-creation-contract.mdc`, `plan-live-disk-sync.mdc`, `plan-template-enforcement.mdc`, `compose-operator-terminal-commands.mdc`, `deploy-ini-with-code-no-phase-zero.mdc`, `operator-command-lessons-learned.mdc`, `docs/plans/PLAN_TEMPLATE.md` — write live plans to **`<workspace_root>/.cursor/plans/*.plan.md`**, not `docs/plans/`; **disk before Plan UI** |
 | `hpcperfstats.ini.example`, `docs/DEPLOY*.md` (INI redeploy guidance) | `deploy-ini-with-code-no-phase-zero.mdc`, `immutable-image-ini-policy.mdc`, `hpcperfstats-ini-format.mdc` |
 | Pre-code planning | `implementation-review-workflow.mdc` |
-| Plan or change blocked — operator must run terminal commands for facts | `compose-operator-terminal-commands.mdc` |
+| Plan or change blocked — operator must run terminal commands for facts | `compose-operator-terminal-commands.mdc`, `operator-command-lessons-learned.mdc` (when pastes fail) |
 
-**Hooks (same close discipline as implementation):** `CreatePlan` counts as closeable work. **`stop`** (`check-close-gate.py`) **unconditionally** blocks turn end when `CreatePlan` ran without a same-turn Write/StrReplace to `.cursor/plans/*.plan.md` (not only when the assistant says "plan is ready"); also enforces chat close headings, plan body sections, and Read before `CreatePlan` for `plan-creation-contract.mdc`, `plan-live-disk-sync.mdc`, `PLAN_TEMPLATE.md`. **`postToolUse`** (`check-create-plan-disk-sync.py` on `CreatePlan`; `check-edit-triggered-rules.py`) warns mid-turn when disk write or required reads are missing.
+**Hooks (same close discipline as implementation):** `CreatePlan` counts as closeable work. **`preToolUse`** denies **`CreatePlan`** until plan-authoring rules + `PLAN_TEMPLATE.md` are Read; blocks other tools after `CreatePlan` until disk write. **`stop`** (`check-close-gate.py`) **unconditionally** blocks turn end when `CreatePlan` ran without a same-turn Write/StrReplace to `.cursor/plans/*.plan.md`; also enforces chat close headings, **PLAN_TEMPLATE** + **operator-discovery command shape** in the live disk plan file, and Read proof for listed rules. **`postToolUse`** (`check-create-plan-disk-sync.py`, `check-edit-triggered-rules.py`) warns mid-turn when disk write or required reads are missing.
 
 ## Implementation habits (short)
 
@@ -109,7 +109,7 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 - **3+ duplicate logic** → shared helper: `duplicate-threshold-helper-mandate.mdc`
 - **Multi-layer features** → wire all layers: `end-to-end-feature-wiring-contract.mdc`
 - **Run compose** on this machine via **Colima** when rules require it—do not skip after one `docker` failure
-- **Operator terminal commands** (plans, blocked diagnostics): `compose-operator-terminal-commands.mdc` — one copy/paste block per Compose service
+- **Operator terminal commands** (plans, blocked diagnostics): `compose-operator-terminal-commands.mdc` — INI paths first, filtered service-specific logs, one block per Compose service; on failure update rules per `operator-command-lessons-learned.mdc`
 
 ## Creating or changing domain rules (mandatory)
 
