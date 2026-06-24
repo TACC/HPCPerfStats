@@ -165,7 +165,7 @@ def test_run_day_close_raw_removal_verify_wait_times_out_and_defers(tmp_path, mo
     enabled = True
     start_calls = 0
 
-    def start_async_verify(self, _tar_path):
+    def start_async_verify(self, _tar_path, *, sealed_members=None):
       self.start_calls += 1
 
     def verification_complete(self, _tar_path):
@@ -221,7 +221,7 @@ def test_run_day_close_sets_raw_delete_pending_after_verify(tmp_path, monkeypatc
   class _FakeRawCoord:
     enabled = True
 
-    def start_async_verify(self, _tar_path):
+    def start_async_verify(self, _tar_path, *, sealed_members=None):
       return None
 
     def verification_complete(self, _tar_path):
@@ -274,7 +274,7 @@ def test_run_day_close_defers_on_handoff_instead_of_raw_delete_pending(
   class _FakeRawCoord:
     enabled = True
 
-    def start_async_verify(self, _tar_path):
+    def start_async_verify(self, _tar_path, *, sealed_members=None):
       return None
 
     def verification_complete(self, _tar_path):
@@ -987,3 +987,83 @@ def test_tar_paths_raw_delete_pending_returns_sorted_pending(tmp_path):
   coord._set_entry_status(tar_b, "raw_delete_pending")
   coord._set_entry_status(tar_a, "raw_delete_pending")
   assert coord.tar_paths_raw_delete_pending() == [tar_a, tar_b]
+
+
+@pytest.mark.django_db(databases=[])
+def test_tail_complete_with_ghost_remaining_mapping_only(tmp_path, monkeypatch):
+  """Quiescent fast-path must not block on ghost remaining_raw list entries."""
+  archive_dir = str(tmp_path / "archive")
+  daily_dir = str(tmp_path / "daily")
+  os.makedirs(archive_dir)
+  os.makedirs(daily_dir)
+  tar_norm = os.path.normpath(os.path.join(daily_dir, "2026-05-28.tar"))
+  zst_path = os.path.normpath(os.path.join(daily_dir, "2026-05-28.tar.zst"))
+  member = tmp_path / "m.txt"
+  member.write_text("x")
+  import tarfile
+  with tarfile.open(tar_norm, "w") as tf:
+    tf.add(str(member), arcname="m.txt")
+  with tarfile.open(zst_path, "w") as tf:
+    tf.add(str(member), arcname="m.txt")
+
+  monkeypatch.setattr(
+      async_dc_mod,
+      "build_remaining_raw_for_daily_tar",
+      lambda *_a, **_k: {zst_path: ["/ghost/raw/not-on-disk"]},
+  )
+
+  class _FakeRawCoord:
+    enabled = True
+
+    def try_finish_tar_drop_if_ready(self, _tar_path):
+      if os.path.isfile(tar_norm):
+        os.remove(tar_norm)
+      return True
+
+  coord = async_dc_mod.AsyncDayCloseCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=daily_dir,
+      local_tz=None,
+      log_fn=lambda *_a, **_k: None,
+      get_disqualified_daily_tars=lambda: set(),
+      day_raw_removal_coordinator=_FakeRawCoord(),
+  )
+  assert coord._try_complete_day_close_tail_without_reseal(tar_norm)
+  assert not os.path.isfile(tar_norm)
+
+
+@pytest.mark.django_db(databases=[])
+def test_seal_day_stores_zst_members_for_verify(tmp_path, monkeypatch):
+  archive_dir = str(tmp_path / "archive")
+  daily_dir = str(tmp_path / "daily")
+  os.makedirs(archive_dir)
+  os.makedirs(daily_dir)
+  tar_norm = os.path.normpath(os.path.join(daily_dir, "2026-04-18.tar"))
+  zst_path = os.path.normpath(os.path.join(daily_dir, "2026-04-18.tar.zst"))
+  open(tar_norm, "wb").close()
+  open(zst_path, "wb").close()
+  skip_members = {"host/raw": 99}
+
+  monkeypatch.setattr(
+      async_dc_mod,
+      "daily_tar_seal_calendar_eligible",
+      lambda *_a, **_k: True,
+  )
+  monkeypatch.setattr(
+      async_dc_mod,
+      "_seal_skip_existing_zst_equivalent",
+      lambda *_a, **_k: (True, dict(skip_members)),
+  )
+  monkeypatch.setattr(async_dc_mod.cfg, "get_archive_zstd_threads", lambda: 0)
+
+  coord = async_dc_mod.AsyncDayCloseCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=daily_dir,
+      local_tz=None,
+      log_fn=lambda *_a, **_k: None,
+      get_disqualified_daily_tars=lambda: set(),
+  )
+  assert coord._seal_day(tar_norm) is True
+  assert coord._pending_verify_zst_members == skip_members

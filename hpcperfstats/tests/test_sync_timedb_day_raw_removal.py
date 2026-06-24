@@ -526,3 +526,30 @@ def test_build_remaining_uses_snapshot_when_wired(tmp_path, monkeypatch):
   closed = state._closed_raw_paths_on_disk()
   assert closed == [str(seg)]
   assert captured["maintenance_snapshot"] is snapshot
+
+
+def test_verify_uses_provided_sealed_members_without_validation_scan(
+    tmp_path, monkeypatch,
+):
+  day = datetime(2022, 6, 22)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: True)
+  validate_calls = []
+
+  def _fail_validate(*_a, **_k):
+    validate_calls.append(True)
+    raise AssertionError("validate_sealed_daily_archive_for_raw_removal must not run")
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
+      "validate_sealed_daily_archive_for_raw_removal",
+      _fail_validate,
+  )
+  arcname = get_tar_member_name(str(seg))
+  sealed_members = {arcname: seg.stat().st_size}
+  coord.start_async_verify(tar_path, sealed_members=sealed_members)
+  state = coord._get_or_create_day(tar_path)
+  state._verify_body()
+  assert validate_calls == []
+  assert coord.verification_complete(tar_path)

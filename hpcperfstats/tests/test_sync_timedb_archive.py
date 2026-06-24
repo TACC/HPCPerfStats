@@ -1844,6 +1844,8 @@ def test_remove_verified_uncompressed_daily_tars_removes_when_tar_matches_gz(tmp
 def test_remove_verified_uncompressed_daily_tars_skips_when_raw_remains(tmp_path):
   day_tar = tmp_path / "2026-04-23.tar"
   day_gz = tmp_path / "2026-04-23.tar.gz"
+  raw_on_disk = tmp_path / "still_here.raw"
+  raw_on_disk.write_text("data")
   member = tmp_path / "member.txt"
   member.write_text("same-content")
   with tarfile.open(day_tar, "w") as tf:
@@ -1855,7 +1857,58 @@ def test_remove_verified_uncompressed_daily_tars_skips_when_raw_remains(tmp_path
       str(tmp_path),
       log_fn=None,
       remaining_raw_by_gz={
-          normalize_daily_compressed_path(str(day_gz)): ["/raw/still-here"],
+          normalize_daily_compressed_path(str(day_gz)): [str(raw_on_disk)],
+      },
+  )
+
+  assert day_tar.is_file()
+  assert day_gz.is_file()
+
+
+def test_remove_verified_uncompressed_daily_tars_drops_when_raw_ghost_only(
+    tmp_path,
+):
+  """Ghost mapping entries (not on disk) must not block tar drop (hpcperfstats03 H6)."""
+  day_tar = tmp_path / "2026-04-24.tar"
+  day_gz = tmp_path / "2026-04-24.tar.gz"
+  member = tmp_path / "member.txt"
+  member.write_text("same-content")
+  with tarfile.open(day_tar, "w") as tf:
+    tf.add(str(member), arcname="member.txt")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(member), arcname="member.txt")
+
+  remove_verified_uncompressed_daily_tars(
+      str(tmp_path),
+      log_fn=None,
+      remaining_raw_by_gz={
+          normalize_daily_compressed_path(str(day_gz)): ["/ghost/raw/not-on-disk"],
+      },
+  )
+
+  assert not day_tar.exists()
+  assert day_gz.is_file()
+
+
+def test_remove_verified_uncompressed_daily_tars_skips_when_raw_on_disk(
+    tmp_path,
+):
+  day_tar = tmp_path / "2026-04-24b.tar"
+  day_gz = tmp_path / "2026-04-24b.tar.gz"
+  raw_on_disk = tmp_path / "still_here.raw"
+  raw_on_disk.write_text("data")
+  member = tmp_path / "member-b.txt"
+  member.write_text("same-content")
+  with tarfile.open(day_tar, "w") as tf:
+    tf.add(str(member), arcname="member.txt")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(member), arcname="member.txt")
+
+  remove_verified_uncompressed_daily_tars(
+      str(tmp_path),
+      log_fn=None,
+      remaining_raw_by_gz={
+          normalize_daily_compressed_path(str(day_gz)): [str(raw_on_disk)],
       },
   )
 

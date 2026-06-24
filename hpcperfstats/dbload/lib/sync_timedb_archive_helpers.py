@@ -2963,16 +2963,20 @@ def classify_removable_raw_paths_for_daily_gz(
     allow_auto_seal=False,
     log_fn=log_print,
     validation_cache=None,
+    sealed_members=None,
 ):
   """Classify raw paths for a daily compressed archive without deleting."""
   if not stats_paths:
     return []
-  ok, members = validate_sealed_daily_archive_for_raw_removal(
-      gz_path,
-      log_fn=log_fn,
-      validation_cache=validation_cache,
-      allow_auto_seal=allow_auto_seal,
-  )
+  if sealed_members is not None:
+    ok, members = True, dict(sealed_members)
+  else:
+    ok, members = validate_sealed_daily_archive_for_raw_removal(
+        gz_path,
+        log_fn=log_fn,
+        validation_cache=validation_cache,
+        allow_auto_seal=allow_auto_seal,
+    )
   if not ok or members is None:
     return [
         (path, "skipped_seal_invalid", "seal_validation_failed")
@@ -3244,6 +3248,24 @@ def daily_gz_has_remaining_raw_stats(gz_path, remaining_by_gz):
   return bool(remaining_by_gz.get(key))
 
 
+def remaining_raw_by_gz_has_paths_on_disk(remaining_by_gz, gz_path=None):
+  """True if ``remaining_by_gz`` lists at least one raw stats path that exists on disk.
+
+  When ``gz_path`` is set, only paths mapped to that daily compressed archive are
+  considered. Ghost mapping entries (listed but already deleted) return False.
+  """
+  if not remaining_by_gz:
+    return False
+  if gz_path is not None:
+    key = normalize_daily_compressed_path(gz_path)
+    paths = remaining_by_gz.get(key) or ()
+    return any(os.path.isfile(path) for path in paths)
+  for paths in remaining_by_gz.values():
+    if any(os.path.isfile(path) for path in (paths or ())):
+      return True
+  return False
+
+
 def remove_verified_uncompressed_daily_tars(
     daily_archive_dir,
     *,
@@ -3313,7 +3335,7 @@ def remove_verified_uncompressed_daily_tars(
     tar_path = tar_by_gz[gz_path]
     if (
         not force_remove_uncompressed_tar
-        and daily_gz_has_remaining_raw_stats(gz_path, remaining_raw_by_gz)
+        and remaining_raw_by_gz_has_paths_on_disk(remaining_raw_by_gz, gz_path)
     ):
       if log_fn:
         log_fn(

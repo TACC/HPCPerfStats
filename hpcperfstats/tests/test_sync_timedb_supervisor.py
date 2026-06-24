@@ -6729,3 +6729,77 @@ def test_supervisor_startup_handoff_paths_ingested_at_queue_head(
         assert min(backlog_positions) > 0
   finally:
     shutdown_requested[0] = False
+
+
+def test_immediate_day_close_respects_sync_day_close_max_inflight(
+    monkeypatch,
+    tmp_path,
+):
+  shutdown_requested[0] = False
+  submitted = []
+  try:
+    day1_epoch = int(datetime(2020, 1, 1, 12, tzinfo=timezone.utc).timestamp())
+    day2_epoch = int(datetime(2020, 1, 2, 12, tzinfo=timezone.utc).timestamp())
+    day3_epoch = int(datetime(2020, 1, 3, 12, tzinfo=timezone.utc).timestamp())
+    archive_dir, daily_dir = _supervisor_two_day_ingest_patches(
+        monkeypatch,
+        tmp_path,
+        paths=[],
+    )
+    tar_paths = []
+    for epoch in (day1_epoch, day2_epoch, day3_epoch):
+      day = datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("%Y-%m-%d")
+      tar = os.path.normpath(os.path.join(daily_dir, "%s.tar" % day))
+      open(tar, "wb").close()
+      tar_paths.append(tar)
+
+    monkeypatch.setattr(st, "build_unprocessed_raw_by_daily_tar", lambda *_a, **_k: {})
+    monkeypatch.setattr(
+        archive_helpers,
+        "build_unprocessed_raw_by_daily_tar",
+        lambda *_a, **_k: {},
+    )
+    monkeypatch.setattr(
+        st,
+        "days_ingest_complete_by_checkpoint",
+        lambda _unprocessed, **_kwargs: list(tar_paths),
+    )
+    monkeypatch.setattr(
+        async_day_close_mod.cfg,
+        "get_sync_day_close_max_inflight",
+        lambda: 1,
+    )
+    active = set()
+
+    def _submit(self, tar_path, *, reason, disqualified_daily_tars=None):
+      tar_norm = os.path.normpath(tar_path)
+      submitted.append(tar_norm)
+      active.add(tar_norm)
+      return True
+
+    def _active(self):
+      return set(active)
+
+    monkeypatch.setattr(
+        async_day_close_mod.AsyncDayCloseCoordinator,
+        "submit_day_close",
+        _submit,
+    )
+    monkeypatch.setattr(
+        async_day_close_mod.AsyncDayCloseCoordinator,
+        "active_or_submitted_tar_paths",
+        _active,
+    )
+    monkeypatch.setattr(
+        async_day_close_mod.AsyncDayCloseCoordinator,
+        "is_complete",
+        lambda self, _tar_path: False,
+    )
+
+    st.run_sync_timedb_supervisor_loop(
+        archive_dir, "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
+
+    assert len(submitted) == 1
+    assert submitted[0] == tar_paths[0]
+  finally:
+    shutdown_requested[0] = False

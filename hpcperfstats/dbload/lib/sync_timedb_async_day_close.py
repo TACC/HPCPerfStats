@@ -17,12 +17,12 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     _seal_skip_existing_zst_equivalent,
     atomic_seal_tar_to_zst,
     build_remaining_raw_for_daily_tar,
-    daily_gz_has_remaining_raw_stats,
     daily_tar_seal_calendar_eligible,
     dedupe_sealed_daily_archive,
     dedupe_tar_keep_largest_file_per_member,
     drop_legacy_gz_if_equivalent_to_zst,
     effective_keep_uncompressed_tar,
+    remaining_raw_by_gz_has_paths_on_disk,
     remove_verified_uncompressed_daily_tars,
     tar_has_duplicate_file_members,
 )
@@ -108,6 +108,7 @@ class AsyncDayCloseCoordinator:
     self._manifest = _load_manifest(self._manifest_path)
     self._futures: Dict[str, Any] = {}
     self._executor: Optional[ThreadPoolExecutor] = None
+    self._pending_verify_zst_members = None
     self._recover_stale_manifest_entries()
 
   def recover_stale_manifest_entries(self) -> None:
@@ -287,7 +288,7 @@ class AsyncDayCloseCoordinator:
         self.tgz_archive_dir,
         tar_norm,
     )
-    if daily_gz_has_remaining_raw_stats(zst_path, remaining):
+    if remaining_raw_by_gz_has_paths_on_disk(remaining, zst_path):
       return False
     if os.path.isfile(tar_norm):
       return False
@@ -445,7 +446,7 @@ class AsyncDayCloseCoordinator:
         self.tgz_archive_dir,
         tar_norm,
     )
-    if daily_gz_has_remaining_raw_stats(zst_path, remaining):
+    if remaining_raw_by_gz_has_paths_on_disk(remaining, zst_path):
       return False
     coord = self.day_raw_removal_coordinator
     if coord is not None and bool(getattr(coord, "enabled", False)):
@@ -488,7 +489,10 @@ class AsyncDayCloseCoordinator:
       if coord is not None and bool(getattr(coord, "enabled", False)):
         self._touch_manifest("raw_removal", tar_norm=tar_norm)
         self._set_entry_status(tar_norm, "raw_removal")
-        coord.start_async_verify(tar_norm)
+        coord.start_async_verify(
+            tar_norm,
+            sealed_members=self._pending_verify_zst_members,
+        )
         wait_budget_s = cfg.get_sync_day_close_raw_removal_wait_seconds()
         wait_started = time.time()
         last_progress_log = wait_started
@@ -537,7 +541,10 @@ class AsyncDayCloseCoordinator:
               and coord.pipeline_future_done(tar_norm)
               and not coord.verification_complete(tar_norm)
           ):
-            coord.start_async_verify(tar_norm)
+            coord.start_async_verify(
+                tar_norm,
+                sealed_members=self._pending_verify_zst_members,
+            )
             verify_rekick_done = True
           sleep_until_shutdown(0.5)
         if not coord.verification_complete(tar_norm):
@@ -575,6 +582,7 @@ class AsyncDayCloseCoordinator:
         self._futures.pop(tar_norm, None)
 
   def _seal_day(self, tar_norm: str) -> bool:
+    self._pending_verify_zst_members = None
     if not daily_tar_seal_calendar_eligible(tar_norm, self.local_tz):
       self.log_fn(
           "janitor: async day_close seal deferred (calendar grace) %s" % tar_norm,
@@ -624,6 +632,7 @@ class AsyncDayCloseCoordinator:
           log_fn=self.log_fn,
           zst_members=skip_result[1],
       )
+      self._pending_verify_zst_members = skip_result[1]
       return True
     remaining_raw_by_gz = {
         zst_path: build_remaining_raw_for_daily_tar(
@@ -676,6 +685,7 @@ class AsyncDayCloseCoordinator:
     drop_legacy_gz_if_equivalent_to_zst(
         gz_path, zst_path, log_fn=self.log_fn, zst_members=zst_members,
     )
+    self._pending_verify_zst_members = zst_members
     if os.path.isfile(zst_path) or os.path.isfile(gz_path):
       self.log_fn(
           "janitor: async day_close seal done tar=%s" % tar_norm,
@@ -692,7 +702,7 @@ class AsyncDayCloseCoordinator:
         tar_norm,
     )
     zst_path, _gz_path = compressed_sibling_paths(tar_norm)
-    if daily_gz_has_remaining_raw_stats(zst_path, remaining_raw_by_gz):
+    if remaining_raw_by_gz_has_paths_on_disk(remaining_raw_by_gz, zst_path):
       return False
     remove_verified_uncompressed_daily_tars(
         self.tgz_archive_dir,

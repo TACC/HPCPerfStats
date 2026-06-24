@@ -18,6 +18,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     calendar_date_from_daily_tar_path,
     classify_removable_raw_paths_for_daily_gz,
     daily_gz_has_remaining_raw_stats,
+    remaining_raw_by_gz_has_paths_on_disk,
     remove_verified_uncompressed_daily_tars,
     stats_file_is_active_segment,
 )
@@ -138,6 +139,7 @@ class _DayRawRemovalState:
     self._manifest = _load_manifest(self._manifest_path, self.tar_path)
     self._validation_cache = {"hits": 0, "misses": 0}
     self._pipeline_future = None
+    self._verify_sealed_members = None
 
   def phase(self) -> str:
     with self._lock:
@@ -181,7 +183,9 @@ class _DayRawRemovalState:
     return paths
 
   def _has_closed_raw_existing_on_disk(self) -> bool:
-    return any(os.path.isfile(path) for path in self._closed_raw_paths_on_disk())
+    remaining = self._build_remaining_raw_for_daily_tar()
+    zst_path, _gz_path = compressed_sibling_paths(self.tar_path)
+    return remaining_raw_by_gz_has_paths_on_disk(remaining, zst_path)
 
   def try_finish_tar_drop_if_ready(self) -> bool:
     """Drop ``.tar`` when sealed and no closed raw files remain on disk."""
@@ -191,9 +195,8 @@ class _DayRawRemovalState:
     if not (os.path.isfile(zst_path) or os.path.isfile(gz_path)):
       return False
     remaining_raw = self._build_remaining_raw_for_daily_tar()
-    if daily_gz_has_remaining_raw_stats(zst_path, remaining_raw):
-      if self._has_closed_raw_existing_on_disk():
-        return False
+    if remaining_raw_by_gz_has_paths_on_disk(remaining_raw, zst_path):
+      return False
     remove_verified_uncompressed_daily_tars(
         self.tgz_archive_dir,
         log_fn=self.log_fn,
@@ -499,6 +502,7 @@ class _DayRawRemovalState:
           allow_auto_seal=False,
           log_fn=self.log_fn,
           validation_cache=self._validation_cache,
+          sealed_members=self._verify_sealed_members,
       ):
         self._record_entry(path, zst_path, status, reason)
     with self._lock:
@@ -913,11 +917,19 @@ class DayRawRemovalCoordinator:
 
     state._pipeline_future = executor.submit(_run)
 
-  def start_async_verify(self, tar_path: str) -> None:
+  def start_async_verify(
+      self,
+      tar_path: str,
+      *,
+      sealed_members=None,
+  ) -> None:
     """Run verify for one calendar day on a background thread (production path)."""
     if not self.enabled:
       return
     state = self._get_or_create_day(tar_path)
+    state._verify_sealed_members = (
+        dict(sealed_members) if sealed_members is not None else None
+    )
     if state.delete_phase_done():
       if state._needs_retry_after_ingest():
         state._reset_for_reverify()

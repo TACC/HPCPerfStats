@@ -72,8 +72,8 @@ This must **not** wait for an empty global ingest queue.
 - **`archive_keep_uncompressed_tar=no`** (default): prior-calendar-day `.tar` may be dropped at seal when closed raw is gone (`effective_keep_uncompressed_tar` → `atomic_seal_tar_to_zst` `keep_tar=False`).
 - **Calendar today:** do not **start** sealing until **`archive_today_uncompressed_tar_grace_hours`** (default **8**) after local midnight (`daily_tar_seal_calendar_eligible`). After seal, keep uncompressed `.tar` during the same grace window (`effective_keep_uncompressed_tar`) unless global keep is `yes`.
 - **`archive_keep_uncompressed_tar=yes`:** always retain `.tar` until explicit `TAR_DROP` / day-close tail.
-
-## Janitor tick contract
+- **Ghost `remaining_raw_by_gz` gate:** `remove_verified_uncompressed_daily_tars` and async day-close tail paths use **`remaining_raw_by_gz_has_paths_on_disk`** — mapping entries for a day block tar drop only when at least one listed path **exists on disk** (ghost list entries after raw delete must not stall `raw_delete_pending` days).
+- **Immediate day-close inflight:** supervisor **`_maybe_enqueue_immediate_day_close`** respects **`sync_day_close_max_inflight`** the same way scheduled maintenance submit does (break when `active_or_submitted_tar_paths()` ≥ cap).
 
 - **Tick chaining:** when a tick made progress (`tick_made_progress`: processed at least one debt item or hit budget break after partial progress) and `debt_depth() > 0` afterward, `_run_tick_body` `finally` sets `_pending_signal` and schedules the next tick immediately. **Do not** chain on empty `work_items` or when every popped item was only re-queued mid-tick due to disqualification (avoids busy spin). RSS defer and existing `_pending_signal` paths unchanged.
 - **Maintenance vs debt budget:** `run_scheduled_maintenance_pass` (snapshot + candidate report only) runs **before** `debt_tick_t0`; **`archive_janitor_budget_seconds`** applies only to the debt loop after maintenance. Tick summary logs `maintenance_pass_s`, `debt_popped`, `async_submitted`, `days_completed`.

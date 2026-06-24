@@ -3726,7 +3726,11 @@ def run_sync_timedb_supervisor_loop(
     )
     submitted_any = False
     disqualified = _janitor_disqualified_daily_tars()
+    max_inflight = cfg.get_sync_day_close_max_inflight()
     for tar_path in candidates:
+      if async_day_close is not None:
+        if len(async_day_close.active_or_submitted_tar_paths()) >= max_inflight:
+          break
       if async_day_close.submit_day_close(
           tar_path,
           reason="day_ingest_complete:%s" % context,
