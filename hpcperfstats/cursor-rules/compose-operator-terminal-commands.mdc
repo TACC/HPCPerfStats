@@ -87,6 +87,48 @@ docker compose logs pipeline --tail=500
 
 Match **`README.md`** *Useful commands* and **`readme-installation-sync.mdc`** (`docker compose exec <service>` over hardcoded container names).
 
+## Container introspection tools (pipeline / web image)
+
+The **`hpcperfstats-base`** image ( **`pipeline`**, **`web`**, and siblings built from root **`Dockerfile`**) ships these **read-only diagnostic** tools. Prefer them over asking the operator to install packages on the host.
+
+| Tool | Package / install | Typical use |
+|------|-------------------|-------------|
+| **`py-spy`** | `pip install py-spy` in image | Sample Python stacks for `sync_timedb`, gunicorn, or pool workers without stopping the process (`py-spy top --pid …`, `py-spy dump --pid …`) |
+| **`gdb`** | `apt` (`gdb`) | Attach to a stuck worker when stacks are insufficient (short, targeted sessions; paste backtrace only) |
+| **`lsof`** | `apt` (`lsof`) | Open files / sockets for a PID (`lsof -p <pid>`) — archive dirs, log fds, stale locks |
+| **`ps`**, **`top`**, **`pgrep`** | `apt` (`procps`) | Process tree, RSS/CPU, worker PIDs (`ps auxf`, `top -b -n1`) |
+| **`strace`** | `apt` (`strace`) | Syscall trace for hang diagnosis — **short** captures only (`strace -p <pid> -f -tt -e trace=…` for 10–30 s, not unbounded) |
+| **`nc`** | `apt` (`netcat-openbsd`) | TCP reachability (`nc -zv db 5432`, `nc -zv redis 6379`) from inside the compose network |
+
+**Rules:**
+
+1. Run on **`pipeline`** (or **`web`**) via `docker compose exec … su hpcperfstats -c '…'` unless the target is another service’s port (then `nc` from `pipeline` or `web` is fine).
+2. **Read-only** — do not ask operators to `kill -9`, modify processes, or leave `gdb`/`strace` attached indefinitely.
+3. Combine with **INI-resolved paths** and **filtered logs** — e.g. `py-spy` on the `sync_timedb` supervisor PID after grep confirms a stall signature.
+4. Label the block with **which signal** you need (stack sample, open files, port open, syscall on `open`/`read`).
+
+**Example** — pipeline block after stall hypothesis:
+
+```bash
+cd HPCPerfStats
+
+docker compose -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline su hpcperfstats -c '
+SUP=$(pgrep -f "sync_timedb" | head -1)
+echo "sync_timedb pid=$SUP"
+ps -o pid,ppid,rss,etime,cmd -p "$SUP" 2>/dev/null
+py-spy dump --pid "$SUP" --nonblocking 2>/dev/null | head -80
+lsof -p "$SUP" 2>/dev/null | head -30
+'
+```
+
+**Example** — compose DNS / port check from pipeline:
+
+```bash
+cd HPCPerfStats
+
+docker compose exec pipeline su hpcperfstats -c 'nc -zv db 5432 && nc -zv redis 6379'
+```
+
 ## Examples
 
 **Bad** — host assumes compose DNS; three separate pastes for one service:
