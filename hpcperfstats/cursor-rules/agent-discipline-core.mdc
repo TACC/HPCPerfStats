@@ -101,7 +101,7 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 | Pre-code planning | `implementation-review-workflow.mdc` |
 | Plan or change blocked — operator must run terminal commands for facts | `compose-operator-terminal-commands.mdc` |
 
-**Hooks (same close discipline as implementation):** `CreatePlan` counts as closeable work. **`stop`** enforces chat close headings plus `PLAN_TEMPLATE.md` sections inside the plan body, **live plan disk write** to `.cursor/plans/*.plan.md` (`plan-live-disk-sync.mdc`), and **Read before `CreatePlan`** for `plan-creation-contract.mdc`, `plan-live-disk-sync.mdc`, `PLAN_TEMPLATE.md`, and domain rules referenced in the plan. **`postToolUse`** warns mid-turn when those reads are missing.
+**Hooks (same close discipline as implementation):** `CreatePlan` counts as closeable work. **`stop`** (`check-close-gate.py`) **unconditionally** blocks turn end when `CreatePlan` ran without a same-turn Write/StrReplace to `.cursor/plans/*.plan.md` (not only when the assistant says "plan is ready"); also enforces chat close headings, plan body sections, and Read before `CreatePlan` for `plan-creation-contract.mdc`, `plan-live-disk-sync.mdc`, `PLAN_TEMPLATE.md`. **`postToolUse`** (`check-create-plan-disk-sync.py` on `CreatePlan`; `check-edit-triggered-rules.py`) warns mid-turn when disk write or required reads are missing.
 
 ## Implementation habits (short)
 

@@ -10,6 +10,11 @@
     ],
     "postToolUse": [
       {
+        "command": ".cursor/hooks/check-create-plan-disk-sync.py",
+        "matcher": "CreatePlan",
+        "timeout": 10
+      },
+      {
         "command": ".cursor/hooks/check-edit-triggered-rules.py",
         "matcher": "Write|StrReplace|EditNotebook|CreatePlan",
         "timeout": 10

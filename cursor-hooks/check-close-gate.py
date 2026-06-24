@@ -11,16 +11,21 @@ if str(HOOK_DIR) not in sys.path:
 
 from hpc_hook_lib import (  # noqa: E402
     close_gate_issues,
+    create_plan_payload_from_tool_part,
     emit_json,
     extract_assistant_text,
     last_turn_rows,
     load_json_stdin,
     looks_like_task_close,
     parse_transcript_lines,
+    plan_disk_sync_followup_message,
+    plan_disk_sync_issues,
     profile_rules_dir_label,
+    suggested_live_plan_disk_path,
     turn_had_closeable_work,
     turn_had_create_plan,
     turn_had_edits,
+    turn_had_live_plan_disk_write,
 )
 
 
@@ -48,6 +53,33 @@ def main() -> int:
     turn_rows = last_turn_rows(rows)
     had_edits = turn_had_edits(turn_rows)
     had_plan = turn_had_create_plan(turn_rows)
+
+    # Hard gate: CreatePlan without a same-turn .cursor/plans/*.plan.md write always
+    # blocks turn end (does not depend on "plan is ready" phrasing).
+    if had_plan and not turn_had_live_plan_disk_write(turn_rows):
+        disk_issues = plan_disk_sync_issues(turn_rows)
+        if disk_issues:
+            suggested = ""
+            for row in turn_rows:
+                message = row.get("message") or {}
+                for part in message.get("content") or []:
+                    payload = create_plan_payload_from_tool_part(part)
+                    if payload:
+                        suggested = suggested_live_plan_disk_path(payload)
+                        break
+                if suggested:
+                    break
+            emit_json(
+                {
+                    "followup_message": plan_disk_sync_followup_message(
+                        disk_issues,
+                        suggested_path=suggested,
+                        loop_count=loop_count,
+                    ),
+                },
+            )
+            return 0
+
     if not turn_had_closeable_work(turn_rows):
         emit_json({})
         return 0

@@ -429,6 +429,59 @@ def plan_disk_sync_issues(transcript_rows: list[dict]) -> list[str]:
     return []
 
 
+def suggested_live_plan_disk_path(create_plan_payload: dict | None) -> str:
+    """Best-effort live plan path from CreatePlan tool input."""
+    payload = create_plan_payload if isinstance(create_plan_payload, dict) else {}
+    name = payload.get("name")
+    if not name:
+        plan_text = str(payload.get("plan") or payload.get("content") or "")
+        match = re.search(r"^name:\s*['\"]?([^'\"\n]+)", plan_text, re.M)
+        if match:
+            name = match.group(1).strip()
+    if name:
+        kebab = re.sub(r"[^a-z0-9-]+", "-", str(name).strip().lower())
+        kebab = re.sub(r"-+", "-", kebab).strip("-")
+        if kebab:
+            return f"{LIVE_PLAN_DISK_SUFFIX}{kebab}.plan.md"
+    return f"{LIVE_PLAN_DISK_SUFFIX}<short-kebab-name>.plan.md"
+
+
+def plan_disk_sync_followup_message(
+    issues: list[str],
+    *,
+    suggested_path: str = "",
+    loop_count: int = 0,
+) -> str:
+    """User-visible follow-up when a turn used CreatePlan without a disk write."""
+    path_hint = suggested_path or f"{LIVE_PLAN_DISK_SUFFIX}<short-kebab-name>.plan.md"
+    issue_text = ", ".join(issues) if issues else "Plan not written to disk"
+    return (
+        "Plan disk sync incomplete (Cursor stop hook). This turn called CreatePlan "
+        "but did not Write or StrReplace a live plan under "
+        f"<workspace_root>/{path_hint} in the same turn.\n\n"
+        "MANDATORY before ending the turn or claiming the plan exists:\n"
+        "1. Read plan-creation-contract.mdc, plan-live-disk-sync.mdc, and "
+        "docs/plans/PLAN_TEMPLATE.md (Read tool).\n"
+        "2. Write the full plan (frontmatter todos + PLAN_TEMPLATE sections) to "
+        f"`{path_hint}` — CreatePlan and chat do not count (plan-live-disk-sync.mdc).\n"
+        "3. Include ## Plan disk file with live path and last-updated date.\n\n"
+        f"Missing now: {issue_text}\n"
+        f"loop_count={loop_count}. Per plan-live-disk-sync.mdc and plan-creation-contract.mdc."
+    )
+
+
+def create_plan_disk_sync_post_tool_context(suggested_path: str) -> str:
+    """Inject immediately after CreatePlan so the agent writes disk in the same turn."""
+    return (
+        "PLAN DISK SYNC (mandatory same turn): CreatePlan does NOT satisfy "
+        "plan-live-disk-sync.mdc. Before any user-facing reply or other tools, "
+        "Write or StrReplace the full plan to "
+        f"<workspace_root>/{suggested_path} "
+        "(frontmatter todos + PLAN_TEMPLATE sections including ## Plan disk file). "
+        "Chat and CreatePlan alone are not authoritative."
+    )
+
+
 def iter_tool_parts(rows: list[dict]) -> Iterable[tuple[int, dict]]:
     for event_idx, row in enumerate(rows):
         if row.get("role") != "assistant":

@@ -429,6 +429,94 @@ def test_plan_disk_sync_issues_passes_when_disk_write_present():
   assert lib.plan_disk_sync_issues(rows) == []
 
 
+def test_suggested_live_plan_disk_path_from_name_field():
+  path = lib.suggested_live_plan_disk_path(
+      {"name": "startup stall follow-up"},
+  )
+  assert path == ".cursor/plans/startup-stall-follow-up.plan.md"
+
+
+def test_check_close_gate_blocks_create_plan_without_disk_even_without_plan_ready(
+    tmp_path,
+):
+  transcript = tmp_path / "plan-silent.jsonl"
+  transcript.write_text(
+      json.dumps(
+          {
+              "role": "user",
+              "message": {"content": [{"type": "text", "text": "create a plan"}]},
+          },
+      )
+      + "\n"
+      + json.dumps(
+          {
+              "role": "assistant",
+              "message": {
+                  "content": [
+                      {
+                          "type": "tool_use",
+                          "name": "CreatePlan",
+                          "input": {
+                              "name": "startup-stall-followup",
+                              "plan": "## Approach\n\nonly",
+                          },
+                      },
+                      {
+                          "type": "text",
+                          "text": "See the plan in the UI.",
+                      },
+                  ],
+              },
+          },
+      )
+      + "\n",
+      encoding="utf-8",
+  )
+  payload = {
+      "status": "completed",
+      "loop_count": 0,
+      "transcript_path": str(transcript),
+  }
+  script = HOOKS_DIR / "check-close-gate.py"
+  proc = subprocess.run(
+      [sys.executable, str(script)],
+      input=json.dumps(payload),
+      capture_output=True,
+      text=True,
+      check=False,
+  )
+  assert proc.returncode == 0
+  data = json.loads(proc.stdout.strip())
+  assert "followup_message" in data
+  assert "Plan disk sync incomplete" in data["followup_message"]
+  assert ".cursor/plans/startup-stall-followup.plan.md" in data["followup_message"]
+
+
+def test_check_create_plan_disk_sync_injects_same_turn_write(tmp_path):
+  payload = {
+      "tool_name": "CreatePlan",
+      "tool_input": {
+          "name": "foo-bar",
+          "plan": "---\nname: foo-bar\n---\n\n## Approach\n",
+      },
+      "transcript_path": str(tmp_path / "empty.jsonl"),
+  }
+  (tmp_path / "empty.jsonl").write_text("", encoding="utf-8")
+  script = HOOKS_DIR / "check-create-plan-disk-sync.py"
+  proc = subprocess.run(
+      [sys.executable, str(script)],
+      input=json.dumps(payload),
+      capture_output=True,
+      text=True,
+      check=False,
+  )
+  assert proc.returncode == 0
+  data = json.loads(proc.stdout.strip())
+  assert "additional_context" in data
+  assert "PLAN DISK SYNC" in data["additional_context"]
+  assert ".cursor/plans/foo-bar.plan.md" in data["additional_context"]
+
+
 def test_paths_from_plan_markdown_extracts_backtick_paths():
   text = (
       "Touch [`hpcperfstats/dbload/lib/sync_timedb_async_day_close.py`](path)"
@@ -545,7 +633,7 @@ def test_check_close_gate_emits_followup_for_create_plan(tmp_path):
   assert proc.returncode == 0
   data = json.loads(proc.stdout.strip())
   assert "followup_message" in data
-  assert "Close gate incomplete" in data["followup_message"]
+  assert "Plan disk sync incomplete" in data["followup_message"]
   assert "PLAN_TEMPLATE.md" in data["followup_message"]
 
 
