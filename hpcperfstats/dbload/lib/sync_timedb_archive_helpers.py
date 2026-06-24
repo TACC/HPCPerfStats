@@ -236,6 +236,7 @@ def daily_tar_eligible_for_day_close_submit(
     remaining_raw_by_gz=None,
     local_tz=None,
     now=None,
+    day_raw_removal=None,
 ):
   """Return ``(eligible, skip_reason)`` for async ``DAY_CLOSE`` submit."""
   tar_norm = os.path.normpath(str(tar_norm or ""))
@@ -245,6 +246,10 @@ def daily_tar_eligible_for_day_close_submit(
     return False, "missing_unprocessed_map"
   if unprocessed_tar_paths_still_on_disk(unprocessed_by_tar, tar_norm):
     return False, "checkpoint_incomplete"
+  if day_raw_removal is not None and bool(getattr(day_raw_removal, "enabled", False)):
+    has_closed_raw = getattr(day_raw_removal, "has_closed_raw_on_disk", None)
+    if callable(has_closed_raw) and has_closed_raw(tar_norm):
+      return False, "closed_raw_on_disk"
   disqualified = _normalize_daily_tar_path_set(disqualified_daily_tars)
   if tar_norm in disqualified:
     return False, "disqualified"

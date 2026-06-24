@@ -166,7 +166,10 @@ from hpcperfstats.dbload.lib.sync_timedb_async_day_close import AsyncDayCloseCoo
 from hpcperfstats.dbload.lib.file_locking import file_write_lock
 from hpcperfstats.dbload.lib.sync_timedb_archive_dispatch import ArchiveDispatchCoordinator
 from hpcperfstats.dbload.lib.sync_timedb_archive_janitor import ArchiveJanitor
-from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import DayRawRemovalCoordinator
+from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
+    DayRawRemovalCoordinator,
+    run_supervisor_day_raw_removal_delete_pass,
+)
 from hpcperfstats.dbload.lib.sync_timedb_startup_raw_removal import (
     PHASE_VERIFICATION_COMPLETE,
     StartupRawRemovalPreflight,
@@ -4750,14 +4753,25 @@ def run_sync_timedb_supervisor_loop(
           host_name_ext,
           tgz_archive_dir,
       )
-    return daily_tar_eligible_for_day_close_submit(
+    eligible, skip_reason = daily_tar_eligible_for_day_close_submit(
         tar_norm,
         unprocessed_by_tar=captured.get("unprocessed_by_tar"),
         disqualified_daily_tars=_janitor_disqualified_daily_tars(),
         day_phases=day_phases,
         remaining_raw_by_gz=remaining,
         local_tz=local_timezone,
+        day_raw_removal=day_raw_removal,
     )
+    if (
+        not eligible
+        and skip_reason == "closed_raw_on_disk"
+        and day_raw_removal is not None
+    ):
+      day_raw_removal.requeue_closed_raw_paths_for_ingest(
+          tar_norm,
+          reason="closed_raw_submit_guard",
+      )
+    return eligible, skip_reason
 
   async_day_close.submit_eligible_fn = _async_day_close_submit_eligible
   async_day_close.on_day_phase = _on_async_day_phase
@@ -4834,6 +4848,12 @@ def run_sync_timedb_supervisor_loop(
           tar_norm,
           paths,
           reason="startup_manifest_handoff",
+      )
+    for tar_norm, paths in day_raw_removal.discover_closed_raw_on_disk_handoffs():
+      _requeue_day_close_handoff_paths(
+          tar_norm,
+          paths,
+          reason="startup_closed_raw_handoff",
       )
 
   day_raw_removal.on_pipeline_complete = _on_day_close_pipeline_complete
@@ -5200,55 +5220,37 @@ def run_sync_timedb_supervisor_loop(
     def _apply_day_close_raw_removal_deletes():
       """One ingest-gated pass over pending days (oldest-first; skip stuck per batch)."""
       nonlocal delete_phase_active
-      if day_raw_removal is None or not day_raw_removal.enabled:
-        return False
-      if async_day_close is not None:
-        async_day_close.reconcile_supervisor_raw_delete_pending(
-            reason="delete_pass",
+
+      def _log_chunk_wait(blocking_tar, async_tar_drop_n):
+        log_print(
+            "sync_timedb: day raw delete waiting on ingest chunk "
+            "blocking_tar=%s async_tar_drop_n=%d"
+            % (blocking_tar or "", async_tar_drop_n),
+            flush=True,
         )
-      needs_delete = day_raw_removal.any_needs_delete_phase()
-      needs_tar_drop = day_raw_removal.any_needs_tar_drop_finish()
-      async_tar_drop = (
-          async_day_close.tar_paths_raw_delete_pending()
-          if async_day_close is not None
-          else []
+        _maybe_log_startup_drain_blocked(
+            trigger="chunk_wait_day_raw_delete",
+            delete_driver=True,
+        )
+
+      spin = run_supervisor_day_raw_removal_delete_pass(
+          day_raw_removal,
+          async_day_close,
+          chunk_in_progress=chunk_in_progress,
+          finalize_day_close_delete=_finalize_day_close_raw_removal_delete,
+          sleep_fn=sleep_until_shutdown,
+          log_chunk_wait=_log_chunk_wait,
+          on_delete_batch_begin=lambda: _set_delete_phase_active(True),
+          on_delete_batch_end=lambda: _set_delete_phase_active(False),
       )
-      if not needs_delete and not needs_tar_drop and not async_tar_drop:
-        return False
-      if needs_delete:
-        if chunk_in_progress:
-          sleep_until_shutdown(0.1)
-          _maybe_log_startup_drain_blocked(
-              trigger="chunk_wait_day_raw_delete",
-              delete_driver=True,
-          )
-          return True
-        delete_phase_active = True
-        for tar_norm in day_raw_removal.days_needing_delete_oldest_first():
-          if day_raw_removal.phase(tar_norm) == PHASE_VERIFICATION_COMPLETE:
-            day_raw_removal.begin_deleting(tar_norm)
-          deleted = day_raw_removal.apply_batch_delete(tar_norm)
-          if day_raw_removal.delete_phase_done(tar_norm):
-            _finalize_day_close_raw_removal_delete(tar_norm)
-            continue
-          if (
-              deleted == 0
-              and day_raw_removal.needs_delete_phase(tar_norm)
-              and not day_raw_removal.delete_phase_done(tar_norm)
-          ):
-            continue
-        delete_phase_active = False
-      tar_drop_targets: list[str] = []
-      if needs_tar_drop:
-        tar_drop_targets.extend(day_raw_removal.days_needing_tar_drop_oldest_first())
-      for tar_norm in async_tar_drop:
-        if tar_norm not in tar_drop_targets:
-          tar_drop_targets.append(tar_norm)
-      for tar_norm in tar_drop_targets:
-        if day_raw_removal.try_finish_tar_drop_if_ready(tar_norm):
-          _finalize_day_close_raw_removal_delete(tar_norm)
+      if spin:
+        return True
       _maybe_apply_day_close_rescan()
       return False
+
+    def _set_delete_phase_active(active: bool) -> None:
+      nonlocal delete_phase_active
+      delete_phase_active = active
 
     def _maybe_handle_raw_removal_delete_phase():
       nonlocal delete_phase_active, pending_stats_files

@@ -5683,6 +5683,33 @@ def test_daily_tar_eligible_for_day_close_submit_requires_checkpoint_complete(tm
   assert reason == ""
 
 
+def test_daily_tar_eligible_for_day_close_submit_skips_closed_raw_on_disk(tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      daily_tar_eligible_for_day_close_submit,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2026-05-22.tar"))
+  open(tar_path, "wb").close()
+
+  class _ClosedRawCoord:
+    enabled = True
+
+    def has_closed_raw_on_disk(self, tar_norm):
+      return tar_norm == tar_path
+
+  eligible, reason = daily_tar_eligible_for_day_close_submit(
+      tar_path,
+      unprocessed_by_tar={tar_path: []},
+      disqualified_daily_tars=set(),
+      local_tz=timezone.utc,
+      day_raw_removal=_ClosedRawCoord(),
+  )
+  assert not eligible
+  assert reason == "closed_raw_on_disk"
+
+
 def test_build_unprocessed_raw_by_daily_tar_subtracts_checkpoint(tmp_path):
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       build_unprocessed_raw_by_daily_tar,

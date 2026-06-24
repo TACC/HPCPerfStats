@@ -319,6 +319,53 @@ def test_run_day_close_defers_on_handoff_instead_of_raw_delete_pending(
 
 
 @pytest.mark.django_db(databases=[])
+def test_run_day_close_defers_seal_when_closed_raw_on_disk(tmp_path, monkeypatch):
+  archive_dir = str(tmp_path / "archive")
+  daily_dir = str(tmp_path / "daily")
+  os.makedirs(archive_dir)
+  os.makedirs(daily_dir)
+  tar_norm = os.path.normpath(os.path.join(daily_dir, "2026-05-22.tar"))
+  open(tar_norm, "wb").close()
+  logs: list[str] = []
+  seal_calls = {"n": 0}
+
+  class _ClosedRawCoord:
+    enabled = True
+
+    def has_closed_raw_on_disk(self, _tar_path):
+      return True
+
+    def requeue_closed_raw_paths_for_ingest(self, _tar_path, *, reason):
+      return ["/raw/closed"]
+
+  monkeypatch.setattr(async_dc_mod.cfg, "get_sync_day_close_async_workers", lambda: 1)
+
+  coord = async_dc_mod.AsyncDayCloseCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=daily_dir,
+      local_tz=None,
+      log_fn=lambda msg, **_kw: logs.append(str(msg)),
+      get_disqualified_daily_tars=lambda: set(),
+      day_raw_removal_coordinator=_ClosedRawCoord(),
+  )
+
+  def counting_seal(_tar):
+    seal_calls["n"] += 1
+    return True
+
+  with mock.patch.object(coord, "_seal_day", side_effect=counting_seal):
+    coord._set_entry_status(tar_norm, "submitted", reason="test")
+    coord._run_day_close(tar_norm, "test")
+
+  entry = async_dc_mod._load_manifest(coord._manifest_path)["entries"][tar_norm]
+  assert entry.get("status") == "deferred"
+  assert entry.get("detail") == "waiting_on_ingest"
+  assert seal_calls["n"] == 0
+  assert any("seal deferred closed raw on disk" in line for line in logs)
+
+
+@pytest.mark.django_db(databases=[])
 def test_submit_day_close_no_resubmit_when_raw_delete_pending(tmp_path, monkeypatch):
   archive_dir = str(tmp_path / "archive")
   daily_dir = str(tmp_path / "daily")

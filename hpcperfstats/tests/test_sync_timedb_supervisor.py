@@ -6803,3 +6803,71 @@ def test_immediate_day_close_respects_sync_day_close_max_inflight(
     assert submitted[0] == tar_paths[0]
   finally:
     shutdown_requested[0] = False
+
+
+def test_apply_day_close_raw_removal_tar_drop_runs_during_chunk():
+  """Class B regression: tar-drop runs before batch-delete chunk wait."""
+  from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
+      run_supervisor_day_raw_removal_delete_pass,
+  )
+
+  delete_tar = "/tmp/daily/2025-12-03.tar"
+  tar_drop_tar = "/tmp/daily/2025-12-28.tar"
+  tar_drop_calls = []
+
+  class _FakeAsync:
+    def reconcile_supervisor_raw_delete_pending(self, reason=""):
+      del reason
+
+    def tar_paths_raw_delete_pending(self):
+      return [tar_drop_tar]
+
+  class _FakeDayRaw:
+    enabled = True
+
+    def any_needs_delete_phase(self):
+      return True
+
+    def any_needs_tar_drop_finish(self):
+      return False
+
+    def days_needing_tar_drop_oldest_first(self):
+      return []
+
+    def oldest_day_needing_delete(self):
+      return delete_tar
+
+    def days_needing_delete_oldest_first(self):
+      return [delete_tar]
+
+    def try_finish_tar_drop_if_ready(self, tar_norm):
+      tar_drop_calls.append(tar_norm)
+      return False
+
+    def phase(self, tar_norm):
+      del tar_norm
+      return "verification_complete"
+
+    def begin_deleting(self, tar_norm):
+      del tar_norm
+
+    def apply_batch_delete(self, tar_norm):
+      pytest.fail("batch delete must not run while chunk_in_progress")
+
+    def delete_phase_done(self, tar_norm):
+      del tar_norm
+      return False
+
+    def needs_delete_phase(self, tar_norm):
+      del tar_norm
+      return True
+
+  spin = run_supervisor_day_raw_removal_delete_pass(
+      _FakeDayRaw(),
+      _FakeAsync(),
+      chunk_in_progress=True,
+      finalize_day_close_delete=lambda _t: None,
+      sleep_fn=lambda _s: None,
+  )
+  assert spin is True
+  assert tar_drop_calls == [tar_drop_tar]

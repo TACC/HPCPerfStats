@@ -553,3 +553,122 @@ def test_verify_uses_provided_sealed_members_without_validation_scan(
   state._verify_body()
   assert validate_calls == []
   assert coord.verification_complete(tar_path)
+
+
+def test_run_supervisor_delete_pass_tar_drop_before_chunk_wait():
+  """Tar-drop must run even when batch delete waits on chunk_in_progress."""
+  from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
+      run_supervisor_day_raw_removal_delete_pass,
+  )
+
+  delete_tar = "/tmp/daily/2025-12-03.tar"
+  tar_drop_tar = "/tmp/daily/2025-12-28.tar"
+  tar_drop_calls = []
+  delete_calls = []
+  chunk_wait_logs = []
+
+  class _FakeAsync:
+    def reconcile_supervisor_raw_delete_pending(self, reason=""):
+      del reason
+
+    def tar_paths_raw_delete_pending(self):
+      return [tar_drop_tar]
+
+  class _FakeDayRaw:
+    enabled = True
+
+    def any_needs_delete_phase(self):
+      return True
+
+    def any_needs_tar_drop_finish(self):
+      return False
+
+    def days_needing_tar_drop_oldest_first(self):
+      return []
+
+    def oldest_day_needing_delete(self):
+      return delete_tar
+
+    def days_needing_delete_oldest_first(self):
+      return [delete_tar]
+
+    def try_finish_tar_drop_if_ready(self, tar_norm):
+      tar_drop_calls.append(tar_norm)
+      return False
+
+    def phase(self, tar_norm):
+      del tar_norm
+      return PHASE_VERIFICATION_COMPLETE
+
+    def begin_deleting(self, tar_norm):
+      del tar_norm
+
+    def apply_batch_delete(self, tar_norm):
+      delete_calls.append(tar_norm)
+      return 0
+
+    def delete_phase_done(self, tar_norm):
+      del tar_norm
+      return False
+
+    def needs_delete_phase(self, tar_norm):
+      del tar_norm
+      return True
+
+  spin = run_supervisor_day_raw_removal_delete_pass(
+      _FakeDayRaw(),
+      _FakeAsync(),
+      chunk_in_progress=True,
+      finalize_day_close_delete=lambda _t: None,
+      sleep_fn=lambda _s: None,
+      log_chunk_wait=lambda blocking_tar, n: chunk_wait_logs.append(
+          (blocking_tar, n),
+      ),
+  )
+  assert spin is True
+  assert tar_drop_calls == [tar_drop_tar]
+  assert delete_calls == []
+  assert chunk_wait_logs == [(delete_tar, 1)]
+
+
+def test_discover_closed_raw_on_disk_handoffs_phase_done_verified(tmp_path):
+  day = datetime(2026, 5, 22)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  handoffs = []
+
+  def _on_handoff(tar_norm, paths, reason):
+    handoffs.append((tar_norm, list(paths), reason))
+
+  coord = _make_coordinator(
+      tmp_path,
+      ingest_ready_fn=lambda _p: True,
+      on_handoff_to_ingest=_on_handoff,
+  )
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), zst, "verified", "verified")
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["verified_count"] = 1
+    state._manifest["completed_at"] = time.time()
+    _save_manifest(state._manifest_path, state._manifest)
+
+  coord2 = _make_coordinator(
+      tmp_path,
+      ingest_ready_fn=lambda _p: True,
+      on_handoff_to_ingest=_on_handoff,
+  )
+  found = coord2.discover_closed_raw_on_disk_handoffs()
+  assert len(found) == 1
+  assert found[0][0] == os.path.normpath(tar_path)
+  assert str(seg) in found[0][1]
+  assert not coord2.should_handoff_to_ingest(tar_path)
+
+  requeued = coord2.requeue_closed_raw_paths_for_ingest(
+      tar_path,
+      reason="unit_closed_raw",
+  )
+  assert requeued == [str(seg)]
+  assert handoffs == [
+      (os.path.normpath(tar_path), [str(seg)], "unit_closed_raw"),
+  ]

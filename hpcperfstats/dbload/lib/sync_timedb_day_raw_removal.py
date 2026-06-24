@@ -624,6 +624,72 @@ class _DayRawRemovalState:
     return deleted
 
 
+def run_supervisor_day_raw_removal_delete_pass(
+    day_raw_removal,
+    async_day_close,
+    *,
+    chunk_in_progress: bool,
+    finalize_day_close_delete: Callable[[str], None],
+    sleep_fn: Callable[[float], None],
+    log_chunk_wait: Optional[Callable[[Optional[str], int], None]] = None,
+    on_delete_batch_begin: Optional[Callable[[], None]] = None,
+    on_delete_batch_end: Optional[Callable[[], None]] = None,
+) -> bool:
+  """One supervisor delete-driver pass; tar-drop runs before batch-delete chunk wait.
+
+  Returns True when the caller should keep spinning the delete driver.
+  """
+  if day_raw_removal is None or not day_raw_removal.enabled:
+    return False
+  if async_day_close is not None:
+    async_day_close.reconcile_supervisor_raw_delete_pending(reason="delete_pass")
+  needs_delete = day_raw_removal.any_needs_delete_phase()
+  needs_tar_drop = day_raw_removal.any_needs_tar_drop_finish()
+  async_tar_drop = (
+      async_day_close.tar_paths_raw_delete_pending()
+      if async_day_close is not None
+      else []
+  )
+  if not needs_delete and not needs_tar_drop and not async_tar_drop:
+    return False
+  tar_drop_targets: list[str] = []
+  if needs_tar_drop:
+    tar_drop_targets.extend(day_raw_removal.days_needing_tar_drop_oldest_first())
+  for tar_norm in async_tar_drop:
+    if tar_norm not in tar_drop_targets:
+      tar_drop_targets.append(tar_norm)
+  for tar_norm in tar_drop_targets:
+    if day_raw_removal.try_finish_tar_drop_if_ready(tar_norm):
+      finalize_day_close_delete(tar_norm)
+  if needs_delete:
+    if chunk_in_progress:
+      blocking_tar = day_raw_removal.oldest_day_needing_delete()
+      sleep_fn(0.1)
+      if log_chunk_wait is not None:
+        log_chunk_wait(blocking_tar, len(tar_drop_targets))
+      return True
+    if on_delete_batch_begin is not None:
+      on_delete_batch_begin()
+    try:
+      for tar_norm in day_raw_removal.days_needing_delete_oldest_first():
+        if day_raw_removal.phase(tar_norm) == PHASE_VERIFICATION_COMPLETE:
+          day_raw_removal.begin_deleting(tar_norm)
+        deleted = day_raw_removal.apply_batch_delete(tar_norm)
+        if day_raw_removal.delete_phase_done(tar_norm):
+          finalize_day_close_delete(tar_norm)
+          continue
+        if (
+            deleted == 0
+            and day_raw_removal.needs_delete_phase(tar_norm)
+            and not day_raw_removal.delete_phase_done(tar_norm)
+        ):
+          continue
+    finally:
+      if on_delete_batch_end is not None:
+        on_delete_batch_end()
+  return False
+
+
 class DayRawRemovalCoordinator:
   """Registry of per-day verify/delete state machines."""
 
@@ -787,6 +853,64 @@ class DayRawRemovalCoordinator:
 
   def should_handoff_to_ingest(self, tar_path: str) -> bool:
     return self._get_or_create_day(tar_path).should_handoff_day_close_to_ingest()
+
+  def has_closed_raw_on_disk(self, tar_path: str) -> bool:
+    return self._get_or_create_day(tar_path)._has_closed_raw_existing_on_disk()
+
+  def closed_raw_paths_on_disk(self, tar_path: str) -> List[str]:
+    state = self._get_or_create_day(tar_path)
+    return [
+        path
+        for path in state._closed_raw_paths_on_disk()
+        if os.path.isfile(path)
+    ]
+
+  def requeue_closed_raw_paths_for_ingest(
+      self,
+      tar_path: str,
+      *,
+      reason: str,
+  ) -> List[str]:
+    """Requeue every closed raw path on disk for ingest (checkpoint-complete days)."""
+    if not self.enabled or self.on_handoff_to_ingest is None:
+      return []
+    paths = self.closed_raw_paths_on_disk(tar_path)
+    if not paths:
+      return []
+    tar_norm = os.path.normpath(tar_path)
+    try:
+      self.on_handoff_to_ingest(tar_norm, paths, reason)
+    except Exception:
+      if self.log_fn:
+        self.log_fn(
+            "Day raw removal closed-raw handoff callback failed tar=%s"
+            % tar_norm,
+            flush=True,
+        )
+      return []
+    return paths
+
+  def discover_closed_raw_on_disk_handoffs(self) -> List[Tuple[str, List[str]]]:
+    """Boot-time handoff for days with closed raw on disk (any manifest entry status)."""
+    if not self.enabled:
+      return []
+    manifest_dir = day_removal_manifest_dir(self.archive_data_dir)
+    if not os.path.isdir(manifest_dir):
+      return []
+    handoffs: List[Tuple[str, List[str]]] = []
+    for fname in sorted(os.listdir(manifest_dir)):
+      if not fname.endswith(".json"):
+        continue
+      tar_path = os.path.join(
+          self.tgz_archive_dir,
+          fname.replace(".json", ".tar"),
+      )
+      if not os.path.isfile(tar_path) and not os.path.isfile(tar_path + ".zst"):
+        continue
+      paths = self.closed_raw_paths_on_disk(tar_path)
+      if paths:
+        handoffs.append((os.path.normpath(tar_path), paths))
+    return handoffs
 
   def complete_handoff_to_ingest(
       self,

@@ -768,8 +768,16 @@ class ArchiveJanitor:
         day_phases=day_phases,
         remaining_raw_by_gz=remaining,
         local_tz=self.local_tz,
+        day_raw_removal=self.day_raw_removal_coordinator,
     )
     if not eligible:
+      if skip_reason == "closed_raw_on_disk":
+        coord = self.day_raw_removal_coordinator
+        if coord is not None:
+          coord.requeue_closed_raw_paths_for_ingest(
+              tar_norm,
+              reason="janitor_closed_raw_submit_guard",
+          )
       if skip_reason and self.log_fn:
         self.log_fn(
             "janitor: day_close submit skip tar=%s reason=%s"

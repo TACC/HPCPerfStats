@@ -1403,6 +1403,50 @@ def test_enqueue_immediate_day_close_submits_async_when_eligible(tmp_path):
   ]
 
 
+def test_enqueue_immediate_day_close_skips_closed_raw_and_requeues(tmp_path):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2026-05-22.tar"))
+  open(tar_path, "wb").close()
+  submit_calls = []
+  requeue_calls = []
+
+  class _FakeCoord:
+    def submit_day_close(self, tar, *, reason, disqualified_daily_tars=None):
+      submit_calls.append((tar, reason))
+      return True
+
+    def active_or_submitted_tar_paths(self):
+      return set()
+
+    def entry_progress_snapshot(self, _tar_path):
+      return {}
+
+  class _ClosedRawCoord:
+    enabled = True
+
+    def has_closed_raw_on_disk(self, tar_norm):
+      return tar_norm == tar_path
+
+    def requeue_closed_raw_paths_for_ingest(self, tar_norm, *, reason):
+      requeue_calls.append((tar_norm, reason))
+      return ["/raw/closed"]
+
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      async_day_close_coordinator=_FakeCoord(),
+      day_raw_removal_coordinator=_ClosedRawCoord(),
+      get_day_close_candidate_inputs=lambda: {
+          "unprocessed_by_tar": {tar_path: []},
+      },
+  )
+  assert not janitor.enqueue_immediate_day_close(tar_path, reason="chunk_end")
+  assert submit_calls == []
+  assert requeue_calls == [
+      (tar_path, "janitor_closed_raw_submit_guard"),
+  ]
+
+
 def test_enqueue_immediate_day_close_many_signals_once(tmp_path):
   daily_dir = tmp_path / "daily"
   daily_dir.mkdir()

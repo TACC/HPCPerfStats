@@ -479,6 +479,21 @@ class AsyncDayCloseCoordinator:
         return
       if self._try_complete_day_close_tail_without_reseal(tar_norm):
         return
+      coord = self.day_raw_removal_coordinator
+      if coord is not None and bool(getattr(coord, "enabled", False)):
+        if coord.has_closed_raw_on_disk(tar_norm):
+          paths = coord.requeue_closed_raw_paths_for_ingest(
+              tar_norm,
+              reason="async_seal_closed_raw_guard",
+          )
+          self.defer_for_ingest_handoff(tar_norm)
+          self.log_fn(
+              "janitor: async day_close seal deferred closed raw on disk "
+              "tar=%s paths=%d"
+              % (tar_norm, len(paths)),
+              flush=True,
+          )
+          return
       self._touch_manifest("sealing", tar_norm=tar_norm)
       self._set_entry_status(tar_norm, "sealing", reason=reason)
       if not self._seal_day(tar_norm):
