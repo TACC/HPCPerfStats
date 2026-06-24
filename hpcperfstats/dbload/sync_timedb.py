@@ -5233,10 +5233,17 @@ def run_sync_timedb_supervisor_loop(
             delete_driver=True,
         )
 
+      chunk_day_hint = None
+      if chunk_in_progress and active_chunk_ingest_tracker is not None:
+        chunk_day_hint = _calendar_day_hint_from_paths(
+            active_chunk_ingest_tracker.sample_in_flight(),
+        ) or None
+
       spin = run_supervisor_day_raw_removal_delete_pass(
           day_raw_removal,
           async_day_close,
           chunk_in_progress=chunk_in_progress,
+          chunk_calendar_day_hint=chunk_day_hint,
           finalize_day_close_delete=_finalize_day_close_raw_removal_delete,
           sleep_fn=sleep_until_shutdown,
           log_chunk_wait=_log_chunk_wait,

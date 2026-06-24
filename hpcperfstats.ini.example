@@ -531,6 +531,9 @@ sync_ingest_malloc_trim_after_file = yes
 # Max on-disk unprocessed paths per day for startup tail ingest (default 100).
 # sync_startup_tail_ingest_max_files = 100
 
+# Wall-clock budget for startup tail ingest thread (0 = disabled; recommend 600 on large tails).
+# sync_startup_tail_ingest_max_wall_seconds = 0
+
 # Startup checkpoint-driven async DAY_CLOSE for ingest-complete calendar days (default yes).
 # sync_startup_day_close_preflight = yes
 

@@ -6200,6 +6200,94 @@ def test_supervisor_startup_drain_completes_when_day_raw_waiting_on_ingest_and_t
     shutdown_requested[0] = False
 
 
+def test_supervisor_startup_drain_opens_when_verified_pending_delete_only(
+    monkeypatch, tmp_path, capsys):
+  """Verified-only day raw delete does not block startup drain gate."""
+  from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
+      PHASE_VERIFICATION_COMPLETE,
+  )
+
+  shutdown_requested[0] = False
+  rescan_calls = {"n": 0}
+
+  class _VerifiedPendingDayCoord:
+    enabled = True
+
+    def discover_manifest_handoffs(self):
+      return []
+
+    def discover_closed_raw_on_disk_handoffs(self):
+      return []
+
+    def any_blocks_startup_drain(self):
+      return False
+
+    def any_needs_delete_phase(self):
+      return True
+
+    def any_needs_tar_drop_finish(self):
+      return False
+
+    def count_days_waiting_on_ingest(self):
+      return 0
+
+    def days_needing_delete_oldest_first(self):
+      return [os.path.normpath(str(tmp_path / "daily" / "2025-12-03.tar"))]
+
+    def oldest_day_needing_delete(self):
+      return self.days_needing_delete_oldest_first()[0]
+
+    def phase(self, tar_norm):
+      del tar_norm
+      return PHASE_VERIFICATION_COMPLETE
+
+    def begin_deleting(self, tar_norm):
+      del tar_norm
+
+    def apply_batch_delete(self, tar_norm):
+      del tar_norm
+      return 0
+
+    def delete_phase_done(self, tar_norm):
+      del tar_norm
+      return False
+
+    def needs_delete_phase(self, tar_norm):
+      del tar_norm
+      return True
+
+    def days_needing_tar_drop_oldest_first(self):
+      return []
+
+    def consumed_paths(self):
+      return set()
+
+    def shutdown(self, wait=True):
+      del wait
+
+  try:
+    def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
+      rescan_calls["n"] += 1
+      shutdown_requested[0] = True
+      return []
+
+    archive_dir, _ = _startup_tail_drain_patches(
+        monkeypatch,
+        tmp_path,
+        live_unprocessed_fn=lambda *_a, **_k: {},
+    )
+    _supervisor_day_raw_removal_patches(monkeypatch, _VerifiedPendingDayCoord())
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    st.run_sync_timedb_supervisor_loop(
+        str(archive_dir), "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
+    out = capsys.readouterr().out
+    assert "startup ingest maintenance complete" in out
+    assert "startup maintenance idle; ingest may begin" in out
+    assert rescan_calls["n"] >= 1
+  finally:
+    shutdown_requested[0] = False
+
+
 def test_supervisor_startup_drain_blocked_reason_logged(
     monkeypatch, tmp_path, capsys):
   shutdown_requested[0] = False
@@ -6616,6 +6704,9 @@ def test_supervisor_startup_handoff_paths_ingested_at_queue_head(
 
       def discover_manifest_handoffs(self):
         return [(tar_norm, [handoff_path])]
+
+      def discover_closed_raw_on_disk_handoffs(self):
+        return []
 
       def any_blocks_startup_drain(self):
         return False

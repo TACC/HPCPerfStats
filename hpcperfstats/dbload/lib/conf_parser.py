@@ -185,6 +185,7 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_startup_drain_day_close_before_ingest"),
     ("PIPELINE", "sync_startup_tail_ingest_enabled"),
     ("PIPELINE", "sync_startup_tail_ingest_max_files"),
+    ("PIPELINE", "sync_startup_tail_ingest_max_wall_seconds"),
     ("PIPELINE", "sync_day_close_candidate_report"),
     ("PIPELINE", "sync_startup_day_close_preflight"),
     ("PIPELINE", "sync_startup_day_close_budget_seconds"),
@@ -2810,6 +2811,18 @@ def get_sync_startup_tail_ingest_max_files():
   """Max on-disk unprocessed paths per calendar day for startup tail ingest."""
   _ensure_cfg_loaded()
   return max(1, _pipeline_getint("sync_startup_tail_ingest_max_files", fallback=100))
+
+
+def get_sync_startup_tail_ingest_max_wall_seconds():
+  """Wall-clock budget for startup tail ingest thread (0 = disabled)."""
+  _ensure_cfg_loaded()
+  return max(
+      0.0,
+      float(_pipeline_get(
+          "sync_startup_tail_ingest_max_wall_seconds",
+          fallback="0",
+      )),
+  )
 
 
 def get_sync_day_close_candidate_report():

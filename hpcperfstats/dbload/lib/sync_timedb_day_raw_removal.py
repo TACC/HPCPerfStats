@@ -175,7 +175,14 @@ class _DayRawRemovalState:
         maintenance_snapshot=self._resolve_maintenance_snapshot(),
     )
 
+  def _manifest_paths_on_disk(self) -> List[str]:
+    return [path for path, entry in self._manifest_entries_on_disk()]
+
   def _closed_raw_paths_on_disk(self) -> List[str]:
+    if self.delete_phase_done():
+      manifest_paths = self._manifest_paths_on_disk()
+      if manifest_paths:
+        return manifest_paths
     remaining = self._build_remaining_raw_for_daily_tar()
     paths: List[str] = []
     for raw_list in (remaining or {}).values():
@@ -183,6 +190,11 @@ class _DayRawRemovalState:
     return paths
 
   def _has_closed_raw_existing_on_disk(self) -> bool:
+    if self.delete_phase_done():
+      if self._manifest_paths_on_disk():
+        return True
+      if self._unmanifested_closed_raw_paths():
+        return True
     remaining = self._build_remaining_raw_for_daily_tar()
     zst_path, _gz_path = compressed_sibling_paths(self.tar_path)
     return remaining_raw_by_gz_has_paths_on_disk(remaining, zst_path)
@@ -263,6 +275,8 @@ class _DayRawRemovalState:
   def _unmanifested_closed_raw_paths(self) -> List[str]:
     with self._lock:
       entries = dict(self._manifest.get("entries", {}))
+    if self.delete_phase_done() and self._manifest_paths_on_disk():
+      return []
     unmanifested: List[str] = []
     for path in self._closed_raw_paths_on_disk():
       if not os.path.isfile(path):
@@ -323,6 +337,11 @@ class _DayRawRemovalState:
     if self.phase() == PHASE_VERIFYING:
       return True
     if self.paths_pending_delete():
+      if (
+          self.phase() == PHASE_VERIFICATION_COMPLETE
+          and not self._async_verify_in_flight()
+      ):
+        return False
       return True
     if self.phase() == PHASE_DELETING:
       return True
@@ -624,11 +643,30 @@ class _DayRawRemovalState:
     return deleted
 
 
+def day_raw_delete_safe_during_chunk(
+    day_raw_removal,
+    chunk_calendar_day_hint: Optional[str],
+) -> bool:
+  """True when oldest pending delete day is calendar-disjoint from in-flight ingest."""
+  if not chunk_calendar_day_hint:
+    return False
+  if day_raw_removal is None or not day_raw_removal.enabled:
+    return False
+  blocking_tar = day_raw_removal.oldest_day_needing_delete()
+  if not blocking_tar:
+    return False
+  delete_day = calendar_date_from_daily_tar_path(blocking_tar)
+  if delete_day is None:
+    return False
+  return delete_day.isoformat() != chunk_calendar_day_hint
+
+
 def run_supervisor_day_raw_removal_delete_pass(
     day_raw_removal,
     async_day_close,
     *,
     chunk_in_progress: bool,
+    chunk_calendar_day_hint: Optional[str] = None,
     finalize_day_close_delete: Callable[[str], None],
     sleep_fn: Callable[[float], None],
     log_chunk_wait: Optional[Callable[[Optional[str], int], None]] = None,
@@ -663,11 +701,15 @@ def run_supervisor_day_raw_removal_delete_pass(
       finalize_day_close_delete(tar_norm)
   if needs_delete:
     if chunk_in_progress:
-      blocking_tar = day_raw_removal.oldest_day_needing_delete()
-      sleep_fn(0.1)
-      if log_chunk_wait is not None:
-        log_chunk_wait(blocking_tar, len(tar_drop_targets))
-      return True
+      if not day_raw_delete_safe_during_chunk(
+          day_raw_removal,
+          chunk_calendar_day_hint,
+      ):
+        blocking_tar = day_raw_removal.oldest_day_needing_delete()
+        sleep_fn(0.1)
+        if log_chunk_wait is not None:
+          log_chunk_wait(blocking_tar, len(tar_drop_targets))
+        return True
     if on_delete_batch_begin is not None:
       on_delete_batch_begin()
     try:

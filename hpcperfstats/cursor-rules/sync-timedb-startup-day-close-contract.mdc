@@ -45,7 +45,8 @@ After each discover slice builds `unprocessed_by_tar`:
 3. **Tail thread** starts at boot **in parallel** with discover; **does not** wait for `discover_done()` before consuming the first enqueue.
 4. Tail ingest uses the **ingest pool imap sliding-window path** (same as main ingest; **`HPCPERFSTATS_SYNC_TIMEDB_INGEST_INLINE=1`** forces supervisor-thread serial ingest for tests), archive finalize, flush checkpoint, submit async **`DAY_CLOSE`** on checkpoint-complete.
 5. Discover **defers async submit** while **`StartupTailIngestCoordinator.pending_count() > 0`** (tail-first submit priority).
-6. **`tail_ingest_done()`** when **`discover_done()` AND queue empty AND no in-progress day**.
+6. **`tail_ingest_done()`** when **`discover_done()` AND queue empty AND no in-progress day**, **or** when **`sync_startup_tail_ingest_max_wall_seconds`** budget is exceeded (remaining queued days defer to main ingest).
+7. Days with any path exceeding giant ingest budget (`is_giant_ingest_budget`) are **not** tail-enqueued; log **`reason=giant_ingest_budget`** once per tar (main ingest handles).
 
 **Only days released by discover slices** may be tail-ingested (tail thread must not live-scan ahead of slice classification).
 
@@ -56,11 +57,11 @@ When **`sync_startup_drain_day_close_before_ingest=yes`**, before the first resc
 - `StartupTailIngestCoordinator.tail_ingest_done()` (when enabled) — **always blocks** main ingest until startup tail queue is drained
 - `StartupDayClosePreflight.discover_done()` (when enabled) — **`phase=done` and `pending_retry` empty**; **`pending_eligible` does not block**
 - `StartupRawRemovalPreflight.delete_phase_done()` (when enabled)
-- `DayRawRemovalCoordinator.any_blocks_startup_drain()` false (when enabled) — days in `verification_complete` with only ingest-gated retryable skips on disk do **not** block startup; main ingest clears them after the gate. Mid-run delete driver still uses `any_needs_delete_phase()` via `_apply_day_close_raw_removal_deletes`.
+- `DayRawRemovalCoordinator.any_blocks_startup_drain()` false (when enabled) — days in `verification_complete` with only ingest-gated retryable skips on disk do **not** block startup; **`verification_complete` with only verified paths pending batch delete** also does **not** block (delete driver runs calendar-disjoint during tail ingest). Main ingest clears retryable skips after the gate. Mid-run delete driver still uses `any_needs_delete_phase()` via `_apply_day_close_raw_removal_deletes`.
 
 **Does not block** on `AsyncDayCloseCoordinator.active_or_submitted_tar_paths()` or manifest **`pending_eligible`** — main ingest may proceed while async seal/zstd continues and startup-deferred eligible days are picked up by chunk-end / janitor submit.
 
-**Supervisor delete pass ordering:** `_apply_day_close_raw_removal_deletes` (via `run_supervisor_day_raw_removal_delete_pass`) runs **`try_finish_tar_drop_if_ready`** for `days_needing_tar_drop_oldest_first` and async manifest **`raw_delete_pending`** tars **before** waiting on **`chunk_in_progress`** for **`apply_batch_delete`**. Batch delete alone blocks on ingest chunk; tar-drop must not. When batch delete waits, log **`sync_timedb: day raw delete waiting on ingest chunk blocking_tar=… async_tar_drop_n=…`** plus **`startup drain blocked reason=trigger:chunk_wait_day_raw_delete`**.
+**Supervisor delete pass ordering:** `_apply_day_close_raw_removal_deletes` (via `run_supervisor_day_raw_removal_delete_pass`) runs **`try_finish_tar_drop_if_ready`** for `days_needing_tar_drop_oldest_first` and async manifest **`raw_delete_pending`** tars **before** waiting on **`chunk_in_progress`** for **`apply_batch_delete`**. Batch delete alone blocks on ingest chunk when the oldest pending delete calendar day **matches** the in-flight ingest day hint from **`active_chunk_ingest_tracker.sample_in_flight()`**; when calendar-disjoint (e.g. May tail ingest + December verified delete), batch delete proceeds via **`day_raw_delete_safe_during_chunk`**. Tar-drop must not wait on chunk. When batch delete waits on same-day chunk, log **`sync_timedb: day raw delete waiting on ingest chunk blocking_tar=… async_tar_drop_n=…`** plus **`startup drain blocked reason=trigger:chunk_wait_day_raw_delete`**.
 
 **Closed raw on disk submit guard:** `daily_tar_eligible_for_day_close_submit` returns **`closed_raw_on_disk`** when `DayRawRemovalCoordinator.has_closed_raw_on_disk(tar)` is true (checkpoint-complete days with any closed raw file on disk — not only retryable-skip manifest entries). Startup discover, janitor immediate/scheduled submit, and `AsyncDayCloseCoordinator.submit_day_close` must **not** submit async DAY_CLOSE; instead **`requeue_closed_raw_paths_for_ingest`** + **`defer_for_ingest_handoff`**. Boot recovery also runs **`discover_closed_raw_on_disk_handoffs`** (any manifest entry status). In-flight async worker **`_run_day_close`** defers before **`_seal_day`** when closed raw remains.
 
@@ -76,6 +77,7 @@ Delete phases are driven via `_maybe_handle_raw_removal_delete_phase()` during t
 - `sync_startup_drain_day_close_before_ingest` (default yes)
 - `sync_startup_tail_ingest_enabled` (default yes) — pipelined tail ingest thread during startup maintenance
 - `sync_startup_tail_ingest_max_files` (default 100) — max on-disk unprocessed paths per calendar day eligible for startup tail ingest
+- `sync_startup_tail_ingest_max_wall_seconds` (default 0, disabled) — wall-clock budget for startup tail ingest thread; when exceeded, **`tail_ingest_done=True`** even if queue non-empty (recommend **600** on large tails)
 - `sync_startup_day_close_budget_seconds` (default 300) — applies to **submit** loop after scans
 - `sync_startup_day_close_max_inflight` (default = `archive_seal_parallel_workers`, typically 4) — startup discover + janitor `reason=startup` submit cap; backoff when `active_or_submitted_tar_paths()` ≥ cap
 - `sync_startup_day_close_days_per_slice` (default = startup max inflight) — max submits per discover slice
@@ -113,6 +115,8 @@ sync_timedb: startup tail ingest enqueue day=YYYY-MM-DD paths=N
 sync_timedb: startup tail ingest begin day=YYYY-MM-DD paths=N max=100
 sync_timedb: startup tail ingest complete day=… ingested=N failed=N checkpoint_complete=yes|no
 sync_timedb: startup tail ingest defer day=… paths=N reason=above_max_files max=100
+sync_timedb: startup tail ingest defer day=… paths=N reason=giant_ingest_budget giants=N
+sync_timedb: startup tail ingest wall budget exceeded max_wall_s=N pending_days=N
 sync_timedb: startup tail ingest submitted day_close tar=…/YYYY-MM-DD.tar
 sync_timedb: startup tail ingest phase complete
 sync_timedb: day raw delete waiting on ingest chunk blocking_tar=…/YYYY-MM-DD.tar async_tar_drop_n=N
@@ -133,7 +137,7 @@ sync_timedb: pending reconcile cap done elapsed_s=… oldest_tar=… blocked_n=�
 
 ## Manifest-fast handoff (`phase=done`)
 
-When per-day raw removal manifest **`phase=done`**, handoff eligibility (`should_handoff_to_ingest`, `handoff_paths_for_ingest`, `_only_waiting_on_ingest_blocks_completion`, `discover_manifest_handoffs`) uses **manifest + `os.path.isfile`** only — **no** nested `build_remaining_raw_stats_by_daily_gz` full collect. This avoids OOM/stall on large archives when async manifest is stuck at **`raw_delete_pending`** but verify already finished.
+When per-day raw removal manifest **`phase=done`**, handoff eligibility (`should_handoff_to_ingest`, `handoff_paths_for_ingest`, `_only_waiting_on_ingest_blocks_completion`, `discover_manifest_handoffs`, **`closed_raw_paths_on_disk`**, **`discover_closed_raw_on_disk_handoffs`**, **`has_closed_raw_on_disk`**) uses **manifest + `os.path.isfile`** only — **no** nested `build_remaining_raw_stats_by_daily_gz` full collect. This avoids OOM/stall on large archives when async manifest is stuck at **`raw_delete_pending`** but verify already finished, and unblocks boot **`startup_closed_raw_handoff`** recovery (e.g. 05-22 with hundreds of retryable skips on disk).
 
 **Handoff allowed when:** at least one manifest path exists on disk and every on-disk manifest entry is a retryable skip (not verified / pending delete).
 
@@ -144,10 +148,10 @@ When per-day raw removal manifest **`phase=done`**, handoff eligibility (`should
 ## Tests
 
 - `hpcperfstats/tests/test_sync_timedb_startup_day_close.py` (checkpoint-complete + quiescent submit, boot reconcile when `phase=done`, `discover_done` true with `pending_eligible`, false with `pending_retry`, async-saturated loop exit, tail-first submit deferral, pipelined tail enqueue)
-- `hpcperfstats/tests/test_sync_timedb_startup_tail_ingest.py` (coordinator queue, ingest before discover_done, phase complete)
+- `hpcperfstats/tests/test_sync_timedb_startup_tail_ingest.py` (coordinator queue, ingest before discover_done, phase complete, tail wall budget, giant defer)
 - `hpcperfstats/tests/test_sync_timedb_supervisor.py` (`test_supervisor_waits_for_startup_day_close_drain_before_ingest`, `test_supervisor_opens_ingest_when_discover_done_pending_eligible_only`, `test_supervisor_blocks_ingest_when_pending_retry`, `test_supervisor_startup_drain_disabled_allows_parallel_ingest`, `test_supervisor_failed_ingest_requeues_at_pending_head`, `test_supervisor_startup_tail_ingest_runs_during_drain`, `test_supervisor_startup_drain_completes_when_day_raw_waiting_on_ingest_and_tail_skip`, `test_supervisor_startup_drain_blocked_reason_logged`, gate clear with inflight async)
 - Archive/janitor/async helpers in `test_sync_timedb_archive.py`, `test_sync_timedb_janitor.py`, `test_sync_timedb_async_day_close.py` (including **`raw_delete_pending`** single-flight / no-resubmit, stale **`raw_delete_pending`** recovery, **`reconcile_supervisor_raw_delete_pending`** handoff, **`test_reconcile_supervisor_raw_delete_pending_handoffs_phase_done`**)
-- `hpcperfstats/tests/test_sync_timedb_day_raw_removal.py` (manifest-fast handoff when **`phase=done`**, snapshot-aware remaining raw, verified-on-disk handoff block, **`run_supervisor_day_raw_removal_delete_pass`** tar-drop-before-chunk-wait, **`discover_closed_raw_on_disk_handoffs`**)
+- `hpcperfstats/tests/test_sync_timedb_day_raw_removal.py` (manifest-fast handoff when **`phase=done`**, snapshot-aware remaining raw, verified-on-disk handoff block, **`run_supervisor_day_raw_removal_delete_pass`** tar-drop-before-chunk-wait, calendar-disjoint batch delete during chunk, **`discover_closed_raw_on_disk_handoffs`**, verified-only pending does not block startup drain)
 
 ## Overlap
 

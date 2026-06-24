@@ -672,3 +672,130 @@ def test_discover_closed_raw_on_disk_handoffs_phase_done_verified(tmp_path):
   assert handoffs == [
       (os.path.normpath(tar_path), [str(seg)], "unit_closed_raw"),
   ]
+
+
+def test_closed_raw_handoff_manifest_fast_phase_done_many_retryable_skip(
+    tmp_path, monkeypatch,
+):
+  day = datetime(2022, 5, 22)
+  host = tmp_path / "n.cluster.integration.test"
+  host.mkdir(parents=True, exist_ok=True)
+  segs = []
+  for hour in range(10):
+    ts = int(datetime(day.year, day.month, day.day, hour, 0, 0).timestamp())
+    seg = host / str(ts)
+    seg.write_text("%d job1 cn001\nline\n" % ts)
+    os.utime(seg, (ts, ts))
+    segs.append(seg)
+  tar_path, zst = _seal_day(tmp_path, segs[0], day)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
+  state = coord._get_or_create_day(tar_path)
+  for seg in segs:
+    state._record_entry(
+        str(seg),
+        zst,
+        "skipped_not_in_archive",
+        "not_in_sealed_archive",
+    )
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["skipped_count"] = len(segs)
+    state._manifest["completed_at"] = time.time()
+    _save_manifest(state._manifest_path, state._manifest)
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+      lambda *_a, **_k: pytest.fail("manifest-fast closed raw must not full-scan when phase=done"),
+  )
+  coord2 = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
+  found = coord2.discover_closed_raw_on_disk_handoffs()
+  assert len(found) == 1
+  assert found[0][0] == os.path.normpath(tar_path)
+  assert set(found[0][1]) == {str(seg) for seg in segs}
+  assert coord2.closed_raw_paths_on_disk(tar_path) == [str(seg) for seg in segs]
+  assert coord2.has_closed_raw_on_disk(tar_path)
+
+
+def test_blocks_startup_drain_false_when_only_verified_pending_delete(tmp_path):
+  day = datetime(2025, 12, 3)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, _zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path)
+  state = coord._get_or_create_day(tar_path)
+  state._verify_body()
+  assert coord.paths_pending_delete()
+  assert not coord.any_blocks_startup_drain()
+  assert state.blocks_startup_drain() is False
+
+
+def test_batch_delete_runs_during_chunk_when_calendar_disjoint():
+  from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
+      run_supervisor_day_raw_removal_delete_pass,
+  )
+
+  delete_tar = "/tmp/daily/2025-12-03.tar"
+  delete_calls = []
+  chunk_wait_logs = []
+
+  class _FakeAsync:
+    def reconcile_supervisor_raw_delete_pending(self, reason=""):
+      del reason
+
+    def tar_paths_raw_delete_pending(self):
+      return []
+
+  class _FakeDayRaw:
+    enabled = True
+
+    def any_needs_delete_phase(self):
+      return True
+
+    def any_needs_tar_drop_finish(self):
+      return False
+
+    def days_needing_tar_drop_oldest_first(self):
+      return []
+
+    def oldest_day_needing_delete(self):
+      return delete_tar
+
+    def days_needing_delete_oldest_first(self):
+      return [delete_tar]
+
+    def try_finish_tar_drop_if_ready(self, tar_norm):
+      del tar_norm
+      return False
+
+    def phase(self, tar_norm):
+      del tar_norm
+      return PHASE_VERIFICATION_COMPLETE
+
+    def begin_deleting(self, tar_norm):
+      del tar_norm
+
+    def apply_batch_delete(self, tar_norm):
+      delete_calls.append(tar_norm)
+      return 1
+
+    def delete_phase_done(self, tar_norm):
+      del tar_norm
+      return False
+
+    def needs_delete_phase(self, tar_norm):
+      del tar_norm
+      return True
+
+  spin = run_supervisor_day_raw_removal_delete_pass(
+      _FakeDayRaw(),
+      _FakeAsync(),
+      chunk_in_progress=True,
+      chunk_calendar_day_hint="2026-05-26",
+      finalize_day_close_delete=lambda _t: None,
+      sleep_fn=lambda _s: None,
+      log_chunk_wait=lambda blocking_tar, n: chunk_wait_logs.append(
+          (blocking_tar, n),
+      ),
+  )
+  assert spin is False
+  assert delete_calls == [delete_tar]
+  assert chunk_wait_logs == []

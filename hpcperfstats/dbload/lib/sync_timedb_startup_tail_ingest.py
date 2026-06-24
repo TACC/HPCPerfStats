@@ -16,6 +16,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     calendar_date_from_daily_tar_path,
     unprocessed_tar_paths_still_on_disk,
 )
+from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import is_giant_ingest_budget
 
 
 class StartupTailIngestCoordinator:
@@ -46,6 +47,7 @@ class StartupTailIngestCoordinator:
     self._queue: List[Tuple[date, str, List[str]]] = []
     self._seen_tars: set[str] = set()
     self._deferred_above_max: set[str] = set()
+    self._deferred_giant: set[str] = set()
     self._in_progress_tar: Optional[str] = None
     self._tail_ingest_done = False
     self._executor: Optional[ThreadPoolExecutor] = None
@@ -66,6 +68,10 @@ class StartupTailIngestCoordinator:
     """Idempotent enqueue for one calendar day (``paths`` on disk)."""
     tar_norm = os.path.normpath(str(tar_norm or ""))
     if not tar_norm or not paths:
+      return False
+    giant_paths = [path for path in paths if is_giant_ingest_budget(path)]
+    if giant_paths:
+      self.note_deferred_giant(tar_norm, len(giant_paths), len(paths))
       return False
     with self._condition:
       if tar_norm in self._seen_tars:
@@ -107,6 +113,34 @@ class StartupTailIngestCoordinator:
           "sync_timedb: startup tail ingest defer day=%s paths=%d "
           "reason=above_max_files max=%d"
           % (day_iso, path_count, max_files),
+          flush=True,
+      )
+
+  def note_deferred_giant(
+      self,
+      tar_norm: str,
+      giant_count: int,
+      path_count: int,
+  ) -> None:
+    """Log once per tar deferred because a path exceeds giant ingest budget."""
+    tar_norm = os.path.normpath(str(tar_norm or ""))
+    if not tar_norm:
+      return
+    with self._lock:
+      if (
+          tar_norm in self._deferred_giant
+          or tar_norm in self._seen_tars
+          or tar_norm in self._deferred_above_max
+      ):
+        return
+      self._deferred_giant.add(tar_norm)
+    day_date = calendar_date_from_daily_tar_path(tar_norm)
+    day_iso = day_date.isoformat() if day_date is not None else tar_norm
+    if self.log_fn:
+      self.log_fn(
+          "sync_timedb: startup tail ingest defer day=%s paths=%d "
+          "reason=giant_ingest_budget giants=%d"
+          % (day_iso, path_count, giant_count),
           flush=True,
       )
 
@@ -186,8 +220,23 @@ class StartupTailIngestCoordinator:
         role="startup-tail-ingest",
     )
     max_files = max(1, int(cfg.get_sync_startup_tail_ingest_max_files()))
+    max_wall_s = float(cfg.get_sync_startup_tail_ingest_max_wall_seconds())
+    wall_started = time.time()
     try:
       while not shutdown_requested[0]:
+        if max_wall_s > 0 and (time.time() - wall_started) >= max_wall_s:
+          with self._condition:
+            if not self._tail_ingest_done:
+              self._tail_ingest_done = True
+              if self.log_fn:
+                pending = len(self._queue) + (1 if self._in_progress_tar else 0)
+                self.log_fn(
+                    "sync_timedb: startup tail ingest wall budget exceeded "
+                    "max_wall_s=%.0f pending_days=%d"
+                    % (max_wall_s, pending),
+                    flush=True,
+                )
+          break
         item = self._pop_oldest_queued()
         if item is None:
           self._maybe_mark_done()

@@ -171,3 +171,49 @@ def test_tail_ingest_done_waits_for_discover_and_queue():
     time.sleep(0.05)
   coord.shutdown()
   assert coord.tail_ingest_done()
+
+
+def test_tail_ingest_budget_opens_gate_with_queued_days_remaining(monkeypatch):
+  discover_done = {"value": False}
+  coord = _make_coordinator(discover_done_fn=lambda: discover_done["value"])
+  monkeypatch.setattr(
+      cfg, "get_sync_startup_tail_ingest_max_wall_seconds", lambda: 0.05,
+  )
+  coord.enqueue_tail_day("/daily/2020-01-01.tar", ["/raw/a"])
+  coord.enqueue_tail_day("/daily/2020-01-02.tar", ["/raw/b"])
+  coord.start_async_tail_ingest()
+  deadline = time.time() + 5.0
+  while time.time() < deadline:
+    if coord.tail_ingest_done():
+      break
+    time.sleep(0.05)
+  coord.shutdown()
+  assert coord.tail_ingest_done()
+  assert len(coord._ingest_calls) < 2
+  budget_logs = [
+      call
+      for call in coord.log_fn.call_args_list
+      if call.args and "wall budget exceeded" in str(call.args[0])
+  ]
+  assert len(budget_logs) == 1
+
+
+def test_enqueue_tail_day_defers_giant_paths(monkeypatch, tmp_path):
+  giant = tmp_path / "giant"
+  giant.write_bytes(b"x" * 16)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_startup_tail_ingest."
+      "is_giant_ingest_budget",
+      lambda _path: True,
+  )
+  log = MagicMock()
+  coord = _make_coordinator(log_fn=log)
+  tar = os.path.normpath("/daily/2020-01-01.tar")
+  assert coord.enqueue_tail_day(tar, [str(giant)]) is False
+  assert coord.pending_count() == 0
+  giant_logs = [
+      call
+      for call in log.call_args_list
+      if call.args and "giant_ingest_budget" in str(call.args[0])
+  ]
+  assert len(giant_logs) == 1
