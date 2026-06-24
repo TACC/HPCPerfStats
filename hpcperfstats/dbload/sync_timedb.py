@@ -2979,6 +2979,69 @@ def _remove_processed_path(
   return True
 
 
+def _batch_remove_processed_paths(
+    paths,
+    processed_files,
+    processed_files_order,
+    checkpoint_entries,
+    checkpoint_path,
+    *,
+    file_states=None,
+    host_scan_hints=None,
+    persist=True,
+):
+  """Single-pass checkpoint clear for a path set (handoff hot path)."""
+  path_set = set()
+  paths_with_fp = {}
+  paths_without_fp = set()
+  for raw in paths or ():
+    if not raw:
+      continue
+    path = str(raw)
+    if not os.path.isfile(path):
+      continue
+    path_set.add(path)
+    fp = _path_fingerprint(path)
+    if fp is not None:
+      paths_with_fp[path] = fp
+    else:
+      paths_without_fp.add(path)
+
+  if not path_set:
+    return 0
+
+  for path in path_set:
+    processed_files.discard(path)
+    try:
+      processed_files_order.remove(path)
+    except ValueError:
+      pass
+    if file_states is not None:
+      file_states[path] = SyncFileState.DISCOVERED
+    if isinstance(host_scan_hints, dict):
+      host_scan_hints.pop(path, None)
+
+  kept = deque()
+  for entry in checkpoint_entries:
+    path = entry.get("path")
+    if path in paths_without_fp:
+      continue
+    if path in paths_with_fp:
+      fp = paths_with_fp[path]
+      if (
+          entry.get("size") == fp["size"]
+          and entry.get("mtime") == fp["mtime"]
+      ):
+        continue
+    kept.append(entry)
+  checkpoint_entries.clear()
+  checkpoint_entries.extend(kept)
+
+  if persist and checkpoint_path:
+    _save_sync_checkpoint(checkpoint_path, checkpoint_entries)
+  return len(path_set)
+
+
 def _insert_proc_data_individually(proc_stats_df):
   """Fallback: insert proc_data rows one by one, skipping duplicates.
 
@@ -4004,9 +4067,29 @@ def run_sync_timedb_supervisor_loop(
       tail = tail[:tail_budget]
     return head + tail
 
-  def _cap_pending_after_rescan(paths):
+  def _cap_pending_after_rescan(paths, *, handoff=False):
     cap_t0 = time.time()
     _snapshot, source = _resolve_reconcile_maintenance_snapshot()
+    if (
+        handoff
+        and not reconcile_refs["ingest_gate_cleared"]
+        and _snapshot is not None
+    ):
+      log_print(
+          "sync_timedb: pending reconcile cap begin source=%s handoff=light"
+          % source,
+          flush=True,
+      )
+      capped = _cap_pending_stats_with_handoff_priority(
+          _apply_handoff_priority_to_pending(paths),
+      )
+      log_print(
+          "sync_timedb: pending reconcile cap done elapsed_s=%.3f "
+          "handoff_light=1 blocked_n=0 capped_pending=%d"
+          % (time.time() - cap_t0, len(capped)),
+          flush=True,
+      )
+      return capped
     log_print(
         "sync_timedb: pending reconcile cap begin source=%s" % source,
         flush=True,
@@ -4793,6 +4876,9 @@ def run_sync_timedb_supervisor_loop(
 
   set_archive_members_invalidation_hook(_archive_members_invalidation_hook)
 
+  startup_handoff_recover_pending = deque()
+  handoff_requeued_tars_this_boot = set()
+
   def _on_day_close_pipeline_complete(_tar_path):
     nonlocal day_close_rescan_pending
     day_close_rescan_pending = True
@@ -4801,29 +4887,47 @@ def run_sync_timedb_supervisor_loop(
   def _requeue_day_close_handoff_paths(tar_norm, paths, reason):
     nonlocal pending_stats_files
     tar_norm = os.path.normpath(str(tar_norm or ""))
-    requeued = []
-    for path in paths or ():
-      if not path or not os.path.isfile(path):
-        continue
-      _remove_processed_path(
-          path,
-          processed_files,
-          processed_files_order,
-          checkpoint_entries,
-          checkpoint_path,
-          file_states=file_states,
-          host_scan_hints=host_scan_hints,
-          persist=False,
-      )
-      handoff_priority_paths.add(path)
-      requeued.append(path)
-    if not requeued:
+    if not tar_norm:
       return
+    if tar_norm in handoff_requeued_tars_this_boot:
+      log_print(
+          "sync_timedb: day_close handoff requeue skip day=%s reason=%s "
+          "detail=same_boot_duplicate"
+          % (
+              calendar_date_from_daily_tar_path(tar_norm).isoformat()
+              if calendar_date_from_daily_tar_path(tar_norm) is not None
+              else tar_norm,
+              reason or "",
+          ),
+          flush=True,
+      )
+      return
+    requeued_paths = [
+        str(path)
+        for path in (paths or ())
+        if path and os.path.isfile(path)
+    ]
+    if not requeued_paths:
+      return
+    _batch_remove_processed_paths(
+        requeued_paths,
+        processed_files,
+        processed_files_order,
+        checkpoint_entries,
+        checkpoint_path,
+        file_states=file_states,
+        host_scan_hints=host_scan_hints,
+        persist=False,
+    )
+    for path in requeued_paths:
+      handoff_priority_paths.add(path)
     _flush_checkpoint_if_needed(force=True)
     if async_day_close is not None:
       async_day_close.defer_for_ingest_handoff(tar_norm)
+    handoff_requeued_tars_this_boot.add(tar_norm)
     pending_stats_files = _cap_pending_after_rescan(
         _apply_handoff_priority_to_pending(pending_stats_files),
+        handoff=True,
     )
     log_print(
         "sync_timedb: day_close handoff requeue day=%s paths=%d reason=%s "
@@ -4832,29 +4936,43 @@ def run_sync_timedb_supervisor_loop(
             calendar_date_from_daily_tar_path(tar_norm).isoformat()
             if calendar_date_from_daily_tar_path(tar_norm) is not None
             else tar_norm,
-            len(requeued),
+            len(requeued_paths),
             reason or "",
         ),
         flush=True,
     )
     archive_janitor.signal_work_available()
 
-  def _recover_startup_day_close_handoffs():
-    nonlocal pending_stats_files
+  def _enqueue_startup_handoff_recoveries():
     if day_raw_removal is None or not day_raw_removal.enabled:
       return
+    seen_tars = set()
     for tar_norm, paths in day_raw_removal.discover_manifest_handoffs():
-      _requeue_day_close_handoff_paths(
-          tar_norm,
-          paths,
-          reason="startup_manifest_handoff",
+      tar_norm = os.path.normpath(str(tar_norm or ""))
+      if not tar_norm or tar_norm in seen_tars:
+        continue
+      seen_tars.add(tar_norm)
+      startup_handoff_recover_pending.append(
+          (tar_norm, paths, "startup_manifest_handoff"),
       )
     for tar_norm, paths in day_raw_removal.discover_closed_raw_on_disk_handoffs():
-      _requeue_day_close_handoff_paths(
-          tar_norm,
-          paths,
-          reason="startup_closed_raw_handoff",
+      tar_norm = os.path.normpath(str(tar_norm or ""))
+      if not tar_norm or tar_norm in seen_tars:
+        continue
+      seen_tars.add(tar_norm)
+      startup_handoff_recover_pending.append(
+          (tar_norm, paths, "startup_closed_raw_handoff"),
       )
+
+  def _process_one_startup_handoff_recover():
+    if not startup_handoff_recover_pending:
+      return False
+    tar_norm, paths, reason = startup_handoff_recover_pending.popleft()
+    _requeue_day_close_handoff_paths(tar_norm, paths, reason)
+    return True
+
+  def _recover_startup_day_close_handoffs():
+    _enqueue_startup_handoff_recoveries()
 
   day_raw_removal.on_pipeline_complete = _on_day_close_pipeline_complete
   day_raw_removal.on_handoff_to_ingest = _requeue_day_close_handoff_paths
@@ -4967,6 +5085,10 @@ def run_sync_timedb_supervisor_loop(
         async_day_close.reconcile_supervisor_raw_delete_pending(
             reason="startup",
         )
+
+      if not cfg.get_sync_startup_drain_day_close_before_ingest():
+        while startup_handoff_recover_pending:
+          _process_one_startup_handoff_recover()
 
       startup_ingest_gate_cleared = (
           not cfg.get_sync_startup_drain_day_close_before_ingest()
@@ -5145,6 +5267,11 @@ def run_sync_timedb_supervisor_loop(
       nonlocal startup_ingest_gate_cleared, startup_day_close_drain_complete
       if startup_ingest_gate_cleared:
         return False
+      if startup_handoff_recover_pending:
+        _process_one_startup_handoff_recover()
+        _maybe_log_startup_drain_blocked(trigger="handoff_recover")
+        sleep_until_shutdown(0.25)
+        return True
       if not startup_day_close_drain_complete:
         if _maybe_handle_raw_removal_delete_phase():
           _maybe_log_startup_drain_blocked(

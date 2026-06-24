@@ -6962,3 +6962,521 @@ def test_apply_day_close_raw_removal_tar_drop_runs_during_chunk():
   )
   assert spin is True
   assert tar_drop_calls == [tar_drop_tar]
+
+
+def test_handoff_batch_remove_processed_paths_single_checkpoint_pass(
+    tmp_path, monkeypatch,
+):
+  """1578 paths: batch remove is one checkpoint scan; per-path loop scans N times."""
+  from collections import deque as deque_cls
+
+  n_paths = 1578
+  paths = []
+  for i in range(n_paths):
+    p = tmp_path / "host" / ("stats_%d" % i)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(b"x")
+    paths.append(str(p))
+
+  monkeypatch.setattr(
+      st,
+      "_path_fingerprint",
+      lambda p: {"path": p, "size": 1, "mtime": 1},
+  )
+
+  def _counting_checkpoint_iter(entries):
+    counts = {"n": 0}
+
+    class _CountingDeque(deque_cls):
+      def __iter__(self):
+        counts["n"] += 1
+        return super().__iter__()
+
+    return _CountingDeque(entries), counts
+
+  entries, batch_counts = _counting_checkpoint_iter(
+      [{"path": p, "size": 1, "mtime": 1} for p in paths],
+  )
+  processed_files = set(paths)
+  processed_order = deque_cls(paths)
+  st._batch_remove_processed_paths(
+      paths,
+      processed_files,
+      processed_order,
+      entries,
+      None,
+      persist=False,
+  )
+  assert len(entries) == 0
+  assert processed_files == set()
+  assert batch_counts["n"] == 1
+
+  entries2, per_path_counts = _counting_checkpoint_iter(
+      [{"path": p, "size": 1, "mtime": 1} for p in paths],
+  )
+  processed_files2 = set(paths)
+  processed_order2 = deque_cls(paths)
+  for path in paths:
+    st._remove_processed_path(
+        path,
+        processed_files2,
+        processed_order2,
+        entries2,
+        None,
+        persist=False,
+    )
+  assert len(entries2) == 0
+  assert per_path_counts["n"] == n_paths
+
+
+def test_recover_startup_handoff_incremental_one_tar_per_drain_spin(
+    monkeypatch, tmp_path, capsys,
+):
+  """Boot recover enqueues handoffs; drain loop processes one tar per spin."""
+  shutdown_requested[0] = False
+  try:
+    archive_dir = tmp_path / "archive"
+    daily_dir = tmp_path / "daily"
+    archive_dir.mkdir()
+    daily_dir.mkdir()
+    tar_a = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+    tar_b = os.path.normpath(str(daily_dir / "2020-01-02.tar"))
+    open(tar_a, "wb").close()
+    open(tar_b, "wb").close()
+    path_a = str(tmp_path / "host" / "a")
+    path_b = str(tmp_path / "host" / "b")
+    os.makedirs(os.path.dirname(path_a), exist_ok=True)
+    for path in (path_a, path_b):
+      with open(path, "w", encoding="utf-8") as fh:
+        fh.write("1000 job cn001\n")
+
+    class _MultiHandoffDayRawRemoval:
+      enabled = True
+      on_handoff_to_ingest = None
+      on_pipeline_complete = None
+
+      def __init__(self, **_kwargs):
+        pass
+
+      def discover_manifest_handoffs(self):
+        return [(tar_a, [path_a]), (tar_b, [path_b])]
+
+      def discover_closed_raw_on_disk_handoffs(self):
+        return []
+
+      def any_blocks_startup_drain(self):
+        return False
+
+      def consumed_paths(self):
+        return set()
+
+      def paths_pending_delete(self):
+        return set()
+
+      def any_needs_delete_phase(self):
+        return False
+
+      def any_needs_tar_drop_finish(self):
+        return False
+
+      def days_needing_delete_oldest_first(self):
+        return []
+
+      def days_needing_tar_drop_oldest_first(self):
+        return []
+
+      def count_days_waiting_on_ingest(self):
+        return 0
+
+      def shutdown(self, wait=True):
+        del wait
+
+    import hpcperfstats.dbload.lib.sync_timedb_startup_tail_ingest as tail_mod
+    from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
+        StartupArchiveScanCoordinator,
+    )
+
+    class _DoneTail:
+      enabled = False
+
+      def __init__(self, **_kwargs):
+        pass
+
+      def start_async_tail_ingest(self):
+        return None
+
+      def tail_ingest_done(self):
+        return True
+
+      def shutdown(self, wait=True):
+        del wait
+
+    _supervisor_startup_preflight_disabled(monkeypatch)
+    monkeypatch.setattr(tail_mod, "StartupTailIngestCoordinator", _DoneTail)
+    monkeypatch.setattr(st, "StartupTailIngestCoordinator", _DoneTail)
+    monkeypatch.setattr(st.cfg, "get_sync_startup_tail_ingest_enabled", lambda: False)
+    monkeypatch.setattr(st, "DayRawRemovalCoordinator", _MultiHandoffDayRawRemoval)
+    monkeypatch.setattr(st.cfg, "get_sync_day_close_raw_removal_preflight", lambda: True)
+    monkeypatch.setattr(
+        st.cfg,
+        "get_sync_startup_drain_day_close_before_ingest",
+        lambda: True,
+    )
+    monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(
+        st, "add_stats_file_to_db", lambda _lock, path, **_k: (path, True, True, 0.0))
+    monkeypatch.setattr(st.cfg, "get_sync_ingest_chunk_size", lambda: 1)
+    monkeypatch.setattr(st.cfg, "get_sync_ingest_queue_max_size", lambda: 100)
+    monkeypatch.setattr(
+        StartupArchiveScanCoordinator,
+        "get_snapshot",
+        lambda self: type("Snap", (), {"closed_paths": []})(),
+    )
+    monkeypatch.setattr(
+        StartupArchiveScanCoordinator,
+        "is_startup_heavy_maintenance_idle",
+        lambda self: True,
+    )
+    monkeypatch.setattr(
+        StartupArchiveScanCoordinator,
+        "wait_for_startup_maintenance_idle",
+        lambda self: True,
+    )
+    monkeypatch.setattr(
+        StartupArchiveScanCoordinator,
+        "wait_for_snapshot",
+        lambda self, *, allow_build=False: None,
+    )
+    monkeypatch.setattr(st, "rescan_pending_stats_files", lambda *_a, **_k: (
+        shutdown_requested.__setitem__(0, True) or []
+    ))
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", str(daily_dir))
+    monkeypatch.setattr(
+        st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
+    monkeypatch.setattr(st, "ensure_persistence_contract", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        archive_helpers,
+        "build_live_unprocessed_by_tar_for_reconcile",
+        lambda *_a, **_k: {},
+    )
+    monkeypatch.setattr(
+        janitor_mod.ArchiveJanitor,
+        "signal_work_available",
+        lambda self: None,
+    )
+    monkeypatch.setattr(
+        janitor_mod.ArchiveJanitor,
+        "shutdown",
+        lambda self, wait=True: None,
+    )
+
+    st.run_sync_timedb_supervisor_loop(
+        str(archive_dir),
+        "all",
+        None,
+        ".hpc",
+        object(),
+        _FakeArchivePool(),
+        run_once=True,
+    )
+    out = capsys.readouterr().out
+    assert "handoff_recover" in out
+    requeue_lines = [
+        line for line in out.splitlines()
+        if "day_close handoff requeue" in line and "skip" not in line
+    ]
+    assert len(requeue_lines) == 2
+    assert "startup maintenance idle; ingest may begin" in out
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_cap_pending_after_handoff_uses_snapshot_during_startup_gate(
+    monkeypatch, tmp_path, capsys,
+):
+  """Handoff reconcile uses light cap when coordinator snapshot exists at startup."""
+  shutdown_requested[0] = False
+  live_reconcile_calls = {"n": 0}
+  try:
+    archive_dir = tmp_path / "archive"
+    daily_dir = tmp_path / "daily"
+    archive_dir.mkdir()
+    daily_dir.mkdir()
+    tar_norm = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+    open(tar_norm, "wb").close()
+    handoff_path = str(tmp_path / "host" / "1000")
+    os.makedirs(os.path.dirname(handoff_path), exist_ok=True)
+    with open(handoff_path, "w", encoding="utf-8") as fh:
+      fh.write("1000 job cn001\n")
+
+    class _HandoffDayRawRemoval:
+      enabled = True
+      on_handoff_to_ingest = None
+      on_pipeline_complete = None
+
+      def __init__(self, **_kwargs):
+        pass
+
+      def discover_manifest_handoffs(self):
+        return [(tar_norm, [handoff_path])]
+
+      def discover_closed_raw_on_disk_handoffs(self):
+        return []
+
+      def any_blocks_startup_drain(self):
+        return False
+
+      def consumed_paths(self):
+        return set()
+
+      def paths_pending_delete(self):
+        return set()
+
+      def any_needs_delete_phase(self):
+        return False
+
+      def any_needs_tar_drop_finish(self):
+        return False
+
+      def days_needing_delete_oldest_first(self):
+        return []
+
+      def days_needing_tar_drop_oldest_first(self):
+        return []
+
+      def count_days_waiting_on_ingest(self):
+        return 0
+
+      def shutdown(self, wait=True):
+        del wait
+
+    def fake_live_reconcile(*_a, **_k):
+      live_reconcile_calls["n"] += 1
+      return {}
+
+    from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
+        StartupArchiveScanCoordinator,
+    )
+    import hpcperfstats.dbload.lib.sync_timedb_startup_tail_ingest as tail_mod
+
+    class _DoneTail:
+      enabled = False
+
+      def __init__(self, **_kwargs):
+        pass
+
+      def start_async_tail_ingest(self):
+        return None
+
+      def tail_ingest_done(self):
+        return True
+
+      def shutdown(self, wait=True):
+        del wait
+
+    _supervisor_startup_preflight_disabled(monkeypatch)
+    monkeypatch.setattr(tail_mod, "StartupTailIngestCoordinator", _DoneTail)
+    monkeypatch.setattr(st, "StartupTailIngestCoordinator", _DoneTail)
+    monkeypatch.setattr(st, "DayRawRemovalCoordinator", _HandoffDayRawRemoval)
+    monkeypatch.setattr(st.cfg, "get_sync_day_close_raw_removal_preflight", lambda: True)
+    monkeypatch.setattr(
+        st.cfg,
+        "get_sync_startup_drain_day_close_before_ingest",
+        lambda: True,
+    )
+    monkeypatch.setattr(st.cfg, "get_sync_startup_tail_ingest_enabled", lambda: False)
+    monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        StartupArchiveScanCoordinator,
+        "get_snapshot",
+        lambda self: type("Snap", (), {"closed_paths": []})(),
+    )
+    monkeypatch.setattr(
+        StartupArchiveScanCoordinator,
+        "is_startup_heavy_maintenance_idle",
+        lambda self: True,
+    )
+    monkeypatch.setattr(
+        StartupArchiveScanCoordinator,
+        "wait_for_startup_maintenance_idle",
+        lambda self: True,
+    )
+    monkeypatch.setattr(
+        StartupArchiveScanCoordinator,
+        "wait_for_snapshot",
+        lambda self, *, allow_build=False: None,
+    )
+    monkeypatch.setattr(
+        archive_helpers,
+        "build_live_unprocessed_by_tar_for_reconcile",
+        fake_live_reconcile,
+    )
+    monkeypatch.setattr(st, "rescan_pending_stats_files", lambda *_a, **_k: (
+        shutdown_requested.__setitem__(0, True) or []
+    ))
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", str(daily_dir))
+    monkeypatch.setattr(
+        st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
+    monkeypatch.setattr(st, "ensure_persistence_contract", lambda *_a, **_k: None)
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(
+        st, "add_stats_file_to_db", lambda _lock, path, **_k: (path, True, True, 0.0))
+    monkeypatch.setattr(st.cfg, "get_sync_ingest_chunk_size", lambda: 1)
+
+    st.run_sync_timedb_supervisor_loop(
+        str(archive_dir),
+        "all",
+        None,
+        ".hpc",
+        object(),
+        _FakeArchivePool(),
+        run_once=True,
+    )
+    out = capsys.readouterr().out
+    assert "handoff_light=1" in out
+    assert live_reconcile_calls["n"] == 0
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_handoff_skips_duplicate_requeue_same_boot(
+    monkeypatch, tmp_path, capsys,
+):
+  """Second handoff requeue for the same tar in one boot is a no-op."""
+  shutdown_requested[0] = False
+  coord_holder = []
+  try:
+    archive_dir = tmp_path / "archive"
+    daily_dir = tmp_path / "daily"
+    archive_dir.mkdir()
+    daily_dir.mkdir()
+    tar_norm = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+    open(tar_norm, "wb").close()
+    handoff_path = str(tmp_path / "host" / "1000")
+    os.makedirs(os.path.dirname(handoff_path), exist_ok=True)
+    with open(handoff_path, "w", encoding="utf-8") as fh:
+      fh.write("1000 job cn001\n")
+
+    class _HandoffDayRawRemoval:
+      enabled = True
+      on_pipeline_complete = None
+
+      def __init__(self, **_kwargs):
+        coord_holder.append(self)
+
+      def discover_manifest_handoffs(self):
+        return [(tar_norm, [handoff_path])]
+
+      def discover_closed_raw_on_disk_handoffs(self):
+        return []
+
+      def any_blocks_startup_drain(self):
+        return False
+
+      def consumed_paths(self):
+        return set()
+
+      def paths_pending_delete(self):
+        return set()
+
+      def any_needs_delete_phase(self):
+        return False
+
+      def any_needs_tar_drop_finish(self):
+        return False
+
+      def days_needing_delete_oldest_first(self):
+        return []
+
+      def days_needing_tar_drop_oldest_first(self):
+        return []
+
+      def count_days_waiting_on_ingest(self):
+        return 0
+
+      def shutdown(self, wait=True):
+        del wait
+
+    from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
+        StartupArchiveScanCoordinator,
+    )
+
+    _supervisor_startup_preflight_disabled(monkeypatch)
+    monkeypatch.setattr(st, "DayRawRemovalCoordinator", _HandoffDayRawRemoval)
+    monkeypatch.setattr(st.cfg, "get_sync_day_close_raw_removal_preflight", lambda: True)
+    monkeypatch.setattr(
+        st.cfg,
+        "get_sync_startup_drain_day_close_before_ingest",
+        lambda: False,
+    )
+    monkeypatch.setattr(st.cfg, "get_sync_startup_tail_ingest_enabled", lambda: False)
+    monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(
+        st, "add_stats_file_to_db", lambda _lock, path, **_k: (path, True, True, 0.0))
+    monkeypatch.setattr(st.cfg, "get_sync_ingest_chunk_size", lambda: 1)
+    monkeypatch.setattr(
+        StartupArchiveScanCoordinator,
+        "get_snapshot",
+        lambda self: type("Snap", (), {"closed_paths": []})(),
+    )
+    monkeypatch.setattr(
+        StartupArchiveScanCoordinator,
+        "wait_for_snapshot",
+        lambda self, *, allow_build=False: None,
+    )
+    monkeypatch.setattr(st, "rescan_pending_stats_files", lambda *_a, **_k: (
+        shutdown_requested.__setitem__(0, True) or []
+    ))
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", str(daily_dir))
+    monkeypatch.setattr(
+        st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
+    monkeypatch.setattr(st, "ensure_persistence_contract", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        archive_helpers,
+        "build_live_unprocessed_by_tar_for_reconcile",
+        lambda *_a, **_k: {},
+    )
+    monkeypatch.setattr(
+        janitor_mod.ArchiveJanitor,
+        "signal_work_available",
+        lambda self: None,
+    )
+    monkeypatch.setattr(
+        janitor_mod.ArchiveJanitor,
+        "shutdown",
+        lambda self, wait=True: None,
+    )
+
+    st.run_sync_timedb_supervisor_loop(
+        str(archive_dir),
+        "all",
+        None,
+        ".hpc",
+        object(),
+        _FakeArchivePool(),
+        run_once=True,
+    )
+    boot_out = capsys.readouterr().out
+    assert boot_out.count("day_close handoff requeue") == 1
+    assert coord_holder
+    assert coord_holder[0].on_handoff_to_ingest is not None
+    coord_holder[0].on_handoff_to_ingest(
+        tar_norm,
+        [handoff_path],
+        "janitor_closed_raw_submit_guard",
+    )
+    dup_out = capsys.readouterr().out
+    assert "same_boot_duplicate" in dup_out
+  finally:
+    shutdown_requested[0] = False
