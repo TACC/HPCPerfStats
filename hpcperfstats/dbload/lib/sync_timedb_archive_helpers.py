@@ -1071,6 +1071,28 @@ def load_checkpoint_path_set(checkpoint_path):
   return matched
 
 
+def resolved_checkpoint_path_set(checkpoint_path, checkpoint_entries=None):
+  """Return checkpoint-complete paths from disk plus in-memory buffer entries."""
+  paths = load_checkpoint_path_set(checkpoint_path)
+  for entry in checkpoint_entries or ():
+    if not isinstance(entry, dict):
+      continue
+    path = entry.get("path")
+    if not isinstance(path, str):
+      continue
+    fp = _checkpoint_entry_fingerprint(path)
+    if fp is None:
+      continue
+    try:
+      size = int(entry["size"])
+      mtime = int(entry["mtime"])
+    except (KeyError, TypeError, ValueError):
+      continue
+    if fp["size"] == size and fp["mtime"] == mtime:
+      paths.add(path)
+  return paths
+
+
 def build_unprocessed_raw_by_daily_tar(
     archive_data_dir,
     host_name_ext,

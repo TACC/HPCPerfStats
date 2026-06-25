@@ -6097,6 +6097,80 @@ def test_prepend_checkpoint_blocked_paths_to_pending_dedupes_and_orders():
   assert merged == ["/a", "/b", "/c"]
 
 
+def test_resolved_checkpoint_path_set_includes_memory_entries(tmp_path):
+  """In-memory checkpoint entries count before disk flush."""
+  from collections import deque
+
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      resolved_checkpoint_path_set,
+  )
+
+  raw_path = tmp_path / "host" / "seg"
+  raw_path.parent.mkdir(parents=True)
+  raw_path.write_text("1000 job cn001\n")
+  checkpoint_path = str(tmp_path / ".sync_timedb_state.json")
+  stat = raw_path.stat()
+  memory_entries = deque([{
+      "path": str(raw_path),
+      "size": int(stat.st_size),
+      "mtime": int(stat.st_mtime),
+  }])
+  merged = resolved_checkpoint_path_set(checkpoint_path, memory_entries)
+  assert str(raw_path) in merged
+
+
+def test_build_live_unprocessed_blocked_drops_after_memory_checkpoint(
+    tmp_path,
+):
+  """Stale accrual blocked paths drop when merged checkpoint has them."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      build_live_unprocessed_by_tar_for_reconcile,
+      resolved_checkpoint_path_set,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import (
+      ArchiveMaintenanceSnapshot,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_norm = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+  open(tar_norm, "wb").close()
+  raw_path = str(tmp_path / "host.example.com" / "123")
+  os.makedirs(os.path.dirname(raw_path), exist_ok=True)
+  open(raw_path, "wb").close()
+  stat = os.stat(raw_path)
+  memory_entries = [{
+      "path": raw_path,
+      "size": int(stat.st_size),
+      "mtime": int(stat.st_mtime),
+  }]
+  checkpoint_path = str(tmp_path / ".sync_timedb_state.json")
+  snapshot = ArchiveMaintenanceSnapshot(
+      closed_paths=[raw_path],
+      mapping={str(daily_dir / "2020-01-01.tar.zst"): [raw_path]},
+      first_timestamp_by_path={raw_path: 123.0},
+  )
+  stale = build_live_unprocessed_by_tar_for_reconcile(
+      str(tmp_path),
+      "example.com",
+      str(daily_dir),
+      checkpoint_path=checkpoint_path,
+      checkpoint_paths=set(),
+      maintenance_snapshot=snapshot,
+  )
+  assert raw_path in stale.get(tar_norm, [])
+  merged = resolved_checkpoint_path_set(checkpoint_path, memory_entries)
+  cleared = build_live_unprocessed_by_tar_for_reconcile(
+      str(tmp_path),
+      "example.com",
+      str(daily_dir),
+      checkpoint_path=checkpoint_path,
+      checkpoint_paths=merged,
+      maintenance_snapshot=snapshot,
+  )
+  assert cleared.get(tar_norm, []) == []
+
+
 def test_remove_processed_path_clears_checkpoint_entry(tmp_path):
   from collections import deque
 

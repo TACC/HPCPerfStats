@@ -130,6 +130,8 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     oldest_checkpoint_blocked_tar,
     on_disk_unprocessed_paths_for_tar,
     prepend_checkpoint_blocked_paths_to_pending,
+    load_checkpoint_path_set,
+    resolved_checkpoint_path_set,
     unprocessed_tar_paths_still_on_disk,
     daily_tar_paths_for_archive_job_tasks,
     daily_tar_paths_for_stats_paths,
@@ -4068,6 +4070,9 @@ def run_sync_timedb_supervisor_loop(
       return accrual, "accrual"
     return None, "live"
 
+  def _reconcile_checkpoint_paths():
+    return resolved_checkpoint_path_set(checkpoint_path, checkpoint_entries)
+
   def _live_unprocessed_by_tar_for_reconcile():
     snapshot, _source = _resolve_reconcile_maintenance_snapshot()
     return build_live_unprocessed_by_tar_for_reconcile(
@@ -4075,6 +4080,7 @@ def run_sync_timedb_supervisor_loop(
         host_name_ext,
         tgz_archive_dir,
         checkpoint_path=checkpoint_path,
+        checkpoint_paths=_reconcile_checkpoint_paths(),
         pending_stats_paths=list(pending_stats_files),
         maintenance_snapshot=snapshot,
     )
@@ -4145,6 +4151,9 @@ def run_sync_timedb_supervisor_loop(
         "sync_timedb: pending reconcile cap begin source=%s" % source,
         flush=True,
     )
+    disk_checkpoint_paths = load_checkpoint_path_set(checkpoint_path)
+    merged_checkpoint_paths = _reconcile_checkpoint_paths()
+    memory_extra_n = len(merged_checkpoint_paths - disk_checkpoint_paths)
     unprocessed = _live_unprocessed_by_tar_for_reconcile()
     tar_norm = oldest_checkpoint_blocked_tar(
         unprocessed, tgz_archive_dir=tgz_archive_dir)
@@ -4165,12 +4174,18 @@ def run_sync_timedb_supervisor_loop(
     )
     log_print(
         "sync_timedb: pending reconcile cap done elapsed_s=%.3f "
-        "oldest_tar=%s blocked_n=%d capped_pending=%d"
+        "oldest_tar=%s blocked_n=%d capped_pending=%d%s"
         % (
             time.time() - cap_t0,
             tar_norm or "",
             len(blocked),
             len(capped),
+            (
+                " checkpoint_merge disk_n=%d memory_extra_n=%d"
+                % (len(disk_checkpoint_paths), memory_extra_n)
+                if memory_extra_n > 0
+                else ""
+            ),
         ),
         flush=True,
     )
@@ -5789,7 +5804,10 @@ def run_sync_timedb_supervisor_loop(
               handoff_priority_paths=handoff_priority_paths)
           if added:
             checkpoint_dirty_count += 1
-        _flush_checkpoint_if_needed()
+        if blocked_n > 0 and immediate_paths:
+          _flush_checkpoint_if_needed(force=True)
+        else:
+          _flush_checkpoint_if_needed()
 
         if ar_file_mapping:
           if len(ar_file_mapping) >= archive_queue_high:
