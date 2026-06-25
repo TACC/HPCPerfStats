@@ -6137,3 +6137,276 @@ def test_classify_ghost_unprocessed_becomes_eligible_deferred(tmp_path):
   assert by_tar[tar_path]["status"] == "eligible_deferred"
   assert by_tar[tar_path]["unprocessed"] == 0
   assert by_tar[tar_path]["unprocessed_list"] == 1
+
+
+def test_populate_uses_tar_not_sealed_when_dirty(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  """Dirty mutable tar must populate Redis from tar scan, not sealed zst stream."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
+      FakeRedis,
+  )
+
+  day_zst = tmp_path / "2024-06-02.tar.zst"
+  day_tar = tmp_path / "2024-06-02.tar"
+  inner = tmp_path / "member.txt"
+  inner.write_text("payload")
+  with tarfile.open(day_tar, "w") as tf:
+    tf.add(str(inner), arcname="host/member")
+  day_zst.write_bytes(b"not-real-zst")
+  os.utime(day_zst, (1000, 1000))
+  os.utime(day_tar, (2000, 2000))
+
+  sealed_calls = {"n": 0}
+  tar_calls = {"n": 0}
+
+  def _counting_sealed(*_a, **_k):
+    sealed_calls["n"] += 1
+    return {"stale": 1}
+
+  def _counting_tar(*_a, **_k):
+    tar_calls["n"] += 1
+    return {"host/member": inner.stat().st_size}
+
+  monkeypatch.setattr(
+      helpers, "_populate_redis_members_from_sealed_scan", _counting_sealed,
+  )
+  monkeypatch.setattr(
+      helpers, "_populate_redis_members_from_tar_scan", _counting_tar,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: FakeRedis(),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".redis_lookup_full_members",
+      lambda keys: None,
+  )
+
+  members = helpers.get_existing_archive_members_for_daily_archive(str(day_zst))
+  assert tar_calls["n"] == 1
+  assert sealed_calls["n"] == 0
+  assert members.get("host/member") == inner.stat().st_size
+
+
+def test_sealed_populate_when_not_dirty(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  """Clean sealed sibling (zst newer than tar) still uses sealed populate."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
+      FakeRedis,
+  )
+
+  day_zst = tmp_path / "2024-06-03.tar.zst"
+  day_tar = tmp_path / "2024-06-03.tar"
+  inner = tmp_path / "raw.txt"
+  inner.write_text("data")
+  with tarfile.open(day_tar, "w") as tf:
+    tf.add(str(inner), arcname="host/raw")
+  day_zst.write_bytes(b"sealed-placeholder")
+  os.utime(day_tar, (1000, 1000))
+  os.utime(day_zst, (2000, 2000))
+
+  sealed_calls = {"n": 0}
+  tar_calls = {"n": 0}
+
+  def _counting_sealed(sealed_path, cache_key):
+    sealed_calls["n"] += 1
+    return {"host/raw": inner.stat().st_size}
+
+  def _forbidden_tar(*_a, **_k):
+    tar_calls["n"] += 1
+    raise AssertionError("clean sealed day must not use tar populate")
+
+  monkeypatch.setattr(
+      helpers, "_populate_redis_members_from_sealed_scan", _counting_sealed,
+  )
+  monkeypatch.setattr(
+      helpers, "_populate_redis_members_from_tar_scan", _forbidden_tar,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: FakeRedis(),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".redis_lookup_full_members",
+      lambda keys: None,
+  )
+
+  helpers.get_existing_archive_members_for_daily_archive(str(day_zst))
+  assert sealed_calls["n"] == 1
+  assert tar_calls["n"] == 0
+
+
+def test_tar_append_merges_redis_without_invalidate(monkeypatch, tmp_path):
+  """Successful tar_append merges Redis L2 instead of full invalidation."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.sync_timedb as st
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      reset_archive_members_redis_client_for_tests,
+  )
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
+      FakeRedis,
+      build_archive_members_redis_keys,
+      store_complete_members_in_redis,
+  )
+
+  reset_archive_members_redis_client_for_tests()
+  raw_file = tmp_path / "1709123456"
+  raw_file.write_text("1709123456 job1 cn001\n")
+  archive_key = str(tmp_path / "2024-03-04.tar.zst")
+  tar_path = daily_tar_path_from_compressed(archive_key)
+  os.makedirs(os.path.dirname(tar_path) or ".", exist_ok=True)
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(raw_file), arcname=helpers.get_tar_member_name(str(raw_file)))
+  open(archive_key, "wb").write(b"sealed")
+
+  fake = FakeRedis()
+  cache_key = helpers._daily_archive_members_cache_key(
+      normalize_daily_compressed_path(archive_key),
+  )
+  keys = build_archive_members_redis_keys(cache_key)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: fake,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
+      lambda: True,
+  )
+  store_complete_members_in_redis(keys, {"existing": 10}, saw_duplicates=False)
+
+  invalidated = []
+  _patch_archive_gate_pass(monkeypatch)
+  monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
+  monkeypatch.setattr(st, "_append_to_tar", lambda *_a, **_k: None)
+  monkeypatch.setattr(
+      st.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      st,
+      "invalidate_after_daily_tar_mutation",
+      lambda path, **kw: invalidated.append((path, kw.get("reason"))),
+  )
+
+  new_raw = tmp_path / "1709123457"
+  new_raw.write_text("1709123457 job2 cn002\n")
+  assert st._archive_stats_files_body((archive_key, [str(new_raw)])) is True
+  assert not invalidated
+  member_name = helpers.get_tar_member_name(str(new_raw))
+  assert fake.hget(keys.hash_key, member_name) == str(new_raw.stat().st_size)
+  assert fake.hget(keys.hash_key, "existing") == "10"
+  assert fake.get(keys.complete_key) == "1"
+
+
+def test_select_ingest_chunk_paths_oldest_tar_only(tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      select_ingest_chunk_paths,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_a = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+  tar_b = os.path.normpath(str(daily_dir / "2020-01-02.tar"))
+  open(tar_a, "wb").close()
+  open(tar_b, "wb").close()
+  d1 = datetime(2020, 1, 1, 12, tzinfo=timezone.utc)
+  d2 = datetime(2020, 1, 2, 12, tzinfo=timezone.utc)
+  p1 = tmp_path / "p1"
+  p2 = tmp_path / "p2"
+  p3 = tmp_path / "p3"
+  for path in (p1, p2, p3):
+    path.write_text("x")
+  os.utime(p1, (d1.timestamp(), d1.timestamp()))
+  os.utime(p2, (d1.timestamp(), d1.timestamp()))
+  os.utime(p3, (d2.timestamp(), d2.timestamp()))
+  pending = [str(p1), str(p2), str(p3)]
+  unprocessed = {tar_a: [str(p1), str(p2)]}
+  chunk = select_ingest_chunk_paths(
+      pending,
+      oldest_tar=tar_a,
+      unprocessed_by_tar=unprocessed,
+      inflight_archive_paths=set(),
+      tgz_archive_dir=str(daily_dir),
+      chunk_size=10,
+      ingest_queue_high=10,
+  )
+  assert chunk == [str(p1), str(p2)]
+  assert str(p3) not in chunk
+
+
+def test_select_ingest_chunk_paths_oldest_tar_1500_paths(tmp_path):
+  """Oldest blocked tar monopolizes chunk even with 1500+ handoff paths."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      select_ingest_chunk_paths,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_a = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+  tar_b = os.path.normpath(str(daily_dir / "2020-01-02.tar"))
+  open(tar_a, "wb").close()
+  open(tar_b, "wb").close()
+  d1 = datetime(2020, 1, 1, 12, tzinfo=timezone.utc)
+  d2 = datetime(2020, 1, 2, 12, tzinfo=timezone.utc)
+  handoff_paths = []
+  for i in range(1578):
+    path = tmp_path / ("h%d" % i)
+    path.write_text("x")
+    os.utime(path, (d1.timestamp(), d1.timestamp()))
+    handoff_paths.append(str(path))
+  tail_path = tmp_path / "tail"
+  tail_path.write_text("x")
+  os.utime(tail_path, (d2.timestamp(), d2.timestamp()))
+  pending = handoff_paths + [str(tail_path)]
+  unprocessed = {tar_a: list(handoff_paths)}
+  chunk = select_ingest_chunk_paths(
+      pending,
+      oldest_tar=tar_a,
+      unprocessed_by_tar=unprocessed,
+      inflight_archive_paths=set(),
+      tgz_archive_dir=str(daily_dir),
+      chunk_size=1000,
+      ingest_queue_high=2000,
+  )
+  assert len(chunk) == 1000
+  assert str(tail_path) not in chunk
+  assert all(path in handoff_paths for path in chunk)
+
+
+def test_handoff_priority_cap_explicit_wave_when_priority_exceeds_max():
+  """When handoff_priority_n >= ingest_queue_max, cap is an explicit head wave."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      prepend_checkpoint_blocked_paths_to_pending,
+  )
+
+  handoff = ["/h%d" % i for i in range(2500)]
+  pending = ["/t%d" % i for i in range(100)]
+  merged = prepend_checkpoint_blocked_paths_to_pending(pending, handoff)
+  ingest_queue_max = 2000
+  priority_n = len(handoff)
+  assert priority_n >= ingest_queue_max
+  capped = merged[:ingest_queue_max]
+  assert len(capped) == ingest_queue_max
+  assert capped[0] == "/h0"
+  assert capped[-1] == "/h1999"
+  assert "/t0" not in capped

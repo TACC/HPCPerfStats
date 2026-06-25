@@ -111,12 +111,17 @@ from hpcperfstats.dbload.lib.shutdown_utils import (
 from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     augment_unprocessed_by_tar_with_pending_paths,
     build_archive_mapping,
+    build_chunk_day_histogram,
     build_live_unprocessed_by_tar_for_reconcile,
     build_seal_disqualified_daily_tars,
     build_remaining_raw_stats_by_daily_gz,
     build_unprocessed_raw_by_daily_tar,
+    build_tar_append_member_map,
     calendar_days_checkpoint_ingest_complete,
+    consume_archive_members_populate_source,
     daily_tar_eligible_for_day_close_submit,
+    merge_daily_archive_members_l1_cache,
+    select_ingest_chunk_paths,
     resolve_unmapped_closed_raw_daily_tars,
     daily_tar_path_for_stats_path,
     daily_tar_path_from_compressed,
@@ -487,7 +492,8 @@ def _prewarm_archive_members_redis_for_days(day_items):
     )
     try:
       get_existing_archive_members_for_daily_archive(canonical)
-      summary_parts.append("%s:prewarmed" % day_token)
+      source = consume_archive_members_populate_source(canonical)
+      summary_parts.append("%s:%s" % (day_token, source))
     except ArchiveDayIngestSkipError:
       summary_parts.append("%s:day_ingest_skip" % day_token)
     except ArchiveMembersRedisUnavailableError as exc:
@@ -3367,11 +3373,47 @@ def _archive_stats_files_body(archive_info):
         )
         return False
   if stats_files_to_tar:
-    invalidate_after_daily_tar_mutation(
-        archive_fname,
-        reason="tar_append",
-        log_fn=log_print,
+    from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+        _daily_archive_members_cache_key,
     )
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+        merge_appended_members_into_redis,
+    )
+
+    canonical = normalize_daily_compressed_path(archive_fname)
+    cache_key = _daily_archive_members_cache_key(canonical)
+    member_map = build_tar_append_member_map(stats_files_to_tar)
+    saw_dupes = len(member_map) < len(stats_files_to_tar)
+    merged = False
+    try:
+      merged = merge_appended_members_into_redis(
+          cache_key,
+          member_map,
+          saw_duplicates=saw_dupes,
+      )
+    except Exception as exc:
+      log_print(
+          "WARNING: tar_append redis merge failed for %s: %s; invalidating"
+          % (canonical, exc),
+          flush=True,
+      )
+    if merged:
+      merge_daily_archive_members_l1_cache(canonical, member_map)
+      day_date = calendar_date_from_daily_tar_path(archive_tar_fname)
+      log_print(
+          "INFO: tar_append redis merge day=%s members=%d"
+          % (
+              day_date.isoformat() if day_date is not None else canonical,
+              len(member_map),
+          ),
+          flush=True,
+      )
+    else:
+      invalidate_after_daily_tar_mutation(
+          archive_fname,
+          reason="tar_append",
+          log_fn=log_print,
+      )
   return True
 
 
@@ -4052,6 +4094,15 @@ def run_sync_timedb_supervisor_loop(
       return _cap_pending_stats_files_list(paths, ingest_queue_max)
     merged = _apply_handoff_priority_to_pending(paths)
     priority_n = len(handoff_priority_paths)
+    if priority_n >= ingest_queue_max:
+      if len(merged) > ingest_queue_max:
+        log_print(
+            "sync_timedb: handoff priority cap handoff_priority_n=%d "
+            "pending=%d max=%d detail=explicit_handoff_wave"
+            % (priority_n, len(merged), ingest_queue_max),
+            flush=True,
+        )
+      return merged[:ingest_queue_max]
     tail_budget = max(0, ingest_queue_max - priority_n)
     if len(merged) <= ingest_queue_max:
       return merged
@@ -4919,6 +4970,39 @@ def run_sync_timedb_supervisor_loop(
         host_scan_hints=host_scan_hints,
         persist=False,
     )
+    max_slice = cfg.get_sync_startup_tail_ingest_max_files()
+    if len(requeued_paths) > max_slice:
+      day_token = (
+          calendar_date_from_daily_tar_path(tar_norm).isoformat()
+          if calendar_date_from_daily_tar_path(tar_norm) is not None
+          else tar_norm
+      )
+      n_slices = (len(requeued_paths) + max_slice - 1) // max_slice
+      log_print(
+          "sync_timedb: startup handoff giant-day ingest begin day=%s paths=%d "
+          "slices=%d max_files=%d"
+          % (day_token, len(requeued_paths), n_slices, max_slice),
+          flush=True,
+      )
+      failed_requeue = []
+      for off in range(0, len(requeued_paths), max_slice):
+        slice_paths = requeued_paths[off:off + max_slice]
+        _successful, failed = _run_startup_tail_ingest_batch(
+            slice_paths,
+            "handoff giant-day slice",
+        )
+        failed_requeue.extend(failed)
+      requeued_paths = failed_requeue
+      if not requeued_paths:
+        handoff_requeued_tars_this_boot.add(tar_norm)
+        log_print(
+            "sync_timedb: startup handoff giant-day ingest complete day=%s "
+            "detail=all_slices_ok"
+            % day_token,
+            flush=True,
+        )
+        archive_janitor.signal_work_available()
+        return
     for path in requeued_paths:
       handoff_priority_paths.add(path)
     _flush_checkpoint_if_needed(force=True)
@@ -5510,10 +5594,62 @@ def run_sync_timedb_supervisor_loop(
           )
         _reconcile_pending_with_oldest_checkpoint_blocked()
         target_chunk_size = min(chunk_size, ingest_queue_high)
+        unprocessed_for_chunk = _live_unprocessed_by_tar_for_reconcile()
+        oldest_tar_for_chunk = oldest_checkpoint_blocked_tar(
+            unprocessed_for_chunk,
+            tgz_archive_dir=tgz_archive_dir,
+        )
+        blocked_n = (
+            len(on_disk_unprocessed_paths_for_tar(
+                unprocessed_for_chunk,
+                oldest_tar_for_chunk,
+            ))
+            if oldest_tar_for_chunk
+            else 0
+        )
+        handoff_inflight_n = 0
+        if oldest_tar_for_chunk:
+          handoff_inflight_n = sum(
+              1
+              for path in inflight_archive_paths
+              if oldest_tar_for_chunk in daily_tar_paths_for_stats_paths(
+                  [path],
+                  tgz_archive_dir,
+              )
+          )
         had_pending_before_chunk = bool(pending_stats_files)
         pending_paths_before_chunk = list(pending_stats_files)
-        stats_files_chunk = pending_stats_files[:target_chunk_size]
+        stats_files_chunk = select_ingest_chunk_paths(
+            pending_stats_files,
+            oldest_tar=oldest_tar_for_chunk,
+            unprocessed_by_tar=unprocessed_for_chunk,
+            inflight_archive_paths=inflight_archive_paths,
+            tgz_archive_dir=tgz_archive_dir,
+            chunk_size=chunk_size,
+            ingest_queue_high=ingest_queue_high,
+        )
+        if oldest_tar_for_chunk and (blocked_n or handoff_inflight_n):
+          log_print(
+              "sync_timedb: oldest_day_chunk_gate oldest_tar=%s blocked_n=%d "
+              "handoff_inflight_n=%d oldest_tar_checkpoint_pending_n=%d "
+              "chunk_day_histogram=%s chunk_len=%d"
+              % (
+                  oldest_tar_for_chunk,
+                  blocked_n,
+                  handoff_inflight_n,
+                  blocked_n,
+                  build_chunk_day_histogram(stats_files_chunk, tgz_archive_dir),
+                  len(stats_files_chunk),
+              ),
+              flush=True,
+          )
         if not stats_files_chunk:
+          if oldest_tar_for_chunk and (blocked_n or handoff_inflight_n):
+            _finalize_archive_slots_if_needed(
+                force=True,
+                allow_defer=True,
+                context="oldest_day_gate_wait",
+            )
           continue
 
         chunk_in_progress = True
@@ -5545,6 +5681,23 @@ def run_sync_timedb_supervisor_loop(
               flush=True,
           )
         log_print("Files marked for archival: %d" % len(files_to_be_archived))
+        log_print(
+            "sync_timedb: chunk ingest summary chunk=%d ingested_this_chunk=%d "
+            "checkpoint_immediate_n=%d archive_deferred_n=%d"
+            % (
+                chunk_counter,
+                len(successful_paths),
+                len([
+                    p for p in successful_paths
+                    if p not in set(files_to_be_archived)
+                ]),
+                len([
+                    p for p in successful_paths
+                    if p in set(files_to_be_archived)
+                ]),
+            ),
+            flush=True,
+        )
 
         if files_to_be_archived:
           _ensure_daily_archive_dir_exists()

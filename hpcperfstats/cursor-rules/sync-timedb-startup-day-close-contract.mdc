@@ -70,7 +70,8 @@ When **`sync_startup_drain_day_close_before_ingest=yes`**, before the first resc
 - **`_enqueue_startup_handoff_recoveries()`** at boot collects manifest + closed-on-disk handoffs into **`startup_handoff_recover_pending`** (one queue entry per tar).
 - When **`sync_startup_drain_day_close_before_ingest=yes`**, the startup drain loop processes **one tar per spin** via **`_process_one_startup_handoff_recover()`** — log **`startup drain blocked reason=trigger:handoff_recover`** — so the main thread reaches the drain loop before all handoffs complete.
 - When drain is **disabled**, the queue is flushed synchronously at boot (same per-tar processing, no gate spin).
-- **`_requeue_day_close_handoff_paths`**: **`_batch_remove_processed_paths`** (single checkpoint pass per tar, not per-path loop); **per-boot idempotency** (`handoff_requeued_tars_this_boot` — log **`same_boot_duplicate`** on repeat janitor/discover requeue); **startup-light reconcile** on handoff when coordinator snapshot exists (`pending reconcile cap … handoff_light=1`, skips live full-tree **`build_live_unprocessed_by_tar_for_reconcile`**).
+- **`_requeue_day_close_handoff_paths`**: **`_batch_remove_processed_paths`** (single checkpoint pass per tar, not per-path loop); **per-boot idempotency** (`handoff_requeued_tars_this_boot` — log **`same_boot_duplicate`** on repeat janitor/discover requeue); **startup-light reconcile** on handoff when coordinator snapshot exists (`pending reconcile cap … handoff_light=1`, skips live full-tree **`build_live_unprocessed_by_tar_for_reconcile`**). **Giant handoff days** (`len(paths) > sync_startup_tail_ingest_max_files`): slice ingest via **`_run_startup_tail_ingest_batch`** (handoff-only; does not raise global tail INI max); log **`startup handoff giant-day ingest begin`** / **`complete`**.
+- **Oldest-blocked-day chunk gating (steady-state):** while oldest checkpoint-blocked tar has on-disk unprocessed or inflight paths, **`select_ingest_chunk_paths`** restricts each ingest chunk to that tar only (no tail backfill from newer days). Log **`oldest_day_chunk_gate`** with **`chunk_day_histogram`**, **`handoff_inflight_n`**, **`blocked_n`**. Resume normal interleave when oldest tar clears.
 
 Delete phases are driven via `_maybe_handle_raw_removal_delete_phase()` during the drain loop. On exit, `_post_startup_raw_removal_rescan()` runs when startup raw removal finished. **`startup_ingest_gate_cleared`** is one-time; mid-run day-close deletes do not re-gate ingest.
 
@@ -138,6 +139,14 @@ sync_timedb: pending reconcile cap begin source=coordinator handoff=light
 sync_timedb: pending reconcile cap done elapsed_s=… handoff_light=1 blocked_n=0 capped_pending=…
 sync_timedb: pending reconcile cap begin source=coordinator|accrual|live
 sync_timedb: pending reconcile cap done elapsed_s=… oldest_tar=… blocked_n=… capped_pending=…
+sync_timedb: handoff priority cap handoff_priority_n=… pending=… max=… detail=explicit_handoff_wave
+sync_timedb: oldest_day_chunk_gate oldest_tar=… blocked_n=… handoff_inflight_n=… oldest_tar_checkpoint_pending_n=… chunk_day_histogram={…} chunk_len=…
+sync_timedb: chunk ingest summary chunk=… ingested_this_chunk=… checkpoint_immediate_n=… archive_deferred_n=…
+sync_timedb: startup handoff giant-day ingest begin day=YYYY-MM-DD paths=N slices=M max_files=…
+sync_timedb: startup handoff giant-day ingest complete day=YYYY-MM-DD detail=all_slices_ok
+INFO: populate_source=tar|sealed day=YYYY-MM-DD path=…
+INFO: tar_append redis merge day=YYYY-MM-DD members=N
+chunk prewarm days=YYYY-MM-DD:redis_warm|tar_populated|sealed_populated|day_ingest_skip|no_daily_archive
 ```
 
 ## Coordination
@@ -160,8 +169,8 @@ When per-day raw removal manifest **`phase=done`**, handoff eligibility (`should
 
 - `hpcperfstats/tests/test_sync_timedb_startup_day_close.py` (checkpoint-complete + quiescent submit, boot reconcile when `phase=done`, `discover_done` true with `pending_eligible`, false with `pending_retry`, async-saturated loop exit, tail-first submit deferral, pipelined tail enqueue)
 - `hpcperfstats/tests/test_sync_timedb_startup_tail_ingest.py` (coordinator queue, ingest before discover_done, phase complete, tail wall budget, giant defer)
-- `hpcperfstats/tests/test_sync_timedb_supervisor.py` (…, **`test_handoff_batch_remove_processed_paths_single_checkpoint_pass`**, **`test_recover_startup_handoff_incremental_one_tar_per_drain_spin`**, **`test_handoff_skips_duplicate_requeue_same_boot`**, **`test_cap_pending_after_handoff_uses_snapshot_during_startup_gate`**, handoff queue head)
-- Archive/janitor/async helpers in `test_sync_timedb_archive.py`, `test_sync_timedb_janitor.py`, `test_sync_timedb_async_day_close.py` (including **`raw_delete_pending`** single-flight / no-resubmit, stale **`raw_delete_pending`** recovery, **`reconcile_supervisor_raw_delete_pending`** handoff, **`test_reconcile_supervisor_raw_delete_pending_handoffs_phase_done`**)
+- `hpcperfstats/tests/test_sync_timedb_supervisor.py` (…, **`test_handoff_batch_remove_processed_paths_single_checkpoint_pass`**, **`test_recover_startup_handoff_incremental_one_tar_per_drain_spin`**, **`test_handoff_skips_duplicate_requeue_same_boot`**, **`test_cap_pending_after_handoff_uses_snapshot_during_startup_gate`**, **`test_supervisor_oldest_day_chunk_gate_inflight_starvation`**, **`test_handoff_giant_day_slice_ingest`**, **`test_prewarm_skips_sealed_scan_after_tar_append_merge`**, handoff queue head)
+- Archive/janitor/async helpers in `test_sync_timedb_archive.py` (including **`test_populate_uses_tar_not_sealed_when_dirty`**, **`test_select_ingest_chunk_paths_oldest_tar_only`**, **`test_handoff_priority_cap_explicit_wave_when_priority_exceeds_max`**), `test_sync_timedb_janitor.py`, `test_sync_timedb_async_day_close.py` (including **`raw_delete_pending`** single-flight / no-resubmit, stale **`raw_delete_pending`** recovery, **`reconcile_supervisor_raw_delete_pending`** handoff, **`test_reconcile_supervisor_raw_delete_pending_handoffs_phase_done`**)
 - `hpcperfstats/tests/test_sync_timedb_day_raw_removal.py` (manifest-fast handoff when **`phase=done`**, snapshot-aware remaining raw, verified-on-disk handoff block, **`run_supervisor_day_raw_removal_delete_pass`** tar-drop-before-chunk-wait, calendar-disjoint batch delete during chunk, **`discover_closed_raw_on_disk_handoffs`**, verified-only pending does not block startup drain)
 
 ## Overlap

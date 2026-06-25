@@ -7480,3 +7480,374 @@ def test_handoff_skips_duplicate_requeue_same_boot(
     assert "same_boot_duplicate" in dup_out
   finally:
     shutdown_requested[0] = False
+
+
+def test_prewarm_skips_sealed_scan_after_tar_append_merge(
+    monkeypatch, tmp_path,
+):
+  """Warm Redis after tar_append merge must not repopulate from sealed scan."""
+  from hpcperfstats.dbload.lib.archive_compress import (
+      normalize_daily_compressed_path,
+  )
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
+      FakeRedis,
+      build_archive_members_redis_keys,
+      store_complete_members_in_redis,
+  )
+
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      reset_archive_members_redis_client_for_tests,
+  )
+
+  fake = FakeRedis()
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
+      lambda: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: fake,
+  )
+  reset_archive_members_redis_client_for_tests()
+  day = "2026-05-22"
+  zst = tmp_path / ("%s.tar.zst" % day)
+  tar = tmp_path / ("%s.tar" % day)
+  zst.write_bytes(b"z")
+  tar.write_bytes(b"t")
+  canonical = str(zst)
+  cache_key = archive_helpers._daily_archive_members_cache_key(
+      normalize_daily_compressed_path(canonical),
+  )
+  keys = build_archive_members_redis_keys(cache_key)
+  store_complete_members_in_redis(keys, {"m": 1}, saw_duplicates=False)
+
+  populate_calls = {"n": 0}
+  log_lines = []
+
+  def _track_get_existing(*_a, **_k):
+    populate_calls["n"] += 1
+    return {"m": 1}
+
+  monkeypatch.setattr(
+      st, "get_existing_archive_members_for_daily_archive", _track_get_existing,
+  )
+  monkeypatch.setattr(
+      st,
+      "log_print",
+      lambda *args, **kw: log_lines.append(" ".join(str(a) for a in args)),
+  )
+
+  summary = st._prewarm_archive_members_redis_for_days([(canonical, day)])
+  assert "%s:redis_warm" % day in summary
+  assert populate_calls["n"] == 0
+  assert not any("Prewarming archive members" in line for line in log_lines)
+
+
+def test_supervisor_oldest_day_chunk_gate_inflight_starvation(
+    monkeypatch, tmp_path,
+):
+  """While oldest blocked tar has work, ingest chunk excludes newer-day backlog."""
+  shutdown_requested[0] = False
+  ingest_batches = []
+  gate_logs = []
+  try:
+    archive_dir = tmp_path / "archive"
+    daily_dir = tmp_path / "daily"
+    archive_dir.mkdir()
+    daily_dir.mkdir()
+    d1 = datetime(2020, 1, 1, 12, tzinfo=timezone.utc)
+    d2 = datetime(2020, 1, 2, 12, tzinfo=timezone.utc)
+    tar_a = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+    tar_b = os.path.normpath(str(daily_dir / "2020-01-02.tar"))
+    open(tar_a, "wb").close()
+    open(tar_b, "wb").close()
+    handoff = []
+    for i in range(8):
+      path = tmp_path / ("h%d" % i)
+      path.write_text("1000 job cn001\n")
+      os.utime(path, (d1.timestamp(), d1.timestamp()))
+      handoff.append(str(path))
+    tail = []
+    for i in range(10):
+      path = tmp_path / ("t%d" % i)
+      path.write_text("2000 job cn002\n")
+      os.utime(path, (d2.timestamp(), d2.timestamp()))
+      tail.append(str(path))
+
+    class _HandoffDayRawRemoval:
+      enabled = True
+      on_handoff_to_ingest = None
+      on_pipeline_complete = None
+
+      def __init__(self, **_kwargs):
+        pass
+
+      def discover_manifest_handoffs(self):
+        return [(tar_a, handoff[:3])]
+
+      def discover_closed_raw_on_disk_handoffs(self):
+        return []
+
+      def any_blocks_startup_drain(self):
+        return False
+
+      def consumed_paths(self):
+        return set()
+
+      def paths_pending_delete(self):
+        return set()
+
+      def any_needs_delete_phase(self):
+        return False
+
+      def any_needs_tar_drop_finish(self):
+        return False
+
+      def days_needing_delete_oldest_first(self):
+        return []
+
+      def days_needing_tar_drop_oldest_first(self):
+        return []
+
+      def count_days_waiting_on_ingest(self):
+        return 1
+
+      def shutdown(self, wait=True):
+        del wait
+
+    rescan_calls = {"n": 0}
+
+    def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
+      rescan_calls["n"] += 1
+      if rescan_calls["n"] == 1:
+        return list(handoff[5:]) + list(tail)
+      shutdown_requested[0] = True
+      return []
+
+    def fake_add(_lock, path, **_kwargs):
+      ingest_batches.append(path)
+      if len(ingest_batches) >= 3:
+        shutdown_requested[0] = True
+      return (path, True, True, 0.0)
+
+    from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
+        StartupArchiveScanCoordinator,
+    )
+
+    _supervisor_startup_preflight_disabled(monkeypatch)
+    monkeypatch.setattr(st, "DayRawRemovalCoordinator", _HandoffDayRawRemoval)
+    monkeypatch.setattr(st.cfg, "get_sync_day_close_raw_removal_preflight", lambda: True)
+    monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        st.cfg,
+        "get_sync_startup_drain_day_close_before_ingest",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        StartupArchiveScanCoordinator,
+        "wait_for_snapshot",
+        lambda self, *, allow_build=False: None,
+    )
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "add_stats_file_to_db", fake_add)
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st.cfg, "get_sync_ingest_chunk_size", lambda: 3)
+    monkeypatch.setattr(st.cfg, "get_sync_ingest_queue_max_size", lambda: 2000)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", str(daily_dir))
+    monkeypatch.setattr(
+        st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
+    monkeypatch.setattr(
+        archive_helpers, "build_archive_mapping", lambda *_a, **_k: ({}, {}))
+    monkeypatch.setattr(
+        st,
+        "build_unprocessed_raw_by_daily_tar",
+        lambda *_a, **_k: {tar_a: list(handoff)},
+    )
+    monkeypatch.setattr(
+        archive_helpers,
+        "build_unprocessed_raw_by_daily_tar",
+        lambda *_a, **_k: {tar_a: list(handoff)},
+    )
+    monkeypatch.setattr(
+        st,
+        "days_ingest_complete_by_checkpoint",
+        lambda *_a, **_k: [],
+    )
+    monkeypatch.setattr(
+        janitor_mod.ArchiveJanitor,
+        "signal_work_available",
+        lambda self: None,
+    )
+    monkeypatch.setattr(
+        st,
+        "log_print",
+        lambda *args, **kw: (
+            gate_logs.append(" ".join(str(a) for a in args))
+            if args and "oldest_day_chunk_gate" in str(args[0])
+            else None
+        ),
+    )
+
+    st.run_sync_timedb_supervisor_loop(
+        str(archive_dir),
+        "all",
+        None,
+        ".hpc",
+        object(),
+        _FakeArchivePool(),
+        run_once=True,
+    )
+
+    assert gate_logs
+    assert ingest_batches
+    assert all(path in handoff for path in ingest_batches)
+    assert not any(path in tail for path in ingest_batches)
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_handoff_giant_day_slice_ingest(monkeypatch, tmp_path):
+  """Handoff requeue slices giant days via _run_startup_tail_ingest_batch."""
+  shutdown_requested[0] = False
+  ingest_calls = []
+  log_lines = []
+  try:
+    archive_dir = tmp_path / "archive"
+    daily_dir = tmp_path / "daily"
+    archive_dir.mkdir()
+    daily_dir.mkdir()
+    tar_norm = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+    open(tar_norm, "wb").close()
+    paths = []
+    for i in range(250):
+      path = tmp_path / ("p%d" % i)
+      path.write_text("1000 job cn001\n")
+      paths.append(str(path))
+
+    class _HandoffDayRawRemoval:
+      enabled = True
+      on_handoff_to_ingest = None
+      on_pipeline_complete = None
+
+      def __init__(self, **_kwargs):
+        pass
+
+      def discover_manifest_handoffs(self):
+        return [(tar_norm, paths)]
+
+      def discover_closed_raw_on_disk_handoffs(self):
+        return []
+
+      def any_blocks_startup_drain(self):
+        return False
+
+      def consumed_paths(self):
+        return set()
+
+      def paths_pending_delete(self):
+        return set()
+
+      def any_needs_delete_phase(self):
+        return False
+
+      def any_needs_tar_drop_finish(self):
+        return False
+
+      def days_needing_delete_oldest_first(self):
+        return []
+
+      def days_needing_tar_drop_oldest_first(self):
+        return []
+
+      def count_days_waiting_on_ingest(self):
+        return 1
+
+      def shutdown(self, wait=True):
+        del wait
+
+    def fake_tail_add(_lock, path, **_kwargs):
+      ingest_calls.append(path)
+      return (path, True, True, 0.0)
+
+    from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
+        StartupArchiveScanCoordinator,
+    )
+
+    _supervisor_startup_preflight_disabled(monkeypatch)
+    monkeypatch.setattr(st, "DayRawRemovalCoordinator", _HandoffDayRawRemoval)
+    monkeypatch.setattr(st.cfg, "get_sync_day_close_raw_removal_preflight", lambda: True)
+    monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        st.cfg,
+        "get_sync_startup_drain_day_close_before_ingest",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        st.cfg,
+        "get_sync_startup_tail_ingest_max_files",
+        lambda: 100,
+    )
+    monkeypatch.setattr(st, "add_stats_file_to_db", fake_tail_add)
+    monkeypatch.setattr(
+        StartupArchiveScanCoordinator,
+        "wait_for_snapshot",
+        lambda self, *, allow_build=False: None,
+    )
+    monkeypatch.setattr(st, "rescan_pending_stats_files", lambda *_a, **_k: [])
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(
+        st,
+        "log_print",
+        lambda *args, **kw: log_lines.append(" ".join(str(a) for a in args)),
+    )
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", str(daily_dir))
+    monkeypatch.setattr(
+        st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
+    monkeypatch.setattr(
+        archive_helpers, "build_archive_mapping", lambda *_a, **_k: ({}, {}))
+    monkeypatch.setattr(
+        st,
+        "build_unprocessed_raw_by_daily_tar",
+        lambda *_a, **_k: {},
+    )
+    monkeypatch.setattr(
+        archive_helpers,
+        "build_unprocessed_raw_by_daily_tar",
+        lambda *_a, **_k: {},
+    )
+    monkeypatch.setattr(
+        st,
+        "days_ingest_complete_by_checkpoint",
+        lambda *_a, **_k: [],
+    )
+    monkeypatch.setattr(
+        janitor_mod.ArchiveJanitor,
+        "signal_work_available",
+        lambda self: None,
+    )
+
+    st.run_sync_timedb_supervisor_loop(
+        str(archive_dir),
+        "all",
+        None,
+        ".hpc",
+        object(),
+        _FakeArchivePool(),
+        run_once=True,
+    )
+
+    assert len(ingest_calls) == 250
+    begin_logs = [
+        line for line in log_lines if "startup handoff giant-day ingest begin" in line
+    ]
+    assert begin_logs
+    assert "slices=3" in begin_logs[0]
+  finally:
+    shutdown_requested[0] = False

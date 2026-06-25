@@ -22,6 +22,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
     get_archive_members_redis_client,
     invalidate_archive_members_redis,
     list_dedupe_hint_day_tokens,
+    merge_appended_members_into_redis,
     populate_archive_members_redis,
     reset_archive_members_redis_client_for_tests,
     set_archive_day_ingest_skip,
@@ -880,3 +881,20 @@ def test_archive_members_redis_populate_single_flight_compose(tmp_path):
   assert skip is not None
   assert skip[0] == "tar_truncated_or_unreadable"
   invalidate_archive_members_redis(cache_key)
+
+
+def test_merge_appended_members_into_redis_keeps_existing(_redis_test_env, tmp_path):
+  """Incremental merge HSETs new members without clearing the HASH."""
+  fake = _redis_test_env
+  cache_key = _sample_cache_key(tmp_path)
+  keys = build_archive_members_redis_keys(cache_key)
+  store_complete_members_in_redis(keys, {"existing": 42}, saw_duplicates=False)
+
+  assert merge_appended_members_into_redis(
+      cache_key,
+      {"appended": 7},
+      saw_duplicates=False,
+  ) is True
+  assert fake.hget(keys.hash_key, "existing") == "42"
+  assert fake.hget(keys.hash_key, "appended") == "7"
+  assert fake.get(keys.complete_key) == "1"

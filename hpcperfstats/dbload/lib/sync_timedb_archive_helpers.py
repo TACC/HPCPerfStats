@@ -1384,6 +1384,92 @@ def oldest_checkpoint_blocked_tar(unprocessed_by_tar, *, tgz_archive_dir):
   return ranked[0][1]
 
 
+def build_chunk_day_histogram(paths, tgz_archive_dir):
+  """Count chunk paths per calendar day (for handoff chunk telemetry)."""
+  histogram = {}
+  for path in paths or ():
+    for tar_path in daily_tar_paths_for_stats_paths([path], tgz_archive_dir):
+      day_date = calendar_date_from_daily_tar_path(tar_path)
+      if day_date is None:
+        continue
+      token = day_date.isoformat()
+      histogram[token] = histogram.get(token, 0) + 1
+  return histogram
+
+
+def select_ingest_chunk_paths(
+    pending,
+    *,
+    oldest_tar,
+    unprocessed_by_tar,
+    inflight_archive_paths,
+    tgz_archive_dir,
+    chunk_size,
+    ingest_queue_high,
+):
+  """While oldest checkpoint-blocked tar has work, restrict chunk to that tar only."""
+  target_chunk_size = min(chunk_size, ingest_queue_high)
+  if not pending or target_chunk_size <= 0:
+    return []
+  if not oldest_tar or not tgz_archive_dir:
+    return list(pending[:target_chunk_size])
+  oldest_tar_norm = os.path.normpath(str(oldest_tar))
+  blocked_on_disk = on_disk_unprocessed_paths_for_tar(
+      unprocessed_by_tar,
+      oldest_tar_norm,
+  )
+  inflight_for_oldest = False
+  for path in inflight_archive_paths or ():
+    if oldest_tar_norm in daily_tar_paths_for_stats_paths(
+        [path],
+        tgz_archive_dir,
+    ):
+      inflight_for_oldest = True
+      break
+  if not blocked_on_disk and not inflight_for_oldest:
+    return list(pending[:target_chunk_size])
+  oldest_only = [
+      path
+      for path in pending
+      if oldest_tar_norm in daily_tar_paths_for_stats_paths(
+          [path],
+          tgz_archive_dir,
+      )
+  ]
+  return list(oldest_only[:target_chunk_size])
+
+
+def merge_daily_archive_members_l1_cache(canonical, member_map):
+  """Merge appended tar members into the per-process L1 map when present."""
+  if not member_map:
+    return
+  canonical = normalize_daily_compressed_path(canonical)
+  cache_key = _daily_archive_members_cache_key(canonical)
+  cached = _DAILY_ARCHIVE_MEMBERS_CACHE.get(cache_key)
+  if cached is None:
+    return
+  merged = dict(cached)
+  for name, size in member_map.items():
+    size = int(size)
+    prev = merged.get(name)
+    if prev is None or size > prev:
+      merged[name] = size
+  _DAILY_ARCHIVE_MEMBERS_CACHE[cache_key] = merged
+
+
+def build_tar_append_member_map(stats_paths):
+  """Member name → byte size for paths successfully appended to a daily tar."""
+  member_map = {}
+  for path in stats_paths or ():
+    if not path:
+      continue
+    try:
+      member_map[get_tar_member_name(path)] = int(os.path.getsize(path))
+    except OSError:
+      continue
+  return member_map
+
+
 def prepend_checkpoint_blocked_paths_to_pending(
     pending,
     blocked_paths,
@@ -2795,6 +2881,21 @@ def get_existing_archive_members(tar_path):
   return members
 
 
+_POPULATE_SOURCE_BY_CANONICAL = {}
+
+
+def consume_archive_members_populate_source(canonical, default="prewarmed"):
+  """Pop last populate source token for prewarm summary (``tar_populated`` / ``sealed_populated``)."""
+  return _POPULATE_SOURCE_BY_CANONICAL.pop(
+      normalize_daily_compressed_path(canonical),
+      default,
+  )
+
+
+def _record_archive_members_populate_source(canonical, source):
+  _POPULATE_SOURCE_BY_CANONICAL[normalize_daily_compressed_path(canonical)] = source
+
+
 def _populate_redis_members_from_sealed_scan(sealed_path, cache_key):
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       build_archive_members_redis_keys,
@@ -2802,6 +2903,7 @@ def _populate_redis_members_from_sealed_scan(sealed_path, cache_key):
   )
 
   keys = build_archive_members_redis_keys(cache_key)
+  canonical = cache_key[0] if cache_key else sealed_path
 
   def _scan_fn(on_member):
     readable, _members, saw_duplicates, stream_error = (
@@ -2813,7 +2915,64 @@ def _populate_redis_members_from_sealed_scan(sealed_path, cache_key):
     )
     return readable, saw_duplicates, stream_error
 
-  return populate_archive_members_redis(keys, _scan_fn, sealed_path=sealed_path)
+  members = populate_archive_members_redis(keys, _scan_fn, sealed_path=sealed_path)
+  if members is not None:
+    _record_archive_members_populate_source(canonical, "sealed_populated")
+    day_token = keys.day_token if keys.day_token != "unknown" else ""
+    if day_token:
+      log_print(
+          "INFO: populate_source=sealed day=%s path=%s"
+          % (day_token, sealed_path),
+          flush=True,
+      )
+  return members
+
+
+def _populate_redis_members_from_tar_scan(tar_path, cache_key):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      build_archive_members_redis_keys,
+      populate_archive_members_redis,
+  )
+
+  keys = build_archive_members_redis_keys(cache_key)
+  canonical = cache_key[0] if cache_key else tar_path
+
+  def _scan_fn(on_member):
+    if not os.path.isfile(tar_path):
+      return False, False, None
+    saw_duplicates = False
+    seen_names = set()
+    try:
+      with file_read_lock_wait(tar_path):
+        with _open_tarfile_for_read(tar_path, get_archive_zstd_thread_count()) as tf:
+          for member in _iter_tar_members(tf):
+            if not member.isfile():
+              continue
+            if member.name in seen_names:
+              saw_duplicates = True
+            seen_names.add(member.name)
+            on_member(member.name, member.size)
+    except Exception as exc:
+      return False, False, exc
+    finally:
+      _remove_read_lock_sidecar(tar_path)
+    return True, saw_duplicates, None
+
+  members = populate_archive_members_redis(
+      keys,
+      _scan_fn,
+      sealed_path=None,
+  )
+  if members is not None:
+    _record_archive_members_populate_source(canonical, "tar_populated")
+    day_token = keys.day_token if keys.day_token != "unknown" else ""
+    if day_token:
+      log_print(
+          "INFO: populate_source=tar day=%s path=%s"
+          % (day_token, tar_path),
+          flush=True,
+      )
+  return members
 
 
 def get_existing_archive_members_for_daily_archive(archive_compressed_path):
@@ -2859,10 +3018,20 @@ def get_existing_archive_members_for_daily_archive(archive_compressed_path):
               % keys.day_token,
           )
         else:
-          members = _populate_redis_members_from_sealed_scan(
-              sealed_path,
-              cache_key,
-          )
+          zst_path, gz_path = compressed_sibling_paths(tar_path)
+          if (
+              os.path.isfile(tar_path)
+              and is_daily_tar_sealed_dirty(tar_path, zst_path, gz_path)
+          ):
+            members = _populate_redis_members_from_tar_scan(
+                tar_path,
+                cache_key,
+            )
+          else:
+            members = _populate_redis_members_from_sealed_scan(
+                sealed_path,
+                cache_key,
+            )
         if members is not None:
           _store_daily_archive_members_cache(canonical, members)
           return dict(members)

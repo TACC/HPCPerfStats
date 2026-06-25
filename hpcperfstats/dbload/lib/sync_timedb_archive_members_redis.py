@@ -986,6 +986,47 @@ def store_complete_members_in_redis(
     client.set(keys.dedupe_hint_key, "1", ex=_redis_ttl_seconds())
 
 
+def merge_appended_members_into_redis(
+    cache_key,
+    member_map,
+    *,
+    saw_duplicates=False,
+):
+  """HSET appended tar members without clearing the Redis L2 map (``tar_append`` path).
+
+  Returns ``True`` when Redis L2 is enabled and merge succeeded; ``False`` when
+  disabled or ``member_map`` is empty (caller may fall back to full invalidation).
+  """
+  if not member_map:
+    return False
+  if not archive_members_redis_enabled():
+    return False
+  keys = build_archive_members_redis_keys(cache_key)
+  client = get_archive_members_redis_client(required=True)
+  pending_batch = {}
+  for name, size in member_map.items():
+    size = int(size)
+    existing = client.hget(keys.hash_key, name)
+    if existing is not None:
+      try:
+        if int(existing) >= size:
+          continue
+      except (TypeError, ValueError):
+        pass
+    pending_batch[name] = size
+    if len(pending_batch) >= _hset_batch_size():
+      _flush_hset_batch(client, keys, pending_batch)
+      pending_batch.clear()
+  if pending_batch:
+    _flush_hset_batch(client, keys, pending_batch)
+  client.set(keys.complete_key, "1", ex=_redis_ttl_seconds())
+  _apply_ttl(client, keys)
+  client.delete(keys.progress_key, keys.degraded_key)
+  if saw_duplicates and keys.day_token != "unknown":
+    client.set(keys.dedupe_hint_key, "1", ex=_redis_ttl_seconds())
+  return True
+
+
 def invalidate_archive_members_redis(cache_key):
   """Delete Redis L2 keys for a daily archive identity."""
   if not archive_members_redis_enabled():
