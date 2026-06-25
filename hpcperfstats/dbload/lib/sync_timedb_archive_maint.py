@@ -8,7 +8,6 @@ re-read on a cache miss.
 """
 from __future__ import annotations
 
-import json
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed

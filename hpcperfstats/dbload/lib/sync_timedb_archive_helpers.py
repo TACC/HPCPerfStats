@@ -1,7 +1,6 @@
 """Pure helpers for sync_timedb archiving, tar utilities, and file discovery (no Django). Used by sync_timedb and by unit tests."""
 import contextlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import json
 import os
 import re
 import shutil
@@ -577,7 +576,6 @@ def raw_stats_path_needs_tar_append(
   except Exception as exc:
     from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
         ArchiveDayIngestSkipError,
-        ArchiveMembersRedisUnavailableError,
     )
     if isinstance(exc, ArchiveDayIngestSkipError):
       _log_archive_day_ingest_skip_once(exc)
@@ -2162,7 +2160,6 @@ def invalidate_daily_archive_members_cache(compressed_path):
   try:
     from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
         archive_members_redis_enabled,
-        build_archive_members_redis_keys,
         invalidate_archive_members_redis,
     )
     if archive_members_redis_enabled():

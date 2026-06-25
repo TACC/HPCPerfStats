@@ -43,7 +43,7 @@ function gpuPatchFromResponse(gpuRes: unknown): Record<string, unknown> {
   return JOB_MONITOR_GPU_NO_DATA_ROW;
 }
 
-export async function fetchJobMonitorGpuPatchForUsername(
+async function fetchJobMonitorGpuPatchForUsername(
   username: string,
   days: number | undefined,
 ): Promise<Record<string, unknown>> {

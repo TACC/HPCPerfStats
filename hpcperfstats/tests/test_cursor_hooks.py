@@ -12,7 +12,6 @@ sys.path.insert(0, str(HOOKS_DIR))
 
 import hpc_hook_lib as lib  # noqa: E402
 from hook_task_router import (  # noqa: E402
-    HPCPERFSTATS_ROUTER_ENTRIES,
     MONITOR_ROUTER_ENTRIES,
     ROUTER_ENTRIES,
     detect_rules_profile,

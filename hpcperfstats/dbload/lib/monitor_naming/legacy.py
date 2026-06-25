@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from hpcperfstats.dbload.lib.monitor_naming.load_map import (
     event_renames,
-    legacy_type_names,
     load_monitor_rename_map,
     type_renames,
 )

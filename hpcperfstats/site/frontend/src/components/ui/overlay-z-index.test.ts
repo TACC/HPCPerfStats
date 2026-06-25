@@ -20,10 +20,9 @@ describe("overlay z-index contract", () => {
     expect(source).not.toMatch(/\bz-50\b/);
   });
 
-  it.each([
-    ["dialog.tsx", "dialog"],
-    ["sheet.tsx", "sheet"],
-  ])("keeps modal %s on project backdrop scale", (filename) => {
+  it.each([["dialog.tsx", "dialog"]])(
+    "keeps modal %s on project backdrop scale",
+    (filename) => {
     const source = readUiSource(filename);
     expect(source).toMatch(/z-\[var\(--z-modal-backdrop\)\]/);
     expect(source).toMatch(/z-\[calc\(var\(--z-modal-backdrop\)\+1\)\]/);

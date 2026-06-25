@@ -90,13 +90,6 @@ export type TypeDetailData = Record<string, unknown> & {
   values?: unknown[];
 };
 
-export type ApiErrorBody = {
-  message?: string;
-  detail?: string;
-  error?: string;
-  login_url?: string;
-};
-
 export type PubDashboardHistogramBlock = {
   expansion_factor_definition?: string;
   histogram_bin_edges?: unknown[];

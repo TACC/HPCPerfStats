@@ -6,9 +6,8 @@ Uses the same LocMem / django_db(databases=[]) contract as test_api_helpers.py.
 from __future__ import annotations
 
 import sys
-import time
-from concurrent.futures import Future, ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone as dt_timezone
+from concurrent.futures import Future
+from datetime import datetime, timezone as dt_timezone
 from unittest.mock import MagicMock, patch
 
 import pytest

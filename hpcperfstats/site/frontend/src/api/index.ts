@@ -89,6 +89,3 @@ export const api = {
   },
 };
 
-export default api;
-
-export { fetchPubClusterDashboard } from "./fetch-mutator";

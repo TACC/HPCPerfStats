@@ -1,7 +1,5 @@
 """Tests for archive maintenance snapshot, hints, and parallel head metadata."""
 from datetime import datetime, timezone
-import json
-import os
 
 import pytest
 
@@ -102,7 +100,6 @@ def test_save_and_load_archive_maint_hints_roundtrip(tmp_path, monkeypatch):
 
 @pytest.mark.skipif(not __import__("shutil").which("zstd"), reason="zstd not on PATH")
 def test_atomic_seal_skips_when_tar_and_zst_equivalent(tmp_path):
-  import shutil
   import subprocess
   import tarfile
 
@@ -187,7 +184,7 @@ def test_build_archive_maintenance_snapshot_head_mode_skips_sampled_collect(
   monkeypatch.setattr(
       readiness,
       "build_head_ingest_ready_set",
-      lambda closed, identities, **kw: set(),
+      lambda closed, _identities, **kw: set(),
   )
   snap = maint.build_archive_maintenance_snapshot(
       str(tmp_path), arch_suffix, str(tgz), log_fn=None)
@@ -217,7 +214,7 @@ def test_build_archive_maintenance_snapshot_sample_mode_collects_sampled(
   monkeypatch.setattr(
       readiness,
       "build_head_ingest_ready_set",
-      lambda closed, identities, **kw: set(),
+      lambda closed, _identities, **kw: set(),
   )
   maint.build_archive_maintenance_snapshot(
       str(tmp_path), arch_suffix, str(tgz), log_fn=None)

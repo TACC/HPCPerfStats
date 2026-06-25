@@ -24,7 +24,7 @@ export class ApiError extends Error {
   }
 }
 
-export function extractApiErrorMessage(body: ApiErrorBody, status: number): string {
+function extractApiErrorMessage(body: ApiErrorBody, status: number): string {
   const detail = typeof body.detail === "string" ? body.detail.trim() : "";
   const error = typeof body.error === "string" ? body.error.trim() : "";
   const message = typeof body.message === "string" ? body.message.trim() : "";
@@ -46,7 +46,6 @@ export function parseApiErrorBody(payload: unknown, status: number): ApiError {
         ? (payload as ApiErrorBody)
         : {};
   if (isDevEnvironment() && !parsed.success) {
-    // eslint-disable-next-line no-console
     console.warn("API error body failed schema validation", parsed.error.flatten());
   }
   return new ApiError(extractApiErrorMessage(body, status), status, body);

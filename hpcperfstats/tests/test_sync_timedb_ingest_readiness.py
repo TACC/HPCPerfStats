@@ -243,7 +243,7 @@ def test_stats_file_head_ingested_in_db_closes_connections(monkeypatch, tmp_path
       close_calls.append("enter")
       return self
 
-    def __exit__(self, exc_type, exc, tb):
+    def __exit__(self, _exc_type, exc, tb):
       close_calls.append("exit")
       return False
 

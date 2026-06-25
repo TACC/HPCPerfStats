@@ -1,7 +1,6 @@
 """Async DAY_CLOSE coordinator: seal + raw removal + tar drop off janitor thread."""
 from __future__ import annotations
 
-import json
 import os
 import threading
 import time

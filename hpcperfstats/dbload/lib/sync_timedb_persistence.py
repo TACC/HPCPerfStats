@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, Optional
 
 # Bump when ANY persisted semantics change (day-close eligibility, checkpoint
 # shape, manifest phase meaning, delete-gate assumptions, hints debt, etc.).

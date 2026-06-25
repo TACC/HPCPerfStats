@@ -802,7 +802,7 @@ def _cache_set_fail_job_plots_only(key, val, timeout=None):
     return None
 
 
-def _plots_cache_get_factory(hit_keys=(), l2_keys=(), data_keys=()):
+def _plots_cache_get_factory(hit_keys=(), _l2_keys=(), data_keys=()):
     """Build cache.get side_effect that preserves DRF throttle defaults."""
 
     def _cache_get(key, default=None):

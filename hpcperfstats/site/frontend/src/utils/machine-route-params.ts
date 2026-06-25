@@ -23,11 +23,6 @@ export type MachineFlatRouteParams = {
   host?: string;
 };
 
-export function routeParamString(value: string | string[] | undefined): string {
-  if (Array.isArray(value)) return value[0] ?? "";
-  return value ?? "";
-}
-
 /** Strip `/machine` prefix and return URL path segments. */
 export function parseMachinePathname(pathname: string): string[] {
   const normalized = pathname.replace(/\/+$/, "") || "/";

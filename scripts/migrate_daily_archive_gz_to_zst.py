@@ -131,8 +131,6 @@ def main(argv=None):
       MIGRATE_GZ_STATUS_CONVERTED,
       MIGRATE_GZ_STATUS_DROPPED_ONLY,
       MIGRATE_GZ_STATUS_FAILED,
-      MIGRATE_GZ_STATUS_KEPT_MISMATCH,
-      MIGRATE_GZ_STATUS_SKIPPED_LOCKED,
       build_remaining_raw_stats_by_daily_gz,
       check_archive_migration_prerequisites,
       migrate_legacy_daily_gz_archives,

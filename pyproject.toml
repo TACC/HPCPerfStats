@@ -57,6 +57,8 @@ test = [
 dev = [
   "ruff>=0.15.17",
   "pylint>=4.0.6",  # optional; Ruff is the primary linter (see docs/TESTING.md)
+  "vulture>=2.14",
+  "pre-commit>=4.2.0",
 ]
 
 [tool.pytest.ini_options]
@@ -166,3 +168,21 @@ exclude_lines = [
 
 [tool.coverage.html]
 directory = "htmlcov"
+
+[tool.vulture]
+paths = ["hpcperfstats"]
+min_confidence = 80
+ignore_decorators = [
+  "@receiver",
+  "@pytest.fixture",
+  "@api_view",
+  "@authentication_classes",
+  "@contextmanager",
+]
+ignore_names = [
+  "urlpatterns",
+  "ready",
+  "Meta",
+  "handle",
+  "add_arguments",
+]

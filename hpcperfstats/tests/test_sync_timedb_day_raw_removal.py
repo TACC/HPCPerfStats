@@ -302,7 +302,6 @@ def test_skip_stuck_older_day_allows_younger_delete_in_one_pass(tmp_path, monkey
 
 
 def test_pipeline_verify_budget_exhausted_logs_warning(tmp_path, monkeypatch):
-  day = datetime(2022, 6, 8)
   tar_path = str(tmp_path / "daily" / "2022-06-08.tar")
   (tmp_path / "daily").mkdir(exist_ok=True)
   open(tar_path, "wb").close()

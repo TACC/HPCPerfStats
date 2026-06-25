@@ -6,7 +6,6 @@ import time
 from datetime import date, datetime
 from unittest.mock import MagicMock
 
-import pytest
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.dbload.lib.sync_timedb_startup_day_close import (

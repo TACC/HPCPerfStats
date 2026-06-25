@@ -591,13 +591,38 @@ memray flamegraph memray-*.bin
 
 For ingestion-style workloads, run `memray` against a short `sync_timedb` invocation or a targeted dbload test module instead of the full archive scan.
 
-**Unused imports (ruff F401):** install [Ruff](https://docs.astral.sh/ruff/) in your environment (`pip install ruff`), then from the project root:
+**Static analysis (local git hooks):** install dev extras and register hooks from the git checkout root:
 
 ```bash
-ruff check hpcperfstats --select F401
+cd HPCPerfStats
+pip install -e ".[dev]"
+./scripts/install-git-hooks.sh
 ```
 
-Use `ruff check hpcperfstats --select F401 --fix` only after reviewing the diff (tests and dynamic imports can confuse static analysis).
+**Pre-commit** (staged files): Ruff `F401`/`F841`/`F811` on `hpcperfstats/`, `cursor-hooks/`, `scripts/`; ESLint on staged `hpcperfstats/site/frontend` TypeScript.
+
+**Pre-push:** frontend `npm run typecheck` and `npm run lint:dead` (knip); `vulture hpcperfstats scripts/vulture_whitelist.py --min-confidence 80`.
+
+Manual equivalents:
+
+```bash
+# Python unused imports/variables
+../.venv/bin/ruff check hpcperfstats cursor-hooks scripts --select F401,F841,F811
+../.venv/bin/ruff check ../hpcperfstats-tools --select F401,F841,F811
+
+# Python dead symbols (high confidence)
+../.venv/bin/vulture hpcperfstats scripts/vulture_whitelist.py --min-confidence 80
+
+# Frontend
+cd hpcperfstats/site/frontend
+npm run typecheck
+npm run lint
+npm run lint:dead
+```
+
+Host pytest drift guards: `pytest -q hpcperfstats/tests/test_static_analysis.py`.
+
+Use `ruff check … --fix` only after reviewing the diff (tests and dynamic imports can confuse static analysis).
 
 ## Security scanning (optional)
 

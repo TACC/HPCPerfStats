@@ -17,7 +17,6 @@ from hpcperfstats.dbload.lib.sync_timedb_parsing import (
     exclude_types,
     find_processing_start_index,
     load_stats_file_lines,
-    map_hardware_counter_vals,
     parse_first_timestamp_line,
     parse_stats_file_path,
     parse_stats_file_streaming,

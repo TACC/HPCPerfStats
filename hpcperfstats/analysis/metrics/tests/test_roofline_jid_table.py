@@ -107,7 +107,7 @@ def test_roofline_intel_succeeds_with_non_skx_imc_bandwidth():
 
 def test_roofline_succeeds_with_cpu_counter_metrics_flops_and_imc_bw():
   """Intel roofline FLOPS can come from cpu_counter_metrics (aligned with avg_flops)."""
-  from hpcperfstats.analysis.metrics.lib.gen.utils import INTEL_FP_ARITH_ALL_EVENTS
+  from hpcperfstats.dbload.lib.monitor_naming.canonical import INTEL_FP_ARITH_ALL_EVENTS
 
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
@@ -175,7 +175,7 @@ def test_roofline_succeeds_with_arm_dcgm_approx_metrics():
 
 def test_roofline_uses_arm_imc_cas_bandwidth_when_present():
   """ARM path accepts arm_imc CAS counters for bandwidth."""
-  from hpcperfstats.analysis.metrics.lib.gen.utils import INTEL_FP_ARITH_ALL_EVENTS
+  from hpcperfstats.dbload.lib.monitor_naming.canonical import INTEL_FP_ARITH_ALL_EVENTS
 
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
@@ -370,7 +370,7 @@ def test_plot_and_reason_gpu_rejects_explicit_zero_peak_bw():
 
 def test_plot_and_reason_cpu_rejects_explicit_zero_peak_bw():
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
-  from hpcperfstats.analysis.metrics.lib.gen.utils import INTEL_FP_ARITH_ALL_EVENTS
+  from hpcperfstats.dbload.lib.monitor_naming.canonical import INTEL_FP_ARITH_ALL_EVENTS
 
   base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])

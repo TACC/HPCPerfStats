@@ -4,7 +4,6 @@ import importlib
 import sys
 from types import SimpleNamespace
 
-import pytest
 
 from hpcperfstats.dbload.lib.process_title import (
     apply_pool_worker_process_title,

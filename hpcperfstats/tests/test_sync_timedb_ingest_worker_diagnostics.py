@@ -1,5 +1,4 @@
 import os
-import time
 
 from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
     apply_ingest_pool_worker_init,

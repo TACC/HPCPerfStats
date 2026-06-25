@@ -17,7 +17,7 @@ def test_get_rmq_queue_depth_for_monitor_passive_ok(monkeypatch):
   declare_calls = []
 
   class _FakeChannel:
-    def queue_declare(self, queue=None, durable=None, passive=None):
+    def queue_declare(self, queue=None, _durable=None, passive=None):
       declare_calls.append(passive)
       return _FakeQueue(99)
 
@@ -43,7 +43,7 @@ def test_get_rmq_queue_depth_for_monitor_falls_back_to_non_passive(monkeypatch):
   declare_calls = []
 
   class _FakeChannel:
-    def queue_declare(self, queue=None, durable=None, passive=None):
+    def queue_declare(self, queue=None, _durable=None, passive=None):
       declare_calls.append(passive)
       if passive is True:
         raise RuntimeError("queue not found (simulated)")

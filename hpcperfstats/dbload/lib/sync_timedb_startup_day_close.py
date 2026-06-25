@@ -1,7 +1,6 @@
 """Startup checkpoint-driven async DAY_CLOSE preflight."""
 from __future__ import annotations
 
-import json
 import os
 import threading
 import time

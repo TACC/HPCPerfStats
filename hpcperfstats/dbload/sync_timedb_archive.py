@@ -42,7 +42,6 @@ from hpcperfstats.dbload.lib.archive_compress import (
     detect_compressed_format,
 )
 from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-    STREAM_ARCHIVE_TASK,
     collect_sealed_daily_archive_paths_in_range,
     iter_archive_ingest_tasks,
     iter_sealed_daily_archive_member_paths,

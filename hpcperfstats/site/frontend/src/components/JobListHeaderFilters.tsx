@@ -26,7 +26,7 @@ import {
   type JobListHeaderFilterKey,
 } from "@/utils/job-list-header-filter-params";
 
-export const HEADER_FILTER_DIMENSIONS = [
+const HEADER_FILTER_DIMENSIONS = [
   { key: "performance_sort_rank" as const, label: JOB_LIST_TABLE_HEADERS.performanceData },
   { key: "username" as const, label: JOB_LIST_TABLE_HEADERS.user },
   { key: "account" as const, label: PROJECT_FIELD_LABEL },

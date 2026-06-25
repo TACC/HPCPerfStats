@@ -4,9 +4,7 @@ import threading
 import time
 from unittest.mock import MagicMock
 
-import pytest
 
-import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
 from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
     StartupArchiveScanCoordinator,

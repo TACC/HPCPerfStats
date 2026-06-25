@@ -29,15 +29,6 @@ local_timezone = cfg.get_timezone()
 
 # Canonical monitor typenames (see hpcperfstats.dbload.lib.monitor_naming); dual-read via resolve.
 from hpcperfstats.dbload.lib.monitor_naming.canonical import (  # noqa: E402
-    ARM_IMC_STATS_TYPES,
-    CHA_TYPENAME_PRIORITY,
-    INTEL_CORE_PMC_TYPES_ORDERED,
-    INTEL_FP_ARITH_ALL_EVENTS,
-    INTEL_FP_ARITH_DOUBLE_EVENTS,
-    INTEL_FP_ARITH_SINGLE_EVENTS,
-    INTEL_IMC_STATS_TYPES,
-    INTEL_LEGACY_SSE_FLOP_EVENTS,
-    PMC_TYPENAME_PRIORITY,
     pmc_freq_for_typename,
 )
 from hpcperfstats.dbload.lib.monitor_naming.resolve import (  # noqa: E402

@@ -11,6 +11,8 @@
     "prebuild": "npm run write-site-identity",
     "pretypecheck": "npm run write-site-identity",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:dead": "knip",
     "build": "npm run generate:api && next build && node scripts/copy-next-export.mjs && node scripts/generate-robots-txt.mjs",
     "build:with-bokeh-playwright-smoke": "next build && node scripts/copy-next-export.mjs && node scripts/generate-robots-txt.mjs",
     "start": "next start",
@@ -44,6 +46,7 @@
     "zod": "^3.25.56"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.4",
     "@orval/zod": "^7.21.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
@@ -53,10 +56,15 @@
     "@types/react-dom": "^19.1.5",
     "@vitejs/plugin-react": "^4.7.0",
     "@vitest/coverage-v8": "^4.1.8",
+    "eslint": "^9.39.4",
+    "eslint-plugin-unused-imports": "^4.4.1",
+    "globals": "^16.5.0",
     "jest-axe": "^10.0.0",
     "jsdom": "^29.1.1",
+    "knip": "^5.88.1",
     "orval": "^7.21.0",
     "typescript": "^5.8.3",
+    "typescript-eslint": "^8.62.0",
     "vitest": "^4.1.8"
   },
   "overrides": {

@@ -15,7 +15,6 @@ from hpc_hook_lib import (  # noqa: E402
     domain_rule_read_issues,
     edit_path_from_tool_part,
     emit_json,
-    extract_edited_paths,
     extract_plan_authority_markdown,
     extract_work_paths,
     is_live_plan_disk_path,

@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-from django.test import override_settings
 from drf_spectacular.generators import SchemaGenerator
 
 COMMITTED_SCHEMA = (

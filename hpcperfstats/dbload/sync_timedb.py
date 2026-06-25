@@ -42,7 +42,6 @@ import types
 import warnings
 from collections import deque
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date as date_cls
 from datetime import datetime, timedelta, timezone
@@ -52,7 +51,6 @@ from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
 from hpcperfstats.dbload.lib.process_title import (
     apply_pool_worker_process_title,
     set_daemon_process_title,
-    set_daemon_thread_title,
 )
 
 ensure_django()
@@ -124,7 +122,6 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     select_ingest_chunk_paths,
     resolve_unmapped_closed_raw_daily_tars,
     daily_tar_path_for_stats_path,
-    daily_tar_path_from_compressed,
     calendar_date_from_daily_tar_path,
     days_ingest_complete_by_checkpoint,
     oldest_checkpoint_blocked_tar,
@@ -132,15 +129,12 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     prepend_checkpoint_blocked_paths_to_pending,
     load_checkpoint_path_set,
     resolved_checkpoint_path_set,
-    unprocessed_tar_paths_still_on_disk,
-    daily_tar_paths_for_archive_job_tasks,
     daily_tar_paths_for_stats_paths,
     daily_tar_paths_from_pending_archive_tasks,
     filter_files_to_add_to_archive,
     get_existing_archive_members,
     get_existing_archive_members_for_daily_archive,
     invalidate_after_daily_tar_mutation,
-    invalidate_daily_archive_members_cache,
     iter_daily_tar_paths,
     replace_corrupt_tar_from_compressed_backup,
     ensure_daily_tar_restored_for_append,
@@ -150,7 +144,6 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     raw_stats_path_needs_tar_append,
     rescan_pending_stats_files,
     set_archive_members_invalidation_hook,
-    should_seal_daily_tar,
     stats_file_is_active_segment,
     stats_path_ingest_sort_epoch,
     verify_tar_archive_readable,
@@ -201,7 +194,6 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
     describe_archive_members_populate_redis_for_day,
     get_ingest_task_deadline_monotonic,
     get_ingest_task_effective_timeout_s,
-    redis_lookup_full_members,
     redis_members_cache_is_fully_warm,
     reset_ingest_task_deadline_monotonic,
     reset_ingest_task_effective_timeout_s,
@@ -2026,6 +2018,7 @@ def _try_db_complete_head_tail_fast_path(
     lines=None,
 ):
   """When head and tail seconds are in DB, skip full duplicate scan (returns start_idx=-1)."""
+  del head_timestamp_utc  # callers pass head ts for API stability; fast path uses tail only
   if lines is not None:
     tail_t, _tail_jid, tail_host = parse_last_timestamp_line(lines)
   else:
@@ -5617,7 +5610,6 @@ def run_sync_timedb_supervisor_loop(
               flush=True,
           )
         _reconcile_pending_with_oldest_checkpoint_blocked()
-        target_chunk_size = min(chunk_size, ingest_queue_high)
         unprocessed_for_chunk = _live_unprocessed_by_tar_for_reconcile()
         oldest_tar_for_chunk = oldest_checkpoint_blocked_tar(
             unprocessed_for_chunk,

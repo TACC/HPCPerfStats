@@ -23,7 +23,6 @@ from hpcperfstats.dbload.lib.zstd_cli import zstd_executable, zstd_gzip_supporte
 from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     STREAM_ARCHIVE_TASK,
     atomic_seal_tar_to_zst,
-    compare_compressed_archive_members,
     drop_legacy_gz_if_equivalent_to_zst,
     build_archive_mapping,
     build_remaining_raw_stats_by_daily_gz,
@@ -48,7 +47,6 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     get_file_member_sizes_from_gzip_archive,
     get_stats_chunk,
     get_tar_file_tasks,
-    iter_daily_sealed_archive_calendar_days,
     iter_archive_ingest_tasks,
     iter_sealed_daily_archive_member_lines,
     iter_tar_file_tasks,
@@ -461,6 +459,7 @@ def test_seal_skip_redis_single_flight_cold(monkeypatch, tmp_path, _clear_daily_
       [shutil.which("zstd"), "-q", "-f", str(tar_path), "-o", str(zst_path)],
       check=True,
   )
+  tar_path.unlink()
   stream_calls = {"n": 0}
   stream_lock = threading.Lock()
   original_stream = helpers._stream_compressed_archive_members
@@ -644,7 +643,7 @@ def test_drop_legacy_gz_removes_when_zst_is_superset(monkeypatch, tmp_path):
   gz_members = {"a.txt": 10, "b.txt": 20}
   zst_members = {"a.txt": 10, "b.txt": 20, "c.txt": 5}
 
-  def _scan(path):
+  def _scan(path, **_kwargs):
     if str(path).endswith(".tar.gz"):
       return True, dict(gz_members)
     return True, dict(zst_members)
@@ -667,7 +666,7 @@ def test_drop_legacy_gz_keeps_when_zst_missing_gz_member(monkeypatch, tmp_path):
   gz_path.write_bytes(b"gz")
   zst_path.write_bytes(b"zst")
 
-  def _scan(path):
+  def _scan(path, **_kwargs):
     if str(path).endswith(".tar.gz"):
       return True, {"a.txt": 10, "b.txt": 20}
     return True, {"a.txt": 10}
@@ -690,7 +689,7 @@ def test_drop_legacy_gz_keeps_when_zst_member_size_differs(monkeypatch, tmp_path
   gz_path.write_bytes(b"gz")
   zst_path.write_bytes(b"zst")
 
-  def _scan(path):
+  def _scan(path, **_kwargs):
     if str(path).endswith(".tar.gz"):
       return True, {"a.txt": 10, "b.txt": 20}
     return True, {"a.txt": 10, "b.txt": 21, "c.txt": 5}
@@ -1486,7 +1485,7 @@ def test_get_tar_file_tasks_restores_corrupt_tar_from_gz(monkeypatch, tmp_path):
     def __enter__(self):
       return self
 
-    def __exit__(self, exc_type, exc, tb):
+    def __exit__(self, _exc_type, exc, tb):
       return False
 
   class _Member:
@@ -1501,7 +1500,7 @@ def test_get_tar_file_tasks_restores_corrupt_tar_from_gz(monkeypatch, tmp_path):
     def __enter__(self):
       return self
 
-    def __exit__(self, exc_type, exc, tb):
+    def __exit__(self, _exc_type, exc, tb):
       return False
 
     def getmembers(self):
@@ -1519,7 +1518,6 @@ def test_get_tar_file_tasks_restores_corrupt_tar_from_gz(monkeypatch, tmp_path):
       raise tarfile.ReadError("corrupt tar")
     return _FakeTar()
 
-  zst_path = "%s.zst" % tar_path[:-4]  # broken.tar.zst
   monkeypatch.setattr(helpers, "file_read_lock_wait", lambda _p: _NoOpLock())
   monkeypatch.setattr(helpers, "file_write_lock", lambda _p: _NoOpLock())
   monkeypatch.setattr(helpers.tarfile, "open", _open_mock)
@@ -1556,7 +1554,7 @@ def test_get_tar_file_tasks_raises_when_corrupt_and_no_gz(monkeypatch, tmp_path)
     def __enter__(self):
       return self
 
-    def __exit__(self, exc_type, exc, tb):
+    def __exit__(self, _exc_type, exc, tb):
       return False
 
   monkeypatch.setattr(helpers, "file_read_lock_wait", lambda _p: _NoOpLock())
@@ -1582,7 +1580,7 @@ def test_get_tar_file_tasks_raises_when_zstd_restore_fails(monkeypatch, tmp_path
     def __enter__(self):
       return self
 
-    def __exit__(self, exc_type, exc, tb):
+    def __exit__(self, _exc_type, exc, tb):
       return False
 
   monkeypatch.setattr(helpers, "file_read_lock_wait", lambda _p: _NoOpLock())
@@ -1748,7 +1746,6 @@ def test_remove_verified_archived_raw_files_skips_bootstrap_until_ingest_ready(
   seg.write_text("%d job1 cn001\nline\n" % ts)
   tgz_dir = tmp_path / "daily"
   tgz_dir.mkdir()
-  zst_key = str(tgz_dir / "2026-04-16.tar.zst")
   archive_calls = []
 
   def fake_archive(info):
@@ -2025,7 +2022,6 @@ def test_archive_stats_files_fail_closed_when_decompress_fails(monkeypatch, tmp_
 
 def test_not_ingested_raw_still_blocks_tar_removal_after_seal(tmp_path, monkeypatch):
   """Scheduled maintenance: filesystem gate blocks .tar removal while raw remains."""
-  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   arch_suffix = "cluster.integration.test"
   host = tmp_path / ("n." + arch_suffix)
@@ -2468,7 +2464,6 @@ def test_dedupe_sealed_daily_archive_last_resort(monkeypatch, tmp_path):
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   zst_path = tmp_path / "2026-06-01.tar.zst"
-  tar_path = tmp_path / "2026-06-01.tar"
   zst_path.write_bytes(b"sealed")
   calls = []
 
@@ -3618,7 +3613,7 @@ def test_migrate_one_dropped_only_when_zst_is_superset(monkeypatch, tmp_path):
   gz_path.write_bytes(b"gz")
   zst_path.write_bytes(b"zst")
 
-  def _scan(path):
+  def _scan(path, **_kwargs):
     if str(path).endswith(".tar.gz"):
       return True, {"a.txt": 10}
     return True, {"a.txt": 10, "b.txt": 5}
@@ -3656,7 +3651,7 @@ def test_migrate_one_kept_mismatch_when_zst_missing_gz_member(monkeypatch, tmp_p
   gz_path.write_bytes(b"gz")
   zst_path.write_bytes(b"zst")
 
-  def _scan(path):
+  def _scan(path, **_kwargs):
     if str(path).endswith(".tar.gz"):
       return True, {"a.txt": 10, "b.txt": 20}
     return True, {"a.txt": 10}
@@ -5560,7 +5555,6 @@ def test_find_immediate_day_close_candidates_orders_oldest_first(tmp_path):
   tar_new = str(daily_dir / "2020-01-02.tar")
   open(tar_old, "wb").close()
   open(tar_new, "wb").close()
-  day2_epoch = int(datetime(2020, 1, 2, 12, tzinfo=timezone.utc).timestamp())
   pending_path = tmp_path / "raw_day2"
   pending_path.write_text("stats")
   pending = [str(pending_path)]
@@ -5581,7 +5575,6 @@ def test_find_immediate_day_close_candidates_skips_disqualified(tmp_path):
   daily_dir.mkdir()
   tar_path = str(daily_dir / "2020-01-01.tar")
   open(tar_path, "wb").close()
-  day_epoch = int(datetime(2020, 1, 1, 12, tzinfo=timezone.utc).timestamp())
   result = find_immediate_day_close_candidates(
       tgz_archive_dir=str(daily_dir),
       candidate_tar_paths=[tar_path],
@@ -5599,7 +5592,6 @@ def test_find_immediate_day_close_candidates_skips_tar_dropped_phase(tmp_path, m
   daily_dir.mkdir()
   tar_path = str(daily_dir / "2020-01-01.tar")
   open(tar_path, "wb").close()
-  day_epoch = int(datetime(2020, 1, 1, 12, tzinfo=timezone.utc).timestamp())
   monkeypatch.setattr(helpers_mod, "tar_day_dirty_by_mtime", lambda _p: False)
   result = find_immediate_day_close_candidates(
       tgz_archive_dir=str(daily_dir),

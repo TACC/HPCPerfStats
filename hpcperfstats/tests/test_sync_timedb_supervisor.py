@@ -34,7 +34,7 @@ class _FakeIngestPool:
   def __enter__(self):
     return self
 
-  def __exit__(self, exc_type, exc, tb):
+  def __exit__(self, _exc_type, exc, tb):
     return False
 
   def imap_unordered(self, fn, chunk):
@@ -47,7 +47,7 @@ class _FakeFailedIngestPool:
   def __enter__(self):
     return self
 
-  def __exit__(self, exc_type, exc, tb):
+  def __exit__(self, _exc_type, exc, tb):
     return False
 
   def imap_unordered(self, fn, chunk):
@@ -64,7 +64,7 @@ class _FakeArchivePool:
   def __enter__(self):
     return self
 
-  def __exit__(self, exc_type, exc, tb):
+  def __exit__(self, _exc_type, exc, tb):
     return False
 
   def map_async(self, fn, items):
@@ -76,7 +76,7 @@ class _FakeArchivePoolPending:
   def __enter__(self):
     return self
 
-  def __exit__(self, exc_type, exc, tb):
+  def __exit__(self, _exc_type, exc, tb):
     return False
 
   def map_async(self, fn, items):
@@ -136,7 +136,6 @@ def _default_startup_daily_tar_count(monkeypatch):
       _empty_maintenance_snapshot,
   )
   monkeypatch.setattr(janitor_mod, "save_archive_maint_hints", lambda *_a, **_k: None)
-  monkeypatch.setattr(st, "ThreadPoolExecutor", _InlineThreadPoolExecutor)
   monkeypatch.setattr(janitor_mod, "ThreadPoolExecutor", _InlineThreadPoolExecutor)
   monkeypatch.setattr(st.cfg, "get_sync_day_close_raw_removal_preflight", lambda: False)
   monkeypatch.setattr(
@@ -211,7 +210,7 @@ def test_periodic_maintenance_always_runs_gated_tar_removal(monkeypatch, tmp_pat
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
     monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
     monkeypatch.setattr(
-        st,
+        archive_helpers,
         "get_unmapped_closed_raw_daily_tars_cached",
         lambda *_a, **_k: frozenset(),
     )
@@ -507,7 +506,7 @@ def test_run_sync_timedb_supervisor_from_parsed_resets_runtime_caches(monkeypatc
     def __enter__(self):
       return self
 
-    def __exit__(self, exc_type, exc, tb):
+    def __exit__(self, _exc_type, exc, tb):
       return False
 
   class _Context:
@@ -2172,6 +2171,7 @@ def test_parse_payload_quarantines_permanent_failures(
     host,
     empty_df,
 ):
+  _ = empty_df
   archive_dir = tmp_path / "archive"
   host_dir = archive_dir / "host.hpc"
   host_dir.mkdir(parents=True)
@@ -3093,7 +3093,7 @@ def test_ingest_first_archive_abandoned_after_retries_exhausted(monkeypatch, tmp
       del wait
 
   _supervisor_startup_preflight_patches(monkeypatch, _DonePreflight())
-  monkeypatch.setattr(st, "ThreadPoolExecutor", _InlineThreadPoolExecutor)
+  monkeypatch.setattr(janitor_mod, "ThreadPoolExecutor", _InlineThreadPoolExecutor)
 
   def fake_rescan(*_a, **_k):
     if fake_rescan.calls == 0:
@@ -3193,7 +3193,7 @@ def test_archive_finalize_cardinality_mismatch_retries_unmatched(monkeypatch, tm
       del wait
 
   _supervisor_startup_preflight_patches(monkeypatch, _DonePreflight())
-  monkeypatch.setattr(st, "ThreadPoolExecutor", _InlineThreadPoolExecutor)
+  monkeypatch.setattr(janitor_mod, "ThreadPoolExecutor", _InlineThreadPoolExecutor)
 
   def fake_rescan(*_a, **_k):
     if fake_rescan.calls == 0:
@@ -3289,7 +3289,7 @@ def test_checkpoint_flush_logs_oserror_and_preserves_dirty(monkeypatch, tmp_path
       del wait
 
   _supervisor_startup_preflight_patches(monkeypatch, _DonePreflight())
-  monkeypatch.setattr(st, "ThreadPoolExecutor", _InlineThreadPoolExecutor)
+  monkeypatch.setattr(janitor_mod, "ThreadPoolExecutor", _InlineThreadPoolExecutor)
 
   def fake_rescan(*_a, **_k):
     if fake_rescan.calls == 0:
@@ -5526,7 +5526,6 @@ def test_immediate_day_close_submits_checkpoint_complete_not_chunk_touched_only(
   shutdown_requested[0] = False
   submitted = []
   try:
-    day1_epoch = int(datetime(2020, 1, 1, 12, tzinfo=timezone.utc).timestamp())
     day2_epoch = int(datetime(2020, 1, 2, 12, tzinfo=timezone.utc).timestamp())
     archive_dir, daily_dir = _supervisor_two_day_ingest_patches(
         monkeypatch,
@@ -5723,8 +5722,6 @@ def test_immediate_day_close_on_idle_finalize_without_chunk(monkeypatch, tmp_pat
   shutdown_requested[0] = False
   immediate_reasons = []
   try:
-    day1_epoch = int(datetime(2020, 1, 1, 12, tzinfo=timezone.utc).timestamp())
-    path_day1 = "/fake/stats/%d" % day1_epoch
     archive_dir, daily_dir = _supervisor_two_day_ingest_patches(
         monkeypatch,
         tmp_path,
@@ -7898,8 +7895,6 @@ def test_gate_chunk_no_respin_after_db_complete_checkpoint(
     tail_path = tmp_path / "tail"
     tail_path.write_text("2000 job cn002\n")
     os.utime(tail_path, (d2.timestamp(), d2.timestamp()))
-
-    checkpoint_path = str(archive_dir / ".sync_timedb_state.json")
 
     from hpcperfstats.dbload.lib.sync_timedb_archive_maint import (
         ArchiveMaintenanceSnapshot,

@@ -13,7 +13,7 @@ export const JOB_LIST_HEADER_FILTER_KEYS = [
 export type JobListHeaderFilterKey = (typeof JOB_LIST_HEADER_FILTER_KEYS)[number];
 
 /** Time-window query keys that header filter navigation must never drop. */
-export const JOB_LIST_TIME_SELECTION_KEYS = [
+const JOB_LIST_TIME_SELECTION_KEYS = [
   "end_time__date",
   "end_time__date__gte",
   "end_time__date__lte",
@@ -151,7 +151,7 @@ export function buildHeaderFilterHref({
   routeParams,
   mutate,
 }: HeaderFilterHrefArgs): { targetPath: string; params: URLSearchParams } {
-  let params = mergeRouteParamsIntoSearchParams(searchParams, routeParams);
+  const params = mergeRouteParamsIntoSearchParams(searchParams, routeParams);
   const timeSnapshot = snapshotTimeSelectionParams(params);
   mutate?.(params);
   applyTimeSnapshot(timeSnapshot, params);

@@ -1,7 +1,6 @@
 """Anonymous read-only JSON endpoints for `/pub/` dashboards (pre-warmed artifacts only)."""
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
-from drf_spectacular.utils import extend_schema
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView

@@ -22,7 +22,12 @@ describe("useJobMonitorQuery", () => {
 
     expect(useJobMonitorRetrieve).toHaveBeenCalledWith(
       { days: 30 },
-      expect.objectContaining({ query: { enabled: true } }),
+      expect.objectContaining({
+        query: expect.objectContaining({
+          enabled: true,
+          placeholderData: expect.any(Function),
+        }),
+      }),
     );
     expect(result.current.data?.results?.[0]?.username).toBe("alice");
   });

@@ -1,0 +1,41 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "app/**/*.{ts,tsx}",
+    "scripts/*.{mjs,mts,cjs}",
+    "vitest.config.ts",
+    "orval.config.ts",
+    "src/api.test.ts",
+    "src/**/*.test.{ts,tsx}",
+    "bokeh-playwright-smoke.html",
+    "src/playwright-bokeh-bundle-smoke.ts"
+  ],
+  "project": ["src/**/*.{ts,tsx}", "app/**/*.{ts,tsx}"],
+  "ignore": ["src/api/generated/**", "src/api/generated-zod/**"],
+  "ignoreExportsUsedInFile": true,
+  "ignoreIssues": {
+    "src/components/ui/**": ["exports", "types"],
+    "src/api/fetch-mutator.ts": ["types"]
+  },
+  "ignoreDependencies": [
+    "@tailwindcss/postcss",
+    "autoprefixer",
+    "postcss",
+    "tailwindcss",
+    "tailwindcss-animate",
+    "tw-animate-css",
+    "clsx",
+    "tailwind-merge",
+    "@radix-ui/react-slot",
+    "shadcn",
+    "@testing-library/jest-dom",
+    "@testing-library/react",
+    "@testing-library/user-event",
+    "@vitest/coverage-v8",
+    "jest-axe",
+    "jsdom",
+    "vitest",
+    "@orval/zod",
+    "postcss-load-config"
+  ]
+}

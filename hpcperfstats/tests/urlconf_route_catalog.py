@@ -93,7 +93,6 @@ def build_pipeline_http_endpoint_specs(
       "end_time__gte": time_gte_iso,
       "end_time__lte": time_lte_iso,
   })
-  jid_q = quote(jid, safe="")
   user_q = quote(username, safe="")
 
   specs: List[PipelineHttpEndpointSpec] = []

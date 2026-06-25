@@ -2,7 +2,7 @@ import BokehEmbed from "./BokehEmbed";
 import type { BokehPlotWithLimitationProps } from "@/types/bokeh";
 
 /** Visually-hidden prose for screen readers; chart data is not exposed from Bokeh canvas. */
-export const BOKEH_PLOT_LIMITATION_TEXT =
+const BOKEH_PLOT_LIMITATION_TEXT =
   "Interactive performance chart. Scales to the available width. Numerical detail may not be read by assistive technology.";
 
 /**

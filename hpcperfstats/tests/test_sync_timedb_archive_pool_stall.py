@@ -1,9 +1,7 @@
 """Pool stall guard regressions for sync_timedb_archive sealed-day backfill."""
 
-import os
 import time
 
-import pytest
 
 from hpcperfstats.dbload import sync_timedb as st
 from hpcperfstats.dbload.lib import sync_timedb_ingest_timeout as ingest_timeout_mod

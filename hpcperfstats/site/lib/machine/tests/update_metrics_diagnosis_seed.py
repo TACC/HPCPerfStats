@@ -212,7 +212,6 @@ def seed_update_metrics_diagnosis_jobs():
   )
 
   # Large job: same calendar window, disjoint host prefix so (time,host,type,event) stays unique.
-  n_rows_large = large_hosts * large_steps
   t_last_l = t0 + delta * (large_steps - 1)
   end_l = t_last_l + timedelta(seconds=margin_sec)
   probe_l = end_l + timedelta(seconds=probe_after_sec)

@@ -11,11 +11,10 @@ import numpy
 from bokeh.models import ColumnDataSource, HoverTool
 from bokeh.plotting import figure
 
-from hpcperfstats.analysis.metrics.lib.gen.utils import (
-    INTEL_CORE_PMC_TYPES_ORDERED,
+from hpcperfstats.analysis.metrics.lib.gen.utils import format_plain_decimal
+from hpcperfstats.dbload.lib.monitor_naming.canonical import (
     INTEL_FP_ARITH_ALL_EVENTS,
     INTEL_LEGACY_SSE_FLOP_EVENTS,
-    format_plain_decimal,
 )
 from hpcperfstats.dbload.lib.monitor_naming.resolve import (
     amd_df_type_names,

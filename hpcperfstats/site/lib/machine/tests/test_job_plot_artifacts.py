@@ -67,7 +67,6 @@ def test_fingerprint_stable_for_same_job_fields():
 
 @pytest.mark.django_db
 def test_fingerprint_changes_when_telemetry_first_time_moves():
-  from hpcperfstats.site.lib.machine import job_plot_artifacts as plot_cfg
 
   start = timezone.now() - timedelta(hours=2)
   end = timezone.now()

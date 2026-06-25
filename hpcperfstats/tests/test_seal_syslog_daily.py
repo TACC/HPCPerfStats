@@ -64,7 +64,7 @@ def test_seal_day_removes_leftovers_when_valid_tar_exists(tmp_path, monkeypatch)
   arch = root / "logs" / "log_archive"
   arch.mkdir(parents=True)
   tar_path = arch / "2024-01-02-syslog.tar.gz"
-  with tarfile.open(tar_path, "w:gz") as tf:
+  with tarfile.open(tar_path, "w:gz"):
     pass
   (cur / "n1.20240102.log").write_text("orphan\n", encoding="utf-8")
 

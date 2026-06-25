@@ -1,7 +1,6 @@
 """Unit tests for sync_acct ingest logic."""
 from __future__ import annotations
 
-import io
 from datetime import date
 from unittest.mock import MagicMock, patch
 
@@ -141,7 +140,6 @@ def test_insert_job_data_individually_skips_integrity_error(mock_from_row):
   from hpcperfstats.dbload.sync_acct import _insert_job_data_individually
   import pandas as pd
 
-  row = MagicMock(jid="900")
   df = pd.DataFrame([{"jid": "900"}])
   obj = MagicMock()
   obj.save.side_effect = IntegrityError()

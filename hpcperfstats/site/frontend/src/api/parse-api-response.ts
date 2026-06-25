@@ -19,7 +19,6 @@ export function parseApiResponse<T>(
       ? ` (${firstIssue.path.join(".")}: ${firstIssue.message})`
       : "";
     if (isDevEnvironment()) {
-      // eslint-disable-next-line no-console
       console.error(`API response validation failed: ${routeLabel}`, parsed.error.flatten());
     }
     throw new Error(`API response validation failed: ${routeLabel}${detail}`);

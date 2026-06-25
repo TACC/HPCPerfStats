@@ -1103,7 +1103,7 @@ export default function AdminMonitor() {
                   })()}
                   {(!rabbitStats ||
                     Object.entries(rabbitStats).filter(
-                      ([key, value]) => value !== null && value !== undefined
+                      ([_key, value]) => value !== null && value !== undefined
                     ).length === 0) && (
                     <TableRow>
                       <TableCell colSpan={2} className="text-muted-foreground">

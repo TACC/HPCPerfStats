@@ -1,0 +1,40 @@
+# Local git hooks for lint gates (install: scripts/install-git-hooks.sh).
+default_language_version:
+  python: python3.12
+
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-unused
+        name: ruff (Python unused imports/vars)
+        entry: bash -c '../.venv/bin/ruff check --select=F401,F841,F811 hpcperfstats cursor-hooks scripts'
+        language: system
+        files: ^(hpcperfstats/|cursor-hooks/|scripts/).*\.py$
+        pass_filenames: false
+
+  - repo: local
+    hooks:
+      - id: frontend-eslint
+        name: frontend eslint (staged)
+        entry: bash -c 'cd hpcperfstats/site/frontend && npm run lint -- --max-warnings=0'
+        language: system
+        files: ^hpcperfstats/site/frontend/.*\.(ts|tsx)$
+        pass_filenames: false
+
+  - repo: local
+    hooks:
+      - id: frontend-pre-push
+        name: frontend typecheck + knip (pre-push)
+        entry: bash -c 'cd hpcperfstats/site/frontend && npm run typecheck && npm run lint:dead'
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
+
+  - repo: local
+    hooks:
+      - id: vulture-pre-push
+        name: vulture dead code (pre-push)
+        entry: bash -c '../.venv/bin/vulture hpcperfstats scripts/vulture_whitelist.py --min-confidence 80'
+        language: system
+        stages: [pre-push]
+        pass_filenames: false

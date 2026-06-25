@@ -69,8 +69,9 @@ export function useJobPlotsQuery(pk: string, enabled: boolean) {
         setPlotsFetchFailed(true);
         setPlots(createEmptyJobPlotsState(false));
       } finally {
-        if (cancelledCheck() || keepLoading) return;
-        setPlotsLoading(false);
+        if (!cancelledCheck() && !keepLoading) {
+          setPlotsLoading(false);
+        }
       }
     },
     [pk],

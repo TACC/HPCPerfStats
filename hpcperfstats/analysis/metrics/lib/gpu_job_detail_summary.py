@@ -5,7 +5,7 @@ chunked ``host__in``, nvidia util aggregates, then ``gpu_count`` per vendor.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from django.db.models import Avg, Count, Max
 

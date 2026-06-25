@@ -63,7 +63,7 @@ function batchErrorMessage(err: unknown): string {
 }
 
 /** Stable serialized key for effect dependencies (avoids object-identity refetch loops). */
-export function serializeJobListApiParams(params: Record<string, string>): string {
+function serializeJobListApiParams(params: Record<string, string>): string {
   const keys = Object.keys(params).sort();
   return keys.map((key) => `${key}=${params[key]}`).join("&");
 }

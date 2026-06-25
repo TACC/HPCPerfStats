@@ -1,5 +1,5 @@
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect } from "react";
 import type { ReactNode } from "react";
 import { TextLink } from "@/components/TextLink";
 import { useJobDetailQuery } from "@/hooks/use-job-detail";
@@ -8,7 +8,6 @@ import type { BokehJsonItem } from "@/types/bokeh";
 import type {
   JobDetailData,
   JobMetricCell,
-  JobPlotsState,
 } from "@/types/view-models";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import BokehEmbed from "../components/BokehEmbed";
@@ -48,11 +47,6 @@ import { JOB_PLOT_CONFIGS } from "@/utils/job-detail-plots";
 const JOB_DETAIL_COMPACT_TABLE_CLASS =
   "border text-sm [&_td]:px-[0.45rem] [&_td]:py-[0.2rem] [&_td]:align-middle [&_td]:leading-[1.3] [&_th]:px-[0.45rem] [&_th]:py-[0.2rem] [&_th]:align-middle [&_th]:leading-[1.3]";
 
-export {
-  mergeProgressiveJobPlotsState,
-  jobPlotEntryEqual,
-  jobPlotStatesEqual,
-} from "@/utils/job-detail-plots";
 
 type JobAnalysisTab =
   | "metrics"

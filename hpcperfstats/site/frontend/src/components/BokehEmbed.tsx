@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { BokehEmbedProps } from "@/types/bokeh";
@@ -99,7 +99,7 @@ function whenBokehReady(timeoutMs = 10000, options: WhenBokehReadyOptions = {}) 
  * ``embed_item`` resolves, and defer synthetic ``resize`` (see
  * ``maximizeEmbeddedPlot``).
  */
-let bokehEmbedChains: Promise<void>[] = Array.from(
+const bokehEmbedChains: Promise<void>[] = Array.from(
   { length: BOKEH_EMBED_LOCK_SHARDS },
   () => Promise.resolve(),
 );

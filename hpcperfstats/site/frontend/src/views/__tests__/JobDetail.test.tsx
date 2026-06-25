@@ -1,10 +1,11 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import JobDetail, {
+import JobDetail from "../JobDetail";
+import {
   jobPlotEntryEqual,
   jobPlotStatesEqual,
   mergeProgressiveJobPlotsState,
-} from "../JobDetail";
+} from "@/utils/job-detail-plots";
 import { useJobDetailQuery } from "@/hooks/use-job-detail";
 import { useJobPlotsQuery } from "@/hooks/use-job-plots";
 import { axeSeriousViolations } from "../../axe-test-utils";

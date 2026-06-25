@@ -18,7 +18,7 @@ from rest_framework.decorators import api_view, authentication_classes, throttle
 from rest_framework.response import Response
 
 from django.conf import settings
-from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
+from django.views.decorators.csrf import ensure_csrf_cookie
 from django.core.cache import cache
 from django.db import connection, close_old_connections, transaction
 from django.test import RequestFactory
@@ -29,7 +29,6 @@ from django.utils.cache import (
 )
 import os
 import urllib.parse
-from types import SimpleNamespace
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +81,6 @@ from .cache_utils import (
     KEY_GPU_AGG,
     KEY_GPU_COUNT,
     KEY_XALT,
-    KEY_JOB,
     KEY_PROC_LIST,
     KEY_HOST_PLOT,
     cached_orm,

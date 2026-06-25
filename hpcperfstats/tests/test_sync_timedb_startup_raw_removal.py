@@ -2,11 +2,9 @@
 
 import os
 import tarfile
-import time
 from datetime import datetime
 from unittest.mock import MagicMock
 
-import pytest
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (

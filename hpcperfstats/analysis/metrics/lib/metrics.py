@@ -30,31 +30,18 @@ from django.db.utils import OperationalError, DatabaseError
 
 from hpcperfstats.analysis.metrics.lib.gen import jid_table
 from hpcperfstats.dbload.lib.multiprocessing_pool_health import abort_if_pool_workers_dead
-from hpcperfstats.analysis.metrics.lib.gen.utils import (
-    INTEL_FP_ARITH_ALL_EVENTS,
-    INTEL_LEGACY_SSE_FLOP_EVENTS,
-    utils,
-)
+from hpcperfstats.analysis.metrics.lib.gen.utils import utils
 from hpcperfstats.dbload.lib.monitor_naming.canonical import (
     HOST_BLOCK_TYPE,
     HOST_CPU_TYPE,
     HOST_IB_TYPE,
     HOST_LNET_TYPE,
     HOST_MEM_TYPE,
-    HOST_NFS_TYPE,
     HOST_NUMA_TYPE,
     HOST_OPA_TYPE,
+    INTEL_FP_ARITH_ALL_EVENTS,
+    INTEL_LEGACY_SSE_FLOP_EVENTS,
     LUSTRE_LLITE_TYPE,
-)
-from hpcperfstats.dbload.lib.monitor_naming.legacy import (
-    LEGACY_HOST_BLOCK_TYPE,
-    LEGACY_HOST_CPU_TYPE,
-    LEGACY_HOST_LNET_TYPE,
-    LEGACY_HOST_MEM_TYPE,
-    LEGACY_HOST_NFS_TYPE,
-    LEGACY_HOST_NUMA_TYPE,
-    LEGACY_HOST_OPA_TYPE,
-    LEGACY_LUSTRE_LLITE_TYPE,
 )
 from hpcperfstats.dbload.lib.monitor_naming.resolve import (
     events_probe_names,
@@ -66,9 +53,6 @@ from hpcperfstats.dbload.lib.monitor_naming.resolve import (
     dram_cas_read_write_pairs,
     fp_ops_retired_event_names,
     host_cpu_hw_type_names,
-    host_cpu_type_names,
-    host_mem_type_names,
-    host_nfs_type_names,
     imc_types_probe_order,
     resolve_get_type,
     type_probe_names,

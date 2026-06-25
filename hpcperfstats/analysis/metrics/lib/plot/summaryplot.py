@@ -25,15 +25,17 @@ from pandas import isna as pd_isna
 from pandas import to_datetime
 
 from hpcperfstats.analysis.metrics.lib.gen.utils import (
-    CHA_TYPENAME_PRIORITY,
-    INTEL_FP_ARITH_DOUBLE_EVENTS,
-    INTEL_FP_ARITH_SINGLE_EVENTS,
     add_hover_plain_columns,
     format_plain_decimal,
     format_cluster_hover_datetime,
     non_degenerate_y_range_for_series,
     set_linear_axes_plain_numeric,
     tz_aware_bokeh_tick_formatter,
+)
+from hpcperfstats.dbload.lib.monitor_naming.canonical import (
+    CHA_TYPENAME_PRIORITY,
+    INTEL_FP_ARITH_DOUBLE_EVENTS,
+    INTEL_FP_ARITH_SINGLE_EVENTS,
 )
 from hpcperfstats.dbload.lib.monitor_naming.resolve import (
     aperf_event_names,
@@ -787,7 +789,6 @@ def _one_error_job_series(jt, typ, event):
 
 def _collect_hardware_error_job_series(jt):
   """List of (legend, time/rate frame) for overlay; may be empty."""
-  import pandas as pd
 
   parts = []
   for ev in _IB_SUMMARY_ERROR_EVENTS:

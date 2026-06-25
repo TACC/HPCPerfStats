@@ -1,12 +1,10 @@
 """Regression tests for window-coverage metrics readiness (dual-edge margins)."""
 
-import os
 import threading
 from datetime import datetime, timedelta, timezone as dt_timezone
 from types import SimpleNamespace
 
 import pytest
-from django.utils import timezone
 
 from hpcperfstats.analysis.metrics import update_metrics as um
 

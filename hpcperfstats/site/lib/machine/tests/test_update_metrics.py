@@ -3142,7 +3142,7 @@ def test_prewarm_pipeline_drain_some_force_leaves_unfinished_future_pending(monk
   fut = _PendingFuture()
   pipeline._pending.add(fut)
   pipeline._created_at[fut] = update_metrics.time.monotonic()
-  monkeypatch.setattr(update_metrics, "wait", lambda pending, timeout, return_when: (set(), set(pending)))
+  monkeypatch.setattr(update_metrics, "wait", lambda pending, timeout, _return_when: (set(), set(pending)))
 
   pipeline.drain_some(force=True, wait_timeout_s=0.0)
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pandas as pd
-import pytest
 
 from hpcperfstats.dbload import sync_timedb as st
 from hpcperfstats.dbload.lib.sync_timedb_parsing import (

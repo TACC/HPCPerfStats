@@ -27,8 +27,8 @@ describe("PageBreadcrumbs", () => {
 
     const nav = screen.getByRole("navigation", { name: "Breadcrumb" });
     expect(nav).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Browse" })).toHaveAttribute("href", "/");
-    expect(screen.getByRole("link", { name: "Jobs" })).toHaveAttribute("href", "/jobs");
+    expect(screen.getByRole("link", { name: "Browse" })).toHaveAttribute("href", "/machine");
+    expect(screen.getByRole("link", { name: "Jobs" })).toHaveAttribute("href", "/machine/jobs");
     const current = screen.getByText("Job 42");
     expect(current.closest("li")).toHaveAttribute("aria-current", "page");
     expect(current.closest("li")).toHaveClass("active");

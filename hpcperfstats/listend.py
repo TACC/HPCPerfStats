@@ -303,7 +303,7 @@ def _get_rmq_queue_depth_for_monitor():
         pass
 
 
-def on_message(channel, method_frame, header_frame, body):
+def on_message(channel, method_frame, _header_frame, body):
   """Callback for each message: decode body, determine host, write/append to host's current file and optionally rotate. Acknowledges the message.
 
   Per-message logging of consumption/queue depth is avoided; instead, a

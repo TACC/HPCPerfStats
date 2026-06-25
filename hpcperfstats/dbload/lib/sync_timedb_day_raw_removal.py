@@ -1,7 +1,6 @@
 """Per-day post-seal raw removal: async verify; ingest-thread batched delete."""
 from __future__ import annotations
 
-import json
 import os
 import threading
 import time
@@ -17,7 +16,6 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     build_remaining_raw_for_daily_tar,
     calendar_date_from_daily_tar_path,
     classify_removable_raw_paths_for_daily_gz,
-    daily_gz_has_remaining_raw_stats,
     remaining_raw_by_gz_has_paths_on_disk,
     remove_verified_uncompressed_daily_tars,
     stats_file_is_active_segment,

@@ -9,7 +9,7 @@ from bokeh.models.plots import GridPlot
 from bokeh.palettes import d3
 from bokeh.plotting import figure
 
-from hpcperfstats.analysis.metrics.lib.gen.utils import INTEL_FP_ARITH_DOUBLE_EVENTS
+from hpcperfstats.dbload.lib.monitor_naming.canonical import INTEL_FP_ARITH_DOUBLE_EVENTS
 from hpcperfstats.analysis.metrics.lib.llite_metadata_iops_events import (
     LLITE_METADATA_IOPS_EVENTS,
 )

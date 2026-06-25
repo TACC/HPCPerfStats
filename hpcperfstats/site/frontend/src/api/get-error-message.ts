@@ -14,10 +14,6 @@ export function getErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
-export function getApiErrorStatus(error: unknown): number | undefined {
-  return error instanceof ApiError ? error.status : undefined;
-}
-
 /** Status-aware copy for page-level error banners. */
 export function getStatusAwareErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiError) {

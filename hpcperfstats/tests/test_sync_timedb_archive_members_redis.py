@@ -6,14 +6,12 @@ import tarfile
 import threading
 import time
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
 from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
     ArchiveDayIngestSkipError,
     ArchiveMembersPopulateStalledError,
-    ArchiveMembersRedisConnectionError,
     ArchiveMembersRedisUnavailableError,
     build_archive_members_redis_keys,
     clear_dedupe_hint,
@@ -135,7 +133,7 @@ class FakeRedis:
   def pipeline(self):
     return _FakePipeline(self)
 
-  def eval(self, script, numkeys, key, token):
+  def eval(self, script, _numkeys, key, token):
     with self._lock:
       if self._kv.get(key) == token:
         self._kv.pop(key, None)
@@ -265,7 +263,6 @@ def test_invalidate_drops_lock_when_populate_idle(_redis_test_env, tmp_path):
 
 
 def test_populate_retries_after_invalidate_pending(_redis_test_env, tmp_path):
-  import time
 
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       populate_archive_members_redis,
@@ -830,7 +827,6 @@ def test_stream_logs_generic_failure(tmp_path, capsys, monkeypatch):
   def _fail_read_lock(_path, timeout_seconds=None, expiry_seconds=None):
     del timeout_seconds, expiry_seconds
     raise IOError("disk read error")
-    yield
 
   monkeypatch.setattr(helpers, "file_read_lock_wait", _fail_read_lock)
   readable, members, dups, stream_error = _stream_compressed_archive_members(str(day_gz))

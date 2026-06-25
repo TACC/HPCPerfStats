@@ -9,7 +9,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import hpcperfstats.dbload.lib.conf_parser as cfg
 import hpcperfstats.dbload.lib.sync_timedb_archive_janitor as janitor_mod
 from hpcperfstats.dbload.lib.sync_timedb_archive_janitor import (
     ArchiveJanitor,
