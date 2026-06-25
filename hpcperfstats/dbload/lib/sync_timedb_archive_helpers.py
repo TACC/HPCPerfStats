@@ -1436,6 +1436,11 @@ def select_ingest_chunk_paths(
           tgz_archive_dir,
       )
   ]
+  if not oldest_only and blocked_on_disk:
+    inflight_set = set(inflight_archive_paths or ())
+    oldest_only = [
+        path for path in blocked_on_disk if path not in inflight_set
+    ]
   return list(oldest_only[:target_chunk_size])
 
 

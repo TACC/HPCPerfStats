@@ -4152,11 +4152,15 @@ def run_sync_timedb_supervisor_loop(
         on_disk_unprocessed_paths_for_tar(unprocessed, tar_norm)
         if tar_norm else []
     )
+    blocked_set = set(blocked)
+    reconcile_exclude = (
+        (processed_files | inflight_archive_paths) - blocked_set
+    )
     capped = _cap_pending_stats_with_handoff_priority(
         prepend_checkpoint_blocked_paths_to_pending(
             paths,
             blocked,
-            exclude=processed_files | inflight_archive_paths,
+            exclude=reconcile_exclude,
         ),
     )
     log_print(
@@ -4188,11 +4192,15 @@ def run_sync_timedb_supervisor_loop(
     successful_set = set(successful_paths)
     tail = [path for path in tail if path not in successful_set]
     if failed_chunk_paths:
+      failed_set = set(failed_chunk_paths)
+      requeue_exclude = (
+          (processed_files | inflight_archive_paths) - failed_set
+      )
       pending_stats_files = _apply_handoff_priority_to_pending(
           prepend_checkpoint_blocked_paths_to_pending(
               tail,
               failed_chunk_paths,
-              exclude=processed_files | inflight_archive_paths,
+              exclude=requeue_exclude,
           ),
       )
     else:
@@ -4650,6 +4658,7 @@ def run_sync_timedb_supervisor_loop(
   pending_stats_files = []
   handoff_priority_paths = set()
   chunk_counter = 0
+  oldest_day_chunk_gate_stall_last_log = 0.0
   # Per-day cache of raw paths queued/in-flight for tar append (loss-safe
   # disqualification source for ArchiveJanitor ticks). Mirrors the
   # archive lifecycle: populated when groups are dispatched/queued, pruned when a
@@ -5645,6 +5654,44 @@ def run_sync_timedb_supervisor_loop(
           )
         if not stats_files_chunk:
           if oldest_tar_for_chunk and (blocked_n or handoff_inflight_n):
+            if blocked_n > 0:
+              now = time.time()
+              if now - oldest_day_chunk_gate_stall_last_log >= 30.0:
+                oldest_day_chunk_gate_stall_last_log = now
+                blocked_on_disk_stall = on_disk_unprocessed_paths_for_tar(
+                    unprocessed_for_chunk,
+                    oldest_tar_for_chunk,
+                )
+                fallback_n = sum(
+                    1
+                    for path in blocked_on_disk_stall
+                    if path not in inflight_archive_paths
+                )
+                pending_oldest_n = sum(
+                    1
+                    for path in pending_paths_before_chunk
+                    if oldest_tar_for_chunk in daily_tar_paths_for_stats_paths(
+                        [path],
+                        tgz_archive_dir,
+                    )
+                )
+                stall_detail = (
+                    "blocked_not_in_pending"
+                    if pending_oldest_n == 0
+                    else "pending_filter_empty"
+                )
+                log_print(
+                    "sync_timedb: oldest_day_chunk_gate_stall oldest_tar=%s "
+                    "blocked_n=%d pending_oldest_n=%d fallback_n=%d detail=%s"
+                    % (
+                        oldest_tar_for_chunk,
+                        blocked_n,
+                        pending_oldest_n,
+                        fallback_n,
+                        stall_detail,
+                    ),
+                    flush=True,
+                )
             _finalize_archive_slots_if_needed(
                 force=True,
                 allow_defer=True,

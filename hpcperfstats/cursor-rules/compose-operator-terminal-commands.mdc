@@ -41,6 +41,8 @@ for k in ('data_dir', 'archive_dir', 'daily_archive_dir', 'acct_path'):
 3. **Substitute** printed values into subsequent `exec`/`grep`/`stat` commands in the same plan (shell vars in the operator paste, or inline after the INI block in **Completed findings**).
 4. Key names and sections — **`hpcperfstats-ini-format.mdc`** (`data_dir`, `archive_dir`, `daily_archive_dir`, `acct_path`, etc.).
 
+**Anti-pattern — sync_timedb checkpoint path:** Do **not** assume checkpoint lives at `{data_dir}/.sync_timedb_state.json`. The supervisor checkpoint is **`os.path.join(conf_parser.get_archive_dir_path(), '.sync_timedb_state.json')`** (same **`archive_dir`** as sealed archive root from INI). Resolve **`archive_dir`** from INI first, then grep/stat that path.
+
 When the operator already pasted the relevant `[PIPELINE]` / `[DEFAULT]` lines, skip the INI block and use their values.
 
 ## Service-specific logs (not raw pipeline firehose)

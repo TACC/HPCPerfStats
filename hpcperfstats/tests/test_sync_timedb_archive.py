@@ -6021,6 +6021,67 @@ def test_log_day_close_candidate_report_silent_when_empty(capsys, monkeypatch):
   assert "day_close candidate report" not in capsys.readouterr().out
 
 
+def test_prepend_checkpoint_blocked_paths_not_excluded_when_processed():
+  """Checkpoint-blocked paths must not be dropped when still in processed_files."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      prepend_checkpoint_blocked_paths_to_pending,
+  )
+
+  blocked = ["/a", "/b"]
+  processed = {"/a", "/x"}
+  blocked_set = set(blocked)
+  reconcile_exclude = processed - blocked_set
+  merged = prepend_checkpoint_blocked_paths_to_pending(
+      ["/c"],
+      blocked,
+      exclude=reconcile_exclude,
+  )
+  assert merged == ["/a", "/b", "/c"]
+  legacy = prepend_checkpoint_blocked_paths_to_pending(
+      ["/c"],
+      blocked,
+      exclude=processed,
+  )
+  assert legacy == ["/b", "/c"]
+
+
+def test_select_ingest_chunk_paths_fallback_blocked_on_disk(tmp_path):
+  """When pending has only newer-day paths, fall back to blocked_on_disk."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      select_ingest_chunk_paths,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_a = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+  tar_b = os.path.normpath(str(daily_dir / "2020-01-02.tar"))
+  open(tar_a, "wb").close()
+  open(tar_b, "wb").close()
+  d1 = datetime(2020, 1, 1, 12, tzinfo=timezone.utc)
+  d2 = datetime(2020, 1, 2, 12, tzinfo=timezone.utc)
+  blocked1 = tmp_path / "blocked1"
+  blocked2 = tmp_path / "blocked2"
+  newer = tmp_path / "newer"
+  for path in (blocked1, blocked2, newer):
+    path.write_text("x")
+  os.utime(blocked1, (d1.timestamp(), d1.timestamp()))
+  os.utime(blocked2, (d1.timestamp(), d1.timestamp()))
+  os.utime(newer, (d2.timestamp(), d2.timestamp()))
+  pending = [str(newer)]
+  unprocessed = {tar_a: [str(blocked1), str(blocked2)]}
+  chunk = select_ingest_chunk_paths(
+      pending,
+      oldest_tar=tar_a,
+      unprocessed_by_tar=unprocessed,
+      inflight_archive_paths=set(),
+      tgz_archive_dir=str(daily_dir),
+      chunk_size=10,
+      ingest_queue_high=10,
+  )
+  assert chunk == [str(blocked1), str(blocked2)]
+  assert str(newer) not in chunk
+
+
 def test_prepend_checkpoint_blocked_paths_to_pending_dedupes_and_orders():
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       prepend_checkpoint_blocked_paths_to_pending,
