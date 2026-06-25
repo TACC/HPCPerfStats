@@ -1,7 +1,7 @@
-FROM alpine:3.23.4
+FROM alpine:3.23.5
 
 # Pin nginx from Alpine edge main (stable 3.23 lags); bump NGINX_EDGE_VERSION on proxy rebuilds.
-ARG NGINX_EDGE_VERSION=1.30.2-r1
+ARG NGINX_EDGE_VERSION=1.30.3-r0
 ARG ALPINE_EDGE_MAIN=https://dl-cdn.alpinelinux.org/alpine/edge/main
 
 RUN apk add --no-cache \

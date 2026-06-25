@@ -25,7 +25,7 @@ classifiers = [
   "Topic :: Scientific/Engineering",
 ]
 dependencies = [
-  "numpy==2.4.6",
+  "numpy==2.5.0",
   "numexpr",
   "psycopg==3.3.4",
   "pandas==3.0.3",
@@ -39,7 +39,7 @@ dependencies = [
   "cryptography>=49.0.0",
   "pillow>=12.2.0",
   "tzdata",
-  "redis==8.0.0",
+  "redis==8.0.1",
   "djangorestframework",
   "drf-spectacular>=0.29.0",
   "django-cors-headers",
@@ -55,10 +55,10 @@ test = [
   "psycopg[binary]",
 ]
 dev = [
-  "ruff>=0.15.17",
+  "ruff>=0.15.19",
   "pylint>=4.0.6",  # optional; Ruff is the primary linter (see docs/TESTING.md)
-  "vulture>=2.14",
-  "pre-commit>=4.2.0",
+  "vulture>=2.16",
+  "pre-commit>=4.6.0",
 ]
 
 [tool.pytest.ini_options]

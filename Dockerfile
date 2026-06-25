@@ -1,6 +1,6 @@
 # Build frontend assets in a dedicated node stage.
 # COPY is scoped to frontend inputs so Python/backend changes do not bust npm layers.
-FROM node:26.3.0-alpine3.23 AS frontend-builder
+FROM node:26.3.1-alpine3.23 AS frontend-builder
 RUN apk add --no-cache bash
 ENV NEXT_TELEMETRY_DISABLED=1
 
