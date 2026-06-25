@@ -726,6 +726,53 @@ def test_redis_members_cache_is_fully_warm_requires_nonempty_hash(_redis_test_en
   assert redis_members_cache_is_fully_warm(keys, client=_redis_test_env) is True
 
 
+def test_orphan_incomplete_hash_detected_and_cleared(_redis_test_env, tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      maybe_clear_orphan_incomplete_archive_members_redis,
+      redis_members_populate_is_orphaned_incomplete,
+  )
+
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  _redis_test_env.hset(keys.hash_key, mapping={"host/a": "1000"})
+  _redis_test_env.set(keys.complete_key, "0")
+  assert redis_members_populate_is_orphaned_incomplete(keys, client=_redis_test_env)
+  assert maybe_clear_orphan_incomplete_archive_members_redis(
+      keys, client=_redis_test_env,
+  )
+  assert _redis_test_env.hlen(keys.hash_key) == 0
+  assert redis_members_populate_is_orphaned_incomplete(keys, client=_redis_test_env) is False
+
+
+def test_populate_acquire_clears_orphan_incomplete_hash(monkeypatch, tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      populate_archive_members_redis,
+      reset_archive_members_redis_client_for_tests,
+  )
+
+  fake = FakeRedis()
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
+      lambda: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: fake,
+  )
+  reset_archive_members_redis_client_for_tests()
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  fake.hset(keys.hash_key, mapping={"orphan/m": "1"})
+  fake.set(keys.complete_key, "0")
+
+  def _scan(on_member):
+    on_member("fresh/m", 2)
+    return True, False
+
+  members = populate_archive_members_redis(keys, _scan, sealed_path=str(tmp_path))
+  assert members == {"fresh/m": 2}
+  assert fake.get(keys.complete_key) == "1"
+
+
 def test_archive_members_populate_shows_progress_for_day(_redis_test_env, tmp_path):
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       archive_members_populate_shows_progress_for_day,

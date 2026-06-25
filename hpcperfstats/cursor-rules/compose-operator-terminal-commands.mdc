@@ -166,6 +166,27 @@ docker compose exec pipeline su hpcperfstats -c 'ls -la "${archive_dir:-/hpcperf
 
 (Resolve `archive_dir` from INI first — see **Resolve paths from INI first** above.)
 
+## Podman-compose sites (anti-patterns)
+
+Some production hosts use **podman-compose** with project name `-p hpcperfstats`. Command shapes differ from Docker Compose v2 plugins.
+
+| Anti-pattern | Why it fails | Corrected pattern |
+|--------------|--------------|-------------------|
+| `docker compose ps pipeline` | podman-compose treats `pipeline` as an unrecognized positional argument | `docker compose -p hpcperfstats ps \| grep pipeline` (or full `ps` table) |
+| Multi-line `su hpcperfstats -c 'tail … \| grep …'` with no matches | Non-zero exit when grep finds nothing; fragile quoting through podman-compose | `docker compose exec pipeline su hpcperfstats -c "sh -lc 'tail -200 /path/to/sync_timedb.log \| grep -E \"pattern1\|pattern2\" \|\| true'"` |
+| Host `$MAIN_PID` passed to `py-spy` inside `exec` | PID namespaces differ; host PID is invalid in container | Resolve PID inside container: `pgrep -f sync_timedb` then `py-spy dump --pid "$SUP"` (no `--nonblocking` on older py-spy) |
+
+**Good** — podman service check + filtered log tail (paths from INI first):
+
+```bash
+cd HPCPerfStats
+
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml ps | grep pipeline
+
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline \
+  su hpcperfstats -c "sh -lc 'LOG=\${HPCPERFSTATS_SYNC_TIMEDB_LOG:-/home/hpcperfstats/log/sync_timedb.log}; tail -200 \"\$LOG\" | grep -E \"populate_prewarm|chunk prewarm|ingest may begin|populate stalled\" || true'"
+```
+
 ## Narrow exceptions (host is OK)
 
 - **Colima / Docker availability** — `colima status`, `DOCKER_HOST`, `docker info` per **`colima-docker-runtime.mdc`**.

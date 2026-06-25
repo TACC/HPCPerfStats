@@ -194,6 +194,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
     describe_archive_members_populate_redis_for_day,
     get_ingest_task_deadline_monotonic,
     get_ingest_task_effective_timeout_s,
+    maybe_clear_orphan_incomplete_archive_members_redis,
     redis_members_cache_is_fully_warm,
     reset_ingest_task_deadline_monotonic,
     reset_ingest_task_effective_timeout_s,
@@ -454,7 +455,11 @@ def _unique_daily_compressed_archives_for_paths(paths, tgz_archive_dir):
   return unique
 
 
-def _prewarm_archive_members_redis_for_days(day_items):
+def _prewarm_archive_members_redis_for_days(
+    day_items,
+    *,
+    gated_tar_restore_day_tokens=None,
+):
   """Single-flight populate on supervisor before imap when Redis L2 is cold."""
   summary_parts = []
   if not archive_members_redis_enabled():
@@ -467,10 +472,12 @@ def _prewarm_archive_members_redis_for_days(day_items):
       ArchiveDayIngestSkipError,
   )
 
+  gated_restore = set(gated_tar_restore_day_tokens or ())
   for compressed, day_token in day_items or ():
     canonical = normalize_daily_compressed_path(compressed)
     cache_key = _daily_archive_members_cache_key(canonical)
     keys = build_archive_members_redis_keys(cache_key)
+    maybe_clear_orphan_incomplete_archive_members_redis(keys)
     if redis_members_cache_is_fully_warm(keys):
       summary_parts.append("%s:redis_warm" % day_token)
       continue
@@ -479,6 +486,23 @@ def _prewarm_archive_members_redis_for_days(day_items):
     if sealed_path is None and not os.path.isfile(tar_path):
       summary_parts.append("%s:no_daily_archive" % day_token)
       continue
+    if (
+        day_token in gated_restore
+        and sealed_path is not None
+        and not os.path.isfile(tar_path)
+    ):
+      if ensure_daily_tar_restored_for_append(
+          tar_path,
+          cfg.get_archive_zstd_threads(),
+      ):
+        log_print(
+            "INFO: populate_prewarm restored tar day=%s path=%s"
+            % (day_token, tar_path),
+            flush=True,
+        )
+      else:
+        summary_parts.append("%s:restore_failed" % day_token)
+        continue
     log_print(
         "Prewarming archive members Redis for day=%s sealed=%s"
         % (day_token, sealed_path or tar_path),
@@ -491,6 +515,7 @@ def _prewarm_archive_members_redis_for_days(day_items):
     except ArchiveDayIngestSkipError:
       summary_parts.append("%s:day_ingest_skip" % day_token)
     except ArchiveMembersRedisUnavailableError as exc:
+      maybe_clear_orphan_incomplete_archive_members_redis(keys)
       _exit_on_archive_members_redis_unavailable(exc)
   return ",".join(summary_parts) if summary_parts else "-"
 
@@ -529,10 +554,29 @@ def _reprewarm_archive_members_after_seal_phase(
   prewarm_fn(day_token)
 
 
-def _prewarm_archive_members_redis_for_chunk(paths):
+def _prewarm_archive_members_redis_for_chunk(
+    paths,
+    *,
+    oldest_tar=None,
+    gated_tar_restore=False,
+):
   """Single-flight populate on supervisor before imap when Redis L2 is cold."""
+  day_map = _unique_daily_compressed_archives_for_paths(paths, tgz_archive_dir)
+  gated_tokens = set()
+  if oldest_tar:
+    oldest_day = calendar_date_from_daily_tar_path(oldest_tar)
+    if oldest_day is not None:
+      oldest_compressed = daily_compressed_path_for_date(
+          tgz_archive_dir,
+          oldest_day,
+      )
+      oldest_token = oldest_day.isoformat()
+      day_map[oldest_compressed] = oldest_token
+      if gated_tar_restore:
+        gated_tokens.add(oldest_token)
   summary = _prewarm_archive_members_redis_for_days(
-      list(_unique_daily_compressed_archives_for_paths(paths, tgz_archive_dir).items()),
+      list(day_map.items()),
+      gated_tar_restore_day_tokens=gated_tokens,
   )
   log_print("INFO: chunk prewarm days=%s" % summary, flush=True)
   return summary
@@ -4273,6 +4317,8 @@ def run_sync_timedb_supervisor_loop(
       pending_total,
       batch_chunk_counter,
       pending_tail=None,
+      oldest_tar=None,
+      gated_tar_restore=False,
   ):
     """Ingest an explicit path list via pool imap or supervisor-thread fallback."""
     nonlocal pool_worker_exit, active_chunk_ingest_tracker
@@ -4289,7 +4335,11 @@ def run_sync_timedb_supervisor_loop(
 
     stall_diagnostics.chunk_batch_size = len(paths)
     stall_diagnostics.chunk_prewarm_summary = (
-        _prewarm_archive_members_redis_for_chunk(paths)
+        _prewarm_archive_members_redis_for_chunk(
+            paths,
+            oldest_tar=oldest_tar,
+            gated_tar_restore=gated_tar_restore,
+        )
     )
 
     k = 0
@@ -5714,6 +5764,14 @@ def run_sync_timedb_supervisor_loop(
                 pending_total=len(pending_stats_files),
                 batch_chunk_counter=chunk_counter,
                 pending_tail=pending_stats_files[len(stats_files_chunk):],
+                oldest_tar=(
+                    oldest_tar_for_chunk
+                    if (blocked_n or handoff_inflight_n)
+                    else None
+                ),
+                gated_tar_restore=bool(
+                    oldest_tar_for_chunk and blocked_n > 0,
+                ),
             )
         )
 

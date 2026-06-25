@@ -2014,6 +2014,62 @@ def test_chunk_prewarm_populates_redis_before_imap(monkeypatch, tmp_path):
   assert len(calls) == 1
 
 
+def test_chunk_prewarm_includes_oldest_tar_day(monkeypatch, tmp_path):
+  from datetime import datetime, timezone
+
+  tgz_dir = tmp_path / "daily"
+  tgz_dir.mkdir()
+  (tgz_dir / "2026-05-31.tar.zst").write_bytes(b"zst")
+  (tgz_dir / "2026-06-01.tar.zst").write_bytes(b"zst")
+  june_ts = int(datetime(2026, 6, 1, 12, tzinfo=timezone.utc).timestamp())
+  paths = ["/archive/host.hpc/%d" % june_ts]
+  oldest_tar = str(tgz_dir / "2026-05-31.tar")
+  calls = []
+  monkeypatch.setattr(st, "archive_members_redis_enabled", lambda: True)
+  monkeypatch.setattr(st, "tgz_archive_dir", str(tgz_dir))
+  monkeypatch.setattr(st, "redis_members_cache_is_fully_warm", lambda keys: False)
+  monkeypatch.setattr(
+      st,
+      "get_existing_archive_members_for_daily_archive",
+      lambda canonical: calls.append(canonical) or {"m": 1},
+  )
+  st._prewarm_archive_members_redis_for_chunk(paths, oldest_tar=oldest_tar)
+  assert len(calls) == 2
+  basenames = {os.path.basename(c) for c in calls}
+  assert basenames == {"2026-05-31.tar.zst", "2026-06-01.tar.zst"}
+
+
+def test_prewarm_gated_tar_restore_before_sealed_populate(
+    monkeypatch, tmp_path, capsys,
+):
+  tgz_dir = tmp_path / "daily"
+  tgz_dir.mkdir()
+  zst = tgz_dir / "2026-05-31.tar.zst"
+  zst.write_bytes(b"zst")
+  tar = tgz_dir / "2026-05-31.tar"
+  restore_calls = []
+  monkeypatch.setattr(st, "archive_members_redis_enabled", lambda: True)
+  monkeypatch.setattr(st, "tgz_archive_dir", str(tgz_dir))
+  monkeypatch.setattr(st, "redis_members_cache_is_fully_warm", lambda keys: False)
+  monkeypatch.setattr(
+      st,
+      "ensure_daily_tar_restored_for_append",
+      lambda tar_path, threads: restore_calls.append(tar_path) or True,
+  )
+  monkeypatch.setattr(
+      st,
+      "get_existing_archive_members_for_daily_archive",
+      lambda canonical: {"m": 1},
+  )
+  monkeypatch.setattr(st.cfg, "get_archive_zstd_threads", lambda: 1)
+  st._prewarm_archive_members_redis_for_days(
+      [(str(zst), "2026-05-31")],
+      gated_tar_restore_day_tokens={"2026-05-31"},
+  )
+  assert restore_calls == [str(tar)]
+  assert "populate_prewarm restored tar" in capsys.readouterr().out
+
+
 def test_prewarm_runs_when_redis_complete_with_empty_hash(monkeypatch, tmp_path, capsys):
   tgz_dir = tmp_path / "daily"
   tgz_dir.mkdir()
@@ -2048,7 +2104,7 @@ def test_prewarm_skips_when_redis_fully_warm(monkeypatch, tmp_path, capsys):
       lambda canonical: (_ for _ in ()).throw(AssertionError("should not populate")),
   )
   st._prewarm_archive_members_redis_for_chunk(paths)
-  assert "reason=redis_warm" in capsys.readouterr().out
+  assert ":redis_warm" in capsys.readouterr().out
 
 
 def test_invalidation_hook_can_trigger_reprewarm(monkeypatch, tmp_path):
@@ -6444,7 +6500,7 @@ def test_supervisor_startup_tail_ingest_uses_imap_and_prewarm_when_pool_present(
         yield (path, True, True, 0.0)
       tail_state["unprocessed"] = {}
 
-    def spy_prewarm(paths):
+    def spy_prewarm(paths, **_kwargs):
       prewarm_calls.append(list(paths))
       return {}
 

@@ -525,6 +525,53 @@ def redis_members_cache_is_fully_warm(
   return _hash_member_count(client, keys) > 0
 
 
+def redis_members_populate_is_orphaned_incomplete(
+    keys: ArchiveMembersRedisKeys,
+    *,
+    client=None,
+) -> bool:
+  """True when a partial HASH remains without ``complete=1`` and no populate lock."""
+  if not archive_members_redis_enabled():
+    return False
+  if client is None:
+    client = get_archive_members_redis_client(required=False)
+    if client is None:
+      return False
+  if client.get(keys.complete_key) == "1":
+    return False
+  if client.exists(keys.lock_key):
+    return False
+  return _hash_member_count(client, keys) > 0
+
+
+def maybe_clear_orphan_incomplete_archive_members_redis(
+    keys: ArchiveMembersRedisKeys,
+    *,
+    client=None,
+    log_fn=log_print,
+) -> bool:
+  """Drop a partial populate HASH so the next single-flight scan can restart."""
+  if not redis_members_populate_is_orphaned_incomplete(keys, client=client):
+    return False
+  if client is None:
+    client = get_archive_members_redis_client(required=True)
+  hlen = _hash_member_count(client, keys)
+  log_fn(
+      "WARNING: clearing orphan incomplete archive members Redis "
+      "hash=%s hlen=%d complete=0 lock=0"
+      % (keys.hash_key, hlen),
+      flush=True,
+  )
+  client.delete(
+      keys.hash_key,
+      keys.complete_key,
+      keys.progress_key,
+      keys.degraded_key,
+      keys.invalidate_pending_key,
+  )
+  return True
+
+
 def _release_populate_lock(client, keys: ArchiveMembersRedisKeys, lock_value: str):
   script = (
       "if redis.call('get', KEYS[1]) == ARGV[1] then "
@@ -658,6 +705,9 @@ def _check_populate_wait_limits(
     if (time.monotonic() - last_progress_monotonic) >= float(
         _populate_stall_seconds(),
     ):
+      if redis_members_populate_is_orphaned_incomplete(keys, client=client):
+        maybe_clear_orphan_incomplete_archive_members_redis(keys, client=client)
+        return True
       raise ArchiveMembersPopulateStalledError(
           "Archive members populate incomplete after lock release: %s"
           % keys.hash_key,
@@ -679,6 +729,7 @@ def populate_archive_members_redis(
   client = get_archive_members_redis_client(required=True)
   acquire_deadline = time.monotonic() + float(_populate_lock_seconds())
   while time.monotonic() < acquire_deadline:
+    maybe_clear_orphan_incomplete_archive_members_redis(keys, client=client)
     existing = _hgetall_members(client, keys)
     if existing is not None:
       return existing
