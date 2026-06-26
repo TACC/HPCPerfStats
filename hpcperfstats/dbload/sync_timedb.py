@@ -5073,19 +5073,43 @@ def run_sync_timedb_supervisor_loop(
     tar_norm = os.path.normpath(str(tar_norm or ""))
     if not tar_norm:
       return
+    retry_closed_raw_persists = False
     if tar_norm in handoff_requeued_tars_this_boot:
-      log_print(
-          "sync_timedb: day_close handoff requeue skip day=%s reason=%s "
-          "detail=same_boot_duplicate"
-          % (
-              calendar_date_from_daily_tar_path(tar_norm).isoformat()
-              if calendar_date_from_daily_tar_path(tar_norm) is not None
-              else tar_norm,
-              reason or "",
-          ),
-          flush=True,
-      )
-      return
+      if (
+          day_raw_removal is not None
+          and day_raw_removal.has_closed_raw_on_disk(tar_norm)
+      ):
+        persist_paths = day_raw_removal.closed_raw_paths_on_disk(tar_norm)
+        if persist_paths:
+          paths = persist_paths
+          retry_closed_raw_persists = True
+          reason = reason or "closed_raw_persists"
+        else:
+          log_print(
+              "sync_timedb: day_close handoff requeue skip day=%s reason=%s "
+              "detail=same_boot_duplicate"
+              % (
+                  calendar_date_from_daily_tar_path(tar_norm).isoformat()
+                  if calendar_date_from_daily_tar_path(tar_norm) is not None
+                  else tar_norm,
+                  reason or "",
+              ),
+              flush=True,
+          )
+          return
+      else:
+        log_print(
+            "sync_timedb: day_close handoff requeue skip day=%s reason=%s "
+            "detail=same_boot_duplicate"
+            % (
+                calendar_date_from_daily_tar_path(tar_norm).isoformat()
+                if calendar_date_from_daily_tar_path(tar_norm) is not None
+                else tar_norm,
+                reason or "",
+            ),
+            flush=True,
+        )
+        return
     requeued_paths = [
         str(path)
         for path in (paths or ())
@@ -5147,9 +5171,10 @@ def run_sync_timedb_supervisor_loop(
         handoff=True,
     )
     log_print(
-        "sync_timedb: day_close handoff requeue day=%s paths=%d reason=%s "
+        "sync_timedb: day_close handoff requeue%s day=%s paths=%d reason=%s "
         "checkpoint_cleared=yes queue_head=yes"
         % (
+            " retry" if retry_closed_raw_persists else "",
             calendar_date_from_daily_tar_path(tar_norm).isoformat()
             if calendar_date_from_daily_tar_path(tar_norm) is not None
             else tar_norm,

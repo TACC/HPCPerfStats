@@ -169,6 +169,27 @@ class AsyncDayCloseCoordinator:
         recovered.append(tar_norm)
       if recovered or finalized:
         _save_manifest(self._manifest_path, self._manifest)
+    downgraded: list[str] = []
+    with self._lock:
+      for tar_norm, entry in list(self._manifest.get("entries", {}).items()):
+        if not isinstance(entry, dict):
+          continue
+        if str(entry.get("status") or "") != "complete":
+          continue
+        tar_norm = os.path.normpath(tar_norm)
+        if self._day_close_filesystem_complete(tar_norm):
+          continue
+        entry["status"] = "deferred"
+        entry["detail"] = "stale_complete_filesystem_mismatch"
+        entry["recovered_at"] = now
+        downgraded.append(tar_norm)
+      if downgraded:
+        _save_manifest(self._manifest_path, self._manifest)
+    for tar_norm in downgraded:
+      self.log_fn(
+          "janitor: async day_close stale complete downgraded tar=%s" % tar_norm,
+          flush=True,
+      )
     for tar_norm in recovered:
       self.log_fn(
           "janitor: async day_close stale manifest recovery tar=%s" % tar_norm,
@@ -367,8 +388,6 @@ class AsyncDayCloseCoordinator:
             )
           return False
       entry = self._manifest.setdefault("entries", {}).get(tar_norm)
-      if isinstance(entry, dict) and entry.get("status") == "complete":
-        return True
       if _is_pipeline_pending_entry(entry):
         return True
       self._manifest.setdefault("entries", {})[tar_norm] = {
@@ -480,10 +499,13 @@ class AsyncDayCloseCoordinator:
         return
       coord = self.day_raw_removal_coordinator
       if coord is not None and bool(getattr(coord, "enabled", False)):
-        if coord.has_closed_raw_on_disk(tar_norm):
-          paths = coord.requeue_closed_raw_paths_for_ingest(
-              tar_norm,
-              reason="async_seal_closed_raw_guard",
+        has_closed_raw_fn = getattr(coord, "has_closed_raw_on_disk", None)
+        if callable(has_closed_raw_fn) and has_closed_raw_fn(tar_norm):
+          requeue_fn = getattr(coord, "requeue_closed_raw_paths_for_ingest", None)
+          paths = (
+              requeue_fn(tar_norm, reason="async_seal_closed_raw_guard")
+              if callable(requeue_fn)
+              else []
           )
           self.defer_for_ingest_handoff(tar_norm)
           self.log_fn(

@@ -448,7 +448,28 @@ def test_tick_lock_cleanup_runs_before_day_close(monkeypatch, tmp_path):
 
 
 def test_janitor_enqueues_day_close_from_dedupe_hint(monkeypatch, tmp_path):
-  janitor = _make_janitor(tgz_archive_dir=str(tmp_path))
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.join(str(daily_dir), "2026-05-09.tar")
+  open(tar_path, "wb").close()
+  submit_calls = []
+
+  class _FakeCoord:
+    def submit_day_close(self, tar, *, reason, disqualified_daily_tars=None):
+      submit_calls.append((tar, reason))
+      return True
+
+    def active_or_submitted_tar_paths(self):
+      return set()
+
+    def entry_progress_snapshot(self, _tar_path):
+      return {}
+
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      async_day_close_coordinator=_FakeCoord(),
+      get_day_close_candidate_inputs=lambda: {"unprocessed_by_tar": {}},
+  )
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis.archive_members_redis_enabled",
       lambda: True,
@@ -458,11 +479,7 @@ def test_janitor_enqueues_day_close_from_dedupe_hint(monkeypatch, tmp_path):
       lambda client=None: ["2026-05-09"],
   )
   janitor._consume_dedupe_hints(set())
-  with janitor._debt_lock:
-    kinds = {debt.kind for debt in janitor._debt_heap}
-    tar_paths = {debt.tar_path for debt in janitor._debt_heap}
-  assert DebtKind.DAY_CLOSE in kinds
-  assert os.path.join(str(tmp_path), "2026-05-09.tar") in tar_paths
+  assert submit_calls == [(os.path.normpath(tar_path), "dedupe_hint")]
 
 
 def test_close_one_day_dedupes_before_seal(monkeypatch, tmp_path):
@@ -1494,9 +1511,20 @@ def test_enqueue_immediate_day_close_many_logs_candidate_report(tmp_path, monkey
   def _log(msg, **kwargs):
     log_lines.append(str(msg))
 
+  class _FakeAsyncCoord:
+    def submit_day_close(self, tar, *, reason, disqualified_daily_tars=None):
+      return True
+
+    def active_or_submitted_tar_paths(self):
+      return set()
+
+    def entry_progress_snapshot(self, _tar_path):
+      return {}
+
   janitor = _make_janitor(
       tgz_archive_dir=str(daily_dir),
       log_fn=_log,
+      async_day_close_coordinator=_FakeAsyncCoord(),
       get_day_close_candidate_inputs=lambda: {
           "inflight_paths": set(),
           "pending_append_by_daily_tar": {},

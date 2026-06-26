@@ -5244,6 +5244,15 @@ def test_supervisor_ingest_proceeds_without_day_close_delete_gate(monkeypatch):
     def consumed_paths(self):
       return set()
 
+    def discover_manifest_handoffs(self):
+      return []
+
+    def discover_closed_raw_on_disk_handoffs(self):
+      return []
+
+    def any_needs_tar_drop_finish(self):
+      return False
+
     def shutdown(self, wait=True):
       del wait
 
@@ -7430,6 +7439,14 @@ def test_handoff_skips_duplicate_requeue_same_boot(
       def discover_closed_raw_on_disk_handoffs(self):
         return []
 
+      def has_closed_raw_on_disk(self, tar_norm):
+        del tar_norm
+        return False
+
+      def closed_raw_paths_on_disk(self, tar_norm):
+        del tar_norm
+        return []
+
       def any_blocks_startup_drain(self):
         return False
 
@@ -7531,6 +7548,156 @@ def test_handoff_skips_duplicate_requeue_same_boot(
     )
     dup_out = capsys.readouterr().out
     assert "same_boot_duplicate" in dup_out
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_handoff_requeue_retries_when_closed_raw_persists_after_same_boot_handoff(
+    monkeypatch, tmp_path, capsys,
+):
+  """When closed raw remains on disk, a second handoff requeue in the same boot is allowed."""
+  shutdown_requested[0] = False
+  coord_holder = []
+  try:
+    archive_dir = tmp_path / "archive"
+    daily_dir = tmp_path / "daily"
+    archive_dir.mkdir()
+    daily_dir.mkdir()
+    tar_norm = os.path.normpath(str(daily_dir / "2026-05-26.tar"))
+    open(tar_norm, "wb").close()
+    handoff_paths = [
+        str(tmp_path / "host-a" / "1782242314"),
+        str(tmp_path / "host-b" / "1782282524"),
+    ]
+    for path in handoff_paths:
+      os.makedirs(os.path.dirname(path), exist_ok=True)
+      with open(path, "w", encoding="utf-8") as fh:
+        fh.write("1000 job cn001\n")
+
+    class _HandoffDayRawRemoval:
+      enabled = True
+      on_pipeline_complete = None
+
+      def __init__(self, **_kwargs):
+        coord_holder.append(self)
+
+      def discover_manifest_handoffs(self):
+        return [(tar_norm, handoff_paths)]
+
+      def discover_closed_raw_on_disk_handoffs(self):
+        return []
+
+      def has_closed_raw_on_disk(self, tar_norm):
+        return os.path.normpath(str(tar_norm or "")) == tar_norm
+
+      def closed_raw_paths_on_disk(self, tar_norm):
+        if os.path.normpath(str(tar_norm or "")) != tar_norm:
+          return []
+        return [p for p in handoff_paths if os.path.isfile(p)]
+
+      def any_blocks_startup_drain(self):
+        return False
+
+      def consumed_paths(self):
+        return set()
+
+      def paths_pending_delete(self):
+        return set()
+
+      def any_needs_delete_phase(self):
+        return False
+
+      def any_needs_tar_drop_finish(self):
+        return False
+
+      def days_needing_delete_oldest_first(self):
+        return []
+
+      def days_needing_tar_drop_oldest_first(self):
+        return []
+
+      def count_days_waiting_on_ingest(self):
+        return 0
+
+      def shutdown(self, wait=True):
+        del wait
+
+    from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
+        StartupArchiveScanCoordinator,
+    )
+
+    _supervisor_startup_preflight_disabled(monkeypatch)
+    monkeypatch.setattr(st, "DayRawRemovalCoordinator", _HandoffDayRawRemoval)
+    monkeypatch.setattr(st.cfg, "get_sync_day_close_raw_removal_preflight", lambda: True)
+    monkeypatch.setattr(
+        st.cfg,
+        "get_sync_startup_drain_day_close_before_ingest",
+        lambda: False,
+    )
+    monkeypatch.setattr(st.cfg, "get_sync_startup_tail_ingest_enabled", lambda: False)
+    monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(
+        st, "add_stats_file_to_db", lambda _lock, path, **_k: (path, True, True, 0.0))
+    monkeypatch.setattr(st.cfg, "get_sync_ingest_chunk_size", lambda: 1)
+    monkeypatch.setattr(
+        StartupArchiveScanCoordinator,
+        "get_snapshot",
+        lambda self: type("Snap", (), {"closed_paths": []})(),
+    )
+    monkeypatch.setattr(
+        StartupArchiveScanCoordinator,
+        "wait_for_snapshot",
+        lambda self, *, allow_build=False: None,
+    )
+    monkeypatch.setattr(st, "rescan_pending_stats_files", lambda *_a, **_k: (
+        shutdown_requested.__setitem__(0, True) or []
+    ))
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", str(daily_dir))
+    monkeypatch.setattr(
+        st, "_path_fingerprint", lambda p: {"path": p, "size": 1, "mtime": 1})
+    monkeypatch.setattr(st, "ensure_persistence_contract", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        archive_helpers,
+        "build_live_unprocessed_by_tar_for_reconcile",
+        lambda *_a, **_k: {},
+    )
+    monkeypatch.setattr(
+        janitor_mod.ArchiveJanitor,
+        "signal_work_available",
+        lambda self: None,
+    )
+    monkeypatch.setattr(
+        janitor_mod.ArchiveJanitor,
+        "shutdown",
+        lambda self, wait=True: None,
+    )
+
+    st.run_sync_timedb_supervisor_loop(
+        str(archive_dir),
+        "all",
+        None,
+        ".hpc",
+        object(),
+        _FakeArchivePool(),
+        run_once=True,
+    )
+    boot_out = capsys.readouterr().out
+    assert boot_out.count("day_close handoff requeue") == 1
+    assert coord_holder
+    assert coord_holder[0].on_handoff_to_ingest is not None
+    coord_holder[0].on_handoff_to_ingest(
+        tar_norm,
+        handoff_paths,
+        "janitor_closed_raw_submit_guard",
+    )
+    retry_out = capsys.readouterr().out
+    assert "handoff requeue retry" in retry_out
+    assert "same_boot_duplicate" not in retry_out
+    assert retry_out.count("day_close handoff requeue") == 1
   finally:
     shutdown_requested[0] = False
 

@@ -1114,3 +1114,85 @@ def test_seal_day_stores_zst_members_for_verify(tmp_path, monkeypatch):
   )
   assert coord._seal_day(tar_norm) is True
   assert coord._pending_verify_zst_members == skip_members
+
+
+@pytest.mark.django_db(databases=[])
+def test_init_downgrades_stale_complete_manifest_when_tar_on_disk(
+    tmp_path, monkeypatch,
+):
+  archive_dir = str(tmp_path / "archive")
+  daily_dir = str(tmp_path / "daily")
+  os.makedirs(archive_dir)
+  os.makedirs(daily_dir)
+  tar_norm = os.path.normpath(os.path.join(daily_dir, "2026-05-26.tar"))
+  open(tar_norm, "wb").close()
+  logs: list[str] = []
+  monkeypatch.setattr(
+      async_dc_mod,
+      "build_remaining_raw_for_daily_tar",
+      lambda *_a, **_k: {},
+  )
+  manifest_path = async_dc_mod.manifest_path(archive_dir)
+  with open(manifest_path, "w", encoding="utf-8") as fh:
+    json.dump(
+        {
+            "entries": {
+                tar_norm: {
+                    "status": "complete",
+                    "completed_at": time.time(),
+                },
+            },
+        },
+        fh,
+    )
+
+  async_dc_mod.AsyncDayCloseCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=daily_dir,
+      local_tz=None,
+      log_fn=lambda msg, **_kw: logs.append(str(msg)),
+      get_disqualified_daily_tars=lambda: set(),
+  )
+
+  entry = async_dc_mod._load_manifest(manifest_path)["entries"][tar_norm]
+  assert entry.get("status") == "deferred"
+  assert entry.get("detail") == "stale_complete_filesystem_mismatch"
+  assert any("stale complete downgraded" in line for line in logs)
+
+
+@pytest.mark.django_db(databases=[])
+def test_submit_day_close_resubmits_when_manifest_complete_but_filesystem_incomplete(
+    tmp_path, monkeypatch,
+):
+  archive_dir = str(tmp_path / "archive")
+  daily_dir = str(tmp_path / "daily")
+  os.makedirs(archive_dir)
+  os.makedirs(daily_dir)
+  tar_norm = os.path.normpath(os.path.join(daily_dir, "2026-05-26.tar"))
+  open(tar_norm, "wb").close()
+  logs: list[str] = []
+  monkeypatch.setattr(async_dc_mod.cfg, "get_sync_day_close_async_workers", lambda: 1)
+  monkeypatch.setattr(
+      async_dc_mod,
+      "build_remaining_raw_for_daily_tar",
+      lambda *_a, **_k: {},
+  )
+
+  coord = async_dc_mod.AsyncDayCloseCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=daily_dir,
+      local_tz=None,
+      log_fn=lambda msg, **_kw: logs.append(str(msg)),
+      get_disqualified_daily_tars=lambda: set(),
+      submit_eligible_fn=lambda _tar: (True, ""),
+  )
+  coord._set_entry_status(tar_norm, "complete", completed_at=time.time())
+
+  with mock.patch.object(coord, "_run_day_close", return_value=None):
+    assert coord.submit_day_close(tar_norm, reason="retry_after_stale_complete") is True
+
+  entry = async_dc_mod._load_manifest(coord._manifest_path)["entries"][tar_norm]
+  assert entry.get("status") == "submitted"
+  assert any("async day_close submit" in line for line in logs)

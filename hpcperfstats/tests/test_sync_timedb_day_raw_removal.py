@@ -798,3 +798,32 @@ def test_batch_delete_runs_during_chunk_when_calendar_disjoint():
   assert spin is False
   assert delete_calls == [delete_tar]
   assert chunk_wait_logs == []
+
+
+def test_ghost_deleted_manifest_path_on_disk_triggers_delete_retry(
+    tmp_path, monkeypatch,
+):
+  day = datetime(2026, 5, 26)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path)
+  state = coord._get_or_create_day(tar_path)
+  state._verify_body()
+  seg_str = str(seg)
+  with state._lock:
+    entry = state._manifest["entries"][seg_str]
+    entry["deleted"] = True
+    entry["status"] = "verified"
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["completed_at"] = time.time()
+    _save_manifest(state._manifest_path, state._manifest)
+
+  assert state.delete_phase_done()
+  assert state._ghost_deleted_paths_on_disk() == [seg_str]
+  assert not state._has_closed_raw_existing_on_disk()
+  assert state.needs_ghost_delete_retry()
+
+  deleted = state.apply_batch_delete()
+  assert deleted == 1
+  assert not os.path.isfile(seg_str)
+  assert not state._ghost_deleted_paths_on_disk()

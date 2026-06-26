@@ -178,9 +178,9 @@ class _DayRawRemovalState:
 
   def _closed_raw_paths_on_disk(self) -> List[str]:
     if self.delete_phase_done():
-      manifest_paths = self._manifest_paths_on_disk()
-      if manifest_paths:
-        return manifest_paths
+      blocking = self._blocking_manifest_paths_on_disk()
+      if blocking:
+        return blocking
     remaining = self._build_remaining_raw_for_daily_tar()
     paths: List[str] = []
     for raw_list in (remaining or {}).values():
@@ -189,10 +189,12 @@ class _DayRawRemovalState:
 
   def _has_closed_raw_existing_on_disk(self) -> bool:
     if self.delete_phase_done():
-      if self._manifest_paths_on_disk():
+      if self._blocking_manifest_paths_on_disk():
         return True
       if self._unmanifested_closed_raw_paths():
         return True
+      if self._ghost_deleted_paths_on_disk():
+        return False
     remaining = self._build_remaining_raw_for_daily_tar()
     zst_path, _gz_path = compressed_sibling_paths(self.tar_path)
     return remaining_raw_by_gz_has_paths_on_disk(remaining, zst_path)
@@ -273,7 +275,7 @@ class _DayRawRemovalState:
   def _unmanifested_closed_raw_paths(self) -> List[str]:
     with self._lock:
       entries = dict(self._manifest.get("entries", {}))
-    if self.delete_phase_done() and self._manifest_paths_on_disk():
+    if self.delete_phase_done() and self._blocking_manifest_paths_on_disk():
       return []
     unmanifested: List[str] = []
     for path in self._closed_raw_paths_on_disk():
@@ -291,6 +293,52 @@ class _DayRawRemovalState:
       if os.path.isfile(path) and isinstance(entry, dict):
         on_disk.append((path, entry))
     return on_disk
+
+  def _entry_is_verified_ghost_on_disk(self, entry: Dict[str, Any]) -> bool:
+    if not isinstance(entry, dict):
+      return False
+    return (
+        entry.get("deleted") is True
+        and str(entry.get("status") or "") == "verified"
+    )
+
+  def _ghost_deleted_paths_on_disk(self) -> List[str]:
+    return [
+        path
+        for path, entry in self._manifest_entries_on_disk()
+        if self._entry_is_verified_ghost_on_disk(entry)
+    ]
+
+  def needs_ghost_delete_retry(self) -> bool:
+    return bool(self.delete_phase_done() and self._ghost_deleted_paths_on_disk())
+
+  def _blocking_manifest_paths_on_disk(self) -> List[str]:
+    return [
+        path
+        for path, entry in self._manifest_entries_on_disk()
+        if not self._entry_is_verified_ghost_on_disk(entry)
+    ]
+
+  def _prepare_ghost_delete_retry(self) -> bool:
+    ghosts = self._ghost_deleted_paths_on_disk()
+    if not ghosts:
+      return False
+    with self._lock:
+      for path in ghosts:
+        entry = self._manifest.get("entries", {}).get(path)
+        if isinstance(entry, dict):
+          entry.pop("deleted", None)
+          entry.pop("delete_failed", None)
+          entry.pop("delete_reason", None)
+      self._manifest["phase"] = PHASE_DELETING
+      _save_manifest(self._manifest_path, self._manifest)
+    if self.log_fn:
+      self.log_fn(
+          "Day raw removal ghost delete retry day=%s paths=%d"
+          % (self.day_date.isoformat(), len(ghosts)),
+          flush=True,
+      )
+    return True
 
   def _manifest_retryable_paths_on_disk(self) -> List[str]:
     return [
@@ -537,6 +585,8 @@ class _DayRawRemovalState:
       )
 
   def apply_batch_delete(self) -> int:
+    if self.needs_ghost_delete_retry():
+      self._prepare_ghost_delete_retry()
     max_deletes = cfg.get_sync_day_close_raw_removal_max_deletes_per_pass()
     deleted = 0
     with self._lock:
@@ -834,7 +884,11 @@ class DayRawRemovalCoordinator:
   def any_needs_delete_phase(self) -> bool:
     with self._days_lock:
       states = list(self._days.values())
-    return any(s.needs_delete_phase() and not s.delete_phase_done() for s in states)
+    return any(
+        (s.needs_delete_phase() and not s.delete_phase_done())
+        or s.needs_ghost_delete_retry()
+        for s in states
+    )
 
   def any_needs_tar_drop_finish(self) -> bool:
     return bool(self.days_needing_tar_drop_oldest_first())
@@ -886,7 +940,10 @@ class DayRawRemovalCoordinator:
     with self._days_lock:
       states = list(self._days.values())
     for state in states:
-      if state.needs_delete_phase() and not state.delete_phase_done():
+      if (
+          (state.needs_delete_phase() and not state.delete_phase_done())
+          or state.needs_ghost_delete_retry()
+      ):
         candidates.append((state.day_date, state.tar_path))
     candidates.sort(key=lambda item: item[0])
     return [tar_path for _day_date, tar_path in candidates]
