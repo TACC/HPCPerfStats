@@ -3283,177 +3283,243 @@ def archive_stats_files(archive_info):
     return _archive_stats_files_body(archive_info)
 
 
+def _lookup_existing_members_for_archive_append(archive_fname, archive_tar_fname):
+  """Return (members, members_source) for archive append; Redis-first when L2 on."""
+  if not os.path.exists(archive_tar_fname):
+    return {}, "tar_scan"
+  canonical = normalize_daily_compressed_path(archive_fname)
+  if cfg.get_sync_archive_members_redis_enabled():
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+        archive_members_redis_enabled,
+        build_archive_members_redis_keys,
+        redis_members_cache_is_fully_warm,
+    )
+    from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+        _daily_archive_members_cache_key,
+    )
+    if archive_members_redis_enabled():
+      keys = build_archive_members_redis_keys(
+          _daily_archive_members_cache_key(canonical),
+      )
+      members_source = (
+          "redis" if redis_members_cache_is_fully_warm(keys) else "tar_scan"
+      )
+      return (
+          get_existing_archive_members_for_daily_archive(canonical),
+          members_source,
+      )
+  return get_existing_archive_members(archive_tar_fname), "tar_scan"
+
+
+def _log_archive_job_begin(archive_tar_fname, members_source):
+  day_token = calendar_date_from_daily_tar_path(archive_tar_fname) or "?"
+  tar_bytes = os.path.getsize(archive_tar_fname) if os.path.isfile(archive_tar_fname) else 0
+  log_print(
+      "INFO: archive_job_begin day=%s tar_bytes=%s members_source=%s"
+      % (day_token, tar_bytes, members_source),
+      flush=True,
+  )
+
+
 def _archive_stats_files_body(archive_info):
   archive_fname, stats_files = archive_info
-  stats_files, _skipped = filter_paths_head_ingested(stats_files, log_fn=log_print)
-  if not stats_files:
-    return True
   archive_tar_fname = daily_tar_path_from_compressed(archive_fname)
-  existing_members = {}
-  zst_path, gz_path = compressed_sibling_paths(archive_tar_fname)
-  sealed_exists = os.path.isfile(zst_path) or os.path.isfile(gz_path)
+  day_token = calendar_date_from_daily_tar_path(archive_tar_fname) or "?"
+  job_start = time.monotonic()
+  job_begin_logged = False
+  members_source = "tar_scan"
 
-  if not os.path.exists(archive_tar_fname):
-    if os.path.isfile(zst_path):
-      if not _decompress_compressed_archive(zst_path):
-        log_print(
-            "ERROR: could not restore daily tar from sealed zst before append; "
-            "leaving raw stats files in place: %s" % zst_path,
-            flush=True,
-        )
-        return False
-    elif os.path.isfile(gz_path):
-      if not _decompress_compressed_archive(gz_path):
-        log_print(
-            "ERROR: could not restore daily tar from sealed gzip before append; "
-            "leaving raw stats files in place: %s" % gz_path,
-            flush=True,
-        )
-        return False
-    elif os.path.isfile(archive_fname) and detect_compressed_format(archive_fname):
-      if not _decompress_compressed_archive(archive_fname):
-        log_print(
-            "ERROR: could not restore daily tar from sealed archive before append; "
-            "leaving raw stats files in place: %s" % archive_fname,
-            flush=True,
-        )
-        return False
-  if not os.path.exists(archive_tar_fname) and sealed_exists:
-    log_print(
-        "ERROR: sealed archive present but daily tar missing after decompress; "
-        "leaving raw stats files in place: %s" % archive_tar_fname,
-        flush=True,
-    )
-    return False
-  if os.path.exists(archive_tar_fname):
-    existing_members = get_existing_archive_members(archive_tar_fname)
+  def _ensure_job_begin_logged(source):
+    nonlocal job_begin_logged
+    if not job_begin_logged:
+      _log_archive_job_begin(archive_tar_fname, source)
+      job_begin_logged = True
 
-  # Corrupt/truncated .tar can make Python's tarfile reader return {} while GNU
-  # tar still refuses append (exit 2). Recover before append so we never raise
-  # without trying restore-from-.gz (same as post-append path).
-  if os.path.isfile(archive_tar_fname) and not verify_tar_archive_readable(
-      archive_tar_fname):
-    log_print(
-        "Daily tar unreadable before append; recovering from sealed archive or "
-        "clearing: %s" % archive_tar_fname,
-        flush=True,
-    )
-    if not replace_corrupt_tar_from_compressed_backup(
-        archive_tar_fname, zst_path, gz_path, cfg.get_archive_zstd_threads(),
-    ):
+  try:
+    stats_files, _skipped = filter_paths_head_ingested(stats_files, log_fn=log_print)
+    if not stats_files:
+      return True
+    existing_members = {}
+    zst_path, gz_path = compressed_sibling_paths(archive_tar_fname)
+    sealed_exists = os.path.isfile(zst_path) or os.path.isfile(gz_path)
+
+    if not os.path.exists(archive_tar_fname):
+      if os.path.isfile(zst_path):
+        if not _decompress_compressed_archive(zst_path):
+          log_print(
+              "ERROR: could not restore daily tar from sealed zst before append; "
+              "leaving raw stats files in place: %s" % zst_path,
+              flush=True,
+          )
+          return False
+      elif os.path.isfile(gz_path):
+        if not _decompress_compressed_archive(gz_path):
+          log_print(
+              "ERROR: could not restore daily tar from sealed gzip before append; "
+              "leaving raw stats files in place: %s" % gz_path,
+              flush=True,
+          )
+          return False
+      elif os.path.isfile(archive_fname) and detect_compressed_format(archive_fname):
+        if not _decompress_compressed_archive(archive_fname):
+          log_print(
+              "ERROR: could not restore daily tar from sealed archive before append; "
+              "leaving raw stats files in place: %s" % archive_fname,
+              flush=True,
+          )
+          return False
+    if not os.path.exists(archive_tar_fname) and sealed_exists:
       log_print(
-          "ERROR: could not restore daily tar before append; leaving raw stats "
-          "files in place: %s" % archive_fname,
+          "ERROR: sealed archive present but daily tar missing after decompress; "
+          "leaving raw stats files in place: %s" % archive_tar_fname,
           flush=True,
       )
       return False
     if os.path.exists(archive_tar_fname):
-      existing_members = get_existing_archive_members(archive_tar_fname)
-    else:
-      existing_members = {}
+      existing_members, members_source = _lookup_existing_members_for_archive_append(
+          archive_fname, archive_tar_fname,
+      )
+      _ensure_job_begin_logged(members_source)
 
-  stats_files_to_tar = filter_files_to_add_to_archive(
-      stats_files, existing_members, debug=DEBUG)
-  if stats_files_to_tar:
-    if not _restore_daily_tar_or_log_failure(
-        archive_tar_fname, context="before append"):
-      return False
-  try:
-    _append_to_tar(archive_tar_fname, stats_files_to_tar)
-  except (subprocess.CalledProcessError, RuntimeError) as exc:
-    log_print(
-        "ERROR: tar append failed for %s (%s); leaving raw stats files in place"
-        % (archive_tar_fname, exc),
-        flush=True,
-    )
-    return False
-
-  if stats_files_to_tar:
-    if not verify_tar_archive_readable(archive_tar_fname):
+    # Corrupt/truncated .tar can make Python's tarfile reader return {} while GNU
+    # tar still refuses append (exit 2). Recover before append so we never raise
+    # without trying restore-from-.gz (same as post-append path).
+    if os.path.isfile(archive_tar_fname) and not verify_tar_archive_readable(
+        archive_tar_fname):
       log_print(
-          "Daily tar failed integrity check after append; recovering from "
-          "sealed archive or clearing for rebuild: %s" % archive_tar_fname,
+          "Daily tar unreadable before append; recovering from sealed archive or "
+          "clearing: %s" % archive_tar_fname,
           flush=True,
       )
       if not replace_corrupt_tar_from_compressed_backup(
           archive_tar_fname, zst_path, gz_path, cfg.get_archive_zstd_threads(),
       ):
         log_print(
-            "ERROR: could not restore daily tar from %s; leaving raw stats "
-            "files in place" % archive_fname,
+            "ERROR: could not restore daily tar before append; leaving raw stats "
+            "files in place: %s" % archive_fname,
             flush=True,
         )
         return False
-      existing_after = (
-          get_existing_archive_members(archive_tar_fname)
-          if os.path.exists(archive_tar_fname)
-          else {}
+      if os.path.exists(archive_tar_fname):
+        existing_members, members_source = _lookup_existing_members_for_archive_append(
+            archive_fname, archive_tar_fname,
+        )
+        _ensure_job_begin_logged(members_source)
+      else:
+        existing_members = {}
+
+    stats_files_to_tar = filter_files_to_add_to_archive(
+        stats_files, existing_members, debug=DEBUG)
+    if stats_files_to_tar:
+      if not _restore_daily_tar_or_log_failure(
+          archive_tar_fname, context="before append"):
+        return False
+      _ensure_job_begin_logged(members_source)
+    try:
+      _append_to_tar(archive_tar_fname, stats_files_to_tar)
+    except (subprocess.CalledProcessError, RuntimeError) as exc:
+      log_print(
+          "ERROR: tar append failed for %s (%s); leaving raw stats files in place"
+          % (archive_tar_fname, exc),
+          flush=True,
       )
-      to_retry = filter_files_to_add_to_archive(
-          stats_files_to_tar, existing_after, debug=DEBUG)
-      if to_retry:
-        if not _restore_daily_tar_or_log_failure(
-            archive_tar_fname, context="before retry append"):
-          return False
-        try:
-          _append_to_tar(archive_tar_fname, to_retry)
-        except (subprocess.CalledProcessError, RuntimeError) as exc:
+      return False
+
+    if stats_files_to_tar:
+      if not verify_tar_archive_readable(archive_tar_fname):
+        log_print(
+            "Daily tar failed integrity check after append; recovering from "
+            "sealed archive or clearing for rebuild: %s" % archive_tar_fname,
+            flush=True,
+        )
+        if not replace_corrupt_tar_from_compressed_backup(
+            archive_tar_fname, zst_path, gz_path, cfg.get_archive_zstd_threads(),
+        ):
           log_print(
-              "ERROR: retry tar append failed for %s (%s); leaving raw stats "
-              "files in place" % (archive_tar_fname, exc),
+              "ERROR: could not restore daily tar from %s; leaving raw stats "
+              "files in place" % archive_fname,
               flush=True,
           )
           return False
-      if not verify_tar_archive_readable(archive_tar_fname):
+        if os.path.exists(archive_tar_fname):
+          existing_after, members_source = _lookup_existing_members_for_archive_append(
+              archive_fname, archive_tar_fname,
+          )
+          _ensure_job_begin_logged(members_source)
+        else:
+          existing_after = {}
+        to_retry = filter_files_to_add_to_archive(
+            stats_files_to_tar, existing_after, debug=DEBUG)
+        if to_retry:
+          if not _restore_daily_tar_or_log_failure(
+              archive_tar_fname, context="before retry append"):
+            return False
+          try:
+            _append_to_tar(archive_tar_fname, to_retry)
+          except (subprocess.CalledProcessError, RuntimeError) as exc:
+            log_print(
+                "ERROR: retry tar append failed for %s (%s); leaving raw stats "
+                "files in place" % (archive_tar_fname, exc),
+                flush=True,
+            )
+            return False
+        if not verify_tar_archive_readable(archive_tar_fname):
+          log_print(
+              "ERROR: daily tar still unreadable after recovery append; leaving "
+              "raw stats files in place: %s" % archive_tar_fname,
+              flush=True,
+          )
+          return False
+    if stats_files_to_tar:
+      from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+          _daily_archive_members_cache_key,
+      )
+      from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+          merge_appended_members_into_redis,
+      )
+
+      canonical = normalize_daily_compressed_path(archive_fname)
+      cache_key = _daily_archive_members_cache_key(canonical)
+      member_map = build_tar_append_member_map(stats_files_to_tar)
+      saw_dupes = len(member_map) < len(stats_files_to_tar)
+      merged = False
+      try:
+        merged = merge_appended_members_into_redis(
+            cache_key,
+            member_map,
+            saw_duplicates=saw_dupes,
+        )
+      except Exception as exc:
         log_print(
-            "ERROR: daily tar still unreadable after recovery append; leaving "
-            "raw stats files in place: %s" % archive_tar_fname,
+            "WARNING: tar_append redis merge failed for %s: %s; invalidating"
+            % (canonical, exc),
             flush=True,
         )
-        return False
-  if stats_files_to_tar:
-    from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-        _daily_archive_members_cache_key,
-    )
-    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-        merge_appended_members_into_redis,
-    )
-
-    canonical = normalize_daily_compressed_path(archive_fname)
-    cache_key = _daily_archive_members_cache_key(canonical)
-    member_map = build_tar_append_member_map(stats_files_to_tar)
-    saw_dupes = len(member_map) < len(stats_files_to_tar)
-    merged = False
-    try:
-      merged = merge_appended_members_into_redis(
-          cache_key,
-          member_map,
-          saw_duplicates=saw_dupes,
-      )
-    except Exception as exc:
+      if merged:
+        merge_daily_archive_members_l1_cache(canonical, member_map)
+        day_date = calendar_date_from_daily_tar_path(archive_tar_fname)
+        log_print(
+            "INFO: tar_append redis merge day=%s members=%d"
+            % (
+                day_date.isoformat() if day_date is not None else canonical,
+                len(member_map),
+            ),
+            flush=True,
+        )
+      else:
+        invalidate_after_daily_tar_mutation(
+            archive_fname,
+            reason="tar_append",
+            log_fn=log_print,
+        )
+    return True
+  finally:
+    if job_begin_logged:
       log_print(
-          "WARNING: tar_append redis merge failed for %s: %s; invalidating"
-          % (canonical, exc),
+          "INFO: archive_job_done day=%s elapsed_s=%.3f"
+          % (day_token, time.monotonic() - job_start),
           flush=True,
       )
-    if merged:
-      merge_daily_archive_members_l1_cache(canonical, member_map)
-      day_date = calendar_date_from_daily_tar_path(archive_tar_fname)
-      log_print(
-          "INFO: tar_append redis merge day=%s members=%d"
-          % (
-              day_date.isoformat() if day_date is not None else canonical,
-              len(member_map),
-          ),
-          flush=True,
-      )
-    else:
-      invalidate_after_daily_tar_mutation(
-          archive_fname,
-          reason="tar_append",
-          log_fn=log_print,
-      )
-  return True
 
 
 def _build_fallback_archive_mapping_by_mtime(files_to_be_archived, tgz_dir):

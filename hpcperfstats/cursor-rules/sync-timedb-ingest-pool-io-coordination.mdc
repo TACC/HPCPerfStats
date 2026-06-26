@@ -38,6 +38,7 @@ When code on the **ingest pool worker** hot path can read or decompress the **sa
 14. **Stale populate lock owners:** `_process_is_alive` treats Linux **zombie** PIDs (state `Z` in `/proc`) as dead so stale `{token}:{pid}` locks are released promptly.
 15. **Pool fatal teardown:** after stall/worker-death, `_handle_pool_worker_exit_fatal` must **`os._exit`** even when `terminate_pool_bounded` reports lingering workers; bounded **`waitpid` reap** after SIGKILL prevents defunct children under `[main]`.
 16. **Tar mutation invalidation:** mutating changes to a daily archive must refresh member caches. **`tar_append` success** calls **`merge_appended_members_into_redis`** (HSET new members, keep `complete=1`) + L1 merge — **not** full **`invalidate_after_daily_tar_mutation`** unless merge fails/disabled. **Full invalidation** remains required for: seal, dedupe rewrite, identity change, bootstrap append when merge unavailable, and **`archive_finalize`** when a full rebuild is needed. Log `INFO: tar_append redis merge day=… members=N` on merge path.
+17. **Archive pool append Redis parity:** **`_archive_stats_files_body`** (archive pool workers) must resolve **`existing_members`** via **`get_existing_archive_members_for_daily_archive(canonical)`** when Redis L2 is enabled — same Redis-first path as ingest duplicate-check. **Forbidden:** calling **`get_existing_archive_members(tar)`** (full sibling **`.tar`** scan under **`file_read_lock`**) when Redis is fully warm (`complete=1`, non-empty HASH). Log **`archive_job_begin … members_source=redis|tar_scan`** and **`archive_job_done elapsed_s=…`** for operator stall diagnosis. Post-recovery and post-corrupt-restore member lookups use the same helper.
 
 ## Tests (same task, non-optional)
 
@@ -50,6 +51,7 @@ When code on the **ingest pool worker** hot path can read or decompress the **sa
 - Add **`test_seal_skip_redis_single_flight_cold`**: concurrent **`_seal_skip_existing_zst_equivalent`** + **`get_existing_archive_members_for_daily_archive`** on same cold sealed day → one stream.
 - Add **`test_invalidate_does_not_drop_lock_during_populate`** and **`test_populate_retries_after_invalidate_pending`**: seal invalidation during populate must not spawn a second decompress.
 - Add **`test_populate_uses_tar_not_sealed_when_dirty`**, **`test_sealed_populate_when_not_dirty`**, **`test_tar_append_merges_redis_without_invalidate`**, **`test_prewarm_skips_sealed_scan_after_tar_append_merge`**, **`test_merge_appended_members_into_redis_keeps_existing`**: dirty-tar populate source, incremental merge on append, warm prewarm skip.
+- Add **`test_archive_stats_files_body_prefers_redis_over_tar_scan_when_warm`**: archive pool **`_archive_stats_files_body`** with warm Redis must not call **`get_existing_archive_members(tar)`**; emits **`archive_job_begin`** / **`archive_job_done`** timing logs.
 
 ## Overlap
 

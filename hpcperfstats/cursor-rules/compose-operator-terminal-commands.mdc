@@ -175,6 +175,9 @@ Some production hosts use **podman-compose** with project name `-p hpcperfstats`
 | `docker compose ps pipeline` | podman-compose treats `pipeline` as an unrecognized positional argument | `docker compose -p hpcperfstats ps \| grep pipeline` (or full `ps` table) |
 | Multi-line `su hpcperfstats -c 'tail … \| grep …'` with no matches | Non-zero exit when grep finds nothing; fragile quoting through podman-compose | `docker compose exec pipeline su hpcperfstats -c "sh -lc 'tail -200 /path/to/sync_timedb.log \| grep -E \"pattern1\|pattern2\" \|\| true'"` |
 | Host `$MAIN_PID` passed to `py-spy` inside `exec` | PID namespaces differ; host PID is invalid in container | Resolve PID inside container: `pgrep -f sync_timedb` then `py-spy dump --pid "$SUP"` (no `--nonblocking` on older py-spy) |
+| Nested `python3 -c \"…\"` inside `sh -lc` through podman-compose `exec` | Escaped quotes stripped → `c.read(/path/ini)` **SyntaxError** | Read INI with a single-quoted outer `su -c 'python3 -c "…"'` block, or `grep`/`awk` keys directly |
+| `docker compose logs pipeline --tail=N \| grep …` on podman-compose | **Empty grep** even when stall lines exist in full log (no rotation) | `docker compose logs pipeline` **without `--tail`**, pipe to `grep -E 'pattern1\|pattern2'` |
+| Async DAY_CLOSE manifest: `entries[:15]` | **`entries` is a dict** keyed by tar path, not a list → **KeyError** | `sorted(data.get('entries', {}).items())[:15]` or filter by on-disk `.tar` days |
 
 **Good** — podman service check + filtered log tail (paths from INI first):
 
