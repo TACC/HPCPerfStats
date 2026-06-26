@@ -2108,12 +2108,17 @@ def reset_archive_members_invalidation_hook_for_tests():
   _ARCHIVE_MEMBERS_INVALIDATION_HOOK = None
 
 
-def _notify_archive_members_invalidation(canonical, day_token=None):
+def _notify_archive_members_invalidation(canonical, day_token=None, reason=None):
   hook = _ARCHIVE_MEMBERS_INVALIDATION_HOOK
   if hook is None:
     return
   try:
-    hook(canonical, day_token)
+    hook(canonical, day_token, reason)
+  except TypeError:
+    try:
+      hook(canonical, day_token)
+    except Exception:
+      pass
   except Exception:
     pass
 
@@ -2134,7 +2139,7 @@ def invalidate_after_daily_tar_mutation(
   canonical = normalize_daily_compressed_path(
       os.path.normpath(daily_tar_or_compressed_path),
   )
-  invalidate_daily_archive_members_cache(canonical)
+  invalidate_daily_archive_members_cache(canonical, reason=reason)
   if log_fn and reason:
     log_fn(
         "Archive members cache invalidated path=%s reason=%s"
@@ -2143,7 +2148,7 @@ def invalidate_after_daily_tar_mutation(
     )
 
 
-def invalidate_daily_archive_members_cache(compressed_path):
+def invalidate_daily_archive_members_cache(compressed_path, *, reason=None):
   """Drop cached member maps for a daily archive (append, seal, identity change)."""
   if not compressed_path:
     return
@@ -2169,7 +2174,7 @@ def invalidate_daily_archive_members_cache(compressed_path):
         invalidate_archive_members_redis(_daily_archive_members_cache_key(canonical))
   except Exception:
     pass
-  _notify_archive_members_invalidation(canonical, day_token)
+  _notify_archive_members_invalidation(canonical, day_token, reason)
 
 
 def _daily_archive_members_cache_enabled():

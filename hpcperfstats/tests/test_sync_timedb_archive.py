@@ -1817,7 +1817,7 @@ def test_archive_stats_files_skips_append_when_not_head_ingested(monkeypatch, tm
   )
   monkeypatch.setattr(st, "_append_to_tar", lambda *_a, **_k: append_calls.__setitem__("n", append_calls["n"] + 1))
 
-  assert archive_stats_files((archive_key, [str(raw_file)])) is True
+  assert archive_stats_files((archive_key, [str(raw_file)]))
   assert append_calls["n"] == 0
 
 
@@ -3228,7 +3228,7 @@ def test_archive_stats_files_creates_new_tar_when_missing(monkeypatch, tmp_path)
   assert not os.path.exists(archive_tar)
 
   _patch_archive_gate_pass(monkeypatch)
-  assert archive_stats_files((archive_key, [str(raw_file)])) is True
+  assert archive_stats_files((archive_key, [str(raw_file)]))
   assert os.path.exists(archive_tar)
   members = get_existing_archive_members(archive_tar)
   assert get_tar_member_name(str(raw_file)) in members
@@ -6437,7 +6437,7 @@ def test_tar_append_merges_redis_without_invalidate(monkeypatch, tmp_path):
 
   new_raw = tmp_path / "1709123457"
   new_raw.write_text("1709123457 job2 cn002\n")
-  assert st._archive_stats_files_body((archive_key, [str(new_raw)])) is True
+  assert st._archive_stats_files_body((archive_key, [str(new_raw)]))
   assert not invalidated
   member_name = helpers.get_tar_member_name(str(new_raw))
   assert fake.hget(keys.hash_key, member_name) == str(new_raw.stat().st_size)
@@ -6510,7 +6510,7 @@ def test_archive_stats_files_body_prefers_redis_over_tar_scan_when_warm(
   monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
   monkeypatch.setattr(st, "_append_to_tar", lambda *_a, **_k: None)
 
-  assert st._archive_stats_files_body((archive_key, [str(new_raw)])) is True
+  assert st._archive_stats_files_body((archive_key, [str(new_raw)]))
   assert tar_scan_calls["n"] == 0
   assert any(
       "archive_job_begin" in line and "members_source=redis" in line

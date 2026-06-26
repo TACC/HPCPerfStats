@@ -1684,6 +1684,32 @@ class ArchiveTask:
   attempt: int = 1
 
 
+@dataclass(frozen=True)
+class ArchiveAppendOutcome:
+  """Archive pool append result plumbed to supervisor finalize."""
+
+  ok: bool = True
+  redis_merge_ok: bool = False
+  skip_finalize_invalidate: bool = True
+
+  def __bool__(self):
+    return self.ok
+
+
+def _archive_task_succeeded(result):
+  if result is False or result is None:
+    return False
+  if isinstance(result, ArchiveAppendOutcome):
+    return result.ok
+  return bool(result)
+
+
+def _archive_finalize_skip_invalidate_log_reason(result):
+  if isinstance(result, ArchiveAppendOutcome) and result.redis_merge_ok:
+    return "redis_merge_warm"
+  return "no_tar_mutation_or_worker_invalidated"
+
+
 def _db_write_task_tuple(task):
   return (
       task.path,
@@ -1861,6 +1887,7 @@ def _drain_db_write_tasks(
     archive_pool=None,
     stall_diagnostics=None,
     chunk_paths_norm=None,
+    handoff_priority_paths=None,
 ):
   """Write queued parse payloads and return updated finished count."""
   if not parse_tasks:
@@ -1898,7 +1925,12 @@ def _drain_db_write_tasks(
       if write_tracker is not None:
         write_tracker.complete(stats_fname)
       if ingest_ok:
-        _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
+        _transition_file_state(
+            file_states,
+            stats_fname,
+            SyncFileState.WRITTEN,
+            handoff_priority_paths=handoff_priority_paths,
+        )
         successful_paths.append(stats_fname)
         if should_archive and need_archival:
           files_to_be_archived.append(stats_fname)
@@ -1953,10 +1985,24 @@ _SYNC_STATE_TRANSITIONS = {
 SYNC_TIMEDB_DEAD_LETTER_BASENAME = ".sync_timedb_dead_letter.json"
 
 
-def _transition_file_state(file_states, path, new_state):
+def _transition_file_state(
+    file_states,
+    path,
+    new_state,
+    *,
+    handoff_priority_paths=None,
+):
   """Best-effort state transition validator for per-file supervisor state."""
   current = file_states.get(path)
   if current is None:
+    file_states[path] = new_state
+    return True
+  if (
+      current == SyncFileState.ARCHIVED
+      and new_state == SyncFileState.WRITTEN
+      and handoff_priority_paths is not None
+      and path in handoff_priority_paths
+  ):
     file_states[path] = new_state
     return True
   allowed = _SYNC_STATE_TRANSITIONS.get(current, set())
@@ -3338,7 +3384,7 @@ def _archive_stats_files_body(archive_info):
   try:
     stats_files, _skipped = filter_paths_head_ingested(stats_files, log_fn=log_print)
     if not stats_files:
-      return True
+      return ArchiveAppendOutcome(skip_finalize_invalidate=True)
     existing_members = {}
     zst_path, gz_path = compressed_sibling_paths(archive_tar_fname)
     sealed_exists = os.path.isfile(zst_path) or os.path.isfile(gz_path)
@@ -3483,6 +3529,7 @@ def _archive_stats_files_body(archive_info):
       member_map = build_tar_append_member_map(stats_files_to_tar)
       saw_dupes = len(member_map) < len(stats_files_to_tar)
       merged = False
+      worker_invalidated = False
       try:
         merged = merge_appended_members_into_redis(
             cache_key,
@@ -3512,7 +3559,12 @@ def _archive_stats_files_body(archive_info):
             reason="tar_append",
             log_fn=log_print,
         )
-    return True
+        worker_invalidated = True
+      return ArchiveAppendOutcome(
+          redis_merge_ok=merged,
+          skip_finalize_invalidate=merged or worker_invalidated,
+      )
+    return ArchiveAppendOutcome(skip_finalize_invalidate=True)
   finally:
     if job_begin_logged:
       log_print(
@@ -3779,6 +3831,7 @@ def run_sync_timedb_supervisor_loop(
   day_close_rescan_pending = False
   chunk_in_progress = False
   active_chunk_ingest_tracker = None
+  deferred_archive_finalize_prewarm_days = set()
   max_ingest_sort_epoch_by_tar: dict[str, int] = {}
 
   def _get_quarantine_skip_paths():
@@ -3968,12 +4021,31 @@ def run_sync_timedb_supervisor_loop(
     for task_payload, result in zip(deferred_paths, results):
       archive_task = task_payload["task"]
       archive_paths = task_payload["paths"]
-      if result:
-        invalidate_after_daily_tar_mutation(
-            archive_task.archive_info[0],
-            reason="archive_finalize",
-            log_fn=log_print,
+      if _archive_task_succeeded(result):
+        skip_finalize_invalidate = (
+            isinstance(result, ArchiveAppendOutcome)
+            and result.skip_finalize_invalidate
         )
+        archive_path = archive_task.archive_info[0]
+        day_date = calendar_date_from_daily_tar_path(
+            daily_tar_path_from_compressed(archive_path),
+        )
+        day_token = day_date.isoformat() if day_date is not None else None
+        if skip_finalize_invalidate:
+          log_print(
+              "INFO: archive_finalize skip invalidate day=%s reason=%s"
+              % (
+                  day_token or archive_path,
+                  _archive_finalize_skip_invalidate_log_reason(result),
+              ),
+              flush=True,
+          )
+        else:
+          invalidate_after_daily_tar_mutation(
+              archive_path,
+              reason="archive_finalize",
+              log_fn=log_print,
+          )
         for p in archive_paths:
           _transition_file_state(file_states, p, SyncFileState.ARCHIVED)
           added = _add_processed_path(
@@ -4062,11 +4134,25 @@ def run_sync_timedb_supervisor_loop(
     _flush_checkpoint_if_needed()
     finalized_paths = []
     for task_payload, result in zip(deferred_paths, results):
-      if result:
+      if _archive_task_succeeded(result):
         finalized_paths.extend(task_payload.get("paths") or ())
     if finalized_paths:
       _record_ingest_sort_epochs_for_paths(finalized_paths)
-      _maybe_enqueue_immediate_day_close(context="archive_finalize")
+      defer_day_close = bool(
+          startup_handoff_recover_pending or handoff_priority_paths
+      )
+      if defer_day_close:
+        log_print(
+            "INFO: archive_finalize defer immediate day_close "
+            "reason=handoff_recovery pending=%d handoff_n=%d"
+            % (
+                len(startup_handoff_recover_pending),
+                len(handoff_priority_paths),
+            ),
+            flush=True,
+        )
+      else:
+        _maybe_enqueue_immediate_day_close(context="archive_finalize")
 
   def _finalize_archive_slot(slot, *, force=False, allow_defer=False, context=""):
     ready_fn = getattr(slot.async_result, "ready", None)
@@ -4336,7 +4422,12 @@ def run_sync_timedb_supervisor_loop(
         if not ingest_ok:
           continue
         if payload is None:
-          _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
+          _transition_file_state(
+              file_states,
+              stats_fname,
+              SyncFileState.WRITTEN,
+              handoff_priority_paths=handoff_priority_paths,
+          )
           successful_paths.append(stats_fname)
           if should_archive and need_archival:
             files_to_be_archived.append(stats_fname)
@@ -4351,7 +4442,12 @@ def run_sync_timedb_supervisor_loop(
         )
         if not ingest_ok:
           continue
-        _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
+        _transition_file_state(
+            file_states,
+            stats_fname,
+            SyncFileState.WRITTEN,
+            handoff_priority_paths=handoff_priority_paths,
+        )
         successful_paths.append(stats_fname)
         if should_archive and need_archival:
           files_to_be_archived.append(stats_fname)
@@ -4361,7 +4457,12 @@ def run_sync_timedb_supervisor_loop(
         )
         if not ingest_ok:
           continue
-        _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
+        _transition_file_state(
+            file_states,
+            stats_fname,
+            SyncFileState.WRITTEN,
+            handoff_priority_paths=handoff_priority_paths,
+        )
         successful_paths.append(stats_fname)
         if should_archive and need_archival:
           files_to_be_archived.append(stats_fname)
@@ -4370,7 +4471,12 @@ def run_sync_timedb_supervisor_loop(
             manager_lock, path)
         if not ingest_ok:
           continue
-        _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
+        _transition_file_state(
+            file_states,
+            stats_fname,
+            SyncFileState.WRITTEN,
+            handoff_priority_paths=handoff_priority_paths,
+        )
         successful_paths.append(stats_fname)
         if should_archive and need_archival:
           files_to_be_archived.append(stats_fname)
@@ -4456,7 +4562,12 @@ def run_sync_timedb_supervisor_loop(
           if not ingest_ok:
             continue
           if payload is None:
-            _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
+            _transition_file_state(
+              file_states,
+              stats_fname,
+              SyncFileState.WRITTEN,
+              handoff_priority_paths=handoff_priority_paths,
+          )
             successful_paths.append(stats_fname)
             if should_archive and need_archival:
               files_to_be_archived.append(stats_fname)
@@ -4493,6 +4604,7 @@ def run_sync_timedb_supervisor_loop(
                 archive_pool=archive_pool,
                 stall_diagnostics=stall_diagnostics,
                 chunk_paths_norm=chunk_paths_norm,
+                handoff_priority_paths=handoff_priority_paths,
             )
         if parse_tasks:
           chunk_ingest_finished = _drain_db_write_tasks(
@@ -4509,6 +4621,7 @@ def run_sync_timedb_supervisor_loop(
               archive_pool=archive_pool,
               stall_diagnostics=stall_diagnostics,
               chunk_paths_norm=chunk_paths_norm,
+              handoff_priority_paths=handoff_priority_paths,
           )
       elif db_writer_combined_task:
         add_combined = partial(_ingest_parse_and_write_file, manager_lock)
@@ -4543,7 +4656,12 @@ def run_sync_timedb_supervisor_loop(
           k += 1
           active_workers = max(active_workers, min(thread_count, k))
           if ingest_ok:
-            _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
+            _transition_file_state(
+              file_states,
+              stats_fname,
+              SyncFileState.WRITTEN,
+              handoff_priority_paths=handoff_priority_paths,
+          )
             successful_paths.append(stats_fname)
             if should_archive and need_archival:
               files_to_be_archived.append(stats_fname)
@@ -4589,7 +4707,12 @@ def run_sync_timedb_supervisor_loop(
           k += 1
           active_workers = max(active_workers, min(thread_count, k))
           if ingest_ok:
-            _transition_file_state(file_states, stats_fname, SyncFileState.WRITTEN)
+            _transition_file_state(
+              file_states,
+              stats_fname,
+              SyncFileState.WRITTEN,
+              handoff_priority_paths=handoff_priority_paths,
+          )
             successful_paths.append(stats_fname)
             if should_archive and need_archival:
               files_to_be_archived.append(stats_fname)
@@ -4727,6 +4850,7 @@ def run_sync_timedb_supervisor_loop(
     try:
       return _run_ingest_archive_paths_batch(paths, context_label)
     finally:
+      _flush_deferred_archive_finalize_prewarm()
       chunk_in_progress = False
 
   log_print(
@@ -5043,7 +5167,24 @@ def run_sync_timedb_supervisor_loop(
   async_day_close.submit_eligible_fn = _async_day_close_submit_eligible
   async_day_close.on_day_phase = _on_async_day_phase
 
-  def _archive_members_invalidation_hook(_canonical, day_token):
+  def _flush_deferred_archive_finalize_prewarm():
+    if not deferred_archive_finalize_prewarm_days:
+      return
+    days = sorted(deferred_archive_finalize_prewarm_days)
+    deferred_archive_finalize_prewarm_days.clear()
+    for day_token in days:
+      log_print(
+          "INFO: deferred prewarm flush day=%s reason=archive_finalize"
+          % day_token,
+          flush=True,
+      )
+      _prewarm_archive_members_redis_for_day_token(day_token)
+
+  def _archive_members_invalidation_hook(_canonical, day_token, reason=None):
+    if reason == "archive_finalize":
+      if day_token:
+        deferred_archive_finalize_prewarm_days.add(day_token)
+      return
     if not chunk_in_progress or not day_token:
       return
     tracker = active_chunk_ingest_tracker
@@ -6085,6 +6226,7 @@ def run_sync_timedb_supervisor_loop(
           archive_janitor.signal_scheduled_maintenance_pass(reason=heavy_reason)
           archive_janitor.signal_work_available()
 
+        _flush_deferred_archive_finalize_prewarm()
         chunk_in_progress = False
 
       _persist_dead_letters_if_needed(force=True)
