@@ -16,6 +16,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     build_remaining_raw_for_daily_tar,
     calendar_date_from_daily_tar_path,
     classify_removable_raw_paths_for_daily_gz,
+    quarantine_dir_for_archive,
     remaining_raw_by_gz_has_paths_on_disk,
     remove_verified_uncompressed_daily_tars,
     stats_file_is_active_segment,
@@ -962,19 +963,82 @@ class DayRawRemovalCoordinator:
         if os.path.isfile(path)
     ]
 
+  def _closed_raw_path_is_quarantine_skip(self, path: str) -> bool:
+    path_norm = os.path.normpath(str(path or ""))
+    if not path_norm:
+      return True
+    skip_paths = set(self.get_quarantine_skip_paths() or ())
+    if path_norm in skip_paths:
+      return True
+    quarantine_root = os.path.normpath(
+        quarantine_dir_for_archive(self.archive_data_dir),
+    )
+    if quarantine_root and path_norm.startswith(quarantine_root + os.sep):
+      return True
+    return False
+
+  def paths_for_closed_raw_handoff_requeue(self, tar_path: str) -> List[str]:
+    """Retryable/unmanifested closed raw only — not manifest-blocking verify paths."""
+    state = self._get_or_create_day(tar_path)
+    paths: List[str] = []
+    seen: Set[str] = set()
+    for path in state.handoff_paths_for_ingest():
+      path_norm = os.path.normpath(str(path or ""))
+      if not path_norm or path_norm in seen:
+        continue
+      if not os.path.isfile(path_norm):
+        continue
+      if self._closed_raw_path_is_quarantine_skip(path_norm):
+        continue
+      seen.add(path_norm)
+      paths.append(path_norm)
+    for path in state._unmanifested_closed_raw_paths():
+      path_norm = os.path.normpath(str(path or ""))
+      if not path_norm or path_norm in seen:
+        continue
+      if not os.path.isfile(path_norm):
+        continue
+      if self._closed_raw_path_is_quarantine_skip(path_norm):
+        continue
+      seen.add(path_norm)
+      paths.append(path_norm)
+    return paths
+
+  def needs_verify_for_closed_raw_block(self, tar_path: str) -> bool:
+    """True when manifest phase=done but non-retryable manifest paths block DAY_CLOSE."""
+    state = self._get_or_create_day(tar_path)
+    if state.needs_ghost_delete_retry():
+      return True
+    if not state.delete_phase_done():
+      return False
+    blocking = state._blocking_manifest_paths_on_disk()
+    if not blocking:
+      return False
+    retryable = set(state._manifest_retryable_paths_on_disk())
+    return any(path not in retryable for path in blocking)
+
   def requeue_closed_raw_paths_for_ingest(
       self,
       tar_path: str,
       *,
       reason: str,
   ) -> List[str]:
-    """Requeue every closed raw path on disk for ingest (checkpoint-complete days)."""
+    """Requeue handoff-eligible closed raw; verify-kick when manifest blocks submit."""
     if not self.enabled or self.on_handoff_to_ingest is None:
       return []
-    paths = self.closed_raw_paths_on_disk(tar_path)
+    tar_norm = os.path.normpath(tar_path)
+    verify_kick = self.needs_verify_for_closed_raw_block(tar_path)
+    if verify_kick:
+      self.start_async_verify(tar_path)
+      if self.log_fn:
+        self.log_fn(
+            "Day raw removal closed-raw verify kick tar=%s reason=%s"
+            % (tar_norm, reason or ""),
+            flush=True,
+        )
+    paths = self.paths_for_closed_raw_handoff_requeue(tar_path)
     if not paths:
       return []
-    tar_norm = os.path.normpath(tar_path)
     try:
       self.on_handoff_to_ingest(tar_norm, paths, reason)
     except Exception:

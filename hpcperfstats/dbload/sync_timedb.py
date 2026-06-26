@@ -4139,15 +4139,15 @@ def run_sync_timedb_supervisor_loop(
     if finalized_paths:
       _record_ingest_sort_epochs_for_paths(finalized_paths)
       defer_day_close = bool(
-          startup_handoff_recover_pending or handoff_priority_paths
+          startup_handoff_recover_pending or handoff_giant_day_slice_in_progress
       )
       if defer_day_close:
         log_print(
             "INFO: archive_finalize defer immediate day_close "
-            "reason=handoff_recovery pending=%d handoff_n=%d"
+            "reason=handoff_recovery pending=%d giant_day_slice=%s"
             % (
                 len(startup_handoff_recover_pending),
-                len(handoff_priority_paths),
+                "yes" if handoff_giant_day_slice_in_progress else "no",
             ),
             flush=True,
         )
@@ -4907,6 +4907,7 @@ def run_sync_timedb_supervisor_loop(
   handoff_priority_paths = set()
   chunk_counter = 0
   oldest_day_chunk_gate_stall_last_log = 0.0
+  handoff_priority_stall_last_log = 0.0
   # Per-day cache of raw paths queued/in-flight for tar append (loss-safe
   # disqualification source for ArchiveJanitor ticks). Mirrors the
   # archive lifecycle: populated when groups are dispatched/queued, pruned when a
@@ -5203,28 +5204,106 @@ def run_sync_timedb_supervisor_loop(
 
   startup_handoff_recover_pending = deque()
   handoff_requeued_tars_this_boot = set()
+  handoff_giant_day_slice_in_progress = False
+
+  def _clear_handoff_priority_for_tar(tar_norm):
+    tar_norm = os.path.normpath(str(tar_norm or ""))
+    if not tar_norm:
+      return
+    to_drop = [
+        path
+        for path in handoff_priority_paths
+        if tar_norm in daily_tar_paths_for_stats_paths(
+            [path],
+            tgz_archive_dir,
+        )
+    ]
+    for path in to_drop:
+      handoff_priority_paths.discard(path)
+
+  def _filter_handoff_requeue_paths(paths):
+    filtered = []
+    for path in (paths or ()):
+      if not path or not os.path.isfile(path):
+        continue
+      if day_raw_removal is not None:
+        skip_fn = getattr(
+            day_raw_removal,
+            "_closed_raw_path_is_quarantine_skip",
+            None,
+        )
+        if callable(skip_fn) and skip_fn(path):
+          continue
+      filtered.append(str(path))
+    return filtered
 
   def _on_day_close_pipeline_complete(_tar_path):
     nonlocal day_close_rescan_pending
     day_close_rescan_pending = True
     archive_janitor.signal_work_available()
 
-  def _requeue_day_close_handoff_paths(tar_norm, paths, reason):
+  def _requeue_day_close_handoff_paths(
+      tar_norm,
+      paths,
+      reason,
+      *,
+      allow_giant_day_slice=False,
+  ):
     nonlocal pending_stats_files
     tar_norm = os.path.normpath(str(tar_norm or ""))
     if not tar_norm:
       return
     retry_closed_raw_persists = False
     if tar_norm in handoff_requeued_tars_this_boot:
-      if (
+      has_closed_raw_fn = getattr(
+          day_raw_removal,
+          "has_closed_raw_on_disk",
+          None,
+      )
+      closed_raw_still = (
           day_raw_removal is not None
-          and day_raw_removal.has_closed_raw_on_disk(tar_norm)
-      ):
-        persist_paths = day_raw_removal.closed_raw_paths_on_disk(tar_norm)
+          and callable(has_closed_raw_fn)
+          and has_closed_raw_fn(tar_norm)
+      )
+      if closed_raw_still:
+        needs_verify_fn = getattr(
+            day_raw_removal,
+            "needs_verify_for_closed_raw_block",
+            None,
+        )
+        needs_verify = (
+            needs_verify_fn(tar_norm)
+            if callable(needs_verify_fn)
+            else False
+        )
+        if needs_verify:
+          day_raw_removal.start_async_verify(tar_norm)
+        requeue_fn = getattr(
+            day_raw_removal,
+            "paths_for_closed_raw_handoff_requeue",
+            None,
+        )
+        if callable(requeue_fn):
+          persist_paths = requeue_fn(tar_norm)
+        else:
+          persist_paths = day_raw_removal.closed_raw_paths_on_disk(tar_norm)
         if persist_paths:
           paths = persist_paths
           retry_closed_raw_persists = True
           reason = reason or "closed_raw_persists"
+        elif needs_verify:
+          log_print(
+              "sync_timedb: day_close handoff requeue skip day=%s reason=%s "
+              "detail=closed_raw_verify_kick"
+              % (
+                  calendar_date_from_daily_tar_path(tar_norm).isoformat()
+                  if calendar_date_from_daily_tar_path(tar_norm) is not None
+                  else tar_norm,
+                  reason or "",
+              ),
+              flush=True,
+          )
+          return
         else:
           log_print(
               "sync_timedb: day_close handoff requeue skip day=%s reason=%s "
@@ -5251,11 +5330,7 @@ def run_sync_timedb_supervisor_loop(
             flush=True,
         )
         return
-    requeued_paths = [
-        str(path)
-        for path in (paths or ())
-        if path and os.path.isfile(path)
-    ]
+    requeued_paths = _filter_handoff_requeue_paths(paths)
     if not requeued_paths:
       return
     _batch_remove_processed_paths(
@@ -5275,32 +5350,66 @@ def run_sync_timedb_supervisor_loop(
           if calendar_date_from_daily_tar_path(tar_norm) is not None
           else tar_norm
       )
-      n_slices = (len(requeued_paths) + max_slice - 1) // max_slice
-      log_print(
-          "sync_timedb: startup handoff giant-day ingest begin day=%s paths=%d "
-          "slices=%d max_files=%d"
-          % (day_token, len(requeued_paths), n_slices, max_slice),
-          flush=True,
-      )
-      failed_requeue = []
-      for off in range(0, len(requeued_paths), max_slice):
-        slice_paths = requeued_paths[off:off + max_slice]
-        _successful, failed = _run_startup_tail_ingest_batch(
-            slice_paths,
-            "handoff giant-day slice",
-        )
-        failed_requeue.extend(failed)
-      requeued_paths = failed_requeue
-      if not requeued_paths:
-        handoff_requeued_tars_this_boot.add(tar_norm)
+      if allow_giant_day_slice:
+        nonlocal handoff_giant_day_slice_in_progress
+        n_slices = (len(requeued_paths) + max_slice - 1) // max_slice
         log_print(
-            "sync_timedb: startup handoff giant-day ingest complete day=%s "
-            "detail=all_slices_ok"
-            % day_token,
+            "sync_timedb: startup handoff giant-day ingest begin day=%s paths=%d "
+            "slices=%d max_files=%d handoff_mode=giant_day_slice "
+            "reason=startup_handoff_recover"
+            % (day_token, len(requeued_paths), n_slices, max_slice),
             flush=True,
         )
-        archive_janitor.signal_work_available()
-        return
+        handoff_giant_day_slice_in_progress = True
+        failed_requeue = []
+        try:
+          for off in range(0, len(requeued_paths), max_slice):
+            slice_paths = requeued_paths[off:off + max_slice]
+            _successful, failed = _run_startup_tail_ingest_batch(
+                slice_paths,
+                "handoff giant-day slice",
+            )
+            failed_requeue.extend(failed)
+        finally:
+          handoff_giant_day_slice_in_progress = False
+        requeued_paths = failed_requeue
+        if not requeued_paths:
+          handoff_requeued_tars_this_boot.add(tar_norm)
+          has_closed_raw_fn = getattr(
+              day_raw_removal,
+              "has_closed_raw_on_disk",
+              None,
+          )
+          closed_raw_gone = (
+              day_raw_removal is None
+              or not (
+                  has_closed_raw_fn(tar_norm)
+                  if callable(has_closed_raw_fn)
+                  else False
+              )
+          )
+          if closed_raw_gone:
+            _clear_handoff_priority_for_tar(tar_norm)
+          log_print(
+              "sync_timedb: startup handoff giant-day ingest complete day=%s "
+              "detail=all_slices_ok"
+              % day_token,
+              flush=True,
+          )
+          archive_janitor.signal_work_available()
+          return
+      else:
+        log_print(
+            "sync_timedb: day_close handoff steady-chunk enqueue day=%s paths=%d "
+            "handoff_mode=steady_chunk chunk_size=%d reason=%s"
+            % (
+                day_token,
+                len(requeued_paths),
+                cfg.get_sync_ingest_chunk_size(),
+                reason or "",
+            ),
+            flush=True,
+        )
     for path in requeued_paths:
       handoff_priority_paths.add(path)
     _flush_checkpoint_if_needed(force=True)
@@ -5351,7 +5460,12 @@ def run_sync_timedb_supervisor_loop(
     if not startup_handoff_recover_pending:
       return False
     tar_norm, paths, reason = startup_handoff_recover_pending.popleft()
-    _requeue_day_close_handoff_paths(tar_norm, paths, reason)
+    _requeue_day_close_handoff_paths(
+        tar_norm,
+        paths,
+        reason,
+        allow_giant_day_slice=True,
+    )
     return True
 
   def _recover_startup_day_close_handoffs():
@@ -5942,6 +6056,21 @@ def run_sync_timedb_supervisor_loop(
               flush=True,
           )
         if not stats_files_chunk:
+          if handoff_priority_paths:
+            now = time.time()
+            if now - handoff_priority_stall_last_log >= 30.0:
+              handoff_priority_stall_last_log = now
+              log_print(
+                  "sync_timedb: handoff_priority_stall handoff_n=%d chunk_len=0 "
+                  "pending=%d oldest_tar=%s blocked_n=%d"
+                  % (
+                      len(handoff_priority_paths),
+                      len(pending_stats_files),
+                      oldest_tar_for_chunk or "",
+                      blocked_n,
+                  ),
+                  flush=True,
+              )
           if oldest_tar_for_chunk and (blocked_n or handoff_inflight_n):
             if blocked_n > 0:
               now = time.time()

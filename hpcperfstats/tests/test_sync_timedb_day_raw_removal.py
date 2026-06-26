@@ -663,14 +663,21 @@ def test_discover_closed_raw_on_disk_handoffs_phase_done_verified(tmp_path):
   assert str(seg) in found[0][1]
   assert not coord2.should_handoff_to_ingest(tar_path)
 
+  verify_kicked = []
+  original_start = coord2.start_async_verify
+
+  def _track_verify(tar_path, **kwargs):
+    verify_kicked.append(os.path.normpath(tar_path))
+    return original_start(tar_path, **kwargs)
+
+  coord2.start_async_verify = _track_verify
   requeued = coord2.requeue_closed_raw_paths_for_ingest(
       tar_path,
       reason="unit_closed_raw",
   )
-  assert requeued == [str(seg)]
-  assert handoffs == [
-      (os.path.normpath(tar_path), [str(seg)], "unit_closed_raw"),
-  ]
+  assert requeued == []
+  assert handoffs == []
+  assert verify_kicked == [os.path.normpath(tar_path)]
 
 
 def test_closed_raw_handoff_manifest_fast_phase_done_many_retryable_skip(
@@ -827,3 +834,83 @@ def test_ghost_deleted_manifest_path_on_disk_triggers_delete_retry(
   assert deleted == 1
   assert not os.path.isfile(seg_str)
   assert not state._ghost_deleted_paths_on_disk()
+
+
+def test_requeue_closed_raw_skips_quarantine_and_manifested(tmp_path):
+  day = datetime(2026, 5, 22)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  handoffs = []
+  quarantine_root = tmp_path / ".sync_timedb_unparsable_raw"
+  quarantine_root.mkdir(parents=True, exist_ok=True)
+  quarantine_path = quarantine_root / "host" / "9999999999"
+  quarantine_path.parent.mkdir(parents=True, exist_ok=True)
+  quarantine_path.write_text("bad\n")
+
+  def _on_handoff(tar_norm, paths, reason):
+    handoffs.append((tar_norm, list(paths), reason))
+
+  coord = _make_coordinator(
+      tmp_path,
+      on_handoff_to_ingest=_on_handoff,
+      get_quarantine_skip_paths=lambda: {str(quarantine_path)},
+  )
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), zst, "verified", "verified")
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["verified_count"] = 1
+    state._manifest["completed_at"] = time.time()
+    _save_manifest(state._manifest_path, state._manifest)
+
+  verify_kicked = []
+  original_start = coord.start_async_verify
+
+  def _track_verify(tar_path, **kwargs):
+    verify_kicked.append(os.path.normpath(tar_path))
+    return original_start(tar_path, **kwargs)
+
+  coord.start_async_verify = _track_verify
+  requeued = coord.requeue_closed_raw_paths_for_ingest(
+      tar_path,
+      reason="janitor_closed_raw_submit_guard",
+  )
+  assert requeued == []
+  assert handoffs == []
+  assert verify_kicked == [os.path.normpath(tar_path)]
+
+  retry_day = datetime(2026, 5, 23)
+  retry_seg = _make_closed_segment(tmp_path, "cluster.integration.test", retry_day)
+  retry_tar_path, retry_zst = _seal_day(tmp_path, retry_seg, retry_day)
+  coord2 = _make_coordinator(
+      tmp_path,
+      on_handoff_to_ingest=_on_handoff,
+      get_quarantine_skip_paths=lambda: {str(quarantine_path)},
+  )
+  state2 = coord2._get_or_create_day(retry_tar_path)
+  state2._record_entry(
+      str(retry_seg),
+      retry_zst,
+      "skipped_not_in_archive",
+      "not_in_sealed_archive",
+  )
+  with state2._lock:
+    state2._manifest["phase"] = PHASE_DONE
+    state2._manifest["skipped_count"] = 1
+    state2._manifest["completed_at"] = time.time()
+    _save_manifest(state2._manifest_path, state2._manifest)
+
+  handoffs.clear()
+  requeued2 = coord2.requeue_closed_raw_paths_for_ingest(
+      retry_tar_path,
+      reason="janitor_closed_raw_submit_guard",
+  )
+  assert str(retry_seg) in requeued2
+  assert str(quarantine_path) not in requeued2
+  assert handoffs == [
+      (
+          os.path.normpath(retry_tar_path),
+          [str(retry_seg)],
+          "janitor_closed_raw_submit_guard",
+      ),
+  ]

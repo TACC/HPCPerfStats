@@ -47,33 +47,42 @@ When the operator already pasted the relevant `[PIPELINE]` / `[DEFAULT]` lines, 
 
 ## Service-specific logs (not raw pipeline firehose)
 
-**Pipeline logs are noisy** — janitor ticks, unrelated days, imap deferrals, and routine ingest lines drown the signal. **Do not** ask for unfiltered `docker compose logs pipeline --tail=N` as the primary diagnostic.
+**Pipeline logs are noisy** — janitor ticks, unrelated days, imap deferrals, and routine ingest lines drown the signal. **Do not** ask for unfiltered `docker compose logs pipeline` (full firehose with no `grep`) as the primary diagnostic.
+
+### No `--tail` on `compose logs` (mandatory)
+
+**Do not** use `docker compose logs … --tail=N` (or podman-compose equivalent) in operator discovery blocks, plans, or chat diagnostics.
+
+Long-running **`pipeline`** containers accumulate **days** of `[sync_timedb]` stdout. Compose/Podman **`--tail`** reads only the **last N lines of the retained buffer** — often **before** the stall window — so `grep` returns **empty or stale** results even when matching lines exist earlier in the log.
 
 | Do | Don't |
 |----|-------|
-| **Filtered** pipeline logs: `docker compose logs pipeline --tail=200 \| grep -E 'signature1\|signature2'` with hypothesis-specific patterns | `docker compose logs pipeline --tail=500` with no filter |
+| **Full log + grep:** `docker compose -p hpcperfstats logs pipeline 2>&1 \| grep -E 'sig1\|sig2'` | `docker compose logs pipeline --tail=500` (with or without grep) |
+| **Limit after grep:** `… \| grep -E '…' \| tail -40` when operator should paste only recent matches | `--tail` before `grep` |
 | **Separate service blocks** — `pipeline` vs `proxy` vs `web` vs `db`; one hypothesis per labeled block | One giant mixed log paste |
-| **In-container** `grep`/`tail` on files under INI-resolved paths when you know the log file | Assume host paths match container layout |
-| State **what signal** you need (stall line, day_close phase, ingest completion) in the `#### <service> — …` label | "Paste pipeline logs" |
+| **In-container** `grep`/`tail` on a **known** log file path (after INI/`ls` confirms it exists) | Assume `/home/hpcperfstats/log/sync_timedb.log` exists (often missing — stdout only) |
+| State **what signal** you need in the `#### <service> — …` label | "Paste pipeline logs" |
 
-**Good** — filtered pipeline + INI paths in one service block:
+**Good** — full compose log stream, filtered, then tail matches only:
 
 ```bash
 cd HPCPerfStats
 
-docker compose -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline --tail=200 | \
-  grep -E 'startup drain blocked|chunk_wait_day_raw_delete|ingest file completed|day_close complete'
-
-docker compose -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline \
-  su hpcperfstats -c 'grep -E "startup drain blocked|chunk_wait" /home/hpcperfstats/log/sync_timedb.log 2>/dev/null | tail -20'
+docker compose -p hpcperfstats logs pipeline 2>&1 | \
+  grep -E 'startup drain blocked|chunk_wait_day_raw_delete|ingest file completed|day_close complete' | tail -40
 ```
 
-(Adjust log path after INI/`ls` confirms layout on the site.)
+**Bad** — `--tail` truncates before the stall window (empty grep on podman-compose sites):
+
+```bash
+docker compose logs pipeline --tail=500 | grep -E 'stall signature'
+docker compose logs pipeline --tail=200
+```
 
 **Bad** — unfiltered firehose:
 
 ```bash
-docker compose logs pipeline --tail=500
+docker compose logs pipeline
 ```
 
 ## Service mapping (default)
@@ -85,7 +94,7 @@ docker compose logs pipeline --tail=500
 | Redis | `redis` | `docker compose exec redis redis-cli …` |
 | RabbitMQ | `rabbitmq` | `docker compose exec rabbitmq rabbitmqctl …` |
 | Ingest / sync_timedb / pipeline data | `pipeline` | `docker compose exec pipeline su hpcperfstats -c '…'` |
-| nginx / proxy logs | `proxy` | `docker compose logs proxy --tail=200` |
+| nginx / proxy logs | `proxy` | `docker compose logs proxy 2>&1 \| grep -E 'error\|warn' \| tail -40` |
 
 Match **`README.md`** *Useful commands* and **`readme-installation-sync.mdc`** (`docker compose exec <service>` over hardcoded container names).
 
@@ -159,8 +168,8 @@ docker compose exec db psql -h localhost -U hpcperfstats -c "SELECT COUNT(*) FRO
 ```bash
 cd HPCPerfStats
 
-docker compose logs pipeline --tail=150 | \
-  grep -E 'startup drain blocked|ingest file completed' && \
+docker compose -p hpcperfstats logs pipeline 2>&1 | \
+  grep -E 'startup drain blocked|ingest file completed' | tail -20 && \
 docker compose exec pipeline su hpcperfstats -c 'ls -la "${archive_dir:-/hpcperfstats/archive}" 2>/dev/null | tail -5'
 ```
 
@@ -176,7 +185,7 @@ Some production hosts use **podman-compose** with project name `-p hpcperfstats`
 | Multi-line `su hpcperfstats -c 'tail … \| grep …'` with no matches | Non-zero exit when grep finds nothing; fragile quoting through podman-compose | `docker compose exec pipeline su hpcperfstats -c "sh -lc 'tail -200 /path/to/sync_timedb.log \| grep -E \"pattern1\|pattern2\" \|\| true'"` |
 | Host `$MAIN_PID` passed to `py-spy` inside `exec` | PID namespaces differ; host PID is invalid in container | Resolve PID inside container: `pgrep -f sync_timedb` then `py-spy dump --pid "$SUP"` (no `--nonblocking` on older py-spy) |
 | Nested `python3 -c \"…\"` inside `sh -lc` through podman-compose `exec` | Escaped quotes stripped → `c.read(/path/ini)` **SyntaxError** | Read INI with a single-quoted outer `su -c 'python3 -c "…"'` block, or `grep`/`awk` keys directly |
-| `docker compose logs pipeline --tail=N \| grep …` on podman-compose | **Empty grep** even when stall lines exist in full log (no rotation) | `docker compose logs pipeline` **without `--tail`**, pipe to `grep -E 'pattern1\|pattern2'` |
+| `docker compose logs pipeline --tail=N` (any N) | **Empty or stale grep** on long-running pipeline — stall lines are often **outside** the tail window (podman-compose retains full stdout buffer) | `docker compose logs pipeline 2>&1` **without `--tail`**, then `grep -E '…'`; optional `\| tail -40` **after** grep |
 | Async DAY_CLOSE manifest: `entries[:15]` | **`entries` is a dict** keyed by tar path, not a list → **KeyError** | `sorted(data.get('entries', {}).items())[:15]` or filter by on-disk `.tar` days |
 
 **Good** — podman service check + filtered log tail (paths from INI first):
