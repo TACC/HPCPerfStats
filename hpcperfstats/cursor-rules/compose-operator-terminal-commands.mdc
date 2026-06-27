@@ -43,6 +43,53 @@ for k in ('data_dir', 'archive_dir', 'daily_archive_dir', 'acct_path'):
 
 **Anti-pattern — sync_timedb checkpoint path:** Do **not** assume checkpoint lives at `{data_dir}/.sync_timedb_state.json`. The supervisor checkpoint is **`os.path.join(conf_parser.get_archive_dir_path(), '.sync_timedb_state.json')`** (same **`archive_dir`** as sealed archive root from INI). Resolve **`archive_dir`** from INI first, then grep/stat that path.
 
+### Use `conf_parser` for sync_timedb paths (mandatory)
+
+Operator Python one-liners inside **`pipeline`** that touch **`archive_dir`**, **`daily_archive_dir`**, accounting paths, or **`sync_timedb` sidecars** must use **`hpcperfstats.dbload.lib.conf_parser`** getters — the same module the supervisor uses — **not** raw **`ConfigParser().get('PIPELINE', 'archive_dir')`**.
+
+| Getter | Use |
+|--------|-----|
+| `get_archive_dir_path()` | Raw archive tree, checkpoint `.sync_timedb_state.json`, `.sync_timedb_day_raw_removal/` |
+| `get_daily_archive_dir_path()` | Daily `.tar` / sealed siblings |
+| `get_accounting_path()` | Sacct / accounting file |
+
+Getters honor **`PIPELINE`** + legacy **`PORTAL`** sections and normalization; bare **`ConfigParser`** often returns **`None`** for interpolated keys (e.g. `%(data_dir)s/archive`) — **`TypeError: join … NoneType`** on sidecar paths.
+
+**Anti-pattern — raw ConfigParser for `archive_dir`:**
+
+```python
+c = ConfigParser(); c.read("/home/hpcperfstats/hpcperfstats.ini")
+arch = c["PIPELINE"].get("archive_dir", c["DEFAULT"].get("archive_dir"))  # often None
+```
+
+**Corrected — day raw removal manifest (05-22 example):**
+
+```bash
+cd HPCPerfStats
+
+docker compose -p hpcperfstats exec pipeline su hpcperfstats -c 'python3 -c "
+import json, os
+from hpcperfstats.dbload.lib import conf_parser as cfg
+arch = cfg.get_archive_dir_path()
+assert arch, \"archive_dir unset\"
+mf = os.path.join(arch, \".sync_timedb_day_raw_removal\", \"2026-05-22.json\")
+doc = json.load(open(mf))
+entries = doc.get(\"entries\", {})
+verified_not_deleted = sum(
+    1 for e in entries.values()
+    if isinstance(e, dict) and e.get(\"status\") == \"verified\"
+    and not e.get(\"deleted\") and os.path.isfile(e.get(\"path\", \"\"))
+)
+print(\"archive_dir\", arch)
+print(\"phase\", doc.get(\"phase\"), \"entries\", len(entries),
+      \"verified_not_deleted\", verified_not_deleted,
+      \"deleted_count\", doc.get(\"deleted_count\"),
+      \"verified_count\", doc.get(\"verified_count\"))
+"'
+```
+
+**Lessons learned (hpcperfstats03, 2026-06):** `phase=done` + `verified_not_deleted=0` + janitor `closed_raw_on_disk` ⇒ likely **ghost delete** (`deleted=True` in manifest, files still on disk) and/or **unmanifested** closed raw — not “1578 verified-not-deleted”. Prefer printing **`deleted_count`** / **`verified_count`** manifest fields alongside the per-entry scan.
+
 When the operator already pasted the relevant `[PIPELINE]` / `[DEFAULT]` lines, skip the INI block and use their values.
 
 ## Service-specific logs (not raw pipeline firehose)

@@ -25,7 +25,7 @@ from hpcperfstats.dbload.lib.sync_timedb_persistence import (
     load_persistence_document,
     save_persistence_document,
 )
-from hpcperfstats.dbload.lib.file_locking import file_write_lock
+from hpcperfstats.dbload.lib.file_locking import cleanup_orphan_fnctl_lock_sidecars, file_write_lock
 from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
 from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
 
@@ -497,9 +497,38 @@ class _DayRawRemovalState:
           removed.add(path)
       return removed
 
-  def begin_deleting(self) -> None:
+  def reopen_delete_phase_if_verified_on_disk(self) -> bool:
+    """Reopen delete when ``phase=done`` but verified paths remain on disk."""
+    if self.phase() != PHASE_DONE:
+      return False
+    pending = [
+        path
+        for path, entry in self._manifest_entries_on_disk()
+        if str(entry.get("status") or "") == "verified"
+        and not entry.get("deleted")
+    ]
+    if not pending:
+      return False
     with self._lock:
-      if self._manifest.get("phase") == PHASE_VERIFICATION_COMPLETE:
+      self._manifest["phase"] = PHASE_DELETING
+      _save_manifest(self._manifest_path, self._manifest)
+    if self.log_fn:
+      self.log_fn(
+          "Day raw removal pending delete reopen day=%s paths=%d"
+          % (self.day_date.isoformat(), len(pending)),
+          flush=True,
+      )
+    return True
+
+  def begin_deleting(self) -> None:
+    pending_delete = self.paths_pending_delete()
+    blocking = self._blocking_manifest_paths_on_disk()
+    with self._lock:
+      phase = self._manifest.get("phase")
+      if phase == PHASE_VERIFICATION_COMPLETE:
+        self._manifest["phase"] = PHASE_DELETING
+        _save_manifest(self._manifest_path, self._manifest)
+      elif phase == PHASE_DONE and (pending_delete or blocking):
         self._manifest["phase"] = PHASE_DELETING
         _save_manifest(self._manifest_path, self._manifest)
 
@@ -812,6 +841,10 @@ class DayRawRemovalCoordinator:
     self._days: Dict[str, _DayRawRemovalState] = {}
     self._days_lock = threading.Lock()
     self._executor: Optional[ThreadPoolExecutor] = None
+    if self.enabled:
+      cleanup_orphan_fnctl_lock_sidecars(
+          day_removal_manifest_dir(self.archive_data_dir),
+      )
 
   def _get_or_create_day(self, tar_path: str) -> _DayRawRemovalState:
     tar_norm = os.path.normpath(tar_path)
@@ -1017,18 +1050,40 @@ class DayRawRemovalCoordinator:
     retryable = set(state._manifest_retryable_paths_on_disk())
     return any(path not in retryable for path in blocking)
 
-  def requeue_closed_raw_paths_for_ingest(
-      self,
-      tar_path: str,
-      *,
-      reason: str,
-  ) -> List[str]:
-    """Requeue handoff-eligible closed raw; verify-kick when manifest blocks submit."""
-    if not self.enabled or self.on_handoff_to_ingest is None:
-      return []
+  def kick_closed_raw_unblock(self, tar_path: str, *, reason: str) -> str:
+    """Drive delete reopen, ghost retry, or verify for closed-raw blockers."""
+    if not self.enabled:
+      return "noop"
+    state = self._get_or_create_day(tar_path)
     tar_norm = os.path.normpath(tar_path)
-    verify_kick = self.needs_verify_for_closed_raw_block(tar_path)
-    if verify_kick:
+    if state.needs_ghost_delete_retry():
+      if state._prepare_ghost_delete_retry():
+        if self.log_fn:
+          self.log_fn(
+              "Day raw removal closed-raw ghost delete kick tar=%s reason=%s"
+              % (tar_norm, reason or ""),
+              flush=True,
+          )
+        return "ghost_delete"
+    if state.delete_phase_done():
+      if state.reopen_delete_phase_if_verified_on_disk():
+        return "delete_reopen"
+      blocking = state._blocking_manifest_paths_on_disk()
+      if blocking:
+        retryable = set(state._manifest_retryable_paths_on_disk())
+        if any(path not in retryable for path in blocking):
+          state.begin_deleting()
+          if state.phase() == PHASE_DELETING:
+            if self.log_fn:
+              self.log_fn(
+                  "Day raw removal closed-raw delete kick tar=%s reason=%s "
+                  "detail=blocking_manifest"
+                  % (tar_norm, reason or ""),
+                  flush=True,
+              )
+            return "delete_reopen"
+      return "noop"
+    if not state.verification_complete():
       self.start_async_verify(tar_path)
       if self.log_fn:
         self.log_fn(
@@ -1036,7 +1091,21 @@ class DayRawRemovalCoordinator:
             % (tar_norm, reason or ""),
             flush=True,
         )
+      return "verify"
+    return "noop"
+
+  def requeue_closed_raw_paths_for_ingest(
+      self,
+      tar_path: str,
+      *,
+      reason: str,
+  ) -> List[str]:
+    """Requeue handoff-eligible closed raw; kick delete/verify when manifest blocks."""
+    if not self.enabled or self.on_handoff_to_ingest is None:
+      return []
+    tar_norm = os.path.normpath(tar_path)
     paths = self.paths_for_closed_raw_handoff_requeue(tar_path)
+    self.kick_closed_raw_unblock(tar_path, reason=reason)
     if not paths:
       return []
     try:
@@ -1052,7 +1121,7 @@ class DayRawRemovalCoordinator:
     return paths
 
   def discover_closed_raw_on_disk_handoffs(self) -> List[Tuple[str, List[str]]]:
-    """Boot-time handoff for days with closed raw on disk (any manifest entry status)."""
+    """Boot-time handoff for days with closed raw blockers (narrow path lists)."""
     if not self.enabled:
       return []
     manifest_dir = day_removal_manifest_dir(self.archive_data_dir)
@@ -1068,9 +1137,17 @@ class DayRawRemovalCoordinator:
       )
       if not os.path.isfile(tar_path) and not os.path.isfile(tar_path + ".zst"):
         continue
-      paths = self.closed_raw_paths_on_disk(tar_path)
-      if paths:
-        handoffs.append((os.path.normpath(tar_path), paths))
+      tar_norm = os.path.normpath(tar_path)
+      state = self._get_or_create_day(tar_path)
+      needs_kick = (
+          self.has_closed_raw_on_disk(tar_path)
+          or state.needs_ghost_delete_retry()
+          or self.needs_verify_for_closed_raw_block(tar_path)
+      )
+      if not needs_kick:
+        continue
+      paths = self.paths_for_closed_raw_handoff_requeue(tar_path)
+      handoffs.append((tar_norm, paths))
     return handoffs
 
   def complete_handoff_to_ingest(

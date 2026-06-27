@@ -6,6 +6,7 @@ import time
 import pytest
 
 from hpcperfstats.dbload.lib.file_locking import (
+    cleanup_orphan_fnctl_lock_sidecars,
     cleanup_stale_fnctl_lock_sidecars,
     file_read_lock_wait,
     file_write_lock,
@@ -135,6 +136,51 @@ def test_cleanup_stale_fnctl_lock_sidecars_skips_recent_mtime(tmp_path):
   lock_path.write_text("")
   assert cleanup_stale_fnctl_lock_sidecars(str(tmp_path)) == 0
   assert lock_path.exists()
+
+
+def test_cleanup_orphan_fnctl_lock_sidecars_removes_recent_uncontended(tmp_path):
+  target = tmp_path / "recent.tar"
+  target.write_text("x")
+  lock_path = tmp_path / "recent.tar.fnctl.lock"
+  lock_path.write_text("")
+  assert cleanup_orphan_fnctl_lock_sidecars(str(tmp_path)) == 1
+  assert not lock_path.exists()
+
+
+def test_file_write_lock_clears_recent_orphan_sidecar_before_acquire(tmp_path):
+  """Post-crash orphan sidecars must not force the full 60s wait loop."""
+  target = tmp_path / "data.txt"
+  target.write_text("ok")
+  lock_path = tmp_path / "data.txt.fnctl.lock"
+  lock_path.write_text("")
+
+  start = time.time()
+  with file_write_lock(str(target), timeout_seconds=1):
+    assert lock_path.exists()
+  elapsed = time.time() - start
+  assert elapsed < 0.5
+  assert not lock_path.exists()
+
+
+def test_cleanup_orphan_fnctl_lock_sidecars_does_not_remove_active_lock(tmp_path):
+  target = tmp_path / "held.tar"
+  target.write_text("x")
+  lock_path = tmp_path / "held.tar.fnctl.lock"
+  held = threading.Event()
+  release = threading.Event()
+
+  def _hold_writer():
+    with file_write_lock(str(target), timeout_seconds=1):
+      held.set()
+      release.wait(timeout=2)
+
+  t = threading.Thread(target=_hold_writer, daemon=True)
+  t.start()
+  assert held.wait(timeout=1)
+  assert cleanup_orphan_fnctl_lock_sidecars(str(tmp_path)) == 0
+  assert lock_path.exists()
+  release.set()
+  t.join(timeout=1)
 
 
 def test_cleanup_stale_fnctl_lock_sidecars_does_not_remove_active_lock(tmp_path):

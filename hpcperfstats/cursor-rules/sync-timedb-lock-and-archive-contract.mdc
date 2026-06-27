@@ -15,7 +15,7 @@ When changing ingest/archive paths under `hpcperfstats/dbload/sync_timedb.py`, `
 - Lock path generation must be **idempotent**. Re-wrapping an already-locked target must not append repeated lock suffixes (for example avoid `.fnctl.lock.fnctl.lock...` growth).
 - Lock files must be removed on normal release and on error/exception paths.
 - Any cleanup path that can skip unlock due to early return/exception is a defect and must be fixed in the same change.
-- **Stale sidecars:** read-lock paths do not unlink `*.fnctl.lock`. `cleanup_stale_fnctl_lock_sidecars` walks the raw archive dir and daily archive dir during scheduled `sync_timedb` maintenance and removes sidecars older than `LOCK_EXPIRY_SECONDS` only after the same non-blocking exclusive flock probe as `_maybe_reset_stale_lock_file` (no removal if contended).
+- **Stale sidecars:** read-lock paths do not unlink `*.fnctl.lock`. On every write/read lock acquire, `_maybe_reset_stale_lock_file(..., expiry_seconds=0)` removes uncontended orphan sidecars regardless of mtime (post-crash safe). Scheduled bulk cleanup still uses `LOCK_EXPIRY_SECONDS` on archive dirs; `cleanup_orphan_fnctl_lock_sidecars` walks the day-raw-removal manifest dir at coordinator startup and during janitor lock cleanup.
 
 ## Archival recovery and compression behavior
 

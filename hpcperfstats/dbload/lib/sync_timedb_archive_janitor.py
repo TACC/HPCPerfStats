@@ -16,7 +16,10 @@ import hpcperfstats.dbload.lib.conf_parser as cfg
 from django.db import close_old_connections
 
 from hpcperfstats.dbload.lib.archive_compress import compressed_sibling_paths
-from hpcperfstats.dbload.lib.file_locking import cleanup_stale_fnctl_lock_sidecars
+from hpcperfstats.dbload.lib.file_locking import (
+    cleanup_orphan_fnctl_lock_sidecars,
+    cleanup_stale_fnctl_lock_sidecars,
+)
 from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     atomic_seal_tar_to_zst,
     build_disqualification_reasons_by_tar,
@@ -849,8 +852,14 @@ class ArchiveJanitor:
     return False
 
   def _run_tick_lock_cleanup(self) -> int:
+    from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
+        day_removal_manifest_dir,
+    )
+
     removed = cleanup_stale_fnctl_lock_sidecars(self.archive_data_dir)
     removed += cleanup_stale_fnctl_lock_sidecars(self.tgz_archive_dir)
+    manifest_dir = day_removal_manifest_dir(self.archive_data_dir)
+    removed += cleanup_orphan_fnctl_lock_sidecars(manifest_dir)
     return removed
 
   def _consume_dedupe_hints(self, disqualified: Set[str]):

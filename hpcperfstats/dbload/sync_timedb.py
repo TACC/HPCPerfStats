@@ -3679,6 +3679,7 @@ def run_sync_timedb_supervisor_loop(
   archive_retry_backoff_max = max(0.0, float(cfg.get_sync_archive_retry_backoff_max_seconds()))
   ingest_first_durability = bool(cfg.get_sync_enable_ingest_first_durability_mode())
   ingest_t0 = time.time()
+  startup_gate_cleared_t0 = None
   run_startup_maintenance = startdate == "all"
 
   pending_archive_tasks = []
@@ -4262,6 +4263,14 @@ def run_sync_timedb_supervisor_loop(
   def _reconcile_checkpoint_paths():
     return resolved_checkpoint_path_set(checkpoint_path, checkpoint_entries)
 
+  def _checkpoint_unblocked_paths_for_tar(unprocessed_by_tar, tar_norm):
+    """On-disk unprocessed paths for ``tar_norm`` not yet in checkpoint merge."""
+    paths = on_disk_unprocessed_paths_for_tar(unprocessed_by_tar, tar_norm)
+    checkpoint_paths = _reconcile_checkpoint_paths()
+    if not checkpoint_paths:
+      return paths
+    return [path for path in paths if path not in checkpoint_paths]
+
   def _live_unprocessed_by_tar_for_reconcile():
     snapshot, _source = _resolve_reconcile_maintenance_snapshot()
     return build_live_unprocessed_by_tar_for_reconcile(
@@ -4347,7 +4356,7 @@ def run_sync_timedb_supervisor_loop(
     tar_norm = oldest_checkpoint_blocked_tar(
         unprocessed, tgz_archive_dir=tgz_archive_dir)
     blocked = (
-        on_disk_unprocessed_paths_for_tar(unprocessed, tar_norm)
+        _checkpoint_unblocked_paths_for_tar(unprocessed, tar_norm)
         if tar_norm else []
     )
     blocked_set = set(blocked)
@@ -5159,10 +5168,12 @@ def run_sync_timedb_supervisor_loop(
         and skip_reason == "closed_raw_on_disk"
         and day_raw_removal is not None
     ):
-      day_raw_removal.requeue_closed_raw_paths_for_ingest(
+      requeued = day_raw_removal.requeue_closed_raw_paths_for_ingest(
           tar_norm,
           reason="closed_raw_submit_guard",
       )
+      if not requeued:
+        archive_janitor.signal_work_available()
     return eligible, skip_reason
 
   async_day_close.submit_eligible_fn = _async_day_close_submit_eligible
@@ -5205,6 +5216,35 @@ def run_sync_timedb_supervisor_loop(
   startup_handoff_recover_pending = deque()
   handoff_requeued_tars_this_boot = set()
   handoff_giant_day_slice_in_progress = False
+  startup_ingest_gate_cleared = False
+  startup_day_close_drain_complete = False
+  startup_drain_last_log = 0.0
+  startup_drain_blocked_last_log = 0.0
+  startup_gate_cleared_logged = False
+
+  def _mark_startup_ingest_gate_cleared():
+    nonlocal startup_ingest_gate_cleared
+    nonlocal startup_gate_cleared_t0
+    nonlocal startup_gate_cleared_logged
+    if startup_ingest_gate_cleared:
+      return
+    startup_ingest_gate_cleared = True
+    reconcile_refs["ingest_gate_cleared"] = True
+    startup_gate_cleared_t0 = time.time()
+    if startup_gate_cleared_logged:
+      return
+    startup_gate_cleared_logged = True
+    log_print(
+        "sync_timedb: startup_elapsed_s=%.3f startup_handoff_recover summary "
+        "handoff_requeued_tars=%d pending_handoff=%d giant_day_slice=%s"
+        % (
+            startup_gate_cleared_t0 - ingest_t0,
+            len(handoff_requeued_tars_this_boot),
+            len(startup_handoff_recover_pending),
+            handoff_giant_day_slice_in_progress,
+        ),
+        flush=True,
+    )
 
   def _clear_handoff_priority_for_tar(tar_norm):
     tar_norm = os.path.normpath(str(tar_norm or ""))
@@ -5266,18 +5306,16 @@ def run_sync_timedb_supervisor_loop(
           and has_closed_raw_fn(tar_norm)
       )
       if closed_raw_still:
-        needs_verify_fn = getattr(
+        kick_fn = getattr(
             day_raw_removal,
-            "needs_verify_for_closed_raw_block",
+            "kick_closed_raw_unblock",
             None,
         )
-        needs_verify = (
-            needs_verify_fn(tar_norm)
-            if callable(needs_verify_fn)
-            else False
+        kick_action = (
+            kick_fn(tar_norm, reason=reason or "closed_raw_persists")
+            if callable(kick_fn)
+            else "noop"
         )
-        if needs_verify:
-          day_raw_removal.start_async_verify(tar_norm)
         requeue_fn = getattr(
             day_raw_removal,
             "paths_for_closed_raw_handoff_requeue",
@@ -5291,20 +5329,50 @@ def run_sync_timedb_supervisor_loop(
           paths = persist_paths
           retry_closed_raw_persists = True
           reason = reason or "closed_raw_persists"
-        elif needs_verify:
+        elif kick_action != "noop":
+          day_token = (
+              calendar_date_from_daily_tar_path(tar_norm).isoformat()
+              if calendar_date_from_daily_tar_path(tar_norm) is not None
+              else tar_norm
+          )
+          detail = (
+              "closed_raw_delete_kick"
+              if kick_action in ("ghost_delete", "delete_reopen")
+              else "closed_raw_verify_kick"
+          )
           log_print(
               "sync_timedb: day_close handoff requeue skip day=%s reason=%s "
-              "detail=closed_raw_verify_kick"
-              % (
-                  calendar_date_from_daily_tar_path(tar_norm).isoformat()
-                  if calendar_date_from_daily_tar_path(tar_norm) is not None
-                  else tar_norm,
-                  reason or "",
-              ),
+              "detail=%s kick=%s"
+              % (day_token, reason or "", detail, kick_action),
               flush=True,
           )
+          archive_janitor.signal_work_available()
           return
-        else:
+        elif closed_raw_still:
+          needs_verify_fn = getattr(
+              day_raw_removal,
+              "needs_verify_for_closed_raw_block",
+              None,
+          )
+          needs_blocker_kick = (
+              needs_verify_fn(tar_norm)
+              if callable(needs_verify_fn)
+              else False
+          )
+          if needs_blocker_kick:
+            log_print(
+                "sync_timedb: day_close handoff requeue skip day=%s reason=%s "
+                "detail=closed_raw_blocker_kick"
+                % (
+                    calendar_date_from_daily_tar_path(tar_norm).isoformat()
+                    if calendar_date_from_daily_tar_path(tar_norm) is not None
+                    else tar_norm,
+                    reason or "",
+                ),
+                flush=True,
+            )
+            archive_janitor.signal_work_available()
+            return
           log_print(
               "sync_timedb: day_close handoff requeue skip day=%s reason=%s "
               "detail=same_boot_duplicate"
@@ -5460,6 +5528,18 @@ def run_sync_timedb_supervisor_loop(
     if not startup_handoff_recover_pending:
       return False
     tar_norm, paths, reason = startup_handoff_recover_pending.popleft()
+    if (
+        reason == "startup_closed_raw_handoff"
+        and day_raw_removal is not None
+    ):
+      requeued = day_raw_removal.requeue_closed_raw_paths_for_ingest(
+          tar_norm,
+          reason=reason,
+      )
+      if not requeued:
+        handoff_requeued_tars_this_boot.add(tar_norm)
+        archive_janitor.signal_work_available()
+      return True
     _requeue_day_close_handoff_paths(
         tar_norm,
         paths,
@@ -5586,10 +5666,9 @@ def run_sync_timedb_supervisor_loop(
       if not cfg.get_sync_startup_drain_day_close_before_ingest():
         while startup_handoff_recover_pending:
           _process_one_startup_handoff_recover()
-
-      startup_ingest_gate_cleared = (
-          not cfg.get_sync_startup_drain_day_close_before_ingest()
-      )
+        _mark_startup_ingest_gate_cleared()
+      else:
+        startup_ingest_gate_cleared = False
       startup_day_close_drain_complete = startup_ingest_gate_cleared
     else:
       log_print(
@@ -5598,9 +5677,8 @@ def run_sync_timedb_supervisor_loop(
           flush=True,
       )
       startup_archive_scan.mark_startup_heavy_maintenance_finished()
-      startup_ingest_gate_cleared = True
+      _mark_startup_ingest_gate_cleared()
       startup_day_close_drain_complete = True
-      reconcile_refs["ingest_gate_cleared"] = True
     startup_drain_last_log = 0.0
     startup_drain_blocked_last_log = 0.0
 
@@ -5814,8 +5892,7 @@ def run_sync_timedb_supervisor_loop(
           "sync_timedb: startup maintenance idle; ingest may begin",
           flush=True,
       )
-      startup_ingest_gate_cleared = True
-      reconcile_refs["ingest_gate_cleared"] = True
+      _mark_startup_ingest_gate_cleared()
       return False
 
     def _post_startup_raw_removal_rescan():
@@ -6005,20 +6082,37 @@ def run_sync_timedb_supervisor_loop(
               % (len(pending_stats_files), ingest_queue_high),
               flush=True,
           )
+        chunk_t0 = time.time()
         _reconcile_pending_with_oldest_checkpoint_blocked()
         unprocessed_for_chunk = _live_unprocessed_by_tar_for_reconcile()
         oldest_tar_for_chunk = oldest_checkpoint_blocked_tar(
             unprocessed_for_chunk,
             tgz_archive_dir=tgz_archive_dir,
         )
-        blocked_n = (
-            len(on_disk_unprocessed_paths_for_tar(
+        raw_blocked_paths = (
+            on_disk_unprocessed_paths_for_tar(
                 unprocessed_for_chunk,
                 oldest_tar_for_chunk,
-            ))
+            )
             if oldest_tar_for_chunk
-            else 0
+            else []
         )
+        blocked_paths = (
+            _checkpoint_unblocked_paths_for_tar(
+                unprocessed_for_chunk,
+                oldest_tar_for_chunk,
+            )
+            if oldest_tar_for_chunk
+            else []
+        )
+        blocked_n = len(blocked_paths)
+        if raw_blocked_paths and blocked_n == 0:
+          log_print(
+              "sync_timedb: oldest_day_chunk_gate_all_db_complete oldest_tar=%s "
+              "raw_blocked_n=%d"
+              % (oldest_tar_for_chunk, len(raw_blocked_paths)),
+              flush=True,
+          )
         handoff_inflight_n = 0
         if oldest_tar_for_chunk:
           handoff_inflight_n = sum(
@@ -6076,10 +6170,7 @@ def run_sync_timedb_supervisor_loop(
               now = time.time()
               if now - oldest_day_chunk_gate_stall_last_log >= 30.0:
                 oldest_day_chunk_gate_stall_last_log = now
-                blocked_on_disk_stall = on_disk_unprocessed_paths_for_tar(
-                    unprocessed_for_chunk,
-                    oldest_tar_for_chunk,
-                )
+                blocked_on_disk_stall = list(blocked_paths)
                 fallback_n = sum(
                     1
                     for path in blocked_on_disk_stall
@@ -6136,7 +6227,17 @@ def run_sync_timedb_supervisor_loop(
             )
         )
 
-        log_print("loading time", time.time() - ingest_t0)
+        if chunk_counter == 0 and startup_gate_cleared_t0 is not None:
+          log_print(
+              "sync_timedb: startup_elapsed_s %.3f"
+              % (startup_gate_cleared_t0 - ingest_t0),
+              flush=True,
+          )
+        log_print(
+            "sync_timedb: chunk_elapsed_s %.3f"
+            % (time.time() - chunk_t0),
+            flush=True,
+        )
         log_print(
             "Throughput telemetry: active_workers=%d backlog=%d chunk_size=%d bulk_create_batch=%d"
             % (
