@@ -6086,6 +6086,41 @@ def test_select_ingest_chunk_paths_fallback_blocked_on_disk(tmp_path):
   assert str(newer) not in chunk
 
 
+def test_select_ingest_chunk_paths_fallback_logs_calendar_days(tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      select_ingest_chunk_paths,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_a = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+  tar_b = os.path.normpath(str(daily_dir / "2020-01-02.tar"))
+  open(tar_a, "wb").close()
+  open(tar_b, "wb").close()
+  d1 = datetime(2020, 1, 1, 12, tzinfo=timezone.utc)
+  d2 = datetime(2020, 1, 2, 12, tzinfo=timezone.utc)
+  blocked1 = tmp_path / "blocked1"
+  newer = tmp_path / "newer"
+  for path in (blocked1, newer):
+    path.write_text("x")
+  os.utime(blocked1, (d1.timestamp(), d1.timestamp()))
+  os.utime(newer, (d2.timestamp(), d2.timestamp()))
+  logs = []
+  chunk = select_ingest_chunk_paths(
+      [str(newer)],
+      oldest_tar=tar_a,
+      unprocessed_by_tar={tar_a: [str(blocked1)]},
+      inflight_archive_paths=set(),
+      tgz_archive_dir=str(daily_dir),
+      chunk_size=10,
+      ingest_queue_high=10,
+      log_fn=lambda msg: logs.append(str(msg)),
+  )
+  assert chunk == [str(blocked1)]
+  assert any("oldest_day_chunk_gate_fallback" in line for line in logs)
+  assert any("calendar_days=" in line for line in logs)
+
+
 def test_prepend_checkpoint_blocked_paths_to_pending_dedupes_and_orders():
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       prepend_checkpoint_blocked_paths_to_pending,

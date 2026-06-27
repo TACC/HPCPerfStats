@@ -51,6 +51,9 @@ RETRYABLE_SKIP_STATUSES = frozenset({
     "skipped_not_in_archive",
     "skipped_size_mismatch",
 })
+QUARANTINE_SKIP_REASONS = frozenset({"quarantine"})
+QUARANTINE_SKIP_STATUSES = frozenset({"skipped_quarantine"})
+KICK_NO_HANDOFF_PROGRESS = frozenset({"noop", "quarantine_terminal"})
 
 
 def day_removal_manifest_dir(archive_data_dir: str) -> str:
@@ -182,6 +185,7 @@ class _DayRawRemovalState:
       blocking = self._blocking_manifest_paths_on_disk()
       if blocking:
         return blocking
+      return []
     remaining = self._build_remaining_raw_for_daily_tar()
     paths: List[str] = []
     for raw_list in (remaining or {}).values():
@@ -189,6 +193,9 @@ class _DayRawRemovalState:
     return paths
 
   def _has_closed_raw_existing_on_disk(self) -> bool:
+    if self._only_quarantine_terminal_on_disk():
+      self._finalize_quarantine_terminal_done()
+      return False
     if self.delete_phase_done():
       if self._blocking_manifest_paths_on_disk():
         return True
@@ -196,6 +203,7 @@ class _DayRawRemovalState:
         return True
       if self._ghost_deleted_paths_on_disk():
         return False
+      return False
     remaining = self._build_remaining_raw_for_daily_tar()
     zst_path, _gz_path = compressed_sibling_paths(self.tar_path)
     return remaining_raw_by_gz_has_paths_on_disk(remaining, zst_path)
@@ -242,6 +250,16 @@ class _DayRawRemovalState:
         or status in RETRYABLE_SKIP_STATUSES
     )
 
+  def _entry_is_quarantine_terminal_skip(self, entry: Dict[str, Any]) -> bool:
+    if not isinstance(entry, dict):
+      return False
+    reason = str(entry.get("reason") or "")
+    status = str(entry.get("status") or "")
+    return (
+        reason in QUARANTINE_SKIP_REASONS
+        or status in QUARANTINE_SKIP_STATUSES
+    )
+
   def _needs_retry_after_ingest(self) -> bool:
     if self.phase() != PHASE_DONE:
       return False
@@ -269,6 +287,8 @@ class _DayRawRemovalState:
       entry = entries.get(path)
       if entry is None:
         return False
+      if self._entry_is_quarantine_terminal_skip(entry):
+        continue
       if self._entry_is_retryable_skip(entry):
         return False
     return True
@@ -276,7 +296,7 @@ class _DayRawRemovalState:
   def _unmanifested_closed_raw_paths(self) -> List[str]:
     with self._lock:
       entries = dict(self._manifest.get("entries", {}))
-    if self.delete_phase_done() and self._blocking_manifest_paths_on_disk():
+    if self.delete_phase_done():
       return []
     unmanifested: List[str] = []
     for path in self._closed_raw_paths_on_disk():
@@ -318,7 +338,36 @@ class _DayRawRemovalState:
         path
         for path, entry in self._manifest_entries_on_disk()
         if not self._entry_is_verified_ghost_on_disk(entry)
+        and not self._entry_is_quarantine_terminal_skip(entry)
     ]
+
+  def _only_quarantine_terminal_on_disk(self) -> bool:
+    on_disk = self._manifest_entries_on_disk()
+    if not on_disk:
+      return False
+    for _path, entry in on_disk:
+      if not self._entry_is_quarantine_terminal_skip(entry):
+        return False
+    return True
+
+  def _finalize_quarantine_terminal_done(self) -> None:
+    if self.delete_phase_done():
+      return
+    with self._lock:
+      if self._manifest.get("phase") == PHASE_DONE:
+        return
+      self._manifest["phase"] = PHASE_DONE
+      self._manifest["completed_at"] = time.time()
+      _save_manifest(self._manifest_path, self._manifest)
+    if self.log_fn:
+      self.log_fn(
+          "Day raw removal quarantine-terminal done day=%s on_disk=%d"
+          % (
+              self.day_date.isoformat(),
+              len(self._manifest_entries_on_disk()),
+          ),
+          flush=True,
+      )
 
   def _prepare_ghost_delete_retry(self) -> bool:
     ghosts = self._ghost_deleted_paths_on_disk()
@@ -868,6 +917,7 @@ class DayRawRemovalCoordinator:
     self._days: Dict[str, _DayRawRemovalState] = {}
     self._days_lock = threading.Lock()
     self._executor: Optional[ThreadPoolExecutor] = None
+    self._last_closed_raw_kick_action: Optional[str] = None
     if self.enabled:
       cleanup_orphan_fnctl_lock_sidecars(
           day_removal_manifest_dir(self.archive_data_dir),
@@ -1083,6 +1133,15 @@ class DayRawRemovalCoordinator:
       return "noop"
     state = self._get_or_create_day(tar_path)
     tar_norm = os.path.normpath(tar_path)
+    if state._only_quarantine_terminal_on_disk():
+      state._finalize_quarantine_terminal_done()
+      if self.log_fn:
+        self.log_fn(
+            "Day raw removal closed-raw quarantine terminal tar=%s reason=%s"
+            % (tar_norm, reason or ""),
+            flush=True,
+        )
+      return "quarantine_terminal"
     if state.needs_ghost_delete_retry():
       if state._prepare_ghost_delete_retry():
         if self.log_fn:
@@ -1149,6 +1208,7 @@ class DayRawRemovalCoordinator:
       paths: Optional[List[str]] = None,
   ) -> List[str]:
     """Requeue handoff-eligible closed raw; kick delete/verify when manifest blocks."""
+    self._last_closed_raw_kick_action = None
     if not self.enabled or self.on_handoff_to_ingest is None:
       return []
     tar_norm = os.path.normpath(tar_path)
@@ -1180,7 +1240,8 @@ class DayRawRemovalCoordinator:
           )
         return []
       return paths
-    self.kick_closed_raw_unblock(tar_path, reason=reason)
+    kick_action = self.kick_closed_raw_unblock(tar_path, reason=reason)
+    self._last_closed_raw_kick_action = kick_action
     return []
 
   def discover_closed_raw_on_disk_handoffs(self) -> List[Tuple[str, List[str]]]:

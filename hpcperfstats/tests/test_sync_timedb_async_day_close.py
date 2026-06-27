@@ -366,6 +366,47 @@ def test_run_day_close_defers_seal_when_closed_raw_on_disk(tmp_path, monkeypatch
 
 
 @pytest.mark.django_db(databases=[])
+def test_run_day_close_no_defer_when_kick_quarantine_terminal(tmp_path, monkeypatch):
+  archive_dir = str(tmp_path / "archive")
+  daily_dir = str(tmp_path / "daily")
+  os.makedirs(archive_dir)
+  os.makedirs(daily_dir)
+  tar_norm = os.path.normpath(os.path.join(daily_dir, "2026-05-22.tar"))
+  open(tar_norm, "wb").close()
+  logs: list[str] = []
+
+  class _QuarantineNoProgressCoord:
+    enabled = True
+    _last_closed_raw_kick_action = "quarantine_terminal"
+
+    def has_closed_raw_on_disk(self, _tar_path):
+      return True
+
+    def requeue_closed_raw_paths_for_ingest(self, _tar_path, *, reason):
+      return []
+
+  monkeypatch.setattr(async_dc_mod.cfg, "get_sync_day_close_async_workers", lambda: 1)
+
+  coord = async_dc_mod.AsyncDayCloseCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=daily_dir,
+      local_tz=None,
+      log_fn=lambda msg, **_kw: logs.append(str(msg)),
+      get_disqualified_daily_tars=lambda: set(),
+      day_raw_removal_coordinator=_QuarantineNoProgressCoord(),
+  )
+
+  with mock.patch.object(coord, "_seal_day", return_value=True):
+    coord._set_entry_status(tar_norm, "submitted", reason="test")
+    coord._run_day_close(tar_norm, "test")
+
+  entry = async_dc_mod._load_manifest(coord._manifest_path)["entries"][tar_norm]
+  assert entry.get("detail") != "waiting_on_ingest"
+  assert any("kick=quarantine_terminal" in line for line in logs)
+
+
+@pytest.mark.django_db(databases=[])
 def test_submit_day_close_no_resubmit_when_raw_delete_pending(tmp_path, monkeypatch):
   archive_dir = str(tmp_path / "archive")
   daily_dir = str(tmp_path / "daily")

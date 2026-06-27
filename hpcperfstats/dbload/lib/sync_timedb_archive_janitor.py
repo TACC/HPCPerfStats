@@ -203,6 +203,7 @@ class ArchiveJanitor:
     self.get_chunk_in_progress = get_chunk_in_progress or (lambda: False)
     self.process_title = process_title
     self._allow_tick_chaining = True
+    self._maintenance_pass_cached_inputs = None
 
     self._executor = ThreadPoolExecutor(
         max_workers=1, thread_name_prefix="archive-janitor")
@@ -515,6 +516,20 @@ class ArchiveJanitor:
       return
     startup_pass = reason == "startup" and coord is not None
     day_ingest_complete_pass = str(reason).startswith("day_ingest_complete:")
+    pass_t0 = time.time()
+    sub_remaining_map_s = 0.0
+    sub_candidate_report_s = 0.0
+    sub_scheduled_submit_s = 0.0
+    sub_trim_s = 0.0
+    sub_lock_cleanup_s = 0.0
+    self._maintenance_pass_cached_inputs = None
+    if self.get_day_close_candidate_inputs is not None:
+      try:
+        cached_inputs = self.get_day_close_candidate_inputs() or {}
+        if isinstance(cached_inputs, dict):
+          self._maintenance_pass_cached_inputs = cached_inputs
+      except Exception:
+        self._maintenance_pass_cached_inputs = {}
     if startup_pass:
       coord.mark_startup_heavy_maintenance_started()
     snap_t0 = time.time()
@@ -590,36 +605,65 @@ class ArchiveJanitor:
       )
       with self._accrual_snapshot_lock:
         accrual_snapshot = self._accrual_snapshot
+      remaining_t0 = time.time()
       remaining = build_remaining_raw_stats_by_daily_gz(
           self.archive_data_dir,
           self.host_name_ext,
           self.tgz_archive_dir,
           maintenance_snapshot=accrual_snapshot,
       )
+      sub_remaining_map_s = time.time() - remaining_t0
+      report_t0 = time.time()
       self._log_day_close_candidate_report(
           reason=reason,
           remaining_raw_by_gz=remaining,
           newly_queued_tars=set(),
       )
+      sub_candidate_report_s = time.time() - report_t0
+      submit_t0 = time.time()
       newly_queued = self._submit_scheduled_day_close_from_snapshot(
           reason=reason,
           remaining_raw_by_gz=remaining,
       )
+      sub_scheduled_submit_s = time.time() - submit_t0
       if newly_queued:
+        report_t0 = time.time()
         self._log_day_close_candidate_report(
             reason=reason,
             remaining_raw_by_gz=remaining,
             newly_queued_tars=newly_queued,
         )
+        sub_candidate_report_s += time.time() - report_t0
+      trim_t0 = time.time()
       self._trim_accrual_snapshot_memory()
-      removed_locks = self._run_scheduled_archive_lock_cleanup()
+      sub_trim_s = time.time() - trim_t0
+      lock_t0 = time.time()
+      removed_locks = self._run_scheduled_archive_lock_cleanup(reason=reason)
+      sub_lock_cleanup_s = time.time() - lock_t0
       if removed_locks:
         self.log_fn(
             "janitor: scheduled lock_cleanup removed=%d reason=%s"
             % (removed_locks, reason),
             flush=True,
         )
+      self.log_fn(
+          "janitor: heavy maintenance sub_phases reason=%s "
+          "remaining_map_s=%.3f candidate_report_s=%.3f "
+          "scheduled_submit_s=%.3f trim_s=%.3f lock_cleanup_s=%.3f "
+          "maintenance_pass_s=%.3f"
+          % (
+              reason,
+              sub_remaining_map_s,
+              sub_candidate_report_s,
+              sub_scheduled_submit_s,
+              sub_trim_s,
+              sub_lock_cleanup_s,
+              time.time() - pass_t0,
+          ),
+          flush=True,
+      )
     finally:
+      self._maintenance_pass_cached_inputs = None
       if startup_pass and coord is not None:
         coord.mark_startup_heavy_maintenance_finished()
 
@@ -753,12 +797,7 @@ class ArchiveJanitor:
     coord = self.async_day_close_coordinator
     if coord is None:
       return False
-    inputs = {}
-    if self.get_day_close_candidate_inputs is not None:
-      try:
-        inputs = self.get_day_close_candidate_inputs() or {}
-      except Exception:
-        inputs = {}
+    inputs = self._get_maintenance_pass_candidate_inputs()
     if disqualified is None:
       disqualified = set(self.get_disqualified_daily_tars())
     with self._hints_state_lock:
@@ -866,10 +905,26 @@ class ArchiveJanitor:
     manifest_dir = day_removal_manifest_dir(self.archive_data_dir)
     return cleanup_orphan_fnctl_lock_sidecars(manifest_dir)
 
-  def _run_scheduled_archive_lock_cleanup(self) -> int:
+  def _run_scheduled_archive_lock_cleanup(self, *, reason: str = "") -> int:
+    if reason == "startup":
+      return self._run_tick_lock_cleanup()
     removed = cleanup_stale_fnctl_lock_sidecars(self.archive_data_dir)
     removed += cleanup_stale_fnctl_lock_sidecars(self.tgz_archive_dir)
     return removed
+
+  def _get_maintenance_pass_candidate_inputs(self) -> Dict[str, Any]:
+    cached = self._maintenance_pass_cached_inputs
+    if isinstance(cached, dict):
+      return cached
+    if self.get_day_close_candidate_inputs is None:
+      return {}
+    try:
+      inputs = self.get_day_close_candidate_inputs() or {}
+    except Exception:
+      inputs = {}
+    if not isinstance(inputs, dict):
+      inputs = {}
+    return inputs
 
   def _consume_dedupe_hints(self, disqualified: Set[str]):
     """Enqueue ``DAY_CLOSE`` for days flagged by ingest member-cache populate."""
@@ -1145,10 +1200,7 @@ class ArchiveJanitor:
   ) -> None:
     if self.get_day_close_candidate_inputs is None:
       return
-    try:
-      inputs = self.get_day_close_candidate_inputs()
-    except Exception:
-      return
+    inputs = self._get_maintenance_pass_candidate_inputs()
     if not isinstance(inputs, dict):
       return
     disq_reasons = build_disqualification_reasons_by_tar(
@@ -1201,10 +1253,7 @@ class ArchiveJanitor:
     coord = self.async_day_close_coordinator
     if coord is None:
       return set()
-    try:
-      inputs = self.get_day_close_candidate_inputs() or {}
-    except Exception:
-      inputs = {}
+    inputs = self._get_maintenance_pass_candidate_inputs()
     if not isinstance(inputs, dict):
       inputs = {}
     disq_reasons = build_disqualification_reasons_by_tar(

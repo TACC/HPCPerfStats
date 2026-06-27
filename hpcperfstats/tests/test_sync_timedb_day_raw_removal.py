@@ -1061,3 +1061,54 @@ def test_apply_batch_delete_completion_single_scan(tmp_path, monkeypatch):
   deleted = state.apply_batch_delete()
   assert deleted == 1
   assert context_calls["n"] == 1
+
+
+def test_quarantine_only_manifest_not_blocking(tmp_path):
+  """1578-style skipped_quarantine entries must not block DAY_CLOSE."""
+  day = datetime(2022, 5, 22)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, _zst = _seal_day(tmp_path, seg, day)
+  manifest_path = day_removal_manifest_path(str(tmp_path), day.date())
+  fp = {"mtime": 0, "size": int(seg.stat().st_size)}
+  payload = {
+      "version": 1,
+      "tar_path": os.path.normpath(tar_path),
+      "phase": PHASE_DELETING,
+      "started_at": time.time(),
+      "completed_at": None,
+      "verified_count": 0,
+      "skipped_count": 1,
+      "deleted_count": 0,
+      "entries": {
+          str(seg): {
+              "status": "skipped_quarantine",
+              "reason": "quarantine",
+              **fp,
+          },
+      },
+  }
+  _save_manifest(manifest_path, payload)
+  coord = _make_coordinator(tmp_path)
+  assert not coord.has_closed_raw_on_disk(tar_path)
+  assert coord.phase(tar_path) == PHASE_DONE
+  assert coord.kick_closed_raw_unblock(tar_path, reason="test") == "quarantine_terminal"
+
+
+def test_has_closed_raw_false_when_manifest_done_no_on_disk(tmp_path, monkeypatch):
+  """05-26: phase=done with no manifest blockers ignores stale remaining_raw."""
+  day = datetime(2022, 5, 26)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, _zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path)
+  state = coord._get_or_create_day(tar_path)
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["completed_at"] = time.time()
+    state._manifest["entries"] = {}
+    _save_manifest(state._manifest_path, state._manifest)
+  monkeypatch.setattr(
+      state,
+      "_build_remaining_raw_for_daily_tar",
+      lambda: {str(_zst): [str(seg)]},
+  )
+  assert not coord.has_closed_raw_on_disk(tar_path)

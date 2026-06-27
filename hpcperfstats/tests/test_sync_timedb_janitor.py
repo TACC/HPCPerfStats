@@ -1853,3 +1853,71 @@ def test_run_scheduled_maintenance_startup_uses_startup_max_inflight(
   submitted.clear()
   janitor.run_scheduled_maintenance_pass(reason="every_n_chunks")
   assert len(submitted) == 1
+
+
+def test_startup_heavy_pass_manifest_only_lock_cleanup(monkeypatch, tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  janitor = _make_janitor(tgz_archive_dir=str(daily_dir))
+  janitor.startup_snapshot_coordinator = None
+  stale_calls = []
+  orphan_calls = []
+  logs = []
+
+  def fake_stale(*_a, **_k):
+    stale_calls.append(1)
+    return 0
+
+  def fake_orphan(*_a, **_k):
+    orphan_calls.append(1)
+    return 1
+
+  snapshot = ArchiveMaintenanceSnapshot(
+      closed_paths=[],
+      remaining_raw_by_gz={},
+      mapping={},
+      ready_paths=set(),
+      first_timestamp_by_path={},
+      head_identity_by_path={},
+  )
+  monkeypatch.setattr(janitor_mod, "build_archive_maintenance_snapshot", lambda *_a, **_k: snapshot)
+  monkeypatch.setattr(janitor_mod, "cleanup_stale_fnctl_lock_sidecars", fake_stale)
+  monkeypatch.setattr(janitor_mod, "cleanup_orphan_fnctl_lock_sidecars", fake_orphan)
+  monkeypatch.setattr(janitor, "get_ingest_pool_in_flight_count", lambda: 0)
+  monkeypatch.setattr(janitor, "get_chunk_in_progress", lambda: False)
+  janitor.log_fn = lambda msg, **_kw: logs.append(str(msg))
+  janitor.run_heavy_maintenance_pass(reason="startup")
+  assert stale_calls == []
+  assert orphan_calls
+  assert any("heavy maintenance sub_phases" in line for line in logs)
+  assert any("lock_cleanup_s=" in line for line in logs)
+
+
+def test_non_startup_heavy_pass_full_archive_lock_cleanup(monkeypatch, tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  janitor = _make_janitor(tgz_archive_dir=str(daily_dir))
+  stale_calls = {"n": 0}
+
+  def fake_stale(*_a, **_k):
+    stale_calls["n"] += 1
+    return 0
+
+  snapshot = ArchiveMaintenanceSnapshot(
+      closed_paths=[],
+      remaining_raw_by_gz={},
+      mapping={},
+      ready_paths=set(),
+      first_timestamp_by_path={},
+      head_identity_by_path={},
+  )
+  monkeypatch.setattr(janitor_mod, "build_archive_maintenance_snapshot", lambda *_a, **_k: snapshot)
+  monkeypatch.setattr(janitor_mod, "cleanup_stale_fnctl_lock_sidecars", fake_stale)
+  monkeypatch.setattr(janitor, "get_ingest_pool_in_flight_count", lambda: 0)
+  monkeypatch.setattr(janitor, "get_chunk_in_progress", lambda: False)
+  janitor.run_heavy_maintenance_pass(reason="every_n_chunks")
+  assert stale_calls["n"] == 2

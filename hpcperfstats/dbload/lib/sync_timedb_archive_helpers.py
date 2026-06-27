@@ -1426,6 +1426,7 @@ def select_ingest_chunk_paths(
     tgz_archive_dir,
     chunk_size,
     ingest_queue_high,
+    log_fn=None,
 ):
   """While oldest checkpoint-blocked tar has work, restrict chunk to that tar only."""
   target_chunk_size = min(chunk_size, ingest_queue_high)
@@ -1457,6 +1458,16 @@ def select_ingest_chunk_paths(
       )
   ]
   if not oldest_only and blocked_on_disk:
+    if log_fn is not None:
+      log_fn(
+          "sync_timedb: oldest_day_chunk_gate_fallback oldest_tar=%s "
+          "calendar_days=%s blocked_n=%d"
+          % (
+              oldest_tar_norm,
+              build_chunk_day_histogram(blocked_on_disk, tgz_archive_dir),
+              len(blocked_on_disk),
+          ),
+      )
     inflight_set = set(inflight_archive_paths or ())
     oldest_only = [
         path for path in blocked_on_disk if path not in inflight_set

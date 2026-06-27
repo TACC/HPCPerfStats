@@ -455,6 +455,25 @@ def _unique_daily_compressed_archives_for_paths(paths, tgz_archive_dir):
   return unique
 
 
+def _paths_all_db_complete_for_prewarm_skip(paths):
+  """True when every chunk path would db-complete skip (no tar restore/prewarm)."""
+  if not paths:
+    return False
+  for stats_file in paths:
+    if not stats_file or not os.path.isfile(stats_file):
+      return False
+    t, _jid, host = parse_first_timestamp_line_streaming(stats_file)
+    if t is None or not host:
+      return False
+    host = str(host).strip()
+    timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
+    if not head_timestamp_present_in_db(host, timestamp_utc):
+      return False
+    if _try_db_complete_head_tail_fast_path(stats_file, host, timestamp_utc) is None:
+      return False
+  return True
+
+
 def _prewarm_archive_members_redis_for_days(
     day_items,
     *,
@@ -559,8 +578,16 @@ def _prewarm_archive_members_redis_for_chunk(
     *,
     oldest_tar=None,
     gated_tar_restore=False,
+    skip_prewarm=False,
 ):
   """Single-flight populate on supervisor before imap when Redis L2 is cold."""
+  if skip_prewarm:
+    log_print(
+        "INFO: chunk prewarm skipped reason=all_db_complete paths=%d"
+        % len(paths or ()),
+        flush=True,
+    )
+    return "skipped:all_db_complete"
   day_map = _unique_daily_compressed_archives_for_paths(paths, tgz_archive_dir)
   gated_tokens = set()
   if oldest_tar:
@@ -685,6 +712,9 @@ class IngestStallDiagnostics:
     self.async_day_close = None
     self.worker_registry = None
     self.chunk_prewarm_summary = "-"
+    self.chunk_prewarm_elapsed_s = 0.0
+    self.chunk_ingest_elapsed_s = 0.0
+    self.chunk_archive_elapsed_s = 0.0
 
   def note_imap_completion(self):
     self.last_imap_completion_monotonic = time.monotonic()
@@ -3995,9 +4025,15 @@ def run_sync_timedb_supervisor_loop(
     disqualified = _janitor_disqualified_daily_tars()
     max_inflight = cfg.get_sync_day_close_max_inflight()
     for tar_path in candidates:
+      tar_norm = os.path.normpath(str(tar_path or ""))
+      if tar_norm in closed_raw_guard_no_progress_tars:
+        continue
+      if tar_norm in immediate_day_close_attempted_tars:
+        continue
       if async_day_close is not None:
         if len(async_day_close.active_or_submitted_tar_paths()) >= max_inflight:
           break
+      immediate_day_close_attempted_tars.add(tar_norm)
       if async_day_close.submit_day_close(
           tar_path,
           reason="day_ingest_complete:%s" % context,
@@ -4516,15 +4552,22 @@ def run_sync_timedb_supervisor_loop(
         for path in (paths or ())
         if path
     }
+    state_reingest_paths = handoff_priority_paths | chunk_paths_norm
+    skip_prewarm = _paths_all_db_complete_for_prewarm_skip(paths)
+    effective_gated_restore = gated_tar_restore and not skip_prewarm
 
     stall_diagnostics.chunk_batch_size = len(paths)
+    prewarm_t0 = time.time()
     stall_diagnostics.chunk_prewarm_summary = (
         _prewarm_archive_members_redis_for_chunk(
             paths,
             oldest_tar=oldest_tar,
-            gated_tar_restore=gated_tar_restore,
+            gated_tar_restore=effective_gated_restore,
+            skip_prewarm=skip_prewarm,
         )
     )
+    stall_diagnostics.chunk_prewarm_elapsed_s = time.time() - prewarm_t0
+    ingest_t0 = time.time()
 
     k = 0
     active_workers = 0
@@ -4578,7 +4621,7 @@ def run_sync_timedb_supervisor_loop(
               file_states,
               stats_fname,
               SyncFileState.WRITTEN,
-              handoff_priority_paths=handoff_priority_paths,
+              handoff_priority_paths=state_reingest_paths,
           )
             successful_paths.append(stats_fname)
             if should_archive and need_archival:
@@ -4616,7 +4659,7 @@ def run_sync_timedb_supervisor_loop(
                 archive_pool=archive_pool,
                 stall_diagnostics=stall_diagnostics,
                 chunk_paths_norm=chunk_paths_norm,
-                handoff_priority_paths=handoff_priority_paths,
+                handoff_priority_paths=state_reingest_paths,
             )
         if parse_tasks:
           chunk_ingest_finished = _drain_db_write_tasks(
@@ -4633,8 +4676,8 @@ def run_sync_timedb_supervisor_loop(
               archive_pool=archive_pool,
               stall_diagnostics=stall_diagnostics,
               chunk_paths_norm=chunk_paths_norm,
-              handoff_priority_paths=handoff_priority_paths,
-          )
+              handoff_priority_paths=state_reingest_paths,
+            )
       elif db_writer_combined_task:
         add_combined = partial(_ingest_parse_and_write_file, manager_lock)
         combined_tracker = _IngestPoolInFlightTracker(paths)
@@ -4672,7 +4715,7 @@ def run_sync_timedb_supervisor_loop(
               file_states,
               stats_fname,
               SyncFileState.WRITTEN,
-              handoff_priority_paths=handoff_priority_paths,
+              handoff_priority_paths=state_reingest_paths,
           )
             successful_paths.append(stats_fname)
             if should_archive and need_archival:
@@ -4723,7 +4766,7 @@ def run_sync_timedb_supervisor_loop(
               file_states,
               stats_fname,
               SyncFileState.WRITTEN,
-              handoff_priority_paths=handoff_priority_paths,
+              handoff_priority_paths=state_reingest_paths,
           )
             successful_paths.append(stats_fname)
             if should_archive and need_archival:
@@ -4761,6 +4804,7 @@ def run_sync_timedb_supervisor_loop(
     finally:
       active_chunk_ingest_tracker = None
 
+    stall_diagnostics.chunk_ingest_elapsed_s = time.time() - ingest_t0
     return successful_paths, files_to_be_archived, active_workers, k
 
   def _finalize_ingest_archive_batch(
@@ -4917,6 +4961,8 @@ def run_sync_timedb_supervisor_loop(
   inflight_archive_paths = set()
   pending_stats_files = []
   handoff_priority_paths = set()
+  closed_raw_guard_no_progress_tars = set()
+  immediate_day_close_attempted_tars = set()
   chunk_counter = 0
   oldest_day_chunk_gate_stall_last_log = 0.0
   handoff_priority_stall_last_log = 0.0
@@ -5147,6 +5193,13 @@ def run_sync_timedb_supervisor_loop(
         )
 
   def _async_day_close_submit_eligible(tar_norm):
+    from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
+        KICK_NO_HANDOFF_PROGRESS,
+    )
+
+    tar_norm = os.path.normpath(str(tar_norm or ""))
+    if tar_norm in closed_raw_guard_no_progress_tars:
+      return False, "closed_raw_no_progress"
     captured = _build_day_close_candidate_inputs()
     with archive_janitor._hints_state_lock:
       day_phases = dict(archive_janitor._day_phases)
@@ -5175,6 +5228,9 @@ def run_sync_timedb_supervisor_loop(
           tar_norm,
           reason="closed_raw_submit_guard",
       )
+      kick = getattr(day_raw_removal, "_last_closed_raw_kick_action", None)
+      if not requeued and kick in KICK_NO_HANDOFF_PROGRESS:
+        closed_raw_guard_no_progress_tars.add(tar_norm)
       if not requeued:
         archive_janitor.signal_work_available()
     return eligible, skip_reason
@@ -5332,7 +5388,7 @@ def run_sync_timedb_supervisor_loop(
           paths = persist_paths
           retry_closed_raw_persists = True
           reason = reason or "closed_raw_persists"
-        elif kick_action != "noop":
+        elif kick_action not in ("noop", "quarantine_terminal"):
           day_token = (
               calendar_date_from_daily_tar_path(tar_norm).isoformat()
               if calendar_date_from_daily_tar_path(tar_norm) is not None
@@ -6140,6 +6196,7 @@ def run_sync_timedb_supervisor_loop(
             tgz_archive_dir=tgz_archive_dir,
             chunk_size=chunk_size,
             ingest_queue_high=ingest_queue_high,
+            log_fn=log_print,
         )
         if oldest_tar_for_chunk and (blocked_n or handoff_inflight_n):
           log_print(
@@ -6282,6 +6339,7 @@ def run_sync_timedb_supervisor_loop(
 
         if files_to_be_archived:
           _ensure_daily_archive_dir_exists()
+        archive_t0 = time.time()
         ar_file_mapping = build_archive_mapping(
             files_to_be_archived,
             tgz_archive_dir,
@@ -6315,12 +6373,20 @@ def run_sync_timedb_supervisor_loop(
             p for p in successful_paths if p not in archived_candidates
         ]
         deferred_paths = [p for p in successful_paths if p in archived_candidates]
+        chunk_state_paths = handoff_priority_paths | {
+            os.path.normpath(p) for p in stats_files_chunk if p
+        }
         for p in immediate_paths:
-          _transition_file_state(file_states, p, SyncFileState.ARCHIVED)
+          _transition_file_state(
+              file_states,
+              p,
+              SyncFileState.ARCHIVED,
+              handoff_priority_paths=chunk_state_paths,
+          )
           added = _add_processed_path(
               p, processed_files, processed_files_order, checkpoint_entries,
               checkpoint_path, file_states=file_states,
-              handoff_priority_paths=handoff_priority_paths)
+              handoff_priority_paths=chunk_state_paths)
           if added:
             checkpoint_dirty_count += 1
         if blocked_n > 0 and immediate_paths:
@@ -6369,6 +6435,17 @@ def run_sync_timedb_supervisor_loop(
               % len(deferred_paths),
               flush=True,
           )
+        stall_diagnostics.chunk_archive_elapsed_s = time.time() - archive_t0
+        log_print(
+            "sync_timedb: chunk_prewarm_elapsed_s=%.3f chunk_ingest_elapsed_s=%.3f "
+            "chunk_archive_elapsed_s=%.3f"
+            % (
+                stall_diagnostics.chunk_prewarm_elapsed_s,
+                stall_diagnostics.chunk_ingest_elapsed_s,
+                stall_diagnostics.chunk_archive_elapsed_s,
+            ),
+            flush=True,
+        )
 
         _record_ingest_sort_epochs_for_paths(
             [p for p in stats_files_chunk if p in set(successful_paths)])

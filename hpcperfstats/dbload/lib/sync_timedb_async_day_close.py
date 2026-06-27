@@ -507,11 +507,16 @@ class AsyncDayCloseCoordinator:
               if callable(requeue_fn)
               else []
           )
-          self.defer_for_ingest_handoff(tar_norm)
+          kick = getattr(coord, "_last_closed_raw_kick_action", None)
+          from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
+              KICK_NO_HANDOFF_PROGRESS,
+          )
+          if paths or kick not in KICK_NO_HANDOFF_PROGRESS:
+            self.defer_for_ingest_handoff(tar_norm)
           self.log_fn(
               "janitor: async day_close seal deferred closed raw on disk "
-              "tar=%s paths=%d"
-              % (tar_norm, len(paths)),
+              "tar=%s paths=%d kick=%s"
+              % (tar_norm, len(paths), kick or "-"),
               flush=True,
           )
           return
