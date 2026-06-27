@@ -953,3 +953,111 @@ def test_requeue_closed_raw_skips_quarantine_and_manifested(tmp_path):
           "janitor_closed_raw_submit_guard",
       ),
   ]
+
+
+def test_discover_closed_raw_no_full_tree_scan(tmp_path):
+  """Boot discover uses manifest-first predicates, not has_closed_raw_on_disk."""
+  day = datetime(2026, 5, 22)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path)
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), zst, "verified", "verified")
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["verified_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+
+  def _forbidden_full_tree(_tar_path):
+    raise AssertionError("has_closed_raw_on_disk must not run during discover")
+
+  coord.has_closed_raw_on_disk = _forbidden_full_tree
+  found = coord.discover_closed_raw_on_disk_handoffs()
+  assert len(found) == 1
+  assert found[0][0] == os.path.normpath(tar_path)
+
+
+def test_requeue_handoff_before_kick(tmp_path):
+  """Handoff paths present → kick must not run before handoff callback."""
+  retry_day = datetime(2026, 5, 23)
+  retry_seg = _make_closed_segment(tmp_path, "cluster.integration.test", retry_day)
+  retry_tar_path, retry_zst = _seal_day(tmp_path, retry_seg, retry_day)
+  handoffs = []
+  kick_calls = []
+
+  def _on_handoff(tar_norm, paths, reason):
+    handoffs.append((tar_norm, list(paths), reason))
+
+  coord = _make_coordinator(
+      tmp_path,
+      on_handoff_to_ingest=_on_handoff,
+      log_fn=lambda *_a, **_k: None,
+  )
+  state = coord._get_or_create_day(retry_tar_path)
+  state._record_entry(
+      str(retry_seg),
+      retry_zst,
+      "skipped_not_in_archive",
+      "not_in_sealed_archive",
+  )
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    _save_manifest(state._manifest_path, state._manifest)
+
+  original_kick = coord.kick_closed_raw_unblock
+
+  def _track_kick(tar_path, *, reason):
+    kick_calls.append((tar_path, reason))
+    return original_kick(tar_path, reason=reason)
+
+  coord.kick_closed_raw_unblock = _track_kick
+  requeued = coord.requeue_closed_raw_paths_for_ingest(
+      retry_tar_path,
+      reason="unit_handoff_first",
+  )
+  assert str(retry_seg) in requeued
+  assert handoffs
+  assert kick_calls == []
+
+
+def test_kick_delete_reopen_at_verification_complete(tmp_path):
+  """VERIFICATION_COMPLETE with verified pending delete → begin_deleting kick."""
+  day = datetime(2026, 5, 22)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path, log_fn=lambda *_a, **_k: None)
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), zst, "verified", "verified")
+  with state._lock:
+    state._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
+    state._manifest["verified_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+
+  assert coord.kick_closed_raw_unblock(tar_path, reason="unit") == "delete_reopen"
+  assert coord.phase(tar_path) == PHASE_DELETING
+
+
+def test_apply_batch_delete_completion_single_scan(tmp_path, monkeypatch):
+  """Completion path uses one _batch_delete_completion_context call per batch."""
+  day = datetime(2026, 5, 22)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path, log_fn=lambda *_a, **_k: None)
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), zst, "verified", "verified")
+  with state._lock:
+    state._manifest["phase"] = PHASE_DELETING
+    state._manifest["verified_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+
+  context_calls = {"n": 0}
+  original_context = state._batch_delete_completion_context
+
+  def _count_context(entries):
+    context_calls["n"] += 1
+    return original_context(entries)
+
+  monkeypatch.setattr(state, "_batch_delete_completion_context", _count_context)
+  deleted = state.apply_batch_delete()
+  assert deleted == 1
+  assert context_calls["n"] == 1

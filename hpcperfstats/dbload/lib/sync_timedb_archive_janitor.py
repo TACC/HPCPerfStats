@@ -612,6 +612,13 @@ class ArchiveJanitor:
             newly_queued_tars=newly_queued,
         )
       self._trim_accrual_snapshot_memory()
+      removed_locks = self._run_scheduled_archive_lock_cleanup()
+      if removed_locks:
+        self.log_fn(
+            "janitor: scheduled lock_cleanup removed=%d reason=%s"
+            % (removed_locks, reason),
+            flush=True,
+        )
     finally:
       if startup_pass and coord is not None:
         coord.mark_startup_heavy_maintenance_finished()
@@ -856,10 +863,12 @@ class ArchiveJanitor:
         day_removal_manifest_dir,
     )
 
+    manifest_dir = day_removal_manifest_dir(self.archive_data_dir)
+    return cleanup_orphan_fnctl_lock_sidecars(manifest_dir)
+
+  def _run_scheduled_archive_lock_cleanup(self) -> int:
     removed = cleanup_stale_fnctl_lock_sidecars(self.archive_data_dir)
     removed += cleanup_stale_fnctl_lock_sidecars(self.tgz_archive_dir)
-    manifest_dir = day_removal_manifest_dir(self.archive_data_dir)
-    removed += cleanup_orphan_fnctl_lock_sidecars(manifest_dir)
     return removed
 
   def _consume_dedupe_hints(self, disqualified: Set[str]):
@@ -948,11 +957,14 @@ class ArchiveJanitor:
     cached = self._tick_remaining_raw_cache.get(tar_norm)
     if cached is not None:
       return cached
+    with self._accrual_snapshot_lock:
+      accrual_snapshot = self._accrual_snapshot
     fresh = build_remaining_raw_for_daily_tar(
         self.archive_data_dir,
         self.host_name_ext,
         self.tgz_archive_dir,
         tar_norm,
+        maintenance_snapshot=accrual_snapshot,
     )
     self._tick_remaining_raw_cache[tar_norm] = fresh
     return fresh

@@ -176,8 +176,6 @@ def file_write_lock(target_path,
   while True:
     now = time.time()
     _maybe_reset_stale_lock_file(target_path, now, 0)
-    if expiry_seconds > 0:
-      _maybe_reset_stale_lock_file(target_path, now, expiry_seconds)
     try:
       lock_fd = _try_open_write_lock_fd(target_path)
       break
@@ -225,8 +223,6 @@ def file_read_lock_wait(target_path,
   while True:
     now = time.time()
     _maybe_reset_stale_lock_file(target_path, now, 0)
-    if expiry_seconds > 0:
-      _maybe_reset_stale_lock_file(target_path, now, expiry_seconds)
     try:
       lock_fd = _open_lock_file(target_path)
       flock(lock_fd, LOCK_SH | LOCK_NB)

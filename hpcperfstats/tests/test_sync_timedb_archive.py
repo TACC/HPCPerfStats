@@ -1175,6 +1175,18 @@ def test_build_remaining_raw_stats_by_daily_gz_groups_closed_segments(tmp_path):
       str(tgz_dir / "2026-04-21.tar.zst"), remaining)
 
 
+def test_daily_gz_has_remaining_raw_ghost_paths_not_on_disk(tmp_path):
+  """Ghost accrual entries (deleted paths) must not block seal/scheduling gates."""
+  zst_key = str(tmp_path / "2026-04-20.tar.zst")
+  ghost_path = str(tmp_path / "missing.raw")
+  remaining = {zst_key: [ghost_path]}
+  assert not daily_gz_has_remaining_raw_stats(zst_key, remaining)
+  live_path = tmp_path / "live.raw"
+  live_path.write_text("x")
+  remaining_live = {zst_key: [str(live_path)]}
+  assert daily_gz_has_remaining_raw_stats(zst_key, remaining_live)
+
+
 def test_atomic_seal_tar_to_zst_passes_thread_count_to_compress_and_test(monkeypatch, tmp_path):
   """zstd compress and zstd -t should use the requested -T count."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers

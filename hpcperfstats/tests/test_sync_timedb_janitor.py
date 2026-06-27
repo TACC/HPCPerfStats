@@ -439,7 +439,7 @@ def test_tick_lock_cleanup_runs_before_day_close(monkeypatch, tmp_path):
     order.append("close")
     return True
 
-  monkeypatch.setattr(janitor_mod, "cleanup_stale_fnctl_lock_sidecars", fake_cleanup)
+  monkeypatch.setattr(janitor_mod, "cleanup_orphan_fnctl_lock_sidecars", fake_cleanup)
   monkeypatch.setattr(janitor, "_close_one_day", fake_close)
   janitor._run_tick_body()
   assert order[-1] == "close"

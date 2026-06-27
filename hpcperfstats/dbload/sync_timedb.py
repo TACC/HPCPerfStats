@@ -4240,10 +4240,11 @@ def run_sync_timedb_supervisor_loop(
       "get_startup_snapshot": lambda: None,
       "get_accrual_snapshot": lambda: None,
       "warned_live_reconcile_fallback": False,
+      "last_unprocessed_by_tar": None,
   }
 
-  def _resolve_reconcile_maintenance_snapshot():
-    if not reconcile_refs["ingest_gate_cleared"]:
+  def _resolve_reconcile_maintenance_snapshot(*, prefer_startup=False):
+    if prefer_startup or not reconcile_refs["ingest_gate_cleared"]:
       snap = reconcile_refs["get_startup_snapshot"]()
       if snap is not None:
         return snap, "coordinator"
@@ -4324,10 +4325,11 @@ def run_sync_timedb_supervisor_loop(
 
   def _cap_pending_after_rescan(paths, *, handoff=False):
     cap_t0 = time.time()
-    _snapshot, source = _resolve_reconcile_maintenance_snapshot()
+    _snapshot, source = _resolve_reconcile_maintenance_snapshot(
+        prefer_startup=handoff,
+    )
     if (
         handoff
-        and not reconcile_refs["ingest_gate_cleared"]
         and _snapshot is not None
     ):
       log_print(
@@ -4353,6 +4355,7 @@ def run_sync_timedb_supervisor_loop(
     merged_checkpoint_paths = _reconcile_checkpoint_paths()
     memory_extra_n = len(merged_checkpoint_paths - disk_checkpoint_paths)
     unprocessed = _live_unprocessed_by_tar_for_reconcile()
+    reconcile_refs["last_unprocessed_by_tar"] = unprocessed
     tar_norm = oldest_checkpoint_blocked_tar(
         unprocessed, tgz_archive_dir=tgz_archive_dir)
     blocked = (
@@ -5535,6 +5538,7 @@ def run_sync_timedb_supervisor_loop(
       requeued = day_raw_removal.requeue_closed_raw_paths_for_ingest(
           tar_norm,
           reason=reason,
+          paths=paths,
       )
       if not requeued:
         handoff_requeued_tars_this_boot.add(tar_norm)
@@ -6083,8 +6087,11 @@ def run_sync_timedb_supervisor_loop(
               flush=True,
           )
         chunk_t0 = time.time()
+        reconcile_refs["last_unprocessed_by_tar"] = None
         _reconcile_pending_with_oldest_checkpoint_blocked()
-        unprocessed_for_chunk = _live_unprocessed_by_tar_for_reconcile()
+        unprocessed_for_chunk = reconcile_refs.get("last_unprocessed_by_tar")
+        if unprocessed_for_chunk is None:
+          unprocessed_for_chunk = _live_unprocessed_by_tar_for_reconcile()
         oldest_tar_for_chunk = oldest_checkpoint_blocked_tar(
             unprocessed_for_chunk,
             tgz_archive_dir=tgz_archive_dir,

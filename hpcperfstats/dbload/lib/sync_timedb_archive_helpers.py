@@ -3444,11 +3444,8 @@ def build_remaining_raw_for_daily_tar(
 
 
 def daily_gz_has_remaining_raw_stats(gz_path, remaining_by_gz):
-  """True if ``remaining_by_gz`` lists any raw stats path for this daily archive."""
-  if not remaining_by_gz:
-    return False
-  key = normalize_daily_compressed_path(gz_path)
-  return bool(remaining_by_gz.get(key))
+  """True if ``remaining_by_gz`` lists at least one existing raw stats path for this daily archive."""
+  return remaining_raw_by_gz_has_paths_on_disk(remaining_by_gz, gz_path)
 
 
 def remaining_raw_by_gz_has_paths_on_disk(remaining_by_gz, gz_path=None):
