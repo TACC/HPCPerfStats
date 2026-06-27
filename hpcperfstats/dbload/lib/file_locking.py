@@ -106,7 +106,6 @@ def _maybe_reset_stale_lock_file(target_path, now, expiry_seconds):
         lock_fd.close()
       except OSError:
         pass
-  return False
 
 
 def _target_path_from_lock_sidecar(lock_path):
