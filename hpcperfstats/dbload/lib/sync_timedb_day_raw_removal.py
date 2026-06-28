@@ -687,19 +687,25 @@ class _DayRawRemovalState:
       return removed
 
   def reopen_delete_phase_if_verified_on_disk(self) -> bool:
-    """Reopen delete when ``phase=done`` but verified paths remain on disk."""
+    """Reopen delete when ``phase=done`` but verified entries remain undeleted."""
     if self.phase() != PHASE_DONE:
       return False
-    pending = self._verified_pending_paths_on_disk()
-    if not pending:
+    pending_manifest_n = self._manifest_verified_pending_count()
+    if pending_manifest_n == 0:
       return False
+    pending_on_disk = self._verified_pending_paths_on_disk()
     with self._lock:
       self._manifest["phase"] = PHASE_DELETING
       _save_manifest(self._manifest_path, self._manifest)
     if self.log_fn:
       self.log_fn(
-          "Day raw removal pending delete reopen day=%s paths=%d"
-          % (self.day_date.isoformat(), len(pending)),
+          "Day raw removal pending delete reopen day=%s "
+          "manifest_pending=%d on_disk=%d"
+          % (
+              self.day_date.isoformat(),
+              pending_manifest_n,
+              len(pending_on_disk),
+          ),
           flush=True,
       )
     return True
@@ -1307,6 +1313,7 @@ class DayRawRemovalCoordinator:
       if (
           (state.needs_delete_phase() and not state.delete_phase_done())
           or state.needs_ghost_delete_retry()
+          or state.needs_reopen_for_verified_pending()
       ):
         candidates.append((state.day_date, state.tar_path))
     candidates.sort(key=lambda item: item[0])

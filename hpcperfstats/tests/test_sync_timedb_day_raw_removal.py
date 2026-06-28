@@ -1191,7 +1191,7 @@ def test_days_needing_delete_includes_done_with_verified_on_disk_after_reopen(
     state._manifest["verified_count"] = 1
     _save_manifest(state._manifest_path, state._manifest)
 
-  assert coord.days_needing_delete_oldest_first() == []
+  assert coord.days_needing_delete_oldest_first() == [tar_path]
   assert coord.reopen_done_days_with_verified_on_disk() == 1
   assert coord.phase(tar_path) == PHASE_DELETING
   assert coord.days_needing_delete_oldest_first() == [tar_path]
@@ -1304,3 +1304,42 @@ def test_blocks_startup_drain_true_when_done_with_verified_pending(tmp_path):
   n, token = coord.blocking_startup_drain_summary()
   assert n == 1
   assert "pending_verified=1" in token
+
+
+def test_reopen_done_manifest_pending_without_files_on_disk_unblocks_gate(
+    tmp_path,
+):
+  """Manifest-only verified pending (no isfile) must reopen and reconcile."""
+  from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
+      run_supervisor_day_raw_removal_delete_pass,
+  )
+
+  day = datetime(2026, 5, 24)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path)
+  state = coord._get_or_create_day(tar_path)
+  seg_str = str(seg)
+  state._record_entry(seg_str, zst, "verified", "verified")
+  seg.unlink()
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["verified_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+
+  assert state.blocks_startup_drain()
+  assert state.reopen_delete_phase_if_verified_on_disk()
+  assert state.phase() == PHASE_DELETING
+  assert state.apply_batch_delete() == 1
+  assert state._manifest_verified_pending_count() == 0
+  assert not state.blocks_startup_drain()
+  spin = run_supervisor_day_raw_removal_delete_pass(
+      coord,
+      None,
+      chunk_in_progress=False,
+      chunk_calendar_day_hint=None,
+      finalize_day_close_delete=lambda _t: None,
+      sleep_fn=lambda _s: None,
+  )
+  assert not state.blocks_startup_drain()
+  assert spin is False
