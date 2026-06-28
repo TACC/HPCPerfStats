@@ -6336,6 +6336,18 @@ def test_supervisor_startup_drain_completes_when_day_raw_waiting_on_ingest_and_t
     def discover_manifest_handoffs(self):
       return []
 
+    def discover_closed_raw_on_disk_handoffs(self):
+      return []
+
+    def reopen_done_days_with_verified_on_disk(self):
+      return 0
+
+    def advance_startup_drain_blockers(self):
+      return False
+
+    def blocking_startup_drain_summary(self):
+      return 0, ""
+
     def any_blocks_startup_drain(self):
       return False
 
@@ -6419,6 +6431,15 @@ def test_supervisor_startup_drain_opens_when_verified_pending_delete_only(
     def discover_closed_raw_on_disk_handoffs(self):
       return []
 
+    def reopen_done_days_with_verified_on_disk(self):
+      return 0
+
+    def advance_startup_drain_blockers(self):
+      return False
+
+    def blocking_startup_drain_summary(self):
+      return 0, ""
+
     def any_blocks_startup_drain(self):
       return False
 
@@ -6484,6 +6505,57 @@ def test_supervisor_startup_drain_opens_when_verified_pending_delete_only(
     assert "startup ingest maintenance complete" in out
     assert "startup maintenance idle; ingest may begin" in out
     assert rescan_calls["n"] >= 1
+  finally:
+    shutdown_requested[0] = False
+
+
+def test_supervisor_startup_drain_gate_pending_clears_after_pending_verified_delete(
+    monkeypatch, tmp_path, capsys,
+):
+  """RC-G: phase=done with verified paths on disk blocks drain until delete pass."""
+  from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
+      PHASE_DONE,
+      _save_manifest,
+  )
+  from hpcperfstats.tests.test_sync_timedb_day_raw_removal import (
+      _make_closed_segment,
+      _make_coordinator,
+      _seal_day,
+  )
+
+  shutdown_requested[0] = False
+  day = datetime(2026, 5, 24)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(
+      tmp_path,
+      tgz_archive_dir=str(tmp_path / "daily"),
+  )
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), zst, "verified", "verified")
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["verified_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+
+  coord.discover_manifest_handoffs = lambda: []
+  coord.discover_closed_raw_on_disk_handoffs = lambda: []
+
+  try:
+    archive_dir, _ = _startup_tail_drain_patches(
+        monkeypatch,
+        tmp_path,
+        live_unprocessed_fn=lambda *_a, **_k: {},
+    )
+    _supervisor_day_raw_removal_patches(monkeypatch, coord)
+    monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
+    st.run_sync_timedb_supervisor_loop(
+        str(archive_dir), "all", None, ".hpc", object(), _FakeArchivePool(), run_once=True)
+    out = capsys.readouterr().out
+    assert "startup ingest maintenance complete" in out
+    assert "startup maintenance idle; ingest may begin" in out
+    assert not os.path.isfile(str(seg))
+    assert coord.phase(tar_path) == PHASE_DONE
   finally:
     shutdown_requested[0] = False
 

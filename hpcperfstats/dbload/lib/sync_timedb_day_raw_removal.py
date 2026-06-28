@@ -407,7 +407,49 @@ class _DayRawRemovalState:
         and str(entry.get("status") or "") == "verified"
     )
 
+  def _manifest_verified_pending_count(self) -> int:
+    """Manifest-only count of verified entries not yet marked deleted."""
+    with self._lock:
+      entries = self._manifest.get("entries", {})
+    count = 0
+    for entry in (entries or {}).values():
+      if not isinstance(entry, dict):
+        continue
+      if str(entry.get("status") or "") != "verified":
+        continue
+      if entry.get("deleted"):
+        continue
+      count += 1
+    return count
+
+  def _manifest_has_ghost_markers(self) -> bool:
+    """True when manifest marks verified paths deleted (ghost retry candidates)."""
+    with self._lock:
+      entries = self._manifest.get("entries", {})
+    for entry in (entries or {}).values():
+      if self._entry_is_verified_ghost_on_disk(entry):
+        return True
+    return False
+
+  def _verified_pending_paths_on_disk(self) -> List[str]:
+    """On-disk paths whose manifest entry is verified and not yet deleted."""
+    with self._lock:
+      entries = dict(self._manifest.get("entries", {}))
+    pending: List[str] = []
+    for path, entry in entries.items():
+      if not isinstance(entry, dict):
+        continue
+      if str(entry.get("status") or "") != "verified":
+        continue
+      if entry.get("deleted"):
+        continue
+      if os.path.isfile(path):
+        pending.append(path)
+    return pending
+
   def _ghost_deleted_paths_on_disk(self) -> List[str]:
+    if not self._manifest_has_ghost_markers():
+      return []
     return [
         path
         for path, entry in self._manifest_entries_on_disk()
@@ -415,7 +457,17 @@ class _DayRawRemovalState:
     ]
 
   def needs_ghost_delete_retry(self) -> bool:
-    return bool(self.delete_phase_done() and self._ghost_deleted_paths_on_disk())
+    if not self.delete_phase_done():
+      return False
+    if not self._manifest_has_ghost_markers():
+      return False
+    return bool(self._ghost_deleted_paths_on_disk())
+
+  def needs_reopen_for_verified_pending(self) -> bool:
+    """True when ``phase=done`` but verified manifest entries remain undeleted."""
+    if self.phase() != PHASE_DONE:
+      return False
+    return self._manifest_verified_pending_count() > 0
 
   def _blocking_manifest_paths_on_disk(self) -> List[str]:
     return [
@@ -510,7 +562,11 @@ class _DayRawRemovalState:
     return future is not None and not future.done()
 
   def blocks_startup_drain(self) -> bool:
-    if self.delete_phase_done():
+    if self.phase() == PHASE_DONE:
+      if self.needs_reopen_for_verified_pending():
+        return True
+      if self._only_quarantine_terminal_on_disk():
+        self._finalize_quarantine_terminal_done()
       return False
     if self._async_verify_in_flight():
       return True
@@ -634,12 +690,7 @@ class _DayRawRemovalState:
     """Reopen delete when ``phase=done`` but verified paths remain on disk."""
     if self.phase() != PHASE_DONE:
       return False
-    pending = [
-        path
-        for path, entry in self._manifest_entries_on_disk()
-        if str(entry.get("status") or "") == "verified"
-        and not entry.get("deleted")
-    ]
+    pending = self._verified_pending_paths_on_disk()
     if not pending:
       return False
     with self._lock:
@@ -919,6 +970,10 @@ def run_supervisor_day_raw_removal_delete_pass(
     return False
   if async_day_close is not None:
     async_day_close.reconcile_supervisor_raw_delete_pending(reason="delete_pass")
+  reopen_fn = getattr(
+      day_raw_removal, "reopen_done_days_with_verified_on_disk", lambda: 0,
+  )
+  made_progress = reopen_fn() > 0
   needs_delete = day_raw_removal.any_needs_delete_phase()
   needs_tar_drop = day_raw_removal.any_needs_tar_drop_finish()
   async_tar_drop = (
@@ -927,6 +982,11 @@ def run_supervisor_day_raw_removal_delete_pass(
       else []
   )
   if not needs_delete and not needs_tar_drop and not async_tar_drop:
+    advance_fn = getattr(
+        day_raw_removal, "advance_startup_drain_blockers", lambda: False,
+    )
+    if day_raw_removal.any_blocks_startup_drain() and advance_fn():
+      return True
     return False
   tar_drop_targets: list[str] = []
   if needs_tar_drop:
@@ -937,6 +997,7 @@ def run_supervisor_day_raw_removal_delete_pass(
   for tar_norm in tar_drop_targets:
     if day_raw_removal.try_finish_tar_drop_if_ready(tar_norm):
       finalize_day_close_delete(tar_norm)
+      made_progress = True
   if tar_drop_targets and getattr(day_raw_removal, "log_fn", None):
     still_present = [t for t in tar_drop_targets if os.path.isfile(t)]
     if still_present:
@@ -963,8 +1024,11 @@ def run_supervisor_day_raw_removal_delete_pass(
         if day_raw_removal.phase(tar_norm) == PHASE_VERIFICATION_COMPLETE:
           day_raw_removal.begin_deleting(tar_norm)
         deleted = day_raw_removal.apply_batch_delete(tar_norm)
+        if deleted:
+          made_progress = True
         if day_raw_removal.delete_phase_done(tar_norm):
           finalize_day_close_delete(tar_norm)
+          made_progress = True
           continue
         if (
             deleted == 0
@@ -975,6 +1039,12 @@ def run_supervisor_day_raw_removal_delete_pass(
     finally:
       if on_delete_batch_end is not None:
         on_delete_batch_end()
+  if (
+      needs_delete
+      and day_raw_removal.any_needs_delete_phase()
+      and made_progress
+  ):
+    return True
   return False
 
 
@@ -1110,11 +1180,76 @@ class DayRawRemovalCoordinator:
   def any_needs_delete_phase(self) -> bool:
     with self._days_lock:
       states = list(self._days.values())
-    return any(
-        (s.needs_delete_phase() and not s.delete_phase_done())
-        or s.needs_ghost_delete_retry()
-        for s in states
-    )
+    for state in states:
+      if state.needs_delete_phase() and not state.delete_phase_done():
+        return True
+      if state.needs_reopen_for_verified_pending():
+        return True
+      if state.needs_ghost_delete_retry():
+        return True
+    return False
+
+  def reopen_done_days_with_verified_on_disk(self) -> int:
+    """Reopen ``phase=done`` days that still have verified paths on disk."""
+    reopened = 0
+    with self._days_lock:
+      states = list(self._days.values())
+    for state in states:
+      if state.reopen_delete_phase_if_verified_on_disk():
+        reopened += 1
+    return reopened
+
+  def advance_startup_drain_blockers(self) -> bool:
+    """Kick verify/quarantine for days that block startup drain without delete work."""
+    if not self.enabled:
+      return False
+    progressed = False
+    with self._days_lock:
+      states = list(self._days.values())
+    for state in states:
+      if not state.blocks_startup_drain():
+        continue
+      if state._async_verify_in_flight():
+        continue
+      if (
+          not state.verification_complete()
+          or state.phase() == PHASE_VERIFYING
+      ):
+        self.start_async_verify(state.tar_path)
+        progressed = True
+        continue
+      kick = self.kick_closed_raw_unblock(
+          state.tar_path,
+          reason="startup_drain",
+      )
+      if kick not in KICK_NO_HANDOFF_PROGRESS:
+        progressed = True
+    return progressed
+
+  def blocking_startup_drain_summary(self) -> Tuple[int, str]:
+    """Return (blocking_day_count, oldest_summary_token) for drain telemetry."""
+    blockers: List[Tuple[Any, str]] = []
+    with self._days_lock:
+      states = list(self._days.values())
+    for state in states:
+      if not state.blocks_startup_drain():
+        continue
+      in_flight = state._async_verify_in_flight()
+      pending_n = state._manifest_verified_pending_count()
+      token = (
+          "%s phase=%s pending_verified=%d in_flight=%s"
+          % (
+              os.path.basename(state.tar_path),
+              state.phase(),
+              pending_n,
+              in_flight,
+          )
+      )
+      blockers.append((state.day_date, token))
+    if not blockers:
+      return 0, ""
+    blockers.sort(key=lambda item: item[0])
+    return len(blockers), blockers[0][1]
 
   def any_needs_tar_drop_finish(self) -> bool:
     return bool(self.days_needing_tar_drop_oldest_first())

@@ -5816,11 +5816,18 @@ def run_sync_timedb_supervisor_loop(
           if day_raw_removal is not None and day_raw_removal.enabled
           else 0
       )
+      day_raw_blocking_n = 0
+      day_raw_blocking_oldest = ""
+      if day_raw_removal is not None and day_raw_removal.enabled:
+        day_raw_blocking_n, day_raw_blocking_oldest = (
+            day_raw_removal.blocking_startup_drain_summary()
+        )
       log_print(
           "sync_timedb: startup ingest maintenance waiting tail_pending=%s "
           "discover=%s pending_eligible=%d pending_retry=%d tail_queue=%d "
           "async_active=%d startup_raw=%s day_raw_delete=%s "
-          "day_raw_waiting_on_ingest=%d"
+          "day_raw_waiting_on_ingest=%d day_raw_blocking_n=%d "
+          "day_raw_blocking_oldest=%s"
           % (
               tail_pending,
               discover_pending,
@@ -5831,6 +5838,8 @@ def run_sync_timedb_supervisor_loop(
               raw_pending,
               day_delete_pending,
               day_raw_waiting_on_ingest,
+              day_raw_blocking_n,
+              day_raw_blocking_oldest or "",
           ),
           flush=True,
       )
@@ -5927,6 +5936,18 @@ def run_sync_timedb_supervisor_loop(
           )
           startup_day_close_drain_complete = True
         else:
+          if (
+              day_raw_removal is not None
+              and day_raw_removal.enabled
+              and day_raw_removal.advance_startup_drain_blockers()
+          ):
+            if _maybe_handle_raw_removal_delete_phase():
+              _maybe_log_startup_drain_blocked(
+                  trigger="delete_driver",
+                  delete_driver=True,
+              )
+              return True
+            return True
           _maybe_log_startup_drain_wait()
           _maybe_log_startup_drain_blocked(trigger="gate_pending")
           sleep_until_shutdown(0.25)

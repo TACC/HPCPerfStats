@@ -847,7 +847,7 @@ def test_batch_delete_runs_during_chunk_when_calendar_disjoint():
           (blocking_tar, n),
       ),
   )
-  assert spin is False
+  assert spin is True
   assert delete_calls == [delete_tar]
   assert chunk_wait_logs == []
 
@@ -1175,3 +1175,132 @@ def test_try_finish_tar_drop_manifest_done_stale_accrual(tmp_path, monkeypatch):
   assert os.path.isfile(tar_path)
   assert coord.try_finish_tar_drop_if_ready(tar_path)
   assert not os.path.isfile(tar_path)
+
+
+def test_days_needing_delete_includes_done_with_verified_on_disk_after_reopen(
+    tmp_path,
+):
+  day = datetime(2026, 5, 24)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, _zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path)
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), _zst, "verified", "verified")
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["verified_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+
+  assert coord.days_needing_delete_oldest_first() == []
+  assert coord.reopen_done_days_with_verified_on_disk() == 1
+  assert coord.phase(tar_path) == PHASE_DELETING
+  assert coord.days_needing_delete_oldest_first() == [tar_path]
+
+
+def test_any_needs_delete_phase_skips_isfile_when_no_ghost_markers(
+    tmp_path, monkeypatch,
+):
+  day = datetime(2026, 5, 24)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path)
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), zst, "verified", "verified")
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["verified_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+
+  isfile_calls = []
+
+  def _track_isfile(path):
+    isfile_calls.append(path)
+    return os.path.isfile(path)
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.os.path.isfile",
+      _track_isfile,
+  )
+  assert coord.any_needs_delete_phase()
+  assert isfile_calls == []
+
+
+def test_reopen_done_days_with_verified_on_disk_at_delete_pass_start(tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
+      run_supervisor_day_raw_removal_delete_pass,
+  )
+
+  day = datetime(2026, 5, 24)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, _zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path)
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), _zst, "verified", "verified")
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["verified_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+
+  batch_calls = []
+  original_apply = coord.apply_batch_delete
+
+  def _track_apply(tar_norm):
+    batch_calls.append(tar_norm)
+    return original_apply(tar_norm)
+
+  coord.apply_batch_delete = _track_apply
+  spin = run_supervisor_day_raw_removal_delete_pass(
+      coord,
+      None,
+      chunk_in_progress=False,
+      chunk_calendar_day_hint=None,
+      finalize_day_close_delete=lambda _t: None,
+      sleep_fn=lambda _s: None,
+  )
+  assert coord.phase(tar_path) == PHASE_DONE
+  assert batch_calls == [tar_path]
+  assert not os.path.isfile(str(seg))
+  assert spin is False
+
+
+def test_advance_startup_drain_blockers_starts_verify_for_verifying_manifest(
+    tmp_path,
+):
+  day = datetime(2026, 5, 20)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, _zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path)
+  state = coord._get_or_create_day(tar_path)
+  with state._lock:
+    state._manifest["phase"] = PHASE_VERIFYING
+    _save_manifest(state._manifest_path, state._manifest)
+
+  verify_calls = []
+  original_verify = coord.start_async_verify
+
+  def _track_verify(tar_norm, **kwargs):
+    verify_calls.append(tar_norm)
+    return original_verify(tar_norm, **kwargs)
+
+  coord.start_async_verify = _track_verify
+  assert coord.advance_startup_drain_blockers()
+  assert verify_calls == [tar_path]
+
+
+def test_blocks_startup_drain_true_when_done_with_verified_pending(tmp_path):
+  day = datetime(2026, 5, 24)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, _zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path)
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), _zst, "verified", "verified")
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["verified_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+
+  assert state.blocks_startup_drain()
+  assert coord.any_blocks_startup_drain()
+  n, token = coord.blocking_startup_drain_summary()
+  assert n == 1
+  assert "pending_verified=1" in token
