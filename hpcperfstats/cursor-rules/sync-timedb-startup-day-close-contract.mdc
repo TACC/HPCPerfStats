@@ -168,9 +168,9 @@ When per-day raw removal manifest **`phase=done`**, handoff eligibility (`should
 
 **Handoff allowed when:** at least one manifest path exists on disk and every on-disk manifest entry is a retryable skip (not verified / pending delete).
 
-**Tar drop unchanged:** `try_finish_tar_drop_if_ready` and other filesystem gates still use `build_remaining_raw_for_daily_tar` with janitor accrual or startup snapshot when wired (`DayRawRemovalCoordinator.get_maintenance_snapshot` from supervisor).
+**Tar drop (manifest/quarantine-aware):** `try_finish_tar_drop_if_ready`, async `_tar_drop_day` / `_day_close_filesystem_complete`, and supervisor delete-pass tar drop use **`_remaining_raw_paths_blocking_tar_drop()`** (same truth as **`has_closed_raw_on_disk`**): quarantine-terminal manifest entries (`skipped_quarantine` / `reason=quarantine`) and **`get_quarantine_skip_paths()`** do **not** block `.tar` unlink when manifest is **`phase=done`**; stale janitor accrual alone must not block after manifest clean. Log **`sync_timedb: tar_drop_skip`** / **`tar_drop_deferred`** on skip. **`daily_tar_needs_day_close_work`** treats existing `.tar` as work when janitor hint ≥ `tar_dropped` (hint drift).
 
-**Unmanifested closed raw** may still exist on disk; handoff requeues known retryable manifest paths and defers async — tar drop stays blocked until filesystem truth clears (see **`sync-timedb-db-before-archive-contract.mdc`**).
+**Unmanifested closed raw** may still exist on disk; handoff requeues known retryable manifest paths and defers async — tar drop stays blocked until non-quarantine filesystem truth clears (see **`sync-timedb-db-before-archive-contract.mdc`**).
 
 ## Tests
 
@@ -178,7 +178,7 @@ When per-day raw removal manifest **`phase=done`**, handoff eligibility (`should
 - `hpcperfstats/tests/test_sync_timedb_startup_tail_ingest.py` (coordinator queue, ingest before discover_done, phase complete, tail wall budget, giant defer)
 - `hpcperfstats/tests/test_sync_timedb_supervisor.py` (…, **`test_handoff_batch_remove_processed_paths_single_checkpoint_pass`**, **`test_recover_startup_handoff_incremental_one_tar_per_drain_spin`**, **`test_handoff_skips_duplicate_requeue_same_boot`**, **`test_cap_pending_after_handoff_uses_snapshot_during_startup_gate`**, **`test_supervisor_oldest_day_chunk_gate_inflight_starvation`**, **`test_handoff_giant_day_slice_ingest`**, **`test_prewarm_skips_sealed_scan_after_tar_append_merge`**, handoff queue head)
 - Archive/janitor/async helpers in `test_sync_timedb_archive.py` (including **`test_populate_uses_tar_not_sealed_when_dirty`**, **`test_select_ingest_chunk_paths_oldest_tar_only`**, **`test_handoff_priority_cap_explicit_wave_when_priority_exceeds_max`**), `test_sync_timedb_janitor.py`, `test_sync_timedb_async_day_close.py` (including **`raw_delete_pending`** single-flight / no-resubmit, stale **`raw_delete_pending`** recovery, **`reconcile_supervisor_raw_delete_pending`** handoff, **`test_reconcile_supervisor_raw_delete_pending_handoffs_phase_done`**)
-- `hpcperfstats/tests/test_sync_timedb_day_raw_removal.py` (manifest-fast handoff when **`phase=done`**, snapshot-aware remaining raw, verified-on-disk handoff block, **`run_supervisor_day_raw_removal_delete_pass`** tar-drop-before-chunk-wait, calendar-disjoint batch delete during chunk, **`discover_closed_raw_on_disk_handoffs`**, verified-only pending does not block startup drain)
+- `hpcperfstats/tests/test_sync_timedb_day_raw_removal.py` (manifest-fast handoff when **`phase=done`**, snapshot-aware remaining raw, verified-on-disk handoff block, **`run_supervisor_day_raw_removal_delete_pass`** tar-drop-before-chunk-wait, calendar-disjoint batch delete during chunk, **`discover_closed_raw_on_disk_handoffs`**, verified-only pending does not block startup drain, **`test_try_finish_tar_drop_quarantine_only_on_disk`**, **`test_try_finish_tar_drop_manifest_done_stale_accrual`**)
 
 ## Overlap
 

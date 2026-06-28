@@ -32,6 +32,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     daily_gz_has_remaining_raw_stats,
     daily_tar_paths_for_stats_paths,
     daily_tar_seal_calendar_eligible,
+    daily_tar_needs_day_close_work,
     raw_stats_path_needs_tar_append,
     daily_tar_paths_from_pending_archive_tasks,
     collect_lock_sidecar_stats,
@@ -1923,6 +1924,20 @@ def test_remove_verified_uncompressed_daily_tars_skips_when_raw_on_disk(
 
   assert day_tar.is_file()
   assert day_gz.is_file()
+
+
+def test_daily_tar_needs_day_close_work_when_tar_exists_despite_tar_dropped_hint(
+    tmp_path,
+):
+  """Hint drift: ``tar_dropped`` phase but ``.tar`` still on disk needs work."""
+  day_tar = tmp_path / "2026-05-22.tar"
+  day_tar.write_bytes(b"x" * 64)
+  day_phases = {str(day_tar): "tar_dropped"}
+  assert daily_tar_needs_day_close_work(
+      str(day_tar),
+      day_phases=day_phases,
+      remaining_raw_by_gz={},
+  )
 
 
 def test_remove_verified_uncompressed_daily_tars_force_removes_with_raw(
@@ -5597,7 +5612,10 @@ def test_find_immediate_day_close_candidates_skips_disqualified(tmp_path):
   assert result == []
 
 
-def test_find_immediate_day_close_candidates_skips_tar_dropped_phase(tmp_path, monkeypatch):
+def test_find_immediate_day_close_candidates_retries_when_tar_dropped_hint_but_tar_exists(
+    tmp_path, monkeypatch,
+):
+  """Hint drift: ``tar_dropped`` phase with ``.tar`` still on disk must re-enqueue."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers_mod
 
   daily_dir = tmp_path / "daily"
@@ -5613,7 +5631,7 @@ def test_find_immediate_day_close_candidates_skips_tar_dropped_phase(tmp_path, m
       local_tz=timezone.utc,
       day_phases={os.path.normpath(tar_path): {"phase": "tar_dropped"}},
   )
-  assert result == []
+  assert result == [os.path.normpath(tar_path)]
 
 
 def test_find_immediate_day_close_candidates_requires_unprocessed_map(tmp_path):

@@ -208,15 +208,99 @@ class _DayRawRemovalState:
     zst_path, _gz_path = compressed_sibling_paths(self.tar_path)
     return remaining_raw_by_gz_has_paths_on_disk(remaining, zst_path)
 
+  def _filter_accrual_paths_blocking_tar_drop(
+      self, remaining: Dict[str, List[str]],
+  ) -> Dict[str, List[str]]:
+    if not remaining:
+      return {}
+    skip_paths = set(self.get_quarantine_skip_paths() or ())
+    with self._lock:
+      entries = dict(self._manifest.get("entries", {}))
+    filtered: Dict[str, List[str]] = {}
+    for gz_path, raw_list in remaining.items():
+      blockers: List[str] = []
+      for path in raw_list or []:
+        if not os.path.isfile(path):
+          continue
+        if path in skip_paths:
+          continue
+        entry = entries.get(path)
+        if entry is not None and self._entry_is_quarantine_terminal_skip(entry):
+          continue
+        blockers.append(path)
+      if blockers:
+        filtered[gz_path] = blockers
+    return filtered
+
+  def _remaining_raw_paths_blocking_tar_drop(self) -> Dict[str, List[str]]:
+    """Accrual map whose on-disk paths block ``.tar`` unlink (manifest/quarantine-aware)."""
+    if self._only_quarantine_terminal_on_disk():
+      self._finalize_quarantine_terminal_done()
+      return {}
+    if self.delete_phase_done():
+      blocking = self._blocking_manifest_paths_on_disk()
+      if blocking:
+        zst_path, _gz_path = compressed_sibling_paths(self.tar_path)
+        return {zst_path: blocking}
+      return {}
+    return self._filter_accrual_paths_blocking_tar_drop(
+        self._build_remaining_raw_for_daily_tar(),
+    )
+
+  def _count_quarantine_accrual_paths_on_disk(self) -> int:
+    remaining = self._build_remaining_raw_for_daily_tar()
+    skip_paths = set(self.get_quarantine_skip_paths() or ())
+    with self._lock:
+      entries = dict(self._manifest.get("entries", {}))
+    count = 0
+    for paths in (remaining or {}).values():
+      for path in paths or []:
+        if not os.path.isfile(path):
+          continue
+        if path in skip_paths:
+          count += 1
+          continue
+        entry = entries.get(path)
+        if entry is not None and self._entry_is_quarantine_terminal_skip(entry):
+          count += 1
+    return count
+
+  def _log_tar_drop_skip(self, reason: str, *, sealed_ok: bool = True) -> None:
+    if not self.log_fn:
+      return
+    blocking = self._remaining_raw_paths_blocking_tar_drop()
+    remaining_n = sum(
+        1
+        for paths in (blocking or {}).values()
+        for path in (paths or [])
+        if os.path.isfile(path)
+    )
+    quarantine_n = self._count_quarantine_accrual_paths_on_disk()
+    sealed = "ok" if sealed_ok else "missing"
+    self.log_fn(
+        "sync_timedb: tar_drop_skip day=%s reason=%s remaining_n=%d "
+        "quarantine_n=%d sealed=%s validation=ok"
+        % (
+            self.day_date.isoformat(),
+            reason,
+            remaining_n,
+            quarantine_n,
+            sealed,
+        ),
+        flush=True,
+    )
+
   def try_finish_tar_drop_if_ready(self) -> bool:
     """Drop ``.tar`` when sealed and no closed raw files remain on disk."""
     if not os.path.isfile(self.tar_path):
       return True
     zst_path, gz_path = compressed_sibling_paths(self.tar_path)
     if not (os.path.isfile(zst_path) or os.path.isfile(gz_path)):
+      self._log_tar_drop_skip("sealed_missing", sealed_ok=False)
       return False
-    remaining_raw = self._build_remaining_raw_for_daily_tar()
+    remaining_raw = self._remaining_raw_paths_blocking_tar_drop()
     if remaining_raw_by_gz_has_paths_on_disk(remaining_raw, zst_path):
+      self._log_tar_drop_skip("remaining_raw_on_disk")
       return False
     remove_verified_uncompressed_daily_tars(
         self.tgz_archive_dir,
@@ -685,7 +769,7 @@ class _DayRawRemovalState:
         if only_waiting:
           has_closed_raw = self._has_closed_raw_existing_on_disk()
       else:
-        remaining_raw = self._build_remaining_raw_for_daily_tar()
+        remaining_raw = self._remaining_raw_paths_blocking_tar_drop()
     return {
         "raw_delete_complete": raw_delete_complete,
         "all_closed_raw_terminal_or_gone": all_terminal,
@@ -777,7 +861,7 @@ class _DayRawRemovalState:
       remove_verified_uncompressed_daily_tars(
           self.tgz_archive_dir,
           log_fn=self.log_fn,
-          remaining_raw_by_gz=completion["remaining_raw_by_gz"],
+          remaining_raw_by_gz=self._remaining_raw_paths_blocking_tar_drop(),
           force_remove_uncompressed_tar=False,
           only_daily_tar_paths={self.tar_path},
       )
@@ -853,6 +937,14 @@ def run_supervisor_day_raw_removal_delete_pass(
   for tar_norm in tar_drop_targets:
     if day_raw_removal.try_finish_tar_drop_if_ready(tar_norm):
       finalize_day_close_delete(tar_norm)
+  if tar_drop_targets and getattr(day_raw_removal, "log_fn", None):
+    still_present = [t for t in tar_drop_targets if os.path.isfile(t)]
+    if still_present:
+      day_raw_removal.log_fn(
+          "sync_timedb: tar_drop_deferred oldest=%s count=%d"
+          % (still_present[0], len(still_present)),
+          flush=True,
+      )
   if needs_delete:
     if chunk_in_progress:
       if not day_raw_delete_safe_during_chunk(
@@ -884,6 +976,29 @@ def run_supervisor_day_raw_removal_delete_pass(
       if on_delete_batch_end is not None:
         on_delete_batch_end()
   return False
+
+
+def remaining_raw_by_gz_blocking_tar_drop(
+    *,
+    tar_path: str,
+    archive_data_dir: str,
+    host_name_ext: str,
+    tgz_archive_dir: str,
+    get_quarantine_skip_paths: Callable[[], Set[str]],
+    get_maintenance_snapshot: Optional[Callable[[], Any]] = None,
+    log_fn=None,
+) -> Dict[str, List[str]]:
+  """Shared tar-drop blocker map for supervisor and async paths."""
+  state = _DayRawRemovalState(
+      tar_path=tar_path,
+      archive_data_dir=archive_data_dir,
+      host_name_ext=host_name_ext,
+      tgz_archive_dir=tgz_archive_dir,
+      log_fn=log_fn,
+      get_quarantine_skip_paths=get_quarantine_skip_paths,
+      get_maintenance_snapshot=get_maintenance_snapshot,
+  )
+  return state._remaining_raw_paths_blocking_tar_drop()
 
 
 class DayRawRemovalCoordinator:
@@ -1019,6 +1134,9 @@ class DayRawRemovalCoordinator:
       candidates.append((state.day_date, state.tar_path))
     candidates.sort(key=lambda item: item[0])
     return [tar_path for _day_date, tar_path in candidates]
+
+  def remaining_raw_paths_blocking_tar_drop(self, tar_path: str) -> Dict[str, List[str]]:
+    return self._get_or_create_day(tar_path)._remaining_raw_paths_blocking_tar_drop()
 
   def try_finish_tar_drop_if_ready(self, tar_path: str) -> bool:
     state = self._get_or_create_day(tar_path)

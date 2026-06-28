@@ -77,8 +77,8 @@ Closed raw segments that **cannot be ingested** (missing head, load error, `pars
 ## Tar removal vs DB gate
 
 - **Append / raw delete:** `stats_file_head_ingested_in_db` (when `sync_archive_require_db_head_ingest` is on).
-- **Uncompressed `.tar` unlink (scheduled):** filesystem gate via `build_remaining_raw_stats_by_daily_gz` — counts **all** closed raw segments mapped to that daily archive, including segments not yet sample-ingested. Not-yet-ingested files therefore block `.tar` removal until they are gone from disk (typically after ingest + verified raw removal), even though the DB gate prevented earlier delete/append.
-- **Uncompressed `.tar` unlink:** janitor `TAR_DROP` debt only when sealed valid and `remaining_raw_by_gz` has no closed raw for that day (`force_remove_uncompressed_tar=False`). Raw delete/append DB gate unchanged.
+- **Uncompressed `.tar` unlink (scheduled):** filesystem gate via **`_remaining_raw_paths_blocking_tar_drop()`** / `remaining_raw_by_gz_has_paths_on_disk` on the **filtered** map — not the raw janitor accrual alone. **Quarantine-terminal** manifest entries (`skipped_quarantine`) and **`get_quarantine_skip_paths()`** paths intentionally left on disk do **not** block `.tar` unlink when manifest is **`phase=done`**. Verified-not-deleted non-quarantine raw and unmanifested closed raw still block. Not-yet-ingested retryable paths block until ingest/handoff clears them.
+- **Uncompressed `.tar` unlink:** janitor `TAR_DROP` debt only when sealed valid and filtered remaining raw has no blocking paths for that day (`force_remove_uncompressed_tar=False`). Raw delete/append DB gate unchanged.
 - Maintenance order in janitor ticks: seal (if debt) → validate/raw remove (DB-gated) → `.tar` drop (filesystem-gated).
 
 ## Ordering

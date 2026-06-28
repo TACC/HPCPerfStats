@@ -1239,7 +1239,7 @@ def daily_tar_needs_day_close_work(
     return False
   if not _day_phase_at_least_hints(day_phases, tar_norm, "tar_dropped"):
     return True
-  if os.path.isfile(tar_norm) and tar_day_dirty_by_mtime(tar_norm):
+  if os.path.isfile(tar_norm):
     return True
   zst_path, _gz_path = compressed_sibling_paths(tar_norm)
   if remaining_raw_by_gz and daily_gz_has_remaining_raw_stats(

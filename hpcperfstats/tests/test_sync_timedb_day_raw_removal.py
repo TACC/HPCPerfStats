@@ -1112,3 +1112,66 @@ def test_has_closed_raw_false_when_manifest_done_no_on_disk(tmp_path, monkeypatc
       lambda: {str(_zst): [str(seg)]},
   )
   assert not coord.has_closed_raw_on_disk(tar_path)
+
+
+def test_try_finish_tar_drop_quarantine_only_on_disk(tmp_path, monkeypatch):
+  """05-22: quarantine-terminal manifest entries must not block tar unlink."""
+  day = datetime(2022, 5, 22)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  manifest_path = day_removal_manifest_path(str(tmp_path), day.date())
+  fp = {"mtime": 0, "size": int(seg.stat().st_size)}
+  payload = {
+      "version": 1,
+      "tar_path": os.path.normpath(tar_path),
+      "phase": PHASE_DONE,
+      "started_at": time.time(),
+      "completed_at": time.time(),
+      "verified_count": 0,
+      "skipped_count": 1,
+      "deleted_count": 0,
+      "entries": {
+          str(seg): {
+              "status": "skipped_quarantine",
+              "reason": "quarantine",
+              **fp,
+          },
+      },
+  }
+  _save_manifest(manifest_path, payload)
+  coord = _make_coordinator(tmp_path)
+  state = coord._get_or_create_day(tar_path)
+  monkeypatch.setattr(
+      state,
+      "_build_remaining_raw_for_daily_tar",
+      lambda: {str(zst): [str(seg)]},
+  )
+  assert os.path.isfile(tar_path)
+  assert seg.is_file()
+  assert coord.try_finish_tar_drop_if_ready(tar_path)
+  assert not os.path.isfile(tar_path)
+  assert seg.is_file()
+  assert os.path.isfile(zst)
+
+
+def test_try_finish_tar_drop_manifest_done_stale_accrual(tmp_path, monkeypatch):
+  """05-26: manifest phase=done with clean entries ignores stale accrual."""
+  day = datetime(2022, 5, 26)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path)
+  state = coord._get_or_create_day(tar_path)
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["completed_at"] = time.time()
+    state._manifest["entries"] = {}
+    _save_manifest(state._manifest_path, state._manifest)
+  seg.unlink()
+  monkeypatch.setattr(
+      state,
+      "_build_remaining_raw_for_daily_tar",
+      lambda: {str(zst): [str(seg)]},
+  )
+  assert os.path.isfile(tar_path)
+  assert coord.try_finish_tar_drop_if_ready(tar_path)
+  assert not os.path.isfile(tar_path)

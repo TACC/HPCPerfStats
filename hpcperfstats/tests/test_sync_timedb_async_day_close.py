@@ -71,8 +71,7 @@ def test_seal_day_build_remaining_raw_uses_archive_dir_not_tar_path(
     return {}
 
   monkeypatch.setattr(
-      async_dc_mod,
-      "build_remaining_raw_for_daily_tar",
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
       capture_build,
   )
   monkeypatch.setattr(
@@ -126,8 +125,7 @@ def test_tar_drop_day_build_remaining_raw_uses_archive_dir_not_tar_path(
     return {zst_path: []}
 
   monkeypatch.setattr(
-      async_dc_mod,
-      "build_remaining_raw_for_daily_tar",
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
       capture_build,
   )
   monkeypatch.setattr(

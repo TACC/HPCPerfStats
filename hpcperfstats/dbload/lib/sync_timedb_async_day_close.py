@@ -15,7 +15,6 @@ from hpcperfstats.dbload.lib.archive_compress import compressed_sibling_paths
 from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     _seal_skip_existing_zst_equivalent,
     atomic_seal_tar_to_zst,
-    build_remaining_raw_for_daily_tar,
     daily_tar_seal_calendar_eligible,
     dedupe_sealed_daily_archive,
     dedupe_tar_keep_largest_file_per_member,
@@ -297,17 +296,28 @@ class AsyncDayCloseCoordinator:
     pending.sort()
     return pending
 
+  def _remaining_raw_for_tar_drop(self, tar_norm: str) -> Dict[str, List[str]]:
+    coord = self.day_raw_removal_coordinator
+    if coord is not None and bool(getattr(coord, "enabled", False)):
+      return coord.remaining_raw_paths_blocking_tar_drop(tar_norm)
+    from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
+        remaining_raw_by_gz_blocking_tar_drop,
+    )
+    return remaining_raw_by_gz_blocking_tar_drop(
+        tar_path=tar_norm,
+        archive_data_dir=self.archive_data_dir,
+        host_name_ext=self.host_name_ext,
+        tgz_archive_dir=self.tgz_archive_dir,
+        get_quarantine_skip_paths=lambda: set(),
+        log_fn=None,
+    )
+
   def _day_close_filesystem_complete(self, tar_norm: str) -> bool:
     tar_norm = os.path.normpath(tar_norm or "")
     if not tar_norm:
       return False
     zst_path, gz_path = compressed_sibling_paths(tar_norm)
-    remaining = build_remaining_raw_for_daily_tar(
-        self.archive_data_dir,
-        self.host_name_ext,
-        self.tgz_archive_dir,
-        tar_norm,
-    )
+    remaining = self._remaining_raw_for_tar_drop(tar_norm)
     if remaining_raw_by_gz_has_paths_on_disk(remaining, zst_path):
       return False
     if os.path.isfile(tar_norm):
@@ -458,12 +468,7 @@ class AsyncDayCloseCoordinator:
     zst_path, gz_path = compressed_sibling_paths(tar_norm)
     if not (os.path.isfile(zst_path) or os.path.isfile(gz_path)):
       return False
-    remaining = build_remaining_raw_for_daily_tar(
-        self.archive_data_dir,
-        self.host_name_ext,
-        self.tgz_archive_dir,
-        tar_norm,
-    )
+    remaining = self._remaining_raw_for_tar_drop(tar_norm)
     if remaining_raw_by_gz_has_paths_on_disk(remaining, zst_path):
       return False
     coord = self.day_raw_removal_coordinator
@@ -675,14 +680,7 @@ class AsyncDayCloseCoordinator:
       )
       self._pending_verify_zst_members = skip_result[1]
       return True
-    remaining_raw_by_gz = {
-        zst_path: build_remaining_raw_for_daily_tar(
-            self.archive_data_dir,
-            self.host_name_ext,
-            self.tgz_archive_dir,
-            tar_norm,
-        ),
-    }
+    remaining_raw_by_gz = self._remaining_raw_for_tar_drop(tar_norm)
     keep_tar = effective_keep_uncompressed_tar(
         tar_norm,
         local_tz=self.local_tz,
@@ -736,12 +734,7 @@ class AsyncDayCloseCoordinator:
     return False
 
   def _tar_drop_day(self, tar_norm: str) -> bool:
-    remaining_raw_by_gz = build_remaining_raw_for_daily_tar(
-        self.archive_data_dir,
-        self.host_name_ext,
-        self.tgz_archive_dir,
-        tar_norm,
-    )
+    remaining_raw_by_gz = self._remaining_raw_for_tar_drop(tar_norm)
     zst_path, _gz_path = compressed_sibling_paths(tar_norm)
     if remaining_raw_by_gz_has_paths_on_disk(remaining_raw_by_gz, zst_path):
       return False
