@@ -1417,6 +1417,67 @@ def build_chunk_day_histogram(paths, tgz_archive_dir):
   return histogram
 
 
+def reconcile_orphan_inflight_for_oldest_tar(
+    *,
+    oldest_tar,
+    blocked_paths,
+    inflight_archive_paths,
+    pending_append_by_daily_tar,
+    in_flight_archive_tars,
+    tgz_archive_dir,
+    last_reclaim_monotonic_by_path=None,
+    reclaim_throttle_s=30.0,
+    now=None,
+    log_fn=None,
+):
+  """Return blocked inflight paths with no active archive job or pending append."""
+  import time
+
+  oldest_tar_norm = os.path.normpath(str(oldest_tar or ""))
+  if not oldest_tar_norm or not blocked_paths or not inflight_archive_paths:
+    return []
+  active_tars = {
+      os.path.normpath(str(tar_path))
+      for tar_path in (in_flight_archive_tars or ())
+  }
+  if oldest_tar_norm in active_tars:
+    return []
+  pending_bucket = set()
+  for tar_path, paths in (pending_append_by_daily_tar or {}).items():
+    if os.path.normpath(str(tar_path)) == oldest_tar_norm and paths:
+      pending_bucket |= set(paths)
+  blocked_set = set(blocked_paths or ())
+  mono_now = float(now if now is not None else time.monotonic())
+  throttle_state = (
+      last_reclaim_monotonic_by_path
+      if last_reclaim_monotonic_by_path is not None
+      else {}
+  )
+  reclaimed = []
+  for path in list(inflight_archive_paths or ()):
+    if path not in blocked_set:
+      continue
+    if oldest_tar_norm not in daily_tar_paths_for_stats_paths(
+        [path],
+        tgz_archive_dir,
+    ):
+      continue
+    if path in pending_bucket:
+      continue
+    last_reclaim = float(throttle_state.get(path, 0.0))
+    if mono_now - last_reclaim < reclaim_throttle_s:
+      continue
+    throttle_state[path] = mono_now
+    reclaimed.append(path)
+  if reclaimed and log_fn is not None:
+    log_fn(
+        "sync_timedb: orphan inflight reclaim oldest_tar=%s reclaimed_n=%d"
+        % (oldest_tar_norm, len(reclaimed)),
+        flush=True,
+    )
+  return reclaimed
+
+
 def select_ingest_chunk_paths(
     pending,
     *,

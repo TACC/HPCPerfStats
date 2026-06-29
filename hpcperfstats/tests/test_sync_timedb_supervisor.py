@@ -8888,10 +8888,10 @@ def test_giant_day_slice_gated_to_startup_handoff_recover_only(
     shutdown_requested[0] = False
 
 
-def test_finalize_day_close_not_deferred_for_stale_handoff_priority_only(
+def test_finalize_day_close_deferred_when_handoff_priority_pending(
     monkeypatch, tmp_path, capsys,
 ):
-  """Stale handoff_priority_paths alone must not defer archive_finalize day_close."""
+  """archive_finalize defers immediate day_close when handoff_priority_paths pending."""
   shutdown_requested[0] = False
   try:
     archive_dir = tmp_path / "archive"
@@ -9001,6 +9001,7 @@ def test_finalize_day_close_not_deferred_for_stale_handoff_priority_only(
     monkeypatch.setattr(st, "remove_verified_archived_raw_files", lambda *a, **k: None)
     monkeypatch.setattr(st, "close_old_connections", lambda: None)
     monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "head_timestamp_present_in_db", lambda *_a, **_k: False)
     monkeypatch.setattr(st, "tgz_archive_dir", str(daily_dir))
     monkeypatch.setattr(
         StartupArchiveScanCoordinator,
@@ -9033,8 +9034,12 @@ def test_finalize_day_close_not_deferred_for_stale_handoff_priority_only(
         run_once=True,
     )
     out = capsys.readouterr().out
+    assert (
+        "archive_finalize defer immediate day_close reason=handoff_priority"
+        in out
+    )
+    assert "post_finalize_reconcile" in out
     assert "day_close handoff requeue" in out
-    assert "defer immediate day_close" not in out
   finally:
     shutdown_requested[0] = False
 

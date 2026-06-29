@@ -6676,3 +6676,92 @@ def test_handoff_priority_cap_explicit_wave_when_priority_exceeds_max():
   assert capped[0] == "/h0"
   assert capped[-1] == "/h1999"
   assert "/t0" not in capped
+
+
+def test_reconcile_orphan_inflight_for_oldest_tar_reclaims_without_archive_job(
+    tmp_path,
+):
+  """Orphan inflight paths on oldest tar are reclaimed when no archive owns them."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      reconcile_orphan_inflight_for_oldest_tar,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  d1 = datetime(2020, 1, 1, 12, tzinfo=timezone.utc)
+  tar_a = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+  open(tar_a, "wb").close()
+  blocked = []
+  for i in range(3):
+    path = tmp_path / ("b%d" % i)
+    path.write_text("1000 job cn001\n")
+    os.utime(path, (d1.timestamp(), d1.timestamp()))
+    blocked.append(str(path))
+  inflight = set(blocked)
+  reclaimed = reconcile_orphan_inflight_for_oldest_tar(
+      oldest_tar=tar_a,
+      blocked_paths=blocked,
+      inflight_archive_paths=inflight,
+      pending_append_by_daily_tar={},
+      in_flight_archive_tars=set(),
+      tgz_archive_dir=str(daily_dir),
+      reclaim_throttle_s=0.0,
+  )
+  assert set(reclaimed) == set(blocked)
+
+
+def test_reconcile_orphan_inflight_skips_active_archive_job(tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      reconcile_orphan_inflight_for_oldest_tar,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  d1 = datetime(2020, 1, 1, 12, tzinfo=timezone.utc)
+  tar_a = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+  open(tar_a, "wb").close()
+  path = str(tmp_path / "blocked")
+  path_obj = tmp_path / "blocked"
+  path_obj.write_text("1000 job cn001\n")
+  os.utime(path_obj, (d1.timestamp(), d1.timestamp()))
+  reclaimed = reconcile_orphan_inflight_for_oldest_tar(
+      oldest_tar=tar_a,
+      blocked_paths=[path],
+      inflight_archive_paths={path},
+      pending_append_by_daily_tar={},
+      in_flight_archive_tars={tar_a},
+      tgz_archive_dir=str(daily_dir),
+      reclaim_throttle_s=0.0,
+  )
+  assert reclaimed == []
+
+
+def test_handoff_cap_preserves_oldest_blocked_head():
+  """Oldest-tar blocked paths stay in capped pending when handoff tail is trimmed."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      prepend_checkpoint_blocked_paths_to_pending,
+  )
+
+  handoff = ["/handoff/%d" % i for i in range(1500)]
+  blocked = ["/blocked/%d" % i for i in range(5)]
+  tail = ["/tail/%d" % i for i in range(100)]
+  merged = prepend_checkpoint_blocked_paths_to_pending(
+      tail,
+      blocked,
+  )
+  merged = prepend_checkpoint_blocked_paths_to_pending(
+      merged,
+      handoff,
+  )
+  ingest_queue_max = 2000
+  priority_n = len(handoff)
+  reserved = blocked[:3]
+  reserved_set = set(reserved)
+  tail_budget = max(0, ingest_queue_max - priority_n - len(reserved))
+  head = merged[:priority_n]
+  tail_paths = [path for path in merged[priority_n:] if path not in reserved_set]
+  capped = reserved + head + tail_paths[:tail_budget]
+  assert all(path in capped for path in reserved)
+  assert capped[0] == "/blocked/0"
+  assert "/handoff/0" in capped
+  assert len(capped) <= ingest_queue_max

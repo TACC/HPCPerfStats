@@ -127,6 +127,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     oldest_checkpoint_blocked_tar,
     on_disk_unprocessed_paths_for_tar,
     prepend_checkpoint_blocked_paths_to_pending,
+    reconcile_orphan_inflight_for_oldest_tar,
     load_checkpoint_path_set,
     resolved_checkpoint_path_set,
     daily_tar_paths_for_stats_paths,
@@ -4043,9 +4044,109 @@ def run_sync_timedb_supervisor_loop(
     if submitted_any:
       archive_janitor.signal_work_available()
 
+  def _should_defer_archive_finalize_day_close():
+    if startup_handoff_recover_pending or handoff_giant_day_slice_in_progress:
+      return True, "handoff_recovery", len(startup_handoff_recover_pending)
+    if handoff_priority_paths:
+      return True, "handoff_priority", len(handoff_priority_paths)
+    if tgz_archive_dir and day_raw_removal is not None:
+      disqualified = _janitor_disqualified_daily_tars()
+      with archive_janitor._hints_state_lock:
+        day_phases = dict(archive_janitor._day_phases)
+      unprocessed_by_tar = _build_unprocessed_by_tar_for_day_close(
+          pending_stats_paths=list(pending_stats_files),
+      )
+      remaining_raw_by_gz = _get_accrual_remaining_raw_by_gz()
+      candidates = days_ingest_complete_by_checkpoint(
+          unprocessed_by_tar,
+          tgz_archive_dir=tgz_archive_dir,
+          day_phases=day_phases,
+          remaining_raw_by_gz=remaining_raw_by_gz,
+          local_tz=archive_janitor.local_tz,
+          disqualified_daily_tars=disqualified,
+      )
+      for tar_path in candidates:
+        tar_norm = os.path.normpath(str(tar_path or ""))
+        eligible, skip_reason = daily_tar_eligible_for_day_close_submit(
+            tar_norm,
+            unprocessed_by_tar=unprocessed_by_tar,
+            disqualified_daily_tars=disqualified,
+            day_phases=day_phases,
+            remaining_raw_by_gz=remaining_raw_by_gz,
+            local_tz=archive_janitor.local_tz,
+            day_raw_removal=day_raw_removal,
+        )
+        del eligible
+        if skip_reason == "closed_raw_on_disk":
+          return True, "closed_raw_guard", 0
+    return False, "", 0
+
+  def _maybe_run_post_finalize_reconcile_and_day_close():
+    nonlocal archive_finalize_day_close_deferred
+    nonlocal archive_finalize_needs_post_reconcile
+    nonlocal post_finalize_reconcile_done_this_chunk
+    if (
+        not archive_finalize_needs_post_reconcile
+        and not archive_finalize_day_close_deferred
+    ):
+      return
+    if archive_finalize_needs_post_reconcile:
+      unprocessed = _live_unprocessed_by_tar_for_reconcile()
+      tar_norm = oldest_checkpoint_blocked_tar(
+          unprocessed,
+          tgz_archive_dir=tgz_archive_dir,
+      )
+      blocked = (
+          _checkpoint_unblocked_paths_for_tar(unprocessed, tar_norm)
+          if tar_norm
+          else []
+      )
+      inflight_oldest_n = 0
+      if tar_norm:
+        inflight_oldest_n = sum(
+            1
+            for path in inflight_archive_paths
+            if tar_norm in daily_tar_paths_for_stats_paths(
+                [path],
+                tgz_archive_dir,
+            )
+        )
+      log_print(
+          "sync_timedb: post_finalize_reconcile oldest_tar=%s blocked_n=%d "
+          "inflight_oldest_n=%d"
+          % (tar_norm or "", len(blocked), inflight_oldest_n),
+          flush=True,
+      )
+      _reconcile_pending_with_oldest_checkpoint_blocked()
+      archive_finalize_needs_post_reconcile = False
+      post_finalize_reconcile_done_this_chunk = True
+    if archive_finalize_day_close_deferred:
+      archive_finalize_day_close_deferred = False
+      _maybe_enqueue_immediate_day_close(context="archive_finalize")
+
+  def _reconcile_orphan_inflight_for_oldest_tar(oldest_tar, blocked_paths):
+    captured = _capture_disqualification_inputs()
+    reclaimed = reconcile_orphan_inflight_for_oldest_tar(
+        oldest_tar=oldest_tar,
+        blocked_paths=blocked_paths,
+        inflight_archive_paths=captured["inflight_paths"],
+        pending_append_by_daily_tar=captured["pending_append_by_daily_tar"],
+        in_flight_archive_tars=captured["in_flight_archive_tars"],
+        tgz_archive_dir=tgz_archive_dir,
+        last_reclaim_monotonic_by_path=orphan_inflight_reclaim_last_monotonic,
+        log_fn=log_print,
+    )
+    if reclaimed:
+      with archive_state_lock:
+        for path in reclaimed:
+          inflight_archive_paths.discard(path)
+    return reclaimed
+
   def _apply_archive_finalize_results(deferred_paths, results):
     nonlocal checkpoint_dirty_count
     nonlocal dead_letter_dirty
+    nonlocal archive_finalize_day_close_deferred
+    nonlocal archive_finalize_needs_post_reconcile
     if not isinstance(results, list):
       results = [results]
     if len(results) != len(deferred_paths):
@@ -4175,19 +4276,36 @@ def run_sync_timedb_supervisor_loop(
         finalized_paths.extend(task_payload.get("paths") or ())
     if finalized_paths:
       _record_ingest_sort_epochs_for_paths(finalized_paths)
-      defer_day_close = bool(
-          startup_handoff_recover_pending or handoff_giant_day_slice_in_progress
+      archive_finalize_needs_post_reconcile = True
+      defer_day_close, defer_reason, defer_extra = (
+          _should_defer_archive_finalize_day_close()
       )
       if defer_day_close:
-        log_print(
-            "INFO: archive_finalize defer immediate day_close "
-            "reason=handoff_recovery pending=%d giant_day_slice=%s"
-            % (
-                len(startup_handoff_recover_pending),
-                "yes" if handoff_giant_day_slice_in_progress else "no",
-            ),
-            flush=True,
-        )
+        archive_finalize_day_close_deferred = True
+        if defer_reason == "handoff_recovery":
+          log_print(
+              "INFO: archive_finalize defer immediate day_close "
+              "reason=handoff_recovery pending=%d giant_day_slice=%s"
+              % (
+                  defer_extra,
+                  "yes" if handoff_giant_day_slice_in_progress else "no",
+              ),
+              flush=True,
+          )
+        elif defer_reason == "handoff_priority":
+          log_print(
+              "INFO: archive_finalize defer immediate day_close "
+              "reason=handoff_priority pending_handoff=%d"
+              % defer_extra,
+              flush=True,
+          )
+        else:
+          log_print(
+              "INFO: archive_finalize defer immediate day_close "
+              "reason=%s"
+              % defer_reason,
+              flush=True,
+          )
       else:
         _maybe_enqueue_immediate_day_close(context="archive_finalize")
 
@@ -4330,34 +4448,106 @@ def run_sync_timedb_supervisor_loop(
         exclude=inflight_archive_paths,
     )
 
-  def _cap_pending_stats_with_handoff_priority(paths):
+  def _cap_pending_stats_with_handoff_priority(
+      paths,
+      *,
+      oldest_tar=None,
+      oldest_tar_reserved_paths=None,
+  ):
     if not handoff_priority_paths:
       return _cap_pending_stats_files_list(paths, ingest_queue_max)
     merged = _apply_handoff_priority_to_pending(paths)
     priority_n = len(handoff_priority_paths)
+    reserved = []
+    reserved_set = set()
+    if oldest_tar and oldest_tar_reserved_paths:
+      reserve_budget = min(len(oldest_tar_reserved_paths), chunk_size)
+      for path in oldest_tar_reserved_paths:
+        if path in merged and path not in reserved_set:
+          reserved.append(path)
+          reserved_set.add(path)
+          if len(reserved) >= reserve_budget:
+            break
+    reserved_n = len(reserved)
     if priority_n >= ingest_queue_max:
       if len(merged) > ingest_queue_max:
         log_print(
             "sync_timedb: handoff priority cap handoff_priority_n=%d "
-            "pending=%d max=%d detail=explicit_handoff_wave"
-            % (priority_n, len(merged), ingest_queue_max),
+            "pending=%d max=%d detail=explicit_handoff_wave%s"
+            % (
+                priority_n,
+                len(merged),
+                ingest_queue_max,
+                (
+                    " oldest_blocked_reserved=%d"
+                    % reserved_n
+                    if reserved_n
+                    else ""
+                ),
+            ),
             flush=True,
         )
+      if reserved_n:
+        tail = [path for path in merged if path not in reserved_set]
+        tail_budget = max(0, ingest_queue_max - reserved_n)
+        return reserved + tail[:tail_budget]
       return merged[:ingest_queue_max]
-    tail_budget = max(0, ingest_queue_max - priority_n)
+    tail_budget = max(0, ingest_queue_max - priority_n - reserved_n)
     if len(merged) <= ingest_queue_max:
+      if reserved_n:
+        log_print(
+            "sync_timedb: handoff priority cap handoff_priority_n=%d "
+            "pending=%d max=%d detail=oldest_blocked_reserved reserved_n=%d"
+            % (priority_n, len(merged), ingest_queue_max, reserved_n),
+            flush=True,
+        )
       return merged
     head = merged[:priority_n]
     tail = merged[priority_n:]
+    tail = [path for path in tail if path not in reserved_set]
+    evicted_oldest_n = 0
     if len(tail) > tail_budget:
+      would_drop = tail[tail_budget:]
+      if oldest_tar:
+        oldest_tar_norm = os.path.normpath(str(oldest_tar))
+        evicted_oldest_n = sum(
+            1
+            for path in would_drop
+            if oldest_tar_norm in daily_tar_paths_for_stats_paths(
+                [path],
+                tgz_archive_dir,
+            )
+        )
       log_print(
           "sync_timedb: handoff priority cap handoff_priority_n=%d capped_tail=%d "
-          "pending=%d max=%d"
-          % (priority_n, len(tail) - tail_budget, len(merged), ingest_queue_max),
+          "pending=%d max=%d%s"
+          % (
+              priority_n,
+              len(tail) - tail_budget,
+              len(merged),
+              ingest_queue_max,
+              (
+                  " detail=oldest_blocked_reserved reserved_n=%d evicted_oldest_n=%d"
+                  % (reserved_n, evicted_oldest_n)
+                  if reserved_n
+                  else (
+                      " evicted_oldest_n=%d" % evicted_oldest_n
+                      if evicted_oldest_n
+                      else ""
+                  )
+              ),
+          ),
           flush=True,
       )
       tail = tail[:tail_budget]
-    return head + tail
+    elif reserved_n:
+      log_print(
+          "sync_timedb: handoff priority cap handoff_priority_n=%d "
+          "pending=%d max=%d detail=oldest_blocked_reserved reserved_n=%d"
+          % (priority_n, len(merged), ingest_queue_max, reserved_n),
+          flush=True,
+      )
+    return reserved + head + tail
 
   def _cap_pending_after_rescan(paths, *, handoff=False):
     cap_t0 = time.time()
@@ -4402,12 +4592,15 @@ def run_sync_timedb_supervisor_loop(
     reconcile_exclude = (
         (processed_files | inflight_archive_paths) - blocked_set
     )
+    reserved_blocked = blocked[:chunk_size] if tar_norm else None
     capped = _cap_pending_stats_with_handoff_priority(
         prepend_checkpoint_blocked_paths_to_pending(
             paths,
             blocked,
             exclude=reconcile_exclude,
         ),
+        oldest_tar=tar_norm,
+        oldest_tar_reserved_paths=reserved_blocked,
     )
     log_print(
         "sync_timedb: pending reconcile cap done elapsed_s=%.3f "
@@ -4966,6 +5159,10 @@ def run_sync_timedb_supervisor_loop(
   chunk_counter = 0
   oldest_day_chunk_gate_stall_last_log = 0.0
   handoff_priority_stall_last_log = 0.0
+  archive_finalize_day_close_deferred = False
+  archive_finalize_needs_post_reconcile = False
+  post_finalize_reconcile_done_this_chunk = False
+  orphan_inflight_reclaim_last_monotonic = {}
   # Per-day cache of raw paths queued/in-flight for tar append (loss-safe
   # disqualification source for ArchiveJanitor ticks). Mirrors the
   # archive lifecycle: populated when groups are dispatched/queued, pruned when a
@@ -6145,11 +6342,21 @@ def run_sync_timedb_supervisor_loop(
             ingest_pool, db_writer_pool, archive_pool)
         _maybe_apply_day_close_rescan()
         idle_since_empty_queue = None
+        post_finalize_reconcile_done_this_chunk = False
         _finalize_archive_slots_if_needed(
             force=True,
             allow_defer=True,
             context="chunk_boundary",
         )
+        _maybe_run_post_finalize_reconcile_and_day_close()
+        if not post_finalize_reconcile_done_this_chunk:
+          reconcile_refs["last_unprocessed_by_tar"] = None
+          _reconcile_pending_with_oldest_checkpoint_blocked()
+        else:
+          reconcile_refs["last_unprocessed_by_tar"] = (
+              reconcile_refs.get("last_unprocessed_by_tar")
+              or _live_unprocessed_by_tar_for_reconcile()
+          )
         if shutdown_requested[0]:
           log_print("Exiting due to SIGTERM")
           break
@@ -6164,8 +6371,6 @@ def run_sync_timedb_supervisor_loop(
               flush=True,
           )
         chunk_t0 = time.time()
-        reconcile_refs["last_unprocessed_by_tar"] = None
-        _reconcile_pending_with_oldest_checkpoint_blocked()
         unprocessed_for_chunk = reconcile_refs.get("last_unprocessed_by_tar")
         if unprocessed_for_chunk is None:
           unprocessed_for_chunk = _live_unprocessed_by_tar_for_reconcile()
@@ -6252,6 +6457,19 @@ def run_sync_timedb_supervisor_loop(
               )
           if oldest_tar_for_chunk and (blocked_n or handoff_inflight_n):
             if blocked_n > 0:
+              reclaimed = _reconcile_orphan_inflight_for_oldest_tar(
+                  oldest_tar_for_chunk,
+                  blocked_paths,
+              )
+              if reclaimed:
+                reconcile_refs["last_unprocessed_by_tar"] = None
+                _reconcile_pending_with_oldest_checkpoint_blocked()
+                _finalize_archive_slots_if_needed(
+                    force=True,
+                    allow_defer=True,
+                    context="oldest_day_gate_wait",
+                )
+                continue
               now = time.time()
               if now - oldest_day_chunk_gate_stall_last_log >= 30.0:
                 oldest_day_chunk_gate_stall_last_log = now
@@ -6276,10 +6494,13 @@ def run_sync_timedb_supervisor_loop(
                 )
                 log_print(
                     "sync_timedb: oldest_day_chunk_gate_stall oldest_tar=%s "
-                    "blocked_n=%d pending_oldest_n=%d fallback_n=%d detail=%s"
+                    "blocked_n=%d blocked_in_pending_n=%d inflight_oldest_n=%d "
+                    "pending_oldest_n=%d fallback_n=%d detail=%s"
                     % (
                         oldest_tar_for_chunk,
                         blocked_n,
+                        pending_oldest_n,
+                        handoff_inflight_n,
                         pending_oldest_n,
                         fallback_n,
                         stall_detail,
