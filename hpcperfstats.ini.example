@@ -522,8 +522,8 @@ sync_ingest_malloc_trim_after_file = yes
 # Max deletes per gated startup delete pass; 0 = unlimited during delete window (default 0).
 # sync_startup_raw_removal_max_deletes_per_pass = 0
 
-# Block first ingest until startup day-close discover and deletion drain idle (default yes).
-# sync_startup_drain_day_close_before_ingest = yes
+# Block first ingest until startup day-close discover and deletion drain idle (default no).
+# sync_startup_drain_day_close_before_ingest = no
 
 # During startup drain, ingest checkpoint-blocked tail paths per day (default yes).
 # sync_startup_tail_ingest_enabled = yes

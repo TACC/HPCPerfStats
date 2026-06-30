@@ -2795,7 +2795,7 @@ def get_sync_startup_drain_day_close_before_ingest():
   """Block first ingest until startup day-close discover and deletes finish."""
   _ensure_cfg_loaded()
   return _parse_bool(
-      _pipeline_get("sync_startup_drain_day_close_before_ingest", fallback="yes"),
+      _pipeline_get("sync_startup_drain_day_close_before_ingest", fallback="no"),
   )
 
 

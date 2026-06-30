@@ -1343,3 +1343,21 @@ def test_reopen_done_manifest_pending_without_files_on_disk_unblocks_gate(
   )
   assert not state.blocks_startup_drain()
   assert spin is False
+
+
+def test_handoff_ingest_complete_triggers_delete_not_second_handoff(tmp_path):
+  """RC-I: stale done all-skipped reopens verify instead of silent done."""
+  day = datetime(2026, 6, 1)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive")
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["skipped_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+
+  assert state.stale_done_all_skipped_still_on_disk()
+  assert coord.reopen_done_days_with_verified_on_disk() == 1
+  assert state.phase() == PHASE_VERIFYING

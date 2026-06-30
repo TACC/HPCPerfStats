@@ -160,6 +160,40 @@ class _DayRawRemovalState:
   def delete_phase_done(self) -> bool:
     return self.phase() == PHASE_DONE
 
+  def stale_done_all_skipped_still_on_disk(self) -> bool:
+    """True when phase=done but verify skipped every on-disk path (RC-I census)."""
+    if self.phase() != PHASE_DONE:
+      return False
+    with self._lock:
+      verified_n = int(self._manifest.get("verified_count", 0))
+      entries = dict(self._manifest.get("entries", {}))
+    if verified_n > 0:
+      return False
+    for path, entry in entries.items():
+      if not isinstance(entry, dict):
+        continue
+      if not os.path.isfile(path):
+        continue
+      if entry.get("status") == "verified" and not entry.get("deleted"):
+        return True
+    return verified_n == 0 and bool(entries) and any(
+        os.path.isfile(path) for path in entries
+    )
+
+  def reopen_stale_done_all_skipped(self) -> bool:
+    if not self.stale_done_all_skipped_still_on_disk():
+      return False
+    with self._lock:
+      self._manifest["phase"] = PHASE_VERIFYING
+      _save_manifest(self._manifest_path, self._manifest)
+    if self.log_fn:
+      self.log_fn(
+          "Day raw removal reopen stale done (all skipped on disk) day=%s"
+          % self.day_date.isoformat(),
+          flush=True,
+      )
+    return True
+
   def _resolve_maintenance_snapshot(self) -> Any:
     if self.get_maintenance_snapshot is None:
       return None
@@ -622,6 +656,9 @@ class _DayRawRemovalState:
     return list(paths)
 
   def _mark_done_waiting_on_ingest(self) -> None:
+    handoff_paths = self.handoff_paths_for_ingest()
+    if not handoff_paths:
+      return
     retryable_count = 0
     with self._lock:
       entries = dict(self._manifest.get("entries", {}))
@@ -1203,6 +1240,8 @@ class DayRawRemovalCoordinator:
     for state in states:
       if state.reopen_delete_phase_if_verified_on_disk():
         reopened += 1
+      elif state.reopen_stale_done_all_skipped():
+        reopened += 1
     return reopened
 
   def advance_startup_drain_blockers(self) -> bool:
@@ -1346,6 +1385,22 @@ class DayRawRemovalCoordinator:
     if quarantine_root and path_norm.startswith(quarantine_root + os.sep):
       return True
     return False
+
+  def rescan_exclude_paths(self) -> Set[str]:
+    """Paths that must stay out of pending rescan during handoff/delete drain."""
+    excluded: Set[str] = set()
+    with self._days_lock:
+      tar_paths = list(self._days.keys())
+    for tar_norm in tar_paths:
+      state = self._get_or_create_day(tar_norm)
+      if not (
+          state.delete_phase_done()
+          or state.handoff_paths_for_ingest()
+          or state.should_handoff_day_close_to_ingest()
+      ):
+        continue
+      excluded.update(self.paths_for_closed_raw_handoff_requeue(tar_norm))
+    return excluded
 
   def paths_for_closed_raw_handoff_requeue(self, tar_path: str) -> List[str]:
     """Retryable/unmanifested closed raw only — not manifest-blocking verify paths."""

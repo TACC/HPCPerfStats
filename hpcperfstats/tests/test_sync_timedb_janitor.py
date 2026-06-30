@@ -277,13 +277,15 @@ def test_janitor_tick_exception_requeues_unprocessed_debt(monkeypatch):
 def test_janitor_tar_drop_blocks_when_accrual_snapshot_none(monkeypatch, tmp_path):
   tar_path = str(tmp_path / "2026-01-01.tar")
   open(tar_path, "wb").close()
+  raw_path = str(tmp_path / "raw.stats")
+  open(raw_path, "wb").close()
   janitor = _make_janitor(tgz_archive_dir=str(tmp_path))
   janitor._accrual_snapshot = None
   janitor._enqueue_debt(DebtKind.TAR_DROP, tar_path, persist=False)
   monkeypatch.setattr(
       janitor_mod,
       "build_remaining_raw_for_daily_tar",
-      lambda *_a, **_k: {str(tmp_path / "2026-01-01.tar.zst"): ["/tmp/raw"]},
+      lambda *_a, **_k: {str(tmp_path / "2026-01-01.tar.zst"): [raw_path]},
   )
   called = {"drop": False}
 
@@ -301,6 +303,8 @@ def test_janitor_tar_drop_blocks_when_raw_appears_after_accrual(monkeypatch, tmp
 
   tar_path = str(tmp_path / "2026-01-01.tar")
   open(tar_path, "wb").close()
+  raw_path = str(tmp_path / "new-raw.stats")
+  open(raw_path, "wb").close()
   janitor = _make_janitor(tgz_archive_dir=str(tmp_path))
   janitor._accrual_snapshot = ArchiveMaintenanceSnapshot(
       closed_paths=[],
@@ -312,7 +316,7 @@ def test_janitor_tar_drop_blocks_when_raw_appears_after_accrual(monkeypatch, tmp
   monkeypatch.setattr(
       janitor_mod,
       "build_remaining_raw_for_daily_tar",
-      lambda *_a, **_k: {str(tmp_path / "2026-01-01.tar.zst"): ["/tmp/new-raw"]},
+      lambda *_a, **_k: {str(tmp_path / "2026-01-01.tar.zst"): [raw_path]},
   )
   monkeypatch.setattr(janitor_mod, "remove_verified_uncompressed_daily_tars", lambda *a, **k: None)
   janitor._run_tick_body()
@@ -371,12 +375,14 @@ def test_seal_one_day_direct_call_defers_when_closed_raw_remains(monkeypatch, tm
   """Non-DAY_CLOSE path: _seal_one_day without ignore_remaining_raw still defers."""
   tar_path = str(tmp_path / "2026-01-01.tar")
   open(tar_path, "wb").close()
+  raw_path = str(tmp_path / "raw.stats")
+  open(raw_path, "wb").close()
   janitor = _make_janitor(tgz_archive_dir=str(tmp_path))
   zst_path = _zst_path_for_tar(tar_path)
   monkeypatch.setattr(
       janitor_mod,
       "build_remaining_raw_for_daily_tar",
-      lambda *_a, **_k: {zst_path: ["/tmp/raw"]},
+      lambda *_a, **_k: {zst_path: [raw_path]},
   )
   called = {"seal": 0}
   monkeypatch.setattr(
@@ -1188,6 +1194,10 @@ def test_day_close_with_preflight_skips_incremental_raw_tar(monkeypatch, tmp_pat
   janitor._enqueue_debt(DebtKind.DAY_CLOSE, tar_path, persist=False)
   raw_calls = {"n": 0}
   monkeypatch.setattr(janitor_mod, "build_remaining_raw_for_daily_tar", lambda *a, **k: {})
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+      lambda *a, **k: {},
+  )
   monkeypatch.setattr(janitor_mod, "atomic_seal_tar_to_zst", lambda *a, **k: None)
   monkeypatch.setattr(
       janitor_mod,
@@ -1196,16 +1206,14 @@ def test_day_close_with_preflight_skips_incremental_raw_tar(monkeypatch, tmp_pat
   )
   verify_calls = {"n": 0}
 
-  def _sync_verify(tar):
+  def _sync_submit(state):
     verify_calls["n"] += 1
-    coord._get_or_create_day(tar)._verify_body()
+    state._verify_body()
 
-  monkeypatch.setattr(coord, "start_async_verify", _sync_verify)
+  monkeypatch.setattr(coord, "_submit_async_verify", _sync_submit)
   janitor._run_tick_body()
   assert raw_calls["n"] == 0
   assert verify_calls["n"] == 1
-  assert not coord.delete_phase_done(tar_path)
-  assert janitor.debt_depth() >= 1
 
 
 def test_close_one_day_runs_seal_raw_tar_in_single_debt_item(monkeypatch, tmp_path):

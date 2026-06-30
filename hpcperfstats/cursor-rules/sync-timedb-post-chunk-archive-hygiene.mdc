@@ -8,7 +8,7 @@ globs: hpcperfstats/dbload/sync_timedb*.py
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-**Superseded by `sync-timedb-archive-janitor-contract.mdc`.** Post-chunk hygiene (`_schedule_post_chunk_hygiene` / `_run_post_chunk_hygiene_body`) was removed; chunk-end `archive_janitor.signal_work_available()` plus the janitor debt queue owns the same seal → raw → `.tar` order off the supervisor thread.
+**Superseded by `sync-timedb-archive-janitor-contract.mdc` (2026-06).** Post-chunk hygiene (`_schedule_post_chunk_hygiene` / `_run_post_chunk_hygiene_body`) was removed. Chunk-end work is **ingest-only** on MainThread (`_finalize_archive_slots_if_needed`, `signal_work_available`, non-blocking `_maybe_enqueue_immediate_day_close`). Seal → verify → delete → tar drop runs on the **archival thread** (`ArchiveJanitor._close_one_day`, drain-until-empty). Do **not** reintroduce `signal_scheduled_maintenance_pass` every N chunks or `run_supervisor_day_raw_removal_delete_pass` at chunk boundaries.
 
 The contracts below remain valid for **janitor ticks** and shared helpers. When changing cold-path behavior, edit `sync_timedb_archive_janitor.py` and preserve these invariants.
 
@@ -45,7 +45,7 @@ pending_append_by_daily_tar: dict[str, set[str]]  # daily_tar_path -> raw paths
 
 `build_seal_disqualified_daily_tars` unions, as normalized `YYYY-MM-DD.tar` paths:
 
-1. `pending_stats_files` mapped to daily tars (pending ingest).
+1. ~~`pending_stats_files` mapped to daily tars~~ — **removed** from seal disqualifiers (2026-06); use **`_janitor_delete_disqualified_daily_tars`** for delete overlap with pending ingest instead.
 2. `inflight_archive_paths` mapped to daily tars.
 3. Non-empty `pending_append_by_daily_tar` keys.
 4. In-flight `archive_job` daily tars.

@@ -168,6 +168,7 @@ class ArchiveJanitor:
       get_ingest_backlog_high: Callable[[], bool],
       get_pending_stats_count: Callable[[], int],
       get_idle_seconds: Callable[[], float],
+      get_delete_disqualified_daily_tars: Optional[Callable[[], Set[str]]] = None,
       get_quarantine_skip_paths: Optional[Callable[[], Set[str]]] = None,
       ingest_ready_fn=None,
       archive_stats_files_fn=None,
@@ -186,6 +187,9 @@ class ArchiveJanitor:
     self.local_tz = local_tz
     self.log_fn = log_fn
     self.get_disqualified_daily_tars = get_disqualified_daily_tars
+    self.get_delete_disqualified_daily_tars = (
+        get_delete_disqualified_daily_tars or get_disqualified_daily_tars
+    )
     self.get_ingest_backlog_high = get_ingest_backlog_high
     self.get_pending_stats_count = get_pending_stats_count
     self.get_idle_seconds = get_idle_seconds
@@ -1045,105 +1049,122 @@ class ArchiveJanitor:
       budget_s, max_days = self._effective_tick_limits()
       tick_t0 = time.time()
       maintenance_pass_s = 0.0
-      pass_reason = None
-      with self._maintenance_pass_lock:
-        pass_reason = self._pending_maintenance_pass_reason
-        self._pending_maintenance_pass_reason = None
-      if pass_reason:
-        maint_t0 = time.time()
-        self.run_scheduled_maintenance_pass(reason=pass_reason)
-        maintenance_pass_s = time.time() - maint_t0
-      debt_tick_t0 = time.time()
-      disqualified = set(self.get_disqualified_daily_tars())
-      self._consume_dedupe_hints(disqualified)
-      self._tick_remaining_raw_cache = {}
-      with self._debt_lock:
-        has_day_work = self._heap_has_day_close_work_locked()
-      if has_day_work:
-        removed = self._run_tick_lock_cleanup()
-        if removed:
-          self.log_fn(
-              "janitor: lock_cleanup removed=%d" % removed,
-              flush=True,
-          )
-      with self._debt_lock:
-        work_items = self._pop_eligible_debt_locked(disqualified, max_days)
-      debt_popped = len(work_items)
-      if not work_items:
-        self._ticks_completed += 1
-        self.log_fn(
-            "Archive janitor tick done days=0 debt_remaining=%d duration_s=%.3f "
-            "maintenance_pass_s=%.3f debt_popped=0 async_submitted=0 days_completed=0"
-            % (
-                self.debt_depth(),
-                time.time() - tick_t0,
-                maintenance_pass_s,
-            ),
-            flush=True,
-        )
-        return
-
-      validation_cache = {"hits": 0, "misses": 0}
-      with self._accrual_snapshot_lock:
-        snapshot = self._accrual_snapshot
       days_processed = 0
+      debt_popped = 0
       async_submitted = 0
-      tick_mutated = False
-
-      for i, debt in enumerate(work_items):
-        if time.time() - debt_tick_t0 >= budget_s:
-          self._budget_throttled_count += 1
-          self._requeue_unprocessed_work(work_items, i)
-          tick_mutated = True
-          if processed_index > 0:
-            tick_made_progress = True
+      drain_round = 0
+      while True:
+        drain_round += 1
+        pass_reason = None
+        if drain_round == 1:
+          with self._maintenance_pass_lock:
+            pass_reason = self._pending_maintenance_pass_reason
+            self._pending_maintenance_pass_reason = None
+        if pass_reason:
+          maint_t0 = time.time()
+          self.run_scheduled_maintenance_pass(reason=pass_reason)
+          maintenance_pass_s += time.time() - maint_t0
+        debt_tick_t0 = time.time()
+        disqualified = set(self.get_disqualified_daily_tars())
+        self._consume_dedupe_hints(disqualified)
+        self._tick_remaining_raw_cache = {}
+        with self._debt_lock:
+          has_day_work = self._heap_has_day_close_work_locked()
+        if has_day_work and drain_round == 1:
+          removed = self._run_tick_lock_cleanup()
+          if removed:
+            self.log_fn(
+                "janitor: lock_cleanup removed=%d" % removed,
+                flush=True,
+            )
+        with self._debt_lock:
+          work_items = self._pop_eligible_debt_locked(disqualified, max_days)
+        debt_popped = len(work_items)
+        if not work_items:
+          if drain_round == 1:
+            self._ticks_completed += 1
+            self.log_fn(
+                "Archive janitor tick done days=0 debt_remaining=%d duration_s=%.3f "
+                "maintenance_pass_s=%.3f debt_popped=0 async_submitted=0 days_completed=0"
+                % (
+                    self.debt_depth(),
+                    time.time() - tick_t0,
+                    maintenance_pass_s,
+                ),
+                flush=True,
+            )
           break
 
-        try:
-          disqualified = set(self.get_disqualified_daily_tars())
-          if debt.tar_path in disqualified:
-            self._enqueue_debt(debt.kind, debt.tar_path, persist=False)
-            continue
-          tick_stats = {"async_submitted": 0}
-          success = self._process_debt_item(
-              debt,
-              snapshot=snapshot,
-              validation_cache=validation_cache,
-              disqualified=disqualified,
-              tick_stats=tick_stats,
-          )
-          async_submitted += int(tick_stats.get("async_submitted") or 0)
-          processed_index = i + 1
-          tick_mutated = True
-          tick_made_progress = True
-          if success and debt.kind in (
-              DebtKind.DAY_CLOSE,
-              DebtKind.SEAL_PRIOR_DAY,
-              DebtKind.RAW_REMOVE,
-              DebtKind.VALIDATE,
-              DebtKind.TAR_DROP,
-          ):
-            days_processed += 1
-          disqualified = set(self.get_disqualified_daily_tars())
-        except Exception as exc:
-          self.log_fn(
-              "Archive janitor debt error kind=%s tar=%s: %s\n%s"
-              % (
-                  debt.kind.value,
-                  debt.tar_path,
-                  exc,
-                  traceback.format_exc(),
-              ),
-              flush=True,
-          )
-          self._requeue_unprocessed_work(work_items, i)
-          tick_mutated = True
-          if processed_index > 0:
-            tick_made_progress = True
-          break
+        validation_cache = {"hits": 0, "misses": 0}
+        with self._accrual_snapshot_lock:
+          snapshot = self._accrual_snapshot
+        days_processed = 0
+        async_submitted = 0
+        tick_mutated = False
 
-      if tick_mutated:
-        self._persist_hints()
+        for i, debt in enumerate(work_items):
+          if time.time() - debt_tick_t0 >= budget_s:
+            self._budget_throttled_count += 1
+            self._requeue_unprocessed_work(work_items, i)
+            tick_mutated = True
+            if processed_index > 0:
+              tick_made_progress = True
+            break
+
+          try:
+            disqualified = set(self.get_disqualified_daily_tars())
+            if debt.tar_path in disqualified:
+              self._enqueue_debt(debt.kind, debt.tar_path, persist=False)
+              continue
+            tick_stats = {"async_submitted": 0}
+            success = self._process_debt_item(
+                debt,
+                snapshot=snapshot,
+                validation_cache=validation_cache,
+                disqualified=disqualified,
+                tick_stats=tick_stats,
+            )
+            async_submitted += int(tick_stats.get("async_submitted") or 0)
+            processed_index = i + 1
+            if success:
+              tick_mutated = True
+              tick_made_progress = True
+              if debt.kind in (
+                  DebtKind.DAY_CLOSE,
+                  DebtKind.SEAL_PRIOR_DAY,
+                  DebtKind.RAW_REMOVE,
+                  DebtKind.VALIDATE,
+                  DebtKind.TAR_DROP,
+              ):
+                days_processed += 1
+            else:
+              self._persist_hints()
+              break
+            disqualified = set(self.get_disqualified_daily_tars())
+          except Exception as exc:
+            self.log_fn(
+                "Archive janitor debt error kind=%s tar=%s: %s\n%s"
+                % (
+                    debt.kind.value,
+                    debt.tar_path,
+                    exc,
+                    traceback.format_exc(),
+                ),
+                flush=True,
+            )
+            self._requeue_unprocessed_work(work_items, i)
+            tick_mutated = True
+            if processed_index > 0:
+              tick_made_progress = True
+            break
+
+        if tick_mutated:
+          self._persist_hints()
+
+        if self.debt_depth() == 0:
+          break
+        if time.time() - tick_t0 >= budget_s:
+          break
 
       self._ticks_completed += 1
       self.log_fn(
@@ -1447,18 +1468,35 @@ class ArchiveJanitor:
         return False
     if self._day_close_raw_removal_enabled():
       coord = self.day_raw_removal_coordinator
-      self.log_fn(
-          "janitor: day_close async_verify start tar=%s" % tar_norm,
-          flush=True,
-      )
-      coord.start_async_verify(tar_norm)
+      if not coord.verification_complete(tar_norm):
+        self.log_fn(
+            "janitor: day_close async_verify start tar=%s" % tar_norm,
+            flush=True,
+        )
+        coord.start_async_verify(tar_norm)
       if not coord.verification_complete(tar_norm):
         self._enqueue_day_close(tar_norm, persist=False)
         self._persist_hints()
         return False
+      delete_disqualified = set(self.get_delete_disqualified_daily_tars())
+      if tar_norm in delete_disqualified:
+        self._enqueue_day_close(tar_norm, persist=False)
+        self._persist_hints()
+        return False
+      coord.reopen_done_days_with_verified_on_disk()
+      if not coord.delete_phase_done(tar_norm):
+        coord.begin_deleting(tar_norm)
+        coord.apply_batch_delete(tar_norm)
       if coord.delete_phase_done(tar_norm):
-        with self._hints_state_lock:
-          self._day_phases[tar_norm] = day_phase_hint_entry(tar_norm, "tar_dropped")
+        if not self._day_phase_at_least(tar_norm, "tar_dropped"):
+          if not self._tar_drop_one_day(
+              tar_norm,
+              validation_cache,
+              disqualified,
+          ):
+            self._enqueue_day_close(tar_norm, persist=False)
+            self._persist_hints()
+            return False
         return True
       self._enqueue_day_close(tar_norm, persist=False)
       self._persist_hints()

@@ -42,6 +42,11 @@ class _FakeIngestPool:
     for path in chunk:
       yield (path, False)
 
+  def apply_async(self, fn, args=(), kwds=None):
+    del fn, kwds
+    path = args[0] if args else None
+    return _fake_map_async_result((path, False))
+
 
 class _FakeFailedIngestPool:
   def __enter__(self):
@@ -182,6 +187,8 @@ def _default_startup_daily_tar_count(monkeypatch):
       "wait_for_startup_maintenance_idle",
       _fast_wait_idle,
   )
+  # Host supervisor tests avoid DB; prewarm skip probes head_timestamp_present_in_db.
+  monkeypatch.setattr(st, "_paths_all_db_complete_for_prewarm_skip", lambda _paths: False)
 
 
 def test_periodic_maintenance_always_runs_gated_tar_removal(monkeypatch, tmp_path):
@@ -4547,6 +4554,11 @@ def test_supervisor_rescans_pending_after_startup_delete_complete(monkeypatch):
       return (path, True, True, 0.0)
 
     _supervisor_startup_preflight_patches(monkeypatch, preflight)
+    monkeypatch.setattr(
+        st.cfg,
+        "get_sync_startup_drain_day_close_before_ingest",
+        lambda: True,
+    )
 
     monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
     monkeypatch.setattr(st, "add_stats_file_to_db", fake_add)
@@ -9344,8 +9356,8 @@ def test_startup_handoff_no_giant_slice_manifest_done_0522(
       def discover_closed_raw_on_disk_handoffs(self):
         return [(tar_norm, [])]
 
-      def requeue_closed_raw_paths_for_ingest(self, tar_norm, *, reason):
-        del tar_norm
+      def requeue_closed_raw_paths_for_ingest(self, tar_norm, *, reason, paths=None):
+        del tar_norm, paths
         kick_calls.append(reason)
         return []
 
@@ -10045,3 +10057,39 @@ def test_handoff_light_when_drain_disabled(
     assert live_reconcile_calls["n"] == 0
   finally:
     shutdown_requested[0] = False
+
+
+def test_pipeline_complete_rescan_excludes_active_handoff_paths(tmp_path):
+  """RC-G: rescan exclude set includes coordinator handoff paths."""
+  from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
+      PHASE_DONE,
+      DayRawRemovalCoordinator,
+      _save_manifest,
+  )
+
+  seg = tmp_path / "host" / "1782242314"
+  seg.parent.mkdir(parents=True)
+  seg.write_text("1000 job cn001\n", encoding="utf-8")
+  tar_path = str(tmp_path / "daily" / "2026-06-01.tar")
+  os.makedirs(os.path.dirname(tar_path), exist_ok=True)
+  open(tar_path, "wb").close()
+  zst = str(tmp_path / "daily" / "2026-06-01.tar.zst")
+  open(zst, "wb").close()
+
+  coord = DayRawRemovalCoordinator(
+      archive_data_dir=str(tmp_path / "archive"),
+      host_name_ext=".hpc",
+      tgz_archive_dir=str(tmp_path / "daily"),
+      log_fn=None,
+      get_quarantine_skip_paths=lambda: set(),
+      ingest_ready_fn=lambda _p: False,
+  )
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive")
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["skipped_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+
+  excluded = coord.rescan_exclude_paths()
+  assert str(seg) in excluded

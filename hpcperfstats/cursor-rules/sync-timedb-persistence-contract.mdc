@@ -56,6 +56,10 @@ Increment `SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION` in the **same PR** as any c
 
 Add or extend `test_sync_timedb_persistence.py` and `test_sync_timedb_persistence_artifact_registry` drift guard.
 
+## Archival ground-truth (hints ≠ done)
+
+Persisted manifests and **`archive_maint_hints`** (`day_phases`, debt) are **hints only** at decision time. Seal eligibility, delete, tar-drop, and **`is_complete`** must re-check **disk + DB** predicates (`has_closed_raw_on_disk`, **`_day_close_filesystem_complete`**, **`remaining_raw_by_gz_has_paths_on_disk`**) — stale hint/manifest **`phase=done`** or **`tar_dropped`** must not skip work. **`reopen_stale_done_all_skipped`** / **`reopen_done_days_with_verified_on_disk`** downgrade hints when ground truth disagrees. See **`test_try_finish_tar_drop_manifest_done_stale_accrual`** and **`test_reopen_done_days_with_verified_on_disk_at_delete_pass_start`** in `test_sync_timedb_day_raw_removal.py`.
+
 ## Operator notes
 
 - Contract bump triggers one-time full reprocess on next startup (intentional); manual `.sync_*` delete is not required.

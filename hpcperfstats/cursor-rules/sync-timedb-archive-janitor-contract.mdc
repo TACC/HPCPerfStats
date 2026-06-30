@@ -10,11 +10,27 @@ globs: hpcperfstats/dbload/sync_timedb*.py
 
 `sync_timedb` separates **hot path** (supervisor: discover → ingest → dispatch append) from **cold path** (`ArchiveJanitor` thread: seal → validate → raw delete → `.tar` drop via day-debt micro-batches). Continuous ingest must not depend on idle windows or blocking supervisor maintenance.
 
+## Two-queue model (2026-06)
+
+| Queue | Thread | Owns |
+|---|---|---|
+| **Ingest** | MainThread + `ingest_pool` / `archive_pool` | Parse → DB → tar append dispatch; handoff requeue; non-blocking `submit_day_close` enqueue |
+| **Archival** | `ArchiveJanitor` + `AsyncDayCloseCoordinator` workers | Seal → verify → **batch delete** → tar drop; scheduled maintenance; drain-until-empty debt processing |
+
+**MainThread coordinator:** enqueue archival work (`signal_work_available`, `signal_scheduled_maintenance_pass`, `_maybe_enqueue_immediate_day_close`) — **never** block on seal/delete/day_close completion.
+
+**Chunk boundaries are ingest-only:** slot finalize, prewarm, ingest imap, archive append dispatch, pending rescan (with handoff exclusion), and non-blocking day_close **submit**. **Forbidden at chunk end:** `run_supervisor_day_raw_removal_delete_pass`, chunk-spinning `_maybe_handle_raw_removal_delete_phase`, `signal_scheduled_maintenance_pass(reason=every_n_chunks|ingest_queue_empty|day_ingest_complete:…)`, and inline `post_finalize_reconcile` (moved to **`_apply_archive_finalize_results`**). Regression: **`test_arch_supervisor_chunk_loop_does_not_call_apply_batch_delete`** in `test_sync_timedb_architecture_contract.py`.
+
+**Ingest-path tar append stays on `archive_pool`** (including decompress-for-append). Janitor does not replace append workers.
+
+See also **`sync-timedb-startup-day-close-contract.mdc`** (handoff, rescan exclusion, startup drain).
+
 ## Canonical modules
 
 | Concern | Location |
 |---|---|
 | Janitor thread, debt queue, ticks | `hpcperfstats/dbload/lib/sync_timedb_archive_janitor.py` → `ArchiveJanitor` |
+| Delete disqualification superset | `sync_timedb.py` → `_janitor_delete_disqualified_daily_tars` (seal disqualifiers + handoff + pending/inflight ingest for same calendar day) |
 | Multi-slot append dispatch | `hpcperfstats/dbload/lib/sync_timedb_archive_dispatch.py` → `ArchiveDispatchCoordinator` |
 | Hints v2 (`day_phases`, `debt_queue`) | `hpcperfstats/dbload/lib/sync_timedb_archive_maint.py` |
 | Per-day tar retention / seal calendar policy | `effective_keep_uncompressed_tar`, `daily_tar_seal_calendar_eligible` in `sync_timedb_archive_helpers.py` |
@@ -36,35 +52,37 @@ Verified paths pending delete are unioned into **`get_quarantine_skip_paths()`**
 
 Disable with **`sync_startup_raw_removal_preflight=no`**.
 
+When **`sync_startup_drain_day_close_before_ingest=yes`** (opt-in), startup delete may run via **`_maybe_handle_raw_removal_delete_phase`** inside the drain loop only — not the steady-state chunk loop.
+
 ## Supervisor hot-path rules
 
 - **Ingest order (oldest first):** `collect_stats_files_in_range` → `rescan_pending_stats_files` → `pending_stats_files` must be **oldest-first** (effective timestamp ascending: filename epoch when numeric, else mtime; `None` sort keys last). The supervisor ingests from the queue head (`pending_stats_files[:chunk_size]`). `cap_pending_stats_file_list` must retain the **oldest** `max_size` entries when truncating (drop newer paths). Do not reverse to newest-first without an explicit product decision and regression tests.
-- **No blocking maintenance** on the supervisor thread: do not reintroduce `_archive_maintenance_pipeline`, forced two-phase maintenance, or supervisor-driven seal/raw/`.tar` bursts.
-- **Startup (`startdate == 'all'` only):** `archive_janitor.enqueue_startup_debt()` signals janitor work only (no unparsable tree scan); `signal_scheduled_maintenance_pass(reason="startup")`; **`StartupRawRemovalPreflight.start_async_verify()`** and **`StartupDayClosePreflight.start_async_discover_and_close()`** start in parallel (optional via INI). When **`sync_startup_drain_day_close_before_ingest=yes`** (default), first ingest waits on startup day-close + deletion drain (see **`sync-timedb-startup-day-close-contract.mdc`**). Quiescent dirty `.tar` days (filesystem has no closed raw; stale checkpoint-unprocessed paths) are submitted via startup discover with `reason=startup_quiescent_tar`. Unparseable closed raw is quarantined at ingest parse failure (`quarantine_ingest_failed_raw_path`). Date-range runs without **`all`** skip this startup block; periodic janitor maintenance still runs.
-- **Every N chunks:** when `chunk_counter % rescan_every_chunks == 0` (default 10), call **`signal_scheduled_maintenance_pass(reason="every_n_chunks")`** (**light** pass only — no full-tree collect) and `signal_work_available()`.
-- **Ingest queue drain:** after a chunk that had pending files and leaves `pending_stats_files` empty, call **`signal_scheduled_maintenance_pass(reason="ingest_queue_empty")`** (**light** pass only; edge-triggered).
-- **Day ingest complete (heavy):** when a calendar day is **checkpoint-complete** (`build_unprocessed_raw_by_daily_tar` + pending augment shows no on-disk unprocessed paths for that daily `.tar`) and the pending queue has no remaining paths for that calendar day, supervisor signals **`reason=day_ingest_complete:<YYYY-MM-DD>`** (coalesced per chunk). Pending-queue drain alone must not trigger heavy passes while thousands of same-day files remain off-queue or uncheckpointed.
+- **No blocking maintenance** on the supervisor thread: do not reintroduce `_archive_maintenance_pipeline`, forced two-phase maintenance, supervisor-driven seal/raw/`.tar` bursts, or steady-state **`run_supervisor_day_raw_removal_delete_pass`** between chunks.
+- **Startup (`startdate == 'all'` only):** `archive_janitor.enqueue_startup_debt()` signals janitor work only (no unparsable tree scan); `signal_scheduled_maintenance_pass(reason="startup")`; **`StartupRawRemovalPreflight.start_async_verify()`** and **`StartupDayClosePreflight.start_async_discover_and_close()`** start in parallel (optional via INI). When **`sync_startup_drain_day_close_before_ingest=yes`** (opt-in; **default `no`**), first ingest waits on startup day-close + deletion drain (see **`sync-timedb-startup-day-close-contract.mdc`**). Quiescent dirty `.tar` days are submitted via startup discover with `reason=startup_quiescent_tar`. Unparseable closed raw is quarantined at ingest parse failure (`quarantine_ingest_failed_raw_path`). Date-range runs without **`all`** skip this startup block.
+- **Chunk end (ingest-only):** after each chunk — `_finalize_archive_slots_if_needed(context="end_of_batch")`, **`archive_janitor.signal_work_available()`**, **`_maybe_enqueue_immediate_day_close(context="chunk_end")`** (async submit only). Optional periodic **rescan** at `chunk_counter % rescan_every_chunks == 0` uses **`_rescan_processed_exclusions()`** — **does not** call `signal_scheduled_maintenance_pass` at chunk boundary.
+- **Idle / empty queue:** `signal_work_available()` when pending drains; `_maybe_enqueue_immediate_day_close(context="idle_finalize")` on rescan-with-no-work paths.
 - **`archive_maintenance_interval_seconds`:** deprecated and ignored; do not reintroduce interval accrual on the supervisor.
-- **Finalize:** `force=True` with `allow_defer=True` when backlog present; log `Archive finalize deferred` instead of blocking ingest.
+- **Finalize:** `force=True` with `allow_defer=True` when backlog present; log `Archive finalize deferred` instead of blocking ingest. **`post_finalize_reconcile`** runs inline in **`_apply_archive_finalize_results`** (not at chunk start).
 - **Shutdown:** `archive_janitor.shutdown(wait=True)` in supervisor `finally`.
 
 ## Day-close debt (disk-critical)
 
-Canonical per-calendar-day pipeline debt is **`DebtKind.DAY_CLOSE`**: one heap item runs seal → raw remove (bounded) → `.tar` drop for a single daily `.tar` within tick budget; partial progress re-enqueues `DAY_CLOSE`.
+Canonical per-calendar-day pipeline debt is **`DebtKind.DAY_CLOSE`**: one heap item runs seal → verify → **batch delete** (when preflight on) → `.tar` drop for a single daily `.tar` within tick budget; partial progress re-enqueues `DAY_CLOSE`.
 
 **Enqueue paths (oldest first where applicable):**
 
-- **Scheduled scan:** `run_scheduled_maintenance_pass` at supervisor **startup**, every **`rescan_every_chunks`** ingest chunks (default 10), and when the ingest queue **drains to zero** refreshes snapshot/hints, logs `classify_day_close_candidates`, and for `reason=startup|every_n_chunks|ingest_queue_empty` **submits async DAY_CLOSE** for **`eligible_deferred`** days via `_submit_scheduled_day_close_from_snapshot` (does **not** enqueue `DAY_CLOSE` debt on the janitor heap). Other maintenance reasons remain report-only. Startup discover (`StartupDayClosePreflight`) plus supervisor immediate hooks (`chunk_end`, `archive_finalize`, `idle_finalize`) and gated dedupe hints also submit async work.
-- **Calendar-day ingest drain (immediate):** supervisor `_maybe_enqueue_immediate_day_close` after **`chunk_end`** (post `end_of_batch` finalize), **`archive_finalize`**, and **`idle_finalize`**. Scans **all** checkpoint-complete calendar days oldest-first via **`days_ingest_complete_by_checkpoint`** with **`build_unprocessed_raw_by_daily_tar`** (reuses janitor **accrual snapshot** when set) — **not** limited to calendar days touched in the current chunk (`max_ingest_sort_epoch_by_tar`). Submits async **`DAY_CLOSE`** through **`AsyncDayCloseCoordinator`**; not blocked by unrelated `pending_stats_files` on other days. Per-chunk progress log when **`sync_day_close_candidate_report=yes`**: **`sync_timedb: checkpoint day-close progress oldest_days=…`**.
-- **Ingest-queue disqualification removed:** `pending_stats_paths` must **never** appear in `build_seal_disqualified_daily_tars`. Retained disqualifiers: inflight append, append cache, in-flight archive jobs, pending archive tasks, unmapped closed raw.
-- **Submit eligibility:** `daily_tar_eligible_for_day_close_submit` uses **`unprocessed_tar_paths_still_on_disk`** (not raw list length) for checkpoint-complete gating — aligned with quiescent startup and `calendar_days_checkpoint_ingest_complete`. `classify_day_close_candidates` reports on-disk counts; ghost list-only entries log **`checkpoint_unprocessed_ghosts`** when list length exceeds on-disk count.
-- **Oldest-day pending reconcile:** before each ingest chunk and after every pending rescan, supervisor prepends on-disk checkpoint-blocked paths for the **single oldest** calendar day via **`build_live_unprocessed_by_tar_for_reconcile`** + **`prepend_checkpoint_blocked_paths_to_pending`**. Snapshot precedence: **startup coordinator** (drain gate not cleared) → **janitor accrual** (`get_accrual_snapshot_for_reconcile` when `mapping` non-empty) → **live** `force_full_scan` fallback. Progress logs: **`pending reconcile cap begin source=coordinator|accrual|live`**, **`pending reconcile cap done elapsed_s=…`**. Failed chunk paths are re-prepended at queue head and host-dir scan hints invalidated so incremental rescans cannot skip them.
-- **Candidate report:** scheduled maintenance pass and startup discover log `classify_day_close_candidates` via `log_day_close_candidate_report` — **queued / waiting_on_ingest / eligible_deferred / disqualified**; silent `skipped_no_work`; no lines when all counts zero (`sync_day_close_candidate_report`, default yes). Queued rows with **`async_in_progress`** append async manifest **`async_last_progress`** / **`async_age_s`** via `AsyncDayCloseCoordinator.entry_progress_snapshot`.
-- **Async raw-removal wait:** after seal, `AsyncDayCloseCoordinator._run_day_close` polls `DayRawRemovalCoordinator.verification_complete` with bounded **`sync_day_close_raw_removal_wait_seconds`** (default 3600; 0 = unbounded). Stall logs every 60s; timeout → **`deferred`** / **`raw_removal_verify_timeout`**. On verify success → manifest **`raw_delete_pending`** (worker released). **`raw_delete_pending` is pipeline-in-flight:** `active_or_submitted_tar_paths` and `submit_day_close` single-flight include it until supervisor delete + `finalize_complete_if_filesystem` → **`complete`**; immediate/scheduled enqueue must not spawn a new async worker (no re-seal). Stale recovery applies only to **`submitted`/`sealing`/`raw_removal`**, not **`raw_delete_pending`**. One verify re-kick when `pipeline_future_done` but verify incomplete. Init **`sync_day_close_async_stale_seconds`** (default 7200) recovers stale manifest entries with no live future.
-- **Filesystem-truth manifest `complete`:** `AsyncDayCloseCoordinator.is_complete` / manifest **`status=complete`** require **`_day_close_filesystem_complete`** (sealed sibling present, no blocking closed raw, `.tar` dropped when policy requires). On coordinator init, **`_recover_stale_manifest_entries`** downgrades **`status=complete`** → **`deferred`** with **`detail=stale_complete_filesystem_mismatch`** when filesystem is incomplete (log **`janitor: async day_close stale complete downgraded`**). **`submit_day_close`** must not return success from manifest-only `complete` when filesystem is incomplete — eligibility and resubmit follow deferred state.
-- **Closed raw handoff vs `same_boot_duplicate`:** when **`daily_tar_eligible_for_day_close_submit`** skips for **`closed_raw_on_disk`**, janitor/supervisor call **`requeue_closed_raw_paths_for_ingest`**, which runs **handoff first** when **`paths_for_closed_raw_handoff_requeue`** (or precomputed discover paths) is non-empty; **`kick_closed_raw_unblock`** runs only when handoff paths are empty. Kick drives **ghost delete retry**, **pending delete reopen** (including **`VERIFICATION_COMPLETE`** with verified-not-deleted entries), or async verify when phase not done — **not** verify-only no-op at **`phase=done`**; returns **noop** when all blocking manifest paths are retryable skips (handoff requeue owns ingest).
-- **Ghost delete (manifest vs filesystem):** when **`phase=done`**, manifest entries with **`deleted=true`** + **`status=verified`** but path still on disk are **ghost deletes** — they must **not** block **`has_closed_raw_on_disk`** / DAY_CLOSE submit. **`needs_ghost_delete_retry`** reopens delete phase (clears **`deleted`**, sets **`phase=deleting`**, log **`Day raw removal ghost delete retry`**). Unmanifested closed raw on disk when **`phase=done`** still blocks submit until handoff re-ingest completes verify+delete.
-- **In-progress verify:** janitor re-enqueues `DAY_CLOSE` while async verify incomplete; delete tail runs on supervisor (ingest thread) via `apply_batch_delete`.
+- **Scheduled scan:** `run_scheduled_maintenance_pass` on the **janitor thread** when supervisor signals **`reason=startup`** at boot (heavy or adopt) or when maintenance was queued via **`signal_scheduled_maintenance_pass`** from non-chunk-boundary paths (e.g. **`archive_finalize_deferred`**). **No longer** triggered every N ingest chunks or on every ingest-queue drain at chunk boundary. Light passes refresh candidate report + submit **`eligible_deferred`** via `_submit_scheduled_day_close_from_snapshot`. Startup discover (`StartupDayClosePreflight`) plus supervisor immediate hooks (`chunk_end`, `archive_finalize`, `idle_finalize`) and gated dedupe hints also submit async work.
+- **Calendar-day ingest drain (immediate):** supervisor `_maybe_enqueue_immediate_day_close` after **`chunk_end`**, **`archive_finalize`** (inline reconcile first), and **`idle_finalize`**. Submits async **`DAY_CLOSE`** through **`AsyncDayCloseCoordinator`**; not blocked by unrelated `pending_stats_files` on other days.
+- **Seal disqualification:** `build_seal_disqualified_daily_tars` — inflight append, append cache, in-flight archive jobs, pending archive tasks, unmapped closed raw. **`pending_stats_paths` must never** appear in seal disqualifiers.
+- **Delete disqualification (strict superset):** `_janitor_delete_disqualified_daily_tars()` unions seal disqualifiers with daily `.tar` for any path in **`handoff_priority_paths`**, **`pending_stats_files`**, and active chunk in-flight paths for that calendar day. Janitor **`_close_one_day`** skips batch delete when `tar_norm ∈ delete_disqualified`; re-enqueues `DAY_CLOSE`.
+- **Submit eligibility:** `daily_tar_eligible_for_day_close_submit` uses **`unprocessed_tar_paths_still_on_disk`** for checkpoint-complete gating. Skip **`submit_day_close`** when **`is_complete(tar)`** and **`has_closed_raw_on_disk(tar)`** (RC-H).
+- **Oldest-day pending reconcile:** before each ingest chunk, supervisor prepends on-disk checkpoint-blocked paths for the **single oldest** calendar day. Snapshot precedence: startup coordinator → janitor accrual → live fallback.
+- **Async raw-removal wait:** after seal, async worker polls `verification_complete` with bounded **`sync_day_close_raw_removal_wait_seconds`**. On verify success → **`raw_delete_pending`** until janitor delete + filesystem complete.
+- **Filesystem-truth manifest `complete`:** `is_complete` / manifest **`status=complete`** require **`_day_close_filesystem_complete`**. Stale complete downgraded on init/recover.
+- **Closed raw handoff:** **`requeue_closed_raw_paths_for_ingest`** before kick; rescan uses **`rescan_exclude_paths()`** — see **`sync-timedb-startup-day-close-contract.mdc`**.
+- **Ghost delete / stale done:** **`reopen_done_days_with_verified_on_disk()`** and **`reopen_stale_done_all_skipped()`** on janitor tick before delete; manifest-fast **`phase=done`** with retryable skips on disk still handoffs via ingest.
+- **In-progress verify:** janitor re-enqueues `DAY_CLOSE` while async verify incomplete.
+- **Batch delete driver (preflight on):** **`ArchiveJanitor._close_one_day`** after `verification_complete` calls `begin_deleting` + `apply_batch_delete` when not delete-disqualified — **not** MainThread chunk loop. `on_pipeline_complete` / `finalize_complete_if_filesystem` drive rescan and async manifest completion.
 
 **Legacy hints/debt:** persisted `SEAL_PRIOR_DAY` / `RAW_REMOVE` / `TAR_DROP` for the same `tar_path` coalesce to one `DAY_CLOSE` on load and when popped for a tick.
 
@@ -75,50 +93,48 @@ This must **not** wait for an empty global ingest queue.
 - **`archive_keep_uncompressed_tar=no`** (default): prior-calendar-day `.tar` may be dropped at seal when closed raw is gone (`effective_keep_uncompressed_tar` → `atomic_seal_tar_to_zst` `keep_tar=False`).
 - **Calendar today:** do not **start** sealing until **`archive_today_uncompressed_tar_grace_hours`** (default **8**) after local midnight (`daily_tar_seal_calendar_eligible`). After seal, keep uncompressed `.tar` during the same grace window (`effective_keep_uncompressed_tar`) unless global keep is `yes`.
 - **`archive_keep_uncompressed_tar=yes`:** always retain `.tar` until explicit `TAR_DROP` / day-close tail.
-- **Ghost `remaining_raw_by_gz` gate:** **`daily_gz_has_remaining_raw_stats`** delegates to **`remaining_raw_by_gz_has_paths_on_disk`** (disk-truth for seal, scheduling, and tar-drop gates). `remove_verified_uncompressed_daily_tars` and async day-close tail paths use the same disk-truth rule — ghost list entries after raw delete must not stall `raw_delete_pending` days.
-- **Immediate day-close inflight:** supervisor **`_maybe_enqueue_immediate_day_close`** respects **`sync_day_close_max_inflight`** the same way scheduled maintenance submit does (break when `active_or_submitted_tar_paths()` ≥ cap).
+- **Ghost `remaining_raw_by_gz` gate:** **`daily_gz_has_remaining_raw_stats`** / **`remaining_raw_by_gz_has_paths_on_disk`** — disk-truth for seal, scheduling, tar-drop, and **`day_phases`** hints. Hint `tar_dropped` / manifest `phase=done` must not skip disk predicate (RC-L).
+- **Immediate day-close inflight:** respects **`sync_day_close_max_inflight`** same as scheduled submit.
 
-- **Tick chaining:** when a tick made progress (`tick_made_progress`: processed at least one debt item or hit budget break after partial progress) and `debt_depth() > 0` afterward, `_run_tick_body` `finally` sets `_pending_signal` and schedules the next tick immediately. **Do not** chain on empty `work_items` or when every popped item was only re-queued mid-tick due to disqualification (avoids busy spin). RSS defer and existing `_pending_signal` paths unchanged.
-- **Maintenance vs debt budget:** `run_scheduled_maintenance_pass` (snapshot + candidate report only) runs **before** `debt_tick_t0`; **`archive_janitor_budget_seconds`** applies only to the debt loop after maintenance. Tick summary logs `maintenance_pass_s`, `debt_popped`, `async_submitted`, `days_completed`.
-- **`archive_janitor_budget_seconds`** / **`archive_janitor_days_per_tick`** gate **starting the next calendar day** between debt items, not mid-seal abort. Large ingest backlog still shrinks slices via `sync_dispatch_archive_backoff_ratio`; chaining keeps execution continuous.
+## Janitor tick (`ArchiveJanitor._run_tick_body`)
+
+- **Drain-until-empty:** within one `signal_work_available` wake, loop pop → process debt until heap empty or **`archive_janitor_budget_seconds`** exceeded (replaces one-tick-per-signal as primary progress model). Regression: **`test_arch_janitor_drains_multiple_enqueued_jobs_per_wake`** (planned/extend janitor tests).
+- **Tick chaining:** when budget breaks mid-drain with `debt_depth() > 0`, `_pending_signal` schedules follow-up tick (unchanged safety valve).
+- **Maintenance vs debt budget:** `run_scheduled_maintenance_pass` runs before debt loop on first drain round; budget applies to debt items only.
 - Single-flight `ThreadPoolExecutor(max_workers=1)`; thread title `sync_timedb.py [thread:archive-janitor]`.
 - Guard `_debt_heap` / `_debt_seen` with `_debt_lock`; accrual and ticks share the same lock.
-- Per tick: RSS pre-check (reschedule only at outermost tick depth) → pop ≤ `archive_janitor_days_per_tick` **distinct calendar days** (`tar_path` values, not raw heap entry count) within `archive_janitor_budget_seconds` → `DAY_CLOSE` (or maintenance debt kinds) per item.
-- **Mid-tick disqualification:** recompute `get_disqualified_daily_tars()` immediately before each debt item; skip and re-enqueue when the day became hot. Pass the tick snapshot into **`submit_day_close(..., disqualified_daily_tars=)`** (same contract as startup day-close slices) so the async coordinator does not recompute disqualifiers while holding **`AsyncDayCloseCoordinator._lock`**.
-- **Post-seal cleanup (`sync_day_close_raw_removal_preflight=yes`, default):** after seal, async worker calls `DayRawRemovalCoordinator.start_async_verify` (verify on background thread). Supervisor **`_maybe_handle_raw_removal_delete_phase`** applies batched deletes at chunk boundaries (startup manifest first, then per-day manifests oldest-first; skip stuck day for that batch). Janitor does **not** run incremental `_raw_remove_one_day` / `_tar_drop_one_day` when preflight is on. `on_pipeline_complete` / `finalize_complete_if_filesystem` drive rescan and async manifest completion. Manifests under `{archive_data_dir}/.sync_timedb_day_raw_removal/`. When preflight is **off**, incremental janitor raw/tar ticks remain the path.
-- **RAW remove inside `DAY_CLOSE` (preflight off):** `maintenance_snapshot=None`; `allow_auto_seal=False`; `max_deletes_per_pass` from `archive_janitor_raw_paths_per_tick`.
-- **Hints:** guard `_validated_days` / `_day_phases` with `_hints_state_lock`; defer paths call `_persist_hints` before tick end.
-- **Budget/exception:** re-queue **all** unprocessed popped debt; never drop tail debt on budget break or tick exception.
+- Per tick: RSS pre-check → pop ≤ `archive_janitor_days_per_tick` distinct calendar days within budget → `DAY_CLOSE` per item.
+- **Mid-tick disqualification:** recompute **`get_disqualified_daily_tars()`** (seal) before each debt item; use **`get_delete_disqualified_daily_tars()`** for delete decisions inside **`_close_one_day`**.
+- **Post-seal cleanup (`sync_day_close_raw_removal_preflight=yes`, default):** after seal, async verify then **janitor** `begin_deleting` + `apply_batch_delete` in **`_close_one_day`** when verify complete and not delete-disqualified. Steady-state supervisor **does not** call **`run_supervisor_day_raw_removal_delete_pass`**. When preflight is **off**, incremental `_raw_remove_one_day` / `_tar_drop_one_day` remain on janitor path.
+- **Hints:** guard `_validated_days` / `_day_phases` with `_hints_state_lock`; set **`day_phases`** only when disk predicate passes for that step.
+- **Budget/exception:** re-queue all unprocessed popped debt; never drop tail debt on budget break or tick exception.
 - **Fresh per-day raw:** `build_remaining_raw_for_daily_tar` before seal deferral and `TAR_DROP`.
-- **Async DAY_CLOSE (default):** when `AsyncDayCloseCoordinator` is wired, janitor `DAY_CLOSE` **submits** to the coordinator only — **no synchronous zstd** on the janitor thread. `is_complete` / `complete` require filesystem truth (no closed raw, `.tar` dropped). Re-enqueue debt until manifest `complete` and `day_phases` reaches `tar_dropped`. Fallback `_close_one_day` remains when coordinator is absent (tests/tooling).
-- **Seal (async worker / legacy sync):** seal with `ignore_remaining_raw=True` when checkpoint-complete; raw remove via `DayRawRemovalCoordinator` then tar drop. Pass `effective_keep_uncompressed_tar` into `atomic_seal_tar_to_zst`. Successful seal must call `invalidate_daily_archive_members_cache`. Raw-removal verify uses Redis coordinated sealed read when L2 enabled (see **`sync-timedb-ingest-pool-io-coordination.mdc`**).
-- **day_phases:** set only on verified success (sealed, raw gone, tar dropped).
-- **Full** `build_archive_maintenance_snapshot` on **heavy** maintenance passes only (**`reason=startup`** with coordinator adopt when already published; **`reason=day_ingest_complete:<YYYY-MM-DD>`**), not every tick and not on **`every_n_chunks`** / **`ingest_queue_empty`** (those run **light** passes from existing accrual).
-- **Lock cleanup:** per janitor tick with day-pipeline debt, **manifest-dir orphan** cleanup only (`cleanup_orphan_fnctl_lock_sidecars` on `.sync_timedb_day_raw_removal/`). **Heavy maintenance passes** with **`reason=startup`**: manifest-dir orphan cleanup only (same as per-tick — no full `os.walk` of archive/daily dirs on boot critical path). **Non-startup heavy passes** run **`cleanup_stale_fnctl_lock_sidecars`** on archive + daily dirs. Log **`janitor: heavy maintenance sub_phases`** with **`remaining_map_s`**, **`candidate_report_s`**, **`scheduled_submit_s`**, **`trim_s`**, **`lock_cleanup_s`**, **`maintenance_pass_s`**. Cache **`get_day_close_candidate_inputs()`** for one heavy pass (no repeated live scans during scheduled submit).
-- **Dedupe:** `_consume_dedupe_hints` on each tick calls **`_submit_eligible_async_day_close`** when Redis `dedupe_hint` is set (from ingest member-cache populate) and submit eligibility passes — async submit, not debt-heap `DAY_CLOSE`. Inline in `_close_one_day` before `_seal_one_day`: `.tar` → `dedupe_tar_keep_largest_file_per_member`; sealed-only → `dedupe_sealed_daily_archive` last resort. Clear hint after successful re-seal; invalidate L1 + Redis members keys.
-- Persist hints after progress; trim heap to `archive_janitor_debt_max_entries` before persist.
+- **Async DAY_CLOSE (default):** janitor `DAY_CLOSE` **submits** to coordinator — no synchronous zstd on janitor thread. Re-enqueue until filesystem complete.
+- **Full** `build_archive_maintenance_snapshot` on **heavy** passes only (`reason=startup`, `reason=day_ingest_complete:<date>` when explicitly signaled — not from chunk boundary).
+- **Lock cleanup:** per tick with day-pipeline debt — manifest-dir orphan cleanup only on startup heavy pass; non-startup heavy passes run stale lock cleanup on archive + daily dirs.
+- **Dedupe:** `_consume_dedupe_hints` + inline dedupe before seal; invalidate L1 + Redis on mutation.
 - `close_old_connections()` at tick entry and in `finally`.
 
 ## Scheduled maintenance pass
 
-- **Supervisor signals only:** `signal_scheduled_maintenance_pass(reason)` sets a pending flag and `signal_work_available()`; no snapshot on the supervisor thread. Heavy reasons replace a pending light reason; light never replaces heavy.
-- **Janitor thread:** `run_scheduled_maintenance_pass` dispatches **`run_heavy_maintenance_pass`** (full collect or startup coordinator adopt) or **`run_light_maintenance_pass`** (candidate report + async submit from existing accrual; no tree walk).
-- **Heavy triggers:** `reason=startup` at process start (adopt coordinator snapshot when already published — never a second full collect); `reason=day_ingest_complete:<YYYY-MM-DD>` when supervisor detects checkpoint-complete ingest for that calendar day (same contract as immediate `DAY_CLOSE` submit). **`day_ingest_complete` heavy passes adopt existing accrual** when mapping/closed_paths present; full collect only when accrual absent.
-- **Heavy defer:** `run_heavy_maintenance_pass` re-queues when **`get_chunk_in_progress()`** or **`get_ingest_pool_in_flight_count()`** > 0.
-- **Light triggers:** `reason=every_n_chunks`; `reason=ingest_queue_empty` when a chunk drains `pending_stats_files` to zero.
-- **Legacy debt:** `LOCK_CLEANUP` / `DEDUPE` hint rows are dropped on load; lock cleanup and dedupe run inline (per-tick / per-day) instead of separate heap kinds.
-- **Burst:** when `debt_depth >= archive_janitor_debt_high_watermark`, scale budget/days by `archive_janitor_debt_burst_factor`.
-- **Idle bonus (optional):** 2× budget when queue empty for `archive_maintenance_idle_seconds`.
+- **Supervisor signals only:** `signal_scheduled_maintenance_pass(reason)` sets pending flag and `signal_work_available()`; no snapshot on MainThread.
+- **Janitor thread:** `run_scheduled_maintenance_pass` → heavy or light pass.
+- **Heavy triggers:** `reason=startup`; `reason=day_ingest_complete:<YYYY-MM-DD>` when explicitly queued (not from per-chunk supervisor hook after 2026-06 refactor).
+- **Heavy defer:** re-queues when chunk in progress or ingest pool in-flight > 0.
+- **Light triggers:** `reason=archive_finalize_deferred` and other enqueue-only reasons — **not** `every_n_chunks` / `ingest_queue_empty` at chunk boundary.
+- **Burst / idle bonus:** unchanged (`archive_janitor_debt_high_watermark`, `archive_maintenance_idle_seconds`).
 
 ## Forbidden patterns
 
-- Blocking supervisor seal/raw/`.tar` maintenance.
+- Blocking supervisor seal/raw/`.tar` maintenance or steady-state **`run_supervisor_day_raw_removal_delete_pass`** in the chunk loop.
+- **`signal_scheduled_maintenance_pass`** every N chunks or on every chunk-end queue drain (archival scheduling belongs to enqueue + janitor drain).
 - Treating `pending_stats_files == 0` as the **only** path to enqueue day-close debt during multi-week backlog.
 - Enqueuing three separate `SEAL`/`RAW`/`TAR` debts per day in new code (use `DAY_CLOSE`).
-- Interpreting `archive_janitor_days_per_tick` as heap entry count rather than distinct calendar days.
+- Delete for a calendar day while **`handoff_priority_paths`** or same-day pending/inflight ingest overlap (**`delete_disqualified`** must block).
+- Marking manifest **`phase=done`** or hint **`tar_dropped`** when verified/skipped paths or `.tar` still exist on disk without reopen (RC-I/L).
 - Silent debt drop at `archive_janitor_debt_max_entries`.
 - Dropping unprocessed debt on budget expiry or tick exception.
-- `TAR_DROP` / day-close tail with stale `remaining_raw_by_gz=None` when closed raw may exist on disk.
+- `TAR_DROP` / day-close tail with stale `remaining_raw_by_gz` when closed raw may exist on disk.
 
 ## Append dispatch
 
@@ -134,16 +150,15 @@ This must **not** wait for an empty global ingest queue.
 
 ## Tests
 
-- `hpcperfstats/tests/test_sync_timedb_janitor.py` (`DAY_CLOSE`, days-per-tick calendar cap, day-drain, defer persist, partial raw ticks, `enqueue_immediate_day_close*`, tick chaining)
-- `hpcperfstats/tests/test_sync_timedb_hints.py`
-- `hpcperfstats/tests/test_sync_timedb_archive_dispatch.py`
-- `hpcperfstats/tests/test_sync_timedb_supervisor.py` (immediate day-close on calendar-day drain, mid-day negative, ≤1-batch latency, every-batch check, startup coexistence, boundary-finalize ordering, idle_finalize; oldest-first ingest order; startup preflight delete gate + post-delete rescan)
-- `hpcperfstats/tests/test_sync_timedb_startup_raw_removal.py` (async verify manifest, sealed-only skip, DB gate, gated delete)
-- `hpcperfstats/tests/test_sync_timedb_day_raw_removal.py` (per-day verify manifest, batch delete, async verify, ghost delete retry, unmanifested closed raw gate)
-- `hpcperfstats/tests/test_sync_timedb_async_day_close.py` (stale manifest complete downgrade, submit resubmit when fs incomplete)
-- `hpcperfstats/tests/test_sync_timedb_archive.py` (`stats_path_ingest_sort_epoch`, `ingest_stream_past_calendar_day`, `find_immediate_day_close_candidates`, `effective_keep_uncompressed_tar`, `daily_tar_seal_calendar_eligible`, `raw_stats_path_needs_tar_append`, seal drop-at-seal)
+- `hpcperfstats/tests/test_sync_timedb_architecture_contract.py` — **`test_arch_*`**: two-queue, chunk-boundary ingest-only, startup drain default, rescan exclusion, janitor-only delete (`test_arch_supervisor_chunk_loop_does_not_call_apply_batch_delete`, `test_arch_rescan_exclude_paths_covers_handoff_retryable`, `test_arch_ingest_begins_without_startup_maintenance_idle_block`)
+- `hpcperfstats/tests/test_sync_timedb_janitor.py` (`DAY_CLOSE`, tar-drop disk-truth, drain rounds, defer persist)
+- `hpcperfstats/tests/test_sync_timedb_supervisor.py` (handoff, archive_finalize defer, post_finalize inline, rescan exclusion — `test_pipeline_complete_rescan_excludes_active_handoff_paths`)
+- `hpcperfstats/tests/test_sync_timedb_day_raw_removal.py` (`reopen_stale_done_all_skipped`, ghost delete, manifest-fast handoff — `test_handoff_ingest_complete_triggers_delete_not_second_handoff`)
+- `hpcperfstats/tests/test_sync_timedb_async_day_close.py` (stale manifest complete downgrade)
+- `hpcperfstats/tests/test_sync_timedb_archive.py` (seal/disqualify helpers)
+- Regression battery: `test_runs/day-close-loop-regression-battery-*.log` (82 tests, handoff/archive_finalize/rescan keywords)
 
 ## Overlap
 
-- Replaces supervisor-driven hygiene in **`sync-timedb-post-chunk-archive-hygiene.mdc`** (historical).
-- Complements **`sync-timedb-lock-and-archive-contract.mdc`**, **`sync-timedb-db-before-archive-contract.mdc`**, **`runtime-resource-and-metrics-safety.mdc`**, **`process-title-and-pool-labels.mdc`**.
+- **Supersedes** supervisor chunk-boundary hygiene in **`sync-timedb-post-chunk-archive-hygiene.mdc`** (historical `_schedule_post_chunk_hygiene` removed).
+- Complements **`sync-timedb-startup-day-close-contract.mdc`**, **`sync-timedb-lock-and-archive-contract.mdc`**, **`sync-timedb-db-before-archive-contract.mdc`**, **`runtime-resource-and-metrics-safety.mdc`**, **`process-title-and-pool-labels.mdc`**.

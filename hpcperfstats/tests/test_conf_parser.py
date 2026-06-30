@@ -1304,7 +1304,7 @@ def test_archive_janitor_and_dispatch_defaults(temp_ini, monkeypatch):
   assert cfg.get_sync_startup_raw_removal_verify_budget_seconds() == 60.0
   assert cfg.get_sync_startup_raw_removal_verify_days_per_slice() == 5
   assert cfg.get_sync_startup_raw_removal_max_deletes_per_pass() == 0
-  assert cfg.get_sync_startup_drain_day_close_before_ingest() is True
+  assert cfg.get_sync_startup_drain_day_close_before_ingest() is False
   assert cfg.get_sync_day_close_candidate_report() is True
   assert cfg.get_sync_startup_day_close_preflight() is True
   assert cfg.get_sync_startup_day_close_budget_seconds() == 300.0
