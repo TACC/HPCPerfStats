@@ -4418,6 +4418,8 @@ def run_sync_timedb_supervisor_loop(
       "get_accrual_snapshot": lambda: None,
       "warned_live_reconcile_fallback": False,
       "last_unprocessed_by_tar": None,
+      "oldest_day_gate_stall_blocked_n": None,
+      "last_cap_pending_monotonic": 0.0,
   }
 
   def _resolve_reconcile_maintenance_snapshot(*, prefer_startup=False):
@@ -4596,15 +4598,51 @@ def run_sync_timedb_supervisor_loop(
           flush=True,
       )
       return capped
-    log_print(
-        "sync_timedb: pending reconcile cap begin source=%s" % source,
-        flush=True,
-    )
+    stall_blocked_n = reconcile_refs.get("oldest_day_gate_stall_blocked_n")
+    cached_unprocessed = reconcile_refs.get("last_unprocessed_by_tar")
+    mono_now = time.monotonic()
+    last_cap_mono = float(reconcile_refs.get("last_cap_pending_monotonic", 0.0))
+    if (
+        stall_blocked_n
+        and stall_blocked_n > 0
+        and cached_unprocessed is not None
+        and mono_now - last_cap_mono < 60.0
+    ):
+      tar_norm_cached = oldest_checkpoint_blocked_tar(
+          cached_unprocessed,
+          tgz_archive_dir=tgz_archive_dir,
+      )
+      blocked_cached = (
+          _checkpoint_unblocked_paths_for_tar(
+              cached_unprocessed,
+              tar_norm_cached,
+          )
+          if tar_norm_cached
+          else []
+      )
+      if len(blocked_cached) == stall_blocked_n:
+        log_print(
+            "sync_timedb: pending reconcile cap skipped "
+            "reason=oldest_day_gate_stall_unchanged oldest_tar=%s blocked_n=%d"
+            % (tar_norm_cached or "", len(blocked_cached)),
+            flush=True,
+        )
+        unprocessed = cached_unprocessed
+      else:
+        unprocessed = None
+    else:
+      unprocessed = None
+    if unprocessed is None:
+      log_print(
+          "sync_timedb: pending reconcile cap begin source=%s" % source,
+          flush=True,
+      )
+      unprocessed = _live_unprocessed_by_tar_for_reconcile()
+      reconcile_refs["last_unprocessed_by_tar"] = unprocessed
+      reconcile_refs["last_cap_pending_monotonic"] = mono_now
     disk_checkpoint_paths = load_checkpoint_path_set(checkpoint_path)
     merged_checkpoint_paths = _reconcile_checkpoint_paths()
     memory_extra_n = len(merged_checkpoint_paths - disk_checkpoint_paths)
-    unprocessed = _live_unprocessed_by_tar_for_reconcile()
-    reconcile_refs["last_unprocessed_by_tar"] = unprocessed
     tar_norm = oldest_checkpoint_blocked_tar(
         unprocessed, tgz_archive_dir=tgz_archive_dir)
     blocked = (
@@ -6472,6 +6510,7 @@ def run_sync_timedb_supervisor_loop(
                   blocked_paths,
               )
               if reclaimed:
+                reconcile_refs["oldest_day_gate_stall_blocked_n"] = None
                 reconcile_refs["last_unprocessed_by_tar"] = None
                 _reconcile_pending_with_oldest_checkpoint_blocked()
                 _finalize_archive_slots_if_needed(
@@ -6480,6 +6519,7 @@ def run_sync_timedb_supervisor_loop(
                     context="oldest_day_gate_wait",
                 )
                 continue
+              reconcile_refs["oldest_day_gate_stall_blocked_n"] = blocked_n
               now = time.time()
               if now - oldest_day_chunk_gate_stall_last_log >= 30.0:
                 oldest_day_chunk_gate_stall_last_log = now
@@ -6497,22 +6537,43 @@ def run_sync_timedb_supervisor_loop(
                         tgz_archive_dir,
                     )
                 )
+                blocked_in_pending_n = sum(
+                    1
+                    for path in blocked_on_disk_stall
+                    if path in pending_paths_before_chunk
+                )
+                cross_day_mismatch_n = sum(
+                    1
+                    for path in blocked_on_disk_stall
+                    if oldest_tar_for_chunk not in daily_tar_paths_for_stats_paths(
+                        [path],
+                        tgz_archive_dir,
+                    )
+                )
                 stall_detail = (
                     "blocked_not_in_pending"
                     if pending_oldest_n == 0
                     else "pending_filter_empty"
                 )
+                if cross_day_mismatch_n:
+                  stall_detail = "cross_day_bucket"
                 log_print(
                     "sync_timedb: oldest_day_chunk_gate_stall oldest_tar=%s "
                     "blocked_n=%d blocked_in_pending_n=%d inflight_oldest_n=%d "
-                    "pending_oldest_n=%d fallback_n=%d detail=%s"
+                    "pending_oldest_n=%d fallback_n=%d cross_day_mismatch_n=%d "
+                    "calendar_tar_histogram=%s detail=%s"
                     % (
                         oldest_tar_for_chunk,
                         blocked_n,
-                        pending_oldest_n,
+                        blocked_in_pending_n,
                         handoff_inflight_n,
                         pending_oldest_n,
                         fallback_n,
+                        cross_day_mismatch_n,
+                        build_chunk_day_histogram(
+                            blocked_on_disk_stall,
+                            tgz_archive_dir,
+                        ),
                         stall_detail,
                     ),
                     flush=True,
@@ -6524,6 +6585,7 @@ def run_sync_timedb_supervisor_loop(
             )
           continue
 
+        reconcile_refs["oldest_day_gate_stall_blocked_n"] = None
         chunk_in_progress = True
         successful_paths, files_to_be_archived, active_workers, k = (
             _ingest_explicit_path_batch(

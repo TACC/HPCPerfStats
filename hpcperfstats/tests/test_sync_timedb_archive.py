@@ -6736,6 +6736,116 @@ def test_reconcile_orphan_inflight_skips_active_archive_job(tmp_path):
   assert reclaimed == []
 
 
+def test_reconcile_orphan_inflight_reclaims_cross_day_bucket_mismatch(tmp_path):
+  """Cross-day bucket blocked paths in inflight are reclaimed without archive job."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      reconcile_orphan_inflight_for_oldest_tar,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  d2 = datetime(2020, 1, 2, 12, tzinfo=timezone.utc)
+  tar_a = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+  tar_b = os.path.normpath(str(daily_dir / "2020-01-02.tar"))
+  open(tar_a, "wb").close()
+  open(tar_b, "wb").close()
+  path_obj = tmp_path / "cross_day_blocked"
+  path_obj.write_text("1000 job cn001\n")
+  os.utime(path_obj, (d2.timestamp(), d2.timestamp()))
+  path = str(path_obj)
+  logs = []
+  reclaimed = reconcile_orphan_inflight_for_oldest_tar(
+      oldest_tar=tar_a,
+      blocked_paths=[path],
+      inflight_archive_paths={path},
+      pending_append_by_daily_tar={},
+      in_flight_archive_tars=set(),
+      tgz_archive_dir=str(daily_dir),
+      reclaim_throttle_s=0.0,
+      log_fn=lambda msg, **kwargs: logs.append(str(msg)),
+  )
+  assert reclaimed == [path]
+  assert any("cross_day_n=1" in line for line in logs)
+  assert any("detail=cross_day_bucket" in line for line in logs)
+
+
+def test_reconcile_orphan_inflight_skips_cross_day_when_calendar_tar_active(
+    tmp_path,
+):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      reconcile_orphan_inflight_for_oldest_tar,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  d2 = datetime(2020, 1, 2, 12, tzinfo=timezone.utc)
+  tar_a = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+  tar_b = os.path.normpath(str(daily_dir / "2020-01-02.tar"))
+  open(tar_a, "wb").close()
+  open(tar_b, "wb").close()
+  path_obj = tmp_path / "cross_day_blocked"
+  path_obj.write_text("1000 job cn001\n")
+  os.utime(path_obj, (d2.timestamp(), d2.timestamp()))
+  path = str(path_obj)
+  reclaimed = reconcile_orphan_inflight_for_oldest_tar(
+      oldest_tar=tar_a,
+      blocked_paths=[path],
+      inflight_archive_paths={path},
+      pending_append_by_daily_tar={},
+      in_flight_archive_tars={tar_b},
+      tgz_archive_dir=str(daily_dir),
+      reclaim_throttle_s=0.0,
+  )
+  assert reclaimed == []
+
+
+def test_select_ingest_chunk_paths_cross_day_inflight_returns_chunk_after_reclaim(
+    tmp_path,
+):
+  """Fallback chunk is empty while cross-day path is inflight; non-empty after reclaim."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      select_ingest_chunk_paths,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  d2 = datetime(2020, 1, 2, 12, tzinfo=timezone.utc)
+  tar_a = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+  tar_b = os.path.normpath(str(daily_dir / "2020-01-02.tar"))
+  open(tar_a, "wb").close()
+  open(tar_b, "wb").close()
+  blocked_obj = tmp_path / "cross_day_blocked"
+  tail_obj = tmp_path / "tail"
+  blocked_obj.write_text("1000 job cn001\n")
+  tail_obj.write_text("2000 job cn002\n")
+  os.utime(blocked_obj, (d2.timestamp(), d2.timestamp()))
+  os.utime(tail_obj, (d2.timestamp(), d2.timestamp()))
+  blocked = str(blocked_obj)
+  unprocessed = {tar_a: [blocked]}
+  pending = [str(tail_obj)]
+  inflight = {blocked}
+  empty_chunk = select_ingest_chunk_paths(
+      pending,
+      oldest_tar=tar_a,
+      unprocessed_by_tar=unprocessed,
+      inflight_archive_paths=inflight,
+      tgz_archive_dir=str(daily_dir),
+      chunk_size=10,
+      ingest_queue_high=10,
+  )
+  assert empty_chunk == []
+  after_reclaim = select_ingest_chunk_paths(
+      pending,
+      oldest_tar=tar_a,
+      unprocessed_by_tar=unprocessed,
+      inflight_archive_paths=set(),
+      tgz_archive_dir=str(daily_dir),
+      chunk_size=10,
+      ingest_queue_high=10,
+  )
+  assert after_reclaim == [blocked]
+
+
 def test_handoff_cap_preserves_oldest_blocked_head():
   """Oldest-tar blocked paths stay in capped pending when handoff tail is trimmed."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (

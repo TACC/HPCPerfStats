@@ -8152,6 +8152,173 @@ def test_supervisor_oldest_day_chunk_gate_inflight_starvation(
     shutdown_requested[0] = False
 
 
+def test_supervisor_chunk_gate_cross_day_stall_dispatches_ingest(
+    monkeypatch, tmp_path,
+):
+  """Cross-day blocked inflight orphan is reclaimed and ingest resumes."""
+  shutdown_requested[0] = False
+  ingest_batches = []
+  reclaim_logs = []
+  try:
+    archive_dir = tmp_path / "archive"
+    daily_dir = tmp_path / "daily"
+    archive_dir.mkdir()
+    daily_dir.mkdir()
+    d2 = datetime(2020, 1, 2, 12, tzinfo=timezone.utc)
+    tar_a = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+    tar_b = os.path.normpath(str(daily_dir / "2020-01-02.tar"))
+    open(tar_a, "wb").close()
+    open(tar_b, "wb").close()
+    blocked_obj = tmp_path / "cross_day_blocked"
+    tail_obj = tmp_path / "tail"
+    blocked_obj.write_text("1000 job cn001\n")
+    tail_obj.write_text("2000 job cn002\n")
+    os.utime(blocked_obj, (d2.timestamp(), d2.timestamp()))
+    os.utime(tail_obj, (d2.timestamp(), d2.timestamp()))
+    blocked = str(blocked_obj)
+
+    class _DisabledDayRawRemoval:
+      enabled = False
+      on_handoff_to_ingest = None
+      on_pipeline_complete = None
+
+      def __init__(self, **_kwargs):
+        pass
+
+      def any_blocks_startup_drain(self):
+        return False
+
+      def consumed_paths(self):
+        return set()
+
+      def paths_pending_delete(self):
+        return set()
+
+      def any_needs_delete_phase(self):
+        return False
+
+      def any_needs_tar_drop_finish(self):
+        return False
+
+      def days_needing_delete_oldest_first(self):
+        return []
+
+      def days_needing_tar_drop_oldest_first(self):
+        return []
+
+      def count_days_waiting_on_ingest(self):
+        return 0
+
+      def shutdown(self, wait=True):
+        del wait
+
+    def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
+      return [str(tail_obj)]
+
+    def fake_add(_lock, path, **_kwargs):
+      ingest_batches.append(path)
+      if path == blocked:
+        shutdown_requested[0] = True
+      return (path, True, True, 0.0)
+
+    real_reconcile = st.reconcile_orphan_inflight_for_oldest_tar
+    real_select = st.select_ingest_chunk_paths
+    inflight_seeded = {"done": False}
+
+    def seed_inflight_select(pending, **kwargs):
+      inflight = kwargs.get("inflight_archive_paths")
+      if inflight is not None and not inflight_seeded["done"]:
+        inflight.add(blocked)
+        inflight_seeded["done"] = True
+      return real_select(pending, **kwargs)
+
+    def track_reconcile(**kwargs):
+      result = real_reconcile(**kwargs)
+      if result:
+        reclaim_logs.append("reclaimed")
+      return result
+
+    from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
+        StartupArchiveScanCoordinator,
+    )
+
+    _supervisor_startup_preflight_disabled(monkeypatch)
+    monkeypatch.setattr(st, "DayRawRemovalCoordinator", _DisabledDayRawRemoval)
+    monkeypatch.setattr(st.cfg, "get_sync_day_close_raw_removal_preflight", lambda: False)
+    monkeypatch.setattr(st, "sleep_until_shutdown", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        st.cfg,
+        "get_sync_startup_drain_day_close_before_ingest",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        StartupArchiveScanCoordinator,
+        "wait_for_snapshot",
+        lambda self, *, allow_build=False: None,
+    )
+    monkeypatch.setattr(st, "rescan_pending_stats_files", fake_rescan)
+    monkeypatch.setattr(st, "add_stats_file_to_db", fake_add)
+    monkeypatch.setattr(st, "_sync_timedb_ingest_inline_requested", lambda: True)
+    monkeypatch.setattr(st.cfg, "get_archive_maintenance_interval_seconds", lambda: 10**12)
+    monkeypatch.setattr(st.cfg, "get_sync_ingest_chunk_size", lambda: 10)
+    monkeypatch.setattr(st.cfg, "get_sync_ingest_queue_max_size", lambda: 2000)
+    monkeypatch.setattr(st, "close_old_connections", lambda: None)
+    monkeypatch.setattr(st.connections, "close_all", lambda: None)
+    monkeypatch.setattr(st, "tgz_archive_dir", str(daily_dir))
+    monkeypatch.setattr(st, "build_archive_mapping", lambda *_a, **_k: {})
+    monkeypatch.setattr(archive_helpers, "build_archive_mapping", lambda *_a, **_k: {})
+    monkeypatch.setattr(
+        st,
+        "build_unprocessed_raw_by_daily_tar",
+        lambda *_a, **_k: {tar_a: [blocked]},
+    )
+    monkeypatch.setattr(
+        st,
+        "build_live_unprocessed_by_tar_for_reconcile",
+        lambda *_a, **_k: {tar_a: [blocked]},
+    )
+    monkeypatch.setattr(
+        archive_helpers,
+        "build_unprocessed_raw_by_daily_tar",
+        lambda *_a, **_k: {tar_a: [blocked]},
+    )
+    monkeypatch.setattr(
+        st,
+        "select_ingest_chunk_paths",
+        seed_inflight_select,
+    )
+    monkeypatch.setattr(
+        st,
+        "reconcile_orphan_inflight_for_oldest_tar",
+        track_reconcile,
+    )
+    monkeypatch.setattr(
+        st,
+        "days_ingest_complete_by_checkpoint",
+        lambda *_a, **_k: [],
+    )
+    monkeypatch.setattr(
+        janitor_mod.ArchiveJanitor,
+        "signal_work_available",
+        lambda self: None,
+    )
+
+    st.run_sync_timedb_supervisor_loop(
+        str(archive_dir),
+        "all",
+        None,
+        ".hpc",
+        object(),
+        _FakeArchivePool(),
+        run_once=True,
+    )
+
+    assert reclaim_logs
+    assert blocked in ingest_batches
+  finally:
+    shutdown_requested[0] = False
+
+
 def test_supervisor_chunk_gate_unblocks_when_blocked_excluded_from_processed(
     monkeypatch, tmp_path,
 ):

@@ -1454,27 +1454,46 @@ def reconcile_orphan_inflight_for_oldest_tar(
       else {}
   )
   reclaimed = []
+  cross_day_reclaimed = 0
   for path in list(inflight_archive_paths or ()):
     if path not in blocked_set:
       continue
-    if oldest_tar_norm not in daily_tar_paths_for_stats_paths(
-        [path],
-        tgz_archive_dir,
-    ):
+    calendar_tars = {
+        os.path.normpath(str(tar_path))
+        for tar_path in daily_tar_paths_for_stats_paths(
+            [path],
+            tgz_archive_dir,
+        )
+    }
+    if not calendar_tars:
       continue
-    if path in pending_bucket:
-      continue
+    aligned_with_oldest = oldest_tar_norm in calendar_tars
+    if aligned_with_oldest:
+      if path in pending_bucket:
+        continue
+    else:
+      if calendar_tars & active_tars:
+        continue
+      if any(
+          path in set((pending_append_by_daily_tar or {}).get(tar_path, ()))
+          for tar_path in calendar_tars
+      ):
+        continue
     last_reclaim = float(throttle_state.get(path, 0.0))
     if mono_now - last_reclaim < reclaim_throttle_s:
       continue
     throttle_state[path] = mono_now
     reclaimed.append(path)
+    if not aligned_with_oldest:
+      cross_day_reclaimed += 1
   if reclaimed and log_fn is not None:
-    log_fn(
+    msg = (
         "sync_timedb: orphan inflight reclaim oldest_tar=%s reclaimed_n=%d"
-        % (oldest_tar_norm, len(reclaimed)),
-        flush=True,
+        % (oldest_tar_norm, len(reclaimed))
     )
+    if cross_day_reclaimed:
+      msg += " cross_day_n=%d detail=cross_day_bucket" % cross_day_reclaimed
+    log_fn(msg, flush=True)
   return reclaimed
 
 
