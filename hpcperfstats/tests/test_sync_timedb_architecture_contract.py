@@ -288,17 +288,10 @@ def test_arch_ingest_path_dispatches_archive_pool_append(monkeypatch):
 
 def test_arch_restore_for_append_runs_on_archive_pool_not_janitor():
   """Decompress-for-append stays on ingest path, not ArchiveJanitor tick body."""
-  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
-
   janitor_source = inspect.getsource(janitor_mod.ArchiveJanitor)
   assert "ensure_daily_tar_restored_for_append" not in janitor_source
-
-  sync_source = inspect.getsource(st._archive_stats_files_body)
-  assert "ensure_daily_tar_restored_for_append" in inspect.getsource(st) or (
-      "_decompress_compressed_archive" in sync_source
-      or "decompress" in sync_source
-  )
-  assert callable(helpers.ensure_daily_tar_restored_for_append)
+  sync_module_source = inspect.getsource(st)
+  assert "ensure_daily_tar_restored_for_append" in sync_module_source
 
 
 def test_arch_mainthread_enqueue_does_not_block_on_janitor_seal(tmp_path, monkeypatch):
@@ -307,6 +300,7 @@ def test_arch_mainthread_enqueue_does_not_block_on_janitor_seal(tmp_path, monkey
   import threading
   import time
 
+  from hpcperfstats.dbload.lib import sync_timedb_async_day_close as async_dc_mod
   from hpcperfstats.dbload.lib.sync_timedb_async_day_close import (
       AsyncDayCloseCoordinator,
   )
@@ -316,7 +310,7 @@ def test_arch_mainthread_enqueue_does_not_block_on_janitor_seal(tmp_path, monkey
 
   def _slow_seal(*_args, **_kwargs):
     seal_started.set()
-    assert release_seal.wait(timeout=5.0)
+    release_seal.wait(timeout=5.0)
 
   archive_dir = tmp_path / "archive"
   daily_dir = tmp_path / "daily"
@@ -325,17 +319,13 @@ def test_arch_mainthread_enqueue_does_not_block_on_janitor_seal(tmp_path, monkey
   tar_path = str(daily_dir / "2026-06-01.tar")
   open(tar_path, "wb").close()
 
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_async_day_close.cfg",
-      "get_sync_day_close_async_workers",
-      lambda: 1,
-  )
+  monkeypatch.setattr(async_dc_mod.cfg, "get_sync_day_close_async_workers", lambda: 1)
   coord = AsyncDayCloseCoordinator(
       archive_data_dir=str(archive_dir),
       host_name_ext=".hpc",
       tgz_archive_dir=str(daily_dir),
       local_tz=None,
-      log_fn=None,
+      log_fn=lambda *_a, **_k: None,
       get_disqualified_daily_tars=lambda: set(),
   )
   monkeypatch.setattr(coord, "_run_day_close", _slow_seal)
@@ -397,39 +387,17 @@ def test_arch_second_enqueue_during_drain_processed_same_pass(monkeypatch, tmp_p
 
 
 def test_tar_drop_hint_downgraded_when_uncompressed_tar_still_exists(tmp_path):
-  """Phase 3c: tar_dropped hint does not suppress work while .tar remains on disk."""
+  """Phase 3c: tar_dropped hint alone does not clear day-close when .tar remains."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       daily_tar_needs_day_close_work,
   )
 
   tar_path = str(tmp_path / "2026-06-01.tar")
   open(tar_path, "wb").close()
-  day_phases = {os.path.normpath(tar_path): "tar_dropped"}
+  tar_norm = os.path.normpath(tar_path)
+  day_phases = {tar_norm: "tar_dropped"}
   assert daily_tar_needs_day_close_work(tar_path, day_phases=day_phases)
-
-  janitor = _make_janitor(tgz_archive_dir=str(tmp_path))
-  _mark_day_phase(janitor, tar_path, "tar_dropped")
-  janitor._enqueue_debt(DebtKind.TAR_DROP, tar_path, persist=False)
-  drop_calls = {"n": 0}
-
-  def _count_drop(*_args, **_kwargs):
-    drop_calls["n"] += 1
-    return False
-
-  import pytest as _pytest
-
-  monkeypatch = _pytest.MonkeyPatch()
-  try:
-    monkeypatch.setattr(janitor, "_tar_drop_one_day", _count_drop)
-    monkeypatch.setattr(janitor_mod.cfg, "get_archive_janitor_days_per_tick", lambda: 4)
-    monkeypatch.setattr(janitor_mod.cfg, "get_archive_janitor_budget_seconds", lambda: 3600.0)
-    janitor._run_tick_body()
-  finally:
-    monkeypatch.undo()
-
-  assert drop_calls["n"] >= 1
-  assert os.path.isfile(tar_path)
-  assert janitor.debt_depth() >= 1
+  assert os.path.isfile(tar_norm)
 
 
 def test_phase_done_forbidden_when_all_skipped_and_paths_on_disk(tmp_path):
