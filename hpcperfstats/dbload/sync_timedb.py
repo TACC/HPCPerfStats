@@ -4069,8 +4069,112 @@ def run_sync_timedb_supervisor_loop(
           flush=True,
       )
 
+  def _should_defer_immediate_day_close():
+    if startup_handoff_recover_pending or handoff_giant_day_slice_in_progress:
+      return True, "handoff_recovery", len(startup_handoff_recover_pending)
+    if handoff_priority_paths:
+      return True, "handoff_priority", len(handoff_priority_paths)
+    if tgz_archive_dir and day_raw_removal is not None:
+      disqualified = _janitor_disqualified_daily_tars()
+      with archive_janitor._hints_state_lock:
+        day_phases = dict(archive_janitor._day_phases)
+      unprocessed_by_tar = _build_unprocessed_by_tar_for_day_close(
+          pending_stats_paths=list(pending_stats_files),
+      )
+      remaining_raw_by_gz = _get_accrual_remaining_raw_by_gz()
+      candidates = days_ingest_complete_by_checkpoint(
+          unprocessed_by_tar,
+          tgz_archive_dir=tgz_archive_dir,
+          day_phases=day_phases,
+          remaining_raw_by_gz=remaining_raw_by_gz,
+          local_tz=archive_janitor.local_tz,
+          disqualified_daily_tars=disqualified,
+      )
+      for tar_path in candidates:
+        tar_norm = os.path.normpath(str(tar_path or ""))
+        eligible, skip_reason = daily_tar_eligible_for_day_close_submit(
+            tar_norm,
+            unprocessed_by_tar=unprocessed_by_tar,
+            disqualified_daily_tars=disqualified,
+            day_phases=day_phases,
+            remaining_raw_by_gz=remaining_raw_by_gz,
+            local_tz=archive_janitor.local_tz,
+            day_raw_removal=day_raw_removal,
+        )
+        del eligible
+        if skip_reason == "closed_raw_on_disk":
+          return True, "closed_raw_guard", 0
+    return False, "", 0
+
+  _should_defer_archive_finalize_day_close = _should_defer_immediate_day_close
+
+  def _log_immediate_day_close_defer(context, reason, extra):
+    if reason == "handoff_recovery":
+      log_print(
+          "INFO: immediate day_close defer context=%s reason=handoff_recovery "
+          "pending=%d giant_day_slice=%s"
+          % (
+              context,
+              extra,
+              "yes" if handoff_giant_day_slice_in_progress else "no",
+          ),
+          flush=True,
+      )
+    elif reason == "handoff_priority":
+      log_print(
+          "INFO: immediate day_close defer context=%s reason=handoff_priority "
+          "pending_handoff=%d"
+          % (context, extra),
+          flush=True,
+      )
+    else:
+      log_print(
+          "INFO: immediate day_close defer context=%s reason=%s"
+          % (context, reason),
+          flush=True,
+      )
+    if context == "archive_finalize":
+      if reason == "handoff_recovery":
+        log_print(
+            "INFO: archive_finalize defer immediate day_close "
+            "reason=handoff_recovery pending=%d giant_day_slice=%s"
+            % (
+                extra,
+                "yes" if handoff_giant_day_slice_in_progress else "no",
+            ),
+            flush=True,
+        )
+      elif reason == "handoff_priority":
+        log_print(
+            "INFO: archive_finalize defer immediate day_close "
+            "reason=handoff_priority pending_handoff=%d"
+            % extra,
+            flush=True,
+        )
+      else:
+        log_print(
+            "INFO: archive_finalize defer immediate day_close reason=%s"
+            % reason,
+            flush=True,
+        )
+
   def _maybe_enqueue_immediate_day_close(*, context: str):
+    nonlocal archive_finalize_day_close_deferred
     if not tgz_archive_dir:
+      return
+    defer_day_close, defer_reason, defer_extra = (
+        _should_defer_immediate_day_close()
+    )
+    if defer_day_close:
+      _log_immediate_day_close_defer(context, defer_reason, defer_extra)
+      archive_finalize_day_close_deferred = True
+      if context == "archive_finalize":
+        archive_janitor.signal_scheduled_maintenance_pass(
+            reason="archive_finalize_deferred",
+        )
+        archive_janitor.signal_work_available()
+      if context in ("chunk_end", "archive_finalize", "idle_finalize"):
+        _reconcile_pending_with_oldest_checkpoint_blocked()
       return
     disqualified = _janitor_disqualified_daily_tars()
     with archive_janitor._hints_state_lock:
@@ -4115,43 +4219,6 @@ def run_sync_timedb_supervisor_loop(
         submitted_any = True
     if submitted_any:
       archive_janitor.signal_work_available()
-
-  def _should_defer_archive_finalize_day_close():
-    if startup_handoff_recover_pending or handoff_giant_day_slice_in_progress:
-      return True, "handoff_recovery", len(startup_handoff_recover_pending)
-    if handoff_priority_paths:
-      return True, "handoff_priority", len(handoff_priority_paths)
-    if tgz_archive_dir and day_raw_removal is not None:
-      disqualified = _janitor_disqualified_daily_tars()
-      with archive_janitor._hints_state_lock:
-        day_phases = dict(archive_janitor._day_phases)
-      unprocessed_by_tar = _build_unprocessed_by_tar_for_day_close(
-          pending_stats_paths=list(pending_stats_files),
-      )
-      remaining_raw_by_gz = _get_accrual_remaining_raw_by_gz()
-      candidates = days_ingest_complete_by_checkpoint(
-          unprocessed_by_tar,
-          tgz_archive_dir=tgz_archive_dir,
-          day_phases=day_phases,
-          remaining_raw_by_gz=remaining_raw_by_gz,
-          local_tz=archive_janitor.local_tz,
-          disqualified_daily_tars=disqualified,
-      )
-      for tar_path in candidates:
-        tar_norm = os.path.normpath(str(tar_path or ""))
-        eligible, skip_reason = daily_tar_eligible_for_day_close_submit(
-            tar_norm,
-            unprocessed_by_tar=unprocessed_by_tar,
-            disqualified_daily_tars=disqualified,
-            day_phases=day_phases,
-            remaining_raw_by_gz=remaining_raw_by_gz,
-            local_tz=archive_janitor.local_tz,
-            day_raw_removal=day_raw_removal,
-        )
-        del eligible
-        if skip_reason == "closed_raw_on_disk":
-          return True, "closed_raw_guard", 0
-    return False, "", 0
 
   def _reconcile_orphan_inflight_for_oldest_tar(oldest_tar, blocked_paths):
     captured = _capture_disqualification_inputs()
@@ -4334,7 +4401,7 @@ def run_sync_timedb_supervisor_loop(
       _reconcile_pending_with_oldest_checkpoint_blocked()
       archive_finalize_needs_post_reconcile = False
       defer_day_close, defer_reason, defer_extra = (
-          _should_defer_archive_finalize_day_close()
+          _should_defer_immediate_day_close()
       )
       if defer_day_close:
         archive_finalize_day_close_deferred = True
@@ -4342,30 +4409,7 @@ def run_sync_timedb_supervisor_loop(
             reason="archive_finalize_deferred",
         )
         archive_janitor.signal_work_available()
-        if defer_reason == "handoff_recovery":
-          log_print(
-              "INFO: archive_finalize defer immediate day_close "
-              "reason=handoff_recovery pending=%d giant_day_slice=%s"
-              % (
-                  defer_extra,
-                  "yes" if handoff_giant_day_slice_in_progress else "no",
-              ),
-              flush=True,
-          )
-        elif defer_reason == "handoff_priority":
-          log_print(
-              "INFO: archive_finalize defer immediate day_close "
-              "reason=handoff_priority pending_handoff=%d"
-              % defer_extra,
-              flush=True,
-          )
-        else:
-          log_print(
-              "INFO: archive_finalize defer immediate day_close "
-              "reason=%s"
-              % defer_reason,
-              flush=True,
-          )
+        _log_immediate_day_close_defer("archive_finalize", defer_reason, defer_extra)
       else:
         _maybe_enqueue_immediate_day_close(context="archive_finalize")
 
@@ -6898,7 +6942,7 @@ def run_sync_timedb_supervisor_loop(
         _maybe_enqueue_immediate_day_close(context="chunk_end")
         if archive_finalize_day_close_deferred:
           defer_still, defer_reason, _defer_extra = (
-              _should_defer_archive_finalize_day_close()
+              _should_defer_immediate_day_close()
           )
           if defer_still:
             log_print(
@@ -6907,8 +6951,9 @@ def run_sync_timedb_supervisor_loop(
                 flush=True,
             )
           else:
-            archive_finalize_day_close_deferred = False
-            _maybe_enqueue_immediate_day_close(context="archive_finalize")
+            if not handoff_priority_paths:
+              archive_finalize_day_close_deferred = False
+              _maybe_enqueue_immediate_day_close(context="archive_finalize")
 
         _flush_deferred_archive_finalize_prewarm()
         chunk_in_progress = False

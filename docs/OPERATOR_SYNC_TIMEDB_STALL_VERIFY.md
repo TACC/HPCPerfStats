@@ -56,6 +56,29 @@ print('daily_tar_dir', cfg.get_tgz_archive_dir())
 
 Either line during catch-up is a **merge blocker** until RC is classified (see june-ingest-stall-prevention plan Phase 0 greps).
 
+### py-spy (MainThread idle during handoff — RC-F)
+
+Use a **single** `sh -lc` inside the container so PID resolution and `py-spy` share the same namespace. **Do not** pass a host `$MAIN_PID` or split across two `exec` calls — **podman-compose eats `--pid`** (`ParseIntError` / `InvalidDigit`).
+
+```bash
+cd hpcperfstats   # or HPCPerfStats checkout on site
+podman-compose exec -T pipeline su hpcperfstats -c "sh -lc '
+SUP=\$(pgrep -f \"[s]ync_timedb\" | head -1)
+echo main_pid=\$SUP
+py-spy dump --pid \"\$SUP\" 2>&1 | tail -80
+'"
+```
+
+**RC-F signature:** all pools idle; MainThread in `defer_for_ingest_handoff` ← `_requeue_day_close_handoff_paths` ← `requeue_closed_raw_paths_for_ingest` ← `submit_day_close` ← `_maybe_enqueue_immediate_day_close`.
+
+**T1 pass grep** (after deploy):
+
+```bash
+podman-compose logs pipeline 2>&1 | grep -E 'chunk ingest summary|immediate day_close defer|ingest_stall_watchdog|oldest_day_unprocessed_frozen' | tail -40
+```
+
+Expect `chunk ingest summary` to resume after `immediate day_close defer` / `archive_finalize defer immediate day_close reason=closed_raw_guard`; no `ingest_stall_watchdog` within 30 min of handoff enqueue.
+
 ## Optional cron (backlog catch-up week)
 
 Every 2 h: full-log grep for `oldest_day_chunk_gate_stall` and `ingest_stall_watchdog` on pipeline; alert on non-zero new matches.

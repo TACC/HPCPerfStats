@@ -37,7 +37,7 @@ Equivalent manual command: day-close plan **Phase 1b** pytest line in [`tests/ru
 | Test | Module | Contract |
 |------|--------|----------|
 | `test_arch_oldest_day_gate_blocked_paths_enter_pending` | `test_sync_timedb_architecture_contract.py` | `blocked_n>0` → blocked paths at pending head |
-| `test_arch_june04_handoff_after_giant_finalize_dispatches_chunk` | `test_sync_timedb_supervisor.py` | Giant finalize defer → handoff → **next chunk dispatches** (xfail until RC-F fix lands) |
+| `test_arch_june04_handoff_after_giant_finalize_dispatches_chunk` | `test_sync_timedb_supervisor.py` | Giant finalize defer → handoff → **next chunk dispatches** (behavioral replay; RC-F Phase 2) |
 | `test_arch_*` battery | Phase 1b `-k` | Must stay green; no weaken/xfail without plan amend |
 
 ## Runtime stall telemetry (backlog sites)
