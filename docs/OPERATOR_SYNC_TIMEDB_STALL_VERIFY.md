@@ -32,7 +32,7 @@ COMPOSE='podman-compose'   # or: docker compose
 SVC='pipeline'
 $COMPOSE logs "$SVC" 2>&1 | tee /tmp/pipeline-full.log
 
-grep -E 'chunk ingest summary|oldest_day_chunk_gate_stall|ingest_stall_watchdog|oldest_day_unprocessed_frozen|archive_finalize defer|day_close handoff requeue|archive_job_done' /tmp/pipeline-full.log | tail -50
+grep -E 'chunk ingest summary|oldest_day_chunk_gate_stall|ingest_stall_watchdog|oldest_day_unprocessed_frozen|archive_finalize defer|day_close handoff requeue|discover_ready_day_close|archive_job_done' /tmp/pipeline-full.log | tail -50
 
 grep -c 'chunk ingest summary' /tmp/pipeline-full.log
 grep -c 'oldest_day_chunk_gate_stall' /tmp/pipeline-full.log
@@ -78,6 +78,17 @@ podman-compose logs pipeline 2>&1 | grep -E 'chunk ingest summary|immediate day_
 ```
 
 Expect `chunk ingest summary` to resume after `immediate day_close defer` / `archive_finalize defer immediate day_close reason=closed_raw_guard`; no `ingest_stall_watchdog` within 30 min of handoff enqueue.
+
+### T1 verify — janitor proactive day-close (backlog catch-up sites)
+
+After deploy of janitor discover + janitor-only **`DAY_CLOSE`** (2026-07), grep pipeline logs for discovery enqueue and janitor progress (not legacy `async day_close submit` / `eligible_deferred`):
+
+```bash
+podman-compose logs pipeline 2>&1 | grep -E \
+  'discover_ready_day_close|janitor: day_close enqueue|janitor: day_close submit|day_close candidate report|Archive janitor tick done' | tail -40
+```
+
+**Pass:** checkpoint-complete older calendar days show **`discover_ready_day_close enqueued=`** or **`janitor: day_close enqueue`**; candidate report uses **`waiting_on_ingest`** / **`disqualified`** (no **`eligible_deferred`**); ingest head day stays **`waiting_on_ingest`** while janitor processes prior days; **`Archive janitor tick done`** shows **`debt_popped>0`** or progressing **`day_phases`** without **`ingest_stall_watchdog`** within 30 min.
 
 ## Optional cron (backlog catch-up week)
 

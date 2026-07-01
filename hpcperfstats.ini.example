@@ -510,8 +510,8 @@ sync_ingest_malloc_trim_after_file = yes
 # Max raw stats file deletes per janitor RAW_REMOVE debt item per tick (default 1000).
 # archive_janitor_raw_paths_per_tick = 1000
 
-# Startup async verify + gated delete for sealed archived raw (default yes).
-# sync_startup_raw_removal_preflight = yes
+# Startup async verify + gated delete for sealed archived raw (default no).
+# sync_startup_raw_removal_preflight = no
 
 # Wall-clock budget per startup raw-removal verification slice (default 60 seconds).
 # sync_startup_raw_removal_verify_budget_seconds = 60
@@ -525,8 +525,8 @@ sync_ingest_malloc_trim_after_file = yes
 # Block first ingest until startup day-close discover and deletion drain idle (default no).
 # sync_startup_drain_day_close_before_ingest = no
 
-# During startup drain, ingest checkpoint-blocked tail paths per day (default yes).
-# sync_startup_tail_ingest_enabled = yes
+# During startup drain, ingest checkpoint-blocked tail paths per day (default no).
+# sync_startup_tail_ingest_enabled = no
 
 # Max on-disk unprocessed paths per day for startup tail ingest (default 100).
 # sync_startup_tail_ingest_max_files = 100
@@ -552,11 +552,8 @@ sync_ingest_malloc_trim_after_file = yes
 # Optional warn threshold when startup day-close scan phase is slow (0 = disabled).
 # sync_startup_day_close_scan_budget_seconds = 0
 
-# Async DAY_CLOSE worker threads (default 1).
-# sync_day_close_async_workers = 1
-
-# Max concurrent async DAY_CLOSE jobs (default = sync_day_close_async_workers).
-# sync_day_close_max_inflight = 1
+# Max concurrent DAY_CLOSE calendar days on janitor debt (default 2).
+# sync_day_close_max_inflight = 2
 
 # Wall-clock wait in async DAY_CLOSE for day raw removal verify after seal (default 3600s; 0 = unbounded).
 # sync_day_close_raw_removal_wait_seconds = 3600

@@ -1011,20 +1011,13 @@ def run_supervisor_day_raw_removal_delete_pass(
   """
   if day_raw_removal is None or not day_raw_removal.enabled:
     return False
-  if async_day_close is not None:
-    async_day_close.reconcile_supervisor_raw_delete_pending(reason="delete_pass")
   reopen_fn = getattr(
       day_raw_removal, "reopen_done_days_with_verified_on_disk", lambda: 0,
   )
   made_progress = reopen_fn() > 0
   needs_delete = day_raw_removal.any_needs_delete_phase()
   needs_tar_drop = day_raw_removal.any_needs_tar_drop_finish()
-  async_tar_drop = (
-      async_day_close.tar_paths_raw_delete_pending()
-      if async_day_close is not None
-      else []
-  )
-  if not needs_delete and not needs_tar_drop and not async_tar_drop:
+  if not needs_delete and not needs_tar_drop:
     advance_fn = getattr(
         day_raw_removal, "advance_startup_drain_blockers", lambda: False,
     )
@@ -1034,9 +1027,6 @@ def run_supervisor_day_raw_removal_delete_pass(
   tar_drop_targets: list[str] = []
   if needs_tar_drop:
     tar_drop_targets.extend(day_raw_removal.days_needing_tar_drop_oldest_first())
-  for tar_norm in async_tar_drop:
-    if tar_norm not in tar_drop_targets:
-      tar_drop_targets.append(tar_norm)
   for tar_norm in tar_drop_targets:
     if day_raw_removal.try_finish_tar_drop_if_ready(tar_norm):
       finalize_day_close_delete(tar_norm)
@@ -1721,6 +1711,28 @@ class DayRawRemovalCoordinator:
         close_old_connections()
 
     state._pipeline_future = executor.submit(_run)
+
+  def run_verify_sync(
+      self,
+      tar_path: str,
+      *,
+      sealed_members=None,
+  ) -> None:
+    """Run verify for one calendar day on the caller thread (janitor path)."""
+    if not self.enabled:
+      return
+    state = self._get_or_create_day(tar_path)
+    state._verify_sealed_members = (
+        dict(sealed_members) if sealed_members is not None else None
+    )
+    if state.delete_phase_done():
+      if state._needs_retry_after_ingest():
+        state._reset_for_reverify()
+      else:
+        return
+    if state.verification_complete():
+      return
+    self._verify_pipeline_body(state)
 
   def start_async_verify(
       self,

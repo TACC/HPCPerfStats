@@ -572,7 +572,7 @@ def test_run_supervisor_delete_pass_tar_drop_before_chunk_wait():
       del reason
 
     def tar_paths_raw_delete_pending(self):
-      return [tar_drop_tar]
+      return []
 
   class _FakeDayRaw:
     enabled = True
@@ -581,10 +581,10 @@ def test_run_supervisor_delete_pass_tar_drop_before_chunk_wait():
       return True
 
     def any_needs_tar_drop_finish(self):
-      return False
+      return True
 
     def days_needing_tar_drop_oldest_first(self):
-      return []
+      return [tar_drop_tar]
 
     def oldest_day_needing_delete(self):
       return delete_tar

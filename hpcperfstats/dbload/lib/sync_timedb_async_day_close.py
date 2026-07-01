@@ -1,44 +1,30 @@
-"""Async DAY_CLOSE coordinator: seal + raw removal + tar drop off janitor thread."""
+"""Day-close manifest shim; janitor thread runs seal/verify/delete/tar_drop."""
 from __future__ import annotations
 
 import os
 import threading
 import time
-import traceback
-from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable, Dict, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
-from django.db import close_old_connections
-
 from hpcperfstats.dbload.lib.archive_compress import compressed_sibling_paths
 from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-    _seal_skip_existing_zst_equivalent,
-    atomic_seal_tar_to_zst,
-    daily_tar_seal_calendar_eligible,
-    dedupe_sealed_daily_archive,
-    dedupe_tar_keep_largest_file_per_member,
-    drop_legacy_gz_if_equivalent_to_zst,
-    effective_keep_uncompressed_tar,
     remaining_raw_by_gz_has_paths_on_disk,
-    remove_verified_uncompressed_daily_tars,
-    tar_has_duplicate_file_members,
 )
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
     load_persistence_document,
     save_persistence_document,
 )
-from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
-from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested, sleep_until_shutdown
 
 MANIFEST_BASENAME = ".sync_timedb_async_day_close.json"
 MANIFEST_VERSION = 1
 
 _ASYNC_DAY_CLOSE_PIPELINE_PENDING_STATUSES = frozenset({
     "submitted",
+    "queued",
     "sealing",
     "raw_removal",
-    "raw_delete_pending",
+    "deferred",
 })
 
 
@@ -75,7 +61,7 @@ def _save_manifest(path: str, payload: Dict[str, Any]) -> None:
 
 
 class AsyncDayCloseCoordinator:
-  """Single-flight async DAY_CLOSE per daily ``.tar`` (no sync zstd on janitor)."""
+  """Manifest + enqueue shim; ``DAY_CLOSE`` work runs on ``ArchiveJanitor`` thread."""
 
   def __init__(
       self,
@@ -89,6 +75,8 @@ class AsyncDayCloseCoordinator:
       day_raw_removal_coordinator=None,
       on_day_phase: Optional[Callable[[str, str], None]] = None,
       submit_eligible_fn: Optional[Callable[[str], tuple]] = None,
+      enqueue_day_close_fn: Optional[Callable[[str, str], bool]] = None,
+      get_inflight_tar_paths_fn: Optional[Callable[[], Set[str]]] = None,
       process_title: str = "sync_timedb.py",
   ):
     self.archive_data_dir = archive_data_dir
@@ -100,26 +88,16 @@ class AsyncDayCloseCoordinator:
     self.day_raw_removal_coordinator = day_raw_removal_coordinator
     self.on_day_phase = on_day_phase
     self.submit_eligible_fn = submit_eligible_fn
+    self.enqueue_day_close_fn = enqueue_day_close_fn
+    self.get_inflight_tar_paths_fn = get_inflight_tar_paths_fn
     self.process_title = process_title
     self._manifest_path = manifest_path(archive_data_dir)
     self._lock = threading.Lock()
     self._manifest = _load_manifest(self._manifest_path)
-    self._futures: Dict[str, Any] = {}
-    self._executor: Optional[ThreadPoolExecutor] = None
-    self._pending_verify_zst_members = None
     self._recover_stale_manifest_entries()
 
   def recover_stale_manifest_entries(self) -> None:
-    """Public entry for startup discover slices and maintenance passes."""
     self._recover_stale_manifest_entries()
-
-  def _worker_in_flight(self, tar_norm: str) -> bool:
-    tar_norm = os.path.normpath(tar_norm or "")
-    if not tar_norm:
-      return False
-    with self._lock:
-      future = self._futures.get(tar_norm)
-      return future is not None and not future.done()
 
   def _recover_stale_manifest_entries(self) -> None:
     stale_s = cfg.get_sync_day_close_async_stale_seconds()
@@ -127,49 +105,28 @@ class AsyncDayCloseCoordinator:
       return
     now = time.time()
     recovered: list[str] = []
-    finalized: list[str] = []
+    downgraded: list[str] = []
     with self._lock:
       for tar_norm, entry in list(self._manifest.get("entries", {}).items()):
         if not isinstance(entry, dict):
           continue
         status = str(entry.get("status") or "")
-        if status not in ("submitted", "sealing", "raw_removal", "raw_delete_pending"):
+        if status == "raw_delete_pending":
+          entry["status"] = "deferred"
+          entry["detail"] = "legacy_raw_delete_pending"
+          entry["recovered_at"] = now
+          recovered.append(os.path.normpath(tar_norm))
           continue
-        future = self._futures.get(tar_norm)
-        if future is not None and not future.done():
+        if status not in ("submitted", "sealing", "raw_removal", "queued"):
           continue
         last_at = entry.get("last_progress_at") or entry.get("submitted_at")
-        if last_at is None:
-          continue
-        if now - float(last_at) < stale_s:
+        if last_at is None or now - float(last_at) < stale_s:
           continue
         tar_norm = os.path.normpath(tar_norm)
-        if status == "raw_delete_pending":
-          coord = self.day_raw_removal_coordinator
-          if coord is not None and getattr(coord, "enabled", True):
-            if coord.should_handoff_to_ingest(tar_norm):
-              # Supervisor reconcile must requeue paths; leave manifest until then.
-              continue
-          if self._day_close_filesystem_complete(tar_norm):
-            entry["status"] = "complete"
-            entry["detail"] = "stale_manifest_recovery"
-            entry["completed_at"] = now
-            entry["recovered_at"] = now
-            finalized.append(tar_norm)
-            continue
-          entry["status"] = "deferred"
-          entry["detail"] = "stale_raw_delete_pending"
-          entry["recovered_at"] = now
-          recovered.append(tar_norm)
-          continue
         entry["status"] = "deferred"
         entry["detail"] = "stale_manifest_recovery"
         entry["recovered_at"] = now
         recovered.append(tar_norm)
-      if recovered or finalized:
-        _save_manifest(self._manifest_path, self._manifest)
-    downgraded: list[str] = []
-    with self._lock:
       for tar_norm, entry in list(self._manifest.get("entries", {}).items()):
         if not isinstance(entry, dict):
           continue
@@ -182,61 +139,22 @@ class AsyncDayCloseCoordinator:
         entry["detail"] = "stale_complete_filesystem_mismatch"
         entry["recovered_at"] = now
         downgraded.append(tar_norm)
-      if downgraded:
+      if recovered or downgraded:
         _save_manifest(self._manifest_path, self._manifest)
     for tar_norm in downgraded:
       self.log_fn(
-          "janitor: async day_close stale complete downgraded tar=%s" % tar_norm,
+          "janitor: day_close stale complete downgraded tar=%s" % tar_norm,
           flush=True,
       )
     for tar_norm in recovered:
       self.log_fn(
-          "janitor: async day_close stale manifest recovery tar=%s" % tar_norm,
-          flush=True,
-      )
-    for tar_norm in finalized:
-      self.log_fn(
-          "janitor: async day_close stale raw_delete_pending finalized tar=%s"
-          % tar_norm,
+          "janitor: day_close stale manifest recovery tar=%s" % tar_norm,
           flush=True,
       )
 
   def reconcile_supervisor_raw_delete_pending(self, *, reason: str) -> int:
-    """Hand off retryable raw to ingest or finalize when tar drop cannot finish."""
-    coord = self.day_raw_removal_coordinator
-    resolved = 0
-    for tar_norm in self.tar_paths_raw_delete_pending():
-      if self._worker_in_flight(tar_norm):
-        continue
-      if (
-          coord is not None
-          and getattr(coord, "enabled", True)
-          and coord.should_handoff_to_ingest(tar_norm)
-      ):
-        paths = coord.complete_handoff_to_ingest(
-            tar_norm,
-            reason=reason,
-        )
-        if paths:
-          self.defer_for_ingest_handoff(tar_norm)
-          if self.log_fn:
-            self.log_fn(
-                "sync_timedb: async raw_delete_pending handoff tar=%s paths=%d "
-                "reason=%s"
-                % (tar_norm, len(paths), reason),
-                flush=True,
-            )
-          resolved += 1
-        continue
-      if self.finalize_complete_if_filesystem(tar_norm):
-        if self.log_fn:
-          self.log_fn(
-              "sync_timedb: async raw_delete_pending finalized tar=%s reason=%s"
-              % (tar_norm, reason),
-              flush=True,
-          )
-        resolved += 1
-    return resolved
+    """Legacy no-op; janitor owns delete on ``DAY_CLOSE`` debt."""
+    return 0
 
   def entry_progress_snapshot(self, tar_path: str) -> Dict[str, Any]:
     tar_norm = os.path.normpath(tar_path or "")
@@ -254,47 +172,28 @@ class AsyncDayCloseCoordinator:
           "last_progress_age_s": age_s,
       }
 
-  def _ensure_executor(self) -> ThreadPoolExecutor:
-    if self._executor is None:
-      workers = max(
-          cfg.get_sync_day_close_async_workers(),
-          cfg.get_sync_startup_day_close_max_inflight(),
-      )
-      self._executor = ThreadPoolExecutor(
-          max_workers=workers,
-          thread_name_prefix="async-day-close",
-      )
-    return self._executor
-
   def shutdown(self, wait: bool = True) -> None:
-    executor = self._executor
-    if executor is None:
-      return
-    executor.shutdown(wait=wait)
+    return
+
+  def _active_tar_paths_unlocked(self) -> Set[str]:
+    """Caller must hold ``_lock`` when reading manifest entries."""
+    active: Set[str] = set()
+    if self.get_inflight_tar_paths_fn is not None:
+      try:
+        active |= set(self.get_inflight_tar_paths_fn() or ())
+      except Exception:
+        pass
+    for tar_norm, entry in self._manifest.get("entries", {}).items():
+      if _is_pipeline_pending_entry(entry):
+        active.add(os.path.normpath(tar_norm))
+    return active
 
   def active_or_submitted_tar_paths(self) -> Set[str]:
     with self._lock:
-      active = set()
-      for tar_norm, future in self._futures.items():
-        if future is not None and not future.done():
-          active.add(tar_norm)
-      for tar_norm, entry in self._manifest.get("entries", {}).items():
-        if _is_pipeline_pending_entry(entry):
-          active.add(os.path.normpath(tar_norm))
-      return active
+      return set(self._active_tar_paths_unlocked())
 
   def tar_paths_raw_delete_pending(self) -> List[str]:
-    """Daily tars handed off to the supervisor for batched raw delete + tar drop."""
-    pending: List[str] = []
-    with self._lock:
-      for tar_norm, entry in self._manifest.get("entries", {}).items():
-        if not isinstance(entry, dict):
-          continue
-        if entry.get("status") != "raw_delete_pending":
-          continue
-        pending.append(os.path.normpath(tar_norm))
-    pending.sort()
-    return pending
+    return []
 
   def _remaining_raw_for_tar_drop(self, tar_norm: str) -> Dict[str, List[str]]:
     coord = self.day_raw_removal_coordinator
@@ -325,7 +224,6 @@ class AsyncDayCloseCoordinator:
     return os.path.isfile(zst_path) or os.path.isfile(gz_path)
 
   def defer_for_ingest_handoff(self, tar_path: str) -> None:
-    """Release async single-flight when day-close work defers to ingest."""
     tar_norm = os.path.normpath(tar_path or "")
     if not tar_norm:
       return
@@ -340,7 +238,6 @@ class AsyncDayCloseCoordinator:
     self._touch_manifest("deferred_waiting_on_ingest", tar_norm=tar_norm)
 
   def finalize_complete_if_filesystem(self, tar_path: str) -> bool:
-    """Mark async DAY_CLOSE complete when filesystem truth holds."""
     tar_norm = os.path.normpath(tar_path or "")
     if not tar_norm or not self._day_close_filesystem_complete(tar_norm):
       return False
@@ -368,57 +265,68 @@ class AsyncDayCloseCoordinator:
       reason: str,
       disqualified_daily_tars=None,
   ) -> bool:
-    """Submit async DAY_CLOSE for ``tar_path`` (single-flight per tar)."""
+    """Enqueue janitor ``DAY_CLOSE`` debt for ``tar_path`` (single-flight per tar)."""
     tar_norm = os.path.normpath(tar_path or "")
     if not tar_norm:
       return False
     if self.is_complete(tar_norm):
       return True
-    with self._lock:
-      future = self._futures.get(tar_norm)
-      if future is not None and not future.done():
-        return True
-      if disqualified_daily_tars is None:
-        disqualified = self.get_disqualified_daily_tars()
-      else:
-        disqualified = disqualified_daily_tars
-      if tar_norm in disqualified:
+    if disqualified_daily_tars is None:
+      disqualified = self.get_disqualified_daily_tars()
+    else:
+      disqualified = disqualified_daily_tars
+    if tar_norm in disqualified:
+      return False
+    if self.submit_eligible_fn is not None:
+      try:
+        eligible, skip_reason = self.submit_eligible_fn(tar_norm)
+      except Exception:
+        eligible, skip_reason = False, "submit_eligible_error"
+      if not eligible:
+        if skip_reason:
+          self.log_fn(
+              "janitor: day_close submit skip tar=%s reason=%s"
+              % (tar_norm, skip_reason),
+              flush=True,
+          )
         return False
-      if self.submit_eligible_fn is not None:
-        try:
-          eligible, skip_reason = self.submit_eligible_fn(tar_norm)
-        except Exception:
-          eligible, skip_reason = False, "submit_eligible_error"
-        if not eligible:
-          if skip_reason:
-            self.log_fn(
-                "janitor: async day_close submit skip tar=%s reason=%s"
-                % (tar_norm, skip_reason),
-                flush=True,
-            )
-          return False
+    inflight: Set[str] = set()
+    if self.get_inflight_tar_paths_fn is not None:
+      try:
+        inflight = set(self.get_inflight_tar_paths_fn() or ())
+      except Exception:
+        inflight = set()
+    with self._lock:
       entry = self._manifest.setdefault("entries", {}).get(tar_norm)
       if _is_pipeline_pending_entry(entry):
         return True
+      active = set(inflight)
+      for pending_tar, pending_entry in self._manifest.get("entries", {}).items():
+        if _is_pipeline_pending_entry(pending_entry):
+          active.add(os.path.normpath(pending_tar))
+      if tar_norm in active:
+        return True
       self._manifest.setdefault("entries", {})[tar_norm] = {
           "tar_path": tar_norm,
-          "status": "submitted",
+          "status": "queued",
           "reason": reason,
           "submitted_at": time.time(),
       }
-      self._touch_manifest_locked("submitted", tar_norm=tar_norm)
-      executor = self._ensure_executor()
-      future = executor.submit(self._run_day_close, tar_norm, reason)
-      future.add_done_callback(lambda f, t=tar_norm: self._on_future_done(t, f))
-      self._futures[tar_norm] = future
-    self.log_fn(
-        "janitor: async day_close submit tar=%s reason=%s" % (tar_norm, reason),
-        flush=True,
-    )
-    return True
+      self._touch_manifest_locked("queued", tar_norm=tar_norm)
+    enqueued = False
+    if self.enqueue_day_close_fn is not None:
+      try:
+        enqueued = bool(self.enqueue_day_close_fn(tar_norm, reason))
+      except Exception:
+        enqueued = False
+    if enqueued:
+      self.log_fn(
+          "janitor: day_close submit tar=%s reason=%s" % (tar_norm, reason),
+          flush=True,
+      )
+    return enqueued
 
   def _touch_manifest_locked(self, stage: str, *, tar_norm: str = "") -> None:
-    """Update manifest progress fields and persist. Caller must hold ``self._lock``."""
     self._manifest["last_progress"] = stage
     self._manifest["last_progress_at"] = time.time()
     if tar_norm:
@@ -442,307 +350,9 @@ class AsyncDayCloseCoordinator:
       entry.update(extra)
       _save_manifest(self._manifest_path, self._manifest)
 
-  def _on_future_done(self, tar_norm: str, future) -> None:
-    try:
-      exc = future.exception()
-    except Exception as callback_exc:
-      exc = callback_exc
-    if exc is None:
-      return
-    self._set_entry_status(tar_norm, "failed", error=str(exc))
-    self.log_fn(
-        "janitor: async day_close failed tar=%s err=%s" % (tar_norm, exc),
-        flush=True,
-    )
-
   def _notify_phase(self, tar_norm: str, phase: str) -> None:
     if self.on_day_phase is not None:
       try:
         self.on_day_phase(tar_norm, phase)
       except Exception:
         pass
-
-  def _try_complete_day_close_tail_without_reseal(self, tar_norm: str) -> bool:
-    """Finish tar drop + complete when sealed and raw are already gone (no re-seal)."""
-    tar_norm = os.path.normpath(tar_norm or "")
-    zst_path, gz_path = compressed_sibling_paths(tar_norm)
-    if not (os.path.isfile(zst_path) or os.path.isfile(gz_path)):
-      return False
-    remaining = self._remaining_raw_for_tar_drop(tar_norm)
-    if remaining_raw_by_gz_has_paths_on_disk(remaining, zst_path):
-      return False
-    coord = self.day_raw_removal_coordinator
-    if coord is not None and bool(getattr(coord, "enabled", False)):
-      if not coord.try_finish_tar_drop_if_ready(tar_norm):
-        if os.path.isfile(tar_norm):
-          return False
-    elif os.path.isfile(tar_norm) and not self._tar_drop_day(tar_norm):
-      return False
-    if not self._day_close_filesystem_complete(tar_norm):
-      return False
-    self._notify_phase(tar_norm, "tar_dropped")
-    self._set_entry_status(tar_norm, "complete", completed_at=time.time())
-    self._touch_manifest("complete", tar_norm=tar_norm)
-    self.log_fn(
-        "janitor: async day_close complete (tail only) tar=%s" % tar_norm,
-        flush=True,
-    )
-    return True
-
-  def _run_day_close(self, tar_norm: str, reason: str) -> None:
-    set_daemon_thread_title(
-        "",
-        script_name=self.process_title,
-        role="async-day-close",
-    )
-    try:
-      close_old_connections()
-      if tar_norm in self.get_disqualified_daily_tars():
-        self._set_entry_status(tar_norm, "deferred", detail="disqualified")
-        return
-      if self._try_complete_day_close_tail_without_reseal(tar_norm):
-        return
-      coord = self.day_raw_removal_coordinator
-      if coord is not None and bool(getattr(coord, "enabled", False)):
-        has_closed_raw_fn = getattr(coord, "has_closed_raw_on_disk", None)
-        if callable(has_closed_raw_fn) and has_closed_raw_fn(tar_norm):
-          requeue_fn = getattr(coord, "requeue_closed_raw_paths_for_ingest", None)
-          paths = (
-              requeue_fn(tar_norm, reason="async_seal_closed_raw_guard")
-              if callable(requeue_fn)
-              else []
-          )
-          kick = getattr(coord, "_last_closed_raw_kick_action", None)
-          from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
-              KICK_NO_HANDOFF_PROGRESS,
-          )
-          if paths or kick not in KICK_NO_HANDOFF_PROGRESS:
-            self.defer_for_ingest_handoff(tar_norm)
-          self.log_fn(
-              "janitor: async day_close seal deferred closed raw on disk "
-              "tar=%s paths=%d kick=%s"
-              % (tar_norm, len(paths), kick or "-"),
-              flush=True,
-          )
-          return
-      self._touch_manifest("sealing", tar_norm=tar_norm)
-      self._set_entry_status(tar_norm, "sealing", reason=reason)
-      if not self._seal_day(tar_norm):
-        self._set_entry_status(tar_norm, "deferred", detail="seal_deferred")
-        return
-      self._notify_phase(tar_norm, "sealed")
-      coord = self.day_raw_removal_coordinator
-      if coord is not None and bool(getattr(coord, "enabled", False)):
-        self._touch_manifest("raw_removal", tar_norm=tar_norm)
-        self._set_entry_status(tar_norm, "raw_removal")
-        coord.start_async_verify(
-            tar_norm,
-            sealed_members=self._pending_verify_zst_members,
-        )
-        wait_budget_s = cfg.get_sync_day_close_raw_removal_wait_seconds()
-        wait_started = time.time()
-        last_progress_log = wait_started
-        verify_rekick_done = False
-        while not shutdown_requested[0]:
-          if coord.verification_complete(tar_norm):
-            break
-          now = time.time()
-          if wait_budget_s > 0 and now - wait_started >= wait_budget_s:
-            summary = coord.raw_removal_progress_summary(tar_norm)
-            self.log_fn(
-                "janitor: async day_close raw_removal verify stall tar=%s "
-                "wait_s=%.0f phase=%s verified=%d pending_delete=%d"
-                % (
-                    tar_norm,
-                    wait_budget_s,
-                    summary.get("phase"),
-                    int(summary.get("verified_count", 0)),
-                    int(summary.get("pending_delete", 0)),
-                ),
-                flush=True,
-            )
-            self._set_entry_status(
-                tar_norm,
-                "deferred",
-                detail="raw_removal_verify_timeout",
-            )
-            return
-          if now - last_progress_log >= 60.0:
-            summary = coord.raw_removal_progress_summary(tar_norm)
-            self.log_fn(
-                "janitor: async day_close raw_removal verify wait tar=%s "
-                "elapsed_s=%.0f phase=%s verified=%d pending_delete=%d"
-                % (
-                    tar_norm,
-                    now - wait_started,
-                    summary.get("phase"),
-                    int(summary.get("verified_count", 0)),
-                    int(summary.get("pending_delete", 0)),
-                ),
-                flush=True,
-            )
-            last_progress_log = now
-          if (
-              not verify_rekick_done
-              and coord.pipeline_future_done(tar_norm)
-              and not coord.verification_complete(tar_norm)
-          ):
-            coord.start_async_verify(
-                tar_norm,
-                sealed_members=self._pending_verify_zst_members,
-            )
-            verify_rekick_done = True
-          sleep_until_shutdown(0.5)
-        if not coord.verification_complete(tar_norm):
-          self._set_entry_status(tar_norm, "deferred", detail="raw_removal_verify")
-          return
-        if coord.should_handoff_to_ingest(tar_norm):
-          coord.complete_handoff_to_ingest(
-              tar_norm,
-              reason="async_day_close_verify",
-          )
-          self.defer_for_ingest_handoff(tar_norm)
-          return
-        self._set_entry_status(tar_norm, "raw_delete_pending")
-        self._touch_manifest("raw_delete_pending", tar_norm=tar_norm)
-        return
-      if not self._tar_drop_day(tar_norm):
-        self._set_entry_status(tar_norm, "deferred", detail="tar_drop")
-        return
-      if not self._day_close_filesystem_complete(tar_norm):
-        self._set_entry_status(tar_norm, "deferred", detail="raw_remains")
-        return
-      self._notify_phase(tar_norm, "tar_dropped")
-      self._set_entry_status(tar_norm, "complete", completed_at=time.time())
-      self._touch_manifest("complete", tar_norm=tar_norm)
-    except Exception as exc:
-      self._set_entry_status(tar_norm, "failed", error=str(exc))
-      self.log_fn(
-          "janitor: async day_close error tar=%s: %s\n%s"
-          % (tar_norm, exc, traceback.format_exc()),
-          flush=True,
-      )
-    finally:
-      close_old_connections()
-      with self._lock:
-        self._futures.pop(tar_norm, None)
-
-  def _seal_day(self, tar_norm: str) -> bool:
-    self._pending_verify_zst_members = None
-    if not daily_tar_seal_calendar_eligible(tar_norm, self.local_tz):
-      self.log_fn(
-          "janitor: async day_close seal deferred (calendar grace) %s" % tar_norm,
-          flush=True,
-      )
-      return False
-    if os.path.isfile(tar_norm):
-      if tar_has_duplicate_file_members(tar_norm):
-        dedupe_tar_keep_largest_file_per_member(tar_norm, log_fn=self.log_fn)
-    else:
-      zst_path, gz_path = compressed_sibling_paths(tar_norm)
-      sealed_path = zst_path if os.path.isfile(zst_path) else gz_path
-      if os.path.isfile(sealed_path):
-        dedupe_sealed_daily_archive(sealed_path, log_fn=self.log_fn)
-    zst_path, gz_path = compressed_sibling_paths(tar_norm)
-    if os.path.isfile(zst_path) and not (
-        os.path.isfile(tar_norm) and tar_has_duplicate_file_members(tar_norm)
-    ):
-      if not os.path.isfile(tar_norm):
-        drop_legacy_gz_if_equivalent_to_zst(
-            gz_path, zst_path, log_fn=self.log_fn,
-        )
-        self._notify_phase(tar_norm, "sealed")
-        return True
-    if not os.path.isfile(tar_norm):
-      if os.path.isfile(zst_path):
-        drop_legacy_gz_if_equivalent_to_zst(
-            gz_path, zst_path, log_fn=self.log_fn,
-        )
-      return bool(os.path.isfile(zst_path) or os.path.isfile(gz_path))
-    num_threads = cfg.get_archive_zstd_threads()
-    skip_result = _seal_skip_existing_zst_equivalent(
-        tar_norm,
-        zst_path,
-        num_threads,
-        self.log_fn,
-    )
-    if skip_result[0]:
-      self.log_fn(
-          "janitor: async day_close seal skipped (zst equivalent) tar=%s"
-          % tar_norm,
-          flush=True,
-      )
-      drop_legacy_gz_if_equivalent_to_zst(
-          gz_path,
-          zst_path,
-          log_fn=self.log_fn,
-          zst_members=skip_result[1],
-      )
-      self._pending_verify_zst_members = skip_result[1]
-      return True
-    remaining_raw_by_gz = self._remaining_raw_for_tar_drop(tar_norm)
-    keep_tar = effective_keep_uncompressed_tar(
-        tar_norm,
-        local_tz=self.local_tz,
-    )
-    async_inflight = len(self.active_or_submitted_tar_paths())
-    async_max = max(
-        cfg.get_sync_day_close_async_workers(),
-        cfg.get_sync_startup_day_close_max_inflight(),
-    )
-    tar_size_bytes = -1
-    try:
-      tar_size_bytes = os.path.getsize(tar_norm)
-    except OSError:
-      pass
-    self.log_fn(
-        "janitor: async day_close seal start tar=%s async_inflight=%d/%d "
-        "zstd_threads=%s ionice=c%s-n%s nice=%s tar_size_bytes=%d"
-        % (
-            tar_norm,
-            async_inflight,
-            async_max,
-            cfg.get_archive_zstd_threads(),
-            cfg.get_archive_zstd_ionice_class(),
-            cfg.get_archive_zstd_ionice_level(),
-            cfg.get_archive_zstd_nice(),
-            int(tar_size_bytes),
-        ),
-        flush=True,
-    )
-    zst_members = atomic_seal_tar_to_zst(
-        tar_norm,
-        zst_path,
-        cfg.get_archive_zstd_threads(),
-        cfg.get_archive_zstd_level(),
-        keep_tar,
-        log_fn=self.log_fn,
-        remaining_raw_by_gz=remaining_raw_by_gz,
-        force_remove_uncompressed_tar=False,
-        skip_result=skip_result,
-    )
-    drop_legacy_gz_if_equivalent_to_zst(
-        gz_path, zst_path, log_fn=self.log_fn, zst_members=zst_members,
-    )
-    self._pending_verify_zst_members = zst_members
-    if os.path.isfile(zst_path) or os.path.isfile(gz_path):
-      self.log_fn(
-          "janitor: async day_close seal done tar=%s" % tar_norm,
-          flush=True,
-      )
-      return True
-    return False
-
-  def _tar_drop_day(self, tar_norm: str) -> bool:
-    remaining_raw_by_gz = self._remaining_raw_for_tar_drop(tar_norm)
-    zst_path, _gz_path = compressed_sibling_paths(tar_norm)
-    if remaining_raw_by_gz_has_paths_on_disk(remaining_raw_by_gz, zst_path):
-      return False
-    remove_verified_uncompressed_daily_tars(
-        self.tgz_archive_dir,
-        log_fn=self.log_fn,
-        remaining_raw_by_gz=remaining_raw_by_gz,
-        force_remove_uncompressed_tar=False,
-        only_daily_tar_paths={tar_norm},
-    )
-    return True

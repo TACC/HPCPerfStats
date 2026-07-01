@@ -193,7 +193,6 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_startup_day_close_max_inflight"),
     ("PIPELINE", "sync_startup_snapshot_wait_seconds"),
     ("PIPELINE", "sync_startup_day_close_scan_budget_seconds"),
-    ("PIPELINE", "sync_day_close_async_workers"),
     ("PIPELINE", "sync_day_close_max_inflight"),
     ("PIPELINE", "sync_day_close_raw_removal_wait_seconds"),
     ("PIPELINE", "sync_day_close_async_stale_seconds"),
@@ -2753,10 +2752,10 @@ def get_sync_unparsable_raw_quarantine_max_per_tick():
 
 
 def get_sync_startup_raw_removal_preflight():
-  """Enable startup async verify + gated delete for sealed archived raw (default on)."""
+  """Enable startup async verify + gated delete for sealed archived raw (default off)."""
   _ensure_cfg_loaded()
   return _parse_bool(
-      _pipeline_get("sync_startup_raw_removal_preflight", fallback="yes"),
+      _pipeline_get("sync_startup_raw_removal_preflight", fallback="no"),
   )
 
 
@@ -2803,7 +2802,7 @@ def get_sync_startup_tail_ingest_enabled():
   """Run targeted ingest for small checkpoint-blocked tails during startup drain."""
   _ensure_cfg_loaded()
   return _parse_bool(
-      _pipeline_get("sync_startup_tail_ingest_enabled", fallback="yes"),
+      _pipeline_get("sync_startup_tail_ingest_enabled", fallback="no"),
   )
 
 
@@ -2900,15 +2899,6 @@ def get_sync_startup_day_close_scan_budget_seconds():
   )
 
 
-def get_sync_day_close_async_workers():
-  """Worker threads for async DAY_CLOSE seal/raw/tar pipeline (default 1)."""
-  _ensure_cfg_loaded()
-  return max(
-      1,
-      _pipeline_getint("sync_day_close_async_workers", fallback=1),
-  )
-
-
 def get_sync_day_close_raw_removal_preflight():
   """Enable per-day async verify + chunk-boundary batch delete after DAY_CLOSE seal."""
   _ensure_cfg_loaded()
@@ -2950,15 +2940,13 @@ def get_sync_day_close_raw_removal_wait_seconds():
 
 
 def get_sync_day_close_max_inflight():
-  """Max concurrent async DAY_CLOSE jobs (default sync_day_close_async_workers)."""
+  """Max concurrent ``DAY_CLOSE`` calendar days on janitor debt (default 2)."""
   _ensure_cfg_loaded()
-  raw = _pipeline_get("sync_day_close_max_inflight", fallback="")
-  if raw is None or str(raw).strip() == "":
-    return get_sync_day_close_async_workers()
+  raw = _pipeline_get("sync_day_close_max_inflight", fallback="2")
   try:
     return max(1, int(raw))
   except (TypeError, ValueError):
-    return get_sync_day_close_async_workers()
+    return 2
 
 
 def get_sync_startup_day_close_backoff_seconds():

@@ -4691,18 +4691,6 @@ def _supervisor_startup_preflight_disabled(monkeypatch):
     def shutdown(self, wait=True):
       del wait
 
-  import hpcperfstats.dbload.lib.sync_timedb_async_day_close as async_dc_mod
-
-  def _noop_async_day_close(self, tar_norm, reason):
-    del reason
-    self._set_entry_status(tar_norm, "complete")
-    self._notify_phase(tar_norm, "tar_dropped")
-
-  monkeypatch.setattr(
-      async_dc_mod.AsyncDayCloseCoordinator,
-      "_run_day_close",
-      _noop_async_day_close,
-  )
   monkeypatch.setattr(preflight_mod, "StartupRawRemovalPreflight", _DonePreflight)
   monkeypatch.setattr(st, "StartupRawRemovalPreflight", _DonePreflight)
   monkeypatch.setattr(day_close_mod, "StartupDayClosePreflight", _DoneDayClose)
@@ -7247,7 +7235,7 @@ def test_apply_day_close_raw_removal_tar_drop_runs_during_chunk():
       del reason
 
     def tar_paths_raw_delete_pending(self):
-      return [tar_drop_tar]
+      return []
 
   class _FakeDayRaw:
     enabled = True
@@ -7256,10 +7244,10 @@ def test_apply_day_close_raw_removal_tar_drop_runs_during_chunk():
       return True
 
     def any_needs_tar_drop_finish(self):
-      return False
+      return True
 
     def days_needing_tar_drop_oldest_first(self):
-      return []
+      return [tar_drop_tar]
 
     def oldest_day_needing_delete(self):
       return delete_tar
@@ -10795,3 +10783,15 @@ def test_arch_june04_handoff_after_giant_finalize_dispatches_chunk(
     assert "day_close handoff requeue" in out
   finally:
     shutdown_requested[0] = False
+
+
+def test_light_pass_archive_finalize_deferred_no_longer_exists():
+  """Archive finalize defer must signal janitor work, not archive_finalize_deferred maintenance."""
+  import inspect
+
+  import hpcperfstats.dbload.sync_timedb as sync_mod
+
+  source = inspect.getsource(sync_mod)
+  assert "archive_finalize_deferred" not in source
+  assert "archive_finalize_day_close_deferred" not in source
+  assert "signal_work_available" in source

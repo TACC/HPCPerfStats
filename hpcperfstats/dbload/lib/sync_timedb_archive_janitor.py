@@ -85,12 +85,6 @@ _LEGACY_DAY_PIPELINE_KINDS = frozenset({
     DebtKind.TAR_DROP,
 })
 
-_SCHEDULED_DAY_CLOSE_SUBMIT_REASONS = frozenset({
-    "startup",
-    "every_n_chunks",
-    "ingest_queue_empty",
-})
-
 
 def _is_heavy_maintenance_reason(reason: str) -> bool:
   if not reason:
@@ -99,11 +93,6 @@ def _is_heavy_maintenance_reason(reason: str) -> bool:
     return True
   return str(reason).startswith("day_ingest_complete:")
 
-
-def _scheduled_day_close_submit_allowed(reason: str) -> bool:
-  if reason in _SCHEDULED_DAY_CLOSE_SUBMIT_REASONS:
-    return True
-  return str(reason).startswith("day_ingest_complete:")
 
 _DEBT_PRIORITY = {
     DebtKind.DAY_CLOSE: 0,
@@ -482,10 +471,7 @@ class ArchiveJanitor:
         remaining_raw_by_gz=remaining,
         newly_queued_tars=set(),
     )
-    newly_queued = self._submit_scheduled_day_close_from_snapshot(
-        reason=reason,
-        remaining_raw_by_gz=remaining,
-    )
+    newly_queued = self._discover_and_enqueue_ready_day_close(reason=reason)
     if newly_queued:
       self._log_day_close_candidate_report(
           reason=reason,
@@ -625,10 +611,7 @@ class ArchiveJanitor:
       )
       sub_candidate_report_s = time.time() - report_t0
       submit_t0 = time.time()
-      newly_queued = self._submit_scheduled_day_close_from_snapshot(
-          reason=reason,
-          remaining_raw_by_gz=remaining,
-      )
+      newly_queued = self._discover_and_enqueue_ready_day_close(reason=reason)
       sub_scheduled_submit_s = time.time() - submit_t0
       if newly_queued:
         report_t0 = time.time()
@@ -794,12 +777,22 @@ class ArchiveJanitor:
       reason: str,
       disqualified: Optional[Set[str]] = None,
   ) -> bool:
-    """Submit async ``DAY_CLOSE`` when checkpoint-complete eligibility passes."""
+    """Enqueue ``DAY_CLOSE`` debt when checkpoint-complete eligibility passes."""
+    return self._enqueue_eligible_day_close(
+        tar_norm,
+        reason=reason,
+        disqualified=disqualified,
+    )
+
+  def _enqueue_eligible_day_close(
+      self,
+      tar_norm: str,
+      *,
+      reason: str,
+      disqualified: Optional[Set[str]] = None,
+  ) -> bool:
     tar_norm = os.path.normpath(tar_norm or "")
     if not tar_norm:
-      return False
-    coord = self.async_day_close_coordinator
-    if coord is None:
       return False
     inputs = self._get_maintenance_pass_candidate_inputs()
     if disqualified is None:
@@ -833,19 +826,103 @@ class ArchiveJanitor:
           )
       if skip_reason and self.log_fn:
         self.log_fn(
-            "janitor: day_close submit skip tar=%s reason=%s"
+            "janitor: day_close enqueue skip tar=%s reason=%s"
             % (tar_norm, skip_reason),
             flush=True,
         )
       return False
-    return coord.submit_day_close(
-        tar_norm,
-        reason=reason,
-        disqualified_daily_tars=disqualified,
+    if tar_norm in self._debt_heap_tar_paths():
+      return False
+    self._enqueue_day_close(tar_norm, persist=True)
+    if self.log_fn:
+      self.log_fn(
+          "janitor: day_close enqueue tar=%s reason=%s"
+          % (tar_norm, reason),
+          flush=True,
+      )
+    return True
+
+  def _day_close_inflight_tar_paths(self) -> Set[str]:
+    return self._debt_heap_tar_paths()
+
+  def _discover_and_enqueue_ready_day_close(
+      self,
+      *,
+      reason: str,
+  ) -> Set[str]:
+    if not self.tgz_archive_dir:
+      return set()
+    inputs = self._get_maintenance_pass_candidate_inputs()
+    if not isinstance(inputs, dict):
+      inputs = {}
+    with self._accrual_snapshot_lock:
+      accrual_snapshot = self._accrual_snapshot
+    remaining = build_remaining_raw_stats_by_daily_gz(
+        self.archive_data_dir,
+        self.host_name_ext,
+        self.tgz_archive_dir,
+        maintenance_snapshot=accrual_snapshot,
     )
+    disq_reasons = build_disqualification_reasons_by_tar(
+        tgz_archive_dir=self.tgz_archive_dir,
+        inflight_paths=inputs.get("inflight_paths"),
+        pending_append_by_daily_tar=inputs.get("pending_append_by_daily_tar"),
+        in_flight_archive_tars=inputs.get("in_flight_archive_tars"),
+        pending_archive_task_tars=inputs.get("pending_archive_task_tars"),
+        unmapped_closed_raw_tars=inputs.get("unmapped_closed_raw_tars"),
+        unprocessed_by_tar=inputs.get("unprocessed_by_tar"),
+        local_tz=self.local_tz,
+    )
+    with self._hints_state_lock:
+      day_phases = dict(self._day_phases)
+    entries = classify_day_close_candidates(
+        tgz_archive_dir=self.tgz_archive_dir,
+        remaining_raw_by_gz=remaining,
+        unprocessed_by_tar=inputs.get("unprocessed_by_tar"),
+        disqualification_reasons=disq_reasons,
+        day_phases=day_phases,
+        local_tz=self.local_tz,
+        async_in_progress_tars=self._day_close_inflight_tar_paths(),
+        debt_heap_tars=self._debt_heap_tar_paths(),
+        newly_queued_tars=set(),
+        day_raw_removal=self.day_raw_removal_coordinator,
+    )
+    if reason == "startup":
+      max_inflight = cfg.get_sync_startup_day_close_max_inflight()
+    else:
+      max_inflight = cfg.get_sync_day_close_max_inflight()
+    active = set(self._day_close_inflight_tar_paths())
+    disqualified = set(self.get_disqualified_daily_tars())
+    newly_queued: Set[str] = set()
+    skipped_inflight = 0
+    discover_reason = "discover_ready_%s" % reason
+    for entry in entries:
+      if len(active) >= max_inflight:
+        skipped_inflight += 1
+        continue
+      if entry.get("status") != "disqualified":
+        continue
+      if "pending_discovery" not in (entry.get("reasons") or ()):
+        continue
+      tar_norm = os.path.normpath(entry["tar_path"])
+      if self._enqueue_eligible_day_close(
+          tar_norm,
+          reason=discover_reason,
+          disqualified=disqualified,
+      ):
+        newly_queued.add(tar_norm)
+        active.add(tar_norm)
+    if newly_queued or skipped_inflight:
+      self.log_fn(
+          "janitor: discover_ready_day_close enqueued=%d skipped_inflight=%d "
+          "max_inflight=%d reason=%s"
+          % (len(newly_queued), skipped_inflight, max_inflight, reason),
+          flush=True,
+      )
+    return newly_queued
 
   def enqueue_immediate_day_close(self, tar_path: str, *, reason: str) -> bool:
-    """Submit async ``DAY_CLOSE`` when ingest checkpoint is complete for the day."""
+    """Enqueue ``DAY_CLOSE`` when ingest checkpoint is complete for the day."""
     tar_norm = os.path.normpath(tar_path) if tar_path else ""
     if not tar_norm:
       return False
@@ -863,7 +940,7 @@ class ArchiveJanitor:
     return submitted
 
   def enqueue_immediate_day_close_many(self, tar_paths, *, reason: str):
-    """Bulk async ``DAY_CLOSE`` submit (oldest-first list); one wake signal."""
+    """Bulk ``DAY_CLOSE`` enqueue (oldest-first list); one wake signal."""
     if not tar_paths:
       return
     disqualified = set(self.get_disqualified_daily_tars())
@@ -889,7 +966,7 @@ class ArchiveJanitor:
     if not submitted:
       return
     self.log_fn(
-        "janitor: async day_close bulk submit reason=%s days=%d"
+        "janitor: day_close bulk enqueue reason=%s days=%d"
         % (submit_reason, submitted),
         flush=True,
     )
@@ -1053,6 +1130,7 @@ class ArchiveJanitor:
       debt_popped = 0
       async_submitted = 0
       drain_round = 0
+      self._discover_and_enqueue_ready_day_close(reason="tick")
       while True:
         drain_round += 1
         pass_reason = None
@@ -1236,10 +1314,6 @@ class ArchiveJanitor:
     )
     with self._hints_state_lock:
       day_phases = dict(self._day_phases)
-    async_active = set()
-    coord = self.async_day_close_coordinator
-    if coord is not None:
-      async_active = coord.active_or_submitted_tar_paths()
     entries = classify_day_close_candidates(
         tgz_archive_dir=self.tgz_archive_dir,
         remaining_raw_by_gz=remaining_raw_by_gz,
@@ -1247,91 +1321,18 @@ class ArchiveJanitor:
         disqualification_reasons=disq_reasons,
         day_phases=day_phases,
         local_tz=self.local_tz,
-        async_in_progress_tars=async_active,
+        async_in_progress_tars=self._day_close_inflight_tar_paths(),
         debt_heap_tars=self._debt_heap_tar_paths(),
         newly_queued_tars=newly_queued_tars or set(),
         queued_reason=day_close_queued_reason_for_report_reason(reason),
+        day_raw_removal=self.day_raw_removal_coordinator,
     )
-    async_progress_fn = None
-    if coord is not None:
-      async_progress_fn = coord.entry_progress_snapshot
     log_day_close_candidate_report(
         entries,
         reason=reason,
         log_fn=self.log_fn,
-        async_progress_fn=async_progress_fn,
+        async_progress_fn=None,
     )
-
-  def _submit_scheduled_day_close_from_snapshot(
-      self,
-      *,
-      reason: str,
-      remaining_raw_by_gz,
-  ) -> Set[str]:
-    """Submit async DAY_CLOSE for ``eligible_deferred`` days on scheduled passes."""
-    if not _scheduled_day_close_submit_allowed(reason):
-      return set()
-    coord = self.async_day_close_coordinator
-    if coord is None:
-      return set()
-    inputs = self._get_maintenance_pass_candidate_inputs()
-    if not isinstance(inputs, dict):
-      inputs = {}
-    disq_reasons = build_disqualification_reasons_by_tar(
-        tgz_archive_dir=self.tgz_archive_dir,
-        inflight_paths=inputs.get("inflight_paths"),
-        pending_append_by_daily_tar=inputs.get("pending_append_by_daily_tar"),
-        in_flight_archive_tars=inputs.get("in_flight_archive_tars"),
-        pending_archive_task_tars=inputs.get("pending_archive_task_tars"),
-        unmapped_closed_raw_tars=inputs.get("unmapped_closed_raw_tars"),
-        unprocessed_by_tar=inputs.get("unprocessed_by_tar"),
-        local_tz=self.local_tz,
-    )
-    with self._hints_state_lock:
-      day_phases = dict(self._day_phases)
-    entries = classify_day_close_candidates(
-        tgz_archive_dir=self.tgz_archive_dir,
-        remaining_raw_by_gz=remaining_raw_by_gz,
-        unprocessed_by_tar=inputs.get("unprocessed_by_tar"),
-        disqualification_reasons=disq_reasons,
-        day_phases=day_phases,
-        local_tz=self.local_tz,
-        async_in_progress_tars=coord.active_or_submitted_tar_paths(),
-        debt_heap_tars=self._debt_heap_tar_paths(),
-        newly_queued_tars=set(),
-    )
-    deferred = [
-        entry for entry in entries
-        if entry.get("status") == "eligible_deferred"
-    ]
-    deferred.sort(
-        key=lambda entry: calendar_date_from_daily_tar_path(entry["tar_path"])
-        or date.max,
-    )
-    newly_queued: Set[str] = set()
-    disqualified = set(self.get_disqualified_daily_tars())
-    if reason == "startup":
-      max_inflight = cfg.get_sync_startup_day_close_max_inflight()
-    else:
-      max_inflight = cfg.get_sync_day_close_max_inflight()
-    submit_reason = "scheduled_%s" % reason
-    for entry in deferred:
-      if len(coord.active_or_submitted_tar_paths()) >= max_inflight:
-        break
-      tar_norm = os.path.normpath(entry["tar_path"])
-      if self._submit_eligible_async_day_close(
-          tar_norm,
-          reason=submit_reason,
-          disqualified=disqualified,
-      ):
-        newly_queued.add(tar_norm)
-    if newly_queued:
-      self.log_fn(
-          "janitor: scheduled day_close submit reason=%s days=%d"
-          % (reason, len(newly_queued)),
-          flush=True,
-      )
-    return newly_queued
 
   def _process_debt_item(
       self,
@@ -1344,32 +1345,11 @@ class ArchiveJanitor:
   ) -> bool:
     if debt.kind == DebtKind.DAY_CLOSE:
       coord = self.async_day_close_coordinator
-      if coord is not None:
-        tar_norm = os.path.normpath(debt.tar_path)
-        if coord.is_complete(tar_norm):
-          with self._hints_state_lock:
-            self._day_phases[tar_norm] = day_phase_hint_entry(tar_norm, "tar_dropped")
-          return True
-        was_active = tar_norm in coord.active_or_submitted_tar_paths()
-        self._submit_eligible_async_day_close(
-            tar_norm,
-            reason="janitor_debt",
-            disqualified=disqualified,
-        )
-        if (
-            tick_stats is not None
-            and not was_active
-            and tar_norm in coord.active_or_submitted_tar_paths()
-        ):
-          tick_stats["async_submitted"] = int(
-              tick_stats.get("async_submitted") or 0
-          ) + 1
-        if coord.is_complete(tar_norm):
-          with self._hints_state_lock:
-            self._day_phases[tar_norm] = day_phase_hint_entry(tar_norm, "tar_dropped")
-          return True
-        self._enqueue_day_close(tar_norm, persist=False)
-        return False
+      if coord is not None and coord.is_complete(os.path.normpath(debt.tar_path)):
+        with self._hints_state_lock:
+          self._day_phases[os.path.normpath(debt.tar_path)] = day_phase_hint_entry(
+              debt.tar_path, "tar_dropped")
+        return True
       return self._close_one_day(
           debt.tar_path,
           snapshot=snapshot,
@@ -1470,10 +1450,10 @@ class ArchiveJanitor:
       coord = self.day_raw_removal_coordinator
       if not coord.verification_complete(tar_norm):
         self.log_fn(
-            "janitor: day_close async_verify start tar=%s" % tar_norm,
+            "janitor: day_close verify start tar=%s" % tar_norm,
             flush=True,
         )
-        coord.start_async_verify(tar_norm)
+        coord.run_verify_sync(tar_norm)
       if not coord.verification_complete(tar_norm):
         self._enqueue_day_close(tar_norm, persist=False)
         self._persist_hints()

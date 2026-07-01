@@ -5816,7 +5816,7 @@ def test_classify_day_close_candidates_reports_reasons(tmp_path):
   assert "checkpoint_incomplete" in by_tar[tar_path]["reasons"]
 
 
-def test_classify_day_close_waiting_on_ingest_vs_eligible_deferred(tmp_path):
+def test_classify_no_eligible_deferred_status(tmp_path):
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       classify_day_close_candidates,
   )
@@ -5824,9 +5824,9 @@ def test_classify_day_close_waiting_on_ingest_vs_eligible_deferred(tmp_path):
   daily_dir = tmp_path / "daily"
   daily_dir.mkdir()
   waiting_tar = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
-  deferred_tar = os.path.normpath(str(daily_dir / "2020-01-02.tar"))
+  ready_tar = os.path.normpath(str(daily_dir / "2020-01-02.tar"))
   open(waiting_tar, "wb").close()
-  open(deferred_tar, "wb").close()
+  open(ready_tar, "wb").close()
   raw_waiting = tmp_path / "raw_waiting"
   raw_waiting.write_text("x")
   entries = classify_day_close_candidates(
@@ -5837,7 +5837,37 @@ def test_classify_day_close_waiting_on_ingest_vs_eligible_deferred(tmp_path):
   )
   by_tar = {e["tar_path"]: e for e in entries}
   assert by_tar[waiting_tar]["status"] == "waiting_on_ingest"
-  assert by_tar[deferred_tar]["status"] == "eligible_deferred"
+  assert by_tar[ready_tar]["status"] == "disqualified"
+  assert "pending_discovery" in by_tar[ready_tar]["reasons"]
+  assert "eligible_deferred" not in {e.get("status") for e in entries}
+
+
+def test_closed_raw_classified_waiting_on_ingest(tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      classify_day_close_candidates,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+  open(tar_path, "wb").close()
+
+  class _FakeDayRaw:
+    enabled = True
+
+    def has_closed_raw_on_disk(self, _tar):
+      return True
+
+  entries = classify_day_close_candidates(
+      tgz_archive_dir=str(daily_dir),
+      unprocessed_by_tar={},
+      disqualification_reasons={},
+      local_tz=timezone.utc,
+      day_raw_removal=_FakeDayRaw(),
+  )
+  by_tar = {e["tar_path"]: e for e in entries}
+  assert by_tar[tar_path]["status"] == "waiting_on_ingest"
+  assert "closed_raw_on_disk" in by_tar[tar_path]["reasons"]
 
 
 def test_build_remaining_raw_accepts_snapshot_no_nested_collect(monkeypatch, tmp_path):
@@ -5991,7 +6021,7 @@ def test_log_day_close_candidate_report_logs_queued_and_disqualified(capsys, mon
   out = capsys.readouterr().out
   assert (
       "day_close candidate report reason=test queued=1 "
-      "waiting_on_ingest=1 eligible_deferred=0 disqualified=0"
+      "waiting_on_ingest=1 disqualified=0"
   ) in out
   assert "status=queued" in out
   assert "status=waiting_on_ingest" in out
@@ -6349,7 +6379,7 @@ def test_oldest_checkpoint_blocked_tar_returns_oldest_on_disk_day(tmp_path):
       unprocessed, tgz_archive_dir=str(daily_dir)) == tar_old
 
 
-def test_classify_ghost_unprocessed_becomes_eligible_deferred(tmp_path):
+def test_classify_ghost_unprocessed_becomes_pending_discovery(tmp_path):
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       classify_day_close_candidates,
   )
@@ -6365,7 +6395,8 @@ def test_classify_ghost_unprocessed_becomes_eligible_deferred(tmp_path):
       local_tz=timezone.utc,
   )
   by_tar = {e["tar_path"]: e for e in entries}
-  assert by_tar[tar_path]["status"] == "eligible_deferred"
+  assert by_tar[tar_path]["status"] == "disqualified"
+  assert "pending_discovery" in by_tar[tar_path]["reasons"]
   assert by_tar[tar_path]["unprocessed"] == 0
   assert by_tar[tar_path]["unprocessed_list"] == 1
 

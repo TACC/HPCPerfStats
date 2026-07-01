@@ -337,6 +337,7 @@ def classify_day_close_candidates(
     debt_heap_tars=None,
     newly_queued_tars=None,
     queued_reason="scheduled_enqueue",
+    day_raw_removal=None,
 ):
   """Classify day-close universe into queued/disqualified/skipped_no_work entries."""
   if not tgz_archive_dir:
@@ -393,10 +394,21 @@ def classify_day_close_candidates(
       status = "waiting_on_ingest"
       reasons = set(reasons)
       reasons.add("checkpoint_incomplete")
+    elif (
+        day_raw_removal is not None
+        and getattr(day_raw_removal, "enabled", False)
+        and getattr(day_raw_removal, "has_closed_raw_on_disk", None)
+        and day_raw_removal.has_closed_raw_on_disk(tar_norm)
+    ):
+      status = "waiting_on_ingest"
+      reasons = set(reasons)
+      reasons.add("closed_raw_on_disk")
     elif blocking:
       status = "disqualified"
     else:
-      status = "eligible_deferred"
+      status = "disqualified"
+      reasons = set(reasons)
+      reasons.add("pending_discovery")
     entry = {
         "tar_path": tar_norm,
         "status": status,
@@ -460,18 +472,17 @@ def log_day_close_candidate_report(
     return
   queued = [e for e in entries if e.get("status") == "queued"]
   waiting = [e for e in entries if e.get("status") == "waiting_on_ingest"]
-  deferred = [e for e in entries if e.get("status") == "eligible_deferred"]
   disqualified = [e for e in entries if e.get("status") == "disqualified"]
   maybe_log_oldest_day_unprocessed_frozen(waiting, log_fn=log_fn)
-  if not queued and not waiting and not deferred and not disqualified:
+  if not queued and not waiting and not disqualified:
     return
   log_fn(
       "janitor: day_close candidate report reason=%s queued=%d "
-      "waiting_on_ingest=%d eligible_deferred=%d disqualified=%d"
-      % (reason, len(queued), len(waiting), len(deferred), len(disqualified)),
+      "waiting_on_ingest=%d disqualified=%d"
+      % (reason, len(queued), len(waiting), len(disqualified)),
       flush=True,
   )
-  for entry in queued + waiting + deferred + disqualified:
+  for entry in queued + waiting + disqualified:
     reasons = list(entry.get("reasons") or ())
     async_suffix = ""
     if (

@@ -3,9 +3,9 @@
 
 **Hot path (supervisor thread):** discover → ingest → checkpoint → dispatch append (up to ``sync_archive_max_inflight_jobs`` disjoint daily-tar slots). Ingest never blocks on seal, zstd, raw delete, or uncompressed ``.tar`` removal.
 
-**Cold path (``ArchiveJanitor`` thread):** day-debt queue consumed in time-sliced micro-batches (``archive_janitor_budget_seconds`` / ``archive_janitor_days_per_tick``). Snapshot/hints refresh and ``DAY_CLOSE`` scheduling run at supervisor startup (CLI ``all`` only), every ``rescan_every_chunks`` ingest chunks (default 10), and when the ingest queue drains to zero after chunk processing—all on the janitor thread. Per-day lock cleanup (once per tick), dedupe-before-seal, seal → async verify (``DayRawRemovalCoordinator``) with ingest-thread batched delete, or incremental raw/tar when preflight is off; DB head-ingest gate and disqualification union unchanged. Progress persists in ``.sync_archive_maint_hints.json`` v2 (``debt_queue``, ``day_phases``).
+**Cold path (``ArchiveJanitor`` thread):** day-debt queue consumed in time-sliced micro-batches (``archive_janitor_budget_seconds`` / ``archive_janitor_days_per_tick``). Each tick discovers checkpoint-complete ``DAY_CLOSE`` candidates and enqueues debt (``sync_day_close_max_inflight`` cap). ``DAY_CLOSE`` runs seal → verify → delete → tar_drop on the janitor thread (no async worker pool; steady-state ingest is not gated on raw deletion). Snapshot/hints refresh at supervisor startup (CLI ``all`` only) and on scheduled maintenance passes. Per-day lock cleanup (once per tick), dedupe-before-seal, and DB head-ingest gate unchanged. Progress persists in ``.sync_archive_maint_hints.json`` v2 (``debt_queue``, ``day_phases``).
 
-**Startup prefights (``all`` only):** when ``startdate == 'all'``, ``StartupRawRemovalPreflight`` and ``StartupDayClosePreflight`` (checkpoint-complete + filesystem-quiescent ``startup_quiescent_tar`` submit) run on background threads; ``StartupTailIngestCoordinator`` consumes discover-slice tail enqueue on another thread. Default ``sync_startup_drain_day_close_before_ingest=yes`` blocks first ingest until discover + startup tail ingest + deletion prefights complete (not until async DAY_CLOSE idles). Date-range runs skip startup maintenance and begin ingest immediately.
+**Startup prefights (``all`` only):** when ``startdate == 'all'``, janitor startup maintenance discovers/enqueues ``DAY_CLOSE``; optional ``StartupRawRemovalPreflight``, ``StartupDayClosePreflight``, and ``StartupTailIngestCoordinator`` run when enabled in ini (defaults off for raw-removal preflight and tail ingest). Opt-in ``sync_startup_drain_day_close_before_ingest=yes`` blocks first ingest until startup drain idle. Date-range runs skip startup maintenance and begin ingest immediately.
 
 Append and raw delete stay DB-gated when ``sync_archive_require_db_head_ingest=yes``. Finalize uses soft defer (``allow_defer``) under ingest backlog instead of blocking the supervisor.
 
@@ -4159,7 +4159,6 @@ def run_sync_timedb_supervisor_loop(
         )
 
   def _maybe_enqueue_immediate_day_close(*, context: str):
-    nonlocal archive_finalize_day_close_deferred
     if not tgz_archive_dir:
       return
     defer_day_close, defer_reason, defer_extra = (
@@ -4167,12 +4166,6 @@ def run_sync_timedb_supervisor_loop(
     )
     if defer_day_close:
       _log_immediate_day_close_defer(context, defer_reason, defer_extra)
-      archive_finalize_day_close_deferred = True
-      if context == "archive_finalize":
-        archive_janitor.signal_scheduled_maintenance_pass(
-            reason="archive_finalize_deferred",
-        )
-        archive_janitor.signal_work_available()
       if context in ("chunk_end", "archive_finalize", "idle_finalize"):
         _reconcile_pending_with_oldest_checkpoint_blocked()
       return
@@ -4200,21 +4193,21 @@ def run_sync_timedb_supervisor_loop(
         continue
       if tar_norm in immediate_day_close_attempted_tars:
         continue
-      if async_day_close is not None:
-        if len(async_day_close.active_or_submitted_tar_paths()) >= max_inflight:
-          break
-        if (
-            async_day_close.is_complete(tar_norm)
-            and day_raw_removal is not None
-            and hasattr(day_raw_removal, "has_closed_raw_on_disk")
-            and day_raw_removal.has_closed_raw_on_disk(tar_norm)
-        ):
-          continue
+      if len(archive_janitor._day_close_inflight_tar_paths()) >= max_inflight:
+        break
+      if (
+          async_day_close is not None
+          and async_day_close.is_complete(tar_norm)
+          and day_raw_removal is not None
+          and hasattr(day_raw_removal, "has_closed_raw_on_disk")
+          and day_raw_removal.has_closed_raw_on_disk(tar_norm)
+      ):
+        continue
       immediate_day_close_attempted_tars.add(tar_norm)
-      if async_day_close.submit_day_close(
-          tar_path,
+      if archive_janitor._enqueue_eligible_day_close(
+          tar_norm,
           reason="day_ingest_complete:%s" % context,
-          disqualified_daily_tars=disqualified,
+          disqualified=disqualified,
       ):
         submitted_any = True
     if submitted_any:
@@ -4241,7 +4234,6 @@ def run_sync_timedb_supervisor_loop(
   def _apply_archive_finalize_results(deferred_paths, results):
     nonlocal checkpoint_dirty_count
     nonlocal dead_letter_dirty
-    nonlocal archive_finalize_day_close_deferred
     nonlocal archive_finalize_needs_post_reconcile
     if not isinstance(results, list):
       results = [results]
@@ -4404,12 +4396,8 @@ def run_sync_timedb_supervisor_loop(
           _should_defer_immediate_day_close()
       )
       if defer_day_close:
-        archive_finalize_day_close_deferred = True
-        archive_janitor.signal_scheduled_maintenance_pass(
-            reason="archive_finalize_deferred",
-        )
-        archive_janitor.signal_work_available()
         _log_immediate_day_close_defer("archive_finalize", defer_reason, defer_extra)
+        archive_janitor.signal_work_available()
       else:
         _maybe_enqueue_immediate_day_close(context="archive_finalize")
 
@@ -5350,7 +5338,6 @@ def run_sync_timedb_supervisor_loop(
   chunk_counter = 0
   oldest_day_chunk_gate_stall_last_log = 0.0
   handoff_priority_stall_last_log = 0.0
-  archive_finalize_day_close_deferred = False
   archive_finalize_needs_post_reconcile = False
   orphan_inflight_reclaim_last_monotonic = {}
   # Per-day cache of raw paths queued/in-flight for tar append (loss-safe
@@ -5551,6 +5538,20 @@ def run_sync_timedb_supervisor_loop(
   reconcile_refs["get_startup_snapshot"] = startup_archive_scan.get_snapshot
   reconcile_refs["get_accrual_snapshot"] = (
       archive_janitor.get_accrual_snapshot_for_reconcile
+  )
+
+  def _async_enqueue_day_close(tar_norm, reason):
+    if archive_janitor._enqueue_eligible_day_close(
+        tar_norm,
+        reason=reason,
+    ):
+      archive_janitor.signal_work_available()
+      return True
+    return False
+
+  async_day_close.enqueue_day_close_fn = _async_enqueue_day_close
+  async_day_close.get_inflight_tar_paths_fn = (
+      archive_janitor._day_close_inflight_tar_paths
   )
 
   def _on_async_day_phase(tar_norm, phase):
@@ -6060,19 +6061,14 @@ def run_sync_timedb_supervisor_loop(
           get_startup_snapshot=_wait_startup_snapshot_for_preflight,
           process_title=SYNC_TIMEDB_PROCESS_TITLE,
       )
-      startup_preflight.start_async_verify()
+      if startup_preflight.enabled:
+        startup_preflight.start_async_verify()
       startup_day_close_holder = {"preflight": None}
       startup_tail_ingest = StartupTailIngestCoordinator(
           log_fn=log_print,
           run_ingest_batch=_run_startup_tail_ingest_batch,
           submit_day_close=lambda tar_norm, reason: (
-              async_day_close.submit_day_close(
-                  tar_norm,
-                  reason=reason,
-                  disqualified_daily_tars=_janitor_disqualified_daily_tars(),
-              )
-              if async_day_close is not None
-              else False
+              _async_enqueue_day_close(tar_norm, reason)
           ),
           signal_janitor=lambda: archive_janitor.signal_work_available(),
           get_startup_snapshot=_get_startup_snapshot_for_rescan,
@@ -6104,12 +6100,9 @@ def run_sync_timedb_supervisor_loop(
       )
       startup_day_close_holder["preflight"] = startup_day_close
       startup_day_close.start_async_discover_and_close()
-      startup_tail_ingest.start_async_tail_ingest()
+      if cfg.get_sync_startup_tail_ingest_enabled():
+        startup_tail_ingest.start_async_tail_ingest()
       _recover_startup_day_close_handoffs()
-      if async_day_close is not None:
-        async_day_close.reconcile_supervisor_raw_delete_pending(
-            reason="startup",
-        )
 
       if not cfg.get_sync_startup_drain_day_close_before_ingest():
         while startup_handoff_recover_pending:
@@ -6940,20 +6933,6 @@ def run_sync_timedb_supervisor_loop(
         )
         archive_janitor.signal_work_available()
         _maybe_enqueue_immediate_day_close(context="chunk_end")
-        if archive_finalize_day_close_deferred:
-          defer_still, defer_reason, _defer_extra = (
-              _should_defer_immediate_day_close()
-          )
-          if defer_still:
-            log_print(
-                "INFO: archive_finalize keep deferred day_close reason=%s"
-                % defer_reason,
-                flush=True,
-            )
-          else:
-            if not handoff_priority_paths:
-              archive_finalize_day_close_deferred = False
-              _maybe_enqueue_immediate_day_close(context="archive_finalize")
 
         _flush_deferred_archive_finalize_prewarm()
         chunk_in_progress = False

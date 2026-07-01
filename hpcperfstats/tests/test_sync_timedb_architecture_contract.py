@@ -294,23 +294,13 @@ def test_arch_restore_for_append_runs_on_archive_pool_not_janitor():
   assert "ensure_daily_tar_restored_for_append" in sync_module_source
 
 
-def test_arch_mainthread_enqueue_does_not_block_on_janitor_seal(tmp_path, monkeypatch):
-  """MainThread submit_day_close returns before async seal worker finishes."""
-  import concurrent.futures
-  import threading
+def test_arch_mainthread_enqueue_does_not_block_on_janitor_fn(tmp_path):
+  """MainThread submit_day_close returns immediately; janitor enqueue is async."""
   import time
 
-  from hpcperfstats.dbload.lib import sync_timedb_async_day_close as async_dc_mod
   from hpcperfstats.dbload.lib.sync_timedb_async_day_close import (
       AsyncDayCloseCoordinator,
   )
-
-  seal_started = threading.Event()
-  release_seal = threading.Event()
-
-  def _slow_seal(*_args, **_kwargs):
-    seal_started.set()
-    release_seal.wait(timeout=5.0)
 
   archive_dir = tmp_path / "archive"
   daily_dir = tmp_path / "daily"
@@ -318,8 +308,13 @@ def test_arch_mainthread_enqueue_does_not_block_on_janitor_seal(tmp_path, monkey
   daily_dir.mkdir()
   tar_path = str(daily_dir / "2026-06-01.tar")
   open(tar_path, "wb").close()
+  blocked = {"n": 0}
 
-  monkeypatch.setattr(async_dc_mod.cfg, "get_sync_day_close_async_workers", lambda: 1)
+  def _blocking_enqueue(_tar, _reason):
+    blocked["n"] += 1
+    time.sleep(0.05)
+    return True
+
   coord = AsyncDayCloseCoordinator(
       archive_data_dir=str(archive_dir),
       host_name_ext=".hpc",
@@ -327,23 +322,14 @@ def test_arch_mainthread_enqueue_does_not_block_on_janitor_seal(tmp_path, monkey
       local_tz=None,
       log_fn=lambda *_a, **_k: None,
       get_disqualified_daily_tars=lambda: set(),
+      enqueue_day_close_fn=_blocking_enqueue,
   )
-  monkeypatch.setattr(coord, "_run_day_close", _slow_seal)
 
   enqueue_t0 = time.monotonic()
-  with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-    fut = pool.submit(
-        coord.submit_day_close,
-        tar_path,
-        reason="arch_contract",
-        disqualified_daily_tars=set(),
-    )
-    assert fut.result(timeout=2.0) is True
+  assert coord.submit_day_close(tar_path, reason="arch_contract") is True
   enqueue_elapsed = time.monotonic() - enqueue_t0
-  assert enqueue_elapsed < 1.0
-  assert seal_started.wait(timeout=2.0)
-  release_seal.set()
-  coord.shutdown(wait=True)
+  assert enqueue_elapsed < 0.2
+  assert blocked["n"] == 1
 
 
 def test_arch_chunk_boundary_may_finalize_append_slots_only():
@@ -471,3 +457,34 @@ def test_arch_june04_gate_wait_defer_loops_not_exits():
   assert 'context="oldest_day_gate_wait"' in source
   after_gate = source.split('context="oldest_day_gate_wait"', 1)[1]
   assert "continue" in after_gate[:1500]
+
+
+def test_arch_steady_state_ingest_not_gated_on_raw_deletion():
+  """Steady-state chunk loop must not wait on raw_delete_pending or delete driver."""
+  source = inspect.getsource(st.run_sync_timedb_supervisor_loop)
+  chunk_section = source.split("while pending_stats_files:", 1)[1]
+  assert "raw_delete_pending" not in chunk_section
+  assert "run_supervisor_day_raw_removal_delete_pass" not in chunk_section
+
+
+def test_arch_no_raw_delete_pending_in_steady_state_tree():
+  """Janitor DAY_CLOSE path must not use raw_delete_pending status contract."""
+  janitor_source = inspect.getsource(janitor_mod.ArchiveJanitor._process_debt_item)
+  assert "raw_delete_pending" not in janitor_source
+  async_source = inspect.getsource(
+      __import__(
+          "hpcperfstats.dbload.lib.sync_timedb_async_day_close",
+          fromlist=["AsyncDayCloseCoordinator"],
+      ).AsyncDayCloseCoordinator.tar_paths_raw_delete_pending,
+  )
+  assert "return[]" in async_source.replace(" ", "").replace("\n", "")
+
+
+def test_arch_janitor_close_one_day_owns_delete_not_supervisor():
+  """Day-close delete entry is janitor ``_close_one_day``; supervisor chunk loop has no delete pass."""
+  janitor_source = inspect.getsource(janitor_mod.ArchiveJanitor._process_debt_item)
+  assert "_close_one_day" in janitor_source
+  supervisor_source = inspect.getsource(st.run_sync_timedb_supervisor_loop)
+  chunk_section = supervisor_source.split("while pending_stats_files:", 1)[1]
+  assert "apply_batch_delete" not in chunk_section
+  assert "_maybe_handle_raw_removal_delete_phase" not in chunk_section
