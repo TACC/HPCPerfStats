@@ -437,3 +437,37 @@ def test_phase_done_forbidden_when_all_skipped_and_paths_on_disk(tmp_path):
   assert coord.reopen_done_days_with_verified_on_disk() == 1
   assert state.phase() == PHASE_VERIFYING
   assert not state.delete_phase_done()
+
+
+def test_arch_oldest_day_gate_blocked_paths_enter_pending():
+  """blocked_n>0 paths must prepend to pending for oldest-day gate reconcile."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      prepend_checkpoint_blocked_paths_to_pending,
+  )
+
+  blocked = ["/data/host/a", "/data/host/b"]
+  pending = ["/data/host/c", "/data/host/d"]
+  merged = prepend_checkpoint_blocked_paths_to_pending(pending, blocked)
+  assert merged[:2] == blocked
+  assert merged[2:] == pending
+
+
+def test_arch_ingest_stall_watchdog_idle_threshold():
+  """Long-horizon stall detection: 30 min idle before ERROR."""
+  assert st.INGEST_STALL_WATCHDOG_IDLE_S == 1800.0
+
+
+def test_arch_supervisor_loop_wires_ingest_stall_watchdog():
+  """Product telemetry: ingest_stall_watchdog wired at oldest-day gate stall."""
+  source = inspect.getsource(st.run_sync_timedb_supervisor_loop)
+  assert "ingest_stall_watchdog" in source
+  assert "_maybe_log_ingest_stall_watchdog" in source
+  assert "last_chunk_ingest_summary_mono" in source
+
+
+def test_arch_june04_gate_wait_defer_loops_not_exits():
+  """june04 contract: oldest_day_gate_wait defer must continue chunk loop."""
+  source = inspect.getsource(st.run_sync_timedb_supervisor_loop)
+  assert 'context="oldest_day_gate_wait"' in source
+  after_gate = source.split('context="oldest_day_gate_wait"', 1)[1]
+  assert "continue" in after_gate[:1500]

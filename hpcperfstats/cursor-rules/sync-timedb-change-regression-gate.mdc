@@ -1,0 +1,72 @@
+---
+description: Mandatory regression battery and long-horizon stall guards for sync_timedb changes
+alwaysApply: false
+globs: hpcperfstats/dbload/sync_timedb*.py,hpcperfstats/dbload/lib/sync_timedb_*.py,hpcperfstats/tests/test_sync_timedb*.py,tests/run_sync_timedb_regression_battery.sh
+---
+
+# sync_timedb Change Regression Gate
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+Long-horizon ingest stalls (6h+ on backlog catch-up) are **not** caught by a 15-minute post-deploy soak. This rule enforces **pre-deploy** regression and **process** gates so handoff/chunk_gate/archive_finalize regressions fail in CI/agent close **before** production.
+
+## Read before first edit (cross-plan intelligence)
+
+When the task touches ingest stall, day-close, chunk gate, handoff, or archive finalize:
+
+1. Read **Cross-plan intelligence** in [day-close-ingest-loop-fix](.cursor/plans/day-close-ingest-loop-fix.plan.md) (RC-G/H/I/K, architecture laws, Phase 1b battery command).
+2. Read related live plans when the signature matches: `june-ingest-stall-prevention`, `june04-post-archive-handoff-idle-stall`, `chunk-gate-cross-day-spin`, `oldest-day-chunk-gate-stall`, `sync-timedb-state-transitions`.
+3. Read [`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`](../../docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md) for T0/T1/T2 tiered verify (not T0-only on backlog sites).
+
+## Mandatory regression battery
+
+**Before marking any sync_timedb stall-related task done** (and before merge on ingest/archive semantics changes):
+
+```bash
+cd HPCPerfStats && tests/run_sync_timedb_regression_battery.sh
+```
+
+- Exit code **must be 0**.
+- Log path under **`test_runs/day-close-loop-regression-battery-*.log`** must appear in the closing chat turn.
+- Cursor **`stop`** hook enforces battery citation when `sync_timedb` paths change (`hpc_hook_lib.py` → `sync_timedb_regression_battery_issues`).
+
+Equivalent manual command: day-close plan **Phase 1b** pytest line in [`tests/run_sync_timedb_regression_battery.sh`](../../tests/run_sync_timedb_regression_battery.sh).
+
+## Architecture + june04 replay tests
+
+| Test | Module | Contract |
+|------|--------|----------|
+| `test_arch_oldest_day_gate_blocked_paths_enter_pending` | `test_sync_timedb_architecture_contract.py` | `blocked_n>0` → blocked paths at pending head |
+| `test_arch_june04_handoff_after_giant_finalize_dispatches_chunk` | `test_sync_timedb_supervisor.py` | Giant finalize defer → handoff → **next chunk dispatches** (xfail until RC-F fix lands) |
+| `test_arch_*` battery | Phase 1b `-k` | Must stay green; no weaken/xfail without plan amend |
+
+## Runtime stall telemetry (backlog sites)
+
+Ship and keep enabled on catch-up deployments:
+
+- **`ingest_stall_watchdog`** — ERROR when `blocked_n>0`, no `chunk ingest summary` for **30 min**, not in active giant imap budget.
+- **`oldest_day_unprocessed_frozen`** — WARN when oldest `waiting_on_ingest` `unprocessed` unchanged across consecutive janitor candidate reports.
+
+## Plan authoring (sync_timedb plans)
+
+Per **`plan-creation-contract.mdc`**, every live plan touching `sync_timedb` YAML must include todos:
+
+- `run-full-battery` (or `regression-battery-script`) — run Phase 1b battery pre/post fix; log to `test_runs/`
+- `operator-stall-verify-doc` (or equivalent) — T1/T2 verify on backlog sites; cite `OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`
+
+Hooks validate plan disk YAML when `CreatePlan` triggers sync_timedb paths (`sync_timedb_plan_todo_issues`).
+
+## Forbidden without plan amend
+
+- One-line supervisor `continue`/`return` stall patches without failing-first test named for the RC
+- Weakening or xfail-ing `test_arch_*` to green a stall patch
+- Closing sync_timedb work without `test_runs/*battery*` path in chat
+- Marking backlog deploy “verified” on **T0 smoke alone** (15 min)
+
+## Overlap
+
+- **`sync-timedb-archive-janitor-contract.mdc`** — two-queue model; cites battery script
+- **`every-error-regression-test.mdc`** — failing-first tests for each fixed RC
+- **`bugfix-and-perf-change-playbook.mdc`** — smallest root-cause patch after battery baseline
+- **`compose-operator-terminal-commands.mdc`** — operator greps for T1/T2 verify; no `--tail` before grep on pipeline logs
+- **`plan-completion-gate.mdc`** — close sequence cites battery log in checklist row 4

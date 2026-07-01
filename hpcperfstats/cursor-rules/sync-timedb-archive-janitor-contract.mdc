@@ -156,7 +156,7 @@ This must **not** wait for an empty global ingest queue.
 - `hpcperfstats/tests/test_sync_timedb_day_raw_removal.py` (`reopen_stale_done_all_skipped`, ghost delete, manifest-fast handoff — `test_handoff_ingest_complete_triggers_delete_not_second_handoff`)
 - `hpcperfstats/tests/test_sync_timedb_async_day_close.py` (stale manifest complete downgrade)
 - `hpcperfstats/tests/test_sync_timedb_archive.py` (seal/disqualify helpers)
-- Regression battery: `test_runs/day-close-loop-regression-battery-*.log` (82 tests, handoff/archive_finalize/rescan keywords)
+- Regression battery: **`tests/run_sync_timedb_regression_battery.sh`** → `test_runs/day-close-loop-regression-battery-*.log` (handoff/archive_finalize/chunk_gate/`test_arch_*` keywords; mandatory per **`sync-timedb-change-regression-gate.mdc`**)
 
 ## Overlap
 

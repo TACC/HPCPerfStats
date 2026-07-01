@@ -10312,3 +10312,18 @@ def test_pipeline_complete_rescan_excludes_active_handoff_paths(tmp_path):
 
   excluded = coord.rescan_exclude_paths()
   assert str(seg) in excluded
+
+
+def test_arch_june04_handoff_after_giant_finalize_dispatches_chunk():
+  """june04 replay contract: after gate-wait defer, supervisor continues chunk loop.
+
+  Behavioral replay (giant imap → archive_job_done → handoff → next chunk) lands
+  with RC-F fix in Phase 2; this structural guard ships in Phase 1.
+  """
+  import inspect
+
+  source = inspect.getsource(st.run_sync_timedb_supervisor_loop)
+  assert 'context="oldest_day_gate_wait"' in source
+  after_gate = source.split('context="oldest_day_gate_wait"', 1)[1]
+  assert "continue" in after_gate[:1500]
+  assert "ingest_stall_watchdog" in source

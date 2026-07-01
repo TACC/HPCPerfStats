@@ -34,8 +34,20 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
             "sync-timedb-archive-janitor-contract.mdc",
             "sync-timedb-db-before-archive-contract.mdc",
             "sync-timedb-lock-and-archive-contract.mdc",
+            "sync-timedb-change-regression-gate.mdc",
             "runtime-resource-and-metrics-safety.mdc",
             "bugfix-and-perf-change-playbook.mdc",
+            "test-first-discipline.mdc",
+        ],
+    },
+    {
+        "id": "sync_timedb_regression_gate",
+        "patterns": [
+            "hpcperfstats/tests/test_sync_timedb*.py",
+            "tests/run_sync_timedb_regression_battery.sh",
+        ],
+        "rules": [
+            "sync-timedb-change-regression-gate.mdc",
             "test-first-discipline.mdc",
         ],
     },

@@ -177,6 +177,64 @@ def test_edge_cases_issues_requires_three_items():
   ]
 
 
+def test_sync_timedb_regression_battery_issues_requires_citation():
+  assistant_text = (
+      "## Agent rule dispatch\n\nsync-timedb-change-regression-gate.mdc\n"
+      "## Final code review (senior engineer pass)\n\nok\n"
+      "## Post-implementation review\n\n"
+      "### Why it works\n\nok\n"
+      "### Edge cases\n\n- a\n- b\n- c\n"
+      "### Convention check\n\nok\n"
+  )
+  rows = [
+      {
+          "role": "assistant",
+          "message": {
+              "content": [
+                  {
+                      "type": "tool_use",
+                      "name": "Write",
+                      "input": {
+                          "path": "HPCPerfStats/hpcperfstats/dbload/sync_timedb.py",
+                      },
+                  },
+              ],
+          },
+      },
+  ]
+  issues = lib.sync_timedb_regression_battery_issues(
+      assistant_text,
+      rows,
+      ["hpcperfstats/dbload/sync_timedb.py"],
+  )
+  assert issues
+  cited = assistant_text + "\nrun_sync_timedb_regression_battery"
+  assert not lib.sync_timedb_regression_battery_issues(
+      cited,
+      rows,
+      ["hpcperfstats/dbload/sync_timedb.py"],
+  )
+
+
+def test_sync_timedb_plan_todo_issues_requires_battery_and_verify():
+  plan = (
+      "---\nname: sync stall\n"
+      "todos:\n"
+      "  - id: regression-battery-script\n"
+      "    status: pending\n"
+      "  - id: operator-stall-verify-doc\n"
+      "    status: pending\n"
+      "---\n\n"
+      "## Problem and facts\n\nsync_timedb stall\n"
+  )
+  assert lib.sync_timedb_plan_todo_issues(plan) == []
+  missing = lib.sync_timedb_plan_todo_issues(
+      "## Problem and facts\n\nsync_timedb day_close stall\n",
+  )
+  assert any("regression-battery" in issue or "run-full-battery" in issue for issue in missing)
+  assert any("operator-stall-verify" in issue for issue in missing)
+
+
 def test_close_gate_issues_passes_when_rules_read_before_edit():
   assistant_text = (
       "## Agent rule dispatch\n\n"

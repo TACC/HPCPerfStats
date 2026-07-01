@@ -410,6 +410,44 @@ def classify_day_close_candidates(
   return entries
 
 
+_oldest_waiting_ingest_frozen_state = {
+    "tar": None,
+    "unprocessed": None,
+    "streak": 0,
+}
+
+
+def reset_oldest_day_unprocessed_frozen_state_for_tests():
+  """Test helper: clear module-level frozen tracker."""
+  _oldest_waiting_ingest_frozen_state.update(
+      tar=None,
+      unprocessed=None,
+      streak=0,
+  )
+
+
+def maybe_log_oldest_day_unprocessed_frozen(waiting_entries, *, log_fn=log_print):
+  """WARN when oldest waiting_on_ingest unprocessed count is unchanged across reports."""
+  waiting = list(waiting_entries or ())
+  state = _oldest_waiting_ingest_frozen_state
+  if not waiting:
+    state.update(tar=None, unprocessed=None, streak=0)
+    return
+  oldest = min(waiting, key=lambda entry: str(entry.get("tar_path") or ""))
+  tar = oldest.get("tar_path")
+  unprocessed = int(oldest.get("unprocessed") or 0)
+  if state["tar"] == tar and state["unprocessed"] == unprocessed:
+    state["streak"] = int(state.get("streak") or 0) + 1
+  else:
+    state.update(tar=tar, unprocessed=unprocessed, streak=1)
+  if int(state["streak"]) >= 2:
+    log_fn(
+        "WARN: oldest_day_unprocessed_frozen oldest_tar=%s unprocessed=%d streak=%d"
+        % (tar, unprocessed, int(state["streak"])),
+        flush=True,
+    )
+
+
 def log_day_close_candidate_report(
     entries,
     *,
@@ -424,6 +462,7 @@ def log_day_close_candidate_report(
   waiting = [e for e in entries if e.get("status") == "waiting_on_ingest"]
   deferred = [e for e in entries if e.get("status") == "eligible_deferred"]
   disqualified = [e for e in entries if e.get("status") == "disqualified"]
+  maybe_log_oldest_day_unprocessed_frozen(waiting, log_fn=log_fn)
   if not queued and not waiting and not deferred and not disqualified:
     return
   log_fn(

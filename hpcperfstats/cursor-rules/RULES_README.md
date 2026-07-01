@@ -26,7 +26,7 @@ Notable contracts (see filename in `hpcperfstats/cursor-rules/`):
 - **`plan-live-disk-sync.mdc`** — live plan file on disk is authority; chat/CreatePlan do not count; operator discovery Completed findings vs Pending commands.
 - **`package-lib-colocation.mdc`** — new library modules under flat `{parent}/lib/`; import prefixes; `.gitignore` negation so lib trees are committed; Django migrations stay under `site/lib/machine/`.
 - **`deploy-ini-with-code-no-phase-zero.mdc`** — no pre-code INI redeploy; proactive read-only operator data gathering for plans.
-- **`sync-timedb-parsing-collapse-vectorization.mdc`** — multi-dev metric collapse in `sync_timedb_parsing.py` must use native `groupby.agg` or shared vectorized helpers; forbid `groupby.apply`.
+- **`sync-timedb-change-regression-gate.mdc`** — mandatory `tests/run_sync_timedb_regression_battery.sh` before sync_timedb stall PR close; T0/T1/T2 operator verify (`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`); hooks enforce battery log citation on close.
 - **`dockerignore-test-artifacts-sync.mdc`** — `.dockerignore` must exclude test-only paths; keep `test_dockerignore_test_artifacts.py` in sync when test layout changes.
 
 Adding a new domain rule (same task, non-optional):

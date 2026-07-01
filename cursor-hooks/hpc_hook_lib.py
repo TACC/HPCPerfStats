@@ -996,6 +996,7 @@ def plan_content_issues(plan_markdown: str) -> list[str]:
         if not pattern.search(plan_markdown):
             missing.append(label)
     missing.extend(operator_discovery_issues(plan_markdown))
+    missing.extend(sync_timedb_plan_todo_issues(plan_markdown))
     return missing
 
 
@@ -1027,6 +1028,112 @@ def edge_cases_issues(assistant_text: str) -> list[str]:
     if len(items) < 3:
         return ["### Edge cases (≥3 numbered/bulleted items required)"]
     return []
+
+
+SYNC_TIMEDB_BATTERY_PATH_MARKERS = (
+    "sync_timedb",
+    "run_sync_timedb_regression_battery",
+)
+
+SYNC_TIMEDB_BATTERY_CITATION_RE = re.compile(
+    r"day-close-loop-regression-battery|run_sync_timedb_regression_battery",
+    re.I,
+)
+
+SYNC_TIMEDB_PLAN_MARKERS = (
+    "sync_timedb",
+    "sync-timedb",
+    "day-close",
+    "day_close",
+    "chunk gate",
+    "chunk_gate",
+)
+
+SYNC_TIMEDB_PLAN_BATTERY_TODO_RE = re.compile(
+    r"id:\s*(?:run-full-battery|regression-battery-script|cross-plan-regression-battery)\b",
+    re.I,
+)
+
+SYNC_TIMEDB_PLAN_VERIFY_TODO_RE = re.compile(
+    r"id:\s*(?:operator-stall-verify-doc|operator-stall-verify|tiered-verify)\b",
+    re.I,
+)
+
+
+def paths_trigger_sync_timedb_battery(work_paths: list[str]) -> bool:
+    for path in work_paths or ():
+        norm = (path or "").replace("\\", "/").lower()
+        if any(marker in norm for marker in SYNC_TIMEDB_BATTERY_PATH_MARKERS):
+            return True
+    return False
+
+
+def shell_command_from_tool_part(part: dict) -> str | None:
+    if not isinstance(part, dict):
+        return None
+    tool_name = None
+    payload = None
+    if part.get("type") == "tool_use":
+        tool_name = part.get("name")
+        payload = part.get("input") or {}
+    elif part.get("type") == "tool_call":
+        tool_name = part.get("tool_name") or part.get("name")
+        payload = part.get("input") or part.get("arguments") or {}
+    if tool_name != "Shell" or not isinstance(payload, dict):
+        return None
+    command = payload.get("command")
+    return str(command) if command else None
+
+
+def transcript_ran_sync_timedb_battery(transcript_rows: list[dict]) -> bool:
+    for row in transcript_rows:
+        message = row.get("message") or {}
+        for part in message.get("content") or []:
+            command = shell_command_from_tool_part(part)
+            if command and SYNC_TIMEDB_BATTERY_CITATION_RE.search(command):
+                return True
+    return False
+
+
+def sync_timedb_regression_battery_issues(
+    assistant_text: str,
+    transcript_rows: list[dict],
+    work_paths: list[str],
+) -> list[str]:
+    if not paths_trigger_sync_timedb_battery(work_paths):
+        return []
+    text = assistant_text or ""
+    if SYNC_TIMEDB_BATTERY_CITATION_RE.search(text):
+        return []
+    if transcript_ran_sync_timedb_battery(transcript_rows):
+        return []
+    return [
+        "sync_timedb regression battery: cite test_runs/day-close-loop-regression-battery-*.log "
+        "or run tests/run_sync_timedb_regression_battery.sh "
+        "(sync-timedb-change-regression-gate.mdc)",
+    ]
+
+
+def plan_touches_sync_timedb(plan_markdown: str) -> bool:
+    lower = (plan_markdown or "").lower()
+    return any(marker in lower for marker in SYNC_TIMEDB_PLAN_MARKERS)
+
+
+def sync_timedb_plan_todo_issues(plan_markdown: str) -> list[str]:
+    if not plan_touches_sync_timedb(plan_markdown):
+        return []
+    issues: list[str] = []
+    if not SYNC_TIMEDB_PLAN_BATTERY_TODO_RE.search(plan_markdown):
+        issues.append(
+            "sync_timedb plan YAML must include run-full-battery or "
+            "regression-battery-script todo (sync-timedb-change-regression-gate.mdc)",
+        )
+    if not SYNC_TIMEDB_PLAN_VERIFY_TODO_RE.search(plan_markdown):
+        issues.append(
+            "sync_timedb plan YAML must include operator-stall-verify-doc todo "
+            "(OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md; sync-timedb-change-regression-gate.mdc)",
+        )
+    return issues
 
 
 def rule_dual_registration_issues(work_paths: list[str]) -> list[str]:
@@ -1094,6 +1201,13 @@ def close_gate_issues(
     issues.extend(domain_rule_read_issues(required_rules, transcript_rows))
     issues.extend(rule_dual_registration_issues(work_paths))
     issues.extend(edge_cases_issues(assistant_text))
+    issues.extend(
+        sync_timedb_regression_battery_issues(
+            assistant_text,
+            transcript_rows,
+            work_paths,
+        ),
+    )
     if turn_had_create_plan(transcript_rows):
         issues.extend(plan_authority_content_issues(transcript_rows, workspace_roots))
         issues.extend(plan_template_read_issues(transcript_rows))

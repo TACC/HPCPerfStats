@@ -6043,6 +6043,45 @@ def test_log_day_close_candidate_report_silent_when_empty(capsys, monkeypatch):
   assert "day_close candidate report" not in capsys.readouterr().out
 
 
+def test_oldest_day_unprocessed_frozen_logs_after_unchanged_reports(
+    capsys, monkeypatch,
+):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      log_day_close_candidate_report,
+      reset_oldest_day_unprocessed_frozen_state_for_tests,
+  )
+
+  import hpcperfstats.dbload.lib.conf_parser as cfg_mod
+
+  monkeypatch.setattr(cfg_mod, "get_sync_day_close_candidate_report", lambda: True)
+  reset_oldest_day_unprocessed_frozen_state_for_tests()
+  waiting = [
+      {
+          "tar_path": "/daily/2026-06-02.tar",
+          "status": "waiting_on_ingest",
+          "reasons": ["checkpoint_incomplete"],
+          "unprocessed": 5495,
+          "phase": "",
+      },
+      {
+          "tar_path": "/daily/2026-06-05.tar",
+          "status": "waiting_on_ingest",
+          "reasons": ["checkpoint_incomplete"],
+          "unprocessed": 100,
+          "phase": "",
+      },
+  ]
+  log_day_close_candidate_report(waiting, reason="tick1")
+  out1 = capsys.readouterr().out
+  assert "oldest_day_unprocessed_frozen" not in out1
+  log_day_close_candidate_report(waiting, reason="tick2")
+  out2 = capsys.readouterr().out
+  assert "oldest_day_unprocessed_frozen" in out2
+  assert "2026-06-02.tar" in out2
+  assert "unprocessed=5495" in out2
+  reset_oldest_day_unprocessed_frozen_state_for_tests()
+
+
 def test_prepend_checkpoint_blocked_paths_not_excluded_when_processed():
   """Checkpoint-blocked paths must not be dropped when still in processed_files."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (

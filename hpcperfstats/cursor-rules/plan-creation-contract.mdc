@@ -70,6 +70,15 @@ Include a **final** todo the agent cannot skip:
 
 Copy the full todo block from **`docs/plans/PLAN_TEMPLATE.md`** when authoring new plans.
 
+### sync_timedb / ingest-stall plans (mandatory YAML todos)
+
+When a live plan touches **`sync_timedb`**, day-close, chunk gate, handoff, or archive-finalize stall signatures, YAML **must** include:
+
+- **`regression-battery-script`** or **`run-full-battery`** — run `tests/run_sync_timedb_regression_battery.sh` pre/post fix; log to `test_runs/`
+- **`operator-stall-verify-doc`** (or **`tiered-verify`**) — T0/T1/T2 verify per **`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`** on backlog sites (not T0-only)
+
+Hooks enforce these ids on plan disk when `CreatePlan` triggers sync_timedb paths (`sync-timedb-change-regression-gate.mdc`, `hpc_hook_lib.sync_timedb_plan_todo_issues`).
+
 ## Post-implementation review (completion bar section)
 
 Every implementation plan must end with this section (checkboxes for the implementing agent):

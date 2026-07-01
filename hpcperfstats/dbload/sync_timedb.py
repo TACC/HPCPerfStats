@@ -725,6 +725,9 @@ def _in_flight_file_meta_from_paths(paths, max_n=10):
   return ",".join(parts) if parts else "-"
 
 
+INGEST_STALL_WATCHDOG_IDLE_S = 1800.0
+
+
 class IngestStallDiagnostics:
   """Supervisor-thread state included on pool imap stall WARN/ERROR lines."""
 
@@ -4454,7 +4457,56 @@ def run_sync_timedb_supervisor_loop(
       "last_unprocessed_by_tar": None,
       "oldest_day_gate_stall_blocked_n": None,
       "last_cap_pending_monotonic": 0.0,
+      "last_chunk_ingest_summary_mono": None,
+      "last_ingest_stall_watchdog_mono": 0.0,
   }
+
+  def _maybe_log_ingest_stall_watchdog(
+      *,
+      blocked_n,
+      oldest_tar=None,
+      in_flight_paths=None,
+  ):
+    """ERROR when gate blocked but no chunk progress for INGEST_STALL_WATCHDOG_IDLE_S."""
+    if blocked_n <= 0:
+      return
+    last_summary = reconcile_refs.get("last_chunk_ingest_summary_mono")
+    if last_summary is None:
+      return
+    idle_s = time.monotonic() - float(last_summary)
+    if idle_s < INGEST_STALL_WATCHDOG_IDLE_S:
+      return
+    if chunk_in_progress:
+      return
+    flight = list(in_flight_paths or ())
+    if active_chunk_ingest_tracker is not None:
+      flight.extend(active_chunk_ingest_tracker.sample_in_flight())
+    if any_giant_ingest_budget_in_flight(flight):
+      return
+    registry = getattr(stall_diagnostics, "worker_registry", None)
+    if registry is not None:
+      effective = _max_effective_ingest_timeout_from_registry(registry)
+      if effective is not None and effective > 0.0:
+        if idle_s < float(effective):
+          return
+    now_mono = time.monotonic()
+    last_log = float(reconcile_refs.get("last_ingest_stall_watchdog_mono") or 0.0)
+    if now_mono - last_log < INGEST_STALL_WATCHDOG_IDLE_S:
+      return
+    reconcile_refs["last_ingest_stall_watchdog_mono"] = now_mono
+    log_print(
+        "ERROR: ingest_stall_watchdog blocked_n=%d oldest_tar=%s "
+        "idle_since_chunk_summary_s=%.0f chunk_in_progress=%d "
+        "giant_in_flight=%d"
+        % (
+            blocked_n,
+            oldest_tar or "",
+            idle_s,
+            int(chunk_in_progress),
+            int(any_giant_ingest_budget_in_flight(flight)),
+        ),
+        flush=True,
+    )
 
   def _resolve_reconcile_maintenance_snapshot(*, prefer_startup=False):
     if prefer_startup or not reconcile_refs["ingest_gate_cleared"]:
@@ -6617,6 +6669,11 @@ def run_sync_timedb_supervisor_loop(
                 allow_defer=True,
                 context="oldest_day_gate_wait",
             )
+            _maybe_log_ingest_stall_watchdog(
+                blocked_n=blocked_n,
+                oldest_tar=oldest_tar_for_chunk,
+                in_flight_paths=inflight_archive_paths,
+            )
           continue
 
         reconcile_refs["oldest_day_gate_stall_blocked_n"] = None
@@ -6684,6 +6741,7 @@ def run_sync_timedb_supervisor_loop(
             ),
             flush=True,
         )
+        reconcile_refs["last_chunk_ingest_summary_mono"] = time.monotonic()
 
         if files_to_be_archived:
           _ensure_daily_archive_dir_exists()
