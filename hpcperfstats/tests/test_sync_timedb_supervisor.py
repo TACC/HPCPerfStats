@@ -1765,6 +1765,34 @@ def test_transition_file_state_rejects_invalid_transition():
       file_states, "/tmp/x", st.SyncFileState.ARCHIVED)
 
 
+def test_transition_archive_queued_to_written_allowed():
+  path = "/tmp/archive-queued-reingest"
+  file_states = {path: st.SyncFileState.ARCHIVE_QUEUED}
+  assert st._transition_file_state(file_states, path, st.SyncFileState.WRITTEN)
+  assert file_states[path] == st.SyncFileState.WRITTEN
+
+
+def test_transition_archived_to_written_allowed_for_reingest():
+  path = "/tmp/archived-db-complete-reingest"
+  file_states = {path: st.SyncFileState.ARCHIVED}
+  assert st._transition_file_state(file_states, path, st.SyncFileState.WRITTEN)
+  assert file_states[path] == st.SyncFileState.WRITTEN
+
+
+def test_transition_archived_to_archive_queued_is_idempotent():
+  path = "/tmp/archived-replay-dispatch"
+  file_states = {path: st.SyncFileState.ARCHIVED}
+  assert st._transition_file_state(file_states, path, st.SyncFileState.ARCHIVE_QUEUED)
+  assert file_states[path] == st.SyncFileState.ARCHIVED
+
+
+def test_transition_still_rejects_discovered_to_archived():
+  path = "/tmp/invalid-skip-to-archived"
+  file_states = {path: st.SyncFileState.DISCOVERED}
+  assert not st._transition_file_state(file_states, path, st.SyncFileState.ARCHIVED)
+  assert file_states[path] == st.SyncFileState.DISCOVERED
+
+
 def test_dead_letter_round_trip(tmp_path):
   dead_letter = tmp_path / ".sync_timedb_dead_letter.json"
   entries = [{
@@ -2019,6 +2047,30 @@ def test_chunk_prewarm_populates_redis_before_imap(monkeypatch, tmp_path):
   )
   st._prewarm_archive_members_redis_for_chunk(paths)
   assert len(calls) == 1
+
+
+def test_chunk_prewarm_logs_begin_and_complete(monkeypatch, tmp_path, capsys):
+  tgz_dir = tmp_path / "daily"
+  tgz_dir.mkdir()
+  sealed = tgz_dir / "2026-05-20.tar.zst"
+  sealed.write_bytes(b"zst")
+  paths = ["/archive/host.hpc/1779274402"]
+  monkeypatch.setattr(st, "archive_members_redis_enabled", lambda: True)
+  monkeypatch.setattr(st, "tgz_archive_dir", str(tgz_dir))
+  monkeypatch.setattr(st, "redis_members_cache_is_fully_warm", lambda keys: False)
+  monkeypatch.setattr(
+      st,
+      "get_existing_archive_members_for_daily_archive",
+      lambda canonical: {"m": 1},
+  )
+  st._prewarm_archive_members_redis_for_chunk(paths)
+  out = capsys.readouterr().out
+  begin_at = out.find("sync_timedb: chunk prewarm begin")
+  complete_at = out.find("sync_timedb: chunk prewarm complete")
+  assert begin_at >= 0
+  assert complete_at > begin_at
+  assert "days=['2026-05-20']" in out
+  assert "elapsed_s=" in out
 
 
 def test_chunk_prewarm_includes_oldest_tar_day(monkeypatch, tmp_path):
@@ -3251,13 +3303,13 @@ def test_handoff_reingest_allows_archived_to_written_transition():
   assert file_states["/tmp/handoff.raw"] == st.SyncFileState.WRITTEN
 
   file_states2 = {"/tmp/normal.raw": st.SyncFileState.ARCHIVED}
-  assert not st._transition_file_state(
+  assert st._transition_file_state(
       file_states2,
       "/tmp/normal.raw",
       st.SyncFileState.WRITTEN,
       handoff_priority_paths=handoff,
   )
-  assert file_states2["/tmp/normal.raw"] == st.SyncFileState.ARCHIVED
+  assert file_states2["/tmp/normal.raw"] == st.SyncFileState.WRITTEN
 
 
 def test_ingest_first_archive_abandoned_after_retries_exhausted(monkeypatch, tmp_path):

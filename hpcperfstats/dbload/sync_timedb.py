@@ -602,11 +602,28 @@ def _prewarm_archive_members_redis_for_chunk(
       day_map[oldest_compressed] = oldest_token
       if gated_tar_restore:
         gated_tokens.add(oldest_token)
+  day_tokens = sorted(set(day_map.values()))
+  log_print(
+      "sync_timedb: chunk prewarm begin paths=%d days=%s oldest_tar=%s "
+      "gated_tar_restore=%s"
+      % (
+          len(paths or ()),
+          day_tokens,
+          os.path.basename(str(oldest_tar or "")),
+          bool(gated_tar_restore and gated_tokens),
+      ),
+      flush=True,
+  )
+  prewarm_t0 = time.time()
   summary = _prewarm_archive_members_redis_for_days(
       list(day_map.items()),
       gated_tar_restore_day_tokens=gated_tokens,
   )
-  log_print("INFO: chunk prewarm days=%s" % summary, flush=True)
+  log_print(
+      "sync_timedb: chunk prewarm complete elapsed_s=%.3f days=%s"
+      % (time.time() - prewarm_t0, summary),
+      flush=True,
+  )
   return summary
 
 
@@ -625,8 +642,19 @@ def _prewarm_archive_members_redis_for_sealed_chunk(sealed_paths):
     if not day_token:
       continue
     day_items.append((sealed_path, day_token))
+  day_tokens = sorted({token for _, token in day_items})
+  log_print(
+      "sync_timedb: archive chunk prewarm begin sealed_paths=%d days=%s"
+      % (len(day_items), day_tokens),
+      flush=True,
+  )
+  prewarm_t0 = time.time()
   summary = _prewarm_archive_members_redis_for_days(day_items)
-  log_print("INFO: archive chunk prewarm days=%s" % summary, flush=True)
+  log_print(
+      "sync_timedb: archive chunk prewarm complete elapsed_s=%.3f days=%s"
+      % (time.time() - prewarm_t0, summary),
+      flush=True,
+  )
   return summary
 
 
@@ -2028,13 +2056,19 @@ def _transition_file_state(
   if current is None:
     file_states[path] = new_state
     return True
-  if (
-      current == SyncFileState.ARCHIVED
-      and new_state == SyncFileState.WRITTEN
-      and handoff_priority_paths is not None
-      and path in handoff_priority_paths
+  # Re-entrant ingest while raw remains on disk or archive dispatch replays:
+  # db-complete re-ingest may complete again before append finalizes.
+  if new_state == SyncFileState.WRITTEN and current in (
+      SyncFileState.ARCHIVE_QUEUED,
+      SyncFileState.ARCHIVED,
   ):
     file_states[path] = new_state
+    return True
+  # Archive replay may queue paths already marked ARCHIVED in checkpoint.
+  if (
+      current == SyncFileState.ARCHIVED
+      and new_state == SyncFileState.ARCHIVE_QUEUED
+  ):
     return True
   allowed = _SYNC_STATE_TRANSITIONS.get(current, set())
   if new_state in allowed or new_state == current:
