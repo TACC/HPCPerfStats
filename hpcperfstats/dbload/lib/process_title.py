@@ -97,6 +97,17 @@ def _apply_setproctitle(title: str) -> str:
   return title
 
 
+def _sync_log_role_from_daemon_process(*, role: str, pool_kind: str | None = None) -> None:
+  from hpcperfstats.dbload.lib.print_utils import set_log_role
+
+  if role == "worker":
+    set_log_role("worker:%s" % (pool_kind or "pool"))
+  elif role == "main":
+    set_log_role("main")
+  elif role:
+    set_log_role(role)
+
+
 def set_daemon_process_title(
     *,
     name: str | None = None,
@@ -115,6 +126,7 @@ def set_daemon_process_title(
       role=role,
       pool_kind=pool_kind,
   )
+  _sync_log_role_from_daemon_process(role=role, pool_kind=pool_kind)
   return _apply_setproctitle(title)
 
 
@@ -155,6 +167,9 @@ def set_daemon_thread_title(
       script_name = resolve_script_process_title_name()
     if script_name:
       title = format_daemon_thread_title(script_name, role=role)
+    from hpcperfstats.dbload.lib.print_utils import set_log_role
+
+    set_log_role("thread:%s" % role)
   try:
     from setproctitle import setthreadtitle
   except ImportError:

@@ -101,6 +101,59 @@ podman-compose logs pipeline 2>&1 | grep -E \
 
 **Pass:** no sustained **`skipped_inflight`** with stale manifest **`queued`** and zero janitor debt progress; **`status=complete`** appears for finished calendar days after janitor tar-drop; **`oldest_day_chunk_gate_stall`** may appear but ingest resumes ( **`chunk ingest summary`** ) without CPU-only spin (backoff every 32 empty-chunk loops).
 
+## Log source attribution (`[sync_timedb:role]`)
+
+After deploy of log-role prefixes (2026-06), pipeline lines identify **which actor** emitted them. Greps for **`[sync_timedb]`** still match (substring).
+
+### Log prefix → actor
+
+| Log prefix | Process / thread | Responsibility |
+|------------|------------------|----------------|
+| `[sync_timedb:main]` | Supervisor main thread in pipeline PID | Chunk loop, handoff, oldest-day gate, rescan, enqueue day-close |
+| `[sync_timedb:worker:ingest-pool]` | Spawned ingest worker | Parse + DB ingest (combined pool) |
+| `[sync_timedb:worker:ingest-parse-pool]` | Spawned parse worker | Split pipeline parse stage |
+| `[sync_timedb:worker:db-writer-pool]` | Spawned DB writer | Split pipeline DB write stage |
+| `[sync_timedb:worker:archive-pool]` | Spawned archive append worker | **Hot-path tar append** (`map_async` dispatch) — **not** the janitor |
+| `[sync_timedb:thread:archive-janitor]` | Daemon thread in supervisor PID | Cold path: seal → verify → delete → tar-drop |
+| `[sync_timedb:thread:startup-day-close-preflight]` | Daemon thread | Boot discover + submit day-close |
+| `[sync_timedb:thread:startup-raw-removal-preflight]` | Daemon thread | Boot raw removal verify/delete |
+| `[sync_timedb:thread:startup-tail-ingest]` | Daemon thread | Optional tail ingest before steady state |
+| `[sync_timedb:thread:archive-discovery]` | Short-lived helper thread | Archive metadata scan during heavy maintenance |
+| `[sync_timedb]` (no role segment) | Legacy logs or non-daemon callers | Use message heuristics below |
+
+**Naming note:** cpuset / process-bucket text **"sync_timedb archive workers"** means the **append pool** (`worker:archive-pool`), not the janitor thread. The janitor runs inside the supervisor process on **`thread:archive-janitor`**.
+
+### Legacy message heuristics (pre-role deploy)
+
+When the prefix has no `:role` segment, use message substrings:
+
+| Substring | Likely actor |
+|-----------|----------------|
+| `chunk ingest summary`, `oldest_day_chunk_gate`, `handoff`, `startup_elapsed_s` | Main supervisor |
+| `janitor:`, `Archive janitor tick` | Janitor thread |
+| `startup day close discover` | Startup day-close preflight |
+| `startup raw removal` | Startup raw removal preflight |
+| `Pool imap stalled`, `worker_stages` | Ingest or parse pool worker |
+| `Archive mapping`, `archive_job_done` (from worker context) | Often main coordinating append; append work runs on `archive-pool` workers |
+
+### Correlate logs with `ps` (read-only exec)
+
+```bash
+cd HPCPerfStats   # checkout with docker-compose.yaml on site
+docker compose -f docker-compose.app.yaml -f docker-compose.yaml -p hpcperfstats exec -T pipeline \
+  sh -c 'ps -eLo pid,tid,pcpu,stat,args | grep -E "sync_timedb|worker:|thread:" | grep -v grep | head -30'
+```
+
+Filter live logs by role:
+
+```bash
+docker compose -f docker-compose.app.yaml -f docker-compose.yaml -p hpcperfstats logs --names pipeline 2>&1 \
+  | grep --line-buffered '\[sync_timedb:thread:archive-janitor\]'
+
+docker compose -f docker-compose.app.yaml -f docker-compose.yaml -p hpcperfstats logs --names pipeline 2>&1 \
+  | grep --line-buffered '\[sync_timedb:main\]'
+```
+
 ## Optional cron (backlog catch-up week)
 
 Every 2 h: full-log grep for `oldest_day_chunk_gate_stall` and `ingest_stall_watchdog` on pipeline; alert on non-zero new matches.

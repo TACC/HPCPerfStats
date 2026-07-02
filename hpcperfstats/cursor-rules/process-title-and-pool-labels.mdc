@@ -52,8 +52,9 @@ Use a **distinct, stable `pool_kind`** per pool type in the same script (e.g. `i
    Do not use nested closures for `initializer` (`spawn` must pickle it). ``Pool`` calls ``initializer(*initargs)``, so pass two positional args in ``initargs``, not a single nested tuple.
 
 4. **Daemon threads only:** `set_daemon_thread_title(..., script_name="….py", role="…")`. Never change the **process** title for threads.
-5. **Gunicorn request paths:** do not add process or thread titles in `site.machine.api`, plot builders invoked per-request under gunicorn, or other WSGI hot paths unless product explicitly revisits that policy.
-6. **Tests:** extend [`hpcperfstats/tests/test_process_title.py`](hpcperfstats/tests/test_process_title.py) when adding pools or import paths that could affect gunicorn titles.
+5. **Log role mirrors title:** `set_daemon_process_title` and `set_daemon_thread_title` wire `print_utils.set_log_role()` so `log_print` emits `[script:role]` (e.g. `[sync_timedb:thread:archive-janitor]`) matching `top`/`ps` labels.
+6. **Gunicorn request paths:** do not add process or thread titles in `site.machine.api`, plot builders invoked per-request under gunicorn, or other WSGI hot paths unless product explicitly revisits that policy.
+7. **Tests:** extend [`hpcperfstats/tests/test_process_title.py`](hpcperfstats/tests/test_process_title.py) when adding pools or import paths that could affect gunicorn titles.
 
 ## Overlap
 
