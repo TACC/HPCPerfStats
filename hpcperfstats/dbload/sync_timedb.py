@@ -5,7 +5,7 @@
 
 **Cold path (``ArchiveJanitor`` thread):** day-debt queue consumed in time-sliced micro-batches (``archive_janitor_budget_seconds`` / ``archive_janitor_days_per_tick``). Each tick discovers checkpoint-complete ``DAY_CLOSE`` candidates and enqueues debt (``sync_day_close_max_inflight`` cap). ``DAY_CLOSE`` runs seal → verify → delete → tar_drop on the janitor thread (no async worker pool; steady-state ingest is not gated on raw deletion). Snapshot/hints refresh at supervisor startup (CLI ``all`` only) and on scheduled maintenance passes. Per-day lock cleanup (once per tick), dedupe-before-seal, and DB head-ingest gate unchanged. Progress persists in ``.sync_archive_maint_hints.json`` v2 (``debt_queue``, ``day_phases``).
 
-**Startup prefights (``all`` only):** when ``startdate == 'all'``, janitor startup maintenance discovers/enqueues ``DAY_CLOSE``; optional ``StartupRawRemovalPreflight``, ``StartupDayClosePreflight``, and ``StartupTailIngestCoordinator`` run when enabled in ini (defaults off for raw-removal preflight and tail ingest). Opt-in ``sync_startup_drain_day_close_before_ingest=yes`` blocks first ingest until startup drain idle. Date-range runs skip startup maintenance and begin ingest immediately.
+**Startup prefights (``all`` only):** when ``startdate == 'all'``, janitor startup maintenance discovers/enqueues ``DAY_CLOSE``; ``StartupDayClosePreflight`` runs when enabled (default on). Date-range runs skip startup maintenance and begin ingest immediately.
 
 Append and raw delete stay DB-gated when ``sync_archive_require_db_head_ingest=yes``. Finalize uses soft defer (``allow_defer``) under ingest backlog instead of blocking the supervisor.
 
@@ -22,7 +22,6 @@ import gc
 import itertools
 import heapq
 import json
-import math
 import multiprocessing
 from contextlib import contextmanager
 import os
@@ -170,17 +169,9 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_dispatch import ArchiveDispatch
 from hpcperfstats.dbload.lib.sync_timedb_archive_janitor import ArchiveJanitor
 from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
     DayRawRemovalCoordinator,
-    run_supervisor_day_raw_removal_delete_pass,
-)
-from hpcperfstats.dbload.lib.sync_timedb_startup_raw_removal import (
-    PHASE_VERIFICATION_COMPLETE,
-    StartupRawRemovalPreflight,
 )
 from hpcperfstats.dbload.lib.sync_timedb_startup_day_close import (
     StartupDayClosePreflight,
-)
-from hpcperfstats.dbload.lib.sync_timedb_startup_tail_ingest import (
-    StartupTailIngestCoordinator,
 )
 from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
     StartupArchiveScanCoordinator,
@@ -1247,7 +1238,6 @@ def _imap_ingest_pool(
     chunk_counter,
     pending_count,
     ingest_pool=None,
-    db_writer_pool=None,
     archive_pool=None,
     stall_poll_state=None,
     stall_diagnostics=None,
@@ -1271,7 +1261,6 @@ def _imap_ingest_pool(
     stall_diagnostics.dynamic_stall_wall_s = batch_abort * poll_s
   pool_health_context = {
       "ingest_pool": ingest_pool if ingest_pool is not None else pool,
-      "db_writer_pool": db_writer_pool,
       "archive_pool": archive_pool,
       "in_flight_sample_fn": (
           tracker.sample_in_flight if tracker is not None else None
@@ -1349,7 +1338,6 @@ def _imap_ingest_paths_batched(
     chunk_counter,
     pending_count,
     ingest_pool=None,
-    db_writer_pool=None,
     archive_pool=None,
     stall_diagnostics=None,
     pending_tail=None,
@@ -1368,7 +1356,6 @@ def _imap_ingest_paths_batched(
     seed_dispatch_worker_stages(dispatch_registry, paths)
   pool_health_context = {
       "ingest_pool": ingest_pool if ingest_pool is not None else pool,
-      "db_writer_pool": db_writer_pool,
       "archive_pool": archive_pool,
       "in_flight_sample_fn": (
           tracker.sample_in_flight if tracker is not None else None
@@ -1725,18 +1712,6 @@ def _log_db_lock_wait(batch_kind, stats_file, lock_wait):
   )
 
 
-@dataclass(frozen=True)
-class ParseTask:
-  path: str
-
-
-@dataclass(frozen=True)
-class DBWriteTask:
-  path: str
-  payload: object
-  need_archival: bool
-  parse_elapsed_s: float = 0.0
-
 
 @dataclass(frozen=True)
 class ArchiveTask:
@@ -1770,26 +1745,9 @@ def _archive_finalize_skip_invalidate_log_reason(result):
   return "no_tar_mutation_or_worker_invalidated"
 
 
-def _db_write_task_tuple(task):
-  return (
-      task.path,
-      task.payload,
-      task.need_archival,
-      task.parse_elapsed_s,
-  )
-
-
-def _db_writer_stage_batch_size(target_chunk_size, ingest_queue_high):
-  """Bound parse->writer payload staging to limit peak memory."""
-  queue_cap = max(1, int(ingest_queue_high) // 8)
-  stage_max = cfg.get_sync_db_writer_stage_max_batch()
-  return max(1, min(int(target_chunk_size), stage_max, queue_cap))
-
-
-def _shutdown_ingest_pools(ingest_pool, db_writer_pool, *, force_terminate=False):
-  """Bounded shutdown for ingest pools (terminate after worker OOM/SIGKILL)."""
+def _shutdown_ingest_pools(ingest_pool, *, force_terminate=False):
+  """Bounded shutdown for ingest pool (terminate after worker OOM/SIGKILL)."""
   close_pool_bounded(ingest_pool, force_terminate=force_terminate)
-  close_pool_bounded(db_writer_pool, force_terminate=force_terminate)
 
 
 def _cap_pending_stats_files_list(paths, ingest_queue_max):
@@ -1816,30 +1774,27 @@ def _maybe_exit_on_supervisor_rss_limit(chunk_counter):
   raise SystemExit(137)
 
 
-def _maybe_wait_tree_rss_before_chunk(ingest_pool, db_writer_pool, archive_pool):
+def _maybe_wait_tree_rss_before_chunk(ingest_pool, archive_pool):
   """Defer starting a new chunk while the process tree is over the RSS cap."""
   limit_mb = cfg.get_sync_process_tree_rss_limit_mb()
   if limit_mb <= 0:
     return
   limit_bytes = int(limit_mb) * 1024 * 1024
   for attempt in range(60):
-    tree_bytes = read_sync_timedb_tree_rss_bytes(
-        ingest_pool, db_writer_pool, archive_pool)
+    tree_bytes = read_sync_timedb_tree_rss_bytes(ingest_pool, archive_pool)
     if tree_bytes <= 0 or tree_bytes <= limit_bytes:
       return
     if attempt == 0:
-      breakdown = format_tree_rss_breakdown_mb(
-          ingest_pool, db_writer_pool, archive_pool)
+      breakdown = format_tree_rss_breakdown_mb(ingest_pool, archive_pool)
       log_print(
           "sync_timedb tree RSS %.1f MiB exceeds limit %d MiB "
-          "(supervisor=%.1f ingest=%.1f db_writer=%.1f archive=%.1f); "
+          "(supervisor=%.1f ingest=%.1f archive=%.1f); "
           "deferring chunk dispatch"
           % (
               breakdown["tree_total_mb"],
               limit_mb,
               breakdown["supervisor_mb"],
               breakdown["ingest_pool_mb"],
-              breakdown["db_writer_pool_mb"],
               breakdown["archive_pool_mb"],
           ),
           flush=True,
@@ -1850,7 +1805,6 @@ def _maybe_wait_tree_rss_before_chunk(ingest_pool, db_writer_pool, archive_pool)
 def _maybe_apply_tree_rss_governor(
     chunk_counter,
     ingest_pool,
-    db_writer_pool,
     archive_pool,
 ):
   """Tree RSS backpressure and optional hard exit after each chunk."""
@@ -1862,20 +1816,17 @@ def _maybe_apply_tree_rss_governor(
   if exit_mb <= 0 and limit_mb <= 0:
     _maybe_exit_on_supervisor_rss_limit(chunk_counter)
     return
-  tree_bytes = read_sync_timedb_tree_rss_bytes(
-      ingest_pool, db_writer_pool, archive_pool)
+  tree_bytes = read_sync_timedb_tree_rss_bytes(ingest_pool, archive_pool)
   if exit_mb > 0 and tree_bytes > int(exit_mb) * 1024 * 1024:
-    breakdown = format_tree_rss_breakdown_mb(
-        ingest_pool, db_writer_pool, archive_pool)
+    breakdown = format_tree_rss_breakdown_mb(ingest_pool, archive_pool)
     log_print(
         "ERROR: sync_timedb process tree RSS %.1f MiB exceeds exit cap %d MiB "
-        "(supervisor=%.1f ingest=%.1f db_writer=%.1f archive=%.1f); exiting"
+        "(supervisor=%.1f ingest=%.1f archive=%.1f); exiting"
         % (
             breakdown["tree_total_mb"],
             exit_mb,
             breakdown["supervisor_mb"],
             breakdown["ingest_pool_mb"],
-            breakdown["db_writer_pool_mb"],
             breakdown["archive_pool_mb"],
         ),
         flush=True,
@@ -1907,11 +1858,10 @@ def _handle_pool_worker_exit_fatal(
     exc,
     *,
     ingest_pool=None,
-    db_writer_pool=None,
     archive_pool=None,
 ):
   """``os._exit`` immediately — do not wait on pool terminate or context managers."""
-  del ingest_pool, db_writer_pool, archive_pool
+  del ingest_pool, archive_pool
   hard_exit_pool_worker_error(exc)
 
 
@@ -1919,93 +1869,16 @@ def _reraise_or_handle_pool_worker_exit(
     exc,
     *,
     ingest_pool,
-    db_writer_pool,
     archive_pool=None,
 ):
   """Terminate ingest/archive pools and re-raise worker death."""
   if isinstance(exc, MultiprocessingWorkerExitError):
     ctx = getattr(exc, "context", "") or "pool_worker_exit"
     terminate_pool_bounded(ingest_pool, context=ctx)
-    terminate_pool_bounded(db_writer_pool, context=ctx)
     terminate_pool_bounded(archive_pool, context=ctx)
     raise
   raise exc
 
-
-def _drain_db_write_tasks(
-    *,
-    parse_tasks,
-    manager_lock,
-    db_writer_pool,
-    file_states,
-    successful_paths,
-    files_to_be_archived,
-    chunk_ingest_finished,
-    pending_total,
-    chunk_counter=0,
-    ingest_pool=None,
-    archive_pool=None,
-    stall_diagnostics=None,
-    chunk_paths_norm=None,
-    handoff_priority_paths=None,
-):
-  """Write queued parse payloads and return updated finished count."""
-  if not parse_tasks:
-    return chunk_ingest_finished
-  chunk_paths_norm = chunk_paths_norm or set()
-  writer_fn = partial(_db_writer_worker, manager_lock)
-  task_batch = list(parse_tasks)
-  parse_tasks.clear()
-  task_paths = [task.path for task in task_batch]
-  write_tracker = (
-      _IngestPoolInFlightTracker(task_paths)
-      if db_writer_pool is not None
-      and not _sync_timedb_ingest_inline_requested()
-      else None
-  )
-  if _sync_timedb_ingest_inline_requested() or db_writer_pool is None:
-    write_results_iter = (writer_fn(_db_write_task_tuple(task)) for task in task_batch)
-  else:
-    write_results_iter = _imap_ingest_pool(
-        db_writer_pool,
-        writer_fn,
-        [_db_write_task_tuple(task) for task in task_batch],
-        context="sync_timedb ingest db_writer pool",
-        tracker=write_tracker,
-        chunk_counter=chunk_counter,
-        pending_count=pending_total,
-        ingest_pool=ingest_pool,
-        db_writer_pool=db_writer_pool,
-        archive_pool=archive_pool,
-        stall_diagnostics=stall_diagnostics,
-    )
-  try:
-    for result in write_results_iter:
-      stats_fname, need_archival, ingest_ok, elapsed_s = result
-      if write_tracker is not None:
-        write_tracker.complete(stats_fname)
-      if ingest_ok:
-        _transition_file_state(
-            file_states,
-            stats_fname,
-            SyncFileState.WRITTEN,
-            handoff_priority_paths=handoff_priority_paths,
-        )
-        successful_paths.append(stats_fname)
-        if should_archive and need_archival:
-          files_to_be_archived.append(stats_fname)
-        remaining = _ingest_remaining_count(pending_total, chunk_ingest_finished)
-        chunk_ingest_finished += 1
-        _log_sync_timedb_ingest_completed(
-            stats_fname,
-            elapsed_s,
-            remaining,
-            stage="write",
-            supplement=_ingest_path_is_supplement(stats_fname, chunk_paths_norm),
-        )
-  except MultiprocessingWorkerExitError:
-    raise
-  return chunk_ingest_finished
 
 
 class SyncFileState(str, Enum):
@@ -2019,11 +1892,6 @@ class SyncFileState(str, Enum):
 
 _SYNC_STATE_TRANSITIONS = {
     SyncFileState.DISCOVERED: {
-        SyncFileState.PARSED,
-        SyncFileState.WRITTEN,
-        SyncFileState.ARCHIVE_QUEUED,
-    },
-    SyncFileState.PARSED: {
         SyncFileState.WRITTEN,
         SyncFileState.ARCHIVE_QUEUED,
     },
@@ -3678,18 +3546,6 @@ def database_startup():
     raise
 
 
-def _resolve_archive_maintenance_interval_seconds(raw_value):
-  """Normalize archive maintenance interval to a safe finite positive float."""
-  default_interval = float(8 * 3600)
-  try:
-    interval = float(raw_value)
-  except (TypeError, ValueError):
-    return default_interval, "invalid"
-  if (not math.isfinite(interval)) or interval <= 0:
-    return default_interval, "non_finite_or_non_positive"
-  return interval, None
-
-
 def run_sync_timedb_supervisor_loop(
     directory,
     startdate,
@@ -3859,12 +3715,9 @@ def run_sync_timedb_supervisor_loop(
               pending_archive_tasks),
       }
 
-  startup_preflight = None
   startup_day_close = None
-  startup_tail_ingest = None
   day_raw_removal = None
   async_day_close = None
-  delete_phase_active = False
   day_close_rescan_pending = False
   chunk_in_progress = False
   active_chunk_ingest_tracker = None
@@ -3877,8 +3730,6 @@ def run_sync_timedb_supervisor_loop(
     skip_paths |= set(captured["inflight_paths"])
     for paths in captured["pending_append_by_daily_tar"].values():
       skip_paths |= set(paths)
-    if startup_preflight is not None:
-      skip_paths |= startup_preflight.paths_pending_startup_delete()
     if day_raw_removal is not None:
       skip_paths |= day_raw_removal.paths_pending_delete()
     return skip_paths
@@ -4171,10 +4022,10 @@ def run_sync_timedb_supervisor_loop(
           and day_raw_removal.has_closed_raw_on_disk(tar_norm)
       ):
         continue
-      if archive_janitor._enqueue_eligible_day_close(
+      if async_day_close is not None and async_day_close.submit_day_close(
           tar_norm,
           reason="day_ingest_complete:%s" % context,
-          disqualified=disqualified,
+          disqualified_daily_tars=disqualified,
       ):
         immediate_day_close_attempted_tars.add(tar_norm)
         submitted_any = True
@@ -4447,10 +4298,7 @@ def run_sync_timedb_supervisor_loop(
       host_scan_hints.pop(host_dir, None)
 
   reconcile_refs = {
-      "ingest_gate_cleared": (
-          not run_startup_maintenance
-          or not cfg.get_sync_startup_drain_day_close_before_ingest()
-      ),
+      "ingest_gate_cleared": True,
       "get_startup_snapshot": lambda: None,
       "get_accrual_snapshot": lambda: None,
       "warned_live_reconcile_fallback": False,
@@ -4799,75 +4647,23 @@ def run_sync_timedb_supervisor_loop(
       pending_stats_files = _apply_handoff_priority_to_pending(tail)
 
   def _ingest_paths_on_supervisor_thread(paths):
-    """Bounded short ingest for startup tail (runs on supervisor thread)."""
+    """Bounded short ingest on supervisor thread (inline env fallback)."""
     successful_paths = []
     files_to_be_archived = []
     for path in paths:
-      if use_split_db_writer_pipeline:
-        stats_fname, payload, need_archival, ingest_ok, _parse_elapsed = (
-            _parse_stats_file_payload(path)
-        )
-        if not ingest_ok:
-          continue
-        if payload is None:
-          _transition_file_state(
-              file_states,
-              stats_fname,
-              SyncFileState.WRITTEN,
-              handoff_priority_paths=handoff_priority_paths,
-          )
-          successful_paths.append(stats_fname)
-          if should_archive and need_archival:
-            files_to_be_archived.append(stats_fname)
-          continue
-        stats, proc_stats = payload
-        stats_fname, need_archival, ingest_ok = _write_stats_payload_to_db(
-            manager_lock,
-            stats_fname,
-            stats,
-            proc_stats,
-            need_archival=need_archival,
-        )
-        if not ingest_ok:
-          continue
-        _transition_file_state(
-            file_states,
-            stats_fname,
-            SyncFileState.WRITTEN,
-            handoff_priority_paths=handoff_priority_paths,
-        )
-        successful_paths.append(stats_fname)
-        if should_archive and need_archival:
-          files_to_be_archived.append(stats_fname)
-      elif db_writer_combined_task:
-        stats_fname, need_archival, ingest_ok, _elapsed = (
-            _ingest_parse_and_write_file(manager_lock, path)
-        )
-        if not ingest_ok:
-          continue
-        _transition_file_state(
-            file_states,
-            stats_fname,
-            SyncFileState.WRITTEN,
-            handoff_priority_paths=handoff_priority_paths,
-        )
-        successful_paths.append(stats_fname)
-        if should_archive and need_archival:
-          files_to_be_archived.append(stats_fname)
-      else:
-        stats_fname, need_archival, ingest_ok, _elapsed = add_stats_file_to_db(
-            manager_lock, path)
-        if not ingest_ok:
-          continue
-        _transition_file_state(
-            file_states,
-            stats_fname,
-            SyncFileState.WRITTEN,
-            handoff_priority_paths=handoff_priority_paths,
-        )
-        successful_paths.append(stats_fname)
-        if should_archive and need_archival:
-          files_to_be_archived.append(stats_fname)
+      stats_fname, need_archival, ingest_ok, _elapsed = add_stats_file_to_db(
+          manager_lock, path)
+      if not ingest_ok:
+        continue
+      _transition_file_state(
+          file_states,
+          stats_fname,
+          SyncFileState.WRITTEN,
+          handoff_priority_paths=handoff_priority_paths,
+      )
+      successful_paths.append(stats_fname)
+      if should_archive and need_archival:
+        files_to_be_archived.append(stats_fname)
     return successful_paths, files_to_be_archived
 
   def _ingest_explicit_path_batch(
@@ -4922,210 +4718,60 @@ def run_sync_timedb_supervisor_loop(
         active_chunk_ingest_tracker = None
 
     try:
-      if use_split_db_writer_pipeline:
-        parse_tasks = deque()
-        writer_stage_batch_size = _db_writer_stage_batch_size(
-            len(paths),
-            ingest_queue_high,
+      add_stats_file = partial(add_stats_file_to_db, manager_lock)
+      ingest_tracker = _IngestPoolInFlightTracker(paths)
+      active_chunk_ingest_tracker = ingest_tracker
+      results_iter = _imap_ingest_paths_batched(
+          ingest_pool,
+          add_stats_file,
+          paths,
+          thread_count=thread_count,
+          context=imap_context,
+          tracker=ingest_tracker,
+          chunk_counter=batch_chunk_counter,
+          pending_count=pending_total,
+          ingest_pool=ingest_pool,
+          archive_pool=archive_pool,
+          stall_diagnostics=stall_diagnostics,
+          pending_tail=pending_tail,
+      )
+      for result in results_iter:
+        ingest_ok = True
+        elapsed_s = 0.0
+        if len(result) >= 4:
+          stats_fname, need_archival, ingest_ok, elapsed_s = result[:4]
+        elif len(result) >= 3:
+          stats_fname, need_archival, ingest_ok = result[:3]
+        else:
+          stats_fname, need_archival = result
+        if ingest_tracker is not None:
+          ingest_tracker.complete(stats_fname)
+        k += 1
+        active_workers = max(active_workers, min(thread_count, k))
+        if ingest_ok:
+          _transition_file_state(
+            file_states,
+            stats_fname,
+            SyncFileState.WRITTEN,
+            handoff_priority_paths=state_reingest_paths,
         )
-        parse_envelopes = [ParseTask(path=path) for path in paths]
-        parse_tracker = None
-        parse_paths = [task.path for task in parse_envelopes]
-        parse_tracker = _IngestPoolInFlightTracker(parse_paths)
-        active_chunk_ingest_tracker = parse_tracker
-        parse_results_iter = _imap_ingest_paths_batched(
-            ingest_pool,
-            _parse_stats_file_payload,
-            parse_paths,
-            thread_count=thread_count,
-            context=imap_context,
-            tracker=parse_tracker,
-            chunk_counter=batch_chunk_counter,
-            pending_count=pending_total,
-            ingest_pool=ingest_pool,
-            db_writer_pool=db_writer_pool,
-            archive_pool=archive_pool,
-            stall_diagnostics=stall_diagnostics,
-            pending_tail=pending_tail,
-        )
-        for parsed in parse_results_iter:
-          stats_fname, payload, need_archival, ingest_ok, parse_elapsed_s = parsed
-          if parse_tracker is not None:
-            parse_tracker.complete(stats_fname)
-          k += 1
-          active_workers = max(active_workers, min(thread_count, k))
-          if not ingest_ok:
-            continue
-          if payload is None:
-            _transition_file_state(
-              file_states,
+          successful_paths.append(stats_fname)
+          if should_archive and need_archival:
+            files_to_be_archived.append(stats_fname)
+          remaining = _ingest_remaining_count(pending_total, chunk_ingest_finished)
+          chunk_ingest_finished += 1
+          _log_sync_timedb_ingest_completed(
               stats_fname,
-              SyncFileState.WRITTEN,
-              handoff_priority_paths=state_reingest_paths,
+              elapsed_s,
+              remaining,
+              stage="ingest",
+              supplement=_ingest_path_is_supplement(stats_fname, chunk_paths_norm),
           )
-            successful_paths.append(stats_fname)
-            if should_archive and need_archival:
-              files_to_be_archived.append(stats_fname)
-            remaining = _ingest_remaining_count(pending_total, chunk_ingest_finished)
-            chunk_ingest_finished += 1
-            _log_sync_timedb_ingest_completed(
-                stats_fname,
-                parse_elapsed_s,
-                remaining,
-                stage="parse",
-                supplement=_ingest_path_is_supplement(stats_fname, chunk_paths_norm),
-            )
-            continue
-          parse_tasks.append(
-              DBWriteTask(
-                  path=stats_fname,
-                  payload=payload,
-                  need_archival=need_archival,
-                  parse_elapsed_s=parse_elapsed_s,
-              ))
-          _transition_file_state(file_states, stats_fname, SyncFileState.PARSED)
-          if len(parse_tasks) >= writer_stage_batch_size:
-            chunk_ingest_finished = _drain_db_write_tasks(
-                parse_tasks=parse_tasks,
-                manager_lock=manager_lock,
-                db_writer_pool=db_writer_pool,
-                file_states=file_states,
-                successful_paths=successful_paths,
-                files_to_be_archived=files_to_be_archived,
-                chunk_ingest_finished=chunk_ingest_finished,
-                pending_total=pending_total,
-                chunk_counter=batch_chunk_counter,
-                ingest_pool=ingest_pool,
-                archive_pool=archive_pool,
-                stall_diagnostics=stall_diagnostics,
-                chunk_paths_norm=chunk_paths_norm,
-                handoff_priority_paths=state_reingest_paths,
-            )
-        if parse_tasks:
-          chunk_ingest_finished = _drain_db_write_tasks(
-              parse_tasks=parse_tasks,
-              manager_lock=manager_lock,
-              db_writer_pool=db_writer_pool,
-              file_states=file_states,
-              successful_paths=successful_paths,
-              files_to_be_archived=files_to_be_archived,
-              chunk_ingest_finished=chunk_ingest_finished,
-              pending_total=pending_total,
-              chunk_counter=batch_chunk_counter,
-              ingest_pool=ingest_pool,
-              archive_pool=archive_pool,
-              stall_diagnostics=stall_diagnostics,
-              chunk_paths_norm=chunk_paths_norm,
-              handoff_priority_paths=state_reingest_paths,
-            )
-      elif db_writer_combined_task:
-        add_combined = partial(_ingest_parse_and_write_file, manager_lock)
-        combined_tracker = _IngestPoolInFlightTracker(paths)
-        active_chunk_ingest_tracker = combined_tracker
-        results_iter = _imap_ingest_paths_batched(
-            ingest_pool,
-            add_combined,
-            paths,
-            thread_count=thread_count,
-            context=imap_context,
-            tracker=combined_tracker,
-            chunk_counter=batch_chunk_counter,
-            pending_count=pending_total,
-            ingest_pool=ingest_pool,
-            db_writer_pool=db_writer_pool,
-            archive_pool=archive_pool,
-            stall_diagnostics=stall_diagnostics,
-            pending_tail=pending_tail,
-        )
-        for result in results_iter:
-          ingest_ok = True
-          elapsed_s = 0.0
-          if len(result) >= 4:
-            stats_fname, need_archival, ingest_ok, elapsed_s = result[:4]
-          elif len(result) >= 3:
-            stats_fname, need_archival, ingest_ok = result[:3]
-          else:
-            stats_fname, need_archival = result
-          if combined_tracker is not None:
-            combined_tracker.complete(stats_fname)
-          k += 1
-          active_workers = max(active_workers, min(thread_count, k))
-          if ingest_ok:
-            _transition_file_state(
-              file_states,
-              stats_fname,
-              SyncFileState.WRITTEN,
-              handoff_priority_paths=state_reingest_paths,
-          )
-            successful_paths.append(stats_fname)
-            if should_archive and need_archival:
-              files_to_be_archived.append(stats_fname)
-            remaining = _ingest_remaining_count(pending_total, chunk_ingest_finished)
-            chunk_ingest_finished += 1
-            _log_sync_timedb_ingest_completed(
-                stats_fname,
-                elapsed_s,
-                remaining,
-                stage="ingest",
-                supplement=_ingest_path_is_supplement(stats_fname, chunk_paths_norm),
-            )
-      else:
-        add_stats_file = partial(add_stats_file_to_db, manager_lock)
-        ingest_tracker = _IngestPoolInFlightTracker(paths)
-        active_chunk_ingest_tracker = ingest_tracker
-        results_iter = _imap_ingest_paths_batched(
-            ingest_pool,
-            add_stats_file,
-            paths,
-            thread_count=thread_count,
-            context=imap_context,
-            tracker=ingest_tracker,
-            chunk_counter=batch_chunk_counter,
-            pending_count=pending_total,
-            ingest_pool=ingest_pool,
-            db_writer_pool=db_writer_pool,
-            archive_pool=archive_pool,
-            stall_diagnostics=stall_diagnostics,
-            pending_tail=pending_tail,
-        )
-        for result in results_iter:
-          ingest_ok = True
-          elapsed_s = 0.0
-          if len(result) >= 4:
-            stats_fname, need_archival, ingest_ok, elapsed_s = result[:4]
-          elif len(result) >= 3:
-            stats_fname, need_archival, ingest_ok = result[:3]
-          else:
-            stats_fname, need_archival = result
-          if ingest_tracker is not None:
-            ingest_tracker.complete(stats_fname)
-          k += 1
-          active_workers = max(active_workers, min(thread_count, k))
-          if ingest_ok:
-            _transition_file_state(
-              file_states,
-              stats_fname,
-              SyncFileState.WRITTEN,
-              handoff_priority_paths=state_reingest_paths,
-          )
-            successful_paths.append(stats_fname)
-            if should_archive and need_archival:
-              files_to_be_archived.append(stats_fname)
-            remaining = _ingest_remaining_count(pending_total, chunk_ingest_finished)
-            chunk_ingest_finished += 1
-            _log_sync_timedb_ingest_completed(
-                stats_fname,
-                elapsed_s,
-                remaining,
-                stage="ingest",
-                supplement=_ingest_path_is_supplement(stats_fname, chunk_paths_norm),
-            )
     except MultiprocessingWorkerExitError as exc:
       pool_worker_exit = True
       _handle_pool_worker_exit_fatal(
           exc,
           ingest_pool=ingest_pool,
-          db_writer_pool=db_writer_pool,
           archive_pool=archive_pool,
       )
     except DatabaseUnavailableExit:
@@ -5133,12 +4779,7 @@ def run_sync_timedb_supervisor_loop(
     except ArchiveMembersRedisUnavailableError as exc:
       _exit_on_archive_members_redis_unavailable(exc)
     except Exception as exc:
-      if use_split_db_writer_pipeline:
-        error_context = "sync_timedb ingest parse pool"
-      elif db_writer_combined_task:
-        error_context = "sync_timedb ingest pool"
-      else:
-        error_context = "sync_timedb ingest pool"
+      error_context = "sync_timedb ingest pool"
       reraise_database_unavailable_chain(exc, context=error_context)
       raise
     finally:
@@ -5240,29 +4881,11 @@ def run_sync_timedb_supervisor_loop(
       _invalidate_host_scan_hints_for_paths(failed_paths)
     return successful_paths, failed_paths
 
-  def _run_startup_tail_ingest_batch(paths, context_label):
-    nonlocal chunk_in_progress
-    chunk_in_progress = True
-    try:
-      return _run_ingest_archive_paths_batch(paths, context_label)
-    finally:
-      _flush_deferred_archive_finalize_prewarm()
-      chunk_in_progress = False
-
   log_print(
       "sync_timedb: day_close immediate enqueue after chunk_end, archive_finalize, "
       "and idle_finalize; janitor tick discover is steady-state backstop; "
       "idle rescan sleep %s s"
       % (int(EMPTY_QUEUE_RESCAN_SLEEP_SECONDS),),
-      flush=True,
-  )
-  log_print(
-      "sync_timedb: archive_maintenance_interval_seconds is deprecated and ignored",
-      flush=True,
-  )
-  log_print(
-      "sync_timedb: sync_unparsable_raw_quarantine_max_per_tick is deprecated; "
-      "unparseable closed raw is quarantined at ingest parse failure",
       flush=True,
   )
   log_print(
@@ -5275,20 +4898,9 @@ def run_sync_timedb_supervisor_loop(
   idle_since_empty_queue = None
   worker_idle_loops = 0
   ingest_pool = None
-  db_writer_pool = None
   pool_worker_exit = False
-  db_writer_enabled = cfg.get_sync_enable_db_writer_pipeline()
-  db_writer_combined_task = (
-      db_writer_enabled and cfg.get_sync_db_writer_combined_task()
-  )
-  use_split_db_writer_pipeline = (
-      db_writer_enabled and not db_writer_combined_task
-  )
   stall_diagnostics = IngestStallDiagnostics()
-  if use_split_db_writer_pipeline:
-    stall_diagnostics.ingest_pipeline = "split_parse_write"
-  else:
-    stall_diagnostics.ingest_pipeline = "combined"
+  stall_diagnostics.ingest_pipeline = "combined"
   chunk_size = cfg.get_sync_ingest_chunk_size()
   processed_files = set()
   file_states = {}
@@ -5340,10 +4952,7 @@ def run_sync_timedb_supervisor_loop(
     worker_diagnostics_registry = diagnostics_manager.dict()
     stall_diagnostics.worker_registry = worker_diagnostics_registry
     stall_diagnostics.diagnostics_manager = diagnostics_manager
-    if use_split_db_writer_pipeline:
-      ingest_pool_kind = "ingest-parse-pool"
-    else:
-      ingest_pool_kind = "ingest-pool"
+    ingest_pool_kind = "ingest-pool"
     ingest_pool = create_sync_timedb_spawn_pool(
         processes=thread_count,
         initializer=apply_ingest_pool_worker_init,
@@ -5354,26 +4963,6 @@ def run_sync_timedb_supervisor_loop(
         ),
         pool_kind_log_label=ingest_pool_kind,
     )
-    if use_split_db_writer_pipeline:
-      db_writer_processes = cfg.get_sync_db_writer_pool_processes(
-          ingest_processes=thread_count)
-      db_writer_pool = create_sync_timedb_spawn_pool(
-          processes=db_writer_processes,
-          initializer=apply_ingest_pool_worker_init,
-          initargs=(
-              SYNC_TIMEDB_PROCESS_TITLE,
-              "db-writer-pool",
-              worker_diagnostics_registry,
-          ),
-          pool_kind_log_label="db-writer-pool",
-      )
-    elif db_writer_combined_task:
-      log_print(
-          "sync_db_writer_combined_task is enabled; parse and DB write run in "
-          "one ingest worker per file (no split staging in supervisor).",
-          flush=True,
-      )
-
   archive_dispatch = ArchiveDispatchCoordinator(
       archive_pool=archive_pool,
       max_inflight=cfg.get_sync_archive_max_inflight_jobs(),
@@ -5494,8 +5083,7 @@ def run_sync_timedb_supervisor_loop(
       day_raw_removal_coordinator=day_raw_removal,
       async_day_close_coordinator=async_day_close,
       get_day_close_candidate_inputs=_build_day_close_candidate_inputs,
-      get_tree_rss_bytes=lambda: read_sync_timedb_tree_rss_bytes(
-          ingest_pool, db_writer_pool, archive_pool),
+      get_tree_rss_bytes=lambda: read_sync_timedb_tree_rss_bytes(ingest_pool, archive_pool),
       startup_snapshot_coordinator=startup_archive_scan,
       get_ingest_pool_in_flight_count=_get_ingest_pool_in_flight_count,
       get_chunk_in_progress=_get_chunk_in_progress,
@@ -5507,10 +5095,7 @@ def run_sync_timedb_supervisor_loop(
   )
 
   def _async_enqueue_day_close(tar_norm, reason):
-    if archive_janitor._enqueue_eligible_day_close(
-        tar_norm,
-        reason=reason,
-    ):
+    if archive_janitor._enqueue_day_close(tar_norm):
       archive_janitor.signal_work_available()
       return True
     return False
@@ -5631,9 +5216,6 @@ def run_sync_timedb_supervisor_loop(
   handoff_requeued_tars_this_boot = set()
   handoff_giant_day_slice_in_progress = False
   startup_ingest_gate_cleared = False
-  startup_day_close_drain_complete = False
-  startup_drain_last_log = 0.0
-  startup_drain_blocked_last_log = 0.0
   startup_gate_cleared_logged = False
 
   def _mark_startup_ingest_gate_cleared():
@@ -5826,7 +5408,7 @@ def run_sync_timedb_supervisor_loop(
         host_scan_hints=host_scan_hints,
         persist=False,
     )
-    max_slice = cfg.get_sync_startup_tail_ingest_max_files()
+    max_slice = cfg.get_sync_ingest_chunk_size()
     if len(requeued_paths) > max_slice:
       day_token = (
           calendar_date_from_daily_tar_path(tar_norm).isoformat()
@@ -5848,7 +5430,7 @@ def run_sync_timedb_supervisor_loop(
         try:
           for off in range(0, len(requeued_paths), max_slice):
             slice_paths = requeued_paths[off:off + max_slice]
-            _successful, failed = _run_startup_tail_ingest_batch(
+            _successful, failed = _run_ingest_archive_paths_batch(
                 slice_paths,
                 "handoff giant-day slice",
             )
@@ -5996,9 +5578,7 @@ def run_sync_timedb_supervisor_loop(
         flush=True,
     )
 
-  startup_preflight = None
   startup_day_close = None
-  startup_tail_ingest = None
 
   try:
     _ensure_daily_archive_dir_exists()
@@ -6008,37 +5588,6 @@ def run_sync_timedb_supervisor_loop(
       startup_archive_scan.note_startup_maintenance_pending()
       archive_janitor.signal_scheduled_maintenance_pass(reason="startup")
       archive_janitor.enqueue_startup_debt()
-      startup_preflight = StartupRawRemovalPreflight(
-          archive_data_dir=directory,
-          host_name_ext=host_name_ext,
-          tgz_archive_dir=tgz_archive_dir,
-          log_fn=log_print,
-          get_disqualified_daily_tars=_janitor_disqualified_daily_tars,
-          get_quarantine_skip_paths=_get_quarantine_skip_paths,
-          ingest_ready_fn=stats_file_head_ingested_in_db,
-          get_startup_snapshot=_wait_startup_snapshot_for_preflight,
-          process_title=SYNC_TIMEDB_PROCESS_TITLE,
-      )
-      if startup_preflight.enabled:
-        startup_preflight.start_async_verify()
-      startup_day_close_holder = {"preflight": None}
-      startup_tail_ingest = StartupTailIngestCoordinator(
-          log_fn=log_print,
-          run_ingest_batch=_run_startup_tail_ingest_batch,
-          submit_day_close=lambda tar_norm, reason: (
-              _async_enqueue_day_close(tar_norm, reason)
-          ),
-          signal_janitor=lambda: archive_janitor.signal_work_available(),
-          get_startup_snapshot=_get_startup_snapshot_for_rescan,
-          live_unprocessed_by_tar=_live_unprocessed_by_tar_for_reconcile,
-          discover_done_fn=lambda: (
-              startup_day_close_holder["preflight"].discover_done()
-              if startup_day_close_holder["preflight"] is not None
-              and startup_day_close_holder["preflight"].enabled
-              else True
-          ),
-          process_title=SYNC_TIMEDB_PROCESS_TITLE,
-      )
       startup_day_close = StartupDayClosePreflight(
           archive_data_dir=directory,
           host_name_ext=host_name_ext,
@@ -6051,24 +5600,18 @@ def run_sync_timedb_supervisor_loop(
           day_phases=archive_janitor.get_day_phases_snapshot,
           get_startup_snapshot=_wait_startup_snapshot_for_preflight,
           get_accrual_remaining_raw_by_gz=_get_accrual_remaining_raw_by_gz,
-          tail_ingest_coordinator=(
-              startup_tail_ingest if startup_tail_ingest.enabled else None
-          ),
+          tail_ingest_coordinator=None,
           process_title=SYNC_TIMEDB_PROCESS_TITLE,
       )
-      startup_day_close_holder["preflight"] = startup_day_close
       startup_day_close.start_async_discover_and_close()
-      if cfg.get_sync_startup_tail_ingest_enabled():
-        startup_tail_ingest.start_async_tail_ingest()
       _recover_startup_day_close_handoffs()
-
-      if not cfg.get_sync_startup_drain_day_close_before_ingest():
-        while startup_handoff_recover_pending:
-          _process_one_startup_handoff_recover()
-        _mark_startup_ingest_gate_cleared()
-      else:
-        startup_ingest_gate_cleared = False
-      startup_day_close_drain_complete = startup_ingest_gate_cleared
+      while startup_handoff_recover_pending:
+        _process_one_startup_handoff_recover()
+      _mark_startup_ingest_gate_cleared()
+      log_print(
+          "sync_timedb: startup maintenance idle; ingest may begin",
+          flush=True,
+      )
     else:
       log_print(
           "sync_timedb: startup maintenance skipped "
@@ -6077,340 +5620,8 @@ def run_sync_timedb_supervisor_loop(
       )
       startup_archive_scan.mark_startup_heavy_maintenance_finished()
       _mark_startup_ingest_gate_cleared()
-      startup_day_close_drain_complete = True
-    startup_drain_last_log = 0.0
-    startup_drain_blocked_last_log = 0.0
-
-    def _startup_ingest_gate_pending():
-      if startup_tail_ingest is not None and startup_tail_ingest.enabled:
-        if not startup_tail_ingest.tail_ingest_done():
-          return True
-      if startup_day_close is not None and startup_day_close.enabled:
-        if not startup_day_close.discover_done():
-          return True
-      if startup_preflight is not None and startup_preflight.enabled:
-        if not startup_preflight.delete_phase_done():
-          return True
-      if day_raw_removal is not None and day_raw_removal.enabled:
-        if day_raw_removal.any_blocks_startup_drain():
-          return True
-      return False
-
-    def _maybe_log_startup_drain_wait():
-      nonlocal startup_drain_last_log
-      now = time.time()
-      if now - startup_drain_last_log < 30.0:
-        return
-      startup_drain_last_log = now
-      tail_pending = (
-          startup_tail_ingest is not None
-          and startup_tail_ingest.enabled
-          and not startup_tail_ingest.tail_ingest_done()
-      )
-      discover_pending = (
-          startup_day_close is not None
-          and startup_day_close.enabled
-          and not startup_day_close.discover_done()
-      )
-      pending_eligible = (
-          startup_day_close.pending_eligible_count()
-          if startup_day_close is not None
-          and startup_day_close.enabled
-          and hasattr(startup_day_close, "pending_eligible_count")
-          else (
-              startup_day_close.pending_deferral_count()
-              if startup_day_close is not None and startup_day_close.enabled
-              else 0
-          )
-      )
-      pending_retry = (
-          startup_day_close.pending_retry_count()
-          if startup_day_close is not None
-          and startup_day_close.enabled
-          and hasattr(startup_day_close, "pending_retry_count")
-          else 0
-      )
-      tail_queue = (
-          startup_tail_ingest.pending_count()
-          if startup_tail_ingest is not None and startup_tail_ingest.enabled
-          else 0
-      )
-      async_active = (
-          len(async_day_close.active_or_submitted_tar_paths())
-          if async_day_close is not None
-          else 0
-      )
-      raw_pending = (
-          startup_preflight is not None
-          and startup_preflight.enabled
-          and not startup_preflight.delete_phase_done()
-      )
-      day_delete_pending = (
-          day_raw_removal is not None
-          and day_raw_removal.enabled
-          and day_raw_removal.any_blocks_startup_drain()
-      )
-      day_raw_waiting_on_ingest = (
-          day_raw_removal.count_days_waiting_on_ingest()
-          if day_raw_removal is not None and day_raw_removal.enabled
-          else 0
-      )
-      day_raw_blocking_n = 0
-      day_raw_blocking_oldest = ""
-      if day_raw_removal is not None and day_raw_removal.enabled:
-        day_raw_blocking_n, day_raw_blocking_oldest = (
-            day_raw_removal.blocking_startup_drain_summary()
-        )
-      log_print(
-          "sync_timedb: startup ingest maintenance waiting tail_pending=%s "
-          "discover=%s pending_eligible=%d pending_retry=%d tail_queue=%d "
-          "async_active=%d startup_raw=%s day_raw_delete=%s "
-          "day_raw_waiting_on_ingest=%d day_raw_blocking_n=%d "
-          "day_raw_blocking_oldest=%s"
-          % (
-              tail_pending,
-              discover_pending,
-              pending_eligible,
-              pending_retry,
-              tail_queue,
-              async_active,
-              raw_pending,
-              day_delete_pending,
-              day_raw_waiting_on_ingest,
-              day_raw_blocking_n,
-              day_raw_blocking_oldest or "",
-          ),
-          flush=True,
-      )
-
-    def _startup_drain_block_snapshot(*, delete_driver: bool = False):
-      async_raw = (
-          async_day_close.tar_paths_raw_delete_pending()
-          if async_day_close is not None
-          else []
-      )
-      return {
-          "delete_driver": delete_driver,
-          "async_raw_delete_pending": len(async_raw),
-          "chunk_in_progress": chunk_in_progress,
-          "tail_pending": (
-              startup_tail_ingest is not None
-              and startup_tail_ingest.enabled
-              and not startup_tail_ingest.tail_ingest_done()
-          ),
-          "discover_pending": (
-              startup_day_close is not None
-              and startup_day_close.enabled
-              and not startup_day_close.discover_done()
-          ),
-          "raw_pending": (
-              startup_preflight is not None
-              and startup_preflight.enabled
-              and not startup_preflight.delete_phase_done()
-          ),
-          "day_raw_delete": (
-              day_raw_removal is not None
-              and day_raw_removal.enabled
-              and day_raw_removal.any_blocks_startup_drain()
-          ),
-          "heavy_not_idle": (
-              not startup_archive_scan.is_startup_heavy_maintenance_idle()
-          ),
-          "gate_pending": _startup_ingest_gate_pending(),
-      }
-
-    def _maybe_log_startup_drain_blocked(*, trigger: str, delete_driver: bool = False):
-      nonlocal startup_drain_blocked_last_log
-      now = time.time()
-      if now - startup_drain_blocked_last_log < 30.0:
-        return
-      startup_drain_blocked_last_log = now
-      snap = _startup_drain_block_snapshot(delete_driver=delete_driver)
-      log_print(
-          "sync_timedb: startup drain blocked reason=trigger:%s "
-          "delete_driver=%s async_raw_delete_pending=%d chunk_in_progress=%s "
-          "tail_pending=%s discover_pending=%s raw_pending=%s "
-          "day_raw_delete=%s heavy_not_idle=%s gate_pending=%s"
-          % (
-              trigger,
-              snap["delete_driver"],
-              snap["async_raw_delete_pending"],
-              snap["chunk_in_progress"],
-              snap["tail_pending"],
-              snap["discover_pending"],
-              snap["raw_pending"],
-              snap["day_raw_delete"],
-              snap["heavy_not_idle"],
-              snap["gate_pending"],
-          ),
-          flush=True,
-      )
-
-    def _drain_startup_day_close_and_deletion_if_needed():
-      nonlocal startup_ingest_gate_cleared, startup_day_close_drain_complete
-      if startup_ingest_gate_cleared:
-        return False
-      if startup_handoff_recover_pending:
-        _process_one_startup_handoff_recover()
-        _maybe_log_startup_drain_blocked(trigger="handoff_recover")
-        sleep_until_shutdown(0.25)
-        return True
-      if not startup_day_close_drain_complete:
-        if _maybe_handle_raw_removal_delete_phase():
-          _maybe_log_startup_drain_blocked(
-              trigger="delete_driver",
-              delete_driver=True,
-          )
-          return True
-        if not _startup_ingest_gate_pending():
-          if (
-              startup_preflight is not None
-              and startup_preflight.enabled
-              and startup_preflight.delete_phase_done()
-          ):
-            _post_startup_raw_removal_rescan()
-          log_print(
-              "sync_timedb: startup ingest maintenance complete",
-              flush=True,
-          )
-          startup_day_close_drain_complete = True
-        else:
-          if (
-              day_raw_removal is not None
-              and day_raw_removal.enabled
-              and day_raw_removal.advance_startup_drain_blockers()
-          ):
-            if _maybe_handle_raw_removal_delete_phase():
-              _maybe_log_startup_drain_blocked(
-                  trigger="delete_driver",
-                  delete_driver=True,
-              )
-              return True
-            return True
-          _maybe_log_startup_drain_wait()
-          _maybe_log_startup_drain_blocked(trigger="gate_pending")
-          sleep_until_shutdown(0.25)
-          return True
-      if not startup_archive_scan.is_startup_heavy_maintenance_idle():
-        _maybe_log_startup_drain_blocked(trigger="heavy_not_idle")
-        if not startup_archive_scan.wait_for_startup_maintenance_idle():
-          if startup_archive_scan.get_snapshot() is None:
-            log_print(
-                "WARN: startup maintenance idle wait timed out with no "
-                "coordinator snapshot; delaying ingest",
-                flush=True,
-            )
-            _maybe_log_startup_drain_blocked(trigger="heavy_not_idle_no_snapshot")
-            sleep_until_shutdown(1.0)
-            return True
-          log_print(
-              "WARN: startup maintenance idle wait timed out; proceeding "
-              "with coordinator snapshot only",
-              flush=True,
-          )
-      log_print(
-          "sync_timedb: startup maintenance idle; ingest may begin",
-          flush=True,
-      )
-      _mark_startup_ingest_gate_cleared()
-      return False
-
-    def _post_startup_raw_removal_rescan():
-      nonlocal pending_stats_files
-      if startup_preflight is None:
-        return
-      removed = startup_preflight.consumed_paths()
-      for path in removed:
-        file_states.pop(path, None)
-        if isinstance(host_scan_hints, dict):
-          host_scan_hints.pop(path, None)
-      pending_stats_files = _cap_pending_after_rescan(
-          _rescan_pending_with_progress(),
-      )
-      log_print(
-          "Startup raw removal preflight done; rescanned pending=%d"
-          % len(pending_stats_files),
-          flush=True,
-      )
-
-    def _finalize_day_close_raw_removal_delete(tar_norm):
-      if async_day_close is not None:
-        async_day_close.finalize_complete_if_filesystem(os.path.normpath(tar_norm))
-      archive_janitor.signal_work_available()
-
-    def _apply_day_close_raw_removal_deletes():
-      """One ingest-gated pass over pending days (oldest-first; skip stuck per batch)."""
-      nonlocal delete_phase_active
-
-      def _log_chunk_wait(blocking_tar, async_tar_drop_n):
-        log_print(
-            "sync_timedb: day raw delete waiting on ingest chunk "
-            "blocking_tar=%s async_tar_drop_n=%d"
-            % (blocking_tar or "", async_tar_drop_n),
-            flush=True,
-        )
-        _maybe_log_startup_drain_blocked(
-            trigger="chunk_wait_day_raw_delete",
-            delete_driver=True,
-        )
-
-      chunk_day_hint = None
-      if chunk_in_progress and active_chunk_ingest_tracker is not None:
-        chunk_day_hint = _calendar_day_hint_from_paths(
-            active_chunk_ingest_tracker.sample_in_flight(),
-        ) or None
-
-      spin = run_supervisor_day_raw_removal_delete_pass(
-          day_raw_removal,
-          async_day_close,
-          chunk_in_progress=chunk_in_progress,
-          chunk_calendar_day_hint=chunk_day_hint,
-          finalize_day_close_delete=_finalize_day_close_raw_removal_delete,
-          sleep_fn=sleep_until_shutdown,
-          log_chunk_wait=_log_chunk_wait,
-          on_delete_batch_begin=lambda: _set_delete_phase_active(True),
-          on_delete_batch_end=lambda: _set_delete_phase_active(False),
-      )
-      if spin:
-        return True
-      _maybe_apply_day_close_rescan()
-      return False
-
-    def _set_delete_phase_active(active: bool) -> None:
-      nonlocal delete_phase_active
-      delete_phase_active = active
-
-    def _maybe_handle_raw_removal_delete_phase():
-      nonlocal delete_phase_active, pending_stats_files
-      if startup_preflight is not None and startup_preflight.enabled:
-        if not startup_preflight.delete_phase_done():
-          if startup_preflight.needs_delete_phase():
-            delete_phase_active = True
-          if delete_phase_active:
-            if chunk_in_progress:
-              sleep_until_shutdown(0.1)
-              _maybe_log_startup_drain_blocked(
-                  trigger="chunk_wait_startup_raw_delete",
-                  delete_driver=True,
-              )
-              return True
-            if startup_preflight.phase() == PHASE_VERIFICATION_COMPLETE:
-              startup_preflight.begin_deleting()
-            startup_preflight.apply_deletes_from_manifest()
-            if startup_preflight.delete_phase_done():
-              delete_phase_active = False
-              _post_startup_raw_removal_rescan()
-            else:
-              _maybe_log_startup_drain_blocked(
-                  trigger="startup_raw_delete_in_progress",
-                  delete_driver=True,
-              )
-              return True
-      return _apply_day_close_raw_removal_deletes()
 
     while not shutdown_requested[0]:
-      if _drain_startup_day_close_and_deletion_if_needed():
-        continue
       _maybe_apply_day_close_rescan()
 
       if not pending_stats_files:
@@ -6476,8 +5687,7 @@ def run_sync_timedb_supervisor_loop(
           break
 
       while pending_stats_files:
-        _maybe_wait_tree_rss_before_chunk(
-            ingest_pool, db_writer_pool, archive_pool)
+        _maybe_wait_tree_rss_before_chunk(ingest_pool, archive_pool)
         _maybe_apply_day_close_rescan()
         idle_since_empty_queue = None
         _finalize_archive_slots_if_needed(
@@ -6863,8 +6073,7 @@ def run_sync_timedb_supervisor_loop(
               flush=True,
           )
         chunk_counter += 1
-        _maybe_apply_tree_rss_governor(
-            chunk_counter, ingest_pool, db_writer_pool, archive_pool)
+        _maybe_apply_tree_rss_governor(chunk_counter, ingest_pool, archive_pool)
 
         _dispatch_due_archive_retries()
         active_chunk_ingest_tracker = None
@@ -6928,12 +6137,8 @@ def run_sync_timedb_supervisor_loop(
     chunk_in_progress = False
     active_chunk_ingest_tracker = None
     preflight_shutdown_wait = not pool_worker_exit
-    if startup_preflight is not None:
-      startup_preflight.shutdown(wait=preflight_shutdown_wait)
     if startup_day_close is not None:
       startup_day_close.shutdown(wait=preflight_shutdown_wait)
-    if startup_tail_ingest is not None:
-      startup_tail_ingest.shutdown(wait=preflight_shutdown_wait)
     if async_day_close is not None:
       async_day_close.shutdown(wait=preflight_shutdown_wait)
     if day_raw_removal is not None:
@@ -6950,7 +6155,6 @@ def run_sync_timedb_supervisor_loop(
     _flush_checkpoint_if_needed(force=True)
     _shutdown_ingest_pools(
         ingest_pool,
-        db_writer_pool,
         force_terminate=pool_worker_exit,
     )
 
@@ -7044,19 +6248,6 @@ def run_sync_timedb_supervisor_from_parsed(run_once, startdate, enddate):
           ),
           flush=True,
       )
-    if cfg.get_sync_enable_db_writer_pipeline():
-      if cfg.get_sync_db_writer_combined_task():
-        log_print(
-            "sync_enable_db_writer_pipeline with sync_db_writer_combined_task: "
-            "parse and DB write in one ingest worker per file.",
-            flush=True,
-        )
-      else:
-        log_print(
-            "sync_enable_db_writer_pipeline is enabled; using separated parse "
-            "workers and DB-writer workers.",
-            flush=True,
-        )
     lock_shards = max(1, int(cfg.get_sync_write_lock_shards()))
     if lock_shards == 1:
       manager_lock = manager.Lock()

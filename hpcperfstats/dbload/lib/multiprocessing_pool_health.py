@@ -315,7 +315,6 @@ def describe_dead_pool_workers(pool, *, pool_health_context=None):
 
   ctx = pool_health_context or {}
   ingest_pool = ctx.get("ingest_pool")
-  db_writer_pool = ctx.get("db_writer_pool")
   archive_pool = ctx.get("archive_pool")
   in_flight_sample = list(ctx.get("in_flight_sample") or ())
 
@@ -334,7 +333,7 @@ def describe_dead_pool_workers(pool, *, pool_health_context=None):
   cgroup_events = read_cgroup_memory_events()
   cgroup_current = read_cgroup_memory_current_bytes()
   cgroup_max = read_cgroup_memory_max_bytes()
-  tree = format_tree_rss_breakdown_mb(ingest_pool, db_writer_pool, archive_pool)
+  tree = format_tree_rss_breakdown_mb(ingest_pool, archive_pool)
   likely_cause = _infer_likely_cause(dead_workers, cgroup_events)
 
   diagnostics = {
@@ -349,7 +348,6 @@ def describe_dead_pool_workers(pool, *, pool_health_context=None):
       "tree_total_mb": tree.get("tree_total_mb"),
       "supervisor_mb": tree.get("supervisor_mb"),
       "ingest_pool_mb": tree.get("ingest_pool_mb"),
-      "db_writer_pool_mb": tree.get("db_writer_pool_mb"),
       "archive_pool_mb": tree.get("archive_pool_mb"),
       "in_flight_sample": in_flight_sample,
       "likely_cause": likely_cause,

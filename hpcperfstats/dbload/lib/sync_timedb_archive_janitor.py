@@ -79,12 +79,14 @@ _DAY_PIPELINE_KINDS = frozenset({
     DebtKind.SEAL_PRIOR_DAY,
     DebtKind.RAW_REMOVE,
     DebtKind.TAR_DROP,
+    DebtKind.VALIDATE,
 })
 
 _LEGACY_DAY_PIPELINE_KINDS = frozenset({
     DebtKind.SEAL_PRIOR_DAY,
     DebtKind.RAW_REMOVE,
     DebtKind.TAR_DROP,
+    DebtKind.VALIDATE,
 })
 
 
@@ -242,6 +244,7 @@ class ArchiveJanitor:
           prune_day_phases_hints(prior.get("day_phases") or {}))
     with self._debt_lock:
       day_close_loaded = set()
+      debt_migrated = False
       for entry in prior.get("debt_queue") or []:
         if not isinstance(entry, dict):
           continue
@@ -258,9 +261,12 @@ class ArchiveJanitor:
               % (kind.value, tar_path),
               flush=True,
           )
+          debt_migrated = True
           continue
         if kind in _DAY_PIPELINE_KINDS:
           tar_norm = os.path.normpath(tar_path)
+          if kind != DebtKind.DAY_CLOSE:
+            debt_migrated = True
           if tar_norm in day_close_loaded:
             continue
           day_close_loaded.add(tar_norm)
@@ -268,6 +274,8 @@ class ArchiveJanitor:
           continue
         self._enqueue_debt_locked(kind, tar_path, persist=False)
       self._trim_heap_to_max_entries_locked()
+    if debt_migrated:
+      self._persist_hints()
 
   def _persist_hints(self, *, paths_hint=None, host_dirs_hint=None):
     with self._debt_lock:
@@ -783,7 +791,20 @@ class ArchiveJanitor:
       reason: str,
       disqualified: Optional[Set[str]] = None,
   ) -> bool:
-    """Enqueue ``DAY_CLOSE`` debt when checkpoint-complete eligibility passes."""
+    """Enqueue manifest + ``DAY_CLOSE`` debt when checkpoint-complete eligibility passes."""
+    coord = self.async_day_close_coordinator
+    if coord is not None:
+      if hasattr(coord, "enqueue_day_close"):
+        return coord.enqueue_day_close(
+            tar_norm,
+            reason,
+            disqualified_daily_tars=disqualified,
+        )
+      return coord.submit_day_close(
+          tar_norm,
+          reason=reason,
+          disqualified_daily_tars=disqualified,
+      )
     return self._enqueue_eligible_day_close(
         tar_norm,
         reason=reason,
@@ -930,10 +951,10 @@ class ArchiveJanitor:
         continue
       if entry.get("status") != "disqualified":
         continue
-      if "pending_discovery" not in (entry.get("reasons") or ()):
+      if "awaiting_janitor_discover" not in (entry.get("reasons") or ()):
         continue
       tar_norm = os.path.normpath(entry["tar_path"])
-      if self._enqueue_eligible_day_close(
+      if self._submit_eligible_async_day_close(
           tar_norm,
           reason=discover_reason,
           disqualified=disqualified,
@@ -1235,13 +1256,7 @@ class ArchiveJanitor:
             if success:
               tick_mutated = True
               tick_made_progress = True
-              if debt.kind in (
-                  DebtKind.DAY_CLOSE,
-                  DebtKind.SEAL_PRIOR_DAY,
-                  DebtKind.RAW_REMOVE,
-                  DebtKind.VALIDATE,
-                  DebtKind.TAR_DROP,
-              ):
+              if debt.kind == DebtKind.DAY_CLOSE:
                 days_processed += 1
             else:
               self._persist_hints()
@@ -1383,21 +1398,6 @@ class ArchiveJanitor:
           snapshot=snapshot,
           validation_cache=validation_cache,
           disqualified=disqualified,
-      )
-    if debt.kind == DebtKind.SEAL_PRIOR_DAY:
-      return self._seal_one_day(debt.tar_path)
-    if debt.kind in (DebtKind.RAW_REMOVE, DebtKind.VALIDATE):
-      return self._raw_remove_one_day(
-          debt.tar_path,
-          snapshot,
-          validation_cache,
-          disqualified,
-      )
-    if debt.kind == DebtKind.TAR_DROP:
-      return self._tar_drop_one_day(
-          debt.tar_path,
-          validation_cache,
-          disqualified,
       )
     if debt.kind in (DebtKind.DEDUPE, DebtKind.LOCK_CLEANUP):
       self.log_fn(

@@ -514,8 +514,7 @@ def test_abort_sigkill_logs_diagnostics_with_non_cgroup_hint(monkeypatch):
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.process_memory.format_tree_rss_breakdown_mb",
       lambda *a, **k: {"tree_total_mb": 31.0, "supervisor_mb": 1.0,
-                       "ingest_pool_mb": 20.0, "db_writer_pool_mb": 5.0,
-                       "archive_pool_mb": 5.0},
+                       "ingest_pool_mb": 20.0, "archive_pool_mb": 5.0},
   )
   pool = SimpleNamespace(_pool=[_DeadWorker()])
   with pytest.raises(mph.MultiprocessingWorkerExitError) as excinfo:
@@ -541,8 +540,7 @@ def test_abort_sigkill_with_cgroup_oom_reports_sigkill(monkeypatch):
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.process_memory.format_tree_rss_breakdown_mb",
       lambda *a, **k: {"tree_total_mb": 1.0, "supervisor_mb": 1.0,
-                       "ingest_pool_mb": 0.0, "db_writer_pool_mb": 0.0,
-                       "archive_pool_mb": 0.0},
+                       "ingest_pool_mb": 0.0, "archive_pool_mb": 0.0},
   )
   pool = SimpleNamespace(_pool=[_DeadWorker()])
   with pytest.raises(mph.MultiprocessingWorkerExitError) as excinfo:
@@ -566,8 +564,7 @@ def test_describe_dead_pool_workers_includes_in_flight_sample(monkeypatch):
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.process_memory.format_tree_rss_breakdown_mb",
       lambda *a, **k: {"tree_total_mb": 0.0, "supervisor_mb": 0.0,
-                       "ingest_pool_mb": 0.0, "db_writer_pool_mb": 0.0,
-                       "archive_pool_mb": 0.0},
+                       "ingest_pool_mb": 0.0, "archive_pool_mb": 0.0},
   )
   pool = SimpleNamespace(_pool=[_RecycledWorker(), _AliveWorker()])
   diag = mph.describe_dead_pool_workers(

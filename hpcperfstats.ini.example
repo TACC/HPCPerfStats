@@ -365,15 +365,6 @@ sync_pool_process_cap = 8
 # Write-lock shard count for sync ingest; auto if unset.
 # sync_write_lock_shards =
 
-# Parse-worker to DB-writer queue pipeline (default no).
-# sync_enable_db_writer_pipeline = no
-
-# Parse+write in one ingest worker; no parent DataFrame staging (default no).
-# sync_db_writer_combined_task = no
-
-# Max parse payloads staged before db-writer drain when split pipeline (default 8).
-# sync_db_writer_stage_max_batch = 8
-
 # Stats files per ingest chunk (default 1000).
 # sync_ingest_chunk_size = 1000
 
@@ -417,12 +408,6 @@ sync_ingest_malloc_trim_after_file = yes
 
 # Optional global seal concurrency cap; 0 unlimited (default 0).
 # sync_cold_path_max_concurrent_seals = 0
-
-# DB-writer pool size as fraction of ingest pool (default 0.80).
-# sync_db_writer_pool_multiplier = 0.80
-
-# Hard cap on DB-writer pool processes when set.
-# sync_db_writer_pool_cap =
 
 # Adaptive burst dispatch for sync queues (default yes).
 # sync_adaptive_dispatch_enabled = yes
@@ -483,9 +468,6 @@ sync_ingest_malloc_trim_after_file = yes
 # Default yes when omitted; set no only for A/B tuning or debugging.
 # archive_zstd_drop_page_cache = yes
 
-# Deprecated: ignored by sync_timedb (day-close runs at startup + every rescan_every_chunks).
-# archive_maintenance_interval_seconds = 28800
-
 # Max seconds to defer scheduled maintenance while archive append is in flight (legacy; default 3600).
 # archive_maintenance_max_defer_seconds = 3600
 
@@ -509,30 +491,6 @@ sync_ingest_malloc_trim_after_file = yes
 
 # Max raw stats file deletes per janitor RAW_REMOVE debt item per tick (default 1000).
 # archive_janitor_raw_paths_per_tick = 1000
-
-# Startup async verify + gated delete for sealed archived raw (default no).
-# sync_startup_raw_removal_preflight = no
-
-# Wall-clock budget per startup raw-removal verification slice (default 60 seconds).
-# sync_startup_raw_removal_verify_budget_seconds = 60
-
-# Max calendar days verified per startup raw-removal slice (default 5).
-# sync_startup_raw_removal_verify_days_per_slice = 5
-
-# Max deletes per gated startup delete pass; 0 = unlimited during delete window (default 0).
-# sync_startup_raw_removal_max_deletes_per_pass = 0
-
-# Block first ingest until startup day-close discover and deletion drain idle (default no).
-# sync_startup_drain_day_close_before_ingest = no
-
-# During startup drain, ingest checkpoint-blocked tail paths per day (default no).
-# sync_startup_tail_ingest_enabled = no
-
-# Max on-disk unprocessed paths per day for startup tail ingest (default 100).
-# sync_startup_tail_ingest_max_files = 100
-
-# Wall-clock budget for startup tail ingest thread (0 = disabled; recommend 600 on large tails).
-# sync_startup_tail_ingest_max_wall_seconds = 0
 
 # Startup checkpoint-driven async DAY_CLOSE for ingest-complete calendar days (default yes).
 # sync_startup_day_close_preflight = yes
@@ -579,9 +537,6 @@ sync_ingest_malloc_trim_after_file = yes
 
 # Max deletes per day-close delete loop iteration; 0 = unlimited per iteration (default 0).
 # sync_day_close_raw_removal_max_deletes_per_pass = 0
-
-# Deprecated: unparsable closed raw is quarantined at ingest parse failure (default 50, unused).
-# sync_unparsable_raw_quarantine_max_per_tick = 50
 
 # Max concurrent disjoint daily-tar archive append jobs (default 2).
 # sync_archive_max_inflight_jobs = 2

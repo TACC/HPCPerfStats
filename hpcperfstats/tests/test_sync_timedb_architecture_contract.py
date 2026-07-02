@@ -19,9 +19,29 @@ from hpcperfstats.tests.test_sync_timedb_janitor import (
 )
 
 
-def test_arch_ingest_begins_without_startup_maintenance_idle_block(monkeypatch):
-  """sync-timedb-startup-day-close-contract: default drain=no does not spin gate."""
-  assert cfg.get_sync_startup_drain_day_close_before_ingest() is False
+def test_arch_ingest_begins_without_startup_drain_gate():
+  """Phase H: supervisor loop must not block first ingest on startup drain gate."""
+  source = inspect.getsource(st.run_sync_timedb_supervisor_loop)
+  assert "_drain_startup_day_close_and_deletion_if_needed" not in source
+  assert "get_sync_startup_drain_day_close_before_ingest" not in source
+
+
+def test_arch_supervisor_has_no_split_db_writer_pipeline():
+  """Phase G: split db-writer pipeline removed from supervisor."""
+  source = inspect.getsource(st.run_sync_timedb_supervisor_loop)
+  assert "db_writer_pool" not in source
+  assert "DBWriteTask" not in source
+  assert "ParseTask" not in source
+  assert "use_split_db_writer_pipeline" not in source
+
+
+def test_arch_supervisor_has_no_default_off_startup_coordinators():
+  """Phase H: default-off startup coordinators removed from supervisor."""
+  source = inspect.getsource(st.run_sync_timedb_supervisor_loop)
+  assert "StartupRawRemovalPreflight" not in source
+  assert "StartupTailIngestCoordinator" not in source
+  assert "sync_timedb_startup_raw_removal" not in source
+  assert "sync_timedb_startup_tail_ingest" not in source
 
 
 def test_arch_rescan_exclude_paths_covers_handoff_retryable(tmp_path):

@@ -5838,7 +5838,7 @@ def test_classify_no_eligible_deferred_status(tmp_path):
   by_tar = {e["tar_path"]: e for e in entries}
   assert by_tar[waiting_tar]["status"] == "waiting_on_ingest"
   assert by_tar[ready_tar]["status"] == "disqualified"
-  assert "pending_discovery" in by_tar[ready_tar]["reasons"]
+  assert "awaiting_janitor_discover" in by_tar[ready_tar]["reasons"]
   assert "eligible_deferred" not in {e.get("status") for e in entries}
 
 
@@ -6379,7 +6379,7 @@ def test_oldest_checkpoint_blocked_tar_returns_oldest_on_disk_day(tmp_path):
       unprocessed, tgz_archive_dir=str(daily_dir)) == tar_old
 
 
-def test_classify_ghost_unprocessed_becomes_pending_discovery(tmp_path):
+def test_classify_ghost_unprocessed_becomes_awaiting_janitor_discover(tmp_path):
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       classify_day_close_candidates,
   )
@@ -6396,7 +6396,7 @@ def test_classify_ghost_unprocessed_becomes_pending_discovery(tmp_path):
   )
   by_tar = {e["tar_path"]: e for e in entries}
   assert by_tar[tar_path]["status"] == "disqualified"
-  assert "pending_discovery" in by_tar[tar_path]["reasons"]
+  assert "awaiting_janitor_discover" in by_tar[tar_path]["reasons"]
   assert by_tar[tar_path]["unprocessed"] == 0
   assert by_tar[tar_path]["unprocessed_list"] == 1
 

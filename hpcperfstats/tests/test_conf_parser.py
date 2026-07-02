@@ -145,60 +145,24 @@ def test_get_archive_zstd_level_clamps(temp_ini, monkeypatch):
     assert cfg.get_archive_zstd_level() == expected
 
 
-def test_get_archive_zstd_threads_and_maintenance_interval(temp_ini, monkeypatch):
+def test_get_archive_zstd_threads_override(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
   import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_archive_zstd_threads() == 0
-  assert cfg.get_archive_maintenance_interval_seconds() == 8 * 3600
 
   with open(temp_ini) as f:
     base = f.read()
   content = base.replace(
       "daily_archive_dir = /tmp",
-      "daily_archive_dir = /tmp\n"
-      "archive_zstd_threads = 4\n"
-      "archive_maintenance_interval_seconds = 600",
+      "daily_archive_dir = /tmp\narchive_zstd_threads = 4",
   )
   with open(temp_ini, "w") as f:
     f.write(content)
   importlib.reload(cfg)
   assert cfg.get_archive_zstd_threads() == 4
-  assert cfg.get_archive_maintenance_interval_seconds() == 600.0
 
-
-def test_get_archive_maintenance_interval_seconds_rejects_nonfinite_and_nonpositive(
-    temp_ini, monkeypatch
-):
-  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
-  import importlib
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-  importlib.reload(cfg)
-  assert cfg.get_archive_maintenance_interval_seconds() == 8 * 3600
-
-  with open(temp_ini) as f:
-    base = f.read()
-
-  for raw in ("nan", "inf", "0", "-5", "not-a-number"):
-    content = base.replace(
-        "daily_archive_dir = /tmp",
-        "daily_archive_dir = /tmp\narchive_maintenance_interval_seconds = %s"
-        % raw,
-    )
-    with open(temp_ini, "w") as f:
-      f.write(content)
-    importlib.reload(cfg)
-    assert cfg.get_archive_maintenance_interval_seconds() == 8 * 3600
-
-  content = base.replace(
-      "daily_archive_dir = /tmp",
-      "daily_archive_dir = /tmp\narchive_maintenance_interval_seconds = 120",
-  )
-  with open(temp_ini, "w") as f:
-    f.write(content)
-  importlib.reload(cfg)
-  assert cfg.get_archive_maintenance_interval_seconds() == 120.0
 
 
 def test_get_archive_maintenance_max_defer_seconds_defaults_and_override(
@@ -1024,7 +988,6 @@ def test_sync_phase2_feature_flags_and_shards(temp_ini, monkeypatch):
   importlib.reload(cfg)
   monkeypatch.setattr(cfg.os, "cpu_count", lambda: 16)
   assert cfg.get_sync_write_lock_shards() == 1
-  assert cfg.get_sync_enable_db_writer_pipeline() is False
   # Ingest-first durability is on by default (fallback=yes in conf_parser).
   assert cfg.get_sync_enable_ingest_first_durability_mode() is True
 
@@ -1034,52 +997,15 @@ def test_sync_phase2_feature_flags_and_shards(temp_ini, monkeypatch):
       "total_cores = 4",
       "total_cores = 4\n"
       "sync_write_lock_shards = 4\n"
-      "sync_enable_db_writer_pipeline = yes\n"
       "sync_enable_ingest_first_durability_mode = true",
   )
   with open(temp_ini, "w") as f:
     f.write(content)
   importlib.reload(cfg)
   assert cfg.get_sync_write_lock_shards() == 4
-  assert cfg.get_sync_enable_db_writer_pipeline() is True
   assert cfg.get_sync_enable_ingest_first_durability_mode() is True
 
-
-def test_sync_db_writer_pool_defaults_and_cap(temp_ini, monkeypatch):
-  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
-  import importlib
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-  importlib.reload(cfg)
-  assert cfg.get_sync_db_writer_pool_processes(ingest_processes=8) == 6
-
-  with open(temp_ini) as f:
-    content = f.read()
-  content = content.replace(
-      "total_cores = 4",
-      "total_cores = 4\nsync_db_writer_pool_multiplier = 0.75\nsync_db_writer_pool_cap = 3",
-  )
-  with open(temp_ini, "w") as f:
-    f.write(content)
-  importlib.reload(cfg)
-  assert cfg.get_sync_db_writer_pool_processes(ingest_processes=8) == 3
-
-
-def test_conf_parser_defaults_audit_snapshot(temp_ini, monkeypatch):
-  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
-  import importlib
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-  importlib.reload(cfg)
-  snapshot = cfg.get_conf_parser_defaults_audit_snapshot()
-  assert "platform_constraints" in snapshot
-  assert "sync_throughput" in snapshot
-  assert "overlap_contention" in snapshot
-  assert "stability" in snapshot
-  assert snapshot["sync_throughput"]["sync_budget_ingest_ratio"] == 0.60
-  assert snapshot["stability"]["parallel_db_prefetch_max"] == 4
-  assert snapshot["stability"]["sync_ingest_pool_maxtasksperchild"] == 1
-  assert snapshot["stability"]["sync_ingest_malloc_trim_after_file"] == "yes"
-  assert snapshot["stability"]["sync_pool_process_cap"] == 8
-  assert snapshot["stability"]["sync_process_tree_rss_limit_mb"] == 96000
+  assert cfg.get_sync_process_tree_rss_limit_mb() == 96000
 
 
 def test_get_syslog_allow_from_ipv4_networks_empty_default(temp_ini, monkeypatch):
@@ -1299,13 +1225,6 @@ def test_archive_janitor_and_dispatch_defaults(temp_ini, monkeypatch):
   assert cfg.get_archive_janitor_debt_burst_factor() == 1.5
   assert cfg.get_archive_janitor_debt_max_entries() == 200
   assert cfg.get_archive_janitor_raw_paths_per_tick() == 1000
-  assert cfg.get_sync_unparsable_raw_quarantine_max_per_tick() == 50
-  assert cfg.get_sync_startup_raw_removal_preflight() is False
-  assert cfg.get_sync_startup_tail_ingest_enabled() is False
-  assert cfg.get_sync_startup_raw_removal_verify_budget_seconds() == 60.0
-  assert cfg.get_sync_startup_raw_removal_verify_days_per_slice() == 5
-  assert cfg.get_sync_startup_raw_removal_max_deletes_per_pass() == 0
-  assert cfg.get_sync_startup_drain_day_close_before_ingest() is False
   assert cfg.get_sync_day_close_candidate_report() is True
   assert cfg.get_sync_startup_day_close_preflight() is True
   assert cfg.get_sync_startup_day_close_budget_seconds() == 300.0

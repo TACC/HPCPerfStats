@@ -98,25 +98,22 @@ def sum_pool_worker_rss_bytes(pool):
   return total
 
 
-def read_sync_timedb_tree_rss_bytes(ingest_pool, db_writer_pool, archive_pool):
-  """Supervisor RSS plus ingest/db-writer/archive pool worker RSS."""
+def read_sync_timedb_tree_rss_bytes(ingest_pool, archive_pool):
+  """Supervisor RSS plus ingest/archive pool worker RSS."""
   total = read_process_rss_bytes()
   total += sum_pool_worker_rss_bytes(ingest_pool)
-  total += sum_pool_worker_rss_bytes(db_writer_pool)
   total += sum_pool_worker_rss_bytes(archive_pool)
   return total
 
 
-def format_tree_rss_breakdown_mb(ingest_pool, db_writer_pool, archive_pool):
+def format_tree_rss_breakdown_mb(ingest_pool, archive_pool):
   """Human-readable per-component RSS breakdown in MiB."""
   supervisor = read_process_rss_bytes()
   ingest = sum_pool_worker_rss_bytes(ingest_pool)
-  db_writer = sum_pool_worker_rss_bytes(db_writer_pool)
   archive = sum_pool_worker_rss_bytes(archive_pool)
   return {
       "supervisor_mb": supervisor / (1024.0 * 1024.0),
       "ingest_pool_mb": ingest / (1024.0 * 1024.0),
-      "db_writer_pool_mb": db_writer / (1024.0 * 1024.0),
       "archive_pool_mb": archive / (1024.0 * 1024.0),
-      "tree_total_mb": (supervisor + ingest + db_writer + archive) / (1024.0 * 1024.0),
+      "tree_total_mb": (supervisor + ingest + archive) / (1024.0 * 1024.0),
   }

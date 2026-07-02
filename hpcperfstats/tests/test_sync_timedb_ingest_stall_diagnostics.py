@@ -81,7 +81,7 @@ def test_build_ingest_stall_log_suffix_includes_defer_and_pipeline(monkeypatch):
   diag.current_imap_batch_max_timeout_s = 900.0
   diag.dynamic_stall_abort_after_polls = 181
   diag.dynamic_stall_wall_s = 905.0
-  diag.ingest_pipeline = "split_parse_write"
+  diag.ingest_pipeline = "combined"
   diag.imap_batch_cap = 10
   diag.chunk_batch_size = 200
   diag.current_imap_batch_size = 10
@@ -99,7 +99,7 @@ def test_build_ingest_stall_log_suffix_includes_defer_and_pipeline(monkeypatch):
   assert "sync_ingest_per_file_timeout_s=900.0" in suffix
   assert "sync_ingest_per_file_timeout_max_s=14400.0" in suffix
   assert "effective_ingest_timeout_s=-" in suffix
-  assert "ingest_pipeline=split_parse_write" in suffix
+  assert "ingest_pipeline=combined" in suffix
   assert "pipeline_overlap_mode=ingest_priority" in suffix
   assert "chunk_prewarm=2026-05-20:redis_warm" in suffix
   assert "imap_batch_cap=10" in suffix

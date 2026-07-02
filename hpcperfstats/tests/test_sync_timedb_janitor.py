@@ -1423,17 +1423,6 @@ def test_enqueue_immediate_day_close_skips_closed_raw_and_requeues(tmp_path):
   submit_calls = []
   requeue_calls = []
 
-  class _FakeCoord:
-    def submit_day_close(self, tar, *, reason, disqualified_daily_tars=None):
-      submit_calls.append((tar, reason))
-      return True
-
-    def active_or_submitted_tar_paths(self):
-      return set()
-
-    def entry_progress_snapshot(self, _tar_path):
-      return {}
-
   class _ClosedRawCoord:
     enabled = True
 
@@ -1444,14 +1433,43 @@ def test_enqueue_immediate_day_close_skips_closed_raw_and_requeues(tmp_path):
       requeue_calls.append((tar_norm, reason))
       return ["/raw/closed"]
 
+  class _FakeCoord:
+    def __init__(self, janitor):
+      self._janitor = janitor
+
+    def submit_day_close(self, tar, *, reason, disqualified_daily_tars=None):
+      return self._janitor._enqueue_eligible_day_close(
+          tar,
+          reason=reason,
+          disqualified=disqualified_daily_tars,
+      ) and self._record_submit(tar, reason)
+
+    def enqueue_day_close(self, tar, reason, *, disqualified_daily_tars=None):
+      return self.submit_day_close(
+          tar,
+          reason=reason,
+          disqualified_daily_tars=disqualified_daily_tars,
+      )
+
+    def _record_submit(self, tar, reason):
+      submit_calls.append((tar, reason))
+      return True
+
+    def active_or_submitted_tar_paths(self):
+      return set()
+
+    def entry_progress_snapshot(self, _tar_path):
+      return {}
+
   janitor = _make_janitor(
       tgz_archive_dir=str(daily_dir),
-      async_day_close_coordinator=_FakeCoord(),
+      async_day_close_coordinator=None,
       day_raw_removal_coordinator=_ClosedRawCoord(),
       get_day_close_candidate_inputs=lambda: {
           "unprocessed_by_tar": {tar_path: []},
       },
   )
+  janitor.async_day_close_coordinator = _FakeCoord(janitor)
   assert not janitor.enqueue_immediate_day_close(tar_path, reason="chunk_end")
   assert submit_calls == []
   assert requeue_calls == [
@@ -1792,7 +1810,7 @@ def test_run_scheduled_maintenance_pass_logs_candidate_report_only(tmp_path, mon
   assert any("disqualified" in line for line in report_lines)
 
 
-def test_run_scheduled_maintenance_pass_discovers_pending_discovery_on_startup(
+def test_run_scheduled_maintenance_pass_discovers_awaiting_janitor_discover_on_startup(
     tmp_path, monkeypatch,
 ):
   daily_dir = tmp_path / "daily"
@@ -1918,7 +1936,7 @@ def test_run_scheduled_maintenance_startup_uses_startup_max_inflight(
           {
               "tar_path": t,
               "status": "disqualified",
-              "reasons": ["pending_discovery"],
+              "reasons": ["awaiting_janitor_discover"],
               "unprocessed": 0,
           }
           for t in deferred_tars
@@ -2075,7 +2093,7 @@ def test_janitor_startup_tick_discovers_and_enqueues_day_close(
           {
               "tar_path": tar_path,
               "status": "disqualified",
-              "reasons": ["pending_discovery"],
+              "reasons": ["awaiting_janitor_discover"],
               "unprocessed": 0,
           },
       ],

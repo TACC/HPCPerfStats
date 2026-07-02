@@ -28,10 +28,9 @@ def test_read_sync_timedb_tree_rss_bytes_sums_components(monkeypatch):
   monkeypatch.setattr(pm, "read_process_rss_bytes", lambda pid=None: 100 * 1024 * 1024)
   monkeypatch.setattr(pm, "sum_pool_worker_rss_bytes", lambda pool: 50 * 1024 * 1024 if pool else 0)
   ingest = object()
-  db_writer = object()
   archive = object()
-  total = pm.read_sync_timedb_tree_rss_bytes(ingest, db_writer, archive)
-  assert total == 250 * 1024 * 1024
+  total = pm.read_sync_timedb_tree_rss_bytes(ingest, archive)
+  assert total == 200 * 1024 * 1024
 
 
 def test_read_cgroup_memory_current_bytes_parses_file(monkeypatch):
@@ -62,7 +61,7 @@ def test_read_cgroup_memory_events_from_raw(monkeypatch):
 def test_format_tree_rss_breakdown_mb(monkeypatch):
   monkeypatch.setattr(pm, "read_process_rss_bytes", lambda pid=None: 10 * 1024 * 1024)
   monkeypatch.setattr(pm, "sum_pool_worker_rss_bytes", lambda pool: 20 * 1024 * 1024)
-  breakdown = pm.format_tree_rss_breakdown_mb(object(), object(), object())
+  breakdown = pm.format_tree_rss_breakdown_mb(object(), object())
   assert breakdown["supervisor_mb"] == 10.0
   assert breakdown["ingest_pool_mb"] == 20.0
-  assert breakdown["tree_total_mb"] == 70.0
+  assert breakdown["tree_total_mb"] == 50.0

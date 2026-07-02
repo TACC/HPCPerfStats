@@ -17,7 +17,7 @@ This document describes how `sync_timedb` uses **spawn process pools**, **sessio
 
 | Pool | Module | Workers | Initializer | Why spawn |
 |------|--------|---------|-------------|-----------|
-| `ingest_pool` / `db_writer_pool` | `sync_timedb.py` | INI `sync_ingest_pool_processes` | `apply_ingest_pool_worker_init` + diagnostics registry | CPU parse, RSS, Django test DB isolation, BLAS, stall exit **124**, L1 host cache |
+| `ingest_pool` | `sync_timedb.py` | INI `sync_ingest_pool_processes` | `apply_ingest_pool_worker_init` + diagnostics registry | Combined parse+DB write; CPU parse, RSS, Django test DB isolation, BLAS, stall exit **124**, L1 host cache |
 | `archive_pool` | `sync_timedb.py` | INI `sync_archive_pool_processes` | `apply_pool_worker_process_title` only | Per-job process recycle (`maxtasksperchild`), failure isolation, L1 cache; append is I/O-heavy but isolation wins |
 | `sealed-archive-pool` | `sync_timedb_archive.py` | INI archive worker count | Same as ingest init | Standalone sealed-archive ingest CLI |
 
@@ -35,8 +35,6 @@ Single-flight (`max_workers=1`) roles share `SessionSingleFlightExecutor` (`sync
 |------|--------|---------------------|---------|
 | Archive janitor tick | `sync_timedb_archive_janitor.py` | `archive-janitor` | Eager at `ArchiveJanitor.__init__` |
 | Startup day-close discover | `sync_timedb_startup_day_close.py` | `startup-day-close` | Eager when preflight enabled |
-| Startup raw removal verify | `sync_timedb_startup_raw_removal.py` | `startup-raw-removal` | Eager when preflight enabled |
-| Startup tail ingest | `sync_timedb_startup_tail_ingest.py` | `startup-tail-ingest` | Eager when enabled |
 | Day raw removal verify | `sync_timedb_day_raw_removal.py` | `day-raw-removal` | Eager when preflight enabled |
 
 **Two-queue law:** MainThread + ingest/archive pools own hot path; janitor thread owns seal/validate/delete/tar-drop. Janitor stays on **threads** (not spawn) — one queue, single-flight ticks.

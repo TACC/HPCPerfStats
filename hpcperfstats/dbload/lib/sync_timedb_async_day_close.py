@@ -266,6 +266,33 @@ class AsyncDayCloseCoordinator:
       disqualified_daily_tars=None,
   ) -> bool:
     """Enqueue janitor ``DAY_CLOSE`` debt for ``tar_path`` (single-flight per tar)."""
+    return self._submit_day_close_impl(
+        tar_path,
+        reason=reason,
+        disqualified_daily_tars=disqualified_daily_tars,
+    )
+
+  def enqueue_day_close(
+      self,
+      tar_path: str,
+      reason: str,
+      *,
+      disqualified_daily_tars=None,
+  ) -> bool:
+    """Unified manifest + debt enqueue API."""
+    return self._submit_day_close_impl(
+        tar_path,
+        reason=reason,
+        disqualified_daily_tars=disqualified_daily_tars,
+    )
+
+  def _submit_day_close_impl(
+      self,
+      tar_path: str,
+      *,
+      reason: str,
+      disqualified_daily_tars=None,
+  ) -> bool:
     tar_norm = os.path.normpath(tar_path or "")
     if not tar_norm:
       return False

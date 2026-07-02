@@ -129,10 +129,8 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_archive_members_redis_hset_batch_size"),
     ("PIPELINE", "sync_archive_members_redis_max_payload_bytes"),
     ("PIPELINE", "sync_write_lock_shards"),
-    ("PIPELINE", "sync_enable_db_writer_pipeline"),
-    ("PIPELINE", "sync_db_writer_combined_task"),
-    ("PIPELINE", "sync_db_writer_stage_max_batch"),
     ("PIPELINE", "sync_ingest_chunk_size"),
+    ("PIPELINE", "sync_bulk_create_batch_size"),
     ("PIPELINE", "sync_supervisor_rss_limit_mb"),
     ("PIPELINE", "sync_supervisor_rss_check_every_n_chunks"),
     ("PIPELINE", "sync_process_tree_rss_limit_mb"),
@@ -145,8 +143,6 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_ingest_pool_maxtasksperchild"),
     ("PIPELINE", "sync_ingest_malloc_trim_after_file"),
     ("PIPELINE", "sync_cold_path_max_concurrent_seals"),
-    ("PIPELINE", "sync_db_writer_pool_multiplier"),
-    ("PIPELINE", "sync_db_writer_pool_cap"),
     ("PIPELINE", "sync_adaptive_dispatch_enabled"),
     ("PIPELINE", "sync_dispatch_burst_factor"),
     ("PIPELINE", "sync_dispatch_archive_backoff_ratio"),
@@ -168,7 +164,6 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "archive_zstd_ionice_level"),
     ("PIPELINE", "archive_zstd_drop_page_cache"),
     ("PIPELINE", "archive_seal_parallel_workers"),
-    ("PIPELINE", "archive_maintenance_interval_seconds"),
     ("PIPELINE", "archive_maintenance_max_defer_seconds"),
     ("PIPELINE", "archive_maintenance_idle_seconds"),
     ("PIPELINE", "archive_janitor_budget_seconds"),
@@ -177,15 +172,6 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "archive_janitor_debt_burst_factor"),
     ("PIPELINE", "archive_janitor_debt_max_entries"),
     ("PIPELINE", "archive_janitor_raw_paths_per_tick"),
-    ("PIPELINE", "sync_unparsable_raw_quarantine_max_per_tick"),
-    ("PIPELINE", "sync_startup_raw_removal_preflight"),
-    ("PIPELINE", "sync_startup_raw_removal_verify_budget_seconds"),
-    ("PIPELINE", "sync_startup_raw_removal_verify_days_per_slice"),
-    ("PIPELINE", "sync_startup_raw_removal_max_deletes_per_pass"),
-    ("PIPELINE", "sync_startup_drain_day_close_before_ingest"),
-    ("PIPELINE", "sync_startup_tail_ingest_enabled"),
-    ("PIPELINE", "sync_startup_tail_ingest_max_files"),
-    ("PIPELINE", "sync_startup_tail_ingest_max_wall_seconds"),
     ("PIPELINE", "sync_day_close_candidate_report"),
     ("PIPELINE", "sync_startup_day_close_preflight"),
     ("PIPELINE", "sync_startup_day_close_budget_seconds"),
@@ -595,25 +581,6 @@ def get_archive_seal_parallel_workers():
       legacy_sections=("PORTAL",),
   )
   return max(1, int(raw))
-
-
-def get_archive_maintenance_interval_seconds():
-  """Deprecated: retained for INI compatibility; sync_timedb ignores this value."""
-  _ensure_cfg_loaded()
-  default_interval = float(8 * 3600)
-  raw_value = _ini_get(
-      "PIPELINE",
-      "archive_maintenance_interval_seconds",
-      fallback=str(default_interval),
-      legacy_sections=("PORTAL",),
-  )
-  try:
-    interval = float(raw_value)
-  except (TypeError, ValueError):
-    return default_interval
-  if (not math.isfinite(interval)) or interval <= 0:
-    return default_interval
-  return interval
 
 
 def get_archive_maintenance_max_defer_seconds():
@@ -2253,27 +2220,6 @@ def get_sync_write_lock_shards():
   return max(1, min(8, get_effective_cores() // 5))
 
 
-def get_sync_enable_db_writer_pipeline():
-  """Feature flag for optional parse-worker -> DB-writer queue pipeline (default disabled)."""
-  _ensure_cfg_loaded()
-  return _parse_bool(_pipeline_get("sync_enable_db_writer_pipeline", fallback="no"))
-
-
-def get_sync_db_writer_combined_task():
-  """Parse+write in one ingest worker (no parent DataFrame staging; default no)."""
-  _ensure_cfg_loaded()
-  return _parse_bool(_pipeline_get("sync_db_writer_combined_task", fallback="no"))
-
-
-def get_sync_db_writer_stage_max_batch():
-  """Max parse payloads staged in supervisor before db-writer drain (default 8)."""
-  _ensure_cfg_loaded()
-  return max(
-      1,
-      _pipeline_getint("sync_db_writer_stage_max_batch", fallback=8),
-  )
-
-
 def get_sync_ingest_chunk_size():
   """Stats files processed per ingest chunk (default 1000)."""
   _ensure_cfg_loaded()
@@ -2357,34 +2303,6 @@ def get_sync_cold_path_max_concurrent_seals():
   """Optional global seal concurrency cap; 0 unlimited (default 0)."""
   _ensure_cfg_loaded()
   return max(0, _pipeline_getint("sync_cold_path_max_concurrent_seals", fallback=0))
-
-
-def get_sync_db_writer_pool_multiplier():
-  """DB-writer pool size multiplier relative to ingest pool."""
-  _ensure_cfg_loaded()
-  return max(
-      0.10,
-      min(2.00, float(_pipeline_get("sync_db_writer_pool_multiplier", fallback="0.80"))),
-  )
-
-
-def get_sync_db_writer_pool_cap():
-  env = os.environ.get("SYNC_DB_WRITER_POOL_CAP", "").strip()
-  if env:
-    return max(1, int(env))
-  _ensure_cfg_loaded()
-  if _pipeline_has_option("sync_db_writer_pool_cap"):
-    return max(1, _pipeline_getint("sync_db_writer_pool_cap", fallback=1))
-  return None
-
-
-def get_sync_db_writer_pool_processes(ingest_processes=None):
-  base = max(1, int(ingest_processes if ingest_processes is not None else get_sync_ingest_pool_processes()))
-  n = max(1, int(math.floor(base * get_sync_db_writer_pool_multiplier())))
-  cap = get_sync_db_writer_pool_cap()
-  if cap is not None:
-    n = min(n, cap)
-  return max(1, n)
 
 
 def get_sync_adaptive_dispatch_enabled():
@@ -2651,12 +2569,6 @@ def _iter_sync_timedb_config_audit_getters():
     if inspect.signature(getter).parameters:
       continue
     yield (option, getter)
-  yield (
-      "sync_db_writer_pool_processes",
-      lambda: get_sync_db_writer_pool_processes(
-          ingest_processes=get_sync_ingest_pool_processes(),
-      ),
-  )
 
 
 def collect_sync_timedb_non_default_settings():
@@ -2743,85 +2655,6 @@ def get_archive_janitor_raw_paths_per_tick():
   """Max raw stats file deletes per janitor RAW_REMOVE debt item (default 1000)."""
   _ensure_cfg_loaded()
   return max(1, _pipeline_getint("archive_janitor_raw_paths_per_tick", fallback=1000))
-
-
-def get_sync_unparsable_raw_quarantine_max_per_tick():
-  """Deprecated: ingest quarantines unparseable raw at parse failure (default 50)."""
-  _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("sync_unparsable_raw_quarantine_max_per_tick", fallback=50))
-
-
-def get_sync_startup_raw_removal_preflight():
-  """Enable startup async verify + gated delete for sealed archived raw (default off)."""
-  _ensure_cfg_loaded()
-  return _parse_bool(
-      _pipeline_get("sync_startup_raw_removal_preflight", fallback="no"),
-  )
-
-
-def get_sync_startup_raw_removal_verify_budget_seconds():
-  """Wall-clock budget per startup raw-removal verification slice (default 60s)."""
-  _ensure_cfg_loaded()
-  return max(
-      1.0,
-      float(_pipeline_get(
-          "sync_startup_raw_removal_verify_budget_seconds",
-          fallback="60",
-      )),
-  )
-
-
-def get_sync_startup_raw_removal_verify_days_per_slice():
-  """Max calendar days verified per startup raw-removal slice (default 5)."""
-  _ensure_cfg_loaded()
-  return max(
-      1,
-      _pipeline_getint("sync_startup_raw_removal_verify_days_per_slice", fallback=5),
-  )
-
-
-def get_sync_startup_raw_removal_max_deletes_per_pass():
-  """Max deletes per gated startup delete pass; 0 means unlimited (default 0)."""
-  _ensure_cfg_loaded()
-  raw = _pipeline_get("sync_startup_raw_removal_max_deletes_per_pass", fallback="0")
-  try:
-    return max(0, int(raw))
-  except (TypeError, ValueError):
-    return 0
-
-
-def get_sync_startup_drain_day_close_before_ingest():
-  """Block first ingest until startup day-close discover and deletes finish."""
-  _ensure_cfg_loaded()
-  return _parse_bool(
-      _pipeline_get("sync_startup_drain_day_close_before_ingest", fallback="no"),
-  )
-
-
-def get_sync_startup_tail_ingest_enabled():
-  """Run targeted ingest for small checkpoint-blocked tails during startup drain."""
-  _ensure_cfg_loaded()
-  return _parse_bool(
-      _pipeline_get("sync_startup_tail_ingest_enabled", fallback="no"),
-  )
-
-
-def get_sync_startup_tail_ingest_max_files():
-  """Max on-disk unprocessed paths per calendar day for startup tail ingest."""
-  _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("sync_startup_tail_ingest_max_files", fallback=100))
-
-
-def get_sync_startup_tail_ingest_max_wall_seconds():
-  """Wall-clock budget for startup tail ingest thread (0 = disabled)."""
-  _ensure_cfg_loaded()
-  return max(
-      0.0,
-      float(_pipeline_get(
-          "sync_startup_tail_ingest_max_wall_seconds",
-          fallback="0",
-      )),
-  )
 
 
 def get_sync_day_close_candidate_report():

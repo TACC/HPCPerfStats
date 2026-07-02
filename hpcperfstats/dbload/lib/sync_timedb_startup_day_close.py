@@ -5,19 +5,13 @@ import os
 import threading
 import time
 from datetime import date
-from typing import Any, Callable, Dict, List, Optional, Set, TYPE_CHECKING
+from typing import Any, Callable, Dict, List, Optional, Set
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
 
 from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
     SessionSingleFlightExecutor,
 )
-
-if TYPE_CHECKING:
-  from hpcperfstats.dbload.lib.sync_timedb_startup_tail_ingest import (
-      StartupTailIngestCoordinator,
-  )
-
 from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     augment_unprocessed_by_tar_with_pending_paths,
     build_disqualification_reasons_by_tar,
@@ -27,9 +21,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     classify_day_close_candidates,
     days_ingest_complete_by_checkpoint,
     days_quiescent_tar_needs_day_close_at_startup,
-    iter_checkpoint_blocked_days_oldest_first,
     log_day_close_candidate_report,
-    tail_eligible_days_from_unprocessed,
 )
 from hpcperfstats.dbload.lib.sync_timedb_async_day_close import AsyncDayCloseCoordinator
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
@@ -106,7 +98,7 @@ class StartupDayClosePreflight:
       day_phases: Callable[[], Dict[str, Any]],
       get_startup_snapshot: Optional[Callable[[], Any]] = None,
       get_accrual_remaining_raw_by_gz: Optional[Callable[[], Optional[Dict]]] = None,
-      tail_ingest_coordinator: Optional["StartupTailIngestCoordinator"] = None,
+      tail_ingest_coordinator=None,
       process_title: str = "sync_timedb.py",
   ):
     self.archive_data_dir = archive_data_dir
@@ -334,22 +326,7 @@ class StartupDayClosePreflight:
     )
 
   def _enqueue_tail_eligible_from_unprocessed(self, unprocessed_by_tar) -> None:
-    coordinator = self.tail_ingest_coordinator
-    if coordinator is None or not coordinator.enabled:
-      return
-    max_files = max(1, int(cfg.get_sync_startup_tail_ingest_max_files()))
-    for tar_norm, paths in tail_eligible_days_from_unprocessed(
-        unprocessed_by_tar,
-        tgz_archive_dir=self.tgz_archive_dir,
-        max_files=max_files,
-    ):
-      coordinator.enqueue_tail_day(tar_norm, paths)
-    for _day, tar_norm, paths in iter_checkpoint_blocked_days_oldest_first(
-        unprocessed_by_tar,
-        tgz_archive_dir=self.tgz_archive_dir,
-    ):
-      if len(paths) > max_files:
-        coordinator.note_deferred_above_max(tar_norm, len(paths), max_files)
+    return
 
   def _build_slice_unprocessed_map(self, slice_index: int):
     snapshot = self._resolve_snapshot()
@@ -584,14 +561,6 @@ class StartupDayClosePreflight:
           deferred_eligible.append(tar_norm)
           continue
         if len(self.async_day_close.active_or_submitted_tar_paths()) >= max_inflight:
-          deferred_eligible.append(tar_norm)
-          continue
-        tail_coord = self.tail_ingest_coordinator
-        if (
-            tail_coord is not None
-            and tail_coord.enabled
-            and tail_coord.pending_count() > 0
-        ):
           deferred_eligible.append(tar_norm)
           continue
         if tar_norm in disqualified:

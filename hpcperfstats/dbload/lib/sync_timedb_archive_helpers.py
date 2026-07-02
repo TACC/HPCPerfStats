@@ -410,7 +410,7 @@ def classify_day_close_candidates(
     else:
       status = "disqualified"
       reasons = set(reasons)
-      reasons.add("pending_discovery")
+      reasons.add("awaiting_janitor_discover")
     entry = {
         "tar_path": tar_norm,
         "status": status,
@@ -996,7 +996,7 @@ def quarantine_unparsable_closed_raw_paths(
   if not paths or not archive_data_dir:
     return 0
   if max_moves is None:
-    max_moves = cfg.get_sync_unparsable_raw_quarantine_max_per_tick()
+    max_moves = len(tuple(paths))
   max_moves = max(0, int(max_moves))
   if max_moves <= 0:
     return 0
