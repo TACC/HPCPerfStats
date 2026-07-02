@@ -459,6 +459,13 @@ def test_arch_june04_gate_wait_defer_loops_not_exits():
   assert "continue" in after_gate[:1500]
 
 
+def test_arch_oldest_day_gate_empty_chunk_backoff():
+  """Empty chunk under oldest-day gate must backoff (avoid CPU spin)."""
+  source = inspect.getsource(st.run_sync_timedb_supervisor_loop)
+  assert "oldest_day_gate_empty_chunk_spins" in source
+  assert "sleep_until_shutdown(0.05)" in source
+
+
 def test_arch_steady_state_ingest_not_gated_on_raw_deletion():
   """Steady-state chunk loop must not wait on raw_delete_pending or delete driver."""
   source = inspect.getsource(st.run_sync_timedb_supervisor_loop)

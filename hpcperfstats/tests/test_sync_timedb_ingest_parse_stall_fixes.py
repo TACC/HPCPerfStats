@@ -248,48 +248,6 @@ def test_calendar_days_checkpoint_ingest_complete_requires_empty_unprocessed(
   ) == ["2020-01-01"]
 
 
-def test_calendar_days_ingest_complete_for_heavy_pass_gates_on_checkpoint(
-    monkeypatch, tmp_path,
-):
-  chunk = ["/data/h/1577836800"]
-  pending_before = ["/data/h/1577836800", "/data/h/1577923200"]
-  pending_after = ["/data/h/1577923200"]
-  tgz = tmp_path / "daily"
-  tgz.mkdir()
-
-  monkeypatch.setattr(
-      st,
-      "calendar_days_checkpoint_ingest_complete",
-      lambda candidate_days, **kw: (
-          [] if candidate_days else []
-      ),
-  )
-  assert st._calendar_days_ingest_complete_for_heavy_pass(
-      chunk_paths=chunk,
-      pending_before=pending_before,
-      pending_after=pending_after,
-      archive_data_dir=str(tmp_path),
-      host_name_ext=".example",
-      tgz_archive_dir=str(tgz),
-      checkpoint_path=str(tmp_path / "state.json"),
-  ) == []
-
-  monkeypatch.setattr(
-      st,
-      "calendar_days_checkpoint_ingest_complete",
-      lambda candidate_days, **kw: list(candidate_days),
-  )
-  assert st._calendar_days_ingest_complete_for_heavy_pass(
-      chunk_paths=chunk,
-      pending_before=pending_before,
-      pending_after=pending_after,
-      archive_data_dir=str(tmp_path),
-      host_name_ext=".example",
-      tgz_archive_dir=str(tgz),
-      checkpoint_path=str(tmp_path / "state.json"),
-  ) == ["2020-01-01"]
-
-
 def _make_janitor(tmp_path):
   from unittest.mock import MagicMock
 

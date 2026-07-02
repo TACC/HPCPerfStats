@@ -297,7 +297,7 @@ class AsyncDayCloseCoordinator:
       except Exception:
         inflight = set()
     with self._lock:
-      entry = self._manifest.setdefault("entries", {}).get(tar_norm)
+      entry = self._manifest.get("entries", {}).get(tar_norm)
       if _is_pipeline_pending_entry(entry):
         return True
       active = set(inflight)
@@ -306,6 +306,15 @@ class AsyncDayCloseCoordinator:
           active.add(os.path.normpath(pending_tar))
       if tar_norm in active:
         return True
+    enqueued = False
+    if self.enqueue_day_close_fn is not None:
+      try:
+        enqueued = bool(self.enqueue_day_close_fn(tar_norm, reason))
+      except Exception:
+        enqueued = False
+    if not enqueued:
+      return False
+    with self._lock:
       self._manifest.setdefault("entries", {})[tar_norm] = {
           "tar_path": tar_norm,
           "status": "queued",
@@ -313,18 +322,11 @@ class AsyncDayCloseCoordinator:
           "submitted_at": time.time(),
       }
       self._touch_manifest_locked("queued", tar_norm=tar_norm)
-    enqueued = False
-    if self.enqueue_day_close_fn is not None:
-      try:
-        enqueued = bool(self.enqueue_day_close_fn(tar_norm, reason))
-      except Exception:
-        enqueued = False
-    if enqueued:
-      self.log_fn(
-          "janitor: day_close submit tar=%s reason=%s" % (tar_norm, reason),
-          flush=True,
-      )
-    return enqueued
+    self.log_fn(
+        "janitor: day_close submit tar=%s reason=%s" % (tar_norm, reason),
+        flush=True,
+    )
+    return True
 
   def _touch_manifest_locked(self, stage: str, *, tar_norm: str = "") -> None:
     self._manifest["last_progress"] = stage

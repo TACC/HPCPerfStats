@@ -115,7 +115,6 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     build_remaining_raw_stats_by_daily_gz,
     build_unprocessed_raw_by_daily_tar,
     build_tar_append_member_map,
-    calendar_days_checkpoint_ingest_complete,
     consume_archive_members_populate_source,
     daily_tar_eligible_for_day_close_submit,
     merge_daily_archive_members_l1_cache,
@@ -2257,36 +2256,6 @@ def _completed_ingest_calendar_days(*, chunk_paths, pending_before, pending_afte
   return sorted(day for day in touched if day not in still_pending)
 
 
-def _calendar_days_ingest_complete_for_heavy_pass(
-    *,
-    chunk_paths,
-    pending_before,
-    pending_after,
-    archive_data_dir,
-    host_name_ext,
-    tgz_archive_dir,
-    checkpoint_path,
-    maintenance_snapshot=None,
-):
-  """Calendar days eligible for ``day_ingest_complete`` heavy maintenance."""
-  pending_drained = _completed_ingest_calendar_days(
-      chunk_paths=chunk_paths,
-      pending_before=pending_before,
-      pending_after=pending_after,
-  )
-  if not pending_drained:
-    return []
-  return calendar_days_checkpoint_ingest_complete(
-      pending_drained,
-      archive_data_dir=archive_data_dir,
-      host_name_ext=host_name_ext,
-      tgz_archive_dir=tgz_archive_dir,
-      checkpoint_path=checkpoint_path,
-      pending_stats_paths=pending_after,
-      maintenance_snapshot=maintenance_snapshot,
-  )
-
-
 def _invalidate_jid_caches(stats, proc_stats):
   try:
     from hpcperfstats.site.lib.machine.cache_utils import (
@@ -4193,7 +4162,7 @@ def run_sync_timedb_supervisor_loop(
         continue
       if tar_norm in immediate_day_close_attempted_tars:
         continue
-      if len(archive_janitor._day_close_inflight_tar_paths()) >= max_inflight:
+      if len(archive_janitor._day_close_active_tar_paths()) >= max_inflight:
         break
       if (
           async_day_close is not None
@@ -4203,12 +4172,12 @@ def run_sync_timedb_supervisor_loop(
           and day_raw_removal.has_closed_raw_on_disk(tar_norm)
       ):
         continue
-      immediate_day_close_attempted_tars.add(tar_norm)
       if archive_janitor._enqueue_eligible_day_close(
           tar_norm,
           reason="day_ingest_complete:%s" % context,
           disqualified=disqualified,
       ):
+        immediate_day_close_attempted_tars.add(tar_norm)
         submitted_any = True
     if submitted_any:
       archive_janitor.signal_work_available()
@@ -5282,13 +5251,10 @@ def run_sync_timedb_supervisor_loop(
       chunk_in_progress = False
 
   log_print(
-      "sync_timedb: day_close schedule startup + every %d ingest chunks + "
-      "on ingest queue drain + each ingest batch (calendar-day drain); "
+      "sync_timedb: day_close immediate enqueue after chunk_end, archive_finalize, "
+      "and idle_finalize; janitor tick discover is steady-state backstop; "
       "idle rescan sleep %s s"
-      % (
-          int(rescan_every_chunks),
-          int(EMPTY_QUEUE_RESCAN_SLEEP_SECONDS),
-      ),
+      % (int(EMPTY_QUEUE_RESCAN_SLEEP_SECONDS),),
       flush=True,
   )
   log_print(
@@ -5337,6 +5303,7 @@ def run_sync_timedb_supervisor_loop(
   immediate_day_close_attempted_tars = set()
   chunk_counter = 0
   oldest_day_chunk_gate_stall_last_log = 0.0
+  oldest_day_gate_empty_chunk_spins = 0
   handoff_priority_stall_last_log = 0.0
   archive_finalize_needs_post_reconcile = False
   orphan_inflight_reclaim_last_monotonic = {}
@@ -5550,9 +5517,7 @@ def run_sync_timedb_supervisor_loop(
     return False
 
   async_day_close.enqueue_day_close_fn = _async_enqueue_day_close
-  async_day_close.get_inflight_tar_paths_fn = (
-      archive_janitor._day_close_inflight_tar_paths
-  )
+  async_day_close.get_inflight_tar_paths_fn = archive_janitor._debt_heap_tar_paths
 
   def _on_async_day_phase(tar_norm, phase):
     nonlocal day_close_rescan_pending
@@ -5617,6 +5582,8 @@ def run_sync_timedb_supervisor_loop(
           tar_norm,
           reason="closed_raw_submit_guard",
       )
+      if requeued:
+        closed_raw_guard_no_progress_tars.discard(tar_norm)
       kick = getattr(day_raw_removal, "_last_closed_raw_kick_action", None)
       if not requeued and kick in KICK_NO_HANDOFF_PROGRESS:
         closed_raw_guard_no_progress_tars.add(tar_norm)
@@ -5849,6 +5816,7 @@ def run_sync_timedb_supervisor_loop(
     requeued_paths = _filter_handoff_requeue_paths(paths)
     if not requeued_paths:
       return
+    closed_raw_guard_no_progress_tars.discard(tar_norm)
     _batch_remove_processed_paths(
         requeued_paths,
         processed_files,
@@ -6029,15 +5997,6 @@ def run_sync_timedb_supervisor_loop(
         flush=True,
     )
 
-  def _signal_maintenance_pass_if_queue_drained(*, had_pending_before_chunk: bool):
-    if not had_pending_before_chunk or pending_stats_files:
-      return
-    log_print(
-        "sync_timedb: maintenance pass reason=ingest_queue_empty",
-        flush=True,
-    )
-    archive_janitor.signal_scheduled_maintenance_pass(reason="ingest_queue_empty")
-
   startup_preflight = None
   startup_day_close = None
   startup_tail_ingest = None
@@ -6090,7 +6049,7 @@ def run_sync_timedb_supervisor_loop(
           async_day_close=async_day_close,
           get_disqualification_inputs=_capture_disqualification_inputs,
           get_unmapped_closed_raw_tars=_get_unmapped_closed_raw_tars,
-          day_phases=lambda: dict(archive_janitor._day_phases),
+          day_phases=archive_janitor.get_day_phases_snapshot,
           get_startup_snapshot=_wait_startup_snapshot_for_preflight,
           get_accrual_remaining_raw_by_gz=_get_accrual_remaining_raw_by_gz,
           tail_ingest_coordinator=(
@@ -6711,9 +6670,14 @@ def run_sync_timedb_supervisor_loop(
                 oldest_tar=oldest_tar_for_chunk,
                 in_flight_paths=inflight_archive_paths,
             )
+            oldest_day_gate_empty_chunk_spins += 1
+            if oldest_day_gate_empty_chunk_spins >= 32:
+              sleep_until_shutdown(0.05)
+              oldest_day_gate_empty_chunk_spins = 0
           continue
 
         reconcile_refs["oldest_day_gate_stall_blocked_n"] = None
+        oldest_day_gate_empty_chunk_spins = 0
         chunk_in_progress = True
         successful_paths, files_to_be_archived, active_workers, k = (
             _ingest_explicit_path_batch(

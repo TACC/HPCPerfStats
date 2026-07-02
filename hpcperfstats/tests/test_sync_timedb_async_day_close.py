@@ -237,3 +237,51 @@ def test_submit_day_close_respects_submit_eligible_fn(tmp_path):
   )
   assert coord.submit_day_close(tar_path, reason="test") is False
   assert any("submit skip" in line for line in logs)
+
+
+@pytest.mark.django_db(databases=[])
+def test_submit_day_close_no_orphan_queued_on_enqueue_failure(tmp_path):
+  archive_dir = str(tmp_path / "archive")
+  os.makedirs(archive_dir)
+  tar_path = os.path.normpath(str(tmp_path / "daily" / "2020-01-05.tar"))
+  os.makedirs(os.path.dirname(tar_path), exist_ok=True)
+
+  coord = async_dc_mod.AsyncDayCloseCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=str(tmp_path / "daily"),
+      local_tz=None,
+      log_fn=lambda *_a, **_k: None,
+      get_disqualified_daily_tars=lambda: set(),
+      enqueue_day_close_fn=lambda *_a, **_k: False,
+  )
+  assert coord.submit_day_close(tar_path, reason="test") is False
+  with coord._lock:
+    entry = coord._manifest.get("entries", {}).get(tar_path)
+  assert entry is None or str(entry.get("status") or "") != "queued"
+
+
+@pytest.mark.django_db(databases=[])
+def test_unified_inflight_cap_counts_manifest_and_debt(tmp_path):
+  archive_dir = str(tmp_path / "archive")
+  os.makedirs(archive_dir)
+  tar_debt = os.path.normpath(str(tmp_path / "daily" / "2020-01-01.tar"))
+  tar_manifest = os.path.normpath(str(tmp_path / "daily" / "2020-01-02.tar"))
+  os.makedirs(os.path.dirname(tar_debt), exist_ok=True)
+
+  inflight = {tar_debt}
+
+  coord = async_dc_mod.AsyncDayCloseCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=str(tmp_path / "daily"),
+      local_tz=None,
+      log_fn=lambda *_a, **_k: None,
+      get_disqualified_daily_tars=lambda: set(),
+      get_inflight_tar_paths_fn=lambda: inflight,
+  )
+  coord._set_entry_status(tar_manifest, "queued")
+  active = coord.active_or_submitted_tar_paths()
+  assert tar_debt in active
+  assert tar_manifest in active
+  assert len(active) == 2

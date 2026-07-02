@@ -831,9 +831,12 @@ class ArchiveJanitor:
             flush=True,
         )
       return False
-    if tar_norm in self._debt_heap_tar_paths():
-      return False
-    self._enqueue_day_close(tar_norm, persist=True)
+    with self._debt_lock:
+      if self._day_pipeline_queued_locked(tar_norm):
+        return False
+      self._enqueue_day_close_locked(tar_norm, persist=False)
+      self._trim_heap_to_max_entries_locked()
+    self._persist_hints()
     if self.log_fn:
       self.log_fn(
           "janitor: day_close enqueue tar=%s reason=%s"
@@ -842,8 +845,27 @@ class ArchiveJanitor:
       )
     return True
 
-  def _day_close_inflight_tar_paths(self) -> Set[str]:
+  def get_day_phases_snapshot(self) -> Dict[str, Any]:
+    with self._hints_state_lock:
+      return dict(self._day_phases)
+
+  def _day_close_active_tar_paths(self) -> Set[str]:
+    coord = self.async_day_close_coordinator
+    if coord is not None:
+      return coord.active_or_submitted_tar_paths()
     return self._debt_heap_tar_paths()
+
+  def _day_close_inflight_tar_paths(self) -> Set[str]:
+    return self._day_close_active_tar_paths()
+
+  def _finalize_async_day_close_manifest(self, tar_norm: str) -> None:
+    coord = self.async_day_close_coordinator
+    if coord is None:
+      return
+    try:
+      coord.finalize_complete_if_filesystem(tar_norm)
+    except Exception:
+      pass
 
   def _discover_and_enqueue_ready_day_close(
       self,
@@ -882,7 +904,7 @@ class ArchiveJanitor:
         disqualification_reasons=disq_reasons,
         day_phases=day_phases,
         local_tz=self.local_tz,
-        async_in_progress_tars=self._day_close_inflight_tar_paths(),
+        async_in_progress_tars=self._day_close_active_tar_paths(),
         debt_heap_tars=self._debt_heap_tar_paths(),
         newly_queued_tars=set(),
         day_raw_removal=self.day_raw_removal_coordinator,
@@ -891,7 +913,7 @@ class ArchiveJanitor:
       max_inflight = cfg.get_sync_startup_day_close_max_inflight()
     else:
       max_inflight = cfg.get_sync_day_close_max_inflight()
-    active = set(self._day_close_inflight_tar_paths())
+    active = set(self._day_close_active_tar_paths())
     disqualified = set(self.get_disqualified_daily_tars())
     newly_queued: Set[str] = set()
     skipped_inflight = 0
@@ -1321,7 +1343,7 @@ class ArchiveJanitor:
         disqualification_reasons=disq_reasons,
         day_phases=day_phases,
         local_tz=self.local_tz,
-        async_in_progress_tars=self._day_close_inflight_tar_paths(),
+        async_in_progress_tars=self._day_close_active_tar_paths(),
         debt_heap_tars=self._debt_heap_tar_paths(),
         newly_queued_tars=newly_queued_tars or set(),
         queued_reason=day_close_queued_reason_for_report_reason(reason),
@@ -1477,6 +1499,7 @@ class ArchiveJanitor:
             self._enqueue_day_close(tar_norm, persist=False)
             self._persist_hints()
             return False
+        self._finalize_async_day_close_manifest(tar_norm)
         return True
       self._enqueue_day_close(tar_norm, persist=False)
       self._persist_hints()
@@ -1498,6 +1521,7 @@ class ArchiveJanitor:
       ):
         self._enqueue_day_close(tar_norm, persist=False)
         return False
+    self._finalize_async_day_close_manifest(tar_norm)
     return True
 
   def _seal_one_day(self, tar_path: str, *, ignore_remaining_raw: bool = False) -> bool:

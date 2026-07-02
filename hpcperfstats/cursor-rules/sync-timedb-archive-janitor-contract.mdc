@@ -83,7 +83,9 @@ Canonical per-calendar-day pipeline debt is **`DebtKind.DAY_CLOSE`**: one heap i
 - **Closed raw handoff:** **`requeue_closed_raw_paths_for_ingest`** before kick; rescan uses **`rescan_exclude_paths()`** — see **`sync-timedb-startup-day-close-contract.mdc`**.
 - **Ghost delete / stale done:** **`reopen_done_days_with_verified_on_disk()`** and **`reopen_stale_done_all_skipped()`** on janitor tick before delete; manifest-fast **`phase=done`** with retryable skips on disk still handoffs via ingest.
 - **In-progress verify:** janitor re-enqueues `DAY_CLOSE` while async verify incomplete.
-- **Batch delete driver (preflight on):** **`ArchiveJanitor._close_one_day`** after `verification_complete` calls `begin_deleting` + `apply_batch_delete` when not delete-disqualified — **not** MainThread chunk loop. `on_pipeline_complete` / `finalize_complete_if_filesystem` drive rescan and async manifest completion.
+- **Batch delete driver (preflight on):** **`ArchiveJanitor._close_one_day`** after `verification_complete` calls `begin_deleting` + `apply_batch_delete` when not delete-disqualified — **not** MainThread chunk loop. On successful tar-drop / FS complete, **`_finalize_async_day_close_manifest`** calls **`finalize_complete_if_filesystem`** so manifest reaches **`complete`** (not only startup delete pass).
+- **Unified inflight cap:** **`_day_close_active_tar_paths()`** = debt heap **`DAY_CLOSE`** ∪ manifest pending (`active_or_submitted_tar_paths`); used for discover, immediate enqueue, and startup drain caps. **`get_inflight_tar_paths_fn`** on the manifest shim reads debt heap only (no recursion).
+- **Manifest enqueue ordering:** **`submit_day_close`** persists manifest **`queued`** only **after** successful **`enqueue_day_close_fn`** (no orphan pending on enqueue failure).
 
 **Legacy hints/debt:** persisted `SEAL_PRIOR_DAY` / `RAW_REMOVE` / `TAR_DROP` for the same `tar_path` coalesce to one `DAY_CLOSE` on load and when popped for a tick.
 
@@ -95,7 +97,7 @@ This must **not** wait for an empty global ingest queue.
 - **Calendar today:** do not **start** sealing until **`archive_today_uncompressed_tar_grace_hours`** (default **8**) after local midnight (`daily_tar_seal_calendar_eligible`). After seal, keep uncompressed `.tar` during the same grace window (`effective_keep_uncompressed_tar`) unless global keep is `yes`.
 - **`archive_keep_uncompressed_tar=yes`:** always retain `.tar` until explicit `TAR_DROP` / day-close tail.
 - **Ghost `remaining_raw_by_gz` gate:** **`daily_gz_has_remaining_raw_stats`** / **`remaining_raw_by_gz_has_paths_on_disk`** — disk-truth for seal, scheduling, tar-drop, and **`day_phases`** hints. Hint `tar_dropped` / manifest `phase=done` must not skip disk predicate (RC-L).
-- **Immediate day-close inflight:** respects **`sync_day_close_max_inflight`** same as scheduled submit.
+- **Immediate day-close inflight:** respects **`sync_day_close_max_inflight`** via **`_day_close_active_tar_paths()`** (debt ∪ manifest pending).
 
 ## Janitor tick (`ArchiveJanitor._run_tick_body`)
 
