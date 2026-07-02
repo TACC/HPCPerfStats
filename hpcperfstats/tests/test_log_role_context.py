@@ -30,18 +30,21 @@ def sync_timedb_main(monkeypatch):
   set_log_role(None)
 
 
-def test_format_log_prefix_without_role(sync_timedb_main):
+@pytest.mark.usefixtures("sync_timedb_main")
+def test_format_log_prefix_without_role():
   assert format_log_prefix() == "[sync_timedb]"
 
 
-def test_format_log_prefix_with_role(sync_timedb_main):
+@pytest.mark.usefixtures("sync_timedb_main")
+def test_format_log_prefix_with_role():
   set_log_role("main")
   assert format_log_prefix() == "[sync_timedb:main]"
   set_log_role("thread:archive-janitor")
   assert format_log_prefix() == "[sync_timedb:thread:archive-janitor]"
 
 
-def test_log_print_includes_role_prefix(sync_timedb_main, monkeypatch):
+@pytest.mark.usefixtures("sync_timedb_main")
+def test_log_print_includes_role_prefix(monkeypatch):
   calls = []
 
   def fake_print(*args, **kwargs):
@@ -54,7 +57,8 @@ def test_log_print_includes_role_prefix(sync_timedb_main, monkeypatch):
   assert calls[0][0][1:] == ("seal done",)
 
 
-def test_set_daemon_process_title_main_sets_log_role(sync_timedb_main, monkeypatch):
+@pytest.mark.usefixtures("sync_timedb_main")
+def test_set_daemon_process_title_main_sets_log_role(monkeypatch):
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.process_title.running_under_gunicorn",
       lambda: False,
@@ -67,7 +71,8 @@ def test_set_daemon_process_title_main_sets_log_role(sync_timedb_main, monkeypat
   assert get_log_role() == "main"
 
 
-def test_apply_pool_worker_process_title_sets_log_role(sync_timedb_main, monkeypatch):
+@pytest.mark.usefixtures("sync_timedb_main")
+def test_apply_pool_worker_process_title_sets_log_role(monkeypatch):
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.process_title.running_under_gunicorn",
       lambda: False,
@@ -78,13 +83,14 @@ def test_apply_pool_worker_process_title_sets_log_role(sync_timedb_main, monkeyp
   )
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.process_title.enable_parent_death_signal",
-      lambda *a, **k: False,
+      lambda *_args, **_kwargs: False,
   )
   apply_pool_worker_process_title("sync_timedb.py", "archive-pool")
   assert get_log_role() == "worker:archive-pool"
 
 
-def test_set_daemon_thread_title_sets_log_role(sync_timedb_main, monkeypatch):
+@pytest.mark.usefixtures("sync_timedb_main")
+def test_set_daemon_thread_title_sets_log_role(monkeypatch):
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.process_title.setthreadtitle",
       lambda title: None,
@@ -94,7 +100,8 @@ def test_set_daemon_thread_title_sets_log_role(sync_timedb_main, monkeypatch):
   assert get_log_role() == "thread:archive-janitor"
 
 
-def test_gunicorn_skips_log_role_on_process_title(sync_timedb_main, monkeypatch):
+@pytest.mark.usefixtures("sync_timedb_main")
+def test_gunicorn_skips_log_role_on_process_title(monkeypatch):
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.process_title.running_under_gunicorn",
       lambda: True,
