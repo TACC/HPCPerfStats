@@ -18,21 +18,10 @@ RAW_REMOVAL_PHASES: FrozenSet[str] = frozenset(
     },
 )
 
-# Startup day-close preflight.
-PHASE_DISCOVERING = "discovering"
-
-STARTUP_DAY_CLOSE_PHASES: FrozenSet[str] = frozenset(
-    {
-        PHASE_DISCOVERING,
-        PHASE_DONE,
-    },
-)
-
 # Required top-level keys per persistence kind (after envelope unwrap where applicable).
 MANIFEST_REQUIRED_TOP_LEVEL: Dict[str, Tuple[str, ...]] = {
     "startup_raw_removal": ("phase",),
     "day_raw_removal": ("phase", "tar_path"),
-    "startup_day_close": ("phase",),
     "async_day_close": ("entries",),
     "archive_maint_hints": ("version",),
 }
@@ -49,8 +38,6 @@ CHECKPOINT_ENTRY_REQUIRED_KEYS: Tuple[str, ...] = ("path", "size", "mtime")
 def manifest_phase_is_valid(kind: str, phase: str) -> bool:
   if kind in ("startup_raw_removal", "day_raw_removal"):
     return phase in RAW_REMOVAL_PHASES
-  if kind == "startup_day_close":
-    return phase in STARTUP_DAY_CLOSE_PHASES
   return True
 
 

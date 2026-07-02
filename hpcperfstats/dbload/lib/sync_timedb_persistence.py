@@ -8,7 +8,7 @@ from typing import Any, Callable, Dict, Optional
 
 # Bump when ANY persisted semantics change (day-close eligibility, checkpoint
 # shape, manifest phase meaning, delete-gate assumptions, hints debt, etc.).
-SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION = 2
+SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION = 3
 
 PERSISTENCE_CONTRACT_BASENAME = ".sync_timedb_persistence.json"
 
@@ -18,7 +18,6 @@ PERSISTENCE_ARTIFACT_REGISTRY: Dict[str, str] = {
     "archive_dead_letter": ".sync_timedb_dead_letter.json",
     "archive_maint_hints": ".sync_archive_maint_hints.json",
     "async_day_close": ".sync_timedb_async_day_close.json",
-    "startup_day_close": ".sync_timedb_startup_day_close.json",
     "startup_tar_seal": ".sync_timedb_startup_tar_seal.json",
     "startup_raw_removal": ".sync_timedb_startup_raw_removal.json",
     "day_raw_removal_dir": ".sync_timedb_day_raw_removal",
@@ -173,7 +172,6 @@ def _expected_schema_version(kind: str) -> Optional[int]:
     return MAINT_HINTS_SCHEMA_VERSION
   if kind in (
       "async_day_close",
-      "startup_day_close",
       "startup_tar_seal",
       "startup_raw_removal",
       "day_raw_removal",
@@ -227,7 +225,6 @@ def _validate_envelope(raw: Any, *, kind: str, log_fn: LogFn = None) -> bool:
     return True
   if kind in (
       "async_day_close",
-      "startup_day_close",
       "startup_tar_seal",
       "startup_raw_removal",
       "day_raw_removal",
@@ -286,7 +283,6 @@ def _unwrap_envelope(raw: Any, *, kind: str) -> Any:
     return None
   if kind in (
       "async_day_close",
-      "startup_day_close",
       "startup_tar_seal",
       "startup_raw_removal",
   ):
@@ -317,7 +313,6 @@ def load_persistence_document(
       default = None
     elif kind in (
         "async_day_close",
-        "startup_day_close",
         "startup_tar_seal",
         "startup_raw_removal",
         "day_raw_removal",
@@ -379,7 +374,6 @@ def save_persistence_document(
     return
   if kind in (
       "async_day_close",
-      "startup_day_close",
       "startup_tar_seal",
       "startup_raw_removal",
       "day_raw_removal",

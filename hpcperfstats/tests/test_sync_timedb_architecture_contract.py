@@ -9,8 +9,6 @@ import os
 import hpcperfstats.dbload.lib.conf_parser as cfg
 import hpcperfstats.dbload.lib.sync_timedb_archive_janitor as janitor_mod
 import hpcperfstats.dbload.sync_timedb as st
-import pytest
-from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
 from hpcperfstats.dbload.lib.sync_timedb_archive_janitor import DebtKind
 from hpcperfstats.tests.test_sync_timedb_janitor import (
     _day_phase_value,
@@ -42,6 +40,14 @@ def test_arch_supervisor_has_no_default_off_startup_coordinators():
   assert "StartupTailIngestCoordinator" not in source
   assert "sync_timedb_startup_raw_removal" not in source
   assert "sync_timedb_startup_tail_ingest" not in source
+
+
+def test_arch_no_startup_day_close_preflight_in_supervisor():
+  """Boot DAY_CLOSE discover is janitor-only; no StartupDayClosePreflight thread."""
+  source = inspect.getsource(st.run_sync_timedb_supervisor_loop)
+  assert "StartupDayClosePreflight" not in source
+  assert "sync_timedb_startup_day_close" not in source
+  assert "start_async_discover_and_close" not in source
 
 
 def test_arch_rescan_exclude_paths_covers_handoff_retryable(tmp_path):
@@ -82,19 +88,10 @@ def test_arch_rescan_exclude_paths_covers_handoff_retryable(tmp_path):
 
 def test_arch_supervisor_chunk_loop_does_not_call_apply_batch_delete(monkeypatch, tmp_path):
   """Janitor-only delete: supervisor chunk loop must not drive batch delete."""
-  shutdown_requested[0] = False
-  monkeypatch.setattr(
-      st,
-      "run_supervisor_day_raw_removal_delete_pass",
-      lambda *_a, **_k: pytest.fail("delete pass must not run in chunk loop"),
-  )
-
   source = inspect.getsource(st.run_sync_timedb_supervisor_loop)
   chunk_section = source.split("while pending_stats_files:", 1)[1]
   assert "run_supervisor_day_raw_removal_delete_pass" not in chunk_section
   assert "_maybe_handle_raw_removal_delete_phase" not in chunk_section
-
-  shutdown_requested[0] = False
 
 
 def test_arch_raw_delete_driver_only_on_archival_thread():

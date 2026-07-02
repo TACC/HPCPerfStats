@@ -23,7 +23,7 @@ globs: hpcperfstats/dbload/sync_timedb*.py
 
 **Ingest-path tar append stays on `archive_pool`** (including decompress-for-append). Janitor does not replace append workers.
 
-See also **`sync-timedb-startup-day-close-contract.mdc`** (handoff, rescan exclusion, startup drain).
+See also **`sync-timedb-canonical-startup-archive-scan.mdc`** (startup snapshot, handoff reconcile, rescan exclusion).
 
 ## Canonical modules
 
@@ -36,7 +36,7 @@ See also **`sync-timedb-startup-day-close-contract.mdc`** (handoff, rescan exclu
 | Per-day tar retention / seal calendar policy | `effective_keep_uncompressed_tar`, `daily_tar_seal_calendar_eligible` in `sync_timedb_archive_helpers.py` |
 | DB-complete tar backfill check | `raw_stats_path_needs_tar_append` in `sync_timedb_archive_helpers.py`; wired from `_parse_stats_file_payload` when `start_idx == -1` |
 | Startup raw removal preflight | `hpcperfstats/dbload/lib/sync_timedb_startup_raw_removal.py` → `StartupRawRemovalPreflight` |
-| Startup checkpoint day-close | `hpcperfstats/dbload/lib/sync_timedb_startup_day_close.py` → `StartupDayClosePreflight` (see **`sync-timedb-startup-day-close-contract.mdc`**) |
+| Startup archive scan coordinator | `hpcperfstats/dbload/lib/sync_timedb_startup_archive_scan.py` → `StartupArchiveScanCoordinator` (see **`sync-timedb-canonical-startup-archive-scan.mdc`**) |
 | Async DAY_CLOSE manifest shim | `hpcperfstats/dbload/lib/sync_timedb_async_day_close.py` → `AsyncDayCloseCoordinator` (manifest + enqueue only; work runs on janitor) |
 | Per-day post-seal raw removal | `hpcperfstats/dbload/lib/sync_timedb_day_raw_removal.py` → `DayRawRemovalCoordinator` |
 | Supervisor wiring | `hpcperfstats/dbload/sync_timedb.py` → `run_sync_timedb_supervisor_loop` |
@@ -58,7 +58,7 @@ When **`sync_startup_drain_day_close_before_ingest=yes`** (opt-in), startup dele
 
 - **Ingest order (oldest first):** `collect_stats_files_in_range` → `rescan_pending_stats_files` → `pending_stats_files` must be **oldest-first** (effective timestamp ascending: filename epoch when numeric, else mtime; `None` sort keys last). The supervisor ingests from the queue head (`pending_stats_files[:chunk_size]`). `cap_pending_stats_file_list` must retain the **oldest** `max_size` entries when truncating (drop newer paths). Do not reverse to newest-first without an explicit product decision and regression tests.
 - **No blocking maintenance** on the supervisor thread: do not reintroduce `_archive_maintenance_pipeline`, forced two-phase maintenance, supervisor-driven seal/raw/`.tar` bursts, or steady-state **`run_supervisor_day_raw_removal_delete_pass`** between chunks.
-- **Startup (`startdate == 'all'` only):** `archive_janitor.enqueue_startup_debt()` signals janitor work only (no unparsable tree scan); `signal_scheduled_maintenance_pass(reason="startup")`; **`StartupRawRemovalPreflight.start_async_verify()`** and **`StartupDayClosePreflight.start_async_discover_and_close()`** start in parallel (optional via INI). When **`sync_startup_drain_day_close_before_ingest=yes`** (opt-in; **default `no`**), first ingest waits on startup day-close + deletion drain (see **`sync-timedb-startup-day-close-contract.mdc`**). Quiescent dirty `.tar` days are submitted via startup discover with `reason=startup_quiescent_tar`. Unparseable closed raw is quarantined at ingest parse failure (`quarantine_ingest_failed_raw_path`). Date-range runs without **`all`** skip this startup block.
+- **Startup (`startdate == 'all'` only):** `archive_janitor.enqueue_startup_debt()` signals janitor work only (no unparsable tree scan); `signal_scheduled_maintenance_pass(reason="startup")` queues the janitor heavy maintenance pass, which runs **`_discover_and_enqueue_ready_day_close(reason="startup")`** on the **janitor thread** (cap **`sync_startup_day_close_max_inflight`**). Ingest is **never** gated on day-close completion. Handoff recover runs on the supervisor main thread before **`startup maintenance idle; ingest may begin`**. Quiescent dirty `.tar` days enqueue via janitor discover (`awaiting_janitor_discover`). Unparseable closed raw is quarantined at ingest parse failure (`quarantine_ingest_failed_raw_path`). Date-range runs without **`all`** skip this startup block.
 - **Chunk end (ingest-only):** after each chunk — `_finalize_archive_slots_if_needed(context="end_of_batch")`, **`archive_janitor.signal_work_available()`**, **`_maybe_enqueue_immediate_day_close(context="chunk_end")`** (async submit only). **`_should_defer_immediate_day_close`** must defer at **`chunk_end`** (and all immediate contexts) when **`handoff_priority_paths`** is non-empty, handoff recovery is active, or **`closed_raw_guard`** applies — MainThread must not run synchronous **`requeue_closed_raw_paths_for_ingest`** while handoff is draining (RC-F two-queue law). On defer: log `immediate day_close defer context=…`, run **`_reconcile_pending_with_oldest_checkpoint_blocked`**, and only flush deferred **`archive_finalize`** day_close when handoff queue is empty. Optional periodic **rescan** at `chunk_counter % rescan_every_chunks == 0` uses **`_rescan_processed_exclusions()`** — **does not** call `signal_scheduled_maintenance_pass` at chunk boundary.
 - **Idle / empty queue:** `signal_work_available()` when pending drains; `_maybe_enqueue_immediate_day_close(context="idle_finalize")` on rescan-with-no-work paths.
 - **`archive_maintenance_interval_seconds`:** deprecated and ignored; do not reintroduce interval accrual on the supervisor.
@@ -80,7 +80,7 @@ Canonical per-calendar-day pipeline debt is **`DebtKind.DAY_CLOSE`**: one heap i
 - **Oldest-day pending reconcile:** before each ingest chunk, supervisor prepends on-disk checkpoint-blocked paths for the **single oldest** calendar day. Snapshot precedence: startup coordinator → janitor accrual → live fallback.
 - **Janitor-thread verify/delete:** after seal in **`_close_one_day`**, **`run_verify_sync`** then **`begin_deleting` + `apply_batch_delete`** when verify complete and not delete-disqualified. No **`raw_delete_pending`** manifest handoff; steady-state ingest is **not** gated on raw deletion (cross-day). Regression: **`test_arch_steady_state_ingest_not_gated_on_raw_deletion`**, **`test_arch_no_raw_delete_pending_in_steady_state_tree`**, **`test_arch_janitor_close_one_day_owns_delete_not_supervisor`**.
 - **Filesystem-truth manifest `complete`:** `is_complete` / manifest **`status=complete`** require **`_day_close_filesystem_complete`**. Stale complete downgraded on init/recover.
-- **Closed raw handoff:** **`requeue_closed_raw_paths_for_ingest`** before kick; rescan uses **`rescan_exclude_paths()`** — see **`sync-timedb-startup-day-close-contract.mdc`**.
+- **Closed raw handoff:** **`requeue_closed_raw_paths_for_ingest`** before kick; rescan uses **`rescan_exclude_paths()`** — see supervisor handoff helpers in **`sync_timedb.py`** and **`sync-timedb-canonical-startup-archive-scan.mdc`**.
 - **Ghost delete / stale done:** **`reopen_done_days_with_verified_on_disk()`** and **`reopen_stale_done_all_skipped()`** on janitor tick before delete; manifest-fast **`phase=done`** with retryable skips on disk still handoffs via ingest.
 - **In-progress verify:** janitor re-enqueues `DAY_CLOSE` while async verify incomplete.
 - **Batch delete driver (preflight on):** **`ArchiveJanitor._close_one_day`** after `verification_complete` calls `begin_deleting` + `apply_batch_delete` when not delete-disqualified — **not** MainThread chunk loop. On successful tar-drop / FS complete, **`_finalize_async_day_close_manifest`** calls **`finalize_complete_if_filesystem`** so manifest reaches **`complete`** (not only startup delete pass).
@@ -185,4 +185,4 @@ Canonical reference: **`docs/SYNC_TIMEDB_PARALLELISM.md`**.
 ## Overlap
 
 - **Supersedes** supervisor chunk-boundary hygiene in **`sync-timedb-post-chunk-archive-hygiene.mdc`** (historical `_schedule_post_chunk_hygiene` removed).
-- Complements **`sync-timedb-startup-day-close-contract.mdc`**, **`sync-timedb-lock-and-archive-contract.mdc`**, **`sync-timedb-db-before-archive-contract.mdc`**, **`runtime-resource-and-metrics-safety.mdc`**, **`process-title-and-pool-labels.mdc`**.
+- Complements **`sync-timedb-lock-and-archive-contract.mdc`**, **`sync-timedb-db-before-archive-contract.mdc`**, **`runtime-resource-and-metrics-safety.mdc`**, **`process-title-and-pool-labels.mdc`**.

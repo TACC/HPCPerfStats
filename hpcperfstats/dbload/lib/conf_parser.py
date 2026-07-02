@@ -173,17 +173,11 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "archive_janitor_debt_max_entries"),
     ("PIPELINE", "archive_janitor_raw_paths_per_tick"),
     ("PIPELINE", "sync_day_close_candidate_report"),
-    ("PIPELINE", "sync_startup_day_close_preflight"),
-    ("PIPELINE", "sync_startup_day_close_budget_seconds"),
-    ("PIPELINE", "sync_startup_day_close_days_per_slice"),
     ("PIPELINE", "sync_startup_day_close_max_inflight"),
     ("PIPELINE", "sync_startup_snapshot_wait_seconds"),
-    ("PIPELINE", "sync_startup_day_close_scan_budget_seconds"),
     ("PIPELINE", "sync_day_close_max_inflight"),
     ("PIPELINE", "sync_day_close_raw_removal_wait_seconds"),
     ("PIPELINE", "sync_day_close_async_stale_seconds"),
-    ("PIPELINE", "sync_startup_day_close_backoff_seconds"),
-    ("PIPELINE", "sync_startup_discover_slice_stall_seconds"),
     ("PIPELINE", "sync_day_close_raw_removal_preflight"),
     ("PIPELINE", "sync_day_close_raw_removal_verify_budget_seconds"),
     ("PIPELINE", "sync_day_close_raw_removal_max_deletes_per_pass"),
@@ -2665,26 +2659,6 @@ def get_sync_day_close_candidate_report():
   )
 
 
-def get_sync_startup_day_close_preflight():
-  """Enable startup checkpoint-driven async DAY_CLOSE (default on)."""
-  _ensure_cfg_loaded()
-  return _parse_bool(
-      _pipeline_get("sync_startup_day_close_preflight", fallback="yes"),
-  )
-
-
-def get_sync_startup_day_close_budget_seconds():
-  """Wall-clock budget per startup day-close discover slice (default 300s)."""
-  _ensure_cfg_loaded()
-  return max(
-      1.0,
-      float(_pipeline_get(
-          "sync_startup_day_close_budget_seconds",
-          fallback="300",
-      )),
-  )
-
-
 def get_sync_startup_day_close_max_inflight():
   """Max concurrent async DAY_CLOSE during startup drain (default archive_seal_parallel_workers)."""
   _ensure_cfg_loaded()
@@ -2697,17 +2671,6 @@ def get_sync_startup_day_close_max_inflight():
     return get_archive_seal_parallel_workers()
 
 
-def get_sync_startup_day_close_days_per_slice():
-  """Max calendar days submitted per startup day-close slice (default startup max inflight)."""
-  _ensure_cfg_loaded()
-  if _pipeline_has_option("sync_startup_day_close_days_per_slice"):
-    return max(
-        1,
-        _pipeline_getint("sync_startup_day_close_days_per_slice", fallback=1),
-    )
-  return get_sync_startup_day_close_max_inflight()
-
-
 def get_sync_startup_snapshot_wait_seconds():
   """Max wait for canonical startup archive snapshot before single-flight build."""
   _ensure_cfg_loaded()
@@ -2716,18 +2679,6 @@ def get_sync_startup_snapshot_wait_seconds():
       float(_pipeline_get(
           "sync_startup_snapshot_wait_seconds",
           fallback="300",
-      )),
-  )
-
-
-def get_sync_startup_day_close_scan_budget_seconds():
-  """Optional warn threshold for startup day-close scan phase (0 = disabled)."""
-  _ensure_cfg_loaded()
-  return max(
-      0.0,
-      float(_pipeline_get(
-          "sync_startup_day_close_scan_budget_seconds",
-          fallback="0",
       )),
   )
 
@@ -2780,29 +2731,6 @@ def get_sync_day_close_max_inflight():
     return max(1, int(raw))
   except (TypeError, ValueError):
     return 2
-
-
-def get_sync_startup_day_close_backoff_seconds():
-  """Sleep between startup discover slices when async pool saturated (default 30)."""
-  _ensure_cfg_loaded()
-  raw = _pipeline_get("sync_startup_day_close_backoff_seconds", fallback="30")
-  try:
-    return max(1.0, float(raw))
-  except (TypeError, ValueError):
-    return 30.0
-
-
-def get_sync_startup_discover_slice_stall_seconds():
-  """Max wall time at discover_slice_begin before forcing phase=done (default 900; 0=off)."""
-  _ensure_cfg_loaded()
-  raw = _pipeline_get("sync_startup_discover_slice_stall_seconds", fallback="900")
-  try:
-    stall_s = float(raw)
-  except (TypeError, ValueError):
-    stall_s = 900.0
-  if stall_s <= 0:
-    return 0.0
-  return max(120.0, stall_s)
 
 
 def get_sync_day_close_async_stale_seconds():

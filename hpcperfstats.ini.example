@@ -492,23 +492,11 @@ sync_ingest_malloc_trim_after_file = yes
 # Max raw stats file deletes per janitor RAW_REMOVE debt item per tick (default 1000).
 # archive_janitor_raw_paths_per_tick = 1000
 
-# Startup checkpoint-driven async DAY_CLOSE for ingest-complete calendar days (default yes).
-# sync_startup_day_close_preflight = yes
-
-# Wall-clock budget per startup day-close discover slice (default 300 seconds).
-# sync_startup_day_close_budget_seconds = 300
-
-# Max calendar days submitted per startup day-close slice (default = startup max inflight).
-# sync_startup_day_close_days_per_slice = 4
-
-# Max concurrent async DAY_CLOSE during startup drain (default = archive_seal_parallel_workers).
+# Max concurrent async DAY_CLOSE during startup janitor discover (default = archive_seal_parallel_workers).
 # sync_startup_day_close_max_inflight = 4
 
 # Max wait for canonical startup archive snapshot before single-flight build (default 300s; min 120).
 # sync_startup_snapshot_wait_seconds = 300
-
-# Optional warn threshold when startup day-close scan phase is slow (0 = disabled).
-# sync_startup_day_close_scan_budget_seconds = 0
 
 # Max concurrent DAY_CLOSE calendar days on janitor debt (default 2).
 # sync_day_close_max_inflight = 2
@@ -518,12 +506,6 @@ sync_ingest_malloc_trim_after_file = yes
 
 # Recover stale async DAY_CLOSE manifest entries on coordinator init (default 7200s; 0 = off).
 # sync_day_close_async_stale_seconds = 7200
-
-# Sleep between startup day-close discover slices when async pool saturated (default 30s).
-# sync_startup_day_close_backoff_seconds = 30
-
-# Force startup discover done when stuck at discover_slice_begin (default 900s; min 120; 0=off).
-# sync_startup_discover_slice_stall_seconds = 900
 
 # Log day-close candidate report (queued/disqualified only; default yes).
 # sync_day_close_candidate_report = yes

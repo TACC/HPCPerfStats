@@ -114,8 +114,7 @@ After deploy of log-role prefixes (2026-06), pipeline lines identify **which act
 | `[sync_timedb:worker:ingest-parse-pool]` | Spawned parse worker | Split pipeline parse stage |
 | `[sync_timedb:worker:db-writer-pool]` | Spawned DB writer | Split pipeline DB write stage |
 | `[sync_timedb:worker:archive-pool]` | Spawned archive append worker | **Hot-path tar append** (`map_async` dispatch) — **not** the janitor |
-| `[sync_timedb:thread:archive-janitor]` | Daemon thread in supervisor PID | Cold path: seal → verify → delete → tar-drop |
-| `[sync_timedb:thread:startup-day-close-preflight]` | Daemon thread | Boot discover + submit day-close |
+| `[sync_timedb:thread:archive-janitor]` | Daemon thread in supervisor PID | Cold path: seal → verify → delete → tar-drop; boot **`DAY_CLOSE`** discover |
 | `[sync_timedb:thread:startup-raw-removal-preflight]` | Daemon thread | Boot raw removal verify/delete |
 | `[sync_timedb:thread:startup-tail-ingest]` | Daemon thread | Optional tail ingest before steady state |
 | `[sync_timedb:thread:archive-discovery]` | Short-lived helper thread | Archive metadata scan during heavy maintenance |
@@ -131,7 +130,7 @@ When the prefix has no `:role` segment, use message substrings:
 |-----------|----------------|
 | `chunk ingest summary`, `oldest_day_chunk_gate`, `handoff`, `startup_elapsed_s` | Main supervisor |
 | `janitor:`, `Archive janitor tick` | Janitor thread |
-| `startup day close discover` | Startup day-close preflight |
+| `janitor: discover_ready_day_close` | Janitor boot/steady-state DAY_CLOSE discover |
 | `startup raw removal` | Startup raw removal preflight |
 | `Pool imap stalled`, `worker_stages` | Ingest or parse pool worker |
 | `Archive mapping`, `archive_job_done` (from worker context) | Often main coordinating append; append work runs on `archive-pool` workers |

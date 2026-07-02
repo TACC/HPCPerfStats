@@ -68,7 +68,6 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
             "hpcperfstats/dbload/lib/sync_timedb_startup_*.py",
         ],
         "rules": [
-            "sync-timedb-startup-day-close-contract.mdc",
             "sync-timedb-canonical-startup-archive-scan.mdc",
         ],
     },

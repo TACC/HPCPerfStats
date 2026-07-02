@@ -5,7 +5,7 @@
 
 **Cold path (``ArchiveJanitor`` thread):** day-debt queue consumed in time-sliced micro-batches (``archive_janitor_budget_seconds`` / ``archive_janitor_days_per_tick``). Each tick discovers checkpoint-complete ``DAY_CLOSE`` candidates and enqueues debt (``sync_day_close_max_inflight`` cap). ``DAY_CLOSE`` runs seal → verify → delete → tar_drop on the janitor thread (no async worker pool; steady-state ingest is not gated on raw deletion). Snapshot/hints refresh at supervisor startup (CLI ``all`` only) and on scheduled maintenance passes. Per-day lock cleanup (once per tick), dedupe-before-seal, and DB head-ingest gate unchanged. Progress persists in ``.sync_archive_maint_hints.json`` v2 (``debt_queue``, ``day_phases``).
 
-**Startup prefights (``all`` only):** when ``startdate == 'all'``, janitor startup maintenance discovers/enqueues ``DAY_CLOSE``; ``StartupDayClosePreflight`` runs when enabled (default on). Date-range runs skip startup maintenance and begin ingest immediately.
+**Startup maintenance (``all`` only):** when ``startdate == 'all'``, the janitor thread discovers/enqueues ``DAY_CLOSE`` on its heavy maintenance pass; ingest is never gated on day-close completion. Date-range runs skip startup maintenance and begin ingest immediately.
 
 Append and raw delete stay DB-gated when ``sync_archive_require_db_head_ingest=yes``. Finalize uses soft defer (``allow_defer``) under ingest backlog instead of blocking the supervisor.
 
@@ -169,9 +169,6 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_dispatch import ArchiveDispatch
 from hpcperfstats.dbload.lib.sync_timedb_archive_janitor import ArchiveJanitor
 from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
     DayRawRemovalCoordinator,
-)
-from hpcperfstats.dbload.lib.sync_timedb_startup_day_close import (
-    StartupDayClosePreflight,
 )
 from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
     StartupArchiveScanCoordinator,
@@ -3715,7 +3712,6 @@ def run_sync_timedb_supervisor_loop(
               pending_archive_tasks),
       }
 
-  startup_day_close = None
   day_raw_removal = None
   async_day_close = None
   day_close_rescan_pending = False
@@ -4298,7 +4294,7 @@ def run_sync_timedb_supervisor_loop(
       host_scan_hints.pop(host_dir, None)
 
   reconcile_refs = {
-      "ingest_gate_cleared": True,
+      "ingest_gate_cleared": False,
       "get_startup_snapshot": lambda: None,
       "get_accrual_snapshot": lambda: None,
       "warned_live_reconcile_fallback": False,
@@ -4999,13 +4995,6 @@ def run_sync_timedb_supervisor_loop(
       log_fn=log_print,
   )
 
-  def _wait_startup_snapshot_for_preflight():
-    """Preflights wait on janitor publish only; never trigger fallback collect."""
-    snap = startup_archive_scan.get_snapshot()
-    if snap is not None:
-      return snap
-    return startup_archive_scan.wait_for_snapshot(allow_build=False)
-
   def _get_startup_snapshot_for_rescan():
     """Supervisor rescan may single-flight fallback-build after wait timeout."""
     snap = startup_archive_scan.get_snapshot()
@@ -5578,8 +5567,6 @@ def run_sync_timedb_supervisor_loop(
         flush=True,
     )
 
-  startup_day_close = None
-
   try:
     _ensure_daily_archive_dir_exists()
     if run_startup_maintenance:
@@ -5588,22 +5575,6 @@ def run_sync_timedb_supervisor_loop(
       startup_archive_scan.note_startup_maintenance_pending()
       archive_janitor.signal_scheduled_maintenance_pass(reason="startup")
       archive_janitor.enqueue_startup_debt()
-      startup_day_close = StartupDayClosePreflight(
-          archive_data_dir=directory,
-          host_name_ext=host_name_ext,
-          tgz_archive_dir=tgz_archive_dir,
-          local_tz=local_timezone,
-          log_fn=log_print,
-          async_day_close=async_day_close,
-          get_disqualification_inputs=_capture_disqualification_inputs,
-          get_unmapped_closed_raw_tars=_get_unmapped_closed_raw_tars,
-          day_phases=archive_janitor.get_day_phases_snapshot,
-          get_startup_snapshot=_wait_startup_snapshot_for_preflight,
-          get_accrual_remaining_raw_by_gz=_get_accrual_remaining_raw_by_gz,
-          tail_ingest_coordinator=None,
-          process_title=SYNC_TIMEDB_PROCESS_TITLE,
-      )
-      startup_day_close.start_async_discover_and_close()
       _recover_startup_day_close_handoffs()
       while startup_handoff_recover_pending:
         _process_one_startup_handoff_recover()
@@ -6137,8 +6108,6 @@ def run_sync_timedb_supervisor_loop(
     chunk_in_progress = False
     active_chunk_ingest_tracker = None
     preflight_shutdown_wait = not pool_worker_exit
-    if startup_day_close is not None:
-      startup_day_close.shutdown(wait=preflight_shutdown_wait)
     if async_day_close is not None:
       async_day_close.shutdown(wait=preflight_shutdown_wait)
     if day_raw_removal is not None:

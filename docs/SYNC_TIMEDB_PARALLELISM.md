@@ -34,7 +34,6 @@ Single-flight (`max_workers=1`) roles share `SessionSingleFlightExecutor` (`sync
 | Role | Module | `thread_name_prefix` | Created |
 |------|--------|---------------------|---------|
 | Archive janitor tick | `sync_timedb_archive_janitor.py` | `archive-janitor` | Eager at `ArchiveJanitor.__init__` |
-| Startup day-close discover | `sync_timedb_startup_day_close.py` | `startup-day-close` | Eager when preflight enabled |
 | Day raw removal verify | `sync_timedb_day_raw_removal.py` | `day-raw-removal` | Eager when preflight enabled |
 
 **Two-queue law:** MainThread + ingest/archive pools own hot path; janitor thread owns seal/validate/delete/tar-drop. Janitor stays on **threads** (not spawn) — one queue, single-flight ticks.

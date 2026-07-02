@@ -1226,14 +1226,10 @@ def test_archive_janitor_and_dispatch_defaults(temp_ini, monkeypatch):
   assert cfg.get_archive_janitor_debt_max_entries() == 200
   assert cfg.get_archive_janitor_raw_paths_per_tick() == 1000
   assert cfg.get_sync_day_close_candidate_report() is True
-  assert cfg.get_sync_startup_day_close_preflight() is True
-  assert cfg.get_sync_startup_day_close_budget_seconds() == 300.0
   assert cfg.get_sync_startup_day_close_max_inflight() == cfg.get_archive_seal_parallel_workers()
-  assert cfg.get_sync_startup_day_close_days_per_slice() == cfg.get_sync_startup_day_close_max_inflight()
   assert cfg.get_sync_day_close_max_inflight() == 2
   assert cfg.get_sync_day_close_raw_removal_wait_seconds() == 3600.0
   assert cfg.get_sync_day_close_async_stale_seconds() == 7200.0
-  assert cfg.get_sync_startup_day_close_backoff_seconds() == 30.0
   assert cfg.get_sync_day_close_raw_removal_preflight() is True
   assert cfg.get_sync_day_close_raw_removal_verify_budget_seconds() == 30.0
   assert cfg.get_sync_day_close_raw_removal_max_deletes_per_pass() == 0

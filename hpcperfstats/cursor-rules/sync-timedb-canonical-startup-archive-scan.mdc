@@ -1,5 +1,5 @@
 ---
-description: Single-flight canonical startup archive snapshot for sync_timedb prefights
+description: Single-flight canonical startup archive snapshot for sync_timedb
 alwaysApply: false
 globs: hpcperfstats/dbload/sync_timedb*.py
 ---
@@ -8,7 +8,7 @@ globs: hpcperfstats/dbload/sync_timedb*.py
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-At supervisor boot **when CLI `startdate == 'all'`**, **one** `collect_stats_files_in_range` (+ one head-metadata pass via `build_archive_maintenance_snapshot`) must be shared by janitor maintenance and all startup prefights. Do not let each subsystem walk the full raw tree independently. Date-range runs (`startdate` not **`all`**) skip startup maintenance entirely and must not trigger coordinator snapshot waits on first rescan.
+At supervisor boot **when CLI `startdate == 'all'`**, **one** `collect_stats_files_in_range` (+ one head-metadata pass via `build_archive_maintenance_snapshot`) must be shared by janitor startup maintenance and the first supervisor rescan. Do not let each subsystem walk the full raw tree independently. Date-range runs (`startdate` not **`all`**) skip startup maintenance entirely and must not trigger coordinator snapshot waits on first rescan.
 
 ## Canonical modules
 
@@ -19,30 +19,28 @@ At supervisor boot **when CLI `startdate == 'all'`**, **one** `collect_stats_fil
 | Snapshot builder | `build_archive_maintenance_snapshot` in `sync_timedb_archive_maint.py` |
 | Janitor publish | `ArchiveJanitor.run_heavy_maintenance_pass(reason=startup)` → adopt `coordinator.get_snapshot()` via `copy_archive_maintenance_snapshot` when already published, else `begin_build()` → build → `publish(..., from_janitor=True)` → `invalidate_unmapped_disqualify_cache()` before accrual trim |
 | Unmapped resolve | `resolve_unmapped_closed_raw_daily_tars` in `sync_timedb_archive_helpers.py` (coordinator → accrual if `closed_paths` non-empty → TTL collect) |
-| Supervisor wiring | `run_sync_timedb_supervisor_loop` in `sync_timedb.py` → `note_startup_maintenance_pending`, `_wait_startup_snapshot_for_preflight`, `_get_startup_snapshot_for_rescan`, `_rescan_pending_with_progress` |
+| Supervisor wiring | `run_sync_timedb_supervisor_loop` in `sync_timedb.py` → `note_startup_maintenance_pending`, `_get_startup_snapshot_for_rescan`, `_rescan_pending_with_progress` |
 
 ## Required behavior
 
 - **Janitor** `run_heavy_maintenance_pass(reason=startup)` adopts an already-published coordinator snapshot when present; otherwise calls `begin_build()` before `build_archive_maintenance_snapshot`; `abort_build()` on build failure; `publish` in success path. **Only when supervisor `startdate == 'all'`.**
-- **Preflights** call `wait_for_snapshot(allow_build=False)` via `_wait_startup_snapshot_for_preflight` (never returns `None`); block until janitor publish only—**must not** fallback-build. **Only when `startdate == 'all'`.**
 - **Supervisor rescan** (`_get_startup_snapshot_for_rescan`) may single-flight fallback-build after **`sync_startup_snapshot_wait_seconds`** (default **300**, min **120**). **Only when `startdate == 'all'`**; date-range runs skip this call.
-- **`note_startup_maintenance_pending()`** from supervisor on `signal_scheduled_maintenance_pass(reason=startup)` extends effective wait so prefights do not timeout-fallback while janitor builds. **Only when `startdate == 'all'`.**
+- **`note_startup_maintenance_pending()`** from supervisor on `signal_scheduled_maintenance_pass(reason=startup)` extends effective wait while janitor builds. **Only when `startdate == 'all'`.**
 - While `_building` is true, waiters **must not** start parallel collects.
 - **Publish deep-copies** `mapping` / `remaining_raw_by_gz` list values via `copy_archive_maintenance_snapshot` — trim clears heavy lists on accrual object only; coordinator retains `closed_paths` for unmapped disqualify.
-- **Derive, do not rescan:** startup day-close, raw removal, `enqueue_scheduled_day_close` remaining map, first supervisor `rescan_pending_stats_files` (when range is full tree), and **`_cap_pending_after_rescan` / checkpoint reconcile** (`build_live_unprocessed_by_tar_for_reconcile`) use the shared snapshot — **coordinator** while startup ingest gate not cleared, **janitor accrual** when gate cleared and accrual `mapping` present; live `force_full_scan` only as fallback.
+- **Derive, do not rescan:** janitor **`DAY_CLOSE`** discover remaining map, first supervisor `rescan_pending_stats_files` (when range is full tree), and **`_cap_pending_after_rescan` / checkpoint reconcile** (`build_live_unprocessed_by_tar_for_reconcile`) use the shared snapshot — **coordinator** while startup ingest gate not cleared, **janitor accrual** when gate cleared and accrual `mapping` present; live `force_full_scan` only as fallback.
 - **`build_remaining_raw_stats_by_daily_gz`** must accept `maintenance_snapshot=` and **never** nest `build_archive_maintenance_snapshot` when provided.
-- **Supervisor first ingest** blocks until **`StartupArchiveScanCoordinator.wait_for_startup_maintenance_idle()`** when **`sync_startup_drain_day_close_before_ingest=yes`** (after day-close/deletion drain) — janitor **`run_heavy_maintenance_pass(reason=startup)`** must finish (including remaining-map + candidate report), not only coordinator publish. **Default (`sync_startup_drain_day_close_before_ingest=no`):** ingest and archival start immediately; heavy startup pass still runs on janitor thread but does not gate first rescan. On idle wait timeout with a published snapshot, log once and proceed; without snapshot, keep waiting. **Only when `startdate == 'all'`.**
-- **Preflights** run on background threads; `_rescan_pending_with_progress` may wait inside the rescan helper only.
+- **Ingest is not gated** on janitor startup heavy pass completion or **`DAY_CLOSE`** debt drain. Supervisor logs **`startup maintenance idle; ingest may begin`** after handoff recover; first rescan may still wait on snapshot publish via **`_get_startup_snapshot_for_rescan`**.
 - **Heavy maintenance defer:** `run_heavy_maintenance_pass` re-queues when **`get_chunk_in_progress()`** or **`get_ingest_pool_in_flight_count()`** > 0 (light passes unchanged). Supervisor keeps **`chunk_in_progress`** true through chunk archive finalize — **does not** schedule `signal_scheduled_maintenance_pass(reason=day_ingest_complete:…)` at every chunk boundary (2026-06).
 
 ## Forbidden patterns
 
-- Parallel full-tree `collect_stats_files_in_range` at boot from janitor + each preflight + first rescan + **post-rescan reconcile cap**.
+- Parallel full-tree `collect_stats_files_in_range` at boot from janitor + first rescan + **post-rescan reconcile cap**.
 - `wait_or_build_snapshot` / `wait_for_snapshot` returning `None` to consumers.
 - Janitor `build_archive_maintenance_snapshot` without `begin_build()` / `publish()` coordinator wiring.
 - Nested `with self._lock` while holding `Condition` lock (same non-reentrant lock).
-- Tight-loop startup day-close discover when async pool saturated (use **`sync_startup_day_close_backoff_seconds`**).
 - Mutating the coordinator-published snapshot in place during janitor trim.
+- Reintroducing **`StartupDayClosePreflight`** or a parallel boot discover thread for **`DAY_CLOSE`**.
 
 ## Tests
 
@@ -50,9 +48,10 @@ At supervisor boot **when CLI `startdate == 'all'`**, **one** `collect_stats_fil
 - `test_build_remaining_raw_accepts_snapshot_no_nested_collect` in `test_sync_timedb_archive.py`
 - `test_unmapped_disqualify_uses_coordinator_after_accrual_trim` in `test_sync_timedb_archive.py`
 - `test_live_unprocessed_reconcile_uses_snapshot_no_collect` in `test_sync_timedb_archive.py`
-- `test_startup_day_close_uses_accrual_snapshot_when_present` in `test_sync_timedb_startup_day_close.py`
+- `test_arch_no_startup_day_close_preflight_in_supervisor` in `test_sync_timedb_architecture_contract.py`
+- `test_run_scheduled_maintenance_pass_discovers_awaiting_janitor_discover_on_startup` in `test_sync_timedb_janitor.py`
 
 ## Overlap
 
-- **`sync-timedb-archive-janitor-contract.mdc`** — maintenance pass publishes snapshot; debt budget uses `debt_tick_t0` after maintenance.
-- **`sync-timedb-startup-day-close-contract.mdc`**, **`runtime-resource-and-metrics-safety.mdc`**.
+- **`sync-timedb-archive-janitor-contract.mdc`** — maintenance pass publishes snapshot; boot **`DAY_CLOSE`** discover; debt budget uses `debt_tick_t0` after maintenance.
+- **`runtime-resource-and-metrics-safety.mdc`**.
