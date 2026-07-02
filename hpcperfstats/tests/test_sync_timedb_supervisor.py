@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import hpcperfstats.dbload.sync_timedb as st
 import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as archive_helpers
 import hpcperfstats.dbload.lib.sync_timedb_archive_janitor as janitor_mod
+import hpcperfstats.dbload.lib.sync_timedb_session_executor as session_executor_mod
 import hpcperfstats.dbload.lib.sync_timedb_async_day_close as async_day_close_mod
 import pandas as pd
 import pytest
@@ -141,7 +142,7 @@ def _default_startup_daily_tar_count(monkeypatch):
       _empty_maintenance_snapshot,
   )
   monkeypatch.setattr(janitor_mod, "save_archive_maint_hints", lambda *_a, **_k: None)
-  monkeypatch.setattr(janitor_mod, "ThreadPoolExecutor", _InlineThreadPoolExecutor)
+  monkeypatch.setattr(session_executor_mod, "ThreadPoolExecutor", _InlineThreadPoolExecutor)
   monkeypatch.setattr(st.cfg, "get_sync_day_close_raw_removal_preflight", lambda: False)
   monkeypatch.setattr(
       async_day_close_mod.AsyncDayCloseCoordinator,
@@ -1537,6 +1538,7 @@ def test_periodic_maintenance_logs_deferred_when_archive_finalize_pending(
   archive_dir = tmp_path / "archive"
   archive_dir.mkdir()
   try:
+    _supervisor_startup_preflight_disabled(monkeypatch)
     logs = []
     clock = {"t": 2000.0}
     pending = ["/tmp/stats-a", "/tmp/stats-b", "/tmp/stats-c"]
@@ -1627,6 +1629,7 @@ def test_periodic_maintenance_runs_forced_two_phase_when_defer_cap_exceeded(
   archive_dir = tmp_path / "archive"
   archive_dir.mkdir()
   try:
+    _supervisor_startup_preflight_disabled(monkeypatch)
     logs = []
     janitor_signals = {"n": 0}
     original_signal = janitor_mod.ArchiveJanitor.signal_work_available
@@ -3346,7 +3349,7 @@ def test_ingest_first_archive_abandoned_after_retries_exhausted(monkeypatch, tmp
       del wait
 
   _supervisor_startup_preflight_patches(monkeypatch, _DonePreflight())
-  monkeypatch.setattr(janitor_mod, "ThreadPoolExecutor", _InlineThreadPoolExecutor)
+  monkeypatch.setattr(session_executor_mod, "ThreadPoolExecutor", _InlineThreadPoolExecutor)
 
   def fake_rescan(*_a, **_k):
     if fake_rescan.calls == 0:
@@ -3446,7 +3449,7 @@ def test_archive_finalize_cardinality_mismatch_retries_unmatched(monkeypatch, tm
       del wait
 
   _supervisor_startup_preflight_patches(monkeypatch, _DonePreflight())
-  monkeypatch.setattr(janitor_mod, "ThreadPoolExecutor", _InlineThreadPoolExecutor)
+  monkeypatch.setattr(session_executor_mod, "ThreadPoolExecutor", _InlineThreadPoolExecutor)
 
   def fake_rescan(*_a, **_k):
     if fake_rescan.calls == 0:
@@ -3542,7 +3545,7 @@ def test_checkpoint_flush_logs_oserror_and_preserves_dirty(monkeypatch, tmp_path
       del wait
 
   _supervisor_startup_preflight_patches(monkeypatch, _DonePreflight())
-  monkeypatch.setattr(janitor_mod, "ThreadPoolExecutor", _InlineThreadPoolExecutor)
+  monkeypatch.setattr(session_executor_mod, "ThreadPoolExecutor", _InlineThreadPoolExecutor)
 
   def fake_rescan(*_a, **_k):
     if fake_rescan.calls == 0:

@@ -1,6 +1,8 @@
 """Pure helpers for sync_timedb archiving, tar utilities, and file discovery (no Django). Used by sync_timedb and by unit tests."""
 import contextlib
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
+    iter_bounded_thread_pool,
+)
 import os
 import re
 import shutil
@@ -1970,10 +1972,6 @@ def _iter_archive_validation_results_stream(
     return
 
   def _validate_one(gz_path):
-    from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
-
-    set_daemon_thread_title("", script_name="sync_timedb.py", role="archive-validation")
-    # Avoid shared mutable cache updates across threads.
     return validate_sealed_daily_archive_for_raw_removal(
         gz_path,
         log_fn=log_fn,
@@ -1981,20 +1979,22 @@ def _iter_archive_validation_results_stream(
         allow_auto_seal=allow_auto_seal,
     )
 
-  with ThreadPoolExecutor(max_workers=workers) as executor:
-    future_to_gz = {executor.submit(_validate_one, gz_path): gz_path for gz_path in gz_paths}
-    for future in as_completed(future_to_gz):
-      gz_path = future_to_gz[future]
-      try:
-        ok, members = future.result()
-      except Exception as exc:
-        if log_fn:
-          log_fn(
-              "Skipping removal: validation worker error for %s (%s)" % (gz_path, exc),
-              flush=True,
-          )
-        ok, members = False, None
-      yield gz_path, ok, members
+  for gz_path, packed, err in iter_bounded_thread_pool(
+      gz_paths,
+      _validate_one,
+      max_workers=workers,
+      thread_role="archive-validation",
+  ):
+    if err is not None:
+      if log_fn:
+        log_fn(
+            "Skipping removal: validation worker error for %s (%s)" % (gz_path, err),
+            flush=True,
+        )
+      ok, members = False, None
+    else:
+      ok, members = packed
+    yield gz_path, ok, members
 
 
 def _log_archive_validation_summary(
@@ -4697,13 +4697,18 @@ def seal_dirty_daily_archives(
       _seal_one_daily_tar(tar_path, zst_path, gz_path, **seal_kwargs)
     return
 
-  with ThreadPoolExecutor(max_workers=workers) as executor:
-    futures = [
-        executor.submit(_seal_one_daily_tar, tar_path, zst_path, gz_path, **seal_kwargs)
-        for tar_path, zst_path, gz_path in candidates
-    ]
-    for future in as_completed(futures):
-      future.result()
+  def _seal_candidate(candidate):
+    tar_path, zst_path, gz_path = candidate
+    _seal_one_daily_tar(tar_path, zst_path, gz_path, **seal_kwargs)
+
+  for _candidate, _result, err in iter_bounded_thread_pool(
+      candidates,
+      _seal_candidate,
+      max_workers=workers,
+      thread_role="archive-seal",
+  ):
+    if err is not None:
+      raise err
 
 
 def _planned_migrate_action_for_legacy_gz(gz_path, tar_path, zst_path):
@@ -5025,10 +5030,14 @@ def migrate_legacy_daily_gz_archives(
     for gz_path in gz_paths:
       _migrate_summary_bump(summary, _run_one(gz_path))
   else:
-    with ThreadPoolExecutor(max_workers=worker_count) as executor:
-      futures = [executor.submit(_run_one, p) for p in gz_paths]
-      for future in as_completed(futures):
-        _migrate_summary_bump(summary, future.result())
+    for gz_path, result, err in iter_bounded_thread_pool(
+        gz_paths,
+        _run_one,
+        max_workers=worker_count,
+    ):
+      if err is not None:
+        raise err
+      _migrate_summary_bump(summary, result)
 
   remaining = sum(1 for _ in iter_daily_gz_paths(daily_archive_dir))
   summary["gz_remaining"] = remaining

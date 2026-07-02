@@ -4,7 +4,6 @@ from __future__ import annotations
 import os
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
@@ -26,8 +25,10 @@ from hpcperfstats.dbload.lib.sync_timedb_persistence import (
     save_persistence_document,
 )
 from hpcperfstats.dbload.lib.file_locking import cleanup_orphan_fnctl_lock_sidecars, file_write_lock
-from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
 from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
+from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
+    SessionSingleFlightExecutor,
+)
 
 MANIFEST_VERSION = 1
 MANIFEST_SUBDIR = ".sync_timedb_day_raw_removal"
@@ -1134,8 +1135,13 @@ class DayRawRemovalCoordinator:
     self.enabled = cfg.get_sync_day_close_raw_removal_preflight()
     self._days: Dict[str, _DayRawRemovalState] = {}
     self._days_lock = threading.Lock()
-    self._executor: Optional[ThreadPoolExecutor] = None
     self._last_closed_raw_kick_action: Optional[str] = None
+    self._session_executor = SessionSingleFlightExecutor(
+        thread_name_prefix="day-raw-removal",
+        process_title=self.process_title,
+        thread_role="day-raw-removal-verify",
+        enabled=self.enabled,
+    )
     if self.enabled:
       cleanup_orphan_fnctl_lock_sidecars(
           day_removal_manifest_dir(self.archive_data_dir),
@@ -1648,11 +1654,6 @@ class DayRawRemovalCoordinator:
   def verified_paths_pending_delete(self, tar_path: str) -> Set[str]:
     return self._get_or_create_day(tar_path).paths_pending_delete()
 
-  def _ensure_executor(self) -> ThreadPoolExecutor:
-    if self._executor is None:
-      self._executor = ThreadPoolExecutor(max_workers=1)
-    return self._executor
-
   def _verify_pipeline_body(self, state: _DayRawRemovalState) -> None:
     close_old_connections()
     if state.delete_phase_done():
@@ -1697,20 +1698,10 @@ class DayRawRemovalCoordinator:
   def _submit_async_verify(self, state: _DayRawRemovalState) -> None:
     if state._pipeline_future is not None and not state._pipeline_future.done():
       return
-    executor = self._ensure_executor()
-
-    def _run():
-      set_daemon_thread_title(
-          "",
-          script_name=self.process_title,
-          role="day-raw-removal-verify",
-      )
-      try:
-        self._verify_pipeline_body(state)
-      finally:
-        close_old_connections()
-
-    state._pipeline_future = executor.submit(_run)
+    state._pipeline_future = self._session_executor.submit(
+        self._verify_pipeline_body,
+        state,
+    )
 
   def run_verify_sync(
       self,
@@ -1790,9 +1781,6 @@ class DayRawRemovalCoordinator:
     return deleted
 
   def shutdown(self, wait: bool = True) -> None:
-    executor = self._executor
-    if executor is None:
-      return
     if wait:
       with self._days_lock:
         states = list(self._days.values())
@@ -1803,4 +1791,4 @@ class DayRawRemovalCoordinator:
             future.result(timeout=30.0)
           except Exception:
             pass
-    executor.shutdown(wait=wait)
+    self._session_executor.shutdown(wait=wait)

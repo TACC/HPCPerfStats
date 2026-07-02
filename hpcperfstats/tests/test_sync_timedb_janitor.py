@@ -585,7 +585,7 @@ def test_janitor_rss_defer_reschedules_tick(monkeypatch):
     def shutdown(self, wait=True):
       del wait
 
-  janitor._executor = _Exec()
+  janitor._session_executor = _Exec()
   monkeypatch.setattr(janitor_mod, "read_process_rss_bytes", lambda: 999999999)
   monkeypatch.setattr(janitor_mod.cfg, "get_sync_supervisor_rss_limit_mb", lambda: 1)
   janitor._enqueue_debt(DebtKind.RAW_REMOVE, "/tmp/2026-01-01.tar", persist=False)

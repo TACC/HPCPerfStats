@@ -1187,3 +1187,30 @@ def hard_exit_pool_worker_error(exc: MultiprocessingWorkerExitError) -> None:
       flush=True,
   )
   os._exit(int(exc.exit_code))
+
+
+def sync_timedb_spawn_pool_recycle_kwargs() -> dict:
+  """Return ``maxtasksperchild`` kwargs for sync_timedb spawn pools when configured."""
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  maxtasks = cfg.get_sync_ingest_pool_maxtasksperchild()
+  if maxtasks > 0:
+    return {"maxtasksperchild": int(maxtasks)}
+  return {}
+
+
+def create_sync_timedb_spawn_pool(
+    *,
+    processes,
+    initializer,
+    initargs,
+    pool_kind_log_label=None,
+):
+  """Create a spawn-context ``Pool`` with shared sync_timedb recycle kwargs."""
+  del pool_kind_log_label
+  return multiprocessing.get_context("spawn").Pool(
+      processes=processes,
+      initializer=initializer,
+      initargs=initargs,
+      **sync_timedb_spawn_pool_recycle_kwargs(),
+  )

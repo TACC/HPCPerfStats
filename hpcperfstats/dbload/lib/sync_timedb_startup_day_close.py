@@ -4,11 +4,14 @@ from __future__ import annotations
 import os
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from typing import Any, Callable, Dict, List, Optional, Set, TYPE_CHECKING
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
+
+from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
+    SessionSingleFlightExecutor,
+)
 
 if TYPE_CHECKING:
   from hpcperfstats.dbload.lib.sync_timedb_startup_tail_ingest import (
@@ -126,9 +129,14 @@ class StartupDayClosePreflight:
     )
     self._lock = threading.Lock()
     self._manifest = _load_manifest(self._manifest_path)
-    self._executor: Optional[ThreadPoolExecutor] = None
     self._discover_future = None
     self.enabled = cfg.get_sync_startup_day_close_preflight()
+    self._session_executor = SessionSingleFlightExecutor(
+        thread_name_prefix="startup-day-close",
+        process_title=self.process_title,
+        thread_role="startup-day-close-preflight",
+        enabled=self.enabled,
+    )
 
   def phase(self) -> str:
     with self._lock:
@@ -261,10 +269,12 @@ class StartupDayClosePreflight:
         self._manifest["started_at"] = time.time()
       self._manifest["phase"] = PHASE_DISCOVERING
       _save_manifest(self._manifest_path, self._manifest)
-      if self._executor is not None:
+      if (
+          self._discover_future is not None
+          and not self._discover_future.done()
+      ):
         return
-      self._executor = ThreadPoolExecutor(max_workers=1)
-      self._discover_future = self._executor.submit(self._discover_loop)
+      self._discover_future = self._session_executor.submit(self._discover_loop)
       self._discover_future.add_done_callback(self._on_discover_future_done)
     if self.log_fn:
       self.log_fn(
@@ -273,10 +283,7 @@ class StartupDayClosePreflight:
       )
 
   def shutdown(self, wait: bool = True) -> None:
-    executor = self._executor
-    if executor is None:
-      return
-    executor.shutdown(wait=wait)
+    self._session_executor.shutdown(wait=wait)
 
   def _on_discover_future_done(self, future) -> None:
     try:

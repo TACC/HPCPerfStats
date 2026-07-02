@@ -4,7 +4,6 @@ from __future__ import annotations
 import os
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Optional, Set
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
@@ -20,6 +19,9 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
 )
 from hpcperfstats.dbload.lib.file_locking import file_write_lock
 from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
+from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
+    SessionSingleFlightExecutor,
+)
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
     load_persistence_document,
     save_persistence_document,
@@ -111,10 +113,15 @@ class StartupRawRemovalPreflight:
     self._manifest_path = manifest_path(archive_data_dir)
     self._lock = threading.Lock()
     self._manifest = _load_manifest(self._manifest_path)
-    self._executor: Optional[ThreadPoolExecutor] = None
     self._verify_future = None
     self._validation_cache = {"hits": 0, "misses": 0}
     self.enabled = cfg.get_sync_startup_raw_removal_preflight()
+    self._session_executor = SessionSingleFlightExecutor(
+        thread_name_prefix="startup-raw-removal",
+        process_title=self.process_title,
+        thread_role="startup-raw-removal-preflight",
+        enabled=self.enabled,
+    )
 
   def phase(self) -> str:
     with self._lock:
@@ -173,16 +180,12 @@ class StartupRawRemovalPreflight:
           self._manifest["started_at"] = time.time()
         self._manifest["phase"] = PHASE_VERIFYING
         _save_manifest(self._manifest_path, self._manifest)
-      if self._executor is not None:
+      if self._verify_future is not None and not self._verify_future.done():
         return
-      self._executor = ThreadPoolExecutor(max_workers=1)
-      self._verify_future = self._executor.submit(self._verify_loop)
+      self._verify_future = self._session_executor.submit(self._verify_loop)
 
   def shutdown(self, wait: bool = True) -> None:
-    executor = self._executor
-    if executor is None:
-      return
-    executor.shutdown(wait=wait)
+    self._session_executor.shutdown(wait=wait)
 
   def begin_deleting(self) -> None:
     with self._lock:

@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Set, Tuple
+
+from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
+    iter_bounded_thread_pool,
+)
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
@@ -363,42 +366,14 @@ def collect_sampled_timestamp_identities_for_paths(
   last_progress_mono = started_mono
   done = 0
   if path_list:
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-      futures = {
-          executor.submit(_read_sampled_identities_one, path, sample_stride=stride): path
-          for path in path_list
-      }
-      for future in as_completed(futures):
-        try:
-          path, sampled = future.result()
-        except Exception:
-          errors += 1
-          done += 1
-          last_progress_mono = _maybe_log_parallel_task_progress(
-              prefix="Sampled timestamp metadata",
-              total=total_tasks,
-              done=done,
-              errors=errors,
-              started_mono=started_mono,
-              last_progress_mono=last_progress_mono,
-              log_fn=log_fn,
-          )
-          continue
-        if sampled is None:
-          errors += 1
-          done += 1
-          last_progress_mono = _maybe_log_parallel_task_progress(
-              prefix="Sampled timestamp metadata",
-              total=total_tasks,
-              done=done,
-              errors=errors,
-              started_mono=started_mono,
-              last_progress_mono=last_progress_mono,
-              log_fn=log_fn,
-          )
-          continue
-        sampled_by_path[path] = sampled
-        done += 1
+    for _path, packed, err in iter_bounded_thread_pool(
+        path_list,
+        lambda path: _read_sampled_identities_one(path, sample_stride=stride),
+        max_workers=workers,
+    ):
+      done += 1
+      if err is not None:
+        errors += 1
         last_progress_mono = _maybe_log_parallel_task_progress(
             prefix="Sampled timestamp metadata",
             total=total_tasks,
@@ -408,6 +383,30 @@ def collect_sampled_timestamp_identities_for_paths(
             last_progress_mono=last_progress_mono,
             log_fn=log_fn,
         )
+        continue
+      path, sampled = packed
+      if sampled is None:
+        errors += 1
+        last_progress_mono = _maybe_log_parallel_task_progress(
+            prefix="Sampled timestamp metadata",
+            total=total_tasks,
+            done=done,
+            errors=errors,
+            started_mono=started_mono,
+            last_progress_mono=last_progress_mono,
+            log_fn=log_fn,
+        )
+        continue
+      sampled_by_path[path] = sampled
+      last_progress_mono = _maybe_log_parallel_task_progress(
+          prefix="Sampled timestamp metadata",
+          total=total_tasks,
+          done=done,
+          errors=errors,
+          started_mono=started_mono,
+          last_progress_mono=last_progress_mono,
+          log_fn=log_fn,
+      )
   stats = {
       "paths": len(path_list),
       "read": len(path_list),
@@ -457,42 +456,14 @@ def collect_head_metadata_for_paths(
       )
     last_progress_mono = started_mono
     done = 0
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-      futures = {
-          executor.submit(_read_head_metadata_one, path): path for path in needs_read
-      }
-      for future in as_completed(futures):
-        try:
-          path, first_ts, host, unix_second = future.result()
-        except Exception:
-          errors += 1
-          done += 1
-          last_progress_mono = _maybe_log_parallel_task_progress(
-              prefix="Head metadata",
-              total=read_total,
-              done=done,
-              errors=errors,
-              started_mono=started_mono,
-              last_progress_mono=last_progress_mono,
-              log_fn=log_fn,
-          )
-          continue
-        if first_ts is None or host is None or unix_second is None:
-          errors += 1
-          done += 1
-          last_progress_mono = _maybe_log_parallel_task_progress(
-              prefix="Head metadata",
-              total=read_total,
-              done=done,
-              errors=errors,
-              started_mono=started_mono,
-              last_progress_mono=last_progress_mono,
-              log_fn=log_fn,
-          )
-          continue
-        first_timestamp_by_path[path] = first_ts
-        head_identity_by_path[path] = (host, unix_second)
-        done += 1
+    for _path, packed, err in iter_bounded_thread_pool(
+        needs_read,
+        _read_head_metadata_one,
+        max_workers=workers,
+    ):
+      done += 1
+      if err is not None:
+        errors += 1
         last_progress_mono = _maybe_log_parallel_task_progress(
             prefix="Head metadata",
             total=read_total,
@@ -502,6 +473,31 @@ def collect_head_metadata_for_paths(
             last_progress_mono=last_progress_mono,
             log_fn=log_fn,
         )
+        continue
+      path, first_ts, host, unix_second = packed
+      if first_ts is None or host is None or unix_second is None:
+        errors += 1
+        last_progress_mono = _maybe_log_parallel_task_progress(
+            prefix="Head metadata",
+            total=read_total,
+            done=done,
+            errors=errors,
+            started_mono=started_mono,
+            last_progress_mono=last_progress_mono,
+            log_fn=log_fn,
+        )
+        continue
+      first_timestamp_by_path[path] = first_ts
+      head_identity_by_path[path] = (host, unix_second)
+      last_progress_mono = _maybe_log_parallel_task_progress(
+          prefix="Head metadata",
+          total=read_total,
+          done=done,
+          errors=errors,
+          started_mono=started_mono,
+          last_progress_mono=last_progress_mono,
+          log_fn=log_fn,
+      )
   else:
     workers = 0
 

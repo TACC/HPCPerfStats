@@ -74,10 +74,12 @@ from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
     alive_pool_worker_count,
     async_result_get_watch_pool,
     close_pool_bounded,
+    create_sync_timedb_spawn_pool,
     hard_exit_pool_worker_error,
     imap_sliding_window_watch_pool,
     imap_unordered_watch_pool,
     pool_workers_all_idle,
+    sync_timedb_spawn_pool_recycle_kwargs,
     terminate_pool_bounded,
 )
 from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import (
@@ -1614,10 +1616,7 @@ def _log_ingest_worker_file_completion(
 
 
 def _spawn_pool_recycle_kwargs():
-  maxtasks = cfg.get_sync_ingest_pool_maxtasksperchild()
-  if maxtasks > 0:
-    return {"maxtasksperchild": int(maxtasks)}
-  return {}
+  return sync_timedb_spawn_pool_recycle_kwargs()
 
 # Set to 1/yes/true so ingest runs in the parent process (no spawn pool). Required
 # for pytest-django: pool workers would reconnect with default [DEFAULT] dbname instead
@@ -5345,7 +5344,7 @@ def run_sync_timedb_supervisor_loop(
       ingest_pool_kind = "ingest-parse-pool"
     else:
       ingest_pool_kind = "ingest-pool"
-    ingest_pool = multiprocessing.get_context('spawn').Pool(
+    ingest_pool = create_sync_timedb_spawn_pool(
         processes=thread_count,
         initializer=apply_ingest_pool_worker_init,
         initargs=(
@@ -5353,12 +5352,12 @@ def run_sync_timedb_supervisor_loop(
             ingest_pool_kind,
             worker_diagnostics_registry,
         ),
-        **_spawn_pool_recycle_kwargs(),
+        pool_kind_log_label=ingest_pool_kind,
     )
     if use_split_db_writer_pipeline:
       db_writer_processes = cfg.get_sync_db_writer_pool_processes(
           ingest_processes=thread_count)
-      db_writer_pool = multiprocessing.get_context('spawn').Pool(
+      db_writer_pool = create_sync_timedb_spawn_pool(
           processes=db_writer_processes,
           initializer=apply_ingest_pool_worker_init,
           initargs=(
@@ -5366,7 +5365,7 @@ def run_sync_timedb_supervisor_loop(
               "db-writer-pool",
               worker_diagnostics_registry,
           ),
-          **_spawn_pool_recycle_kwargs(),
+          pool_kind_log_label="db-writer-pool",
       )
     elif db_writer_combined_task:
       log_print(
@@ -7064,11 +7063,11 @@ def run_sync_timedb_supervisor_from_parsed(run_once, startdate, enddate):
     else:
       manager_lock = [manager.Lock() for _ in range(lock_shards)]
       log_print("Using %d sync_timedb write-lock shards" % lock_shards, flush=True)
-    with multiprocessing.get_context('spawn').Pool(
+    with create_sync_timedb_spawn_pool(
         processes=archive_thread_count,
         initializer=apply_pool_worker_process_title,
         initargs=(SYNC_TIMEDB_PROCESS_TITLE, "archive-pool"),
-        **_spawn_pool_recycle_kwargs(),
+        pool_kind_log_label="archive-pool",
     ) as archive_pool:
       try:
         run_sync_timedb_supervisor_loop(

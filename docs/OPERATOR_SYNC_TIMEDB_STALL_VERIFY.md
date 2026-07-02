@@ -2,7 +2,7 @@
 
 Backlog catch-up sites (months of `waiting_on_ingest` days) can run **many hours** of valid giant-archive work before an **idle spin** stall appears. Do **not** mark a deploy verified on a **15-minute T0 smoke alone**.
 
-See also: `sync-timedb-change-regression-gate.mdc`, [day-close-ingest-loop-fix plan](.cursor/plans/day-close-ingest-loop-fix.plan.md) Phase 6, [june-ingest-stall-prevention plan](.cursor/plans/june-ingest-stall-prevention.plan.md).
+See also: `sync-timedb-change-regression-gate.mdc`, [SYNC_TIMEDB_PARALLELISM.md](SYNC_TIMEDB_PARALLELISM.md) (spawn vs thread pool taxonomy), [day-close-ingest-loop-fix plan](.cursor/plans/day-close-ingest-loop-fix.plan.md) Phase 6, [june-ingest-stall-prevention plan](.cursor/plans/june-ingest-stall-prevention.plan.md).
 
 ## Pre-deploy (every PR touching sync_timedb)
 
@@ -16,7 +16,7 @@ Attach the `test_runs/day-close-loop-regression-battery-*.log` path to the PR or
 
 | Tier | When | Pass criteria |
 |------|------|---------------|
-| **T0 smoke** | T+15 min after deploy | Pipeline up; at least one `chunk ingest summary` **or** documented giant-chunk defer (not an error by itself) |
+| **T0 smoke** | T+15 min after deploy | Pipeline up; at least one `chunk ingest summary` **or** documented giant-chunk defer (not an error by itself); optional boot thread census (below) |
 | **T1 progress** | T+4 h **or** after first giant `archive_job_done` for backlog head day | Oldest `waiting_on_ingest` day: `unprocessed` **not frozen** vs prior sample; no repeating `oldest_day_chunk_gate_stall` with same `blocked_n` |
 | **T2 catch-up** | T+24 h or when head day advances | New `chunk ingest summary` cadence; June-scale head day `unprocessed` trending down; `ingest_stall_watchdog` absent |
 
@@ -163,3 +163,23 @@ Every 2 h: full-log grep for `oldest_day_chunk_gate_stall` and `ingest_stall_wat
 - Handoff-after-giant-finalize idle spin (RC-F family) — requires **T1** after first head-day `archive_job_done`.
 - State-transition log noise fixes — throughput unchanged.
 - Cross-day bucket mismatch — may be benign if orphan reclaim runs.
+
+### T0 optional — boot thread census
+
+After deploy, confirm session background roles are present (supervisor PID) and hot-path pools use spawn workers — stall exit **124** applies to **process pools**, not janitor threads. See [SYNC_TIMEDB_PARALLELISM.md](SYNC_TIMEDB_PARALLELISM.md).
+
+```bash
+# Replace compose driver and service name as on site.
+COMPOSE='podman-compose'
+SVC='pipeline'
+$COMPOSE exec -T "$SVC" sh -lc '
+SUP=$(pgrep -f "[s]ync_timedb" | head -1)
+echo supervisor_pid=$SUP
+ps -T -p "$SUP" -o pid,tid,comm,args 2>/dev/null | grep -E "archive-janitor|startup-|day-raw|sync_timedb" | head -20
+pgrep -af "sync_timedb.*worker:" | head -10
+'
+```
+
+**Expect:** one `archive-janitor` thread when janitor enabled; optional `startup-*` threads during boot preflights; separate `[worker:ingest-pool]` / `[worker:archive-pool]` PIDs (spawn), not threads for parse/append hot path.
+
+**Why ingest/archive stay on spawn:** CPU/RSS isolation, `maxtasksperchild` recycle, L1 host cache, and pool stall diagnostics (`Pool imap stalled`, exit **124**). Janitor and startup coordinators use **session thread executors** by design (two-queue model).

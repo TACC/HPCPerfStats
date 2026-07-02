@@ -4,7 +4,6 @@ from __future__ import annotations
 import os
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -12,6 +11,9 @@ import hpcperfstats.dbload.lib.conf_parser as cfg
 
 from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
 from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
+from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
+    SessionSingleFlightExecutor,
+)
 from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     calendar_date_from_daily_tar_path,
     unprocessed_tar_paths_still_on_disk,
@@ -50,11 +52,16 @@ class StartupTailIngestCoordinator:
     self._deferred_giant: set[str] = set()
     self._in_progress_tar: Optional[str] = None
     self._tail_ingest_done = False
-    self._executor: Optional[ThreadPoolExecutor] = None
     self._ingest_future = None
     self.enabled = cfg.get_sync_startup_tail_ingest_enabled()
     if not self.enabled:
       self._tail_ingest_done = True
+    self._session_executor = SessionSingleFlightExecutor(
+        thread_name_prefix="startup-tail-ingest",
+        process_title=self.process_title,
+        thread_role="startup-tail-ingest",
+        enabled=self.enabled,
+    )
 
   def tail_ingest_done(self) -> bool:
     with self._lock:
@@ -153,10 +160,9 @@ class StartupTailIngestCoordinator:
         )
       return
     with self._lock:
-      if self._executor is not None:
+      if self._ingest_future is not None and not self._ingest_future.done():
         return
-      self._executor = ThreadPoolExecutor(max_workers=1)
-      self._ingest_future = self._executor.submit(self._tail_ingest_loop)
+      self._ingest_future = self._session_executor.submit(self._tail_ingest_loop)
       self._ingest_future.add_done_callback(self._on_ingest_future_done)
     if self.log_fn:
       self.log_fn(
@@ -165,12 +171,9 @@ class StartupTailIngestCoordinator:
       )
 
   def shutdown(self, wait: bool = True) -> None:
-    executor = self._executor
-    if executor is None:
-      return
     with self._condition:
       self._condition.notify_all()
-    executor.shutdown(wait=wait)
+    self._session_executor.shutdown(wait=wait)
 
   def _on_ingest_future_done(self, future) -> None:
     try:

@@ -118,6 +118,27 @@ This must **not** wait for an empty global ingest queue.
 - **Dedupe:** `_consume_dedupe_hints` + inline dedupe before seal; invalidate L1 + Redis on mutation.
 - `close_old_connections()` at tick entry and in `finally`.
 
+## Pool lifecycle and parallelism (2026-07)
+
+Canonical reference: **`docs/SYNC_TIMEDB_PARALLELISM.md`**.
+
+| Category | Examples | Policy |
+|----------|----------|--------|
+| **Hot-path spawn pools** | `ingest_pool`, `db_writer_pool`, `archive_pool`, sealed-archive CLI pool | Stay on **spawn**; created via `create_sync_timedb_spawn_pool()`; distinct initializers per pool kind |
+| **Session thread executors** | `ArchiveJanitor`, startup preflights, `DayRawRemovalCoordinator` | **Eager** `SessionSingleFlightExecutor(max_workers=1)` when role enabled; shutdown in supervisor `finally` |
+| **Ephemeral burst threads** | metadata reads, parallel seal/validation/migrate | `run_bounded_thread_pool()` / `iter_bounded_thread_pool()`; not session-static |
+| **Subprocess CLI** | zstd, GNU `tar -r` | Not Python pools |
+
+**Normalization allowed:** shared spawn factory, session executor helper, burst thread helper — **no behavior change** on hot-path dispatch.
+
+**Forbidden without explicit approval + regression battery:**
+
+- Ingest or archive hot path Pool → threads (`map_async` / `imap_unordered_watch_pool` semantics differ from `Future` submit).
+- Janitor tick → spawn process (violates two-queue single-flight law).
+- Renaming `archive_pool` log label without operator doc sync.
+
+**Archive pool on spawn (documented rationale):** append is I/O-heavy but spawn retains per-job process recycle, failure isolation, and L1 cache benefits; default inflight is low (`sync_archive_max_inflight_jobs`).
+
 ## Scheduled maintenance pass
 
 - **Supervisor signals only:** `signal_scheduled_maintenance_pass(reason)` sets pending flag and `signal_work_available()`; no snapshot on MainThread.

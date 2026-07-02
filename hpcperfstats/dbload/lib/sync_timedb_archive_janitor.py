@@ -6,7 +6,6 @@ import os
 import threading
 import time
 import traceback
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import Enum
@@ -55,6 +54,9 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_maint import (
 )
 from hpcperfstats.dbload.lib.process_memory import read_process_rss_bytes
 from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
+from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
+    SessionSingleFlightExecutor,
+)
 from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
     copy_archive_maintenance_snapshot,
 )
@@ -198,8 +200,12 @@ class ArchiveJanitor:
     self._allow_tick_chaining = True
     self._maintenance_pass_cached_inputs = None
 
-    self._executor = ThreadPoolExecutor(
-        max_workers=1, thread_name_prefix="archive-janitor")
+    self._session_executor = SessionSingleFlightExecutor(
+        thread_name_prefix="archive-janitor",
+        process_title=self.process_title,
+        thread_role="archive-janitor",
+        enabled=True,
+    )
     self._future = None
     self._debt_heap: list = []
     self._debt_seen: Set[tuple] = set()
@@ -416,7 +422,7 @@ class ArchiveJanitor:
       self._pending_signal = True
       return
     try:
-      self._future = self._executor.submit(self._run_tick_body)
+      self._future = self._session_executor.submit(self._run_tick_body)
     except RuntimeError:
       self._future = None
 
@@ -1655,7 +1661,7 @@ class ArchiveJanitor:
     return False
 
   def shutdown(self, wait: bool = True):
-    self._executor.shutdown(wait=wait)
+    self._session_executor.shutdown(wait=wait)
 
   def stats(self) -> Dict[str, Any]:
     return {

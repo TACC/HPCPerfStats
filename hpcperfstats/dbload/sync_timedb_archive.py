@@ -65,7 +65,9 @@ from hpcperfstats.dbload.lib.db_unavailable import (
 )
 from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
     MultiprocessingWorkerExitError,
+    create_sync_timedb_spawn_pool,
     imap_sliding_window_watch_pool,
+    sync_timedb_spawn_pool_recycle_kwargs,
     terminate_pool_bounded,
 )
 from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
@@ -162,10 +164,7 @@ def _resolve_sealed_paths_from_argv(mode, startdate, enddate, path_args):
 
 
 def _archive_spawn_pool_recycle_kwargs():
-  maxtasks = cfg.get_sync_ingest_pool_maxtasksperchild()
-  if maxtasks > 0:
-    return {"maxtasksperchild": int(maxtasks)}
-  return {}
+  return sync_timedb_spawn_pool_recycle_kwargs()
 
 
 def _process_stream_archive(lock, sealed_path):
@@ -506,8 +505,7 @@ if __name__ == "__main__":
             "Using %d sync_timedb_archive write-lock shards" % lock_shards,
             flush=True,
         )
-      ctx = multiprocessing.get_context("spawn")
-      pool = ctx.Pool(
+      pool = create_sync_timedb_spawn_pool(
           processes=_archive_worker_process_count(),
           initializer=apply_ingest_pool_worker_init,
           initargs=(
@@ -515,7 +513,7 @@ if __name__ == "__main__":
               "sealed-archive-pool",
               worker_diagnostics_registry,
           ),
-          **_archive_spawn_pool_recycle_kwargs(),
+          pool_kind_log_label="sealed-archive-pool",
       )
       try:
         tasks = list(
