@@ -1567,38 +1567,6 @@ def _sealed_archive_ingest_remaining_pair():
   return remaining, progress.total_files
 
 
-def _log_ingest_worker_file_completion(
-    stats_file,
-    *,
-    elapsed_s,
-    parse_elapsed_s=None,
-    stats_rows=None,
-    proc_rows=None,
-    stage=None,
-):
-  """Worker-side per-file completion log (size, rows, RSS)."""
-  size_bytes = stats_file_size_bytes(stats_file)
-  parts = [
-      "ingest file completed path=%s" % stats_file,
-      "size_bytes=%d" % size_bytes,
-      "elapsed_s=%.1f" % float(elapsed_s),
-      "worker_rss_mib=%.1f" % _worker_rss_mib(),
-  ]
-  if parse_elapsed_s is not None:
-    parts.append("parse_elapsed_s=%.1f" % float(parse_elapsed_s))
-  if stats_rows is not None:
-    parts.append("stats_rows=%d" % int(stats_rows))
-  if proc_rows is not None:
-    parts.append("proc_rows=%d" % int(proc_rows))
-  if stage:
-    parts.append("stage=%s" % stage)
-  remaining_pair = _sealed_archive_ingest_remaining_pair()
-  if remaining_pair is not None:
-    remaining, total = remaining_pair
-    parts.append("remaining=%d/%d" % (remaining, total))
-  log_print(" ".join(parts), flush=True)
-
-
 def _spawn_pool_recycle_kwargs():
   return sync_timedb_spawn_pool_recycle_kwargs()
 
@@ -2225,42 +2193,163 @@ def _ingest_path_is_supplement(stats_fname, chunk_paths_norm):
   return norm not in chunk_paths_norm
 
 
-def _log_sync_timedb_ingest_completed(
-    stats_fname,
+_DB_COMPLETE_REASON_TO_SKIP = {
+    "db_complete_head_tail": "head_tail",
+    "db_complete_tail_window": "tail_window",
+    "db_complete_full_scan": "full_scan",
+}
+
+
+def _db_skip_token_from_complete_reason(reason):
+  if not reason:
+    return "no"
+  return _DB_COMPLETE_REASON_TO_SKIP.get(str(reason), "no")
+
+
+def _ingest_outcome_meta(**kwargs):
+  return {key: value for key, value in kwargs.items() if value is not None}
+
+
+@dataclass
+class IngestFileOutcome:
+  path: str
+  elapsed_s: float
+  ingest_ok: bool
+  need_archival: bool
+  outcome: str
+  db_skip: str = "no"
+  parse_elapsed_s: float | None = None
+  stats_rows: int | None = None
+  proc_rows: int | None = None
+  fail_reason: str | None = None
+
+
+def _pack_ingest_worker_result(
+    stats_file,
+    need_archival,
+    ingest_ok,
     elapsed_s,
-    remaining,
+    outcome_meta=None,
+):
+  meta = dict(outcome_meta or {})
+  return (stats_file, need_archival, ingest_ok, float(elapsed_s), meta)
+
+
+def _unpack_ingest_worker_result(result):
+  if not isinstance(result, (tuple, list)) or not result:
+    return ("", False, False, 0.0, {})
+  if len(result) >= 5:
+    meta = result[4]
+    return (
+        result[0],
+        result[1],
+        result[2],
+        float(result[3]),
+        dict(meta) if isinstance(meta, dict) else {},
+    )
+  if len(result) >= 4:
+    return result[0], result[1], result[2], float(result[3]), {}
+  if len(result) >= 3:
+    return result[0], result[1], result[2], 0.0, {}
+  return result[0], result[1], True, 0.0, {}
+
+
+def _unpack_parse_payload_result(result):
+  if not isinstance(result, (tuple, list)):
+    return ("", None, False, False, 0.0, {})
+  if len(result) >= 6:
+    meta = result[5]
+    return (
+        result[0],
+        result[1],
+        result[2],
+        result[3],
+        float(result[4]),
+        dict(meta) if isinstance(meta, dict) else {},
+    )
+  if len(result) >= 5:
+    return result[0], result[1], result[2], result[3], float(result[4]), {}
+  return ("", None, False, False, 0.0, {})
+
+
+def _ingest_file_outcome_from_worker(
+    stats_file,
+    need_archival,
+    ingest_ok,
+    elapsed_s,
+    outcome_meta,
+):
+  meta = dict(outcome_meta or {})
+  outcome = str(meta.get("outcome") or "")
+  if not outcome:
+    if ingest_ok:
+      outcome = "ingested" if meta.get("stats_rows") else "db_skip"
+    else:
+      outcome = "parse_fail"
+  db_skip = str(meta.get("db_skip") or "no")
+  return IngestFileOutcome(
+      path=str(stats_file or ""),
+      elapsed_s=float(elapsed_s),
+      ingest_ok=bool(ingest_ok),
+      need_archival=bool(need_archival),
+      outcome=outcome,
+      db_skip=db_skip,
+      parse_elapsed_s=meta.get("parse_elapsed_s"),
+      stats_rows=meta.get("stats_rows"),
+      proc_rows=meta.get("proc_rows"),
+      fail_reason=meta.get("fail_reason"),
+  )
+
+
+def _log_ingest_file_outcome(
+    outcome,
     *,
-    stage=None,
+    remaining=None,
     supplement=False,
 ):
-  stage_suffix = " stage=%s" % stage if stage else ""
-  supplement_suffix = " supplement=yes" if supplement else ""
-  size_bytes = stats_file_size_bytes(stats_fname)
-  remaining_count = max(0, int(remaining))
-  log_print(
-      "Completed file %s - processed in %.1fs - %d remaining to process "
-      "size_bytes=%d%s%s"
-      % (
-          stats_fname,
-          float(elapsed_s),
-          remaining_count,
-          size_bytes,
-          stage_suffix,
-          supplement_suffix,
-      ),
-      flush=True,
-  )
+  parts = [
+      "ingest file path=%s" % outcome.path,
+      "outcome=%s" % outcome.outcome,
+      "elapsed_s=%.1f" % float(outcome.elapsed_s),
+      "ingest_ok=%s" % ("yes" if outcome.ingest_ok else "no"),
+      "archive=%s" % ("yes" if outcome.need_archival else "no"),
+      "db_skip=%s" % (outcome.db_skip or "no"),
+      "size_bytes=%d" % stats_file_size_bytes(outcome.path),
+  ]
+  if outcome.parse_elapsed_s is not None:
+    parts.append("parse_elapsed_s=%.1f" % float(outcome.parse_elapsed_s))
+  if outcome.stats_rows is not None:
+    parts.append("stats_rows=%d" % int(outcome.stats_rows))
+  if outcome.proc_rows is not None:
+    parts.append("proc_rows=%d" % int(outcome.proc_rows))
+  if outcome.fail_reason:
+    parts.append("fail_reason=%s" % outcome.fail_reason)
+  if remaining is not None:
+    parts.append("remaining=%d" % max(0, int(remaining)))
+  if supplement:
+    parts.append("supplement=yes")
+  remaining_pair = _sealed_archive_ingest_remaining_pair()
+  if remaining_pair is not None:
+    sealed_remaining, sealed_total = remaining_pair
+    parts.append("sealed_remaining=%d/%d" % (sealed_remaining, sealed_total))
+  log_print(" ".join(parts), flush=True)
 
 
-def _log_db_complete_skip(stats_file, reason, *, elapsed_s=None):
-  size_bytes = stats_file_size_bytes(stats_file)
-  elapsed_suffix = (
-      " elapsed_s=%.1f" % float(elapsed_s) if elapsed_s is not None else ""
+def _log_ingest_worker_result(result, *, remaining=None, supplement=False):
+  stats_file, need_archival, ingest_ok, elapsed_s, outcome_meta = (
+      _unpack_ingest_worker_result(result)
   )
-  log_print(
-      "No missing timestamps found for %s reason=%s size_bytes=%d%s"
-      % (stats_file, reason, size_bytes, elapsed_suffix),
-      flush=True,
+  outcome = _ingest_file_outcome_from_worker(
+      stats_file,
+      need_archival,
+      ingest_ok,
+      elapsed_s,
+      outcome_meta,
+  )
+  _log_ingest_file_outcome(
+      outcome,
+      remaining=remaining,
+      supplement=supplement,
   )
 
 
@@ -2280,8 +2369,10 @@ def _quarantine_failed_ingest_parse(stats_file, error_detail=None):
 def _parse_failure_after_quarantine(stats_file, parse_elapsed, error_detail=None):
   """Quarantine on permanent parse failure; ingest_ok=True when DLO move succeeds."""
   if _quarantine_failed_ingest_parse(stats_file, error_detail=error_detail):
-    return (stats_file, None, False, True, parse_elapsed)
-  return (stats_file, None, False, False, parse_elapsed)
+    meta = _ingest_outcome_meta(outcome="quarantine", fail_reason=error_detail)
+    return (stats_file, None, False, True, parse_elapsed, meta)
+  meta = _ingest_outcome_meta(outcome="parse_fail", fail_reason=error_detail)
+  return (stats_file, None, False, False, parse_elapsed, meta)
 
 
 def _parse_stats_file_payload(stats_file, stats_file_contents=None, *, use_ingest_timer=True):
@@ -2297,7 +2388,14 @@ def _parse_stats_file_payload(stats_file, stats_file_contents=None, *, use_inges
       return impl()
     except IngestArchiveLookupBudgetExceededError as exc:
       _log_ingest_archive_lookup_budget_exceeded(exc)
-      return (stats_file, None, False, False, 0.0)
+      return (
+          stats_file,
+          None,
+          False,
+          False,
+          0.0,
+          _ingest_outcome_meta(outcome="lookup_budget"),
+      )
   try:
     return _run_ingest_timed(
         stats_file,
@@ -2306,10 +2404,24 @@ def _parse_stats_file_payload(stats_file, stats_file_contents=None, *, use_inges
     )
   except IngestPerFileTimeoutError as exc:
     _log_ingest_per_file_timeout(exc)
-    return (stats_file, None, False, False, exc.elapsed_s)
+    return (
+        stats_file,
+        None,
+        False,
+        False,
+        exc.elapsed_s,
+        _ingest_outcome_meta(outcome="timeout", fail_reason=exc.stage),
+    )
   except IngestArchiveLookupBudgetExceededError as exc:
     _log_ingest_archive_lookup_budget_exceeded(exc)
-    return (stats_file, None, False, False, 0.0)
+    return (
+        stats_file,
+        None,
+        False,
+        False,
+        0.0,
+        _ingest_outcome_meta(outcome="lookup_budget"),
+    )
   finally:
     _release_ingest_worker_heap()
 
@@ -2374,19 +2486,17 @@ def _resolve_streaming_ingest_start(stats_file, parse_elapsed_fn):
   """
   t, _jid, host = parse_first_timestamp_line_streaming(stats_file)
   if t is None:
-    log_print("initial timestamp not found")
     return (
         True,
         _parse_failure_after_quarantine(
-            stats_file, parse_elapsed_fn(), error_detail="initial timestamp not found",
+            stats_file, parse_elapsed_fn(), error_detail="initial_timestamp_not_found",
         ),
     )
   if not host:
-    log_print("initial host not found in %s" % stats_file)
     return (
         True,
         _parse_failure_after_quarantine(
-            stats_file, parse_elapsed_fn(), error_detail="initial host not found",
+            stats_file, parse_elapsed_fn(), error_detail="initial_host_not_found",
         ),
     )
   host = str(host).strip()
@@ -2415,26 +2525,47 @@ def _resolve_streaming_ingest_start(stats_file, parse_elapsed_fn):
       if start_idx == -1:
         db_complete_reason = "db_complete_full_scan"
   if start_idx == -1:
-    _log_db_complete_skip(
-        stats_file,
-        db_complete_reason or "db_complete_full_scan",
-        elapsed_s=parse_elapsed_fn(),
-    )
     need_archival = raw_stats_path_needs_tar_append(
         stats_file,
         tgz_archive_dir,
         first_ts=t,
     )
-    return True, (stats_file, None, need_archival, True, parse_elapsed_fn())
+    parse_elapsed = parse_elapsed_fn()
+    meta = _ingest_outcome_meta(
+        outcome="db_skip",
+        db_skip=_db_skip_token_from_complete_reason(
+            db_complete_reason or "db_complete_full_scan",
+        ),
+        parse_elapsed_s=parse_elapsed,
+    )
+    return True, (stats_file, None, need_archival, True, parse_elapsed, meta)
   return False, (int(start_idx), need_archival)
 
 
 def _ingest_reconcile_skip_result(stats_file):
   """Return an ingest result tuple when DB idempotency says re-dispatch is unnecessary."""
-  done, result = _resolve_streaming_ingest_start(stats_file, lambda: 0.0)
-  if done:
-    return result
-  return None
+  t0 = time.time()
+  done, result = _resolve_streaming_ingest_start(
+      stats_file,
+      lambda: time.time() - t0,
+  )
+  if not done:
+    return None
+  (
+      stats_file_local,
+      _payload,
+      need_archival,
+      ingest_ok,
+      _parse_elapsed,
+      outcome_meta,
+  ) = _unpack_parse_payload_result(result)
+  return _pack_ingest_worker_result(
+      stats_file_local,
+      need_archival,
+      ingest_ok,
+      time.time() - t0,
+      outcome_meta,
+  )
 
 
 def _parse_stats_file_payload_impl_streaming(stats_file):
@@ -2459,8 +2590,6 @@ def _parse_stats_file_payload_impl_streaming(stats_file):
             exclude_types_list=exclude_types,
         )
       except Exception as e:
-        log_print("error: process data failed: ", str(e))
-        log_print("Possibly corrupt file: %s" % stats_file)
         return _parse_failure_after_quarantine(
             stats_file, _parse_elapsed(), error_detail=str(e),
         )
@@ -2476,10 +2605,16 @@ def _parse_stats_file_payload_impl_streaming(stats_file):
         )
       update_worker_substage("parse:deltas_arc")
       stats = compute_deltas_and_arc(stats)
-      return (stats_file, (stats, proc_stats), need_archival, True, _parse_elapsed())
+      parse_elapsed = _parse_elapsed()
+      meta = _ingest_outcome_meta(
+          outcome="ingested",
+          parse_elapsed_s=parse_elapsed,
+          stats_rows=len(stats),
+          proc_rows=len(proc_stats),
+      )
+      return (stats_file, (stats, proc_stats), need_archival, True, parse_elapsed, meta)
     except FileNotFoundError:
-      load_err = "Stats file disappeared: %s" % stats_file
-      log_print(load_err)
+      load_err = "stats_file_disappeared"
       return _parse_failure_after_quarantine(
           stats_file, _parse_elapsed(), error_detail=load_err,
       )
@@ -2532,11 +2667,23 @@ def _add_stats_file_to_db_streaming_incremental(lock, stats_file, t0):
     try:
       done, result = _resolve_streaming_ingest_start(stats_file, _parse_elapsed)
       if done:
-        _stats_file, _payload, need_archival, early_ok, _early_parse_elapsed = result
+        (
+            _stats_file,
+            _payload,
+            need_archival,
+            early_ok,
+            _early_parse_elapsed,
+            outcome_meta,
+        ) = _unpack_parse_payload_result(result)
+        elapsed_total = time.time() - t0
         if not early_ok:
-          return (_stats_file, need_archival, False, time.time() - t0)
+          return _pack_ingest_worker_result(
+              _stats_file, need_archival, False, elapsed_total, outcome_meta,
+          )
         if _payload is None:
-          return (_stats_file, need_archival, True, time.time() - t0)
+          return _pack_ingest_worker_result(
+              _stats_file, need_archival, True, elapsed_total, outcome_meta,
+          )
       else:
         start_line_idx, need_archival = result
         try:
@@ -2550,37 +2697,62 @@ def _add_stats_file_to_db_streaming_incremental(lock, stats_file, t0):
               exclude_types_list=exclude_types,
           )
         except Exception as e:
-          log_print("error: process data failed: ", str(e))
-          log_print("Possibly corrupt file: %s" % stats_file)
-          _stats_file, _payload, _need, early_ok, _ = _parse_failure_after_quarantine(
+          failure = _parse_failure_after_quarantine(
               stats_file, _parse_elapsed(), error_detail=str(e),
           )
-          return (_stats_file, _need, False, time.time() - t0)
+          (
+              _stats_file,
+              _payload,
+              _need,
+              early_ok,
+              _,
+              outcome_meta,
+          ) = _unpack_parse_payload_result(failure)
+          return _pack_ingest_worker_result(
+              _stats_file, _need, early_ok, time.time() - t0, outcome_meta,
+          )
         if total_stats_rows == 0 and total_proc_rows == 0:
           if DEBUG:
             log_print("Unable to process stats file %s" % stats_file)
-          _stats_file, _payload, _need, early_ok, _ = _parse_failure_after_quarantine(
+          failure = _parse_failure_after_quarantine(
               stats_file, _parse_elapsed(), error_detail="empty stats and proc_stats",
           )
-          return (_stats_file, _need, False, time.time() - t0)
+          (
+              _stats_file,
+              _payload,
+              _need,
+              early_ok,
+              _,
+              outcome_meta,
+          ) = _unpack_parse_payload_result(failure)
+          return _pack_ingest_worker_result(
+              _stats_file, _need, early_ok, time.time() - t0, outcome_meta,
+          )
       elapsed = time.time() - t0
-      if ingest_ok:
-        _log_ingest_worker_file_completion(
-            stats_file,
-            elapsed_s=elapsed,
-            parse_elapsed_s=_parse_elapsed(),
-            stats_rows=total_stats_rows,
-            proc_rows=total_proc_rows,
-            stage="ingest",
-        )
-      return (stats_file, need_archival, ingest_ok, elapsed)
-    except FileNotFoundError:
-      load_err = "Stats file disappeared: %s" % stats_file
-      log_print(load_err)
-      _stats_file, _payload, _need, early_ok, _ = _parse_failure_after_quarantine(
-          stats_file, _parse_elapsed(), error_detail=load_err,
+      meta = _ingest_outcome_meta(
+          outcome="ingested",
+          parse_elapsed_s=_parse_elapsed(),
+          stats_rows=total_stats_rows,
+          proc_rows=total_proc_rows,
       )
-      return (_stats_file, _need, False, time.time() - t0)
+      return _pack_ingest_worker_result(
+          stats_file, need_archival, ingest_ok, elapsed, meta,
+      )
+    except FileNotFoundError:
+      failure = _parse_failure_after_quarantine(
+          stats_file, _parse_elapsed(), error_detail="stats_file_disappeared",
+      )
+      (
+          _stats_file,
+          _payload,
+          _need,
+          early_ok,
+          _,
+          outcome_meta,
+      ) = _unpack_parse_payload_result(failure)
+      return _pack_ingest_worker_result(
+          _stats_file, _need, early_ok, time.time() - t0, outcome_meta,
+      )
 
 
 def _parse_stats_file_payload_impl(stats_file, stats_file_contents=None):
@@ -2595,30 +2767,47 @@ def _parse_stats_file_payload_impl(stats_file, stats_file_contents=None):
     try:
       hostname, _ = parse_stats_file_path(stats_file)
       if hostname is None:
-        log_print("Invalid stats file path: %s" % stats_file)
-        return (stats_file, None, False, False, _parse_elapsed())
+        return (
+            stats_file,
+            None,
+            False,
+            False,
+            _parse_elapsed(),
+            _ingest_outcome_meta(
+                outcome="parse_fail",
+                fail_reason="invalid_stats_path",
+            ),
+        )
       if stats_file_is_active_segment(stats_file):
         if DEBUG:
           log_print("Skipping active segment (still linked to current): %s" % stats_file)
-        return (stats_file, None, False, False, _parse_elapsed())
+        return (
+            stats_file,
+            None,
+            False,
+            False,
+            _parse_elapsed(),
+            _ingest_outcome_meta(outcome="active_segment"),
+        )
       if _should_stream_stats_file(stats_file, stats_file_contents):
         return _parse_stats_file_payload_impl_streaming(stats_file)
       lines, load_err = load_stats_file_lines(stats_file, stats_file_contents)
       if load_err is not None:
-        log_print(load_err)
         return _parse_failure_after_quarantine(
             stats_file, _parse_elapsed(), error_detail=load_err,
         )
       t, _jid, host = parse_first_timestamp_line(lines)
       if t is None:
-        log_print("initial timestamp not found")
         return _parse_failure_after_quarantine(
-            stats_file, _parse_elapsed(), error_detail="initial timestamp not found",
+            stats_file,
+            _parse_elapsed(),
+            error_detail="initial_timestamp_not_found",
         )
       if not host:
-        log_print("initial host not found in %s" % stats_file)
         return _parse_failure_after_quarantine(
-            stats_file, _parse_elapsed(), error_detail="initial host not found",
+            stats_file,
+            _parse_elapsed(),
+            error_detail="initial_host_not_found",
         )
       host = str(host).strip()
       timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
@@ -2652,17 +2841,20 @@ def _parse_stats_file_payload_impl(stats_file, stats_file_contents=None):
             if start_idx == -1:
               db_complete_reason = "db_complete_full_scan"
       if start_idx == -1:
-        _log_db_complete_skip(
-            stats_file,
-            db_complete_reason or "db_complete_full_scan",
-            elapsed_s=_parse_elapsed(),
-        )
         need_archival = raw_stats_path_needs_tar_append(
             stats_file,
             tgz_archive_dir,
             first_ts=t,
         )
-        return (stats_file, None, need_archival, True, _parse_elapsed())
+        parse_elapsed = _parse_elapsed()
+        meta = _ingest_outcome_meta(
+            outcome="db_skip",
+            db_skip=_db_skip_token_from_complete_reason(
+                db_complete_reason or "db_complete_full_scan",
+            ),
+            parse_elapsed_s=parse_elapsed,
+        )
+        return (stats_file, None, need_archival, True, parse_elapsed, meta)
       lines = lines[start_idx:]
       try:
         update_worker_substage("parse:accumulate")
@@ -2673,8 +2865,6 @@ def _parse_stats_file_payload_impl(stats_file, stats_file_contents=None):
             exclude_types_list=exclude_types,
         )
       except Exception as e:
-        log_print("error: process data failed: ", str(e))
-        log_print("Possibly corrupt file: %s" % stats_file)
         return _parse_failure_after_quarantine(
             stats_file, _parse_elapsed(), error_detail=str(e),
         )
@@ -2690,7 +2880,14 @@ def _parse_stats_file_payload_impl(stats_file, stats_file_contents=None):
         )
       update_worker_substage("parse:deltas_arc")
       stats = compute_deltas_and_arc(stats)
-      return (stats_file, (stats, proc_stats), need_archival, True, _parse_elapsed())
+      parse_elapsed = _parse_elapsed()
+      meta = _ingest_outcome_meta(
+          outcome="ingested",
+          parse_elapsed_s=parse_elapsed,
+          stats_rows=len(stats),
+          proc_rows=len(proc_stats),
+      )
+      return (stats_file, (stats, proc_stats), need_archival, True, parse_elapsed, meta)
     finally:
       if lines is not None:
         del lines
@@ -2770,10 +2967,22 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
     )
   except IngestPerFileTimeoutError as exc:
     _log_ingest_per_file_timeout(exc)
-    return (stats_file, False, False, exc.elapsed_s)
+    return _pack_ingest_worker_result(
+        stats_file,
+        False,
+        False,
+        exc.elapsed_s,
+        _ingest_outcome_meta(outcome="timeout", fail_reason=exc.stage),
+    )
   except IngestArchiveLookupBudgetExceededError as exc:
     _log_ingest_archive_lookup_budget_exceeded(exc)
-    return (stats_file, False, False, 0.0)
+    return _pack_ingest_worker_result(
+        stats_file,
+        False,
+        False,
+        0.0,
+        _ingest_outcome_meta(outcome="lookup_budget"),
+    )
   finally:
     _release_ingest_worker_heap()
 
@@ -2790,32 +2999,45 @@ def _add_stats_file_to_db_impl(lock, stats_file, stats_file_contents=None):
     )
   with _sync_worker_db_task():
     try:
-      stats_file, payload, need_archival, ingest_ok, _parse_elapsed = _parse_stats_file_payload(
+      parse_result = _parse_stats_file_payload(
           stats_file,
           stats_file_contents=stats_file_contents,
           use_ingest_timer=False,
       )
+      (
+          stats_file,
+          payload,
+          need_archival,
+          ingest_ok,
+          parse_elapsed,
+          outcome_meta,
+      ) = _unpack_parse_payload_result(parse_result)
+      elapsed_total = time.time() - t0
       if not ingest_ok:
-        return (stats_file, need_archival, False, time.time() - t0)
+        return _pack_ingest_worker_result(
+            stats_file, need_archival, False, elapsed_total, outcome_meta,
+        )
       if payload is None:
-        return (stats_file, need_archival, True, time.time() - t0)
+        return _pack_ingest_worker_result(
+            stats_file, need_archival, True, elapsed_total, outcome_meta,
+        )
       stats, proc_stats = payload
       stats_rows = len(stats)
       proc_rows = len(proc_stats)
       stats_file, need_archival, ingest_ok = _write_stats_payload_to_db(
           lock, stats_file, stats, proc_stats, need_archival=need_archival
       )
-      elapsed = time.time() - t0
-      if ingest_ok:
-        _log_ingest_worker_file_completion(
-            stats_file,
-            elapsed_s=elapsed,
-            parse_elapsed_s=_parse_elapsed,
-            stats_rows=stats_rows,
-            proc_rows=proc_rows,
-            stage="ingest",
-        )
-      return (stats_file, need_archival, ingest_ok, elapsed)
+      elapsed_total = time.time() - t0
+      meta = dict(outcome_meta)
+      meta.update(
+          outcome="ingested",
+          parse_elapsed_s=parse_elapsed,
+          stats_rows=stats_rows,
+          proc_rows=proc_rows,
+      )
+      return _pack_ingest_worker_result(
+          stats_file, need_archival, ingest_ok, elapsed_total, meta,
+      )
     except (OperationalError, DatabaseError) as exc:
       if is_database_unavailable_error(exc):
         log_and_raise_database_unavailable(
@@ -4646,9 +4868,13 @@ def run_sync_timedb_supervisor_loop(
     """Bounded short ingest on supervisor thread (inline env fallback)."""
     successful_paths = []
     files_to_be_archived = []
-    for path in paths:
-      stats_fname, need_archival, ingest_ok, _elapsed = add_stats_file_to_db(
-          manager_lock, path)
+    for index, path in enumerate(paths):
+      result = add_stats_file_to_db(manager_lock, path)
+      remaining = _ingest_remaining_count(len(paths), index)
+      _log_ingest_worker_result(result, remaining=remaining)
+      stats_fname, need_archival, ingest_ok, _elapsed, _meta = (
+          _unpack_ingest_worker_result(result)
+      )
       if not ingest_ok:
         continue
       _transition_file_state(
@@ -4732,18 +4958,20 @@ def run_sync_timedb_supervisor_loop(
           pending_tail=pending_tail,
       )
       for result in results_iter:
-        ingest_ok = True
-        elapsed_s = 0.0
-        if len(result) >= 4:
-          stats_fname, need_archival, ingest_ok, elapsed_s = result[:4]
-        elif len(result) >= 3:
-          stats_fname, need_archival, ingest_ok = result[:3]
-        else:
-          stats_fname, need_archival = result
+        stats_fname, need_archival, ingest_ok, elapsed_s, _outcome_meta = (
+            _unpack_ingest_worker_result(result)
+        )
         if ingest_tracker is not None:
           ingest_tracker.complete(stats_fname)
         k += 1
         active_workers = max(active_workers, min(thread_count, k))
+        remaining = _ingest_remaining_count(pending_total, chunk_ingest_finished)
+        _log_ingest_worker_result(
+            result,
+            remaining=remaining,
+            supplement=_ingest_path_is_supplement(stats_fname, chunk_paths_norm),
+        )
+        chunk_ingest_finished += 1
         if ingest_ok:
           _transition_file_state(
             file_states,
@@ -4754,15 +4982,6 @@ def run_sync_timedb_supervisor_loop(
           successful_paths.append(stats_fname)
           if should_archive and need_archival:
             files_to_be_archived.append(stats_fname)
-          remaining = _ingest_remaining_count(pending_total, chunk_ingest_finished)
-          chunk_ingest_finished += 1
-          _log_sync_timedb_ingest_completed(
-              stats_fname,
-              elapsed_s,
-              remaining,
-              stage="ingest",
-              supplement=_ingest_path_is_supplement(stats_fname, chunk_paths_norm),
-          )
     except MultiprocessingWorkerExitError as exc:
       pool_worker_exit = True
       _handle_pool_worker_exit_fatal(

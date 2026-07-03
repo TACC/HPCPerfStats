@@ -79,7 +79,7 @@ def test_db_complete_head_tail_skips_full_duplicate_scan(tmp_path, monkeypatch):
   assert result[3] is True
 
 
-def test_db_complete_head_tail_logs_skip_reason(tmp_path, monkeypatch):
+def test_db_complete_head_tail_returns_skip_outcome_meta(tmp_path, monkeypatch):
   stats_file = str(tmp_path / "host.example" / "1700000000")
   _write_stats_file(stats_file, 5000)
   logs = []
@@ -105,10 +105,44 @@ def test_db_complete_head_tail_logs_skip_reason(tmp_path, monkeypatch):
   monkeypatch.setattr(st.cfg, "get_sync_ingest_max_file_read_bytes", lambda: 512 * 1024 * 1024)
   monkeypatch.setattr(st.cfg, "get_sync_ingest_stream_duplicate_scan_bytes", lambda: 0)
 
-  st._parse_stats_file_payload_impl(stats_file)
+  result = st._parse_stats_file_payload_impl(stats_file)
+  (
+      _path,
+      payload,
+      _need_archival,
+      ingest_ok,
+      _parse_elapsed,
+      outcome_meta,
+  ) = st._unpack_parse_payload_result(result)
+  assert ingest_ok is True
+  assert payload is None
+  assert outcome_meta["outcome"] == "db_skip"
+  assert outcome_meta["db_skip"] == "head_tail"
   joined = "\n".join(logs)
-  assert "reason=db_complete_head_tail" in joined
-  assert "size_bytes=" in joined
+  assert "No missing timestamps found" not in joined
+  assert "ingest file path=" not in joined
+
+
+def test_ingest_file_outcome_single_log_line(capsys, monkeypatch):
+  monkeypatch.setattr(st, "stats_file_size_bytes", lambda _p: 173380395)
+  result = st._pack_ingest_worker_result(
+      "/hpcperfstats/archive/host/1779471215",
+      False,
+      True,
+      0.3,
+      st._ingest_outcome_meta(outcome="db_skip", db_skip="head_tail"),
+  )
+  st._log_ingest_worker_result(result, remaining=102440)
+  out = capsys.readouterr().out
+  assert out.count("ingest file path=") == 1
+  assert "outcome=db_skip" in out
+  assert "db_skip=head_tail" in out
+  assert "ingest_ok=yes" in out
+  assert "archive=no" in out
+  assert "remaining=102440" in out
+  assert "Completed file" not in out
+  assert "ingest file completed" not in out
+  assert "No missing timestamps found" not in out
 
 
 def test_db_complete_tail_missing_falls_back_to_full_scan(tmp_path, monkeypatch):

@@ -114,11 +114,13 @@ def test_streaming_incremental_combined_path_writes_multiple_chunks(
     return path, need_archival, True
 
   monkeypatch.setattr(st, "_write_stats_payload_to_db", fake_write)
-  monkeypatch.setattr(st, "_log_ingest_worker_file_completion", lambda *a, **k: None)
   monkeypatch.setattr(st, "_release_ingest_worker_heap", lambda: None)
 
-  _path, need_archival, ingest_ok, _elapsed = st._add_stats_file_to_db_streaming_incremental(
+  result = st._add_stats_file_to_db_streaming_incremental(
       object(), str(stats_file), 0.0,
+  )
+  _path, need_archival, ingest_ok, _elapsed, _meta = st._unpack_ingest_worker_result(
+      result,
   )
   assert ingest_ok is True
   assert need_archival is True
@@ -151,7 +153,6 @@ def test_small_file_combined_path_unchanged(monkeypatch, tmp_path):
       "_write_stats_payload_to_db",
       lambda *_a, **_k: (str(stats_file), True, True),
   )
-  monkeypatch.setattr(st, "_log_ingest_worker_file_completion", lambda *a, **k: None)
 
   st._add_stats_file_to_db_impl(object(), str(stats_file))
   assert parse_calls["n"] == 1

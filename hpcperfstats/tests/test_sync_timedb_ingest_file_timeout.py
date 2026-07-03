@@ -313,17 +313,20 @@ def test_ingest_remaining_count_never_negative():
   assert st._ingest_remaining_count(100, 50) == 49
 
 
-def test_log_sync_timedb_ingest_completed_supplement_annotation(capsys):
-  st._log_sync_timedb_ingest_completed(
-      "/data/tail0",
-      0.3,
-      -5,
-      stage="ingest",
-      supplement=True,
+def test_log_ingest_file_outcome_supplement_annotation(capsys, monkeypatch):
+  monkeypatch.setattr(st, "stats_file_size_bytes", lambda _p: 100)
+  outcome = st.IngestFileOutcome(
+      path="/data/tail0",
+      elapsed_s=0.3,
+      ingest_ok=True,
+      need_archival=False,
+      outcome="db_skip",
+      db_skip="head_tail",
   )
+  st._log_ingest_file_outcome(outcome, remaining=0, supplement=True)
   out = capsys.readouterr().out
   assert "supplement=yes" in out
-  assert "0 remaining to process" in out
+  assert "remaining=0" in out
   assert "-5 remaining" not in out
 
 

@@ -603,13 +603,16 @@ def test_supervisor_logs_completed_file_with_global_remaining(monkeypatch):
             st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), archive_pool, run_once=True)
         finally:
             archive_pool.__exit__(None, None, None)
-        completed_lines = [ln for ln in logs if ln.startswith('Completed file ')]
+        completed_lines = [ln for ln in logs if "ingest file path=" in ln]
         assert len(completed_lines) == 2
         for ln in completed_lines:
-            assert ' - processed in ' in ln
-            assert ' remaining to process.' in ln
-        assert any((' - 1 remaining to process.' in ln for ln in completed_lines))
-        assert any((' - 0 remaining to process.' in ln for ln in completed_lines))
+            assert "outcome=" in ln
+            assert "elapsed_s=" in ln
+            assert "remaining=" in ln
+        assert any(("remaining=1" in ln for ln in completed_lines))
+        assert any(("remaining=0" in ln for ln in completed_lines))
+        assert not any(("Completed file " in ln for ln in logs))
+        assert not any(("ingest file completed" in ln for ln in logs))
         assert not any(('chunk ' in ln and 'completed file' in ln for ln in logs))
     finally:
         shutdown_requested[0] = False
