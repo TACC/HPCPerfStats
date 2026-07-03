@@ -1,10 +1,13 @@
 """Cross-process ingest worker stage registry for pool stall diagnostics."""
 from __future__ import annotations
 
+import contextvars
 import os
 import time
 
 _registry = None
+
+_worker_pool_kind = contextvars.ContextVar("sync_timedb_worker_pool_kind", default=None)
 
 
 def set_worker_diagnostics_registry(registry):
@@ -28,10 +31,28 @@ def _resolve_registry():
     return None
 
 
+def get_worker_pool_kind():
+  return _worker_pool_kind.get()
+
+
+def set_worker_pool_kind(pool_kind):
+  return _worker_pool_kind.set(pool_kind)
+
+
+def reset_worker_pool_kind(token):
+  _worker_pool_kind.reset(token)
+
+
+def may_run_archive_members_populate_scan():
+  """True only on populate-pool workers."""
+  return get_worker_pool_kind() == "populate-pool"
+
+
 def apply_ingest_pool_worker_init(script_name, pool_kind, registry):
   from hpcperfstats.dbload.lib.process_title import apply_pool_worker_process_title
 
   apply_pool_worker_process_title(script_name, pool_kind)
+  set_worker_pool_kind(pool_kind)
   set_worker_diagnostics_registry(registry)
   try:
     from multiprocessing import current_process

@@ -365,6 +365,9 @@ sync_pool_process_cap = 8
 # Refuse populate when estimated Redis HASH payload exceeds this many bytes (default 8388608).
 # sync_archive_members_redis_max_payload_bytes = 8388608
 
+# Dedicated workers that stream sealed/tar archives into Redis L2 (default 1).
+sync_archive_members_populate_pool_processes = 1
+
 # Write-lock shard count for sync ingest; auto if unset.
 # sync_write_lock_shards =
 

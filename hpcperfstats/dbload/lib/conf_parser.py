@@ -129,6 +129,7 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_archive_members_redis_wait_poll_seconds"),
     ("PIPELINE", "sync_archive_members_redis_hset_batch_size"),
     ("PIPELINE", "sync_archive_members_redis_max_payload_bytes"),
+    ("PIPELINE", "sync_archive_members_populate_pool_processes"),
     ("PIPELINE", "sync_write_lock_shards"),
     ("PIPELINE", "sync_ingest_chunk_size"),
     ("PIPELINE", "sync_bulk_create_batch_size"),
@@ -1768,6 +1769,29 @@ def get_sync_archive_members_redis_max_payload_bytes():
     )
   except (TypeError, ValueError, OverflowError):
     return 8388608
+
+
+def get_sync_archive_members_populate_pool_processes():
+  """Dedicated populate-pool workers for Redis L2 sealed/tar member streaming."""
+  env = os.environ.get(
+      "HPCPERFSTATS_SYNC_ARCHIVE_MEMBERS_POPULATE_POOL_PROCESSES", "",
+  ).strip()
+  if env:
+    try:
+      return max(0, int(env))
+    except (TypeError, ValueError, OverflowError):
+      return 1
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        0,
+        int(_pipeline_get(
+            "sync_archive_members_populate_pool_processes",
+            fallback="1",
+        )),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 1
 
 
 def get_sync_ingest_per_file_timeout_s():

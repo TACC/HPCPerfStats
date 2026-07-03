@@ -76,6 +76,7 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         "patterns": [
             "hpcperfstats/dbload/lib/sync_timedb_archive_members_redis.py",
             "hpcperfstats/dbload/lib/sync_timedb_archive_helpers.py",
+            "hpcperfstats/dbload/lib/sync_timedb_populate_pool.py",
         ],
         "rules": [
             "sync-timedb-ingest-pool-io-coordination.mdc",

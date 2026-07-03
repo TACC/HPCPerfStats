@@ -4,11 +4,17 @@ from __future__ import annotations
 
 import math
 import os
+import signal
+import tarfile
+import threading
+import time
 
 import pytest
 
 from hpcperfstats.dbload import sync_timedb as st
 from hpcperfstats.dbload.lib import sync_timedb_ingest_timeout as ingest_timeout_mod
+
+_SIGALRM_AVAILABLE = hasattr(signal, "SIGALRM")
 
 
 def _mib_bytes(mib):
@@ -395,3 +401,149 @@ def test_giant_supplement_begin_log(monkeypatch, tmp_path, capsys):
   assert "giant pool supplement begin" in captured
   assert "pending_tail_n=" in captured
   assert "in_flight_giants=" in captured
+
+
+def test_extend_ingest_task_deadline_monotonic():
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      extend_ingest_task_deadline_monotonic,
+      get_ingest_task_deadline_monotonic,
+      reset_ingest_task_deadline_monotonic,
+      set_ingest_task_deadline_monotonic,
+  )
+
+  token = set_ingest_task_deadline_monotonic(100.0)
+  try:
+    extend_ingest_task_deadline_monotonic(0.0)
+    assert get_ingest_task_deadline_monotonic() == 100.0
+    extend_ingest_task_deadline_monotonic(1.5)
+    assert get_ingest_task_deadline_monotonic() == 101.5
+  finally:
+    reset_ingest_task_deadline_monotonic(token)
+
+
+@pytest.mark.skipif(not _SIGALRM_AVAILABLE, reason="SIGALRM not available")
+def test_suspend_sigalrm_extends_deadline_monotonic(monkeypatch):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      get_ingest_task_deadline_monotonic,
+      reset_ingest_task_deadline_monotonic,
+      set_ingest_task_deadline_monotonic,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_sigalrm import (
+      suspend_ingest_sigalrm_for_populate_wait,
+  )
+
+  base = time.monotonic() + 2.0
+  token = set_ingest_task_deadline_monotonic(base)
+  arm_calls = []
+  original_setitimer = signal.setitimer
+
+  def counting_setitimer(which, seconds, interval=0.0):
+    arm_calls.append(float(seconds))
+    return original_setitimer(which, seconds, interval)
+
+  monkeypatch.setattr(signal, "setitimer", counting_setitimer)
+
+  signal.signal(signal.SIGALRM, lambda *_a: None)
+  signal.setitimer(signal.ITIMER_REAL, 2.0)
+  try:
+    with suspend_ingest_sigalrm_for_populate_wait():
+      time.sleep(0.15)
+    extended = get_ingest_task_deadline_monotonic()
+    assert extended is not None
+    assert extended > base
+    assert math.isclose(extended - base, 0.15, abs_tol=0.08)
+    assert any(value > 0.0 for value in arm_calls)
+  finally:
+    signal.setitimer(signal.ITIMER_REAL, 0)
+    reset_ingest_task_deadline_monotonic(token)
+
+
+@pytest.mark.skipif(not _SIGALRM_AVAILABLE, reason="SIGALRM not available")
+def test_ingest_populate_wait_survives_sigalrm(monkeypatch, tmp_path):
+  """Short per-file SIGALRM must not fire during Redis populate wait."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      _daily_archive_members_cache_key,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      build_archive_members_redis_keys,
+      request_archive_members_populate_and_wait,
+      reset_archive_members_redis_client_for_tests,
+  )
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import FakeRedis
+
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 0.15)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s_per_mib", lambda: 0.0)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 0.15)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_cache_enabled",
+      lambda: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
+      lambda: True,
+  )
+
+  fake = FakeRedis()
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: fake,
+  )
+  reset_archive_members_redis_client_for_tests()
+
+  day_gz = tmp_path / "2024-06-13.tar.gz"
+  inner = tmp_path / "raw.txt"
+  inner.write_text("data")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(inner), arcname="host/raw")
+  cache_key = _daily_archive_members_cache_key(str(day_gz))
+  keys = build_archive_members_redis_keys(cache_key)
+  fake.set(keys.lock_key, "tok:999999997", ex=30)
+  fake.set(keys.complete_key, "0")
+
+  populate_done = threading.Event()
+
+  def _finish_populate():
+    time.sleep(0.35)
+    fake.hset(keys.hash_key, mapping={"host/raw": "4"})
+    fake.set(keys.complete_key, "1")
+    populate_done.set()
+
+  threading.Thread(target=_finish_populate, daemon=True).start()
+  monkeypatch.setattr(st, "record_worker_stage", lambda *_a, **_k: None)
+  monkeypatch.setattr(st, "clear_worker_stage", lambda: None)
+  monkeypatch.setattr(st, "_log_long_ingest_timeout_budget_if_needed", lambda *_a, **_k: None)
+
+  stats_file = tmp_path / "segment"
+  stats_file.write_bytes(b"x")
+  _patch_stats_file_size_bytes(monkeypatch, lambda _p: 1024)
+
+  result = st._run_ingest_timed(
+      str(stats_file),
+      "ingest",
+      lambda: request_archive_members_populate_and_wait(str(day_gz)),
+  )
+  assert populate_done.wait(timeout=2.0)
+  assert result.get("host/raw") == 4
+
+
+@pytest.mark.skipif(not _SIGALRM_AVAILABLE, reason="SIGALRM not available")
+def test_parse_still_times_out_without_populate_wait(monkeypatch, tmp_path):
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 0.1)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s_per_mib", lambda: 0.0)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 0.1)
+  monkeypatch.setattr(st, "record_worker_stage", lambda *_a, **_k: None)
+  monkeypatch.setattr(st, "clear_worker_stage", lambda: None)
+  monkeypatch.setattr(st, "_log_long_ingest_timeout_budget_if_needed", lambda *_a, **_k: None)
+
+  stats_file = tmp_path / "segment"
+  stats_file.write_bytes(b"x")
+  _patch_stats_file_size_bytes(monkeypatch, lambda _p: 1024)
+
+  with pytest.raises(st.IngestPerFileTimeoutError) as excinfo:
+    st._run_ingest_timed(
+        str(stats_file),
+        "parse",
+        lambda: time.sleep(0.4),
+    )
+  assert excinfo.value.stage == "parse"

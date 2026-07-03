@@ -4537,6 +4537,204 @@ def test_ingest_sealed_single_flight_one_zstd_scan(
   assert results.count(False) == 8
 
 
+def _start_fake_populate_pool_worker(monkeypatch, fake, *, stop_event):
+  """BRPOP loop for unit tests when PopulatePoolController reports running."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+      reset_worker_pool_kind,
+      set_worker_pool_kind,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_populate_pool import (
+      set_populate_pool_controller,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      archive_members_populate_queue_brpop,
+  )
+
+  class _FakePopulateController:
+    def is_running(self):
+      return True
+
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_populate_lock_seconds",
+      lambda: 30,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: fake,
+  )
+  set_populate_pool_controller(_FakePopulateController())
+
+  def _worker():
+    token = set_worker_pool_kind("populate-pool")
+    try:
+      while not stop_event.is_set():
+        job = archive_members_populate_queue_brpop(timeout_s=0.2)
+        if job is None:
+          continue
+        canonical = str(job.get("canonical") or "")
+        if canonical:
+          helpers.execute_archive_members_populate_for_canonical(canonical)
+    finally:
+      reset_worker_pool_kind(token)
+
+  thread = threading.Thread(target=_worker, daemon=True)
+  thread.start()
+  return thread
+
+
+def test_ingest_worker_never_streams_sealed_on_cold_redis(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  import threading
+
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+      reset_worker_pool_kind,
+      set_worker_pool_kind,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_populate_pool import (
+      reset_populate_pool_controller_for_tests,
+  )
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
+      FakeRedis,
+  )
+
+  day_gz = tmp_path / "2024-06-13.tar.gz"
+  inner = tmp_path / "raw.txt"
+  inner.write_text("data")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(inner), arcname="host/raw")
+  sealed = str(day_gz)
+  fake = FakeRedis()
+  stop = threading.Event()
+  _start_fake_populate_pool_worker(monkeypatch, fake, stop_event=stop)
+
+  ingest_stream_calls = {"n": 0}
+  populate_stream_calls = {"n": 0}
+  stream_lock = threading.Lock()
+  original_stream = helpers._stream_compressed_archive_members
+
+  def _counting_stream(compressed_path, on_member=None, **kwargs):
+    from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+        get_worker_pool_kind,
+    )
+
+    with stream_lock:
+      kind = get_worker_pool_kind()
+      if kind == "ingest-pool":
+        ingest_stream_calls["n"] += 1
+      elif kind == "populate-pool":
+        populate_stream_calls["n"] += 1
+    return original_stream(compressed_path, on_member, **kwargs)
+
+  monkeypatch.setattr(
+      helpers, "_stream_compressed_archive_members", _counting_stream,
+  )
+
+  errors = []
+
+  def _lookup():
+    token = set_worker_pool_kind("ingest-pool")
+    try:
+      helpers.daily_archive_has_member_with_size(sealed, "host/raw", 4)
+    except Exception as exc:
+      errors.append(exc)
+    finally:
+      reset_worker_pool_kind(token)
+
+  threads = [threading.Thread(target=_lookup) for _ in range(8)]
+  for thread in threads:
+    thread.start()
+  for thread in threads:
+    thread.join(timeout=15)
+  stop.set()
+  reset_populate_pool_controller_for_tests()
+  assert not errors
+  assert ingest_stream_calls["n"] == 0
+  assert populate_stream_calls["n"] == 1
+
+
+def test_sealed_stream_timeout_no_longer_ingest_per_file(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  """Expired ingest deadline during populate wait must not abort sealed scan."""
+  import threading
+  import time
+
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      IngestArchiveLookupBudgetExceededError,
+      reset_ingest_task_deadline_monotonic,
+      set_ingest_task_deadline_monotonic,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+      reset_worker_pool_kind,
+      set_worker_pool_kind,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_populate_pool import (
+      reset_populate_pool_controller_for_tests,
+  )
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
+      FakeRedis,
+  )
+
+  day_gz = tmp_path / "2024-06-13.tar.gz"
+  inner = tmp_path / "raw.txt"
+  inner.write_text("data")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(inner), arcname="host/raw")
+  sealed = str(day_gz)
+  fake = FakeRedis()
+  stop = threading.Event()
+  _start_fake_populate_pool_worker(monkeypatch, fake, stop_event=stop)
+
+  stream_release = threading.Event()
+  original_stream = helpers._stream_compressed_archive_members
+
+  def _slow_stream(compressed_path, on_member=None, **kwargs):
+    stream_release.wait(timeout=5.0)
+    return original_stream(compressed_path, on_member, **kwargs)
+
+  monkeypatch.setattr(helpers, "_stream_compressed_archive_members", _slow_stream)
+
+  deadline_token = set_ingest_task_deadline_monotonic(time.monotonic() - 1.0)
+  errors = []
+  results = []
+
+  def _lookup():
+    pool_token = set_worker_pool_kind("ingest-pool")
+    try:
+      results.append(
+          helpers.daily_archive_has_member_with_size(sealed, "host/raw", 4),
+      )
+    except Exception as exc:
+      errors.append(exc)
+    finally:
+      reset_worker_pool_kind(pool_token)
+
+  thread = threading.Thread(target=_lookup)
+  thread.start()
+  time.sleep(0.1)
+  stream_release.set()
+  thread.join(timeout=10)
+  reset_ingest_task_deadline_monotonic(deadline_token)
+  stop.set()
+  reset_populate_pool_controller_for_tests()
+  assert not errors
+  assert not any(
+      isinstance(exc, IngestArchiveLookupBudgetExceededError) for exc in errors
+  )
+  assert results == [True]
+
+
 def test_validate_sealed_uses_redis_single_flight(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):

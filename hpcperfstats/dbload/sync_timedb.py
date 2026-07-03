@@ -481,6 +481,7 @@ def _prewarm_archive_members_redis_for_days(
   )
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       ArchiveDayIngestSkipError,
+      request_archive_members_populate_and_wait,
   )
 
   gated_restore = set(gated_tar_restore_day_tokens or ())
@@ -520,7 +521,10 @@ def _prewarm_archive_members_redis_for_days(
         flush=True,
     )
     try:
-      get_existing_archive_members_for_daily_archive(canonical)
+      request_archive_members_populate_and_wait(
+          canonical,
+          role="supervisor",
+      )
       source = consume_archive_members_populate_source(canonical)
       summary_parts.append("%s:%s" % (day_token, source))
     except ArchiveDayIngestSkipError:
@@ -5059,6 +5063,7 @@ def run_sync_timedb_supervisor_loop(
   idle_since_empty_queue = None
   worker_idle_loops = 0
   ingest_pool = None
+  populate_pool_controller = None
   pool_worker_exit = False
   stall_diagnostics = IngestStallDiagnostics()
   stall_diagnostics.ingest_pipeline = "combined"
@@ -5123,6 +5128,17 @@ def run_sync_timedb_supervisor_loop(
             worker_diagnostics_registry,
         ),
         pool_kind_log_label=ingest_pool_kind,
+    )
+    from hpcperfstats.dbload.lib.sync_timedb_populate_pool import (
+        PopulatePoolController,
+        set_populate_pool_controller,
+    )
+
+    populate_pool_controller = PopulatePoolController()
+    set_populate_pool_controller(populate_pool_controller)
+    populate_pool_controller.start(
+        script_name=SYNC_TIMEDB_PROCESS_TITLE,
+        registry=worker_diagnostics_registry,
     )
   archive_dispatch = ArchiveDispatchCoordinator(
       archive_pool=archive_pool,
@@ -6315,6 +6331,13 @@ def run_sync_timedb_supervisor_loop(
         ingest_pool,
         force_terminate=pool_worker_exit,
     )
+    from hpcperfstats.dbload.lib.sync_timedb_populate_pool import (
+        reset_populate_pool_controller_for_tests,
+        shutdown_populate_pool_controller,
+    )
+
+    shutdown_populate_pool_controller(force=pool_worker_exit)
+    reset_populate_pool_controller_for_tests()
 
 
 def parse_sync_timedb_argv(argv):

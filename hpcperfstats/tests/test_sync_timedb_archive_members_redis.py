@@ -75,6 +75,7 @@ class FakeRedis:
   def __init__(self):
     self._kv = {}
     self._hash = {}
+    self._lists = {}
     self._lock = threading.Lock()
 
   def ping(self):
@@ -100,6 +101,25 @@ class FakeRedis:
   def exists(self, key):
     with self._lock:
       return 1 if key in self._kv else 0
+
+  def lpush(self, key, value):
+    with self._lock:
+      self._lists.setdefault(key, []).insert(0, value)
+      return len(self._lists[key])
+
+  def brpop(self, key, timeout=0):
+    deadline = time.monotonic() + float(timeout)
+    while True:
+      with self._lock:
+        bucket = self._lists.get(key)
+        if bucket:
+          value = bucket.pop()
+          if not bucket:
+            del self._lists[key]
+          return key, value
+      if time.monotonic() >= deadline:
+        return None
+      time.sleep(min(0.02, max(0.0, deadline - time.monotonic())))
 
   def hset(self, key, field=None, value=None, mapping=None, **kwargs):
     with self._lock:
@@ -941,3 +961,54 @@ def test_merge_appended_members_into_redis_keeps_existing(_redis_test_env, tmp_p
   assert fake.hget(keys.hash_key, "existing") == "42"
   assert fake.hget(keys.hash_key, "appended") == "7"
   assert fake.get(keys.complete_key) == "1"
+
+
+def test_ingest_populate_wait_ignores_per_file_deadline(monkeypatch, tmp_path):
+  """Populate wait paths must not consult per-file ingest deadline ContextVar."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      request_archive_members_populate_and_wait,
+      reset_ingest_task_deadline_monotonic,
+      set_ingest_task_deadline_monotonic,
+  )
+
+  fake = FakeRedis()
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_cache_enabled",
+      lambda: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
+      lambda: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: fake,
+  )
+  reset_archive_members_redis_client_for_tests()
+
+  day_gz = tmp_path / "2024-06-13.tar.gz"
+  inner = tmp_path / "raw.txt"
+  inner.write_text("data")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(inner), arcname="host/raw")
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  fake.set(keys.lock_key, "tok:999999997", ex=30)
+  fake.set(keys.complete_key, "0")
+
+  populate_done = threading.Event()
+
+  def _finish_populate():
+    time.sleep(0.05)
+    fake.hset(keys.hash_key, mapping={"host/raw": "4"})
+    fake.set(keys.complete_key, "1")
+    populate_done.set()
+
+  threading.Thread(target=_finish_populate, daemon=True).start()
+  token = set_ingest_task_deadline_monotonic(time.monotonic() - 1.0)
+  try:
+    members = request_archive_members_populate_and_wait(str(day_gz))
+  finally:
+    reset_ingest_task_deadline_monotonic(token)
+  assert populate_done.wait(timeout=2.0)
+  assert members.get("host/raw") == 4

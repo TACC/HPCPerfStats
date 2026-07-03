@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextvars
+import json
 import os
 import secrets
 import threading
@@ -23,6 +24,9 @@ _DEGRADED_PREFIX = "%s:archive_populate_degraded:v1" % _KEY_PREFIX
 _DAY_SKIP_PREFIX = "%s:archive_day_ingest_skip:v1" % _KEY_PREFIX
 _INVALIDATE_PENDING_PREFIX = "%s:archive_members:invalidate_pending:v1" % _KEY_PREFIX
 _PROGRESS_SUFFIX = ":progress"
+_POPULATE_QUEUE_KEY = "%s:archive_members:populate_queue:v1" % _KEY_PREFIX
+_POPULATE_QUEUED_PREFIX = "%s:archive_members:populate_queued:v1" % _KEY_PREFIX
+_POPULATE_QUEUED_TTL_SECONDS = 3600
 
 _REDIS_CLIENT = None
 _REDIS_CLIENT_URL = None
@@ -68,6 +72,17 @@ def get_ingest_task_deadline_monotonic():
   return _ingest_task_deadline_monotonic.get()
 
 
+def extend_ingest_task_deadline_monotonic(delta_seconds):
+  """Extend active ingest worker deadline by populate-wait wall time."""
+  delta_seconds = float(delta_seconds)
+  if delta_seconds <= 0.0:
+    return
+  deadline = get_ingest_task_deadline_monotonic()
+  if deadline is None:
+    return
+  _ingest_task_deadline_monotonic.set(float(deadline) + delta_seconds)
+
+
 def set_ingest_task_effective_timeout_s(timeout_s):
   """Resolved per-file ingest budget for this worker task (ContextVar)."""
   return _ingest_task_effective_timeout_s.set(timeout_s)
@@ -88,6 +103,11 @@ def _raise_if_ingest_deadline_exceeded():
         "ingest archive lookup budget exceeded (deadline_monotonic=%s)"
         % deadline,
     )
+
+
+def _raise_if_ingest_deadline_exceeded_when_enabled(respect_ingest_deadline):
+  if respect_ingest_deadline:
+    _raise_if_ingest_deadline_exceeded()
 
 
 class ArchiveDayIngestSkipError(RuntimeError):
@@ -664,9 +684,10 @@ def _check_populate_wait_limits(
     started_monotonic,
     last_progress_monotonic,
     sealed_path="",
+    respect_ingest_deadline=True,
 ) -> bool:
   """Return True when a stale populate lock was released for retry."""
-  _raise_if_ingest_deadline_exceeded()
+  _raise_if_ingest_deadline_exceeded_when_enabled(respect_ingest_deadline)
   _raise_if_archive_day_ingest_skip(keys, sealed_path, client)
   max_seconds = _populate_max_seconds()
   if max_seconds > 0 and (time.monotonic() - started_monotonic) >= max_seconds:
@@ -749,7 +770,6 @@ def populate_archive_members_redis(
 
     def _on_member(name: str, size: int):
       nonlocal saw_duplicates, last_heartbeat_monotonic
-      _raise_if_ingest_deadline_exceeded()
       last_heartbeat_monotonic = _maybe_populate_heartbeat(
           client, keys, last_heartbeat_monotonic,
       )
@@ -824,8 +844,13 @@ def wait_for_member_match(
     expected_size: int,
     *,
     sealed_path="",
+    respect_ingest_deadline=True,
 ) -> bool:
   """Wait for populate completion or incremental HASH hit; stall if no progress."""
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_sigalrm import (
+      populate_wait_ingest_sigalrm_guard,
+  )
+
   client = get_archive_members_redis_client(required=True)
   expected_size = int(expected_size)
   started = time.monotonic()
@@ -833,90 +858,103 @@ def wait_for_member_match(
   last_hlen = _hash_member_count(client, keys)
   last_progress_monotonic = started
 
-  while True:
-    _raise_if_ingest_deadline_exceeded()
-    _raise_if_archive_day_ingest_skip(keys, sealed_path, client)
-    complete = client.get(keys.complete_key)
-    raw_size = client.hget(keys.hash_key, member_name)
-    if raw_size is not None:
-      size = int(raw_size)
-      if size == expected_size:
-        return True
-      if size > expected_size:
+  with populate_wait_ingest_sigalrm_guard(
+      respect_ingest_deadline=respect_ingest_deadline,
+  ):
+    while True:
+      _raise_if_ingest_deadline_exceeded_when_enabled(respect_ingest_deadline)
+      _raise_if_archive_day_ingest_skip(keys, sealed_path, client)
+      complete = client.get(keys.complete_key)
+      raw_size = client.hget(keys.hash_key, member_name)
+      if raw_size is not None:
+        size = int(raw_size)
+        if size == expected_size:
+          return True
+        if size > expected_size:
+          return False
+      if complete == "1":
         return False
-    if complete == "1":
-      return False
 
-    progress_seen, last_progress_ts, last_hlen = _populate_progress_seen(
-        client,
-        keys,
-        last_progress_ts=last_progress_ts,
-        last_hlen=last_hlen,
-    )
-    if progress_seen:
-      last_progress_monotonic = time.monotonic()
+      progress_seen, last_progress_ts, last_hlen = _populate_progress_seen(
+          client,
+          keys,
+          last_progress_ts=last_progress_ts,
+          last_hlen=last_hlen,
+      )
+      if progress_seen:
+        last_progress_monotonic = time.monotonic()
 
-    stale_lock_released = _check_populate_wait_limits(
-        client,
-        keys,
-        started_monotonic=started,
-        last_progress_monotonic=last_progress_monotonic,
-        sealed_path=sealed_path,
-    )
-    if stale_lock_released:
-      last_progress_monotonic = time.monotonic()
-      last_progress_ts = _read_populate_progress_ts(client, keys)
-      last_hlen = _hash_member_count(client, keys)
+      stale_lock_released = _check_populate_wait_limits(
+          client,
+          keys,
+          started_monotonic=started,
+          last_progress_monotonic=last_progress_monotonic,
+          sealed_path=sealed_path,
+          respect_ingest_deadline=respect_ingest_deadline,
+      )
+      if stale_lock_released:
+        last_progress_monotonic = time.monotonic()
+        last_progress_ts = _read_populate_progress_ts(client, keys)
+        last_hlen = _hash_member_count(client, keys)
 
-    if not client.exists(keys.lock_key):
-      existing = _hgetall_members(client, keys)
-      if existing is not None:
-        return existing.get(member_name) == expected_size
+      if not client.exists(keys.lock_key):
+        existing = _hgetall_members(client, keys)
+        if existing is not None:
+          return existing.get(member_name) == expected_size
 
-    time.sleep(_wait_poll_seconds())
+      time.sleep(_wait_poll_seconds())
 
 
 def wait_for_complete_members(
     keys: ArchiveMembersRedisKeys,
     *,
     sealed_path="",
+    respect_ingest_deadline=True,
 ) -> dict:
   """Block until ``complete=1`` and return full member map."""
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_sigalrm import (
+      populate_wait_ingest_sigalrm_guard,
+  )
+
   client = get_archive_members_redis_client(required=True)
   started = time.monotonic()
   last_progress_ts = _read_populate_progress_ts(client, keys)
   last_hlen = _hash_member_count(client, keys)
   last_progress_monotonic = started
 
-  while True:
-    _raise_if_ingest_deadline_exceeded()
-    _raise_if_archive_day_ingest_skip(keys, sealed_path, client)
-    members = _hgetall_members(client, keys)
-    if members is not None:
-      return members
+  with populate_wait_ingest_sigalrm_guard(
+      respect_ingest_deadline=respect_ingest_deadline,
+  ):
+    while True:
+      _raise_if_ingest_deadline_exceeded_when_enabled(respect_ingest_deadline)
+      _raise_if_archive_day_ingest_skip(keys, sealed_path, client)
+      members = _hgetall_members(client, keys)
+      if members is not None:
+        return members
 
-    progress_seen, last_progress_ts, last_hlen = _populate_progress_seen(
-        client,
-        keys,
-        last_progress_ts=last_progress_ts,
-        last_hlen=last_hlen,
-    )
-    if progress_seen:
-      last_progress_monotonic = time.monotonic()
+      progress_seen, last_progress_ts, last_hlen = _populate_progress_seen(
+          client,
+          keys,
+          last_progress_ts=last_progress_ts,
+          last_hlen=last_hlen,
+      )
+      if progress_seen:
+        last_progress_monotonic = time.monotonic()
 
-    stale_lock_released = _check_populate_wait_limits(
-        client,
-        keys,
-        started_monotonic=started,
-        last_progress_monotonic=last_progress_monotonic,
-        sealed_path=sealed_path,
-    )
-    if stale_lock_released:
-      last_progress_monotonic = time.monotonic()
-      last_progress_ts = _read_populate_progress_ts(client, keys)
-      last_hlen = _hash_member_count(client, keys)
+      stale_lock_released = _check_populate_wait_limits(
+          client,
+          keys,
+          started_monotonic=started,
+          last_progress_monotonic=last_progress_monotonic,
+          sealed_path=sealed_path,
+          respect_ingest_deadline=respect_ingest_deadline,
+      )
+      if stale_lock_released:
+        last_progress_monotonic = time.monotonic()
+        last_progress_ts = _read_populate_progress_ts(client, keys)
+        last_hlen = _hash_member_count(client, keys)
 
-    time.sleep(_wait_poll_seconds())
+      time.sleep(_wait_poll_seconds())
 
 
 def describe_archive_members_populate_redis_for_day(
@@ -1149,3 +1187,114 @@ def dedupe_hint_is_set(day_token: str, client=None) -> bool:
     if client is None:
       return False
   return bool(client.get("%s:%s" % (_DEDUPE_HINT_PREFIX, day_token)))
+
+
+def _populate_queued_key(day_token: str) -> str:
+  return "%s:%s" % (_POPULATE_QUEUED_PREFIX, day_token)
+
+
+def enqueue_archive_members_populate(canonical_path, day_token):
+  """Enqueue one calendar day for populate-pool workers (deduped per day)."""
+  if not day_token or day_token == "unknown":
+    return False
+  client = get_archive_members_redis_client(required=True)
+  queued_key = _populate_queued_key(day_token)
+  if not client.set(queued_key, "1", nx=True, ex=_POPULATE_QUEUED_TTL_SECONDS):
+    return False
+  payload = json.dumps({
+      "canonical": str(canonical_path),
+      "day_token": str(day_token),
+  })
+  client.lpush(_POPULATE_QUEUE_KEY, payload)
+  return True
+
+
+def archive_members_populate_queue_brpop(*, timeout_s=1.0):
+  """Blocking pop for populate-pool worker; returns job dict or None."""
+  client = get_archive_members_redis_client(required=True)
+  timeout_s = max(0.1, float(timeout_s))
+  result = client.brpop(_POPULATE_QUEUE_KEY, timeout=timeout_s)
+  if not result:
+    return None
+  _key, raw = result
+  del _key
+  try:
+    job = json.loads(raw)
+  except (TypeError, ValueError):
+    return None
+  if not isinstance(job, dict):
+    return None
+  return job
+
+
+def request_archive_members_populate_and_wait(
+    archive_compressed_path,
+    *,
+    role="ingest",
+):
+  """Wait for warm Redis member map; enqueue populate-pool work when cold.
+
+  Ingest/archive pool callers must use this instead of running sealed streams
+  locally. Populate wait paths ignore per-file ingest deadlines.
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      _daily_archive_members_cache_key,
+      _lookup_daily_archive_members_cache,
+      _resolve_sealed_daily_archive_path,
+      _store_daily_archive_members_cache,
+      execute_archive_members_populate_for_canonical,
+      normalize_daily_compressed_path,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_populate_pool import (
+      get_populate_pool_controller,
+  )
+
+  del role
+  canonical = normalize_daily_compressed_path(archive_compressed_path)
+  cached = _lookup_daily_archive_members_cache(canonical)
+  if cached is not None:
+    return dict(cached)
+  if not archive_members_redis_enabled():
+    raise ArchiveMembersRedisUnavailableError(
+        "request_archive_members_populate_and_wait requires Redis L2",
+    )
+  cache_key = _daily_archive_members_cache_key(canonical)
+  keys = build_archive_members_redis_keys(cache_key)
+  members = redis_lookup_full_members(keys)
+  if members is not None:
+    _store_daily_archive_members_cache(canonical, members)
+    return dict(members)
+  sealed_path = _resolve_sealed_daily_archive_path(archive_compressed_path) or ""
+  client = get_archive_members_redis_client(required=True)
+  respect_ingest_deadline = False
+  if client.exists(keys.lock_key):
+    members = wait_for_complete_members(
+        keys,
+        sealed_path=sealed_path,
+        respect_ingest_deadline=respect_ingest_deadline,
+    )
+  elif populate_degraded_is_set(keys, client=client):
+    if get_archive_day_ingest_skip(keys, client=client) is not None:
+      return {}
+    raise ArchiveMembersRedisUnavailableError(
+        "archive members Redis populate degraded for %s without day skip"
+        % keys.day_token,
+    )
+  else:
+    controller = get_populate_pool_controller()
+    if controller is not None and controller.is_running():
+      enqueue_archive_members_populate(canonical, keys.day_token)
+    else:
+      execute_archive_members_populate_for_canonical(canonical)
+    members = wait_for_complete_members(
+        keys,
+        sealed_path=sealed_path,
+        respect_ingest_deadline=respect_ingest_deadline,
+    )
+  if members is not None:
+    _store_daily_archive_members_cache(canonical, members)
+    return dict(members)
+  raise ArchiveMembersRedisUnavailableError(
+      "archive members Redis enabled but lookup did not return members for %s"
+      % canonical,
+  )

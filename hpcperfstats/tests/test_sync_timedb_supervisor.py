@@ -4060,6 +4060,57 @@ def test_prewarm_skips_sealed_scan_after_tar_append_merge(monkeypatch, tmp_path)
     assert populate_calls['n'] == 0
     assert not any(('Prewarming archive members' in line for line in log_lines))
 
+def test_supervisor_prewarm_delegates_to_populate_pool(monkeypatch, tmp_path):
+    """MainThread prewarm enqueues populate-pool work; never runs sealed streams."""
+    import threading
+    import tarfile
+    from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+        get_worker_pool_kind,
+    )
+    from hpcperfstats.dbload.lib.sync_timedb_populate_pool import (
+        reset_populate_pool_controller_for_tests,
+    )
+    from hpcperfstats.tests.test_sync_timedb_archive import (
+        _start_fake_populate_pool_worker,
+    )
+    from hpcperfstats.tests.test_sync_timedb_archive_members_redis import FakeRedis
+
+    fake = FakeRedis()
+    stop = threading.Event()
+    _start_fake_populate_pool_worker(monkeypatch, fake, stop_event=stop)
+    monkeypatch.setattr(
+        'hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled',
+        lambda: True,
+    )
+    day = '2026-05-23'
+    day_gz = tmp_path / ('%s.tar.gz' % day)
+    inner = tmp_path / 'raw.txt'
+    inner.write_text('data')
+    with tarfile.open(day_gz, 'w:gz') as tf:
+        tf.add(str(inner), arcname='host/raw')
+    canonical = str(day_gz)
+    main_thread_stream = {'n': 0}
+    populate_stream = {'n': 0}
+    original_stream = archive_helpers._stream_compressed_archive_members
+
+    def _counting_stream(compressed_path, on_member=None, **kwargs):
+        kind = get_worker_pool_kind()
+        if kind is None:
+            main_thread_stream['n'] += 1
+        elif kind == 'populate-pool':
+            populate_stream['n'] += 1
+        return original_stream(compressed_path, on_member, **kwargs)
+
+    monkeypatch.setattr(
+        archive_helpers, '_stream_compressed_archive_members', _counting_stream,
+    )
+    summary = st._prewarm_archive_members_redis_for_days([(canonical, day)])
+    stop.set()
+    reset_populate_pool_controller_for_tests()
+    assert main_thread_stream['n'] == 0
+    assert populate_stream['n'] == 1
+    assert '%s:sealed_populated' % day in summary
+
 def test_supervisor_oldest_day_chunk_gate_inflight_starvation(monkeypatch, tmp_path):
     """While oldest blocked tar has work, ingest chunk excludes newer-day backlog."""
     shutdown_requested[0] = False

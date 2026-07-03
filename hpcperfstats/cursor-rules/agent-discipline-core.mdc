@@ -47,7 +47,7 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 | `hpcperfstats/tests/test_sync_timedb*.py`, `tests/run_sync_timedb_regression_battery.sh` | `sync-timedb-change-regression-gate.mdc`, `test-first-discipline.mdc` |
 | `hpcperfstats/dbload/lib/sync_timedb_parsing.py`, collapse tests in `hpcperfstats/tests/test_sync_timedb.py` | `sync-timedb-parsing-collapse-vectorization.mdc` |
 | Startup archive scan | `sync-timedb-canonical-startup-archive-scan.mdc` |
-| Ingest pool + sealed archive / Redis members | `sync-timedb-ingest-pool-io-coordination.mdc` |
+| Ingest pool + sealed archive / Redis members | `sync-timedb-ingest-pool-io-coordination.mdc` (`sync_timedb_populate_pool.py`, populate queue, `request_archive_members_populate_and_wait`) |
 | `hpcperfstats/analysis/metrics/` | `runtime-resource-and-metrics-safety.mdc`, `pipeline-metrics-e2e-maintenance.mdc`, `update-metrics-job-listing-new-data-type.mdc`, `update-metrics-batch-resilience.mdc` |
 | Bugfix / traceback / stall / timeout | `bugfix-and-perf-change-playbook.mdc`, `exhaustive-error-path-analysis.mdc`, `logic-change-checklist.mdc` |
 
