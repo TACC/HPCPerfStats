@@ -320,7 +320,7 @@ Chunk handlers call **`hard_exit_pool_worker_error`** (`os._exit`) immediately a
 | `sync_archive_members_redis_wait_poll_seconds` | 0.25 | Waiter poll for incremental `HGET` + `complete` |
 | `sync_archive_members_redis_hset_batch_size` | 500 | Winner `HSET` pipeline batch size during scan |
 | `sync_archive_members_redis_max_payload_bytes` | 8388608 | Refuse oversized HASH populate |
-| `sync_archive_members_populate_pool_processes` | 1 | Dedicated `populate-pool` workers for sealed/tar Redis L2 streaming (ingest/archive pools enqueue + wait only) |
+| `sync_archive_members_populate_pool_processes` | 2 | Dedicated `populate-pool` workers for sealed/tar Redis L2 streaming (ingest/archive pools enqueue + wait only) |
 
 **Post-deploy populate-pool verification (`pipeline` logs):**
 

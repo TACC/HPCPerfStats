@@ -1780,18 +1780,18 @@ def get_sync_archive_members_populate_pool_processes():
     try:
       return max(0, int(env))
     except (TypeError, ValueError, OverflowError):
-      return 1
+      return 2
   _ensure_cfg_loaded()
   try:
     return max(
         0,
         int(_pipeline_get(
             "sync_archive_members_populate_pool_processes",
-            fallback="1",
+            fallback="2",
         )),
     )
   except (TypeError, ValueError, OverflowError):
-    return 1
+    return 2
 
 
 def get_sync_ingest_per_file_timeout_s():
