@@ -34,6 +34,10 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     daily_tar_seal_calendar_eligible,
     daily_tar_needs_day_close_work,
     raw_stats_path_needs_tar_append,
+    raw_stats_path_tar_append_decision,
+    ARCHIVE_SKIP_MEMBER_EXISTS,
+    ARCHIVE_SKIP_MISSING_PATH,
+    ARCHIVE_SKIP_ACTIVE_SEGMENT,
     daily_tar_paths_from_pending_archive_tasks,
     collect_lock_sidecar_stats,
     collect_stats_files_in_range,
@@ -4312,6 +4316,97 @@ def test_raw_stats_path_needs_tar_append_skips_matching_member(tmp_path):
       str(daily_dir),
       first_ts=ts,
   )
+
+
+def test_raw_stats_path_tar_append_decision_member_exists(tmp_path):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  host_dir = tmp_path / "archive" / "node1.hpc"
+  host_dir.mkdir(parents=True)
+  ts = _local_day_epoch("2024-01-02")
+  raw_path = host_dir / ts
+  payload = f"{ts} job1 node1\n".encode()
+  raw_path.write_bytes(payload)
+  tar_path = daily_dir / "2024-01-02.tar"
+  member_name = get_tar_member_name(str(raw_path))
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(raw_path), arcname=member_name)
+  needs, skip = raw_stats_path_tar_append_decision(
+      str(raw_path),
+      str(daily_dir),
+      first_ts=ts,
+  )
+  assert needs is False
+  assert skip == ARCHIVE_SKIP_MEMBER_EXISTS
+
+
+def test_raw_stats_path_tar_append_decision_missing_path(tmp_path):
+  needs, skip = raw_stats_path_tar_append_decision(
+      str(tmp_path / "missing" / "segment"),
+      str(tmp_path / "daily"),
+  )
+  assert needs is False
+  assert skip == ARCHIVE_SKIP_MISSING_PATH
+
+
+def test_raw_stats_path_tar_append_decision_active_segment(
+    tmp_path, monkeypatch,
+):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  raw_path = tmp_path / "archive" / "host.hpc" / "1700000000"
+  raw_path.parent.mkdir(parents=True)
+  raw_path.write_text("1700000000 job1 host\n")
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.stats_file_is_active_segment",
+      lambda _p: True,
+  )
+  needs, skip = raw_stats_path_tar_append_decision(
+      str(raw_path),
+      str(daily_dir),
+  )
+  assert needs is False
+  assert skip == ARCHIVE_SKIP_ACTIVE_SEGMENT
+
+
+def test_raw_stats_path_tar_append_decision_day_ingest_skip(
+    tmp_path, monkeypatch,
+):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      ArchiveDayIngestSkipError,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  host_dir = tmp_path / "archive" / "node1.hpc"
+  host_dir.mkdir(parents=True)
+  ts = _local_day_epoch("2024-01-03")
+  raw_path = host_dir / ts
+  raw_path.write_text(f"{ts} job1 node1\n")
+
+  def raise_skip(*_a, **_k):
+    raise ArchiveDayIngestSkipError(
+        "2024-01-03",
+        str(daily_dir / "2024-01-03.tar.zst"),
+        "zst_frame_invalid",
+        "bad frame",
+    )
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.daily_archive_has_member_with_size",
+      raise_skip,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers._log_archive_day_ingest_skip_once",
+      lambda _exc: None,
+  )
+  needs, skip = raw_stats_path_tar_append_decision(
+      str(raw_path),
+      str(daily_dir),
+      first_ts=ts,
+  )
+  assert needs is False
+  assert skip == "day_ingest_skip:zst_frame_invalid"
 
 
 def test_raw_stats_path_needs_tar_append_when_member_size_differs(tmp_path):

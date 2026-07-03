@@ -770,6 +770,57 @@ def daily_tar_seal_calendar_eligible(tar_path, local_tz, now=None):
   return now >= grace_end
 
 
+ARCHIVE_SKIP_MEMBER_EXISTS = "member_exists"
+ARCHIVE_SKIP_MISSING_PATH = "missing_path"
+ARCHIVE_SKIP_ACTIVE_SEGMENT = "active_segment"
+ARCHIVE_SKIP_UNRESOLVED_DAY = "unresolved_day"
+ARCHIVE_SKIP_DAY_INGEST_SKIP_PREFIX = "day_ingest_skip:"
+
+
+def _day_ingest_skip_archive_token(kind):
+  return "%s%s" % (ARCHIVE_SKIP_DAY_INGEST_SKIP_PREFIX, kind)
+
+
+def raw_stats_path_tar_append_decision(
+    stats_path,
+    tgz_archive_dir,
+    *,
+    first_ts=None,
+):
+  """Return ``(needs_append, skip_reason)`` for closed raw tar-append lookup.
+
+  ``skip_reason`` is empty when ``needs_append`` is True. When append is not
+  needed, ``skip_reason`` is a stable token for per-file ingest logs.
+  """
+  if not stats_path or not os.path.isfile(stats_path):
+    return False, ARCHIVE_SKIP_MISSING_PATH
+  if stats_file_is_active_segment(stats_path):
+    return False, ARCHIVE_SKIP_ACTIVE_SEGMENT
+  file_date = _derive_stats_path_date(stats_path, first_ts)
+  if file_date is None:
+    return False, ARCHIVE_SKIP_UNRESOLVED_DAY
+  compressed_path = daily_compressed_path_for_date(tgz_archive_dir, file_date)
+  member_name = get_tar_member_name(stats_path)
+  try:
+    expected_size = os.path.getsize(stats_path)
+  except OSError:
+    return True, ""
+  try:
+    if daily_archive_has_member_with_size(
+        compressed_path, member_name, expected_size,
+    ):
+      return False, ARCHIVE_SKIP_MEMBER_EXISTS
+  except Exception as exc:
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+        ArchiveDayIngestSkipError,
+    )
+    if isinstance(exc, ArchiveDayIngestSkipError):
+      _log_archive_day_ingest_skip_once(exc)
+      return False, _day_ingest_skip_archive_token(exc.kind)
+    raise
+  return True, ""
+
+
 def raw_stats_path_needs_tar_append(
     stats_path,
     tgz_archive_dir,
@@ -783,33 +834,12 @@ def raw_stats_path_needs_tar_append(
   missing, active (same inode as ``current``), or its calendar day cannot be
   resolved.
   """
-  if not stats_path or not os.path.isfile(stats_path):
-    return False
-  if stats_file_is_active_segment(stats_path):
-    return False
-  file_date = _derive_stats_path_date(stats_path, first_ts)
-  if file_date is None:
-    return False
-  compressed_path = daily_compressed_path_for_date(tgz_archive_dir, file_date)
-  member_name = get_tar_member_name(stats_path)
-  try:
-    expected_size = os.path.getsize(stats_path)
-  except OSError:
-    return True
-  try:
-    if daily_archive_has_member_with_size(
-        compressed_path, member_name, expected_size,
-    ):
-      return False
-  except Exception as exc:
-    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-        ArchiveDayIngestSkipError,
-    )
-    if isinstance(exc, ArchiveDayIngestSkipError):
-      _log_archive_day_ingest_skip_once(exc)
-      return False
-    raise
-  return True
+  needs_append, _skip_reason = raw_stats_path_tar_append_decision(
+      stats_path,
+      tgz_archive_dir,
+      first_ts=first_ts,
+  )
+  return needs_append
 
 
 def daily_tar_paths_for_stats_paths(

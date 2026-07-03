@@ -150,7 +150,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     sort_pending_stats_paths_oldest_first,
     INGEST_PARSE_FAILED_QUARANTINE_REASON,
     quarantine_ingest_failed_raw_path,
-    raw_stats_path_needs_tar_append,
+    raw_stats_path_tar_append_decision,
     rescan_pending_stats_files,
     set_archive_members_invalidation_hook,
     stats_file_is_active_segment,
@@ -2232,6 +2232,14 @@ _DB_COMPLETE_REASON_TO_SKIP = {
     "db_complete_full_scan": "full_scan",
 }
 
+_ARCHIVE_SKIP_FROM_OUTCOME = {
+    "quarantine": "quarantine",
+    "parse_fail": "parse_fail",
+    "active_segment": "active_segment",
+    "lookup_budget": "lookup_budget",
+    "timeout": "timeout",
+}
+
 
 def _db_skip_token_from_complete_reason(reason):
   if not reason:
@@ -2255,6 +2263,36 @@ class IngestFileOutcome:
   stats_rows: int | None = None
   proc_rows: int | None = None
   fail_reason: str | None = None
+  archive_skip: str | None = None
+
+
+def _archive_skip_token_for_outcome(outcome):
+  """Infer archive log token when meta omitted but archival was skipped."""
+  if outcome.need_archival:
+    return "yes"
+  if outcome.archive_skip:
+    return outcome.archive_skip
+  mapped = _ARCHIVE_SKIP_FROM_OUTCOME.get(outcome.outcome)
+  if mapped:
+    return mapped
+  if outcome.outcome == "parse_fail" and outcome.fail_reason == "invalid_stats_path":
+    return "invalid_stats_path"
+  if outcome.ingest_ok and outcome.outcome == "ingested":
+    return "db_write_error"
+  return "not_needed"
+
+
+def _need_archival_and_archive_skip_meta(stats_file, first_ts):
+  """Tar-append decision for DB-complete ingest; returns meta fragment."""
+  need_archival, skip_reason = raw_stats_path_tar_append_decision(
+      stats_file,
+      tgz_archive_dir,
+      first_ts=first_ts,
+  )
+  meta = {}
+  if not need_archival and skip_reason:
+    meta["archive_skip"] = skip_reason
+  return need_archival, meta
 
 
 def _pack_ingest_worker_result(
@@ -2331,6 +2369,7 @@ def _ingest_file_outcome_from_worker(
       stats_rows=meta.get("stats_rows"),
       proc_rows=meta.get("proc_rows"),
       fail_reason=meta.get("fail_reason"),
+      archive_skip=meta.get("archive_skip"),
   )
 
 
@@ -2345,7 +2384,7 @@ def _log_ingest_file_outcome(
       "outcome=%s" % outcome.outcome,
       "elapsed_s=%.1f" % float(outcome.elapsed_s),
       "ingest_ok=%s" % ("yes" if outcome.ingest_ok else "no"),
-      "archive=%s" % ("yes" if outcome.need_archival else "no"),
+      "archive=%s" % _archive_skip_token_for_outcome(outcome),
       "db_skip=%s" % (outcome.db_skip or "no"),
       "size_bytes=%d" % stats_file_size_bytes(outcome.path),
   ]
@@ -2402,9 +2441,17 @@ def _quarantine_failed_ingest_parse(stats_file, error_detail=None):
 def _parse_failure_after_quarantine(stats_file, parse_elapsed, error_detail=None):
   """Quarantine on permanent parse failure; ingest_ok=True when DLO move succeeds."""
   if _quarantine_failed_ingest_parse(stats_file, error_detail=error_detail):
-    meta = _ingest_outcome_meta(outcome="quarantine", fail_reason=error_detail)
+    meta = _ingest_outcome_meta(
+        outcome="quarantine",
+        fail_reason=error_detail,
+        archive_skip="quarantine",
+    )
     return (stats_file, None, False, True, parse_elapsed, meta)
-  meta = _ingest_outcome_meta(outcome="parse_fail", fail_reason=error_detail)
+  meta = _ingest_outcome_meta(
+      outcome="parse_fail",
+      fail_reason=error_detail,
+      archive_skip="parse_fail",
+  )
   return (stats_file, None, False, False, parse_elapsed, meta)
 
 
@@ -2427,7 +2474,7 @@ def _parse_stats_file_payload(stats_file, stats_file_contents=None, *, use_inges
           False,
           False,
           0.0,
-          _ingest_outcome_meta(outcome="lookup_budget"),
+          _ingest_outcome_meta(outcome="lookup_budget", archive_skip="lookup_budget"),
       )
   try:
     return _run_ingest_timed(
@@ -2443,7 +2490,11 @@ def _parse_stats_file_payload(stats_file, stats_file_contents=None, *, use_inges
         False,
         False,
         exc.elapsed_s,
-        _ingest_outcome_meta(outcome="timeout", fail_reason=exc.stage),
+        _ingest_outcome_meta(
+            outcome="timeout",
+            fail_reason=exc.stage,
+            archive_skip="timeout",
+        ),
     )
   except IngestArchiveLookupBudgetExceededError as exc:
     _log_ingest_archive_lookup_budget_exceeded(exc)
@@ -2453,7 +2504,7 @@ def _parse_stats_file_payload(stats_file, stats_file_contents=None, *, use_inges
         False,
         False,
         0.0,
-        _ingest_outcome_meta(outcome="lookup_budget"),
+        _ingest_outcome_meta(outcome="lookup_budget", archive_skip="lookup_budget"),
     )
   finally:
     _release_ingest_worker_heap()
@@ -2558,10 +2609,9 @@ def _resolve_streaming_ingest_start(stats_file, parse_elapsed_fn):
       if start_idx == -1:
         db_complete_reason = "db_complete_full_scan"
   if start_idx == -1:
-    need_archival = raw_stats_path_needs_tar_append(
+    need_archival, archive_skip_meta = _need_archival_and_archive_skip_meta(
         stats_file,
-        tgz_archive_dir,
-        first_ts=t,
+        t,
     )
     parse_elapsed = parse_elapsed_fn()
     meta = _ingest_outcome_meta(
@@ -2570,6 +2620,7 @@ def _resolve_streaming_ingest_start(stats_file, parse_elapsed_fn):
             db_complete_reason or "db_complete_full_scan",
         ),
         parse_elapsed_s=parse_elapsed,
+        **archive_skip_meta,
     )
     return True, (stats_file, None, need_archival, True, parse_elapsed, meta)
   return False, (int(start_idx), need_archival)
@@ -2809,6 +2860,7 @@ def _parse_stats_file_payload_impl(stats_file, stats_file_contents=None):
             _ingest_outcome_meta(
                 outcome="parse_fail",
                 fail_reason="invalid_stats_path",
+                archive_skip="invalid_stats_path",
             ),
         )
       if stats_file_is_active_segment(stats_file):
@@ -2820,7 +2872,10 @@ def _parse_stats_file_payload_impl(stats_file, stats_file_contents=None):
             False,
             False,
             _parse_elapsed(),
-            _ingest_outcome_meta(outcome="active_segment"),
+            _ingest_outcome_meta(
+                outcome="active_segment",
+                archive_skip="active_segment",
+            ),
         )
       if _should_stream_stats_file(stats_file, stats_file_contents):
         return _parse_stats_file_payload_impl_streaming(stats_file)
@@ -2874,10 +2929,9 @@ def _parse_stats_file_payload_impl(stats_file, stats_file_contents=None):
             if start_idx == -1:
               db_complete_reason = "db_complete_full_scan"
       if start_idx == -1:
-        need_archival = raw_stats_path_needs_tar_append(
+        need_archival, archive_skip_meta = _need_archival_and_archive_skip_meta(
             stats_file,
-            tgz_archive_dir,
-            first_ts=t,
+            t,
         )
         parse_elapsed = _parse_elapsed()
         meta = _ingest_outcome_meta(
@@ -2886,6 +2940,7 @@ def _parse_stats_file_payload_impl(stats_file, stats_file_contents=None):
                 db_complete_reason or "db_complete_full_scan",
             ),
             parse_elapsed_s=parse_elapsed,
+            **archive_skip_meta,
         )
         return (stats_file, None, need_archival, True, parse_elapsed, meta)
       lines = lines[start_idx:]
@@ -3005,7 +3060,11 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
         False,
         False,
         exc.elapsed_s,
-        _ingest_outcome_meta(outcome="timeout", fail_reason=exc.stage),
+        _ingest_outcome_meta(
+            outcome="timeout",
+            fail_reason=exc.stage,
+            archive_skip="timeout",
+        ),
     )
   except IngestArchiveLookupBudgetExceededError as exc:
     _log_ingest_archive_lookup_budget_exceeded(exc)
@@ -3014,7 +3073,7 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
         False,
         False,
         0.0,
-        _ingest_outcome_meta(outcome="lookup_budget"),
+        _ingest_outcome_meta(outcome="lookup_budget", archive_skip="lookup_budget"),
     )
   finally:
     _release_ingest_worker_heap()

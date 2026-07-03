@@ -69,7 +69,9 @@ def test_db_complete_head_tail_skips_full_duplicate_scan(tmp_path, monkeypatch):
       st, "_timestamp_second_present_for_duplicate", lambda _h, _s, _t: True,
   )
   monkeypatch.setattr(st, "_duplicate_window_start_index", fake_duplicate)
-  monkeypatch.setattr(st, "raw_stats_path_needs_tar_append", lambda *_a, **_k: False)
+  monkeypatch.setattr(
+      st, "raw_stats_path_tar_append_decision", lambda *_a, **_k: (False, "member_exists"),
+  )
   monkeypatch.setattr(st.cfg, "get_sync_ingest_max_file_read_bytes", lambda: 512 * 1024 * 1024)
   monkeypatch.setattr(st.cfg, "get_sync_ingest_stream_duplicate_scan_bytes", lambda: 0)
 
@@ -101,7 +103,9 @@ def test_db_complete_head_tail_returns_skip_outcome_meta(tmp_path, monkeypatch):
   monkeypatch.setattr(
       st, "_timestamp_second_present_for_duplicate", lambda _h, _s, _t: True,
   )
-  monkeypatch.setattr(st, "raw_stats_path_needs_tar_append", lambda *_a, **_k: False)
+  monkeypatch.setattr(
+      st, "raw_stats_path_tar_append_decision", lambda *_a, **_k: (False, "member_exists"),
+  )
   monkeypatch.setattr(st.cfg, "get_sync_ingest_max_file_read_bytes", lambda: 512 * 1024 * 1024)
   monkeypatch.setattr(st.cfg, "get_sync_ingest_stream_duplicate_scan_bytes", lambda: 0)
 
@@ -130,7 +134,11 @@ def test_ingest_file_outcome_single_log_line(capsys, monkeypatch):
       False,
       True,
       0.3,
-      st._ingest_outcome_meta(outcome="db_skip", db_skip="head_tail"),
+      st._ingest_outcome_meta(
+          outcome="db_skip",
+          db_skip="head_tail",
+          archive_skip="member_exists",
+      ),
   )
   st._log_ingest_worker_result(result, remaining=102440)
   out = capsys.readouterr().out
@@ -138,11 +146,30 @@ def test_ingest_file_outcome_single_log_line(capsys, monkeypatch):
   assert "outcome=db_skip" in out
   assert "db_skip=head_tail" in out
   assert "ingest_ok=yes" in out
-  assert "archive=no" in out
+  assert "archive=member_exists" in out
+  assert "archive=no" not in out
   assert "remaining=102440" in out
   assert "Completed file" not in out
   assert "ingest file completed" not in out
   assert "No missing timestamps found" not in out
+
+
+def test_log_ingest_file_outcome_archive_skip_member_exists(capsys, monkeypatch):
+  monkeypatch.setattr(st, "stats_file_size_bytes", lambda _p: 100)
+  st._log_ingest_file_outcome(
+      st.IngestFileOutcome(
+          path="/data/host/1",
+          elapsed_s=0.1,
+          ingest_ok=True,
+          need_archival=False,
+          outcome="db_skip",
+          db_skip="head_tail",
+          archive_skip="member_exists",
+      ),
+  )
+  out = capsys.readouterr().out
+  assert "archive=member_exists" in out
+  assert "archive=no" not in out
 
 
 def test_db_complete_tail_missing_falls_back_to_full_scan(tmp_path, monkeypatch):
@@ -169,7 +196,9 @@ def test_db_complete_tail_missing_falls_back_to_full_scan(tmp_path, monkeypatch)
       lambda _h, unix_second, _t: unix_second == 1700000100,
   )
   monkeypatch.setattr(st, "_duplicate_window_start_index", fake_duplicate)
-  monkeypatch.setattr(st, "raw_stats_path_needs_tar_append", lambda *_a, **_k: False)
+  monkeypatch.setattr(
+      st, "raw_stats_path_tar_append_decision", lambda *_a, **_k: (False, "member_exists"),
+  )
   monkeypatch.setattr(st.cfg, "get_sync_ingest_max_file_read_bytes", lambda: 512 * 1024 * 1024)
   monkeypatch.setattr(st.cfg, "get_sync_ingest_stream_duplicate_scan_bytes", lambda: 0)
 
@@ -505,7 +534,9 @@ def test_combined_ingest_uses_single_parse_timer(monkeypatch, tmp_path):
   monkeypatch.setattr(
       st, "_timestamp_second_present_for_duplicate", lambda _h, _s, _t: True,
   )
-  monkeypatch.setattr(st, "raw_stats_path_needs_tar_append", lambda *_a, **_k: False)
+  monkeypatch.setattr(
+      st, "raw_stats_path_tar_append_decision", lambda *_a, **_k: (False, "member_exists"),
+  )
   monkeypatch.setattr(st.cfg, "get_sync_ingest_max_file_read_bytes", lambda: 512 * 1024 * 1024)
   monkeypatch.setattr(st.cfg, "get_sync_ingest_stream_duplicate_scan_bytes", lambda: 0)
   monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 900.0)
@@ -545,7 +576,9 @@ def test_tail_window_skips_full_duplicate_scan(tmp_path, monkeypatch):
       lambda *_a, **_k: True,
   )
   monkeypatch.setattr(st, "_duplicate_window_start_index", fake_duplicate)
-  monkeypatch.setattr(st, "raw_stats_path_needs_tar_append", lambda *_a, **_k: False)
+  monkeypatch.setattr(
+      st, "raw_stats_path_tar_append_decision", lambda *_a, **_k: (False, "member_exists"),
+  )
   monkeypatch.setattr(st.cfg, "get_sync_ingest_max_file_read_bytes", lambda: 512 * 1024 * 1024)
   monkeypatch.setattr(st.cfg, "get_sync_ingest_stream_duplicate_scan_bytes", lambda: 100_000)
 
