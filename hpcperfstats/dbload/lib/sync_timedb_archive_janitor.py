@@ -1478,7 +1478,7 @@ class ArchiveJanitor:
                 flush=True,
             )
             dedupe_sealed_daily_archive(sealed_path, log_fn=self.log_fn)
-      if not self._seal_one_day(tar_norm, ignore_remaining_raw=False):
+      if not self._seal_one_day(tar_norm):
         return False
     if coord is not None:
       if not coord.post_seal_verification_complete(tar_norm):
@@ -1533,7 +1533,13 @@ class ArchiveJanitor:
     self._finalize_async_day_close_manifest(tar_norm)
     return True
 
-  def _seal_one_day(self, tar_path: str, *, ignore_remaining_raw: bool = False) -> bool:
+  def _seal_one_day(self, tar_path: str) -> bool:
+    """Seal daily ``.tar`` to ``.tar.zst``.
+
+    Closed-raw on disk is expected after pre-seal verify (delete runs post-seal).
+    Do not gate seal on remaining closed-raw; pre-seal/handoff and tar-drop own
+    that safety. Calendar-today grace still applies.
+    """
     if not daily_tar_seal_calendar_eligible(tar_path, self.local_tz):
       self.log_fn(
           "Janitor seal deferred (calendar-today grace): %s" % tar_path,
@@ -1544,18 +1550,6 @@ class ArchiveJanitor:
       return False
     remaining_raw_by_gz = self._fresh_remaining_raw_by_gz_for_tar(tar_path)
     zst_path, gz_path = compressed_sibling_paths(tar_path)
-    if (
-        not ignore_remaining_raw
-        and daily_gz_has_remaining_raw_stats(zst_path, remaining_raw_by_gz)
-    ):
-      self.log_fn(
-          "Janitor seal deferred (raw stats still present for day): %s"
-          % tar_path,
-          flush=True,
-      )
-      self._enqueue_day_close(tar_path, persist=False)
-      self._persist_hints()
-      return False
     keep_tar = effective_keep_uncompressed_tar(
         tar_path,
         local_tz=self.local_tz,

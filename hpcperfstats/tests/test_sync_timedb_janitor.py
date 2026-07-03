@@ -64,7 +64,7 @@ def _stub_janitor_day_close_tick_phases(
         lambda self, **kwargs: None,
     )
 
-  def seal_stub(self, tar_path, *, ignore_remaining_raw=False):
+  def seal_stub(self, tar_path):
     events.append(("seal", os.path.normpath(tar_path)))
     _mark_day_sealed(self, tar_path)
     return True
@@ -451,8 +451,8 @@ def test_janitor_legacy_seal_prior_day_coalesces_to_day_close_and_seals(
   assert called["seal"] == 1
 
 
-def test_seal_one_day_direct_call_defers_when_closed_raw_remains(monkeypatch, tmp_path):
-  """Non-DAY_CLOSE path: _seal_one_day without ignore_remaining_raw still defers."""
+def test_seal_one_day_direct_call_seals_when_closed_raw_remains(monkeypatch, tmp_path):
+  """Seal is not gated on closed-raw; pre-seal/handoff and tar_drop own that."""
   tar_path = str(tmp_path / "2026-01-01.tar")
   open(tar_path, "wb").close()
   raw_path = str(tmp_path / "raw.stats")
@@ -465,14 +465,15 @@ def test_seal_one_day_direct_call_defers_when_closed_raw_remains(monkeypatch, tm
       lambda *_a, **_k: {zst_path: [raw_path]},
   )
   called = {"seal": 0}
-  monkeypatch.setattr(
-      janitor_mod,
-      "atomic_seal_tar_to_zst",
-      lambda *a, **k: called.__setitem__("seal", called["seal"] + 1),
-  )
-  assert janitor._seal_one_day(tar_path) is False
-  assert called["seal"] == 0
-  assert janitor.debt_depth() >= 1
+
+  def fake_seal(*_a, **_k):
+    called["seal"] += 1
+    open(zst_path, "wb").close()
+    return None
+
+  monkeypatch.setattr(janitor_mod, "atomic_seal_tar_to_zst", fake_seal)
+  assert janitor._seal_one_day(tar_path) is True
+  assert called["seal"] == 1
 
 
 def test_janitor_day_phases_set_only_on_verified_success(monkeypatch, tmp_path):
@@ -1172,6 +1173,7 @@ def test_janitor_skips_debt_item_when_day_becomes_disqualified_mid_tick(monkeypa
 
 
 def test_janitor_defer_reenqueue_persists_debt_before_tick_end(monkeypatch, tmp_path):
+  """Calendar-grace seal defer re-enqueues DAY_CLOSE and persists hints."""
   tar_path = str(tmp_path / "2026-01-01.tar")
   open(tar_path, "wb").close()
   janitor = ArchiveJanitor(
@@ -1193,13 +1195,10 @@ def test_janitor_defer_reenqueue_persists_debt_before_tick_end(monkeypatch, tmp_
     return original_persist(*args, **kwargs)
 
   janitor._persist_hints = tracking_persist
-  zst_path = _zst_path_for_tar(tar_path)
-  raw_path = str(tmp_path / "raw")
-  open(raw_path, "wb").close()
   monkeypatch.setattr(
       janitor_mod,
-      "build_remaining_raw_for_daily_tar",
-      lambda *_a, **_k: {zst_path: [raw_path]},
+      "daily_tar_seal_calendar_eligible",
+      lambda *_a, **_k: False,
   )
   monkeypatch.setattr(janitor_mod, "atomic_seal_tar_to_zst", lambda *a, **k: None)
   assert janitor._seal_one_day(tar_path) is False
@@ -1394,8 +1393,10 @@ def test_enqueue_scheduled_day_close_skips_tar_dropped_days(monkeypatch, tmp_pat
   assert janitor.debt_depth() == 0
 
 
-def test_close_one_day_defers_seal_when_remaining_raw_on_disk(monkeypatch, tmp_path):
-  """Pre-seal path uses ignore_remaining_raw=False; seal defers when raw remains."""
+def test_close_one_day_seals_when_remaining_raw_on_disk_after_pre_seal(
+    monkeypatch, tmp_path,
+):
+  """After pre-seal complete, seal runs even when verified closed-raw remains."""
   events = []
   tar_path = str(tmp_path / "2026-01-01.tar")
   open(tar_path, "wb").close()
@@ -1413,23 +1414,25 @@ def test_close_one_day_defers_seal_when_remaining_raw_on_disk(monkeypatch, tmp_p
       "_fresh_remaining_raw_by_gz_for_tar",
       lambda *_a, **_k: {zst_path: [raw_path]},
   )
+  seal_calls = {"n": 0}
 
-  def seal_defer(self, tp, *, ignore_remaining_raw=False):
-    events.append(
-        ("seal_attempt", os.path.normpath(tp), ignore_remaining_raw),
-    )
-    return False
+  def real_seal_path(self, tp):
+    seal_calls["n"] += 1
+    events.append(("seal", os.path.normpath(tp)))
+    open(zst_path, "wb").close()
+    _mark_day_sealed(self, tp)
+    return True
 
-  monkeypatch.setattr(janitor_mod.ArchiveJanitor, "_seal_one_day", seal_defer)
+  monkeypatch.setattr(janitor_mod.ArchiveJanitor, "_seal_one_day", real_seal_path)
   monkeypatch.setattr(
       janitor_mod.ArchiveJanitor,
       "_discover_and_enqueue_ready_day_close",
       lambda self, **kwargs: None,
   )
   janitor._run_tick_body()
-  assert not any(e[0] == "seal" for e in events)
   assert events[0][0] == "pre_seal_verify"
-  assert not any(e[0] == "seal_attempt" and e[2] is True for e in events)
+  assert seal_calls["n"] == 1
+  assert ("seal", os.path.normpath(tar_path)) in events
 
 
 def test_janitor_persist_hints_snapshots_day_phases_under_lock(monkeypatch, tmp_path):
