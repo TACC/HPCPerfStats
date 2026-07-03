@@ -128,7 +128,7 @@ def test_ini_option_registry_defaults_are_strings_or_none():
     assert default is None or isinstance(default, str), (
         "%s.%s default must be None or str, got %r" % (section, option, default)
     )
-  assert cfg.ini_registry_default("sync_archive_members_populate_pool_processes") == "2"
+  assert cfg.ini_registry_default("sync_archive_members_populate_pool_processes") == "4"
   assert cfg.ini_option_registry_set() == {
       (section, option) for section, option, _default in cfg.INI_OPTION_REGISTRY
   }

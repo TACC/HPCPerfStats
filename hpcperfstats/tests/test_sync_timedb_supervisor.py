@@ -127,7 +127,6 @@ def _default_startup_daily_tar_count(monkeypatch):
     monkeypatch.setattr(janitor_mod, 'build_archive_maintenance_snapshot', _empty_maintenance_snapshot)
     monkeypatch.setattr(janitor_mod, 'save_archive_maint_hints', lambda *_a, **_k: None)
     monkeypatch.setattr(session_executor_mod, 'ThreadPoolExecutor', _InlineThreadPoolExecutor)
-    monkeypatch.setattr(st.cfg, 'get_sync_day_close_raw_removal_preflight', lambda: False)
     monkeypatch.setattr(async_day_close_mod.AsyncDayCloseCoordinator, 'submit_day_close', lambda self, tar_path, *, reason, disqualified_daily_tars=None: bool(tar_path))
     monkeypatch.setattr(async_day_close_mod.AsyncDayCloseCoordinator, 'is_complete', lambda self, tar_path: bool(tar_path))
     monkeypatch.setattr(async_day_close_mod.AsyncDayCloseCoordinator, 'active_or_submitted_tar_paths', lambda self: set())
@@ -3472,7 +3471,6 @@ def test_supervisor_startup_handoff_paths_ingested_at_queue_head(monkeypatch, tm
         from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import StartupArchiveScanCoordinator
         _supervisor_startup_preflight_disabled(monkeypatch)
         monkeypatch.setattr(st, 'DayRawRemovalCoordinator', _HandoffDayRawRemoval)
-        monkeypatch.setattr(st.cfg, 'get_sync_day_close_raw_removal_preflight', lambda: True)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
         monkeypatch.setattr(StartupArchiveScanCoordinator, 'wait_for_snapshot', lambda self, *, allow_build=False: None)
         monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
@@ -3708,7 +3706,6 @@ def test_recover_startup_handoff_incremental_one_tar_per_drain_spin(monkeypatch,
                 del wait
         _supervisor_startup_preflight_disabled(monkeypatch)
         monkeypatch.setattr(st, 'DayRawRemovalCoordinator', _MultiHandoffDayRawRemoval)
-        monkeypatch.setattr(st.cfg, 'get_sync_day_close_raw_removal_preflight', lambda: True)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
         monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
         monkeypatch.setattr(st, 'add_stats_file_to_db', lambda _lock, path, **_k: (path, True, True, 0.0))
@@ -3814,7 +3811,6 @@ def test_cap_pending_after_handoff_uses_snapshot_during_startup_gate(monkeypatch
                 del wait
         _supervisor_startup_preflight_disabled(monkeypatch)
         monkeypatch.setattr(st, 'DayRawRemovalCoordinator', _HandoffDayRawRemoval)
-        monkeypatch.setattr(st.cfg, 'get_sync_day_close_raw_removal_preflight', lambda: True)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
         monkeypatch.setattr(StartupArchiveScanCoordinator, 'get_snapshot', lambda self: type('Snap', (), {'closed_paths': []})())
         monkeypatch.setattr(StartupArchiveScanCoordinator, 'is_startup_heavy_maintenance_idle', lambda self: True)
@@ -3903,7 +3899,6 @@ def test_handoff_skips_duplicate_requeue_same_boot(monkeypatch, tmp_path, capsys
         from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import StartupArchiveScanCoordinator
         _supervisor_startup_preflight_disabled(monkeypatch)
         monkeypatch.setattr(st, 'DayRawRemovalCoordinator', _HandoffDayRawRemoval)
-        monkeypatch.setattr(st.cfg, 'get_sync_day_close_raw_removal_preflight', lambda: True)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
         monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
         monkeypatch.setattr(st, 'add_stats_file_to_db', lambda _lock, path, **_k: (path, True, True, 0.0))
@@ -3930,8 +3925,8 @@ def test_handoff_skips_duplicate_requeue_same_boot(monkeypatch, tmp_path, capsys
     finally:
         shutdown_requested[0] = False
 
-def test_handoff_requeue_retries_when_closed_raw_persists_after_same_boot_handoff(monkeypatch, tmp_path, capsys):
-    """When closed raw remains on disk, a second handoff requeue in the same boot is allowed."""
+def test_handoff_requeue_skips_same_boot_duplicate_after_first_handoff(monkeypatch, tmp_path, capsys):
+    """Second handoff requeue for the same tar in one boot is skipped (same_boot_duplicate)."""
     shutdown_requested[0] = False
     coord_holder = []
     try:
@@ -4000,7 +3995,6 @@ def test_handoff_requeue_retries_when_closed_raw_persists_after_same_boot_handof
         from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import StartupArchiveScanCoordinator
         _supervisor_startup_preflight_disabled(monkeypatch)
         monkeypatch.setattr(st, 'DayRawRemovalCoordinator', _HandoffDayRawRemoval)
-        monkeypatch.setattr(st.cfg, 'get_sync_day_close_raw_removal_preflight', lambda: True)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
         monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
         monkeypatch.setattr(st, 'add_stats_file_to_db', lambda _lock, path, **_k: (path, True, True, 0.0))
@@ -4023,9 +4017,9 @@ def test_handoff_requeue_retries_when_closed_raw_persists_after_same_boot_handof
         assert coord_holder[0].on_handoff_to_ingest is not None
         coord_holder[0].on_handoff_to_ingest(tar_norm, handoff_paths, 'janitor_closed_raw_submit_guard')
         retry_out = capsys.readouterr().out
-        assert 'handoff requeue retry' in retry_out
-        assert 'same_boot_duplicate' not in retry_out
-        assert retry_out.count('day_close handoff requeue') == 1
+        assert 'detail=same_boot_duplicate' in retry_out
+        assert 'handoff requeue retry' not in retry_out
+        assert 'day_close handoff requeue day=' not in retry_out
     finally:
         shutdown_requested[0] = False
 
@@ -4197,7 +4191,6 @@ def test_supervisor_oldest_day_chunk_gate_inflight_starvation(monkeypatch, tmp_p
         from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import StartupArchiveScanCoordinator
         _supervisor_startup_preflight_disabled(monkeypatch)
         monkeypatch.setattr(st, 'DayRawRemovalCoordinator', _HandoffDayRawRemoval)
-        monkeypatch.setattr(st.cfg, 'get_sync_day_close_raw_removal_preflight', lambda: True)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
         monkeypatch.setattr(StartupArchiveScanCoordinator, 'wait_for_snapshot', lambda self, *, allow_build=False: None)
         monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
@@ -4308,7 +4301,6 @@ def test_supervisor_chunk_gate_cross_day_stall_dispatches_pending_head(monkeypat
         from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import StartupArchiveScanCoordinator
         _supervisor_startup_preflight_disabled(monkeypatch)
         monkeypatch.setattr(st, 'DayRawRemovalCoordinator', _DisabledDayRawRemoval)
-        monkeypatch.setattr(st.cfg, 'get_sync_day_close_raw_removal_preflight', lambda: False)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
         monkeypatch.setattr(StartupArchiveScanCoordinator, 'wait_for_snapshot', lambda self, *, allow_build=False: None)
         monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
@@ -4412,7 +4404,6 @@ def test_supervisor_chunk_gate_unblocks_when_blocked_excluded_from_processed(mon
         _supervisor_startup_preflight_disabled(monkeypatch)
         monkeypatch.setattr(st, 'ensure_persistence_contract', lambda *_a, **_k: None)
         monkeypatch.setattr(st, 'DayRawRemovalCoordinator', _DisabledDayRawRemoval)
-        monkeypatch.setattr(st.cfg, 'get_sync_day_close_raw_removal_preflight', lambda: False)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
         monkeypatch.setattr(StartupArchiveScanCoordinator, 'wait_for_snapshot', lambda self, *, allow_build=False: None)
         monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
@@ -4531,7 +4522,6 @@ def test_gate_chunk_no_respin_after_db_complete_checkpoint(monkeypatch, tmp_path
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, '__init__', janitor_init_with_accrual)
         monkeypatch.setattr(st, 'ensure_persistence_contract', lambda *_a, **_k: None)
         monkeypatch.setattr(st, 'DayRawRemovalCoordinator', _DisabledDayRawRemoval)
-        monkeypatch.setattr(st.cfg, 'get_sync_day_close_raw_removal_preflight', lambda: False)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
         monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
         monkeypatch.setattr(st, 'add_stats_file_to_db', fake_add)
@@ -4621,7 +4611,6 @@ def test_handoff_giant_day_slice_ingest(monkeypatch, tmp_path):
         from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import StartupArchiveScanCoordinator
         _supervisor_startup_preflight_disabled(monkeypatch)
         monkeypatch.setattr(st, 'DayRawRemovalCoordinator', _HandoffDayRawRemoval)
-        monkeypatch.setattr(st.cfg, 'get_sync_day_close_raw_removal_preflight', lambda: True)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
         monkeypatch.setattr(st.cfg, 'get_sync_ingest_chunk_size', lambda: 100)
         monkeypatch.setattr(st, 'add_stats_file_to_db', fake_tail_add)
@@ -4728,7 +4717,6 @@ def test_closed_raw_handoff_uses_steady_chunk_not_giant_day_slice(monkeypatch, t
         from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import StartupArchiveScanCoordinator
         _supervisor_startup_preflight_disabled(monkeypatch)
         monkeypatch.setattr(st, 'DayRawRemovalCoordinator', _HandoffDayRawRemoval)
-        monkeypatch.setattr(st.cfg, 'get_sync_day_close_raw_removal_preflight', lambda: True)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
         monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
         monkeypatch.setattr(st, 'add_stats_file_to_db', lambda _lock, path, **_k: ingest_calls.append(path) or (path, True, True, 0.0))
@@ -4813,7 +4801,6 @@ def test_giant_day_slice_gated_to_startup_handoff_recover_only(monkeypatch, tmp_
         from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import StartupArchiveScanCoordinator
         _supervisor_startup_preflight_disabled(monkeypatch)
         monkeypatch.setattr(st, 'DayRawRemovalCoordinator', _HandoffDayRawRemoval)
-        monkeypatch.setattr(st.cfg, 'get_sync_day_close_raw_removal_preflight', lambda: True)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
         monkeypatch.setattr(st.cfg, 'get_sync_ingest_chunk_size', lambda: 100)
         monkeypatch.setattr(st, 'add_stats_file_to_db', lambda _lock, path, **_k: ingest_calls.append(path) or (path, True, True, 0.0))
@@ -4922,7 +4909,6 @@ def test_finalize_day_close_deferred_when_handoff_priority_pending(monkeypatch, 
         from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import StartupArchiveScanCoordinator
         _supervisor_startup_preflight_disabled(monkeypatch)
         monkeypatch.setattr(st, 'DayRawRemovalCoordinator', _HandoffDayRawRemoval)
-        monkeypatch.setattr(st.cfg, 'get_sync_day_close_raw_removal_preflight', lambda: True)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
         monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
         monkeypatch.setattr(st, 'add_stats_file_to_db', lambda _lock, path, **_k: (path, True, True, 0.0))
@@ -5028,7 +5014,6 @@ def test_post_finalize_reconcile_clears_blocked_before_handoff(monkeypatch, tmp_
         from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import StartupArchiveScanCoordinator
         _supervisor_startup_preflight_disabled(monkeypatch)
         monkeypatch.setattr(st, 'DayRawRemovalCoordinator', _DisabledDayRawRemoval)
-        monkeypatch.setattr(st.cfg, 'get_sync_day_close_raw_removal_preflight', lambda: False)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
         monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
         monkeypatch.setattr(st, 'add_stats_file_to_db', lambda _lock, path, **_k: (path, True, True, 0.0))
@@ -5112,7 +5097,6 @@ def test_handoff_giant_day_does_not_block_main_on_immediate_day_close(monkeypatc
         from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import StartupArchiveScanCoordinator
         _supervisor_startup_preflight_disabled(monkeypatch)
         monkeypatch.setattr(st, 'DayRawRemovalCoordinator', _HandoffDayRawRemoval)
-        monkeypatch.setattr(st.cfg, 'get_sync_day_close_raw_removal_preflight', lambda: True)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
         monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
         monkeypatch.setattr(st, 'add_stats_file_to_db', lambda _lock, path, **_k: ingest_calls.append(path) or (path, True, True, 0.0))
@@ -5203,7 +5187,6 @@ def test_startup_handoff_no_giant_slice_manifest_done_0522(monkeypatch, tmp_path
         from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import StartupArchiveScanCoordinator
         _supervisor_startup_preflight_disabled(monkeypatch)
         monkeypatch.setattr(st, 'DayRawRemovalCoordinator', _HandoffDayRawRemoval)
-        monkeypatch.setattr(st.cfg, 'get_sync_day_close_raw_removal_preflight', lambda: True)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
         monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
         monkeypatch.setattr(st, 'add_stats_file_to_db', lambda _lock, path, **_k: (path, True, True, 0.0))
@@ -5305,7 +5288,6 @@ def test_startup_same_boot_duplicate_kicks_delete_not_skip(monkeypatch, tmp_path
         from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import StartupArchiveScanCoordinator
         _supervisor_startup_preflight_disabled(monkeypatch)
         monkeypatch.setattr(st, 'DayRawRemovalCoordinator', _HandoffDayRawRemoval)
-        monkeypatch.setattr(st.cfg, 'get_sync_day_close_raw_removal_preflight', lambda: True)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
         monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
         monkeypatch.setattr(st, 'add_stats_file_to_db', lambda _lock, path, **_k: (path, True, True, 0.0))
@@ -5326,9 +5308,8 @@ def test_startup_same_boot_duplicate_kicks_delete_not_skip(monkeypatch, tmp_path
         assert coord_holder
         coord_holder[0].on_handoff_to_ingest(tar_norm, handoff_paths, 'janitor_closed_raw_submit_guard')
         retry_out = capsys.readouterr().out
-        assert kick_calls
-        assert 'closed_raw_delete_kick' in retry_out
-        assert 'same_boot_duplicate' not in retry_out
+        assert 'same_boot_duplicate' in retry_out
+        assert not kick_calls
     finally:
         shutdown_requested[0] = False
 
@@ -5421,7 +5402,6 @@ def test_gate_blocked_n_excludes_db_complete_paths(monkeypatch, tmp_path, capsys
         monkeypatch.setattr(st, 'log_print', capture_log)
         monkeypatch.setattr(st, 'ensure_persistence_contract', lambda *_a, **_k: None)
         monkeypatch.setattr(st, 'DayRawRemovalCoordinator', _DisabledDayRawRemoval)
-        monkeypatch.setattr(st.cfg, 'get_sync_day_close_raw_removal_preflight', lambda: False)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
         monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
         monkeypatch.setattr(st, 'add_stats_file_to_db', fake_add)
@@ -5514,7 +5494,6 @@ def test_chunk_reconcile_single_live_scan_per_chunk(monkeypatch, tmp_path, capsy
         _supervisor_startup_preflight_disabled(monkeypatch)
         monkeypatch.setattr(st, 'ensure_persistence_contract', lambda *_a, **_k: None)
         monkeypatch.setattr(st, 'DayRawRemovalCoordinator', _DisabledDayRawRemoval)
-        monkeypatch.setattr(st.cfg, 'get_sync_day_close_raw_removal_preflight', lambda: False)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
         monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
         monkeypatch.setattr(st, 'add_stats_file_to_db', fake_add)
@@ -5614,7 +5593,6 @@ def test_handoff_light_when_drain_disabled(monkeypatch, tmp_path, capsys):
                 del wait
         _supervisor_startup_preflight_disabled(monkeypatch)
         monkeypatch.setattr(st, 'DayRawRemovalCoordinator', _HandoffDayRawRemoval)
-        monkeypatch.setattr(st.cfg, 'get_sync_day_close_raw_removal_preflight', lambda: True)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
         monkeypatch.setattr(StartupArchiveScanCoordinator, 'get_snapshot', lambda self: type('Snap', (), {'closed_paths': []})())
         monkeypatch.setattr(StartupArchiveScanCoordinator, 'is_startup_heavy_maintenance_idle', lambda self: True)
@@ -5743,7 +5721,6 @@ def test_chunk_end_defers_immediate_day_close_when_handoff_pending(monkeypatch, 
         from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import StartupArchiveScanCoordinator
         _supervisor_startup_preflight_disabled(monkeypatch)
         monkeypatch.setattr(st, 'DayRawRemovalCoordinator', _HandoffDayRawRemoval)
-        monkeypatch.setattr(st.cfg, 'get_sync_day_close_raw_removal_preflight', lambda: True)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
         monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
         monkeypatch.setattr(st, 'add_stats_file_to_db', lambda _lock, path, **_k: (path, True, True, 0.0))
@@ -5767,9 +5744,10 @@ def test_chunk_end_defers_immediate_day_close_when_handoff_pending(monkeypatch, 
     finally:
         shutdown_requested[0] = False
 
-def test_chunk_end_defers_immediate_day_close_when_closed_raw_guard(monkeypatch, tmp_path, capsys):
-    """RC-F: closed_raw_guard at chunk_end defers submit and chunk loop continues."""
+def test_chunk_end_submits_immediate_day_close_despite_closed_raw_on_disk(monkeypatch, tmp_path, capsys):
+    """Checkpoint-complete day with closed raw on disk still submits day_close at chunk_end."""
     shutdown_requested[0] = False
+    submit_calls = []
     try:
         archive_dir = tmp_path / 'archive'
         daily_dir = tmp_path / 'daily'
@@ -5851,7 +5829,6 @@ def test_chunk_end_defers_immediate_day_close_when_closed_raw_guard(monkeypatch,
         from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import StartupArchiveScanCoordinator
         _supervisor_startup_preflight_disabled(monkeypatch)
         monkeypatch.setattr(st, 'DayRawRemovalCoordinator', _ClosedRawDayRawRemoval)
-        monkeypatch.setattr(st.cfg, 'get_sync_day_close_raw_removal_preflight', lambda: True)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
         monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
         monkeypatch.setattr(st, 'add_stats_file_to_db', lambda _lock, path, **_k: (path, True, True, 0.0))
@@ -5866,11 +5843,24 @@ def test_chunk_end_defers_immediate_day_close_when_closed_raw_guard(monkeypatch,
         monkeypatch.setattr(StartupArchiveScanCoordinator, 'wait_for_snapshot', lambda self, *, allow_build=False: None)
         monkeypatch.setattr(archive_helpers, 'build_live_unprocessed_by_tar_for_reconcile', lambda *_a, **_k: {})
         monkeypatch.setattr(st, 'days_ingest_complete_by_checkpoint', lambda *_a, **_k: [tar_norm])
-        monkeypatch.setattr(st, 'daily_tar_eligible_for_day_close_submit', lambda *_a, **_k: (False, 'closed_raw_on_disk'))
+        monkeypatch.setattr(st, 'daily_tar_eligible_for_day_close_submit', lambda *_a, **_k: (True, ''))
+
+        import hpcperfstats.dbload.lib.sync_timedb_async_day_close as async_day_close_mod
+
+        def _record_submit(self, tar, *, reason, disqualified_daily_tars=None):
+            submit_calls.append((tar, reason))
+            return True
+
+        monkeypatch.setattr(
+            async_day_close_mod.AsyncDayCloseCoordinator,
+            'submit_day_close',
+            _record_submit,
+        )
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
         st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _ArchivePoolSuccess(), run_once=True)
         out = capsys.readouterr().out
-        assert 'immediate day_close defer context=chunk_end reason=closed_raw_guard' in out
+        assert 'closed_raw_guard' not in out
+        assert submit_calls
         assert 'chunk ingest summary' in out
     finally:
         shutdown_requested[0] = False
@@ -5969,7 +5959,6 @@ def test_arch_june04_handoff_after_giant_finalize_dispatches_chunk(monkeypatch, 
         _supervisor_startup_preflight_disabled(monkeypatch)
         monkeypatch.setattr(st, 'DayRawRemovalCoordinator', _HandoffDayRawRemoval)
         monkeypatch.setattr(st, 'log_print', counting_log_print)
-        monkeypatch.setattr(st.cfg, 'get_sync_day_close_raw_removal_preflight', lambda: True)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
         monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
         monkeypatch.setattr(st, 'add_stats_file_to_db', lambda _lock, path, **_k: (path, True, True, 0.0))

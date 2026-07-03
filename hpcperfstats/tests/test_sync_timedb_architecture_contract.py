@@ -217,6 +217,15 @@ def test_arch_close_one_day_tar_drop_after_raw_removal_done(monkeypatch, tmp_pat
   class _FakeDayRawCoord:
     enabled = True
 
+    def pre_seal_verification_complete(self, _tar):
+      return True
+
+    def post_seal_verification_complete(self, _tar):
+      return True
+
+    def run_post_seal_verify_sync(self, _tar):
+      return True
+
     def start_async_verify(self, _tar):
       return None
 
@@ -512,3 +521,12 @@ def test_arch_janitor_close_one_day_owns_delete_not_supervisor():
   chunk_section = supervisor_source.split("while pending_stats_files:", 1)[1]
   assert "apply_batch_delete" not in chunk_section
   assert "_maybe_handle_raw_removal_delete_phase" not in chunk_section
+
+
+def test_arch_day_close_verify_before_seal():
+  """Pre-seal verify must run before seal in ``_close_one_day`` source order."""
+  source = inspect.getsource(janitor_mod.ArchiveJanitor._close_one_day)
+  pre_idx = source.index("pre_seal_verify")
+  seal_idx = source.index("_seal_one_day")
+  post_idx = source.index("post_seal_verify")
+  assert pre_idx < seal_idx < post_idx

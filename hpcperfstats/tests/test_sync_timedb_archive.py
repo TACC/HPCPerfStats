@@ -5903,7 +5903,7 @@ def test_daily_tar_eligible_for_day_close_submit_requires_checkpoint_complete(tm
   assert reason == ""
 
 
-def test_daily_tar_eligible_for_day_close_submit_skips_closed_raw_on_disk(tmp_path):
+def test_daily_tar_eligible_for_day_close_submit_allows_closed_raw_on_disk(tmp_path):
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       daily_tar_eligible_for_day_close_submit,
   )
@@ -5926,8 +5926,8 @@ def test_daily_tar_eligible_for_day_close_submit_skips_closed_raw_on_disk(tmp_pa
       local_tz=timezone.utc,
       day_raw_removal=_ClosedRawCoord(),
   )
-  assert not eligible
-  assert reason == "closed_raw_on_disk"
+  assert eligible
+  assert reason == ""
 
 
 def test_build_unprocessed_raw_by_daily_tar_subtracts_checkpoint(tmp_path):
@@ -6040,7 +6040,7 @@ def test_classify_no_eligible_deferred_status(tmp_path):
   assert "eligible_deferred" not in {e.get("status") for e in entries}
 
 
-def test_closed_raw_classified_waiting_on_ingest(tmp_path):
+def test_closed_raw_no_longer_blocks_day_close_candidate_report(tmp_path):
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       classify_day_close_candidates,
   )
@@ -6064,8 +6064,9 @@ def test_closed_raw_classified_waiting_on_ingest(tmp_path):
       day_raw_removal=_FakeDayRaw(),
   )
   by_tar = {e["tar_path"]: e for e in entries}
-  assert by_tar[tar_path]["status"] == "waiting_on_ingest"
-  assert "closed_raw_on_disk" in by_tar[tar_path]["reasons"]
+  assert by_tar[tar_path]["status"] == "disqualified"
+  assert "awaiting_janitor_discover" in by_tar[tar_path]["reasons"]
+  assert "closed_raw_on_disk" not in by_tar[tar_path]["reasons"]
 
 
 def test_build_remaining_raw_accepts_snapshot_no_nested_collect(monkeypatch, tmp_path):

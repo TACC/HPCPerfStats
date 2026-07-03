@@ -181,10 +181,10 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_day_close_max_inflight"),
     ("PIPELINE", "sync_day_close_raw_removal_wait_seconds"),
     ("PIPELINE", "sync_day_close_async_stale_seconds"),
-    ("PIPELINE", "sync_day_close_raw_removal_preflight"),
     ("PIPELINE", "sync_day_close_raw_removal_verify_budget_seconds"),
     ("PIPELINE", "sync_day_close_raw_removal_max_deletes_per_pass"),
     ("PIPELINE", "sync_archive_max_inflight_jobs"),
+    ("PIPELINE", "sync_archive_validation_max_workers"),
     ("PIPELINE", "sync_archive_worker_stall_seconds"),
     # [OAUTH2]
     ("OAUTH2", "client_id"),
@@ -316,7 +316,7 @@ INI_OPTION_DEFAULTS = {
     'sync_archive_members_redis_wait_poll_seconds': '0.25',
     'sync_archive_members_redis_hset_batch_size': '500',
     'sync_archive_members_redis_max_payload_bytes': '8388608',
-    'sync_archive_members_populate_pool_processes': '2',
+    'sync_archive_members_populate_pool_processes': '4',
     'sync_write_lock_shards': '1',
     'sync_ingest_chunk_size': '1000',
     'sync_bulk_create_batch_size': '10000',
@@ -367,10 +367,10 @@ INI_OPTION_DEFAULTS = {
     'sync_day_close_max_inflight': '2',
     'sync_day_close_raw_removal_wait_seconds': '3600',
     'sync_day_close_async_stale_seconds': '7200',
-    'sync_day_close_raw_removal_preflight': 'yes',
     'sync_day_close_raw_removal_verify_budget_seconds': '30',
     'sync_day_close_raw_removal_max_deletes_per_pass': '0',
     'sync_archive_max_inflight_jobs': '2',
+    'sync_archive_validation_max_workers': '2',
     'sync_archive_worker_stall_seconds': '600',
     'client_id': None,
     'client_key': None,
@@ -1981,7 +1981,7 @@ def get_sync_archive_members_populate_pool_processes():
     try:
       return max(0, int(env))
     except (TypeError, ValueError, OverflowError):
-      return 2
+      return 4
   _ensure_cfg_loaded()
   try:
     return max(
@@ -1989,7 +1989,7 @@ def get_sync_archive_members_populate_pool_processes():
         int(_pipeline_get("sync_archive_members_populate_pool_processes")),
     )
   except (TypeError, ValueError, OverflowError):
-    return 2
+    return 4
 
 
 def get_sync_ingest_per_file_timeout_s():
@@ -2891,14 +2891,6 @@ def get_sync_startup_snapshot_wait_seconds():
   return max(
       120.0,
       float(_pipeline_get("sync_startup_snapshot_wait_seconds")),
-  )
-
-
-def get_sync_day_close_raw_removal_preflight():
-  """Enable per-day async verify + chunk-boundary batch delete after DAY_CLOSE seal."""
-  _ensure_cfg_loaded()
-  return _parse_bool(
-      _pipeline_get("sync_day_close_raw_removal_preflight"),
   )
 
 

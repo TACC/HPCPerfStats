@@ -15,10 +15,13 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     build_remaining_raw_for_daily_tar,
     calendar_date_from_daily_tar_path,
     classify_removable_raw_paths_for_daily_gz,
+    classify_removable_raw_paths_for_open_tar,
+    ensure_daily_tar_restored_for_append,
     quarantine_dir_for_archive,
     remaining_raw_by_gz_has_paths_on_disk,
     remove_verified_uncompressed_daily_tars,
     stats_file_is_active_segment,
+    validate_post_seal_tar_zst_parity,
 )
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
     load_persistence_document,
@@ -56,6 +59,10 @@ QUARANTINE_SKIP_REASONS = frozenset({"quarantine"})
 QUARANTINE_SKIP_STATUSES = frozenset({"skipped_quarantine"})
 KICK_NO_HANDOFF_PROGRESS = frozenset({"noop", "quarantine_terminal"})
 
+VERIFY_STAGE_NONE = "none"
+VERIFY_STAGE_PRE_SEAL = "pre_seal_complete"
+VERIFY_STAGE_POST_SEAL = "post_seal_complete"
+
 
 def day_removal_manifest_dir(archive_data_dir: str) -> str:
   return os.path.join(archive_data_dir, MANIFEST_SUBDIR)
@@ -81,6 +88,7 @@ def _new_manifest(tar_path: str) -> Dict[str, Any]:
       "version": MANIFEST_VERSION,
       "tar_path": os.path.normpath(tar_path),
       "phase": PHASE_VERIFYING,
+      "verify_stage": VERIFY_STAGE_NONE,
       "started_at": time.time(),
       "completed_at": None,
       "verified_count": 0,
@@ -97,6 +105,7 @@ def _load_manifest(path: str, tar_path: str) -> Dict[str, Any]:
   payload.setdefault("version", MANIFEST_VERSION)
   payload.setdefault("entries", {})
   payload.setdefault("tar_path", os.path.normpath(tar_path))
+  payload.setdefault("verify_stage", VERIFY_STAGE_NONE)
   return payload
 
 
@@ -147,6 +156,24 @@ class _DayRawRemovalState:
   def phase(self) -> str:
     with self._lock:
       return str(self._manifest.get("phase") or PHASE_VERIFYING)
+
+  def verify_stage(self) -> str:
+    with self._lock:
+      return str(self._manifest.get("verify_stage") or VERIFY_STAGE_NONE)
+
+  def pre_seal_verification_complete(self) -> bool:
+    stage = self.verify_stage()
+    if stage in (VERIFY_STAGE_PRE_SEAL, VERIFY_STAGE_POST_SEAL):
+      return True
+    # Legacy manifests from post-seal-only verify before verify-before-seal.
+    return self.phase() in (
+        PHASE_VERIFICATION_COMPLETE,
+        PHASE_DELETING,
+        PHASE_DONE,
+    )
+
+  def post_seal_verification_complete(self) -> bool:
+    return self.verify_stage() == VERIFY_STAGE_POST_SEAL
 
   def verification_complete(self) -> bool:
     return self.phase() in (
@@ -842,6 +869,91 @@ class _DayRawRemovalState:
           flush=True,
       )
 
+  def _pre_seal_verify_body(self) -> None:
+    close_old_connections()
+    with self._lock:
+      if self.pre_seal_verification_complete():
+        return
+      self._manifest["phase"] = PHASE_VERIFYING
+      if not self._manifest.get("started_at"):
+        self._manifest["started_at"] = time.time()
+    if not ensure_daily_tar_restored_for_append(
+        self.tar_path,
+        cfg.get_archive_zstd_thread_count(),
+    ):
+      if self.log_fn:
+        self.log_fn(
+            "Day raw removal pre-seal verify deferred (tar restore failed) "
+            "day=%s"
+            % self.day_date.isoformat(),
+            flush=True,
+        )
+      return
+    zst_path, _gz_path = compressed_sibling_paths(self.tar_path)
+    remaining = self._build_remaining_raw_for_daily_tar()
+    raw_paths: List[str] = []
+    for paths in (remaining or {}).values():
+      raw_paths.extend(paths or [])
+    skip_paths = set(self.get_quarantine_skip_paths() or ())
+    filtered = []
+    for path in raw_paths:
+      if stats_file_is_active_segment(path):
+        self._record_entry(path, zst_path, "skipped_active_segment", "active_segment")
+        continue
+      if path in skip_paths:
+        self._record_entry(path, zst_path, "skipped_quarantine", "quarantine")
+        continue
+      filtered.append(path)
+    gate_fn = (
+        self.ingest_ready_fn
+        if cfg.get_sync_archive_require_db_head_ingest()
+        else None
+    )
+    if filtered:
+      for path, status, reason in classify_removable_raw_paths_for_open_tar(
+          self.tar_path,
+          filtered,
+          ingest_ready_fn=gate_fn,
+          log_fn=self.log_fn,
+          validation_cache=self._validation_cache,
+      ):
+        self._record_entry(path, zst_path, status, reason)
+    with self._lock:
+      self._manifest["verify_stage"] = VERIFY_STAGE_PRE_SEAL
+      self._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
+      _save_manifest(self._manifest_path, self._manifest)
+    if self.log_fn:
+      self.log_fn(
+          "Day raw removal pre-seal verify complete day=%s verified=%d skipped=%d"
+          % (
+              self.day_date.isoformat(),
+              int(self._manifest.get("verified_count", 0)),
+              int(self._manifest.get("skipped_count", 0)),
+          ),
+          flush=True,
+      )
+
+  def _post_seal_verify_body(self) -> bool:
+    close_old_connections()
+    if self.post_seal_verification_complete():
+      return True
+    ok = validate_post_seal_tar_zst_parity(
+        self.tar_path,
+        log_fn=self.log_fn,
+        validation_cache=self._validation_cache,
+    )
+    if ok:
+      with self._lock:
+        self._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
+        _save_manifest(self._manifest_path, self._manifest)
+      if self.log_fn:
+        self.log_fn(
+            "Day raw removal post-seal verify complete day=%s"
+            % self.day_date.isoformat(),
+            flush=True,
+        )
+    return ok
+
   def _batch_delete_completion_context(self, entries):
     """Single completion snapshot after the delete loop (one pass per helper)."""
     remaining_verified = [
@@ -1132,7 +1244,7 @@ class DayRawRemovalCoordinator:
     self.on_pipeline_complete = on_pipeline_complete
     self.on_handoff_to_ingest = on_handoff_to_ingest
     self.get_maintenance_snapshot = get_maintenance_snapshot
-    self.enabled = cfg.get_sync_day_close_raw_removal_preflight()
+    self.enabled = True
     self._days: Dict[str, _DayRawRemovalState] = {}
     self._days_lock = threading.Lock()
     self._last_closed_raw_kick_action: Optional[str] = None
@@ -1140,12 +1252,11 @@ class DayRawRemovalCoordinator:
         thread_name_prefix="day-raw-removal",
         process_title=self.process_title,
         thread_role="day-raw-removal-verify",
-        enabled=self.enabled,
+        enabled=True,
     )
-    if self.enabled:
-      cleanup_orphan_fnctl_lock_sidecars(
-          day_removal_manifest_dir(self.archive_data_dir),
-      )
+    cleanup_orphan_fnctl_lock_sidecars(
+        day_removal_manifest_dir(self.archive_data_dir),
+    )
 
   def _get_or_create_day(self, tar_path: str) -> _DayRawRemovalState:
     tar_norm = os.path.normpath(tar_path)
@@ -1171,6 +1282,32 @@ class DayRawRemovalCoordinator:
 
   def verification_complete(self, tar_path: str) -> bool:
     return self._get_or_create_day(tar_path).verification_complete()
+
+  def pre_seal_verification_complete(self, tar_path: str) -> bool:
+    return self._get_or_create_day(tar_path).pre_seal_verification_complete()
+
+  def post_seal_verification_complete(self, tar_path: str) -> bool:
+    return self._get_or_create_day(tar_path).post_seal_verification_complete()
+
+  def should_handoff_before_seal(self, tar_path: str) -> bool:
+    return bool(self._get_or_create_day(tar_path).handoff_paths_for_ingest())
+
+  def run_pre_seal_verify_sync(self, tar_path: str) -> bool:
+    if not self.enabled:
+      return True
+    state = self._get_or_create_day(tar_path)
+    if state.pre_seal_verification_complete():
+      return True
+    state._pre_seal_verify_body()
+    return state.pre_seal_verification_complete()
+
+  def run_post_seal_verify_sync(self, tar_path: str) -> bool:
+    if not self.enabled:
+      return True
+    state = self._get_or_create_day(tar_path)
+    if state.post_seal_verification_complete():
+      return True
+    return state._post_seal_verify_body()
 
   def needs_delete_phase(self, tar_path: str) -> bool:
     return self._get_or_create_day(tar_path).needs_delete_phase()

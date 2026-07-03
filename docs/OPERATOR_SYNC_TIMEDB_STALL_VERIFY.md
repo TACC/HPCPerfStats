@@ -69,7 +69,7 @@ py-spy dump --pid \"\$SUP\" 2>&1 | tail -80
 '"
 ```
 
-**RC-F signature:** all pools idle; MainThread in `defer_for_ingest_handoff` ← `_requeue_day_close_handoff_paths` ← `requeue_closed_raw_paths_for_ingest` ← `submit_day_close` ← `_maybe_enqueue_immediate_day_close`.
+**RC-F signature:** all pools idle; MainThread in `defer_for_ingest_handoff` ← `_requeue_day_close_handoff_paths` ← `complete_handoff_to_ingest` (pre-seal retryable) ← `_maybe_enqueue_immediate_day_close`.
 
 **T1 pass grep** (after deploy):
 
@@ -77,7 +77,20 @@ py-spy dump --pid \"\$SUP\" 2>&1 | tail -80
 podman-compose logs pipeline 2>&1 | grep -E 'chunk ingest summary|immediate day_close defer|ingest_stall_watchdog|oldest_day_unprocessed_frozen' | tail -40
 ```
 
-Expect `chunk ingest summary` to resume after `immediate day_close defer` / `archive_finalize defer immediate day_close reason=closed_raw_guard`; no `ingest_stall_watchdog` within 30 min of handoff enqueue.
+Expect `chunk ingest summary` to resume after `immediate day_close defer` for **`handoff_priority`** / **`handoff_recovery`** only (no **`closed_raw_guard`**); no `ingest_stall_watchdog` within 30 min of handoff enqueue.
+
+### T1 verify — verify-before-seal day close (2026-07+)
+
+After deploy, backlog sites with **closed raw on disk** but **checkpoint-complete** days should enter janitor **`DAY_CLOSE`** without waiting on ingest queue drain:
+
+```bash
+podman-compose logs pipeline 2>&1 | grep -E \
+  'janitor: day_close pre_seal_verify|janitor: day_close seal|janitor: day_close post_seal_verify|janitor: day_close delete|day_close handoff requeue' | tail -60
+```
+
+**T0 (first janitor pass on a backlog day):** grep shows **`pre_seal_verify`** before **`seal`** for the same `tar=` path; retryable paths log **`day_close handoff requeue`** and **no seal** for that pass.
+
+**T1 (steady progress):** sealed days show **`post_seal_verify`** then **`delete`**; candidate report no longer lists **`closed_raw_on_disk`** as submit block; **`waiting_on_ingest`** remains only for **`checkpoint_incomplete`** days.
 
 ### T1 verify — janitor proactive day-close (backlog catch-up sites)
 

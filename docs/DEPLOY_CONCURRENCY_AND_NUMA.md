@@ -127,7 +127,7 @@ Raw stats on disk remain the **source of truth** until validated archive members
 | **Canonical startup archive scan** | One **`build_archive_maintenance_snapshot`** per boot: janitor calls **`begin_build()`** → build → **`publish(from_janitor=True)`** → **`invalidate_unmapped_disqualify_cache()`**; supervisor rescan may **`wait_for_snapshot(allow_build=True)`** after **`sync_startup_snapshot_wait_seconds`**. Deep-copied coordinator snapshot retains **`closed_paths`** after accrual trim for unmapped disqualify. Log: **`sync_timedb: startup archive scan ready paths=N`**. |
 | **Quiescent dirty `.tar` at startup** | When a daily **`.tar`** is dirty but **no closed raw remains on disk** for that calendar day, janitor **`_discover_and_enqueue_ready_day_close(reason=startup)`** enqueues **`DAY_CLOSE`** debt (`awaiting_janitor_discover`). Requires filesystem truth (`os.path.isfile` on every unprocessed path). |
 | **Checkpoint-complete DAY_CLOSE at startup** | When all **mapped** closed raw for a calendar day is checkpoint-complete but **`.tar`** / raw remain on disk, janitor boot discover enqueues via manifest shim → **`DAY_CLOSE`** debt. Steady-state cap: **`sync_day_close_max_inflight`** (default **2**); startup cap: **`sync_startup_day_close_max_inflight`**. Candidate log: **`queued` / `waiting_on_ingest` / `disqualified`**. |
-| **Day-close verify/delete on janitor thread** | Seal → **`run_verify_sync`** → **`apply_batch_delete`** in **`ArchiveJanitor._close_one_day`** when preflight on. No async worker pool or **`raw_delete_pending`** handoff. Grep: **`janitor: discover_ready_day_close`**, **`janitor: day_close enqueue`**, **`Archive janitor tick done`**. |
+| **Day-close verify/delete on janitor thread** | **Pre-seal verify (open `.tar`) → dedupe → seal → post-seal parity verify → `apply_batch_delete`** in **`ArchiveJanitor._close_one_day`**. Grep: **`janitor: day_close pre_seal_verify`**, **`janitor: day_close seal`**, **`janitor: day_close post_seal_verify`**, **`janitor: day_close delete`**, **`Archive janitor tick done`**. |
 
 ## PostgreSQL connection budget (operator)
 
@@ -320,7 +320,7 @@ Chunk handlers call **`hard_exit_pool_worker_error`** (`os._exit`) immediately a
 | `sync_archive_members_redis_wait_poll_seconds` | 0.25 | Waiter poll for incremental `HGET` + `complete` |
 | `sync_archive_members_redis_hset_batch_size` | 500 | Winner `HSET` pipeline batch size during scan |
 | `sync_archive_members_redis_max_payload_bytes` | 8388608 | Refuse oversized HASH populate |
-| `sync_archive_members_populate_pool_processes` | 2 | Dedicated `populate-pool` workers for sealed/tar Redis L2 streaming (ingest/archive pools enqueue + wait only) |
+| `sync_archive_members_populate_pool_processes` | 4 | Dedicated `populate-pool` workers for sealed/tar Redis L2 streaming (ingest/archive pools enqueue + wait only) |
 
 **Post-deploy populate-pool verification (`pipeline` logs):**
 

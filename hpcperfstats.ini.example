@@ -365,8 +365,8 @@ sync_pool_process_cap = 8
 # Refuse populate when estimated Redis HASH payload exceeds this many bytes (default 8388608).
 # sync_archive_members_redis_max_payload_bytes = 8388608
 
-# Dedicated workers that stream sealed/tar archives into Redis L2 (default 2).
-sync_archive_members_populate_pool_processes = 2
+# Dedicated workers that stream sealed/tar archives into Redis L2 (default 4).
+sync_archive_members_populate_pool_processes = 4
 
 # Write-lock shard count for sync ingest; auto if unset.
 # sync_write_lock_shards =
@@ -515,10 +515,6 @@ sync_ingest_malloc_trim_after_file = yes
 
 # Log day-close candidate report (queued/disqualified only; default yes).
 # sync_day_close_candidate_report = yes
-
-# Per-day async verify+delete pipeline after DAY_CLOSE seal (default yes). DAY_CLOSE debt
-# is scheduled at supervisor startup and every rescan_every_chunks ingest chunks (default 10).
-# sync_day_close_raw_removal_preflight = yes
 
 # Wall-clock budget for day-close verify slices in the async pipeline (default 30 seconds).
 # sync_day_close_raw_removal_verify_budget_seconds = 30

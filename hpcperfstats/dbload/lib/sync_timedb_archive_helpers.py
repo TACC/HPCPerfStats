@@ -311,10 +311,6 @@ def daily_tar_eligible_for_day_close_submit(
     return False, "missing_unprocessed_map"
   if unprocessed_tar_paths_still_on_disk(unprocessed_by_tar, tar_norm):
     return False, "checkpoint_incomplete"
-  if day_raw_removal is not None and bool(getattr(day_raw_removal, "enabled", False)):
-    has_closed_raw = getattr(day_raw_removal, "has_closed_raw_on_disk", None)
-    if callable(has_closed_raw) and has_closed_raw(tar_norm):
-      return False, "closed_raw_on_disk"
   disqualified = _normalize_daily_tar_path_set(disqualified_daily_tars)
   if tar_norm in disqualified:
     return False, "disqualified"
@@ -460,15 +456,6 @@ def classify_day_close_candidates(
       status = "waiting_on_ingest"
       reasons = set(reasons)
       reasons.add("checkpoint_incomplete")
-    elif (
-        day_raw_removal is not None
-        and getattr(day_raw_removal, "enabled", False)
-        and getattr(day_raw_removal, "has_closed_raw_on_disk", None)
-        and day_raw_removal.has_closed_raw_on_disk(tar_norm)
-    ):
-      status = "waiting_on_ingest"
-      reasons = set(reasons)
-      reasons.add("closed_raw_on_disk")
     elif blocking:
       status = "disqualified"
     else:
@@ -3495,6 +3482,126 @@ def classify_removable_raw_paths_for_daily_gz(
       members,
       ingest_ready_fn=ingest_ready_fn,
   )
+
+
+def validate_open_tar_for_raw_removal(
+    tar_path,
+    log_fn=log_print,
+    *,
+    validation_cache=None,
+):
+  """Validate readable open ``.tar`` and return file member map for pre-seal verify."""
+  tar_path = os.path.normpath(str(tar_path or ""))
+  if not tar_path:
+    return False, None
+  if not os.path.isfile(tar_path):
+    if not ensure_daily_tar_restored_for_append(
+        tar_path,
+        get_archive_zstd_thread_count(),
+    ):
+      if log_fn:
+        log_fn(
+            "Skipping open-tar verify: cannot restore tar from sealed: %s"
+            % tar_path,
+            flush=True,
+        )
+      return False, None
+  if not verify_tar_archive_readable(tar_path):
+    zst_restore, gz_restore = compressed_sibling_paths(tar_path)
+    if replace_corrupt_tar_from_compressed_backup(
+        tar_path,
+        zst_restore,
+        gz_restore,
+        get_archive_zstd_thread_count(),
+    ) and verify_tar_archive_readable(tar_path):
+      if log_fn:
+        log_fn(
+            "Restored unreadable tar from sealed backup before open-tar verify: %s"
+            % tar_path,
+            flush=True,
+        )
+    else:
+      if log_fn:
+        log_fn(
+            "Skipping open-tar verify: uncompressed tar failed check: %s"
+            % tar_path,
+            flush=True,
+        )
+      return False, None
+  members = get_existing_archive_members(tar_path)
+  if not members:
+    if log_fn:
+      log_fn(
+          "Skipping open-tar verify: uncompressed tar has no file members: %s"
+          % tar_path,
+          flush=True,
+      )
+    return False, None
+  return True, dict(members)
+
+
+def classify_removable_raw_paths_for_open_tar(
+    tar_path,
+    stats_paths,
+    *,
+    ingest_ready_fn=None,
+    log_fn=log_print,
+    validation_cache=None,
+    open_tar_members=None,
+):
+  """Classify raw paths against an open daily ``.tar`` without deleting."""
+  if not stats_paths:
+    return []
+  if open_tar_members is not None:
+    ok, members = True, dict(open_tar_members)
+  else:
+    ok, members = validate_open_tar_for_raw_removal(
+        tar_path,
+        log_fn=log_fn,
+        validation_cache=validation_cache,
+    )
+  if not ok or members is None:
+    return [
+        (path, "skipped_seal_invalid", "seal_validation_failed")
+        for path in stats_paths
+    ]
+  return classify_removable_raw_paths_for_members(
+      stats_paths,
+      members,
+      ingest_ready_fn=ingest_ready_fn,
+  )
+
+
+def validate_post_seal_tar_zst_parity(
+    tar_path,
+    log_fn=log_print,
+    *,
+    validation_cache=None,
+):
+  """Return True when open ``.tar`` and ``.tar.zst`` member maps match."""
+  tar_path = os.path.normpath(str(tar_path or ""))
+  zst_path, _gz_path = compressed_sibling_paths(tar_path)
+  if not os.path.isfile(zst_path):
+    if log_fn:
+      log_fn(
+          "janitor: day_close post_seal_verify failed sealed missing: %s"
+          % zst_path,
+          flush=True,
+      )
+    return False
+  ok, _members = validate_sealed_daily_archive_for_raw_removal(
+      zst_path,
+      log_fn=log_fn,
+      validation_cache=validation_cache,
+      allow_auto_seal=False,
+  )
+  if not ok and log_fn:
+    log_fn(
+        "janitor: day_close post_seal_verify mismatch tar=%s"
+        % tar_path,
+        flush=True,
+    )
+  return ok
 
 
 def remove_verified_archived_raw_files(

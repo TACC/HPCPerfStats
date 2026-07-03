@@ -4138,36 +4138,6 @@ def run_sync_timedb_supervisor_loop(
       return True, "handoff_recovery", len(startup_handoff_recover_pending)
     if handoff_priority_paths:
       return True, "handoff_priority", len(handoff_priority_paths)
-    if tgz_archive_dir and day_raw_removal is not None:
-      disqualified = _janitor_disqualified_daily_tars()
-      with archive_janitor._hints_state_lock:
-        day_phases = dict(archive_janitor._day_phases)
-      unprocessed_by_tar = _build_unprocessed_by_tar_for_day_close(
-          pending_stats_paths=list(pending_stats_files),
-      )
-      remaining_raw_by_gz = _get_accrual_remaining_raw_by_gz()
-      candidates = days_ingest_complete_by_checkpoint(
-          unprocessed_by_tar,
-          tgz_archive_dir=tgz_archive_dir,
-          day_phases=day_phases,
-          remaining_raw_by_gz=remaining_raw_by_gz,
-          local_tz=archive_janitor.local_tz,
-          disqualified_daily_tars=disqualified,
-      )
-      for tar_path in candidates:
-        tar_norm = os.path.normpath(str(tar_path or ""))
-        eligible, skip_reason = daily_tar_eligible_for_day_close_submit(
-            tar_norm,
-            unprocessed_by_tar=unprocessed_by_tar,
-            disqualified_daily_tars=disqualified,
-            day_phases=day_phases,
-            remaining_raw_by_gz=remaining_raw_by_gz,
-            local_tz=archive_janitor.local_tz,
-            day_raw_removal=day_raw_removal,
-        )
-        del eligible
-        if skip_reason == "closed_raw_on_disk":
-          return True, "closed_raw_guard", 0
     return False, "", 0
 
   _should_defer_archive_finalize_day_close = _should_defer_immediate_day_close
@@ -4253,20 +4223,10 @@ def run_sync_timedb_supervisor_loop(
     max_inflight = cfg.get_sync_day_close_max_inflight()
     for tar_path in candidates:
       tar_norm = os.path.normpath(str(tar_path or ""))
-      if tar_norm in closed_raw_guard_no_progress_tars:
-        continue
       if tar_norm in immediate_day_close_attempted_tars:
         continue
       if len(archive_janitor._day_close_active_tar_paths()) >= max_inflight:
         break
-      if (
-          async_day_close is not None
-          and async_day_close.is_complete(tar_norm)
-          and day_raw_removal is not None
-          and hasattr(day_raw_removal, "has_closed_raw_on_disk")
-          and day_raw_removal.has_closed_raw_on_disk(tar_norm)
-      ):
-        continue
       if async_day_close is not None and async_day_close.submit_day_close(
           tar_norm,
           reason="day_ingest_complete:%s" % context,
@@ -5076,7 +5036,6 @@ def run_sync_timedb_supervisor_loop(
   inflight_archive_paths = set()
   pending_stats_files = []
   handoff_priority_paths = set()
-  closed_raw_guard_no_progress_tars = set()
   immediate_day_close_attempted_tars = set()
   chunk_counter = 0
   oldest_day_chunk_gate_stall_last_log = 0.0
@@ -5301,13 +5260,7 @@ def run_sync_timedb_supervisor_loop(
         )
 
   def _async_day_close_submit_eligible(tar_norm):
-    from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
-        KICK_NO_HANDOFF_PROGRESS,
-    )
-
     tar_norm = os.path.normpath(str(tar_norm or ""))
-    if tar_norm in closed_raw_guard_no_progress_tars:
-      return False, "closed_raw_no_progress"
     captured = _build_day_close_candidate_inputs()
     with archive_janitor._hints_state_lock:
       day_phases = dict(archive_janitor._day_phases)
@@ -5318,7 +5271,7 @@ def run_sync_timedb_supervisor_loop(
           host_name_ext,
           tgz_archive_dir,
       )
-    eligible, skip_reason = daily_tar_eligible_for_day_close_submit(
+    return daily_tar_eligible_for_day_close_submit(
         tar_norm,
         unprocessed_by_tar=captured.get("unprocessed_by_tar"),
         disqualified_daily_tars=_janitor_disqualified_daily_tars(),
@@ -5327,23 +5280,6 @@ def run_sync_timedb_supervisor_loop(
         local_tz=local_timezone,
         day_raw_removal=day_raw_removal,
     )
-    if (
-        not eligible
-        and skip_reason == "closed_raw_on_disk"
-        and day_raw_removal is not None
-    ):
-      requeued = day_raw_removal.requeue_closed_raw_paths_for_ingest(
-          tar_norm,
-          reason="closed_raw_submit_guard",
-      )
-      if requeued:
-        closed_raw_guard_no_progress_tars.discard(tar_norm)
-      kick = getattr(day_raw_removal, "_last_closed_raw_kick_action", None)
-      if not requeued and kick in KICK_NO_HANDOFF_PROGRESS:
-        closed_raw_guard_no_progress_tars.add(tar_norm)
-      if not requeued:
-        archive_janitor.signal_work_available()
-    return eligible, skip_reason
 
   async_day_close.submit_eligible_fn = _async_day_close_submit_eligible
   async_day_close.on_day_phase = _on_async_day_phase
@@ -5459,115 +5395,22 @@ def run_sync_timedb_supervisor_loop(
     tar_norm = os.path.normpath(str(tar_norm or ""))
     if not tar_norm:
       return
-    retry_closed_raw_persists = False
     if tar_norm in handoff_requeued_tars_this_boot:
-      has_closed_raw_fn = getattr(
-          day_raw_removal,
-          "has_closed_raw_on_disk",
-          None,
-      )
-      closed_raw_still = (
-          day_raw_removal is not None
-          and callable(has_closed_raw_fn)
-          and has_closed_raw_fn(tar_norm)
-      )
-      if closed_raw_still:
-        kick_fn = getattr(
-            day_raw_removal,
-            "kick_closed_raw_unblock",
-            None,
-        )
-        kick_action = (
-            kick_fn(tar_norm, reason=reason or "closed_raw_persists")
-            if callable(kick_fn)
-            else "noop"
-        )
-        requeue_fn = getattr(
-            day_raw_removal,
-            "paths_for_closed_raw_handoff_requeue",
-            None,
-        )
-        if callable(requeue_fn):
-          persist_paths = requeue_fn(tar_norm)
-        else:
-          persist_paths = day_raw_removal.closed_raw_paths_on_disk(tar_norm)
-        if persist_paths:
-          paths = persist_paths
-          retry_closed_raw_persists = True
-          reason = reason or "closed_raw_persists"
-        elif kick_action not in ("noop", "quarantine_terminal"):
-          day_token = (
+      log_print(
+          "sync_timedb: day_close handoff requeue skip day=%s reason=%s "
+          "detail=same_boot_duplicate"
+          % (
               calendar_date_from_daily_tar_path(tar_norm).isoformat()
               if calendar_date_from_daily_tar_path(tar_norm) is not None
-              else tar_norm
-          )
-          detail = (
-              "closed_raw_delete_kick"
-              if kick_action in ("ghost_delete", "delete_reopen")
-              else "closed_raw_verify_kick"
-          )
-          log_print(
-              "sync_timedb: day_close handoff requeue skip day=%s reason=%s "
-              "detail=%s kick=%s"
-              % (day_token, reason or "", detail, kick_action),
-              flush=True,
-          )
-          archive_janitor.signal_work_available()
-          return
-        elif closed_raw_still:
-          needs_verify_fn = getattr(
-              day_raw_removal,
-              "needs_verify_for_closed_raw_block",
-              None,
-          )
-          needs_blocker_kick = (
-              needs_verify_fn(tar_norm)
-              if callable(needs_verify_fn)
-              else False
-          )
-          if needs_blocker_kick:
-            log_print(
-                "sync_timedb: day_close handoff requeue skip day=%s reason=%s "
-                "detail=closed_raw_blocker_kick"
-                % (
-                    calendar_date_from_daily_tar_path(tar_norm).isoformat()
-                    if calendar_date_from_daily_tar_path(tar_norm) is not None
-                    else tar_norm,
-                    reason or "",
-                ),
-                flush=True,
-            )
-            archive_janitor.signal_work_available()
-            return
-          log_print(
-              "sync_timedb: day_close handoff requeue skip day=%s reason=%s "
-              "detail=same_boot_duplicate"
-              % (
-                  calendar_date_from_daily_tar_path(tar_norm).isoformat()
-                  if calendar_date_from_daily_tar_path(tar_norm) is not None
-                  else tar_norm,
-                  reason or "",
-              ),
-              flush=True,
-          )
-          return
-      else:
-        log_print(
-            "sync_timedb: day_close handoff requeue skip day=%s reason=%s "
-            "detail=same_boot_duplicate"
-            % (
-                calendar_date_from_daily_tar_path(tar_norm).isoformat()
-                if calendar_date_from_daily_tar_path(tar_norm) is not None
-                else tar_norm,
-                reason or "",
-            ),
-            flush=True,
-        )
-        return
+              else tar_norm,
+              reason or "",
+          ),
+          flush=True,
+      )
+      return
     requeued_paths = _filter_handoff_requeue_paths(paths)
     if not requeued_paths:
       return
-    closed_raw_guard_no_progress_tars.discard(tar_norm)
     _batch_remove_processed_paths(
         requeued_paths,
         processed_files,
@@ -5656,10 +5499,9 @@ def run_sync_timedb_supervisor_loop(
         handoff=True,
     )
     log_print(
-        "sync_timedb: day_close handoff requeue%s day=%s paths=%d reason=%s "
+        "sync_timedb: day_close handoff requeue day=%s paths=%d reason=%s "
         "checkpoint_cleared=yes queue_head=yes"
         % (
-            " retry" if retry_closed_raw_persists else "",
             calendar_date_from_daily_tar_path(tar_norm).isoformat()
             if calendar_date_from_daily_tar_path(tar_norm) is not None
             else tar_norm,

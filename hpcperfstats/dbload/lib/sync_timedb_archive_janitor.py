@@ -37,7 +37,6 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     invalidate_unmapped_disqualify_cache,
     iter_daily_tar_paths,
     log_day_close_candidate_report,
-    remove_verified_archived_raw_files,
     remove_verified_uncompressed_daily_tars,
     tar_day_dirty_by_mtime,
     tar_has_duplicate_file_members,
@@ -844,13 +843,6 @@ class ArchiveJanitor:
         day_raw_removal=self.day_raw_removal_coordinator,
     )
     if not eligible:
-      if skip_reason == "closed_raw_on_disk":
-        coord = self.day_raw_removal_coordinator
-        if coord is not None:
-          coord.requeue_closed_raw_paths_for_ingest(
-              tar_norm,
-              reason="janitor_closed_raw_submit_guard",
-          )
       if skip_reason and self.log_fn:
         self.log_fn(
             "janitor: day_close enqueue skip tar=%s reason=%s"
@@ -1421,10 +1413,6 @@ class ArchiveJanitor:
       return False
     return order[phase_name] >= order[target]
 
-  def _day_close_raw_removal_enabled(self) -> bool:
-    coord = self.day_raw_removal_coordinator
-    return coord is not None and bool(getattr(coord, "enabled", False))
-
   def _close_one_day(
       self,
       tar_path: str,
@@ -1434,7 +1422,25 @@ class ArchiveJanitor:
       disqualified: Set[str],
   ) -> bool:
     tar_norm = os.path.normpath(tar_path)
+    coord = self.day_raw_removal_coordinator
     if not self._day_phase_at_least(tar_norm, "sealed"):
+      if coord is not None and not coord.pre_seal_verification_complete(tar_norm):
+        self.log_fn(
+            "janitor: day_close pre_seal_verify start tar=%s" % tar_norm,
+            flush=True,
+        )
+        if not coord.run_pre_seal_verify_sync(tar_norm):
+          self._enqueue_day_close(tar_norm, persist=False)
+          self._persist_hints()
+          return False
+        if coord.should_handoff_before_seal(tar_norm):
+          coord.complete_handoff_to_ingest(
+              tar_norm,
+              reason="pre_seal_verify",
+          )
+          self._enqueue_day_close(tar_norm, persist=False)
+          self._persist_hints()
+          return False
       needs_dedupe = False
       if os.path.isfile(tar_norm):
         needs_dedupe = tar_has_duplicate_file_members(tar_norm)
@@ -1472,16 +1478,18 @@ class ArchiveJanitor:
                 flush=True,
             )
             dedupe_sealed_daily_archive(sealed_path, log_fn=self.log_fn)
-      if not self._seal_one_day(tar_norm, ignore_remaining_raw=True):
+      if not self._seal_one_day(tar_norm, ignore_remaining_raw=False):
         return False
-    if self._day_close_raw_removal_enabled():
-      coord = self.day_raw_removal_coordinator
-      if not coord.verification_complete(tar_norm):
+    if coord is not None:
+      if not coord.post_seal_verification_complete(tar_norm):
         self.log_fn(
-            "janitor: day_close verify start tar=%s" % tar_norm,
+            "janitor: day_close post_seal_verify start tar=%s" % tar_norm,
             flush=True,
         )
-        coord.run_verify_sync(tar_norm)
+        if not coord.run_post_seal_verify_sync(tar_norm):
+          self._enqueue_day_close(tar_norm, persist=False)
+          self._persist_hints()
+          return False
       if not coord.verification_complete(tar_norm):
         self._enqueue_day_close(tar_norm, persist=False)
         self._persist_hints()
@@ -1493,6 +1501,10 @@ class ArchiveJanitor:
         return False
       coord.reopen_done_days_with_verified_on_disk()
       if not coord.delete_phase_done(tar_norm):
+        self.log_fn(
+            "janitor: day_close delete start tar=%s" % tar_norm,
+            flush=True,
+        )
         coord.begin_deleting(tar_norm)
         coord.apply_batch_delete(tar_norm)
       if coord.delete_phase_done(tar_norm):
@@ -1510,15 +1522,6 @@ class ArchiveJanitor:
       self._enqueue_day_close(tar_norm, persist=False)
       self._persist_hints()
       return False
-    if not self._day_phase_at_least(tar_norm, "raw_removed"):
-      if not self._raw_remove_one_day(
-          tar_norm,
-          snapshot,
-          validation_cache,
-          disqualified,
-      ):
-        self._enqueue_day_close(tar_norm, persist=False)
-        return False
     if not self._day_phase_at_least(tar_norm, "tar_dropped"):
       if not self._tar_drop_one_day(
           tar_norm,
@@ -1583,46 +1586,6 @@ class ArchiveJanitor:
         self._day_phases[tar_path] = day_phase_hint_entry(tar_path, "sealed")
       return True
     return False
-
-  def _raw_remove_one_day(
-      self,
-      tar_path: str,
-      snapshot,
-      validation_cache,
-      disqualified: Set[str],
-  ) -> bool:
-    max_paths = cfg.get_archive_janitor_raw_paths_per_tick()
-    before_remaining = self._fresh_remaining_raw_by_gz_for_tar(tar_path)
-    remove_verified_archived_raw_files(
-        self.archive_data_dir,
-        self.host_name_ext,
-        self.tgz_archive_dir,
-        log_fn=self.log_fn,
-        archive_stats_files_fn=self.archive_stats_files_fn,
-        ingest_ready_fn=self.ingest_ready_fn,
-        maintenance_snapshot=None,
-        validation_cache=validation_cache,
-        validated_days_out=self._validated_days,
-        skip_daily_tar_paths=disqualified,
-        only_daily_tar_paths={tar_path},
-        allow_auto_seal=False,
-        max_deletes_per_pass=max_paths,
-        skip_raw_paths=self.get_quarantine_skip_paths(),
-        require_fingerprint_at_delete=True,
-    )
-    self._tick_remaining_raw_cache.pop(os.path.normpath(tar_path), None)
-    after_remaining = self._fresh_remaining_raw_by_gz_for_tar(tar_path)
-    zst_path, _gz_path = compressed_sibling_paths(tar_path)
-    if daily_gz_has_remaining_raw_stats(zst_path, after_remaining):
-      self._enqueue_day_close(tar_path, persist=False)
-      self._persist_hints()
-      if before_remaining != after_remaining:
-        with self._hints_state_lock:
-          self._day_phases.pop(tar_path, None)
-      return False
-    with self._hints_state_lock:
-      self._day_phases[tar_path] = day_phase_hint_entry(tar_path, "raw_removed")
-    return True
 
   def _tar_drop_one_day(
       self,
