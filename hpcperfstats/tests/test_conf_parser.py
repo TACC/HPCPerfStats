@@ -868,6 +868,7 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_bulk_create_batch_size() == 10000
   assert cfg.get_sync_pool_stall_abort_after_timeouts() == 17320
   assert cfg.get_sync_pool_poll_timeout_s() == 5.0
+  assert cfg.get_sync_pool_stall_defer_log_interval_s() == 60.0
   assert cfg.get_sync_ingest_per_file_timeout_s() == 900.0
   assert cfg.get_sync_ingest_per_file_timeout_max_s() == 86400.0
   assert cfg.get_sync_ingest_per_file_timeout_s_per_mib() == pytest.approx(
@@ -902,6 +903,7 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
       "sync_checkpoint_flush_batch_size = 42\n"
       "sync_pool_stall_abort_after_timeouts = 90\n"
       "sync_pool_poll_timeout_s = 2.5\n"
+      "sync_pool_stall_defer_log_interval_s = 30\n"
       "sync_ingest_per_file_timeout_s = 900\n"
       "sync_ingest_per_file_timeout_max_s = 7200\n"
       "sync_ingest_per_file_timeout_s_per_mib = 1.0\n"
@@ -928,6 +930,7 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_checkpoint_flush_batch_size() == 42
   assert cfg.get_sync_pool_stall_abort_after_timeouts() == 90
   assert cfg.get_sync_pool_poll_timeout_s() == 2.5
+  assert cfg.get_sync_pool_stall_defer_log_interval_s() == 30.0
   assert cfg.get_sync_ingest_per_file_timeout_s() == 900.0
   assert cfg.get_sync_ingest_per_file_timeout_max_s() == 7200.0
   assert cfg.get_sync_ingest_per_file_timeout_s_per_mib() == 1.0

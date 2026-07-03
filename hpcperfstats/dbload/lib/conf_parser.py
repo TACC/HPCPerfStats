@@ -108,6 +108,7 @@ INI_OPTION_REGISTRY = (
     ("PIPELINE", "sync_checkpoint_flush_batch_size"),
     ("PIPELINE", "sync_host_itimes_cache_max_timestamps_per_entry"),
     ("PIPELINE", "sync_pool_poll_timeout_s"),
+    ("PIPELINE", "sync_pool_stall_defer_log_interval_s"),
     ("PIPELINE", "sync_pool_stall_abort_after_timeouts"),
     ("PIPELINE", "sync_pool_worker_recycle_grace_polls"),
     ("PIPELINE", "sync_pool_idle_reconcile_max_rounds"),
@@ -1637,6 +1638,18 @@ def get_sync_pool_poll_timeout_s():
     )
   except (TypeError, ValueError, OverflowError):
     return 5.0
+
+
+def get_sync_pool_stall_defer_log_interval_s():
+  """Minimum wall seconds between repeated pool imap stall defer WARN lines (0 = every poll)."""
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        0.0,
+        float(_pipeline_get("sync_pool_stall_defer_log_interval_s", fallback="60")),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 60.0
 
 
 def get_sync_archive_members_cache_enabled():

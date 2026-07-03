@@ -1120,6 +1120,22 @@ def _make_ingest_stall_warning_fn(
   return on_stall_warning
 
 
+def _should_emit_stall_defer_warn(defer_reason, defer_log_state, interval_s):
+  """Return True when a pool imap stall defer WARN should be logged."""
+  if interval_s <= 0.0:
+    return True
+  now_mono = time.monotonic()
+  if defer_log_state.get("last_defer_reason") != defer_reason:
+    defer_log_state["last_defer_reason"] = defer_reason
+    defer_log_state["last_log_mono"] = now_mono
+    return True
+  last_log_mono = float(defer_log_state.get("last_log_mono") or 0.0)
+  if now_mono - last_log_mono >= interval_s:
+    defer_log_state["last_log_mono"] = now_mono
+    return True
+  return False
+
+
 def _make_ingest_stall_poll_fn(
     tracker,
     progress_state,
@@ -1128,6 +1144,7 @@ def _make_ingest_stall_poll_fn(
     day_hint_from_sample_fn=None,
 ):
   """Defer pool imap stall abort while Redis populate shows progress."""
+  defer_log_state = {}
 
   def on_stall_poll(consecutive, context, pool_health_context):
     del context
@@ -1150,76 +1167,80 @@ def _make_ingest_stall_poll_fn(
         sample=sample,
         day_hint_from_sample_fn=day_hint_from_sample_fn,
     )
-    if defer_on:
-      poll_s = float(cfg.get_sync_pool_poll_timeout_s())
-      estimated_stall_s = consecutive * poll_s
-      worker_stages = format_worker_stages_snapshot(
+    if not defer_on:
+      defer_log_state.clear()
+      return False
+    log_interval_s = float(cfg.get_sync_pool_stall_defer_log_interval_s())
+    if not _should_emit_stall_defer_warn(defer_reason, defer_log_state, log_interval_s):
+      return True
+    poll_s = float(cfg.get_sync_pool_poll_timeout_s())
+    estimated_stall_s = consecutive * poll_s
+    worker_stages = format_worker_stages_snapshot(
+        getattr(stall_diagnostics, "worker_registry", None)
+        if stall_diagnostics is not None
+        else None,
+    )
+    if defer_reason == "long_ingest_budget":
+      effective = _max_effective_ingest_timeout_from_registry(
           getattr(stall_diagnostics, "worker_registry", None)
           if stall_diagnostics is not None
           else None,
       )
-      if defer_reason == "long_ingest_budget":
-        effective = _max_effective_ingest_timeout_from_registry(
-            getattr(stall_diagnostics, "worker_registry", None)
-            if stall_diagnostics is not None
-            else None,
-        )
-        batch_max_s = float(
-            getattr(stall_diagnostics, "current_imap_batch_max_timeout_s", 0.0)
-            if stall_diagnostics is not None
-            else 0.0,
-        )
-        log_print(
-            "WARN: pool imap stall deferred: long ingest budget "
-            "effective_ingest_timeout_s=%.1f batch_max_ingest_timeout_s=%.1f "
-            "dynamic_stall_wall_s=%.0f consecutive_timeouts=%d "
-            "estimated_stall_s=%.1f in_flight_n=%d worker_stages=%s"
-            % (
-                effective or 0.0,
-                batch_max_s,
-                _dynamic_stall_wall_seconds(stall_diagnostics),
-                int(consecutive),
-                estimated_stall_s,
-                len(sample),
-                worker_stages,
-            ),
-            flush=True,
-        )
-        return True
-      if defer_reason == "worker_progress_active":
-        log_print(
-            "WARN: pool imap stall deferred: worker progress active "
-            "consecutive_timeouts=%d in_flight_n=%d estimated_stall_s=%.1f "
-            "worker_stages=%s"
-            % (
-                int(consecutive),
-                len(sample),
-                estimated_stall_s,
-                worker_stages,
-            ),
-            flush=True,
-        )
-        return True
-      redis_snapshot = describe_archive_members_populate_redis_for_day(
-          day_hint,
-          tgz_archive_dir,
+      batch_max_s = float(
+          getattr(stall_diagnostics, "current_imap_batch_max_timeout_s", 0.0)
+          if stall_diagnostics is not None
+          else 0.0,
       )
       log_print(
-          "WARN: pool imap stall deferred: Redis populate active for day=%s (%s) "
-          "consecutive_timeouts=%d in_flight_n=%d estimated_stall_s=%.1f "
-          "worker_stages=%s"
+          "WARN: pool imap stall deferred: long ingest budget "
+          "effective_ingest_timeout_s=%.1f batch_max_ingest_timeout_s=%.1f "
+          "dynamic_stall_wall_s=%.0f consecutive_timeouts=%d "
+          "estimated_stall_s=%.1f in_flight_n=%d worker_stages=%s"
           % (
-              day_hint,
-              redis_snapshot,
+              effective or 0.0,
+              batch_max_s,
+              _dynamic_stall_wall_seconds(stall_diagnostics),
               int(consecutive),
+              estimated_stall_s,
               len(sample),
-              consecutive * float(cfg.get_sync_pool_poll_timeout_s()),
               worker_stages,
           ),
           flush=True,
       )
       return True
-    return False
+    if defer_reason == "worker_progress_active":
+      log_print(
+          "WARN: pool imap stall deferred: worker progress active "
+          "consecutive_timeouts=%d in_flight_n=%d estimated_stall_s=%.1f "
+          "worker_stages=%s"
+          % (
+              int(consecutive),
+              len(sample),
+              estimated_stall_s,
+              worker_stages,
+          ),
+          flush=True,
+      )
+      return True
+    redis_snapshot = describe_archive_members_populate_redis_for_day(
+        day_hint,
+        tgz_archive_dir,
+    )
+    log_print(
+        "WARN: pool imap stall deferred: Redis populate active for day=%s (%s) "
+        "consecutive_timeouts=%d in_flight_n=%d estimated_stall_s=%.1f "
+        "worker_stages=%s"
+        % (
+            day_hint,
+            redis_snapshot,
+            int(consecutive),
+            len(sample),
+            consecutive * float(cfg.get_sync_pool_poll_timeout_s()),
+            worker_stages,
+        ),
+        flush=True,
+    )
+    return True
 
   return on_stall_poll
 

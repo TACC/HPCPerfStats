@@ -309,6 +309,9 @@ sync_pool_process_cap = 8
 # Poll interval for sync_timedb pool waits seconds (default 5).
 # sync_pool_poll_timeout_s = 5
 
+# Minimum seconds between repeated pool imap stall defer WARN lines (default 60; 0 = every poll).
+# sync_pool_stall_defer_log_interval_s = 60
+
 # Maximum consecutive pool poll timeouts before exit 124 (ceiling 17320 x 5s = 86600s).
 # Per-batch abort is computed from the largest file in the current imap sub-batch (floor .. ceiling).
 # sync_pool_stall_abort_after_timeouts = 17320

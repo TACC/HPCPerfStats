@@ -290,3 +290,88 @@ def test_build_ingest_stall_log_suffix_includes_worker_registry_counts(monkeypat
   assert "worker_registry_gap=1" in suffix
   assert "effective_ingest_timeout_s=5183.0" in suffix
   assert "duplicate_scan_streaming" in suffix
+
+
+def _stall_defer_poll_fn(monkeypatch, defer_reason):
+  """Build on_stall_poll with a fixed defer reason for throttle tests."""
+  monkeypatch.setattr(
+      st, "_ingest_stall_defer_state",
+      lambda *_a, **_k: (True, defer_reason),
+  )
+  monkeypatch.setattr(st, "_max_effective_ingest_timeout_from_registry", lambda *_a: 3290.8)
+  monkeypatch.setattr(st, "format_worker_stages_snapshot", lambda *_a: "stages")
+  monkeypatch.setattr(st, "_dynamic_stall_wall_seconds", lambda *_a: 3295.0)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
+  diag = st.IngestStallDiagnostics()
+  diag.current_imap_batch_max_timeout_s = 3290.8
+  return st._make_ingest_stall_poll_fn(None, {}, stall_diagnostics=diag)
+
+
+def test_stall_defer_warn_throttled_by_interval(monkeypatch):
+  logs = []
+  mono = {"t": 1000.0}
+  monkeypatch.setattr(st.time, "monotonic", lambda: mono["t"])
+  monkeypatch.setattr(
+      st, "log_print",
+      lambda *args, **kwargs: logs.append(" ".join(str(a) for a in args)),
+  )
+  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_defer_log_interval_s", lambda: 60.0)
+  on_stall_poll = _stall_defer_poll_fn(monkeypatch, "long_ingest_budget")
+  ctx = {"active_pool": None}
+
+  on_stall_poll(0, "ctx", ctx)
+  on_stall_poll(0, "ctx", ctx)
+  defer_lines = [ln for ln in logs if "pool imap stall deferred" in ln]
+  assert len(defer_lines) == 1
+
+  mono["t"] = 1061.0
+  on_stall_poll(0, "ctx", ctx)
+  defer_lines = [ln for ln in logs if "pool imap stall deferred" in ln]
+  assert len(defer_lines) == 2
+
+
+def test_stall_defer_warn_logs_immediately_on_reason_change(monkeypatch):
+  logs = []
+  mono = {"t": 2000.0}
+  monkeypatch.setattr(st.time, "monotonic", lambda: mono["t"])
+  monkeypatch.setattr(
+      st, "log_print",
+      lambda *args, **kwargs: logs.append(" ".join(str(a) for a in args)),
+  )
+  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_defer_log_interval_s", lambda: 60.0)
+  reasons = iter(["long_ingest_budget", "worker_progress_active"])
+  monkeypatch.setattr(
+      st, "_ingest_stall_defer_state",
+      lambda *_a, **_k: (True, next(reasons)),
+  )
+  monkeypatch.setattr(st, "_max_effective_ingest_timeout_from_registry", lambda *_a: 3290.8)
+  monkeypatch.setattr(st, "format_worker_stages_snapshot", lambda *_a: "stages")
+  monkeypatch.setattr(st, "_dynamic_stall_wall_seconds", lambda *_a: 3295.0)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
+  diag = st.IngestStallDiagnostics()
+  diag.current_imap_batch_max_timeout_s = 3290.8
+  on_stall_poll = st._make_ingest_stall_poll_fn(None, {}, stall_diagnostics=diag)
+  ctx = {"active_pool": None}
+
+  on_stall_poll(0, "ctx", ctx)
+  on_stall_poll(0, "ctx", ctx)
+  defer_lines = [ln for ln in logs if "pool imap stall deferred" in ln]
+  assert len(defer_lines) == 2
+  assert any("long ingest budget" in ln for ln in defer_lines)
+  assert any("worker progress active" in ln for ln in defer_lines)
+
+
+def test_stall_defer_warn_interval_zero_logs_every_poll(monkeypatch):
+  logs = []
+  monkeypatch.setattr(
+      st, "log_print",
+      lambda *args, **kwargs: logs.append(" ".join(str(a) for a in args)),
+  )
+  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_defer_log_interval_s", lambda: 0.0)
+  on_stall_poll = _stall_defer_poll_fn(monkeypatch, "long_ingest_budget")
+  ctx = {"active_pool": None}
+
+  on_stall_poll(0, "ctx", ctx)
+  on_stall_poll(0, "ctx", ctx)
+  defer_lines = [ln for ln in logs if "pool imap stall deferred" in ln]
+  assert len(defer_lines) == 2
