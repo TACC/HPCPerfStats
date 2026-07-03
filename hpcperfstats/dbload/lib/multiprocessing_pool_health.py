@@ -403,6 +403,9 @@ def abort_if_pool_workers_dead(pool, *, context="", pool_health_context=None):
         reconcile_fn()
       except Exception:
         pass
+    # Reap exitcode-0 recycled workers every grace poll so zombies do not
+    # accumulate under the supervisor while replacements start.
+    reap_pool_worker_pids(pool, context=context or "recycle_grace")
     grace_limit = get_sync_pool_worker_recycle_grace_polls()
     pool_key = id(pool)
     grace_used = _RECYCLE_GRACE_POLLS_BY_POOL.get(pool_key, 0) + 1
@@ -460,52 +463,134 @@ def _wait_pool_processes_bounded(active_pool, timeout_s):
   return len(alive) == 0, alive
 
 
+def _waitpid_pid_nonblocking(pid, *, timeout_s=0.5):
+  """Return True when ``pid`` was reaped (or already gone)."""
+  try:
+    waited_pid, _status = os.waitpid(int(pid), os.WNOHANG)
+    if waited_pid == int(pid):
+      return True
+  except ChildProcessError:
+    return True
+  except OSError:
+    return False
+  deadline = time.monotonic() + max(0.0, float(timeout_s))
+  while time.monotonic() < deadline:
+    try:
+      waited_pid, _status = os.waitpid(int(pid), os.WNOHANG)
+      if waited_pid == int(pid):
+        return True
+    except ChildProcessError:
+      return True
+    except OSError:
+      return False
+    time.sleep(0.05)
+  return False
+
+
 def _reap_pool_worker_pids(pool, *, timeout_s=5.0, context=""):
   """Reap terminated pool workers so zombies do not accumulate under the supervisor."""
   if pool is None:
-    return
+    return []
+  # Prefer Process.join so multiprocessing updates internal state first.
+  for proc in list(_iter_dead_pool_worker_processes(pool)):
+    try:
+      proc.join(timeout=0)
+    except Exception:
+      pass
   pids = [
       getattr(proc, "pid", None)
       for proc in iter_pool_worker_processes(pool)
       if getattr(proc, "pid", None) is not None
+      and not getattr(proc, "is_alive", lambda: True)()
   ]
   if not pids:
-    return
+    return []
   deadline = time.monotonic() + max(0.1, float(timeout_s))
   reaped = []
   for pid in pids:
     remaining = deadline - time.monotonic()
     if remaining <= 0:
       break
-    try:
-      waited_pid, status = os.waitpid(int(pid), os.WNOHANG)
-      if waited_pid == int(pid):
-        reaped.append(int(pid))
-        continue
-    except ChildProcessError:
+    if _waitpid_pid_nonblocking(pid, timeout_s=min(remaining, 0.5)):
       reaped.append(int(pid))
-      continue
-    except OSError:
-      continue
-    wait_deadline = time.monotonic() + min(remaining, 0.5)
-    while time.monotonic() < wait_deadline:
-      try:
-        waited_pid, _status = os.waitpid(int(pid), os.WNOHANG)
-        if waited_pid == int(pid):
-          reaped.append(int(pid))
-          break
-      except ChildProcessError:
-        reaped.append(int(pid))
-        break
-      except OSError:
-        break
-      time.sleep(0.05)
   if reaped:
     log_print(
         "Pool worker reap context=%s pids=%s"
         % (context or "pool", reaped),
         flush=True,
     )
+  return reaped
+
+
+def reap_pool_worker_pids(pool, *, timeout_s=5.0, context=""):
+  """Public wrapper: reap dead workers still listed on ``pool._pool``."""
+  return _reap_pool_worker_pids(pool, timeout_s=timeout_s, context=context)
+
+
+def _process_stat_is_zombie(pid):
+  """Return True when ``/proc/<pid>/stat`` reports state ``Z``."""
+  try:
+    with open("/proc/%d/stat" % int(pid), "r", encoding="ascii") as proc_stat:
+      stat_line = proc_stat.read()
+  except OSError:
+    return False
+  rparen = stat_line.rfind(")")
+  if rparen < 0 or rparen + 2 >= len(stat_line):
+    return False
+  return stat_line[rparen + 2] == "Z"
+
+
+def _iter_zombie_child_pids():
+  """Yield PIDs of direct children of this process that are zombies."""
+  self_pid = os.getpid()
+  try:
+    entries = os.listdir("/proc")
+  except OSError:
+    return
+  for name in entries:
+    if not name.isdigit():
+      continue
+    pid = int(name)
+    if pid == self_pid:
+      continue
+    try:
+      with open("/proc/%d/stat" % pid, "r", encoding="ascii") as proc_stat:
+        stat_line = proc_stat.read()
+    except OSError:
+      continue
+    rparen = stat_line.rfind(")")
+    if rparen < 0 or rparen + 2 >= len(stat_line):
+      continue
+    # fields after ") ": state ppid ...
+    rest = stat_line[rparen + 2 :].split()
+    if len(rest) < 2:
+      continue
+    if rest[0] != "Z":
+      continue
+    try:
+      ppid = int(rest[1])
+    except (TypeError, ValueError):
+      continue
+    if ppid == self_pid:
+      yield pid
+
+
+def reap_zombie_children_of_self(*, context=""):
+  """PID-specific waitpid for zombie children (not in pool._pool).
+
+  Prefer this over ``waitpid(-1)`` so live Pool/Manager waits are not stolen.
+  """
+  reaped = []
+  for pid in _iter_zombie_child_pids():
+    if _waitpid_pid_nonblocking(pid, timeout_s=0.5):
+      reaped.append(int(pid))
+  if reaped:
+    log_print(
+        "Zombie child reap context=%s pids=%s"
+        % (context or "supervisor", reaped),
+        flush=True,
+    )
+  return reaped
 
 
 def _sigkill_pool_worker_pids(pids, *, context=""):

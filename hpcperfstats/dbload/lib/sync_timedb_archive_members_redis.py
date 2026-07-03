@@ -592,6 +592,44 @@ def maybe_clear_orphan_incomplete_archive_members_redis(
   return True
 
 
+def clear_stale_incomplete_archive_members_redis(
+    keys: ArchiveMembersRedisKeys,
+    *,
+    client=None,
+    log_fn=log_print,
+) -> bool:
+  """Clear incomplete populate state even when HASH is empty (hlen=0).
+
+  Used after lock release without ``complete=1`` so a new single-flight can
+  acquire the lock (degraded must be cleared for ``_try_acquire_populate_lock``).
+  """
+  if client is None:
+    client = get_archive_members_redis_client(required=True)
+  if client.exists(keys.lock_key):
+    return False
+  if client.get(keys.complete_key) == "1":
+    return False
+  hlen = _hash_member_count(client, keys)
+  log_fn(
+      "WARNING: clearing stale incomplete archive members Redis "
+      "hash=%s hlen=%d complete=%s lock=0"
+      % (
+          keys.hash_key,
+          hlen,
+          client.get(keys.complete_key) or "-",
+      ),
+      flush=True,
+  )
+  client.delete(
+      keys.hash_key,
+      keys.complete_key,
+      keys.progress_key,
+      keys.degraded_key,
+      keys.invalidate_pending_key,
+  )
+  return True
+
+
 def _release_populate_lock(client, keys: ArchiveMembersRedisKeys, lock_value: str):
   script = (
       "if redis.call('get', KEYS[1]) == ARGV[1] then "
@@ -729,10 +767,22 @@ def _check_populate_wait_limits(
       if redis_members_populate_is_orphaned_incomplete(keys, client=client):
         maybe_clear_orphan_incomplete_archive_members_redis(keys, client=client)
         return True
-      raise ArchiveMembersPopulateStalledError(
-          "Archive members populate incomplete after lock release: %s"
+      # Empty incomplete (hlen=0): recover within populate_max_seconds rather
+      # than fatal on first stall — caller re-enqueues and may re-resolve identity.
+      # When max_seconds is 0 (unlimited / tests), keep fail-closed on first stall.
+      clear_stale_incomplete_archive_members_redis(keys, client=client)
+      if max_seconds <= 0:
+        raise ArchiveMembersPopulateStalledError(
+            "Archive members populate incomplete after lock release: %s"
+            % keys.hash_key,
+        )
+      log_print(
+          "WARNING: archive members populate incomplete after lock release; "
+          "recovering hash=%s"
           % keys.hash_key,
+          flush=True,
       )
+      return True
   return False
 
 
@@ -845,6 +895,7 @@ def wait_for_member_match(
     *,
     sealed_path="",
     respect_ingest_deadline=True,
+    canonical="",
 ) -> bool:
   """Wait for populate completion or incremental HASH hit; stall if no progress."""
   from hpcperfstats.dbload.lib.sync_timedb_ingest_sigalrm import (
@@ -857,12 +908,25 @@ def wait_for_member_match(
   last_progress_ts = _read_populate_progress_ts(client, keys)
   last_hlen = _hash_member_count(client, keys)
   last_progress_monotonic = started
+  logged_drift_keys = set()
 
   with populate_wait_ingest_sigalrm_guard(
       respect_ingest_deadline=respect_ingest_deadline,
   ):
     while True:
       _raise_if_ingest_deadline_exceeded_when_enabled(respect_ingest_deadline)
+      if canonical:
+        warm_members, keys = _maybe_reresolve_warm_members(
+            client,
+            keys,
+            canonical=canonical,
+            logged_drift_keys=logged_drift_keys,
+        )
+        if warm_members is not None:
+          size = warm_members.get(member_name)
+          if size is None:
+            return False
+          return int(size) == expected_size
       _raise_if_archive_day_ingest_skip(keys, sealed_path, client)
       complete = client.get(keys.complete_key)
       raw_size = client.hget(keys.hash_key, member_name)
@@ -893,6 +957,21 @@ def wait_for_member_match(
           respect_ingest_deadline=respect_ingest_deadline,
       )
       if stale_lock_released:
+        if canonical:
+          warm_members, keys = _maybe_reresolve_warm_members(
+              client,
+              keys,
+              canonical=canonical,
+              logged_drift_keys=logged_drift_keys,
+          )
+          if warm_members is not None:
+            size = warm_members.get(member_name)
+            if size is None:
+              return False
+            return int(size) == expected_size
+          _recover_populate_wait_after_stale_lock(
+              client, keys, canonical=canonical,
+          )
         last_progress_monotonic = time.monotonic()
         last_progress_ts = _read_populate_progress_ts(client, keys)
         last_hlen = _hash_member_count(client, keys)
@@ -905,13 +984,73 @@ def wait_for_member_match(
       time.sleep(_wait_poll_seconds())
 
 
+def _resolve_keys_for_canonical(canonical: str) -> ArchiveMembersRedisKeys:
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      _daily_archive_members_cache_key,
+      normalize_daily_compressed_path,
+  )
+
+  path = normalize_daily_compressed_path(canonical)
+  return build_archive_members_redis_keys(_daily_archive_members_cache_key(path))
+
+
+def _maybe_reresolve_warm_members(
+    client,
+    keys: ArchiveMembersRedisKeys,
+    *,
+    canonical="",
+    logged_drift_keys=None,
+):
+  """Return members when *canonical* identity is fully warm (may differ from *keys*)."""
+  if not canonical:
+    return None, keys
+  try:
+    current_keys = _resolve_keys_for_canonical(canonical)
+  except Exception:
+    return None, keys
+  if current_keys.hash_key != keys.hash_key:
+    if logged_drift_keys is not None and keys.hash_key not in logged_drift_keys:
+      logged_drift_keys.add(keys.hash_key)
+      log_print(
+          "INFO: populate_wait identity_drift day=%s from=%s to=%s"
+          % (current_keys.day_token, keys.hash_key, current_keys.hash_key),
+          flush=True,
+      )
+    keys = current_keys
+  if not redis_members_cache_is_fully_warm(keys, client=client):
+    return None, keys
+  members = _hgetall_members(client, keys)
+  if members is None:
+    return None, keys
+  return members, keys
+
+
+def _recover_populate_wait_after_stale_lock(
+    client,
+    keys: ArchiveMembersRedisKeys,
+    *,
+    canonical="",
+):
+  """Re-enqueue populate after incomplete lock release when *canonical* is known."""
+  if not canonical:
+    return
+  enqueue_archive_members_populate(canonical, keys.day_token)
+
+
 def wait_for_complete_members(
     keys: ArchiveMembersRedisKeys,
     *,
     sealed_path="",
     respect_ingest_deadline=True,
+    canonical="",
 ) -> dict:
-  """Block until ``complete=1`` and return full member map."""
+  """Block until ``complete=1`` and return full member map.
+
+  When *canonical* is set, each poll re-resolves the on-disk archive identity so
+  concurrent tar append (identity drift T1→T2) can succeed when the current key
+  is warm. Incomplete-after-lock-release recovers by clearing stale state and
+  re-enqueuing until ``populate_max_seconds``.
+  """
   from hpcperfstats.dbload.lib.sync_timedb_ingest_sigalrm import (
       populate_wait_ingest_sigalrm_guard,
   )
@@ -921,16 +1060,28 @@ def wait_for_complete_members(
   last_progress_ts = _read_populate_progress_ts(client, keys)
   last_hlen = _hash_member_count(client, keys)
   last_progress_monotonic = started
+  logged_drift_keys = set()
 
   with populate_wait_ingest_sigalrm_guard(
       respect_ingest_deadline=respect_ingest_deadline,
   ):
     while True:
       _raise_if_ingest_deadline_exceeded_when_enabled(respect_ingest_deadline)
+      if canonical:
+        warm_members, keys = _maybe_reresolve_warm_members(
+            client,
+            keys,
+            canonical=canonical,
+            logged_drift_keys=logged_drift_keys,
+        )
+        if warm_members is not None:
+          return warm_members
       _raise_if_archive_day_ingest_skip(keys, sealed_path, client)
       members = _hgetall_members(client, keys)
       if members is not None:
-        return members
+        # complete=1 with empty HASH is not fully warm when tracking identity.
+        if members or not canonical:
+          return members
 
       progress_seen, last_progress_ts, last_hlen = _populate_progress_seen(
           client,
@@ -950,6 +1101,17 @@ def wait_for_complete_members(
           respect_ingest_deadline=respect_ingest_deadline,
       )
       if stale_lock_released:
+        warm_members, keys = _maybe_reresolve_warm_members(
+            client,
+            keys,
+            canonical=canonical,
+            logged_drift_keys=logged_drift_keys,
+        )
+        if warm_members is not None:
+          return warm_members
+        _recover_populate_wait_after_stale_lock(
+            client, keys, canonical=canonical,
+        )
         last_progress_monotonic = time.monotonic()
         last_progress_ts = _read_populate_progress_ts(client, keys)
         last_hlen = _hash_member_count(client, keys)
@@ -1272,13 +1434,23 @@ def request_archive_members_populate_and_wait(
         keys,
         sealed_path=sealed_path,
         respect_ingest_deadline=respect_ingest_deadline,
+        canonical=canonical,
     )
   elif populate_degraded_is_set(keys, client=client):
     if get_archive_day_ingest_skip(keys, client=client) is not None:
       return {}
-    raise ArchiveMembersRedisUnavailableError(
-        "archive members Redis populate degraded for %s without day skip"
-        % keys.day_token,
+    # Recoverable: clear degraded and wait with re-enqueue (identity may have drifted).
+    clear_stale_incomplete_archive_members_redis(keys, client=client)
+    controller = get_populate_pool_controller()
+    if controller is not None and controller.is_running():
+      enqueue_archive_members_populate(canonical, keys.day_token)
+    else:
+      execute_archive_members_populate_for_canonical(canonical)
+    members = wait_for_complete_members(
+        keys,
+        sealed_path=sealed_path,
+        respect_ingest_deadline=respect_ingest_deadline,
+        canonical=canonical,
     )
   else:
     controller = get_populate_pool_controller()
@@ -1290,6 +1462,7 @@ def request_archive_members_populate_and_wait(
         keys,
         sealed_path=sealed_path,
         respect_ingest_deadline=respect_ingest_deadline,
+        canonical=canonical,
     )
   if members is not None:
     _store_daily_archive_members_cache(canonical, members)

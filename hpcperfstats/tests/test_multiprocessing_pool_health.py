@@ -21,8 +21,15 @@ class _RecycledWorker:
   pid = 4242
   exitcode = 0
 
+  def __init__(self):
+    self._joined = False
+
   def is_alive(self):
     return False
+
+  def join(self, timeout=None):
+    del timeout
+    self._joined = True
 
 
 class _AliveWorker:
@@ -481,6 +488,58 @@ def test_abort_recycle_grace_tolerates_exitcode_zero(monkeypatch):
     mph.abort_if_pool_workers_dead(pool, context="recycle_test")
   assert excinfo.value.exit_code == 137
   assert excinfo.value.likely_cause == "recycle"
+
+
+def test_abort_recycle_grace_reaps_dead_worker_pids(monkeypatch):
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.multiprocessing_pool_health.get_sync_pool_worker_recycle_grace_polls",
+      lambda: 2,
+  )
+  waitpids = []
+
+  def _waitpid(pid, flags):
+    waitpids.append((pid, flags))
+    return (pid, 0)
+
+  monkeypatch.setattr(mph.os, "waitpid", _waitpid)
+  recycled = _RecycledWorker()
+  pool = SimpleNamespace(_pool=[recycled, _AliveWorker()])
+  mph.abort_if_pool_workers_dead(pool, context="recycle_reap")
+  assert recycled._joined is True
+  assert any(pid == 4242 for pid, _flags in waitpids)
+
+
+def test_reap_pool_worker_pids_logs_reaped(monkeypatch):
+  logs = []
+  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  waitpids = []
+
+  def _waitpid(pid, flags):
+    waitpids.append(pid)
+    return (pid, 0)
+
+  monkeypatch.setattr(mph.os, "waitpid", _waitpid)
+  pool = SimpleNamespace(_pool=[_RecycledWorker()])
+  reaped = mph.reap_pool_worker_pids(pool, context="unit")
+  assert reaped == [4242]
+  assert any("Pool worker reap context=unit" in line for line in logs)
+
+
+def test_reap_zombie_children_of_self_waitpids_state_z(monkeypatch):
+  logs = []
+  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  monkeypatch.setattr(mph, "_iter_zombie_child_pids", lambda: iter([99901, 99902]))
+  waitpids = []
+
+  def _waitpid(pid, flags):
+    waitpids.append(pid)
+    return (pid, 0)
+
+  monkeypatch.setattr(mph.os, "waitpid", _waitpid)
+  reaped = mph.reap_zombie_children_of_self(context="unit_z")
+  assert reaped == [99901, 99902]
+  assert waitpids == [99901, 99902]
+  assert any("Zombie child reap context=unit_z" in line for line in logs)
 
 
 def test_abort_recycle_grace_logs_info_not_error(monkeypatch):

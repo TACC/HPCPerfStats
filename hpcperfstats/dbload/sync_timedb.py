@@ -78,6 +78,8 @@ from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
     imap_sliding_window_watch_pool,
     imap_unordered_watch_pool,
     pool_workers_all_idle,
+    reap_pool_worker_pids,
+    reap_zombie_children_of_self,
     sync_timedb_spawn_pool_recycle_kwargs,
     terminate_pool_bounded,
 )
@@ -1626,6 +1628,21 @@ _HOST_SECOND_PRESENT_CACHE_MAX_ENTRIES = sync_timedb_host_itimes._HOST_SECOND_PR
 _TREE_RSS_DEFER_SLEEP_SECONDS = 5.0
 
 tgz_archive_dir = cfg.get_daily_archive_dir_path()
+
+
+def _reap_supervisor_pool_children(ingest_pool, archive_pool, populate_pool_controller):
+  """Reap dead pool workers and zombies; restart dead populate-pool workers."""
+  reap_pool_worker_pids(ingest_pool, context="chunk_boundary_ingest")
+  reap_pool_worker_pids(archive_pool, context="chunk_boundary_archive")
+  reap_zombie_children_of_self(context="chunk_boundary")
+  if populate_pool_controller is not None:
+    try:
+      populate_pool_controller.reap_and_restart()
+    except Exception as exc:
+      log_print(
+          "WARN: populate-pool reap_and_restart failed: %s" % exc,
+          flush=True,
+      )
 
 
 def _exit_on_archive_members_redis_unavailable(exc):
@@ -6312,6 +6329,9 @@ def run_sync_timedb_supervisor_loop(
                 stall_diagnostics.chunk_archive_elapsed_s,
             ),
             flush=True,
+        )
+        _reap_supervisor_pool_children(
+            ingest_pool, archive_pool, populate_pool_controller,
         )
 
         _record_ingest_sort_epochs_for_paths(

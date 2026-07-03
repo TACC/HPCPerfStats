@@ -35,6 +35,9 @@ class PopulatePoolController:
   def __init__(self):
     self._shutdown = None
     self._processes = []
+    self._script_name = None
+    self._registry = None
+    self._ctx = None
 
   def is_running(self):
     return bool(self._processes)
@@ -47,35 +50,83 @@ class PopulatePoolController:
     n_workers = int(cfg.get_sync_archive_members_populate_pool_processes())
     if n_workers <= 0 or not archive_members_redis_enabled():
       return
-    ctx = multiprocessing.get_context("spawn")
-    self._shutdown = ctx.Event()
+    self._script_name = script_name
+    self._registry = registry
+    self._ctx = multiprocessing.get_context("spawn")
+    self._shutdown = self._ctx.Event()
     for index in range(n_workers):
-      proc = ctx.Process(
-          target=_populate_pool_worker_entry,
-          args=(script_name, registry, self._shutdown),
-          name="populate-pool-%d" % index,
-          daemon=True,
-      )
-      proc.start()
-      self._processes.append(proc)
+      self._spawn_one(index)
     log_print(
         "sync_timedb: populate-pool started workers=%d"
         % len(self._processes),
         flush=True,
     )
 
+  def _spawn_one(self, index):
+    proc = self._ctx.Process(
+        target=_populate_pool_worker_entry,
+        args=(self._script_name, self._registry, self._shutdown),
+        name="populate-pool-%d" % index,
+        daemon=True,
+    )
+    proc.start()
+    self._processes.append(proc)
+    return proc
+
   def stop(self, *, force=False):
     if self._shutdown is not None:
       self._shutdown.set()
     for proc in self._processes:
-      if not proc.is_alive():
-        continue
-      proc.join(timeout=5.0 if not force else 0.0)
+      # Always join — is_alive() is False for zombies but join still reaps.
+      try:
+        proc.join(timeout=5.0 if not force else 0.0)
+      except Exception:
+        pass
       if proc.is_alive() and force:
-        proc.terminate()
-        proc.join(timeout=2.0)
+        try:
+          proc.terminate()
+        except Exception:
+          pass
+        try:
+          proc.join(timeout=2.0)
+        except Exception:
+          pass
     self._processes = []
     self._shutdown = None
+    self._script_name = None
+    self._registry = None
+    self._ctx = None
+
+  def reap_and_restart(self):
+    """Join dead workers and replace them up to the configured pool size."""
+    if self._shutdown is None or self._ctx is None:
+      return
+    if self._shutdown.is_set():
+      return
+    n_workers = int(cfg.get_sync_archive_members_populate_pool_processes())
+    if n_workers <= 0:
+      return
+    kept = []
+    restarted = 0
+    for proc in self._processes:
+      if proc.is_alive():
+        kept.append(proc)
+        continue
+      old_pid = getattr(proc, "pid", None)
+      try:
+        proc.join(timeout=0)
+      except Exception:
+        pass
+      log_print(
+          "WARN: populate-pool worker restarted pid=%s"
+          % (old_pid if old_pid is not None else "-"),
+          flush=True,
+      )
+      restarted += 1
+    self._processes = kept
+    while len(self._processes) < n_workers:
+      self._spawn_one(len(self._processes))
+    return restarted
 
 
 def _populate_pool_worker_entry(script_name, registry, shutdown):

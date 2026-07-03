@@ -9,6 +9,9 @@ from pathlib import Path
 
 import pytest
 
+from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+    _daily_archive_members_cache_key,
+)
 from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
     ArchiveDayIngestSkipError,
     ArchiveMembersPopulateStalledError,
@@ -26,6 +29,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
     set_archive_day_ingest_skip,
     store_complete_members_in_redis,
     verify_archive_members_redis_startup,
+    wait_for_complete_members,
     wait_for_member_match,
 )
 
@@ -487,6 +491,10 @@ def test_populate_redis_members_from_sealed_scan_wires_stream_fn(
       _populate_redis_members_from_sealed_scan,
       normalize_daily_compressed_path,
   )
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+      reset_worker_pool_kind,
+      set_worker_pool_kind,
+  )
 
   day_gz = tmp_path / "2024-06-10.tar.gz"
   inner = tmp_path / "payload.txt"
@@ -498,7 +506,11 @@ def test_populate_redis_members_from_sealed_scan_wires_stream_fn(
   canonical = normalize_daily_compressed_path(sealed_path)
   cache_key = _daily_archive_members_cache_key(canonical)
 
-  members = _populate_redis_members_from_sealed_scan(sealed_path, cache_key)
+  token = set_worker_pool_kind("populate-pool")
+  try:
+    members = _populate_redis_members_from_sealed_scan(sealed_path, cache_key)
+  finally:
+    reset_worker_pool_kind(token)
   assert members == {"host/payload": 5}
 
 
@@ -1012,3 +1024,106 @@ def test_ingest_populate_wait_ignores_per_file_deadline(monkeypatch, tmp_path):
     reset_ingest_task_deadline_monotonic(token)
   assert populate_done.wait(timeout=2.0)
   assert members.get("host/raw") == 4
+
+
+def test_populate_wait_succeeds_when_tar_identity_drifts_to_warm_key(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  day = "2026-06-07"
+  tar = tmp_path / ("%s.tar" % day)
+  zst = tmp_path / ("%s.tar.zst" % day)
+  tar.write_bytes(b"v1")
+  canonical = str(zst)
+  keys_t1 = build_archive_members_redis_keys(
+      _daily_archive_members_cache_key(canonical),
+  )
+  assert "none:none" in keys_t1.hash_key
+  result = {"members": None, "exc": None}
+
+  def _waiter():
+    try:
+      result["members"] = wait_for_complete_members(
+          keys_t1, canonical=canonical,
+      )
+    except Exception as exc:
+      result["exc"] = exc
+
+  t_wait = threading.Thread(target=_waiter)
+  t_wait.start()
+  time.sleep(0.05)
+  tar.write_bytes(b"v1-appended-bytes")
+  keys_t2 = build_archive_members_redis_keys(
+      _daily_archive_members_cache_key(canonical),
+  )
+  assert keys_t1.hash_key != keys_t2.hash_key
+  _redis_test_env.hset(keys_t2.hash_key, mapping={"host/a": "10"})
+  _redis_test_env.set(keys_t2.complete_key, "1")
+  t_wait.join(timeout=3)
+  assert result["exc"] is None
+  assert result["members"] == {"host/a": 10}
+
+
+def test_incomplete_after_lock_release_reenqueues_before_fatal(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser"
+      ".get_sync_archive_members_redis_populate_stall_seconds",
+      lambda: 1,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser"
+      ".get_sync_archive_members_redis_populate_max_seconds",
+      lambda: 5,
+  )
+  day = "2026-06-07"
+  tar = tmp_path / ("%s.tar" % day)
+  zst = tmp_path / ("%s.tar.zst" % day)
+  tar.write_bytes(b"tar")
+  canonical = str(zst)
+  keys = build_archive_members_redis_keys(
+      _daily_archive_members_cache_key(canonical),
+  )
+  _redis_test_env.set(keys.complete_key, "0")
+  enqueued = []
+
+  def _enqueue(path, day_token):
+    enqueued.append((path, day_token))
+    return True
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".enqueue_archive_members_populate",
+      _enqueue,
+  )
+  result = {"members": None, "exc": None}
+
+  def _waiter():
+    try:
+      result["members"] = wait_for_complete_members(
+          keys, canonical=canonical,
+      )
+    except Exception as exc:
+      result["exc"] = exc
+
+  t_wait = threading.Thread(target=_waiter)
+  t_wait.start()
+  time.sleep(1.5)
+  assert enqueued, "expected re-enqueue after incomplete lock release"
+  _redis_test_env.hset(keys.hash_key, mapping={"host/b": "2"})
+  _redis_test_env.set(keys.complete_key, "1")
+  t_wait.join(timeout=3)
+  assert result["exc"] is None
+  assert result["members"] == {"host/b": 2}
+
+
+def test_incomplete_after_lock_release_fatal_when_max_seconds_zero(
+    _redis_test_env, tmp_path,
+):
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  _redis_test_env.set(keys.complete_key, "0")
+  with pytest.raises(
+      ArchiveMembersPopulateStalledError,
+      match="incomplete after lock release",
+  ):
+    wait_for_complete_members(keys)
