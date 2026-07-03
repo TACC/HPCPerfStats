@@ -15,9 +15,10 @@ _DEFAULT_TOTAL_CORES = "40"
 cfg = None
 _ACTIVE_CONFIG_PATH = None
 
-# Canonical (section, option) pairs read from hpcperfstats.ini. Used by
-# test_hpcperfstats_ini_example drift guards; keep in sync when adding getters.
-INI_OPTION_REGISTRY = (
+# Canonical (section, option, default) tuples for hpcperfstats.ini.
+# *default* is a str code fallback, or None when the key is required / has no
+# code default. Used by drift guards; keep in sync when adding getters.
+_INI_OPTION_REGISTRY_KEYS = (
     # [DEFAULT] — install, site-wide, PostgreSQL connection, cpuset pinning (last in example)
     ("DEFAULT", "machine"),
     ("DEFAULT", "host_name_ext"),
@@ -206,11 +207,234 @@ INI_OPTION_REGISTRY = (
     ("XALT", "xalt_password"),
     ("XALT", "xalt_host"),
 )
+INI_OPTION_DEFAULTS = {
+    'machine': None,
+    'host_name_ext': None,
+    'data_dir': None,
+    'server': None,
+    'restricted_queue_keywords': None,
+    'debug': 'no',
+    'staff_email_domain': None,
+    'timezone': None,
+    'secret_key': None,
+    'total_cores': '40',
+    'engine_name': None,
+    'dbname': None,
+    'username': None,
+    'password': None,
+    'host': None,
+    'port': None,
+    'cpuset_pin_min_total_cores': '32',
+    'cpuset_pin_min_cores_per_node': '16',
+    'numa_pin_max_nodes_auto': '16',
+    'pin_proxy_in_compose': 'no',
+    'web_numa_node': None,
+    'pipeline_numa_node': None,
+    'cors_origin_scheme': '',
+    'max_gunicorn_workers': '32',
+    'parallel_db_prefetch_max': '4',
+    'api_small_executor_max_workers': None,
+    'db_conn_max_age': '90',
+    'db_statement_timeout_ms': '120000',
+    'db_idle_in_transaction_session_timeout_ms': '300000',
+    'pipeline_overlap_mode': 'balanced',
+    'metrics_pool_process_cap': '32',
+    'metrics_ingest_priority_scale': '0.75',
+    'metrics_min_processes': '1',
+    'metrics_scheduler_mode': 'global_priority',
+    'metrics_scheduler_prefetch_chunks': '8',
+    'metrics_scheduler_ready_queue_target': '2000',
+    'metrics_plot_prewarm_mode': 'pipeline_required',
+    'metrics_scheduler_skip_prewarm': 'no',
+    'metrics_prewarm_workers': '4',
+    'metrics_prewarm_backlog_cap': '32',
+    'metrics_prewarm_backpressure_wait_s': '0.25',
+    'metrics_prewarm_drain_batch_budget_s': '2.0',
+    'metrics_prewarm_drain_batch_budget_max_s': '60.0',
+    'metrics_prewarm_drain_per_job_s': '0.5',
+    'metrics_prewarm_retry_attempts': '2',
+    'metrics_scheduler_compute_threads': '4',
+    'metrics_run_poll_timeout_s': '5',
+    'metrics_run_stall_timeout_s': '900',
+    'metrics_run_per_job_timeout_s': '0',
+    'metrics_persist_statement_timeout_ms': '120000',
+    'metrics_persist_lock_timeout_ms': '10000',
+    'metrics_proxy_reject_jid_batch_size': '48',
+    'metrics_compute_batch_max_window_s': '0.0',
+    'metrics_compute_batch_max_single_job_s': '0.0',
+    'metrics_compute_batch_unknown_runtime_s': '172800.0',
+    'metrics_compute_watchdog_s': '120.0',
+    'metrics_compute_total_watchdog_s': '0.0',
+    'metrics_deferred_not_ready_retry_s': '10.0',
+    'metrics_deferred_not_ready_max_retries': '30',
+    'metrics_deferred_not_ready_max_age_s': '900.0',
+    'metrics_deferred_not_ready_quarantine_s': '300.0',
+    'metrics_readiness_require_window_coverage': 'yes',
+    'metrics_readiness_start_margin_seconds': '600',
+    'metrics_readiness_end_margin_seconds': '600',
+    'sync_pool_process_cap': '1',
+    'archive_pool_process_cap': '1',
+    'sync_enable_cpuset_priority_budget': 'yes',
+    'sync_budget_ingest_ratio': '0.6',
+    'sync_budget_archive_ratio': '0.15',
+    'sync_budget_metrics_ratio': '0.2',
+    'sync_budget_reserve_ratio': '0.05',
+    'sync_budget_min_metrics_percent': '10',
+    'sync_budget_min_archive_percent': '10',
+    'sync_enable_overprovision_mode': 'no',
+    'sync_budget_overcommit_factor': '1.0',
+    'sync_overprovision_ingest_multiplier': '1.0',
+    'sync_overprovision_archive_multiplier': '1.0',
+    'sync_overprovision_metrics_multiplier': '1.0',
+    'sync_ingest_queue_max_size': '2000',
+    'sync_archive_queue_max_size': '1000',
+    'sync_timedb_archive_max_concurrent_sealed_days': '1',
+    'sync_archive_retry_max_attempts': '5',
+    'sync_archive_retry_backoff_base_seconds': '1',
+    'sync_archive_retry_backoff_max_seconds': '60',
+    'sync_checkpoint_flush_batch_size': '100',
+    'sync_host_itimes_cache_max_timestamps_per_entry': '100000',
+    'sync_pool_poll_timeout_s': '5',
+    'sync_pool_stall_defer_log_interval_s': '60',
+    'sync_pool_stall_abort_after_timeouts': '17320',
+    'sync_pool_worker_recycle_grace_polls': '2',
+    'sync_pool_idle_reconcile_max_rounds': '3',
+    'sync_pool_idle_reconcile_polls_per_round': '4',
+    'sync_ingest_per_file_timeout_s': '900',
+    'sync_ingest_per_file_timeout_max_s': '86400',
+    'sync_ingest_per_file_timeout_s_per_mib': '2.783203125',
+    'sync_ingest_giant_pool_supplement_enabled': 'yes',
+    'sync_ingest_giant_pool_supplement_max_bytes': '1073741824',
+    'sync_ingest_giant_pool_supplement_trigger_budget_s': '6600',
+    'sync_archive_members_cache_enabled': 'yes',
+    'sync_archive_members_cache_max_entries': '64',
+    'sync_archive_members_redis_enabled': 'yes',
+    'sync_archive_members_redis_ttl_seconds': '86400',
+    'sync_archive_members_redis_populate_lock_seconds': '3600',
+    'sync_archive_members_redis_populate_stall_seconds': '120',
+    'sync_archive_members_redis_populate_max_seconds': '7200',
+    'sync_archive_members_redis_wait_poll_seconds': '0.25',
+    'sync_archive_members_redis_hset_batch_size': '500',
+    'sync_archive_members_redis_max_payload_bytes': '8388608',
+    'sync_archive_members_populate_pool_processes': '2',
+    'sync_write_lock_shards': '1',
+    'sync_ingest_chunk_size': '1000',
+    'sync_bulk_create_batch_size': '10000',
+    'sync_supervisor_rss_limit_mb': '0',
+    'sync_supervisor_rss_check_every_n_chunks': '1',
+    'sync_process_tree_rss_limit_mb': '96000',
+    'sync_process_tree_rss_check_every_n_chunks': '1',
+    'sync_process_tree_rss_exit_mb': '0',
+    'sync_ingest_max_file_read_bytes': '536870912',
+    'sync_ingest_stream_duplicate_scan_bytes': '8388608',
+    'sync_ingest_db_complete_tail_window_lines': '500',
+    'sync_ingest_imap_inflight_cap': '0',
+    'sync_ingest_pool_maxtasksperchild': '1',
+    'sync_ingest_malloc_trim_after_file': 'yes',
+    'sync_cold_path_max_concurrent_seals': '0',
+    'sync_adaptive_dispatch_enabled': 'yes',
+    'sync_dispatch_burst_factor': '2.0',
+    'sync_dispatch_archive_backoff_ratio': '0.50',
+    'sync_dispatch_step_size': '8',
+    'sync_enable_ingest_first_durability_mode': 'yes',
+    'sync_archive_db_ingest_gate_mode': 'head',
+    'sync_archive_require_db_head_ingest': 'yes',
+    'sync_archive_maint_hints': 'yes',
+    'acct_path': None,
+    'archive_dir': None,
+    'daily_archive_dir': None,
+    'archive_keep_uncompressed_tar': 'no',
+    'archive_today_uncompressed_tar_grace_hours': '8.0',
+    'archive_seal_idle_seconds': '60',
+    'archive_zstd_threads': '0',
+    'archive_zstd_level': '7',
+    'archive_zstd_nice': '10',
+    'archive_zstd_ionice_class': '2',
+    'archive_zstd_ionice_level': '6',
+    'archive_zstd_drop_page_cache': 'yes',
+    'archive_seal_parallel_workers': '4',
+    'archive_maintenance_max_defer_seconds': '3600',
+    'archive_maintenance_idle_seconds': '300',
+    'archive_janitor_budget_seconds': '30',
+    'archive_janitor_days_per_tick': '2',
+    'archive_janitor_debt_high_watermark': '50',
+    'archive_janitor_debt_burst_factor': '1.5',
+    'archive_janitor_debt_max_entries': '200',
+    'archive_janitor_raw_paths_per_tick': '1000',
+    'sync_day_close_candidate_report': 'yes',
+    'sync_startup_day_close_max_inflight': '',
+    'sync_startup_snapshot_wait_seconds': '300',
+    'sync_day_close_max_inflight': '2',
+    'sync_day_close_raw_removal_wait_seconds': '3600',
+    'sync_day_close_async_stale_seconds': '7200',
+    'sync_day_close_raw_removal_preflight': 'yes',
+    'sync_day_close_raw_removal_verify_budget_seconds': '30',
+    'sync_day_close_raw_removal_max_deletes_per_pass': '0',
+    'sync_archive_max_inflight_jobs': '2',
+    'sync_archive_worker_stall_seconds': '600',
+    'client_id': None,
+    'client_key': None,
+    'oauth_base_url': None,
+    'authorize_url': None,
+    'rmq_server': None,
+    'rmq_queue': None,
+    'allow_from': '',
+    'listen_tcp': 'yes',
+    'listen_udp': 'yes',
+    'redis_location': None,
+    'xalt_engine': None,
+    'xalt_name': None,
+    'xalt_user': None,
+    'xalt_password': None,
+    'xalt_host': None,
+}
+
+INI_OPTION_REGISTRY = tuple(
+    (section, option, INI_OPTION_DEFAULTS[option])
+    for section, option in _INI_OPTION_REGISTRY_KEYS
+)
+
+_INI_REGISTRY_DEFAULT_BY_OPTION = {
+    option: default for _section, option, default in INI_OPTION_REGISTRY
+}
+
+_INI_FALLBACK_SENTINEL = object()
+
+
+def ini_registry_default(option):
+  """Return the code default for *option* (may be None)."""
+  try:
+    return _INI_REGISTRY_DEFAULT_BY_OPTION[option]
+  except KeyError as exc:
+    raise KeyError('unknown ini option %r' % option) from exc
+
+
+def _ini_registry_default_str(option):
+  """Return registry default as str; raises NoOptionError when default is None."""
+  default = ini_registry_default(option)
+  if default is None:
+    raise configparser.NoOptionError(option, 'registry')
+  return str(default)
+
+
+def _ini_get_from_registry(primary_section, option, *, legacy_sections=()):
+  """Like ``_ini_get`` but uses ``INI_OPTION_DEFAULTS`` for the fallback."""
+  return _ini_get(
+      primary_section,
+      option,
+      fallback=_ini_registry_default_str(option),
+      legacy_sections=legacy_sections,
+  )
+
+
+def ini_option_registry_pairs():
+  """Return list of (section, option) from INI_OPTION_REGISTRY."""
+  return [(section, option) for section, option, _default in INI_OPTION_REGISTRY]
 
 
 def ini_option_registry_set():
   """Return the set of (section, option) tuples in INI_OPTION_REGISTRY."""
-  return set(INI_OPTION_REGISTRY)
+  return {(section, option) for section, option, _default in INI_OPTION_REGISTRY}
 
 
 def _candidate_config_paths():
@@ -325,8 +549,10 @@ _PIPELINE_LEGACY = ("DEFAULT",)
 _PIPELINE_ARCHIVE_LEGACY = ("PORTAL",)
 
 
-def _pipeline_get(option, *, fallback):
+def _pipeline_get(option, *, fallback=_INI_FALLBACK_SENTINEL):
   """Read a PIPELINE option with DEFAULT legacy fallback."""
+  if fallback is _INI_FALLBACK_SENTINEL:
+    fallback = _ini_registry_default_str(option)
   return _ini_get(
       "PIPELINE", option, fallback=str(fallback), legacy_sections=_PIPELINE_LEGACY,
   )
@@ -336,11 +562,11 @@ def _pipeline_has_option(option):
   return _ini_has_option_any("PIPELINE", option, _PIPELINE_LEGACY)
 
 
-def _pipeline_getint(option, *, fallback):
+def _pipeline_getint(option, *, fallback=_INI_FALLBACK_SENTINEL):
   return int(_pipeline_get(option, fallback=fallback))
 
 
-def _pipeline_getfloat(option, *, fallback):
+def _pipeline_getfloat(option, *, fallback=_INI_FALLBACK_SENTINEL):
   return float(_pipeline_get(option, fallback=fallback))
 
 
@@ -355,23 +581,27 @@ def _parse_bool(raw, *, default=False):
   return default
 
 
-def _env_or_cfg_int(env_key, section, option, fallback, legacy_sections=()):
+def _env_or_cfg_int(env_key, section, option, fallback=_INI_FALLBACK_SENTINEL, legacy_sections=()):
   env = os.environ.get(env_key, "").strip()
   if env:
     return int(env)
   _ensure_cfg_loaded()
+  if fallback is _INI_FALLBACK_SENTINEL:
+    fallback = _ini_registry_default_str(option)
   return int(_ini_get(
       section, option, fallback=str(fallback), legacy_sections=legacy_sections,
   ))
 
 
 def _env_or_cfg_bounded_float(
-    env_key, section, option, fallback, *, lower, upper, legacy_sections=(),
+    env_key, section, option, fallback=_INI_FALLBACK_SENTINEL, *, lower, upper, legacy_sections=(),
 ):
   env = os.environ.get(env_key, "").strip()
   if env:
     return max(lower, min(upper, float(env)))
   _ensure_cfg_loaded()
+  if fallback is _INI_FALLBACK_SENTINEL:
+    fallback = _ini_registry_default_str(option)
   return max(
       lower,
       min(upper, float(_ini_get(
@@ -418,7 +648,9 @@ def get_debug():
     older/minimal configs omit this optional setting.
     """
   _ensure_cfg_loaded()
-  return cfg.get('DEFAULT', 'debug', fallback='no').lower() in ("yes", "true", "1")
+  return cfg.get(
+      'DEFAULT', 'debug', fallback=ini_registry_default('debug'),
+  ).lower() in ("yes", "true", "1")
 
 
 def get_secret_key():
@@ -469,10 +701,9 @@ def get_archive_keep_uncompressed_tar():
   ``effective_keep_uncompressed_tar`` unless this global override is yes.
   """
   _ensure_cfg_loaded()
-  raw = _ini_get(
+  raw = _ini_get_from_registry(
       "PIPELINE",
       "archive_keep_uncompressed_tar",
-      fallback="no",
       legacy_sections=("PORTAL",),
   )
   return raw.lower() in ('yes', 'true', '1')
@@ -483,7 +714,7 @@ def get_archive_today_uncompressed_tar_grace_hours():
   _ensure_cfg_loaded()
   return max(
       0.0,
-      _pipeline_getfloat("archive_today_uncompressed_tar_grace_hours", fallback=8.0),
+      _pipeline_getfloat("archive_today_uncompressed_tar_grace_hours"),
   )
 
 
@@ -493,10 +724,9 @@ def get_archive_seal_idle_seconds():
   Prior calendar days seal as soon as the tar/gz pair is dirty (no idle wait).
   """
   _ensure_cfg_loaded()
-  return float(_ini_get(
+  return float(_ini_get_from_registry(
       "PIPELINE",
       "archive_seal_idle_seconds",
-      fallback="60",
       legacy_sections=("PORTAL",),
   ))
 
@@ -510,8 +740,8 @@ def _ini_bool(value, default=False):
 def get_archive_zstd_level():
   """Native zstd compression level (1--19) for sealing ``.tar.zst``. Default 7."""
   _ensure_cfg_loaded()
-  raw = _ini_get(
-      "PIPELINE", "archive_zstd_level", fallback="7", legacy_sections=("PORTAL",),
+  raw = _ini_get_from_registry(
+      "PIPELINE", "archive_zstd_level", legacy_sections=("PORTAL",),
   )
   level = int(raw)
   return max(1, min(19, level))
@@ -520,8 +750,8 @@ def get_archive_zstd_level():
 def get_archive_zstd_threads():
   """zstd ``-T`` thread count for archive compress/decompress. Default 0 (-T0)."""
   _ensure_cfg_loaded()
-  raw = _ini_get(
-      "PIPELINE", "archive_zstd_threads", fallback="0", legacy_sections=("PORTAL",),
+  raw = _ini_get_from_registry(
+      "PIPELINE", "archive_zstd_threads", legacy_sections=("PORTAL",),
   )
   return max(0, int(raw))
 
@@ -529,8 +759,8 @@ def get_archive_zstd_threads():
 def get_archive_zstd_nice():
   """Added nice for archive zstd child processes (0 disables). Default 10."""
   _ensure_cfg_loaded()
-  raw = _ini_get(
-      "PIPELINE", "archive_zstd_nice", fallback="10", legacy_sections=("PORTAL",),
+  raw = _ini_get_from_registry(
+      "PIPELINE", "archive_zstd_nice", legacy_sections=("PORTAL",),
   )
   return max(0, int(raw))
 
@@ -538,10 +768,9 @@ def get_archive_zstd_nice():
 def get_archive_zstd_ionice_class():
   """I/O scheduling class for archive zstd (0=none, 2=best-effort, 3=idle). Default 2."""
   _ensure_cfg_loaded()
-  raw = _ini_get(
+  raw = _ini_get_from_registry(
       "PIPELINE",
       "archive_zstd_ionice_class",
-      fallback="2",
       legacy_sections=("PORTAL",),
   )
   return max(0, min(3, int(raw)))
@@ -550,10 +779,9 @@ def get_archive_zstd_ionice_class():
 def get_archive_zstd_ionice_level():
   """I/O priority level within class for archive zstd (0-7). Default 6."""
   _ensure_cfg_loaded()
-  raw = _ini_get(
+  raw = _ini_get_from_registry(
       "PIPELINE",
       "archive_zstd_ionice_level",
-      fallback="6",
       legacy_sections=("PORTAL",),
   )
   return max(0, min(7, int(raw)))
@@ -563,17 +791,16 @@ def get_archive_zstd_drop_page_cache():
   """Linux posix_fadvise hints around archive zstd I/O (default on)."""
   _ensure_cfg_loaded()
   return _parse_bool(
-      _pipeline_get("archive_zstd_drop_page_cache", fallback="yes"),
+      _pipeline_get("archive_zstd_drop_page_cache"),
   )
 
 
 def get_archive_seal_parallel_workers():
   """Max concurrent daily tar seals during maintenance. Default 4."""
   _ensure_cfg_loaded()
-  raw = _ini_get(
+  raw = _ini_get_from_registry(
       "PIPELINE",
       "archive_seal_parallel_workers",
-      fallback="4",
       legacy_sections=("PORTAL",),
   )
   return max(1, int(raw))
@@ -582,19 +809,17 @@ def get_archive_seal_parallel_workers():
 def get_archive_maintenance_max_defer_seconds():
   """Max seconds to defer scheduled maintenance while archive append is in flight (default 1h)."""
   _ensure_cfg_loaded()
-  default_max_defer = float(3600)
-  raw_value = _ini_get(
+  raw_value = _ini_get_from_registry(
       "PIPELINE",
       "archive_maintenance_max_defer_seconds",
-      fallback=str(default_max_defer),
       legacy_sections=("PORTAL",),
   )
   try:
     max_defer = float(raw_value)
   except (TypeError, ValueError):
-    return default_max_defer
+    return float(_ini_registry_default_str("archive_maintenance_max_defer_seconds"))
   if (not math.isfinite(max_defer)) or max_defer <= 0:
-    return default_max_defer
+    return float(_ini_registry_default_str("archive_maintenance_max_defer_seconds"))
   return max_defer
 
 
@@ -625,10 +850,9 @@ def get_cors_origin_scheme():
   (legacy: ``[DEFAULT]``). When omitted, defaults to ``https``.
   """
   _ensure_cfg_loaded()
-  raw = _ini_get(
+  raw = _ini_get_from_registry(
       "PORTAL",
       "cors_origin_scheme",
-      fallback="",
       legacy_sections=("DEFAULT",),
   ).strip().lower()
   if raw in ('http', 'https'):
@@ -681,7 +905,9 @@ def get_syslog_allow_from_ipv4_networks():
   _ensure_cfg_loaded()
   if not cfg.has_section('SYSLOG'):
     return []
-  raw = cfg.get('SYSLOG', 'allow_from', fallback='').strip()
+  raw = cfg.get(
+      'SYSLOG', 'allow_from', fallback=ini_registry_default('allow_from'),
+  ).strip()
   if not raw:
     return []
   nets = []
@@ -710,7 +936,10 @@ def get_syslog_listen_tcp():
   _ensure_cfg_loaded()
   if not cfg.has_section('SYSLOG'):
     return True
-  return _parse_bool(cfg.get('SYSLOG', 'listen_tcp', fallback='yes'), default=True)
+  return _parse_bool(
+      cfg.get('SYSLOG', 'listen_tcp', fallback=ini_registry_default('listen_tcp')),
+      default=True,
+  )
 
 
 def get_syslog_listen_udp():
@@ -718,7 +947,10 @@ def get_syslog_listen_udp():
   _ensure_cfg_loaded()
   if not cfg.has_section('SYSLOG'):
     return True
-  return _parse_bool(cfg.get('SYSLOG', 'listen_udp', fallback='yes'), default=True)
+  return _parse_bool(
+      cfg.get('SYSLOG', 'listen_udp', fallback=ini_registry_default('listen_udp')),
+      default=True,
+  )
 
 
 def get_syslog_logs_current_path():
@@ -836,7 +1068,9 @@ def get_total_cores():
   If ``total_cores`` is omitted, returns ``\"40\"`` (default when not set in ini).
   """
   _ensure_cfg_loaded()
-  return cfg.get("DEFAULT", "total_cores", fallback=_DEFAULT_TOTAL_CORES).strip() or _DEFAULT_TOTAL_CORES
+  return cfg.get(
+      "DEFAULT", "total_cores", fallback=ini_registry_default("total_cores"),
+  ).strip() or ini_registry_default("total_cores")
 
 
 def get_ini_total_cores_int():
@@ -864,10 +1098,9 @@ def get_max_gunicorn_workers_cap():
   PostgreSQL ``max_connections`` (Compose default **500**) alongside metrics/sync pools.
   """
   _ensure_cfg_loaded()
-  return int(_ini_get(
+  return int(_ini_get_from_registry(
       "PORTAL",
       "max_gunicorn_workers",
-      fallback="32",
       legacy_sections=("DEFAULT",),
   ))
 
@@ -878,10 +1111,9 @@ def get_metrics_pool_process_cap():
   if env:
     return int(env)
   _ensure_cfg_loaded()
-  return int(_ini_get(
+  return int(_ini_get_from_registry(
       "PIPELINE",
       "metrics_pool_process_cap",
-      fallback="32",
       legacy_sections=("DEFAULT",),
   ))
 
@@ -907,12 +1139,12 @@ def get_metrics_pool_process_count():
 
 def get_cpuset_pin_min_total_cores():
   _ensure_cfg_loaded()
-  return _pipeline_getint("cpuset_pin_min_total_cores", fallback=32)
+  return _pipeline_getint("cpuset_pin_min_total_cores")
 
 
 def get_cpuset_pin_min_cores_per_node():
   _ensure_cfg_loaded()
-  return _pipeline_getint("cpuset_pin_min_cores_per_node", fallback=16)
+  return _pipeline_getint("cpuset_pin_min_cores_per_node")
 
 
 def get_web_numa_node():
@@ -928,13 +1160,13 @@ def get_pipeline_numa_node():
 def get_pin_proxy_for_compose():
   """If True, NUMA pinning script also sets ``cpuset`` on ``proxy`` (match web node)."""
   _ensure_cfg_loaded()
-  return _parse_bool(_pipeline_get("pin_proxy_in_compose", fallback="no"))
+  return _parse_bool(_pipeline_get("pin_proxy_in_compose"))
 
 
 def get_numa_pin_max_nodes_auto():
   """Auto compose pinning supports up to this many NUMA nodes without explicit ids."""
   _ensure_cfg_loaded()
-  return _pipeline_getint("numa_pin_max_nodes_auto", fallback=16)
+  return _pipeline_getint("numa_pin_max_nodes_auto")
 
 
 def get_parallel_db_prefetch_max_workers():
@@ -949,10 +1181,9 @@ def get_parallel_db_prefetch_max_workers():
   if env:
     return max(1, int(env))
   _ensure_cfg_loaded()
-  return max(1, int(_ini_get(
+  return max(1, int(_ini_get_from_registry(
       "PORTAL",
       "parallel_db_prefetch_max",
-      fallback="4",
       legacy_sections=("DEFAULT",),
   )))
 
@@ -981,7 +1212,7 @@ def get_db_conn_max_age():
   Env ``DJANGO_CONN_MAX_AGE`` overrides ``[PORTAL] db_conn_max_age``.
   """
   return _env_or_cfg_int(
-      "DJANGO_CONN_MAX_AGE", "PORTAL", "db_conn_max_age", 90,
+      "DJANGO_CONN_MAX_AGE", "PORTAL", "db_conn_max_age",
       legacy_sections=("DEFAULT",),
   )
 
@@ -996,7 +1227,6 @@ def get_db_statement_timeout_ms():
       "DJANGO_DB_STATEMENT_TIMEOUT_MS",
       "PORTAL",
       "db_statement_timeout_ms",
-      120000,
       legacy_sections=("DEFAULT",),
   )
 
@@ -1007,7 +1237,6 @@ def get_db_idle_in_transaction_session_timeout_ms():
       "DJANGO_DB_IDLE_IN_TRANSACTION_TIMEOUT_MS",
       "PORTAL",
       "db_idle_in_transaction_session_timeout_ms",
-      300000,
       legacy_sections=("DEFAULT",),
   )
 
@@ -1049,7 +1278,7 @@ def get_sync_pool_process_cap():
     return int(env)
   _ensure_cfg_loaded()
   if _pipeline_has_option("sync_pool_process_cap"):
-    return _pipeline_getint("sync_pool_process_cap", fallback=1)
+    return _pipeline_getint("sync_pool_process_cap")
   return 8
 
 
@@ -1060,7 +1289,7 @@ def get_archive_pool_process_cap():
     return int(env)
   _ensure_cfg_loaded()
   if _pipeline_has_option("archive_pool_process_cap"):
-    return _pipeline_getint("archive_pool_process_cap", fallback=1)
+    return _pipeline_getint("archive_pool_process_cap")
   return None
 
 
@@ -1085,20 +1314,17 @@ def get_sync_archive_pool_processes():
 def get_sync_timedb_archive_max_concurrent_sealed_days():
   """Max concurrent sealed-day stream workers in ``sync_timedb_archive`` (default 1)."""
   _ensure_cfg_loaded()
-  raw = _pipeline_getint(
-      "sync_timedb_archive_max_concurrent_sealed_days",
-      fallback=1,
-  )
+  raw = _pipeline_getint("sync_timedb_archive_max_concurrent_sealed_days")
   pool_cap = max(1, int(get_sync_archive_pool_processes()))
   return max(1, min(pool_cap, raw))
 
 
-def _budget_ratio(name, fallback):
-  return _pipeline_getfloat(name, fallback=fallback)
+def _budget_ratio(name):
+  return _pipeline_getfloat(name)
 
 
-def _budget_floor_percent(name, fallback):
-  return _pipeline_getint(name, fallback=fallback)
+def _budget_floor_percent(name):
+  return _pipeline_getint(name)
 
 
 def get_pipeline_overlap_mode():
@@ -1107,7 +1333,7 @@ def get_pipeline_overlap_mode():
   if env in ("balanced", "ingest_priority"):
     return env
   _ensure_cfg_loaded()
-  mode = _pipeline_get("pipeline_overlap_mode", fallback="balanced").strip().lower()
+  mode = _pipeline_get("pipeline_overlap_mode").strip().lower()
   return mode if mode in ("balanced", "ingest_priority") else "balanced"
 
 
@@ -1116,14 +1342,14 @@ def get_metrics_ingest_priority_scale():
   _ensure_cfg_loaded()
   return max(
       0.10,
-      min(1.00, _pipeline_getfloat("metrics_ingest_priority_scale", fallback=0.75)),
+      min(1.00, _pipeline_getfloat("metrics_ingest_priority_scale")),
   )
 
 
 def get_metrics_min_processes():
   """Minimum metrics worker count under ingest-priority overlap mode."""
   _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("metrics_min_processes", fallback=1))
+  return max(1, _pipeline_getint("metrics_min_processes"))
 
 
 def get_metrics_scheduler_mode():
@@ -1132,9 +1358,7 @@ def get_metrics_scheduler_mode():
   if env in ("strict_date", "global_fifo", "global_priority"):
     return env
   _ensure_cfg_loaded()
-  mode = _pipeline_get(
-      "metrics_scheduler_mode", fallback="global_priority",
-  ).strip().lower()
+  mode = _pipeline_get("metrics_scheduler_mode").strip().lower()
   if mode in ("strict_date", "global_fifo", "global_priority"):
     return mode
   return "global_priority"
@@ -1143,13 +1367,13 @@ def get_metrics_scheduler_mode():
 def get_metrics_scheduler_prefetch_chunks():
   """Max chunk descriptors prefetched ahead for global scheduler."""
   _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("metrics_scheduler_prefetch_chunks", fallback=8))
+  return max(1, _pipeline_getint("metrics_scheduler_prefetch_chunks"))
 
 
 def get_metrics_scheduler_ready_queue_target():
   """Target ready-jid queue depth before compute dispatch."""
   _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("metrics_scheduler_ready_queue_target", fallback=2000))
+  return max(1, _pipeline_getint("metrics_scheduler_ready_queue_target"))
 
 
 def get_metrics_plot_prewarm_mode():
@@ -1158,9 +1382,7 @@ def get_metrics_plot_prewarm_mode():
   if env in ("inline", "pipeline_required"):
     return env
   _ensure_cfg_loaded()
-  mode = _pipeline_get(
-      "metrics_plot_prewarm_mode", fallback="pipeline_required",
-  ).strip().lower()
+  mode = _pipeline_get("metrics_plot_prewarm_mode").strip().lower()
   if mode in ("inline", "pipeline_required"):
     return mode
   return "pipeline_required"
@@ -1173,7 +1395,7 @@ def get_metrics_scheduler_skip_prewarm():
     return _parse_bool(env)
   _ensure_cfg_loaded()
   return _parse_bool(
-      _pipeline_get("metrics_scheduler_skip_prewarm", fallback="no"),
+      _pipeline_get("metrics_scheduler_skip_prewarm"),
   )
 
 
@@ -1190,7 +1412,7 @@ def get_metrics_per_jid_phase_diagnostics_enabled():
 def get_metrics_prewarm_workers():
   """Thread workers for required plot prewarm stage."""
   _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("metrics_prewarm_workers", fallback=4))
+  return max(1, _pipeline_getint("metrics_prewarm_workers"))
 
 
 def get_metrics_prewarm_backlog_cap():
@@ -1205,7 +1427,7 @@ def get_metrics_prewarm_backlog_cap():
   try:
     return max(
         1,
-        int(_pipeline_get("metrics_prewarm_backlog_cap", fallback="32")),
+        int(_pipeline_get("metrics_prewarm_backlog_cap")),
     )
   except (TypeError, ValueError, OverflowError):
     return 32
@@ -1225,7 +1447,7 @@ def get_metrics_prewarm_backpressure_wait_s():
   try:
     return max(
         0.0,
-        _pipeline_getfloat("metrics_prewarm_backpressure_wait_s", fallback=0.25),
+        _pipeline_getfloat("metrics_prewarm_backpressure_wait_s"),
     )
   except (TypeError, ValueError, OverflowError):
     return 0.25
@@ -1249,7 +1471,7 @@ def get_metrics_prewarm_drain_batch_budget_base_s():
   try:
     return max(
         0.0,
-        _pipeline_getfloat("metrics_prewarm_drain_batch_budget_s", fallback=2.0),
+        _pipeline_getfloat("metrics_prewarm_drain_batch_budget_s"),
     )
   except (TypeError, ValueError, OverflowError):
     return 2.0
@@ -1269,7 +1491,7 @@ def get_metrics_prewarm_drain_batch_budget_max_s():
   try:
     return max(
         0.0,
-        _pipeline_getfloat("metrics_prewarm_drain_batch_budget_max_s", fallback=60.0),
+        _pipeline_getfloat("metrics_prewarm_drain_batch_budget_max_s"),
     )
   except (TypeError, ValueError, OverflowError):
     return 60.0
@@ -1289,7 +1511,7 @@ def get_metrics_prewarm_drain_budget_per_successful_job_s():
   try:
     return max(
         0.0,
-        _pipeline_getfloat("metrics_prewarm_drain_per_job_s", fallback=0.5),
+        _pipeline_getfloat("metrics_prewarm_drain_per_job_s"),
     )
   except (TypeError, ValueError, OverflowError):
     return 0.5
@@ -1314,7 +1536,7 @@ def get_metrics_compute_batch_max_window_seconds():
   try:
     return max(
         0.0,
-        _pipeline_getfloat("metrics_compute_batch_max_window_s", fallback=0.0),
+        _pipeline_getfloat("metrics_compute_batch_max_window_s"),
     )
   except (TypeError, ValueError, OverflowError):
     return 0.0
@@ -1338,7 +1560,7 @@ def get_metrics_compute_batch_max_single_job_runtime_seconds():
   try:
     return max(
         0.0,
-        _pipeline_getfloat("metrics_compute_batch_max_single_job_s", fallback=0.0),
+        _pipeline_getfloat("metrics_compute_batch_max_single_job_s"),
     )
   except (TypeError, ValueError, OverflowError):
     return 0.0
@@ -1358,7 +1580,7 @@ def get_metrics_compute_batch_unknown_runtime_seconds():
   try:
     return max(
         0.0,
-        _pipeline_getfloat("metrics_compute_batch_unknown_runtime_s", fallback=172800.0),
+        _pipeline_getfloat("metrics_compute_batch_unknown_runtime_s"),
     )
   except (TypeError, ValueError, OverflowError):
     return 172800.0
@@ -1378,7 +1600,7 @@ def get_metrics_compute_watchdog_seconds():
   try:
     return max(
         1.0,
-        _pipeline_getfloat("metrics_compute_watchdog_s", fallback=120.0),
+        _pipeline_getfloat("metrics_compute_watchdog_s"),
     )
   except (TypeError, ValueError, OverflowError):
     return 120.0
@@ -1402,7 +1624,7 @@ def get_metrics_compute_total_watchdog_seconds():
   try:
     return max(
         0.0,
-        _pipeline_getfloat("metrics_compute_total_watchdog_s", fallback=0.0),
+        _pipeline_getfloat("metrics_compute_total_watchdog_s"),
     )
   except (TypeError, ValueError, OverflowError):
     return 0.0
@@ -1421,7 +1643,7 @@ def get_metrics_deferred_not_ready_retry_seconds():
   try:
     return max(
         0.1,
-        _pipeline_getfloat("metrics_deferred_not_ready_retry_s", fallback=10.0),
+        _pipeline_getfloat("metrics_deferred_not_ready_retry_s"),
     )
   except (TypeError, ValueError, OverflowError):
     return 10.0
@@ -1440,7 +1662,7 @@ def get_metrics_deferred_not_ready_max_retries():
   try:
     return max(
         1,
-        _pipeline_getint("metrics_deferred_not_ready_max_retries", fallback=30),
+        _pipeline_getint("metrics_deferred_not_ready_max_retries"),
     )
   except (TypeError, ValueError, OverflowError):
     return 30
@@ -1459,7 +1681,7 @@ def get_metrics_deferred_not_ready_max_age_seconds():
   try:
     return max(
         1.0,
-        _pipeline_getfloat("metrics_deferred_not_ready_max_age_s", fallback=900.0),
+        _pipeline_getfloat("metrics_deferred_not_ready_max_age_s"),
     )
   except (TypeError, ValueError, OverflowError):
     return 900.0
@@ -1478,7 +1700,7 @@ def get_metrics_deferred_not_ready_quarantine_seconds():
   try:
     return max(
         1.0,
-        _pipeline_getfloat("metrics_deferred_not_ready_quarantine_s", fallback=300.0),
+        _pipeline_getfloat("metrics_deferred_not_ready_quarantine_s"),
     )
   except (TypeError, ValueError, OverflowError):
     return 300.0
@@ -1488,7 +1710,7 @@ def get_metrics_readiness_require_window_coverage():
   """When True, defer metrics until in-window host_data covers start and end margins."""
   _ensure_cfg_loaded()
   return _parse_bool(
-      _pipeline_get("metrics_readiness_require_window_coverage", fallback="yes"),
+      _pipeline_get("metrics_readiness_require_window_coverage"),
   )
 
 
@@ -1499,7 +1721,7 @@ def get_metrics_readiness_start_margin_seconds():
     return max(
         0.0,
         float(
-            _pipeline_get("metrics_readiness_start_margin_seconds", fallback="600"),
+            _pipeline_get("metrics_readiness_start_margin_seconds"),
         ),
     )
   except (TypeError, ValueError, OverflowError):
@@ -1513,7 +1735,7 @@ def get_metrics_readiness_end_margin_seconds():
     return max(
         0.0,
         float(
-            _pipeline_get("metrics_readiness_end_margin_seconds", fallback="600"),
+            _pipeline_get("metrics_readiness_end_margin_seconds"),
         ),
     )
   except (TypeError, ValueError, OverflowError):
@@ -1525,7 +1747,7 @@ def get_metrics_scheduler_compute_threads():
   _ensure_cfg_loaded()
   return max(
       1,
-      _pipeline_getint("metrics_scheduler_compute_threads", fallback=4),
+      _pipeline_getint("metrics_scheduler_compute_threads"),
   )
 
 
@@ -1541,7 +1763,7 @@ def get_metrics_run_poll_timeout_s():
   try:
     return max(
         0.1,
-        float(_pipeline_get("metrics_run_poll_timeout_s", fallback="5")),
+        float(_pipeline_get("metrics_run_poll_timeout_s")),
     )
   except (TypeError, ValueError, OverflowError):
     return 5.0
@@ -1559,7 +1781,7 @@ def get_sync_archive_validation_max_workers():
   try:
     return max(
         1,
-        int(_pipeline_get("sync_archive_validation_max_workers", fallback="2")),
+        int(_pipeline_get("sync_archive_validation_max_workers")),
     )
   except (TypeError, ValueError, OverflowError):
     return 2
@@ -1581,7 +1803,7 @@ def get_sync_pool_stall_abort_after_timeouts():
   try:
     return max(
         1,
-        int(_pipeline_get("sync_pool_stall_abort_after_timeouts", fallback="17320")),
+        int(_pipeline_get("sync_pool_stall_abort_after_timeouts")),
     )
   except (TypeError, ValueError, OverflowError):
     return 17320
@@ -1593,7 +1815,7 @@ def get_sync_pool_worker_recycle_grace_polls():
   try:
     return max(
         0,
-        int(_pipeline_get("sync_pool_worker_recycle_grace_polls", fallback="2")),
+        int(_pipeline_get("sync_pool_worker_recycle_grace_polls")),
     )
   except (TypeError, ValueError, OverflowError):
     return 2
@@ -1605,7 +1827,7 @@ def get_sync_pool_idle_reconcile_max_rounds():
   try:
     return max(
         0,
-        int(_pipeline_get("sync_pool_idle_reconcile_max_rounds", fallback="3")),
+        int(_pipeline_get("sync_pool_idle_reconcile_max_rounds")),
     )
   except (TypeError, ValueError, OverflowError):
     return 3
@@ -1617,7 +1839,7 @@ def get_sync_pool_idle_reconcile_polls_per_round():
   try:
     return max(
         1,
-        int(_pipeline_get("sync_pool_idle_reconcile_polls_per_round", fallback="4")),
+        int(_pipeline_get("sync_pool_idle_reconcile_polls_per_round")),
     )
   except (TypeError, ValueError, OverflowError):
     return 4
@@ -1635,7 +1857,7 @@ def get_sync_pool_poll_timeout_s():
   try:
     return max(
         0.05,
-        float(_pipeline_get("sync_pool_poll_timeout_s", fallback="5")),
+        float(_pipeline_get("sync_pool_poll_timeout_s")),
     )
   except (TypeError, ValueError, OverflowError):
     return 5.0
@@ -1647,7 +1869,7 @@ def get_sync_pool_stall_defer_log_interval_s():
   try:
     return max(
         0.0,
-        float(_pipeline_get("sync_pool_stall_defer_log_interval_s", fallback="60")),
+        float(_pipeline_get("sync_pool_stall_defer_log_interval_s")),
     )
   except (TypeError, ValueError, OverflowError):
     return 60.0
@@ -1657,7 +1879,7 @@ def get_sync_archive_members_cache_enabled():
   """Whether ingest/archive workers cache daily tar member maps per archive identity."""
   _ensure_cfg_loaded()
   return _parse_bool(
-      _pipeline_get("sync_archive_members_cache_enabled", fallback="yes"),
+      _pipeline_get("sync_archive_members_cache_enabled"),
   )
 
 
@@ -1667,7 +1889,7 @@ def get_sync_archive_members_cache_max_entries():
   try:
     return max(
         1,
-        int(_pipeline_get("sync_archive_members_cache_max_entries", fallback="64")),
+        int(_pipeline_get("sync_archive_members_cache_max_entries")),
     )
   except (TypeError, ValueError, OverflowError):
     return 64
@@ -1677,7 +1899,7 @@ def get_sync_archive_members_redis_enabled():
   """Whether cross-worker Redis L2 backs daily archive member maps."""
   _ensure_cfg_loaded()
   return _parse_bool(
-      _pipeline_get("sync_archive_members_redis_enabled", fallback="yes"),
+      _pipeline_get("sync_archive_members_redis_enabled"),
   )
 
 
@@ -1685,10 +1907,7 @@ def get_sync_archive_members_redis_ttl_seconds():
   """TTL for Redis archive member HASH / complete keys."""
   _ensure_cfg_loaded()
   try:
-    return max(60, int(_pipeline_get(
-        "sync_archive_members_redis_ttl_seconds",
-        fallback="86400",
-    )))
+    return max(60, int(_pipeline_get("sync_archive_members_redis_ttl_seconds")))
   except (TypeError, ValueError, OverflowError):
     return 86400
 
@@ -1697,10 +1916,7 @@ def get_sync_archive_members_redis_populate_lock_seconds():
   """Populate lock lease (renewed during scan)."""
   _ensure_cfg_loaded()
   try:
-    return max(30, int(_pipeline_get(
-        "sync_archive_members_redis_populate_lock_seconds",
-        fallback="3600",
-    )))
+    return max(30, int(_pipeline_get("sync_archive_members_redis_populate_lock_seconds")))
   except (TypeError, ValueError, OverflowError):
     return 3600
 
@@ -1709,10 +1925,7 @@ def get_sync_archive_members_redis_populate_stall_seconds():
   """Waiter abort when populate shows no lock renewal or HASH growth."""
   _ensure_cfg_loaded()
   try:
-    return max(5, int(_pipeline_get(
-        "sync_archive_members_redis_populate_stall_seconds",
-        fallback="120",
-    )))
+    return max(5, int(_pipeline_get("sync_archive_members_redis_populate_stall_seconds")))
   except (TypeError, ValueError, OverflowError):
     return 120
 
@@ -1721,10 +1934,7 @@ def get_sync_archive_members_redis_populate_max_seconds():
   """Absolute cap for populate/waiter loops (0 = disabled)."""
   _ensure_cfg_loaded()
   try:
-    return max(0, int(_pipeline_get(
-        "sync_archive_members_redis_populate_max_seconds",
-        fallback="7200",
-    )))
+    return max(0, int(_pipeline_get("sync_archive_members_redis_populate_max_seconds")))
   except (TypeError, ValueError, OverflowError):
     return 7200
 
@@ -1735,10 +1945,7 @@ def get_sync_archive_members_redis_wait_poll_seconds():
   try:
     return max(
         0.05,
-        float(_pipeline_get(
-            "sync_archive_members_redis_wait_poll_seconds",
-            fallback="0.25",
-        )),
+        float(_pipeline_get("sync_archive_members_redis_wait_poll_seconds")),
     )
   except (TypeError, ValueError, OverflowError):
     return 0.25
@@ -1748,10 +1955,7 @@ def get_sync_archive_members_redis_hset_batch_size():
   """Pipeline batch size for incremental Redis HASH writes during populate."""
   _ensure_cfg_loaded()
   try:
-    return max(1, int(_pipeline_get(
-        "sync_archive_members_redis_hset_batch_size",
-        fallback="500",
-    )))
+    return max(1, int(_pipeline_get("sync_archive_members_redis_hset_batch_size")))
   except (TypeError, ValueError, OverflowError):
     return 500
 
@@ -1762,10 +1966,7 @@ def get_sync_archive_members_redis_max_payload_bytes():
   try:
     return max(
         65536,
-        int(_pipeline_get(
-            "sync_archive_members_redis_max_payload_bytes",
-            fallback="8388608",
-        )),
+        int(_pipeline_get("sync_archive_members_redis_max_payload_bytes")),
     )
   except (TypeError, ValueError, OverflowError):
     return 8388608
@@ -1785,10 +1986,7 @@ def get_sync_archive_members_populate_pool_processes():
   try:
     return max(
         0,
-        int(_pipeline_get(
-            "sync_archive_members_populate_pool_processes",
-            fallback="2",
-        )),
+        int(_pipeline_get("sync_archive_members_populate_pool_processes")),
     )
   except (TypeError, ValueError, OverflowError):
     return 2
@@ -1806,7 +2004,7 @@ def get_sync_ingest_per_file_timeout_s():
   try:
     return max(
         0.0,
-        float(_pipeline_get("sync_ingest_per_file_timeout_s", fallback="900")),
+        float(_pipeline_get("sync_ingest_per_file_timeout_s")),
     )
   except (TypeError, ValueError, OverflowError):
     return 0.0
@@ -1840,10 +2038,7 @@ def get_sync_ingest_per_file_timeout_max_s():
   try:
     return max(
         0.0,
-        float(_pipeline_get(
-            "sync_ingest_per_file_timeout_max_s",
-            fallback=str(int(_SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S_DEFAULT)),
-        )),
+        float(_pipeline_get("sync_ingest_per_file_timeout_max_s")),
     )
   except (TypeError, ValueError, OverflowError):
     return _SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S_DEFAULT
@@ -1863,10 +2058,7 @@ def get_sync_ingest_per_file_timeout_s_per_mib():
   try:
     return max(
         0.0,
-        float(_pipeline_get(
-            "sync_ingest_per_file_timeout_s_per_mib",
-            fallback=str(_SYNC_INGEST_PER_FILE_TIMEOUT_S_PER_MIB_DEFAULT),
-        )),
+        float(_pipeline_get("sync_ingest_per_file_timeout_s_per_mib")),
     )
   except (TypeError, ValueError, OverflowError):
     return _SYNC_INGEST_PER_FILE_TIMEOUT_S_PER_MIB_DEFAULT
@@ -1883,10 +2075,7 @@ def get_sync_ingest_giant_pool_supplement_enabled():
     return False
   _ensure_cfg_loaded()
   try:
-    return _pipeline_get(
-        "sync_ingest_giant_pool_supplement_enabled",
-        fallback="yes",
-    ).strip().lower() in ("1", "true", "yes", "on")
+    return _pipeline_get("sync_ingest_giant_pool_supplement_enabled").strip().lower() in ("1", "true", "yes", "on")
   except (TypeError, ValueError, OverflowError):
     return True
 
@@ -1905,10 +2094,7 @@ def get_sync_ingest_giant_pool_supplement_max_bytes():
   try:
     return max(
         1,
-        int(_pipeline_get(
-            "sync_ingest_giant_pool_supplement_max_bytes",
-            fallback=str(_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES_DEFAULT),
-        )),
+        int(_pipeline_get("sync_ingest_giant_pool_supplement_max_bytes")),
     )
   except (TypeError, ValueError, OverflowError):
     return _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES_DEFAULT
@@ -1928,10 +2114,7 @@ def get_sync_ingest_giant_pool_supplement_trigger_budget_s():
   try:
     return max(
         0.0,
-        float(_pipeline_get(
-            "sync_ingest_giant_pool_supplement_trigger_budget_s",
-            fallback=str(int(_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S_DEFAULT)),
-        )),
+        float(_pipeline_get("sync_ingest_giant_pool_supplement_trigger_budget_s")),
     )
   except (TypeError, ValueError, OverflowError):
     return _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S_DEFAULT
@@ -1949,7 +2132,7 @@ def get_metrics_run_stall_timeout_s():
   try:
     return max(
         5.0,
-        float(_pipeline_get("metrics_run_stall_timeout_s", fallback="900")),
+        float(_pipeline_get("metrics_run_stall_timeout_s")),
     )
   except (TypeError, ValueError, OverflowError):
     return 600.0
@@ -1971,7 +2154,7 @@ def get_metrics_run_per_job_timeout_s():
   try:
     return max(
         0.0,
-        float(_pipeline_get("metrics_run_per_job_timeout_s", fallback="0")),
+        float(_pipeline_get("metrics_run_per_job_timeout_s")),
     )
   except (TypeError, ValueError, OverflowError):
     return 0.0
@@ -1991,7 +2174,7 @@ def get_metrics_persist_statement_timeout_ms():
   try:
     return max(
         1000,
-        int(_pipeline_get("metrics_persist_statement_timeout_ms", fallback="120000")),
+        int(_pipeline_get("metrics_persist_statement_timeout_ms")),
     )
   except (TypeError, ValueError, OverflowError):
     return 120000
@@ -2009,7 +2192,7 @@ def get_metrics_persist_lock_timeout_ms():
   try:
     return max(
         1000,
-        int(_pipeline_get("metrics_persist_lock_timeout_ms", fallback="10000")),
+        int(_pipeline_get("metrics_persist_lock_timeout_ms")),
     )
   except (TypeError, ValueError, OverflowError):
     return 10000
@@ -2018,13 +2201,13 @@ def get_metrics_persist_lock_timeout_ms():
 def get_metrics_prewarm_retry_attempts():
   """Retry attempts for plot artifact prewarm tasks."""
   _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("metrics_prewarm_retry_attempts", fallback=2))
+  return max(1, _pipeline_getint("metrics_prewarm_retry_attempts"))
 
 
 def get_metrics_proxy_reject_jid_batch_size():
   """Max jids per DB round-trip in ``update_metrics`` proxy readiness (PostgreSQL)."""
   _ensure_cfg_loaded()
-  return max(8, _pipeline_getint("metrics_proxy_reject_jid_batch_size", fallback=48))
+  return max(8, _pipeline_getint("metrics_proxy_reject_jid_batch_size"))
 
 
 def get_sync_enable_cpuset_priority_budget():
@@ -2034,7 +2217,7 @@ def get_sync_enable_cpuset_priority_budget():
     return _parse_bool(env)
   _ensure_cfg_loaded()
   return _parse_bool(
-      _pipeline_get("sync_enable_cpuset_priority_budget", fallback="yes"),
+      _pipeline_get("sync_enable_cpuset_priority_budget"),
       default=True,
   )
 
@@ -2048,10 +2231,10 @@ def derive_pipeline_cpuset_priority_budget():
   - best_effort: maintenance and optional test/browser load
   """
   c = max(1, int(get_effective_cores()))
-  ingest_ratio = _budget_ratio("sync_budget_ingest_ratio", 0.60)
-  archive_ratio = _budget_ratio("sync_budget_archive_ratio", 0.15)
-  metrics_ratio = _budget_ratio("sync_budget_metrics_ratio", 0.20)
-  reserve_ratio = _budget_ratio("sync_budget_reserve_ratio", 0.05)
+  ingest_ratio = _budget_ratio("sync_budget_ingest_ratio")
+  archive_ratio = _budget_ratio("sync_budget_archive_ratio")
+  metrics_ratio = _budget_ratio("sync_budget_metrics_ratio")
+  reserve_ratio = _budget_ratio("sync_budget_reserve_ratio")
 
   s = max(1, int(math.floor(ingest_ratio * c)))
   a = max(1, int(math.floor(archive_ratio * c)))
@@ -2076,8 +2259,8 @@ def derive_pipeline_cpuset_priority_budget():
       break
     total = s + a + m + r
 
-  min_metrics = _budget_floor_percent("sync_budget_min_metrics_percent", 10)
-  min_archive = _budget_floor_percent("sync_budget_min_archive_percent", 10)
+  min_metrics = _budget_floor_percent("sync_budget_min_metrics_percent")
+  min_archive = _budget_floor_percent("sync_budget_min_archive_percent")
   m_min = max(1, int(math.floor((min_metrics / 100.0) * c)))
   a_min = max(1, int(math.floor((min_archive / 100.0) * c)))
   if m < m_min:
@@ -2108,7 +2291,7 @@ def get_sync_enable_overprovision_mode():
     return _parse_bool(env)
   _ensure_cfg_loaded()
   return _parse_bool(
-      _pipeline_get("sync_enable_overprovision_mode", fallback="no"),
+      _pipeline_get("sync_enable_overprovision_mode"),
   )
 
 
@@ -2117,7 +2300,6 @@ def get_sync_overprovision_ingest_multiplier():
       "SYNC_OVERPROVISION_INGEST_MULTIPLIER",
       "PIPELINE",
       "sync_overprovision_ingest_multiplier",
-      1.00,
       lower=1.00,
       upper=2.50,
       legacy_sections=_PIPELINE_LEGACY,
@@ -2129,7 +2311,6 @@ def get_sync_overprovision_archive_multiplier():
       "SYNC_OVERPROVISION_ARCHIVE_MULTIPLIER",
       "PIPELINE",
       "sync_overprovision_archive_multiplier",
-      1.00,
       lower=1.00,
       upper=2.50,
       legacy_sections=_PIPELINE_LEGACY,
@@ -2141,7 +2322,6 @@ def get_sync_overprovision_metrics_multiplier():
       "SYNC_OVERPROVISION_METRICS_MULTIPLIER",
       "PIPELINE",
       "sync_overprovision_metrics_multiplier",
-      1.00,
       lower=0.10,
       upper=2.50,
       legacy_sections=_PIPELINE_LEGACY,
@@ -2153,7 +2333,6 @@ def get_sync_budget_overcommit_factor():
       "SYNC_BUDGET_OVERCOMMIT_FACTOR",
       "PIPELINE",
       "sync_budget_overcommit_factor",
-      1.00,
       lower=1.00,
       upper=2.00,
       legacy_sections=_PIPELINE_LEGACY,
@@ -2185,43 +2364,43 @@ def pipeline_cpu_process_buckets(include_browser_phase=False, include_rsync=Fals
 def get_sync_ingest_queue_max_size():
   """Bound for in-memory ingest work queue (default 2000)."""
   _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("sync_ingest_queue_max_size", fallback=2000))
+  return max(1, _pipeline_getint("sync_ingest_queue_max_size"))
 
 
 def get_sync_archive_queue_max_size():
   """Bound for in-memory archive work queue (default 1000)."""
   _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("sync_archive_queue_max_size", fallback=1000))
+  return max(1, _pipeline_getint("sync_archive_queue_max_size"))
 
 
 def get_sync_archive_retry_max_attempts():
   """Maximum archive retries before dead-letter behavior (default 5)."""
   _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("sync_archive_retry_max_attempts", fallback=5))
+  return max(1, _pipeline_getint("sync_archive_retry_max_attempts"))
 
 
 def get_sync_archive_retry_backoff_base_seconds():
   """Base archive retry backoff in seconds (default 1)."""
   _ensure_cfg_loaded()
-  return max(0.0, float(_pipeline_get("sync_archive_retry_backoff_base_seconds", fallback="1")))
+  return max(0.0, float(_pipeline_get("sync_archive_retry_backoff_base_seconds")))
 
 
 def get_sync_archive_retry_backoff_max_seconds():
   """Ceiling archive retry backoff in seconds (default 60)."""
   _ensure_cfg_loaded()
-  return max(0.0, float(_pipeline_get("sync_archive_retry_backoff_max_seconds", fallback="60")))
+  return max(0.0, float(_pipeline_get("sync_archive_retry_backoff_max_seconds")))
 
 
 def get_sync_checkpoint_flush_batch_size():
   """Number of processed-file state transitions between checkpoint writes (default 100)."""
   _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("sync_checkpoint_flush_batch_size", fallback=100))
+  return max(1, _pipeline_getint("sync_checkpoint_flush_batch_size"))
 
 
 def get_sync_bulk_create_batch_size():
   """Rows per host_data/proc_data bulk_create batch and incremental parse flush (default 10000)."""
   _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("sync_bulk_create_batch_size", fallback=10000))
+  return max(1, _pipeline_getint("sync_bulk_create_batch_size"))
 
 
 def get_sync_archive_db_ingest_gate_sample_stride():
@@ -2234,7 +2413,7 @@ def get_sync_host_itimes_cache_max_timestamps_per_entry():
   _ensure_cfg_loaded()
   return max(
       1,
-      _pipeline_getint("sync_host_itimes_cache_max_timestamps_per_entry", fallback=100000),
+      _pipeline_getint("sync_host_itimes_cache_max_timestamps_per_entry"),
   )
 
 
@@ -2245,7 +2424,7 @@ def get_sync_write_lock_shards():
     return max(1, int(env))
   _ensure_cfg_loaded()
   if _pipeline_has_option("sync_write_lock_shards"):
-    return max(1, _pipeline_getint("sync_write_lock_shards", fallback=1))
+    return max(1, _pipeline_getint("sync_write_lock_shards"))
   # Default scales modestly with cores to reduce write serialization without
   # exploding contention on smaller systems (40 effective cores -> 8 shards).
   return max(1, min(8, get_effective_cores() // 5))
@@ -2254,51 +2433,49 @@ def get_sync_write_lock_shards():
 def get_sync_ingest_chunk_size():
   """Stats files processed per ingest chunk (default 1000)."""
   _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("sync_ingest_chunk_size", fallback=1000))
+  return max(1, _pipeline_getint("sync_ingest_chunk_size"))
 
 
 def get_sync_supervisor_rss_limit_mb():
   """Supervisor RSS limit in MiB; 0 disables fail-fast exit (default 0)."""
   _ensure_cfg_loaded()
-  return max(0, _pipeline_getint("sync_supervisor_rss_limit_mb", fallback=0))
+  return max(0, _pipeline_getint("sync_supervisor_rss_limit_mb"))
 
 
 def get_sync_supervisor_rss_check_every_n_chunks():
   """Check supervisor RSS every N processed chunks (default 1)."""
   _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("sync_supervisor_rss_check_every_n_chunks", fallback=1))
+  return max(1, _pipeline_getint("sync_supervisor_rss_check_every_n_chunks"))
 
 
 def get_sync_process_tree_rss_limit_mb():
   """Process-tree RSS defer limit in MiB; 0 disables backpressure (default 96000)."""
   _ensure_cfg_loaded()
-  return max(0, _pipeline_getint("sync_process_tree_rss_limit_mb", fallback=96000))
+  return max(0, _pipeline_getint("sync_process_tree_rss_limit_mb"))
 
 
 def get_sync_process_tree_rss_check_every_n_chunks():
   """Check process-tree RSS every N ingest chunks (default 1)."""
   _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("sync_process_tree_rss_check_every_n_chunks", fallback=1))
+  return max(1, _pipeline_getint("sync_process_tree_rss_check_every_n_chunks"))
 
 
 def get_sync_process_tree_rss_exit_mb():
   """Hard exit when process-tree RSS exceeds MiB; 0 disables (default 0)."""
   _ensure_cfg_loaded()
-  return max(0, _pipeline_getint("sync_process_tree_rss_exit_mb", fallback=0))
+  return max(0, _pipeline_getint("sync_process_tree_rss_exit_mb"))
 
 
 def get_sync_ingest_max_file_read_bytes():
   """Max stats file size for ``readlines()`` fast path (default 512 MiB)."""
   _ensure_cfg_loaded()
-  default = 512 * 1024 * 1024
-  return max(0, _pipeline_getint("sync_ingest_max_file_read_bytes", fallback=default))
+  return max(0, _pipeline_getint("sync_ingest_max_file_read_bytes"))
 
 
 def get_sync_ingest_stream_duplicate_scan_bytes():
   """Route duplicate scan through streaming path above this size (default 8 MiB)."""
   _ensure_cfg_loaded()
-  default = 8 * 1024 * 1024
-  return max(0, _pipeline_getint("sync_ingest_stream_duplicate_scan_bytes", fallback=default))
+  return max(0, _pipeline_getint("sync_ingest_stream_duplicate_scan_bytes"))
 
 
 def get_sync_ingest_db_complete_tail_window_lines():
@@ -2306,40 +2483,40 @@ def get_sync_ingest_db_complete_tail_window_lines():
   _ensure_cfg_loaded()
   return max(
       1,
-      _pipeline_getint("sync_ingest_db_complete_tail_window_lines", fallback=500),
+      _pipeline_getint("sync_ingest_db_complete_tail_window_lines"),
   )
 
 
 def get_sync_ingest_imap_inflight_cap():
   """Max concurrent imap tasks per chunk; 0 means pool size (default 0)."""
   _ensure_cfg_loaded()
-  return max(0, _pipeline_getint("sync_ingest_imap_inflight_cap", fallback=0))
+  return max(0, _pipeline_getint("sync_ingest_imap_inflight_cap"))
 
 
 def get_sync_ingest_pool_maxtasksperchild():
   """Recycle ingest/archive pool workers after N tasks; 0 unlimited (default 1)."""
   _ensure_cfg_loaded()
-  return max(0, _pipeline_getint("sync_ingest_pool_maxtasksperchild", fallback=1))
+  return max(0, _pipeline_getint("sync_ingest_pool_maxtasksperchild"))
 
 
 def get_sync_ingest_malloc_trim_after_file():
   """After each ingest pool task on Linux, gc.collect() and malloc_trim(0) (default yes)."""
   _ensure_cfg_loaded()
   return _parse_bool(
-      _pipeline_get("sync_ingest_malloc_trim_after_file", fallback="yes"),
+      _pipeline_get("sync_ingest_malloc_trim_after_file"),
   )
 
 
 def get_sync_cold_path_max_concurrent_seals():
   """Optional global seal concurrency cap; 0 unlimited (default 0)."""
   _ensure_cfg_loaded()
-  return max(0, _pipeline_getint("sync_cold_path_max_concurrent_seals", fallback=0))
+  return max(0, _pipeline_getint("sync_cold_path_max_concurrent_seals"))
 
 
 def get_sync_adaptive_dispatch_enabled():
   _ensure_cfg_loaded()
   return _parse_bool(
-      _pipeline_get("sync_adaptive_dispatch_enabled", fallback="yes"),
+      _pipeline_get("sync_adaptive_dispatch_enabled"),
       default=True,
   )
 
@@ -2348,7 +2525,7 @@ def get_sync_dispatch_burst_factor():
   _ensure_cfg_loaded()
   return max(
       1.0,
-      min(4.0, float(_pipeline_get("sync_dispatch_burst_factor", fallback="2.0"))),
+      min(4.0, float(_pipeline_get("sync_dispatch_burst_factor"))),
   )
 
 
@@ -2356,13 +2533,13 @@ def get_sync_dispatch_archive_backoff_ratio():
   _ensure_cfg_loaded()
   return max(
       0.1,
-      min(1.0, float(_pipeline_get("sync_dispatch_archive_backoff_ratio", fallback="0.50"))),
+      min(1.0, float(_pipeline_get("sync_dispatch_archive_backoff_ratio"))),
   )
 
 
 def get_sync_dispatch_step_size():
   _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("sync_dispatch_step_size", fallback=8))
+  return max(1, _pipeline_getint("sync_dispatch_step_size"))
 
 
 def get_conf_parser_defaults_audit_snapshot():
@@ -2588,7 +2765,7 @@ def _iter_sync_timedb_config_audit_getters():
   yield ("pin_proxy_in_compose", get_pin_proxy_for_compose)
   yield ("web_numa_node", get_web_numa_node)
   yield ("pipeline_numa_node", get_pipeline_numa_node)
-  for _section, option in INI_OPTION_REGISTRY:
+  for _section, option, _default in INI_OPTION_REGISTRY:
     if _section != "PIPELINE":
       continue
     if option in _PIPELINE_PATH_OPTIONS or option in _PIPELINE_DERIVED_AUDIT_SKIP:
@@ -2633,7 +2810,7 @@ def get_sync_enable_ingest_first_durability_mode():
   """Checkpoint after DB write even when tar append fails (default on)."""
   _ensure_cfg_loaded()
   return _parse_bool(
-      _pipeline_get("sync_enable_ingest_first_durability_mode", fallback="yes"),
+      _pipeline_get("sync_enable_ingest_first_durability_mode"),
   )
 
 
@@ -2642,7 +2819,7 @@ def get_archive_maintenance_idle_seconds():
   _ensure_cfg_loaded()
   return max(
       0.0,
-      float(_pipeline_get("archive_maintenance_idle_seconds", fallback="300")),
+      float(_pipeline_get("archive_maintenance_idle_seconds")),
   )
 
 
@@ -2651,20 +2828,20 @@ def get_archive_janitor_budget_seconds():
   _ensure_cfg_loaded()
   return max(
       1.0,
-      float(_pipeline_get("archive_janitor_budget_seconds", fallback="30")),
+      float(_pipeline_get("archive_janitor_budget_seconds")),
   )
 
 
 def get_archive_janitor_days_per_tick():
   """Max calendar days processed per janitor tick (default 2)."""
   _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("archive_janitor_days_per_tick", fallback=2))
+  return max(1, _pipeline_getint("archive_janitor_days_per_tick"))
 
 
 def get_archive_janitor_debt_high_watermark():
   """Debt queue depth before temporary burst scaling (default 50)."""
   _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("archive_janitor_debt_high_watermark", fallback=50))
+  return max(1, _pipeline_getint("archive_janitor_debt_high_watermark"))
 
 
 def get_archive_janitor_debt_burst_factor():
@@ -2672,34 +2849,34 @@ def get_archive_janitor_debt_burst_factor():
   _ensure_cfg_loaded()
   return max(
       1.0,
-      min(4.0, float(_pipeline_get("archive_janitor_debt_burst_factor", fallback="1.5"))),
+      min(4.0, float(_pipeline_get("archive_janitor_debt_burst_factor"))),
   )
 
 
 def get_archive_janitor_debt_max_entries():
   """Cap in-memory janitor debt queue size (default 200)."""
   _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("archive_janitor_debt_max_entries", fallback=200))
+  return max(1, _pipeline_getint("archive_janitor_debt_max_entries"))
 
 
 def get_archive_janitor_raw_paths_per_tick():
   """Max raw stats file deletes per janitor RAW_REMOVE debt item (default 1000)."""
   _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("archive_janitor_raw_paths_per_tick", fallback=1000))
+  return max(1, _pipeline_getint("archive_janitor_raw_paths_per_tick"))
 
 
 def get_sync_day_close_candidate_report():
   """Log day-close candidate report (queued/disqualified only; default on)."""
   _ensure_cfg_loaded()
   return _parse_bool(
-      _pipeline_get("sync_day_close_candidate_report", fallback="yes"),
+      _pipeline_get("sync_day_close_candidate_report"),
   )
 
 
 def get_sync_startup_day_close_max_inflight():
   """Max concurrent async DAY_CLOSE during startup drain (default archive_seal_parallel_workers)."""
   _ensure_cfg_loaded()
-  raw = _pipeline_get("sync_startup_day_close_max_inflight", fallback="")
+  raw = _pipeline_get("sync_startup_day_close_max_inflight")
   if raw is None or str(raw).strip() == "":
     return get_archive_seal_parallel_workers()
   try:
@@ -2713,10 +2890,7 @@ def get_sync_startup_snapshot_wait_seconds():
   _ensure_cfg_loaded()
   return max(
       120.0,
-      float(_pipeline_get(
-          "sync_startup_snapshot_wait_seconds",
-          fallback="300",
-      )),
+      float(_pipeline_get("sync_startup_snapshot_wait_seconds")),
   )
 
 
@@ -2724,7 +2898,7 @@ def get_sync_day_close_raw_removal_preflight():
   """Enable per-day async verify + chunk-boundary batch delete after DAY_CLOSE seal."""
   _ensure_cfg_loaded()
   return _parse_bool(
-      _pipeline_get("sync_day_close_raw_removal_preflight", fallback="yes"),
+      _pipeline_get("sync_day_close_raw_removal_preflight"),
   )
 
 
@@ -2733,17 +2907,14 @@ def get_sync_day_close_raw_removal_verify_budget_seconds():
   _ensure_cfg_loaded()
   return max(
       1.0,
-      float(_pipeline_get(
-          "sync_day_close_raw_removal_verify_budget_seconds",
-          fallback="30",
-      )),
+      float(_pipeline_get("sync_day_close_raw_removal_verify_budget_seconds")),
   )
 
 
 def get_sync_day_close_raw_removal_max_deletes_per_pass():
   """Max deletes per day-close batch delete; 0 means unlimited (default 0)."""
   _ensure_cfg_loaded()
-  raw = _pipeline_get("sync_day_close_raw_removal_max_deletes_per_pass", fallback="0")
+  raw = _pipeline_get("sync_day_close_raw_removal_max_deletes_per_pass")
   try:
     return max(0, int(raw))
   except (TypeError, ValueError):
@@ -2753,7 +2924,7 @@ def get_sync_day_close_raw_removal_max_deletes_per_pass():
 def get_sync_day_close_raw_removal_wait_seconds():
   """Max wall-clock wait in async DAY_CLOSE for verify after seal (default 3600; 0=unbounded)."""
   _ensure_cfg_loaded()
-  raw = _pipeline_get("sync_day_close_raw_removal_wait_seconds", fallback="3600")
+  raw = _pipeline_get("sync_day_close_raw_removal_wait_seconds")
   try:
     return max(0.0, float(raw))
   except (TypeError, ValueError):
@@ -2763,7 +2934,7 @@ def get_sync_day_close_raw_removal_wait_seconds():
 def get_sync_day_close_max_inflight():
   """Max concurrent ``DAY_CLOSE`` calendar days on janitor debt (default 2)."""
   _ensure_cfg_loaded()
-  raw = _pipeline_get("sync_day_close_max_inflight", fallback="2")
+  raw = _pipeline_get("sync_day_close_max_inflight")
   try:
     return max(1, int(raw))
   except (TypeError, ValueError):
@@ -2773,7 +2944,7 @@ def get_sync_day_close_max_inflight():
 def get_sync_day_close_async_stale_seconds():
   """Recover stale async DAY_CLOSE manifest entries on startup (default 7200; 0=off)."""
   _ensure_cfg_loaded()
-  raw = _pipeline_get("sync_day_close_async_stale_seconds", fallback="7200")
+  raw = _pipeline_get("sync_day_close_async_stale_seconds")
   try:
     return max(0.0, float(raw))
   except (TypeError, ValueError):
@@ -2783,7 +2954,7 @@ def get_sync_day_close_async_stale_seconds():
 def get_sync_archive_max_inflight_jobs():
   """Max concurrent disjoint daily-tar archive append jobs (default 2)."""
   _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("sync_archive_max_inflight_jobs", fallback=2))
+  return max(1, _pipeline_getint("sync_archive_max_inflight_jobs"))
 
 
 def get_sync_archive_worker_stall_seconds():
@@ -2791,7 +2962,7 @@ def get_sync_archive_worker_stall_seconds():
   _ensure_cfg_loaded()
   return max(
       60.0,
-      float(_pipeline_get("sync_archive_worker_stall_seconds", fallback="600")),
+      float(_pipeline_get("sync_archive_worker_stall_seconds")),
   )
 
 
@@ -2799,7 +2970,7 @@ def get_sync_archive_db_ingest_gate_mode():
   """Return archive DB gate depth: ``head`` (first timestamp) or ``sample`` (strided+EOF)."""
   _ensure_cfg_loaded()
   raw = str(
-      _pipeline_get("sync_archive_db_ingest_gate_mode", fallback="head"),
+      _pipeline_get("sync_archive_db_ingest_gate_mode"),
   ).strip().lower()
   if raw in ("sample", "sampled"):
     return "sample"
@@ -2815,7 +2986,7 @@ def get_sync_archive_require_db_head_ingest():
   """Require DB ingest readiness before tar append or raw removal (depth via gate mode)."""
   _ensure_cfg_loaded()
   return _parse_bool(
-      _pipeline_get("sync_archive_require_db_head_ingest", fallback="yes"),
+      _pipeline_get("sync_archive_require_db_head_ingest"),
   )
 
 
@@ -2823,7 +2994,7 @@ def get_sync_archive_maint_hints():
   """Persist host-dir/path hints for faster archive maintenance restarts (default on)."""
   _ensure_cfg_loaded()
   return _parse_bool(
-      _pipeline_get("sync_archive_maint_hints", fallback="yes"),
+      _pipeline_get("sync_archive_maint_hints"),
   )
 
 

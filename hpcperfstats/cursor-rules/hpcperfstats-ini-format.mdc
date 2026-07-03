@@ -60,14 +60,14 @@ In the **same task**:
 
 1. Classify using the taxonomy above.
 2. Add or update the getter in **`dbload/lib/dbload/lib/conf_parser.py`** with primary section + legacy fallback in **`_ini_option()`** when migrating keys.
-3. Append **`(section, option)`** to **`INI_OPTION_REGISTRY`**.
+3. Append **`(section, option, default)`** to **`INI_OPTION_REGISTRY`** (`default` is a str code fallback, or `None` when required).
 4. Ensure **`ini_section_placement.py`** covers the option (explicit map or prefix rule).
 5. Document the key in **`hpcperfstats.ini.example`** in the correct section and **`[DEFAULT]`** order.
 6. Run **`test_hpcperfstats_ini_example.py`**, **`test_ini_section_placement_contract.py`**, and relevant **`test_dbload/lib/dbload/lib/conf_parser.py`** cases.
 
 ## Registry and drift tests
 
-- **`hpcperfstats/dbload/lib/dbload/lib/dbload/lib/conf_parser.py`** → **`INI_OPTION_REGISTRY`**: every ini-backed `(section, option)` pair.
+- **`hpcperfstats/dbload/lib/conf_parser.py`** → **`INI_OPTION_REGISTRY`**: every ini-backed `(section, option, default)` tuple; getters load fallbacks via **`ini_registry_default()`** / **`_pipeline_get()`**.
 - **`hpcperfstats/ini_section_placement.py`** → **`expected_section()`** / **`validate_registry_sections()`**.
 - **`hpcperfstats/tests/test_hpcperfstats_ini_example.py`**: example documents every registry entry; pinning keys last in `[DEFAULT]`.
 - **`hpcperfstats/tests/test_ini_section_placement_contract.py`**: registry matches placement contract.

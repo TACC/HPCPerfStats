@@ -122,6 +122,18 @@ def test_no_duplicate_options_across_sections_in_example():
   assert not duplicates, "options documented in multiple sections: %s" % duplicates
 
 
+def test_ini_option_registry_defaults_are_strings_or_none():
+  """Registry third element is None (required key) or a str code default."""
+  for section, option, default in cfg.INI_OPTION_REGISTRY:
+    assert default is None or isinstance(default, str), (
+        "%s.%s default must be None or str, got %r" % (section, option, default)
+    )
+  assert cfg.ini_registry_default("sync_archive_members_populate_pool_processes") == "2"
+  assert cfg.ini_option_registry_set() == {
+      (section, option) for section, option, _default in cfg.INI_OPTION_REGISTRY
+  }
+
+
 def test_ini_example_option_blocks_have_preceding_comment():
   path = _repo_ini_example_path()
   lines = path.read_text(encoding="utf-8").splitlines()

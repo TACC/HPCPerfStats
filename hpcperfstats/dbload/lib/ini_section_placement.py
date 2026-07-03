@@ -127,7 +127,8 @@ def expected_section(option: str) -> str:
 def validate_registry_sections(registry) -> list[str]:
   """Return human-readable violations when registry section != expected_section."""
   violations = []
-  for section, option in registry:
+  for entry in registry:
+    section, option = entry[0], entry[1]
     try:
       expected = expected_section(option)
     except KeyError:
