@@ -142,6 +142,34 @@ grep -E 'chunk dispatch begin|ingest file path=' /tmp/pipeline-full.log | tail -
 
 Within one chunk, **`ingest file path=`** epochs may permute; across chunks, **`chunk dispatch begin`** `epochs` must not leap months ahead while earlier calendar days still have closed raw on disk.
 
+### T2 verify — idle rescan stall + cap refill (hpcperfstats03, 2026-07)
+
+After deploy of **idle rescan snapshot refill** fix, confirm empty-queue rescans do not block ~14 minutes on **`wait_for_snapshot`**, and cap refill restores **`ingest_queue_max`** backlog instead of collapsing to **`blocked_n`** only.
+
+```bash
+podman-compose logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+
+# Idle rescan must complete (no begin without done for >5m).
+grep -E 'pending rescan begin|pending rescan done|idle_rescan_snapshot' /tmp/pipeline-full.log | tail -40
+
+# Snapshot wait during idle refill (should be rare; accrual/coordinator fast-path).
+grep 'idle_rescan_snapshot_wait' /tmp/pipeline-full.log | tail -20
+
+# Cap must supplement from snapshot when cross-day stragglers remain.
+grep -E 'pending reconcile cap|pending cap supplement' /tmp/pipeline-full.log | tail -30
+
+# Cross-day db_skip micro-chunk should clear stall without endless gate spin.
+grep 'oldest_day_chunk_gate_cross_day_db_complete' /tmp/pipeline-full.log | tail -20
+
+# Janitor pre_seal_verify must not block ticks without progress logs.
+grep -E 'pre_seal_verify (start|tar_restore|classify progress|complete)' /tmp/pipeline-full.log | tail -40
+
+# Orphan giant archive job when chunk had zero archival (pre-fix).
+grep -E 'Files marked for archival: 0|archive_job_begin' /tmp/pipeline-full.log | tail -40
+```
+
+**Pass (T2):** Every **`pending rescan begin`** is followed by **`pending rescan done`** within minutes (not ~862s **`startup archive scan ready wait_s`** on MainThread alone). **`idle_rescan_snapshot_source=accrual|coordinator`** appears on idle refill. **`pending cap supplement`** or **`capped_pending`** near **`ingest_queue_max`** after queue drain despite **`blocked_n=2`** cross-day stragglers. **`oldest_day_chunk_gate_cross_day_db_complete`** after all-**`db_skip=head_tail`** defer chunks. **`pre_seal_verify classify progress`** during long verify; **`pre_seal_verify start`** without **`complete`** for >5m is a failure. No **`archive_job_begin`** for unrelated calendar days immediately after **`Files marked for archival: 0`** chunks.
+
 ## Log source attribution (`[sync_timedb:role]`)
 
 After deploy of log-role prefixes (2026-06), pipeline lines identify **which actor** emitted them. Greps for **`[sync_timedb]`** still match (substring).

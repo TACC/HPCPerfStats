@@ -1626,9 +1626,27 @@ class ArchiveJanitor:
   def shutdown(self, wait: bool = True):
     self._session_executor.shutdown(wait=wait)
 
+  def tick_defer_reason(self) -> Optional[str]:
+    """Best-effort reason when debt exists but no tick has completed yet."""
+    if self._tick_depth > 0:
+      return "tick_in_progress"
+    with self._maintenance_pass_lock:
+      if self._pending_maintenance_pass_reason:
+        return "startup_heavy_maintenance"
+    if self.debt_depth() <= 0:
+      return None
+    coord = self.day_raw_removal_coordinator
+    if coord is not None:
+      for tar_norm in self._debt_heap_tar_paths():
+        if not coord.pre_seal_verification_complete(tar_norm):
+          return "pre_seal_verify_in_progress"
+    return "debt_pending"
+
   def stats(self) -> Dict[str, Any]:
+    defer_reason = self.tick_defer_reason()
     return {
         "janitor_debt_depth": self.debt_depth(),
         "janitor_ticks_completed": self._ticks_completed,
         "janitor_budget_throttled": self._budget_throttled_count,
+        "janitor_tick_defer_reason": defer_reason,
     }

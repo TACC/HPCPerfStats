@@ -140,7 +140,13 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     replace_corrupt_tar_from_compressed_backup,
     ensure_daily_tar_restored_for_append,
     cap_pending_stats_file_list,
+    cap_pending_stats_with_blocked_retention,
     merge_rescan_discovered_into_pending,
+    resolve_idle_rescan_closed_paths,
+    supplement_pending_paths_from_closed_paths,
+    chunk_was_cross_day_defer_dispatch,
+    all_ingest_outcomes_db_skip_head_tail,
+    blocked_paths_aligned_with_oldest_tar,
     sort_pending_stats_paths_oldest_first,
     INGEST_PARSE_FAILED_QUARANTINE_REASON,
     quarantine_ingest_failed_raw_path,
@@ -3889,7 +3895,13 @@ def run_sync_timedb_supervisor_loop(
         for item in items
     ]
 
-  def _dispatch_due_archive_retries():
+  def _dispatch_due_archive_retries(*, allow_idle_stale=False):
+    if (
+        not allow_idle_stale
+        and not pending_stats_files
+        and reconcile_refs.get("suppress_idle_archive_retries")
+    ):
+      return
     if not pending_archive_tasks or not archive_dispatch.has_capacity():
       return
     due_tasks = []
@@ -4512,6 +4524,9 @@ def run_sync_timedb_supervisor_loop(
       "last_cap_pending_monotonic": 0.0,
       "last_chunk_ingest_summary_mono": None,
       "last_ingest_stall_watchdog_mono": 0.0,
+      "chunk_ingest_outcomes": [],
+      "last_chunk_archival_n": 0,
+      "suppress_idle_archive_retries": False,
   }
 
   def _maybe_log_ingest_stall_watchdog(
@@ -4618,23 +4633,41 @@ def run_sync_timedb_supervisor_loop(
       oldest_tar=None,
       oldest_tar_reserved_paths=None,
   ):
-    del oldest_tar, oldest_tar_reserved_paths
-    merged = (
-        _apply_handoff_priority_to_pending(paths)
-        if handoff_priority_paths
-        else list(paths or ())
-    )
+    blocked_reserved = list(oldest_tar_reserved_paths or ())
+    if handoff_priority_paths or blocked_reserved:
+      return cap_pending_stats_with_blocked_retention(
+          paths,
+          max_size=ingest_queue_max,
+          blocked_paths=blocked_reserved,
+          handoff_priority_paths=handoff_priority_paths,
+          log_fn=log_print,
+      )
     return cap_pending_stats_file_list(
-        sort_pending_stats_paths_oldest_first(merged),
+        sort_pending_stats_paths_oldest_first(list(paths or ())),
         ingest_queue_max,
         log_fn=log_print,
     )
 
-  def _cap_pending_after_rescan(paths, *, handoff=False):
+  def _resolve_closed_paths_for_cap():
+    coordinator = reconcile_refs["get_startup_snapshot"]()
+    accrual = reconcile_refs["get_accrual_snapshot"]()
+    closed_paths, _source = resolve_idle_rescan_closed_paths(
+        coordinator_snapshot=coordinator,
+        accrual_snapshot=accrual,
+    )
+    return closed_paths
+
+  def _cap_pending_after_rescan(paths, *, handoff=False, idle_refill=False):
     cap_t0 = time.time()
     _snapshot, source = _resolve_reconcile_maintenance_snapshot(
-        prefer_startup=handoff,
+        prefer_startup=(handoff or idle_refill),
     )
+    if idle_refill and _snapshot is not None:
+      log_print(
+          "sync_timedb: idle cap reconcile source=%s pending_in=%d"
+          % (source, len(paths or ())),
+          flush=True,
+      )
     if (
         handoff
         and _snapshot is not None
@@ -4722,6 +4755,27 @@ def run_sync_timedb_supervisor_loop(
         oldest_tar=tar_norm,
         oldest_tar_reserved_paths=reserved_blocked,
     )
+    cross_day_blocked_only = (
+        tar_norm
+        and blocked
+        and not blocked_paths_aligned_with_oldest_tar(
+            blocked,
+            tar_norm,
+            tgz_archive_dir=tgz_archive_dir,
+        )
+    )
+    closed_paths = _resolve_closed_paths_for_cap()
+    if closed_paths and (
+        len(capped) < ingest_queue_max
+        or cross_day_blocked_only
+    ):
+      capped = supplement_pending_paths_from_closed_paths(
+          capped,
+          closed_paths=closed_paths,
+          max_size=ingest_queue_max,
+          processed_exclude=reconcile_exclude,
+          log_fn=log_print,
+      )
     log_print(
         "sync_timedb: pending reconcile cap done elapsed_s=%.3f "
         "oldest_tar=%s blocked_n=%d capped_pending=%d%s"
@@ -4740,6 +4794,40 @@ def run_sync_timedb_supervisor_loop(
         flush=True,
     )
     return capped
+
+  def _maybe_handle_cross_day_db_complete_after_chunk(
+      *,
+      stats_files_chunk,
+      successful_paths,
+      files_to_be_archived,
+      oldest_tar_for_chunk,
+      blocked_n,
+  ):
+    outcomes = list(reconcile_refs.get("chunk_ingest_outcomes") or ())
+    reconcile_refs["chunk_ingest_outcomes"] = []
+    if not chunk_was_cross_day_defer_dispatch(
+        stats_files_chunk,
+        oldest_tar_for_chunk,
+        blocked_n=blocked_n,
+        tgz_archive_dir=tgz_archive_dir,
+    ):
+      return
+    if files_to_be_archived:
+      return
+    if not all_ingest_outcomes_db_skip_head_tail(outcomes):
+      return
+    if len(successful_paths) != len(stats_files_chunk):
+      return
+    log_print(
+        "sync_timedb: oldest_day_chunk_gate_cross_day_db_complete oldest_tar=%s "
+        "path_n=%d"
+        % (oldest_tar_for_chunk or "", len(stats_files_chunk)),
+        flush=True,
+    )
+    reconcile_refs["oldest_day_gate_stall_blocked_n"] = None
+    reconcile_refs["last_unprocessed_by_tar"] = None
+    archive_janitor.signal_work_available()
+    _maybe_enqueue_immediate_day_close(context="cross_day_db_complete")
 
   def _reconcile_pending_with_oldest_checkpoint_blocked():
     nonlocal pending_stats_files
@@ -4821,6 +4909,7 @@ def run_sync_timedb_supervisor_loop(
         if path
     }
     state_reingest_paths = handoff_priority_paths | chunk_paths_norm
+    reconcile_refs["chunk_ingest_outcomes"] = []
     skip_prewarm = _paths_all_db_complete_for_prewarm_skip(paths)
     effective_gated_restore = gated_tar_restore and not skip_prewarm
 
@@ -4868,8 +4957,16 @@ def run_sync_timedb_supervisor_loop(
           pending_tail=pending_tail,
       )
       for result in results_iter:
-        stats_fname, need_archival, ingest_ok, elapsed_s, _outcome_meta = (
+        stats_fname, need_archival, ingest_ok, elapsed_s, outcome_meta = (
             _unpack_ingest_worker_result(result)
+        )
+        meta = dict(outcome_meta or {})
+        outcome = str(meta.get("outcome") or "")
+        if not outcome:
+          outcome = "ingested" if meta.get("stats_rows") else "db_skip"
+        db_skip = str(meta.get("db_skip") or "no")
+        reconcile_refs["chunk_ingest_outcomes"].append(
+            (stats_fname, outcome, db_skip),
         )
         if ingest_tracker is not None:
           ingest_tracker.complete(stats_fname)
@@ -5135,18 +5232,62 @@ def run_sync_timedb_supervisor_loop(
       log_fn=log_print,
   )
 
-  def _get_startup_snapshot_for_rescan():
+  def _get_startup_snapshot_for_rescan(*, idle_refill=False):
     """Supervisor rescan may single-flight fallback-build after wait timeout."""
     snap = startup_archive_scan.get_snapshot()
     if snap is not None:
       return snap
+    if idle_refill:
+      accrual = reconcile_refs["get_accrual_snapshot"]()
+      if accrual is not None and accrual.closed_paths:
+        return accrual
+      wait_t0 = time.time()
+      last_log = wait_t0
+      wait_limit = min(
+          30.0,
+          max(5.0, float(cfg.get_sync_startup_snapshot_wait_seconds())),
+      )
+      while time.time() - wait_t0 < wait_limit:
+        snap = startup_archive_scan.get_snapshot()
+        if snap is not None:
+          return snap
+        accrual = reconcile_refs["get_accrual_snapshot"]()
+        if accrual is not None and accrual.closed_paths:
+          return accrual
+        now = time.time()
+        if now - last_log >= 30.0:
+          log_print(
+              "sync_timedb: idle_rescan_snapshot_wait elapsed_s=%.1f"
+              % (now - wait_t0),
+              flush=True,
+          )
+          last_log = now
+        if startup_archive_scan.is_startup_heavy_maintenance_idle():
+          break
+        sleep_until_shutdown(0.5)
+      return startup_archive_scan.get_snapshot()
     return startup_archive_scan.wait_for_snapshot(allow_build=True)
 
-  def _startup_closed_paths_for_rescan():
+  def _startup_closed_paths_for_rescan(*, idle_refill=False):
     snap = startup_archive_scan.get_snapshot()
-    if snap is None or not snap.closed_paths:
-      return None
-    return list(snap.closed_paths)
+    if snap is not None and snap.closed_paths:
+      if idle_refill:
+        log_print(
+            "sync_timedb: idle_rescan_snapshot_source=coordinator closed_paths=%d"
+            % len(snap.closed_paths),
+            flush=True,
+        )
+      return list(snap.closed_paths)
+    if idle_refill:
+      accrual = reconcile_refs["get_accrual_snapshot"]()
+      if accrual is not None and accrual.closed_paths:
+        log_print(
+            "sync_timedb: idle_rescan_snapshot_source=accrual closed_paths=%d"
+            % len(accrual.closed_paths),
+            flush=True,
+        )
+        return list(accrual.closed_paths)
+    return None
 
   def _get_accrual_remaining_raw_by_gz():
     with archive_janitor._accrual_snapshot_lock:
@@ -5163,11 +5304,20 @@ def run_sync_timedb_supervisor_loop(
 
   day_raw_removal.get_maintenance_snapshot = _get_maintenance_snapshot_for_day_raw
 
-  def _rescan_pending_with_progress():
+  def _rescan_pending_with_progress(*, idle_refill=False):
     rescan_t0 = time.time()
     log_print("sync_timedb: pending rescan begin", flush=True)
-    if run_startup_maintenance:
-      _get_startup_snapshot_for_rescan()
+    closed_paths = _startup_closed_paths_for_rescan(idle_refill=idle_refill)
+    if (
+        closed_paths is None
+        and run_startup_maintenance
+        and not idle_refill
+    ):
+      _get_startup_snapshot_for_rescan(idle_refill=False)
+      closed_paths = _startup_closed_paths_for_rescan(idle_refill=False)
+    elif closed_paths is None and idle_refill:
+      _get_startup_snapshot_for_rescan(idle_refill=True)
+      closed_paths = _startup_closed_paths_for_rescan(idle_refill=True)
     paths = rescan_pending_stats_files(
         directory,
         startdate,
@@ -5175,7 +5325,9 @@ def run_sync_timedb_supervisor_loop(
         host_name_ext,
         _rescan_processed_exclusions(),
         host_scan_hints=host_scan_hints,
-        startup_closed_paths=_startup_closed_paths_for_rescan(),
+        startup_closed_paths=closed_paths,
+        force_snapshot_paths=idle_refill,
+        log_fn=log_print,
     )
     log_print(
         "sync_timedb: pending rescan done pending=%d elapsed_s=%.3f"
@@ -5625,7 +5777,8 @@ def run_sync_timedb_supervisor_loop(
       if not pending_stats_files:
         if idle_since_empty_queue is None:
           idle_since_empty_queue = time.time()
-        _dispatch_due_archive_retries()
+        archive_janitor.signal_work_available()
+        _dispatch_due_archive_retries(allow_idle_stale=False)
         if len(pending_archive_tasks) > archive_queue_high:
           log_print(
               "Archive backlog above high watermark pending=%d high=%d"
@@ -5634,10 +5787,17 @@ def run_sync_timedb_supervisor_loop(
           )
         _finalize_archive_slots_if_needed(force=True, context="pre_rescan")
         _maybe_enqueue_immediate_day_close(context="idle_finalize")
+        discovered = _rescan_pending_with_progress(idle_refill=True)
         pending_stats_files = _cap_pending_after_rescan(
-            _rescan_pending_with_progress(),
+            merge_rescan_discovered_into_pending(
+                pending_stats_files,
+                discovered,
+                processed_exclude=_rescan_processed_exclusions(),
+            ),
+            idle_refill=True,
         )
         if pending_stats_files:
+          reconcile_refs["suppress_idle_archive_retries"] = False
           for p in pending_stats_files:
             _transition_file_state(file_states, p, SyncFileState.DISCOVERED)
           log_print(
@@ -5649,8 +5809,14 @@ def run_sync_timedb_supervisor_loop(
           worker_idle_loops = 0
           continue
         archive_janitor.signal_work_available()
+        discovered = _rescan_pending_with_progress(idle_refill=True)
         pending_stats_files = _cap_pending_after_rescan(
-            _rescan_pending_with_progress(),
+            merge_rescan_discovered_into_pending(
+                pending_stats_files,
+                discovered,
+                processed_exclude=_rescan_processed_exclusions(),
+            ),
+            idle_refill=True,
         )
         if pending_stats_files:
           idle_since_empty_queue = None
@@ -5966,6 +6132,18 @@ def run_sync_timedb_supervisor_loop(
             flush=True,
         )
         reconcile_refs["last_chunk_ingest_summary_mono"] = time.monotonic()
+        reconcile_refs["last_chunk_archival_n"] = len(files_to_be_archived)
+        reconcile_refs["suppress_idle_archive_retries"] = (
+            len(files_to_be_archived) == 0
+        )
+
+        _maybe_handle_cross_day_db_complete_after_chunk(
+            stats_files_chunk=stats_files_chunk,
+            successful_paths=successful_paths,
+            files_to_be_archived=files_to_be_archived,
+            oldest_tar_for_chunk=oldest_tar_for_chunk,
+            blocked_n=blocked_n,
+        )
 
         if files_to_be_archived:
           _ensure_daily_archive_dir_exists()
@@ -6130,6 +6308,19 @@ def run_sync_timedb_supervisor_loop(
       _persist_dead_letters_if_needed(force=True)
       _flush_checkpoint_if_needed(force=True)
       janitor_stats = archive_janitor.stats()
+      if (
+          janitor_stats["janitor_debt_depth"] > 0
+          and janitor_stats["janitor_ticks_completed"] == 0
+          and janitor_stats.get("janitor_tick_defer_reason")
+      ):
+        log_print(
+            "Archive janitor tick defer reason=%s debt=%d"
+            % (
+                janitor_stats["janitor_tick_defer_reason"],
+                janitor_stats["janitor_debt_depth"],
+            ),
+            flush=True,
+        )
       if (perf_stats["archive_finalize_calls"] or perf_stats["archive_dispatch_count"]
           or janitor_stats["janitor_ticks_completed"]):
         log_print(

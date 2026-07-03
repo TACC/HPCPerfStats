@@ -7275,3 +7275,102 @@ def test_handoff_cap_preserves_oldest_blocked_head():
   assert capped[0] == "/blocked/0"
   assert "/handoff/0" in capped
   assert len(capped) <= ingest_queue_max
+
+
+def test_rescan_force_snapshot_paths_uses_closed_list_despite_rescan_count(
+    tmp_path,
+    monkeypatch,
+):
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
+
+  host_dir = tmp_path / "host.cluster.test"
+  host_dir.mkdir(parents=True)
+  snap_path = host_dir / "snap.stats"
+  walk_path = host_dir / "walk.stats"
+  snap_path.write_text("1\n", encoding="utf-8")
+  walk_path.write_text("1\n", encoding="utf-8")
+  hints = {"__rescan_count__": 3}
+  monkeypatch.setattr(
+      helpers,
+      "collect_stats_files_in_range",
+      lambda *_a, **_k: [str(walk_path)],
+  )
+  result = helpers.rescan_pending_stats_files(
+      str(tmp_path),
+      "all",
+      None,
+      "cluster.test",
+      set(),
+      host_scan_hints=hints,
+      startup_closed_paths=[str(snap_path)],
+      force_snapshot_paths=True,
+  )
+  assert result == [str(snap_path)]
+  assert hints["__rescan_count__"] == 4
+
+
+def test_supplement_pending_paths_from_closed_paths_refills_toward_max(
+    tmp_path,
+):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      supplement_pending_paths_from_closed_paths,
+  )
+
+  host_dir = tmp_path / "host.cluster.test"
+  host_dir.mkdir(parents=True)
+  closed = []
+  for index in range(10):
+    path = host_dir / ("seg_%d.stats" % index)
+    path.write_text("1\n", encoding="utf-8")
+    closed.append(str(path))
+  capped = supplement_pending_paths_from_closed_paths(
+      [closed[0]],
+      closed_paths=closed,
+      max_size=5,
+      processed_exclude=set(),
+      log_fn=lambda *_a, **_k: None,
+  )
+  assert len(capped) == 5
+  assert capped[0] == closed[0]
+
+
+def test_cap_pending_with_blocked_retention_keeps_global_head():
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      cap_pending_stats_with_blocked_retention,
+  )
+
+  blocked = ["/blocked/%d" % i for i in range(2)]
+  tail = ["/tail/%d" % i for i in range(100)]
+  merged = blocked + tail
+  capped = cap_pending_stats_with_blocked_retention(
+      merged,
+      max_size=20,
+      blocked_paths=blocked,
+      handoff_priority_paths=[],
+      log_fn=lambda *_a, **_k: None,
+  )
+  assert len(capped) == 20
+  assert capped[0] == blocked[0]
+  assert capped[1] == blocked[1]
+
+
+def test_cross_day_db_complete_helper_contract():
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      all_ingest_outcomes_db_skip_head_tail,
+      chunk_was_cross_day_defer_dispatch,
+  )
+
+  oldest_tar = "/archive/daily/2026-05-26.tar"
+  tgz = "/archive/daily"
+  june_path = "/archive/host.cluster.test/2026-06-01_12-00-00.stats"
+  assert chunk_was_cross_day_defer_dispatch(
+      [june_path],
+      oldest_tar,
+      blocked_n=2,
+      tgz_archive_dir=tgz,
+  )
+  outcomes = [(june_path, "db_skip", "head_tail")]
+  assert all_ingest_outcomes_db_skip_head_tail(outcomes)
+  assert not all_ingest_outcomes_db_skip_head_tail(
+      [(june_path, "ingested", "no")],
+  )

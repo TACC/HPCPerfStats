@@ -204,8 +204,6 @@ def merge_rescan_discovered_into_pending(
   for path in discovered or ():
     if not path or path in exclude or path in seen:
       continue
-    if not os.path.isfile(path):
-      continue
     seen.add(path)
     merged.append(path)
   for path in existing_pending or ():
@@ -216,6 +214,133 @@ def merge_rescan_discovered_into_pending(
     seen.add(path)
     merged.append(path)
   return sort_pending_stats_paths_oldest_first(merged)
+
+
+def resolve_idle_rescan_closed_paths(
+    *,
+    coordinator_snapshot=None,
+    accrual_snapshot=None,
+):
+  """Return ``(closed_paths, source)`` for idle rescan; prefer coordinator."""
+  if coordinator_snapshot is not None and coordinator_snapshot.closed_paths:
+    return list(coordinator_snapshot.closed_paths), "coordinator"
+  if accrual_snapshot is not None and accrual_snapshot.closed_paths:
+    return list(accrual_snapshot.closed_paths), "accrual"
+  return None, None
+
+
+def supplement_pending_paths_from_closed_paths(
+    paths,
+    *,
+    closed_paths,
+    max_size,
+    processed_exclude=None,
+    log_fn=log_print,
+):
+  """Fill pending toward ``max_size`` from snapshot ``closed_paths`` when below cap."""
+  max_size = max(1, int(max_size))
+  exclude = set(processed_exclude or ())
+  seen = set(paths or ())
+  result = list(paths or ())
+  if len(result) >= max_size:
+    return cap_pending_stats_file_list(
+        sort_pending_stats_paths_oldest_first(result),
+        max_size,
+        log_fn=log_fn,
+    )
+  supplemented = 0
+  for path in closed_paths or ():
+    if len(result) >= max_size:
+      break
+    if not path or path in exclude or path in seen:
+      continue
+    if not os.path.isfile(path):
+      continue
+    seen.add(path)
+    result.append(path)
+    supplemented += 1
+  if supplemented and log_fn is not None:
+    log_fn(
+        "sync_timedb: pending cap supplement from snapshot n=%d pending=%d"
+        % (supplemented, len(result)),
+        flush=True,
+    )
+  return cap_pending_stats_file_list(
+      sort_pending_stats_paths_oldest_first(result),
+      max_size,
+      log_fn=log_fn,
+  )
+
+
+def cap_pending_stats_with_blocked_retention(
+    paths,
+    *,
+    max_size,
+    blocked_paths=None,
+    handoff_priority_paths=None,
+    log_fn=log_print,
+):
+  """Cap pending while preserving blocked head and handoff priority paths."""
+  max_size = max(1, int(max_size))
+  merged = sort_pending_stats_paths_oldest_first(list(paths or ()))
+  blocked = list(blocked_paths or ())
+  handoff = list(handoff_priority_paths or ())
+  if not blocked and not handoff:
+    return cap_pending_stats_file_list(merged, max_size, log_fn=log_fn)
+  reserved = list(blocked)
+  reserved_set = set(reserved)
+  priority_n = len(handoff)
+  tail_budget = max(0, max_size - priority_n - len(reserved))
+  head = [path for path in handoff if path in merged or path in set(handoff)]
+  if len(head) < priority_n:
+    for path in merged:
+      if path in head or path in reserved_set:
+        continue
+      head.append(path)
+      if len(head) >= priority_n:
+        break
+  tail_paths = [
+      path for path in merged
+      if path not in reserved_set and path not in set(head)
+  ]
+  capped = reserved + head + tail_paths[:tail_budget]
+  if len(capped) > max_size:
+    capped = capped[:max_size]
+  if len(merged) > len(capped) and log_fn is not None:
+    log_fn(
+        "Pending stats file list truncated pending=%d max=%d"
+        % (len(merged), max_size),
+        flush=True,
+    )
+  return capped
+
+
+def chunk_was_cross_day_defer_dispatch(
+    chunk_paths,
+    oldest_tar_norm,
+    *,
+    blocked_n,
+    tgz_archive_dir,
+):
+  """True when chunk paths are not aligned with oldest checkpoint-blocked tar."""
+  if not oldest_tar_norm or blocked_n <= 0 or not chunk_paths or not tgz_archive_dir:
+    return False
+  aligned = blocked_paths_aligned_with_oldest_tar(
+      chunk_paths,
+      oldest_tar_norm,
+      tgz_archive_dir=tgz_archive_dir,
+  )
+  return len(aligned) < len(chunk_paths)
+
+
+def all_ingest_outcomes_db_skip_head_tail(outcomes):
+  """True when every recorded ingest outcome is db_skip=head_tail."""
+  if not outcomes:
+    return False
+  for _path, outcome, db_skip in outcomes:
+    if outcome != "db_skip" or db_skip != "head_tail":
+      return False
+  return True
 
 
 def blocked_paths_aligned_with_oldest_tar(
@@ -5473,6 +5598,10 @@ def rescan_pending_stats_files(
     host_scan_hints=None,
     full_rescan_every=10,
     startup_closed_paths=None,
+    *,
+    force_snapshot_paths=False,
+    log_fn=None,
+    progress_interval=5000,
 ):
   """Return oldest-first files still pending after excluding processed files."""
   should_force_full = True
@@ -5483,12 +5612,13 @@ def rescan_pending_stats_files(
     host_scan_hints["__rescan_count__"] = int(
         host_scan_hints.get("__rescan_count__", 0)
     ) + 1
-  if (
-      should_force_full
+  use_snapshot = (
+      (should_force_full or force_snapshot_paths)
       and startup_closed_paths is not None
       and startdate in ("all", None, "")
       and enddate in (None, "")
-  ):
+  )
+  if use_snapshot:
     discovered_files = list(startup_closed_paths)
   else:
     discovered_files = collect_stats_files_in_range(
@@ -5503,7 +5633,30 @@ def rescan_pending_stats_files(
     exclude = processed_files
   else:
     exclude = set(processed_files or [])
-  return [path for path in discovered_files if path not in exclude]
+  total = len(discovered_files)
+  if total == 0:
+    return []
+  filter_t0 = time.monotonic()
+  result = []
+  for index, path in enumerate(discovered_files):
+    if path not in exclude:
+      result.append(path)
+    if (
+        log_fn is not None
+        and total >= 10000
+        and progress_interval > 0
+        and (index + 1) % progress_interval == 0
+    ):
+      log_fn(
+          "sync_timedb: pending rescan progress filtered_n=%d/%d elapsed_s=%.1f"
+          % (
+              index + 1,
+              total,
+              time.monotonic() - filter_t0,
+          ),
+          flush=True,
+      )
+  return result
 
 
 def cap_pending_stats_file_list(paths, max_size, log_fn=log_print):

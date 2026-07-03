@@ -1361,3 +1361,51 @@ def test_handoff_ingest_complete_triggers_delete_not_second_handoff(tmp_path):
   assert state.stale_done_all_skipped_still_on_disk()
   assert coord.reopen_done_days_with_verified_on_disk() == 1
   assert state.phase() == PHASE_VERIFYING
+
+
+def test_pre_seal_verify_slices_by_paths_per_tick(tmp_path, monkeypatch):
+  day = datetime(2026, 5, 22)
+  segs = [_make_closed_segment(tmp_path, "cluster.integration.test", day) for _ in range(5)]
+  tgz_dir = tmp_path / "daily"
+  tgz_dir.mkdir()
+  tar_path = str(tgz_dir / "2026-05-22.tar")
+  open(tar_path, "wb").close()
+  seg_paths = [str(seg) for seg in segs]
+  members = {get_tar_member_name(path): os.path.getsize(path) for path in seg_paths}
+  monkeypatch.setattr(cfg, "get_archive_janitor_raw_paths_per_tick", lambda: 2)
+  monkeypatch.setattr(
+      cfg,
+      "get_sync_day_close_raw_removal_verify_budget_seconds",
+      lambda: 3600.0,
+  )
+  monkeypatch.setattr(cfg, "get_archive_janitor_budget_seconds", lambda: 3600.0)
+  monkeypatch.setattr(cfg, "get_sync_archive_require_db_head_ingest", lambda: False)
+  logs = []
+
+  def _remaining(*_a, **_k):
+    return {"host": seg_paths}
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+      _remaining,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.ensure_daily_tar_restored_for_append",
+      lambda *_a, **_k: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.validate_open_tar_for_raw_removal",
+      lambda *_a, **_k: (True, dict(members)),
+  )
+  coord = _make_coordinator(
+      tmp_path,
+      log_fn=lambda msg, **kw: logs.append(str(msg)),
+  )
+  assert coord.run_pre_seal_verify_sync(tar_path) is False
+  state = coord._get_or_create_day(tar_path)
+  assert int(state._manifest.get("pre_seal_classify_index", 0)) == 2
+  assert any("classify progress" in line for line in logs)
+  assert coord.run_pre_seal_verify_sync(tar_path) is False
+  assert int(state._manifest.get("pre_seal_classify_index", 0)) == 4
+  assert coord.run_pre_seal_verify_sync(tar_path) is True
+  assert state.pre_seal_verification_complete()

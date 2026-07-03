@@ -353,6 +353,7 @@ def test_janitor_tick_exception_requeues_unprocessed_debt(monkeypatch):
 
 
 def test_janitor_tar_drop_blocks_when_accrual_snapshot_none(monkeypatch, tmp_path):
+  monkeypatch.setattr(janitor_mod.cfg, "get_archive_janitor_budget_seconds", lambda: 0.01)
   tar_path = str(tmp_path / "2026-01-01.tar")
   open(tar_path, "wb").close()
   raw_path = str(tmp_path / "raw.stats")
@@ -377,6 +378,7 @@ def test_janitor_tar_drop_blocks_when_accrual_snapshot_none(monkeypatch, tmp_pat
 
 
 def test_janitor_tar_drop_blocks_when_raw_appears_after_accrual(monkeypatch, tmp_path):
+  monkeypatch.setattr(janitor_mod.cfg, "get_archive_janitor_budget_seconds", lambda: 0.01)
   from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
 
   tar_path = str(tmp_path / "2026-01-01.tar")
@@ -649,7 +651,12 @@ def test_janitor_tar_drop_runs_same_tick_after_raw_remove_when_fresh_probe(
     return {}
 
   monkeypatch.setattr(janitor_mod, "build_remaining_raw_for_daily_tar", remaining_seq)
-  monkeypatch.setattr(janitor_mod, "remove_verified_archived_raw_files", lambda *a, **k: None)
+  monkeypatch.setattr(
+      janitor_mod,
+      "remove_verified_archived_raw_files",
+      lambda *a, **k: None,
+      raising=False,
+  )
 
   def drop_tar(*_a, **_k):
     if os.path.isfile(tar_path):
@@ -1074,6 +1081,7 @@ def test_janitor_tick_does_not_scan_unparsable_tree(monkeypatch):
 def test_janitor_raw_remove_deletes_new_closed_raw_after_accrual_snapshot_stale(
     monkeypatch, tmp_path,
 ):
+  monkeypatch.setattr(janitor_mod.cfg, "get_archive_janitor_budget_seconds", lambda: 0.01)
   from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import DayRawRemovalCoordinator
 
   archive_dir = tmp_path / "archive"
@@ -2213,3 +2221,13 @@ def test_no_async_day_close_worker_submit_on_discover(tmp_path, monkeypatch):
   janitor._discover_and_enqueue_ready_day_close(reason="tick")
   assert submit_calls == []
   assert janitor.debt_depth() == 1
+
+
+def test_janitor_tick_defer_reason_startup_heavy(tmp_path, monkeypatch):
+  janitor = _make_janitor(tgz_archive_dir=str(tmp_path / "daily"))
+  with janitor._maintenance_pass_lock:
+    janitor._pending_maintenance_pass_reason = "startup_heavy"
+  janitor._enqueue_day_close(str(tmp_path / "daily" / "2020-01-01.tar"))
+  assert janitor.tick_defer_reason() == "startup_heavy_maintenance"
+  stats = janitor.stats()
+  assert stats["janitor_tick_defer_reason"] == "startup_heavy_maintenance"

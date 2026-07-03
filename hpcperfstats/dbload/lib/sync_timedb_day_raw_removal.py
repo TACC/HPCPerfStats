@@ -21,7 +21,11 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     remaining_raw_by_gz_has_paths_on_disk,
     remove_verified_uncompressed_daily_tars,
     stats_file_is_active_segment,
+    validate_open_tar_for_raw_removal,
     validate_post_seal_tar_zst_parity,
+)
+from hpcperfstats.dbload.lib.sync_timedb_ingest_readiness import (
+    filter_paths_head_ingested,
 )
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
     load_persistence_document,
@@ -31,6 +35,7 @@ from hpcperfstats.dbload.lib.file_locking import cleanup_orphan_fnctl_lock_sidec
 from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
 from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
     SessionSingleFlightExecutor,
+    iter_bounded_thread_pool,
 )
 
 MANIFEST_VERSION = 1
@@ -869,17 +874,30 @@ class _DayRawRemovalState:
           flush=True,
       )
 
-  def _pre_seal_verify_body(self) -> None:
+  def _pre_seal_verify_body(self) -> bool:
+    """Run pre-seal verify (possibly sliced); return True when fully complete."""
     close_old_connections()
+    if self.pre_seal_verification_complete():
+      return True
     with self._lock:
-      if self.pre_seal_verification_complete():
-        return
       self._manifest["phase"] = PHASE_VERIFYING
       if not self._manifest.get("started_at"):
         self._manifest["started_at"] = time.time()
+    verify_budget = float(
+        cfg.get_sync_day_close_raw_removal_verify_budget_seconds(),
+    )
+    paths_per_tick = max(1, int(cfg.get_archive_janitor_raw_paths_per_tick()))
+    janitor_budget = float(cfg.get_archive_janitor_budget_seconds())
+    verify_started = time.time()
+    if self.log_fn:
+      self.log_fn(
+          "janitor: day_close pre_seal_verify tar_restore begin day=%s"
+          % self.day_date.isoformat(),
+          flush=True,
+      )
     if not ensure_daily_tar_restored_for_append(
         self.tar_path,
-        cfg.get_archive_zstd_thread_count(),
+        cfg.get_archive_zstd_threads(),
     ):
       if self.log_fn:
         self.log_fn(
@@ -888,14 +906,33 @@ class _DayRawRemovalState:
             % self.day_date.isoformat(),
             flush=True,
         )
-      return
+      return False
+    if self.log_fn:
+      self.log_fn(
+          "janitor: day_close pre_seal_verify tar_restore done day=%s"
+          % self.day_date.isoformat(),
+          flush=True,
+      )
+    ok, members = validate_open_tar_for_raw_removal(
+        self.tar_path,
+        log_fn=self.log_fn,
+        validation_cache=self._validation_cache,
+    )
+    if not ok or members is None:
+      return False
+    if self.log_fn:
+      self.log_fn(
+          "janitor: day_close pre_seal_verify open_tar_members n=%d day=%s"
+          % (len(members), self.day_date.isoformat()),
+          flush=True,
+      )
     zst_path, _gz_path = compressed_sibling_paths(self.tar_path)
     remaining = self._build_remaining_raw_for_daily_tar()
     raw_paths: List[str] = []
     for paths in (remaining or {}).values():
       raw_paths.extend(paths or [])
     skip_paths = set(self.get_quarantine_skip_paths() or ())
-    filtered = []
+    filtered: List[str] = []
     for path in raw_paths:
       if stats_file_is_active_segment(path):
         self._record_entry(path, zst_path, "skipped_active_segment", "active_segment")
@@ -904,23 +941,117 @@ class _DayRawRemovalState:
         self._record_entry(path, zst_path, "skipped_quarantine", "quarantine")
         continue
       filtered.append(path)
+    with self._lock:
+      cursor = int(self._manifest.get("pre_seal_classify_index", 0))
+    if cursor > len(filtered):
+      cursor = 0
+    batch_end = min(cursor + paths_per_tick, len(filtered))
+    batch = filtered[cursor:batch_end]
     gate_fn = (
         self.ingest_ready_fn
         if cfg.get_sync_archive_require_db_head_ingest()
         else None
     )
-    if filtered:
+    classify_paths = batch
+    if batch and gate_fn is not None:
+      snapshot = (
+          self.get_maintenance_snapshot()
+          if callable(self.get_maintenance_snapshot)
+          else None
+      )
+      head_identity = (
+          getattr(snapshot, "head_identity_by_path", None)
+          if snapshot is not None
+          else None
+      )
+      if head_identity:
+        gate_ready, gate_skipped = filter_paths_head_ingested(
+            batch,
+            log_fn=self.log_fn,
+            head_identity_by_path=head_identity,
+        )
+        for path in gate_skipped:
+          self._record_entry(
+              path,
+              zst_path,
+              "skipped_not_head_ingested",
+              "not_head_ingested",
+          )
+        classify_paths = gate_ready
+      else:
+        gate_ready = []
+        gate_skipped = []
+        worker_cap = max(1, int(cfg.get_sync_pool_process_cap()))
+
+        def _gate_one(path):
+          close_old_connections()
+          if gate_fn(path):
+            return path, True, ""
+          return path, False, "not_head_ingested"
+
+        for path, ready, _err in iter_bounded_thread_pool(
+            batch,
+            _gate_one,
+            max_workers=worker_cap,
+        ):
+          if ready:
+            gate_ready.append(path)
+          else:
+            gate_skipped.append(path)
+        for path in gate_skipped:
+          self._record_entry(
+              path,
+              zst_path,
+              "skipped_not_head_ingested",
+              "not_head_ingested",
+          )
+        classify_paths = gate_ready
+    if classify_paths:
       for path, status, reason in classify_removable_raw_paths_for_open_tar(
           self.tar_path,
-          filtered,
-          ingest_ready_fn=gate_fn,
+          classify_paths,
+          ingest_ready_fn=None,
           log_fn=self.log_fn,
           validation_cache=self._validation_cache,
+          open_tar_members=members,
       ):
         self._record_entry(path, zst_path, status, reason)
+    cursor = batch_end
+    with self._lock:
+      self._manifest["pre_seal_classify_index"] = cursor
+      _save_manifest(self._manifest_path, self._manifest)
+    elapsed = time.time() - verify_started
+    if self.log_fn:
+      self.log_fn(
+          "janitor: day_close pre_seal_verify classify progress "
+          "verified_n=%d/%d elapsed_s=%.1f day=%s"
+          % (cursor, len(filtered), elapsed, self.day_date.isoformat()),
+          flush=True,
+      )
+    if cursor < len(filtered):
+      if verify_budget > 0 and elapsed >= verify_budget:
+        if self.log_fn:
+          self.log_fn(
+              "Day raw removal pre-seal verify budget exhausted day=%s "
+              "verified=%d/%d"
+              % (self.day_date.isoformat(), cursor, len(filtered)),
+              flush=True,
+          )
+        return False
+      if janitor_budget > 0 and elapsed >= janitor_budget:
+        if self.log_fn:
+          self.log_fn(
+              "WARN: janitor pre_seal_verify exceeded tick budget day=%s "
+              "elapsed_s=%.1f budget_s=%.1f"
+              % (self.day_date.isoformat(), elapsed, janitor_budget),
+              flush=True,
+          )
+        return False
+      return False
     with self._lock:
       self._manifest["verify_stage"] = VERIFY_STAGE_PRE_SEAL
       self._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
+      self._manifest.pop("pre_seal_classify_index", None)
       _save_manifest(self._manifest_path, self._manifest)
     if self.log_fn:
       self.log_fn(
@@ -932,6 +1063,7 @@ class _DayRawRemovalState:
           ),
           flush=True,
       )
+    return True
 
   def _post_seal_verify_body(self) -> bool:
     close_old_connections()
@@ -1298,8 +1430,7 @@ class DayRawRemovalCoordinator:
     state = self._get_or_create_day(tar_path)
     if state.pre_seal_verification_complete():
       return True
-    state._pre_seal_verify_body()
-    return state.pre_seal_verification_complete()
+    return state._pre_seal_verify_body()
 
   def run_post_seal_verify_sync(self, tar_path: str) -> bool:
     if not self.enabled:
