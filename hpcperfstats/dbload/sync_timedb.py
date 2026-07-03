@@ -140,6 +140,8 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     replace_corrupt_tar_from_compressed_backup,
     ensure_daily_tar_restored_for_append,
     cap_pending_stats_file_list,
+    merge_rescan_discovered_into_pending,
+    sort_pending_stats_paths_oldest_first,
     INGEST_PARSE_FAILED_QUARANTINE_REASON,
     quarantine_ingest_failed_raw_path,
     raw_stats_path_needs_tar_append,
@@ -4639,7 +4641,7 @@ def run_sync_timedb_supervisor_loop(
   def _apply_handoff_priority_to_pending(pending):
     if not handoff_priority_paths:
       return list(pending or ())
-    blocked = sorted(handoff_priority_paths)
+    blocked = sort_pending_stats_paths_oldest_first(handoff_priority_paths)
     return prepend_checkpoint_blocked_paths_to_pending(
         pending,
         blocked,
@@ -4652,100 +4654,17 @@ def run_sync_timedb_supervisor_loop(
       oldest_tar=None,
       oldest_tar_reserved_paths=None,
   ):
-    if not handoff_priority_paths:
-      return _cap_pending_stats_files_list(paths, ingest_queue_max)
-    merged = _apply_handoff_priority_to_pending(paths)
-    priority_n = len(handoff_priority_paths)
-    reserved = []
-    reserved_set = set()
-    if oldest_tar and oldest_tar_reserved_paths:
-      reserve_budget = min(len(oldest_tar_reserved_paths), chunk_size)
-      for path in oldest_tar_reserved_paths:
-        if path in merged and path not in reserved_set:
-          reserved.append(path)
-          reserved_set.add(path)
-          if len(reserved) >= reserve_budget:
-            break
-    reserved_n = len(reserved)
-    if priority_n >= ingest_queue_max:
-      if len(merged) > ingest_queue_max:
-        log_print(
-            "sync_timedb: handoff priority cap handoff_priority_n=%d "
-            "pending=%d max=%d detail=explicit_handoff_wave%s"
-            % (
-                priority_n,
-                len(merged),
-                ingest_queue_max,
-                (
-                    " oldest_blocked_reserved=%d"
-                    % reserved_n
-                    if reserved_n
-                    else ""
-                ),
-            ),
-            flush=True,
-        )
-      if reserved_n:
-        tail = [path for path in merged if path not in reserved_set]
-        tail_budget = max(0, ingest_queue_max - reserved_n)
-        return reserved + tail[:tail_budget]
-      return merged[:ingest_queue_max]
-    tail_budget = max(0, ingest_queue_max - priority_n - reserved_n)
-    if len(merged) <= ingest_queue_max:
-      if reserved_n:
-        log_print(
-            "sync_timedb: handoff priority cap handoff_priority_n=%d "
-            "pending=%d max=%d detail=oldest_blocked_reserved reserved_n=%d"
-            % (priority_n, len(merged), ingest_queue_max, reserved_n),
-            flush=True,
-        )
-      return merged
-    head = merged[:priority_n]
-    tail = merged[priority_n:]
-    tail = [path for path in tail if path not in reserved_set]
-    evicted_oldest_n = 0
-    if len(tail) > tail_budget:
-      would_drop = tail[tail_budget:]
-      if oldest_tar:
-        oldest_tar_norm = os.path.normpath(str(oldest_tar))
-        evicted_oldest_n = sum(
-            1
-            for path in would_drop
-            if oldest_tar_norm in daily_tar_paths_for_stats_paths(
-                [path],
-                tgz_archive_dir,
-            )
-        )
-      log_print(
-          "sync_timedb: handoff priority cap handoff_priority_n=%d capped_tail=%d "
-          "pending=%d max=%d%s"
-          % (
-              priority_n,
-              len(tail) - tail_budget,
-              len(merged),
-              ingest_queue_max,
-              (
-                  " detail=oldest_blocked_reserved reserved_n=%d evicted_oldest_n=%d"
-                  % (reserved_n, evicted_oldest_n)
-                  if reserved_n
-                  else (
-                      " evicted_oldest_n=%d" % evicted_oldest_n
-                      if evicted_oldest_n
-                      else ""
-                  )
-              ),
-          ),
-          flush=True,
-      )
-      tail = tail[:tail_budget]
-    elif reserved_n:
-      log_print(
-          "sync_timedb: handoff priority cap handoff_priority_n=%d "
-          "pending=%d max=%d detail=oldest_blocked_reserved reserved_n=%d"
-          % (priority_n, len(merged), ingest_queue_max, reserved_n),
-          flush=True,
-      )
-    return reserved + head + tail
+    del oldest_tar, oldest_tar_reserved_paths
+    merged = (
+        _apply_handoff_priority_to_pending(paths)
+        if handoff_priority_paths
+        else list(paths or ())
+    )
+    return cap_pending_stats_file_list(
+        sort_pending_stats_paths_oldest_first(merged),
+        ingest_queue_max,
+        log_fn=log_print,
+    )
 
   def _cap_pending_after_rescan(paths, *, handoff=False):
     cap_t0 = time.time()
@@ -4819,8 +4738,11 @@ def run_sync_timedb_supervisor_loop(
     tar_norm = oldest_checkpoint_blocked_tar(
         unprocessed, tgz_archive_dir=tgz_archive_dir)
     blocked = (
-        _checkpoint_unblocked_paths_for_tar(unprocessed, tar_norm)
-        if tar_norm else []
+        sort_pending_stats_paths_oldest_first(
+            _checkpoint_unblocked_paths_for_tar(unprocessed, tar_norm),
+        )
+        if tar_norm
+        else []
     )
     blocked_set = set(blocked)
     reconcile_exclude = (
@@ -4871,6 +4793,9 @@ def run_sync_timedb_supervisor_loop(
     successful_set = set(successful_paths)
     tail = [path for path in tail if path not in successful_set]
     if failed_chunk_paths:
+      failed_chunk_paths = sort_pending_stats_paths_oldest_first(
+          failed_chunk_paths,
+      )
       failed_set = set(failed_chunk_paths)
       requeue_exclude = (
           (processed_files | inflight_archive_paths) - failed_set
@@ -5791,13 +5716,17 @@ def run_sync_timedb_supervisor_loop(
       if isinstance(host_scan_hints, dict):
         host_scan_hints.pop(path, None)
     pending_stats_files = _cap_pending_after_rescan(
-        rescan_pending_stats_files(
-            directory,
-            startdate,
-            enddate,
-            host_name_ext,
-            _rescan_processed_exclusions(),
-            host_scan_hints=host_scan_hints,
+        merge_rescan_discovered_into_pending(
+            pending_stats_files,
+            rescan_pending_stats_files(
+                directory,
+                startdate,
+                enddate,
+                host_name_ext,
+                _rescan_processed_exclusions(),
+                host_scan_hints=host_scan_hints,
+            ),
+            processed_exclude=_rescan_processed_exclusions(),
         ),
     )
     day_close_rescan_pending = False
@@ -6098,6 +6027,22 @@ def run_sync_timedb_supervisor_loop(
 
         reconcile_refs["oldest_day_gate_stall_blocked_n"] = None
         oldest_day_gate_empty_chunk_spins = 0
+        if stats_files_chunk:
+          dispatch_sample = stats_files_chunk[:5]
+          log_print(
+              "sync_timedb: chunk dispatch begin chunk_n=%d pending_n=%d "
+              "paths_sample=%s epochs=%s"
+              % (
+                  chunk_counter,
+                  len(pending_stats_files),
+                  [os.path.basename(str(path)) for path in dispatch_sample],
+                  [
+                      stats_path_ingest_sort_epoch(path)
+                      for path in dispatch_sample
+                  ],
+              ),
+              flush=True,
+          )
         chunk_in_progress = True
         successful_paths, files_to_be_archived, active_workers, k = (
             _ingest_explicit_path_batch(
@@ -6296,13 +6241,17 @@ def run_sync_timedb_supervisor_loop(
               context="rescan_every_chunks",
           )
           pending_stats_files = _cap_pending_after_rescan(
-              rescan_pending_stats_files(
-                  directory,
-                  startdate,
-                  enddate,
-                  host_name_ext,
-                  _rescan_processed_exclusions(),
-                  host_scan_hints=host_scan_hints,
+              merge_rescan_discovered_into_pending(
+                  pending_stats_files,
+                  rescan_pending_stats_files(
+                      directory,
+                      startdate,
+                      enddate,
+                      host_name_ext,
+                      _rescan_processed_exclusions(),
+                      host_scan_hints=host_scan_hints,
+                  ),
+                  processed_exclude=_rescan_processed_exclusions(),
               ),
           )
           log_print(

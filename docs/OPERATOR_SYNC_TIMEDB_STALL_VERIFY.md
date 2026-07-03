@@ -101,6 +101,34 @@ podman-compose logs pipeline 2>&1 | grep -E \
 
 **Pass:** no sustained **`skipped_inflight`** with stale manifest **`queued`** and zero janitor debt progress; **`status=complete`** appears for finished calendar days after janitor tar-drop; **`oldest_day_chunk_gate_stall`** may appear but ingest resumes ( **`chunk ingest summary`** ) without CPU-only spin (backoff every 32 empty-chunk loops).
 
+### T1 verify — ingest oldest-first (hpcperfstats03 / cross_day_bucket gate defer)
+
+After deploy of **ingest oldest-first** fix (2026-07), confirm dispatch order on backlog catch-up sites with **277k+** closed raw on disk. **Do not** infer skip from **`ingest file path=`** alone — parallel chunk workers complete out of order.
+
+```bash
+# Full log first (never --tail before grep on backlog sites).
+podman-compose logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+
+# Dispatch order: each chunk logs paths_sample + epochs before pool work.
+grep -E 'chunk dispatch begin|oldest_day_chunk_gate_cross_day_defer|oldest_day_chunk_gate_fallback' /tmp/pipeline-full.log | tail -80
+
+# Failure signature (pre-fix): May-26 oldest_tar with June calendar_days in fallback while pending_n >> chunk_size.
+grep 'oldest_day_chunk_gate_fallback' /tmp/pipeline-full.log | grep -E '2026-05-2[0-9].*tar.*2026-06' || true
+
+# Cap collapse (pre-fix): pending reconcile cap dropping global tail when handoff consumed budget.
+grep 'pending reconcile cap' /tmp/pipeline-full.log | tail -20
+```
+
+**Pass (T1):** After May-22 head day clears, no **`oldest_day_chunk_gate_fallback`** whose **`calendar_days`** are **months ahead** of **`oldest_tar`** while **`pending_n`** remains large; **`oldest_day_chunk_gate_cross_day_defer`** may appear (expected — resumes global pending head). **`chunk dispatch begin`** `epochs` trend oldest-first at chunk boundaries. **`pending reconcile cap`** retains oldest global head (no 987→424 style collapse when only a few checkpoint-blocked paths remain for advanced `oldest_tar`).
+
+**Compare dispatch vs completion:**
+
+```bash
+grep -E 'chunk dispatch begin|ingest file path=' /tmp/pipeline-full.log | tail -40
+```
+
+Within one chunk, **`ingest file path=`** epochs may permute; across chunks, **`chunk dispatch begin`** `epochs` must not leap months ahead while earlier calendar days still have closed raw on disk.
+
 ## Log source attribution (`[sync_timedb:role]`)
 
 After deploy of log-role prefixes (2026-06), pipeline lines identify **which actor** emitted them. Greps for **`[sync_timedb]`** still match (substring).

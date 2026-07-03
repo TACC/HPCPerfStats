@@ -175,6 +175,70 @@ def stats_path_ingest_sort_epoch(stats_path):
     return None
 
 
+def sort_pending_stats_paths_oldest_first(paths):
+  """Return ``paths`` sorted oldest-first by :func:`stats_path_ingest_sort_epoch`."""
+  indexed = []
+  for index, path in enumerate(paths or ()):
+    if not path:
+      continue
+    epoch = stats_path_ingest_sort_epoch(path)
+    indexed.append(((epoch is None, epoch), index, path))
+  indexed.sort(key=lambda item: item[0])
+  return [path for _, _, path in indexed]
+
+
+def merge_rescan_discovered_into_pending(
+    existing_pending,
+    discovered,
+    *,
+    processed_exclude=None,
+):
+  """Union incremental rescan results with in-memory pending; oldest-first.
+
+  Retains still-valid ``existing_pending`` paths (on disk, not processed) when
+  incremental discovery only returns a host-dir subset.
+  """
+  exclude = set(processed_exclude or ())
+  seen = set()
+  merged = []
+  for path in discovered or ():
+    if not path or path in exclude or path in seen:
+      continue
+    if not os.path.isfile(path):
+      continue
+    seen.add(path)
+    merged.append(path)
+  for path in existing_pending or ():
+    if not path or path in exclude or path in seen:
+      continue
+    if not os.path.isfile(path):
+      continue
+    seen.add(path)
+    merged.append(path)
+  return sort_pending_stats_paths_oldest_first(merged)
+
+
+def blocked_paths_aligned_with_oldest_tar(
+    blocked_paths,
+    oldest_tar_norm,
+    *,
+    tgz_archive_dir,
+):
+  """Subset of ``blocked_paths`` whose calendar tar mapping includes ``oldest_tar``."""
+  if not oldest_tar_norm or not tgz_archive_dir:
+    return []
+  aligned = []
+  for path in blocked_paths or ():
+    if not path:
+      continue
+    if oldest_tar_norm in daily_tar_paths_for_stats_paths(
+        [path],
+        tgz_archive_dir,
+    ):
+      aligned.append(path)
+  return aligned
+
+
 def daily_tar_path_for_stats_path(stats_path, tgz_archive_dir, first_ts=None):
   """Normalized daily ``.tar`` path for a raw stats file."""
   file_date = _derive_stats_path_date(stats_path, first_ts)
@@ -1562,10 +1626,11 @@ def select_ingest_chunk_paths(
 ):
   """While oldest checkpoint-blocked tar has work, restrict chunk to that tar only."""
   target_chunk_size = min(chunk_size, ingest_queue_high)
-  if not pending or target_chunk_size <= 0:
+  if target_chunk_size <= 0:
     return []
+  pending_list = list(pending or ())
   if not oldest_tar or not tgz_archive_dir:
-    return list(pending[:target_chunk_size])
+    return pending_list[:target_chunk_size]
   oldest_tar_norm = os.path.normpath(str(oldest_tar))
   blocked_on_disk = on_disk_unprocessed_paths_for_tar(
       unprocessed_by_tar,
@@ -1580,30 +1645,65 @@ def select_ingest_chunk_paths(
       inflight_for_oldest = True
       break
   if not blocked_on_disk and not inflight_for_oldest:
-    return list(pending[:target_chunk_size])
+    return pending_list[:target_chunk_size]
   oldest_only = [
       path
-      for path in pending
+      for path in pending_list
       if oldest_tar_norm in daily_tar_paths_for_stats_paths(
           [path],
           tgz_archive_dir,
       )
   ]
   if not oldest_only and blocked_on_disk:
-    if log_fn is not None:
-      log_fn(
-          "sync_timedb: oldest_day_chunk_gate_fallback oldest_tar=%s "
-          "calendar_days=%s blocked_n=%d"
-          % (
-              oldest_tar_norm,
-              build_chunk_day_histogram(blocked_on_disk, tgz_archive_dir),
-              len(blocked_on_disk),
-          ),
-      )
     inflight_set = set(inflight_archive_paths or ())
-    oldest_only = [
-        path for path in blocked_on_disk if path not in inflight_set
+    aligned_blocked = [
+        path
+        for path in blocked_paths_aligned_with_oldest_tar(
+            blocked_on_disk,
+            oldest_tar_norm,
+            tgz_archive_dir=tgz_archive_dir,
+        )
+        if path not in inflight_set
     ]
+    if not aligned_blocked and pending_list:
+      if log_fn is not None:
+        log_fn(
+            "sync_timedb: oldest_day_chunk_gate_cross_day_defer oldest_tar=%s "
+            "calendar_days=%s blocked_n=%d pending_n=%d"
+            % (
+                oldest_tar_norm,
+                build_chunk_day_histogram(blocked_on_disk, tgz_archive_dir),
+                len(blocked_on_disk),
+                len(pending_list),
+            ),
+        )
+      return pending_list[:target_chunk_size]
+    if aligned_blocked:
+      if log_fn is not None:
+        log_fn(
+            "sync_timedb: oldest_day_chunk_gate_fallback oldest_tar=%s "
+            "calendar_days=%s blocked_n=%d"
+            % (
+                oldest_tar_norm,
+                build_chunk_day_histogram(aligned_blocked, tgz_archive_dir),
+                len(aligned_blocked),
+            ),
+        )
+      oldest_only = aligned_blocked
+    else:
+      if log_fn is not None:
+        log_fn(
+            "sync_timedb: oldest_day_chunk_gate_fallback oldest_tar=%s "
+            "calendar_days=%s blocked_n=%d"
+            % (
+                oldest_tar_norm,
+                build_chunk_day_histogram(blocked_on_disk, tgz_archive_dir),
+                len(blocked_on_disk),
+            ),
+        )
+      oldest_only = [
+          path for path in blocked_on_disk if path not in inflight_set
+      ]
   return list(oldest_only[:target_chunk_size])
 
 

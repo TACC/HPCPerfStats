@@ -6903,7 +6903,7 @@ def test_select_ingest_chunk_paths_cross_day_inflight_returns_chunk_after_reclai
       chunk_size=10,
       ingest_queue_high=10,
   )
-  assert empty_chunk == []
+  assert empty_chunk == [str(tail_obj)]
   after_reclaim = select_ingest_chunk_paths(
       pending,
       oldest_tar=tar_a,
@@ -6913,7 +6913,138 @@ def test_select_ingest_chunk_paths_cross_day_inflight_returns_chunk_after_reclai
       chunk_size=10,
       ingest_queue_high=10,
   )
-  assert after_reclaim == [blocked]
+  assert after_reclaim == [str(tail_obj)]
+
+
+def test_select_ingest_chunk_paths_cross_day_only_defers_to_pending_head(tmp_path):
+  """hpcperfstats03 replay: cross-day blocked under May-26 tar defers to pending head."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      select_ingest_chunk_paths,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  may26_tar = os.path.normpath(str(daily_dir / "2026-05-26.tar"))
+  open(may26_tar, "wb").close()
+  d_may23 = datetime(2026, 5, 23, 12, tzinfo=timezone.utc)
+  d_jun23 = datetime(2026, 6, 23, 12, tzinfo=timezone.utc)
+  d_jun24 = datetime(2026, 6, 24, 12, tzinfo=timezone.utc)
+  may_pending = tmp_path / "host" / "may_pending"
+  jun_blocked1 = tmp_path / "host" / "jun_blocked1"
+  jun_blocked2 = tmp_path / "host" / "jun_blocked2"
+  may_pending.parent.mkdir(parents=True)
+  for path in (may_pending, jun_blocked1, jun_blocked2):
+    path.write_text("x")
+  os.utime(may_pending, (d_may23.timestamp(), d_may23.timestamp()))
+  os.utime(jun_blocked1, (d_jun23.timestamp(), d_jun23.timestamp()))
+  os.utime(jun_blocked2, (d_jun24.timestamp(), d_jun24.timestamp()))
+  pending = [str(may_pending)]
+  blocked = [str(jun_blocked1), str(jun_blocked2)]
+  logs = []
+  chunk = select_ingest_chunk_paths(
+      pending,
+      oldest_tar=may26_tar,
+      unprocessed_by_tar={may26_tar: blocked},
+      inflight_archive_paths=set(),
+      tgz_archive_dir=str(daily_dir),
+      chunk_size=1000,
+      ingest_queue_high=2000,
+      log_fn=lambda msg: logs.append(str(msg)),
+  )
+  assert chunk == pending
+  assert any("oldest_day_chunk_gate_cross_day_defer" in line for line in logs)
+
+
+def test_select_ingest_chunk_paths_cross_day_only_empty_pending_uses_fallback(
+    tmp_path,
+):
+  """Cross-day blocked with empty pending still uses fallback (orphan reclaim path)."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      select_ingest_chunk_paths,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  d2 = datetime(2020, 1, 2, 12, tzinfo=timezone.utc)
+  tar_a = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+  open(tar_a, "wb").close()
+  blocked_obj = tmp_path / "cross_day_blocked"
+  blocked_obj.write_text("1000 job cn001\n")
+  os.utime(blocked_obj, (d2.timestamp(), d2.timestamp()))
+  blocked = str(blocked_obj)
+  chunk = select_ingest_chunk_paths(
+      [],
+      oldest_tar=tar_a,
+      unprocessed_by_tar={tar_a: [blocked]},
+      inflight_archive_paths=set(),
+      tgz_archive_dir=str(daily_dir),
+      chunk_size=10,
+      ingest_queue_high=10,
+  )
+  assert chunk == [blocked]
+
+
+def test_sort_pending_stats_paths_oldest_first(tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      sort_pending_stats_paths_oldest_first,
+  )
+
+  base_ts = int(datetime(2020, 6, 15, 12, 0, 0, tzinfo=timezone.utc).timestamp())
+  paths = []
+  for offset in (2, 0, 1):
+    path = tmp_path / str(base_ts + offset * 60)
+    path.write_text("x")
+    paths.append(str(path))
+  sorted_paths = sort_pending_stats_paths_oldest_first(paths)
+  assert [os.path.basename(path) for path in sorted_paths] == [
+      str(base_ts),
+      str(base_ts + 60),
+      str(base_ts + 120),
+  ]
+
+
+def test_merge_rescan_discovered_into_pending_retains_quiet_host(tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      merge_rescan_discovered_into_pending,
+  )
+
+  host_a = tmp_path / ("a." + _ARCH_HOST_SUFFIX)
+  host_b = tmp_path / ("b." + _ARCH_HOST_SUFFIX)
+  host_a.mkdir()
+  host_b.mkdir()
+  may_ts = int(datetime(2026, 5, 22, 12, tzinfo=timezone.utc).timestamp())
+  jun_ts = int(datetime(2026, 6, 24, 12, tzinfo=timezone.utc).timestamp())
+  may_path = host_a / str(may_ts)
+  jun_path = host_b / str(jun_ts)
+  may_path.write_text("x")
+  jun_path.write_text("x")
+  existing = [str(may_path)]
+  discovered = [str(jun_path)]
+  merged = merge_rescan_discovered_into_pending(
+      existing,
+      discovered,
+      processed_exclude=set(),
+  )
+  assert merged == [str(may_path), str(jun_path)]
+
+
+def test_cap_pending_sort_retains_global_oldest_head():
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      cap_pending_stats_file_list,
+      sort_pending_stats_paths_oldest_first,
+  )
+
+  may_paths = ["/archive/host/%d" % (1_000_000 + index) for index in range(1000)]
+  handoff_paths = ["/archive/host/%d" % (2_000_000 + index) for index in range(1500)]
+  merged = handoff_paths + may_paths
+  capped = cap_pending_stats_file_list(
+      sort_pending_stats_paths_oldest_first(merged),
+      2000,
+      log_fn=lambda *_a, **_k: None,
+  )
+  assert capped[0] == may_paths[0]
+  assert len(capped) == 2000
+  assert may_paths[-1] in capped
 
 
 def test_handoff_cap_preserves_oldest_blocked_head():

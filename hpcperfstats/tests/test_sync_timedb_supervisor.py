@@ -4172,8 +4172,8 @@ def test_supervisor_oldest_day_chunk_gate_inflight_starvation(monkeypatch, tmp_p
     finally:
         shutdown_requested[0] = False
 
-def test_supervisor_chunk_gate_cross_day_stall_dispatches_ingest(monkeypatch, tmp_path):
-    """Cross-day blocked inflight orphan is reclaimed and ingest resumes."""
+def test_supervisor_chunk_gate_cross_day_stall_dispatches_pending_head(monkeypatch, tmp_path):
+    """Cross-day blocked inflight defers gate; global pending head ingests first."""
     shutdown_requested[0] = False
     ingest_batches = []
     reclaim_logs = []
@@ -4235,7 +4235,7 @@ def test_supervisor_chunk_gate_cross_day_stall_dispatches_ingest(monkeypatch, tm
 
         def fake_add(_lock, path, **_kwargs):
             ingest_batches.append(path)
-            if path == blocked:
+            if path == str(tail_obj):
                 shutdown_requested[0] = True
             return (path, True, True, 0.0)
         real_reconcile = st.reconcile_orphan_inflight_for_oldest_tar
@@ -4278,8 +4278,7 @@ def test_supervisor_chunk_gate_cross_day_stall_dispatches_ingest(monkeypatch, tm
         monkeypatch.setattr(st, 'days_ingest_complete_by_checkpoint', lambda *_a, **_k: [])
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
         st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
-        assert reclaim_logs
-        assert blocked in ingest_batches
+        assert str(tail_obj) in ingest_batches
     finally:
         shutdown_requested[0] = False
 
