@@ -83,7 +83,7 @@ Wire tests: `JOB_MONITOR_GPU_BATCH_WIRE` in `test_openapi_wire_contracts.py`; ba
 
 | Wire field | Actual Django shape | Wrong OpenAPI guess |
 |------------|---------------------|---------------------|
-| `*_plot_item`, `plot_item_thumb/full`, `bokeh_histogram_json_item` | Bokeh `json_item` document with `doc.roots[]` / `doc.root_ids[]` | `JSONField` / `zod.unknown()` — wire tests pass `{ type: "plot" }` but embed fails; use `BokehJsonItemSerializer` in `openapi_serializers.py` and `OPENAPI_BOKEH_JSON_ITEM` in `wire-audit-cases.ts` |
+| `*_plot_item`, `plot_item_thumb/full`, `bokeh_histogram_json_item` | Bokeh `json_item` document with `doc.roots[]` / `doc.root_ids[]` | `JSONField` / `zod.unknown()` — wire tests pass `{ type: "plot" }` but embed fails; use `BokehJsonItemSerializer` in `openapi_serializers.py` and `OPENAPI_BOKEH_JSON_ITEM` in `test/wire-audit/wire-audit-cases.ts` |
 | Bokeh trust boundary | Structural validation via `parseBokehJsonItem` before `Bokeh.embed` | Not an HTML sanitizer — trusted HTTPS + auth server content |
 
 ## New SPA endpoint checklist

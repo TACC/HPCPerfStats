@@ -72,6 +72,8 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 | `hpcperfstats/site/lib/machine/tests/test_*openapi_wire_contract*.py` | `openapi-spa-wire-validation-contract.mdc` |
 | Job Detail, Extended Search, metadata | `search-metric-artifact-sync.mdc`, `variable-metadata-cross-source-sync.mdc`, `researcher-job-detail-doc-sync.mdc` |
 | Plots / Bokeh embed | `job-plot-artifacts-caching.mdc`, `bokeh-layout-surface-split.mdc`, `no-scientific-notation-web.mdc` |
+| `@bokeh/bokehjs` / `bokeh==` pins, `test_bokeh*.py`, Bokeh fixture regen | `bokeh-version-and-vendor-patch-upgrade.mdc` |
+| Frontend jest-axe / Playwright axe (`axe-test-utils`, page shell tests) | `frontend-a11y-regression.mdc` |
 | Web-facing pages | `web-pages-e2e-test-maintenance.mdc`, `web-pages-full-e2e-completion-gate.mdc` |
 
 ### Deploy, compose, nginx, docs
@@ -80,7 +82,8 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 |---------------|------------------|
 | `docker-compose*.yaml`, `tests/run_*_workflow.sh` | `colima-docker-runtime.mdc`, `compose-required-for-data-services-changes.mdc`, `docker-compose-non-unit-testing.mdc` |
 | `docker-compose.app.yaml`, `docker-compose.app.yaml.example` | `docker-compose-app-example-sync.mdc`, `readme-installation-sync.mdc` |
-| `.dockerignore`, `Dockerfile`, `hpcperfstats/tests/test_dockerignore_test_artifacts.py` | `dockerignore-test-artifacts-sync.mdc` |
+| `.dockerignore`, `Dockerfile`, `hpcperfstats/tests/test_dockerignore_test_artifacts.py` | `dockerignore-test-artifacts-sync.mdc`, `frontend-prod-test-build-boundary.mdc` (when frontend test/prod build boundary changes) |
+| `hpcperfstats/site/frontend/package.json`, `next.config.ts`, `tsconfig*.json`, `scripts/copy-next-export.mjs`, `frontend/test/**`, `app/bokeh-playwright-smoke/**`, `scripts/rebuild_frontend.sh` | `frontend-prod-test-build-boundary.mdc` |
 | `services-conf/nginx*` | `nginx-static-url-prefix.mdc`, `nginx-django-route-allowlist-sync.mdc` |
 | `HPCPerfStats/README.md` or workspace-root `README.md` only (not other `README.md` paths) | `readme-installation-sync.mdc`, `compose-operator-terminal-commands.mdc` |
 | `docs/TESTING.md`, test runners | `testing-doc-sync.mdc`, `compose-operator-terminal-commands.mdc` |

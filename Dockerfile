@@ -24,7 +24,7 @@ WORKDIR /home/hpcperfstats/hpcperfstats/site/frontend
 # Frontend source: cached until site/frontend changes.
 COPY --chown=node:node hpcperfstats/site/frontend/ ./
 
-RUN /bin/bash -o pipefail -c "npm run build"
+RUN /bin/bash -o pipefail -c "npm run build:prod"
 
 WORKDIR /home/hpcperfstats
 RUN /bin/bash -o pipefail -c "\

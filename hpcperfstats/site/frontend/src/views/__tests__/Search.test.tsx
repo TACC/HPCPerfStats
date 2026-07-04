@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import Search from "../Search";
 import * as useHomeOptionsModule from "../../hooks/use-home-options";
-import { axeSeriousViolations } from "../../axe-test-utils";
+import { axeSeriousViolations } from "@test/vitest/axe-test-utils";
 
 vi.mock("../../hooks/use-home-options", () => ({
   useHomeOptions: vi.fn(),

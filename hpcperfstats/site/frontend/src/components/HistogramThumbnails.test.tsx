@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import HistogramThumbnails from "./HistogramThumbnails";
 import { SessionContext } from "../session-context";
-import { axeSeriousViolations } from "../axe-test-utils";
+import { axeSeriousViolations } from "@test/vitest/axe-test-utils";
 
 const navigationMock = vi.hoisted(() => {
   let pathname = "/machine/jobs/";

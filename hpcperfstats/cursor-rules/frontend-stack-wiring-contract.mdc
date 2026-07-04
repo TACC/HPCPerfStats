@@ -10,7 +10,7 @@ globs:
   - "**/hpcperfstats/site/frontend/src/api/fetch-mutator.ts"
   - "**/hpcperfstats/site/frontend/src/api/parse-api-response*"
   - "**/hpcperfstats/site/frontend/scripts/audit-wire-drift.mts"
-  - "**/hpcperfstats/site/frontend/src/test-utils/**"
+  - "**/hpcperfstats/site/frontend/test/**"
 alwaysApply: false
 ---
 
@@ -61,7 +61,7 @@ Shared chrome (layout, session, extended search) also uses `useHomeOptions`, ses
 3. **Routing is canonical** — `/machine/**` views read `useMachineRouteParams().flatParams` and `view`; every new `MachineRouteView` needs `parseMachineSlug`, `matchMachineView` in `machine-route-client.tsx`, and a pathname test in `machine-route-client.test.tsx`.
 4. **Validation registry is mandatory** — any JSON validated by `customFetch` must resolve in `response-schema-registry.ts` (exact key or dynamic matcher). Unregistered routes skip Zod and hide wire drift.
 5. **Tests mock at the same layer the view uses** — view tests mock thin hooks (`@/hooks/use-*`); hook unit tests mock `@/api/generated/**`. Do not mock `fetch` or `customFetch` in view tests when a thin hook exists.
-6. **Shared test infra** — use `renderWithProviders` and `configureNextNavigationFromPath` for route-aware views; use `bokeh-fixtures.ts` for Bokeh surfaces.
+6. **Shared test infra** — use `renderWithProviders` and `configureNextNavigationFromPath` from `test/vitest/test-utils/` for route-aware views; use `bokeh-fixtures.ts` for Bokeh surfaces. Prod/test build boundaries — **`frontend-prod-test-build-boundary.mdc`**.
 
 ## Required actions (same task)
 

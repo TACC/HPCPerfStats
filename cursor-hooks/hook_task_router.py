@@ -147,6 +147,26 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
     },
     {
+        "id": "frontend_prod_test_build",
+        "patterns": [
+            "hpcperfstats/site/frontend/package.json",
+            "hpcperfstats/site/frontend/next.config.ts",
+            "hpcperfstats/site/frontend/tsconfig*.json",
+            "hpcperfstats/site/frontend/scripts/copy-next-export.mjs",
+            "hpcperfstats/site/frontend/test/*",
+            "hpcperfstats/site/frontend/app/bokeh-playwright-smoke/*",
+            "scripts/rebuild_frontend.sh",
+        ],
+        "exact_paths": [
+            "Dockerfile",
+            ".dockerignore",
+        ],
+        "rules": [
+            "frontend-prod-test-build-boundary.mdc",
+            "dockerignore-test-artifacts-sync.mdc",
+        ],
+    },
+    {
         "id": "frontend",
         "patterns": [
             "hpcperfstats/site/frontend/*",
@@ -209,6 +229,39 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
         "rules": [
             "dockerignore-test-artifacts-sync.mdc",
+        ],
+    },
+    {
+        "id": "web_pages_e2e",
+        "patterns": [
+            "hpcperfstats/site/lib/machine/tests/test_web_pages*.py",
+            "hpcperfstats/site/lib/machine/tests/test_bokeh_job_list_embed_browser_e2e.py",
+        ],
+        "rules": [
+            "web-pages-e2e-test-maintenance.mdc",
+            "web-pages-full-e2e-completion-gate.mdc",
+        ],
+    },
+    {
+        "id": "bokeh_version_upgrade",
+        "patterns": [
+            "hpcperfstats/site/frontend/package.json",
+            "pyproject.toml",
+            "hpcperfstats/site/lib/machine/tests/test_bokeh*.py",
+        ],
+        "rules": [
+            "bokeh-version-and-vendor-patch-upgrade.mdc",
+        ],
+    },
+    {
+        "id": "frontend_a11y",
+        "patterns": [
+            "hpcperfstats/site/frontend/test/vitest/axe-test-utils.ts",
+            "hpcperfstats/site/frontend/**/*.test.tsx",
+            "tests/pipeline_e2e/test_a11y_axe_browser.py",
+        ],
+        "rules": [
+            "frontend-a11y-regression.mdc",
         ],
     },
     {

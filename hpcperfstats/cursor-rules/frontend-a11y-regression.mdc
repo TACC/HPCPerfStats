@@ -1,9 +1,10 @@
 ---
 description: jest-axe and Playwright axe regression for SPA page shells and overlays
 globs:
+  - "hpcperfstats/site/frontend/**/*.tsx"
   - "hpcperfstats/site/frontend/**/*.jsx"
   - "hpcperfstats/site/frontend/**/*.js"
-  - "hpcperfstats/site/frontend/src/axe-test-utils.js"
+  - "hpcperfstats/site/frontend/test/vitest/axe-test-utils.ts"
   - "tests/pipeline_e2e/test_a11y_axe_browser.py"
   - "hpcperfstats/tests/playwright_axe.py"
 alwaysApply: false
@@ -15,7 +16,7 @@ alwaysApply: false
 
 | Layer | Module |
 |-------|--------|
-| Vitest | [`axe-test-utils.js`](hpcperfstats/site/frontend/src/axe-test-utils.js) → `axeSeriousViolations()` (WCAG 2.x / 2.1 AA tags; **serious/critical** only) |
+| Vitest | [`axe-test-utils.ts`](hpcperfstats/site/frontend/test/vitest/axe-test-utils.ts) → `axeSeriousViolations()` (WCAG 2.x / 2.1 AA tags; **serious/critical** only) |
 | Playwright | [`playwright_axe.py`](hpcperfstats/tests/playwright_axe.py) → `assert_no_serious_axe_violations()` |
 
 ## Trigger conditions

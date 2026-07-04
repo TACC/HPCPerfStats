@@ -1,13 +1,13 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, it, vi } from "vitest";
-import { axeSeriousViolations } from "../../axe-test-utils";
+import { axeSeriousViolations } from "@test/vitest/axe-test-utils";
 import JobList from "../JobList";
 import { useJobListQuery } from "@/hooks/use-job-list";
 import { useJobListFilterOptions } from "@/hooks/use-job-list-filter-options";
 import { useJobListHistograms } from "@/hooks/use-job-list-histograms";
-import { renderWithProviders } from "@/test-utils/render-with-providers";
-import { nextNavigationMock } from "../../test-utils/next-navigation-state";
-import { VALID_BOKEH_JSON_ITEM } from "@/test-utils/bokeh-fixtures";
+import { renderWithProviders } from "@test/vitest/test-utils/render-with-providers";
+import { nextNavigationMock } from "@test/vitest/test-utils/next-navigation-state";
+import { VALID_BOKEH_JSON_ITEM } from "@test/vitest/test-utils/bokeh-fixtures";
 import type { MetricHistStatusMap } from "@/types/view-models";
 
 vi.mock("@/hooks/use-job-list", () => ({

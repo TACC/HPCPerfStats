@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import MachineRouteClient, { matchMachineView } from "./machine-route-client";
-import { configureNextNavigationFromPath } from "@/test-utils/next-navigation-state";
+import { configureNextNavigationFromPath } from "@test/vitest/test-utils/next-navigation-state";
 import type { MachineRouteView } from "@/utils/machine-route-params";
 
 vi.mock("@/views/Search", () => ({

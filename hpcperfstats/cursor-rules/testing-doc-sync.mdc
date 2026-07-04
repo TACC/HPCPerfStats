@@ -13,7 +13,7 @@ When test behavior, test scope, or test execution workflow changes, update
 ## Trigger conditions
 - New/removed/renamed test files.
 - Changes to test commands, markers, fixtures, or test dependencies.
-- Changes to **committed** Bokeh `json_item` fixtures under `hpcperfstats/site/frontend/src/test-fixtures/` or to how they are generated (regeneration commands, Django entrypoints, Playwright CDN pin). Keep `docs/TESTING.md` aligned with `web-pages-e2e-test-maintenance.mdc` → **Bokeh job-list `json_item` fixtures**.
+- Changes to **committed** Bokeh `json_item` fixtures under `hpcperfstats/site/frontend/test/fixtures/` or to how they are generated (regeneration commands, Django entrypoints, Playwright CDN pin). Keep `docs/TESTING.md` aligned with `web-pages-e2e-test-maintenance.mdc` → **Bokeh job-list `json_item` fixtures**.
 - Changes to test runners/scripts (for example `scripts/run_tests.py`,
   `tests/run_web_e2e_workflow.sh`, compose-based test workflows, or
   `pyproject.toml` test runner metadata).

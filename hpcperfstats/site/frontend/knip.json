@@ -8,7 +8,7 @@
     "src/api.test.ts",
     "src/**/*.test.{ts,tsx}"
   ],
-  "project": ["src/**/*.{ts,tsx}", "app/**/*.{ts,tsx}"],
+  "project": ["src/**/*.{ts,tsx}", "app/**/*.{ts,tsx}", "test/**/*.{ts,tsx}"],
   "ignore": ["src/api/generated/**", "src/api/generated-zod/**"],
   "ignoreExportsUsedInFile": true,
   "ignoreIssues": {

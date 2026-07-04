@@ -2,8 +2,8 @@ import { screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import HostDetail from "../HostDetail";
 import { useHostPlotQuery } from "@/hooks/use-host-plot";
-import { renderWithProviders } from "@/test-utils/render-with-providers";
-import { VALID_BOKEH_JSON_ITEM } from "@/test-utils/bokeh-fixtures";
+import { renderWithProviders } from "@test/vitest/test-utils/render-with-providers";
+import { VALID_BOKEH_JSON_ITEM } from "@test/vitest/test-utils/bokeh-fixtures";
 
 vi.mock("@/hooks/use-host-plot", () => ({
   useHostPlotQuery: vi.fn(),

@@ -50,8 +50,7 @@ scripts/test_*.sh
 **/*.test.tsx
 **/test-utils/
 **/test-fixtures/
-hpcperfstats/site/frontend/src/axe-test-utils.ts
-hpcperfstats/site/frontend/src/setupTests.ts
+hpcperfstats/site/frontend/test/
 hpcperfstats/site/frontend/vitest.config.ts
 hpcperfstats/site/frontend/scripts/fix-tests-next.mjs
 hpcperfstats/site/frontend/README.md

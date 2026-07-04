@@ -27,7 +27,7 @@ def test_frontend_builder_does_not_copy_entire_repo():
 
   assert "COPY --chown=node:node . ." not in stage
   assert "npm ci" in stage
-  assert "npm run build" in stage
+  assert "npm run build:prod" in stage
   assert re.search(
       r"COPY --chown=node:node hpcperfstats/site/frontend/package\.json",
       stage,
@@ -39,7 +39,7 @@ def test_frontend_builder_does_not_copy_entire_repo():
   )
 
   npm_ci_pos = stage.index("npm ci")
-  build_pos = stage.index("npm run build")
+  build_pos = stage.index("npm run build:prod")
   frontend_copy_pos = stage.rindex("hpcperfstats/site/frontend/")
   assert npm_ci_pos < build_pos
   assert frontend_copy_pos < build_pos

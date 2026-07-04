@@ -4,9 +4,9 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ExtendedSearch from "./ExtendedSearch";
 import * as useHomeOptionsModule from "../hooks/use-home-options";
-import { axeSeriousViolations } from "../axe-test-utils";
+import { axeSeriousViolations } from "@test/vitest/axe-test-utils";
 import { EXTENDED_SEARCH_PARAMETER_DEFINITIONS } from "../utils/extended-search-parameters";
-import { lastRouterPushUrl } from "../test-utils/next-navigation-state";
+import { lastRouterPushUrl } from "@test/vitest/test-utils/next-navigation-state";
 
 vi.mock("../hooks/use-home-options", () => ({
   useHomeOptions: vi.fn(),

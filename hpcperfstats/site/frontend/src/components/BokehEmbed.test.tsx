@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { vi, afterEach, describe, expect, it } from "vitest";
 import BokehEmbed from "./BokehEmbed";
 import { SessionContext } from "../session-context";
-import { VALID_BOKEH_JSON_ITEM } from "@/test-utils/bokeh-fixtures";
+import { VALID_BOKEH_JSON_ITEM } from "@test/vitest/test-utils/bokeh-fixtures";
 import { BOKEH_EMBED_LOCK_SHARDS } from "@/utils/bokeh-embed-defaults";
 
 vi.mock("../bokehInit", () => ({

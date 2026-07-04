@@ -30,7 +30,7 @@ usage() {
   cat <<'EOF'
 Usage: scripts/rebuild_frontend.sh [options]
 
-Build the SPA (npm run build) and, when the compose web service is running, copy
+Build the SPA (npm run build:prod) and, when the compose web service is running, copy
 artifacts into web STATIC_ROOT/frontend (nginx volume) so new hashes are served
 immediately. The pipeline service is never stopped or restarted.
 
@@ -82,7 +82,7 @@ build_on_host() {
   if [[ "${SKIP_NPM_CI}" -eq 0 ]]; then
     npm ci
   fi
-  NEXT_TELEMETRY_DISABLED=1 npm run build
+  NEXT_TELEMETRY_DISABLED=1 npm run build:prod
 }
 
 build_in_docker() {
@@ -95,7 +95,7 @@ build_in_docker() {
     -w /home/hpcperfstats/hpcperfstats/site/frontend \
     -e NEXT_TELEMETRY_DISABLED=1 \
     "${NODE_IMAGE}" \
-    sh -lc "${npm_ci_cmd} && npm run build"
+    sh -lc "${npm_ci_cmd} && npm run build:prod"
 }
 
 verify_build_output() {

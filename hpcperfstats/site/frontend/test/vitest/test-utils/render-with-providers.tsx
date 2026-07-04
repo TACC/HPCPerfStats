@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, type RenderOptions } from "@testing-library/react";
 import type { ReactElement, ReactNode } from "react";
 import type { SessionInfo } from "@/api/generated/models/sessionInfo";
-import { SessionContext } from "../session-context";
+import { SessionContext } from "@/session-context";
 import { configureNextNavigationFromPath } from "./next-navigation-state";
 import { WithNavigationSync } from "./with-navigation-sync";
 

@@ -20,8 +20,8 @@ Keep these patterns in **`.dockerignore`** unless a deliberate runtime contract 
 | Local run logs | `test_runs/` |
 | Pytest entrypoints | `conftest.py`, `**/conftest.py` |
 | Shell regression scripts | `scripts/test_*.sh` (not `scripts/rebuild_*.sh`) |
-| Frontend Vitest / a11y | `**/__tests__/`, `**/*.test.ts`, `**/*.test.tsx`, `**/test-utils/`, `**/test-fixtures/` |
-| Frontend test-only files | `vitest.config.ts`, `setupTests.ts`, `axe-test-utils.ts`, playwright smoke assets |
+| Frontend Vitest / a11y | `**/__tests__/`, `**/*.test.ts`, `**/*.test.tsx`, `**/test-utils/`, `**/test-fixtures/`, `hpcperfstats/site/frontend/test/` |
+| Frontend test-only files | `vitest.config.ts`, `setupTests.ts` under `frontend/test/vitest/`, `axe-test-utils.ts`, playwright smoke assets |
 | Cursor / agent rules | `hpcperfstats/cursor-rules/`, `**/*.mdc`, `.cursor/` |
 | Docs (not runtime) | `docs/` |
 | Compose / CI / staging | `docker-compose*.yaml`, `docker-compose*.yaml.example`, `.github/`, `.build/` |
@@ -59,7 +59,7 @@ Read this file in the **same task** when you:
 ## Do not exclude
 
 - Runtime Python under **`hpcperfstats/`** (non-test modules).
-- Frontend production sources consumed by **`npm run build`** (`src/`, `app/`, `scripts/write-site-identity.mjs`, etc.).
+- Frontend production sources consumed by **`npm run build`** / **`npm run build:prod`** (`src/`, `app/`, `scripts/write-site-identity.mjs`, etc.). Test tree `frontend/test/` is excluded — see **`frontend-prod-test-build-boundary.mdc`**.
 - Committed OpenAPI at **`hpcperfstats/site/openapi/openapi.yaml`** (Orval in **`frontend-builder`**).
 - Deploy scripts: **`scripts/rebuild_frontend.sh`**, **`scripts/rebuild_pipeline.sh`**, **`services-conf/`**.
 - Root **`README.md`** (referenced by **`pyproject.toml`** for `pip install`).
@@ -70,4 +70,5 @@ Read this file in the **same task** when you:
 - **`testing-best-practices.mdc`** — where tests live; new layouts may require dockerignore sync.
 - **`every-error-regression-test.mdc`** — guard test failures when patterns drift.
 - **`test-runs-output-directory.mdc`** — `test_runs/` belongs in dockerignore and stays gitignored locally.
+- **`frontend-prod-test-build-boundary.mdc`** — prod vs test build commands and static export exclusions
 - **`docker-compose-app-example-sync.mdc`** — compose build `target:` is separate from context exclusions.

@@ -1,0 +1,81 @@
+---
+description: Frontend production vs test build boundaries (tsconfig, build:prod, test/ tree)
+alwaysApply: false
+globs:
+  - hpcperfstats/site/frontend/package.json
+  - hpcperfstats/site/frontend/next.config.ts
+  - hpcperfstats/site/frontend/tsconfig*.json
+  - hpcperfstats/site/frontend/scripts/copy-next-export.mjs
+  - hpcperfstats/site/frontend/test/**
+  - hpcperfstats/site/frontend/app/bokeh-playwright-smoke/**
+  - Dockerfile
+  - scripts/rebuild_frontend.sh
+  - .dockerignore
+---
+
+# Frontend Production vs Test Build Boundary
+
+**Activation:** when changing Next build scripts, TypeScript project split, static export copy, or test-only frontend source layout.
+
+## Three boundaries (non-negotiable)
+
+| Boundary | Production | Test / CI |
+|----------|------------|-----------|
+| **Typecheck** | `tsconfig.app.json` — `app/` + production `src/` only; wired via `next.config.ts` `typescript.tsconfigPath` | `tsconfig.test.json` — `*.test.ts(x)`, `test/**`, `vitest.config.ts`, `scripts/audit-wire-drift.mts` |
+| **Deploy** | `npm run build:prod` — sets `HPCPERFSTATS_PRODUCTION_STATIC=1` for `copy-next-export.mjs` | `npm run build` — full static copy including Playwright smoke |
+| **Source** | `src/`, `app/` (except test-only routes compiled but not deployed) | `hpcperfstats/site/frontend/test/` — **dockerignored**; never imported from prod `app/` or `src/` |
+
+## Build commands
+
+| Command | Use |
+|---------|-----|
+| **`npm run build:prod`** | Docker `frontend-builder`, `scripts/rebuild_frontend.sh`, production hot deploy |
+| **`npm run build`** | Local dev, CI before Playwright Bokeh bundle test |
+| **`npm run typecheck`** | Production TS (`tsconfig.app.json`) |
+| **`npm run typecheck:all`** | Production + test TS before merge |
+
+## Excluded static export directories
+
+`PRODUCTION_EXCLUDED_EXPORT_DIRS` in [`copy-next-export.mjs`](hpcperfstats/site/frontend/scripts/copy-next-export.mjs) lists Next export top-level dirs **omitted from production deploy** (initially `bokeh-playwright-smoke/`).
+
+- Next may still **compile** test-only App Router pages during `build:prod`; they must **not** appear under `hpcperfstats_site/static/frontend/` after production copy.
+- When adding a new test-only export route, append its top-level dir name to `PRODUCTION_EXCLUDED_EXPORT_DIRS`, extend `copy-next-export.production.test.ts`, and update this rule in the **same task**.
+
+## `frontend/test/` layout
+
+| Path | Purpose |
+|------|---------|
+| `test/vitest/` | Vitest setup, `axe-test-utils`, shared RTL/router mocks |
+| `test/vitest/test-utils/` | `renderWithProviders`, `bokeh-fixtures`, navigation mocks |
+| `test/fixtures/` | Committed Bokeh `json_item` JSON for Playwright |
+| `test/wire-audit/` | `wire-audit-cases.ts`, `bokeh-wire-fixtures.ts` for drift audit + Vitest |
+
+Import from tests via **`@test/...`** alias (Vitest + `tsconfig.test.json`). Do **not** reintroduce `src/test-utils/` or import `test/**` from production modules.
+
+## Import law
+
+- ESLint `no-restricted-imports` on production `app/` and `src/` (excluding `*.test.*`) blocks `@test/**`, `@/test-utils/*`, and `**/test/**`.
+- Docker build context excludes `hpcperfstats/site/frontend/test/` — a prod import of test paths breaks `next build` in the image.
+
+## Playwright exception
+
+`test_bokeh_job_list_embed_browser_e2e.py` third test requires **full** `npm run build` so `bokeh-playwright-smoke/index.html` exists under `hpcperfstats_site/static/frontend/`. Production deploy uses `build:prod` and does **not** ship that path.
+
+Fixtures live under `test/fixtures/` (not `src/test-fixtures/`).
+
+## Required actions (same task)
+
+When touching this boundary:
+
+1. Keep **`build:prod`** on Dockerfile `frontend-builder` and `rebuild_frontend.sh`.
+2. Update **`test_dockerignore_test_artifacts.py`** if `frontend/test/` layout or dockerignore patterns change (`dockerignore-test-artifacts-sync.mdc`).
+3. Run **`copy-next-export.production.test.ts`** and **`npm run typecheck:all`**.
+4. Document **`build` vs `build:prod`** in `docs/TESTING.md` when commands change (`testing-doc-sync.mdc`).
+
+## Overlap
+
+- **`dockerignore-test-artifacts-sync.mdc`** — docker context exclusions for `frontend/test/`
+- **`frontend-stack-wiring-contract.mdc`** — test mock layers; test-utils path under `test/vitest/test-utils/`
+- **`bokeh-version-and-vendor-patch-upgrade.mdc`** — full `build` before Playwright; Bokeh fixture regen
+- **`web-pages-e2e-test-maintenance.mdc`** — fixture paths under `test/fixtures/`
+- **`testing-doc-sync.mdc`** — `docs/TESTING.md` build command sync

@@ -22,14 +22,14 @@ If Bokeh regressions reappear in the browser console after upgrades, prefer fixi
 | `pyproject.toml` | `bokeh==X.Y.Z` (Python `json_item` / figures must match JS embed major.minor.patch policy) |
 | `hpcperfstats/site/lib/machine/job_plot_artifacts.py` | Fingerprint includes `bokeh.__version__` — expect artifact churn / cache behavior on bump |
 | `hpcperfstats/site/lib/machine/tests/test_bokeh_job_list_embed_browser_e2e.py` | `_BOKEH_CDN_JS` jsDelivr pin for `@bokeh/bokehjs@X.Y.Z` |
-| `hpcperfstats/site/frontend/src/test-fixtures/bokeh-*.json` | Regenerate if serialized `json_item` / doc schema changes (per `web-pages-e2e-test-maintenance.mdc`) |
+| `hpcperfstats/site/frontend/test/fixtures/bokeh-*.json` | Regenerate if serialized `json_item` / doc schema changes (per `web-pages-e2e-test-maintenance.mdc`) |
 | `hpcperfstats/site/frontend/src/bokehInit.js` / `patch-resize-observer-for-bokeh.js` | Re-validate embed + ResizeObserver behavior after Bokeh upgrades |
 
 ## Workflow (bump checklist)
 
 1. Bump **`@bokeh/bokehjs`** and **`bokeh==…`** together per the table above.
 2. `cd hpcperfstats/site/frontend && npm ci` (or `npm install`).
-3. `npm run build` → fix bundle/import breaks (includes `app/bokeh-playwright-smoke/` for Playwright bundle regression).
+3. `npm run build` (full export) → fix bundle/import breaks (includes `app/bokeh-playwright-smoke/` for Playwright bundle regression). Production Docker/redeploy uses **`npm run build:prod`** (`frontend-prod-test-build-boundary.mdc`).
 4. `npm test -- --run` (Vitest), including Bokeh embed tests as needed.
 5. `pytest hpcperfstats/site/lib/machine/tests/test_bokeh_job_list_embed_browser_e2e.py` (Playwright + CDN Bokeh; see below). For the **third** (Next-bundle) test, run **`npm run build`** first or that test skips.
 6. Regenerate **`test-fixtures`** if schema changes; update **`docs/TESTING.md`** if workflow or commands change (`testing-doc-sync.mdc`).

@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { axeSeriousViolations } from "../../axe-test-utils";
+import { axeSeriousViolations } from "@test/vitest/axe-test-utils";
 import PageApiKey from "../PageApiKey";
 import { SessionContext } from "../../session-context";
 import { useUserApiKey } from "@/hooks/use-user-api-key";

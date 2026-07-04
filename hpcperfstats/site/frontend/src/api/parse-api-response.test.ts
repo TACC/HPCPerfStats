@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { OPENAPI_BOKEH_JSON_ITEM } from "@/test-utils/bokeh-fixtures";
+import { OPENAPI_BOKEH_JSON_ITEM } from "@test/vitest/test-utils/bokeh-fixtures";
 import { parseApiResponse } from "@/api/parse-api-response";
 import { resolveResponseSchema } from "@/api/response-schema-registry";
 import { HomeRetrieveResponse } from "@/api/generated-zod/home/home";

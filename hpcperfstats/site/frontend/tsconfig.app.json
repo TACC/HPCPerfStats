@@ -1,0 +1,23 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "next-env.d.ts",
+    "app/**/*.ts",
+    "app/**/*.tsx",
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    ".next/types/**/*.ts",
+    "src/types/**/*.d.ts",
+    ".next/dev/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "out",
+    "test",
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "app/**/*.test.tsx",
+    "src/views/__tests__",
+    "scripts/audit-wire-drift.mts"
+  ]
+}

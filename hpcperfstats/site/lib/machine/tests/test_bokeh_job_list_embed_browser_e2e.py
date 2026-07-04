@@ -1,6 +1,6 @@
 """Playwright + real BokehJS: job-list json_item fixtures must not log known failure strings.
 
-Loads committed fixtures from ``site/frontend/src/test-fixtures/`` (generated from
+Loads committed fixtures from ``site/frontend/test/fixtures/`` (generated from
 Django ``json_item`` after range fixes). Uses the public Bokeh 3.9.1 CDN so
 Chromium has a real canvas (jsdom/Vitest cannot run ``embed_item``).
 
@@ -44,7 +44,7 @@ _FAILURE_SUBSTRINGS = (
 
 # hpcperfstats/site/lib/machine/tests -> site
 _SITE_DIR = Path(__file__).resolve().parents[3]
-_FIXTURE_DIR = _SITE_DIR / "frontend" / "src" / "test-fixtures"
+_FIXTURE_DIR = _SITE_DIR / "frontend" / "test" / "fixtures"
 _STATIC_FRONTEND_DIR = _SITE_DIR / "hpcperfstats_site" / "static" / "frontend"
 _SITE_ROOT_DIR = _SITE_DIR / "hpcperfstats_site"
 
@@ -128,7 +128,7 @@ def test_bokeh_embed_job_list_fixtures_no_histogram_failure_console_messages():
     missing = [p for p in paths if not p.is_file()]
     if missing:
         pytest.skip(
-            "Missing json fixtures under site/frontend/src/test-fixtures/ "
+            "Missing json fixtures under site/frontend/test/fixtures/ "
             "(generate via Django json_item; see module docstring). Missing: "
             + ", ".join(str(p) for p in missing)
         )
@@ -184,7 +184,7 @@ def test_bokeh_embed_job_list_fixtures_next_built_bundle_no_histogram_failure_co
     missing = [p for p in paths if not p.is_file()]
     if missing:
         pytest.skip(
-            "Missing json fixtures under site/frontend/src/test-fixtures/. Missing: "
+            "Missing json fixtures under site/frontend/test/fixtures/. Missing: "
             + ", ".join(str(p) for p in missing)
         )
 
@@ -273,7 +273,7 @@ def test_bokeh_embed_two_job_list_fixtures_sequential_scroll_no_console_failures
     missing = [p for p in (hist, queue) if not p.is_file()]
     if missing:
         pytest.skip(
-            "Missing json fixtures under site/frontend/src/test-fixtures/. Missing: "
+            "Missing json fixtures under site/frontend/test/fixtures/. Missing: "
             + ", ".join(str(p) for p in missing)
         )
 

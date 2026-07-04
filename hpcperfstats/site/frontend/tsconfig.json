@@ -30,6 +30,9 @@
     "paths": {
       "@/*": [
         "./src/*"
+      ],
+      "@test/*": [
+        "./test/*"
       ]
     }
   },
@@ -44,10 +47,10 @@
   "exclude": [
     "node_modules",
     "out",
+    "test",
     "src/**/*.test.ts",
     "src/**/*.test.tsx",
     "app/**/*.test.tsx",
-    "src/views/__tests__",
-    "src/axe-test-utils.ts"
+    "src/views/__tests__"
   ]
 }

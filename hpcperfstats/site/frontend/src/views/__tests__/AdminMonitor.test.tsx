@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import AdminMonitor from "../AdminMonitor";
 import { useAdminMonitorSectionQuery } from "@/hooks/use-admin-monitor-section";
-import { renderWithProviders } from "@/test-utils/render-with-providers";
+import { renderWithProviders } from "@test/vitest/test-utils/render-with-providers";
 
 vi.mock("@/hooks/use-admin-monitor-section", () => ({
   useAdminMonitorSectionQuery: vi.fn(),

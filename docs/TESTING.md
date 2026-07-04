@@ -163,11 +163,21 @@ The SPA bundles Bokeh via **`@bokeh/bokehjs`** in `package.json`; keep its versi
 
 **Bootswatch** (Spacelab) is imported from **`bootswatch`** in the Next.js bundle (same CSS stack as the rest of `/machine/`).
 
-**Frontend stack:** Next.js 16 App Router (static export, Turbopack), strict TypeScript 6, TanStack Query, Orval 8 + Zod 4 (from committed `hpcperfstats/site/openapi/openapi.yaml`), React Hook Form + Zod. Build:
+**Frontend stack:** Next.js 16 App Router (static export, Turbopack), strict TypeScript 6, TanStack Query, Orval 8 + Zod 4 (from committed `hpcperfstats/site/openapi/openapi.yaml`), React Hook Form + Zod.
+
+**Production static export** (Docker image, `scripts/rebuild_frontend.sh` — omits test-only routes such as `bokeh-playwright-smoke/`):
+
+```bash
+cd hpcperfstats/site/frontend && npm ci && npm run build:prod
+```
+
+**Full static export** (local dev, CI before Playwright Bokeh bundle test):
 
 ```bash
 cd hpcperfstats/site/frontend && npm ci && npm run build
 ```
+
+See **`hpcperfstats/cursor-rules/frontend-prod-test-build-boundary.mdc`**. Test-only source lives under `hpcperfstats/site/frontend/test/` (Vitest mocks, wire-audit fixtures, Bokeh JSON fixtures).
 
 Regenerate API client after OpenAPI changes:
 
@@ -403,7 +413,7 @@ Use this for web-page E2E modules plus the nginx/WSGI route contract:
 - `hpcperfstats/site/lib/machine/tests/test_web_pages_e2e.py` (**PostgreSQL on Compose**: root **`conftest.py`** applies **`django_db`** to **`site/lib/machine/tests`** by default when unset; **`pytest_collection_modifyitems`** skips Postgres-backed machine tests unless **`HPCPERFSTATS_COMPOSE_NETWORK=1`**. This workflow passes **`HPCPERFSTATS_COMPOSE_NETWORK=1`** into the **`web`** container and runs **`manage.py migrate --noinput`** before pytest.)
 - `hpcperfstats/site/lib/machine/tests/test_web_pages_browser_e2e.py` (Playwright: Django stub server + **`/machine/*`** and **`/pub/*`** SPA shells return **404** from WSGI per nginx ownership contract)
 - `hpcperfstats/site/hpcperfstats_site/tests/test_nginx_static_wsgi_contract.py` (**`/static/`**, **`/machine/`**, **`/pub/`** WSGI 404 contract + **`/robots.txt`** nginx static / WSGI 404 + edge headers include)
-- **`test_bokeh_job_list_embed_browser_e2e.py`** is **not** run here (needs CDN and optionally a **Next-built** static tree under **`hpcperfstats_site/static/frontend/`**). Run it separately—compose-backed **`pytest`** on **`web`** after **`pip install ".[test]"`** + **`playwright install chromium`**, or on the host with Playwright installed. For the bundled-Bokeh test, run **`npm run build`** in `hpcperfstats/site/frontend` first. See module docstring for fixture regeneration after **`job_hist`** / queue bar chart changes.
+- **`test_bokeh_job_list_embed_browser_e2e.py`** is **not** run here (needs CDN and optionally a **Next-built** static tree under **`hpcperfstats_site/static/frontend/`**). Run it separately—compose-backed **`pytest`** on **`web`** after **`pip install ".[test]"`** + **`playwright install chromium`**, or on the host with Playwright installed. For the bundled-Bokeh test, run **`npm run build`** (full export, not `build:prod`) in `hpcperfstats/site/frontend` first. Fixtures: `hpcperfstats/site/frontend/test/fixtures/`. See module docstring for fixture regeneration after **`job_hist`** / queue bar chart changes.
 
 The workflow script handles Docker lifecycle and runs **`migrate`** plus those modules in one session:
 
@@ -526,7 +536,7 @@ The SPA and standalone HTML pages aim for **WCAG 2.2 Level AA** for in-app flows
 
 **Automated (frontend — Vitest + jest-axe)**
 
-`jest-axe` and `axe-core` are **devDependencies** only. They are imported from `*.test.{js,jsx}`, [`src/setupTests.js`](hpcperfstats/site/frontend/src/setupTests.js), and [`src/axe-test-utils.js`](hpcperfstats/site/frontend/src/axe-test-utils.js); they are **not** part of the Vite production bundle. The Docker **runtime** image does not run `npm install` for the app and excludes `node_modules/` from the build context; the frontend builder runs `npm prune --omit=dev` after `vite build`, so axe is not shipped with production static assets.
+`jest-axe` and `axe-core` are **devDependencies** only. They are imported from `*.test.{ts,tsx}`, [`test/vitest/setupTests.ts`](hpcperfstats/site/frontend/test/vitest/setupTests.ts), and [`test/vitest/axe-test-utils.ts`](hpcperfstats/site/frontend/test/vitest/axe-test-utils.ts); they are **not** part of the Next production bundle. The Docker **runtime** image does not run `npm install` for the app and excludes `node_modules/` and `frontend/test/` from the build context; the frontend builder uses **`npm run build:prod`**, so axe and test-only static routes are not shipped with production static assets.
 
 Colocated page/component tests call `axeSeriousViolations()` (WCAG 2.x / 2.1 AA tag scope, asserting **no serious or critical** violations) for: `Layout` (including Extended Search open), `JobList` (including charts tab with histograms), `JobDetail`, `Search`, `PageApiKey`, `ExtendedSearch` (dialog shell), and `HistogramThumbnails` (thumbnail + open popover). New or materially changed page shells must extend this set per **`frontend-a11y-regression.mdc`**.
 

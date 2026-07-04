@@ -3,7 +3,7 @@
  * registered in response-schema-registry.ts. Run: npx tsx scripts/audit-wire-drift.mts
  */
 import { resolveResponseSchema } from "../src/api/response-schema-registry";
-import { WIRE_AUDIT_CASES } from "../src/api/wire-audit-cases";
+import { WIRE_AUDIT_CASES } from "../test/wire-audit/wire-audit-cases";
 
 function summarize(data: unknown): string {
   if (data === null || data === undefined) return String(data);

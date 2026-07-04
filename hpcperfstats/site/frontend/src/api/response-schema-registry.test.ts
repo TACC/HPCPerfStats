@@ -5,7 +5,7 @@ import {
   normalizeApiPath,
   resolveResponseSchema,
 } from "./response-schema-registry";
-import { WIRE_AUDIT_CASES, WIRE_AUDIT_EXACT_PATHS } from "./wire-audit-cases";
+import { WIRE_AUDIT_CASES, WIRE_AUDIT_EXACT_PATHS } from "@test/wire-audit/wire-audit-cases";
 
 /** Keep in sync with scripts/audit-wire-drift.mts exact routes. */
 const EXPECTED_EXACT_ROUTES = [

@@ -8,10 +8,10 @@ import {
 } from "@/utils/job-detail-plots";
 import { useJobDetailQuery } from "@/hooks/use-job-detail";
 import { useJobPlotsQuery } from "@/hooks/use-job-plots";
-import { axeSeriousViolations } from "../../axe-test-utils";
-import { nextNavigationMock, resetNextNavigationMock } from "../../test-utils/next-navigation-state";
-import { renderWithProviders } from "@/test-utils/render-with-providers";
-import { VALID_BOKEH_JSON_ITEM } from "@/test-utils/bokeh-fixtures";
+import { axeSeriousViolations } from "@test/vitest/axe-test-utils";
+import { nextNavigationMock, resetNextNavigationMock } from "@test/vitest/test-utils/next-navigation-state";
+import { renderWithProviders } from "@test/vitest/test-utils/render-with-providers";
+import { VALID_BOKEH_JSON_ITEM } from "@test/vitest/test-utils/bokeh-fixtures";
 import {
   createEmptyJobPlotsState,
   plotsStateFromBatchResponse,

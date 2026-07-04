@@ -139,6 +139,8 @@ def _looks_like_test_artifact(rel_path: str) -> bool:
     return True
   if "/test-utils/" in f"/{rel}/" or "/test-fixtures/" in f"/{rel}/":
     return True
+  if rel.startswith("hpcperfstats/site/frontend/test/"):
+    return True
   if name in {
       "vitest.config.ts",
       "setupTests.ts",
@@ -162,6 +164,7 @@ def test_dockerignore_lists_required_test_patterns():
       "scripts/test_*.sh",
       "**/*.test.ts",
       "**/__tests__/",
+      "hpcperfstats/site/frontend/test/",
   )
   for pattern in required:
     assert pattern in content, f"missing .dockerignore pattern: {pattern}"

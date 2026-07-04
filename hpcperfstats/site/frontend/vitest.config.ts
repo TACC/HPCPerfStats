@@ -7,13 +7,18 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      "@test": path.resolve(__dirname, "./test"),
     },
   },
   test: {
     environment: "jsdom",
     globals: true,
-    setupFiles: "./src/setupTests.ts",
-    include: ["src/**/*.{test,spec}.{ts,tsx}", "app/**/*.{test,spec}.{ts,tsx}"],
+    setupFiles: "./test/vitest/setupTests.ts",
+    include: [
+      "src/**/*.{test,spec}.{ts,tsx}",
+      "app/**/*.{test,spec}.{ts,tsx}",
+      "scripts/**/*.test.ts",
+    ],
     pool: "threads",
     maxWorkers: 1,
     fileParallelism: false,
@@ -24,8 +29,7 @@ export default defineConfig({
       include: ["src/**/*.{ts,tsx}"],
       exclude: [
         "src/**/*.test.{ts,tsx}",
-        "src/**/setupTests.ts",
-        "src/axe-test-utils.ts",
+        "test/**",
         "src/api/generated/**",
         "src/utils/generate-variable-metadata-monitor-events.py",
       ],

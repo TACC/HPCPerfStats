@@ -5,7 +5,7 @@ import JobMonitor from "../JobMonitor";
 import { useJobMonitorQuery } from "@/hooks/use-job-monitor";
 import { jobMonitorGpuRetrieve } from "@/api/generated/monitor/monitor";
 import { orvalOkEnvelope } from "@/api/orval-response";
-import { renderWithProviders } from "@/test-utils/render-with-providers";
+import { renderWithProviders } from "@test/vitest/test-utils/render-with-providers";
 
 vi.mock("@/hooks/use-job-monitor", () => ({
   useJobMonitorQuery: vi.fn(),
