@@ -163,24 +163,31 @@ def test_build_head_ingest_ready_set_dedupes_db_lookups(monkeypatch, tmp_path):
   assert calls["n"] == 1
 
 
-def test_build_archive_maintenance_snapshot_head_mode_skips_sampled_collect(
+def test_build_archive_maintenance_snapshot_collects_head_tail_gate_identities(
     monkeypatch, tmp_path,
 ):
-  arch_suffix = "cluster.maint.head"
+  arch_suffix = "cluster.maint.head_tail"
   host = tmp_path / ("n." + arch_suffix)
-  seg = _write_stats_segment(host, 1700000500)
+  host.mkdir(parents=True, exist_ok=True)
+  seg_path = host / "1700000500"
+  seg_path.write_text(
+      "1700000500 job1 cn001\n"
+      "1700000501 job2 cn001\n"
+      "1700000502 job3 cn001\n"
+      "payload\n"
+  )
+  seg = str(seg_path)
   tgz = tmp_path / "daily"
   tgz.mkdir()
-  sampled_calls = {"n": 0}
-  real_sampled = maint.collect_sampled_timestamp_identities_for_paths
+  gate_calls = {"n": 0}
+  real_gate = maint.collect_gate_identities_for_paths
 
-  def _counting_sampled(*args, **kwargs):
-    sampled_calls["n"] += 1
-    return real_sampled(*args, **kwargs)
+  def _counting_gate(*args, **kwargs):
+    gate_calls["n"] += 1
+    return real_gate(*args, **kwargs)
 
   monkeypatch.setattr(cfg, "get_sync_archive_maint_hints", lambda: False)
-  monkeypatch.setattr(cfg, "get_sync_archive_db_ingest_gate_mode", lambda: "head")
-  monkeypatch.setattr(maint, "collect_sampled_timestamp_identities_for_paths", _counting_sampled)
+  monkeypatch.setattr(maint, "collect_gate_identities_for_paths", _counting_gate)
   monkeypatch.setattr(
       readiness,
       "build_head_ingest_ready_set",
@@ -188,37 +195,12 @@ def test_build_archive_maintenance_snapshot_head_mode_skips_sampled_collect(
   )
   snap = maint.build_archive_maintenance_snapshot(
       str(tmp_path), arch_suffix, str(tgz), log_fn=None)
-  assert sampled_calls["n"] == 0
+  assert gate_calls["n"] == 1
   assert seg in snap.closed_paths
-  assert snap.sampled_timestamp_identities_by_path == {}
-
-
-def test_build_archive_maintenance_snapshot_sample_mode_collects_sampled(
-    monkeypatch, tmp_path,
-):
-  arch_suffix = "cluster.maint.sample"
-  host = tmp_path / ("n." + arch_suffix)
-  _write_stats_segment(host, 1700000500)
-  tgz = tmp_path / "daily"
-  tgz.mkdir()
-  sampled_calls = {"n": 0}
-  real_sampled = maint.collect_sampled_timestamp_identities_for_paths
-
-  def _counting_sampled(*args, **kwargs):
-    sampled_calls["n"] += 1
-    return real_sampled(*args, **kwargs)
-
-  monkeypatch.setattr(cfg, "get_sync_archive_maint_hints", lambda: False)
-  monkeypatch.setattr(cfg, "get_sync_archive_db_ingest_gate_mode", lambda: "sample")
-  monkeypatch.setattr(maint, "collect_sampled_timestamp_identities_for_paths", _counting_sampled)
-  monkeypatch.setattr(
-      readiness,
-      "build_head_ingest_ready_set",
-      lambda closed, _identities, **kw: set(),
-  )
-  maint.build_archive_maintenance_snapshot(
-      str(tmp_path), arch_suffix, str(tgz), log_fn=None)
-  assert sampled_calls["n"] == 1
+  assert snap.gate_identities_by_path[seg] == {
+      "cn001": {1700000500, 1700000502},
+  }
+  assert not hasattr(maint, "collect_sampled_timestamp_identities_for_paths")
 
 
 def test_build_archive_maintenance_snapshot_once_collects(monkeypatch, tmp_path):
@@ -255,25 +237,25 @@ def test_archive_discovery_worker_count_uses_sync_pool_process_cap(monkeypatch):
   assert maint._get_archive_discovery_worker_count(2) == 2
 
 
-def test_sampled_metadata_logs_begin_and_progress(monkeypatch):
+def test_gate_tail_metadata_logs_begin_and_progress(monkeypatch):
   paths = ["/fake/path/%d" % i for i in range(5001)]
+  head_identity = {path: ("cn001", 1700000000) for path in paths}
   logs = []
 
-  def _fake_read(path, *, sample_stride):
-    del sample_stride
-    return path, {"host": {1700000000}}
+  def _fake_read(path):
+    return path, "cn001", 1700000001
 
-  monkeypatch.setattr(maint, "_read_sampled_identities_one", _fake_read)
+  monkeypatch.setattr(maint, "_read_tail_metadata_one", _fake_read)
   monkeypatch.setattr(cfg, "get_sync_pool_process_cap", lambda: 4)
-  monkeypatch.setattr(cfg, "get_sync_archive_db_ingest_gate_sample_stride", lambda: 5000)
-  maint.collect_sampled_timestamp_identities_for_paths(
+  maint.collect_gate_identities_for_paths(
       paths,
+      head_identity,
       log_fn=lambda msg, **kw: logs.append(msg),
   )
   joined = "\n".join(logs)
-  assert "Sampled timestamp metadata: begin" in joined
-  assert "Sampled timestamp metadata: progress" in joined
-  assert "Sampled timestamp metadata: paths=5001" in joined
+  assert "Gate tail metadata: begin" in joined
+  assert "Gate tail metadata: progress" in joined
+  assert "Gate tail metadata: paths=5001" in joined
 
 
 def test_head_metadata_logs_begin_and_progress_for_large_read_set(monkeypatch):

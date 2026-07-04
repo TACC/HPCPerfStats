@@ -21,9 +21,9 @@ def copy_archive_maintenance_snapshot(
       closed_paths=list(snapshot.closed_paths),
       first_timestamp_by_path=dict(snapshot.first_timestamp_by_path),
       head_identity_by_path=dict(snapshot.head_identity_by_path),
-      sampled_timestamp_identities_by_path={
+      gate_identities_by_path={
           path: {host: set(seconds) for host, seconds in hosts.items()}
-          for path, hosts in (snapshot.sampled_timestamp_identities_by_path or {}).items()
+          for path, hosts in (snapshot.gate_identities_by_path or {}).items()
       },
       mapping={
           key: list(paths)

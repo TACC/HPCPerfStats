@@ -20,6 +20,15 @@ Attach the `test_runs/day-close-loop-regression-battery-*.log` path to the PR or
 | **T1 progress** | T+4 h **or** after first giant `archive_job_done` for backlog head day | Oldest `waiting_on_ingest` day: `unprocessed` **not frozen** vs prior sample; no repeating `oldest_day_chunk_gate_stall` with same `blocked_n` |
 | **T2 catch-up** | T+24 h or when head day advances | New `chunk ingest summary` cadence; June-scale head day `unprocessed` trending down; `ingest_stall_watchdog` absent |
 
+### Head+tail archive DB gate (stricter than head-only)
+
+When **`sync_archive_require_db_head_ingest=yes`**, tar append and raw delete require **both** the first and last digit-leading timestamp seconds in `host_data` (streaming head + EOF-backward tail; no full-file scan). After deploy:
+
+- Expect more **`not_head_tail_ingested`** / **`skipped_not_head_tail_ingested`** and day-close **handoff** (`day_close handoff requeue`) until ingest writes the tail second.
+- Legacy manifest reasons **`not_head_ingested`** / **`not_sample_ingested`** remain retryable.
+- **T0:** gate skips alone are not a stall if `chunk ingest summary` continues.
+- **T1/T2:** `not_head_tail_ingested` counts should fall as head-day `unprocessed` declines; frozen `waiting_on_ingest` with only gate skips and no ingest progress is a real stall.
+
 ## Operator greps (pipeline service)
 
 **Never** use `compose logs --tail=N` before grep on pipeline — tail can miss stall lines hours earlier.

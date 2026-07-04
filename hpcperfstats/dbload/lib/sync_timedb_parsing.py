@@ -485,52 +485,6 @@ def parse_last_timestamp_line_streaming(stats_file, *, tail_read_bytes=65536):
   return (None, None, None)
 
 
-def collect_stats_file_sampled_timestamp_identities_streaming(
-    stats_file,
-    *,
-    sample_stride,
-):
-  """Return ``host -> {unix_second, ...}`` for strided timestamp-line samples + EOF last line."""
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      _raise_if_ingest_deadline_exceeded,
-  )
-  from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
-      update_worker_substage,
-  )
-
-  stride = max(1, int(sample_stride))
-  update_worker_substage("ingest_gate:timestamp_sample_scan")
-  by_host = {}
-  timestamp_index = 0
-  last_host = None
-  last_unix_second = None
-  line_idx = 0
-  for line in iter_stats_file_lines(stats_file):
-    if line_idx and line_idx % 1000 == 0:
-      update_worker_substage("ingest_gate:timestamp_sample_scan")
-      _raise_if_ingest_deadline_exceeded()
-    line_idx += 1
-    if not line:
-      continue
-    s = line.lstrip()
-    if not s or not s[0].isdigit():
-      continue
-    try:
-      t, _jid, host = s.split()
-      unix_second = int(float(t))
-      host = str(host).strip()
-    except Exception:
-      continue
-    timestamp_index += 1
-    last_host = host
-    last_unix_second = unix_second
-    if (timestamp_index - 1) % stride == 0:
-      by_host.setdefault(host, set()).add(unix_second)
-  if last_host is not None and last_unix_second is not None:
-    by_host.setdefault(last_host, set()).add(last_unix_second)
-  return by_host
-
-
 def _timestamp_present_for_duplicate(itimes_set, timestamp_present, unix_second):
   if timestamp_present is not None:
     return bool(timestamp_present(unix_second))

@@ -1,14 +1,12 @@
 """DB ingest-readiness checks before sync_timedb archives or deletes raw stats files.
 
 When ``sync_archive_require_db_head_ingest=yes``, closed segments must pass the
-configured gate depth (``sync_archive_db_ingest_gate_mode``):
+head+tail gate: first and last digit-leading timestamp lines for their hostname
+tokens must each have a ``host_data`` row in the same Unix second.
 
-- **head** (default): first stats timestamp line for the hostname token in DB.
-- **sample**: strided digit-leading timestamp lines (``sync_bulk_create_batch_size // 2``)
-  plus the last timestamp at EOF.
-
-The monitor emits fractional seconds; ingest stores subsecond ``time`` values — probes
-use Unix-second windows, not exact ``time=`` equality.
+Probes use streaming head and EOF-backward tail reads (no full-file load). The
+monitor emits fractional seconds; ingest stores subsecond ``time`` values —
+probes use Unix-second windows, not exact ``time=`` equality.
 """
 import os
 import time
@@ -18,10 +16,8 @@ import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.dbload.lib import sync_timedb_host_itimes
 from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     read_stats_file_head_identity,
+    read_stats_file_tail_identity,
     stats_file_is_active_segment,
-)
-from hpcperfstats.dbload.lib.sync_timedb_parsing import (
-    collect_stats_file_sampled_timestamp_identities_streaming,
 )
 
 _HEAD_DB_CACHE = {}
@@ -100,8 +96,26 @@ def head_timestamp_present_in_db(hostname, timestamp_utc):
   return present
 
 
+def head_tail_identity_as_gate_identities(head_identity_by_path, tail_identity_by_path):
+  """Convert head/tail ``(host, unix_second)`` maps to batched gate identity shape."""
+  gate = {}
+  for path, head_ident in (head_identity_by_path or {}).items():
+    if not head_ident or head_ident[0] is None or head_ident[1] is None:
+      continue
+    tail_ident = (tail_identity_by_path or {}).get(path)
+    if not tail_ident or tail_ident[0] is None or tail_ident[1] is None:
+      continue
+    by_host = {}
+    head_host, head_sec = str(head_ident[0]).strip(), int(head_ident[1])
+    tail_host, tail_sec = str(tail_ident[0]).strip(), int(tail_ident[1])
+    by_host.setdefault(head_host, set()).add(head_sec)
+    by_host.setdefault(tail_host, set()).add(tail_sec)
+    gate[path] = by_host
+  return gate
+
+
 def head_identity_as_gate_identities(head_identity_by_path):
-  """Convert head ``(host, unix_second)`` map to batched gate identity shape."""
+  """Deprecated head-only converter; prefer ``head_tail_identity_as_gate_identities``."""
   return {
       path: {host: {unix_second}}
       for path, (host, unix_second) in (head_identity_by_path or {}).items()
@@ -109,19 +123,23 @@ def head_identity_as_gate_identities(head_identity_by_path):
 
 
 def host_timestamp_seconds_all_present(host, unix_seconds):
-  """Return whether every sampled Unix second for ``host`` exists in ``host_data``."""
+  """Return whether every Unix second for ``host`` exists in ``host_data``."""
   return sync_timedb_host_itimes.host_sampled_timestamp_seconds_all_present(
       host, unix_seconds)
 
 
-def sampled_identities_ready_in_db(sampled_by_host):
-  """Return True when every host's sampled seconds pass the batched DB gate."""
-  if not sampled_by_host:
+def gate_identities_ready_in_db(gate_by_host):
+  """Return True when every host's gate seconds pass the batched DB gate."""
+  if not gate_by_host:
     return False
-  for host, seconds in sampled_by_host.items():
+  for host, seconds in gate_by_host.items():
     if not host_timestamp_seconds_all_present(host, seconds):
       return False
   return True
+
+
+# Back-compat alias for older call sites / tests.
+sampled_identities_ready_in_db = gate_identities_ready_in_db
 
 
 def archive_db_head_ingest_gate_enabled():
@@ -130,9 +148,7 @@ def archive_db_head_ingest_gate_enabled():
 
 
 def _archive_gate_skip_label():
-  if cfg.sync_archive_db_ingest_gate_uses_sample_mode():
-    return "sampled timestamps"
-  return "head timestamp"
+  return "head/tail timestamps"
 
 
 def _log_gate_disabled_once(log_fn):
@@ -147,8 +163,23 @@ def _log_gate_disabled_once(log_fn):
   )
 
 
+def _path_head_tail_ready_in_db(path):
+  """Return True when head and tail timestamp seconds are present in ``host_data``."""
+  head_host, head_ts = read_stats_file_head_identity(path)
+  if head_host is None or head_ts is None:
+    return False
+  if not head_timestamp_present_in_db(head_host, head_ts):
+    return False
+  tail_host, tail_ts = read_stats_file_tail_identity(path)
+  if tail_host is None or tail_ts is None:
+    return False
+  if head_host == tail_host and int(head_ts.timestamp()) == int(tail_ts.timestamp()):
+    return True
+  return head_timestamp_present_in_db(tail_host, tail_ts)
+
+
 def stats_file_head_ingested_in_db(path, *, log_fn=None):
-  """Return True when the closed segment passes the configured DB ingest gate."""
+  """Return True when the closed segment passes the head+tail DB ingest gate."""
   from hpcperfstats.dbload.sync_timedb import _sync_worker_db_task
 
   with _sync_worker_db_task():
@@ -166,17 +197,7 @@ def stats_file_head_ingested_in_db(path, *, log_fn=None):
 
     ready = False
     if not stats_file_is_active_segment(path):
-      if cfg.sync_archive_db_ingest_gate_uses_sample_mode():
-        stride = cfg.get_sync_archive_db_ingest_gate_sample_stride()
-        sampled_by_host = collect_stats_file_sampled_timestamp_identities_streaming(
-            path,
-            sample_stride=stride,
-        )
-        ready = sampled_identities_ready_in_db(sampled_by_host)
-      else:
-        host, timestamp_utc = read_stats_file_head_identity(path)
-        if host is not None and timestamp_utc is not None:
-          ready = head_timestamp_present_in_db(host, timestamp_utc)
+      ready = _path_head_tail_ready_in_db(path)
 
     _PATH_READY_CACHE[fp] = {"ready": bool(ready), "checked_at": now}
     _trim_path_ready_cache()
@@ -185,7 +206,7 @@ def stats_file_head_ingested_in_db(path, *, log_fn=None):
 
 def build_head_ingest_ready_set(
     closed_paths,
-    sampled_timestamp_identities_by_path,
+    gate_identities_by_path,
     *,
     log_fn=None,
 ):
@@ -202,7 +223,7 @@ def build_head_ingest_ready_set(
     for path in closed_paths or []:
       if stats_file_is_active_segment(path):
         continue
-      sampled = sampled_timestamp_identities_by_path.get(path)
+      sampled = gate_identities_by_path.get(path)
       if not sampled:
         continue
       path_samples[path] = sampled
@@ -225,18 +246,23 @@ def filter_paths_head_ingested(
     paths,
     *,
     log_fn=None,
+    gate_identities_by_path=None,
     sampled_timestamp_identities_by_path=None,
     head_identity_by_path=None,
 ):
-  """Return ``(ready_paths, skipped_paths)`` using batched or per-path gate."""
-  if head_identity_by_path is not None and sampled_timestamp_identities_by_path is None:
-    sampled_timestamp_identities_by_path = head_identity_as_gate_identities(
-        head_identity_by_path,
-    )
-  if sampled_timestamp_identities_by_path is not None:
+  """Return ``(ready_paths, skipped_paths)`` using batched or per-path gate.
+
+  ``head_identity_by_path`` alone is not sufficient (head-only would miss tails);
+  pass ``gate_identities_by_path`` for the batched path, otherwise each path is
+  probed with streaming head+tail reads.
+  """
+  del head_identity_by_path  # no longer used for head-only batch conversion
+  if gate_identities_by_path is None:
+    gate_identities_by_path = sampled_timestamp_identities_by_path
+  if gate_identities_by_path is not None:
     ready_set = build_head_ingest_ready_set(
         paths,
-        sampled_timestamp_identities_by_path,
+        gate_identities_by_path,
         log_fn=log_fn,
     )
     ready = [p for p in paths if p in ready_set]

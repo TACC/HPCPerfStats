@@ -49,14 +49,16 @@ from hpcperfstats.dbload.lib.sync_timedb_manifest_contract import (
 )
 
 RETRYABLE_SKIP_REASONS = frozenset({
-    "not_sample_ingested",
-    "not_head_ingested",
+    "not_head_tail_ingested",
+    "not_sample_ingested",  # legacy manifests
+    "not_head_ingested",  # legacy manifests
     "not_in_sealed_archive",
     "size_mismatch",
 })
 RETRYABLE_SKIP_STATUSES = frozenset({
-    "skipped_not_sample_ingested",
-    "skipped_not_head_ingested",
+    "skipped_not_head_tail_ingested",
+    "skipped_not_sample_ingested",  # legacy manifests
+    "skipped_not_head_ingested",  # legacy manifests
     "skipped_not_in_archive",
     "skipped_size_mismatch",
 })
@@ -959,23 +961,23 @@ class _DayRawRemovalState:
           if callable(self.get_maintenance_snapshot)
           else None
       )
-      head_identity = (
-          getattr(snapshot, "head_identity_by_path", None)
+      gate_identities = (
+          getattr(snapshot, "gate_identities_by_path", None)
           if snapshot is not None
           else None
       )
-      if head_identity:
+      if gate_identities:
         gate_ready, gate_skipped = filter_paths_head_ingested(
             batch,
             log_fn=self.log_fn,
-            head_identity_by_path=head_identity,
+            gate_identities_by_path=gate_identities,
         )
         for path in gate_skipped:
           self._record_entry(
               path,
               zst_path,
-              "skipped_not_head_ingested",
-              "not_head_ingested",
+              "skipped_not_head_tail_ingested",
+              "not_head_tail_ingested",
           )
         classify_paths = gate_ready
       else:
@@ -987,7 +989,7 @@ class _DayRawRemovalState:
           close_old_connections()
           if gate_fn(path):
             return path, True, ""
-          return path, False, "not_head_ingested"
+          return path, False, "not_head_tail_ingested"
 
         for path, ready, _err in iter_bounded_thread_pool(
             batch,
@@ -1002,8 +1004,8 @@ class _DayRawRemovalState:
           self._record_entry(
               path,
               zst_path,
-              "skipped_not_head_ingested",
-              "not_head_ingested",
+              "skipped_not_head_tail_ingested",
+              "not_head_tail_ingested",
           )
         classify_paths = gate_ready
     if classify_paths:

@@ -430,12 +430,8 @@ sync_ingest_malloc_trim_after_file = yes
 # Ingest-first durability semantics: checkpoint after DB even if append fails (default yes).
 # sync_enable_ingest_first_durability_mode = yes
 
-# Archive DB gate depth: head = first timestamp only; sample = strided lines + EOF last.
-# sync_archive_db_ingest_gate_mode = head
-
-# Require DB ingest readiness before tar append or raw delete (default yes).
-# When yes, gate depth follows sync_archive_db_ingest_gate_mode (sample stride =
-# sync_bulk_create_batch_size // 2 plus last timestamp line at EOF).
+# Require head+tail DB ingest readiness before tar append or raw delete (default yes).
+# When yes, first and last digit-leading timestamp seconds must exist in host_data.
 # sync_archive_require_db_head_ingest = yes
 
 # Persist archive maintenance hints for faster restarts (default yes).

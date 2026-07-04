@@ -151,7 +151,6 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_dispatch_archive_backoff_ratio"),
     ("PIPELINE", "sync_dispatch_step_size"),
     ("PIPELINE", "sync_enable_ingest_first_durability_mode"),
-    ("PIPELINE", "sync_archive_db_ingest_gate_mode"),
     ("PIPELINE", "sync_archive_require_db_head_ingest"),
     ("PIPELINE", "sync_archive_maint_hints"),
     ("PIPELINE", "acct_path"),
@@ -332,7 +331,6 @@ INI_OPTION_DEFAULTS = {
     'sync_dispatch_archive_backoff_ratio': '0.50',
     'sync_dispatch_step_size': '8',
     'sync_enable_ingest_first_durability_mode': 'yes',
-    'sync_archive_db_ingest_gate_mode': 'head',
     'sync_archive_require_db_head_ingest': 'yes',
     'sync_archive_maint_hints': 'yes',
     'acct_path': None,
@@ -2363,11 +2361,6 @@ def get_sync_bulk_create_batch_size():
   return max(1, _pipeline_getint("sync_bulk_create_batch_size"))
 
 
-def get_sync_archive_db_ingest_gate_sample_stride():
-  """Strided archive gate sample interval: sync_bulk_create_batch_size // 2 (min 1)."""
-  return max(1, get_sync_bulk_create_batch_size() // 2)
-
-
 def get_sync_host_itimes_cache_max_timestamps_per_entry():
   """Max distinct DB timestamps cached per host window in sync_timedb (default 100000)."""
   _ensure_cfg_loaded()
@@ -2571,9 +2564,7 @@ _PIPELINE_PATH_OPTIONS = frozenset({
     "daily_archive_dir",
 })
 
-_PIPELINE_DERIVED_AUDIT_SKIP = frozenset({
-    "sync_archive_db_ingest_gate_sample_stride",
-})
+_PIPELINE_DERIVED_AUDIT_SKIP = frozenset()
 
 _SYNC_TIMEDB_CONFIG_AUDIT_ENV_KEYS = (
     "ARCHIVE_POOL_PROCESS_CAP",
@@ -2898,24 +2889,8 @@ def get_sync_archive_worker_stall_seconds():
   )
 
 
-def get_sync_archive_db_ingest_gate_mode():
-  """Return archive DB gate depth: ``head`` (first timestamp) or ``sample`` (strided+EOF)."""
-  _ensure_cfg_loaded()
-  raw = str(
-      _pipeline_get("sync_archive_db_ingest_gate_mode"),
-  ).strip().lower()
-  if raw in ("sample", "sampled"):
-    return "sample"
-  return "head"
-
-
-def sync_archive_db_ingest_gate_uses_sample_mode():
-  """True when the archive DB gate uses strided timestamp samples plus EOF last line."""
-  return get_sync_archive_db_ingest_gate_mode() == "sample"
-
-
 def get_sync_archive_require_db_head_ingest():
-  """Require DB ingest readiness before tar append or raw removal (depth via gate mode)."""
+  """Require head+tail DB ingest readiness before tar append or raw removal."""
   _ensure_cfg_loaded()
   return _parse_bool(
       _pipeline_get("sync_archive_require_db_head_ingest"),

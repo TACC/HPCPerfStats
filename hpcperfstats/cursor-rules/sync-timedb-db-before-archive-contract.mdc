@@ -1,5 +1,5 @@
 ---
-description: Require DB sampled-timestamp ingest check before sync_timedb tar append or raw file removal
+description: Require DB head+tail ingest check before sync_timedb tar append or raw file removal
 alwaysApply: false
 globs: hpcperfstats/dbload/sync_timedb*.py
 ---
@@ -13,33 +13,30 @@ When changing ingest, archive, or raw-stats removal under `hpcperfstats/dbload/s
 ## Mandatory behavior (when enabled)
 
 - Default **`sync_archive_require_db_head_ingest`** is **on** (`conf_parser.get_sync_archive_require_db_head_ingest()`).
-- Gate depth is **`sync_archive_db_ingest_gate_mode`** (default **`head`**; optional **`sample`**).
+- Gate depth is always **head + tail** (first and last digit-leading timestamp lines). There is no sample/strided mode.
 - No production path may **append** a raw monitor stats file to a daily `.tar` or **delete** that raw file from the archive tree unless **`stats_file_head_ingested_in_db`** returns true.
 - Canonical implementation: **`hpcperfstats/dbload/lib/sync_timedb_ingest_readiness.py`**.
 
-## Definition: head ingested (default mode)
+## Definition: head+tail ingested
 
-- **`sync_archive_db_ingest_gate_mode = head`** (default when omitted): closed segment passes when the **first** digit-leading timestamp line's **hostname token** has at least one **`host_data`** row in the **same Unix second** (monitor fractional seconds; do not use exact `time=` equality).
+- Closed segment passes when **both**:
+  1. The **first** digit-leading timestamp line's **hostname token** has at least one **`host_data`** row in the **same Unix second**.
+  2. The **last** digit-leading timestamp line's **hostname token** has at least one **`host_data`** row in the **same Unix second**.
+- Monitor fractional seconds; do not use exact `time=` equality (Unix-second windows).
 - **`host` must be the hostname token from the stats file line** (same field written to `host_data.host` during ingest). Do **not** use the archive path's parent directory name (often FQDN) for the DB lookup.
-- Canonical probe: `read_stats_file_head_identity` + `head_timestamp_present_in_db` in `sync_timedb_ingest_readiness.py`.
-- **Limitation:** middle segments may be missing in DB and still pass when only the head second is present.
-
-## Definition: sample ingested (`sync_archive_db_ingest_gate_mode = sample`)
-
-- One streaming pass collects **sampled** digit-leading timestamp lines: stride = **`sync_bulk_create_batch_size // 2`** (default batch 10000 → stride 5000 → lines 1, 5001, 10001, …) plus **always the last timestamp at EOF**.
-- **Sample ingested** = for every sampled line, at least one **`host_data`** row for that line's **hostname token** with `time` in the **same Unix second** (monitor fractional seconds; do not use exact `time=` equality).
-- **`host` must be the hostname token from the stats file line** (same field written to `host_data.host` during ingest). Do **not** use the archive path's parent directory name (often FQDN) for the DB lookup.
-- Canonical collector: `collect_stats_file_sampled_timestamp_identities_streaming` in `sync_timedb_parsing.py`.
-- **Limitation:** gaps **between** stride sample points may be missing in DB and still pass; **last timestamp must be present** (tail-only partial ingest fails).
+- Head and tail hosts may differ; both must pass. When head second equals tail second (tiny file), one DB probe is enough.
+- Canonical probes: `read_stats_file_head_identity` + `read_stats_file_tail_identity` (EOF-backward streaming via `parse_last_timestamp_line_streaming`) + `head_timestamp_present_in_db` in `sync_timedb_ingest_readiness.py` / `sync_timedb_archive_helpers.py`.
+- **Limitation:** middle segments may be missing in DB and still pass when only the head and tail seconds are present.
 - **Emergency override:** **`sync_archive_require_db_head_ingest = no`** disables the gate (log once).
 
 ## Performance
 
-- **Head mode:** per-path gate reads only the file head; maintenance `ready_paths` reuse `head_identity_by_path` from the head metadata pass (no second full-file scan).
+- Per-path gate reads only the file **head** (until first digit-leading line) and a **bounded EOF-backward tail** (default 64KB chunks) — **no full-file load**.
+- Maintenance `ready_paths` reuse `gate_identities_by_path` built from head metadata plus parallel tail reads (`collect_gate_identities_for_paths`); no strided full-file sample pass.
+- Batched membership uses `sync_timedb_host_itimes.host_sampled_timestamp_seconds_all_present` for the small head+tail second sets (typically ≤2 per host); overflow (cardinality cap **or** statement/lock timeout on wide scan) → cached per-second exists (same as ingest duplicate scan).
 - **Ingest duplicate head/tail fast path:** tail second membership uses **`host_timestamp_second_present_in_db`** (indexed per-second `exists()` + 60s TTL cache), not a wide itimes window scan.
-- **Sample mode:** one streaming pass per file for sample collection; **one itimes range query per host** (maintenance: per distinct host per tick) via `sync_timedb_host_itimes.host_sampled_timestamp_seconds_all_present`; in-memory membership for all sample seconds; overflow (cardinality cap **or** statement/lock timeout on wide scan) → cached per-second exists (same as ingest duplicate scan).
 - **Wide itimes scans:** windows wider than 24h are queried in non-overlapping 24h chunks; statement timeout on any chunk returns overflow without killing the ingest pool worker.
-- **Archive metadata discovery** (head + sampled timestamp scans in `build_archive_maintenance_snapshot`) uses a `ThreadPoolExecutor` sized by **`get_sync_pool_process_cap()`** only (same INI/env as ingest pool cap). Head metadata always runs; sampled metadata runs only in **sample** gate mode. Long scans log begin + periodic progress (every 5000 paths or 60s when path count ≥ 1000).
+- **Archive metadata discovery** (head + gate-tail scans in `build_archive_maintenance_snapshot`) uses a `ThreadPoolExecutor` sized by **`get_sync_pool_process_cap()`** only (same INI/env as ingest pool cap). Long scans log begin + periodic progress (every 5000 paths or 60s when path count ≥ 1000).
 - Path result cache keyed by `(path, mtime, size)` (TTL ~60s) for maintenance rescans.
 - Archive pool workers call `close_old_connections()` at gate entry.
 
@@ -53,7 +50,7 @@ When changing ingest, archive, or raw-stats removal under `hpcperfstats/dbload/s
 | `remove_verified_archived_raw_files` raw removal | `ingest_ready_fn` after archive member/size match |
 | `ArchiveJanitor` day close (`_close_one_day` + `DayRawRemovalCoordinator`) | Pre-seal classify via open `.tar` (`classify_removable_raw_paths_for_open_tar`); post-seal tar/zst parity; **`ingest_ready_fn=stats_file_head_ingested_in_db`** at delete; handoff retryable paths before seal |
 | `StartupRawRemovalPreflight` verify + gated delete (`sync_timedb_startup_raw_removal.py`) | `classify_removable_raw_paths_for_daily_gz` with `allow_auto_seal=False`; `stats_file_head_ingested_in_db` when gate enabled; manifest at `{archive_data_dir}/.sync_timedb_startup_raw_removal.json` |
-| `DayRawRemovalCoordinator` async verify + janitor delete (`sync_timedb_day_raw_removal.py`) | per-day manifest `{archive_data_dir}/.sync_timedb_day_raw_removal/YYYY-MM-DD.json`; same classify contract; **verify on background thread**, **`apply_batch_delete` on archival thread** (`ArchiveJanitor._close_one_day` when not delete-disqualified; startup drain may still use **`run_supervisor_day_raw_removal_delete_pass`** when **`sync_startup_drain_day_close_before_ingest=yes`**); `on_pipeline_complete` on `phase=done`. **`phase=done`** only when no closed raw remains or only terminal skips; retryable skips (`not_sample_ingested`, legacy `not_head_ingested`, `not_in_sealed_archive`, `size_mismatch`) trigger **`on_handoff_to_ingest`**: defer async DAY_CLOSE (`waiting_on_ingest`), clear checkpoint entries, prepend paths at **queue head** (`handoff_priority_paths`) for full chunk ingest (parse/DB write/archive append) — not append-only. Do not treat frozen `done` with `verified=0` as terminal. |
+| `DayRawRemovalCoordinator` async verify + janitor delete (`sync_timedb_day_raw_removal.py`) | per-day manifest `{archive_data_dir}/.sync_timedb_day_raw_removal/YYYY-MM-DD.json`; same classify contract; **verify on background thread**, **`apply_batch_delete` on archival thread** (`ArchiveJanitor._close_one_day` when not delete-disqualified; startup drain may still use **`run_supervisor_day_raw_removal_delete_pass`** when **`sync_startup_drain_day_close_before_ingest=yes`**); `on_pipeline_complete` on `phase=done`. **`phase=done`** only when no closed raw remains or only terminal skips; retryable skips (`not_head_tail_ingested`, legacy `not_sample_ingested` / `not_head_ingested`, `not_in_sealed_archive`, `size_mismatch`) trigger **`on_handoff_to_ingest`**: defer async DAY_CLOSE (`waiting_on_ingest`), clear checkpoint entries, prepend paths at **queue head** (`handoff_priority_paths`) for full chunk ingest (parse/DB write/archive append) — not append-only. Do not treat frozen `done` with `verified=0` as terminal. |
 | Production wiring | `ingest_ready_fn=stats_file_head_ingested_in_db` passed into `ArchiveJanitor` and `StartupRawRemovalPreflight` from `run_sync_timedb_supervisor_loop` |
 
 Out of scope for the DB gate: `remove_verified_uncompressed_daily_tars` (`.tar` only), tar dedupe/seal/recovery without raw stats paths.

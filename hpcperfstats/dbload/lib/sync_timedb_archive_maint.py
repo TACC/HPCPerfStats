@@ -24,6 +24,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     detect_compressed_format,
     normalize_daily_compressed_path,
     read_stats_file_head_identity,
+    read_stats_file_tail_identity,
 )
 from hpcperfstats.dbload.lib.print_utils import log_print
 
@@ -41,7 +42,7 @@ class ArchiveMaintenanceSnapshot:
   closed_paths: list
   first_timestamp_by_path: Dict[str, str] = field(default_factory=dict)
   head_identity_by_path: Dict[str, Tuple[str, int]] = field(default_factory=dict)
-  sampled_timestamp_identities_by_path: Dict[str, Dict[str, Set[int]]] = field(
+  gate_identities_by_path: Dict[str, Dict[str, Set[int]]] = field(
       default_factory=dict,
   )
   mapping: Dict[str, list] = field(default_factory=dict)
@@ -321,46 +322,44 @@ def _read_head_metadata_one(path: str) -> Tuple[str, Optional[str], Optional[str
   return path, first_ts, str(host).strip(), unix_second
 
 
-def _read_sampled_identities_one(path, *, sample_stride):
+def _read_tail_metadata_one(path: str) -> Tuple[str, Optional[str], Optional[int]]:
   from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
-  from hpcperfstats.dbload.lib.sync_timedb_parsing import (
-      collect_stats_file_sampled_timestamp_identities_streaming,
-  )
 
   set_daemon_thread_title("", script_name="sync_timedb.py", role="archive-discovery")
   try:
-    sampled = collect_stats_file_sampled_timestamp_identities_streaming(
-        path,
-        sample_stride=sample_stride,
-    )
+    host, timestamp_utc = read_stats_file_tail_identity(path)
   except Exception:
-    return path, None
-  if not sampled:
-    return path, None
-  return path, sampled
+    return path, None, None
+  if host is None or timestamp_utc is None:
+    return path, None, None
+  return path, str(host).strip(), int(timestamp_utc.timestamp())
 
 
-def collect_sampled_timestamp_identities_for_paths(
+def collect_gate_identities_for_paths(
     paths,
+    head_identity_by_path: Dict[str, Tuple[str, int]],
     *,
-    sample_stride=None,
     log_fn=log_print,
 ) -> Tuple[Dict[str, Dict[str, Set[int]]], Dict[str, int]]:
-  """Build per-path sampled host→seconds maps; parallel read for large path lists."""
-  stride = sample_stride
-  if stride is None:
-    stride = cfg.get_sync_archive_db_ingest_gate_sample_stride()
-  sampled_by_path: Dict[str, Dict[str, Set[int]]] = {}
+  """Build per-path head+tail host→seconds maps; parallel EOF-backward tail reads."""
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_readiness import (
+      head_tail_identity_as_gate_identities,
+  )
+
+  path_list = [
+      path for path in (paths or [])
+      if path in (head_identity_by_path or {})
+  ]
+  tail_identity_by_path: Dict[str, Tuple[str, int]] = {}
   errors = 0
   started = time.time()
   started_mono = time.monotonic()
-  path_list = list(paths or [])
   workers = _get_archive_discovery_worker_count(len(path_list)) if path_list else 0
   total_tasks = len(path_list)
   if log_fn and total_tasks >= _ARCHIVE_METADATA_PROGRESS_MIN_PATHS:
     log_fn(
-        "Sampled timestamp metadata: begin paths=%d workers=%d stride=%d"
-        % (total_tasks, workers, stride),
+        "Gate tail metadata: begin paths=%d workers=%d"
+        % (total_tasks, workers),
         flush=True,
     )
   last_progress_mono = started_mono
@@ -368,14 +367,14 @@ def collect_sampled_timestamp_identities_for_paths(
   if path_list:
     for _path, packed, err in iter_bounded_thread_pool(
         path_list,
-        lambda path: _read_sampled_identities_one(path, sample_stride=stride),
+        _read_tail_metadata_one,
         max_workers=workers,
     ):
       done += 1
       if err is not None:
         errors += 1
         last_progress_mono = _maybe_log_parallel_task_progress(
-            prefix="Sampled timestamp metadata",
+            prefix="Gate tail metadata",
             total=total_tasks,
             done=done,
             errors=errors,
@@ -384,11 +383,11 @@ def collect_sampled_timestamp_identities_for_paths(
             log_fn=log_fn,
         )
         continue
-      path, sampled = packed
-      if sampled is None:
+      path, host, unix_second = packed
+      if host is None or unix_second is None:
         errors += 1
         last_progress_mono = _maybe_log_parallel_task_progress(
-            prefix="Sampled timestamp metadata",
+            prefix="Gate tail metadata",
             total=total_tasks,
             done=done,
             errors=errors,
@@ -397,9 +396,9 @@ def collect_sampled_timestamp_identities_for_paths(
             log_fn=log_fn,
         )
         continue
-      sampled_by_path[path] = sampled
+      tail_identity_by_path[path] = (host, unix_second)
       last_progress_mono = _maybe_log_parallel_task_progress(
-          prefix="Sampled timestamp metadata",
+          prefix="Gate tail metadata",
           total=total_tasks,
           done=done,
           errors=errors,
@@ -407,16 +406,20 @@ def collect_sampled_timestamp_identities_for_paths(
           last_progress_mono=last_progress_mono,
           log_fn=log_fn,
       )
+  gate_by_path = head_tail_identity_as_gate_identities(
+      head_identity_by_path,
+      tail_identity_by_path,
+  )
   stats = {
-      "paths": len(path_list),
-      "read": len(path_list),
+      "paths": total_tasks,
+      "read": total_tasks,
       "workers": workers if path_list else 0,
       "errors": errors,
       "elapsed_s": int(time.time() - started),
   }
   if log_fn and path_list:
     log_fn(
-        "Sampled timestamp metadata: paths=%d read=%d workers=%d errors=%d elapsed_s=%d"
+        "Gate tail metadata: paths=%d read=%d workers=%d errors=%d elapsed_s=%d"
         % (
             stats["paths"],
             stats["read"],
@@ -426,7 +429,7 @@ def collect_sampled_timestamp_identities_for_paths(
         ),
         flush=True,
     )
-  return sampled_by_path, stats
+  return gate_by_path, stats
 
 
 def collect_head_metadata_for_paths(
@@ -541,10 +544,9 @@ def build_archive_maintenance_snapshot(
     build_ready_set=True,
     log_fn=log_print,
 ) -> ArchiveMaintenanceSnapshot:
-  """One collect pass, head metadata (hints + parallel), mapping, optional ready set."""
+  """One collect pass, head+tail gate metadata, mapping, optional ready set."""
   from hpcperfstats.dbload.lib.sync_timedb_ingest_readiness import (
       build_head_ingest_ready_set,
-      head_identity_as_gate_identities,
   )
 
   snap_t0 = time.time()
@@ -562,18 +564,11 @@ def build_archive_maintenance_snapshot(
         % (len(closed_paths), time.time() - snap_t0),
         flush=True,
     )
-  if cfg.sync_archive_db_ingest_gate_uses_sample_mode():
-    sampled_timestamp_identities_by_path, sample_read_stats = (
-        collect_sampled_timestamp_identities_for_paths(
-            closed_paths, log_fn=log_fn)
-    )
-    gate_identities_by_path = sampled_timestamp_identities_by_path
-  else:
-    sampled_timestamp_identities_by_path = {}
-    sample_read_stats = {"errors": 0}
-    gate_identities_by_path = head_identity_as_gate_identities(
-        head_identity_by_path,
-    )
+  gate_identities_by_path, gate_read_stats = collect_gate_identities_for_paths(
+      closed_paths,
+      head_identity_by_path,
+      log_fn=log_fn,
+  )
   mapping = build_archive_mapping(
       closed_paths,
       tgz_archive_dir,
@@ -615,13 +610,13 @@ def build_archive_maintenance_snapshot(
       closed_paths=closed_paths,
       first_timestamp_by_path=first_timestamp_by_path,
       head_identity_by_path=head_identity_by_path,
-      sampled_timestamp_identities_by_path=sampled_timestamp_identities_by_path,
+      gate_identities_by_path=gate_identities_by_path,
       mapping=mapping,
       remaining_raw_by_gz=remaining_raw_by_gz,
       ready_paths=ready_paths,
       head_read_stats={
           **head_read_stats,
-          "sample_read_errors": sample_read_stats.get("errors", 0),
+          "gate_tail_read_errors": gate_read_stats.get("errors", 0),
       },
   )
 

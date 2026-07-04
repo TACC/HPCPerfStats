@@ -1145,32 +1145,15 @@ def test_legacy_default_fallback_for_moved_pipeline_key(tmp_path, monkeypatch):
   assert cfg.get_sync_archive_require_db_head_ingest() is False
 
 
-def test_sync_archive_db_ingest_gate_mode_defaults_and_aliases(temp_ini, monkeypatch):
+def test_sync_archive_db_ingest_gate_mode_removed(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
   import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
-  assert cfg.get_sync_archive_db_ingest_gate_mode() == "head"
-  assert cfg.sync_archive_db_ingest_gate_uses_sample_mode() is False
-
-  with open(temp_ini) as fh:
-    content = fh.read()
-  for mode in ("sample", "sampled", "SAMPLE"):
-    with open(temp_ini, "w") as fh:
-      fh.write(content.replace(
-          "total_cores = 4",
-          "total_cores = 4\nsync_archive_db_ingest_gate_mode = %s" % mode,
-      ))
-    importlib.reload(cfg)
-    assert cfg.get_sync_archive_db_ingest_gate_mode() == "sample"
-
-  with open(temp_ini, "w") as fh:
-    fh.write(content.replace(
-        "total_cores = 4",
-        "total_cores = 4\nsync_archive_db_ingest_gate_mode = bogus",
-    ))
-  importlib.reload(cfg)
-  assert cfg.get_sync_archive_db_ingest_gate_mode() == "head"
+  assert not hasattr(cfg, "get_sync_archive_db_ingest_gate_mode")
+  assert not hasattr(cfg, "sync_archive_db_ingest_gate_uses_sample_mode")
+  assert not hasattr(cfg, "get_sync_archive_db_ingest_gate_sample_stride")
+  assert cfg.get_sync_archive_require_db_head_ingest() is True
 
 
 def test_archive_janitor_and_dispatch_defaults(temp_ini, monkeypatch):

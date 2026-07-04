@@ -2446,6 +2446,25 @@ def read_stats_file_head_identity(stats_fname, parse_first_ts_fn=None):
   return str(host).strip(), timestamp_utc
 
 
+def read_stats_file_tail_identity(stats_fname):
+  """Return ``(host, timestamp_utc)`` from the last stats timestamp line (EOF-backward).
+
+  Uses a bounded tail read (no full-file load). ``host`` is the monitor hostname
+  token from file content (same as ``host_data.host`` after ingest).
+  """
+  from datetime import datetime, timezone
+
+  from hpcperfstats.dbload.lib.sync_timedb_parsing import (
+      parse_last_timestamp_line_streaming,
+  )
+
+  t, _jid, host = parse_last_timestamp_line_streaming(stats_fname)
+  if t is None or not host:
+    return None, None
+  timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
+  return str(host).strip(), timestamp_utc
+
+
 def _read_first_timestamp_from_stats_file(stats_fname, parse_first_ts_fn):
   """Read minimal file head and parse first stats timestamp string."""
   _host, timestamp_utc = read_stats_file_head_identity(stats_fname, parse_first_ts_fn)
@@ -3720,7 +3739,7 @@ def classify_removable_raw_paths_for_members(
   for stats_path in stats_paths:
     if ingest_ready_fn is not None and not ingest_ready_fn(stats_path):
       results.append(
-          (stats_path, "skipped_not_sample_ingested", "not_sample_ingested"))
+          (stats_path, "skipped_not_head_tail_ingested", "not_head_tail_ingested"))
       continue
     removable = get_verified_files_to_remove([stats_path], members)
     if stats_path in removable:
