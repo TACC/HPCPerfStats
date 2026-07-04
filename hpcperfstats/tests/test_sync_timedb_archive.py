@@ -6182,6 +6182,8 @@ def test_classify_no_eligible_deferred_status(tmp_path):
   assert by_tar[waiting_tar]["status"] == "waiting_on_ingest"
   assert by_tar[ready_tar]["status"] == "ready_for_enqueue"
   assert "awaiting_janitor_discover" in by_tar[ready_tar]["reasons"]
+  assert "mutable_tar_present" in by_tar[ready_tar]["reasons"]
+  assert by_tar[ready_tar]["mutable_tar"] is True
   assert "eligible_deferred" not in {e.get("status") for e in entries}
 
 
@@ -6365,10 +6367,22 @@ def test_log_day_close_candidate_report_logs_queued_and_disqualified(capsys, mon
   out = capsys.readouterr().out
   assert (
       "day_close candidate report reason=test queued=1 "
-      "waiting_on_ingest=1 disqualified=0"
+      "waiting_on_ingest=1 ready_for_enqueue=0 disqualified=0 "
+      "mutable_tar_n=0"
   ) in out
   assert "status=queued" in out
   assert "status=waiting_on_ingest" in out
+  queued_line = [
+      line for line in out.splitlines()
+      if "status=queued" in line and "day_close candidate tar=" in line
+  ][0]
+  waiting_line = [
+      line for line in out.splitlines()
+      if "status=waiting_on_ingest" in line and "day_close candidate tar=" in line
+  ][0]
+  assert "queue_order=1" in queued_line
+  assert "queue_order=" in waiting_line
+  assert "queue_order=1" not in waiting_line
   assert "skipped_no_work" not in out
 
 
@@ -6745,6 +6759,8 @@ def test_classify_ghost_unprocessed_becomes_awaiting_janitor_discover(tmp_path):
   by_tar = {e["tar_path"]: e for e in entries}
   assert by_tar[tar_path]["status"] == "ready_for_enqueue"
   assert "awaiting_janitor_discover" in by_tar[tar_path]["reasons"]
+  assert "mutable_tar_present" in by_tar[tar_path]["reasons"]
+  assert "checkpoint_incomplete" not in by_tar[tar_path]["reasons"]
   assert by_tar[tar_path]["unprocessed"] == 0
   assert by_tar[tar_path]["unprocessed_list"] == 1
 
@@ -7573,6 +7589,140 @@ def test_day_close_eligibility_ignores_cross_day_unprocessed(tmp_path):
   )
   assert eligible
   assert reason == ""
+
+
+def test_disq_reasons_checkpoint_incomplete_aligned_only(tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      build_disqualification_reasons_by_tar,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  may27 = os.path.normpath(str(daily_dir / "2026-05-27.tar"))
+  open(may27, "wb").close()
+  d_july = datetime(2026, 7, 3, 12, tzinfo=timezone.utc)
+  cross = tmp_path / "cross_july"
+  cross.write_text("x")
+  os.utime(cross, (d_july.timestamp(), d_july.timestamp()))
+  reasons = build_disqualification_reasons_by_tar(
+      tgz_archive_dir=str(daily_dir),
+      unprocessed_by_tar={may27: [str(cross)]},
+  )
+  assert "checkpoint_incomplete" not in reasons.get(may27, set())
+
+
+def test_classify_no_stale_checkpoint_incomplete_when_unprocessed_zero(tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      classify_day_close_candidates,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2026-05-31.tar"))
+  open(tar_path, "wb").close()
+  d_july = datetime(2026, 7, 3, 12, tzinfo=timezone.utc)
+  cross = tmp_path / "cross_july"
+  cross.write_text("x")
+  os.utime(cross, (d_july.timestamp(), d_july.timestamp()))
+  entries = classify_day_close_candidates(
+      tgz_archive_dir=str(daily_dir),
+      unprocessed_by_tar={tar_path: [str(cross)]},
+      disqualification_reasons={tar_path: {"checkpoint_incomplete"}},
+      local_tz=timezone.utc,
+  )
+  by_tar = {e["tar_path"]: e for e in entries}
+  assert by_tar[tar_path]["status"] == "ready_for_enqueue"
+  assert "checkpoint_incomplete" not in by_tar[tar_path]["reasons"]
+  assert "awaiting_janitor_discover" in by_tar[tar_path]["reasons"]
+  assert "mutable_tar_present" in by_tar[tar_path]["reasons"]
+  assert by_tar[tar_path]["unprocessed"] == 0
+  assert by_tar[tar_path]["unprocessed_cross_day_n"] == 1
+
+
+def test_classify_mutable_tar_present_reason(tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      classify_day_close_candidates,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2026-06-01.tar"))
+  open(tar_path, "wb").close()
+  entries = classify_day_close_candidates(
+      tgz_archive_dir=str(daily_dir),
+      unprocessed_by_tar={},
+      disqualification_reasons={},
+      local_tz=timezone.utc,
+  )
+  by_tar = {e["tar_path"]: e for e in entries}
+  assert by_tar[tar_path]["status"] == "ready_for_enqueue"
+  assert by_tar[tar_path]["mutable_tar"] is True
+  assert "mutable_tar_present" in by_tar[tar_path]["reasons"]
+
+
+def test_log_day_close_candidate_report_date_order_across_statuses(
+    capsys, monkeypatch,
+):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      log_day_close_candidate_report,
+  )
+
+  import hpcperfstats.dbload.lib.conf_parser as cfg_mod
+
+  monkeypatch.setattr(cfg_mod, "get_sync_day_close_candidate_report", lambda: True)
+  log_day_close_candidate_report(
+      [
+          {
+              "tar_path": "/arch/2026-06-07.tar",
+              "status": "waiting_on_ingest",
+              "reasons": ["checkpoint_incomplete"],
+              "unprocessed": 10,
+              "phase": "",
+              "mutable_tar": True,
+          },
+          {
+              "tar_path": "/arch/2026-05-26.tar",
+              "status": "queued",
+              "reasons": ["day_close_in_progress"],
+              "unprocessed": 0,
+              "phase": "",
+              "mutable_tar": True,
+          },
+          {
+              "tar_path": "/arch/2026-05-31.tar",
+              "status": "disqualified",
+              "reasons": ["inflight_append_path"],
+              "unprocessed": 0,
+              "phase": "",
+              "mutable_tar": True,
+          },
+          {
+              "tar_path": "/arch/2026-05-22.tar",
+              "status": "queued",
+              "reasons": ["day_close_in_progress"],
+              "unprocessed": 0,
+              "phase": "",
+              "mutable_tar": True,
+          },
+      ],
+      reason="test",
+  )
+  out = capsys.readouterr().out
+  lines = [
+      line for line in out.splitlines()
+      if "day_close candidate tar=" in line
+  ]
+  assert len(lines) == 4
+  assert "2026-05-22" in lines[0]
+  assert "2026-05-26" in lines[1]
+  assert "2026-05-31" in lines[2]
+  assert "2026-06-07" in lines[3]
+  assert "queue_order=1" in lines[0]
+  assert "queue_order=2" in lines[1]
+  assert "queue_order=" in lines[2] and "queue_order=1" not in lines[2]
+  assert "queue_order=" in lines[3] and "queue_order=1" not in lines[3]
+  assert "mutable_tar=yes" in lines[0]
+  assert "mutable_tar_n=4" in out
 
 
 def test_classify_reports_aligned_unprocessed_and_cross_day_n(tmp_path):

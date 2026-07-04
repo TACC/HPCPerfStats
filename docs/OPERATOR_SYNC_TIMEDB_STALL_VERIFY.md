@@ -110,7 +110,26 @@ podman-compose logs pipeline 2>&1 | grep -E \
   'discover_ready_day_close|janitor: day_close enqueue|day_close candidate report|Archive janitor tick done' | tail -40
 ```
 
-**Pass:** checkpoint-complete older calendar days show **`discover_ready_day_close enqueued=`** or **`janitor: day_close enqueue`**; candidate report uses **`waiting_on_ingest`** / **`disqualified`** (no **`eligible_deferred`**); ingest head day stays **`waiting_on_ingest`** while janitor processes prior days; **`Archive janitor tick done`** shows **`days_started>0`** / **`debt_popped>0`** or progressing **`day_phases`** without **`ingest_stall_watchdog`** within 30 min. Under backlog, expect up to **4** concurrent day-close workers (`sync_day_close_max_inflight`) unless tuned lower.
+**Pass:** checkpoint-complete older calendar days show **`discover_ready_day_close enqueued=`** or **`janitor: day_close enqueue`**; candidate report uses **`waiting_on_ingest`** / **`ready_for_enqueue`** / **`disqualified`** (no **`eligible_deferred`**); ingest head day stays **`waiting_on_ingest`** while janitor processes prior days; **`Archive janitor tick done`** shows **`days_started>0`** / **`debt_popped>0`** or progressing **`day_phases`** without **`ingest_stall_watchdog`** within 30 min. Under backlog, expect up to **4** concurrent day-close workers (`sync_day_close_max_inflight`) unless tuned lower.
+
+### T1 verify — day-close candidacy honesty (mutable `.tar` + report order, 2026-07)
+
+After deploy of **day-close tar candidacy** fix, confirm report and discover behavior on backlog sites with large mutable daily `.tar` files:
+
+```bash
+podman-compose logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+
+grep -E 'day_close candidate report|day_close candidate tar=|discover_ready_day_close' /tmp/pipeline-full.log | tail -80
+```
+
+**Pass (T1):**
+
+- Candidate **per-tar lines are oldest calendar day first** (not status-bucket order). Summary still has `queued=` / `waiting_on_ingest=` / `ready_for_enqueue=` / `disqualified=` / `mutable_tar_n=`.
+- **`queue_order=1..N` only on `status=queued`** (oldest queued first); non-queued lines show **`queue_order=`** (empty).
+- **`checkpoint_incomplete` never appears with `unprocessed=0`** (pre-fix: May-30…Jun-06 `disqualified` + `awaiting_janitor_discover,checkpoint_incomplete` + `unprocessed=0`). Those days must be **`ready_for_enqueue`** (or `queued` once inflight frees) with `mutable_tar=yes`.
+- **`status=queued` + `unprocessed=0` finishes** day-close (workers running).
+- Days with **`waiting_on_ingest`** and **`unprocessed>0`** (aligned backlog) stay gated — not a skip; they wait on ingest.
+- Discover logs **`ready_for_enqueue_n=`**; **`skipped_inflight`** counts only ready entries blocked by `max_inflight`, not all candidates.
 
 ### T1 verify — pipeline review fixes (manifest inflight + gate backoff)
 

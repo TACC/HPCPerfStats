@@ -595,7 +595,10 @@ def classify_day_close_candidates(
         tgz_archive_dir=tgz_archive_dir,
     )
     cross_day_n = max(0, on_disk_all_n - unprocessed_count)
+    if unprocessed_count == 0:
+      reasons.discard("checkpoint_incomplete")
     phase_name = _day_phase_name_from_hints(day_phases, tar_norm) or ""
+    mutable_tar = os.path.isfile(tar_norm)
     needs_work = daily_tar_needs_day_close_work(
         tar_norm,
         day_phases=day_phases,
@@ -608,6 +611,7 @@ def classify_day_close_candidates(
           "reasons": sorted(reasons),
           "unprocessed": unprocessed_count,
           "phase": phase_name,
+          "mutable_tar": mutable_tar,
       }
       if cross_day_n:
         entry["unprocessed_cross_day_n"] = cross_day_n
@@ -637,12 +641,15 @@ def classify_day_close_candidates(
       status = "ready_for_enqueue"
       reasons = set(reasons)
       reasons.add("awaiting_janitor_discover")
+    if mutable_tar:
+      reasons.add("mutable_tar_present")
     entry = {
         "tar_path": tar_norm,
         "status": status,
         "reasons": sorted(reasons),
         "unprocessed": unprocessed_count,
         "phase": phase_name,
+        "mutable_tar": mutable_tar,
     }
     if unprocessed_list_count != unprocessed_count:
       entry["unprocessed_list"] = unprocessed_list_count
@@ -697,7 +704,7 @@ def log_day_close_candidate_report(
     log_fn=log_print,
     async_progress_fn=None,
 ):
-  """Log day-close candidates (silent skipped_no_work)."""
+  """Log day-close candidates (silent skipped_no_work), oldest calendar day first."""
   if not cfg.get_sync_day_close_candidate_report():
     return
   queued = [e for e in entries if e.get("status") == "queued"]
@@ -705,15 +712,35 @@ def log_day_close_candidate_report(
   ready = [e for e in entries if e.get("status") == "ready_for_enqueue"]
   disqualified = [e for e in entries if e.get("status") == "disqualified"]
   maybe_log_oldest_day_unprocessed_frozen(waiting, log_fn=log_fn)
-  if not queued and not waiting and not ready and not disqualified:
+  reportable = [
+      e for e in entries if e.get("status") != "skipped_no_work"
+  ]
+  if not reportable:
     return
+  reportable.sort(key=lambda e: _calendar_date_from_tar_sort_key(e.get("tar_path")))
+  queued_ordered = [
+      e for e in reportable if e.get("status") == "queued"
+  ]
+  queue_slot = {
+      os.path.normpath(str(e.get("tar_path") or "")): index
+      for index, e in enumerate(queued_ordered, start=1)
+  }
+  mutable_tar_n = sum(1 for e in reportable if e.get("mutable_tar"))
   log_fn(
       "janitor: day_close candidate report reason=%s queued=%d "
-      "waiting_on_ingest=%d ready_for_enqueue=%d disqualified=%d"
-      % (reason, len(queued), len(waiting), len(ready), len(disqualified)),
+      "waiting_on_ingest=%d ready_for_enqueue=%d disqualified=%d "
+      "mutable_tar_n=%d"
+      % (
+          reason,
+          len(queued),
+          len(waiting),
+          len(ready),
+          len(disqualified),
+          mutable_tar_n,
+      ),
       flush=True,
   )
-  for entry in queued + waiting + ready + disqualified:
+  for entry in reportable:
     reasons = list(entry.get("reasons") or ())
     async_suffix = ""
     if (
@@ -760,15 +787,25 @@ def log_day_close_candidate_report(
         )
     if cross_day_n:
       ghost_suffix += " unprocessed_cross_day_n=%d" % cross_day_n
+    tar_key = os.path.normpath(str(entry.get("tar_path") or ""))
+    slot = queue_slot.get(tar_key)
+    queue_order_token = (
+        "queue_order=%d" % slot if slot is not None else "queue_order="
+    )
+    mutable_tar = bool(entry.get("mutable_tar"))
+    if "mutable_tar" not in entry and tar_key:
+      mutable_tar = os.path.isfile(tar_key)
     log_fn(
         "janitor: day_close candidate tar=%s status=%s reasons=%s "
-        "unprocessed=%d phase=%s%s%s"
+        "unprocessed=%d phase=%s mutable_tar=%s %s%s%s"
         % (
             entry.get("tar_path"),
             entry.get("status"),
             ",".join(reasons),
             unprocessed_on_disk,
             entry.get("phase") or "",
+            "yes" if mutable_tar else "no",
+            queue_order_token,
             ghost_suffix,
             async_suffix,
         ),
@@ -2245,10 +2282,17 @@ def build_disqualification_reasons_by_tar(
       reasons[os.path.normpath(tar_path)].add("inflight_append_path")
   for tar_path in _normalize_daily_tar_path_set(unmapped_closed_raw_tars):
     reasons[tar_path].add("unmapped_closed_raw")
-  if unprocessed_by_tar:
-    for tar_path, paths in unprocessed_by_tar.items():
-      if paths:
-        reasons[os.path.normpath(tar_path)].add("checkpoint_incomplete")
+  if unprocessed_by_tar and tgz_archive_dir:
+    for tar_path in unprocessed_by_tar:
+      tar_norm = os.path.normpath(str(tar_path or ""))
+      if not tar_norm:
+        continue
+      if aligned_unprocessed_tar_paths_still_on_disk(
+          unprocessed_by_tar,
+          tar_norm,
+          tgz_archive_dir=tgz_archive_dir,
+      ):
+        reasons[tar_norm].add("checkpoint_incomplete")
   if local_tz is not None:
     for tar_path in list(reasons.keys()):
       if not daily_tar_seal_calendar_eligible(tar_path, local_tz, now=now):

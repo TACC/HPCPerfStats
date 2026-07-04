@@ -934,14 +934,16 @@ class ArchiveJanitor:
     disqualified = set(self.get_disqualified_daily_tars())
     newly_queued: Set[str] = set()
     skipped_inflight = 0
+    ready_for_enqueue_n = 0
     discover_reason = "discover_ready_%s" % reason
     for entry in entries:
-      if len(active) >= max_inflight:
-        skipped_inflight += 1
-        continue
       if entry.get("status") != "ready_for_enqueue":
         continue
       if "awaiting_janitor_discover" not in (entry.get("reasons") or ()):
+        continue
+      ready_for_enqueue_n += 1
+      if len(active) >= max_inflight:
+        skipped_inflight += 1
         continue
       tar_norm = os.path.normpath(entry["tar_path"])
       if self._enqueue_eligible_day_close(
@@ -951,11 +953,17 @@ class ArchiveJanitor:
       ):
         newly_queued.add(tar_norm)
         active.add(tar_norm)
-    if newly_queued or skipped_inflight:
+    if newly_queued or skipped_inflight or ready_for_enqueue_n:
       self.log_fn(
           "janitor: discover_ready_day_close enqueued=%d skipped_inflight=%d "
-          "max_inflight=%d reason=%s"
-          % (len(newly_queued), skipped_inflight, max_inflight, reason),
+          "ready_for_enqueue_n=%d max_inflight=%d reason=%s"
+          % (
+              len(newly_queued),
+              skipped_inflight,
+              ready_for_enqueue_n,
+              max_inflight,
+              reason,
+          ),
           flush=True,
       )
     return newly_queued
