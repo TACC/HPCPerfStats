@@ -2908,12 +2908,17 @@ def _supervisor_startup_preflight_disabled(monkeypatch):
 
 
 def _supervisor_shutdown_on_startup_idle(monkeypatch):
-    """Exit supervisor loop right after startup gate clears (before steady ingest)."""
+    """Exit after startup gate and boot handoff prep, before steady ingest."""
     _orig_log = st.log_print
+    state = {'idle': False}
 
     def _spy_log(*args, **kwargs):
         msg = ' '.join(str(a) for a in args)
         if 'startup maintenance idle; ingest may begin' in msg:
+            state['idle'] = True
+        if 'boot handoff discover' in msg:
+            shutdown_requested[0] = True
+        elif state['idle'] and 'sync_timedb: pending rescan begin' in msg:
             shutdown_requested[0] = True
         return _orig_log(*args, **kwargs)
 
@@ -3497,8 +3502,8 @@ def test_supervisor_reconcile_prepends_oldest_blocked_before_chunk(monkeypatch, 
     finally:
         shutdown_requested[0] = False
 
-def test_supervisor_startup_handoff_paths_ingested_at_queue_head(monkeypatch, tmp_path):
-    """Day-close handoff paths are prepended ahead of unrelated pending backlog."""
+def test_supervisor_startup_handoff_paths_ingested_at_queue_head(monkeypatch, tmp_path, capsys):
+    """Boot handoff paths are prepended ahead of unrelated pending backlog after gate clear."""
     shutdown_requested[0] = False
     ingest_order = []
     try:
@@ -3587,6 +3592,11 @@ def test_supervisor_startup_handoff_paths_ingested_at_queue_head(monkeypatch, tm
         monkeypatch.setattr(st, 'days_ingest_complete_by_checkpoint', lambda *_a, **_k: [])
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
         st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        out = capsys.readouterr().out
+        assert 'startup maintenance idle; ingest may begin' in out
+        idle_idx = out.index('startup maintenance idle; ingest may begin')
+        if 'boot handoff discover' in out:
+            assert out.index('boot handoff discover') > idle_idx
         assert ingest_order
         assert ingest_order[0] == handoff_path
         if backlog:
@@ -3729,7 +3739,7 @@ def test_handoff_batch_remove_processed_paths_single_checkpoint_pass(tmp_path, m
     assert per_path_counts['n'] == n_paths
 
 def test_recover_startup_handoff_incremental_one_tar_per_drain_spin(monkeypatch, tmp_path, capsys):
-    """Boot recover enqueues handoffs; drain loop processes one tar per spin."""
+    """Boot handoff discover enqueues handoffs once after gate clear."""
     shutdown_requested[0] = False
     try:
         archive_dir = tmp_path / 'archive'
@@ -3825,9 +3835,11 @@ def test_recover_startup_handoff_incremental_one_tar_per_drain_spin(monkeypatch,
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'shutdown', lambda self, wait=True: None)
         st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         out = capsys.readouterr().out
-        assert 'handoff_recover' in out
+        assert 'boot handoff discover' in out
         requeue_lines = [line for line in out.splitlines() if 'day_close handoff requeue' in line and 'skip' not in line]
         assert len(requeue_lines) == 2
+        idle_idx = out.index('startup maintenance idle; ingest may begin')
+        assert out.index('boot handoff discover') > idle_idx
         assert 'startup maintenance idle; ingest may begin' in out
     finally:
         shutdown_requested[0] = False
@@ -4841,7 +4853,7 @@ def test_closed_raw_handoff_uses_steady_chunk_not_giant_day_slice(monkeypatch, t
         shutdown_requested[0] = False
 
 def test_giant_day_slice_gated_to_startup_handoff_recover_only(monkeypatch, tmp_path, capsys):
-    """Startup handoff recover enqueues steady chunks only (no giant-day sync ingest)."""
+    """Boot handoff discover enqueues steady chunks only (no giant-day sync ingest)."""
     shutdown_requested[0] = False
     ingest_calls = []
     coord_holder = []
@@ -4932,7 +4944,7 @@ def test_giant_day_slice_gated_to_startup_handoff_recover_only(monkeypatch, tmp_
         shutdown_requested[0] = False
 
 def test_startup_waits_snapshot_before_handoff(monkeypatch, tmp_path, capsys):
-    """Handoff discover runs only after coordinator snapshot is visible."""
+    """Boot handoff discover runs after startup snapshot wait and gate clear."""
     shutdown_requested[0] = False
     events = []
     try:
@@ -5004,10 +5016,19 @@ def test_startup_waits_snapshot_before_handoff(monkeypatch, tmp_path, capsys):
             events.append('snapshot_ready')
             return published
 
+        def gated_wait_for_snapshot(self, *, allow_build=False, build_fn=None):
+            del allow_build, build_fn
+            return gated_get_snapshot(self)
+
         _supervisor_startup_preflight_disabled(monkeypatch)
         monkeypatch.setattr(st, 'DayRawRemovalCoordinator', _HandoffDayRawRemoval)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
         monkeypatch.setattr(StartupArchiveScanCoordinator, 'get_snapshot', gated_get_snapshot)
+        monkeypatch.setattr(
+            StartupArchiveScanCoordinator,
+            'wait_for_snapshot',
+            gated_wait_for_snapshot,
+        )
         monkeypatch.setattr(st, 'rescan_pending_stats_files', lambda *_a, **_k: [])
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
@@ -5022,6 +5043,11 @@ def test_startup_waits_snapshot_before_handoff(monkeypatch, tmp_path, capsys):
         assert 'snapshot_ready' in events
         assert 'discover_manifest' in events
         assert events.index('snapshot_ready') < events.index('discover_manifest')
+        out = capsys.readouterr().out
+        assert 'startup maintenance idle; ingest may begin' in out
+        idle_idx = out.index('startup maintenance idle; ingest may begin')
+        assert 'boot handoff discover' in out
+        assert out.index('boot handoff discover') > idle_idx
     finally:
         shutdown_requested[0] = False
 
@@ -5405,7 +5431,7 @@ def test_startup_handoff_no_giant_slice_manifest_done_0522(monkeypatch, tmp_path
         out = capsys.readouterr().out
         assert kick_calls
         assert 'startup handoff giant-day ingest begin' not in out
-        assert 'startup_handoff_recover summary' in out
+        assert 'boot_handoff summary' in out
     finally:
         shutdown_requested[0] = False
 

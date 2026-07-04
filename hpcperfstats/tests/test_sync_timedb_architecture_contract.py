@@ -50,6 +50,16 @@ def test_arch_no_startup_day_close_preflight_in_supervisor():
   assert "start_async_discover_and_close" not in source
 
 
+def test_arch_startup_block_has_no_handoff_recover():
+  """Prep-only boot: no startup handoff recover or handoff-specific snapshot wait."""
+  source = inspect.getsource(st.run_sync_timedb_supervisor_loop)
+  assert "_recover_startup_day_close_handoffs" not in source
+  assert "_wait_for_startup_snapshot_for_handoff" not in source
+  assert "_process_one_startup_handoff_recover" not in source
+  assert "startup_handoff_recover_pending" not in source
+  assert "_process_boot_handoffs_once" in source
+
+
 def test_arch_rescan_exclude_paths_covers_handoff_retryable(tmp_path):
   """RC-G: handoff retryable paths stay out of pending rescan exclude set."""
   from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (

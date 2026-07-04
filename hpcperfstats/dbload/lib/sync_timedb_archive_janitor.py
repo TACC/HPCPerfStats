@@ -172,6 +172,7 @@ class ArchiveJanitor:
       startup_snapshot_coordinator=None,
       get_ingest_pool_in_flight_count=None,
       get_chunk_in_progress=None,
+      get_startup_ingest_gate_cleared=None,
       process_title: str = "sync_timedb.py",
   ):
     self.archive_data_dir = archive_data_dir
@@ -198,6 +199,9 @@ class ArchiveJanitor:
         get_ingest_pool_in_flight_count or (lambda: 0)
     )
     self.get_chunk_in_progress = get_chunk_in_progress or (lambda: False)
+    self.get_startup_ingest_gate_cleared = (
+        get_startup_ingest_gate_cleared or (lambda: True)
+    )
     self.process_title = process_title
     self._allow_tick_chaining = True
     self._maintenance_pass_cached_inputs = None
@@ -1251,6 +1255,17 @@ class ArchiveJanitor:
         maint_t0 = time.time()
         self.run_scheduled_maintenance_pass(reason=pass_reason)
         maintenance_pass_s += time.time() - maint_t0
+      if not self.get_startup_ingest_gate_cleared():
+        with self._debt_lock:
+          debt_depth = len(self._debt_heap)
+        self.log_fn(
+            "janitor: tick deferred day_close_execution reason=startup_prep "
+            "debt_depth=%d maintenance_pass_s=%.3f"
+            % (debt_depth, maintenance_pass_s),
+            flush=True,
+        )
+        self._ticks_completed += 1
+        return
       # Debt-drain budget starts after scheduled maintenance (not wall-clock for the whole tick).
       budget_deadline = time.time() + self._effective_tick_budget()
       disqualified = set(self.get_disqualified_daily_tars())

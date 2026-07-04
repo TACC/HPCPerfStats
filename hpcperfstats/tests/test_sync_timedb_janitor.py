@@ -2393,6 +2393,81 @@ def test_janitor_startup_tick_discovers_and_enqueues_day_close(
   )
 
 
+def test_janitor_tick_defers_day_close_execution_before_ingest_gate_cleared(
+    tmp_path, monkeypatch,
+):
+  """Discover/enqueue runs at startup; _close_one_day waits for ingest gate clear."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2020-01-11.tar"))
+  open(tar_path, "wb").close()
+  close_calls = []
+  log_lines = []
+
+  def capture_log(msg, flush=False):
+    del flush
+    log_lines.append(str(msg))
+
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      log_fn=capture_log,
+      get_startup_ingest_gate_cleared=lambda: False,
+      get_day_close_candidate_inputs=lambda: {
+          "inflight_paths": set(),
+          "pending_append_by_daily_tar": {},
+          "in_flight_archive_tars": set(),
+          "pending_archive_task_tars": set(),
+          "unmapped_closed_raw_tars": set(),
+          "unprocessed_by_tar": {},
+      },
+  )
+  snapshot = ArchiveMaintenanceSnapshot(closed_paths=[], remaining_raw_by_gz={})
+  monkeypatch.setattr(
+      janitor_mod,
+      "build_archive_maintenance_snapshot",
+      lambda *_a, **_k: snapshot,
+  )
+  monkeypatch.setattr(
+      janitor_mod,
+      "build_remaining_raw_stats_by_daily_gz",
+      lambda *args, **kwargs: {},
+  )
+  monkeypatch.setattr(
+      janitor_mod,
+      "classify_day_close_candidates",
+      lambda **_k: [
+          {
+              "tar_path": tar_path,
+              "status": "ready_for_enqueue",
+              "reasons": ["awaiting_janitor_discover"],
+              "unprocessed": 0,
+          },
+      ],
+  )
+  monkeypatch.setattr(janitor, "get_ingest_pool_in_flight_count", lambda: 0)
+  monkeypatch.setattr(janitor, "get_chunk_in_progress", lambda: False)
+  monkeypatch.setattr(
+      janitor,
+      "_close_one_day",
+      lambda *_a, **_k: close_calls.append(1) or False,
+  )
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor,
+      "_run_tick_lock_cleanup",
+      lambda self: 0,
+  )
+  janitor._enqueue_day_close(tar_path)
+  janitor._run_tick_body()
+  assert close_calls == []
+  assert janitor.debt_depth() == 1
+  assert any(
+      "tick deferred day_close_execution reason=startup_prep" in line
+      for line in log_lines
+  )
+
+
 def test_no_async_day_close_worker_submit_on_discover(tmp_path, monkeypatch):
   """Discover enqueues debt only; does not start day-close pool workers."""
   daily_dir = tmp_path / "daily"
@@ -2425,6 +2500,18 @@ def test_no_async_day_close_worker_submit_on_discover(tmp_path, monkeypatch):
       janitor_mod,
       "build_remaining_raw_stats_by_daily_gz",
       lambda *args, **kwargs: {},
+  )
+  monkeypatch.setattr(
+      janitor_mod,
+      "classify_day_close_candidates",
+      lambda **_k: [
+          {
+              "tar_path": tar_path,
+              "status": "ready_for_enqueue",
+              "reasons": ["awaiting_janitor_discover"],
+              "unprocessed": 0,
+          },
+      ],
   )
   janitor._discover_and_enqueue_ready_day_close(reason="tick")
   assert pool_submits == []

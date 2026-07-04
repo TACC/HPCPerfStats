@@ -5,7 +5,7 @@
 
 **Cold path (``ArchiveJanitor`` coordinator thread):** day-debt queue drained within ``archive_janitor_budget_seconds`` using a ``ThreadPoolExecutor`` of up to ``sync_day_close_max_inflight`` (default **4**) parallel ``DAY_CLOSE`` workers (continuous refill on completion). Each tick discovers checkpoint-complete ``DAY_CLOSE`` candidates and enqueues debt (same inflight cap). Workers run seal → verify → delete → tar_drop (steady-state ingest is not gated on raw deletion). Snapshot/hints refresh at supervisor startup (CLI ``all`` only) and on scheduled maintenance passes. Per-day lock cleanup (once per tick), dedupe-before-seal, and DB head-ingest gate unchanged. Progress persists in ``.sync_archive_maint_hints.json`` v2 (``debt_queue``, ``day_phases``).
 
-**Startup maintenance (``all`` only):** when ``startdate == 'all'``, the janitor thread discovers/enqueues ``DAY_CLOSE`` on its heavy maintenance pass; ingest is never gated on day-close completion. Date-range runs skip startup maintenance and begin ingest immediately.
+**Startup maintenance (``all`` only):** when ``startdate == 'all'``, the janitor thread builds the canonical snapshot and may discover/enqueue ``DAY_CLOSE`` debt, but does not run ``_close_one_day`` until the supervisor clears the ingest gate. Boot handoff discovery runs once on the first main-loop iteration after gate clear. Date-range runs skip startup maintenance and begin ingest immediately.
 
 Append and raw delete stay DB-gated when ``sync_archive_require_db_ingest=yes``. Finalize uses soft defer (``allow_defer``) under ingest backlog instead of blocking the supervisor.
 
@@ -4222,8 +4222,6 @@ def run_sync_timedb_supervisor_loop(
       )
 
   def _should_defer_immediate_day_close():
-    if startup_handoff_recover_pending or handoff_giant_day_slice_in_progress:
-      return True, "handoff_recovery", len(startup_handoff_recover_pending)
     if handoff_priority_paths:
       return True, "handoff_priority", len(handoff_priority_paths)
     return False, "", 0
@@ -4231,18 +4229,7 @@ def run_sync_timedb_supervisor_loop(
   _should_defer_archive_finalize_day_close = _should_defer_immediate_day_close
 
   def _log_immediate_day_close_defer(context, reason, extra):
-    if reason == "handoff_recovery":
-      log_print(
-          "INFO: immediate day_close defer context=%s reason=handoff_recovery "
-          "pending=%d giant_day_slice=%s"
-          % (
-              context,
-              extra,
-              "yes" if handoff_giant_day_slice_in_progress else "no",
-          ),
-          flush=True,
-      )
-    elif reason == "handoff_priority":
+    if reason == "handoff_priority":
       log_print(
           "INFO: immediate day_close defer context=%s reason=handoff_priority "
           "pending_handoff=%d"
@@ -4256,17 +4243,7 @@ def run_sync_timedb_supervisor_loop(
           flush=True,
       )
     if context == "archive_finalize":
-      if reason == "handoff_recovery":
-        log_print(
-            "INFO: archive_finalize defer immediate day_close "
-            "reason=handoff_recovery pending=%d giant_day_slice=%s"
-            % (
-                extra,
-                "yes" if handoff_giant_day_slice_in_progress else "no",
-            ),
-            flush=True,
-        )
-      elif reason == "handoff_priority":
+      if reason == "handoff_priority":
         log_print(
             "INFO: archive_finalize defer immediate day_close "
             "reason=handoff_priority pending_handoff=%d"
@@ -5428,6 +5405,9 @@ def run_sync_timedb_supervisor_loop(
   def _get_chunk_in_progress():
     return bool(chunk_in_progress)
 
+  def _get_startup_ingest_gate_cleared():
+    return bool(reconcile_refs.get("ingest_gate_cleared"))
+
   archive_janitor = ArchiveJanitor(
       archive_data_dir=directory,
       host_name_ext=host_name_ext,
@@ -5452,6 +5432,7 @@ def run_sync_timedb_supervisor_loop(
       startup_snapshot_coordinator=startup_archive_scan,
       get_ingest_pool_in_flight_count=_get_ingest_pool_in_flight_count,
       get_chunk_in_progress=_get_chunk_in_progress,
+      get_startup_ingest_gate_cleared=_get_startup_ingest_gate_cleared,
       process_title=SYNC_TIMEDB_PROCESS_TITLE,
   )
   reconcile_refs["get_startup_snapshot"] = startup_archive_scan.get_snapshot
@@ -5555,9 +5536,8 @@ def run_sync_timedb_supervisor_loop(
 
   set_archive_members_invalidation_hook(_archive_members_invalidation_hook)
 
-  startup_handoff_recover_pending = deque()
   handoff_requeued_tars_this_boot = set()
-  handoff_giant_day_slice_in_progress = False
+  boot_handoffs_processed = False
   startup_ingest_gate_cleared = False
   startup_gate_cleared_logged = False
 
@@ -5574,13 +5554,11 @@ def run_sync_timedb_supervisor_loop(
       return
     startup_gate_cleared_logged = True
     log_print(
-        "sync_timedb: startup_elapsed_s=%.3f startup_handoff_recover summary "
-        "handoff_requeued_tars=%d pending_handoff=%d giant_day_slice=%s"
+        "sync_timedb: startup_elapsed_s=%.3f boot_handoff summary "
+        "handoff_requeued_tars=%d"
         % (
             startup_gate_cleared_t0 - ingest_t0,
             len(handoff_requeued_tars_this_boot),
-            len(startup_handoff_recover_pending),
-            handoff_giant_day_slice_in_progress,
         ),
         flush=True,
     )
@@ -5625,8 +5603,6 @@ def run_sync_timedb_supervisor_loop(
       tar_norm,
       paths,
       reason,
-      *,
-      allow_giant_day_slice=False,
   ):
     nonlocal pending_stats_files
     tar_norm = os.path.normpath(str(tar_norm or ""))
@@ -5665,66 +5641,17 @@ def run_sync_timedb_supervisor_loop(
           if calendar_date_from_daily_tar_path(tar_norm) is not None
           else tar_norm
       )
-      if allow_giant_day_slice:
-        nonlocal handoff_giant_day_slice_in_progress
-        n_slices = (len(requeued_paths) + max_slice - 1) // max_slice
-        log_print(
-            "sync_timedb: startup handoff giant-day ingest begin day=%s paths=%d "
-            "slices=%d max_files=%d handoff_mode=giant_day_slice "
-            "reason=startup_handoff_recover"
-            % (day_token, len(requeued_paths), n_slices, max_slice),
-            flush=True,
-        )
-        handoff_giant_day_slice_in_progress = True
-        failed_requeue = []
-        try:
-          for off in range(0, len(requeued_paths), max_slice):
-            slice_paths = requeued_paths[off:off + max_slice]
-            _successful, failed = _run_ingest_archive_paths_batch(
-                slice_paths,
-                "handoff giant-day slice",
-            )
-            failed_requeue.extend(failed)
-        finally:
-          handoff_giant_day_slice_in_progress = False
-        requeued_paths = failed_requeue
-        if not requeued_paths:
-          handoff_requeued_tars_this_boot.add(tar_norm)
-          has_closed_raw_fn = getattr(
-              day_raw_removal,
-              "has_closed_raw_on_disk",
-              None,
-          )
-          closed_raw_gone = (
-              day_raw_removal is None
-              or not (
-                  has_closed_raw_fn(tar_norm)
-                  if callable(has_closed_raw_fn)
-                  else False
-              )
-          )
-          if closed_raw_gone:
-            _clear_handoff_priority_for_tar(tar_norm)
-          log_print(
-              "sync_timedb: startup handoff giant-day ingest complete day=%s "
-              "detail=all_slices_ok"
-              % day_token,
-              flush=True,
-          )
-          archive_janitor.signal_work_available()
-          return
-      else:
-        log_print(
-            "sync_timedb: day_close handoff steady-chunk enqueue day=%s paths=%d "
-            "handoff_mode=steady_chunk chunk_size=%d reason=%s"
-            % (
-                day_token,
-                len(requeued_paths),
-                cfg.get_sync_ingest_chunk_size(),
-                reason or "",
-            ),
-            flush=True,
-        )
+      log_print(
+          "sync_timedb: day_close handoff steady-chunk enqueue day=%s paths=%d "
+          "handoff_mode=steady_chunk chunk_size=%d reason=%s"
+          % (
+              day_token,
+              len(requeued_paths),
+              cfg.get_sync_ingest_chunk_size(),
+              reason or "",
+          ),
+          flush=True,
+      )
     for path in requeued_paths:
       handoff_priority_paths.add(path)
     _flush_checkpoint_if_needed(force=True)
@@ -5749,88 +5676,46 @@ def run_sync_timedb_supervisor_loop(
     )
     archive_janitor.signal_work_available()
 
-  def _enqueue_startup_handoff_recoveries():
+  def _process_boot_handoffs_once():
+    nonlocal pending_stats_files, boot_handoffs_processed
+    if boot_handoffs_processed or not run_startup_maintenance:
+      return
+    boot_handoffs_processed = True
     if day_raw_removal is None or not day_raw_removal.enabled:
       return
     seen_tars = set()
+    handoff_entries = []
     for tar_norm, paths in day_raw_removal.discover_manifest_handoffs():
       tar_norm = os.path.normpath(str(tar_norm or ""))
       if not tar_norm or tar_norm in seen_tars:
         continue
       seen_tars.add(tar_norm)
-      startup_handoff_recover_pending.append(
-          (tar_norm, paths, "startup_manifest_handoff"),
-      )
+      handoff_entries.append((tar_norm, paths, "boot_manifest_handoff"))
     for tar_norm, paths in day_raw_removal.discover_closed_raw_on_disk_handoffs():
       tar_norm = os.path.normpath(str(tar_norm or ""))
       if not tar_norm or tar_norm in seen_tars:
         continue
       seen_tars.add(tar_norm)
-      startup_handoff_recover_pending.append(
-          (tar_norm, paths, "startup_closed_raw_handoff"),
-      )
-
-  def _process_one_startup_handoff_recover():
-    if not startup_handoff_recover_pending:
-      return False
-    tar_norm, paths, reason = startup_handoff_recover_pending.popleft()
-    if (
-        reason == "startup_closed_raw_handoff"
-        and day_raw_removal is not None
-    ):
-      requeued = day_raw_removal.requeue_closed_raw_paths_for_ingest(
-          tar_norm,
-          reason=reason,
-          paths=paths,
-      )
-      if not requeued:
-        handoff_requeued_tars_this_boot.add(tar_norm)
-        archive_janitor.signal_work_available()
-      return True
-    _requeue_day_close_handoff_paths(
-        tar_norm,
-        paths,
-        reason,
-        allow_giant_day_slice=False,
-    )
-    return True
-
-  def _wait_for_startup_snapshot_for_handoff():
-    """Poll coordinator/accrual snapshot before handoff discover (bounded wait)."""
-    if not run_startup_maintenance:
+      handoff_entries.append((tar_norm, paths, "boot_closed_raw_handoff"))
+    if not handoff_entries:
       return
-    wait_limit = max(
-        120.0,
-        float(cfg.get_sync_startup_snapshot_wait_seconds()),
-    )
-    wait_t0 = time.time()
-    last_log = wait_t0
-    while time.time() - wait_t0 < wait_limit:
-      if startup_archive_scan.get_snapshot() is not None:
-        return
-      accrual = reconcile_refs["get_accrual_snapshot"]()
-      if accrual is not None and accrual.closed_paths:
-        return
-      now = time.time()
-      if now - last_log >= 30.0:
-        log_print(
-            "sync_timedb: startup_handoff_snapshot_wait elapsed_s=%.1f"
-            % (now - wait_t0),
-            flush=True,
-        )
-        last_log = now
-      if shutdown_requested[0]:
-        return
-      sleep_until_shutdown(0.5)
     log_print(
-        "sync_timedb: startup_handoff_snapshot_wait timeout elapsed_s=%.1f "
-        "detail=handoff_discover_proceeding"
-        % (time.time() - wait_t0),
+        "sync_timedb: boot handoff discover tars=%d"
+        % len(handoff_entries),
         flush=True,
     )
-
-  def _recover_startup_day_close_handoffs():
-    _enqueue_startup_handoff_recoveries()
+    for tar_norm, paths, reason in handoff_entries:
+      if reason == "boot_closed_raw_handoff":
+        requeued = day_raw_removal.requeue_closed_raw_paths_for_ingest(
+            tar_norm,
+            reason=reason,
+            paths=paths,
+        )
+        if not requeued:
+          handoff_requeued_tars_this_boot.add(tar_norm)
+          archive_janitor.signal_work_available()
+        continue
+      _requeue_day_close_handoff_paths(tar_norm, paths, reason)
 
   day_raw_removal.on_pipeline_complete = _on_day_close_pipeline_complete
   day_raw_removal.on_handoff_to_ingest = _requeue_day_close_handoff_paths
@@ -5873,10 +5758,7 @@ def run_sync_timedb_supervisor_loop(
       startup_archive_scan.note_startup_maintenance_pending()
       archive_janitor.signal_scheduled_maintenance_pass(reason="startup")
       archive_janitor.enqueue_startup_debt()
-      _wait_for_startup_snapshot_for_handoff()
-      _recover_startup_day_close_handoffs()
-      while startup_handoff_recover_pending:
-        _process_one_startup_handoff_recover()
+      _get_startup_snapshot_for_rescan(idle_refill=False)
       _mark_startup_ingest_gate_cleared()
       log_print(
           "sync_timedb: startup maintenance idle; ingest may begin",
@@ -5892,6 +5774,7 @@ def run_sync_timedb_supervisor_loop(
       _mark_startup_ingest_gate_cleared()
 
     while not shutdown_requested[0]:
+      _process_boot_handoffs_once()
       _maybe_apply_day_close_rescan()
 
       if not pending_stats_files:
