@@ -2,7 +2,7 @@
  * Realistic Django wire payloads shared by audit-wire-drift.mts and parse-api-response tests.
  * Keep in sync with hpcperfstats/site/lib/machine/tests/test_openapi_wire_contracts.py fixtures.
  */
-import { OPENAPI_BOKEH_JSON_ITEM } from "@/test-utils/bokeh-fixtures";
+import { OPENAPI_BOKEH_JSON_ITEM } from "./bokeh-wire-fixtures";
 
 export type WireAuditCase = {
   method: "GET" | "POST";
