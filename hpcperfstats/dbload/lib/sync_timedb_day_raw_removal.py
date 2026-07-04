@@ -630,7 +630,7 @@ class _DayRawRemovalState:
     future = self._pipeline_future
     return future is not None and not future.done()
 
-  def blocks_startup_drain(self) -> bool:
+  def has_active_raw_removal_work(self) -> bool:
     if self.phase() == PHASE_DONE:
       if self.needs_reopen_for_verified_pending():
         return True
@@ -655,7 +655,7 @@ class _DayRawRemovalState:
   def waiting_on_ingest_at_startup(self) -> bool:
     return (
         not self.delete_phase_done()
-        and not self.blocks_startup_drain()
+        and not self.has_active_raw_removal_work()
         and self.needs_delete_phase()
     )
 
@@ -848,7 +848,7 @@ class _DayRawRemovalState:
       filtered.append(path)
     gate_fn = (
         self.ingest_ready_fn
-        if cfg.get_sync_archive_require_db_head_ingest()
+        if cfg.get_sync_archive_require_db_ingest()
         else None
     )
     if filtered:
@@ -951,7 +951,7 @@ class _DayRawRemovalState:
     batch = filtered[cursor:batch_end]
     gate_fn = (
         self.ingest_ready_fn
-        if cfg.get_sync_archive_require_db_head_ingest()
+        if cfg.get_sync_archive_require_db_ingest()
         else None
     )
     classify_paths = batch
@@ -1242,7 +1242,7 @@ def day_raw_delete_safe_during_chunk(
 
 def run_supervisor_day_raw_removal_delete_pass(
     day_raw_removal,
-    async_day_close,
+    day_close_manifest,
     *,
     chunk_in_progress: bool,
     chunk_calendar_day_hint: Optional[str] = None,
@@ -1266,9 +1266,9 @@ def run_supervisor_day_raw_removal_delete_pass(
   needs_tar_drop = day_raw_removal.any_needs_tar_drop_finish()
   if not needs_delete and not needs_tar_drop:
     advance_fn = getattr(
-        day_raw_removal, "advance_startup_drain_blockers", lambda: False,
+        day_raw_removal, "advance_raw_removal_blockers", lambda: False,
     )
-    if day_raw_removal.any_blocks_startup_drain() and advance_fn():
+    if day_raw_removal.any_active_raw_removal_work() and advance_fn():
       return True
     return False
   tar_drop_targets: list[str] = []
@@ -1510,7 +1510,7 @@ class DayRawRemovalCoordinator:
         reopened += 1
     return reopened
 
-  def advance_startup_drain_blockers(self) -> bool:
+  def advance_raw_removal_blockers(self) -> bool:
     """Kick verify/quarantine for days that block startup drain without delete work."""
     if not self.enabled:
       return False
@@ -1518,7 +1518,7 @@ class DayRawRemovalCoordinator:
     with self._days_lock:
       states = list(self._days.values())
     for state in states:
-      if not state.blocks_startup_drain():
+      if not state.has_active_raw_removal_work():
         continue
       if state._async_verify_in_flight():
         continue
@@ -1543,7 +1543,7 @@ class DayRawRemovalCoordinator:
     with self._days_lock:
       states = list(self._days.values())
     for state in states:
-      if not state.blocks_startup_drain():
+      if not state.has_active_raw_removal_work():
         continue
       in_flight = state._async_verify_in_flight()
       pending_n = state._manifest_verified_pending_count()
@@ -1592,12 +1592,12 @@ class DayRawRemovalCoordinator:
       self._notify_delete_complete(tar_path)
     return True
 
-  def any_blocks_startup_drain(self) -> bool:
+  def any_active_raw_removal_work(self) -> bool:
     if not self.enabled:
       return False
     with self._days_lock:
       states = list(self._days.values())
-    return any(state.blocks_startup_drain() for state in states)
+    return any(state.has_active_raw_removal_work() for state in states)
 
   def count_days_waiting_on_ingest(self) -> int:
     if not self.enabled:

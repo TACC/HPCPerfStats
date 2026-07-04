@@ -155,7 +155,7 @@ def test_build_head_ingest_ready_set_dedupes_db_lookups(monkeypatch, tmp_path):
     calls["n"] += 1
     return True
 
-  monkeypatch.setattr(cfg, "get_sync_archive_require_db_head_ingest", lambda: True)
+  monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
   monkeypatch.setattr(readiness, "host_timestamp_seconds_all_present", _all_present)
   ready = readiness.build_head_ingest_ready_set(paths, sampled, log_fn=None)
   assert paths[0] in ready

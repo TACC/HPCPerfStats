@@ -307,14 +307,14 @@ def test_triggered_rules_for_dockerignore_path():
 
 def test_triggered_rules_sync_timedb_lib_helper_path():
   rules = triggered_rules_for_paths(
-      ["hpcperfstats/dbload/lib/sync_timedb_async_day_close.py"],
+      ["hpcperfstats/dbload/lib/sync_timedb_day_close_manifest.py"],
   )
   assert "sync-timedb-archive-janitor-contract.mdc" in rules
 
 
 def test_triggered_rules_stale_dbload_helper_path_not_matched():
   rules = triggered_rules_for_paths(
-      ["hpcperfstats/dbload/sync_timedb_async_day_close.py"],
+      ["hpcperfstats/dbload/sync_timedb_day_close_manifest.py"],
   )
   assert "sync-timedb-archive-janitor-contract.mdc" not in rules
 
@@ -577,10 +577,10 @@ def test_check_create_plan_disk_sync_injects_same_turn_write(tmp_path):
 
 def test_paths_from_plan_markdown_extracts_backtick_paths():
   text = (
-      "Touch [`hpcperfstats/dbload/lib/sync_timedb_async_day_close.py`](path)"
+      "Touch [`hpcperfstats/dbload/lib/sync_timedb_day_close_manifest.py`](path)"
   )
   paths = lib.paths_from_plan_markdown(text)
-  assert "hpcperfstats/dbload/lib/sync_timedb_async_day_close.py" in paths
+  assert "hpcperfstats/dbload/lib/sync_timedb_day_close_manifest.py" in paths
 
 
 def test_plan_template_read_issues_requires_read_before_create_plan():
@@ -1027,7 +1027,7 @@ def test_check_edit_triggered_rules_create_plan_requires_reads(tmp_path):
                           "input": {
                               "plan": (
                                   "## Implementation\n\n"
-                                  "`hpcperfstats/dbload/lib/sync_timedb_async_day_close.py`\n"
+                                  "`hpcperfstats/dbload/lib/sync_timedb_day_close_manifest.py`\n"
                               ),
                           },
                       },
@@ -1043,7 +1043,7 @@ def test_check_edit_triggered_rules_create_plan_requires_reads(tmp_path):
       "tool_input": {
           "plan": (
               "## Implementation\n\n"
-              "`hpcperfstats/dbload/lib/sync_timedb_async_day_close.py`\n"
+              "`hpcperfstats/dbload/lib/sync_timedb_day_close_manifest.py`\n"
           ),
       },
       "transcript_path": str(transcript),

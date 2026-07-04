@@ -220,7 +220,7 @@ def test_done_manifest_resets_when_retryable_skips_remain_on_disk(tmp_path):
   assert seg.is_file()
 
 
-def test_any_blocks_startup_drain_false_when_only_retryable_skips_remain(tmp_path):
+def test_any_active_raw_removal_work_false_when_only_retryable_skips_remain(tmp_path):
   day = datetime(2022, 6, 12)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
   tar_path, _zst = _seal_day(tmp_path, seg, day)
@@ -228,12 +228,12 @@ def test_any_blocks_startup_drain_false_when_only_retryable_skips_remain(tmp_pat
   state = coord._get_or_create_day(tar_path)
   state._verify_body()
   assert coord.any_needs_delete_phase()
-  assert not coord.any_blocks_startup_drain()
+  assert not coord.any_active_raw_removal_work()
   assert state.waiting_on_ingest_at_startup()
   assert coord.count_days_waiting_on_ingest() == 1
   state._mark_done_waiting_on_ingest()
   assert not coord.any_needs_delete_phase()
-  assert not coord.any_blocks_startup_drain()
+  assert not coord.any_active_raw_removal_work()
   assert coord.count_days_waiting_on_ingest() == 0
   assert seg.is_file()
 
@@ -254,7 +254,7 @@ def test_apply_batch_delete_marks_done_when_only_retryable_skips_remain(
   assert deleted == 0
   assert coord.phase(tar_path) == PHASE_DONE
   assert state._needs_retry_after_ingest()
-  assert not coord.any_blocks_startup_drain()
+  assert not coord.any_active_raw_removal_work()
   assert seg.is_file()
 
 
@@ -767,7 +767,7 @@ def test_closed_raw_handoff_manifest_fast_phase_done_many_retryable_skip(
   assert coord2.has_closed_raw_on_disk(tar_path)
 
 
-def test_blocks_startup_drain_false_when_only_verified_pending_delete(tmp_path):
+def test_has_active_raw_removal_work_false_when_only_verified_pending_delete(tmp_path):
   day = datetime(2025, 12, 3)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
   tar_path, _zst = _seal_day(tmp_path, seg, day)
@@ -775,8 +775,8 @@ def test_blocks_startup_drain_false_when_only_verified_pending_delete(tmp_path):
   state = coord._get_or_create_day(tar_path)
   state._verify_body()
   assert coord.paths_pending_delete()
-  assert not coord.any_blocks_startup_drain()
-  assert state.blocks_startup_drain() is False
+  assert not coord.any_active_raw_removal_work()
+  assert state.has_active_raw_removal_work() is False
 
 
 def test_batch_delete_runs_during_chunk_when_calendar_disjoint():
@@ -1263,7 +1263,7 @@ def test_reopen_done_days_with_verified_on_disk_at_delete_pass_start(tmp_path):
   assert spin is False
 
 
-def test_advance_startup_drain_blockers_starts_verify_for_verifying_manifest(
+def test_advance_raw_removal_blockers_starts_verify_for_verifying_manifest(
     tmp_path,
 ):
   day = datetime(2026, 5, 20)
@@ -1283,11 +1283,11 @@ def test_advance_startup_drain_blockers_starts_verify_for_verifying_manifest(
     return original_verify(tar_norm, **kwargs)
 
   coord.start_async_verify = _track_verify
-  assert coord.advance_startup_drain_blockers()
+  assert coord.advance_raw_removal_blockers()
   assert verify_calls == [tar_path]
 
 
-def test_blocks_startup_drain_true_when_done_with_verified_pending(tmp_path):
+def test_has_active_raw_removal_work_true_when_done_with_verified_pending(tmp_path):
   day = datetime(2026, 5, 24)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
   tar_path, _zst = _seal_day(tmp_path, seg, day)
@@ -1299,8 +1299,8 @@ def test_blocks_startup_drain_true_when_done_with_verified_pending(tmp_path):
     state._manifest["verified_count"] = 1
     _save_manifest(state._manifest_path, state._manifest)
 
-  assert state.blocks_startup_drain()
-  assert coord.any_blocks_startup_drain()
+  assert state.has_active_raw_removal_work()
+  assert coord.any_active_raw_removal_work()
   n, token = coord.blocking_startup_drain_summary()
   assert n == 1
   assert "pending_verified=1" in token
@@ -1327,12 +1327,12 @@ def test_reopen_done_manifest_pending_without_files_on_disk_unblocks_gate(
     state._manifest["verified_count"] = 1
     _save_manifest(state._manifest_path, state._manifest)
 
-  assert state.blocks_startup_drain()
+  assert state.has_active_raw_removal_work()
   assert state.reopen_delete_phase_if_verified_on_disk()
   assert state.phase() == PHASE_DELETING
   assert state.apply_batch_delete() == 1
   assert state._manifest_verified_pending_count() == 0
-  assert not state.blocks_startup_drain()
+  assert not state.has_active_raw_removal_work()
   spin = run_supervisor_day_raw_removal_delete_pass(
       coord,
       None,
@@ -1341,7 +1341,7 @@ def test_reopen_done_manifest_pending_without_files_on_disk_unblocks_gate(
       finalize_day_close_delete=lambda _t: None,
       sleep_fn=lambda _s: None,
   )
-  assert not state.blocks_startup_drain()
+  assert not state.has_active_raw_removal_work()
   assert spin is False
 
 
@@ -1379,7 +1379,7 @@ def test_pre_seal_verify_slices_by_paths_per_tick(tmp_path, monkeypatch):
       lambda: 3600.0,
   )
   monkeypatch.setattr(cfg, "get_archive_janitor_budget_seconds", lambda: 3600.0)
-  monkeypatch.setattr(cfg, "get_sync_archive_require_db_head_ingest", lambda: False)
+  monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: False)
   logs = []
 
   def _remaining(*_a, **_k):

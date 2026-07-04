@@ -1,4 +1,4 @@
-"""Day-close manifest coordinator (historical module name: async_day_close).
+"""Day-close manifest coordinator (historical module name: day_close_manifest).
 
 On-disk artifact remains ``.sync_timedb_async_day_close.json``. Work runs on
 janitor day-close worker threads, not an async worker pool owned by this module.
@@ -23,7 +23,7 @@ from hpcperfstats.dbload.lib.sync_timedb_persistence import (
 MANIFEST_BASENAME = ".sync_timedb_async_day_close.json"
 MANIFEST_VERSION = 1
 
-_ASYNC_DAY_CLOSE_PIPELINE_PENDING_STATUSES = frozenset({
+_DAY_CLOSE_PIPELINE_PENDING_STATUSES = frozenset({
     "submitted",
     "queued",
     "sealing",
@@ -32,10 +32,10 @@ _ASYNC_DAY_CLOSE_PIPELINE_PENDING_STATUSES = frozenset({
 })
 
 
-def _is_pipeline_pending_entry(entry) -> bool:
+def _is_day_close_pipeline_pending_entry(entry) -> bool:
   if not isinstance(entry, dict):
     return False
-  return str(entry.get("status") or "") in _ASYNC_DAY_CLOSE_PIPELINE_PENDING_STATUSES
+  return str(entry.get("status") or "") in _DAY_CLOSE_PIPELINE_PENDING_STATUSES
 
 
 def manifest_path(archive_data_dir: str) -> str:
@@ -52,7 +52,7 @@ def _new_manifest() -> Dict[str, Any]:
 
 
 def _load_manifest(path: str) -> Dict[str, Any]:
-  payload = load_persistence_document(path, "async_day_close", default=None)
+  payload = load_persistence_document(path, "day_close_manifest", default=None)
   if not isinstance(payload, dict):
     return _new_manifest()
   payload.setdefault("version", MANIFEST_VERSION)
@@ -61,7 +61,7 @@ def _load_manifest(path: str) -> Dict[str, Any]:
 
 
 def _save_manifest(path: str, payload: Dict[str, Any]) -> None:
-  save_persistence_document(path, "async_day_close", payload)
+  save_persistence_document(path, "day_close_manifest", payload)
 
 
 class DayCloseManifestCoordinator:
@@ -104,7 +104,7 @@ class DayCloseManifestCoordinator:
     self._recover_stale_manifest_entries()
 
   def _recover_stale_manifest_entries(self) -> None:
-    stale_s = cfg.get_sync_day_close_async_stale_seconds()
+    stale_s = cfg.get_sync_day_close_manifest_stale_seconds()
     if stale_s <= 0:
       return
     now = time.time()
@@ -188,7 +188,7 @@ class DayCloseManifestCoordinator:
       except Exception:
         pass
     for tar_norm, entry in self._manifest.get("entries", {}).items():
-      if _is_pipeline_pending_entry(entry):
+      if _is_day_close_pipeline_pending_entry(entry):
         active.add(os.path.normpath(tar_norm))
     return active
 
@@ -236,7 +236,7 @@ class DayCloseManifestCoordinator:
       if not isinstance(entry, dict):
         return
       status = str(entry.get("status") or "")
-      if status not in _ASYNC_DAY_CLOSE_PIPELINE_PENDING_STATUSES:
+      if status not in _DAY_CLOSE_PIPELINE_PENDING_STATUSES:
         return
     self._set_entry_status(tar_norm, "deferred", detail="waiting_on_ingest")
     self._touch_manifest("deferred_waiting_on_ingest", tar_norm=tar_norm)
@@ -262,35 +262,21 @@ class DayCloseManifestCoordinator:
         return False
     return self._day_close_filesystem_complete(tar_norm)
 
-  def submit_day_close(
-      self,
-      tar_path: str,
-      *,
-      reason: str,
-      disqualified_daily_tars=None,
-  ) -> bool:
-    """Enqueue janitor ``DAY_CLOSE`` debt for ``tar_path`` (single-flight per tar)."""
-    return self._submit_day_close_impl(
-        tar_path,
-        reason=reason,
-        disqualified_daily_tars=disqualified_daily_tars,
-    )
-
   def enqueue_day_close(
       self,
       tar_path: str,
-      reason: str,
+      reason: str = "",
       *,
       disqualified_daily_tars=None,
   ) -> bool:
-    """Unified manifest + debt enqueue API."""
-    return self._submit_day_close_impl(
+    """Enqueue janitor ``DAY_CLOSE`` debt for ``tar_path`` (single-flight per tar)."""
+    return self._enqueue_day_close_impl(
         tar_path,
         reason=reason,
         disqualified_daily_tars=disqualified_daily_tars,
     )
 
-  def _submit_day_close_impl(
+  def _enqueue_day_close_impl(
       self,
       tar_path: str,
       *,
@@ -312,11 +298,11 @@ class DayCloseManifestCoordinator:
       try:
         eligible, skip_reason = self.submit_eligible_fn(tar_norm)
       except Exception:
-        eligible, skip_reason = False, "submit_eligible_error"
+        eligible, skip_reason = False, "enqueue_eligible_error"
       if not eligible:
         if skip_reason:
           self.log_fn(
-              "janitor: day_close submit skip tar=%s reason=%s"
+              "janitor: day_close enqueue skip tar=%s reason=%s"
               % (tar_norm, skip_reason),
               flush=True,
           )
@@ -329,11 +315,11 @@ class DayCloseManifestCoordinator:
         inflight = set()
     with self._lock:
       entry = self._manifest.get("entries", {}).get(tar_norm)
-      if _is_pipeline_pending_entry(entry):
+      if _is_day_close_pipeline_pending_entry(entry):
         return True
       active = set(inflight)
       for pending_tar, pending_entry in self._manifest.get("entries", {}).items():
-        if _is_pipeline_pending_entry(pending_entry):
+        if _is_day_close_pipeline_pending_entry(pending_entry):
           active.add(os.path.normpath(pending_tar))
       if tar_norm in active:
         return True
@@ -354,7 +340,7 @@ class DayCloseManifestCoordinator:
       }
       self._touch_manifest_locked("queued", tar_norm=tar_norm)
     self.log_fn(
-        "janitor: day_close submit tar=%s reason=%s" % (tar_norm, reason),
+        "janitor: day_close enqueue tar=%s reason=%s" % (tar_norm, reason),
         flush=True,
     )
     return True
@@ -390,6 +376,3 @@ class DayCloseManifestCoordinator:
       except Exception:
         pass
 
-
-# Historical name — not an async worker pool.
-AsyncDayCloseCoordinator = DayCloseManifestCoordinator

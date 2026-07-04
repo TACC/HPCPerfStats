@@ -163,7 +163,7 @@ def test_arch_async_complete_requires_filesystem_truth(tmp_path):
   """Phase 3c: manifest complete status does not imply is_complete when .tar remains."""
   from datetime import timezone
 
-  from hpcperfstats.dbload.lib.sync_timedb_async_day_close import AsyncDayCloseCoordinator
+  from hpcperfstats.dbload.lib.sync_timedb_day_close_manifest import DayCloseManifestCoordinator
 
   daily_dir = tmp_path / "daily"
   daily_dir.mkdir()
@@ -172,7 +172,7 @@ def test_arch_async_complete_requires_filesystem_truth(tmp_path):
   zst_path = tar_path.replace(".tar", ".tar.zst")
   open(zst_path, "wb").close()
 
-  coord = AsyncDayCloseCoordinator(
+  coord = DayCloseManifestCoordinator(
       archive_data_dir=str(tmp_path / "archive"),
       host_name_ext=".hpc",
       tgz_archive_dir=str(daily_dir),
@@ -326,11 +326,11 @@ def test_arch_restore_for_append_runs_on_archive_pool_not_janitor():
 
 
 def test_arch_mainthread_enqueue_does_not_block_on_janitor_fn(tmp_path):
-  """MainThread submit_day_close returns immediately; janitor enqueue is async."""
+  """MainThread enqueue_day_close returns immediately; janitor enqueue is async."""
   import time
 
-  from hpcperfstats.dbload.lib.sync_timedb_async_day_close import (
-      AsyncDayCloseCoordinator,
+  from hpcperfstats.dbload.lib.sync_timedb_day_close_manifest import (
+      DayCloseManifestCoordinator,
   )
 
   archive_dir = tmp_path / "archive"
@@ -346,7 +346,7 @@ def test_arch_mainthread_enqueue_does_not_block_on_janitor_fn(tmp_path):
     time.sleep(0.05)
     return True
 
-  coord = AsyncDayCloseCoordinator(
+  coord = DayCloseManifestCoordinator(
       archive_data_dir=str(archive_dir),
       host_name_ext=".hpc",
       tgz_archive_dir=str(daily_dir),
@@ -357,7 +357,7 @@ def test_arch_mainthread_enqueue_does_not_block_on_janitor_fn(tmp_path):
   )
 
   enqueue_t0 = time.monotonic()
-  assert coord.submit_day_close(tar_path, reason="arch_contract") is True
+  assert coord.enqueue_day_close(tar_path, reason="arch_contract") is True
   enqueue_elapsed = time.monotonic() - enqueue_t0
   assert enqueue_elapsed < 0.2
   assert blocked["n"] == 1
@@ -462,14 +462,14 @@ def test_phase_done_forbidden_when_all_skipped_and_paths_on_disk(tmp_path):
 
 
 def test_arch_oldest_day_gate_blocked_paths_enter_pending():
-  """blocked_n>0 paths must prepend to pending for oldest-day gate reconcile."""
+  """incomplete_n>0 paths must prepend to pending for oldest-day gate reconcile."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      prepend_checkpoint_blocked_paths_to_pending,
+      prepend_checkpoint_incomplete_paths_to_pending,
   )
 
   blocked = ["/data/host/a", "/data/host/b"]
   pending = ["/data/host/c", "/data/host/d"]
-  merged = prepend_checkpoint_blocked_paths_to_pending(pending, blocked)
+  merged = prepend_checkpoint_incomplete_paths_to_pending(pending, blocked)
   assert merged[:2] == blocked
   assert merged[2:] == pending
 
@@ -516,9 +516,9 @@ def test_arch_no_raw_delete_pending_in_steady_state_tree():
   assert "raw_delete_pending" not in janitor_source
   async_source = inspect.getsource(
       __import__(
-          "hpcperfstats.dbload.lib.sync_timedb_async_day_close",
-          fromlist=["AsyncDayCloseCoordinator"],
-      ).AsyncDayCloseCoordinator.tar_paths_raw_delete_pending,
+          "hpcperfstats.dbload.lib.sync_timedb_day_close_manifest",
+          fromlist=["DayCloseManifestCoordinator"],
+      ).DayCloseManifestCoordinator.tar_paths_raw_delete_pending,
   )
   assert "return[]" in async_source.replace(" ", "").replace("\n", "")
 

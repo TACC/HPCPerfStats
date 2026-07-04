@@ -31,7 +31,7 @@ def _profiles_from_budget():
       {
           "name": "derived",
           "sync_pool_process_cap": s,
-          "archive_pool_process_cap": a,
+          "sync_archive_pool_process_cap": a,
           "metrics_pool_process_cap": m,
           "env_overrides": {
               "HPCPERFSTATS_PIPELINE_OVERLAP_MODE": "balanced",
@@ -41,7 +41,7 @@ def _profiles_from_budget():
       {
           "name": "tune_s_minus_1_m_plus_1",
           "sync_pool_process_cap": max(1, s - 1),
-          "archive_pool_process_cap": a,
+          "sync_archive_pool_process_cap": a,
           "metrics_pool_process_cap": min(c, m + 1),
           "env_overrides": {
               "HPCPERFSTATS_PIPELINE_OVERLAP_MODE": "balanced",
@@ -51,7 +51,7 @@ def _profiles_from_budget():
       {
           "name": "tune_s_plus_1_m_minus_1",
           "sync_pool_process_cap": min(c, s + 1),
-          "archive_pool_process_cap": a,
+          "sync_archive_pool_process_cap": a,
           "metrics_pool_process_cap": max(1, m - 1),
           "env_overrides": {
               "HPCPERFSTATS_PIPELINE_OVERLAP_MODE": "balanced",
@@ -61,7 +61,7 @@ def _profiles_from_budget():
       {
           "name": "ingest_priority",
           "sync_pool_process_cap": s,
-          "archive_pool_process_cap": a,
+          "sync_archive_pool_process_cap": a,
           "metrics_pool_process_cap": m,
           "env_overrides": {
               "HPCPERFSTATS_PIPELINE_OVERLAP_MODE": "ingest_priority",
@@ -71,7 +71,7 @@ def _profiles_from_budget():
       {
           "name": "sync_overprovision",
           "sync_pool_process_cap": min(c + max(1, c // 2), max(1, int(c * 2))),
-          "archive_pool_process_cap": min(c, max(1, a + 1)),
+          "sync_archive_pool_process_cap": min(c, max(1, a + 1)),
           "metrics_pool_process_cap": max(1, m),
           "env_overrides": {
               "HPCPERFSTATS_PIPELINE_OVERLAP_MODE": "ingest_priority",
@@ -89,11 +89,11 @@ def _profiles_from_budget():
 def _run_profile(profile, skip_build):
   name = profile["name"]
   s = profile["sync_pool_process_cap"]
-  a = profile["archive_pool_process_cap"]
+  a = profile["sync_archive_pool_process_cap"]
   m = profile["metrics_pool_process_cap"]
   env = dict(os.environ)
   env["SYNC_POOL_PROCESS_CAP"] = str(s)
-  env["ARCHIVE_POOL_PROCESS_CAP"] = str(a)
+  env["SYNC_ARCHIVE_POOL_PROCESS_CAP"] = str(a)
   env["METRICS_POOL_PROCESS_CAP"] = str(m)
   for key, value in profile.get("env_overrides", {}).items():
     env[str(key)] = str(value)
@@ -105,7 +105,7 @@ def _run_profile(profile, skip_build):
   return {
       "name": name,
       "sync_pool_process_cap": s,
-      "archive_pool_process_cap": a,
+      "sync_archive_pool_process_cap": a,
       "metrics_pool_process_cap": m,
       "env_overrides": profile.get("env_overrides", {}),
       "exit_code": proc.returncode,
@@ -149,7 +149,7 @@ def main():
         profile["name"],
         "S/A/M=",
         profile["sync_pool_process_cap"],
-        profile["archive_pool_process_cap"],
+        profile["sync_archive_pool_process_cap"],
         profile["metrics_pool_process_cap"],
         flush=True,
     )

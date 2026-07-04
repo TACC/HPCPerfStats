@@ -166,7 +166,7 @@ class ArchiveJanitor:
       ingest_ready_fn=None,
       archive_stats_files_fn=None,
       day_raw_removal_coordinator=None,
-      async_day_close_coordinator=None,
+      day_close_manifest_coordinator=None,
       get_day_close_candidate_inputs=None,
       get_tree_rss_bytes=None,
       startup_snapshot_coordinator=None,
@@ -190,7 +190,7 @@ class ArchiveJanitor:
     self.ingest_ready_fn = ingest_ready_fn
     self.archive_stats_files_fn = archive_stats_files_fn
     self.day_raw_removal_coordinator = day_raw_removal_coordinator
-    self.async_day_close_coordinator = async_day_close_coordinator
+    self.day_close_manifest_coordinator = day_close_manifest_coordinator
     self.get_day_close_candidate_inputs = get_day_close_candidate_inputs
     self.get_tree_rss_bytes = get_tree_rss_bytes
     self.startup_snapshot_coordinator = startup_snapshot_coordinator
@@ -455,7 +455,7 @@ class ArchiveJanitor:
 
   def run_scheduled_maintenance_pass(self, *, reason: str):
     """Janitor-thread: light or heavy maintenance depending on ``reason``."""
-    coord = self.async_day_close_coordinator
+    coord = self.day_close_manifest_coordinator
     if coord is not None:
       recover = getattr(coord, "recover_stale_manifest_entries", None)
       if callable(recover):
@@ -789,7 +789,7 @@ class ArchiveJanitor:
         flush=True,
     )
 
-  def _submit_eligible_async_day_close(
+  def _enqueue_eligible_day_close(
       self,
       tar_norm: str,
       *,
@@ -797,26 +797,20 @@ class ArchiveJanitor:
       disqualified: Optional[Set[str]] = None,
   ) -> bool:
     """Enqueue manifest + ``DAY_CLOSE`` debt when checkpoint-complete eligibility passes."""
-    coord = self.async_day_close_coordinator
+    coord = self.day_close_manifest_coordinator
     if coord is not None:
-      if hasattr(coord, "enqueue_day_close"):
-        return coord.enqueue_day_close(
-            tar_norm,
-            reason,
-            disqualified_daily_tars=disqualified,
-        )
-      return coord.submit_day_close(
+      return coord.enqueue_day_close(
           tar_norm,
-          reason=reason,
+          reason,
           disqualified_daily_tars=disqualified,
       )
-    return self._enqueue_eligible_day_close(
+    return self._enqueue_day_close_debt_if_eligible(
         tar_norm,
         reason=reason,
         disqualified=disqualified,
     )
 
-  def _enqueue_eligible_day_close(
+  def _enqueue_day_close_debt_if_eligible(
       self,
       tar_norm: str,
       *,
@@ -876,7 +870,7 @@ class ArchiveJanitor:
       return dict(self._day_phases)
 
   def _day_close_active_tar_paths(self) -> Set[str]:
-    coord = self.async_day_close_coordinator
+    coord = self.day_close_manifest_coordinator
     if coord is not None:
       return coord.active_or_submitted_tar_paths()
     return self._debt_heap_tar_paths()
@@ -884,8 +878,8 @@ class ArchiveJanitor:
   def _day_close_inflight_tar_paths(self) -> Set[str]:
     return self._day_close_active_tar_paths()
 
-  def _finalize_async_day_close_manifest(self, tar_norm: str) -> None:
-    coord = self.async_day_close_coordinator
+  def _finalize_day_close_manifest(self, tar_norm: str) -> None:
+    coord = self.day_close_manifest_coordinator
     if coord is None:
       return
     try:
@@ -930,7 +924,7 @@ class ArchiveJanitor:
         disqualification_reasons=disq_reasons,
         day_phases=day_phases,
         local_tz=self.local_tz,
-        async_in_progress_tars=self._day_close_active_tar_paths(),
+        day_close_in_progress_tars=self._day_close_active_tar_paths(),
         debt_heap_tars=self._debt_heap_tar_paths(),
         newly_queued_tars=set(),
         day_raw_removal=self.day_raw_removal_coordinator,
@@ -945,12 +939,12 @@ class ArchiveJanitor:
       if len(active) >= max_inflight:
         skipped_inflight += 1
         continue
-      if entry.get("status") != "disqualified":
+      if entry.get("status") != "ready_for_enqueue":
         continue
       if "awaiting_janitor_discover" not in (entry.get("reasons") or ()):
         continue
       tar_norm = os.path.normpath(entry["tar_path"])
-      if self._submit_eligible_async_day_close(
+      if self._enqueue_eligible_day_close(
           tar_norm,
           reason=discover_reason,
           disqualified=disqualified,
@@ -972,7 +966,7 @@ class ArchiveJanitor:
     if not tar_norm:
       return False
     submit_reason = "day_ingest_complete:%s" % reason
-    submitted = self._submit_eligible_async_day_close(
+    submitted = self._enqueue_eligible_day_close(
         tar_norm,
         reason=submit_reason,
     )
@@ -996,7 +990,7 @@ class ArchiveJanitor:
       tar_norm = os.path.normpath(tar_path) if tar_path else ""
       if not tar_norm:
         continue
-      if self._submit_eligible_async_day_close(
+      if self._enqueue_eligible_day_close(
           tar_norm,
           reason=submit_reason,
           disqualified=disqualified,
@@ -1068,7 +1062,7 @@ class ArchiveJanitor:
       tar_norm = os.path.normpath(tar_path)
       if tar_norm in disqualified:
         continue
-      self._submit_eligible_async_day_close(
+      self._enqueue_eligible_day_close(
           tar_norm,
           reason="dedupe_hint",
           disqualified=disqualified,
@@ -1509,7 +1503,7 @@ class ArchiveJanitor:
         disqualification_reasons=disq_reasons,
         day_phases=day_phases,
         local_tz=self.local_tz,
-        async_in_progress_tars=self._day_close_active_tar_paths(),
+        day_close_in_progress_tars=self._day_close_active_tar_paths(),
         debt_heap_tars=self._debt_heap_tar_paths(),
         newly_queued_tars=newly_queued_tars or set(),
         queued_reason=day_close_queued_reason_for_report_reason(reason),
@@ -1532,7 +1526,7 @@ class ArchiveJanitor:
       tick_stats=None,
   ) -> bool:
     if debt.kind == DebtKind.DAY_CLOSE:
-      coord = self.async_day_close_coordinator
+      coord = self.day_close_manifest_coordinator
       if coord is not None and coord.is_complete(os.path.normpath(debt.tar_path)):
         with self._hints_state_lock:
           self._day_phases[os.path.normpath(debt.tar_path)] = day_phase_hint_entry(
@@ -1670,7 +1664,7 @@ class ArchiveJanitor:
             self._enqueue_day_close(tar_norm, persist=False)
             self._persist_hints()
             return False
-        self._finalize_async_day_close_manifest(tar_norm)
+        self._finalize_day_close_manifest(tar_norm)
         return True
       self._enqueue_day_close(tar_norm, persist=False)
       self._persist_hints()
@@ -1683,7 +1677,7 @@ class ArchiveJanitor:
       ):
         self._enqueue_day_close(tar_norm, persist=False)
         return False
-    self._finalize_async_day_close_manifest(tar_norm)
+    self._finalize_day_close_manifest(tar_norm)
     return True
 
   def _seal_one_day(self, tar_path: str) -> bool:

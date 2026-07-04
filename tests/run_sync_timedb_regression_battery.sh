@@ -53,7 +53,7 @@ set +e
 "$PYTHON" -m pytest -q \
   hpcperfstats/tests/test_sync_timedb_supervisor.py \
   hpcperfstats/tests/test_sync_timedb_day_raw_removal.py \
-  hpcperfstats/tests/test_sync_timedb_async_day_close.py \
+  hpcperfstats/tests/test_sync_timedb_day_close_manifest.py \
   hpcperfstats/tests/test_sync_timedb_archive.py \
   hpcperfstats/tests/test_sync_timedb_janitor.py \
   hpcperfstats/tests/test_sync_timedb_architecture_contract.py \

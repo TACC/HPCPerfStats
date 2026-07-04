@@ -22,7 +22,7 @@ RAW_REMOVAL_PHASES: FrozenSet[str] = frozenset(
 MANIFEST_REQUIRED_TOP_LEVEL: Dict[str, Tuple[str, ...]] = {
     "startup_raw_removal": ("phase",),
     "day_raw_removal": ("phase", "tar_path"),
-    "async_day_close": ("entries",),
+    "day_close_manifest": ("entries",),
     "archive_maint_hints": ("version",),
 }
 

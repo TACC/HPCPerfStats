@@ -1,4 +1,4 @@
-"""Regression tests for AsyncDayCloseCoordinator manifest/enqueue shim."""
+"""Regression tests for DayCloseManifestCoordinator manifest/enqueue shim."""
 from __future__ import annotations
 
 import json
@@ -7,17 +7,17 @@ import time
 
 import pytest
 
-from hpcperfstats.dbload.lib import sync_timedb_async_day_close as async_dc_mod
+from hpcperfstats.dbload.lib import sync_timedb_day_close_manifest as async_dc_mod
 
 
 @pytest.mark.django_db(databases=[])
 def test_submit_day_close_does_not_deadlock_on_manifest_touch(tmp_path):
-  """submit_day_close must not re-acquire ``_lock`` via ``active_or_submitted_tar_paths``."""
+  """enqueue_day_close must not re-acquire ``_lock`` via ``active_or_submitted_tar_paths``."""
   import concurrent.futures
 
   archive_dir = str(tmp_path / "archive")
   os.makedirs(archive_dir)
-  coord = async_dc_mod.AsyncDayCloseCoordinator(
+  coord = async_dc_mod.DayCloseManifestCoordinator(
       archive_data_dir=archive_dir,
       host_name_ext="",
       tgz_archive_dir=str(tmp_path / "daily"),
@@ -30,7 +30,7 @@ def test_submit_day_close_does_not_deadlock_on_manifest_touch(tmp_path):
   os.makedirs(os.path.dirname(tar_path), exist_ok=True)
   with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
     fut = pool.submit(
-        coord.submit_day_close,
+        coord.enqueue_day_close,
         tar_path,
         reason="test",
         disqualified_daily_tars=set(),
@@ -52,7 +52,7 @@ def test_submit_day_close_enqueues_via_janitor_fn(tmp_path):
     enqueued.append((tar_norm, reason))
     return True
 
-  coord = async_dc_mod.AsyncDayCloseCoordinator(
+  coord = async_dc_mod.DayCloseManifestCoordinator(
       archive_data_dir=archive_dir,
       host_name_ext="",
       tgz_archive_dir=str(tmp_path / "daily"),
@@ -64,9 +64,9 @@ def test_submit_day_close_enqueues_via_janitor_fn(tmp_path):
   tar_path = str(tmp_path / "daily" / "2020-01-01.tar")
   os.makedirs(os.path.dirname(tar_path), exist_ok=True)
 
-  assert coord.submit_day_close(tar_path, reason="test") is True
+  assert coord.enqueue_day_close(tar_path, reason="test") is True
   assert enqueued == [(os.path.normpath(tar_path), "test")]
-  assert any("day_close submit" in line for line in logs)
+  assert any("day_close enqueue" in line for line in logs)
   manifest = async_dc_mod._load_manifest(coord._manifest_path)
   assert manifest["entries"][os.path.normpath(tar_path)]["status"] == "queued"
 
@@ -81,7 +81,7 @@ def test_submit_day_close_idempotent_when_queued(tmp_path):
     enqueue_calls["n"] += 1
     return True
 
-  coord = async_dc_mod.AsyncDayCloseCoordinator(
+  coord = async_dc_mod.DayCloseManifestCoordinator(
       archive_data_dir=archive_dir,
       host_name_ext="",
       tgz_archive_dir=str(tmp_path / "daily"),
@@ -92,8 +92,8 @@ def test_submit_day_close_idempotent_when_queued(tmp_path):
   )
   tar_path = os.path.normpath(str(tmp_path / "daily" / "2020-01-02.tar"))
   os.makedirs(os.path.dirname(tar_path), exist_ok=True)
-  coord.submit_day_close(tar_path, reason="first")
-  coord.submit_day_close(tar_path, reason="second")
+  coord.enqueue_day_close(tar_path, reason="first")
+  coord.enqueue_day_close(tar_path, reason="second")
   assert enqueue_calls["n"] == 1
 
 
@@ -104,7 +104,7 @@ def test_submit_day_close_skips_disqualified(tmp_path):
   tar_path = os.path.normpath(str(tmp_path / "daily" / "2020-01-03.tar"))
   os.makedirs(os.path.dirname(tar_path), exist_ok=True)
 
-  coord = async_dc_mod.AsyncDayCloseCoordinator(
+  coord = async_dc_mod.DayCloseManifestCoordinator(
       archive_data_dir=archive_dir,
       host_name_ext="",
       tgz_archive_dir=str(tmp_path / "daily"),
@@ -113,7 +113,7 @@ def test_submit_day_close_skips_disqualified(tmp_path):
       get_disqualified_daily_tars=lambda: {tar_path},
       enqueue_day_close_fn=lambda *_a, **_k: True,
   )
-  assert coord.submit_day_close(tar_path, reason="test") is False
+  assert coord.enqueue_day_close(tar_path, reason="test") is False
 
 
 @pytest.mark.django_db(databases=[])
@@ -135,8 +135,8 @@ def test_stale_manifest_recovery_downgrades_raw_delete_pending(tmp_path, monkeyp
   with open(manifest_path, "w", encoding="utf-8") as fh:
     json.dump(payload, fh)
 
-  monkeypatch.setattr(async_dc_mod.cfg, "get_sync_day_close_async_stale_seconds", lambda: 1.0)
-  async_dc_mod.AsyncDayCloseCoordinator(
+  monkeypatch.setattr(async_dc_mod.cfg, "get_sync_day_close_manifest_stale_seconds", lambda: 1.0)
+  async_dc_mod.DayCloseManifestCoordinator(
       archive_data_dir=archive_dir,
       host_name_ext="",
       tgz_archive_dir=str(tmp_path / "daily"),
@@ -151,7 +151,7 @@ def test_stale_manifest_recovery_downgrades_raw_delete_pending(tmp_path, monkeyp
 
 @pytest.mark.django_db(databases=[])
 def test_reconcile_supervisor_raw_delete_pending_is_noop(tmp_path):
-  coord = async_dc_mod.AsyncDayCloseCoordinator(
+  coord = async_dc_mod.DayCloseManifestCoordinator(
       archive_data_dir=str(tmp_path / "archive"),
       host_name_ext="",
       tgz_archive_dir=str(tmp_path / "daily"),
@@ -164,7 +164,7 @@ def test_reconcile_supervisor_raw_delete_pending_is_noop(tmp_path):
 
 @pytest.mark.django_db(databases=[])
 def test_tar_paths_raw_delete_pending_empty(tmp_path):
-  coord = async_dc_mod.AsyncDayCloseCoordinator(
+  coord = async_dc_mod.DayCloseManifestCoordinator(
       archive_data_dir=str(tmp_path / "archive"),
       host_name_ext="",
       tgz_archive_dir=str(tmp_path / "daily"),
@@ -183,7 +183,7 @@ def test_active_or_submitted_merges_manifest_and_inflight_fn(tmp_path):
   tar_b = os.path.normpath("/tmp/daily/2020-01-02.tar")
   inflight = {tar_b}
 
-  coord = async_dc_mod.AsyncDayCloseCoordinator(
+  coord = async_dc_mod.DayCloseManifestCoordinator(
       archive_data_dir=archive_dir,
       host_name_ext="",
       tgz_archive_dir=str(tmp_path / "daily"),
@@ -204,7 +204,7 @@ def test_finalize_complete_if_filesystem(tmp_path):
   zst_path = tar_path + ".zst"
   open(zst_path, "wb").close()
 
-  coord = async_dc_mod.AsyncDayCloseCoordinator(
+  coord = async_dc_mod.DayCloseManifestCoordinator(
       archive_data_dir=str(tmp_path / "archive"),
       host_name_ext="",
       tgz_archive_dir=str(daily_dir),
@@ -225,7 +225,7 @@ def test_submit_day_close_respects_submit_eligible_fn(tmp_path):
   os.makedirs(os.path.dirname(tar_path), exist_ok=True)
   logs: list[str] = []
 
-  coord = async_dc_mod.AsyncDayCloseCoordinator(
+  coord = async_dc_mod.DayCloseManifestCoordinator(
       archive_data_dir=archive_dir,
       host_name_ext="",
       tgz_archive_dir=str(tmp_path / "daily"),
@@ -235,8 +235,8 @@ def test_submit_day_close_respects_submit_eligible_fn(tmp_path):
       submit_eligible_fn=lambda _t: (False, "not_ready"),
       enqueue_day_close_fn=lambda *_a, **_k: True,
   )
-  assert coord.submit_day_close(tar_path, reason="test") is False
-  assert any("submit skip" in line for line in logs)
+  assert coord.enqueue_day_close(tar_path, reason="test") is False
+  assert any("enqueue skip" in line for line in logs)
 
 
 @pytest.mark.django_db(databases=[])
@@ -246,7 +246,7 @@ def test_submit_day_close_no_orphan_queued_on_enqueue_failure(tmp_path):
   tar_path = os.path.normpath(str(tmp_path / "daily" / "2020-01-05.tar"))
   os.makedirs(os.path.dirname(tar_path), exist_ok=True)
 
-  coord = async_dc_mod.AsyncDayCloseCoordinator(
+  coord = async_dc_mod.DayCloseManifestCoordinator(
       archive_data_dir=archive_dir,
       host_name_ext="",
       tgz_archive_dir=str(tmp_path / "daily"),
@@ -255,7 +255,7 @@ def test_submit_day_close_no_orphan_queued_on_enqueue_failure(tmp_path):
       get_disqualified_daily_tars=lambda: set(),
       enqueue_day_close_fn=lambda *_a, **_k: False,
   )
-  assert coord.submit_day_close(tar_path, reason="test") is False
+  assert coord.enqueue_day_close(tar_path, reason="test") is False
   with coord._lock:
     entry = coord._manifest.get("entries", {}).get(tar_path)
   assert entry is None or str(entry.get("status") or "") != "queued"
@@ -271,7 +271,7 @@ def test_unified_inflight_cap_counts_manifest_and_debt(tmp_path):
 
   inflight = {tar_debt}
 
-  coord = async_dc_mod.AsyncDayCloseCoordinator(
+  coord = async_dc_mod.DayCloseManifestCoordinator(
       archive_data_dir=archive_dir,
       host_name_ext="",
       tgz_archive_dir=str(tmp_path / "daily"),

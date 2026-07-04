@@ -177,9 +177,6 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Prewarm retry attempts per plot task (default 2).
 # metrics_prewarm_retry_attempts = 2
 
-# Threads for concurrent per-jid metrics+prewarm in scheduler (default 4).
-# metrics_scheduler_compute_threads = 4
-
 # imap_unordered poll timeout in Metrics.run seconds (default 5).
 # metrics_run_poll_timeout_s = 5
 
@@ -238,8 +235,8 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Cap sync_timedb ingest pool and metadata discovery threads; imap inflight equals pool size (default 16).
 sync_pool_process_cap = 16
 
-# Cap sync_timedb archive pool processes when set.
-# archive_pool_process_cap =
+# Cap sync_timedb archive pool processes when set (unset = no extra cap).
+# sync_archive_pool_process_cap =
 
 # Max concurrent sealed-day streams for sync_timedb_archive backfill (default 1).
 # sync_timedb_archive_max_concurrent_sealed_days = 1
@@ -408,9 +405,6 @@ sync_ingest_pool_maxtasksperchild = 1
 # Return freed worker heap to OS after each ingest task on Linux (default yes).
 sync_ingest_malloc_trim_after_file = yes
 
-# Optional global seal concurrency cap; 0 unlimited (default 0).
-# sync_cold_path_max_concurrent_seals = 0
-
 # Adaptive burst dispatch for sync queues (default yes).
 # sync_adaptive_dispatch_enabled = yes
 
@@ -420,15 +414,12 @@ sync_ingest_malloc_trim_after_file = yes
 # Archive dispatch backoff ratio (default 0.50).
 # sync_dispatch_archive_backoff_ratio = 0.50
 
-# Dispatch step size (default 8).
-# sync_dispatch_step_size = 8
-
 # Ingest-first durability semantics: checkpoint after DB even if append fails (default yes).
 # sync_enable_ingest_first_durability_mode = yes
 
 # Require head+tail DB ingest readiness before tar append or raw delete (default yes).
 # When yes, first and last digit-leading timestamp seconds must exist in host_data.
-# sync_archive_require_db_head_ingest = yes
+# sync_archive_require_db_ingest = yes
 
 # Persist archive maintenance hints for faster restarts (default yes).
 # sync_archive_maint_hints = yes
@@ -494,7 +485,7 @@ ingest_zstd_threads = 4
 # sync_day_close_max_inflight = 4
 
 # Recover stale day-close manifest entries on coordinator init (default 7200s; 0 = off).
-# sync_day_close_async_stale_seconds = 7200
+# sync_day_close_manifest_stale_seconds = 7200
 
 # Log day-close candidate report (queued/disqualified only; default yes).
 # sync_day_close_candidate_report = yes

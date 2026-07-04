@@ -57,19 +57,18 @@ def _patch_scheduler_defaults(monkeypatch):
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "inline")
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_compute_threads", lambda: 1)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_batch_budget_base_s", lambda: 2.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_batch_budget_s", lambda: 2.0)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_batch_budget_max_s", lambda: 60.0)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_budget_per_successful_job_s", lambda: 0.5)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_batch_max_window_seconds", lambda: 0.0)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_batch_max_single_job_runtime_seconds", lambda: 0.0)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_batch_unknown_runtime_seconds", lambda: 172800.0)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_watchdog_seconds", lambda: 120.0)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_total_watchdog_seconds", lambda: 0.0)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_retry_seconds", lambda: 10.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_per_job_s", lambda: 0.5)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_batch_max_window_s", lambda: 0.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_batch_max_single_job_s", lambda: 0.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_batch_unknown_runtime_s", lambda: 172800.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_watchdog_s", lambda: 120.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_total_watchdog_s", lambda: 0.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_retry_s", lambda: 10.0)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_max_retries", lambda: 30)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_max_age_seconds", lambda: 900.0)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_quarantine_seconds", lambda: 300.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_max_age_s", lambda: 900.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_quarantine_s", lambda: 300.0)
   monkeypatch.setattr(update_metrics, "persist_job_detail_artifacts_for_jid", lambda jid: None)
 
 
@@ -1053,8 +1052,8 @@ def test_compute_jid_outcomes_batch_skips_prewarm_for_explicit_failed_outcomes(m
 @pytest.mark.machine_unit_mock
 def test_compute_jid_outcomes_batch_prewarm_drain_budget_defers_backlog(monkeypatch):
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: False)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_batch_budget_base_s", lambda: 0.0)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_budget_per_successful_job_s", lambda: 0.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_batch_budget_s", lambda: 0.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_per_job_s", lambda: 0.0)
 
   class _M:
     def ensure_pool(self, pool_kind="metrics-pool"):
@@ -1096,9 +1095,9 @@ def test_compute_jid_outcomes_batch_prewarm_drain_budget_defers_backlog(monkeypa
 @pytest.mark.machine_unit_mock
 def test_pop_candidates_respects_max_window_seconds(monkeypatch):
   """Greedy dequeue splits long-window jobs across batches when window cap is on."""
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_batch_max_window_seconds", lambda: 100.0)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_batch_max_single_job_runtime_seconds", lambda: 0.0)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_batch_unknown_runtime_seconds", lambda: 1.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_batch_max_window_s", lambda: 100.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_batch_max_single_job_s", lambda: 0.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_batch_unknown_runtime_s", lambda: 1.0)
   q = deque([
       update_metrics._candidate_ref("a", False, runtime_s=60.0),
       update_metrics._candidate_ref("b", False, runtime_s=60.0),
@@ -1113,8 +1112,8 @@ def test_pop_candidates_respects_max_window_seconds(monkeypatch):
 
 @pytest.mark.machine_unit_mock
 def test_effective_prewarm_drain_budget_scales_with_successful_count(monkeypatch):
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_batch_budget_base_s", lambda: 1.0)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_budget_per_successful_job_s", lambda: 0.5)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_batch_budget_s", lambda: 1.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_per_job_s", lambda: 0.5)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_batch_budget_max_s", lambda: 10.0)
   assert update_metrics._effective_prewarm_drain_batch_budget_s(0) == 1.0
   assert update_metrics._effective_prewarm_drain_batch_budget_s(2) == 2.0
@@ -2399,7 +2398,7 @@ def test_update_metrics_for_dates_rescan_picks_up_new_mid_run_jid(monkeypatch):
   _patch_strict_readiness_batch(monkeypatch, _strict)
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
   monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_retry_seconds", lambda: 0.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_retry_s", lambda: 0.0)
 
   class _FakeQs:
     def __init__(self, chunks):
@@ -2670,7 +2669,7 @@ def test_update_metrics_for_dates_rechecks_deferred_not_ready_jid_until_ready(mo
   )
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
   monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_retry_seconds", lambda: 0.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_retry_s", lambda: 0.0)
   monkeypatch.setattr(
       update_metrics.cfg,
       "get_metrics_readiness_require_window_coverage",
@@ -2738,8 +2737,8 @@ def test_update_metrics_pub_parallel_once_then_safe_in_finally(monkeypatch):
   monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
   _patch_strict_readiness_batch(monkeypatch, lambda jids: list(jids))
   monkeypatch.setattr(update_metrics, "_start_candidate_rescan_thread", lambda **kwargs: None)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_batch_budget_base_s", lambda: 0.0)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_budget_per_successful_job_s", lambda: 0.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_batch_budget_s", lambda: 0.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_per_job_s", lambda: 0.0)
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
   monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
   monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None)
@@ -3737,10 +3736,10 @@ def test_proxy_coverage_batch_query_count_bounded(monkeypatch):
 @pytest.mark.machine_unit_mock
 def test_deferred_not_ready_quarantine_timing_unchanged(monkeypatch):
   """Defer/quarantine retry contract unchanged under coverage gate work."""
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_retry_seconds", lambda: 10.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_retry_s", lambda: 10.0)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_max_retries", lambda: 2)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_max_age_seconds", lambda: 900.0)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_quarantine_seconds", lambda: 300.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_max_age_s", lambda: 900.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_deferred_not_ready_quarantine_s", lambda: 300.0)
   deferred_not_ready = {}
   deferred_meta = {}
   stats = {"deferred_quarantined_jids": 0}
@@ -3761,12 +3760,12 @@ def test_deferred_not_ready_quarantine_timing_unchanged(monkeypatch):
     max_retries = int(update_metrics.cfg.get_metrics_deferred_not_ready_max_retries())
     use_quarantine = (
         meta["attempts"] >= max_retries
-        or age_s >= float(update_metrics.cfg.get_metrics_deferred_not_ready_max_age_seconds())
+        or age_s >= float(update_metrics.cfg.get_metrics_deferred_not_ready_max_age_s())
     )
     retry_after = (
-        float(update_metrics.cfg.get_metrics_deferred_not_ready_quarantine_seconds())
+        float(update_metrics.cfg.get_metrics_deferred_not_ready_quarantine_s())
         if use_quarantine
-        else float(update_metrics.cfg.get_metrics_deferred_not_ready_retry_seconds())
+        else float(update_metrics.cfg.get_metrics_deferred_not_ready_retry_s())
     )
     if use_quarantine:
       with scheduler_shared_lock:

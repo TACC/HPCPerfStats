@@ -49,13 +49,23 @@ def test_dead_day_close_knobs_removed_from_registry_and_example():
       "archive_seal_idle_seconds",
       "archive_maintenance_max_defer_seconds",
       "sync_day_close_raw_removal_wait_seconds",
+      "sync_cold_path_max_concurrent_seals",
+      "sync_dispatch_step_size",
+      "metrics_scheduler_compute_threads",
+      "sync_archive_require_db_head_ingest",
+      "sync_day_close_async_stale_seconds",
+      "archive_pool_process_cap",
   }
   registry_options = {option for _section, option, _default in cfg.INI_OPTION_REGISTRY}
   assert not (dead & registry_options)
   path = _repo_ini_example_path()
   text = path.read_text(encoding="utf-8")
   for key in dead:
-    assert key not in text, "dead key still documented in example: %s" % key
+    # Word-boundary match so ``archive_pool_process_cap`` does not hit
+    # ``sync_archive_pool_process_cap``.
+    assert not re.search(r"(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])" % re.escape(key), text), (
+        "dead key still documented in example: %s" % key
+    )
 
 
 def test_ini_example_documents_every_registry_option():
@@ -86,7 +96,7 @@ def test_ini_example_registry_matches_section_placement_contract():
   assert not violations, violations
 
 
-def test_sync_archive_require_db_head_ingest_under_pipeline_not_portal():
+def test_sync_archive_require_db_ingest_under_pipeline_not_portal():
   path = _repo_ini_example_path()
   text = path.read_text(encoding="utf-8")
   current = None
@@ -95,10 +105,10 @@ def test_sync_archive_require_db_head_ingest_under_pipeline_not_portal():
     if stripped.startswith("[") and stripped.endswith("]"):
       current = stripped[1:-1].strip()
       continue
-    if "sync_archive_require_db_head_ingest" not in line:
+    if "sync_archive_require_db_ingest" not in line:
       continue
     assert current == "PIPELINE", (
-        "sync_archive_require_db_head_ingest must be under [PIPELINE], not [%s]"
+        "sync_archive_require_db_ingest must be under [PIPELINE], not [%s]"
         % current
     )
 

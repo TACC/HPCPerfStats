@@ -67,7 +67,6 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "metrics_prewarm_drain_batch_budget_max_s"),
     ("PIPELINE", "metrics_prewarm_drain_per_job_s"),
     ("PIPELINE", "metrics_prewarm_retry_attempts"),
-    ("PIPELINE", "metrics_scheduler_compute_threads"),
     ("PIPELINE", "metrics_run_poll_timeout_s"),
     ("PIPELINE", "metrics_run_stall_timeout_s"),
     ("PIPELINE", "metrics_run_per_job_timeout_s"),
@@ -87,7 +86,7 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "metrics_readiness_start_margin_seconds"),
     ("PIPELINE", "metrics_readiness_end_margin_seconds"),
     ("PIPELINE", "sync_pool_process_cap"),
-    ("PIPELINE", "archive_pool_process_cap"),
+    ("PIPELINE", "sync_archive_pool_process_cap"),
     ("PIPELINE", "sync_enable_cpuset_priority_budget"),
     ("PIPELINE", "sync_budget_ingest_ratio"),
     ("PIPELINE", "sync_budget_archive_ratio"),
@@ -144,13 +143,11 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_ingest_db_complete_tail_window_lines"),
     ("PIPELINE", "sync_ingest_pool_maxtasksperchild"),
     ("PIPELINE", "sync_ingest_malloc_trim_after_file"),
-    ("PIPELINE", "sync_cold_path_max_concurrent_seals"),
     ("PIPELINE", "sync_adaptive_dispatch_enabled"),
     ("PIPELINE", "sync_dispatch_burst_factor"),
     ("PIPELINE", "sync_dispatch_archive_backoff_ratio"),
-    ("PIPELINE", "sync_dispatch_step_size"),
     ("PIPELINE", "sync_enable_ingest_first_durability_mode"),
-    ("PIPELINE", "sync_archive_require_db_head_ingest"),
+    ("PIPELINE", "sync_archive_require_db_ingest"),
     ("PIPELINE", "sync_archive_maint_hints"),
     ("PIPELINE", "acct_path"),
     ("PIPELINE", "archive_dir"),
@@ -174,7 +171,7 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_day_close_candidate_report"),
     ("PIPELINE", "sync_startup_snapshot_wait_seconds"),
     ("PIPELINE", "sync_day_close_max_inflight"),
-    ("PIPELINE", "sync_day_close_async_stale_seconds"),
+    ("PIPELINE", "sync_day_close_manifest_stale_seconds"),
     ("PIPELINE", "sync_day_close_raw_removal_verify_budget_seconds"),
     ("PIPELINE", "sync_day_close_raw_removal_max_deletes_per_pass"),
     ("PIPELINE", "sync_archive_max_inflight_jobs"),
@@ -247,7 +244,6 @@ INI_OPTION_DEFAULTS = {
     'metrics_prewarm_drain_batch_budget_max_s': '60.0',
     'metrics_prewarm_drain_per_job_s': '0.5',
     'metrics_prewarm_retry_attempts': '2',
-    'metrics_scheduler_compute_threads': '4',
     'metrics_run_poll_timeout_s': '5',
     'metrics_run_stall_timeout_s': '900',
     'metrics_run_per_job_timeout_s': '0',
@@ -267,7 +263,7 @@ INI_OPTION_DEFAULTS = {
     'metrics_readiness_start_margin_seconds': '600',
     'metrics_readiness_end_margin_seconds': '600',
     'sync_pool_process_cap': '16',
-    'archive_pool_process_cap': '1',
+    'sync_archive_pool_process_cap': None,
     'sync_enable_cpuset_priority_budget': 'yes',
     'sync_budget_ingest_ratio': '0.6',
     'sync_budget_archive_ratio': '0.15',
@@ -311,7 +307,7 @@ INI_OPTION_DEFAULTS = {
     'sync_archive_members_redis_hset_batch_size': '500',
     'sync_archive_members_redis_max_payload_bytes': '8388608',
     'sync_archive_members_populate_pool_processes': '4',
-    'sync_write_lock_shards': '1',
+    'sync_write_lock_shards': None,
     'sync_ingest_chunk_size': '1000',
     'sync_bulk_create_batch_size': '10000',
     'sync_supervisor_rss_limit_mb': '0',
@@ -324,13 +320,11 @@ INI_OPTION_DEFAULTS = {
     'sync_ingest_db_complete_tail_window_lines': '500',
     'sync_ingest_pool_maxtasksperchild': '1',
     'sync_ingest_malloc_trim_after_file': 'yes',
-    'sync_cold_path_max_concurrent_seals': '0',
     'sync_adaptive_dispatch_enabled': 'yes',
     'sync_dispatch_burst_factor': '2.0',
     'sync_dispatch_archive_backoff_ratio': '0.50',
-    'sync_dispatch_step_size': '8',
     'sync_enable_ingest_first_durability_mode': 'yes',
-    'sync_archive_require_db_head_ingest': 'yes',
+    'sync_archive_require_db_ingest': 'yes',
     'sync_archive_maint_hints': 'yes',
     'acct_path': None,
     'archive_dir': None,
@@ -354,7 +348,7 @@ INI_OPTION_DEFAULTS = {
     'sync_day_close_candidate_report': 'yes',
     'sync_startup_snapshot_wait_seconds': '300',
     'sync_day_close_max_inflight': '4',
-    'sync_day_close_async_stale_seconds': '7200',
+    'sync_day_close_manifest_stale_seconds': '7200',
     'sync_day_close_raw_removal_verify_budget_seconds': '30',
     'sync_day_close_raw_removal_max_deletes_per_pass': '0',
     'sync_archive_max_inflight_jobs': '2',
@@ -612,18 +606,6 @@ def _optional_default_int_option(option_name, *, legacy_sections=()):
   return int(value)
 
 
-def get_db_connection_string():
-  """Return a PostgreSQL connection string from DEFAULT config (legacy: PORTAL)."""
-  legacy = ("PORTAL",)
-  return "dbname={0} user={1} password={2} port={3} host={4}".format(
-      _ini_option("DEFAULT", "dbname", legacy_sections=legacy),
-      _ini_option("DEFAULT", "username", legacy_sections=legacy),
-      _ini_option("DEFAULT", "password", legacy_sections=legacy),
-      _ini_option("DEFAULT", "port", legacy_sections=legacy),
-      _ini_option("DEFAULT", "host", legacy_sections=legacy),
-  )
-
-
 def get_db_name():
   """Return the database name from DEFAULT config (legacy: PORTAL)."""
   return _ini_option("DEFAULT", "dbname", legacy_sections=("PORTAL",))
@@ -798,11 +780,6 @@ def get_rmq_server():
 def get_rmq_queue():
   """Return the RabbitMQ queue name from RMQ config."""
   return _get('RMQ', 'rmq_queue')
-
-
-def get_machine_name():
-  """Return the machine name from DEFAULT config."""
-  return _get('DEFAULT', 'machine')
 
 
 def get_server_name():
@@ -1058,7 +1035,7 @@ def get_effective_cores():
   return min(ini_budget, host)
 
 
-def get_max_gunicorn_workers_cap():
+def get_max_gunicorn_workers():
   """Upper bound for Gunicorn workers (see ``django_startup.sh``).
 
   Default **32** pairs with a **40**-core ini budget: leaves headroom vs
@@ -1106,12 +1083,12 @@ def get_metrics_pool_process_count():
 
 def get_cpuset_pin_min_total_cores():
   _ensure_cfg_loaded()
-  return _pipeline_getint("cpuset_pin_min_total_cores")
+  return int(_ini_get_from_registry("DEFAULT", "cpuset_pin_min_total_cores"))
 
 
 def get_cpuset_pin_min_cores_per_node():
   _ensure_cfg_loaded()
-  return _pipeline_getint("cpuset_pin_min_cores_per_node")
+  return int(_ini_get_from_registry("DEFAULT", "cpuset_pin_min_cores_per_node"))
 
 
 def get_web_numa_node():
@@ -1124,19 +1101,21 @@ def get_pipeline_numa_node():
   return _optional_default_int_option("pipeline_numa_node")
 
 
-def get_pin_proxy_for_compose():
+def get_pin_proxy_in_compose():
   """If True, NUMA pinning script also sets ``cpuset`` on ``proxy`` (match web node)."""
   _ensure_cfg_loaded()
-  return _parse_bool(_pipeline_get("pin_proxy_in_compose"))
+  return _parse_bool(
+      _ini_get_from_registry("DEFAULT", "pin_proxy_in_compose"),
+  )
 
 
 def get_numa_pin_max_nodes_auto():
   """Auto compose pinning supports up to this many NUMA nodes without explicit ids."""
   _ensure_cfg_loaded()
-  return _pipeline_getint("numa_pin_max_nodes_auto")
+  return int(_ini_get_from_registry("DEFAULT", "numa_pin_max_nodes_auto"))
 
 
-def get_parallel_db_prefetch_max_workers():
+def get_parallel_db_prefetch_max():
   """Max threads for parallel ORM prefetch (summary plots) and default API executor size.
 
   Default **4** (INI ``parallel_db_prefetch_max``); summary aggregate prefetch also applies a
@@ -1159,7 +1138,7 @@ def get_api_small_executor_max_workers():
   """Max workers for shared ``ThreadPoolExecutor`` in ``site.machine.api``.
 
   If ``[PORTAL] api_small_executor_max_workers`` is set, it wins; otherwise
-  ``get_parallel_db_prefetch_max_workers()`` (default **4**).
+  ``get_parallel_db_prefetch_max()`` (default **4**).
   """
   _ensure_cfg_loaded()
   if _ini_has_option_any(
@@ -1170,7 +1149,7 @@ def get_api_small_executor_max_workers():
         "api_small_executor_max_workers",
         legacy_sections=("DEFAULT",),
     )))
-  return get_parallel_db_prefetch_max_workers()
+  return get_parallel_db_prefetch_max()
 
 
 def get_db_conn_max_age():
@@ -1222,7 +1201,7 @@ def build_postgres_connection_options():
   return {"options": " ".join(parts)}
 
 
-def get_worker_thread_count(divisor=4):
+def get_worker_process_count(divisor=4):
   """Return worker process count as ``effective_cores / divisor``, clamped to at least 1."""
   return max(1, get_effective_cores() // divisor)
 
@@ -1249,14 +1228,16 @@ def get_sync_pool_process_cap():
   return 16
 
 
-def get_archive_pool_process_cap():
-  """If set, caps archive-side pool in ``sync_timedb``. Env ``ARCHIVE_POOL_PROCESS_CAP``."""
-  env = os.environ.get("ARCHIVE_POOL_PROCESS_CAP", "").strip()
+def get_sync_archive_pool_process_cap():
+  """If set, caps archive-side pool in ``sync_timedb``. Env ``SYNC_ARCHIVE_POOL_PROCESS_CAP``."""
+  env = os.environ.get("SYNC_ARCHIVE_POOL_PROCESS_CAP", "").strip()
   if env:
     return int(env)
   _ensure_cfg_loaded()
-  if _pipeline_has_option("archive_pool_process_cap"):
-    return _pipeline_getint("archive_pool_process_cap")
+  if _pipeline_has_option("sync_archive_pool_process_cap"):
+    return int(
+        _ini_option("PIPELINE", "sync_archive_pool_process_cap", legacy_sections=_PIPELINE_LEGACY)
+    )
   return None
 
 
@@ -1265,7 +1246,7 @@ def get_sync_ingest_pool_processes():
   if get_sync_enable_cpuset_priority_budget():
     raw = derive_pipeline_cpuset_priority_budget()["sync_ingest_cap"]
   else:
-    raw = get_worker_thread_count(2)
+    raw = get_worker_process_count(2)
   return _apply_sync_pool_cap(raw, get_sync_pool_process_cap())
 
 
@@ -1275,7 +1256,7 @@ def get_sync_archive_pool_processes():
     raw = derive_pipeline_cpuset_priority_budget()["sync_archive_cap"]
   else:
     raw = 4
-  return _apply_sync_pool_cap(raw, get_archive_pool_process_cap())
+  return _apply_sync_pool_cap(raw, get_sync_archive_pool_process_cap())
 
 
 def get_sync_timedb_archive_max_concurrent_sealed_days():
@@ -1420,7 +1401,7 @@ def get_metrics_prewarm_backpressure_wait_s():
     return 0.25
 
 
-def get_metrics_prewarm_drain_batch_budget_base_s():
+def get_metrics_prewarm_drain_batch_budget_s():
   """Base seconds to drain async plot prewarm after each ``Metrics.run`` batch.
 
   Env ``HPCPERFSTATS_METRICS_PREWARM_DRAIN_BATCH_BUDGET_S`` overrides INI
@@ -1464,7 +1445,7 @@ def get_metrics_prewarm_drain_batch_budget_max_s():
     return 60.0
 
 
-def get_metrics_prewarm_drain_budget_per_successful_job_s():
+def get_metrics_prewarm_drain_per_job_s():
   """Extra drain seconds added per successful jid in the batch (scaled budget)."""
   env = os.environ.get(
       "HPCPERFSTATS_METRICS_PREWARM_DRAIN_PER_JOB_S", ""
@@ -1484,7 +1465,7 @@ def get_metrics_prewarm_drain_budget_per_successful_job_s():
     return 0.5
 
 
-def get_metrics_compute_batch_max_window_seconds():
+def get_metrics_compute_batch_max_window_s():
   """Max sum of job accounting-window seconds per compute batch (0 = disabled).
 
   Heterogeneity guard: avoids packing many multi-day jobs into one batch.
@@ -1509,7 +1490,7 @@ def get_metrics_compute_batch_max_window_seconds():
     return 0.0
 
 
-def get_metrics_compute_batch_max_single_job_runtime_seconds():
+def get_metrics_compute_batch_max_single_job_s():
   """Max seconds for one non-artifact-only job in a batch (0 = disabled).
 
   When set, a job whose window exceeds this is still scheduled alone if it would
@@ -1533,7 +1514,7 @@ def get_metrics_compute_batch_max_single_job_runtime_seconds():
     return 0.0
 
 
-def get_metrics_compute_batch_unknown_runtime_seconds():
+def get_metrics_compute_batch_unknown_runtime_s():
   """Accounting window seconds assumed when start/end unavailable on a candidate."""
   env = os.environ.get(
       "HPCPERFSTATS_METRICS_COMPUTE_BATCH_UNKNOWN_RUNTIME_S", ""
@@ -1553,7 +1534,7 @@ def get_metrics_compute_batch_unknown_runtime_seconds():
     return 172800.0
 
 
-def get_metrics_compute_watchdog_seconds():
+def get_metrics_compute_watchdog_s():
   """Watchdog on metrics phase wall time inside a scheduler batch (seconds)."""
   env = os.environ.get(
       "HPCPERFSTATS_METRICS_COMPUTE_WATCHDOG_S", ""
@@ -1573,10 +1554,10 @@ def get_metrics_compute_watchdog_seconds():
     return 120.0
 
 
-def get_metrics_compute_total_watchdog_seconds():
+def get_metrics_compute_total_watchdog_s():
   """Watchdog on full batch wall (metrics + prewarm submit/drain). 0 = use metrics-only.
 
-  When 0, only ``get_metrics_compute_watchdog_seconds`` applies to the metrics
+  When 0, only ``get_metrics_compute_watchdog_s`` applies to the metrics
   slice; total batch time is logged but does not downshift batch cap.
   """
   env = os.environ.get(
@@ -1597,7 +1578,7 @@ def get_metrics_compute_total_watchdog_seconds():
     return 0.0
 
 
-def get_metrics_deferred_not_ready_retry_seconds():
+def get_metrics_deferred_not_ready_retry_s():
   env = os.environ.get(
       "HPCPERFSTATS_METRICS_DEFERRED_NOT_READY_RETRY_S", ""
   ).strip()
@@ -1635,7 +1616,7 @@ def get_metrics_deferred_not_ready_max_retries():
     return 30
 
 
-def get_metrics_deferred_not_ready_max_age_seconds():
+def get_metrics_deferred_not_ready_max_age_s():
   env = os.environ.get(
       "HPCPERFSTATS_METRICS_DEFERRED_NOT_READY_MAX_AGE_S", ""
   ).strip()
@@ -1654,7 +1635,7 @@ def get_metrics_deferred_not_ready_max_age_seconds():
     return 900.0
 
 
-def get_metrics_deferred_not_ready_quarantine_seconds():
+def get_metrics_deferred_not_ready_quarantine_s():
   env = os.environ.get(
       "HPCPERFSTATS_METRICS_DEFERRED_NOT_READY_QUARANTINE_S", ""
   ).strip()
@@ -1707,15 +1688,6 @@ def get_metrics_readiness_end_margin_seconds():
     )
   except (TypeError, ValueError, OverflowError):
     return 600.0
-
-
-def get_metrics_scheduler_compute_threads():
-  """Thread workers for concurrent per-jid metrics+prewarm in update_metrics scheduler."""
-  _ensure_cfg_loaded()
-  return max(
-      1,
-      _pipeline_getint("metrics_scheduler_compute_threads"),
-  )
 
 
 def get_metrics_run_poll_timeout_s():
@@ -2094,7 +2066,7 @@ def get_metrics_run_stall_timeout_s():
     try:
       return max(5.0, float(env))
     except (TypeError, ValueError, OverflowError):
-      return 600.0
+      return 900.0
   _ensure_cfg_loaded()
   try:
     return max(
@@ -2102,7 +2074,7 @@ def get_metrics_run_stall_timeout_s():
         float(_pipeline_get("metrics_run_stall_timeout_s")),
     )
   except (TypeError, ValueError, OverflowError):
-    return 600.0
+    return 900.0
 
 
 def get_metrics_run_per_job_timeout_s():
@@ -2386,7 +2358,16 @@ def get_sync_write_lock_shards():
     return max(1, int(env))
   _ensure_cfg_loaded()
   if _pipeline_has_option("sync_write_lock_shards"):
-    return max(1, _pipeline_getint("sync_write_lock_shards"))
+    return max(
+        1,
+        int(
+            _ini_option(
+                "PIPELINE",
+                "sync_write_lock_shards",
+                legacy_sections=_PIPELINE_LEGACY,
+            )
+        ),
+    )
   # Default scales modestly with cores to reduce write serialization without
   # exploding contention on smaller systems (40 effective cores -> 8 shards).
   return max(1, min(8, get_effective_cores() // 5))
@@ -2463,12 +2444,6 @@ def get_sync_ingest_malloc_trim_after_file():
   )
 
 
-def get_sync_cold_path_max_concurrent_seals():
-  """Optional global seal concurrency cap; 0 unlimited (default 0)."""
-  _ensure_cfg_loaded()
-  return max(0, _pipeline_getint("sync_cold_path_max_concurrent_seals"))
-
-
 def get_sync_adaptive_dispatch_enabled():
   _ensure_cfg_loaded()
   return _parse_bool(
@@ -2493,70 +2468,6 @@ def get_sync_dispatch_archive_backoff_ratio():
   )
 
 
-def get_sync_dispatch_step_size():
-  _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("sync_dispatch_step_size"))
-
-
-def get_conf_parser_defaults_audit_snapshot():
-  """Return categorized defaults/fallbacks for tuning/audit workflows."""
-  return {
-      "platform_constraints": {
-          "total_cores_default": _DEFAULT_TOTAL_CORES,
-          "cpuset_pin_min_total_cores": 32,
-          "cpuset_pin_min_cores_per_node": 16,
-          "numa_pin_max_nodes_auto": 16,
-      },
-      "sync_throughput": {
-          "sync_enable_cpuset_priority_budget": "yes",
-          "sync_budget_ingest_ratio": 0.60,
-          "sync_budget_archive_ratio": 0.15,
-          "sync_budget_metrics_ratio": 0.20,
-          "sync_budget_reserve_ratio": 0.05,
-          "sync_write_lock_shards_auto_rule": "max(1,min(8,effective_cores//5))",
-          "sync_ingest_queue_max_size": 2000,
-          "sync_archive_queue_max_size": 1000,
-      },
-      "overlap_contention": {
-          "pipeline_overlap_mode": "balanced",
-          "metrics_ingest_priority_scale": 0.75,
-          "metrics_min_processes": 1,
-          "metrics_scheduler_mode": "global_priority",
-          "metrics_scheduler_prefetch_chunks": 8,
-          "metrics_scheduler_ready_queue_target": 2000,
-          "metrics_plot_prewarm_mode": "pipeline_required",
-          "metrics_scheduler_skip_prewarm": "no",
-          "metrics_prewarm_workers": 4,
-      "metrics_prewarm_backlog_cap": 32,
-      "metrics_prewarm_backpressure_wait_s": 0.25,
-          "metrics_scheduler_compute_threads": 4,
-          "metrics_prewarm_retry_attempts": 2,
-      },
-      "stability": {
-          "sync_archive_retry_max_attempts": 5,
-          "sync_archive_retry_backoff_base_seconds": 1.0,
-          "sync_archive_retry_backoff_max_seconds": 60.0,
-          "sync_checkpoint_flush_batch_size": 100,
-          "sync_host_itimes_cache_max_timestamps_per_entry": 20000,
-          "sync_ingest_max_file_read_bytes": 536870912,
-          "sync_ingest_stream_duplicate_scan_bytes": 8388608,
-          "sync_ingest_db_complete_tail_window_lines": 500,
-          "sync_ingest_pool_maxtasksperchild": 1,
-          "sync_ingest_malloc_trim_after_file": "yes",
-          "sync_pool_process_cap": 16,
-          "sync_pool_worker_recycle_grace_polls": 2,
-          "sync_process_tree_rss_limit_mb": 110000,
-          "sync_process_tree_rss_check_every_n_chunks": 1,
-          "sync_process_tree_rss_exit_mb": 0,
-          "sync_cold_path_max_concurrent_seals": 0,
-          "parallel_db_prefetch_max": 4,
-          "db_conn_max_age": 90,
-          "db_statement_timeout_ms": 120000,
-          "db_idle_in_transaction_session_timeout_ms": 300000,
-      },
-  }
-
-
 _SYNC_TIMEDB_CONFIG_BASELINE_PATH = "<sync_timedb_config_baseline>"
 _SYNC_TIMEDB_CONFIG_BASELINE_PARSER = None
 
@@ -2569,7 +2480,7 @@ _PIPELINE_PATH_OPTIONS = frozenset({
 _PIPELINE_DERIVED_AUDIT_SKIP = frozenset()
 
 _SYNC_TIMEDB_CONFIG_AUDIT_ENV_KEYS = (
-    "ARCHIVE_POOL_PROCESS_CAP",
+    "SYNC_ARCHIVE_POOL_PROCESS_CAP",
     "HPCPERFSTATS_METRICS_COMPUTE_BATCH_MAX_SINGLE_JOB_S",
     "HPCPERFSTATS_METRICS_COMPUTE_BATCH_MAX_WINDOW_S",
     "HPCPERFSTATS_METRICS_COMPUTE_BATCH_UNKNOWN_RUNTIME_S",
@@ -2715,7 +2626,7 @@ def _iter_sync_timedb_config_audit_getters():
   yield ("cpuset_pin_min_total_cores", get_cpuset_pin_min_total_cores)
   yield ("cpuset_pin_min_cores_per_node", get_cpuset_pin_min_cores_per_node)
   yield ("numa_pin_max_nodes_auto", get_numa_pin_max_nodes_auto)
-  yield ("pin_proxy_in_compose", get_pin_proxy_for_compose)
+  yield ("pin_proxy_in_compose", get_pin_proxy_in_compose)
   yield ("web_numa_node", get_web_numa_node)
   yield ("pipeline_numa_node", get_pipeline_numa_node)
   for _section, option, _default in INI_OPTION_REGISTRY:
@@ -2858,22 +2769,14 @@ def get_sync_day_close_max_inflight():
     return 4
 
 
-def get_sync_day_close_async_stale_seconds():
-  """Recover stale day-close manifest entries on coordinator init (default 7200; 0=off).
-
-  INI key retains historical ``async`` name; on-disk manifest path is unchanged.
-  """
+def get_sync_day_close_manifest_stale_seconds():
+  """Recover stale day-close manifest entries on coordinator init (default 7200; 0=off)."""
   _ensure_cfg_loaded()
-  raw = _pipeline_get("sync_day_close_async_stale_seconds")
+  raw = _pipeline_get("sync_day_close_manifest_stale_seconds")
   try:
     return max(0.0, float(raw))
   except (TypeError, ValueError):
     return 7200.0
-
-
-def get_sync_day_close_manifest_stale_seconds():
-  """Alias for ``get_sync_day_close_async_stale_seconds``."""
-  return get_sync_day_close_async_stale_seconds()
 
 
 def get_sync_archive_max_inflight_jobs():
@@ -2891,11 +2794,11 @@ def get_sync_archive_worker_stall_seconds():
   )
 
 
-def get_sync_archive_require_db_head_ingest():
+def get_sync_archive_require_db_ingest():
   """Require head+tail DB ingest readiness before tar append or raw removal."""
   _ensure_cfg_loaded()
   return _parse_bool(
-      _pipeline_get("sync_archive_require_db_head_ingest"),
+      _pipeline_get("sync_archive_require_db_ingest"),
   )
 
 

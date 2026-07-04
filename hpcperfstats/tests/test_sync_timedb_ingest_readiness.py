@@ -63,7 +63,7 @@ def test_path_cache_reuses_recent_lookup(monkeypatch, tmp_path):
     calls["n"] += 1
     return True
 
-  monkeypatch.setattr(cfg, "get_sync_archive_require_db_head_ingest", lambda: True)
+  monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
   monkeypatch.setattr(readiness, "head_timestamp_present_in_db", _head_present)
   assert readiness.stats_file_head_ingested_in_db(str(seg)) is True
   assert readiness.stats_file_head_ingested_in_db(str(seg)) is True
@@ -79,7 +79,7 @@ def test_stats_file_head_ingested_false_without_db_row(monkeypatch, tmp_path):
   seg = host / str(ts)
   seg.write_text("%d job1 cn001\nline\n" % ts)
 
-  monkeypatch.setattr(cfg, "get_sync_archive_require_db_head_ingest", lambda: True)
+  monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
   monkeypatch.setattr(readiness, "head_timestamp_present_in_db", lambda _h, _t: False)
   assert readiness.stats_file_head_ingested_in_db(str(seg)) is False
 
@@ -92,7 +92,7 @@ def test_stats_file_head_ingested_true_with_db_row(monkeypatch, tmp_path):
   ts = int(ts_dt.timestamp())
   seg = host_dir / str(ts)
   seg.write_text("%d job1 cn001\nline\n" % ts)
-  monkeypatch.setattr(cfg, "get_sync_archive_require_db_head_ingest", lambda: True)
+  monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
   monkeypatch.setattr(readiness, "head_timestamp_present_in_db", lambda _h, _t: True)
   assert readiness.stats_file_head_ingested_in_db(str(seg)) is True
 
@@ -108,7 +108,7 @@ def test_gate_false_when_head_present_tail_absent(monkeypatch, tmp_path):
     del hostname
     return int(timestamp_utc.timestamp()) in present
 
-  monkeypatch.setattr(cfg, "get_sync_archive_require_db_head_ingest", lambda: True)
+  monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
   monkeypatch.setattr(readiness, "head_timestamp_present_in_db", _present)
   assert readiness.stats_file_head_ingested_in_db(seg) is False
 
@@ -124,7 +124,7 @@ def test_gate_false_when_tail_present_head_absent(monkeypatch, tmp_path):
     del hostname
     return int(timestamp_utc.timestamp()) in present
 
-  monkeypatch.setattr(cfg, "get_sync_archive_require_db_head_ingest", lambda: True)
+  monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
   monkeypatch.setattr(readiness, "head_timestamp_present_in_db", _present)
   assert readiness.stats_file_head_ingested_in_db(seg) is False
 
@@ -140,7 +140,7 @@ def test_gate_true_when_head_and_tail_present_distinct_seconds(monkeypatch, tmp_
     del hostname
     return int(timestamp_utc.timestamp()) in present
 
-  monkeypatch.setattr(cfg, "get_sync_archive_require_db_head_ingest", lambda: True)
+  monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
   monkeypatch.setattr(readiness, "head_timestamp_present_in_db", _present)
   assert readiness.stats_file_head_ingested_in_db(seg) is True
 
@@ -157,7 +157,7 @@ def test_gate_true_single_line_head_equals_tail(monkeypatch, tmp_path):
     calls["n"] += 1
     return True
 
-  monkeypatch.setattr(cfg, "get_sync_archive_require_db_head_ingest", lambda: True)
+  monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
   monkeypatch.setattr(readiness, "head_timestamp_present_in_db", _present)
   assert readiness.stats_file_head_ingested_in_db(seg) is True
   assert calls["n"] == 1
@@ -221,7 +221,7 @@ def test_stats_file_head_ingested_fractional_head_line_after_subsecond_ingest(
   seg = host_dir / str(int(ts_line))
   seg.write_text("%f job1 cn001\nblock dev 1 2 3\n" % ts_line)
 
-  monkeypatch.setattr(cfg, "get_sync_archive_require_db_head_ingest", lambda: True)
+  monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
   monkeypatch.setattr(readiness, "head_timestamp_present_in_db", lambda _h, _t: True)
   assert readiness.stats_file_head_ingested_in_db(str(seg)) is True
 
@@ -239,7 +239,7 @@ def test_stats_file_head_ingested_uses_host_from_file_not_path_dirname(
   short_host = "c641-072"
   seg.write_text("%d job1 %s\nline\n" % (ts, short_host))
 
-  monkeypatch.setattr(cfg, "get_sync_archive_require_db_head_ingest", lambda: True)
+  monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
 
   def _head_present(hostname, timestamp_utc):
     del timestamp_utc
@@ -276,7 +276,7 @@ def test_filter_paths_head_identity_alone_does_not_batch_head_only(monkeypatch, 
     del hostname
     return int(timestamp_utc.timestamp()) in present
 
-  monkeypatch.setattr(cfg, "get_sync_archive_require_db_head_ingest", lambda: True)
+  monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
   monkeypatch.setattr(readiness, "head_timestamp_present_in_db", _present)
   ready, skipped = readiness.filter_paths_head_ingested(
       [seg],
@@ -290,27 +290,27 @@ def test_filter_paths_head_identity_alone_does_not_batch_head_only(monkeypatch, 
 def test_gate_disabled_passes_without_db(monkeypatch, tmp_path):
   seg = tmp_path / "seg"
   seg.write_text("not-a-stats-file\n")
-  monkeypatch.setattr(cfg, "get_sync_archive_require_db_head_ingest", lambda: False)
+  monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: False)
   readiness.reset_sync_ingest_readiness_caches()
   assert readiness.stats_file_head_ingested_in_db(str(seg)) is True
 
 
-def test_conf_parser_sync_archive_require_db_head_ingest_default(temp_ini, monkeypatch):
+def test_conf_parser_sync_archive_require_db_ingest_default(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
   importlib.reload(cfg)
-  assert cfg.get_sync_archive_require_db_head_ingest() is True
+  assert cfg.get_sync_archive_require_db_ingest() is True
 
   with open(temp_ini) as fh:
     content = fh.read()
   content = content.replace(
       "total_cores = 4",
-      "total_cores = 4\nsync_archive_require_db_head_ingest = no",
+      "total_cores = 4\nsync_archive_require_db_ingest = no",
   )
   with open(temp_ini, "w") as fh:
     fh.write(content)
   importlib.reload(cfg)
-  assert cfg.get_sync_archive_require_db_head_ingest() is False
+  assert cfg.get_sync_archive_require_db_ingest() is False
   assert not hasattr(cfg, "get_sync_archive_db_ingest_gate_mode")
   assert not hasattr(cfg, "sync_archive_db_ingest_gate_uses_sample_mode")
   assert not hasattr(cfg, "get_sync_archive_db_ingest_gate_sample_stride")
@@ -330,7 +330,7 @@ def test_stats_file_head_ingested_in_db_closes_connections(monkeypatch, tmp_path
 
   seg = tmp_path / "seg"
   seg.write_text("not-a-stats-file\n")
-  monkeypatch.setattr(cfg, "get_sync_archive_require_db_head_ingest", lambda: False)
+  monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: False)
   import hpcperfstats.dbload.sync_timedb as sync_timedb
   monkeypatch.setattr(sync_timedb, "_sync_worker_db_task", lambda: _FakeSyncWorkerDbTask())
   assert readiness.stats_file_head_ingested_in_db(str(seg)) is True
@@ -397,7 +397,7 @@ def test_build_head_ingest_ready_set_one_batch_probe_per_host(monkeypatch, tmp_p
     calls["n"] += 1
     return True
 
-  monkeypatch.setattr(cfg, "get_sync_archive_require_db_head_ingest", lambda: True)
+  monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
   monkeypatch.setattr(readiness, "host_timestamp_seconds_all_present", _all_present)
   ready = readiness.build_head_ingest_ready_set(paths, gate, log_fn=None)
   assert paths[0] in ready

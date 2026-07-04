@@ -17,7 +17,7 @@ PERSISTENCE_ARTIFACT_REGISTRY: Dict[str, str] = {
     "ingest_checkpoint": ".sync_timedb_state.json",
     "archive_dead_letter": ".sync_timedb_dead_letter.json",
     "archive_maint_hints": ".sync_archive_maint_hints.json",
-    "async_day_close": ".sync_timedb_async_day_close.json",
+    "day_close_manifest": ".sync_timedb_async_day_close.json",
     "startup_tar_seal": ".sync_timedb_startup_tar_seal.json",
     "startup_raw_removal": ".sync_timedb_startup_raw_removal.json",
     "day_raw_removal_dir": ".sync_timedb_day_raw_removal",
@@ -171,7 +171,7 @@ def _expected_schema_version(kind: str) -> Optional[int]:
   if kind == "archive_maint_hints":
     return MAINT_HINTS_SCHEMA_VERSION
   if kind in (
-      "async_day_close",
+      "day_close_manifest",
       "startup_tar_seal",
       "startup_raw_removal",
       "day_raw_removal",
@@ -224,7 +224,7 @@ def _validate_envelope(raw: Any, *, kind: str, log_fn: LogFn = None) -> bool:
         return False
     return True
   if kind in (
-      "async_day_close",
+      "day_close_manifest",
       "startup_tar_seal",
       "startup_raw_removal",
       "day_raw_removal",
@@ -282,7 +282,7 @@ def _unwrap_envelope(raw: Any, *, kind: str) -> Any:
       return raw
     return None
   if kind in (
-      "async_day_close",
+      "day_close_manifest",
       "startup_tar_seal",
       "startup_raw_removal",
   ):
@@ -312,7 +312,7 @@ def load_persistence_document(
     elif kind == "archive_maint_hints":
       default = None
     elif kind in (
-        "async_day_close",
+        "day_close_manifest",
         "startup_tar_seal",
         "startup_raw_removal",
         "day_raw_removal",
@@ -373,7 +373,7 @@ def save_persistence_document(
     _save_json_atomic(path, payload, compact=compact)
     return
   if kind in (
-      "async_day_close",
+      "day_close_manifest",
       "startup_tar_seal",
       "startup_raw_removal",
       "day_raw_removal",

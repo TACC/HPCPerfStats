@@ -12,7 +12,7 @@ When changing ingest, archive, or raw-stats removal under `hpcperfstats/dbload/s
 
 ## Mandatory behavior (when enabled)
 
-- Default **`sync_archive_require_db_head_ingest`** is **on** (`conf_parser.get_sync_archive_require_db_head_ingest()`).
+- Default **`sync_archive_require_db_ingest`** is **on** (`conf_parser.get_sync_archive_require_db_ingest()`).
 - Gate depth is always **head + tail** (first and last digit-leading timestamp lines). There is no sample/strided mode.
 - No production path may **append** a raw monitor stats file to a daily `.tar` or **delete** that raw file from the archive tree unless **`stats_file_head_ingested_in_db`** returns true.
 - Canonical implementation: **`hpcperfstats/dbload/lib/sync_timedb_ingest_readiness.py`**.
@@ -27,7 +27,7 @@ When changing ingest, archive, or raw-stats removal under `hpcperfstats/dbload/s
 - Head and tail hosts may differ; both must pass. When head second equals tail second (tiny file), one DB probe is enough.
 - Canonical probes: `read_stats_file_head_identity` + `read_stats_file_tail_identity` (EOF-backward streaming via `parse_last_timestamp_line_streaming`) + `head_timestamp_present_in_db` in `sync_timedb_ingest_readiness.py` / `sync_timedb_archive_helpers.py`.
 - **Limitation:** middle segments may be missing in DB and still pass when only the head and tail seconds are present.
-- **Emergency override:** **`sync_archive_require_db_head_ingest = no`** disables the gate (log once).
+- **Emergency override:** **`sync_archive_require_db_ingest = no`** disables the gate (log once).
 
 ## Performance
 
@@ -73,7 +73,7 @@ Closed raw segments that **cannot be ingested** (missing head, load error, `pars
 
 ## Tar removal vs DB gate
 
-- **Append / raw delete:** `stats_file_head_ingested_in_db` (when `sync_archive_require_db_head_ingest` is on).
+- **Append / raw delete:** `stats_file_head_ingested_in_db` (when `sync_archive_require_db_ingest` is on).
 - **Uncompressed `.tar` unlink (scheduled):** filesystem gate via **`_remaining_raw_paths_blocking_tar_drop()`** / `remaining_raw_by_gz_has_paths_on_disk` on the **filtered** map — not the raw janitor accrual alone. **Quarantine-terminal** manifest entries (`skipped_quarantine`) and **`get_quarantine_skip_paths()`** paths intentionally left on disk do **not** block `.tar` unlink when manifest is **`phase=done`**. Verified-not-deleted non-quarantine raw and unmanifested closed raw still block. Not-yet-ingested retryable paths block until ingest/handoff clears them.
 - **Uncompressed `.tar` unlink:** janitor `TAR_DROP` debt only when sealed valid and filtered remaining raw has no blocking paths for that day (`force_remove_uncompressed_tar=False`). Raw delete/append DB gate unchanged.
 - Maintenance order in janitor ticks: seal (if debt) → validate/raw remove (DB-gated) → `.tar` drop (filesystem-gated).

@@ -159,7 +159,7 @@ def compute_summary_aggregate_prefetch_pool_size(num_specs):
     1,
     min(
       int(num_specs),
-      cfg.get_parallel_db_prefetch_max_workers(),
+      cfg.get_parallel_db_prefetch_max(),
       _SUMMARY_AGGREGATE_PREFETCH_MAX_THREADS,
     ),
   )

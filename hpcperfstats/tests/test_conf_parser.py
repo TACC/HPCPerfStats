@@ -15,7 +15,6 @@ def test_config_path_from_env(temp_ini, monkeypatch):
   import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_debug() is False
-  assert cfg.get_machine_name() == "test"
   assert cfg.get_total_cores() == "4"
   assert cfg.get_db_name() == "test"
   assert cfg.get_host_name_ext() == "local"
@@ -30,7 +29,7 @@ def test_get_debug_true(temp_ini, monkeypatch):
   content = content.replace("debug = no", "debug = yes")
   with open(temp_ini, "w") as f:
     f.write(content)
-  monkeypatch.setenv("ARCHIVE_POOL_PROCESS_CAP", "64")
+  monkeypatch.setenv("SYNC_ARCHIVE_POOL_PROCESS_CAP", "64")
   monkeypatch.delenv("SYNC_POOL_PROCESS_CAP", raising=False)
   monkeypatch.setenv("SYNC_ENABLE_CPUSET_PRIORITY_BUDGET", "0")
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
@@ -40,39 +39,25 @@ def test_get_debug_true(temp_ini, monkeypatch):
   assert cfg.get_debug() is True
 
 
-def test_get_db_connection_string(temp_ini, monkeypatch):
-  """get_db_connection_string returns connection string from PORTAL section."""
+def test_get_max_gunicorn_workers_default(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
   import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
-  s = cfg.get_db_connection_string()
-  assert "dbname=test" in s
-  assert "user=u" in s or " user=u " in s
-  assert "password=p" in s
-  assert "host=localhost" in s
-  assert "port=5432" in s
+  assert cfg.get_max_gunicorn_workers() == 32
 
 
-def test_get_max_gunicorn_workers_cap_default(temp_ini, monkeypatch):
-  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
-  import importlib
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-  importlib.reload(cfg)
-  assert cfg.get_max_gunicorn_workers_cap() == 32
-
-
-def test_get_worker_thread_count(temp_ini, monkeypatch):
-  """get_worker_thread_count uses effective_cores // divisor, clamped to at least 1."""
+def test_get_worker_process_count(temp_ini, monkeypatch):
+  """get_worker_process_count uses effective_cores // divisor, clamped to at least 1."""
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
   import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   monkeypatch.setattr(cfg.os, "cpu_count", lambda: 64)
   # temp_ini has total_cores = 4 -> effective 4
-  assert cfg.get_worker_thread_count(4) == 1
-  assert cfg.get_worker_thread_count(2) == 2
-  assert cfg.get_worker_thread_count(8) == 1  # 4//8 = 0 -> clamped to 1
+  assert cfg.get_worker_process_count(4) == 1
+  assert cfg.get_worker_process_count(2) == 2
+  assert cfg.get_worker_process_count(8) == 1  # 4//8 = 0 -> clamped to 1
 
 
 def test_get_archive_zstd_priority_defaults(temp_ini, monkeypatch):
@@ -445,7 +430,7 @@ def test_missing_config_file_raises_helpful_error(monkeypatch, tmp_path):
   importlib.reload(cfg)
 
   with pytest.raises(FileNotFoundError, match="Unable to locate HPCPerfStats"):
-    cfg.get_machine_name()
+    cfg.get_db_name()
 
 
 def test_parallel_db_prefetch_and_api_defaults(temp_ini, monkeypatch):
@@ -453,7 +438,7 @@ def test_parallel_db_prefetch_and_api_defaults(temp_ini, monkeypatch):
   import importlib
   import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
-  assert cfg.get_parallel_db_prefetch_max_workers() == 4
+  assert cfg.get_parallel_db_prefetch_max() == 4
   assert cfg.get_api_small_executor_max_workers() == 4
 
 
@@ -471,7 +456,7 @@ def test_api_small_executor_override(temp_ini, monkeypatch):
   import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_api_small_executor_max_workers() == 3
-  assert cfg.get_parallel_db_prefetch_max_workers() == 4
+  assert cfg.get_parallel_db_prefetch_max() == 4
 
 
 def test_db_conn_max_age_default(temp_ini, monkeypatch):
@@ -520,7 +505,7 @@ def test_sync_ingest_pool_respects_cap(temp_ini, monkeypatch):
   import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   monkeypatch.setattr(cfg.os, "cpu_count", lambda: 64)
-  assert cfg.get_worker_thread_count(4) == 16
+  assert cfg.get_worker_process_count(4) == 16
   assert cfg.get_sync_ingest_pool_processes() == 2
 
 
@@ -529,7 +514,7 @@ def test_sync_archive_pool_respects_cap(temp_ini, monkeypatch):
     content = f.read()
   content = content.replace(
       "total_cores = 4",
-      "total_cores = 64\nsync_pool_process_cap = 8\narchive_pool_process_cap = 2",
+      "total_cores = 64\nsync_pool_process_cap = 8\nsync_archive_pool_process_cap = 2",
   )
   with open(temp_ini, "w") as f:
     f.write(content)
@@ -547,11 +532,11 @@ def test_sync_archive_pool_default_is_four_without_cpuset(temp_ini, monkeypatch)
     content = f.read()
   content = content.replace(
       "total_cores = 4",
-      "total_cores = 4\narchive_pool_process_cap = 64",
+      "total_cores = 4\nsync_archive_pool_process_cap = 64",
   )
   with open(temp_ini, "w") as f:
     f.write(content)
-  monkeypatch.setenv("ARCHIVE_POOL_PROCESS_CAP", "64")
+  monkeypatch.setenv("SYNC_ARCHIVE_POOL_PROCESS_CAP", "64")
   monkeypatch.delenv("SYNC_POOL_PROCESS_CAP", raising=False)
   monkeypatch.setenv("SYNC_ENABLE_CPUSET_PRIORITY_BUDGET", "0")
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
@@ -629,7 +614,6 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
   assert cfg.get_metrics_prewarm_workers() == 4
   assert cfg.get_metrics_prewarm_backlog_cap() == 32
   assert cfg.get_metrics_prewarm_backpressure_wait_s() == 0.25
-  assert cfg.get_metrics_scheduler_compute_threads() == 4
   assert cfg.get_metrics_run_poll_timeout_s() == 5.0
   assert cfg.get_metrics_run_stall_timeout_s() == 900.0
   assert cfg.get_metrics_run_per_job_timeout_s() == 0.0
@@ -638,18 +622,18 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
   assert cfg.get_metrics_prewarm_retry_attempts() == 2
   assert cfg.get_metrics_proxy_reject_jid_batch_size() == 48
   assert cfg.get_metrics_scheduler_skip_prewarm() is False
-  assert cfg.get_metrics_prewarm_drain_batch_budget_base_s() == 2.0
+  assert cfg.get_metrics_prewarm_drain_batch_budget_s() == 2.0
   assert cfg.get_metrics_prewarm_drain_batch_budget_max_s() == 60.0
-  assert cfg.get_metrics_prewarm_drain_budget_per_successful_job_s() == 0.5
-  assert cfg.get_metrics_compute_batch_max_window_seconds() == 0.0
-  assert cfg.get_metrics_compute_batch_max_single_job_runtime_seconds() == 0.0
-  assert cfg.get_metrics_compute_batch_unknown_runtime_seconds() == 172800.0
-  assert cfg.get_metrics_compute_watchdog_seconds() == 120.0
-  assert cfg.get_metrics_compute_total_watchdog_seconds() == 0.0
-  assert cfg.get_metrics_deferred_not_ready_retry_seconds() == 10.0
+  assert cfg.get_metrics_prewarm_drain_per_job_s() == 0.5
+  assert cfg.get_metrics_compute_batch_max_window_s() == 0.0
+  assert cfg.get_metrics_compute_batch_max_single_job_s() == 0.0
+  assert cfg.get_metrics_compute_batch_unknown_runtime_s() == 172800.0
+  assert cfg.get_metrics_compute_watchdog_s() == 120.0
+  assert cfg.get_metrics_compute_total_watchdog_s() == 0.0
+  assert cfg.get_metrics_deferred_not_ready_retry_s() == 10.0
   assert cfg.get_metrics_deferred_not_ready_max_retries() == 30
-  assert cfg.get_metrics_deferred_not_ready_max_age_seconds() == 900.0
-  assert cfg.get_metrics_deferred_not_ready_quarantine_seconds() == 300.0
+  assert cfg.get_metrics_deferred_not_ready_max_age_s() == 900.0
+  assert cfg.get_metrics_deferred_not_ready_quarantine_s() == 300.0
   assert cfg.get_metrics_readiness_require_window_coverage() is True
   assert cfg.get_metrics_readiness_start_margin_seconds() == 600.0
   assert cfg.get_metrics_readiness_end_margin_seconds() == 600.0
@@ -666,7 +650,6 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
       "metrics_prewarm_workers = 7\n"
       "metrics_prewarm_backlog_cap = 13\n"
       "metrics_prewarm_backpressure_wait_s = 0.75\n"
-      "metrics_scheduler_compute_threads = 6\n"
       "metrics_run_poll_timeout_s = 1.5\n"
       "metrics_run_stall_timeout_s = 120\n"
       "metrics_persist_statement_timeout_ms = 45000\n"
@@ -686,7 +669,6 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
   assert cfg.get_metrics_prewarm_workers() == 7
   assert cfg.get_metrics_prewarm_backlog_cap() == 13
   assert cfg.get_metrics_prewarm_backpressure_wait_s() == 0.75
-  assert cfg.get_metrics_scheduler_compute_threads() == 6
   assert cfg.get_metrics_run_poll_timeout_s() == 1.5
   assert cfg.get_metrics_run_stall_timeout_s() == 120.0
   assert cfg.get_metrics_persist_statement_timeout_ms() == 45000
@@ -713,10 +695,10 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
   assert cfg.get_metrics_run_stall_timeout_s() == 45.0
   assert cfg.get_metrics_persist_statement_timeout_ms() == 9000
   assert cfg.get_metrics_persist_lock_timeout_ms() == 3000
-  assert cfg.get_metrics_prewarm_drain_batch_budget_base_s() == 3.5
-  assert cfg.get_metrics_compute_watchdog_seconds() == 90.0
-  assert cfg.get_metrics_compute_total_watchdog_seconds() == 600.0
-  assert cfg.get_metrics_deferred_not_ready_retry_seconds() == 15.0
+  assert cfg.get_metrics_prewarm_drain_batch_budget_s() == 3.5
+  assert cfg.get_metrics_compute_watchdog_s() == 90.0
+  assert cfg.get_metrics_compute_total_watchdog_s() == 600.0
+  assert cfg.get_metrics_deferred_not_ready_retry_s() == 15.0
 
 
 def test_get_metrics_readiness_window_coverage_defaults(temp_ini, monkeypatch):
@@ -1156,7 +1138,7 @@ def test_legacy_default_fallback_for_moved_pipeline_key(tmp_path, monkeypatch):
       "staff_email_domain = local\ntimezone = UTC\ndebug = no\n"
       "host_name_ext = local\nrestricted_queue_keywords =\n"
       "total_cores = 4\n"
-      "sync_archive_require_db_head_ingest = no\n"
+      "sync_archive_require_db_ingest = no\n"
       "engine_name = django.db.backends.postgresql\n"
       "dbname = test\nusername = u\npassword = p\nport = 5432\nhost = localhost\n"
       "[PIPELINE]\narchive_dir = /tmp\nacct_path = /tmp\ndaily_archive_dir = /tmp\n"
@@ -1171,7 +1153,7 @@ def test_legacy_default_fallback_for_moved_pipeline_key(tmp_path, monkeypatch):
   import importlib
   import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
-  assert cfg.get_sync_archive_require_db_head_ingest() is False
+  assert cfg.get_sync_archive_require_db_ingest() is False
 
 
 def test_sync_archive_db_ingest_gate_mode_removed(temp_ini, monkeypatch):
@@ -1182,7 +1164,7 @@ def test_sync_archive_db_ingest_gate_mode_removed(temp_ini, monkeypatch):
   assert not hasattr(cfg, "get_sync_archive_db_ingest_gate_mode")
   assert not hasattr(cfg, "sync_archive_db_ingest_gate_uses_sample_mode")
   assert not hasattr(cfg, "get_sync_archive_db_ingest_gate_sample_stride")
-  assert cfg.get_sync_archive_require_db_head_ingest() is True
+  assert cfg.get_sync_archive_require_db_ingest() is True
 
 
 def test_archive_janitor_and_dispatch_defaults(temp_ini, monkeypatch):
@@ -1196,7 +1178,7 @@ def test_archive_janitor_and_dispatch_defaults(temp_ini, monkeypatch):
   assert cfg.get_archive_janitor_raw_paths_per_tick() == 1000
   assert cfg.get_sync_day_close_candidate_report() is True
   assert cfg.get_sync_day_close_max_inflight() == 4
-  assert cfg.get_sync_day_close_async_stale_seconds() == 7200.0
+  assert cfg.get_sync_day_close_manifest_stale_seconds() == 7200.0
   assert cfg.get_sync_day_close_raw_removal_verify_budget_seconds() == 30.0
   assert cfg.get_sync_day_close_raw_removal_max_deletes_per_pass() == 0
   assert cfg.get_archive_keep_uncompressed_tar() is False
@@ -1210,7 +1192,14 @@ def test_archive_janitor_and_dispatch_defaults(temp_ini, monkeypatch):
   assert not hasattr(cfg, "get_archive_seal_idle_seconds")
   assert not hasattr(cfg, "get_archive_maintenance_max_defer_seconds")
   assert not hasattr(cfg, "get_sync_day_close_raw_removal_wait_seconds")
+  assert not hasattr(cfg, "get_sync_cold_path_max_concurrent_seals")
+  assert not hasattr(cfg, "get_sync_dispatch_step_size")
+  assert not hasattr(cfg, "get_metrics_scheduler_compute_threads")
+  assert not hasattr(cfg, "get_db_connection_string")
+  assert not hasattr(cfg, "get_machine_name")
   assert cfg.get_sync_day_close_manifest_stale_seconds() == 7200.0
+  assert cfg.get_sync_pool_process_cap() == 16
+  assert cfg.get_sync_archive_pool_process_cap() is None
 
 
 def test_day_close_max_inflight_default_4(temp_ini, monkeypatch):

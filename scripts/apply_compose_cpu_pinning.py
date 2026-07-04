@@ -164,7 +164,7 @@ def main() -> int:
         if wnode.node_id != pnode.node_id:
           cpus["web"] = wnode.cpulist
           cpus["pipeline"] = pnode.cpulist
-          if cfg.get_pin_proxy_for_compose():
+          if cfg.get_pin_proxy_in_compose():
             cpus["proxy"] = wnode.cpulist
           else:
             cpus["proxy"] = linear["web"]

@@ -19,7 +19,7 @@ The contracts below remain valid for **janitor ticks** and shared helpers. When 
 | Schedule single-flight background pass | `_schedule_post_chunk_hygiene` (closure in `run_sync_timedb_supervisor_loop`) |
 | Pipeline body (seal → raw → `.tar`) | `_run_post_chunk_hygiene_body` |
 | Preflight (any eligible work?) | `_post_chunk_hygiene_has_work` |
-| Recompute disqualified days | `_post_chunk_disqualified_daily_tars` → `build_seal_disqualified_daily_tars` |
+| Recompute disqualified days | `_post_chunk_disqualified_daily_tars` → `build_day_close_disqualified_daily_tars` |
 | Snapshot supervisor state under lock | `_capture_disqualification_inputs` |
 | Per-day append cache bookkeeping | `_track_pending_append_groups`, `_discard_inflight_archive_path` |
 | Day-mapping helpers | `daily_tar_paths_from_pending_archive_tasks`, `daily_tar_paths_for_stats_paths`, `collect_days_with_unmapped_closed_raw` |
@@ -43,7 +43,7 @@ pending_append_by_daily_tar: dict[str, set[str]]  # daily_tar_path -> raw paths
 
 ## Day disqualification union (recompute before every mutating step)
 
-`build_seal_disqualified_daily_tars` unions, as normalized `YYYY-MM-DD.tar` paths:
+`build_day_close_disqualified_daily_tars` unions, as normalized `YYYY-MM-DD.tar` paths:
 
 1. ~~`pending_stats_files` mapped to daily tars~~ — **removed** from seal disqualifiers (2026-06); use **`_janitor_delete_disqualified_daily_tars`** for delete overlap with pending ingest instead.
 2. `inflight_archive_paths` mapped to daily tars.
@@ -69,7 +69,7 @@ Supervisor state is read under `archive_state_lock`; `heapq` push/pop on `pendin
 
 ## Tests
 
-- Helper tests in `test_sync_timedb_archive.py`: `only_when_no_remaining_raw`, `allow_auto_seal=False` skips auto-seal, `daily_tar_paths_from_pending_archive_tasks`, `collect_days_with_unmapped_closed_raw`, `build_seal_disqualified_daily_tars` union.
+- Helper tests in `test_sync_timedb_archive.py`: `only_when_no_remaining_raw`, `allow_auto_seal=False` skips auto-seal, `daily_tar_paths_from_pending_archive_tasks`, `collect_days_with_unmapped_closed_raw`, `build_day_close_disqualified_daily_tars` union.
 - Supervisor test in `test_sync_timedb_supervisor.py`: hygiene is scheduled, runs canonical seal → raw → `.tar` order, passes `skip_daily_tar_paths`, sets `allow_auto_seal=False`, and the preflight skips with no eligible work.
 - Follow `every-error-regression-test.mdc`.
 

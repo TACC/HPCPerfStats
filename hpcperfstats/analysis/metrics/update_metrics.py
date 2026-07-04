@@ -214,8 +214,8 @@ def _job_window_runtime_seconds(start_time, end_time):
 def _effective_prewarm_drain_batch_budget_s(n_successful):
   """Scaled time budget for draining async prewarm after each metrics batch."""
   n = max(0, int(n_successful))
-  base = float(cfg.get_metrics_prewarm_drain_batch_budget_base_s())
-  per_job = float(cfg.get_metrics_prewarm_drain_budget_per_successful_job_s())
+  base = float(cfg.get_metrics_prewarm_drain_batch_budget_s())
+  per_job = float(cfg.get_metrics_prewarm_drain_per_job_s())
   ceiling = float(cfg.get_metrics_prewarm_drain_batch_budget_max_s())
   raw = base + float(n) * per_job
   if ceiling <= 0.0:
@@ -229,7 +229,7 @@ def _batch_window_cost_pair_for_ref(ref):
     return 0.0, 0.0
   rt = getattr(ref, "runtime_s", None)
   if rt is None:
-    rt = float(cfg.get_metrics_compute_batch_unknown_runtime_seconds())
+    rt = float(cfg.get_metrics_compute_batch_unknown_runtime_s())
   else:
     rt = float(rt)
   return rt, rt
@@ -237,8 +237,8 @@ def _batch_window_cost_pair_for_ref(ref):
 
 def _pop_candidates_for_compute_batch_locked(ready_queue, cap):
   """Pop up to ``cap`` candidates using optional window / per-job runtime caps (0 = off)."""
-  max_window = float(cfg.get_metrics_compute_batch_max_window_seconds())
-  max_single = float(cfg.get_metrics_compute_batch_max_single_job_runtime_seconds())
+  max_window = float(cfg.get_metrics_compute_batch_max_window_s())
+  max_single = float(cfg.get_metrics_compute_batch_max_single_job_s())
   out = []
   sum_w = 0.0
   max_rt = 0.0
@@ -2530,14 +2530,14 @@ def _start_readiness_producer(
       max_retries = int(cfg.get_metrics_deferred_not_ready_max_retries())
       use_quarantine = (
           meta["attempts"] >= max_retries
-          or age_s >= float(cfg.get_metrics_deferred_not_ready_max_age_seconds())
+          or age_s >= float(cfg.get_metrics_deferred_not_ready_max_age_s())
       )
       if use_quarantine:
-        retry_after = float(cfg.get_metrics_deferred_not_ready_quarantine_seconds())
+        retry_after = float(cfg.get_metrics_deferred_not_ready_quarantine_s())
         with scheduler_shared_lock:
           stats["deferred_quarantined_jids"] += 1
       else:
-        retry_after = float(cfg.get_metrics_deferred_not_ready_retry_seconds())
+        retry_after = float(cfg.get_metrics_deferred_not_ready_retry_s())
       candidate_retry_at = now + retry_after
       deferred_not_ready[jid] = _merge_deferred_retry_at(
           deferred_not_ready.get(jid),
@@ -3598,8 +3598,8 @@ def update_metrics_for_dates(dates, rerun=False):
               else:
                 failed_count += 1
           batch_elapsed = time.monotonic() - batch_start
-          metrics_watchdog_s = float(cfg.get_metrics_compute_watchdog_seconds())
-          total_watchdog_s = float(cfg.get_metrics_compute_total_watchdog_seconds())
+          metrics_watchdog_s = float(cfg.get_metrics_compute_watchdog_s())
+          total_watchdog_s = float(cfg.get_metrics_compute_total_watchdog_s())
           metrics_phase_s = float(batch_phase_timing.get("metrics_wall_s", batch_elapsed))
           prewarm_phase_s = float(batch_phase_timing.get("prewarm_wall_s", 0.0))
           batch_wall_s = float(batch_phase_timing.get("batch_wall_s", batch_elapsed))

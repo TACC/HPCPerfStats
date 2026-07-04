@@ -26,7 +26,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     drop_legacy_gz_if_equivalent_to_zst,
     build_archive_mapping,
     build_remaining_raw_stats_by_daily_gz,
-    build_seal_disqualified_daily_tars,
+    build_day_close_disqualified_daily_tars,
     collect_days_with_unmapped_closed_raw,
     merge_maintenance_skip_daily_tar_paths,
     daily_gz_has_remaining_raw_stats,
@@ -5810,12 +5810,12 @@ def test_collect_days_with_unmapped_closed_raw_buckets_unmapped_only():
   assert os.path.normpath("/arch/2024-05-01.tar") not in result
 
 
-def test_build_seal_disqualified_daily_tars_ignores_pending_ingest():
+def test_build_day_close_disqualified_daily_tars_ignores_pending_ingest():
   archive_dir = "/arch"
   d = lambda day: os.path.normpath("/arch/2024-06-%02d.tar" % day)
   pending_day = datetime(2024, 6, 1, 3, 0, 0)
   pending_path = "/raw/host/%d" % int(pending_day.timestamp())
-  disqualified = build_seal_disqualified_daily_tars(
+  disqualified = build_day_close_disqualified_daily_tars(
       tgz_archive_dir=archive_dir,
       pending_stats_paths=[pending_path],
       inflight_paths=[],
@@ -5823,14 +5823,14 @@ def test_build_seal_disqualified_daily_tars_ignores_pending_ingest():
   assert d(1) not in disqualified
 
 
-def test_build_seal_disqualified_daily_tars_unions_all_sources():
+def test_build_day_close_disqualified_daily_tars_unions_all_sources():
   archive_dir = "/arch"
   d = lambda day: os.path.normpath("/arch/2024-06-%02d.tar" % day)
   pending_day = datetime(2024, 6, 1, 3, 0, 0)
   inflight_day = datetime(2024, 6, 2, 3, 0, 0)
   pending_path = "/raw/host/%d" % int(pending_day.timestamp())
   inflight_path = "/raw/host/%d" % int(inflight_day.timestamp())
-  disqualified = build_seal_disqualified_daily_tars(
+  disqualified = build_day_close_disqualified_daily_tars(
       tgz_archive_dir=archive_dir,
       remaining_raw_by_gz={"/arch/2024-06-03.tar.zst": ["/raw/x"]},
       pending_stats_paths=[pending_path],
@@ -6180,7 +6180,7 @@ def test_classify_no_eligible_deferred_status(tmp_path):
   )
   by_tar = {e["tar_path"]: e for e in entries}
   assert by_tar[waiting_tar]["status"] == "waiting_on_ingest"
-  assert by_tar[ready_tar]["status"] == "disqualified"
+  assert by_tar[ready_tar]["status"] == "ready_for_enqueue"
   assert "awaiting_janitor_discover" in by_tar[ready_tar]["reasons"]
   assert "eligible_deferred" not in {e.get("status") for e in entries}
 
@@ -6209,7 +6209,7 @@ def test_closed_raw_no_longer_blocks_day_close_candidate_report(tmp_path):
       day_raw_removal=_FakeDayRaw(),
   )
   by_tar = {e["tar_path"]: e for e in entries}
-  assert by_tar[tar_path]["status"] == "disqualified"
+  assert by_tar[tar_path]["status"] == "ready_for_enqueue"
   assert "awaiting_janitor_discover" in by_tar[tar_path]["reasons"]
   assert "closed_raw_on_disk" not in by_tar[tar_path]["reasons"]
 
@@ -6392,7 +6392,7 @@ def test_log_day_close_candidate_report_includes_async_progress(capsys, monkeypa
           {
               "tar_path": "/arch/2026-04-15.tar",
               "status": "queued",
-              "reasons": ["async_in_progress"],
+              "reasons": ["day_close_in_progress"],
               "unprocessed": 0,
               "phase": "",
           },
@@ -6459,20 +6459,20 @@ def test_oldest_day_unprocessed_frozen_logs_after_unchanged_reports(
 def test_prepend_checkpoint_blocked_paths_not_excluded_when_processed():
   """Checkpoint-blocked paths must not be dropped when still in processed_files."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      prepend_checkpoint_blocked_paths_to_pending,
+      prepend_checkpoint_incomplete_paths_to_pending,
   )
 
   blocked = ["/a", "/b"]
   processed = {"/a", "/x"}
   blocked_set = set(blocked)
   reconcile_exclude = processed - blocked_set
-  merged = prepend_checkpoint_blocked_paths_to_pending(
+  merged = prepend_checkpoint_incomplete_paths_to_pending(
       ["/c"],
       blocked,
       exclude=reconcile_exclude,
   )
   assert merged == ["/a", "/b", "/c"]
-  legacy = prepend_checkpoint_blocked_paths_to_pending(
+  legacy = prepend_checkpoint_incomplete_paths_to_pending(
       ["/c"],
       blocked,
       exclude=processed,
@@ -6480,8 +6480,8 @@ def test_prepend_checkpoint_blocked_paths_not_excluded_when_processed():
   assert legacy == ["/b", "/c"]
 
 
-def test_select_ingest_chunk_paths_fallback_blocked_on_disk(tmp_path):
-  """When pending has only newer-day paths, fall back to blocked_on_disk."""
+def test_select_ingest_chunk_paths_fallback_checkpoint_incomplete_on_disk(tmp_path):
+  """When pending has only newer-day paths, fall back to checkpoint_incomplete_on_disk."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       select_ingest_chunk_paths,
   )
@@ -6552,14 +6552,14 @@ def test_select_ingest_chunk_paths_fallback_logs_calendar_days(tmp_path):
   assert any("calendar_days=" in line for line in logs)
 
 
-def test_prepend_checkpoint_blocked_paths_to_pending_dedupes_and_orders():
+def test_prepend_checkpoint_incomplete_paths_to_pending_dedupes_and_orders():
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      prepend_checkpoint_blocked_paths_to_pending,
+      prepend_checkpoint_incomplete_paths_to_pending,
   )
 
   pending = ["/b", "/c"]
   blocked = ["/a", "/b"]
-  merged = prepend_checkpoint_blocked_paths_to_pending(
+  merged = prepend_checkpoint_incomplete_paths_to_pending(
       pending,
       blocked,
       exclude={"/x"},
@@ -6682,12 +6682,12 @@ def test_remove_processed_path_clears_checkpoint_entry(tmp_path):
 
 def test_handoff_priority_cap_keeps_head_paths(tmp_path):
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      prepend_checkpoint_blocked_paths_to_pending,
+      prepend_checkpoint_incomplete_paths_to_pending,
   )
 
   handoff = ["/h1", "/h2"]
   pending = ["/t1", "/t2", "/t3", "/t4", "/t5"]
-  merged = prepend_checkpoint_blocked_paths_to_pending(pending, handoff)
+  merged = prepend_checkpoint_incomplete_paths_to_pending(pending, handoff)
   ingest_queue_max = 4
   priority_n = len(handoff)
   tail_budget = max(0, ingest_queue_max - priority_n)
@@ -6700,9 +6700,9 @@ def test_handoff_priority_cap_keeps_head_paths(tmp_path):
   assert "/t5" not in capped
 
 
-def test_oldest_checkpoint_blocked_tar_returns_oldest_on_disk_day(tmp_path):
+def test_oldest_checkpoint_incomplete_tar_returns_oldest_on_disk_day(tmp_path):
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      oldest_checkpoint_blocked_tar,
+      oldest_checkpoint_incomplete_tar,
   )
 
   daily_dir = tmp_path / "daily"
@@ -6723,7 +6723,7 @@ def test_oldest_checkpoint_blocked_tar_returns_oldest_on_disk_day(tmp_path):
       tar_new: [str(raw_new)],
       tar_old: [str(raw_old)],
   }
-  assert oldest_checkpoint_blocked_tar(
+  assert oldest_checkpoint_incomplete_tar(
       unprocessed, tgz_archive_dir=str(daily_dir)) == tar_old
 
 
@@ -6743,7 +6743,7 @@ def test_classify_ghost_unprocessed_becomes_awaiting_janitor_discover(tmp_path):
       local_tz=timezone.utc,
   )
   by_tar = {e["tar_path"]: e for e in entries}
-  assert by_tar[tar_path]["status"] == "disqualified"
+  assert by_tar[tar_path]["status"] == "ready_for_enqueue"
   assert "awaiting_janitor_discover" in by_tar[tar_path]["reasons"]
   assert by_tar[tar_path]["unprocessed"] == 0
   assert by_tar[tar_path]["unprocessed_list"] == 1
@@ -7080,12 +7080,12 @@ def test_select_ingest_chunk_paths_oldest_tar_1500_paths(tmp_path):
 def test_handoff_priority_cap_explicit_wave_when_priority_exceeds_max():
   """When handoff_priority_n >= ingest_queue_max, cap is an explicit head wave."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      prepend_checkpoint_blocked_paths_to_pending,
+      prepend_checkpoint_incomplete_paths_to_pending,
   )
 
   handoff = ["/h%d" % i for i in range(2500)]
   pending = ["/t%d" % i for i in range(100)]
-  merged = prepend_checkpoint_blocked_paths_to_pending(pending, handoff)
+  merged = prepend_checkpoint_incomplete_paths_to_pending(pending, handoff)
   ingest_queue_max = 2000
   priority_n = len(handoff)
   assert priority_n >= ingest_queue_max
@@ -7395,17 +7395,17 @@ def test_cap_pending_sort_retains_global_oldest_head():
 def test_handoff_cap_preserves_oldest_blocked_head():
   """Oldest-tar blocked paths stay in capped pending when handoff tail is trimmed."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      prepend_checkpoint_blocked_paths_to_pending,
+      prepend_checkpoint_incomplete_paths_to_pending,
   )
 
   handoff = ["/handoff/%d" % i for i in range(1500)]
   blocked = ["/blocked/%d" % i for i in range(5)]
   tail = ["/tail/%d" % i for i in range(100)]
-  merged = prepend_checkpoint_blocked_paths_to_pending(
+  merged = prepend_checkpoint_incomplete_paths_to_pending(
       tail,
       blocked,
   )
-  merged = prepend_checkpoint_blocked_paths_to_pending(
+  merged = prepend_checkpoint_incomplete_paths_to_pending(
       merged,
       handoff,
   )
@@ -7512,7 +7512,7 @@ def test_cross_day_db_complete_helper_contract():
   assert chunk_was_cross_day_defer_dispatch(
       [june_path],
       oldest_tar,
-      blocked_n=2,
+      incomplete_n=2,
       tgz_archive_dir=tgz,
   )
   outcomes = [(june_path, "db_skip", "head_tail")]
@@ -7522,10 +7522,10 @@ def test_cross_day_db_complete_helper_contract():
   )
 
 
-def test_oldest_checkpoint_blocked_tar_skips_cross_day_only(tmp_path):
+def test_oldest_checkpoint_incomplete_tar_skips_cross_day_only(tmp_path):
   """May-27 with only July-mapped path is not oldest; next aligned day wins."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      oldest_checkpoint_blocked_tar,
+      oldest_checkpoint_incomplete_tar,
   )
 
   daily_dir = tmp_path / "daily"
@@ -7546,7 +7546,7 @@ def test_oldest_checkpoint_blocked_tar_skips_cross_day_only(tmp_path):
       may27: [str(cross)],
       may29: [str(aligned)],
   }
-  assert oldest_checkpoint_blocked_tar(
+  assert oldest_checkpoint_incomplete_tar(
       unprocessed, tgz_archive_dir=str(daily_dir)) == may29
 
 
@@ -7608,10 +7608,10 @@ def test_cap_merges_all_unprocessed_days_into_pending(tmp_path):
   """Cap input missing May-30 paths but unprocessed map has them → head includes May-30."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       all_on_disk_unprocessed_paths,
-      prepend_checkpoint_blocked_paths_to_pending,
+      prepend_checkpoint_incomplete_paths_to_pending,
       sort_pending_stats_paths_oldest_first,
       cap_pending_stats_with_blocked_retention,
-      oldest_checkpoint_blocked_tar,
+      oldest_checkpoint_incomplete_tar,
       aligned_on_disk_unprocessed_paths_for_tar,
   )
 
@@ -7643,13 +7643,13 @@ def test_cap_merges_all_unprocessed_days_into_pending(tmp_path):
   all_unprocessed = sort_pending_stats_paths_oldest_first(
       all_on_disk_unprocessed_paths(unprocessed),
   )
-  tar_norm = oldest_checkpoint_blocked_tar(
+  tar_norm = oldest_checkpoint_incomplete_tar(
       unprocessed, tgz_archive_dir=str(daily_dir))
   assert tar_norm == may30
   reserved = aligned_on_disk_unprocessed_paths_for_tar(
       unprocessed, tar_norm, tgz_archive_dir=str(daily_dir))
   capped = cap_pending_stats_with_blocked_retention(
-      prepend_checkpoint_blocked_paths_to_pending(paths, all_unprocessed),
+      prepend_checkpoint_incomplete_paths_to_pending(paths, all_unprocessed),
       max_size=2000,
       blocked_paths=reserved,
       handoff_priority_paths=[],

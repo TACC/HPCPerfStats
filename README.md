@@ -305,7 +305,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
    For a fresh Docker install you typically edit **`[DEFAULT]`** as above; **`[RMQ]`** and PostgreSQL defaults in the example are already wired for Compose. Do not change **`[RMQ]`** hostnames unless your RabbitMQ layout differs. For **cluster syslog**, add or edit the optional **`[SYSLOG]`** section (see `hpcperfstats.ini.example` and the compose step above).
 
-   **`hpcperfstats.ini.example` layout:** each setting has a one-line `#` comment directly above it; optional tuning keys appear commented with defaults matching `conf_parser`. Pipeline/archive behavior (zstd seal, DB-before-append gate **`sync_archive_require_db_head_ingest`** under **`[PIPELINE]`**, syslog allowlist) is described in the bullets above and in **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`**.
+   **`hpcperfstats.ini.example` layout:** each setting has a one-line `#` comment directly above it; optional tuning keys appear commented with defaults matching `conf_parser`. Pipeline/archive behavior (zstd seal, DB-before-append gate **`sync_archive_require_db_ingest`** under **`[PIPELINE]`**, syslog allowlist) is described in the bullets above and in **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`**.
 
    **Upgrading from an older ini layout:** PostgreSQL keys moved from **`[PORTAL]`** to **`[DEFAULT]`**; ingest/archive/metrics keys moved from **`[DEFAULT]`** / **`[PORTAL]`** to **`[PIPELINE]`**. Existing deployments keep working via legacy section fallbacks in `conf_parser` until you migrate keys into the new sections.
 

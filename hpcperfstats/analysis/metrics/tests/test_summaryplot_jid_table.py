@@ -66,10 +66,10 @@ def test_compute_summary_aggregate_prefetch_pool_size_caps_at_two(monkeypatch):
   """Nested summary prefetch must not use full parallel_db_prefetch_max (API stacking)."""
   import hpcperfstats.analysis.metrics.lib.plot.summaryplot as sp
 
-  monkeypatch.setattr(sp.cfg, "get_parallel_db_prefetch_max_workers", lambda: 99)
+  monkeypatch.setattr(sp.cfg, "get_parallel_db_prefetch_max", lambda: 99)
   assert compute_summary_aggregate_prefetch_pool_size(50) == 2
   assert compute_summary_aggregate_prefetch_pool_size(1) == 1
-  monkeypatch.setattr(sp.cfg, "get_parallel_db_prefetch_max_workers", lambda: 1)
+  monkeypatch.setattr(sp.cfg, "get_parallel_db_prefetch_max", lambda: 1)
   assert compute_summary_aggregate_prefetch_pool_size(50) == 1
 
 

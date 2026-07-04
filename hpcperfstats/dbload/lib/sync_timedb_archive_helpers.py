@@ -353,13 +353,13 @@ def chunk_was_cross_day_defer_dispatch(
     chunk_paths,
     oldest_tar_norm,
     *,
-    blocked_n,
+    incomplete_n,
     tgz_archive_dir,
 ):
-  """True when chunk paths are not aligned with oldest checkpoint-blocked tar."""
-  if not oldest_tar_norm or blocked_n <= 0 or not chunk_paths or not tgz_archive_dir:
+  """True when chunk paths are not aligned with oldest checkpoint-incomplete tar."""
+  if not oldest_tar_norm or incomplete_n <= 0 or not chunk_paths or not tgz_archive_dir:
     return False
-  aligned = blocked_paths_aligned_with_oldest_tar(
+  aligned = checkpoint_incomplete_paths_aligned_with_oldest_tar(
       chunk_paths,
       oldest_tar_norm,
       tgz_archive_dir=tgz_archive_dir,
@@ -377,7 +377,7 @@ def all_ingest_outcomes_db_skip_head_tail(outcomes):
   return True
 
 
-def blocked_paths_aligned_with_oldest_tar(
+def checkpoint_incomplete_paths_aligned_with_oldest_tar(
     blocked_paths,
     oldest_tar_norm,
     *,
@@ -561,7 +561,7 @@ def classify_day_close_candidates(
     day_phases=None,
     local_tz=None,
     now=None,
-    async_in_progress_tars=None,
+    day_close_in_progress_tars=None,
     debt_heap_tars=None,
     newly_queued_tars=None,
     queued_reason="scheduled_enqueue",
@@ -572,7 +572,7 @@ def classify_day_close_candidates(
     return []
   unprocessed = unprocessed_by_tar or {}
   disq = disqualification_reasons or {}
-  async_active = _normalize_daily_tar_path_set(async_in_progress_tars)
+  async_active = _normalize_daily_tar_path_set(day_close_in_progress_tars)
   debt_tars = _normalize_daily_tar_path_set(debt_heap_tars)
   newly_queued = _normalize_daily_tar_path_set(newly_queued_tars)
   universe = set()
@@ -617,7 +617,7 @@ def classify_day_close_candidates(
     if tar_norm in async_active:
       status = "queued"
       reasons = set(reasons)
-      reasons.add("async_in_progress")
+      reasons.add("day_close_in_progress")
     elif tar_norm in newly_queued:
       status = "queued"
       reasons = set(reasons)
@@ -634,7 +634,7 @@ def classify_day_close_candidates(
     elif blocking:
       status = "disqualified"
     else:
-      status = "disqualified"
+      status = "ready_for_enqueue"
       reasons = set(reasons)
       reasons.add("awaiting_janitor_discover")
     entry = {
@@ -702,23 +702,24 @@ def log_day_close_candidate_report(
     return
   queued = [e for e in entries if e.get("status") == "queued"]
   waiting = [e for e in entries if e.get("status") == "waiting_on_ingest"]
+  ready = [e for e in entries if e.get("status") == "ready_for_enqueue"]
   disqualified = [e for e in entries if e.get("status") == "disqualified"]
   maybe_log_oldest_day_unprocessed_frozen(waiting, log_fn=log_fn)
-  if not queued and not waiting and not disqualified:
+  if not queued and not waiting and not ready and not disqualified:
     return
   log_fn(
       "janitor: day_close candidate report reason=%s queued=%d "
-      "waiting_on_ingest=%d disqualified=%d"
-      % (reason, len(queued), len(waiting), len(disqualified)),
+      "waiting_on_ingest=%d ready_for_enqueue=%d disqualified=%d"
+      % (reason, len(queued), len(waiting), len(ready), len(disqualified)),
       flush=True,
   )
-  for entry in queued + waiting + disqualified:
+  for entry in queued + waiting + ready + disqualified:
     reasons = list(entry.get("reasons") or ())
     async_suffix = ""
     if (
         async_progress_fn is not None
         and entry.get("status") == "queued"
-        and "async_in_progress" in reasons
+        and "day_close_in_progress" in reasons
     ):
       tar_path = entry.get("tar_path")
       if tar_path:
@@ -1642,7 +1643,7 @@ def aligned_on_disk_unprocessed_paths_for_tar(
   tar_key = os.path.normpath(str(tar_norm or ""))
   if not tar_key or not tgz_archive_dir:
     return []
-  return blocked_paths_aligned_with_oldest_tar(
+  return checkpoint_incomplete_paths_aligned_with_oldest_tar(
       on_disk_unprocessed_paths_for_tar(unprocessed_by_tar, tar_key),
       tar_key,
       tgz_archive_dir=tgz_archive_dir,
@@ -1692,7 +1693,7 @@ def all_on_disk_unprocessed_paths(unprocessed_by_tar):
   return result
 
 
-def iter_checkpoint_blocked_days_oldest_first(
+def iter_checkpoint_incomplete_days_oldest_first(
     unprocessed_by_tar,
     *,
     tgz_archive_dir,
@@ -1747,7 +1748,7 @@ def tail_eligible_days_from_unprocessed(
   """Oldest-first ``(tar_norm, paths)`` with ``1 <= len(paths) <= max_files``."""
   max_files = max(1, int(max_files))
   result = []
-  for _day, tar_norm, paths in iter_checkpoint_blocked_days_oldest_first(
+  for _day, tar_norm, paths in iter_checkpoint_incomplete_days_oldest_first(
       unprocessed_by_tar,
       tgz_archive_dir=tgz_archive_dir,
   ):
@@ -1757,7 +1758,7 @@ def tail_eligible_days_from_unprocessed(
   return result
 
 
-def oldest_checkpoint_blocked_tar(unprocessed_by_tar, *, tgz_archive_dir):
+def oldest_checkpoint_incomplete_tar(unprocessed_by_tar, *, tgz_archive_dir):
   """Return oldest daily ``.tar`` with tar-aligned on-disk unprocessed paths."""
   if not tgz_archive_dir or not unprocessed_by_tar:
     return ""
@@ -1910,7 +1911,7 @@ def select_ingest_chunk_paths(
   if not oldest_tar or not tgz_archive_dir:
     return pending_list[:target_chunk_size]
   oldest_tar_norm = os.path.normpath(str(oldest_tar))
-  blocked_on_disk = aligned_on_disk_unprocessed_paths_for_tar(
+  checkpoint_incomplete_on_disk = aligned_on_disk_unprocessed_paths_for_tar(
       unprocessed_by_tar,
       oldest_tar_norm,
       tgz_archive_dir=tgz_archive_dir,
@@ -1923,7 +1924,7 @@ def select_ingest_chunk_paths(
     ):
       inflight_for_oldest = True
       break
-  if not blocked_on_disk and not inflight_for_oldest:
+  if not checkpoint_incomplete_on_disk and not inflight_for_oldest:
     return pending_list[:target_chunk_size]
   oldest_only = [
       path
@@ -1933,12 +1934,12 @@ def select_ingest_chunk_paths(
           tgz_archive_dir,
       )
   ]
-  if not oldest_only and blocked_on_disk:
+  if not oldest_only and checkpoint_incomplete_on_disk:
     inflight_set = set(inflight_archive_paths or ())
     aligned_blocked = [
         path
-        for path in blocked_paths_aligned_with_oldest_tar(
-            blocked_on_disk,
+        for path in checkpoint_incomplete_paths_aligned_with_oldest_tar(
+            checkpoint_incomplete_on_disk,
             oldest_tar_norm,
             tgz_archive_dir=tgz_archive_dir,
         )
@@ -1948,11 +1949,11 @@ def select_ingest_chunk_paths(
       if log_fn is not None:
         log_fn(
             "sync_timedb: oldest_day_chunk_gate_cross_day_defer oldest_tar=%s "
-            "calendar_days=%s blocked_n=%d pending_n=%d"
+            "calendar_days=%s incomplete_n=%d pending_n=%d"
             % (
                 oldest_tar_norm,
-                build_chunk_day_histogram(blocked_on_disk, tgz_archive_dir),
-                len(blocked_on_disk),
+                build_chunk_day_histogram(checkpoint_incomplete_on_disk, tgz_archive_dir),
+                len(checkpoint_incomplete_on_disk),
                 len(pending_list),
             ),
         )
@@ -1961,7 +1962,7 @@ def select_ingest_chunk_paths(
       if log_fn is not None:
         log_fn(
             "sync_timedb: oldest_day_chunk_gate_fallback oldest_tar=%s "
-            "calendar_days=%s blocked_n=%d"
+            "calendar_days=%s incomplete_n=%d"
             % (
                 oldest_tar_norm,
                 build_chunk_day_histogram(aligned_blocked, tgz_archive_dir),
@@ -1973,15 +1974,15 @@ def select_ingest_chunk_paths(
       if log_fn is not None:
         log_fn(
             "sync_timedb: oldest_day_chunk_gate_fallback oldest_tar=%s "
-            "calendar_days=%s blocked_n=%d"
+            "calendar_days=%s incomplete_n=%d"
             % (
                 oldest_tar_norm,
-                build_chunk_day_histogram(blocked_on_disk, tgz_archive_dir),
-                len(blocked_on_disk),
+                build_chunk_day_histogram(checkpoint_incomplete_on_disk, tgz_archive_dir),
+                len(checkpoint_incomplete_on_disk),
             ),
         )
       oldest_only = [
-          path for path in blocked_on_disk if path not in inflight_set
+          path for path in checkpoint_incomplete_on_disk if path not in inflight_set
       ]
   return list(oldest_only[:target_chunk_size])
 
@@ -2017,7 +2018,7 @@ def build_tar_append_member_map(stats_paths):
   return member_map
 
 
-def prepend_checkpoint_blocked_paths_to_pending(
+def prepend_checkpoint_incomplete_paths_to_pending(
     pending,
     blocked_paths,
     *,
@@ -2259,7 +2260,7 @@ def build_disqualification_reasons_by_tar(
   return {tar: set(codes) for tar, codes in reasons.items()}
 
 
-def build_seal_disqualified_daily_tars(
+def build_day_close_disqualified_daily_tars(
     *,
     tgz_archive_dir,
     remaining_raw_by_gz=None,

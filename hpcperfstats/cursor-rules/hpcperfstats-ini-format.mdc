@@ -43,7 +43,7 @@ next_option = value
 ## Section placement
 
 - Each option must live in the **same `[section]`** as its `conf_parser` reader and **`ini_section_placement.expected_section()`**.
-- Example: **`sync_archive_require_db_head_ingest`** is **`[PIPELINE]`**, not `[DEFAULT]` or `[PORTAL]`.
+- Example: **`sync_archive_require_db_ingest`** is **`[PIPELINE]`**, not `[DEFAULT]` or `[PORTAL]`.
 
 **Prefix heuristics (enforced in `ini_section_placement.py`):**
 
@@ -65,6 +65,11 @@ In the **same task**:
 5. Document the key in **`hpcperfstats.ini.example`** in the correct section and **`[DEFAULT]`** order.
 6. Run **`test_hpcperfstats_ini_example.py`**, **`test_ini_section_placement_contract.py`**, and relevant **`test_dbload/lib/dbload/lib/conf_parser.py`** cases.
 
+## Getter naming
+
+- Prefer **`get_<option>`** matching the INI key (path getters may use a `_path` suffix).
+- Do not leave orphan getters for removed options; remove registry, example, and getter together.
+
 ## Registry and drift tests
 
 - **`hpcperfstats/dbload/lib/conf_parser.py`** → **`INI_OPTION_REGISTRY`**: every ini-backed `(section, option, default)` tuple; getters load fallbacks via **`ini_registry_default()`** / **`_pipeline_get()`**.
@@ -80,4 +85,4 @@ Do **not** add ini entries for knobs that are **environment-only** unless you al
 
 - **`readme-installation-sync.mdc`** — Installation copy/edit steps for `hpcperfstats.ini`.
 - **`immutable-image-ini-policy.mdc`** — no runtime bind-mount of ini in compose.
-- **`sync-timedb-db-before-archive-contract.mdc`** — `sync_archive_require_db_head_ingest` semantics.
+- **`sync-timedb-db-before-archive-contract.mdc`** — `sync_archive_require_db_ingest` semantics.

@@ -9,7 +9,7 @@ import hpcperfstats.dbload.sync_timedb as st
 import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as archive_helpers
 import hpcperfstats.dbload.lib.sync_timedb_archive_janitor as janitor_mod
 import hpcperfstats.dbload.lib.sync_timedb_session_executor as session_executor_mod
-import hpcperfstats.dbload.lib.sync_timedb_async_day_close as async_day_close_mod
+import hpcperfstats.dbload.lib.sync_timedb_day_close_manifest as async_day_close_mod
 import pandas as pd
 import pytest
 from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
@@ -132,7 +132,7 @@ def _default_startup_daily_tar_count(monkeypatch):
     monkeypatch.setattr(janitor_mod, 'ThreadPoolExecutor', _InlineThreadPoolExecutor)
     monkeypatch.setattr(
         async_day_close_mod.DayCloseManifestCoordinator,
-        'submit_day_close',
+        'enqueue_day_close',
         lambda self, tar_path, *, reason, disqualified_daily_tars=None: bool(tar_path),
     )
     monkeypatch.setattr(
@@ -192,8 +192,8 @@ def test_periodic_maintenance_always_runs_gated_tar_removal(monkeypatch, tmp_pat
         monkeypatch.setattr(archive_helpers, 'get_unmapped_closed_raw_daily_tars_cached', lambda *_a, **_k: frozenset())
         monkeypatch.setattr(janitor_mod, 'build_archive_maintenance_snapshot', snapshot_with_tar_debt)
         monkeypatch.setattr(janitor_mod, 'atomic_seal_tar_to_zst', lambda *a, **k: None)
-        monkeypatch.setattr(janitor_mod, 'remove_verified_archived_raw_files', lambda *a, **k: None)
-        monkeypatch.setattr(janitor_mod, 'remove_verified_uncompressed_daily_tars', lambda *a, **k: tar_removal_calls.append(1))
+        monkeypatch.setattr(janitor_mod, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(janitor_mod, 'remove_verified_uncompressed_daily_tars', lambda *a, **k: tar_removal_calls.append(1, raising=False))
         clock = {'t': 10000.0}
 
         def fake_time():
@@ -412,9 +412,9 @@ def test_supervisor_sleeps_once_then_exits_after_empty_full_rescan(monkeypatch, 
         monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
         monkeypatch.setattr(st, 'sleep_until_shutdown', fake_sleep)
         monkeypatch.setattr(st, 'build_archive_mapping', lambda *a, **k: {})
-        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: final_maintenance.__setitem__('calls', final_maintenance['calls'] + 1))
-        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
-        monkeypatch.setattr(st, 'remove_verified_uncompressed_daily_tars', lambda *a, **k: final_maintenance.__setitem__('remove_verified_tars_calls', final_maintenance['remove_verified_tars_calls'] + 1))
+        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: final_maintenance.__setitem__('calls', final_maintenance['calls'] + 1, raising=False))
+        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(st, 'remove_verified_uncompressed_daily_tars', lambda *a, **k: final_maintenance.__setitem__('remove_verified_tars_calls', final_maintenance['remove_verified_tars_calls'] + 1, raising=False))
         monkeypatch.setattr(st, 'tgz_archive_dir', str(daily_dir))
         monkeypatch.setattr(st.multiprocessing, 'get_context', fake_get_context)
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
@@ -447,9 +447,9 @@ def test_supervisor_runs_full_archive_maintenance_before_rescan_when_idle(monkey
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
         monkeypatch.setattr(st, 'build_archive_mapping', lambda *a, **k: {})
         monkeypatch.setattr(st, '_count_daily_tars', lambda *_a, **_k: 3)
-        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: events.append('maintenance'))
-        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
-        monkeypatch.setattr(st, 'remove_verified_uncompressed_daily_tars', lambda *a, **k: events.append('tar_removal'))
+        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: events.append('maintenance', raising=False))
+        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(st, 'remove_verified_uncompressed_daily_tars', lambda *a, **k: events.append('tar_removal', raising=False))
         monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
@@ -484,9 +484,9 @@ def test_supervisor_rescans_before_full_maintenance_when_queue_empty(monkeypatch
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
         monkeypatch.setattr(st, 'build_archive_mapping', lambda *a, **k: {})
         monkeypatch.setattr(st, '_count_daily_tars', lambda *_a, **_k: 0)
-        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: events.append('maintenance'))
-        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
-        monkeypatch.setattr(st, 'remove_verified_uncompressed_daily_tars', lambda *a, **k: None)
+        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: events.append('maintenance', raising=False))
+        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(st, 'remove_verified_uncompressed_daily_tars', lambda *a, **k: None, raising=False)
         monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
@@ -555,8 +555,8 @@ def test_supervisor_run_once_exits_without_idle_sleep_when_empty(monkeypatch):
             sleeps.append(secs)
         monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
         monkeypatch.setattr(st, 'sleep_until_shutdown', fake_sleep)
-        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
         monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
@@ -577,8 +577,8 @@ def test_supervisor_logs_queue_watermarks(monkeypatch):
         monkeypatch.setattr(st, 'rescan_pending_stats_files', lambda *a, **k: [])
         monkeypatch.setattr(st.cfg, 'get_sync_ingest_queue_max_size', lambda: 10)
         monkeypatch.setattr(st.cfg, 'get_sync_archive_queue_max_size', lambda: 8)
-        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
         monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
@@ -610,8 +610,8 @@ def test_supervisor_logs_completed_file_with_global_remaining(monkeypatch):
         monkeypatch.setattr(st, 'add_stats_file_to_db', lambda _lock, p, _c=None: (p, True, True, 0.05))
         monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
         monkeypatch.setattr(st, 'build_archive_mapping', lambda *_a, **_k: {})
-        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
         monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
@@ -727,8 +727,8 @@ def test_failed_ingest_is_not_marked_processed(monkeypatch):
         monkeypatch.setattr(st, 'sleep_until_shutdown', fake_sleep)
         _supervisor_startup_preflight_disabled(monkeypatch)
         monkeypatch.setattr(st, 'build_archive_mapping', lambda *a, **k: {})
-        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
         monkeypatch.setattr(st.multiprocessing, 'get_context', fake_get_context)
         monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
@@ -773,8 +773,8 @@ def test_checkpoint_flush_is_coalesced(monkeypatch, tmp_path):
         monkeypatch.setattr(st, '_save_sync_checkpoint', fake_save)
         monkeypatch.setattr(st, '_path_fingerprint', lambda p: {'path': p, 'size': 1, 'mtime': 1})
         monkeypatch.setattr(st, 'build_archive_mapping', lambda *a, **k: {})
-        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
         monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
         monkeypatch.setattr(st.multiprocessing, 'get_context', fake_get_context)
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
@@ -825,8 +825,8 @@ def test_rescan_excludes_inflight_archive_paths(monkeypatch):
         monkeypatch.setattr(st, 'add_stats_file_to_db', fake_add)
         monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
         monkeypatch.setattr(st, 'build_archive_mapping', lambda *_a, **_k: {'/tmp/day.tar.gz': [target]})
-        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
         monkeypatch.setattr(st, 'chunk_size', 1)
@@ -887,8 +887,8 @@ def test_archive_retry_backoff_requeues_failed_archive(monkeypatch):
         monkeypatch.setattr(st.cfg, 'get_sync_archive_retry_max_attempts', lambda: 2)
         monkeypatch.setattr(st.cfg, 'get_sync_archive_retry_backoff_base_seconds', lambda: 0.0)
         monkeypatch.setattr(st.cfg, 'get_sync_archive_retry_backoff_max_seconds', lambda: 0.0)
-        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
         monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
@@ -909,8 +909,8 @@ def test_retry_queue_dispatch_uses_retry_at_order_not_insertion(monkeypatch):
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
-        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
         monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
         monkeypatch.setattr(st.time, 'time', lambda: 1.0)
         dispatched = []
@@ -947,8 +947,8 @@ def test_nonblocking_finalize_queues_new_archive_work_when_busy(monkeypatch, tmp
         monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
         monkeypatch.setattr(st, 'chunk_size', 1)
         monkeypatch.setattr(st, 'build_archive_mapping', lambda files, *_a, **_k: {'/tmp/%s.tar.gz' % files[0].split('/')[-1]: [files[0]]})
-        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
         monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
@@ -1016,8 +1016,8 @@ def test_archive_dispatch_by_tgz_groups_respects_archive_queue_max(monkeypatch):
         monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
         monkeypatch.setattr(st.cfg, 'get_sync_archive_queue_max_size', lambda: 2)
         monkeypatch.setattr(st, 'build_archive_mapping', lambda *_a, **_k: mapping)
-        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
         monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
@@ -1245,8 +1245,8 @@ def test_dead_letter_replay_runs_before_idle_sleep(monkeypatch):
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
-        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
         monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
 
         class _ArchivePoolReplay:
@@ -1276,7 +1276,7 @@ def test_parse_payload_marks_new_head_as_archival(monkeypatch):
     proc_df = pd.DataFrame(columns=['jid', 'host', 'proc'])
     monkeypatch.setattr(st, 'build_stats_dataframes', lambda *_a, **_k: (stats_df, proc_df))
     monkeypatch.setattr(st, 'compute_deltas_and_arc', lambda s: s)
-    stats_file, payload, need_archival, ingest_ok, parse_elapsed_s = st._parse_stats_file_payload(target)
+    stats_file, payload, need_archival, ingest_ok, parse_elapsed_s, _outcome_meta = st._unpack_parse_payload_result(st._parse_stats_file_payload(target))
     assert stats_file == target
     assert payload[0] is stats_df
     assert payload[1] is proc_df
@@ -1295,7 +1295,7 @@ def test_parse_payload_marks_fully_duplicate_file_for_archival(monkeypatch):
     monkeypatch.setattr(st.host_data, 'objects', type('_Mgr', (), {'filter': staticmethod(lambda **_k: type('_QS', (), {'values_list': staticmethod(lambda *a, **k: type('_V', (), {'distinct': staticmethod(lambda: type('_I', (), {'iterator': staticmethod(lambda: iter([]))})())})())})())})())
     monkeypatch.setattr(st, 'find_processing_start_index', lambda *_a, **_k: (-1, True))
     monkeypatch.setattr(st, 'raw_stats_path_tar_append_decision', lambda *_a, **_k: (True, ''))
-    stats_file, payload, need_archival, ingest_ok, parse_elapsed_s = st._parse_stats_file_payload(target)
+    stats_file, payload, need_archival, ingest_ok, parse_elapsed_s, _outcome_meta = st._unpack_parse_payload_result(st._parse_stats_file_payload(target))
     assert stats_file == target
     assert payload is None
     assert need_archival is True
@@ -1315,7 +1315,7 @@ def test_parse_stats_file_payload_need_archival_false_on_day_skip(monkeypatch):
     monkeypatch.setattr(
         st, 'raw_stats_path_tar_append_decision', lambda *_a, **_k: (False, 'member_exists'),
     )
-    stats_file, payload, need_archival, ingest_ok, parse_elapsed_s = st._parse_stats_file_payload(target)
+    stats_file, payload, need_archival, ingest_ok, parse_elapsed_s, _outcome_meta = st._unpack_parse_payload_result(st._parse_stats_file_payload(target))
     assert stats_file == target
     assert payload is None
     assert need_archival is False
@@ -1345,8 +1345,8 @@ def test_sync_timedb_exits_on_redis_unavailable_during_ingest(monkeypatch):
         monkeypatch.setattr(st.cfg, 'get_sync_supervisor_rss_limit_mb', lambda: 0)
         monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
         monkeypatch.setattr(st, 'build_archive_mapping', lambda *_a, **_k: {})
-        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
         monkeypatch.setattr('hpcperfstats.dbload.lib.sync_timedb_archive_members_redis.verify_archive_members_redis_startup', lambda: None)
@@ -1528,7 +1528,7 @@ def _parse_payload_quarantine_fixture(monkeypatch, tmp_path, *, lines, parse_sid
 def test_parse_payload_quarantines_on_parse_exception(monkeypatch, tmp_path):
     lines = ['1778200758 job1 cn001\n', 'bad\n']
     target, archive_dir, raw_path = _parse_payload_quarantine_fixture(monkeypatch, tmp_path, lines=lines, parse_side_effect=lambda *_a, **_k: (_ for _ in ()).throw(ValueError('not enough values to unpack (expected 3, got 2)')))
-    stats_file, payload, need_archival, ingest_ok, parse_elapsed_s = st._parse_stats_file_payload(target)
+    stats_file, payload, need_archival, ingest_ok, parse_elapsed_s, _outcome_meta = st._unpack_parse_payload_result(st._parse_stats_file_payload(target))
     assert stats_file == target
     assert payload is None
     assert need_archival is False
@@ -1671,8 +1671,8 @@ def test_empty_primary_mapping_falls_back_to_mtime_archive(monkeypatch, tmp_path
         monkeypatch.setattr(st, 'add_stats_file_to_db', lambda *_a, **_k: (target, True, True, 0.0))
         monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
         monkeypatch.setattr(st, 'build_archive_mapping', lambda *_a, **_k: {})
-        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
         monkeypatch.setattr(st, 'tgz_archive_dir', str(tmp_path / 'daily'))
@@ -1706,8 +1706,8 @@ def test_finally_path_finalizes_inflight_archive(monkeypatch, tmp_path):
         monkeypatch.setattr(st, 'add_stats_file_to_db', lambda *_a, **_k: (target, True, True, 0.0))
         monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
         monkeypatch.setattr(st, 'build_archive_mapping', lambda *_a, **_k: {str(tmp_path / 'day.tar.gz'): [target]})
-        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
         monkeypatch.setattr(st, '_path_fingerprint', lambda p: {'path': p, 'size': 1, 'mtime': 1})
@@ -1749,8 +1749,8 @@ def test_archive_result_mismatch_retries_unmatched(monkeypatch, tmp_path):
         monkeypatch.setattr(st.cfg, 'get_sync_archive_retry_max_attempts', lambda: 2)
         monkeypatch.setattr(st.cfg, 'get_sync_archive_retry_backoff_base_seconds', lambda: 0.0)
         monkeypatch.setattr(st.cfg, 'get_sync_archive_retry_backoff_max_seconds', lambda: 0.0)
-        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
         monkeypatch.setattr(st, 'tgz_archive_dir', str(tmp_path / 'daily'))
@@ -1889,8 +1889,8 @@ def test_ingest_pool_worker_exit_propagates_from_supervisor(monkeypatch):
     monkeypatch.setattr(st.cfg, 'get_sync_supervisor_rss_limit_mb', lambda: 0)
     monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
     monkeypatch.setattr(st, 'build_archive_mapping', lambda *_a, **_k: {})
-    monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-    monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+    monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
     monkeypatch.setattr(st, 'close_old_connections', lambda: None)
     monkeypatch.setattr(st.connections, 'close_all', lambda: None)
     terminate_calls = []
@@ -1947,8 +1947,8 @@ def test_stall_teardown_preserves_exit_124_not_137(monkeypatch):
     monkeypatch.setattr(st.cfg, 'get_sync_supervisor_rss_limit_mb', lambda: 0)
     monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
     monkeypatch.setattr(st, 'build_archive_mapping', lambda *_a, **_k: {})
-    monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-    monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+    monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
     monkeypatch.setattr(st, 'close_old_connections', lambda: None)
     monkeypatch.setattr(st.connections, 'close_all', lambda: None)
     monkeypatch.setattr(st, 'terminate_pool_bounded', lambda pool, **kwargs: True)
@@ -1998,8 +1998,8 @@ def test_supervisor_stall_hard_exits_before_archive_pool_context(monkeypatch):
     monkeypatch.setattr(st.cfg, 'get_sync_supervisor_rss_limit_mb', lambda: 0)
     monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
     monkeypatch.setattr(st, 'build_archive_mapping', lambda *_a, **_k: {})
-    monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-    monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+    monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
     monkeypatch.setattr(st, 'close_old_connections', lambda: None)
     monkeypatch.setattr(st.connections, 'close_all', lambda: None)
     monkeypatch.setattr(st, 'terminate_pool_bounded', lambda pool, **kwargs: True)
@@ -2025,7 +2025,7 @@ def test_supervisor_stall_hard_exits_before_archive_pool_context(monkeypatch):
 
 def test_stall_teardown_uses_nonblocking_coordinator_shutdown(monkeypatch):
     from hpcperfstats.dbload.lib.multiprocessing_pool_health import MultiprocessingPoolStallError
-    from hpcperfstats.dbload.lib.sync_timedb_async_day_close import AsyncDayCloseCoordinator
+    from hpcperfstats.dbload.lib.sync_timedb_day_close_manifest import DayCloseManifestCoordinator
     shutdown_requested[0] = False
     target = '/fake/stats-stall-shutdown'
     janitor_shutdown = []
@@ -2037,7 +2037,7 @@ def test_stall_teardown_uses_nonblocking_coordinator_shutdown(monkeypatch):
 
     def async_shutdown_track(self, wait=True):
         async_shutdown_waits.append(wait)
-    monkeypatch.setattr(AsyncDayCloseCoordinator, 'shutdown', async_shutdown_track)
+    monkeypatch.setattr(DayCloseManifestCoordinator, 'shutdown', async_shutdown_track)
 
     def fake_rescan(*_a, **_k):
         if fake_rescan.calls == 0:
@@ -2057,8 +2057,8 @@ def test_stall_teardown_uses_nonblocking_coordinator_shutdown(monkeypatch):
     monkeypatch.setattr(st.cfg, 'get_sync_supervisor_rss_limit_mb', lambda: 0)
     monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
     monkeypatch.setattr(st, 'build_archive_mapping', lambda *_a, **_k: {})
-    monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-    monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+    monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
     monkeypatch.setattr(st, 'close_old_connections', lambda: None)
     monkeypatch.setattr(st.connections, 'close_all', lambda: None)
     monkeypatch.setattr(st, 'terminate_pool_bounded', lambda pool, **kwargs: True)
@@ -2114,8 +2114,8 @@ def test_finalize_invalidates_members_cache(monkeypatch):
     monkeypatch.setattr(st, 'add_stats_file_to_db', lambda *_a, **_k: (target, True, True, 0.0))
     monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
     monkeypatch.setattr(st, 'build_archive_mapping', lambda *_a, **_k: {archive_compressed: [target]})
-    monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-    monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+    monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
     monkeypatch.setattr(st, 'close_old_connections', lambda: None)
     monkeypatch.setattr(st.connections, 'close_all', lambda: None)
     monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
@@ -2157,8 +2157,8 @@ def test_archive_finalize_skips_invalidate_when_tar_append_redis_merge_succeeded
     monkeypatch.setattr(st, 'add_stats_file_to_db', lambda *_a, **_k: (target, True, True, 0.0))
     monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
     monkeypatch.setattr(st, 'build_archive_mapping', lambda *_a, **_k: {archive_compressed: [target]})
-    monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-    monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+    monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
     monkeypatch.setattr(st, 'close_old_connections', lambda: None)
     monkeypatch.setattr(st.connections, 'close_all', lambda: None)
     monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
@@ -2261,8 +2261,8 @@ def test_ingest_first_archive_abandoned_after_retries_exhausted(monkeypatch, tmp
     monkeypatch.setattr(st.cfg, 'get_sync_archive_retry_backoff_base_seconds', lambda: 0.0)
     monkeypatch.setattr(st.cfg, 'get_sync_archive_retry_backoff_max_seconds', lambda: 0.0)
     monkeypatch.setattr(st.cfg, 'get_sync_enable_ingest_first_durability_mode', lambda: True)
-    monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-    monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+    monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
     monkeypatch.setattr(st, 'close_old_connections', lambda: None)
     monkeypatch.setattr(st.connections, 'close_all', lambda: None)
     monkeypatch.setattr(st, 'tgz_archive_dir', str(tmp_path))
@@ -2342,8 +2342,8 @@ def test_archive_finalize_cardinality_mismatch_retries_unmatched(monkeypatch, tm
     monkeypatch.setattr(st.cfg, 'get_sync_archive_retry_max_attempts', lambda: 3)
     monkeypatch.setattr(st.cfg, 'get_sync_archive_retry_backoff_base_seconds', lambda: 0.0)
     monkeypatch.setattr(st.cfg, 'get_sync_archive_retry_backoff_max_seconds', lambda: 0.0)
-    monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-    monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+    monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
     monkeypatch.setattr(st, 'close_old_connections', lambda: None)
     monkeypatch.setattr(st.connections, 'close_all', lambda: None)
     monkeypatch.setattr(st, 'tgz_archive_dir', str(tmp_path))
@@ -2405,8 +2405,8 @@ def test_checkpoint_flush_logs_oserror_and_preserves_dirty(monkeypatch, tmp_path
     monkeypatch.setattr(st, 'add_stats_file_to_db', lambda *_a, **_k: (target, False, True, 0.0))
     monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
     monkeypatch.setattr(st, 'build_archive_mapping', lambda *_a, **_k: {})
-    monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-    monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+    monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
     monkeypatch.setattr(st, 'close_old_connections', lambda: None)
     monkeypatch.setattr(st.connections, 'close_all', lambda: None)
     monkeypatch.setattr(st, 'tgz_archive_dir', str(tmp_path))
@@ -2999,7 +2999,7 @@ def test_supervisor_ingest_proceeds_without_day_close_delete_gate(monkeypatch):
         def any_needs_delete_phase(self):
             return self.block_startup_drain
 
-        def any_blocks_startup_drain(self):
+        def any_active_raw_removal_work(self):
             return self.block_startup_drain
 
         def count_days_waiting_on_ingest(self):
@@ -3498,7 +3498,7 @@ def test_supervisor_startup_handoff_paths_ingested_at_queue_head(monkeypatch, tm
             def discover_closed_raw_on_disk_handoffs(self):
                 return []
 
-            def any_blocks_startup_drain(self):
+            def any_active_raw_removal_work(self):
                 return False
 
             def consumed_paths(self):
@@ -3730,7 +3730,7 @@ def test_recover_startup_handoff_incremental_one_tar_per_drain_spin(monkeypatch,
             def discover_closed_raw_on_disk_handoffs(self):
                 return []
 
-            def any_blocks_startup_drain(self):
+            def any_active_raw_removal_work(self):
                 return False
 
             def consumed_paths(self):
@@ -3831,7 +3831,7 @@ def test_cap_pending_after_handoff_uses_snapshot_during_startup_gate(monkeypatch
             def discover_closed_raw_on_disk_handoffs(self):
                 return []
 
-            def any_blocks_startup_drain(self):
+            def any_active_raw_removal_work(self):
                 return False
 
             def consumed_paths(self):
@@ -3938,7 +3938,7 @@ def test_handoff_skips_duplicate_requeue_same_boot(monkeypatch, tmp_path, capsys
                 del tar_norm
                 return []
 
-            def any_blocks_startup_drain(self):
+            def any_active_raw_removal_work(self):
                 return False
 
             def consumed_paths(self):
@@ -4034,7 +4034,7 @@ def test_handoff_requeue_skips_same_boot_duplicate_after_first_handoff(monkeypat
             def paths_for_closed_raw_handoff_requeue(self, tar_norm):
                 return self.closed_raw_paths_on_disk(tar_norm)
 
-            def any_blocks_startup_drain(self):
+            def any_active_raw_removal_work(self):
                 return False
 
             def consumed_paths(self):
@@ -4216,7 +4216,7 @@ def test_supervisor_oldest_day_chunk_gate_inflight_starvation(monkeypatch, tmp_p
             def discover_closed_raw_on_disk_handoffs(self):
                 return []
 
-            def any_blocks_startup_drain(self):
+            def any_active_raw_removal_work(self):
                 return False
 
             def consumed_paths(self):
@@ -4315,7 +4315,7 @@ def test_supervisor_chunk_gate_cross_day_stall_dispatches_pending_head(monkeypat
             def __init__(self, **_kwargs):
                 pass
 
-            def any_blocks_startup_drain(self):
+            def any_active_raw_removal_work(self):
                 return False
 
             def consumed_paths(self):
@@ -4432,7 +4432,7 @@ def test_supervisor_chunk_gate_unblocks_when_blocked_excluded_from_processed(mon
             def __init__(self, **_kwargs):
                 pass
 
-            def any_blocks_startup_drain(self):
+            def any_active_raw_removal_work(self):
                 return False
 
             def consumed_paths(self):
@@ -4542,7 +4542,7 @@ def test_gate_chunk_no_respin_after_db_complete_checkpoint(monkeypatch, tmp_path
             def __init__(self, **_kwargs):
                 pass
 
-            def any_blocks_startup_drain(self):
+            def any_active_raw_removal_work(self):
                 return False
 
             def consumed_paths(self):
@@ -4646,7 +4646,7 @@ def test_handoff_giant_day_slice_ingest(monkeypatch, tmp_path):
             def discover_closed_raw_on_disk_handoffs(self):
                 return []
 
-            def any_blocks_startup_drain(self):
+            def any_active_raw_removal_work(self):
                 return False
 
             def consumed_paths(self):
@@ -4756,7 +4756,7 @@ def test_closed_raw_handoff_uses_steady_chunk_not_giant_day_slice(monkeypatch, t
                 del path
                 return False
 
-            def any_blocks_startup_drain(self):
+            def any_active_raw_removal_work(self):
                 return False
 
             def consumed_paths(self):
@@ -4840,7 +4840,7 @@ def test_giant_day_slice_gated_to_startup_handoff_recover_only(monkeypatch, tmp_
             def discover_closed_raw_on_disk_handoffs(self):
                 return []
 
-            def any_blocks_startup_drain(self):
+            def any_active_raw_removal_work(self):
                 return False
 
             def consumed_paths(self):
@@ -4927,7 +4927,7 @@ def test_finalize_day_close_deferred_when_handoff_priority_pending(monkeypatch, 
             def discover_closed_raw_on_disk_handoffs(self):
                 return []
 
-            def any_blocks_startup_drain(self):
+            def any_active_raw_removal_work(self):
                 return False
 
             def consumed_paths(self):
@@ -4982,8 +4982,8 @@ def test_finalize_day_close_deferred_when_handoff_priority_pending(monkeypatch, 
         monkeypatch.setattr(st, 'add_stats_file_to_db', lambda _lock, path, **_k: (path, True, True, 0.0))
         monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
         monkeypatch.setattr(st, 'build_archive_mapping', lambda *_a, **_k: {archive_compressed: [target]})
-        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
         monkeypatch.setattr(st, 'head_timestamp_present_in_db', lambda *_a, **_k: False)
@@ -5026,7 +5026,7 @@ def test_post_finalize_reconcile_clears_blocked_before_handoff(monkeypatch, tmp_
             def __init__(self, **_kwargs):
                 pass
 
-            def any_blocks_startup_drain(self):
+            def any_active_raw_removal_work(self):
                 return False
 
             def consumed_paths(self):
@@ -5087,8 +5087,8 @@ def test_post_finalize_reconcile_clears_blocked_before_handoff(monkeypatch, tmp_
         monkeypatch.setattr(st, 'add_stats_file_to_db', lambda _lock, path, **_k: (path, True, True, 0.0))
         monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
         monkeypatch.setattr(st, 'build_archive_mapping', lambda *_a, **_k: {archive_compressed: [target]})
-        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
         monkeypatch.setattr(st, 'head_timestamp_present_in_db', lambda *_a, **_k: False)
@@ -5099,7 +5099,7 @@ def test_post_finalize_reconcile_clears_blocked_before_handoff(monkeypatch, tmp_
         st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _ArchivePoolSuccess(), run_once=True)
         out = capsys.readouterr().out
         assert 'post_finalize_reconcile' in out
-        assert 'blocked_n=0' in out
+        assert 'incomplete_n=0' in out
         assert 'chunk ingest summary' in out
     finally:
         shutdown_requested[0] = False
@@ -5136,7 +5136,7 @@ def test_handoff_giant_day_does_not_block_main_on_immediate_day_close(monkeypatc
             def discover_closed_raw_on_disk_handoffs(self):
                 return []
 
-            def any_blocks_startup_drain(self):
+            def any_active_raw_removal_work(self):
                 return False
 
             def consumed_paths(self):
@@ -5226,7 +5226,7 @@ def test_startup_handoff_no_giant_slice_manifest_done_0522(monkeypatch, tmp_path
             def has_closed_raw_on_disk(self, tar_norm):
                 return os.path.normpath(str(tar_norm or '')) == tar_norm
 
-            def any_blocks_startup_drain(self):
+            def any_active_raw_removal_work(self):
                 return False
 
             def consumed_paths(self):
@@ -5327,7 +5327,7 @@ def test_startup_same_boot_duplicate_kicks_delete_not_skip(monkeypatch, tmp_path
                     return []
                 return list(handoff_paths)
 
-            def any_blocks_startup_drain(self):
+            def any_active_raw_removal_work(self):
                 return False
 
             def consumed_paths(self):
@@ -5382,7 +5382,7 @@ def test_startup_same_boot_duplicate_kicks_delete_not_skip(monkeypatch, tmp_path
         shutdown_requested[0] = False
 
 def test_gate_blocked_n_excludes_db_complete_paths(monkeypatch, tmp_path, capsys):
-    """Gate blocked_n drops to zero when paths are checkpoint-complete in memory."""
+    """Gate incomplete_n drops to zero when paths are checkpoint-complete in memory."""
     shutdown_requested[0] = False
     gate_logs = []
     try:
@@ -5414,7 +5414,7 @@ def test_gate_blocked_n_excludes_db_complete_paths(monkeypatch, tmp_path, capsys
             def discover_closed_raw_on_disk_handoffs(self):
                 return []
 
-            def any_blocks_startup_drain(self):
+            def any_active_raw_removal_work(self):
                 return False
 
             def consumed_paths(self):
@@ -5495,7 +5495,7 @@ def test_gate_blocked_n_excludes_db_complete_paths(monkeypatch, tmp_path, capsys
         st.run_sync_timedb_supervisor_loop(str(archive_dir), '2020-01-01', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         out = capsys.readouterr().out
         combined = out + '\n'.join(gate_logs)
-        assert 'oldest_day_chunk_gate_all_db_complete' in combined or any(('blocked_n=0' in line for line in gate_logs)) or 'blocked_n=0' in combined
+        assert 'oldest_day_chunk_gate_all_db_complete' in combined or any(('incomplete_n=0' in line for line in gate_logs)) or 'incomplete_n=0' in combined
     finally:
         shutdown_requested[0] = False
 
@@ -5522,7 +5522,7 @@ def test_chunk_reconcile_single_live_scan_per_chunk(monkeypatch, tmp_path, capsy
             def __init__(self, **_kwargs):
                 pass
 
-            def any_blocks_startup_drain(self):
+            def any_active_raw_removal_work(self):
                 return False
 
             def consumed_paths(self):
@@ -5613,7 +5613,7 @@ def test_handoff_light_when_drain_disabled(monkeypatch, tmp_path, capsys):
             def discover_closed_raw_on_disk_handoffs(self):
                 return []
 
-            def any_blocks_startup_drain(self):
+            def any_active_raw_removal_work(self):
                 return False
 
             def consumed_paths(self):
@@ -5739,7 +5739,7 @@ def test_chunk_end_defers_immediate_day_close_when_handoff_pending(monkeypatch, 
             def discover_closed_raw_on_disk_handoffs(self):
                 return []
 
-            def any_blocks_startup_drain(self):
+            def any_active_raw_removal_work(self):
                 return False
 
             def consumed_paths(self):
@@ -5794,8 +5794,8 @@ def test_chunk_end_defers_immediate_day_close_when_handoff_pending(monkeypatch, 
         monkeypatch.setattr(st, 'add_stats_file_to_db', lambda _lock, path, **_k: (path, True, True, 0.0))
         monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
         monkeypatch.setattr(st, 'build_archive_mapping', lambda *_a, **_k: {archive_compressed: [target]})
-        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
         monkeypatch.setattr(st, 'head_timestamp_present_in_db', lambda *_a, **_k: False)
@@ -5844,7 +5844,7 @@ def test_chunk_end_submits_immediate_day_close_despite_closed_raw_on_disk(monkey
             def discover_closed_raw_on_disk_handoffs(self):
                 return []
 
-            def any_blocks_startup_drain(self):
+            def any_active_raw_removal_work(self):
                 return False
 
             def consumed_paths(self):
@@ -5902,8 +5902,8 @@ def test_chunk_end_submits_immediate_day_close_despite_closed_raw_on_disk(monkey
         monkeypatch.setattr(st, 'add_stats_file_to_db', lambda _lock, path, **_k: (path, True, True, 0.0))
         monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
         monkeypatch.setattr(st, 'build_archive_mapping', lambda *_a, **_k: {archive_compressed: [target]})
-        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
         monkeypatch.setattr(st, 'head_timestamp_present_in_db', lambda *_a, **_k: False)
@@ -5914,7 +5914,7 @@ def test_chunk_end_submits_immediate_day_close_despite_closed_raw_on_disk(monkey
         monkeypatch.setattr(st, 'days_ingest_complete_by_checkpoint', lambda *_a, **_k: [tar_norm])
         monkeypatch.setattr(st, 'daily_tar_eligible_for_day_close_submit', lambda *_a, **_k: (True, ''))
 
-        import hpcperfstats.dbload.lib.sync_timedb_async_day_close as async_day_close_mod
+        import hpcperfstats.dbload.lib.sync_timedb_day_close_manifest as async_day_close_mod
 
         def _record_submit(self, tar, *, reason, disqualified_daily_tars=None):
             submit_calls.append((tar, reason))
@@ -5922,7 +5922,7 @@ def test_chunk_end_submits_immediate_day_close_despite_closed_raw_on_disk(monkey
 
         monkeypatch.setattr(
             async_day_close_mod.DayCloseManifestCoordinator,
-            'submit_day_close',
+            'enqueue_day_close',
             _record_submit,
         )
         monkeypatch.setattr(
@@ -5977,7 +5977,7 @@ def test_arch_june04_handoff_after_giant_finalize_dispatches_chunk(monkeypatch, 
             def discover_closed_raw_on_disk_handoffs(self):
                 return []
 
-            def any_blocks_startup_drain(self):
+            def any_active_raw_removal_work(self):
                 return False
 
             def consumed_paths(self):
@@ -6040,8 +6040,8 @@ def test_arch_june04_handoff_after_giant_finalize_dispatches_chunk(monkeypatch, 
         monkeypatch.setattr(st, 'add_stats_file_to_db', lambda _lock, path, **_k: (path, True, True, 0.0))
         monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
         monkeypatch.setattr(st, 'build_archive_mapping', lambda *_a, **_k: {archive_compressed: [target]})
-        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None)
-        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None)
+        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
         monkeypatch.setattr(st, 'head_timestamp_present_in_db', lambda *_a, **_k: False)

@@ -918,6 +918,8 @@ def test_oldest_completed_day_reclaimed_before_newer_days(monkeypatch, tmp_path)
   janitor._enqueue_debt(DebtKind.DAY_CLOSE, tar1, persist=False)
 
   monkeypatch.setattr(janitor_mod.cfg, "get_archive_janitor_budget_seconds", lambda: 3600.0)
+  # Serial workers so seal/delete event order is deterministic.
+  monkeypatch.setattr(janitor_mod.cfg, "get_sync_day_close_max_inflight", lambda: 1)
 
   janitor._run_tick_body()
   seal_order = [tar for kind, tar in events if kind == "seal"]
@@ -1702,23 +1704,15 @@ def test_enqueue_immediate_day_close_enqueues_despite_closed_raw_on_disk(tmp_pat
     def __init__(self, janitor):
       self._janitor = janitor
 
-    def submit_day_close(self, tar, *, reason, disqualified_daily_tars=None):
-      return self._janitor._enqueue_eligible_day_close(
+    def enqueue_day_close(self, tar, reason="", *, disqualified_daily_tars=None):
+      ok = self._janitor._enqueue_day_close_debt_if_eligible(
           tar,
           reason=reason,
           disqualified=disqualified_daily_tars,
-      ) and self._record_submit(tar, reason)
-
-    def enqueue_day_close(self, tar, reason, *, disqualified_daily_tars=None):
-      return self.submit_day_close(
-          tar,
-          reason=reason,
-          disqualified_daily_tars=disqualified_daily_tars,
       )
-
-    def _record_submit(self, tar, reason):
-      submit_calls.append((tar, reason))
-      return True
+      if ok:
+        submit_calls.append((tar, reason))
+      return ok
 
     def active_or_submitted_tar_paths(self):
       return set()
@@ -1728,13 +1722,13 @@ def test_enqueue_immediate_day_close_enqueues_despite_closed_raw_on_disk(tmp_pat
 
   janitor = _make_janitor(
       tgz_archive_dir=str(daily_dir),
-      async_day_close_coordinator=None,
+      day_close_manifest_coordinator=None,
       day_raw_removal_coordinator=_ClosedRawCoord(),
       get_day_close_candidate_inputs=lambda: {
           "unprocessed_by_tar": {tar_path: []},
       },
   )
-  janitor.async_day_close_coordinator = _FakeCoord(janitor)
+  janitor.day_close_manifest_coordinator = _FakeCoord(janitor)
   assert janitor.enqueue_immediate_day_close(tar_path, reason="chunk_end")
   assert submit_calls == [(tar_path, "day_ingest_complete:chunk_end")]
 
@@ -1773,7 +1767,7 @@ def test_enqueue_immediate_day_close_many_logs_candidate_report(tmp_path, monkey
     log_lines.append(str(msg))
 
   class _FakeAsyncCoord:
-    def submit_day_close(self, tar, *, reason, disqualified_daily_tars=None):
+    def enqueue_day_close(self, tar, reason="", *, disqualified_daily_tars=None):
       return True
 
     def active_or_submitted_tar_paths(self):
@@ -1785,7 +1779,7 @@ def test_enqueue_immediate_day_close_many_logs_candidate_report(tmp_path, monkey
   janitor = _make_janitor(
       tgz_archive_dir=str(daily_dir),
       log_fn=_log,
-      async_day_close_coordinator=_FakeAsyncCoord(),
+      day_close_manifest_coordinator=_FakeAsyncCoord(),
       get_day_close_candidate_inputs=lambda: {
           "inflight_paths": set(),
           "pending_append_by_daily_tar": {},
@@ -1922,7 +1916,7 @@ def test_janitor_day_close_runs_close_one_day_on_debt(monkeypatch, tmp_path):
 
   janitor = _make_janitor(
       tgz_archive_dir=str(daily_dir),
-      async_day_close_coordinator=_FakeCoord(),
+      day_close_manifest_coordinator=_FakeCoord(),
       get_day_close_candidate_inputs=lambda: {"unprocessed_by_tar": {}},
   )
 
@@ -1962,7 +1956,7 @@ def test_janitor_close_one_day_finalizes_async_manifest(tmp_path):
 
   janitor = _make_janitor(
       tgz_archive_dir=str(daily_dir),
-      async_day_close_coordinator=_FakeCoord(),
+      day_close_manifest_coordinator=_FakeCoord(),
   )
   with janitor._hints_state_lock:
     janitor._day_phases[tar_path] = {"phase": "tar_dropped"}
@@ -2014,7 +2008,7 @@ def test_day_close_active_tar_paths_merges_debt_and_manifest(tmp_path):
 
   janitor = _make_janitor(
       tgz_archive_dir=str(daily_dir),
-      async_day_close_coordinator=_FakeCoord(),
+      day_close_manifest_coordinator=_FakeCoord(),
   )
   janitor._enqueue_debt(DebtKind.DAY_CLOSE, tar_debt, persist=False)
   assert janitor._day_close_active_tar_paths() == {tar_debt, tar_manifest}
@@ -2084,7 +2078,7 @@ def test_run_scheduled_maintenance_pass_discovers_awaiting_janitor_discover_on_s
     def active_or_submitted_tar_paths(self):
       return set(submitted)
 
-    def submit_day_close(self, tar_path, *, reason, disqualified_daily_tars=None):
+    def enqueue_day_close(self, tar_path, reason="", *, disqualified_daily_tars=None):
       submitted.append(os.path.normpath(tar_path))
       return True
 
@@ -2096,7 +2090,7 @@ def test_run_scheduled_maintenance_pass_discovers_awaiting_janitor_discover_on_s
 
   janitor = _make_janitor(
       tgz_archive_dir=str(daily_dir),
-      async_day_close_coordinator=_FakeCoord(),
+      day_close_manifest_coordinator=_FakeCoord(),
       get_day_close_candidate_inputs=lambda: {
           "inflight_paths": set(),
           "pending_append_by_daily_tar": {},
@@ -2144,7 +2138,7 @@ def test_run_scheduled_maintenance_startup_uses_same_max_inflight(
     def active_or_submitted_tar_paths(self):
       return set(submitted)
 
-    def submit_day_close(self, tar_path, *, reason, disqualified_daily_tars=None):
+    def enqueue_day_close(self, tar_path, reason="", *, disqualified_daily_tars=None):
       submitted.append(os.path.normpath(tar_path))
       return True
 
@@ -2156,7 +2150,7 @@ def test_run_scheduled_maintenance_startup_uses_same_max_inflight(
 
   janitor = _make_janitor(
       tgz_archive_dir=str(daily_dir),
-      async_day_close_coordinator=_FakeCoord(),
+      day_close_manifest_coordinator=_FakeCoord(),
       get_day_close_candidate_inputs=lambda: {
           "inflight_paths": set(),
           "pending_append_by_daily_tar": {},
@@ -2191,7 +2185,7 @@ def test_run_scheduled_maintenance_startup_uses_same_max_inflight(
       lambda **_k: [
           {
               "tar_path": t,
-              "status": "disqualified",
+              "status": "ready_for_enqueue",
               "reasons": ["awaiting_janitor_discover"],
               "unprocessed": 0,
           }
@@ -2284,8 +2278,22 @@ def test_janitor_tick_discovers_and_submits_without_startup_reason(
   daily_dir.mkdir()
   tar_path = os.path.normpath(str(daily_dir / "2020-01-08.tar"))
   open(tar_path, "wb").close()
+  enqueued = []
+
+  class _FakeCoord:
+    def active_or_submitted_tar_paths(self):
+      return set(enqueued)
+
+    def enqueue_day_close(self, tar, reason="", *, disqualified_daily_tars=None):
+      enqueued.append(os.path.normpath(tar))
+      return True
+
+    def entry_progress_snapshot(self, _tar_path):
+      return {}
+
   janitor = _make_janitor(
       tgz_archive_dir=str(daily_dir),
+      day_close_manifest_coordinator=_FakeCoord(),
       get_day_close_candidate_inputs=lambda: {
           "inflight_paths": set(),
           "pending_append_by_daily_tar": {},
@@ -2306,7 +2314,7 @@ def test_janitor_tick_discovers_and_submits_without_startup_reason(
       lambda **_k: [
           {
               "tar_path": tar_path,
-              "status": "disqualified",
+              "status": "ready_for_enqueue",
               "reasons": ["awaiting_janitor_discover"],
               "unprocessed": 0,
           },
@@ -2321,12 +2329,7 @@ def test_janitor_tick_discovers_and_submits_without_startup_reason(
   )
   janitor.signal_work_available()
   janitor._run_tick_body()
-  payload = janitor._debt_queue_payload()
-  assert any(
-      e["kind"] == DebtKind.DAY_CLOSE.value
-      and os.path.normpath(e["tar_path"]) == tar_path
-      for e in payload
-  )
+  assert tar_path in enqueued
 
 
 def test_janitor_startup_tick_discovers_and_enqueues_day_close(
@@ -2366,7 +2369,7 @@ def test_janitor_startup_tick_discovers_and_enqueues_day_close(
       lambda **_k: [
           {
               "tar_path": tar_path,
-              "status": "disqualified",
+              "status": "ready_for_enqueue",
               "reasons": ["awaiting_janitor_discover"],
               "unprocessed": 0,
           },

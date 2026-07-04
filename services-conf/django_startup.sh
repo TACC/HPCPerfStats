@@ -104,7 +104,7 @@ else:
     visible = os.cpu_count() or 1
     eff = cfg.get_effective_cores()
     base = min(visible, eff)
-    cap = cfg.get_max_gunicorn_workers_cap()
+    cap = cfg.get_max_gunicorn_workers()
     print(min(2 * base + 1, cap))
 ")
 

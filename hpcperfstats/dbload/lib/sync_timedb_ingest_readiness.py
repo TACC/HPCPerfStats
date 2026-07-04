@@ -1,6 +1,6 @@
 """DB ingest-readiness checks before sync_timedb archives or deletes raw stats files.
 
-When ``sync_archive_require_db_head_ingest=yes``, closed segments must pass the
+When ``sync_archive_require_db_ingest=yes``, closed segments must pass the
 head+tail gate: first and last digit-leading timestamp lines for their hostname
 tokens must each have a ``host_data`` row in the same Unix second.
 
@@ -144,7 +144,7 @@ sampled_identities_ready_in_db = gate_identities_ready_in_db
 
 def archive_db_head_ingest_gate_enabled():
   """Whether tar append and raw removal require DB ingest readiness."""
-  return bool(cfg.get_sync_archive_require_db_head_ingest())
+  return bool(cfg.get_sync_archive_require_db_ingest())
 
 
 def _archive_gate_skip_label():
@@ -157,7 +157,7 @@ def _log_gate_disabled_once(log_fn):
     return
   _GATE_DISABLED_LOGGED = True
   log_fn(
-      "sync_archive_require_db_head_ingest is disabled; skipping DB readiness "
+      "sync_archive_require_db_ingest is disabled; skipping DB readiness "
       "checks before archive/delete",
       flush=True,
   )

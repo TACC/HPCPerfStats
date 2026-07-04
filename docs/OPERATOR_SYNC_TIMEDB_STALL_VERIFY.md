@@ -17,12 +17,12 @@ Attach the `test_runs/day-close-loop-regression-battery-*.log` path to the PR or
 | Tier | When | Pass criteria |
 |------|------|---------------|
 | **T0 smoke** | T+15 min after deploy | Pipeline up; at least one `chunk ingest summary` **or** documented giant-chunk defer (not an error by itself); optional boot thread census (below) |
-| **T1 progress** | T+4 h **or** after first giant `archive_job_done` for backlog head day | Oldest `waiting_on_ingest` day: `unprocessed` **not frozen** vs prior sample; no repeating `oldest_day_chunk_gate_stall` with same `blocked_n` |
+| **T1 progress** | T+4 h **or** after first giant `archive_job_done` for backlog head day | Oldest `waiting_on_ingest` day: `unprocessed` **not frozen** vs prior sample; no repeating `oldest_day_chunk_gate_stall` with same `incomplete_n` |
 | **T2 catch-up** | T+24 h or when head day advances | New `chunk ingest summary` cadence; June-scale head day `unprocessed` trending down; `ingest_stall_watchdog` absent |
 
 ### Head+tail archive DB gate (stricter than head-only)
 
-When **`sync_archive_require_db_head_ingest=yes`**, tar append and raw delete require **both** the first and last digit-leading timestamp seconds in `host_data` (streaming head + EOF-backward tail; no full-file scan). After deploy:
+When **`sync_archive_require_db_ingest=yes`**, tar append and raw delete require **both** the first and last digit-leading timestamp seconds in `host_data` (streaming head + EOF-backward tail; no full-file scan). After deploy:
 
 - Expect more **`not_head_tail_ingested`** / **`skipped_not_head_tail_ingested`** and day-close **handoff** (`day_close handoff requeue`) until ingest writes the tail second.
 - Legacy manifest reasons **`not_head_ingested`** / **`not_sample_ingested`** remain retryable.
@@ -60,7 +60,7 @@ print('daily_tar_dir', cfg.get_tgz_archive_dir())
 
 ### Runtime watchdog
 
-- **`ERROR: ingest_stall_watchdog`** — MainThread idle ≥30 min with `blocked_n>0` and no giant imap budget in flight.
+- **`ERROR: ingest_stall_watchdog`** — MainThread idle ≥30 min with `incomplete_n>0` and no giant imap budget in flight.
 - **`WARN: oldest_day_unprocessed_frozen`** — oldest `waiting_on_ingest` `unprocessed` unchanged across consecutive janitor candidate reports.
 
 Either line during catch-up is a **merge blocker** until RC is classified (see june-ingest-stall-prevention plan Phase 0 greps).
@@ -107,7 +107,7 @@ After deploy of janitor discover + janitor-only **`DAY_CLOSE`** (2026-07), grep 
 
 ```bash
 podman-compose logs pipeline 2>&1 | grep -E \
-  'discover_ready_day_close|janitor: day_close enqueue|janitor: day_close submit|day_close candidate report|Archive janitor tick done' | tail -40
+  'discover_ready_day_close|janitor: day_close enqueue|day_close candidate report|Archive janitor tick done' | tail -40
 ```
 
 **Pass:** checkpoint-complete older calendar days show **`discover_ready_day_close enqueued=`** or **`janitor: day_close enqueue`**; candidate report uses **`waiting_on_ingest`** / **`disqualified`** (no **`eligible_deferred`**); ingest head day stays **`waiting_on_ingest`** while janitor processes prior days; **`Archive janitor tick done`** shows **`days_started>0`** / **`debt_popped>0`** or progressing **`day_phases`** without **`ingest_stall_watchdog`** within 30 min. Under backlog, expect up to **4** concurrent day-close workers (`sync_day_close_max_inflight`) unless tuned lower.
@@ -163,7 +163,7 @@ Within one chunk, **`ingest file path=`** epochs may permute; across chunks, **`
 
 ### T2 verify — idle rescan stall + cap refill (hpcperfstats03, 2026-07)
 
-After deploy of **idle rescan snapshot refill** fix, confirm empty-queue rescans do not block ~14 minutes on **`wait_for_snapshot`**, and cap refill restores **`ingest_queue_max`** backlog instead of collapsing to **`blocked_n`** only.
+After deploy of **idle rescan snapshot refill** fix, confirm empty-queue rescans do not block ~14 minutes on **`wait_for_snapshot`**, and cap refill restores **`ingest_queue_max`** backlog instead of collapsing to **`incomplete_n`** only.
 
 ```bash
 podman-compose logs pipeline 2>&1 | tee /tmp/pipeline-full.log
@@ -187,7 +187,7 @@ grep -E 'pre_seal_verify (start|tar_restore|classify progress|complete)' /tmp/pi
 grep -E 'Files marked for archival: 0|archive_job_begin' /tmp/pipeline-full.log | tail -40
 ```
 
-**Pass (T2):** Every **`pending rescan begin`** is followed by **`pending rescan done`** within minutes (not ~862s **`startup archive scan ready wait_s`** on MainThread alone). **`idle_rescan_snapshot_source=accrual|coordinator`** appears on idle refill. **`pending cap supplement`** or **`capped_pending`** near **`ingest_queue_max`** after queue drain despite **`blocked_n=2`** cross-day stragglers. **`oldest_day_chunk_gate_cross_day_db_complete`** after all-**`db_skip=head_tail`** defer chunks. **`pre_seal_verify classify progress`** during long verify; **`pre_seal_verify start`** without **`complete`** for >5m is a failure. No **`archive_job_begin`** for unrelated calendar days immediately after **`Files marked for archival: 0`** chunks.
+**Pass (T2):** Every **`pending rescan begin`** is followed by **`pending rescan done`** within minutes (not ~862s **`startup archive scan ready wait_s`** on MainThread alone). **`idle_rescan_snapshot_source=accrual|coordinator`** appears on idle refill. **`pending cap supplement`** or **`capped_pending`** near **`ingest_queue_max`** after queue drain despite **`incomplete_n=2`** cross-day stragglers. **`oldest_day_chunk_gate_cross_day_db_complete`** after all-**`db_skip=head_tail`** defer chunks. **`pre_seal_verify classify progress`** during long verify; **`pre_seal_verify start`** without **`complete`** for >5m is a failure. No **`archive_job_begin`** for unrelated calendar days immediately after **`Files marked for archival: 0`** chunks.
 
 ## Log source attribution (`[sync_timedb:role]`)
 

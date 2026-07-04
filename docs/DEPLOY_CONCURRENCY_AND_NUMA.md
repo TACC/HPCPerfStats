@@ -82,7 +82,7 @@ Kernel OOM may kill an ingest pool worker (`[worker:ingest-pool]`) with a **tran
 
 **Catch-up INI starting points** (until backlog of multi‑GiB segments clears): defaults above ship in **`hpcperfstats.ini.example`** with the release — **`sync_pool_process_cap=16`**, **`sync_ingest_pool_maxtasksperchild=1`**, **`sync_ingest_malloc_trim_after_file=yes`**, **`sync_process_tree_rss_limit_mb=110000`**. On **small dev compose** hosts (e.g. 8–16 GiB pipeline cgroup), set **`sync_process_tree_rss_limit_mb=0`** to disable tree defer and optionally lower **`sync_pool_process_cap`** if RAM-bound. Historical catch-up tuning: `sync_ingest_chunk_size=8–16`. On very large trees (~100k+ closed paths), tune **`sync_startup_snapshot_wait_seconds`** (default **300**) and **`sync_day_close_max_inflight`** (default **4**, pipeline occupancy and parallel workers). Boot **`DAY_CLOSE`** discover runs on the janitor thread only; ingest begins after handoff recover without waiting for day-close completion.
 
-**Post-fix disk-release progress grep:** `janitor: discover_ready_day_close`, `janitor: day_close enqueue`, `janitor: day_close submit`, `Archive janitor tick done` (expect `debt_popped>0` or progressing day-close), `sync_timedb: startup archive scan ready`, `sync_timedb: pending rescan done`, `idle_rescan_snapshot_source=`, `pending cap supplement from snapshot`.
+**Post-fix disk-release progress grep:** `janitor: discover_ready_day_close`, `janitor: day_close enqueue`, `Archive janitor tick done` (expect `debt_popped>0` or progressing day-close), `sync_timedb: startup archive scan ready`, `sync_timedb: pending rescan done`, `idle_rescan_snapshot_source=`, `pending cap supplement from snapshot`.
 
 **Idle queue drain:** after **`pending=0`**, supervisor idle rescan uses coordinator/accrual **`closed_paths`** (not incremental tree walk every cycle) and **`merge_rescan_discovered_into_pending`** before cap — same parity as periodic **`rescan_every_chunks`** path.
 
@@ -114,7 +114,7 @@ Tune tree RSS limits to ~**70–80%** of the pipeline cgroup cap; grep kernel lo
 
 ## Archive recovery (operators)
 
-Raw stats on disk remain the **source of truth** until validated archive membership, DB ingest gate (when enabled; **`sync_archive_require_db_head_ingest=yes`** requires first **and** last digit-leading timestamp seconds in `host_data`, via streaming head + EOF-backward tail reads), and janitor raw removal all succeed.
+Raw stats on disk remain the **source of truth** until validated archive membership, DB ingest gate (when enabled; **`sync_archive_require_db_ingest=yes`** requires first **and** last digit-leading timestamp seconds in `host_data`, via streaming head + EOF-backward tail reads), and janitor raw removal all succeed.
 
 | Symptom | Safe recovery |
 |---------|----------------|
@@ -183,10 +183,8 @@ Relevant ini keys (all under **`[PIPELINE]`** unless noted):
 - `sync_adaptive_dispatch_enabled`
 - `sync_dispatch_burst_factor`
 - `sync_dispatch_archive_backoff_ratio`
-- `sync_dispatch_step_size`
 
-Default alignment note:
-- `conf_parser` now exposes `get_conf_parser_defaults_audit_snapshot()` to provide a categorized default/fallback accounting for platform constraints, sync throughput, overlap contention, and stability guardrails.
+Adaptive dispatch uses burst factor and archive backoff ratio only (no separate step-size knob).
 
 ### Metrics window-coverage readiness (summary plots)
 
@@ -268,7 +266,7 @@ The background **`ArchiveJanitor`** runs up to **`sync_day_close_max_inflight`**
 | `distinct_in_flight_days` / `in_flight_file_meta` | Calendar days and file sizes in the stall sample |
 | `seconds_since_last_imap_completion` | Time since last imap yield (`-` = none yet this chunk) |
 | `ingest_pipeline` | `split_parse_write`, `combined`, or inline |
-| `day_close` | Active DAY_CLOSE pipeline (`tar:status:last_progress:age_s`; historical stall token `async_day_close`) |
+| `day_close` | Active DAY_CLOSE pipeline (`tar:status:last_progress:age_s`; historical stall token `day_close_manifest`) |
 | `chunk_prewarm` | One-line chunk prewarm summary (`INFO: chunk prewarm days=…`) |
 | `worker_stages` | `pid:stage:basename:age_s` from ingest workers (includes `archive_member_lookup:hget`, `duplicate_scan_streaming`, `itimes_overflow_db`, `db_write`) |
 | `worker_registry_n` / `worker_registry_gap` | Registry entries vs `in_flight_n` (gap > 0 means missing worker stage wiring) |
