@@ -194,7 +194,15 @@ const cases: Case[] = [
   {
     route: "GET /api/admin_monitor/",
     schema: AdminMonitorRetrieveResponse,
-    wire: { host_stats: [{ host: "n001", last_seen: "2024-01-01T00:00:00+00:00" }] },
+    wire: {
+      host_stats: [
+        {
+          host: "n001",
+          last_time: "2024-01-01T00:00:00+00:00",
+          age_bucket: "ok",
+        },
+      ],
+    },
   },
   {
     route: "GET /api/job_monitor/",
@@ -224,6 +232,28 @@ const cases: Case[] = [
       gpu_active_total: 2,
       gpu_active_percentage: 50.0,
       has_data: true,
+    },
+  },
+  {
+    route: "GET /api/job_monitor/gpu/ (batch)",
+    schema: JobMonitorGpuRetrieveResponse,
+    wire: {
+      results: [
+        {
+          username: "alice",
+          gpu_count_total: 4,
+          gpu_active_total: 2,
+          gpu_active_percentage: 50.0,
+          has_data: true,
+        },
+        {
+          username: "bob",
+          gpu_count_total: 0,
+          gpu_active_total: 0,
+          gpu_active_percentage: 0.0,
+          has_data: false,
+        },
+      ],
     },
   },
   {
@@ -278,7 +308,43 @@ const cases: Case[] = [
     },
   },
   {
-    route: "GET /api/pub/cluster-dashboard/",
+    route: "GET /api/pub/cluster-dashboard/ (meta)",
+    schema: PubClusterDashboardRetrieveResponse,
+    wire: {
+      status: "ready",
+      machine_name: "test.cluster.example",
+      detail: null,
+      retry_hint: null,
+      schema_version: 1,
+      sections: {
+        expansion_factor: {
+          monthly_period_keys: ["2024-02", "2024-01"],
+          yearly_period_keys: ["2024", "2023"],
+        },
+      },
+    },
+  },
+  {
+    route: "GET /api/pub/cluster-dashboard/ (lazy period)",
+    schema: PubClusterDashboardRetrieveResponse,
+    wire: {
+      status: "ready",
+      machine_name: "test.cluster.example",
+      section: "expansion_factor",
+      grouping: "monthly",
+      period_key: "2024-01",
+      block: {
+        scheduler_expansion_factor_daily_means_in_month_count: 28,
+        histogram_bin_edges: [0.0, 1.0, 2.0],
+        histogram_counts: [5, 10, 3],
+        expansion_factor_definition:
+          "(queue_wait_seconds + runtime_seconds) / (ncores * runtime_seconds)",
+        bokeh_histogram_json_item: { type: "plot" },
+      },
+    },
+  },
+  {
+    route: "GET /api/pub/cluster-dashboard/ (legacy full)",
     schema: PubClusterDashboardRetrieveResponse,
     wire: {
       status: "ready",

@@ -79,16 +79,19 @@ export default function MachineLayout({ children }: { children: React.ReactNode 
     );
   }
 
+  if (isLoading) {
+    return (
+      <main id="main-content" tabIndex={-1}>
+        <LoadingMessage message="Loading session…" />
+      </main>
+    );
+  }
+
   const layoutSession = session ?? PLACEHOLDER_SESSION;
 
   return (
     <SessionContext.Provider value={layoutSession}>
       <Layout session={layoutSession} onSessionChange={handleSessionChange}>
-        {isLoading ? (
-          <span className="sr-only" role="status" aria-live="polite">
-            Loading session…
-          </span>
-        ) : null}
         <Suspense
           fallback={
             <span className="sr-only" role="status" aria-live="polite">

@@ -14,8 +14,9 @@ vi.mock("@/components/LazyExpansionHistogram", () => ({
 }));
 
 import { usePubDashboard } from "@/hooks/use-pub-dashboard";
+import { parseApiResponse } from "@/api/parse-api-response";
 
-const mockReadyBundle = {
+const mockReadyBundle = parseApiResponse("GET", "/api/pub/cluster-dashboard/", {
   status: "ready",
   schema_version: 2,
   machine_name: "cluster.test",
@@ -25,7 +26,7 @@ const mockReadyBundle = {
       monthly_period_keys: ["2100-02", "2099-01"],
     },
   },
-};
+});
 
 describe("PageClusterDashboard", () => {
   beforeEach(() => {

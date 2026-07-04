@@ -303,7 +303,7 @@ describe("useJobListHistograms", () => {
       { initialProps: { params: STABLE_PARAMS } },
     );
 
-    expect(result.current.histogramsUpdating).toBe(false);
+    expect(result.current.histogramsUpdating).toBe(true);
 
     await advanceDebounce();
     expect(result.current.histogramsUpdating).toBe(true);
@@ -321,16 +321,38 @@ describe("useJobListHistograms", () => {
     });
   });
 
-  it("does not set histogramsUpdating true until debounce fires", async () => {
+  it("clears prior histogram entries when filter params change before debounce", async () => {
+    vi.mocked(jobsHistogramsBatchRetrieve).mockResolvedValue(mockBatchResponse());
+
+    const { result, rerender } = renderHook(
+      ({ params }) => useJobListHistograms(params, 0, true),
+      { initialProps: { params: STABLE_PARAMS } },
+    );
+
+    await advanceDebounce();
+
+    await waitFor(() => {
+      expect(result.current.histograms?.length).toBeGreaterThan(0);
+    });
+
+    rerender({ params: { ...STABLE_PARAMS, queue: "normal" } });
+
+    expect(result.current.histograms).toBeNull();
+    expect(result.current.histogramsUpdating).toBe(true);
+    expect(result.current.metricHistStatus.runtime.loading).toBe(true);
+  });
+
+  it("sets histogramsUpdating immediately when params change", async () => {
     vi.mocked(jobsHistogramsBatchRetrieve).mockResolvedValue(mockBatchResponse());
 
     const { result } = renderHook(() => useJobListHistograms(STABLE_PARAMS, 0, true));
 
-    expect(result.current.histogramsUpdating).toBe(false);
+    expect(result.current.histogramsUpdating).toBe(true);
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(JOB_LIST_HISTOGRAM_DEBOUNCE_MS - 1);
+    await advanceDebounce();
+
+    await waitFor(() => {
+      expect(result.current.histogramsUpdating).toBe(false);
     });
-    expect(result.current.histogramsUpdating).toBe(false);
   });
 });

@@ -1649,6 +1649,28 @@ components:
           nullable: true
     JobMonitorGpuResponse:
       type: object
+      description: Single-user GPU rollup or batch wrapper with ``results``.
+      properties:
+        username:
+          type: string
+        gpu_count_total:
+          type: integer
+          nullable: true
+        gpu_active_total:
+          type: integer
+          nullable: true
+        gpu_active_percentage:
+          type: number
+          format: double
+          nullable: true
+        has_data:
+          type: boolean
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobMonitorGpuRow'
+    JobMonitorGpuRow:
+      type: object
       properties:
         username:
           type: string
@@ -1764,6 +1786,24 @@ components:
           type: string
         machine_name:
           type: string
+        detail:
+          type: string
+          nullable: true
+        retry_hint:
+          type: string
+          nullable: true
+        schema_version:
+          type: integer
+        sections:
+          $ref: '#/components/schemas/PublicDashboardSections'
+        section:
+          type: string
+        grouping:
+          type: string
+        period_key:
+          type: string
+        block:
+          $ref: '#/components/schemas/PublicExpansionFactorHistogramBlock'
         expansion_factors:
           type: object
           additionalProperties: {}
@@ -1775,6 +1815,45 @@ components:
       type: object
       properties:
         title:
+          type: string
+        bokeh_histogram_json_item:
+          nullable: true
+    PublicDashboardExpansionFactorSection:
+      type: object
+      properties:
+        monthly_period_keys:
+          type: array
+          items:
+            type: string
+        yearly_period_keys:
+          type: array
+          items:
+            type: string
+        monthly_daily_histograms:
+          type: object
+          additionalProperties: {}
+        yearly_weekly_histograms:
+          type: object
+          additionalProperties: {}
+    PublicDashboardSections:
+      type: object
+      properties:
+        expansion_factor:
+          $ref: '#/components/schemas/PublicDashboardExpansionFactorSection'
+    PublicExpansionFactorHistogramBlock:
+      type: object
+      properties:
+        scheduler_expansion_factor_daily_means_in_month_count:
+          type: integer
+        scheduler_expansion_factor_weekly_means_in_year_count:
+          type: integer
+        histogram_bin_edges:
+          type: array
+          items: {}
+        histogram_counts:
+          type: array
+          items: {}
+        expansion_factor_definition:
           type: string
         bokeh_histogram_json_item:
           nullable: true

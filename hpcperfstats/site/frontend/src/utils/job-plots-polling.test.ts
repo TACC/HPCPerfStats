@@ -20,4 +20,14 @@ describe("scheduleJobPlotsRetry", () => {
     expect(fetchFn).not.toHaveBeenCalled();
     vi.useRealTimers();
   });
+
+  it("cancel clears a pending retry timer", async () => {
+    vi.useFakeTimers();
+    const fetchFn = vi.fn();
+    const cancel = scheduleJobPlotsRetry(fetchFn, 0.1, () => false);
+    cancel();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(fetchFn).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
 });

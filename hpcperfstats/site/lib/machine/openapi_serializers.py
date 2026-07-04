@@ -318,12 +318,18 @@ class JobMonitorResponseSerializer(serializers.Serializer):
     results = JobMonitorRowSerializer(many=True, required=False)
 
 
-class JobMonitorGpuResponseSerializer(serializers.Serializer):
+class JobMonitorGpuRowSerializer(serializers.Serializer):
     username = serializers.CharField(required=False, allow_blank=True)
     gpu_count_total = serializers.IntegerField(required=False, allow_null=True)
     gpu_active_total = serializers.IntegerField(required=False, allow_null=True)
     gpu_active_percentage = serializers.FloatField(required=False, allow_null=True)
     has_data = serializers.BooleanField(required=False)
+
+
+class JobMonitorGpuResponseSerializer(JobMonitorGpuRowSerializer):
+    """Single-user GPU rollup or batch wrapper with ``results``."""
+
+    results = JobMonitorGpuRowSerializer(many=True, required=False)
 
 
 class SacctIngestResponseSerializer(serializers.Serializer):
@@ -337,8 +343,44 @@ class PublicClusterMetricBlockSerializer(serializers.Serializer):
     bokeh_histogram_json_item = serializers.JSONField(required=False, allow_null=True)
 
 
+class PublicExpansionFactorHistogramBlockSerializer(serializers.Serializer):
+    scheduler_expansion_factor_daily_means_in_month_count = serializers.IntegerField(
+        required=False
+    )
+    scheduler_expansion_factor_weekly_means_in_year_count = serializers.IntegerField(
+        required=False
+    )
+    histogram_bin_edges = serializers.ListField(required=False)
+    histogram_counts = serializers.ListField(required=False)
+    expansion_factor_definition = serializers.CharField(required=False, allow_blank=True)
+    bokeh_histogram_json_item = serializers.JSONField(required=False, allow_null=True)
+
+
+class PublicDashboardExpansionFactorSectionSerializer(serializers.Serializer):
+    monthly_period_keys = serializers.ListField(
+        child=serializers.CharField(), required=False
+    )
+    yearly_period_keys = serializers.ListField(
+        child=serializers.CharField(), required=False
+    )
+    monthly_daily_histograms = serializers.DictField(required=False)
+    yearly_weekly_histograms = serializers.DictField(required=False)
+
+
+class PublicDashboardSectionsSerializer(serializers.Serializer):
+    expansion_factor = PublicDashboardExpansionFactorSectionSerializer(required=False)
+
+
 class PublicClusterDashboardSerializer(serializers.Serializer):
     status = serializers.CharField(required=False)
     machine_name = serializers.CharField(required=False)
+    detail = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    retry_hint = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    schema_version = serializers.IntegerField(required=False)
+    sections = PublicDashboardSectionsSerializer(required=False)
+    section = serializers.CharField(required=False, allow_blank=True)
+    grouping = serializers.CharField(required=False, allow_blank=True)
+    period_key = serializers.CharField(required=False, allow_blank=True)
+    block = PublicExpansionFactorHistogramBlockSerializer(required=False)
     expansion_factors = serializers.DictField(required=False)
     monthly_metrics = PublicClusterMetricBlockSerializer(many=True, required=False)

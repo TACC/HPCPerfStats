@@ -16,6 +16,7 @@ from hpcperfstats.site.lib.machine.openapi_serializers import (
     JobMonitorGpuResponseSerializer,
     JobMonitorResponseSerializer,
     JobPlotsResponseSerializer,
+    PublicClusterDashboardSerializer,
     TypeDetailResponseSerializer,
 )
 
@@ -43,6 +44,61 @@ JOB_MONITOR_GPU_WIRE = {
     "gpu_active_total": 2,
     "gpu_active_percentage": 50.0,
     "has_data": True,
+}
+
+JOB_MONITOR_GPU_BATCH_WIRE = {
+    "results": [
+        {
+            "username": "alice",
+            "gpu_count_total": 4,
+            "gpu_active_total": 2,
+            "gpu_active_percentage": 50.0,
+            "has_data": True,
+        },
+        {
+            "username": "bob",
+            "gpu_count_total": 0,
+            "gpu_active_total": 0,
+            "gpu_active_percentage": 0.0,
+            "has_data": False,
+        },
+    ],
+}
+
+PUB_DASHBOARD_META_WIRE = {
+    "status": "ready",
+    "machine_name": "test.cluster.example",
+    "detail": None,
+    "retry_hint": None,
+    "schema_version": 1,
+    "sections": {
+        "expansion_factor": {
+            "monthly_period_keys": ["2024-02", "2024-01"],
+            "yearly_period_keys": ["2024", "2023"],
+        },
+    },
+}
+
+PUB_DASHBOARD_LAZY_PERIOD_WIRE = {
+    "status": "ready",
+    "machine_name": "test.cluster.example",
+    "section": "expansion_factor",
+    "grouping": "monthly",
+    "period_key": "2024-01",
+    "block": {
+        "scheduler_expansion_factor_daily_means_in_month_count": 28,
+        "histogram_bin_edges": [0.0, 1.0, 2.0],
+        "histogram_counts": [5, 10, 3],
+        "expansion_factor_definition": "(queue_wait_seconds + runtime_seconds) / (ncores * runtime_seconds)",
+        "bokeh_histogram_json_item": {"type": "plot"},
+    },
+}
+
+PUB_DASHBOARD_LEGACY_FULL_WIRE = {
+    "status": "ready",
+    "machine_name": "test.cluster.example",
+    "expansion_factors": {"cpu": 1.2},
+    "monthly_metrics": [{"title": "Jan", "bokeh_histogram_json_item": {"type": "plot"}}],
 }
 
 JOB_DETAIL_WIRE = {
@@ -136,7 +192,10 @@ def _assert_wire_valid(serializer_cls, wire):
     [
         (JobMonitorResponseSerializer, JOB_MONITOR_WIRE),
         (JobMonitorGpuResponseSerializer, JOB_MONITOR_GPU_WIRE),
+        (JobMonitorGpuResponseSerializer, JOB_MONITOR_GPU_BATCH_WIRE),
         (JobDetailResponseSerializer, JOB_DETAIL_WIRE),
+        (PublicClusterDashboardSerializer, PUB_DASHBOARD_META_WIRE),
+        (PublicClusterDashboardSerializer, PUB_DASHBOARD_LAZY_PERIOD_WIRE),
     ],
 )
 def test_openapi_hard_fail_wire_examples_match_serializers(serializer_cls, wire):
@@ -151,6 +210,7 @@ def test_openapi_hard_fail_wire_examples_match_serializers(serializer_cls, wire)
         (JobPlotsResponseSerializer, JOB_PLOTS_WIRE),
         (JobListHistogramResponseSerializer, JOB_LIST_HISTOGRAM_WIRE),
         (TypeDetailResponseSerializer, TYPE_DETAIL_WIRE),
+        (PublicClusterDashboardSerializer, PUB_DASHBOARD_LEGACY_FULL_WIRE),
     ],
 )
 def test_openapi_silent_strip_wire_examples_match_serializers(serializer_cls, wire):

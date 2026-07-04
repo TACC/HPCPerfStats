@@ -1,4 +1,4 @@
-import { ApiError, type ApiErrorBody } from "./api-error";
+import { ApiError, extractApiErrorMessage, type ApiErrorBody } from "./api-error";
 import { isOrvalFetchEnvelope } from "./orval-response";
 
 export function getApiBody(value: unknown): ApiErrorBody {
@@ -12,10 +12,7 @@ export function getErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiError) return error.message;
   if (error instanceof Error && error.message.trim()) return error.message;
   const body = getApiBody(error);
-  if (typeof body.error === "string" && body.error.trim()) return body.error;
-  if (typeof body.message === "string" && body.message.trim()) return body.message;
-  if (typeof body.detail === "string" && body.detail.trim()) return body.detail;
-  return fallback;
+  return extractApiErrorMessage(body, 0, fallback);
 }
 
 /** Status-aware copy for page-level error banners. */

@@ -1,11 +1,28 @@
-import { keepPreviousData } from "@tanstack/react-query";
 import { useCallback, useEffect, useState } from "react";
 import { useJobsRetrieve2 } from "@/api/generated/jobs/jobs";
+import type { jobsRetrieve2Response } from "@/api/generated/jobs/jobs";
 import type { JobDetailResponse } from "@/api/generated/models/jobDetailResponse";
 import { getErrorMessage, getStatusAwareErrorMessage } from "@/api/get-error-message";
 import { selectOrvalData } from "@/api/orval-response";
 
 const INITIAL_DEFER = "xalt,proc,multiprecision";
+
+function jobDetailPkFromData(data: JobDetailResponse | undefined): string | null {
+  const jid = data?.job_data?.jid;
+  if (jid === undefined || jid === null) return null;
+  return String(jid);
+}
+
+/** Keep prior detail envelope only for the same pk (avoid cross-job flash on route change). */
+export function jobDetailPlaceholderData(
+  pk: string,
+  previousData: jobsRetrieve2Response | undefined,
+): jobsRetrieve2Response | undefined {
+  if (!previousData || previousData.status !== 200) return undefined;
+  const prevPk = jobDetailPkFromData(previousData.data);
+  if (!prevPk || prevPk !== pk) return undefined;
+  return previousData;
+}
 
 /** Single job detail fetch with deferred heavy sections; refetch without defer on demand. */
 export function useJobDetailQuery(pk: string) {
@@ -16,7 +33,7 @@ export function useJobDetailQuery(pk: string) {
     {
       query: {
         enabled: !!pk,
-        placeholderData: keepPreviousData,
+        placeholderData: (previousData) => jobDetailPlaceholderData(pk, previousData),
         select: selectOrvalData,
       },
     },

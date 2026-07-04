@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { useHomeOptionsQuery } from "@/hooks/use-home-options";
 import MachineLayout from "./layout";
 
 vi.mock("@/patch-resize-observer-for-bokeh", () => ({
@@ -14,11 +15,24 @@ vi.mock("@/Layout", () => ({
 }));
 
 const useSessionRetrieveMock = vi.fn();
+const authenticatedChildHookSpy = vi.fn();
 
 vi.mock("@/api/generated/session/session", () => ({
   useSessionRetrieve: () => useSessionRetrieveMock(),
   getSessionRetrieveQueryKey: () => ["/api/session/"],
 }));
+
+vi.mock("@/hooks/use-home-options", () => ({
+  useHomeOptionsQuery: () => {
+    authenticatedChildHookSpy();
+    return { data: null, error: null, loading: false };
+  },
+}));
+
+function AuthenticatedPageStub() {
+  useHomeOptionsQuery();
+  return <p>page body</p>;
+}
 
 function renderMachineLayout(children: React.ReactNode) {
   const client = new QueryClient({
@@ -34,22 +48,21 @@ function renderMachineLayout(children: React.ReactNode) {
 describe("MachineLayout", () => {
   beforeEach(() => {
     useSessionRetrieveMock.mockReset();
+    authenticatedChildHookSpy.mockReset();
   });
 
-  it("renders children while session is loading", () => {
+  it("does not render children while session is loading", () => {
     useSessionRetrieveMock.mockReturnValue({
       data: undefined,
       isLoading: true,
       isError: false,
     });
 
-    renderMachineLayout(<p>page body</p>);
+    renderMachineLayout(<AuthenticatedPageStub />);
 
-    expect(screen.getByText("page body")).toBeInTheDocument();
-    const status = screen.getByText("Loading session…");
-    expect(status).toHaveClass("sr-only");
-    expect(status).toHaveAttribute("role", "status");
-    expect(screen.queryByText("Loading session…", { selector: "div.mx-auto" })).not.toBeInTheDocument();
+    expect(screen.queryByText("page body")).not.toBeInTheDocument();
+    expect(screen.getByText("Loading session…")).toBeInTheDocument();
+    expect(authenticatedChildHookSpy).not.toHaveBeenCalled();
   });
 
   it("renders children after session resolves", () => {
@@ -64,9 +77,10 @@ describe("MachineLayout", () => {
       isError: false,
     });
 
-    renderMachineLayout(<p>loaded page</p>);
+    renderMachineLayout(<AuthenticatedPageStub />);
 
-    expect(screen.getByText("loaded page")).toBeInTheDocument();
+    expect(screen.getByText("page body")).toBeInTheDocument();
     expect(screen.queryByText("Loading session…")).not.toBeInTheDocument();
+    expect(authenticatedChildHookSpy).toHaveBeenCalledTimes(1);
   });
 });

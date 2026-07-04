@@ -17,6 +17,7 @@ export function useJobPlotsQuery(pk: string, enabled: boolean) {
   const [plotsLoading, setPlotsLoading] = useState(true);
   const [plotsFetchFailed, setPlotsFetchFailed] = useState(false);
   const plotsFetchGenRef = useRef(0);
+  const plotsRetryCancelRef = useRef<(() => void) | null>(null);
 
   const fetchAllJobPlotsWithPolling = useCallback(
     async (cancelledCheck: () => boolean): Promise<void> => {
@@ -30,7 +31,8 @@ export function useJobPlotsQuery(pk: string, enabled: boolean) {
 
         if (plotResponse?.status === "loading") {
           keepLoading = true;
-          scheduleJobPlotsRetry(
+          plotsRetryCancelRef.current?.();
+          plotsRetryCancelRef.current = scheduleJobPlotsRetry(
             () => fetchAllJobPlotsWithPolling(cancelledCheck),
             plotResponse.retry_after_seconds,
             cancelledCheck,
@@ -45,7 +47,8 @@ export function useJobPlotsQuery(pk: string, enabled: boolean) {
             const merged = mergeProgressiveJobPlotsState(prev, plotResponse);
             return jobPlotStatesEqual(prev, merged) ? prev : merged;
           });
-          scheduleJobPlotsRetry(
+          plotsRetryCancelRef.current?.();
+          plotsRetryCancelRef.current = scheduleJobPlotsRetry(
             () => fetchAllJobPlotsWithPolling(cancelledCheck),
             plotResponse.retry_after_seconds,
             cancelledCheck,
@@ -102,6 +105,8 @@ export function useJobPlotsQuery(pk: string, enabled: boolean) {
 
     return () => {
       cancelled = true;
+      plotsRetryCancelRef.current?.();
+      plotsRetryCancelRef.current = null;
     };
   }, [pk, enabled, fetchAllJobPlotsWithPolling]);
 

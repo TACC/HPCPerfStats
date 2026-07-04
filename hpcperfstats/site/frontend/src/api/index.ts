@@ -1,6 +1,6 @@
 /**
- * Legacy API facade — delegates to customFetch mutator (Orval-compatible).
- * Prefer Orval-generated react-query hooks for new code.
+ * @deprecated Legacy API facade — use Orval-generated hooks instead.
+ * Retained for api.test.ts contract coverage only.
  */
 
 import { customFetch } from "./fetch-mutator";

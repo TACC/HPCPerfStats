@@ -33,6 +33,18 @@ alwaysApply: false
 8. **`orval.config.ts`:** keep `override.zod.version: 4` and `override.zod.dateTimeOptions: { local: true, offset: true }` for DRF datetimes. Orval 8 emits **PascalCase** Zod schema exports — register those names in `response-schema-registry.ts`.
 9. **Stack wiring:** per **`frontend-stack-wiring-contract.mdc`** — thin hook, view, registry, and audit script updated together.
 
+## High-risk wire shapes (2026-07 remediation)
+
+When touching these routes, run wire contract + `parse-api-response` + `audit-wire-drift` in the same task:
+
+| Route | Contract pitfall |
+|-------|------------------|
+| `GET /api/pub/cluster-dashboard/` (default meta) | Must document `sections.expansion_factor.*_period_keys`, not only legacy `full=1` bundle fields |
+| `GET /api/pub/cluster-dashboard/?section=…&period=…` | Must document lazy `block` + `period_key` |
+| `GET /api/job_monitor/gpu/` (batch) | Must document optional top-level `results[]` wrapper for multi-user requests |
+
+See drift trap tables in **`openapi-spa-wire-validation-contract.mdc`**.
+
 ## Overlap
 
 - **`openapi-spa-wire-validation-contract.mdc`** — wire JSON must match OpenAPI serializers; runtime Zod validation tests

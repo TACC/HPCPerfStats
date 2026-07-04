@@ -5,6 +5,7 @@ import { vi } from "vitest";
 import { axeSeriousViolations } from "./axe-test-utils";
 import Layout from "./Layout";
 import { getSessionRetrieveQueryKey } from "@/api/generated/session/session";
+import { orvalOkEnvelope } from "@/api/orval-response";
 import {
   createTestQueryClient,
   renderWithProviders,
@@ -125,11 +126,13 @@ describe("Layout", () => {
     });
 
     const queryClient = createTestQueryClient();
-    const fetchQuerySpy = vi.spyOn(queryClient, "fetchQuery").mockResolvedValue({
-      logged_in: true,
-      username: "alice",
-      is_staff: false,
-    });
+    const fetchQuerySpy = vi.spyOn(queryClient, "fetchQuery").mockResolvedValue(
+      orvalOkEnvelope({
+        logged_in: true,
+        username: "alice",
+        is_staff: false,
+      }),
+    );
 
     const user = userEvent.setup();
     renderWithProviders(<SessionHarness />, { queryClient });

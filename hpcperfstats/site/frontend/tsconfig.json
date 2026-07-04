@@ -46,6 +46,7 @@
     "out",
     "src/**/*.test.ts",
     "src/**/*.test.tsx",
+    "app/**/*.test.tsx",
     "src/views/__tests__",
     "src/axe-test-utils.ts"
   ]

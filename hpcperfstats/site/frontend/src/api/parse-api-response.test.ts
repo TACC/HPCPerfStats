@@ -50,6 +50,54 @@ describe("parse-api-response", () => {
     expect(parseApiResponse("GET", "/api/job_monitor/", wire)).toEqual(wire);
   });
 
+  it("accepts job monitor gpu batch results envelope", () => {
+    const wire = {
+      results: [
+        {
+          username: "alice",
+          gpu_count_total: 4,
+          gpu_active_total: 2,
+          gpu_active_percentage: 50,
+          has_data: true,
+        },
+      ],
+    };
+    expect(parseApiResponse("GET", "/api/job_monitor/gpu/", wire)).toEqual(wire);
+  });
+
+  it("accepts pub dashboard meta bundle with sections period keys", () => {
+    const wire = {
+      status: "ready",
+      machine_name: "test.cluster.example",
+      detail: null,
+      retry_hint: null,
+      schema_version: 1,
+      sections: {
+        expansion_factor: {
+          monthly_period_keys: ["2024-02", "2024-01"],
+          yearly_period_keys: ["2024", "2023"],
+        },
+      },
+    };
+    expect(parseApiResponse("GET", "/api/pub/cluster-dashboard/", wire)).toEqual(wire);
+  });
+
+  it("accepts pub dashboard lazy period with block", () => {
+    const wire = {
+      status: "ready",
+      machine_name: "test.cluster.example",
+      section: "expansion_factor",
+      grouping: "monthly",
+      period_key: "2024-01",
+      block: {
+        histogram_bin_edges: [0.0, 1.0, 2.0],
+        histogram_counts: [5, 10, 3],
+        bokeh_histogram_json_item: { type: "plot" },
+      },
+    };
+    expect(parseApiResponse("GET", "/api/pub/cluster-dashboard/", wire)).toEqual(wire);
+  });
+
   it("accepts job detail proc_list as string array", () => {
     const wire = {
       job_data: { jid: "123" },

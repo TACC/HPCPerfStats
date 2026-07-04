@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import JobMonitor from "../JobMonitor";
 import { useJobMonitorQuery } from "@/hooks/use-job-monitor";
 import { jobMonitorGpuRetrieve } from "@/api/generated/monitor/monitor";
@@ -67,13 +68,15 @@ describe("JobMonitor", () => {
         ],
       },
     });
-    vi.mocked(jobMonitorGpuRetrieve).mockResolvedValue({
-      username: "alice",
-      gpu_count_total: null,
-      gpu_active_total: null,
-      gpu_active_percentage: null,
-      has_data: false,
-    });
+    vi.mocked(jobMonitorGpuRetrieve).mockResolvedValue(
+      orvalOkEnvelope({
+        username: "alice",
+        gpu_count_total: null,
+        gpu_active_total: null,
+        gpu_active_percentage: null,
+        has_data: false,
+      }),
+    );
 
     renderWithProviders(<JobMonitor />);
 
@@ -160,7 +163,86 @@ describe("JobMonitor", () => {
     });
   });
 
-  it("loads GPU data with one API call per user (bounded fan-out)", async () => {
+  it("skips GPU fetch while monitor query is still refetching", async () => {
+    setJobMonitorQueryMock({
+      fetching: true,
+      data: {
+        window_days: 30,
+        results: [
+          { username: "alice", total_jobs: 10, failed_jobs: 1, failed_rate: 10 },
+        ],
+      },
+    });
+
+    renderWithProviders(<JobMonitor />);
+
+    await waitFor(() => {
+      expect(jobMonitorGpuRetrieve).not.toHaveBeenCalled();
+    });
+  });
+
+  it("skips GPU fetch when monitor payload window_days lags local windowDays", async () => {
+    let monitorPayload = {
+      window_days: 30,
+      results: [
+        { username: "alice", total_jobs: 10, failed_jobs: 1, failed_rate: 10 },
+      ],
+    };
+
+    vi.mocked(useJobMonitorQuery).mockImplementation((days?: number) => {
+      const requestedDays = days ?? 30;
+      const pendingWindow = requestedDays !== monitorPayload.window_days;
+      return {
+        data: monitorPayload,
+        error: null,
+        initialLoading: false,
+        tableBusy: pendingWindow,
+        loading: false,
+        fetching: pendingWindow,
+        refetch: vi.fn(),
+      };
+    });
+    vi.mocked(jobMonitorGpuRetrieve).mockResolvedValue(
+      orvalOkEnvelope({
+        username: "alice",
+        has_data: false,
+      }),
+    );
+
+    const user = userEvent.setup();
+    const { rerender } = renderWithProviders(<JobMonitor />);
+
+    await waitFor(() => {
+      expect(jobMonitorGpuRetrieve).toHaveBeenCalledTimes(1);
+    });
+    vi.mocked(jobMonitorGpuRetrieve).mockClear();
+
+    await user.clear(screen.getByLabelText(/window \(days\)/i));
+    await user.type(screen.getByLabelText(/window \(days\)/i), "14");
+    await user.click(screen.getByRole("button", { name: /apply/i }));
+
+    await waitFor(() => {
+      expect(jobMonitorGpuRetrieve).not.toHaveBeenCalled();
+    });
+
+    monitorPayload = {
+      window_days: 14,
+      results: [
+        { username: "alice", total_jobs: 10, failed_jobs: 1, failed_rate: 10 },
+      ],
+    };
+    rerender(<JobMonitor />);
+
+    await waitFor(() => {
+      expect(jobMonitorGpuRetrieve).toHaveBeenCalledTimes(1);
+    });
+    expect(jobMonitorGpuRetrieve).toHaveBeenCalledWith({
+      username: "alice",
+      days: 14,
+    });
+  });
+
+  it("loads GPU data with one batch API call for multiple users", async () => {
     setJobMonitorQueryMock({
       data: {
         window_days: 30,
@@ -171,17 +253,25 @@ describe("JobMonitor", () => {
         ],
       },
     });
-    vi.mocked(jobMonitorGpuRetrieve).mockResolvedValue({
-      has_data: false,
-    });
+    vi.mocked(jobMonitorGpuRetrieve).mockResolvedValue(
+      orvalOkEnvelope({
+        results: [
+          { username: "alice", has_data: false },
+          { username: "bob", has_data: false },
+          { username: "carol", has_data: false },
+        ],
+      }),
+    );
 
     renderWithProviders(<JobMonitor />);
 
     await waitFor(() => {
-      expect(jobMonitorGpuRetrieve.mock.calls.length).toBeGreaterThanOrEqual(3);
+      expect(jobMonitorGpuRetrieve).toHaveBeenCalledTimes(1);
     });
-    const usernames = jobMonitorGpuRetrieve.mock.calls.map((call) => call[0]?.username);
-    expect(usernames).toEqual(expect.arrayContaining(["alice", "bob", "carol"]));
+    expect(jobMonitorGpuRetrieve).toHaveBeenCalledWith({
+      usernames: "alice,bob,carol",
+      days: 30,
+    });
   });
 
   it("keeps sort headers available while tableBusy", async () => {
@@ -201,10 +291,12 @@ describe("JobMonitor", () => {
         ],
       },
     });
-    vi.mocked(jobMonitorGpuRetrieve).mockResolvedValue({
-      username: "alice",
-      has_data: false,
-    });
+    vi.mocked(jobMonitorGpuRetrieve).mockResolvedValue(
+      orvalOkEnvelope({
+        username: "alice",
+        has_data: false,
+      }),
+    );
 
     renderWithProviders(<JobMonitor />);
 

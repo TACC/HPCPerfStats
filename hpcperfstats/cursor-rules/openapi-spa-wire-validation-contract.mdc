@@ -54,6 +54,24 @@ When adding or changing JSON fields on an endpoint registered in `response-schem
 
 Apply the same discipline to **job detail** (`job_data` extends list entry fields), histograms, and any new Orval-backed route.
 
+## Known drift traps (pub cluster dashboard family)
+
+| Wire field | Actual Django shape | Wrong OpenAPI guess |
+|------------|---------------------|---------------------|
+| Default meta bundle | `sections.expansion_factor.{monthly_period_keys,yearly_period_keys}` from `assemble_public_dashboard_meta_bundle()` | Legacy-only schema with `expansion_factors` / `monthly_metrics` only → Zod strips `sections` |
+| Lazy period query (`section`, `grouping`, `period`) | `{ block, section, grouping, period_key, status, … }` from `public_api.py` | Omitting `block` → lazy histogram payload stripped |
+| Meta loading state | `detail`, `retry_hint`, `schema_version` on meta responses | Missing optional meta fields on loading/retry paths |
+
+Wire tests: `PUB_DASHBOARD_META_WIRE`, `PUB_DASHBOARD_LAZY_PERIOD_WIRE`, `PUB_DASHBOARD_LEGACY_FULL_WIRE` in `test_openapi_wire_contracts.py`; audit cases in `audit-wire-drift.mts`.
+
+## Known drift traps (job monitor GPU family)
+
+| Wire field | Actual Django shape | Wrong OpenAPI guess |
+|------------|---------------------|---------------------|
+| Batch request (`len(usernames) > 1`) | `{ results: [ { username, gpu_count_total, … }, … ] }` from `job_monitor_gpu_for_user` | Single-user flat shape only → Zod strips `results`, client falls back to N parallel requests |
+
+Wire tests: `JOB_MONITOR_GPU_BATCH_WIRE` in `test_openapi_wire_contracts.py`; batch audit case in `audit-wire-drift.mts`.
+
 ## Known drift traps (job detail family)
 
 | Wire field | Actual Django shape | Wrong OpenAPI guess |

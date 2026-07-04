@@ -99,6 +99,12 @@ export function useJobListHistograms(
       return;
     }
 
+    setHistograms(null);
+    setMetricHistStatus(createInitialMetricStatus(true));
+    setBatchError(null);
+    setSampleMeta(NO_JOBS_META);
+    setHistogramsUpdating(true);
+
     const controller = new AbortController();
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 

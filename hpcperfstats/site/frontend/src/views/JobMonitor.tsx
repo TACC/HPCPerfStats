@@ -81,6 +81,7 @@ export default function JobMonitor() {
     initialLoading: hookInitialLoading,
     loading,
     tableBusy,
+    fetching,
   } = useJobMonitorQuery(windowDays);
   const initialLoading = hookInitialLoading ?? loading ?? false;
   const error = validationError ?? loadError;
@@ -103,19 +104,25 @@ export default function JobMonitor() {
   };
 
   useEffect(() => {
-    if (!data) return;
+    if (!data || fetching) return;
     const typed = data as JobMonitorApiResponse;
-    const nextRows = normalizeJobMonitorRows(typed.results);
-    setRows(nextRows);
-    const days =
+    const responseDays =
       typeof typed.window_days === "number" ? typed.window_days : windowDays;
+
     if (typeof typed.window_days === "number") {
       setWindowDays(typed.window_days);
       setInputDays(String(typed.window_days));
     }
 
+    const nextRows = normalizeJobMonitorRows(typed.results);
+    setRows(nextRows);
+
+    if (typeof typed.window_days === "number" && typed.window_days !== windowDays) {
+      return;
+    }
+
     let cancelled = false;
-    void fetchJobMonitorGpuPatches(nextRows, days).then((patches) => {
+    void fetchJobMonitorGpuPatches(nextRows, responseDays).then((patches) => {
       if (cancelled) return;
       setRows((prev) => mergeJobMonitorGpuPatches(prev, patches) as JobMonitorViewRow[]);
     });
@@ -123,7 +130,7 @@ export default function JobMonitor() {
     return () => {
       cancelled = true;
     };
-  }, [data, windowDays]);
+  }, [data, windowDays, fetching]);
 
   const sortedRows = useMemo(() => {
     return [...rows].sort((a, b) => {

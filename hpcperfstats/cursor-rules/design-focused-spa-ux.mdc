@@ -25,7 +25,7 @@ HPCPerfStats serves researchers and operators who expect clear hierarchy, honest
 ## Loading vs unavailable vs error
 
 - **Deployment cluster identity** (`host_name_ext`, short `machine` from image ini) is **build-time** via [`site-identity.ts`](hpcperfstats/site/frontend/src/config/site-identity.ts) (`write-site-identity.mjs`); SPA header chrome must not wait on `/api/session/` for cluster name. `/api/home/` `machine_name` is redundant for SPA (retained for `hpcperfstats-tools` CLI). See **`immutable-image-ini-policy.mdc`**.
-- **`/machine/**` session gate:** render route-level page skeletons while `useSessionRetrieve` is in flight; use `PLACEHOLDER_SESSION` + sr-only session status—do not block `children` with a full-page spinner ([`app/machine/layout.tsx`](hpcperfstats/site/frontend/app/machine/layout.tsx)).
+- **`/machine/**` session gate:** do not mount route `children` until `useSessionRetrieve` resolves; show `LoadingMessage` for session load and redirect shell when unauthenticated ([`app/machine/layout.tsx`](hpcperfstats/site/frontend/app/machine/layout.tsx)). Prevents authenticated API queries from firing before session is known.
 - **Interactive-ready law:** see **`interactive-ready-controls.mdc`** — hide or skeleton until ready; shown controls must accept clicks immediately; no `pointer-events-none` on table/pagination parents during `tableBusy`.
 - Do not show Bokeh **Unavailable** while a section is still loading; pass `isLoading` / `detailsLoading` into `BokehEmbed`.
 - Distinguish **no data** (`unavailableReason`), **loading** (`LoadingMessage` / skeleton), and **transient failure** (warning + **Retry** when async fetch fails).

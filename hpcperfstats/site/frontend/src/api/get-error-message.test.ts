@@ -12,6 +12,18 @@ describe("get-error-message", () => {
     expect(getErrorMessage({ error: "staff only" }, "fallback")).toBe("staff only");
   });
 
+  it("prefers human detail over snake_case error key", () => {
+    expect(
+      getErrorMessage(
+        {
+          error: "histogram_job_count_exceeded",
+          detail: "Too many jobs for histogram generation.",
+        },
+        "fallback",
+      ),
+    ).toBe("Too many jobs for histogram generation.");
+  });
+
   it("returns status-aware copy for 403", () => {
     const err = new ApiError("Forbidden", 403, { detail: "Forbidden" });
     expect(getStatusAwareErrorMessage(err, "fallback")).toContain("permission");

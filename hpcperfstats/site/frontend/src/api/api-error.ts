@@ -24,7 +24,11 @@ export class ApiError extends Error {
   }
 }
 
-function extractApiErrorMessage(body: ApiErrorBody, status: number): string {
+export function extractApiErrorMessage(
+  body: ApiErrorBody,
+  status: number,
+  fallback?: string,
+): string {
   const detail = typeof body.detail === "string" ? body.detail.trim() : "";
   const error = typeof body.error === "string" ? body.error.trim() : "";
   const message = typeof body.message === "string" ? body.message.trim() : "";
@@ -34,7 +38,7 @@ function extractApiErrorMessage(body: ApiErrorBody, status: number): string {
   }
   if (error) return error;
   if (message) return message;
-  return `HTTP ${status}`;
+  return fallback ?? `HTTP ${status}`;
 }
 
 export function parseApiErrorBody(payload: unknown, status: number): ApiError {
