@@ -127,7 +127,8 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     calendar_date_from_daily_tar_path,
     days_ingest_complete_by_checkpoint,
     oldest_checkpoint_blocked_tar,
-    on_disk_unprocessed_paths_for_tar,
+    aligned_on_disk_unprocessed_paths_for_tar,
+    all_on_disk_unprocessed_paths,
     prepend_checkpoint_blocked_paths_to_pending,
     reconcile_orphan_inflight_for_oldest_tar,
     load_checkpoint_path_set,
@@ -148,7 +149,6 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     supplement_pending_paths_from_closed_paths,
     chunk_was_cross_day_defer_dispatch,
     all_ingest_outcomes_db_skip_head_tail,
-    blocked_paths_aligned_with_oldest_tar,
     sort_pending_stats_paths_oldest_first,
     INGEST_PARSE_FAILED_QUARANTINE_REASON,
     quarantine_ingest_failed_raw_path,
@@ -4680,8 +4680,20 @@ def run_sync_timedb_supervisor_loop(
     return resolved_checkpoint_path_set(checkpoint_path, checkpoint_entries)
 
   def _checkpoint_unblocked_paths_for_tar(unprocessed_by_tar, tar_norm):
-    """On-disk unprocessed paths for ``tar_norm`` not yet in checkpoint merge."""
-    paths = on_disk_unprocessed_paths_for_tar(unprocessed_by_tar, tar_norm)
+    """Tar-aligned on-disk unprocessed paths not yet in checkpoint merge."""
+    paths = aligned_on_disk_unprocessed_paths_for_tar(
+        unprocessed_by_tar,
+        tar_norm,
+        tgz_archive_dir=tgz_archive_dir,
+    )
+    checkpoint_paths = _reconcile_checkpoint_paths()
+    if not checkpoint_paths:
+      return paths
+    return [path for path in paths if path not in checkpoint_paths]
+
+  def _all_checkpoint_unblocked_paths(unprocessed_by_tar):
+    """All on-disk unprocessed paths (any tar) not yet in checkpoint merge."""
+    paths = all_on_disk_unprocessed_paths(unprocessed_by_tar)
     checkpoint_paths = _reconcile_checkpoint_paths()
     if not checkpoint_paths:
       return paths
@@ -4816,6 +4828,9 @@ def run_sync_timedb_supervisor_loop(
     memory_extra_n = len(merged_checkpoint_paths - disk_checkpoint_paths)
     tar_norm = oldest_checkpoint_blocked_tar(
         unprocessed, tgz_archive_dir=tgz_archive_dir)
+    all_unprocessed = sort_pending_stats_paths_oldest_first(
+        _all_checkpoint_unblocked_paths(unprocessed),
+    )
     blocked = (
         sort_pending_stats_paths_oldest_first(
             _checkpoint_unblocked_paths_for_tar(unprocessed, tar_norm),
@@ -4823,7 +4838,7 @@ def run_sync_timedb_supervisor_loop(
         if tar_norm
         else []
     )
-    blocked_set = set(blocked)
+    blocked_set = set(all_unprocessed)
     reconcile_exclude = (
         (processed_files | inflight_archive_paths) - blocked_set
     )
@@ -4831,26 +4846,19 @@ def run_sync_timedb_supervisor_loop(
     capped = _cap_pending_stats_with_handoff_priority(
         prepend_checkpoint_blocked_paths_to_pending(
             paths,
-            blocked,
+            all_unprocessed,
             exclude=reconcile_exclude,
         ),
         oldest_tar=tar_norm,
         oldest_tar_reserved_paths=reserved_blocked,
     )
-    cross_day_blocked_only = (
-        tar_norm
-        and blocked
-        and not blocked_paths_aligned_with_oldest_tar(
-            blocked,
-            tar_norm,
-            tgz_archive_dir=tgz_archive_dir,
-        )
-    )
     closed_paths = _resolve_closed_paths_for_cap()
-    if closed_paths and (
-        len(capped) < ingest_queue_max
-        or cross_day_blocked_only
-    ):
+    if closed_paths is None:
+      log_print(
+          "sync_timedb: pending cap supplement skipped reason=no_closed_paths",
+          flush=True,
+      )
+    elif len(capped) < ingest_queue_max or all_unprocessed:
       capped = supplement_pending_paths_from_closed_paths(
           capped,
           closed_paths=closed_paths,
@@ -5515,6 +5523,7 @@ def run_sync_timedb_supervisor_loop(
         remaining_raw_by_gz=remaining,
         local_tz=local_timezone,
         day_raw_removal=day_raw_removal,
+        tgz_archive_dir=tgz_archive_dir,
     )
 
   async_day_close.submit_eligible_fn = _async_day_close_submit_eligible
@@ -5967,9 +5976,10 @@ def run_sync_timedb_supervisor_loop(
             tgz_archive_dir=tgz_archive_dir,
         )
         raw_blocked_paths = (
-            on_disk_unprocessed_paths_for_tar(
+            aligned_on_disk_unprocessed_paths_for_tar(
                 unprocessed_for_chunk,
                 oldest_tar_for_chunk,
+                tgz_archive_dir=tgz_archive_dir,
             )
             if oldest_tar_for_chunk
             else []

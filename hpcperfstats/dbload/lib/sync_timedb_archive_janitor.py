@@ -847,6 +847,7 @@ class ArchiveJanitor:
         remaining_raw_by_gz=remaining,
         local_tz=self.local_tz,
         day_raw_removal=self.day_raw_removal_coordinator,
+        tgz_archive_dir=self.tgz_archive_dir,
     )
     if not eligible:
       if skip_reason and self.log_fn:

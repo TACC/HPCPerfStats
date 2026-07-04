@@ -237,21 +237,19 @@ def supplement_pending_paths_from_closed_paths(
     processed_exclude=None,
     log_fn=log_print,
 ):
-  """Fill pending toward ``max_size`` from snapshot ``closed_paths`` when below cap."""
+  """Merge snapshot ``closed_paths`` into pending and retain oldest ``max_size``.
+
+  Always unions ``closed_paths`` (minus exclude) even when ``paths`` is already at
+  ``max_size``, so older snapshot entries can displace newer queue heads.
+  """
   max_size = max(1, int(max_size))
   exclude = set(processed_exclude or ())
-  seen = set(paths or ())
-  result = list(paths or ())
-  if len(result) >= max_size:
-    return cap_pending_stats_file_list(
-        sort_pending_stats_paths_oldest_first(result),
-        max_size,
-        log_fn=log_fn,
-    )
+  before = list(paths or ())
+  before_set = set(before)
+  seen = set(before)
+  result = list(before)
   supplemented = 0
   for path in closed_paths or ():
-    if len(result) >= max_size:
-      break
     if not path or path in exclude or path in seen:
       continue
     if not os.path.isfile(path):
@@ -259,17 +257,41 @@ def supplement_pending_paths_from_closed_paths(
     seen.add(path)
     result.append(path)
     supplemented += 1
-  if supplemented and log_fn is not None:
-    log_fn(
-        "sync_timedb: pending cap supplement from snapshot n=%d pending=%d"
-        % (supplemented, len(result)),
-        flush=True,
+  if not supplemented and not closed_paths:
+    return cap_pending_stats_file_list(
+        sort_pending_stats_paths_oldest_first(result),
+        max_size,
+        log_fn=log_fn,
     )
-  return cap_pending_stats_file_list(
+  capped = cap_pending_stats_file_list(
       sort_pending_stats_paths_oldest_first(result),
       max_size,
       log_fn=log_fn,
   )
+  if supplemented and log_fn is not None:
+    at_max_before = len(before) >= max_size
+    replaced = 0
+    if at_max_before:
+      replaced = sum(1 for path in capped if path not in before_set)
+      if replaced:
+        log_fn(
+            "sync_timedb: pending cap supplement replace n=%d pending=%d"
+            % (replaced, len(capped)),
+            flush=True,
+        )
+      elif supplemented:
+        log_fn(
+            "sync_timedb: pending cap supplement from snapshot n=%d pending=%d"
+            % (supplemented, len(capped)),
+            flush=True,
+        )
+    else:
+      log_fn(
+          "sync_timedb: pending cap supplement from snapshot n=%d pending=%d"
+          % (supplemented, len(capped)),
+          flush=True,
+      )
+  return capped
 
 
 def cap_pending_stats_with_blocked_retention(
@@ -427,6 +449,7 @@ def daily_tar_eligible_for_day_close_submit(
     local_tz=None,
     now=None,
     day_raw_removal=None,
+    tgz_archive_dir=None,
 ):
   """Return ``(eligible, skip_reason)`` for async ``DAY_CLOSE`` submit."""
   tar_norm = os.path.normpath(str(tar_norm or ""))
@@ -434,7 +457,12 @@ def daily_tar_eligible_for_day_close_submit(
     return False, "invalid_tar_path"
   if unprocessed_by_tar is None:
     return False, "missing_unprocessed_map"
-  if unprocessed_tar_paths_still_on_disk(unprocessed_by_tar, tar_norm):
+  archive_dir = tgz_archive_dir or os.path.dirname(tar_norm)
+  if aligned_unprocessed_tar_paths_still_on_disk(
+      unprocessed_by_tar,
+      tar_norm,
+      tgz_archive_dir=archive_dir,
+  ):
     return False, "checkpoint_incomplete"
   disqualified = _normalize_daily_tar_path_set(disqualified_daily_tars)
   if tar_norm in disqualified:
@@ -490,6 +518,7 @@ def find_immediate_day_close_candidates(
         remaining_raw_by_gz=remaining_raw_by_gz,
         local_tz=local_tz,
         now=now,
+        tgz_archive_dir=tgz_archive_dir,
     )
     if not eligible:
       continue
@@ -547,7 +576,13 @@ def classify_day_close_candidates(
   for tar_norm in ranked:
     reasons = set(disq.get(tar_norm, set()))
     unprocessed_list_count = len(unprocessed.get(tar_norm, ()))
-    unprocessed_count = count_unprocessed_paths_on_disk(unprocessed, tar_norm)
+    on_disk_all_n = count_unprocessed_paths_on_disk(unprocessed, tar_norm)
+    unprocessed_count = count_aligned_unprocessed_paths_on_disk(
+        unprocessed,
+        tar_norm,
+        tgz_archive_dir=tgz_archive_dir,
+    )
+    cross_day_n = max(0, on_disk_all_n - unprocessed_count)
     phase_name = _day_phase_name_from_hints(day_phases, tar_norm) or ""
     needs_work = daily_tar_needs_day_close_work(
         tar_norm,
@@ -555,13 +590,16 @@ def classify_day_close_candidates(
         remaining_raw_by_gz=remaining_raw_by_gz,
     )
     if not needs_work:
-      entries.append({
+      entry = {
           "tar_path": tar_norm,
           "status": "skipped_no_work",
           "reasons": sorted(reasons),
           "unprocessed": unprocessed_count,
           "phase": phase_name,
-      })
+      }
+      if cross_day_n:
+        entry["unprocessed_cross_day_n"] = cross_day_n
+      entries.append(entry)
       continue
     blocking = reasons & _DAY_CLOSE_DISQUALIFY_CODES
     if tar_norm in async_active:
@@ -596,6 +634,8 @@ def classify_day_close_candidates(
     }
     if unprocessed_list_count != unprocessed_count:
       entry["unprocessed_list"] = unprocessed_list_count
+    if cross_day_n:
+      entry["unprocessed_cross_day_n"] = cross_day_n
     entries.append(entry)
   return entries
 
@@ -688,9 +728,10 @@ def log_day_close_candidate_report(
           )
     unprocessed_on_disk = int(entry.get("unprocessed") or 0)
     unprocessed_list = entry.get("unprocessed_list")
+    cross_day_n = int(entry.get("unprocessed_cross_day_n") or 0)
     ghost_suffix = ""
     if unprocessed_list is not None:
-      ghosts = max(0, int(unprocessed_list) - unprocessed_on_disk)
+      ghosts = max(0, int(unprocessed_list) - unprocessed_on_disk - cross_day_n)
       ghost_suffix = " on_disk=%d ghosts=%d" % (unprocessed_on_disk, ghosts)
       if ghosts > 0 and entry.get("status") == "waiting_on_ingest":
         log_fn(
@@ -704,6 +745,8 @@ def log_day_close_candidate_report(
             ),
             flush=True,
         )
+    if cross_day_n:
+      ghost_suffix += " unprocessed_cross_day_n=%d" % cross_day_n
     log_fn(
         "janitor: day_close candidate tar=%s status=%s reasons=%s "
         "unprocessed=%d phase=%s%s%s"
@@ -1468,7 +1511,11 @@ def calendar_days_checkpoint_ingest_complete(
     tar_norm = daily_tar_path_for_calendar_day(tgz_archive_dir, day_iso)
     if not tar_norm:
       continue
-    if not unprocessed_tar_paths_still_on_disk(unprocessed_by_tar, tar_norm):
+    if not aligned_unprocessed_tar_paths_still_on_disk(
+        unprocessed_by_tar,
+        tar_norm,
+        tgz_archive_dir=tgz_archive_dir,
+    ):
       complete.append(day_iso)
   return complete
 
@@ -1536,6 +1583,7 @@ def days_ingest_complete_by_checkpoint(
         remaining_raw_by_gz=remaining_raw_by_gz,
         local_tz=local_tz,
         now=now,
+        tgz_archive_dir=tgz_archive_dir,
     )
     if not eligible:
       continue
@@ -1572,12 +1620,72 @@ def on_disk_unprocessed_paths_for_tar(unprocessed_by_tar, tar_norm):
   ]
 
 
+def aligned_on_disk_unprocessed_paths_for_tar(
+    unprocessed_by_tar,
+    tar_norm,
+    *,
+    tgz_archive_dir,
+):
+  """On-disk unprocessed paths whose filename calendar day maps to ``tar_norm``."""
+  tar_key = os.path.normpath(str(tar_norm or ""))
+  if not tar_key or not tgz_archive_dir:
+    return []
+  return blocked_paths_aligned_with_oldest_tar(
+      on_disk_unprocessed_paths_for_tar(unprocessed_by_tar, tar_key),
+      tar_key,
+      tgz_archive_dir=tgz_archive_dir,
+  )
+
+
+def count_aligned_unprocessed_paths_on_disk(
+    unprocessed_by_tar,
+    tar_norm,
+    *,
+    tgz_archive_dir,
+):
+  """Count tar-aligned on-disk checkpoint-unprocessed paths for ``tar_norm``."""
+  return len(
+      aligned_on_disk_unprocessed_paths_for_tar(
+          unprocessed_by_tar,
+          tar_norm,
+          tgz_archive_dir=tgz_archive_dir,
+      )
+  )
+
+
+def aligned_unprocessed_tar_paths_still_on_disk(
+    unprocessed_by_tar,
+    tar_norm,
+    *,
+    tgz_archive_dir,
+):
+  """True when any tar-aligned checkpoint-unprocessed path still exists."""
+  return count_aligned_unprocessed_paths_on_disk(
+      unprocessed_by_tar,
+      tar_norm,
+      tgz_archive_dir=tgz_archive_dir,
+  ) > 0
+
+
+def all_on_disk_unprocessed_paths(unprocessed_by_tar):
+  """Deduped on-disk checkpoint-unprocessed paths across all daily tars."""
+  seen = set()
+  result = []
+  for tar_norm in (unprocessed_by_tar or {}):
+    for path in on_disk_unprocessed_paths_for_tar(unprocessed_by_tar, tar_norm):
+      if path in seen:
+        continue
+      seen.add(path)
+      result.append(path)
+  return result
+
+
 def iter_checkpoint_blocked_days_oldest_first(
     unprocessed_by_tar,
     *,
     tgz_archive_dir,
 ):
-  """Yield ``(day_date, tar_norm, on_disk_paths)`` oldest calendar day first."""
+  """Yield ``(day_date, tar_norm, aligned_on_disk_paths)`` oldest calendar day first."""
   if not tgz_archive_dir or not unprocessed_by_tar:
     return
   ranked = []
@@ -1587,7 +1695,11 @@ def iter_checkpoint_blocked_days_oldest_first(
     if tar_norm in seen:
       continue
     seen.add(tar_norm)
-    paths = on_disk_unprocessed_paths_for_tar(unprocessed_by_tar, tar_norm)
+    paths = aligned_on_disk_unprocessed_paths_for_tar(
+        unprocessed_by_tar,
+        tar_norm,
+        tgz_archive_dir=tgz_archive_dir,
+    )
     if not paths:
       continue
     day_date = calendar_date_from_daily_tar_path(tar_norm)
@@ -1598,7 +1710,11 @@ def iter_checkpoint_blocked_days_oldest_first(
     tar_norm = os.path.normpath(str(tar_norm or ""))
     if not tar_norm or tar_norm in seen:
       continue
-    paths = on_disk_unprocessed_paths_for_tar(unprocessed_by_tar, tar_norm)
+    paths = aligned_on_disk_unprocessed_paths_for_tar(
+        unprocessed_by_tar,
+        tar_norm,
+        tgz_archive_dir=tgz_archive_dir,
+    )
     if not paths:
       continue
     day_date = calendar_date_from_daily_tar_path(tar_norm)
@@ -1630,7 +1746,7 @@ def tail_eligible_days_from_unprocessed(
 
 
 def oldest_checkpoint_blocked_tar(unprocessed_by_tar, *, tgz_archive_dir):
-  """Return oldest daily ``.tar`` with on-disk checkpoint-unprocessed paths."""
+  """Return oldest daily ``.tar`` with tar-aligned on-disk unprocessed paths."""
   if not tgz_archive_dir or not unprocessed_by_tar:
     return ""
   ranked = []
@@ -1640,7 +1756,11 @@ def oldest_checkpoint_blocked_tar(unprocessed_by_tar, *, tgz_archive_dir):
     if tar_norm in seen:
       continue
     seen.add(tar_norm)
-    if not unprocessed_tar_paths_still_on_disk(unprocessed_by_tar, tar_norm):
+    if not aligned_unprocessed_tar_paths_still_on_disk(
+        unprocessed_by_tar,
+        tar_norm,
+        tgz_archive_dir=tgz_archive_dir,
+    ):
       continue
     day_date = calendar_date_from_daily_tar_path(tar_norm)
     if day_date is None:
@@ -1650,7 +1770,11 @@ def oldest_checkpoint_blocked_tar(unprocessed_by_tar, *, tgz_archive_dir):
     tar_norm = os.path.normpath(str(tar_norm or ""))
     if not tar_norm or tar_norm in seen:
       continue
-    if not unprocessed_tar_paths_still_on_disk(unprocessed_by_tar, tar_norm):
+    if not aligned_unprocessed_tar_paths_still_on_disk(
+        unprocessed_by_tar,
+        tar_norm,
+        tgz_archive_dir=tgz_archive_dir,
+    ):
       continue
     day_date = calendar_date_from_daily_tar_path(tar_norm)
     if day_date is None:
@@ -1774,9 +1898,10 @@ def select_ingest_chunk_paths(
   if not oldest_tar or not tgz_archive_dir:
     return pending_list[:target_chunk_size]
   oldest_tar_norm = os.path.normpath(str(oldest_tar))
-  blocked_on_disk = on_disk_unprocessed_paths_for_tar(
+  blocked_on_disk = aligned_on_disk_unprocessed_paths_for_tar(
       unprocessed_by_tar,
       oldest_tar_norm,
+      tgz_archive_dir=tgz_archive_dir,
   )
   inflight_for_oldest = False
   for path in inflight_archive_paths or ():
@@ -1987,7 +2112,12 @@ def daily_tar_eligible_for_quiescent_day_close_submit(
   tar_norm = os.path.normpath(str(tar_norm or ""))
   if not tar_norm:
     return False, "invalid_tar_path"
-  if unprocessed_tar_paths_still_on_disk(unprocessed_by_tar, tar_norm):
+  archive_dir = tgz_archive_dir or os.path.dirname(tar_norm)
+  if aligned_unprocessed_tar_paths_still_on_disk(
+      unprocessed_by_tar,
+      tar_norm,
+      tgz_archive_dir=archive_dir,
+  ):
     return False, "checkpoint_incomplete"
   if not daily_tar_filesystem_quiescent(
       tar_norm,

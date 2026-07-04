@@ -5875,8 +5875,10 @@ def test_find_immediate_day_close_candidates_orders_oldest_first(tmp_path):
   tar_new = str(daily_dir / "2020-01-02.tar")
   open(tar_old, "wb").close()
   open(tar_new, "wb").close()
+  day2_ts = datetime(2020, 1, 2, 12, tzinfo=timezone.utc).timestamp()
   pending_path = tmp_path / "raw_day2"
   pending_path.write_text("stats")
+  os.utime(pending_path, (day2_ts, day2_ts))
   pending = [str(pending_path)]
   result = find_immediate_day_close_candidates(
       tgz_archive_dir=str(daily_dir),
@@ -5970,13 +5972,16 @@ def test_daily_tar_eligible_for_day_close_submit_requires_checkpoint_complete(tm
   daily_dir.mkdir()
   tar_path = os.path.normpath(str(daily_dir / "2021-03-15.tar"))
   open(tar_path, "wb").close()
+  day_ts = datetime(2021, 3, 15, 12, tzinfo=timezone.utc).timestamp()
   raw_path = tmp_path / "raw_pending"
   raw_path.write_text("x")
+  os.utime(raw_path, (day_ts, day_ts))
   eligible, reason = daily_tar_eligible_for_day_close_submit(
       tar_path,
       unprocessed_by_tar={tar_path: [str(raw_path)]},
       disqualified_daily_tars=set(),
       local_tz=timezone.utc,
+      tgz_archive_dir=str(daily_dir),
   )
   assert not eligible
   assert reason == "checkpoint_incomplete"
@@ -5985,6 +5990,7 @@ def test_daily_tar_eligible_for_day_close_submit_requires_checkpoint_complete(tm
       unprocessed_by_tar={tar_path: ["/raw/ghost_only"]},
       disqualified_daily_tars=set(),
       local_tz=timezone.utc,
+      tgz_archive_dir=str(daily_dir),
   )
   assert eligible
   assert reason == ""
@@ -5993,6 +5999,7 @@ def test_daily_tar_eligible_for_day_close_submit_requires_checkpoint_complete(tm
       unprocessed_by_tar={tar_path: []},
       disqualified_daily_tars=set(),
       local_tz=timezone.utc,
+      tgz_archive_dir=str(daily_dir),
   )
   assert eligible
   assert reason == ""
@@ -6094,8 +6101,10 @@ def test_classify_day_close_candidates_reports_reasons(tmp_path):
   daily_dir.mkdir()
   tar_path = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
   open(tar_path, "wb").close()
+  day_ts = datetime(2020, 1, 1, 12, tzinfo=timezone.utc).timestamp()
   raw_path = tmp_path / "raw_x"
   raw_path.write_text("x")
+  os.utime(raw_path, (day_ts, day_ts))
   entries = classify_day_close_candidates(
       tgz_archive_dir=str(daily_dir),
       unprocessed_by_tar={tar_path: [str(raw_path)]},
@@ -6120,8 +6129,10 @@ def test_classify_no_eligible_deferred_status(tmp_path):
   ready_tar = os.path.normpath(str(daily_dir / "2020-01-02.tar"))
   open(waiting_tar, "wb").close()
   open(ready_tar, "wb").close()
+  day_ts = datetime(2020, 1, 1, 12, tzinfo=timezone.utc).timestamp()
   raw_waiting = tmp_path / "raw_waiting"
   raw_waiting.write_text("x")
+  os.utime(raw_waiting, (day_ts, day_ts))
   entries = classify_day_close_candidates(
       tgz_archive_dir=str(daily_dir),
       unprocessed_by_tar={waiting_tar: [str(raw_waiting)]},
@@ -6661,10 +6672,14 @@ def test_oldest_checkpoint_blocked_tar_returns_oldest_on_disk_day(tmp_path):
   tar_new = os.path.normpath(str(daily_dir / "2020-01-02.tar"))
   open(tar_old, "wb").close()
   open(tar_new, "wb").close()
+  d_old = datetime(2020, 1, 1, 12, tzinfo=timezone.utc)
+  d_new = datetime(2020, 1, 2, 12, tzinfo=timezone.utc)
   raw_old = tmp_path / "old"
   raw_new = tmp_path / "new"
   raw_old.write_text("a")
   raw_new.write_text("b")
+  os.utime(raw_old, (d_old.timestamp(), d_old.timestamp()))
+  os.utime(raw_new, (d_new.timestamp(), d_new.timestamp()))
   unprocessed = {
       tar_new: [str(raw_new)],
       tar_old: [str(raw_old)],
@@ -7211,7 +7226,7 @@ def test_select_ingest_chunk_paths_cross_day_inflight_returns_chunk_after_reclai
 
 
 def test_select_ingest_chunk_paths_cross_day_only_defers_to_pending_head(tmp_path):
-  """hpcperfstats03 replay: cross-day blocked under May-26 tar defers to pending head."""
+  """Cross-day-only under oldest_tar: gate inactive (aligned empty), pending head wins."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       select_ingest_chunk_paths,
   )
@@ -7234,7 +7249,6 @@ def test_select_ingest_chunk_paths_cross_day_only_defers_to_pending_head(tmp_pat
   os.utime(jun_blocked2, (d_jun24.timestamp(), d_jun24.timestamp()))
   pending = [str(may_pending)]
   blocked = [str(jun_blocked1), str(jun_blocked2)]
-  logs = []
   chunk = select_ingest_chunk_paths(
       pending,
       oldest_tar=may26_tar,
@@ -7243,16 +7257,14 @@ def test_select_ingest_chunk_paths_cross_day_only_defers_to_pending_head(tmp_pat
       tgz_archive_dir=str(daily_dir),
       chunk_size=1000,
       ingest_queue_high=2000,
-      log_fn=lambda msg: logs.append(str(msg)),
   )
   assert chunk == pending
-  assert any("oldest_day_chunk_gate_cross_day_defer" in line for line in logs)
 
 
 def test_select_ingest_chunk_paths_cross_day_only_empty_pending_uses_fallback(
     tmp_path,
 ):
-  """Cross-day blocked with empty pending still uses fallback (orphan reclaim path)."""
+  """Cross-day-only under oldest_tar with empty pending: no aligned work to dispatch."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       select_ingest_chunk_paths,
   )
@@ -7275,7 +7287,7 @@ def test_select_ingest_chunk_paths_cross_day_only_empty_pending_uses_fallback(
       chunk_size=10,
       ingest_queue_high=10,
   )
-  assert chunk == [blocked]
+  assert chunk == []
 
 
 def test_sort_pending_stats_paths_oldest_first(tmp_path):
@@ -7469,3 +7481,187 @@ def test_cross_day_db_complete_helper_contract():
   assert not all_ingest_outcomes_db_skip_head_tail(
       [(june_path, "ingested", "no")],
   )
+
+
+def test_oldest_checkpoint_blocked_tar_skips_cross_day_only(tmp_path):
+  """May-27 with only July-mapped path is not oldest; next aligned day wins."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      oldest_checkpoint_blocked_tar,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  may27 = os.path.normpath(str(daily_dir / "2026-05-27.tar"))
+  may29 = os.path.normpath(str(daily_dir / "2026-05-29.tar"))
+  open(may27, "wb").close()
+  open(may29, "wb").close()
+  d_july = datetime(2026, 7, 3, 12, tzinfo=timezone.utc)
+  d_may29 = datetime(2026, 5, 29, 12, tzinfo=timezone.utc)
+  cross = tmp_path / "cross_july"
+  aligned = tmp_path / "aligned_may29"
+  cross.write_text("x")
+  aligned.write_text("x")
+  os.utime(cross, (d_july.timestamp(), d_july.timestamp()))
+  os.utime(aligned, (d_may29.timestamp(), d_may29.timestamp()))
+  unprocessed = {
+      may27: [str(cross)],
+      may29: [str(aligned)],
+  }
+  assert oldest_checkpoint_blocked_tar(
+      unprocessed, tgz_archive_dir=str(daily_dir)) == may29
+
+
+def test_day_close_eligibility_ignores_cross_day_unprocessed(tmp_path):
+  """checkpoint_incomplete is false when only misaligned paths remain."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      daily_tar_eligible_for_day_close_submit,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2026-05-27.tar"))
+  open(tar_path, "wb").close()
+  d_july = datetime(2026, 7, 3, 12, tzinfo=timezone.utc)
+  cross = tmp_path / "cross_july"
+  cross.write_text("x")
+  os.utime(cross, (d_july.timestamp(), d_july.timestamp()))
+  eligible, reason = daily_tar_eligible_for_day_close_submit(
+      tar_path,
+      unprocessed_by_tar={tar_path: [str(cross)]},
+      disqualified_daily_tars=set(),
+      local_tz=timezone.utc,
+      tgz_archive_dir=str(daily_dir),
+  )
+  assert eligible
+  assert reason == ""
+
+
+def test_classify_reports_aligned_unprocessed_and_cross_day_n(tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      classify_day_close_candidates,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2026-05-27.tar"))
+  open(tar_path, "wb").close()
+  d_may = datetime(2026, 5, 27, 12, tzinfo=timezone.utc)
+  d_july = datetime(2026, 7, 3, 12, tzinfo=timezone.utc)
+  aligned = tmp_path / "aligned"
+  cross = tmp_path / "cross"
+  aligned.write_text("x")
+  cross.write_text("x")
+  os.utime(aligned, (d_may.timestamp(), d_may.timestamp()))
+  os.utime(cross, (d_july.timestamp(), d_july.timestamp()))
+  entries = classify_day_close_candidates(
+      tgz_archive_dir=str(daily_dir),
+      unprocessed_by_tar={tar_path: [str(aligned), str(cross)]},
+      disqualification_reasons={},
+      local_tz=timezone.utc,
+  )
+  by_tar = {e["tar_path"]: e for e in entries}
+  assert by_tar[tar_path]["status"] == "waiting_on_ingest"
+  assert by_tar[tar_path]["unprocessed"] == 1
+  assert by_tar[tar_path]["unprocessed_cross_day_n"] == 1
+
+
+def test_cap_merges_all_unprocessed_days_into_pending(tmp_path):
+  """Cap input missing May-30 paths but unprocessed map has them → head includes May-30."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      all_on_disk_unprocessed_paths,
+      prepend_checkpoint_blocked_paths_to_pending,
+      sort_pending_stats_paths_oldest_first,
+      cap_pending_stats_with_blocked_retention,
+      oldest_checkpoint_blocked_tar,
+      aligned_on_disk_unprocessed_paths_for_tar,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  may27 = os.path.normpath(str(daily_dir / "2026-05-27.tar"))
+  may30 = os.path.normpath(str(daily_dir / "2026-05-30.tar"))
+  open(may27, "wb").close()
+  open(may30, "wb").close()
+  d_july = datetime(2026, 7, 3, 12, tzinfo=timezone.utc)
+  d_may30 = datetime(2026, 5, 30, 12, tzinfo=timezone.utc)
+  d_june = datetime(2026, 6, 7, 12, tzinfo=timezone.utc)
+  cross = tmp_path / "cross_july"
+  may30_path = tmp_path / "may30_seg"
+  june_path = tmp_path / "june_seg"
+  for path, day in (
+      (cross, d_july),
+      (may30_path, d_may30),
+      (june_path, d_june),
+  ):
+    path.write_text("x")
+    os.utime(path, (day.timestamp(), day.timestamp()))
+  unprocessed = {
+      may27: [str(cross)],
+      may30: [str(may30_path)],
+  }
+  # Pending only has June (scan gap); map still has May-30.
+  paths = [str(june_path)]
+  all_unprocessed = sort_pending_stats_paths_oldest_first(
+      all_on_disk_unprocessed_paths(unprocessed),
+  )
+  tar_norm = oldest_checkpoint_blocked_tar(
+      unprocessed, tgz_archive_dir=str(daily_dir))
+  assert tar_norm == may30
+  reserved = aligned_on_disk_unprocessed_paths_for_tar(
+      unprocessed, tar_norm, tgz_archive_dir=str(daily_dir))
+  capped = cap_pending_stats_with_blocked_retention(
+      prepend_checkpoint_blocked_paths_to_pending(paths, all_unprocessed),
+      max_size=2000,
+      blocked_paths=reserved,
+      handoff_priority_paths=[],
+      log_fn=lambda *_a, **_k: None,
+  )
+  assert str(may30_path) in capped
+  assert capped[0] == str(may30_path)
+
+
+def test_supplement_at_max_replaces_with_older_closed_paths(tmp_path):
+  """Full queue of June paths + older closed_paths → head is older."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      supplement_pending_paths_from_closed_paths,
+  )
+
+  host_dir = tmp_path / "host.cluster.test"
+  host_dir.mkdir(parents=True)
+  d_may = datetime(2026, 5, 30, 12, tzinfo=timezone.utc)
+  d_june = datetime(2026, 6, 7, 12, tzinfo=timezone.utc)
+  may_paths = []
+  june_paths = []
+  for index in range(5):
+    may_path = host_dir / ("may_%d" % index)
+    june_path = host_dir / ("june_%d" % index)
+    may_path.write_text("1\n", encoding="utf-8")
+    june_path.write_text("1\n", encoding="utf-8")
+    os.utime(may_path, (d_may.timestamp() + index, d_may.timestamp() + index))
+    os.utime(june_path, (d_june.timestamp() + index, d_june.timestamp() + index))
+    may_paths.append(str(may_path))
+    june_paths.append(str(june_path))
+  # Use numeric basenames so oldest-first sort uses epochs.
+  may_epoch = int(d_may.timestamp())
+  june_epoch = int(d_june.timestamp())
+  may_named = []
+  june_named = []
+  for index in range(5):
+    may_p = host_dir / str(may_epoch + index)
+    june_p = host_dir / str(june_epoch + index)
+    may_p.write_text("1\n", encoding="utf-8")
+    june_p.write_text("1\n", encoding="utf-8")
+    may_named.append(str(may_p))
+    june_named.append(str(june_p))
+  logs = []
+  capped = supplement_pending_paths_from_closed_paths(
+      june_named,
+      closed_paths=may_named + june_named,
+      max_size=5,
+      processed_exclude=set(),
+      log_fn=lambda msg, **_k: logs.append(str(msg)),
+  )
+  assert len(capped) == 5
+  assert capped[0] == may_named[0]
+  assert all(path in may_named for path in capped)
+  assert any("pending cap supplement replace" in line for line in logs)
