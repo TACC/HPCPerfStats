@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "@/api";
+import { api } from "@/test-utils/legacy-api-facade";
 import { ApiError } from "@/api/api-error";
 import { fetchPubClusterDashboard } from "@/api/fetch-mutator";
 

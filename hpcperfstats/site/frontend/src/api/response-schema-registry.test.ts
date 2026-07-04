@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { parseApiResponse } from "@/api/parse-api-response";
 import {
   EXACT_RESPONSE_SCHEMA_ROUTES,
   normalizeApiPath,
   resolveResponseSchema,
 } from "./response-schema-registry";
+import { WIRE_AUDIT_CASES, WIRE_AUDIT_EXACT_PATHS } from "./wire-audit-cases";
 
 /** Keep in sync with scripts/audit-wire-drift.mts exact routes. */
 const EXPECTED_EXACT_ROUTES = [
@@ -56,5 +58,21 @@ describe("response-schema-registry wiring", () => {
 
   it("returns null for unregistered routes", () => {
     expect(resolveResponseSchema("GET", "/api/unregistered/")).toBeNull();
+  });
+
+  it("resolves schema for every wire-audit path", () => {
+    for (const key of WIRE_AUDIT_EXACT_PATHS) {
+      const spaceIdx = key.indexOf(" ");
+      const method = key.slice(0, spaceIdx);
+      const path = key.slice(spaceIdx + 1);
+      expect(resolveResponseSchema(method, path), `missing registry schema for ${key}`).not.toBeNull();
+    }
+  });
+
+  it("parseApiResponse validates every wire-audit payload without drift", () => {
+    for (const { method, path, wire } of WIRE_AUDIT_CASES) {
+      expect(resolveResponseSchema(method, path), `${method} ${path}`).not.toBeNull();
+      expect(parseApiResponse(method, path, wire)).toEqual(wire);
+    }
   });
 });

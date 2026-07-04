@@ -1,4 +1,5 @@
-import { useSearchParams } from "next/navigation";
+"use client";
+
 import { TextLink } from "@/components/TextLink";
 import { useMemo } from "react";
 import type { BokehJsonItem } from "@/types/bokeh";
@@ -16,13 +17,13 @@ import { useHostPlotQuery } from "@/hooks/use-host-plot";
 export default function HostDetail() {
   const { flatParams } = useMachineRouteParams();
   const host = flatParams.host ?? "";
-  const searchParams = useSearchParams();
   const searchParamsKey = useStableSearchParamsKey();
 
   const plotParams = useMemo(() => {
     if (!host) return null;
-    let end_time__gte = searchParams.get("end_time__gte") || "";
-    const end_time__lte = searchParams.get("end_time__lte") || "now()";
+    const params = new URLSearchParams(searchParamsKey);
+    let end_time__gte = params.get("end_time__gte") || "";
+    const end_time__lte = params.get("end_time__lte") || "now()";
     if (!end_time__gte) {
       const d = new Date();
       d.setDate(d.getDate() - 1);

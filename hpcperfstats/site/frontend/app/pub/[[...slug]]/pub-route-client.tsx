@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import LoadingMessage from "@/components/LoadingMessage";
 import PageClusterDashboard from "@/views/PageClusterDashboard";
 
 export default function PubRouteClient({ slug }: { slug?: string[] }) {
   const router = useRouter();
-  const parts = slug ?? [];
+  const parts = useMemo(() => slug ?? [], [slug]);
 
   useEffect(() => {
     if (parts.length === 0) {
@@ -20,5 +21,5 @@ export default function PubRouteClient({ slug }: { slug?: string[] }) {
     return <PageClusterDashboard />;
   }
 
-  return null;
+  return <LoadingMessage message="Loading dashboard…" />;
 }

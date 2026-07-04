@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import BokehPlotWithLimitation from "../components/BokehPlotWithLimitation";
 import LoadingMessage from "../components/LoadingMessage";
-import { fetchPubExpansionPeriod } from "@/api/fetch-mutator";
+import { usePubExpansionPeriod } from "@/hooks/use-pub-expansion-period";
 import type { PubDashboardHistogramBlock } from "../types/view-models";
 import { formatDecimalStandard } from "../utils/formatDecimal";
 
@@ -13,15 +13,6 @@ type LazyExpansionHistogramProps = {
   initialBlock?: PubDashboardHistogramBlock | null;
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object";
-}
-
-function asHistogramBlock(value: unknown): PubDashboardHistogramBlock | null {
-  if (!isRecord(value)) return null;
-  return value as PubDashboardHistogramBlock;
-}
-
 export default function LazyExpansionHistogram({
   grouping,
   periodKey,
@@ -30,8 +21,12 @@ export default function LazyExpansionHistogram({
 }: LazyExpansionHistogramProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [shouldLoad, setShouldLoad] = useState(Boolean(initialBlock));
-  const [block, setBlock] = useState<PubDashboardHistogramBlock | null>(initialBlock);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const { block, loadError } = usePubExpansionPeriod(
+    grouping,
+    periodKey,
+    shouldLoad,
+    initialBlock,
+  );
   const safeDomId = String(periodKey).replace(/[^a-zA-Z0-9_-]+/g, "-");
 
   useEffect(() => {
@@ -50,23 +45,6 @@ export default function LazyExpansionHistogram({
     observer.observe(el);
     return () => observer.disconnect();
   }, [initialBlock, shouldLoad]);
-
-  useEffect(() => {
-    if (!shouldLoad || block || initialBlock) return;
-    let cancelled = false;
-    void fetchPubExpansionPeriod<{ block?: unknown }>(grouping, periodKey)
-      .then((payload) => {
-        if (cancelled) return;
-        setBlock(asHistogramBlock(payload?.block));
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        setLoadError(err instanceof Error ? err.message : "Unable to load histogram.");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [shouldLoad, block, initialBlock, grouping, periodKey]);
 
   const edges = Array.isArray(block?.histogram_bin_edges) ? block!.histogram_bin_edges! : [];
   const counts = Array.isArray(block?.histogram_counts) ? block!.histogram_counts! : [];

@@ -1,3 +1,5 @@
+"use client";
+
 import { TextLink } from "@/components/TextLink";
 import type { BokehJsonItem } from "@/types/bokeh";
 import type { TypeDetailData } from "@/types/view-models";

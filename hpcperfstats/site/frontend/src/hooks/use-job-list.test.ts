@@ -21,7 +21,7 @@ describe("useJobListQuery", () => {
     const { result } = renderHook(() => useJobListQuery({ page: "1" }));
 
     expect(useJobsRetrieve).toHaveBeenCalledWith(
-      { page: "1", include_filter_options: 0 },
+      expect.objectContaining({ page: 1, include_filter_options: 0 }),
       expect.objectContaining({ query: expect.objectContaining({ placeholderData: expect.anything() }) }),
     );
     expect(result.current.data).toEqual({ nj: 2 });

@@ -33,23 +33,23 @@ vi.mock("@/views/PageNotFound", () => ({
 }));
 
 describe("MachineRouteClient", () => {
-  it("renders Search on home pathname", () => {
+  it("renders Search on home pathname", async () => {
     configureNextNavigationFromPath("/machine/");
     render(<MachineRouteClient />);
-    expect(screen.getByTestId("view-search")).toBeInTheDocument();
+    expect(await screen.findByTestId("view-search")).toBeInTheDocument();
   });
 
-  it("renders JobList for date deep link pathname", () => {
+  it("renders JobList for date deep link pathname", async () => {
     configureNextNavigationFromPath("/machine/date/2024-01-15/");
     render(<MachineRouteClient />);
-    expect(screen.getByTestId("view-job-list")).toBeInTheDocument();
+    expect(await screen.findByTestId("view-job-list")).toBeInTheDocument();
     expect(screen.queryByTestId("view-search")).not.toBeInTheDocument();
   });
 
-  it("renders JobDetail for job id pathname", () => {
+  it("renders JobDetail for job id pathname", async () => {
     configureNextNavigationFromPath("/machine/job/991/");
     render(<MachineRouteClient />);
-    expect(screen.getByTestId("view-job-detail")).toBeInTheDocument();
+    expect(await screen.findByTestId("view-job-detail")).toBeInTheDocument();
   });
 });
 
@@ -65,13 +65,13 @@ const ROUTED_VIEWS: { view: MachineRouteView; testId: string }[] = [
 ];
 
 describe("matchMachineView", () => {
-  it.each(ROUTED_VIEWS)("maps $view to the expected view component", ({ view, testId }) => {
+  it.each(ROUTED_VIEWS)("maps $view to the expected view component", async ({ view, testId }) => {
     render(matchMachineView(view));
-    expect(screen.getByTestId(testId)).toBeInTheDocument();
+    expect(await screen.findByTestId(testId)).toBeInTheDocument();
   });
 
-  it("falls back to PageNotFound for unknown views", () => {
+  it("falls back to PageNotFound for unknown views", async () => {
     render(matchMachineView("notFound"));
-    expect(screen.getByTestId("view-not-found")).toBeInTheDocument();
+    expect(await screen.findByTestId("view-not-found")).toBeInTheDocument();
   });
 });

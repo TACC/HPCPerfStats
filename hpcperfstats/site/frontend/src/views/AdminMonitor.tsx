@@ -1,3 +1,5 @@
+"use client";
+
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useAdminMonitorSectionQuery } from "@/hooks/use-admin-monitor-section";
 import { ChevronRight } from "lucide-react";

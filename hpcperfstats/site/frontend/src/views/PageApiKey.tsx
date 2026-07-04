@@ -1,3 +1,5 @@
+"use client";
+
 import { TextLink } from "@/components/TextLink";
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import BannerErrorMessage from "../components/BannerErrorMessage";
@@ -25,6 +27,7 @@ export default function PageApiKey() {
     rotating,
     rotateError,
     refetch,
+    clearRawKeyFromCache,
   } = useUserApiKey();
   const [copyStatus, setCopyStatus] = useState("");
   const [actionError, setActionError] = useState("");
@@ -59,6 +62,9 @@ export default function PageApiKey() {
     setCopyStatus("");
     const didCopy = await copyToClipboard(key);
     setCopyStatus(didCopy ? "Copied" : "Copy failed");
+    if (didCopy) {
+      clearRawKeyFromCache();
+    }
   }
 
   async function handleRotate(event: FormEvent<HTMLFormElement>) {

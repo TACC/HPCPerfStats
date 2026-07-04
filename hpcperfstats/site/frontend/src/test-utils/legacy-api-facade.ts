@@ -3,9 +3,9 @@
  * Retained for api.test.ts contract coverage only.
  */
 
-import { customFetch } from "./fetch-mutator";
-import { orvalResponseData } from "./orval-response";
-import { API_PATHS, HISTOGRAM_EMBED_VERSION } from "../api-paths";
+import { customFetch } from "@/api/fetch-mutator";
+import { orvalResponseData } from "@/api/orval-response";
+import { API_PATHS, HISTOGRAM_EMBED_VERSION } from "@/api-paths";
 
 type QueryParams = Record<string, string | number | boolean | undefined | null> | URLSearchParams;
 

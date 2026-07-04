@@ -30,6 +30,7 @@ describe("PageApiKey", () => {
       rotate,
       rotating: false,
       rotateError: null,
+      clearRawKeyFromCache: vi.fn(),
     });
   });
 
@@ -50,6 +51,7 @@ describe("PageApiKey", () => {
       rotate,
       rotating: false,
       rotateError: null,
+      clearRawKeyFromCache: vi.fn(),
     });
 
     const view = renderPage();
@@ -74,6 +76,7 @@ describe("PageApiKey", () => {
       rotate,
       rotating: false,
       rotateError: null,
+      clearRawKeyFromCache: vi.fn(),
     });
 
     renderPage();
@@ -103,6 +106,7 @@ describe("PageApiKey", () => {
       rotate,
       rotating: false,
       rotateError: null,
+      clearRawKeyFromCache: vi.fn(),
     }));
 
     const user = userEvent.setup();
@@ -121,5 +125,29 @@ describe("PageApiKey", () => {
       </SessionContext.Provider>,
     );
     expect(await screen.findByText("newrawkeyvalue")).toBeInTheDocument();
+  });
+
+  it("clears raw_key from hook cache after successful copy", async () => {
+    const clearRawKeyFromCache = vi.fn();
+    vi.mocked(useUserApiKey).mockReturnValue({
+      data: {
+        username: "alice",
+        raw_key: "deadbeefcafe0123",
+        key_prefix: "deadbeefcafe",
+      },
+      error: null,
+      loading: false,
+      refetch: vi.fn(),
+      rotate,
+      rotating: false,
+      rotateError: null,
+      clearRawKeyFromCache,
+    });
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: "Copy API key" }));
+    expect(clearRawKeyFromCache).toHaveBeenCalledTimes(1);
   });
 });

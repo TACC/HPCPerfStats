@@ -51,7 +51,7 @@ function rewriteImports(content) {
   );
 }
 
-function prefixMachinePath(pathExpr) {
+function _prefixMachinePath(pathExpr) {
   const trimmed = pathExpr.trim();
   if (
     trimmed.startsWith("/machine") ||

@@ -8,6 +8,32 @@ class ErrorDetailSerializer(serializers.Serializer):
     login_url = serializers.CharField(required=False)
 
 
+class BokehDocRootNodeSerializer(serializers.Serializer):
+    """Minimal Bokeh json_item root node (``doc.roots[]`` entry)."""
+
+    id = serializers.JSONField(
+        required=False,
+        help_text="Root model id (string or number) referenced by Bokeh.embed.",
+    )
+
+
+class BokehDocSerializer(serializers.Serializer):
+    """Bokeh json_item document container."""
+
+    roots = BokehDocRootNodeSerializer(many=True, required=False)
+    root_ids = serializers.ListField(
+        child=serializers.JSONField(),
+        required=False,
+        help_text="Alternate root id list when roots omit explicit ids.",
+    )
+
+
+class BokehJsonItemSerializer(serializers.Serializer):
+    """Minimal Bokeh embed payload (``Bokeh.embed.embed_item`` json_item document)."""
+
+    doc = BokehDocSerializer()
+
+
 class SessionInfoSerializer(serializers.Serializer):
     logged_in = serializers.BooleanField()
     username = serializers.CharField()
@@ -206,11 +232,11 @@ class JobDetailResponseSerializer(serializers.Serializer):
     gpu_utilization_max = serializers.FloatField(required=False, allow_null=True)
     gpu_utilization_mean = serializers.FloatField(required=False, allow_null=True)
     gpu_count = serializers.IntegerField(required=False, allow_null=True)
-    multiprecision_cpu_plot_item = serializers.JSONField(required=False, allow_null=True)
+    multiprecision_cpu_plot_item = BokehJsonItemSerializer(required=False, allow_null=True)
     multiprecision_cpu_unavailable_reason = serializers.CharField(
         required=False, allow_null=True
     )
-    multiprecision_gpu_plot_item = serializers.JSONField(required=False, allow_null=True)
+    multiprecision_gpu_plot_item = BokehJsonItemSerializer(required=False, allow_null=True)
     multiprecision_gpu_unavailable_reason = serializers.CharField(
         required=False, allow_null=True
     )
@@ -224,15 +250,15 @@ class JobPlotsResponseSerializer(serializers.Serializer):
 
     mscript = serializers.CharField(required=False, allow_blank=True)
     mdiv = serializers.CharField(required=False, allow_blank=True)
-    mplot_item = serializers.JSONField(required=False, allow_null=True)
+    mplot_item = BokehJsonItemSerializer(required=False, allow_null=True)
     mplot_unavailable_reason = serializers.CharField(required=False, allow_null=True)
     rscript = serializers.CharField(required=False, allow_blank=True)
     rdiv = serializers.CharField(required=False, allow_blank=True)
-    rplot_item = serializers.JSONField(required=False, allow_null=True)
+    rplot_item = BokehJsonItemSerializer(required=False, allow_null=True)
     rplot_unavailable_reason = serializers.CharField(required=False, allow_null=True)
     grscript = serializers.CharField(required=False, allow_blank=True)
     grdiv = serializers.CharField(required=False, allow_blank=True)
-    grplot_item = serializers.JSONField(required=False, allow_null=True)
+    grplot_item = BokehJsonItemSerializer(required=False, allow_null=True)
     grplot_unavailable_reason = serializers.CharField(required=False, allow_null=True)
     status = serializers.CharField(required=False)
     detail = serializers.CharField(required=False)
@@ -240,7 +266,7 @@ class JobPlotsResponseSerializer(serializers.Serializer):
     loading_plots = serializers.ListField(child=serializers.CharField(), required=False)
     progressive = serializers.BooleanField(required=False)
     plot = serializers.CharField(required=False)
-    plot_item = serializers.JSONField(required=False, allow_null=True)
+    plot_item = BokehJsonItemSerializer(required=False, allow_null=True)
     unavailable_reason = serializers.CharField(required=False, allow_null=True)
 
 
@@ -253,8 +279,8 @@ class JobListHistogramResponseSerializer(serializers.Serializer):
     histogram_nj = serializers.IntegerField(required=False)
     histogram_sampled = serializers.BooleanField(required=False)
     title = serializers.CharField(required=False, allow_blank=True)
-    plot_item_thumb = serializers.JSONField(required=False, allow_null=True)
-    plot_item_full = serializers.JSONField(required=False, allow_null=True)
+    plot_item_thumb = BokehJsonItemSerializer(required=False, allow_null=True)
+    plot_item_full = BokehJsonItemSerializer(required=False, allow_null=True)
     plot_unavailable_reason = serializers.CharField(required=False, allow_null=True)
 
 
@@ -270,7 +296,7 @@ class JobListHistogramBatchResponseSerializer(serializers.Serializer):
 class TypeDetailResponseSerializer(serializers.Serializer):
     type_name = serializers.CharField(required=False)
     jobid = serializers.CharField(required=False)
-    tplot_item = serializers.JSONField(required=False, allow_null=True)
+    tplot_item = BokehJsonItemSerializer(required=False, allow_null=True)
     tplot_unavailable_reason = serializers.CharField(required=False, allow_null=True)
     stats_data = serializers.ListField(child=serializers.JSONField(), required=False)
     schema = serializers.ListField(child=serializers.JSONField(), required=False)
@@ -279,7 +305,7 @@ class TypeDetailResponseSerializer(serializers.Serializer):
 
 class HostPlotResponseSerializer(serializers.Serializer):
     host = serializers.CharField()
-    plot_item = serializers.JSONField(allow_null=True)
+    plot_item = BokehJsonItemSerializer(allow_null=True)
     plot_unavailable_reason = serializers.CharField(allow_null=True, required=False)
     end_time__gte = serializers.CharField()
     end_time__lte = serializers.CharField()
@@ -340,7 +366,7 @@ class SacctIngestResponseSerializer(serializers.Serializer):
 
 class PublicClusterMetricBlockSerializer(serializers.Serializer):
     title = serializers.CharField(required=False, allow_blank=True)
-    bokeh_histogram_json_item = serializers.JSONField(required=False, allow_null=True)
+    bokeh_histogram_json_item = BokehJsonItemSerializer(required=False, allow_null=True)
 
 
 class PublicExpansionFactorHistogramBlockSerializer(serializers.Serializer):
@@ -353,7 +379,7 @@ class PublicExpansionFactorHistogramBlockSerializer(serializers.Serializer):
     histogram_bin_edges = serializers.ListField(required=False)
     histogram_counts = serializers.ListField(required=False)
     expansion_factor_definition = serializers.CharField(required=False, allow_blank=True)
-    bokeh_histogram_json_item = serializers.JSONField(required=False, allow_null=True)
+    bokeh_histogram_json_item = BokehJsonItemSerializer(required=False, allow_null=True)
 
 
 class PublicDashboardExpansionFactorSectionSerializer(serializers.Serializer):

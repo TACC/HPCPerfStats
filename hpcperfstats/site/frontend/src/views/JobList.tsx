@@ -1,10 +1,13 @@
+"use client";
+
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { MouseEvent } from "react";
 import { ChevronDownIcon } from "lucide-react";
 import { TextLink, textLinkClassName } from "@/components/TextLink";
 import type { JobListEntry } from "@/api/generated/models/jobListEntry";
-import type { JobListData } from "@/types/view-models";
+import type { JobListResponse } from "@/api/generated/models/jobListResponse";
+import { useMinWidth } from "@/hooks/use-media-query";
 import { useJobListQuery } from "@/hooks/use-job-list";
 import { useJobListFilterOptions } from "@/hooks/use-job-list-filter-options";
 import {
@@ -42,9 +45,7 @@ import { cn } from "@/lib/utils";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import HistogramThumbnails from "../components/HistogramThumbnails";
 import JobListFilterSummary from "../components/JobListFilterSummary";
-import JobListHeaderFilters, {
-  type JobListFilterOptions,
-} from "../components/JobListHeaderFilters";
+import JobListHeaderFilters from "../components/JobListHeaderFilters";
 import LoadingMessage from "../components/LoadingMessage";
 import PageBreadcrumbs from "../components/PageBreadcrumbs";
 import { useExtendedSearchLayout } from "../context/extended-search-layout-context";
@@ -81,22 +82,9 @@ type JobPerformanceBadge = {
 type JobListRow = Omit<JobListEntry, "performance"> & {
   performance?: JobPerformanceBadge | null;
 };
-type JobListApiResponse = Omit<JobListData, "job_list" | "filter_summary"> & {
+type JobListApiResponse = Omit<JobListResponse, "job_list" | "filter_summary"> & {
   job_list?: JobListRow[];
   filter_summary?: string[];
-  filter_options?: JobListFilterOptions | null;
-  aggregates?: {
-    total_node_hours?: number | null;
-    queue_wait_mean_hours?: number | null;
-  };
-  pagination?: {
-    page?: number;
-    num_pages?: number;
-  };
-  order_by?: string;
-  current_path?: string;
-  qname?: string;
-  nj?: number;
 };
 type BuildJobListTitleArgs = {
   error: string | null;
@@ -203,19 +191,7 @@ export default function JobList() {
   const [distributionsOpen, setDistributionsOpen] = useState(false);
   const { openExtendedSearch } = useExtendedSearchLayout();
   const listViewTab = readTabFromSearchParams(rawSearchParams, "view", "jobs");
-  const [isLgUp, setIsLgUp] = useState(() =>
-    typeof window !== "undefined" && window.matchMedia("(min-width: 992px)").matches,
-  );
-
-  useEffect(() => {
-    const mq = window.matchMedia("(min-width: 992px)");
-    function syncLg() {
-      setIsLgUp(mq.matches);
-    }
-    syncLg();
-    mq.addEventListener("change", syncLg);
-    return () => mq.removeEventListener("change", syncLg);
-  }, []);
+  const isLgUp = useMinWidth(992);
 
   const asURLSearchParams = searchParams;
 

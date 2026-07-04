@@ -1,8 +1,12 @@
 import { z } from "zod";
 import {
+  EXTENDED_SEARCH_ALLOWED_PARAM_NAMES,
   EXTENDED_SEARCH_DATE_RANGE_PAIRS,
   EXTENDED_SEARCH_NUMERIC_RANGE_PAIRS,
+  getExtendedSearchParameterDefinition,
 } from "./extended-search-parameters";
+
+const METRIC_FILTER_KEY = /^metrics_[a-zA-Z0-9_.-]+__(?:gte|lte)$/;
 
 function optionalNumber(raw: unknown) {
   const s = String(raw ?? "").trim();
@@ -39,6 +43,18 @@ export function buildExtendedSearchZodSchema(metrics: ExtendedSearchMetricOption
   return z
     .record(z.string(), z.string().optional())
     .superRefine((params, ctx) => {
+      for (const [key, raw] of Object.entries(params)) {
+        if (raw == null || String(raw).trim() === "") continue;
+        if (EXTENDED_SEARCH_ALLOWED_PARAM_NAMES.includes(key)) continue;
+        if (METRIC_FILTER_KEY.test(key)) continue;
+        const def = getExtendedSearchParameterDefinition(key);
+        ctx.addIssue({
+          code: "custom",
+          message: `Unknown search field: ${key}`,
+          path: [def?.htmlId ?? key],
+        });
+      }
+
       const meaningful = Object.entries(params).filter(
         ([, v]) => v != null && String(v).trim() !== "",
       );

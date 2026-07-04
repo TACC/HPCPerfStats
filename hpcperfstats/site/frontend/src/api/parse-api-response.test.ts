@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { OPENAPI_BOKEH_JSON_ITEM } from "@/test-utils/bokeh-fixtures";
 import { parseApiResponse } from "@/api/parse-api-response";
 import { resolveResponseSchema } from "@/api/response-schema-registry";
 import { HomeRetrieveResponse } from "@/api/generated-zod/home/home";
@@ -92,7 +93,7 @@ describe("parse-api-response", () => {
       block: {
         histogram_bin_edges: [0.0, 1.0, 2.0],
         histogram_counts: [5, 10, 3],
-        bokeh_histogram_json_item: { type: "plot" },
+        bokeh_histogram_json_item: OPENAPI_BOKEH_JSON_ITEM,
       },
     };
     expect(parseApiResponse("GET", "/api/pub/cluster-dashboard/", wire)).toEqual(wire);
@@ -154,7 +155,7 @@ describe("parse-api-response", () => {
     const wire = {
       type_name: "cpu",
       jobid: "123",
-      tplot_item: { type: "plot" },
+      tplot_item: OPENAPI_BOKEH_JSON_ITEM,
       stats_data: [],
       schema: [],
       status: "ready",
@@ -164,7 +165,7 @@ describe("parse-api-response", () => {
 
   it("accepts job plots legacy m/r/gr plot keys", () => {
     const wire = {
-      mplot_item: { type: "plot" },
+      mplot_item: OPENAPI_BOKEH_JSON_ITEM,
       mplot_unavailable_reason: null,
       rplot_item: null,
       rplot_unavailable_reason: "no data",
@@ -183,8 +184,8 @@ describe("parse-api-response", () => {
       histogram_nj: 5,
       histogram_sampled: false,
       title: "Runtime",
-      plot_item_thumb: { type: "plot" },
-      plot_item_full: { type: "plot" },
+      plot_item_thumb: OPENAPI_BOKEH_JSON_ITEM,
+      plot_item_full: OPENAPI_BOKEH_JSON_ITEM,
       plot_unavailable_reason: null,
     };
     expect(parseApiResponse("GET", "/api/jobs/histograms/", wire)).toEqual(wire);
@@ -203,8 +204,8 @@ describe("parse-api-response", () => {
           histogram_nj: 5000,
           histogram_sampled: true,
           title: "Runtime",
-          plot_item_thumb: { type: "plot" },
-          plot_item_full: { type: "plot" },
+          plot_item_thumb: OPENAPI_BOKEH_JSON_ITEM,
+          plot_item_full: OPENAPI_BOKEH_JSON_ITEM,
           plot_unavailable_reason: null,
         },
       ],

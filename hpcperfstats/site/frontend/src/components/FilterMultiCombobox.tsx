@@ -33,11 +33,12 @@ export default function FilterMultiCombobox({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const searchParams = useSearchParams();
+  const searchParamsKey = searchParams.toString();
 
   useEffect(() => {
     setOpen(false);
     setQuery("");
-  }, [searchParams.toString()]);
+  }, [searchParamsKey]);
 
   useEffect(() => {
     if (!panelOpen) {

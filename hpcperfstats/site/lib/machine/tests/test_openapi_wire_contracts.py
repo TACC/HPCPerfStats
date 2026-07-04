@@ -20,7 +20,13 @@ from hpcperfstats.site.lib.machine.openapi_serializers import (
     TypeDetailResponseSerializer,
 )
 
-# --- Hard fail fixes (Zod threw on real Django wire) ---
+# Minimal Bokeh json_item document (matches frontend bokeh-fixtures.ts).
+VALID_BOKEH_JSON_ITEM = {
+    "doc": {
+        "root_ids": ["p1001"],
+        "roots": [{"id": "p1001", "type": "object", "name": "GridPlot"}],
+    },
+}
 
 JOB_MONITOR_WIRE = {
     "window_days": 30,
@@ -90,7 +96,7 @@ PUB_DASHBOARD_LAZY_PERIOD_WIRE = {
         "histogram_bin_edges": [0.0, 1.0, 2.0],
         "histogram_counts": [5, 10, 3],
         "expansion_factor_definition": "(queue_wait_seconds + runtime_seconds) / (ncores * runtime_seconds)",
-        "bokeh_histogram_json_item": {"type": "plot"},
+        "bokeh_histogram_json_item": VALID_BOKEH_JSON_ITEM,
     },
 }
 
@@ -98,7 +104,7 @@ PUB_DASHBOARD_LEGACY_FULL_WIRE = {
     "status": "ready",
     "machine_name": "test.cluster.example",
     "expansion_factors": {"cpu": 1.2},
-    "monthly_metrics": [{"title": "Jan", "bokeh_histogram_json_item": {"type": "plot"}}],
+    "monthly_metrics": [{"title": "Jan", "bokeh_histogram_json_item": VALID_BOKEH_JSON_ITEM}],
 }
 
 JOB_DETAIL_WIRE = {
@@ -145,15 +151,15 @@ ADMIN_MONITOR_HOSTS_WIRE = {
 JOB_PLOTS_WIRE = {
     "mscript": "",
     "mdiv": "",
-    "mplot_item": {"type": "plot"},
+    "mplot_item": VALID_BOKEH_JSON_ITEM,
     "mplot_unavailable_reason": None,
     "rscript": "",
     "rdiv": "",
-    "rplot_item": {"type": "plot"},
+    "rplot_item": VALID_BOKEH_JSON_ITEM,
     "rplot_unavailable_reason": None,
     "grscript": "",
     "grdiv": "",
-    "grplot_item": {"type": "plot"},
+    "grplot_item": VALID_BOKEH_JSON_ITEM,
     "grplot_unavailable_reason": None,
     "status": "ready",
     "progressive": True,
@@ -165,15 +171,15 @@ JOB_LIST_HISTOGRAM_WIRE = {
     "metric": "runtime",
     "nj": 10,
     "title": "Runtime",
-    "plot_item_thumb": {"type": "plot"},
-    "plot_item_full": {"type": "plot"},
+    "plot_item_thumb": VALID_BOKEH_JSON_ITEM,
+    "plot_item_full": VALID_BOKEH_JSON_ITEM,
     "plot_unavailable_reason": None,
 }
 
 TYPE_DETAIL_WIRE = {
     "type_name": "cpu",
     "jobid": "12345",
-    "tplot_item": {"type": "plot"},
+    "tplot_item": VALID_BOKEH_JSON_ITEM,
     "tplot_unavailable_reason": None,
     "stats_data": [],
     "schema": [],

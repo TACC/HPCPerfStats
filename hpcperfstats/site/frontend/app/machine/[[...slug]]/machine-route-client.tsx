@@ -1,38 +1,39 @@
 "use client";
 
-import Search from "@/views/Search";
-import JobList from "@/views/JobList";
-import JobDetail from "@/views/JobDetail";
-import TypeDetail from "@/views/TypeDetail";
-import HostDetail from "@/views/HostDetail";
-import AdminMonitor from "@/views/AdminMonitor";
-import JobMonitor from "@/views/JobMonitor";
-import PageApiKey from "@/views/PageApiKey";
-import PageNotFound from "@/views/PageNotFound";
+import { lazy, Suspense, type ComponentType } from "react";
+import LoadingMessage from "@/components/LoadingMessage";
 import { useMachineRouteParams } from "@/hooks/use-machine-route-params";
 import type { MachineRouteView } from "@/utils/machine-route-params";
 
+const Search = lazy(() => import("@/views/Search"));
+const JobList = lazy(() => import("@/views/JobList"));
+const JobDetail = lazy(() => import("@/views/JobDetail"));
+const TypeDetail = lazy(() => import("@/views/TypeDetail"));
+const HostDetail = lazy(() => import("@/views/HostDetail"));
+const AdminMonitor = lazy(() => import("@/views/AdminMonitor"));
+const JobMonitor = lazy(() => import("@/views/JobMonitor"));
+const PageApiKey = lazy(() => import("@/views/PageApiKey"));
+const PageNotFound = lazy(() => import("@/views/PageNotFound"));
+
+const VIEW_COMPONENTS: Record<MachineRouteView, ComponentType> = {
+  search: Search,
+  jobList: JobList,
+  jobDetail: JobDetail,
+  typeDetail: TypeDetail,
+  hostDetail: HostDetail,
+  adminMonitor: AdminMonitor,
+  jobMonitor: JobMonitor,
+  pageApiKey: PageApiKey,
+  notFound: PageNotFound,
+};
+
 export function matchMachineView(view: MachineRouteView) {
-  switch (view) {
-    case "search":
-      return <Search />;
-    case "jobList":
-      return <JobList />;
-    case "jobDetail":
-      return <JobDetail />;
-    case "typeDetail":
-      return <TypeDetail />;
-    case "hostDetail":
-      return <HostDetail />;
-    case "adminMonitor":
-      return <AdminMonitor />;
-    case "jobMonitor":
-      return <JobMonitor />;
-    case "pageApiKey":
-      return <PageApiKey />;
-    default:
-      return <PageNotFound />;
-  }
+  const View = VIEW_COMPONENTS[view] ?? PageNotFound;
+  return (
+    <Suspense fallback={<LoadingMessage message="Loading page…" />}>
+      <View />
+    </Suspense>
+  );
 }
 
 /** Client pathname/slug is authoritative under static export (nginx serves home shell for deep links). */

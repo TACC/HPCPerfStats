@@ -1,14 +1,12 @@
 import { z } from "zod";
 import { isDevEnvironment } from "@/utils/is-dev-environment";
 
-export const apiErrorBodySchema = z
-  .object({
-    error: z.string().optional(),
-    detail: z.string().optional(),
-    login_url: z.string().optional(),
-    message: z.string().optional(),
-  })
-  .catchall(z.unknown());
+export const apiErrorBodySchema = z.object({
+  error: z.string().optional(),
+  detail: z.string().optional(),
+  login_url: z.string().optional(),
+  message: z.string().optional(),
+});
 
 export type ApiErrorBody = z.infer<typeof apiErrorBodySchema>;
 
@@ -43,14 +41,13 @@ export function extractApiErrorMessage(
 
 export function parseApiErrorBody(payload: unknown, status: number): ApiError {
   const parsed = apiErrorBodySchema.safeParse(payload);
-  const body: ApiErrorBody =
-    parsed.success
-      ? parsed.data
-      : payload && typeof payload === "object"
-        ? (payload as ApiErrorBody)
-        : {};
-  if (isDevEnvironment() && !parsed.success) {
-    console.warn("API error body failed schema validation", z.treeifyError(parsed.error));
+  const body: ApiErrorBody = parsed.success
+    ? parsed.data
+    : typeof payload === "string" && payload.trim()
+      ? { detail: payload.trim() }
+      : {};
+  if (isDevEnvironment() && !parsed.success && payload && typeof payload === "object") {
+    console.warn("API error body failed schema validation", parsed.error?.issues?.slice(0, 3));
   }
   return new ApiError(extractApiErrorMessage(body, status), status, body);
 }

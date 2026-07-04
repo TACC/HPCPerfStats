@@ -7,7 +7,7 @@ import { ApiError, parseApiErrorBody } from "./api-error";
 import { parseApiResponse } from "./parse-api-response";
 import { orvalResponseData } from "./orval-response";
 
-export type ErrorType<T> = T;
+export type ErrorType<_T> = ApiError;
 
 function getCookie(name: string): string | null {
   if (typeof document === "undefined" || !document.cookie) return null;

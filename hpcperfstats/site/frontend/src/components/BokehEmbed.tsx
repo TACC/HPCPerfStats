@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+/**
+ * Trust boundary: plot json_item payloads are structural-validated (parseBokehJsonItem) before
+ * Bokeh.embed — not HTML-sanitized. Treat as trusted server content over HTTPS with session auth;
+ * pub plots are anonymous read-only embeds from the same origin API.
+ */
+
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { BokehEmbedProps } from "@/types/bokeh";
@@ -344,11 +350,11 @@ export default function BokehEmbed({
   const [errorDetailsOpen, setErrorDetailsOpen] = useState(false);
   const [copyStatus, setCopyStatus] = useState("");
   const errorDetailsPanelId = `${id}-plot-error-details`;
-  const failEmbed = (reason: string) => {
+  const failEmbed = useCallback((reason: string) => {
     setFailureReason(reason);
     setLoadFailed(true);
     if (onPlotReadyChange) onPlotReadyChange(false);
-  };
+  }, [onPlotReadyChange]);
 
   const hasData = !!item;
   const showPlaceholder = !hasData || !plotReady || loadFailed;
@@ -519,6 +525,7 @@ export default function BokehEmbed({
     effectiveSettleMs,
     embedAllowed,
     embedStaggerMs,
+    failEmbed,
   ]);
 
   useEffect(() => {

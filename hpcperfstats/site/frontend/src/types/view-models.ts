@@ -1,4 +1,4 @@
-import type { JobListEntry } from "@/api/generated/models/jobListEntry";
+import type { JobDetailResponse } from "@/api/generated/models/jobDetailResponse";
 import type { BokehJsonItem } from "./bokeh";
 
 export type FreshnessBucket = "ok" | "gt_10min" | "gt_hour" | "gt_day" | "gt_week";
@@ -45,27 +45,7 @@ export type JobPlotBatchResponse = Record<string, unknown> & {
   loading_plots?: string[];
 };
 
-export type JobDetailData = Record<string, unknown> & {
-  job_data?: Record<string, unknown> & { jid?: string };
-  metrics?: Record<string, JobMetricCell>;
-  gpu?: Record<string, unknown>;
-  fsio?: Record<string, unknown>;
-  processes?: unknown[];
-  exec_hosts?: unknown[];
-  device?: unknown[];
-};
-
-export type JobListData = Record<string, unknown> & {
-  qname?: string;
-  nj?: number;
-  job_list?: JobListEntry[];
-  filter_summary?: unknown;
-  total_node_hours?: number;
-  queue_wait_mean_hours?: number;
-  page?: number;
-  num_pages?: number;
-  histograms?: Record<string, unknown>;
-};
+export type JobDetailData = JobDetailResponse;
 
 export type JobListHistogramEntry = {
   title?: string;

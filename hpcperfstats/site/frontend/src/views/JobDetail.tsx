@@ -1,3 +1,5 @@
+"use client";
+
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { memo, useEffect } from "react";
 import type { ReactNode } from "react";
@@ -5,8 +7,8 @@ import { TextLink } from "@/components/TextLink";
 import { useJobDetailQuery } from "@/hooks/use-job-detail";
 import { useJobPlotsQuery } from "@/hooks/use-job-plots";
 import type { BokehJsonItem } from "@/types/bokeh";
+import type { JobDetailResponse } from "@/api/generated/models/jobDetailResponse";
 import type {
-  JobDetailData,
   JobMetricCell,
 } from "@/types/view-models";
 import BannerErrorMessage from "../components/BannerErrorMessage";
@@ -61,7 +63,7 @@ type JobPlotConfig = (typeof JOB_PLOT_CONFIGS)[number];
 
 type JobPlotConfigKey = JobPlotConfig["key"];
 
-type JobMetricRow = JobMetricCell & {
+type JobMetricDisplayRow = JobMetricCell & {
   metric: string;
   units?: string | null;
 };
@@ -88,7 +90,7 @@ type XaltData = {
   libset?: XaltLibsetEntry[];
 };
 
-type JobDetailViewData = JobDetailData & {
+type JobDetailViewData = JobDetailResponse & {
   job_data?: JobSummaryRow;
   host_list?: string[];
   fsio?: Record<string, Array<number | null>>;
@@ -104,7 +106,7 @@ type JobDetailViewData = JobDetailData & {
   multiprecision_cpu_unavailable_reason?: string | null;
   multiprecision_gpu_plot_item?: BokehJsonItem | null;
   multiprecision_gpu_unavailable_reason?: string | null;
-  metrics_list?: JobMetricRow[];
+  metrics_list?: JobMetricDisplayRow[];
   proc_list?: string[];
   staff_metrics_distinct_time_count?: string | number | null;
 };
@@ -154,7 +156,7 @@ function buildJobDetailTitle({
 }: {
   error: string | null;
   loading: boolean;
-  data: JobDetailData | null;
+  data: JobDetailViewData | null;
   pk: string;
 }): string {
   if (error) return pk ? `Job ${pk} (error)` : "Job detail";
@@ -277,7 +279,7 @@ export default function JobDetail() {
   if (!data) return null;
 
   const detailData = data as JobDetailViewData;
-  const job = detailData.job_data || {};
+  const job: JobSummaryRow = detailData.job_data ?? {};
   const {
     host_list = [],
     fsio = {},
@@ -317,7 +319,7 @@ export default function JobDetail() {
       key: "gpu_util_max",
       label: "Max GPU Utilization:",
       value:
-        gpu_utilization_max != null && gpu_utilization_max !== ""
+        gpu_utilization_max != null && String(gpu_utilization_max) !== ""
           ? `${formatDecimalStandard(gpu_utilization_max)}%`
           : "",
     },
@@ -325,7 +327,7 @@ export default function JobDetail() {
       key: "gpu_util_mean",
       label: "Mean GPU Utilization:",
       value:
-        gpu_utilization_mean != null && gpu_utilization_mean !== ""
+        gpu_utilization_mean != null && String(gpu_utilization_mean) !== ""
           ? `${formatDecimalStandard(gpu_utilization_mean)}%`
           : "",
     },
@@ -345,12 +347,12 @@ export default function JobDetail() {
     unavailableReason: plots?.[config.key]?.unavailableReason ?? null,
   }));
 
-  const metricsListFull = metrics_list || [];
+  const metricsListFull: JobMetricDisplayRow[] = (metrics_list || []) as JobMetricDisplayRow[];
   const metricsSplitIdx = Math.ceil(metricsListFull.length / 2);
   const metricsTableLeft = metricsListFull.slice(0, metricsSplitIdx);
   const metricsTableRight = metricsListFull.slice(metricsSplitIdx);
 
-  function metricTableRows(list: JobMetricRow[]): ReactNode {
+  function metricTableRows(list: JobMetricDisplayRow[]): ReactNode {
     return list.map((obj) => (
       <TableRow key={obj.metric}>
         <TableHead scope="row">
@@ -496,7 +498,8 @@ export default function JobDetail() {
                     />
                   </div>
                   <div>
-                    {staffMetricsDistinctTimeCount != null && staffMetricsDistinctTimeCount !== ""
+                    {staffMetricsDistinctTimeCount != null &&
+                    String(staffMetricsDistinctTimeCount) !== ""
                       ? formatDecimalStandard(staffMetricsDistinctTimeCount)
                       : "Not computed yet."}
                   </div>
@@ -869,7 +872,7 @@ export default function JobDetail() {
                 </TableHeader>
                 <TableBody>
                   {(proc_list || []).map((proc, i) => (
-                    <TableRow key={i}>
+                    <TableRow key={`proc-${String(proc)}-${i}`}>
                       <TableCell>{proc}</TableCell>
                     </TableRow>
                   ))}
@@ -939,7 +942,7 @@ export default function JobDetail() {
                       </TableRow>
                     ) : (
                       (xalt_data.libset || []).map((item: XaltLibsetEntry, i: number) => (
-                        <TableRow key={i}>
+                        <TableRow key={`libset-${String(item[0])}-${String(item[1])}-${i}`}>
                           <TableCell>{item[1] === "none" ? "system" : item[1]}</TableCell>
                           <TableCell>{item[0]}</TableCell>
                         </TableRow>
@@ -964,7 +967,7 @@ export default function JobDetail() {
                   </TableHeader>
                   <TableBody>
                     {host_list.map((host, i) => (
-                      <TableRow key={i}>
+                      <TableRow key={`host-${host}-${i}`}>
                         <TableCell>{host}</TableCell>
                       </TableRow>
                     ))}
@@ -1002,7 +1005,7 @@ export default function JobDetail() {
                           <TableCell className="text-left">
                             {Array.isArray(event)
                               ? event.map((ev, i) => (
-                                  <span key={ev}>
+                                  <span key={`${type_name}-${String(ev)}-${i}`}>
                                     {i > 0 ? ", " : ""}
                                     <VariableInfoLabel
                                       variableName={ev}

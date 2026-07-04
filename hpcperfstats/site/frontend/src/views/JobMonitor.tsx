@@ -1,8 +1,11 @@
+"use client";
+
 import { TextLink } from "@/components/TextLink";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { JobMonitorRow } from "@/types/view-models";
 import { useJobMonitorQuery } from "@/hooks/use-job-monitor";
+import { useJobMonitorGpuPatches } from "@/hooks/use-job-monitor-gpu-patches";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import LoadingMessage from "../components/LoadingMessage";
 import SortableTableHeader from "../components/SortableTableHeader";
@@ -19,11 +22,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatDecimalStandard } from "../utils/formatDecimal";
-import {
-  fetchJobMonitorGpuPatches,
-  jobMonitorSortComparable,
-  mergeJobMonitorGpuPatches,
-} from "../utils/job-monitor-gpu";
+import { jobMonitorSortComparable } from "../utils/job-monitor-gpu";
 import { useTableSort } from "../hooks/useTableSort";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 
@@ -71,7 +70,9 @@ const sortHeaderClassName =
 export default function JobMonitor() {
   useDocumentTitle("Job failure monitor");
 
-  const [rows, setRows] = useState<JobMonitorViewRow[]>([]);
+  const [baseRows, setBaseRows] = useState<JobMonitorViewRow[]>([]);
+  const [gpuResponseDays, setGpuResponseDays] = useState<number | undefined>(undefined);
+  const [gpuPatchesEnabled, setGpuPatchesEnabled] = useState(false);
   const [windowDays, setWindowDays] = useState(30);
   const [inputDays, setInputDays] = useState("30");
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -115,22 +116,15 @@ export default function JobMonitor() {
     }
 
     const nextRows = normalizeJobMonitorRows(typed.results);
-    setRows(nextRows);
+    setBaseRows(nextRows);
+    setGpuResponseDays(responseDays);
 
-    if (typeof typed.window_days === "number" && typed.window_days !== windowDays) {
-      return;
-    }
-
-    let cancelled = false;
-    void fetchJobMonitorGpuPatches(nextRows, responseDays).then((patches) => {
-      if (cancelled) return;
-      setRows((prev) => mergeJobMonitorGpuPatches(prev, patches) as JobMonitorViewRow[]);
-    });
-
-    return () => {
-      cancelled = true;
-    };
+    const deferGpu =
+      typeof typed.window_days === "number" && typed.window_days !== windowDays;
+    setGpuPatchesEnabled(!deferGpu);
   }, [data, windowDays, fetching]);
+
+  const rows = useJobMonitorGpuPatches(baseRows, gpuResponseDays, gpuPatchesEnabled);
 
   const sortedRows = useMemo(() => {
     return [...rows].sort((a, b) => {

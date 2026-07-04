@@ -79,6 +79,13 @@ Wire tests: `JOB_MONITOR_GPU_BATCH_WIRE` in `test_openapi_wire_contracts.py`; ba
 | `metrics_list[]` | `{ type, metric, units, value: number\|null, no_data_reason: string\|null }` from `build_job_metrics_display_list` | `Dict[str, string]` / `zod.record(string, string)` → Zod rejects numeric `value` |
 | `job_data.*` nullable columns | Same as job list (`account`, `queue`, `sample_count`, …) | See job list traps above |
 
+## Known drift traps (Bokeh json_item family)
+
+| Wire field | Actual Django shape | Wrong OpenAPI guess |
+|------------|---------------------|---------------------|
+| `*_plot_item`, `plot_item_thumb/full`, `bokeh_histogram_json_item` | Bokeh `json_item` document with `doc.roots[]` / `doc.root_ids[]` | `JSONField` / `zod.unknown()` — wire tests pass `{ type: "plot" }` but embed fails; use `BokehJsonItemSerializer` in `openapi_serializers.py` and `OPENAPI_BOKEH_JSON_ITEM` in `wire-audit-cases.ts` |
+| Bokeh trust boundary | Structural validation via `parseBokehJsonItem` before `Bokeh.embed` | Not an HTML sanitizer — trusted HTTPS + auth server content |
+
 ## New SPA endpoint checklist
 
 - `@extend_schema` response → `openapi_serializers.py` entry

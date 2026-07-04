@@ -1,3 +1,5 @@
+"use client";
+
 import { useId, useMemo, useState } from "react";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import LazyExpansionHistogram from "@/components/LazyExpansionHistogram";

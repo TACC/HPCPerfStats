@@ -1,3 +1,5 @@
+"use client";
+
 import { useRouter, usePathname } from "next/navigation";
 import NavLink from "@/components/NavLink";
 import Link from "next/link";
@@ -12,21 +14,8 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { Menu } from "lucide-react";
-import {
-  getHomeRetrieveQueryKey,
-} from "@/api/generated/home/home";
-import {
-  getSessionRetrieveQueryKey,
-  getSessionRetrieveQueryOptions,
-  useSessionDropStaffCreate,
-} from "@/api/generated/session/session";
-import { useCacheInvalidatePageCreate } from "@/api/generated/admin/admin";
-import { getApiBody, getErrorMessage } from "@/api/get-error-message";
-import { orvalResponseData } from "@/api/orval-response";
-import type { SessionInfo } from "@/api/generated/models/sessionInfo";
-import type { InvalidateCacheResponse } from "@/api/generated/models/invalidateCacheResponse";
+import { useLayoutSessionActions } from "@/hooks/use-layout-session-actions";
 import LoadingMessage from "./components/LoadingMessage";
 import LayoutRouteChromeReset from "./components/LayoutRouteChromeReset";
 import { ExtendedSearchLayoutContext } from "./context/extended-search-layout-context";
@@ -57,9 +46,12 @@ type LayoutProps = {
 export default function Layout({ session, onSessionChange, children }: LayoutProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const queryClient = useQueryClient();
-  const dropStaffMutation = useSessionDropStaffCreate();
-  const invalidateCacheMutation = useCacheInvalidatePageCreate();
+  const {
+    staffMessage,
+    staffMenuBusy,
+    handleDropStaffForSession,
+    handleInvalidateCacheForPage,
+  } = useLayoutSessionActions({ pathname, onSessionChange });
   const machineName = (
     (session && typeof session.machine_name === "string" ? session.machine_name : "") ||
     SITE_MACHINE_NAME
@@ -68,9 +60,6 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
   const [extendedSearchOpen, setExtendedSearchOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [findJobError, setFindJobError] = useState("");
-  const [staffMessage, setStaffMessage] = useState("");
-  const [isDroppingStaff, setIsDroppingStaff] = useState(false);
-  const [isInvalidatingCache, setIsInvalidatingCache] = useState(false);
   useRouteFocusMain(pathname);
   const resetRouteChrome = useCallback(() => {
     setMoreMenuOpen(false);
@@ -139,83 +128,6 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
     });
     return () => window.cancelAnimationFrame(id);
   }, [extendedSearchOpen]);
-
-  async function handleDropStaffForSession(closeMenu?: () => void) {
-    if (isDroppingStaff) return;
-    if (
-      !window.confirm(
-        "Remove staff permissions for this browser session? You can restore them by signing out and signing in again.",
-      )
-    ) {
-      return;
-    }
-    setIsDroppingStaff(true);
-    setStaffMessage("");
-    try {
-      const response = await dropStaffMutation.mutateAsync();
-      await queryClient.invalidateQueries({ queryKey: getSessionRetrieveQueryKey() });
-      const refreshedSession = await queryClient.fetchQuery(getSessionRetrieveQueryOptions());
-      if (typeof onSessionChange === "function") {
-        const sessionBody = orvalResponseData<SessionInfo>(refreshedSession);
-        onSessionChange(
-          sessionBody
-            ? {
-                logged_in: sessionBody.logged_in,
-                username: sessionBody.username,
-                is_staff: sessionBody.is_staff,
-                machine_name: sessionBody.machine_name ?? SITE_MACHINE_NAME,
-              }
-            : null,
-        );
-      }
-      const responseBody = getApiBody(response);
-      setStaffMessage(
-        responseBody.message ||
-          "Staff access removed for this session. Log out and log back in to restore staff access.",
-      );
-    } catch (error: unknown) {
-      setStaffMessage(
-        getErrorMessage(error, "Unable to remove staff access for this session."),
-      );
-    } finally {
-      setIsDroppingStaff(false);
-      closeMenu?.();
-    }
-  }
-
-  async function handleInvalidateCacheForPage(closeMenu?: () => void) {
-    if (isInvalidatingCache) return;
-    const pagePathForCache =
-      typeof window !== "undefined" && window.location.pathname
-        ? window.location.pathname
-        : pathname;
-    if (
-      !window.confirm(
-        `Invalidate cached data for the current page path (${pagePathForCache})?`,
-      )
-    ) {
-      return;
-    }
-    setIsInvalidatingCache(true);
-    setStaffMessage("");
-    try {
-      const response = await invalidateCacheMutation.mutateAsync({
-        data: { page_path: pagePathForCache },
-      });
-      const deletedCount = Number(orvalResponseData<InvalidateCacheResponse>(response)?.deleted_keys || 0);
-      setStaffMessage(
-        `Invalidated ${deletedCount} cache key${deletedCount === 1 ? "" : "s"} for ${pagePathForCache}.`,
-      );
-      void queryClient.invalidateQueries({ queryKey: getHomeRetrieveQueryKey() });
-    } catch (error: unknown) {
-      setStaffMessage(getErrorMessage(error, "Unable to invalidate cache for this page."));
-    } finally {
-      setIsInvalidatingCache(false);
-      closeMenu?.();
-    }
-  }
-
-  const staffMenuBusy = isDroppingStaff || isInvalidatingCache;
 
   return (
     <div className="w-full px-4 lg:px-6">

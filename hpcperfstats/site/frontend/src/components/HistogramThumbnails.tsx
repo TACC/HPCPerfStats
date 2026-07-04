@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useLayoutEffect, useCallback, useId } from
 import { useSearchParams, usePathname } from "next/navigation";
 import type { BokehJsonItem } from "@/types/bokeh";
 import type { JobListHistogramEntry } from "@/types/view-models";
+import { useIsMobile } from "@/hooks/use-media-query";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -31,19 +32,6 @@ type HistogramThumbnailsProps = {
   embedAllowed?: boolean;
 };
 
-function useIsMobile() {
-  const [isMobile, setIsMobile] = useState(() =>
-    typeof window !== "undefined" && window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 0.02}px)`).matches
-  );
-  useEffect(() => {
-    const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 0.02}px)`);
-    const handler = () => setIsMobile(mql.matches);
-    mql.addEventListener("change", handler);
-    return () => mql.removeEventListener("change", handler);
-  }, []);
-  return isMobile;
-}
-
 /**
  * One histogram: on desktop, thumbnail with full-size popover opened by click
  * (or Enter/Space on enlarge control), not hover. On mobile, full histogram only.
@@ -56,9 +44,10 @@ function HistogramThumbnail({
   unavailableReason,
   embedAllowed = true,
 }: HistogramThumbnailProps & { embedAllowed?: boolean }) {
-  const isMobile = useIsMobile();
+  const isMobile = useIsMobile(MOBILE_BREAKPOINT - 0.02);
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const searchParamsKey = searchParams.toString();
   const [expanded, setExpanded] = useState(false);
   const [hasOpened, setHasOpened] = useState(false);
   const [popoverLayoutReady, setPopoverLayoutReady] = useState(false);
@@ -98,7 +87,7 @@ function HistogramThumbnail({
     setExpanded(false);
     setHasOpened(false);
     setPopoverLayoutReady(false);
-  }, [searchParams.toString(), pathname]);
+  }, [searchParamsKey, pathname]);
 
   useEffect(() => {
     if (embedAllowed) return;

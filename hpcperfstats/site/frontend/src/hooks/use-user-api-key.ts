@@ -28,6 +28,19 @@ export function useUserApiKey() {
     },
   });
 
+  const clearRawKeyFromCache = () => {
+    queryClient.setQueryData(getUserApiKeyRetrieveQueryKey(), (current) => {
+      if (!current || typeof current !== "object" || !("data" in current)) return current;
+      const envelope = current as { status: number; data: Record<string, unknown>; headers: Headers };
+      const nextData = envelope.data;
+      if (!nextData || nextData.raw_key == null) return current;
+      return {
+        ...envelope,
+        data: { ...nextData, raw_key: null },
+      };
+    });
+  };
+
   return {
     data: data ?? null,
     error: error ? getErrorMessage(error, "Unable to load API key status.") : null,
@@ -38,5 +51,6 @@ export function useUserApiKey() {
     rotateError: rotateMutation.error
       ? getErrorMessage(rotateMutation.error, "Unable to rotate API key.")
       : null,
+    clearRawKeyFromCache,
   };
 }
