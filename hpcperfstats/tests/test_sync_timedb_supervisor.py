@@ -2439,9 +2439,10 @@ def test_maybe_apply_tree_rss_governor_exits_on_exit_cap(monkeypatch):
         st._maybe_apply_tree_rss_governor(1, object(), None, object())
     assert excinfo.value.code == 137
 
-def test_effective_ingest_imap_inflight_cap_respects_ini(monkeypatch):
-    monkeypatch.setattr(st.cfg, 'get_sync_ingest_imap_inflight_cap', lambda: 4)
-    assert st._effective_ingest_imap_inflight_cap(24, 100) == 4
+def test_effective_ingest_imap_inflight_cap_equals_pool_size(monkeypatch):
+    assert st._effective_ingest_imap_inflight_cap(24, 100) == 24
+    assert st._effective_ingest_imap_inflight_cap(24, 10) == 10
+    assert st._effective_ingest_imap_inflight_cap(1, 0) == 1
 
 def test_spawn_pool_recycle_kwargs_when_maxtasks_set(monkeypatch):
     monkeypatch.setattr(st.cfg, 'get_sync_ingest_pool_maxtasksperchild', lambda: 25)

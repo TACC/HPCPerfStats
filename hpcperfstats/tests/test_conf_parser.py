@@ -125,6 +125,35 @@ def test_get_archive_zstd_threads_default_and_override(temp_ini, monkeypatch):
   assert cfg.get_archive_zstd_threads() == 12
 
 
+def test_get_ingest_zstd_threads_default_and_override(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_ingest_zstd_threads() == 4
+  assert not hasattr(cfg, "get_sync_ingest_imap_inflight_cap")
+
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+      "daily_archive_dir = /tmp",
+      "daily_archive_dir = /tmp\ningest_zstd_threads = 8",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  importlib.reload(cfg)
+  assert cfg.get_ingest_zstd_threads() == 8
+
+
+def test_sync_pool_process_cap_and_tree_rss_defaults(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_sync_pool_process_cap() == 16
+  assert cfg.get_sync_process_tree_rss_limit_mb() == 110000
+
+
 def test_get_archive_zstd_level_clamps(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
@@ -963,7 +992,7 @@ def test_sync_phase2_feature_flags_and_shards(temp_ini, monkeypatch):
   assert cfg.get_sync_write_lock_shards() == 4
   assert cfg.get_sync_enable_ingest_first_durability_mode() is True
 
-  assert cfg.get_sync_process_tree_rss_limit_mb() == 96000
+  assert cfg.get_sync_process_tree_rss_limit_mb() == 110000
 
 
 def test_get_syslog_allow_from_ipv4_networks_empty_default(temp_ini, monkeypatch):

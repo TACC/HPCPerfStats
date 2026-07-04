@@ -46,8 +46,20 @@ from hpcperfstats.dbload.lib.print_utils import log_print
 
 
 def get_archive_zstd_thread_count():
-  """Current zstd ``-T`` setting (0 → ``-T0``). Read at call time for ini freshness."""
+  """Current archive zstd ``-T`` setting (0 → ``-T0``). Read at call time for ini freshness."""
   return cfg.get_archive_zstd_threads()
+
+
+def get_ingest_zstd_thread_count():
+  """Current ingest/populate zstd ``-T`` setting (default 4 → ``-T4``)."""
+  return cfg.get_ingest_zstd_threads()
+
+
+def zstd_thread_count_for_wrap(apply_priority_wrap):
+  """Niced archive paths use ``archive_zstd_threads``; un-niced ingest uses ``ingest_zstd_threads``."""
+  if apply_priority_wrap:
+    return get_archive_zstd_thread_count()
+  return get_ingest_zstd_thread_count()
 
 
 def _normalize_daily_tar_path_set(paths):
@@ -2907,7 +2919,7 @@ def classify_sealed_archive_stream_failure(sealed_path, stream_error=None):
     try:
       zstd_cli.zstd_test(
           sealed_path,
-          get_archive_zstd_thread_count(),
+          get_ingest_zstd_thread_count(),
           apply_priority_wrap=False,
       )
       detail = stream_detail or "tar stream unreadable"
@@ -3088,7 +3100,7 @@ def _stream_compressed_archive_members(
     with file_read_lock_wait(compressed_path):
       with _open_tarfile_for_read(
           compressed_path,
-          get_archive_zstd_thread_count(),
+          zstd_thread_count_for_wrap(apply_priority_wrap),
           apply_priority_wrap=apply_priority_wrap,
       ) as tf:
         by_name = defaultdict(list)

@@ -3610,6 +3610,45 @@ def test_sealed_stream_uses_zstd_priority_wrap(monkeypatch, tmp_path):
   assert wrap_calls == [True]
 
 
+def test_zstd_thread_count_for_wrap_splits_ingest_and_archive(monkeypatch):
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
+
+  monkeypatch.setattr(helpers, "get_archive_zstd_thread_count", lambda: 0)
+  monkeypatch.setattr(helpers, "get_ingest_zstd_thread_count", lambda: 4)
+  assert helpers.zstd_thread_count_for_wrap(True) == 0
+  assert helpers.zstd_thread_count_for_wrap(False) == 4
+
+
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_unniced_stream_uses_ingest_zstd_thread_count(monkeypatch, tmp_path):
+  zst_p, _tar_p = _write_sealed_daily_archive(tmp_path, day="2024-03-12")
+  thread_calls = []
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
+
+  real_open = helpers._open_tarfile_for_read
+
+  @contextlib.contextmanager
+  def _spy_open(path, num_threads, *, apply_priority_wrap=True):
+    thread_calls.append((num_threads, apply_priority_wrap))
+    with real_open(
+        path, num_threads, apply_priority_wrap=apply_priority_wrap,
+    ) as tf:
+      yield tf
+
+  monkeypatch.setattr(helpers, "get_archive_zstd_thread_count", lambda: 0)
+  monkeypatch.setattr(helpers, "get_ingest_zstd_thread_count", lambda: 4)
+  monkeypatch.setattr(helpers, "_open_tarfile_for_read", _spy_open)
+  helpers._stream_compressed_archive_members(
+      zst_p, apply_priority_wrap=False,
+  )
+  assert thread_calls == [(4, False)]
+  thread_calls.clear()
+  helpers._stream_compressed_archive_members(
+      zst_p, apply_priority_wrap=True,
+  )
+  assert thread_calls == [(0, True)]
+
+
 @pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
 def test_stream_archive_skips_oversize_member(monkeypatch, tmp_path):
   zst_p, _tar_p = _write_sealed_daily_archive(tmp_path, day="2024-03-11")

@@ -348,7 +348,6 @@ def test_giant_supplement_begin_log(monkeypatch, tmp_path, capsys):
   chunk = ["giant0", "giant1"]
   _default_timeout_getters(monkeypatch)
   monkeypatch.setattr(st.cfg, "get_sync_ingest_giant_pool_supplement_enabled", lambda: True)
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_imap_inflight_cap", lambda: 4)
   monkeypatch.setattr(st, "_effective_ingest_imap_inflight_cap", lambda _tc, _pc: 4)
   monkeypatch.setattr(
       st.cfg, "get_sync_ingest_giant_pool_supplement_trigger_budget_s", lambda: 100.0,

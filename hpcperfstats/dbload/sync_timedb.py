@@ -1346,10 +1346,8 @@ def _imap_ingest_pool(
 
 
 def _effective_ingest_imap_inflight_cap(thread_count, path_count):
-  cap = cfg.get_sync_ingest_imap_inflight_cap()
-  if cap <= 0:
-    cap = thread_count
-  return max(1, min(int(path_count), int(thread_count), int(cap)))
+  """Sliding-window inflight equals live pool size (capped by ``sync_pool_process_cap``)."""
+  return max(1, min(int(path_count), int(thread_count)))
 
 
 def _update_sliding_window_stall_diagnostics(stall_diagnostics, in_flight_paths, inflight_cap):

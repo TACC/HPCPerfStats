@@ -142,7 +142,6 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_ingest_max_file_read_bytes"),
     ("PIPELINE", "sync_ingest_stream_duplicate_scan_bytes"),
     ("PIPELINE", "sync_ingest_db_complete_tail_window_lines"),
-    ("PIPELINE", "sync_ingest_imap_inflight_cap"),
     ("PIPELINE", "sync_ingest_pool_maxtasksperchild"),
     ("PIPELINE", "sync_ingest_malloc_trim_after_file"),
     ("PIPELINE", "sync_cold_path_max_concurrent_seals"),
@@ -159,6 +158,7 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "archive_keep_uncompressed_tar"),
     ("PIPELINE", "archive_today_uncompressed_tar_grace_hours"),
     ("PIPELINE", "archive_zstd_threads"),
+    ("PIPELINE", "ingest_zstd_threads"),
     ("PIPELINE", "archive_zstd_level"),
     ("PIPELINE", "archive_zstd_nice"),
     ("PIPELINE", "archive_zstd_ionice_class"),
@@ -266,7 +266,7 @@ INI_OPTION_DEFAULTS = {
     'metrics_readiness_require_window_coverage': 'yes',
     'metrics_readiness_start_margin_seconds': '600',
     'metrics_readiness_end_margin_seconds': '600',
-    'sync_pool_process_cap': '1',
+    'sync_pool_process_cap': '16',
     'archive_pool_process_cap': '1',
     'sync_enable_cpuset_priority_budget': 'yes',
     'sync_budget_ingest_ratio': '0.6',
@@ -316,13 +316,12 @@ INI_OPTION_DEFAULTS = {
     'sync_bulk_create_batch_size': '10000',
     'sync_supervisor_rss_limit_mb': '0',
     'sync_supervisor_rss_check_every_n_chunks': '1',
-    'sync_process_tree_rss_limit_mb': '96000',
+    'sync_process_tree_rss_limit_mb': '110000',
     'sync_process_tree_rss_check_every_n_chunks': '1',
     'sync_process_tree_rss_exit_mb': '0',
     'sync_ingest_max_file_read_bytes': '536870912',
     'sync_ingest_stream_duplicate_scan_bytes': '8388608',
     'sync_ingest_db_complete_tail_window_lines': '500',
-    'sync_ingest_imap_inflight_cap': '0',
     'sync_ingest_pool_maxtasksperchild': '1',
     'sync_ingest_malloc_trim_after_file': 'yes',
     'sync_cold_path_max_concurrent_seals': '0',
@@ -339,6 +338,7 @@ INI_OPTION_DEFAULTS = {
     'archive_keep_uncompressed_tar': 'no',
     'archive_today_uncompressed_tar_grace_hours': '8.0',
     'archive_zstd_threads': '0',
+    'ingest_zstd_threads': '4',
     'archive_zstd_level': '7',
     'archive_zstd_nice': '10',
     'archive_zstd_ionice_class': '2',
@@ -727,6 +727,15 @@ def get_archive_zstd_threads():
   _ensure_cfg_loaded()
   raw = _ini_get_from_registry(
       "PIPELINE", "archive_zstd_threads", legacy_sections=("PORTAL",),
+  )
+  return max(0, int(raw))
+
+
+def get_ingest_zstd_threads():
+  """zstd ``-T`` for un-niced ingest/populate sealed streams. Default 4 (-T4)."""
+  _ensure_cfg_loaded()
+  raw = _ini_get_from_registry(
+      "PIPELINE", "ingest_zstd_threads", legacy_sections=("PORTAL",),
   )
   return max(0, int(raw))
 
@@ -1237,7 +1246,7 @@ def get_sync_pool_process_cap():
   _ensure_cfg_loaded()
   if _pipeline_has_option("sync_pool_process_cap"):
     return _pipeline_getint("sync_pool_process_cap")
-  return 8
+  return 16
 
 
 def get_archive_pool_process_cap():
@@ -2402,7 +2411,7 @@ def get_sync_supervisor_rss_check_every_n_chunks():
 
 
 def get_sync_process_tree_rss_limit_mb():
-  """Process-tree RSS defer limit in MiB; 0 disables backpressure (default 96000)."""
+  """Process-tree RSS defer limit in MiB; 0 disables backpressure (default 110000)."""
   _ensure_cfg_loaded()
   return max(0, _pipeline_getint("sync_process_tree_rss_limit_mb"))
 
@@ -2438,12 +2447,6 @@ def get_sync_ingest_db_complete_tail_window_lines():
       1,
       _pipeline_getint("sync_ingest_db_complete_tail_window_lines"),
   )
-
-
-def get_sync_ingest_imap_inflight_cap():
-  """Max concurrent imap tasks per chunk; 0 means pool size (default 0)."""
-  _ensure_cfg_loaded()
-  return max(0, _pipeline_getint("sync_ingest_imap_inflight_cap"))
 
 
 def get_sync_ingest_pool_maxtasksperchild():
@@ -2538,12 +2541,11 @@ def get_conf_parser_defaults_audit_snapshot():
           "sync_ingest_max_file_read_bytes": 536870912,
           "sync_ingest_stream_duplicate_scan_bytes": 8388608,
           "sync_ingest_db_complete_tail_window_lines": 500,
-          "sync_ingest_imap_inflight_cap": 0,
           "sync_ingest_pool_maxtasksperchild": 1,
           "sync_ingest_malloc_trim_after_file": "yes",
-          "sync_pool_process_cap": 8,
+          "sync_pool_process_cap": 16,
           "sync_pool_worker_recycle_grace_polls": 2,
-          "sync_process_tree_rss_limit_mb": 96000,
+          "sync_process_tree_rss_limit_mb": 110000,
           "sync_process_tree_rss_check_every_n_chunks": 1,
           "sync_process_tree_rss_exit_mb": 0,
           "sync_cold_path_max_concurrent_seals": 0,

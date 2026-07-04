@@ -148,5 +148,5 @@ def test_conf_parser_ingest_memory_defaults(temp_ini, monkeypatch):
   importlib.reload(cfg)
   assert cfg.get_sync_ingest_pool_maxtasksperchild() == 1
   assert cfg.get_sync_ingest_malloc_trim_after_file() is True
-  assert cfg.get_sync_pool_process_cap() == 8
-  assert cfg.get_sync_process_tree_rss_limit_mb() == 96000
+  assert cfg.get_sync_pool_process_cap() == 16
+  assert cfg.get_sync_process_tree_rss_limit_mb() == 110000

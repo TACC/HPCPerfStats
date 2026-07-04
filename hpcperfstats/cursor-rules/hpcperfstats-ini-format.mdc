@@ -47,7 +47,7 @@ next_option = value
 
 **Prefix heuristics (enforced in `ini_section_placement.py`):**
 
-- `sync_*`, `metrics_*` → **`[PIPELINE]`**
+- `sync_*`, `metrics_*`, `ingest_*` → **`[PIPELINE]`**
 - `archive_*` → **`[PIPELINE]`**
 - `max_gunicorn_*`, `parallel_db_*`, `api_small_*`, `db_conn_*`, `db_statement_*`, `db_idle_*`, `cors_*` → **`[PORTAL]`**
 - `xalt_*` → **`[XALT]`**; `rmq_*` → **`[RMQ]`**

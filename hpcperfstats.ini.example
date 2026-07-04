@@ -235,9 +235,8 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # End edge tolerance seconds (default 600): MAX(time) in window must be >= end - margin.
 # metrics_readiness_end_margin_seconds = 600
 
-# Cap sync_timedb ingest pool processes and archive metadata discovery threads
-# (head + sampled DB-gate scans on the janitor thread; default 8 on 128 GiB cgroup hosts).
-sync_pool_process_cap = 8
+# Cap sync_timedb ingest pool and metadata discovery threads; imap inflight equals pool size (default 16).
+sync_pool_process_cap = 16
 
 # Cap sync_timedb archive pool processes when set.
 # archive_pool_process_cap =
@@ -380,8 +379,8 @@ sync_archive_members_populate_pool_processes = 4
 # Check supervisor RSS every N ingest chunks (default 1).
 # sync_supervisor_rss_check_every_n_chunks = 1
 
-# Process-tree RSS defer limit MiB (supervisor + pool workers); 0 off (default 96000).
-sync_process_tree_rss_limit_mb = 96000
+# Process-tree RSS defer limit MiB (supervisor + pool workers); 0 off (default 110000).
+sync_process_tree_rss_limit_mb = 110000
 
 # Check process-tree RSS every N ingest chunks (default 1).
 # sync_process_tree_rss_check_every_n_chunks = 1
@@ -397,9 +396,6 @@ sync_process_tree_rss_limit_mb = 96000
 
 # Tail timestamp lines probed before full duplicate scan on large head-present files (default 500).
 # sync_ingest_db_complete_tail_window_lines = 500
-
-# Max concurrent imap tasks per chunk; 0 means pool size (default 0).
-# sync_ingest_imap_inflight_cap = 0
 
 # Backfill idle ingest pool slots with sub-1GiB files from pending tail while >=2GiB giants run.
 # sync_ingest_giant_pool_supplement_enabled = yes
@@ -444,8 +440,11 @@ sync_ingest_malloc_trim_after_file = yes
 # Hours after local midnight to retain today's uncompressed .tar when global keep is off (default 8).
 # archive_today_uncompressed_tar_grace_hours = 8
 
-# zstd -T thread count for seal and decompress; 0 uses -T0 (all cores per job, default).
+# zstd -T thread count for niced seal/restore/decompress; 0 uses -T0 (all cores per job, default).
 # archive_zstd_threads = 0
+
+# zstd -T for un-niced ingest/populate sealed streams (default 4).
+ingest_zstd_threads = 4
 
 # Added nice for archive zstd subprocesses; 0 disables (default 10).
 # archive_zstd_nice = 10
