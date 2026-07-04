@@ -37,7 +37,7 @@ dependencies = [
   "gunicorn",
   "requests>=2.34.2",
   "cryptography>=49.0.0",
-  "pillow>=12.2.0",
+  "pillow>=12.3.0",
   "tzdata",
   "redis==8.0.1",
   "djangorestframework",
@@ -48,14 +48,14 @@ dependencies = [
 
 [project.optional-dependencies]
 test = [
-  "pytest>=9.0",
+  "pytest>=9.1.1",
   "pytest-django>=4.12.0",
   "pytest-cov>=7.1.0",
-  "playwright>=1.60.0",
+  "playwright>=1.61.0",
   "psycopg[binary]",
 ]
 dev = [
-  "ruff>=0.15.19",
+  "ruff>=0.15.20",
   "pylint>=4.0.6",  # optional; Ruff is the primary linter (see docs/TESTING.md)
   "vulture>=2.16",
   "pre-commit>=4.6.0",

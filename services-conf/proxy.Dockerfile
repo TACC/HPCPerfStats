@@ -1,4 +1,4 @@
-FROM alpine:3.23.5
+FROM alpine:3.24.0
 
 # Pin nginx from Alpine edge main (stable 3.23 lags); bump NGINX_EDGE_VERSION on proxy rebuilds.
 ARG NGINX_EDGE_VERSION=1.30.3-r0
