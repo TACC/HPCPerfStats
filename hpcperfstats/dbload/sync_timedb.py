@@ -3,7 +3,7 @@
 
 **Hot path (supervisor thread):** discover → ingest → checkpoint → dispatch append (up to ``sync_archive_max_inflight_jobs`` disjoint daily-tar slots). Ingest never blocks on seal, zstd, raw delete, or uncompressed ``.tar`` removal.
 
-**Cold path (``ArchiveJanitor`` thread):** day-debt queue consumed in time-sliced micro-batches (``archive_janitor_budget_seconds`` / ``archive_janitor_days_per_tick``). Each tick discovers checkpoint-complete ``DAY_CLOSE`` candidates and enqueues debt (``sync_day_close_max_inflight`` cap). ``DAY_CLOSE`` runs seal → verify → delete → tar_drop on the janitor thread (no async worker pool; steady-state ingest is not gated on raw deletion). Snapshot/hints refresh at supervisor startup (CLI ``all`` only) and on scheduled maintenance passes. Per-day lock cleanup (once per tick), dedupe-before-seal, and DB head-ingest gate unchanged. Progress persists in ``.sync_archive_maint_hints.json`` v2 (``debt_queue``, ``day_phases``).
+**Cold path (``ArchiveJanitor`` coordinator thread):** day-debt queue drained within ``archive_janitor_budget_seconds`` using a ``ThreadPoolExecutor`` of up to ``sync_day_close_max_inflight`` (default **4**) parallel ``DAY_CLOSE`` workers (continuous refill on completion). Each tick discovers checkpoint-complete ``DAY_CLOSE`` candidates and enqueues debt (same inflight cap). Workers run seal → verify → delete → tar_drop (steady-state ingest is not gated on raw deletion). Snapshot/hints refresh at supervisor startup (CLI ``all`` only) and on scheduled maintenance passes. Per-day lock cleanup (once per tick), dedupe-before-seal, and DB head-ingest gate unchanged. Progress persists in ``.sync_archive_maint_hints.json`` v2 (``debt_queue``, ``day_phases``).
 
 **Startup maintenance (``all`` only):** when ``startdate == 'all'``, the janitor thread discovers/enqueues ``DAY_CLOSE`` on its heavy maintenance pass; ingest is never gated on day-close completion. Date-range runs skip startup maintenance and begin ingest immediately.
 
@@ -173,7 +173,9 @@ from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
     update_worker_substage,
     worker_registry_shows_recent_progress,
 )
-from hpcperfstats.dbload.lib.sync_timedb_async_day_close import AsyncDayCloseCoordinator
+from hpcperfstats.dbload.lib.sync_timedb_async_day_close import (
+    DayCloseManifestCoordinator,
+)
 from hpcperfstats.dbload.lib.file_locking import file_write_lock
 from hpcperfstats.dbload.lib.sync_timedb_archive_dispatch import ArchiveDispatchCoordinator
 from hpcperfstats.dbload.lib.sync_timedb_archive_janitor import ArchiveJanitor
@@ -744,7 +746,8 @@ class IngestStallDiagnostics:
     self.current_imap_batch_max_timeout_s = 0.0
     self.dynamic_stall_abort_after_polls = 0
     self.dynamic_stall_wall_s = 0.0
-    self.async_day_close = None
+    self.day_close_manifest = None
+    self.async_day_close = None  # historical alias
     self.worker_registry = None
     self.chunk_prewarm_summary = "-"
     self.chunk_prewarm_elapsed_s = 0.0
@@ -760,8 +763,8 @@ class IngestStallDiagnostics:
       return -1.0
     return max(0.0, time.monotonic() - float(last))
 
-  def format_async_day_close_detail(self):
-    coord = self.async_day_close
+  def format_day_close_pipeline_detail(self):
+    coord = self.day_close_manifest or self.async_day_close
     if coord is None:
       return "0 detail=-"
     try:
@@ -784,6 +787,9 @@ class IngestStallDiagnostics:
       )
     detail = ";".join(details) if details else "-"
     return "%d detail=%s" % (len(active), detail)
+
+  # Historical name.
+  format_async_day_close_detail = format_day_close_pipeline_detail
 
 
 def _pool_stall_wall_seconds():
@@ -1039,7 +1045,7 @@ def _build_ingest_stall_log_suffix(
       " stall_defer=%s defer_reason=%s imap_batch_cap=%d chunk_batch=%d imap_batch=%d"
       " distinct_in_flight_days=%s in_flight_file_meta=%s"
       " seconds_since_last_imap_completion=%s ingest_pipeline=%s"
-      " pipeline_overlap_mode=%s async_day_close=%s chunk_prewarm=%s"
+      " pipeline_overlap_mode=%s day_close=%s chunk_prewarm=%s"
       " worker_registry_n=%d in_flight_n=%d worker_stages=%s%s%s"
       % (
           floor_timeout_s,
@@ -5290,7 +5296,7 @@ def run_sync_timedb_supervisor_loop(
       ingest_ready_fn=stats_file_head_ingested_in_db,
       process_title=SYNC_TIMEDB_PROCESS_TITLE,
   )
-  async_day_close = AsyncDayCloseCoordinator(
+  day_close_manifest = DayCloseManifestCoordinator(
       archive_data_dir=directory,
       host_name_ext=host_name_ext,
       tgz_archive_dir=tgz_archive_dir,
@@ -5300,7 +5306,9 @@ def run_sync_timedb_supervisor_loop(
       day_raw_removal_coordinator=day_raw_removal,
       process_title=SYNC_TIMEDB_PROCESS_TITLE,
   )
-  stall_diagnostics.async_day_close = async_day_close
+  async_day_close = day_close_manifest  # historical local name
+  stall_diagnostics.day_close_manifest = day_close_manifest
+  stall_diagnostics.async_day_close = day_close_manifest
   startup_archive_scan = StartupArchiveScanCoordinator(
       archive_data_dir=directory,
       host_name_ext=host_name_ext,

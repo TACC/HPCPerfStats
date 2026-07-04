@@ -39,7 +39,7 @@ When changing ingest/archive paths under `hpcperfstats/dbload/sync_timedb.py`, `
 
 - **Entry point:** `archive_janitor.signal_work_available()` at chunk end; **`ArchiveJanitor._run_tick_body`** in `sync_timedb_archive_janitor.py`. Single-flight background thread; supervisor never waits on janitor completion.
 - **Pipeline order (canonical, loss-safe):** per debt item: seal (if `SEAL_PRIOR_DAY`) → raw remove / validate → `.tar` drop; **`allow_auto_seal=False`** on raw removal. Seal tries `_seal_skip_existing_zst_equivalent` before compress; at most one compress per day per debt cycle.
-- **Today policy:** prior days seal when dirty; calendar-today waits `archive_seal_idle_seconds` and disqualification clears. Janitor never sets `force_remove_uncompressed_tar=True`.
+- **Today policy:** prior days seal when dirty; calendar-today waits **`archive_today_uncompressed_tar_grace_hours`** (default 8h after local midnight) via `daily_tar_seal_calendar_eligible` / `effective_keep_uncompressed_tar`, and disqualification clears. Janitor never sets `force_remove_uncompressed_tar=True`.
 - **Locks / re-disqualify:** `get_disqualified_daily_tars()` unions pending ingest, in-flight append, heap tasks, append cache, and unmapped closed raw — recomputed before each mutating janitor step.
 
 ## Required tests when behavior changes

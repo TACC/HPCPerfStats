@@ -1,4 +1,4 @@
-"""Background archive janitor: day-debt queue and time-sliced micro-batches."""
+"""Background archive janitor: day-debt queue and parallel DAY_CLOSE workers."""
 from __future__ import annotations
 
 import heapq
@@ -6,6 +6,7 @@ import os
 import threading
 import time
 import traceback
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import Enum
@@ -223,6 +224,11 @@ class ArchiveJanitor:
     self._pending_signal = False
     self._tick_depth = 0
     self._tick_remaining_raw_cache: Dict[str, dict] = {}
+    self._day_close_pool: Optional[ThreadPoolExecutor] = None
+    self._day_close_pool_size = 0
+    self._day_close_in_flight: Dict[Any, DayDebt] = {}
+    self._day_close_in_flight_lock = threading.Lock()
+    self._day_close_role_seq = 0
 
     self._load_hints_state()
 
@@ -928,10 +934,7 @@ class ArchiveJanitor:
         newly_queued_tars=set(),
         day_raw_removal=self.day_raw_removal_coordinator,
     )
-    if reason == "startup":
-      max_inflight = cfg.get_sync_startup_day_close_max_inflight()
-    else:
-      max_inflight = cfg.get_sync_day_close_max_inflight()
+    max_inflight = cfg.get_sync_day_close_max_inflight()
     active = set(self._day_close_active_tar_paths())
     disqualified = set(self.get_disqualified_daily_tars())
     newly_queued: Set[str] = set()
@@ -1070,21 +1073,91 @@ class ArchiveJanitor:
           disqualified=disqualified,
       )
 
-  def _effective_tick_limits(self):
+  def _effective_tick_budget(self) -> float:
+    """Wall-clock budget for one janitor wake (burst/backoff scale budget only)."""
     budget = float(cfg.get_archive_janitor_budget_seconds())
-    max_days = int(cfg.get_archive_janitor_days_per_tick())
     if self.get_ingest_backlog_high() or cfg.get_pipeline_overlap_mode() == "ingest_priority":
       backoff = float(cfg.get_sync_dispatch_archive_backoff_ratio())
       budget *= backoff
-      max_days = max(1, int(max_days * backoff))
     if self.debt_depth() >= cfg.get_archive_janitor_debt_high_watermark():
       burst = float(cfg.get_archive_janitor_debt_burst_factor())
       budget *= burst
-      max_days = max(max_days, int(cfg.get_archive_janitor_days_per_tick() * burst))
     idle_s = self.get_idle_seconds()
     if self.get_pending_stats_count() == 0 and idle_s >= cfg.get_archive_maintenance_idle_seconds():
       budget *= 2.0
-    return budget, max_days
+    return budget
+
+  def _ensure_day_close_pool(self) -> ThreadPoolExecutor:
+    size = max(1, int(cfg.get_sync_day_close_max_inflight()))
+    if self._day_close_pool is not None and self._day_close_pool_size == size:
+      return self._day_close_pool
+    if self._day_close_pool is not None:
+      self._day_close_pool.shutdown(wait=False)
+    self._day_close_pool = ThreadPoolExecutor(
+        max_workers=size,
+        thread_name_prefix="day-close",
+    )
+    self._day_close_pool_size = size
+    return self._day_close_pool
+
+  def _day_close_free_slots(self) -> int:
+    with self._day_close_in_flight_lock:
+      in_flight = len(self._day_close_in_flight)
+    return max(0, max(1, int(cfg.get_sync_day_close_max_inflight())) - in_flight)
+
+  def _pop_one_day_close_debt(
+      self,
+      disqualified: Set[str],
+      *,
+      skip_tars: Optional[Set[str]] = None,
+  ) -> Optional[DayDebt]:
+    blocked = set(disqualified)
+    if skip_tars:
+      blocked |= skip_tars
+    with self._debt_lock:
+      items = self._pop_eligible_debt_locked(blocked, max_days=1)
+    for debt in items:
+      if debt.kind == DebtKind.DAY_CLOSE:
+        return debt
+      # Legacy non-DAY_CLOSE debts: process inline on coordinator (rare).
+      return debt
+    return None
+
+  def _submit_day_close_debt(
+      self,
+      debt: DayDebt,
+      *,
+      snapshot,
+      validation_cache,
+      disqualified: Set[str],
+  ):
+    pool = self._ensure_day_close_pool()
+    with self._day_close_in_flight_lock:
+      self._day_close_role_seq += 1
+      role_id = self._day_close_role_seq
+    role = "day-close-%d" % (role_id % max(1, self._day_close_pool_size))
+
+    def _run():
+      set_daemon_thread_title(
+          "", script_name=self.process_title, role=role,
+      )
+      close_old_connections()
+      try:
+        tick_stats = {"days_started": 0}
+        return self._process_debt_item(
+            debt,
+            snapshot=snapshot,
+            validation_cache=validation_cache,
+            disqualified=disqualified,
+            tick_stats=tick_stats,
+        )
+      finally:
+        close_old_connections()
+
+    future = pool.submit(_run)
+    with self._day_close_in_flight_lock:
+      self._day_close_in_flight[future] = debt
+    return future
 
   def _rss_over_limit(self) -> bool:
     tree_limit_mb = cfg.get_sync_process_tree_rss_limit_mb()
@@ -1150,8 +1223,6 @@ class ArchiveJanitor:
     set_daemon_thread_title(
         "", script_name=self.process_title, role="archive-janitor")
     self._tick_depth += 1
-    work_items = []
-    processed_index = 0
     tick_made_progress = False
     try:
       close_old_connections()
@@ -1164,96 +1235,165 @@ class ArchiveJanitor:
         self._pending_signal = True
         return
 
-      budget_s, max_days = self._effective_tick_limits()
       tick_t0 = time.time()
       maintenance_pass_s = 0.0
       days_processed = 0
       debt_popped = 0
-      async_submitted = 0
-      drain_round = 0
+      days_started = 0
       self._discover_and_enqueue_ready_day_close(reason="tick")
-      while True:
-        drain_round += 1
-        pass_reason = None
-        if drain_round == 1:
-          with self._maintenance_pass_lock:
-            pass_reason = self._pending_maintenance_pass_reason
-            self._pending_maintenance_pass_reason = None
-        if pass_reason:
-          maint_t0 = time.time()
-          self.run_scheduled_maintenance_pass(reason=pass_reason)
-          maintenance_pass_s += time.time() - maint_t0
-        debt_tick_t0 = time.time()
-        disqualified = set(self.get_disqualified_daily_tars())
-        self._consume_dedupe_hints(disqualified)
-        self._tick_remaining_raw_cache = {}
-        with self._debt_lock:
-          has_day_work = self._heap_has_day_close_work_locked()
-        if has_day_work and drain_round == 1:
-          removed = self._run_tick_lock_cleanup()
-          if removed:
-            self.log_fn(
-                "janitor: lock_cleanup removed=%d" % removed,
-                flush=True,
-            )
-        with self._debt_lock:
-          work_items = self._pop_eligible_debt_locked(disqualified, max_days)
-        debt_popped = len(work_items)
-        if not work_items:
-          if drain_round == 1:
-            self._ticks_completed += 1
-            self.log_fn(
-                "Archive janitor tick done days=0 debt_remaining=%d duration_s=%.3f "
-                "maintenance_pass_s=%.3f debt_popped=0 async_submitted=0 days_completed=0"
-                % (
-                    self.debt_depth(),
-                    time.time() - tick_t0,
-                    maintenance_pass_s,
-                ),
-                flush=True,
-            )
-          break
+      with self._maintenance_pass_lock:
+        pass_reason = self._pending_maintenance_pass_reason
+        self._pending_maintenance_pass_reason = None
+      if pass_reason:
+        maint_t0 = time.time()
+        self.run_scheduled_maintenance_pass(reason=pass_reason)
+        maintenance_pass_s += time.time() - maint_t0
+      # Debt-drain budget starts after scheduled maintenance (not wall-clock for the whole tick).
+      budget_deadline = time.time() + self._effective_tick_budget()
+      disqualified = set(self.get_disqualified_daily_tars())
+      self._consume_dedupe_hints(disqualified)
+      self._tick_remaining_raw_cache = {}
+      with self._debt_lock:
+        has_day_work = self._heap_has_day_close_work_locked()
+      if has_day_work:
+        removed = self._run_tick_lock_cleanup()
+        if removed:
+          self.log_fn(
+              "janitor: lock_cleanup removed=%d" % removed,
+              flush=True,
+          )
+      validation_cache = {"hits": 0, "misses": 0}
+      with self._accrual_snapshot_lock:
+        snapshot = self._accrual_snapshot
+      tick_mutated = False
+      in_flight: Dict[Any, DayDebt] = {}
+      # Do not re-pop the same calendar day within one tick after a partial/failed
+      # attempt (avoids busy-spinning the pool until budget expires).
+      attempted_tars: Set[str] = set()
 
-        validation_cache = {"hits": 0, "misses": 0}
-        with self._accrual_snapshot_lock:
-          snapshot = self._accrual_snapshot
-        days_processed = 0
-        async_submitted = 0
-        tick_mutated = False
+      def _budget_ok() -> bool:
+        return time.time() < budget_deadline
 
-        for i, debt in enumerate(work_items):
-          if time.time() - debt_tick_t0 >= budget_s:
-            self._budget_throttled_count += 1
-            self._requeue_unprocessed_work(work_items, i)
-            tick_mutated = True
-            if processed_index > 0:
-              tick_made_progress = True
+      def _fill_free_slots() -> int:
+        nonlocal debt_popped, days_started, tick_mutated, disqualified
+        nonlocal tick_made_progress
+        started = 0
+        max_workers = max(1, int(cfg.get_sync_day_close_max_inflight()))
+        while _budget_ok() and len(in_flight) < max_workers:
+          disqualified = set(self.get_disqualified_daily_tars())
+          debt = self._pop_one_day_close_debt(
+              disqualified, skip_tars=attempted_tars,
+          )
+          if debt is None:
             break
-
-          try:
-            disqualified = set(self.get_disqualified_daily_tars())
-            if debt.tar_path in disqualified:
+          debt_popped += 1
+          attempted_tars.add(os.path.normpath(debt.tar_path))
+          if debt.tar_path in disqualified:
+            self._enqueue_debt(debt.kind, debt.tar_path, persist=False)
+            tick_mutated = True
+            continue
+          if debt.kind != DebtKind.DAY_CLOSE:
+            # Rare legacy debt: run on coordinator thread.
+            try:
+              success = self._process_debt_item(
+                  debt,
+                  snapshot=snapshot,
+                  validation_cache=validation_cache,
+                  disqualified=disqualified,
+                  tick_stats={"days_started": 0},
+              )
+              if success:
+                tick_mutated = True
+                tick_made_progress = True
+            except Exception as exc:
+              self.log_fn(
+                  "Archive janitor debt error kind=%s tar=%s: %s\n%s"
+                  % (
+                      debt.kind.value,
+                      debt.tar_path,
+                      exc,
+                      traceback.format_exc(),
+                  ),
+                  flush=True,
+              )
               self._enqueue_debt(debt.kind, debt.tar_path, persist=False)
+              tick_mutated = True
+            continue
+          future = self._submit_day_close_debt(
+              debt,
+              snapshot=snapshot,
+              validation_cache=validation_cache,
+              disqualified=disqualified,
+          )
+          in_flight[future] = debt
+          days_started += 1
+          started += 1
+        return started
+
+      _fill_free_slots()
+      if not in_flight and debt_popped == 0:
+        self._ticks_completed += 1
+        self.log_fn(
+            "Archive janitor tick done days=0 debt_remaining=%d duration_s=%.3f "
+            "maintenance_pass_s=%.3f debt_popped=0 days_started=0 days_completed=0"
+            % (
+                self.debt_depth(),
+                time.time() - tick_t0,
+                maintenance_pass_s,
+            ),
+            flush=True,
+        )
+      else:
+        while in_flight:
+          timeout = max(0.05, budget_deadline - time.time())
+          done, _pending = wait(
+              list(in_flight.keys()),
+              timeout=timeout,
+              return_when=FIRST_COMPLETED,
+          )
+          if not done:
+            if not _budget_ok():
+              self._budget_throttled_count += 1
+              break
+            continue
+          for future in done:
+            debt = in_flight.pop(future)
+            with self._day_close_in_flight_lock:
+              self._day_close_in_flight.pop(future, None)
+            try:
+              success = future.result()
+            except Exception as exc:
+              self.log_fn(
+                  "Archive janitor debt error kind=%s tar=%s: %s\n%s"
+                  % (
+                      debt.kind.value,
+                      debt.tar_path,
+                      exc,
+                      traceback.format_exc(),
+                  ),
+                  flush=True,
+              )
+              self._enqueue_debt(debt.kind, debt.tar_path, persist=False)
+              tick_mutated = True
               continue
-            tick_stats = {"async_submitted": 0}
-            success = self._process_debt_item(
-                debt,
-                snapshot=snapshot,
-                validation_cache=validation_cache,
-                disqualified=disqualified,
-                tick_stats=tick_stats,
-            )
-            async_submitted += int(tick_stats.get("async_submitted") or 0)
-            processed_index = i + 1
             if success:
               tick_mutated = True
               tick_made_progress = True
               if debt.kind == DebtKind.DAY_CLOSE:
                 days_processed += 1
             else:
-              self._persist_hints()
-              break
-            disqualified = set(self.get_disqualified_daily_tars())
+              self._enqueue_debt(debt.kind, debt.tar_path, persist=False)
+              tick_mutated = True
+          if _budget_ok():
+            _fill_free_slots()
+          else:
+            self._budget_throttled_count += 1
+            break
+
+        # Budget expired or idle: drain remaining in-flight without new pops.
+        for future, debt in list(in_flight.items()):
+          try:
+            success = future.result()
           except Exception as exc:
             self.log_fn(
                 "Archive janitor debt error kind=%s tar=%s: %s\n%s"
@@ -1265,45 +1405,57 @@ class ArchiveJanitor:
                 ),
                 flush=True,
             )
-            self._requeue_unprocessed_work(work_items, i)
+            self._enqueue_debt(debt.kind, debt.tar_path, persist=False)
             tick_mutated = True
-            if processed_index > 0:
-              tick_made_progress = True
-            break
+            continue
+          finally:
+            with self._day_close_in_flight_lock:
+              self._day_close_in_flight.pop(future, None)
+          if success:
+            tick_mutated = True
+            tick_made_progress = True
+            if debt.kind == DebtKind.DAY_CLOSE:
+              days_processed += 1
+          else:
+            self._enqueue_debt(debt.kind, debt.tar_path, persist=False)
+            tick_mutated = True
+        in_flight.clear()
 
         if tick_mutated:
           self._persist_hints()
 
-        if self.debt_depth() == 0:
-          break
-        if time.time() - tick_t0 >= budget_s:
-          break
-
-      self._ticks_completed += 1
-      self.log_fn(
-          "Archive janitor tick done days=%d debt_remaining=%d duration_s=%.3f "
-          "maintenance_pass_s=%.3f debt_popped=%d async_submitted=%d "
-          "days_completed=%d"
-          % (
-              days_processed,
-              self.debt_depth(),
-              time.time() - tick_t0,
-              maintenance_pass_s,
-              debt_popped,
-              async_submitted,
-              days_processed,
-          ),
-          flush=True,
-      )
+        self._ticks_completed += 1
+        self.log_fn(
+            "Archive janitor tick done days=%d debt_remaining=%d duration_s=%.3f "
+            "maintenance_pass_s=%.3f debt_popped=%d days_started=%d "
+            "days_completed=%d"
+            % (
+                days_processed,
+                self.debt_depth(),
+                time.time() - tick_t0,
+                maintenance_pass_s,
+                debt_popped,
+                days_started,
+                days_processed,
+            ),
+            flush=True,
+        )
     except Exception as exc:
       self.log_fn(
           "Archive janitor tick error: %s\n%s"
           % (exc, traceback.format_exc()),
           flush=True,
       )
-      if work_items and processed_index < len(work_items):
-        self._requeue_unprocessed_work(work_items, processed_index)
-        self._persist_hints()
+      with self._day_close_in_flight_lock:
+        stuck = list(self._day_close_in_flight.items())
+        self._day_close_in_flight.clear()
+      for future, debt in stuck:
+        try:
+          future.result(timeout=0.1)
+        except Exception:
+          pass
+        self._enqueue_debt(debt.kind, debt.tar_path, persist=False)
+      self._persist_hints()
     finally:
       close_old_connections()
       if (
@@ -1619,6 +1771,12 @@ class ArchiveJanitor:
 
   def shutdown(self, wait: bool = True):
     self._session_executor.shutdown(wait=wait)
+    if self._day_close_pool is not None:
+      self._day_close_pool.shutdown(wait=wait)
+      self._day_close_pool = None
+      self._day_close_pool_size = 0
+    with self._day_close_in_flight_lock:
+      self._day_close_in_flight.clear()
 
   def tick_defer_reason(self) -> Optional[str]:
     """Best-effort reason when debt exists but no tick has completed yet."""

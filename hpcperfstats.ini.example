@@ -448,9 +448,6 @@ sync_ingest_malloc_trim_after_file = yes
 # Hours after local midnight to retain today's uncompressed .tar when global keep is off (default 8).
 # archive_today_uncompressed_tar_grace_hours = 8
 
-# Seconds idle before sealing today's tar; prior days seal immediately (default 60).
-# archive_seal_idle_seconds = 60
-
 # zstd -T thread count for seal and decompress; 0 uses -T0 (all cores per job, default).
 # archive_zstd_threads = 0
 
@@ -466,6 +463,9 @@ sync_ingest_malloc_trim_after_file = yes
 # Max concurrent daily tar seals during maintenance (default 4).
 # archive_seal_parallel_workers = 4
 
+# Max parallel threads for sealed/tar validation read-lock scope (default 2).
+# sync_archive_validation_max_workers = 2
+
 # zstd compression level 1-19 for .tar.zst (default 7; benchmark before raising above 9).
 # archive_zstd_level = 7
 
@@ -474,19 +474,13 @@ sync_ingest_malloc_trim_after_file = yes
 # Default yes when omitted; set no only for A/B tuning or debugging.
 # archive_zstd_drop_page_cache = yes
 
-# Max seconds to defer scheduled maintenance while archive append is in flight (legacy; default 3600).
-# archive_maintenance_max_defer_seconds = 3600
-
 # Optional idle dwell before janitor tick budget bonus (default 300).
 # archive_maintenance_idle_seconds = 300
 
 # Archive janitor micro-batch wall budget per tick seconds (default 30).
 # archive_janitor_budget_seconds = 30
 
-# Max distinct calendar days (DAY_CLOSE pipeline) per janitor tick (default 2).
-# archive_janitor_days_per_tick = 2
-
-# Debt queue depth before temporary burst scaling (default 50).
+# Debt queue depth before temporary budget burst (default 50).
 # archive_janitor_debt_high_watermark = 50
 
 # Budget multiplier when debt exceeds high watermark (default 1.5).
@@ -498,25 +492,19 @@ sync_ingest_malloc_trim_after_file = yes
 # Max raw stats file deletes per janitor RAW_REMOVE debt item per tick (default 1000).
 # archive_janitor_raw_paths_per_tick = 1000
 
-# Max concurrent async DAY_CLOSE during startup janitor discover (default = archive_seal_parallel_workers).
-# sync_startup_day_close_max_inflight = 4
-
 # Max wait for canonical startup archive snapshot before single-flight build (default 300s; min 120).
 # sync_startup_snapshot_wait_seconds = 300
 
-# Max concurrent DAY_CLOSE calendar days on janitor debt (default 2).
-# sync_day_close_max_inflight = 2
+# DAY_CLOSE pipeline occupancy and parallel worker count (default 4).
+# sync_day_close_max_inflight = 4
 
-# Wall-clock wait in async DAY_CLOSE for day raw removal verify after seal (default 3600s; 0 = unbounded).
-# sync_day_close_raw_removal_wait_seconds = 3600
-
-# Recover stale async DAY_CLOSE manifest entries on coordinator init (default 7200s; 0 = off).
+# Recover stale day-close manifest entries on coordinator init (default 7200s; 0 = off).
 # sync_day_close_async_stale_seconds = 7200
 
 # Log day-close candidate report (queued/disqualified only; default yes).
 # sync_day_close_candidate_report = yes
 
-# Wall-clock budget for day-close verify slices in the async pipeline (default 30 seconds).
+# Wall-clock budget for day-close verify slices (default 30 seconds).
 # sync_day_close_raw_removal_verify_budget_seconds = 30
 
 # Max deletes per day-close delete loop iteration; 0 = unlimited per iteration (default 0).

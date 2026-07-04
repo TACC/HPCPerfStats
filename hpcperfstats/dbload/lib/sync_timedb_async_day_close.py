@@ -1,4 +1,8 @@
-"""Day-close manifest shim; janitor thread runs seal/verify/delete/tar_drop."""
+"""Day-close manifest coordinator (historical module name: async_day_close).
+
+On-disk artifact remains ``.sync_timedb_async_day_close.json``. Work runs on
+janitor day-close worker threads, not an async worker pool owned by this module.
+"""
 from __future__ import annotations
 
 import os
@@ -60,8 +64,8 @@ def _save_manifest(path: str, payload: Dict[str, Any]) -> None:
   save_persistence_document(path, "async_day_close", payload)
 
 
-class AsyncDayCloseCoordinator:
-  """Manifest + enqueue shim; ``DAY_CLOSE`` work runs on ``ArchiveJanitor`` thread."""
+class DayCloseManifestCoordinator:
+  """Manifest + enqueue shim; ``DAY_CLOSE`` work runs on janitor worker threads."""
 
   def __init__(
       self,
@@ -385,3 +389,7 @@ class AsyncDayCloseCoordinator:
         self.on_day_phase(tar_norm, phase)
       except Exception:
         pass
+
+
+# Historical name — not an async worker pool.
+AsyncDayCloseCoordinator = DayCloseManifestCoordinator

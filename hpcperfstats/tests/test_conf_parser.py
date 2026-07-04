@@ -165,51 +165,6 @@ def test_get_archive_zstd_threads_override(temp_ini, monkeypatch):
 
 
 
-def test_get_archive_maintenance_max_defer_seconds_defaults_and_override(
-    temp_ini, monkeypatch
-):
-  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
-  import importlib
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-  importlib.reload(cfg)
-  assert cfg.get_archive_maintenance_max_defer_seconds() == 3600.0
-
-  with open(temp_ini) as f:
-    base = f.read()
-  content = base.replace(
-      "daily_archive_dir = /tmp",
-      "daily_archive_dir = /tmp\narchive_maintenance_max_defer_seconds = 90",
-  )
-  with open(temp_ini, "w") as f:
-    f.write(content)
-  importlib.reload(cfg)
-  assert cfg.get_archive_maintenance_max_defer_seconds() == 90.0
-
-
-def test_get_archive_maintenance_max_defer_seconds_rejects_nonfinite_and_nonpositive(
-    temp_ini, monkeypatch
-):
-  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
-  import importlib
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-  importlib.reload(cfg)
-  assert cfg.get_archive_maintenance_max_defer_seconds() == 3600.0
-
-  with open(temp_ini) as f:
-    base = f.read()
-
-  for raw in ("nan", "inf", "0", "-5", "not-a-number"):
-    content = base.replace(
-        "daily_archive_dir = /tmp",
-        "daily_archive_dir = /tmp\narchive_maintenance_max_defer_seconds = %s"
-        % raw,
-    )
-    with open(temp_ini, "w") as f:
-      f.write(content)
-    importlib.reload(cfg)
-    assert cfg.get_archive_maintenance_max_defer_seconds() == 3600.0
-
-
 def test_get_effective_cores_caps_by_host(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
@@ -1223,15 +1178,12 @@ def test_archive_janitor_and_dispatch_defaults(temp_ini, monkeypatch):
   import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_archive_janitor_budget_seconds() == 30.0
-  assert cfg.get_archive_janitor_days_per_tick() == 2
   assert cfg.get_archive_janitor_debt_high_watermark() == 50
   assert cfg.get_archive_janitor_debt_burst_factor() == 1.5
   assert cfg.get_archive_janitor_debt_max_entries() == 200
   assert cfg.get_archive_janitor_raw_paths_per_tick() == 1000
   assert cfg.get_sync_day_close_candidate_report() is True
-  assert cfg.get_sync_startup_day_close_max_inflight() == cfg.get_archive_seal_parallel_workers()
-  assert cfg.get_sync_day_close_max_inflight() == 2
-  assert cfg.get_sync_day_close_raw_removal_wait_seconds() == 3600.0
+  assert cfg.get_sync_day_close_max_inflight() == 4
   assert cfg.get_sync_day_close_async_stale_seconds() == 7200.0
   assert cfg.get_sync_day_close_raw_removal_verify_budget_seconds() == 30.0
   assert cfg.get_sync_day_close_raw_removal_max_deletes_per_pass() == 0
@@ -1241,6 +1193,19 @@ def test_archive_janitor_and_dispatch_defaults(temp_ini, monkeypatch):
   assert cfg.get_sync_archive_max_inflight_jobs() == 2
   assert cfg.get_sync_archive_worker_stall_seconds() == 600.0
   assert cfg.get_sync_enable_ingest_first_durability_mode() is True
+  assert not hasattr(cfg, "get_archive_janitor_days_per_tick")
+  assert not hasattr(cfg, "get_sync_startup_day_close_max_inflight")
+  assert not hasattr(cfg, "get_archive_seal_idle_seconds")
+  assert not hasattr(cfg, "get_archive_maintenance_max_defer_seconds")
+  assert not hasattr(cfg, "get_sync_day_close_raw_removal_wait_seconds")
+  assert cfg.get_sync_day_close_manifest_stale_seconds() == 7200.0
+
+
+def test_day_close_max_inflight_default_4(temp_ini, monkeypatch):
+  import importlib
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_sync_day_close_max_inflight() == 4
 
 
 def test_legacy_portal_fallback_for_archive_dir(tmp_path, monkeypatch):

@@ -41,6 +41,23 @@ def _parse_documented_ini_options(path):
   return documented
 
 
+def test_dead_day_close_knobs_removed_from_registry_and_example():
+  """Startup inflight, days_per_tick, and dead seal/defer/wait knobs stay gone."""
+  dead = {
+      "sync_startup_day_close_max_inflight",
+      "archive_janitor_days_per_tick",
+      "archive_seal_idle_seconds",
+      "archive_maintenance_max_defer_seconds",
+      "sync_day_close_raw_removal_wait_seconds",
+  }
+  registry_options = {option for _section, option, _default in cfg.INI_OPTION_REGISTRY}
+  assert not (dead & registry_options)
+  path = _repo_ini_example_path()
+  text = path.read_text(encoding="utf-8")
+  for key in dead:
+    assert key not in text, "dead key still documented in example: %s" % key
+
+
 def test_ini_example_documents_every_registry_option():
   path = _repo_ini_example_path()
   assert path.is_file(), "missing %s" % path

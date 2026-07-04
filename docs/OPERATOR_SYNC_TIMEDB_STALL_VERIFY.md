@@ -88,7 +88,7 @@ podman-compose logs pipeline 2>&1 | grep -E \
   'janitor: day_close pre_seal_verify|janitor: day_close seal|janitor: day_close post_seal_verify|janitor: day_close delete|day_close handoff requeue' | tail -60
 ```
 
-**T0 (first janitor pass on a backlog day):** grep shows **`pre_seal_verify`** before **`seal`** for the same `tar=` path; retryable paths log **`day_close handoff requeue`** and **no seal** for that pass.
+**T0 (first janitor pass on a backlog day):** grep shows **`pre_seal_verify`** before **`seal`** for the same `tar=` path; retryable paths log **`day_close handoff requeue`** and **no seal** for that pass. Stall diagnostics use **`day_close=`** (not `async_day_close=`). Up to **`sync_day_close_max_inflight`** (default **4**) days may run **`DAY_CLOSE`** in parallel on `day-close-N` worker threads; tick logs use **`days_started=`** / **`days_completed=`**.
 
 **T1 (steady progress):** sealed days show **`post_seal_verify`** then **`delete`**; candidate report no longer lists **`closed_raw_on_disk`** as submit block; **`waiting_on_ingest`** remains only for **`checkpoint_incomplete`** days.
 
@@ -101,7 +101,7 @@ podman-compose logs pipeline 2>&1 | grep -E \
   'discover_ready_day_close|janitor: day_close enqueue|janitor: day_close submit|day_close candidate report|Archive janitor tick done' | tail -40
 ```
 
-**Pass:** checkpoint-complete older calendar days show **`discover_ready_day_close enqueued=`** or **`janitor: day_close enqueue`**; candidate report uses **`waiting_on_ingest`** / **`disqualified`** (no **`eligible_deferred`**); ingest head day stays **`waiting_on_ingest`** while janitor processes prior days; **`Archive janitor tick done`** shows **`debt_popped>0`** or progressing **`day_phases`** without **`ingest_stall_watchdog`** within 30 min.
+**Pass:** checkpoint-complete older calendar days show **`discover_ready_day_close enqueued=`** or **`janitor: day_close enqueue`**; candidate report uses **`waiting_on_ingest`** / **`disqualified`** (no **`eligible_deferred`**); ingest head day stays **`waiting_on_ingest`** while janitor processes prior days; **`Archive janitor tick done`** shows **`days_started>0`** / **`debt_popped>0`** or progressing **`day_phases`** without **`ingest_stall_watchdog`** within 30 min. Under backlog, expect up to **4** concurrent day-close workers (`sync_day_close_max_inflight`) unless tuned lower.
 
 ### T1 verify — pipeline review fixes (manifest inflight + gate backoff)
 

@@ -159,7 +159,6 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "daily_archive_dir"),
     ("PIPELINE", "archive_keep_uncompressed_tar"),
     ("PIPELINE", "archive_today_uncompressed_tar_grace_hours"),
-    ("PIPELINE", "archive_seal_idle_seconds"),
     ("PIPELINE", "archive_zstd_threads"),
     ("PIPELINE", "archive_zstd_level"),
     ("PIPELINE", "archive_zstd_nice"),
@@ -167,19 +166,15 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "archive_zstd_ionice_level"),
     ("PIPELINE", "archive_zstd_drop_page_cache"),
     ("PIPELINE", "archive_seal_parallel_workers"),
-    ("PIPELINE", "archive_maintenance_max_defer_seconds"),
     ("PIPELINE", "archive_maintenance_idle_seconds"),
     ("PIPELINE", "archive_janitor_budget_seconds"),
-    ("PIPELINE", "archive_janitor_days_per_tick"),
     ("PIPELINE", "archive_janitor_debt_high_watermark"),
     ("PIPELINE", "archive_janitor_debt_burst_factor"),
     ("PIPELINE", "archive_janitor_debt_max_entries"),
     ("PIPELINE", "archive_janitor_raw_paths_per_tick"),
     ("PIPELINE", "sync_day_close_candidate_report"),
-    ("PIPELINE", "sync_startup_day_close_max_inflight"),
     ("PIPELINE", "sync_startup_snapshot_wait_seconds"),
     ("PIPELINE", "sync_day_close_max_inflight"),
-    ("PIPELINE", "sync_day_close_raw_removal_wait_seconds"),
     ("PIPELINE", "sync_day_close_async_stale_seconds"),
     ("PIPELINE", "sync_day_close_raw_removal_verify_budget_seconds"),
     ("PIPELINE", "sync_day_close_raw_removal_max_deletes_per_pass"),
@@ -345,7 +340,6 @@ INI_OPTION_DEFAULTS = {
     'daily_archive_dir': None,
     'archive_keep_uncompressed_tar': 'no',
     'archive_today_uncompressed_tar_grace_hours': '8.0',
-    'archive_seal_idle_seconds': '60',
     'archive_zstd_threads': '0',
     'archive_zstd_level': '7',
     'archive_zstd_nice': '10',
@@ -353,19 +347,15 @@ INI_OPTION_DEFAULTS = {
     'archive_zstd_ionice_level': '6',
     'archive_zstd_drop_page_cache': 'yes',
     'archive_seal_parallel_workers': '4',
-    'archive_maintenance_max_defer_seconds': '3600',
     'archive_maintenance_idle_seconds': '300',
     'archive_janitor_budget_seconds': '30',
-    'archive_janitor_days_per_tick': '2',
     'archive_janitor_debt_high_watermark': '50',
     'archive_janitor_debt_burst_factor': '1.5',
     'archive_janitor_debt_max_entries': '200',
     'archive_janitor_raw_paths_per_tick': '1000',
     'sync_day_close_candidate_report': 'yes',
-    'sync_startup_day_close_max_inflight': '',
     'sync_startup_snapshot_wait_seconds': '300',
-    'sync_day_close_max_inflight': '2',
-    'sync_day_close_raw_removal_wait_seconds': '3600',
+    'sync_day_close_max_inflight': '4',
     'sync_day_close_async_stale_seconds': '7200',
     'sync_day_close_raw_removal_verify_budget_seconds': '30',
     'sync_day_close_raw_removal_max_deletes_per_pass': '0',
@@ -718,19 +708,6 @@ def get_archive_today_uncompressed_tar_grace_hours():
   )
 
 
-def get_archive_seal_idle_seconds():
-  """Minimum seconds since last ``.tar`` mtime before sealing *today's* archive.
-
-  Prior calendar days seal as soon as the tar/gz pair is dirty (no idle wait).
-  """
-  _ensure_cfg_loaded()
-  return float(_ini_get_from_registry(
-      "PIPELINE",
-      "archive_seal_idle_seconds",
-      legacy_sections=("PORTAL",),
-  ))
-
-
 def _ini_bool(value, default=False):
   if value is None:
     return default
@@ -804,23 +781,6 @@ def get_archive_seal_parallel_workers():
       legacy_sections=("PORTAL",),
   )
   return max(1, int(raw))
-
-
-def get_archive_maintenance_max_defer_seconds():
-  """Max seconds to defer scheduled maintenance while archive append is in flight (default 1h)."""
-  _ensure_cfg_loaded()
-  raw_value = _ini_get_from_registry(
-      "PIPELINE",
-      "archive_maintenance_max_defer_seconds",
-      legacy_sections=("PORTAL",),
-  )
-  try:
-    max_defer = float(raw_value)
-  except (TypeError, ValueError):
-    return float(_ini_registry_default_str("archive_maintenance_max_defer_seconds"))
-  if (not math.isfinite(max_defer)) or max_defer <= 0:
-    return float(_ini_registry_default_str("archive_maintenance_max_defer_seconds"))
-  return max_defer
 
 
 def get_rmq_server():
@@ -2832,12 +2792,6 @@ def get_archive_janitor_budget_seconds():
   )
 
 
-def get_archive_janitor_days_per_tick():
-  """Max calendar days processed per janitor tick (default 2)."""
-  _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("archive_janitor_days_per_tick"))
-
-
 def get_archive_janitor_debt_high_watermark():
   """Debt queue depth before temporary burst scaling (default 50)."""
   _ensure_cfg_loaded()
@@ -2873,18 +2827,6 @@ def get_sync_day_close_candidate_report():
   )
 
 
-def get_sync_startup_day_close_max_inflight():
-  """Max concurrent async DAY_CLOSE during startup drain (default archive_seal_parallel_workers)."""
-  _ensure_cfg_loaded()
-  raw = _pipeline_get("sync_startup_day_close_max_inflight")
-  if raw is None or str(raw).strip() == "":
-    return get_archive_seal_parallel_workers()
-  try:
-    return max(1, int(raw))
-  except (TypeError, ValueError):
-    return get_archive_seal_parallel_workers()
-
-
 def get_sync_startup_snapshot_wait_seconds():
   """Max wait for canonical startup archive snapshot before single-flight build."""
   _ensure_cfg_loaded()
@@ -2913,34 +2855,32 @@ def get_sync_day_close_raw_removal_max_deletes_per_pass():
     return 0
 
 
-def get_sync_day_close_raw_removal_wait_seconds():
-  """Max wall-clock wait in async DAY_CLOSE for verify after seal (default 3600; 0=unbounded)."""
-  _ensure_cfg_loaded()
-  raw = _pipeline_get("sync_day_close_raw_removal_wait_seconds")
-  try:
-    return max(0.0, float(raw))
-  except (TypeError, ValueError):
-    return 3600.0
-
-
 def get_sync_day_close_max_inflight():
-  """Max concurrent ``DAY_CLOSE`` calendar days on janitor debt (default 2)."""
+  """Pipeline occupancy and parallel ``DAY_CLOSE`` worker count (default 4)."""
   _ensure_cfg_loaded()
   raw = _pipeline_get("sync_day_close_max_inflight")
   try:
     return max(1, int(raw))
   except (TypeError, ValueError):
-    return 2
+    return 4
 
 
 def get_sync_day_close_async_stale_seconds():
-  """Recover stale async DAY_CLOSE manifest entries on startup (default 7200; 0=off)."""
+  """Recover stale day-close manifest entries on coordinator init (default 7200; 0=off).
+
+  INI key retains historical ``async`` name; on-disk manifest path is unchanged.
+  """
   _ensure_cfg_loaded()
   raw = _pipeline_get("sync_day_close_async_stale_seconds")
   try:
     return max(0.0, float(raw))
   except (TypeError, ValueError):
     return 7200.0
+
+
+def get_sync_day_close_manifest_stale_seconds():
+  """Alias for ``get_sync_day_close_async_stale_seconds``."""
+  return get_sync_day_close_async_stale_seconds()
 
 
 def get_sync_archive_max_inflight_jobs():

@@ -102,19 +102,20 @@ def _empty_maintenance_snapshot(*_a, **_k):
     return ArchiveMaintenanceSnapshot(closed_paths=[], remaining_raw_by_gz={}, mapping={}, ready_paths=set())
 
 class _InlineThreadPoolExecutor:
-    """Run archive-janitor ticks inline so supervisor unit tests do not hang."""
+    """Run janitor / day-close work inline so supervisor unit tests do not hang."""
 
     def __init__(self, *args, **kwargs):
         del args, kwargs
 
     def submit(self, fn, *args, **kwargs):
-        fn(*args, **kwargs)
+        from concurrent.futures import Future
 
-        class _DoneFuture:
-
-            def done(self):
-                return True
-        return _DoneFuture()
+        fut = Future()
+        try:
+            fut.set_result(fn(*args, **kwargs))
+        except BaseException as exc:
+            fut.set_exception(exc)
+        return fut
 
     def shutdown(self, wait=True):
         del wait
@@ -127,9 +128,28 @@ def _default_startup_daily_tar_count(monkeypatch):
     monkeypatch.setattr(janitor_mod, 'build_archive_maintenance_snapshot', _empty_maintenance_snapshot)
     monkeypatch.setattr(janitor_mod, 'save_archive_maint_hints', lambda *_a, **_k: None)
     monkeypatch.setattr(session_executor_mod, 'ThreadPoolExecutor', _InlineThreadPoolExecutor)
-    monkeypatch.setattr(async_day_close_mod.AsyncDayCloseCoordinator, 'submit_day_close', lambda self, tar_path, *, reason, disqualified_daily_tars=None: bool(tar_path))
-    monkeypatch.setattr(async_day_close_mod.AsyncDayCloseCoordinator, 'is_complete', lambda self, tar_path: bool(tar_path))
-    monkeypatch.setattr(async_day_close_mod.AsyncDayCloseCoordinator, 'active_or_submitted_tar_paths', lambda self: set())
+    # Day-close workers also use ThreadPoolExecutor; keep them inline in unit tests.
+    monkeypatch.setattr(janitor_mod, 'ThreadPoolExecutor', _InlineThreadPoolExecutor)
+    monkeypatch.setattr(
+        async_day_close_mod.DayCloseManifestCoordinator,
+        'submit_day_close',
+        lambda self, tar_path, *, reason, disqualified_daily_tars=None: bool(tar_path),
+    )
+    monkeypatch.setattr(
+        async_day_close_mod.DayCloseManifestCoordinator,
+        'enqueue_day_close',
+        lambda self, tar_path, reason, *, disqualified_daily_tars=None: bool(tar_path),
+    )
+    monkeypatch.setattr(
+        async_day_close_mod.DayCloseManifestCoordinator,
+        'is_complete',
+        lambda self, tar_path: bool(tar_path),
+    )
+    monkeypatch.setattr(
+        async_day_close_mod.DayCloseManifestCoordinator,
+        'active_or_submitted_tar_paths',
+        lambda self: set(),
+    )
     _orig_janitor_init = janitor_mod.ArchiveJanitor.__init__
 
     def _janitor_init_no_tick_chain(self, *args, **kwargs):
@@ -5889,6 +5909,7 @@ def test_chunk_end_submits_immediate_day_close_despite_closed_raw_on_disk(monkey
         monkeypatch.setattr(st, 'tgz_archive_dir', str(daily_dir))
         monkeypatch.setattr(StartupArchiveScanCoordinator, 'wait_for_snapshot', lambda self, *, allow_build=False: None)
         monkeypatch.setattr(archive_helpers, 'build_live_unprocessed_by_tar_for_reconcile', lambda *_a, **_k: {})
+        # Force a checkpoint-complete candidate; patch the name bound in sync_timedb.
         monkeypatch.setattr(st, 'days_ingest_complete_by_checkpoint', lambda *_a, **_k: [tar_norm])
         monkeypatch.setattr(st, 'daily_tar_eligible_for_day_close_submit', lambda *_a, **_k: (True, ''))
 
@@ -5899,11 +5920,18 @@ def test_chunk_end_submits_immediate_day_close_despite_closed_raw_on_disk(monkey
             return True
 
         monkeypatch.setattr(
-            async_day_close_mod.AsyncDayCloseCoordinator,
+            async_day_close_mod.DayCloseManifestCoordinator,
             'submit_day_close',
             _record_submit,
         )
-        monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
+        monkeypatch.setattr(
+            async_day_close_mod.DayCloseManifestCoordinator,
+            'enqueue_day_close',
+            lambda self, tar, reason, *, disqualified_daily_tars=None: _record_submit(
+                self, tar, reason=reason, disqualified_daily_tars=disqualified_daily_tars,
+            ),
+        )
+        # Do not silence janitor: autouse inline executors run ticks without real threads.
         st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _ArchivePoolSuccess(), run_once=True)
         out = capsys.readouterr().out
         assert 'closed_raw_guard' not in out

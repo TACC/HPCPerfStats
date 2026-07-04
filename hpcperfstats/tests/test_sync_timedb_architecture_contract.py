@@ -201,8 +201,13 @@ def test_arch_janitor_drains_multiple_enqueued_jobs_per_wake(monkeypatch, tmp_pa
     return True
 
   monkeypatch.setattr(janitor, "_close_one_day", _track_close)
-  monkeypatch.setattr(janitor_mod.cfg, "get_archive_janitor_days_per_tick", lambda: 4)
+  monkeypatch.setattr(janitor_mod.cfg, "get_sync_day_close_max_inflight", lambda: 4)
   monkeypatch.setattr(janitor_mod.cfg, "get_archive_janitor_budget_seconds", lambda: 3600.0)
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor,
+      "_run_tick_lock_cleanup",
+      lambda self: 0,
+  )
   janitor._run_tick_body()
   assert len(processed) == 2
   assert janitor.debt_depth() == 0
@@ -387,14 +392,19 @@ def test_arch_second_enqueue_during_drain_processed_same_pass(monkeypatch, tmp_p
     return True
 
   monkeypatch.setattr(janitor, "_close_one_day", _track_close)
-  monkeypatch.setattr(janitor_mod.cfg, "get_archive_janitor_days_per_tick", lambda: 4)
+  monkeypatch.setattr(janitor_mod.cfg, "get_sync_day_close_max_inflight", lambda: 4)
   monkeypatch.setattr(janitor_mod.cfg, "get_archive_janitor_budget_seconds", lambda: 3600.0)
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor,
+      "_run_tick_lock_cleanup",
+      lambda self: 0,
+  )
   janitor._run_tick_body()
-  assert processed == [
+  assert set(processed) == {
       os.path.normpath(tar1),
       os.path.normpath(tar2),
       os.path.normpath(tar3),
-  ]
+  }
   assert janitor.debt_depth() == 0
 
 

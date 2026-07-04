@@ -34,6 +34,7 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
             "sync-timedb-archive-janitor-contract.mdc",
             "sync-timedb-db-before-archive-contract.mdc",
             "sync-timedb-lock-and-archive-contract.mdc",
+            "sync-timedb-post-chunk-archive-hygiene.mdc",
             "sync-timedb-change-regression-gate.mdc",
             "runtime-resource-and-metrics-safety.mdc",
             "process-title-and-pool-labels.mdc",
