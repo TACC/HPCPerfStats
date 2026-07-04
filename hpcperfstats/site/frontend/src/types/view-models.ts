@@ -1,4 +1,3 @@
-import type { JobDetailResponse } from "@/api/generated/models/jobDetailResponse";
 import type { BokehJsonItem } from "./bokeh";
 
 export type FreshnessBucket = "ok" | "gt_10min" | "gt_hour" | "gt_day" | "gt_week";
@@ -44,8 +43,6 @@ export type JobPlotBatchResponse = Record<string, unknown> & {
   retry_after_seconds?: number;
   loading_plots?: string[];
 };
-
-export type JobDetailData = JobDetailResponse;
 
 export type JobListHistogramEntry = {
   title?: string;
