@@ -1844,16 +1844,18 @@ class DayRawRemovalCoordinator:
         continue
       tar_norm = os.path.normpath(tar_path)
       state = self._get_or_create_day(tar_path)
-      paths = self.paths_for_closed_raw_handoff_requeue(tar_path)
       needs_kick = (
-          paths
-          or state.needs_ghost_delete_retry()
+          state.needs_ghost_delete_retry()
           or self.needs_verify_for_closed_raw_block(tar_path)
           or (
               not state.delete_phase_done()
               and not state.verification_complete()
           )
       )
+      paths: List[str] = []
+      if needs_kick or state.should_handoff_day_close_to_ingest():
+        paths = self.paths_for_closed_raw_handoff_requeue(tar_path)
+        needs_kick = needs_kick or bool(paths)
       if not needs_kick:
         continue
       handoffs.append((tar_norm, paths))

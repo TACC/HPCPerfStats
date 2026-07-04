@@ -552,7 +552,7 @@ def build_archive_maintenance_snapshot(
   snap_t0 = time.time()
   hints_data = load_archive_maint_hints(archive_data_dir)
   closed_paths = collect_stats_files_in_range(
-      archive_data_dir, "all", None, host_name_ext)
+      archive_data_dir, "all", None, host_name_ext, log_fn=log_fn)
   first_timestamp_by_path, head_identity_by_path, head_read_stats = (
       collect_head_metadata_for_paths(
           closed_paths, hints_data=hints_data, log_fn=log_fn)
@@ -564,11 +564,19 @@ def build_archive_maintenance_snapshot(
         % (len(closed_paths), time.time() - snap_t0),
         flush=True,
     )
-  gate_identities_by_path, gate_read_stats = collect_gate_identities_for_paths(
-      closed_paths,
-      head_identity_by_path,
-      log_fn=log_fn,
-  )
+  gate_identities_by_path: Dict[str, Dict[str, Set[int]]] = {}
+  gate_read_stats: Dict[str, int] = {}
+  if build_ready_set:
+    gate_identities_by_path, gate_read_stats = collect_gate_identities_for_paths(
+        closed_paths,
+        head_identity_by_path,
+        log_fn=log_fn,
+    )
+  elif log_fn:
+    log_fn(
+        "Archive maintenance snapshot: gate tail skipped (build_ready_set=False)",
+        flush=True,
+    )
   mapping = build_archive_mapping(
       closed_paths,
       tgz_archive_dir,

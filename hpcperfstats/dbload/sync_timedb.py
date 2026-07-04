@@ -5791,9 +5791,43 @@ def run_sync_timedb_supervisor_loop(
         tar_norm,
         paths,
         reason,
-        allow_giant_day_slice=True,
+        allow_giant_day_slice=False,
     )
     return True
+
+  def _wait_for_startup_snapshot_for_handoff():
+    """Poll coordinator/accrual snapshot before handoff discover (bounded wait)."""
+    if not run_startup_maintenance:
+      return
+    wait_limit = max(
+        120.0,
+        float(cfg.get_sync_startup_snapshot_wait_seconds()),
+    )
+    wait_t0 = time.time()
+    last_log = wait_t0
+    while time.time() - wait_t0 < wait_limit:
+      if startup_archive_scan.get_snapshot() is not None:
+        return
+      accrual = reconcile_refs["get_accrual_snapshot"]()
+      if accrual is not None and accrual.closed_paths:
+        return
+      now = time.time()
+      if now - last_log >= 30.0:
+        log_print(
+            "sync_timedb: startup_handoff_snapshot_wait elapsed_s=%.1f"
+            % (now - wait_t0),
+            flush=True,
+        )
+        last_log = now
+      if shutdown_requested[0]:
+        return
+      sleep_until_shutdown(0.5)
+    log_print(
+        "sync_timedb: startup_handoff_snapshot_wait timeout elapsed_s=%.1f "
+        "detail=handoff_discover_proceeding"
+        % (time.time() - wait_t0),
+        flush=True,
+    )
 
   def _recover_startup_day_close_handoffs():
     _enqueue_startup_handoff_recoveries()
@@ -5839,6 +5873,7 @@ def run_sync_timedb_supervisor_loop(
       startup_archive_scan.note_startup_maintenance_pending()
       archive_janitor.signal_scheduled_maintenance_pass(reason="startup")
       archive_janitor.enqueue_startup_debt()
+      _wait_for_startup_snapshot_for_handoff()
       _recover_startup_day_close_handoffs()
       while startup_handoff_recover_pending:
         _process_one_startup_handoff_recover()

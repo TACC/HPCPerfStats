@@ -163,6 +163,36 @@ def test_build_head_ingest_ready_set_dedupes_db_lookups(monkeypatch, tmp_path):
   assert calls["n"] == 1
 
 
+def test_build_archive_maintenance_snapshot_skips_gate_when_build_ready_set_false(
+    monkeypatch, tmp_path,
+):
+  arch_suffix = "cluster.maint.skip_gate"
+  host = tmp_path / ("n." + arch_suffix)
+  host.mkdir(parents=True, exist_ok=True)
+  seg_path = host / "1700000500"
+  seg_path.write_text("1700000500 job1 cn001\npayload\n")
+  tgz = tmp_path / "daily"
+  tgz.mkdir()
+  gate_calls = {"n": 0}
+
+  def _forbidden_gate(*args, **kwargs):
+    gate_calls["n"] += 1
+    raise AssertionError("gate collect must not run when build_ready_set=False")
+
+  monkeypatch.setattr(cfg, "get_sync_archive_maint_hints", lambda: False)
+  monkeypatch.setattr(maint, "collect_gate_identities_for_paths", _forbidden_gate)
+  snap = maint.build_archive_maintenance_snapshot(
+      str(tmp_path),
+      arch_suffix,
+      str(tgz),
+      build_ready_set=False,
+      log_fn=None,
+  )
+  assert gate_calls["n"] == 0
+  assert snap.gate_identities_by_path == {}
+  assert str(seg_path) in snap.closed_paths
+
+
 def test_build_archive_maintenance_snapshot_collects_head_tail_gate_identities(
     monkeypatch, tmp_path,
 ):

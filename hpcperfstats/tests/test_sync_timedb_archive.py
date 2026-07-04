@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.dbload.lib.archive_compress import (
     DAILY_ARCHIVE_ZST_SUFFIX,
     archive_gz_members_contained_in_zst,
@@ -2901,6 +2902,38 @@ def test_collect_stats_files_in_range_sorted_oldest_first(tmp_path):
   basenames = [os.path.basename(p) for p in result]
   # Expect oldest (smallest epoch) first.
   assert basenames == [str(epochs[0]), str(epochs[1]), str(epochs[2])]
+
+
+def test_collect_stats_files_in_range_parallel_multi_host(monkeypatch, tmp_path):
+  """Multi-host collect uses ingest pool cap and preserves oldest-first order."""
+  monkeypatch.setattr(cfg, "get_sync_ingest_pool_processes", lambda: 4)
+  base_ts = datetime(2020, 6, 15, 12, 0, 0)
+  epochs = [
+      int((base_ts + timedelta(minutes=offset)).timestamp())
+      for offset in [2, 0, 1]
+  ]
+  host_dirs = []
+  for host_idx in range(3):
+    cn = tmp_path / ("cn%03d." % host_idx + _ARCH_HOST_SUFFIX)
+    cn.mkdir()
+    host_dirs.append(cn)
+    ts = epochs[host_idx]
+    p = cn / str(ts)
+    p.write_text("x")
+    os.utime(p, (ts, ts))
+
+  logs = []
+  result = collect_stats_files_in_range(
+      str(tmp_path),
+      "all",
+      None,
+      _ARCH_HOST_SUFFIX,
+      log_fn=lambda msg, **kw: logs.append(msg),
+  )
+  assert len(result) == 3
+  assert result == sorted(result, key=lambda path: int(os.path.basename(path)))
+  joined = "\n".join(logs)
+  assert "collect_stats_files_in_range: hosts=3 workers=3" in joined
 
 
 def test_rescan_pending_stats_files_excludes_processed_and_keeps_oldest_first(tmp_path):

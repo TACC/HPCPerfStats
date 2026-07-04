@@ -5736,6 +5736,60 @@ def stats_file_is_active_segment(stats_path):
     return False
 
 
+def _collect_stats_files_in_host_dir(
+    host_dir,
+    startdate,
+    enddate,
+):
+  """Return ``[(path, sort_epoch), ...]`` for one host stats directory."""
+  stats_files = []
+  for stats_file in os.scandir(host_dir):
+    if not stats_file.is_file() or stats_file.name.startswith("."):
+      continue
+    if _is_lock_file_name(stats_file.name):
+      continue
+    if stats_file.name.startswith("current"):
+      continue
+    if stats_file_is_active_segment(stats_file.path):
+      continue
+    try:
+      st_info = stats_file.stat()
+      st_mtime = int(st_info.st_mtime)
+      fdate_mtime = datetime.fromtimestamp(st_mtime)
+    except Exception as e:
+      log_print("error in obtaining timestamp of raw data files: ", str(e))
+      continue
+
+    fdate_name = None
+    try:
+      fname_epoch = int(os.path.basename(stats_file.path))
+      fdate_name = datetime.fromtimestamp(fname_epoch)
+    except Exception:
+      pass
+
+    sort_epoch = None
+    if fdate_name is not None:
+      sort_epoch = int(os.path.basename(stats_file.path))
+    else:
+      sort_epoch = st_mtime
+
+    if startdate == "all":
+      stats_files.append((stats_file.path, sort_epoch))
+      continue
+
+    def _in_range(ts):
+      if ts is None:
+        return False
+      return not (ts <= startdate - timedelta(days=1) or ts > enddate)
+
+    in_range_mtime = _in_range(fdate_mtime)
+    in_range_name = _in_range(fdate_name)
+    if not (in_range_mtime or in_range_name):
+      continue
+    stats_files.append((stats_file.path, sort_epoch))
+  return stats_files
+
+
 def collect_stats_files_in_range(
     directory,
     startdate,
@@ -5743,6 +5797,7 @@ def collect_stats_files_in_range(
     host_name_ext,
     host_scan_hints=None,
     force_full_scan=False,
+    log_fn=None,
 ):
   """Scan ``archive_dir`` for stats files in immediate subdirs whose names end
   with ``host_name_ext`` (same value as ``DEFAULT.host_name_ext`` in ini).
@@ -5756,10 +5811,10 @@ def collect_stats_files_in_range(
   epoch when numeric, else mtime). If ``host_name_ext`` is empty after strip,
   returns an empty list.
   """
-  stats_files = []
   suffix = (host_name_ext or "").strip()
   if not suffix:
     return []
+  host_dirs = []
   for entry in os.scandir(directory):
     if entry.is_file() or not entry.is_dir():
       continue
@@ -5774,54 +5829,51 @@ def collect_stats_files_in_range(
       host_scan_hints[entry.path] = dir_mtime
       if prev_mtime is not None and prev_mtime == dir_mtime:
         continue
-    for stats_file in os.scandir(entry.path):
-      if not stats_file.is_file() or stats_file.name.startswith("."):
-        continue
-      if _is_lock_file_name(stats_file.name):
-        continue
-      if stats_file.name.startswith("current"):
-        continue
-      if stats_file_is_active_segment(stats_file.path):
-        continue
-      try:
-        st_info = stats_file.stat()
-        st_mtime = int(st_info.st_mtime)
-        fdate_mtime = datetime.fromtimestamp(st_mtime)
-      except Exception as e:
-        log_print("error in obtaining timestamp of raw data files: ", str(e))
-        continue
+    host_dirs.append(entry.path)
 
-      fdate_name = None
-      try:
-        fname_epoch = int(os.path.basename(stats_file.path))
-        fdate_name = datetime.fromtimestamp(fname_epoch)
-      except Exception:
-        pass
+  collect_t0 = time.monotonic()
+  stats_files = []
+  if len(host_dirs) <= 1:
+    for host_dir in host_dirs:
+      stats_files.extend(
+          _collect_stats_files_in_host_dir(host_dir, startdate, enddate)
+      )
+  else:
+    max_workers = min(len(host_dirs), max(1, int(cfg.get_sync_ingest_pool_processes())))
+    if max_workers <= 1:
+      for host_dir in host_dirs:
+        stats_files.extend(
+            _collect_stats_files_in_host_dir(host_dir, startdate, enddate)
+        )
+    else:
+      def _scan_host(host_dir):
+        return _collect_stats_files_in_host_dir(host_dir, startdate, enddate)
 
-      sort_epoch = None
-      if fdate_name is not None:
-        sort_epoch = int(os.path.basename(stats_file.path))
-      else:
-        sort_epoch = st_mtime
-
-      if startdate == "all":
-        stats_files.append((stats_file.path, sort_epoch))
-        continue
-
-      def _in_range(ts):
-        if ts is None:
-          return False
-        return not (ts <= startdate - timedelta(days=1) or ts > enddate)
-
-      in_range_mtime = _in_range(fdate_mtime)
-      in_range_name = _in_range(fdate_name)
-      if not (in_range_mtime or in_range_name):
-        continue
-      stats_files.append((stats_file.path, sort_epoch))
+      for _host_dir, partial, err in iter_bounded_thread_pool(
+          host_dirs,
+          _scan_host,
+          max_workers=max_workers,
+          thread_role="archive-collect",
+      ):
+        if err is not None:
+          raise err
+        if partial:
+          stats_files.extend(partial)
 
   # Sort by effective timestamp ascending (oldest files first); None values
   # sort last. Then return just the paths.
   stats_files.sort(key=lambda item: (item[1] is None, item[1]))
+  if log_fn is not None and len(host_dirs) > 1:
+    log_fn(
+        "collect_stats_files_in_range: hosts=%d workers=%d paths=%d elapsed_s=%.3f"
+        % (
+            len(host_dirs),
+            min(len(host_dirs), max(1, int(cfg.get_sync_ingest_pool_processes()))),
+            len(stats_files),
+            time.monotonic() - collect_t0,
+        ),
+        flush=True,
+    )
   return [path for path, _ in stats_files]
 
 

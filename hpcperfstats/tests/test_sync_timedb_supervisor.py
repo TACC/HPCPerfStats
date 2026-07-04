@@ -169,6 +169,24 @@ def _default_startup_daily_tar_count(monkeypatch):
             timeout_s = 5.0
         return _orig_wait_idle(self, timeout_s=timeout_s)
     monkeypatch.setattr(StartupArchiveScanCoordinator, 'wait_for_startup_maintenance_idle', _fast_wait_idle)
+    _orig_coordinator_get_snapshot = StartupArchiveScanCoordinator.get_snapshot
+
+    def _supervisor_unit_test_get_snapshot(self):
+        snap = _orig_coordinator_get_snapshot(self)
+        if snap is not None:
+            return snap
+        # Many unit tests stub janitor signal_work_available; return an empty
+        # snapshot so startup handoff wait does not block on the 300s timeout.
+        from hpcperfstats.dbload.lib.sync_timedb_archive_maint import (
+            ArchiveMaintenanceSnapshot,
+        )
+        return ArchiveMaintenanceSnapshot(closed_paths=[])
+
+    monkeypatch.setattr(
+        StartupArchiveScanCoordinator,
+        'get_snapshot',
+        _supervisor_unit_test_get_snapshot,
+    )
     monkeypatch.setattr(st, '_paths_all_db_complete_for_prewarm_skip', lambda _paths: False)
 
 def test_periodic_maintenance_always_runs_gated_tar_removal(monkeypatch, tmp_path):
@@ -2888,6 +2906,19 @@ def _supervisor_day_raw_removal_patches(monkeypatch, coord_obj):
 def _supervisor_startup_preflight_disabled(monkeypatch):
     del monkeypatch
 
+
+def _supervisor_shutdown_on_startup_idle(monkeypatch):
+    """Exit supervisor loop right after startup gate clears (before steady ingest)."""
+    _orig_log = st.log_print
+
+    def _spy_log(*args, **kwargs):
+        msg = ' '.join(str(a) for a in args)
+        if 'startup maintenance idle; ingest may begin' in msg:
+            shutdown_requested[0] = True
+        return _orig_log(*args, **kwargs)
+
+    monkeypatch.setattr(st, 'log_print', _spy_log)
+
 def test_supervisor_reconcile_cap_uses_coordinator_snapshot_no_live_collect(monkeypatch, capsys):
     """Handoff reconcile must use coordinator snapshot instead of live collect."""
     shutdown_requested[0] = False
@@ -4615,7 +4646,7 @@ def test_gate_chunk_no_respin_after_db_complete_checkpoint(monkeypatch, tmp_path
         shutdown_requested[0] = False
 
 def test_handoff_giant_day_slice_ingest(monkeypatch, tmp_path):
-    """Handoff requeue slices giant days via _run_startup_tail_ingest_batch."""
+    """Startup manifest handoff enqueues steady chunks (no giant-day sync ingest)."""
     shutdown_requested[0] = False
     ingest_calls = []
     log_lines = []
@@ -4695,11 +4726,12 @@ def test_handoff_giant_day_slice_ingest(monkeypatch, tmp_path):
         monkeypatch.setattr(archive_helpers, 'build_unprocessed_raw_by_daily_tar', lambda *_a, **_k: {})
         monkeypatch.setattr(st, 'days_ingest_complete_by_checkpoint', lambda *_a, **_k: [])
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
+        _supervisor_shutdown_on_startup_idle(monkeypatch)
         st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
-        assert len(ingest_calls) == 250
-        begin_logs = [line for line in log_lines if 'startup handoff giant-day ingest begin' in line]
-        assert begin_logs
-        assert 'slices=3' in begin_logs[0]
+        assert len(ingest_calls) == 0
+        combined = '\n'.join(log_lines)
+        assert 'handoff_mode=steady_chunk' in combined
+        assert 'startup handoff giant-day ingest begin' not in combined
     finally:
         shutdown_requested[0] = False
 
@@ -4809,7 +4841,7 @@ def test_closed_raw_handoff_uses_steady_chunk_not_giant_day_slice(monkeypatch, t
         shutdown_requested[0] = False
 
 def test_giant_day_slice_gated_to_startup_handoff_recover_only(monkeypatch, tmp_path, capsys):
-    """Giant-day synchronous slices run at startup recover only."""
+    """Startup handoff recover enqueues steady chunks only (no giant-day sync ingest)."""
     shutdown_requested[0] = False
     ingest_calls = []
     coord_holder = []
@@ -4867,12 +4899,18 @@ def test_giant_day_slice_gated_to_startup_handoff_recover_only(monkeypatch, tmp_
             def shutdown(self, wait=True):
                 del wait
         from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import StartupArchiveScanCoordinator
+        from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
         _supervisor_startup_preflight_disabled(monkeypatch)
         monkeypatch.setattr(st, 'DayRawRemovalCoordinator', _HandoffDayRawRemoval)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
         monkeypatch.setattr(st.cfg, 'get_sync_ingest_chunk_size', lambda: 100)
         monkeypatch.setattr(st, 'add_stats_file_to_db', lambda _lock, path, **_k: ingest_calls.append(path) or (path, True, True, 0.0))
-        monkeypatch.setattr(StartupArchiveScanCoordinator, 'wait_for_snapshot', lambda self, *, allow_build=False: None)
+        published = ArchiveMaintenanceSnapshot(closed_paths=list(paths))
+        monkeypatch.setattr(
+            StartupArchiveScanCoordinator,
+            'get_snapshot',
+            lambda self: published,
+        )
         monkeypatch.setattr(st, 'rescan_pending_stats_files', lambda *_a, **_k: [])
         monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
@@ -4883,12 +4921,107 @@ def test_giant_day_slice_gated_to_startup_handoff_recover_only(monkeypatch, tmp_
         monkeypatch.setattr(st, 'build_archive_mapping', lambda *_a, **_k: {})
         monkeypatch.setattr(st, 'ensure_persistence_contract', lambda *_a, **_k: None)
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
+        _supervisor_shutdown_on_startup_idle(monkeypatch)
         st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         boot_out = capsys.readouterr().out
-        assert len(ingest_calls) == 250
-        assert 'startup handoff giant-day ingest begin' in boot_out
-        assert 'handoff_mode=giant_day_slice' in boot_out
-        assert 'handoff_mode=steady_chunk' not in boot_out
+        assert len(ingest_calls) == 0
+        assert 'startup handoff giant-day ingest begin' not in boot_out
+        assert 'handoff_mode=steady_chunk' in boot_out
+        assert 'handoff_mode=giant_day_slice' not in boot_out
+    finally:
+        shutdown_requested[0] = False
+
+def test_startup_waits_snapshot_before_handoff(monkeypatch, tmp_path, capsys):
+    """Handoff discover runs only after coordinator snapshot is visible."""
+    shutdown_requested[0] = False
+    events = []
+    try:
+        archive_dir = tmp_path / 'archive'
+        daily_dir = tmp_path / 'daily'
+        archive_dir.mkdir()
+        daily_dir.mkdir()
+        tar_norm = os.path.normpath(str(daily_dir / '2020-01-01.tar'))
+        open(tar_norm, 'wb').close()
+        paths = [str(tmp_path / 'handoff-path')]
+
+        class _HandoffDayRawRemoval:
+            enabled = True
+            on_handoff_to_ingest = None
+            on_pipeline_complete = None
+
+            def __init__(self, **_kwargs):
+                pass
+
+            def discover_manifest_handoffs(self):
+                events.append('discover_manifest')
+                return [(tar_norm, paths)]
+
+            def discover_closed_raw_on_disk_handoffs(self):
+                return []
+
+            def any_active_raw_removal_work(self):
+                return False
+
+            def consumed_paths(self):
+                return set()
+
+            def paths_pending_delete(self):
+                return set()
+
+            def any_needs_delete_phase(self):
+                return False
+
+            def any_needs_tar_drop_finish(self):
+                return False
+
+            def days_needing_delete_oldest_first(self):
+                return []
+
+            def days_needing_tar_drop_oldest_first(self):
+                return []
+
+            def count_days_waiting_on_ingest(self):
+                return 0
+
+            def shutdown(self, wait=True):
+                del wait
+
+        from hpcperfstats.dbload.lib.sync_timedb_archive_maint import (
+            ArchiveMaintenanceSnapshot,
+        )
+        from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
+            StartupArchiveScanCoordinator,
+        )
+        published = ArchiveMaintenanceSnapshot(closed_paths=paths)
+        poll_calls = {'n': 0}
+        _orig_get_snapshot = StartupArchiveScanCoordinator.get_snapshot
+
+        def gated_get_snapshot(self):
+            poll_calls['n'] += 1
+            if poll_calls['n'] < 2:
+                events.append('snapshot_wait_poll')
+                return None
+            events.append('snapshot_ready')
+            return published
+
+        _supervisor_startup_preflight_disabled(monkeypatch)
+        monkeypatch.setattr(st, 'DayRawRemovalCoordinator', _HandoffDayRawRemoval)
+        monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
+        monkeypatch.setattr(StartupArchiveScanCoordinator, 'get_snapshot', gated_get_snapshot)
+        monkeypatch.setattr(st, 'rescan_pending_stats_files', lambda *_a, **_k: [])
+        monkeypatch.setattr(st, 'close_old_connections', lambda: None)
+        monkeypatch.setattr(st.connections, 'close_all', lambda: None)
+        monkeypatch.setattr(st, 'tgz_archive_dir', str(daily_dir))
+        monkeypatch.setattr(st, 'ensure_persistence_contract', lambda *_a, **_k: None)
+        monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
+        _supervisor_shutdown_on_startup_idle(monkeypatch)
+        st.run_sync_timedb_supervisor_loop(
+            str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True,
+        )
+        assert 'snapshot_wait_poll' in events
+        assert 'snapshot_ready' in events
+        assert 'discover_manifest' in events
+        assert events.index('snapshot_ready') < events.index('discover_manifest')
     finally:
         shutdown_requested[0] = False
 

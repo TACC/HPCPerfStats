@@ -955,6 +955,36 @@ def test_requeue_closed_raw_skips_quarantine_and_manifested(tmp_path):
   ]
 
 
+def test_discover_closed_raw_lazy_skips_remaining_raw_for_done_days(
+    tmp_path, monkeypatch,
+):
+  """Lazy discover must not call build_remaining_raw_for phase=done manifest days."""
+  day = datetime(2026, 5, 22)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path)
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), zst, "verified", "verified")
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["verified_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+
+  build_calls = {"n": 0}
+
+  def _count_build(*_args, **_kwargs):
+    build_calls["n"] += 1
+    return {}
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+      _count_build,
+  )
+  found = coord.discover_closed_raw_on_disk_handoffs()
+  assert len(found) == 1
+  assert build_calls["n"] == 0
+
+
 def test_discover_closed_raw_no_full_tree_scan(tmp_path):
   """Boot discover uses manifest-first predicates, not has_closed_raw_on_disk."""
   day = datetime(2026, 5, 22)
