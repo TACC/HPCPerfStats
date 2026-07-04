@@ -24,6 +24,9 @@ import {
 } from "@/api/generated/session/session";
 import { useCacheInvalidatePageCreate } from "@/api/generated/admin/admin";
 import { getApiBody, getErrorMessage } from "@/api/get-error-message";
+import { orvalResponseData } from "@/api/orval-response";
+import type { SessionInfo } from "@/api/generated/models/sessionInfo";
+import type { InvalidateCacheResponse } from "@/api/generated/models/invalidateCacheResponse";
 import LoadingMessage from "./components/LoadingMessage";
 import LayoutRouteChromeReset from "./components/LayoutRouteChromeReset";
 import { ExtendedSearchLayoutContext } from "./context/extended-search-layout-context";
@@ -153,9 +156,15 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
       await queryClient.invalidateQueries({ queryKey: getSessionRetrieveQueryKey() });
       const refreshedSession = await queryClient.fetchQuery(getSessionRetrieveQueryOptions());
       if (typeof onSessionChange === "function") {
+        const sessionBody = orvalResponseData<SessionInfo>(refreshedSession);
         onSessionChange(
-          refreshedSession && typeof refreshedSession === "object"
-            ? (refreshedSession as SessionData)
+          sessionBody
+            ? {
+                logged_in: sessionBody.logged_in,
+                username: sessionBody.username,
+                is_staff: sessionBody.is_staff,
+                machine_name: sessionBody.machine_name ?? SITE_MACHINE_NAME,
+              }
             : null,
         );
       }
@@ -193,7 +202,7 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
       const response = await invalidateCacheMutation.mutateAsync({
         data: { page_path: pagePathForCache },
       });
-      const deletedCount = Number(response.deleted_keys || 0);
+      const deletedCount = Number(orvalResponseData<InvalidateCacheResponse>(response)?.deleted_keys || 0);
       setStaffMessage(
         `Invalidated ${deletedCount} cache key${deletedCount === 1 ? "" : "s"} for ${pagePathForCache}.`,
       );

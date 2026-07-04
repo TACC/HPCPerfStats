@@ -1,11 +1,13 @@
 import { usePubClusterDashboardRetrieve } from "@/api/generated/public/public";
 import { getErrorMessage } from "@/api/get-error-message";
+import { selectOrvalData } from "@/api/orval-response";
 
 /** Loads anonymous `/api/pub/cluster-dashboard/` bundle for public dashboards. */
 export function usePubDashboard() {
   const { data, error, isLoading, isFetching, refetch } = usePubClusterDashboardRetrieve(
     undefined,
     {
+      query: { select: selectOrvalData },
       request: { credentials: "omit" },
     },
   );

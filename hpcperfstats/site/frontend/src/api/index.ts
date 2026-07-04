@@ -4,26 +4,38 @@
  */
 
 import { customFetch } from "./fetch-mutator";
+import { orvalResponseData } from "./orval-response";
 import { API_PATHS, HISTOGRAM_EMBED_VERSION } from "../api-paths";
 
 type QueryParams = Record<string, string | number | boolean | undefined | null> | URLSearchParams;
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+function buildUrl(path: string, params?: QueryParams): string {
   const url = path.startsWith("/api") ? path : `/api${path}`;
-  return customFetch<T>({ url, method: options.method || "GET" }, options);
+  if (!params) return url;
+  if (params instanceof URLSearchParams) {
+    const query = params.toString();
+    return query ? `${url}?${query}` : url;
+  }
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null) continue;
+    search.set(key, String(value));
+  }
+  const qs = search.toString();
+  return qs ? `${url}?${qs}` : url;
+}
+
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const url = buildUrl(path);
+  const envelope = await customFetch<{ status: number; data: unknown }>(url, {
+    method: options.method || "GET",
+    ...options,
+  });
+  return orvalResponseData<T>(envelope) as T;
 }
 
 function requestWithQuery<T>(path: string, params?: QueryParams): Promise<T> {
-  const url = path.startsWith("/api") ? path : `/api${path}`;
-  if (params instanceof URLSearchParams) {
-    const query = params.toString();
-    return customFetch<T>({ url: query ? `${url}?${query}` : url, method: "GET" });
-  }
-  return customFetch<T>({
-    url,
-    method: "GET",
-    params: params as Record<string, unknown> | undefined,
-  });
+  return request<T>(buildUrl(path, params));
 }
 
 function buildJobHistogramSearchParams(
@@ -88,4 +100,3 @@ export const api = {
     return requestWithQuery(API_PATHS.jobMonitorGpu, params);
   },
 };
-

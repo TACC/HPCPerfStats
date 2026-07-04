@@ -78,7 +78,7 @@ Regenerate and **commit** updated JSON in the **same task** as you change any of
 - `hpcperfstats/site/lib/machine/api.py` → `_job_list_queue_bar_chart` (ranges, data source, dimensions).
 - Bokeh major/minor used by the SPA (`package.json` `@bokeh/bokehjs`) if the serialized `json_item` schema or the Playwright test’s CDN pin (`test_bokeh_job_list_embed_browser_e2e.py`) changes.
 
-When changing **`_BOKEH_CDN_JS`** or **`@bokeh/bokehjs`**, follow **`bokeh-version-and-vendor-patch-upgrade.mdc`** (JS/Python pin sync, Vitest + Playwright). Run **`npm run build:with-bokeh-playwright-smoke`** in `hpcperfstats/site/frontend` so **`bokeh-playwright-smoke.html`** and hashed **`assets/bokeh-*.js`** exist for the Vite-bundle Playwright test in the same module (default **`npm run build`** does not emit the smoke HTML).
+When changing **`_BOKEH_CDN_JS`** or **`@bokeh/bokehjs`**, follow **`bokeh-version-and-vendor-patch-upgrade.mdc`** (JS/Python pin sync, Vitest + Playwright). Run **`npm run build`** in `hpcperfstats/site/frontend` so **`bokeh-playwright-smoke/index.html`** exists under **`hpcperfstats_site/static/frontend/`** for the Next-bundle Playwright test in the same module.
 
 Also regenerate if the Playwright test’s **failure substrings** or embed harness change in a way that assumes a specific payload shape.
 

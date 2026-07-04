@@ -11,6 +11,7 @@ vi.mock("@/api/generated/monitor/monitor", () => ({
   jobMonitorGpuRetrieve: vi.fn(),
 }));
 
+import { orvalOkEnvelope } from "@/api/orval-response";
 import { jobMonitorGpuRetrieve } from "@/api/generated/monitor/monitor";
 
 describe("mergeJobMonitorGpuPatches", () => {
@@ -32,12 +33,14 @@ describe("mergeJobMonitorGpuPatches", () => {
 
 describe("fetchJobMonitorGpuPatches", () => {
   it("uses batch usernames param for multiple rows", async () => {
-    vi.mocked(jobMonitorGpuRetrieve).mockResolvedValue({
+    vi.mocked(jobMonitorGpuRetrieve).mockResolvedValue(
+      orvalOkEnvelope({
       results: [
         { username: "a", has_data: false },
         { username: "b", has_data: false },
       ],
-    });
+      }),
+    );
     const patches = await fetchJobMonitorGpuPatches(
       [{ username: "a" }, { username: "b" }],
       30,

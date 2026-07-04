@@ -1,4 +1,5 @@
 import { jobMonitorGpuRetrieve } from "@/api/generated/monitor/monitor";
+import { orvalResponseData } from "@/api/orval-response";
 import type { JobMonitorRow } from "@/types/view-models";
 
 const JOB_MONITOR_GPU_SORT_KEYS = new Set([
@@ -51,7 +52,7 @@ async function fetchJobMonitorGpuPatchForUsername(
     return JOB_MONITOR_GPU_NO_DATA_ROW;
   }
   try {
-    const gpuRes = await jobMonitorGpuRetrieve({ username, days });
+    const gpuRes = orvalResponseData(await jobMonitorGpuRetrieve({ username, days }));
     return gpuPatchFromResponse(gpuRes);
   } catch {
     return JOB_MONITOR_GPU_NO_DATA_ROW;
@@ -74,10 +75,12 @@ export async function fetchJobMonitorGpuPatches(
   }
 
   try {
-    const batchRes = await jobMonitorGpuRetrieve({
-      usernames: usernames.join(","),
-      days,
-    });
+    const batchRes = orvalResponseData(
+      await jobMonitorGpuRetrieve({
+        usernames: usernames.join(","),
+        days,
+      }),
+    );
 
     if (
       batchRes &&

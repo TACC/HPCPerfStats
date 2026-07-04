@@ -3,44 +3,44 @@
  * registered in response-schema-registry.ts. Run: npx tsx scripts/audit-wire-drift.mts
  */
 import {
-  adminMonitorRetrieveResponse,
-  cacheInvalidatePageCreateResponse,
-  sacctIngestCreateResponse,
+  AdminMonitorRetrieveResponse,
+  CacheInvalidatePageCreateResponse,
+  SacctIngestCreateResponse,
 } from "../src/api/generated-zod/admin/admin";
-import { homeRetrieveResponse } from "../src/api/generated-zod/home/home";
+import { HomeRetrieveResponse } from "../src/api/generated-zod/home/home";
 import {
-  jobsHistogramsBatchRetrieveResponse,
-  jobsHistogramsRetrieveResponse,
-  jobsFilterOptionsRetrieveResponse,
-  jobsPlotsRetrieveResponse,
-  jobsRetrieve2Response,
-  jobsRetrieve3Response,
-  jobsRetrieveResponse,
+  JobsHistogramsBatchRetrieveResponse,
+  JobsHistogramsRetrieveResponse,
+  JobsFilterOptionsRetrieveResponse,
+  JobsPlotsRetrieveResponse,
+  JobsRetrieve2Response,
+  JobsRetrieve3Response,
+  JobsRetrieveResponse,
 } from "../src/api/generated-zod/jobs/jobs";
-import { hostPlotRetrieveResponse } from "../src/api/generated-zod/hosts/hosts";
+import { HostPlotRetrieveResponse } from "../src/api/generated-zod/hosts/hosts";
 import {
-  jobMonitorGpuRetrieveResponse,
-  jobMonitorRetrieveResponse,
+  JobMonitorGpuRetrieveResponse,
+  JobMonitorRetrieveResponse,
 } from "../src/api/generated-zod/monitor/monitor";
-import { pubClusterDashboardRetrieveResponse } from "../src/api/generated-zod/public/public";
+import { PubClusterDashboardRetrieveResponse } from "../src/api/generated-zod/public/public";
 import {
-  sessionDropStaffCreateResponse,
-  sessionRetrieveResponse,
-  userApiKeyRetrieveResponse,
-  userApiKeyRotateCreateResponse,
+  SessionDropStaffCreateResponse,
+  SessionRetrieveResponse,
+  UserApiKeyRetrieveResponse,
+  UserApiKeyRotateCreateResponse,
 } from "../src/api/generated-zod/session/session";
 import type { z } from "zod";
 
 type Case = {
   route: string;
-  schema: z.ZodTypeAny;
+  schema: z.ZodType;
   wire: unknown;
 };
 
 const cases: Case[] = [
   {
     route: "GET /api/session/",
-    schema: sessionRetrieveResponse,
+    schema: SessionRetrieveResponse,
     wire: {
       logged_in: true,
       username: "alice",
@@ -50,22 +50,22 @@ const cases: Case[] = [
   },
   {
     route: "POST /api/session/drop-staff/",
-    schema: sessionDropStaffCreateResponse,
+    schema: SessionDropStaffCreateResponse,
     wire: { ok: true, message: "Staff removed", is_staff: false },
   },
   {
     route: "GET /api/user-api-key/",
-    schema: userApiKeyRetrieveResponse,
+    schema: UserApiKeyRetrieveResponse,
     wire: { username: "alice", raw_key: null, key_prefix: "abc123" },
   },
   {
     route: "POST /api/user-api-key/rotate/",
-    schema: userApiKeyRotateCreateResponse,
+    schema: UserApiKeyRotateCreateResponse,
     wire: { username: "alice", raw_key: "secret", key_prefix: "xyz" },
   },
   {
     route: "POST /api/cache/invalidate-page/",
-    schema: cacheInvalidatePageCreateResponse,
+    schema: CacheInvalidatePageCreateResponse,
     wire: {
       ok: true,
       page_path: "/machine/jobs/",
@@ -75,12 +75,12 @@ const cases: Case[] = [
   },
   {
     route: "POST /api/sacct/ingest/",
-    schema: sacctIngestCreateResponse,
+    schema: SacctIngestCreateResponse,
     wire: { ok: true, message: "Ingested 5 jobs" },
   },
   {
     route: "GET /api/home/",
-    schema: homeRetrieveResponse,
+    schema: HomeRetrieveResponse,
     wire: {
       machine_name: "test",
       year_list: [2024],
@@ -92,7 +92,7 @@ const cases: Case[] = [
   },
   {
     route: "GET /api/jobs/",
-    schema: jobsRetrieveResponse,
+    schema: JobsRetrieveResponse,
     wire: {
       nj: 1,
       job_list: [
@@ -126,7 +126,7 @@ const cases: Case[] = [
   },
   {
     route: "GET /api/jobs/filter_options/",
-    schema: jobsFilterOptionsRetrieveResponse,
+    schema: JobsFilterOptionsRetrieveResponse,
     wire: {
       filter_options: {
         usernames: ["alice"],
@@ -145,7 +145,7 @@ const cases: Case[] = [
   },
   {
     route: "GET /api/jobs/histograms/",
-    schema: jobsHistogramsRetrieveResponse,
+    schema: JobsHistogramsRetrieveResponse,
     wire: {
       group: "metric",
       metric: "runtime",
@@ -160,7 +160,7 @@ const cases: Case[] = [
   },
   {
     route: "GET /api/jobs/histograms/batch/",
-    schema: jobsHistogramsBatchRetrieveResponse,
+    schema: JobsHistogramsBatchRetrieveResponse,
     wire: {
       nj: 12000,
       histogram_nj: 5000,
@@ -182,7 +182,7 @@ const cases: Case[] = [
   },
   {
     route: "GET /api/host_plot/",
-    schema: hostPlotRetrieveResponse,
+    schema: HostPlotRetrieveResponse,
     wire: {
       host: "n001.cluster.example",
       plot_item: { type: "plot" },
@@ -193,12 +193,12 @@ const cases: Case[] = [
   },
   {
     route: "GET /api/admin_monitor/",
-    schema: adminMonitorRetrieveResponse,
+    schema: AdminMonitorRetrieveResponse,
     wire: { host_stats: [{ host: "n001", last_seen: "2024-01-01T00:00:00+00:00" }] },
   },
   {
     route: "GET /api/job_monitor/",
-    schema: jobMonitorRetrieveResponse,
+    schema: JobMonitorRetrieveResponse,
     wire: {
       window_days: 30,
       start_time: "2024-01-01T00:00:00+00:00",
@@ -217,7 +217,7 @@ const cases: Case[] = [
   },
   {
     route: "GET /api/job_monitor/gpu/",
-    schema: jobMonitorGpuRetrieveResponse,
+    schema: JobMonitorGpuRetrieveResponse,
     wire: {
       username: "alice",
       gpu_count_total: 4,
@@ -228,7 +228,7 @@ const cases: Case[] = [
   },
   {
     route: "GET /api/jobs/{id}/",
-    schema: jobsRetrieve2Response,
+    schema: JobsRetrieve2Response,
     wire: {
       job_data: { jid: "123", host_list: ["n001"] },
       host_list: ["n001"],
@@ -254,7 +254,7 @@ const cases: Case[] = [
   },
   {
     route: "GET /api/jobs/{id}/plots/",
-    schema: jobsPlotsRetrieveResponse,
+    schema: JobsPlotsRetrieveResponse,
     wire: {
       mplot_item: { type: "plot" },
       mplot_unavailable_reason: null,
@@ -267,7 +267,7 @@ const cases: Case[] = [
   },
   {
     route: "GET /api/jobs/{jid}/{type}/",
-    schema: jobsRetrieve3Response,
+    schema: JobsRetrieve3Response,
     wire: {
       type_name: "cpu",
       jobid: "123",
@@ -279,7 +279,7 @@ const cases: Case[] = [
   },
   {
     route: "GET /api/pub/cluster-dashboard/",
-    schema: pubClusterDashboardRetrieveResponse,
+    schema: PubClusterDashboardRetrieveResponse,
     wire: {
       status: "ready",
       machine_name: "test",

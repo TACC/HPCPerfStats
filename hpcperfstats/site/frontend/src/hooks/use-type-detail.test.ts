@@ -21,7 +21,7 @@ describe("useTypeDetailQuery", () => {
     expect(useJobsRetrieve3).toHaveBeenCalledWith(
       "123",
       "cpu",
-      expect.objectContaining({ query: { enabled: true } }),
+      expect.objectContaining({ query: { enabled: true, select: expect.any(Function) } }),
     );
     expect(result.current.data?.type_name).toBe("cpu");
   });
@@ -38,7 +38,7 @@ describe("useTypeDetailQuery", () => {
     expect(useJobsRetrieve3).toHaveBeenCalledWith(
       "",
       "cpu",
-      expect.objectContaining({ query: { enabled: false } }),
+      expect.objectContaining({ query: { enabled: false, select: expect.any(Function) } }),
     );
   });
 });

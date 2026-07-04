@@ -1,5 +1,6 @@
 import { useAdminMonitorRetrieve } from "@/api/generated/admin/admin";
 import { getErrorMessage } from "@/api/get-error-message";
+import { selectOrvalData } from "@/api/orval-response";
 import type { AdminMonitorSectionResponse } from "@/types/view-models";
 
 export type UseAdminMonitorSectionQueryOptions<T> = {
@@ -25,6 +26,7 @@ export function useAdminMonitorSectionQuery<T>({
       query: {
         enabled,
         queryKey: ["adminMonitor", section, refreshSeq],
+        select: selectOrvalData,
       },
     },
   );

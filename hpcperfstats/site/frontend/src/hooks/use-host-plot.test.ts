@@ -25,7 +25,7 @@ describe("useHostPlotQuery", () => {
 
     expect(useHostPlotRetrieve).toHaveBeenCalledWith(
       params,
-      expect.objectContaining({ query: { enabled: true } }),
+      expect.objectContaining({ query: { enabled: true, select: expect.any(Function) } }),
     );
     expect(result.current.data?.host).toBe("node1");
     expect(result.current.loading).toBe(false);
@@ -42,7 +42,7 @@ describe("useHostPlotQuery", () => {
 
     expect(useHostPlotRetrieve).toHaveBeenCalledWith(
       { host: "", end_time__gte: "" },
-      expect.objectContaining({ query: { enabled: false } }),
+      expect.objectContaining({ query: { enabled: false, select: expect.any(Function) } }),
     );
     expect(result.current.data).toBe(null);
     expect(result.current.loading).toBe(false);

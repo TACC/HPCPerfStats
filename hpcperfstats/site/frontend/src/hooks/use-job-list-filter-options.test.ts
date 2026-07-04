@@ -28,7 +28,7 @@ describe("useJobListFilterOptions", () => {
 
     expect(useJobsFilterOptionsRetrieve).toHaveBeenCalledWith(
       { page: "1" },
-      { query: { enabled: true } },
+      { query: { enabled: true, select: expect.any(Function) } },
     );
     expect(result.current.filterOptions).toEqual({
       queues: ["normal"],
@@ -66,7 +66,7 @@ describe("useJobListFilterOptions", () => {
 
     expect(useJobsFilterOptionsRetrieve).toHaveBeenCalledWith(
       { page: "1" },
-      { query: { enabled: false } },
+      { query: { enabled: false, select: expect.any(Function) } },
     );
   });
 
@@ -84,7 +84,7 @@ describe("useJobListFilterOptions", () => {
 
     expect(useJobsFilterOptionsRetrieve).toHaveBeenCalledWith(
       { end_time__date: "2024-01-15", page: "1" },
-      { query: { enabled: true } },
+      { query: { enabled: true, select: expect.any(Function) } },
     );
   });
 });

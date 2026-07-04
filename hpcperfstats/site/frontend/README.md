@@ -30,7 +30,7 @@ npm run build
 
 Output: `../hpcperfstats_site/static/frontend/`. After `collectstatic`, nginx serves hashed files under `/static/`; Django’s **`ReactSPAView`** serves only the **`index.html`** shell for `/machine/` and `/machine/<path>`.
 
-**Playwright Vite-bundle check** (`test_bokeh_job_list_embed_browser_e2e.py` third test): emit the extra multipage entry with **`npm run build:with-bokeh-playwright-smoke`** (sets `BUILD_BOKEH_SMOKE=1`). That adds **`bokeh-playwright-smoke.html`** to the same output dir; production Docker builds use default **`npm run build`** only, so the smoke page is not shipped.
+**Playwright Next-bundle check** (`test_bokeh_job_list_embed_browser_e2e.py` third test): run **`npm run build`** so **`bokeh-playwright-smoke/index.html`** is copied to **`../hpcperfstats_site/static/frontend/`**. The smoke route is a Next App Router page used only for regression testing; it is not linked from production UI.
 
 ## Stack
 

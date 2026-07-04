@@ -1,6 +1,4 @@
-/**
- * Runtime validation for Orval-generated API responses at the customFetch boundary.
- */
+import { z } from "zod";
 import { normalizeApiPath, resolveResponseSchema } from "./response-schema-registry";
 import { isDevEnvironment } from "@/utils/is-dev-environment";
 
@@ -19,7 +17,7 @@ export function parseApiResponse<T>(
       ? ` (${firstIssue.path.join(".")}: ${firstIssue.message})`
       : "";
     if (isDevEnvironment()) {
-      console.error(`API response validation failed: ${routeLabel}`, parsed.error.flatten());
+      console.error(`API response validation failed: ${routeLabel}`, z.treeifyError(parsed.error));
     }
     throw new Error(`API response validation failed: ${routeLabel}${detail}`);
   }

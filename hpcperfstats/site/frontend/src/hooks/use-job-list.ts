@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import { useJobsRetrieve } from "@/api/generated/jobs/jobs";
 import type { JobsRetrieveParams } from "@/api/generated/models/jobsRetrieveParams";
 import { getErrorMessage } from "@/api/get-error-message";
+import { selectOrvalData } from "@/api/orval-response";
 
 /** Paginated job list via TanStack Query (histograms loaded separately). */
 export function useJobListQuery(params: Record<string, string>) {
@@ -12,7 +13,7 @@ export function useJobListQuery(params: Record<string, string>) {
   );
   const { data, error, isLoading, isFetching, refetch } = useJobsRetrieve(
     jobsParams as JobsRetrieveParams,
-    { query: { placeholderData: keepPreviousData } },
+    { query: { placeholderData: keepPreviousData, select: selectOrvalData } },
   );
   return {
     data: data ?? null,

@@ -5,15 +5,25 @@ import {
   useUserApiKeyRotateCreate,
 } from "@/api/generated/session/session";
 import { getErrorMessage } from "@/api/get-error-message";
+import { orvalResponseData, selectOrvalData } from "@/api/orval-response";
 
 /** API key status + rotate mutation with query invalidation. */
 export function useUserApiKey() {
   const queryClient = useQueryClient();
-  const { data, error, isLoading, refetch } = useUserApiKeyRetrieve();
+  const { data, error, isLoading, refetch } = useUserApiKeyRetrieve({
+    query: { select: selectOrvalData },
+  });
   const rotateMutation = useUserApiKeyRotateCreate({
     mutation: {
       onSuccess: (rotated) => {
-        queryClient.setQueryData(getUserApiKeyRetrieveQueryKey(), rotated);
+        const body = orvalResponseData(rotated);
+        if (body) {
+          queryClient.setQueryData(getUserApiKeyRetrieveQueryKey(), {
+            status: 200,
+            data: body,
+            headers: rotated.headers,
+          });
+        }
       },
     },
   });

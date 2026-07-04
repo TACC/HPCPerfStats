@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { jobsHistogramsBatchRetrieve } from "@/api/generated/jobs/jobs";
+import type { JobListHistogramBatchResponse } from "@/api/generated/models/jobListHistogramBatchResponse";
 import { ApiError } from "@/api/api-error";
+import { orvalResponseData } from "@/api/orval-response";
 import { HISTOGRAM_EMBED_VERSION } from "@/api-paths";
 import type { JobListHistogramEntry, MetricHistStatusMap } from "@/types/view-models";
 import { normalizeJobListHistogramEntry } from "@/utils/normalize-job-list-histogram-entry";
@@ -108,11 +110,10 @@ export function useJobListHistograms(
           metrics: BATCH_METRICS_PARAM,
           _histogram_embed_v: HISTOGRAM_EMBED_VERSION,
         };
-        const batchData = await jobsHistogramsBatchRetrieve(
-          batchParams,
-          undefined,
-          controller.signal,
-        );
+        const batchEnvelope = await jobsHistogramsBatchRetrieve(batchParams, {
+          signal: controller.signal,
+        });
+        const batchData = orvalResponseData<JobListHistogramBatchResponse>(batchEnvelope);
         if (controller.signal.aborted) return;
 
         const rows = Array.isArray(batchData?.histograms) ? batchData.histograms : [];

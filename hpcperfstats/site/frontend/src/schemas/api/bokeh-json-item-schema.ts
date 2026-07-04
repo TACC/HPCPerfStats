@@ -1,22 +1,17 @@
 import { z } from "zod";
 
 /** Minimal Bokeh json_item document shape required before embed_item. */
-const bokehRootNodeSchema = z
-  .object({
-    id: z.union([z.string(), z.number()]).optional(),
-  })
-  .passthrough();
+const bokehRootNodeSchema = z.looseObject({
+  id: z.union([z.string(), z.number()]).optional(),
+});
 
 export const bokehJsonItemSchema = z
-  .object({
-    doc: z
-      .object({
-        roots: z.array(bokehRootNodeSchema).optional(),
-        root_ids: z.array(z.union([z.string(), z.number()])).optional(),
-      })
-      .passthrough(),
+  .looseObject({
+    doc: z.looseObject({
+      roots: z.array(bokehRootNodeSchema).optional(),
+      root_ids: z.array(z.union([z.string(), z.number()])).optional(),
+    }),
   })
-  .passthrough()
   .refine(
   (value) => {
     const doc = value.doc as Record<string, unknown> | undefined;

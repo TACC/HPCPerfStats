@@ -1,6 +1,10 @@
 import { ApiError, type ApiErrorBody } from "./api-error";
+import { isOrvalFetchEnvelope } from "./orval-response";
 
 export function getApiBody(value: unknown): ApiErrorBody {
+  if (isOrvalFetchEnvelope(value) && value.data && typeof value.data === "object") {
+    return value.data as ApiErrorBody;
+  }
   return value && typeof value === "object" ? (value as ApiErrorBody) : {};
 }
 

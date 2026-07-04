@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/api/api-error";
+import { orvalOkEnvelope } from "@/api/orval-response";
 import {
   JOB_LIST_HISTOGRAM_DEBOUNCE_MS,
   useJobListHistograms,
@@ -23,7 +24,7 @@ const VALID_BOKEH_THUMB = {
 };
 
 function mockBatchResponse(overrides: Record<string, unknown> = {}) {
-  return {
+  return orvalOkEnvelope({
     nj: 3,
     histogram_nj: 3,
     histogram_sampled: false,
@@ -51,7 +52,7 @@ function mockBatchResponse(overrides: Record<string, unknown> = {}) {
       },
     ],
     ...overrides,
-  };
+  });
 }
 
 async function advanceDebounce() {
@@ -204,12 +205,14 @@ describe("useJobListHistograms", () => {
   });
 
   it("maps legacy nj=0 empty batch to no-jobs message", async () => {
-    vi.mocked(jobsHistogramsBatchRetrieve).mockResolvedValue({
+    vi.mocked(jobsHistogramsBatchRetrieve).mockResolvedValue(
+      orvalOkEnvelope({
       nj: 0,
       histogram_nj: 0,
       histogram_sampled: false,
       histograms: [],
-    });
+      }),
+    );
 
     const { result } = renderHook(() => useJobListHistograms(STABLE_PARAMS, 0, true));
 
@@ -224,7 +227,8 @@ describe("useJobListHistograms", () => {
   });
 
   it("surfaces plot_unavailable_reason on metric status when plots are null", async () => {
-    vi.mocked(jobsHistogramsBatchRetrieve).mockResolvedValue({
+    vi.mocked(jobsHistogramsBatchRetrieve).mockResolvedValue(
+      orvalOkEnvelope({
       nj: 2,
       histogram_nj: 2,
       histogram_sampled: false,
@@ -252,7 +256,8 @@ describe("useJobListHistograms", () => {
           plot_unavailable_reason: null,
         },
       ],
-    });
+      }),
+    );
 
     const { result } = renderHook(() => useJobListHistograms(STABLE_PARAMS, 0, true));
 

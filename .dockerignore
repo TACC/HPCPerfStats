@@ -53,8 +53,6 @@ scripts/test_*.sh
 hpcperfstats/site/frontend/src/axe-test-utils.ts
 hpcperfstats/site/frontend/src/setupTests.ts
 hpcperfstats/site/frontend/vitest.config.ts
-hpcperfstats/site/frontend/src/playwright-bokeh-bundle-smoke.ts
-hpcperfstats/site/frontend/bokeh-playwright-smoke.html
 hpcperfstats/site/frontend/scripts/fix-tests-next.mjs
 hpcperfstats/site/frontend/README.md
 

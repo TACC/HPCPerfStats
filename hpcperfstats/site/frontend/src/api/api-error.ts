@@ -46,7 +46,7 @@ export function parseApiErrorBody(payload: unknown, status: number): ApiError {
         ? (payload as ApiErrorBody)
         : {};
   if (isDevEnvironment() && !parsed.success) {
-    console.warn("API error body failed schema validation", parsed.error.flatten());
+    console.warn("API error body failed schema validation", z.treeifyError(parsed.error));
   }
   return new ApiError(extractApiErrorMessage(body, status), status, body);
 }

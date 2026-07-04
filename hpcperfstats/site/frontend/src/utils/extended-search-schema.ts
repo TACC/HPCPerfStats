@@ -44,7 +44,7 @@ export function buildExtendedSearchZodSchema(metrics: ExtendedSearchMetricOption
       );
       if (meaningful.length === 0) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: "custom",
           message:
             "Enter at least one search criterion (for example a date, Job ID, host, queue, or numeric threshold).",
         });
@@ -62,19 +62,19 @@ export function buildExtendedSearchZodSchema(metrics: ExtendedSearchMetricOption
         const a = parseValue(params[gteKey]);
         const b = parseValue(params[lteKey]);
         if (a.invalid) {
-          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${label} minimum is not valid.`, path: [gteId] });
+          ctx.addIssue({ code: "custom", message: `${label} minimum is not valid.`, path: [gteId] });
         }
         if (b.invalid) {
-          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${label} maximum is not valid.`, path: [lteId] });
+          ctx.addIssue({ code: "custom", message: `${label} maximum is not valid.`, path: [lteId] });
         }
         if (!a.invalid && !b.invalid && !a.empty && !b.empty && a.value! > b.value!) {
           ctx.addIssue({
-            code: z.ZodIssueCode.custom,
+            code: "custom",
             message: `${label} minimum cannot be greater than maximum.`,
             path: [gteId],
           });
           ctx.addIssue({
-            code: z.ZodIssueCode.custom,
+            code: "custom",
             message: `${label} minimum cannot be greater than maximum.`,
             path: [lteId],
           });

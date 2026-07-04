@@ -29,14 +29,14 @@ If Bokeh regressions reappear in the browser console after upgrades, prefer fixi
 
 1. Bump **`@bokeh/bokehjs`** and **`bokeh==…`** together per the table above.
 2. `cd hpcperfstats/site/frontend && npm ci` (or `npm install`).
-3. `npm run build` → fix bundle/import breaks (SPA-only; default build does not emit **`bokeh-playwright-smoke.html`**).
+3. `npm run build` → fix bundle/import breaks (includes `app/bokeh-playwright-smoke/` for Playwright bundle regression).
 4. `npm test -- --run` (Vitest), including Bokeh embed tests as needed.
-5. `pytest hpcperfstats/site/lib/machine/tests/test_bokeh_job_list_embed_browser_e2e.py` (Playwright + CDN Bokeh; see below). For the **third** (Vite-bundle) test, run **`npm run build:with-bokeh-playwright-smoke`** first or that test skips.
+5. `pytest hpcperfstats/site/lib/machine/tests/test_bokeh_job_list_embed_browser_e2e.py` (Playwright + CDN Bokeh; see below). For the **third** (Next-bundle) test, run **`npm run build`** first or that test skips.
 6. Regenerate **`test-fixtures`** if schema changes; update **`docs/TESTING.md`** if workflow or commands change (`testing-doc-sync.mdc`).
 
 ## Playwright vs production bundle
 
-`test_bokeh_job_list_embed_browser_e2e.py` loads Bokeh from **jsDelivr** at the same **version** as `package.json` for two tests, and a third starts **`vite preview`** against the built tree so **`bokeh-playwright-smoke.html`** exercises the **same Vite chunk graph** as production (requires **`npm run build:with-bokeh-playwright-smoke`** in `hpcperfstats/site/frontend`, or **`BUILD_BOKEH_SMOKE=1 npm run build`**; default **`npm run build`** is SPA-only—or the third test skips). After Bokeh bumps, spot-check real pages (job list distributions, job detail plots) for console cleanliness if Vitest/Playwright are green.
+`test_bokeh_job_list_embed_browser_e2e.py` loads Bokeh from **jsDelivr** at the same **version** as `package.json` for two tests, and a third serves the **Next static export** (`hpcperfstats_site/static/frontend/`) via `python3 -m http.server` so **`/static/frontend/bokeh-playwright-smoke/`** exercises the **same Turbopack chunk graph** as production (requires **`npm run build`** in `hpcperfstats/site/frontend` — or the third test skips). After Bokeh bumps, spot-check real pages (job list distributions, job detail plots) for console cleanliness if Vitest/Playwright are green.
 
 ## Overlap
 

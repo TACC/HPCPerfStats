@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { parseApiResponse } from "@/api/parse-api-response";
 import { resolveResponseSchema } from "@/api/response-schema-registry";
-import { homeRetrieveResponse } from "@/api/generated-zod/home/home";
-import { jobsRetrieveResponse } from "@/api/generated-zod/jobs/jobs";
-import { sessionRetrieveResponse } from "@/api/generated-zod/session/session";
+import { HomeRetrieveResponse } from "@/api/generated-zod/home/home";
+import { JobsRetrieveResponse } from "@/api/generated-zod/jobs/jobs";
+import { SessionRetrieveResponse } from "@/api/generated-zod/session/session";
 import * as isDevEnvironmentModule from "@/utils/is-dev-environment";
 
 const validHomePayload = {
@@ -187,7 +187,7 @@ describe("parse-api-response", () => {
   });
 
   it("accepts realistic home options payload", () => {
-    expect(homeRetrieveResponse.safeParse(validHomePayload).success).toBe(true);
+    expect(HomeRetrieveResponse.safeParse(validHomePayload).success).toBe(true);
     const parsed = parseApiResponse("GET", "/api/home/", validHomePayload);
     expect(parsed).toEqual(validHomePayload);
   });
@@ -198,7 +198,7 @@ describe("parse-api-response", () => {
       username: "alice",
       is_staff: false,
     };
-    expect(sessionRetrieveResponse.safeParse(payload).success).toBe(true);
+    expect(SessionRetrieveResponse.safeParse(payload).success).toBe(true);
     const parsed = parseApiResponse("GET", "/api/session/", payload);
     expect(parsed).toEqual(payload);
   });
@@ -210,7 +210,7 @@ describe("parse-api-response", () => {
       is_staff: true,
       machine_name: "cluster.test",
     };
-    expect(sessionRetrieveResponse.safeParse(payload).success).toBe(true);
+    expect(SessionRetrieveResponse.safeParse(payload).success).toBe(true);
     expect(parseApiResponse("GET", "/api/session/", payload)).toEqual(payload);
   });
 
@@ -219,7 +219,7 @@ describe("parse-api-response", () => {
       ...validHomePayload,
       metrics: [{ metric: "runtime", units: "hours" }],
     };
-    expect(homeRetrieveResponse.safeParse(legacyPayload).success).toBe(false);
+    expect(HomeRetrieveResponse.safeParse(legacyPayload).success).toBe(false);
     expect(() => parseApiResponse("GET", "/api/home/", legacyPayload)).toThrow(
       "API response validation failed: GET /api/home/",
     );
@@ -248,7 +248,7 @@ describe("parse-api-response", () => {
       aggregates: { total_node_hours: 64 },
       pagination: { page: 1, num_pages: 1 },
     };
-    expect(jobsRetrieveResponse.safeParse(payload).success).toBe(true);
+    expect(JobsRetrieveResponse.safeParse(payload).success).toBe(true);
     const parsed = parseApiResponse<typeof payload>("GET", "/api/jobs/", payload);
     expect(parsed.nj).toBe(1);
     expect(parsed.job_list?.[0]?.host_list).toEqual(["n001.cluster.example"]);
@@ -285,7 +285,7 @@ describe("parse-api-response", () => {
       aggregates: { total_node_hours: 12 },
       pagination: { page: 1, num_pages: 1 },
     };
-    expect(jobsRetrieveResponse.safeParse(payload).success).toBe(true);
+    expect(JobsRetrieveResponse.safeParse(payload).success).toBe(true);
     const parsed = parseApiResponse<typeof payload>("GET", "/api/jobs/", payload);
     expect(parsed.job_list?.[0]?.account).toBeNull();
     expect(parsed.job_list?.[0]?.queue).toBeNull();

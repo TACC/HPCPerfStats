@@ -4,8 +4,9 @@ Loads committed fixtures from ``site/frontend/src/test-fixtures/`` (generated fr
 Django ``json_item`` after range fixes). Uses the public Bokeh 3.9.1 CDN so
 Chromium has a real canvas (jsdom/Vitest cannot run ``embed_item``).
 
-A second test serves the **Vite production build** via ``vite preview`` and embeds
-the same fixtures through ``bokeh-playwright-smoke.html`` (bundled
+A second test serves the **Next static export** (``npm run build`` →
+``hpcperfstats_site/static/frontend/``) via ``python3 -m http.server`` and embeds
+the same fixtures through ``/static/frontend/bokeh-playwright-smoke/`` (bundled
 ``@bokeh/bokehjs`` + ``patch-resize-observer-for-bokeh``), matching production chunk
 graph without jsDelivr.
 
@@ -42,11 +43,10 @@ _FAILURE_SUBSTRINGS = (
 )
 
 # hpcperfstats/site/lib/machine/tests -> site
-_SITE_DIR = Path(__file__).resolve().parent.parent.parent
+_SITE_DIR = Path(__file__).resolve().parents[3]
 _FIXTURE_DIR = _SITE_DIR / "frontend" / "src" / "test-fixtures"
 _STATIC_FRONTEND_DIR = _SITE_DIR / "hpcperfstats_site" / "static" / "frontend"
-_FRONTEND_DIR = _SITE_DIR / "frontend"
-_VITE_CLI = _FRONTEND_DIR / "node_modules" / "vite" / "bin" / "vite.js"
+_SITE_ROOT_DIR = _SITE_DIR / "hpcperfstats_site"
 
 
 def _pick_free_port() -> int:
@@ -168,19 +168,13 @@ def test_bokeh_embed_job_list_fixtures_no_histogram_failure_console_messages():
 
 
 @pytest.mark.django_db(databases=[])
-def test_bokeh_embed_job_list_fixtures_vite_built_bundle_no_histogram_failure_console_messages():
-    """Same fixtures as CDN test, but Bokeh loads from the Vite-built smoke entry (no jsDelivr)."""
-    smoke_html = _STATIC_FRONTEND_DIR / "bokeh-playwright-smoke.html"
-    if not smoke_html.is_file():
+def test_bokeh_embed_job_list_fixtures_next_built_bundle_no_histogram_failure_console_messages():
+    """Same fixtures as CDN test, but Bokeh loads from the Next-built smoke route (no jsDelivr)."""
+    smoke_index = _STATIC_FRONTEND_DIR / "bokeh-playwright-smoke" / "index.html"
+    if not smoke_index.is_file():
         pytest.skip(
-            "Built frontend missing bokeh-playwright-smoke.html; from "
-            "hpcperfstats/site/frontend run `npm run build:with-bokeh-playwright-smoke` "
-            "(or `BUILD_BOKEH_SMOKE=1 npm run build`). Default `npm run build` is SPA-only "
-            "(see docs/TESTING.md)."
-        )
-    if not _VITE_CLI.is_file():
-        pytest.skip(
-            "Vite CLI missing under node_modules; run `npm ci` in hpcperfstats/site/frontend."
+            "Built frontend missing bokeh-playwright-smoke/index.html; from "
+            "hpcperfstats/site/frontend run `npm run build` (see docs/TESTING.md)."
         )
 
     paths = [
@@ -197,29 +191,26 @@ def test_bokeh_embed_job_list_fixtures_vite_built_bundle_no_histogram_failure_co
     port = _pick_free_port()
     proc = subprocess.Popen(
         [
-            "node",
-            str(_VITE_CLI),
-            "preview",
-            "--host",
-            "127.0.0.1",
-            "--port",
+            "python3",
+            "-m",
+            "http.server",
             str(port),
-            "--strictPort",
+            "--bind",
+            "127.0.0.1",
+            "--directory",
+            str(_SITE_ROOT_DIR),
         ],
-        cwd=str(_FRONTEND_DIR),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    base = f"http://127.0.0.1:{port}/static/frontend/bokeh-playwright-smoke.html"
+    base = f"http://127.0.0.1:{port}/static/frontend/bokeh-playwright-smoke/"
     try:
         try:
             _wait_http_ok(base)
         except TimeoutError:
             pytest.fail(
-                "vite preview did not start in time for Bokeh bundle smoke test "
-                f"(port {port}). From hpcperfstats/site/frontend run "
-                "`npm run build:with-bokeh-playwright-smoke` (or `BUILD_BOKEH_SMOKE=1 npm run build`) "
-                "and retry."
+                "http.server did not start in time for Bokeh bundle smoke test "
+                f"(port {port}). From hpcperfstats/site/frontend run `npm run build` and retry."
             )
 
         with sync_playwright() as playwright:
@@ -253,13 +244,13 @@ def test_bokeh_embed_job_list_fixtures_vite_built_bundle_no_histogram_failure_co
                     )
                     page.evaluate(
                         """(plotItem) => {
-                          window.__HPCPERFSTATS_VITE_BOKEH__.embed.embed_item(plotItem, "plot");
+                          window.__HPCPERFSTATS_NEXT_BOKEH__.embed.embed_item(plotItem, "plot");
                         }""",
                         item,
                     )
                     time.sleep(0.8)
                     assert not violations, (
-                        f"Bokeh console/pageerror (Vite bundle) while embedding {path.name}: "
+                        f"Bokeh console/pageerror (Next bundle) while embedding {path.name}: "
                         f"{violations!r}"
                     )
             finally:

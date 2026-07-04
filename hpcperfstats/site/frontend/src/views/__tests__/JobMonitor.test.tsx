@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import JobMonitor from "../JobMonitor";
 import { useJobMonitorQuery } from "@/hooks/use-job-monitor";
 import { jobMonitorGpuRetrieve } from "@/api/generated/monitor/monitor";
+import { orvalOkEnvelope } from "@/api/orval-response";
 import { renderWithProviders } from "@/test-utils/render-with-providers";
 
 vi.mock("@/hooks/use-job-monitor", () => ({
@@ -104,13 +105,15 @@ describe("JobMonitor", () => {
         ],
       },
     });
-    vi.mocked(jobMonitorGpuRetrieve).mockResolvedValue({
+    vi.mocked(jobMonitorGpuRetrieve).mockResolvedValue(
+      orvalOkEnvelope({
       username: "bob",
       gpu_count_total: 8,
       gpu_active_total: 4,
       gpu_active_percentage: 50,
       has_data: true,
-    });
+      }),
+    );
 
     renderWithProviders(<JobMonitor />);
 

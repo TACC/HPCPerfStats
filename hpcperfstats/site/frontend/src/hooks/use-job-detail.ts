@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useJobsRetrieve2 } from "@/api/generated/jobs/jobs";
 import type { JobDetailResponse } from "@/api/generated/models/jobDetailResponse";
 import { getErrorMessage, getStatusAwareErrorMessage } from "@/api/get-error-message";
+import { selectOrvalData } from "@/api/orval-response";
 
 const INITIAL_DEFER = "xalt,proc,multiprecision";
 
@@ -16,6 +17,7 @@ export function useJobDetailQuery(pk: string) {
       query: {
         enabled: !!pk,
         placeholderData: keepPreviousData,
+        select: selectOrvalData,
       },
     },
   );

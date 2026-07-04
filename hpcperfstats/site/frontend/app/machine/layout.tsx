@@ -11,6 +11,7 @@ import LoadingMessage from "@/components/LoadingMessage";
 import { SessionContext, type SessionData } from "@/session-context";
 import { useDocumentTitle } from "@/utils/useDocumentTitle";
 import { SITE_MACHINE_NAME } from "@/config/site-identity";
+import { selectOrvalData } from "@/api/orval-response";
 
 applyBokehResizeObserverDeferral();
 
@@ -32,7 +33,9 @@ function sessionFromApi(data: SessionInfo): SessionData {
 
 export default function MachineLayout({ children }: { children: React.ReactNode }) {
   const queryClient = useQueryClient();
-  const { data: sessionData, isLoading, isError } = useSessionRetrieve();
+  const { data: sessionData, isLoading, isError } = useSessionRetrieve({
+    query: { select: selectOrvalData },
+  });
 
   const session: SessionData | null = sessionData
     ? sessionFromApi(sessionData)
@@ -43,7 +46,11 @@ export default function MachineLayout({ children }: { children: React.ReactNode 
   const handleSessionChange = useCallback(
     (next: SessionData | null) => {
       if (next) {
-        queryClient.setQueryData(getSessionRetrieveQueryKey(), next);
+        queryClient.setQueryData(getSessionRetrieveQueryKey(), {
+          status: 200,
+          data: next,
+          headers: new Headers(),
+        });
       } else {
         void queryClient.invalidateQueries({ queryKey: getSessionRetrieveQueryKey() });
       }

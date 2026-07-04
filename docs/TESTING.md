@@ -163,7 +163,7 @@ The SPA bundles Bokeh via **`@bokeh/bokehjs`** in `package.json`; keep its versi
 
 **Bootswatch** (Spacelab) is imported from **`bootswatch`** in the Next.js bundle (same CSS stack as the rest of `/machine/`).
 
-**Frontend stack:** Next.js 15 App Router (static export), strict TypeScript, TanStack Query, Orval (from committed `hpcperfstats/site/openapi/openapi.yaml`), React Hook Form + Zod. Build:
+**Frontend stack:** Next.js 16 App Router (static export, Turbopack), strict TypeScript 6, TanStack Query, Orval 8 + Zod 4 (from committed `hpcperfstats/site/openapi/openapi.yaml`), React Hook Form + Zod. Build:
 
 ```bash
 cd hpcperfstats/site/frontend && npm ci && npm run build
@@ -403,7 +403,7 @@ Use this for web-page E2E modules plus the nginx/WSGI route contract:
 - `hpcperfstats/site/lib/machine/tests/test_web_pages_e2e.py` (**PostgreSQL on Compose**: root **`conftest.py`** applies **`django_db`** to **`site/lib/machine/tests`** by default when unset; **`pytest_collection_modifyitems`** skips Postgres-backed machine tests unless **`HPCPERFSTATS_COMPOSE_NETWORK=1`**. This workflow passes **`HPCPERFSTATS_COMPOSE_NETWORK=1`** into the **`web`** container and runs **`manage.py migrate --noinput`** before pytest.)
 - `hpcperfstats/site/lib/machine/tests/test_web_pages_browser_e2e.py` (Playwright: Django stub server + **`/machine/*`** and **`/pub/*`** SPA shells return **404** from WSGI per nginx ownership contract)
 - `hpcperfstats/site/hpcperfstats_site/tests/test_nginx_static_wsgi_contract.py` (**`/static/`**, **`/machine/`**, **`/pub/`** WSGI 404 contract + **`/robots.txt`** nginx static / WSGI 404 + edge headers include)
-- **`test_bokeh_job_list_embed_browser_e2e.py`** is **not** run here (needs CDN and optionally **`vite preview`** / **`node_modules`** inside the container). Run it separately—compose-backed **`pytest`** on **`web`** after **`pip install ".[test]"`** + **`playwright install chromium`**, or on the host with Playwright installed. See module docstring for **`BUILD_BOKEH_SMOKE`** and fixture regeneration after **`job_hist`** / queue bar chart changes.
+- **`test_bokeh_job_list_embed_browser_e2e.py`** is **not** run here (needs CDN and optionally a **Next-built** static tree under **`hpcperfstats_site/static/frontend/`**). Run it separately—compose-backed **`pytest`** on **`web`** after **`pip install ".[test]"`** + **`playwright install chromium`**, or on the host with Playwright installed. For the bundled-Bokeh test, run **`npm run build`** in `hpcperfstats/site/frontend` first. See module docstring for fixture regeneration after **`job_hist`** / queue bar chart changes.
 
 The workflow script handles Docker lifecycle and runs **`migrate`** plus those modules in one session:
 

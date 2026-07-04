@@ -30,7 +30,7 @@ alwaysApply: false
 5. **Wire contract:** per **`openapi-spa-wire-validation-contract.mdc`** — representative `test_*_openapi_wire_contract.py` + `parse-api-response.test.ts` for registry routes
 6. **Run frontend tests** touching API mocks after hook signature changes.
 7. **Parse registry:** when adding endpoints, register Zod response schemas in `src/api/response-schema-registry.ts` (or regenerate if codegen adds a registry).
-8. **`orval.config.ts`:** keep `override.zod.dateTimeOptions: { local: true, offset: true }` for DRF datetimes.
+8. **`orval.config.ts`:** keep `override.zod.version: 4` and `override.zod.dateTimeOptions: { local: true, offset: true }` for DRF datetimes. Orval 8 emits **PascalCase** Zod schema exports — register those names in `response-schema-registry.ts`.
 9. **Stack wiring:** per **`frontend-stack-wiring-contract.mdc`** — thin hook, view, registry, and audit script updated together.
 
 ## Overlap

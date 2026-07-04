@@ -4,34 +4,34 @@
  */
 import type { z } from "zod";
 import {
-  adminMonitorRetrieveResponse,
-  cacheInvalidatePageCreateResponse,
-  sacctIngestCreateResponse,
+  AdminMonitorRetrieveResponse,
+  CacheInvalidatePageCreateResponse,
+  SacctIngestCreateResponse,
 } from "./generated-zod/admin/admin";
-import { homeRetrieveResponse } from "./generated-zod/home/home";
+import { HomeRetrieveResponse } from "./generated-zod/home/home";
 import {
-  jobsHistogramsBatchRetrieveResponse,
-  jobsHistogramsRetrieveResponse,
-  jobsFilterOptionsRetrieveResponse,
-  jobsPlotsRetrieveResponse,
-  jobsRetrieve2Response,
-  jobsRetrieve3Response,
-  jobsRetrieveResponse,
+  JobsHistogramsBatchRetrieveResponse,
+  JobsHistogramsRetrieveResponse,
+  JobsFilterOptionsRetrieveResponse,
+  JobsPlotsRetrieveResponse,
+  JobsRetrieve2Response,
+  JobsRetrieve3Response,
+  JobsRetrieveResponse,
 } from "./generated-zod/jobs/jobs";
-import { hostPlotRetrieveResponse } from "./generated-zod/hosts/hosts";
+import { HostPlotRetrieveResponse } from "./generated-zod/hosts/hosts";
 import {
-  jobMonitorGpuRetrieveResponse,
-  jobMonitorRetrieveResponse,
+  JobMonitorGpuRetrieveResponse,
+  JobMonitorRetrieveResponse,
 } from "./generated-zod/monitor/monitor";
-import { pubClusterDashboardRetrieveResponse } from "./generated-zod/public/public";
+import { PubClusterDashboardRetrieveResponse } from "./generated-zod/public/public";
 import {
-  sessionDropStaffCreateResponse,
-  sessionRetrieveResponse,
-  userApiKeyRetrieveResponse,
-  userApiKeyRotateCreateResponse,
+  SessionDropStaffCreateResponse,
+  SessionRetrieveResponse,
+  UserApiKeyRetrieveResponse,
+  UserApiKeyRotateCreateResponse,
 } from "./generated-zod/session/session";
 
-type ZodSchema = z.ZodTypeAny;
+type ZodSchema = z.ZodType;
 
 export function normalizeApiPath(url: string): string {
   const withoutQuery = url.split("?")[0];
@@ -55,22 +55,22 @@ function matchTypeDetail(path: string): boolean {
 
 /** Registry keyed by `METHOD path` for exact routes; dynamic paths use matchers below. */
 const EXACT_RESPONSE_SCHEMAS: Record<string, ZodSchema> = {
-  "GET /api/session/": sessionRetrieveResponse,
-  "POST /api/session/drop-staff/": sessionDropStaffCreateResponse,
-  "GET /api/user-api-key/": userApiKeyRetrieveResponse,
-  "POST /api/user-api-key/rotate/": userApiKeyRotateCreateResponse,
-  "POST /api/cache/invalidate-page/": cacheInvalidatePageCreateResponse,
-  "POST /api/sacct/ingest/": sacctIngestCreateResponse,
-  "GET /api/home/": homeRetrieveResponse,
-  "GET /api/jobs/": jobsRetrieveResponse,
-  "GET /api/jobs/filter_options/": jobsFilterOptionsRetrieveResponse,
-  "GET /api/jobs/histograms/": jobsHistogramsRetrieveResponse,
-  "GET /api/jobs/histograms/batch/": jobsHistogramsBatchRetrieveResponse,
-  "GET /api/host_plot/": hostPlotRetrieveResponse,
-  "GET /api/admin_monitor/": adminMonitorRetrieveResponse,
-  "GET /api/job_monitor/gpu/": jobMonitorGpuRetrieveResponse,
-  "GET /api/job_monitor/": jobMonitorRetrieveResponse,
-  "GET /api/pub/cluster-dashboard/": pubClusterDashboardRetrieveResponse,
+  "GET /api/session/": SessionRetrieveResponse,
+  "POST /api/session/drop-staff/": SessionDropStaffCreateResponse,
+  "GET /api/user-api-key/": UserApiKeyRetrieveResponse,
+  "POST /api/user-api-key/rotate/": UserApiKeyRotateCreateResponse,
+  "POST /api/cache/invalidate-page/": CacheInvalidatePageCreateResponse,
+  "POST /api/sacct/ingest/": SacctIngestCreateResponse,
+  "GET /api/home/": HomeRetrieveResponse,
+  "GET /api/jobs/": JobsRetrieveResponse,
+  "GET /api/jobs/filter_options/": JobsFilterOptionsRetrieveResponse,
+  "GET /api/jobs/histograms/": JobsHistogramsRetrieveResponse,
+  "GET /api/jobs/histograms/batch/": JobsHistogramsBatchRetrieveResponse,
+  "GET /api/host_plot/": HostPlotRetrieveResponse,
+  "GET /api/admin_monitor/": AdminMonitorRetrieveResponse,
+  "GET /api/job_monitor/gpu/": JobMonitorGpuRetrieveResponse,
+  "GET /api/job_monitor/": JobMonitorRetrieveResponse,
+  "GET /api/pub/cluster-dashboard/": PubClusterDashboardRetrieveResponse,
 };
 
 /** Exposed for wiring drift tests (frontend-stack-wiring-contract.mdc). */
@@ -82,8 +82,8 @@ export function resolveResponseSchema(method: string, url: string): ZodSchema | 
   const exact = EXACT_RESPONSE_SCHEMAS[`${upper} ${path}`];
   if (exact) return exact;
 
-  if (upper === "GET" && matchJobDetailPlots(path)) return jobsPlotsRetrieveResponse;
-  if (upper === "GET" && matchTypeDetail(path)) return jobsRetrieve3Response;
-  if (upper === "GET" && matchJobDetail(path)) return jobsRetrieve2Response;
+  if (upper === "GET" && matchJobDetailPlots(path)) return JobsPlotsRetrieveResponse;
+  if (upper === "GET" && matchTypeDetail(path)) return JobsRetrieve3Response;
+  if (upper === "GET" && matchJobDetail(path)) return JobsRetrieve2Response;
   return null;
 }

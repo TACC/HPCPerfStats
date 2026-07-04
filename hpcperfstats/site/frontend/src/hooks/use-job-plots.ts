@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { jobsPlotsRetrieve } from "@/api/generated/jobs/jobs";
+import { orvalResponseData } from "@/api/orval-response";
 import type { JobPlotBatchResponse, JobPlotsState } from "@/types/view-models";
 import {
   JOB_PLOT_CONFIGS,
@@ -21,9 +22,10 @@ export function useJobPlotsQuery(pk: string, enabled: boolean) {
     async (cancelledCheck: () => boolean): Promise<void> => {
       let keepLoading = false;
       try {
-        const plotResponse = (await jobsPlotsRetrieve(pk, {
+        const plotEnvelope = await jobsPlotsRetrieve(pk, {
           progressive: "1",
-        })) as unknown as JobPlotBatchResponse;
+        });
+        const plotResponse = orvalResponseData(plotEnvelope) as JobPlotBatchResponse | undefined;
         if (cancelledCheck()) return;
 
         if (plotResponse?.status === "loading") {

@@ -27,7 +27,6 @@ export default defineConfig({
         "src/**/setupTests.ts",
         "src/axe-test-utils.ts",
         "src/api/generated/**",
-        "src/playwright-bokeh-bundle-smoke.ts",
         "src/utils/generate-variable-metadata-monitor-events.py",
       ],
     },

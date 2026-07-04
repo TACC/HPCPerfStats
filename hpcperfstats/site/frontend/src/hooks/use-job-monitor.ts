@@ -1,6 +1,7 @@
 import { keepPreviousData } from "@tanstack/react-query";
 import { useJobMonitorRetrieve } from "@/api/generated/monitor/monitor";
 import { getErrorMessage } from "@/api/get-error-message";
+import { selectOrvalData } from "@/api/orval-response";
 
 /** Job failure monitor table for a rolling window (days query param). */
 export function useJobMonitorQuery(days?: number) {
@@ -10,6 +11,7 @@ export function useJobMonitorQuery(days?: number) {
       query: {
         enabled: days !== undefined,
         placeholderData: keepPreviousData,
+        select: selectOrvalData,
       },
     },
   );

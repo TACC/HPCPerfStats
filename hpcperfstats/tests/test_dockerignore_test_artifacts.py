@@ -143,8 +143,6 @@ def _looks_like_test_artifact(rel_path: str) -> bool:
       "vitest.config.ts",
       "setupTests.ts",
       "axe-test-utils.ts",
-      "playwright-bokeh-bundle-smoke.ts",
-      "bokeh-playwright-smoke.html",
       "fix-tests-next.mjs",
       "playwright_axe.py",
   }:

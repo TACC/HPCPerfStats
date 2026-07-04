@@ -13,7 +13,7 @@ declare global {
     /** Set by patch-resize-observer-for-bokeh.ts when deferral is active. */
     __hpcperfstatsResizeObserverDeferred?: boolean;
     __HPCPERFSTATS_BOKEH_SMOKE_READY__?: boolean;
-    __HPCPERFSTATS_VITE_BOKEH__?: typeof import("@bokeh/bokehjs");
+    __HPCPERFSTATS_NEXT_BOKEH__?: typeof import("@bokeh/bokehjs");
   }
 
   interface ImportMeta {
