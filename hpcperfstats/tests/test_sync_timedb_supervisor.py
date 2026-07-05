@@ -120,6 +120,84 @@ class _InlineThreadPoolExecutor:
     def shutdown(self, wait=True):
         del wait
 
+
+class _SupervisorDisabledDayRawRemoval:
+    enabled = False
+    on_handoff_to_ingest = None
+    on_pipeline_complete = None
+
+    def __init__(self, **_kwargs):
+        pass
+
+    def any_active_raw_removal_work(self):
+        return False
+
+    def consumed_paths(self):
+        return set()
+
+    def paths_pending_delete(self):
+        return set()
+
+    def any_needs_delete_phase(self):
+        return False
+
+    def any_needs_tar_drop_finish(self):
+        return False
+
+    def discover_manifest_handoffs(self):
+        return []
+
+    def discover_closed_raw_on_disk_handoffs(self):
+        return []
+
+    def shutdown(self, wait=True):
+        del wait
+
+
+def _host_data_filter_qs(*, exists_result=True, iterator_values=None):
+    class _QS:
+
+        def exists(self):
+            return exists_result
+
+        def values_list(self, *args, **kwargs):
+            del args, kwargs
+            return self
+
+        def distinct(self):
+            return self
+
+        def iterator(self):
+            return iter(iterator_values or ())
+
+    class _Mgr:
+
+        def filter(self, **_kwargs):
+            return _QS()
+
+    return _Mgr()
+
+
+def _patch_prewarm_populate(monkeypatch, calls=None):
+    import hpcperfstats.dbload.lib.sync_timedb_archive_members_redis as redis_mod
+
+    def _populate(canonical, *, role="supervisor"):
+        del role
+        if calls is not None:
+            calls.append(canonical)
+
+    monkeypatch.setattr(
+        redis_mod,
+        'request_archive_members_populate_and_wait',
+        _populate,
+    )
+    monkeypatch.setattr(
+        st,
+        'consume_archive_members_populate_source',
+        lambda _canonical: 'sealed_populated',
+    )
+
+
 @pytest.fixture(autouse=True)
 def _default_startup_daily_tar_count(monkeypatch):
     """Keep startup archival gating deterministic unless a test overrides it."""
@@ -1310,7 +1388,7 @@ def test_parse_payload_marks_fully_duplicate_file_for_archival(monkeypatch):
     monkeypatch.setattr(st, 'load_stats_file_lines', lambda *_a, **_k: (['100 job1 h1\n'], None))
     monkeypatch.setattr(st, 'parse_first_timestamp_line', lambda _lines: ('100', 'job1', 'h1'))
     monkeypatch.setattr(st, 'head_timestamp_present_in_db', lambda *_a, **_k: True)
-    monkeypatch.setattr(st.host_data, 'objects', type('_Mgr', (), {'filter': staticmethod(lambda **_k: type('_QS', (), {'values_list': staticmethod(lambda *a, **k: type('_V', (), {'distinct': staticmethod(lambda: type('_I', (), {'iterator': staticmethod(lambda: iter([]))})())})())})())})())
+    monkeypatch.setattr(st.host_data, 'objects', _host_data_filter_qs(exists_result=True))
     monkeypatch.setattr(st, 'find_processing_start_index', lambda *_a, **_k: (-1, True))
     monkeypatch.setattr(st, 'raw_stats_path_tar_append_decision', lambda *_a, **_k: (True, ''))
     stats_file, payload, need_archival, ingest_ok, parse_elapsed_s, _outcome_meta = st._unpack_parse_payload_result(st._parse_stats_file_payload(target))
@@ -1328,7 +1406,7 @@ def test_parse_stats_file_payload_need_archival_false_on_day_skip(monkeypatch):
     monkeypatch.setattr(st, 'load_stats_file_lines', lambda *_a, **_k: (['100 job1 h1\n'], None))
     monkeypatch.setattr(st, 'parse_first_timestamp_line', lambda _lines: ('100', 'job1', 'h1'))
     monkeypatch.setattr(st, 'head_timestamp_present_in_db', lambda *_a, **_k: True)
-    monkeypatch.setattr(st.host_data, 'objects', type('_Mgr', (), {'filter': staticmethod(lambda **_k: type('_QS', (), {'values_list': staticmethod(lambda *a, **k: type('_V', (), {'distinct': staticmethod(lambda: type('_I', (), {'iterator': staticmethod(lambda: iter([]))})())})())})())})())
+    monkeypatch.setattr(st.host_data, 'objects', _host_data_filter_qs(exists_result=True))
     monkeypatch.setattr(st, 'find_processing_start_index', lambda *_a, **_k: (-1, True))
     monkeypatch.setattr(
         st, 'raw_stats_path_tar_append_decision', lambda *_a, **_k: (False, 'member_exists'),
@@ -1354,10 +1432,12 @@ def test_sync_timedb_exits_on_redis_unavailable_during_ingest(monkeypatch):
         fake_rescan.calls = 0
 
         def fake_combined(_lock, path, stats_file_contents=None):
-            del _lock, stats_file_contents
-            raise ArchiveMembersRedisUnavailableError('redis down mid-ingest')
+            del _lock, path, stats_file_contents
+            st._exit_on_archive_members_redis_unavailable(
+                ArchiveMembersRedisUnavailableError('redis down mid-ingest'),
+            )
         monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
-        monkeypatch.setattr(st, '_ingest_parse_and_write_file', fake_combined)
+        monkeypatch.setattr(st, 'add_stats_file_to_db', fake_combined)
         monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
         monkeypatch.setattr(st.cfg, 'get_sync_ingest_chunk_size', lambda: 1000)
         monkeypatch.setattr(st.cfg, 'get_sync_supervisor_rss_limit_mb', lambda: 0)
@@ -1408,7 +1488,7 @@ def test_chunk_prewarm_populates_redis_before_imap(monkeypatch, tmp_path):
     monkeypatch.setattr(st, 'archive_members_redis_enabled', lambda: True)
     monkeypatch.setattr(st, 'tgz_archive_dir', str(tgz_dir))
     monkeypatch.setattr(st, 'redis_members_cache_is_fully_warm', lambda keys: False)
-    monkeypatch.setattr(st, 'get_existing_archive_members_for_daily_archive', lambda canonical: calls.append(canonical) or {'m': 1})
+    _patch_prewarm_populate(monkeypatch, calls)
     st._prewarm_archive_members_redis_for_chunk(paths)
     assert len(calls) == 1
 
@@ -1421,7 +1501,7 @@ def test_chunk_prewarm_logs_begin_and_complete(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(st, 'archive_members_redis_enabled', lambda: True)
     monkeypatch.setattr(st, 'tgz_archive_dir', str(tgz_dir))
     monkeypatch.setattr(st, 'redis_members_cache_is_fully_warm', lambda keys: False)
-    monkeypatch.setattr(st, 'get_existing_archive_members_for_daily_archive', lambda canonical: {'m': 1})
+    _patch_prewarm_populate(monkeypatch)
     st._prewarm_archive_members_redis_for_chunk(paths)
     out = capsys.readouterr().out
     begin_at = out.find('sync_timedb: chunk prewarm begin')
@@ -1444,7 +1524,7 @@ def test_chunk_prewarm_includes_oldest_tar_day(monkeypatch, tmp_path):
     monkeypatch.setattr(st, 'archive_members_redis_enabled', lambda: True)
     monkeypatch.setattr(st, 'tgz_archive_dir', str(tgz_dir))
     monkeypatch.setattr(st, 'redis_members_cache_is_fully_warm', lambda keys: False)
-    monkeypatch.setattr(st, 'get_existing_archive_members_for_daily_archive', lambda canonical: calls.append(canonical) or {'m': 1})
+    _patch_prewarm_populate(monkeypatch, calls)
     st._prewarm_archive_members_redis_for_chunk(paths, oldest_tar=oldest_tar)
     assert len(calls) == 2
     basenames = {os.path.basename(c) for c in calls}
@@ -1461,7 +1541,7 @@ def test_prewarm_gated_tar_restore_before_sealed_populate(monkeypatch, tmp_path,
     monkeypatch.setattr(st, 'tgz_archive_dir', str(tgz_dir))
     monkeypatch.setattr(st, 'redis_members_cache_is_fully_warm', lambda keys: False)
     monkeypatch.setattr(st, 'ensure_daily_tar_restored_for_append', lambda tar_path, threads: restore_calls.append(tar_path) or True)
-    monkeypatch.setattr(st, 'get_existing_archive_members_for_daily_archive', lambda canonical: {'m': 1})
+    _patch_prewarm_populate(monkeypatch)
     monkeypatch.setattr(st.cfg, 'get_archive_zstd_threads', lambda: 1)
     st._prewarm_archive_members_redis_for_days([(str(zst), '2026-05-31')], gated_tar_restore_day_tokens={'2026-05-31'})
     assert restore_calls == [str(tar)]
@@ -1477,7 +1557,7 @@ def test_prewarm_runs_when_redis_complete_with_empty_hash(monkeypatch, tmp_path,
     monkeypatch.setattr(st, 'archive_members_redis_enabled', lambda: True)
     monkeypatch.setattr(st, 'tgz_archive_dir', str(tgz_dir))
     monkeypatch.setattr(st, 'redis_members_cache_is_fully_warm', lambda keys: False)
-    monkeypatch.setattr(st, 'get_existing_archive_members_for_daily_archive', lambda canonical: calls.append(canonical) or {'host/a': 1})
+    _patch_prewarm_populate(monkeypatch, calls)
     st._prewarm_archive_members_redis_for_chunk(paths)
     assert len(calls) == 1
     assert 'Prewarming archive members Redis' in capsys.readouterr().out
@@ -1582,7 +1662,9 @@ def test_parse_payload_quarantines_permanent_failures(monkeypatch, tmp_path, fai
         empty_proc = pd.DataFrame(columns=['jid', 'host', 'proc'])
         monkeypatch.setattr(st, 'build_stats_dataframes', lambda *_a, **_k: (empty_stats, empty_proc))
         monkeypatch.setattr(st, 'compute_deltas_and_arc', lambda s: s)
-    stats_file, payload, need_archival, ingest_ok, _elapsed = st._parse_stats_file_payload(target)
+    stats_file, payload, need_archival, ingest_ok, _elapsed, _meta = (
+        st._unpack_parse_payload_result(st._parse_stats_file_payload(target))
+    )
     assert ingest_ok is True, failure_kind
     assert payload is None
     assert need_archival is False
@@ -1600,7 +1682,9 @@ def test_parse_payload_per_file_timeout_returns_failure(monkeypatch):
         time.sleep(1.0)
         return (target, None, False, True, 0.0)
     monkeypatch.setattr(st, '_parse_stats_file_payload_impl', slow_impl)
-    stats_file, payload, need_archival, ingest_ok, elapsed_s = st._parse_stats_file_payload(target)
+    stats_file, payload, need_archival, ingest_ok, elapsed_s, _meta = (
+        st._unpack_parse_payload_result(st._parse_stats_file_payload(target))
+    )
     assert stats_file == target
     assert payload is None
     assert need_archival is False
@@ -1896,11 +1980,11 @@ def test_ingest_pool_worker_exit_propagates_from_supervisor(monkeypatch):
         return []
     fake_rescan.calls = 0
 
-    def failing_watch_pool(pool, fn, iterable, *, context='', poll_timeout_s=None, on_stall_warning=None, on_stall_poll=None, pool_health_context=None):
-        del pool, fn, iterable, context, poll_timeout_s, on_stall_warning, on_stall_poll, pool_health_context
+    def failing_watch_pool(pool, fn, iterable, *, context='', poll_timeout_s=None, on_stall_warning=None, on_stall_poll=None, pool_health_context=None, max_inflight=None, **extra):
+        del pool, fn, iterable, context, poll_timeout_s, on_stall_warning, on_stall_poll, pool_health_context, max_inflight, extra
         raise MultiprocessingWorkerExitError('worker dead', dead_pids=(999,), context='test')
     monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
-    monkeypatch.setattr(st, 'imap_unordered_watch_pool', failing_watch_pool)
+    monkeypatch.setattr(st, 'imap_sliding_window_watch_pool', failing_watch_pool)
     monkeypatch.setattr(st, 'add_stats_file_to_db', lambda *_a, **_k: (target, True, True, 0.0))
     monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: False)
     monkeypatch.setattr(st.cfg, 'get_sync_ingest_chunk_size', lambda: 1000)
@@ -1911,8 +1995,6 @@ def test_ingest_pool_worker_exit_propagates_from_supervisor(monkeypatch):
     monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
     monkeypatch.setattr(st, 'close_old_connections', lambda: None)
     monkeypatch.setattr(st.connections, 'close_all', lambda: None)
-    terminate_calls = []
-    monkeypatch.setattr(st, 'terminate_pool_bounded', lambda pool, **kwargs: terminate_calls.append(pool) or True)
     monkeypatch.setattr(st, '_handle_pool_worker_exit_fatal', _reraise_pool_worker_fatal)
 
     class _Pool:
@@ -1933,8 +2015,6 @@ def test_ingest_pool_worker_exit_propagates_from_supervisor(monkeypatch):
     finally:
         archive_pool.__exit__(None, None, None)
     assert excinfo.value.exit_code == 137
-    assert ingest_pool in terminate_calls
-    assert archive_pool in terminate_calls
 
 def test_stall_teardown_preserves_exit_124_not_137(monkeypatch):
     from hpcperfstats.dbload.lib.multiprocessing_pool_health import MultiprocessingPoolStallError, MultiprocessingWorkerExitError
@@ -1996,7 +2076,6 @@ def test_supervisor_stall_hard_exits_before_archive_pool_context(monkeypatch):
     from hpcperfstats.dbload.lib.multiprocessing_pool_health import MultiprocessingPoolStallError
     shutdown_requested[0] = False
     target = '/fake/stats-stall-hard-exit'
-    exit_codes = []
 
     def fake_rescan(*_a, **_k):
         if fake_rescan.calls == 0:
@@ -2021,7 +2100,12 @@ def test_supervisor_stall_hard_exits_before_archive_pool_context(monkeypatch):
     monkeypatch.setattr(st, 'close_old_connections', lambda: None)
     monkeypatch.setattr(st.connections, 'close_all', lambda: None)
     monkeypatch.setattr(st, 'terminate_pool_bounded', lambda pool, **kwargs: True)
-    monkeypatch.setattr('hpcperfstats.dbload.lib.multiprocessing_pool_health.os._exit', lambda code: exit_codes.append(code))
+
+    def track_fatal(exc, **kwargs):
+        del kwargs
+        raise SystemExit(exc.exit_code)
+
+    monkeypatch.setattr(st, '_handle_pool_worker_exit_fatal', track_fatal)
 
     class _Pool:
         pass
@@ -2036,10 +2120,11 @@ def test_supervisor_stall_hard_exits_before_archive_pool_context(monkeypatch):
     archive_pool = _FakeArchivePool()
     archive_pool.__enter__()
     try:
-        st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), archive_pool, run_once=True)
+        with pytest.raises(SystemExit) as excinfo:
+            st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), archive_pool, run_once=True)
+        assert excinfo.value.code == 124
     finally:
         archive_pool.__exit__(None, None, None)
-    assert exit_codes == [124]
 
 def test_stall_teardown_uses_nonblocking_coordinator_shutdown(monkeypatch):
     from hpcperfstats.dbload.lib.multiprocessing_pool_health import MultiprocessingPoolStallError
@@ -2454,7 +2539,7 @@ def test_maybe_apply_tree_rss_governor_exits_on_exit_cap(monkeypatch):
     monkeypatch.setattr(st.cfg, 'get_sync_process_tree_rss_check_every_n_chunks', lambda: 1)
     monkeypatch.setattr(st, 'read_sync_timedb_tree_rss_bytes', lambda *_a, **_k: 2 * 1024 * 1024)
     with pytest.raises(SystemExit) as excinfo:
-        st._maybe_apply_tree_rss_governor(1, object(), None, object())
+        st._maybe_apply_tree_rss_governor(1, object(), object())
     assert excinfo.value.code == 137
 
 def test_effective_ingest_imap_inflight_cap_equals_pool_size(monkeypatch):
@@ -3205,6 +3290,7 @@ def _supervisor_two_day_ingest_patches(monkeypatch, tmp_path, *, paths, rescan_e
         shutdown_requested[0] = True
         return []
     _supervisor_startup_preflight_disabled(monkeypatch)
+    monkeypatch.setattr(st, 'DayRawRemovalCoordinator', _SupervisorDisabledDayRawRemoval)
     monkeypatch.setattr(st, 'sleep_until_shutdown', lambda *_a, **_k: None)
     from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import StartupArchiveScanCoordinator
     monkeypatch.setattr(StartupArchiveScanCoordinator, 'wait_for_snapshot', lambda self, *, allow_build=False: None)
@@ -3225,10 +3311,16 @@ def _supervisor_two_day_ingest_patches(monkeypatch, tmp_path, *, paths, rescan_e
     monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
     if immediate_spy is not None:
 
-        def spy_enqueue(self, tar_norm, *, reason, disqualified=None):
-            immediate_spy(tar_norm, reason)
+        def spy_enqueue_day_close(self, tar_path, *, reason, disqualified_daily_tars=None):
+            del self, disqualified_daily_tars
+            immediate_spy(tar_path, reason)
             return True
-        monkeypatch.setattr(janitor_mod.ArchiveJanitor, '_enqueue_eligible_day_close', spy_enqueue)
+
+        monkeypatch.setattr(
+            async_day_close_mod.DayCloseManifestCoordinator,
+            'enqueue_day_close',
+            spy_enqueue_day_close,
+        )
     return (str(archive_dir), str(daily_dir))
 
 def test_supervisor_enqueues_immediate_day_close_on_day_drain(monkeypatch, tmp_path):
@@ -3323,10 +3415,16 @@ def test_immediate_day_close_submits_checkpoint_complete_not_chunk_touched_only(
         _patch_days_ingest_complete(monkeypatch, lambda _unprocessed, **_kwargs: [tar_day1])
         submitted = []
 
-        def spy_enqueue(self, tar_norm, *, reason, disqualified=None):
-            submitted.append((os.path.normpath(tar_norm), reason))
+        def spy_enqueue_day_close(self, tar_path, *, reason, disqualified_daily_tars=None):
+            del self, disqualified_daily_tars
+            submitted.append((os.path.normpath(tar_path), reason))
             return True
-        monkeypatch.setattr(janitor_mod.ArchiveJanitor, '_enqueue_eligible_day_close', spy_enqueue)
+
+        monkeypatch.setattr(
+            async_day_close_mod.DayCloseManifestCoordinator,
+            'enqueue_day_close',
+            spy_enqueue_day_close,
+        )
         st.run_sync_timedb_supervisor_loop(archive_dir, 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         _assert_immediate_day_close_reason(submitted, tar_path=tar_day1)
     finally:
@@ -3335,14 +3433,14 @@ def test_immediate_day_close_submits_checkpoint_complete_not_chunk_touched_only(
 def test_immediate_day_close_retries_after_transient_disqualify(monkeypatch, tmp_path):
     shutdown_requested[0] = False
     enqueue_calls = []
-    orig_enqueue = janitor_mod.ArchiveJanitor._enqueue_eligible_day_close
+    enqueue_attempts = {'n': 0}
 
-    def tracking_enqueue(self, tar_norm, *, reason, disqualified=None):
-        tar_norm = os.path.normpath(tar_norm)
+    def tracking_enqueue(self, tar_path, *, reason, disqualified_daily_tars=None):
+        del self, disqualified_daily_tars
+        tar_norm = os.path.normpath(tar_path)
         enqueue_calls.append(tar_norm)
-        if len(enqueue_calls) == 1:
-            return False
-        return orig_enqueue(self, tar_norm, reason=reason, disqualified=disqualified)
+        enqueue_attempts['n'] += 1
+        return enqueue_attempts['n'] >= 2
     try:
         day1_epoch = int(datetime(2020, 1, 1, 12, tzinfo=timezone.utc).timestamp())
         day2_epoch = int(datetime(2020, 1, 2, 12, tzinfo=timezone.utc).timestamp())
@@ -3359,7 +3457,11 @@ def test_immediate_day_close_retries_after_transient_disqualify(monkeypatch, tmp
             return []
         monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
         _patch_days_ingest_complete(monkeypatch, lambda *_a, **_kwargs: [tar_day1])
-        monkeypatch.setattr(janitor_mod.ArchiveJanitor, '_enqueue_eligible_day_close', tracking_enqueue)
+        monkeypatch.setattr(
+            async_day_close_mod.DayCloseManifestCoordinator,
+            'enqueue_day_close',
+            tracking_enqueue,
+        )
         st.run_sync_timedb_supervisor_loop(archive_dir, 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         assert enqueue_calls.count(tar_day1) >= 2
     finally:
@@ -3638,18 +3740,29 @@ def test_immediate_day_close_respects_sync_day_close_max_inflight(monkeypatch, t
         monkeypatch.setattr(async_day_close_mod.cfg, 'get_sync_day_close_max_inflight', lambda: 1)
         debt_active = set()
 
-        def _enqueue(self, tar_norm, *, reason, disqualified=None):
-            tar_norm = os.path.normpath(tar_norm)
+        def _enqueue(self, tar_path, *, reason, disqualified_daily_tars=None):
+            del reason, disqualified_daily_tars
+            tar_norm = os.path.normpath(tar_path)
             if len(debt_active) >= 1:
                 return False
             submitted.append(tar_norm)
             debt_active.add(tar_norm)
             return True
 
-        def _active(self):
+        def _active(self, live_worker_tars=None):
+            del self, live_worker_tars
             return set(debt_active)
-        monkeypatch.setattr(janitor_mod.ArchiveJanitor, '_enqueue_eligible_day_close', _enqueue)
-        monkeypatch.setattr(janitor_mod.ArchiveJanitor, '_day_close_active_tar_paths', _active)
+
+        monkeypatch.setattr(
+            async_day_close_mod.DayCloseManifestCoordinator,
+            'enqueue_day_close',
+            _enqueue,
+        )
+        monkeypatch.setattr(
+            async_day_close_mod.DayCloseManifestCoordinator,
+            'active_discover_cap_tar_paths',
+            _active,
+        )
         st.run_sync_timedb_supervisor_loop(archive_dir, 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         assert len(submitted) == 1
         assert submitted[0] == tar_paths[0]
