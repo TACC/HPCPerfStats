@@ -2526,3 +2526,129 @@ def test_janitor_tick_defer_reason_startup_heavy(tmp_path, monkeypatch):
   assert janitor.tick_defer_reason() == "startup_heavy_maintenance"
   stats = janitor.stats()
   assert stats["janitor_tick_defer_reason"] == "startup_heavy_maintenance"
+
+
+def test_discover_enqueues_when_deferred_waiting_on_ingest_not_worker_inflight(
+    tmp_path, monkeypatch,
+):
+  from hpcperfstats.dbload.lib.sync_timedb_day_close_manifest import (
+      DayCloseManifestCoordinator,
+  )
+
+  daily_dir = tmp_path / "daily"
+  archive_dir = tmp_path / "archive"
+  daily_dir.mkdir()
+  archive_dir.mkdir()
+  deferred_tars = []
+  for day in ("2020-01-01", "2020-01-02", "2020-01-03", "2020-01-04"):
+    tar_path = os.path.normpath(str(daily_dir / ("%s.tar" % day)))
+    open(tar_path, "wb").close()
+    deferred_tars.append(tar_path)
+  ready_tars = []
+  for day in ("2020-01-05", "2020-01-06", "2020-01-07", "2020-01-08"):
+    tar_path = os.path.normpath(str(daily_dir / ("%s.tar" % day)))
+    open(tar_path, "wb").close()
+    ready_tars.append(tar_path)
+
+  submitted = []
+
+  def _enqueue_fn(tar_path, reason="", *, disqualified_daily_tars=None):
+    submitted.append(os.path.normpath(tar_path))
+    return True
+
+  coord = DayCloseManifestCoordinator(
+      archive_data_dir=str(archive_dir),
+      host_name_ext="",
+      tgz_archive_dir=str(daily_dir),
+      local_tz=timezone.utc,
+      log_fn=lambda *_a, **_k: None,
+      get_disqualified_daily_tars=lambda: set(),
+      get_inflight_tar_paths_fn=lambda: set(deferred_tars),
+      enqueue_day_close_fn=_enqueue_fn,
+  )
+  for tar_path in deferred_tars:
+    coord._set_entry_status(tar_path, "deferred", detail="waiting_on_ingest")
+
+  log_lines = []
+
+  def _log(msg, **kwargs):
+    log_lines.append(str(msg))
+
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      log_fn=_log,
+      day_close_manifest_coordinator=coord,
+      get_day_close_candidate_inputs=lambda: {
+          "inflight_paths": set(),
+          "pending_append_by_daily_tar": {},
+          "in_flight_archive_tars": set(),
+          "pending_archive_task_tars": set(),
+          "unmapped_closed_raw_tars": set(),
+          "unprocessed_by_tar": {},
+      },
+  )
+  monkeypatch.setattr(janitor_mod.cfg, "get_sync_day_close_max_inflight", lambda: 4)
+  monkeypatch.setattr(
+      janitor_mod,
+      "build_remaining_raw_stats_by_daily_gz",
+      lambda *args, **kwargs: {},
+  )
+  monkeypatch.setattr(
+      janitor_mod,
+      "classify_day_close_candidates",
+      lambda **_k: [
+          {
+              "tar_path": t,
+              "status": "ready_for_enqueue",
+              "reasons": ["awaiting_janitor_discover"],
+              "unprocessed": 0,
+          }
+          for t in ready_tars
+      ],
+  )
+  newly_queued = janitor._discover_and_enqueue_ready_day_close(reason="tick")
+  assert len(newly_queued) == 4
+  assert len(submitted) == 4
+  discover_lines = [
+      line for line in log_lines if "discover_ready_day_close" in line
+  ]
+  assert discover_lines
+  assert "deferred_waiting=4" in discover_lines[0]
+  assert "skipped_inflight=0" in discover_lines[0]
+
+
+def test_tar_drop_deferred_logs_handoff_requeue_correlation(tmp_path, monkeypatch):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+  open(tar_path, "wb").close()
+  zst_path = _zst_path_for_tar(tar_path)
+  open(zst_path, "wb").close()
+
+  class _HandoffCoord:
+    def paths_for_closed_raw_handoff_requeue(self, tar_norm):
+      assert os.path.normpath(tar_norm) == tar_path
+      return [str(tmp_path / "host" / "1000"), str(tmp_path / "host" / "1001")]
+
+  log_lines = []
+
+  def _log(msg, **kwargs):
+    log_lines.append(str(msg))
+
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      log_fn=_log,
+      day_raw_removal_coordinator=_HandoffCoord(),
+  )
+  monkeypatch.setattr(
+      janitor_mod,
+      "daily_gz_has_remaining_raw_stats",
+      lambda *_a, **_k: True,
+  )
+  janitor._tar_drop_one_day(tar_path, validation_cache={}, disqualified=set())
+  deferred_lines = [
+      line for line in log_lines if "tar drop deferred" in line.lower()
+  ]
+  assert deferred_lines
+  assert "handoff_paths=2" in deferred_lines[0]
+  assert "waiting_on_ingest" in deferred_lines[0]

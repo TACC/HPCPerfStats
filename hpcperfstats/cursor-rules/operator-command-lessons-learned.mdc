@@ -28,6 +28,7 @@ If the failure reveals a **recurring** gap (not a one-off typo), also add a one-
 - Non-zero exit, `command not found`, wrong container user (`su hpcperfstats` vs root).
 - Path does not exist — especially when the command hardcoded `/hpcperfstats/...` instead of INI-resolved paths.
 - `docker compose logs pipeline --tail=N` (with or without grep) on long-running pipeline — truncates before stall window; see **No `--tail` on `compose logs`** in `compose-operator-terminal-commands.mdc`.
+- `docker compose exec pipeline python3 - <<'PY'` (heredoc through exec) on podman-compose — opens interactive REPL instead of running script; use `su hpcperfstats -c 'python3 -c "…"'` per **Podman-compose sites** anti-patterns in `compose-operator-terminal-commands.mdc`.
 - Introspection misuse — unbounded `strace`, `gdb` left attached, or `py-spy` without a target PID when `pgrep`/`ps` should run first (see **Container introspection tools** in `compose-operator-terminal-commands.mdc`).
 - Missing `-f docker-compose.app.yaml` (or other overlay) when production uses it.
 - Duplicate command blocks that already failed in an earlier plan for the same site.

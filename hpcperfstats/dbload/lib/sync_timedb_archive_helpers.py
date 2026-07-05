@@ -1938,6 +1938,7 @@ def select_ingest_chunk_paths(
     tgz_archive_dir,
     chunk_size,
     ingest_queue_high,
+    handoff_priority_paths=None,
     log_fn=None,
 ):
   """While oldest checkpoint-blocked tar has work, restrict chunk to that tar only."""
@@ -1945,9 +1946,42 @@ def select_ingest_chunk_paths(
   if target_chunk_size <= 0:
     return []
   pending_list = list(pending or ())
+  handoff_lead: list = []
+  handoff_set = set(handoff_priority_paths or ())
+  oldest_tar_norm = os.path.normpath(str(oldest_tar)) if oldest_tar else ""
+  if handoff_set and oldest_tar_norm and tgz_archive_dir:
+    pending_set = set(pending_list)
+    cross_day_handoff = []
+    for path in pending_list:
+      if path not in handoff_set:
+        continue
+      if oldest_tar_norm not in daily_tar_paths_for_stats_paths(
+          [path],
+          tgz_archive_dir,
+      ):
+        cross_day_handoff.append(path)
+    for path in handoff_set:
+      if path in pending_set:
+        continue
+      if not path or not os.path.isfile(path):
+        continue
+      if oldest_tar_norm not in daily_tar_paths_for_stats_paths(
+          [path],
+          tgz_archive_dir,
+      ):
+        cross_day_handoff.append(path)
+    if cross_day_handoff:
+      handoff_lead = cross_day_handoff[:target_chunk_size]
+      if handoff_lead:
+        pending_list = [
+            path for path in pending_list if path not in set(handoff_lead)
+        ]
+        target_chunk_size -= len(handoff_lead)
+        if target_chunk_size <= 0:
+          return handoff_lead
   if not oldest_tar or not tgz_archive_dir:
-    return pending_list[:target_chunk_size]
-  oldest_tar_norm = os.path.normpath(str(oldest_tar))
+    tail = pending_list[:target_chunk_size]
+    return handoff_lead + tail
   checkpoint_incomplete_on_disk = aligned_on_disk_unprocessed_paths_for_tar(
       unprocessed_by_tar,
       oldest_tar_norm,
@@ -1962,7 +1996,8 @@ def select_ingest_chunk_paths(
       inflight_for_oldest = True
       break
   if not checkpoint_incomplete_on_disk and not inflight_for_oldest:
-    return pending_list[:target_chunk_size]
+    tail = pending_list[:target_chunk_size]
+    return handoff_lead + tail
   oldest_only = [
       path
       for path in pending_list
@@ -1994,7 +2029,8 @@ def select_ingest_chunk_paths(
                 len(pending_list),
             ),
         )
-      return pending_list[:target_chunk_size]
+      tail = pending_list[:target_chunk_size]
+      return handoff_lead + tail
     if aligned_blocked:
       if log_fn is not None:
         log_fn(
@@ -2021,7 +2057,8 @@ def select_ingest_chunk_paths(
       oldest_only = [
           path for path in checkpoint_incomplete_on_disk if path not in inflight_set
       ]
-  return list(oldest_only[:target_chunk_size])
+  tail = list(oldest_only[:target_chunk_size])
+  return handoff_lead + tail
 
 
 def merge_daily_archive_members_l1_cache(canonical, member_map):

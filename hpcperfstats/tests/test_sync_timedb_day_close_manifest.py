@@ -285,3 +285,35 @@ def test_unified_inflight_cap_counts_manifest_and_debt(tmp_path):
   assert tar_debt in active
   assert tar_manifest in active
   assert len(active) == 2
+
+
+@pytest.mark.django_db(databases=[])
+def test_active_worker_tar_paths_excludes_deferred_waiting_on_ingest(tmp_path):
+  archive_dir = str(tmp_path / "archive")
+  os.makedirs(archive_dir)
+  tar_deferred = os.path.normpath(str(tmp_path / "daily" / "2020-01-01.tar"))
+  tar_worker = os.path.normpath(str(tmp_path / "daily" / "2020-01-02.tar"))
+  tar_debt_only = os.path.normpath(str(tmp_path / "daily" / "2020-01-03.tar"))
+  os.makedirs(os.path.dirname(tar_deferred), exist_ok=True)
+
+  coord = async_dc_mod.DayCloseManifestCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=str(tmp_path / "daily"),
+      local_tz=None,
+      log_fn=lambda *_a, **_k: None,
+      get_disqualified_daily_tars=lambda: set(),
+      get_inflight_tar_paths_fn=lambda: {tar_deferred, tar_debt_only},
+  )
+  coord._set_entry_status(tar_deferred, "deferred", detail="waiting_on_ingest")
+  coord._set_entry_status(tar_worker, "queued")
+
+  worker_slots = coord.active_worker_tar_paths()
+  assert tar_deferred not in worker_slots
+  assert tar_worker in worker_slots
+  assert tar_debt_only in worker_slots
+
+  breakdown = coord.discover_inflight_breakdown()
+  assert breakdown["deferred_waiting_n"] == 1
+  assert breakdown["manifest_worker_slot_n"] == 1
+  assert breakdown["worker_occupancy_n"] == 2

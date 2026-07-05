@@ -4301,7 +4301,7 @@ def run_sync_timedb_supervisor_loop(
       tar_norm = os.path.normpath(str(tar_path or ""))
       if tar_norm in immediate_day_close_attempted_tars:
         continue
-      if len(archive_janitor._day_close_active_tar_paths()) >= max_inflight:
+      if len(archive_janitor._day_close_worker_occupancy_tar_paths()) >= max_inflight:
         break
       if day_close_manifest is not None and day_close_manifest.enqueue_day_close(
           tar_norm,
@@ -5619,21 +5619,48 @@ def run_sync_timedb_supervisor_loop(
     tar_norm = os.path.normpath(str(tar_norm or ""))
     if not tar_norm:
       return
+    requeued_paths = _filter_handoff_requeue_paths(paths)
+    if not requeued_paths and day_raw_removal is not None:
+      fallback_fn = getattr(
+          day_raw_removal,
+          "paths_for_closed_raw_handoff_requeue",
+          None,
+      )
+      if callable(fallback_fn):
+        requeued_paths = _filter_handoff_requeue_paths(fallback_fn(tar_norm))
+    retryable_on_disk = len(requeued_paths)
     if tar_norm in handoff_requeued_tars_this_boot:
+      new_paths = [
+          path for path in requeued_paths if path not in handoff_priority_paths
+      ]
+      if not new_paths:
+        log_print(
+            "sync_timedb: day_close handoff requeue skip day=%s reason=%s "
+            "detail=same_boot_duplicate retryable_on_disk=%d"
+            % (
+                calendar_date_from_daily_tar_path(tar_norm).isoformat()
+                if calendar_date_from_daily_tar_path(tar_norm) is not None
+                else tar_norm,
+                reason or "",
+                retryable_on_disk,
+            ),
+            flush=True,
+        )
+        return
+      requeued_paths = new_paths
+    elif not requeued_paths:
       log_print(
           "sync_timedb: day_close handoff requeue skip day=%s reason=%s "
-          "detail=same_boot_duplicate"
+          "detail=paths=0 retryable_on_disk=%d"
           % (
               calendar_date_from_daily_tar_path(tar_norm).isoformat()
               if calendar_date_from_daily_tar_path(tar_norm) is not None
               else tar_norm,
               reason or "",
+              retryable_on_disk,
           ),
           flush=True,
       )
-      return
-    requeued_paths = _filter_handoff_requeue_paths(paths)
-    if not requeued_paths:
       return
     _batch_remove_processed_paths(
         requeued_paths,
@@ -5922,11 +5949,21 @@ def run_sync_timedb_supervisor_loop(
               flush=True,
           )
         handoff_inflight_n = 0
+        handoff_priority_n = len(handoff_priority_paths)
+        handoff_cross_day_n = 0
         if oldest_tar_for_chunk:
           handoff_inflight_n = sum(
               1
               for path in inflight_archive_paths
               if oldest_tar_for_chunk in daily_tar_paths_for_stats_paths(
+                  [path],
+                  tgz_archive_dir,
+              )
+          )
+          handoff_cross_day_n = sum(
+              1
+              for path in handoff_priority_paths
+              if oldest_tar_for_chunk not in daily_tar_paths_for_stats_paths(
                   [path],
                   tgz_archive_dir,
               )
@@ -5940,17 +5977,21 @@ def run_sync_timedb_supervisor_loop(
             tgz_archive_dir=tgz_archive_dir,
             chunk_size=chunk_size,
             ingest_queue_high=ingest_queue_high,
+            handoff_priority_paths=handoff_priority_paths,
             log_fn=log_print,
         )
         if oldest_tar_for_chunk and (incomplete_n or handoff_inflight_n):
           log_print(
               "sync_timedb: oldest_day_chunk_gate oldest_tar=%s incomplete_n=%d "
-              "handoff_inflight_n=%d oldest_tar_checkpoint_pending_n=%d "
+              "handoff_inflight_n=%d handoff_priority_n=%d handoff_cross_day_n=%d "
+              "oldest_tar_checkpoint_pending_n=%d "
               "chunk_day_histogram=%s chunk_len=%d"
               % (
                   oldest_tar_for_chunk,
                   incomplete_n,
                   handoff_inflight_n,
+                  handoff_priority_n,
+                  handoff_cross_day_n,
                   incomplete_n,
                   build_chunk_day_histogram(stats_files_chunk, tgz_archive_dir),
                   len(stats_files_chunk),

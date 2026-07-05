@@ -7378,6 +7378,46 @@ def test_select_ingest_chunk_paths_cross_day_only_empty_pending_uses_fallback(
   assert chunk == []
 
 
+def test_select_ingest_chunk_prefers_handoff_across_oldest_tar(tmp_path):
+  """Cross-day handoff paths dispatch before oldest_tar gate (May vs June stall)."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      select_ingest_chunk_paths,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  may_tar = os.path.normpath(str(daily_dir / "2026-05-27.tar"))
+  jun_tar = os.path.normpath(str(daily_dir / "2026-06-07.tar"))
+  open(may_tar, "wb").close()
+  open(jun_tar, "wb").close()
+  d_may = datetime(2026, 5, 27, 12, tzinfo=timezone.utc)
+  d_jun = datetime(2026, 6, 7, 12, tzinfo=timezone.utc)
+  may_handoff = tmp_path / "host" / "may_handoff"
+  may_handoff.parent.mkdir(parents=True)
+  may_handoff.write_text("1000 job cn001\n")
+  os.utime(may_handoff, (d_may.timestamp(), d_may.timestamp()))
+  jun_paths = []
+  for i in range(5):
+    path = tmp_path / "host" / ("jun_%d" % i)
+    path.write_text("2000 job cn002\n")
+    os.utime(path, (d_jun.timestamp(), d_jun.timestamp()))
+    jun_paths.append(str(path))
+  pending = list(jun_paths) + [str(may_handoff)]
+  chunk = select_ingest_chunk_paths(
+      pending,
+      oldest_tar=jun_tar,
+      unprocessed_by_tar={jun_tar: jun_paths},
+      inflight_archive_paths=set(),
+      tgz_archive_dir=str(daily_dir),
+      chunk_size=1000,
+      ingest_queue_high=2000,
+      handoff_priority_paths={str(may_handoff)},
+  )
+  assert chunk[0] == str(may_handoff)
+  assert str(may_handoff) in chunk
+  assert all(path in jun_paths for path in chunk[1:])
+
+
 def test_sort_pending_stats_paths_oldest_first(tmp_path):
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       sort_pending_stats_paths_oldest_first,

@@ -31,11 +31,33 @@ _DAY_CLOSE_PIPELINE_PENDING_STATUSES = frozenset({
     "deferred",
 })
 
+_DAY_CLOSE_WORKER_SLOT_STATUSES = frozenset({
+    "submitted",
+    "queued",
+    "sealing",
+    "raw_removal",
+})
+
 
 def _is_day_close_pipeline_pending_entry(entry) -> bool:
   if not isinstance(entry, dict):
     return False
   return str(entry.get("status") or "") in _DAY_CLOSE_PIPELINE_PENDING_STATUSES
+
+
+def _is_worker_slot_pending_entry(entry) -> bool:
+  if not isinstance(entry, dict):
+    return False
+  return str(entry.get("status") or "") in _DAY_CLOSE_WORKER_SLOT_STATUSES
+
+
+def _is_deferred_waiting_on_ingest_entry(entry) -> bool:
+  if not isinstance(entry, dict):
+    return False
+  if str(entry.get("status") or "") != "deferred":
+    return False
+  detail = str(entry.get("detail") or "")
+  return detail in ("waiting_on_ingest", "legacy_raw_delete_pending", "")
 
 
 def manifest_path(archive_data_dir: str) -> str:
@@ -192,9 +214,86 @@ class DayCloseManifestCoordinator:
         active.add(os.path.normpath(tar_norm))
     return active
 
+  def _manifest_worker_slot_tar_paths_unlocked(self) -> Set[str]:
+    """Manifest entries occupying a day-close worker slot (excludes deferred handoff)."""
+    active: Set[str] = set()
+    for tar_norm, entry in self._manifest.get("entries", {}).items():
+      if _is_worker_slot_pending_entry(entry):
+        active.add(os.path.normpath(tar_norm))
+    return active
+
+  def _deferred_waiting_on_ingest_tar_paths_unlocked(self) -> Set[str]:
+    waiting: Set[str] = set()
+    for tar_norm, entry in self._manifest.get("entries", {}).items():
+      if _is_deferred_waiting_on_ingest_entry(entry):
+        waiting.add(os.path.normpath(tar_norm))
+    return waiting
+
   def active_or_submitted_tar_paths(self) -> Set[str]:
     with self._lock:
       return set(self._active_tar_paths_unlocked())
+
+  def manifest_worker_slot_tar_paths(self) -> Set[str]:
+    with self._lock:
+      return set(self._manifest_worker_slot_tar_paths_unlocked())
+
+  def deferred_waiting_on_ingest_tar_paths(self) -> Set[str]:
+    with self._lock:
+      return set(self._deferred_waiting_on_ingest_tar_paths_unlocked())
+
+  def active_worker_tar_paths(self, *, live_worker_tars=None) -> Set[str]:
+    """Worker-slot occupancy for discover inflight cap (excludes deferred/waiting_on_ingest)."""
+    live_worker_tars = {
+        os.path.normpath(t)
+        for t in (live_worker_tars or ())
+        if t
+    }
+    with self._lock:
+      deferred = self._deferred_waiting_on_ingest_tar_paths_unlocked()
+      active = set(live_worker_tars)
+      if self.get_inflight_tar_paths_fn is not None:
+        try:
+          debt_heap = set(self.get_inflight_tar_paths_fn() or ())
+        except Exception:
+          debt_heap = set()
+      else:
+        debt_heap = set()
+      active |= debt_heap - deferred
+      active |= self._manifest_worker_slot_tar_paths_unlocked()
+    return active
+
+  def discover_inflight_breakdown(self, *, live_worker_tars=None) -> Dict[str, int]:
+    """Counts for janitor discover logging (debt heap vs deferred vs worker slots)."""
+    live_worker_tars = {
+        os.path.normpath(t)
+        for t in (live_worker_tars or ())
+        if t
+    }
+    with self._lock:
+      deferred = self._deferred_waiting_on_ingest_tar_paths_unlocked()
+      manifest_worker = self._manifest_worker_slot_tar_paths_unlocked()
+      manifest_pending = sum(
+          1
+          for entry in self._manifest.get("entries", {}).values()
+          if _is_day_close_pipeline_pending_entry(entry)
+      )
+      if self.get_inflight_tar_paths_fn is not None:
+        try:
+          debt_heap = set(self.get_inflight_tar_paths_fn() or ())
+        except Exception:
+          debt_heap = set()
+      else:
+        debt_heap = set()
+    worker_occupancy = self.active_worker_tar_paths(live_worker_tars=live_worker_tars)
+    return {
+        "active_workers_n": len(live_worker_tars),
+        "deferred_waiting_n": len(deferred),
+        "debt_heap_n": len(debt_heap),
+        "debt_heap_minus_deferred_n": len(debt_heap - deferred),
+        "manifest_pending_n": manifest_pending,
+        "manifest_worker_slot_n": len(manifest_worker),
+        "worker_occupancy_n": len(worker_occupancy),
+    }
 
   def tar_paths_raw_delete_pending(self) -> List[str]:
     return []

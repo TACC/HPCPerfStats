@@ -879,6 +879,23 @@ class ArchiveJanitor:
       return coord.active_or_submitted_tar_paths()
     return self._debt_heap_tar_paths()
 
+  def _day_close_live_worker_tar_paths(self) -> Set[str]:
+    with self._day_close_in_flight_lock:
+      return {
+          os.path.normpath(debt.tar_path)
+          for debt in self._day_close_in_flight.values()
+          if debt and debt.tar_path
+      }
+
+  def _day_close_worker_occupancy_tar_paths(self) -> Set[str]:
+    live_workers = self._day_close_live_worker_tar_paths()
+    coord = self.day_close_manifest_coordinator
+    if coord is not None and hasattr(coord, "active_worker_tar_paths"):
+      return coord.active_worker_tar_paths(live_worker_tars=live_workers)
+    active = set(live_workers)
+    active |= self._debt_heap_tar_paths()
+    return active
+
   def _day_close_inflight_tar_paths(self) -> Set[str]:
     return self._day_close_active_tar_paths()
 
@@ -934,7 +951,7 @@ class ArchiveJanitor:
         day_raw_removal=self.day_raw_removal_coordinator,
     )
     max_inflight = cfg.get_sync_day_close_max_inflight()
-    active = set(self._day_close_active_tar_paths())
+    active = set(self._day_close_worker_occupancy_tar_paths())
     disqualified = set(self.get_disqualified_daily_tars())
     newly_queued: Set[str] = set()
     skipped_inflight = 0
@@ -958,14 +975,30 @@ class ArchiveJanitor:
         newly_queued.add(tar_norm)
         active.add(tar_norm)
     if newly_queued or skipped_inflight or ready_for_enqueue_n:
+      breakdown: Dict[str, int] = {}
+      coord = self.day_close_manifest_coordinator
+      if coord is not None and hasattr(coord, "discover_inflight_breakdown"):
+        try:
+          breakdown = coord.discover_inflight_breakdown(
+              live_worker_tars=self._day_close_live_worker_tar_paths(),
+          )
+        except Exception:
+          breakdown = {}
       self.log_fn(
           "janitor: discover_ready_day_close enqueued=%d skipped_inflight=%d "
-          "ready_for_enqueue_n=%d max_inflight=%d reason=%s"
+          "ready_for_enqueue_n=%d max_inflight=%d active_workers=%d "
+          "deferred_waiting=%d debt_heap=%d manifest_pending=%d "
+          "worker_occupancy=%d reason=%s"
           % (
               len(newly_queued),
               skipped_inflight,
               ready_for_enqueue_n,
               max_inflight,
+              breakdown.get("active_workers_n", len(self._day_close_live_worker_tar_paths())),
+              breakdown.get("deferred_waiting_n", 0),
+              breakdown.get("debt_heap_n", 0),
+              breakdown.get("manifest_pending_n", 0),
+              breakdown.get("worker_occupancy_n", len(active)),
               reason,
           ),
           flush=True,
@@ -1760,9 +1793,19 @@ class ArchiveJanitor:
     remaining_raw_by_gz = self._fresh_remaining_raw_by_gz_for_tar(tar_path)
     zst_path, _gz_path = compressed_sibling_paths(tar_path)
     if daily_gz_has_remaining_raw_stats(zst_path, remaining_raw_by_gz):
+      handoff_paths_n = 0
+      coord = self.day_raw_removal_coordinator
+      if coord is not None:
+        try:
+          handoff_paths_n = len(
+              coord.paths_for_closed_raw_handoff_requeue(tar_path) or (),
+          )
+        except Exception:
+          handoff_paths_n = 0
       self.log_fn(
-          "Janitor tar drop deferred (raw stats still present for day): %s"
-          % tar_path,
+          "Janitor tar drop deferred (raw stats still present for day): %s "
+          "handoff_paths=%d reason=waiting_on_ingest"
+          % (tar_path, handoff_paths_n),
           flush=True,
       )
       self._enqueue_day_close(tar_path, persist=False)
