@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import time
 from typing import Any, Callable, Dict, Optional
 
@@ -53,16 +54,26 @@ def _read_json_file(path: str) -> Any:
 
 
 def _save_json_atomic(path: str, payload: Any, *, compact: bool = False) -> None:
-  parent = os.path.dirname(str(path))
-  if parent:
-    os.makedirs(parent, exist_ok=True)
-  tmp_path = "%s.tmp" % path
-  with open(tmp_path, "w", encoding="utf-8") as handle:
-    if compact:
-      json.dump(payload, handle, separators=(",", ":"), sort_keys=True)
-    else:
-      json.dump(payload, handle)
-  os.replace(tmp_path, path)
+  parent = os.path.dirname(str(path)) or "."
+  os.makedirs(parent, exist_ok=True)
+  fd, tmp_path = tempfile.mkstemp(
+      prefix=".atomic.",
+      suffix=os.path.basename(path),
+      dir=parent,
+  )
+  try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+      if compact:
+        json.dump(payload, handle, separators=(",", ":"), sort_keys=True)
+      else:
+        json.dump(payload, handle)
+    os.replace(tmp_path, path)
+  except Exception:
+    try:
+      os.unlink(tmp_path)
+    except OSError:
+      pass
+    raise
 
 
 def _unlink_path(path: str, log_fn: LogFn) -> None:

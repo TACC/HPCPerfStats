@@ -1656,6 +1656,56 @@ def test_janitor_persist_hints_snapshots_day_phases_under_lock(monkeypatch, tmp_
   assert tar_path in loaded.get("day_phases", {})
 
 
+def test_janitor_parallel_persist_hints_no_error(monkeypatch, tmp_path):
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_maint.cfg.get_sync_archive_maint_hints",
+      lambda: True,
+  )
+  archive_dir = str(tmp_path / "archive")
+  os.makedirs(archive_dir, exist_ok=True)
+  janitor = ArchiveJanitor(
+      archive_data_dir=archive_dir,
+      host_name_ext=".hpc",
+      tgz_archive_dir=str(tmp_path / "daily"),
+      local_tz=timezone.utc,
+      log_fn=MagicMock(),
+      get_disqualified_daily_tars=lambda: set(),
+      get_ingest_backlog_high=lambda: False,
+      get_pending_stats_count=lambda: 0,
+      get_idle_seconds=lambda: 0.0,
+  )
+  errors: list[BaseException] = []
+  barrier = threading.Barrier(2)
+
+  def worker(worker_id: int) -> None:
+    try:
+      barrier.wait(timeout=5)
+      tar_path = os.path.normpath(
+          str(tmp_path / "daily" / ("2026-05-2%s.tar" % worker_id)))
+      os.makedirs(os.path.dirname(tar_path), exist_ok=True)
+      open(tar_path, "wb").close()
+      with janitor._hints_state_lock:
+        janitor._day_phases[tar_path] = "tar_drop_deferred"
+      janitor._persist_hints()
+    except BaseException as exc:
+      errors.append(exc)
+
+  threads = [
+      threading.Thread(target=worker, args=(worker_id,))
+      for worker_id in range(2)
+  ]
+  for thread in threads:
+    thread.start()
+  for thread in threads:
+    thread.join(timeout=30)
+
+  assert errors == []
+  loaded = janitor_mod.load_archive_maint_hints(archive_dir)
+  assert loaded is not None
+  assert isinstance(loaded.get("day_phases"), dict)
+  assert len(loaded["day_phases"]) >= 1
+
+
 def test_enqueue_immediate_day_close_respects_disqualified(monkeypatch, tmp_path):
   daily_dir = tmp_path / "daily"
   daily_dir.mkdir()

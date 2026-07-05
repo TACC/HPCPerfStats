@@ -217,6 +217,7 @@ class ArchiveJanitor:
     self._debt_seen: Set[tuple] = set()
     self._debt_lock = threading.Lock()
     self._hints_state_lock = threading.Lock()
+    self._persist_hints_lock = threading.Lock()
     self._validated_days: Dict[str, Dict[str, Any]] = {}
     self._day_phases: Dict[str, str] = {}
     self._accrual_snapshot = None
@@ -287,22 +288,23 @@ class ArchiveJanitor:
       self._persist_hints()
 
   def _persist_hints(self, *, paths_hint=None, host_dirs_hint=None):
-    with self._debt_lock:
-      self._trim_heap_to_max_entries_locked()
-      debt_payload = self._debt_queue_payload_locked()
-    with self._hints_state_lock:
-      validated_days = prune_validated_days_hints(self._validated_days)
-      day_phases = prune_day_phases_hints(self._day_phases)
-      self._validated_days = dict(validated_days)
-      self._day_phases = dict(day_phases)
-    save_archive_maint_hints(
-        self.archive_data_dir,
-        host_dirs=host_dirs_hint or {},
-        paths=paths_hint or {},
-        validated_days=validated_days,
-        day_phases=day_phases,
-        debt_queue=debt_payload,
-    )
+    with self._persist_hints_lock:
+      with self._debt_lock:
+        self._trim_heap_to_max_entries_locked()
+        debt_payload = self._debt_queue_payload_locked()
+      with self._hints_state_lock:
+        validated_days = prune_validated_days_hints(self._validated_days)
+        day_phases = prune_day_phases_hints(self._day_phases)
+        self._validated_days = dict(validated_days)
+        self._day_phases = dict(day_phases)
+      save_archive_maint_hints(
+          self.archive_data_dir,
+          host_dirs=host_dirs_hint or {},
+          paths=paths_hint or {},
+          validated_days=validated_days,
+          day_phases=day_phases,
+          debt_queue=debt_payload,
+      )
 
   def _debt_queue_payload(self) -> list:
     with self._debt_lock:

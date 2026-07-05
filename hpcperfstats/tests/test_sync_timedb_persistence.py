@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pytest
 
@@ -140,3 +141,47 @@ def test_persistence_artifact_registry_matches_dbload_sidecars():
     assert rel in basenames or rel.rstrip("/") in {
         b.rstrip("/") for b in basenames
     }, "registry path missing from dbload sidecar references: %s" % rel
+
+
+@pytest.mark.django_db(databases=[])
+def test_save_json_atomic_concurrent_writers_no_enoent(tmp_path):
+  """Parallel writers must not ENOENT on a shared fixed .tmp basename (RC maint hints)."""
+  archive_dir = str(tmp_path / "archive")
+  os.makedirs(archive_dir)
+  path = persist_mod.artifact_path(archive_dir, "archive_maint_hints")
+  errors: list[BaseException] = []
+
+  def writer(worker_id: int) -> None:
+    try:
+      for iteration in range(40):
+        save_persistence_document(
+            path,
+            "archive_maint_hints",
+            {
+                "host_dirs": {},
+                "paths": {},
+                "validated_days": {},
+                "day_phases": {
+                    "/daily/%s-%s.tar" % (worker_id, iteration): "sealed",
+                },
+                "debt_queue": [{
+                    "kind": "DAY_CLOSE",
+                    "tar_path": "/daily/%s-%s.tar" % (worker_id, iteration),
+                }],
+            },
+            compact=True,
+        )
+    except BaseException as exc:
+      errors.append(exc)
+
+  with ThreadPoolExecutor(max_workers=8) as pool:
+    futures = [pool.submit(writer, worker_id) for worker_id in range(8)]
+    for future in as_completed(futures):
+      future.result()
+
+  assert errors == []
+  assert os.path.isfile(path)
+  with open(path, encoding="utf-8") as handle:
+    payload = json.load(handle)
+  assert payload.get("contract_version") == SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION
+  assert load_persistence_document(path, "archive_maint_hints") is not None
