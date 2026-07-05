@@ -458,6 +458,12 @@ def _public_ef_period_worker(task: Tuple[str, str]) -> Dict[str, int]:
   except Exception:
     logger.exception("public EF period worker failed kind=%s key=%s", kind, key)
     return {"worker_exceptions": 1}
+  finally:
+    from hpcperfstats.dbload.lib.sync_timedb_worker_memory import (
+        release_spawn_pool_worker_memory,
+    )
+
+    release_spawn_pool_worker_memory()
 
 
 def refresh_public_expansion_factor_artifacts_parallel(

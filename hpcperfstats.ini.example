@@ -408,6 +408,16 @@ sync_ingest_pool_maxtasksperchild = 1
 # Return freed worker heap to OS after each ingest task on Linux (default yes).
 sync_ingest_malloc_trim_after_file = yes
 
+# Worker memory telemetry: one batch_summary line per ingest chunk (default no; enable for soak).
+# sync_ingest_worker_memory_telemetry = no
+# sync_ingest_worker_memory_telemetry_every_n_chunks = 1
+
+# Cooperative recycle when maxtasksperchild=0 (supervisor retires worker after result):
+# sync_ingest_recycle_worker_on_failure = yes
+# sync_ingest_cooperative_recycle_rss_fraction = 0.5
+# sync_ingest_rss_recheck_delay_ms = 50
+# sync_ingest_cooperative_recycle_after_giant = yes
+
 # Adaptive burst dispatch for sync queues (default yes).
 # sync_adaptive_dispatch_enabled = yes
 

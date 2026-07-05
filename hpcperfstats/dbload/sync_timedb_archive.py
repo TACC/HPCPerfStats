@@ -176,7 +176,6 @@ def _process_stream_archive(lock, sealed_path):
   close_old_connections = None
   DatabaseError = None
   OperationalError = None
-  release_heap = None
   from hpcperfstats.dbload.sync_timedb import (
       advance_sealed_archive_ingest_progress,
       clear_sealed_archive_ingest_progress,
@@ -196,17 +195,13 @@ def _process_stream_archive(lock, sealed_path):
         from django.db.utils import OperationalError as _OpErr
 
         from hpcperfstats.dbload.lib.django_bootstrap import ensure_django as _ensure
-        from hpcperfstats.dbload.sync_timedb import (
-            add_stats_file_to_db as _add,
-            _release_ingest_worker_heap as _release,
-        )
+        from hpcperfstats.dbload.sync_timedb import add_stats_file_to_db as _add
 
         close_old_connections = _close
         DatabaseError = _DBErr
         OperationalError = _OpErr
         ensure_django = _ensure
         add_stats = _add
-        release_heap = _release
         ensure_django()
         close_old_connections()
 
@@ -221,8 +216,6 @@ def _process_stream_archive(lock, sealed_path):
           )
         raise
       finally:
-        if release_heap is not None:
-          release_heap()
         try:
           os.remove(member_path)
         except OSError:
@@ -234,6 +227,11 @@ def _process_stream_archive(lock, sealed_path):
         except OSError:
           pass
   finally:
+    from hpcperfstats.dbload.lib.sync_timedb_worker_memory import (
+        release_spawn_pool_worker_memory,
+    )
+
+    release_spawn_pool_worker_memory()
     clear_sealed_archive_ingest_progress()
 
 

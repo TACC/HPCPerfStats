@@ -3578,7 +3578,7 @@ def test_process_stream_archive_task_ingests_all_members(monkeypatch, tmp_path):
       fake_add,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.sync_timedb._release_ingest_worker_heap",
+      "hpcperfstats.dbload.lib.sync_timedb_worker_memory.release_spawn_pool_worker_memory",
       lambda: None,
   )
   monkeypatch.setattr(

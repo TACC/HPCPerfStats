@@ -5,13 +5,50 @@ from __future__ import annotations
 import gc
 
 import pytest
+import ctypes
 
 from hpcperfstats.dbload import sync_timedb as st
+from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as archive_helpers
+from hpcperfstats.dbload.lib import sync_timedb_worker_memory as worker_memory
+
+
+def test_release_spawn_pool_worker_memory_clears_caches_and_trims(monkeypatch):
+  trim_calls = []
+  stage_clear = []
+
+  class _Libc:
+    @staticmethod
+    def malloc_trim(_arg):
+      trim_calls.append(_arg)
+      return 1
+
+  archive_helpers._DAILY_ARCHIVE_MEMBERS_CACHE["day"] = {"m": True}
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_malloc_trim_after_file",
+      lambda: True,
+  )
+  monkeypatch.setattr(gc, "collect", lambda: None)
+  monkeypatch.setattr(ctypes, "CDLL", lambda _name: _Libc())
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_host_itimes.reset_host_itimes_caches",
+      lambda: None,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics.clear_worker_stage",
+      lambda: stage_clear.append(True),
+  )
+
+  worker_memory.release_spawn_pool_worker_memory()
+
+  assert trim_calls == [0]
+  assert archive_helpers._DAILY_ARCHIVE_MEMBERS_CACHE == {}
+  assert stage_clear == [True]
 
 
 def test_release_ingest_worker_heap_calls_malloc_trim_when_enabled(monkeypatch):
   trim_calls = []
   collect_calls = []
+  l1_clear_calls = []
 
   class _Libc:
     @staticmethod
@@ -23,6 +60,11 @@ def test_release_ingest_worker_heap_calls_malloc_trim_when_enabled(monkeypatch):
   monkeypatch.setattr(st, "gc", gc)
   monkeypatch.setattr(st.gc, "collect", lambda: collect_calls.append(True))
   monkeypatch.setattr(st.ctypes, "CDLL", lambda _name: _Libc())
+  monkeypatch.setattr(
+      st,
+      "clear_daily_archive_members_cache",
+      lambda: l1_clear_calls.append(True),
+  )
   st._HOST_ITIMES_CACHE["probe"] = set()
   st._HOST_SECOND_PRESENT_CACHE["probe"] = True
 
@@ -32,6 +74,33 @@ def test_release_ingest_worker_heap_calls_malloc_trim_when_enabled(monkeypatch):
   assert trim_calls == [0]
   assert st._HOST_ITIMES_CACHE == {}
   assert st._HOST_SECOND_PRESENT_CACHE == {}
+  assert l1_clear_calls == []
+
+
+def test_release_ingest_worker_memory_clears_l1_and_returns_meta(monkeypatch):
+  trim_calls = []
+  archive_helpers._DAILY_ARCHIVE_MEMBERS_CACHE["day"] = {"m": True}
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_malloc_trim_after_file", lambda: True)
+  monkeypatch.setattr(st, "gc", gc)
+  monkeypatch.setattr(st.gc, "collect", lambda: None)
+
+  class _Libc:
+    @staticmethod
+    def malloc_trim(_arg):
+      trim_calls.append(_arg)
+      return 1
+
+  monkeypatch.setattr(st.ctypes, "CDLL", lambda _name: _Libc())
+  monkeypatch.setattr(st, "measure_worker_rss_after_release", lambda _p: {
+      "worker_pid": 999,
+      "tasks_on_worker": 1,
+      "rss_mib_after_release": 42.0,
+      "giant": "no",
+  })
+  meta = st._release_ingest_worker_memory("/data/host/1")
+  assert trim_calls == [0]
+  assert archive_helpers._DAILY_ARCHIVE_MEMBERS_CACHE == {}
+  assert meta["worker_pid"] == 999
 
 
 def test_release_ingest_worker_heap_skips_malloc_trim_when_disabled(monkeypatch):
@@ -148,5 +217,8 @@ def test_conf_parser_ingest_memory_defaults(temp_ini, monkeypatch):
   importlib.reload(cfg)
   assert cfg.get_sync_ingest_pool_maxtasksperchild() == 1
   assert cfg.get_sync_ingest_malloc_trim_after_file() is True
+  assert cfg.get_sync_ingest_worker_memory_telemetry() is False
+  assert cfg.get_sync_ingest_cooperative_recycle_after_giant() is True
+  assert cfg.get_sync_ingest_cooperative_recycle_rss_fraction() == 0.5
   assert cfg.get_sync_pool_process_cap() == 16
   assert cfg.get_sync_process_tree_rss_limit_mb() == 110000

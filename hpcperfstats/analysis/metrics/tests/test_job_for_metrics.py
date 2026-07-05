@@ -243,6 +243,11 @@ def test_drain_metrics_imap_returns_explicit_worker_failure_outcome():
 
 
 def test_unwrap_returns_worker_compute_error_on_value_error(monkeypatch):
+  release_calls = []
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_worker_memory.release_spawn_pool_worker_memory",
+      lambda: release_calls.append(True),
+  )
   class _Job:
     jid = "j-bad"
 
@@ -257,6 +262,7 @@ def test_unwrap_returns_worker_compute_error_on_value_error(monkeypatch):
   assert out["jid"] == "j-bad"
   assert out["error_type"] == "ValueError"
   assert out["rows"] == []
+  assert release_calls == [True]
 
 
 def test_drain_metrics_imap_returns_worker_compute_error_outcome():

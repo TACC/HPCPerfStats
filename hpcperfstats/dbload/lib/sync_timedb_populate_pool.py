@@ -164,6 +164,11 @@ def _populate_pool_worker_entry(script_name, registry, shutdown):
       )
     finally:
       clear_worker_stage()
+      from hpcperfstats.dbload.lib.sync_timedb_worker_memory import (
+          release_spawn_pool_worker_memory,
+      )
+
+      release_spawn_pool_worker_memory()
       time.sleep(0)
 
 

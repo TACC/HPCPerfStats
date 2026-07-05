@@ -25,6 +25,7 @@ from hpcperfstats.dbload.lib.print_utils import log_print
 _RECYCLE_PID_FIRST_SEEN_BY_POOL = {}
 _LOGGED_RECYCLE_INFO_PIDS_BY_POOL = {}
 _WARNED_SLOW_RECYCLE_PIDS_BY_POOL = {}
+_SUPERVISOR_RETIRE_PIDS_BY_POOL = {}
 _RECYCLE_TRACKING_MAX_PIDS = 256
 
 
@@ -299,11 +300,17 @@ def _infer_likely_cause(dead_workers, cgroup_events):
   return "unknown"
 
 
-def _dead_worker_exitcode_is_recycle(proc):
-  """True when a dead worker exitcode looks like ``maxtasksperchild`` recycle."""
+def _dead_worker_exitcode_is_recycle(proc, *, pool=None):
+  """True when a dead worker exitcode looks like healthy pool recycle."""
   exitcode = getattr(proc, "exitcode", None)
   if exitcode == 0:
     return True
+  if exitcode == -signal.SIGTERM and pool is not None:
+    pid = getattr(proc, "pid", None)
+    if pid is not None:
+      retired = _SUPERVISOR_RETIRE_PIDS_BY_POOL.get(id(pool), set())
+      if pid in retired:
+        return True
   if exitcode is None:
     import hpcperfstats.dbload.lib.conf_parser as cfg
 
@@ -312,7 +319,7 @@ def _dead_worker_exitcode_is_recycle(proc):
 
 
 def _is_maxtasksperchild_recycle_in_progress(pool, dead_procs):
-  """True when dead workers look like normal ``maxtasksperchild`` replacement."""
+  """True when dead workers look like normal pool worker replacement."""
   if not dead_procs:
     return False
   workers = list(iter_pool_worker_processes(pool))
@@ -321,7 +328,7 @@ def _is_maxtasksperchild_recycle_in_progress(pool, dead_procs):
   if alive <= 0 or alive < total - len(dead_procs):
     return False
   for proc in dead_procs:
-    if not _dead_worker_exitcode_is_recycle(proc):
+    if not _dead_worker_exitcode_is_recycle(proc, pool=pool):
       return False
   return True
 
@@ -628,7 +635,49 @@ def _reap_pool_worker_pids(pool, *, timeout_s=5.0, context=""):
 
 def reap_pool_worker_pids(pool, *, timeout_s=5.0, context=""):
   """Public wrapper: reap dead workers still listed on ``pool._pool``."""
-  return _reap_pool_worker_pids(pool, timeout_s=timeout_s, context=context)
+  reaped = _reap_pool_worker_pids(pool, timeout_s=timeout_s, context=context)
+  if reaped:
+    pool_key = id(pool)
+    retired = _SUPERVISOR_RETIRE_PIDS_BY_POOL.get(pool_key)
+    if retired:
+      for pid in reaped:
+        retired.discard(int(pid))
+  return reaped
+
+
+def _find_pool_worker_process(pool, pid):
+  try:
+    pid_int = int(pid)
+  except (TypeError, ValueError):
+    return None
+  for proc in iter_pool_worker_processes(pool):
+    if getattr(proc, "pid", None) == pid_int:
+      return proc
+  return None
+
+
+def retire_pool_worker_pid(pool, pid, *, context=""):
+  """Supervisor-initiated cooperative worker retire (SIGTERM, exitcode -15)."""
+  if pool is None or pid is None:
+    return False
+  proc = _find_pool_worker_process(pool, pid)
+  if proc is None:
+    return False
+  pool_key = id(pool)
+  retired = _SUPERVISOR_RETIRE_PIDS_BY_POOL.setdefault(pool_key, set())
+  pid_int = int(getattr(proc, "pid", pid))
+  retired.add(pid_int)
+  is_alive_fn = getattr(proc, "is_alive", None)
+  if callable(is_alive_fn) and is_alive_fn():
+    terminate_fn = getattr(proc, "terminate", None)
+    if callable(terminate_fn):
+      terminate_fn()
+  reap_pool_worker_pids(pool, context=context or "supervisor_retire")
+  return True
+
+
+def reset_supervisor_retire_tracking_for_tests():
+  _SUPERVISOR_RETIRE_PIDS_BY_POOL.clear()
 
 
 def _process_stat_is_zombie(pid):

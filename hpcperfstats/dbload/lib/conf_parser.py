@@ -144,6 +144,12 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_ingest_db_complete_tail_window_lines"),
     ("PIPELINE", "sync_ingest_pool_maxtasksperchild"),
     ("PIPELINE", "sync_ingest_malloc_trim_after_file"),
+    ("PIPELINE", "sync_ingest_worker_memory_telemetry"),
+    ("PIPELINE", "sync_ingest_worker_memory_telemetry_every_n_chunks"),
+    ("PIPELINE", "sync_ingest_recycle_worker_on_failure"),
+    ("PIPELINE", "sync_ingest_cooperative_recycle_rss_fraction"),
+    ("PIPELINE", "sync_ingest_rss_recheck_delay_ms"),
+    ("PIPELINE", "sync_ingest_cooperative_recycle_after_giant"),
     ("PIPELINE", "sync_adaptive_dispatch_enabled"),
     ("PIPELINE", "sync_dispatch_burst_factor"),
     ("PIPELINE", "sync_dispatch_archive_backoff_ratio"),
@@ -321,6 +327,12 @@ INI_OPTION_DEFAULTS = {
     'sync_ingest_db_complete_tail_window_lines': '500',
     'sync_ingest_pool_maxtasksperchild': '1',
     'sync_ingest_malloc_trim_after_file': 'yes',
+    'sync_ingest_worker_memory_telemetry': 'no',
+    'sync_ingest_worker_memory_telemetry_every_n_chunks': '1',
+    'sync_ingest_recycle_worker_on_failure': 'yes',
+    'sync_ingest_cooperative_recycle_rss_fraction': '0.5',
+    'sync_ingest_rss_recheck_delay_ms': '50',
+    'sync_ingest_cooperative_recycle_after_giant': 'yes',
     'sync_adaptive_dispatch_enabled': 'yes',
     'sync_dispatch_burst_factor': '2.0',
     'sync_dispatch_archive_backoff_ratio': '0.50',
@@ -2455,6 +2467,51 @@ def get_sync_ingest_malloc_trim_after_file():
   _ensure_cfg_loaded()
   return _parse_bool(
       _pipeline_get("sync_ingest_malloc_trim_after_file"),
+  )
+
+
+def get_sync_ingest_worker_memory_telemetry():
+  """Log one worker_memory batch_summary line per ingest chunk when yes (default no)."""
+  _ensure_cfg_loaded()
+  return _parse_bool(
+      _pipeline_get("sync_ingest_worker_memory_telemetry"),
+  )
+
+
+def get_sync_ingest_worker_memory_telemetry_every_n_chunks():
+  """Emit worker_memory batch_summary every N ingest chunks (default 1)."""
+  _ensure_cfg_loaded()
+  return max(1, _pipeline_getint("sync_ingest_worker_memory_telemetry_every_n_chunks"))
+
+
+def get_sync_ingest_recycle_worker_on_failure():
+  """Supervisor-retire ingest workers after failed outcomes when maxtasksperchild=0."""
+  _ensure_cfg_loaded()
+  if _pipeline_has_option("sync_ingest_recycle_worker_on_failure"):
+    return _parse_bool(_pipeline_get("sync_ingest_recycle_worker_on_failure"))
+  return get_sync_ingest_pool_maxtasksperchild() == 0
+
+
+def get_sync_ingest_cooperative_recycle_rss_fraction():
+  """Fair-share RSS fraction for success-path cooperative recycle (default 0.5)."""
+  _ensure_cfg_loaded()
+  return max(
+      0.0,
+      min(1.0, float(_pipeline_get("sync_ingest_cooperative_recycle_rss_fraction"))),
+  )
+
+
+def get_sync_ingest_rss_recheck_delay_ms():
+  """Optional RSS re-measure delay after release when above threshold (default 50)."""
+  _ensure_cfg_loaded()
+  return max(0, _pipeline_getint("sync_ingest_rss_recheck_delay_ms"))
+
+
+def get_sync_ingest_cooperative_recycle_after_giant():
+  """Supervisor-retire workers after successful giant ingest (default yes)."""
+  _ensure_cfg_loaded()
+  return _parse_bool(
+      _pipeline_get("sync_ingest_cooperative_recycle_after_giant"),
   )
 
 

@@ -748,6 +748,12 @@ def _unwrap(args):
         "error_type": type(exc).__name__,
         "error_message": str(exc),
     }
+  finally:
+    from hpcperfstats.dbload.lib.sync_timedb_worker_memory import (
+        release_spawn_pool_worker_memory,
+    )
+
+    release_spawn_pool_worker_memory()
 
 
 def _persist_metrics_batch(

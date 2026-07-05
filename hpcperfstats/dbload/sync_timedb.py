@@ -80,6 +80,7 @@ from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
     pool_workers_all_idle,
     reap_pool_worker_pids,
     reap_zombie_children_of_self,
+    retire_pool_worker_pid,
     warn_unreaped_zombie_children,
     sync_timedb_spawn_pool_recycle_kwargs,
     terminate_pool_bounded,
@@ -119,6 +120,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     build_remaining_raw_stats_by_daily_gz,
     build_unprocessed_raw_by_daily_tar,
     build_tar_append_member_map,
+    clear_daily_archive_members_cache,
     consume_archive_members_populate_source,
     daily_tar_eligible_for_day_close_submit,
     merge_daily_archive_members_l1_cache,
@@ -165,7 +167,6 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
 from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
     apply_ingest_pool_worker_init,
     clear_dispatch_worker_stages,
-    clear_worker_stage,
     count_worker_registry_entries,
     format_worker_stages_snapshot,
     prune_stale_worker_stages,
@@ -173,6 +174,15 @@ from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
     seed_dispatch_worker_stages,
     update_worker_substage,
     worker_registry_shows_recent_progress,
+)
+from hpcperfstats.dbload.lib.sync_timedb_worker_memory import (
+    WorkerMemoryBatchAccumulator,
+    classify_archive_append_reap_kind,
+    classify_supervisor_reap_kind,
+    increment_worker_tasks_on_worker,
+    measure_worker_rss_after_release,
+    resolve_worker_pid_from_meta_or_registry,
+    should_supervisor_retire_worker,
 )
 from hpcperfstats.dbload.lib.sync_timedb_day_close_manifest import (
     DayCloseManifestCoordinator,
@@ -427,7 +437,132 @@ def _run_ingest_timed(stats_file, stage, fn, *, enable_sigalrm=True):
       reset_ingest_task_effective_timeout_s(effective_token)
     if deadline_token is not None:
       reset_ingest_task_deadline_monotonic(deadline_token)
-    clear_worker_stage()
+
+
+def _merge_worker_memory_meta(result, mem_meta):
+  if not mem_meta:
+    return result
+  stats_file, need_archival, ingest_ok, elapsed_s, meta = (
+      _unpack_ingest_worker_result(result)
+  )
+  merged = dict(meta)
+  merged.update(mem_meta)
+  return _pack_ingest_worker_result(
+      stats_file, need_archival, ingest_ok, elapsed_s, merged,
+  )
+
+
+def _handle_ingest_worker_memory_after_imap(
+    *,
+    pool,
+    registry,
+    result,
+    accumulator,
+):
+  stats_fname, _need_archival, ingest_ok, _elapsed_s, outcome_meta = (
+      _unpack_ingest_worker_result(result)
+  )
+  meta = dict(outcome_meta or {})
+  outcome = str(meta.get("outcome") or "")
+  if not outcome:
+    outcome = "ingested" if meta.get("stats_rows") else "db_skip"
+  reap_kind = classify_supervisor_reap_kind(
+      ingest_ok=ingest_ok,
+      outcome=outcome,
+      meta=meta,
+      path=stats_fname,
+  )
+  if should_supervisor_retire_worker(reap_kind):
+    worker_pid = resolve_worker_pid_from_meta_or_registry(
+        meta, registry, stats_fname,
+    )
+    if worker_pid is not None:
+      retire_pool_worker_pid(
+          pool,
+          worker_pid,
+          context="ingest_%s" % reap_kind,
+      )
+    else:
+      log_print(
+          "WARN: sync_timedb worker_memory: retire skipped missing worker_pid "
+          "path=%s reap_kind=%s"
+          % (stats_fname, reap_kind),
+          flush=True,
+      )
+  if accumulator is not None:
+    accumulator.record_completion(reap_kind, meta)
+  return reap_kind
+
+
+def _attach_archive_worker_memory_meta(result, mem_meta, archive_info):
+  """Merge worker memory meta into archive append results for supervisor retire."""
+  worker_pid = None
+  if isinstance(mem_meta, dict):
+    try:
+      worker_pid = int(mem_meta.get("worker_pid"))
+    except (TypeError, ValueError):
+      worker_pid = None
+  if isinstance(result, ArchiveAppendOutcome):
+    return ArchiveAppendOutcome(
+        ok=result.ok,
+        redis_merge_ok=result.redis_merge_ok,
+        skip_finalize_invalidate=result.skip_finalize_invalidate,
+        worker_pid=worker_pid,
+    )
+  append_ok = _archive_task_succeeded(result)
+  return ArchiveAppendOutcome(
+      ok=append_ok,
+      skip_finalize_invalidate=append_ok,
+      worker_pid=worker_pid,
+  )
+
+
+def _handle_archive_worker_memory_after_results(
+    *,
+    pool,
+    registry,
+    results,
+    deferred_paths,
+    accumulator,
+):
+  if not isinstance(results, list):
+    results = [results]
+  for task_payload, result in zip(deferred_paths, results):
+    append_ok = _archive_task_succeeded(result)
+    reap_kind = classify_archive_append_reap_kind(append_ok=append_ok)
+    archive_path = ""
+    worker_pid = None
+    if isinstance(result, ArchiveAppendOutcome):
+      worker_pid = result.worker_pid
+    task = task_payload.get("task") if isinstance(task_payload, dict) else None
+    archive_info = getattr(task, "archive_info", None) if task is not None else None
+    if archive_info:
+      archive_path = str(archive_info[0] or "")
+    if should_supervisor_retire_worker(reap_kind):
+      if worker_pid is None:
+        worker_pid = resolve_worker_pid_from_meta_or_registry(
+            {},
+            registry,
+            archive_path,
+        )
+      if worker_pid is not None:
+        retire_pool_worker_pid(
+            pool,
+            worker_pid,
+            context="archive_%s" % reap_kind,
+        )
+      else:
+        log_print(
+            "WARN: sync_timedb worker_memory: archive retire skipped "
+            "missing worker_pid path=%s reap_kind=%s"
+            % (archive_path, reap_kind),
+            flush=True,
+        )
+    if accumulator is not None:
+      accumulator.record_completion(
+          reap_kind,
+          {"worker_pid": worker_pid, "archive_path": archive_path},
+      )
 
 
 def _log_ingest_per_file_timeout(exc):
@@ -1560,12 +1695,18 @@ def _imap_ingest_paths_batched(
 
 
 def _clear_ingest_worker_file_caches():
-  """Drop per-process ingest caches after a file (safe when worker recycles)."""
+  """Drop per-process host itimes caches after parse segments."""
   sync_timedb_host_itimes.reset_host_itimes_caches()
 
 
+def _clear_ingest_worker_memory_caches():
+  """Full per-task cache sweep including daily archive member L1."""
+  _clear_ingest_worker_file_caches()
+  clear_daily_archive_members_cache()
+
+
 def _release_ingest_worker_heap():
-  """Return parse heap to the OS on Linux when ``sync_ingest_malloc_trim_after_file``."""
+  """Return parse heap to the OS on Linux (mid-task or end-of-task trim)."""
   _clear_ingest_worker_file_caches()
   if not cfg.get_sync_ingest_malloc_trim_after_file():
     return
@@ -1575,6 +1716,17 @@ def _release_ingest_worker_heap():
     libc.malloc_trim(0)
   except (OSError, AttributeError):
     pass
+
+
+def _release_ingest_worker_memory(stats_file=""):
+  """Full per-task worker memory release; returns telemetry meta for supervisor."""
+  from hpcperfstats.dbload.lib.sync_timedb_worker_memory import (
+      release_spawn_pool_worker_memory,
+  )
+
+  release_spawn_pool_worker_memory()
+  increment_worker_tasks_on_worker()
+  return measure_worker_rss_after_release(stats_file)
 
 
 def _worker_rss_mib():
@@ -1804,6 +1956,7 @@ class ArchiveAppendOutcome:
   ok: bool = True
   redis_merge_ok: bool = False
   skip_finalize_invalidate: bool = True
+  worker_pid: int | None = None
 
   def __bool__(self):
     return self.ok
@@ -2586,8 +2739,6 @@ def _parse_stats_file_payload(stats_file, stats_file_contents=None, *, use_inges
         0.0,
         _ingest_outcome_meta(outcome="lookup_budget", archive_skip="lookup_budget"),
     )
-  finally:
-    _release_ingest_worker_heap()
 
 
 def _duplicate_window_start_index(
@@ -3106,7 +3257,6 @@ def _db_writer_worker_impl(lock, db_task):
         del stats
       if proc_stats is not None:
         del proc_stats
-      _release_ingest_worker_heap()
 
 
 def _ingest_parse_and_write_file(lock, stats_file, stats_file_contents=None):
@@ -3124,39 +3274,44 @@ def add_stats_file_to_db(lock, stats_file, stats_file_contents=None):
   seconds for the attempted ingest path. Uses lock for DB writes.
 
     """
+  result = None
   record_worker_stage(stats_file, "ingest", substage="worker_entry")
   try:
-    return _run_ingest_timed(
-        stats_file,
-        "ingest",
-        lambda: _add_stats_file_to_db_impl(
-            lock, stats_file, stats_file_contents=stats_file_contents
-        ),
-    )
-  except IngestPerFileTimeoutError as exc:
-    _log_ingest_per_file_timeout(exc)
-    return _pack_ingest_worker_result(
-        stats_file,
-        False,
-        False,
-        exc.elapsed_s,
-        _ingest_outcome_meta(
-            outcome="timeout",
-            fail_reason=exc.stage,
-            archive_skip="timeout",
-        ),
-    )
-  except IngestArchiveLookupBudgetExceededError as exc:
-    _log_ingest_archive_lookup_budget_exceeded(exc)
-    return _pack_ingest_worker_result(
-        stats_file,
-        False,
-        False,
-        0.0,
-        _ingest_outcome_meta(outcome="lookup_budget", archive_skip="lookup_budget"),
-    )
+    try:
+      result = _run_ingest_timed(
+          stats_file,
+          "ingest",
+          lambda: _add_stats_file_to_db_impl(
+              lock, stats_file, stats_file_contents=stats_file_contents
+          ),
+      )
+    except IngestPerFileTimeoutError as exc:
+      _log_ingest_per_file_timeout(exc)
+      result = _pack_ingest_worker_result(
+          stats_file,
+          False,
+          False,
+          exc.elapsed_s,
+          _ingest_outcome_meta(
+              outcome="timeout",
+              fail_reason=exc.stage,
+              archive_skip="timeout",
+          ),
+      )
+    except IngestArchiveLookupBudgetExceededError as exc:
+      _log_ingest_archive_lookup_budget_exceeded(exc)
+      result = _pack_ingest_worker_result(
+          stats_file,
+          False,
+          False,
+          0.0,
+          _ingest_outcome_meta(outcome="lookup_budget", archive_skip="lookup_budget"),
+      )
   finally:
-    _release_ingest_worker_heap()
+    mem_meta = _release_ingest_worker_memory(stats_file)
+    if result is not None:
+      result = _merge_worker_memory_meta(result, mem_meta)
+  return result
 
 
 def _add_stats_file_to_db_impl(lock, stats_file, stats_file_contents=None):
@@ -3620,8 +3775,17 @@ def archive_stats_files(archive_info):
   zstd sealing and removal of raw stats run on the ``ArchiveJanitor`` cold path
   (startup + every ``rescan_every_chunks`` ingest chunks), not after each append.
   """
-  with _sync_worker_db_task():
-    return _archive_stats_files_body(archive_info)
+  archive_path = archive_info[0] if archive_info else ""
+  record_worker_stage(archive_path, "archive_append")
+  result = None
+  try:
+    with _sync_worker_db_task():
+      result = _archive_stats_files_body(archive_info)
+  finally:
+    mem_meta = _release_ingest_worker_memory(archive_path)
+    if result is not None:
+      result = _attach_archive_worker_memory_meta(result, mem_meta, archive_info)
+  return result
 
 
 def _lookup_existing_members_for_archive_append(archive_fname, archive_tar_fname):
@@ -4598,6 +4762,13 @@ def run_sync_timedb_supervisor_loop(
     )
     perf_stats["archive_finalize_wait_s"] += max(0.0, time.time() - finalize_t0)
     perf_stats["archive_finalize_calls"] += 1
+    _handle_archive_worker_memory_after_results(
+        pool=archive_pool,
+        registry=stall_diagnostics.worker_registry,
+        results=results,
+        deferred_paths=slot.deferred_paths,
+        accumulator=worker_memory_accumulator,
+    )
     _apply_archive_finalize_results(slot.deferred_paths, results)
     return True
 
@@ -5129,6 +5300,12 @@ def run_sync_timedb_supervisor_loop(
             remaining=remaining,
             supplement=_ingest_path_is_supplement(stats_fname, chunk_paths_norm),
         )
+        _handle_ingest_worker_memory_after_imap(
+            pool=ingest_pool,
+            registry=stall_diagnostics.worker_registry,
+            result=result,
+            accumulator=worker_memory_accumulator,
+        )
         chunk_ingest_finished += 1
         if ingest_ok:
           _transition_file_state(
@@ -5286,6 +5463,7 @@ def run_sync_timedb_supervisor_loop(
   handoff_priority_paths = set()
   immediate_day_close_attempted_tars = set()
   chunk_counter = 0
+  worker_memory_accumulator = WorkerMemoryBatchAccumulator()
   oldest_day_chunk_gate_stall_last_log = 0.0
   oldest_day_gate_empty_chunk_spins = 0
   handoff_priority_stall_last_log = 0.0
@@ -6271,6 +6449,11 @@ def run_sync_timedb_supervisor_loop(
                 ]),
             ),
             flush=True,
+        )
+        worker_memory_accumulator.maybe_flush(
+            chunk_counter,
+            ingest_pool=ingest_pool,
+            archive_pool=archive_pool,
         )
         reconcile_refs["last_chunk_ingest_summary_mono"] = time.monotonic()
         reconcile_refs["last_chunk_archival_n"] = len(files_to_be_archived)
