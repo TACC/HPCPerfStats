@@ -4297,11 +4297,20 @@ def run_sync_timedb_supervisor_loop(
     submitted_any = False
     disqualified = _janitor_disqualified_daily_tars()
     max_inflight = cfg.get_sync_day_close_max_inflight()
+    live_workers = archive_janitor._day_close_live_worker_tar_paths()
     for tar_path in candidates:
       tar_norm = os.path.normpath(str(tar_path or ""))
       if tar_norm in immediate_day_close_attempted_tars:
         continue
-      if len(archive_janitor._day_close_worker_occupancy_tar_paths()) >= max_inflight:
+      if day_close_manifest is not None and hasattr(
+          day_close_manifest, "active_discover_cap_tar_paths",
+      ):
+        cap_active = day_close_manifest.active_discover_cap_tar_paths(
+            live_worker_tars=live_workers,
+        )
+      else:
+        cap_active = set(live_workers)
+      if len(cap_active) >= max_inflight:
         break
       if day_close_manifest is not None and day_close_manifest.enqueue_day_close(
           tar_norm,

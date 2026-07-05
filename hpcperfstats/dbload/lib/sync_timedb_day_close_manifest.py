@@ -241,8 +241,20 @@ class DayCloseManifestCoordinator:
     with self._lock:
       return set(self._deferred_waiting_on_ingest_tar_paths_unlocked())
 
+  def active_discover_cap_tar_paths(self, *, live_worker_tars=None) -> Set[str]:
+    """Discover enqueue cap: live day-close workers + manifest worker slots only."""
+    live_worker_tars = {
+        os.path.normpath(t)
+        for t in (live_worker_tars or ())
+        if t
+    }
+    with self._lock:
+      active = set(live_worker_tars)
+      active |= self._manifest_worker_slot_tar_paths_unlocked()
+    return active
+
   def active_worker_tar_paths(self, *, live_worker_tars=None) -> Set[str]:
-    """Worker-slot occupancy for discover inflight cap (excludes deferred/waiting_on_ingest)."""
+    """Legacy worker occupancy metric (includes debt heap; excludes deferred)."""
     live_worker_tars = {
         os.path.normpath(t)
         for t in (live_worker_tars or ())
@@ -261,6 +273,47 @@ class DayCloseManifestCoordinator:
       active |= debt_heap - deferred
       active |= self._manifest_worker_slot_tar_paths_unlocked()
     return active
+
+  def reconcile_manifest_with_debt_heap(
+      self,
+      *,
+      debt_tar_paths: Set[str],
+      live_worker_tars: Set[str],
+  ) -> int:
+    """Re-enqueue manifest worker slots with no heap debt and no live worker."""
+    debt_tar_paths = {
+        os.path.normpath(t) for t in (debt_tar_paths or ()) if t
+    }
+    live_worker_tars = {
+        os.path.normpath(t) for t in (live_worker_tars or ()) if t
+    }
+    reenqueue: list[str] = []
+    with self._lock:
+      for tar_norm, entry in list(self._manifest.get("entries", {}).items()):
+        if not isinstance(entry, dict):
+          continue
+        if not _is_worker_slot_pending_entry(entry):
+          continue
+        tar_norm = os.path.normpath(tar_norm)
+        if tar_norm in debt_tar_paths or tar_norm in live_worker_tars:
+          continue
+        entry["status"] = "deferred"
+        entry["detail"] = "ghost_manifest_reconcile"
+        entry["recovered_at"] = time.time()
+        reenqueue.append(tar_norm)
+      if reenqueue:
+        _save_manifest(self._manifest_path, self._manifest)
+    for tar_norm in reenqueue:
+      self.log_fn(
+          "janitor: day_close ghost manifest reconcile tar=%s" % tar_norm,
+          flush=True,
+      )
+      if self.enqueue_day_close_fn is not None:
+        try:
+          self.enqueue_day_close_fn(tar_norm, "ghost_manifest_reconcile")
+        except Exception:
+          pass
+    return len(reenqueue)
 
   def discover_inflight_breakdown(self, *, live_worker_tars=None) -> Dict[str, int]:
     """Counts for janitor discover logging (debt heap vs deferred vs worker slots)."""
@@ -284,6 +337,7 @@ class DayCloseManifestCoordinator:
           debt_heap = set()
       else:
         debt_heap = set()
+    discover_cap = self.active_discover_cap_tar_paths(live_worker_tars=live_worker_tars)
     worker_occupancy = self.active_worker_tar_paths(live_worker_tars=live_worker_tars)
     return {
         "active_workers_n": len(live_worker_tars),
@@ -292,6 +346,7 @@ class DayCloseManifestCoordinator:
         "debt_heap_minus_deferred_n": len(debt_heap - deferred),
         "manifest_pending_n": manifest_pending,
         "manifest_worker_slot_n": len(manifest_worker),
+        "discover_cap_n": len(discover_cap),
         "worker_occupancy_n": len(worker_occupancy),
     }
 
@@ -333,6 +388,14 @@ class DayCloseManifestCoordinator:
     with self._lock:
       entry = self._manifest.get("entries", {}).get(tar_norm)
       if not isinstance(entry, dict):
+        self._manifest.setdefault("entries", {})[tar_norm] = {
+            "tar_path": tar_norm,
+            "status": "deferred",
+            "detail": "waiting_on_ingest",
+            "submitted_at": time.time(),
+        }
+        _save_manifest(self._manifest_path, self._manifest)
+        self._touch_manifest_locked("deferred_waiting_on_ingest", tar_norm=tar_norm)
         return
       status = str(entry.get("status") or "")
       if status not in _DAY_CLOSE_PIPELINE_PENDING_STATUSES:
@@ -415,12 +478,9 @@ class DayCloseManifestCoordinator:
     with self._lock:
       entry = self._manifest.get("entries", {}).get(tar_norm)
       if _is_day_close_pipeline_pending_entry(entry):
-        return True
-      active = set(inflight)
-      for pending_tar, pending_entry in self._manifest.get("entries", {}).items():
-        if _is_day_close_pipeline_pending_entry(pending_entry):
-          active.add(os.path.normpath(pending_tar))
-      if tar_norm in active:
+        if tar_norm in inflight:
+          return True
+      elif tar_norm in inflight:
         return True
     enqueued = False
     if self.enqueue_day_close_fn is not None:

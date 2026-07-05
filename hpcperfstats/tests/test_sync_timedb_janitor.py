@@ -2652,3 +2652,314 @@ def test_tar_drop_deferred_logs_handoff_requeue_correlation(tmp_path, monkeypatc
   assert deferred_lines
   assert "handoff_paths=2" in deferred_lines[0]
   assert "waiting_on_ingest" in deferred_lines[0]
+
+
+def test_discover_enqueues_when_debt_heap_full_but_no_live_workers(
+    tmp_path, monkeypatch,
+):
+  from hpcperfstats.dbload.lib.sync_timedb_day_close_manifest import (
+      DayCloseManifestCoordinator,
+  )
+
+  daily_dir = tmp_path / "daily"
+  archive_dir = tmp_path / "archive"
+  daily_dir.mkdir()
+  archive_dir.mkdir()
+  debt_tars = []
+  for day in ("2020-01-01", "2020-01-02", "2020-01-03", "2020-01-04"):
+    tar_path = os.path.normpath(str(daily_dir / ("%s.tar" % day)))
+    open(tar_path, "wb").close()
+    debt_tars.append(tar_path)
+  ready_tars = []
+  for day in ("2020-01-05", "2020-01-06", "2020-01-07", "2020-01-08"):
+    tar_path = os.path.normpath(str(daily_dir / ("%s.tar" % day)))
+    open(tar_path, "wb").close()
+    ready_tars.append(tar_path)
+
+  submitted = []
+
+  def _enqueue_fn(tar_path, reason="", *, disqualified_daily_tars=None):
+    submitted.append(os.path.normpath(tar_path))
+    return True
+
+  coord = DayCloseManifestCoordinator(
+      archive_data_dir=str(archive_dir),
+      host_name_ext="",
+      tgz_archive_dir=str(daily_dir),
+      local_tz=timezone.utc,
+      log_fn=lambda *_a, **_k: None,
+      get_disqualified_daily_tars=lambda: set(),
+      get_inflight_tar_paths_fn=lambda: set(debt_tars),
+      enqueue_day_close_fn=_enqueue_fn,
+  )
+  log_lines = []
+
+  def _log(msg, **kwargs):
+    log_lines.append(str(msg))
+
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      log_fn=_log,
+      day_close_manifest_coordinator=coord,
+      get_day_close_candidate_inputs=lambda: {
+          "inflight_paths": set(),
+          "pending_append_by_daily_tar": {},
+          "in_flight_archive_tars": set(),
+          "pending_archive_task_tars": set(),
+          "unmapped_closed_raw_tars": set(),
+          "unprocessed_by_tar": {},
+      },
+  )
+  for tar_path in debt_tars:
+    janitor._enqueue_debt(DebtKind.DAY_CLOSE, tar_path, persist=False)
+
+  monkeypatch.setattr(janitor_mod.cfg, "get_sync_day_close_max_inflight", lambda: 4)
+  monkeypatch.setattr(
+      janitor_mod,
+      "build_remaining_raw_stats_by_daily_gz",
+      lambda *args, **kwargs: {},
+  )
+  monkeypatch.setattr(
+      janitor_mod,
+      "classify_day_close_candidates",
+      lambda **_k: [
+          {
+              "tar_path": t,
+              "status": "ready_for_enqueue",
+              "reasons": ["awaiting_janitor_discover"],
+              "unprocessed": 0,
+          }
+          for t in ready_tars
+      ],
+  )
+  newly_queued = janitor._discover_and_enqueue_ready_day_close(reason="tick")
+  assert len(newly_queued) == 4
+  assert len(submitted) == 4
+  discover_lines = [line for line in log_lines if "discover_ready_day_close" in line]
+  assert discover_lines
+  assert "debt_heap=4" in discover_lines[0]
+  assert "active_workers=0" in discover_lines[0]
+  assert "skipped_inflight=0" in discover_lines[0]
+  assert "worker_occupancy=8" in discover_lines[0]
+
+
+def test_day_close_free_slots_excludes_running_workers(tmp_path, monkeypatch):
+  janitor = _make_janitor(tgz_archive_dir=str(tmp_path))
+  monkeypatch.setattr(janitor_mod.cfg, "get_sync_day_close_max_inflight", lambda: 4)
+  tar_a = os.path.normpath(str(tmp_path / "2020-01-01.tar"))
+  tar_b = os.path.normpath(str(tmp_path / "2020-01-02.tar"))
+  janitor._day_close_in_flight[object()] = DayDebt(
+      sort_index=_debt_sort_key(DebtKind.DAY_CLOSE, tar_a),
+      kind=DebtKind.DAY_CLOSE,
+      tar_path=tar_a,
+  )
+  janitor._day_close_in_flight[object()] = DayDebt(
+      sort_index=_debt_sort_key(DebtKind.DAY_CLOSE, tar_b),
+      kind=DebtKind.DAY_CLOSE,
+      tar_path=tar_b,
+  )
+  assert janitor._day_close_free_slots() == 2
+
+
+def test_janitor_budget_partial_tick_schedules_followup(monkeypatch, tmp_path):
+  janitor = _make_janitor(tgz_archive_dir=str(tmp_path))
+  janitor._allow_tick_chaining = True
+  janitor._enqueue_debt(
+      DebtKind.DAY_CLOSE, str(tmp_path / "2020-01-01.tar"), persist=False,
+  )
+  janitor._enqueue_debt(
+      DebtKind.DAY_CLOSE, str(tmp_path / "2020-01-02.tar"), persist=False,
+  )
+  processed = {"n": 0}
+  signals = []
+
+  def fake_time():
+    return 200.0 if processed["n"] >= 1 else 100.0
+
+  def fake_process(_debt, **_kwargs):
+    processed["n"] += 1
+    return False
+
+  def capture_signal():
+    signals.append(1)
+    return None
+
+  monkeypatch.setattr(janitor_mod.time, "time", fake_time)
+  monkeypatch.setattr(janitor_mod, "close_old_connections", lambda: None)
+  monkeypatch.setattr(janitor_mod, "cleanup_stale_fnctl_lock_sidecars", lambda *_a, **_k: 0)
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor,
+      "_run_tick_lock_cleanup",
+      lambda self: 0,
+  )
+  monkeypatch.setattr(janitor_mod.ArchiveJanitor, "_discover_and_enqueue_ready_day_close", lambda self, **kwargs: set())
+  monkeypatch.setattr(janitor, "_process_debt_item", fake_process)
+  monkeypatch.setattr(janitor_mod.cfg, "get_archive_janitor_budget_seconds", lambda: 50.0)
+  monkeypatch.setattr(janitor_mod.cfg, "get_sync_day_close_max_inflight", lambda: 1)
+  monkeypatch.setattr(janitor, "get_startup_ingest_gate_cleared", lambda: True)
+  monkeypatch.setattr(janitor, "signal_work_available", capture_signal)
+  janitor._run_tick_body()
+  assert janitor.debt_depth() >= 1
+  assert signals == [1]
+
+
+def test_seal_failure_and_tar_drop_unlink_failure_reenqueue(monkeypatch, tmp_path):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+  open(tar_path, "wb").close()
+  enqueued = []
+
+  def track_enqueue(tar, persist=True):
+    enqueued.append(os.path.normpath(tar))
+    return True
+
+  janitor = _make_janitor(tgz_archive_dir=str(daily_dir))
+  janitor._enqueue_day_close = track_enqueue
+  monkeypatch.setattr(
+      janitor_mod,
+      "daily_tar_seal_calendar_eligible",
+      lambda *_a, **_k: True,
+  )
+  monkeypatch.setattr(
+      janitor_mod,
+      "atomic_seal_tar_to_zst",
+      lambda *_a, **_k: None,
+  )
+  monkeypatch.setattr(
+      janitor_mod,
+      "drop_legacy_gz_if_equivalent_to_zst",
+      lambda *_a, **_k: None,
+  )
+  assert janitor._seal_one_day(tar_path) is False
+  assert enqueued == [tar_path]
+
+  enqueued.clear()
+  zst_path = _zst_path_for_tar(tar_path)
+  open(zst_path, "wb").close()
+  _mark_day_sealed(janitor, tar_path)
+  monkeypatch.setattr(
+      janitor_mod,
+      "daily_gz_has_remaining_raw_stats",
+      lambda *_a, **_k: False,
+  )
+  monkeypatch.setattr(
+      janitor_mod,
+      "remove_verified_uncompressed_daily_tars",
+      lambda *_a, **_k: None,
+  )
+  assert janitor._tar_drop_one_day(tar_path, {}, set()) is False
+  assert enqueued == [tar_path]
+
+
+def test_mid_tick_discover_enqueues_when_heap_empty_and_slots_free(
+    tmp_path, monkeypatch,
+):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  discover_calls = []
+
+  def track_discover(self, *, reason, slot_budget=None):
+    discover_calls.append((reason, slot_budget))
+    return set()
+
+  janitor = _make_janitor(tgz_archive_dir=str(daily_dir))
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor,
+      "_discover_and_enqueue_ready_day_close",
+      track_discover,
+  )
+  monkeypatch.setattr(janitor_mod.ArchiveJanitor, "_pop_one_day_close_debt", lambda self, *_a, **_k: None)
+  monkeypatch.setattr(janitor_mod.ArchiveJanitor, "_day_close_free_slots", lambda self: 2)
+  monkeypatch.setattr(janitor_mod.time, "time", lambda: 100.0)
+
+  attempted_tars = set()
+  budget_deadline = 200.0
+
+  def _budget_ok():
+    return janitor_mod.time.time() < budget_deadline
+
+  def _fill_free_slots():
+    started = 0
+    while _budget_ok() and janitor._day_close_free_slots() > 0:
+      debt = janitor._pop_one_day_close_debt(set(), skip_tars=attempted_tars)
+      if debt is None:
+        free_slots = janitor._day_close_free_slots()
+        if free_slots > 0:
+          janitor._discover_and_enqueue_ready_day_close(
+              reason="tick_slot_free",
+              slot_budget=free_slots,
+          )
+        break
+    return started
+
+  _fill_free_slots()
+  assert discover_calls == [("tick_slot_free", 2)]
+
+
+def test_fill_free_slots_submits_to_idle_workers_while_others_running(
+    monkeypatch, tmp_path,
+):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_paths = []
+  for day in ("2020-01-01", "2020-01-02", "2020-01-03", "2020-01-04"):
+    tar_path = os.path.normpath(str(daily_dir / ("%s.tar" % day)))
+    open(tar_path, "wb").close()
+    tar_paths.append(tar_path)
+
+  janitor = _make_janitor(tgz_archive_dir=str(daily_dir))
+  for tar_path in tar_paths:
+    janitor._enqueue_debt(DebtKind.DAY_CLOSE, tar_path, persist=False)
+
+  submits = []
+
+  def track_submit(self, debt, **kwargs):
+    submits.append(os.path.normpath(debt.tar_path))
+    fut = MagicMock()
+    fut.result = lambda timeout=None: True
+    with janitor._day_close_in_flight_lock:
+      janitor._day_close_in_flight[fut] = debt
+    return fut
+
+  monkeypatch.setattr(janitor_mod.cfg, "get_sync_day_close_max_inflight", lambda: 4)
+  monkeypatch.setattr(janitor_mod.ArchiveJanitor, "_submit_day_close_debt", track_submit)
+  monkeypatch.setattr(janitor_mod.ArchiveJanitor, "_discover_and_enqueue_ready_day_close", lambda self, **kwargs: set())
+  monkeypatch.setattr(janitor_mod.time, "time", lambda: 100.0)
+
+  in_flight = {}
+  attempted_tars = set()
+  budget_deadline = 200.0
+
+  def _budget_ok():
+    return janitor_mod.time.time() < budget_deadline
+
+  while _budget_ok() and janitor._day_close_free_slots() > 0:
+    debt = janitor._pop_one_day_close_debt(set(), skip_tars=attempted_tars)
+    if debt is None:
+      break
+    attempted_tars.add(os.path.normpath(debt.tar_path))
+    fut = janitor._submit_day_close_debt(debt, snapshot=None, validation_cache={}, disqualified=set())
+    in_flight[fut] = debt
+
+  assert len(submits) == 4
+  assert janitor._day_close_free_slots() == 0
+
+  # Simulate two completions freeing slots while two remain busy.
+  busy = list(in_flight.keys())[:2]
+  for fut in busy:
+    in_flight.pop(fut)
+    with janitor._day_close_in_flight_lock:
+      janitor._day_close_in_flight.pop(fut, None)
+
+  assert janitor._day_close_free_slots() == 2
+  assert len(janitor._day_close_in_flight) == 2
+
+  while _budget_ok() and janitor._day_close_free_slots() > 0:
+    debt = janitor._pop_one_day_close_debt(set(), skip_tars=attempted_tars)
+    if debt is None:
+      break
+    attempted_tars.add(os.path.normpath(debt.tar_path))
+    janitor._submit_day_close_debt(debt, snapshot=None, validation_cache={}, disqualified=set())
+
+  assert len(submits) == 4

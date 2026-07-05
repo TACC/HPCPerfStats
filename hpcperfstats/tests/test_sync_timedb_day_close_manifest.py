@@ -317,3 +317,109 @@ def test_active_worker_tar_paths_excludes_deferred_waiting_on_ingest(tmp_path):
   assert breakdown["deferred_waiting_n"] == 1
   assert breakdown["manifest_worker_slot_n"] == 1
   assert breakdown["worker_occupancy_n"] == 2
+  assert breakdown["discover_cap_n"] == 1
+
+  discover_cap = coord.active_discover_cap_tar_paths()
+  assert tar_deferred not in discover_cap
+  assert tar_worker in discover_cap
+  assert tar_debt_only not in discover_cap
+
+
+@pytest.mark.django_db(databases=[])
+def test_discover_cap_excludes_debt_heap_from_inflight(tmp_path):
+  archive_dir = str(tmp_path / "archive")
+  os.makedirs(archive_dir)
+  tar_debt = os.path.normpath(str(tmp_path / "daily" / "2020-01-03.tar"))
+  tar_live = os.path.normpath(str(tmp_path / "daily" / "2020-01-04.tar"))
+  os.makedirs(os.path.dirname(tar_debt), exist_ok=True)
+
+  coord = async_dc_mod.DayCloseManifestCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=str(tmp_path / "daily"),
+      local_tz=None,
+      log_fn=lambda *_a, **_k: None,
+      get_disqualified_daily_tars=lambda: set(),
+      get_inflight_tar_paths_fn=lambda: {tar_debt},
+  )
+  discover_cap = coord.active_discover_cap_tar_paths(live_worker_tars={tar_live})
+  assert tar_live in discover_cap
+  assert tar_debt not in discover_cap
+
+
+@pytest.mark.django_db(databases=[])
+def test_enqueue_day_close_requeues_when_manifest_queued_without_debt(tmp_path):
+  archive_dir = str(tmp_path / "archive")
+  os.makedirs(archive_dir)
+  tar_path = os.path.normpath(str(tmp_path / "daily" / "2020-01-01.tar"))
+  os.makedirs(os.path.dirname(tar_path), exist_ok=True)
+  enqueued = []
+
+  def _enqueue_fn(tar, reason=""):
+    enqueued.append(tar)
+    return True
+
+  coord = async_dc_mod.DayCloseManifestCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=str(tmp_path / "daily"),
+      local_tz=None,
+      log_fn=lambda *_a, **_k: None,
+      get_disqualified_daily_tars=lambda: set(),
+      get_inflight_tar_paths_fn=lambda: set(),
+      enqueue_day_close_fn=_enqueue_fn,
+  )
+  coord._set_entry_status(tar_path, "queued")
+  assert coord.enqueue_day_close(tar_path, reason="ghost_test")
+  assert enqueued == [tar_path]
+
+
+@pytest.mark.django_db(databases=[])
+def test_reconcile_manifest_ghost_slot_downgrades_or_reenqueues(tmp_path):
+  archive_dir = str(tmp_path / "archive")
+  os.makedirs(archive_dir)
+  tar_path = os.path.normpath(str(tmp_path / "daily" / "2020-01-01.tar"))
+  os.makedirs(os.path.dirname(tar_path), exist_ok=True)
+  reenqueued = []
+
+  def _enqueue_fn(tar, reason=""):
+    reenqueued.append((tar, reason))
+    return True
+
+  coord = async_dc_mod.DayCloseManifestCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=str(tmp_path / "daily"),
+      local_tz=None,
+      log_fn=lambda *_a, **_k: None,
+      get_disqualified_daily_tars=lambda: set(),
+      get_inflight_tar_paths_fn=lambda: set(),
+      enqueue_day_close_fn=_enqueue_fn,
+  )
+  coord._set_entry_status(tar_path, "queued")
+  fixed = coord.reconcile_manifest_with_debt_heap(
+      debt_tar_paths=set(),
+      live_worker_tars=set(),
+  )
+  assert fixed == 1
+  assert reenqueued == [(tar_path, "ghost_manifest_reconcile")]
+
+
+@pytest.mark.django_db(databases=[])
+def test_defer_for_ingest_handoff_creates_entry_when_missing(tmp_path):
+  archive_dir = str(tmp_path / "archive")
+  os.makedirs(archive_dir)
+  tar_path = os.path.normpath(str(tmp_path / "daily" / "2020-01-01.tar"))
+  os.makedirs(os.path.dirname(tar_path), exist_ok=True)
+
+  coord = async_dc_mod.DayCloseManifestCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=str(tmp_path / "daily"),
+      local_tz=None,
+      log_fn=lambda *_a, **_k: None,
+      get_disqualified_daily_tars=lambda: set(),
+  )
+  coord.defer_for_ingest_handoff(tar_path)
+  snap = coord.entry_progress_snapshot(tar_path)
+  assert snap.get("status") == "deferred"

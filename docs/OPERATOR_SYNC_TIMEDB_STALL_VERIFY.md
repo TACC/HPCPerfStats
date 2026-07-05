@@ -208,6 +208,43 @@ grep -E 'Files marked for archival: 0|archive_job_begin' /tmp/pipeline-full.log 
 
 **Pass (T2):** Every **`pending rescan begin`** is followed by **`pending rescan done`** within minutes (not ~862s **`startup archive scan ready wait_s`** on MainThread alone). **`idle_rescan_snapshot_source=accrual|coordinator`** appears on idle refill. **`pending cap supplement`** or **`capped_pending`** near **`ingest_queue_max`** after queue drain despite **`incomplete_n=2`** cross-day stragglers. **`oldest_day_chunk_gate_cross_day_db_complete`** after all-**`db_skip=head_tail`** defer chunks. During large-day pre-seal, **`pre_seal_verify classify progress`** should show rising **`verified_n/N`** within one worker session, then **`pre_seal_verify complete`** — **`verify budget exhausted`** must **not** appear (removed). **`pre_seal_verify start`** without **`complete`** for >5m is a failure. No **`archive_job_begin`** for unrelated calendar days immediately after **`Files marked for archival: 0`** chunks.
 
+### T1 verify — day-close idle threads + discover cap split (2026-07)
+
+After deploy of **day-close idle thread recovery**, confirm discover enqueues NEW ready days when debt heap is non-empty but pool workers are idle, and mid-tick refill uses free slots.
+
+```bash
+podman-compose logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+
+# Discover cap vs debt heap (RC-1): discover_cap should track live workers + manifest slots, not debt_heap alone.
+grep -E 'discover_ready_day_close|Archive janitor tick done|janitor: tick budget_exit' /tmp/pipeline-full.log | tail -80
+
+# Mid-tick slot-free discover when heap drains before pool fills.
+grep 'discover_ready_day_close.*reason=tick_slot_free' /tmp/pipeline-full.log | tail -20
+
+# Budget partial tick follow-up (RC-4).
+grep 'janitor: tick budget_exit debt_remaining=' /tmp/pipeline-full.log | tail -20
+```
+
+**Pass (T1):**
+
+- With **`active_workers=0`** and **`ready_for_enqueue_n>0`**, discover shows **`enqueued>0`** even when **`debt_heap>0`** (debt heap no longer blocks discover cap).
+- Discover log distinguishes **`discover_cap=`** (live workers + manifest worker slots) from **`worker_occupancy=`** (legacy, includes debt heap) and **`debt_heap=`**.
+- When some **`day-close-N`** workers are busy and others idle, **`reason=tick_slot_free`** discover may appear with **`free_slots=`**; **`Archive janitor tick done`** shows **`days_started>0`** without long silence while **`ready_for_enqueue`** days remain.
+- After budget break with remaining debt: **`janitor: tick budget_exit debt_remaining=N scheduling_followup=yes`** followed by another janitor tick (not multi-hour idle pool threads).
+
+**Root-cause decision tree (idle `day-close-N` threads):**
+
+| Observation | Likely cause | Fix track |
+|-------------|--------------|-----------|
+| `skipped_inflight=N`, `active_workers=0`, `worker_occupancy>=max_inflight`, `debt_heap_n=0` | Ghost manifest slots block discover; heap empty | Reconcile (manifest ghost) |
+| Same but `debt_heap_n>0`, no `Archive janitor tick done` after budget | Tick not waking / budget chain gap | Budget partial-tick wake |
+| `skipped_inflight=N`, `active_workers=0`, `debt_heap_n>=N`, `discover_cap<max_inflight` | Debt counted as discover occupancy (pre-fix) | Discover cap split |
+| `Archive janitor tick done` + `debt_remaining>0`, long silence | No `_pending_signal` after partial tick | Budget partial-tick wake |
+| `active_workers>0`, `free_slots>0`, `enqueued=0`, heap empty | No mid-tick discover on slot-free refill (pre-fix) | `tick_slot_free` discover |
+| Repeated `tar drop deferred`, one `handoff requeue` only | Ingest handoff starvation (separate plan) | Prior handoff plan |
+
+**Pre-fix failure signature (hpcperfstats03 finding #4):** `discover_ready_day_close enqueued=0 skipped_inflight=8 ready_for_enqueue_n=8 max_inflight=4 active_workers=0 debt_heap=4 worker_occupancy=4 manifest_pending=0` — **`worker_occupancy` tracks `debt_heap`**, not live workers.
+
 ## Log source attribution (`[sync_timedb:role]`)
 
 After deploy of log-role prefixes (2026-06), pipeline lines identify **which actor** emitted them. Greps for **`[sync_timedb]`** still match (substring).

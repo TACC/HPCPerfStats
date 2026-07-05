@@ -912,6 +912,7 @@ class ArchiveJanitor:
       self,
       *,
       reason: str,
+      slot_budget: Optional[int] = None,
   ) -> Set[str]:
     if not self.tgz_archive_dir:
       return set()
@@ -951,12 +952,18 @@ class ArchiveJanitor:
         day_raw_removal=self.day_raw_removal_coordinator,
     )
     max_inflight = cfg.get_sync_day_close_max_inflight()
-    active = set(self._day_close_worker_occupancy_tar_paths())
+    live_workers = self._day_close_live_worker_tar_paths()
+    coord = self.day_close_manifest_coordinator
+    if coord is not None and hasattr(coord, "active_discover_cap_tar_paths"):
+      active = coord.active_discover_cap_tar_paths(live_worker_tars=live_workers)
+    else:
+      active = set(live_workers)
     disqualified = set(self.get_disqualified_daily_tars())
     newly_queued: Set[str] = set()
     skipped_inflight = 0
     ready_for_enqueue_n = 0
     discover_reason = "discover_ready_%s" % reason
+    slot_budget_n = None if slot_budget is None else max(0, int(slot_budget))
     for entry in entries:
       if entry.get("status") != "ready_for_enqueue":
         continue
@@ -965,6 +972,8 @@ class ArchiveJanitor:
       ready_for_enqueue_n += 1
       if len(active) >= max_inflight:
         skipped_inflight += 1
+        continue
+      if slot_budget_n is not None and len(newly_queued) >= slot_budget_n:
         continue
       tar_norm = os.path.normpath(entry["tar_path"])
       if self._enqueue_eligible_day_close(
@@ -976,30 +985,35 @@ class ArchiveJanitor:
         active.add(tar_norm)
     if newly_queued or skipped_inflight or ready_for_enqueue_n:
       breakdown: Dict[str, int] = {}
-      coord = self.day_close_manifest_coordinator
       if coord is not None and hasattr(coord, "discover_inflight_breakdown"):
         try:
           breakdown = coord.discover_inflight_breakdown(
-              live_worker_tars=self._day_close_live_worker_tar_paths(),
+              live_worker_tars=live_workers,
           )
         except Exception:
           breakdown = {}
+      free_slots = self._day_close_free_slots()
+      log_suffix = ""
+      if reason == "tick_slot_free":
+        log_suffix = " free_slots=%d" % free_slots
       self.log_fn(
           "janitor: discover_ready_day_close enqueued=%d skipped_inflight=%d "
           "ready_for_enqueue_n=%d max_inflight=%d active_workers=%d "
           "deferred_waiting=%d debt_heap=%d manifest_pending=%d "
-          "worker_occupancy=%d reason=%s"
+          "discover_cap=%d worker_occupancy=%d reason=%s%s"
           % (
               len(newly_queued),
               skipped_inflight,
               ready_for_enqueue_n,
               max_inflight,
-              breakdown.get("active_workers_n", len(self._day_close_live_worker_tar_paths())),
+              breakdown.get("active_workers_n", len(live_workers)),
               breakdown.get("deferred_waiting_n", 0),
               breakdown.get("debt_heap_n", 0),
               breakdown.get("manifest_pending_n", 0),
+              breakdown.get("discover_cap_n", len(active)),
               breakdown.get("worker_occupancy_n", len(active)),
               reason,
+              log_suffix,
           ),
           flush=True,
       )
@@ -1264,6 +1278,8 @@ class ArchiveJanitor:
         "", script_name=self.process_title, role="archive-janitor")
     self._tick_depth += 1
     tick_made_progress = False
+    budget_throttled_this_tick = False
+    tick_mutated = False
     try:
       close_old_connections()
       if self._rss_over_limit():
@@ -1281,6 +1297,14 @@ class ArchiveJanitor:
       debt_popped = 0
       days_started = 0
       self._discover_and_enqueue_ready_day_close(reason="tick")
+      coord = self.day_close_manifest_coordinator
+      if coord is not None:
+        coord.recover_stale_manifest_entries()
+        if hasattr(coord, "reconcile_manifest_with_debt_heap"):
+          coord.reconcile_manifest_with_debt_heap(
+              debt_tar_paths=self._debt_heap_tar_paths(),
+              live_worker_tars=self._day_close_live_worker_tar_paths(),
+          )
       with self._maintenance_pass_lock:
         pass_reason = self._pending_maintenance_pass_reason
         self._pending_maintenance_pass_reason = None
@@ -1327,16 +1351,25 @@ class ArchiveJanitor:
 
       def _fill_free_slots() -> int:
         nonlocal debt_popped, days_started, tick_mutated, disqualified
-        nonlocal tick_made_progress
+        nonlocal tick_made_progress, budget_throttled_this_tick
         started = 0
-        max_workers = max(1, int(cfg.get_sync_day_close_max_inflight()))
-        while _budget_ok() and len(in_flight) < max_workers:
+        while _budget_ok() and self._day_close_free_slots() > 0:
           disqualified = set(self.get_disqualified_daily_tars())
           debt = self._pop_one_day_close_debt(
               disqualified, skip_tars=attempted_tars,
           )
           if debt is None:
-            break
+            free_slots = self._day_close_free_slots()
+            if free_slots > 0:
+              self._discover_and_enqueue_ready_day_close(
+                  reason="tick_slot_free",
+                  slot_budget=free_slots,
+              )
+              debt = self._pop_one_day_close_debt(
+                  disqualified, skip_tars=attempted_tars,
+              )
+            if debt is None:
+              break
           debt_popped += 1
           attempted_tars.add(os.path.normpath(debt.tar_path))
           if debt.tar_path in disqualified:
@@ -1405,6 +1438,13 @@ class ArchiveJanitor:
           if not done:
             if not _budget_ok():
               self._budget_throttled_count += 1
+              budget_throttled_this_tick = True
+              self.log_fn(
+                  "janitor: tick budget_exit debt_remaining=%d "
+                  "scheduling_followup=yes"
+                  % self.debt_depth(),
+                  flush=True,
+              )
               break
             continue
           for future in done:
@@ -1439,6 +1479,13 @@ class ArchiveJanitor:
             _fill_free_slots()
           else:
             self._budget_throttled_count += 1
+            budget_throttled_this_tick = True
+            self.log_fn(
+                "janitor: tick budget_exit debt_remaining=%d "
+                "scheduling_followup=yes"
+                % self.debt_depth(),
+                flush=True,
+            )
             break
 
         # Budget expired or idle: drain remaining in-flight without new pops.
@@ -1512,7 +1559,11 @@ class ArchiveJanitor:
       if (
           self._allow_tick_chaining
           and self.debt_depth() > 0
-          and tick_made_progress
+          and (
+              tick_made_progress
+              or tick_mutated
+              or budget_throttled_this_tick
+          )
       ):
         self._pending_signal = True
       if self._pending_signal and self._tick_depth == 1:
@@ -1732,6 +1783,7 @@ class ArchiveJanitor:
           disqualified,
       ):
         self._enqueue_day_close(tar_norm, persist=False)
+        self._persist_hints()
         return False
     self._finalize_day_close_manifest(tar_norm)
     return True
@@ -1782,6 +1834,8 @@ class ArchiveJanitor:
       with self._hints_state_lock:
         self._day_phases[tar_path] = day_phase_hint_entry(tar_path, "sealed")
       return True
+    self._enqueue_day_close(tar_path, persist=False)
+    self._persist_hints()
     return False
 
   def _tar_drop_one_day(
@@ -1823,6 +1877,8 @@ class ArchiveJanitor:
         only_daily_tar_paths={tar_path},
     )
     if tar_existed and os.path.isfile(tar_path):
+      self._enqueue_day_close(tar_path, persist=False)
+      self._persist_hints()
       return False
     if not tar_existed or not os.path.isfile(tar_path):
       with self._hints_state_lock:
