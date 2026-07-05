@@ -9,6 +9,7 @@
     "dev": "next dev",
     "generate:api": "orval --project hpcperfstatsZod && orval --project hpcperfstats",
     "prebuild": "npm run write-site-identity",
+    "prebuild:prod": "npm run write-site-identity",
     "pretypecheck": "npm run write-site-identity",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
     "typecheck:test": "tsc --noEmit -p tsconfig.test.json",

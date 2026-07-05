@@ -43,3 +43,14 @@ def test_frontend_builder_does_not_copy_entire_repo():
   frontend_copy_pos = stage.rindex("hpcperfstats/site/frontend/")
   assert npm_ci_pos < build_pos
   assert frontend_copy_pos < build_pos
+
+
+def test_build_prod_runs_write_site_identity_hook():
+  """build:prod must generate gitignored site-identity.ts (Docker uses build:prod, not build)."""
+  import json
+
+  package_json = json.loads(
+      (_repo_root() / "hpcperfstats/site/frontend/package.json").read_text(encoding="utf-8"),
+  )
+  scripts = package_json.get("scripts") or {}
+  assert scripts.get("prebuild:prod") == "npm run write-site-identity"
