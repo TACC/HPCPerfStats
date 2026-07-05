@@ -72,13 +72,15 @@ Not generalized to `ThreadPoolExecutor` — lifecycle tied to populate call.
 
 ## Redis L2 populate fnctl contention
 
-On **active-ingest** calendar days, populate-pool **shared read locks** (`file_read_lock_wait` on `*.fnctl.lock`) contend with archive-pool **exclusive write locks** during `.tar` append. Transient timeouts must recover (waiter re-enqueue, prewarm retry) rather than supervisor **`sys.exit(1)`** on the first failure.
+On **active-ingest** calendar days, populate-pool **shared read locks** (`file_read_lock_wait` on `*.fnctl.lock`) contend with archive-pool **exclusive write locks** during `.tar` append. Tar populate waits up to **`sync_archive_members_redis_populate_max_seconds`** (default **7200**) in one blocking attempt; transient timeouts must recover (waiter re-enqueue, prewarm retry) rather than supervisor **`sys.exit(1)`** on the first failure.
 
 | INI key | Default | Role |
 |---------|---------|------|
-| `sync_archive_members_fnctl_read_lock_timeout_seconds` | 180 | Read-lock wait for archive populate/verify paths |
+| `sync_archive_members_redis_populate_max_seconds` | 7200 | Tar populate fnctl read-lock wait when > 0; absolute waiter/prewarm recovery budget (`0` = off) |
+| `sync_archive_members_fnctl_read_lock_timeout_seconds` | 180 | Read-lock wait for verify/non-populate paths; tar populate fallback when `populate_max_seconds=0` |
 | `sync_archive_members_redis_populate_stall_seconds` | 120 | No-progress detection while populate lock held |
-| `sync_archive_members_redis_populate_max_seconds` | 7200 | Absolute waiter/prewarm recovery budget (`0` = off) |
+
+**Populate source:** when sibling **`YYYY-MM-DD.tar` exists**, cold Redis populate uses **`populate_source=tar`**; **`populate_source=sealed`** only when tar is absent (post tar-drop).
 
 Prewarm summary token **`populate_recovering`** indicates transient fnctl recovery succeeded after retry.
 

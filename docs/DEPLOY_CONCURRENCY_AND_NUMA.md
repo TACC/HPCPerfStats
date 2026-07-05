@@ -332,7 +332,7 @@ docker compose -p hpcperfstats logs pipeline 2>&1 | \
   grep -E 'populate-pool|chunk prewarm|sealed archive member stream failed|ingest per-file timeout' | tail -40
 ```
 
-Expect `sync_timedb:worker:populate-pool` with `populate_source=sealed` during catch-up; **no** `ingest per-file timeout` from `ingest-pool` workers while Redis populate lock is held and progressing (populate wait suspends per-file SIGALRM; stall/max limits bound wait duration).
+Expect `sync_timedb:worker:populate-pool` with **`populate_source=tar`** when sibling `.tar` exists (active or closed days), or **`populate_source=sealed`** only when tar was dropped; **no** `ingest per-file timeout` from `ingest-pool` workers while Redis populate lock is held and progressing (populate wait suspends per-file SIGALRM; stall/max limits bound wait duration).
 
 Duplicate file members detected during populate set a Redis **`dedupe_hint`**; the archive janitor enqueues **`DAY_CLOSE`** (inline `.tar` dedupe or sealed-only `dedupe_sealed_daily_archive` last resort).
 

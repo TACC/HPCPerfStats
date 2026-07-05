@@ -353,9 +353,10 @@ sync_pool_process_cap = 16
 # sync_archive_members_redis_populate_stall_seconds = 120
 
 # Absolute cap for populate/waiter loops; 0 disables (default 7200).
+# Tar populate fnctl read-lock wait uses this value when > 0 (else fnctl INI below).
 # sync_archive_members_redis_populate_max_seconds = 7200
 
-# Shared fnctl read-lock wait for archive populate/verify paths (default 180).
+# Shared fnctl read-lock wait for non-populate archive verify paths (default 180).
 # sync_archive_members_fnctl_read_lock_timeout_seconds = 180
 
 # Waiter poll interval seconds for incremental member lookups (default 0.25).

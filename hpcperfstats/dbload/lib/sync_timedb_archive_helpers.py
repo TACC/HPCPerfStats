@@ -3033,6 +3033,15 @@ def _archive_file_read_lock_wait(target_path):
   )
 
 
+def _populate_tar_file_read_lock_wait(target_path):
+  """Tar populate read-lock wait — bounded by populate_max_seconds when set."""
+  max_s = cfg.get_sync_archive_members_redis_populate_max_seconds()
+  timeout = float(max_s) if max_s > 0 else float(
+      _archive_members_fnctl_read_lock_timeout_seconds(),
+  )
+  return file_read_lock_wait(target_path, timeout_seconds=timeout)
+
+
 def _scoped_remaining_raw_for_tar_path(tar_path):
   """Day-scoped remaining raw map for populate/decompress gating."""
   try:
@@ -3069,20 +3078,10 @@ def _decompress_should_unlink_compressed(tar_path):
 
 
 def _populate_should_use_tar_scan(tar_path, zst_path, gz_path, sealed_path):
-  """Return ``(use_tar, reason)`` for populate source selection (Fix B)."""
-  if not os.path.isfile(tar_path):
-    return False, None
-  if sealed_path is None or not os.path.isfile(sealed_path):
-    return True, "sealed_missing"
-  if is_daily_tar_sealed_dirty(tar_path, zst_path, gz_path):
-    return True, "sealed_dirty"
-  try:
-    scoped = _scoped_remaining_raw_for_tar_path(tar_path)
-    zst_key = normalize_daily_compressed_path(sealed_path)
-    if daily_gz_has_remaining_raw_stats(zst_key, scoped):
-      return True, "active_ingest_day"
-  except Exception:
-    pass
+  """Return ``(use_tar, reason)`` for populate source selection."""
+  del zst_path, gz_path, sealed_path
+  if os.path.isfile(tar_path):
+    return True, "tar_exists"
   return False, None
 
 
@@ -3102,7 +3101,7 @@ def _log_populate_source_decision(day_token, tar_path, zst_path, gz_path, sealed
           dirty,
           sealed_exists,
           use_tar,
-          reason or ("sealed" if not use_tar else "tar"),
+          reason or ("sealed_only" if not use_tar else "tar_exists"),
           tar_path,
           sealed_path or "",
       ),
@@ -3889,39 +3888,28 @@ def _populate_redis_members_from_tar_scan(tar_path, cache_key):
       return False, False, None
     saw_duplicates = False
     seen_names = set()
-    last_fnctl_exc = None
-    for attempt, delay in enumerate((0.0,) + _FNCTL_POPULATE_RETRY_DELAYS_S):
-      if delay:
-        time.sleep(delay)
-      try:
-        with _archive_file_read_lock_wait(tar_path):
-          with _open_tarfile_for_read(tar_path, get_archive_zstd_thread_count()) as tf:
-            for member in _iter_tar_members(tf):
-              if not member.isfile():
-                continue
-              if member.name in seen_names:
-                saw_duplicates = True
-              seen_names.add(member.name)
-              on_member(member.name, member.size)
-        last_fnctl_exc = None
-        break
-      except Exception as exc:
-        from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-            ArchiveMembersRedisUnavailableError,
-        )
-        if _is_fnctl_read_lock_timeout_error(exc):
-          last_fnctl_exc = ArchiveMembersRedisUnavailableError(
-              "transient fnctl read lock timeout during tar populate path=%s"
-              % tar_path,
-          )
-          if attempt < len(_FNCTL_POPULATE_RETRY_DELAYS_S):
-            continue
-          raise last_fnctl_exc from exc
-        return False, False, exc
-      finally:
-        _remove_read_lock_sidecar(tar_path)
-    if last_fnctl_exc is not None:
-      raise last_fnctl_exc
+    try:
+      with _populate_tar_file_read_lock_wait(tar_path):
+        with _open_tarfile_for_read(tar_path, get_archive_zstd_thread_count()) as tf:
+          for member in _iter_tar_members(tf):
+            if not member.isfile():
+              continue
+            if member.name in seen_names:
+              saw_duplicates = True
+            seen_names.add(member.name)
+            on_member(member.name, member.size)
+    except Exception as exc:
+      from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+          ArchiveMembersRedisUnavailableError,
+      )
+      if _is_fnctl_read_lock_timeout_error(exc):
+        raise ArchiveMembersRedisUnavailableError(
+            "transient fnctl read lock timeout during tar populate path=%s"
+            % tar_path,
+        ) from exc
+      return False, False, exc
+    finally:
+      _remove_read_lock_sidecar(tar_path)
     return True, saw_duplicates, None
 
   members = populate_archive_members_redis(
