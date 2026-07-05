@@ -111,6 +111,7 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_pool_stall_defer_log_interval_s"),
     ("PIPELINE", "sync_pool_stall_abort_after_timeouts"),
     ("PIPELINE", "sync_pool_worker_recycle_grace_polls"),
+    ("PIPELINE", "sync_pool_worker_recycle_grace_seconds"),
     ("PIPELINE", "sync_pool_idle_reconcile_max_rounds"),
     ("PIPELINE", "sync_pool_idle_reconcile_polls_per_round"),
     ("PIPELINE", "sync_ingest_per_file_timeout_s"),
@@ -287,6 +288,7 @@ INI_OPTION_DEFAULTS = {
     'sync_pool_stall_defer_log_interval_s': '60',
     'sync_pool_stall_abort_after_timeouts': '17320',
     'sync_pool_worker_recycle_grace_polls': '2',
+    'sync_pool_worker_recycle_grace_seconds': '60',
     'sync_pool_idle_reconcile_max_rounds': '3',
     'sync_pool_idle_reconcile_polls_per_round': '4',
     'sync_ingest_per_file_timeout_s': '900',
@@ -1756,6 +1758,20 @@ def get_sync_pool_worker_recycle_grace_polls():
     )
   except (TypeError, ValueError, OverflowError):
     return 2
+
+
+def get_sync_pool_worker_recycle_grace_seconds():
+  """Wall-clock seconds before WARN on slow maxtasksperchild replacement per dead PID."""
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        0.0,
+        float(_pipeline_get("sync_pool_worker_recycle_grace_seconds")),
+    )
+  except (TypeError, ValueError, OverflowError):
+    poll_grace = get_sync_pool_worker_recycle_grace_polls()
+    poll_timeout = get_sync_pool_poll_timeout_s()
+    return max(30.0, float(poll_grace) * float(poll_timeout))
 
 
 def get_sync_pool_idle_reconcile_max_rounds():

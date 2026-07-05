@@ -18,10 +18,23 @@ class _DeadWorker:
 
 
 class _RecycledWorker:
-  pid = 4242
-  exitcode = 0
+  def __init__(self, pid=4242):
+    self.pid = pid
+    self.exitcode = 0
+    self._joined = False
 
-  def __init__(self):
+  def is_alive(self):
+    return False
+
+  def join(self, timeout=None):
+    del timeout
+    self._joined = True
+
+
+class _RecycledWorkerNoneExit:
+  def __init__(self, pid=4242):
+    self.pid = pid
+    self.exitcode = None
     self._joined = False
 
   def is_alive(self):
@@ -33,9 +46,8 @@ class _RecycledWorker:
 
 
 class _AliveWorker:
-  pid = 4243
-
-  def __init__(self):
+  def __init__(self, pid=4243):
+    self.pid = pid
     self._joined = False
 
   def is_alive(self):
@@ -476,24 +488,92 @@ def test_handle_pool_worker_exit_fatal_hard_exits_when_terminate_would_block(mon
   assert terminate_started == []
 
 
-def test_abort_recycle_grace_tolerates_exitcode_zero(monkeypatch):
+def test_abort_recycle_grace_tolerates_many_checks(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.multiprocessing_pool_health.get_sync_pool_worker_recycle_grace_polls",
-      lambda: 2,
+      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0,
   )
   pool = SimpleNamespace(_pool=[_RecycledWorker(), _AliveWorker()])
-  mph.abort_if_pool_workers_dead(pool, context="recycle_test")
-  mph.abort_if_pool_workers_dead(pool, context="recycle_test")
-  with pytest.raises(mph.MultiprocessingWorkerExitError) as excinfo:
+  for _ in range(20):
     mph.abort_if_pool_workers_dead(pool, context="recycle_test")
+
+
+def test_abort_recycle_consecutive_different_pids_no_fatal(monkeypatch):
+  """Reproduces hpcperfstats03: grace 1/2, 2/2, then third PID must not fatal."""
+  monkeypatch.setattr(
+      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0,
+  )
+  logs = []
+  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+
+  def pool_with_one_dead(dead_pid, alive_count=15):
+    workers = [_RecycledWorker(pid=dead_pid)]
+    workers.extend(_AliveWorker(pid=6000 + i) for i in range(alive_count))
+    return SimpleNamespace(_pool=workers)
+
+  mph.abort_if_pool_workers_dead(pool_with_one_dead(1173), context="sync_timedb ingest chunk")
+  mph.abort_if_pool_workers_dead(pool_with_one_dead(1500), context="sync_timedb ingest chunk")
+  mph.abort_if_pool_workers_dead(pool_with_one_dead(1765), context="sync_timedb ingest chunk")
+  assert not any("ERROR: pool worker death diagnostics" in line for line in logs)
+  assert any("dead_pid=1765" in line for line in logs)
+
+
+def test_abort_recycle_many_rapid_checks_no_fatal(monkeypatch):
+  monkeypatch.setattr(
+      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0,
+  )
+  pool = SimpleNamespace(_pool=[_RecycledWorker(), _AliveWorker()])
+  for _ in range(25):
+    mph.abort_if_pool_workers_dead(pool, context="rapid")
+
+
+def test_abort_recycle_stuck_replacements_fatal(monkeypatch):
+  monkeypatch.setattr(
+      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0,
+  )
+  dead_workers = [_RecycledWorker(pid=100 + i) for i in range(4)]
+  pool = SimpleNamespace(_pool=dead_workers)
+  with pytest.raises(mph.MultiprocessingWorkerExitError) as excinfo:
+    mph.abort_if_pool_workers_dead(pool, context="stuck")
+  assert excinfo.value.likely_cause == "recycle_stuck"
   assert excinfo.value.exit_code == 137
-  assert excinfo.value.likely_cause == "recycle"
+
+
+def test_abort_recycle_slow_spawn_warn_not_fatal(monkeypatch):
+  mono = [1000.0]
+
+  def fake_monotonic():
+    return mono[0]
+
+  monkeypatch.setattr(mph.time, "monotonic", fake_monotonic)
+  monkeypatch.setattr(
+      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 10.0,
+  )
+  logs = []
+  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  pool = SimpleNamespace(_pool=[_RecycledWorker(), _AliveWorker()])
+  mph.abort_if_pool_workers_dead(pool, context="slow")
+  mono[0] += 15.0
+  mph.abort_if_pool_workers_dead(pool, context="slow")
+  assert any("WARN: pool worker recycle slow" in line for line in logs)
+  assert not any("ERROR: pool worker death diagnostics" in line for line in logs)
+
+
+def test_abort_recycle_exitcode_none_grace(monkeypatch):
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
+      lambda: 1,
+  )
+  monkeypatch.setattr(
+      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0,
+  )
+  pool = SimpleNamespace(_pool=[_RecycledWorkerNoneExit(), _AliveWorker()])
+  mph.abort_if_pool_workers_dead(pool, context="none_exit")
+  mph.abort_if_pool_workers_dead(pool, context="none_exit")
 
 
 def test_abort_recycle_grace_reaps_dead_worker_pids(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.multiprocessing_pool_health.get_sync_pool_worker_recycle_grace_polls",
-      lambda: 2,
+      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0,
   )
   waitpids = []
 
@@ -511,8 +591,7 @@ def test_abort_recycle_grace_reaps_dead_worker_pids(monkeypatch):
 
 def test_abort_recycle_grace_reaps_zombie_children(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.multiprocessing_pool_health.get_sync_pool_worker_recycle_grace_polls",
-      lambda: 2,
+      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0,
   )
   zombie_calls = []
   warn_calls = []
@@ -575,14 +654,14 @@ def test_reap_zombie_children_of_self_waitpids_state_z(monkeypatch):
 
 def test_abort_recycle_grace_logs_info_not_error(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.multiprocessing_pool_health.get_sync_pool_worker_recycle_grace_polls",
-      lambda: 2,
+      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0,
   )
   logs = []
   monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
   pool = SimpleNamespace(_pool=[_RecycledWorker(), _AliveWorker()])
   mph.abort_if_pool_workers_dead(pool, context="recycle_log")
   assert any("INFO: pool worker recycle in progress" in line for line in logs)
+  assert any("grace_deadline_s=" in line for line in logs)
   assert not any("ERROR: pool worker death diagnostics" in line for line in logs)
 
 
@@ -1283,7 +1362,7 @@ def test_imap_sliding_window_ghost_fatal_after_reconcile_exhausted(monkeypatch):
 
 
 def test_abort_if_pool_workers_dead_recycle_invokes_idle_reconcile(monkeypatch):
-  monkeypatch.setattr(mph, "get_sync_pool_worker_recycle_grace_polls", lambda: 2)
+  monkeypatch.setattr(mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0)
   reconcile_calls = {"n": 0}
 
   def reconcile_fn():
@@ -1295,10 +1374,10 @@ def test_abort_if_pool_workers_dead_recycle_invokes_idle_reconcile(monkeypatch):
   assert reconcile_calls["n"] == 1
   mph.abort_if_pool_workers_dead(pool, context="recycle_reconcile_test", pool_health_context=ctx)
   assert reconcile_calls["n"] == 2
-  with pytest.raises(mph.MultiprocessingWorkerExitError):
-    mph.abort_if_pool_workers_dead(
-        pool,
-        context="recycle_reconcile_test",
-        pool_health_context=ctx,
-    )
+  mph.abort_if_pool_workers_dead(
+      pool,
+      context="recycle_reconcile_test",
+      pool_health_context=ctx,
+  )
+  assert reconcile_calls["n"] == 3
 

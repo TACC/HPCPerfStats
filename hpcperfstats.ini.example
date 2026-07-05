@@ -312,8 +312,11 @@ sync_pool_process_cap = 16
 # Per-batch abort is computed from the largest file in the current imap sub-batch (floor .. ceiling).
 # sync_pool_stall_abort_after_timeouts = 17320
 
-# Polls to tolerate maxtasksperchild worker recycle before exit 137 (default 2).
+# Polls to tolerate maxtasksperchild worker recycle (deprecated; use grace_seconds).
 # sync_pool_worker_recycle_grace_polls = 2
+
+# Wall-clock seconds before WARN on slow maxtasksperchild replacement per dead PID (default 60).
+# sync_pool_worker_recycle_grace_seconds = 60
 
 # Idle-pool ghost reconcile: redispatch stale pending_async before exit 124 (default 3 rounds).
 # sync_pool_idle_reconcile_max_rounds = 3

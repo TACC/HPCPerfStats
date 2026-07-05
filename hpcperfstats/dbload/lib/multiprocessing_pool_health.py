@@ -21,8 +21,11 @@ import time
 
 from hpcperfstats.dbload.lib.print_utils import log_print
 
-# Consecutive recycle-grace polls per pool (keyed by ``id(pool)``).
-_RECYCLE_GRACE_POLLS_BY_POOL = {}
+# Per-pool recycle tracking (keyed by ``id(pool)``).
+_RECYCLE_PID_FIRST_SEEN_BY_POOL = {}
+_LOGGED_RECYCLE_INFO_PIDS_BY_POOL = {}
+_WARNED_SLOW_RECYCLE_PIDS_BY_POOL = {}
+_RECYCLE_TRACKING_MAX_PIDS = 256
 
 
 class MultiprocessingWorkerExitError(RuntimeError):
@@ -58,10 +61,17 @@ def get_sync_pool_poll_timeout_s():
 
 
 def get_sync_pool_worker_recycle_grace_polls():
-  """Consecutive dead-worker polls to tolerate ``maxtasksperchild`` recycle."""
+  """Deprecated poll-count grace; prefer ``get_sync_pool_worker_recycle_grace_seconds``."""
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
   return cfg.get_sync_pool_worker_recycle_grace_polls()
+
+
+def get_sync_pool_worker_recycle_grace_seconds():
+  """Wall-clock seconds before WARN on slow ``maxtasksperchild`` replacement per dead PID."""
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  return cfg.get_sync_pool_worker_recycle_grace_seconds()
 
 
 def get_sync_pool_idle_reconcile_max_rounds():
@@ -289,6 +299,18 @@ def _infer_likely_cause(dead_workers, cgroup_events):
   return "unknown"
 
 
+def _dead_worker_exitcode_is_recycle(proc):
+  """True when a dead worker exitcode looks like ``maxtasksperchild`` recycle."""
+  exitcode = getattr(proc, "exitcode", None)
+  if exitcode == 0:
+    return True
+  if exitcode is None:
+    import hpcperfstats.dbload.lib.conf_parser as cfg
+
+    return cfg.get_sync_ingest_pool_maxtasksperchild() > 0
+  return False
+
+
 def _is_maxtasksperchild_recycle_in_progress(pool, dead_procs):
   """True when dead workers look like normal ``maxtasksperchild`` replacement."""
   if not dead_procs:
@@ -299,7 +321,19 @@ def _is_maxtasksperchild_recycle_in_progress(pool, dead_procs):
   if alive <= 0 or alive < total - len(dead_procs):
     return False
   for proc in dead_procs:
-    if getattr(proc, "exitcode", None) != 0:
+    if not _dead_worker_exitcode_is_recycle(proc):
+      return False
+  return True
+
+
+def _is_recycle_stuck_replacements_lagging(pool, dead_procs):
+  """True when recycle-shaped exits occur but replacements are not keeping pace."""
+  if not dead_procs:
+    return False
+  if _is_maxtasksperchild_recycle_in_progress(pool, dead_procs):
+    return False
+  for proc in dead_procs:
+    if not _dead_worker_exitcode_is_recycle(proc):
       return False
   return True
 
@@ -379,15 +413,95 @@ def _format_pool_worker_death_diagnostics(context, diagnostics):
   )
 
 
-def _reset_recycle_grace(pool):
-  _RECYCLE_GRACE_POLLS_BY_POOL.pop(id(pool), None)
+def _reset_recycle_tracking(pool):
+  pool_key = id(pool)
+  _RECYCLE_PID_FIRST_SEEN_BY_POOL.pop(pool_key, None)
+  _LOGGED_RECYCLE_INFO_PIDS_BY_POOL.pop(pool_key, None)
+  _WARNED_SLOW_RECYCLE_PIDS_BY_POOL.pop(pool_key, None)
+
+
+def _prune_recycle_tracking(pool, dead_pids):
+  pool_key = id(pool)
+  first_seen = _RECYCLE_PID_FIRST_SEEN_BY_POOL.get(pool_key)
+  if not first_seen:
+    return
+  dead_set = set(dead_pids)
+  for pid in list(first_seen):
+    if pid not in dead_set:
+      first_seen.pop(pid, None)
+      logged = _LOGGED_RECYCLE_INFO_PIDS_BY_POOL.get(pool_key)
+      if logged is not None:
+        logged.discard(pid)
+      warned = _WARNED_SLOW_RECYCLE_PIDS_BY_POOL.get(pool_key)
+      if warned is not None:
+        warned.discard(pid)
+
+
+def _handle_healthy_maxtasksperchild_recycle(
+    pool,
+    dead_procs,
+    *,
+    context,
+    diagnostics,
+    pool_health_context,
+):
+  """Reap and log healthy recycle; never fatal while replacements keep pace."""
+  reconcile_fn = (pool_health_context or {}).get("idle_reconcile_fn")
+  if callable(reconcile_fn):
+    try:
+      reconcile_fn()
+    except Exception:
+      pass
+  grace_ctx = context or "recycle_grace"
+  reap_pool_worker_pids(pool, context=grace_ctx)
+  reap_zombie_children_of_self(context=grace_ctx)
+  warn_unreaped_zombie_children(context=grace_ctx)
+
+  now_mono = time.monotonic()
+  grace_seconds = float(get_sync_pool_worker_recycle_grace_seconds())
+  pool_key = id(pool)
+  first_seen = _RECYCLE_PID_FIRST_SEEN_BY_POOL.setdefault(pool_key, {})
+  logged_info = _LOGGED_RECYCLE_INFO_PIDS_BY_POOL.setdefault(pool_key, set())
+  warned_slow = _WARNED_SLOW_RECYCLE_PIDS_BY_POOL.setdefault(pool_key, set())
+  dead_pids = [
+      getattr(proc, "pid", None)
+      for proc in dead_procs
+      if getattr(proc, "pid", None) is not None
+  ]
+  _prune_recycle_tracking(pool, dead_pids)
+  diag_suffix = _format_pool_worker_death_diagnostics(context, diagnostics)
+  for pid in dead_pids:
+    if pid not in first_seen:
+      first_seen[pid] = now_mono
+    age_s = now_mono - first_seen[pid]
+    if pid not in logged_info:
+      if len(logged_info) >= _RECYCLE_TRACKING_MAX_PIDS:
+        logged_info.clear()
+        warned_slow.clear()
+      logged_info.add(pid)
+      log_print(
+          "INFO: pool worker recycle in progress %s dead_pid=%s "
+          "dead_pid_age_s=%.1f grace_deadline_s=%.0f"
+          % (diag_suffix, pid, age_s, grace_seconds),
+          flush=True,
+      )
+    elif age_s >= grace_seconds and pid not in warned_slow:
+      if len(warned_slow) >= _RECYCLE_TRACKING_MAX_PIDS:
+        warned_slow.clear()
+      warned_slow.add(pid)
+      log_print(
+          "WARN: pool worker recycle slow %s dead_pid=%s "
+          "dead_pid_age_s=%.1f grace_deadline_s=%.0f"
+          % (diag_suffix, pid, age_s, grace_seconds),
+          flush=True,
+      )
 
 
 def abort_if_pool_workers_dead(pool, *, context="", pool_health_context=None):
   """Raise ``MultiprocessingWorkerExitError`` when any pool worker has exited."""
   dead_procs = list(_iter_dead_pool_worker_processes(pool))
   if not dead_procs:
-    _reset_recycle_grace(pool)
+    _reset_recycle_tracking(pool)
     return
 
   diagnostics = describe_dead_pool_workers(
@@ -397,35 +511,22 @@ def abort_if_pool_workers_dead(pool, *, context="", pool_health_context=None):
   dead = [w.get("pid") for w in diagnostics.get("dead_workers") or () if w.get("pid")]
 
   if _is_maxtasksperchild_recycle_in_progress(pool, dead_procs):
-    reconcile_fn = (pool_health_context or {}).get("idle_reconcile_fn")
-    if callable(reconcile_fn):
-      try:
-        reconcile_fn()
-      except Exception:
-        pass
-    # Reap exitcode-0 recycled workers every grace poll so zombies do not
-    # accumulate under the supervisor while replacements start.
-    grace_ctx = context or "recycle_grace"
-    reap_pool_worker_pids(pool, context=grace_ctx)
-    reap_zombie_children_of_self(context=grace_ctx)
-    warn_unreaped_zombie_children(context=grace_ctx)
-    grace_limit = get_sync_pool_worker_recycle_grace_polls()
-    pool_key = id(pool)
-    grace_used = _RECYCLE_GRACE_POLLS_BY_POOL.get(pool_key, 0) + 1
-    if grace_used <= grace_limit:
-      _RECYCLE_GRACE_POLLS_BY_POOL[pool_key] = grace_used
-      log_print(
-          "INFO: pool worker recycle in progress %s grace_poll=%d/%d"
-          % (
-              _format_pool_worker_death_diagnostics(context, diagnostics),
-              grace_used,
-              grace_limit,
-          ),
-          flush=True,
-      )
-      return
+    _handle_healthy_maxtasksperchild_recycle(
+        pool,
+        dead_procs,
+        context=context,
+        diagnostics=diagnostics,
+        pool_health_context=pool_health_context or {},
+    )
+    return
 
-  _reset_recycle_grace(pool)
+  likely_cause = diagnostics.get("likely_cause") or "unknown"
+  if _is_recycle_stuck_replacements_lagging(pool, dead_procs):
+    likely_cause = "recycle_stuck"
+    diagnostics = dict(diagnostics)
+    diagnostics["likely_cause"] = likely_cause
+
+  _reset_recycle_tracking(pool)
   message = (
       "Multiprocessing pool worker no longer alive; "
       "dead_pids=%s context=%s"
@@ -442,7 +543,7 @@ def abort_if_pool_workers_dead(pool, *, context="", pool_health_context=None):
       dead_pids=dead,
       context=context,
       exit_code=137,
-      likely_cause=diagnostics.get("likely_cause") or "unknown",
+      likely_cause=likely_cause,
       diagnostics=diagnostics,
   )
 
