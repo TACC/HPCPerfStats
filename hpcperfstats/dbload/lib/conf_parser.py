@@ -2457,7 +2457,10 @@ def get_sync_ingest_db_complete_tail_window_lines():
 
 
 def get_sync_ingest_pool_maxtasksperchild():
-  """Recycle ingest/archive pool workers after N tasks; 0 unlimited (default 1)."""
+  """Recycle ingest-pool workers after N tasks; 0 unlimited (default 1).
+
+  Archive and sealed-archive spawn pools always use maxtasksperchild=1.
+  """
   _ensure_cfg_loaded()
   return max(0, _pipeline_getint("sync_ingest_pool_maxtasksperchild"))
 

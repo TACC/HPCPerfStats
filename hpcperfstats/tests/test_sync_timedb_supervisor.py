@@ -2462,11 +2462,23 @@ def test_effective_ingest_imap_inflight_cap_equals_pool_size(monkeypatch):
     assert st._effective_ingest_imap_inflight_cap(24, 10) == 10
     assert st._effective_ingest_imap_inflight_cap(1, 0) == 1
 
-def test_spawn_pool_recycle_kwargs_when_maxtasks_set(monkeypatch):
+def test_spawn_pool_recycle_kwargs_ingest_uses_ini(monkeypatch):
     monkeypatch.setattr(st.cfg, 'get_sync_ingest_pool_maxtasksperchild', lambda: 25)
     assert st._spawn_pool_recycle_kwargs() == {'maxtasksperchild': 25}
     monkeypatch.setattr(st.cfg, 'get_sync_ingest_pool_maxtasksperchild', lambda: 0)
     assert st._spawn_pool_recycle_kwargs() == {}
+
+
+def test_spawn_pool_recycle_kwargs_when_maxtasks_set(monkeypatch):
+    from hpcperfstats.dbload.lib import multiprocessing_pool_health as mph
+
+    monkeypatch.setattr(st.cfg, 'get_sync_ingest_pool_maxtasksperchild', lambda: 0)
+    assert mph.sync_timedb_spawn_pool_recycle_kwargs(
+        pool_kind_log_label="archive-pool",
+    ) == {'maxtasksperchild': 1}
+    assert mph.sync_timedb_spawn_pool_recycle_kwargs(
+        pool_kind_log_label="sealed-archive-pool",
+    ) == {'maxtasksperchild': 1}
 
 def test_streaming_parse_path_avoids_readlines(monkeypatch, tmp_path):
     stats_file = tmp_path / 'host.example.com' / '1709123456'

@@ -300,7 +300,21 @@ def _infer_likely_cause(dead_workers, cgroup_events):
   return "unknown"
 
 
-def _dead_worker_exitcode_is_recycle(proc, *, pool=None):
+def _cold_sync_timedb_pool_recycles_after_every_task(pool, *, pool_health_context=None):
+  """True when ``pool`` is not the supervised ingest pool (hardcoded maxtasksperchild=1)."""
+  ctx = pool_health_context or {}
+  ingest_pool = ctx.get("ingest_pool")
+  if ingest_pool is None or pool is None:
+    return False
+  return pool is not ingest_pool
+
+
+def _dead_worker_exitcode_is_recycle(
+    proc,
+    *,
+    pool=None,
+    pool_health_context=None,
+):
   """True when a dead worker exitcode looks like healthy pool recycle."""
   exitcode = getattr(proc, "exitcode", None)
   if exitcode == 0:
@@ -312,13 +326,23 @@ def _dead_worker_exitcode_is_recycle(proc, *, pool=None):
       if pid in retired:
         return True
   if exitcode is None:
+    if _cold_sync_timedb_pool_recycles_after_every_task(
+        pool,
+        pool_health_context=pool_health_context,
+    ):
+      return True
     import hpcperfstats.dbload.lib.conf_parser as cfg
 
     return cfg.get_sync_ingest_pool_maxtasksperchild() > 0
   return False
 
 
-def _is_maxtasksperchild_recycle_in_progress(pool, dead_procs):
+def _is_maxtasksperchild_recycle_in_progress(
+    pool,
+    dead_procs,
+    *,
+    pool_health_context=None,
+):
   """True when dead workers look like normal pool worker replacement."""
   if not dead_procs:
     return False
@@ -328,19 +352,36 @@ def _is_maxtasksperchild_recycle_in_progress(pool, dead_procs):
   if alive <= 0 or alive < total - len(dead_procs):
     return False
   for proc in dead_procs:
-    if not _dead_worker_exitcode_is_recycle(proc, pool=pool):
+    if not _dead_worker_exitcode_is_recycle(
+        proc,
+        pool=pool,
+        pool_health_context=pool_health_context,
+    ):
       return False
   return True
 
 
-def _is_recycle_stuck_replacements_lagging(pool, dead_procs):
+def _is_recycle_stuck_replacements_lagging(
+    pool,
+    dead_procs,
+    *,
+    pool_health_context=None,
+):
   """True when recycle-shaped exits occur but replacements are not keeping pace."""
   if not dead_procs:
     return False
-  if _is_maxtasksperchild_recycle_in_progress(pool, dead_procs):
+  if _is_maxtasksperchild_recycle_in_progress(
+      pool,
+      dead_procs,
+      pool_health_context=pool_health_context,
+  ):
     return False
   for proc in dead_procs:
-    if not _dead_worker_exitcode_is_recycle(proc):
+    if not _dead_worker_exitcode_is_recycle(
+        proc,
+        pool=pool,
+        pool_health_context=pool_health_context,
+    ):
       return False
   return True
 
@@ -517,7 +558,11 @@ def abort_if_pool_workers_dead(pool, *, context="", pool_health_context=None):
   )
   dead = [w.get("pid") for w in diagnostics.get("dead_workers") or () if w.get("pid")]
 
-  if _is_maxtasksperchild_recycle_in_progress(pool, dead_procs):
+  if _is_maxtasksperchild_recycle_in_progress(
+      pool,
+      dead_procs,
+      pool_health_context=pool_health_context,
+  ):
     _handle_healthy_maxtasksperchild_recycle(
         pool,
         dead_procs,
@@ -528,7 +573,11 @@ def abort_if_pool_workers_dead(pool, *, context="", pool_health_context=None):
     return
 
   likely_cause = diagnostics.get("likely_cause") or "unknown"
-  if _is_recycle_stuck_replacements_lagging(pool, dead_procs):
+  if _is_recycle_stuck_replacements_lagging(
+      pool,
+      dead_procs,
+      pool_health_context=pool_health_context,
+  ):
     likely_cause = "recycle_stuck"
     diagnostics = dict(diagnostics)
     diagnostics["likely_cause"] = likely_cause
@@ -1438,14 +1487,20 @@ def hard_exit_pool_worker_error(exc: MultiprocessingWorkerExitError) -> None:
   os._exit(int(exc.exit_code))
 
 
-def sync_timedb_spawn_pool_recycle_kwargs() -> dict:
-  """Return ``maxtasksperchild`` kwargs for sync_timedb spawn pools when configured."""
+_COLD_SYNC_TIMEDB_POOL_MAXTASKSPERCHILD = 1
+_INGEST_POOL_KIND_LOG_LABEL = "ingest-pool"
+
+
+def sync_timedb_spawn_pool_recycle_kwargs(*, pool_kind_log_label):
+  """Return ``maxtasksperchild`` kwargs for a sync_timedb spawn pool kind."""
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
-  maxtasks = cfg.get_sync_ingest_pool_maxtasksperchild()
-  if maxtasks > 0:
-    return {"maxtasksperchild": int(maxtasks)}
-  return {}
+  if pool_kind_log_label == _INGEST_POOL_KIND_LOG_LABEL:
+    maxtasks = cfg.get_sync_ingest_pool_maxtasksperchild()
+    if maxtasks > 0:
+      return {"maxtasksperchild": int(maxtasks)}
+    return {}
+  return {"maxtasksperchild": _COLD_SYNC_TIMEDB_POOL_MAXTASKSPERCHILD}
 
 
 def create_sync_timedb_spawn_pool(
@@ -1455,11 +1510,13 @@ def create_sync_timedb_spawn_pool(
     initargs,
     pool_kind_log_label=None,
 ):
-  """Create a spawn-context ``Pool`` with shared sync_timedb recycle kwargs."""
-  del pool_kind_log_label
+  """Create a spawn-context ``Pool`` with pool-kind recycle kwargs."""
+  label = str(pool_kind_log_label or "").strip()
+  if not label:
+    raise ValueError("create_sync_timedb_spawn_pool requires pool_kind_log_label")
   return multiprocessing.get_context("spawn").Pool(
       processes=processes,
       initializer=initializer,
       initargs=initargs,
-      **sync_timedb_spawn_pool_recycle_kwargs(),
+      **sync_timedb_spawn_pool_recycle_kwargs(pool_kind_log_label=label),
   )

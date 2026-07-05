@@ -403,6 +403,7 @@ sync_process_tree_rss_limit_mb = 110000
 # sync_ingest_giant_pool_supplement_trigger_budget_s = 6600
 
 # Recycle ingest/archive pool workers after N files; 0 unlimited (default 1).
+# Ingest pool only; archive and sealed-archive spawn pools always maxtasksperchild=1.
 sync_ingest_pool_maxtasksperchild = 1
 
 # Return freed worker heap to OS after each ingest task on Linux (default yes).

@@ -177,7 +177,6 @@ from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
 )
 from hpcperfstats.dbload.lib.sync_timedb_worker_memory import (
     WorkerMemoryBatchAccumulator,
-    classify_archive_append_reap_kind,
     classify_supervisor_reap_kind,
     increment_worker_tasks_on_worker,
     measure_worker_rss_after_release,
@@ -492,77 +491,6 @@ def _handle_ingest_worker_memory_after_imap(
   if accumulator is not None:
     accumulator.record_completion(reap_kind, meta)
   return reap_kind
-
-
-def _attach_archive_worker_memory_meta(result, mem_meta, archive_info):
-  """Merge worker memory meta into archive append results for supervisor retire."""
-  worker_pid = None
-  if isinstance(mem_meta, dict):
-    try:
-      worker_pid = int(mem_meta.get("worker_pid"))
-    except (TypeError, ValueError):
-      worker_pid = None
-  if isinstance(result, ArchiveAppendOutcome):
-    return ArchiveAppendOutcome(
-        ok=result.ok,
-        redis_merge_ok=result.redis_merge_ok,
-        skip_finalize_invalidate=result.skip_finalize_invalidate,
-        worker_pid=worker_pid,
-    )
-  append_ok = _archive_task_succeeded(result)
-  return ArchiveAppendOutcome(
-      ok=append_ok,
-      skip_finalize_invalidate=append_ok,
-      worker_pid=worker_pid,
-  )
-
-
-def _handle_archive_worker_memory_after_results(
-    *,
-    pool,
-    registry,
-    results,
-    deferred_paths,
-    accumulator,
-):
-  if not isinstance(results, list):
-    results = [results]
-  for task_payload, result in zip(deferred_paths, results):
-    append_ok = _archive_task_succeeded(result)
-    reap_kind = classify_archive_append_reap_kind(append_ok=append_ok)
-    archive_path = ""
-    worker_pid = None
-    if isinstance(result, ArchiveAppendOutcome):
-      worker_pid = result.worker_pid
-    task = task_payload.get("task") if isinstance(task_payload, dict) else None
-    archive_info = getattr(task, "archive_info", None) if task is not None else None
-    if archive_info:
-      archive_path = str(archive_info[0] or "")
-    if should_supervisor_retire_worker(reap_kind):
-      if worker_pid is None:
-        worker_pid = resolve_worker_pid_from_meta_or_registry(
-            {},
-            registry,
-            archive_path,
-        )
-      if worker_pid is not None:
-        retire_pool_worker_pid(
-            pool,
-            worker_pid,
-            context="archive_%s" % reap_kind,
-        )
-      else:
-        log_print(
-            "WARN: sync_timedb worker_memory: archive retire skipped "
-            "missing worker_pid path=%s reap_kind=%s"
-            % (archive_path, reap_kind),
-            flush=True,
-        )
-    if accumulator is not None:
-      accumulator.record_completion(
-          reap_kind,
-          {"worker_pid": worker_pid, "archive_path": archive_path},
-      )
 
 
 def _log_ingest_per_file_timeout(exc):
@@ -1789,7 +1717,7 @@ def _sealed_archive_ingest_remaining_pair():
 
 
 def _spawn_pool_recycle_kwargs():
-  return sync_timedb_spawn_pool_recycle_kwargs()
+  return sync_timedb_spawn_pool_recycle_kwargs(pool_kind_log_label="ingest-pool")
 
 # Set to 1/yes/true so ingest runs in the parent process (no spawn pool). Required
 # for pytest-django: pool workers would reconnect with default [DEFAULT] dbname instead
@@ -1956,7 +1884,6 @@ class ArchiveAppendOutcome:
   ok: bool = True
   redis_merge_ok: bool = False
   skip_finalize_invalidate: bool = True
-  worker_pid: int | None = None
 
   def __bool__(self):
     return self.ok
@@ -3782,9 +3709,7 @@ def archive_stats_files(archive_info):
     with _sync_worker_db_task():
       result = _archive_stats_files_body(archive_info)
   finally:
-    mem_meta = _release_ingest_worker_memory(archive_path)
-    if result is not None:
-      result = _attach_archive_worker_memory_meta(result, mem_meta, archive_info)
+    _release_ingest_worker_memory(archive_path)
   return result
 
 
@@ -4762,13 +4687,6 @@ def run_sync_timedb_supervisor_loop(
     )
     perf_stats["archive_finalize_wait_s"] += max(0.0, time.time() - finalize_t0)
     perf_stats["archive_finalize_calls"] += 1
-    _handle_archive_worker_memory_after_results(
-        pool=archive_pool,
-        registry=stall_diagnostics.worker_registry,
-        results=results,
-        deferred_paths=slot.deferred_paths,
-        accumulator=worker_memory_accumulator,
-    )
     _apply_archive_finalize_results(slot.deferred_paths, results)
     return True
 

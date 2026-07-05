@@ -215,11 +215,6 @@ def should_supervisor_retire_worker(reap_kind):
   return True
 
 
-def classify_archive_append_reap_kind(*, append_ok):
-  """Archive pool: failure-always retire on append failure; success keeps worker."""
-  return REAP_KEEP if append_ok else REAP_FAILURE
-
-
 def _percentile(values, pct):
   if not values:
     return 0

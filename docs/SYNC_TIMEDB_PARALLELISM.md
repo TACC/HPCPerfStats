@@ -18,8 +18,8 @@ This document describes how `sync_timedb` uses **spawn process pools**, **sessio
 | Pool | Module | Workers | Initializer | Why spawn |
 |------|--------|---------|-------------|-----------|
 | `ingest_pool` | `sync_timedb.py` | INI `sync_ingest_pool_processes` | `apply_ingest_pool_worker_init` + diagnostics registry | Combined parse+DB write; CPU parse, RSS, Django test DB isolation, BLAS, stall exit **124**, L1 host cache |
-| `archive_pool` | `sync_timedb.py` | INI `sync_archive_pool_processes` | `apply_pool_worker_process_title` only | Per-job process recycle (`maxtasksperchild`), failure isolation, L1 cache; append is I/O-heavy but isolation wins |
-| `sealed-archive-pool` | `sync_timedb_archive.py` | INI archive worker count | Same as ingest init | Standalone sealed-archive ingest CLI |
+| `archive_pool` | `sync_timedb.py` | INI `sync_archive_pool_processes` | `apply_pool_worker_process_title` only | Hardcoded **`maxtasksperchild=1`** per append job; failure isolation, L1 cache; append is I/O-heavy but isolation wins |
+| `sealed-archive-pool` | `sync_timedb_archive.py` | INI archive worker count | Same as ingest init | Hardcoded **`maxtasksperchild=1`**; standalone sealed-archive ingest CLI |
 
 **Factory:** `create_sync_timedb_spawn_pool()` in `multiprocessing_pool_health.py` — shared spawn context + recycle kwargs; **distinct initializers per pool kind** (do not unify initargs).
 

@@ -635,6 +635,36 @@ def test_reap_pool_worker_pids_logs_reaped(monkeypatch):
   assert any("Pool worker reap context=unit" in line for line in logs)
 
 
+def test_create_sync_timedb_spawn_pool_requires_pool_kind():
+  with pytest.raises(ValueError, match="pool_kind_log_label"):
+    mph.create_sync_timedb_spawn_pool(
+        processes=1,
+        initializer=lambda: None,
+        initargs=(),
+        pool_kind_log_label="",
+    )
+
+
+def test_abort_archive_recycle_healthy_when_ingest_maxtasks_zero(monkeypatch):
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
+      lambda: 0,
+  )
+  monkeypatch.setattr(
+      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0,
+  )
+  ingest_pool = SimpleNamespace(_pool=[_AliveWorker()])
+  archive_pool = SimpleNamespace(_pool=[_RecycledWorker(), _AliveWorker()])
+  mph.abort_if_pool_workers_dead(
+      archive_pool,
+      context="archive_recycle",
+      pool_health_context={
+          "ingest_pool": ingest_pool,
+          "archive_pool": archive_pool,
+      },
+  )
+
+
 def test_reap_zombie_children_of_self_waitpids_state_z(monkeypatch):
   logs = []
   monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))

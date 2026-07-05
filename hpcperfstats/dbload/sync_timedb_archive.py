@@ -67,7 +67,6 @@ from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
     MultiprocessingWorkerExitError,
     create_sync_timedb_spawn_pool,
     imap_sliding_window_watch_pool,
-    sync_timedb_spawn_pool_recycle_kwargs,
     terminate_pool_bounded,
 )
 from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
@@ -161,10 +160,6 @@ def _resolve_sealed_paths_from_argv(mode, startdate, enddate, path_args):
     else:
       skipped += 1
   return sealed_paths, skipped
-
-
-def _archive_spawn_pool_recycle_kwargs():
-  return sync_timedb_spawn_pool_recycle_kwargs()
 
 
 def _process_stream_archive(lock, sealed_path):
