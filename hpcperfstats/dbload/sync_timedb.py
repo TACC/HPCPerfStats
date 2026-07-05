@@ -80,6 +80,7 @@ from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
     pool_workers_all_idle,
     reap_pool_worker_pids,
     reap_zombie_children_of_self,
+    warn_unreaped_zombie_children,
     sync_timedb_spawn_pool_recycle_kwargs,
     terminate_pool_bounded,
 )
@@ -731,6 +732,8 @@ def _in_flight_file_meta_from_paths(paths, max_n=10):
 
 
 INGEST_STALL_WATCHDOG_IDLE_S = 1800.0
+_SUPERVISOR_CHILD_REAP_INTERVAL_S = 60.0
+_last_supervisor_child_reap_mono = 0.0
 
 
 class IngestStallDiagnostics:
@@ -1158,12 +1161,18 @@ def _make_ingest_stall_poll_fn(
     stall_diagnostics=None,
     *,
     day_hint_from_sample_fn=None,
+    supervisor_reap_fn=None,
 ):
   """Defer pool imap stall abort while Redis populate shows progress."""
   defer_log_state = {}
 
   def on_stall_poll(consecutive, context, pool_health_context):
     del context
+    if supervisor_reap_fn is not None:
+      try:
+        supervisor_reap_fn()
+      except Exception:
+        pass
     sample = []
     if tracker is not None:
       sample = tracker.sample_in_flight()
@@ -1275,6 +1284,7 @@ def _imap_ingest_pool(
     archive_pool=None,
     stall_poll_state=None,
     stall_diagnostics=None,
+    populate_pool_controller=None,
 ):
   if pool is None:
     return iter(())
@@ -1300,6 +1310,15 @@ def _imap_ingest_pool(
           tracker.sample_in_flight if tracker is not None else None
       ),
   }
+
+  def _supervisor_reap():
+    _maybe_reap_supervisor_pool_children_throttled(
+        ingest_pool if ingest_pool is not None else pool,
+        archive_pool,
+        populate_pool_controller,
+        context="stall_poll",
+    )
+
   iterator = imap_unordered_watch_pool(
       pool,
       fn,
@@ -1316,7 +1335,10 @@ def _imap_ingest_pool(
           progress_state=stall_poll_state,
       ),
       on_stall_poll=_make_ingest_stall_poll_fn(
-          tracker, stall_poll_state, stall_diagnostics=stall_diagnostics,
+          tracker,
+          stall_poll_state,
+          stall_diagnostics=stall_diagnostics,
+          supervisor_reap_fn=_supervisor_reap,
       ),
       pool_health_context=pool_health_context,
       on_stall_fatal_summary=(
@@ -1373,6 +1395,7 @@ def _imap_ingest_paths_batched(
     archive_pool=None,
     stall_diagnostics=None,
     pending_tail=None,
+    populate_pool_controller=None,
 ):
   """Cap concurrent pool tasks below full chunk size for RSS safety (sliding window)."""
   inflight_cap = _effective_ingest_imap_inflight_cap(thread_count, len(paths))
@@ -1394,6 +1417,14 @@ def _imap_ingest_paths_batched(
       ),
   }
   supplement_log_state = {"logged": False}
+
+  def _supervisor_reap():
+    _maybe_reap_supervisor_pool_children_throttled(
+        ingest_pool if ingest_pool is not None else pool,
+        archive_pool,
+        populate_pool_controller,
+        context="stall_poll",
+    )
 
   def _format_giant_in_flight_snapshot(in_flight_paths):
     entries = []
@@ -1497,7 +1528,10 @@ def _imap_ingest_paths_batched(
           progress_state=stall_poll_state,
       ),
       on_stall_poll=_make_ingest_stall_poll_fn(
-          tracker, stall_poll_state, stall_diagnostics=stall_diagnostics,
+          tracker,
+          stall_poll_state,
+          stall_diagnostics=stall_diagnostics,
+          supervisor_reap_fn=_supervisor_reap,
       ),
       pool_health_context=pool_health_context,
       on_stall_fatal_summary=(
@@ -1630,11 +1664,17 @@ _TREE_RSS_DEFER_SLEEP_SECONDS = 5.0
 tgz_archive_dir = cfg.get_daily_archive_dir_path()
 
 
-def _reap_supervisor_pool_children(ingest_pool, archive_pool, populate_pool_controller):
+def _reap_supervisor_pool_children(
+    ingest_pool,
+    archive_pool,
+    populate_pool_controller,
+    *,
+    context="chunk_boundary",
+):
   """Reap dead pool workers and zombies; restart dead populate-pool workers."""
-  reap_pool_worker_pids(ingest_pool, context="chunk_boundary_ingest")
-  reap_pool_worker_pids(archive_pool, context="chunk_boundary_archive")
-  reap_zombie_children_of_self(context="chunk_boundary")
+  reap_pool_worker_pids(ingest_pool, context="%s_ingest" % context)
+  reap_pool_worker_pids(archive_pool, context="%s_archive" % context)
+  reap_zombie_children_of_self(context=context)
   if populate_pool_controller is not None:
     try:
       populate_pool_controller.reap_and_restart()
@@ -1643,6 +1683,29 @@ def _reap_supervisor_pool_children(ingest_pool, archive_pool, populate_pool_cont
           "WARN: populate-pool reap_and_restart failed: %s" % exc,
           flush=True,
       )
+  warn_unreaped_zombie_children(context=context)
+
+
+def _maybe_reap_supervisor_pool_children_throttled(
+    ingest_pool,
+    archive_pool,
+    populate_pool_controller,
+    *,
+    context="throttled",
+):
+  """Run supervisor child hygiene at most once per ``_SUPERVISOR_CHILD_REAP_INTERVAL_S``."""
+  global _last_supervisor_child_reap_mono
+  now_mono = time.monotonic()
+  if now_mono - _last_supervisor_child_reap_mono < _SUPERVISOR_CHILD_REAP_INTERVAL_S:
+    return False
+  _last_supervisor_child_reap_mono = now_mono
+  _reap_supervisor_pool_children(
+      ingest_pool,
+      archive_pool,
+      populate_pool_controller,
+      context=context,
+  )
+  return True
 
 
 def _exit_on_archive_members_redis_unavailable(exc):
@@ -4635,6 +4698,12 @@ def run_sync_timedb_supervisor_loop(
     if now_mono - last_log < INGEST_STALL_WATCHDOG_IDLE_S:
       return
     reconcile_refs["last_ingest_stall_watchdog_mono"] = now_mono
+    _maybe_reap_supervisor_pool_children_throttled(
+        ingest_pool,
+        archive_pool,
+        populate_pool_controller,
+        context="stall_watchdog",
+    )
     log_print(
         "ERROR: ingest_stall_watchdog incomplete_n=%d oldest_tar=%s "
         "idle_since_chunk_summary_s=%.0f chunk_in_progress=%d "
@@ -5036,6 +5105,7 @@ def run_sync_timedb_supervisor_loop(
           archive_pool=archive_pool,
           stall_diagnostics=stall_diagnostics,
           pending_tail=pending_tail,
+          populate_pool_controller=populate_pool_controller,
       )
       for result in results_iter:
         stats_fname, need_archival, ingest_ok, elapsed_s, outcome_meta = (
@@ -5414,6 +5484,12 @@ def run_sync_timedb_supervisor_loop(
         "sync_timedb: pending rescan done pending=%d elapsed_s=%.3f"
         % (len(paths), time.time() - rescan_t0),
         flush=True,
+    )
+    _maybe_reap_supervisor_pool_children_throttled(
+        ingest_pool,
+        archive_pool,
+        populate_pool_controller,
+        context="pending_rescan",
     )
     return paths
 

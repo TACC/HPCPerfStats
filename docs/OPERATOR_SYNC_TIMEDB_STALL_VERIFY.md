@@ -325,7 +325,7 @@ pgrep -af "sync_timedb.*worker:" | head -10
 
 **Expect:** one `archive-janitor` thread when janitor enabled; optional `startup-*` threads during boot preflights; separate `[worker:ingest-pool]` / `[worker:archive-pool]` / `[worker:populate-pool]` PIDs (spawn), not threads for parse/append/populate hot path.
 
-**Defunct children (T0/T1):** under supervisor PID, `ps` must **not** accumulate `[sync_timedb.py ] <defunct>` zombies. Chunk-boundary reap + populate-pool `reap_and_restart` should clear them. If zombies persist with `exit_code=9` (SIGKILL) and no live `worker:populate-pool`, expect prewarm failures.
+**Defunct children (T0/T1):** under supervisor PID, `ps` must **not** accumulate `[sync_timedb.py ] <defunct>` zombies. Chunk-boundary reap + populate-pool `reap_and_restart` should clear them; mid-chunk throttled reap (stall poll / idle backstop) must also emit `Zombie child reap` or `Pool worker reap` when workers recycle during long imap. Grep pipeline logs for `Zombie child reap` and `WARN: unreaped zombie children` — failure if zombies span **past** the next `chunk ingest summary` / `chunk_prewarm_elapsed_s` line. If zombies persist with `exit_code=9` (SIGKILL) and no live `worker:populate-pool`, expect prewarm failures.
 
 **Populate incomplete after lock release:** grep for `Archive members populate incomplete after lock release`. Error key suffix `none:none:<tar_mtime>:<tar_size>` with concurrent `archive_job_done` / `redis_merge_warm` on the same day usually means **tar-identity drift** (waiter on pre-append fingerprint, merge on post-append). Post-fix waiters re-resolve identity and re-enqueue within `populate_max_seconds` rather than immediate `sys.exit(1)`.
 

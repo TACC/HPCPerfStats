@@ -405,7 +405,10 @@ def abort_if_pool_workers_dead(pool, *, context="", pool_health_context=None):
         pass
     # Reap exitcode-0 recycled workers every grace poll so zombies do not
     # accumulate under the supervisor while replacements start.
-    reap_pool_worker_pids(pool, context=context or "recycle_grace")
+    grace_ctx = context or "recycle_grace"
+    reap_pool_worker_pids(pool, context=grace_ctx)
+    reap_zombie_children_of_self(context=grace_ctx)
+    warn_unreaped_zombie_children(context=grace_ctx)
     grace_limit = get_sync_pool_worker_recycle_grace_polls()
     pool_key = id(pool)
     grace_used = _RECYCLE_GRACE_POLLS_BY_POOL.get(pool_key, 0) + 1
@@ -591,6 +594,19 @@ def reap_zombie_children_of_self(*, context=""):
         flush=True,
     )
   return reaped
+
+
+def warn_unreaped_zombie_children(*, context=""):
+  """Log WARN when direct zombie children remain after a reap attempt."""
+  zombies = list(_iter_zombie_child_pids())
+  if not zombies:
+    return
+  sample = zombies[:8]
+  log_print(
+      "WARN: unreaped zombie children context=%s count=%d sample_pids=%s"
+      % (context or "supervisor", len(zombies), sample),
+      flush=True,
+  )
 
 
 def _sigkill_pool_worker_pids(pids, *, context=""):

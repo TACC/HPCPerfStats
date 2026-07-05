@@ -70,3 +70,39 @@ def test_populate_pool_reap_and_restart_replaces_dead_worker(monkeypatch):
   assert alive in controller._processes
   assert len(controller._processes) == 2
   assert spawned
+
+
+def test_populate_pool_reap_waitpids_dead_worker(monkeypatch):
+  controller = PopulatePoolController()
+  dead = _DeadProc()
+  alive = _AliveProc()
+  controller._processes = [dead, alive]
+  controller._shutdown = SimpleNamespace(is_set=lambda: False)
+  controller._ctx = object()
+  controller._script_name = "sync_timedb.py"
+  controller._registry = {}
+  waitpids = []
+
+  def _waitpid(pid, timeout_s=0.5):
+    waitpids.append(int(pid))
+    return True
+
+  def _spawn(index):
+    proc = _AliveProc()
+    proc.pid = 8000 + index
+    controller._processes.append(proc)
+    return proc
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_populate_pool._waitpid_pid_nonblocking",
+      _waitpid,
+  )
+  monkeypatch.setattr(controller, "_spawn_one", _spawn)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser"
+      ".get_sync_archive_members_populate_pool_processes",
+      lambda: 2,
+  )
+  controller.reap_and_restart()
+  assert dead.joined is True
+  assert 7001 in waitpids

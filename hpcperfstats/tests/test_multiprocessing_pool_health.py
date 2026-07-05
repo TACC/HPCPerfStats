@@ -509,6 +509,37 @@ def test_abort_recycle_grace_reaps_dead_worker_pids(monkeypatch):
   assert any(pid == 4242 for pid, _flags in waitpids)
 
 
+def test_abort_recycle_grace_reaps_zombie_children(monkeypatch):
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.multiprocessing_pool_health.get_sync_pool_worker_recycle_grace_polls",
+      lambda: 2,
+  )
+  zombie_calls = []
+  warn_calls = []
+
+  def _reap_zombies(*, context=""):
+    zombie_calls.append(context)
+    return []
+
+  def _warn(*, context=""):
+    warn_calls.append(context)
+
+  monkeypatch.setattr(mph, "reap_zombie_children_of_self", _reap_zombies)
+  monkeypatch.setattr(mph, "warn_unreaped_zombie_children", _warn)
+  pool = SimpleNamespace(_pool=[_RecycledWorker(), _AliveWorker()])
+  mph.abort_if_pool_workers_dead(pool, context="recycle_zombie")
+  assert zombie_calls == ["recycle_zombie"]
+  assert warn_calls == ["recycle_zombie"]
+
+
+def test_warn_unreaped_zombie_children_logs_when_zombies_remain(monkeypatch):
+  logs = []
+  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  monkeypatch.setattr(mph, "_iter_zombie_child_pids", lambda: iter([111, 222, 333]))
+  mph.warn_unreaped_zombie_children(context="unit_warn")
+  assert any("WARN: unreaped zombie children context=unit_warn count=3" in line for line in logs)
+
+
 def test_reap_pool_worker_pids_logs_reaped(monkeypatch):
   logs = []
   monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))

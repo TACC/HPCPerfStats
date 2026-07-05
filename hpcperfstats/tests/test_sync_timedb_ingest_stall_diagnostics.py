@@ -375,3 +375,52 @@ def test_stall_defer_warn_interval_zero_logs_every_poll(monkeypatch):
   on_stall_poll(0, "ctx", ctx)
   defer_lines = [ln for ln in logs if "pool imap stall deferred" in ln]
   assert len(defer_lines) == 2
+
+
+def test_ingest_stall_poll_triggers_throttled_reap(monkeypatch):
+  reap_calls = []
+  monkeypatch.setattr(
+      st, "_ingest_stall_defer_state",
+      lambda *_a, **_k: (False, ""),
+  )
+  monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
+
+  def _reap():
+    reap_calls.append(True)
+
+  on_stall_poll = st._make_ingest_stall_poll_fn(
+      None,
+      {},
+      supervisor_reap_fn=_reap,
+  )
+  on_stall_poll(1, "ctx", {"active_pool": None})
+  assert reap_calls == [True]
+
+
+def test_reap_supervisor_pool_children_throttled(monkeypatch):
+  monkeypatch.setattr(st, "_SUPERVISOR_CHILD_REAP_INTERVAL_S", 60.0)
+  st._last_supervisor_child_reap_mono = 0.0
+  reap_calls = []
+
+  def _reap(*args, **kwargs):
+    reap_calls.append((args, kwargs))
+
+  monkeypatch.setattr(st, "_reap_supervisor_pool_children", _reap)
+  mono = {"t": 1000.0}
+  monkeypatch.setattr(st.time, "monotonic", lambda: mono["t"])
+
+  assert st._maybe_reap_supervisor_pool_children_throttled(
+      object(), object(), None, context="unit",
+  ) is True
+  assert len(reap_calls) == 1
+
+  assert st._maybe_reap_supervisor_pool_children_throttled(
+      object(), object(), None, context="unit",
+  ) is False
+  assert len(reap_calls) == 1
+
+  mono["t"] = 1061.0
+  assert st._maybe_reap_supervisor_pool_children_throttled(
+      object(), object(), None, context="unit",
+  ) is True
+  assert len(reap_calls) == 2

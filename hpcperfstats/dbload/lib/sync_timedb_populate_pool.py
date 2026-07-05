@@ -5,6 +5,9 @@ import multiprocessing
 import time
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
+from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
+    _waitpid_pid_nonblocking,
+)
 from hpcperfstats.dbload.lib.print_utils import log_print
 from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
     apply_ingest_pool_worker_init,
@@ -117,6 +120,8 @@ class PopulatePoolController:
         proc.join(timeout=0)
       except Exception:
         pass
+      if old_pid is not None:
+        _waitpid_pid_nonblocking(int(old_pid), timeout_s=0.5)
       log_print(
           "WARN: populate-pool worker restarted pid=%s"
           % (old_pid if old_pid is not None else "-"),
