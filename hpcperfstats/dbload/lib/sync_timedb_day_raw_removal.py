@@ -602,6 +602,68 @@ class _DayRawRemovalState:
         if self._entry_is_retryable_skip(entry)
     ]
 
+  def _reclassify_retryable_skips_on_disk(self) -> int:
+    """Upgrade retryable skip entries when tar membership and DB gate now pass."""
+    if not self.delete_phase_done():
+      return 0
+    retryable_paths = self._manifest_retryable_paths_on_disk()
+    if not retryable_paths:
+      return 0
+    if not ensure_daily_tar_restored_for_append(
+        self.tar_path,
+        cfg.get_archive_zstd_threads(),
+    ):
+      if self.log_fn:
+        self.log_fn(
+            "Day raw removal reclassify deferred (tar restore failed) day=%s"
+            % self.day_date.isoformat(),
+            flush=True,
+        )
+      return 0
+    ok, members = validate_open_tar_for_raw_removal(
+        self.tar_path,
+        log_fn=self.log_fn,
+        validation_cache=self._validation_cache,
+    )
+    if not ok or members is None:
+      return 0
+    zst_path, _gz_path = compressed_sibling_paths(self.tar_path)
+    gate_fn = (
+        self.ingest_ready_fn
+        if cfg.get_sync_archive_require_db_ingest()
+        else None
+    )
+    upgraded = 0
+    still_skipped = 0
+    for path, status, reason in classify_removable_raw_paths_for_open_tar(
+        self.tar_path,
+        retryable_paths,
+        ingest_ready_fn=gate_fn,
+        log_fn=self.log_fn,
+        validation_cache=self._validation_cache,
+        open_tar_members=members,
+    ):
+      if status == "verified":
+        with self._lock:
+          prior = self._manifest.get("entries", {}).get(path)
+          if isinstance(prior, dict) and prior.get("status") == "verified":
+            continue
+        self._record_entry(path, zst_path, status, reason)
+        upgraded += 1
+      else:
+        still_skipped += 1
+    if upgraded:
+      with self._lock:
+        _save_manifest(self._manifest_path, self._manifest)
+      if self.log_fn:
+        self.log_fn(
+            "Day raw removal reclassify retryable skips day=%s "
+            "upgraded=%d still_skipped=%d"
+            % (self.day_date.isoformat(), upgraded, still_skipped),
+            flush=True,
+        )
+    return upgraded
+
   def _manifest_only_waiting_on_ingest(self) -> bool:
     on_disk = self._manifest_entries_on_disk()
     if not on_disk:
@@ -813,6 +875,15 @@ class _DayRawRemovalState:
           return
         if prior.get("status") == status:
           return
+        prior_status = str(prior.get("status") or "")
+        if prior_status != "verified":
+          if status == "verified":
+            self._manifest["skipped_count"] = max(
+                0,
+                int(self._manifest.get("skipped_count", 0)) - 1,
+            )
+            self._manifest["verified_count"] = int(
+                self._manifest.get("verified_count", 0)) + 1
       else:
         if status == "verified":
           self._manifest["verified_count"] = int(
@@ -1431,6 +1502,12 @@ class DayRawRemovalCoordinator:
   def delete_phase_done(self, tar_path: str) -> bool:
     return self._get_or_create_day(tar_path).delete_phase_done()
 
+  def reclassify_retryable_skips_after_handoff_sync(self, tar_path: str) -> int:
+    """Re-run classify on retryable manifest skips after handoff ingest succeeds."""
+    if not self.enabled:
+      return 0
+    return self._get_or_create_day(tar_path)._reclassify_retryable_skips_on_disk()
+
   def raw_removal_progress_summary(self, tar_path: str) -> Dict[str, Any]:
     tar_norm = os.path.normpath(tar_path or "")
     with self._days_lock:
@@ -1721,6 +1798,22 @@ class DayRawRemovalCoordinator:
       blocking = state._blocking_manifest_paths_on_disk()
       if blocking:
         retryable = set(state._manifest_retryable_paths_on_disk())
+        if blocking and all(path in retryable for path in blocking):
+          upgraded = state._reclassify_retryable_skips_on_disk()
+          if upgraded:
+            if state.reopen_delete_phase_if_verified_on_disk():
+              return "delete_reopen"
+            state.begin_deleting()
+            if state.phase() == PHASE_DELETING:
+              if self.log_fn:
+                self.log_fn(
+                    "Day raw removal closed-raw delete kick tar=%s reason=%s "
+                    "detail=reclassify_upgraded"
+                    % (tar_norm, reason or ""),
+                    flush=True,
+                )
+              return "delete_reopen"
+          return "noop"
         if any(path not in retryable for path in blocking):
           state.begin_deleting()
           if state.phase() == PHASE_DELETING:

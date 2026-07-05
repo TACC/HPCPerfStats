@@ -21,6 +21,7 @@ from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
     PHASE_DONE,
     PHASE_VERIFICATION_COMPLETE,
     PHASE_VERIFYING,
+    VERIFY_STAGE_POST_SEAL,
     DayRawRemovalCoordinator,
     _save_manifest,
     day_removal_manifest_path,
@@ -751,6 +752,103 @@ def test_closed_raw_handoff_manifest_fast_phase_done_many_retryable_skip(
   assert coord2.has_closed_raw_on_disk(tar_path)
 
 
+def test_reclassify_retryable_skip_upgrades_to_verified_when_tar_member(
+    tmp_path,
+):
+  """Reproduce hpcperfstats03 shape: phase=done + skipped_not_in_archive on disk in tar."""
+  day = datetime(2026, 5, 30)
+  host = tmp_path / "n.cluster.integration.test"
+  host.mkdir(parents=True, exist_ok=True)
+  segs = []
+  for hour in (10, 11):
+    ts = int(datetime(day.year, day.month, day.day, hour, 0, 0).timestamp())
+    seg = host / str(ts)
+    seg.write_text("%d job1 cn001\nline\n" % ts)
+    os.utime(seg, (ts, ts))
+    segs.append(seg)
+  tar_path, zst = _seal_day(tmp_path, segs[0], day)
+  with tarfile.open(tar_path, "a") as tf:
+    tf.add(str(segs[1]), arcname=get_tar_member_name(str(segs[1])))
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: True)
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(segs[0]), zst, "verified", "verified")
+  with state._lock:
+    state._manifest["entries"][str(segs[0])]["deleted"] = True
+    state._manifest["verified_count"] = 1
+  state._record_entry(
+      str(segs[1]),
+      zst,
+      "skipped_not_in_archive",
+      "not_in_sealed_archive",
+  )
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
+    state._manifest["completed_at"] = time.time()
+    _save_manifest(state._manifest_path, state._manifest)
+
+  upgraded = coord.reclassify_retryable_skips_after_handoff_sync(tar_path)
+  assert upgraded == 1
+  entry = state._manifest["entries"][str(segs[1])]
+  assert entry["status"] == "verified"
+  assert state._manifest["verified_count"] == 2
+  assert state._manifest["skipped_count"] == 0
+
+
+def test_record_entry_skip_to_verified_adjusts_counts(tmp_path):
+  day = datetime(2026, 5, 30)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path)
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive")
+  assert state._manifest["skipped_count"] == 1
+  assert state._manifest["verified_count"] == 0
+  state._record_entry(str(seg), zst, "verified", "verified")
+  assert state._manifest["skipped_count"] == 0
+  assert state._manifest["verified_count"] == 1
+
+
+def test_reclassify_then_batch_delete_clears_blockers(tmp_path, monkeypatch):
+  day = datetime(2026, 5, 30)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: True)
+  monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0)
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive")
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
+    state._manifest["completed_at"] = time.time()
+    _save_manifest(state._manifest_path, state._manifest)
+
+  assert coord.reclassify_retryable_skips_after_handoff_sync(tar_path) == 1
+  coord.begin_deleting(tar_path)
+  deleted = coord.apply_batch_delete(tar_path)
+  assert deleted == 1
+  assert not seg.is_file()
+  assert coord.delete_phase_done(tar_path)
+
+
+def test_kick_closed_raw_reclassify_opens_delete(tmp_path):
+  day = datetime(2026, 5, 30)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: True)
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive")
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
+    state._manifest["completed_at"] = time.time()
+    _save_manifest(state._manifest_path, state._manifest)
+
+  assert coord.kick_closed_raw_unblock(tar_path, reason="unit") == "delete_reopen"
+  assert coord.phase(tar_path) == PHASE_DELETING
+  assert state._manifest["entries"][str(seg)]["status"] == "verified"
+
+
 def test_has_active_raw_removal_work_false_when_only_verified_pending_delete(tmp_path):
   day = datetime(2025, 12, 3)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
@@ -870,7 +968,11 @@ def test_kick_closed_raw_unblock_no_deadlock_retryable_only(tmp_path):
   retry_day = datetime(2026, 5, 23)
   retry_seg = _make_closed_segment(tmp_path, "cluster.integration.test", retry_day)
   retry_tar_path, retry_zst = _seal_day(tmp_path, retry_seg, retry_day)
-  coord = _make_coordinator(tmp_path, log_fn=lambda *_a, **_k: None)
+  coord = _make_coordinator(
+      tmp_path,
+      log_fn=lambda *_a, **_k: None,
+      ingest_ready_fn=lambda _p: False,
+  )
   state = coord._get_or_create_day(retry_tar_path)
   state._record_entry(
       str(retry_seg),

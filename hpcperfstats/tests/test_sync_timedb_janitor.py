@@ -1,6 +1,7 @@
 """Unit tests for ArchiveJanitor debt queue and micro-batch ticks."""
 
 import os
+import tarfile
 import tempfile
 import threading
 import uuid
@@ -115,6 +116,9 @@ def _stub_janitor_day_close_tick_phases(
 
     def delete_phase_done(self, tar_path):
       return os.path.normpath(tar_path) in self._delete_done
+
+    def reclassify_retryable_skips_after_handoff_sync(self, tar_path):
+      return 0
 
     def begin_deleting(self, tar_path):
       events.append(("delete", os.path.normpath(tar_path)))
@@ -2702,6 +2706,140 @@ def test_tar_drop_deferred_logs_handoff_requeue_correlation(tmp_path, monkeypatc
   assert deferred_lines
   assert "handoff_paths=2" in deferred_lines[0]
   assert "waiting_on_ingest" in deferred_lines[0]
+
+
+def test_tar_drop_deferred_logs_stale_manifest_when_phase_done(
+    tmp_path, monkeypatch,
+):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+  open(tar_path, "wb").close()
+  zst_path = _zst_path_for_tar(tar_path)
+  open(zst_path, "wb").close()
+
+  class _StaleManifestCoord:
+    def paths_for_closed_raw_handoff_requeue(self, tar_norm):
+      return [str(tmp_path / "host" / "1000")]
+
+    def delete_phase_done(self, tar_path):
+      return True
+
+  log_lines = []
+
+  def _log(msg, **kwargs):
+    log_lines.append(str(msg))
+
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      log_fn=_log,
+      day_raw_removal_coordinator=_StaleManifestCoord(),
+  )
+  monkeypatch.setattr(
+      janitor_mod,
+      "daily_gz_has_remaining_raw_stats",
+      lambda *_a, **_k: True,
+  )
+  janitor._tar_drop_one_day(tar_path, validation_cache={}, disqualified=set())
+  deferred_lines = [
+      line for line in log_lines if "tar drop deferred" in line.lower()
+  ]
+  assert deferred_lines
+  assert "stale_manifest_retryable" in deferred_lines[0]
+
+
+def test_janitor_day_close_reclassify_unblocks_tar_drop(monkeypatch, tmp_path):
+  from datetime import datetime
+
+  import hpcperfstats.dbload.lib.conf_parser as day_cfg
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      atomic_seal_tar_to_zst,
+      daily_tar_path_from_compressed,
+      get_tar_member_name,
+      validate_sealed_daily_archive_for_raw_removal,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
+      DayRawRemovalCoordinator,
+      PHASE_DONE,
+      VERIFY_STAGE_POST_SEAL,
+      _save_manifest,
+  )
+
+  day = datetime(2026, 5, 30)
+  host = tmp_path / "n.cluster.integration.test"
+  host.mkdir(parents=True)
+  ts = int(datetime(day.year, day.month, day.day, 12, 0, 0).timestamp())
+  seg = host / str(ts)
+  seg.write_text("%d job1 cn001\nline\n" % ts)
+  os.utime(seg, (ts, ts))
+  tgz_dir = tmp_path / "daily"
+  tgz_dir.mkdir()
+  zst_key = str(tgz_dir / "2026-05-30.tar.zst")
+  tar_path = daily_tar_path_from_compressed(zst_key)
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(seg), arcname=get_tar_member_name(str(seg)))
+  atomic_seal_tar_to_zst(tar_path, zst_key, 1, 6, True, log_fn=None)
+  validate_sealed_daily_archive_for_raw_removal(zst_key, log_fn=None)
+
+  coord = DayRawRemovalCoordinator(
+      archive_data_dir=str(tmp_path),
+      host_name_ext="cluster.integration.test",
+      tgz_archive_dir=str(tgz_dir),
+      log_fn=MagicMock(),
+      get_quarantine_skip_paths=lambda: set(),
+      ingest_ready_fn=lambda _p: True,
+  )
+  coord.enabled = True
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(
+      str(seg),
+      zst_key,
+      "skipped_not_in_archive",
+      "not_in_sealed_archive",
+  )
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
+    _save_manifest(state._manifest_path, state._manifest)
+
+  tar_drop_calls = []
+  janitor = _make_janitor(
+      archive_data_dir=str(tmp_path),
+      tgz_archive_dir=str(tgz_dir),
+      day_raw_removal_coordinator=coord,
+  )
+  tar_norm = os.path.normpath(tar_path)
+  with janitor._hints_state_lock:
+    janitor._day_phases[tar_norm] = "sealed"
+
+  monkeypatch.setattr(
+      day_cfg,
+      "get_sync_day_close_raw_removal_max_deletes_per_pass",
+      lambda: 0,
+  )
+
+  def _track_tar_drop(self, tp, *args, **kwargs):
+    tar_drop_calls.append(os.path.normpath(tp))
+    _mark_day_phase(self, tp, "tar_dropped")
+    return True
+
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor,
+      "_tar_drop_one_day",
+      _track_tar_drop,
+  )
+
+  janitor.log_fn = MagicMock()
+  assert coord.post_seal_verification_complete(tar_norm)
+  assert coord.delete_phase_done(tar_norm)
+  assert janitor._close_one_day(
+      tar_norm,
+      snapshot=None,
+      validation_cache={},
+      disqualified=set(),
+  )
+  assert not seg.is_file()
+  assert tar_drop_calls == [tar_norm]
 
 
 def test_discover_enqueues_when_debt_heap_full_but_no_live_workers(

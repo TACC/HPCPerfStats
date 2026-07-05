@@ -253,6 +253,9 @@ def test_arch_close_one_day_tar_drop_after_raw_removal_done(monkeypatch, tmp_pat
     def delete_phase_done(self, _tar):
       return True
 
+    def reclassify_retryable_skips_after_handoff_sync(self, _tar):
+      return 0
+
     def begin_deleting(self, _tar):
       return None
 

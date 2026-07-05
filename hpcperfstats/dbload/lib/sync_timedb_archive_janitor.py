@@ -1755,6 +1755,16 @@ class ArchiveJanitor:
         self._enqueue_day_close(tar_norm, persist=False)
         self._persist_hints()
         return False
+      if coord.delete_phase_done(tar_norm):
+        upgraded = coord.reclassify_retryable_skips_after_handoff_sync(tar_norm)
+        if upgraded:
+          self.log_fn(
+              "janitor: day_close reclassify upgraded=%d tar=%s"
+              % (upgraded, tar_norm),
+              flush=True,
+          )
+          coord.begin_deleting(tar_norm)
+          coord.apply_batch_delete(tar_norm)
       coord.reopen_done_days_with_verified_on_disk()
       if not coord.delete_phase_done(tar_norm):
         self.log_fn(
@@ -1850,18 +1860,26 @@ class ArchiveJanitor:
     zst_path, _gz_path = compressed_sibling_paths(tar_path)
     if daily_gz_has_remaining_raw_stats(zst_path, remaining_raw_by_gz):
       handoff_paths_n = 0
+      defer_reason = "waiting_on_ingest"
       coord = self.day_raw_removal_coordinator
       if coord is not None:
         try:
-          handoff_paths_n = len(
-              coord.paths_for_closed_raw_handoff_requeue(tar_path) or (),
+          handoff_paths = coord.paths_for_closed_raw_handoff_requeue(tar_path) or ()
+          handoff_paths_n = len(handoff_paths)
+          delete_done_fn = getattr(coord, "delete_phase_done", None)
+          phase_done = (
+              bool(delete_done_fn(tar_path))
+              if callable(delete_done_fn)
+              else False
           )
+          if handoff_paths_n > 0 and phase_done:
+            defer_reason = "stale_manifest_retryable"
         except Exception:
           handoff_paths_n = 0
       self.log_fn(
           "Janitor tar drop deferred (raw stats still present for day): %s "
-          "handoff_paths=%d reason=waiting_on_ingest"
-          % (tar_path, handoff_paths_n),
+          "handoff_paths=%d reason=%s"
+          % (tar_path, handoff_paths_n, defer_reason),
           flush=True,
       )
       self._enqueue_day_close(tar_path, persist=False)
