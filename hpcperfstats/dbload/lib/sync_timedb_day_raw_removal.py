@@ -877,7 +877,7 @@ class _DayRawRemovalState:
       )
 
   def _pre_seal_verify_body(self) -> bool:
-    """Run pre-seal verify (possibly sliced); return True when fully complete."""
+    """Run pre-seal verify to completion on the day-close worker; batch internally."""
     close_old_connections()
     if self.pre_seal_verification_complete():
       return True
@@ -885,11 +885,7 @@ class _DayRawRemovalState:
       self._manifest["phase"] = PHASE_VERIFYING
       if not self._manifest.get("started_at"):
         self._manifest["started_at"] = time.time()
-    verify_budget = float(
-        cfg.get_sync_day_close_raw_removal_verify_budget_seconds(),
-    )
     paths_per_tick = max(1, int(cfg.get_archive_janitor_raw_paths_per_tick()))
-    janitor_budget = float(cfg.get_archive_janitor_budget_seconds())
     verify_started = time.time()
     if self.log_fn:
       self.log_fn(
@@ -947,108 +943,95 @@ class _DayRawRemovalState:
       cursor = int(self._manifest.get("pre_seal_classify_index", 0))
     if cursor > len(filtered):
       cursor = 0
-    batch_end = min(cursor + paths_per_tick, len(filtered))
-    batch = filtered[cursor:batch_end]
     gate_fn = (
         self.ingest_ready_fn
         if cfg.get_sync_archive_require_db_ingest()
         else None
     )
-    classify_paths = batch
-    if batch and gate_fn is not None:
-      snapshot = (
-          self.get_maintenance_snapshot()
-          if callable(self.get_maintenance_snapshot)
-          else None
-      )
-      gate_identities = (
-          getattr(snapshot, "gate_identities_by_path", None)
-          if snapshot is not None
-          else None
-      )
-      if gate_identities:
-        gate_ready, gate_skipped = filter_paths_head_ingested(
-            batch,
-            log_fn=self.log_fn,
-            gate_identities_by_path=gate_identities,
+    while cursor < len(filtered) and not shutdown_requested[0]:
+      batch_end = min(cursor + paths_per_tick, len(filtered))
+      batch = filtered[cursor:batch_end]
+      classify_paths = batch
+      if batch and gate_fn is not None:
+        snapshot = (
+            self.get_maintenance_snapshot()
+            if callable(self.get_maintenance_snapshot)
+            else None
         )
-        for path in gate_skipped:
-          self._record_entry(
-              path,
-              zst_path,
-              "skipped_not_head_tail_ingested",
-              "not_head_tail_ingested",
+        gate_identities = (
+            getattr(snapshot, "gate_identities_by_path", None)
+            if snapshot is not None
+            else None
+        )
+        if gate_identities:
+          gate_ready, gate_skipped = filter_paths_head_ingested(
+              batch,
+              log_fn=self.log_fn,
+              gate_identities_by_path=gate_identities,
           )
-        classify_paths = gate_ready
-      else:
-        gate_ready = []
-        gate_skipped = []
-        worker_cap = max(1, int(cfg.get_sync_pool_process_cap()))
+          for path in gate_skipped:
+            self._record_entry(
+                path,
+                zst_path,
+                "skipped_not_head_tail_ingested",
+                "not_head_tail_ingested",
+            )
+          classify_paths = gate_ready
+        else:
+          gate_ready = []
+          gate_skipped = []
+          worker_cap = max(1, int(cfg.get_sync_pool_process_cap()))
 
-        def _gate_one(path):
-          close_old_connections()
-          if gate_fn(path):
-            return path, True, ""
-          return path, False, "not_head_tail_ingested"
+          def _gate_one(path):
+            close_old_connections()
+            if gate_fn(path):
+              return path, True, ""
+            return path, False, "not_head_tail_ingested"
 
-        for path, ready, _err in iter_bounded_thread_pool(
-            batch,
-            _gate_one,
-            max_workers=worker_cap,
+          for path, ready, _err in iter_bounded_thread_pool(
+              batch,
+              _gate_one,
+              max_workers=worker_cap,
+          ):
+            if ready:
+              gate_ready.append(path)
+            else:
+              gate_skipped.append(path)
+          for path in gate_skipped:
+            self._record_entry(
+                path,
+                zst_path,
+                "skipped_not_head_tail_ingested",
+                "not_head_tail_ingested",
+            )
+          classify_paths = gate_ready
+      if classify_paths:
+        for path, status, reason in classify_removable_raw_paths_for_open_tar(
+            self.tar_path,
+            classify_paths,
+            ingest_ready_fn=None,
+            log_fn=self.log_fn,
+            validation_cache=self._validation_cache,
+            open_tar_members=members,
         ):
-          if ready:
-            gate_ready.append(path)
-          else:
-            gate_skipped.append(path)
-        for path in gate_skipped:
-          self._record_entry(
-              path,
-              zst_path,
-              "skipped_not_head_tail_ingested",
-              "not_head_tail_ingested",
-          )
-        classify_paths = gate_ready
-    if classify_paths:
-      for path, status, reason in classify_removable_raw_paths_for_open_tar(
-          self.tar_path,
-          classify_paths,
-          ingest_ready_fn=None,
-          log_fn=self.log_fn,
-          validation_cache=self._validation_cache,
-          open_tar_members=members,
-      ):
-        self._record_entry(path, zst_path, status, reason)
-    cursor = batch_end
-    with self._lock:
-      self._manifest["pre_seal_classify_index"] = cursor
-      _save_manifest(self._manifest_path, self._manifest)
-    elapsed = time.time() - verify_started
-    if self.log_fn:
-      self.log_fn(
-          "janitor: day_close pre_seal_verify classify progress "
-          "verified_n=%d/%d elapsed_s=%.1f day=%s"
-          % (cursor, len(filtered), elapsed, self.day_date.isoformat()),
-          flush=True,
-      )
-    if cursor < len(filtered):
-      if verify_budget > 0 and elapsed >= verify_budget:
-        if self.log_fn:
-          self.log_fn(
-              "Day raw removal pre-seal verify budget exhausted day=%s "
-              "verified=%d/%d"
-              % (self.day_date.isoformat(), cursor, len(filtered)),
-              flush=True,
-          )
-        return False
-      if janitor_budget > 0 and elapsed >= janitor_budget:
-        if self.log_fn:
-          self.log_fn(
-              "WARN: janitor pre_seal_verify exceeded tick budget day=%s "
-              "elapsed_s=%.1f budget_s=%.1f"
-              % (self.day_date.isoformat(), elapsed, janitor_budget),
-              flush=True,
-          )
-        return False
+          self._record_entry(path, zst_path, status, reason)
+      cursor = batch_end
+      with self._lock:
+        self._manifest["pre_seal_classify_index"] = cursor
+        _save_manifest(self._manifest_path, self._manifest)
+      if self.log_fn:
+        self.log_fn(
+            "janitor: day_close pre_seal_verify classify progress "
+            "verified_n=%d/%d elapsed_s=%.1f day=%s"
+            % (
+                cursor,
+                len(filtered),
+                time.time() - verify_started,
+                self.day_date.isoformat(),
+            ),
+            flush=True,
+        )
+    if shutdown_requested[0] or cursor < len(filtered):
       return False
     with self._lock:
       self._manifest["verify_stage"] = VERIFY_STAGE_PRE_SEAL
@@ -1933,34 +1916,13 @@ class DayRawRemovalCoordinator:
         state._reset_for_reverify()
       else:
         return
-    verify_started = time.time()
-    verify_budget = cfg.get_sync_day_close_raw_removal_verify_budget_seconds()
-    if not state.verification_complete():
-      while not shutdown_requested[0]:
-        if verify_budget > 0 and time.time() - verify_started >= verify_budget:
-          break
-        state._verify_body()
-        if state.verification_complete():
-          break
-        time.sleep(0.1)
     if shutdown_requested[0]:
       return
     if not state.verification_complete():
-      summary = state.progress_summary()
-      if self.log_fn:
-        self.log_fn(
-            "Day raw removal verify budget exhausted day=%s phase=%s "
-            "verified=%d pending_delete=%d"
-            % (
-                state.day_date.isoformat(),
-                summary.get("phase"),
-                int(summary.get("verified_count", 0)),
-                int(summary.get("pending_delete", 0)),
-            ),
-            flush=True,
-        )
-      with state._lock:
-        _save_manifest(state._manifest_path, state._manifest)
+      state._verify_body()
+    if shutdown_requested[0]:
+      return
+    if not state.verification_complete():
       return
     self._try_handoff_to_ingest(
         state.tar_path,

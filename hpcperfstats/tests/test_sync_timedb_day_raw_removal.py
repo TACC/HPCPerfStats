@@ -302,22 +302,6 @@ def test_skip_stuck_older_day_allows_younger_delete_in_one_pass(tmp_path, monkey
   assert not seg_young.is_file()
 
 
-def test_pipeline_verify_budget_exhausted_logs_warning(tmp_path, monkeypatch):
-  tar_path = str(tmp_path / "daily" / "2022-06-08.tar")
-  (tmp_path / "daily").mkdir(exist_ok=True)
-  open(tar_path, "wb").close()
-  log_fn = MagicMock()
-  coord = _make_coordinator(tmp_path, log_fn=log_fn)
-  state = coord._get_or_create_day(tar_path)
-
-  monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_verify_budget_seconds", lambda: 0.01)
-  monkeypatch.setattr(state, "verification_complete", lambda: False)
-  monkeypatch.setattr(state, "_verify_body", lambda: None)
-
-  coord._verify_pipeline_body(state)
-  messages = [str(call.args[0]) for call in log_fn.call_args_list]
-  assert any("Day raw removal verify budget exhausted" in msg for msg in messages)
-
 
 def test_try_finish_tar_drop_drops_tar_when_raw_gone_and_phase_done(tmp_path):
   day = datetime(2022, 6, 14)
@@ -1403,12 +1387,6 @@ def test_pre_seal_verify_slices_by_paths_per_tick(tmp_path, monkeypatch):
   seg_paths = [str(seg) for seg in segs]
   members = {get_tar_member_name(path): os.path.getsize(path) for path in seg_paths}
   monkeypatch.setattr(cfg, "get_archive_janitor_raw_paths_per_tick", lambda: 2)
-  monkeypatch.setattr(
-      cfg,
-      "get_sync_day_close_raw_removal_verify_budget_seconds",
-      lambda: 3600.0,
-  )
-  monkeypatch.setattr(cfg, "get_archive_janitor_budget_seconds", lambda: 3600.0)
   monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: False)
   logs = []
 
@@ -1431,11 +1409,71 @@ def test_pre_seal_verify_slices_by_paths_per_tick(tmp_path, monkeypatch):
       tmp_path,
       log_fn=lambda msg, **kw: logs.append(str(msg)),
   )
-  assert coord.run_pre_seal_verify_sync(tar_path) is False
-  state = coord._get_or_create_day(tar_path)
-  assert int(state._manifest.get("pre_seal_classify_index", 0)) == 2
-  assert any("classify progress" in line for line in logs)
-  assert coord.run_pre_seal_verify_sync(tar_path) is False
-  assert int(state._manifest.get("pre_seal_classify_index", 0)) == 4
   assert coord.run_pre_seal_verify_sync(tar_path) is True
+  state = coord._get_or_create_day(tar_path)
+  assert "pre_seal_classify_index" not in state._manifest
+  progress_logs = [line for line in logs if "classify progress" in line]
+  assert len(progress_logs) == 3
+  assert "verified_n=2/5" in progress_logs[0]
+  assert "verified_n=5/5" in progress_logs[-1]
   assert state.pre_seal_verification_complete()
+  assert not any("budget exhausted" in line for line in logs)
+
+
+def test_pre_seal_verify_completes_large_day_without_budget_log(tmp_path, monkeypatch):
+  day = datetime(2026, 6, 2)
+  n_paths = 2500
+  host = tmp_path / "n.cluster.integration.test"
+  host.mkdir(parents=True)
+  ts = int(datetime(day.year, day.month, day.day, 12, 0, 0).timestamp())
+  seg_paths = []
+  for i in range(n_paths):
+    seg = host / str(ts + i)
+    seg.write_text("%d job1 cn001\nline\n" % (ts + i))
+    seg_paths.append(str(seg))
+  tgz_dir = tmp_path / "daily"
+  tgz_dir.mkdir()
+  tar_path = str(tgz_dir / "2026-06-02.tar")
+  open(tar_path, "wb").close()
+  members = {get_tar_member_name(path): os.path.getsize(path) for path in seg_paths}
+  paths_per_tick = 1000
+  monkeypatch.setattr(cfg, "get_archive_janitor_raw_paths_per_tick", lambda: paths_per_tick)
+  monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: False)
+  logs = []
+
+  def _remaining(*_a, **_k):
+    return {"host": seg_paths}
+
+  def _classify(_tar, paths, **_k):
+    for path in paths:
+      yield path, "verified", "ok"
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+      _remaining,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.ensure_daily_tar_restored_for_append",
+      lambda *_a, **_k: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.validate_open_tar_for_raw_removal",
+      lambda *_a, **_k: (True, dict(members)),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.classify_removable_raw_paths_for_open_tar",
+      _classify,
+  )
+  coord = _make_coordinator(
+      tmp_path,
+      log_fn=lambda msg, **kw: logs.append(str(msg)),
+  )
+  assert coord.run_pre_seal_verify_sync(tar_path) is True
+  state = coord._get_or_create_day(tar_path)
+  assert "pre_seal_classify_index" not in state._manifest
+  assert state.pre_seal_verification_complete()
+  progress_logs = [line for line in logs if "classify progress" in line]
+  assert len(progress_logs) == 3
+  assert "verified_n=1000/2500" in progress_logs[0]
+  assert "verified_n=2500/2500" in progress_logs[-1]
+  assert not any("budget exhausted" in line for line in logs)

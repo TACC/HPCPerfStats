@@ -172,7 +172,6 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_startup_snapshot_wait_seconds"),
     ("PIPELINE", "sync_day_close_max_inflight"),
     ("PIPELINE", "sync_day_close_manifest_stale_seconds"),
-    ("PIPELINE", "sync_day_close_raw_removal_verify_budget_seconds"),
     ("PIPELINE", "sync_day_close_raw_removal_max_deletes_per_pass"),
     ("PIPELINE", "sync_archive_max_inflight_jobs"),
     ("PIPELINE", "sync_archive_validation_max_workers"),
@@ -349,7 +348,6 @@ INI_OPTION_DEFAULTS = {
     'sync_startup_snapshot_wait_seconds': '300',
     'sync_day_close_max_inflight': '4',
     'sync_day_close_manifest_stale_seconds': '7200',
-    'sync_day_close_raw_removal_verify_budget_seconds': '30',
     'sync_day_close_raw_removal_max_deletes_per_pass': '0',
     'sync_archive_max_inflight_jobs': '2',
     'sync_archive_validation_max_workers': '2',
@@ -2737,15 +2735,6 @@ def get_sync_startup_snapshot_wait_seconds():
   return max(
       120.0,
       float(_pipeline_get("sync_startup_snapshot_wait_seconds")),
-  )
-
-
-def get_sync_day_close_raw_removal_verify_budget_seconds():
-  """Reserved wall-clock budget knob for day-close verify slices (default 30s)."""
-  _ensure_cfg_loaded()
-  return max(
-      1.0,
-      float(_pipeline_get("sync_day_close_raw_removal_verify_budget_seconds")),
   )
 
 

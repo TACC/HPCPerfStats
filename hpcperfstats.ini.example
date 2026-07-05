@@ -490,9 +490,6 @@ ingest_zstd_threads = 4
 # Log day-close candidate report (queued/disqualified only; default yes).
 # sync_day_close_candidate_report = yes
 
-# Wall-clock budget for day-close verify slices (default 30 seconds).
-# sync_day_close_raw_removal_verify_budget_seconds = 30
-
 # Max deletes per day-close delete loop iteration; 0 = unlimited per iteration (default 0).
 # sync_day_close_raw_removal_max_deletes_per_pass = 0
 

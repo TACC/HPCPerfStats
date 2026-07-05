@@ -1179,7 +1179,6 @@ def test_archive_janitor_and_dispatch_defaults(temp_ini, monkeypatch):
   assert cfg.get_sync_day_close_candidate_report() is True
   assert cfg.get_sync_day_close_max_inflight() == 4
   assert cfg.get_sync_day_close_manifest_stale_seconds() == 7200.0
-  assert cfg.get_sync_day_close_raw_removal_verify_budget_seconds() == 30.0
   assert cfg.get_sync_day_close_raw_removal_max_deletes_per_pass() == 0
   assert cfg.get_archive_keep_uncompressed_tar() is False
   assert cfg.get_archive_today_uncompressed_tar_grace_hours() == 8.0
