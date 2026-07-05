@@ -18,6 +18,7 @@ export default defineConfig({
       "src/**/*.{test,spec}.{ts,tsx}",
       "app/**/*.{test,spec}.{ts,tsx}",
       "scripts/**/*.test.ts",
+      "test/**/*.test.{ts,tsx}",
     ],
     pool: "threads",
     maxWorkers: 1,

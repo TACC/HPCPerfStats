@@ -6,7 +6,8 @@
     "vitest.config.ts",
     "orval.config.ts",
     "src/api.test.ts",
-    "src/**/*.test.{ts,tsx}"
+    "src/**/*.test.{ts,tsx}",
+    "test/**/*.test.{ts,tsx}"
   ],
   "project": ["src/**/*.{ts,tsx}", "app/**/*.{ts,tsx}", "test/**/*.{ts,tsx}"],
   "ignore": ["src/api/generated/**", "src/api/generated-zod/**"],
