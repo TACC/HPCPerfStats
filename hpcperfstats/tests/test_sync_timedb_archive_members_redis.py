@@ -1215,3 +1215,112 @@ def test_clear_stale_day_skip_when_sealed_gone_and_tar_readable(
       sealed_path=None,
   )
   assert get_archive_day_ingest_skip(keys, client=_redis_test_env) is None
+
+
+def test_is_transient_fnctl_populate_unavailable():
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      ArchiveMembersRedisConnectionError,
+      ArchiveMembersPopulateStalledError,
+      ArchiveMembersRedisUnavailableError,
+      is_transient_fnctl_populate_unavailable,
+  )
+
+  fnctl = ArchiveMembersRedisUnavailableError(
+      "transient fnctl read lock timeout during tar populate path=/x.tar",
+  )
+  assert is_transient_fnctl_populate_unavailable(fnctl) is True
+  assert is_transient_fnctl_populate_unavailable(
+      ArchiveMembersRedisConnectionError("connection refused"),
+  ) is False
+  assert is_transient_fnctl_populate_unavailable(
+      ArchiveMembersPopulateStalledError("stalled"),
+  ) is False
+  assert is_transient_fnctl_populate_unavailable(
+      ArchiveMembersRedisUnavailableError("populate degraded"),
+  ) is False
+
+
+def test_execute_populate_clears_degraded_and_retries_scan(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  """Populate-pool re-entry clears degraded and runs scan instead of raising."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+      reset_worker_pool_kind,
+      set_worker_pool_kind,
+  )
+
+  day = "2026-06-08"
+  tar = tmp_path / ("%s.tar" % day)
+  zst = tmp_path / ("%s.tar.zst" % day)
+  tar.write_bytes(b"tar")
+  zst.write_bytes(b"z")
+  canonical = str(zst)
+  keys = build_archive_members_redis_keys(
+      _daily_archive_members_cache_key(canonical),
+  )
+  _redis_test_env.set(keys.degraded_key, "1")
+  scan_calls = {"n": 0}
+
+  def _fake_tar_scan(tar_path, cache_key):
+    del tar_path, cache_key
+    scan_calls["n"] += 1
+    return {"host/a": 10}
+
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: _redis_test_env,
+  )
+  monkeypatch.setattr(helpers, "_populate_redis_members_from_tar_scan", _fake_tar_scan)
+  monkeypatch.setattr(helpers, "_resolve_sealed_daily_archive_path", lambda _p: None)
+  token = set_worker_pool_kind("populate-pool")
+  try:
+    members = helpers.execute_archive_members_populate_for_canonical(canonical)
+  finally:
+    reset_worker_pool_kind(token)
+  assert scan_calls["n"] == 1
+  assert members == {"host/a": 10}
+  assert _redis_test_env.get(keys.degraded_key) is None
+
+
+def test_member_match_degraded_routes_to_populate_wait(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  """Degraded Redis state routes duplicate-check through populate wait."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  day = "2026-06-09"
+  zst = tmp_path / ("%s.tar.zst" % day)
+  zst.write_bytes(b"z")
+  canonical = str(zst)
+  cache_key = _daily_archive_members_cache_key(canonical)
+  keys = build_archive_members_redis_keys(cache_key)
+  _redis_test_env.set(keys.degraded_key, "1")
+  request_calls = {"n": 0}
+
+  def _fake_request(path, *, role="ingest"):
+    del role
+    request_calls["n"] += 1
+    assert path == canonical
+    return {"host/raw": 42}
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".request_archive_members_populate_and_wait",
+      _fake_request,
+  )
+  matched = helpers._member_match_via_redis_or_sealed_point(
+      canonical,
+      cache_key,
+      keys,
+      "",
+      "host/raw",
+      42,
+      client=_redis_test_env,
+  )
+  assert matched is True
+  assert request_calls["n"] == 1

@@ -4534,6 +4534,116 @@ def test_supervisor_prewarm_delegates_to_populate_pool(monkeypatch, tmp_path):
     assert populate_stream['n'] == 1
     assert '%s:sealed_populated' % day in summary
 
+
+def test_prewarm_survives_transient_fnctl_then_warms(monkeypatch, tmp_path):
+    """Supervisor prewarm retries transient fnctl instead of immediate sys.exit(1)."""
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+        ArchiveMembersRedisUnavailableError,
+        reset_archive_members_redis_client_for_tests,
+    )
+    from hpcperfstats.tests.test_sync_timedb_archive_members_redis import FakeRedis
+
+    fake = FakeRedis()
+    monkeypatch.setattr(
+        'hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled',
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        'hpcperfstats.dbload.lib.sync_timedb_archive_members_redis'
+        '.get_archive_members_redis_client',
+        lambda required=True: fake,
+    )
+    reset_archive_members_redis_client_for_tests()
+    day = '2026-06-10'
+    zst = tmp_path / ('%s.tar.zst' % day)
+    tar = tmp_path / ('%s.tar' % day)
+    zst.write_bytes(b'z')
+    tar.write_bytes(b't')
+    canonical = str(zst)
+    calls = {'n': 0}
+
+    def _request(path, *, role='ingest'):
+        del role
+        calls['n'] += 1
+        if calls['n'] == 1:
+            raise ArchiveMembersRedisUnavailableError(
+                'transient fnctl read lock timeout during tar populate path=%s'
+                % tar,
+            )
+        return {'host/a': 1}
+
+    monkeypatch.setattr(
+        'hpcperfstats.dbload.lib.sync_timedb_archive_members_redis'
+        '.request_archive_members_populate_and_wait',
+        _request,
+    )
+    monkeypatch.setattr(
+        st, 'consume_archive_members_populate_source', lambda _c: 'tar_populated',
+    )
+    monkeypatch.setattr(
+        'hpcperfstats.dbload.lib.sync_timedb_archive_helpers'
+        '._FNCTL_POPULATE_RETRY_DELAYS_S',
+        (0.0, 0.0),
+    )
+    summary = st._prewarm_archive_members_redis_for_days([(canonical, day)])
+    assert calls['n'] == 2
+    assert '%s:populate_recovering:tar_populated' % day in summary
+
+
+def test_prewarm_fatals_after_transient_fnctl_retries_exhausted(monkeypatch, tmp_path):
+    """Persistent transient fnctl still fail-closes after prewarm retry budget."""
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+        ArchiveMembersRedisUnavailableError,
+        reset_archive_members_redis_client_for_tests,
+    )
+    from hpcperfstats.tests.test_sync_timedb_archive_members_redis import FakeRedis
+
+    fake = FakeRedis()
+    monkeypatch.setattr(
+        'hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled',
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        'hpcperfstats.dbload.lib.sync_timedb_archive_members_redis'
+        '.get_archive_members_redis_client',
+        lambda required=True: fake,
+    )
+    reset_archive_members_redis_client_for_tests()
+    day = '2026-06-11'
+    zst = tmp_path / ('%s.tar.zst' % day)
+    tar = tmp_path / ('%s.tar' % day)
+    zst.write_bytes(b'z')
+    tar.write_bytes(b't')
+    canonical = str(zst)
+
+    def _always_fnctl(path, *, role='ingest'):
+        del path, role
+        raise ArchiveMembersRedisUnavailableError(
+            'transient fnctl read lock timeout during tar populate path=%s' % tar,
+        )
+
+    monkeypatch.setattr(
+        'hpcperfstats.dbload.lib.sync_timedb_archive_members_redis'
+        '.request_archive_members_populate_and_wait',
+        _always_fnctl,
+    )
+    exits = {'n': 0}
+
+    def _capture_exit(exc):
+        exits['n'] += 1
+        raise SystemExit(1) from exc
+
+    monkeypatch.setattr(st, '_exit_on_archive_members_redis_unavailable', _capture_exit)
+    monkeypatch.setattr(
+        'hpcperfstats.dbload.lib.sync_timedb_archive_helpers'
+        '._FNCTL_POPULATE_RETRY_DELAYS_S',
+        (0.0, 0.0),
+    )
+    with pytest.raises(SystemExit):
+        st._prewarm_archive_members_redis_for_days([(canonical, day)])
+    assert exits['n'] == 1
+
+
 def test_supervisor_oldest_day_chunk_gate_inflight_starvation(monkeypatch, tmp_path):
     """While oldest blocked tar has work, ingest chunk excludes newer-day backlog."""
     shutdown_requested[0] = False

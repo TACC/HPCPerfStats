@@ -206,6 +206,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
     describe_archive_members_populate_redis_for_day,
     get_ingest_task_deadline_monotonic,
     get_ingest_task_effective_timeout_s,
+    is_transient_fnctl_populate_unavailable,
     maybe_clear_orphan_incomplete_archive_members_redis,
     redis_members_cache_is_fully_warm,
     reset_ingest_task_deadline_monotonic,
@@ -550,6 +551,7 @@ def _prewarm_archive_members_redis_for_days(
   if not archive_members_redis_enabled():
     return "-"
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      _FNCTL_POPULATE_RETRY_DELAYS_S,
       _daily_archive_members_cache_key,
       _resolve_sealed_daily_archive_path,
   )
@@ -594,18 +596,54 @@ def _prewarm_archive_members_redis_for_days(
         % (day_token, sealed_path or tar_path),
         flush=True,
     )
-    try:
-      request_archive_members_populate_and_wait(
-          canonical,
-          role="supervisor",
-      )
-      source = consume_archive_members_populate_source(canonical)
-      summary_parts.append("%s:%s" % (day_token, source))
-    except ArchiveDayIngestSkipError:
-      summary_parts.append("%s:day_ingest_skip" % day_token)
-    except ArchiveMembersRedisUnavailableError as exc:
-      maybe_clear_orphan_incomplete_archive_members_redis(keys)
-      _exit_on_archive_members_redis_unavailable(exc)
+    prewarm_recovered = False
+    last_transient_exc = None
+    for attempt, delay in enumerate((0.0,) + _FNCTL_POPULATE_RETRY_DELAYS_S):
+      if delay:
+        time.sleep(delay)
+      try:
+        request_archive_members_populate_and_wait(
+            canonical,
+            role="supervisor",
+        )
+        source = consume_archive_members_populate_source(canonical) or "redis_warm"
+        if prewarm_recovered:
+          summary_parts.append(
+              "%s:populate_recovering:%s" % (day_token, source),
+          )
+        else:
+          summary_parts.append("%s:%s" % (day_token, source))
+        last_transient_exc = None
+        break
+      except ArchiveDayIngestSkipError:
+        summary_parts.append("%s:day_ingest_skip" % day_token)
+        last_transient_exc = None
+        break
+      except ArchiveMembersPopulateStalledError as exc:
+        maybe_clear_orphan_incomplete_archive_members_redis(keys)
+        _exit_on_archive_members_redis_unavailable(exc)
+      except ArchiveMembersRedisUnavailableError as exc:
+        maybe_clear_orphan_incomplete_archive_members_redis(keys)
+        if is_transient_fnctl_populate_unavailable(exc):
+          prewarm_recovered = True
+          last_transient_exc = exc
+          if attempt < len(_FNCTL_POPULATE_RETRY_DELAYS_S):
+            log_print(
+                "WARNING: transient fnctl during archive members prewarm "
+                "day=%s attempt=%d/%d: %s"
+                % (
+                    day_token,
+                    attempt + 1,
+                    len(_FNCTL_POPULATE_RETRY_DELAYS_S) + 1,
+                    exc,
+                ),
+                flush=True,
+            )
+            continue
+        _exit_on_archive_members_redis_unavailable(exc)
+    else:
+      if last_transient_exc is not None:
+        _exit_on_archive_members_redis_unavailable(last_transient_exc)
   return ",".join(summary_parts) if summary_parts else "-"
 
 

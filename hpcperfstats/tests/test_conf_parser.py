@@ -853,6 +853,7 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_archive_members_redis_populate_lock_seconds() == 3600
   assert cfg.get_sync_archive_members_redis_populate_stall_seconds() == 120
   assert cfg.get_sync_archive_members_redis_populate_max_seconds() == 7200
+  assert cfg.get_sync_archive_members_fnctl_read_lock_timeout_seconds() == 180
   assert cfg.get_sync_archive_members_redis_wait_poll_seconds() == 0.25
   assert cfg.get_sync_archive_members_redis_hset_batch_size() == 500
   assert cfg.get_sync_archive_members_redis_max_payload_bytes() == 8388608
@@ -881,6 +882,7 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
       "sync_archive_members_redis_populate_lock_seconds = 120\n"
       "sync_archive_members_redis_populate_stall_seconds = 45\n"
       "sync_archive_members_redis_populate_max_seconds = 1800\n"
+      "sync_archive_members_fnctl_read_lock_timeout_seconds = 300\n"
       "sync_archive_members_redis_wait_poll_seconds = 0.5\n"
       "sync_archive_members_redis_hset_batch_size = 100\n"
       "sync_archive_members_redis_max_payload_bytes = 1048576",
@@ -908,6 +910,7 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_archive_members_redis_populate_lock_seconds() == 120
   assert cfg.get_sync_archive_members_redis_populate_stall_seconds() == 45
   assert cfg.get_sync_archive_members_redis_populate_max_seconds() == 1800
+  assert cfg.get_sync_archive_members_fnctl_read_lock_timeout_seconds() == 300
   assert cfg.get_sync_archive_members_redis_wait_poll_seconds() == 0.5
   assert cfg.get_sync_archive_members_redis_hset_batch_size() == 100
   assert cfg.get_sync_archive_members_redis_max_payload_bytes() == 1048576

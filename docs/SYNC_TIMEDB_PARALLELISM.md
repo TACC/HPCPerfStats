@@ -70,6 +70,18 @@ Per-task `set_daemon_thread_title(role=...)` for operator `ps`/logs. Validation 
 
 Not generalized to `ThreadPoolExecutor` — lifecycle tied to populate call.
 
+## Redis L2 populate fnctl contention
+
+On **active-ingest** calendar days, populate-pool **shared read locks** (`file_read_lock_wait` on `*.fnctl.lock`) contend with archive-pool **exclusive write locks** during `.tar` append. Transient timeouts must recover (waiter re-enqueue, prewarm retry) rather than supervisor **`sys.exit(1)`** on the first failure.
+
+| INI key | Default | Role |
+|---------|---------|------|
+| `sync_archive_members_fnctl_read_lock_timeout_seconds` | 180 | Read-lock wait for archive populate/verify paths |
+| `sync_archive_members_redis_populate_stall_seconds` | 120 | No-progress detection while populate lock held |
+| `sync_archive_members_redis_populate_max_seconds` | 7200 | Absolute waiter/prewarm recovery budget (`0` = off) |
+
+Prewarm summary token **`populate_recovering`** indicates transient fnctl recovery succeeded after retry.
+
 ## Operator stall signals (spawn-specific)
 
 Exit **124** / `Pool imap stalled` / `MultiprocessingWorkerExitError` come from **spawn pool health** (`multiprocessing_pool_health.py`), not janitor threads. See `OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`.

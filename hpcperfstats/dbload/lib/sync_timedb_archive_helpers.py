@@ -2674,7 +2674,7 @@ def verify_tar_archive_readable(tar_path, *, assume_write_lock_held=False):
   try:
     if assume_write_lock_held:
       return _locked_scan()
-    with file_read_lock_wait(tar_path):
+    with _archive_file_read_lock_wait(tar_path):
       return _locked_scan()
   except FileNotFoundError:
     pass
@@ -2688,7 +2688,7 @@ def verify_tar_archive_readable(tar_path, *, assume_write_lock_held=False):
         for _member in _iter_tar_members(tf):
           pass
       return True
-    with file_read_lock_wait(tar_path):
+    with _archive_file_read_lock_wait(tar_path):
       with tarfile.open(tar_path, "r") as tf:
         for _member in _iter_tar_members(tf):
           pass
@@ -3018,6 +3018,21 @@ def _is_fnctl_read_lock_timeout_detail(detail):
   return "timed out waiting" in msg and "fnctl.lock" in msg
 
 
+_FNCTL_POPULATE_RETRY_DELAYS_S = (2.0, 5.0)
+
+
+def _archive_members_fnctl_read_lock_timeout_seconds():
+  return cfg.get_sync_archive_members_fnctl_read_lock_timeout_seconds()
+
+
+def _archive_file_read_lock_wait(target_path):
+  """Shared read-lock wait for archive populate/verify (INI-backed timeout)."""
+  return file_read_lock_wait(
+      target_path,
+      timeout_seconds=_archive_members_fnctl_read_lock_timeout_seconds(),
+  )
+
+
 def _scoped_remaining_raw_for_tar_path(tar_path):
   """Day-scoped remaining raw map for populate/decompress gating."""
   try:
@@ -3278,9 +3293,26 @@ def _member_match_via_redis_or_sealed_point(
 
   if populate_degraded_is_set(keys, client=client):
     _raise_if_ingest_day_skipped(keys, sealed_path, client)
-    raise ArchiveMembersRedisUnavailableError(
-        "archive members populate degraded for %s" % keys.day_token,
+    update_worker_substage(
+        "archive_member_lookup",
+        lookup_mode="redis_wait",
     )
+    try:
+      members = request_archive_members_populate_and_wait(canonical)
+      size = members.get(member_name)
+      if size is None:
+        return False
+      return int(size) == expected_size
+    except ArchiveDayIngestSkipError:
+      raise
+    except ArchiveMembersRedisUnavailableError:
+      _raise_if_ingest_day_skipped(keys, sealed_path, client)
+      if client.exists(keys.lock_key) or client.get(keys.complete_key) == "1":
+        return wait_for_member_match(
+            keys, member_name, expected_size, sealed_path=sealed_path,
+            respect_ingest_deadline=False,
+        )
+      raise
 
   if client.exists(keys.lock_key):
     if populate_degraded_is_set(keys, client=client):
@@ -3324,7 +3356,7 @@ def _stream_compressed_archive_members(
   ):
     return False, {}, False, None
   try:
-    with file_read_lock_wait(compressed_path):
+    with _archive_file_read_lock_wait(compressed_path):
       with _open_tarfile_for_read(
           compressed_path,
           zstd_thread_count_for_wrap(apply_priority_wrap),
@@ -3857,28 +3889,39 @@ def _populate_redis_members_from_tar_scan(tar_path, cache_key):
       return False, False, None
     saw_duplicates = False
     seen_names = set()
-    try:
-      with file_read_lock_wait(tar_path):
-        with _open_tarfile_for_read(tar_path, get_archive_zstd_thread_count()) as tf:
-          for member in _iter_tar_members(tf):
-            if not member.isfile():
-              continue
-            if member.name in seen_names:
-              saw_duplicates = True
-            seen_names.add(member.name)
-            on_member(member.name, member.size)
-    except Exception as exc:
-      from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-          ArchiveMembersRedisUnavailableError,
-      )
-      if _is_fnctl_read_lock_timeout_error(exc):
-        raise ArchiveMembersRedisUnavailableError(
-            "transient fnctl read lock timeout during tar populate path=%s"
-            % tar_path,
-        ) from exc
-      return False, False, exc
-    finally:
-      _remove_read_lock_sidecar(tar_path)
+    last_fnctl_exc = None
+    for attempt, delay in enumerate((0.0,) + _FNCTL_POPULATE_RETRY_DELAYS_S):
+      if delay:
+        time.sleep(delay)
+      try:
+        with _archive_file_read_lock_wait(tar_path):
+          with _open_tarfile_for_read(tar_path, get_archive_zstd_thread_count()) as tf:
+            for member in _iter_tar_members(tf):
+              if not member.isfile():
+                continue
+              if member.name in seen_names:
+                saw_duplicates = True
+              seen_names.add(member.name)
+              on_member(member.name, member.size)
+        last_fnctl_exc = None
+        break
+      except Exception as exc:
+        from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+            ArchiveMembersRedisUnavailableError,
+        )
+        if _is_fnctl_read_lock_timeout_error(exc):
+          last_fnctl_exc = ArchiveMembersRedisUnavailableError(
+              "transient fnctl read lock timeout during tar populate path=%s"
+              % tar_path,
+          )
+          if attempt < len(_FNCTL_POPULATE_RETRY_DELAYS_S):
+            continue
+          raise last_fnctl_exc from exc
+        return False, False, exc
+      finally:
+        _remove_read_lock_sidecar(tar_path)
+    if last_fnctl_exc is not None:
+      raise last_fnctl_exc
     return True, saw_duplicates, None
 
   members = populate_archive_members_redis(
@@ -3942,10 +3985,10 @@ def execute_archive_members_populate_for_canonical(canonical):
     if client is not None and populate_degraded_is_set(keys, client=client):
       if get_archive_day_ingest_skip(keys, client=client) is not None:
         return {}
-      raise ArchiveMembersRedisUnavailableError(
-          "archive members Redis populate degraded for %s without day skip"
-          % keys.day_token,
+      from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+          clear_stale_incomplete_archive_members_redis,
       )
+      clear_stale_incomplete_archive_members_redis(keys, client=client)
     if sealed_path is None and not os.path.isfile(tar_path):
       return {}
     zst_path, gz_path = compressed_sibling_paths(tar_path)

@@ -5267,8 +5267,25 @@ def test_get_existing_archive_members_no_local_scan_when_degraded(
   keys = build_archive_members_redis_keys(cache_key)
   fake.set(keys.degraded_key, "1")
 
+  request_calls = {"n": 0}
+
+  def _fake_request(path, *, role="ingest"):
+    del role
+    request_calls["n"] += 1
+    raise ArchiveMembersRedisUnavailableError(
+        "archive members Redis enabled but lookup did not return members for %s"
+        % path,
+    )
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".request_archive_members_populate_and_wait",
+      _fake_request,
+  )
+
   with pytest.raises(ArchiveMembersRedisUnavailableError):
     get_existing_archive_members_for_daily_archive(sealed)
+  assert request_calls["n"] == 1
   assert stream_calls["n"] == 0
 
 

@@ -44,6 +44,18 @@ class ArchiveMembersPopulateStalledError(ArchiveMembersRedisUnavailableError):
   """Raised when populate lock is held but shows no progress within stall limits."""
 
 
+def is_transient_fnctl_populate_unavailable(exc) -> bool:
+  """True when *exc* is a transient fnctl read-lock timeout during populate."""
+  if not isinstance(exc, ArchiveMembersRedisUnavailableError):
+    return False
+  if isinstance(exc, (ArchiveMembersRedisConnectionError, ArchiveMembersPopulateStalledError)):
+    return False
+  msg = str(exc).lower()
+  if "transient fnctl" in msg and "read lock timeout" in msg:
+    return True
+  return "timed out waiting" in msg and "fnctl.lock" in msg
+
+
 class IngestArchiveLookupBudgetExceededError(TimeoutError):
   """Raised when Redis archive duplicate-check exceeds ingest per-file budget."""
 

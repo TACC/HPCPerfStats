@@ -355,6 +355,9 @@ sync_pool_process_cap = 16
 # Absolute cap for populate/waiter loops; 0 disables (default 7200).
 # sync_archive_members_redis_populate_max_seconds = 7200
 
+# Shared fnctl read-lock wait for archive populate/verify paths (default 180).
+# sync_archive_members_fnctl_read_lock_timeout_seconds = 180
+
 # Waiter poll interval seconds for incremental member lookups (default 0.25).
 # sync_archive_members_redis_wait_poll_seconds = 0.25
 
