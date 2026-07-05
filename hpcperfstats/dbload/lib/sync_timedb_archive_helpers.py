@@ -2606,40 +2606,58 @@ def _iter_tar_members(tf):
     yield member
 
 
-def verify_tar_archive_readable(tar_path):
+def verify_tar_archive_readable(tar_path, *, assume_write_lock_held=False):
   """Return True if ``tar_path`` is a readable archive (full scan via ``tar tf``).
 
   For ``.tar.zst`` / ``.tar.gz``, uses ``zstd -d -c | tar tf -`` when zstd is
   available; otherwise ``tar tf`` on the file (or :mod:`tarfile` if ``tar`` is
   missing).
+
+  When ``assume_write_lock_held`` is True, skip ``file_read_lock_wait`` (caller
+  holds ``file_write_lock`` on ``tar_path``).
   """
   if not os.path.isfile(tar_path):
     return False
   tar_bin = _tar_list_executable()
-  try:
-    with file_read_lock_wait(tar_path):
-      if detect_compressed_format(tar_path) in ("zst", "gz"):
-        return zstd_compressed_archive_pipe_readable(
-            tar_path,
-            get_archive_zstd_thread_count(),
-        )
-      result = subprocess.run(
-          [tar_bin, "tf", tar_path],
-          capture_output=True,
-          text=True,
-          check=False,
+
+  def _locked_scan():
+    if detect_compressed_format(tar_path) in ("zst", "gz"):
+      return zstd_compressed_archive_pipe_readable(
+          tar_path,
+          get_archive_zstd_thread_count(),
       )
-      return result.returncode == 0
+    result = subprocess.run(
+        [tar_bin, "tf", tar_path],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+  try:
+    if assume_write_lock_held:
+      return _locked_scan()
+    with file_read_lock_wait(tar_path):
+      return _locked_scan()
   except FileNotFoundError:
     pass
+  except TimeoutError:
+    raise
   except (OSError, subprocess.SubprocessError):
     return False
   try:
+    if assume_write_lock_held:
+      with tarfile.open(tar_path, "r") as tf:
+        for _member in _iter_tar_members(tf):
+          pass
+      return True
     with file_read_lock_wait(tar_path):
       with tarfile.open(tar_path, "r") as tf:
         for _member in _iter_tar_members(tf):
           pass
     return True
+  except TimeoutError:
+    raise
   except (tarfile.TarError, OSError, EOFError):
     return False
 
@@ -2946,6 +2964,115 @@ SKIP_KIND_TAR_TRUNCATED = "tar_truncated_or_unreadable"
 SKIP_KIND_READ_ERROR = "read_error"
 
 
+def _is_fnctl_read_lock_timeout_error(exc):
+  """True when ``file_read_lock_wait`` timed out (transient append contention)."""
+  if exc is None:
+    return False
+  if isinstance(exc, TimeoutError):
+    return True
+  msg = str(exc).lower()
+  return "timed out waiting" in msg and "fnctl.lock" in msg
+
+
+def _is_fnctl_read_lock_timeout_detail(detail):
+  if not detail:
+    return False
+  msg = str(detail).lower()
+  return "timed out waiting" in msg and "fnctl.lock" in msg
+
+
+def _scoped_remaining_raw_for_tar_path(tar_path):
+  """Day-scoped remaining raw map for populate/decompress gating."""
+  try:
+    archive_data_dir = cfg.get_archive_dir_path()
+    tgz_archive_dir = cfg.get_daily_archive_dir_path() or archive_data_dir
+    if not archive_data_dir or not tgz_archive_dir or not tar_path:
+      return {}
+    return build_remaining_raw_for_daily_tar(
+        archive_data_dir,
+        cfg.get_host_name_ext(),
+        tgz_archive_dir,
+        tar_path,
+    )
+  except Exception:
+    return {}
+
+
+def _decompress_should_unlink_compressed(tar_path):
+  """Fix H: keep sealed sibling during active-ingest / dirty mutable tar days."""
+  if not tar_path:
+    return True
+  zst_path, gz_path = compressed_sibling_paths(tar_path)
+  if os.path.isfile(tar_path) and is_daily_tar_sealed_dirty(
+      tar_path, zst_path, gz_path,
+  ):
+    return False
+  scoped = _scoped_remaining_raw_for_tar_path(tar_path)
+  zst_key = normalize_daily_compressed_path(
+      zst_path if os.path.isfile(zst_path) else gz_path,
+  )
+  if zst_key and daily_gz_has_remaining_raw_stats(zst_key, scoped):
+    return False
+  return True
+
+
+def _populate_should_use_tar_scan(tar_path, zst_path, gz_path, sealed_path):
+  """Return ``(use_tar, reason)`` for populate source selection (Fix B)."""
+  if not os.path.isfile(tar_path):
+    return False, None
+  if sealed_path is None or not os.path.isfile(sealed_path):
+    return True, "sealed_missing"
+  if is_daily_tar_sealed_dirty(tar_path, zst_path, gz_path):
+    return True, "sealed_dirty"
+  try:
+    scoped = _scoped_remaining_raw_for_tar_path(tar_path)
+    zst_key = normalize_daily_compressed_path(sealed_path)
+    if daily_gz_has_remaining_raw_stats(zst_key, scoped):
+      return True, "active_ingest_day"
+  except Exception:
+    pass
+  return False, None
+
+
+def _log_populate_source_decision(day_token, tar_path, zst_path, gz_path, sealed_path):
+  use_tar, reason = _populate_should_use_tar_scan(
+      tar_path, zst_path, gz_path, sealed_path,
+  )
+  dirty = is_daily_tar_sealed_dirty(tar_path, zst_path, gz_path) if os.path.isfile(
+      tar_path,
+  ) else False
+  sealed_exists = bool(sealed_path and os.path.isfile(sealed_path))
+  log_print(
+      "INFO: populate_source_decision day=%s dirty=%s sealed_exists=%s "
+      "use_tar=%s reason=%s tar=%s sealed=%s"
+      % (
+          day_token,
+          dirty,
+          sealed_exists,
+          use_tar,
+          reason or ("sealed" if not use_tar else "tar"),
+          tar_path,
+          sealed_path or "",
+      ),
+      flush=True,
+  )
+
+
+def _resolve_sealed_path_for_day_token(day_token):
+  if not day_token or day_token == "unknown":
+    return ""
+  daily_dir = cfg.get_daily_archive_dir_path()
+  if not daily_dir:
+    return ""
+  tar_path = os.path.join(daily_dir, "%s.tar" % day_token)
+  zst_path, gz_path = compressed_sibling_paths(tar_path)
+  if os.path.isfile(zst_path):
+    return zst_path
+  if os.path.isfile(gz_path):
+    return gz_path
+  return ""
+
+
 def classify_sealed_archive_stream_failure(sealed_path, stream_error=None):
   """Classify sealed archive stream failure (single-flight populate winner only)."""
   import subprocess
@@ -2999,26 +3126,44 @@ def _raise_if_ingest_day_skipped(keys, sealed_path, client):
   cached = _INGEST_SKIPPED_CALENDAR_DAYS.get(keys.day_token)
   if cached is not None:
     kind, detail, cached_path = cached
+    resolved = cached_path or sealed_path or _resolve_sealed_path_for_day_token(
+        keys.day_token,
+    )
     raise ArchiveDayIngestSkipError(
-        keys.day_token, cached_path or sealed_path, kind, detail,
+        keys.day_token, resolved, kind, detail,
     )
   skip = get_archive_day_ingest_skip(keys, client=client)
   if skip is not None:
     kind, detail = skip
-    _cache_ingest_skipped_calendar_day(keys.day_token, kind, detail, sealed_path)
-    raise ArchiveDayIngestSkipError(keys.day_token, sealed_path, kind, detail)
+    resolved = sealed_path or _resolve_sealed_path_for_day_token(keys.day_token)
+    _cache_ingest_skipped_calendar_day(keys.day_token, kind, detail, resolved)
+    raise ArchiveDayIngestSkipError(keys.day_token, resolved, kind, detail)
 
 
 def mark_archive_day_ingest_skip_and_raise(sealed_path, keys, client, stream_error=None):
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       ArchiveDayIngestSkipError,
+      ArchiveMembersRedisUnavailableError,
       set_archive_day_ingest_skip,
   )
 
   kind, detail = classify_sealed_archive_stream_failure(sealed_path, stream_error)
+  if kind == SKIP_KIND_READ_ERROR and (
+      _is_fnctl_read_lock_timeout_error(stream_error)
+      or _is_fnctl_read_lock_timeout_detail(detail)
+  ):
+    raise ArchiveMembersRedisUnavailableError(
+        "transient fnctl read lock timeout during sealed populate day=%s path=%s"
+        % (keys.day_token, sealed_path or ""),
+    )
+  resolved_sealed = sealed_path or _resolve_sealed_path_for_day_token(keys.day_token)
   set_archive_day_ingest_skip(client, keys, kind, detail)
-  _cache_ingest_skipped_calendar_day(keys.day_token, kind, detail, sealed_path)
-  raise ArchiveDayIngestSkipError(keys.day_token, sealed_path, kind, detail)
+  _cache_ingest_skipped_calendar_day(
+      keys.day_token, kind, detail, resolved_sealed,
+  )
+  raise ArchiveDayIngestSkipError(
+      keys.day_token, resolved_sealed, kind, detail,
+  )
 
 
 def _log_archive_day_ingest_skip_once(exc):
@@ -3403,11 +3548,26 @@ def ensure_daily_tar_restored_for_append(tar_path, zstd_threads):
   if os.path.isfile(tar_path):
     return True
   zst_path, gz_path = compressed_sibling_paths(tar_path)
+  remove_compressed = _decompress_should_unlink_compressed(tar_path)
   if os.path.isfile(zst_path):
-    if decompress_compressed_to_tar(zst_path, tar_path, zstd_threads):
+    if decompress_compressed_to_tar(
+        zst_path, tar_path, zstd_threads, remove_compressed=remove_compressed,
+    ):
+      log_print(
+          "INFO: archive decompress restore tar=%s from=%s remove_compressed=%s"
+          % (tar_path, zst_path, remove_compressed),
+          flush=True,
+      )
       return True
   if os.path.isfile(gz_path):
-    if decompress_compressed_to_tar(gz_path, tar_path, zstd_threads):
+    if decompress_compressed_to_tar(
+        gz_path, tar_path, zstd_threads, remove_compressed=remove_compressed,
+    ):
+      log_print(
+          "INFO: archive decompress restore tar=%s from=%s remove_compressed=%s"
+          % (tar_path, gz_path, remove_compressed),
+          flush=True,
+      )
       return True
   if os.path.isfile(zst_path) or os.path.isfile(gz_path):
     return False
@@ -3431,11 +3591,16 @@ def replace_corrupt_tar_from_compressed_backup(
     with file_write_lock(tar_path):
       if os.path.isfile(tar_path):
         os.remove(tar_path)
+      remove_compressed = _decompress_should_unlink_compressed(tar_path)
       if os.path.isfile(zst_path):
-        if decompress_compressed_to_tar(zst_path, tar_path, zstd_threads):
+        if decompress_compressed_to_tar(
+            zst_path, tar_path, zstd_threads, remove_compressed=remove_compressed,
+        ):
           return True
       if os.path.isfile(gz_path):
-        if decompress_compressed_to_tar(gz_path, tar_path, zstd_threads):
+        if decompress_compressed_to_tar(
+            gz_path, tar_path, zstd_threads, remove_compressed=remove_compressed,
+        ):
           return True
       if os.path.isfile(tar_path):
         return True
@@ -3527,7 +3692,52 @@ def _ensure_populate_scan_allowed():
     )
 
 
-def _populate_redis_members_from_sealed_scan(sealed_path, cache_key):
+def _clear_stale_day_ingest_skip_if_tar_repaired(
+    client,
+    keys,
+    tar_path,
+    zst_path,
+    gz_path,
+    sealed_path,
+):
+  """Fix D: drop sticky skip when sealed is gone and mutable tar is readable."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      clear_archive_day_ingest_skip,
+      get_archive_day_ingest_skip,
+      populate_degraded_is_set,
+  )
+
+  if client is None or keys.day_token == "unknown":
+    return
+  skip = get_archive_day_ingest_skip(keys, client=client)
+  if skip is None:
+    return
+  if sealed_path and os.path.isfile(sealed_path):
+    return
+  if not os.path.isfile(tar_path):
+    return
+  dirty = is_daily_tar_sealed_dirty(tar_path, zst_path, gz_path)
+  if not dirty and os.path.isfile(sealed_path or ""):
+    return
+  try:
+    if not verify_tar_archive_readable(tar_path):
+      return
+  except TimeoutError:
+    return
+  clear_archive_day_ingest_skip(client, keys)
+  _INGEST_SKIPPED_CALENDAR_DAYS.pop(keys.day_token, None)
+  _LOGGED_ARCHIVE_DAY_INGEST_SKIP.discard(keys.day_token)
+  if populate_degraded_is_set(keys, client=client):
+    client.delete(keys.degraded_key)
+  log_print(
+      "INFO: cleared stale archive_day_ingest_skip day=%s tar=%s "
+      "(sealed missing/dirty; tar readable)"
+      % (keys.day_token, tar_path),
+      flush=True,
+  )
+
+
+def _populate_redis_members_from_sealed_scan(sealed_path, cache_key, tar_path=None):
   _ensure_populate_scan_allowed()
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       build_archive_members_redis_keys,
@@ -3547,7 +3757,42 @@ def _populate_redis_members_from_sealed_scan(sealed_path, cache_key):
     )
     return readable, saw_duplicates, stream_error
 
-  members = populate_archive_members_redis(keys, _scan_fn, sealed_path=sealed_path)
+  members = None
+  try:
+    members = populate_archive_members_redis(keys, _scan_fn, sealed_path=sealed_path)
+  except Exception as exc:
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+        ArchiveDayIngestSkipError,
+        clear_archive_day_ingest_skip,
+        get_archive_members_redis_client,
+    )
+    if not isinstance(exc, ArchiveDayIngestSkipError):
+      raise
+    if tar_path and os.path.isfile(tar_path):
+      try:
+        tar_ok = verify_tar_archive_readable(tar_path)
+      except TimeoutError:
+        raise
+      if tar_ok:
+        log_print(
+            "INFO: populate tar fallback after sealed failure day=%s "
+            "sealed=%s tar=%s reason=%s"
+            % (
+                keys.day_token,
+                sealed_path,
+                tar_path,
+                exc.detail,
+            ),
+            flush=True,
+        )
+        client = get_archive_members_redis_client(required=False)
+        if client is not None:
+          clear_archive_day_ingest_skip(client, keys)
+          client.delete(keys.degraded_key)
+        _INGEST_SKIPPED_CALENDAR_DAYS.pop(keys.day_token, None)
+        _LOGGED_ARCHIVE_DAY_INGEST_SKIP.discard(keys.day_token)
+        return _populate_redis_members_from_tar_scan(tar_path, cache_key)
+    raise
   if members is not None:
     _record_archive_members_populate_source(canonical, "sealed_populated")
     day_token = keys.day_token if keys.day_token != "unknown" else ""
@@ -3586,6 +3831,14 @@ def _populate_redis_members_from_tar_scan(tar_path, cache_key):
             seen_names.add(member.name)
             on_member(member.name, member.size)
     except Exception as exc:
+      from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+          ArchiveMembersRedisUnavailableError,
+      )
+      if _is_fnctl_read_lock_timeout_error(exc):
+        raise ArchiveMembersRedisUnavailableError(
+            "transient fnctl read lock timeout during tar populate path=%s"
+            % tar_path,
+        ) from exc
       return False, False, exc
     finally:
       _remove_read_lock_sidecar(tar_path)
@@ -3659,17 +3912,25 @@ def execute_archive_members_populate_for_canonical(canonical):
     if sealed_path is None and not os.path.isfile(tar_path):
       return {}
     zst_path, gz_path = compressed_sibling_paths(tar_path)
-    if (
-        os.path.isfile(tar_path)
-        and is_daily_tar_sealed_dirty(tar_path, zst_path, gz_path)
-    ):
+    _clear_stale_day_ingest_skip_if_tar_repaired(
+        client, keys, tar_path, zst_path, gz_path, sealed_path,
+    )
+    _log_populate_source_decision(
+        keys.day_token, tar_path, zst_path, gz_path, sealed_path,
+    )
+    use_tar, _reason = _populate_should_use_tar_scan(
+        tar_path, zst_path, gz_path, sealed_path,
+    )
+    if use_tar:
       members = _populate_redis_members_from_tar_scan(tar_path, cache_key)
     else:
       if sealed_path is None:
         raise ArchiveMembersRedisUnavailableError(
             "no sealed archive for populate canonical=%s" % canonical,
         )
-      members = _populate_redis_members_from_sealed_scan(sealed_path, cache_key)
+      members = _populate_redis_members_from_sealed_scan(
+          sealed_path, cache_key, tar_path=tar_path,
+      )
     if members is not None:
       _store_daily_archive_members_cache(canonical, members)
       return dict(members)
@@ -5163,6 +5424,13 @@ def atomic_seal_tar_to_zst(
                   flush=True,
               )
             return None
+      if not verify_tar_archive_readable(tar_path, assume_write_lock_held=True):
+        if log_fn:
+          log_fn(
+              "Seal refused: tar unreadable before compress: %s" % tar_path,
+              flush=True,
+          )
+        return None
       zstd_compress_tar_to_file(
           tar_path,
           tmp_zst,

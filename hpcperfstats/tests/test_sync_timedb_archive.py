@@ -7887,3 +7887,197 @@ def test_supplement_at_max_replaces_with_older_closed_paths(tmp_path):
   assert capped[0] == may_named[0]
   assert all(path in may_named for path in capped)
   assert any("pending cap supplement replace" in line for line in logs)
+
+
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_atomic_seal_refuses_unreadable_tar(tmp_path):
+  """Fix A: refuse seal when tar fails full readability scan."""
+  tar_path = tmp_path / "2021-06-07.tar"
+  zst_path = tmp_path / "2021-06-07.tar.zst"
+  tar_path.write_bytes(b"not-a-valid-tar-archive")
+  result = atomic_seal_tar_to_zst(
+      str(tar_path),
+      str(zst_path),
+      num_threads=1,
+      compress_level=6,
+      keep_uncompressed_tar=True,
+      log_fn=None,
+  )
+  assert result is None
+  assert not zst_path.is_file()
+
+
+def test_verify_tar_read_lock_timeout_not_treated_as_corrupt(monkeypatch, tmp_path):
+  """Fix I: fnctl read lock timeout must propagate, not return False."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "2021-06-08.tar"
+  member = tmp_path / "payload.txt"
+  member.write_text("ok")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(member), arcname="host/payload")
+
+  def _timeout_lock(_path):
+    raise TimeoutError("timed out waiting for fnctl.lock on %s" % _path)
+
+  monkeypatch.setattr(helpers, "file_read_lock_wait", _timeout_lock)
+  with pytest.raises(TimeoutError, match="fnctl.lock"):
+    helpers.verify_tar_archive_readable(str(tar_path))
+
+
+def test_decompress_restore_keeps_zst_on_active_ingest_day(monkeypatch, tmp_path):
+  """Fix H: active-ingest restore must not unlink sealed sibling."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "2024-06-07.tar"
+  zst_path = tmp_path / "2024-06-07.tar.zst"
+  zst_path.write_bytes(b"placeholder-zst")
+  captured = {}
+
+  def _fake_decompress(src, dst, zstd_threads, remove_compressed=True):
+    captured["remove_compressed"] = remove_compressed
+    with tarfile.open(dst, "w") as tf:
+      tf.addfile(tarfile.TarInfo(name="host/raw"), io.BytesIO(b"x"))
+    return True
+
+  monkeypatch.setattr(helpers, "decompress_compressed_to_tar", _fake_decompress)
+  monkeypatch.setattr(
+      helpers, "daily_gz_has_remaining_raw_stats", lambda *_a, **_k: True,
+  )
+  assert helpers.ensure_daily_tar_restored_for_append(str(tar_path), 1) is True
+  assert captured.get("remove_compressed") is False
+  assert zst_path.is_file()
+
+
+def test_populate_uses_tar_when_sealed_missing_even_if_not_dirty_mtime(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  """Fix B: missing sealed sibling must populate from mutable tar."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+      reset_worker_pool_kind,
+      set_worker_pool_kind,
+  )
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
+      FakeRedis,
+  )
+
+  day_tar = tmp_path / "2024-06-09.tar"
+  inner = tmp_path / "member.txt"
+  inner.write_text("payload")
+  with tarfile.open(day_tar, "w") as tf:
+    tf.add(str(inner), arcname="host/member")
+  canonical = str(tmp_path / "2024-06-09.tar.zst")
+
+  sealed_calls = {"n": 0}
+  tar_calls = {"n": 0}
+
+  def _forbidden_sealed(*_a, **_k):
+    sealed_calls["n"] += 1
+    raise AssertionError("sealed missing; must not scan sealed")
+
+  def _counting_tar(*_a, **_k):
+    tar_calls["n"] += 1
+    return {"host/member": inner.stat().st_size}
+
+  monkeypatch.setattr(
+      helpers, "_populate_redis_members_from_sealed_scan", _forbidden_sealed,
+  )
+  monkeypatch.setattr(
+      helpers, "_populate_redis_members_from_tar_scan", _counting_tar,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: FakeRedis(),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".redis_lookup_full_members",
+      lambda keys: None,
+  )
+
+  token = set_worker_pool_kind("populate-pool")
+  try:
+    members = helpers.get_existing_archive_members_for_daily_archive(canonical)
+  finally:
+    reset_worker_pool_kind(token)
+  assert tar_calls["n"] == 1
+  assert sealed_calls["n"] == 0
+  assert members.get("host/member") == inner.stat().st_size
+
+
+def test_populate_uses_tar_for_active_ingest_day(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  """Fix B: active-ingest day must prefer tar even when sealed mtime is current."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+      reset_worker_pool_kind,
+      set_worker_pool_kind,
+  )
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
+      FakeRedis,
+  )
+
+  day_zst = tmp_path / "2024-06-10.tar.zst"
+  day_tar = tmp_path / "2024-06-10.tar"
+  inner = tmp_path / "member.txt"
+  inner.write_text("payload")
+  with tarfile.open(day_tar, "w") as tf:
+    tf.add(str(inner), arcname="host/member")
+  day_zst.write_bytes(b"sealed-placeholder")
+  os.utime(day_tar, (1000, 1000))
+  os.utime(day_zst, (2000, 2000))
+
+  sealed_calls = {"n": 0}
+  tar_calls = {"n": 0}
+
+  def _forbidden_sealed(*_a, **_k):
+    sealed_calls["n"] += 1
+    raise AssertionError("active ingest must use tar populate")
+
+  def _counting_tar(*_a, **_k):
+    tar_calls["n"] += 1
+    return {"host/member": inner.stat().st_size}
+
+  monkeypatch.setattr(
+      helpers, "daily_gz_has_remaining_raw_stats", lambda *_a, **_k: True,
+  )
+  monkeypatch.setattr(
+      helpers, "_populate_redis_members_from_sealed_scan", _forbidden_sealed,
+  )
+  monkeypatch.setattr(
+      helpers, "_populate_redis_members_from_tar_scan", _counting_tar,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: FakeRedis(),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".redis_lookup_full_members",
+      lambda keys: None,
+  )
+
+  token = set_worker_pool_kind("populate-pool")
+  try:
+    members = helpers.get_existing_archive_members_for_daily_archive(str(day_zst))
+  finally:
+    reset_worker_pool_kind(token)
+  assert tar_calls["n"] == 1
+  assert sealed_calls["n"] == 0
+  assert members.get("host/member") == inner.stat().st_size

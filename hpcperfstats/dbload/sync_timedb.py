@@ -3662,8 +3662,19 @@ def _archive_stats_files_body(archive_info):
     # Corrupt/truncated .tar can make Python's tarfile reader return {} while GNU
     # tar still refuses append (exit 2). Recover before append so we never raise
     # without trying restore-from-.gz (same as post-append path).
-    if os.path.isfile(archive_tar_fname) and not verify_tar_archive_readable(
-        archive_tar_fname):
+    tar_unreadable = False
+    if os.path.isfile(archive_tar_fname):
+      try:
+        tar_unreadable = not verify_tar_archive_readable(archive_tar_fname)
+      except TimeoutError:
+        log_print(
+            "WARNING: fnctl read lock timeout verifying tar before append; "
+            "deferring append for %s"
+            % archive_tar_fname,
+            flush=True,
+        )
+        return False
+    if tar_unreadable:
       log_print(
           "Daily tar unreadable before append; recovering from sealed archive or "
           "clearing: %s" % archive_tar_fname,

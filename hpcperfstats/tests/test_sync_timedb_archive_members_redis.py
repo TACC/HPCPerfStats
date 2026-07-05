@@ -1127,3 +1127,91 @@ def test_incomplete_after_lock_release_fatal_when_max_seconds_zero(
       match="incomplete after lock release",
   ):
     wait_for_complete_members(keys)
+
+
+def test_read_lock_timeout_does_not_sticky_day_skip(_redis_test_env, tmp_path):
+  """Fix G: transient fnctl lock timeout must not set archive_day_ingest_skip."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      mark_archive_day_ingest_skip_and_raise,
+  )
+
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  timeout = TimeoutError("timed out waiting for fnctl.lock on /data/day.tar")
+  with pytest.raises(ArchiveMembersRedisUnavailableError, match="fnctl read lock timeout"):
+    mark_archive_day_ingest_skip_and_raise("", keys, _redis_test_env, timeout)
+  assert get_archive_day_ingest_skip(keys, client=_redis_test_env) is None
+
+
+def test_populate_tar_fallback_after_sealed_truncated(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  """Fix C: tar fallback when sealed stream fails but mutable tar is readable."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      _populate_redis_members_from_sealed_scan,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+      reset_worker_pool_kind,
+      set_worker_pool_kind,
+  )
+  from hpcperfstats.dbload.lib.archive_compress import (
+      normalize_daily_compressed_path,
+  )
+
+  day_tar = tmp_path / "2024-06-07.tar"
+  day_zst = tmp_path / "2024-06-07.tar.zst"
+  inner = tmp_path / "payload.txt"
+  inner.write_text("hello")
+  with tarfile.open(day_tar, "w") as tf:
+    tf.add(str(inner), arcname="host/payload")
+  day_zst.write_bytes(b"not-a-valid-zst-frame")
+
+  sealed_path = str(day_zst)
+  canonical = normalize_daily_compressed_path(sealed_path)
+  cache_key = _daily_archive_members_cache_key(canonical)
+
+  token = set_worker_pool_kind("populate-pool")
+  try:
+    members = _populate_redis_members_from_sealed_scan(
+        sealed_path, cache_key, tar_path=str(day_tar),
+    )
+  finally:
+    reset_worker_pool_kind(token)
+
+  assert members == {"host/payload": inner.stat().st_size}
+  keys = build_archive_members_redis_keys(cache_key)
+  assert get_archive_day_ingest_skip(keys, client=_redis_test_env) is None
+
+
+def test_clear_stale_day_skip_when_sealed_gone_and_tar_readable(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  """Fix D: auto-clear sticky skip when sealed is gone and tar is readable."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.archive_compress import (
+      normalize_daily_compressed_path,
+  )
+
+  day_tar = tmp_path / "2024-06-07.tar"
+  inner = tmp_path / "payload.txt"
+  inner.write_text("hello")
+  with tarfile.open(day_tar, "w") as tf:
+    tf.add(str(inner), arcname="host/payload")
+  canonical = str(tmp_path / "2024-06-07.tar.zst")
+  cache_key = _daily_archive_members_cache_key(normalize_daily_compressed_path(canonical))
+  keys = build_archive_members_redis_keys(cache_key)
+  set_archive_day_ingest_skip(
+      _redis_test_env,
+      keys,
+      "tar_truncated_or_unreadable",
+      "unexpected end of data",
+  )
+
+  helpers._clear_stale_day_ingest_skip_if_tar_repaired(
+      _redis_test_env,
+      keys,
+      str(day_tar),
+      str(tmp_path / "2024-06-07.tar.zst"),
+      str(tmp_path / "2024-06-07.tar.gz"),
+      sealed_path=None,
+  )
+  assert get_archive_day_ingest_skip(keys, client=_redis_test_env) is None

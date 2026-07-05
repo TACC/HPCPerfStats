@@ -443,6 +443,13 @@ def set_archive_day_ingest_skip(
   )
 
 
+def clear_archive_day_ingest_skip(client, keys: ArchiveMembersRedisKeys):
+  """Remove sticky day skip after tar repair (Fix D)."""
+  if keys.day_token == "unknown":
+    return
+  client.delete(keys.day_skip_key)
+
+
 def get_archive_day_ingest_skip(
     keys: ArchiveMembersRedisKeys,
     client=None,
