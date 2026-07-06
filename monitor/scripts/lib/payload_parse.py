@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterator
 
 from .row_validate import split_fields, validate_metric_row
@@ -64,3 +65,41 @@ def sample_header_timestamp(body: str) -> float | None:
 
     ts, _, _ = validate_sample_header(lines[0].lstrip())
     return ts
+
+
+def iter_row_type_dev(body: str) -> Iterator[tuple[str, str]]:
+    """Lightweight type/dev scan (no schema validation) for manifest enrichment."""
+    for line in body.splitlines():
+        s = line.lstrip()
+        if not s or s[0] in ("%", "#", "$", "!"):
+            continue
+        fields = split_fields(s)
+        if len(fields) < 2:
+            continue
+        if fields[0].replace(".", "", 1).isdigit():
+            continue
+        yield fields[0], fields[1]
+
+
+def observed_devices_from_shm(
+    shm_dir: Path,
+    *,
+    enable_slow_tier: bool,
+) -> dict[str, list[str]]:
+    """Devices actually present in shm sample payloads (ground truth union)."""
+    seen: dict[str, set[str]] = {}
+    bodies: list[str] = []
+    full = shm_dir / "full"
+    if full.is_file():
+        bodies.append(full.read_text(encoding="utf-8"))
+    if enable_slow_tier:
+        fast = shm_dir / "fast"
+        if fast.is_file():
+            bodies.append(fast.read_text(encoding="utf-8"))
+        schema = shm_dir / "schema"
+        if schema.is_file():
+            bodies.append(schema.read_text(encoding="utf-8"))
+    for body in bodies:
+        for type_name, dev in iter_row_type_dev(body):
+            seen.setdefault(type_name, set()).add(dev)
+    return {k: sorted(v) for k, v in seen.items()}

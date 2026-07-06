@@ -130,6 +130,38 @@ class HostLiveProbeTests(unittest.TestCase):
             with patch("lib.host_live_probes.Path", side_effect=fake_path):
                 self.assertEqual(probe_net_devices(), ["lo"])
 
+    def test_probe_nfs_mount_paths(self) -> None:
+        from unittest.mock import patch
+
+        from lib.host_live_probes import probe_nfs_mount_devices
+
+        mountstats = (
+            "device nfs-server:/export mounted on /home1 with fstype nfs statvers=1.0\n"
+            "device nfs-server:/export mounted on /home2 with fstype nfs statvers=1.1\n"
+            "device local:/srv mounted on /local with fstype nfs4 statvers=1.0\n"
+        )
+        with patch("lib.host_live_probes._read_lines", return_value=mountstats.splitlines()):
+            self.assertEqual(probe_nfs_mount_devices(), ["/home1", "/home2"])
+
+    def test_merge_device_lists_observed_over_singleton(self) -> None:
+        from lib.host_live_probes import merge_device_lists
+
+        self.assertEqual(
+            merge_device_lists(["-"], ["/home1"]),
+            ["/home1"],
+        )
+        self.assertEqual(
+            merge_device_lists(["eno1"], ["lo"]),
+            ["eno1", "lo"],
+        )
+
+    def test_observed_devices_from_shm_fixture(self) -> None:
+        from lib.payload_parse import observed_devices_from_shm
+
+        observed = observed_devices_from_shm(SYNTHETIC, enable_slow_tier=True)
+        self.assertIn("host_net", observed)
+        self.assertEqual(observed["host_net"], ["eth0"])
+
 
 class ListendContractTests(unittest.TestCase):
     def test_schema_host_token(self) -> None:

@@ -100,8 +100,104 @@ def probe_numa_node_devices() -> list[str]:
     return devs
 
 
+def probe_nfs_mount_devices() -> list[str]:
+    """NFS client mount points from /proc/self/mountstats (nfs.c uses mnt as dev)."""
+    prefix = "device "
+    mounted_on = " mounted on "
+    fstype = " with fstype nfs statvers="
+    devs: list[str] = []
+    for line in _read_lines("/proc/self/mountstats"):
+        s = line.strip()
+        if not s.startswith(prefix) or mounted_on not in s or fstype not in s:
+            continue
+        after_mounted = s.split(mounted_on, 1)[1]
+        mnt = after_mounted.split()[0] if after_mounted else ""
+        if not mnt:
+            continue
+        ver = s.split(fstype, 1)[1].split()[0] if fstype in s else ""
+        if ver not in ("1.0", "1.1"):
+            continue
+        devs.append(mnt)
+    return sorted(set(devs))
+
+
+def _lustre_sb_mount_map() -> dict[str, str]:
+    """Map 16-char Lustre superblock suffix to mount prefix (lustre_obd_to_mnt.c)."""
+    lov = Path("/proc/fs/lustre/lov")
+    out: dict[str, str] = {}
+    if not lov.is_dir():
+        return out
+    for p in lov.iterdir():
+        if not p.is_dir() or p.name.startswith("."):
+            continue
+        name = p.name
+        if len(name) < 17:
+            continue
+        sb = name[-16:]
+        prefix = name[:-17]
+        if prefix and all(c in "0123456789abcdef" for c in sb.lower()):
+            out[sb] = prefix
+    return out
+
+
+def probe_lustre_obd_devices(obd_subdir: str) -> list[str]:
+    """Mount paths for lustre_osc/mdc/llite rows (osc.c, mdc.c, llite.c)."""
+    sb_map = _lustre_sb_mount_map()
+    base = Path(f"/proc/fs/lustre/{obd_subdir}")
+    mounts: list[str] = []
+    if not base.is_dir():
+        return []
+    for p in sorted(base.iterdir()):
+        if not p.is_dir() or p.name.startswith("."):
+            continue
+        name = p.name
+        if len(name) < 16:
+            continue
+        mnt = sb_map.get(name[-16:])
+        if mnt:
+            mounts.append(mnt)
+    return sorted(set(mounts))
+
+
+def probe_tmpfs_devices() -> list[str]:
+    """host_tmpfs only tracks /tmp tmpfs (tmpfs.c)."""
+    for line in _read_lines("/proc/mounts"):
+        parts = line.split()
+        if len(parts) >= 3 and parts[2] == "tmpfs" and parts[1] == "/tmp":
+            return ["/tmp"]
+    return []
+
+
+def probe_nvidia_gpu_devices() -> list[str]:
+    """GPU row indices 0..N-1 when /dev/nvidiaN exists (nvidia_gpu.c)."""
+    devs: list[str] = []
+    i = 0
+    while Path(f"/dev/nvidia{i}").exists():
+        devs.append(str(i))
+        i += 1
+    return devs
+
+
+def merge_device_lists(
+    probed: list[str] | None,
+    observed: list[str] | None,
+) -> list[str] | None:
+    """Union probe + shm-observed devices; observed wins over stale singleton ['-']."""
+    if observed:
+        obs = sorted(set(observed))
+        if probed is None:
+            return obs
+        if probed == ["-"] and obs != ["-"]:
+            return obs
+        return sorted(set(probed) | set(obs))
+    return probed
+
+
 def default_devices_for_type(type_name: str) -> list[str] | None:
     if type_name == "host_cpu":
+        cpus = probe_cpu_devices()
+        return cpus if cpus else None
+    if type_name == "cpu_counter_metrics":
         cpus = probe_cpu_devices()
         return cpus if cpus else None
     if type_name == "host_net":
@@ -113,13 +209,27 @@ def default_devices_for_type(type_name: str) -> list[str] | None:
     if type_name in ("host_mem", "host_numa"):
         nodes = probe_numa_node_devices()
         return nodes if nodes else None
+    if type_name == "host_nfs":
+        devs = probe_nfs_mount_devices()
+        return devs if devs else None
+    if type_name in ("lustre_osc", "lustre_mdc", "lustre_llite"):
+        sub = type_name.replace("lustre_", "")
+        devs = probe_lustre_obd_devices(sub)
+        return devs if devs else None
+    if type_name == "host_tmpfs":
+        devs = probe_tmpfs_devices()
+        return devs if devs else None
+    if type_name == "nvidia_gpu":
+        devs = probe_nvidia_gpu_devices()
+        return devs if devs else None
+    if type_name == "amd_gpu":
+        return ["0"]
     if type_name in (
         "host_vm",
         "host_ps",
         "host_vfs",
-        "host_nfs",
         "host_sysv_shm",
-        "host_tmpfs",
+        "host_lnet",
         "host_roofline_peak",
     ):
         return ["-"]

@@ -11,12 +11,17 @@ from pathlib import Path
 MONITOR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(MONITOR / "scripts"))
 
-from lib.host_live_probes import default_devices_for_type, probe_host_fqdn  # noqa: E402
+from lib.host_live_probes import (  # noqa: E402
+    default_devices_for_type,
+    merge_device_lists,
+    probe_host_fqdn,
+)
 from lib.message_parse import (  # noqa: E402
     fast_schema_keys,
     parse_schema_counts,
     schema_key_name,
 )
+from lib.payload_parse import observed_devices_from_shm  # noqa: E402
 
 
 def load_capabilities(path: Path) -> dict:
@@ -42,6 +47,9 @@ def build_manifest(
     slug = capabilities["capability_slug"]
     schema = schema_from_shm(shm_dir) if shm_dir else None
     types: dict[str, dict] = {}
+    observed: dict[str, list[str]] = {}
+    if shm_dir:
+        observed = observed_devices_from_shm(shm_dir, enable_slow_tier=enable_slow_tier)
     if schema:
         for type_name, keys in schema.items():
             entry = {
@@ -49,7 +57,10 @@ def build_manifest(
                 "fast_keys": fast_schema_keys(keys),
                 "schema_key_names": [schema_key_name(k) for k in keys],
             }
-            devices = default_devices_for_type(type_name)
+            devices = merge_device_lists(
+                default_devices_for_type(type_name),
+                observed.get(type_name),
+            )
             if devices is not None:
                 entry["devices"] = devices
             types[type_name] = entry
