@@ -1429,6 +1429,30 @@ def test_tar_populate_eof_during_append_does_not_set_day_skip(
   assert get_archive_day_ingest_skip(keys, client=_redis_test_env) is None
 
 
+def test_prewarm_populate_completes_when_ingest_tar_hot_set(
+    _redis_test_env, tmp_path,
+):
+  """Chunk prewarm sets ingest_tar_hot before populate; scan must still run."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      set_ingest_tar_hot,
+  )
+
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  set_ingest_tar_hot(keys.day_token, reason="chunk_prewarm")
+  scan_calls = {"n": 0}
+
+  def _scan(on_member):
+    scan_calls["n"] += 1
+    on_member("host/a", 10)
+    on_member("host/b", 20)
+    return True, False
+
+  members = populate_archive_members_redis(keys, _scan, sealed_path=None)
+  assert scan_calls["n"] == 1
+  assert members == {"host/a": 10, "host/b": 20}
+  assert _redis_test_env.get(keys.complete_key) == "1"
+
+
 def test_populate_defers_tar_scan_while_archive_append_inflight(
     _redis_test_env, tmp_path, monkeypatch,
 ):

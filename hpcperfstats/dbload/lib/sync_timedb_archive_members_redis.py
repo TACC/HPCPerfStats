@@ -837,6 +837,13 @@ def populate_archive_members_redis(
     lock_value = token
     if _populate_scan_should_defer(keys, sealed_path):
       _release_populate_lock(client, keys, lock_value)
+      day_token = keys.day_token
+      if day_token and archive_append_inflight_for_day(day_token):
+        log_print(
+            "populate: defer tar scan day=%s reason=archive_append_inflight"
+            % day_token,
+            flush=True,
+        )
       time.sleep(_wait_poll_seconds())
       continue
     if source_decision is not None:
@@ -1492,14 +1499,16 @@ def _populate_scan_should_defer(
     keys: ArchiveMembersRedisKeys,
     sealed_path,
 ) -> bool:
-  """Defer mutable-tar populate while ingest hot or archive append is in flight."""
+  """Defer mutable-tar populate while archive-pool append is in flight.
+
+  ``ingest_tar_hot`` is for janitor yield (``sync-timedb-hot-path-janitor-lock-priority``),
+  not for blocking the populate winner that set the flag during chunk prewarm.
+  """
   day_token = keys.day_token
   if not day_token or day_token == "unknown":
     return False
   if sealed_path:
     return False
-  if ingest_tar_hot_for_day(day_token):
-    return True
   return archive_append_inflight_for_day(day_token)
 
 
