@@ -923,7 +923,7 @@ class archive_pre_append_member_lookup_context:
     self._token = _archive_pre_append_member_lookup.set(True)
     return self
 
-  def __exit__(self, exc_type, exc, tb):
+  def __exit__(self, _exc_type, _exc, _tb):
     _archive_pre_append_member_lookup.reset(self._token)
     return False
 
