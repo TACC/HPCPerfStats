@@ -757,7 +757,6 @@ def _operator_in_progress_plan_markdown() -> str:
           "### Pending commands\n\n"
           "#### pipeline — paste manifest snapshot\n\n"
           "```bash\n"
-          "cd HPCPerfStats\n\n"
           "docker compose exec pipeline su hpcperfstats -c 'ls /hpcperfstats/archive'\n"
           "```\n"
       ),

@@ -80,13 +80,11 @@ Record every command that has run — **remove** its copy/paste block from Pendi
 
 ### Pending commands
 
-**Working directory:** git checkout containing `docker-compose.yaml` (typically `HPCPerfStats/`). **One fenced `bash` block per Compose service** — chain multiple commands on the same service with `&&` or `sh -lc '…'`.
+**Compose cwd (prose only):** git checkout containing `docker-compose.yaml` (typically `HPCPerfStats/`). **Do not** include `cd …` before `docker compose` in paste blocks — see **`compose-operator-terminal-commands.mdc`**. **One fenced `bash` block per Compose service** — chain multiple commands on the same service with `&&` or `sh -lc '…'`.
 
 #### `<service>` — `<what output to paste back>`
 
 ```bash
-cd HPCPerfStats
-
 docker compose exec <service> …
 ```
 

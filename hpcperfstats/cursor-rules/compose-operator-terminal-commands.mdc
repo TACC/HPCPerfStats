@@ -12,11 +12,12 @@ When a **plan**, **implementation**, or **diagnostic step** needs more informati
 
 ## Mandatory format
 
-1. **Working directory** — state once that commands run from the git checkout containing `docker-compose.yaml` (typically `HPCPerfStats/`).
-2. **One block per service** — if multiple commands target the same container (`web`, `db`, `redis`, `rabbitmq`, `pipeline`, `proxy`), **combine them into a single command** (chain with `&&`, or wrap in `sh -lc '…'` / `bash -lc '…'`).
-3. **Copy/paste** — each service gets **one fenced `bash` block** the operator can run as-is; label the block with the **service name** and **what output to paste back**.
-4. **Prefer `exec` on a running stack** — `docker compose exec <service> …` when services are already up; use `docker compose run --rm <service> …` only for one-off tasks that do not need the full running stack.
-5. **Do not split** — avoid numbered micro-steps like “run A, then run B, then run C” on the same service when they can be one block.
+1. **Working directory (prose only)** — state once in plan/chat prose that the operator runs compose from the checkout containing `docker-compose.yaml` (typically `HPCPerfStats/`). **Do not** put `cd …` before `docker compose` / `docker-compose` in operator paste blocks — assume the operator already knows where to run Docker.
+2. **No host `cd` before Docker** — fenced operator blocks must start with `docker compose …` (or `docker-compose …`). **`cd` inside** an `exec`/`run` shell (`su hpcperfstats -c 'sh -lc "cd /path && …"'`) is fine when the path is **inside the container**.
+3. **One block per service** — if multiple commands target the same container (`web`, `db`, `redis`, `rabbitmq`, `pipeline`, `proxy`), **combine them into a single command** (chain with `&&`, or wrap in `sh -lc '…'` / `bash -lc '…'`).
+4. **Copy/paste** — each service gets **one fenced `bash` block** the operator can run as-is; label the block with the **service name** and **what output to paste back**.
+5. **Prefer `exec` on a running stack** — `docker compose exec <service> …` when services are already up; use `docker compose run --rm <service> …` only for one-off tasks that do not need the full running stack.
+6. **Do not split** — avoid numbered micro-steps like “run A, then run B, then run C” on the same service when they can be one block.
 
 ## Resolve paths from INI first (mandatory)
 
@@ -26,8 +27,6 @@ Before operator commands touch archive, accounting, logs, or other on-disk data:
 2. **First block (pipeline service)** — read paths from production INI inside the container, then use those variables in all later commands in the plan:
 
 ```bash
-cd HPCPerfStats
-
 docker compose exec pipeline su hpcperfstats -c "python3 -c \"
 from configparser import ConfigParser
 c = ConfigParser()
@@ -65,8 +64,6 @@ arch = c["PIPELINE"].get("archive_dir", c["DEFAULT"].get("archive_dir"))  # ofte
 **Corrected — day raw removal manifest (05-22 example):**
 
 ```bash
-cd HPCPerfStats
-
 docker compose -p hpcperfstats exec pipeline su hpcperfstats -c 'python3 -c "
 import json, os
 from hpcperfstats.dbload.lib import conf_parser as cfg
@@ -113,8 +110,6 @@ Long-running **`pipeline`** containers accumulate **days** of `[sync_timedb]` st
 **Good** — full compose log stream, filtered, then tail matches only:
 
 ```bash
-cd HPCPerfStats
-
 docker compose -p hpcperfstats logs pipeline 2>&1 | \
   grep -E 'startup drain blocked|chunk_wait_day_raw_delete|ingest file completed|day_close complete' | tail -40
 ```
@@ -168,8 +163,6 @@ The **`hpcperfstats-base`** image ( **`pipeline`**, **`web`**, and siblings buil
 **Example** — pipeline block after stall hypothesis:
 
 ```bash
-cd HPCPerfStats
-
 docker compose -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline su hpcperfstats -c '
 SUP=$(pgrep -f "sync_timedb" | head -1)
 echo "sync_timedb pid=$SUP"
@@ -182,8 +175,6 @@ lsof -p "$SUP" 2>/dev/null | head -30
 **Example** — compose DNS / port check from pipeline:
 
 ```bash
-cd HPCPerfStats
-
 docker compose exec pipeline su hpcperfstats -c 'nc -zv db 5432 && nc -zv redis 6379'
 ```
 
@@ -200,8 +191,6 @@ psql -h db -U hpcperfstats -c "SELECT 1"
 **Good** — one paste per service:
 
 ```bash
-cd HPCPerfStats
-
 docker compose exec web bash -lc '
 python -m pytest hpcperfstats/site/lib/machine/tests/test_foo.py -q &&
 python hpcperfstats/site/manage.py shell -c "from machine.models import Job; print(Job.objects.count())"
@@ -213,8 +202,6 @@ docker compose exec db psql -h localhost -U hpcperfstats -c "SELECT COUNT(*) FRO
 **Good** — filtered logs + in-container check (after INI paths known):
 
 ```bash
-cd HPCPerfStats
-
 docker compose -p hpcperfstats logs pipeline 2>&1 | \
   grep -E 'startup drain blocked|ingest file completed' | tail -20 && \
 docker compose exec pipeline su hpcperfstats -c 'ls -la "${archive_dir:-/hpcperfstats/archive}" 2>/dev/null | tail -5'
@@ -240,13 +227,21 @@ Some production hosts use **podman-compose** with project name `-p hpcperfstats`
 **Good** — podman service check + filtered log tail (paths from INI first):
 
 ```bash
-cd HPCPerfStats
-
 docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml ps | grep pipeline
 
 docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline \
   su hpcperfstats -c "sh -lc 'LOG=\${HPCPERFSTATS_SYNC_TIMEDB_LOG:-/home/hpcperfstats/log/sync_timedb.log}; tail -200 \"\$LOG\" | grep -E \"populate_prewarm|chunk prewarm|ingest may begin|populate stalled\" || true'"
 ```
+
+**Anti-pattern — host `cd` before Docker:**
+
+```bash
+cd HPCPerfStats
+
+docker compose exec pipeline …
+```
+
+Operators already know their compose checkout; leading `cd` adds noise and breaks copy/paste when cwd differs.
 
 ## Narrow exceptions (host is OK)
 
