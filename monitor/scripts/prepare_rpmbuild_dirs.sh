@@ -263,6 +263,7 @@ DEBUG /dev/shm mirror (debug RPM only):
 EOF
 fi
 if test "${debug_build}" = "1"; then
-  RPM_TOPDIR="${topdir}" DIST_TOP="${dist_top}" MONITOR_DIR="${MONITOR_DIR}" \
+  # MONITOR_DIR is readonly in this shell and is not exported to children; use env.
+  env RPM_TOPDIR="${topdir}" DIST_TOP="${dist_top}" MONITOR_DIR="${MONITOR_DIR}" \
     "${SCRIPT_DIR}/lib/print_debug_shm_verify.sh"
 fi

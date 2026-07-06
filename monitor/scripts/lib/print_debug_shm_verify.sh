@@ -5,7 +5,7 @@
 # Required environment:
 #   RPM_TOPDIR   rpmbuild _topdir (e.g. monitor/rpmbuild)
 #   DIST_TOP     unpacked source dir name (e.g. hpcperfstats-3.0)
-#   MONITOR_DIR  HPCPerfStats/monitor checkout
+#   MONITOR_DIR  HPCPerfStats/monitor checkout (pass via env from prepare)
 #
 set -euo pipefail
 
