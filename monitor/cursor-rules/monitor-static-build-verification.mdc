@@ -65,6 +65,8 @@ Prepare removes prior **`./embedded-static-prefix/`** and **`./rpmbuild/`**, rec
 
 The spec **`%build`** sets **`PREFIX`** to **`embedded-static-prefix`** inside the unpacked sources, **`SKIP_DEPS=1`**, and runs **`./scripts/build_static_bundle.sh`**, which **does not** rebuild third-party static libs—only configures and compiles **hpcperfstatsd**. **`rpmbuild`** does not need **curl/cmake** for vendored deps. Install the spec’s **`BuildRequires`** before **`rpmbuild`**.
 
+**Debug RPM (`hpc_debug_build 1`):** spec sets **`HPC_BUNDLE_ENABLE_DEBUG=1`** so configure gets **`--enable-debug`** (DEBUG **`/dev/shm`** mirror when the daemon runs). **`-g3` alone is insufficient** — see **monitor-debug-vs-symbols**. Release RPM (no macro) uses **`HPC_BUNDLE_RELEASE_BUILD=1`** and **`--disable-debug`**. Prepare prints both **`rpmbuild`** commands; the same tarball serves either path.
+
 If **`rpmlint`** is installed, run **`rpmlint hpcperfstats.spec`** on spec edits.
 
 ## Summary for handoffs

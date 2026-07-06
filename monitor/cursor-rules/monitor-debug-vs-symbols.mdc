@@ -15,3 +15,4 @@ alwaysApply: false
   - **Optimizer level** (`-O0` vs `-O2`) → debugging vs production performance.
   - **Symbols** → stack traces in **gdb** without changing runtime behavior.
 - Changing **`configure.ac`** defaults for **CFLAGS** should be reviewed for **static bundle** and **RPM** expectations (see **monitor-version-and-packaging**, **monitor-static-build-verification**).
+- **RPM `hpc_debug_build`**: spec sets `HPC_BUNDLE_ENABLE_DEBUG=1` so **`build_static_bundle.sh`** passes **`--enable-debug`** (DEBUG `/dev/shm` mirror). **`-g3` symbols alone** do not define **`DEBUG`**; release RPMs use **`--disable-debug`** (see **monitor-debug-shm**).

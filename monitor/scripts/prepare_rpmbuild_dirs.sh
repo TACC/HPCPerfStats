@@ -40,8 +40,14 @@ while (($# > 0)); do
       cat <<EOF
 Usage: ./scripts/prepare_rpmbuild_dirs.sh [--debug-build]
 
-  --debug-build  Prepare rpmbuild tree for symbol-rich profiling build.
-                 Pairs with: rpmbuild -ba ... --define "hpc_debug_build 1"
+  --debug-build  Mark the debug rpmbuild command as recommended for this run.
+                 Same source tarball as the default prepare; use the printed
+                 rpmbuild line with hpc_debug_build 1 for symbols + DEBUG /dev/shm.
+
+  Release (default): rpmbuild without hpc_debug_build — production RPM, no /dev/shm mirror.
+  Debug (opt-in):    rpmbuild with hpc_debug_build 1 — -g symbols and --enable-debug.
+
+  See README.md "DEBUG /dev/shm mirror" for install/start/ls workflow after RPM install.
 EOF
       exit 0
       ;;
@@ -225,14 +231,30 @@ monitor_tree_clean_post_dist "${MONITOR_DIR}" "${tb}"
 echo "Source tarball: ${sources_dir}/${tb}"
 echo "RPM tree ready under ${topdir}"
 echo ""
+release_rpmbuild="rpmbuild -ba --define \"_topdir ${topdir}\" \"${specs_dir}/hpcperfstats.spec\""
+debug_rpmbuild="rpmbuild -ba --define \"_topdir ${topdir}\" --define \"hpc_debug_build 1\" \"${specs_dir}/hpcperfstats.spec\""
 echo "Build binary and source RPMs with:"
 if test "${debug_build}" = "1"; then
-  echo "  rpmbuild -ba --define \"_topdir ${topdir}\" --define \"hpc_debug_build 1\" \"${specs_dir}/hpcperfstats.spec\""
   echo ""
-  echo "Debug/profiling mode enabled:"
-  echo "  - preserves symbols/debuginfo"
-  echo "  - uses -g3 -ggdb3 -fno-omit-frame-pointer -fno-inline"
-  echo "  - disables release strip path in static bundle build"
+  echo "Recommended (you passed --debug-build):"
+  echo "  ${debug_rpmbuild}"
+  echo ""
+  echo "Release (production, no DEBUG /dev/shm):"
+  echo "  ${release_rpmbuild}"
 else
-  echo "  rpmbuild -ba --define \"_topdir ${topdir}\" \"${specs_dir}/hpcperfstats.spec\""
+  echo ""
+  echo "Recommended (release / production):"
+  echo "  ${release_rpmbuild}"
+  echo ""
+  echo "Optional debug (symbols + --enable-debug /dev/shm mirror):"
+  echo "  ${debug_rpmbuild}"
 fi
+cat <<EOF
+
+DEBUG /dev/shm mirror (debug RPM only):
+  - prepare does not install or start hpcperfstatsd.
+  - After debug RPM install: systemctl start hpcperfstatsd (or run foreground).
+  - Payload mirror: /dev/shm/hpcperfstatsd-debug/{schema,fast,full}
+  - Override base dir: HPCPERFSTATS_DEBUG_SHM_DIR
+  - Release RPM (no hpc_debug_build) does not write /dev/shm files.
+EOF

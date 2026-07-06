@@ -80,6 +80,7 @@ export SKIP_DEPS=1
 export JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
 %if 0%{?hpc_debug_build}
 export HPC_BUNDLE_RELEASE_BUILD=0
+export HPC_BUNDLE_ENABLE_DEBUG=1
 export CFLAGS="%{optflags} -g3 -ggdb3 -fno-omit-frame-pointer -fno-inline"
 export CXXFLAGS="${CFLAGS}"
 export LDFLAGS="${LDFLAGS:-} -Wl,--build-id=sha1"

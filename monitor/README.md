@@ -135,6 +135,23 @@ contain job id, hostname, and workload metrics — treat as sensitive on shared
 nodes. Files are created mode `0600` under a `0700` directory (atomic `*.tmp` +
 `rename`).
 
+**RPM debug path** (symbols + behavioral DEBUG for `/dev/shm`):
+
+```bash
+cd HPCPerfStats/monitor
+./scripts/prepare_rpmbuild_dirs.sh --debug-build   # or default prepare; same tarball
+# use the printed debug rpmbuild line (includes hpc_debug_build 1):
+#   rpmbuild -ba --define "_topdir .../rpmbuild" --define "hpc_debug_build 1" ...
+sudo rpm -Uvh rpmbuild/RPMS/*/hpcperfstatsd-*.rpm
+sudo systemctl restart hpcperfstatsd
+ls -la /dev/shm/hpcperfstatsd-debug/
+```
+
+The default **release** `rpmbuild` (no `hpc_debug_build`) strips the binary and
+passes `--disable-debug` — no `/dev/shm` mirror. Compiler `-g` alone does not
+enable the mirror; the spec sets `HPC_BUNDLE_ENABLE_DEBUG=1` only for
+`hpc_debug_build` RPMs.
+
 ### `/dev/shm` message correctness testing
 
 On a data host with a DEBUG build:

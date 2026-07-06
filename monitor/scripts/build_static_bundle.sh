@@ -27,6 +27,9 @@
 #                   link-time --gc-sections, configure --disable-debug, and strip(1)
 #                   the daemon after link. Intended for RPM packaging (see hpcperfstats.spec
 #                   %%global hpc_release_build). CLI: pass --release.
+#   HPC_BUNDLE_ENABLE_DEBUG   When 1 (or yes/true) and release build is off, pass
+#                   configure --enable-debug (DEBUG macro, /dev/shm payload mirror).
+#                   Set by hpcperfstats.spec when rpmbuild uses hpc_debug_build 1.
 #
 # Optional stacks (InfiniBand MAD, NVIDIA DCGM GPU, AMD GPUPerfAPI): this script probes the
 # build host and passes --disable-* when development libs/headers are missing so configure
@@ -83,6 +86,13 @@ STATIC_BUNDLE_FEAT_FLAGS=()
 
 static_bundle_release_build_enabled() {
   case "${HPC_BUNDLE_RELEASE_BUILD:-0}" in
+  1 | yes | YES | true | TRUE | on | ON) return 0 ;;
+  *) return 1 ;;
+  esac
+}
+
+static_bundle_enable_debug_enabled() {
+  case "${HPC_BUNDLE_ENABLE_DEBUG:-0}" in
   1 | yes | YES | true | TRUE | on | ON) return 0 ;;
   *) return 1 ;;
   esac
@@ -440,6 +450,8 @@ build_monitor() {
   )
   if static_bundle_release_build_enabled; then
     cfg+=(--disable-debug)
+  elif static_bundle_enable_debug_enabled; then
+    cfg+=(--enable-debug)
   fi
   "${MONITOR_DIR}/configure" "${cfg[@]}" "$@"
   make -j"${JOBS}"
