@@ -75,6 +75,36 @@ class DeviceValidateTests(unittest.TestCase):
             )
         self.assertIn("eth99", str(ctx.exception))
 
+    def test_host_mem_numa_nodes(self) -> None:
+        manifest = _load_manifest()
+        schema = _schema_by_type(manifest)
+        manifest = json.loads(json.dumps(manifest))
+        manifest["types"]["host_mem"]["devices"] = ["0", "1"]
+        full = (SYNTHETIC / "full").read_text(encoding="utf-8")
+        numa_full = full.replace("host_mem mem @full 20 11 12", "host_mem 0 @full 20 11 12")
+        numa_full += "\nhost_mem 1 @full 20 11 12"
+        validate_devices_in_payload(
+            numa_full, manifest, schema, require_tier=True, allowed_tier="@full"
+        )
+        bad = numa_full.replace("host_mem 1 @full", "host_mem 9 @full")
+        with self.assertRaises(ValueError) as ctx:
+            validate_devices_in_payload(
+                bad, manifest, schema, require_tier=True, allowed_tier="@full"
+            )
+        self.assertIn("9", str(ctx.exception))
+
+
+class HostLiveProbeTests(unittest.TestCase):
+    def test_host_mem_default_devices_are_numa_nodes(self) -> None:
+        from unittest.mock import patch
+
+        from lib.host_live_probes import default_devices_for_type
+
+        with patch("lib.host_live_probes.probe_numa_node_devices", return_value=["0", "1"]):
+            self.assertEqual(default_devices_for_type("host_mem"), ["0", "1"])
+            self.assertEqual(default_devices_for_type("host_numa"), ["0", "1"])
+        self.assertEqual(default_devices_for_type("host_ps"), ["-"])
+
 
 class ListendContractTests(unittest.TestCase):
     def test_schema_host_token(self) -> None:

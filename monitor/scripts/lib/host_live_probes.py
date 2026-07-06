@@ -77,6 +77,21 @@ def probe_block_devices() -> list[str]:
     return sorted(set(devs))
 
 
+def probe_numa_node_devices() -> list[str]:
+    """NUMA node ids used as host_mem/host_numa dev (see mem.c, numa.c)."""
+    base = Path("/sys/devices/system/node")
+    if not base.is_dir():
+        return []
+    devs: list[str] = []
+    for p in sorted(base.iterdir()):
+        if not p.is_dir() or not p.name.startswith("node"):
+            continue
+        node_id = p.name[4:]
+        if node_id.isdigit():
+            devs.append(node_id)
+    return devs
+
+
 def default_devices_for_type(type_name: str) -> list[str] | None:
     if type_name == "host_cpu":
         cpus = probe_cpu_devices()
@@ -87,13 +102,14 @@ def default_devices_for_type(type_name: str) -> list[str] | None:
         return probe_ib_devices()
     if type_name == "host_block":
         return probe_block_devices()
+    if type_name in ("host_mem", "host_numa"):
+        nodes = probe_numa_node_devices()
+        return nodes if nodes else None
     if type_name in (
-        "host_mem",
         "host_vm",
         "host_ps",
         "host_vfs",
         "host_nfs",
-        "host_numa",
         "host_sysv_shm",
         "host_tmpfs",
         "host_roofline_peak",
