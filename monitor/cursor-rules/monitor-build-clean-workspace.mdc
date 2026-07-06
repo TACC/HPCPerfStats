@@ -1,0 +1,49 @@
+---
+description: Monitor build scripts must establish a clean workspace before compile/configure
+globs:
+  - HPCPerfStats/monitor/scripts/**
+alwaysApply: false
+---
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+# Monitor: clean workspace before every compile
+
+## Law
+
+Every monitor **build script** that configures or compiles the daemon (or produces a dist/RPM tarball) must **establish a clean workspace before the first compile/configure step** of that run. Stale Autotools trees, object files, or prior tarballs must not influence the build.
+
+## Shared implementation
+
+Use [`scripts/lib/monitor_tree_clean.sh`](HPCPerfStats/monitor/scripts/lib/monitor_tree_clean.sh) — do not duplicate `rm -rf` lists in each script.
+
+| Function | Purpose |
+|----------|---------|
+| `monitor_tree_clean_pre_dist` | Before in-source `autoreconf` / `configure` / `make dist` |
+| `monitor_tree_clean_post_dist` | After successful `make dist` and tarball copy (prepare only) |
+| `monitor_tree_clean_build_static` | Before `build_static_bundle.sh` configures `.build-static` |
+| `verify_dist_tarball_host_headers` | After `make dist`; assert collector `host_*.h` in tarball |
+
+Ship `monitor_tree_clean.sh` via `src/Makefile.am` `EXTRA_DIST` so RPM tarballs include it.
+
+## In-scope scripts
+
+| Script | Requirement |
+|--------|-------------|
+| `prepare_rpmbuild_dirs.sh` | `monitor_tree_clean_pre_dist` before dist; `monitor_tree_clean_post_dist` after copy to `rpmbuild/SOURCES/` |
+| `build_static_bundle.sh` | Source clean helper; `monitor_tree_clean_build_static` in `build_monitor()`; honor `SKIP_CLEAN=1` |
+| `cross_compile_test.sh` | `rm -rf` foreign monitor build root before `configure` in `build_foreign_monitor()` |
+
+## Relation to other rules
+
+- **monitor-post-verify-distclean** — **post**-success cleanup after verify; this rule covers **pre**-compile cleanup at script entry.
+- **monitor-static-build-verification** — canonical verify path; cross-link here for prepare idempotency.
+
+## Tests
+
+- `tests/test_prepare_monitor_tree_clean.sh` — sources, grep contracts, functional pre_dist check.
+- `tests/test_make_dist_extra_dist_prereqs.sh` — `host_*.h` in `hpcperfstatsd_SOURCES` and prepare tarball guard.
+
+## New build scripts
+
+When adding a script that runs `configure` / `make` for the monitor, source `monitor_tree_clean.sh` or document why a dedicated clean path is required.

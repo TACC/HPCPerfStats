@@ -88,6 +88,10 @@ hpcperfstatsd_SOURCES = \
 	hwdetect.c \
 	host_key_alias.h \
 	host_key_alias.c \
+	host_cpu.h \
+	host_mem.h \
+	host_net.h \
+	host_ps.h \
 	intel_pmc3.h \
 	intel_pmc_uncore.h \
 	JOIN.h \
@@ -311,4 +315,5 @@ endif
 
 EXTRA_DIST = hpcperfstats.conf hpcperfstats.service hpcperfstatsd.sysconfig \
 	$(top_srcdir)/scripts/build_static_bundle.sh \
-	$(top_srcdir)/scripts/ensure_dotbuild_prefix_static.sh
+	$(top_srcdir)/scripts/ensure_dotbuild_prefix_static.sh \
+	$(top_srcdir)/scripts/lib/monitor_tree_clean.sh

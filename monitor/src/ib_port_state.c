@@ -1,5 +1,6 @@
 /* InfiniBand port state/phys_state sysfs line parsers (testable, no I/O). */
 #include <ctype.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "ib_port_state.h"

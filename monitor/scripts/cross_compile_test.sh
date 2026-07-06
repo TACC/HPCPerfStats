@@ -1072,6 +1072,10 @@ build_foreign_monitor() {
   prefix="$(foreign_prefix "${target}")"
   build_dir="$(foreign_build_root "${target}")"
   qemu_exe="$(foreign_qemu_user_executable "${target}")"
+  if test -d "${build_dir}"; then
+    echo "Removing prior foreign monitor build tree: ${build_dir}"
+    rm -rf "${build_dir}"
+  fi
   mkdir -p "${build_dir}"
   cfg_file="${build_dir}/configure.args"
   : > "${cfg_file}"

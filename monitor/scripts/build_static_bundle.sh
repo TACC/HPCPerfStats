@@ -50,6 +50,8 @@ set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly MONITOR_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=lib/monitor_tree_clean.sh
+source "${SCRIPT_DIR}/lib/monitor_tree_clean.sh"
 readonly REPO_ROOT="$(cd "${MONITOR_DIR}/../.." && pwd)"
 
 # =============================================================================
@@ -414,12 +416,7 @@ configure_arg_requests_ebpf() {
 }
 
 build_monitor() {
-  if test "${SKIP_CLEAN}" != "1"; then
-    if test -d "${MONITOR_DIR}/.build-static"; then
-      echo "Removing prior monitor build tree (failed or stale): ${MONITOR_DIR}/.build-static"
-      rm -rf "${MONITOR_DIR}/.build-static"
-    fi
-  fi
+  monitor_tree_clean_build_static "${MONITOR_DIR}"
   mkdir -p "${MONITOR_DIR}/.build-static"
   cd "${MONITOR_DIR}/.build-static"
   if test -f "${MONITOR_DIR}/configure.ac" || test -f "${MONITOR_DIR}/configure.in"; then

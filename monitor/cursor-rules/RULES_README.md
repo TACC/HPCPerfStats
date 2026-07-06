@@ -21,6 +21,7 @@ Loaded every agent turn. Keep these short; do not add more `alwaysApply: true` f
 Notable contracts (see filename in `HPCPerfStats/monitor/cursor-rules/`):
 
 - **`monitor-static-build-verification.mdc`** / **`monitor-dual-verify-cross-and-static.mdc`** — canonical static bundle + cross-compile gates
+- **`monitor-build-clean-workspace.mdc`** — pre-compile clean workspace in `prepare_rpmbuild_dirs.sh`, `build_static_bundle.sh`, `cross_compile_test.sh`
 - **`monitor-workspace-contract.mdc`** — scope and listend consumer contract
 - **`monitor-consumer-side-plan.mdc`** — secondary consumer plan when emit changes need ingest work
 - **`plan-creation-contract.mdc`** / **`plan-template-enforcement.mdc`** — plan authoring; template at **`HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md`**

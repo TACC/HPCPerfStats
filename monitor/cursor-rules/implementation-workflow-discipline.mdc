@@ -26,6 +26,7 @@ Use these during **plan**, **implement**, **self-review**, and **verification** 
 | [monitor-c-testing-standards.mdc](monitor-c-testing-standards.mdc) | Monitor unit/contract tests |
 | [monitor-workspace-contract.mdc](monitor-workspace-contract.mdc) | Scope, RabbitMQ/listend contract |
 | [monitor-static-build-verification.mdc](monitor-static-build-verification.mdc) | Canonical `build_static_bundle.sh` path |
+| [monitor-build-clean-workspace.mdc](monitor-build-clean-workspace.mdc) | Pre-compile clean workspace in build scripts |
 | [monitor-dual-verify-cross-and-static.mdc](monitor-dual-verify-cross-and-static.mdc) | Static bundle + cross-compile |
 | [monitor-collect-tier-gating.mdc](monitor-collect-tier-gating.mdc) | Two-tier collect/emit |
 | [monitor-schema-keys-headers.mdc](monitor-schema-keys-headers.mdc) | Shared KEYS headers |

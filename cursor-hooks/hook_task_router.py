@@ -500,6 +500,7 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
             "monitor-static-build-verification.mdc",
             "monitor-dual-verify-cross-and-static.mdc",
             "monitor-post-verify-distclean.mdc",
+            "monitor-build-clean-workspace.mdc",
             "configure-autoconf-awk-m4.mdc",
             "monitor-local-build-deps.mdc",
             "global-testing-discipline.mdc",

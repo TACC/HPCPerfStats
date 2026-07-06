@@ -4,6 +4,10 @@
 # run configure + make dist with HPC_BUNDLE_EMBED_PREFIX=1 so the tarball includes that tree,
 # and copy the tarball to rpmbuild/SOURCES.
 #
+# Each run is idempotent: removes prior rpmbuild/, embedded-static-prefix/, and monitor
+# Autotools artifacts (via scripts/lib/monitor_tree_clean.sh) before dist; post-dist cleanup
+# leaves outputs under rpmbuild/ only.
+#
 # The spec build uses SKIP_DEPS=1 and PREFIX=.../embedded-static-prefix inside the unpacked
 # sources so only hpcperfstatsd is compiled (no second libev/rabbitmq-c/LIKWID build).
 #
@@ -21,6 +25,8 @@
 set -euo pipefail
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly MONITOR_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=lib/monitor_tree_clean.sh
+source "${SCRIPT_DIR}/lib/monitor_tree_clean.sh"
 readonly SPEC_SRC="${MONITOR_DIR}/hpcperfstats.spec"
 readonly EMBED_PREFIX="${MONITOR_DIR}/embedded-static-prefix"
 
@@ -107,7 +113,8 @@ for distfile in \
   scripts/validate_shm_messages.py \
   scripts/lib/__init__.py \
   scripts/lib/message_parse.py \
-  scripts/lib/row_validate.py
+  scripts/lib/row_validate.py \
+  scripts/lib/monitor_tree_clean.sh
 do
   if test ! -f "${MONITOR_DIR}/${distfile}"; then
     echo "Missing file required for make dist: ${MONITOR_DIR}/${distfile}" >&2
@@ -179,11 +186,8 @@ EOF
 fi
 
 rm -f "${MONITOR_DIR}/${tb}"
-echo "Rebuilding ${tb} from ${MONITOR_DIR} (make distclean; autoreconf -fi; configure; make dist) ..."
-if test -f "${MONITOR_DIR}/Makefile"; then
-  echo "Running make distclean ..."
-  (cd "${MONITOR_DIR}" && make distclean)
-fi
+echo "Rebuilding ${tb} from ${MONITOR_DIR} (clean tree; autoreconf -fi; configure; make dist) ..."
+monitor_tree_clean_pre_dist "${MONITOR_DIR}" "${tb}"
 
 echo "Running autoreconf -fi in ${MONITOR_DIR} ..."
 (cd "${MONITOR_DIR}" && autoreconf -fi)
@@ -213,7 +217,11 @@ if test ! -f "${MONITOR_DIR}/${tb}"; then
   exit 1
 fi
 
+dist_top="${tarbase}-${ver}"
+verify_dist_tarball_host_headers "${MONITOR_DIR}/${tb}" "${dist_top}"
+
 cp -f "${MONITOR_DIR}/${tb}" "${sources_dir}/${tb}"
+monitor_tree_clean_post_dist "${MONITOR_DIR}" "${tb}"
 echo "Source tarball: ${sources_dir}/${tb}"
 echo "RPM tree ready under ${topdir}"
 echo ""

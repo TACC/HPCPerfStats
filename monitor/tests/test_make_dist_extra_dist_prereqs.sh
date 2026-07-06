@@ -29,4 +29,14 @@ grep -q 'tests/scripts/bootstrap_local_rabbitmq.sh' scripts/prepare_rpmbuild_dir
 grep -q 'scripts/lib/message_parse.py' scripts/prepare_rpmbuild_dirs.sh \
   || { echo "prepare_rpmbuild_dirs.sh must preflight scripts/lib/message_parse.py" >&2; exit 1; }
 
+for hdr in host_cpu.h host_mem.h host_net.h host_ps.h; do
+  test -f "src/${hdr}" \
+    || { echo "missing src/${hdr} (required for RPM build)" >&2; exit 1; }
+  grep -q "${hdr}" src/Makefile.am \
+    || { echo "src/Makefile.am must list ${hdr} in hpcperfstatsd_SOURCES" >&2; exit 1; }
+done
+
+grep -q 'verify_dist_tarball_host_headers' scripts/prepare_rpmbuild_dirs.sh \
+  || { echo "prepare_rpmbuild_dirs.sh must verify host_*.h in dist tarball" >&2; exit 1; }
+
 echo "test_make_dist_extra_dist_prereqs passed"
