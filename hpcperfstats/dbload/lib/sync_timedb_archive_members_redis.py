@@ -32,6 +32,7 @@ _DAILY_TAR_RESTORE_PREFIX = "%s:daily_tar_restore:v1" % _KEY_PREFIX
 _POPULATE_QUEUED_TTL_SECONDS = 3600
 _IDENTITY_DRIFT_LOG_INTERVAL_S = 120.0
 _IDENTITY_DRIFT_LOG_STATE: Dict[str, Dict[str, float]] = {}
+_APPEND_INFLIGHT_DEFER_LOG_STATE: Dict[str, Dict[str, float]] = {}
 
 _REDIS_CLIENT = None
 _REDIS_CLIENT_URL = None
@@ -839,11 +840,7 @@ def populate_archive_members_redis(
       _release_populate_lock(client, keys, lock_value)
       day_token = keys.day_token
       if day_token and archive_append_inflight_for_day(day_token):
-        log_print(
-            "populate: defer tar scan day=%s reason=archive_append_inflight"
-            % day_token,
-            flush=True,
-        )
+        _log_append_inflight_defer_if_allowed(day_token)
       time.sleep(_wait_poll_seconds())
       continue
     if source_decision is not None:
@@ -1058,6 +1055,30 @@ def _log_identity_drift_if_allowed(day_token: str, from_key: str, to_key: str) -
   log_print(
       "INFO: populate_wait identity_drift day=%s from=%s to=%s%s"
       % (day_token, from_key, to_key, suffix),
+      flush=True,
+  )
+
+
+def _log_append_inflight_defer_if_allowed(day_token: str) -> None:
+  """Rate-limit archive_append_inflight defer logs to once per calendar day."""
+  if not day_token or day_token == "unknown":
+    return
+  now_mono = time.monotonic()
+  state = _APPEND_INFLIGHT_DEFER_LOG_STATE.get(day_token)
+  if state is None:
+    state = {"last_log_mono": 0.0, "suppressed": 0.0}
+    _APPEND_INFLIGHT_DEFER_LOG_STATE[day_token] = state
+  last_log_mono = float(state.get("last_log_mono") or 0.0)
+  if now_mono - last_log_mono < _IDENTITY_DRIFT_LOG_INTERVAL_S:
+    state["suppressed"] = float(state.get("suppressed") or 0.0) + 1.0
+    return
+  suppressed_n = int(state.get("suppressed") or 0)
+  state["last_log_mono"] = now_mono
+  state["suppressed"] = 0.0
+  suffix = (" suppressed_n=%d" % suppressed_n) if suppressed_n else ""
+  log_print(
+      "populate: defer tar scan day=%s reason=archive_append_inflight%s"
+      % (day_token, suffix),
       flush=True,
   )
 

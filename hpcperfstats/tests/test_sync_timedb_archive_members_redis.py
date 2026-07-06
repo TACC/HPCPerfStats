@@ -1403,6 +1403,38 @@ def test_identity_drift_rate_limited_per_day(monkeypatch):
   assert "suppressed_n=2" in drift_logs[1]
 
 
+def test_append_inflight_defer_log_rate_limited(monkeypatch):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      _APPEND_INFLIGHT_DEFER_LOG_STATE,
+      _log_append_inflight_defer_if_allowed,
+  )
+
+  _APPEND_INFLIGHT_DEFER_LOG_STATE.clear()
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      "._IDENTITY_DRIFT_LOG_INTERVAL_S",
+      0.05,
+  )
+  logs = []
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis.log_print",
+      lambda msg, **kw: logs.append(msg),
+  )
+  day = "2026-06-03"
+  _log_append_inflight_defer_if_allowed(day)
+  _log_append_inflight_defer_if_allowed(day)
+  _log_append_inflight_defer_if_allowed(day)
+  defer_logs = [line for line in logs if "defer tar scan" in line]
+  assert len(defer_logs) == 1
+  assert "reason=archive_append_inflight" in defer_logs[0]
+  assert "suppressed_n=" not in defer_logs[0]
+  time.sleep(0.06)
+  _log_append_inflight_defer_if_allowed(day)
+  defer_logs = [line for line in logs if "defer tar scan" in line]
+  assert len(defer_logs) == 2
+  assert "suppressed_n=2" in defer_logs[1]
+
+
 def test_tar_populate_eof_during_append_does_not_set_day_skip(
     _redis_test_env, tmp_path,
 ):
