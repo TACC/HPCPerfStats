@@ -5,7 +5,7 @@
 # RPM_TOPDIR and DIST_TOP default from this checkout when unset.
 #
 # Optional: ENABLE_SLOW_TIER, HPCPERFSTATS_DEBUG_SHM_DIR, WORKSPACE_ROOT,
-#           SKIP_INSTALL=1, SKIP_DAEMON=1, SKIP_SHM_LS=1
+#           SKIP_INSTALL=1, SKIP_SHM_LS=1
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -81,7 +81,8 @@ usage() {
 Usage: $(basename "$0")
 
 Run from HPCPerfStats/monitor/ after debug rpmbuild completes.
-Optional: SKIP_INSTALL=1 SKIP_DAEMON=1 to re-validate without reinstall.
+RPM %post starts hpcperfstats.service on install/upgrade (see hpcperfstats.spec).
+Optional: SKIP_INSTALL=1 to re-validate without reinstall.
 EOF
 }
 
@@ -122,10 +123,7 @@ main() {
 
   if test "${SKIP_INSTALL:-0}" != "1"; then
     install_main_daemon_rpm "${rpm_topdir}"
-  fi
-  if test "${SKIP_DAEMON:-0}" != "1"; then
-    echo "Restarting hpcperfstatsd ..."
-    sudo systemctl restart hpcperfstatsd
+    echo "RPM %post enables and starts hpcperfstats.service (no extra restart here)."
   fi
 
   echo "Emitting ${caps} ..."

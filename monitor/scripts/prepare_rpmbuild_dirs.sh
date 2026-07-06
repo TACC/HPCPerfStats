@@ -241,7 +241,7 @@ if test "${debug_build}" = "1"; then
   echo "    && ./scripts/rpm_debug_shm_verify.sh"
   echo ""
   echo "Re-validate only (RPM installed, daemon running):"
-  echo "  SKIP_INSTALL=1 SKIP_DAEMON=1 ./scripts/rpm_debug_shm_verify.sh"
+  echo "  SKIP_INSTALL=1 ./scripts/rpm_debug_shm_verify.sh"
 else
   echo ""
   echo "Recommended (release / production):"

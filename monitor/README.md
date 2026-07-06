@@ -145,7 +145,8 @@ cd HPCPerfStats/monitor
 ```
 
 The footer uses paths under `rpmbuild/BUILD/hpcperfstats-<ver>/.build-static/` from
-the RPM `%build` tree. After install and `systemctl restart hpcperfstatsd`, shm
+the RPM `%build` tree. After install, `hpcperfstats.spec` `%post` starts
+`hpcperfstats.service`; shm
 payloads appear under `/dev/shm/hpcperfstatsd-debug/` (override with
 `HPCPERFSTATS_DEBUG_SHM_DIR`).
 
@@ -184,7 +185,7 @@ rpmbuild -ba ... hpc_debug_build 1 ... && ./scripts/rpm_debug_shm_verify.sh
 ```
 
 Run from `HPCPerfStats/monitor/`. No exports needed. Re-validate only:
-`SKIP_INSTALL=1 SKIP_DAEMON=1 ./scripts/rpm_debug_shm_verify.sh`
+`SKIP_INSTALL=1 ./scripts/rpm_debug_shm_verify.sh`
 
 **Capability slug** — `monitor-build-capabilities.json` includes
 `capability_slug` (compile flags + `slowtier0`/`slowtier1`). Golden fixtures
