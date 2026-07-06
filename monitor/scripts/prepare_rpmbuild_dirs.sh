@@ -100,7 +100,14 @@ for distfile in \
   tests/README.md \
   tests/scripts/bootstrap_local_rabbitmq.sh \
   scripts/check_unsafe_c_patterns.sh \
-  scripts/check_unsafe_c_patterns.allowlist
+  scripts/check_unsafe_c_patterns.allowlist \
+  scripts/check_emitted_variable_names.py \
+  scripts/emit_build_capabilities.py \
+  scripts/build_message_expectations.py \
+  scripts/validate_shm_messages.py \
+  scripts/lib/__init__.py \
+  scripts/lib/message_parse.py \
+  scripts/lib/row_validate.py
 do
   if test ! -f "${MONITOR_DIR}/${distfile}"; then
     echo "Missing file required for make dist: ${MONITOR_DIR}/${distfile}" >&2
