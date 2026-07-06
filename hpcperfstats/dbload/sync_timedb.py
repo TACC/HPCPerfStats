@@ -3789,10 +3789,12 @@ def _lookup_existing_members_for_archive_append(archive_fname, archive_tar_fname
       members_source = (
           "redis" if redis_members_cache_is_fully_warm(keys) else "tar_scan"
       )
-      return (
-          get_existing_archive_members_for_daily_archive(canonical),
-          members_source,
+      from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+          archive_pre_append_member_lookup_context,
       )
+      with archive_pre_append_member_lookup_context():
+        members = get_existing_archive_members_for_daily_archive(canonical)
+      return members, members_source
   return get_existing_archive_members(archive_tar_fname), "tar_scan"
 
 

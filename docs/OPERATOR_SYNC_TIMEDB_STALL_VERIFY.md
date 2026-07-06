@@ -363,6 +363,16 @@ docker compose logs pipeline --since 24h 2>&1 | grep -F 'sync_timedb worker_memo
 docker compose logs pipeline --since 24h 2>&1 | grep -F 'sync_timedb worker_memory: event=batch_summary' | grep -oE '(failure|rss|giant)_reap_pct=[^ ]+' | tail -20
 ```
 
+**Archive populate lock timeout / F6 self-defer (T0/T1 post-fix):** fatal `Timed out waiting for archive members populate lock` during archive append when **`archive_append_inflight`** is set **before** pre-append lookup. **Pre-fix signature:** tail of pipeline logs shows **only** `populate: defer tar scan day=YYYY-MM-DD reason=archive_append_inflight` from **archive-pool** with **no** `archive_job_begin` / `archive_job_done` for that day; may end in duplicate populate lock timeout lines. Redis census post-crash may show `complete=0`, `hlen=0`, `lock_value=None`, `append_inflight=False` (orphan incomplete). **Post-fix pass:** same day shows `archive_job_begin` then `archive_job_done` / `archive_finalize`; **no** fatal populate lock timeout; janitor `Archive janitor tick done` clears `in_flight` without multi-hour `duration_s` stalls tied to stuck finalize.
+
+```bash
+docker compose logs pipeline 2>&1 | \
+  grep -E 'YYYY-MM-DD|Timed out waiting for archive members populate lock|archive_job_begin|archive_job_done|archive_finalize|populate: defer tar scan|lock acquire timeout|janitor: tick' | \
+  tail -60
+```
+
+Replace `YYYY-MM-DD` with the failing calendar day. Expect **`lock acquire timeout`** diagnostics (with `lock_owner_pid`, `append_inflight`, `pre_append_exempt`) only when a **live** external lock holder blocks acquire — not during normal archive append with inflight-first ordering.
+
 **Populate incomplete after lock release:** grep for `Archive members populate incomplete after lock release`. Error key suffix `none:none:<tar_mtime>:<tar_size>` with concurrent `archive_job_done` / `redis_merge_warm` on the same day usually means **tar-identity drift** (waiter on pre-append fingerprint, merge on post-append). Post-fix waiters re-resolve identity and re-enqueue within `populate_max_seconds` rather than immediate `sys.exit(1)`.
 
 **Transient fnctl read-lock timeout (T1):** grep for `transient fnctl read lock timeout during tar populate` and `transient fnctl during archive members prewarm`. **Healthy:** populate waits on fnctl (up to **`populate_max_seconds`**) then `populate_source=tar` when `.tar` exists; occasional WARNING + `populate incomplete after lock release; recovering` or `chunk prewarm days=...:populate_recovering:tar_populated` — supervisor must **not** restart (`L2 contract failed` absent or rare). **Unhealthy:** repeated `ERROR: archive members Redis L2 contract failed` with supervisor restart loop on the same calendar day. When **`.tar` is present**, expect **`populate_source=tar`** not sealed; sealed populate is normal only after tar-drop (`archive_keep_uncompressed_tar=no`).

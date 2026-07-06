@@ -7236,6 +7236,82 @@ def test_archive_stats_files_body_prefers_redis_over_tar_scan_when_warm(
   assert any("archive_job_done" in line and "elapsed_s=" in line for line in logs)
 
 
+def test_archive_append_cold_redis_completes_with_inflight_first(
+    monkeypatch, tmp_path, capsys,
+):
+  """F6: inflight-first archive job must still reach archive_job_begin on cold Redis."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.sync_timedb as st
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      reset_archive_members_redis_client_for_tests,
+  )
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
+      FakeRedis,
+  )
+
+  reset_archive_members_redis_client_for_tests()
+  raw_existing = tmp_path / "1709123456"
+  raw_existing.write_text("1709123456 job1 cn001\n")
+  new_raw = tmp_path / "1709123457"
+  new_raw.write_text("1709123457 job2 cn002\n")
+  archive_key = str(tmp_path / "2026-06-03.tar.zst")
+  tar_path = daily_tar_path_from_compressed(archive_key)
+  os.makedirs(os.path.dirname(tar_path) or ".", exist_ok=True)
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(
+        str(raw_existing),
+        arcname=helpers.get_tar_member_name(str(raw_existing)),
+    )
+  open(archive_key, "wb").write(b"sealed")
+
+  fake = FakeRedis()
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: fake,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
+      lambda: True,
+  )
+  monkeypatch.setattr(st.cfg, "get_sync_archive_members_redis_enabled", lambda: True)
+
+  import hpcperfstats.dbload.lib.sync_timedb_archive_members_redis as redis_mod
+
+  call_order = []
+  original_set_inflight = redis_mod.set_archive_append_inflight
+
+  def inflight_first(*args, **kwargs):
+    call_order.append("inflight")
+    return original_set_inflight(*args, **kwargs)
+
+  original_lookup = st.get_existing_archive_members_for_daily_archive
+
+  def lookup_traced(canonical):
+    call_order.append("lookup")
+    return original_lookup(canonical)
+
+  monkeypatch.setattr(redis_mod, "set_archive_append_inflight", inflight_first)
+  monkeypatch.setattr(
+      st,
+      "get_existing_archive_members_for_daily_archive",
+      lookup_traced,
+  )
+
+  logs = []
+  monkeypatch.setattr(st, "log_print", lambda msg, **kw: logs.append(str(msg)))
+  _patch_archive_gate_pass(monkeypatch)
+  monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
+  monkeypatch.setattr(st, "_append_to_tar", lambda *_a, **_k: None)
+
+  assert st._archive_stats_files_body((archive_key, [str(new_raw)]))
+  assert call_order.index("inflight") < call_order.index("lookup")
+  combined = "\n".join(logs) + capsys.readouterr().out
+  assert "archive_job_begin" in combined and "members_source=tar_scan" in combined
+  assert "populate_source=tar" in combined
+  assert "archive_job_done" in combined
+
+
 def test_select_ingest_chunk_paths_oldest_tar_only(tmp_path):
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       select_ingest_chunk_paths,

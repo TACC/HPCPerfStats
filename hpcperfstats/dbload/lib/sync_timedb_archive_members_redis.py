@@ -34,6 +34,11 @@ _IDENTITY_DRIFT_LOG_INTERVAL_S = 120.0
 _IDENTITY_DRIFT_LOG_STATE: Dict[str, Dict[str, float]] = {}
 _APPEND_INFLIGHT_DEFER_LOG_STATE: Dict[str, Dict[str, float]] = {}
 
+_archive_pre_append_member_lookup = contextvars.ContextVar(
+    "sync_timedb_archive_pre_append_member_lookup",
+    default=False,
+)
+
 _REDIS_CLIENT = None
 _REDIS_CLIENT_URL = None
 
@@ -740,6 +745,37 @@ def _populate_progress_seen(
   return False, last_progress_ts, hlen
 
 
+def _release_stale_populate_lock_if_owner_dead(
+    client,
+    keys: ArchiveMembersRedisKeys,
+    *,
+    last_progress_monotonic,
+    require_stall: bool = True,
+) -> bool:
+  """Release a populate lock when the owner PID is dead after stall window."""
+  if not client.exists(keys.lock_key):
+    return False
+  if require_stall and (time.monotonic() - last_progress_monotonic) < float(
+      _populate_stall_seconds(),
+  ):
+    return False
+  if populate_degraded_is_set(keys, client=client):
+    _raise_if_archive_day_ingest_skip(keys, "", client)
+  _verify_redis_ping_or_raise(client)
+  owner_pid = _parse_populate_lock_owner_pid(client.get(keys.lock_key))
+  if owner_pid is not None and not _process_is_alive(owner_pid):
+    log_print(
+        "WARNING: archive members populate lock owner pid=%d dead; "
+        "releasing stale lock for %s"
+        % (owner_pid, keys.hash_key),
+        flush=True,
+    )
+    client.delete(keys.lock_key)
+    client.delete(keys.progress_key)
+    return True
+  return False
+
+
 def _check_populate_wait_limits(
     client,
     keys: ArchiveMembersRedisKeys,
@@ -763,23 +799,15 @@ def _check_populate_wait_limits(
   if complete == "1":
     return False
   if lock_held:
+    if _release_stale_populate_lock_if_owner_dead(
+        client,
+        keys,
+        last_progress_monotonic=last_progress_monotonic,
+    ):
+      return True
     if (time.monotonic() - last_progress_monotonic) >= float(
         _populate_stall_seconds(),
     ):
-      if populate_degraded_is_set(keys, client=client):
-        _raise_if_archive_day_ingest_skip(keys, sealed_path, client)
-      _verify_redis_ping_or_raise(client)
-      owner_pid = _parse_populate_lock_owner_pid(client.get(keys.lock_key))
-      if owner_pid is not None and not _process_is_alive(owner_pid):
-        log_print(
-            "WARNING: archive members populate lock owner pid=%d dead; "
-            "releasing stale lock for %s"
-            % (owner_pid, keys.hash_key),
-            flush=True,
-        )
-        client.delete(keys.lock_key)
-        client.delete(keys.progress_key)
-        return True
       raise ArchiveMembersPopulateStalledError(
           "Archive members populate stalled (no progress for %ss): %s"
           % (_populate_stall_seconds(), keys.hash_key),
@@ -811,6 +839,95 @@ def _check_populate_wait_limits(
   return False
 
 
+def _extend_populate_acquire_deadline() -> float:
+  return time.monotonic() + float(_populate_lock_seconds())
+
+
+def _populate_lock_timeout_diagnostics(
+    client,
+    keys: ArchiveMembersRedisKeys,
+) -> dict:
+  day_token = keys.day_token if keys.day_token != "unknown" else ""
+  lock_raw = client.get(keys.lock_key)
+  owner_pid = _parse_populate_lock_owner_pid(lock_raw)
+  progress_raw = client.get(keys.progress_key)
+  progress_age_s = None
+  if progress_raw:
+    try:
+      progress_age_s = max(0.0, time.time() - float(progress_raw))
+    except (TypeError, ValueError):
+      progress_age_s = None
+  return {
+      "lock_owner_pid": owner_pid,
+      "owner_alive": (
+          _process_is_alive(owner_pid) if owner_pid is not None else None
+      ),
+      "complete": client.get(keys.complete_key),
+      "hlen": _hash_member_count(client, keys),
+      "progress_age_s": progress_age_s,
+      "append_inflight": (
+          archive_append_inflight_for_day(day_token) if day_token else False
+      ),
+      "pre_append_exempt": archive_pre_append_member_lookup_active(),
+  }
+
+
+def _maybe_recover_orphan_incomplete_on_populate_lock_timeout(
+    client,
+    keys: ArchiveMembersRedisKeys,
+) -> None:
+  if client.get(keys.complete_key) == "1" or client.exists(keys.lock_key):
+    return
+  if _hash_member_count(client, keys) == 0:
+    clear_stale_incomplete_archive_members_redis(keys, client=client)
+    return
+  maybe_clear_orphan_incomplete_archive_members_redis(keys, client=client)
+
+
+def _raise_populate_lock_acquire_timeout(
+    client,
+    keys: ArchiveMembersRedisKeys,
+) -> None:
+  diag = _populate_lock_timeout_diagnostics(client, keys)
+  _maybe_recover_orphan_incomplete_on_populate_lock_timeout(client, keys)
+  log_print(
+      "ERROR: archive members populate lock acquire timeout lock_key=%s "
+      "lock_owner_pid=%s owner_alive=%s complete=%s hlen=%s progress_age_s=%s "
+      "append_inflight=%s pre_append_exempt=%s"
+      % (
+          keys.lock_key,
+          diag["lock_owner_pid"],
+          diag["owner_alive"],
+          diag["complete"],
+          diag["hlen"],
+          diag["progress_age_s"],
+          diag["append_inflight"],
+          diag["pre_append_exempt"],
+      ),
+      flush=True,
+  )
+  raise ArchiveMembersRedisUnavailableError(
+      "Timed out waiting for archive members populate lock: %s"
+      % keys.lock_key,
+  )
+
+
+def archive_pre_append_member_lookup_active() -> bool:
+  return bool(_archive_pre_append_member_lookup.get())
+
+
+class archive_pre_append_member_lookup_context:
+  """Allow archive-pool pre-append member lookup during own append_inflight."""
+
+  def __enter__(self):
+    self._token = _archive_pre_append_member_lookup.set(True)
+    return self
+
+  def __exit__(self, exc_type, exc, tb):
+    _archive_pre_append_member_lookup.reset(self._token)
+    return False
+
+
 def populate_archive_members_redis(
     keys: ArchiveMembersRedisKeys,
     scan_fn: Callable[[Callable[[str, int], None]], tuple],
@@ -824,15 +941,49 @@ def populate_archive_members_redis(
   Member sizes are collected via ``on_member`` callbacks during the scan.
   """
   client = get_archive_members_redis_client(required=True)
-  acquire_deadline = time.monotonic() + float(_populate_lock_seconds())
-  while time.monotonic() < acquire_deadline:
+  started_monotonic = time.monotonic()
+  max_seconds = _populate_max_seconds()
+  acquire_deadline = _extend_populate_acquire_deadline()
+  last_lock_progress_monotonic = started_monotonic
+  while True:
+    now = time.monotonic()
+    if max_seconds > 0 and (now - started_monotonic) >= max_seconds:
+      raise ArchiveMembersPopulateStalledError(
+          "Timed out waiting for archive members populate (max_seconds=%s): %s"
+          % (max_seconds, keys.hash_key),
+      )
+    if now >= acquire_deadline:
+      _raise_populate_lock_acquire_timeout(client, keys)
+
     maybe_clear_orphan_incomplete_archive_members_redis(keys, client=client)
     existing = _hgetall_members(client, keys)
     if existing is not None:
       return existing
     token = _try_acquire_populate_lock(client, keys)
     if token is None:
+      if client.exists(keys.lock_key):
+        progress_seen, _, _ = _populate_progress_seen(
+            client,
+            keys,
+            last_progress_ts=None,
+            last_hlen=0,
+        )
+        if progress_seen:
+          last_lock_progress_monotonic = time.monotonic()
+        if _release_stale_populate_lock_if_owner_dead(
+            client,
+            keys,
+            last_progress_monotonic=last_lock_progress_monotonic,
+            require_stall=False,
+        ):
+          continue
+      defer_wait = (
+          keys.day_token not in ("", "unknown")
+          and archive_append_inflight_for_day(keys.day_token)
+      )
       time.sleep(_wait_poll_seconds())
+      if defer_wait:
+        acquire_deadline = _extend_populate_acquire_deadline()
       continue
 
     lock_value = token
@@ -842,6 +993,7 @@ def populate_archive_members_redis(
       if day_token and archive_append_inflight_for_day(day_token):
         _log_append_inflight_defer_if_allowed(day_token)
       time.sleep(_wait_poll_seconds())
+      acquire_deadline = _extend_populate_acquire_deadline()
       continue
     if source_decision is not None:
       from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
@@ -925,11 +1077,6 @@ def populate_archive_members_redis(
       if populate_failed:
         _set_populate_degraded(client, keys)
       _release_populate_lock(client, keys, lock_value)
-
-  raise ArchiveMembersRedisUnavailableError(
-      "Timed out waiting for archive members populate lock: %s"
-      % keys.lock_key,
-  )
 
 
 def wait_for_member_match(
@@ -1529,6 +1676,8 @@ def _populate_scan_should_defer(
   if not day_token or day_token == "unknown":
     return False
   if sealed_path:
+    return False
+  if archive_pre_append_member_lookup_active():
     return False
   return archive_append_inflight_for_day(day_token)
 

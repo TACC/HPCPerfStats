@@ -1489,6 +1489,7 @@ def test_populate_defers_tar_scan_while_archive_append_inflight(
     _redis_test_env, tmp_path, monkeypatch,
 ):
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      clear_archive_append_inflight,
       set_archive_append_inflight,
   )
 
@@ -1506,9 +1507,181 @@ def test_populate_defers_tar_scan_while_archive_append_inflight(
     on_member("host/a", 1)
     return True, False
 
+  result = {"members": None, "exc": None}
+
+  def _populate():
+    try:
+      result["members"] = populate_archive_members_redis(
+          keys, _scan, sealed_path=None,
+      )
+    except Exception as exc:
+      result["exc"] = exc
+
+  t = threading.Thread(target=_populate)
+  t.start()
+  time.sleep(0.08)
+  assert scan_calls["n"] == 0
+  assert result["exc"] is None
+  clear_archive_append_inflight(keys.day_token)
+  t.join(timeout=5)
+  assert result["exc"] is None
+  assert scan_calls["n"] == 1
+  assert result["members"] == {"host/a": 1}
+
+
+def test_populate_acquire_deadline_pauses_during_append_inflight_defer(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      clear_archive_append_inflight,
+      set_archive_append_inflight,
+  )
+
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  set_archive_append_inflight(keys.day_token, reason="archive_job")
+  scan_calls = {"n": 0}
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser"
+      ".get_sync_archive_members_redis_populate_lock_seconds",
+      lambda: 0.12,
+  )
+
+  def _scan(on_member):
+    scan_calls["n"] += 1
+    on_member("host/a", 1)
+    return True, False
+
+  result = {"members": None, "exc": None}
+
+  def _populate():
+    try:
+      result["members"] = populate_archive_members_redis(
+          keys, _scan, sealed_path=None,
+      )
+    except Exception as exc:
+      result["exc"] = exc
+
+  def _clear_inflight_later():
+    time.sleep(0.25)
+    clear_archive_append_inflight(keys.day_token)
+
+  t = threading.Thread(target=_populate)
+  t_clear = threading.Thread(target=_clear_inflight_later)
+  t.start()
+  t_clear.start()
+  t.join(timeout=5)
+  t_clear.join(timeout=5)
+  assert result["exc"] is None
+  assert scan_calls["n"] == 1
+
+
+def test_acquire_loop_releases_stale_lock_when_owner_dead(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  dead_pid = 999999997
+  _redis_test_env.set(keys.lock_key, "tok:%d" % dead_pid, ex=30)
+  _redis_test_env.set(keys.complete_key, "0")
+  _redis_test_env.set(keys.progress_key, str(time.time() - 1000))
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser"
+      ".get_sync_archive_members_redis_populate_stall_seconds",
+      lambda: 0.05,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser"
+      ".get_sync_archive_members_redis_populate_lock_seconds",
+      lambda: 2.0,
+  )
+  scan_calls = {"n": 0}
+
+  def _scan(on_member):
+    scan_calls["n"] += 1
+    on_member("host/a", 1)
+    return True, False
+
+  members = populate_archive_members_redis(keys, _scan, sealed_path=None)
+  assert scan_calls["n"] == 1
+  assert members == {"host/a": 1}
+
+
+def test_populate_lock_timeout_when_external_holder_alive(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  alive_pid = os.getpid()
+  _redis_test_env.set(keys.lock_key, "tok:%d" % alive_pid, ex=30)
+  _redis_test_env.set(keys.complete_key, "0")
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser"
+      ".get_sync_archive_members_redis_populate_lock_seconds",
+      lambda: 0.12,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser"
+      ".get_sync_archive_members_redis_populate_stall_seconds",
+      lambda: 9999.0,
+  )
+  scan_calls = {"n": 0}
+
+  def _scan(on_member):
+    scan_calls["n"] += 1
+    return True, False
+
   with pytest.raises(ArchiveMembersRedisUnavailableError, match="populate lock"):
     populate_archive_members_redis(keys, _scan, sealed_path=None)
   assert scan_calls["n"] == 0
+
+
+def test_populate_lock_timeout_clears_orphan_incomplete_hlen_zero(
+    _redis_test_env, tmp_path, monkeypatch, capsys,
+):
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  alive_pid = os.getpid()
+  _redis_test_env.set(keys.lock_key, "tok:%d" % alive_pid, ex=30)
+  _redis_test_env.set(keys.complete_key, "0")
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser"
+      ".get_sync_archive_members_redis_populate_lock_seconds",
+      lambda: 0.08,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser"
+      ".get_sync_archive_members_redis_populate_stall_seconds",
+      lambda: 9999.0,
+  )
+
+  def _scan(on_member):
+    return True, False
+
+  with pytest.raises(ArchiveMembersRedisUnavailableError, match="populate lock"):
+    populate_archive_members_redis(keys, _scan, sealed_path=None)
+  out = capsys.readouterr().out
+  assert "lock acquire timeout" in out
+  assert "lock_owner_pid=%s" % alive_pid in out
+
+
+def test_archive_pre_append_lookup_exempt_from_append_inflight_defer(
+    _redis_test_env, tmp_path,
+):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      archive_pre_append_member_lookup_context,
+      set_archive_append_inflight,
+  )
+
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  set_archive_append_inflight(keys.day_token, reason="archive_job")
+  scan_calls = {"n": 0}
+
+  def _scan(on_member):
+    scan_calls["n"] += 1
+    on_member("host/a", 1)
+    return True, False
+
+  with archive_pre_append_member_lookup_context():
+    members = populate_archive_members_redis(keys, _scan, sealed_path=None)
+  assert scan_calls["n"] == 1
+  assert members == {"host/a": 1}
 
 
 def test_populate_completes_after_tar_append_merge(
