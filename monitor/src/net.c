@@ -82,25 +82,6 @@ static int net_iface_cache_append(const char *name)
   return 0;
 }
 
-#define NET_FLAGS \
-  X(IFF_UP), \
-  X(IFF_BROADCAST), \
-  X(IFF_DEBUG), \
-  X(IFF_LOOPBACK), \
-  X(IFF_POINTOPOINT), \
-  X(IFF_NOTRAILERS), \
-  X(IFF_RUNNING), \
-  X(IFF_NOARP), \
-  X(IFF_PROMISC), \
-  X(IFF_ALLMULTI), \
-  X(IFF_MASTER), \
-  X(IFF_SLAVE), \
-  X(IFF_MULTICAST), \
-  X(IFF_VOLATILE), \
-  X(IFF_PORTSEL), \
-  X(IFF_AUTOMEDIA), \
-  X(IFF_DYNAMIC)
-
 static void net_iface_cache_each(const char *base, const char *name, void *ctx)
 {
   unsigned int flags;
@@ -112,10 +93,7 @@ static void net_iface_cache_each(const char *base, const char *name, void *ctx)
   if (pscanf(flags_path, "%x", &flags) != 1)
     return;
 
-#define X(F) ((flags & F) ? " " #F : "")
-  TRACE("dev %s, flags %u%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n",
-        name, flags, NET_FLAGS);
-#undef X
+  TRACE("dev %s, flags 0x%x\n", name, flags);
 
   if ((flags & IFF_UP) && net_iface_cache_append(name) < 0)
     ERROR("cannot cache net iface `%s': %m\n", name);
