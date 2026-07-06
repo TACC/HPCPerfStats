@@ -12,7 +12,7 @@ This is **non-negotiable project law** for monitor work: **no fix or behavior ch
 - Any **traceback**, **uncaught exception**, or **assertion failure** in application code, tests, or tooling that reflects incorrect or fragile behavior you are fixing.
 - Any **failing `make check`** test or contract test you address by changing monitor C — **extend or add tests** in `HPCPerfStats/monitor/tests/`.
 - **User-reported bugs**, **wrong stats output**, **RabbitMQ payload shape errors**, or **regressions**—always add a test that fails on the old behavior and passes after the fix.
-- **CI failures** (`monitor-verify.yaml`) caused by missing coverage for a real contract: stabilize with a deterministic test; do not “fix green” without locking the intended behavior in tests.
+- **CI failures** caused by missing coverage for a real contract: stabilize with a deterministic test; do not “fix green” without locking the intended behavior in tests.
 
 ## Required outcome before closing the task
 
