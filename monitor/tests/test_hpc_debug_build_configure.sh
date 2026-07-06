@@ -9,6 +9,10 @@ spec="${ROOT}/hpcperfstats.spec"
 bundle="${ROOT}/scripts/build_static_bundle.sh"
 prepare="${ROOT}/scripts/prepare_rpmbuild_dirs.sh"
 
+awk '/%if 0%\{\?hpc_debug_build\}/,/%else/' "${spec}" \
+  | grep -q 'sample_freq_slow 60' \
+  || { echo "hpcperfstats.spec must set sample_freq_slow 60 in hpc_debug_build block" >&2; exit 1; }
+
 # Debug RPM: spec exports HPC_BUNDLE_ENABLE_DEBUG inside hpc_debug_build block only.
 awk '/%if 0%\{\?hpc_debug_build\}/,/%else/' "${spec}" \
   | grep -q 'HPC_BUNDLE_ENABLE_DEBUG=1' \

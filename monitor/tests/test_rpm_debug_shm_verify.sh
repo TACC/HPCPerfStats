@@ -25,6 +25,12 @@ grep -q '\-\-live-spot-check' "${verify}" \
 grep -q '\-\-wait-shm-seconds' "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must wait for shm payloads" >&2; exit 1; }
 
+grep -q 'FULL=' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must define FULL for post-install sleep" >&2; exit 1; }
+
+grep -q 'POST_INSTALL_SLEEP_SECONDS:-\${FULL}' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must default post-install sleep to FULL" >&2; exit 1; }
+
 grep -q 'hpcperfstatsd-\[0-9\]' "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must install main hpcperfstatsd RPM only" >&2; exit 1; }
 

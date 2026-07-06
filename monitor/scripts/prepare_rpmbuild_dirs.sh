@@ -41,6 +41,7 @@ while (($# > 0)); do
 Usage: ./scripts/prepare_rpmbuild_dirs.sh [--debug-build]
 
   --debug-build  Mark the debug rpmbuild command as recommended for this run.
+                 Debug RPM uses sample_freq=30 / sample_freq_slow=60 in hpcperfstats.conf.
                  Prints build && install && /dev/shm validate as one chained command.
 
   Release (default): rpmbuild without hpc_debug_build — production RPM, no /dev/shm mirror.

@@ -5,9 +5,14 @@
 # RPM_TOPDIR and DIST_TOP default from this checkout when unset.
 #
 # Optional: ENABLE_SLOW_TIER, HPCPERFSTATS_DEBUG_SHM_DIR, WORKSPACE_ROOT,
-#           SKIP_INSTALL=1, SKIP_SHM_LS=1, WAIT_SHM_SECONDS,
+#           SKIP_INSTALL=1, SKIP_SHM_LS=1, FAST (default 30), FULL (default 60),
+#           POST_INSTALL_SLEEP_SECONDS (defaults to FULL), WAIT_SHM_SECONDS,
 #           STRICT_LIVE_SPOT_CHECK=1, STRICT_PLAUSIBILITY=1, GOLDEN_DIR
 set -euo pipefail
+
+# Debug verify cadence: matches hpcperfstats.conf when built with hpc_debug_build 1.
+readonly FAST="${FAST:-30}"
+readonly FULL="${FULL:-60}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MONITOR_DIR="${MONITOR_DIR:-${SCRIPT_DIR}/..}"
@@ -83,7 +88,9 @@ Usage: $(basename "$0")
 
 Run from HPCPerfStats/monitor/ after debug rpmbuild completes.
 RPM %post starts hpcperfstats.service on install/upgrade (see hpcperfstats.spec).
-Optional: SKIP_INSTALL=1 to re-validate without reinstall.
+Waits POST_INSTALL_SLEEP_SECONDS (default FULL=60) after install before validation.
+Debug RPM sets sample_freq=${FAST} and sample_freq_slow=${FULL} in hpcperfstats.conf.
+Optional: SKIP_INSTALL=1 to re-validate without reinstall or post-install wait.
 EOF
 }
 
@@ -125,6 +132,11 @@ main() {
   if test "${SKIP_INSTALL:-0}" != "1"; then
     install_main_daemon_rpm "${rpm_topdir}"
     echo "RPM %post enables and starts hpcperfstats.service (no extra restart here)."
+    post_install_sleep="${POST_INSTALL_SLEEP_SECONDS:-${FULL}}"
+    if test "${post_install_sleep}" -gt 0 2>/dev/null; then
+      echo "Waiting ${post_install_sleep}s after install for daemon shm payloads ..."
+      sleep "${post_install_sleep}"
+    fi
   fi
 
   echo "Emitting ${caps} ..."

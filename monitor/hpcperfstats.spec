@@ -96,6 +96,11 @@ export HPCS_BUNDLE_REQUIRE_DCGM_GPU=1
 sed -i 's/CONFIGFILE/\%{_sysconfdir}\/hpcperfstats\/hpcperfstats.conf/' src/hpcperfstats.service
 sed -i 's/localhost/stats.frontera.tacc.utexas.edu/' src/hpcperfstats.conf
 sed -i 's/default/frontera/' src/hpcperfstats.conf
+%if 0%{?hpc_debug_build}
+# Debug /dev/shm verify: fast tier every 30s, full tier every 60s (see rpm_debug_shm_verify.sh FULL).
+sed -i 's/^sample_freq .*/sample_freq 30/' src/hpcperfstats.conf
+sed -i 's/^sample_freq_slow .*/sample_freq_slow 60/' src/hpcperfstats.conf
+%endif
 
 %install
 cd "%{_builddir}/%{srcname}-%{version}"
