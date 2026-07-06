@@ -1,9 +1,12 @@
 """Structural validation for monitor sample rows (Python port of test_debug_shm_emit_validate)."""
 from __future__ import annotations
 
+import re
+
 from .message_parse import fast_schema_keys, schema_key_name
 
 _TIER_MARKERS = frozenset({"@fast", "@full"})
+_DRIVER_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 def split_fields(line: str, max_fields: int = 64) -> list[str]:
@@ -13,6 +16,22 @@ def split_fields(line: str, max_fields: int = 64) -> list[str]:
         if len(fields) >= max_fields:
             break
     return fields
+
+
+def st_name_looks_like_driver(type_name: str) -> bool:
+    return bool(_DRIVER_NAME_RE.match(type_name))
+
+
+def dev_looks_plausible(dev: str) -> bool:
+    if not dev:
+        return False
+    return not any(ch.isspace() for ch in dev)
+
+
+def token_is_uint(tok: str) -> bool:
+    if not tok:
+        return False
+    return tok.isdigit()
 
 
 def validate_sample_header(line: str) -> tuple[float, str, str]:
@@ -46,6 +65,10 @@ def validate_metric_row(
         raise ValueError(f"row too short: {line!r}")
     type_name = fields[0]
     dev = fields[1]
+    if not st_name_looks_like_driver(type_name):
+        raise ValueError(f"type name not driver-shaped: {type_name!r}")
+    if not dev_looks_plausible(dev):
+        raise ValueError(f"device not plausible for {type_name!r}: {dev!r}")
     if type_name not in schema_by_type:
         raise ValueError(f"unknown type in row: {type_name!r}")
     schema_keys = schema_by_type[type_name]
@@ -64,6 +87,9 @@ def validate_metric_row(
         raise ValueError(
             f"type {type_name!r} dev {dev!r}: got {len(values)} values, expected {expect}"
         )
+    for val in values:
+        if not token_is_uint(val):
+            raise ValueError(f"type {type_name!r} non-numeric value {val!r} in {line!r}")
     return type_name, dev, tier_marker
 
 

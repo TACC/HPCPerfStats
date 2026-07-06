@@ -5,116 +5,18 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
-import socket
 import sys
 from pathlib import Path
 
 MONITOR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(MONITOR / "scripts"))
 
+from lib.host_live_probes import default_devices_for_type, probe_host_fqdn  # noqa: E402
 from lib.message_parse import (  # noqa: E402
     fast_schema_keys,
     parse_schema_counts,
     schema_key_name,
 )
-
-PROC_STAT_CPU_RE = re.compile(r"^cpu(\d+)\s")
-
-
-def _read_lines(path: str) -> list[str]:
-    try:
-        with open(path, encoding="utf-8", errors="replace") as fd:
-            return fd.readlines()
-    except OSError:
-        return []
-
-
-def probe_host_fqdn() -> str:
-    try:
-        return socket.getfqdn()
-    except OSError:
-        return socket.gethostname()
-
-
-def probe_cpu_devices() -> list[str]:
-    devs: list[str] = []
-    for line in _read_lines("/proc/stat"):
-        m = PROC_STAT_CPU_RE.match(line)
-        if m:
-            devs.append(m.group(1))
-    return devs
-
-
-def probe_net_devices() -> list[str]:
-    net_base = Path("/sys/class/net")
-    if not net_base.is_dir():
-        return []
-    skip = {"lo"}
-    return sorted(
-        p.name
-        for p in net_base.iterdir()
-        if p.is_dir() and p.name not in skip
-    )
-
-
-def probe_ib_devices() -> list[str]:
-    ib_base = Path("/sys/class/infiniband")
-    if not ib_base.is_dir():
-        return []
-    devs: list[str] = []
-    for hca in sorted(ib_base.iterdir()):
-        if not hca.is_dir():
-            continue
-        ports = hca / "ports"
-        if not ports.is_dir():
-            continue
-        for port in sorted(ports.iterdir()):
-            if port.is_dir() and port.name.isdigit():
-                devs.append(f"{hca.name}.{port.name}")
-    return devs
-
-
-def probe_block_devices() -> list[str]:
-    devs: list[str] = []
-    for line in _read_lines("/proc/diskstats"):
-        parts = line.split()
-        if len(parts) < 3:
-            continue
-        major = int(parts[0])
-        if major < 259 and major != 8 and major != 252:
-            continue
-        name = parts[2]
-        if name and not name[-1].isdigit():
-            devs.append(name)
-    return sorted(set(devs))
-
-
-def default_devices_for_type(type_name: str) -> list[str] | None:
-    if type_name == "host_cpu":
-        cpus = probe_cpu_devices()
-        return cpus if cpus else None
-    if type_name == "host_net":
-        return probe_net_devices()
-    if type_name == "host_ib":
-        return probe_ib_devices()
-    if type_name == "host_block":
-        return probe_block_devices()
-    if type_name in (
-        "host_mem",
-        "host_vm",
-        "host_ps",
-        "host_vfs",
-        "host_nfs",
-        "host_numa",
-        "host_sysv_shm",
-        "host_tmpfs",
-        "host_roofline_peak",
-    ):
-        return ["-"]
-    if type_name == "host_proc":
-        return None
-    return None
 
 
 def load_capabilities(path: Path) -> dict:

@@ -5,7 +5,8 @@
 # RPM_TOPDIR and DIST_TOP default from this checkout when unset.
 #
 # Optional: ENABLE_SLOW_TIER, HPCPERFSTATS_DEBUG_SHM_DIR, WORKSPACE_ROOT,
-#           SKIP_INSTALL=1, SKIP_SHM_LS=1
+#           SKIP_INSTALL=1, SKIP_SHM_LS=1, WAIT_SHM_SECONDS,
+#           STRICT_LIVE_SPOT_CHECK=1, STRICT_PLAUSIBILITY=1, GOLDEN_DIR
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -154,11 +155,28 @@ main() {
     --out "${expectations}"
 
   echo "Validating /dev/shm payloads ..."
-  "${py}" "${monitor_dir}/scripts/validate_shm_messages.py" \
-    --capabilities "${caps}" \
-    --manifest "${expectations}" \
-    --shm-dir "${shm_dir}" \
+  validate_args=(
+    --capabilities "${caps}"
+    --manifest "${expectations}"
+    --shm-dir "${shm_dir}"
+    --live-spot-check
     --report "${report_dir}/validate_rpm_debug_${slug}_$(date +%F).txt"
+  )
+  if test -n "${WAIT_SHM_SECONDS:-}"; then
+    validate_args+=(--wait-shm-seconds "${WAIT_SHM_SECONDS}")
+  else
+    validate_args+=(--wait-shm-seconds 30)
+  fi
+  if test "${STRICT_LIVE_SPOT_CHECK:-0}" = "1"; then
+    validate_args+=(--strict-live-spot-check)
+  fi
+  if test "${STRICT_PLAUSIBILITY:-0}" = "1"; then
+    validate_args+=(--strict-plausibility)
+  fi
+  if test -n "${GOLDEN_DIR:-}"; then
+    validate_args+=(--golden-dir "${GOLDEN_DIR}")
+  fi
+  "${py}" "${monitor_dir}/scripts/validate_shm_messages.py" "${validate_args[@]}"
 
   echo "PASS: validate_shm_messages (slug=${slug})"
 }

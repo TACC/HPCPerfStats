@@ -16,6 +16,15 @@ echo "${err}" | grep -Fe 'RPM build tree missing' >/dev/null \
 grep -q 'emit_build_capabilities.py' "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must emit capabilities before expectations" >&2; exit 1; }
 
+grep -q 'validate_shm_messages.py' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must run validate_shm_messages.py" >&2; exit 1; }
+
+grep -q '\-\-live-spot-check' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must pass --live-spot-check for live shm" >&2; exit 1; }
+
+grep -q '\-\-wait-shm-seconds' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must wait for shm payloads" >&2; exit 1; }
+
 grep -q 'hpcperfstatsd-\[0-9\]' "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must install main hpcperfstatsd RPM only" >&2; exit 1; }
 

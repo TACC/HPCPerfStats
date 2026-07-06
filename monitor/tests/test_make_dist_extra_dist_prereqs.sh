@@ -16,6 +16,13 @@ for path in \
   scripts/lib/__init__.py \
   scripts/lib/message_parse.py \
   scripts/lib/row_validate.py \
+  scripts/lib/payload_parse.py \
+  scripts/lib/device_validate.py \
+  scripts/lib/listend_contract.py \
+  scripts/lib/host_live_probes.py \
+  scripts/lib/value_plausibility.py \
+  scripts/lib/live_spot_check.py \
+  scripts/lib/golden_diff.py \
   scripts/rpm_debug_shm_verify.sh
 do
   test -f "${path}" \

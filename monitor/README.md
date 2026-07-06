@@ -174,8 +174,17 @@ python3 scripts/validate_shm_messages.py \
   --capabilities .build-static/monitor-build-capabilities.json \
   --manifest ".build-static/expectations_${SLUG}.json" \
   --shm-dir /dev/shm/hpcperfstatsd-debug \
+  --live-spot-check \
   --report "../../test_runs/monitor/validate_${SLUG}_$(date +%F).txt"
 ```
+
+Validation layers: structural (schema keys, row width, tier markers, uint values,
+manifest device IDs, listend host contract), plausibility warnings
+(`--strict-plausibility` to fail), and live `/proc`/`/sys` spot checks on the
+data host (`--live-spot-check`, default on live shm; `--no-live-spot-check` for
+fixtures). Optional emit drift check: copy shm files to
+`tests/expected/shm_{schema,fast,full}_<slug>.txt` and pass
+`--golden-dir tests/expected`.
 
 For **debug RPM**, use `./scripts/prepare_rpmbuild_dirs.sh --debug-build` — it prints a
 single chained command:
