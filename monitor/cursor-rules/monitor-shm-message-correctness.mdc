@@ -50,4 +50,4 @@ alwaysApply: false
 - Shell: `test_shm_message_correctness.sh` (slug-aware).
 - Python via repo `.venv` (**python-venv-enforcement**).
 
-Cross-links: **monitor-collect-tier-gating**, **monitor-schema-keys-headers**, **monitor-c-testing-standards**, **test-runs-output-directory**.
+Cross-links: **monitor-collect-tier-gating**, **monitor-schema-keys-headers**, **monitor-c-testing-standards**, **test-runs-output-directory**, **monitor-shm-validation-probe-parity** (collector ↔ probe sync).

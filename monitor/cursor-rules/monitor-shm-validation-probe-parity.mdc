@@ -1,0 +1,59 @@
+---
+description: Keep shm validation probes in sync with monitor collector device enumeration
+globs:
+  - HPCPerfStats/monitor/src/net.c
+  - HPCPerfStats/monitor/src/mem.c
+  - HPCPerfStats/monitor/src/numa.c
+  - HPCPerfStats/monitor/src/block.c
+  - HPCPerfStats/monitor/src/ib.c
+  - HPCPerfStats/monitor/src/cpu.c
+  - HPCPerfStats/monitor/scripts/lib/host_live_probes.py
+  - HPCPerfStats/monitor/scripts/lib/device_validate.py
+  - HPCPerfStats/monitor/scripts/lib/live_spot_check.py
+  - HPCPerfStats/monitor/scripts/build_message_expectations.py
+  - HPCPerfStats/monitor/tests/test_shm_validation_lib.py
+alwaysApply: false
+---
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+# Monitor: shm validation probe parity with collectors
+
+## Law
+
+When a monitor collector changes **which `dev` values** it emits (or how it reads live sources), **update Python validation in the same change** so `build_message_expectations.py` / `validate_shm_messages.py` stay aligned.
+
+**Source of truth for device sets:** the C collector (`get_current_stats`, `sys_iter_for_each`, cache rebuild logic).  
+**Mirror in Python:** `scripts/lib/host_live_probes.py` → `default_devices_for_type()` (manifest `types[].devices`) and any matching logic in `live_spot_check.py`.
+
+Do **not** invent probe filters (e.g. skipping `lo`) unless the C collector does the same.
+
+## Parity table (extend when adding types)
+
+| Type | C source | `dev` semantics | Probe |
+|------|----------|-----------------|-------|
+| `host_net` | `net.c` | `IFF_UP` ifaces under `/sys/class/net` (**includes `lo` when up**) | `probe_net_devices()` reads `flags` |
+| `host_mem` | `mem.c` | NUMA node id (`nodeN` → `N`) | `probe_numa_node_devices()` |
+| `host_numa` | `numa.c` | NUMA node id | `probe_numa_node_devices()` |
+| `host_cpu` | `cpu.c` | logical CPU index from `/proc/stat` | `probe_cpu_devices()` |
+| `host_block` | `block.c` | block device names from `/proc/diskstats` | `probe_block_devices()` |
+| `host_ib` | `ib.c` | `hca.port` from sysfs | `probe_ib_devices()` |
+| singleton types | `ps.c`, `vm.c`, … | `"-"` | `["-"]` in `default_devices_for_type` |
+
+## Required workflow
+
+1. **Read the collector** — find how rows are keyed before editing probes or `device_validate.py`.
+2. **Update `host_live_probes.py`** — match enumeration, naming, and filters exactly.
+3. **Update `device_validate.py` / `live_spot_check.py`** when row-count or compare rules depend on device shape.
+4. **Regression test** — extend `tests/test_shm_validation_lib.py` (mock sysfs/proc or table-driven payload). **every-error-regression-test**.
+5. **Run** `tests/test_shm_validation_lib.sh` and `make check` (`check-local`).
+
+## Other collector changes
+
+| Change kind | Also update |
+|-------------|-------------|
+| New schema keys / units / scaling (e.g. load ×100) | `live_spot_check.py`, `value_plausibility.py`, synthetic fixture if needed |
+| Tier gating (`@fast`/`@full`, `,R=S`) | `row_validate.py`, **monitor-collect-tier-gating** |
+| Emit shape / host token position | **monitor-workspace-contract**, `listend_contract.py` |
+
+Cross-links: **monitor-shm-message-correctness**, **monitor-debug-shm**, **every-error-regression-test**.

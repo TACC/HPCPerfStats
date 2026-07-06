@@ -24,6 +24,7 @@ Notable contracts (see filename in `HPCPerfStats/monitor/cursor-rules/`):
 - **`monitor-build-clean-workspace.mdc`** — pre-compile clean workspace in `prepare_rpmbuild_dirs.sh`, `build_static_bundle.sh`, `cross_compile_test.sh`
 - **`monitor-workspace-contract.mdc`** — scope and listend consumer contract
 - **`monitor-consumer-side-plan.mdc`** — secondary consumer plan when emit changes need ingest work
+- **`monitor-shm-validation-probe-parity.mdc`** — collector `dev` enumeration must match `host_live_probes.py`
 - **`plan-creation-contract.mdc`** / **`plan-template-enforcement.mdc`** — plan authoring; template at **`HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md`**
 
 Adding a new domain rule (same task, non-optional):
