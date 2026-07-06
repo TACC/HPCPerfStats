@@ -40,9 +40,11 @@ grep -q 'print_debug_shm_verify' "${prepare}" \
 verify_lib="${ROOT}/scripts/lib/print_debug_shm_verify.sh"
 test -f "${verify_lib}" \
   || { echo "missing ${verify_lib}" >&2; exit 1; }
-grep -q 'validate_shm_messages.py' "${verify_lib}" \
-  || { echo "print_debug_shm_verify.sh must reference validate_shm_messages.py" >&2; exit 1; }
-grep -q 'build_message_expectations.py' "${verify_lib}" \
-  || { echo "print_debug_shm_verify.sh must reference build_message_expectations.py" >&2; exit 1; }
+grep -q 'rpm_debug_shm_verify' "${verify_lib}" \
+  || { echo "print_debug_shm_verify.sh must reference rpm_debug_shm_verify.sh" >&2; exit 1; }
+test -x "${ROOT}/scripts/rpm_debug_shm_verify.sh" \
+  || { echo "missing executable scripts/rpm_debug_shm_verify.sh" >&2; exit 1; }
+grep -q 'emit_build_capabilities.py' "${ROOT}/scripts/rpm_debug_shm_verify.sh" \
+  || { echo "rpm_debug_shm_verify.sh must emit capabilities before validation" >&2; exit 1; }
 
 echo "test_hpc_debug_build_configure passed"

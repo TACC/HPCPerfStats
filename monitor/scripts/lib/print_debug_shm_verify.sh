@@ -37,10 +37,11 @@ print_debug_shm_verify_runbook() {
   local rpm_topdir="${RPM_TOPDIR:?RPM_TOPDIR required}"
   local dist_top="${DIST_TOP:?DIST_TOP required}"
   local monitor_dir="${MONITOR_DIR:?MONITOR_DIR required}"
-  local ws py
+  local ws py verify_script
 
   ws="$(resolve_workspace_root "${monitor_dir}")"
   py="$(resolve_python "${ws}")"
+  verify_script="${monitor_dir}/scripts/rpm_debug_shm_verify.sh"
 
   cat <<EOF
 
@@ -49,55 +50,34 @@ print_debug_shm_verify_runbook() {
 Prerequisite: run the debug rpmbuild line printed above (hpc_debug_build 1).
 prepare does not run rpmbuild, install, or start the daemon.
 
-Copy/paste the block below after rpmbuild succeeds, the debug RPM is installed
-(or use the foreground daemon path), and hpcperfstatsd has written shm payloads.
+After rpmbuild succeeds, run the wrapper (installs debug RPM, restarts daemon,
+emits monitor-build-capabilities.json, then validates shm):
 
 # --- begin copy/paste ---
-set -euo pipefail
+export RPM_TOPDIR=${rpm_topdir@Q}
+export DIST_TOP=${dist_top@Q}
+export MONITOR_DIR=${monitor_dir@Q}
+export WORKSPACE_ROOT=${ws@Q}
+# Match enable_slow_tier in /etc/hpcperfstats/hpcperfstats.conf (default 1):
+export ENABLE_SLOW_TIER="\${ENABLE_SLOW_TIER:-1}"
 
-RPM_TOPDIR=${rpm_topdir@Q}
-DIST_TOP=${dist_top@Q}
-MONITOR_DIR=${monitor_dir@Q}
-WORKSPACE_ROOT=${ws@Q}
-PY=${py@Q}
-
-BUILD_SRC="\${RPM_TOPDIR}/BUILD/\${DIST_TOP}"
-BUILD_STATIC="\${BUILD_SRC}/.build-static"
-CAPS="\${BUILD_STATIC}/monitor-build-capabilities.json"
-SHM_DIR="\${HPCPERFSTATS_DEBUG_SHM_DIR:-/dev/shm/hpcperfstatsd-debug}"
-# Match CAPABILITIES_TIER / --enable-slow-tier to enable_slow_tier in hpcperfstats.conf
-ENABLE_SLOW_TIER="\${ENABLE_SLOW_TIER:-1}"
-
-# Install debug RPM (skip if testing uninstalled build tree binary)
-sudo rpm -Uvh "\${RPM_TOPDIR}"/RPMS/*/"hpcperfstatsd-"*.rpm
-sudo systemctl restart hpcperfstatsd
-# Foreground alternative (no install):
-# sudo systemctl stop hpcperfstatsd 2>/dev/null || true
-# "\${BUILD_STATIC}/src/hpcperfstatsd" -f /etc/hpcperfstats/hpcperfstats.conf
-
-ls -la "\${SHM_DIR}"/{schema,fast,full}
-
-make -C "\${BUILD_STATIC}" capabilities
-
-SLUG="\$("\${PY}" -c "import json; print(json.load(open('\${CAPS}'))['capability_slug'])")"
-echo "capability_slug=\${SLUG}"
-
-"\${PY}" "\${MONITOR_DIR}/scripts/build_message_expectations.py" \\
-  --capabilities "\${CAPS}" \\
-  --shm-dir "\${SHM_DIR}" \\
-  --enable-slow-tier "\${ENABLE_SLOW_TIER}" \\
-  --out "\${BUILD_STATIC}/expectations_\${SLUG}.json"
-
-"\${PY}" "\${MONITOR_DIR}/scripts/validate_shm_messages.py" \\
-  --capabilities "\${CAPS}" \\
-  --manifest "\${BUILD_STATIC}/expectations_\${SLUG}.json" \\
-  --shm-dir "\${SHM_DIR}" \\
-  --report "\${WORKSPACE_ROOT}/test_runs/monitor/validate_rpm_debug_\${SLUG}_\$(date +%F).txt"
-
-echo "PASS: validate_shm_messages exit \$? (expect 0; slug mismatch is exit 2)"
+${verify_script@Q}
 # --- end copy/paste ---
 
-Pass criteria: validate_shm_messages.py exits 0; report shows PASS schema, fast, full
+Optional: already installed / daemon running:
+  SKIP_INSTALL=1 SKIP_DAEMON=1 ${verify_script@Q}
+
+Foreground daemon instead of systemctl (after SKIP_INSTALL=1):
+  sudo systemctl stop hpcperfstatsd 2>/dev/null || true
+  "\${RPM_TOPDIR}/BUILD/\${DIST_TOP}/.build-static/src/hpcperfstatsd" -f /etc/hpcperfstats/hpcperfstats.conf
+
+Manual steps (if not using the wrapper): emit capabilities before expectations:
+  ${py@Q} ${monitor_dir@Q}/scripts/emit_build_capabilities.py \\
+    --build-dir "\${RPM_TOPDIR}/BUILD/\${DIST_TOP}/.build-static" \\
+    --tier slowtier1
+
+Pass criteria: validate_shm_messages.py exits 0; report under
+${ws@Q}/test_runs/monitor/validate_rpm_debug_<slug>_*.txt shows PASS schema, fast, full
 (when enable_slow_tier 1). Override shm base: export HPCPERFSTATS_DEBUG_SHM_DIR=...
 EOF
 }

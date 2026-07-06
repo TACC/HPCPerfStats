@@ -476,7 +476,11 @@ build_monitor() {
   fi
   if test "${SKIP_CAPABILITIES:-0}" != "1"; then
     echo "Emitting monitor-build-capabilities.json"
-    (cd "${MONITOR_DIR}/.build-static" && make capabilities) || true
+    if static_bundle_enable_debug_enabled; then
+      (cd "${MONITOR_DIR}/.build-static" && make capabilities)
+    else
+      (cd "${MONITOR_DIR}/.build-static" && make capabilities) || true
+    fi
   fi
 }
 

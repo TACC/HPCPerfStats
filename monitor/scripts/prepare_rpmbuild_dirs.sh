@@ -123,7 +123,8 @@ for distfile in \
   scripts/lib/message_parse.py \
   scripts/lib/row_validate.py \
   scripts/lib/monitor_tree_clean.sh \
-  scripts/lib/print_debug_shm_verify.sh
+  scripts/lib/print_debug_shm_verify.sh \
+  scripts/rpm_debug_shm_verify.sh
 do
   if test ! -f "${MONITOR_DIR}/${distfile}"; then
     echo "Missing file required for make dist: ${MONITOR_DIR}/${distfile}" >&2
