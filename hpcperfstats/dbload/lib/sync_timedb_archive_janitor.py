@@ -57,6 +57,15 @@ from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
 from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
     SessionSingleFlightExecutor,
 )
+from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
+    DayCloseYieldError,
+    JanitorDeferTracker,
+    clear_day_close_yield,
+    daily_tar_janitor_mutation_should_defer,
+    log_janitor_day_close_defer,
+    log_janitor_day_close_yield,
+    signal_day_close_yield,
+)
 from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
     copy_archive_maintenance_snapshot,
 )
@@ -173,6 +182,7 @@ class ArchiveJanitor:
       startup_snapshot_coordinator=None,
       get_ingest_pool_in_flight_count=None,
       get_chunk_in_progress=None,
+      get_chunk_day_tokens=None,
       get_startup_ingest_gate_cleared=None,
       process_title: str = "sync_timedb.py",
   ):
@@ -200,10 +210,12 @@ class ArchiveJanitor:
         get_ingest_pool_in_flight_count or (lambda: 0)
     )
     self.get_chunk_in_progress = get_chunk_in_progress or (lambda: False)
+    self.get_chunk_day_tokens = get_chunk_day_tokens or (lambda: set())
     self.get_startup_ingest_gate_cleared = (
         get_startup_ingest_gate_cleared or (lambda: True)
     )
     self.process_title = process_title
+    self._defer_tracker = JanitorDeferTracker()
     self._allow_tick_chaining = True
     self._maintenance_pass_cached_inputs = None
 
@@ -1727,6 +1739,65 @@ class ArchiveJanitor:
       return True
     return False
 
+  def signal_day_close_yield(self, tar_path: str, *, reason: str) -> None:
+    signal_day_close_yield(tar_path, reason=reason, log_fn=self.log_fn)
+
+  def _chunk_day_tokens(self) -> Set[str]:
+    try:
+      tokens = self.get_chunk_day_tokens() or set()
+      return set(tokens)
+    except Exception:
+      return set()
+
+  def _check_day_close_defer(
+      self,
+      tar_path: str,
+      *,
+      phase: str,
+      disqualified: Set[str],
+      delete_disqualified: Optional[Set[str]] = None,
+  ) -> tuple[bool, str]:
+    cap_exceeded = self._defer_tracker.defer_cap_exceeded(tar_path)
+    defer, reason = daily_tar_janitor_mutation_should_defer(
+        tar_path,
+        tgz_archive_dir=self.tgz_archive_dir,
+        disqualified_daily_tars=disqualified,
+        delete_disqualified_daily_tars=delete_disqualified,
+        phase=phase,
+        defer_cap_exceeded=cap_exceeded,
+        chunk_in_progress=bool(self.get_chunk_in_progress()),
+        chunk_day_tokens=self._chunk_day_tokens(),
+    )
+    if defer:
+      self._defer_tracker.record_defer(tar_path)
+      log_janitor_day_close_defer(
+          tar_path,
+          phase=phase,
+          reason=reason,
+          log_fn=self.log_fn,
+      )
+      return True, reason
+    if cap_exceeded and self.log_fn:
+      self.log_fn(
+          "janitor: mutation proceed reason=defer_cap_exceeded tar=%s phase=%s"
+          % (os.path.normpath(tar_path), phase or ""),
+          flush=True,
+      )
+    self._defer_tracker.clear_tar(tar_path)
+    return False, ""
+
+  def _handle_day_close_yield(self, tar_path: str, exc: DayCloseYieldError) -> bool:
+    log_janitor_day_close_yield(
+        tar_path,
+        phase=exc.phase or "",
+        reason=exc.reason or "",
+        log_fn=self.log_fn,
+    )
+    clear_day_close_yield(tar_path)
+    self._enqueue_day_close(tar_path, persist=False)
+    self._persist_hints()
+    return False
+
   def _day_phase_name(self, tar_path: str):
     phase = self._day_phases.get(os.path.normpath(tar_path))
     if isinstance(phase, dict):
@@ -1786,12 +1857,29 @@ class ArchiveJanitor:
         except Exception:
           needs_dedupe = False
       if needs_dedupe:
+        defer, _reason = self._check_day_close_defer(
+            tar_norm,
+            phase="dedupe",
+            disqualified=disqualified,
+        )
+        if defer:
+          self._enqueue_day_close(tar_norm, persist=False)
+          self._persist_hints()
+          return False
         if os.path.isfile(tar_norm):
           self.log_fn(
               "janitor: day_close dedupe tar=%s" % tar_norm,
               flush=True,
           )
-          dedupe_tar_keep_largest_file_per_member(tar_norm, log_fn=self.log_fn)
+          try:
+            dedupe_tar_keep_largest_file_per_member(
+                tar_norm,
+                log_fn=self.log_fn,
+                tgz_archive_dir=self.tgz_archive_dir,
+                yield_phase="dedupe",
+            )
+          except DayCloseYieldError as exc:
+            return self._handle_day_close_yield(tar_norm, exc)
         else:
           zst_path, gz_path = compressed_sibling_paths(tar_norm)
           sealed_path = zst_path if os.path.isfile(zst_path) else gz_path
@@ -1804,8 +1892,15 @@ class ArchiveJanitor:
                 "janitor: day_close sealed dedupe %s" % sealed_path,
                 flush=True,
             )
-            dedupe_sealed_daily_archive(sealed_path, log_fn=self.log_fn)
-      if not self._seal_one_day(tar_norm):
+            try:
+              dedupe_sealed_daily_archive(
+                  sealed_path,
+                  log_fn=self.log_fn,
+                  tgz_archive_dir=self.tgz_archive_dir,
+              )
+            except DayCloseYieldError as exc:
+              return self._handle_day_close_yield(tar_norm, exc)
+      if not self._seal_one_day(tar_norm, disqualified=disqualified):
         return False
     if coord is not None:
       if not coord.post_seal_verification_complete(tar_norm):
@@ -1823,6 +1918,16 @@ class ArchiveJanitor:
         return False
       delete_disqualified = set(self.get_delete_disqualified_daily_tars())
       if tar_norm in delete_disqualified:
+        self._enqueue_day_close(tar_norm, persist=False)
+        self._persist_hints()
+        return False
+      delete_defer, _delete_reason = self._check_day_close_defer(
+          tar_norm,
+          phase="delete",
+          disqualified=disqualified,
+          delete_disqualified=delete_disqualified,
+      )
+      if delete_defer:
         self._enqueue_day_close(tar_norm, persist=False)
         self._persist_hints()
         return False
@@ -1871,13 +1976,23 @@ class ArchiveJanitor:
     self._finalize_day_close_manifest(tar_norm)
     return True
 
-  def _seal_one_day(self, tar_path: str) -> bool:
+  def _seal_one_day(self, tar_path: str, *, disqualified: Optional[Set[str]] = None) -> bool:
     """Seal daily ``.tar`` to ``.tar.zst``.
 
     Closed-raw on disk is expected after pre-seal verify (delete runs post-seal).
     Do not gate seal on remaining closed-raw; pre-seal/handoff and tar-drop own
     that safety. Calendar-today grace still applies.
     """
+    disqualified = disqualified if disqualified is not None else set()
+    defer, _reason = self._check_day_close_defer(
+        tar_path,
+        phase="seal",
+        disqualified=disqualified,
+    )
+    if defer:
+      self._enqueue_day_close(tar_path, persist=False)
+      self._persist_hints()
+      return False
     if not daily_tar_seal_calendar_eligible(tar_path, self.local_tz):
       self.log_fn(
           "Janitor seal deferred (calendar-today grace): %s" % tar_path,
@@ -1896,16 +2011,20 @@ class ArchiveJanitor:
         "janitor: day_close seal start tar=%s" % tar_path,
         flush=True,
     )
-    zst_members = atomic_seal_tar_to_zst(
-        tar_path,
-        zst_path,
-        cfg.get_archive_zstd_threads(),
-        cfg.get_archive_zstd_level(),
-        keep_tar,
-        log_fn=self.log_fn,
-        remaining_raw_by_gz=remaining_raw_by_gz,
-        force_remove_uncompressed_tar=False,
-    )
+    try:
+      zst_members = atomic_seal_tar_to_zst(
+          tar_path,
+          zst_path,
+          cfg.get_archive_zstd_threads(),
+          cfg.get_archive_zstd_level(),
+          keep_tar,
+          log_fn=self.log_fn,
+          remaining_raw_by_gz=remaining_raw_by_gz,
+          force_remove_uncompressed_tar=False,
+          tgz_archive_dir=self.tgz_archive_dir,
+      )
+    except DayCloseYieldError as exc:
+      return self._handle_day_close_yield(tar_path, exc)
     drop_legacy_gz_if_equivalent_to_zst(
         gz_path, zst_path, log_fn=self.log_fn, zst_members=zst_members,
     )
@@ -1953,6 +2072,15 @@ class ArchiveJanitor:
           % (tar_path, handoff_paths_n, defer_reason),
           flush=True,
       )
+      self._enqueue_day_close(tar_path, persist=False)
+      self._persist_hints()
+      return False
+    defer, _reason = self._check_day_close_defer(
+        tar_path,
+        phase="tar_drop",
+        disqualified=disqualified,
+    )
+    if defer:
       self._enqueue_day_close(tar_path, persist=False)
       self._persist_hints()
       return False

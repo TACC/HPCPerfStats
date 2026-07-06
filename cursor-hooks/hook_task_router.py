@@ -36,6 +36,7 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
             "sync-timedb-lock-and-archive-contract.mdc",
             "sync-timedb-post-chunk-archive-hygiene.mdc",
             "sync-timedb-change-regression-gate.mdc",
+            "sync-timedb-hot-path-janitor-lock-priority.mdc",
             "runtime-resource-and-metrics-safety.mdc",
             "process-title-and-pool-labels.mdc",
             "bugfix-and-perf-change-playbook.mdc",
@@ -81,6 +82,7 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
         "rules": [
             "sync-timedb-ingest-pool-io-coordination.mdc",
+            "sync-timedb-hot-path-janitor-lock-priority.mdc",
         ],
     },
     {

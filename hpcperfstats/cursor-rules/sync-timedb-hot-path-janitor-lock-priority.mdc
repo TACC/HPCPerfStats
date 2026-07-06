@@ -1,0 +1,41 @@
+---
+description: Ingest hot path wins over janitor fnctl locks; defer, yield, and daily tar restore exception
+alwaysApply: false
+globs: hpcperfstats/dbload/sync_timedb*.py,hpcperfstats/dbload/lib/sync_timedb_archive*.py,hpcperfstats/dbload/lib/file_locking.py,hpcperfstats/dbload/lib/zstd_cli.py
+---
+
+# sync_timedb hot-path janitor lock priority
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+**Law:** ingest/populate/append is the **hot path**; janitor seal/dedupe/delete/tar-drop is the **cold path**. Janitor **defers before write** and **cooperatively yields mid-mutation** when ingest signals need the same daily tar after a janitor-first lock — **except daily tar restore from sealed** (missing or corrupt `.tar`), where restore runs to completion and populate **waits** on `daily_tar_restore`.
+
+## Required patterns
+
+| Mechanism | Module |
+|-----------|--------|
+| `daily_tar_janitor_mutation_should_defer` | `sync_timedb_day_close_cooperation.py` |
+| `day_close_yield_requested` + `DayCloseYieldError` | `sync_timedb_day_close_cooperation.py` |
+| `try_file_write_lock` (`timeout_seconds=0`) | `file_locking.py` |
+| `ingest_tar_hot` Redis key | `sync_timedb_archive_members_redis.py` |
+| `daily_tar_restore` Redis key + populate wait | `sync_timedb_archive_members_redis.py` |
+| `ArchiveJanitor.signal_day_close_yield` | `sync_timedb_archive_janitor.py` |
+| In-operation yield polls (5s) in dedupe + zstd Popen | `sync_timedb_archive_helpers.py`, `zstd_cli.py` |
+
+## Logs (operator grep)
+
+- `janitor: day_close defer tar=… phase=… reason=…`
+- `janitor: day_close yield tar=… phase=… reason=…`
+- `janitor: day_close yield signal tar=… reason=…`
+- `populate: wait daily_tar_restore day=…`
+- `archive: daily_tar_restore begin|end day=… reason=missing_tar|corrupt_tar`
+
+## Starvation
+
+After **3** defer ticks or **15 min** wall without hot-path signals, janitor may proceed with bounded `file_write_lock` — log `janitor: mutation proceed reason=defer_cap_exceeded`.
+
+## Overlap
+
+- **`sync-timedb-archive-janitor-contract.mdc`** — two-queue model; day-close owns cold path.
+- **`sync-timedb-ingest-pool-io-coordination.mdc`** — populate single-flight; janitor yields fnctl write during populate.
+- **`sync-timedb-lock-and-archive-contract.mdc`** — fnctl lifecycle; fail-closed append.

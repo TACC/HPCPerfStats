@@ -107,6 +107,7 @@ This must **not** wait for an empty global ingest queue.
 - **Full** `build_archive_maintenance_snapshot` on **heavy** passes only (`reason=startup`, `reason=day_ingest_complete:<date>` when explicitly signaled — not from chunk boundary).
 - **Lock cleanup:** per tick with day-pipeline debt — manifest-dir orphan cleanup only on startup heavy pass; non-startup heavy passes run stale lock cleanup on archive + daily dirs.
 - **Dedupe:** `_consume_dedupe_hints` + inline dedupe before seal; invalidate L1 + Redis on mutation.
+- **Hot-path lock priority:** ingest/populate/append wins over janitor dedupe/seal/delete on shared daily tar fnctl locks — see **`sync-timedb-hot-path-janitor-lock-priority.mdc`**. Janitor **defers** before write and **cooperatively yields** mid-dedupe/zstd when ingest signals (`ingest_tar_hot`, populate lock, `signal_day_close_yield`). **Exception:** daily tar restore from sealed (`daily_tar_restore` Redis key) runs to completion; populate **waits** (`populate: wait daily_tar_restore`). Operator grep: `janitor: day_close defer|yield`, `defer_cap_exceeded`.
 - `close_old_connections()` at tick entry and in `finally`.
 
 ## Pool lifecycle and parallelism (2026-07)

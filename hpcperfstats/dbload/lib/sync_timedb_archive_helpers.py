@@ -3035,6 +3035,11 @@ def _archive_file_read_lock_wait(target_path):
 
 def _populate_tar_file_read_lock_wait(target_path):
   """Tar populate read-lock wait — bounded by populate_max_seconds when set."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      wait_for_daily_tar_restore_before_populate,
+  )
+
+  wait_for_daily_tar_restore_before_populate(target_path, log_fn=log_print)
   max_s = cfg.get_sync_archive_members_redis_populate_max_seconds()
   timeout = float(max_s) if max_s > 0 else float(
       _archive_members_fnctl_read_lock_timeout_seconds(),
@@ -3662,12 +3667,22 @@ def replace_corrupt_tar_from_compressed_backup(
       remove_compressed = _decompress_should_unlink_compressed(tar_path)
       if os.path.isfile(zst_path):
         if decompress_compressed_to_tar(
-            zst_path, tar_path, zstd_threads, remove_compressed=remove_compressed,
+            zst_path,
+            tar_path,
+            zstd_threads,
+            remove_compressed=remove_compressed,
+            restore_reason="corrupt_tar",
+            restore_caller="replace_corrupt_tar_from_compressed_backup",
         ):
           return True
       if os.path.isfile(gz_path):
         if decompress_compressed_to_tar(
-            gz_path, tar_path, zstd_threads, remove_compressed=remove_compressed,
+            gz_path,
+            tar_path,
+            zstd_threads,
+            remove_compressed=remove_compressed,
+            restore_reason="corrupt_tar",
+            restore_caller="replace_corrupt_tar_from_compressed_backup",
         ):
           return True
       if os.path.isfile(tar_path):
@@ -4704,12 +4719,25 @@ def _dedupe_member_indices_keep_largest_file_per_name(members):
   return keep
 
 
-def dedupe_tar_keep_largest_file_per_member(tar_path, log_fn=log_print):
+def dedupe_tar_keep_largest_file_per_member(
+    tar_path,
+    log_fn=log_print,
+    *,
+    tgz_archive_dir="",
+    yield_phase="dedupe",
+):
   """Rewrite ``tar_path`` so each file path appears once: keep largest size (tie: last).
 
   Writes ``tar_path`` + ``.dedupe.tmp``, verifies, then ``os.replace``. Returns
   False on failure (original tar unchanged if replace never ran).
+  Raises ``DayCloseYieldError`` when ingest hot signals require cooperative yield.
   """
+  from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
+      DayCloseYieldError,
+      check_day_close_yield_or_continue,
+      day_close_yield_requested,
+  )
+
   if not os.path.isfile(tar_path):
     return True
   tmp_path = "%s.dedupe.tmp" % tar_path
@@ -4721,8 +4749,15 @@ def dedupe_tar_keep_largest_file_per_member(tar_path, log_fn=log_print):
   try:
     with file_write_lock(tar_path):
       file_keep = {}
+      last_yield_poll = time.monotonic()
       with tarfile.open(tar_path, "r") as tin:
         for idx, member in enumerate(_iter_tar_members(tin)):
+          last_yield_poll, _ = check_day_close_yield_or_continue(
+              tar_path,
+              last_poll_monotonic=last_yield_poll,
+              tgz_archive_dir=tgz_archive_dir,
+              phase=yield_phase,
+          )
           if not member.isfile():
             continue
           prev = file_keep.get(member.name)
@@ -4733,6 +4768,12 @@ def dedupe_tar_keep_largest_file_per_member(tar_path, log_fn=log_print):
       with tarfile.open(tar_path, "r") as tin:
         with tarfile.open(tmp_path, "w") as tout:
           for idx, member in enumerate(_iter_tar_members(tin)):
+            last_yield_poll, _ = check_day_close_yield_or_continue(
+                tar_path,
+                last_poll_monotonic=last_yield_poll,
+                tgz_archive_dir=tgz_archive_dir,
+                phase=yield_phase,
+            )
             if member.isfile():
               keep = file_keep.get(member.name)
               if keep is None or keep[1] != idx:
@@ -4746,6 +4787,13 @@ def dedupe_tar_keep_largest_file_per_member(tar_path, log_fn=log_print):
                 fobj.close()
               continue
             tout.addfile(member)
+      requested, reason = day_close_yield_requested(
+          tar_path,
+          tgz_archive_dir=tgz_archive_dir,
+          phase=yield_phase,
+      )
+      if requested:
+        raise DayCloseYieldError(tar_path, phase=yield_phase, reason=reason)
       if not verify_tar_archive_readable(tmp_path):
         try:
           os.remove(tmp_path)
@@ -4761,6 +4809,13 @@ def dedupe_tar_keep_largest_file_per_member(tar_path, log_fn=log_print):
     if log_fn:
       log_fn("Deduplicated archive (largest wins per path): %s" % tar_path, flush=True)
     return True
+  except DayCloseYieldError:
+    try:
+      if os.path.exists(tmp_path):
+        os.remove(tmp_path)
+    except OSError:
+      pass
+    raise
   except Exception:
     try:
       if os.path.exists(tmp_path):
@@ -4775,6 +4830,7 @@ def dedupe_sealed_daily_archive(
     log_fn=log_print,
     *,
     keep_uncompressed_tar=None,
+    tgz_archive_dir="",
 ):
   """Last resort: decompress sealed archive, dedupe ``.tar``, and re-seal.
 
@@ -4794,7 +4850,12 @@ def dedupe_sealed_daily_archive(
   if os.path.isfile(tar_path):
     if not tar_has_duplicate_file_members(tar_path):
       return True
-    if not dedupe_tar_keep_largest_file_per_member(tar_path, log_fn=log_fn):
+    if not dedupe_tar_keep_largest_file_per_member(
+        tar_path,
+        log_fn=log_fn,
+        tgz_archive_dir=tgz_archive_dir,
+        yield_phase="dedupe_sealed",
+    ):
       return False
   else:
     if not decompress_compressed_to_tar(
@@ -4810,7 +4871,12 @@ def dedupe_sealed_daily_archive(
             flush=True,
         )
       return False
-    if not dedupe_tar_keep_largest_file_per_member(tar_path, log_fn=log_fn):
+    if not dedupe_tar_keep_largest_file_per_member(
+        tar_path,
+        log_fn=log_fn,
+        tgz_archive_dir=tgz_archive_dir,
+        yield_phase="dedupe_sealed",
+    ):
       return False
   if keep_uncompressed_tar is None:
     keep_uncompressed_tar = cfg.get_archive_keep_uncompressed_tar()
@@ -4822,7 +4888,10 @@ def dedupe_sealed_daily_archive(
         compress_level=cfg.get_archive_zstd_level(),
         keep_uncompressed_tar=keep_uncompressed_tar,
         log_fn=log_fn,
+        tgz_archive_dir=tgz_archive_dir,
     )
+  except DayCloseYieldError:
+    raise
   except (OSError, subprocess.CalledProcessError) as exc:
     if log_fn:
       log_fn(
@@ -5152,6 +5221,8 @@ def iter_tar_file_tasks(tar_path):
               zst_path,
               tar_out,
               get_archive_zstd_thread_count(),
+              restore_reason="corrupt_tar",
+              restore_caller="iter_tar_file_tasks_restore",
           ):
             return True
         if os.path.isfile(gz_path):
@@ -5159,6 +5230,8 @@ def iter_tar_file_tasks(tar_path):
               gz_path,
               tar_out,
               get_archive_zstd_thread_count(),
+              restore_reason="corrupt_tar",
+              restore_caller="iter_tar_file_tasks_restore",
           )
     except OSError:
       return False
@@ -5433,6 +5506,7 @@ def atomic_seal_tar_to_zst(
     remaining_raw_by_gz=None,
     force_remove_uncompressed_tar=False,
     skip_result=None,
+    tgz_archive_dir="",
 ):
   """Compress ``tar_path`` to ``zst_path`` using temp file, ``zstd -t``, ``os.replace``.
 
@@ -5504,6 +5578,8 @@ def atomic_seal_tar_to_zst(
           tmp_zst,
           num_threads,
           compress_level,
+          tgz_archive_dir=tgz_archive_dir,
+          yield_phase="seal",
       )
       zstd_test(tmp_zst, num_threads)
       with file_write_lock(zst_path):
@@ -5885,6 +5961,28 @@ def migrate_one_daily_legacy_gz(
 
   if not os.path.isfile(gz_path):
     return MIGRATE_GZ_STATUS_SKIPPED_NO_GZ
+
+  from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
+      daily_tar_janitor_mutation_should_defer,
+      log_janitor_day_close_defer,
+  )
+
+  tgz_archive_dir = cfg.get_daily_archive_dir_path() or ""
+  defer, defer_reason = daily_tar_janitor_mutation_should_defer(
+      tar_path,
+      tgz_archive_dir=tgz_archive_dir,
+      disqualified_daily_tars=set(),
+      phase="migrate_legacy_gz",
+  )
+  if defer:
+    if log_fn:
+      log_janitor_day_close_defer(
+          tar_path,
+          phase="migrate_legacy_gz",
+          reason=defer_reason,
+          log_fn=log_fn,
+      )
+    return MIGRATE_GZ_STATUS_SKIPPED_LOCKED
 
   primary_path = tar_path if os.path.isfile(tar_path) else gz_path
   try:

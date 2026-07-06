@@ -211,6 +211,16 @@ def file_write_lock(target_path,
 
 
 @contextmanager
+def try_file_write_lock(target_path):
+  """Acquire an exclusive write lock without blocking (timeout 0).
+
+  Raises TimeoutError immediately when the lock is contended.
+  """
+  with file_write_lock(target_path, timeout_seconds=0):
+    yield
+
+
+@contextmanager
 def file_read_lock_wait(target_path,
                         timeout_seconds=READ_WAIT_TIMEOUT_SECONDS,
                         expiry_seconds=LOCK_EXPIRY_SECONDS):

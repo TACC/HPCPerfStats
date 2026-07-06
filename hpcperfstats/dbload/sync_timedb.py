@@ -541,6 +541,22 @@ def _paths_all_db_complete_for_prewarm_skip(paths):
   return True
 
 
+_ARCHIVE_JANITOR_REF = {}
+
+
+def _signal_ingest_hot_for_populate(day_token, tar_path, *, reason):
+  """Early hot-path signal before populate fnctl wait (non-blocking)."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      set_ingest_tar_hot,
+  )
+
+  if day_token:
+    set_ingest_tar_hot(day_token, reason=reason)
+  janitor = _ARCHIVE_JANITOR_REF.get("janitor")
+  if janitor is not None and tar_path:
+    janitor.signal_day_close_yield(tar_path, reason=reason)
+
+
 def _prewarm_archive_members_redis_for_days(
     day_items,
     *,
@@ -596,6 +612,7 @@ def _prewarm_archive_members_redis_for_days(
         % (day_token, sealed_path or tar_path),
         flush=True,
     )
+    _signal_ingest_hot_for_populate(day_token, tar_path, reason="chunk_prewarm")
     prewarm_recovered = False
     last_transient_exc = None
     for attempt, delay in enumerate((0.0,) + _FNCTL_POPULATE_RETRY_DELAYS_S):
@@ -5638,6 +5655,11 @@ def run_sync_timedb_supervisor_loop(
   def _get_startup_ingest_gate_cleared():
     return bool(reconcile_refs.get("ingest_gate_cleared"))
 
+  def _get_chunk_day_tokens():
+    if not chunk_in_progress:
+      return set()
+    return set(reconcile_refs.get("chunk_day_tokens") or ())
+
   archive_janitor = ArchiveJanitor(
       archive_data_dir=directory,
       host_name_ext=host_name_ext,
@@ -5662,9 +5684,11 @@ def run_sync_timedb_supervisor_loop(
       startup_snapshot_coordinator=startup_archive_scan,
       get_ingest_pool_in_flight_count=_get_ingest_pool_in_flight_count,
       get_chunk_in_progress=_get_chunk_in_progress,
+      get_chunk_day_tokens=_get_chunk_day_tokens,
       get_startup_ingest_gate_cleared=_get_startup_ingest_gate_cleared,
       process_title=SYNC_TIMEDB_PROCESS_TITLE,
   )
+  _ARCHIVE_JANITOR_REF["janitor"] = archive_janitor
   reconcile_refs["get_startup_snapshot"] = startup_archive_scan.get_snapshot
   reconcile_refs["get_accrual_snapshot"] = (
       archive_janitor.get_accrual_snapshot_for_reconcile
@@ -6343,6 +6367,9 @@ def run_sync_timedb_supervisor_loop(
               flush=True,
           )
         chunk_in_progress = True
+        reconcile_refs["chunk_day_tokens"] = set(
+            build_chunk_day_histogram(stats_files_chunk, tgz_archive_dir).keys(),
+        )
         successful_paths, files_to_be_archived, active_workers, k = (
             _ingest_explicit_path_batch(
                 stats_files_chunk,
@@ -6587,6 +6614,7 @@ def run_sync_timedb_supervisor_loop(
 
         _flush_deferred_archive_finalize_prewarm()
         chunk_in_progress = False
+        reconcile_refs["chunk_day_tokens"] = set()
 
       _persist_dead_letters_if_needed(force=True)
       _flush_checkpoint_if_needed(force=True)
@@ -6627,6 +6655,7 @@ def run_sync_timedb_supervisor_loop(
       connections.close_all()
   finally:
     chunk_in_progress = False
+    reconcile_refs["chunk_day_tokens"] = set()
     active_chunk_ingest_tracker = None
     preflight_shutdown_wait = not pool_worker_exit
     if day_close_manifest is not None:

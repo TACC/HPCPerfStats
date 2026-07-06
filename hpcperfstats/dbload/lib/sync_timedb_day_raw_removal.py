@@ -31,7 +31,7 @@ from hpcperfstats.dbload.lib.sync_timedb_persistence import (
     load_persistence_document,
     save_persistence_document,
 )
-from hpcperfstats.dbload.lib.file_locking import cleanup_orphan_fnctl_lock_sidecars, file_write_lock
+from hpcperfstats.dbload.lib.file_locking import cleanup_orphan_fnctl_lock_sidecars, try_file_write_lock
 from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
 from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
     SessionSingleFlightExecutor,
@@ -1217,7 +1217,7 @@ class _DayRawRemovalState:
             flush=True,
         )
       try:
-        with file_write_lock(path):
+        with try_file_write_lock(path):
           os.remove(path)
         with self._lock:
           entry = entries.get(path)
@@ -1226,6 +1226,17 @@ class _DayRawRemovalState:
           self._manifest["deleted_count"] = int(
               self._manifest.get("deleted_count", 0)) + 1
         deleted += 1
+      except TimeoutError:
+        if self.log_fn:
+          self.log_fn(
+              "janitor: day_close defer tar=%s phase=raw_delete reason=write_lock_contended path=%s"
+              % (self.tar_path, path),
+              flush=True,
+          )
+        with self._lock:
+          entry = entries.get(path)
+          if isinstance(entry, dict):
+            entry["delete_deferred"] = "write_lock_contended"
       except OSError as exc:
         if self.log_fn:
           self.log_fn("Could not remove %s: %s" % (path, exc), flush=True)

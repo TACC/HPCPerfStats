@@ -26,6 +26,8 @@ _INVALIDATE_PENDING_PREFIX = "%s:archive_members:invalidate_pending:v1" % _KEY_P
 _PROGRESS_SUFFIX = ":progress"
 _POPULATE_QUEUE_KEY = "%s:archive_members:populate_queue:v1" % _KEY_PREFIX
 _POPULATE_QUEUED_PREFIX = "%s:archive_members:populate_queued:v1" % _KEY_PREFIX
+_INGEST_TAR_HOT_PREFIX = "%s:ingest_tar_hot:v1" % _KEY_PREFIX
+_DAILY_TAR_RESTORE_PREFIX = "%s:daily_tar_restore:v1" % _KEY_PREFIX
 _POPULATE_QUEUED_TTL_SECONDS = 3600
 
 _REDIS_CLIENT = None
@@ -1370,6 +1372,145 @@ def dedupe_hint_is_set(day_token: str, client=None) -> bool:
   return bool(client.get("%s:%s" % (_DEDUPE_HINT_PREFIX, day_token)))
 
 
+def _ingest_tar_hot_key(day_token: str) -> str:
+  return "%s:%s" % (_INGEST_TAR_HOT_PREFIX, day_token)
+
+
+def _daily_tar_restore_key(day_token: str) -> str:
+  return "%s:%s" % (_DAILY_TAR_RESTORE_PREFIX, day_token)
+
+
+def set_ingest_tar_hot(day_token: str, *, reason: str = "populate") -> None:
+  """Reserve ingest hot path for ``day_token`` before fnctl read (TTL = populate max)."""
+  if not day_token or day_token == "unknown":
+    return
+  if not archive_members_redis_enabled():
+    return
+  client = get_archive_members_redis_client(required=False)
+  if client is None:
+    return
+  client.set(
+      _ingest_tar_hot_key(day_token),
+      reason or "populate",
+      ex=_populate_max_seconds(),
+  )
+
+
+def clear_ingest_tar_hot(day_token: str) -> None:
+  if not day_token or day_token == "unknown":
+    return
+  if not archive_members_redis_enabled():
+    return
+  client = get_archive_members_redis_client(required=False)
+  if client is None:
+    return
+  client.delete(_ingest_tar_hot_key(day_token))
+
+
+def ingest_tar_hot_for_day(day_token: str) -> bool:
+  if not day_token or not archive_members_redis_enabled():
+    return False
+  client = get_archive_members_redis_client(required=False)
+  if client is None:
+    return False
+  return bool(client.exists(_ingest_tar_hot_key(day_token)))
+
+
+def set_daily_tar_restore_in_progress(
+    day_token: str,
+    *,
+    reason: str,
+    caller: str,
+) -> None:
+  if not day_token or day_token == "unknown":
+    return
+  if not archive_members_redis_enabled():
+    return
+  client = get_archive_members_redis_client(required=False)
+  if client is None:
+    return
+  value = "%s:%s" % (reason or "missing_tar", caller or "")
+  client.set(
+      _daily_tar_restore_key(day_token),
+      value,
+      ex=_populate_max_seconds(),
+  )
+  log_print(
+      "archive: daily_tar_restore begin day=%s reason=%s caller=%s"
+      % (day_token, reason or "missing_tar", caller or ""),
+      flush=True,
+  )
+
+
+def clear_daily_tar_restore_in_progress(day_token: str, *, ok: bool = True, reason: str = "") -> None:
+  if not day_token or day_token == "unknown":
+    return
+  if archive_members_redis_enabled():
+    client = get_archive_members_redis_client(required=False)
+    if client is not None:
+      if not reason:
+        raw = client.get(_daily_tar_restore_key(day_token))
+        if raw:
+          reason = str(raw).split(":", 1)[0]
+      client.delete(_daily_tar_restore_key(day_token))
+  if day_token:
+    log_print(
+        "archive: daily_tar_restore end day=%s ok=%s reason=%s"
+        % (day_token, "yes" if ok else "no", reason or "missing_tar"),
+        flush=True,
+    )
+
+
+def daily_tar_restore_in_progress_for_day(day_token: str) -> bool:
+  if not day_token or not archive_members_redis_enabled():
+    return False
+  client = get_archive_members_redis_client(required=False)
+  if client is None:
+    return False
+  return bool(client.exists(_daily_tar_restore_key(day_token)))
+
+
+def daily_tar_restore_reason_for_day(day_token: str) -> str:
+  if not day_token or not archive_members_redis_enabled():
+    return ""
+  client = get_archive_members_redis_client(required=False)
+  if client is None:
+    return ""
+  raw = client.get(_daily_tar_restore_key(day_token))
+  if not raw:
+    return ""
+  return str(raw).split(":", 1)[0]
+
+
+def wait_for_daily_tar_restore_before_populate(tar_path: str, *, log_fn=log_print) -> None:
+  """Block populate fnctl read while daily tar restore is in progress for this day."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      calendar_date_from_daily_tar_path,
+  )
+
+  day = calendar_date_from_daily_tar_path(tar_path or "")
+  if day is None:
+    return
+  day_token = day.isoformat()
+  if not daily_tar_restore_in_progress_for_day(day_token):
+    return
+  deadline = time.monotonic() + float(_populate_max_seconds())
+  last_log = 0.0
+  while daily_tar_restore_in_progress_for_day(day_token):
+    if time.monotonic() >= deadline:
+      break
+    now = time.monotonic()
+    if log_fn and (now - last_log) >= 5.0:
+      log_fn(
+          "populate: wait daily_tar_restore day=%s reason=%s"
+          % (day_token, daily_tar_restore_reason_for_day(day_token) or "missing_tar"),
+          flush=True,
+      )
+      last_log = now
+    extend_ingest_task_deadline_monotonic(1.0)
+    time.sleep(1.0)
+
+
 def _populate_queued_key(day_token: str) -> str:
   return "%s:%s" % (_POPULATE_QUEUED_PREFIX, day_token)
 
@@ -1378,6 +1519,7 @@ def enqueue_archive_members_populate(canonical_path, day_token):
   """Enqueue one calendar day for populate-pool workers (deduped per day)."""
   if not day_token or day_token == "unknown":
     return False
+  set_ingest_tar_hot(day_token, reason="populate_enqueue")
   client = get_archive_members_redis_client(required=True)
   queued_key = _populate_queued_key(day_token)
   if not client.set(queued_key, "1", nx=True, ex=_POPULATE_QUEUED_TTL_SECONDS):
@@ -1432,61 +1574,72 @@ def request_archive_members_populate_and_wait(
 
   del role
   canonical = normalize_daily_compressed_path(archive_compressed_path)
-  cached = _lookup_daily_archive_members_cache(canonical)
-  if cached is not None:
-    return dict(cached)
-  if not archive_members_redis_enabled():
-    raise ArchiveMembersRedisUnavailableError(
-        "request_archive_members_populate_and_wait requires Redis L2",
-    )
   cache_key = _daily_archive_members_cache_key(canonical)
   keys = build_archive_members_redis_keys(cache_key)
-  members = redis_lookup_full_members(keys)
-  if members is not None:
-    _store_daily_archive_members_cache(canonical, members)
-    return dict(members)
-  sealed_path = _resolve_sealed_daily_archive_path(archive_compressed_path) or ""
-  client = get_archive_members_redis_client(required=True)
-  respect_ingest_deadline = False
-  if client.exists(keys.lock_key):
-    members = wait_for_complete_members(
-        keys,
-        sealed_path=sealed_path,
-        respect_ingest_deadline=respect_ingest_deadline,
-        canonical=canonical,
-    )
-  elif populate_degraded_is_set(keys, client=client):
-    if get_archive_day_ingest_skip(keys, client=client) is not None:
-      return {}
-    # Recoverable: clear degraded and wait with re-enqueue (identity may have drifted).
-    clear_stale_incomplete_archive_members_redis(keys, client=client)
-    controller = get_populate_pool_controller()
-    if controller is not None and controller.is_running():
-      enqueue_archive_members_populate(canonical, keys.day_token)
+  day_token = keys.day_token if keys.day_token != "unknown" else ""
+  tar_path = ""
+  if day_token:
+    from hpcperfstats.dbload.lib.archive_compress import daily_tar_path_from_compressed
+    tar_path = daily_tar_path_from_compressed(canonical)
+    set_ingest_tar_hot(day_token, reason="populate_wait")
+    wait_for_daily_tar_restore_before_populate(tar_path or canonical, log_fn=log_print)
+  try:
+    cached = _lookup_daily_archive_members_cache(canonical)
+    if cached is not None:
+      return dict(cached)
+    if not archive_members_redis_enabled():
+      raise ArchiveMembersRedisUnavailableError(
+          "request_archive_members_populate_and_wait requires Redis L2",
+      )
+    members = redis_lookup_full_members(keys)
+    if members is not None:
+      _store_daily_archive_members_cache(canonical, members)
+      return dict(members)
+    sealed_path = _resolve_sealed_daily_archive_path(archive_compressed_path) or ""
+    client = get_archive_members_redis_client(required=True)
+    respect_ingest_deadline = False
+    if client.exists(keys.lock_key):
+      members = wait_for_complete_members(
+          keys,
+          sealed_path=sealed_path,
+          respect_ingest_deadline=respect_ingest_deadline,
+          canonical=canonical,
+      )
+    elif populate_degraded_is_set(keys, client=client):
+      if get_archive_day_ingest_skip(keys, client=client) is not None:
+        return {}
+      # Recoverable: clear degraded and wait with re-enqueue (identity may have drifted).
+      clear_stale_incomplete_archive_members_redis(keys, client=client)
+      controller = get_populate_pool_controller()
+      if controller is not None and controller.is_running():
+        enqueue_archive_members_populate(canonical, keys.day_token)
+      else:
+        execute_archive_members_populate_for_canonical(canonical)
+      members = wait_for_complete_members(
+          keys,
+          sealed_path=sealed_path,
+          respect_ingest_deadline=respect_ingest_deadline,
+          canonical=canonical,
+      )
     else:
-      execute_archive_members_populate_for_canonical(canonical)
-    members = wait_for_complete_members(
-        keys,
-        sealed_path=sealed_path,
-        respect_ingest_deadline=respect_ingest_deadline,
-        canonical=canonical,
+      controller = get_populate_pool_controller()
+      if controller is not None and controller.is_running():
+        enqueue_archive_members_populate(canonical, keys.day_token)
+      else:
+        execute_archive_members_populate_for_canonical(canonical)
+      members = wait_for_complete_members(
+          keys,
+          sealed_path=sealed_path,
+          respect_ingest_deadline=respect_ingest_deadline,
+          canonical=canonical,
+      )
+    if members is not None:
+      _store_daily_archive_members_cache(canonical, members)
+      return dict(members)
+    raise ArchiveMembersRedisUnavailableError(
+        "archive members Redis enabled but lookup did not return members for %s"
+        % canonical,
     )
-  else:
-    controller = get_populate_pool_controller()
-    if controller is not None and controller.is_running():
-      enqueue_archive_members_populate(canonical, keys.day_token)
-    else:
-      execute_archive_members_populate_for_canonical(canonical)
-    members = wait_for_complete_members(
-        keys,
-        sealed_path=sealed_path,
-        respect_ingest_deadline=respect_ingest_deadline,
-        canonical=canonical,
-    )
-  if members is not None:
-    _store_daily_archive_members_cache(canonical, members)
-    return dict(members)
-  raise ArchiveMembersRedisUnavailableError(
-      "archive members Redis enabled but lookup did not return members for %s"
-      % canonical,
-  )
+  finally:
+    if day_token:
+      clear_ingest_tar_hot(day_token)

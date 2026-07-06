@@ -7,6 +7,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 from collections.abc import Iterator
 from typing import BinaryIO
 
@@ -318,50 +319,76 @@ def decompress_compressed_to_tar(
     thread_count: int,
     *,
     remove_compressed: bool = True,
+    restore_reason: str = "missing_tar",
+    restore_caller: str = "decompress_compressed_to_tar",
 ) -> bool:
   """Decompress to a verified sibling ``.tar``; unlink compressed only on success."""
   if not compressed_path or not os.path.isfile(compressed_path):
     return False
-  pipe_preflight_ok = zstd_compressed_archive_pipe_readable(
-      compressed_path,
-      thread_count,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      calendar_date_from_daily_tar_path,
   )
-  if not pipe_preflight_ok:
-    return False
-  tmp_path = "%s.decomp.tmp" % tar_path
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      clear_daily_tar_restore_in_progress,
+      set_daily_tar_restore_in_progress,
+  )
+
+  day = calendar_date_from_daily_tar_path(tar_path or "")
+  day_token = day.isoformat() if day is not None else ""
+  if day_token:
+    set_daily_tar_restore_in_progress(
+        day_token,
+        reason=restore_reason,
+        caller=restore_caller,
+    )
   try:
-    if os.path.exists(tmp_path):
-      os.remove(tmp_path)
-  except OSError:
-    pass
-  try:
-    _decompress_to_path(compressed_path, tmp_path, thread_count)
-  except (OSError, subprocess.CalledProcessError, ValueError):
-    try:
-      if os.path.exists(tmp_path):
-        os.remove(tmp_path)
-    except OSError:
-      pass
-    return False
-  try:
-    with file_write_lock(tar_path):
-      os.replace(tmp_path, tar_path)
-  except OSError:
-    try:
-      if os.path.exists(tmp_path):
-        os.remove(tmp_path)
-    except OSError:
-      pass
-    return False
-  zstd_drop_page_cache_for_paths(compressed_path, tar_path)
-  if remove_compressed:
-    try:
-      with file_write_lock(compressed_path):
-        if os.path.isfile(compressed_path):
-          os.remove(compressed_path)
-    except OSError:
+    pipe_preflight_ok = zstd_compressed_archive_pipe_readable(
+        compressed_path,
+        thread_count,
+    )
+    if not pipe_preflight_ok:
       return False
-  return True
+    tmp_path = "%s.decomp.tmp" % tar_path
+    try:
+      if os.path.exists(tmp_path):
+        os.remove(tmp_path)
+    except OSError:
+      pass
+    try:
+      _decompress_to_path(compressed_path, tmp_path, thread_count)
+    except (OSError, subprocess.CalledProcessError, ValueError):
+      try:
+        if os.path.exists(tmp_path):
+          os.remove(tmp_path)
+      except OSError:
+        pass
+      return False
+    try:
+      with file_write_lock(tar_path):
+        os.replace(tmp_path, tar_path)
+    except OSError:
+      try:
+        if os.path.exists(tmp_path):
+          os.remove(tmp_path)
+      except OSError:
+        pass
+      return False
+    zstd_drop_page_cache_for_paths(compressed_path, tar_path)
+    if remove_compressed:
+      try:
+        with file_write_lock(compressed_path):
+          if os.path.isfile(compressed_path):
+            os.remove(compressed_path)
+      except OSError:
+        return False
+    return True
+  finally:
+    if day_token:
+      clear_daily_tar_restore_in_progress(
+          day_token,
+          ok=os.path.isfile(tar_path),
+          reason=restore_reason,
+      )
 
 
 def _wait_decompress_proc(proc: subprocess.Popen, args: list) -> None:
@@ -529,8 +556,20 @@ def zstd_compress_tar_to_file(
     zst_path: str,
     thread_count: int,
     compress_level: int,
+    *,
+    tgz_archive_dir: str = "",
+    yield_phase: str = "seal",
 ) -> None:
-  """Compress ``tar_path`` to ``zst_path`` (caller manages temp/replace)."""
+  """Compress ``tar_path`` to ``zst_path`` (caller manages temp/replace).
+
+  When ``tgz_archive_dir`` is set, polls for ingest hot signals every 5s during
+  the zstd subprocess and raises ``DayCloseYieldError`` cooperatively.
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
+      DayCloseYieldError,
+      check_day_close_yield_or_continue,
+  )
+
   try:
     tar_bytes = os.path.getsize(tar_path)
   except OSError:
@@ -546,11 +585,50 @@ def zstd_compress_tar_to_file(
       "--size-hint=%d" % int(tar_bytes),
       tar_path,
   ]
-  result = _run_zstd(cmd, capture_output=True, text=True, check=False)
-  if result.returncode != 0:
-    raise subprocess.CalledProcessError(
-        result.returncode,
-        result.args,
-        stderr=result.stderr,
-    )
+  if tgz_archive_dir:
+    proc = _popen_zstd(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    last_poll = time.monotonic()
+    try:
+      while proc.poll() is None:
+        try:
+          last_poll, _ = check_day_close_yield_or_continue(
+              tar_path,
+              last_poll_monotonic=last_poll,
+              tgz_archive_dir=tgz_archive_dir,
+              phase=yield_phase,
+          )
+        except DayCloseYieldError:
+          proc.terminate()
+          try:
+            proc.wait(timeout=5.0)
+          except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5.0)
+          try:
+            if os.path.isfile(zst_path):
+              os.remove(zst_path)
+          except OSError:
+            pass
+          raise
+        time.sleep(0.25)
+      if proc.returncode != 0:
+        stderr = proc.stderr.read() if proc.stderr is not None else b""
+        raise subprocess.CalledProcessError(
+            proc.returncode,
+            cmd,
+            stderr=stderr.decode("utf-8", errors="replace"),
+        )
+    finally:
+      if proc.stderr is not None:
+        proc.stderr.close()
+      if proc.stdout is not None:
+        proc.stdout.close()
+  else:
+    result = _run_zstd(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+      raise subprocess.CalledProcessError(
+          result.returncode,
+          result.args,
+          stderr=result.stderr,
+      )
   zstd_drop_page_cache_for_paths(tar_path, zst_path)
