@@ -105,6 +105,31 @@ class HostLiveProbeTests(unittest.TestCase):
             self.assertEqual(default_devices_for_type("host_numa"), ["0", "1"])
         self.assertEqual(default_devices_for_type("host_ps"), ["-"])
 
+    def test_probe_net_includes_up_lo(self) -> None:
+        import tempfile
+        from unittest.mock import patch
+
+        from lib.host_live_probes import probe_net_devices
+
+        with tempfile.TemporaryDirectory() as tmp:
+            net = Path(tmp)
+            lo = net / "lo"
+            lo.mkdir()
+            (lo / "flags").write_text("0x9\n")
+            down = net / "eth0"
+            down.mkdir()
+            (down / "flags").write_text("0x0\n")
+
+            real_path = Path
+
+            def fake_path(arg: str) -> Path:
+                if arg == "/sys/class/net":
+                    return net
+                return real_path(arg)
+
+            with patch("lib.host_live_probes.Path", side_effect=fake_path):
+                self.assertEqual(probe_net_devices(), ["lo"])
+
 
 class ListendContractTests(unittest.TestCase):
     def test_schema_host_token(self) -> None:

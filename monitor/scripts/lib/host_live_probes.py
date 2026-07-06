@@ -7,6 +7,7 @@ from pathlib import Path
 
 PROC_STAT_CPU_RE = re.compile(r"^cpu(\d+)\s")
 _NODE_MEMINFO_RE = re.compile(r"^Node \d+ (\w+):\s+(\d+)")
+_IFF_UP = 0x1
 
 
 def _read_lines(path: str) -> list[str]:
@@ -34,15 +35,22 @@ def probe_cpu_devices() -> list[str]:
 
 
 def probe_net_devices() -> list[str]:
+    """Match host_net collector: IFF_UP interfaces from /sys/class/net (net.c)."""
     net_base = Path("/sys/class/net")
     if not net_base.is_dir():
         return []
-    skip = {"lo"}
-    return sorted(
-        p.name
-        for p in net_base.iterdir()
-        if p.is_dir() and p.name not in skip
-    )
+    devs: list[str] = []
+    for p in sorted(net_base.iterdir()):
+        if not p.is_dir():
+            continue
+        flags_path = p / "flags"
+        try:
+            flags = int(flags_path.read_text(encoding="utf-8").strip(), 0)
+        except (OSError, ValueError):
+            continue
+        if flags & _IFF_UP:
+            devs.append(p.name)
+    return devs
 
 
 def probe_ib_devices() -> list[str]:
