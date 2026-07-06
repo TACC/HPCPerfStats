@@ -530,18 +530,23 @@ build_static_dependencies() {
 
 usage_exit() {
   cat <<EOF
-Usage: $(basename "$0") [--deps-only] [--release] [CONFIGURE_ARGS...]
+Usage: $(basename "$0") [--deps-only] [--print-configure-flags] [--release] [CONFIGURE_ARGS...]
 
   --deps-only   Build and install static archives (libev, rabbitmq-c, and LIKWID on x86)
                 into PREFIX only. Use this when monitor configure
                 --enable-all-static fails at link time with missing static .a
                 archives.
 
+  --print-configure-flags
+                Probe the build host and print probe-derived configure flags (e.g.
+                --disable-amd-gpu) one per line on stdout; detection summary on stderr.
+                No dependency builds. Used by prepare_rpmbuild_dirs.sh before make dist.
+
   --release     Same as HPC_BUNDLE_RELEASE_BUILD=1: -O3, -DNDEBUG, section GC,
                 --disable-debug, strip hpcperfstatsd (see script header).
 
   [CONFIGURE_ARGS...] are appended to configure inside build_monitor (e.g.
-  --disable-lustre); ignored with --deps-only.
+  --disable-lustre); ignored with --deps-only and --print-configure-flags.
 
 Environment: PREFIX, SRCDIR, SKIP_DEPS, SKIP_CLEAN, JOBS, HPC_BUNDLE_RELEASE_BUILD,
   MONITOR_METRIC_PROFILER_BACKEND (ebpf|none), and pin overrides (see script header).
@@ -551,11 +556,16 @@ EOF
 
 main() {
   local deps_only=0
+  local print_configure_flags=0
   local -a monitor_args=()
   while test $# -gt 0; do
     case "$1" in
       --deps-only)
         deps_only=1
+        shift
+        ;;
+      --print-configure-flags)
+        print_configure_flags=1
         shift
         ;;
       --release)
@@ -571,6 +581,15 @@ main() {
         ;;
     esac
   done
+
+  if test "${print_configure_flags}" = "1"; then
+    static_bundle_print_detection_summary >&2
+    local flag
+    for flag in "${STATIC_BUNDLE_FEAT_FLAGS[@]}"; do
+      printf '%s\n' "${flag}"
+    done
+    exit 0
+  fi
 
   if configure_arg_requests_ebpf "${monitor_args[@]}"; then
     WANT_METRIC_PROFILER_EBPF=1

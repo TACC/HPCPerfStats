@@ -244,10 +244,11 @@ esac],
 [lustre=true])
 AM_CONDITIONAL([LUSTRE], [test x$lustre = xtrue])
 
+gpu_user_requested=no
 AC_ARG_ENABLE([gpu],
 [  --enable-gpu		Enable Nvidia GPU support (default is auto-detect)],
 [case "${enableval}" in
-  yes) gpu=true ;;
+  yes) gpu=true; gpu_user_requested=yes ;;
   no)  gpu=false ;;
   *) AC_MSG_ERROR([bad value ${enableval} for --enable-gpu]) ;;
 esac],
@@ -281,16 +282,34 @@ if test "x$gpu" = "xtrue"; then
          have_gpu=yes
          LIBS=$save_LIBS],
         [LIBS=$save_LIBS
-         AC_MSG_ERROR([Unable to find libdcgm!])])
+         if test "x$gpu_user_requested" = "xyes"; then
+           AC_MSG_ERROR([Unable to find libdcgm!])
+         else
+           gpu=false
+           gpu_autodetect_result="${gpu_autodetect_result}-no-sdk"
+           AC_MSG_NOTICE([NVIDIA GPU hardware detected but libdcgm is missing; disabling gpu])
+         fi])
     else
       AC_SEARCH_LIBS([dcgmInit], [dcgm], [have_gpu=yes],
-        [AC_MSG_ERROR([Unable to find libdcgm!])])
+        [if test "x$gpu_user_requested" = "xyes"; then
+           AC_MSG_ERROR([Unable to find libdcgm!])
+         else
+           gpu=false
+           gpu_autodetect_result="${gpu_autodetect_result}-no-sdk"
+           AC_MSG_NOTICE([NVIDIA GPU hardware detected but libdcgm is missing; disabling gpu])
+         fi])
     fi
     if test "x${have_gpu}" = xyes; then
       save_CPPFLAGS=$CPPFLAGS
       CPPFLAGS="-I${srcdir}/third_party/nvidia-dcgm ${CPPFLAGS}"
       AC_CHECK_HEADERS([dcgm_agent.h dcgm_structs.h], [gpu=true],
-        [AC_MSG_ERROR([Unable to find dcgm_agent.h/dcgm_structs.h (see third_party/nvidia-dcgm/README)])])
+        [if test "x$gpu_user_requested" = "xyes"; then
+           AC_MSG_ERROR([Unable to find dcgm_agent.h/dcgm_structs.h (see third_party/nvidia-dcgm/README)])
+         else
+           gpu=false
+           gpu_autodetect_result="${gpu_autodetect_result}-no-sdk"
+           AC_MSG_NOTICE([NVIDIA GPU enabled but DCGM headers are missing; disabling gpu])
+         fi])
       CPPFLAGS=$save_CPPFLAGS
     fi
   else
@@ -307,10 +326,11 @@ AM_CONDITIONAL([GPU], [test x$gpu = xtrue])
 AM_CONDITIONAL([MONITOR_USE_DCGM_VENDOR_INCLUDES],
   [test "x$cpu_counter_backend" = "xdcgm" -o "x$gpu" = "xtrue"])
 
+amd_gpu_user_requested=no
 AC_ARG_ENABLE([amd-gpu],
 [  --enable-amd-gpu	Enable AMD GPU support via GPUPerfAPI (default is auto-detect)],
 [case "${enableval}" in
-  yes) amd_gpu=true ;;
+  yes) amd_gpu=true; amd_gpu_user_requested=yes ;;
   no)  amd_gpu=false ;;
   *) AC_MSG_ERROR([bad value ${enableval} for --enable-amd-gpu]) ;;
 esac],
@@ -337,7 +357,13 @@ fi
 
 if test "x$amd_gpu" = "xtrue"; then
   AC_CHECK_HEADERS([gpu_performance_api/gpu_perf_api.h], [amd_gpu=true],
-    [AC_MSG_ERROR([Unable to find gpu_performance_api/gpu_perf_api.h (GPUPerfAPI) for AMD GPU support])])
+    [if test "x$amd_gpu_user_requested" = "xyes"; then
+       AC_MSG_ERROR([Unable to find gpu_performance_api/gpu_perf_api.h (GPUPerfAPI) for AMD GPU support])
+     else
+       amd_gpu=false
+       amd_gpu_autodetect_result="${amd_gpu_autodetect_result}-no-sdk"
+       AC_MSG_NOTICE([AMD GPU hardware detected but GPUPerfAPI headers are missing; disabling amd_gpu])
+     fi])
 fi
 
 if test "x$amd_gpu" = "xtrue"; then

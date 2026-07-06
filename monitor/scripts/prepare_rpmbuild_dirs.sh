@@ -178,11 +178,20 @@ fi
 echo "Running autoreconf -fi in ${MONITOR_DIR} ..."
 (cd "${MONITOR_DIR}" && autoreconf -fi)
 
-if ! (cd "${MONITOR_DIR}" && ./configure --with-systemduserunitdir=no); then
+mapfile -t feat_flags < <(cd "${MONITOR_DIR}" && ./scripts/build_static_bundle.sh --print-configure-flags)
+if test "${#feat_flags[@]}" -gt 0; then
+  echo "Host probe configure flags: ${feat_flags[*]}"
+else
+  echo "Host probe configure flags: (none)"
+fi
+
+if ! (cd "${MONITOR_DIR}" && ./configure --with-systemduserunitdir=no "${feat_flags[@]}"); then
   cat <<EOF >&2
 configure failed while running make dist for ${tb}.
 Static libraries were expected under ${PREFIX} (from build_static_bundle.sh --deps-only).
-Check the bundle script output, network access for pinned tarballs, and host toolchain.
+Host probes should pass --disable-amd-gpu when GPUPerfAPI headers are missing (see
+build_static_bundle.sh --print-configure-flags). Check the bundle script output,
+network access for pinned tarballs, and host toolchain.
 EOF
   exit 1
 fi
