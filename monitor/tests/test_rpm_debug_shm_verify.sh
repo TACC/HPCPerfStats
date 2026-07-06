@@ -19,8 +19,8 @@ grep -q 'emit_build_capabilities.py' "${verify}" \
 grep -q 'hpcperfstatsd-\[0-9\]' "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must install main hpcperfstatsd RPM only" >&2; exit 1; }
 
-grep -q 'rpm -q hpcperfstatsd' "${verify}" \
-  || { echo "rpm_debug_shm_verify.sh must tolerate already-installed main RPM" >&2; exit 1; }
+grep -q '\-\-replacepkgs' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must reinstall with rpm --replacepkgs" >&2; exit 1; }
 
 grep -q 'systemctl restart' "${verify}" \
   && { echo "rpm_debug_shm_verify.sh must not call systemctl restart (spec %post)" >&2; exit 1; } \

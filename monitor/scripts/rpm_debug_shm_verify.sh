@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Post-debug-rpmbuild: install main RPM, restart daemon, emit capabilities, validate /dev/shm.
+# Post-debug-rpmbuild: install main RPM (--replacepkgs), emit capabilities, validate /dev/shm.
 #
 # Run from HPCPerfStats/monitor/ after debug rpmbuild (hpc_debug_build 1).
 # RPM_TOPDIR and DIST_TOP default from this checkout when unset.
@@ -72,8 +72,8 @@ install_main_daemon_rpm() {
     echo "ERROR: main hpcperfstatsd RPM not found under ${rpm_topdir}/RPMS" >&2
     return 1
   }
-  echo "Installing ${main_rpm##*/} ..."
-  sudo rpm -Uvh "${main_rpm}" || rpm -q hpcperfstatsd >/dev/null
+  echo "Installing ${main_rpm##*/} (--replacepkgs overwrites same-version installs) ..."
+  sudo rpm -Uvh --replacepkgs "${main_rpm}"
 }
 
 usage() {
