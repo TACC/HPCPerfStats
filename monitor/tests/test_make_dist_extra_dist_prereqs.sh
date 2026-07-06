@@ -16,7 +16,6 @@ for path in \
   scripts/lib/__init__.py \
   scripts/lib/message_parse.py \
   scripts/lib/row_validate.py \
-  scripts/lib/print_debug_shm_verify.sh \
   scripts/rpm_debug_shm_verify.sh
 do
   test -f "${path}" \
@@ -30,8 +29,6 @@ grep -q 'tests/scripts/bootstrap_local_rabbitmq.sh' scripts/prepare_rpmbuild_dir
   || { echo "prepare_rpmbuild_dirs.sh must preflight tests/scripts/bootstrap_local_rabbitmq.sh" >&2; exit 1; }
 grep -q 'scripts/lib/message_parse.py' scripts/prepare_rpmbuild_dirs.sh \
   || { echo "prepare_rpmbuild_dirs.sh must preflight scripts/lib/message_parse.py" >&2; exit 1; }
-grep -q 'scripts/lib/print_debug_shm_verify.sh' scripts/prepare_rpmbuild_dirs.sh \
-  || { echo "prepare_rpmbuild_dirs.sh must preflight scripts/lib/print_debug_shm_verify.sh" >&2; exit 1; }
 grep -q 'scripts/rpm_debug_shm_verify.sh' scripts/prepare_rpmbuild_dirs.sh \
   || { echo "prepare_rpmbuild_dirs.sh must preflight scripts/rpm_debug_shm_verify.sh" >&2; exit 1; }
 

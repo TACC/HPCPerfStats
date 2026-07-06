@@ -1,23 +1,34 @@
 #!/usr/bin/env bash
-# Post-debug-rpmbuild /dev/shm verification (capabilities + expectations + validate).
-# Invoked directly or via scripts/lib/print_debug_shm_verify.sh runbook.
+# Post-debug-rpmbuild: install main RPM, restart daemon, emit capabilities, validate /dev/shm.
 #
-# Required:
-#   RPM_TOPDIR   rpmbuild _topdir (e.g. monitor/rpmbuild)
-#   DIST_TOP     unpacked source dir name (e.g. hpcperfstats-3.0)
+# Run from HPCPerfStats/monitor/ after debug rpmbuild (hpc_debug_build 1).
+# RPM_TOPDIR and DIST_TOP default from this checkout when unset.
 #
-# Optional:
-#   MONITOR_DIR          monitor checkout (default: parent of scripts/)
-#   WORKSPACE_ROOT       report parent (default: walk up for .venv)
-#   HPCPERFSTATS_DEBUG_SHM_DIR  shm base (default: /dev/shm/hpcperfstatsd-debug)
-#   ENABLE_SLOW_TIER     1=slowtier1 (default), 0=slowtier0
-#   SKIP_INSTALL=1       skip rpm -Uvh
-#   SKIP_DAEMON=1        skip systemctl restart
-#   SKIP_SHM_LS=1        skip ls of schema/fast/full
+# Optional: ENABLE_SLOW_TIER, HPCPERFSTATS_DEBUG_SHM_DIR, WORKSPACE_ROOT,
+#           SKIP_INSTALL=1, SKIP_DAEMON=1, SKIP_SHM_LS=1
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MONITOR_DIR="${MONITOR_DIR:-${SCRIPT_DIR}/..}"
+
+monitor_spec_field() {
+  local field="$1"
+  local file="$2"
+  grep -E "^${field}:" "${file}" | head -1 | sed 's/^[^:]*:[[:space:]]*//;s/[[:space:]]*$//'
+}
+
+resolve_dist_top() {
+  local monitor_dir="$1"
+  local spec="${monitor_dir}/hpcperfstats.spec"
+  local ver tarbase
+  ver="$(monitor_spec_field Version "${spec}")"
+  tarbase="$(sed -n 's/^AC_INIT(\[\([^]]*\)\].*/\1/p' "${monitor_dir}/configure.ac" | head -1)"
+  if test -z "${ver}" || test -z "${tarbase}"; then
+    echo "ERROR: could not read Version from ${spec} or AC_INIT from configure.ac" >&2
+    return 1
+  fi
+  printf '%s-%s' "${tarbase}" "${ver}"
+}
 
 resolve_workspace_root() {
   local monitor_dir="$1"
@@ -43,16 +54,34 @@ resolve_python() {
   fi
 }
 
+find_main_daemon_rpm() {
+  local rpm_topdir="$1"
+  local rpm
+  shopt -s nullglob
+  for rpm in "${rpm_topdir}"/RPMS/*/hpcperfstatsd-[0-9]*.rpm; do
+    printf '%s' "${rpm}"
+    return 0
+  done
+  return 1
+}
+
+install_main_daemon_rpm() {
+  local rpm_topdir="$1"
+  local main_rpm
+  main_rpm="$(find_main_daemon_rpm "${rpm_topdir}")" || {
+    echo "ERROR: main hpcperfstatsd RPM not found under ${rpm_topdir}/RPMS" >&2
+    return 1
+  }
+  echo "Installing ${main_rpm##*/} ..."
+  sudo rpm -Uvh "${main_rpm}" || rpm -q hpcperfstatsd >/dev/null
+}
+
 usage() {
   cat <<EOF
 Usage: $(basename "$0")
 
-Environment:
-  RPM_TOPDIR, DIST_TOP (required)
-  MONITOR_DIR, WORKSPACE_ROOT, ENABLE_SLOW_TIER, HPCPERFSTATS_DEBUG_SHM_DIR
-  SKIP_INSTALL=1, SKIP_DAEMON=1, SKIP_SHM_LS=1
-
-Run after debug rpmbuild (hpc_debug_build 1) succeeds.
+Run from HPCPerfStats/monitor/ after debug rpmbuild completes.
+Optional: SKIP_INSTALL=1 SKIP_DAEMON=1 to re-validate without reinstall.
 EOF
 }
 
@@ -62,12 +91,12 @@ main() {
     return 0
   fi
 
-  local rpm_topdir="${RPM_TOPDIR:?RPM_TOPDIR required}"
-  local dist_top="${DIST_TOP:?DIST_TOP required}"
-  local monitor_dir ws py build_src build_static caps shm_dir tier enable_slow
+  local monitor_dir rpm_topdir dist_top ws py build_src build_static caps shm_dir tier enable_slow
   local slug expectations report_dir
 
   monitor_dir="$(cd "${MONITOR_DIR}" && pwd)"
+  rpm_topdir="${RPM_TOPDIR:-${monitor_dir}/rpmbuild}"
+  dist_top="${DIST_TOP:-$(resolve_dist_top "${monitor_dir}")}"
   ws="${WORKSPACE_ROOT:-$(resolve_workspace_root "${monitor_dir}")}"
   py="$(resolve_python "${ws}")"
 
@@ -83,23 +112,23 @@ main() {
 
   if test ! -d "${build_static}"; then
     echo "ERROR: RPM build tree missing: ${build_static}" >&2
-    echo "Run debug rpmbuild first (prepare_rpmbuild_dirs.sh --debug-build prints the command)." >&2
+    echo "Run debug rpmbuild first (prepare_rpmbuild_dirs.sh --debug-build)." >&2
     return 1
   fi
   if test ! -f "${build_static}/src/hpcperfstatsd"; then
     echo "ERROR: debug daemon not built: ${build_static}/src/hpcperfstatsd" >&2
-    echo "Complete debug rpmbuild (hpc_debug_build 1) before verification." >&2
     return 1
   fi
 
   if test "${SKIP_INSTALL:-0}" != "1"; then
-    sudo rpm -Uvh "${rpm_topdir}"/RPMS/*/"hpcperfstatsd-"*.rpm
+    install_main_daemon_rpm "${rpm_topdir}"
   fi
   if test "${SKIP_DAEMON:-0}" != "1"; then
+    echo "Restarting hpcperfstatsd ..."
     sudo systemctl restart hpcperfstatsd
   fi
 
-  echo "Emitting ${caps}"
+  echo "Emitting ${caps} ..."
   CAPABILITIES_TIER="${tier}" "${py}" "${monitor_dir}/scripts/emit_build_capabilities.py" \
     --build-dir "${build_static}" \
     --tier "${tier}"
@@ -119,19 +148,21 @@ main() {
   report_dir="${ws}/test_runs/monitor"
   mkdir -p "${report_dir}"
 
+  echo "Building expectations ..."
   "${py}" "${monitor_dir}/scripts/build_message_expectations.py" \
     --capabilities "${caps}" \
     --shm-dir "${shm_dir}" \
     --enable-slow-tier "${enable_slow}" \
     --out "${expectations}"
 
+  echo "Validating /dev/shm payloads ..."
   "${py}" "${monitor_dir}/scripts/validate_shm_messages.py" \
     --capabilities "${caps}" \
     --manifest "${expectations}" \
     --shm-dir "${shm_dir}" \
     --report "${report_dir}/validate_rpm_debug_${slug}_$(date +%F).txt"
 
-  echo "PASS: validate_shm_messages completed (slug mismatch is exit 2)"
+  echo "PASS: validate_shm_messages (slug=${slug})"
 }
 
 if test "$(basename "$0")" = "rpm_debug_shm_verify.sh"; then

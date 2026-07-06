@@ -34,14 +34,9 @@ grep -q '\-\-disable-debug' "${bundle}" \
 grep -q 'hpc_debug_build' "${prepare}" \
   || { echo "prepare_rpmbuild_dirs.sh must mention hpc_debug_build in final instructions" >&2; exit 1; }
 
-grep -q 'print_debug_shm_verify' "${prepare}" \
-  || { echo "prepare_rpmbuild_dirs.sh must invoke print_debug_shm_verify for debug runbook" >&2; exit 1; }
+grep -q '&& ./scripts/rpm_debug_shm_verify.sh' "${prepare}" \
+  || { echo "prepare_rpmbuild_dirs.sh must chain rpmbuild with rpm_debug_shm_verify" >&2; exit 1; }
 
-verify_lib="${ROOT}/scripts/lib/print_debug_shm_verify.sh"
-test -f "${verify_lib}" \
-  || { echo "missing ${verify_lib}" >&2; exit 1; }
-grep -q 'rpm_debug_shm_verify' "${verify_lib}" \
-  || { echo "print_debug_shm_verify.sh must reference rpm_debug_shm_verify.sh" >&2; exit 1; }
 test -x "${ROOT}/scripts/rpm_debug_shm_verify.sh" \
   || { echo "missing executable scripts/rpm_debug_shm_verify.sh" >&2; exit 1; }
 grep -q 'emit_build_capabilities.py' "${ROOT}/scripts/rpm_debug_shm_verify.sh" \

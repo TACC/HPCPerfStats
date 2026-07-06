@@ -1,5 +1,5 @@
 #!/bin/sh
-# Regression: rpm_debug_shm_verify.sh checks BUILD tree and emits capabilities first.
+# Regression: rpm_debug_shm_verify.sh checks BUILD tree, main-RPM install, emits capabilities.
 set -e
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -15,5 +15,14 @@ echo "${err}" | grep -Fe 'RPM build tree missing' >/dev/null \
 
 grep -q 'emit_build_capabilities.py' "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must emit capabilities before expectations" >&2; exit 1; }
+
+grep -q 'hpcperfstatsd-\[0-9\]' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must install main hpcperfstatsd RPM only" >&2; exit 1; }
+
+grep -q 'rpm -q hpcperfstatsd' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must tolerate already-installed main RPM" >&2; exit 1; }
+
+grep -q 'resolve_dist_top' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must default DIST_TOP from spec/configure" >&2; exit 1; }
 
 echo "test_rpm_debug_shm_verify passed"

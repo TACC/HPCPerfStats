@@ -39,7 +39,7 @@ alwaysApply: false
 ## Data-host runbook
 
 1. **Static DEBUG build:** `build_static_bundle.sh` with `--enable-debug` → `make -C .build-static capabilities`.
-2. **Debug RPM:** `prepare_rpmbuild_dirs.sh --debug-build` → debug `rpmbuild` → `scripts/rpm_debug_shm_verify.sh` (emits capabilities, then validates).
+2. **Debug RPM:** `prepare_rpmbuild_dirs.sh --debug-build` → `rpmbuild ... && ./scripts/rpm_debug_shm_verify.sh` (install main RPM, validate shm).
 3. Run daemon; read `schema`/`fast`/`full` from shm.
 4. `build_message_expectations.py --capabilities … --shm-dir … --enable-slow-tier … --out expectations_<slug>.json`.
 5. `validate_shm_messages.py --capabilities … --manifest … --shm-dir …` (optional `--report` under `test_runs/monitor/`).

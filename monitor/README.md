@@ -176,10 +176,15 @@ python3 scripts/validate_shm_messages.py \
   --report "../../test_runs/monitor/validate_${SLUG}_$(date +%F).txt"
 ```
 
-For **debug RPM**, use `./scripts/prepare_rpmbuild_dirs.sh --debug-build` — after
-debug `rpmbuild` completes, run the printed `scripts/rpm_debug_shm_verify.sh`
-(one step: emit capabilities, build expectations, validate shm). Use
-`SKIP_INSTALL=1 SKIP_DAEMON=1` if the debug RPM is already installed and running.
+For **debug RPM**, use `./scripts/prepare_rpmbuild_dirs.sh --debug-build` — it prints a
+single chained command:
+
+```bash
+rpmbuild -ba ... hpc_debug_build 1 ... && ./scripts/rpm_debug_shm_verify.sh
+```
+
+Run from `HPCPerfStats/monitor/`. No exports needed. Re-validate only:
+`SKIP_INSTALL=1 SKIP_DAEMON=1 ./scripts/rpm_debug_shm_verify.sh`
 
 **Capability slug** — `monitor-build-capabilities.json` includes
 `capability_slug` (compile flags + `slowtier0`/`slowtier1`). Golden fixtures

@@ -41,10 +41,7 @@ while (($# > 0)); do
 Usage: ./scripts/prepare_rpmbuild_dirs.sh [--debug-build]
 
   --debug-build  Mark the debug rpmbuild command as recommended for this run.
-                 Same source tarball as the default prepare; use the printed
-                 rpmbuild line with hpc_debug_build 1 for symbols + DEBUG /dev/shm.
-                 Prints a full copy/paste /dev/shm verification runbook (manifest +
-                 validate_shm_messages.py) keyed to the RPM BUILD tree.
+                 Prints build && install && /dev/shm validate as one chained command.
 
   Release (default): rpmbuild without hpc_debug_build — production RPM, no /dev/shm mirror.
   Debug (opt-in):    rpmbuild with hpc_debug_build 1 — -g symbols and --enable-debug.
@@ -123,7 +120,6 @@ for distfile in \
   scripts/lib/message_parse.py \
   scripts/lib/row_validate.py \
   scripts/lib/monitor_tree_clean.sh \
-  scripts/lib/print_debug_shm_verify.sh \
   scripts/rpm_debug_shm_verify.sh
 do
   if test ! -f "${MONITOR_DIR}/${distfile}"; then
@@ -240,11 +236,12 @@ debug_rpmbuild="rpmbuild -ba --define \"_topdir ${topdir}\" --define \"hpc_debug
 echo "Build binary and source RPMs with:"
 if test "${debug_build}" = "1"; then
   echo ""
-  echo "Recommended (you passed --debug-build):"
-  echo "  ${debug_rpmbuild}"
+  echo "Build, install, and validate /dev/shm (from ${MONITOR_DIR}):"
+  echo "  ${debug_rpmbuild} \\"
+  echo "    && ./scripts/rpm_debug_shm_verify.sh"
   echo ""
-  echo "Release (production, no DEBUG /dev/shm):"
-  echo "  ${release_rpmbuild}"
+  echo "Re-validate only (RPM installed, daemon running):"
+  echo "  SKIP_INSTALL=1 SKIP_DAEMON=1 ./scripts/rpm_debug_shm_verify.sh"
 else
   echo ""
   echo "Recommended (release / production):"
@@ -262,9 +259,4 @@ DEBUG /dev/shm mirror (debug RPM only):
   - Release RPM (no hpc_debug_build) does not write /dev/shm files.
   - Re-run with --debug-build for the full post-rpmbuild verification runbook.
 EOF
-fi
-if test "${debug_build}" = "1"; then
-  # MONITOR_DIR is readonly in this shell and is not exported to children; use env.
-  env RPM_TOPDIR="${topdir}" DIST_TOP="${dist_top}" MONITOR_DIR="${MONITOR_DIR}" \
-    "${SCRIPT_DIR}/lib/print_debug_shm_verify.sh"
 fi
