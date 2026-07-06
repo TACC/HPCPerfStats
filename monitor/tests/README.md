@@ -68,7 +68,7 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_ring_buffer.c` | Ring buffer / `stats_buffer_collect` tier-row assembly (`STATS_BUFFER_TEST_SEND_HOOK`; RabbitMQ build) |
 | `test_monitor_cli_globals.c` | Stub globals for `test_monitor_cli` |
 | `test_rabbitmq_integration.sh` | Rootless end-to-end monitor -> RabbitMQ publish validation |
-| `scripts/bootstrap_local_rabbitmq.sh` | User-space RabbitMQ bootstrap/start/stop helper |
+| `scripts/bootstrap_local_rabbitmq.sh` | User-space RabbitMQ bootstrap/start/stop helper (must be in the source tree for `make dist` / RPM prepare) |
 | `rmq_integration_validate.py` | Consumes queue messages and validates listend-compatible payload shape |
 | `requirements-rabbitmq-integration.txt` | Python dependency pin for integration validator (`pika`) |
 | `test_monitor_configure_help.sh.in` | Regression (via `check-local`): `configure --help` mentions `--enable-all-static`, `--enable-legacy-pmcs`, `--enable-metric-profiler`, and `--with-metric-profiler-backend` |
