@@ -139,13 +139,15 @@ nodes. Files are created mode `0600` under a `0700` directory (atomic `*.tmp` +
 
 ```bash
 cd HPCPerfStats/monitor
-./scripts/prepare_rpmbuild_dirs.sh --debug-build   # or default prepare; same tarball
-# use the printed debug rpmbuild line (includes hpc_debug_build 1):
-#   rpmbuild -ba --define "_topdir .../rpmbuild" --define "hpc_debug_build 1" ...
-sudo rpm -Uvh rpmbuild/RPMS/*/hpcperfstatsd-*.rpm
-sudo systemctl restart hpcperfstatsd
-ls -la /dev/shm/hpcperfstatsd-debug/
+./scripts/prepare_rpmbuild_dirs.sh --debug-build
+# Run the printed debug rpmbuild line (hpc_debug_build 1), then copy/paste the
+# verification runbook footer (manifest + validate_shm_messages.py).
 ```
+
+The footer uses paths under `rpmbuild/BUILD/hpcperfstats-<ver>/.build-static/` from
+the RPM `%build` tree. After install and `systemctl restart hpcperfstatsd`, shm
+payloads appear under `/dev/shm/hpcperfstatsd-debug/` (override with
+`HPCPERFSTATS_DEBUG_SHM_DIR`).
 
 The default **release** `rpmbuild` (no `hpc_debug_build`) strips the binary and
 passes `--disable-debug` — no `/dev/shm` mirror. Compiler `-g` alone does not
@@ -154,20 +156,28 @@ enable the mirror; the spec sets `HPC_BUNDLE_ENABLE_DEBUG=1` only for
 
 ### `/dev/shm` message correctness testing
 
-On a data host with a DEBUG build:
+On a data host with a DEBUG build (static bundle or debug RPM):
 
 ```bash
 cd HPCPerfStats/monitor
-./scripts/build_static_bundle.sh --enable-debug   # or add to configure args
+./scripts/build_static_bundle.sh --enable-debug   # or debug RPM via prepare --debug-build
 make -C .build-static capabilities
 # start hpcperfstatsd; wait for schema + fast + full updates under /dev/shm/...
+SLUG=$(python3 -c "import json; print(json.load(open('.build-static/monitor-build-capabilities.json'))['capability_slug'])")
 python3 scripts/build_message_expectations.py \
-  --capabilities .build-static/monitor-build-capabilities.json
+  --capabilities .build-static/monitor-build-capabilities.json \
+  --shm-dir /dev/shm/hpcperfstatsd-debug \
+  --enable-slow-tier 1 \
+  --out ".build-static/expectations_${SLUG}.json"
 python3 scripts/validate_shm_messages.py \
   --capabilities .build-static/monitor-build-capabilities.json \
-  --manifest .build-static/expectations_<capability_slug>.json \
-  --shm-dir /dev/shm/hpcperfstatsd-debug
+  --manifest ".build-static/expectations_${SLUG}.json" \
+  --shm-dir /dev/shm/hpcperfstatsd-debug \
+  --report "../../test_runs/monitor/validate_${SLUG}_$(date +%F).txt"
 ```
+
+For **debug RPM**, use `./scripts/prepare_rpmbuild_dirs.sh --debug-build` — the
+printed runbook substitutes the RPM `BUILD` tree paths and workspace `.venv` python.
 
 **Capability slug** — `monitor-build-capabilities.json` includes
 `capability_slug` (compile flags + `slowtier0`/`slowtier1`). Golden fixtures

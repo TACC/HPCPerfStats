@@ -43,11 +43,13 @@ Usage: ./scripts/prepare_rpmbuild_dirs.sh [--debug-build]
   --debug-build  Mark the debug rpmbuild command as recommended for this run.
                  Same source tarball as the default prepare; use the printed
                  rpmbuild line with hpc_debug_build 1 for symbols + DEBUG /dev/shm.
+                 Prints a full copy/paste /dev/shm verification runbook (manifest +
+                 validate_shm_messages.py) keyed to the RPM BUILD tree.
 
   Release (default): rpmbuild without hpc_debug_build — production RPM, no /dev/shm mirror.
   Debug (opt-in):    rpmbuild with hpc_debug_build 1 — -g symbols and --enable-debug.
 
-  See README.md "DEBUG /dev/shm mirror" for install/start/ls workflow after RPM install.
+  See README.md "DEBUG /dev/shm mirror" for the RPM debug workflow.
 EOF
       exit 0
       ;;
@@ -120,7 +122,8 @@ for distfile in \
   scripts/lib/__init__.py \
   scripts/lib/message_parse.py \
   scripts/lib/row_validate.py \
-  scripts/lib/monitor_tree_clean.sh
+  scripts/lib/monitor_tree_clean.sh \
+  scripts/lib/print_debug_shm_verify.sh
 do
   if test ! -f "${MONITOR_DIR}/${distfile}"; then
     echo "Missing file required for make dist: ${MONITOR_DIR}/${distfile}" >&2
@@ -248,8 +251,7 @@ else
   echo ""
   echo "Optional debug (symbols + --enable-debug /dev/shm mirror):"
   echo "  ${debug_rpmbuild}"
-fi
-cat <<EOF
+  cat <<EOF
 
 DEBUG /dev/shm mirror (debug RPM only):
   - prepare does not install or start hpcperfstatsd.
@@ -257,4 +259,10 @@ DEBUG /dev/shm mirror (debug RPM only):
   - Payload mirror: /dev/shm/hpcperfstatsd-debug/{schema,fast,full}
   - Override base dir: HPCPERFSTATS_DEBUG_SHM_DIR
   - Release RPM (no hpc_debug_build) does not write /dev/shm files.
+  - Re-run with --debug-build for the full post-rpmbuild verification runbook.
 EOF
+fi
+if test "${debug_build}" = "1"; then
+  RPM_TOPDIR="${topdir}" DIST_TOP="${dist_top}" MONITOR_DIR="${MONITOR_DIR}" \
+    "${SCRIPT_DIR}/lib/print_debug_shm_verify.sh"
+fi
