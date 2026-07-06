@@ -27,8 +27,11 @@ _PROGRESS_SUFFIX = ":progress"
 _POPULATE_QUEUE_KEY = "%s:archive_members:populate_queue:v1" % _KEY_PREFIX
 _POPULATE_QUEUED_PREFIX = "%s:archive_members:populate_queued:v1" % _KEY_PREFIX
 _INGEST_TAR_HOT_PREFIX = "%s:ingest_tar_hot:v1" % _KEY_PREFIX
+_ARCHIVE_APPEND_INFLIGHT_PREFIX = "%s:archive_append_inflight:v1" % _KEY_PREFIX
 _DAILY_TAR_RESTORE_PREFIX = "%s:daily_tar_restore:v1" % _KEY_PREFIX
 _POPULATE_QUEUED_TTL_SECONDS = 3600
+_IDENTITY_DRIFT_LOG_INTERVAL_S = 120.0
+_IDENTITY_DRIFT_LOG_STATE: Dict[str, Dict[str, float]] = {}
 
 _REDIS_CLIENT = None
 _REDIS_CLIENT_URL = None
@@ -812,6 +815,7 @@ def populate_archive_members_redis(
     scan_fn: Callable[[Callable[[str, int], None]], tuple],
     *,
     sealed_path=None,
+    source_decision=None,
 ) -> dict:
   """Single-flight populate: ``scan_fn(on_member)`` returns ``(readable, saw_duplicates)`` or
   ``(readable, saw_duplicates, stream_error)``.
@@ -831,6 +835,21 @@ def populate_archive_members_redis(
       continue
 
     lock_value = token
+    if _populate_scan_should_defer(keys, sealed_path):
+      _release_populate_lock(client, keys, lock_value)
+      time.sleep(_wait_poll_seconds())
+      continue
+    if source_decision is not None:
+      from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+          _log_populate_source_decision,
+      )
+      _log_populate_source_decision(
+          source_decision.get("day_token", keys.day_token),
+          source_decision.get("tar_path", ""),
+          source_decision.get("zst_path", ""),
+          source_decision.get("gz_path", ""),
+          source_decision.get("sealed_path") or "",
+      )
     client.delete(keys.hash_key)
     running_max: Dict[str, int] = {}
     pending_batch: Dict[str, int] = {}
@@ -929,7 +948,6 @@ def wait_for_member_match(
   last_progress_ts = _read_populate_progress_ts(client, keys)
   last_hlen = _hash_member_count(client, keys)
   last_progress_monotonic = started
-  logged_drift_keys = set()
 
   with populate_wait_ingest_sigalrm_guard(
       respect_ingest_deadline=respect_ingest_deadline,
@@ -941,7 +959,6 @@ def wait_for_member_match(
             client,
             keys,
             canonical=canonical,
-            logged_drift_keys=logged_drift_keys,
         )
         if warm_members is not None:
           size = warm_members.get(member_name)
@@ -983,7 +1000,6 @@ def wait_for_member_match(
               client,
               keys,
               canonical=canonical,
-              logged_drift_keys=logged_drift_keys,
           )
           if warm_members is not None:
             size = warm_members.get(member_name)
@@ -1015,12 +1031,35 @@ def _resolve_keys_for_canonical(canonical: str) -> ArchiveMembersRedisKeys:
   return build_archive_members_redis_keys(_daily_archive_members_cache_key(path))
 
 
+def _log_identity_drift_if_allowed(day_token: str, from_key: str, to_key: str) -> None:
+  """Rate-limit identity_drift logs to once per calendar day per interval."""
+  if not day_token or day_token == "unknown":
+    return
+  now_mono = time.monotonic()
+  state = _IDENTITY_DRIFT_LOG_STATE.get(day_token)
+  if state is None:
+    state = {"last_log_mono": 0.0, "suppressed": 0.0}
+    _IDENTITY_DRIFT_LOG_STATE[day_token] = state
+  last_log_mono = float(state.get("last_log_mono") or 0.0)
+  if now_mono - last_log_mono < _IDENTITY_DRIFT_LOG_INTERVAL_S:
+    state["suppressed"] = float(state.get("suppressed") or 0.0) + 1.0
+    return
+  suppressed_n = int(state.get("suppressed") or 0)
+  state["last_log_mono"] = now_mono
+  state["suppressed"] = 0.0
+  suffix = (" suppressed_n=%d" % suppressed_n) if suppressed_n else ""
+  log_print(
+      "INFO: populate_wait identity_drift day=%s from=%s to=%s%s"
+      % (day_token, from_key, to_key, suffix),
+      flush=True,
+  )
+
+
 def _maybe_reresolve_warm_members(
     client,
     keys: ArchiveMembersRedisKeys,
     *,
     canonical="",
-    logged_drift_keys=None,
 ):
   """Return members when *canonical* identity is fully warm (may differ from *keys*)."""
   if not canonical:
@@ -1030,13 +1069,9 @@ def _maybe_reresolve_warm_members(
   except Exception:
     return None, keys
   if current_keys.hash_key != keys.hash_key:
-    if logged_drift_keys is not None and keys.hash_key not in logged_drift_keys:
-      logged_drift_keys.add(keys.hash_key)
-      log_print(
-          "INFO: populate_wait identity_drift day=%s from=%s to=%s"
-          % (current_keys.day_token, keys.hash_key, current_keys.hash_key),
-          flush=True,
-      )
+    _log_identity_drift_if_allowed(
+        current_keys.day_token, keys.hash_key, current_keys.hash_key,
+    )
     keys = current_keys
   if not redis_members_cache_is_fully_warm(keys, client=client):
     return None, keys
@@ -1081,7 +1116,6 @@ def wait_for_complete_members(
   last_progress_ts = _read_populate_progress_ts(client, keys)
   last_hlen = _hash_member_count(client, keys)
   last_progress_monotonic = started
-  logged_drift_keys = set()
 
   with populate_wait_ingest_sigalrm_guard(
       respect_ingest_deadline=respect_ingest_deadline,
@@ -1093,7 +1127,6 @@ def wait_for_complete_members(
             client,
             keys,
             canonical=canonical,
-            logged_drift_keys=logged_drift_keys,
         )
         if warm_members is not None:
           return warm_members
@@ -1126,7 +1159,6 @@ def wait_for_complete_members(
             client,
             keys,
             canonical=canonical,
-            logged_drift_keys=logged_drift_keys,
         )
         if warm_members is not None:
           return warm_members
@@ -1414,6 +1446,61 @@ def ingest_tar_hot_for_day(day_token: str) -> bool:
   if client is None:
     return False
   return bool(client.exists(_ingest_tar_hot_key(day_token)))
+
+
+def _archive_append_inflight_key(day_token: str) -> str:
+  return "%s:%s" % (_ARCHIVE_APPEND_INFLIGHT_PREFIX, day_token)
+
+
+def set_archive_append_inflight(day_token: str, *, reason: str = "archive_job") -> None:
+  """Signal archive-pool append job in flight for a calendar day."""
+  if not day_token or day_token == "unknown":
+    return
+  if not archive_members_redis_enabled():
+    return
+  client = get_archive_members_redis_client(required=False)
+  if client is None:
+    return
+  client.set(
+      _archive_append_inflight_key(day_token),
+      reason or "archive_job",
+      ex=_populate_max_seconds(),
+  )
+
+
+def clear_archive_append_inflight(day_token: str) -> None:
+  if not day_token or day_token == "unknown":
+    return
+  if not archive_members_redis_enabled():
+    return
+  client = get_archive_members_redis_client(required=False)
+  if client is None:
+    return
+  client.delete(_archive_append_inflight_key(day_token))
+
+
+def archive_append_inflight_for_day(day_token: str) -> bool:
+  if not day_token or not archive_members_redis_enabled():
+    return False
+  client = get_archive_members_redis_client(required=False)
+  if client is None:
+    return False
+  return bool(client.exists(_archive_append_inflight_key(day_token)))
+
+
+def _populate_scan_should_defer(
+    keys: ArchiveMembersRedisKeys,
+    sealed_path,
+) -> bool:
+  """Defer mutable-tar populate while ingest hot or archive append is in flight."""
+  day_token = keys.day_token
+  if not day_token or day_token == "unknown":
+    return False
+  if sealed_path:
+    return False
+  if ingest_tar_hot_for_day(day_token):
+    return True
+  return archive_append_inflight_for_day(day_token)
 
 
 def set_daily_tar_restore_in_progress(

@@ -1324,3 +1324,181 @@ def test_member_match_degraded_routes_to_populate_wait(
   )
   assert matched is True
   assert request_calls["n"] == 1
+
+
+def test_populate_source_decision_only_lock_winner_logs(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  """Lock winner alone logs populate_source_decision (not every racing waiter)."""
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  decision_logs = []
+
+  def _capture_decision(*args, **kwargs):
+    decision_logs.append(args)
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers"
+      "._log_populate_source_decision",
+      _capture_decision,
+  )
+  barrier = threading.Barrier(4)
+  scan_calls = {"n": 0}
+  scan_gate = threading.Lock()
+  source_decision = {
+      "day_token": keys.day_token,
+      "tar_path": str(tmp_path / "day.tar"),
+      "zst_path": "",
+      "gz_path": "",
+      "sealed_path": "",
+  }
+
+  def _slow_scan(on_member):
+    with scan_gate:
+      scan_calls["n"] += 1
+    time.sleep(0.08)
+    on_member("host/a", 10)
+    return True, False
+
+  def _run():
+    barrier.wait()
+    populate_archive_members_redis(
+        keys, _slow_scan, source_decision=source_decision,
+    )
+
+  threads = [threading.Thread(target=_run) for _ in range(4)]
+  for thread in threads:
+    thread.start()
+  for thread in threads:
+    thread.join(timeout=5)
+  assert scan_calls["n"] == 1
+  assert len(decision_logs) == 1
+
+def test_identity_drift_rate_limited_per_day(monkeypatch):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      _IDENTITY_DRIFT_LOG_STATE,
+      _log_identity_drift_if_allowed,
+  )
+
+  _IDENTITY_DRIFT_LOG_STATE.clear()
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      "._IDENTITY_DRIFT_LOG_INTERVAL_S",
+      0.05,
+  )
+  logs = []
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis.log_print",
+      lambda msg, **kw: logs.append(msg),
+  )
+  day = "2026-06-07"
+  _log_identity_drift_if_allowed(day, "from-a", "to-b")
+  _log_identity_drift_if_allowed(day, "from-c", "to-d")
+  _log_identity_drift_if_allowed(day, "from-e", "to-f")
+  drift_logs = [line for line in logs if "identity_drift" in line]
+  assert len(drift_logs) == 1
+  time.sleep(0.06)
+  _log_identity_drift_if_allowed(day, "from-g", "to-h")
+  drift_logs = [line for line in logs if "identity_drift" in line]
+  assert len(drift_logs) == 2
+  assert "suppressed_n=2" in drift_logs[1]
+
+
+def test_tar_populate_eof_during_append_does_not_set_day_skip(
+    _redis_test_env, tmp_path,
+):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      mark_archive_day_ingest_skip_and_raise,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      set_archive_append_inflight,
+  )
+
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  set_archive_append_inflight(keys.day_token, reason="archive_job")
+
+  with pytest.raises(
+      ArchiveMembersRedisUnavailableError,
+      match="transient tar populate EOF",
+  ):
+    mark_archive_day_ingest_skip_and_raise(
+        "",
+        keys,
+        _redis_test_env,
+        EOFError("unexpected end of data"),
+    )
+  assert get_archive_day_ingest_skip(keys, client=_redis_test_env) is None
+
+
+def test_populate_defers_tar_scan_while_archive_append_inflight(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      set_archive_append_inflight,
+  )
+
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  set_archive_append_inflight(keys.day_token, reason="archive_job")
+  scan_calls = {"n": 0}
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser"
+      ".get_sync_archive_members_redis_populate_lock_seconds",
+      lambda: 0.15,
+  )
+
+  def _scan(on_member):
+    scan_calls["n"] += 1
+    on_member("host/a", 1)
+    return True, False
+
+  with pytest.raises(ArchiveMembersRedisUnavailableError, match="populate lock"):
+    populate_archive_members_redis(keys, _scan, sealed_path=None)
+  assert scan_calls["n"] == 0
+
+
+def test_populate_completes_after_tar_append_merge(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  """Waiters succeed after archive job ends and merge warms Redis."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      clear_archive_append_inflight,
+      set_archive_append_inflight,
+      wait_for_complete_members,
+  )
+
+  day = "2026-06-07"
+  tar = tmp_path / ("%s.tar" % day)
+  zst = tmp_path / ("%s.tar.zst" % day)
+  tar.write_bytes(b"v1")
+  canonical = str(zst)
+  keys_t1 = build_archive_members_redis_keys(
+      _daily_archive_members_cache_key(canonical),
+  )
+  set_archive_append_inflight(day, reason="archive_job")
+  result = {"members": None, "exc": None}
+
+  def _waiter():
+    try:
+      result["members"] = wait_for_complete_members(
+          keys_t1, canonical=canonical,
+      )
+    except Exception as exc:
+      result["exc"] = exc
+
+  def _finish_append():
+    time.sleep(0.08)
+    clear_archive_append_inflight(day)
+    tar.write_bytes(b"v1-appended")
+    keys_t2 = build_archive_members_redis_keys(
+        _daily_archive_members_cache_key(canonical),
+    )
+    _redis_test_env.hset(keys_t2.hash_key, mapping={"host/a": "10"})
+    _redis_test_env.set(keys_t2.complete_key, "1")
+
+  t_wait = threading.Thread(target=_waiter)
+  t_finish = threading.Thread(target=_finish_append)
+  t_wait.start()
+  t_finish.start()
+  t_wait.join(timeout=3)
+  t_finish.join(timeout=3)
+  assert result["exc"] is None
+  assert result["members"] == {"host/a": 10}

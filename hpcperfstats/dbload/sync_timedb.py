@@ -3813,6 +3813,7 @@ def _archive_stats_files_body(archive_info):
   job_start = time.monotonic()
   job_begin_logged = False
   members_source = "tar_scan"
+  append_inflight_set = False
 
   def _ensure_job_begin_logged(source):
     nonlocal job_begin_logged
@@ -3824,6 +3825,11 @@ def _archive_stats_files_body(archive_info):
     stats_files, _skipped = filter_paths_head_ingested(stats_files, log_fn=log_print)
     if not stats_files:
       return ArchiveAppendOutcome(skip_finalize_invalidate=True)
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+        set_archive_append_inflight,
+    )
+    set_archive_append_inflight(day_token, reason="archive_job")
+    append_inflight_set = True
     existing_members = {}
     zst_path, gz_path = compressed_sibling_paths(archive_tar_fname)
     sealed_exists = os.path.isfile(zst_path) or os.path.isfile(gz_path)
@@ -4016,6 +4022,11 @@ def _archive_stats_files_body(archive_info):
       )
     return ArchiveAppendOutcome(skip_finalize_invalidate=True)
   finally:
+    if append_inflight_set:
+      from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+          clear_archive_append_inflight,
+      )
+      clear_archive_append_inflight(day_token)
     if job_begin_logged:
       log_print(
           "INFO: archive_job_done day=%s elapsed_s=%.3f"

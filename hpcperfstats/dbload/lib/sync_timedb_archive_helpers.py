@@ -3200,6 +3200,8 @@ def mark_archive_day_ingest_skip_and_raise(sealed_path, keys, client, stream_err
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       ArchiveDayIngestSkipError,
       ArchiveMembersRedisUnavailableError,
+      archive_append_inflight_for_day,
+      ingest_tar_hot_for_day,
       set_archive_day_ingest_skip,
   )
 
@@ -3212,6 +3214,35 @@ def mark_archive_day_ingest_skip_and_raise(sealed_path, keys, client, stream_err
         "transient fnctl read lock timeout during sealed populate day=%s path=%s"
         % (keys.day_token, sealed_path or ""),
     )
+  if kind == SKIP_KIND_TAR_TRUNCATED and not (
+      sealed_path and os.path.isfile(sealed_path)
+  ):
+    day_token = keys.day_token
+    tar_path = ""
+    if day_token and day_token != "unknown":
+      daily_dir = cfg.get_daily_archive_dir_path()
+      if daily_dir:
+        tar_path = os.path.join(daily_dir, "%s.tar" % day_token)
+    if day_token and (
+        ingest_tar_hot_for_day(day_token)
+        or archive_append_inflight_for_day(day_token)
+    ):
+      raise ArchiveMembersRedisUnavailableError(
+          "transient tar populate EOF during hot/append activity day=%s"
+          % day_token,
+      )
+    if tar_path and os.path.isfile(tar_path):
+      try:
+        if verify_tar_archive_readable(tar_path):
+          raise ArchiveMembersRedisUnavailableError(
+              "transient tar populate EOF while mutable tar readable day=%s"
+              % day_token,
+          )
+      except TimeoutError:
+        raise ArchiveMembersRedisUnavailableError(
+            "transient tar populate EOF during fnctl contention day=%s"
+            % day_token,
+        ) from None
   resolved_sealed = sealed_path or _resolve_sealed_path_for_day_token(keys.day_token)
   set_archive_day_ingest_skip(client, keys, kind, detail)
   _cache_ingest_skipped_calendar_day(
@@ -3820,6 +3851,22 @@ def _clear_stale_day_ingest_skip_if_tar_repaired(
   )
 
 
+def _build_populate_source_decision(
+    day_token,
+    tar_path,
+    zst_path,
+    gz_path,
+    sealed_path,
+):
+  return {
+      "day_token": day_token,
+      "tar_path": tar_path,
+      "zst_path": zst_path,
+      "gz_path": gz_path,
+      "sealed_path": sealed_path or "",
+  }
+
+
 def _populate_redis_members_from_sealed_scan(sealed_path, cache_key, tar_path=None):
   _ensure_populate_scan_allowed()
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
@@ -3829,6 +3876,9 @@ def _populate_redis_members_from_sealed_scan(sealed_path, cache_key, tar_path=No
 
   keys = build_archive_members_redis_keys(cache_key)
   canonical = cache_key[0] if cache_key else sealed_path
+  if tar_path is None:
+    tar_path = daily_tar_path_from_compressed(canonical)
+  zst_path, gz_path = compressed_sibling_paths(tar_path)
 
   def _scan_fn(on_member):
     readable, _members, saw_duplicates, stream_error = (
@@ -3842,7 +3892,14 @@ def _populate_redis_members_from_sealed_scan(sealed_path, cache_key, tar_path=No
 
   members = None
   try:
-    members = populate_archive_members_redis(keys, _scan_fn, sealed_path=sealed_path)
+    members = populate_archive_members_redis(
+        keys,
+        _scan_fn,
+        sealed_path=sealed_path,
+        source_decision=_build_populate_source_decision(
+            keys.day_token, tar_path, zst_path, gz_path, sealed_path,
+        ),
+    )
   except Exception as exc:
     from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
         ArchiveDayIngestSkipError,
@@ -3897,6 +3954,8 @@ def _populate_redis_members_from_tar_scan(tar_path, cache_key):
 
   keys = build_archive_members_redis_keys(cache_key)
   canonical = cache_key[0] if cache_key else tar_path
+  zst_path, gz_path = compressed_sibling_paths(tar_path)
+  sealed_path = _resolve_sealed_daily_archive_path(canonical)
 
   def _scan_fn(on_member):
     if not os.path.isfile(tar_path):
@@ -3931,6 +3990,9 @@ def _populate_redis_members_from_tar_scan(tar_path, cache_key):
       keys,
       _scan_fn,
       sealed_path=None,
+      source_decision=_build_populate_source_decision(
+          keys.day_token, tar_path, zst_path, gz_path, sealed_path,
+      ),
   )
   if members is not None:
     _record_archive_members_populate_source(canonical, "tar_populated")
@@ -3997,9 +4059,6 @@ def execute_archive_members_populate_for_canonical(canonical):
     zst_path, gz_path = compressed_sibling_paths(tar_path)
     _clear_stale_day_ingest_skip_if_tar_repaired(
         client, keys, tar_path, zst_path, gz_path, sealed_path,
-    )
-    _log_populate_source_decision(
-        keys.day_token, tar_path, zst_path, gz_path, sealed_path,
     )
     use_tar, _reason = _populate_should_use_tar_scan(
         tar_path, zst_path, gz_path, sealed_path,
