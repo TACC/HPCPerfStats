@@ -432,6 +432,21 @@ class DayCloseManifestCoordinator:
       disqualified_daily_tars=None,
   ) -> bool:
     """Enqueue janitor ``DAY_CLOSE`` debt for ``tar_path`` (single-flight per tar)."""
+    ok, _reason = self.enqueue_day_close_result(
+        tar_path,
+        reason=reason,
+        disqualified_daily_tars=disqualified_daily_tars,
+    )
+    return ok
+
+  def enqueue_day_close_result(
+      self,
+      tar_path: str,
+      reason: str = "",
+      *,
+      disqualified_daily_tars=None,
+  ) -> tuple[bool, str]:
+    """Like ``enqueue_day_close`` but returns ``(ok, reject_reason)``."""
     return self._enqueue_day_close_impl(
         tar_path,
         reason=reason,
@@ -444,18 +459,18 @@ class DayCloseManifestCoordinator:
       *,
       reason: str,
       disqualified_daily_tars=None,
-  ) -> bool:
+  ) -> tuple[bool, str]:
     tar_norm = os.path.normpath(tar_path or "")
     if not tar_norm:
-      return False
+      return False, ""
     if self.is_complete(tar_norm):
-      return True
+      return True, "already_complete"
     if disqualified_daily_tars is None:
       disqualified = self.get_disqualified_daily_tars()
     else:
       disqualified = disqualified_daily_tars
     if tar_norm in disqualified:
-      return False
+      return False, "disqualified"
     if self.submit_eligible_fn is not None:
       try:
         eligible, skip_reason = self.submit_eligible_fn(tar_norm)
@@ -468,7 +483,7 @@ class DayCloseManifestCoordinator:
               % (tar_norm, skip_reason),
               flush=True,
           )
-        return False
+        return False, skip_reason or "submit_ineligible"
     inflight: Set[str] = set()
     if self.get_inflight_tar_paths_fn is not None:
       try:
@@ -479,9 +494,9 @@ class DayCloseManifestCoordinator:
       entry = self._manifest.get("entries", {}).get(tar_norm)
       if _is_day_close_pipeline_pending_entry(entry):
         if tar_norm in inflight:
-          return True
+          return True, "already_inflight"
       elif tar_norm in inflight:
-        return True
+        return True, "already_inflight"
     enqueued = False
     if self.enqueue_day_close_fn is not None:
       try:
@@ -489,7 +504,7 @@ class DayCloseManifestCoordinator:
       except Exception:
         enqueued = False
     if not enqueued:
-      return False
+      return False, "already_on_debt_heap"
     with self._lock:
       self._manifest.setdefault("entries", {})[tar_norm] = {
           "tar_path": tar_norm,
@@ -502,7 +517,7 @@ class DayCloseManifestCoordinator:
         "janitor: day_close enqueue tar=%s reason=%s" % (tar_norm, reason),
         flush=True,
     )
-    return True
+    return True, reason
 
   def _touch_manifest_locked(self, stage: str, *, tar_norm: str = "") -> None:
     self._manifest["last_progress"] = stage

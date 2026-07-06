@@ -10,7 +10,7 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import Enum
-from typing import Any, Callable, Dict, Optional, Set
+from typing import Any, Callable, Dict, Optional, Set, Tuple
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from django.db import close_old_connections
@@ -62,6 +62,7 @@ from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
 )
 
 _LOCK_CLEANUP_TAR_SENTINEL = "__lock_cleanup__"
+_TICK_WAIT_HEARTBEAT_SECONDS = 300.0
 
 
 class DebtKind(str, Enum):
@@ -370,12 +371,12 @@ class ArchiveJanitor:
       self._debt_heap = kept
       heapq.heapify(self._debt_heap)
 
-  def _enqueue_day_close_locked(self, tar_path: str, *, persist: bool = True):
+  def _enqueue_day_close_locked(self, tar_path: str, *, persist: bool = True) -> bool:
     tar_norm = os.path.normpath(tar_path) if tar_path else tar_path
     if not tar_norm or tar_norm == _LOCK_CLEANUP_TAR_SENTINEL:
-      return
+      return False
     if self._day_pipeline_queued_locked(tar_norm):
-      return
+      return False
     self._remove_day_pipeline_debts_for_tar_locked(tar_norm)
     key = (DebtKind.DAY_CLOSE.value, tar_norm)
     self._evict_lowest_priority_debt_if_full_locked()
@@ -390,14 +391,16 @@ class ArchiveJanitor:
     self._debt_seen.add(key)
     if persist:
       self._trim_heap_to_max_entries_locked()
+    return True
 
-  def _enqueue_day_close(self, tar_path: str, *, persist: bool = True):
+  def _enqueue_day_close(self, tar_path: str, *, persist: bool = True) -> bool:
     with self._debt_lock:
-      self._enqueue_day_close_locked(tar_path, persist=False)
+      added = self._enqueue_day_close_locked(tar_path, persist=False)
       if persist:
         self._trim_heap_to_max_entries_locked()
     if persist:
       self._persist_hints()
+    return added
 
   def _enqueue_debt_locked(self, kind: DebtKind, tar_path: str, *, persist: bool = True):
     if kind in _DAY_PIPELINE_KINDS:
@@ -801,15 +804,22 @@ class ArchiveJanitor:
       *,
       reason: str,
       disqualified: Optional[Set[str]] = None,
-  ) -> bool:
+  ) -> Tuple[bool, str]:
     """Enqueue manifest + ``DAY_CLOSE`` debt when checkpoint-complete eligibility passes."""
     coord = self.day_close_manifest_coordinator
     if coord is not None:
-      return coord.enqueue_day_close(
+      if hasattr(coord, "enqueue_day_close_result"):
+        return coord.enqueue_day_close_result(
+            tar_norm,
+            reason,
+            disqualified_daily_tars=disqualified,
+        )
+      ok = coord.enqueue_day_close(
           tar_norm,
           reason,
           disqualified_daily_tars=disqualified,
       )
+      return ok, ("" if ok else "enqueue_rejected")
     return self._enqueue_day_close_debt_if_eligible(
         tar_norm,
         reason=reason,
@@ -822,10 +832,10 @@ class ArchiveJanitor:
       *,
       reason: str,
       disqualified: Optional[Set[str]] = None,
-  ) -> bool:
+  ) -> Tuple[bool, str]:
     tar_norm = os.path.normpath(tar_norm or "")
     if not tar_norm:
-      return False
+      return False, ""
     inputs = self._get_maintenance_pass_candidate_inputs()
     if disqualified is None:
       disqualified = set(self.get_disqualified_daily_tars())
@@ -856,10 +866,10 @@ class ArchiveJanitor:
             % (tar_norm, skip_reason),
             flush=True,
         )
-      return False
+      return False, skip_reason or "submit_ineligible"
     with self._debt_lock:
       if self._day_pipeline_queued_locked(tar_norm):
-        return False
+        return False, "already_on_debt_heap"
       self._enqueue_day_close_locked(tar_norm, persist=False)
       self._trim_heap_to_max_entries_locked()
     self._persist_hints()
@@ -869,7 +879,7 @@ class ArchiveJanitor:
           % (tar_norm, reason),
           flush=True,
       )
-    return True
+    return True, reason
 
   def get_day_phases_snapshot(self) -> Dict[str, Any]:
     with self._hints_state_lock:
@@ -900,6 +910,42 @@ class ArchiveJanitor:
 
   def _day_close_inflight_tar_paths(self) -> Set[str]:
     return self._day_close_active_tar_paths()
+
+  def _format_tick_waiting_tar_paths(self, in_flight: Dict[Any, DayDebt]) -> str:
+    paths = sorted(
+        {
+            os.path.normpath(debt.tar_path)
+            for debt in in_flight.values()
+            if debt and debt.tar_path
+        }
+    )
+    return ",".join(paths) if paths else "-"
+
+  def _log_tick_waiting_heartbeat(
+      self,
+      in_flight: Dict[Any, DayDebt],
+      last_heartbeat: list,
+  ) -> None:
+    if not in_flight or not self.log_fn:
+      return
+    now = time.monotonic()
+    if (
+        last_heartbeat
+        and last_heartbeat[0] is not None
+        and (now - last_heartbeat[0]) < _TICK_WAIT_HEARTBEAT_SECONDS
+    ):
+      return
+    self.log_fn(
+        "janitor: tick waiting in_flight=%d debt_remaining=%d tars=%s"
+        % (
+            len(in_flight),
+            self.debt_depth(),
+            self._format_tick_waiting_tar_paths(in_flight),
+        ),
+        flush=True,
+    )
+    if last_heartbeat:
+      last_heartbeat[0] = now
 
   def _finalize_day_close_manifest(self, tar_norm: str) -> None:
     coord = self.day_close_manifest_coordinator
@@ -963,6 +1009,7 @@ class ArchiveJanitor:
     disqualified = set(self.get_disqualified_daily_tars())
     newly_queued: Set[str] = set()
     skipped_inflight = 0
+    skipped_eligible = 0
     ready_for_enqueue_n = 0
     discover_reason = "discover_ready_%s" % reason
     slot_budget_n = None if slot_budget is None else max(0, int(slot_budget))
@@ -978,14 +1025,23 @@ class ArchiveJanitor:
       if slot_budget_n is not None and len(newly_queued) >= slot_budget_n:
         continue
       tar_norm = os.path.normpath(entry["tar_path"])
-      if self._enqueue_eligible_day_close(
+      ok, reject_reason = self._enqueue_eligible_day_close(
           tar_norm,
           reason=discover_reason,
           disqualified=disqualified,
-      ):
+      )
+      if ok:
         newly_queued.add(tar_norm)
         active.add(tar_norm)
-    if newly_queued or skipped_inflight or ready_for_enqueue_n:
+      else:
+        skipped_eligible += 1
+        if reject_reason and self.log_fn:
+          self.log_fn(
+              "janitor: discover_enqueue_reject tar=%s reason=%s"
+              % (tar_norm, reject_reason),
+              flush=True,
+          )
+    if newly_queued or skipped_inflight or ready_for_enqueue_n or skipped_eligible:
       breakdown: Dict[str, int] = {}
       if coord is not None and hasattr(coord, "discover_inflight_breakdown"):
         try:
@@ -1000,12 +1056,13 @@ class ArchiveJanitor:
         log_suffix = " free_slots=%d" % free_slots
       self.log_fn(
           "janitor: discover_ready_day_close enqueued=%d skipped_inflight=%d "
-          "ready_for_enqueue_n=%d max_inflight=%d active_workers=%d "
+          "skipped_eligible=%d ready_for_enqueue_n=%d max_inflight=%d active_workers=%d "
           "deferred_waiting=%d debt_heap=%d manifest_pending=%d "
           "discover_cap=%d worker_occupancy=%d reason=%s%s"
           % (
               len(newly_queued),
               skipped_inflight,
+              skipped_eligible,
               ready_for_enqueue_n,
               max_inflight,
               breakdown.get("active_workers_n", len(live_workers)),
@@ -1027,7 +1084,7 @@ class ArchiveJanitor:
     if not tar_norm:
       return False
     submit_reason = "day_ingest_complete:%s" % reason
-    submitted = self._enqueue_eligible_day_close(
+    submitted, _reject = self._enqueue_eligible_day_close(
         tar_norm,
         reason=submit_reason,
     )
@@ -1055,7 +1112,7 @@ class ArchiveJanitor:
           tar_norm,
           reason=submit_reason,
           disqualified=disqualified,
-      ):
+      )[0]:
         newly_queued.add(tar_norm)
         submitted += 1
     self._log_day_close_candidate_report(
@@ -1430,14 +1487,17 @@ class ArchiveJanitor:
             flush=True,
         )
       else:
+        tick_wait_heartbeat: list = [None]
         while in_flight:
           timeout = max(0.05, budget_deadline - time.time())
+          wait_timeout = min(timeout, _TICK_WAIT_HEARTBEAT_SECONDS)
           done, _pending = wait(
               list(in_flight.keys()),
-              timeout=timeout,
+              timeout=wait_timeout,
               return_when=FIRST_COMPLETED,
           )
           if not done:
+            self._log_tick_waiting_heartbeat(in_flight, tick_wait_heartbeat)
             if not _budget_ok():
               self._budget_throttled_count += 1
               budget_throttled_this_tick = True
@@ -1491,34 +1551,45 @@ class ArchiveJanitor:
             break
 
         # Budget expired or idle: drain remaining in-flight without new pops.
-        for future, debt in list(in_flight.items()):
-          try:
-            success = future.result()
-          except Exception as exc:
-            self.log_fn(
-                "Archive janitor debt error kind=%s tar=%s: %s\n%s"
-                % (
-                    debt.kind.value,
-                    debt.tar_path,
-                    exc,
-                    traceback.format_exc(),
-                ),
-                flush=True,
-            )
-            self._enqueue_debt(debt.kind, debt.tar_path, persist=False)
-            tick_mutated = True
+        drain_heartbeat: list = [None]
+        pending = dict(in_flight)
+        while pending:
+          done, _not_done = wait(
+              list(pending.keys()),
+              timeout=_TICK_WAIT_HEARTBEAT_SECONDS,
+              return_when=FIRST_COMPLETED,
+          )
+          if not done:
+            self._log_tick_waiting_heartbeat(pending, drain_heartbeat)
             continue
-          finally:
+          for future in done:
+            debt = pending.pop(future)
             with self._day_close_in_flight_lock:
               self._day_close_in_flight.pop(future, None)
-          if success:
-            tick_mutated = True
-            tick_made_progress = True
-            if debt.kind == DebtKind.DAY_CLOSE:
-              days_processed += 1
-          else:
-            self._enqueue_debt(debt.kind, debt.tar_path, persist=False)
-            tick_mutated = True
+            try:
+              success = future.result()
+            except Exception as exc:
+              self.log_fn(
+                  "Archive janitor debt error kind=%s tar=%s: %s\n%s"
+                  % (
+                      debt.kind.value,
+                      debt.tar_path,
+                      exc,
+                      traceback.format_exc(),
+                  ),
+                  flush=True,
+              )
+              self._enqueue_debt(debt.kind, debt.tar_path, persist=False)
+              tick_mutated = True
+              continue
+            if success:
+              tick_mutated = True
+              tick_made_progress = True
+              if debt.kind == DebtKind.DAY_CLOSE:
+                days_processed += 1
+            else:
+              self._enqueue_debt(debt.kind, debt.tar_path, persist=False)
+              tick_mutated = True
         in_flight.clear()
 
         if tick_mutated:

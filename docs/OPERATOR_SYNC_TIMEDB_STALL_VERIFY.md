@@ -245,6 +245,32 @@ grep 'janitor: tick budget_exit debt_remaining=' /tmp/pipeline-full.log | tail -
 
 **Pre-fix failure signature (hpcperfstats03 finding #4):** `discover_ready_day_close enqueued=0 skipped_inflight=8 ready_for_enqueue_n=8 max_inflight=4 active_workers=0 debt_heap=4 worker_occupancy=4 manifest_pending=0` — **`worker_occupancy` tracks `debt_heap`**, not live workers.
 
+### T1 verify — discover silent reject + budget-wait heartbeat (RC-5, 2026-07)
+
+After deploy of **discover enqueue reject logging** and **tick wait heartbeat**, confirm operators can distinguish **saturated pipeline** (busy workers) from **silent enqueue reject** and **janitor budget-wait**.
+
+```bash
+cd HPCPerfStats
+
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+  grep -E 'discover_ready_day_close|discover_enqueue_reject|skipped_eligible|janitor: tick (budget_exit|waiting)|Archive janitor tick done' | \
+  tail -60
+```
+
+**Pass (T1):**
+
+- When **`ready_for_enqueue_n>0`**, **`enqueued=0`**, and **`skipped_inflight=0`** with **`free_slots>0`**: grep shows **`discover_enqueue_reject`** with explicit **`reason=`** (for example **`already_on_debt_heap`**, **`checkpoint_incomplete`**, **`disqualified`**) and discover summary includes **`skipped_eligible=N`**.
+- After **`janitor: tick budget_exit`**, either **`Archive janitor tick done`** within minutes **or** **`janitor: tick waiting in_flight=N debt_remaining=M tars=…`** every **~5 minutes** while day-close workers remain busy (long **`pre_seal_verify`** / seal is **not** a hang by itself).
+
+**RC-5 failure signature (pre-fix):** `ready_for_enqueue_n=2 enqueued=0 skipped_inflight=0 free_slots=1` with **no** `discover_enqueue_reject` lines — operator cannot tell reject reason from discover summary alone.
+
+| Observation | Likely cause | Action |
+|-------------|--------------|--------|
+| `enqueued=0`, `skipped_inflight=0`, `skipped_eligible>0`, `discover_enqueue_reject reason=already_on_debt_heap` | Classify **`ready_for_enqueue`** race vs debt heap | Normal if day already queued; watch for duplicate heap push (should not occur) |
+| `discover_enqueue_reject reason=checkpoint_incomplete` on **`ready_for_enqueue`** days | Classify/submit gate mismatch | File follow-up (Fix B); ingest head may still be incomplete |
+| `budget_exit` then silence >5 min, no `tick waiting`, py-spy stuck in same frame | Worker hang (RC-6) | py-spy + targeted hang fix |
+| `budget_exit` + periodic `tick waiting` + active day-close stacks | Saturated pipeline (normal) | Wait; no redeploy required |
+
 ## Log source attribution (`[sync_timedb:role]`)
 
 After deploy of log-role prefixes (2026-06), pipeline lines identify **which actor** emitted them. Greps for **`[sync_timedb]`** still match (substring).
