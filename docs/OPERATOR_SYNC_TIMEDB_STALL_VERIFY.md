@@ -48,6 +48,22 @@ grep -c 'oldest_day_chunk_gate_stall' /tmp/pipeline-full.log
 grep -c 'ingest_stall_watchdog' /tmp/pipeline-full.log
 ```
 
+### Stats file disappeared vs day-close delete (delete race)
+
+When MainThread logs **`fail_reason=Stats file disappeared`** while day-close workers log **`removing stats file (day raw removal preflight)`** for the same path, that is the **day-close delete race** signature (manifest-verified path deleted while ingest still dispatches it). After fix deploy, expect **`janitor: day_close delete defer path=… reason=active_ingest`** instead of delete lines for active-ingest paths.
+
+```bash
+PATH_SUFFIX='1780924752'   # filename epoch or path fragment
+$COMPOSE logs "$SVC" 2>&1 | tee /tmp/pipeline-full.log
+
+grep -E "${PATH_SUFFIX}|removing stats file|Stats file disappeared|day_close delete defer|chunk dispatch begin" /tmp/pipeline-full.log | tail -80
+
+grep -c 'Stats file disappeared' /tmp/pipeline-full.log
+grep -c 'day_close delete defer' /tmp/pipeline-full.log
+```
+
+**Pass (post-fix):** `Stats file disappeared` rate drops; correlated paths show **delete defer** or no delete line while chunk dispatch is active. **Fail:** same path shows delete preflight then immediate `Stats file disappeared` at `elapsed_s=0.0`.
+
 ### Checkpoint / janitor census (read-only exec)
 
 ```bash

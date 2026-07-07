@@ -553,3 +553,57 @@ def test_arch_day_close_verify_before_seal():
   seal_idx = source.index("_seal_one_day")
   post_idx = source.index("post_seal_verify")
   assert pre_idx < seal_idx < post_idx
+
+
+def test_arch_apply_batch_delete_rechecks_quarantine_skip_paths():
+  """Delete must re-check quarantine skip immediately before os.remove."""
+  from hpcperfstats.dbload.lib import sync_timedb_day_raw_removal as drm
+
+  source = inspect.getsource(drm._DayRawRemovalState.apply_batch_delete)
+  skip_idx = source.index("get_quarantine_skip_paths")
+  remove_idx = source.index("os.remove")
+  assert skip_idx < remove_idx
+  assert "delete_deferred" in source
+  assert "active_ingest" in source
+
+
+def test_arch_delete_disqualified_uses_full_inflight_not_sample():
+  """Tar delete block must union all in-flight ingest paths, not sample_in_flight(10)."""
+  source = inspect.getsource(st.run_sync_timedb_supervisor_loop)
+  delete_fn = source.split("def _janitor_delete_disqualified_daily_tars", 1)[1]
+  delete_fn = delete_fn.split("\n  def ", 1)[0]
+  assert "sample_in_flight" not in delete_fn
+  assert "_get_active_ingest_protected_paths" in delete_fn
+  assert "_capture_disqualification_inputs" in delete_fn
+
+
+def test_arch_quarantine_skip_includes_handoff_and_chunk_dispatch():
+  """Quarantine skip must cover handoff, full tracker in-flight, and chunk dispatch paths."""
+  source = inspect.getsource(st.run_sync_timedb_supervisor_loop)
+  skip_fn = source.split("def _get_quarantine_skip_paths", 1)[1]
+  skip_fn = skip_fn.split("\n  def ", 1)[0]
+  assert "_get_active_ingest_protected_paths" in skip_fn
+  protected_fn = source.split("def _get_active_ingest_protected_paths", 1)[1]
+  protected_fn = protected_fn.split("\n  def ", 1)[0]
+  assert "handoff_priority_paths" in protected_fn
+  assert "all_in_flight_paths" in protected_fn
+  assert "chunk_dispatch_paths" in protected_fn
+
+
+def test_arch_janitor_defers_delete_when_chunk_day_overlaps():
+  """Delete phase honors chunk_in_progress_day defer from cooperation helper."""
+  from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
+      daily_tar_janitor_mutation_should_defer,
+  )
+
+  defer, reason = daily_tar_janitor_mutation_should_defer(
+      "/tmp/daily/2026-06-05.tar",
+      tgz_archive_dir="/tmp/daily",
+      disqualified_daily_tars=set(),
+      delete_disqualified_daily_tars=set(),
+      phase="delete",
+      chunk_in_progress=True,
+      chunk_day_tokens={"2026-06-05"},
+  )
+  assert defer is True
+  assert reason == "chunk_in_progress_day"

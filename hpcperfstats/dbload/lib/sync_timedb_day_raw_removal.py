@@ -1211,6 +1211,19 @@ class _DayRawRemovalState:
           entry["status"] = "skipped_fingerprint_changed"
           entry["reason"] = "fingerprint_changed_before_delete"
           continue
+      skip_paths = set(self.get_quarantine_skip_paths() or ())
+      if path in skip_paths:
+        if self.log_fn:
+          self.log_fn(
+              "janitor: day_close delete defer path=%s reason=active_ingest"
+              % path,
+              flush=True,
+          )
+        with self._lock:
+          entry = entries.get(path)
+          if isinstance(entry, dict):
+            entry["delete_deferred"] = "active_ingest"
+        continue
       if self.log_fn:
         self.log_fn(
             "removing stats file (day raw removal preflight): " + path,

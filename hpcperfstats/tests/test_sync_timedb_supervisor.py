@@ -1696,6 +1696,15 @@ def test_ingest_in_flight_tracker_sample_and_complete():
     tracker.complete('/a/two')
     assert tracker.sample_in_flight(max_n=10) == ['/a/one', '/a/three']
 
+
+def test_ingest_in_flight_tracker_all_in_flight_paths_not_sample_capped():
+    paths = ['/a/%02d' % i for i in range(15)]
+    tracker = st._IngestPoolInFlightTracker(paths)
+    assert len(tracker.sample_in_flight(max_n=10)) == 10
+    assert len(tracker.all_in_flight_paths()) == 15
+    assert tracker.all_in_flight_paths() == set(paths)
+
+
 def test_parse_payload_skips_archival_when_db_complete_and_in_tar(monkeypatch):
     target = '/tmp/stats-in-tar'
     monkeypatch.setattr(st, 'close_old_connections', lambda: None)

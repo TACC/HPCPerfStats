@@ -343,6 +343,9 @@ class _IngestPoolInFlightTracker:
   def batch_seen_paths(self):
     return set(self._batch_seen)
 
+  def all_in_flight_paths(self):
+    return set(self._pending)
+
   def sample_in_flight(self, max_n=10):
     return sorted(self._pending)[: max(0, int(max_n))]
 
@@ -4285,8 +4288,19 @@ def run_sync_timedb_supervisor_loop(
   day_close_rescan_pending = False
   chunk_in_progress = False
   active_chunk_ingest_tracker = None
+  chunk_dispatch_paths = set()
   deferred_archive_finalize_prewarm_days = set()
   max_ingest_sort_epoch_by_tar: dict[str, int] = {}
+
+  def _get_active_ingest_protected_paths():
+    paths = set()
+    if handoff_priority_paths:
+      paths |= set(handoff_priority_paths)
+    if chunk_in_progress and active_chunk_ingest_tracker is not None:
+      paths |= active_chunk_ingest_tracker.all_in_flight_paths()
+    if chunk_dispatch_paths:
+      paths |= set(chunk_dispatch_paths)
+    return paths
 
   def _get_quarantine_skip_paths():
     captured = _capture_disqualification_inputs()
@@ -4296,6 +4310,7 @@ def run_sync_timedb_supervisor_loop(
       skip_paths |= set(paths)
     if day_raw_removal is not None:
       skip_paths |= day_raw_removal.paths_pending_delete()
+    skip_paths |= _get_active_ingest_protected_paths()
     return skip_paths
 
   startup_archive_scan = None
@@ -4331,20 +4346,15 @@ def run_sync_timedb_supervisor_loop(
 
   def _janitor_delete_disqualified_daily_tars():
     disqualified = _janitor_disqualified_daily_tars()
-    if handoff_priority_paths:
-      for path in handoff_priority_paths:
-        tar_path = daily_tar_path_for_stats_path(path, tgz_archive_dir)
-        if tar_path:
-          disqualified.add(os.path.normpath(tar_path))
-    for path in pending_stats_files:
+    captured = _capture_disqualification_inputs()
+    for path in captured["pending_stats_paths"]:
       tar_path = daily_tar_path_for_stats_path(path, tgz_archive_dir)
       if tar_path:
         disqualified.add(os.path.normpath(tar_path))
-    if chunk_in_progress and active_chunk_ingest_tracker is not None:
-      for path in active_chunk_ingest_tracker.sample_in_flight():
-        tar_path = daily_tar_path_for_stats_path(path, tgz_archive_dir)
-        if tar_path:
-          disqualified.add(os.path.normpath(tar_path))
+    for path in _get_active_ingest_protected_paths():
+      tar_path = daily_tar_path_for_stats_path(path, tgz_archive_dir)
+      if tar_path:
+        disqualified.add(os.path.normpath(tar_path))
     return disqualified
 
   def _rescan_processed_exclusions():
@@ -6379,6 +6389,11 @@ def run_sync_timedb_supervisor_loop(
               ),
               flush=True,
           )
+        chunk_dispatch_paths = {
+            os.path.normpath(p)
+            for p in stats_files_chunk
+            if p
+        }
         chunk_in_progress = True
         reconcile_refs["chunk_day_tokens"] = set(
             build_chunk_day_histogram(stats_files_chunk, tgz_archive_dir).keys(),
@@ -6627,6 +6642,7 @@ def run_sync_timedb_supervisor_loop(
 
         _flush_deferred_archive_finalize_prewarm()
         chunk_in_progress = False
+        chunk_dispatch_paths = set()
         reconcile_refs["chunk_day_tokens"] = set()
 
       _persist_dead_letters_if_needed(force=True)
@@ -6668,6 +6684,7 @@ def run_sync_timedb_supervisor_loop(
       connections.close_all()
   finally:
     chunk_in_progress = False
+    chunk_dispatch_paths = set()
     reconcile_refs["chunk_day_tokens"] = set()
     active_chunk_ingest_tracker = None
     preflight_shutdown_wait = not pool_worker_exit

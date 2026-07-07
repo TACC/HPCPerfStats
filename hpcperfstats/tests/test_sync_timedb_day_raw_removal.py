@@ -105,6 +105,53 @@ def test_day_raw_removal_apply_batch_delete_removes_verified_and_tar(
   assert coord.phase(tar_path) == PHASE_DONE
 
 
+def test_apply_batch_delete_skips_path_in_quarantine_skip_paths(tmp_path, monkeypatch):
+  """Verified path in quarantine skip set must not be deleted mid-chunk."""
+  day = datetime(2022, 6, 3)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  skip_path = str(seg)
+  log_lines = []
+  coord = _make_coordinator(
+      tmp_path,
+      get_quarantine_skip_paths=lambda: {skip_path},
+      log_fn=lambda msg, **kwargs: log_lines.append(msg),
+  )
+  monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0)
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(skip_path, zst, "verified", "verified")
+  with state._lock:
+    state._manifest["phase"] = PHASE_DELETING
+    state._manifest["verified_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+  deleted = state.apply_batch_delete()
+  assert deleted == 0
+  assert seg.is_file()
+  entry = state._manifest["entries"][skip_path]
+  assert entry.get("delete_deferred") == "active_ingest"
+  assert any("delete defer path=" in line and "active_ingest" in line for line in log_lines)
+
+
+def test_apply_batch_delete_deletes_when_not_in_skip_paths(tmp_path, monkeypatch):
+  day = datetime(2022, 6, 3)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(
+      tmp_path,
+      get_quarantine_skip_paths=lambda: {"/nonexistent/active/ingest/path"},
+  )
+  monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0)
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), zst, "verified", "verified")
+  with state._lock:
+    state._manifest["phase"] = PHASE_DELETING
+    state._manifest["verified_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+  deleted = state.apply_batch_delete()
+  assert deleted == 1
+  assert not seg.is_file()
+
+
 def test_day_raw_removal_apply_batch_delete_skips_fingerprint_changed(tmp_path, monkeypatch):
   day = datetime(2022, 6, 3)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
