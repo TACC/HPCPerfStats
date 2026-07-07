@@ -43,6 +43,19 @@ alwaysApply: false
 3. Run daemon; read `schema`/`fast`/`full` from shm.
 4. `build_message_expectations.py --capabilities … --shm-dir … --enable-slow-tier … --out expectations_<slug>.json`.
 5. `validate_shm_messages.py --capabilities … --manifest … --shm-dir …` (optional `--report` under `test_runs/monitor/`).
+6. **Cross-sample (L5):** `--cross-sample-check` captures two shm reads using **active** `/etc/hpcperfstats/hpcperfstats.conf` timing (debug RPM: `sample_freq=30`, `sample_freq_slow=60` per `hpcperfstats.spec`); checks header timestamp cadence and schema `E` counter monotonicity. CI: `--cross-sample-fixture-dir tests/expected/cross_sample_fixture`. Debug verify: `CROSS_SAMPLE_CHECK=1 ./scripts/rpm_debug_shm_verify.sh`.
+
+## Cross-sample flags
+
+| Flag | Purpose |
+|------|---------|
+| `--cross-sample-check` | Poll for second snapshot; cadence + E-key monotonic checks |
+| `--cross-sample-wait-full` | Also wait for `full` tier advance (default on with `CROSS_SAMPLE_CHECK=1`) |
+| `--conf PATH` | Override active conf (default: discover from running daemon / systemd) |
+| `--cross-sample-fixture-dir` | Deterministic `t0/`/`t1/` + `fixture_timing.json` (CI) |
+| `--strict-cross-sample` | Promote cadence/monotonic WARN to FAIL |
+
+Debug RPM installed conf is **never** the git `src/hpcperfstats.conf` template (600s slow tier); validator reads the installed file or daemon `-c` path.
 
 ## Tests
 

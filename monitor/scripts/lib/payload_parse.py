@@ -57,6 +57,23 @@ def rows_by_type(
     return out
 
 
+def metric_value_at_key(
+    row_values: list[str],
+    key_names: list[str],
+    key: str,
+) -> int | None:
+    try:
+        idx = key_names.index(key)
+    except ValueError:
+        return None
+    if idx >= len(row_values):
+        return None
+    try:
+        return int(row_values[idx])
+    except ValueError:
+        return None
+
+
 def sample_header_timestamp(body: str) -> float | None:
     lines = [ln for ln in body.splitlines() if ln.strip()]
     if not lines or not lines[0].lstrip()[0:1].isdigit():

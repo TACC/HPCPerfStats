@@ -11,20 +11,7 @@ from .host_live_probes import (
     probe_numa_mem_kb,
 )
 from .message_parse import schema_key_name
-from .payload_parse import rows_by_type, sample_header_timestamp
-
-
-def _row_val(row_values: list[str], key_names: list[str], key: str) -> int | None:
-    try:
-        idx = key_names.index(key)
-    except ValueError:
-        return None
-    if idx >= len(row_values):
-        return None
-    try:
-        return int(row_values[idx])
-    except ValueError:
-        return None
+from .payload_parse import metric_value_at_key, rows_by_type, sample_header_timestamp
 
 
 def run_live_spot_checks(
@@ -69,7 +56,7 @@ def run_live_spot_checks(
         key_names = info.get("schema_key_names") or []
         for row in full_rows["host_ps"]:
             for key in ("load_1", "load_5", "load_15"):
-                emitted = _row_val(row.values, key_names, key)
+                emitted = metric_value_at_key(row.values, key_names, key)
                 live = load_live.get(key)
                 if emitted is None or live is None:
                     continue
@@ -85,14 +72,14 @@ def run_live_spot_checks(
             info = manifest.get("types", {}).get("host_mem", {})
             key_names = info.get("schema_key_names") or []
             for key in ("MemTotal", "mem_total"):
-                emitted = _row_val(row.values, key_names, key)
+                emitted = metric_value_at_key(row.values, key_names, key)
                 live_val = live_mem.get("MemTotal")
                 if emitted is not None and live_val is not None:
                     slack = max(live_val // 20, 65536)
                     if abs(emitted - live_val) > slack:
                         warn(f"host_mem node{node} mem_total: emitted={emitted} live={live_val}")
             for key in ("MemFree", "mem_free"):
-                emitted = _row_val(row.values, key_names, key)
+                emitted = metric_value_at_key(row.values, key_names, key)
                 live_val = live_mem.get("MemFree")
                 if emitted is not None and live_val is not None:
                     slack = max(live_val // 10, 65536)
@@ -104,7 +91,7 @@ def run_live_spot_checks(
         key_names = info.get("schema_key_names") or []
         for row in full_rows["host_net"]:
             for key, stat in (("rx_bytes", "rx_bytes"), ("tx_bytes", "tx_bytes")):
-                emitted = _row_val(row.values, key_names, key)
+                emitted = metric_value_at_key(row.values, key_names, key)
                 live = probe_net_stat(row.dev, stat)
                 if emitted is not None and live is not None and live < emitted:
                     warn(f"host_net {row.dev} {key}: live={live} < emitted={emitted}")

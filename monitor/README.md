@@ -180,9 +180,14 @@ python3 scripts/validate_shm_messages.py \
 
 Validation layers: structural (schema keys, row width, tier markers, uint values,
 manifest device IDs, listend host contract), plausibility warnings
-(`--strict-plausibility` to fail), and live `/proc`/`/sys` spot checks on the
+(`--strict-plausibility` to fail), live `/proc`/`/sys` spot checks on the
 data host (`--live-spot-check`, default on live shm; `--no-live-spot-check` for
-fixtures). Optional emit drift check: copy shm files to
+fixtures), and optional **cross-sample** checks (`--cross-sample-check`:
+timestamp cadence vs active conf + monotonic `E` counters across two snapshots).
+Debug RPM installs `sample_freq=30` and `sample_freq_slow=60` in
+`/etc/hpcperfstats/hpcperfstats.conf` (see `hpcperfstats.spec` `hpc_debug_build`
+block); cross-sample wait bounds are derived from that file at validate time.
+Optional emit drift check: copy shm files to
 `tests/expected/shm_{schema,fast,full}_<slug>.txt` and pass
 `--golden-dir tests/expected`.
 
@@ -195,6 +200,12 @@ rpmbuild -ba ... hpc_debug_build 1 ... && ./scripts/rpm_debug_shm_verify.sh
 
 Run from `HPCPerfStats/monitor/`. No exports needed. Re-validate only:
 `SKIP_INSTALL=1 ./scripts/rpm_debug_shm_verify.sh`
+
+Cross-sample monotonic/cadence verify (debug RPM 30s/60s conf):
+
+```bash
+CROSS_SAMPLE_CHECK=1 ./scripts/rpm_debug_shm_verify.sh
+```
 
 **Capability slug** — `monitor-build-capabilities.json` includes
 `capability_slug` (compile flags + `slowtier0`/`slowtier1`). Golden fixtures

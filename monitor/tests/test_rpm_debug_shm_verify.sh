@@ -47,4 +47,10 @@ grep -q 'RPM %post' "${verify}" \
 grep -q 'resolve_dist_top' "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must default DIST_TOP from spec/configure" >&2; exit 1; }
 
+grep -q 'CROSS_SAMPLE_CHECK' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must honor CROSS_SAMPLE_CHECK" >&2; exit 1; }
+
+grep -q '\-\-cross-sample-check' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must pass --cross-sample-check when enabled" >&2; exit 1; }
+
 echo "test_rpm_debug_shm_verify passed"

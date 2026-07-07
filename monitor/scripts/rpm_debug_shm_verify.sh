@@ -8,6 +8,7 @@
 #           SKIP_INSTALL=1, SKIP_SHM_LS=1, FAST (default 30), FULL (default 60),
 #           POST_INSTALL_SLEEP_SECONDS (defaults to FULL), WAIT_SHM_SECONDS,
 #           STRICT_LIVE_SPOT_CHECK=1, STRICT_PLAUSIBILITY=1, GOLDEN_DIR
+#           CROSS_SAMPLE_CHECK=1, HPCPERFSTATS_CONF=/path/to/hpcperfstats.conf
 set -euo pipefail
 
 # Debug verify cadence: matches hpcperfstats.conf when built with hpc_debug_build 1.
@@ -187,6 +188,12 @@ main() {
   fi
   if test -n "${GOLDEN_DIR:-}"; then
     validate_args+=(--golden-dir "${GOLDEN_DIR}")
+  fi
+  if test "${CROSS_SAMPLE_CHECK:-0}" = "1"; then
+    validate_args+=(--cross-sample-check --cross-sample-wait-full)
+    if test -n "${HPCPERFSTATS_CONF:-}"; then
+      validate_args+=(--conf "${HPCPERFSTATS_CONF}")
+    fi
   fi
   "${py}" "${monitor_dir}/scripts/validate_shm_messages.py" "${validate_args[@]}"
 

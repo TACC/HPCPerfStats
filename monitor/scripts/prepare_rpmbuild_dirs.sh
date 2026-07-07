@@ -127,6 +127,9 @@ for distfile in \
   scripts/lib/value_plausibility.py \
   scripts/lib/live_spot_check.py \
   scripts/lib/golden_diff.py \
+  scripts/lib/daemon_conf.py \
+  scripts/lib/shm_snapshot.py \
+  scripts/lib/cross_sample_validate.py \
   scripts/lib/monitor_tree_clean.sh \
   scripts/rpm_debug_shm_verify.sh
 do

@@ -6,12 +6,13 @@ import argparse
 import json
 import sys
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 MONITOR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(MONITOR / "scripts"))
 
+from lib.cross_sample_validate import run_cross_sample_checks  # noqa: E402
+from lib.daemon_conf import discover_active_conf, load_fixture_timing  # noqa: E402
 from lib.device_validate import validate_devices_in_payload  # noqa: E402
 from lib.golden_diff import compare_golden_shm  # noqa: E402
 from lib.listend_contract import (  # noqa: E402
@@ -20,6 +21,7 @@ from lib.listend_contract import (  # noqa: E402
 )
 from lib.live_spot_check import run_live_spot_checks  # noqa: E402
 from lib.message_parse import parse_schema_counts  # noqa: E402
+from lib.shm_snapshot import capture_pair, load_fixture_pair, save_snapshot_pair  # noqa: E402
 from lib.row_validate import (  # noqa: E402
     validate_sample_header,
     validate_sample_payload,
@@ -163,6 +165,88 @@ def validate_sample_hosts(manifest: dict, bodies: dict[str, str], errors: list[s
             errors.append(f"FAIL {kind}: host {host!r} != manifest {want!r}")
 
 
+def _run_cross_sample_validation(
+    args,
+    *,
+    manifest: dict,
+    schema_by_type: dict[str, list[str]],
+    shm_dir: Path,
+    is_fixture: bool,
+    enable_slow: bool,
+    full_body: str | None,
+) -> tuple[list[str], list[str], list[str], str | None]:
+    notes: list[str] = []
+    warnings: list[str] = []
+    errors: list[str] = []
+
+    fast_pair = None
+    full_pair = None
+    timing = None
+    conf_note = ""
+
+    if args.cross_sample_fixture_dir is not None:
+        fixture_dir = args.cross_sample_fixture_dir
+        timing_path = fixture_dir / "fixture_timing.json"
+        if not timing_path.is_file():
+            errors.append(f"FAIL cross_sample: missing {timing_path}")
+            return notes, warnings, errors, full_body
+        timing = load_fixture_timing(timing_path)
+        conf_note = f"fixture {timing_path}"
+        try:
+            if enable_slow and (fixture_dir / "t0" / "fast").is_file():
+                fast_pair = load_fixture_pair(fixture_dir, "fast")
+            if (fixture_dir / "t0" / "full").is_file():
+                full_pair = load_fixture_pair(fixture_dir, "full")
+        except (OSError, ValueError) as exc:
+            errors.append(f"FAIL cross_sample fixture: {exc}")
+            return notes, warnings, errors, full_body
+    else:
+        try:
+            active = discover_active_conf(
+                explicit_conf=args.conf,
+                systemd_unit=args.systemd_unit,
+                require_daemon=not is_fixture,
+            )
+        except RuntimeError as exc:
+            errors.append(f"FAIL cross_sample: {exc}")
+            return notes, warnings, errors, full_body
+        timing = active.timing
+        conf_note = active.source
+        if active.conf_path is not None:
+            conf_note += f" ({active.conf_path})"
+
+        try:
+            if enable_slow:
+                fast_pair = capture_pair(shm_dir, "fast", timing=timing)
+                if args.cross_sample_save_dir:
+                    save_snapshot_pair(fast_pair, args.cross_sample_save_dir)
+            if args.cross_sample_wait_full or not enable_slow:
+                full_pair = capture_pair(shm_dir, "full", timing=timing)
+                if args.cross_sample_save_dir:
+                    save_snapshot_pair(full_pair, args.cross_sample_save_dir)
+        except (OSError, ValueError, TimeoutError) as exc:
+            errors.append(f"FAIL cross_sample capture: {exc}")
+            return notes, warnings, errors, full_body
+
+    cs_notes, cs_warn, cs_err = run_cross_sample_checks(
+        manifest,
+        schema_by_type,
+        timing=timing,
+        fast_pair=fast_pair,
+        full_pair=full_pair,
+        strict=args.strict_cross_sample,
+        active_conf_note=conf_note,
+    )
+    notes.extend(cs_notes)
+    warnings.extend(cs_warn)
+    errors.extend(cs_err)
+
+    updated_full = full_body
+    if full_pair is not None:
+        updated_full = full_pair.body_b
+    return notes, warnings, errors, updated_full
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Validate shm monitor messages")
     p.add_argument("--capabilities", type=Path, required=True)
@@ -215,6 +299,47 @@ def main() -> int:
         default=0.0,
         help="Poll shm-dir until schema/fast/full exist (live verify)",
     )
+    p.add_argument(
+        "--cross-sample-check",
+        action="store_true",
+        default=False,
+        help="Capture two snapshots; check timestamp cadence and E-counter monotonicity",
+    )
+    p.add_argument("--no-cross-sample-check", action="store_true")
+    p.add_argument(
+        "--conf",
+        type=Path,
+        default=None,
+        help="Override active hpcperfstats.conf path (default: auto-discover)",
+    )
+    p.add_argument(
+        "--systemd-unit",
+        type=str,
+        default="hpcperfstats",
+        help="systemd unit for ExecStart conf discovery",
+    )
+    p.add_argument(
+        "--cross-sample-wait-full",
+        action="store_true",
+        help="Also wait for full-tier timestamp advance (slow-tier cadence)",
+    )
+    p.add_argument(
+        "--cross-sample-fixture-dir",
+        type=Path,
+        default=None,
+        help="Use t0/t1 fixture dirs + fixture_timing.json (no live poll)",
+    )
+    p.add_argument(
+        "--cross-sample-save-dir",
+        type=Path,
+        default=None,
+        help="Save captured snapshot pairs under this directory",
+    )
+    p.add_argument(
+        "--strict-cross-sample",
+        action="store_true",
+        help="Treat cross-sample warnings as errors",
+    )
     args = p.parse_args()
 
     caps = load_json(args.capabilities)
@@ -238,6 +363,12 @@ def main() -> int:
         do_live_spot = not is_fixture
     if args.no_live_spot_check:
         do_live_spot = False
+
+    do_cross_sample = args.cross_sample_check
+    if args.no_cross_sample_check:
+        do_cross_sample = False
+    if args.cross_sample_fixture_dir is not None:
+        do_cross_sample = True
 
     errors: list[str] = []
     warnings: list[str] = []
@@ -305,6 +436,20 @@ def main() -> int:
         notes.extend(p_notes)
         warnings.extend(p_warn)
         errors.extend(p_err)
+
+    if not errors and do_cross_sample:
+        cs_notes, cs_warn, cs_err, full_body = _run_cross_sample_validation(
+            args,
+            manifest=manifest,
+            schema_by_type=schema_by_type,
+            shm_dir=shm_dir,
+            is_fixture=is_fixture,
+            enable_slow=enable_slow,
+            full_body=full_body,
+        )
+        notes.extend(cs_notes)
+        warnings.extend(cs_warn)
+        errors.extend(cs_err)
 
     if not errors and do_live_spot and full_body:
         ls_notes, ls_warn, ls_err = run_live_spot_checks(

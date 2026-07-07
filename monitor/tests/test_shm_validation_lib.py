@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 MONITOR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(MONITOR / "scripts"))
@@ -26,6 +27,7 @@ from lib.row_validate import (  # noqa: E402
 from lib.value_plausibility import check_plausibility  # noqa: E402
 
 SYNTHETIC = MONITOR / "tests" / "expected" / "synthetic_fixture"
+CROSS_SAMPLE = MONITOR / "tests" / "expected" / "cross_sample_fixture"
 
 
 def _load_manifest() -> dict:
@@ -209,6 +211,125 @@ class PlausibilityTests(unittest.TestCase):
             strict=True,
         )
         self.assertTrue(any("mem_total < mem_free" in e for e in errors))
+
+
+class CrossSampleTests(unittest.TestCase):
+    def test_schema_token_is_event_counter(self) -> None:
+        from lib.message_parse import schema_token_is_event_counter
+
+        self.assertTrue(schema_token_is_event_counter("rx_bytes,E,U=B"))
+        self.assertFalse(schema_token_is_event_counter("mem_total,U=KB"))
+
+    def test_wait_bounds_debug_rpm(self) -> None:
+        from lib.daemon_conf import DaemonTiming, wait_bounds_from_timing
+
+        t = DaemonTiming(
+            sample_freq=30.0,
+            sample_freq_slow=60.0,
+            send_freq=300.0,
+            enable_slow_tier=True,
+        )
+        b = wait_bounds_from_timing(t)
+        self.assertEqual(b.fast_timeout_sec, 75.0)
+        self.assertEqual(b.full_timeout_sec, 102.0)
+        self.assertEqual(b.fast_cadence_max, 75.0)
+        self.assertEqual(b.full_cadence_max, 90.0)
+
+    def test_parse_daemon_conf_debug_values(self) -> None:
+        from lib.daemon_conf import parse_daemon_conf
+
+        with tempfile.TemporaryDirectory() as tmp:
+            conf = Path(tmp) / "hpcperfstats.conf"
+            conf.write_text(
+                "sample_freq 30\nsample_freq_slow 60\nenable_slow_tier 1\n",
+                encoding="utf-8",
+            )
+            t = parse_daemon_conf(conf)
+            self.assertEqual(t.sample_freq, 30.0)
+            self.assertEqual(t.sample_freq_slow, 60.0)
+            self.assertTrue(t.enable_slow_tier)
+
+    def test_discover_explicit_conf(self) -> None:
+        from lib.daemon_conf import discover_active_conf
+
+        with tempfile.TemporaryDirectory() as tmp:
+            conf = Path(tmp) / "site.conf"
+            conf.write_text("sample_freq 45\nsample_freq_slow 90\n", encoding="utf-8")
+            active = discover_active_conf(explicit_conf=conf)
+            self.assertEqual(active.timing.sample_freq, 45.0)
+            self.assertIn("explicit", active.source)
+
+    def test_fixture_pair_passes(self) -> None:
+        from lib.cross_sample_validate import run_cross_sample_checks
+        from lib.daemon_conf import load_fixture_timing
+        from lib.shm_snapshot import load_fixture_pair
+
+        manifest = _load_manifest()
+        schema = _schema_by_type(manifest)
+        timing = load_fixture_timing(CROSS_SAMPLE / "fixture_timing.json")
+        fast_pair = load_fixture_pair(CROSS_SAMPLE, "fast")
+        full_pair = load_fixture_pair(CROSS_SAMPLE, "full")
+        notes, warnings, errors = run_cross_sample_checks(
+            manifest,
+            schema,
+            timing=timing,
+            fast_pair=fast_pair,
+            full_pair=full_pair,
+            strict=False,
+            active_conf_note="test fixture",
+        )
+        self.assertFalse(errors)
+        self.assertTrue(any("fast_ts" in n for n in notes))
+        self.assertTrue(any("full_ts" in n for n in notes))
+
+    def test_monotonic_regression_warns(self) -> None:
+        from lib.cross_sample_validate import run_cross_sample_checks
+        from lib.daemon_conf import DaemonTiming
+        from lib.shm_snapshot import SnapshotPair
+
+        manifest = _load_manifest()
+        schema = _schema_by_type(manifest)
+        timing = DaemonTiming(30.0, 60.0, 300.0, True)
+        pair = SnapshotPair(
+            kind="full",
+            ts_a=1000.0,
+            ts_b=1060.0,
+            body_a=(CROSS_SAMPLE / "t1" / "full").read_text(encoding="utf-8"),
+            body_b=(CROSS_SAMPLE / "t0" / "full").read_text(encoding="utf-8"),
+        )
+        _, warnings, errors = run_cross_sample_checks(
+            manifest,
+            schema,
+            timing=timing,
+            fast_pair=None,
+            full_pair=pair,
+            strict=False,
+            active_conf_note="test",
+        )
+        self.assertTrue(any("decreased" in w for w in warnings))
+
+    def test_wait_for_timestamp_advance(self) -> None:
+        from lib.shm_snapshot import wait_for_timestamp_advance
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "fast"
+            path.write_text(
+                "1000.0 job host\nhost_net eth0 @fast 1 2 3\n",
+                encoding="utf-8",
+            )
+
+            def advance():
+                path.write_text(
+                    "1030.0 job host\nhost_net eth0 @fast 2 3 4\n",
+                    encoding="utf-8",
+                )
+
+            with patch("lib.shm_snapshot.time.sleep", side_effect=lambda _: advance()):
+                ts, body = wait_for_timestamp_advance(
+                    path, 1000.0, timeout_sec=5.0, poll_interval_sec=0.01
+                )
+            self.assertEqual(ts, 1030.0)
+            self.assertIn("1030.0", body)
 
 
 class GoldenDiffTests(unittest.TestCase):

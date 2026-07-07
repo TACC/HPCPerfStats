@@ -1,0 +1,3 @@
+
+1000.000000 job42 golden_host
+host_net eth0 @fast 100 200 5

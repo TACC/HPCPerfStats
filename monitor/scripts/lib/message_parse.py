@@ -10,6 +10,11 @@ def schema_token_is_slow_tier(token: str) -> bool:
     return any(p.strip() == "R=S" for p in parts[1:])
 
 
+def schema_token_is_event_counter(token: str) -> bool:
+    parts = token.split(",")
+    return any(p.strip() == "E" for p in parts[1:])
+
+
 def fast_schema_keys(full_events: list[str]) -> list[str]:
     return [e for e in full_events if not schema_token_is_slow_tier(e)]
 

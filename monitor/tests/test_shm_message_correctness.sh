@@ -38,6 +38,17 @@ run_validate \
   "${SYNTHETIC_DIR}" \
   "synthetic_fixture"
 
+CROSS_SAMPLE_FIXTURE="${MONITOR_ROOT}/tests/expected/cross_sample_fixture"
+echo "=== validate_shm_messages (cross_sample_fixture) ==="
+"${VENV_PY}" "${VALIDATOR}" \
+  --capabilities "${SYNTHETIC_DIR}/monitor-build-capabilities.json" \
+  --manifest "${SYNTHETIC_DIR}/expectations_synthetic_debug_tier1.json" \
+  --shm-dir "${SYNTHETIC_DIR}" \
+  --fixture-dir "${SYNTHETIC_DIR}" \
+  --cross-sample-fixture-dir "${CROSS_SAMPLE_FIXTURE}" \
+  --no-live-spot-check \
+  --no-freshness
+
 # Optional: match build-tree slug to slug-named goldens under tests/expected/.
 if [[ -d "${BUILD_DIR}" && -f "${BUILD_DIR}/monitor-build-capabilities.json" ]]; then
   CAPS_JSON="${BUILD_DIR}/monitor-build-capabilities.json"

@@ -1,0 +1,5 @@
+{
+  "sample_freq": 30,
+  "sample_freq_slow": 60,
+  "enable_slow_tier": 1
+}
