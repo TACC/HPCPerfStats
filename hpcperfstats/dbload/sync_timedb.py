@@ -573,6 +573,7 @@ def _prewarm_archive_members_redis_for_days(
       _FNCTL_POPULATE_RETRY_DELAYS_S,
       _daily_archive_members_cache_key,
       _resolve_sealed_daily_archive_path,
+      daily_archive_populate_source_exists,
   )
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       ArchiveDayIngestSkipError,
@@ -588,11 +589,11 @@ def _prewarm_archive_members_redis_for_days(
     if redis_members_cache_is_fully_warm(keys):
       summary_parts.append("%s:redis_warm" % day_token)
       continue
-    sealed_path = _resolve_sealed_daily_archive_path(canonical)
-    tar_path = daily_tar_path_from_compressed(canonical)
-    if sealed_path is None and not os.path.isfile(tar_path):
+    if not daily_archive_populate_source_exists(canonical):
       summary_parts.append("%s:no_daily_archive" % day_token)
       continue
+    sealed_path = _resolve_sealed_daily_archive_path(canonical)
+    tar_path = daily_tar_path_from_compressed(canonical)
     if (
         day_token in gated_restore
         and sealed_path is not None

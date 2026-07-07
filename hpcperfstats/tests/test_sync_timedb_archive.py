@@ -5289,6 +5289,52 @@ def test_get_existing_archive_members_no_local_scan_when_degraded(
   assert stream_calls["n"] == 0
 
 
+def test_daily_archive_has_member_no_wait_no_tar(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  """No tar/sealed on disk must not enter Redis populate wait."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      build_archive_members_redis_keys,
+  )
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import FakeRedis
+
+  day = "2026-06-09"
+  canonical = str(tmp_path / ("%s.tar.zst" % day))
+  fake = FakeRedis()
+  request_calls = {"n": 0}
+
+  def _forbidden_request(*_a, **_k):
+    request_calls["n"] += 1
+    raise AssertionError("must not wait on populate when no daily archive")
+
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: fake,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".request_archive_members_populate_and_wait",
+      _forbidden_request,
+  )
+  keys = build_archive_members_redis_keys(
+      helpers._daily_archive_members_cache_key(canonical),
+  )
+  fake.set(keys.complete_key, "0")
+
+  assert helpers.daily_archive_has_member_with_size(
+      canonical, "host/raw", 4,
+  ) is False
+  assert request_calls["n"] == 0
+
+
 def test_raw_stats_path_needs_tar_append_reraises_redis_unavailable(
     monkeypatch, tmp_path,
 ):

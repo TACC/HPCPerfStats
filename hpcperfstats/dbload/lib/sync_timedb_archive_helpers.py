@@ -2865,6 +2865,14 @@ def _resolve_sealed_daily_archive_path(compressed_path):
   return None
 
 
+def daily_archive_populate_source_exists(compressed_path):
+  """True when a calendar day has a sealed archive and/or mutable ``.tar`` on disk."""
+  canonical = normalize_daily_compressed_path(compressed_path)
+  sealed_path = _resolve_sealed_daily_archive_path(canonical)
+  tar_path = daily_tar_path_from_compressed(canonical)
+  return sealed_path is not None or os.path.isfile(tar_path)
+
+
 def _lookup_daily_archive_members_cache(compressed_path):
   if not _daily_archive_members_cache_enabled():
     return None
@@ -4055,6 +4063,7 @@ def execute_archive_members_populate_for_canonical(canonical):
       )
       clear_stale_incomplete_archive_members_redis(keys, client=client)
     if sealed_path is None and not os.path.isfile(tar_path):
+      _store_daily_archive_members_cache(canonical, {})
       return {}
     zst_path, gz_path = compressed_sibling_paths(tar_path)
     _clear_stale_day_ingest_skip_if_tar_repaired(
@@ -4093,6 +4102,9 @@ def get_existing_archive_members_for_daily_archive(archive_compressed_path):
   cached = _lookup_daily_archive_members_cache(canonical)
   if cached is not None:
     return cached
+  if not daily_archive_populate_source_exists(canonical):
+    _store_daily_archive_members_cache(canonical, {})
+    return {}
   try:
     from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
         archive_members_redis_enabled,

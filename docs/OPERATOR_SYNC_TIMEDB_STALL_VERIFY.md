@@ -389,7 +389,29 @@ docker compose logs pipeline 2>&1 | \
 
 Replace `YYYY-MM-DD` with the failing calendar day. Expect **`lock acquire timeout`** diagnostics (with `lock_owner_pid`, `append_inflight`, `pre_append_exempt`) only when a **live** external lock holder blocks acquire — not during normal archive append with inflight-first ordering.
 
-**Populate incomplete after lock release:** grep for `Archive members populate incomplete after lock release`. Error key suffix `none:none:<tar_mtime>:<tar_size>` with concurrent `archive_job_done` / `redis_merge_warm` on the same day usually means **tar-identity drift** (waiter on pre-append fingerprint, merge on post-append). Post-fix waiters re-resolve identity and re-enqueue within `populate_max_seconds` rather than immediate `sys.exit(1)`.
+**Bucket E — No daily archive (T1/T2 post-fix):** thousands of alternating `archive members populate incomplete after lock release` / `clearing stale incomplete archive members Redis` for hash suffix **`…:YYYY-MM-DD:none:none:none:none`** (`hlen=0 complete=- lock=0`) from **`[sync_timedb:worker:ingest-pool]`**, ending in **`ERROR: Timed out waiting for archive members populate (max_seconds=7200)`** when **no** `.tar`/`.tar.zst`/`.tar.gz` exists on disk for that day.
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline su hpcperfstats -c 'python3 -c "
+from hpcperfstats.dbload.lib import conf_parser as cp
+import os
+day = \"YYYY-MM-DD\"
+dad = cp.get_daily_archive_dir_path()
+for name in (\"%s.tar\" % day, \"%s.tar.zst\" % day, \"%s.tar.gz\" % day):
+    p = os.path.join(dad, name)
+    print(name, \"exists=\" + str(os.path.isfile(p)), \"path=\" + p)
+"'
+```
+
+**Pre-fix:** populate wait loop with no on-disk source. **Post-fix pass:** chunk prewarm shows **`no_daily_archive`** for that day; ingest resumes (`Begining Chunk` / `chunk ingest summary`); **no** 7200s populate timeout storm for days with no archive. Grep:
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+  grep -E 'YYYY-MM-DD|no_daily_archive|populate incomplete|Timed out waiting for archive members populate|Begining Chunk|chunk prewarm days=' | \
+  tail -40
+```
+
+**Populate incomplete after lock release (tar exists):** grep for `Archive members populate incomplete after lock release`. Error key suffix `none:none:<tar_mtime>:<tar_size>` with concurrent `archive_job_done` / `redis_merge_warm` on the same day usually means **tar-identity drift** (waiter on pre-append fingerprint, merge on post-append). Post-fix waiters re-resolve identity and re-enqueue within `populate_max_seconds` rather than immediate `sys.exit(1)`.
 
 **Transient fnctl read-lock timeout (T1):** grep for `transient fnctl read lock timeout during tar populate` and `transient fnctl during archive members prewarm`. **Healthy:** populate waits on fnctl (up to **`populate_max_seconds`**) then `populate_source=tar` when `.tar` exists; occasional WARNING + `populate incomplete after lock release; recovering` or `chunk prewarm days=...:populate_recovering:tar_populated` — supervisor must **not** restart (`L2 contract failed` absent or rare). **Unhealthy:** repeated `ERROR: archive members Redis L2 contract failed` with supervisor restart loop on the same calendar day. When **`.tar` is present**, expect **`populate_source=tar`** not sealed; sealed populate is normal only after tar-drop (`archive_keep_uncompressed_tar=no`).
 

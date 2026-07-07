@@ -31,8 +31,10 @@ _ARCHIVE_APPEND_INFLIGHT_PREFIX = "%s:archive_append_inflight:v1" % _KEY_PREFIX
 _DAILY_TAR_RESTORE_PREFIX = "%s:daily_tar_restore:v1" % _KEY_PREFIX
 _POPULATE_QUEUED_TTL_SECONDS = 3600
 _IDENTITY_DRIFT_LOG_INTERVAL_S = 120.0
+_STALE_INCOMPLETE_LOG_INTERVAL_S = 60.0
 _IDENTITY_DRIFT_LOG_STATE: Dict[str, Dict[str, float]] = {}
 _APPEND_INFLIGHT_DEFER_LOG_STATE: Dict[str, Dict[str, float]] = {}
+_STALE_INCOMPLETE_LOG_STATE: Dict[str, Dict[str, float]] = {}
 
 _archive_pre_append_member_lookup = contextvars.ContextVar(
     "sync_timedb_archive_pre_append_member_lookup",
@@ -640,7 +642,8 @@ def clear_stale_incomplete_archive_members_redis(
   if client.get(keys.complete_key) == "1":
     return False
   hlen = _hash_member_count(client, keys)
-  log_fn(
+  _log_stale_incomplete_if_allowed(
+      keys.day_token,
       "WARNING: clearing stale incomplete archive members Redis "
       "hash=%s hlen=%d complete=%s lock=0"
       % (
@@ -648,7 +651,7 @@ def clear_stale_incomplete_archive_members_redis(
           hlen,
           client.get(keys.complete_key) or "-",
       ),
-      flush=True,
+      log_fn=log_fn,
   )
   client.delete(
       keys.hash_key,
@@ -829,11 +832,11 @@ def _check_populate_wait_limits(
             "Archive members populate incomplete after lock release: %s"
             % keys.hash_key,
         )
-      log_print(
+      _log_stale_incomplete_if_allowed(
+          keys.day_token,
           "WARNING: archive members populate incomplete after lock release; "
           "recovering hash=%s"
           % keys.hash_key,
-          flush=True,
       )
       return True
   return False
@@ -1182,6 +1185,32 @@ def _resolve_keys_for_canonical(canonical: str) -> ArchiveMembersRedisKeys:
   return build_archive_members_redis_keys(_daily_archive_members_cache_key(path))
 
 
+def _log_stale_incomplete_if_allowed(
+    day_token: str,
+    message: str,
+    *,
+    log_fn=log_print,
+) -> None:
+  """Rate-limit stale incomplete populate logs to once per calendar day."""
+  if not day_token or day_token == "unknown":
+    log_fn(message, flush=True)
+    return
+  now_mono = time.monotonic()
+  state = _STALE_INCOMPLETE_LOG_STATE.get(day_token)
+  if state is None:
+    state = {"last_log_mono": 0.0, "suppressed": 0.0}
+    _STALE_INCOMPLETE_LOG_STATE[day_token] = state
+  last_log_mono = float(state.get("last_log_mono") or 0.0)
+  if now_mono - last_log_mono < _STALE_INCOMPLETE_LOG_INTERVAL_S:
+    state["suppressed"] = float(state.get("suppressed") or 0.0) + 1.0
+    return
+  suppressed_n = int(state.get("suppressed") or 0)
+  state["last_log_mono"] = now_mono
+  state["suppressed"] = 0.0
+  suffix = (" suppressed_n=%d" % suppressed_n) if suppressed_n else ""
+  log_fn("%s%s" % (message, suffix), flush=True)
+
+
 def _log_identity_drift_if_allowed(day_token: str, from_key: str, to_key: str) -> None:
   """Rate-limit identity_drift logs to once per calendar day per interval."""
   if not day_token or day_token == "unknown":
@@ -1263,7 +1292,14 @@ def _recover_populate_wait_after_stale_lock(
     canonical="",
 ):
   """Re-enqueue populate after incomplete lock release when *canonical* is known."""
+  del client
   if not canonical:
+    return
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      daily_archive_populate_source_exists,
+      normalize_daily_compressed_path,
+  )
+  if not daily_archive_populate_source_exists(normalize_daily_compressed_path(canonical)):
     return
   enqueue_archive_members_populate(canonical, keys.day_token)
 
@@ -1337,6 +1373,15 @@ def wait_for_complete_members(
         )
         if warm_members is not None:
           return warm_members
+        if canonical:
+          from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+              daily_archive_populate_source_exists,
+              normalize_daily_compressed_path,
+          )
+          if not daily_archive_populate_source_exists(
+              normalize_daily_compressed_path(canonical),
+          ):
+            return {}
         _recover_populate_wait_after_stale_lock(
             client, keys, canonical=canonical,
         )
@@ -1831,6 +1876,7 @@ def request_archive_members_populate_and_wait(
       _lookup_daily_archive_members_cache,
       _resolve_sealed_daily_archive_path,
       _store_daily_archive_members_cache,
+      daily_archive_populate_source_exists,
       execute_archive_members_populate_for_canonical,
       normalize_daily_compressed_path,
   )
@@ -1840,6 +1886,10 @@ def request_archive_members_populate_and_wait(
 
   del role
   canonical = normalize_daily_compressed_path(archive_compressed_path)
+  if not daily_archive_populate_source_exists(canonical):
+    empty = {}
+    _store_daily_archive_members_cache(canonical, empty)
+    return dict(empty)
   cache_key = _daily_archive_members_cache_key(canonical)
   keys = build_archive_members_redis_keys(cache_key)
   day_token = keys.day_token if keys.day_token != "unknown" else ""

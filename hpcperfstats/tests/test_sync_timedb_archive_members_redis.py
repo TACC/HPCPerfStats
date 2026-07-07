@@ -1129,6 +1129,63 @@ def test_incomplete_after_lock_release_fatal_when_max_seconds_zero(
     wait_for_complete_members(keys)
 
 
+def test_request_populate_no_wait_when_no_daily_archive(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      request_archive_members_populate_and_wait,
+  )
+
+  day = "2026-06-09"
+  canonical = str(tmp_path / ("%s.tar.zst" % day))
+  enqueued = []
+  waited = []
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".enqueue_archive_members_populate",
+      lambda path, day_token: enqueued.append((path, day_token)) or True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".wait_for_complete_members",
+      lambda *args, **kwargs: waited.append((args, kwargs)) or {},
+  )
+  members = request_archive_members_populate_and_wait(canonical)
+  assert members == {}
+  assert not enqueued
+  assert not waited
+
+
+def test_recovery_no_reenqueue_no_source(_redis_test_env, tmp_path, monkeypatch):
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser"
+      ".get_sync_archive_members_redis_populate_stall_seconds",
+      lambda: 1,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser"
+      ".get_sync_archive_members_redis_populate_max_seconds",
+      lambda: 5,
+  )
+  day = "2026-06-09"
+  canonical = str(tmp_path / ("%s.tar.zst" % day))
+  keys = build_archive_members_redis_keys(
+      _daily_archive_members_cache_key(canonical),
+  )
+  _redis_test_env.set(keys.complete_key, "0")
+  enqueued = []
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".enqueue_archive_members_populate",
+      lambda path, day_token: enqueued.append((path, day_token)) or True,
+  )
+  members = wait_for_complete_members(keys, canonical=canonical)
+  assert members == {}
+  assert not enqueued
+
+
 def test_read_lock_timeout_does_not_sticky_day_skip(_redis_test_env, tmp_path):
   """Fix G: transient fnctl lock timeout must not set archive_day_ingest_skip."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
