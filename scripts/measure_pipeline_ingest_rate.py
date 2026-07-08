@@ -5,7 +5,7 @@ Reads pipeline container logs (stdin, --log-file, or --fetch-compose) and prints
 only summary outcome lines to stdout. Errors and caveats go to stderr.
 
 Usage (from HPCPerfStats/):
-  docker compose logs --timestamps pipeline 2>&1 | python3 scripts/measure_pipeline_ingest_rate.py
+  docker compose -f docker-compose.app.yaml logs --timestamps --names 2>&1 | python3 scripts/measure_pipeline_ingest_rate.py
   python3 scripts/measure_pipeline_ingest_rate.py --log-file /tmp/pipeline-full.log
 """
 
@@ -19,11 +19,21 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, Iterator, Optional
 
-# Docker / podman compose log prefixes (RFC3339 nano optional).
-_LOG_TS_RE = re.compile(
-    r"^(?P<ts>"
+# Docker / podman compose log prefixes (RFC3339, optional nanoseconds).
+_RFC3339_TS = (
     r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?"
-    r")\s+\S+\s+\|\s+(?P<body>.*)$"
+)
+# docker compose logs --timestamps: 2026-…T…Z container | message
+_LOG_TS_PIPE_RE = re.compile(
+    rf"^(?P<ts>{_RFC3339_TS})\s+\S+\s+\|\s+(?P<body>.*)$"
+)
+# docker compose logs --timestamps --names: container 2026-…T… message
+_LOG_TS_CONTAINER_FIRST_RE = re.compile(
+    rf"^\S+\s+(?P<ts>{_RFC3339_TS})\s+(?P<body>.*)$"
+)
+# Bare RFC3339 prefix (some compose drivers omit container/pipe): 2026-…T… message
+_LOG_TS_LEADING_RE = re.compile(
+    rf"^(?P<ts>{_RFC3339_TS})\s+(?P<body>.*)$"
 )
 _LISTEND_UNLINKS_RE = re.compile(
     r"current file unlinks \(last 10 minutes\): (\d+)"
@@ -84,10 +94,16 @@ def _parse_log_timestamp(raw: str) -> Optional[datetime]:
 
 
 def _strip_log_prefix(line: str) -> tuple[Optional[datetime], str]:
-    match = _LOG_TS_RE.match(line.rstrip("\n"))
-    if match:
-        return _parse_log_timestamp(match.group("ts")), match.group("body")
-    return None, line.rstrip("\n")
+    text = line.rstrip("\n")
+    for pattern in (
+        _LOG_TS_PIPE_RE,
+        _LOG_TS_CONTAINER_FIRST_RE,
+        _LOG_TS_LEADING_RE,
+    ):
+        match = pattern.match(text)
+        if match:
+            return _parse_log_timestamp(match.group("ts")), match.group("body")
+    return None, text
 
 
 def _record_timestamp(metrics: LogMetrics, ts: Optional[datetime]) -> None:

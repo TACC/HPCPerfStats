@@ -62,6 +62,29 @@ FIXTURE_LOSING = [
 ]
 
 
+def test_parse_leading_rfc3339_timestamp(mod):
+    line = (
+        "2026-07-07T08:38:46.381101000-05:00 [update_metrics:thread:readiness-producer] "
+        "metrics_deferred_coverage jid=809643 start_ok=False"
+    )
+    ts, body = mod._strip_log_prefix(line)
+    assert ts is not None
+    assert ts.year == 2026 and ts.month == 7 and ts.day == 7
+    assert "[update_metrics:thread:readiness-producer]" in body
+
+
+def test_parse_container_first_timestamp(mod):
+    line = (
+        "hpcperfstats_pipeline_1 2026-07-07T08:38:51.004115000-05:00 "
+        "[sync_timedb:main] sync_timedb: pending rescan done pending=1000 elapsed_s=1.0"
+    )
+    ts, body = mod._strip_log_prefix(line)
+    assert ts is not None
+    assert "pending rescan done pending=1000" in body
+    metrics = mod.parse_log_lines([line])
+    assert metrics.backlog_rescan_samples[0][1] == 1000
+
+
 def test_parse_full_ingest_and_listend(mod):
     metrics = mod.parse_log_lines(FIXTURE_WINNING)
     assert metrics.listend_unlink_sum == 10
