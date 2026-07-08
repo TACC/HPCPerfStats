@@ -48,6 +48,25 @@ grep -c 'oldest_day_chunk_gate_stall' /tmp/pipeline-full.log
 grep -c 'ingest_stall_watchdog' /tmp/pipeline-full.log
 ```
 
+### Pipeline ingest rate (listend vs sync_timedb)
+
+Measure closed-segment production rate vs full-ingest and archive-done consumption from **full** pipeline logs (requires `--timestamps` for accurate windows and backlog ETA):
+
+```bash
+# Live compose logs (recommended: full dump, not --tail)
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs --timestamps pipeline 2>&1 \
+  | python3 scripts/measure_pipeline_ingest_rate.py
+
+# Saved log file; optional last-N-minutes window
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs --timestamps pipeline 2>&1 > /tmp/pipeline-full.log
+python3 scripts/measure_pipeline_ingest_rate.py --log-file /tmp/pipeline-full.log --since-minutes 240
+
+# Skip pre-boot lines (after last startup maintenance idle / pending rescan)
+python3 scripts/measure_pipeline_ingest_rate.py --log-file /tmp/pipeline-full.log --boot-only
+```
+
+Stdout prints only outcome keys (`listend_closed_per_min`, `sync_full_ingest_per_min`, `verdict_full_ingest`, `eta_hours_*`, etc.). **WINNING** means sync is catching up or even; **LOSING** means listend outruns sync. Warnings go to stderr.
+
 ### Stats file disappeared vs day-close delete (delete race)
 
 When MainThread logs **`fail_reason=Stats file disappeared`** while day-close workers log **`removing stats file (day raw removal preflight)`** for the same path, that is the **day-close delete race** signature (manifest-verified path deleted while ingest still dispatches it). After fix deploy, expect **`janitor: day_close delete defer path=… reason=active_ingest`** instead of delete lines for active-ingest paths.
