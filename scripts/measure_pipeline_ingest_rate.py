@@ -5,7 +5,7 @@ Reads pipeline container logs (stdin, --log-file, or --fetch-compose) and prints
 only summary outcome lines to stdout. Errors and caveats go to stderr.
 
 Usage (from HPCPerfStats/):
-  docker compose -f docker-compose.app.yaml logs --timestamps --names 2>&1 | python3 scripts/measure_pipeline_ingest_rate.py
+  docker compose -f docker-compose.app.yaml logs --timestamps pipeline 2>&1 | python3 scripts/measure_pipeline_ingest_rate.py
   python3 scripts/measure_pipeline_ingest_rate.py --log-file /tmp/pipeline-full.log
 """
 
