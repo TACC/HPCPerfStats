@@ -1,6 +1,7 @@
 """Live host probes shared by build_message_expectations and live spot-check."""
 from __future__ import annotations
 
+import os
 import re
 import socket
 from pathlib import Path
@@ -178,6 +179,77 @@ def probe_nvidia_gpu_devices() -> list[str]:
     return devs
 
 
+def _edac_mc_root() -> Path:
+    env = os.environ.get("HPCPERFSTATS_EDAC_MC_ROOT", "")
+    if env:
+        return Path(env)
+    return Path("/sys/devices/system/edac/mc")
+
+
+def _dimm_mem_type_is_hbm(mem_type: str) -> bool:
+    if not mem_type:
+        return False
+    upper = mem_type.upper()
+    return "HBM" in upper
+
+
+def probe_edac_mem_classes() -> tuple[bool, bool]:
+    """Mirror host_edac_scan_mem_classes() from host_edac_mem_topology.c."""
+    root = _edac_mc_root()
+    has_ddr = False
+    has_hbm = False
+    if not root.is_dir():
+        return has_ddr, has_hbm
+    for mc in sorted(root.iterdir()):
+        if not mc.is_dir() or not mc.name.startswith("mc"):
+            continue
+        for dimm in sorted(mc.iterdir()):
+            if not dimm.is_dir() or not dimm.name.startswith("dimm"):
+                continue
+            speed_path = dimm / "dimm_mem_speed"
+            try:
+                mtps = int(speed_path.read_text(encoding="utf-8").strip())
+            except (OSError, ValueError):
+                continue
+            if mtps <= 0:
+                continue
+            type_path = dimm / "dimm_mem_type"
+            mem_type = ""
+            try:
+                mem_type = type_path.read_text(encoding="utf-8").strip()
+            except OSError:
+                mem_type = ""
+            if _dimm_mem_type_is_hbm(mem_type):
+                has_hbm = True
+            else:
+                has_ddr = True
+    return has_ddr, has_hbm
+
+
+def _spr_imc_mbox_devices() -> list[str]:
+    return [f"mbox{i}" for i in range(16)]
+
+
+def _spr_imc_hbm_devices() -> list[str]:
+    return [f"hbm{i}" for i in range(16)]
+
+
+def probe_spr_imc_devices(
+    has_ddr: bool | None = None,
+    has_hbm: bool | None = None,
+) -> list[str]:
+    """SPR IMC dev ids matching runtime LIKWID eventset selection."""
+    if has_ddr is None or has_hbm is None:
+        has_ddr, has_hbm = probe_edac_mem_classes()
+    if has_ddr and has_hbm:
+        return sorted(_spr_imc_mbox_devices() + _spr_imc_hbm_devices())
+    if has_ddr:
+        return _spr_imc_mbox_devices()
+    if has_hbm:
+        return _spr_imc_hbm_devices()
+    return sorted(_spr_imc_mbox_devices() + _spr_imc_hbm_devices())
+
+
 def merge_device_lists(
     probed: list[str] | None,
     observed: list[str] | None,
@@ -222,6 +294,8 @@ def default_devices_for_type(type_name: str) -> list[str] | None:
     if type_name == "nvidia_gpu":
         devs = probe_nvidia_gpu_devices()
         return devs if devs else None
+    if type_name == "intel_x86_uncore_imc_spr":
+        return probe_spr_imc_devices()
     if type_name == "amd_gpu":
         return ["0"]
     if type_name in (

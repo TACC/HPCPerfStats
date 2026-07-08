@@ -19,4 +19,15 @@ int likwid_uncore_profile_map_counter(likwid_uncore_profile_t profile,
                                       char *dev_out, size_t dev_len,
                                       const char **key_out);
 
+typedef enum {
+  LIKWID_SPR_IMC_EVT_DDR_HBM = 0,
+  LIKWID_SPR_IMC_EVT_DDR_ONLY,
+  LIKWID_SPR_IMC_EVT_HBM_ONLY,
+} likwid_spr_imc_eventset_t;
+
+const char *likwid_spr_imc_eventset_string(likwid_spr_imc_eventset_t variant);
+int likwid_spr_imc_eventset_try_order(int has_ddr, int has_hbm,
+                                      likwid_spr_imc_eventset_t *out,
+                                      int out_cap);
+
 #endif

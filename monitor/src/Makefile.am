@@ -181,6 +181,8 @@ TYPES 	= \
 	roofline_hw_peak.c \
 	roofline_hw_peak_detect.c \
 	roofline_hw_peak_detect.h \
+	host_edac_mem_topology.c \
+	host_edac_mem_topology.h \
 	proc.c \
 	ps.c \
 	sysv_shm.c \

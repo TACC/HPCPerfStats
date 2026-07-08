@@ -8,6 +8,7 @@
 #include <string.h>
 #include <time.h>
 #include "stats.h"
+#include "host_edac_mem_topology.h"
 #include "roofline_hw_peak_detect.h"
 
 static unsigned long long clamp_rate(double v)
@@ -192,62 +193,35 @@ static int parse_link_width(const char *s)
   return (int) strtol(s, NULL, 10);
 }
 
-static int dimm_mem_type_is_hbm(const char *mem_type)
+typedef struct {
+  double *ddr_bw;
+  double *hbm_bw;
+} edac_bw_ctx_t;
+
+static void sum_edac_dimm_bw(long long mtps, int is_hbm, void *ctx)
 {
-  if (mem_type == NULL || mem_type[0] == '\0')
-    return 0;
-  return strstr(mem_type, "HBM") != NULL || strstr(mem_type, "hbm") != NULL;
+  edac_bw_ctx_t *bw = (edac_bw_ctx_t *) ctx;
+  double dimm_bw = (double) mtps * 1000000.0 * 8.0;
+
+  if (is_hbm) {
+    if (bw->hbm_bw != NULL)
+      *bw->hbm_bw += dimm_bw;
+  } else if (bw->ddr_bw != NULL) {
+    *bw->ddr_bw += dimm_bw;
+  }
 }
 
 static void detect_cpu_peak_edac_bw_bytes_per_s(double *ddr_bw, double *hbm_bw)
 {
-  DIR *mcdir = opendir("/sys/devices/system/edac/mc");
-  struct dirent *mc;
+  edac_bw_ctx_t ctx;
 
   if (ddr_bw != NULL)
     *ddr_bw = 0.0;
   if (hbm_bw != NULL)
     *hbm_bw = 0.0;
-  if (mcdir == NULL)
-    return;
-  while ((mc = readdir(mcdir)) != NULL) {
-    DIR *dimm_dir;
-    struct dirent *dimm;
-    char mcpath[256];
-    if (strncmp(mc->d_name, "mc", 2) != 0)
-      continue;
-    if (roofline_path_join2(mcpath, sizeof(mcpath), "/sys/devices/system/edac/mc", mc->d_name) != 0)
-      continue;
-    dimm_dir = opendir(mcpath);
-    if (dimm_dir == NULL)
-      continue;
-    while ((dimm = readdir(dimm_dir)) != NULL) {
-      char speed_path[384];
-      char type_path[384];
-      char type_line[128];
-      long long mtps = 0;
-      double dimm_bw;
-      if (strncmp(dimm->d_name, "dimm", 4) != 0)
-        continue;
-      if (roofline_path_join3(speed_path, sizeof(speed_path), mcpath, dimm->d_name,
-                              "dimm_mem_speed") != 0)
-        continue;
-      if (read_long_long_from_file(speed_path, &mtps) != 0 || mtps <= 0)
-        continue;
-      dimm_bw = (double) mtps * 1000000.0 * 8.0;
-      if (roofline_path_join3(type_path, sizeof(type_path), mcpath, dimm->d_name,
-                              "dimm_mem_type") == 0
-          && read_first_line(type_path, type_line, sizeof(type_line)) == 0
-          && dimm_mem_type_is_hbm(type_line)) {
-        if (hbm_bw != NULL)
-          *hbm_bw += dimm_bw;
-      } else if (ddr_bw != NULL) {
-        *ddr_bw += dimm_bw;
-      }
-    }
-    closedir(dimm_dir);
-  }
-  closedir(mcdir);
+  ctx.ddr_bw = ddr_bw;
+  ctx.hbm_bw = hbm_bw;
+  (void) host_edac_foreach_dimm(sum_edac_dimm_bw, &ctx);
 }
 
 static double detect_cpu_peak_dram_bw_bytes_per_s(void)

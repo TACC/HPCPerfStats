@@ -62,6 +62,42 @@ static void test_eventset_nonempty(void)
                 "HBM0C0") != NULL);
   assert(strstr(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_CHA_SKX),
                 "CBOX0C0") != NULL);
+  assert(strstr(likwid_spr_imc_eventset_string(LIKWID_SPR_IMC_EVT_DDR_ONLY),
+                "MBOX0C0") != NULL);
+  assert(strstr(likwid_spr_imc_eventset_string(LIKWID_SPR_IMC_EVT_HBM_ONLY),
+                "HBM0C0") != NULL);
+  assert(strstr(likwid_spr_imc_eventset_string(LIKWID_SPR_IMC_EVT_DDR_ONLY),
+                "HBM0C0") == NULL);
+}
+
+static void test_spr_try_order(void)
+{
+  likwid_spr_imc_eventset_t order[3];
+  int n;
+
+  n = likwid_spr_imc_eventset_try_order(1, 0, order, 3);
+  assert(n == 3);
+  assert(order[0] == LIKWID_SPR_IMC_EVT_DDR_ONLY);
+  assert(order[1] == LIKWID_SPR_IMC_EVT_HBM_ONLY);
+  assert(order[2] == LIKWID_SPR_IMC_EVT_DDR_HBM);
+
+  n = likwid_spr_imc_eventset_try_order(0, 1, order, 3);
+  assert(n == 3);
+  assert(order[0] == LIKWID_SPR_IMC_EVT_HBM_ONLY);
+  assert(order[1] == LIKWID_SPR_IMC_EVT_DDR_HBM);
+  assert(order[2] == LIKWID_SPR_IMC_EVT_DDR_ONLY);
+
+  n = likwid_spr_imc_eventset_try_order(1, 1, order, 3);
+  assert(n == 3);
+  assert(order[0] == LIKWID_SPR_IMC_EVT_DDR_HBM);
+  assert(order[1] == LIKWID_SPR_IMC_EVT_DDR_ONLY);
+  assert(order[2] == LIKWID_SPR_IMC_EVT_HBM_ONLY);
+
+  n = likwid_spr_imc_eventset_try_order(0, 0, order, 3);
+  assert(n == 3);
+  assert(order[0] == LIKWID_SPR_IMC_EVT_DDR_HBM);
+  assert(order[1] == LIKWID_SPR_IMC_EVT_DDR_ONLY);
+  assert(order[2] == LIKWID_SPR_IMC_EVT_HBM_ONLY);
 }
 
 int main(void)
@@ -69,5 +105,6 @@ int main(void)
   test_profile_processor_match();
   test_counter_map();
   test_eventset_nonempty();
+  test_spr_try_order();
   return 0;
 }

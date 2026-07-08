@@ -8,7 +8,9 @@
 #include <unistd.h>
 
 #include "cpu_counter_metrics_likwid_begin.h"
+#include "host_edac_mem_topology.h"
 #include "likwid_uncore_adapter.h"
+#include "monitor_log.h"
 #include "trace.h"
 
 #ifdef HAVE_LIKWID
@@ -41,6 +43,70 @@ static void likwid_uncore_restore_stderr(int saved_stderr, int null_fd)
     close(null_fd);
 }
 
+#ifdef HAVE_LIKWID
+static int likwid_uncore_try_eventset(const char *events, int *group_out,
+                                      int saved_stderr, int null_fd, int quiet)
+{
+  int group;
+
+  if (events == NULL || events[0] == '\0' || group_out == NULL)
+    return -1;
+
+  group = perfmon_addEventSet(events);
+  if (group < 0)
+    return -1;
+  if (perfmon_setupCounters(group) < 0)
+    return -1;
+  if (perfmon_startCounters() < 0)
+    return -1;
+  *group_out = group;
+  if (quiet)
+    likwid_uncore_restore_stderr(saved_stderr, null_fd);
+  return 0;
+}
+
+static int likwid_uncore_adapter_begin_spr(struct stats_type *type)
+{
+  likwid_spr_imc_eventset_t order[3];
+  int has_ddr = 0;
+  int has_hbm = 0;
+  int n_order;
+  int saved_stderr = -1;
+  int null_fd = -1;
+  int quiet = 0;
+  int i;
+
+  if (g_profile_ready[LIKWID_UNCORE_PROFILE_IMC_SPR])
+    return 0;
+
+  (void) host_edac_scan_mem_classes(&has_ddr, &has_hbm);
+  n_order = likwid_spr_imc_eventset_try_order(has_ddr, has_hbm, order,
+                                              (int) (sizeof(order)
+                                                     / sizeof(order[0])));
+  quiet = likwid_uncore_quiet_stderr(&saved_stderr, &null_fd);
+  for (i = 0; i < n_order; i++) {
+    const char *events = likwid_spr_imc_eventset_string(order[i]);
+    int group = -1;
+
+    if (likwid_uncore_try_eventset(events, &group, saved_stderr, null_fd,
+                                   quiet) == 0) {
+      g_profile_group[LIKWID_UNCORE_PROFILE_IMC_SPR] = group;
+      g_profile_ready[LIKWID_UNCORE_PROFILE_IMC_SPR] = 1;
+      if (i > 0) {
+        monitor_log_warn(
+            "intel_x86_uncore_imc_spr: using LIKWID fallback eventset index %d\n",
+            i);
+      }
+      return 0;
+    }
+  }
+  if (quiet)
+    likwid_uncore_restore_stderr(saved_stderr, null_fd);
+  type->st_enabled = 0;
+  return -1;
+}
+#endif
+
 int likwid_uncore_adapter_begin(struct stats_type *type,
                                 likwid_uncore_profile_t profile)
 {
@@ -56,6 +122,9 @@ int likwid_uncore_adapter_begin(struct stats_type *type,
     goto disable;
   if (!cpu_counter_metrics_likwid_ready())
     goto disable;
+
+  if (profile == LIKWID_UNCORE_PROFILE_IMC_SPR)
+    return likwid_uncore_adapter_begin_spr(type);
 
   events = likwid_uncore_profile_eventset(profile);
   if (events == NULL || events[0] == '\0')

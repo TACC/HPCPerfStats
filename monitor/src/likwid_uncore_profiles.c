@@ -51,6 +51,8 @@
   "HBM14C0 CAS_COUNT_RD,HBM14C1 CAS_COUNT_WR," \
   "HBM15C0 CAS_COUNT_RD,HBM15C1 CAS_COUNT_WR"
 
+#define SPR_DDR_ONLY_EVENTS MBOX16_IMC_EVENTS
+#define SPR_HBM_ONLY_EVENTS HBM16_EVENTS
 #define SPR_DDR_HBM_EVENTS MBOX16_IMC_EVENTS "," HBM16_EVENTS
 
 #define CHA_SKX_CBOX_EVENTS \
@@ -91,6 +93,71 @@ const char *likwid_uncore_profile_eventset(likwid_uncore_profile_t profile)
   if (profile < 0 || profile >= LIKWID_UNCORE_PROFILE_COUNT)
     return NULL;
   return profile_events[profile];
+}
+
+const char *likwid_spr_imc_eventset_string(likwid_spr_imc_eventset_t variant)
+{
+  switch (variant) {
+  case LIKWID_SPR_IMC_EVT_DDR_HBM:
+    return SPR_DDR_HBM_EVENTS;
+  case LIKWID_SPR_IMC_EVT_DDR_ONLY:
+    return SPR_DDR_ONLY_EVENTS;
+  case LIKWID_SPR_IMC_EVT_HBM_ONLY:
+    return SPR_HBM_ONLY_EVENTS;
+  default:
+    return NULL;
+  }
+}
+
+static likwid_spr_imc_eventset_t spr_imc_primary_eventset(int has_ddr, int has_hbm)
+{
+  if (has_ddr && has_hbm)
+    return LIKWID_SPR_IMC_EVT_DDR_HBM;
+  if (has_ddr)
+    return LIKWID_SPR_IMC_EVT_DDR_ONLY;
+  if (has_hbm)
+    return LIKWID_SPR_IMC_EVT_HBM_ONLY;
+  return LIKWID_SPR_IMC_EVT_DDR_HBM;
+}
+
+static void spr_imc_try_append(likwid_spr_imc_eventset_t *out, int *n, int cap,
+                               likwid_spr_imc_eventset_t variant)
+{
+  int i;
+
+  if (out == NULL || n == NULL || *n >= cap)
+    return;
+  for (i = 0; i < *n; i++) {
+    if (out[i] == variant)
+      return;
+  }
+  out[*n] = variant;
+  (*n)++;
+}
+
+int likwid_spr_imc_eventset_try_order(int has_ddr, int has_hbm,
+                                      likwid_spr_imc_eventset_t *out,
+                                      int out_cap)
+{
+  likwid_spr_imc_eventset_t primary;
+  int n = 0;
+
+  if (out == NULL || out_cap <= 0)
+    return 0;
+
+  primary = spr_imc_primary_eventset(has_ddr, has_hbm);
+  spr_imc_try_append(out, &n, out_cap, primary);
+  if (primary == LIKWID_SPR_IMC_EVT_DDR_HBM) {
+    spr_imc_try_append(out, &n, out_cap, LIKWID_SPR_IMC_EVT_DDR_ONLY);
+    spr_imc_try_append(out, &n, out_cap, LIKWID_SPR_IMC_EVT_HBM_ONLY);
+  } else if (primary == LIKWID_SPR_IMC_EVT_DDR_ONLY) {
+    spr_imc_try_append(out, &n, out_cap, LIKWID_SPR_IMC_EVT_HBM_ONLY);
+    spr_imc_try_append(out, &n, out_cap, LIKWID_SPR_IMC_EVT_DDR_HBM);
+  } else {
+    spr_imc_try_append(out, &n, out_cap, LIKWID_SPR_IMC_EVT_DDR_HBM);
+    spr_imc_try_append(out, &n, out_cap, LIKWID_SPR_IMC_EVT_DDR_ONLY);
+  }
+  return n;
 }
 
 static const char *counter_name_base(const char *counter_name, char *work,

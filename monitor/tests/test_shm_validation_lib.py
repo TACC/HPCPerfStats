@@ -164,6 +164,110 @@ class HostLiveProbeTests(unittest.TestCase):
         self.assertIn("host_net", observed)
         self.assertEqual(observed["host_net"], ["eth0"])
 
+    def _install_edac_dimm(self, root: Path, mc: str, dimm: str, speed: str, mem_type: str) -> None:
+        dimm_dir = root / mc / dimm
+        dimm_dir.mkdir(parents=True, exist_ok=True)
+        (dimm_dir / "dimm_mem_speed").write_text(speed, encoding="utf-8")
+        (dimm_dir / "dimm_mem_type").write_text(mem_type, encoding="utf-8")
+
+    def test_probe_edac_mem_classes_ddr_only(self) -> None:
+        import os
+        import tempfile
+
+        from lib.host_live_probes import probe_edac_mem_classes, probe_spr_imc_devices
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._install_edac_dimm(root, "mc0", "dimm0", "4800\n", "DDR5\n")
+            os.environ["HPCPERFSTATS_EDAC_MC_ROOT"] = str(root)
+            try:
+                has_ddr, has_hbm = probe_edac_mem_classes()
+                self.assertTrue(has_ddr)
+                self.assertFalse(has_hbm)
+                devs = probe_spr_imc_devices(has_ddr, has_hbm)
+                self.assertEqual(len(devs), 16)
+                self.assertEqual(devs[0], "mbox0")
+                self.assertNotIn("hbm0", devs)
+            finally:
+                os.environ.pop("HPCPERFSTATS_EDAC_MC_ROOT", None)
+
+    def test_probe_edac_mem_classes_hbm_only(self) -> None:
+        import os
+        import tempfile
+
+        from lib.host_live_probes import probe_edac_mem_classes, probe_spr_imc_devices
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._install_edac_dimm(root, "mc0", "dimm0", "6400\n", "HBM2e\n")
+            os.environ["HPCPERFSTATS_EDAC_MC_ROOT"] = str(root)
+            try:
+                has_ddr, has_hbm = probe_edac_mem_classes()
+                self.assertFalse(has_ddr)
+                self.assertTrue(has_hbm)
+                devs = probe_spr_imc_devices(has_ddr, has_hbm)
+                self.assertEqual(len(devs), 16)
+                self.assertEqual(devs[0], "hbm0")
+                self.assertNotIn("mbox0", devs)
+            finally:
+                os.environ.pop("HPCPERFSTATS_EDAC_MC_ROOT", None)
+
+    def test_probe_edac_mem_classes_mixed(self) -> None:
+        import os
+        import tempfile
+
+        from lib.host_live_probes import probe_edac_mem_classes, probe_spr_imc_devices
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._install_edac_dimm(root, "mc0", "dimm0", "4800\n", "DDR5\n")
+            self._install_edac_dimm(root, "mc0", "dimm1", "6400\n", "HBM3\n")
+            os.environ["HPCPERFSTATS_EDAC_MC_ROOT"] = str(root)
+            try:
+                has_ddr, has_hbm = probe_edac_mem_classes()
+                self.assertTrue(has_ddr)
+                self.assertTrue(has_hbm)
+                devs = probe_spr_imc_devices(has_ddr, has_hbm)
+                self.assertEqual(len(devs), 32)
+            finally:
+                os.environ.pop("HPCPERFSTATS_EDAC_MC_ROOT", None)
+
+    def test_default_devices_spr_imc_hbm_only(self) -> None:
+        from lib.host_live_probes import default_devices_for_type
+
+        with patch("lib.host_live_probes.probe_spr_imc_devices", return_value=["hbm0", "hbm1"]):
+            self.assertEqual(default_devices_for_type("intel_x86_uncore_imc_spr"), ["hbm0", "hbm1"])
+
+    def test_spr_imc_device_validate_hbm_only_manifest(self) -> None:
+        schema_keys = [
+            " dram_cas_reads,E,W=48",
+            " dram_cas_writes,E,W=48",
+            " hbm_cas_reads,E,W=48",
+            " hbm_cas_writes,E,W=48",
+        ]
+        manifest = {
+            "types": {
+                "intel_x86_uncore_imc_spr": {
+                    "schema_keys": schema_keys,
+                    "devices": [f"hbm{i}" for i in range(16)],
+                }
+            }
+        }
+        schema = {"intel_x86_uncore_imc_spr": schema_keys}
+        body = (
+            "1700000000.0 job0 host\n"
+            "intel_x86_uncore_imc_spr hbm3 @full 1 2 3 4\n"
+        )
+        validate_devices_in_payload(
+            body, manifest, schema, require_tier=True, allowed_tier="@full"
+        )
+        bad = body.replace("hbm3", "mbox0")
+        with self.assertRaises(ValueError) as ctx:
+            validate_devices_in_payload(
+                bad, manifest, schema, require_tier=True, allowed_tier="@full"
+            )
+        self.assertIn("mbox0", str(ctx.exception))
+
 
 class ListendContractTests(unittest.TestCase):
     def test_schema_host_token(self) -> None:

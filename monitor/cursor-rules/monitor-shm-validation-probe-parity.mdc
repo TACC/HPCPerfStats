@@ -7,6 +7,7 @@ globs:
   - HPCPerfStats/monitor/src/block.c
   - HPCPerfStats/monitor/src/ib.c
   - HPCPerfStats/monitor/src/cpu.c
+  - HPCPerfStats/monitor/src/intel_spr_imc.c
   - HPCPerfStats/monitor/scripts/lib/host_live_probes.py
   - HPCPerfStats/monitor/scripts/lib/device_validate.py
   - HPCPerfStats/monitor/scripts/lib/live_spot_check.py
@@ -42,6 +43,7 @@ Do **not** invent probe filters (e.g. skipping `lo`) unless the C collector does
 | `lustre_*` | `osc.c` / `mdc.c` / `llite.c` | Lustre mount path via OBD→lov map | `probe_lustre_obd_devices()` |
 | `host_tmpfs` | `tmpfs.c` | `/tmp` when tmpfs | `probe_tmpfs_devices()` |
 | `nvidia_gpu` | `nvidia_gpu.c` | `"0"`..`"N-1"` GPU index | `probe_nvidia_gpu_devices()` |
+| `intel_x86_uncore_imc_spr` | `intel_spr_imc.c` + `likwid_uncore_profiles.c` | `mboxN` / `hbmN` per EDAC topology | `probe_spr_imc_devices()` |
 | singleton types | `ps.c`, `vm.c`, … | `"-"` | `["-"]` in `default_devices_for_type` |
 
 **Manifest build:** `build_message_expectations.py` unions probe lists with devices **observed in shm** (`merge_device_lists` + `observed_devices_from_shm`) so stale `["-"]` probes cannot fail live validation.
