@@ -9,6 +9,7 @@
 #include "stats.h"
 #include "trace.h"
 #include "ib_family.h"
+#include "gpu_pci_detect.h"
 
 static void disable_type_if_present(const char *name)
 {
@@ -55,18 +56,6 @@ static int sysfs_proc_indicates_nvidia_gpu(void)
   if (access("/dev/nvidia0", F_OK) == 0)
     return 1;
   return 0;
-}
-
-static int lspci_line_nvidia_pci_gpu_device(const char *line)
-{
-  if (strstr(line, "[10de:") == NULL)
-    return 0;
-  return strstr(line, "[0300]") != NULL || strstr(line, "[0301]") != NULL
-      || strstr(line, "[0302]") != NULL || strstr(line, "[0680]") != NULL
-      || strstr(line, "[1202]") != NULL || strstr(line, "3d controller") != NULL
-      || strstr(line, "vga compatible controller") != NULL
-      || strstr(line, "display controller") != NULL
-      || strstr(line, "processing accelerators") != NULL;
 }
 
 static int env_truthy(const char *name)
@@ -193,23 +182,14 @@ void hwdetect_probe_optional_stack_presence(int *has_nvidia_gpu,
 
   while (fgets(line, sizeof(line), fp) != NULL) {
     to_lower_ascii(line);
-    if (strstr(line, "vga compatible controller") != NULL ||
-        strstr(line, "3d controller") != NULL ||
-        strstr(line, "display controller") != NULL ||
-        strstr(line, "processing accelerators") != NULL ||
-        strstr(line, "accelerator") != NULL) {
-      if (strstr(line, "nvidia") != NULL)
-        nvidia = 1;
-      if (strstr(line, "advanced micro devices") != NULL ||
-          strstr(line, " amd/ati ") != NULL)
-        amd = 1;
-    }
+    if (gpu_pci_line_indicates_nvidia(line))
+      nvidia = 1;
+    if (gpu_pci_line_indicates_amd(line))
+      amd = 1;
     if (strstr(line, "infiniband") != NULL || strstr(line, "[0207]") != NULL)
       ib = 1;
     if (strstr(line, "omnipath") != NULL || strstr(line, "hfi") != NULL)
       opa = 1;
-    if (!nvidia && lspci_line_nvidia_pci_gpu_device(line))
-      nvidia = 1;
   }
   pclose(fp);
 

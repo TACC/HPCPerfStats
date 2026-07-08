@@ -215,29 +215,13 @@ monitor_probe_amd_gpup_perfapi_sdk() {
     || test -f /usr/local/include/gpu_performance_api/gpu_perf_api.h
 }
 
-# Match configure.ac GPU auto-detect (lspci + awk); used for summary only.
+# Match runtime hwdetect / gpu_pci_detect.c (scripts/gpu_lspci_probe.sh); summary only.
 monitor_lspci_sees_nvidia() {
-  command -v lspci >/dev/null 2>&1 || return 1
-  lspci -nn 2>/dev/null | awk '
-    { l = tolower($0)
-      if ((match(l, /vga compatible controller/) || match(l, /3d controller/) || \
-           match(l, /display controller/) || match(l, /processing accelerators/)) && \
-          match(l, /nvidia/))
-        found = 1
-    }
-    END { exit(found ? 0 : 1) }'
+  sh "${MONITOR_DIR}/scripts/gpu_lspci_probe.sh" nvidia
 }
 
 monitor_lspci_sees_amd() {
-  command -v lspci >/dev/null 2>&1 || return 1
-  lspci -nn 2>/dev/null | awk '
-    { l = tolower($0)
-      if ((match(l, /vga compatible controller/) || match(l, /3d controller/) || \
-           match(l, /display controller/) || match(l, /processing accelerators/)) && \
-          (match(l, /advanced micro devices/) || match(l, / amd\/ati /)))
-        found = 1
-    }
-    END { exit(found ? 0 : 1) }'
+  sh "${MONITOR_DIR}/scripts/gpu_lspci_probe.sh" amd
 }
 
 # Prints detection summary and sets STATIC_BUNDLE_FEAT_FLAGS (configure --disable-* list).
@@ -274,17 +258,21 @@ static_bundle_print_detection_summary() {
   if monitor_probe_dcgm_vendor_link; then
     dcgm_ok=detected
   else
-    dcgm_ok="not detected"
-    if test "${HPCS_BUNDLE_REQUIRE_DCGM_GPU}" = "1"; then
-      cat <<EOF >&2
+    if is_x86_build_host; then
+      dcgm_ok="runtime-dlopen (x86 LIKWID GPU; no link-time libdcgm required)"
+    else
+      dcgm_ok="not detected"
+      if test "${HPCS_BUNDLE_REQUIRE_DCGM_GPU}" = "1"; then
+        cat <<EOF >&2
 ERROR: DCGM link probe failed but HPCS_BUNDLE_REQUIRE_DCGM_GPU=1.
 Refusing to auto-disable nvidia_gpu in this build.
 Install libdcgm development package for this build root (and ensure linker visibility),
 or unset HPCS_BUNDLE_REQUIRE_DCGM_GPU if this build intentionally omits NVIDIA GPU support.
 EOF
-      exit 1
+        exit 1
+      fi
+      STATIC_BUNDLE_FEAT_FLAGS+=(--disable-gpu)
     fi
-    STATIC_BUNDLE_FEAT_FLAGS+=(--disable-gpu)
   fi
 
   if monitor_probe_amd_gpup_perfapi_sdk; then
@@ -507,11 +495,13 @@ EOF
   fi
   cat <<'EOF'
 - This script probes the build host for InfiniBand (libibmad + headers), NVIDIA
-  DCGM (libdcgm + vendored dcgm_agent.h), and AMD GPUPerfAPI headers; missing
-  pieces become --disable-infiniband / --disable-gpu / --disable-amd-gpu so
-  configure can succeed. Configure routes shared-only stacks after -Wl,-Bdynamic
-  when using --enable-all-static: DCGM, Infiniband (libibmad), Omni-Path / OPA,
-  and GPUPerfAPI (AMD) is dlopen'd at runtime.
+  DCGM (libdcgm + vendored dcgm_agent.h on link-time paths), and AMD GPUPerfAPI
+  headers; missing IB/AMD pieces become --disable-infiniband / --disable-amd-gpu.
+  On x86 LIKWID builds, NVIDIA GPU uses runtime dlopen of libdcgm (no --disable-gpu
+  when libdcgm is absent at build time). aarch64 / HPCS_BUNDLE_REQUIRE_DCGM_GPU=1
+  still require link-time libdcgm. Configure routes shared-only stacks after
+  -Wl,-Bdynamic when using --enable-all-static: DCGM (non-x86 GPU or DCGM CPU),
+  Infiniband (libibmad), Omni-Path / OPA; AMD GPUPerfAPI is dlopen'd at runtime.
 - A fully static executable (including glibc) needs musl or careful NSS
   handling; partial static linking (this script) avoids installing the
   third-party deps system-wide while still using the system C library.

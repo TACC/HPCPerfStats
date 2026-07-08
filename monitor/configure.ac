@@ -254,26 +254,57 @@ AC_ARG_ENABLE([gpu],
 esac],
 [gpu=auto])
 
+gpu_dlopen=false
+if test "x$is_x86" = "xtrue" && test "x$cpu_counter_backend" = "xlikwid"; then
+  gpu_dlopen=true
+fi
+
 gpu_autodetect_result="not-run"
 if test "x$gpu" = "xauto"; then
-  gpu=false
-  gpu_autodetect_result="no-nvidia"
-  AC_PATH_PROG([LSPCI], [lspci], [no])
-  if test "x$LSPCI" != "xno"; then
-    if $LSPCI -nn 2>/dev/null | awk '{
-      l=tolower($0);
-      if ((index(l, "vga compatible controller") || index(l, "3d controller")) && index(l, "nvidia")) found=1
-    } END { exit(found ? 0 : 1) }'; then
-      gpu=true
-      gpu_autodetect_result="nvidia-found"
-    fi
+  if test "x$gpu_dlopen" = "xtrue"; then
+    gpu=true
+    gpu_autodetect_result="x86-runtime-dlopen"
   else
-    gpu_autodetect_result="lspci-missing"
+    gpu=false
+    gpu_autodetect_result="no-nvidia"
+    if test -f "${srcdir}/scripts/gpu_lspci_probe.sh"; then
+      if sh "${srcdir}/scripts/gpu_lspci_probe.sh" nvidia; then
+        gpu=true
+        gpu_autodetect_result="nvidia-found"
+      fi
+    else
+      AC_PATH_PROG([LSPCI], [lspci], [no])
+      if test "x$LSPCI" != "xno"; then
+        if $LSPCI -nn 2>/dev/null | awk -v vendor=nvidia -f "${srcdir}/scripts/gpu_lspci_detect.awk"; then
+          gpu=true
+          gpu_autodetect_result="nvidia-found"
+        fi
+      else
+        gpu_autodetect_result="lspci-missing"
+      fi
+    fi
   fi
 fi
 
 if test "x$gpu" = "xtrue"; then
   if test "x$dcgm_checked" = "xfalse"; then
+    if test "x$gpu_dlopen" = "xtrue"; then
+      save_CPPFLAGS=$CPPFLAGS
+      CPPFLAGS="-I${srcdir}/third_party/nvidia-dcgm ${CPPFLAGS}"
+      have_gpu=no
+      AC_CHECK_HEADERS([dcgm_agent.h dcgm_structs.h], [have_gpu=yes],
+        [if test "x$gpu_user_requested" = "xyes"; then
+           AC_MSG_ERROR([Unable to find dcgm_agent.h/dcgm_structs.h (see third_party/nvidia-dcgm/README)])
+         else
+           gpu=false
+           gpu_autodetect_result="${gpu_autodetect_result}-no-hdr"
+           AC_MSG_NOTICE([NVIDIA GPU enabled but DCGM headers are missing; disabling gpu])
+         fi])
+      CPPFLAGS=$save_CPPFLAGS
+      if test "x$gpu" = "xtrue"; then
+        gpu_autodetect_result="${gpu_autodetect_result}-vendored-hdr"
+      fi
+    else
     if test "x$enable_all_static" = xyes; then
       save_LIBS=$LIBS
       LIBS=
@@ -312,17 +343,23 @@ if test "x$gpu" = "xtrue"; then
          fi])
       CPPFLAGS=$save_CPPFLAGS
     fi
+    fi
   else
     gpu=true
   fi
 fi
 
 if test "x$gpu" = "xtrue"; then
-  AC_MSG_NOTICE([GPU summary: enabled (DCGM required); detect=${gpu_autodetect_result}])
+  if test "x$gpu_dlopen" = "xtrue"; then
+    AC_MSG_NOTICE([GPU summary: enabled (runtime dcgm dlopen on x86 LIKWID); detect=${gpu_autodetect_result}])
+  else
+    AC_MSG_NOTICE([GPU summary: enabled (DCGM link-time); detect=${gpu_autodetect_result}])
+  fi
 else
   AC_MSG_NOTICE([GPU summary: disabled; detect=${gpu_autodetect_result}])
 fi
 AM_CONDITIONAL([GPU], [test x$gpu = xtrue])
+AM_CONDITIONAL([GPU_DLOPEN], [test x$gpu = xtrue -a x$gpu_dlopen = xtrue])
 AM_CONDITIONAL([MONITOR_USE_DCGM_VENDOR_INCLUDES],
   [test "x$cpu_counter_backend" = "xdcgm" -o "x$gpu" = "xtrue"])
 
@@ -484,6 +521,9 @@ if test "x$lustre" = "xtrue"; then
 fi
 if test "x$gpu" = "xtrue"; then
   MONITOR_FEATURE_CPPFLAGS="$MONITOR_FEATURE_CPPFLAGS -DMONITOR_WITH_GPU"
+  if test "x$gpu_dlopen" = "xtrue"; then
+    MONITOR_FEATURE_CPPFLAGS="$MONITOR_FEATURE_CPPFLAGS -DMONITOR_GPU_DCGM_DLOPEN"
+  fi
 fi
 if test "x$amd_gpu" = "xtrue"; then
   MONITOR_FEATURE_CPPFLAGS="$MONITOR_FEATURE_CPPFLAGS -DMONITOR_WITH_AMD_GPU"

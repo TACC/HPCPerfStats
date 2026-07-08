@@ -26,7 +26,9 @@ for path in \
   scripts/lib/daemon_conf.py \
   scripts/lib/shm_snapshot.py \
   scripts/lib/cross_sample_validate.py \
-  scripts/rpm_debug_shm_verify.sh
+  scripts/rpm_debug_shm_verify.sh \
+  scripts/gpu_lspci_probe.sh \
+  scripts/gpu_lspci_detect.awk
 do
   test -f "${path}" \
     || { echo "missing ${path} (required for make dist)" >&2; exit 1; }

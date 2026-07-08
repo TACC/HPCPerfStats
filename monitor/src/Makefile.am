@@ -86,6 +86,8 @@ hpcperfstatsd_SOURCES = \
 	fileio.h \
 	hwdetect.h \
 	hwdetect.c \
+	gpu_pci_detect.h \
+	gpu_pci_detect.c \
 	host_key_alias.h \
 	host_key_alias.c \
 	host_cpu.h \
@@ -300,6 +302,12 @@ TYPES += \
 	nvidia_gpu_dcgm_watch.c \
 	nvidia_gpu_dcgm_watch.h \
 	nvidia_gpu_dcgm_compat.h
+if GPU_DLOPEN
+hpcperfstatsd_SOURCES += \
+	dcgm_gpu_dyn.c \
+	dcgm_gpu_dyn.h \
+	dcgm_gpu_api.h
+endif
 hpcperfstatsd_SOURCES += \
 	nvidia_gpu.h \
 	nvidia_gpu_estimate.c \

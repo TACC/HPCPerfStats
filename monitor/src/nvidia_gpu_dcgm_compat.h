@@ -1,8 +1,10 @@
 #ifndef NVIDIA_GPU_DCGM_COMPAT_H_
 #define NVIDIA_GPU_DCGM_COMPAT_H_
 
-#include "dcgm_agent.h"
-#include "dcgm_fields.h"
+#ifdef MONITOR_GPU_DCGM_DLOPEN
+#include "dcgm_gpu_dyn.h"
+#endif
+#include "dcgm_gpu_api.h"
 
 #ifndef DCGM_FI_DEV_CLOCK_THROTTLE_REASONS
 # ifdef DCGM_FI_DEV_CLOCKS_EVENT_REASONS

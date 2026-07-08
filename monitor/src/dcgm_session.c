@@ -1,7 +1,6 @@
 /* dcgm_session — obtain a DCGM host-engine handle (embedded or loopback). */
 #include <string.h>
-#include "dcgm_agent.h"
-#include "dcgm_structs.h"
+#include "dcgm_gpu_api.h"
 #include "dcgm_session.h"
 
 static dcgmReturn_t monitor_dcgm_try_embedded(dcgmHandle_t *outh)

@@ -1,0 +1,35 @@
+#ifndef DCGM_GPU_API_H_
+#define DCGM_GPU_API_H_
+
+#ifdef MONITOR_GPU_DCGM_DLOPEN
+
+#include "dcgm_gpu_dyn.h"
+
+#define dcgmInit dcgm_gpu_dyn_dcgmInit
+#define dcgmShutdown dcgm_gpu_dyn_dcgmShutdown
+#define dcgmStartEmbedded dcgm_gpu_dyn_dcgmStartEmbedded
+#define dcgmStartEmbedded_v2 dcgm_gpu_dyn_dcgmStartEmbedded_v2
+#define dcgmStopEmbedded dcgm_gpu_dyn_dcgmStopEmbedded
+#define dcgmConnect_v2 dcgm_gpu_dyn_dcgmConnect_v2
+#define dcgmDisconnect dcgm_gpu_dyn_dcgmDisconnect
+#define dcgmGetAllDevices dcgm_gpu_dyn_dcgmGetAllDevices
+#define dcgmGetAllSupportedDevices dcgm_gpu_dyn_dcgmGetAllSupportedDevices
+#define dcgmGetEntityGroupEntities dcgm_gpu_dyn_dcgmGetEntityGroupEntities
+#define dcgmGroupCreate dcgm_gpu_dyn_dcgmGroupCreate
+#define dcgmGroupDestroy dcgm_gpu_dyn_dcgmGroupDestroy
+#define dcgmGroupAddDevice dcgm_gpu_dyn_dcgmGroupAddDevice
+#define dcgmFieldGroupCreate dcgm_gpu_dyn_dcgmFieldGroupCreate
+#define dcgmFieldGroupDestroy dcgm_gpu_dyn_dcgmFieldGroupDestroy
+#define dcgmWatchFields dcgm_gpu_dyn_dcgmWatchFields
+#define dcgmUpdateAllFields dcgm_gpu_dyn_dcgmUpdateAllFields
+#define dcgmGetLatestValues dcgm_gpu_dyn_dcgmGetLatestValues
+#define errorString dcgm_gpu_dyn_errorString
+
+#else
+
+#include "dcgm_agent.h"
+#include "dcgm_fields.h"
+
+#endif
+
+#endif

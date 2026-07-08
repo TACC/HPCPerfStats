@@ -9,9 +9,7 @@
 #include <time.h>
 #include <unistd.h>
 #include "collect.h"
-#include "dcgm_agent.h"
-#include "dcgm_structs.h"
-#include "dcgm_fields.h"
+#include "dcgm_gpu_api.h"
 #include "dcgm_session.h"
 #include "nvidia_gpu.h"
 #include "nvidia_gpu_estimate.h"

@@ -1,0 +1,9 @@
+# lspci -nn fixture lines: line<TAB>expect_nvidia<TAB>expect_amd
+00:00.0 VGA compatible controller [0300]: NVIDIA Corporation Device [10de:1e30]	1	0
+01:00.0 3d controller [0302]: Device [10de:20b0] (rev a1)	1	0
+02:00.0 Processing accelerators [1202]: Device [10de:2329]	1	0
+03:00.0 Display controller [0302]: Advanced Micro Devices, Inc. [AMD/ATI] Device [1002:7408]	0	1
+04:00.0 VGA compatible controller [0300]: Intel Corporation AlderLake-S GT1 [8086:4680]	0	0
+05:00.0 3d controller [0302]: Advanced Micro Devices [AMD/ATI] Navi 31 [1002:744c]	0	1
+06:00.0 Accelerator [1202]: Device [10de:2330]	1	0
+07:00.0 Co-processor [0b40]: Intel Corporation Device [8086:0b40]	0	0

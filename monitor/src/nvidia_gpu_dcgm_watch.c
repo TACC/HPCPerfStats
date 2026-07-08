@@ -9,9 +9,7 @@
 #include <time.h>
 #include <unistd.h>
 #include "collect.h"
-#include "dcgm_agent.h"
-#include "dcgm_structs.h"
-#include "dcgm_fields.h"
+#include "dcgm_gpu_api.h"
 #include "dcgm_session.h"
 #include "nvidia_gpu.h"
 #include "monitor_log.h"
@@ -283,6 +281,14 @@ int nvidia_gpu_runtime_prepare(int *fail_stage)
 
   if (g_nvidia_gpu_runtime_ready)
     return 0;
+
+#ifdef MONITOR_GPU_DCGM_DLOPEN
+  if (dcgm_gpu_dyn_load() < 0) {
+    *fail_stage = NVIDIA_GPU_FAIL_DCGM_INIT;
+    ERROR("DCGM runtime load failed: %s\n", dcgm_gpu_dyn_last_error());
+    return -1;
+  }
+#endif
 
   rc = dcgmInit();
   if (rc != DCGM_ST_OK) {
