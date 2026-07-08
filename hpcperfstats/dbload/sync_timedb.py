@@ -1428,6 +1428,7 @@ def _imap_ingest_pool(
   pool_health_context = {
       "ingest_pool": ingest_pool if ingest_pool is not None else pool,
       "archive_pool": archive_pool,
+      "expected_pool_workers": thread_count,
       "in_flight_sample_fn": (
           tracker.sample_in_flight if tracker is not None else None
       ),
@@ -1534,6 +1535,7 @@ def _imap_ingest_paths_batched(
   pool_health_context = {
       "ingest_pool": ingest_pool if ingest_pool is not None else pool,
       "archive_pool": archive_pool,
+      "expected_pool_workers": thread_count,
       "in_flight_sample_fn": (
           tracker.sample_in_flight if tracker is not None else None
       ),

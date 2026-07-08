@@ -497,6 +497,74 @@ def test_abort_recycle_grace_tolerates_many_checks(monkeypatch):
     mph.abort_if_pool_workers_dead(pool, context="recycle_test")
 
 
+def _recycle_test_pool(*, dead_count=1, alive_count=20, pool_pad=0):
+  workers = [_RecycledWorker(pid=1000 + i) for i in range(dead_count)]
+  workers.extend(_AliveWorker(pid=5000 + i) for i in range(alive_count))
+  workers.extend([None] * pool_pad)
+  return SimpleNamespace(_pool=workers)
+
+
+def test_abort_recycle_20_of_21_alive_no_fatal(monkeypatch):
+  """July-08 display signature: 20 alive, 1 dead recycle, 21 materialized."""
+  monkeypatch.setattr(
+      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0,
+  )
+  logs = []
+  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  pool = _recycle_test_pool(dead_count=1, alive_count=20)
+  ctx = {"expected_pool_workers": 24}
+  mph.abort_if_pool_workers_dead(
+      pool,
+      context="sync_timedb ingest chunk",
+      pool_health_context=ctx,
+  )
+  assert not any("ERROR: pool worker death diagnostics" in line for line in logs)
+  assert any("pool worker recycle in progress" in line for line in logs)
+
+
+def test_abort_recycle_24_cap_20_alive_one_dead_no_fatal(monkeypatch):
+  """Reproduces July-08 fatal: process_cap 24, 20 alive, 1 dead, pool below cap."""
+  monkeypatch.setattr(
+      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0,
+  )
+  logs = []
+  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  pool = _recycle_test_pool(dead_count=1, alive_count=20)
+  ctx = {"expected_pool_workers": 24}
+  mph.abort_if_pool_workers_dead(
+      pool,
+      context="sync_timedb ingest chunk",
+      pool_health_context=ctx,
+  )
+  assert not any("ERROR: pool worker death diagnostics" in line for line in logs)
+
+
+def test_abort_recycle_22_pool_19_alive_three_dead_no_fatal(monkeypatch):
+  """July-08 tolerated poll: 19 alive, 3 dead recycle, 22 materialized."""
+  monkeypatch.setattr(
+      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0,
+  )
+  logs = []
+  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  pool = _recycle_test_pool(dead_count=3, alive_count=19)
+  ctx = {"expected_pool_workers": 24}
+  mph.abort_if_pool_workers_dead(
+      pool,
+      context="sync_timedb ingest chunk",
+      pool_health_context=ctx,
+  )
+  assert not any("ERROR: pool worker death diagnostics" in line for line in logs)
+
+
+def test_abort_recycle_spawn_gap_raw_pool_len_no_fatal(monkeypatch):
+  """Raw _pool longer than materialized workers during replacement spawn."""
+  monkeypatch.setattr(
+      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0,
+  )
+  pool = _recycle_test_pool(dead_count=1, alive_count=20, pool_pad=1)
+  mph.abort_if_pool_workers_dead(pool, context="spawn_gap")
+
+
 def test_abort_recycle_consecutive_different_pids_no_fatal(monkeypatch):
   """Reproduces hpcperfstats03: grace 1/2, 2/2, then third PID must not fatal."""
   monkeypatch.setattr(

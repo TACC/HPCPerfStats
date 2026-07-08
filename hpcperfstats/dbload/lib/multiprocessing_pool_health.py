@@ -337,6 +337,78 @@ def _dead_worker_exitcode_is_recycle(
   return False
 
 
+def _pool_recycle_gate_metrics(pool, dead_procs, *, pool_health_context=None):
+  """Snapshot counts for healthy-recycle gate logging and decisions."""
+  workers = list(iter_pool_worker_processes(pool))
+  proc_count = len(workers)
+  alive = alive_pool_worker_count(pool)
+  dead_n = len(dead_procs)
+  materialized = alive + dead_n
+  raw_pool_len = len(getattr(pool, "_pool", []) or [])
+  ctx = pool_health_context or {}
+  configured = ctx.get("expected_pool_workers")
+  if configured is not None:
+    try:
+      configured = int(configured)
+    except (TypeError, ValueError):
+      configured = None
+  expected_total = proc_count
+  if configured is not None and configured > expected_total:
+    expected_total = configured
+  if raw_pool_len > expected_total:
+    expected_total = raw_pool_len
+  gap = max(0, expected_total - materialized)
+  dead_exitcodes = [
+      (getattr(proc, "pid", None), getattr(proc, "exitcode", None))
+      for proc in dead_procs
+  ]
+  return {
+      "alive": alive,
+      "len_workers": proc_count,
+      "expected_total": expected_total,
+      "materialized": materialized,
+      "dead_n": dead_n,
+      "gap": gap,
+      "dead_exitcodes": dead_exitcodes,
+  }
+
+
+def _recycle_replacements_keeping_pace(pool, dead_procs, *, pool_health_context=None):
+  """True when alive workers cover dead slots, including spawn-gap tolerance."""
+  metrics = _pool_recycle_gate_metrics(
+      pool,
+      dead_procs,
+      pool_health_context=pool_health_context,
+  )
+  alive = metrics["alive"]
+  proc_count = metrics["len_workers"]
+  expected_total = metrics["expected_total"]
+  dead_n = metrics["dead_n"]
+  gap = metrics["gap"]
+
+  if alive <= 0:
+    return False
+  if alive >= expected_total - dead_n:
+    return True
+  # Pool sized below process_cap during recycle (July-08: 20/21 materialized vs cap 24).
+  cap_shrink = max(0, expected_total - proc_count)
+  if (
+      cap_shrink > 0
+      and alive >= dead_n
+      and alive >= expected_total - dead_n - cap_shrink
+  ):
+    return True
+  # Replacement slot not yet materialized in pool._pool.
+  if (
+      gap > 0
+      and gap <= dead_n
+      and alive >= dead_n
+      and alive >= expected_total - dead_n - gap
+  ):
+    return True
+  return False
+
+
 def _is_maxtasksperchild_recycle_in_progress(
     pool,
     dead_procs,
@@ -346,10 +418,11 @@ def _is_maxtasksperchild_recycle_in_progress(
   """True when dead workers look like normal pool worker replacement."""
   if not dead_procs:
     return False
-  workers = list(iter_pool_worker_processes(pool))
-  total = len(workers)
-  alive = alive_pool_worker_count(pool)
-  if alive <= 0 or alive < total - len(dead_procs):
+  if not _recycle_replacements_keeping_pace(
+      pool,
+      dead_procs,
+      pool_health_context=pool_health_context,
+  ):
     return False
   for proc in dead_procs:
     if not _dead_worker_exitcode_is_recycle(
@@ -359,6 +432,27 @@ def _is_maxtasksperchild_recycle_in_progress(
     ):
       return False
   return True
+
+
+def _format_recycle_gate_reject_reason(pool, dead_procs, *, pool_health_context=None):
+  metrics = _pool_recycle_gate_metrics(
+      pool,
+      dead_procs,
+      pool_health_context=pool_health_context,
+  )
+  return (
+      "alive=%s len_workers=%s expected_total=%s materialized=%s dead_n=%s "
+      "gap=%s dead_exitcodes=%s"
+      % (
+          metrics["alive"],
+          metrics["len_workers"],
+          metrics["expected_total"],
+          metrics["materialized"],
+          metrics["dead_n"],
+          metrics["gap"],
+          metrics["dead_exitcodes"],
+      )
+  )
 
 
 def _is_recycle_stuck_replacements_lagging(
@@ -581,6 +675,20 @@ def abort_if_pool_workers_dead(pool, *, context="", pool_health_context=None):
     likely_cause = "recycle_stuck"
     diagnostics = dict(diagnostics)
     diagnostics["likely_cause"] = likely_cause
+  elif likely_cause == "recycle":
+    likely_cause = "recycle_stuck"
+    diagnostics = dict(diagnostics)
+    diagnostics["likely_cause"] = likely_cause
+
+  log_print(
+      "ERROR: pool worker recycle gate rejected: %s"
+      % _format_recycle_gate_reject_reason(
+          pool,
+          dead_procs,
+          pool_health_context=pool_health_context,
+      ),
+      flush=True,
+  )
 
   _reset_recycle_tracking(pool)
   message = (
