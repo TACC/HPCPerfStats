@@ -27,14 +27,19 @@ _RFC3339_TS = (
 _LOG_TS_PIPE_RE = re.compile(
     rf"^(?P<ts>{_RFC3339_TS})\s+\S+\s+\|\s+(?P<body>.*)$"
 )
+# docker compose logs --timestamps: container | 2026-…T… message
+_LOG_TS_CONTAINER_PIPE_RE = re.compile(
+    rf"^\S+\s+\|\s+(?P<ts>{_RFC3339_TS})\s+(?P<body>.*)$"
+)
 # docker compose logs --timestamps --names: container 2026-…T… message
 _LOG_TS_CONTAINER_FIRST_RE = re.compile(
     rf"^\S+\s+(?P<ts>{_RFC3339_TS})\s+(?P<body>.*)$"
 )
-# Bare RFC3339 prefix (some compose drivers omit container/pipe): 2026-…T… message
+# Bare RFC3339 prefix (supervisord / some compose drivers): 2026-…T… message
 _LOG_TS_LEADING_RE = re.compile(
     rf"^(?P<ts>{_RFC3339_TS})\s+(?P<body>.*)$"
 )
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
 _LISTEND_UNLINKS_RE = re.compile(
     r"current file unlinks \(last 10 minutes\): (\d+)"
 )
@@ -76,12 +81,27 @@ class LogMetrics:
     timestamped_lines: int = 0
 
 
+def _normalize_iso_timestamp(text: str) -> str:
+    """Truncate nanosecond fractions for Python <3.11 fromisoformat compatibility."""
+    match = re.match(
+        r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?(.*)$",
+        text,
+    )
+    if not match:
+        return text
+    base, frac, suffix = match.group(1), match.group(2), match.group(3) or ""
+    if frac:
+        return f"{base}.{frac[:6]}{suffix}"
+    return text
+
+
 def _parse_log_timestamp(raw: str) -> Optional[datetime]:
     text = (raw or "").strip()
     if not text:
         return None
     if text.endswith("Z"):
         text = text[:-1] + "+00:00"
+    text = _normalize_iso_timestamp(text)
     if len(text) >= 5 and text[-3] != ":" and (text[-5] in "+-") and text[-2:].isdigit():
         text = text[:-2] + ":" + text[-2:]
     try:
@@ -93,10 +113,17 @@ def _parse_log_timestamp(raw: str) -> Optional[datetime]:
     return dt.astimezone(timezone.utc)
 
 
+def _normalize_log_line(line: str) -> str:
+    text = line.rstrip("\r\n")
+    text = _ANSI_ESCAPE_RE.sub("", text)
+    return text.lstrip()
+
+
 def _strip_log_prefix(line: str) -> tuple[Optional[datetime], str]:
-    text = line.rstrip("\n")
+    text = _normalize_log_line(line)
     for pattern in (
         _LOG_TS_PIPE_RE,
+        _LOG_TS_CONTAINER_PIPE_RE,
         _LOG_TS_CONTAINER_FIRST_RE,
         _LOG_TS_LEADING_RE,
     ):

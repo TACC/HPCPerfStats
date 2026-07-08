@@ -73,6 +73,22 @@ def test_parse_leading_rfc3339_timestamp(mod):
     assert "[update_metrics:thread:readiness-producer]" in body
 
 
+def test_parse_nanosecond_timestamp_python39_compatible(mod):
+    ts = mod._parse_log_timestamp("2026-07-07T08:38:46.381101000-05:00")
+    assert ts is not None
+    assert ts.microsecond == 381101
+
+
+def test_parse_container_pipe_timestamp(mod):
+    line = (
+        "hpcperfstats_pipeline_1  | 2026-07-07T08:38:46.381101000-05:00 "
+        "[sync_timedb:main] sync_timedb: pending rescan done pending=1000 elapsed_s=1.0"
+    )
+    ts, body = mod._strip_log_prefix(line)
+    assert ts is not None
+    assert "pending rescan done pending=1000" in body
+
+
 def test_parse_container_first_timestamp(mod):
     line = (
         "hpcperfstats_pipeline_1 2026-07-07T08:38:51.004115000-05:00 "
