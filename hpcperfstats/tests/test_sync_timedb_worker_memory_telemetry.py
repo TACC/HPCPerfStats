@@ -156,3 +156,41 @@ def test_should_supervisor_retire_respects_maxtasksperchild(monkeypatch):
   assert wm.should_supervisor_retire_worker(wm.REAP_FAILURE) is False
   monkeypatch.setattr(cfg, "get_sync_ingest_pool_maxtasksperchild", lambda: 0)
   assert wm.should_supervisor_retire_worker(wm.REAP_FAILURE) is True
+
+
+def test_retire_skipped_missing_worker_pid_warn_only(monkeypatch, capsys):
+  """Giant db_skip meta without pid + maxtasks=0 → WARN only, never raise."""
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+  import hpcperfstats.dbload.sync_timedb as st
+
+  monkeypatch.setattr(cfg, "get_sync_ingest_pool_maxtasksperchild", lambda: 0)
+  monkeypatch.setattr(cfg, "get_sync_ingest_cooperative_recycle_after_giant", lambda: True)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_ingest_timeout.is_giant_ingest_budget",
+      lambda p: True,
+  )
+  retire_calls = []
+  monkeypatch.setattr(
+      st,
+      "retire_pool_worker_pid",
+      lambda *a, **k: retire_calls.append((a, k)),
+  )
+  result = (
+      "/data/huge.stats",
+      False,
+      True,
+      0.1,
+      {"outcome": "db_skip", "db_skip": "head_tail", "giant": "yes"},
+  )
+  reap_kind = st._handle_ingest_worker_memory_after_imap(
+      pool=SimpleNamespace(_pool=[]),
+      registry={},
+      result=result,
+      accumulator=None,
+  )
+  assert reap_kind == wm.REAP_GIANT
+  assert retire_calls == []
+  out = capsys.readouterr().out
+  assert "retire skipped missing worker_pid" in out
+  assert "likely_cause=meta_or_registry_gap" in out
+  assert "reap_kind=giant_reap" in out

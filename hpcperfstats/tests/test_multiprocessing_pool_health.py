@@ -1457,6 +1457,67 @@ def test_imap_sliding_window_ghost_fatal_after_reconcile_exhausted(monkeypatch):
   with pytest.raises(mph.MultiprocessingPoolStallError) as excinfo:
     list(gen)
   assert excinfo.value.context == mph._IDLE_POOL_GHOST_CONTEXT
+  assert excinfo.value.exit_code == 124
+  assert excinfo.value.likely_cause == mph._IDLE_POOL_TASKQUEUE_DEAD_CAUSE
+
+
+def test_reconcile_full_redispatch_then_recovery_callback(monkeypatch):
+  monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 1000)
+  monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 3)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
+  stuck_pool = _ManualPool()
+  recover_calls = {"n": 0}
+
+  def on_recover(pool, pending_paths, pending_async, fn):
+    recover_calls["n"] += 1
+    assert list(pending_paths) == ["stuck_path"]
+    pending_async.clear()
+    new_pool = _ManualPool()
+    ar = new_pool.apply_async(fn, ("stuck_path",))
+    ar.finish()
+    pending_async[ar] = "stuck_path"
+    return {"pool": new_pool, "collected": []}
+
+  gen = mph.imap_sliding_window_watch_pool(
+      stuck_pool,
+      lambda path: path,
+      ["stuck_path"],
+      max_inflight=1,
+      poll_timeout_s=0.01,
+      stall_abort_polls_fn=lambda in_flight: 100000,
+      on_idle_pool_stuck_after_redispatch=on_recover,
+  )
+  results = list(gen)
+  assert results == ["stuck_path"]
+  assert recover_calls["n"] == 1
+
+
+def test_idle_pool_ghost_fatal_sets_taskqueue_dead_cause(monkeypatch):
+  monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 3)
+  monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 1)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
+  pool = _ManualPool()
+
+  def on_recover_fail(pool, pending_paths, pending_async, fn):
+    del pool, pending_paths, pending_async, fn
+    return {"pool": None, "collected": []}
+
+  gen = mph.imap_sliding_window_watch_pool(
+      pool,
+      lambda path: path,
+      ["ghost_path"],
+      max_inflight=1,
+      poll_timeout_s=0.01,
+      stall_abort_polls_fn=lambda in_flight: 100000,
+      on_idle_pool_stuck_after_redispatch=on_recover_fail,
+  )
+  with pytest.raises(mph.MultiprocessingPoolStallError) as excinfo:
+    list(gen)
+  assert excinfo.value.exit_code == 124
+  assert excinfo.value.likely_cause == mph._IDLE_POOL_TASKQUEUE_DEAD_CAUSE
+  assert "idle_pool_taskqueue_dead" in str(excinfo.value)
 
 
 def test_abort_if_pool_workers_dead_recycle_invokes_idle_reconcile(monkeypatch):

@@ -476,6 +476,8 @@ def _handle_ingest_worker_memory_after_imap(
       path=stats_fname,
   )
   if should_supervisor_retire_worker(reap_kind):
+    if str(meta.get("reconcile_skip") or "") == "yes":
+      return reap_kind
     worker_pid = resolve_worker_pid_from_meta_or_registry(
         meta, registry, stats_fname,
     )
@@ -488,7 +490,7 @@ def _handle_ingest_worker_memory_after_imap(
     else:
       log_print(
           "WARN: sync_timedb worker_memory: retire skipped missing worker_pid "
-          "path=%s reap_kind=%s"
+          "path=%s reap_kind=%s likely_cause=meta_or_registry_gap"
           % (stats_fname, reap_kind),
           flush=True,
       )
@@ -1211,7 +1213,8 @@ def _make_ingest_stall_warning_fn(
 ):
   def on_stall_warning(consecutive, abort_after, poll_timeout_s, context):
     sample = tracker.sample_in_flight() if tracker is not None else []
-    alive_workers = alive_pool_worker_count(pool)
+    active_pool = pool() if callable(pool) else pool
+    alive_workers = alive_pool_worker_count(active_pool)
     pool_workers = int(thread_count) if thread_count else alive_workers
     if callable(day_hint_from_sample_fn):
       day_hint = day_hint_from_sample_fn(sample)
@@ -1519,6 +1522,7 @@ def _imap_ingest_paths_batched(
     stall_diagnostics=None,
     pending_tail=None,
     populate_pool_controller=None,
+    on_ingest_pool_replaced=None,
 ):
   """Cap concurrent pool tasks below full chunk size for RSS safety (sliding window)."""
   inflight_cap = _effective_ingest_imap_inflight_cap(thread_count, len(paths))
@@ -1532,8 +1536,9 @@ def _imap_ingest_paths_batched(
     stall_diagnostics.current_imap_batch_size = len(paths or ())
   if dispatch_registry is not None:
     seed_dispatch_worker_stages(dispatch_registry, paths)
+  active_ingest_pool = ingest_pool if ingest_pool is not None else pool
   pool_health_context = {
-      "ingest_pool": ingest_pool if ingest_pool is not None else pool,
+      "ingest_pool": active_ingest_pool,
       "archive_pool": archive_pool,
       "expected_pool_workers": thread_count,
       "in_flight_sample_fn": (
@@ -1544,7 +1549,7 @@ def _imap_ingest_paths_batched(
 
   def _supervisor_reap():
     _maybe_reap_supervisor_pool_children_throttled(
-        ingest_pool if ingest_pool is not None else pool,
+        pool_health_context.get("ingest_pool") or active_ingest_pool,
         archive_pool,
         populate_pool_controller,
         context="stall_poll",
@@ -1630,6 +1635,77 @@ def _imap_ingest_paths_batched(
     if tracker is not None and path:
       tracker.note_dispatched(path)
 
+  def _on_idle_pool_stuck_after_redispatch(
+      stuck_pool,
+      pending_paths,
+      pending_async,
+      apply_fn,
+  ):
+    """Skip-or-recreate ingest Pool after full-redispatch thrash (exit-124 B1)."""
+    collected = []
+    remaining = []
+    for path in list(pending_paths or ()):
+      skip_item = None
+      try:
+        skip_item = _ingest_reconcile_skip_result(path)
+      except Exception:
+        skip_item = None
+      if skip_item is not None:
+        log_print(
+            "INFO: pool imap idle reconcile pool_recover skip=yes path=%s"
+            % os.path.basename(str(path)),
+            flush=True,
+        )
+        collected.append((path, skip_item))
+      else:
+        log_print(
+            "INFO: pool imap idle reconcile pool_recover skip=no path=%s"
+            % os.path.basename(str(path)),
+            flush=True,
+        )
+        remaining.append(path)
+    pending_async.clear()
+    terminate_pool_bounded(
+        stuck_pool,
+        timeout_s=30.0,
+        context="idle_pool_recover",
+    )
+    try:
+      close_pool_bounded(stuck_pool, timeout_s=5.0, force_terminate=True)
+    except Exception:
+      pass
+    initargs = (
+        SYNC_TIMEDB_PROCESS_TITLE,
+        "ingest-pool",
+        dispatch_registry,
+    )
+    new_pool = create_sync_timedb_spawn_pool(
+        processes=thread_count,
+        initializer=apply_ingest_pool_worker_init,
+        initargs=initargs,
+        pool_kind_log_label="ingest-pool",
+    )
+    pool_health_context["ingest_pool"] = new_pool
+    pool_health_context["active_pool"] = new_pool
+    if callable(on_ingest_pool_replaced):
+      try:
+        on_ingest_pool_replaced(new_pool)
+      except Exception:
+        pass
+    apply_async = getattr(new_pool, "apply_async", None)
+    if not callable(apply_async):
+      raise RuntimeError("replacement ingest pool missing apply_async")
+    for path in remaining:
+      if dispatch_registry is not None and path:
+        seed_dispatch_worker_stages(dispatch_registry, [path])
+      if tracker is not None and path:
+        tracker.note_dispatched(path)
+      pending_async[apply_async(apply_fn, (path,))] = path
+    return {"pool": new_pool, "collected": collected}
+
+  def _current_ingest_pool():
+    return pool_health_context.get("ingest_pool") or active_ingest_pool
+
   iterator = imap_sliding_window_watch_pool(
       pool,
       fn,
@@ -1642,9 +1718,10 @@ def _imap_ingest_paths_batched(
       on_idle_pool_ghost_fatal=_on_idle_pool_ghost_fatal,
       on_reconcile_redispatch=_on_reconcile_redispatch,
       resolve_reconcile_skip_result=_ingest_reconcile_skip_result,
+      on_idle_pool_stuck_after_redispatch=_on_idle_pool_stuck_after_redispatch,
       on_stall_warning=_make_ingest_stall_warning_fn(
           tracker,
-          pool=pool,
+          pool=_current_ingest_pool,
           thread_count=thread_count,
           chunk_counter=chunk_counter,
           pending_count=pending_count,
@@ -1666,7 +1743,7 @@ def _imap_ingest_paths_batched(
               ),
               stall_diagnostics=stall_diagnostics,
               progress_state=stall_poll_state,
-              alive_workers=alive_pool_worker_count(pool),
+              alive_workers=alive_pool_worker_count(_current_ingest_pool()),
               consecutive=consecutive,
               poll_timeout_s=poll_timeout_s,
           )
@@ -2862,12 +2939,15 @@ def _ingest_reconcile_skip_result(stats_file):
       _parse_elapsed,
       outcome_meta,
   ) = _unpack_parse_payload_result(result)
+  meta = dict(outcome_meta or {})
+  # Supervisor-side skip: no worker ran; do not retire a pool PID.
+  meta["reconcile_skip"] = "yes"
   return _pack_ingest_worker_result(
       stats_file_local,
       need_archival,
       ingest_ok,
       time.time() - t0,
-      outcome_meta,
+      meta,
   )
 
 
@@ -5217,7 +5297,7 @@ def run_sync_timedb_supervisor_loop(
       gated_tar_restore=False,
   ):
     """Ingest an explicit path list via pool imap or supervisor-thread fallback."""
-    nonlocal pool_worker_exit, active_chunk_ingest_tracker
+    nonlocal pool_worker_exit, active_chunk_ingest_tracker, ingest_pool
 
     successful_paths = []
     files_to_be_archived = []
@@ -5262,6 +5342,11 @@ def run_sync_timedb_supervisor_loop(
       add_stats_file = partial(add_stats_file_to_db, manager_lock)
       ingest_tracker = _IngestPoolInFlightTracker(paths)
       active_chunk_ingest_tracker = ingest_tracker
+
+      def _replace_ingest_pool(new_pool):
+        nonlocal ingest_pool
+        ingest_pool = new_pool
+
       results_iter = _imap_ingest_paths_batched(
           ingest_pool,
           add_stats_file,
@@ -5276,6 +5361,7 @@ def run_sync_timedb_supervisor_loop(
           stall_diagnostics=stall_diagnostics,
           pending_tail=pending_tail,
           populate_pool_controller=populate_pool_controller,
+          on_ingest_pool_replaced=_replace_ingest_pool,
       )
       for result in results_iter:
         stats_fname, need_archival, ingest_ok, elapsed_s, outcome_meta = (

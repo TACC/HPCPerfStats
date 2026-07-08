@@ -397,6 +397,15 @@ docker compose logs pipeline --since 6h 2>&1 | grep -E 'pool worker recycle in p
 
 **Expect:** `INFO: pool worker recycle in progress` during fast `db_skip` catch-up; **no** `hard exit code=137` with bare `likely_cause=recycle` at healthy alive ratios; if recycle replacement truly stalls, `recycle_stuck` + gate-rejected line before fatal.
 
+**Idle-pool ghost / exit 124 after full redispatch thrash (T1, 2026-07-08):** during cooperative recycle (`sync_ingest_pool_maxtasksperchild=0`) + fast `db_skip` / `giant_reap`, pre-fix signature was three **`INFO: pool imap idle reconcile redispatch round=… redispatched_n=N pending_async_n=N`** with identical `pending_sample`, workers `futex_wait_queue`, then **`ERROR: … idle_pool_ghost_inflight`** → **`hard exit code=124`** with **`likely_cause=unknown`**. Post-fix: after a full-redispatch thrash, expect **`INFO: pool imap idle reconcile pool_recover`** (skip yes/no + recreate Pool) and continued ingest **without** exit 124; if recover fails, fatal must include **`likely_cause=idle_pool_taskqueue_dead`**. Optional WARN **`retire skipped missing worker_pid … likely_cause=meta_or_registry_gap`** must stay WARN-only. Distinguish from exit **137** recycle troubleshooting above.
+
+```bash
+cd HPCPerfStats
+docker compose logs pipeline --since 6h 2>&1 | grep -E 'idle reconcile redispatch|idle reconcile pool_recover|idle_pool_ghost_inflight|idle_pool_taskqueue_dead|retire skipped missing worker_pid|hard exit code=124' | tail -80
+```
+
+**Expect:** redispatch → `pool_recover` (or skip-collect) without 124 during catch-up; no `likely_cause=unknown` on ghost fatals; if 124 remains, `idle_pool_taskqueue_dead` is present.
+
 **Worker memory soak (T1/T2, when `maxtasksperchild=0`):** enable **`sync_ingest_worker_memory_telemetry=yes`** and grep **`sync_timedb worker_memory: event=batch_summary`**. Anti-collapse: **`tasks_on_worker_p50≥10`** on small-file batches; **`keep_worker`** dominates **`retires_total`**; **`failure_reap_pct`** / **`rss_reap_pct`** low outside giant backlog; **`giant_reap_pct`** may be high during giant catch-up (expected). Example:
 
 ```bash
