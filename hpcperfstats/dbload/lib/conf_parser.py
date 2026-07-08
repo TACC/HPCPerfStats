@@ -2501,11 +2501,9 @@ def get_sync_ingest_worker_memory_telemetry_every_n_chunks():
 
 
 def get_sync_ingest_recycle_worker_on_failure():
-  """Supervisor-retire ingest workers after failed outcomes when maxtasksperchild=0."""
+  """Supervisor-retire ingest workers after failed outcomes (default yes)."""
   _ensure_cfg_loaded()
-  if _pipeline_has_option("sync_ingest_recycle_worker_on_failure"):
-    return _parse_bool(_pipeline_get("sync_ingest_recycle_worker_on_failure"))
-  return get_sync_ingest_pool_maxtasksperchild() == 0
+  return _parse_bool(_pipeline_get("sync_ingest_recycle_worker_on_failure"))
 
 
 def get_sync_ingest_cooperative_recycle_rss_fraction():

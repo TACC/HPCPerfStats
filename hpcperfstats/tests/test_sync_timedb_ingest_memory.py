@@ -219,6 +219,7 @@ def test_conf_parser_ingest_memory_defaults(temp_ini, monkeypatch):
   assert cfg.get_sync_ingest_malloc_trim_after_file() is True
   assert cfg.get_sync_ingest_worker_memory_telemetry() is False
   assert cfg.get_sync_ingest_cooperative_recycle_after_giant() is True
+  assert cfg.get_sync_ingest_recycle_worker_on_failure() is True
   assert cfg.get_sync_ingest_cooperative_recycle_rss_fraction() == 0.5
   assert cfg.get_sync_pool_process_cap() == 16
   assert cfg.get_sync_process_tree_rss_limit_mb() == 110000

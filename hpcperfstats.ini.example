@@ -417,7 +417,7 @@ sync_ingest_malloc_trim_after_file = yes
 # sync_ingest_worker_memory_telemetry = no
 # sync_ingest_worker_memory_telemetry_every_n_chunks = 1
 
-# Cooperative recycle when maxtasksperchild=0 (supervisor retires worker after result):
+# Cooperative recycle when maxtasksperchild=0 (supervisor retires worker after result; default yes):
 # sync_ingest_recycle_worker_on_failure = yes
 # sync_ingest_cooperative_recycle_rss_fraction = 0.5
 # sync_ingest_rss_recheck_delay_ms = 50
