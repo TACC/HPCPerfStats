@@ -20,14 +20,22 @@ Attach the `test_runs/day-close-loop-regression-battery-*.log` path to the PR or
 | **T1 progress** | T+4 h **or** after first giant `archive_job_done` for backlog head day | Oldest `waiting_on_ingest` day: `unprocessed` **not frozen** vs prior sample; no repeating `oldest_day_chunk_gate_stall` with same `incomplete_n` |
 | **T2 catch-up** | T+24 h or when head day advances | New `chunk ingest summary` cadence; June-scale head day `unprocessed` trending down; `ingest_stall_watchdog` absent |
 
-### Head+tail archive DB gate (stricter than head-only)
+### Archive/delete DB gate (host head+tail OR zero-host ingest mark)
 
-When **`sync_archive_require_db_ingest=yes`**, tar append and raw delete require **both** the first and last digit-leading timestamp seconds in `host_data` (streaming head + EOF-backward tail; no full-file scan). After deploy:
+When **`sync_archive_require_db_ingest=yes`**, tar append and raw delete require **either**:
 
-- Expect more **`not_head_tail_ingested`** / **`skipped_not_head_tail_ingested`** and day-close **handoff** (`day_close handoff requeue`) until ingest writes the tail second.
+1. **Both** the first and last digit-leading timestamp seconds in `host_data` (streaming head + EOF-backward tail; no full-file scan), **or**
+2. A durable **zero-host ingest mark** after successful `outcome=ingested` with `stats_rows=0` (typically `proc_rows>0` — proc-only / empty host payload). Marks live at `{archive_dir}/.sync_timedb_zero_host_ingest_mark.json`. Archival marking (`archive=yes` / `Files marked for archival`) remains correct for these paths; they must **proceed to append + delete**, not stick in `Archive/delete gate: skipped N`.
+
+After deploy:
+
+- Expect **`not_head_tail_ingested`** / **`skipped_not_head_tail_ingested`** and day-close **handoff** until incomplete **host** ingest catches up.
+- **Do not** treat `stats_rows=0` + `outcome=ingested` + `archive=yes` followed by persistent `Archive/delete gate: skipped` as normal — that is a regression of the zero-host mark / readiness OR path.
 - Legacy manifest reasons **`not_head_ingested`** / **`not_sample_ingested`** remain retryable.
-- **T0:** gate skips alone are not a stall if `chunk ingest summary` continues.
+- **T0:** gate skips alone are not a stall if `chunk ingest summary` continues; confirm proc-only successes are **not** stuck behind the skip line after `Files marked for archival`.
 - **T1/T2:** `not_head_tail_ingested` counts should fall as head-day `unprocessed` declines; frozen `waiting_on_ingest` with only gate skips and no ingest progress is a real stall.
+
+**Pre-deploy stuck siblings (one-time):** paths that already logged `outcome=ingested stats_rows=0 … archive=yes` then `Archive/delete gate: skipped` **before** this fix do not have a mark yet. After redeploy, **re-queue those paths for ingest once** (or run a pipeline `python3 -c` that calls `record_zero_host_ingest_mark` with `ensure_django()` + `conf_parser.get_archive_dir_path()`) so the mark is written; subsequent archive/delete passes then proceed. New zero-host successes mint the mark automatically during ingest logging.
 
 ## Operator greps (pipeline service)
 

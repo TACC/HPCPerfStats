@@ -11,6 +11,11 @@
         "command": ".cursor/hooks/check-block-until-plan-disk.py",
         "matcher": "Write|StrReplace|Shell|Grep|Task|Delete|ApplyPatch|EditNotebook",
         "timeout": 10
+      },
+      {
+        "command": ".cursor/hooks/check-live-plan-operator-discovery.py",
+        "matcher": "Write|StrReplace",
+        "timeout": 10
       }
     ],
     "stop": [

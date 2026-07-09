@@ -410,3 +410,77 @@ def test_head_tail_identity_as_gate_identities_merges_hosts():
   tail = {"/p": ("cn002", 200)}
   gate = readiness.head_tail_identity_as_gate_identities(head, tail)
   assert gate["/p"] == {"cn001": {100}, "cn002": {200}}
+
+
+def test_zero_host_mark_makes_filter_paths_head_ingested_ready(
+    monkeypatch, tmp_path,
+):
+  """Successful stats_rows=0 ingest mark must pass archive/delete gate."""
+  from hpcperfstats.dbload.lib import sync_timedb_zero_host_ingest_mark as zhm
+
+  host_dir = tmp_path / "host.cluster"
+  host_dir.mkdir()
+  archive_dir = tmp_path / "archive"
+  archive_dir.mkdir()
+  seg = _write_stats_segment(host_dir / "proc_only", "cn001", 1_700_100_000)
+
+  monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
+  monkeypatch.setattr(cfg, "get_archive_dir_path", lambda: str(archive_dir))
+  monkeypatch.setattr(
+      readiness, "head_timestamp_present_in_db", lambda _h, _t: False,
+  )
+
+  assert readiness.stats_file_head_ingested_in_db(seg) is False
+  ready, skipped = readiness.filter_paths_head_ingested([seg], log_fn=None)
+  assert ready == []
+  assert skipped == [seg]
+
+  assert zhm.record_zero_host_ingest_mark(seg, archive_data_dir=str(archive_dir))
+  readiness.reset_sync_ingest_readiness_caches()
+  assert readiness.stats_file_head_ingested_in_db(seg) is True
+  ready, skipped = readiness.filter_paths_head_ingested([seg], log_fn=None)
+  assert ready == [seg]
+  assert skipped == []
+
+
+def test_zero_host_mark_widens_batched_build_head_ingest_ready_set(
+    monkeypatch, tmp_path,
+):
+  from hpcperfstats.dbload.lib import sync_timedb_zero_host_ingest_mark as zhm
+
+  host_dir = tmp_path / "host.cluster"
+  host_dir.mkdir()
+  archive_dir = tmp_path / "archive"
+  archive_dir.mkdir()
+  seg = _write_stats_segment(host_dir / "proc_only", "cn001", 1_700_100_100)
+
+  monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
+  monkeypatch.setattr(cfg, "get_archive_dir_path", lambda: str(archive_dir))
+  monkeypatch.setattr(
+      readiness,
+      "host_timestamp_seconds_all_present",
+      lambda _h, _s: False,
+  )
+
+  gate = {seg: {"cn001": {1_700_100_100}}}
+  ready = readiness.build_head_ingest_ready_set([seg], gate, log_fn=None)
+  assert seg not in ready
+
+  assert zhm.record_zero_host_ingest_mark(seg, archive_data_dir=str(archive_dir))
+  ready = readiness.build_head_ingest_ready_set([seg], gate, log_fn=None)
+  assert seg in ready
+
+
+def test_without_mark_and_without_host_data_still_skipped(monkeypatch, tmp_path):
+  host_dir = tmp_path / "host.cluster"
+  host_dir.mkdir()
+  archive_dir = tmp_path / "archive"
+  archive_dir.mkdir()
+  seg = _write_stats_segment(host_dir / "never", "cn001", 1_700_100_200)
+
+  monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
+  monkeypatch.setattr(cfg, "get_archive_dir_path", lambda: str(archive_dir))
+  monkeypatch.setattr(
+      readiness, "head_timestamp_present_in_db", lambda _h, _t: False,
+  )
+  assert readiness.stats_file_head_ingested_in_db(seg) is False

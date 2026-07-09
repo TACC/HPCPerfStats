@@ -2827,6 +2827,16 @@ def _log_ingest_worker_result(result, *, remaining=None, supplement=False):
       remaining=remaining,
       supplement=supplement,
   )
+  from hpcperfstats.dbload.lib.sync_timedb_zero_host_ingest_mark import (
+      maybe_record_zero_host_ingest_mark_from_outcome,
+  )
+  maybe_record_zero_host_ingest_mark_from_outcome(
+      stats_file,
+      ingest_ok=outcome.ingest_ok,
+      outcome=outcome.outcome,
+      stats_rows=outcome.stats_rows,
+      log_fn=log_print,
+  )
 
 
 def _quarantine_failed_ingest_parse(stats_file, error_detail=None):
@@ -4210,6 +4220,10 @@ def _archive_stats_files_body(archive_info):
             log_fn=log_print,
         )
         worker_invalidated = True
+      from hpcperfstats.dbload.lib.sync_timedb_zero_host_ingest_mark import (
+          clear_zero_host_ingest_marks,
+      )
+      clear_zero_host_ingest_marks(stats_files_to_tar, log_fn=log_print)
       return ArchiveAppendOutcome(
           redis_merge_ok=merged,
           skip_finalize_invalidate=merged or worker_invalidated,

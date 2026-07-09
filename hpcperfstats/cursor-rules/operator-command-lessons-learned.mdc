@@ -30,6 +30,8 @@ If the failure reveals a **recurring** gap (not a one-off typo), also add a one-
 - Leading `cd HPCPerfStats` (or any host `cd`) before `docker compose` in operator paste blocks — forbidden per **Mandatory format** in `compose-operator-terminal-commands.mdc`; state cwd in prose only.
 - `docker compose logs pipeline --tail=N` (with or without grep) on long-running pipeline — truncates before stall window; see **No `--tail` on `compose logs`** in `compose-operator-terminal-commands.mdc`.
 - `docker compose exec pipeline python3 - <<'PY'` (heredoc through exec) on podman-compose — opens interactive REPL instead of running script; use `su hpcperfstats -c 'python3 -c "…"'` per **Podman-compose sites** anti-patterns in `compose-operator-terminal-commands.mdc`.
+- Bare `python3 -c` importing `sync_timedb_ingest_readiness` / `host_data` without **`ensure_django()`** — `ImproperlyConfigured` (hpcperfstats03); see **Django bootstrap** anti-pattern in `compose-operator-terminal-commands.mdc`.
+- Hardcoded `/hpcperfstats/…` or raw ConfigParser for `archive_dir` in Pending blocks — preToolUse deny (`check-live-plan-operator-discovery.py`).
 - Introspection misuse — unbounded `strace`, `gdb` left attached, or `py-spy` without a target PID when `pgrep`/`ps` should run first (see **Container introspection tools** in `compose-operator-terminal-commands.mdc`).
 - Missing `-f docker-compose.app.yaml` (or other overlay) when production uses it.
 - Duplicate command blocks that already failed in an earlier plan for the same site.

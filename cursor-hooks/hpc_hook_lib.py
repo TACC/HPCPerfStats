@@ -823,6 +823,38 @@ def _validate_pending_commands_subsection(pending: str) -> list[str]:
                 "python3 - << through docker compose exec "
                 "(operator-command-lessons-learned.mdc)",
             )
+        # Hardcoded data roots without conf_parser getters.
+        has_conf_parser = bool(
+            re.search(
+                r"conf_parser|get_archive_dir_path|get_daily_archive_dir_path|"
+                r"get_accounting_path",
+                bash_body,
+                re.I,
+            )
+        )
+        if re.search(
+            r"/(?:hpcperfstats|opt/hpcperfstats_data)(?:/|\b)",
+            bash_body,
+            re.I,
+        ) and not has_conf_parser:
+            issues.append(
+                f"Operator discovery: #### {service} must not hardcode "
+                "/hpcperfstats/ (or /opt/hpcperfstats_data/) data roots without "
+                "conf_parser getters "
+                "(compose-operator-terminal-commands.mdc)",
+            )
+        # Raw ConfigParser for archive_dir / daily_archive_dir / acct_path.
+        if re.search(r"\bConfigParser\b", bash_body) and re.search(
+            r"hpcperfstats\.ini|archive_dir|daily_archive_dir|acct_path",
+            bash_body,
+            re.I,
+        ) and not has_conf_parser:
+            issues.append(
+                f"Operator discovery: #### {service} must use "
+                "hpcperfstats.dbload.lib.conf_parser getters for archive_dir "
+                "(not raw ConfigParser) "
+                "(compose-operator-terminal-commands.mdc)",
+            )
     for service, count in seen_services.items():
         if count > 1:
             issues.append(
@@ -831,6 +863,45 @@ def _validate_pending_commands_subsection(pending: str) -> list[str]:
                 "(compose-operator-terminal-commands.mdc)",
             )
     return issues
+
+
+def reconstruct_live_plan_markdown_from_tool_input(
+    tool_name: str,
+    tool_input: dict,
+    *,
+    on_disk_path: str | None = None,
+) -> str | None:
+    """Rebuild proposed live-plan markdown for preToolUse deny checks."""
+    if not isinstance(tool_input, dict):
+        return None
+    if tool_name == "Write":
+        contents = tool_input.get("contents")
+        return str(contents) if contents is not None else None
+    if tool_name != "StrReplace":
+        return None
+    path = on_disk_path
+    if not path:
+        for key in ("path", "file_path", "target_file"):
+            candidate = tool_input.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                path = candidate
+                break
+    if not path:
+        return None
+    old = tool_input.get("old_string")
+    new = tool_input.get("new_string")
+    if not isinstance(old, str) or not isinstance(new, str):
+        return None
+    try:
+        current = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    if old not in current:
+        return None
+    replace_all = bool(tool_input.get("replace_all"))
+    if replace_all:
+        return current.replace(old, new)
+    return current.replace(old, new, 1)
 
 
 def operator_commands_outside_discovery_issues(plan_markdown: str) -> list[str]:

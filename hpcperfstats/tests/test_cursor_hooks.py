@@ -757,7 +757,9 @@ def _operator_in_progress_plan_markdown() -> str:
           "### Pending commands\n\n"
           "#### pipeline — paste manifest snapshot\n\n"
           "```bash\n"
-          "docker compose exec pipeline su hpcperfstats -c 'ls /hpcperfstats/archive'\n"
+          "docker compose exec pipeline su hpcperfstats -c 'python3 -c \""
+          "from hpcperfstats.dbload.lib import conf_parser as cfg; "
+          "print(cfg.get_archive_dir_path())\"'\n"
           "```\n"
       ),
   )
@@ -902,6 +904,154 @@ def test_operator_discovery_rejects_heredoc_python_through_exec():
   )
   issues = lib.operator_discovery_issues(plan)
   assert any("heredoc" in item for item in issues)
+
+
+def test_operator_discovery_rejects_hardcoded_hpcperfstats_without_conf_parser():
+  plan = _minimal_plan_markdown().replace(
+      "## Operator discovery\n\n**Status:** `not needed`\n",
+      (
+          "## Operator discovery\n\n"
+          "**Status:** `in progress`\n\n"
+          "### Completed findings\n\n"
+          "| # | Service | Asked for | Found | Date |\n"
+          "|---|---------|-----------|-------|------|\n\n"
+          "### Pending commands\n\n"
+          "#### pipeline — hardcoded archive path\n\n"
+          "```bash\n"
+          "docker compose exec pipeline su hpcperfstats -c "
+          "'ls /hpcperfstats/archive/i615-104/1780790218'\n"
+          "```\n"
+      ),
+  )
+  issues = lib.operator_discovery_issues(plan)
+  assert any("hardcode" in item for item in issues)
+
+
+def test_operator_discovery_rejects_raw_configparser_archive_dir():
+  plan = _minimal_plan_markdown().replace(
+      "## Operator discovery\n\n**Status:** `not needed`\n",
+      (
+          "## Operator discovery\n\n"
+          "**Status:** `in progress`\n\n"
+          "### Completed findings\n\n"
+          "| # | Service | Asked for | Found | Date |\n"
+          "|---|---------|-----------|-------|------|\n\n"
+          "### Pending commands\n\n"
+          "#### pipeline — raw ConfigParser\n\n"
+          "```bash\n"
+          "docker compose exec pipeline su hpcperfstats -c 'python3 -c \""
+          "from configparser import ConfigParser; c=ConfigParser(); "
+          "c.read('/home/hpcperfstats/hpcperfstats.ini'); "
+          "print(c['PIPELINE'].get('archive_dir'))\"'\n"
+          "```\n"
+      ),
+  )
+  issues = lib.operator_discovery_issues(plan)
+  assert any("conf_parser" in item for item in issues)
+
+
+def test_operator_discovery_accepts_conf_parser_archive_dir():
+  plan = _minimal_plan_markdown().replace(
+      "## Operator discovery\n\n**Status:** `not needed`\n",
+      (
+          "## Operator discovery\n\n"
+          "**Status:** `in progress`\n\n"
+          "### Completed findings\n\n"
+          "| # | Service | Asked for | Found | Date |\n"
+          "|---|---------|-----------|-------|------|\n\n"
+          "### Pending commands\n\n"
+          "#### pipeline — conf_parser archive\n\n"
+          "```bash\n"
+          "docker compose exec pipeline su hpcperfstats -c 'python3 -c \""
+          "from hpcperfstats.dbload.lib import conf_parser as cfg; "
+          "import os; "
+          "p=os.path.join(cfg.get_archive_dir_path(), 'host', '1'); "
+          "print(p)\"'\n"
+          "```\n"
+      ),
+  )
+  assert lib.operator_discovery_issues(plan) == []
+
+
+def test_reconstruct_live_plan_markdown_from_write():
+  md = lib.reconstruct_live_plan_markdown_from_tool_input(
+      "Write",
+      {"contents": "# plan\n"},
+  )
+  assert md == "# plan\n"
+
+
+def test_reconstruct_live_plan_markdown_from_str_replace(tmp_path):
+  path = tmp_path / "x.plan.md"
+  path.write_text("hello OLD world\n", encoding="utf-8")
+  md = lib.reconstruct_live_plan_markdown_from_tool_input(
+      "StrReplace",
+      {"path": str(path), "old_string": "OLD", "new_string": "NEW"},
+  )
+  assert md == "hello NEW world\n"
+
+
+def test_check_live_plan_operator_discovery_denies_hardcoded_path(tmp_path):
+  plans = tmp_path / ".cursor" / "plans"
+  plans.mkdir(parents=True)
+  plan_path = plans / "bad.plan.md"
+  bad = _minimal_plan_markdown().replace(
+      "## Operator discovery\n\n**Status:** `not needed`\n",
+      (
+          "## Operator discovery\n\n"
+          "**Status:** `in progress`\n\n"
+          "### Completed findings\n\n"
+          "| # | Service | Asked for | Found | Date |\n"
+          "|---|---------|-----------|-------|------|\n\n"
+          "### Pending commands\n\n"
+          "#### pipeline — hardcoded\n\n"
+          "```bash\n"
+          "docker compose exec pipeline su hpcperfstats -c "
+          "'ls /hpcperfstats/archive'\n"
+          "```\n"
+      ),
+  )
+  payload = {
+      "tool_name": "Write",
+      "tool_input": {"path": str(plan_path), "contents": bad},
+  }
+  script = HOOKS_DIR / "check-live-plan-operator-discovery.py"
+  proc = subprocess.run(
+      [sys.executable, str(script)],
+      input=json.dumps(payload),
+      capture_output=True,
+      text=True,
+      check=False,
+  )
+  assert proc.returncode == 0
+  data = json.loads(proc.stdout.strip())
+  assert data.get("permission") == "deny"
+  assert "OPERATOR DISCOVERY DENY" in data.get("user_message", "")
+
+
+def test_check_live_plan_operator_discovery_allows_valid_pending(tmp_path):
+  plans = tmp_path / ".cursor" / "plans"
+  plans.mkdir(parents=True)
+  plan_path = plans / "ok.plan.md"
+  payload = {
+      "tool_name": "Write",
+      "tool_input": {
+          "path": str(plan_path),
+          "contents": _operator_in_progress_plan_markdown(),
+      },
+  }
+  script = HOOKS_DIR / "check-live-plan-operator-discovery.py"
+  proc = subprocess.run(
+      [sys.executable, str(script)],
+      input=json.dumps(payload),
+      capture_output=True,
+      text=True,
+      check=False,
+  )
+  assert proc.returncode == 0
+  data = json.loads(proc.stdout.strip())
+  assert data.get("permission") == "allow"
+
 
 
 def test_operator_discovery_issues_flags_compose_blocks_outside_section():

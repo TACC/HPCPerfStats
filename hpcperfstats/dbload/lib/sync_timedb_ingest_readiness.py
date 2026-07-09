@@ -1,11 +1,12 @@
 """DB ingest-readiness checks before sync_timedb archives or deletes raw stats files.
 
 When ``sync_archive_require_db_ingest=yes``, closed segments must pass the
-head+tail gate: first and last digit-leading timestamp lines for their hostname
-tokens must each have a ``host_data`` row in the same Unix second.
+archive/delete gate: classic host_data head+tail **or** a durable zero-host
+ingest mark (successful ``stats_rows=0`` / proc-only ingest; ``proc_data`` has
+no time column so it cannot mirror head/tail probes).
 
-Probes use streaming head and EOF-backward tail reads (no full-file load). The
-monitor emits fractional seconds; ingest stores subsecond ``time`` values —
+Host probes use streaming head and EOF-backward tail reads (no full-file load).
+The monitor emits fractional seconds; ingest stores subsecond ``time`` values —
 probes use Unix-second windows, not exact ``time=`` equality.
 """
 import os
@@ -178,8 +179,16 @@ def _path_head_tail_ready_in_db(path):
   return head_timestamp_present_in_db(tail_host, tail_ts)
 
 
+def _path_ready_via_zero_host_mark(path):
+  from hpcperfstats.dbload.lib.sync_timedb_zero_host_ingest_mark import (
+      has_zero_host_ingest_mark,
+  )
+
+  return bool(has_zero_host_ingest_mark(path))
+
+
 def stats_file_head_ingested_in_db(path, *, log_fn=None):
-  """Return True when the closed segment passes the head+tail DB ingest gate."""
+  """Return True when head+tail host_data is present OR a zero-host ingest mark exists."""
   from hpcperfstats.dbload.sync_timedb import _sync_worker_db_task
 
   with _sync_worker_db_task():
@@ -198,6 +207,8 @@ def stats_file_head_ingested_in_db(path, *, log_fn=None):
     ready = False
     if not stats_file_is_active_segment(path):
       ready = _path_head_tail_ready_in_db(path)
+      if not ready:
+        ready = _path_ready_via_zero_host_mark(path)
 
     _PATH_READY_CACHE[fp] = {"ready": bool(ready), "checked_at": now}
     _trim_path_ready_cache()
@@ -210,7 +221,7 @@ def build_head_ingest_ready_set(
     *,
     log_fn=None,
 ):
-  """Return paths whose gate ``(host, unix_second)`` sets all exist in ``host_data``."""
+  """Return paths ready via host_data gate seconds OR durable zero-host ingest mark."""
   from hpcperfstats.dbload.sync_timedb import _sync_worker_db_task
 
   with _sync_worker_db_task():
@@ -239,6 +250,14 @@ def build_head_ingest_ready_set(
     for path, sampled in path_samples.items():
       if all(host_ok.get(host, False) for host in sampled):
         ready_paths.add(path)
+
+    for path in closed_paths or []:
+      if path in ready_paths:
+        continue
+      if stats_file_is_active_segment(path):
+        continue
+      if _path_ready_via_zero_host_mark(path):
+        ready_paths.add(path)
     return ready_paths
 
 
@@ -255,6 +274,9 @@ def filter_paths_head_ingested(
   ``head_identity_by_path`` alone is not sufficient (head-only would miss tails);
   pass ``gate_identities_by_path`` for the batched path, otherwise each path is
   probed with streaming head+tail reads.
+
+  Ready when host_data head+tail passes **or** a durable zero-host ingest mark
+  is present for the path fingerprint.
   """
   del head_identity_by_path  # no longer used for head-only batch conversion
   if gate_identities_by_path is None:

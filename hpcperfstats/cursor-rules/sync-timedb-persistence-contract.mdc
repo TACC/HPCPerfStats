@@ -22,7 +22,7 @@ All operator sidecars under `{archive_data_dir}` share one versioned persistence
 `{archive_data_dir}/.sync_timedb_persistence.json`:
 
 ```json
-{"contract_version": 3, "written_at": 1710000000.0}
+{"contract_version": 4, "written_at": 1710000000.0}
 ```
 
 **Startup:** if missing or `contract_version != SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION`, call `reset_sync_timedb_persistence()` (unlink all registered artifacts), write fresh contract, proceed with empty in-memory state.
@@ -39,6 +39,7 @@ All operator sidecars under `{archive_data_dir}` share one versioned persistence
 | `startup_raw_removal` | `.sync_timedb_startup_raw_removal.json` |
 | `day_raw_removal_dir` | `.sync_timedb_day_raw_removal/` |
 | `unparsable_raw` | `.sync_timedb_unparsable_raw.json` |
+| `zero_host_ingest_mark` | `.sync_timedb_zero_host_ingest_mark.json` (fingerprint → successful zero-host-row ingest; archive/delete OR path) |
 
 **API:** `load_persistence_document(path, kind)` / `save_persistence_document(path, kind, payload)` — no ad-hoc JSON load/save for registered kinds in `dbload/`.
 
