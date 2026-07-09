@@ -78,7 +78,9 @@ from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
     hard_exit_pool_worker_error,
     imap_sliding_window_watch_pool,
     imap_unordered_watch_pool,
+    maintain_ingest_pool_after_supervisor_retire,
     pool_workers_all_idle,
+    probe_ingest_pool_dispatch,
     reap_pool_worker_pids,
     reap_zombie_children_of_self,
     retire_pool_worker_pid,
@@ -183,6 +185,7 @@ from hpcperfstats.dbload.lib.sync_timedb_worker_memory import (
     measure_worker_rss_after_release,
     resolve_worker_pid_from_meta_or_registry,
     should_supervisor_retire_worker,
+    should_defer_supervisor_retire,
 )
 from hpcperfstats.dbload.lib.sync_timedb_day_close_manifest import (
     DayCloseManifestCoordinator,
@@ -462,6 +465,11 @@ def _handle_ingest_worker_memory_after_imap(
     registry,
     result,
     accumulator,
+    pool_health_context=None,
+    recreate_ingest_pool_fn=None,
+    on_pool_replaced=None,
+    pending_inflight=None,
+    max_inflight=None,
 ):
   stats_fname, _need_archival, ingest_ok, _elapsed_s, outcome_meta = (
       _unpack_ingest_worker_result(result)
@@ -479,22 +487,47 @@ def _handle_ingest_worker_memory_after_imap(
   if should_supervisor_retire_worker(reap_kind):
     if str(meta.get("reconcile_skip") or "") == "yes":
       return reap_kind
-    worker_pid = resolve_worker_pid_from_meta_or_registry(
-        meta, registry, stats_fname,
-    )
-    if worker_pid is not None:
-      retire_pool_worker_pid(
-          pool,
-          worker_pid,
-          context="ingest_%s" % reap_kind,
-      )
-    else:
+    if should_defer_supervisor_retire(
+        reap_kind,
+        accumulator=accumulator,
+        pending_inflight=pending_inflight,
+        max_inflight=max_inflight,
+    ):
       log_print(
-          "WARN: sync_timedb worker_memory: retire skipped missing worker_pid "
-          "path=%s reap_kind=%s likely_cause=meta_or_registry_gap"
-          % (stats_fname, reap_kind),
+          "INFO: sync_timedb worker_memory: retire deferred reap_kind=%s "
+          "pending_inflight=%s max_inflight=%s path=%s"
+          % (
+              reap_kind,
+              pending_inflight,
+              max_inflight,
+              stats_fname,
+          ),
           flush=True,
       )
+    else:
+      worker_pid = resolve_worker_pid_from_meta_or_registry(
+          meta, registry, stats_fname,
+      )
+      if worker_pid is not None:
+        retire_pool_worker_pid(
+            pool,
+            worker_pid,
+            context="ingest_%s" % reap_kind,
+        )
+        maintained_pool = maintain_ingest_pool_after_supervisor_retire(
+            pool,
+            pool_health_context=pool_health_context,
+            recreate_pool_fn=recreate_ingest_pool_fn,
+        )
+        if maintained_pool is not pool and callable(on_pool_replaced):
+          on_pool_replaced(maintained_pool)
+      else:
+        log_print(
+            "WARN: sync_timedb worker_memory: retire skipped missing worker_pid "
+            "path=%s reap_kind=%s likely_cause=meta_or_registry_gap"
+            % (stats_fname, reap_kind),
+            flush=True,
+        )
   if accumulator is not None:
     accumulator.record_completion(reap_kind, meta)
   return reap_kind
@@ -1693,6 +1726,7 @@ def _imap_ingest_paths_batched(
         stuck_pool,
         timeout_s=30.0,
         context="idle_pool_recover",
+        kill_workers_first=pool_workers_all_idle(stuck_pool),
     )
     log_print(
         "INFO: pool_recover terminate elapsed_s=%.3f"
@@ -1722,6 +1756,11 @@ def _imap_ingest_paths_batched(
           flush=True,
       )
       raise RuntimeError("replacement ingest pool has no alive workers")
+    if not probe_ingest_pool_dispatch(
+        new_pool,
+        context="idle_pool_recover",
+    ):
+      raise RuntimeError("replacement ingest pool dispatch_probe failed")
     pool_health_context["ingest_pool"] = new_pool
     pool_health_context["active_pool"] = new_pool
     if callable(on_ingest_pool_replaced):
@@ -5388,6 +5427,25 @@ def run_sync_timedb_supervisor_loop(
       def _replace_ingest_pool(new_pool):
         nonlocal ingest_pool
         ingest_pool = new_pool
+        maintenance_pool_health["ingest_pool"] = new_pool
+
+      def _recreate_ingest_pool_maintenance():
+        return create_sync_timedb_spawn_pool(
+            processes=thread_count,
+            initializer=apply_ingest_pool_worker_init,
+            initargs=(
+                SYNC_TIMEDB_PROCESS_TITLE,
+                "ingest-pool",
+                stall_diagnostics.worker_registry,
+            ),
+            pool_kind_log_label="ingest-pool",
+        )
+
+      maintenance_pool_health = {
+          "ingest_pool": ingest_pool,
+          "expected_pool_workers": thread_count,
+      }
+      inflight_cap = _effective_ingest_imap_inflight_cap(thread_count, len(paths))
 
       results_iter = _imap_ingest_paths_batched(
           ingest_pool,
@@ -5432,6 +5490,11 @@ def run_sync_timedb_supervisor_loop(
             registry=stall_diagnostics.worker_registry,
             result=result,
             accumulator=worker_memory_accumulator,
+            pool_health_context=maintenance_pool_health,
+            recreate_ingest_pool_fn=_recreate_ingest_pool_maintenance,
+            on_pool_replaced=_replace_ingest_pool,
+            pending_inflight=min(inflight_cap, thread_count),
+            max_inflight=inflight_cap,
         )
         chunk_ingest_finished += 1
         if ingest_ok:

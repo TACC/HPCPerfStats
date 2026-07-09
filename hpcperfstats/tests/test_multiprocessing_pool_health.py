@@ -1582,3 +1582,115 @@ def test_abort_if_pool_workers_dead_recycle_invokes_idle_reconcile(monkeypatch):
   )
   assert reconcile_calls["n"] == 3
 
+
+def test_terminate_pool_bounded_kill_workers_first_before_terminate(monkeypatch):
+  logs = []
+  aggressive_calls = []
+  terminate_calls = []
+
+  monkeypatch.setattr(
+      mph,
+      "log_print",
+      lambda msg, flush=False: logs.append(msg),
+  )
+  monkeypatch.setattr(
+      mph,
+      "_aggressive_terminate_pool_workers",
+      lambda pool, **kwargs: aggressive_calls.append(pool),
+  )
+  monkeypatch.setattr(
+      mph,
+      "_wait_pool_processes_bounded",
+      lambda pool, timeout_s: (True, []),
+  )
+  monkeypatch.setattr(
+      mph,
+      "_reap_pool_worker_pids",
+      lambda pool, **kwargs: [],
+  )
+
+  class _TermPool:
+    _pool = [_AliveWorker()]
+
+    def terminate(self):
+      terminate_calls.append(True)
+
+  mph.terminate_pool_bounded(
+      _TermPool(),
+      context="idle_pool_recover",
+      kill_workers_first=True,
+  )
+  assert aggressive_calls
+  assert terminate_calls
+  assert any("pool_recover terminate outcome=all_done" in line for line in logs)
+
+
+def test_probe_ingest_pool_dispatch_success_and_failure():
+  class _OkAsync:
+    def get(self, timeout=None):
+      del timeout
+      return True
+
+  class _OkPool:
+    def apply_async(self, fn, args):
+      del fn, args
+      return _OkAsync()
+
+  assert mph.probe_ingest_pool_dispatch(_OkPool(), context="test") is True
+
+  class _FailPool:
+    def apply_async(self, fn, args):
+      del fn, args
+      raise RuntimeError("dead taskqueue")
+
+  assert mph.probe_ingest_pool_dispatch(_FailPool(), context="test") is False
+
+
+def test_maintain_ingest_pool_after_supervisor_retire_noop_when_maxtasks_positive(
+    monkeypatch,
+):
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
+      lambda: 1,
+  )
+  probe_calls = []
+  monkeypatch.setattr(
+      mph,
+      "probe_ingest_pool_dispatch",
+      lambda *a, **k: probe_calls.append(True) or True,
+  )
+  pool = object()
+  assert mph.maintain_ingest_pool_after_supervisor_retire(pool) is pool
+  assert probe_calls == []
+
+
+def test_full_redispatch_thrash_triggers_immediate_recover_same_round(monkeypatch):
+  monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 1000)
+  monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 3)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
+  stuck_pool = _ManualPool()
+  recover_calls = {"n": 0}
+
+  def on_recover(pool, pending_paths, pending_async, fn):
+    recover_calls["n"] += 1
+    pending_async.clear()
+    new_pool = _ManualPool()
+    ar = new_pool.apply_async(fn, ("stuck_path",))
+    ar.finish()
+    pending_async[ar] = "stuck_path"
+    return {"pool": new_pool, "collected": []}
+
+  gen = mph.imap_sliding_window_watch_pool(
+      stuck_pool,
+      lambda path: path,
+      ["stuck_path"],
+      max_inflight=1,
+      poll_timeout_s=0.01,
+      stall_abort_polls_fn=lambda in_flight: 100000,
+      on_idle_pool_stuck_after_redispatch=on_recover,
+  )
+  results = list(gen)
+  assert results == ["stuck_path"]
+  assert recover_calls["n"] == 1
+

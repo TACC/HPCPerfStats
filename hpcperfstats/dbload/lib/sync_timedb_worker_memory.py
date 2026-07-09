@@ -215,6 +215,39 @@ def should_supervisor_retire_worker(reap_kind):
   return True
 
 
+def should_defer_supervisor_retire(
+    reap_kind,
+    *,
+    accumulator=None,
+    pending_inflight=None,
+    max_inflight=None,
+):
+  """Defer cooperative retire during catch-up when the pool is near max inflight."""
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  if reap_kind in (REAP_KEEP, REAP_FAILURE):
+    return False
+  if cfg.get_sync_ingest_pool_maxtasksperchild() > 0:
+    return False
+  try:
+    inflight = int(pending_inflight or 0)
+    cap = int(max_inflight or 0)
+  except (TypeError, ValueError):
+    return False
+  if cap <= 0 or inflight < max(1, cap - 1):
+    return False
+  if accumulator is None:
+    return False
+  retire_cap = max(1, cap // 3)
+  if accumulator.retires_this_window >= retire_cap:
+    return True
+  if accumulator.completions >= 8:
+    catchup_retires = accumulator.retires_giant_reap + accumulator.retires_rss_reap
+    if catchup_retires >= max(2, accumulator.retires_total):
+      return accumulator.retires_this_window >= max(1, retire_cap - 1)
+  return False
+
+
 def _percentile(values, pct):
   if not values:
     return 0
@@ -239,6 +272,7 @@ class WorkerMemoryBatchAccumulator:
     self.retires_failure_reap = 0
     self.retires_rss_reap = 0
     self.retires_giant_reap = 0
+    self.retires_this_window = 0
     self._tasks_on_worker = []
     self._rss_mib_after = []
     self.rss_recheck_fired = 0
@@ -258,10 +292,13 @@ class WorkerMemoryBatchAccumulator:
       self.keep_worker += 1
     elif reap_kind == REAP_FAILURE:
       self.retires_failure_reap += 1
+      self.retires_this_window += 1
     elif reap_kind == REAP_RSS:
       self.retires_rss_reap += 1
+      self.retires_this_window += 1
     elif reap_kind == REAP_GIANT:
       self.retires_giant_reap += 1
+      self.retires_this_window += 1
     if isinstance(meta, dict):
       try:
         self._tasks_on_worker.append(int(meta.get("tasks_on_worker") or 0))
@@ -331,6 +368,7 @@ class WorkerMemoryBatchAccumulator:
     self.retires_failure_reap = 0
     self.retires_rss_reap = 0
     self.retires_giant_reap = 0
+    self.retires_this_window = 0
     self._tasks_on_worker = []
     self._rss_mib_after = []
     self.rss_recheck_fired = 0

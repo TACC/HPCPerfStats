@@ -959,6 +959,51 @@ def warn_unreaped_zombie_children(*, context=""):
   )
 
 
+def _pid_is_alive(pid):
+  try:
+    os.kill(int(pid), 0)
+    return True
+  except OSError:
+    return False
+
+
+def _alive_pool_worker_pids(pool):
+  pids = []
+  for proc in iter_pool_worker_processes(pool):
+    is_alive_fn = getattr(proc, "is_alive", None)
+    if callable(is_alive_fn) and is_alive_fn():
+      pid = getattr(proc, "pid", None)
+      if pid is not None:
+        pids.append(int(pid))
+  return pids
+
+
+def _aggressive_terminate_pool_workers(
+    pool,
+    *,
+    context="",
+    sigterm_grace_s=2.0,
+):
+  """SIGTERM then SIGKILL known pool worker PIDs before stdlib ``terminate()``."""
+  alive_pids = _alive_pool_worker_pids(pool)
+  if not alive_pids:
+    return
+  for pid in alive_pids:
+    try:
+      os.kill(pid, signal.SIGTERM)
+    except OSError:
+      continue
+  deadline = time.monotonic() + max(0.05, float(sigterm_grace_s))
+  lingering = []
+  while time.monotonic() < deadline:
+    lingering = [pid for pid in alive_pids if _pid_is_alive(pid)]
+    if not lingering:
+      return
+    time.sleep(0.05)
+  if lingering:
+    _sigkill_pool_worker_pids(lingering, context=context)
+
+
 def _sigkill_pool_worker_pids(pids, *, context=""):
   killed = []
   for pid in pids or ():
@@ -995,11 +1040,29 @@ def _sigkill_pool_worker_pids(pids, *, context=""):
       time.sleep(0.05)
 
 
-def terminate_pool_bounded(active_pool, timeout_s=30.0, *, context=""):
+def terminate_pool_bounded(
+    active_pool,
+    timeout_s=30.0,
+    *,
+    context="",
+    kill_workers_first=False,
+):
   """Terminate a pool and wait briefly so shutdown does not hang after worker death."""
   if active_pool is None:
     return True
   alive_before = alive_pool_worker_count(active_pool)
+  if kill_workers_first:
+    wchan_sample = format_pool_worker_wchan_sample(active_pool)
+    log_print(
+        "INFO: pool_recover terminate workers_before=%d wchan_sample=%s "
+        "context=%s"
+        % (alive_before, wchan_sample, context or "pool"),
+        flush=True,
+    )
+    _aggressive_terminate_pool_workers(
+        active_pool,
+        context=context,
+    )
   try:
     active_pool.terminate()
   except Exception:
@@ -1010,12 +1073,14 @@ def terminate_pool_bounded(active_pool, timeout_s=30.0, *, context=""):
       flush=True,
   )
   all_done, alive = _wait_pool_processes_bounded(active_pool, timeout_s)
+  outcome = "all_done"
   if not all_done:
     log_print(
         "Pool terminate timeout; lingering_workers=%s" % alive,
         flush=True,
     )
     _sigkill_pool_worker_pids(alive, context=context)
+    outcome = "sigkill"
     all_done, alive = _wait_pool_processes_bounded(active_pool, timeout_s)
     if not all_done and alive:
       log_print(
@@ -1023,8 +1088,107 @@ def terminate_pool_bounded(active_pool, timeout_s=30.0, *, context=""):
           % (context or "pool", alive),
           flush=True,
       )
+      outcome = "timeout"
+  if kill_workers_first or "recover" in str(context or ""):
+    log_print(
+        "INFO: pool_recover terminate outcome=%s context=%s"
+        % (outcome, context or "pool"),
+        flush=True,
+    )
   _reap_pool_worker_pids(active_pool, timeout_s=min(5.0, float(timeout_s)), context=context)
   return all_done
+
+
+def _ingest_pool_dispatch_probe_worker(_sentinel):
+  """Picklable no-op task proving the pool taskqueue can dequeue work."""
+  del _sentinel
+  return True
+
+
+def probe_ingest_pool_dispatch(pool, timeout_s=10.0, *, context=""):
+  """Return True when a trivial ``apply_async`` completes within ``timeout_s``."""
+  apply_async = getattr(pool, "apply_async", None)
+  if not callable(apply_async):
+    log_print(
+        "ERROR: pool_recover respawn dispatch_probe failed missing apply_async "
+        "context=%s"
+        % (context or "pool"),
+        flush=True,
+    )
+    return False
+  try:
+    async_result = apply_async(_ingest_pool_dispatch_probe_worker, (None,))
+    get_fn = getattr(async_result, "get", None)
+    if not callable(get_fn):
+      raise RuntimeError("async result missing get")
+    get_fn(timeout=max(0.5, float(timeout_s)))
+    log_print(
+        "INFO: pool_recover respawn dispatch_probe ok context=%s"
+        % (context or "pool"),
+        flush=True,
+    )
+    return True
+  except Exception as exc:
+    log_print(
+        "ERROR: pool_recover respawn dispatch_probe failed context=%s err=%s"
+        % (context or "pool", exc),
+        flush=True,
+    )
+    return False
+
+
+def maintain_ingest_pool_after_supervisor_retire(
+    pool,
+    *,
+    pool_health_context=None,
+    recreate_pool_fn=None,
+):
+  """Post-retire health check when ``maxtasksperchild=0`` (supervisor SIGTERM retire)."""
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  if pool is None:
+    return pool
+  if cfg.get_sync_ingest_pool_maxtasksperchild() > 0:
+    return pool
+  reap_pool_worker_pids(pool, context="post_retire_maintenance")
+  reap_zombie_children_of_self(context="post_retire_maintenance")
+  dead_procs = list(_iter_dead_pool_worker_processes(pool))
+  metrics = _pool_recycle_gate_metrics(
+      pool,
+      dead_procs,
+      pool_health_context=pool_health_context,
+  )
+  if (
+      metrics["gap"] > 0
+      or metrics["alive"] < metrics["expected_total"] - metrics["dead_n"]
+  ):
+    log_print(
+        "WARN: ingest pool replacement lagging alive=%d expected_total=%d "
+        "materialized=%d gap=%d dead_n=%d context=post_retire_maintenance"
+        % (
+            metrics["alive"],
+            metrics["expected_total"],
+            metrics["materialized"],
+            metrics["gap"],
+            metrics["dead_n"],
+        ),
+        flush=True,
+    )
+  if not probe_ingest_pool_dispatch(pool, context="post_retire_maintenance"):
+    if pool_workers_all_idle(pool) and callable(recreate_pool_fn):
+      log_print(
+          "WARN: ingest pool dispatch_probe failed after retire; proactive swap",
+          flush=True,
+      )
+      try:
+        return recreate_pool_fn()
+      except Exception as exc:
+        log_print(
+            "ERROR: ingest pool proactive swap failed err=%s"
+            % exc,
+            flush=True,
+        )
+  return pool
 
 
 def close_pool_bounded(active_pool, timeout_s=30.0, *, force_terminate=False):
@@ -1556,6 +1720,15 @@ def imap_sliding_window_watch_pool(
           and len(pending_async) == pending_before
       ):
         full_redispatch_thrash_seen = True
+        if (
+            callable(on_idle_pool_stuck_after_redispatch)
+            and not pool_recover_attempted
+        ):
+          recovered = _try_pool_recover_after_thrash()
+          if recovered is not None:
+            if recovered and queue_yields:
+              reconcile_pending_yields.extend(recovered)
+            return recovered
       consecutive_timeouts = 0
       polls_since_last_yield = 0
       _submit_until_cap()

@@ -194,3 +194,23 @@ def test_retire_skipped_missing_worker_pid_warn_only(monkeypatch, capsys):
   assert "retire skipped missing worker_pid" in out
   assert "likely_cause=meta_or_registry_gap" in out
   assert "reap_kind=giant_reap" in out
+
+
+def test_should_defer_supervisor_retire_near_max_inflight(monkeypatch):
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  monkeypatch.setattr(cfg, "get_sync_ingest_pool_maxtasksperchild", lambda: 0)
+  acc = wm.WorkerMemoryBatchAccumulator()
+  acc.retires_this_window = 8
+  assert wm.should_defer_supervisor_retire(
+      wm.REAP_GIANT,
+      accumulator=acc,
+      pending_inflight=24,
+      max_inflight=24,
+  ) is True
+  assert wm.should_defer_supervisor_retire(
+      wm.REAP_GIANT,
+      accumulator=acc,
+      pending_inflight=10,
+      max_inflight=24,
+  ) is False
