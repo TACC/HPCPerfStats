@@ -74,6 +74,7 @@ from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
     async_result_get_watch_pool,
     close_pool_bounded,
     create_sync_timedb_spawn_pool,
+    dedupe_ingest_paths_preserve_order,
     hard_exit_pool_worker_error,
     imap_sliding_window_watch_pool,
     imap_unordered_watch_pool,
@@ -1578,9 +1579,17 @@ def _imap_ingest_paths_batched(
       return []
     if not any_giant_ingest_budget_in_flight(in_flight_paths):
       return []
-    exclude = set(in_flight_paths or ())
+    exclude = {
+        os.path.normpath(str(p))
+        for p in (in_flight_paths or ())
+        if p
+    }
     if tracker is not None:
-      exclude.update(tracker.batch_seen_paths())
+      exclude.update(
+          os.path.normpath(str(p))
+          for p in tracker.batch_seen_paths()
+          if p
+      )
     selected = list(
         iter_giant_supplement_paths(
             pending_tail,
@@ -1642,38 +1651,59 @@ def _imap_ingest_paths_batched(
       apply_fn,
   ):
     """Skip-or-recreate ingest Pool after full-redispatch thrash (exit-124 B1)."""
+    unique_paths, duplicate_pending_n, duplicate_sample = (
+        dedupe_ingest_paths_preserve_order(pending_paths)
+    )
+    sample_text = ",".join(duplicate_sample[:5]) if duplicate_sample else "-"
+    log_print(
+        "INFO: pool_recover skip_probe begin unique_pending_n=%d "
+        "duplicate_pending_n=%d duplicate_sample=%s"
+        % (len(unique_paths), duplicate_pending_n, sample_text),
+        flush=True,
+    )
     collected = []
     remaining = []
-    for path in list(pending_paths or ()):
+    skip_yes_n = 0
+    skip_no_n = 0
+    skip_no_sample = []
+    for path in unique_paths:
       skip_item = None
       try:
         skip_item = _ingest_reconcile_skip_result(path)
       except Exception:
         skip_item = None
       if skip_item is not None:
-        log_print(
-            "INFO: pool imap idle reconcile pool_recover skip=yes path=%s"
-            % os.path.basename(str(path)),
-            flush=True,
-        )
+        skip_yes_n += 1
         collected.append((path, skip_item))
       else:
-        log_print(
-            "INFO: pool imap idle reconcile pool_recover skip=no path=%s"
-            % os.path.basename(str(path)),
-            flush=True,
-        )
+        skip_no_n += 1
+        if len(skip_no_sample) < 5:
+          skip_no_sample.append(os.path.basename(str(path)))
         remaining.append(path)
+    log_print(
+        "INFO: pool_recover skip_probe done skip_yes_n=%d skip_no_n=%d "
+        "skip_no_sample=%s"
+        % (skip_yes_n, skip_no_n, skip_no_sample or "-"),
+        flush=True,
+    )
     pending_async.clear()
+    log_print("INFO: pool_recover terminate begin", flush=True)
+    terminate_started = time.monotonic()
     terminate_pool_bounded(
         stuck_pool,
         timeout_s=30.0,
         context="idle_pool_recover",
     )
+    log_print(
+        "INFO: pool_recover terminate elapsed_s=%.3f"
+        % (time.monotonic() - terminate_started,),
+        flush=True,
+    )
     try:
       close_pool_bounded(stuck_pool, timeout_s=5.0, force_terminate=True)
     except Exception:
       pass
+    log_print("INFO: pool_recover respawn begin", flush=True)
     initargs = (
         SYNC_TIMEDB_PROCESS_TITLE,
         "ingest-pool",
@@ -1685,6 +1715,13 @@ def _imap_ingest_paths_batched(
         initargs=initargs,
         pool_kind_log_label="ingest-pool",
     )
+    alive_workers = alive_pool_worker_count(new_pool)
+    if alive_workers <= 0:
+      log_print(
+          "ERROR: pool_recover respawn failed alive_workers=0",
+          flush=True,
+      )
+      raise RuntimeError("replacement ingest pool has no alive workers")
     pool_health_context["ingest_pool"] = new_pool
     pool_health_context["active_pool"] = new_pool
     if callable(on_ingest_pool_replaced):
@@ -1701,6 +1738,11 @@ def _imap_ingest_paths_batched(
       if tracker is not None and path:
         tracker.note_dispatched(path)
       pending_async[apply_async(apply_fn, (path,))] = path
+    log_print(
+        "INFO: pool_recover resubmit n=%d alive_workers=%d"
+        % (len(remaining), alive_workers),
+        flush=True,
+    )
     return {"pool": new_pool, "collected": collected}
 
   def _current_ingest_pool():

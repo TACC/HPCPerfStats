@@ -113,11 +113,18 @@ def iter_giant_supplement_paths(
   """Oldest-first pending tail paths under ``max_bytes`` for giant pool supplement."""
   if max_bytes is None:
     max_bytes = int(cfg.get_sync_ingest_giant_pool_supplement_max_bytes())
-  exclude_set = set(exclude or ())
+  exclude_normpaths = {
+      os.path.normpath(str(path))
+      for path in (exclude or ())
+      if path
+  }
   max_bytes = int(max_bytes)
   remaining = None if limit is None else max(0, int(limit))
   for path in pending_tail or ():
-    if not path or path in exclude_set:
+    if not path:
+      continue
+    norm = os.path.normpath(str(path))
+    if norm in exclude_normpaths:
       continue
     if remaining is not None and remaining <= 0:
       break

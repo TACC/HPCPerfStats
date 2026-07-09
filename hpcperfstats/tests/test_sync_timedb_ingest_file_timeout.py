@@ -265,6 +265,23 @@ def test_giant_trigger_budget_2gib_boundary(monkeypatch, tmp_path):
   assert ingest_timeout_mod.is_giant_ingest_budget(str(at2g)) is True
 
 
+def test_iter_giant_supplement_paths_exclude_normpath_variant(tmp_path, monkeypatch):
+  _default_timeout_getters(monkeypatch)
+  monkeypatch.setattr(
+      st.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: 10**9,
+  )
+  path = str(tmp_path / "tail0")
+  (tmp_path / "tail0").write_bytes(b"x" * 100)
+  variant = os.path.join(str(tmp_path), "tail0", ".")
+  picked = list(
+      ingest_timeout_mod.iter_giant_supplement_paths(
+          [path],
+          exclude=[variant],
+      ),
+  )
+  assert picked == []
+
+
 def test_iter_giant_supplement_paths_skips_at_or_above_max_bytes(monkeypatch, tmp_path):
   _default_timeout_getters(monkeypatch)
   monkeypatch.setattr(

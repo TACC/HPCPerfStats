@@ -54,6 +54,49 @@ class MultiprocessingPoolStallError(MultiprocessingWorkerExitError):
   """Raised when a pool worker is alive but imap progress stalls too long."""
 
 
+def ingest_path_normpath(path):
+  """Canonical normpath key for ingest sliding-window / recover dedupe."""
+  if not path:
+    return ""
+  return os.path.normpath(str(path))
+
+
+def dedupe_ingest_paths_preserve_order(paths):
+  """First occurrence wins; return (unique_paths, duplicate_n, duplicate_sample).
+
+  ``duplicate_sample`` entries are ``basename:count`` strings (capped by caller).
+  """
+  norm_counts = {}
+  first_path_by_norm = {}
+  order = []
+  for path in paths or ():
+    if not path:
+      continue
+    norm = ingest_path_normpath(path)
+    norm_counts[norm] = norm_counts.get(norm, 0) + 1
+    if norm not in first_path_by_norm:
+      first_path_by_norm[norm] = path
+      order.append(norm)
+  unique = [first_path_by_norm[norm] for norm in order]
+  total = sum(norm_counts.values())
+  duplicate_n = max(0, total - len(unique))
+  duplicate_sample = []
+  for norm in order:
+    count = norm_counts[norm]
+    if count > 1:
+      duplicate_sample.append("%s:%d" % (os.path.basename(norm), count))
+  return unique, duplicate_n, duplicate_sample
+
+
+def pending_ingest_normpaths(pending_async):
+  """Normpath keys for paths currently in a sliding-window ``pending_async`` map."""
+  return {
+      ingest_path_normpath(path)
+      for path in (pending_async or {}).values()
+      if path
+  }
+
+
 def get_sync_pool_poll_timeout_s():
   """Seconds between ``AsyncResult.get`` / ``imap`` progress polls."""
   import hpcperfstats.dbload.lib.conf_parser as cfg
@@ -1214,6 +1257,7 @@ def imap_sliding_window_watch_pool(
   warn_thresholds = _stall_warning_thresholds(stall_abort_after)
   full_redispatch_thrash_seen = False
   pool_recover_attempted = False
+  duplicate_dispatch_warned = set()
   active_pool = pool
 
   def _abort_pool_health():
@@ -1244,6 +1288,28 @@ def imap_sliding_window_watch_pool(
     if callable(on_in_flight_change):
       on_in_flight_change(in_flight)
 
+  def _dispatch_path(path):
+    """Submit one path unless the same normpath is already in ``pending_async``."""
+    if not path:
+      return False
+    apply_async = getattr(active_pool, "apply_async", None)
+    if not callable(apply_async):
+      raise RuntimeError("pool missing apply_async for sliding window dispatch")
+    norm = ingest_path_normpath(path)
+    pending_normpaths = pending_ingest_normpaths(pending_async)
+    if norm in pending_normpaths:
+      if norm not in duplicate_dispatch_warned:
+        duplicate_dispatch_warned.add(norm)
+        log_print(
+            "WARN: pool imap duplicate dispatch suppressed path=%s context=%s"
+            % (os.path.basename(norm), context or "pool"),
+            flush=True,
+        )
+      return False
+    async_result = apply_async(fn, (path,))
+    pending_async[async_result] = path
+    return True
+
   def _submit_until_cap():
     apply_async = getattr(active_pool, "apply_async", None)
     if not callable(apply_async):
@@ -1270,16 +1336,12 @@ def imap_sliding_window_watch_pool(
         for extra_path in supplement_paths:
           if len(pending_async) >= max_inflight:
             break
-          if not extra_path:
-            continue
-          extra_async = apply_async(fn, (extra_path,))
-          pending_async[extra_async] = extra_path
+          _dispatch_path(extra_path)
       else:
-        async_result = apply_async(fn, (path,))
-        pending_async[async_result] = path
+        if _dispatch_path(path):
+          continue
         continue
-      async_result = apply_async(fn, (path,))
-      pending_async[async_result] = path
+      _dispatch_path(path)
 
   def _handle_stall_poll():
     nonlocal consecutive_timeouts

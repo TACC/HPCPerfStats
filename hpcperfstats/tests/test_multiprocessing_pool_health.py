@@ -1461,6 +1461,48 @@ def test_imap_sliding_window_ghost_fatal_after_reconcile_exhausted(monkeypatch):
   assert excinfo.value.likely_cause == mph._IDLE_POOL_TASKQUEUE_DEAD_CAUSE
 
 
+def test_dedupe_ingest_paths_preserve_order_counts_duplicates():
+  paths = ["/archive/host/1781085150"] * 8 + ["/archive/host/1781081790"]
+  unique, duplicate_n, sample = mph.dedupe_ingest_paths_preserve_order(paths)
+  assert len(unique) == 2
+  assert duplicate_n == 7
+  assert "1781085150:8" in sample
+
+
+def test_sliding_window_suppresses_duplicate_normpath_dispatch(capsys):
+  class _AutoFinishPool(_ManualPool):
+    def apply_async(self, fn, args=()):
+      ar = super().apply_async(fn, args)
+      ar.finish()
+      return ar
+
+  pool = _AutoFinishPool()
+  paths = ["dup_path", "dup_path", "other_path"]
+  gen = mph.imap_sliding_window_watch_pool(
+      pool,
+      lambda path: path,
+      paths,
+      max_inflight=3,
+      poll_timeout_s=0.01,
+      stall_abort_polls_fn=lambda in_flight: 100000,
+      context="test_duplicate_dispatch",
+  )
+  results = list(gen)
+  assert pool.submit_count == 2
+  assert sorted(results) == ["dup_path", "other_path"]
+  assert "duplicate dispatch suppressed" in capsys.readouterr().out
+
+
+def test_pool_recover_dedupes_duplicate_pending_paths():
+  pending = ["/archive/a/1781085150"] * 8 + ["/archive/a/1781081790"]
+  unique, duplicate_n, sample = mph.dedupe_ingest_paths_preserve_order(pending)
+  assert duplicate_n == 7
+  assert len(unique) == 2
+  assert unique[0].endswith("1781085150")
+  assert unique[1].endswith("1781081790")
+  assert len(unique) == 2
+
+
 def test_reconcile_full_redispatch_then_recovery_callback(monkeypatch):
   monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 1000)
   monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
