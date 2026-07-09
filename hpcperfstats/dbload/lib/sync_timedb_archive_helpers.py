@@ -199,6 +199,27 @@ def sort_pending_stats_paths_oldest_first(paths):
   return [path for _, _, path in indexed]
 
 
+def pending_minus_chunk(pending, chunk):
+  """Return ``pending`` paths whose normpath is not in ``chunk`` (oldest-first order).
+
+  ``select_ingest_chunk_paths`` often returns a non-prefix subset of pending.
+  Never advance the queue with ``pending[len(chunk):]`` — that requeues chunk
+  members past index ``len(chunk)`` and drops non-chunk head paths.
+  """
+  chunk_norms = {
+      os.path.normpath(str(path))
+      for path in (chunk or ())
+      if path
+  }
+  if not chunk_norms:
+    return [path for path in (pending or ()) if path]
+  return [
+      path
+      for path in (pending or ())
+      if path and os.path.normpath(str(path)) not in chunk_norms
+  ]
+
+
 def merge_rescan_discovered_into_pending(
     existing_pending,
     discovered,

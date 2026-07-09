@@ -6677,6 +6677,39 @@ def test_prepend_checkpoint_incomplete_paths_to_pending_dedupes_and_orders():
   assert merged == ["/a", "/b", "/c"]
 
 
+def test_pending_minus_chunk_non_prefix_oldest_tar():
+  """Non-prefix chunk must not use pending[len(chunk):] (drops head, requeues chunk)."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      pending_minus_chunk,
+  )
+
+  pending = ["/p/A", "/p/B", "/p/C", "/p/D", "/p/E"]
+  chunk = ["/p/C", "/p/E"]
+  assert pending_minus_chunk(pending, chunk) == ["/p/A", "/p/B", "/p/D"]
+  # Prefix-slice bug would yield pending[2:] == [C, D, E] (wrong).
+  assert pending[len(chunk):] == ["/p/C", "/p/D", "/p/E"]
+
+
+def test_pending_minus_chunk_prefix_matches_slice():
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      pending_minus_chunk,
+  )
+
+  pending = ["/p/A", "/p/B", "/p/C", "/p/D"]
+  chunk = ["/p/A", "/p/B"]
+  assert pending_minus_chunk(pending, chunk) == pending[len(chunk):]
+
+
+def test_pending_minus_chunk_normpath_and_order():
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      pending_minus_chunk,
+  )
+
+  pending = ["/p/A", "/p/B", "/p/C"]
+  chunk = ["/p/./B"]
+  assert pending_minus_chunk(pending, chunk) == ["/p/A", "/p/C"]
+
+
 def test_resolved_checkpoint_path_set_includes_memory_entries(tmp_path):
   """In-memory checkpoint entries count before disk flush."""
   from collections import deque

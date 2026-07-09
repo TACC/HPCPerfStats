@@ -68,6 +68,22 @@ def ingest_path_normpath(path):
   return os.path.normpath(str(path))
 
 
+def ingest_path_dispatch_label(path):
+  """Operator-facing path label: ``host/basename`` (not basename-only).
+
+  Many hosts share the same timestamp basename; basename-only WARNs collapse
+  distinct full paths into one misleading token.
+  """
+  norm = ingest_path_normpath(path)
+  if not norm:
+    return ""
+  parent = os.path.basename(os.path.dirname(norm))
+  base = os.path.basename(norm)
+  if parent and parent not in (".", "/"):
+    return "%s/%s" % (parent, base)
+  return base
+
+
 def dedupe_ingest_paths_preserve_order(paths):
   """First occurrence wins; return (unique_paths, duplicate_n, duplicate_sample).
 
@@ -1482,6 +1498,7 @@ def imap_sliding_window_watch_pool(
   full_redispatch_thrash_seen = False
   pool_recover_attempted = False
   duplicate_dispatch_warned = set()
+  duplicate_dispatch_suppressed_n = {}
   active_pool = pool
 
   def _abort_pool_health():
@@ -1535,11 +1552,18 @@ def imap_sliding_window_watch_pool(
     norm = ingest_path_normpath(path)
     pending_normpaths = pending_ingest_normpaths(pending_async)
     if norm in pending_normpaths:
+      suppressed_n = duplicate_dispatch_suppressed_n.get(norm, 0) + 1
+      duplicate_dispatch_suppressed_n[norm] = suppressed_n
       if norm not in duplicate_dispatch_warned:
         duplicate_dispatch_warned.add(norm)
         log_print(
-            "WARN: pool imap duplicate dispatch suppressed path=%s context=%s"
-            % (os.path.basename(norm), context or "pool"),
+            "WARN: pool imap duplicate dispatch suppressed path=%s "
+            "suppressed_n=%d context=%s"
+            % (
+                ingest_path_dispatch_label(norm),
+                suppressed_n,
+                context or "pool",
+            ),
             flush=True,
         )
       return False

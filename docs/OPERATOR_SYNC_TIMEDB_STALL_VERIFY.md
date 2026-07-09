@@ -438,6 +438,8 @@ docker compose logs pipeline 2>&1 | grep -E 'idle reconcile redispatch|idle reco
 
 **Expect:** redispatch → `pool_recover` with **`pool_recover done`** and **`terminate outcome=abandoned`** (or **124** `idle_pool_taskqueue_dead` within recover wall); **never** hang after `workers_before=` with no outcome; **`dispatch_probe ok`** and resumed ingest on success; **no** `likely_cause=unknown` on ghost fatals.
 
+**Duplicate dispatch suppressed flood (T1, post-fix 2026-07-09):** dense `WARN: pool imap duplicate dispatch suppressed path=<timestamp>` lines (basename-only) during fast `db_skip` usually meant **non-prefix chunk accounting** — `pending[len(chunk):]` re-offered in-flight paths after `select_ingest_chunk_paths` (oldest-tar / handoff). **Post-fix:** pending advance and giant-supplement tail use **`pending_minus_chunk`** (normpath set-difference); chunk paths are deduped before imap; WARN shows **`path=host/basename`** (and `suppressed_n=` on first hit). Steady-state expect **near-zero** duplicate-suppressed WARNs; shared timestamp basenames across hosts are distinct (`c637-051/1780788583` vs `c637-062/1780788583`). Occasional single WARNs during idle reconcile redispatch remain benign.
+
 **Worker memory soak (T1/T2, default `maxtasksperchild=0`):** enable **`sync_ingest_worker_memory_telemetry=yes`** and grep **`sync_timedb worker_memory: event=batch_summary`**. Anti-collapse: **`tasks_on_worker_p50≥10`** on small-file batches; **`keep_worker`** dominates **`retires_total`**; **`failure_reap_pct`** / **`rss_reap_pct`** low outside RSS pressure. Supervisor retire kinds are **failure + RSS only** (no `giant_reap`). Example:
 
 ```bash

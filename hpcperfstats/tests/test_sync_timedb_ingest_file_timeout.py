@@ -282,6 +282,141 @@ def test_iter_giant_supplement_paths_exclude_normpath_variant(tmp_path, monkeypa
   assert picked == []
 
 
+def test_imap_pending_tail_excludes_chunk_paths(monkeypatch, tmp_path, capsys):
+  """Giant supplement must not re-offer norms already in the non-prefix chunk."""
+  import threading
+  import time
+
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      pending_minus_chunk,
+  )
+  from hpcperfstats.tests import test_multiprocessing_pool_health as mph_tests
+
+  pool = mph_tests._ManualPool()
+  host_a = tmp_path / "c637-051"
+  host_b = tmp_path / "c637-062"
+  host_a.mkdir()
+  host_b.mkdir()
+  chunk_path = str(host_a / "1780788583")
+  tail_ok = str(host_b / "1780788584")
+  (host_a / "1780788583").write_bytes(b"x" * 100)
+  (host_b / "1780788584").write_bytes(b"x" * 100)
+  # Non-prefix pending: head paths then chunk member mid-list.
+  pending = [
+      str(host_b / "head0"),
+      chunk_path,
+      tail_ok,
+  ]
+  (host_b / "head0").write_bytes(b"x" * 50)
+  chunk = [chunk_path]
+  pending_tail = pending_minus_chunk(pending, chunk)
+  assert chunk_path not in pending_tail
+  assert str(host_b / "head0") in pending_tail
+
+  _default_timeout_getters(monkeypatch)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_giant_pool_supplement_enabled", lambda: True)
+  monkeypatch.setattr(st, "_effective_ingest_imap_inflight_cap", lambda _tc, _pc: 2)
+  monkeypatch.setattr(
+      st.cfg, "get_sync_ingest_giant_pool_supplement_trigger_budget_s", lambda: 100.0,
+  )
+  monkeypatch.setattr(
+      st.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: 10**9,
+  )
+  monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 0.01)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 100000)
+
+  def _size_for(path):
+    if path == chunk_path:
+      return _mib_bytes(2048)
+    return 100
+
+  _patch_stats_file_size_bytes(monkeypatch, _size_for)
+  tracker = st._IngestPoolInFlightTracker(chunk)
+  gen = st._imap_ingest_paths_batched(
+      pool,
+      lambda path: path,
+      chunk,
+      thread_count=2,
+      context="test pending_tail exclude chunk",
+      tracker=tracker,
+      chunk_counter=0,
+      pending_count=len(pending),
+      pending_tail=pending_tail,
+  )
+
+  def consumer():
+    list(gen)
+
+  thread = threading.Thread(target=consumer, daemon=True)
+  thread.start()
+  deadline = time.monotonic() + 2.0
+  while pool.submit_count < 2 and time.monotonic() < deadline:
+    time.sleep(0.005)
+  submitted = list(pool.inflight.values())
+  assert chunk_path in submitted
+  assert submitted.count(chunk_path) == 1
+  assert any(p != chunk_path for p in submitted)
+  for ar in list(pool.inflight):
+    ar.finish()
+  while pool.inflight and time.monotonic() < deadline:
+    for ar in list(pool.inflight):
+      ar.finish()
+    time.sleep(0.01)
+  thread.join(timeout=2.0)
+  out = capsys.readouterr().out
+  assert "duplicate dispatch suppressed path=c637-051/1780788583" not in out
+
+
+def test_chunk_paths_deduped_before_imap(monkeypatch, tmp_path):
+  """Duplicate full paths in a chunk must yield one pool submit."""
+  from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
+      dedupe_ingest_paths_preserve_order,
+  )
+  from hpcperfstats.tests import test_multiprocessing_pool_health as mph_tests
+
+  path = str(tmp_path / "host" / "1781085150")
+  (tmp_path / "host").mkdir()
+  (tmp_path / "host" / "1781085150").write_bytes(b"x")
+  unique, duplicate_n, _sample = dedupe_ingest_paths_preserve_order(
+      [path, path, path],
+  )
+  assert len(unique) == 1
+  assert duplicate_n == 2
+
+  pool = mph_tests._ManualPool()
+  _default_timeout_getters(monkeypatch)
+  monkeypatch.setattr(st, "_effective_ingest_imap_inflight_cap", lambda _tc, _pc: 4)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 0.01)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 100000)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_giant_pool_supplement_enabled", lambda: False)
+  tracker = st._IngestPoolInFlightTracker(unique)
+  gen = st._imap_ingest_paths_batched(
+      pool,
+      lambda p: p,
+      unique,
+      thread_count=2,
+      context="test chunk dedupe",
+      tracker=tracker,
+      chunk_counter=0,
+      pending_count=3,
+  )
+  import threading
+  import time
+
+  def consumer():
+    list(gen)
+
+  thread = threading.Thread(target=consumer, daemon=True)
+  thread.start()
+  deadline = time.monotonic() + 2.0
+  while pool.submit_count < 1 and time.monotonic() < deadline:
+    time.sleep(0.005)
+  assert pool.submit_count == 1
+  for ar in list(pool.inflight):
+    ar.finish()
+  thread.join(timeout=2.0)
+
+
 def test_iter_giant_supplement_paths_skips_at_or_above_max_bytes(monkeypatch, tmp_path):
   _default_timeout_getters(monkeypatch)
   monkeypatch.setattr(

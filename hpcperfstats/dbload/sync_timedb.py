@@ -128,6 +128,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     consume_archive_members_populate_source,
     daily_tar_eligible_for_day_close_submit,
     merge_daily_archive_members_l1_cache,
+    pending_minus_chunk,
     select_ingest_chunk_paths,
     resolve_unmapped_closed_raw_daily_tars,
     daily_tar_path_for_stats_path,
@@ -5379,7 +5380,9 @@ def run_sync_timedb_supervisor_loop(
     ]
     if failed_chunk_paths:
       _invalidate_host_scan_hints_for_paths(failed_chunk_paths)
-    tail = pending_stats_files[len(stats_files_chunk):]
+    # Non-prefix chunks (oldest-tar / handoff) must use set-difference, not
+    # pending[len(chunk):] — that requeues in-flight chunk paths and drops head.
+    tail = pending_minus_chunk(pending_stats_files, stats_files_chunk)
     successful_set = set(successful_paths)
     tail = [path for path in tail if path not in successful_set]
     if failed_chunk_paths:
@@ -6651,6 +6654,15 @@ def run_sync_timedb_supervisor_loop(
               ),
               flush=True,
           )
+        stats_files_chunk, chunk_dup_n, _chunk_dup_sample = (
+            dedupe_ingest_paths_preserve_order(stats_files_chunk)
+        )
+        if chunk_dup_n:
+          log_print(
+              "sync_timedb: chunk dispatch deduped duplicate_n=%d chunk_n=%d"
+              % (chunk_dup_n, len(stats_files_chunk)),
+              flush=True,
+          )
         chunk_dispatch_paths = {
             os.path.normpath(p)
             for p in stats_files_chunk
@@ -6666,7 +6678,10 @@ def run_sync_timedb_supervisor_loop(
                 context_label="ingest chunk",
                 pending_total=len(pending_stats_files),
                 batch_chunk_counter=chunk_counter,
-                pending_tail=pending_stats_files[len(stats_files_chunk):],
+                pending_tail=pending_minus_chunk(
+                    pending_stats_files,
+                    stats_files_chunk,
+                ),
                 oldest_tar=(
                     oldest_tar_for_chunk
                     if (incomplete_n or handoff_inflight_n)

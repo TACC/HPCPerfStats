@@ -1518,7 +1518,11 @@ def test_sliding_window_suppresses_duplicate_normpath_dispatch(capsys):
       return ar
 
   pool = _AutoFinishPool()
-  paths = ["dup_path", "dup_path", "other_path"]
+  paths = [
+      "/archive/c637-051/1780788583",
+      "/archive/c637-051/1780788583",
+      "/archive/c637-062/1780788583",
+  ]
   gen = mph.imap_sliding_window_watch_pool(
       pool,
       lambda path: path,
@@ -1530,8 +1534,22 @@ def test_sliding_window_suppresses_duplicate_normpath_dispatch(capsys):
   )
   results = list(gen)
   assert pool.submit_count == 2
-  assert sorted(results) == ["dup_path", "other_path"]
-  assert "duplicate dispatch suppressed" in capsys.readouterr().out
+  assert sorted(results) == [
+      "/archive/c637-051/1780788583",
+      "/archive/c637-062/1780788583",
+  ]
+  out = capsys.readouterr().out
+  assert "duplicate dispatch suppressed" in out
+  assert "path=c637-051/1780788583" in out
+  assert "path=1780788583 " not in out.replace("path=c637-051/1780788583", "")
+
+
+def test_ingest_path_dispatch_label_host_basename():
+  assert (
+      mph.ingest_path_dispatch_label("/archive/c637-051/1780788583")
+      == "c637-051/1780788583"
+  )
+  assert mph.ingest_path_dispatch_label("dup_path") == "dup_path"
 
 
 def test_pool_recover_dedupes_duplicate_pending_paths():
