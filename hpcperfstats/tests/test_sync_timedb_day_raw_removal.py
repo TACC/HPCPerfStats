@@ -105,6 +105,32 @@ def test_day_raw_removal_apply_batch_delete_removes_verified_and_tar(
   assert coord.phase(tar_path) == PHASE_DONE
 
 
+def test_apply_batch_delete_deletes_when_only_in_paths_pending_delete(
+    tmp_path, monkeypatch,
+):
+  """Production skip union includes paths_pending_delete; must not self-block delete."""
+  day = datetime(2022, 6, 14)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path)
+  monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0)
+  state = coord._get_or_create_day(tar_path)
+  seg_path = str(seg)
+  state._record_entry(seg_path, zst, "verified", "verified")
+  with state._lock:
+    state._manifest["phase"] = PHASE_DELETING
+    state._manifest["verified_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+  # Mirror production: get_quarantine_skip_paths unions paths_pending_delete().
+  state.get_quarantine_skip_paths = lambda: set(coord.paths_pending_delete())
+  log_lines = []
+  state.log_fn = lambda msg, **kwargs: log_lines.append(msg)
+  deleted = state.apply_batch_delete()
+  assert deleted == 1
+  assert not seg.is_file()
+  assert not any("delete defer path=" in line for line in log_lines)
+
+
 def test_apply_batch_delete_skips_path_in_quarantine_skip_paths(tmp_path, monkeypatch):
   """Verified path in quarantine skip set must not be deleted mid-chunk."""
   day = datetime(2022, 6, 3)
@@ -114,7 +140,6 @@ def test_apply_batch_delete_skips_path_in_quarantine_skip_paths(tmp_path, monkey
   log_lines = []
   coord = _make_coordinator(
       tmp_path,
-      get_quarantine_skip_paths=lambda: {skip_path},
       log_fn=lambda msg, **kwargs: log_lines.append(msg),
   )
   monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0)
@@ -124,12 +149,17 @@ def test_apply_batch_delete_skips_path_in_quarantine_skip_paths(tmp_path, monkey
     state._manifest["phase"] = PHASE_DELETING
     state._manifest["verified_count"] = 1
     _save_manifest(state._manifest_path, state._manifest)
+  # Live ingest overlap (handoff) — not paths_pending_delete self-block.
+  state.get_ingest_active_skip_paths = lambda: {skip_path}
   deleted = state.apply_batch_delete()
   assert deleted == 0
   assert seg.is_file()
   entry = state._manifest["entries"][skip_path]
   assert entry.get("delete_deferred") == "active_ingest"
-  assert any("delete defer path=" in line and "active_ingest" in line for line in log_lines)
+  assert any(
+      "delete defer" in line and "active_ingest" in line and "skip_class=" in line
+      for line in log_lines
+  )
 
 
 def test_apply_batch_delete_deletes_when_not_in_skip_paths(tmp_path, monkeypatch):
@@ -284,6 +314,47 @@ def test_any_active_raw_removal_work_false_when_only_retryable_skips_remain(tmp_
   assert not coord.any_active_raw_removal_work()
   assert coord.count_days_waiting_on_ingest() == 0
   assert seg.is_file()
+
+
+def test_verification_complete_all_verified_deleted_retryable_skips_handoff(
+    tmp_path, monkeypatch,
+):
+  """June-4 shape: verified deletes done; retryable skips on disk need handoff."""
+  day = datetime(2026, 6, 4)
+  verified_seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  retry_host = tmp_path / "n2.cluster.integration.test"
+  retry_host.mkdir(parents=True, exist_ok=True)
+  ts = int(datetime(day.year, day.month, day.day, 14, 0, 0).timestamp())
+  retry_seg = retry_host / str(ts)
+  retry_seg.write_text("%d job2 cn002\nline\n" % ts)
+  os.utime(retry_seg, (ts, ts))
+  tar_path, zst = _seal_day(tmp_path, verified_seg, day)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
+  monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0)
+  state = coord._get_or_create_day(tar_path)
+  verified_path = str(verified_seg)
+  retry_path = str(retry_seg)
+  state._record_entry(verified_path, zst, "verified", "verified")
+  state._record_entry(retry_path, zst, "skipped_not_in_archive", "not_in_sealed_archive")
+  with state._lock:
+    state._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
+    state._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
+    state._manifest["verified_count"] = 1
+    state._manifest["skipped_count"] = 1
+    entries = state._manifest["entries"]
+    entries[verified_path]["deleted"] = True
+    state._manifest["deleted_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+  verified_seg.unlink()
+  state.get_quarantine_skip_paths = lambda: set(coord.paths_pending_delete())
+  coord.begin_deleting(tar_path)
+  deleted = coord.apply_batch_delete(tar_path)
+  assert deleted == 0
+  assert coord.phase(tar_path) == PHASE_DONE
+  assert retry_seg.is_file()
+  assert coord.should_handoff_to_ingest(tar_path)
+  handoff_paths = coord.complete_handoff_to_ingest(tar_path)
+  assert retry_path in handoff_paths
 
 
 def test_apply_batch_delete_marks_done_when_only_retryable_skips_remain(

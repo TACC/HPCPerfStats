@@ -140,6 +140,8 @@ class _DayRawRemovalState:
       get_quarantine_skip_paths: Callable[[], Set[str]],
       ingest_ready_fn: Optional[Callable[[str], bool]] = None,
       get_maintenance_snapshot: Optional[Callable[[], Any]] = None,
+      get_ingest_active_skip_paths: Optional[Callable[[], Set[str]]] = None,
+      classify_quarantine_skip_path: Optional[Callable[[str], str]] = None,
   ):
     self.tar_path = os.path.normpath(tar_path)
     self.archive_data_dir = archive_data_dir
@@ -149,6 +151,8 @@ class _DayRawRemovalState:
     self.get_quarantine_skip_paths = get_quarantine_skip_paths
     self.ingest_ready_fn = ingest_ready_fn
     self.get_maintenance_snapshot = get_maintenance_snapshot
+    self.get_ingest_active_skip_paths = get_ingest_active_skip_paths
+    self.classify_quarantine_skip_path = classify_quarantine_skip_path
     day_date = calendar_date_from_daily_tar_path(self.tar_path)
     if day_date is None:
       raise ValueError("invalid daily tar path: %s" % tar_path)
@@ -1211,12 +1215,29 @@ class _DayRawRemovalState:
           entry["status"] = "skipped_fingerprint_changed"
           entry["reason"] = "fingerprint_changed_before_delete"
           continue
-      skip_paths = set(self.get_quarantine_skip_paths() or ())
+      ingest_skip_fn = self.get_ingest_active_skip_paths
+      if callable(ingest_skip_fn):
+        skip_paths = set(ingest_skip_fn() or ())
+      else:
+        skip_paths = set(self.get_quarantine_skip_paths() or ())
+        skip_paths -= self.paths_pending_delete()
       if path in skip_paths:
+        classify_fn = self.classify_quarantine_skip_path
+        skip_class = (
+            classify_fn(path)
+            if callable(classify_fn)
+            else "active_ingest"
+        )
         if self.log_fn:
           self.log_fn(
-              "janitor: day_close delete defer path=%s reason=active_ingest"
-              % path,
+              "janitor: day_close delete defer tar=%s day=%s path=%s "
+              "reason=active_ingest skip_class=%s"
+              % (
+                  self.tar_path,
+                  self.day_date.isoformat(),
+                  path,
+                  skip_class,
+              ),
               flush=True,
           )
         with self._lock:
@@ -1445,6 +1466,8 @@ class DayRawRemovalCoordinator:
       on_pipeline_complete: Optional[Callable[[str], None]] = None,
       on_handoff_to_ingest: Optional[Callable[[str, List[str], str], None]] = None,
       get_maintenance_snapshot: Optional[Callable[[], Any]] = None,
+      get_ingest_active_skip_paths: Optional[Callable[[], Set[str]]] = None,
+      classify_quarantine_skip_path: Optional[Callable[[str], str]] = None,
   ):
     self.archive_data_dir = archive_data_dir
     self.host_name_ext = host_name_ext
@@ -1452,6 +1475,8 @@ class DayRawRemovalCoordinator:
     self.log_fn = log_fn
     self.get_quarantine_skip_paths = get_quarantine_skip_paths
     self.ingest_ready_fn = ingest_ready_fn
+    self.get_ingest_active_skip_paths = get_ingest_active_skip_paths
+    self.classify_quarantine_skip_path = classify_quarantine_skip_path
     self.process_title = process_title
     self.on_pipeline_complete = on_pipeline_complete
     self.on_handoff_to_ingest = on_handoff_to_ingest
@@ -1485,6 +1510,8 @@ class DayRawRemovalCoordinator:
           get_quarantine_skip_paths=self.get_quarantine_skip_paths,
           ingest_ready_fn=self.ingest_ready_fn,
           get_maintenance_snapshot=self.get_maintenance_snapshot,
+          get_ingest_active_skip_paths=self.get_ingest_active_skip_paths,
+          classify_quarantine_skip_path=self.classify_quarantine_skip_path,
       )
       self._days[tar_norm] = state
       return state

@@ -11,11 +11,13 @@ Canonical implementation; hpcperfstats-tools may keep a copy for standalone use.
 import contextvars
 import inspect
 import sys
+import threading
 
 _log_role: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "hpc_log_role",
     default=None,
 )
+_log_print_lock = threading.Lock()
 
 
 def set_log_role(role: str | None) -> None:
@@ -54,4 +56,5 @@ def format_log_prefix() -> str:
 def log_print(*args, **kwargs):
   """Print with script prefix. Same signature as print(); forwards all kwargs (e.g. file=, flush=)."""
   prefix = format_log_prefix()
-  return print(prefix, *args, **kwargs)
+  with _log_print_lock:
+    return print(prefix, *args, **kwargs)

@@ -4466,6 +4466,15 @@ def run_sync_timedb_supervisor_loop(
       paths |= set(chunk_dispatch_paths)
     return paths
 
+  def _get_ingest_active_skip_paths():
+    captured = _capture_disqualification_inputs()
+    skip_paths = set(captured["pending_stats_paths"])
+    skip_paths |= set(captured["inflight_paths"])
+    for paths in captured["pending_append_by_daily_tar"].values():
+      skip_paths |= set(paths)
+    skip_paths |= _get_active_ingest_protected_paths()
+    return skip_paths
+
   def _get_quarantine_skip_paths():
     captured = _capture_disqualification_inputs()
     skip_paths = set(captured["pending_stats_paths"])
@@ -4476,6 +4485,30 @@ def run_sync_timedb_supervisor_loop(
       skip_paths |= day_raw_removal.paths_pending_delete()
     skip_paths |= _get_active_ingest_protected_paths()
     return skip_paths
+
+  def _classify_quarantine_skip_path(path):
+    path_norm = os.path.normpath(str(path or ""))
+    if not path_norm:
+      return "active_ingest"
+    if handoff_priority_paths and path_norm in handoff_priority_paths:
+      return "handoff"
+    if chunk_dispatch_paths and path_norm in chunk_dispatch_paths:
+      return "chunk_dispatch"
+    if chunk_in_progress and active_chunk_ingest_tracker is not None:
+      if path_norm in active_chunk_ingest_tracker.all_in_flight_paths():
+        return "inflight"
+    captured = _capture_disqualification_inputs()
+    if path_norm in captured["pending_stats_paths"]:
+      return "pending_stats"
+    if path_norm in captured["inflight_paths"]:
+      return "inflight"
+    for paths in captured["pending_append_by_daily_tar"].values():
+      if path_norm in paths:
+        return "pending_append"
+    if day_raw_removal is not None:
+      if path_norm in day_raw_removal.paths_pending_delete():
+        return "paths_pending_delete"
+    return "active_ingest"
 
   startup_archive_scan = None
 
@@ -5730,6 +5763,8 @@ def run_sync_timedb_supervisor_loop(
       tgz_archive_dir=tgz_archive_dir,
       log_fn=log_print,
       get_quarantine_skip_paths=_get_quarantine_skip_paths,
+      get_ingest_active_skip_paths=_get_ingest_active_skip_paths,
+      classify_quarantine_skip_path=_classify_quarantine_skip_path,
       ingest_ready_fn=stats_file_head_ingested_in_db,
       process_title=SYNC_TIMEDB_PROCESS_TITLE,
   )

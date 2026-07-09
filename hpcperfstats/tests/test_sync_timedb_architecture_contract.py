@@ -560,11 +560,14 @@ def test_arch_apply_batch_delete_rechecks_quarantine_skip_paths():
   from hpcperfstats.dbload.lib import sync_timedb_day_raw_removal as drm
 
   source = inspect.getsource(drm._DayRawRemovalState.apply_batch_delete)
-  skip_idx = source.index("get_quarantine_skip_paths")
+  skip_idx = source.index("get_ingest_active_skip_paths")
+  subtract_idx = source.index("paths_pending_delete()")
   remove_idx = source.index("os.remove")
   assert skip_idx < remove_idx
+  assert subtract_idx < remove_idx
   assert "delete_deferred" in source
   assert "active_ingest" in source
+  assert "skip_class=" in source
 
 
 def test_arch_delete_disqualified_uses_full_inflight_not_sample():
@@ -583,6 +586,13 @@ def test_arch_quarantine_skip_includes_handoff_and_chunk_dispatch():
   skip_fn = source.split("def _get_quarantine_skip_paths", 1)[1]
   skip_fn = skip_fn.split("\n  def ", 1)[0]
   assert "_get_active_ingest_protected_paths" in skip_fn
+  classify_fn = source.split("def _classify_quarantine_skip_path", 1)[1]
+  classify_fn = classify_fn.split("\n  def ", 1)[0]
+  assert "handoff_priority_paths" in classify_fn
+  assert "pending_stats_paths" in classify_fn
+  ingest_fn = source.split("def _get_ingest_active_skip_paths", 1)[1]
+  ingest_fn = ingest_fn.split("\n  def ", 1)[0]
+  assert "paths_pending_delete" not in ingest_fn
   protected_fn = source.split("def _get_active_ingest_protected_paths", 1)[1]
   protected_fn = protected_fn.split("\n  def ", 1)[0]
   assert "handoff_priority_paths" in protected_fn

@@ -136,6 +136,39 @@ podman-compose logs pipeline 2>&1 | grep -E \
 
 **T1 (steady progress):** sealed days show **`post_seal_verify`** then **`delete`**; candidate report no longer lists **`closed_raw_on_disk`** as submit block; **`waiting_on_ingest`** remains only for **`checkpoint_incomplete`** days.
 
+### T0 / T1 / T2 verify — day-close delete defer (`active_ingest`, RC-S, 2026-07)
+
+Up to **`sync_day_close_max_inflight`** (default **4**) janitor workers run as **`day-close-1` … `day-close-4`**. Different **`delete start tar=`** lines on the same prefix are **different workers or passes**, not one thread deleting two tars atomically. Interleaved prefixes like **`[day-close-1][day-close-3]`** are log line mashups from concurrent **`log_print`** (fixed with line lock in 2026-07).
+
+**T0 (pre-deploy baseline):** `preflight_n=0` with massive **`delete defer reason=active_ingest`** means verified paths self-blocked via global **`paths_pending_delete`** in the quarantine skip union (RC-S).
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+
+grep -c 'removing stats file (day raw removal preflight)' /tmp/pipeline-full.log
+grep -c 'janitor: day_close delete defer' /tmp/pipeline-full.log
+grep -E 'janitor: day_close delete (start|defer)' /tmp/pipeline-full.log | tail -40
+```
+
+**T1 (post-deploy RC-S fix):** preflight count **> 0**; defer lines carry **`tar=`**, **`day=`**, **`skip_class=`** (`handoff`, `pending_stats`, `inflight`, `pending_append`, `paths_pending_delete`, `chunk_dispatch`). Legitimate ingest overlap (RC-P) still defers with **`skip_class=pending_stats`** or **`chunk_dispatch`** until the path leaves live ingest sets.
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+  grep -E 'day raw removal preflight|day_close delete defer.*skip_class=|Day raw removal delete complete' | tail -60
+```
+
+**T2 (June-4 retryable-skip stall, RC-J4):** after RC-S deploy, sealed days with all verified paths deleted but retryable skips on disk should handoff (`day_close handoff requeue day=2026-06-04`) and manifest **`phase=done`** when skips clear.
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline su hpcperfstats -c "sh -lc '
+python3 -c \"import json, os; from hpcperfstats.dbload.lib.conf_parser import get_archive_dir_path
+p=os.path.join(get_archive_dir_path(), \\\".sync_timedb_day_raw_removal\\\", \\\"2026-06-04.json\\\")
+print(open(p).read() if os.path.isfile(p) else \\\"missing\\\")\"'"
+
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+  grep -E 'day_close handoff requeue day=2026-06-04|Day raw removal delete complete day=2026-06-04' | tail -20
+```
+
 ### T1 verify — janitor proactive day-close (backlog catch-up sites)
 
 After deploy of janitor discover + janitor-only **`DAY_CLOSE`** (2026-07), grep pipeline logs for discovery enqueue and janitor progress (not legacy `async day_close submit` / `eligible_deferred`):
