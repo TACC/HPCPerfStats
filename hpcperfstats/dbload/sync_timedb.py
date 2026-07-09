@@ -5740,12 +5740,6 @@ def run_sync_timedb_supervisor_loop(
 
   ensure_persistence_contract(directory, log_fn=log_print)
 
-  # RC-X: refuse unsafe maxtasks=0 + cooperative giant recycle at startup.
-  unsafe_combo = cfg.validate_sync_ingest_pool_recycle_combo()
-  if unsafe_combo:
-    log_print("ERROR: %s" % unsafe_combo, flush=True)
-    raise SystemExit(1)
-
   for entry in _load_sync_checkpoint(checkpoint_path):
     fp = _path_fingerprint(entry["path"])
     if fp is None:

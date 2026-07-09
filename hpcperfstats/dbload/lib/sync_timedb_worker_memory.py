@@ -10,7 +10,6 @@ from hpcperfstats.dbload.lib.print_utils import log_print
 REAP_KEEP = "keep"
 REAP_FAILURE = "failure_reap"
 REAP_RSS = "rss_reap"
-REAP_GIANT = "giant_reap"
 
 _FAILED_OUTCOMES = frozenset({
     "parse_fail",
@@ -110,11 +109,10 @@ def measure_worker_rss_after_release(stats_file):
     time.sleep(delay_ms / 1000.0)
     rss_mib = _worker_rss_mib()
     rss_recheck_fired = "yes"
+  # Informational only (soak logs / giant pool supplement context); does not retire.
   giant = "yes" if is_giant_ingest_budget(stats_file) else "no"
   request_worker_recycle = "no"
-  if giant == "yes" and cfg.get_sync_ingest_cooperative_recycle_after_giant():
-    request_worker_recycle = "yes"
-  elif threshold > 0 and rss_mib > threshold:
+  if threshold > 0 and rss_mib > threshold:
     request_worker_recycle = "yes"
   return {
       "worker_pid": os.getpid(),
@@ -158,46 +156,7 @@ def resolve_worker_pid_from_meta_or_registry(meta, registry, path):
   return None
 
 
-def classify_supervisor_reap_kind(
-    *,
-    ingest_ok,
-    outcome,
-    meta,
-    path,
-):
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-  from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import (
-      is_giant_ingest_budget,
-  )
-
-  if not ingest_ok:
-    return REAP_FAILURE
-  outcome_s = str(outcome or "")
-  if outcome_s in _FAILED_OUTCOMES:
-    return REAP_FAILURE
-  # RC-J: never giant_reap / supervisor-retire on db_skip (path budget alone).
-  if outcome_s == "db_skip":
-    threshold = 0.0
-    rss_mib = 0.0
-    if isinstance(meta, dict):
-      try:
-        threshold = float(meta.get("recycle_threshold_mib") or 0.0)
-      except (TypeError, ValueError):
-        threshold = 0.0
-      try:
-        rss_mib = float(meta.get("rss_mib_after_release") or 0.0)
-      except (TypeError, ValueError):
-        rss_mib = 0.0
-    if threshold <= 0:
-      threshold = compute_rss_recycle_threshold_mib()
-    if threshold > 0 and rss_mib > threshold:
-      return REAP_RSS
-    return REAP_KEEP
-  if (
-      cfg.get_sync_ingest_cooperative_recycle_after_giant()
-      and is_giant_ingest_budget(path)
-  ):
-    return REAP_GIANT
+def _rss_threshold_and_mib(meta):
   threshold = 0.0
   rss_mib = 0.0
   if isinstance(meta, dict):
@@ -211,11 +170,33 @@ def classify_supervisor_reap_kind(
       rss_mib = 0.0
   if threshold <= 0:
     threshold = compute_rss_recycle_threshold_mib()
+  return threshold, rss_mib
+
+
+def classify_supervisor_reap_kind(
+    *,
+    ingest_ok,
+    outcome,
+    meta,
+    path,
+):
+  # ``path`` kept for call-site compatibility; size no longer drives retire.
+  _ = path
+  if not ingest_ok:
+    return REAP_FAILURE
+  outcome_s = str(outcome or "")
+  if outcome_s in _FAILED_OUTCOMES:
+    return REAP_FAILURE
+  # RC-J: never supervisor-retire on db_skip from path budget alone; RSS may still.
+  if outcome_s == "db_skip":
+    threshold, rss_mib = _rss_threshold_and_mib(meta)
+    if threshold > 0 and rss_mib > threshold:
+      return REAP_RSS
+    return REAP_KEEP
+  threshold, rss_mib = _rss_threshold_and_mib(meta)
   if threshold > 0 and rss_mib > threshold:
     return REAP_RSS
   if isinstance(meta, dict) and str(meta.get("request_worker_recycle") or "") == "yes":
-    if is_giant_ingest_budget(path) and cfg.get_sync_ingest_cooperative_recycle_after_giant():
-      return REAP_GIANT
     if threshold > 0 and rss_mib > threshold:
       return REAP_RSS
   return REAP_KEEP
@@ -260,7 +241,7 @@ def should_defer_supervisor_retire(
   if accumulator.retires_this_window >= retire_cap:
     return True
   if accumulator.completions >= 8:
-    catchup_retires = accumulator.retires_giant_reap + accumulator.retires_rss_reap
+    catchup_retires = accumulator.retires_rss_reap
     if catchup_retires >= max(2, accumulator.retires_total):
       return accumulator.retires_this_window >= max(1, retire_cap - 1)
   return False
@@ -289,7 +270,6 @@ class WorkerMemoryBatchAccumulator:
     self.keep_worker = 0
     self.retires_failure_reap = 0
     self.retires_rss_reap = 0
-    self.retires_giant_reap = 0
     self.retires_this_window = 0
     self._tasks_on_worker = []
     self._rss_mib_after = []
@@ -298,11 +278,7 @@ class WorkerMemoryBatchAccumulator:
 
   @property
   def retires_total(self):
-    return (
-        self.retires_failure_reap
-        + self.retires_rss_reap
-        + self.retires_giant_reap
-    )
+    return self.retires_failure_reap + self.retires_rss_reap
 
   def record_completion(self, reap_kind, meta=None):
     self.completions += 1
@@ -313,9 +289,6 @@ class WorkerMemoryBatchAccumulator:
       self.retires_this_window += 1
     elif reap_kind == REAP_RSS:
       self.retires_rss_reap += 1
-      self.retires_this_window += 1
-    elif reap_kind == REAP_GIANT:
-      self.retires_giant_reap += 1
       self.retires_this_window += 1
     if isinstance(meta, dict):
       try:
@@ -349,12 +322,12 @@ class WorkerMemoryBatchAccumulator:
     log_print(
         "INFO: sync_timedb worker_memory: event=batch_summary batch=%d "
         "completions=%d keep_worker=%d retires_total=%d "
-        "retires_failure_reap=%d retires_rss_reap=%d retires_giant_reap=%d "
+        "retires_failure_reap=%d retires_rss_reap=%d "
         "retire_rate_pct=%.1f failure_reap_pct=%.1f rss_reap_pct=%.1f "
-        "giant_reap_pct=%.1f tasks_on_worker_min=%d tasks_on_worker_p50=%d "
+        "tasks_on_worker_min=%d tasks_on_worker_p50=%d "
         "tasks_on_worker_max=%d rss_mib_after_p50=%.1f rss_mib_after_max=%.1f "
         "rss_recheck_fired=%d tree_rss_mib=%.1f ingest_pool_rss_mib=%.1f "
-        "threshold_mib=%.1f maxtasksperchild=%d cooperative_recycle_after_giant=%s"
+        "threshold_mib=%.1f maxtasksperchild=%d"
         % (
             int(chunk_index),
             total,
@@ -362,11 +335,9 @@ class WorkerMemoryBatchAccumulator:
             retires_total,
             self.retires_failure_reap,
             self.retires_rss_reap,
-            self.retires_giant_reap,
             _pct(retires_total, total),
             _pct(self.retires_failure_reap, total),
             _pct(self.retires_rss_reap, total),
-            _pct(self.retires_giant_reap, total),
             min(self._tasks_on_worker) if self._tasks_on_worker else 0,
             _percentile(self._tasks_on_worker, 50),
             max(self._tasks_on_worker) if self._tasks_on_worker else 0,
@@ -377,7 +348,6 @@ class WorkerMemoryBatchAccumulator:
             breakdown.get("ingest_pool_mb", 0.0),
             threshold,
             cfg.get_sync_ingest_pool_maxtasksperchild(),
-            "yes" if cfg.get_sync_ingest_cooperative_recycle_after_giant() else "no",
         ),
         flush=True,
     )
@@ -385,9 +355,7 @@ class WorkerMemoryBatchAccumulator:
     self.keep_worker = 0
     self.retires_failure_reap = 0
     self.retires_rss_reap = 0
-    self.retires_giant_reap = 0
     self.retires_this_window = 0
     self._tasks_on_worker = []
     self._rss_mib_after = []
     self.rss_recheck_fired = 0
-

@@ -42,7 +42,6 @@ def test_worker_memory_batch_summary_logs_when_telemetry_on(monkeypatch, capsys)
       cfg, "get_sync_ingest_worker_memory_telemetry_every_n_chunks", lambda: 1,
   )
   monkeypatch.setattr(cfg, "get_sync_ingest_pool_maxtasksperchild", lambda: 0)
-  monkeypatch.setattr(cfg, "get_sync_ingest_cooperative_recycle_after_giant", lambda: True)
   monkeypatch.setattr(pm, "format_tree_rss_breakdown_mb", lambda *_a, **_k: {
       "tree_total_mb": 1000.0,
       "ingest_pool_mb": 800.0,
@@ -53,7 +52,7 @@ def test_worker_memory_batch_summary_logs_when_telemetry_on(monkeypatch, capsys)
   acc.record_completion(wm.REAP_FAILURE, {"tasks_on_worker": 1, "rss_mib_after_release": 500.0})
   acc.record_completion(wm.REAP_RSS, {"tasks_on_worker": 5, "rss_mib_after_release": 4000.0})
   acc.record_completion(
-      wm.REAP_GIANT,
+      wm.REAP_RSS,
       {"tasks_on_worker": 2, "rss_mib_after_release": 3000.0, "rss_recheck_fired": "yes"},
   )
   acc.maybe_flush(7)
@@ -63,11 +62,12 @@ def test_worker_memory_batch_summary_logs_when_telemetry_on(monkeypatch, capsys)
   assert "keep_worker=1" in out
   assert "retires_total=3" in out
   assert "retires_failure_reap=1" in out
-  assert "retires_rss_reap=1" in out
-  assert "retires_giant_reap=1" in out
+  assert "retires_rss_reap=2" in out
   assert "failure_reap_pct=" in out
   assert "rss_reap_pct=" in out
-  assert "giant_reap_pct=" in out
+  assert "retires_giant_reap=" not in out
+  assert "giant_reap_pct=" not in out
+  assert "cooperative_recycle_after_giant=" not in out
   assert "rss_recheck_fired=1" in out
 
 
@@ -88,9 +88,6 @@ def test_worker_memory_telemetry_every_n_chunks_throttles(monkeypatch, capsys):
 
 
 def test_classify_supervisor_reap_kind_priority(monkeypatch):
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-
-  monkeypatch.setattr(cfg, "get_sync_ingest_cooperative_recycle_after_giant", lambda: True)
   monkeypatch.setattr(wm, "compute_rss_recycle_threshold_mib", lambda: 100.0)
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.sync_timedb_ingest_timeout.is_giant_ingest_budget",
@@ -102,12 +99,13 @@ def test_classify_supervisor_reap_kind_priority(monkeypatch):
       meta={"rss_mib_after_release": 50.0},
       path="/data/giant",
   ) == wm.REAP_FAILURE
+  # Giant path budget alone must not retire (coop giant recycle removed).
   assert wm.classify_supervisor_reap_kind(
       ingest_ok=True,
       outcome="ingested",
-      meta={"rss_mib_after_release": 50.0},
+      meta={"rss_mib_after_release": 50.0, "recycle_threshold_mib": 100.0},
       path="/data/giant",
-  ) == wm.REAP_GIANT
+  ) == wm.REAP_KEEP
   assert wm.classify_supervisor_reap_kind(
       ingest_ok=True,
       outcome="db_skip",
@@ -120,7 +118,7 @@ def test_classify_supervisor_reap_kind_priority(monkeypatch):
       meta={"rss_mib_after_release": 50.0, "recycle_threshold_mib": 100.0},
       path="/data/small",
   ) == wm.REAP_KEEP
-  # RC-J: giant path budget must not force giant_reap on db_skip.
+  # RC-J: giant path budget must not force retire on db_skip.
   assert wm.classify_supervisor_reap_kind(
       ingest_ok=True,
       outcome="db_skip",
@@ -130,9 +128,6 @@ def test_classify_supervisor_reap_kind_priority(monkeypatch):
 
 
 def test_no_giant_reap_on_db_skip(monkeypatch):
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-
-  monkeypatch.setattr(cfg, "get_sync_ingest_cooperative_recycle_after_giant", lambda: True)
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.sync_timedb_ingest_timeout.is_giant_ingest_budget",
       lambda p: True,
@@ -144,6 +139,21 @@ def test_no_giant_reap_on_db_skip(monkeypatch):
       path="/data/huge.stats",
   ) == wm.REAP_KEEP
   assert wm.should_supervisor_retire_worker(wm.REAP_KEEP) is False
+
+
+def test_giant_path_does_not_retire_without_rss(monkeypatch):
+  """Giant ingest budget alone never yields supervisor retire after coop removal."""
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_ingest_timeout.is_giant_ingest_budget",
+      lambda p: True,
+  )
+  assert wm.classify_supervisor_reap_kind(
+      ingest_ok=True,
+      outcome="ingested",
+      meta={"rss_mib_after_release": 10.0, "recycle_threshold_mib": 100.0},
+      path="/data/huge.stats",
+  ) == wm.REAP_KEEP
+  assert not hasattr(wm, "REAP_GIANT")
 
 
 def test_supervisor_retire_sigterm_counts_as_healthy_recycle(monkeypatch):
@@ -183,16 +193,11 @@ def test_should_supervisor_retire_respects_maxtasksperchild(monkeypatch):
 
 
 def test_retire_skipped_missing_worker_pid_warn_only(monkeypatch, capsys):
-  """Giant ingested meta without pid + maxtasks=0 → WARN only, never raise."""
+  """RSS retire meta without pid + maxtasks=0 → WARN only, never raise."""
   import hpcperfstats.dbload.lib.conf_parser as cfg
   import hpcperfstats.dbload.sync_timedb as st
 
   monkeypatch.setattr(cfg, "get_sync_ingest_pool_maxtasksperchild", lambda: 0)
-  monkeypatch.setattr(cfg, "get_sync_ingest_cooperative_recycle_after_giant", lambda: True)
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_ingest_timeout.is_giant_ingest_budget",
-      lambda p: True,
-  )
   retire_calls = []
   monkeypatch.setattr(
       st,
@@ -204,7 +209,12 @@ def test_retire_skipped_missing_worker_pid_warn_only(monkeypatch, capsys):
       False,
       True,
       0.1,
-      {"outcome": "ingested", "stats_rows": 1, "giant": "yes"},
+      {
+          "outcome": "ingested",
+          "stats_rows": 1,
+          "rss_mib_after_release": 5000.0,
+          "recycle_threshold_mib": 100.0,
+      },
   )
   reap_kind = st._handle_ingest_worker_memory_after_imap(
       pool=SimpleNamespace(_pool=[]),
@@ -212,12 +222,12 @@ def test_retire_skipped_missing_worker_pid_warn_only(monkeypatch, capsys):
       result=result,
       accumulator=None,
   )
-  assert reap_kind == wm.REAP_GIANT
+  assert reap_kind == wm.REAP_RSS
   assert retire_calls == []
   out = capsys.readouterr().out
   assert "retire skipped missing worker_pid" in out
   assert "likely_cause=meta_or_registry_gap" in out
-  assert "reap_kind=giant_reap" in out
+  assert "reap_kind=rss_reap" in out
 
 
 def test_db_skip_giant_does_not_retire(monkeypatch):
@@ -226,7 +236,6 @@ def test_db_skip_giant_does_not_retire(monkeypatch):
   import hpcperfstats.dbload.sync_timedb as st
 
   monkeypatch.setattr(cfg, "get_sync_ingest_pool_maxtasksperchild", lambda: 0)
-  monkeypatch.setattr(cfg, "get_sync_ingest_cooperative_recycle_after_giant", lambda: True)
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.sync_timedb_ingest_timeout.is_giant_ingest_budget",
       lambda p: True,
@@ -261,13 +270,13 @@ def test_should_defer_supervisor_retire_near_max_inflight(monkeypatch):
   acc = wm.WorkerMemoryBatchAccumulator()
   acc.retires_this_window = 8
   assert wm.should_defer_supervisor_retire(
-      wm.REAP_GIANT,
+      wm.REAP_RSS,
       accumulator=acc,
       pending_inflight=24,
       max_inflight=24,
   ) is True
   assert wm.should_defer_supervisor_retire(
-      wm.REAP_GIANT,
+      wm.REAP_RSS,
       accumulator=acc,
       pending_inflight=10,
       max_inflight=24,
@@ -298,17 +307,8 @@ def test_defer_retire_uses_live_inflight(monkeypatch):
   ) is False
 
 
-def test_validate_sync_ingest_pool_recycle_combo_refuses_unsafe(monkeypatch):
-  """RC-X: maxtasks=0 + coop_giant must fail validation."""
+def test_cooperative_recycle_after_giant_removed_from_conf_parser():
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
-  monkeypatch.setattr(cfg, "get_sync_ingest_pool_maxtasksperchild", lambda: 0)
-  monkeypatch.setattr(cfg, "get_sync_ingest_cooperative_recycle_after_giant", lambda: True)
-  msg = cfg.validate_sync_ingest_pool_recycle_combo()
-  assert msg is not None
-  assert "maxtasksperchild=0" in msg
-  monkeypatch.setattr(cfg, "get_sync_ingest_pool_maxtasksperchild", lambda: 1)
-  assert cfg.validate_sync_ingest_pool_recycle_combo() is None
-  monkeypatch.setattr(cfg, "get_sync_ingest_pool_maxtasksperchild", lambda: 0)
-  monkeypatch.setattr(cfg, "get_sync_ingest_cooperative_recycle_after_giant", lambda: False)
-  assert cfg.validate_sync_ingest_pool_recycle_combo() is None
+  assert not hasattr(cfg, "get_sync_ingest_cooperative_recycle_after_giant")
+  assert not hasattr(cfg, "validate_sync_ingest_pool_recycle_combo")

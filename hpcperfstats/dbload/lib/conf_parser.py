@@ -150,7 +150,6 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_ingest_recycle_worker_on_failure"),
     ("PIPELINE", "sync_ingest_cooperative_recycle_rss_fraction"),
     ("PIPELINE", "sync_ingest_rss_recheck_delay_ms"),
-    ("PIPELINE", "sync_ingest_cooperative_recycle_after_giant"),
     ("PIPELINE", "sync_adaptive_dispatch_enabled"),
     ("PIPELINE", "sync_dispatch_burst_factor"),
     ("PIPELINE", "sync_dispatch_archive_backoff_ratio"),
@@ -334,7 +333,6 @@ INI_OPTION_DEFAULTS = {
     'sync_ingest_recycle_worker_on_failure': 'yes',
     'sync_ingest_cooperative_recycle_rss_fraction': '0.5',
     'sync_ingest_rss_recheck_delay_ms': '50',
-    'sync_ingest_cooperative_recycle_after_giant': 'yes',
     'sync_adaptive_dispatch_enabled': 'yes',
     'sync_dispatch_burst_factor': '2.0',
     'sync_dispatch_archive_backoff_ratio': '0.50',
@@ -2519,31 +2517,6 @@ def get_sync_ingest_rss_recheck_delay_ms():
   """Optional RSS re-measure delay after release when above threshold (default 50)."""
   _ensure_cfg_loaded()
   return max(0, _pipeline_getint("sync_ingest_rss_recheck_delay_ms"))
-
-
-def get_sync_ingest_cooperative_recycle_after_giant():
-  """Supervisor-retire workers after successful giant ingest (default yes)."""
-  _ensure_cfg_loaded()
-  return _parse_bool(
-      _pipeline_get("sync_ingest_cooperative_recycle_after_giant"),
-  )
-
-
-def validate_sync_ingest_pool_recycle_combo():
-  """RC-X: refuse maxtasks=0 + cooperative giant recycle (unsafe retire storm).
-
-  Returns ``None`` when safe, else an error message string.
-  """
-  if (
-      get_sync_ingest_pool_maxtasksperchild() == 0
-      and get_sync_ingest_cooperative_recycle_after_giant()
-  ):
-    return (
-        "unsafe PIPELINE combo: sync_ingest_pool_maxtasksperchild=0 with "
-        "sync_ingest_cooperative_recycle_after_giant=yes — set maxtasks>=1 "
-        "or disable cooperative_recycle_after_giant"
-    )
-  return None
 
 
 def get_sync_adaptive_dispatch_enabled():

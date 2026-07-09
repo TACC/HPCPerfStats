@@ -408,7 +408,7 @@ sync_process_tree_rss_limit_mb = 110000
 
 # Recycle ingest pool workers after N files; 0 unlimited (default 1).
 # Ingest pool only; archive and sealed-archive spawn pools always maxtasksperchild=1.
-# Unsafe with cooperative_recycle_after_giant=yes when maxtasks=0 (startup refuses).
+# Prefer default 1. When 0, supervisor retires only on failure/RSS (not path size).
 sync_ingest_pool_maxtasksperchild = 1
 
 # Return freed worker heap to OS after each ingest task on Linux (default yes).
@@ -419,11 +419,9 @@ sync_ingest_malloc_trim_after_file = yes
 # sync_ingest_worker_memory_telemetry_every_n_chunks = 1
 
 # Cooperative recycle when maxtasksperchild=0 (supervisor retires worker after result).
-# Do not enable cooperative_recycle_after_giant with maxtasks=0 (startup refuses).
 # sync_ingest_recycle_worker_on_failure = yes
 # sync_ingest_cooperative_recycle_rss_fraction = 0.5
 # sync_ingest_rss_recheck_delay_ms = 50
-sync_ingest_cooperative_recycle_after_giant = yes
 
 # Adaptive burst dispatch for sync queues (default yes).
 # sync_adaptive_dispatch_enabled = yes
