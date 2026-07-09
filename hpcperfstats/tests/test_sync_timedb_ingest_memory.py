@@ -215,7 +215,7 @@ def test_conf_parser_ingest_memory_defaults(temp_ini, monkeypatch):
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
   importlib.reload(cfg)
-  assert cfg.get_sync_ingest_pool_maxtasksperchild() == 1
+  assert cfg.get_sync_ingest_pool_maxtasksperchild() == 0
   assert cfg.get_sync_ingest_malloc_trim_after_file() is True
   assert cfg.get_sync_ingest_worker_memory_telemetry() is False
   assert not hasattr(cfg, "get_sync_ingest_cooperative_recycle_after_giant")
