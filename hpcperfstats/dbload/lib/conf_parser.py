@@ -2529,6 +2529,23 @@ def get_sync_ingest_cooperative_recycle_after_giant():
   )
 
 
+def validate_sync_ingest_pool_recycle_combo():
+  """RC-X: refuse maxtasks=0 + cooperative giant recycle (unsafe retire storm).
+
+  Returns ``None`` when safe, else an error message string.
+  """
+  if (
+      get_sync_ingest_pool_maxtasksperchild() == 0
+      and get_sync_ingest_cooperative_recycle_after_giant()
+  ):
+    return (
+        "unsafe PIPELINE combo: sync_ingest_pool_maxtasksperchild=0 with "
+        "sync_ingest_cooperative_recycle_after_giant=yes — set maxtasks>=1 "
+        "or disable cooperative_recycle_after_giant"
+    )
+  return None
+
+
 def get_sync_adaptive_dispatch_enabled():
   _ensure_cfg_loaded()
   return _parse_bool(

@@ -17,6 +17,7 @@ from __future__ import annotations
 import multiprocessing
 import os
 import signal
+import threading
 import time
 
 from hpcperfstats.dbload.lib.print_utils import log_print
@@ -48,6 +49,12 @@ class MultiprocessingWorkerExitError(RuntimeError):
     self.exit_code = int(exit_code)
     self.likely_cause = str(likely_cause or "")
     self.diagnostics = dict(diagnostics or {})
+
+  def __str__(self):
+    base = super().__str__()
+    if self.likely_cause and self.likely_cause not in base:
+      return "%s likely_cause=%s" % (base, self.likely_cause)
+    return base
 
 
 class MultiprocessingPoolStallError(MultiprocessingWorkerExitError):
@@ -983,10 +990,18 @@ def _aggressive_terminate_pool_workers(
     *,
     context="",
     sigterm_grace_s=2.0,
+    sigkill_first=False,
 ):
-  """SIGTERM then SIGKILL known pool worker PIDs before stdlib ``terminate()``."""
+  """SIGTERM then SIGKILL known pool worker PIDs (or SIGKILL-first for abandon)."""
   alive_pids = _alive_pool_worker_pids(pool)
   if not alive_pids:
+    return
+  if sigkill_first:
+    _sigkill_pool_worker_pids(
+        alive_pids,
+        context=context,
+        blocking_reap_s=0.2,
+    )
     return
   for pid in alive_pids:
     try:
@@ -1001,10 +1016,10 @@ def _aggressive_terminate_pool_workers(
       return
     time.sleep(0.05)
   if lingering:
-    _sigkill_pool_worker_pids(lingering, context=context)
+    _sigkill_pool_worker_pids(lingering, context=context, blocking_reap_s=0.2)
 
 
-def _sigkill_pool_worker_pids(pids, *, context=""):
+def _sigkill_pool_worker_pids(pids, *, context="", blocking_reap_s=2.0):
   killed = []
   for pid in pids or ():
     if pid is None:
@@ -1025,18 +1040,25 @@ def _sigkill_pool_worker_pids(pids, *, context=""):
       os.waitpid(int(pid), os.WNOHANG)
     except (ChildProcessError, OSError):
       pass
-  # Blocking reap for defunct children SIGKILL may leave until waitpid runs.
-  deadline = time.monotonic() + 2.0
-  for pid in killed:
-    while time.monotonic() < deadline:
+  # Bounded non-blocking reap; never O(workers × 2s).
+  reap_budget = max(0.0, float(blocking_reap_s))
+  if reap_budget <= 0.0 or not killed:
+    return
+  deadline = time.monotonic() + reap_budget
+  remaining = set(killed)
+  while remaining and time.monotonic() < deadline:
+    done = set()
+    for pid in remaining:
       try:
         waited_pid, _status = os.waitpid(int(pid), os.WNOHANG)
         if waited_pid == int(pid):
-          break
+          done.add(pid)
       except ChildProcessError:
-        break
+        done.add(pid)
       except OSError:
-        break
+        done.add(pid)
+    remaining -= done
+    if remaining:
       time.sleep(0.05)
 
 
@@ -1046,12 +1068,18 @@ def terminate_pool_bounded(
     *,
     context="",
     kill_workers_first=False,
+    abandon_after_kill=False,
 ):
-  """Terminate a pool and wait briefly so shutdown does not hang after worker death."""
+  """Terminate a pool and wait briefly so shutdown does not hang after worker death.
+
+  When ``abandon_after_kill=True`` (idle-pool recover / proactive swap), SIGKILL
+  known worker PIDs and **do not** call stdlib ``Pool.terminate()`` / join — that
+  path can hang forever in ``_help_stuff_finish`` (RC-C).
+  """
   if active_pool is None:
     return True
   alive_before = alive_pool_worker_count(active_pool)
-  if kill_workers_first:
+  if kill_workers_first or abandon_after_kill:
     wchan_sample = format_pool_worker_wchan_sample(active_pool)
     log_print(
         "INFO: pool_recover terminate workers_before=%d wchan_sample=%s "
@@ -1062,7 +1090,21 @@ def terminate_pool_bounded(
     _aggressive_terminate_pool_workers(
         active_pool,
         context=context,
+        sigterm_grace_s=0.2 if abandon_after_kill else 2.0,
+        sigkill_first=bool(abandon_after_kill),
     )
+  if abandon_after_kill:
+    log_print(
+        "INFO: pool_recover terminate outcome=abandoned context=%s "
+        "workers_before=%d"
+        % (context or "pool", alive_before),
+        flush=True,
+    )
+    try:
+      reap_zombie_children_of_self(context=context or "abandon_pool")
+    except Exception:
+      pass
+    return True
   try:
     active_pool.terminate()
   except Exception:
@@ -1079,7 +1121,7 @@ def terminate_pool_bounded(
         "Pool terminate timeout; lingering_workers=%s" % alive,
         flush=True,
     )
-    _sigkill_pool_worker_pids(alive, context=context)
+    _sigkill_pool_worker_pids(alive, context=context, blocking_reap_s=0.5)
     outcome = "sigkill"
     all_done, alive = _wait_pool_processes_bounded(active_pool, timeout_s)
     if not all_done and alive:
@@ -1174,6 +1216,8 @@ def maintain_ingest_pool_after_supervisor_retire(
         ),
         flush=True,
     )
+    # RC-M: refuse further retire/swap while replacement is still lagging.
+    return pool
   if not probe_ingest_pool_dispatch(pool, context="post_retire_maintenance"):
     if pool_workers_all_idle(pool) and callable(recreate_pool_fn):
       log_print(
@@ -1181,6 +1225,14 @@ def maintain_ingest_pool_after_supervisor_retire(
           flush=True,
       )
       try:
+        # RC-N: abandon+kill old workers before returning a fresh Pool.
+        terminate_pool_bounded(
+            pool,
+            timeout_s=5.0,
+            context="proactive_swap",
+            kill_workers_first=True,
+            abandon_after_kill=True,
+        )
         return recreate_pool_fn()
       except Exception as exc:
         log_print(
@@ -1196,7 +1248,13 @@ def close_pool_bounded(active_pool, timeout_s=30.0, *, force_terminate=False):
   if active_pool is None:
     return True
   if force_terminate or dead_pool_worker_pids(active_pool):
-    return terminate_pool_bounded(active_pool, timeout_s)
+    return terminate_pool_bounded(
+        active_pool,
+        timeout_s,
+        abandon_after_kill=bool(force_terminate),
+        kill_workers_first=bool(force_terminate),
+        context="close_force_terminate" if force_terminate else "",
+    )
   try:
     active_pool.close()
   except Exception:
@@ -1355,6 +1413,8 @@ def imap_unordered_watch_pool(
 
 
 _IDLE_POOL_TASKQUEUE_DEAD_CAUSE = "idle_pool_taskqueue_dead"
+# Wall-clock budget for sync one-shot recover (RC-F/G/H); never soft-hang forever.
+IDLE_POOL_RECOVER_WALL_S = 30.0
 
 
 def imap_sliding_window_watch_pool(
@@ -1452,10 +1512,23 @@ def imap_sliding_window_watch_pool(
     if callable(on_in_flight_change):
       on_in_flight_change(in_flight)
 
+  def _sync_active_pool_from_health_ctx():
+    """Adopt proactive-swap / recover pool rewired into health_ctx (RC-N)."""
+    nonlocal active_pool
+    candidate = health_ctx.get("active_pool")
+    if candidate is None:
+      candidate = health_ctx.get("ingest_pool")
+    if candidate is not None and candidate is not active_pool:
+      active_pool = candidate
+      health_ctx["active_pool"] = candidate
+      if "ingest_pool" in health_ctx:
+        health_ctx["ingest_pool"] = candidate
+
   def _dispatch_path(path):
     """Submit one path unless the same normpath is already in ``pending_async``."""
     if not path:
       return False
+    _sync_active_pool_from_health_ctx()
     apply_async = getattr(active_pool, "apply_async", None)
     if not callable(apply_async):
       raise RuntimeError("pool missing apply_async for sliding window dispatch")
@@ -1475,6 +1548,7 @@ def imap_sliding_window_watch_pool(
     return True
 
   def _submit_until_cap():
+    _sync_active_pool_from_health_ctx()
     apply_async = getattr(active_pool, "apply_async", None)
     if not callable(apply_async):
       raise RuntimeError("pool missing apply_async for sliding window dispatch")
@@ -1496,16 +1570,21 @@ def imap_sliding_window_watch_pool(
           supplement_paths = []
         if not supplement_paths:
           break
-        path = supplement_paths.pop(0)
-        for extra_path in supplement_paths:
+        dispatched_any = False
+        for supp_path in supplement_paths:
           if len(pending_async) >= max_inflight:
             break
-          _dispatch_path(extra_path)
+          if _dispatch_path(supp_path):
+            dispatched_any = True
+        # Duplicate-only supplement must not busy-spin the refill loop.
+        if not dispatched_any:
+          break
+        continue
       else:
         if _dispatch_path(path):
           continue
+        # Primary path suppressed as duplicate — advance to next path.
         continue
-      _dispatch_path(path)
 
   def _handle_stall_poll():
     nonlocal consecutive_timeouts
@@ -1600,36 +1679,77 @@ def imap_sliding_window_watch_pool(
         % (pending_before, pending_sample, context or "pool"),
         flush=True,
     )
-    try:
-      recovered = on_idle_pool_stuck_after_redispatch(
-          active_pool,
-          pending_paths,
-          pending_async,
-          fn,
+    # RC-F/G/H: wall-clock abort — never soft-hang MainThread on recover.
+    recover_box = {}
+    recover_error = {}
+
+    def _run_recover_callback():
+      try:
+        recover_box["value"] = on_idle_pool_stuck_after_redispatch(
+            active_pool,
+            pending_paths,
+            pending_async,
+            fn,
+        )
+      except BaseException as exc:
+        recover_error["exc"] = exc
+
+    recover_thread = threading.Thread(
+        target=_run_recover_callback,
+        name="idle-pool-recover",
+        daemon=True,
+    )
+    recover_thread.start()
+    recover_thread.join(timeout=float(IDLE_POOL_RECOVER_WALL_S))
+    if recover_thread.is_alive():
+      log_print(
+          "ERROR: pool imap idle reconcile pool_recover exceeded wall_s=%.1f "
+          "context=%s"
+          % (IDLE_POOL_RECOVER_WALL_S, context or "pool"),
+          flush=True,
       )
-    except Exception as exc:
+      raise MultiprocessingPoolStallError(
+          "idle pool recover exceeded wall_s=%.1f" % IDLE_POOL_RECOVER_WALL_S,
+          dead_pids=[],
+          context=context,
+          exit_code=124,
+          likely_cause=_IDLE_POOL_TASKQUEUE_DEAD_CAUSE,
+      )
+    if "exc" in recover_error:
+      exc = recover_error["exc"]
+      if isinstance(exc, MultiprocessingPoolStallError):
+        raise exc
       log_print(
           "ERROR: pool imap idle reconcile pool_recover failed: %s context=%s"
           % (exc, context or "pool"),
           flush=True,
       )
-      return None
-    if not isinstance(recovered, dict):
-      log_print(
-          "ERROR: pool imap idle reconcile pool_recover failed: "
-          "invalid return type context=%s" % (context or "pool"),
-          flush=True,
+      raise MultiprocessingPoolStallError(
+          "idle pool recover failed: %s" % exc,
+          dead_pids=[],
+          context=context,
+          exit_code=124,
+          likely_cause=_IDLE_POOL_TASKQUEUE_DEAD_CAUSE,
       )
-      return None
+    recovered = recover_box.get("value")
+    if not isinstance(recovered, dict):
+      raise MultiprocessingPoolStallError(
+          "idle pool recover invalid return type",
+          dead_pids=[],
+          context=context,
+          exit_code=124,
+          likely_cause=_IDLE_POOL_TASKQUEUE_DEAD_CAUSE,
+      )
     new_pool = recovered.get("pool")
     collected = list(recovered.get("collected") or ())
     if new_pool is None:
-      log_print(
-          "ERROR: pool imap idle reconcile pool_recover failed: "
-          "no replacement pool context=%s" % (context or "pool"),
-          flush=True,
+      raise MultiprocessingPoolStallError(
+          "idle pool recover returned no replacement pool",
+          dead_pids=[],
+          context=context,
+          exit_code=124,
+          likely_cause=_IDLE_POOL_TASKQUEUE_DEAD_CAUSE,
       )
-      return None
     active_pool = new_pool
     health_ctx["active_pool"] = new_pool
     if "ingest_pool" in health_ctx:

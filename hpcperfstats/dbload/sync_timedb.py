@@ -69,6 +69,7 @@ from hpcperfstats.dbload.lib.db_unavailable import (
 )
 from hpcperfstats.dbload.lib.io_helpers import host_data_instance_from_stats_row
 from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
+    MultiprocessingPoolStallError,
     MultiprocessingWorkerExitError,
     alive_pool_worker_count,
     async_result_get_watch_pool,
@@ -1557,6 +1558,7 @@ def _imap_ingest_paths_batched(
     pending_tail=None,
     populate_pool_controller=None,
     on_ingest_pool_replaced=None,
+    pool_health_context=None,
 ):
   """Cap concurrent pool tasks below full chunk size for RSS safety (sliding window)."""
   inflight_cap = _effective_ingest_imap_inflight_cap(thread_count, len(paths))
@@ -1571,14 +1573,16 @@ def _imap_ingest_paths_batched(
   if dispatch_registry is not None:
     seed_dispatch_worker_stages(dispatch_registry, paths)
   active_ingest_pool = ingest_pool if ingest_pool is not None else pool
-  pool_health_context = {
-      "ingest_pool": active_ingest_pool,
-      "archive_pool": archive_pool,
-      "expected_pool_workers": thread_count,
-      "in_flight_sample_fn": (
-          tracker.sample_in_flight if tracker is not None else None
-      ),
-  }
+  if pool_health_context is None:
+    pool_health_context = {}
+  pool_health_context.setdefault("ingest_pool", active_ingest_pool)
+  pool_health_context.setdefault("active_pool", active_ingest_pool)
+  pool_health_context.setdefault("archive_pool", archive_pool)
+  pool_health_context.setdefault("expected_pool_workers", thread_count)
+  if pool_health_context.get("in_flight_sample_fn") is None:
+    pool_health_context["in_flight_sample_fn"] = (
+        tracker.sample_in_flight if tracker is not None else None
+    )
   supplement_log_state = {"logged": False}
 
   def _supervisor_reap():
@@ -1719,14 +1723,15 @@ def _imap_ingest_paths_batched(
         % (skip_yes_n, skip_no_n, skip_no_sample or "-"),
         flush=True,
     )
-    pending_async.clear()
+    # RC-F/G/H: do not clear pending_async until new pool probe OK.
     log_print("INFO: pool_recover terminate begin", flush=True)
     terminate_started = time.monotonic()
     terminate_pool_bounded(
         stuck_pool,
         timeout_s=30.0,
         context="idle_pool_recover",
-        kill_workers_first=pool_workers_all_idle(stuck_pool),
+        kill_workers_first=True,
+        abandon_after_kill=True,
     )
     log_print(
         "INFO: pool_recover terminate elapsed_s=%.3f"
@@ -1755,12 +1760,24 @@ def _imap_ingest_paths_batched(
           "ERROR: pool_recover respawn failed alive_workers=0",
           flush=True,
       )
-      raise RuntimeError("replacement ingest pool has no alive workers")
+      raise MultiprocessingPoolStallError(
+          "replacement ingest pool has no alive workers",
+          dead_pids=[],
+          context="idle_pool_recover",
+          exit_code=124,
+          likely_cause="idle_pool_taskqueue_dead",
+      )
     if not probe_ingest_pool_dispatch(
         new_pool,
         context="idle_pool_recover",
     ):
-      raise RuntimeError("replacement ingest pool dispatch_probe failed")
+      raise MultiprocessingPoolStallError(
+          "replacement ingest pool dispatch_probe failed",
+          dead_pids=[],
+          context="idle_pool_recover",
+          exit_code=124,
+          likely_cause="idle_pool_taskqueue_dead",
+      )
     pool_health_context["ingest_pool"] = new_pool
     pool_health_context["active_pool"] = new_pool
     if callable(on_ingest_pool_replaced):
@@ -1770,7 +1787,14 @@ def _imap_ingest_paths_batched(
         pass
     apply_async = getattr(new_pool, "apply_async", None)
     if not callable(apply_async):
-      raise RuntimeError("replacement ingest pool missing apply_async")
+      raise MultiprocessingPoolStallError(
+          "replacement ingest pool missing apply_async",
+          dead_pids=[],
+          context="idle_pool_recover",
+          exit_code=124,
+          likely_cause="idle_pool_taskqueue_dead",
+      )
+    pending_async.clear()
     for path in remaining:
       if dispatch_registry is not None and path:
         seed_dispatch_worker_stages(dispatch_registry, [path])
@@ -5461,6 +5485,7 @@ def run_sync_timedb_supervisor_loop(
         nonlocal ingest_pool
         ingest_pool = new_pool
         maintenance_pool_health["ingest_pool"] = new_pool
+        maintenance_pool_health["active_pool"] = new_pool
 
       def _recreate_ingest_pool_maintenance():
         return create_sync_timedb_spawn_pool(
@@ -5476,6 +5501,7 @@ def run_sync_timedb_supervisor_loop(
 
       maintenance_pool_health = {
           "ingest_pool": ingest_pool,
+          "active_pool": ingest_pool,
           "expected_pool_workers": thread_count,
       }
       inflight_cap = _effective_ingest_imap_inflight_cap(thread_count, len(paths))
@@ -5495,6 +5521,7 @@ def run_sync_timedb_supervisor_loop(
           pending_tail=pending_tail,
           populate_pool_controller=populate_pool_controller,
           on_ingest_pool_replaced=_replace_ingest_pool,
+          pool_health_context=maintenance_pool_health,
       )
       for result in results_iter:
         stats_fname, need_archival, ingest_ok, elapsed_s, outcome_meta = (
@@ -5518,6 +5545,12 @@ def run_sync_timedb_supervisor_loop(
             remaining=remaining,
             supplement=_ingest_path_is_supplement(stats_fname, chunk_paths_norm),
         )
+        # RC-K: live in-flight count (not fake min(cap, thread_count)).
+        live_inflight = (
+            ingest_tracker.in_flight_count()
+            if ingest_tracker is not None
+            else 0
+        )
         _handle_ingest_worker_memory_after_imap(
             pool=ingest_pool,
             registry=stall_diagnostics.worker_registry,
@@ -5526,7 +5559,7 @@ def run_sync_timedb_supervisor_loop(
             pool_health_context=maintenance_pool_health,
             recreate_ingest_pool_fn=_recreate_ingest_pool_maintenance,
             on_pool_replaced=_replace_ingest_pool,
-            pending_inflight=min(inflight_cap, thread_count),
+            pending_inflight=live_inflight,
             max_inflight=inflight_cap,
         )
         chunk_ingest_finished += 1
@@ -5706,6 +5739,12 @@ def run_sync_timedb_supervisor_loop(
   dead_letter_path = os.path.join(directory, SYNC_TIMEDB_DEAD_LETTER_BASENAME)
 
   ensure_persistence_contract(directory, log_fn=log_print)
+
+  # RC-X: refuse unsafe maxtasks=0 + cooperative giant recycle at startup.
+  unsafe_combo = cfg.validate_sync_ingest_pool_recycle_combo()
+  if unsafe_combo:
+    log_print("ERROR: %s" % unsafe_combo, flush=True)
+    raise SystemExit(1)
 
   for entry in _load_sync_checkpoint(checkpoint_path):
     fp = _path_fingerprint(entry["path"])

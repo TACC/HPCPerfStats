@@ -1104,6 +1104,47 @@ def test_supplement_not_used_while_chunk_paths_remain():
   assert len(results) == len(paths)
 
 
+def test_supplement_duplicate_only_does_not_busy_spin():
+  """Duplicate-suppressed supplement paths must exit refill, not spin forever."""
+  pool = _ManualPool()
+  paths = ["chunk0"]
+  calls = {"n": 0}
+
+  def _supplement(slots_needed, in_flight):
+    del slots_needed
+    calls["n"] += 1
+    # Always offer a path already in flight → dispatch suppressed.
+    return list(in_flight)[:1] or ["chunk0"]
+
+  gen = mph.imap_sliding_window_watch_pool(
+      pool,
+      lambda path: path,
+      paths,
+      max_inflight=2,
+      poll_timeout_s=0.01,
+      stall_abort_polls_fn=lambda in_flight: 10000,
+      supplement_paths_fn=_supplement,
+  )
+  import threading
+
+  results = []
+
+  def consumer():
+    for item in gen:
+      results.append(item)
+
+  thread = threading.Thread(target=consumer, daemon=True)
+  thread.start()
+  deadline = time.monotonic() + 2.0
+  while not results and time.monotonic() < deadline:
+    for ar in list(pool.inflight):
+      ar.finish()
+    time.sleep(0.01)
+  thread.join(timeout=2.0)
+  assert results == ["chunk0"]
+  assert calls["n"] < 50
+
+
 def test_supplement_requires_giant_in_flight():
   pool = _ManualPool()
   chunk_paths = ["small0", "small1"]
@@ -1584,6 +1625,7 @@ def test_abort_if_pool_workers_dead_recycle_invokes_idle_reconcile(monkeypatch):
 
 
 def test_terminate_pool_bounded_kill_workers_first_before_terminate(monkeypatch):
+  """Non-abandon path still calls stdlib terminate after aggressive kill."""
   logs = []
   aggressive_calls = []
   terminate_calls = []
@@ -1619,10 +1661,206 @@ def test_terminate_pool_bounded_kill_workers_first_before_terminate(monkeypatch)
       _TermPool(),
       context="idle_pool_recover",
       kill_workers_first=True,
+      abandon_after_kill=False,
   )
   assert aggressive_calls
   assert terminate_calls
   assert any("pool_recover terminate outcome=all_done" in line for line in logs)
+
+
+def test_terminate_pool_bounded_abandon_skips_blocking_terminate(monkeypatch):
+  """RC-C/W: blocking Pool.terminate() must not hang abandon-pool recover."""
+  logs = []
+  aggressive_kwargs = []
+  terminate_calls = []
+
+  monkeypatch.setattr(
+      mph,
+      "log_print",
+      lambda msg, flush=False: logs.append(msg),
+  )
+  monkeypatch.setattr(
+      mph,
+      "_aggressive_terminate_pool_workers",
+      lambda pool, **kwargs: aggressive_kwargs.append(dict(kwargs)),
+  )
+  monkeypatch.setattr(
+      mph,
+      "reap_zombie_children_of_self",
+      lambda **kwargs: None,
+  )
+
+  class _HangTerminatePool:
+    _pool = [_AliveWorker()]
+
+    def terminate(self):
+      terminate_calls.append(True)
+      time.sleep(3600)
+
+  started = time.monotonic()
+  ok = mph.terminate_pool_bounded(
+      _HangTerminatePool(),
+      context="idle_pool_recover",
+      kill_workers_first=True,
+      abandon_after_kill=True,
+  )
+  elapsed = time.monotonic() - started
+  assert ok is True
+  assert elapsed < 3.0
+  assert terminate_calls == []
+  assert aggressive_kwargs
+  assert aggressive_kwargs[0].get("sigkill_first") is True
+  assert any("outcome=abandoned" in line for line in logs)
+
+
+def test_recover_wall_raises_stall_not_soft_hang(monkeypatch):
+  """RC-F/G/H: recover callback that never returns → exit 124 within wall."""
+  monkeypatch.setattr(mph, "IDLE_POOL_RECOVER_WALL_S", 0.3)
+  monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 1000)
+  monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 3)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
+  stuck_pool = _ManualPool()
+
+  def on_recover_hang(pool, pending_paths, pending_async, fn):
+    del pool, pending_paths, pending_async, fn
+    time.sleep(30)
+
+  gen = mph.imap_sliding_window_watch_pool(
+      stuck_pool,
+      lambda path: path,
+      ["stuck_path"],
+      max_inflight=1,
+      poll_timeout_s=0.01,
+      stall_abort_polls_fn=lambda in_flight: 100000,
+      on_idle_pool_stuck_after_redispatch=on_recover_hang,
+  )
+  started = time.monotonic()
+  with pytest.raises(mph.MultiprocessingPoolStallError) as excinfo:
+    list(gen)
+  elapsed = time.monotonic() - started
+  assert elapsed < 5.0
+  assert excinfo.value.exit_code == 124
+  assert excinfo.value.likely_cause == mph._IDLE_POOL_TASKQUEUE_DEAD_CAUSE
+  assert "exceeded wall" in str(excinfo.value)
+
+
+def test_recover_does_not_clear_pending_before_new_pool_ready(monkeypatch):
+  """RC-F: pending_async must remain until recover callback proves new pool."""
+  monkeypatch.setattr(mph, "IDLE_POOL_RECOVER_WALL_S", 0.3)
+  monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 1000)
+  monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 3)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
+  stuck_pool = _ManualPool()
+  seen = {}
+
+  def on_recover_fail_after_inspect(pool, pending_paths, pending_async, fn):
+    del pool, pending_paths, fn
+    seen["pending_n"] = len(pending_async)
+    seen["paths"] = list(pending_async.values())
+    # Simulate probe/respawn failure without clearing pending.
+    raise mph.MultiprocessingPoolStallError(
+        "replacement ingest pool dispatch_probe failed",
+        dead_pids=[],
+        context="idle_pool_recover",
+        exit_code=124,
+        likely_cause=mph._IDLE_POOL_TASKQUEUE_DEAD_CAUSE,
+    )
+
+  gen = mph.imap_sliding_window_watch_pool(
+      stuck_pool,
+      lambda path: path,
+      ["stuck_path"],
+      max_inflight=1,
+      poll_timeout_s=0.01,
+      stall_abort_polls_fn=lambda in_flight: 100000,
+      on_idle_pool_stuck_after_redispatch=on_recover_fail_after_inspect,
+  )
+  with pytest.raises(mph.MultiprocessingPoolStallError) as excinfo:
+    list(gen)
+  assert seen["pending_n"] == 1
+  assert seen["paths"] == ["stuck_path"]
+  assert excinfo.value.likely_cause == mph._IDLE_POOL_TASKQUEUE_DEAD_CAUSE
+
+
+def test_maintain_ingest_pool_refuses_swap_while_replacement_lagging(monkeypatch):
+  """RC-M: gap>0 must not proactive-swap."""
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
+      lambda: 0,
+  )
+  monkeypatch.setattr(mph, "reap_pool_worker_pids", lambda *a, **k: [])
+  monkeypatch.setattr(mph, "reap_zombie_children_of_self", lambda **k: None)
+  monkeypatch.setattr(mph, "_iter_dead_pool_worker_processes", lambda pool: [])
+  monkeypatch.setattr(
+      mph,
+      "_pool_recycle_gate_metrics",
+      lambda *a, **k: {
+          "alive": 23,
+          "expected_total": 24,
+          "materialized": 23,
+          "gap": 1,
+          "dead_n": 0,
+      },
+  )
+  probe_calls = []
+  monkeypatch.setattr(
+      mph,
+      "probe_ingest_pool_dispatch",
+      lambda *a, **k: probe_calls.append(True) or False,
+  )
+  recreate_calls = []
+  pool = SimpleNamespace(_pool=[_AliveWorker()])
+  out = mph.maintain_ingest_pool_after_supervisor_retire(
+      pool,
+      recreate_pool_fn=lambda: recreate_calls.append(True) or object(),
+  )
+  assert out is pool
+  assert probe_calls == []
+  assert recreate_calls == []
+
+
+def test_maintain_ingest_pool_proactive_swap_abandons_old_pool(monkeypatch):
+  """RC-N: proactive swap must abandon+kill old pool before recreate."""
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
+      lambda: 0,
+  )
+  monkeypatch.setattr(mph, "reap_pool_worker_pids", lambda *a, **k: [])
+  monkeypatch.setattr(mph, "reap_zombie_children_of_self", lambda **k: None)
+  monkeypatch.setattr(mph, "_iter_dead_pool_worker_processes", lambda pool: [])
+  monkeypatch.setattr(
+      mph,
+      "_pool_recycle_gate_metrics",
+      lambda *a, **k: {
+          "alive": 24,
+          "expected_total": 24,
+          "materialized": 24,
+          "gap": 0,
+          "dead_n": 0,
+      },
+  )
+  monkeypatch.setattr(mph, "probe_ingest_pool_dispatch", lambda *a, **k: False)
+  monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
+  terminate_calls = []
+
+  def fake_terminate(pool, **kwargs):
+    terminate_calls.append(dict(kwargs))
+    return True
+
+  monkeypatch.setattr(mph, "terminate_pool_bounded", fake_terminate)
+  new_pool = object()
+  old_pool = SimpleNamespace(_pool=[_AliveWorker()])
+  out = mph.maintain_ingest_pool_after_supervisor_retire(
+      old_pool,
+      recreate_pool_fn=lambda: new_pool,
+  )
+  assert out is new_pool
+  assert terminate_calls
+  assert terminate_calls[0].get("abandon_after_kill") is True
+  assert terminate_calls[0].get("kill_workers_first") is True
+  assert terminate_calls[0].get("context") == "proactive_swap"
 
 
 def test_probe_ingest_pool_dispatch_success_and_failure():

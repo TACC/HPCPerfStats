@@ -690,7 +690,36 @@ def _pending_has_bash_blocks(text: str) -> bool:
     return bool(re.search(r"```bash\b", text or "", re.I))
 
 
+_COMPOSE_SUBCMD_RE = re.compile(
+    r"docker(?:-compose)?\s+compose\s+"
+    r"(?:(?:-p|--project-name|-f|--file)\s+\S+\s+)*"
+    r"(exec|run|logs)\b",
+    re.I,
+)
+# Legacy `docker-compose` (hyphen) without the `compose` token.
+_COMPOSE_HYPHEN_SUBCMD_RE = re.compile(
+    r"docker-compose\s+"
+    r"(?:(?:-p|--project-name|-f|--file)\s+\S+\s+)*"
+    r"(exec|run|logs)\b",
+    re.I,
+)
+
+
+def _bash_has_compose_subcommand(bash_body: str) -> bool:
+    return bool(
+        _COMPOSE_SUBCMD_RE.search(bash_body or "")
+        or _COMPOSE_HYPHEN_SUBCMD_RE.search(bash_body or "")
+    )
+
+
 def _validate_pending_commands_subsection(pending: str) -> list[str]:
+    """Content-level Pending commands checks (not Read-only / shallow shape).
+
+    Enforces compose-operator-terminal-commands.mdc anti-patterns: one
+    #### block per service, no host ``cd`` before docker, no ``--tail``/
+    ``--since`` before grep on compose logs, no unfiltered logs firehose,
+    no heredoc python through exec, and allow ``-p``/``-f`` before subcommand.
+    """
     if not (pending or "").strip():
         return ["Operator discovery: ### Pending commands empty while Status in progress"]
     service_sections = [
@@ -705,25 +734,101 @@ def _validate_pending_commands_subsection(pending: str) -> list[str]:
             "(compose-operator-terminal-commands.mdc)",
         ]
     issues: list[str] = []
+    seen_services: dict[str, int] = {}
     for section in service_sections:
         label_match = re.match(r"####\s*(\S+)", section)
         if not label_match:
             continue
-        service = label_match.group(1)
+        service = label_match.group(1).rstrip("—-").strip()
+        # Normalize "pipeline — paste …" → service token before em-dash/space.
+        service = re.split(r"[\s—-]", service, maxsplit=1)[0]
+        seen_services[service] = seen_services.get(service, 0) + 1
         if not re.search(r"```bash\b", section, re.I):
             issues.append(
                 f"Operator discovery: #### {service} missing fenced bash block",
             )
             continue
         bash_match = re.search(r"```bash\s*\n(.*?)```", section, re.S | re.I)
-        if bash_match and not re.search(
-            r"docker\s+compose\s+(exec|run|logs)",
-            bash_match.group(1),
-            re.I,
-        ):
+        if not bash_match:
+            continue
+        bash_body = bash_match.group(1)
+        if not _bash_has_compose_subcommand(bash_body):
             issues.append(
                 f"Operator discovery: #### {service} bash block must use "
-                "docker compose exec|run|logs",
+                "docker compose exec|run|logs "
+                "(flags -p/-f allowed before subcommand)",
+            )
+            continue
+        # Host cd before docker compose (container-internal cd via su/sh -lc is OK).
+        for line in bash_body.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if re.match(r"^cd\s+", stripped) and not re.search(
+                r"docker\s+compose|docker-compose",
+                stripped,
+                re.I,
+            ):
+                issues.append(
+                    f"Operator discovery: #### {service} must not use host "
+                    "cd before docker compose "
+                    "(compose-operator-terminal-commands.mdc)",
+                )
+                break
+        # --tail / --since on compose logs before a pipe to grep.
+        for line in bash_body.splitlines():
+            if not re.search(r"docker(?:-compose)?\s+(?:compose\s+)?.*\blogs\b", line, re.I):
+                if not re.search(r"docker-compose\s+.*\blogs\b", line, re.I):
+                    continue
+            if re.search(r"--tail(=|\s)|--since(=|\s)", line, re.I):
+                # Allow only if this logs line already pipes to grep on same line
+                # after the flag (rare); reject the common anti-pattern.
+                if not re.search(r"\|\s*grep\b", line, re.I):
+                    issues.append(
+                        f"Operator discovery: #### {service} must not use "
+                        "--tail/--since on docker compose logs before grep "
+                        "(compose-operator-terminal-commands.mdc)",
+                    )
+                    break
+                # Flag appears before grep on the same line → still reject.
+                flag_pos = re.search(r"--tail(=|\s)|--since(=|\s)", line, re.I)
+                grep_pos = re.search(r"\|\s*grep\b", line, re.I)
+                if flag_pos and grep_pos and flag_pos.start() < grep_pos.start():
+                    issues.append(
+                        f"Operator discovery: #### {service} must not use "
+                        "--tail/--since on docker compose logs before grep "
+                        "(compose-operator-terminal-commands.mdc)",
+                    )
+                    break
+        # Unfiltered compose logs (no grep in the bash block).
+        if re.search(
+            r"docker(?:-compose)?\s+(?:compose\s+)?(?:(?:-p|--project-name|-f|--file)\s+\S+\s+)*logs\b"
+            r"|docker-compose\s+(?:(?:-p|--project-name|-f|--file)\s+\S+\s+)*logs\b",
+            bash_body,
+            re.I,
+        ) and not re.search(r"\bgrep\b", bash_body, re.I):
+            issues.append(
+                f"Operator discovery: #### {service} docker compose logs must "
+                "pipe to grep (no unfiltered firehose) "
+                "(compose-operator-terminal-commands.mdc)",
+            )
+        # Heredoc python through exec (podman REPL anti-pattern).
+        if re.search(
+            r"python3?\s+-?\s*<<|python3?\s+<<",
+            bash_body,
+            re.I,
+        ) and re.search(r"\bexec\b", bash_body, re.I):
+            issues.append(
+                f"Operator discovery: #### {service} must not use heredoc "
+                "python3 - << through docker compose exec "
+                "(operator-command-lessons-learned.mdc)",
+            )
+    for service, count in seen_services.items():
+        if count > 1:
+            issues.append(
+                f"Operator discovery: #### {service} appears {count} times under "
+                "Pending commands — combine into one block per service "
+                "(compose-operator-terminal-commands.mdc)",
             )
     return issues
 

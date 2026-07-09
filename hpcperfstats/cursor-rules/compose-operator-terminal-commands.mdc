@@ -270,3 +270,4 @@ Operators already know their compose checkout; leading `cd` adds noise and break
 - **`deploy-ini-with-code-no-phase-zero.mdc`** — read-only operator data gathering anytime; INI change + restart only with code redeploy.
 - **`operator-command-lessons-learned.mdc`** — when operator commands fail, write the fix back into this file in the same task.
 - **`hpcperfstats-ini-format.mdc`** — INI keys for path resolution before `exec`/`grep` on data dirs.
+- **Cursor hooks (`hpc_hook_lib.operator_discovery_issues`)** — stop/postToolUse validate **content** anti-patterns in live plan Pending commands (multi same-service `####`, host `cd`, `--tail`/`--since` before grep, unfiltered logs, heredoc through exec). Reading this rule alone is not sufficient; the plan disk file must pass those checks (`cursor-hooks/README.md`).

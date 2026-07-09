@@ -175,6 +175,24 @@ def classify_supervisor_reap_kind(
   outcome_s = str(outcome or "")
   if outcome_s in _FAILED_OUTCOMES:
     return REAP_FAILURE
+  # RC-J: never giant_reap / supervisor-retire on db_skip (path budget alone).
+  if outcome_s == "db_skip":
+    threshold = 0.0
+    rss_mib = 0.0
+    if isinstance(meta, dict):
+      try:
+        threshold = float(meta.get("recycle_threshold_mib") or 0.0)
+      except (TypeError, ValueError):
+        threshold = 0.0
+      try:
+        rss_mib = float(meta.get("rss_mib_after_release") or 0.0)
+      except (TypeError, ValueError):
+        rss_mib = 0.0
+    if threshold <= 0:
+      threshold = compute_rss_recycle_threshold_mib()
+    if threshold > 0 and rss_mib > threshold:
+      return REAP_RSS
+    return REAP_KEEP
   if (
       cfg.get_sync_ingest_cooperative_recycle_after_giant()
       and is_giant_ingest_budget(path)

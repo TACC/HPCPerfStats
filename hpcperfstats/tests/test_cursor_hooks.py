@@ -777,6 +777,133 @@ def test_operator_discovery_issues_accepts_valid_pending_commands():
   assert lib.operator_discovery_issues(_operator_in_progress_plan_markdown()) == []
 
 
+def test_operator_discovery_accepts_compose_flags_before_subcommand():
+  plan = _minimal_plan_markdown().replace(
+      "## Operator discovery\n\n**Status:** `not needed`\n",
+      (
+          "## Operator discovery\n\n"
+          "**Status:** `in progress`\n\n"
+          "### Completed findings\n\n"
+          "| # | Service | Asked for | Found | Date |\n"
+          "|---|---------|-----------|-------|------|\n\n"
+          "### Pending commands\n\n"
+          "#### pipeline — filtered recover logs\n\n"
+          "```bash\n"
+          "docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | "
+          "grep -E 'pool_recover' | tail -40\n"
+          "```\n"
+      ),
+  )
+  assert lib.operator_discovery_issues(plan) == []
+
+
+def test_operator_discovery_rejects_multi_pipeline_blocks():
+  plan = _minimal_plan_markdown().replace(
+      "## Operator discovery\n\n**Status:** `not needed`\n",
+      (
+          "## Operator discovery\n\n"
+          "**Status:** `in progress`\n\n"
+          "### Completed findings\n\n"
+          "| # | Service | Asked for | Found | Date |\n"
+          "|---|---------|-----------|-------|------|\n\n"
+          "### Pending commands\n\n"
+          "#### pipeline — knobs\n\n"
+          "```bash\n"
+          "docker compose exec pipeline su hpcperfstats -c 'echo knobs'\n"
+          "```\n\n"
+          "#### pipeline — logs\n\n"
+          "```bash\n"
+          "docker compose logs pipeline 2>&1 | grep -E 'stall' | tail -20\n"
+          "```\n"
+      ),
+  )
+  issues = lib.operator_discovery_issues(plan)
+  assert any("appears 2 times" in item for item in issues)
+
+
+def test_operator_discovery_rejects_host_cd_before_compose():
+  plan = _minimal_plan_markdown().replace(
+      "## Operator discovery\n\n**Status:** `not needed`\n",
+      (
+          "## Operator discovery\n\n"
+          "**Status:** `in progress`\n\n"
+          "### Completed findings\n\n"
+          "| # | Service | Asked for | Found | Date |\n"
+          "|---|---------|-----------|-------|------|\n\n"
+          "### Pending commands\n\n"
+          "#### pipeline — bad host cd\n\n"
+          "```bash\n"
+          "cd HPCPerfStats\n"
+          "docker compose logs pipeline 2>&1 | grep -E 'stall' | tail -20\n"
+          "```\n"
+      ),
+  )
+  issues = lib.operator_discovery_issues(plan)
+  assert any("host cd" in item for item in issues)
+
+
+def test_operator_discovery_rejects_tail_before_grep_on_logs():
+  plan = _minimal_plan_markdown().replace(
+      "## Operator discovery\n\n**Status:** `not needed`\n",
+      (
+          "## Operator discovery\n\n"
+          "**Status:** `in progress`\n\n"
+          "### Completed findings\n\n"
+          "| # | Service | Asked for | Found | Date |\n"
+          "|---|---------|-----------|-------|------|\n\n"
+          "### Pending commands\n\n"
+          "#### pipeline — bad --tail\n\n"
+          "```bash\n"
+          "docker compose logs pipeline --tail=500 2>&1 | grep -E 'stall'\n"
+          "```\n"
+      ),
+  )
+  issues = lib.operator_discovery_issues(plan)
+  assert any("--tail/--since" in item for item in issues)
+
+
+def test_operator_discovery_rejects_unfiltered_compose_logs():
+  plan = _minimal_plan_markdown().replace(
+      "## Operator discovery\n\n**Status:** `not needed`\n",
+      (
+          "## Operator discovery\n\n"
+          "**Status:** `in progress`\n\n"
+          "### Completed findings\n\n"
+          "| # | Service | Asked for | Found | Date |\n"
+          "|---|---------|-----------|-------|------|\n\n"
+          "### Pending commands\n\n"
+          "#### pipeline — firehose\n\n"
+          "```bash\n"
+          "docker compose logs pipeline\n"
+          "```\n"
+      ),
+  )
+  issues = lib.operator_discovery_issues(plan)
+  assert any("unfiltered firehose" in item for item in issues)
+
+
+def test_operator_discovery_rejects_heredoc_python_through_exec():
+  plan = _minimal_plan_markdown().replace(
+      "## Operator discovery\n\n**Status:** `not needed`\n",
+      (
+          "## Operator discovery\n\n"
+          "**Status:** `in progress`\n\n"
+          "### Completed findings\n\n"
+          "| # | Service | Asked for | Found | Date |\n"
+          "|---|---------|-----------|-------|------|\n\n"
+          "### Pending commands\n\n"
+          "#### pipeline — heredoc anti-pattern\n\n"
+          "```bash\n"
+          "docker compose exec pipeline su hpcperfstats -c 'python3 - <<EOF\n"
+          "print(1)\n"
+          "EOF'\n"
+          "```\n"
+      ),
+  )
+  issues = lib.operator_discovery_issues(plan)
+  assert any("heredoc" in item for item in issues)
+
+
 def test_operator_discovery_issues_flags_compose_blocks_outside_section():
   plan = _minimal_plan_markdown() + (
       "\n## Approach\n\n"
