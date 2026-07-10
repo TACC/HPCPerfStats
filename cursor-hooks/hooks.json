@@ -4,7 +4,7 @@
     "preToolUse": [
       {
         "command": ".cursor/hooks/check-pre-create-plan-reads.py",
-        "matcher": "CreatePlan",
+        "matcher": "CreatePlan|Write|StrReplace",
         "timeout": 10
       },
       {

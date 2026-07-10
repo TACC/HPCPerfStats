@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cursor preToolUse — deny live-plan Write/StrReplace when Operator discovery issues exist."""
+"""Cursor preToolUse — deny live-plan Write/StrReplace on Operator discovery issues."""
 from __future__ import annotations
 
 import sys
@@ -10,11 +10,16 @@ if str(HOOK_DIR) not in sys.path:
     sys.path.insert(0, str(HOOK_DIR))
 
 from hpc_hook_lib import (  # noqa: E402
+    OPERATOR_FULL_READ_REQUIRED_MDC,
     emit_allow,
     emit_deny,
+    full_file_rule_read_issues,
     is_live_plan_disk_path,
+    last_turn_rows,
     load_json_stdin,
     operator_discovery_issues,
+    operator_discovery_needs_full_rule_reads,
+    parse_transcript_lines,
     reconstruct_live_plan_markdown_from_tool_input,
 )
 
@@ -55,14 +60,23 @@ def main() -> int:
         return 0
 
     issues = operator_discovery_issues(markdown)
+
+    if operator_discovery_needs_full_rule_reads(markdown):
+        transcript_path = payload.get("transcript_path")
+        if transcript_path:
+            rows = last_turn_rows(parse_transcript_lines(transcript_path))
+            issues.extend(
+                full_file_rule_read_issues(rows, OPERATOR_FULL_READ_REQUIRED_MDC),
+            )
+
     if not issues:
         emit_allow()
         return 0
 
     emit_deny(
-        "OPERATOR DISCOVERY DENY: live plan Operator discovery Pending commands "
-        "fail compose-operator-terminal-commands.mdc checks. Fix before Write/"
-        "StrReplace:\n- " + "\n- ".join(issues),
+        "OPERATOR DISCOVERY DENY: live plan Operator discovery checks failed "
+        "(compose-operator-terminal-commands.mdc / full-file Read gate). "
+        "Fix before Write/StrReplace:\n- " + "\n- ".join(issues),
     )
     return 0
 

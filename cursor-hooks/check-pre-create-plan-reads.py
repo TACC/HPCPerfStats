@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cursor preToolUse hook — deny CreatePlan until plan-authoring rules are Read."""
+"""Cursor preToolUse — deny CreatePlan / live-plan Write until plan-authoring rules are Read."""
 from __future__ import annotations
 
 import sys
@@ -13,6 +13,7 @@ from hpc_hook_lib import (  # noqa: E402
     PLAN_AUTHORING_REQUIRED_MDC,
     emit_allow,
     emit_deny,
+    is_live_plan_disk_path,
     last_turn_rows,
     load_json_stdin,
     parse_transcript_lines,
@@ -21,10 +22,33 @@ from hpc_hook_lib import (  # noqa: E402
 )
 
 
+def tool_input_dict(payload: dict) -> dict:
+    tool_input = payload.get("tool_input") or {}
+    return tool_input if isinstance(tool_input, dict) else {}
+
+
+def edited_path(tool_input: dict) -> str:
+    for key in ("path", "file_path", "target_file"):
+        value = tool_input.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
+
+
 def main() -> int:
     payload = load_json_stdin()
     tool_name = str(payload.get("tool_name") or payload.get("tool") or "")
-    if tool_name != "CreatePlan":
+    tool_input = tool_input_dict(payload)
+
+    if tool_name == "CreatePlan":
+        gate_label = "CreatePlan"
+    elif tool_name in ("Write", "StrReplace"):
+        path = edited_path(tool_input)
+        if not path or not is_live_plan_disk_path(path):
+            emit_allow()
+            return 0
+        gate_label = f"{tool_name} to .cursor/plans/*.plan.md"
+    else:
         emit_allow()
         return 0
 
@@ -44,8 +68,8 @@ def main() -> int:
     )
     required = ", ".join(PLAN_AUTHORING_REQUIRED_MDC)
     message = (
-        "CreatePlan blocked (preToolUse): Read plan-authoring rules via the Read tool "
-        f"BEFORE CreatePlan. Missing: {', '.join(issues)}. "
+        f"{gate_label} blocked (preToolUse): Read plan-authoring rules via the Read tool "
+        f"BEFORE this tool. Missing: {', '.join(issues)}. "
         f"Required: {required}, and {rules_dir}/../docs/plans/PLAN_TEMPLATE.md "
         "(plan-creation-contract.mdc, plan-live-disk-sync.mdc, "
         "compose-operator-terminal-commands.mdc)."

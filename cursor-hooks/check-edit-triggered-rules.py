@@ -18,6 +18,7 @@ from hpc_hook_lib import (  # noqa: E402
     extract_plan_authority_markdown,
     extract_work_paths,
     is_live_plan_disk_path,
+    last_turn_rows,
     load_json_stdin,
     parse_transcript_lines,
     paths_from_plan_markdown,
@@ -62,7 +63,7 @@ def edited_path_from_payload(payload: dict) -> str:
 def triggered_rules_for_payload(payload: dict) -> list[str]:
     tool_name = tool_name_from_payload(payload)
     workspace_roots = payload.get("workspace_roots") or []
-    rows = parse_transcript_lines(payload.get("transcript_path") or "")
+    rows = last_turn_rows(parse_transcript_lines(payload.get("transcript_path") or ""))
     work_paths = extract_work_paths(rows, workspace_roots)
     if tool_name == "CreatePlan":
         plan_text = plan_text_from_payload(payload)
@@ -104,7 +105,8 @@ def main() -> int:
         return 0
 
     workspace_roots = payload.get("workspace_roots") or []
-    rows = parse_transcript_lines(transcript_path)
+    # Turn-scoped only — prior-turn edits must not poison read-before-edit checks.
+    rows = last_turn_rows(parse_transcript_lines(transcript_path))
     issues = domain_rule_read_issues(triggered, rows)
     if tool_name == "CreatePlan":
         issues.extend(plan_template_read_issues(rows))

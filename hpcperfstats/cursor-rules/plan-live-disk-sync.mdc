@@ -66,3 +66,13 @@ When facts are missing and the operator must run commands (`compose-operator-ter
 - **`compose-operator-terminal-commands.mdc`** — command block format per service; INI paths first; filtered service-specific logs.
 - **`operator-command-lessons-learned.mdc`** — update operator-command rules when pastes fail.
 - **`deploy-ini-with-code-no-phase-zero.mdc`** — read-only operator gathering anytime; no pre-code INI redeploy.
+
+## Hooks (enforced)
+
+Cursor **`preToolUse`** / **`stop`** hooks (`cursor-hooks/`):
+
+1. **Deny** `Write`/`StrReplace` to `.cursor/plans/*.plan.md` until plan-authoring `.mdc` files + `PLAN_TEMPLATE.md` are Read this turn (same set as CreatePlan).
+2. **Stop always** runs the close-gate (Agent rule dispatch + Final code review + Post-implementation review + Read-before-edit proof) when CreatePlan ran **or** any live plan file was edited — no soft-phrasing escape hatch.
+3. After CreatePlan, pending disk sync is cleared by **any** same-turn live plan Write/StrReplace (before or after CreatePlan).
+4. When Operator discovery needs commands (`in progress` or Pending bash blocks), deny plan Write unless `compose-operator-terminal-commands.mdc` and `operator-command-lessons-learned.mdc` were Read **full-file** (no `limit`/`offset`) this turn.
+5. Edit-triggered rule Read checks use **this turn only** (`last_turn_rows`), not the full transcript.

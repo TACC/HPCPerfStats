@@ -1033,12 +1033,52 @@ def test_check_live_plan_operator_discovery_allows_valid_pending(tmp_path):
   plans = tmp_path / ".cursor" / "plans"
   plans.mkdir(parents=True)
   plan_path = plans / "ok.plan.md"
+  compose_path = (
+      "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
+      "compose-operator-terminal-commands.mdc"
+  )
+  lessons_path = (
+      "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
+      "operator-command-lessons-learned.mdc"
+  )
+  transcript = tmp_path / "op-allow.jsonl"
+  transcript.write_text(
+      json.dumps(
+          {
+              "role": "user",
+              "message": {"content": [{"type": "text", "text": "plan"}]},
+          },
+      )
+      + "\n"
+      + json.dumps(
+          {
+              "role": "assistant",
+              "message": {
+                  "content": [
+                      {
+                          "type": "tool_use",
+                          "name": "Read",
+                          "input": {"path": compose_path},
+                      },
+                      {
+                          "type": "tool_use",
+                          "name": "Read",
+                          "input": {"path": lessons_path},
+                      },
+                  ],
+              },
+          },
+      )
+      + "\n",
+      encoding="utf-8",
+  )
   payload = {
       "tool_name": "Write",
       "tool_input": {
           "path": str(plan_path),
           "contents": _operator_in_progress_plan_markdown(),
       },
+      "transcript_path": str(transcript),
   }
   script = HOOKS_DIR / "check-live-plan-operator-discovery.py"
   proc = subprocess.run(
@@ -1096,6 +1136,33 @@ def test_turn_create_plan_pending_disk_write():
           },
       },
   )
+  assert lib.turn_create_plan_pending_disk_write(rows) is False
+
+
+def test_turn_create_plan_pending_false_when_disk_before_createplan():
+  """Disk-first: Write before CreatePlan clears pending."""
+  rows = [
+      {
+          "role": "assistant",
+          "message": {
+              "content": [
+                  {
+                      "type": "tool_use",
+                      "name": "Write",
+                      "input": {
+                          "path": ".cursor/plans/foo.plan.md",
+                          "contents": _minimal_plan_markdown(),
+                      },
+                  },
+                  {
+                      "type": "tool_use",
+                      "name": "CreatePlan",
+                      "input": {"plan": "x", "name": "foo"},
+                  },
+              ],
+          },
+      },
+  ]
   assert lib.turn_create_plan_pending_disk_write(rows) is False
 
 
@@ -1551,3 +1618,326 @@ def test_monitor_router_entries_reference_existing_files():
         continue
       path = monitor_rules_dir / rule
       assert path.is_file(), f"missing monitor rule file: {rule} (entry {entry['id']})"
+
+
+def _plan_authoring_read_parts() -> list[dict]:
+  base = "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
+  parts = [
+      {
+          "type": "tool_use",
+          "name": "Read",
+          "input": {"path": f"{base}{name}"},
+      }
+      for name in lib.PLAN_AUTHORING_REQUIRED_MDC
+  ]
+  parts.append(
+      {
+          "type": "tool_use",
+          "name": "Read",
+          "input": {"path": "/repo/HPCPerfStats/docs/plans/PLAN_TEMPLATE.md"},
+      },
+  )
+  return parts
+
+
+def test_full_file_rule_read_issues_rejects_partial_limit():
+  compose = (
+      "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
+      "compose-operator-terminal-commands.mdc"
+  )
+  lessons = (
+      "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
+      "operator-command-lessons-learned.mdc"
+  )
+  rows = [
+      {
+          "role": "assistant",
+          "message": {
+              "content": [
+                  {
+                      "type": "tool_use",
+                      "name": "Read",
+                      "input": {"path": compose, "limit": 5},
+                  },
+                  {
+                      "type": "tool_use",
+                      "name": "Read",
+                      "input": {"path": lessons},
+                  },
+              ],
+          },
+      },
+  ]
+  issues = lib.full_file_rule_read_issues(rows)
+  assert any("Partial Read" in item and "compose-operator" in item for item in issues)
+  assert not any("operator-command-lessons" in item for item in issues)
+
+
+def test_operator_discovery_needs_full_rule_reads():
+  assert lib.operator_discovery_needs_full_rule_reads(_minimal_plan_markdown()) is False
+  assert (
+      lib.operator_discovery_needs_full_rule_reads(_operator_in_progress_plan_markdown())
+      is True
+  )
+
+
+def test_check_pre_create_plan_reads_denies_live_plan_write_without_reads(tmp_path):
+  transcript = tmp_path / "no-reads.jsonl"
+  transcript.write_text(
+      json.dumps(
+          {
+              "role": "user",
+              "message": {"content": [{"type": "text", "text": "update plan"}]},
+          },
+      )
+      + "\n"
+      + json.dumps(
+          {
+              "role": "assistant",
+              "message": {
+                  "content": [
+                      {
+                          "type": "tool_use",
+                          "name": "Read",
+                          "input": {"path": "unrelated.txt"},
+                      },
+                  ],
+              },
+          },
+      )
+      + "\n",
+      encoding="utf-8",
+  )
+  payload = {
+      "tool_name": "Write",
+      "tool_input": {
+          "path": str(tmp_path / ".cursor" / "plans" / "x.plan.md"),
+          "contents": _minimal_plan_markdown(),
+      },
+      "transcript_path": str(transcript),
+  }
+  script = HOOKS_DIR / "check-pre-create-plan-reads.py"
+  proc = subprocess.run(
+      [sys.executable, str(script)],
+      input=json.dumps(payload),
+      capture_output=True,
+      text=True,
+      check=False,
+  )
+  assert proc.returncode == 0
+  data = json.loads(proc.stdout.strip())
+  assert data.get("permission") == "deny"
+  assert ".cursor/plans" in data.get("agent_message", "")
+
+
+def test_check_pre_create_plan_reads_allows_live_plan_write_after_reads(tmp_path):
+  transcript = tmp_path / "with-reads.jsonl"
+  transcript.write_text(
+      json.dumps(
+          {
+              "role": "user",
+              "message": {"content": [{"type": "text", "text": "update plan"}]},
+          },
+      )
+      + "\n"
+      + json.dumps(
+          {
+              "role": "assistant",
+              "message": {"content": _plan_authoring_read_parts()},
+          },
+      )
+      + "\n",
+      encoding="utf-8",
+  )
+  payload = {
+      "tool_name": "Write",
+      "tool_input": {
+          "path": str(tmp_path / ".cursor" / "plans" / "x.plan.md"),
+          "contents": _minimal_plan_markdown(),
+      },
+      "transcript_path": str(transcript),
+  }
+  script = HOOKS_DIR / "check-pre-create-plan-reads.py"
+  proc = subprocess.run(
+      [sys.executable, str(script)],
+      input=json.dumps(payload),
+      capture_output=True,
+      text=True,
+      check=False,
+  )
+  assert proc.returncode == 0
+  data = json.loads(proc.stdout.strip())
+  assert data.get("permission") == "allow"
+
+
+def test_check_live_plan_operator_discovery_denies_partial_operator_read(tmp_path):
+  plans = tmp_path / ".cursor" / "plans"
+  plans.mkdir(parents=True)
+  plan_path = plans / "partial.plan.md"
+  compose = (
+      "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
+      "compose-operator-terminal-commands.mdc"
+  )
+  lessons = (
+      "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
+      "operator-command-lessons-learned.mdc"
+  )
+  transcript = tmp_path / "partial.jsonl"
+  transcript.write_text(
+      json.dumps(
+          {
+              "role": "user",
+              "message": {"content": [{"type": "text", "text": "plan"}]},
+          },
+      )
+      + "\n"
+      + json.dumps(
+          {
+              "role": "assistant",
+              "message": {
+                  "content": [
+                      {
+                          "type": "tool_use",
+                          "name": "Read",
+                          "input": {"path": compose, "limit": 8},
+                      },
+                      {
+                          "type": "tool_use",
+                          "name": "Read",
+                          "input": {"path": lessons},
+                      },
+                  ],
+              },
+          },
+      )
+      + "\n",
+      encoding="utf-8",
+  )
+  payload = {
+      "tool_name": "Write",
+      "tool_input": {
+          "path": str(plan_path),
+          "contents": _operator_in_progress_plan_markdown(),
+      },
+      "transcript_path": str(transcript),
+  }
+  script = HOOKS_DIR / "check-live-plan-operator-discovery.py"
+  proc = subprocess.run(
+      [sys.executable, str(script)],
+      input=json.dumps(payload),
+      capture_output=True,
+      text=True,
+      check=False,
+  )
+  assert proc.returncode == 0
+  data = json.loads(proc.stdout.strip())
+  assert data.get("permission") == "deny"
+  assert "Partial Read" in data.get("user_message", "") or "partial" in data.get(
+      "user_message",
+      "",
+  ).lower()
+
+
+def test_check_close_gate_plan_disk_edit_without_phrasing(tmp_path):
+  """Plan StrReplace alone (no CreatePlan, no completion words) still requires close."""
+  transcript = tmp_path / "plan-edit.jsonl"
+  transcript.write_text(
+      json.dumps(
+          {
+              "role": "user",
+              "message": {"content": [{"type": "text", "text": "tweak plan"}]},
+          },
+      )
+      + "\n"
+      + json.dumps(
+          {
+              "role": "assistant",
+              "message": {
+                  "content": [
+                      {
+                          "type": "tool_use",
+                          "name": "StrReplace",
+                          "input": {
+                              "path": ".cursor/plans/foo.plan.md",
+                              "old_string": "a",
+                              "new_string": "b",
+                          },
+                      },
+                      {
+                          "type": "text",
+                          "text": "Updated the plan slightly.",
+                      },
+                  ],
+              },
+          },
+      )
+      + "\n",
+      encoding="utf-8",
+  )
+  payload = {
+      "status": "completed",
+      "loop_count": 0,
+      "transcript_path": str(transcript),
+  }
+  script = HOOKS_DIR / "check-close-gate.py"
+  proc = subprocess.run(
+      [sys.executable, str(script)],
+      input=json.dumps(payload),
+      capture_output=True,
+      text=True,
+      check=False,
+  )
+  assert proc.returncode == 0
+  data = json.loads(proc.stdout.strip())
+  assert "followup_message" in data
+  assert "Close gate incomplete" in data["followup_message"]
+
+
+def test_domain_rule_read_issues_last_turn_ignores_prior_turn_edit():
+  """Prior-turn edit must not cause read-after-edit when this turn Reads then edits."""
+  prior = {
+      "role": "assistant",
+      "message": {
+          "content": [
+              {
+                  "type": "tool_use",
+                  "name": "Write",
+                  "input": {
+                      "path": ".cursor/plans/old.plan.md",
+                      "contents": "x",
+                  },
+              },
+          ],
+      },
+  }
+  user = {
+      "role": "user",
+      "message": {"content": [{"type": "text", "text": "next"}]},
+  }
+  current = {
+      "role": "assistant",
+      "message": {
+          "content": [
+              {
+                  "type": "tool_use",
+                  "name": "Read",
+                  "input": {"path": TESTING_RULE_PATH},
+              },
+              {
+                  "type": "tool_use",
+                  "name": "Write",
+                  "input": {
+                      "path": "hpcperfstats/tests/test_cursor_hooks.py",
+                      "contents": "pass\n",
+                  },
+              },
+          ],
+      },
+  }
+  full = [prior, user, current]
+  turn = lib.last_turn_rows(full)
+  issues = lib.domain_rule_read_issues(["testing-best-practices.mdc"], turn)
+  assert issues == []
+  # Full transcript still sees prior edit before this turn's Read.
+  full_issues = lib.domain_rule_read_issues(["testing-best-practices.mdc"], full)
+  assert any("read after first edit" in item for item in full_issues)

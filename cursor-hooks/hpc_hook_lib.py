@@ -50,6 +50,12 @@ PLAN_AUTHORING_REQUIRED_MDC = (
     "deploy-ini-with-code-no-phase-zero.mdc",
 )
 
+# Full-file Read (no limit/offset) required when Operator discovery needs commands.
+OPERATOR_FULL_READ_REQUIRED_MDC = (
+    "compose-operator-terminal-commands.mdc",
+    "operator-command-lessons-learned.mdc",
+)
+
 LIVE_PLAN_DISK_SUFFIX = ".cursor/plans/"
 
 PLAN_CONTENT_SECTIONS = (
@@ -966,28 +972,12 @@ def operator_discovery_issues(plan_markdown: str) -> list[str]:
 
 
 def turn_create_plan_pending_disk_write(rows: list[dict]) -> bool:
-    """True when CreatePlan ran this turn but no live plan disk write followed it."""
-    seq = 0
-    last_create_seq: int | None = None
-    disk_write_after_create = False
-    for row in rows:
-        if row.get("role") != "assistant":
-            continue
-        for part in (row.get("message") or {}).get("content") or []:
-            if not isinstance(part, dict):
-                continue
-            if is_create_plan_tool_part(part):
-                last_create_seq = seq
-            path = edit_path_from_tool_part(part)
-            if (
-                path
-                and is_live_plan_disk_path(path)
-                and last_create_seq is not None
-                and seq > last_create_seq
-            ):
-                disk_write_after_create = True
-            seq += 1
-    return last_create_seq is not None and not disk_write_after_create
+    """True when CreatePlan ran this turn and no same-turn live plan disk write exists.
+
+    Disk-first is allowed: any Write/StrReplace to ``.cursor/plans/*.plan.md`` in
+    the same turn (before or after CreatePlan) clears the pending gate.
+    """
+    return turn_had_create_plan(rows) and not turn_had_live_plan_disk_write(rows)
 
 
 def plan_authoring_precreate_read_issues(transcript_rows: list[dict]) -> list[str]:
@@ -1046,7 +1036,7 @@ def extract_dispatch_listed_mdc(body: str) -> list[str]:
     return list(seen.values())
 
 
-def read_path_from_tool_part(part: dict) -> str | None:
+def read_input_from_tool_part(part: dict) -> dict | None:
     if not isinstance(part, dict):
         return None
     tool_name = None
@@ -1059,8 +1049,71 @@ def read_path_from_tool_part(part: dict) -> str | None:
         payload = part.get("input") or part.get("arguments") or {}
     if tool_name != "Read" or not isinstance(payload, dict):
         return None
+    return payload
+
+
+def read_path_from_tool_part(part: dict) -> str | None:
+    payload = read_input_from_tool_part(part)
+    if not payload:
+        return None
     path = payload.get("path") or payload.get("file_path") or payload.get("target_file")
     return str(path) if path else None
+
+
+def is_full_file_rule_read(part: dict, rule_basename: str) -> bool:
+    """True when Read opens the rule with no limit and no offset."""
+    path = read_path_from_tool_part(part)
+    if not path or not is_cursor_rule_read_path(path):
+        return False
+    if Path(path).name.lower() != rule_basename.lower():
+        return False
+    payload = read_input_from_tool_part(part) or {}
+    if payload.get("limit") is not None:
+        return False
+    if payload.get("offset") is not None:
+        return False
+    return True
+
+
+def turn_had_full_file_rule_read(rows: list[dict], rule_basename: str) -> bool:
+    for _event_idx, part in iter_tool_parts(rows):
+        if is_full_file_rule_read(part, rule_basename):
+            return True
+    return False
+
+
+def operator_discovery_needs_full_rule_reads(plan_markdown: str) -> bool:
+    """True when Operator discovery is in progress or Pending has bash blocks."""
+    section = extract_operator_discovery_section(plan_markdown)
+    if not section:
+        return False
+    status = operator_discovery_status(section)
+    pending = extract_subsection_h3(section, "Pending commands")
+    if _pending_has_bash_blocks(pending):
+        return True
+    return status == "in progress"
+
+
+def full_file_rule_read_issues(
+    rows: list[dict],
+    basenames: Iterable[str] = OPERATOR_FULL_READ_REQUIRED_MDC,
+) -> list[str]:
+    """Require full-file Reads (no limit/offset); partial Read does not count."""
+    issues: list[str] = []
+    for name in basenames:
+        if turn_had_full_file_rule_read(rows, name):
+            continue
+        if read_event_indices_for_rule(rows, name):
+            issues.append(
+                f"Partial Read of {name} does not count — Read the full file "
+                "(no limit/offset) when Operator discovery needs commands",
+            )
+        else:
+            issues.append(
+                f"Full-file Read required (no limit/offset): {name} "
+                "(Operator discovery needs commands; partial Read does not count)",
+            )
+    return issues
 
 
 def is_cursor_rule_read_path(path: str) -> bool:

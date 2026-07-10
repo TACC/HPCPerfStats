@@ -53,19 +53,22 @@ def main() -> int:
     turn_rows = last_turn_rows(rows)
     had_edits = turn_had_edits(turn_rows)
     had_plan = turn_had_create_plan(turn_rows)
+    had_live_plan_disk = turn_had_live_plan_disk_write(turn_rows)
+    # Plan turns always require close headings — no looks_like_task_close escape.
+    plan_turn = had_plan or had_live_plan_disk
 
     # Hard gate: CreatePlan without a same-turn .cursor/plans/*.plan.md write always
     # blocks turn end (does not depend on "plan is ready" phrasing).
-    if had_plan and not turn_had_live_plan_disk_write(turn_rows):
+    if had_plan and not had_live_plan_disk:
         disk_issues = plan_disk_sync_issues(turn_rows)
         if disk_issues:
             suggested = ""
             for row in turn_rows:
                 message = row.get("message") or {}
                 for part in message.get("content") or []:
-                    payload = create_plan_payload_from_tool_part(part)
-                    if payload:
-                        suggested = suggested_live_plan_disk_path(payload)
+                    plan_payload = create_plan_payload_from_tool_part(part)
+                    if plan_payload:
+                        suggested = suggested_live_plan_disk_path(plan_payload)
                         break
                 if suggested:
                     break
@@ -85,7 +88,11 @@ def main() -> int:
         return 0
 
     assistant_text = extract_assistant_text(turn_rows)
-    if not looks_like_task_close(assistant_text, had_edits=had_edits, had_plan=had_plan):
+    if not plan_turn and not looks_like_task_close(
+        assistant_text,
+        had_edits=had_edits,
+        had_plan=had_plan,
+    ):
         emit_json({})
         return 0
 
@@ -100,21 +107,22 @@ def main() -> int:
 
     work_kind = "CreatePlan and/or file edits"
     plan_extra = ""
-    if had_plan:
+    if plan_turn:
         plan_extra = (
             "\nPlan turns also require PLAN_TEMPLATE sections in the **live disk file** "
             f"({rules_dir}/../docs/plans/PLAN_TEMPLATE.md or "
             "HPCPerfStats/docs/plans/PLAN_TEMPLATE.md — Plan disk file, Operator discovery, "
             "Problem and facts, Approach, Testing, Implementation, Cursor rules, "
             "Final code review, Post-implementation review, post-implementation-review todo), "
-            "a Write/StrReplace to .cursor/plans/*.plan.md in the same turn "
-            "(plan-live-disk-sync.mdc; hooks validate disk content and operator-discovery "
-            "shape per compose-operator-terminal-commands.mdc, not CreatePlan tool body), "
-            "Read of plan-creation-contract.mdc + plan-live-disk-sync.mdc + "
-            "compose-operator-terminal-commands.mdc + deploy-ini-with-code-no-phase-zero.mdc + "
-            "plan-template-enforcement.mdc + PLAN_TEMPLATE.md before CreatePlan "
-            "(preToolUse denies CreatePlan otherwise), and preToolUse blocks other tools "
-            "after CreatePlan until disk write.\n"
+            "a Write/StrReplace to .cursor/plans/*.plan.md in the same turn when CreatePlan "
+            "was used (plan-live-disk-sync.mdc; hooks validate disk content and "
+            "operator-discovery shape per compose-operator-terminal-commands.mdc, not "
+            "CreatePlan tool body), Read of plan-creation-contract.mdc + "
+            "plan-live-disk-sync.mdc + compose-operator-terminal-commands.mdc + "
+            "deploy-ini-with-code-no-phase-zero.mdc + plan-template-enforcement.mdc + "
+            "PLAN_TEMPLATE.md before CreatePlan or live-plan Write (preToolUse denies "
+            "otherwise), and preToolUse blocks other tools after CreatePlan until disk "
+            "write.\n"
         )
     followup = (
         "Close gate incomplete (Cursor stop hook). This turn used %s but the "
