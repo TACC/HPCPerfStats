@@ -4,6 +4,19 @@
 Reads pipeline container logs (stdin, --log-file, or --fetch-compose) and prints
 only summary outcome lines to stdout. Errors and caveats go to stderr.
 
+Backlog fields (backlog_at_start / backlog_latest / drained / empirical ETA) use
+**on-disk pending census only**:
+  - ``sync_timedb: pending rescan done pending=N`` (uncapped before queue cap)
+  - ``Pending stats file list truncated pending=N max=M`` (uncapped N at truncate)
+
+Do **not** mix those with ``Throughput telemetry … backlog=N``, which is capped
+in-memory ``len(pending_stats_files)`` (≤ sync_ingest_queue_max_size, often 2000).
+Queue occupancy is reported separately as ingest_queue_depth_*.
+
+``estimated_finish_local`` is log_end (or now) plus the first usable ETA among
+empirical / full_ingest / archive_done, formatted in the host local timezone
+(``YYYY-MM-DD HH:MM:SS ±HHMM``). ``estimated_finish_basis`` names which ETA was used.
+
 Usage (from HPCPerfStats/):
   docker compose -f docker-compose.app.yaml logs --timestamps pipeline 2>&1 | python3 scripts/measure_pipeline_ingest_rate.py
   python3 scripts/measure_pipeline_ingest_rate.py --log-file /tmp/pipeline-full.log
@@ -56,6 +69,9 @@ _ARCHIVE_FINALIZE_RE = re.compile(
 _PENDING_RESCAN_RE = re.compile(
     r"sync_timedb: pending rescan done pending=(\d+)"
 )
+_PENDING_TRUNCATE_RE = re.compile(
+    r"Pending stats file list truncated pending=(\d+) max=(\d+)"
+)
 _THROUGHPUT_BACKLOG_RE = re.compile(
     r"Throughput telemetry: active_workers=\d+ backlog=(\d+)"
 )
@@ -63,6 +79,8 @@ _BOOT_MARKERS = (
     "startup maintenance idle; ingest may begin",
     "sync_timedb: pending rescan done pending=",
 )
+# Disk pending ≫ queue depth by at least this factor → saturation WARN.
+_QUEUE_SATURATION_DISK_FACTOR = 2
 
 EVEN_RATIO_TOLERANCE = 0.02
 LISTEND_REPORT_WINDOW_MINUTES = 10.0
@@ -74,11 +92,20 @@ class LogMetrics:
     full_ingest_count: int = 0
     archive_immediate_sum: int = 0
     archive_finalize_sum: int = 0
-    backlog_rescan_samples: list[tuple[datetime, int]] = field(default_factory=list)
+    # Uncapped on-disk pending (rescan done + truncate pending=N).
+    backlog_disk_samples: list[tuple[datetime, int]] = field(default_factory=list)
+    # Observed truncate max= values (queue high watermark hints).
+    truncate_max_samples: list[int] = field(default_factory=list)
+    # Capped in-memory queue depth from Throughput telemetry backlog=.
     backlog_throughput_samples: list[tuple[datetime, int]] = field(default_factory=list)
     first_ts: Optional[datetime] = None
     last_ts: Optional[datetime] = None
     timestamped_lines: int = 0
+
+    @property
+    def backlog_rescan_samples(self) -> list[tuple[datetime, int]]:
+        """Alias kept for older tests/callers; same as disk samples."""
+        return self.backlog_disk_samples
 
 
 def _normalize_iso_timestamp(text: str) -> str:
@@ -219,7 +246,13 @@ def parse_log_lines(
         if ts is not None:
             rescan_match = _PENDING_RESCAN_RE.search(body)
             if rescan_match:
-                metrics.backlog_rescan_samples.append((ts, int(rescan_match.group(1))))
+                metrics.backlog_disk_samples.append((ts, int(rescan_match.group(1))))
+            truncate_match = _PENDING_TRUNCATE_RE.search(body)
+            if truncate_match:
+                metrics.backlog_disk_samples.append(
+                    (ts, int(truncate_match.group(1))),
+                )
+                metrics.truncate_max_samples.append(int(truncate_match.group(2)))
             backlog_match = _THROUGHPUT_BACKLOG_RE.search(body)
             if backlog_match:
                 metrics.backlog_throughput_samples.append(
@@ -271,18 +304,32 @@ def resolve_window_minutes(
 
 
 def _backlog_at_start(metrics: LogMetrics) -> Optional[int]:
-    if metrics.backlog_rescan_samples:
-        return metrics.backlog_rescan_samples[0][1]
+    """First uncapped on-disk pending sample (rescan or truncate)."""
+    if metrics.backlog_disk_samples:
+        return metrics.backlog_disk_samples[0][1]
+    return None
+
+
+def _backlog_latest(metrics: LogMetrics) -> Optional[int]:
+    """Latest uncapped on-disk pending sample (rescan or truncate)."""
+    if metrics.backlog_disk_samples:
+        return metrics.backlog_disk_samples[-1][1]
+    return None
+
+
+def _disk_sample_count(metrics: LogMetrics) -> int:
+    return len(metrics.backlog_disk_samples)
+
+
+def _queue_depth_at_start(metrics: LogMetrics) -> Optional[int]:
     if metrics.backlog_throughput_samples:
         return metrics.backlog_throughput_samples[0][1]
     return None
 
 
-def _backlog_latest(metrics: LogMetrics) -> Optional[int]:
+def _queue_depth_latest(metrics: LogMetrics) -> Optional[int]:
     if metrics.backlog_throughput_samples:
         return metrics.backlog_throughput_samples[-1][1]
-    if metrics.backlog_rescan_samples:
-        return metrics.backlog_rescan_samples[-1][1]
     return None
 
 
@@ -323,6 +370,49 @@ def _fmt_ts(value: Optional[datetime]) -> str:
     return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _fmt_local_ts(value: Optional[datetime]) -> str:
+    """Format as local date and time with numeric UTC offset (e.g. 2026-07-10 14:32:15 -0500)."""
+    if value is None:
+        return "N/A"
+    local = value.astimezone()
+    return local.strftime("%Y-%m-%d %H:%M:%S %z")
+
+
+def _parse_eta_hours(text: str) -> Optional[float]:
+    if text in ("N/A", ""):
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _estimated_finish_local(
+    log_end: Optional[datetime],
+    *,
+    eta_empirical: str,
+    eta_full_ingest: str,
+    eta_archive_done: str,
+) -> tuple[str, str]:
+    """Return (local finish stamp, eta field name) from the first usable ETA.
+
+    Preference: empirical drain, then full ingest net rate, then archive-done net rate.
+    Anchor is log_end when present, otherwise current UTC.
+    """
+    base = log_end if log_end is not None else datetime.now(timezone.utc)
+    for basis, eta_s in (
+        ("eta_hours_empirical", eta_empirical),
+        ("eta_hours_full_ingest", eta_full_ingest),
+        ("eta_hours_archive_done", eta_archive_done),
+    ):
+        hours = _parse_eta_hours(eta_s)
+        if hours is None:
+            continue
+        finish = base + timedelta(hours=hours)
+        return _fmt_local_ts(finish), basis
+    return "N/A", "N/A"
+
+
 def build_outcomes(
     metrics: LogMetrics,
     *,
@@ -341,6 +431,9 @@ def build_outcomes(
 
     backlog_start = _backlog_at_start(metrics)
     backlog_latest = _backlog_latest(metrics)
+    queue_start = _queue_depth_at_start(metrics)
+    queue_latest = _queue_depth_latest(metrics)
+    disk_n = _disk_sample_count(metrics)
     elapsed_hours = 0.0
     elapsed_minutes = 0.0
     if metrics.first_ts is not None and metrics.last_ts is not None:
@@ -348,22 +441,32 @@ def build_outcomes(
         elapsed_minutes = elapsed_hours * 60.0
 
     empirical_drain = 0.0
+    drained = None
+    pct_complete = "N/A"
+    # Require ≥2 disk samples so drain is not invented from a single census point.
     if (
-        backlog_start is not None
+        disk_n >= 2
+        and backlog_start is not None
         and backlog_latest is not None
-        and elapsed_minutes >= 1.0
     ):
-        empirical_drain = (backlog_start - backlog_latest) / elapsed_minutes
+        drained = backlog_start - backlog_latest
+        if backlog_start > 0:
+            pct_complete = f"{(drained / backlog_start) * 100.0:.2f}"
+        if elapsed_minutes >= 1.0:
+            empirical_drain = drained / elapsed_minutes
 
     net_ingest = ingest_rate - listend_rate
     net_archive = archive_rate - listend_rate
 
-    drained = None
-    pct_complete = "N/A"
-    if backlog_start is not None and backlog_latest is not None:
-        drained = backlog_start - backlog_latest
-        if backlog_start > 0:
-            pct_complete = f"{(drained / backlog_start) * 100.0:.2f}"
+    eta_empirical = _eta_hours(backlog_latest, empirical_drain)
+    eta_full_ingest = _eta_hours(backlog_latest, net_ingest)
+    eta_archive_done = _eta_hours(backlog_latest, net_archive)
+    finish_local, finish_basis = _estimated_finish_local(
+        metrics.last_ts,
+        eta_empirical=eta_empirical,
+        eta_full_ingest=eta_full_ingest,
+        eta_archive_done=eta_archive_done,
+    )
 
     outcomes = {
         "window_minutes": f"{window_minutes:.2f}",
@@ -383,10 +486,14 @@ def build_outcomes(
         "backlog_latest": _fmt_optional_int(backlog_latest),
         "backlog_drained_since_start": _fmt_optional_int(drained),
         "pct_complete_since_start": pct_complete,
+        "ingest_queue_depth_at_start": _fmt_optional_int(queue_start),
+        "ingest_queue_depth_latest": _fmt_optional_int(queue_latest),
         "empirical_drain_per_min": _fmt_rate(empirical_drain),
-        "eta_hours_empirical": _eta_hours(backlog_latest, empirical_drain),
-        "eta_hours_full_ingest": _eta_hours(backlog_latest, net_ingest),
-        "eta_hours_archive_done": _eta_hours(backlog_latest, net_archive),
+        "eta_hours_empirical": eta_empirical,
+        "eta_hours_full_ingest": eta_full_ingest,
+        "eta_hours_archive_done": eta_archive_done,
+        "estimated_finish_local": finish_local,
+        "estimated_finish_basis": finish_basis,
     }
     return outcomes
 
@@ -401,8 +508,37 @@ def emit_warnings(metrics: LogMetrics, window_minutes: float) -> None:
         print("WARN: no listend unlink reports found", file=sys.stderr)
     if metrics.full_ingest_count == 0:
         print("WARN: no full ingest lines found", file=sys.stderr)
-    if _backlog_at_start(metrics) is None:
-        print("WARN: no backlog samples found; ETA fields may be N/A", file=sys.stderr)
+    disk_n = _disk_sample_count(metrics)
+    if disk_n == 0:
+        print(
+            "WARN: no disk_pending samples found "
+            "(pending rescan done / truncated pending=); ETA may be N/A",
+            file=sys.stderr,
+        )
+    elif disk_n == 1:
+        print(
+            "WARN: insufficient disk_pending samples for drain "
+            "(need >=2 of rescan done / truncated pending=)",
+            file=sys.stderr,
+        )
+    queue_latest = _queue_depth_latest(metrics)
+    backlog_latest = _backlog_latest(metrics)
+    if (
+        queue_latest is not None
+        and backlog_latest is not None
+        and queue_latest > 0
+        and backlog_latest >= queue_latest * _QUEUE_SATURATION_DISK_FACTOR
+    ):
+        watermark = queue_latest
+        if metrics.truncate_max_samples:
+            watermark = metrics.truncate_max_samples[-1]
+        if queue_latest >= watermark:
+            print(
+                "WARN: ingest queue depth saturated at %d while disk_pending=%d "
+                "(queue depth is not disk backlog)"
+                % (queue_latest, backlog_latest),
+                file=sys.stderr,
+            )
     if window_minutes < 60:
         print(
             "WARN: short log window (%.1f min); rates and ETA are noisy"
@@ -430,10 +566,14 @@ def format_stdout(outcomes: dict[str, str]) -> str:
         "backlog_latest",
         "backlog_drained_since_start",
         "pct_complete_since_start",
+        "ingest_queue_depth_at_start",
+        "ingest_queue_depth_latest",
         "empirical_drain_per_min",
         "eta_hours_empirical",
         "eta_hours_full_ingest",
         "eta_hours_archive_done",
+        "estimated_finish_local",
+        "estimated_finish_basis",
     )
     return "\n".join(f"{key}={outcomes[key]}" for key in order)
 

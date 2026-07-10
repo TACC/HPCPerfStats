@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -46,6 +47,7 @@ FIXTURE_WINNING += [
     for i in range(12)
 ]
 FIXTURE_WINNING += [
+    _ts(50) + "Pending stats file list truncated pending=900 max=2000",
     _ts(50) + "Throughput telemetry: active_workers=4 backlog=900 chunk_size=1000 bulk_create_batch=10000",
     _ts(55) + "sync_timedb: chunk ingest summary chunk=0 ingested_this_chunk=12 checkpoint_immediate_n=8 archive_deferred_n=4",
     _ts(56) + "sync_timedb: checkpoint deferred archive finalize count=4",
@@ -58,6 +60,7 @@ FIXTURE_LOSING = [
     _ts(10) + "Messages consumed in the last 10 minutes: 50; messages waiting to be consumed: 0; current file unlinks (last 10 minutes): 50",
     _ts(70) + "ingest file path=/arch/host/200 outcome=ingested elapsed_s=1.0 ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
     _ts(71) + "ingest file path=/arch/host/201 outcome=ingested elapsed_s=1.0 ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
+    _ts(80) + "Pending stats file list truncated pending=550 max=2000",
     _ts(80) + "Throughput telemetry: active_workers=4 backlog=550 chunk_size=1000 bulk_create_batch=10000",
 ]
 
@@ -116,8 +119,21 @@ def test_winning_verdict_and_eta(mod):
     assert outcomes["backlog_at_start"] == "1000"
     assert outcomes["backlog_latest"] == "900"
     assert outcomes["backlog_drained_since_start"] == "100"
+    assert outcomes["ingest_queue_depth_at_start"] == "900"
+    assert outcomes["ingest_queue_depth_latest"] == "900"
     assert outcomes["eta_hours_full_ingest"] != "N/A"
     assert float(outcomes["eta_hours_full_ingest"]) > 0
+    assert outcomes["estimated_finish_local"] != "N/A"
+    assert outcomes["estimated_finish_basis"] in (
+        "eta_hours_empirical",
+        "eta_hours_full_ingest",
+        "eta_hours_archive_done",
+    )
+    # Local stamp: YYYY-MM-DD HH:MM:SS ±HHMM
+    assert re.match(
+        r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [+-]\d{4}$",
+        outcomes["estimated_finish_local"],
+    )
 
 
 def test_losing_verdict_and_eta_na(mod):
@@ -125,6 +141,8 @@ def test_losing_verdict_and_eta_na(mod):
     assert outcomes["verdict_full_ingest"] == "LOSING"
     assert float(outcomes["ratio_listend_over_full_ingest"]) > 1.0
     assert outcomes["eta_hours_full_ingest"] == "N/A"
+    assert outcomes["estimated_finish_local"] == "N/A"
+    assert outcomes["estimated_finish_basis"] == "N/A"
 
 
 def test_db_skip_not_counted_as_full_ingest(mod):
@@ -136,12 +154,52 @@ def test_db_skip_not_counted_as_full_ingest(mod):
     assert metrics.full_ingest_count == 1
 
 
+def test_mixed_rescan_and_throughput_does_not_invent_drain(mod):
+    """Prod signature: uncapped rescan + capped throughput must not invent drain."""
+    lines = [
+        _ts(0) + "sync_timedb: pending rescan done pending=286501 elapsed_s=63.0",
+        _ts(10) + "Messages consumed in the last 10 minutes: 0; messages waiting to be consumed: 0; current file unlinks (last 10 minutes): 1",
+        _ts(30) + "Throughput telemetry: active_workers=24 backlog=2000 chunk_size=1000 bulk_create_batch=10000",
+        _ts(61) + "ingest file path=/arch/host/1 outcome=ingested elapsed_s=1.0 ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
+    ]
+    outcomes = mod.analyze_lines(lines)
+    assert outcomes["backlog_at_start"] == "286501"
+    assert outcomes["backlog_latest"] == "286501"
+    assert outcomes["backlog_drained_since_start"] == "N/A"
+    assert outcomes["pct_complete_since_start"] == "N/A"
+    assert outcomes["empirical_drain_per_min"] == "0.0000"
+    assert outcomes["eta_hours_empirical"] == "N/A"
+    assert outcomes["ingest_queue_depth_latest"] == "2000"
+    assert outcomes["ingest_queue_depth_at_start"] == "2000"
+    drained_fake = 286501 - 2000
+    assert outcomes["backlog_drained_since_start"] != str(drained_fake)
+    assert outcomes["backlog_latest"] != "2000"
+
+
+def test_truncate_line_is_disk_pending_sample(mod):
+    lines = [
+        _ts(0) + "sync_timedb: pending rescan done pending=286501 elapsed_s=63.0",
+        _ts(10) + "Messages consumed in the last 10 minutes: 0; messages waiting to be consumed: 0; current file unlinks (last 10 minutes): 1",
+        _ts(40) + "Pending stats file list truncated pending=285607 max=2000",
+        _ts(41) + "Throughput telemetry: active_workers=24 backlog=2000 chunk_size=1000 bulk_create_batch=10000",
+        _ts(61) + "ingest file path=/arch/host/1 outcome=ingested elapsed_s=1.0 ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
+    ]
+    outcomes = mod.analyze_lines(lines)
+    assert outcomes["backlog_at_start"] == "286501"
+    assert outcomes["backlog_latest"] == "285607"
+    assert outcomes["backlog_drained_since_start"] == "894"
+    assert outcomes["ingest_queue_depth_latest"] == "2000"
+    assert float(outcomes["empirical_drain_per_min"]) > 0
+    assert outcomes["eta_hours_empirical"] != "N/A"
+
+
 def test_boot_only_skips_pre_boot_lines(mod):
     lines = [
         _ts(0) + "sync_timedb: pending rescan done pending=9999 elapsed_s=1.0",
         _ts(5) + "startup maintenance idle; ingest may begin",
         _ts(10) + "sync_timedb: pending rescan done pending=100 elapsed_s=1.0",
         _ts(10) + "Messages consumed in the last 10 minutes: 0; messages waiting to be consumed: 0; current file unlinks (last 10 minutes): 1",
+        _ts(40) + "Pending stats file list truncated pending=80 max=2000",
         _ts(70) + "Throughput telemetry: active_workers=4 backlog=80 chunk_size=1000 bulk_create_batch=10000",
         _ts(71) + "ingest file path=/arch/host/1 outcome=ingested elapsed_s=1.0 ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
         _ts(72) + "ingest file path=/arch/host/2 outcome=ingested elapsed_s=1.0 ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
@@ -149,6 +207,7 @@ def test_boot_only_skips_pre_boot_lines(mod):
     outcomes = mod.analyze_lines(lines, boot_only=True)
     assert outcomes["backlog_at_start"] == "100"
     assert outcomes["backlog_latest"] == "80"
+    assert outcomes["ingest_queue_depth_latest"] == "80"
 
 
 def test_since_minutes_window(mod):
@@ -194,7 +253,11 @@ def test_stdout_only_key_count(mod):
     lines = text.splitlines()
     assert all("=" in line for line in lines)
     assert lines[0].startswith("window_minutes=")
-    assert len(lines) == 21
+    assert len(lines) == 25
+    assert "ingest_queue_depth_latest=" in text
+    assert "ingest_queue_depth_at_start=" in text
+    assert "estimated_finish_local=" in text
+    assert "estimated_finish_basis=" in text
 
 
 def test_cli_script_runs_from_repo(tmp_path):
