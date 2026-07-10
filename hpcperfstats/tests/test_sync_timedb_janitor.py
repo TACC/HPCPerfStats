@@ -3363,7 +3363,7 @@ def test_janitor_budget_exit_nonblocking_leaves_in_flight(monkeypatch, tmp_path)
       self._day_close_in_flight[fut] = debt
     return fut
 
-  def fake_wait(fs, timeout=None, return_when=None):
+  def fake_wait(fs, timeout=None, **_kwargs):
     # Always time out so the budget loop hits budget_exit without completing.
     return set(), set(fs)
 
