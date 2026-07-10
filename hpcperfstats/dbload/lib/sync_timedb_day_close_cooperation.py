@@ -70,13 +70,12 @@ def day_close_yield_event_set(tar_path: str) -> bool:
     return bool(ev is not None and ev.is_set())
 
 
-def day_close_yield_requested(
+def _hot_path_contention_reasons(
     tar_path: str,
     *,
     tgz_archive_dir: str = "",
-    phase: str = "",
 ) -> tuple[bool, str]:
-  """True when ingest hot signals require cooperative yield mid-mutation."""
+  """Shared ingest-hot checks for yield and janitor defer (pre-flight subset)."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       calendar_date_from_daily_tar_path,
   )
@@ -102,6 +101,19 @@ def day_close_yield_requested(
   ):
     return True, "populate_active"
   return False, ""
+
+
+def day_close_yield_requested(
+    tar_path: str,
+    *,
+    tgz_archive_dir: str = "",
+    phase: str = "",
+) -> tuple[bool, str]:
+  """True when ingest hot signals require cooperative yield mid-mutation."""
+  return _hot_path_contention_reasons(
+      tar_path,
+      tgz_archive_dir=tgz_archive_dir,
+  )
 
 
 def should_poll_day_close_yield(last_poll_monotonic: float) -> bool:
@@ -147,9 +159,7 @@ def daily_tar_janitor_mutation_should_defer(
       calendar_date_from_daily_tar_path,
   )
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      archive_members_populate_shows_progress_for_day,
       daily_tar_restore_in_progress_for_day,
-      ingest_tar_hot_for_day,
   )
 
   tar_norm = _tar_norm(tar_path)
@@ -159,17 +169,12 @@ def daily_tar_janitor_mutation_should_defer(
   day_token = day.isoformat() if day is not None else ""
   if day_token and daily_tar_restore_in_progress_for_day(day_token):
     return True, "daily_tar_restore"
-  if day_token and ingest_tar_hot_for_day(day_token):
-    return True, "ingest_tar_hot"
-  if day_close_yield_event_set(tar_norm):
-    with _yield_lock:
-      return True, _yield_reasons.get(tar_norm, "yield_requested")
-  if (
-      day_token
-      and tgz_archive_dir
-      and archive_members_populate_shows_progress_for_day(day_token, tgz_archive_dir)
-  ):
-    return True, "populate_active"
+  hot, reason = _hot_path_contention_reasons(
+      tar_path,
+      tgz_archive_dir=tgz_archive_dir,
+  )
+  if hot:
+    return True, reason
   if chunk_in_progress and day_token and chunk_day_tokens and day_token in chunk_day_tokens:
     return True, "chunk_in_progress_day"
   if tar_norm in (disqualified_daily_tars or set()):

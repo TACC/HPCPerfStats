@@ -321,8 +321,18 @@ def decompress_compressed_to_tar(
     remove_compressed: bool = True,
     restore_reason: str = "missing_tar",
     restore_caller: str = "decompress_compressed_to_tar",
+    zstd_threads: int | None = None,
+    num_threads: int | None = None,
 ) -> bool:
-  """Decompress to a verified sibling ``.tar``; unlink compressed only on success."""
+  """Decompress to a verified sibling ``.tar``; unlink compressed only on success.
+
+  ``thread_count`` is the canonical public parameter name. ``zstd_threads`` and
+  ``num_threads`` are accepted as deprecated keyword aliases only.
+  """
+  if zstd_threads is not None:
+    thread_count = zstd_threads
+  elif num_threads is not None:
+    thread_count = num_threads
   if not compressed_path or not os.path.isfile(compressed_path):
     return False
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (

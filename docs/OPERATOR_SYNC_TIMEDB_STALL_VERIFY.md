@@ -12,6 +12,8 @@ cd HPCPerfStats && tests/run_sync_timedb_regression_battery.sh
 
 Attach the `test_runs/day-close-loop-regression-battery-*.log` path to the PR or deploy ticket.
 
+**After sync_timedb dedup-audit deploy (blocking/census split, persistence v6):** run the same battery pre-deploy; post-deploy use T0/T1/T2 below. Persistence v6 resets orphan `startup_*` sidecars on contract bump — expect one-time empty maint hints if the contract file was stale. No separate stall signature is expected from this audit alone; treat regressions like any other sync_timedb deploy.
+
 ## Post-deploy tiers
 
 | Tier | When | Pass criteria |

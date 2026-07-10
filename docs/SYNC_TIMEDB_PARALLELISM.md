@@ -92,3 +92,46 @@ Exit **124** / `Pool imap stalled` / `MultiprocessingWorkerExitError` come from 
 
 - **In scope:** session executor helper, spawn pool factory, burst thread helper, replace duplicated Pool/executor boilerplate.
 - **Out of scope:** hot-path Pool→threads (ingest; archive except explicit trial), renaming `archive_pool`, changing `map_async`/stall semantics.
+
+## Census vs blocking remaining-raw (decision gates)
+
+| Layer | API | Use |
+|-------|-----|-----|
+| **Census (inventory)** | `build_remaining_raw_stats_by_daily_gz`, `build_remaining_raw_for_daily_tar` | Maintenance snapshots, logging, verify worklists |
+| **Blocking (decision)** | `blocking_closed_raw_remains_for_day` (alias `remaining_raw_blocking_day_incomplete`) | Tar drop, FS-complete, `daily_tar_needs_day_close_work`, seal defer when `only_when_no_remaining_raw` |
+
+**Precedence for day-close complete:** `day_close_filesystem_complete` (disk + blocking) is ground truth; `archive_maint_hints.day_phases` and `.sync_timedb_async_day_close.json` are hints/occupancy only.
+
+**Quiescent vs FS-complete:** `daily_tar_filesystem_quiescent` uses census for startup scheduling; `day_close_filesystem_complete` uses blocking for completion gates.
+
+## Day-close state stores (authority)
+
+| Store | Path | Authoritative for |
+|-------|------|-------------------|
+| Janitor hints | `.sync_archive_maint_hints.json` `day_phases` | Skip scheduling when phase ≥ target (re-checked against disk) |
+| Day-close manifest | `.sync_timedb_async_day_close.json` | Worker occupancy / enqueue guard |
+| Per-day raw removal | `.sync_timedb_day_raw_removal/*.json` | Delete pipeline phases |
+
+## Redis populate call graph
+
+| Entry | Thread | Scan execution |
+|-------|--------|----------------|
+| `request_archive_members_populate_and_wait` | Supervisor prewarm, ingest workers | Enqueue populate pool or inline `execute_archive_members_populate_for_canonical` |
+| `get_existing_archive_members_for_daily_archive` | Ingest lookup | L1 cache → populate wait → local scan fallback |
+| `sync_timedb_archive.py` backfill | Sealed-only CLI | `iter_sealed_daily_archive_member_paths` (no `.tar` restore) |
+
+**Archive CLI vs supervisor prewarm boundary:** `sync_timedb_archive.py` is an operator/CLI backfill tool — it scans **sealed** archives only and never calls `ensure_daily_tar_restored_for_append` or supervisor chunk prewarm. The supervisor and ingest workers own hot-path Redis populate via `request_archive_members_populate_and_wait`; janitor owns day-close seal/verify/delete. Do not route CLI scans through prewarm or maintenance snapshots.
+
+**Defer split:** janitor day-close defer checks `ingest_tar_hot` (ingest pool activity). Populate-pool tar scans **also** defer on `archive_append_inflight` (append worker holds day until merge). Both keys are intentional — see `sync-timedb-ingest-pool-io-coordination.mdc` §8b.
+
+## zstd thread parameter naming
+
+`zstd_cli.decompress_compressed_to_tar` and related CLI helpers use **`thread_count`** as the canonical name. Archive helpers may still name the third positional argument `zstd_threads` at internal call sites; new public surfaces should prefer `thread_count`.
+
+## Future: sync_timedb.py module split (P4)
+
+Extracting prewarm, checkpoint, and stall diagnostics from `sync_timedb.py` into `lib/` modules is **out of scope** for this audit — track as a separate plan.
+
+## Supervisor maintenance stubs
+
+`sync_timedb.py` exposes `seal_dirty_daily_archives` / `remove_verified_*` as **RuntimeError stubs** so tests can monkeypatch names; real implementations live on `ArchiveJanitor` / helpers (`test_arch_supervisor_maintenance_stubs_raise_runtime_error`).

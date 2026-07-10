@@ -1450,7 +1450,7 @@ def remaining_raw_by_gz_blocking_tar_drop(
   return state._remaining_raw_paths_blocking_tar_drop()
 
 
-def remaining_raw_blocking_day_incomplete(
+def blocking_closed_raw_remains_for_day(
     tar_path: str,
     *,
     archive_data_dir: Optional[str] = None,
@@ -1460,11 +1460,14 @@ def remaining_raw_blocking_day_incomplete(
     get_maintenance_snapshot: Optional[Callable[[], Any]] = None,
     log_fn=None,
 ) -> Dict[str, List[str]]:
-  """Canonical DECISION map: on-disk paths that still block day-incomplete.
+  """Canonical DECISION map: on-disk paths that still block day-close completion.
 
   Quarantine-skip and quarantine-terminal paths are excluded. Use for tar_drop,
   seal retain, needs_work, filesystem-complete, and decompress-unlink gates.
   Census builders (``build_remaining_raw_*``) remain inventory-only.
+
+  Distinct from checkpoint ``checkpoint_incomplete`` (ingest DB), which means
+  unprocessed ingest paths — not closed raw on disk.
   """
   archive_data_dir = archive_data_dir or cfg.get_archive_dir_path()
   host_name_ext = (
@@ -1483,6 +1486,28 @@ def remaining_raw_blocking_day_incomplete(
       host_name_ext=host_name_ext or "",
       tgz_archive_dir=tgz_archive_dir,
       get_quarantine_skip_paths=get_quarantine_skip_paths or (lambda: set()),
+      get_maintenance_snapshot=get_maintenance_snapshot,
+      log_fn=log_fn,
+  )
+
+
+def remaining_raw_blocking_day_incomplete(
+    tar_path: str,
+    *,
+    archive_data_dir: Optional[str] = None,
+    host_name_ext: Optional[str] = None,
+    tgz_archive_dir: Optional[str] = None,
+    get_quarantine_skip_paths: Optional[Callable[[], Set[str]]] = None,
+    get_maintenance_snapshot: Optional[Callable[[], Any]] = None,
+    log_fn=None,
+) -> Dict[str, List[str]]:
+  """Deprecated alias for :func:`blocking_closed_raw_remains_for_day`."""
+  return blocking_closed_raw_remains_for_day(
+      tar_path,
+      archive_data_dir=archive_data_dir,
+      host_name_ext=host_name_ext,
+      tgz_archive_dir=tgz_archive_dir,
+      get_quarantine_skip_paths=get_quarantine_skip_paths,
       get_maintenance_snapshot=get_maintenance_snapshot,
       log_fn=log_fn,
   )
@@ -1567,6 +1592,10 @@ class DayRawRemovalCoordinator:
     return self._get_or_create_day(tar_path).post_seal_verification_complete()
 
   def should_handoff_before_seal(self, tar_path: str) -> bool:
+    """True when closed raw handoff paths exist (pre-seal gate; paths only)."""
+    return self.handoff_paths_exist_before_seal(tar_path)
+
+  def handoff_paths_exist_before_seal(self, tar_path: str) -> bool:
     return bool(self._get_or_create_day(tar_path).handoff_paths_for_ingest())
 
   def run_pre_seal_verify_sync(self, tar_path: str) -> bool:
@@ -1724,7 +1753,8 @@ class DayRawRemovalCoordinator:
       zst_path, gz_path = compressed_sibling_paths(state.tar_path)
       if not (os.path.isfile(zst_path) or os.path.isfile(gz_path)):
         continue
-      if state._has_closed_raw_existing_on_disk():
+      blocking = state._remaining_raw_paths_blocking_tar_drop()
+      if remaining_raw_by_gz_has_paths_on_disk(blocking, zst_path):
         continue
       candidates.append((state.day_date, state.tar_path))
     candidates.sort(key=lambda item: item[0])
@@ -1774,6 +1804,9 @@ class DayRawRemovalCoordinator:
     return [tar_path for _day_date, tar_path in candidates]
 
   def should_handoff_to_ingest(self, tar_path: str) -> bool:
+    return self.handoff_eligible_after_verify(tar_path)
+
+  def handoff_eligible_after_verify(self, tar_path: str) -> bool:
     return self._get_or_create_day(tar_path).should_handoff_day_close_to_ingest()
 
   def has_closed_raw_on_disk(self, tar_path: str) -> bool:

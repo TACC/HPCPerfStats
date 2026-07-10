@@ -29,7 +29,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     classify_day_close_candidates,
     daily_tar_eligible_for_day_close_submit,
     day_close_queued_reason_for_report_reason,
-    daily_gz_has_remaining_raw_stats,
+    remaining_raw_by_gz_has_paths_on_disk,
     daily_tar_path_from_compressed,
     daily_tar_seal_calendar_eligible,
     dedupe_tar_keep_largest_file_per_member,
@@ -737,9 +737,9 @@ class ArchiveJanitor:
     if os.path.isfile(tar_norm) and tar_day_dirty_by_mtime(tar_norm):
       return True
     zst_path, _gz_path = compressed_sibling_paths(tar_norm)
-    if daily_gz_has_remaining_raw_stats(
-        zst_path,
+    if remaining_raw_by_gz_has_paths_on_disk(
         self._blocking_remaining_raw_for_tar(tar_norm),
+        zst_path,
     ):
       return True
     return False
@@ -922,9 +922,6 @@ class ArchiveJanitor:
     active = set(live_workers)
     active |= self._debt_heap_tar_paths()
     return active
-
-  def _day_close_inflight_tar_paths(self) -> Set[str]:
-    return self._day_close_active_tar_paths()
 
   def _format_tick_waiting_tar_paths(self, in_flight: Dict[Any, DayDebt]) -> str:
     paths = sorted(
@@ -1839,11 +1836,10 @@ class ArchiveJanitor:
     return phase
 
   def _day_phase_at_least(self, tar_path: str, target: str) -> bool:
-    order = {"sealed": 1, "raw_removed": 2, "tar_dropped": 3}
-    phase_name = self._day_phase_name(tar_path)
-    if phase_name not in order:
-      return False
-    return order[phase_name] >= order[target]
+    from hpcperfstats.dbload.lib.sync_timedb_manifest_contract import (
+        day_phase_at_least,
+    )
+    return day_phase_at_least(self._day_phases, tar_path, target)
 
   def _close_one_day(
       self,
@@ -2088,7 +2084,7 @@ class ArchiveJanitor:
         self._day_phases[tar_path] = day_phase_hint_entry(tar_path, "tar_dropped")
       return True
     remaining_raw_by_gz = self._blocking_remaining_raw_for_tar(tar_path)
-    if daily_gz_has_remaining_raw_stats(zst_path, remaining_raw_by_gz):
+    if remaining_raw_by_gz_has_paths_on_disk(remaining_raw_by_gz, zst_path):
       handoff_paths_n = 0
       defer_reason = "remaining_raw_on_disk"
       coord = self.day_raw_removal_coordinator

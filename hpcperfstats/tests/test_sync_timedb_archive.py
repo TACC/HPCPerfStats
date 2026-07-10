@@ -30,7 +30,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     build_day_close_disqualified_daily_tars,
     collect_days_with_unmapped_closed_raw,
     merge_maintenance_skip_daily_tar_paths,
-    daily_gz_has_remaining_raw_stats,
+    remaining_raw_by_gz_has_paths_on_disk,
     daily_tar_paths_for_stats_paths,
     daily_tar_seal_calendar_eligible,
     daily_tar_needs_day_close_work,
@@ -1176,21 +1176,21 @@ def test_build_remaining_raw_stats_by_daily_gz_groups_closed_segments(tmp_path):
   remaining = build_remaining_raw_stats_by_daily_gz(
       str(tmp_path), arch_suffix, str(tgz_dir))
   assert remaining == {zst_key: [str(seg)]}
-  assert daily_gz_has_remaining_raw_stats(zst_key, remaining)
-  assert not daily_gz_has_remaining_raw_stats(
-      str(tgz_dir / "2026-04-21.tar.zst"), remaining)
+  assert remaining_raw_by_gz_has_paths_on_disk(remaining, zst_key)
+  assert not remaining_raw_by_gz_has_paths_on_disk(
+      remaining, str(tgz_dir / "2026-04-21.tar.zst"))
 
 
-def test_daily_gz_has_remaining_raw_ghost_paths_not_on_disk(tmp_path):
+def test_remaining_raw_by_gz_has_paths_ghost_paths_not_on_disk(tmp_path):
   """Ghost accrual entries (deleted paths) must not block seal/scheduling gates."""
   zst_key = str(tmp_path / "2026-04-20.tar.zst")
   ghost_path = str(tmp_path / "missing.raw")
   remaining = {zst_key: [ghost_path]}
-  assert not daily_gz_has_remaining_raw_stats(zst_key, remaining)
+  assert not remaining_raw_by_gz_has_paths_on_disk(remaining, zst_key)
   live_path = tmp_path / "live.raw"
   live_path.write_text("x")
   remaining_live = {zst_key: [str(live_path)]}
-  assert daily_gz_has_remaining_raw_stats(zst_key, remaining_live)
+  assert remaining_raw_by_gz_has_paths_on_disk(remaining_live, zst_key)
 
 
 def test_atomic_seal_tar_to_zst_passes_thread_count_to_compress_and_test(monkeypatch, tmp_path):
@@ -5796,6 +5796,58 @@ def test_iter_tar_file_tasks_falls_back_to_gz_when_zst_corrupt(monkeypatch, tmp_
   assert str(gz_path) in calls
 
 
+def test_iter_tar_file_tasks_restore_uses_sealed_keep_policy(monkeypatch, tmp_path):
+  """Corrupt-tar recovery must route through replace_corrupt (sealed-keep gate)."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "2020-01-06.tar"
+  zst_path = tmp_path / "2020-01-06.tar.zst"
+  tar_path.write_text("bad")
+  zst_path.write_bytes(b"sealed")
+  inner = tmp_path / "only.txt"
+  inner.write_text("ok")
+  with tarfile.open(str(tar_path), "w") as tf:
+    tf.add(str(inner), arcname="only.txt")
+
+  open_calls = {"n": 0}
+
+  class _FakeTar:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *_a):
+      return False
+
+    def __iter__(self):
+      yield type("M", (), {"isfile": lambda self: True, "name": "only.txt"})()
+
+  def _open_mock(path, mode="r", *_a, **_k):
+    del mode
+    open_calls["n"] += 1
+    if open_calls["n"] == 1:
+      raise tarfile.ReadError("corrupt")
+    return _FakeTar()
+
+  restore_kwargs = {}
+
+  def _spy_replace(tar_out, zst, gz, threads):
+    restore_kwargs.update(
+        {"tar": tar_out, "zst": zst, "gz": gz, "threads": threads},
+    )
+    return True
+
+  monkeypatch.setattr(helpers.tarfile, "open", _open_mock)
+  monkeypatch.setattr(
+      helpers,
+      "replace_corrupt_tar_from_compressed_backup",
+      _spy_replace,
+  )
+  members = list(helpers.iter_tar_file_tasks(str(tar_path)))
+  assert members == [(str(tar_path), "only.txt")]
+  assert restore_kwargs["zst"] == str(zst_path)
+  assert open_calls["n"] == 2
+
+
 def test_validate_sealed_restores_corrupt_tar_before_fail_closed(monkeypatch, tmp_path):
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
@@ -8475,7 +8527,7 @@ def test_populate_uses_tar_for_active_ingest_day(
     return {"host/member": inner.stat().st_size}
 
   monkeypatch.setattr(
-      helpers, "daily_gz_has_remaining_raw_stats", lambda *_a, **_k: True,
+      helpers, "remaining_raw_by_gz_has_paths_on_disk", lambda *_a, **_k: True,
   )
   monkeypatch.setattr(
       helpers, "_populate_redis_members_from_sealed_scan", _forbidden_sealed,

@@ -26,6 +26,8 @@ _DAY_CLOSE_PIPELINE_PENDING_STATUSES = frozenset({
     "raw_removal",
     "deferred",
 })
+# Legacy statuses retained for stale-manifest recovery until operator on-disk
+# sample confirms no remaining entries (plan P2 shrink — deferred).
 
 _DAY_CLOSE_WORKER_SLOT_STATUSES = frozenset({
     "submitted",
@@ -195,6 +197,8 @@ class DayCloseManifestCoordinator:
       }
 
   def shutdown(self, wait: bool = True) -> None:
+    """Legacy no-op; day-close workers drain via janitor pool shutdown."""
+    del wait
     return
 
   def _active_tar_paths_unlocked(self) -> Set[str]:
@@ -347,6 +351,7 @@ class DayCloseManifestCoordinator:
     }
 
   def tar_paths_raw_delete_pending(self) -> List[str]:
+    """Legacy no-op; janitor ``DayRawRemovalCoordinator`` owns delete pending state."""
     return []
 
   def _remaining_raw_for_tar_drop(self, tar_norm: str) -> Dict[str, List[str]]:

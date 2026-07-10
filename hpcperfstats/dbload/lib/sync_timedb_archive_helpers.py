@@ -428,19 +428,17 @@ def daily_tar_path_for_stats_path(stats_path, tgz_archive_dir, first_ts=None):
 
 
 def _day_phase_name_from_hints(day_phases, tar_path):
-  tar_norm = os.path.normpath(str(tar_path or ""))
-  phase = (day_phases or {}).get(tar_norm)
-  if isinstance(phase, dict):
-    return phase.get("phase")
-  return phase
+  from hpcperfstats.dbload.lib.sync_timedb_manifest_contract import (
+      day_phase_name_from_hints,
+  )
+  return day_phase_name_from_hints(day_phases, tar_path)
 
 
 def _day_phase_at_least_hints(day_phases, tar_path, target):
-  order = {"sealed": 1, "raw_removed": 2, "tar_dropped": 3}
-  phase_name = _day_phase_name_from_hints(day_phases, tar_path)
-  if phase_name not in order:
-    return False
-  return order[phase_name] >= order[target]
+  from hpcperfstats.dbload.lib.sync_timedb_manifest_contract import (
+      day_phase_at_least,
+  )
+  return day_phase_at_least(day_phases, tar_path, target)
 
 
 def ingest_stream_past_calendar_day(
@@ -1639,7 +1637,11 @@ def daily_tar_needs_day_close_work(
     day_phases=None,
     remaining_raw_by_gz=None,
 ):
-  """True when cold-path seal/raw/tar work may still be required for ``tar_path``."""
+  """True when cold-path seal/raw/tar work may still be required for ``tar_path``.
+
+  ``remaining_raw_by_gz`` is accepted for backward compatibility but **ignored**
+  for decision branches; blocking map is always used after FS-complete check.
+  """
   tar_norm = os.path.normpath(str(tar_path or ""))
   if not tar_norm:
     return False
@@ -1651,15 +1653,11 @@ def daily_tar_needs_day_close_work(
   if os.path.isfile(tar_norm):
     return True
   zst_path, _gz_path = compressed_sibling_paths(tar_norm)
-  if remaining_raw_by_gz is not None:
-    if daily_gz_has_remaining_raw_stats(zst_path, remaining_raw_by_gz):
-      return True
-    return False
   from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
       remaining_raw_blocking_day_incomplete,
   )
   blocking = remaining_raw_blocking_day_incomplete(tar_norm)
-  if daily_gz_has_remaining_raw_stats(zst_path, blocking):
+  if remaining_raw_by_gz_has_paths_on_disk(blocking, zst_path):
     return True
   return False
 
@@ -2226,7 +2224,7 @@ def daily_tar_filesystem_quiescent(
   if not tar_norm:
     return False
   zst_path, _gz_path = compressed_sibling_paths(tar_norm)
-  if daily_gz_has_remaining_raw_stats(zst_path, remaining_raw_by_gz or {}):
+  if remaining_raw_by_gz_has_paths_on_disk(remaining_raw_by_gz or {}, zst_path):
     return False
   if archive_data_dir and host_name_ext and tgz_archive_dir:
     scoped = build_remaining_raw_for_daily_tar(
@@ -2667,7 +2665,8 @@ def get_tar_member_name(file_path):
 
 def _tar_list_executable():
   """GNU/BSD ``tar`` for ``tar tf`` integrity checks (same family as append)."""
-  return shutil.which("tar") or "/bin/tar"
+  from hpcperfstats.dbload.lib import zstd_cli
+  return zstd_cli._tar_list_executable()
 
 
 @contextlib.contextmanager
@@ -3569,26 +3568,17 @@ def validate_sealed_daily_archive_for_raw_removal(
     validation_cache["misses"] = int(validation_cache.get("misses", 0)) + 1
   members_tar = None
   if os.path.isfile(tar_path):
-    if not verify_tar_archive_readable(tar_path):
-      zst_restore, gz_restore = compressed_sibling_paths(tar_path)
-      if replace_corrupt_tar_from_compressed_backup(
-          tar_path,
-          zst_restore,
-          gz_restore,
-          get_archive_zstd_thread_count(),
-      ) and verify_tar_archive_readable(tar_path):
-        if log_fn:
-          log_fn(
-              "Restored unreadable tar from sealed backup before removal: %s"
-              % tar_path,
-              flush=True,
-          )
-      elif log_fn:
+    if not restore_tar_from_sealed_if_unreadable(
+        tar_path,
+        get_archive_zstd_thread_count(),
+        log_fn=log_fn,
+    ):
+      if log_fn:
         log_fn(
             "Skipping removal: uncompressed tar failed check: %s" % tar_path,
             flush=True,
         )
-        return False, None
+      return False, None
     members_tar = get_existing_archive_members(tar_path)
     if not members_tar:
       if log_fn:
@@ -3782,6 +3772,67 @@ def replace_corrupt_tar_from_compressed_backup(
       return True
   except OSError:
     return False
+
+
+def restore_tar_from_sealed_if_unreadable(
+    tar_path,
+    zstd_threads,
+    *,
+    log_fn=log_print,
+):
+  """Verify ``tar_path`` readable; restore from sealed sibling when corrupt.
+
+  Returns True when ``tar_path`` is readable after (optional) restore.
+  Returns False when unreadable and restore failed or tar is absent.
+  """
+  if not tar_path or not os.path.isfile(tar_path):
+    return False
+  if verify_tar_archive_readable(tar_path):
+    return True
+  zst_path, gz_path = compressed_sibling_paths(tar_path)
+  if replace_corrupt_tar_from_compressed_backup(
+      tar_path,
+      zst_path,
+      gz_path,
+      zstd_threads,
+  ) and verify_tar_archive_readable(tar_path):
+    if log_fn:
+      log_fn(
+          "Restored unreadable tar from sealed backup: %s" % tar_path,
+          flush=True,
+      )
+    return True
+  if log_fn:
+    log_fn(
+        "Tar unreadable and sealed restore failed: %s" % tar_path,
+        flush=True,
+    )
+  return False
+
+
+def iter_archive_file_member_infos(
+    tar_path,
+    *,
+    thread_count=None,
+    apply_priority_wrap=True,
+):
+  """Yield tarfile member info for file members (shared scan surface)."""
+  if thread_count is None:
+    thread_count = get_archive_zstd_thread_count()
+  open_path = resolve_preferred_archive_path_for_read(tar_path)
+  with file_read_lock_wait(open_path):
+    with _open_tarfile_for_read(
+        open_path,
+        thread_count,
+        apply_priority_wrap=apply_priority_wrap,
+    ) as archive_tar:
+      try:
+        member_infos = iter(archive_tar)
+      except TypeError:
+        member_infos = archive_tar.getmembers()
+      for member_info in member_infos:
+        if member_info.isfile():
+          yield member_info
 
 
 def _read_tar_file_member_sizes_unlocked(tar_path):
@@ -4333,28 +4384,18 @@ def validate_open_tar_for_raw_removal(
             flush=True,
         )
       return False, None
-  if not verify_tar_archive_readable(tar_path):
-    zst_restore, gz_restore = compressed_sibling_paths(tar_path)
-    if replace_corrupt_tar_from_compressed_backup(
-        tar_path,
-        zst_restore,
-        gz_restore,
-        get_archive_zstd_thread_count(),
-    ) and verify_tar_archive_readable(tar_path):
-      if log_fn:
-        log_fn(
-            "Restored unreadable tar from sealed backup before open-tar verify: %s"
-            % tar_path,
-            flush=True,
-        )
-    else:
-      if log_fn:
-        log_fn(
-            "Skipping open-tar verify: uncompressed tar failed check: %s"
-            % tar_path,
-            flush=True,
-        )
-      return False, None
+  if not restore_tar_from_sealed_if_unreadable(
+      tar_path,
+      get_archive_zstd_thread_count(),
+      log_fn=log_fn,
+  ):
+    if log_fn:
+      log_fn(
+          "Skipping open-tar verify: uncompressed tar failed check: %s"
+          % tar_path,
+          flush=True,
+      )
+    return False, None
   members = get_existing_archive_members(tar_path)
   if not members:
     if log_fn:
@@ -4642,21 +4683,6 @@ def build_remaining_raw_stats_by_daily_gz(
   )
   return snapshot.remaining_raw_by_gz
 
-
-def remaining_raw_paths_by_daily_tar_from_snapshot(
-    maintenance_snapshot,
-    tgz_archive_dir,
-):
-  """Derive daily ``.tar``-keyed closed raw paths from a maintenance snapshot."""
-  result = {}
-  for gz_key, paths in (maintenance_snapshot.remaining_raw_by_gz or {}).items():
-    if not paths:
-      continue
-    tar_norm = os.path.normpath(daily_tar_path_from_compressed(gz_key))
-    result[tar_norm] = list(paths)
-  return result
-
-
 def build_remaining_raw_for_daily_tar(
     archive_data_dir,
     host_name_ext,
@@ -4680,12 +4706,6 @@ def build_remaining_raw_for_daily_tar(
     if os.path.normpath(daily_tar_path_from_compressed(gz_key)) == tar_norm:
       scoped[gz_key] = paths
   return scoped
-
-
-def daily_gz_has_remaining_raw_stats(gz_path, remaining_by_gz):
-  """True if ``remaining_by_gz`` lists at least one existing raw stats path for this daily archive."""
-  return remaining_raw_by_gz_has_paths_on_disk(remaining_by_gz, gz_path)
-
 
 def remaining_raw_by_gz_has_paths_on_disk(remaining_by_gz, gz_path=None):
   """True if ``remaining_by_gz`` lists at least one raw stats path that exists on disk.
@@ -5334,30 +5354,12 @@ def iter_tar_file_tasks(tar_path):
     zst_path, gz_path, tar_out = _compressed_backup_and_uncompressed_targets(
         open_path,
     )
-    try:
-      with file_write_lock(tar_out):
-        if os.path.isfile(tar_out):
-          os.remove(tar_out)
-        if os.path.isfile(zst_path):
-          if decompress_compressed_to_tar(
-              zst_path,
-              tar_out,
-              get_archive_zstd_thread_count(),
-              restore_reason="corrupt_tar",
-              restore_caller="iter_tar_file_tasks_restore",
-          ):
-            return True
-        if os.path.isfile(gz_path):
-          return decompress_compressed_to_tar(
-              gz_path,
-              tar_out,
-              get_archive_zstd_thread_count(),
-              restore_reason="corrupt_tar",
-              restore_caller="iter_tar_file_tasks_restore",
-          )
-    except OSError:
-      return False
-    return False
+    return replace_corrupt_tar_from_compressed_backup(
+        tar_out,
+        zst_path,
+        gz_path,
+        get_archive_zstd_thread_count(),
+    )
 
   try:
     yield from _iter_members()
@@ -5723,7 +5725,7 @@ def atomic_seal_tar_to_zst(
       log_fn("Sealed archive retaining uncompressed tar: %s" % tar_path, flush=True)
   elif (
       not force_remove_uncompressed_tar
-      and daily_gz_has_remaining_raw_stats(zst_key, remaining_raw_by_gz)
+      and remaining_raw_by_gz_has_paths_on_disk(remaining_raw_by_gz, zst_key)
   ):
     if log_fn:
       log_fn(
@@ -5835,16 +5837,19 @@ def seal_dirty_daily_archives(
         gz_path=gz_path,
     ):
       continue
-    if only_when_no_remaining_raw and daily_gz_has_remaining_raw_stats(
-        zst_path, remaining_raw_by_gz,
-    ):
-      if log_fn:
-        log_fn(
-            "Post-chunk seal deferred (raw stats still present for day): %s"
-            % tar_path,
-            flush=True,
-        )
-      continue
+    if only_when_no_remaining_raw:
+      from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
+          remaining_raw_blocking_day_incomplete,
+      )
+      blocking = remaining_raw_blocking_day_incomplete(tar_path)
+      if remaining_raw_by_gz_has_paths_on_disk(blocking, zst_path):
+        if log_fn:
+          log_fn(
+              "Post-chunk seal deferred (raw stats still present for day): %s"
+              % tar_path,
+              flush=True,
+          )
+        continue
     candidates.append((tar_path, zst_path, gz_path))
   if not candidates:
     return

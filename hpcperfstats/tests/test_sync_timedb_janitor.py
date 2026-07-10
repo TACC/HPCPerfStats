@@ -681,7 +681,11 @@ def test_janitor_tar_drop_runs_same_tick_after_raw_remove_when_fresh_probe(
       return {str(tmp_path / "2026-01-01.tar.zst"): ["/tmp/raw"]}
     return {}
 
-  monkeypatch.setattr(janitor_mod, "build_remaining_raw_for_daily_tar", remaining_seq)
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor,
+      "_blocking_remaining_raw_for_tar",
+      lambda self, *_a, **_k: remaining_seq(),
+  )
   monkeypatch.setattr(
       janitor_mod,
       "remove_verified_archived_raw_files",
@@ -2725,7 +2729,7 @@ def test_tar_drop_deferred_logs_handoff_requeue_correlation(tmp_path, monkeypatc
   )
   monkeypatch.setattr(
       janitor_mod,
-      "daily_gz_has_remaining_raw_stats",
+      "remaining_raw_by_gz_has_paths_on_disk",
       lambda *_a, **_k: True,
   )
   monkeypatch.setattr(
@@ -2771,7 +2775,7 @@ def test_tar_drop_deferred_logs_stale_manifest_when_phase_done(
   )
   monkeypatch.setattr(
       janitor_mod,
-      "daily_gz_has_remaining_raw_stats",
+      "remaining_raw_by_gz_has_paths_on_disk",
       lambda *_a, **_k: True,
   )
   monkeypatch.setattr(
@@ -3067,7 +3071,7 @@ def test_seal_failure_and_tar_drop_unlink_failure_reenqueue(monkeypatch, tmp_pat
   _mark_day_sealed(janitor, tar_path)
   monkeypatch.setattr(
       janitor_mod,
-      "daily_gz_has_remaining_raw_stats",
+      "remaining_raw_by_gz_has_paths_on_disk",
       lambda *_a, **_k: False,
   )
   monkeypatch.setattr(

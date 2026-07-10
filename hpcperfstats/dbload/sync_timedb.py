@@ -663,7 +663,6 @@ def _prewarm_archive_members_redis_for_days(
       try:
         request_archive_members_populate_and_wait(
             canonical,
-            role="supervisor",
         )
         source = consume_archive_members_populate_source(canonical) or "redis_warm"
         if prewarm_recovered:

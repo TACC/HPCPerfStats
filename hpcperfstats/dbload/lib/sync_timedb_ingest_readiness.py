@@ -114,15 +114,6 @@ def head_tail_identity_as_gate_identities(head_identity_by_path, tail_identity_b
     gate[path] = by_host
   return gate
 
-
-def head_identity_as_gate_identities(head_identity_by_path):
-  """Deprecated head-only converter; prefer ``head_tail_identity_as_gate_identities``."""
-  return {
-      path: {host: {unix_second}}
-      for path, (host, unix_second) in (head_identity_by_path or {}).items()
-  }
-
-
 def host_timestamp_seconds_all_present(host, unix_seconds):
   """Return whether every Unix second for ``host`` exists in ``host_data``."""
   return sync_timedb_host_itimes.host_sampled_timestamp_seconds_all_present(

@@ -5,13 +5,19 @@ import json
 import os
 import tempfile
 import time
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Tuple
 
 # Bump when ANY persisted semantics change (day-close eligibility, checkpoint
 # shape, manifest phase meaning, delete-gate assumptions, hints debt, etc.).
-SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION = 5
+SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION = 6
 
 PERSISTENCE_CONTRACT_BASENAME = ".sync_timedb_persistence.json"
+
+# Orphan sidecars removed from registry at v6; still deleted on contract reset.
+LEGACY_ORPHAN_ARTIFACT_PATHS: Tuple[str, ...] = (
+    ".sync_timedb_startup_tar_seal.json",
+    ".sync_timedb_startup_raw_removal.json",
+)
 
 # Canonical artifact registry (kind -> relative path under archive_data_dir).
 PERSISTENCE_ARTIFACT_REGISTRY: Dict[str, str] = {
@@ -19,8 +25,6 @@ PERSISTENCE_ARTIFACT_REGISTRY: Dict[str, str] = {
     "archive_dead_letter": ".sync_timedb_dead_letter.json",
     "archive_maint_hints": ".sync_archive_maint_hints.json",
     "day_close_manifest": ".sync_timedb_async_day_close.json",
-    "startup_tar_seal": ".sync_timedb_startup_tar_seal.json",
-    "startup_raw_removal": ".sync_timedb_startup_raw_removal.json",
     "day_raw_removal_dir": ".sync_timedb_day_raw_removal",
     "unparsable_raw": ".sync_timedb_unparsable_raw.json",
     "zero_host_ingest_mark": ".sync_timedb_zero_host_ingest_mark.json",
@@ -128,6 +132,8 @@ def reset_sync_timedb_persistence(archive_data_dir: str, *, log_fn: LogFn = None
       _unlink_tree(path, log_fn)
     else:
       _unlink_path(path, log_fn)
+  for rel in LEGACY_ORPHAN_ARTIFACT_PATHS:
+    _unlink_path(os.path.join(archive_data_dir, rel), log_fn)
   _unlink_path(persistence_contract_path(archive_data_dir), log_fn)
 
 
@@ -185,8 +191,6 @@ def _expected_schema_version(kind: str) -> Optional[int]:
     return MAINT_HINTS_SCHEMA_VERSION
   if kind in (
       "day_close_manifest",
-      "startup_tar_seal",
-      "startup_raw_removal",
       "day_raw_removal",
   ):
     return MANIFEST_SCHEMA_VERSION
@@ -224,14 +228,14 @@ def _validate_envelope(raw: Any, *, kind: str, log_fn: LogFn = None) -> bool:
   if kind == "archive_maint_hints":
     if not isinstance(raw, dict):
       return False
-    version = raw.get("version")
-    if version is not None and expected is not None:
+    schema = raw.get("schema_version", raw.get("version"))
+    if schema is not None and expected is not None:
       try:
-        if int(version) != expected:
+        if int(schema) != expected:
           if log_fn:
             log_fn(
-                "sync_timedb: reject archive_maint_hints version=%s expected=%s"
-                % (version, expected),
+                "sync_timedb: reject archive_maint_hints schema_version=%s expected=%s"
+                % (schema, expected),
                 flush=True,
             )
           return False
@@ -240,8 +244,6 @@ def _validate_envelope(raw: Any, *, kind: str, log_fn: LogFn = None) -> bool:
     return True
   if kind in (
       "day_close_manifest",
-      "startup_tar_seal",
-      "startup_raw_removal",
       "day_raw_removal",
   ):
     if not isinstance(raw, dict):
@@ -318,8 +320,6 @@ def _unwrap_envelope(raw: Any, *, kind: str) -> Any:
     return None
   if kind in (
       "day_close_manifest",
-      "startup_tar_seal",
-      "startup_raw_removal",
   ):
     if isinstance(raw, dict):
       return raw
@@ -352,8 +352,6 @@ def load_persistence_document(
       default = None
     elif kind in (
         "day_close_manifest",
-        "startup_tar_seal",
-        "startup_raw_removal",
         "day_raw_removal",
     ):
       default = None
@@ -410,13 +408,12 @@ def save_persistence_document(
       payload = {}
     payload = dict(payload)
     payload["contract_version"] = contract_version
-    payload.setdefault("version", MAINT_HINTS_SCHEMA_VERSION)
+    payload.setdefault("schema_version", MAINT_HINTS_SCHEMA_VERSION)
+    payload.pop("version", None)
     _save_json_atomic(path, payload, compact=compact)
     return
   if kind in (
       "day_close_manifest",
-      "startup_tar_seal",
-      "startup_raw_removal",
       "day_raw_removal",
   ):
     if not isinstance(payload, dict):
@@ -424,7 +421,6 @@ def save_persistence_document(
     payload = dict(payload)
     payload["contract_version"] = contract_version
     payload.setdefault("schema_version", MANIFEST_SCHEMA_VERSION)
-    payload.setdefault("version", MANIFEST_SCHEMA_VERSION)
     _save_json_atomic(path, payload, compact=compact)
     return
   if kind == "zero_host_ingest_mark":

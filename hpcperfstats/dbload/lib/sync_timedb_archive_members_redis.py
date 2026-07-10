@@ -1863,8 +1863,6 @@ def archive_members_populate_queue_brpop(*, timeout_s=1.0):
 
 def request_archive_members_populate_and_wait(
     archive_compressed_path,
-    *,
-    role="ingest",
 ):
   """Wait for warm Redis member map; enqueue populate-pool work when cold.
 
@@ -1884,7 +1882,6 @@ def request_archive_members_populate_and_wait(
       get_populate_pool_controller,
   )
 
-  del role
   canonical = normalize_daily_compressed_path(archive_compressed_path)
   if not daily_archive_populate_source_exists(canonical):
     empty = {}

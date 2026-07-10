@@ -6,6 +6,8 @@ See day-close-ingest-loop-fix plan Phase 2b; rules cite test_arch_* names.
 import inspect
 import os
 
+import pytest
+
 import hpcperfstats.dbload.lib.conf_parser as cfg
 import hpcperfstats.dbload.lib.sync_timedb_archive_janitor as janitor_mod
 import hpcperfstats.dbload.sync_timedb as st
@@ -268,7 +270,11 @@ def test_arch_close_one_day_tar_drop_after_raw_removal_done(monkeypatch, tmp_pat
   )
   _mark_day_sealed(janitor, tar_path)
   janitor._enqueue_debt(DebtKind.DAY_CLOSE, tar_path, persist=False)
-  monkeypatch.setattr(janitor_mod, "build_remaining_raw_for_daily_tar", lambda *a, **k: {})
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor,
+      "_blocking_remaining_raw_for_tar",
+      lambda self, *_a, **_k: {},
+  )
 
   def _drop_tar_only(*_args, **kwargs):
     for tar in kwargs.get("only_daily_tar_paths") or ():
@@ -617,3 +623,34 @@ def test_arch_janitor_defers_delete_when_chunk_day_overlaps():
   )
   assert defer is True
   assert reason == "chunk_in_progress_day"
+
+
+def test_arch_decompress_unlink_gate_avoids_maintenance_snapshot():
+  """Hot restore unlink gate must not build full maintenance snapshot."""
+  import inspect
+
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
+
+  source = inspect.getsource(helpers._decompress_should_unlink_compressed)
+  assert "build_archive_maintenance_snapshot" not in source
+
+
+def test_arch_day_phase_order_single_source():
+  """DAY_CLOSE phase ordering lives in sync_timedb_manifest_contract only."""
+  import inspect
+
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib import sync_timedb_archive_janitor as janitor_mod
+  from hpcperfstats.dbload.lib.sync_timedb_manifest_contract import DAY_PHASE_ORDER
+
+  assert DAY_PHASE_ORDER == {"sealed": 1, "raw_removed": 2, "tar_dropped": 3}
+  helpers_src = inspect.getsource(helpers._day_phase_at_least_hints)
+  janitor_src = inspect.getsource(janitor_mod.ArchiveJanitor._day_phase_at_least)
+  assert '"sealed": 1' not in helpers_src
+  assert '"sealed": 1' not in janitor_src
+
+
+def test_arch_supervisor_maintenance_stubs_raise_runtime_error():
+  """Supervisor exposes janitor-only maintenance names as intentional stubs."""
+  with pytest.raises(RuntimeError, match="janitor-only"):
+    st.seal_dirty_daily_archives("/tmp")

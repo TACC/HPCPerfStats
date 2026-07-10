@@ -184,4 +184,19 @@ def test_save_json_atomic_concurrent_writers_no_enoent(tmp_path):
   with open(path, encoding="utf-8") as handle:
     payload = json.load(handle)
   assert payload.get("contract_version") == SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION
+  assert "schema_version" in payload
+  assert "version" not in payload
   assert load_persistence_document(path, "archive_maint_hints") is not None
+
+
+@pytest.mark.django_db(databases=[])
+def test_reset_unlinks_legacy_orphan_artifacts(tmp_path):
+  archive_dir = str(tmp_path / "archive")
+  os.makedirs(archive_dir)
+  for rel in persist_mod.LEGACY_ORPHAN_ARTIFACT_PATHS:
+    path = os.path.join(archive_dir, rel)
+    with open(path, "w", encoding="utf-8") as handle:
+      json.dump({"phase": "legacy"}, handle)
+  reset_sync_timedb_persistence(archive_dir, log_fn=lambda *_a, **_kw: None)
+  for rel in persist_mod.LEGACY_ORPHAN_ARTIFACT_PATHS:
+    assert not os.path.isfile(os.path.join(archive_dir, rel))

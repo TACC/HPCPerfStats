@@ -27,19 +27,18 @@ def test_raw_removal_phases_stable():
 
 
 def test_manifest_required_fields_registry_covers_coordinators():
-  assert "startup_raw_removal" in MANIFEST_REQUIRED_TOP_LEVEL
   assert "day_raw_removal" in MANIFEST_REQUIRED_TOP_LEVEL
   assert "day_close_manifest" in MANIFEST_REQUIRED_TOP_LEVEL
 
 
 def test_validate_manifest_payload_rejects_invalid_phase():
   assert not validate_manifest_payload(
-      "startup_raw_removal",
+      "day_raw_removal",
       {"phase": "not_a_phase"},
   )
   assert validate_manifest_payload(
-      "startup_raw_removal",
-      {"phase": PHASE_VERIFYING},
+      "day_raw_removal",
+      {"phase": PHASE_VERIFYING, "tar_path": "/daily/2020-01-01.tar"},
   )
 
 
