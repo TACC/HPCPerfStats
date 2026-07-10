@@ -1788,3 +1788,38 @@ def test_populate_completes_after_tar_append_merge(
   t_finish.join(timeout=3)
   assert result["exc"] is None
   assert result["members"] == {"host/a": 10}
+
+
+def test_populate_lock_held_stall_recoverable_within_max_seconds(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  """Alive lock owner + stale progress within max_seconds must not fatal."""
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser"
+      ".get_sync_archive_members_redis_populate_stall_seconds",
+      lambda: 0.05,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser"
+      ".get_sync_archive_members_redis_populate_max_seconds",
+      lambda: 5,
+  )
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  _redis_test_env.set(keys.lock_key, "tok:%d" % os.getpid(), ex=30)
+  _redis_test_env.set(keys.complete_key, "0")
+  # Stale progress timestamp
+  _redis_test_env.set(keys.progress_key, str(time.time() - 10), ex=30)
+
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      _check_populate_wait_limits,
+  )
+
+  started = time.monotonic()
+  # First check after stall window: owner alive → keep waiting (False).
+  time.sleep(0.06)
+  assert _check_populate_wait_limits(
+      _redis_test_env,
+      keys,
+      started_monotonic=started,
+      last_progress_monotonic=started - 10,
+  ) is False

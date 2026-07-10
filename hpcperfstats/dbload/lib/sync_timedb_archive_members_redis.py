@@ -405,8 +405,15 @@ def _maybe_populate_heartbeat(
   now = time.monotonic()
   if now - last_heartbeat_monotonic < _populate_heartbeat_seconds():
     return last_heartbeat_monotonic
-  _touch_populate_progress(client, keys)
-  _renew_populate_lock(client, keys)
+  try:
+    _touch_populate_progress(client, keys)
+    _renew_populate_lock(client, keys)
+  except Exception as exc:
+    log_print(
+        "WARNING: archive members populate heartbeat failed: %s" % exc,
+        flush=True,
+    )
+    return last_heartbeat_monotonic
   return now
 
 
@@ -417,8 +424,14 @@ def _start_populate_heartbeat(client, keys: ArchiveMembersRedisKeys):
     while not stop.wait(_populate_heartbeat_seconds()):
       if stop.is_set():
         return
-      _touch_populate_progress(client, keys)
-      _renew_populate_lock(client, keys)
+      try:
+        _touch_populate_progress(client, keys)
+        _renew_populate_lock(client, keys)
+      except Exception as exc:
+        log_print(
+            "WARNING: archive members populate heartbeat failed: %s" % exc,
+            flush=True,
+        )
 
   thread = threading.Thread(target=_loop, daemon=True)
   thread.start()
@@ -811,6 +824,18 @@ def _check_populate_wait_limits(
     if (time.monotonic() - last_progress_monotonic) >= float(
         _populate_stall_seconds(),
     ):
+      # Owner still alive within populate_max_seconds: keep waiting (heartbeat
+      # may have failed briefly). Fatal only after max_seconds or dead owner.
+      owner_pid = _parse_populate_lock_owner_pid(client.get(keys.lock_key))
+      owner_alive = (
+          owner_pid is not None and _process_is_alive(owner_pid)
+      )
+      if (
+          owner_alive
+          and max_seconds > 0
+          and (time.monotonic() - started_monotonic) < max_seconds
+      ):
+        return False
       raise ArchiveMembersPopulateStalledError(
           "Archive members populate stalled (no progress for %ss): %s"
           % (_populate_stall_seconds(), keys.hash_key),
@@ -1861,6 +1886,38 @@ def archive_members_populate_queue_brpop(*, timeout_s=1.0):
   return job
 
 
+def _enqueue_or_run_archive_members_populate(canonical, day_token):
+  """Enqueue populate-pool work, or run inline only when not ingest/archive pool.
+
+  Ingest-pool and archive-pool must never fall through to
+  ``execute_archive_members_populate_for_canonical`` (sealed stream under
+  SIGALRM). When the populate-pool controller is down, raise so waiters can
+  recover within ``populate_max_seconds`` instead of streaming locally.
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      execute_archive_members_populate_for_canonical,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+      get_worker_pool_kind,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_populate_pool import (
+      get_populate_pool_controller,
+  )
+
+  controller = get_populate_pool_controller()
+  if controller is not None and controller.is_running():
+    enqueue_archive_members_populate(canonical, day_token)
+    return
+  kind = get_worker_pool_kind()
+  if kind in ("ingest-pool", "archive-pool"):
+    raise ArchiveMembersRedisUnavailableError(
+        "populate-pool unavailable; refusing sealed stream on %s for %s"
+        % (kind, canonical),
+    )
+  # MainThread / unset pool kind (unit tests): inline populate allowed.
+  execute_archive_members_populate_for_canonical(canonical)
+
+
 def request_archive_members_populate_and_wait(
     archive_compressed_path,
 ):
@@ -1875,11 +1932,7 @@ def request_archive_members_populate_and_wait(
       _resolve_sealed_daily_archive_path,
       _store_daily_archive_members_cache,
       daily_archive_populate_source_exists,
-      execute_archive_members_populate_for_canonical,
       normalize_daily_compressed_path,
-  )
-  from hpcperfstats.dbload.lib.sync_timedb_populate_pool import (
-      get_populate_pool_controller,
   )
 
   canonical = normalize_daily_compressed_path(archive_compressed_path)
@@ -1926,11 +1979,7 @@ def request_archive_members_populate_and_wait(
         return {}
       # Recoverable: clear degraded and wait with re-enqueue (identity may have drifted).
       clear_stale_incomplete_archive_members_redis(keys, client=client)
-      controller = get_populate_pool_controller()
-      if controller is not None and controller.is_running():
-        enqueue_archive_members_populate(canonical, keys.day_token)
-      else:
-        execute_archive_members_populate_for_canonical(canonical)
+      _enqueue_or_run_archive_members_populate(canonical, keys.day_token)
       members = wait_for_complete_members(
           keys,
           sealed_path=sealed_path,
@@ -1938,11 +1987,7 @@ def request_archive_members_populate_and_wait(
           canonical=canonical,
       )
     else:
-      controller = get_populate_pool_controller()
-      if controller is not None and controller.is_running():
-        enqueue_archive_members_populate(canonical, keys.day_token)
-      else:
-        execute_archive_members_populate_for_canonical(canonical)
+      _enqueue_or_run_archive_members_populate(canonical, keys.day_token)
       members = wait_for_complete_members(
           keys,
           sealed_path=sealed_path,

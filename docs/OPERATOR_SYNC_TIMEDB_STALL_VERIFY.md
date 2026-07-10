@@ -317,6 +317,27 @@ grep 'janitor: tick budget_exit debt_remaining=' /tmp/pipeline-full.log | tail -
 - Discover log distinguishes **`discover_cap=`** (live workers + manifest worker slots) from **`worker_occupancy=`** (legacy, includes debt heap) and **`debt_heap=`**.
 - When some **`day-close-N`** workers are busy and others idle, **`reason=tick_slot_free`** discover may appear with **`free_slots=`**; **`Archive janitor tick done`** shows **`days_started>0`** without long silence while **`ready_for_enqueue`** days remain.
 - After budget break with remaining debt: **`janitor: tick budget_exit debt_remaining=N scheduling_followup=yes`** followed by another janitor tick (not multi-hour idle pool threads).
+- **Non-blocking budget_exit (2026-07):** after **`budget_exit`**, expect **`janitor: tick budget_exit leave_in_flight=N`** (or **`leave_in_flight=`**) and **`Archive janitor tick done … duration_s=`** in **seconds/minutes**, not multi-hour **`duration_s≈9217`** with **`days_completed=0`** while workers still run. Follow-up ticks must reap/fill siblings without waiting for the first day-close to finish.
+- **Candidate counters:** `on_disk=` is **total** aligned closed-raw on disk; `unprocessed=` + `processed_but_on_disk=` partition it (`on_disk = unprocessed + processed_but_on_disk`). Do not treat equal three-way counters as proof of progress when leftover raw remains.
+
+### T0 / T1 verify — ingest-pool sealed stream + populate stall (2026-07)
+
+**Failure signature (pre-fix / contract violation):**
+
+```bash
+grep -E 'ingest-pool\].*sealed archive member stream|Archive members populate stalled|archive members populate stalled|budget_exit|leave_in_flight|duration_s=' /tmp/pipeline-full.log | tail -80
+```
+
+- **`[sync_timedb:worker:ingest-pool] … sealed archive member stream failed`** (often `ingest per-file timeout … elapsed_s=…`) → ingest illegally streamed sealed `.tar.zst` under SIGALRM.
+- Then **`Archive members populate stalled (no progress for 120s)`** → supervisor **`exit status 1`** while Redis is still reachable.
+- Orthogonal: **`janitor: tick budget_exit`** then **`Archive janitor tick done … duration_s=9xxx`** with **`days_completed=0`** → coordinator drain-wait bug (fixed by non-blocking leave_in_flight).
+
+**Pass (T0/T1 post-fix):**
+
+- **Zero** `ingest-pool].*sealed archive member stream` lines.
+- Populate stall within `populate_max_seconds` with alive lock owner recovers (re-enqueue / keep waiting) — not immediate exit 1 on first 120s heartbeat gap.
+- Stall defer prefers **`redis_populate_active`** over **`idle_pool_ghost_inflight`** while Redis populate lock is held.
+- Day-close: **`leave_in_flight`** after **`budget_exit`**; tick **`duration_s`** stays near budget (not multi-hour).
 
 **Root-cause decision tree (idle `day-close-N` threads):**
 

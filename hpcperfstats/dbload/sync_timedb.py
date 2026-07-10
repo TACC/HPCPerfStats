@@ -1055,13 +1055,8 @@ def _ingest_stall_defer_state(
   if active_pool is None and stall_diagnostics is not None:
     active_pool = getattr(stall_diagnostics, "active_pool", None)
   sample_list = list(sample or ())
-  if (
-      active_pool is not None
-      and sample_list
-      and pool_workers_all_idle(active_pool)
-      and not worker_registry_shows_recent_progress(registry, pool=active_pool)
-  ):
-    return False, "idle_pool_ghost_inflight"
+  # Check redis populate / long-budget defer BEFORE idle-ghost: workers blocked
+  # in hrtimer_nanosleep during Redis populate wait look idle to ps/wchan.
   defer_on, defer_reason = _ingest_stall_defer_long_budget(
       stall_diagnostics,
       consecutive_timeouts,
@@ -1076,22 +1071,30 @@ def _ingest_stall_defer_state(
   if pipeline == "sealed_archive_backfill" or _sample_looks_like_sealed_archives(sample):
     if worker_registry_shows_recent_progress(registry, pool=active_pool):
       return True, "worker_progress_active"
-  if not day_hint:
+  day_hint_resolved = day_hint
+  if not day_hint_resolved:
     if callable(day_hint_from_sample_fn) and sample:
-      day_hint = day_hint_from_sample_fn(sample)
+      day_hint_resolved = day_hint_from_sample_fn(sample)
     elif sample:
-      day_hint = _calendar_day_hint_from_sealed_paths(sample)
-  if not day_hint:
-    return False, "no_day_hint"
-  if archive_members_populate_shows_progress_for_day(
-      day_hint,
+      day_hint_resolved = _calendar_day_hint_from_sealed_paths(sample)
+  if day_hint_resolved and archive_members_populate_shows_progress_for_day(
+      day_hint_resolved,
       tgz_archive_dir,
       progress_state=progress_state,
   ):
     return True, "redis_populate_active"
+  if (
+      active_pool is not None
+      and sample_list
+      and pool_workers_all_idle(active_pool)
+      and not worker_registry_shows_recent_progress(registry, pool=active_pool)
+  ):
+    return False, "idle_pool_ghost_inflight"
+  if not day_hint_resolved:
+    return False, "no_day_hint"
   if archive_members_redis_enabled():
     try:
-      day_date = date_cls.fromisoformat(day_hint)
+      day_date = date_cls.fromisoformat(day_hint_resolved)
       compressed = daily_compressed_path_for_date(tgz_archive_dir, day_date)
       from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
           _daily_archive_members_cache_key,

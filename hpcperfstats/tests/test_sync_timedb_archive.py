@@ -8691,3 +8691,107 @@ def test_populate_uses_tar_for_active_ingest_day(
   assert tar_calls["n"] == 1
   assert sealed_calls["n"] == 0
   assert members.get("host/member") == inner.stat().st_size
+
+
+def test_classify_on_disk_equals_unprocessed_plus_processed(tmp_path, monkeypatch):
+  """Three-counter invariant: on_disk == unprocessed + processed_but_on_disk."""
+  import hpcperfstats.dbload.lib.conf_parser as cfg_mod
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      classify_day_close_candidates,
+      log_day_close_candidate_report,
+  )
+
+  monkeypatch.setattr(cfg_mod, "get_sync_day_close_candidate_report", lambda: True)
+  monkeypatch.setattr(
+      helpers,
+      "day_close_filesystem_complete",
+      lambda *_a, **_k: False,
+  )
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2026-05-28.tar"))
+  open(tar_path, "wb").close()
+  zst_path = os.path.normpath(str(daily_dir / "2026-05-28.tar.zst"))
+  open(zst_path, "wb").write(b"sealed")
+  d_may = datetime(2026, 5, 28, 12, tzinfo=timezone.utc)
+  unproc = tmp_path / str(int(d_may.timestamp()))
+  leftover = tmp_path / str(int(d_may.timestamp()) + 1)
+  unproc.write_text("u")
+  leftover.write_text("p")
+  remaining = {zst_path: [str(unproc), str(leftover)]}
+  unprocessed_by_tar = {tar_path: [str(unproc)]}
+  entries = classify_day_close_candidates(
+      tgz_archive_dir=str(daily_dir),
+      remaining_raw_by_gz=remaining,
+      unprocessed_by_tar=unprocessed_by_tar,
+      disqualification_reasons={},
+      local_tz=timezone.utc,
+  )
+  by_tar = {e["tar_path"]: e for e in entries}
+  entry = by_tar[tar_path]
+  assert entry["unprocessed"] == 1
+  assert entry["processed_but_on_disk"] == 1
+  assert entry["on_disk"] == entry["unprocessed"] + entry["processed_but_on_disk"]
+  logs = []
+  log_day_close_candidate_report(
+      [entry],
+      reason="test",
+      log_fn=lambda msg, flush=False: logs.append(msg),
+  )
+  assert any("on_disk=2" in line for line in logs)
+  assert any("unprocessed=1" in line for line in logs)
+  assert any("processed_but_on_disk=1" in line for line in logs)
+
+
+def test_ingest_worker_never_streams_sealed_when_populate_pool_down(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  """Ingest-pool must not fall through to execute/stream when populate-pool is down."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      ArchiveMembersRedisUnavailableError,
+      request_archive_members_populate_and_wait,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+      reset_worker_pool_kind,
+      set_worker_pool_kind,
+  )
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import FakeRedis
+
+  day_gz = tmp_path / "2024-06-13.tar.gz"
+  inner = tmp_path / "raw.txt"
+  inner.write_text("data")
+  with tarfile.open(day_gz, "w:gz") as tf:
+    tf.add(str(inner), arcname="host/raw")
+  fake = FakeRedis()
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: fake,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
+      lambda: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_populate_pool.get_populate_pool_controller",
+      lambda: None,
+  )
+  stream_calls = {"n": 0}
+  original_stream = helpers._stream_compressed_archive_members
+
+  def _counting_stream(*args, **kwargs):
+    stream_calls["n"] += 1
+    return original_stream(*args, **kwargs)
+
+  monkeypatch.setattr(helpers, "_stream_compressed_archive_members", _counting_stream)
+  token = set_worker_pool_kind("ingest-pool")
+  try:
+    with pytest.raises(ArchiveMembersRedisUnavailableError, match="refusing sealed stream"):
+      request_archive_members_populate_and_wait(str(day_gz))
+    with pytest.raises(ArchiveMembersRedisUnavailableError, match="forbidden on ingest-pool"):
+      helpers.execute_archive_members_populate_for_canonical(str(day_gz))
+  finally:
+    reset_worker_pool_kind(token)
+  assert stream_calls["n"] == 0

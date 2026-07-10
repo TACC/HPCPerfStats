@@ -3337,3 +3337,96 @@ def test_janitor_tick_wait_heartbeat(monkeypatch, tmp_path):
   mono["t"] += 201.0
   janitor._log_tick_waiting_heartbeat(in_flight, heartbeat)
   assert len([line for line in log_lines if "janitor: tick waiting" in line]) == 2
+
+
+def test_janitor_budget_exit_nonblocking_leaves_in_flight(monkeypatch, tmp_path):
+  """budget_exit must return without drain-waiting day-close futures."""
+  import time as time_mod
+  from concurrent.futures import Future
+
+  janitor = _make_janitor(tgz_archive_dir=str(tmp_path))
+  janitor._allow_tick_chaining = True
+  tar_a = os.path.normpath(str(tmp_path / "2020-01-01.tar"))
+  tar_b = os.path.normpath(str(tmp_path / "2020-01-02.tar"))
+  janitor._enqueue_debt(DebtKind.DAY_CLOSE, tar_a, persist=False)
+  janitor._enqueue_debt(DebtKind.DAY_CLOSE, tar_b, persist=False)
+  log_lines = []
+  janitor.log_fn = lambda msg, flush=False: log_lines.append(msg)
+  signals = []
+  started = {"n": 0}
+
+  def fake_submit(self, debt, **kwargs):
+    started["n"] += 1
+    fut = Future()
+    # Never set_result — simulates long-running day-close worker.
+    with self._day_close_in_flight_lock:
+      self._day_close_in_flight[fut] = debt
+    return fut
+
+  def fake_wait(fs, timeout=None, return_when=None):
+    # Always time out so the budget loop hits budget_exit without completing.
+    return set(), set(fs)
+
+  def fake_time():
+    # Expire budget once at least one worker was submitted.
+    if started["n"] >= 1:
+      return 200.0
+    return 100.0
+
+  monkeypatch.setattr(janitor_mod.time, "time", fake_time)
+  monkeypatch.setattr(janitor_mod, "wait", fake_wait)
+  monkeypatch.setattr(janitor_mod, "close_old_connections", lambda: None)
+  monkeypatch.setattr(janitor_mod, "cleanup_stale_fnctl_lock_sidecars", lambda *_a, **_k: 0)
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor, "_run_tick_lock_cleanup", lambda self: 0,
+  )
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor,
+      "_discover_and_enqueue_ready_day_close",
+      lambda self, **kwargs: set(),
+  )
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor, "_submit_day_close_debt", fake_submit,
+  )
+  monkeypatch.setattr(janitor_mod.cfg, "get_archive_janitor_budget_seconds", lambda: 50.0)
+  monkeypatch.setattr(janitor_mod.cfg, "get_sync_day_close_max_inflight", lambda: 2)
+  monkeypatch.setattr(janitor, "get_startup_ingest_gate_cleared", lambda: True)
+  monkeypatch.setattr(
+      janitor, "signal_work_available", lambda: signals.append(1),
+  )
+
+  t0 = time_mod.monotonic()
+  janitor._run_tick_body()
+  elapsed = time_mod.monotonic() - t0
+  assert elapsed < 2.0, "tick must not drain-wait slow day-close workers"
+  assert any("budget_exit" in line for line in log_lines)
+  assert any("leave_in_flight" in line for line in log_lines)
+  with janitor._day_close_in_flight_lock:
+    assert len(janitor._day_close_in_flight) >= 1
+  assert signals, "follow-up must be scheduled while in-flight remain"
+
+
+def test_janitor_reconcile_before_discover_order(monkeypatch, tmp_path):
+  """Ghost manifest reconcile must run before tick discover."""
+  order = []
+  janitor = _make_janitor(tgz_archive_dir=str(tmp_path))
+  coord = MagicMock()
+  coord.recover_stale_manifest_entries = lambda: order.append("recover")
+  coord.reconcile_manifest_with_debt_heap = lambda **_k: order.append("reconcile")
+  janitor.day_close_manifest_coordinator = coord
+
+  monkeypatch.setattr(janitor_mod, "close_old_connections", lambda: None)
+  monkeypatch.setattr(janitor_mod, "cleanup_stale_fnctl_lock_sidecars", lambda *_a, **_k: 0)
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor, "_run_tick_lock_cleanup", lambda self: 0,
+  )
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor,
+      "_discover_and_enqueue_ready_day_close",
+      lambda self, **kwargs: order.append("discover:%s" % kwargs.get("reason")),
+  )
+  monkeypatch.setattr(janitor, "get_startup_ingest_gate_cleared", lambda: True)
+  monkeypatch.setattr(janitor_mod.cfg, "get_archive_janitor_budget_seconds", lambda: 30.0)
+  janitor._run_tick_body()
+  assert order.index("reconcile") < order.index("discover:tick")
+  assert order.index("recover") < order.index("discover:tick")

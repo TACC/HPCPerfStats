@@ -424,3 +424,30 @@ def test_reap_supervisor_pool_children_throttled(monkeypatch):
       object(), object(), None, context="unit",
   ) is True
   assert len(reap_calls) == 2
+
+
+def test_ingest_stall_defer_redis_populate_before_idle_ghost(monkeypatch):
+  """redis_populate_active must win over idle_pool_ghost during Redis wait."""
+  monkeypatch.setattr(st, "pool_workers_all_idle", lambda _pool: True)
+  monkeypatch.setattr(
+      st, "worker_registry_shows_recent_progress", lambda *_a, **_k: False,
+  )
+  monkeypatch.setattr(
+      st,
+      "archive_members_populate_shows_progress_for_day",
+      lambda *_a, **_k: True,
+  )
+  monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
+  diag = st.IngestStallDiagnostics()
+  diag.worker_registry = {}
+  diag.current_imap_batch_max_timeout_s = 900.0
+  defer_on, reason = st._ingest_stall_defer_state(
+      "2026-06-05",
+      {},
+      stall_diagnostics=diag,
+      consecutive_timeouts=50,
+      pool=object(),
+      sample=["/data/host.example/1700000000"],
+  )
+  assert defer_on is True
+  assert reason == "redis_populate_active"

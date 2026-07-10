@@ -477,11 +477,43 @@ def remaining_raw_on_disk_counts_for_tar(
   Paths keyed to this tar via first_ts but whose filename/mtime day differs are
   counted as cross-day (diagnostic only; they must not block this day).
   """
+  aligned_paths = remaining_raw_aligned_paths_for_tar(
+      remaining_raw_by_gz,
+      tar_norm,
+      tgz_archive_dir=tgz_archive_dir,
+  )
   tar_key = os.path.normpath(str(tar_norm or ""))
   if not tar_key or not tgz_archive_dir:
     return 0, 0
-  aligned_n = 0
   cross_day_n = 0
+  for gz_key, paths in (remaining_raw_by_gz or {}).items():
+    if not paths:
+      continue
+    if os.path.normpath(daily_tar_path_from_compressed(gz_key)) != tar_key:
+      continue
+    for path in paths:
+      if not path or not os.path.isfile(path):
+        continue
+      if not stats_path_aligned_to_daily_tar(
+          path,
+          tar_key,
+          tgz_archive_dir=tgz_archive_dir,
+      ):
+        cross_day_n += 1
+  return len(aligned_paths), cross_day_n
+
+
+def remaining_raw_aligned_paths_for_tar(
+    remaining_raw_by_gz,
+    tar_norm,
+    *,
+    tgz_archive_dir,
+):
+  """Aligned on-disk remaining-raw paths for ``tar_norm`` (census inventory)."""
+  tar_key = os.path.normpath(str(tar_norm or ""))
+  if not tar_key or not tgz_archive_dir:
+    return []
+  aligned = []
   for gz_key, paths in (remaining_raw_by_gz or {}).items():
     if not paths:
       continue
@@ -495,10 +527,8 @@ def remaining_raw_on_disk_counts_for_tar(
           tar_key,
           tgz_archive_dir=tgz_archive_dir,
       ):
-        aligned_n += 1
-      else:
-        cross_day_n += 1
-  return aligned_n, cross_day_n
+        aligned.append(path)
+  return aligned
 
 
 def daily_tar_path_for_stats_path(stats_path, tgz_archive_dir, first_ts=None):
@@ -690,19 +720,41 @@ def classify_day_close_candidates(
     reasons = set(disq.get(tar_norm, set()))
     unprocessed_list_count = len(unprocessed.get(tar_norm, ()))
     on_disk_all_n = count_unprocessed_paths_on_disk(unprocessed, tar_norm)
-    unprocessed_count = count_aligned_unprocessed_paths_on_disk(
+    unprocessed_paths = aligned_on_disk_unprocessed_paths_for_tar(
         unprocessed,
         tar_norm,
         tgz_archive_dir=tgz_archive_dir,
     )
+    unprocessed_count = len(unprocessed_paths)
     cross_day_n = max(0, on_disk_all_n - unprocessed_count)
-    processed_but_on_disk, processed_cross_day_n = (
-        remaining_raw_on_disk_counts_for_tar(
-            remaining_raw_by_gz,
-            tar_norm,
-            tgz_archive_dir=tgz_archive_dir,
-        )
+    unprocessed_norm = {
+        os.path.normpath(str(path)) for path in unprocessed_paths if path
+    }
+    # Checkpoint-complete leftover = aligned remaining_raw on disk that is not
+    # also in the unprocessed set (avoids double-counting when remaining_raw
+    # includes checkpoint-incomplete closed raw).
+    remaining_aligned_n, processed_cross_day_n = remaining_raw_on_disk_counts_for_tar(
+        remaining_raw_by_gz,
+        tar_norm,
+        tgz_archive_dir=tgz_archive_dir,
     )
+    remaining_aligned_paths = remaining_raw_aligned_paths_for_tar(
+        remaining_raw_by_gz,
+        tar_norm,
+        tgz_archive_dir=tgz_archive_dir,
+    )
+    processed_but_on_disk = len(
+        [
+            path
+            for path in remaining_aligned_paths
+            if os.path.normpath(str(path)) not in unprocessed_norm
+        ]
+    )
+    # Total aligned closed-raw on disk = unprocessed + checkpoint leftover.
+    on_disk_total = unprocessed_count + processed_but_on_disk
+    # Prefer remaining∪unprocessed when remaining missed some unprocessed paths
+    # already counted above; keep invariant on_disk == unprocessed + processed.
+    _ = remaining_aligned_n  # census diagnostic only; decision uses partition
     if unprocessed_count == 0:
       reasons.discard("checkpoint_incomplete")
     phase_name = _day_phase_name_from_hints(day_phases, tar_norm) or ""
@@ -717,6 +769,7 @@ def classify_day_close_candidates(
           "tar_path": tar_norm,
           "status": "skipped_no_work",
           "reasons": sorted(reasons),
+          "on_disk": on_disk_total,
           "unprocessed": unprocessed_count,
           "phase": phase_name,
           "mutable_tar": mutable_tar,
@@ -758,6 +811,7 @@ def classify_day_close_candidates(
         "tar_path": tar_norm,
         "status": status,
         "reasons": sorted(reasons),
+        "on_disk": on_disk_total,
         "unprocessed": unprocessed_count,
         "phase": phase_name,
         "mutable_tar": mutable_tar,
@@ -881,16 +935,21 @@ def log_day_close_candidate_report(
               age_text,
           )
     unprocessed_on_disk = int(entry.get("unprocessed") or 0)
+    on_disk_total = int(entry.get("on_disk") or 0)
+    if on_disk_total <= 0:
+      on_disk_total = unprocessed_on_disk + int(
+          entry.get("processed_but_on_disk") or 0,
+      )
     unprocessed_list = entry.get("unprocessed_list")
     cross_day_n = int(entry.get("unprocessed_cross_day_n") or 0)
-    ghost_suffix = ""
+    ghost_suffix = " on_disk=%d" % on_disk_total
     if unprocessed_list is not None:
       ghosts = max(0, int(unprocessed_list) - unprocessed_on_disk - cross_day_n)
-      ghost_suffix = " on_disk=%d ghosts=%d" % (unprocessed_on_disk, ghosts)
+      ghost_suffix += " ghosts=%d" % ghosts
       if ghosts > 0 and entry.get("status") == "waiting_on_ingest":
         log_fn(
             "WARN: day_close candidate tar=%s checkpoint_unprocessed_ghosts=%d "
-            "list=%d on_disk=%d"
+            "list=%d on_disk_unprocessed=%d"
             % (
                 entry.get("tar_path"),
                 ghosts,
@@ -4252,8 +4311,15 @@ def execute_archive_members_populate_for_canonical(canonical):
     raise ArchiveMembersRedisUnavailableError(
         "execute_archive_members_populate_for_canonical requires Redis L2",
     )
+  kind = get_worker_pool_kind()
+  if kind in ("ingest-pool", "archive-pool"):
+    raise ArchiveMembersRedisUnavailableError(
+        "execute_archive_members_populate_for_canonical forbidden on %s "
+        "(use request_archive_members_populate_and_wait)"
+        % kind,
+    )
   token = None
-  if get_worker_pool_kind() != "populate-pool":
+  if kind != "populate-pool":
     token = set_worker_pool_kind("populate-pool")
   try:
     cache_key = _daily_archive_members_cache_key(canonical)
