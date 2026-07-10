@@ -8219,6 +8219,137 @@ def test_classify_reports_aligned_unprocessed_and_cross_day_n(tmp_path):
   assert by_tar[tar_path]["unprocessed_cross_day_n"] == 1
 
 
+def test_cross_day_remaining_raw_does_not_block_filesystem_complete(tmp_path):
+  """Filename-day misbucket under May-28 must not keep fs_complete false."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      day_close_filesystem_complete,
+      filter_remaining_raw_aligned_to_tar,
+      remaining_raw_on_disk_counts_for_tar,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2026-05-28.tar"))
+  zst_path = os.path.normpath(str(daily_dir / "2026-05-28.tar.zst"))
+  open(zst_path, "wb").write(b"sealed")
+  d_may = datetime(2026, 5, 28, 12, tzinfo=timezone.utc)
+  d_july = datetime(2026, 7, 6, 12, tzinfo=timezone.utc)
+  aligned = tmp_path / str(int(d_may.timestamp()))
+  cross = tmp_path / str(int(d_july.timestamp()))
+  aligned.write_text("x")
+  cross.write_text("x")
+  remaining = {zst_path: [str(aligned), str(cross)]}
+  filtered = filter_remaining_raw_aligned_to_tar(
+      remaining,
+      tar_path,
+      tgz_archive_dir=str(daily_dir),
+  )
+  assert filtered[zst_path] == [str(aligned)]
+  aligned_n, cross_n = remaining_raw_on_disk_counts_for_tar(
+      remaining,
+      tar_path,
+      tgz_archive_dir=str(daily_dir),
+  )
+  assert aligned_n == 1
+  assert cross_n == 1
+  assert day_close_filesystem_complete(
+      tar_path,
+      remaining_raw_by_gz={zst_path: [str(cross)]},
+      use_blocking_remaining=False,
+      tgz_archive_dir=str(daily_dir),
+  ) is True
+  assert day_close_filesystem_complete(
+      tar_path,
+      remaining_raw_by_gz={zst_path: [str(aligned)]},
+      use_blocking_remaining=False,
+      tgz_archive_dir=str(daily_dir),
+  ) is False
+
+
+def test_classify_reports_processed_but_on_disk_and_cross_day(tmp_path, monkeypatch):
+  import hpcperfstats.dbload.lib.conf_parser as cfg_mod
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      classify_day_close_candidates,
+      log_day_close_candidate_report,
+  )
+
+  monkeypatch.setattr(cfg_mod, "get_sync_day_close_candidate_report", lambda: True)
+  # Avoid live archive-dir scan from blocking map during needs_work.
+  monkeypatch.setattr(
+      helpers,
+      "day_close_filesystem_complete",
+      lambda *_a, **_k: True,
+  )
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2026-05-28.tar"))
+  zst_path = os.path.normpath(str(daily_dir / "2026-05-28.tar.zst"))
+  open(zst_path, "wb").write(b"sealed")
+  d_may = datetime(2026, 5, 28, 12, tzinfo=timezone.utc)
+  d_july = datetime(2026, 7, 6, 12, tzinfo=timezone.utc)
+  aligned = tmp_path / str(int(d_may.timestamp()))
+  cross = tmp_path / str(int(d_july.timestamp()))
+  aligned.write_text("x")
+  cross.write_text("x")
+  remaining = {zst_path: [str(aligned), str(cross)]}
+  entries = classify_day_close_candidates(
+      tgz_archive_dir=str(daily_dir),
+      remaining_raw_by_gz=remaining,
+      unprocessed_by_tar={},
+      disqualification_reasons={},
+      local_tz=timezone.utc,
+  )
+  by_tar = {e["tar_path"]: e for e in entries}
+  assert by_tar[tar_path]["processed_but_on_disk"] == 1
+  assert by_tar[tar_path]["processed_cross_day_n"] == 1
+  logs = []
+  log_day_close_candidate_report(
+      [
+          {
+              **by_tar[tar_path],
+              "status": "ready_for_enqueue",
+              "reasons": ["awaiting_janitor_discover"],
+          }
+      ],
+      reason="test",
+      log_fn=lambda msg, flush=False: logs.append(msg),
+  )
+  assert any("processed_but_on_disk=1" in line for line in logs)
+  assert any("processed_cross_day_n=1" in line for line in logs)
+
+
+def test_blocking_tar_drop_excludes_cross_day_filename(tmp_path, monkeypatch):
+  from hpcperfstats.dbload.lib import sync_timedb_day_raw_removal as drm
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2026-05-28.tar"))
+  zst_path = os.path.normpath(str(daily_dir / "2026-05-28.tar.zst"))
+  open(zst_path, "wb").write(b"sealed")
+  d_may = datetime(2026, 5, 28, 12, tzinfo=timezone.utc)
+  d_july = datetime(2026, 7, 6, 12, tzinfo=timezone.utc)
+  aligned = tmp_path / str(int(d_may.timestamp()))
+  cross = tmp_path / str(int(d_july.timestamp()))
+  aligned.write_text("x")
+  cross.write_text("x")
+  monkeypatch.setattr(
+      drm,
+      "build_remaining_raw_for_daily_tar",
+      lambda *_a, **_k: {zst_path: [str(aligned), str(cross)]},
+  )
+  blocking = drm.remaining_raw_by_gz_blocking_tar_drop(
+      tar_path=tar_path,
+      archive_data_dir=str(tmp_path),
+      host_name_ext="example.edu",
+      tgz_archive_dir=str(daily_dir),
+      get_quarantine_skip_paths=lambda: set(),
+  )
+  paths = [p for ps in blocking.values() for p in ps]
+  assert str(aligned) in paths
+  assert str(cross) not in paths
+
+
 def test_cap_merges_all_unprocessed_days_into_pending(tmp_path):
   """Cap input missing May-30 paths but unprocessed map has them → head includes May-30."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (

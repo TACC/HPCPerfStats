@@ -661,10 +661,47 @@ def _prewarm_archive_members_redis_for_days(
       if delay:
         time.sleep(delay)
       try:
-        request_archive_members_populate_and_wait(
+        members = request_archive_members_populate_and_wait(
             canonical,
         )
-        source = consume_archive_members_populate_source(canonical) or "redis_warm"
+        source = consume_archive_members_populate_source(canonical)
+        if not redis_members_cache_is_fully_warm(keys):
+          client = None
+          try:
+            from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+                get_archive_day_ingest_skip,
+                get_archive_members_redis_client,
+            )
+            client = get_archive_members_redis_client(required=False)
+          except Exception:
+            client = None
+            get_archive_day_ingest_skip = None  # type: ignore[assignment]
+          if (
+              get_archive_day_ingest_skip is not None
+              and get_archive_day_ingest_skip(keys, client=client) is not None
+          ):
+            summary_parts.append("%s:day_ingest_skip" % day_token)
+            last_transient_exc = None
+            break
+          complete = (
+              client.get(keys.complete_key) == "1" if client is not None else False
+          )
+          if complete and not (members or {}):
+            source = source or "empty_archive"
+          else:
+            maybe_clear_orphan_incomplete_archive_members_redis(keys)
+            raise ArchiveMembersRedisUnavailableError(
+                "archive members Redis empty after prewarm for day=%s "
+                "canonical=%s source=%s members_n=%d"
+                % (
+                    day_token,
+                    canonical,
+                    source or "none",
+                    len(members or {}),
+                ),
+            )
+        if not source:
+          source = "redis_warm"
         if prewarm_recovered:
           summary_parts.append(
               "%s:populate_recovering:%s" % (day_token, source),
@@ -5483,6 +5520,15 @@ def run_sync_timedb_supervisor_loop(
     k = 0
     active_workers = 0
     imap_context = "sync_timedb %s" % context_label
+    log_print(
+        "sync_timedb: chunk imap start paths=%d prewarm=%s context=%s"
+        % (
+            len(paths or ()),
+            stall_diagnostics.chunk_prewarm_summary or "-",
+            context_label,
+        ),
+        flush=True,
+    )
 
     if _sync_timedb_ingest_inline_requested() or ingest_pool is None:
       try:

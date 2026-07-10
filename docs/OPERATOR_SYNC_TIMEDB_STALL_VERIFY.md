@@ -240,15 +240,23 @@ grep 'pending reconcile cap' /tmp/pipeline-full.log | tail -20
 
 **Pass (T1):** After May-22 head day clears, no **`oldest_day_chunk_gate_fallback`** whose **`calendar_days`** are **months ahead** of **`oldest_tar`** while **`pending_n`** remains large; **`oldest_day_chunk_gate_cross_day_defer`** may appear (expected — resumes global pending head). **`chunk dispatch begin`** `epochs` trend oldest-first at chunk boundaries. **`pending reconcile cap`** retains oldest global head (no 987→424 style collapse when only a few checkpoint-blocked paths remain for advanced `oldest_tar`).
 
-**Pass (T1 — aligned backlog / day-close skip fix, 2026-07):** `oldest_tar` must be a day with **tar-aligned** on-disk unprocessed (filename/mtime calendar day matches the tar), not a day whose only remaining map entries are cross-day misbuckets (e.g. May-27 `oldest_tar` with `calendar_days={'2026-07-03': 1}` only). Day-close candidate lines: `unprocessed=` is **aligned** count; optional `unprocessed_cross_day_n=` for misbucketed paths that do **not** block that day. **`chunk dispatch begin`** must not sit on a later month (e.g. June-07) while earlier days still report **aligned** `unprocessed>0`. Cap may log **`pending cap supplement replace`** when a full queue is rebuilt from older snapshot/unprocessed paths; **`pending cap supplement skipped reason=no_closed_paths`** is OK after accrual trim when Phase-B all-unprocessed merge already filled the head.
+**Pass (T1 — aligned backlog / day-close skip fix, 2026-07):** `oldest_tar` must be a day with **tar-aligned** on-disk unprocessed (filename/mtime calendar day matches the tar), not a day whose only remaining map entries are cross-day misbuckets (e.g. May-27 `oldest_tar` with `calendar_days={'2026-07-03': 1}` only). Day-close candidate lines: `unprocessed=` is **aligned** count; optional `unprocessed_cross_day_n=` for misbucketed paths that do **not** block that day. **`processed_but_on_disk=`** is aligned leftover closed raw; optional **`processed_cross_day_n=`** for first_ts misbuckets that must **not** reopen that calendar day. **`chunk dispatch begin`** / **`chunk imap start`** must not sit on a later month (e.g. June-07) while earlier days still report **aligned** `unprocessed>0`. Cap may log **`pending cap supplement replace`** when a full queue is rebuilt from older snapshot/unprocessed paths; **`pending cap supplement skipped reason=no_closed_paths`** is OK after accrual trim when Phase-B all-unprocessed merge already filled the head.
 
 ```bash
 # Aligned gate: oldest_tar should not be pinned by cross-day-only misbuckets.
 grep -E 'oldest_day_chunk_gate |pending reconcile cap done|pending cap supplement' /tmp/pipeline-full.log | tail -40
 
 # Day-close report: unprocessed= is aligned; cross_day_n is diagnostic only.
-grep 'janitor: day_close candidate' /tmp/pipeline-full.log | grep -E 'waiting_on_ingest|unprocessed_cross_day' | head -40
+grep 'janitor: day_close candidate' /tmp/pipeline-full.log | grep -E 'waiting_on_ingest|unprocessed_cross_day|processed_but_on_disk|processed_cross_day' | head -40
 ```
+
+**Pass (T1 — cross-day remaining_raw blocking, 2026-07):** Sealed-only past days must **not** re-enter day-close / `missing_tar` restore solely because a path keyed under that tar has a **different filename epoch calendar day** (e.g. May-28 blocked by July-6 epoch `…/1783338980`). After fix: `day_close_filesystem_complete` / `needs_work` ignore those misbuckets; candidate lines may still show `processed_cross_day_n>0` without `ready_for_enqueue` for that wrong day. Grep:
+
+```bash
+grep -E 'discover_ready|missing_tar|processed_cross_day_n|processed_but_on_disk|filesystem_complete' /tmp/pipeline-full.log | tail -60
+```
+
+**Pass (T1 — empty Redis after prewarm):** After `chunk prewarm complete` with a day token other than `no_daily_archive` / `day_ingest_skip`, Redis must be warm (`dbsize` / `archive_members*` keys) and **`chunk imap start`** must appear. **Failure signature (pre-fix):** `…:prewarmed` (or similar) with `dbsize=0` and no `chunk_elapsed` / no `chunk imap start`. **Post-fix:** supervisor **exits** with `archive members Redis empty after prewarm` rather than hanging.
 
 **Compare dispatch vs completion:**
 

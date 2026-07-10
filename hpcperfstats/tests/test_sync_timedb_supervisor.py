@@ -181,10 +181,14 @@ def _host_data_filter_qs(*, exists_result=True, iterator_values=None):
 def _patch_prewarm_populate(monkeypatch, calls=None):
     import hpcperfstats.dbload.lib.sync_timedb_archive_members_redis as redis_mod
 
+    warm_state = {"warm": False}
+
     def _populate(canonical, *, role="supervisor"):
         del role
         if calls is not None:
             calls.append(canonical)
+        warm_state["warm"] = True
+        return {"host/member": 1}
 
     monkeypatch.setattr(
         redis_mod,
@@ -195,6 +199,11 @@ def _patch_prewarm_populate(monkeypatch, calls=None):
         st,
         'consume_archive_members_populate_source',
         lambda _canonical: 'sealed_populated',
+    )
+    monkeypatch.setattr(
+        st,
+        'redis_members_cache_is_fully_warm',
+        lambda _keys: warm_state["warm"],
     )
 
 
@@ -1573,6 +1582,48 @@ def test_prewarm_skips_when_redis_fully_warm(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(st, 'get_existing_archive_members_for_daily_archive', lambda canonical: (_ for _ in ()).throw(AssertionError('should not populate')))
     st._prewarm_archive_members_redis_for_chunk(paths)
     assert ':redis_warm' in capsys.readouterr().out
+
+
+def test_prewarm_fails_loud_when_redis_empty_after_populate(monkeypatch, tmp_path):
+    """Claimed prewarm must not succeed while Redis L2 stays empty (operator hang)."""
+    import hpcperfstats.dbload.lib.sync_timedb_archive_members_redis as redis_mod
+
+    tgz_dir = tmp_path / 'daily'
+    tgz_dir.mkdir()
+    sealed = tgz_dir / '2026-06-02.tar.zst'
+    sealed.write_bytes(b'zst')
+    exits = []
+
+    def _populate(_canonical, *, role='supervisor'):
+        del role
+        return {}
+
+    monkeypatch.setattr(st, 'archive_members_redis_enabled', lambda: True)
+    monkeypatch.setattr(st, 'tgz_archive_dir', str(tgz_dir))
+    monkeypatch.setattr(st, 'redis_members_cache_is_fully_warm', lambda _keys: False)
+    monkeypatch.setattr(
+        redis_mod, 'request_archive_members_populate_and_wait', _populate,
+    )
+    monkeypatch.setattr(
+        st, 'consume_archive_members_populate_source', lambda _c: None,
+    )
+    monkeypatch.setattr(
+        redis_mod,
+        'get_archive_members_redis_client',
+        lambda required=False: None,
+    )
+    monkeypatch.setattr(
+        st,
+        '_exit_on_archive_members_redis_unavailable',
+        lambda exc: exits.append(str(exc)) or (_ for _ in ()).throw(SystemExit(1)),
+    )
+    with pytest.raises(SystemExit):
+        st._prewarm_archive_members_redis_for_days(
+            [(str(sealed), '2026-06-02')],
+        )
+    assert exits
+    assert 'empty after prewarm' in exits[0]
+
 
 def test_invalidation_hook_can_trigger_reprewarm(monkeypatch, tmp_path):
     prewarm_days = []

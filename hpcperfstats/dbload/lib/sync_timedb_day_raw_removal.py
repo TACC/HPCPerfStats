@@ -17,10 +17,12 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     classify_removable_raw_paths_for_daily_gz,
     classify_removable_raw_paths_for_open_tar,
     ensure_daily_tar_restored_for_append,
+    filter_remaining_raw_aligned_to_tar,
     quarantine_dir_for_archive,
     remaining_raw_by_gz_has_paths_on_disk,
     remove_verified_uncompressed_daily_tars,
     stats_file_is_active_segment,
+    stats_path_aligned_to_daily_tar,
     validate_open_tar_for_raw_removal,
     validate_post_seal_tar_zst_parity,
 )
@@ -303,7 +305,11 @@ class _DayRawRemovalState:
         blockers.append(path)
       if blockers:
         filtered[gz_path] = blockers
-    return filtered
+    return filter_remaining_raw_aligned_to_tar(
+        filtered,
+        self.tar_path,
+        tgz_archive_dir=self.tgz_archive_dir,
+    )
 
   def _remaining_raw_paths_blocking_tar_drop(self) -> Dict[str, List[str]]:
     """Accrual map whose on-disk paths block ``.tar`` unlink (manifest/quarantine-aware)."""
@@ -548,6 +554,11 @@ class _DayRawRemovalState:
         for path, entry in self._manifest_entries_on_disk()
         if not self._entry_is_verified_ghost_on_disk(entry)
         and not self._entry_is_quarantine_terminal_skip(entry)
+        and stats_path_aligned_to_daily_tar(
+            path,
+            self.tar_path,
+            tgz_archive_dir=self.tgz_archive_dir,
+        )
     ]
 
   def _only_quarantine_terminal_on_disk(self) -> bool:

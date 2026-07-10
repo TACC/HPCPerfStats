@@ -419,6 +419,88 @@ def checkpoint_incomplete_paths_aligned_with_oldest_tar(
   return aligned
 
 
+def stats_path_aligned_to_daily_tar(stats_path, tar_norm, *, tgz_archive_dir):
+  """True when filename/mtime calendar day for ``stats_path`` maps to ``tar_norm``.
+
+  Intentionally omits first-timestamp overrides so first_ts misbuckets cannot
+  pin the wrong calendar day (same law as checkpoint unprocessed alignment).
+  """
+  tar_key = os.path.normpath(str(tar_norm or ""))
+  if not tar_key or not tgz_archive_dir or not stats_path:
+    return False
+  return tar_key in daily_tar_paths_for_stats_paths(
+      [stats_path],
+      tgz_archive_dir,
+  )
+
+
+def filter_remaining_raw_aligned_to_tar(
+    remaining_by_gz,
+    tar_norm,
+    *,
+    tgz_archive_dir,
+):
+  """Keep only remaining-raw paths whose filename/mtime day maps to ``tar_norm``.
+
+  Census maps may key paths under a tar via first_ts while the filename epoch
+  belongs to another calendar day. Those cross-day misbuckets must not block
+  FS-complete / needs_work / tar-drop for the wrong day.
+  """
+  tar_key = os.path.normpath(str(tar_norm or ""))
+  if not remaining_by_gz or not tar_key or not tgz_archive_dir:
+    return {}
+  filtered = {}
+  for gz_key, raw_list in remaining_by_gz.items():
+    blockers = [
+        path
+        for path in (raw_list or ())
+        if path
+        and stats_path_aligned_to_daily_tar(
+            path,
+            tar_key,
+            tgz_archive_dir=tgz_archive_dir,
+        )
+    ]
+    if blockers:
+      filtered[gz_key] = blockers
+  return filtered
+
+
+def remaining_raw_on_disk_counts_for_tar(
+    remaining_raw_by_gz,
+    tar_norm,
+    *,
+    tgz_archive_dir,
+):
+  """Return ``(aligned_on_disk_n, cross_day_on_disk_n)`` for census under ``tar``.
+
+  Paths keyed to this tar via first_ts but whose filename/mtime day differs are
+  counted as cross-day (diagnostic only; they must not block this day).
+  """
+  tar_key = os.path.normpath(str(tar_norm or ""))
+  if not tar_key or not tgz_archive_dir:
+    return 0, 0
+  aligned_n = 0
+  cross_day_n = 0
+  for gz_key, paths in (remaining_raw_by_gz or {}).items():
+    if not paths:
+      continue
+    if os.path.normpath(daily_tar_path_from_compressed(gz_key)) != tar_key:
+      continue
+    for path in paths:
+      if not path or not os.path.isfile(path):
+        continue
+      if stats_path_aligned_to_daily_tar(
+          path,
+          tar_key,
+          tgz_archive_dir=tgz_archive_dir,
+      ):
+        aligned_n += 1
+      else:
+        cross_day_n += 1
+  return aligned_n, cross_day_n
+
+
 def daily_tar_path_for_stats_path(stats_path, tgz_archive_dir, first_ts=None):
   """Normalized daily ``.tar`` path for a raw stats file."""
   file_date = _derive_stats_path_date(stats_path, first_ts)
@@ -614,6 +696,13 @@ def classify_day_close_candidates(
         tgz_archive_dir=tgz_archive_dir,
     )
     cross_day_n = max(0, on_disk_all_n - unprocessed_count)
+    processed_but_on_disk, processed_cross_day_n = (
+        remaining_raw_on_disk_counts_for_tar(
+            remaining_raw_by_gz,
+            tar_norm,
+            tgz_archive_dir=tgz_archive_dir,
+        )
+    )
     if unprocessed_count == 0:
       reasons.discard("checkpoint_incomplete")
     phase_name = _day_phase_name_from_hints(day_phases, tar_norm) or ""
@@ -631,9 +720,12 @@ def classify_day_close_candidates(
           "unprocessed": unprocessed_count,
           "phase": phase_name,
           "mutable_tar": mutable_tar,
+          "processed_but_on_disk": processed_but_on_disk,
       }
       if cross_day_n:
         entry["unprocessed_cross_day_n"] = cross_day_n
+      if processed_cross_day_n:
+        entry["processed_cross_day_n"] = processed_cross_day_n
       entries.append(entry)
       continue
     blocking = reasons & _DAY_CLOSE_DISQUALIFY_CODES
@@ -669,11 +761,14 @@ def classify_day_close_candidates(
         "unprocessed": unprocessed_count,
         "phase": phase_name,
         "mutable_tar": mutable_tar,
+        "processed_but_on_disk": processed_but_on_disk,
     }
     if unprocessed_list_count != unprocessed_count:
       entry["unprocessed_list"] = unprocessed_list_count
     if cross_day_n:
       entry["unprocessed_cross_day_n"] = cross_day_n
+    if processed_cross_day_n:
+      entry["processed_cross_day_n"] = processed_cross_day_n
     entries.append(entry)
   return entries
 
@@ -806,6 +901,11 @@ def log_day_close_candidate_report(
         )
     if cross_day_n:
       ghost_suffix += " unprocessed_cross_day_n=%d" % cross_day_n
+    processed_but_on_disk = int(entry.get("processed_but_on_disk") or 0)
+    processed_cross_day_n = int(entry.get("processed_cross_day_n") or 0)
+    leftover_suffix = " processed_but_on_disk=%d" % processed_but_on_disk
+    if processed_cross_day_n:
+      leftover_suffix += " processed_cross_day_n=%d" % processed_cross_day_n
     tar_key = os.path.normpath(str(entry.get("tar_path") or ""))
     slot = queue_slot.get(tar_key)
     queue_order_token = (
@@ -816,7 +916,7 @@ def log_day_close_candidate_report(
       mutable_tar = os.path.isfile(tar_key)
     log_fn(
         "janitor: day_close candidate tar=%s status=%s reasons=%s "
-        "unprocessed=%d phase=%s mutable_tar=%s %s%s%s"
+        "unprocessed=%d phase=%s mutable_tar=%s %s%s%s%s"
         % (
             entry.get("tar_path"),
             entry.get("status"),
@@ -826,6 +926,7 @@ def log_day_close_candidate_report(
             "yes" if mutable_tar else "no",
             queue_order_token,
             ghost_suffix,
+            leftover_suffix,
             async_suffix,
         ),
         flush=True,
@@ -1606,11 +1707,14 @@ def day_close_filesystem_complete(
     *,
     remaining_raw_by_gz=None,
     use_blocking_remaining=True,
+    tgz_archive_dir=None,
 ):
   """True when sealed-only day has no mutable ``.tar`` and no blocking remaining raw.
 
   When ``remaining_raw_by_gz`` is omitted and ``use_blocking_remaining`` is True,
-  builds the quarantine-aware blocking map for ``tar_path``.
+  builds the quarantine-aware blocking map for ``tar_path``. Explicit remaining
+  maps are filtered to filename/mtime-aligned paths only so first_ts misbuckets
+  cannot keep ``fs_complete`` false for the wrong calendar day.
   """
   tar_norm = os.path.normpath(str(tar_path or ""))
   if not tar_norm:
@@ -1626,6 +1730,13 @@ def day_close_filesystem_complete(
         remaining_raw_blocking_day_incomplete,
     )
     remaining = remaining_raw_blocking_day_incomplete(tar_norm)
+  elif remaining:
+    archive_dir = tgz_archive_dir or os.path.dirname(tar_norm)
+    remaining = filter_remaining_raw_aligned_to_tar(
+        remaining,
+        tar_norm,
+        tgz_archive_dir=archive_dir,
+    )
   if remaining_raw_by_gz_has_paths_on_disk(remaining, zst_path):
     return False
   return True
@@ -3888,8 +3999,12 @@ def get_existing_archive_members(tar_path):
 _POPULATE_SOURCE_BY_CANONICAL = {}
 
 
-def consume_archive_members_populate_source(canonical, default="prewarmed"):
-  """Pop last populate source token for prewarm summary (``tar_populated`` / ``sealed_populated``)."""
+def consume_archive_members_populate_source(canonical, default=None):
+  """Pop last populate source token for prewarm summary (``tar_populated`` / ``sealed_populated``).
+
+  Default is ``None`` so callers can distinguish a recorded populate from a silent
+  miss (do not invent ``prewarmed`` when Redis stayed empty).
+  """
   return _POPULATE_SOURCE_BY_CANONICAL.pop(
       normalize_daily_compressed_path(canonical),
       default,

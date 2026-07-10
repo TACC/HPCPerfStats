@@ -1899,7 +1899,10 @@ def request_archive_members_populate_and_wait(
   try:
     cached = _lookup_daily_archive_members_cache(canonical)
     if cached is not None:
-      return dict(cached)
+      # Empty L1 with Redis enabled is not proof of a warm day — fall through so
+      # supervisor prewarm cannot claim success while Redis stays empty.
+      if cached or not archive_members_redis_enabled():
+        return dict(cached)
     if not archive_members_redis_enabled():
       raise ArchiveMembersRedisUnavailableError(
           "request_archive_members_populate_and_wait requires Redis L2",
