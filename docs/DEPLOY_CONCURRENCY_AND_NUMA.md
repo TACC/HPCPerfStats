@@ -36,7 +36,7 @@ Daily monitor archives are sealed inside the **`pipeline`** container. On hosts 
 
 **Tuning:** If seals are too slow, raise **`sync_day_close_max_inflight`** (parallel day-close workers, default **4**) or **`archive_janitor_budget_seconds`** slightly (still bounded per tick). If web/API or Postgres latency spikes during maintenance, lower janitor budget first, then raise **`archive_zstd_nice`** or **`archive_zstd_ionice_level`**. Override env **`SYNC_ARCHIVE_SEAL_WORKERS`** mirrors validation fanout.
 
-**Page cache:** Large daily archives fill the Linux page cache during zstd I/O. With **`archive_zstd_drop_page_cache=yes`** (default), **`zstd_cli.py`** issues **`POSIX_FADV_SEQUENTIAL`** before reads and **`POSIX_FADV_DONTNEED`** after successful one-shot access. This is a hint only (not **`O_DIRECT`**); macOS dev hosts no-op. Decompress restore uses a single **`zstd -d -c | tar tf -`** preflight when possible so materialized **`.tar`** verify does not re-read the full file.
+**Page cache:** Large daily archives fill the Linux page cache during zstd I/O. With **`archive_zstd_drop_page_cache=yes`** (default), **`zstd_cli.py`** issues **`POSIX_FADV_SEQUENTIAL`** before reads and **`POSIX_FADV_DONTNEED`** after successful one-shot access. This is a hint only (not **`O_DIRECT`**); macOS dev hosts no-op. Decompress restore materializes to a temp ``.tar``, verifies with **`tar tf`** on that tmp, then replaces the canonical sibling (one zst pass; no pipe preflight on the restore path).
 
 ## Archive janitor (continuous ingest)
 

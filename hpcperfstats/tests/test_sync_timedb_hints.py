@@ -10,6 +10,18 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_maint import (
 )
 
 
+def test_prune_keeps_sealed_only_tar_dropped(tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import prune_day_phases_hints
+
+  tar_path = str(tmp_path / "2026-06-04.tar")
+  zst_path = str(tmp_path / "2026-06-04.tar.zst")
+  open(zst_path, "wb").close()
+  day_phases = {tar_path: "tar_dropped"}
+  pruned = prune_day_phases_hints(day_phases)
+  assert tar_path in pruned
+  assert pruned[tar_path] == "tar_dropped"
+
+
 def test_save_and_load_hints_v2_round_trip(tmp_path, monkeypatch):
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.sync_timedb_archive_maint.cfg.get_sync_archive_maint_hints",

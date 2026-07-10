@@ -18,6 +18,7 @@ from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
 )
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
+from hpcperfstats.dbload.lib.archive_compress import compressed_sibling_paths
 from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     build_archive_mapping,
     collect_stats_files_in_range,
@@ -169,7 +170,11 @@ def prune_validated_days_hints(validated_days: Dict[str, Any]) -> Dict[str, Any]
 
 
 def prune_day_phases_hints(day_phases: Dict[str, Any]) -> Dict[str, Any]:
-  """Drop day-phase entries when the daily ``.tar`` fingerprint changed."""
+  """Drop day-phase entries when the daily ``.tar`` fingerprint changed.
+
+  Sealed-only ``tar_dropped`` (or ``sealed``) phases with no sibling ``.tar``
+  are retained so persistence resets / prune do not rediscover finished days.
+  """
   pruned: Dict[str, Any] = {}
   for tar_path, value in (day_phases or {}).items():
     if isinstance(value, dict):
@@ -184,6 +189,11 @@ def prune_day_phases_hints(day_phases: Dict[str, Any]) -> Dict[str, Any]:
       continue
     tar_identity = _daily_tar_hint_identity(tar_path)
     if tar_identity is None:
+      phase_text = str(phase)
+      if phase_text in ("tar_dropped", "sealed"):
+        zst_path, gz_path = compressed_sibling_paths(str(tar_path))
+        if os.path.isfile(zst_path) or os.path.isfile(gz_path):
+          pruned[tar_path] = value
       continue
     if stored_mtime is not None:
       if (

@@ -342,12 +342,6 @@ def decompress_compressed_to_tar(
         caller=restore_caller,
     )
   try:
-    pipe_preflight_ok = zstd_compressed_archive_pipe_readable(
-        compressed_path,
-        thread_count,
-    )
-    if not pipe_preflight_ok:
-      return False
     tmp_path = "%s.decomp.tmp" % tar_path
     try:
       if os.path.exists(tmp_path):
@@ -357,6 +351,13 @@ def decompress_compressed_to_tar(
     try:
       _decompress_to_path(compressed_path, tmp_path, thread_count)
     except (OSError, subprocess.CalledProcessError, ValueError):
+      try:
+        if os.path.exists(tmp_path):
+          os.remove(tmp_path)
+      except OSError:
+        pass
+      return False
+    if not _verify_uncompressed_tar_readable(tmp_path):
       try:
         if os.path.exists(tmp_path):
           os.remove(tmp_path)

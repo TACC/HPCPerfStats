@@ -495,11 +495,11 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 **Ingest-wins janitor lock priority (T1):**
 
 ```bash
-docker compose logs pipeline --since 24h 2>&1 | grep -E 'day_close defer|day_close yield|yield signal|populate: wait daily_tar_restore|daily_tar_restore begin|daily_tar_restore end|defer_cap_exceeded' | tail -60
+docker compose logs pipeline --since 24h 2>&1 | grep -E 'day_close defer|day_close yield|yield signal|populate: wait daily_tar_restore|daily_tar_restore begin|daily_tar_restore end|archive decompress restore begin|filesystem_complete|tar drop deferred|defer_cap_exceeded' | tail -60
 ```
 
-**Healthy:** `janitor: day_close defer … reason=populate_active|ingest_tar_hot|daily_tar_restore|write_lock_contended`; `janitor: day_close yield … reason=chunk_prewarm|ingest_tar_hot` during dedupe/seal overlap; `populate: wait daily_tar_restore day=…` then successful populate; `archive: daily_tar_restore begin|end reason=missing_tar|corrupt_tar`.
+**Healthy:** `janitor: day_close defer … reason=populate_active|ingest_tar_hot|daily_tar_restore|write_lock_contended`; `janitor: day_close yield … reason=chunk_prewarm|ingest_tar_hot` during dedupe/seal overlap; `populate: wait daily_tar_restore day=…` then successful populate; `archive: daily_tar_restore begin|end reason=missing_tar|corrupt_tar`; gated prewarm shows **`archive decompress restore begin`** for the oldest incomplete day before long decompress; sealed-only finished days do **not** storm `discover_ready_*` / `zstd -t` after persistence reset; tar-drop after delete-path unlink completes without false **`waiting_on_ingest`** when `handoff_paths=0`.
 
-**Unhealthy:** populate waits full **`populate_max_seconds`** with **`daily_tar_restore`** stuck (no `daily_tar_restore end`); repeated fnctl timeout without preceding defer/yield/restore-wait logs; defer streak with no progress past **`defer_cap_exceeded`** without seal/dedupe completion.
+**Unhealthy:** populate waits full **`populate_max_seconds`** with **`daily_tar_restore`** stuck (no `daily_tar_restore end`); gated prewarm with **`gated_tar_restore=True`** and no **`archive decompress restore begin`** / no `zstd -d` for that day while MainThread is busy; repeated fnctl timeout without preceding defer/yield/restore-wait logs; defer streak with no progress past **`defer_cap_exceeded`** without seal/dedupe completion.
 
 **Why ingest/archive stay on spawn:** CPU/RSS isolation, `maxtasksperchild` recycle, L1 host cache, and pool stall diagnostics (`Pool imap stalled`, exit **124**). Janitor and startup coordinators use **session thread executors** by design (two-queue model).

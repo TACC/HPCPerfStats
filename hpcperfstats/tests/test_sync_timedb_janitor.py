@@ -384,14 +384,15 @@ def test_janitor_tar_drop_blocks_when_accrual_snapshot_none(monkeypatch, tmp_pat
   monkeypatch.setattr(janitor_mod.cfg, "get_archive_janitor_budget_seconds", lambda: 0.01)
   tar_path = str(tmp_path / "2026-01-01.tar")
   open(tar_path, "wb").close()
+  open(str(tmp_path / "2026-01-01.tar.zst"), "wb").close()
   raw_path = str(tmp_path / "raw.stats")
   open(raw_path, "wb").close()
   janitor = _make_janitor(tgz_archive_dir=str(tmp_path))
   janitor._accrual_snapshot = None
   janitor._enqueue_debt(DebtKind.TAR_DROP, tar_path, persist=False)
   monkeypatch.setattr(
-      janitor_mod,
-      "build_remaining_raw_for_daily_tar",
+      janitor,
+      "_blocking_remaining_raw_for_tar",
       lambda *_a, **_k: {str(tmp_path / "2026-01-01.tar.zst"): [raw_path]},
   )
   called = {"drop": False}
@@ -411,6 +412,7 @@ def test_janitor_tar_drop_blocks_when_raw_appears_after_accrual(monkeypatch, tmp
 
   tar_path = str(tmp_path / "2026-01-01.tar")
   open(tar_path, "wb").close()
+  open(str(tmp_path / "2026-01-01.tar.zst"), "wb").close()
   raw_path = str(tmp_path / "new-raw.stats")
   open(raw_path, "wb").close()
   janitor = _make_janitor(tgz_archive_dir=str(tmp_path))
@@ -422,8 +424,8 @@ def test_janitor_tar_drop_blocks_when_raw_appears_after_accrual(monkeypatch, tmp
   )
   janitor._enqueue_debt(DebtKind.TAR_DROP, tar_path, persist=False)
   monkeypatch.setattr(
-      janitor_mod,
-      "build_remaining_raw_for_daily_tar",
+      janitor,
+      "_blocking_remaining_raw_for_tar",
       lambda *_a, **_k: {str(tmp_path / "2026-01-01.tar.zst"): [raw_path]},
   )
   monkeypatch.setattr(janitor_mod, "remove_verified_uncompressed_daily_tars", lambda *a, **k: None)
@@ -1092,7 +1094,11 @@ def test_janitor_tar_drop_proceeds_after_unparsable_quarantine(
   )
   janitor._accrual_snapshot = None
   janitor._enqueue_debt(DebtKind.TAR_DROP, tar_path, persist=False)
-  monkeypatch.setattr(janitor_mod, "build_remaining_raw_for_daily_tar", lambda *_a, **_k: {})
+  monkeypatch.setattr(
+      janitor,
+      "_blocking_remaining_raw_for_tar",
+      lambda *_a, **_k: {},
+  )
   called = {"drop": False}
   tar_norm = os.path.normpath(tar_path)
 
@@ -1107,7 +1113,9 @@ def test_janitor_tar_drop_proceeds_after_unparsable_quarantine(
   monkeypatch.setattr(janitor_mod, "remove_verified_uncompressed_daily_tars", fake_drop)
   janitor._run_tick_body()
   assert not raw_path.exists()
-  assert called["drop"] is True
+  # Seal may unlink .tar when blocking remaining is empty; tar_drop then
+  # short-circuits. Otherwise remove_verified must run.
+  assert called["drop"] is True or not os.path.isfile(tar_path)
 
 
 def test_janitor_tick_does_not_scan_unparsable_tree(monkeypatch):
@@ -2673,6 +2681,25 @@ def test_discover_enqueues_when_deferred_waiting_on_ingest_not_worker_inflight(
   assert "skipped_inflight=0" in discover_lines[0]
 
 
+def test_tar_drop_complete_when_tar_already_gone_and_sealed(tmp_path, monkeypatch):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2026-06-04.tar"))
+  zst_path = _zst_path_for_tar(tar_path)
+  open(zst_path, "wb").close()
+
+  janitor = _make_janitor(tgz_archive_dir=str(daily_dir))
+  monkeypatch.setattr(
+      janitor,
+      "_blocking_remaining_raw_for_tar",
+      lambda *_a, **_k: {},
+  )
+  assert janitor._tar_drop_one_day(tar_path, {}, set()) is True
+  phase = janitor._day_phases.get(tar_path)
+  phase_text = phase.get("phase") if isinstance(phase, dict) else phase
+  assert phase_text == "tar_dropped"
+
+
 def test_tar_drop_deferred_logs_handoff_requeue_correlation(tmp_path, monkeypatch):
   daily_dir = tmp_path / "daily"
   daily_dir.mkdir()
@@ -2700,6 +2727,11 @@ def test_tar_drop_deferred_logs_handoff_requeue_correlation(tmp_path, monkeypatc
       janitor_mod,
       "daily_gz_has_remaining_raw_stats",
       lambda *_a, **_k: True,
+  )
+  monkeypatch.setattr(
+      janitor,
+      "_blocking_remaining_raw_for_tar",
+      lambda *_a, **_k: {zst_path: ["/raw/x"]},
   )
   janitor._tar_drop_one_day(tar_path, validation_cache={}, disqualified=set())
   deferred_lines = [
@@ -2741,6 +2773,11 @@ def test_tar_drop_deferred_logs_stale_manifest_when_phase_done(
       janitor_mod,
       "daily_gz_has_remaining_raw_stats",
       lambda *_a, **_k: True,
+  )
+  monkeypatch.setattr(
+      janitor,
+      "_blocking_remaining_raw_for_tar",
+      lambda *_a, **_k: {zst_path: ["/raw/x"]},
   )
   janitor._tar_drop_one_day(tar_path, validation_cache={}, disqualified=set())
   deferred_lines = [

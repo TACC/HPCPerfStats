@@ -1450,6 +1450,44 @@ def remaining_raw_by_gz_blocking_tar_drop(
   return state._remaining_raw_paths_blocking_tar_drop()
 
 
+def remaining_raw_blocking_day_incomplete(
+    tar_path: str,
+    *,
+    archive_data_dir: Optional[str] = None,
+    host_name_ext: Optional[str] = None,
+    tgz_archive_dir: Optional[str] = None,
+    get_quarantine_skip_paths: Optional[Callable[[], Set[str]]] = None,
+    get_maintenance_snapshot: Optional[Callable[[], Any]] = None,
+    log_fn=None,
+) -> Dict[str, List[str]]:
+  """Canonical DECISION map: on-disk paths that still block day-incomplete.
+
+  Quarantine-skip and quarantine-terminal paths are excluded. Use for tar_drop,
+  seal retain, needs_work, filesystem-complete, and decompress-unlink gates.
+  Census builders (``build_remaining_raw_*``) remain inventory-only.
+  """
+  archive_data_dir = archive_data_dir or cfg.get_archive_dir_path()
+  host_name_ext = (
+      host_name_ext if host_name_ext is not None else cfg.get_host_name_ext()
+  )
+  tgz_archive_dir = (
+      tgz_archive_dir
+      or cfg.get_daily_archive_dir_path()
+      or archive_data_dir
+  )
+  if not tar_path or not archive_data_dir or not tgz_archive_dir:
+    return {}
+  return remaining_raw_by_gz_blocking_tar_drop(
+      tar_path=tar_path,
+      archive_data_dir=archive_data_dir,
+      host_name_ext=host_name_ext or "",
+      tgz_archive_dir=tgz_archive_dir,
+      get_quarantine_skip_paths=get_quarantine_skip_paths or (lambda: set()),
+      get_maintenance_snapshot=get_maintenance_snapshot,
+      log_fn=log_fn,
+  )
+
+
 class DayRawRemovalCoordinator:
   """Registry of per-day verify/delete state machines."""
 

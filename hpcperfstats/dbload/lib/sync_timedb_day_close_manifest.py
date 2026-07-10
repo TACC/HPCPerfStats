@@ -11,10 +11,6 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Set
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
-from hpcperfstats.dbload.lib.archive_compress import compressed_sibling_paths
-from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-    remaining_raw_by_gz_has_paths_on_disk,
-)
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
     load_persistence_document,
     save_persistence_document,
@@ -370,16 +366,18 @@ class DayCloseManifestCoordinator:
     )
 
   def _day_close_filesystem_complete(self, tar_norm: str) -> bool:
+    from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+        day_close_filesystem_complete,
+    )
     tar_norm = os.path.normpath(tar_norm or "")
     if not tar_norm:
       return False
-    zst_path, gz_path = compressed_sibling_paths(tar_norm)
     remaining = self._remaining_raw_for_tar_drop(tar_norm)
-    if remaining_raw_by_gz_has_paths_on_disk(remaining, zst_path):
-      return False
-    if os.path.isfile(tar_norm):
-      return False
-    return os.path.isfile(zst_path) or os.path.isfile(gz_path)
+    return day_close_filesystem_complete(
+        tar_norm,
+        remaining_raw_by_gz=remaining,
+        use_blocking_remaining=False,
+    )
 
   def defer_for_ingest_handoff(self, tar_path: str) -> None:
     tar_norm = os.path.normpath(tar_path or "")

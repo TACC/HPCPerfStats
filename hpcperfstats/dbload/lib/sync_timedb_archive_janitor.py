@@ -737,7 +737,10 @@ class ArchiveJanitor:
     if os.path.isfile(tar_norm) and tar_day_dirty_by_mtime(tar_norm):
       return True
     zst_path, _gz_path = compressed_sibling_paths(tar_norm)
-    if daily_gz_has_remaining_raw_stats(zst_path, remaining_raw_by_gz):
+    if daily_gz_has_remaining_raw_stats(
+        zst_path,
+        self._blocking_remaining_raw_for_tar(tar_norm),
+    ):
       return True
     return False
 
@@ -1343,6 +1346,37 @@ class ArchiveJanitor:
     )
     self._tick_remaining_raw_cache[tar_norm] = fresh
     return fresh
+
+  def _blocking_remaining_raw_for_tar(self, tar_path: str) -> dict:
+    """Quarantine-aware remaining-raw map for DECISION gates (not census)."""
+    tar_norm = os.path.normpath(tar_path)
+    cached = self._tick_remaining_raw_cache.get(("blocking", tar_norm))
+    if cached is not None:
+      return cached
+    from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
+        remaining_raw_blocking_day_incomplete,
+    )
+    with self._accrual_snapshot_lock:
+      accrual_snapshot = self._accrual_snapshot
+
+    def _snapshot():
+      return accrual_snapshot
+
+    quarantine_fn = None
+    coord = self.day_raw_removal_coordinator
+    if coord is not None:
+      quarantine_fn = getattr(coord, "get_quarantine_skip_paths", None)
+    blocking = remaining_raw_blocking_day_incomplete(
+        tar_norm,
+        archive_data_dir=self.archive_data_dir,
+        host_name_ext=self.host_name_ext,
+        tgz_archive_dir=self.tgz_archive_dir,
+        get_quarantine_skip_paths=quarantine_fn,
+        get_maintenance_snapshot=_snapshot if accrual_snapshot is not None else None,
+        log_fn=self.log_fn,
+    )
+    self._tick_remaining_raw_cache[("blocking", tar_norm)] = blocking
+    return blocking
 
   def _run_tick_body(self):
     set_daemon_thread_title(
@@ -2001,7 +2035,7 @@ class ArchiveJanitor:
       self._enqueue_day_close(tar_path, persist=False)
       self._persist_hints()
       return False
-    remaining_raw_by_gz = self._fresh_remaining_raw_by_gz_for_tar(tar_path)
+    remaining_raw_by_gz = self._blocking_remaining_raw_for_tar(tar_path)
     zst_path, gz_path = compressed_sibling_paths(tar_path)
     keep_tar = effective_keep_uncompressed_tar(
         tar_path,
@@ -2046,11 +2080,17 @@ class ArchiveJanitor:
       validation_cache,
       disqualified: Set[str],
   ) -> bool:
-    remaining_raw_by_gz = self._fresh_remaining_raw_by_gz_for_tar(tar_path)
-    zst_path, _gz_path = compressed_sibling_paths(tar_path)
+    zst_path, gz_path = compressed_sibling_paths(tar_path)
+    sealed_ok = os.path.isfile(zst_path) or os.path.isfile(gz_path)
+    # Delete-path may already have unlinked .tar; sealed-only → complete.
+    if not os.path.isfile(tar_path) and sealed_ok:
+      with self._hints_state_lock:
+        self._day_phases[tar_path] = day_phase_hint_entry(tar_path, "tar_dropped")
+      return True
+    remaining_raw_by_gz = self._blocking_remaining_raw_for_tar(tar_path)
     if daily_gz_has_remaining_raw_stats(zst_path, remaining_raw_by_gz):
       handoff_paths_n = 0
-      defer_reason = "waiting_on_ingest"
+      defer_reason = "remaining_raw_on_disk"
       coord = self.day_raw_removal_coordinator
       if coord is not None:
         try:
@@ -2064,6 +2104,8 @@ class ArchiveJanitor:
           )
           if handoff_paths_n > 0 and phase_done:
             defer_reason = "stale_manifest_retryable"
+          elif handoff_paths_n > 0:
+            defer_reason = "waiting_on_ingest"
         except Exception:
           handoff_paths_n = 0
       self.log_fn(

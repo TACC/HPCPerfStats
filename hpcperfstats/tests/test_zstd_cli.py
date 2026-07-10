@@ -263,17 +263,18 @@ def test_zstd_test_applies_page_cache_hints_on_linux(monkeypatch, tmp_path):
   assert dropped == [str(zst_path)]
 
 
-def test_decompress_skips_second_tar_tf_when_pipe_preflight_passes(
+def test_decompress_verifies_tmp_before_replace_no_pipe_preflight(
     monkeypatch, tmp_path,
 ):
   zst_path = tmp_path / "2024-01-02.tar.zst"
   tar_path = tmp_path / "2024-01-02.tar"
   zst_path.write_bytes(b"placeholder")
 
+  pipe_calls = []
   verify_calls = []
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.zstd_cli.zstd_compressed_archive_pipe_readable",
-      lambda *a, **k: True,
+      lambda *a, **k: pipe_calls.append(a) or True,
   )
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.zstd_cli._verify_uncompressed_tar_readable",
@@ -295,28 +296,35 @@ def test_decompress_skips_second_tar_tf_when_pipe_preflight_passes(
       1,
       remove_compressed=False,
   )
-  assert verify_calls == []
+  assert pipe_calls == []
+  assert len(verify_calls) == 1
+  assert verify_calls[0].endswith(".decomp.tmp")
   assert tar_path.is_file()
 
 
-def test_decompress_pipe_preflight_failure_skips_materialize(monkeypatch, tmp_path):
+def test_decompress_tmp_verify_failure_skips_replace(monkeypatch, tmp_path):
   zst_path = tmp_path / "2024-01-03.tar.zst"
   tar_path = tmp_path / "2024-01-03.tar"
   zst_path.write_bytes(b"bad")
 
-  decompress_calls = []
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli.zstd_compressed_archive_pipe_readable",
-      lambda *a, **k: False,
+      "hpcperfstats.dbload.lib.zstd_cli._verify_uncompressed_tar_readable",
+      lambda p: False,
   )
+
+  def _fake_decompress(compressed_path, output_path, thread_count):
+    with open(output_path, "wb") as f:
+      f.write(b"bad-tar")
+
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.zstd_cli._decompress_to_path",
-      lambda *a, **k: decompress_calls.append(a),
+      _fake_decompress,
   )
 
   assert not decompress_compressed_to_tar(str(zst_path), str(tar_path), 1)
-  assert decompress_calls == []
   assert not tar_path.is_file()
+  assert zst_path.is_file()
+  assert not (tmp_path / "2024-01-03.tar.decomp.tmp").exists()
 
 
 @pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")

@@ -8306,7 +8306,7 @@ def test_verify_tar_read_lock_timeout_not_treated_as_corrupt(monkeypatch, tmp_pa
 
 
 def test_decompress_restore_keeps_zst_on_active_ingest_day(monkeypatch, tmp_path):
-  """Fix H: active-ingest restore must not unlink sealed sibling."""
+  """Restore keeps sealed sibling (day-close owns unlink after blocking empty)."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   tar_path = tmp_path / "2024-06-07.tar"
@@ -8321,12 +8321,59 @@ def test_decompress_restore_keeps_zst_on_active_ingest_day(monkeypatch, tmp_path
     return True
 
   monkeypatch.setattr(helpers, "decompress_compressed_to_tar", _fake_decompress)
-  monkeypatch.setattr(
-      helpers, "daily_gz_has_remaining_raw_stats", lambda *_a, **_k: True,
-  )
   assert helpers.ensure_daily_tar_restored_for_append(str(tar_path), 1) is True
   assert captured.get("remove_compressed") is False
   assert zst_path.is_file()
+
+
+def test_ensure_restore_does_not_build_full_maint_snapshot(monkeypatch, tmp_path):
+  """Gated restore must reach decompress without full remaining-raw census."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "2026-06-02.tar"
+  zst_path = tmp_path / "2026-06-02.tar.zst"
+  zst_path.write_bytes(b"placeholder-zst")
+  snapshot_calls = []
+  decomp_calls = []
+
+  def _boom(*_a, **_k):
+    snapshot_calls.append(1)
+    raise AssertionError("must not build full maint snapshot on restore")
+
+  def _fake_decompress(src, dst, zstd_threads, remove_compressed=True):
+    decomp_calls.append((src, remove_compressed))
+    with tarfile.open(dst, "w") as tf:
+      tf.addfile(tarfile.TarInfo(name="host/raw"), io.BytesIO(b"x"))
+    return True
+
+  monkeypatch.setattr(helpers, "build_remaining_raw_for_daily_tar", _boom)
+  monkeypatch.setattr(helpers, "build_remaining_raw_stats_by_daily_gz", _boom)
+  monkeypatch.setattr(helpers, "decompress_compressed_to_tar", _fake_decompress)
+
+  assert helpers.ensure_daily_tar_restored_for_append(str(tar_path), 1) is True
+  assert snapshot_calls == []
+  assert len(decomp_calls) == 1
+  assert decomp_calls[0][1] is False
+
+
+def test_needs_work_false_when_filesystem_complete_without_phase(
+    monkeypatch, tmp_path,
+):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "2026-06-04.tar"
+  zst_path = tmp_path / "2026-06-04.tar.zst"
+  zst_path.write_bytes(b"sealed")
+  monkeypatch.setattr(
+      helpers,
+      "day_close_filesystem_complete",
+      lambda *_a, **_k: True,
+  )
+  assert helpers.daily_tar_needs_day_close_work(
+      str(tar_path),
+      day_phases={},
+      remaining_raw_by_gz={},
+  ) is False
 
 
 def test_populate_uses_tar_when_sealed_missing_even_if_not_dirty_mtime(

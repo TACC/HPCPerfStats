@@ -1603,6 +1603,36 @@ def day_close_queued_reason_for_report_reason(reason):
   return "scheduled_enqueue"
 
 
+def day_close_filesystem_complete(
+    tar_path,
+    *,
+    remaining_raw_by_gz=None,
+    use_blocking_remaining=True,
+):
+  """True when sealed-only day has no mutable ``.tar`` and no blocking remaining raw.
+
+  When ``remaining_raw_by_gz`` is omitted and ``use_blocking_remaining`` is True,
+  builds the quarantine-aware blocking map for ``tar_path``.
+  """
+  tar_norm = os.path.normpath(str(tar_path or ""))
+  if not tar_norm:
+    return False
+  if os.path.isfile(tar_norm):
+    return False
+  zst_path, gz_path = compressed_sibling_paths(tar_norm)
+  if not (os.path.isfile(zst_path) or os.path.isfile(gz_path)):
+    return False
+  remaining = remaining_raw_by_gz
+  if remaining is None and use_blocking_remaining:
+    from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
+        remaining_raw_blocking_day_incomplete,
+    )
+    remaining = remaining_raw_blocking_day_incomplete(tar_norm)
+  if remaining_raw_by_gz_has_paths_on_disk(remaining, zst_path):
+    return False
+  return True
+
+
 def daily_tar_needs_day_close_work(
     tar_path,
     *,
@@ -1613,13 +1643,23 @@ def daily_tar_needs_day_close_work(
   tar_norm = os.path.normpath(str(tar_path or ""))
   if not tar_norm:
     return False
+  # Always use quarantine-aware blocking map for FS-complete (never raw census).
+  if day_close_filesystem_complete(tar_norm):
+    return False
   if not _day_phase_at_least_hints(day_phases, tar_norm, "tar_dropped"):
     return True
   if os.path.isfile(tar_norm):
     return True
   zst_path, _gz_path = compressed_sibling_paths(tar_norm)
-  if remaining_raw_by_gz and daily_gz_has_remaining_raw_stats(
-      zst_path, remaining_raw_by_gz):
+  if remaining_raw_by_gz is not None:
+    if daily_gz_has_remaining_raw_stats(zst_path, remaining_raw_by_gz):
+      return True
+    return False
+  from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
+      remaining_raw_blocking_day_incomplete,
+  )
+  blocking = remaining_raw_blocking_day_incomplete(tar_norm)
+  if daily_gz_has_remaining_raw_stats(zst_path, blocking):
     return True
   return False
 
@@ -3076,37 +3116,17 @@ def _populate_tar_file_read_lock_wait(target_path):
   return file_read_lock_wait(target_path, timeout_seconds=timeout)
 
 
-def _scoped_remaining_raw_for_tar_path(tar_path):
-  """Day-scoped remaining raw map for populate/decompress gating."""
-  try:
-    archive_data_dir = cfg.get_archive_dir_path()
-    tgz_archive_dir = cfg.get_daily_archive_dir_path() or archive_data_dir
-    if not archive_data_dir or not tgz_archive_dir or not tar_path:
-      return {}
-    return build_remaining_raw_for_daily_tar(
-        archive_data_dir,
-        cfg.get_host_name_ext(),
-        tgz_archive_dir,
-        tar_path,
-    )
-  except Exception:
-    return {}
-
-
 def _decompress_should_unlink_compressed(tar_path):
-  """Fix H: keep sealed sibling during active-ingest / dirty mutable tar days."""
+  """Whether restore may unlink the sealed sibling after materialize.
+
+  Restore hot path must **never** build a full maintenance / remaining-raw
+  census (gated prewarm stall). Day-close tar-drop owns sealed unlink after
+  blocking remaining-raw is empty. While a sealed sibling exists, keep it.
+  """
   if not tar_path:
     return True
   zst_path, gz_path = compressed_sibling_paths(tar_path)
-  if os.path.isfile(tar_path) and is_daily_tar_sealed_dirty(
-      tar_path, zst_path, gz_path,
-  ):
-    return False
-  scoped = _scoped_remaining_raw_for_tar_path(tar_path)
-  zst_key = normalize_daily_compressed_path(
-      zst_path if os.path.isfile(zst_path) else gz_path,
-  )
-  if zst_key and daily_gz_has_remaining_raw_stats(zst_key, scoped):
+  if os.path.isfile(zst_path) or os.path.isfile(gz_path):
     return False
   return True
 
@@ -3682,6 +3702,16 @@ def ensure_daily_tar_restored_for_append(tar_path, zstd_threads):
     return True
   zst_path, gz_path = compressed_sibling_paths(tar_path)
   remove_compressed = _decompress_should_unlink_compressed(tar_path)
+  sealed = zst_path if os.path.isfile(zst_path) else (
+      gz_path if os.path.isfile(gz_path) else ""
+  )
+  if sealed:
+    log_print(
+        "INFO: archive decompress restore begin tar=%s from=%s "
+        "remove_compressed=%s"
+        % (tar_path, sealed, remove_compressed),
+        flush=True,
+    )
   if os.path.isfile(zst_path):
     if decompress_compressed_to_tar(
         zst_path, tar_path, zstd_threads, remove_compressed=remove_compressed,

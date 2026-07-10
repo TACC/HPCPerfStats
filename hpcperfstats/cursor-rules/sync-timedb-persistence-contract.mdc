@@ -22,7 +22,7 @@ All operator sidecars under `{archive_data_dir}` share one versioned persistence
 `{archive_data_dir}/.sync_timedb_persistence.json`:
 
 ```json
-{"contract_version": 4, "written_at": 1710000000.0}
+{"contract_version": 5, "written_at": 1710000000.0}
 ```
 
 **Startup:** if missing or `contract_version != SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION`, call `reset_sync_timedb_persistence()` (unlink all registered artifacts), write fresh contract, proceed with empty in-memory state.
