@@ -1487,6 +1487,24 @@ def test_exit_handler_distinguishes_stall_from_connection(monkeypatch, capsys):
     assert 'is reachable' in stall_out
     assert 'requires a reachable Redis' not in stall_out
 
+
+def test_exit_handler_does_not_fatal_on_populate_pool_unavailable(monkeypatch, capsys):
+    """Refuse-stream / populate-pool-down must not map to immediate sys.exit(1)."""
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+        ArchiveMembersRedisUnavailableError,
+    )
+
+    st._exit_on_archive_members_redis_unavailable(
+        ArchiveMembersRedisUnavailableError(
+            "populate-pool unavailable; refusing sealed stream on ingest-pool "
+            "for /hpcperfstats/daily_archive/2026-05-30.tar.zst",
+        ),
+    )
+    out = capsys.readouterr().out
+    assert "populate-pool unavailable" in out
+    assert "not an immediate L2 fatal" in out
+    assert "L2 contract failed" not in out
+
 def test_chunk_prewarm_populates_redis_before_imap(monkeypatch, tmp_path):
     tgz_dir = tmp_path / 'daily'
     tgz_dir.mkdir()

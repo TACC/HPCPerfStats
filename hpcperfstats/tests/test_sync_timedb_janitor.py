@@ -2311,6 +2311,92 @@ def test_startup_heavy_pass_manifest_only_lock_cleanup(monkeypatch, tmp_path):
   assert any("lock_cleanup_s=" in line for line in logs)
 
 
+def test_heavy_pass_classifies_day_close_candidates_once(monkeypatch, tmp_path):
+  """Startup/heavy pass must share one classify between report and discover."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2020-02-01.tar"))
+  open(tar_path, "wb").close()
+  classify_calls = {"n": 0}
+
+  def _counting_classify(**_kwargs):
+    classify_calls["n"] += 1
+    return [
+        {
+            "tar_path": tar_path,
+            "status": "ready_for_enqueue",
+            "reasons": ["awaiting_janitor_discover"],
+            "unprocessed": 0,
+        },
+    ]
+
+  class _FakeCoord:
+    def active_or_submitted_tar_paths(self):
+      return set()
+
+    def active_discover_cap_tar_paths(self, live_worker_tars=None):
+      return set()
+
+    def enqueue_day_close(self, tar, reason="", *, disqualified_daily_tars=None):
+      return True
+
+    def entry_progress_snapshot(self, _tar_path):
+      return {}
+
+    def discover_inflight_breakdown(self, live_worker_tars=None):
+      return {}
+
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      day_close_manifest_coordinator=_FakeCoord(),
+      get_day_close_candidate_inputs=lambda: {
+          "inflight_paths": set(),
+          "pending_append_by_daily_tar": {},
+          "in_flight_archive_tars": set(),
+          "pending_archive_task_tars": set(),
+          "unmapped_closed_raw_tars": set(),
+          "unprocessed_by_tar": {},
+      },
+  )
+  janitor.startup_snapshot_coordinator = None
+  snapshot = ArchiveMaintenanceSnapshot(
+      closed_paths=[],
+      remaining_raw_by_gz={},
+      mapping={},
+      ready_paths=set(),
+      first_timestamp_by_path={},
+      head_identity_by_path={},
+  )
+  monkeypatch.setattr(janitor_mod, "build_archive_maintenance_snapshot", lambda *_a, **_k: snapshot)
+  monkeypatch.setattr(
+      janitor_mod,
+      "build_remaining_raw_stats_by_daily_gz",
+      lambda *args, **kwargs: {},
+  )
+  monkeypatch.setattr(janitor_mod, "classify_day_close_candidates", _counting_classify)
+  monkeypatch.setattr(janitor_mod, "cleanup_orphan_fnctl_lock_sidecars", lambda *_a, **_k: 0)
+  monkeypatch.setattr(janitor, "get_ingest_pool_in_flight_count", lambda: 0)
+  monkeypatch.setattr(janitor, "get_chunk_in_progress", lambda: False)
+  monkeypatch.setattr(janitor_mod.cfg, "get_sync_day_close_candidate_report", lambda: True)
+  # Enqueue succeeds → follow-up report re-classifies once more (expected).
+  janitor.run_heavy_maintenance_pass(reason="startup")
+  # Shared report+discover = 1; post-enqueue report = +1 → 2 total (not 3).
+  assert classify_calls["n"] == 2
+
+  classify_calls["n"] = 0
+
+  class _NoEnqueueCoord(_FakeCoord):
+    def enqueue_day_close(self, tar, reason="", *, disqualified_daily_tars=None):
+      return False
+
+  janitor.day_close_manifest_coordinator = _NoEnqueueCoord()
+  janitor.run_heavy_maintenance_pass(reason="every_n_chunks")
+  # No newly_queued → exactly one classify for report+discover.
+  assert classify_calls["n"] == 1
+
+
 def test_non_startup_heavy_pass_full_archive_lock_cleanup(monkeypatch, tmp_path):
   from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
 

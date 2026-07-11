@@ -523,6 +523,18 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 **Transient fnctl read-lock timeout (T1):** grep for `transient fnctl read lock timeout during tar populate` and `transient fnctl during archive members prewarm`. **Healthy:** populate waits on fnctl (up to **`populate_max_seconds`**) then `populate_source=tar` when `.tar` exists; occasional WARNING + `populate incomplete after lock release; recovering` or `chunk prewarm days=...:populate_recovering:tar_populated` — supervisor must **not** restart (`L2 contract failed` absent or rare). **Unhealthy:** repeated `ERROR: archive members Redis L2 contract failed` with supervisor restart loop on the same calendar day. When **`.tar` is present**, expect **`populate_source=tar`** not sealed; sealed populate is normal only after tar-drop (`archive_keep_uncompressed_tar=no`).
 
+**Populate-pool unavailable / refuse sealed stream (T1 — exit status 1 class):** grep for `populate-pool unavailable`, `refusing sealed stream`, `not an immediate L2 fatal`, and `archive members Redis L2 contract failed`.
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+  grep -E 'populate-pool unavailable|refusing sealed stream|not an immediate L2 fatal|L2 contract failed|populate-pool worker restarted|chunk prewarm|exit status' | \
+  tail -80
+```
+
+**Healthy (post-fix):** cross-day cold Redis miss from ingest-pool **enqueues** populate work (no sealed stream on ingest-pool); MainThread may log WARNING + ensure/restart populate-pool; prewarm may show `populate_recovering`; supervisor must **not** `sys.exit(1)` / supervisord `exit status 1` solely from refuse-stream. **Unhealthy (pre-fix signature):** `ERROR: populate-pool unavailable; refusing sealed stream on ingest-pool for …/YYYY-MM-DD.tar.zst` immediately followed by `ERROR: archive members Redis L2 contract failed` and supervisor restart — often on a calendar day **outside** the current chunk day set (cross-day handoff).
+
+**Startup heavy-pass classify once (T0/T1 perf):** after boot, `janitor: heavy maintenance sub_phases reason=startup` should not show near-equal multi-thousand-second `candidate_report_s` **and** `scheduled_submit_s` from double `classify_day_close_candidates` (pre-fix ~2× ~1300s). Post-fix shares one classify for report+discover.
+
 **Ingest-wins janitor lock priority (T1):**
 
 ```bash

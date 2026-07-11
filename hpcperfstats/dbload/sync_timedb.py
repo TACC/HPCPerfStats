@@ -212,6 +212,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
     describe_archive_members_populate_redis_for_day,
     get_ingest_task_deadline_monotonic,
     get_ingest_task_effective_timeout_s,
+    is_populate_pool_unavailable_error,
     is_transient_fnctl_populate_unavailable,
     maybe_clear_orphan_incomplete_archive_members_redis,
     redis_members_cache_is_fully_warm,
@@ -719,14 +720,32 @@ def _prewarm_archive_members_redis_for_days(
         _exit_on_archive_members_redis_unavailable(exc)
       except ArchiveMembersRedisUnavailableError as exc:
         maybe_clear_orphan_incomplete_archive_members_redis(keys)
-        if is_transient_fnctl_populate_unavailable(exc):
+        if is_transient_fnctl_populate_unavailable(exc) or is_populate_pool_unavailable_error(
+            exc,
+        ):
           prewarm_recovered = True
           last_transient_exc = exc
+          if is_populate_pool_unavailable_error(exc):
+            from hpcperfstats.dbload.lib.sync_timedb_populate_pool import (
+                get_populate_pool_controller,
+            )
+            controller = get_populate_pool_controller()
+            if controller is not None:
+              try:
+                controller.reap_and_restart()
+              except Exception:
+                pass
           if attempt < len(_FNCTL_POPULATE_RETRY_DELAYS_S):
+            label = (
+                "populate-pool unavailable"
+                if is_populate_pool_unavailable_error(exc)
+                else "transient fnctl"
+            )
             log_print(
-                "WARNING: transient fnctl during archive members prewarm "
+                "WARNING: %s during archive members prewarm "
                 "day=%s attempt=%d/%d: %s"
                 % (
+                    label,
                     day_token,
                     attempt + 1,
                     len(_FNCTL_POPULATE_RETRY_DELAYS_S) + 1,
@@ -2072,8 +2091,24 @@ def _maybe_reap_supervisor_pool_children_throttled(
 
 
 def _exit_on_archive_members_redis_unavailable(exc):
-  """Fatal exit when Redis L2 contract fails during ingest or startup."""
+  """Fatal exit when Redis L2 contract fails during ingest or startup.
+
+  Populate-pool-down / refuse-stream is recoverable (enqueue + wait / ensure
+  pool) and must not map to immediate ``sys.exit(1)``.
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      is_populate_pool_unavailable_error,
+  )
+
   log_print("ERROR: %s" % exc, flush=True)
+  if is_populate_pool_unavailable_error(exc):
+    log_print(
+        "WARNING: populate-pool unavailable is not an immediate L2 fatal; "
+        "ensure/restart populate-pool and wait within populate_max_seconds "
+        "(ingest/archive must enqueue, never sealed-stream).",
+        flush=True,
+    )
+    return
   if isinstance(exc, ArchiveMembersRedisConnectionError):
     log_print(
         "ERROR: sync_archive_members_redis_enabled=yes requires a reachable "
@@ -5648,7 +5683,20 @@ def run_sync_timedb_supervisor_loop(
     except DatabaseUnavailableExit:
       raise
     except ArchiveMembersRedisUnavailableError as exc:
-      _exit_on_archive_members_redis_unavailable(exc)
+      if is_populate_pool_unavailable_error(exc):
+        log_print("ERROR: %s" % exc, flush=True)
+        log_print(
+            "WARNING: populate-pool unavailable during ingest is not L2 fatal; "
+            "ensuring populate-pool and continuing chunk (files retry later).",
+            flush=True,
+        )
+        if populate_pool_controller is not None:
+          try:
+            populate_pool_controller.reap_and_restart()
+          except Exception:
+            pass
+      else:
+        _exit_on_archive_members_redis_unavailable(exc)
     except Exception as exc:
       error_context = "sync_timedb ingest pool"
       reraise_database_unavailable_chain(exc, context=error_context)

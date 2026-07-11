@@ -1279,6 +1279,7 @@ def test_is_transient_fnctl_populate_unavailable():
       ArchiveMembersRedisConnectionError,
       ArchiveMembersPopulateStalledError,
       ArchiveMembersRedisUnavailableError,
+      is_populate_pool_unavailable_error,
       is_transient_fnctl_populate_unavailable,
   )
 
@@ -1294,6 +1295,14 @@ def test_is_transient_fnctl_populate_unavailable():
   ) is False
   assert is_transient_fnctl_populate_unavailable(
       ArchiveMembersRedisUnavailableError("populate degraded"),
+  ) is False
+  refuse = ArchiveMembersRedisUnavailableError(
+      "populate-pool unavailable; refusing sealed stream on ingest-pool for /x.tar.zst",
+  )
+  assert is_populate_pool_unavailable_error(refuse) is True
+  assert is_populate_pool_unavailable_error(fnctl) is False
+  assert is_populate_pool_unavailable_error(
+      ArchiveMembersRedisConnectionError("connection refused"),
   ) is False
 
 

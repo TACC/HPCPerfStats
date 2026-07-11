@@ -644,17 +644,26 @@ class ArchiveJanitor:
       )
       sub_remaining_map_s = time.time() - remaining_t0
       report_t0 = time.time()
-      self._log_day_close_candidate_report(
-          reason=reason,
+      # One classify for candidate report + discover (startup heavy pass was ~2×).
+      shared_entries = self._build_day_close_candidate_entries(
           remaining_raw_by_gz=remaining,
           newly_queued_tars=set(),
+          reason=reason,
+      )
+      self._log_day_close_candidate_entries(
+          shared_entries,
+          reason=reason,
       )
       sub_candidate_report_s = time.time() - report_t0
       submit_t0 = time.time()
-      newly_queued = self._discover_and_enqueue_ready_day_close(reason=reason)
+      newly_queued = self._discover_and_enqueue_ready_day_close(
+          reason=reason,
+          entries=shared_entries,
+      )
       sub_scheduled_submit_s = time.time() - submit_t0
       if newly_queued:
         report_t0 = time.time()
+        # Re-classify only when enqueue changed queued status for the report.
         self._log_day_close_candidate_report(
             reason=reason,
             remaining_raw_by_gz=remaining,
@@ -973,44 +982,28 @@ class ArchiveJanitor:
       *,
       reason: str,
       slot_budget: Optional[int] = None,
+      entries=None,
   ) -> Set[str]:
     if not self.tgz_archive_dir:
       return set()
-    inputs = self._get_maintenance_pass_candidate_inputs()
-    if not isinstance(inputs, dict):
-      inputs = {}
-    with self._accrual_snapshot_lock:
-      accrual_snapshot = self._accrual_snapshot
-    remaining = build_remaining_raw_stats_by_daily_gz(
-        self.archive_data_dir,
-        self.host_name_ext,
-        self.tgz_archive_dir,
-        maintenance_snapshot=accrual_snapshot,
-    )
-    disq_reasons = build_disqualification_reasons_by_tar(
-        tgz_archive_dir=self.tgz_archive_dir,
-        inflight_paths=inputs.get("inflight_paths"),
-        pending_append_by_daily_tar=inputs.get("pending_append_by_daily_tar"),
-        in_flight_archive_tars=inputs.get("in_flight_archive_tars"),
-        pending_archive_task_tars=inputs.get("pending_archive_task_tars"),
-        unmapped_closed_raw_tars=inputs.get("unmapped_closed_raw_tars"),
-        unprocessed_by_tar=inputs.get("unprocessed_by_tar"),
-        local_tz=self.local_tz,
-    )
-    with self._hints_state_lock:
-      day_phases = dict(self._day_phases)
-    entries = classify_day_close_candidates(
-        tgz_archive_dir=self.tgz_archive_dir,
-        remaining_raw_by_gz=remaining,
-        unprocessed_by_tar=inputs.get("unprocessed_by_tar"),
-        disqualification_reasons=disq_reasons,
-        day_phases=day_phases,
-        local_tz=self.local_tz,
-        day_close_in_progress_tars=self._day_close_active_tar_paths(),
-        debt_heap_tars=self._debt_heap_tar_paths(),
-        newly_queued_tars=set(),
-        day_raw_removal=self.day_raw_removal_coordinator,
-    )
+    if entries is None:
+      inputs = self._get_maintenance_pass_candidate_inputs()
+      if not isinstance(inputs, dict):
+        inputs = {}
+      with self._accrual_snapshot_lock:
+        accrual_snapshot = self._accrual_snapshot
+      remaining = build_remaining_raw_stats_by_daily_gz(
+          self.archive_data_dir,
+          self.host_name_ext,
+          self.tgz_archive_dir,
+          maintenance_snapshot=accrual_snapshot,
+      )
+      entries = self._build_day_close_candidate_entries(
+          remaining_raw_by_gz=remaining,
+          newly_queued_tars=set(),
+          reason=reason,
+          inputs=inputs,
+      )
     max_inflight = cfg.get_sync_day_close_max_inflight()
     live_workers = self._day_close_live_worker_tar_paths()
     coord = self.day_close_manifest_coordinator
@@ -1736,18 +1729,21 @@ class ArchiveJanitor:
           if debt.kind == DebtKind.DAY_CLOSE
       }
 
-  def _log_day_close_candidate_report(
+  def _build_day_close_candidate_entries(
       self,
       *,
-      reason: str,
       remaining_raw_by_gz=None,
       newly_queued_tars=None,
-  ) -> None:
-    if self.get_day_close_candidate_inputs is None:
-      return
-    inputs = self._get_maintenance_pass_candidate_inputs()
+      reason: str = "",
+      inputs=None,
+  ):
+    """Classify day-close candidates once for report and/or discover."""
+    if self.get_day_close_candidate_inputs is None and inputs is None:
+      return []
+    if inputs is None:
+      inputs = self._get_maintenance_pass_candidate_inputs()
     if not isinstance(inputs, dict):
-      return
+      return []
     disq_reasons = build_disqualification_reasons_by_tar(
         tgz_archive_dir=self.tgz_archive_dir,
         inflight_paths=inputs.get("inflight_paths"),
@@ -1760,7 +1756,7 @@ class ArchiveJanitor:
     )
     with self._hints_state_lock:
       day_phases = dict(self._day_phases)
-    entries = classify_day_close_candidates(
+    return classify_day_close_candidates(
         tgz_archive_dir=self.tgz_archive_dir,
         remaining_raw_by_gz=remaining_raw_by_gz,
         unprocessed_by_tar=inputs.get("unprocessed_by_tar"),
@@ -1773,12 +1769,30 @@ class ArchiveJanitor:
         queued_reason=day_close_queued_reason_for_report_reason(reason),
         day_raw_removal=self.day_raw_removal_coordinator,
     )
+
+  def _log_day_close_candidate_entries(self, entries, *, reason: str) -> None:
     log_day_close_candidate_report(
         entries,
         reason=reason,
         log_fn=self.log_fn,
         async_progress_fn=None,
     )
+
+  def _log_day_close_candidate_report(
+      self,
+      *,
+      reason: str,
+      remaining_raw_by_gz=None,
+      newly_queued_tars=None,
+  ) -> None:
+    if self.get_day_close_candidate_inputs is None:
+      return
+    entries = self._build_day_close_candidate_entries(
+        remaining_raw_by_gz=remaining_raw_by_gz,
+        newly_queued_tars=newly_queued_tars,
+        reason=reason,
+    )
+    self._log_day_close_candidate_entries(entries, reason=reason)
 
   def _process_debt_item(
       self,

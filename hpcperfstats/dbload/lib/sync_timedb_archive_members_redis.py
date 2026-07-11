@@ -69,6 +69,21 @@ def is_transient_fnctl_populate_unavailable(exc) -> bool:
   return "timed out waiting" in msg and "fnctl.lock" in msg
 
 
+def is_populate_pool_unavailable_error(exc) -> bool:
+  """True when *exc* is populate-pool-down refuse-stream (recoverable, not L2 fatal).
+
+  Spawn ingest/archive workers never share MainThread's PopulatePoolController
+  global; they must enqueue Redis populate jobs and wait. A refuse-stream raise
+  must not map to immediate ``sys.exit(1)``.
+  """
+  if not isinstance(exc, ArchiveMembersRedisUnavailableError):
+    return False
+  if isinstance(exc, (ArchiveMembersRedisConnectionError, ArchiveMembersPopulateStalledError)):
+    return False
+  msg = str(exc).lower()
+  return "populate-pool unavailable" in msg or "refusing sealed stream" in msg
+
+
 class IngestArchiveLookupBudgetExceededError(TimeoutError):
   """Raised when Redis archive duplicate-check exceeds ingest per-file budget."""
 
@@ -1886,13 +1901,35 @@ def archive_members_populate_queue_brpop(*, timeout_s=1.0):
   return job
 
 
+def _ensure_populate_pool_running_for_enqueue():
+  """Best-effort MainThread ensure/restart before enqueue (no-op in spawn workers)."""
+  from hpcperfstats.dbload.lib.sync_timedb_populate_pool import (
+      get_populate_pool_controller,
+  )
+
+  controller = get_populate_pool_controller()
+  if controller is None:
+    return None
+  if not controller.is_running():
+    try:
+      controller.reap_and_restart()
+    except Exception as exc:
+      log_print(
+          "WARNING: populate-pool ensure/restart failed: %s" % exc,
+          flush=True,
+      )
+  return controller
+
+
 def _enqueue_or_run_archive_members_populate(canonical, day_token):
   """Enqueue populate-pool work, or run inline only when not ingest/archive pool.
 
   Ingest-pool and archive-pool must never fall through to
   ``execute_archive_members_populate_for_canonical`` (sealed stream under
-  SIGALRM). When the populate-pool controller is down, raise so waiters can
-  recover within ``populate_max_seconds`` instead of streaming locally.
+  SIGALRM). Spawn workers do not share MainThread's PopulatePoolController
+  global — they always enqueue to Redis and wait; MainThread populate-pool
+  workers BRPOP. When MainThread's controller is down, ensure/restart then
+  enqueue; only fall back to inline execute when pool kind is unset (tests).
   """
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       execute_archive_members_populate_for_canonical,
@@ -1900,20 +1937,17 @@ def _enqueue_or_run_archive_members_populate(canonical, day_token):
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
       get_worker_pool_kind,
   )
-  from hpcperfstats.dbload.lib.sync_timedb_populate_pool import (
-      get_populate_pool_controller,
-  )
 
-  controller = get_populate_pool_controller()
+  kind = get_worker_pool_kind()
+  if kind in ("ingest-pool", "archive-pool"):
+    # Never stream locally. Controller is None in spawn children — enqueue anyway.
+    enqueue_archive_members_populate(canonical, day_token)
+    return
+
+  controller = _ensure_populate_pool_running_for_enqueue()
   if controller is not None and controller.is_running():
     enqueue_archive_members_populate(canonical, day_token)
     return
-  kind = get_worker_pool_kind()
-  if kind in ("ingest-pool", "archive-pool"):
-    raise ArchiveMembersRedisUnavailableError(
-        "populate-pool unavailable; refusing sealed stream on %s for %s"
-        % (kind, canonical),
-    )
   # MainThread / unset pool kind (unit tests): inline populate allowed.
   execute_archive_members_populate_for_canonical(canonical)
 

@@ -8747,10 +8747,11 @@ def test_classify_on_disk_equals_unprocessed_plus_processed(tmp_path, monkeypatc
 def test_ingest_worker_never_streams_sealed_when_populate_pool_down(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
-  """Ingest-pool must not fall through to execute/stream when populate-pool is down."""
+  """Ingest-pool must enqueue (not stream) when controller is None (spawn reality)."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       ArchiveMembersRedisUnavailableError,
+      _POPULATE_QUEUE_KEY,
       request_archive_members_populate_and_wait,
   )
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
@@ -8786,12 +8787,23 @@ def test_ingest_worker_never_streams_sealed_when_populate_pool_down(
     return original_stream(*args, **kwargs)
 
   monkeypatch.setattr(helpers, "_stream_compressed_archive_members", _counting_stream)
+  members = {"host/raw": 4}
+
+  def _fake_wait(*_a, **_k):
+    return dict(members)
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis.wait_for_complete_members",
+      _fake_wait,
+  )
   token = set_worker_pool_kind("ingest-pool")
   try:
-    with pytest.raises(ArchiveMembersRedisUnavailableError, match="refusing sealed stream"):
-      request_archive_members_populate_and_wait(str(day_gz))
+    got = request_archive_members_populate_and_wait(str(day_gz))
+    assert got == members
     with pytest.raises(ArchiveMembersRedisUnavailableError, match="forbidden on ingest-pool"):
       helpers.execute_archive_members_populate_for_canonical(str(day_gz))
   finally:
     reset_worker_pool_kind(token)
   assert stream_calls["n"] == 0
+  assert _POPULATE_QUEUE_KEY in fake._lists
+  assert len(fake._lists[_POPULATE_QUEUE_KEY]) == 1

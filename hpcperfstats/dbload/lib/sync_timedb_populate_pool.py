@@ -43,7 +43,8 @@ class PopulatePoolController:
     self._ctx = None
 
   def is_running(self):
-    return bool(self._processes)
+    """True when at least one populate-pool worker process is alive."""
+    return any(proc.is_alive() for proc in self._processes)
 
   def start(self, *, script_name, registry):
     from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
