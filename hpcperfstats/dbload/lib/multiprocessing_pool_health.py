@@ -1452,6 +1452,7 @@ def imap_sliding_window_watch_pool(
     on_reconcile_redispatch=None,
     resolve_reconcile_skip_result=None,
     on_idle_pool_stuck_after_redispatch=None,
+    skip_idle_pool_recover_fn=None,
 ):
   """Dispatch pool work with at most ``max_inflight`` concurrent ``apply_async`` tasks.
 
@@ -1463,6 +1464,10 @@ def imap_sliding_window_watch_pool(
   When a full-redispatch reconcile thrash leaves workers idle with the same pending
   set, optional ``on_idle_pool_stuck_after_redispatch`` may recreate the Pool and
   rebuild ``pending_async`` (one attempt per sliding-window session).
+
+  Optional ``skip_idle_pool_recover_fn(pending_paths)`` returning a non-empty reason
+  skips recover / ghost fatal while workers are blocked in populate_wait with live
+  pending work (prevents false-positive exit 124).
   """
   if pool is None:
     return iter(())
@@ -1497,9 +1502,31 @@ def imap_sliding_window_watch_pool(
   warn_thresholds = _stall_warning_thresholds(stall_abort_after)
   full_redispatch_thrash_seen = False
   pool_recover_attempted = False
+  idle_recover_skip_logged = False
   duplicate_dispatch_warned = set()
   duplicate_dispatch_suppressed_n = {}
   active_pool = pool
+
+  def _idle_recover_skip_reason(pending_paths):
+    nonlocal idle_recover_skip_logged
+    if not callable(skip_idle_pool_recover_fn):
+      return ""
+    try:
+      reason = skip_idle_pool_recover_fn(pending_paths) or ""
+    except Exception:
+      return ""
+    reason = str(reason).strip()
+    if not reason:
+      return ""
+    if not idle_recover_skip_logged:
+      idle_recover_skip_logged = True
+      log_print(
+          "INFO: pool imap idle reconcile pool_recover skipped reason=%s "
+          "pending_async_n=%d context=%s"
+          % (reason, len(pending_paths or ()), context or "pool"),
+          flush=True,
+      )
+    return reason
 
   def _abort_pool_health():
     ctx = dict(health_ctx)
@@ -1689,9 +1716,11 @@ def imap_sliding_window_watch_pool(
     nonlocal idle_reconcile_rounds, idle_polls_since_reconcile
     if pool_recover_attempted or not callable(on_idle_pool_stuck_after_redispatch):
       return None
-    pool_recover_attempted = True
     pending_before = len(pending_async)
     pending_paths = list(_in_flight_paths())
+    if _idle_recover_skip_reason(pending_paths):
+      return None
+    pool_recover_attempted = True
     pending_sample = [
         os.path.basename(str(path))
         for path in pending_paths[:5]
@@ -1892,6 +1921,8 @@ def imap_sliding_window_watch_pool(
       return
     ghost_abort_polls = idle_pool_ghost_abort_polls(stall_abort_after)
     pending_paths = _in_flight_paths()
+    if _idle_recover_skip_reason(pending_paths):
+      return
     pending_sample = [
         os.path.basename(str(path))
         for path in pending_paths[:5]

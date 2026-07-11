@@ -213,6 +213,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
     describe_archive_members_populate_redis_for_day,
     get_ingest_task_deadline_monotonic,
     get_ingest_task_effective_timeout_s,
+    idle_pool_recover_skip_reason_for_paths,
     is_populate_pool_unavailable_error,
     is_transient_fnctl_populate_unavailable,
     maybe_clear_orphan_incomplete_archive_members_redis,
@@ -1884,6 +1885,12 @@ def _imap_ingest_paths_batched(
       on_reconcile_redispatch=_on_reconcile_redispatch,
       resolve_reconcile_skip_result=_ingest_reconcile_skip_result,
       on_idle_pool_stuck_after_redispatch=_on_idle_pool_stuck_after_redispatch,
+      skip_idle_pool_recover_fn=lambda pending_paths: (
+          idle_pool_recover_skip_reason_for_paths(
+              pending_paths,
+              tgz_archive_dir=tgz_archive_dir,
+          )
+      ),
       on_stall_warning=_make_ingest_stall_warning_fn(
           tracker,
           pool=_current_ingest_pool,

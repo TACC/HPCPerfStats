@@ -3064,6 +3064,34 @@ def test_build_archive_mapping_skips_no_timestamp(tmp_path):
   assert mapping == {}
 
 
+def test_build_archive_mapping_summarizes_missing_timestamp_logs(
+    tmp_path, monkeypatch,
+):
+  """Missing-timestamp skips are summarized once (not one log line per path)."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tgz_dir = tmp_path / "tgz"
+  tgz_dir.mkdir()
+  paths = []
+  for i in range(8):
+    f = tmp_path / ("bad_%d" % i)
+    f.write_text("no digit line\n")
+    paths.append(str(f))
+  logs = []
+  monkeypatch.setattr(
+      helpers, "log_print", lambda msg, flush=False: logs.append(msg),
+  )
+  mapping = helpers.build_archive_mapping(paths, str(tgz_dir))
+  assert mapping == {}
+  summary = [
+      line for line in logs
+      if "Unable to find first timestamp in" in line
+  ]
+  assert len(summary) == 1
+  assert "8 path(s)" in summary[0]
+  assert "sample=" in summary[0]
+
+
 def test_build_archive_mapping_mock_parser(tmp_path):
   """Custom parse_first_ts_fn can be injected."""
   tgz_dir = tmp_path / "tgz"

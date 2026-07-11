@@ -977,6 +977,7 @@ def populate_archive_members_redis(
     *,
     sealed_path=None,
     source_decision=None,
+    scanning_mutable_tar: bool = False,
 ) -> dict:
   """Single-flight populate: ``scan_fn(on_member)`` returns ``(readable, saw_duplicates)`` or
   ``(readable, saw_duplicates, stream_error)``.
@@ -1030,7 +1031,11 @@ def populate_archive_members_redis(
       continue
 
     lock_value = token
-    if _populate_scan_should_defer(keys, sealed_path):
+    if _populate_scan_should_defer(
+        keys,
+        sealed_path,
+        scanning_mutable_tar=scanning_mutable_tar,
+    ):
       _release_populate_lock(client, keys, lock_value)
       day_token = keys.day_token
       if day_token and archive_append_inflight_for_day(day_token):
@@ -1119,6 +1124,13 @@ def populate_archive_members_redis(
     finally:
       if populate_failed:
         _set_populate_degraded(client, keys)
+        # Fail-closed: drop partial HASH so orphan clear (hlen≈6500) cannot thrash.
+        client.delete(
+            keys.hash_key,
+            keys.complete_key,
+            keys.progress_key,
+            keys.invalidate_pending_key,
+        )
       _release_populate_lock(client, keys, lock_value)
 
 
@@ -1708,6 +1720,104 @@ def ingest_tar_hot_for_day(day_token: str) -> bool:
   return bool(client.exists(_ingest_tar_hot_key(day_token)))
 
 
+# Waiter/enqueue/prewarm self-hot must not classify mid-scan tar EOF as forever-transient.
+_SELF_INGEST_TAR_HOT_REASONS = frozenset({
+    "populate_wait",
+    "populate_enqueue",
+    "chunk_prewarm",
+    "populate",
+})
+
+
+def ingest_tar_hot_reason_for_day(day_token: str) -> str:
+  """Return Redis ``ingest_tar_hot`` reason string, or empty when unset."""
+  if not day_token or not archive_members_redis_enabled():
+    return ""
+  client = get_archive_members_redis_client(required=False)
+  if client is None:
+    return ""
+  raw = client.get(_ingest_tar_hot_key(day_token))
+  return str(raw) if raw else ""
+
+
+def ingest_tar_hot_is_self_populate_only(day_token: str) -> bool:
+  """True when hot is set solely by populate wait/enqueue/prewarm (not append)."""
+  if not day_token or not ingest_tar_hot_for_day(day_token):
+    return False
+  if archive_append_inflight_for_day(day_token):
+    return False
+  reason = ingest_tar_hot_reason_for_day(day_token)
+  return (not reason) or reason in _SELF_INGEST_TAR_HOT_REASONS
+
+
+def _calendar_day_hint_from_stats_path(path: str) -> str:
+  """Best-effort calendar day from a raw stats path basename epoch."""
+  if not path:
+    return ""
+  base = os.path.basename(str(path))
+  if not base.isdigit():
+    return ""
+  try:
+    from datetime import datetime, timezone
+
+    return datetime.fromtimestamp(
+        int(base), tz=timezone.utc,
+    ).strftime("%Y-%m-%d")
+  except (TypeError, ValueError, OSError, OverflowError):
+    return ""
+
+
+def idle_pool_recover_skip_reason_for_paths(
+    paths,
+    tgz_archive_dir: str = "",
+) -> str:
+  """Non-empty reason when idle-pool recover/ghost fatal should be skipped.
+
+  Workers blocked in ``populate_wait`` look wchan-idle while ``pending_async``
+  still holds live work — recovering within ``IDLE_POOL_RECOVER_WALL_S`` causes
+  false-positive exit 124.
+
+  Path basename epochs can disagree with the Redis populate calendar day (cross-day
+  pending), so also scan any live ``ingest_tar_hot`` self-populate reasons.
+  """
+  for path in paths or ():
+    day = _calendar_day_hint_from_stats_path(path)
+    if not day:
+      continue
+    reason = ingest_tar_hot_reason_for_day(day)
+    if reason in ("populate_wait", "populate_enqueue", "chunk_prewarm"):
+      return "populate_wait day=%s reason=%s" % (day, reason)
+    if tgz_archive_dir and archive_members_populate_shows_progress_for_day(
+        day, tgz_archive_dir,
+    ):
+      return "populate_progress day=%s" % day
+  if not archive_members_redis_enabled():
+    return ""
+  client = get_archive_members_redis_client(required=False)
+  if client is None:
+    return ""
+  prefix = "%s:" % _INGEST_TAR_HOT_PREFIX
+  scan_iter = getattr(client, "scan_iter", None)
+  keys_iter = ()
+  if callable(scan_iter):
+    keys_iter = list(scan_iter(match=prefix + "*", count=64))
+  else:
+    # FakeRedis / minimal clients: fall back to KEYS when present.
+    keys_fn = getattr(client, "keys", None)
+    if callable(keys_fn):
+      keys_iter = list(keys_fn(prefix + "*") or ())
+    else:
+      keys_iter = []
+  for key in keys_iter:
+    raw = client.get(key)
+    reason = str(raw) if raw else ""
+    if reason not in ("populate_wait", "populate_enqueue", "chunk_prewarm"):
+      continue
+    day = str(key).rsplit(":", 1)[-1]
+    return "populate_wait day=%s reason=%s" % (day, reason)
+  return ""
+
+
 def _archive_append_inflight_key(day_token: str) -> str:
   return "%s:%s" % (_ARCHIVE_APPEND_INFLIGHT_PREFIX, day_token)
 
@@ -1751,20 +1861,29 @@ def archive_append_inflight_for_day(day_token: str) -> bool:
 def _populate_scan_should_defer(
     keys: ArchiveMembersRedisKeys,
     sealed_path,
+    *,
+    scanning_mutable_tar: bool = False,
 ) -> bool:
   """Defer mutable-tar populate while archive-pool append is in flight.
 
   ``ingest_tar_hot`` is for janitor yield (``sync-timedb-hot-path-janitor-lock-priority``),
   not for blocking the populate winner that set the flag during chunk prewarm.
+
+  Dirty-tar scans defer on ``archive_append_inflight`` even when a sealed sibling
+  path string is known — do not start a losing mutable-tar scan under append.
   """
   day_token = keys.day_token
   if not day_token or day_token == "unknown":
     return False
-  if sealed_path:
-    return False
   if archive_pre_append_member_lookup_active():
     return False
-  return archive_append_inflight_for_day(day_token)
+  if not archive_append_inflight_for_day(day_token):
+    return False
+  if scanning_mutable_tar:
+    return True
+  if sealed_path:
+    return False
+  return True
 
 
 def set_daily_tar_restore_in_progress(

@@ -165,11 +165,12 @@ class FakeRedis:
       return 0
 
   def scan_iter(self, match=None, count=100):
+    del count
     prefix = match.rstrip("*") if match else ""
     with self._lock:
-      for key in sorted(self._kv):
-        if key.startswith(prefix):
-          yield key
+      keys = [key for key in sorted(self._kv) if key.startswith(prefix)]
+    for key in keys:
+      yield key
 
 
 def _sample_cache_key(tmp_path, day="2026-05-09"):
@@ -1831,4 +1832,210 @@ def test_populate_lock_held_stall_recoverable_within_max_seconds(
       keys,
       started_monotonic=started,
       last_progress_monotonic=started - 10,
+  ) is False
+
+
+def test_populate_fail_deletes_partial_hash_no_orphan(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  """Mid-scan failure must delete partial HASH (no orphan hlen thrash)."""
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser"
+      ".get_sync_archive_members_redis_hset_batch_size",
+      lambda: 1,
+  )
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+
+  def _scan(on_member):
+    on_member("host/a", 10)
+    on_member("host/b", 20)
+    raise RuntimeError("simulated mid-scan failure")
+
+  with pytest.raises(RuntimeError, match="simulated mid-scan failure"):
+    populate_archive_members_redis(keys, _scan, sealed_path=None)
+
+  assert _redis_test_env.hlen(keys.hash_key) == 0
+  assert _redis_test_env.get(keys.complete_key) is None
+  assert _redis_test_env.get(keys.degraded_key) == "1"
+  assert _redis_test_env.exists(keys.lock_key) == 0
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      redis_members_populate_is_orphaned_incomplete,
+  )
+  assert redis_members_populate_is_orphaned_incomplete(
+      keys, client=_redis_test_env,
+  ) is False
+
+
+def test_tar_populate_eof_self_hot_only_prefers_sealed_fallback(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  """populate_wait self-hot + sealed sibling → sealed fallback, not forever EOF."""
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      set_ingest_tar_hot,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+      reset_worker_pool_kind,
+      set_worker_pool_kind,
+  )
+
+  day = "2026-06-07"
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  tar = daily / ("%s.tar" % day)
+  zst = daily / ("%s.tar.zst" % day)
+  tar.write_bytes(b"dirty-tar")
+  zst.write_bytes(b"sealed-zst")
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_daily_archive_dir_path",
+      lambda: str(daily),
+  )
+  set_ingest_tar_hot(day, reason="populate_wait")
+  keys = build_archive_members_redis_keys(
+      _daily_archive_members_cache_key(str(zst)),
+  )
+
+  with pytest.raises(
+      ArchiveMembersRedisUnavailableError,
+      match="prefer sealed fallback",
+  ):
+    helpers.mark_archive_day_ingest_skip_and_raise(
+        "",
+        keys,
+        _redis_test_env,
+        EOFError("unexpected end of data"),
+    )
+  assert get_archive_day_ingest_skip(keys, client=_redis_test_env) is None
+
+  sealed_calls = {"n": 0}
+
+  def _fake_sealed(sealed_path, cache_key, tar_path=None):
+    del sealed_path, cache_key, tar_path
+    sealed_calls["n"] += 1
+    return {"host/from_sealed": 42}
+
+  def _raise_prefer(_keys, _scan, **_kw):
+    raise ArchiveMembersRedisUnavailableError(
+        "tar populate EOF prefer sealed fallback day=%s" % day,
+    )
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".populate_archive_members_redis",
+      _raise_prefer,
+  )
+  monkeypatch.setattr(
+      helpers, "_populate_redis_members_from_sealed_scan", _fake_sealed,
+  )
+  monkeypatch.setattr(
+      helpers, "_resolve_sealed_daily_archive_path", lambda _p: str(zst),
+  )
+  token = set_worker_pool_kind("populate-pool")
+  try:
+    members = helpers._populate_redis_members_from_tar_scan(
+        str(tar), _daily_archive_members_cache_key(str(zst)),
+    )
+  finally:
+    reset_worker_pool_kind(token)
+  assert sealed_calls["n"] == 1
+  assert members == {"host/from_sealed": 42}
+
+
+def test_tar_populate_eof_during_populate_wait_hot_does_not_forever_transient(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  """Self-hot alone without sealed must not use forever-transient hot/append path."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      mark_archive_day_ingest_skip_and_raise,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      set_ingest_tar_hot,
+  )
+
+  day = "2026-06-07"
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_daily_archive_dir_path",
+      lambda: str(daily),
+  )
+  keys = build_archive_members_redis_keys(
+      _sample_cache_key(tmp_path, day=day),
+  )
+  for name in ("%s.tar.zst" % day, "%s.tar" % day):
+    p = tmp_path / name
+    if p.is_file():
+      p.unlink()
+  set_ingest_tar_hot(day, reason="populate_wait")
+  with pytest.raises(ArchiveDayIngestSkipError):
+    mark_archive_day_ingest_skip_and_raise(
+        "",
+        keys,
+        _redis_test_env,
+        EOFError("unexpected end of data"),
+    )
+  assert get_archive_day_ingest_skip(keys, client=_redis_test_env) is not None
+
+
+def test_idle_pool_recover_skip_reason_for_populate_wait(
+    _redis_test_env, tmp_path,
+):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      idle_pool_recover_skip_reason_for_paths,
+      set_ingest_tar_hot,
+  )
+
+  day = "2026-06-07"
+  # 2026-06-07 12:00:00 UTC
+  epoch = 1780833600
+  path = "/archive/host/%d" % epoch
+  set_ingest_tar_hot(day, reason="populate_wait")
+  reason = idle_pool_recover_skip_reason_for_paths([path])
+  assert "populate_wait" in reason
+  assert day in reason
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      clear_ingest_tar_hot,
+  )
+  clear_ingest_tar_hot(day)
+  assert idle_pool_recover_skip_reason_for_paths(["/nope/not-epoch"]) == ""
+  assert idle_pool_recover_skip_reason_for_paths([path]) == ""
+
+
+def test_idle_pool_recover_skip_reason_scans_hot_when_path_day_mismatches(
+    _redis_test_env, tmp_path,
+):
+  """Cross-day pending basename must still skip when another day has populate_wait."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      idle_pool_recover_skip_reason_for_paths,
+      set_ingest_tar_hot,
+  )
+
+  set_ingest_tar_hot("2026-06-07", reason="populate_wait")
+  # Production crash path epoch maps to 2026-06-08 UTC, not 06-07.
+  path = "/archive/i614-141.vista.tacc.utexas.edu/1780895555"
+  reason = idle_pool_recover_skip_reason_for_paths([path])
+  assert "populate_wait" in reason
+  assert "2026-06-07" in reason
+
+
+def test_populate_defers_dirty_tar_scan_when_append_inflight_and_sealed_known(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  """Dirty-tar populate defers on append even when sealed sibling path is known."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      _populate_scan_should_defer,
+      clear_archive_append_inflight,
+      set_archive_append_inflight,
+  )
+
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  sealed = str(tmp_path / "2026-05-09.tar.zst")
+  set_archive_append_inflight(keys.day_token, reason="archive_job")
+  assert _populate_scan_should_defer(
+      keys, sealed, scanning_mutable_tar=True,
+  ) is True
+  assert _populate_scan_should_defer(keys, sealed) is False
+  clear_archive_append_inflight(keys.day_token)
+  assert _populate_scan_should_defer(
+      keys, sealed, scanning_mutable_tar=True,
   ) is False

@@ -1950,3 +1950,54 @@ def test_full_redispatch_thrash_triggers_immediate_recover_same_round(monkeypatc
   assert results == ["stuck_path"]
   assert recover_calls["n"] == 1
 
+
+def test_idle_pool_recover_skipped_when_skip_fn_returns_reason(monkeypatch):
+  """populate_wait skip must prevent recover wall / exit 124."""
+  monkeypatch.setattr(mph, "IDLE_POOL_RECOVER_WALL_S", 0.3)
+  monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 1000)
+  monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 3)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
+  recover_calls = {"n": 0}
+  logs = []
+
+  def on_recover(pool, pending_paths, pending_async, fn):
+    recover_calls["n"] += 1
+    del pool, pending_paths, pending_async, fn
+    time.sleep(30)
+
+  monkeypatch.setattr(
+      mph, "log_print", lambda msg, flush=False: logs.append(msg),
+  )
+
+  class _FinishablePool(_ManualPool):
+    def apply_async(self, fn, args=()):
+      ar = super().apply_async(fn, args)
+      self._last_ar = ar
+      return ar
+
+  stuck_pool = _FinishablePool()
+  polls = {"n": 0}
+
+  def skip_fn(pending_paths):
+    del pending_paths
+    polls["n"] += 1
+    if polls["n"] >= 6 and hasattr(stuck_pool, "_last_ar"):
+      stuck_pool._last_ar.finish()
+    return "populate_wait day=2026-06-07 reason=populate_wait"
+
+  gen = mph.imap_sliding_window_watch_pool(
+      stuck_pool,
+      lambda path: path,
+      ["stuck_path"],
+      max_inflight=1,
+      poll_timeout_s=0.01,
+      stall_abort_polls_fn=lambda in_flight: 100000,
+      on_idle_pool_stuck_after_redispatch=on_recover,
+      skip_idle_pool_recover_fn=skip_fn,
+  )
+  results = list(gen)
+  assert results == ["stuck_path"]
+  assert recover_calls["n"] == 0
+  assert any("pool_recover skipped" in line for line in logs)
+

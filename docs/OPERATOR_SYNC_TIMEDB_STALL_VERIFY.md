@@ -528,7 +528,7 @@ day = \"YYYY-MM-DD\"
 dad = cp.get_daily_archive_dir_path()
 for name in (\"%s.tar\" % day, \"%s.tar.zst\" % day, \"%s.tar.gz\" % day):
     p = os.path.join(dad, name)
-    print(name, \"exists=\" + str(os.path.isfile(p)), \"path=\" + p)
+    print(name, \"exists=\" + str(os.path.isfile(p)), \"size=\" + (str(os.path.getsize(p)) if os.path.isfile(p) else \"-\"))
 "'
 ```
 
@@ -540,6 +540,34 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
   tail -40
 ```
 
+**Bucket E2 — Dirty-tar populate EOF thrash + self-hot + exit 124 (T0/T1, 2026-06-07 class):** pre-fix loop shows `populate_source_decision … dirty=True sealed_exists=True use_tar=True` then `transient tar populate EOF during hot/append` while Redis census has **`tar_hot=True`** / **`append_inflight=False`** (waiter self-hot alone), orphan clear `hlen≈6500`, stale clear `hlen=0`, forever retry; workers wchan-idle in populate wait → **`pool_recover exceeded wall_s=30.0`** → exit **124** `idle_pool_taskqueue_dead`. Candidate counters `unprocessed_cross_day_n` / `processed_cross_day_n` are **diagnostic only** (misbucket census) — they do **not** set `waiting_on_ingest` by themselves. Flood of `Unable to find first timestamp in N path(s)` after day-close delete is rate-limited/summarized (not the crash driver).
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline su hpcperfstats -c 'python3 -c "
+from hpcperfstats.dbload.lib import conf_parser as cfg
+import os
+from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import is_daily_tar_sealed_dirty
+from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+    archive_append_inflight_for_day, ingest_tar_hot_for_day, ingest_tar_hot_reason_for_day,
+)
+ad=cfg.get_archive_dir_path(); dd=cfg.get_daily_archive_dir_path()
+day=\"YYYY-MM-DD\"
+tar=os.path.join(dd, day+\".tar\"); zst=os.path.join(dd, day+\".tar.zst\")
+print(\"dirty\", is_daily_tar_sealed_dirty(tar, zst, \"\") if os.path.isfile(tar) else \"n/a\")
+print(\"append_inflight\", archive_append_inflight_for_day(day))
+print(\"tar_hot\", ingest_tar_hot_for_day(day), \"reason\", ingest_tar_hot_reason_for_day(day))
+print(\"tar_size\", os.path.getsize(tar) if os.path.isfile(tar) else \"-\")
+print(\"zst_size\", os.path.getsize(zst) if os.path.isfile(zst) else \"-\")
+"'
+```
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+  grep -E 'YYYY-MM-DD|populate_source_decision|prefer sealed fallback|sealed fallback after dirty-tar|transient tar populate EOF|clearing orphan incomplete|pool_recover skipped|pool_recover exceeded wall|idle_pool_taskqueue_dead|Unable to find first timestamp' | \
+  tail -80
+```
+
+**Post-fix pass:** no forever `transient tar populate EOF during hot/append` with only `populate_wait` hot; expect **`prefer sealed fallback`** / **`populate sealed fallback after dirty-tar EOF`** then `populate_source=sealed` (or warm Redis); **no** orphan `hlen≈6500` clears after mid-scan fail; idle reconcile may log **`pool_recover skipped reason=populate_wait…`** instead of exit **124** while wait is live.
 **Populate incomplete after lock release (tar exists):** grep for `Archive members populate incomplete after lock release`. Error key suffix `none:none:<tar_mtime>:<tar_size>` with concurrent `archive_job_done` / `redis_merge_warm` on the same day usually means **tar-identity drift** (waiter on pre-append fingerprint, merge on post-append). Post-fix waiters re-resolve identity and re-enqueue within `populate_max_seconds` rather than immediate `sys.exit(1)`.
 
 **Transient fnctl read-lock timeout (T1):** grep for `transient fnctl read lock timeout during tar populate` and `transient fnctl during archive members prewarm`. **Healthy:** populate waits on fnctl (up to **`populate_max_seconds`**) then `populate_source=tar` when `.tar` exists; occasional WARNING + `populate incomplete after lock release; recovering` or `chunk prewarm days=...:populate_recovering:tar_populated` — supervisor must **not** restart (`L2 contract failed` absent or rare). **Unhealthy:** repeated `ERROR: archive members Redis L2 contract failed` with supervisor restart loop on the same calendar day. When **`.tar` is present**, expect **`populate_source=tar`** not sealed; sealed populate is normal only after tar-drop (`archive_keep_uncompressed_tar=no`).

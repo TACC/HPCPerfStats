@@ -3521,8 +3521,10 @@ def mark_archive_day_ingest_skip_and_raise(sealed_path, keys, client, stream_err
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       ArchiveDayIngestSkipError,
       ArchiveMembersRedisUnavailableError,
+      _SELF_INGEST_TAR_HOT_REASONS,
       archive_append_inflight_for_day,
       ingest_tar_hot_for_day,
+      ingest_tar_hot_reason_for_day,
       set_archive_day_ingest_skip,
   )
 
@@ -3544,14 +3546,30 @@ def mark_archive_day_ingest_skip_and_raise(sealed_path, keys, client, stream_err
       daily_dir = cfg.get_daily_archive_dir_path()
       if daily_dir:
         tar_path = os.path.join(daily_dir, "%s.tar" % day_token)
-    if day_token and (
-        ingest_tar_hot_for_day(day_token)
-        or archive_append_inflight_for_day(day_token)
-    ):
+    sealed_sibling = _resolve_sealed_path_for_day_token(day_token)
+    # True append (or non-self hot) → transient Unavailable; preserve no day-skip.
+    if day_token and archive_append_inflight_for_day(day_token):
       raise ArchiveMembersRedisUnavailableError(
           "transient tar populate EOF during hot/append activity day=%s"
           % day_token,
       )
+    # Self-hot alone + sealed sibling → prefer sealed populate (not forever-transient).
+    if (
+        day_token
+        and sealed_sibling
+        and os.path.isfile(sealed_sibling)
+    ):
+      raise ArchiveMembersRedisUnavailableError(
+          "tar populate EOF prefer sealed fallback day=%s" % day_token,
+      )
+    if day_token and ingest_tar_hot_for_day(day_token):
+      hot_reason = ingest_tar_hot_reason_for_day(day_token)
+      if hot_reason and hot_reason not in _SELF_INGEST_TAR_HOT_REASONS:
+        raise ArchiveMembersRedisUnavailableError(
+            "transient tar populate EOF during hot/append activity day=%s"
+            % day_token,
+        )
+      # Self-hot only without sealed: fall through to readable / sticky skip.
     if tar_path and os.path.isfile(tar_path):
       try:
         if verify_tar_archive_readable(tar_path):
@@ -4373,14 +4391,35 @@ def _populate_redis_members_from_tar_scan(tar_path, cache_key):
       _remove_read_lock_sidecar(tar_path)
     return True, saw_duplicates, None
 
-  members = populate_archive_members_redis(
-      keys,
-      _scan_fn,
-      sealed_path=None,
-      source_decision=_build_populate_source_decision(
-          keys.day_token, tar_path, zst_path, gz_path, sealed_path,
-      ),
-  )
+  try:
+    members = populate_archive_members_redis(
+        keys,
+        _scan_fn,
+        sealed_path=None,
+        source_decision=_build_populate_source_decision(
+            keys.day_token, tar_path, zst_path, gz_path, sealed_path,
+        ),
+        scanning_mutable_tar=True,
+    )
+  except Exception as exc:
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+        ArchiveMembersRedisUnavailableError,
+    )
+    if not isinstance(exc, ArchiveMembersRedisUnavailableError):
+      raise
+    if "prefer sealed fallback" not in str(exc):
+      raise
+    if not (sealed_path and os.path.isfile(sealed_path)):
+      raise
+    log_print(
+        "INFO: populate sealed fallback after dirty-tar EOF day=%s "
+        "tar=%s sealed=%s"
+        % (keys.day_token, tar_path, sealed_path),
+        flush=True,
+    )
+    return _populate_redis_members_from_sealed_scan(
+        sealed_path, cache_key, tar_path=tar_path,
+    )
   if members is not None:
     _record_archive_members_populate_source(canonical, "tar_populated")
     day_token = keys.day_token if keys.day_token != "unknown" else ""
@@ -6825,6 +6864,7 @@ def build_archive_mapping(
     parse_first_ts_fn = parse_first_timestamp_line
   ar_file_mapping = {}
   skipped_no_ts = 0
+  skipped_samples = []
   for stats_fname in files_to_be_archived:
     precomputed_ts = None
     if first_timestamp_by_path:
@@ -6835,17 +6875,22 @@ def build_archive_mapping(
     else:
       t = _read_first_timestamp_from_stats_file(stats_fname, parse_first_ts_fn)
     if t is None:
-      log_print(
-          "Unable to find first timestamp in %s, skipping archiving"
-          % stats_fname
-      )
       skipped_no_ts += 1
+      if len(skipped_samples) < 5:
+        skipped_samples.append(os.path.basename(str(stats_fname)))
       continue
     file_date = datetime.fromtimestamp(float(t))
     archive_fname = daily_compressed_path_for_date(tgz_archive_dir, file_date)
     if archive_fname not in ar_file_mapping:
       ar_file_mapping[archive_fname] = []
     ar_file_mapping[archive_fname].append(stats_fname)
+  if skipped_no_ts:
+    log_print(
+        "Unable to find first timestamp in %d path(s), skipping archiving "
+        "sample=%s"
+        % (skipped_no_ts, ",".join(skipped_samples) or "-"),
+        flush=True,
+    )
   if skipped_no_ts and not ar_file_mapping:
     log_print(
         "No files added to archive mapping (%d skipped: no timestamp)"
