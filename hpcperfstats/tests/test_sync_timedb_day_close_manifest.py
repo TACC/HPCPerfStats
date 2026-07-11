@@ -423,3 +423,24 @@ def test_defer_for_ingest_handoff_creates_entry_when_missing(tmp_path):
   coord.defer_for_ingest_handoff(tar_path)
   snap = coord.entry_progress_snapshot(tar_path)
   assert snap.get("status") == "deferred"
+
+
+@pytest.mark.django_db(databases=[])
+def test_clear_deferred_waiting_on_ingest_removes_entry(tmp_path):
+  archive_dir = str(tmp_path / "archive")
+  os.makedirs(archive_dir)
+  tar_path = os.path.normpath(str(tmp_path / "daily" / "2020-01-01.tar"))
+  os.makedirs(os.path.dirname(tar_path), exist_ok=True)
+
+  coord = async_dc_mod.DayCloseManifestCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=str(tmp_path / "daily"),
+      local_tz=None,
+      log_fn=lambda *_a, **_k: None,
+      get_disqualified_daily_tars=lambda: set(),
+  )
+  coord.defer_for_ingest_handoff(tar_path)
+  assert coord.clear_deferred_waiting_on_ingest(tar_path) is True
+  assert coord.entry_progress_snapshot(tar_path) == {}
+  assert coord.clear_deferred_waiting_on_ingest(tar_path) is False

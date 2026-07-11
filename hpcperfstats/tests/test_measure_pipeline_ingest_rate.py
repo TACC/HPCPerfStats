@@ -196,7 +196,7 @@ def test_truncate_line_is_disk_pending_sample(mod):
 def test_boot_only_skips_pre_boot_lines(mod):
     lines = [
         _ts(0) + "sync_timedb: pending rescan done pending=9999 elapsed_s=1.0",
-        _ts(5) + "startup maintenance idle; ingest may begin",
+        _ts(5) + "startup ingest gate cleared; ingest may begin",
         _ts(10) + "sync_timedb: pending rescan done pending=100 elapsed_s=1.0",
         _ts(10) + "Messages consumed in the last 10 minutes: 0; messages waiting to be consumed: 0; current file unlinks (last 10 minutes): 1",
         _ts(40) + "Pending stats file list truncated pending=80 max=2000",

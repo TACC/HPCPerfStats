@@ -130,6 +130,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     merge_daily_archive_members_l1_cache,
     pending_minus_chunk,
     select_ingest_chunk_paths,
+    age_misbucket_handoff_priority_paths,
     resolve_unmapped_closed_raw_daily_tars,
     daily_tar_path_for_stats_path,
     calendar_date_from_daily_tar_path,
@@ -5830,6 +5831,7 @@ def run_sync_timedb_supervisor_loop(
   inflight_archive_paths = set()
   pending_stats_files = []
   handoff_priority_paths = set()
+  handoff_source_tar_by_path = {}
   immediate_day_close_attempted_tars = set()
   chunk_counter = 0
   worker_memory_accumulator = WorkerMemoryBatchAccumulator()
@@ -6229,6 +6231,27 @@ def run_sync_timedb_supervisor_loop(
     ]
     for path in to_drop:
       handoff_priority_paths.discard(path)
+      handoff_source_tar_by_path.pop(path, None)
+
+  def _age_misbucket_handoff_priority_paths():
+    """Drop sticky handoff leads whose derived day has no daily archive source."""
+    clear_sources = age_misbucket_handoff_priority_paths(
+        handoff_priority_paths,
+        tgz_archive_dir=tgz_archive_dir,
+        handoff_source_tar_by_path=handoff_source_tar_by_path,
+        log_fn=log_print,
+    )
+    for source_tar in clear_sources:
+      if day_close_manifest is not None:
+        clear_fn = getattr(
+            day_close_manifest,
+            "clear_deferred_waiting_on_ingest",
+            None,
+        )
+        if callable(clear_fn):
+          clear_fn(source_tar)
+      archive_janitor.signal_work_available()
+    return len(clear_sources)
 
   def _filter_handoff_requeue_paths(paths):
     filtered = []
@@ -6333,6 +6356,7 @@ def run_sync_timedb_supervisor_loop(
       )
     for path in requeued_paths:
       handoff_priority_paths.add(path)
+      handoff_source_tar_by_path[path] = tar_norm
     _flush_checkpoint_if_needed(force=True)
     if day_close_manifest is not None:
       day_close_manifest.defer_for_ingest_handoff(tar_norm)
@@ -6341,15 +6365,25 @@ def run_sync_timedb_supervisor_loop(
         _apply_handoff_priority_to_pending(pending_stats_files),
         handoff=True,
     )
+    source_day = (
+        calendar_date_from_daily_tar_path(tar_norm).isoformat()
+        if calendar_date_from_daily_tar_path(tar_norm) is not None
+        else tar_norm
+    )
+    sample_path = requeued_paths[0]
+    derived = _derive_stats_path_date(sample_path)
+    derived_day = derived.isoformat() if derived is not None else ""
     log_print(
         "sync_timedb: day_close handoff requeue day=%s paths=%d reason=%s "
-        "checkpoint_cleared=yes queue_head=yes"
+        "checkpoint_cleared=yes queue_head=yes sample_path=%s "
+        "source_day=%s derived_day=%s"
         % (
-            calendar_date_from_daily_tar_path(tar_norm).isoformat()
-            if calendar_date_from_daily_tar_path(tar_norm) is not None
-            else tar_norm,
+            source_day,
             len(requeued_paths),
             reason or "",
+            sample_path,
+            source_day,
+            derived_day,
         ),
         flush=True,
     )
@@ -6440,7 +6474,8 @@ def run_sync_timedb_supervisor_loop(
       _get_startup_snapshot_for_rescan(idle_refill=False)
       _mark_startup_ingest_gate_cleared()
       log_print(
-          "sync_timedb: startup maintenance idle; ingest may begin",
+          "sync_timedb: startup ingest gate cleared; ingest may begin "
+          "(heavy maintenance may still run on janitor thread)",
           flush=True,
       )
     else:
@@ -6610,6 +6645,17 @@ def run_sync_timedb_supervisor_loop(
               )
           )
         pending_paths_before_chunk = list(pending_stats_files)
+        _age_misbucket_handoff_priority_paths()
+        handoff_priority_n = len(handoff_priority_paths)
+        if oldest_tar_for_chunk:
+          handoff_cross_day_n = sum(
+              1
+              for path in handoff_priority_paths
+              if oldest_tar_for_chunk not in daily_tar_paths_for_stats_paths(
+                  [path],
+                  tgz_archive_dir,
+              )
+          )
         stats_files_chunk = select_ingest_chunk_paths(
             pending_stats_files,
             oldest_tar=oldest_tar_for_chunk,

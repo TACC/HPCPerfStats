@@ -315,6 +315,24 @@ class DayCloseManifestCoordinator:
           pass
     return len(reenqueue)
 
+  def clear_deferred_waiting_on_ingest(self, tar_path: str) -> bool:
+    """Drop deferred/waiting_on_ingest so classify can mark ready_for_enqueue."""
+    tar_norm = os.path.normpath(tar_path or "")
+    if not tar_norm:
+      return False
+    with self._lock:
+      entry = self._manifest.get("entries", {}).get(tar_norm)
+      if not _is_deferred_waiting_on_ingest_entry(entry):
+        return False
+      entries = self._manifest.setdefault("entries", {})
+      entries.pop(tar_norm, None)
+      _save_manifest(self._manifest_path, self._manifest)
+    self.log_fn(
+        "janitor: day_close deferred cleared tar=%s" % tar_norm,
+        flush=True,
+    )
+    return True
+
   def discover_inflight_breakdown(self, *, live_worker_tars=None) -> Dict[str, int]:
     """Counts for janitor discover logging (debt heap vs deferred vs worker slots)."""
     live_worker_tars = {

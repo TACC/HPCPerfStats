@@ -7810,6 +7810,73 @@ def test_select_ingest_chunk_prefers_handoff_across_oldest_tar(tmp_path):
   assert all(path in jun_paths for path in chunk[1:])
 
 
+def test_select_ingest_chunk_skips_misbucket_handoff_without_daily_archive(tmp_path):
+  """Misbucket epoch path (e.g. 1783181172 → July) must not pin every June chunk."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      handoff_path_lacks_daily_archive,
+      select_ingest_chunk_paths,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  may_tar = os.path.normpath(str(daily_dir / "2026-05-30.tar"))
+  jun_tar = os.path.normpath(str(daily_dir / "2026-06-07.tar"))
+  open(may_tar, "wb").close()
+  open(jun_tar, "wb").close()
+  # Basename epoch 1783181172 → 2026-07-04; no July tar/zst on disk.
+  misbucket = tmp_path / "i617-114.vista.tacc.utexas.edu" / "1783181172"
+  misbucket.parent.mkdir(parents=True)
+  misbucket.write_text("1000 job cn001\n")
+  d_jun = datetime(2026, 6, 7, 12, tzinfo=timezone.utc)
+  jun_path = tmp_path / "host" / "jun_0"
+  jun_path.parent.mkdir(parents=True, exist_ok=True)
+  jun_path.write_text("2000 job cn002\n")
+  os.utime(jun_path, (d_jun.timestamp(), d_jun.timestamp()))
+  assert handoff_path_lacks_daily_archive(str(misbucket), str(daily_dir))
+  logs = []
+  chunk = select_ingest_chunk_paths(
+      [str(jun_path)],
+      oldest_tar=jun_tar,
+      unprocessed_by_tar={jun_tar: [str(jun_path)]},
+      inflight_archive_paths=set(),
+      tgz_archive_dir=str(daily_dir),
+      chunk_size=1000,
+      ingest_queue_high=2000,
+      handoff_priority_paths={str(misbucket)},
+      log_fn=lambda msg, **_k: logs.append(str(msg)),
+  )
+  assert str(misbucket) not in chunk
+  assert chunk == [str(jun_path)]
+  assert any("handoff_cross_day_skip" in line and "no_daily_archive" in line for line in logs)
+
+
+def test_age_misbucket_handoff_priority_paths_clears_and_returns_source(tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      age_misbucket_handoff_priority_paths,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  may_tar = os.path.normpath(str(daily_dir / "2026-05-30.tar"))
+  open(may_tar, "wb").close()
+  misbucket = tmp_path / "i617-114.vista.tacc.utexas.edu" / "1783181172"
+  misbucket.parent.mkdir(parents=True)
+  misbucket.write_text("x")
+  handoff = {str(misbucket)}
+  source_map = {str(misbucket): may_tar}
+  logs = []
+  clear_sources = age_misbucket_handoff_priority_paths(
+      handoff,
+      tgz_archive_dir=str(daily_dir),
+      handoff_source_tar_by_path=source_map,
+      log_fn=lambda msg, **_k: logs.append(str(msg)),
+  )
+  assert handoff == set()
+  assert source_map == {}
+  assert clear_sources == {may_tar}
+  assert any("handoff_priority_age" in line and "2026-07-04" in line for line in logs)
+
+
 def test_sort_pending_stats_paths_oldest_first(tmp_path):
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       sort_pending_stats_paths_oldest_first,

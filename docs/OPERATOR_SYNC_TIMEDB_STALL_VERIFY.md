@@ -179,6 +179,27 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
   grep -E 'day_close handoff requeue day=2026-06-04|Day raw removal delete complete day=2026-06-04' | tail -20
 ```
 
+### T0/T1 — misbucket handoff pin vs soft wait vs post-progress discover (2026-07)
+
+Sticky cross-day handoff (path under an older day-raw-removal manifest whose basename epoch maps to a **future** day with **`no_daily_archive`**) permanently deferred immediate day_close and polluted every chunk histogram. Separately, classify used to treat manifest **`deferred`/`waiting_on_ingest`** as **`day_close_in_progress`**, so cleared days never became **`ready_for_enqueue`** → **`enqueued=0` / `days_started=0`** with free slots.
+
+```bash
+docker compose -p hpcperfstats logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+
+# T0 — misbucket pin (should age/clear after deploy; must not forever defer)
+grep -E 'handoff_priority_age|handoff_cross_day_skip|immediate day_close defer.*handoff_priority|chunk prewarm days=.*no_daily_archive|oldest_day_chunk_gate.*handoff_cross_day_n=' /tmp/pipeline-full.log | tail -40
+
+# T0 — soft wait only (expected while aligned unprocessed>0)
+grep -E 'day_close candidate tar=.*waiting_on_ingest|unprocessed=[1-9]' /tmp/pipeline-full.log | grep day_close | tail -20
+
+# T1 — post-progress discover must start work (not ready_for_enqueue_n≥1 with enqueued=0 forever)
+grep -E 'discover_ready_day_close|Archive janitor tick done|janitor: day_close enqueue' /tmp/pipeline-full.log | tail -40
+```
+
+**Pass (T0):** after deploy, misbucket leads log **`handoff_priority_age … reason=no_daily_archive`** (or **`handoff_cross_day_skip`**) and **`immediate day_close defer reason=handoff_priority`** stops when the set is empty. Soft **`waiting_on_ingest`** with **`unprocessed>0`** on the ingest head day is **not** a stall.
+
+**Pass (T1):** when oldest advances and prior days have **`unprocessed=0`**, expect **`discover_ready_day_close enqueued≥1`** (or durable **`discover_enqueue_reject`**) and **`Archive janitor tick done`** with **`days_started>0`** / progressing debt — **not** repeating **`ready_for_enqueue_n=1 enqueued=0 skipped_eligible=1 free_slots=4 active_workers=0`** with **`days_started=0`**. Cleared days must **not** stay **`status=queued reasons=day_close_in_progress`** with no live workers.
+
 ### T1 verify — janitor proactive day-close (backlog catch-up sites)
 
 After deploy of janitor discover + janitor-only **`DAY_CLOSE`** (2026-07), grep pipeline logs for discovery enqueue and janitor progress (not legacy `async day_close submit` / `eligible_deferred`):

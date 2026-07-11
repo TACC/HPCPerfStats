@@ -2158,6 +2158,95 @@ def reconcile_orphan_inflight_for_oldest_tar(
   return reclaimed
 
 
+def handoff_path_lacks_daily_archive(stats_path, tgz_archive_dir) -> bool:
+  """True when every derived daily tar for ``stats_path`` has no populate source.
+
+  Used to age misbucket handoff leads (e.g. basename epoch maps to a future day
+  with neither sealed ``.tar.zst`` nor mutable ``.tar``).
+  """
+  if not stats_path or not tgz_archive_dir:
+    return False
+  derived = daily_tar_paths_for_stats_paths([stats_path], tgz_archive_dir)
+  if not derived:
+    return False
+  from hpcperfstats.dbload.lib.archive_compress import compressed_sibling_paths
+
+  for tar_path in derived:
+    zst_path, _gz_path = compressed_sibling_paths(tar_path)
+    if daily_archive_populate_source_exists(zst_path):
+      return False
+  return True
+
+
+def age_misbucket_handoff_priority_paths(
+    handoff_priority_paths,
+    *,
+    tgz_archive_dir,
+    handoff_source_tar_by_path=None,
+    log_fn=None,
+):
+  """Remove forward-misbucket handoff leads with ``no_daily_archive``.
+
+  Only ages when the path's derived calendar day is **strictly after** the
+  source tar day that requeued it and that derived day has neither sealed nor
+  mutable daily archive. Same-day / backward-derived handoffs are kept so
+  legitimate cross-day retry and same-boot duplicate guards still work.
+
+  Mutates ``handoff_priority_paths`` (and optional ``handoff_source_tar_by_path``).
+  Returns source daily-tar paths that no longer have any handoff pin.
+  """
+  if not handoff_priority_paths or not tgz_archive_dir:
+    return set()
+  source_map = handoff_source_tar_by_path
+  to_drop = []
+  for path in list(handoff_priority_paths):
+    if not handoff_path_lacks_daily_archive(path, tgz_archive_dir):
+      continue
+    source_tar = None
+    if source_map is not None:
+      source_tar = source_map.get(path)
+    if not source_tar:
+      continue
+    source_day = calendar_date_from_daily_tar_path(source_tar)
+    derived = _derive_stats_path_date(path)
+    if source_day is None or derived is None or derived <= source_day:
+      continue
+    to_drop.append(path)
+  if not to_drop:
+    return set()
+  candidate_sources = set()
+  for path in to_drop:
+    derived = _derive_stats_path_date(path)
+    derived_day = derived.isoformat() if derived is not None else ""
+    source_tar = None
+    source_day = ""
+    if source_map is not None:
+      source_tar = source_map.pop(path, None)
+    if source_tar:
+      source_tar = os.path.normpath(source_tar)
+      candidate_sources.add(source_tar)
+      src_date = calendar_date_from_daily_tar_path(source_tar)
+      source_day = src_date.isoformat() if src_date is not None else source_tar
+    handoff_priority_paths.discard(path)
+    if log_fn is not None:
+      log_fn(
+          "sync_timedb: handoff_priority_age path=%s source_day=%s "
+          "derived_day=%s reason=no_daily_archive"
+          % (path, source_day, derived_day),
+      )
+  clear_sources = set()
+  for source_tar in candidate_sources:
+    still_pinned = False
+    if source_map is not None:
+      still_pinned = any(
+          os.path.normpath(source_map.get(p) or "") == source_tar
+          for p in handoff_priority_paths
+      )
+    if not still_pinned:
+      clear_sources.add(source_tar)
+  return clear_sources
+
+
 def select_ingest_chunk_paths(
     pending,
     *,
@@ -2188,6 +2277,13 @@ def select_ingest_chunk_paths(
           [path],
           tgz_archive_dir,
       ):
+        if handoff_path_lacks_daily_archive(path, tgz_archive_dir):
+          if log_fn is not None:
+            log_fn(
+                "sync_timedb: handoff_cross_day_skip path=%s reason=no_daily_archive"
+                % path,
+            )
+          continue
         cross_day_handoff.append(path)
     for path in handoff_set:
       if path in pending_set:
@@ -2198,6 +2294,13 @@ def select_ingest_chunk_paths(
           [path],
           tgz_archive_dir,
       ):
+        if handoff_path_lacks_daily_archive(path, tgz_archive_dir):
+          if log_fn is not None:
+            log_fn(
+                "sync_timedb: handoff_cross_day_skip path=%s reason=no_daily_archive"
+                % path,
+            )
+          continue
         cross_day_handoff.append(path)
     if cross_day_handoff:
       handoff_lead = cross_day_handoff[:target_chunk_size]

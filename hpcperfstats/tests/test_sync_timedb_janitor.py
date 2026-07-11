@@ -2071,8 +2071,8 @@ def test_day_close_active_tar_paths_merges_debt_and_manifest(tmp_path):
   tar_manifest = os.path.normpath(str(daily_dir / "2020-01-02.tar"))
 
   class _FakeCoord:
-    def active_or_submitted_tar_paths(self):
-      return {tar_debt, tar_manifest}
+    def manifest_worker_slot_tar_paths(self):
+      return {tar_manifest}
 
   janitor = _make_janitor(
       tgz_archive_dir=str(daily_dir),
@@ -2080,6 +2080,43 @@ def test_day_close_active_tar_paths_merges_debt_and_manifest(tmp_path):
   )
   janitor._enqueue_debt(DebtKind.DAY_CLOSE, tar_debt, persist=False)
   assert janitor._day_close_active_tar_paths() == {tar_debt, tar_manifest}
+
+
+def test_day_close_active_tar_paths_excludes_deferred_waiting_on_ingest(tmp_path):
+  """Deferred handoff must not classify as day_close_in_progress (P0-B)."""
+  from hpcperfstats.dbload.lib.sync_timedb_day_close_manifest import (
+      DayCloseManifestCoordinator,
+  )
+
+  daily_dir = tmp_path / "daily"
+  archive_dir = tmp_path / "archive"
+  daily_dir.mkdir()
+  archive_dir.mkdir()
+  deferred_tar = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+  open(deferred_tar, "wb").close()
+  worker_tar = os.path.normpath(str(daily_dir / "2020-01-02.tar"))
+  open(worker_tar, "wb").close()
+
+  coord = DayCloseManifestCoordinator(
+      archive_data_dir=str(archive_dir),
+      host_name_ext="",
+      tgz_archive_dir=str(daily_dir),
+      local_tz=timezone.utc,
+      log_fn=lambda *_a, **_k: None,
+      get_disqualified_daily_tars=lambda: set(),
+      get_inflight_tar_paths_fn=lambda: set(),
+      enqueue_day_close_fn=lambda *_a, **_k: True,
+  )
+  coord._set_entry_status(deferred_tar, "deferred", detail="waiting_on_ingest")
+  coord._set_entry_status(worker_tar, "queued", detail="test")
+
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      day_close_manifest_coordinator=coord,
+  )
+  active = janitor._day_close_active_tar_paths()
+  assert worker_tar in active
+  assert deferred_tar not in active
 
 
 def test_run_scheduled_maintenance_pass_logs_candidate_report_only(tmp_path, monkeypatch):

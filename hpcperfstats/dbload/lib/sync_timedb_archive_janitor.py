@@ -547,6 +547,12 @@ class ArchiveJanitor:
     startup_pass = reason == "startup" and coord is not None
     day_ingest_complete_pass = str(reason).startswith("day_ingest_complete:")
     pass_t0 = time.time()
+    self.log_fn(
+        "janitor: heavy maintenance begin reason=%s "
+        "(classify/report; not an ingest gate)"
+        % reason,
+        flush=True,
+    )
     sub_remaining_map_s = 0.0
     sub_candidate_report_s = 0.0
     sub_scheduled_submit_s = 0.0
@@ -696,6 +702,11 @@ class ArchiveJanitor:
               sub_lock_cleanup_s,
               time.time() - pass_t0,
           ),
+          flush=True,
+      )
+      self.log_fn(
+          "janitor: heavy maintenance finished reason=%s duration_s=%.3f"
+          % (reason, time.time() - pass_t0),
           flush=True,
       )
     finally:
@@ -910,10 +921,19 @@ class ArchiveJanitor:
       return dict(self._day_phases)
 
   def _day_close_active_tar_paths(self) -> Set[str]:
+    """Tars that are truly in-progress for classify ``day_close_in_progress``.
+
+    Includes live workers, debt-heap ``DAY_CLOSE``, and manifest *worker-slot*
+    statuses (queued/submitted/sealing/raw_removal). Excludes ``deferred`` /
+    ``waiting_on_ingest`` so handoff-deferred days can classify as
+    ``ready_for_enqueue`` and discover can resume after ingest advances.
+    """
+    active = set(self._day_close_live_worker_tar_paths())
+    active |= self._debt_heap_tar_paths()
     coord = self.day_close_manifest_coordinator
-    if coord is not None:
-      return coord.active_or_submitted_tar_paths()
-    return self._debt_heap_tar_paths()
+    if coord is not None and hasattr(coord, "manifest_worker_slot_tar_paths"):
+      active |= set(coord.manifest_worker_slot_tar_paths() or ())
+    return active
 
   def _day_close_live_worker_tar_paths(self) -> Set[str]:
     with self._day_close_in_flight_lock:

@@ -76,7 +76,7 @@ _THROUGHPUT_BACKLOG_RE = re.compile(
     r"Throughput telemetry: active_workers=\d+ backlog=(\d+)"
 )
 _BOOT_MARKERS = (
-    "startup maintenance idle; ingest may begin",
+    "startup ingest gate cleared; ingest may begin",
     "sync_timedb: pending rescan done pending=",
 )
 # Disk pending ≫ queue depth by at least this factor → saturation WARN.

@@ -3089,7 +3089,7 @@ def _supervisor_shutdown_on_startup_idle(monkeypatch):
 
     def _spy_log(*args, **kwargs):
         msg = ' '.join(str(a) for a in args)
-        if 'startup maintenance idle; ingest may begin' in msg:
+        if 'startup ingest gate cleared; ingest may begin' in msg:
             state['idle'] = True
         if 'boot handoff discover' in msg:
             shutdown_requested[0] = True
@@ -3151,7 +3151,7 @@ def test_supervisor_reconcile_cap_uses_coordinator_snapshot_no_live_collect(monk
             '/tmp/archive', 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True,
         )
         out = capsys.readouterr().out
-        assert 'startup maintenance idle; ingest may begin' in out
+        assert 'startup ingest gate cleared; ingest may begin' in out
     finally:
         shutdown_requested[0] = False
 
@@ -3785,8 +3785,8 @@ def test_supervisor_startup_handoff_paths_ingested_at_queue_head(monkeypatch, tm
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
         st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         out = capsys.readouterr().out
-        assert 'startup maintenance idle; ingest may begin' in out
-        idle_idx = out.index('startup maintenance idle; ingest may begin')
+        assert 'startup ingest gate cleared; ingest may begin' in out
+        idle_idx = out.index('startup ingest gate cleared; ingest may begin')
         if 'boot handoff discover' in out:
             assert out.index('boot handoff discover') > idle_idx
         assert ingest_order
@@ -4041,9 +4041,9 @@ def test_recover_startup_handoff_incremental_one_tar_per_drain_spin(monkeypatch,
         assert 'boot handoff discover' in out
         requeue_lines = [line for line in out.splitlines() if 'day_close handoff requeue' in line and 'skip' not in line]
         assert len(requeue_lines) == 2
-        idle_idx = out.index('startup maintenance idle; ingest may begin')
+        idle_idx = out.index('startup ingest gate cleared; ingest may begin')
         assert out.index('boot handoff discover') > idle_idx
-        assert 'startup maintenance idle; ingest may begin' in out
+        assert 'startup ingest gate cleared; ingest may begin' in out
     finally:
         shutdown_requested[0] = False
 
@@ -4250,6 +4250,8 @@ def test_handoff_requeue_skips_same_boot_duplicate_after_first_handoff(monkeypat
         daily_dir.mkdir()
         tar_norm = os.path.normpath(str(daily_dir / '2026-05-26.tar'))
         open(tar_norm, 'wb').close()
+        open(daily_dir / '2026-06-23.tar', 'wb').close()
+        open(daily_dir / '2026-06-24.tar', 'wb').close()
         handoff_paths = [str(tmp_path / 'host-a' / '1782242314'), str(tmp_path / 'host-b' / '1782282524')]
         for path in handoff_paths:
             os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -4348,6 +4350,8 @@ def test_handoff_requeue_allowed_when_paths_remain_after_same_boot(monkeypatch, 
         daily_dir.mkdir()
         tar_norm = os.path.normpath(str(daily_dir / '2026-05-27.tar'))
         open(tar_norm, 'wb').close()
+        open(daily_dir / '2026-06-23.tar', 'wb').close()
+        open(daily_dir / '2026-06-24.tar', 'wb').close()
         first_path = str(tmp_path / 'host-a' / '1782242314')
         second_path = str(tmp_path / 'host-b' / '1782282524')
         for path in (first_path, second_path):
@@ -5550,8 +5554,8 @@ def test_startup_waits_snapshot_before_handoff(monkeypatch, tmp_path, capsys):
         assert 'discover_manifest' in events
         assert events.index('snapshot_ready') < events.index('discover_manifest')
         out = capsys.readouterr().out
-        assert 'startup maintenance idle; ingest may begin' in out
-        idle_idx = out.index('startup maintenance idle; ingest may begin')
+        assert 'startup ingest gate cleared; ingest may begin' in out
+        idle_idx = out.index('startup ingest gate cleared; ingest may begin')
         assert 'boot handoff discover' in out
         assert out.index('boot handoff discover') > idle_idx
     finally:
@@ -5567,6 +5571,8 @@ def test_finalize_day_close_deferred_when_handoff_priority_pending(monkeypatch, 
         daily_dir.mkdir()
         tar_norm = os.path.normpath(str(daily_dir / '2026-06-01.tar'))
         open(tar_norm, 'wb').close()
+        # Derived day for epoch 1782242314; keep handoff pin (not no_daily_archive age).
+        open(daily_dir / '2026-06-23.tar', 'wb').close()
         handoff_path = str(tmp_path / 'host-handoff' / '1782242314')
         os.makedirs(os.path.dirname(handoff_path), exist_ok=True)
         with open(handoff_path, 'w', encoding='utf-8') as fh:
@@ -5953,6 +5959,7 @@ def test_startup_same_boot_duplicate_kicks_delete_not_skip(monkeypatch, tmp_path
         daily_dir.mkdir()
         tar_norm = os.path.normpath(str(daily_dir / '2026-05-26.tar'))
         open(tar_norm, 'wb').close()
+        open(daily_dir / '2026-06-23.tar', 'wb').close()
         handoff_paths = [str(tmp_path / 'host-a' / '1782242314')]
         os.makedirs(os.path.dirname(handoff_paths[0]), exist_ok=True)
         with open(handoff_paths[0], 'w', encoding='utf-8') as fh:
@@ -6379,6 +6386,8 @@ def test_chunk_end_defers_immediate_day_close_when_handoff_pending(monkeypatch, 
         daily_dir.mkdir()
         tar_norm = os.path.normpath(str(daily_dir / '2026-06-01.tar'))
         open(tar_norm, 'wb').close()
+        # Derived day for epoch 1782242314; keep handoff pin (not no_daily_archive age).
+        open(daily_dir / '2026-06-23.tar', 'wb').close()
         handoff_path = str(tmp_path / 'host-handoff' / '1782242314')
         os.makedirs(os.path.dirname(handoff_path), exist_ok=True)
         with open(handoff_path, 'w', encoding='utf-8') as fh:
@@ -6617,6 +6626,8 @@ def test_arch_june04_handoff_after_giant_finalize_dispatches_chunk(monkeypatch, 
         daily_dir.mkdir()
         tar_norm = os.path.normpath(str(daily_dir / '2026-06-04.tar'))
         open(tar_norm, 'wb').close()
+        # Derived day for epoch 1782242314; keep handoff pin (not no_daily_archive age).
+        open(daily_dir / '2026-06-23.tar', 'wb').close()
         handoff_path = str(tmp_path / 'host-handoff' / '1782242314')
         os.makedirs(os.path.dirname(handoff_path), exist_ok=True)
         with open(handoff_path, 'w', encoding='utf-8') as fh:

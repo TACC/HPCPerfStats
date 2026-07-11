@@ -111,6 +111,17 @@ When the operator already pasted the relevant `[PIPELINE]` / `[DEFAULT]` lines, 
 
 **Pipeline logs are noisy** — janitor ticks, unrelated days, imap deferrals, and routine ingest lines drown the signal. **Do not** ask for unfiltered `docker compose logs pipeline` (full firehose with no `grep`) as the primary diagnostic.
 
+**Anti-pattern — ingest flood drowning day_close:** grepping full pipeline logs for mixed tokens (`chunk ingest` + `day_close`) returns mostly ingest lines. Prefer **day_close-only** patterns:
+
+```bash
+docker compose -p hpcperfstats logs pipeline 2>&1 | grep -E \
+  'janitor: day_close|discover_ready_day_close|immediate day_close|handoff_priority|handoff_cross_day|handoff_priority_age' | tail -80
+```
+
+**Anti-pattern — bare ISO date tokens in grep:** patterns like `2026-06-07|2026-07-04` match **`populate_wait identity_drift`** (and other day-keyed Redis lines) far more often than day_close. Use day_close / handoff signatures above, or require `day_close` / `handoff` in the same `grep -E`.
+
+**Anti-pattern — handoff requeue day+count only:** older logs printed `day_close handoff requeue day=… paths=N` without the sticky path. Prefer grepping **`sample_path=`** / **`derived_day=`** / **`handoff_priority_age`** after this fix.
+
 ### No `--tail` on `compose logs` (mandatory)
 
 **Do not** use `docker compose logs … --tail=N` (or podman-compose equivalent) in operator discovery blocks, plans, or chat diagnostics.
