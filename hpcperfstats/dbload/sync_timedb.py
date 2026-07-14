@@ -4017,11 +4017,31 @@ def _restore_daily_tar_or_log_failure(archive_tar_fname, *, context):
   return False
 
 
+def format_tar_append_failure_log(tar_path, exc, *, retry=False):
+  """Build ERROR line for tar append failure; fold CalledProcessError.stderr."""
+  prefix = "ERROR: retry tar append failed" if retry else "ERROR: tar append failed"
+  stderr = getattr(exc, "stderr", None)
+  if isinstance(stderr, bytes):
+    stderr = stderr.decode("utf-8", errors="replace")
+  stderr_text = (stderr or "").strip()
+  if stderr_text:
+    return (
+        "%s for %s (%s); tar append stderr: %s; leaving raw stats files in place"
+        % (prefix, tar_path, exc, stderr_text)
+    )
+  return "%s for %s (%s); leaving raw stats files in place" % (
+      prefix,
+      tar_path,
+      exc,
+  )
+
+
 def _append_to_tar(tar_path, file_paths):
   """Append file_paths to tar at tar_path. Does nothing if file_paths is empty.
 
   Uses GNU/BSD ``tar -r -f`` with ``--null -T`` so argv stays tiny, names may
   contain spaces, and we do not rely on ``-u`` (mtime) vs. Python-side filters.
+  Always passes ``--posix`` (pax) so members larger than 8 GiB - 1 succeed.
   Skips paths that disappeared before append (race). Batches via
   ``tar_append_batch_size``.
   """
@@ -4062,6 +4082,7 @@ def _append_to_tar(tar_path, file_paths):
         tar_args = [
             tar_bin,
             "-r" if tar_exists else "-c",
+            "--posix",
             "-f",
             tar_path,
             "--null",
@@ -4270,8 +4291,7 @@ def _archive_stats_files_body(archive_info):
       _append_to_tar(archive_tar_fname, stats_files_to_tar)
     except (subprocess.CalledProcessError, RuntimeError) as exc:
       log_print(
-          "ERROR: tar append failed for %s (%s); leaving raw stats files in place"
-          % (archive_tar_fname, exc),
+          format_tar_append_failure_log(archive_tar_fname, exc, retry=False),
           flush=True,
       )
       return False
@@ -4309,8 +4329,8 @@ def _archive_stats_files_body(archive_info):
             _append_to_tar(archive_tar_fname, to_retry)
           except (subprocess.CalledProcessError, RuntimeError) as exc:
             log_print(
-                "ERROR: retry tar append failed for %s (%s); leaving raw stats "
-                "files in place" % (archive_tar_fname, exc),
+                format_tar_append_failure_log(
+                    archive_tar_fname, exc, retry=True),
                 flush=True,
             )
             return False

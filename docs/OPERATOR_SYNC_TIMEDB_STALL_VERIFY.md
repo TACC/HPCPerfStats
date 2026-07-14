@@ -58,6 +58,22 @@ grep -c 'oldest_day_chunk_gate_stall' /tmp/pipeline-full.log
 grep -c 'ingest_stall_watchdog' /tmp/pipeline-full.log
 ```
 
+### T0 / T1 — tar append exit 2 / large member (`out of off_t range`, 2026-07)
+
+Members larger than **8 GiB − 1** fail classic ustar without pax headers (`value N out of off_t range 0..8589934591`). Production always passes **`--posix`** on tar create/append; ERROR lines fold stderr under **`tar append stderr:`**.
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+
+# T0 — failure signatures (should be rare/absent after --posix deploy)
+grep -E 'ERROR: (retry )?tar append failed|tar append stderr:|out of off_t range' /tmp/pipeline-full.log | tail -40
+
+# T0 — confirm archive-pool progress continues
+grep -E 'Archived batch|archive_job_done|chunk ingest summary' /tmp/pipeline-full.log | tail -30
+```
+
+**Pass (T0):** no new **`out of off_t range`** on giant-member append after deploy; if append still fails, ERROR includes **`tar append stderr:`** (searchable with the rc line). **`--posix`** is argv-only (no day-tar convert).
+
 ### Pipeline ingest rate (listend vs sync_timedb)
 
 Measure closed-segment production rate vs full-ingest and archive-done consumption from **full** pipeline logs (requires `--timestamps` for accurate windows and backlog ETA):

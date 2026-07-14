@@ -2635,6 +2635,98 @@ def test_append_to_tar_writes_members_via_files_from(tmp_path):
   assert b"segment-body" in bodies
 
 
+def test_append_to_tar_argv_always_includes_posix(monkeypatch, tmp_path):
+  """Create (-c) and append (-r) both pass --posix for large-member pax headers."""
+  from hpcperfstats.dbload import sync_timedb as st
+
+  f1 = tmp_path / "segment1"
+  f1.write_bytes(b"a")
+  f2 = tmp_path / "segment2"
+  f2.write_bytes(b"b")
+  tar_path = tmp_path / "2024-06-01.tar"
+  captured = []
+
+  class _Ok:
+    returncode = 0
+    stdout = ""
+    stderr = ""
+    args = ()
+
+  def _run(args, **_kwargs):
+    captured.append(list(args))
+    # Pretend create succeeded so second call uses -r.
+    if "-c" in args:
+      tar_path.write_bytes(b"ustar\0")
+    return _Ok()
+
+  monkeypatch.setattr(st.subprocess, "run", _run)
+  monkeypatch.setattr(
+      st, "file_write_lock", lambda *_a, **_k: contextlib.nullcontext())
+  st._append_to_tar(str(tar_path), [str(f1)])
+  st._append_to_tar(str(tar_path), [str(f2)])
+  assert len(captured) == 2
+  assert "-c" in captured[0] and "--posix" in captured[0]
+  assert "-r" in captured[1] and "--posix" in captured[1]
+
+
+def test_format_tar_append_failure_log_includes_stderr():
+  from hpcperfstats.dbload.sync_timedb import format_tar_append_failure_log
+
+  exc = subprocess.CalledProcessError(
+      2,
+      ["tar", "-r", "-f", "day.tar"],
+      output="",
+      stderr=(
+          "/usr/bin/tar: value 11109288094 out of off_t range "
+          "0..8589934591\n"
+      ),
+  )
+  msg = format_tar_append_failure_log("day.tar", exc, retry=False)
+  assert msg.startswith("ERROR: tar append failed for day.tar")
+  assert "tar append stderr:" in msg
+  assert "out of off_t range" in msg
+  assert "8589934591" in msg
+  retry_msg = format_tar_append_failure_log("day.tar", exc, retry=True)
+  assert retry_msg.startswith("ERROR: retry tar append failed for day.tar")
+  assert "tar append stderr:" in retry_msg
+
+
+def test_archive_stats_files_error_log_includes_tar_stderr(monkeypatch, tmp_path):
+  """ERROR: tar append failed must fold CalledProcessError.stderr for grep."""
+  raw_file = tmp_path / "1000"
+  raw_file.write_text("1709123456 job1 cn001\n")
+  archive_key = str(tmp_path / "2024-03-01.tar.zst")
+
+  import hpcperfstats.dbload.sync_timedb as st
+
+  _patch_archive_gate_pass(monkeypatch)
+  monkeypatch.setattr(st, "_decompress_compressed_archive", lambda *_a, **_k: True)
+  monkeypatch.setattr(st, "get_existing_archive_members", lambda *_a, **_k: {})
+  monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
+  monkeypatch.setattr(
+      st, "filter_files_to_add_to_archive", lambda files, *_a, **_k: list(files))
+  monkeypatch.setattr(st, "_restore_daily_tar_or_log_failure", lambda *a, **k: True)
+
+  def _boom(*_a, **_k):
+    raise subprocess.CalledProcessError(
+        2,
+        ["tar", "-r", "--posix"],
+        output="",
+        stderr="tar: value 9000000000 out of off_t range 0..8589934591\n",
+    )
+
+  monkeypatch.setattr(st, "_append_to_tar", _boom)
+  logs = []
+  monkeypatch.setattr(st, "log_print", lambda msg, **_k: logs.append(str(msg)))
+
+  assert st.archive_stats_files((archive_key, [str(raw_file)])) is False
+  error_lines = [line for line in logs if line.startswith("ERROR: tar append failed")]
+  assert error_lines
+  assert "tar append stderr:" in error_lines[0]
+  assert "out of off_t range" in error_lines[0]
+  assert raw_file.exists()
+
+
 # --- get_verified_files_to_remove ---
 
 
