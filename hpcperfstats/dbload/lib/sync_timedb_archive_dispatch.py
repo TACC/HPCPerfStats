@@ -113,10 +113,20 @@ class ArchiveDispatchCoordinator:
       transition_queued_fn,
       enqueue_overflow_fn,
   ) -> Dict[str, Any]:
-    """Dispatch items whose daily tar is not already in-flight."""
+    """Dispatch items whose daily tar is not already in-flight.
+
+    Items are ordered oldest calendar day first so the ingest chunk gate day
+    claims archive slots before newer days.
+    """
     stats = {"submitted": 0, "queued": 0, "deferred_groups": 0, "pending_stats": 0}
     if not archive_items_all:
       return stats
+
+    from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+        sort_archive_items_oldest_day_first,
+    )
+
+    archive_items_all = sort_archive_items_oldest_day_first(archive_items_all)
 
     occupied = self._occupied_daily_tars()
     disjoint = []

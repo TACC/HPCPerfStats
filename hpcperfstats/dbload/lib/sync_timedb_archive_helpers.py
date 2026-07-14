@@ -173,6 +173,254 @@ def calendar_date_from_daily_tar_path(tar_path):
     return None
 
 
+# Classic ustar size field (octal) max before GNU/pax extended headers.
+USTAR_MAX_MEMBER_BYTES = 8589934591
+
+
+def partition_paths_by_ustar_member_limit(
+    paths, *, limit=USTAR_MAX_MEMBER_BYTES,
+):
+  """Split paths into (within_limit, oversized) by ``os.path.getsize``."""
+  within = []
+  oversized = []
+  for path in paths or ():
+    try:
+      size = os.path.getsize(path)
+    except OSError:
+      within.append(path)
+      continue
+    if size > int(limit):
+      oversized.append(path)
+    else:
+      within.append(path)
+  return within, oversized
+
+
+def classify_daily_tar_file_label(tar_path):
+  """Return ``file -b`` label for a daily ``.tar`` (empty string on failure)."""
+  if not tar_path or not os.path.isfile(tar_path):
+    return ""
+  file_bin = shutil.which("file") or "file"
+  try:
+    result = subprocess.run(
+        [file_bin, "-b", tar_path],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+  except (OSError, subprocess.TimeoutExpired):
+    return ""
+  return (result.stdout or "").strip()
+
+
+def tar_file_label_is_gnu(label):
+  """True when ``file`` label indicates GNU tar (``--posix`` unlocks giants)."""
+  return "GNU" in str(label or "").upper()
+
+
+def daily_tar_has_pax_extended_headers(tar_path, *, max_members=40):
+  """True when the first ``max_members`` entries include pax extended headers."""
+  if not tar_path or not os.path.isfile(tar_path):
+    return False
+  try:
+    with tarfile.open(tar_path, "r:") as tf:
+      for idx, member in enumerate(tf):
+        if idx >= int(max_members):
+          break
+        if getattr(member, "pax_headers", None):
+          return True
+        mtype = getattr(member, "type", None)
+        if mtype in (getattr(tarfile, "XHDTYPE", b"x"), getattr(tarfile, "XGLTYPE", b"g")):
+          return True
+  except (OSError, tarfile.TarError):
+    return False
+  return False
+
+
+def is_pax_capable_daily_tar(tar_path):
+  """True when giant members can append without extract+pax recreate.
+
+  Missing tar (first create with ``--posix``) and GNU labels are capable;
+  bare ``POSIX tar archive`` without pax headers is not.
+  """
+  if not tar_path or not os.path.isfile(tar_path):
+    return True
+  label = classify_daily_tar_file_label(tar_path)
+  if tar_file_label_is_gnu(label):
+    return True
+  return daily_tar_has_pax_extended_headers(tar_path)
+
+
+def free_bytes_for_path(path):
+  """Free bytes on the filesystem containing ``path`` (0 on error)."""
+  try:
+    target = os.path.dirname(os.path.abspath(path)) or os.sep
+    return int(shutil.disk_usage(target).free)
+  except (OSError, ValueError, TypeError):
+    return 0
+
+
+def convert_daily_tar_to_pax_via_extract_recreate(tar_path, *, log_fn=log_print):
+  """Rewrite ``tar_path`` as ``--format=pax`` via extract + recreate.
+
+  Holds ``file_write_lock`` for the mutate window. On any failure leaves the
+  original tar untouched and returns ``False``.
+  """
+  tar_path = os.path.abspath(str(tar_path or ""))
+  if not os.path.isfile(tar_path):
+    return True
+  tar_size = os.path.getsize(tar_path)
+  free = free_bytes_for_path(tar_path)
+  if free < tar_size:
+    if log_fn:
+      log_fn(
+          "WARNING: convert_fail reason=insufficient_free_space tar=%s "
+          "size=%d free=%d"
+          % (tar_path, tar_size, free),
+          flush=True,
+      )
+    return False
+  tar_bin = shutil.which("tar") or "/bin/tar"
+  parent = os.path.dirname(tar_path) or "."
+  work_root = tempfile.mkdtemp(prefix="hps_pax_convert_", dir=parent)
+  extract_dir = os.path.join(work_root, "extract")
+  new_tar = os.path.join(work_root, "new.tar")
+  os.makedirs(extract_dir, exist_ok=True)
+  try:
+    with file_write_lock(tar_path):
+      if log_fn:
+        log_fn(
+            "INFO: convert_start phase=extract tar=%s" % tar_path,
+            flush=True,
+        )
+      extract = subprocess.run(
+          [tar_bin, "-xf", tar_path, "-C", extract_dir],
+          capture_output=True,
+          text=True,
+          check=False,
+      )
+      if extract.returncode != 0:
+        if log_fn:
+          log_fn(
+              "WARNING: convert_fail phase=extract tar=%s rc=%s stderr=%s"
+              % (
+                  tar_path,
+                  extract.returncode,
+                  (extract.stderr or "").strip(),
+              ),
+              flush=True,
+          )
+        return False
+      if log_fn:
+        log_fn(
+            "INFO: convert_start phase=recreate tar=%s" % tar_path,
+            flush=True,
+        )
+      recreate = subprocess.run(
+          [tar_bin, "--format=pax", "-cf", new_tar, "-C", extract_dir, "."],
+          capture_output=True,
+          text=True,
+          check=False,
+      )
+      if recreate.returncode != 0 or not os.path.isfile(new_tar):
+        if log_fn:
+          log_fn(
+              "WARNING: convert_fail phase=recreate tar=%s rc=%s stderr=%s"
+              % (
+                  tar_path,
+                  recreate.returncode,
+                  (recreate.stderr or "").strip(),
+              ),
+              flush=True,
+          )
+        return False
+      os.replace(new_tar, tar_path)
+    if log_fn:
+      log_fn("INFO: convert_done tar=%s" % tar_path, flush=True)
+    return True
+  except (OSError, subprocess.SubprocessError, TimeoutError) as exc:
+    if log_fn:
+      log_fn(
+          "WARNING: convert_fail tar=%s exc=%s" % (tar_path, exc),
+          flush=True,
+      )
+    return False
+  finally:
+    shutil.rmtree(work_root, ignore_errors=True)
+
+
+def prepare_paths_for_giant_member_append(
+    tar_path,
+    stats_files,
+    *,
+    log_fn=log_print,
+):
+  """Ensure tar can accept giants, or skip oversized paths after convert fail.
+
+  Returns ``(paths_to_append, skipped_oversized)``.
+  """
+  within, oversized = partition_paths_by_ustar_member_limit(stats_files)
+  if not oversized:
+    return list(stats_files or ()), []
+  if is_pax_capable_daily_tar(tar_path):
+    return list(stats_files or ()), []
+  max_size = 0
+  for path in oversized:
+    try:
+      max_size = max(max_size, int(os.path.getsize(path)))
+    except OSError:
+      pass
+  label = (
+      classify_daily_tar_file_label(tar_path)
+      if os.path.isfile(tar_path)
+      else "missing"
+  )
+  if log_fn:
+    log_fn(
+        "INFO: must_convert tar=%s reason=size_gt_ustar_not_pax_capable "
+        "file_label=%r oversized_n=%d max_member_bytes=%d ustar_limit=%d"
+        % (
+            tar_path,
+            label,
+            len(oversized),
+            max_size,
+            USTAR_MAX_MEMBER_BYTES,
+        ),
+        flush=True,
+    )
+  if not os.path.isfile(tar_path):
+    # First create uses ``--posix``; no on-disk convert required.
+    return list(stats_files or ()), []
+  if convert_daily_tar_to_pax_via_extract_recreate(tar_path, log_fn=log_fn):
+    return list(stats_files or ()), []
+  if log_fn:
+    log_fn(
+        "WARNING: convert_fail_skip tar=%s skipped_n=%d sample_paths=%s"
+        % (
+            tar_path,
+            len(oversized),
+            [os.path.basename(p) for p in oversized[:5]],
+        ),
+        flush=True,
+    )
+  return within, list(oversized)
+
+
+def sort_archive_items_oldest_day_first(items):
+  """Order archive tasks ``(compressed_path, paths)`` by calendar day ascending."""
+  def _key(item):
+    try:
+      compressed = item[0]
+    except (TypeError, IndexError, KeyError):
+      return (date.max, "")
+    tar = daily_tar_path_from_compressed(compressed)
+    day = calendar_date_from_daily_tar_path(tar)
+    return (day or date.max, os.path.normpath(str(tar or "")))
+
+  return sorted(list(items or ()), key=_key)
+
+
 def stats_path_ingest_sort_epoch(stats_path):
   """Oldest-first ingest sort key (numeric basename, else mtime; ``None`` last)."""
   if not stats_path:

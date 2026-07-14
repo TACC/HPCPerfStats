@@ -108,6 +108,41 @@ def test_dispatch_disjoint_items_respects_max_inflight_daily_tars(monkeypatch):
   assert len(daily_tars) == 2
 
 
+def test_dispatch_disjoint_items_oldest_calendar_day_first(monkeypatch):
+  """Ingest-path archive dispatch must claim the oldest day slot first."""
+  submitted = []
+
+  class _Pool:
+    def map_async(self, fn, items):
+      submitted.append(list(items))
+      return MagicMock(ready=lambda: False)
+
+  coordinator = ArchiveDispatchCoordinator(
+      archive_pool=_Pool(),
+      max_inflight=1,
+      archive_stats_files_fn=MagicMock(),
+      log_fn=MagicMock(),
+      pending_stats_count_fn=lambda: 0,
+  )
+  # Newer day listed first — after sort, 2026-01-01 must win the only slot.
+  items = [
+      ("/tmp/2026-01-03.tar.gz", ["new"]),
+      ("/tmp/2026-01-01.tar.gz", ["old"]),
+      ("/tmp/2026-01-02.tar.gz", ["mid"]),
+  ]
+  coordinator.dispatch_disjoint_items(
+      items,
+      archive_queue_max=10,
+      build_deferred_paths_fn=lambda x: x,
+      track_pending_append_fn=lambda x: None,
+      transition_queued_fn=lambda p: None,
+      enqueue_overflow_fn=lambda item: None,
+  )
+  assert len(submitted) == 1
+  assert len(submitted[0]) == 1
+  assert submitted[0][0][0].endswith("2026-01-01.tar.gz")
+
+
 def test_dispatch_log_includes_pending_stats_count(monkeypatch):
   logs = []
 

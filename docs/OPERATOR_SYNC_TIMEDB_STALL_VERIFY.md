@@ -60,19 +60,24 @@ grep -c 'ingest_stall_watchdog' /tmp/pipeline-full.log
 
 ### T0 / T1 — tar append exit 2 / large member (`out of off_t range`, 2026-07)
 
-Members larger than **8 GiB − 1** fail classic ustar without pax headers (`value N out of off_t range 0..8589934591`). Production always passes **`--posix`** on tar create/append; ERROR lines fold stderr under **`tar append stderr:`**.
+Members larger than **8 GiB − 1** fail classic ustar without pax headers (`value N out of off_t range 0..8589934591`). Production always passes **`--posix`** on tar create/append (`-C /` + relative `-T` members). When the daily tar is **not pax-capable** (bare `POSIX tar archive` without pax headers; GNU labels need no convert), the **archive pool** job logs **`must_convert`**, attempts **extract + `tar --format=pax` recreate**, then appends. On convert failure: **`convert_fail_skip`** oversized members (original tar untouched) and continue with remaining paths. **`archive_job_done`** includes **`outcome=ok|fail`** (do not treat `archive_job_done` alone as success).
 
 ```bash
 docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
 
-# T0 — failure signatures (should be rare/absent after --posix deploy)
-grep -E 'ERROR: (retry )?tar append failed|tar append stderr:|out of off_t range' /tmp/pipeline-full.log | tail -40
+# T0 — failure signatures
+grep -E 'ERROR: (retry )?tar append failed|tar append stderr:|out of off_t range|marker=off_t_range' /tmp/pipeline-full.log | tail -40
+
+# T0 — convert path / skip fallback
+grep -E 'must_convert|convert_start|convert_done|convert_fail_skip|archive_job_done.*outcome=' /tmp/pipeline-full.log | tail -40
 
 # T0 — confirm archive-pool progress continues
 grep -E 'Archived batch|archive_job_done|chunk ingest summary' /tmp/pipeline-full.log | tail -30
 ```
 
-**Pass (T0):** no new **`out of off_t range`** on giant-member append after deploy; if append still fails, ERROR includes **`tar append stderr:`** (searchable with the rc line). **`--posix`** is argv-only (no day-tar convert).
+**Pass (T0):** no new unexplained **`out of off_t range`** on giant-member append after convert; ERROR includes **`tar append stderr:`** and often **`marker=off_t_range`**. Convert is archive-worker only (never supervisor/ingest). High **`incomplete_n`** + **`handoff_priority`** can be **slow gated progress**, not a hard stall — confirm with subsequent `chunk ingest summary` / `archive_job_done outcome=ok`.
+
+**False stall note:** a snapshot with large `incomplete_n` on the oldest day is not proof of a freeze if the pipeline later continues.
 
 ### T0 — queue watermarks / adaptive backlog removed (2026-07)
 

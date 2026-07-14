@@ -2636,7 +2636,7 @@ def test_append_to_tar_writes_members_via_files_from(tmp_path):
 
 
 def test_append_to_tar_argv_always_includes_posix(monkeypatch, tmp_path):
-  """Create (-c) and append (-r) both pass --posix for large-member pax headers."""
+  """Create (-c) and append (-r) both pass --posix and -C / for large-member pax."""
   from hpcperfstats.dbload import sync_timedb as st
 
   f1 = tmp_path / "segment1"
@@ -2666,7 +2666,9 @@ def test_append_to_tar_argv_always_includes_posix(monkeypatch, tmp_path):
   st._append_to_tar(str(tar_path), [str(f2)])
   assert len(captured) == 2
   assert "-c" in captured[0] and "--posix" in captured[0]
+  assert "-C" in captured[0] and captured[0][captured[0].index("-C") + 1] == "/"
   assert "-r" in captured[1] and "--posix" in captured[1]
+  assert "-C" in captured[1] and captured[1][captured[1].index("-C") + 1] == "/"
 
 
 def test_format_tar_append_failure_log_includes_stderr():
@@ -2686,9 +2688,11 @@ def test_format_tar_append_failure_log_includes_stderr():
   assert "tar append stderr:" in msg
   assert "out of off_t range" in msg
   assert "8589934591" in msg
+  assert "marker=off_t_range" in msg
   retry_msg = format_tar_append_failure_log("day.tar", exc, retry=True)
   assert retry_msg.startswith("ERROR: retry tar append failed for day.tar")
   assert "tar append stderr:" in retry_msg
+  assert "marker=off_t_range" in retry_msg
 
 
 def test_archive_stats_files_error_log_includes_tar_stderr(monkeypatch, tmp_path):
@@ -2725,6 +2729,167 @@ def test_archive_stats_files_error_log_includes_tar_stderr(monkeypatch, tmp_path
   assert "tar append stderr:" in error_lines[0]
   assert "out of off_t range" in error_lines[0]
   assert raw_file.exists()
+
+
+def test_partition_and_sort_archive_items_helpers(tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      USTAR_MAX_MEMBER_BYTES,
+      partition_paths_by_ustar_member_limit,
+      sort_archive_items_oldest_day_first,
+  )
+
+  small = tmp_path / "small"
+  small.write_bytes(b"abc")
+  within, oversized = partition_paths_by_ustar_member_limit([str(small)])
+  assert within == [str(small)]
+  assert oversized == []
+
+  items = [
+      ("/d/2026-03-02.tar.zst", ["b"]),
+      ("/d/2026-03-01.tar.zst", ["a"]),
+  ]
+  assert [i[0] for i in sort_archive_items_oldest_day_first(items)] == [
+      "/d/2026-03-01.tar.zst",
+      "/d/2026-03-02.tar.zst",
+  ]
+  assert USTAR_MAX_MEMBER_BYTES == 8589934591
+
+
+@pytest.mark.skipif(not shutil.which("tar"), reason="tar binary required")
+def test_convert_daily_tar_to_pax_via_extract_recreate(tmp_path, monkeypatch):
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
+
+  member = tmp_path / "m1"
+  member.write_bytes(b"payload")
+  tar_path = tmp_path / "2026-06-01.tar"
+  # Classic ustar create (no --format=pax).
+  subprocess.run(
+      ["tar", "-cf", str(tar_path), "-C", str(tmp_path), member.name],
+      check=True,
+      capture_output=True,
+  )
+  logs = []
+  monkeypatch.setattr(
+      helpers, "file_write_lock", lambda *_a, **_k: contextlib.nullcontext())
+  assert helpers.convert_daily_tar_to_pax_via_extract_recreate(
+      str(tar_path), log_fn=lambda m, **_k: logs.append(str(m)),
+  )
+  assert any("convert_done" in line for line in logs)
+  assert tar_path.is_file()
+
+
+def test_prepare_paths_convert_fail_skips_oversized(monkeypatch, tmp_path):
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
+
+  small = tmp_path / "small"
+  small.write_bytes(b"ok")
+  giant = tmp_path / "giant"
+  giant.write_bytes(b"g")
+  tar_path = tmp_path / "2026-06-01.tar"
+  tar_path.write_bytes(b"ustar\0")
+
+  monkeypatch.setattr(
+      helpers, "partition_paths_by_ustar_member_limit",
+      lambda paths, **_k: ([str(small)], [str(giant)]),
+  )
+  monkeypatch.setattr(helpers, "is_pax_capable_daily_tar", lambda *_a, **_k: False)
+  monkeypatch.setattr(
+      helpers, "classify_daily_tar_file_label", lambda *_a, **_k: "POSIX tar archive")
+  monkeypatch.setattr(
+      helpers, "convert_daily_tar_to_pax_via_extract_recreate",
+      lambda *_a, **_k: False,
+  )
+  logs = []
+  to_append, skipped = helpers.prepare_paths_for_giant_member_append(
+      str(tar_path),
+      [str(small), str(giant)],
+      log_fn=lambda m, **_k: logs.append(str(m)),
+  )
+  assert to_append == [str(small)]
+  assert skipped == [str(giant)]
+  assert any("must_convert" in line for line in logs)
+  assert any("convert_fail_skip" in line for line in logs)
+
+
+def test_archive_stats_files_convert_fail_skip_outcome(monkeypatch, tmp_path):
+  """Convert fail skips giants; job still outcome=ok when remaining appends."""
+  raw_small = tmp_path / "1000"
+  raw_small.write_text("1709123456 job1 cn001\n")
+  raw_giant = tmp_path / "1001"
+  raw_giant.write_text("1709123457 job2 cn002\n")
+  archive_key = str(tmp_path / "2024-03-01.tar.zst")
+  tar_path = daily_tar_path_from_compressed(archive_key)
+  os.makedirs(os.path.dirname(tar_path) or ".", exist_ok=True)
+  Path(tar_path).write_bytes(b"ustar\0")
+
+  import hpcperfstats.dbload.sync_timedb as st
+
+  _patch_archive_gate_pass(monkeypatch)
+  monkeypatch.setattr(st, "_decompress_compressed_archive", lambda *_a, **_k: True)
+  monkeypatch.setattr(st, "get_existing_archive_members", lambda *_a, **_k: {})
+  monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
+  monkeypatch.setattr(
+      st, "filter_files_to_add_to_archive", lambda files, *_a, **_k: list(files))
+  monkeypatch.setattr(st, "_restore_daily_tar_or_log_failure", lambda *a, **k: True)
+  monkeypatch.setattr(
+      st,
+      "prepare_paths_for_giant_member_append",
+      lambda tar, files, **_k: ([str(raw_small)], [str(raw_giant)]),
+  )
+  appended = []
+
+  def _append(tar, paths):
+    appended.extend(list(paths))
+
+  monkeypatch.setattr(st, "_append_to_tar", _append)
+  logs = []
+  monkeypatch.setattr(st, "log_print", lambda msg, **_k: logs.append(str(msg)))
+
+  result = st.archive_stats_files(
+      (archive_key, [str(raw_small), str(raw_giant)]),
+  )
+  assert result
+  assert appended == [str(raw_small)]
+  assert getattr(result, "skipped_paths", ()) == (str(raw_giant),)
+  assert any("outcome=ok" in line for line in logs if "archive_job_done" in line)
+
+
+def test_archive_stats_files_error_log_outcome_fail(monkeypatch, tmp_path):
+  raw_file = tmp_path / "1000"
+  raw_file.write_text("1709123456 job1 cn001\n")
+  archive_key = str(tmp_path / "2024-03-01.tar.zst")
+
+  import hpcperfstats.dbload.sync_timedb as st
+
+  _patch_archive_gate_pass(monkeypatch)
+  monkeypatch.setattr(st, "_decompress_compressed_archive", lambda *_a, **_k: True)
+  monkeypatch.setattr(st, "get_existing_archive_members", lambda *_a, **_k: {})
+  monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
+  monkeypatch.setattr(
+      st, "filter_files_to_add_to_archive", lambda files, *_a, **_k: list(files))
+  monkeypatch.setattr(st, "_restore_daily_tar_or_log_failure", lambda *a, **k: True)
+  monkeypatch.setattr(
+      st,
+      "prepare_paths_for_giant_member_append",
+      lambda tar, files, **_k: (list(files), []),
+  )
+
+  def _boom(*_a, **_k):
+    raise subprocess.CalledProcessError(
+        2,
+        ["tar", "-r", "--posix"],
+        output="",
+        stderr="tar: value 9000000000 out of off_t range 0..8589934591\n",
+    )
+
+  monkeypatch.setattr(st, "_append_to_tar", _boom)
+  logs = []
+  monkeypatch.setattr(st, "log_print", lambda msg, **_k: logs.append(str(msg)))
+
+  assert st.archive_stats_files((archive_key, [str(raw_file)])) is False
+  assert any(
+      "archive_job_done" in line and "outcome=fail" in line for line in logs
+  )
 
 
 # --- get_verified_files_to_remove ---
@@ -7482,7 +7647,10 @@ def test_archive_stats_files_body_prefers_redis_over_tar_scan_when_warm(
       "archive_job_begin" in line and "members_source=redis" in line
       for line in logs
   )
-  assert any("archive_job_done" in line and "elapsed_s=" in line for line in logs)
+  assert any(
+      "archive_job_done" in line and "elapsed_s=" in line and "outcome=ok" in line
+      for line in logs
+  )
 
 
 def test_archive_append_cold_redis_completes_with_inflight_first(

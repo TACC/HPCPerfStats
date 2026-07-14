@@ -134,6 +134,8 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     resolve_unmapped_closed_raw_daily_tars,
     daily_tar_path_for_stats_path,
     calendar_date_from_daily_tar_path,
+    invalidate_after_daily_tar_mutation,
+    prepare_paths_for_giant_member_append,
     days_ingest_complete_by_checkpoint,
     oldest_checkpoint_incomplete_tar,
     aligned_on_disk_unprocessed_paths_for_tar,
@@ -147,7 +149,6 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     filter_files_to_add_to_archive,
     get_existing_archive_members,
     get_existing_archive_members_for_daily_archive,
-    invalidate_after_daily_tar_mutation,
     iter_daily_tar_paths,
     replace_corrupt_tar_from_compressed_backup,
     ensure_daily_tar_restored_for_append,
@@ -2273,6 +2274,8 @@ class ArchiveAppendOutcome:
   ok: bool = True
   redis_merge_ok: bool = False
   skip_finalize_invalidate: bool = True
+  # Oversized paths skipped after convert_fail_skip (still finalized as archived).
+  skipped_paths: tuple = ()
 
   def __bool__(self):
     return self.ok
@@ -4024,26 +4027,32 @@ def format_tar_append_failure_log(tar_path, exc, *, retry=False):
   if isinstance(stderr, bytes):
     stderr = stderr.decode("utf-8", errors="replace")
   stderr_text = (stderr or "").strip()
+  marker = ""
+  if "out of off_t range" in stderr_text:
+    marker = " marker=off_t_range"
+  elif stderr_text and "tar:" in stderr_text.lower():
+    marker = " marker=tar_warning_or_error"
   if stderr_text:
     return (
-        "%s for %s (%s); tar append stderr: %s; leaving raw stats files in place"
-        % (prefix, tar_path, exc, stderr_text)
+        "%s for %s (%s)%s; tar append stderr: %s; leaving raw stats files in place"
+        % (prefix, tar_path, exc, marker, stderr_text)
     )
-  return "%s for %s (%s); leaving raw stats files in place" % (
+  return "%s for %s (%s)%s; leaving raw stats files in place" % (
       prefix,
       tar_path,
       exc,
+      marker,
   )
 
 
 def _append_to_tar(tar_path, file_paths):
   """Append file_paths to tar at tar_path. Does nothing if file_paths is empty.
 
-  Uses GNU/BSD ``tar -r -f`` with ``--null -T`` so argv stays tiny, names may
-  contain spaces, and we do not rely on ``-u`` (mtime) vs. Python-side filters.
-  Always passes ``--posix`` (pax) so members larger than 8 GiB - 1 succeed.
-  Skips paths that disappeared before append (race). Batches via
-  ``tar_append_batch_size``.
+  Uses GNU/BSD ``tar -r -f`` with ``-C /``, ``--null -T`` and relative member
+  paths so argv stays tiny and absolute ``-T`` path warnings are avoided.
+  Always passes ``--posix`` (pax) so members larger than 8 GiB - 1 succeed on
+  pax-capable archives. Skips paths that disappeared before append (race).
+  Batches via ``tar_append_batch_size``.
   """
   if not file_paths:
     return
@@ -4076,13 +4085,18 @@ def _append_to_tar(tar_path, file_paths):
     try:
       with os.fdopen(fd, "wb") as lf:
         for p in present:
-          lf.write(os.fsencode(p) + b"\0")
+          # Member path relative to ``-C /`` (no leading slash in -T file).
+          abs_p = os.path.abspath(p)
+          rel = abs_p[1:] if abs_p.startswith(os.sep) else abs_p
+          lf.write(os.fsencode(rel) + b"\0")
       tar_bin = shutil.which("tar") or "/bin/tar"
       with file_write_lock(tar_path):
         tar_args = [
             tar_bin,
             "-r" if tar_exists else "-c",
             "--posix",
+            "-C",
+            "/",
             "-f",
             tar_path,
             "--null",
@@ -4182,8 +4196,10 @@ def _archive_stats_files_body(archive_info):
   day_token = calendar_date_from_daily_tar_path(archive_tar_fname) or "?"
   job_start = time.monotonic()
   job_begin_logged = False
+  job_outcome = "fail"
   members_source = "tar_scan"
   append_inflight_set = False
+  skipped_oversized = ()
 
   def _ensure_job_begin_logged(source):
     nonlocal job_begin_logged
@@ -4194,6 +4210,7 @@ def _archive_stats_files_body(archive_info):
   try:
     stats_files, _skipped = filter_paths_head_ingested(stats_files, log_fn=log_print)
     if not stats_files:
+      job_outcome = "ok"
       return ArchiveAppendOutcome(skip_finalize_invalidate=True)
     from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
         set_archive_append_inflight,
@@ -4287,6 +4304,27 @@ def _archive_stats_files_body(archive_info):
           archive_tar_fname, context="before append"):
         return False
       _ensure_job_begin_logged(members_source)
+      before_convert_mtime = (
+          os.path.getmtime(archive_tar_fname)
+          if os.path.isfile(archive_tar_fname)
+          else None
+      )
+      stats_files_to_tar, skipped_list = prepare_paths_for_giant_member_append(
+          archive_tar_fname,
+          stats_files_to_tar,
+          log_fn=log_print,
+      )
+      skipped_oversized = tuple(skipped_list)
+      if (
+          before_convert_mtime is not None
+          and os.path.isfile(archive_tar_fname)
+          and os.path.getmtime(archive_tar_fname) != before_convert_mtime
+      ):
+        invalidate_after_daily_tar_mutation(
+            archive_fname,
+            reason="pax_convert",
+            log_fn=log_print,
+        )
     try:
       _append_to_tar(archive_tar_fname, stats_files_to_tar)
     except (subprocess.CalledProcessError, RuntimeError) as exc:
@@ -4389,11 +4427,17 @@ def _archive_stats_files_body(archive_info):
           clear_zero_host_ingest_marks,
       )
       clear_zero_host_ingest_marks(stats_files_to_tar, log_fn=log_print)
+      job_outcome = "ok"
       return ArchiveAppendOutcome(
           redis_merge_ok=merged,
           skip_finalize_invalidate=merged or worker_invalidated,
+          skipped_paths=skipped_oversized,
       )
-    return ArchiveAppendOutcome(skip_finalize_invalidate=True)
+    job_outcome = "ok"
+    return ArchiveAppendOutcome(
+        skip_finalize_invalidate=True,
+        skipped_paths=skipped_oversized,
+    )
   finally:
     if append_inflight_set:
       from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
@@ -4402,8 +4446,8 @@ def _archive_stats_files_body(archive_info):
       clear_archive_append_inflight(day_token)
     if job_begin_logged:
       log_print(
-          "INFO: archive_job_done day=%s elapsed_s=%.3f"
-          % (day_token, time.monotonic() - job_start),
+          "INFO: archive_job_done day=%s elapsed_s=%.3f outcome=%s"
+          % (day_token, time.monotonic() - job_start, job_outcome),
           flush=True,
       )
 
@@ -4988,6 +5032,11 @@ def run_sync_timedb_supervisor_loop(
             isinstance(result, ArchiveAppendOutcome)
             and result.skip_finalize_invalidate
         )
+        skipped_set = set()
+        if isinstance(result, ArchiveAppendOutcome):
+          skipped_set = {
+              os.path.normpath(p) for p in (result.skipped_paths or ()) if p
+          }
         archive_path = archive_task.archive_info[0]
         day_date = calendar_date_from_daily_tar_path(
             daily_tar_path_from_compressed(archive_path),
@@ -5009,6 +5058,12 @@ def run_sync_timedb_supervisor_loop(
               log_fn=log_print,
           )
         for p in archive_paths:
+          if os.path.normpath(p) in skipped_set:
+            log_print(
+                "INFO: archive_finalize convert_fail_skip path=%s day=%s"
+                % (p, day_token or archive_path),
+                flush=True,
+            )
           _transition_file_state(file_states, p, SyncFileState.ARCHIVED)
           added = _add_processed_path(
               p, processed_files, processed_files_order, checkpoint_entries,
