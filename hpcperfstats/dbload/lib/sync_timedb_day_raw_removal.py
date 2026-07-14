@@ -226,10 +226,35 @@ class _DayRawRemovalState:
       return False
     with self._lock:
       self._manifest["phase"] = PHASE_VERIFYING
+      # Clear stage so _close_one_day re-runs verify (avoid VERIFYING+POST_SEAL trap).
+      self._manifest["verify_stage"] = VERIFY_STAGE_NONE
       _save_manifest(self._manifest_path, self._manifest)
     if self.log_fn:
       self.log_fn(
           "Day raw removal reopen stale done (all skipped on disk) day=%s"
+          % self.day_date.isoformat(),
+          flush=True,
+      )
+    return True
+
+  def promote_phase_if_verify_stage_ahead(self) -> bool:
+    """Promote phase when verify_stage already past but phase stuck at verifying.
+
+    05-30 operator shape: ``phase=verifying`` + ``verify_stage=post_seal_complete``
+    caused silent day-close re-enqueue (no delete start).
+    """
+    if self.verification_complete():
+      return False
+    stage = self.verify_stage()
+    if stage != VERIFY_STAGE_POST_SEAL:
+      return False
+    with self._lock:
+      self._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
+      _save_manifest(self._manifest_path, self._manifest)
+    if self.log_fn:
+      self.log_fn(
+          "Day raw removal promote phase=verification_complete "
+          "(verify_stage already post_seal) day=%s"
           % self.day_date.isoformat(),
           flush=True,
       )
@@ -680,13 +705,24 @@ class _DayRawRemovalState:
     return upgraded
 
   def _manifest_only_waiting_on_ingest(self) -> bool:
+    """True when every on-disk entry is retryable or quarantine, with ≥1 retryable.
+
+    Quarantine is transparent: mixed ``skipped_not_in_archive`` +
+    ``skipped_quarantine`` (06-07) must hand off like retryable-only, not stay
+    stuck at ``verification_complete``.
+    """
     on_disk = self._manifest_entries_on_disk()
     if not on_disk:
       return False
+    has_retryable = False
     for _path, entry in on_disk:
-      if not self._entry_is_retryable_skip(entry):
-        return False
-    return True
+      if self._entry_is_retryable_skip(entry):
+        has_retryable = True
+        continue
+      if self._entry_is_quarantine_terminal_skip(entry):
+        continue
+      return False
+    return has_retryable
 
   def _only_waiting_on_ingest_blocks_completion(self) -> bool:
     if self.delete_phase_done():
@@ -695,13 +731,20 @@ class _DayRawRemovalState:
       return False
     with self._lock:
       entries = dict(self._manifest.get("entries", {}))
+    has_retryable = False
     for path in self._closed_raw_paths_on_disk():
       if not os.path.isfile(path):
         continue
       entry = entries.get(path)
-      if entry is None or not self._entry_is_retryable_skip(entry):
+      if entry is None:
         return False
-    return True
+      if self._entry_is_retryable_skip(entry):
+        has_retryable = True
+        continue
+      if self._entry_is_quarantine_terminal_skip(entry):
+        continue
+      return False
+    return has_retryable
 
   def _async_verify_in_flight(self) -> bool:
     future = self._pipeline_future
@@ -1601,6 +1644,9 @@ class DayRawRemovalCoordinator:
 
   def post_seal_verification_complete(self, tar_path: str) -> bool:
     return self._get_or_create_day(tar_path).post_seal_verification_complete()
+
+  def promote_phase_if_verify_stage_ahead(self, tar_path: str) -> bool:
+    return self._get_or_create_day(tar_path).promote_phase_if_verify_stage_ahead()
 
   def should_handoff_before_seal(self, tar_path: str) -> bool:
     """True when closed raw handoff paths exist (pre-seal gate; paths only)."""

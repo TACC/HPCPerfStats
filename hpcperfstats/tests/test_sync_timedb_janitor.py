@@ -111,6 +111,9 @@ def _stub_janitor_day_close_tick_phases(
     def verification_complete(self, tar_path):
       return self.post_seal_verification_complete(tar_path)
 
+    def promote_phase_if_verify_stage_ahead(self, tar_path):
+      return False
+
     def reopen_done_days_with_verified_on_disk(self):
       return 0
 
@@ -3006,6 +3009,189 @@ def test_janitor_day_close_reclassify_unblocks_tar_drop(monkeypatch, tmp_path):
   )
   assert not seg.is_file()
   assert tar_drop_calls == [tar_norm]
+
+
+def test_close_one_day_promotes_verifying_post_seal_and_deletes_or_handoffs(
+    monkeypatch, tmp_path,
+):
+  """05-30: verifying+post_seal must not silent-reenqueue without delete/handoff."""
+  from datetime import datetime
+
+  import hpcperfstats.dbload.lib.conf_parser as day_cfg
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      atomic_seal_tar_to_zst,
+      daily_tar_path_from_compressed,
+      get_tar_member_name,
+      validate_sealed_daily_archive_for_raw_removal,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
+      DayRawRemovalCoordinator,
+      PHASE_VERIFYING,
+      VERIFY_STAGE_POST_SEAL,
+      _save_manifest,
+  )
+
+  day = datetime(2026, 5, 30)
+  host = tmp_path / "n.cluster.integration.test"
+  host.mkdir(parents=True)
+  ts = int(datetime(day.year, day.month, day.day, 12, 0, 0).timestamp())
+  seg = host / str(ts)
+  seg.write_text("%d job1 cn001\nline\n" % ts)
+  os.utime(seg, (ts, ts))
+  tgz_dir = tmp_path / "daily"
+  tgz_dir.mkdir()
+  zst_key = str(tgz_dir / "2026-05-30.tar.zst")
+  tar_path = daily_tar_path_from_compressed(zst_key)
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(seg), arcname=get_tar_member_name(str(seg)))
+  atomic_seal_tar_to_zst(tar_path, zst_key, 1, 6, True, log_fn=None)
+  validate_sealed_daily_archive_for_raw_removal(zst_key, log_fn=None)
+
+  coord = DayRawRemovalCoordinator(
+      archive_data_dir=str(tmp_path),
+      host_name_ext="cluster.integration.test",
+      tgz_archive_dir=str(tgz_dir),
+      log_fn=MagicMock(),
+      get_quarantine_skip_paths=lambda: set(),
+      ingest_ready_fn=lambda _p: False,
+  )
+  coord.enabled = True
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(
+      str(seg),
+      zst_key,
+      "skipped_not_in_archive",
+      "not_in_sealed_archive",
+  )
+  with state._lock:
+    state._manifest["phase"] = PHASE_VERIFYING
+    state._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
+    state._manifest["skipped_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+
+  janitor = _make_janitor(
+      archive_data_dir=str(tmp_path),
+      tgz_archive_dir=str(tgz_dir),
+      day_raw_removal_coordinator=coord,
+  )
+  tar_norm = os.path.normpath(tar_path)
+  with janitor._hints_state_lock:
+    janitor._day_phases[tar_norm] = "sealed"
+
+  monkeypatch.setattr(
+      day_cfg,
+      "get_sync_day_close_raw_removal_max_deletes_per_pass",
+      lambda: 0,
+  )
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor,
+      "_tar_drop_one_day",
+      lambda self, tp, *a, **k: (_mark_day_phase(self, tp, "tar_dropped"), True)[1],
+  )
+
+  log_fn = MagicMock()
+  janitor.log_fn = log_fn
+  assert not coord.verification_complete(tar_norm)
+  result = janitor._close_one_day(
+      tar_norm,
+      snapshot=None,
+      validation_cache={},
+      disqualified=set(),
+  )
+  log_text = " ".join(
+      str(c.args[0]) for c in log_fn.call_args_list if c.args
+  )
+  assert "delete start" in log_text or coord.delete_phase_done(tar_norm)
+  assert coord.verification_complete(tar_norm) or coord.delete_phase_done(tar_norm)
+  assert result is True or coord.delete_phase_done(tar_norm)
+
+
+def test_close_one_day_delete_start_when_verification_complete_verified_on_disk(
+    monkeypatch, tmp_path,
+):
+  """06-08/09 C1: verification_complete + verified on disk must log delete start."""
+  from datetime import datetime
+
+  import hpcperfstats.dbload.lib.conf_parser as day_cfg
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      atomic_seal_tar_to_zst,
+      daily_tar_path_from_compressed,
+      get_tar_member_name,
+      validate_sealed_daily_archive_for_raw_removal,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
+      DayRawRemovalCoordinator,
+      PHASE_VERIFICATION_COMPLETE,
+      VERIFY_STAGE_POST_SEAL,
+      _save_manifest,
+  )
+
+  day = datetime(2026, 6, 8)
+  host = tmp_path / "n.cluster.integration.test"
+  host.mkdir(parents=True)
+  ts = int(datetime(day.year, day.month, day.day, 12, 0, 0).timestamp())
+  seg = host / str(ts)
+  seg.write_text("%d job1 cn001\nline\n" % ts)
+  os.utime(seg, (ts, ts))
+  tgz_dir = tmp_path / "daily"
+  tgz_dir.mkdir()
+  zst_key = str(tgz_dir / "2026-06-08.tar.zst")
+  tar_path = daily_tar_path_from_compressed(zst_key)
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(seg), arcname=get_tar_member_name(str(seg)))
+  atomic_seal_tar_to_zst(tar_path, zst_key, 1, 6, True, log_fn=None)
+  validate_sealed_daily_archive_for_raw_removal(zst_key, log_fn=None)
+
+  coord = DayRawRemovalCoordinator(
+      archive_data_dir=str(tmp_path),
+      host_name_ext="cluster.integration.test",
+      tgz_archive_dir=str(tgz_dir),
+      log_fn=MagicMock(),
+      get_quarantine_skip_paths=lambda: set(),
+      ingest_ready_fn=lambda _p: True,
+  )
+  coord.enabled = True
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), zst_key, "verified", "verified")
+  with state._lock:
+    state._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
+    state._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
+    state._manifest["verified_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+
+  janitor = _make_janitor(
+      archive_data_dir=str(tmp_path),
+      tgz_archive_dir=str(tgz_dir),
+      day_raw_removal_coordinator=coord,
+  )
+  tar_norm = os.path.normpath(tar_path)
+  with janitor._hints_state_lock:
+    janitor._day_phases[tar_norm] = "sealed"
+
+  monkeypatch.setattr(
+      day_cfg,
+      "get_sync_day_close_raw_removal_max_deletes_per_pass",
+      lambda: 100,
+  )
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor,
+      "_tar_drop_one_day",
+      lambda self, tp, *a, **k: (_mark_day_phase(self, tp, "tar_dropped"), True)[1],
+  )
+
+  log_fn = MagicMock()
+  janitor.log_fn = log_fn
+  assert janitor._close_one_day(
+      tar_norm,
+      snapshot=None,
+      validation_cache={},
+      disqualified=set(),
+  ) is True
+  log_text = " ".join(
+      str(c.args[0]) for c in log_fn.call_args_list if c.args
+  )
+  assert "delete start" in log_text
+  assert not seg.is_file()
 
 
 def test_discover_enqueues_when_debt_heap_full_but_no_live_workers(

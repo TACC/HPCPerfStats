@@ -433,6 +433,38 @@ When the prefix has no `:role` segment, use message substrings:
 | `Pool imap stalled`, `worker_stages` | Ingest or parse pool worker |
 | `Archive mapping`, `archive_job_done` (from worker context) | Often main coordinating append; append work runs on `archive-pool` workers |
 
+### Idle `top` + `long_ingest_budget` stall defer (RC-A1 — not a hang)
+
+**Misread:** Host `top` can look “idle” while ingest is healthy — supervisor MainThread often waits on imap; work lives on **`[sync_timedb:worker:ingest-pool]`** PIDs (often ~100%+ CPU). Filter `ps`/`top` for **`worker:ingest-pool`**, not only the main `sync_timedb.py [main]` line.
+
+**Healthy WARN:** `WARN: pool imap stall deferred: long ingest budget` / `defer_reason=long_ingest_budget` means the sliding-window stall timer is deferred because an in-flight path’s **`effective_ingest_timeout_s`** exceeds the batch precompute — expected on giant files / long `db_write`. This is **not** exit **124** and **not** an idle spin.
+
+```bash
+# Full pipeline log first (no --tail before grep)
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 \
+  | tee /tmp/pipeline-full.log
+
+grep -E 'long_ingest_budget|stall deferred|Pool imap stalled|chunk ingest summary|giant pool supplement' /tmp/pipeline-full.log | tail -80
+
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec -T pipeline \
+  sh -c 'ps -eLo pid,pcpu,args | grep -E "worker:ingest-pool|sync_timedb.py" | grep -v grep | head -40'
+```
+
+**Pass (T0):** `chunk ingest summary` continues; ingest-pool workers busy; only defer WARNs (no `ERROR: Pool imap stalled` → exit 124). **Fail:** true stall ERROR, or main+workers idle with no ingest progress for the T1 window.
+
+### Leftover daily `.tar` day-close (VERIFYING+POST_SEAL / mixed skips)
+
+After deploy of quarantine-transparent waiting_on_ingest + phase promote:
+
+- **`phase=verifying` + `verify_stage=post_seal_complete`** must promote (log `promote phase=verification_complete`) then reach **`delete start`** or handoff — not seal-only forever.
+- On-disk mix of **`skipped_not_in_archive` + `skipped_quarantine`** after verified delete must reach **`phase=done`** (waiting_on_ingest) + handoff retryables — not seal↔delete reloop.
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 \
+  | grep -E 'promote phase=verification_complete|day_close delete start|delete deferred tar=.*delete_disqualified|Day raw removal delete complete|waiting_on_ingest' \
+  | tail -60
+```
+
 ### Correlate logs with `ps` (read-only exec)
 
 ```bash

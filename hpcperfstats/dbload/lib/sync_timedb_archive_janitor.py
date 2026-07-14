@@ -2017,12 +2017,21 @@ class ArchiveJanitor:
           self._enqueue_day_close(tar_norm, persist=False)
           self._persist_hints()
           return False
+      # Recover VERIFYING+POST_SEAL inconsistency (silent re-enqueue trap).
+      promote = getattr(coord, "promote_phase_if_verify_stage_ahead", None)
+      if callable(promote):
+        promote(tar_norm)
       if not coord.verification_complete(tar_norm):
         self._enqueue_day_close(tar_norm, persist=False)
         self._persist_hints()
         return False
       delete_disqualified = set(self.get_delete_disqualified_daily_tars())
       if tar_norm in delete_disqualified:
+        self.log_fn(
+            "janitor: day_close delete deferred tar=%s reason=delete_disqualified"
+            % tar_norm,
+            flush=True,
+        )
         self._enqueue_day_close(tar_norm, persist=False)
         self._persist_hints()
         return False

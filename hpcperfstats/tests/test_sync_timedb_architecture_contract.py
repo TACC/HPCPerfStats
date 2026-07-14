@@ -249,6 +249,9 @@ def test_arch_close_one_day_tar_drop_after_raw_removal_done(monkeypatch, tmp_pat
     def verification_complete(self, _tar):
       return True
 
+    def promote_phase_if_verify_stage_ahead(self, _tar):
+      return False
+
     def reopen_done_days_with_verified_on_disk(self):
       return 0
 

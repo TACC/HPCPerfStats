@@ -357,6 +357,99 @@ def test_verification_complete_all_verified_deleted_retryable_skips_handoff(
   assert retry_path in handoff_paths
 
 
+def test_mixed_not_in_archive_and_quarantine_marks_done_waiting_on_ingest(
+    tmp_path, monkeypatch,
+):
+  """06-07 C2: mixed retryable + quarantine must not stay verification_complete."""
+  day = datetime(2026, 6, 7)
+  verified_seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  retry_host = tmp_path / "n2.cluster.integration.test"
+  retry_host.mkdir(parents=True, exist_ok=True)
+  ts_retry = int(datetime(day.year, day.month, day.day, 14, 0, 0).timestamp())
+  retry_seg = retry_host / str(ts_retry)
+  retry_seg.write_text("%d job2 cn002\nline\n" % ts_retry)
+  os.utime(retry_seg, (ts_retry, ts_retry))
+  quar_host = tmp_path / "n3.cluster.integration.test"
+  quar_host.mkdir(parents=True, exist_ok=True)
+  ts_quar = int(datetime(day.year, day.month, day.day, 15, 0, 0).timestamp())
+  quar_seg = quar_host / str(ts_quar)
+  quar_seg.write_text("%d job3 cn003\nline\n" % ts_quar)
+  os.utime(quar_seg, (ts_quar, ts_quar))
+  tar_path, zst = _seal_day(tmp_path, verified_seg, day)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
+  monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0)
+  state = coord._get_or_create_day(tar_path)
+  verified_path = str(verified_seg)
+  retry_path = str(retry_seg)
+  quar_path = str(quar_seg)
+  state._record_entry(verified_path, zst, "verified", "verified")
+  state._record_entry(retry_path, zst, "skipped_not_in_archive", "not_in_sealed_archive")
+  state._record_entry(quar_path, zst, "skipped_quarantine", "quarantine")
+  with state._lock:
+    state._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
+    state._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
+    state._manifest["verified_count"] = 1
+    state._manifest["skipped_count"] = 2
+    entries = state._manifest["entries"]
+    entries[verified_path]["deleted"] = True
+    state._manifest["deleted_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+  verified_seg.unlink()
+  assert state._only_waiting_on_ingest_blocks_completion()
+  coord.begin_deleting(tar_path)
+  deleted = coord.apply_batch_delete(tar_path)
+  assert deleted == 0
+  assert coord.phase(tar_path) == PHASE_DONE
+  assert retry_seg.is_file()
+  assert quar_seg.is_file()
+  assert coord.should_handoff_to_ingest(tar_path)
+  handoff_paths = coord.complete_handoff_to_ingest(tar_path)
+  assert retry_path in handoff_paths
+  assert quar_path not in handoff_paths
+
+
+def test_promote_phase_when_verifying_but_post_seal_complete(tmp_path):
+  """05-30 stuck gate: phase=verifying + verify_stage=post_seal must promote."""
+  day = datetime(2026, 5, 30)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive")
+  with state._lock:
+    state._manifest["phase"] = PHASE_VERIFYING
+    state._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
+    state._manifest["skipped_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+  assert not state.verification_complete()
+  assert state.post_seal_verification_complete()
+  promoted = coord.promote_phase_if_verify_stage_ahead(tar_path)
+  assert promoted is True
+  assert coord.verification_complete(tar_path)
+  assert coord.phase(tar_path) == PHASE_VERIFICATION_COMPLETE
+  assert state._only_waiting_on_ingest_blocks_completion()
+
+
+def test_reopen_stale_done_clears_verify_stage(tmp_path):
+  """Reopen must not leave verify_stage=post_seal with phase=verifying."""
+  day = datetime(2026, 5, 31)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive")
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
+    state._manifest["completed_at"] = time.time()
+    state._manifest["verified_count"] = 0
+    state._manifest["skipped_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+  assert state.reopen_stale_done_all_skipped()
+  assert state.phase() == PHASE_VERIFYING
+  assert state.verify_stage() != VERIFY_STAGE_POST_SEAL
+
+
 def test_apply_batch_delete_marks_done_when_only_retryable_skips_remain(
     tmp_path, monkeypatch,
 ):
