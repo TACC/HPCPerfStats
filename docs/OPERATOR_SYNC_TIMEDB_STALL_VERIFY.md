@@ -481,7 +481,7 @@ When the prefix has no `:role` segment, use message substrings:
 
 **Shared stages (RC-A):** stall snapshots may show workers in **`populate_queue_wait`** while other workers parse giants. An idle-looking `populate_queue_wait` row next to `long_ingest_budget` is **normal shared-stage telemetry**, not proof that ingest is stuck on populate. Prefer `chunk ingest summary`, `giant pool supplement begin|replenish`, and busy `worker:ingest-pool` PIDs over a single stage token.
 
-**RC-D queue semantics:** no-supplement process queue = **`sync_ingest_queue_max_size`** (default **3000**). Giant-supplement reservoir = **queue × `sync_ingest_giant_pool_supplement_queue_multiplier`** (default **2 → 6000**) at **batch start and mid-imap refresh**. Grep **`giant pool supplement replenish`** when giants run for hours with disk backlog; **`giant pool supplement empty reason=exhausted|size_filter`** when the reservoir has nothing eligible.
+**RC-D queue semantics:** no-supplement process queue = **`sync_ingest_queue_max_size`** (default **3000**). Ingest **chunk size** follows the same knob (`get_sync_ingest_chunk_size` alias — leftover `sync_ingest_chunk_size=` INI lines are ignored). Giant-supplement reservoir = **queue × `sync_ingest_giant_pool_supplement_queue_multiplier`** (default **2 → 6000**) at **batch start and mid-imap refresh**. Grep **`giant pool supplement replenish`** when giants run for hours with disk backlog; **`giant pool supplement empty reason=exhausted|size_filter`** when the reservoir has nothing eligible.
 
 ```bash
 # Full pipeline log first (no --tail before grep)

@@ -277,7 +277,7 @@ sync_pool_process_cap = 16
 # Metrics multiplier when overprovision on (default 1.00).
 # sync_overprovision_metrics_multiplier = 1.00
 
-# Max in-memory ingest work queue size (default 3000; no-supplement process queue).
+# Max in-memory ingest work queue size (default 3000; also drives ingest chunk size).
 sync_ingest_queue_max_size = 3000
 
 # Max in-memory archive work queue size (default 1000).
@@ -373,9 +373,6 @@ sync_archive_members_populate_pool_processes = 4
 
 # Write-lock shard count for sync ingest; auto if unset.
 # sync_write_lock_shards =
-
-# Stats files per ingest chunk (default 1000).
-# sync_ingest_chunk_size = 1000
 
 # Supervisor RSS limit MiB; 0 disables fail-fast exit (default 0).
 # sync_supervisor_rss_limit_mb = 0

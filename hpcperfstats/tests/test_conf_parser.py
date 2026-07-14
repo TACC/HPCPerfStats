@@ -826,6 +826,8 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
 
   importlib.reload(cfg)
   assert cfg.get_sync_ingest_queue_max_size() == 3000
+  assert cfg.get_sync_ingest_chunk_size() == 3000
+  assert cfg.get_sync_ingest_chunk_size() == cfg.get_sync_ingest_queue_max_size()
   assert cfg.get_sync_archive_queue_max_size() == 1000
   assert cfg.get_sync_archive_retry_max_attempts() == 5
   assert cfg.get_sync_archive_retry_backoff_base_seconds() == 1.0
@@ -895,6 +897,7 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
 
   importlib.reload(cfg)
   assert cfg.get_sync_ingest_queue_max_size() == 111
+  assert cfg.get_sync_ingest_chunk_size() == 111
   assert cfg.get_sync_archive_queue_max_size() == 222
   assert cfg.get_sync_archive_retry_max_attempts() == 7
   assert cfg.get_sync_archive_retry_backoff_base_seconds() == 2.5

@@ -135,7 +135,6 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_archive_members_redis_max_payload_bytes"),
     ("PIPELINE", "sync_archive_members_populate_pool_processes"),
     ("PIPELINE", "sync_write_lock_shards"),
-    ("PIPELINE", "sync_ingest_chunk_size"),
     ("PIPELINE", "sync_bulk_create_batch_size"),
     ("PIPELINE", "sync_supervisor_rss_limit_mb"),
     ("PIPELINE", "sync_supervisor_rss_check_every_n_chunks"),
@@ -317,7 +316,6 @@ INI_OPTION_DEFAULTS = {
     'sync_archive_members_redis_max_payload_bytes': '8388608',
     'sync_archive_members_populate_pool_processes': '4',
     'sync_write_lock_shards': None,
-    'sync_ingest_chunk_size': '1000',
     'sync_bulk_create_batch_size': '10000',
     'sync_supervisor_rss_limit_mb': '0',
     'sync_supervisor_rss_check_every_n_chunks': '1',
@@ -2460,9 +2458,11 @@ def get_sync_write_lock_shards():
 
 
 def get_sync_ingest_chunk_size():
-  """Stats files processed per ingest chunk (default 1000)."""
-  _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("sync_ingest_chunk_size"))
+  """Stats files processed per ingest chunk — alias of queue max (default 3000).
+
+  Not an independent INI key; leftover ``sync_ingest_chunk_size=`` lines are ignored.
+  """
+  return get_sync_ingest_queue_max_size()
 
 
 def get_sync_supervisor_rss_limit_mb():
