@@ -9,7 +9,6 @@ HPCPerfStats web UI.
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple

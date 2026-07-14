@@ -1,7 +1,6 @@
 """Tests for hpcperfstats_tools.config."""
 
 import importlib
-from pathlib import Path
 
 
 def test_get_api_base_url_reads_ini(tmp_path, monkeypatch):
