@@ -62,6 +62,18 @@ c = ConfigParser(); c.read("/home/hpcperfstats/hpcperfstats.ini")
 arch = c["PIPELINE"].get("archive_dir", c["DEFAULT"].get("archive_dir"))  # often None
 ```
 
+**Anti-pattern — inventing `calendar_date_from_stats_path`:** that symbol **does not exist**. Public helpers are `calendar_date_from_daily_tar_path` (daily `.tar` basename) and `daily_tar_path_for_stats_path` (raw → daily tar). For a raw stats epoch path day hint, use:
+
+```python
+from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+    daily_tar_path_for_stats_path,
+    calendar_date_from_daily_tar_path,
+)
+tgz = cfg.get_daily_archive_dir_path()
+tar = daily_tar_path_for_stats_path(p, tgz) if os.path.isfile(p) else None
+day = calendar_date_from_daily_tar_path(tar) if tar else None
+```
+
 **Anti-pattern — Django/ORM imports without bootstrap (hpcperfstats03 lesson):** importing `sync_timedb_ingest_readiness`, `host_data`, or other Django models from bare `python3 -c` inside pipeline raises **`ImproperlyConfigured`**. Call **`ensure_django()`** first:
 
 ```bash
