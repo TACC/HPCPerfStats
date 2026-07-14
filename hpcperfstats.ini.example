@@ -277,8 +277,8 @@ sync_pool_process_cap = 16
 # Metrics multiplier when overprovision on (default 1.00).
 # sync_overprovision_metrics_multiplier = 1.00
 
-# Max in-memory ingest work queue size (default 2000).
-# sync_ingest_queue_max_size = 2000
+# Max in-memory ingest work queue size (default 3000; no-supplement process queue).
+sync_ingest_queue_max_size = 3000
 
 # Max in-memory archive work queue size (default 1000).
 # sync_archive_queue_max_size = 1000
@@ -401,9 +401,19 @@ sync_process_tree_rss_limit_mb = 110000
 # Tail timestamp lines probed before full duplicate scan on large head-present files (default 500).
 # sync_ingest_db_complete_tail_window_lines = 500
 
-# Backfill idle ingest pool slots with sub-1GiB files from pending tail while >=2GiB giants run.
+# Backfill idle ingest pool slots from pending tail while >=2GiB giants run (default yes).
 # sync_ingest_giant_pool_supplement_enabled = yes
-# sync_ingest_giant_pool_supplement_max_bytes = 1073741824
+
+# Soft max bytes for preferred supplement pass; exclusive upper bound (default 1 GiB).
+sync_ingest_giant_pool_supplement_max_bytes = 1073741824
+
+# Hard max bytes for second-pass supplement; exclusive; paths at/above stay chunk-only (default 8 GiB).
+sync_ingest_giant_pool_supplement_large_max_bytes = 8589934592
+
+# Supplement reservoir = ingest_queue_max * this at batch start and mid-imap refresh (default 2 => 6000).
+sync_ingest_giant_pool_supplement_queue_multiplier = 2
+
+# Min resolved per-file ingest budget (s) for in-flight path to count as giant (default 6600 ~= 2 GiB).
 # sync_ingest_giant_pool_supplement_trigger_budget_s = 6600
 
 # Recycle ingest pool workers after N files; 0 unlimited (default 0).

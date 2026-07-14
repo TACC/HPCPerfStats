@@ -327,6 +327,28 @@ def supplement_pending_paths_from_closed_paths(
   return capped
 
 
+def build_giant_supplement_pending_tail(
+    paths,
+    *,
+    closed_paths,
+    supplement_queue,
+    processed_exclude=None,
+    log_fn=log_print,
+):
+  """Build giant-supplement ``pending_tail`` capped at ``supplement_queue``.
+
+  Used at giant-supplement batch start and for mid-imap refresh from a closed-path
+  snapshot. Same ceiling for both (default queue*multiplier = 6000).
+  """
+  return supplement_pending_paths_from_closed_paths(
+      paths,
+      closed_paths=closed_paths,
+      max_size=max(1, int(supplement_queue)),
+      processed_exclude=processed_exclude,
+      log_fn=log_fn,
+  )
+
+
 def cap_pending_stats_with_blocked_retention(
     paths,
     *,
@@ -6840,11 +6862,12 @@ def cap_pending_stats_file_list(paths, max_size, log_fn=log_print):
   max_size = max(1, int(max_size))
   if len(paths) <= max_size:
     return paths
-  log_fn(
-      "Pending stats file list truncated pending=%d max=%d"
-      % (len(paths), max_size),
-      flush=True,
-  )
+  if log_fn is not None:
+    log_fn(
+        "Pending stats file list truncated pending=%d max=%d"
+        % (len(paths), max_size),
+        flush=True,
+    )
   return list(paths[:max_size])
 
 

@@ -417,10 +417,18 @@ def test_chunk_paths_deduped_before_imap(monkeypatch, tmp_path):
   thread.join(timeout=2.0)
 
 
-def test_iter_giant_supplement_paths_skips_at_or_above_max_bytes(monkeypatch, tmp_path):
+def test_iter_giant_supplement_paths_skips_at_or_above_large_max_bytes(
+    monkeypatch, tmp_path,
+):
+  """Paths at/above large_max are never selected; soft max alone still allows second pass."""
   _default_timeout_getters(monkeypatch)
   monkeypatch.setattr(
       st.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: 1024,
+  )
+  monkeypatch.setattr(
+      st.cfg,
+      "get_sync_ingest_giant_pool_supplement_large_max_bytes",
+      lambda: 1024,
   )
   small = tmp_path / "small"
   large = tmp_path / "large"
@@ -440,9 +448,185 @@ def test_iter_giant_supplement_paths_skips_at_or_above_max_bytes(monkeypatch, tm
   assert picked == [str(small)]
 
 
+def test_iter_giant_supplement_paths_two_pass_prefers_under_soft_max(
+    monkeypatch, tmp_path,
+):
+  """First pass <1 GiB soft max; second pass fills remaining slots from [soft, large)."""
+  _default_timeout_getters(monkeypatch)
+  soft = 1024
+  large_max = 8192
+  monkeypatch.setattr(
+      st.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: soft,
+  )
+  monkeypatch.setattr(
+      st.cfg,
+      "get_sync_ingest_giant_pool_supplement_large_max_bytes",
+      lambda: large_max,
+  )
+  under = tmp_path / "under"
+  mid = tmp_path / "mid"
+  too_big = tmp_path / "toobig"
+  under.write_bytes(b"x")
+  mid.write_bytes(b"x")
+  too_big.write_bytes(b"x")
+
+  def _size_for(path):
+    name = os.path.basename(str(path))
+    if name == "under":
+      return soft - 1
+    if name == "mid":
+      return soft + 10
+    return large_max
+
+  _patch_stats_file_size_bytes(monkeypatch, _size_for)
+  picked = list(
+      ingest_timeout_mod.iter_giant_supplement_paths(
+          [str(mid), str(under), str(too_big)],
+          limit=10,
+      ),
+  )
+  assert picked == [str(under), str(mid)]
+  # Dedupe: same path must not appear twice across passes.
+  assert len(picked) == len(set(os.path.normpath(p) for p in picked))
+  limited = list(
+      ingest_timeout_mod.iter_giant_supplement_paths(
+          [str(mid), str(under), str(too_big)],
+          limit=1,
+      ),
+  )
+  assert limited == [str(under)]
+
+
+def test_giant_supplement_replenish_uses_supplement_queue_excludes_inflight(
+    monkeypatch, tmp_path, capsys,
+):
+  """RC-D: dry frozen tail mid-imap refreshes up to supplement_queue, excludes in-flight."""
+  import threading
+  import time
+
+  from hpcperfstats.tests import test_multiprocessing_pool_health as mph_tests
+
+  pool = mph_tests._ManualPool()
+  refill_a = str(tmp_path / "refill_a")
+  refill_b = str(tmp_path / "refill_b")
+  (tmp_path / "refill_a").write_bytes(b"x" * 100)
+  (tmp_path / "refill_b").write_bytes(b"x" * 100)
+  chunk = ["giant0"]
+  replenish_calls = []
+
+  def _replenish(exclude):
+    replenish_calls.append(set(exclude or ()))
+    return [refill_a, refill_b]
+
+  _default_timeout_getters(monkeypatch)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_giant_pool_supplement_enabled", lambda: True)
+  monkeypatch.setattr(st, "_effective_ingest_imap_inflight_cap", lambda _tc, _pc: 3)
+  monkeypatch.setattr(
+      st.cfg, "get_sync_ingest_giant_pool_supplement_trigger_budget_s", lambda: 100.0,
+  )
+  monkeypatch.setattr(
+      st.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: 10**9,
+  )
+  monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 0.01)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 100000)
+
+  def _size_for(path):
+    base = os.path.basename(str(path))
+    if base.startswith("giant"):
+      return _mib_bytes(2048)
+    return 100
+
+  _patch_stats_file_size_bytes(monkeypatch, _size_for)
+  tracker = st._IngestPoolInFlightTracker(chunk)
+  gen = st._imap_ingest_paths_batched(
+      pool,
+      lambda path: path,
+      chunk,
+      thread_count=3,
+      context="test supplement replenish",
+      tracker=tracker,
+      chunk_counter=0,
+      pending_count=10,
+      pending_tail=[],
+      replenish_pending_tail_fn=_replenish,
+  )
+
+  def consumer():
+    list(gen)
+
+  thread = threading.Thread(target=consumer, daemon=True)
+  thread.start()
+  deadline = time.monotonic() + 2.0
+  while pool.submit_count < 3 and time.monotonic() < deadline:
+    time.sleep(0.005)
+  assert replenish_calls, "expected mid-imap replenish when pending_tail empty"
+  assert any(
+      os.path.normpath("giant0") in call or "giant0" in call
+      for call in replenish_calls
+  ) or any(
+      any("giant0" in os.path.basename(str(p)) for p in call)
+      for call in replenish_calls
+  )
+  # Exclude must include the in-flight giant (normpath).
+  assert any(
+      os.path.normpath("giant0") in {os.path.normpath(str(p)) for p in call}
+      for call in replenish_calls
+  )
+  submitted = list(pool.inflight.values())
+  assert refill_a in submitted or refill_b in submitted
+  for ar in list(pool.inflight):
+    ar.finish()
+  while pool.inflight and time.monotonic() < deadline:
+    for ar in list(pool.inflight):
+      ar.finish()
+    time.sleep(0.01)
+  thread.join(timeout=2.0)
+  captured = capsys.readouterr().out
+  assert "giant pool supplement replenish" in captured
+
+
+def test_build_giant_supplement_pending_tail_uses_supplement_queue(monkeypatch, tmp_path):
+  """Startup reservoir ceiling is supplement_queue (= queue * multiplier), not bare queue."""
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
+
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_giant_pool_supplement_enabled", lambda: True)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_queue_max_size", lambda: 3000)
+  monkeypatch.setattr(
+      st.cfg, "get_sync_ingest_giant_pool_supplement_queue_multiplier", lambda: 2,
+  )
+  assert st.cfg.get_sync_ingest_giant_pool_supplement_queue_size() == 6000
+  base = []
+  for i in range(50):
+    p = tmp_path / f"base-{i:04d}"
+    p.write_bytes(b"x")
+    base.append(str(p))
+  closed = [f"/virtual/closed/{i:05d}" for i in range(7000)]
+  real_isfile = helpers.os.path.isfile
+
+  def _isfile(path):
+    s = str(path)
+    if s.startswith("/virtual/closed/"):
+      return True
+    return real_isfile(path)
+
+  monkeypatch.setattr(helpers.os.path, "isfile", _isfile)
+  capped = helpers.build_giant_supplement_pending_tail(
+      base,
+      closed_paths=closed,
+      supplement_queue=st.cfg.get_sync_ingest_giant_pool_supplement_queue_size(),
+      log_fn=None,
+  )
+  assert len(capped) == 6000
+
+
 def test_ingest_pool_tracker_batch_seen_excludes_redispatch(tmp_path, monkeypatch):
   monkeypatch.setattr(
       ingest_timeout_mod.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: 10**9,
+  )
+  monkeypatch.setattr(
+      ingest_timeout_mod.cfg,
+      "get_sync_ingest_giant_pool_supplement_large_max_bytes",
+      lambda: 10**9,
   )
   tail0 = str(tmp_path / "tail0")
   tail1 = str(tmp_path / "tail1")

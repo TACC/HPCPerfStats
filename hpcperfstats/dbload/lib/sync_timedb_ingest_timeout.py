@@ -107,33 +107,63 @@ def iter_giant_supplement_paths(
     pending_tail,
     *,
     max_bytes=None,
+    large_max_bytes=None,
     limit=None,
     exclude=None,
 ):
-  """Oldest-first pending tail paths under ``max_bytes`` for giant pool supplement."""
+  """Oldest-first two-pass supplement: ``<max_bytes`` then ``[max_bytes, large_max)``.
+
+  Soft max defaults to 1 GiB; large max defaults to 8 GiB. Paths at/above
+  ``large_max_bytes`` are never selected. Each path is yielded at most once.
+  """
   if max_bytes is None:
     max_bytes = int(cfg.get_sync_ingest_giant_pool_supplement_max_bytes())
+  if large_max_bytes is None:
+    large_max_bytes = int(cfg.get_sync_ingest_giant_pool_supplement_large_max_bytes())
   exclude_normpaths = {
       os.path.normpath(str(path))
       for path in (exclude or ())
       if path
   }
-  max_bytes = int(max_bytes)
+  soft_max = int(max_bytes)
+  hard_max = max(soft_max, int(large_max_bytes))
   remaining = None if limit is None else max(0, int(limit))
+  yielded = set()
+
+  def _size_of(path):
+    try:
+      return int(stats_file_size_bytes(path))
+    except (TypeError, ValueError, OSError):
+      return 0
+
   for path in pending_tail or ():
     if not path:
       continue
+    if remaining is not None and remaining <= 0:
+      break
     norm = os.path.normpath(str(path))
-    if norm in exclude_normpaths:
+    if norm in exclude_normpaths or norm in yielded:
+      continue
+    size = _size_of(path)
+    if size <= 0 or size >= soft_max:
+      continue
+    yielded.add(norm)
+    yield path
+    if remaining is not None:
+      remaining -= 1
+
+  for path in pending_tail or ():
+    if not path:
       continue
     if remaining is not None and remaining <= 0:
       break
-    try:
-      size = int(stats_file_size_bytes(path))
-    except (TypeError, ValueError, OSError):
+    norm = os.path.normpath(str(path))
+    if norm in exclude_normpaths or norm in yielded:
       continue
-    if size <= 0 or size >= max_bytes:
+    size = _size_of(path)
+    if size < soft_max or size >= hard_max:
       continue
+    yielded.add(norm)
     yield path
     if remaining is not None:
       remaining -= 1

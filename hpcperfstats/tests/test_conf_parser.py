@@ -825,7 +825,7 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
   importlib.reload(cfg)
-  assert cfg.get_sync_ingest_queue_max_size() == 2000
+  assert cfg.get_sync_ingest_queue_max_size() == 3000
   assert cfg.get_sync_archive_queue_max_size() == 1000
   assert cfg.get_sync_archive_retry_max_attempts() == 5
   assert cfg.get_sync_archive_retry_backoff_base_seconds() == 1.0
@@ -843,6 +843,9 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   )
   assert cfg.get_sync_ingest_giant_pool_supplement_enabled() is True
   assert cfg.get_sync_ingest_giant_pool_supplement_max_bytes() == 1073741824
+  assert cfg.get_sync_ingest_giant_pool_supplement_large_max_bytes() == 8589934592
+  assert cfg.get_sync_ingest_giant_pool_supplement_queue_multiplier() == 2
+  assert cfg.get_sync_ingest_giant_pool_supplement_queue_size() == 6000
   assert cfg.get_sync_ingest_giant_pool_supplement_trigger_budget_s() == pytest.approx(
       6600.0,
   )

@@ -153,6 +153,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     ensure_daily_tar_restored_for_append,
     cap_pending_stats_file_list,
     cap_pending_stats_with_blocked_retention,
+    build_giant_supplement_pending_tail,
     merge_rescan_discovered_into_pending,
     resolve_idle_rescan_closed_paths,
     supplement_pending_paths_from_closed_paths,
@@ -1617,6 +1618,7 @@ def _imap_ingest_paths_batched(
     archive_pool=None,
     stall_diagnostics=None,
     pending_tail=None,
+    replenish_pending_tail_fn=None,
     populate_pool_controller=None,
     on_ingest_pool_replaced=None,
     pool_health_context=None,
@@ -1644,7 +1646,8 @@ def _imap_ingest_paths_batched(
     pool_health_context["in_flight_sample_fn"] = (
         tracker.sample_in_flight if tracker is not None else None
     )
-  supplement_log_state = {"logged": False}
+  supplement_log_state = {"logged": False, "empty_logged": False, "replenish_n": 0}
+  pending_tail_state = list(pending_tail or ())
 
   def _supervisor_reap():
     _maybe_reap_supervisor_pool_children_throttled(
@@ -1670,13 +1673,7 @@ def _imap_ingest_paths_batched(
       )
     return entries
 
-  def _giant_pool_supplement_paths_fn(slots_needed, in_flight_paths):
-    if not cfg.get_sync_ingest_giant_pool_supplement_enabled():
-      return []
-    if slots_needed <= 0 or not pending_tail:
-      return []
-    if not any_giant_ingest_budget_in_flight(in_flight_paths):
-      return []
+  def _supplement_exclude(in_flight_paths):
     exclude = {
         os.path.normpath(str(p))
         for p in (in_flight_paths or ())
@@ -1688,14 +1685,80 @@ def _imap_ingest_paths_batched(
           for p in tracker.batch_seen_paths()
           if p
       )
-    selected = list(
+    return exclude
+
+  def _select_giant_supplement(slots_needed, exclude):
+    return list(
         iter_giant_supplement_paths(
-            pending_tail,
+            pending_tail_state,
             limit=int(slots_needed),
             exclude=exclude,
         ),
     )
+
+  def _classify_supplement_empty(exclude):
+    """Distinguish empty reservoir vs size-filter dryness for operator logs."""
+    if not pending_tail_state:
+      return "exhausted"
+    soft = int(cfg.get_sync_ingest_giant_pool_supplement_max_bytes())
+    hard = int(cfg.get_sync_ingest_giant_pool_supplement_large_max_bytes())
+    hard = max(soft, hard)
+    saw_any = False
+    for path in pending_tail_state:
+      if not path:
+        continue
+      norm = os.path.normpath(str(path))
+      if norm in exclude:
+        continue
+      saw_any = True
+      try:
+        size = int(stats_file_size_bytes(path))
+      except (TypeError, ValueError, OSError):
+        continue
+      if 0 < size < hard:
+        return "size_filter"
+    return "exhausted" if not saw_any else "size_filter"
+
+  def _giant_pool_supplement_paths_fn(slots_needed, in_flight_paths):
+    if not cfg.get_sync_ingest_giant_pool_supplement_enabled():
+      return []
+    if slots_needed <= 0:
+      return []
+    if not any_giant_ingest_budget_in_flight(in_flight_paths):
+      return []
+    exclude = _supplement_exclude(in_flight_paths)
+    selected = _select_giant_supplement(slots_needed, exclude)
+    if (
+        not selected
+        and callable(replenish_pending_tail_fn)
+    ):
+      refreshed = list(replenish_pending_tail_fn(exclude) or ())
+      if refreshed:
+        pending_tail_state[:] = refreshed
+        supplement_log_state["replenish_n"] += 1
+        log_print(
+            "INFO: sync_timedb: giant pool supplement replenish "
+            "pending_tail_n=%d supplement_queue=%d replenish_n=%d "
+            "idle_slots=%d"
+            % (
+                len(pending_tail_state),
+                int(cfg.get_sync_ingest_giant_pool_supplement_queue_size()),
+                int(supplement_log_state["replenish_n"]),
+                int(slots_needed),
+            ),
+            flush=True,
+        )
+        selected = _select_giant_supplement(slots_needed, exclude)
     if not selected:
+      if not supplement_log_state["empty_logged"]:
+        supplement_log_state["empty_logged"] = True
+        reason = _classify_supplement_empty(exclude)
+        log_print(
+            "INFO: sync_timedb: giant pool supplement empty reason=%s "
+            "pending_tail_n=%d idle_slots=%d"
+            % (reason, len(pending_tail_state), int(slots_needed)),
+            flush=True,
+        )
       return []
     if dispatch_registry is not None:
       seed_dispatch_worker_stages(dispatch_registry, selected)
@@ -1706,7 +1769,7 @@ def _imap_ingest_paths_batched(
       supplement_log_state["logged"] = True
       tail_sample = [
           os.path.basename(str(path))
-          for path in (pending_tail or ())[:5]
+          for path in pending_tail_state[:5]
           if path
       ]
       log_print(
@@ -1714,7 +1777,7 @@ def _imap_ingest_paths_batched(
           "pending_tail_sample=%s in_flight_giants=%s selected=%s "
           "idle_slots=%d trigger_budget_s=%.0f"
           % (
-              len(pending_tail or ()),
+              len(pending_tail_state),
               tail_sample,
               _format_giant_in_flight_snapshot(in_flight_paths),
               [os.path.basename(str(path)) for path in selected],
@@ -5550,6 +5613,21 @@ def run_sync_timedb_supervisor_loop(
     skip_prewarm = _paths_all_db_complete_for_prewarm_skip(paths)
     effective_gated_restore = gated_tar_restore and not skip_prewarm
 
+    def _replenish_giant_pending_tail(exclude):
+      if not cfg.get_sync_ingest_giant_pool_supplement_enabled():
+        return []
+      supplement_queue = int(cfg.get_sync_ingest_giant_pool_supplement_queue_size())
+      closed_paths = _resolve_closed_paths_for_cap()
+      if not closed_paths:
+        return []
+      return build_giant_supplement_pending_tail(
+          [],
+          closed_paths=closed_paths,
+          supplement_queue=supplement_queue,
+          processed_exclude=exclude,
+          log_fn=None,
+      )
+
     stall_diagnostics.chunk_batch_size = len(paths)
     prewarm_t0 = time.time()
     stall_diagnostics.chunk_prewarm_summary = (
@@ -5627,6 +5705,7 @@ def run_sync_timedb_supervisor_loop(
           archive_pool=archive_pool,
           stall_diagnostics=stall_diagnostics,
           pending_tail=pending_tail,
+          replenish_pending_tail_fn=_replenish_giant_pending_tail,
           populate_pool_controller=populate_pool_controller,
           on_ingest_pool_replaced=_replace_ingest_pool,
           pool_health_context=maintenance_pool_health,
@@ -6835,16 +6914,37 @@ def run_sync_timedb_supervisor_loop(
         reconcile_refs["chunk_day_tokens"] = set(
             build_chunk_day_histogram(stats_files_chunk, tgz_archive_dir).keys(),
         )
+        pending_minus = pending_minus_chunk(
+            pending_stats_files,
+            stats_files_chunk,
+        )
+        if cfg.get_sync_ingest_giant_pool_supplement_enabled():
+          supplement_queue = int(
+              cfg.get_sync_ingest_giant_pool_supplement_queue_size(),
+          )
+          closed_for_tail = _resolve_closed_paths_for_cap()
+          if closed_for_tail:
+            giant_pending_tail = build_giant_supplement_pending_tail(
+                pending_minus,
+                closed_paths=closed_for_tail,
+                supplement_queue=supplement_queue,
+                log_fn=None,
+            )
+          else:
+            giant_pending_tail = cap_pending_stats_file_list(
+                pending_minus,
+                supplement_queue,
+                log_fn=None,
+            )
+        else:
+          giant_pending_tail = pending_minus
         successful_paths, files_to_be_archived, active_workers, k = (
             _ingest_explicit_path_batch(
                 stats_files_chunk,
                 context_label="ingest chunk",
                 pending_total=len(pending_stats_files),
                 batch_chunk_counter=chunk_counter,
-                pending_tail=pending_minus_chunk(
-                    pending_stats_files,
-                    stats_files_chunk,
-                ),
+                pending_tail=giant_pending_tail,
                 oldest_tar=(
                     oldest_tar_for_chunk
                     if (incomplete_n or handoff_inflight_n)

@@ -119,6 +119,8 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_ingest_per_file_timeout_s_per_mib"),
     ("PIPELINE", "sync_ingest_giant_pool_supplement_enabled"),
     ("PIPELINE", "sync_ingest_giant_pool_supplement_max_bytes"),
+    ("PIPELINE", "sync_ingest_giant_pool_supplement_large_max_bytes"),
+    ("PIPELINE", "sync_ingest_giant_pool_supplement_queue_multiplier"),
     ("PIPELINE", "sync_ingest_giant_pool_supplement_trigger_budget_s"),
     ("PIPELINE", "sync_archive_members_cache_enabled"),
     ("PIPELINE", "sync_archive_members_cache_max_entries"),
@@ -282,7 +284,7 @@ INI_OPTION_DEFAULTS = {
     'sync_overprovision_ingest_multiplier': '1.0',
     'sync_overprovision_archive_multiplier': '1.0',
     'sync_overprovision_metrics_multiplier': '1.0',
-    'sync_ingest_queue_max_size': '2000',
+    'sync_ingest_queue_max_size': '3000',
     'sync_archive_queue_max_size': '1000',
     'sync_timedb_archive_max_concurrent_sealed_days': '1',
     'sync_archive_retry_max_attempts': '5',
@@ -302,6 +304,8 @@ INI_OPTION_DEFAULTS = {
     'sync_ingest_per_file_timeout_s_per_mib': '2.783203125',
     'sync_ingest_giant_pool_supplement_enabled': 'yes',
     'sync_ingest_giant_pool_supplement_max_bytes': '1073741824',
+    'sync_ingest_giant_pool_supplement_large_max_bytes': '8589934592',
+    'sync_ingest_giant_pool_supplement_queue_multiplier': '2',
     'sync_ingest_giant_pool_supplement_trigger_budget_s': '6600',
     'sync_archive_members_cache_enabled': 'yes',
     'sync_archive_members_cache_max_entries': '64',
@@ -1998,6 +2002,8 @@ _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S_DEFAULT = (
     900.0 + 2048.0 * _SYNC_INGEST_PER_FILE_TIMEOUT_S_PER_MIB_DEFAULT
 )
 _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES_DEFAULT = 1073741824  # 1 GiB
+_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_LARGE_MAX_BYTES_DEFAULT = 8589934592  # 8 GiB
+_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_QUEUE_MULTIPLIER_DEFAULT = 2
 
 
 def get_sync_ingest_per_file_timeout_max_s():
@@ -2057,7 +2063,7 @@ def get_sync_ingest_giant_pool_supplement_enabled():
 
 
 def get_sync_ingest_giant_pool_supplement_max_bytes():
-  """Max file size (bytes) eligible for giant-pool supplement dispatch."""
+  """Soft max (bytes): prefer supplement paths strictly under this size (default 1 GiB)."""
   env = os.environ.get(
       "HPCPERFSTATS_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES", "",
   ).strip()
@@ -2074,6 +2080,55 @@ def get_sync_ingest_giant_pool_supplement_max_bytes():
     )
   except (TypeError, ValueError, OverflowError):
     return _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES_DEFAULT
+
+
+def get_sync_ingest_giant_pool_supplement_large_max_bytes():
+  """Hard max (bytes) for second-pass supplement ([soft, large); default 8 GiB)."""
+  env = os.environ.get(
+      "HPCPERFSTATS_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_LARGE_MAX_BYTES", "",
+  ).strip()
+  if env:
+    try:
+      return max(1, int(env))
+    except (TypeError, ValueError, OverflowError):
+      return _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_LARGE_MAX_BYTES_DEFAULT
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        1,
+        int(_pipeline_get("sync_ingest_giant_pool_supplement_large_max_bytes")),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_LARGE_MAX_BYTES_DEFAULT
+
+
+def get_sync_ingest_giant_pool_supplement_queue_multiplier():
+  """Multiplier: supplement_queue = ingest_queue_max * this (default 2 → 6000)."""
+  env = os.environ.get(
+      "HPCPERFSTATS_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_QUEUE_MULTIPLIER", "",
+  ).strip()
+  if env:
+    try:
+      return max(1, int(env))
+    except (TypeError, ValueError, OverflowError):
+      return _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_QUEUE_MULTIPLIER_DEFAULT
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        1,
+        int(_pipeline_get("sync_ingest_giant_pool_supplement_queue_multiplier")),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_QUEUE_MULTIPLIER_DEFAULT
+
+
+def get_sync_ingest_giant_pool_supplement_queue_size():
+  """Ceiling for giant-supplement pending_tail reservoir (startup + mid-imap refresh)."""
+  return max(
+      1,
+      int(get_sync_ingest_queue_max_size())
+      * int(get_sync_ingest_giant_pool_supplement_queue_multiplier()),
+  )
 
 
 def get_sync_ingest_giant_pool_supplement_trigger_budget_s():
@@ -2338,7 +2393,7 @@ def pipeline_cpu_process_buckets(include_browser_phase=False, include_rsync=Fals
 
 
 def get_sync_ingest_queue_max_size():
-  """Bound for in-memory ingest work queue (default 2000)."""
+  """Bound for in-memory ingest work queue (default 3000; no-supplement process queue)."""
   _ensure_cfg_loaded()
   return max(1, _pipeline_getint("sync_ingest_queue_max_size"))
 
@@ -2583,6 +2638,8 @@ _SYNC_TIMEDB_CONFIG_AUDIT_ENV_KEYS = (
     "HPCPERFSTATS_SYNC_ARCHIVE_VALIDATION_MAX_WORKERS",
     "HPCPERFSTATS_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_ENABLED",
     "HPCPERFSTATS_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES",
+    "HPCPERFSTATS_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_LARGE_MAX_BYTES",
+    "HPCPERFSTATS_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_QUEUE_MULTIPLIER",
     "HPCPERFSTATS_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S",
     "HPCPERFSTATS_SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S",
     "HPCPERFSTATS_SYNC_INGEST_PER_FILE_TIMEOUT_S",
