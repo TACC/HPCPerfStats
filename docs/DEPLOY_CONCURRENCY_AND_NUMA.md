@@ -180,11 +180,8 @@ Relevant ini keys (all under **`[PIPELINE]`** unless noted):
 - `sync_overprovision_ingest_multiplier`
 - `sync_overprovision_archive_multiplier`
 - `sync_overprovision_metrics_multiplier`
-- `sync_adaptive_dispatch_enabled`
-- `sync_dispatch_burst_factor`
-- `sync_dispatch_archive_backoff_ratio`
 
-Adaptive dispatch uses burst factor and archive backoff ratio only (no separate step-size knob).
+Archive append and day-close concurrency are fixed thread/slot caps only (**`sync_archive_max_inflight_jobs`**, **`sync_day_close_max_inflight`** — one calendar day / daily tar per slot). There is no adaptive queue burst/backoff or soft queue watermark logging.
 
 ### Metrics window-coverage readiness (summary plots)
 

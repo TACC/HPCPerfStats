@@ -74,6 +74,25 @@ grep -E 'Archived batch|archive_job_done|chunk ingest summary' /tmp/pipeline-ful
 
 **Pass (T0):** no new **`out of off_t range`** on giant-member append after deploy; if append still fails, ERROR includes **`tar append stderr:`** (searchable with the rc line). **`--posix`** is argv-only (no day-tar convert).
 
+### T0 — queue watermarks / adaptive backlog removed (2026-07)
+
+Soft ingest/archive **queue watermarks** and adaptive archive dispatch/janitor backlog backoff were removed. Archival concurrency is **thread/slot caps only**:
+
+- Append: **`sync_archive_max_inflight_jobs`** (one daily tar per slot)
+- Day-close: **`sync_day_close_max_inflight`** (one calendar day per worker)
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+
+# Must be absent after deploy
+grep -E 'Queue watermarks|high watermark|low watermark|adaptive_dispatch' /tmp/pipeline-full.log | tail -20 || true
+
+# Confirm archival still progresses under caps
+grep -E 'Archive dispatch submitted=|discover_ready_day_close|Archive janitor tick done' /tmp/pipeline-full.log | tail -30
+```
+
+**Pass (T0):** no `Queue watermarks` / `above high watermark` / `below low watermark` lines; archive dispatch and day-close continue within configured inflight.
+
 ### Pipeline ingest rate (listend vs sync_timedb)
 
 Measure closed-segment production rate vs full-ingest and archive-done consumption from **full** pipeline logs (requires `--timestamps` for accurate windows and backlog ETA):

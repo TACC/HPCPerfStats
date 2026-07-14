@@ -8,7 +8,6 @@ import os
 
 import pytest
 
-import hpcperfstats.dbload.lib.conf_parser as cfg
 import hpcperfstats.dbload.lib.sync_timedb_archive_janitor as janitor_mod
 import hpcperfstats.dbload.sync_timedb as st
 from hpcperfstats.dbload.lib.sync_timedb_archive_janitor import DebtKind
@@ -315,14 +314,7 @@ def test_arch_ingest_path_dispatches_archive_pool_append(monkeypatch):
       max_inflight=2,
       archive_stats_files_fn=archive_fn,
       log_fn=MagicMock(),
-      get_ingest_backlog_high=lambda: False,
-      ingest_queue_low=1,
       pending_stats_count_fn=lambda: 0,
-  )
-  monkeypatch.setattr(
-      cfg,
-      "get_sync_dispatch_archive_backoff_ratio",
-      lambda: 1.0,
   )
   items = [("/tmp/daily/2026-06-01.tar.gz", ["/tmp/raw/host/seg1"])]
   stats = coordinator.dispatch_disjoint_items(

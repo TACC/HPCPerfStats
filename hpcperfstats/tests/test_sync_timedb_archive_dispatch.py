@@ -18,8 +18,6 @@ def test_log_stalled_slots_emits_once_per_slot(monkeypatch):
       max_inflight=2,
       archive_stats_files_fn=MagicMock(),
       log_fn=lambda *args, **kwargs: logs.append(" ".join(str(a) for a in args)),
-      get_ingest_backlog_high=lambda: False,
-      ingest_queue_low=1,
       pending_stats_count_fn=lambda: 0,
   )
 
@@ -39,7 +37,6 @@ def test_log_stalled_slots_emits_once_per_slot(monkeypatch):
 
 
 def test_dispatch_at_capacity_reports_queued_count_once(monkeypatch):
-  monkeypatch.setattr(cfg, "get_sync_dispatch_archive_backoff_ratio", lambda: 1.0)
   queued = []
 
   class _Pool:
@@ -52,8 +49,6 @@ def test_dispatch_at_capacity_reports_queued_count_once(monkeypatch):
       max_inflight=1,
       archive_stats_files_fn=MagicMock(),
       log_fn=MagicMock(),
-      get_ingest_backlog_high=lambda: False,
-      ingest_queue_low=1,
       pending_stats_count_fn=lambda: 0,
   )
   coordinator.slots.append(ArchiveJobSlot(
@@ -79,7 +74,6 @@ def test_dispatch_at_capacity_reports_queued_count_once(monkeypatch):
 
 
 def test_dispatch_disjoint_items_respects_max_inflight_daily_tars(monkeypatch):
-  monkeypatch.setattr(cfg, "get_sync_dispatch_archive_backoff_ratio", lambda: 1.0)
   submitted = []
 
   class _Pool:
@@ -92,8 +86,6 @@ def test_dispatch_disjoint_items_respects_max_inflight_daily_tars(monkeypatch):
       max_inflight=2,
       archive_stats_files_fn=MagicMock(),
       log_fn=MagicMock(),
-      get_ingest_backlog_high=lambda: False,
-      ingest_queue_low=1,
       pending_stats_count_fn=lambda: 0,
   )
   items = [
@@ -117,7 +109,6 @@ def test_dispatch_disjoint_items_respects_max_inflight_daily_tars(monkeypatch):
 
 
 def test_dispatch_log_includes_pending_stats_count(monkeypatch):
-  monkeypatch.setattr(cfg, "get_sync_dispatch_archive_backoff_ratio", lambda: 1.0)
   logs = []
 
   class _Pool:
@@ -130,8 +121,6 @@ def test_dispatch_log_includes_pending_stats_count(monkeypatch):
       max_inflight=2,
       archive_stats_files_fn=MagicMock(),
       log_fn=lambda *args, **kwargs: logs.append(" ".join(str(a) for a in args)),
-      get_ingest_backlog_high=lambda: False,
-      ingest_queue_low=1,
       pending_stats_count_fn=lambda: 42,
   )
   stats = coordinator.dispatch_disjoint_items(

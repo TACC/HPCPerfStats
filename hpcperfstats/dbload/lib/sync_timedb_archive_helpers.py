@@ -2277,12 +2277,11 @@ def select_ingest_chunk_paths(
     inflight_archive_paths,
     tgz_archive_dir,
     chunk_size,
-    ingest_queue_high,
     handoff_priority_paths=None,
     log_fn=None,
 ):
   """While oldest checkpoint-blocked tar has work, restrict chunk to that tar only."""
-  target_chunk_size = min(chunk_size, ingest_queue_high)
+  target_chunk_size = int(chunk_size)
   if target_chunk_size <= 0:
     return []
   pending_list = list(pending or ())

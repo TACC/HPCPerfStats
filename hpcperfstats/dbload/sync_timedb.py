@@ -4492,10 +4492,6 @@ def run_sync_timedb_supervisor_loop(
   """
   ingest_queue_max = max(1, int(cfg.get_sync_ingest_queue_max_size()))
   archive_queue_max = max(1, int(cfg.get_sync_archive_queue_max_size()))
-  ingest_queue_high = ingest_queue_max
-  ingest_queue_low = max(1, int(ingest_queue_max * 0.5))
-  archive_queue_high = archive_queue_max
-  archive_queue_low = max(1, int(archive_queue_max * 0.5))
   archive_retry_max_attempts = max(1, int(cfg.get_sync_archive_retry_max_attempts()))
   archive_retry_backoff_base = max(0.0, float(cfg.get_sync_archive_retry_backoff_base_seconds()))
   archive_retry_backoff_max = max(0.0, float(cfg.get_sync_archive_retry_backoff_max_seconds()))
@@ -5914,12 +5910,6 @@ def run_sync_timedb_supervisor_loop(
       % (int(EMPTY_QUEUE_RESCAN_SLEEP_SECONDS),),
       flush=True,
   )
-  log_print(
-      "Queue watermarks ingest=(low=%d high=%d) archive=(low=%d high=%d)"
-      % (ingest_queue_low, ingest_queue_high, archive_queue_low, archive_queue_high),
-      flush=True,
-  )
-
   host_scan_hints = {}
   idle_since_empty_queue = None
   worker_idle_loops = 0
@@ -6007,8 +5997,6 @@ def run_sync_timedb_supervisor_loop(
       max_inflight=cfg.get_sync_archive_max_inflight_jobs(),
       archive_stats_files_fn=archive_stats_files,
       log_fn=log_print,
-      get_ingest_backlog_high=lambda: len(pending_stats_files) > ingest_queue_low,
-      ingest_queue_low=ingest_queue_low,
       pending_stats_count_fn=lambda: len(pending_stats_files),
   )
   day_raw_removal = DayRawRemovalCoordinator(
@@ -6174,7 +6162,6 @@ def run_sync_timedb_supervisor_loop(
       log_fn=log_print,
       get_disqualified_daily_tars=_janitor_disqualified_daily_tars,
       get_delete_disqualified_daily_tars=_janitor_delete_disqualified_daily_tars,
-      get_ingest_backlog_high=lambda: len(pending_stats_files) > ingest_queue_low,
       get_pending_stats_count=lambda: len(pending_stats_files),
       get_idle_seconds=lambda: (
           max(0.0, time.time() - float(idle_since_empty_queue))
@@ -6602,12 +6589,6 @@ def run_sync_timedb_supervisor_loop(
           idle_since_empty_queue = time.time()
         archive_janitor.signal_work_available()
         _dispatch_due_archive_retries(allow_idle_stale=False)
-        if len(pending_archive_tasks) > archive_queue_high:
-          log_print(
-              "Archive backlog above high watermark pending=%d high=%d"
-              % (len(pending_archive_tasks), archive_queue_high),
-              flush=True,
-          )
         _finalize_archive_slots_if_needed(force=True, context="pre_rescan")
         _maybe_enqueue_immediate_day_close(context="idle_finalize")
         discovered = _rescan_pending_with_progress(idle_refill=True)
@@ -6691,12 +6672,6 @@ def run_sync_timedb_supervisor_loop(
           log_print(
               "Begining Chunk(%s) #%s Processing" % (chunk_size, chunk_counter))
 
-        if len(pending_stats_files) >= ingest_queue_high:
-          log_print(
-              "Ingest pending above high watermark pending=%d high=%d"
-              % (len(pending_stats_files), ingest_queue_high),
-              flush=True,
-          )
         chunk_t0 = time.time()
         unprocessed_for_chunk = reconcile_refs.get("last_unprocessed_by_tar")
         if unprocessed_for_chunk is None:
@@ -6769,7 +6744,6 @@ def run_sync_timedb_supervisor_loop(
             inflight_archive_paths=inflight_archive_paths,
             tgz_archive_dir=tgz_archive_dir,
             chunk_size=chunk_size,
-            ingest_queue_high=ingest_queue_high,
             handoff_priority_paths=handoff_priority_paths,
             log_fn=log_print,
         )
@@ -7098,12 +7072,6 @@ def run_sync_timedb_supervisor_loop(
           _flush_checkpoint_if_needed()
 
         if ar_file_mapping:
-          if len(ar_file_mapping) >= archive_queue_high:
-            log_print(
-                "Archive mapping above high watermark groups=%d high=%d"
-                % (len(ar_file_mapping), archive_queue_high),
-                flush=True,
-            )
           archive_items_all = _normalize_archive_groups_by_tgz(ar_file_mapping)
           with archive_state_lock:
             inflight_archive_paths.update(deferred_paths)
@@ -7156,12 +7124,6 @@ def run_sync_timedb_supervisor_loop(
         _record_ingest_sort_epochs_for_paths(
             [p for p in stats_files_chunk if p in set(successful_paths)])
         _advance_pending_after_chunk(stats_files_chunk, successful_paths)
-        if len(pending_stats_files) <= ingest_queue_low:
-          log_print(
-              "Ingest pending at/below low watermark pending=%d low=%d"
-              % (len(pending_stats_files), ingest_queue_low),
-              flush=True,
-          )
         chunk_counter += 1
         _maybe_apply_tree_rss_governor(chunk_counter, ingest_pool, archive_pool)
 

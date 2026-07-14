@@ -146,7 +146,6 @@ def _make_janitor(**kwargs):
       "local_tz": timezone.utc,
       "log_fn": MagicMock(),
       "get_disqualified_daily_tars": lambda: set(),
-      "get_ingest_backlog_high": lambda: False,
       "get_pending_stats_count": lambda: 0,
       "get_idle_seconds": lambda: 0.0,
       "ingest_ready_fn": None,
@@ -716,6 +715,16 @@ def test_janitor_effective_tick_budget_burst_at_watermark(monkeypatch):
   assert budget >= 60.0
 
 
+def test_janitor_effective_tick_budget_ignores_pending_stats_depth(monkeypatch):
+  """Tick budget no longer shrinks for deep ingest pending (adaptive backlog removed)."""
+  base = _make_janitor(get_pending_stats_count=lambda: 0)
+  deep = _make_janitor(get_pending_stats_count=lambda: 10000)
+  monkeypatch.setattr(janitor_mod.cfg, "get_archive_janitor_budget_seconds", lambda: 30.0)
+  monkeypatch.setattr(janitor_mod.cfg, "get_archive_janitor_debt_high_watermark", lambda: 99999)
+  assert base._effective_tick_budget() == 30.0
+  assert deep._effective_tick_budget() == 30.0
+
+
 def test_janitor_load_hints_restores_debt_on_init(monkeypatch, tmp_path):
   from hpcperfstats.dbload.lib.sync_timedb_archive_maint import save_archive_maint_hints
 
@@ -1238,7 +1247,6 @@ def test_janitor_defer_reenqueue_persists_debt_before_tick_end(monkeypatch, tmp_
       local_tz=timezone.utc,
       log_fn=MagicMock(),
       get_disqualified_daily_tars=lambda: set(),
-      get_ingest_backlog_high=lambda: False,
       get_pending_stats_count=lambda: 0,
       get_idle_seconds=lambda: 0.0,
   )
@@ -1660,7 +1668,6 @@ def test_janitor_persist_hints_snapshots_day_phases_under_lock(monkeypatch, tmp_
       local_tz=timezone.utc,
       log_fn=MagicMock(),
       get_disqualified_daily_tars=lambda: set(),
-      get_ingest_backlog_high=lambda: False,
       get_pending_stats_count=lambda: 0,
       get_idle_seconds=lambda: 0.0,
   )
@@ -1689,7 +1696,6 @@ def test_janitor_parallel_persist_hints_no_error(monkeypatch, tmp_path):
       local_tz=timezone.utc,
       log_fn=MagicMock(),
       get_disqualified_daily_tars=lambda: set(),
-      get_ingest_backlog_high=lambda: False,
       get_pending_stats_count=lambda: 0,
       get_idle_seconds=lambda: 0.0,
   )

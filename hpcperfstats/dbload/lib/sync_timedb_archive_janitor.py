@@ -168,7 +168,6 @@ class ArchiveJanitor:
       local_tz,
       log_fn,
       get_disqualified_daily_tars: Callable[[], Set[str]],
-      get_ingest_backlog_high: Callable[[], bool],
       get_pending_stats_count: Callable[[], int],
       get_idle_seconds: Callable[[], float],
       get_delete_disqualified_daily_tars: Optional[Callable[[], Set[str]]] = None,
@@ -195,7 +194,6 @@ class ArchiveJanitor:
     self.get_delete_disqualified_daily_tars = (
         get_delete_disqualified_daily_tars or get_disqualified_daily_tars
     )
-    self.get_ingest_backlog_high = get_ingest_backlog_high
     self.get_pending_stats_count = get_pending_stats_count
     self.get_idle_seconds = get_idle_seconds
     self.get_quarantine_skip_paths = get_quarantine_skip_paths or (lambda: set())
@@ -1212,11 +1210,8 @@ class ArchiveJanitor:
       )
 
   def _effective_tick_budget(self) -> float:
-    """Wall-clock budget for one janitor wake (burst/backoff scale budget only)."""
+    """Wall-clock budget for one janitor wake (debt burst / idle scale only)."""
     budget = float(cfg.get_archive_janitor_budget_seconds())
-    if self.get_ingest_backlog_high() or cfg.get_pipeline_overlap_mode() == "ingest_priority":
-      backoff = float(cfg.get_sync_dispatch_archive_backoff_ratio())
-      budget *= backoff
     if self.debt_depth() >= cfg.get_archive_janitor_debt_high_watermark():
       burst = float(cfg.get_archive_janitor_debt_burst_factor())
       budget *= burst

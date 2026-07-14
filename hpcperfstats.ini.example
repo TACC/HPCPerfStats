@@ -433,15 +433,6 @@ sync_ingest_malloc_trim_after_file = yes
 # sync_ingest_cooperative_recycle_rss_fraction = 0.5
 # sync_ingest_rss_recheck_delay_ms = 50
 
-# Adaptive burst dispatch for sync queues (default yes).
-# sync_adaptive_dispatch_enabled = yes
-
-# Dispatch burst factor (default 2.0).
-# sync_dispatch_burst_factor = 2.0
-
-# Archive dispatch backoff ratio (default 0.50).
-# sync_dispatch_archive_backoff_ratio = 0.50
-
 # Ingest-first durability semantics: checkpoint after DB even if append fails (default yes).
 # sync_enable_ingest_first_durability_mode = yes
 

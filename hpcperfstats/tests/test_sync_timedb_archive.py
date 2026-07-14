@@ -6793,7 +6793,6 @@ def test_select_ingest_chunk_paths_fallback_checkpoint_incomplete_on_disk(tmp_pa
       inflight_archive_paths=set(),
       tgz_archive_dir=str(daily_dir),
       chunk_size=10,
-      ingest_queue_high=10,
   )
   assert chunk == [str(blocked1), str(blocked2)]
   assert str(newer) not in chunk
@@ -6826,7 +6825,6 @@ def test_select_ingest_chunk_paths_fallback_logs_calendar_days(tmp_path):
       inflight_archive_paths=set(),
       tgz_archive_dir=str(daily_dir),
       chunk_size=10,
-      ingest_queue_high=10,
       log_fn=lambda msg: logs.append(str(msg)),
   )
   assert chunk == [str(blocked1)]
@@ -7593,7 +7591,6 @@ def test_select_ingest_chunk_paths_oldest_tar_only(tmp_path):
       inflight_archive_paths=set(),
       tgz_archive_dir=str(daily_dir),
       chunk_size=10,
-      ingest_queue_high=10,
   )
   assert chunk == [str(p1), str(p2)]
   assert str(p3) not in chunk
@@ -7631,7 +7628,6 @@ def test_select_ingest_chunk_paths_oldest_tar_1500_paths(tmp_path):
       inflight_archive_paths=set(),
       tgz_archive_dir=str(daily_dir),
       chunk_size=1000,
-      ingest_queue_high=2000,
   )
   assert len(chunk) == 1000
   assert str(tail_path) not in chunk
@@ -7810,7 +7806,6 @@ def test_select_ingest_chunk_paths_cross_day_inflight_returns_chunk_after_reclai
       inflight_archive_paths=inflight,
       tgz_archive_dir=str(daily_dir),
       chunk_size=10,
-      ingest_queue_high=10,
   )
   assert empty_chunk == [str(tail_obj)]
   after_reclaim = select_ingest_chunk_paths(
@@ -7820,7 +7815,6 @@ def test_select_ingest_chunk_paths_cross_day_inflight_returns_chunk_after_reclai
       inflight_archive_paths=set(),
       tgz_archive_dir=str(daily_dir),
       chunk_size=10,
-      ingest_queue_high=10,
   )
   assert after_reclaim == [str(tail_obj)]
 
@@ -7856,7 +7850,6 @@ def test_select_ingest_chunk_paths_cross_day_only_defers_to_pending_head(tmp_pat
       inflight_archive_paths=set(),
       tgz_archive_dir=str(daily_dir),
       chunk_size=1000,
-      ingest_queue_high=2000,
   )
   assert chunk == pending
 
@@ -7885,7 +7878,6 @@ def test_select_ingest_chunk_paths_cross_day_only_empty_pending_uses_fallback(
       inflight_archive_paths=set(),
       tgz_archive_dir=str(daily_dir),
       chunk_size=10,
-      ingest_queue_high=10,
   )
   assert chunk == []
 
@@ -7922,7 +7914,6 @@ def test_select_ingest_chunk_prefers_handoff_across_oldest_tar(tmp_path):
       inflight_archive_paths=set(),
       tgz_archive_dir=str(daily_dir),
       chunk_size=1000,
-      ingest_queue_high=2000,
       handoff_priority_paths={str(may_handoff)},
   )
   assert chunk[0] == str(may_handoff)
@@ -7961,7 +7952,6 @@ def test_select_ingest_chunk_skips_misbucket_handoff_without_daily_archive(tmp_p
       inflight_archive_paths=set(),
       tgz_archive_dir=str(daily_dir),
       chunk_size=1000,
-      ingest_queue_high=2000,
       handoff_priority_paths={str(misbucket)},
       log_fn=lambda msg, **_k: logs.append(str(msg)),
   )

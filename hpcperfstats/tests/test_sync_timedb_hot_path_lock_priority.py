@@ -46,7 +46,6 @@ def _make_janitor(**kwargs):
       "local_tz": __import__("datetime").timezone.utc,
       "log_fn": MagicMock(),
       "get_disqualified_daily_tars": lambda: set(),
-      "get_ingest_backlog_high": lambda: False,
       "get_pending_stats_count": lambda: 0,
       "get_idle_seconds": lambda: 0.0,
   }

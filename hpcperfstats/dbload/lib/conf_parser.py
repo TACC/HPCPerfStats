@@ -152,9 +152,6 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_ingest_recycle_worker_on_failure"),
     ("PIPELINE", "sync_ingest_cooperative_recycle_rss_fraction"),
     ("PIPELINE", "sync_ingest_rss_recheck_delay_ms"),
-    ("PIPELINE", "sync_adaptive_dispatch_enabled"),
-    ("PIPELINE", "sync_dispatch_burst_factor"),
-    ("PIPELINE", "sync_dispatch_archive_backoff_ratio"),
     ("PIPELINE", "sync_enable_ingest_first_durability_mode"),
     ("PIPELINE", "sync_archive_require_db_ingest"),
     ("PIPELINE", "sync_archive_maint_hints"),
@@ -337,9 +334,6 @@ INI_OPTION_DEFAULTS = {
     'sync_ingest_recycle_worker_on_failure': 'yes',
     'sync_ingest_cooperative_recycle_rss_fraction': '0.5',
     'sync_ingest_rss_recheck_delay_ms': '50',
-    'sync_adaptive_dispatch_enabled': 'yes',
-    'sync_dispatch_burst_factor': '2.0',
-    'sync_dispatch_archive_backoff_ratio': '0.50',
     'sync_enable_ingest_first_durability_mode': 'yes',
     'sync_archive_require_db_ingest': 'yes',
     'sync_archive_maint_hints': 'yes',
@@ -2573,30 +2567,6 @@ def get_sync_ingest_rss_recheck_delay_ms():
   """Optional RSS re-measure delay after release when above threshold (default 50)."""
   _ensure_cfg_loaded()
   return max(0, _pipeline_getint("sync_ingest_rss_recheck_delay_ms"))
-
-
-def get_sync_adaptive_dispatch_enabled():
-  _ensure_cfg_loaded()
-  return _parse_bool(
-      _pipeline_get("sync_adaptive_dispatch_enabled"),
-      default=True,
-  )
-
-
-def get_sync_dispatch_burst_factor():
-  _ensure_cfg_loaded()
-  return max(
-      1.0,
-      min(4.0, float(_pipeline_get("sync_dispatch_burst_factor"))),
-  )
-
-
-def get_sync_dispatch_archive_backoff_ratio():
-  _ensure_cfg_loaded()
-  return max(
-      0.1,
-      min(1.0, float(_pipeline_get("sync_dispatch_archive_backoff_ratio"))),
-  )
 
 
 _SYNC_TIMEDB_CONFIG_BASELINE_PATH = "<sync_timedb_config_baseline>"

@@ -27,27 +27,14 @@ class ArchiveDispatchCoordinator:
       max_inflight: int,
       archive_stats_files_fn,
       log_fn,
-      get_ingest_backlog_high: Callable[[], bool],
-      ingest_queue_low: int,
       pending_stats_count_fn: Callable[[], int],
   ):
     self.archive_pool = archive_pool
     self.max_inflight = max(1, int(max_inflight))
     self.archive_stats_files_fn = archive_stats_files_fn
     self.log_fn = log_fn
-    self.get_ingest_backlog_high = get_ingest_backlog_high
-    self.ingest_queue_low = ingest_queue_low
     self.pending_stats_count_fn = pending_stats_count_fn
     self.slots: List[ArchiveJobSlot] = []
-
-  def _effective_max_dispatch_groups(self, requested: int) -> int:
-    if not cfg.get_sync_adaptive_dispatch_enabled():
-      return requested
-    if self.get_ingest_backlog_high():
-      ratio = float(cfg.get_sync_dispatch_archive_backoff_ratio())
-      return max(1, int(requested * ratio))
-    burst = float(cfg.get_sync_dispatch_burst_factor())
-    return max(requested, int(requested * min(burst, 2.0)))
 
   def _occupied_daily_tars(self) -> Set[str]:
     occupied = set()
@@ -145,7 +132,9 @@ class ArchiveDispatchCoordinator:
         overflow.extend(archive_items_all[len(disjoint) + len(overflow):])
         break
 
-    max_groups = self._effective_max_dispatch_groups(archive_queue_max)
+    # Cap by archive_queue_max; disjoint is already limited to max_inflight
+    # (one daily tar per slot). No adaptive backlog burst/backoff.
+    max_groups = max(1, int(archive_queue_max))
     to_dispatch = disjoint[:max_groups]
     overflow.extend(disjoint[max_groups:])
 

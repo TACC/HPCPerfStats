@@ -675,7 +675,7 @@ def test_supervisor_run_once_exits_without_idle_sleep_when_empty(monkeypatch):
     finally:
         shutdown_requested[0] = False
 
-def test_supervisor_logs_queue_watermarks(monkeypatch):
+def test_supervisor_does_not_log_queue_watermarks(monkeypatch):
     shutdown_requested[0] = False
     try:
         logs = []
@@ -696,7 +696,10 @@ def test_supervisor_logs_queue_watermarks(monkeypatch):
             archive_pool.__exit__(None, None, None)
     finally:
         shutdown_requested[0] = False
-    assert any(('Queue watermarks ingest' in line for line in logs))
+    joined = '\n'.join(logs)
+    assert 'Queue watermarks' not in joined
+    assert 'high watermark' not in joined
+    assert 'low watermark' not in joined
 
 def test_supervisor_logs_completed_file_with_global_remaining(monkeypatch):
     """Successful ingest logs path, elapsed, and backlog remaining (not chunk index)."""
