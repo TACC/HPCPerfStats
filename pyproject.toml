@@ -25,12 +25,12 @@ classifiers = [
   "Topic :: Scientific/Engineering",
 ]
 dependencies = [
-  "numpy==2.5.0",
+  "numpy==2.5.1",
   "numexpr",
   "psycopg==3.3.4",
   "pandas==3.0.3",
   "bokeh==3.9.1",
-  "Django>=6.0.6,<7.0",
+  "Django>=6.0.7,<7.0",
   "python-hostlist",
   "pika==1.4.1",
   "mysqlclient",
@@ -41,7 +41,7 @@ dependencies = [
   "tzdata",
   "redis==8.0.1",
   "djangorestframework",
-  "drf-spectacular>=0.29.0",
+  "drf-spectacular>=0.30.0",
   "django-cors-headers",
   "setproctitle",
 ]
@@ -55,7 +55,7 @@ test = [
   "psycopg[binary]",
 ]
 dev = [
-  "ruff>=0.15.20",
+  "ruff>=0.15.21",
   "pylint>=4.0.6",  # optional; Ruff is the primary linter (see docs/TESTING.md)
   "vulture>=2.16",
   "pre-commit>=4.6.0",
