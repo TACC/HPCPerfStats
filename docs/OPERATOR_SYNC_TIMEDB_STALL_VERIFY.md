@@ -81,10 +81,11 @@ grep -E 'Archived batch|archive_job_done|chunk ingest summary' /tmp/pipeline-ful
 
 ### T0 — queue watermarks / adaptive backlog removed (2026-07)
 
-Soft ingest/archive **queue watermarks** and adaptive archive dispatch/janitor backlog backoff were removed. Archival concurrency is **thread/slot caps only**:
+Soft ingest/archive **queue watermarks** and adaptive archive dispatch/janitor backlog backoff were removed. Archival concurrency is **pool/slot caps only**:
 
-- Append: **`sync_archive_max_inflight_jobs`** (one daily tar per slot)
+- Append: **`sync_archive_pool_processes`** (one daily tar per slot; concurrent slots = pool size). Legacy **`sync_archive_max_inflight_jobs`** is ignored (getter aliases pool size).
 - Day-close: **`sync_day_close_max_inflight`** (one calendar day per worker)
+- Overflow: when mapping days exceed pool size, remaining days sit on **`pending_archive_heap`** and **must** get `archive_job_begin` when a slot frees — **without** waiting for the next ingest chunk IMAP. Operator grep: `pending_archive_heap`, `archive_job_duty`, `Archive dispatch submitted=`.
 
 ```bash
 docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
@@ -93,10 +94,12 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 grep -E 'Queue watermarks|high watermark|low watermark|adaptive_dispatch' /tmp/pipeline-full.log | tail -20 || true
 
 # Confirm archival still progresses under caps
-grep -E 'Archive dispatch submitted=|discover_ready_day_close|Archive janitor tick done' /tmp/pipeline-full.log | tail -30
+grep -E 'Archive dispatch submitted=|pending_archive_heap|archive_job_duty|discover_ready_day_close|Archive janitor tick done' /tmp/pipeline-full.log | tail -40
 ```
 
-**Pass (T0):** no `Queue watermarks` / `above high watermark` / `below low watermark` lines; archive dispatch and day-close continue within configured inflight.
+**Pass (T0):** no `Queue watermarks` / `above high watermark` / `below low watermark` lines; archive dispatch and day-close continue within configured pool/inflight.
+
+**T0/T1 — multi-day mapping with pool ≪ N (site example pool=6):** after `Archive mapping: N tar(s)` with N larger than pool (or with overflow from an earlier narrow wave), expect later `archive_job_begin` / `Archive dispatch submitted=` for overflow calendar days **before** the next `chunk imap start` / IMAP for a new ingest chunk. Tiny `Archived batch (2|5|…)` plus `archive_job_duty … to_add=… appended=…` means Redis/tar already-present skips — not a missing day. If `post_finalize_reconcile oldest_tar=` advances past days that never logged `archive_job_*`, that is a drain regression.
 
 ### Pipeline ingest rate (listend vs sync_timedb)
 

@@ -23,7 +23,7 @@ This document describes how `sync_timedb` uses **spawn process pools**, **sessio
 
 **Factory:** `create_sync_timedb_spawn_pool()` in `multiprocessing_pool_health.py` — shared spawn context + recycle kwargs; **distinct initializers per pool kind** (do not unify initargs).
 
-**Archive dispatch:** `ArchiveDispatchCoordinator` uses `archive_pool.map_async(...)` with non-blocking slot finalize. Do **not** replace with `ThreadPoolExecutor.submit` on the hot path without redesigning stall/finalize/fatal-exit semantics (`async_result_get_watch_pool`, `dead_pool_worker_pids`, exit **124**/**137**).
+**Archive dispatch:** `ArchiveDispatchCoordinator` uses `archive_pool.map_async(...)` with **one daily tar per slot**; concurrent slots follow **`sync_archive_pool_processes`**. Non-blocking slot finalize drains overflow heap before long `post_finalize_reconcile`. Do **not** replace with `ThreadPoolExecutor.submit` on the hot path without redesigning stall/finalize/fatal-exit semantics (`async_result_get_watch_pool`, `dead_pool_worker_pids`, exit **124**/**137**).
 
 **Ingest dispatch:** `imap_unordered_watch_pool` polls process liveness and aborts on worker death — thread pools have no equivalent worker-PID model.
 

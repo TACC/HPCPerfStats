@@ -12,7 +12,7 @@ This document summarizes how **thread/process counts** and **Docker Compose CPU 
 | **web** | `api.py` | `ThreadPoolExecutor` size = **`api_small_executor_max_workers`**, or **`parallel_db_prefetch_max`** (default **4**) when the API key is unset | Extra concurrent ORM work per worker |
 | **web** | `summaryplot.py` | Aggregate prefetch uses **`compute_summary_aggregate_prefetch_pool_size()`**: at most **2** inner threads, then **`parallel_db_prefetch_max`** (default **4**) | Prevents nested pools from multiplying against `api.py` under `job_plots` |
 | **pipeline** | `update_metrics.py` | `multiprocessing.Pool` size = **`get_metrics_pool_process_count()`** (≤ **`metrics_pool_process_cap`**) | Many concurrent readers during metrics passes |
-| **pipeline** | `sync_timedb.py` / archive | Ingest pool = **`get_sync_ingest_pool_processes()`**; archive append pool = **`get_sync_archive_pool_processes()`** with up to **`sync_archive_max_inflight_jobs`** (default **2**) disjoint daily-tar slots; **cold-path** seal/raw/`.tar` work runs in the background **`ArchiveJanitor`** (time-sliced; does not block ingest) | Seal load is spread across janitor ticks; see **Archive janitor** and **Archive zstd priority** below |
+| **pipeline** | `sync_timedb.py` / archive | Ingest pool = **`get_sync_ingest_pool_processes()`**; archive append pool = **`get_sync_archive_pool_processes()`** — concurrent daily-tar append slots track that pool size (one day per slot; legacy **`sync_archive_max_inflight_jobs`** is ignored); **cold-path** seal/raw/`.tar` work runs in the background **`ArchiveJanitor`** (time-sliced; does not block ingest) | Seal load is spread across janitor ticks; see **Archive janitor** and **Archive zstd priority** below |
 | **pipeline** | `listend.py` | Pika + a few daemon threads; no Django DB in this module | Low |
 | **db** | PostgreSQL | `max_connections=500`; lowered `work_mem`, parallel worker caps, and maintenance buffers in `docker-compose.yaml` to limit RAM spikes | Hard slot ceiling; per-query memory bounded by GUCs |
 
@@ -53,7 +53,8 @@ Ingest is treated as always-on: the supervisor no longer runs blocking seal/raw/
 | **`archive_janitor_debt_max_entries`** | **`200`** | In-memory debt cap; lowest-priority entries evicted with a warning when full |
 | **`archive_janitor_raw_paths_per_tick`** | **`1000`** | Incremental raw deletes per `RAW_REMOVE` debt item (large-day safety) |
 | **`archive_maintenance_idle_seconds`** | **`300`** | Optional idle-only 2× budget bonus (not required for progress) |
-| **`sync_archive_max_inflight_jobs`** | **`2`** | Concurrent disjoint daily-tar append jobs |
+| **`sync_archive_pool_processes`** | **`4`** (or cpuset budget / cap) | Archive spawn pool workers **and** concurrent daily-tar append slots (one day per slot) |
+| **`sync_archive_max_inflight_jobs`** | *(deprecated / ignored)* | Legacy key; **`get_sync_archive_max_inflight_jobs()`** aliases pool size so a site value of **`2`** cannot under-feed a larger pool |
 | **`sync_archive_worker_stall_seconds`** | **`600`** | Log stalled append workers (observability) |
 | **`sync_enable_ingest_first_durability_mode`** | **`yes`** | Checkpoint after DB even when append is deferred |
 
@@ -181,7 +182,7 @@ Relevant ini keys (all under **`[PIPELINE]`** unless noted):
 - `sync_overprovision_archive_multiplier`
 - `sync_overprovision_metrics_multiplier`
 
-Archive append and day-close concurrency are fixed thread/slot caps only (**`sync_archive_max_inflight_jobs`**, **`sync_day_close_max_inflight`** — one calendar day / daily tar per slot). There is no adaptive queue burst/backoff or soft queue watermark logging.
+Archive append and day-close concurrency are fixed caps only (**`sync_archive_pool_processes`** for append slots, **`sync_day_close_max_inflight`** for day-close — one calendar day / daily tar per slot). Overflow calendar days drain on slot finalize (not only on the next ingest chunk). There is no adaptive queue burst/backoff or soft queue watermark logging.
 
 ### Metrics window-coverage readiness (summary plots)
 

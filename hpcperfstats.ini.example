@@ -509,7 +509,7 @@ ingest_zstd_threads = 4
 # Max deletes per day-close delete loop iteration; 0 = unlimited per iteration (default 0).
 # sync_day_close_raw_removal_max_deletes_per_pass = 0
 
-# Max concurrent disjoint daily-tar archive append jobs (default 2).
+# Deprecated: ignored. Concurrent daily-tar append slots follow sync_archive_pool_processes.
 # sync_archive_max_inflight_jobs = 2
 
 # Seconds before logging an archive pool job as stalled (default 600).

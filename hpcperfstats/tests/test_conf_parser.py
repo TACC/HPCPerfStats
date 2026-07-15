@@ -1193,7 +1193,7 @@ def test_archive_janitor_and_dispatch_defaults(temp_ini, monkeypatch):
   assert cfg.get_archive_keep_uncompressed_tar() is False
   assert cfg.get_archive_today_uncompressed_tar_grace_hours() == 8.0
   assert cfg.get_archive_maintenance_idle_seconds() == 300.0
-  assert cfg.get_sync_archive_max_inflight_jobs() == 2
+  assert cfg.get_sync_archive_max_inflight_jobs() == cfg.get_sync_archive_pool_processes()
   assert cfg.get_sync_archive_worker_stall_seconds() == 600.0
   assert cfg.get_sync_enable_ingest_first_durability_mode() is True
   assert not hasattr(cfg, "get_archive_janitor_days_per_tick")
@@ -1216,6 +1216,16 @@ def test_day_close_max_inflight_default_4(temp_ini, monkeypatch):
   import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_sync_day_close_max_inflight() == 4
+
+
+def test_sync_archive_max_inflight_jobs_aliases_pool_processes(monkeypatch, temp_ini):
+  """Legacy max_inflight INI must not narrow capacity under a larger archive pool."""
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  monkeypatch.setattr(cfg, "get_sync_archive_pool_processes", lambda: 6)
+  assert cfg.get_sync_archive_max_inflight_jobs() == 6
+  monkeypatch.setattr(cfg, "get_sync_archive_pool_processes", lambda: 2)
+  assert cfg.get_sync_archive_max_inflight_jobs() == 2
 
 
 def test_legacy_portal_fallback_for_archive_dir(tmp_path, monkeypatch):

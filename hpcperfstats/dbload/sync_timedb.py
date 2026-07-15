@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Load raw stats files into TimescaleDB (host_data, proc_data). Parses stats, applies hardware counter maps, computes deltas/arc, bulk-inserts, and optionally archives processed files (append to daily ``.tar``; seal to ``.tar.zst`` and raw/``.tar`` cleanup via the background ``ArchiveJanitor``). Runs in parallel with configurable chunk size.
 
-**Hot path (supervisor thread):** discover → ingest → checkpoint → dispatch append (up to ``sync_archive_max_inflight_jobs`` disjoint daily-tar slots). Ingest never blocks on seal, zstd, raw delete, or uncompressed ``.tar`` removal.
+**Hot path (supervisor thread):** discover → ingest → checkpoint → dispatch append (up to ``sync_archive_pool_processes`` concurrent daily-tar slots; one day per slot). Ingest never blocks on seal, zstd, raw delete, or uncompressed ``.tar`` removal.
 
 **Cold path (``ArchiveJanitor`` coordinator thread):** day-debt queue drained within ``archive_janitor_budget_seconds`` using a ``ThreadPoolExecutor`` of up to ``sync_day_close_max_inflight`` (default **4**) parallel ``DAY_CLOSE`` workers (continuous refill on completion). Each tick discovers checkpoint-complete ``DAY_CLOSE`` candidates and enqueues debt (same inflight cap). Workers run seal → verify → delete → tar_drop (steady-state ingest is not gated on raw deletion). Snapshot/hints refresh at supervisor startup (CLI ``all`` only) and on scheduled maintenance passes. Per-day lock cleanup (once per tick), dedupe-before-seal, and DB head-ingest gate unchanged. Progress persists in ``.sync_archive_maint_hints.json`` v2 (``debt_queue``, ``day_phases``).
 
@@ -4300,8 +4300,11 @@ def _archive_stats_files_body(archive_info):
       else:
         existing_members = {}
 
+    mapped_n = len(stats_files)
     stats_files_to_tar = filter_files_to_add_to_archive(
         stats_files, existing_members, debug=DEBUG)
+    to_add_n = len(stats_files_to_tar)
+    appended_n = 0
     if stats_files_to_tar:
       if not _restore_daily_tar_or_log_failure(
           archive_tar_fname, context="before append"):
@@ -4318,6 +4321,7 @@ def _archive_stats_files_body(archive_info):
           log_fn=log_print,
       )
       skipped_oversized = tuple(skipped_list)
+      to_add_n = len(stats_files_to_tar)
       if (
           before_convert_mtime is not None
           and os.path.isfile(archive_tar_fname)
@@ -4375,6 +4379,7 @@ def _archive_stats_files_body(archive_info):
                 flush=True,
             )
             return False
+          stats_files_to_tar = to_retry
         if not verify_tar_archive_readable(archive_tar_fname):
           log_print(
               "ERROR: daily tar still unreadable after recovery append; leaving "
@@ -4393,6 +4398,7 @@ def _archive_stats_files_body(archive_info):
       canonical = normalize_daily_compressed_path(archive_fname)
       cache_key = _daily_archive_members_cache_key(canonical)
       member_map = build_tar_append_member_map(stats_files_to_tar)
+      appended_n = len(member_map)
       saw_dupes = len(member_map) < len(stats_files_to_tar)
       merged = False
       worker_invalidated = False
@@ -4431,12 +4437,22 @@ def _archive_stats_files_body(archive_info):
       )
       clear_zero_host_ingest_marks(stats_files_to_tar, log_fn=log_print)
       job_outcome = "ok"
+      log_print(
+          "INFO: archive_job_duty day=%s mapped=%d to_add=%d appended=%d"
+          % (day_token, mapped_n, to_add_n, appended_n),
+          flush=True,
+      )
       return ArchiveAppendOutcome(
           redis_merge_ok=merged,
           skip_finalize_invalidate=merged or worker_invalidated,
           skipped_paths=skipped_oversized,
       )
     job_outcome = "ok"
+    log_print(
+        "INFO: archive_job_duty day=%s mapped=%d to_add=%d appended=%d"
+        % (day_token, mapped_n, to_add_n, appended_n),
+        flush=True,
+    )
     return ArchiveAppendOutcome(
         skip_finalize_invalidate=True,
         skipped_paths=skipped_oversized,
@@ -4616,10 +4632,27 @@ def run_sync_timedb_supervisor_loop(
         for item in items
     ]
 
+  def _log_pending_archive_heap(*, context):
+    with archive_state_lock:
+      heap_n = len(pending_archive_tasks)
+      heap_tars = sorted(
+          daily_tar_paths_from_pending_archive_tasks(pending_archive_tasks))
+    if heap_n <= 0:
+      return
+    labels = ",".join(os.path.basename(t) for t in heap_tars[:32])
+    if len(heap_tars) > 32:
+      labels += ",..."
+    log_print(
+        "INFO: pending_archive_heap context=%s n=%d tars=%s"
+        % (context, heap_n, labels),
+        flush=True,
+    )
+
   def _dispatch_due_archive_retries(*, allow_idle_stale=False):
     if (
         not allow_idle_stale
         and not pending_stats_files
+        and not pending_archive_tasks
         and reconcile_refs.get("suppress_idle_archive_retries")
     ):
       return
@@ -4660,6 +4693,8 @@ def run_sync_timedb_supervisor_loop(
     perf_stats["archive_dispatch_s"] += stats.get("dispatch_s", 0.0)
     perf_stats["archive_dispatch_count"] += 1
     perf_stats["archive_dispatch_items"] += stats.get("submitted", 0)
+    if stats.get("queued", 0) > 0 or pending_archive_tasks:
+      _log_pending_archive_heap(context="after_drain")
 
   def _discard_inflight_archive_path(p):
     """Drop a path from in-flight tracking and its per-day append cache bucket."""
@@ -5142,6 +5177,11 @@ def run_sync_timedb_supervisor_loop(
           for p in archive_paths:
             _transition_file_state(file_states, p, SyncFileState.ARCHIVE_FAILED_RETRYABLE)
             _discard_inflight_archive_path(p)
+          log_print(
+              "Archive task retry scheduled attempt=%d paths=%d delay_s=%.2f"
+              % (next_attempt, len(archive_paths), max(0.0, retry_at - time.time())),
+              flush=True,
+          )
         else:
           _enqueue_archive_task({
               "task": ArchiveTask(archive_info=archive_task.archive_info, attempt=next_attempt),
@@ -5152,6 +5192,9 @@ def run_sync_timedb_supervisor_loop(
             _transition_file_state(file_states, p, SyncFileState.ARCHIVE_FAILED_RETRYABLE)
             _discard_inflight_archive_path(p)
     _flush_checkpoint_if_needed()
+    # Drain overflow heap before long post_finalize_reconcile so calendar days
+    # beyond current capacity start without waiting for the next ingest chunk.
+    _dispatch_due_archive_retries(allow_idle_stale=True)
     finalized_paths = []
     for task_payload, result in zip(deferred_paths, results):
       if _archive_task_succeeded(result):
@@ -5229,19 +5272,42 @@ def run_sync_timedb_supervisor_loop(
     perf_stats["archive_worker_stall_events"] += (
         archive_dispatch.log_stalled_slots())
     if not force:
-      archive_dispatch.prune_finished_slots(
+      finalized = archive_dispatch.prune_finished_slots(
           lambda slot: _finalize_archive_slot(
               slot, force=True, context=context or "prune_ready"))
+      if finalized:
+        _dispatch_due_archive_retries(allow_idle_stale=True)
       return bool(archive_dispatch.slots)
 
     finalized_any = False
     for slot in list(archive_dispatch.slots):
+      ready_fn = getattr(slot.async_result, "ready", None)
+      is_ready = True
+      if callable(ready_fn):
+        try:
+          is_ready = bool(ready_fn())
+        except Exception:
+          is_ready = True
+      if not is_ready:
+        if allow_defer:
+          log_print(
+              "Archive finalize deferred context=%s reason=not_ready"
+              % (context or "unknown"),
+              flush=True,
+          )
+          continue
+        if not force:
+          continue
+      # Free capacity before finalize/reconcile so heap drain can use the slot.
+      archive_dispatch.slots = [
+          s for s in archive_dispatch.slots if s is not slot
+      ]
       if _finalize_archive_slot(
-          slot, force=True, allow_defer=allow_defer, context=context):
+          slot, force=True, allow_defer=False, context=context):
         finalized_any = True
-        archive_dispatch.slots = [
-            s for s in archive_dispatch.slots if s is not slot
-        ]
+        _dispatch_due_archive_retries(allow_idle_stale=True)
+      else:
+        archive_dispatch.slots.append(slot)
     return finalized_any
 
   def _flush_checkpoint_if_needed(force=False):
@@ -5938,7 +6004,7 @@ def run_sync_timedb_supervisor_loop(
         for p in item[1]:
           _transition_file_state(file_states, p, SyncFileState.ARCHIVE_QUEUED)
 
-      archive_dispatch.dispatch_disjoint_items(
+      batch_stats = archive_dispatch.dispatch_disjoint_items(
           archive_items_all,
           archive_queue_max=archive_queue_max,
           build_deferred_paths_fn=_build_deferred_paths_for_items,
@@ -5947,6 +6013,8 @@ def run_sync_timedb_supervisor_loop(
               file_states, p, SyncFileState.ARCHIVE_QUEUED),
           enqueue_overflow_fn=_enqueue_overflow_item,
       )
+      if batch_stats.get("queued", 0) > 0 or pending_archive_tasks:
+        _log_pending_archive_heap(context="after_batch_dispatch")
       _dispatch_due_archive_retries()
     elif deferred_paths:
       log_print(
@@ -7223,6 +7291,8 @@ def run_sync_timedb_supervisor_loop(
           perf_stats["archive_dispatch_s"] += dispatch_stats.get("dispatch_s", 0.0)
           perf_stats["archive_dispatch_count"] += 1
           perf_stats["archive_dispatch_items"] += dispatch_stats.get("submitted", 0)
+          if dispatch_stats.get("queued", 0) > 0 or pending_archive_tasks:
+            _log_pending_archive_heap(context="after_chunk_dispatch")
           _dispatch_due_archive_retries()
         elif deferred_paths:
           log_print(

@@ -2874,9 +2874,13 @@ def get_sync_day_close_manifest_stale_seconds():
 
 
 def get_sync_archive_max_inflight_jobs():
-  """Max concurrent disjoint daily-tar archive append jobs (default 2)."""
-  _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("sync_archive_max_inflight_jobs"))
+  """Concurrent daily-tar append slots (= ``sync_archive_pool_processes``).
+
+  Legacy INI key ``sync_archive_max_inflight_jobs`` is ignored. Capacity follows
+  ``get_sync_archive_pool_processes()`` so a narrow site inflight cannot leave
+  archive pool workers idle while overflow days sit on the heap.
+  """
+  return max(1, int(get_sync_archive_pool_processes()))
 
 
 def get_sync_archive_worker_stall_seconds():

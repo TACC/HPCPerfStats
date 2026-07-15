@@ -74,11 +74,12 @@ def test_dispatch_at_capacity_reports_queued_count_once(monkeypatch):
 
 
 def test_dispatch_disjoint_items_respects_max_inflight_daily_tars(monkeypatch):
+  """One calendar day per slot; fill free slots up to max_inflight."""
   submitted = []
 
   class _Pool:
     def map_async(self, fn, items):
-      submitted.append(items)
+      submitted.append(list(items))
       return MagicMock(ready=lambda: False)
 
   coordinator = ArchiveDispatchCoordinator(
@@ -102,10 +103,108 @@ def test_dispatch_disjoint_items_respects_max_inflight_daily_tars(monkeypatch):
       enqueue_overflow_fn=lambda item: None,
   )
   assert stats["submitted"] == 2
-  assert len(submitted) == 1
-  assert len(submitted[0]) == 2
-  daily_tars = {coordinator._daily_tar_for_item(item) for item in submitted[0]}
-  assert len(daily_tars) == 2
+  assert len(submitted) == 2
+  assert all(len(batch) == 1 for batch in submitted)
+  assert len(coordinator.slots) == 2
+  assert stats["queued"] == 1
+
+
+def test_dispatch_fills_pool_sized_capacity_one_day_per_slot(monkeypatch):
+  """Pool-sized max_inflight must submit all days when mapping ≤ capacity."""
+  submitted = []
+
+  class _Pool:
+    def map_async(self, fn, items):
+      submitted.append(list(items))
+      return MagicMock(ready=lambda: False)
+
+  coordinator = ArchiveDispatchCoordinator(
+      archive_pool=_Pool(),
+      max_inflight=6,
+      archive_stats_files_fn=MagicMock(),
+      log_fn=MagicMock(),
+      pending_stats_count_fn=lambda: 0,
+  )
+  items = [
+      ("/tmp/2026-06-%02d.tar.gz" % day, ["p%d" % day])
+      for day in range(7, 13)
+  ]
+  stats = coordinator.dispatch_disjoint_items(
+      items,
+      archive_queue_max=1000,
+      build_deferred_paths_fn=lambda x: x,
+      track_pending_append_fn=lambda x: None,
+      transition_queued_fn=lambda p: None,
+      enqueue_overflow_fn=lambda item: None,
+  )
+  assert stats["submitted"] == 6
+  assert stats["queued"] == 0
+  assert len(submitted) == 6
+  assert all(len(batch) == 1 for batch in submitted)
+  assert len(coordinator.slots) == 6
+
+
+def test_dispatch_overflow_when_mapping_exceeds_capacity(monkeypatch):
+  queued = []
+  submitted = []
+
+  class _Pool:
+    def map_async(self, fn, items):
+      submitted.append(list(items))
+      return MagicMock(ready=lambda: False)
+
+  coordinator = ArchiveDispatchCoordinator(
+      archive_pool=_Pool(),
+      max_inflight=6,
+      archive_stats_files_fn=MagicMock(),
+      log_fn=MagicMock(),
+      pending_stats_count_fn=lambda: 0,
+  )
+  items = [
+      ("/tmp/2026-06-%02d.tar.gz" % day, ["p%d" % day])
+      for day in range(7, 14)
+  ]
+  stats = coordinator.dispatch_disjoint_items(
+      items,
+      archive_queue_max=1000,
+      build_deferred_paths_fn=lambda x: x,
+      track_pending_append_fn=lambda x: None,
+      transition_queued_fn=lambda p: None,
+      enqueue_overflow_fn=lambda item: queued.append(item),
+  )
+  assert stats["submitted"] == 6
+  assert stats["queued"] == 1
+  assert len(queued) == 1
+  assert queued[0][0].endswith("2026-06-13.tar.gz")
+
+
+def test_prune_finished_slots_frees_capacity_before_finalize(monkeypatch):
+  """Overflow drain needs has_capacity True during finalize callbacks."""
+  capacity_during_finalize = []
+
+  class _Ready:
+    def ready(self):
+      return True
+
+  coordinator = ArchiveDispatchCoordinator(
+      archive_pool=MagicMock(),
+      max_inflight=1,
+      archive_stats_files_fn=MagicMock(),
+      log_fn=MagicMock(),
+      pending_stats_count_fn=lambda: 0,
+  )
+  coordinator.slots.append(ArchiveJobSlot(
+      async_result=_Ready(),
+      deferred_paths=[],
+      daily_tars={"/tmp/2026-01-01.tar"},
+  ))
+
+  def _finalize(_slot):
+    capacity_during_finalize.append(coordinator.has_capacity())
+
+  assert coordinator.prune_finished_slots(_finalize) == 1
+  assert capacity_during_finalize == [True]
+  assert coordinator.slots == []
 
 
 def test_dispatch_disjoint_items_oldest_calendar_day_first(monkeypatch):

@@ -135,7 +135,7 @@ Canonical reference: **`docs/SYNC_TIMEDB_PARALLELISM.md`**.
 - Janitor tick → spawn process (violates two-queue single-flight law).
 - Renaming `archive_pool` log label without operator doc sync.
 
-**Archive pool on spawn (documented rationale):** append is I/O-heavy but spawn retains per-job process recycle, failure isolation, and L1 cache benefits; default inflight is low (`sync_archive_max_inflight_jobs`).
+**Archive pool on spawn (documented rationale):** append is I/O-heavy but spawn retains per-job process recycle, failure isolation, and L1 cache benefits; concurrent append slots track **`sync_archive_pool_processes`**.
 
 ## Scheduled maintenance pass
 
@@ -160,8 +160,11 @@ Canonical reference: **`docs/SYNC_TIMEDB_PARALLELISM.md`**.
 
 ## Append dispatch
 
-- Up to `sync_archive_max_inflight_jobs` disjoint daily-tar `map_async` slots via `ArchiveDispatchCoordinator`.
-- At capacity, `stats["queued"]` must equal batch size once (not per-item inflation).
+- Concurrent daily-tar append slots = **`sync_archive_pool_processes`** via `ArchiveDispatchCoordinator` (`get_sync_archive_max_inflight_jobs()` aliases that value; legacy INI `sync_archive_max_inflight_jobs` is ignored).
+- **One daily tar per in-flight slot** (`map_async` of a single group); do not pack multiple calendar days into one slot.
+- At capacity, `stats["queued"]` must equal overflow size once (not per-item inflation); overflow lives on `pending_archive_tasks` heap.
+- **Drain on slot free:** `_dispatch_due_archive_retries` after finalize frees capacity (**before** long `post_finalize_reconcile`); idle/exit drain; nonempty heap is not blocked by `suppress_idle_archive_retries`.
+- Telemetry: `pending_archive_heap context=… n=… tars=…`; archive worker `archive_job_duty mapped=… to_add=… appended=…` (tiny `Archived batch` ≠ missing day).
 - Log stall once per slot when elapsed ≥ `sync_archive_worker_stall_seconds` and job not `ready()`.
 
 ## Data safety (unchanged)

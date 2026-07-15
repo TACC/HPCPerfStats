@@ -1123,6 +1123,7 @@ def test_archive_dispatch_by_tgz_groups_respects_archive_queue_max(monkeypatch):
         monkeypatch.setattr(st, 'add_stats_file_to_db', lambda *_a, **_k: (target, True, True, 0.0))
         monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
         monkeypatch.setattr(st.cfg, 'get_sync_archive_queue_max_size', lambda: 2)
+        monkeypatch.setattr(st.cfg, 'get_sync_archive_max_inflight_jobs', lambda: 4)
         monkeypatch.setattr(st, 'build_archive_mapping', lambda *_a, **_k: mapping)
         monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
         monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
@@ -1132,13 +1133,69 @@ def test_archive_dispatch_by_tgz_groups_respects_archive_queue_max(monkeypatch):
         monkeypatch.setattr(st, 'log_print', lambda *args, **kwargs: logs.append(' '.join((str(a) for a in args))))
         st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), _ArchivePoolCapture(), run_once=True)
         assert dispatched
-        first_batch = dispatched[0]
-        assert len(first_batch) == 2
-        assert first_batch[0][0] == '/tmp/2026-03-01.tar.gz'
-        assert first_batch[1][0] == '/tmp/2026-03-02.tar.gz'
-        assert any(('Archive dispatch submitted=2 queued=1 inflight_slots=1' in ln for ln in logs))
+        # First wave is capped by archive_queue_max=2 (one day per slot).
+        assert len(dispatched[0]) == 1
+        assert dispatched[0][0][0] == '/tmp/2026-03-01.tar.gz'
+        assert dispatched[1][0][0] == '/tmp/2026-03-02.tar.gz'
+        dispatch_lines = [ln for ln in logs if 'Archive dispatch submitted=' in ln]
+        assert any('submitted=2' in ln and 'queued=1' in ln for ln in dispatch_lines), dispatch_lines
+        # Finalize frees capacity and drains the remaining calendar day.
+        assert len(dispatched) == 3
+        assert dispatched[2][0][0] == '/tmp/2026-03-03.tar.gz'
     finally:
         shutdown_requested[0] = False
+
+
+def test_archive_overflow_drains_on_finalize_without_new_chunk(monkeypatch):
+    """Overflow days must dispatch on slot finalize, not wait for next IMAP."""
+    shutdown_requested[0] = False
+    try:
+        target = '/tmp/stats-overflow-drain'
+
+        def fake_rescan(*_a, **_k):
+            if fake_rescan.calls == 0:
+                fake_rescan.calls += 1
+                return [target]
+            return []
+        fake_rescan.calls = 0
+        dispatched = []
+        logs = []
+
+        class _ArchivePoolCapture:
+
+            def map_async(self, _fn, items):
+                dispatched.append(list(items))
+                return _fake_map_async_result([True for _ in items])
+        mapping = {
+            '/tmp/2026-06-07.tar.gz': ['/tmp/a'],
+            '/tmp/2026-06-08.tar.gz': ['/tmp/b'],
+            '/tmp/2026-06-09.tar.gz': ['/tmp/c'],
+        }
+        monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
+        monkeypatch.setattr(st, 'add_stats_file_to_db', lambda *_a, **_k: (target, True, True, 0.0))
+        monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
+        monkeypatch.setattr(st.cfg, 'get_sync_archive_max_inflight_jobs', lambda: 2)
+        monkeypatch.setattr(st, 'build_archive_mapping', lambda *_a, **_k: mapping)
+        monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
+        monkeypatch.setattr(st, 'close_old_connections', lambda: None)
+        monkeypatch.setattr(st.connections, 'close_all', lambda: None)
+        monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
+        monkeypatch.setattr(st, 'log_print', lambda *args, **kwargs: logs.append(' '.join((str(a) for a in args))))
+        st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), _ArchivePoolCapture(), run_once=True)
+        assert len(dispatched) == 3
+        assert all(len(batch) == 1 for batch in dispatched)
+        days = [batch[0][0] for batch in dispatched]
+        assert any(d.endswith('2026-06-07.tar.gz') for d in days)
+        assert any(d.endswith('2026-06-09.tar.gz') for d in days)
+        assert any('pending_archive_heap' in ln for ln in logs)
+        # First wave queues overflow; later wave submits without a second mapping/ingest.
+        submit_lines = [ln for ln in logs if 'Archive dispatch submitted=' in ln]
+        assert any('queued=1' in ln for ln in submit_lines)
+        assert any('submitted=1' in ln for ln in submit_lines)
+    finally:
+        shutdown_requested[0] = False
+
 
 def test_periodic_maintenance_logs_deferred_when_archive_finalize_pending(monkeypatch, tmp_path):
     """Finalize stays soft-deferred; janitor replaces blocking supervisor maintenance."""
@@ -2519,8 +2576,10 @@ def test_archive_finalize_cardinality_mismatch_retries_unmatched(monkeypatch, tm
     class _ShortResultArchive:
 
         def map_async(self, _fn, items):
+            # One day per slot: return fewer results than deferred paths so
+            # finalize cardinality retry still fires.
             del items
-            return _fake_map_async_result([False])
+            return _fake_map_async_result([])
     monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
     monkeypatch.setattr(st, 'add_stats_file_to_db', lambda *_a, **_k: (_a[1], True, True, 0.0))
     monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
@@ -2528,6 +2587,7 @@ def test_archive_finalize_cardinality_mismatch_retries_unmatched(monkeypatch, tm
     monkeypatch.setattr(st.cfg, 'get_sync_archive_retry_max_attempts', lambda: 3)
     monkeypatch.setattr(st.cfg, 'get_sync_archive_retry_backoff_base_seconds', lambda: 0.0)
     monkeypatch.setattr(st.cfg, 'get_sync_archive_retry_backoff_max_seconds', lambda: 0.0)
+    monkeypatch.setattr(st.cfg, 'get_sync_archive_max_inflight_jobs', lambda: 2)
     monkeypatch.setattr(st, 'seal_dirty_daily_archives', lambda *a, **k: None, raising=False)
     monkeypatch.setattr(st, 'remove_verified_archived_raw_files', lambda *a, **k: None, raising=False)
     monkeypatch.setattr(st, 'close_old_connections', lambda: None)
@@ -2538,8 +2598,9 @@ def test_archive_finalize_cardinality_mismatch_retries_unmatched(monkeypatch, tm
         st.run_sync_timedb_supervisor_loop(str(tmp_path / 'archive'), 'all', None, '.hpc', object(), _ShortResultArchive(), run_once=True)
     finally:
         shutdown_requested[0] = False
-    mismatch_lines = [line for line in logs if 'Archive result cardinality mismatch: deferred=2 results=1' in line]
+    mismatch_lines = [line for line in logs if 'Archive result cardinality mismatch:' in line]
     assert mismatch_lines, logs[-40:]
+    assert any('deferred=1 results=0' in line for line in mismatch_lines), mismatch_lines
     retry_lines = [line for line in logs if 'Archive task retry scheduled' in line]
     assert len(retry_lines) >= 2, retry_lines
 

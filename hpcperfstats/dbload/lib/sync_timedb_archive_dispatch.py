@@ -81,8 +81,12 @@ class ArchiveDispatchCoordinator:
     return newly_logged
 
   def prune_finished_slots(self, finalize_slot_fn) -> int:
-    """Finalize ready slots; return count finalized."""
-    finalized = 0
+    """Finalize ready slots; return count finalized.
+
+    Free slot capacity *before* calling ``finalize_slot_fn`` so overflow heap
+    drain during finalize can see ``has_capacity()``.
+    """
+    finalized_slots = []
     remaining = []
     for slot in self.slots:
       ready_fn = getattr(slot.async_result, "ready", None)
@@ -93,12 +97,13 @@ class ArchiveDispatchCoordinator:
         except Exception:
           is_ready = False
       if is_ready:
-        finalize_slot_fn(slot)
-        finalized += 1
+        finalized_slots.append(slot)
       else:
         remaining.append(slot)
     self.slots = remaining
-    return finalized
+    for slot in finalized_slots:
+      finalize_slot_fn(slot)
+    return len(finalized_slots)
 
   def has_capacity(self) -> bool:
     return len(self.slots) < self.max_inflight
@@ -116,7 +121,9 @@ class ArchiveDispatchCoordinator:
     """Dispatch items whose daily tar is not already in-flight.
 
     Items are ordered oldest calendar day first so the ingest chunk gate day
-    claims archive slots before newer days.
+    claims archive slots before newer days. Each in-flight slot carries
+    **one** daily tar (``map_async`` of a single group) so concurrent day
+    count tracks ``max_inflight`` (wired to archive pool size).
     """
     stats = {"submitted": 0, "queued": 0, "deferred_groups": 0, "pending_stats": 0}
     if not archive_items_all:
@@ -128,25 +135,27 @@ class ArchiveDispatchCoordinator:
 
     archive_items_all = sort_archive_items_oldest_day_first(archive_items_all)
 
+    if not self.has_capacity():
+      for item in archive_items_all:
+        enqueue_overflow_fn(item)
+      stats["queued"] = len(archive_items_all)
+      return stats
+
     occupied = self._occupied_daily_tars()
-    disjoint = []
+    free_slots = self.max_inflight - len(self.slots)
+    max_submit = min(free_slots, max(1, int(archive_queue_max)))
+    to_dispatch = []
     overflow = []
     for item in archive_items_all:
       tar = self._daily_tar_for_item(item)
       if tar in occupied:
         overflow.append(item)
         continue
-      disjoint.append(item)
+      if len(to_dispatch) >= max_submit:
+        overflow.append(item)
+        continue
+      to_dispatch.append(item)
       occupied.add(tar)
-      if len(disjoint) >= self.max_inflight:
-        overflow.extend(archive_items_all[len(disjoint) + len(overflow):])
-        break
-
-    # Cap by archive_queue_max; disjoint is already limited to max_inflight
-    # (one daily tar per slot). No adaptive backlog burst/backoff.
-    max_groups = max(1, int(archive_queue_max))
-    to_dispatch = disjoint[:max_groups]
-    overflow.extend(disjoint[max_groups:])
 
     if not to_dispatch:
       for item in archive_items_all:
@@ -154,28 +163,23 @@ class ArchiveDispatchCoordinator:
         stats["queued"] += 1
       return stats
 
-    if not self.has_capacity():
-      for item in archive_items_all:
-        enqueue_overflow_fn(item)
-      stats["queued"] = len(archive_items_all)
-      return stats
-
     dispatch_t0 = time.time()
-    async_result = self.archive_pool.map_async(
-        self.archive_stats_files_fn, to_dispatch)
-    deferred_paths = build_deferred_paths_fn(to_dispatch)
-    daily_tars = {self._daily_tar_for_item(item) for item in to_dispatch}
-    self.slots.append(ArchiveJobSlot(
-        async_result=async_result,
-        deferred_paths=deferred_paths,
-        daily_tars=daily_tars,
-    ))
-    track_pending_append_fn(to_dispatch)
     for item in to_dispatch:
+      batch = [item]
+      async_result = self.archive_pool.map_async(
+          self.archive_stats_files_fn, batch)
+      deferred_paths = build_deferred_paths_fn(batch)
+      daily_tars = {self._daily_tar_for_item(item)}
+      self.slots.append(ArchiveJobSlot(
+          async_result=async_result,
+          deferred_paths=deferred_paths,
+          daily_tars=daily_tars,
+      ))
+      track_pending_append_fn(batch)
       for p in item[1]:
         transition_queued_fn(p)
+      stats["submitted"] += 1
 
-    stats["submitted"] = len(to_dispatch)
     stats["dispatch_s"] = max(0.0, time.time() - dispatch_t0)
     stats["deferred_groups"] = len(overflow)
 
