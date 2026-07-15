@@ -7760,8 +7760,92 @@ def test_select_ingest_chunk_paths_oldest_tar_only(tmp_path):
       tgz_archive_dir=str(daily_dir),
       chunk_size=10,
   )
-  assert chunk == [str(p1), str(p2)]
-  assert str(p3) not in chunk
+  # Oldest day first, then pad from remaining pending up to chunk_size.
+  assert chunk == [str(p1), str(p2), str(p3)]
+  assert chunk[:2] == [str(p1), str(p2)]
+
+
+def test_select_ingest_chunk_paths_pads_to_chunk_size_after_oldest(tmp_path):
+  """Gated oldest-day paths stay first; later-day pending fills to chunk_size."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      select_ingest_chunk_paths,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_a = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+  tar_b = os.path.normpath(str(daily_dir / "2020-01-02.tar"))
+  open(tar_a, "wb").close()
+  open(tar_b, "wb").close()
+  d1 = datetime(2020, 1, 1, 12, tzinfo=timezone.utc)
+  d2 = datetime(2020, 1, 2, 12, tzinfo=timezone.utc)
+  oldest_paths = []
+  for i in range(2):
+    path = tmp_path / ("o%d" % i)
+    path.write_text("x")
+    os.utime(path, (d1.timestamp(), d1.timestamp()))
+    oldest_paths.append(str(path))
+  later_paths = []
+  for i in range(5):
+    path = tmp_path / ("l%d" % i)
+    path.write_text("x")
+    os.utime(path, (d2.timestamp(), d2.timestamp()))
+    later_paths.append(str(path))
+  pending = oldest_paths + later_paths
+  unprocessed = {tar_a: list(oldest_paths)}
+  logs = []
+  chunk = select_ingest_chunk_paths(
+      pending,
+      oldest_tar=tar_a,
+      unprocessed_by_tar=unprocessed,
+      inflight_archive_paths=set(),
+      tgz_archive_dir=str(daily_dir),
+      chunk_size=5,
+      log_fn=logs.append,
+  )
+  assert len(chunk) == 5
+  assert chunk[:2] == oldest_paths
+  assert chunk[2:] == later_paths[:3]
+  assert any("chunk_pad_n=3" in line for line in logs)
+
+
+def test_select_ingest_chunk_paths_no_pad_when_oldest_fills_chunk(tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      select_ingest_chunk_paths,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_a = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+  tar_b = os.path.normpath(str(daily_dir / "2020-01-02.tar"))
+  open(tar_a, "wb").close()
+  open(tar_b, "wb").close()
+  d1 = datetime(2020, 1, 1, 12, tzinfo=timezone.utc)
+  d2 = datetime(2020, 1, 2, 12, tzinfo=timezone.utc)
+  oldest_paths = []
+  for i in range(4):
+    path = tmp_path / ("o%d" % i)
+    path.write_text("x")
+    os.utime(path, (d1.timestamp(), d1.timestamp()))
+    oldest_paths.append(str(path))
+  later = tmp_path / "later"
+  later.write_text("x")
+  os.utime(later, (d2.timestamp(), d2.timestamp()))
+  pending = oldest_paths + [str(later)]
+  unprocessed = {tar_a: list(oldest_paths)}
+  logs = []
+  chunk = select_ingest_chunk_paths(
+      pending,
+      oldest_tar=tar_a,
+      unprocessed_by_tar=unprocessed,
+      inflight_archive_paths=set(),
+      tgz_archive_dir=str(daily_dir),
+      chunk_size=3,
+      log_fn=logs.append,
+  )
+  assert chunk == oldest_paths[:3]
+  assert str(later) not in chunk
+  assert not any("chunk_pad_n=" in line for line in logs)
 
 
 def test_select_ingest_chunk_paths_oldest_tar_1500_paths(tmp_path):
@@ -7800,6 +7884,60 @@ def test_select_ingest_chunk_paths_oldest_tar_1500_paths(tmp_path):
   assert len(chunk) == 1000
   assert str(tail_path) not in chunk
   assert all(path in handoff_paths for path in chunk)
+
+
+def test_try_reuse_pending_reconcile_unprocessed_cache_skip_vs_rescan():
+  """Same oldest+incomplete within TTL reuses cache; TTL expiry or zero incomplete rescans."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      try_reuse_pending_reconcile_unprocessed_cache,
+  )
+
+  cached = {"/archive/2020-01-01.tar": ["/a/1", "/a/2"]}
+  reused = try_reuse_pending_reconcile_unprocessed_cache(
+      cached=cached,
+      last_mono=100.0,
+      mono_now=150.0,
+      ttl_s=120.0,
+      last_incomplete_n=72,
+      last_oldest_tar="/archive/2020-01-01.tar",
+  )
+  assert reused is not None
+  assert reused[0] is cached
+  assert reused[1] == "/archive/2020-01-01.tar"
+  assert reused[2] == 72
+  assert reused[3] == "unchanged_incomplete"
+
+  expired = try_reuse_pending_reconcile_unprocessed_cache(
+      cached=cached,
+      last_mono=100.0,
+      mono_now=230.0,
+      ttl_s=120.0,
+      last_incomplete_n=72,
+      last_oldest_tar="/archive/2020-01-01.tar",
+  )
+  assert expired is None
+
+  zero_inc = try_reuse_pending_reconcile_unprocessed_cache(
+      cached=cached,
+      last_mono=100.0,
+      mono_now=110.0,
+      ttl_s=120.0,
+      last_incomplete_n=0,
+      last_oldest_tar="/archive/2020-01-01.tar",
+  )
+  assert zero_inc is None
+
+  stall = try_reuse_pending_reconcile_unprocessed_cache(
+      cached=cached,
+      last_mono=100.0,
+      mono_now=110.0,
+      ttl_s=120.0,
+      last_incomplete_n=72,
+      last_oldest_tar="/archive/2020-01-01.tar",
+      stall_incomplete_n=72,
+  )
+  assert stall is not None
+  assert stall[3] == "oldest_day_gate_stall_unchanged"
 
 
 def test_handoff_priority_cap_explicit_wave_when_priority_exceeds_max():

@@ -2658,8 +2658,30 @@ def select_ingest_chunk_paths(
       oldest_only = [
           path for path in checkpoint_incomplete_on_disk if path not in inflight_set
       ]
-  tail = list(oldest_only[:target_chunk_size])
-  return handoff_lead + tail
+  oldest_slice = list(oldest_only[:target_chunk_size])
+  chosen = set(handoff_lead)
+  chosen.update(oldest_slice)
+  pad = []
+  if len(oldest_slice) < target_chunk_size:
+    for path in pending_list:
+      if path in chosen:
+        continue
+      pad.append(path)
+      chosen.add(path)
+      if len(oldest_slice) + len(pad) >= target_chunk_size:
+        break
+  if pad and log_fn is not None:
+    log_fn(
+        "sync_timedb: oldest_day_chunk_gate_pad oldest_tar=%s "
+        "oldest_n=%d chunk_pad_n=%d chunk_target=%d"
+        % (
+            oldest_tar_norm,
+            len(oldest_slice),
+            len(pad),
+            target_chunk_size,
+        ),
+    )
+  return handoff_lead + oldest_slice + pad
 
 
 def merge_daily_archive_members_l1_cache(canonical, member_map):
@@ -2717,6 +2739,45 @@ def prepend_checkpoint_incomplete_paths_to_pending(
     seen.add(path)
     merged.append(path)
   return merged
+
+
+def try_reuse_pending_reconcile_unprocessed_cache(
+    *,
+    cached,
+    last_mono,
+    mono_now,
+    ttl_s,
+    last_incomplete_n,
+    last_oldest_tar,
+    stall_incomplete_n=None,
+):
+  """Return ``(cached, oldest_tar, incomplete_n, reason)`` when skip is safe.
+
+  Skips a full live unprocessed rebuild when the prior reconcile fingerprint
+  (oldest tar + incomplete_n) is still within ``ttl_s``.
+  """
+  if cached is None:
+    return None
+  try:
+    age = float(mono_now) - float(last_mono or 0.0)
+  except (TypeError, ValueError):
+    return None
+  if age >= float(ttl_s):
+    return None
+  try:
+    last_inc = int(last_incomplete_n) if last_incomplete_n is not None else None
+  except (TypeError, ValueError):
+    return None
+  last_tar = str(last_oldest_tar or "")
+  try:
+    stall_n = int(stall_incomplete_n) if stall_incomplete_n is not None else None
+  except (TypeError, ValueError):
+    stall_n = None
+  if stall_n and stall_n > 0 and last_inc == stall_n and last_tar:
+    return cached, last_tar, last_inc, "oldest_day_gate_stall_unchanged"
+  if last_inc is None or last_inc <= 0 or not last_tar:
+    return None
+  return cached, last_tar, last_inc, "unchanged_incomplete"
 
 
 def build_live_unprocessed_by_tar_for_reconcile(

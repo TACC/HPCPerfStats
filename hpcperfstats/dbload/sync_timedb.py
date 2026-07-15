@@ -130,6 +130,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     merge_daily_archive_members_l1_cache,
     pending_minus_chunk,
     select_ingest_chunk_paths,
+    try_reuse_pending_reconcile_unprocessed_cache,
     age_misbucket_handoff_priority_paths,
     resolve_unmapped_closed_raw_daily_tars,
     daily_tar_path_for_stats_path,
@@ -951,6 +952,8 @@ def _in_flight_file_meta_from_paths(paths, max_n=10):
 
 
 INGEST_STALL_WATCHDOG_IDLE_S = 1800.0
+# Skip full live unprocessed rebuild when oldest incomplete snapshot is unchanged.
+PENDING_RECONCILE_UNPROCESSED_TTL_S = 120.0
 _SUPERVISOR_CHILD_REAP_INTERVAL_S = 60.0
 _last_supervisor_child_reap_mono = 0.0
 
@@ -5275,6 +5278,8 @@ def run_sync_timedb_supervisor_loop(
       "get_accrual_snapshot": lambda: None,
       "warned_live_reconcile_fallback": False,
       "last_unprocessed_by_tar": None,
+      "last_reconcile_oldest_tar": "",
+      "last_reconcile_incomplete_n": None,
       "oldest_day_gate_stall_blocked_n": None,
       "last_cap_pending_monotonic": 0.0,
       "last_chunk_ingest_summary_mono": None,
@@ -5430,6 +5435,38 @@ def run_sync_timedb_supervisor_loop(
     )
     return closed_paths
 
+  def _invalidate_pending_reconcile_unprocessed_cache():
+    reconcile_refs["last_unprocessed_by_tar"] = None
+    reconcile_refs["last_reconcile_oldest_tar"] = ""
+    reconcile_refs["last_reconcile_incomplete_n"] = None
+    reconcile_refs["last_cap_pending_monotonic"] = 0.0
+
+  def _store_pending_reconcile_unprocessed_cache(
+      unprocessed,
+      *,
+      oldest_tar,
+      incomplete_n,
+      mono_now=None,
+  ):
+    reconcile_refs["last_unprocessed_by_tar"] = unprocessed
+    reconcile_refs["last_reconcile_oldest_tar"] = oldest_tar or ""
+    reconcile_refs["last_reconcile_incomplete_n"] = int(incomplete_n)
+    reconcile_refs["last_cap_pending_monotonic"] = (
+        time.monotonic() if mono_now is None else float(mono_now)
+    )
+
+  def _cached_unprocessed_reusable_for_cap(*, mono_now):
+    """Return cached unprocessed map when TTL + incomplete fingerprint allow skip."""
+    return try_reuse_pending_reconcile_unprocessed_cache(
+        cached=reconcile_refs.get("last_unprocessed_by_tar"),
+        last_mono=reconcile_refs.get("last_cap_pending_monotonic", 0.0),
+        mono_now=mono_now,
+        ttl_s=PENDING_RECONCILE_UNPROCESSED_TTL_S,
+        last_incomplete_n=reconcile_refs.get("last_reconcile_incomplete_n"),
+        last_oldest_tar=reconcile_refs.get("last_reconcile_oldest_tar") or "",
+        stall_incomplete_n=reconcile_refs.get("oldest_day_gate_stall_blocked_n"),
+    )
+
   def _cap_pending_after_rescan(paths, *, handoff=False, idle_refill=False):
     cap_t0 = time.time()
     _snapshot, source = _resolve_reconcile_maintenance_snapshot(
@@ -5460,38 +5497,17 @@ def run_sync_timedb_supervisor_loop(
           flush=True,
       )
       return capped
-    stall_incomplete_n = reconcile_refs.get("oldest_day_gate_stall_blocked_n")
-    cached_unprocessed = reconcile_refs.get("last_unprocessed_by_tar")
     mono_now = time.monotonic()
-    last_cap_mono = float(reconcile_refs.get("last_cap_pending_monotonic", 0.0))
-    if (
-        stall_incomplete_n
-        and stall_incomplete_n > 0
-        and cached_unprocessed is not None
-        and mono_now - last_cap_mono < 60.0
-    ):
-      tar_norm_cached = oldest_checkpoint_incomplete_tar(
-          cached_unprocessed,
-          tgz_archive_dir=tgz_archive_dir,
+    reuse = _cached_unprocessed_reusable_for_cap(mono_now=mono_now)
+    skip_reason = None
+    if reuse is not None:
+      unprocessed, tar_norm_cached, incomplete_cached, skip_reason = reuse
+      log_print(
+          "sync_timedb: pending reconcile cap skipped "
+          "reason=%s oldest_tar=%s incomplete_n=%d"
+          % (skip_reason, tar_norm_cached or "", incomplete_cached),
+          flush=True,
       )
-      blocked_cached = (
-          _checkpoint_unblocked_paths_for_tar(
-              cached_unprocessed,
-              tar_norm_cached,
-          )
-          if tar_norm_cached
-          else []
-      )
-      if len(blocked_cached) == stall_incomplete_n:
-        log_print(
-            "sync_timedb: pending reconcile cap skipped "
-            "reason=oldest_day_gate_stall_unchanged oldest_tar=%s incomplete_n=%d"
-            % (tar_norm_cached or "", len(blocked_cached)),
-            flush=True,
-        )
-        unprocessed = cached_unprocessed
-      else:
-        unprocessed = None
     else:
       unprocessed = None
     if unprocessed is None:
@@ -5500,13 +5516,14 @@ def run_sync_timedb_supervisor_loop(
           flush=True,
       )
       unprocessed = _live_unprocessed_by_tar_for_reconcile()
-      reconcile_refs["last_unprocessed_by_tar"] = unprocessed
-      reconcile_refs["last_cap_pending_monotonic"] = mono_now
     disk_checkpoint_paths = load_checkpoint_path_set(checkpoint_path)
     merged_checkpoint_paths = _reconcile_checkpoint_paths()
     memory_extra_n = len(merged_checkpoint_paths - disk_checkpoint_paths)
-    tar_norm = oldest_checkpoint_incomplete_tar(
-        unprocessed, tgz_archive_dir=tgz_archive_dir)
+    if skip_reason is not None:
+      tar_norm = reconcile_refs.get("last_reconcile_oldest_tar") or ""
+    else:
+      tar_norm = oldest_checkpoint_incomplete_tar(
+          unprocessed, tgz_archive_dir=tgz_archive_dir)
     all_unprocessed = sort_pending_stats_paths_oldest_first(
         _all_checkpoint_unblocked_paths(unprocessed),
     )
@@ -5517,6 +5534,13 @@ def run_sync_timedb_supervisor_loop(
         if tar_norm
         else []
     )
+    if skip_reason is None:
+      _store_pending_reconcile_unprocessed_cache(
+          unprocessed,
+          oldest_tar=tar_norm,
+          incomplete_n=len(blocked),
+          mono_now=mono_now,
+      )
     blocked_set = set(all_unprocessed)
     reconcile_exclude = (
         (processed_files | inflight_archive_paths) - blocked_set
@@ -5594,7 +5618,7 @@ def run_sync_timedb_supervisor_loop(
         flush=True,
     )
     reconcile_refs["oldest_day_gate_stall_blocked_n"] = None
-    reconcile_refs["last_unprocessed_by_tar"] = None
+    _invalidate_pending_reconcile_unprocessed_cache()
     archive_janitor.signal_work_available()
     _maybe_enqueue_immediate_day_close(context="cross_day_db_complete")
 
@@ -6718,7 +6742,6 @@ def run_sync_timedb_supervisor_loop(
             allow_defer=True,
             context="chunk_boundary",
         )
-        reconcile_refs["last_unprocessed_by_tar"] = None
         _reconcile_pending_with_oldest_checkpoint_incomplete()
         if shutdown_requested[0]:
           log_print("Exiting due to SIGTERM")
@@ -6729,12 +6752,31 @@ def run_sync_timedb_supervisor_loop(
 
         chunk_t0 = time.time()
         unprocessed_for_chunk = reconcile_refs.get("last_unprocessed_by_tar")
+        oldest_tar_for_chunk = reconcile_refs.get("last_reconcile_oldest_tar") or ""
         if unprocessed_for_chunk is None:
           unprocessed_for_chunk = _live_unprocessed_by_tar_for_reconcile()
-        oldest_tar_for_chunk = oldest_checkpoint_incomplete_tar(
-            unprocessed_for_chunk,
-            tgz_archive_dir=tgz_archive_dir,
-        )
+          oldest_tar_for_chunk = oldest_checkpoint_incomplete_tar(
+              unprocessed_for_chunk,
+              tgz_archive_dir=tgz_archive_dir,
+          )
+          blocked_for_store = (
+              _checkpoint_unblocked_paths_for_tar(
+                  unprocessed_for_chunk,
+                  oldest_tar_for_chunk,
+              )
+              if oldest_tar_for_chunk
+              else []
+          )
+          _store_pending_reconcile_unprocessed_cache(
+              unprocessed_for_chunk,
+              oldest_tar=oldest_tar_for_chunk,
+              incomplete_n=len(blocked_for_store),
+          )
+        elif not oldest_tar_for_chunk:
+          oldest_tar_for_chunk = oldest_checkpoint_incomplete_tar(
+              unprocessed_for_chunk,
+              tgz_archive_dir=tgz_archive_dir,
+          )
         raw_blocked_paths = (
             aligned_on_disk_unprocessed_paths_for_tar(
                 unprocessed_for_chunk,
@@ -6803,11 +6845,34 @@ def run_sync_timedb_supervisor_loop(
             log_fn=log_print,
         )
         if oldest_tar_for_chunk and (incomplete_n or handoff_inflight_n):
+          oldest_aligned_in_chunk_n = sum(
+              1
+              for path in stats_files_chunk
+              if oldest_tar_for_chunk in daily_tar_paths_for_stats_paths(
+                  [path],
+                  tgz_archive_dir,
+              )
+          )
+          handoff_lead_in_chunk_n = sum(
+              1
+              for path in stats_files_chunk
+              if path in handoff_priority_paths
+              and oldest_tar_for_chunk not in daily_tar_paths_for_stats_paths(
+                  [path],
+                  tgz_archive_dir,
+              )
+          )
+          chunk_pad_n = max(
+              0,
+              len(stats_files_chunk)
+              - oldest_aligned_in_chunk_n
+              - handoff_lead_in_chunk_n,
+          )
           log_print(
               "sync_timedb: oldest_day_chunk_gate oldest_tar=%s incomplete_n=%d "
               "handoff_inflight_n=%d handoff_priority_n=%d handoff_cross_day_n=%d "
               "oldest_tar_checkpoint_pending_n=%d "
-              "chunk_day_histogram=%s chunk_len=%d"
+              "chunk_day_histogram=%s chunk_len=%d chunk_pad_n=%d"
               % (
                   oldest_tar_for_chunk,
                   incomplete_n,
@@ -6817,6 +6882,7 @@ def run_sync_timedb_supervisor_loop(
                   incomplete_n,
                   build_chunk_day_histogram(stats_files_chunk, tgz_archive_dir),
                   len(stats_files_chunk),
+                  chunk_pad_n,
               ),
               flush=True,
           )
@@ -6844,7 +6910,7 @@ def run_sync_timedb_supervisor_loop(
               )
               if reclaimed:
                 reconcile_refs["oldest_day_gate_stall_blocked_n"] = None
-                reconcile_refs["last_unprocessed_by_tar"] = None
+                _invalidate_pending_reconcile_unprocessed_cache()
                 _reconcile_pending_with_oldest_checkpoint_incomplete()
                 _finalize_archive_slots_if_needed(
                     force=True,
@@ -7060,6 +7126,9 @@ def run_sync_timedb_supervisor_loop(
         reconcile_refs["suppress_idle_archive_retries"] = (
             len(files_to_be_archived) == 0
         )
+        # Ingest progress can clear oldest-day incomplete — force next reconcile rescan.
+        if successful_paths:
+          _invalidate_pending_reconcile_unprocessed_cache()
 
         _maybe_handle_cross_day_db_complete_after_chunk(
             stats_files_chunk=stats_files_chunk,

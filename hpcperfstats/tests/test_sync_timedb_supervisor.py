@@ -4952,7 +4952,7 @@ def test_supervisor_chunk_gate_cross_day_stall_dispatches_pending_head(monkeypat
         shutdown_requested[0] = False
 
 def test_supervisor_chunk_gate_unblocks_when_blocked_excluded_from_processed(monkeypatch, tmp_path):
-    """Checkpoint-blocked paths in processed_files still ingest after reconcile."""
+    """Checkpoint-blocked paths in processed_files still ingest; pad may follow oldest day."""
     shutdown_requested[0] = False
     ingest_batches = []
     try:
@@ -5050,7 +5050,11 @@ def test_supervisor_chunk_gate_unblocks_when_blocked_excluded_from_processed(mon
         st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         assert ingest_batches
         assert any((path in blocked for path in ingest_batches))
-        assert not any((path == str(tail_path) for path in ingest_batches))
+        # Pad fills remaining slots from later-day pending after oldest-day blocked paths.
+        assert str(tail_path) in ingest_batches
+        blocked_idxs = [ingest_batches.index(path) for path in blocked if path in ingest_batches]
+        assert blocked_idxs
+        assert max(blocked_idxs) < ingest_batches.index(str(tail_path))
     finally:
         shutdown_requested[0] = False
 

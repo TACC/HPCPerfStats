@@ -281,6 +281,25 @@ podman-compose logs pipeline 2>&1 | grep -E \
 
 **Pass:** no sustained **`skipped_inflight`** with stale manifest **`queued`** and zero janitor debt progress; **`status=complete`** appears for finished calendar days after janitor tar-drop; **`oldest_day_chunk_gate_stall`** may appear but ingest resumes ( **`chunk ingest summary`** ) without CPU-only spin (backoff every 32 empty-chunk loops).
 
+### T0 / T1 verify — gated chunk pad + between-chunk reconcile amortize (2026-07)
+
+After deploy of **pad gated chunks / cut between-chunk tax** (Choice C): under saturated pending (`ingest_queue_max` ≈ `chunk_size`) with frozen `oldest_tar` / `incomplete_n>0`, chunks must fill toward `chunk_size` and reconcile must not dominate the duty cycle with multi‑minute identical accrual rescans.
+
+```bash
+# Full log first (never --tail before grep on backlog sites).
+podman-compose logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+
+# T0 — pad + skip signals under backlog
+grep -E 'oldest_day_chunk_gate |oldest_day_chunk_gate_pad|chunk_pad_n=|pending reconcile cap skipped|pending reconcile cap (begin|done)' /tmp/pipeline-full.log | tail -80
+
+# T1 — chunk_len near chunk_size when pending saturated (INI chunk_size=3000 → expect chunk_len≈3000)
+grep -E 'oldest_day_chunk_gate .*chunk_len=' /tmp/pipeline-full.log | tail -40
+```
+
+**Pass (T0):** `oldest_day_chunk_gate` / `chunk ingest summary` continues; when oldest day has fewer paths than `chunk_size` and pending is full, expect **`chunk_pad_n>`0** and **`chunk_len`** near configured **`chunk_size`** (not steady `chunk_len≪chunk_size` like pre-fix `419` vs `3000`). Under frozen `incomplete_n` + same `oldest_tar`, expect **`pending reconcile cap skipped reason=unchanged_incomplete`** (or `oldest_day_gate_stall_unchanged`) between waves — not back-to-back **`pending reconcile cap begin/done source=accrual`** with **`elapsed_s` hundreds–thousands** and identical `incomplete_n`.
+
+**Pass (T1):** Oldest-day paths still lead the chunk (`epochs` / sample still prioritize head day); padded later-day paths may appear **after** oldest paths within the same chunk. Reconcile skip must clear after ingest progress / oldest advance (`incomplete_n` change) — next wave may show a full **`pending reconcile cap begin`** again.
+
 ### T1 verify — ingest oldest-first (hpcperfstats03 / cross_day_bucket gate defer)
 
 After deploy of **ingest oldest-first** fix (2026-07), confirm dispatch order on backlog catch-up sites with **277k+** closed raw on disk. **Do not** infer skip from **`ingest file path=`** alone — parallel chunk workers complete out of order.
