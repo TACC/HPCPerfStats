@@ -205,6 +205,7 @@ from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
 from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
     StartupArchiveScanCoordinator,
 )
+from hpcperfstats.dbload.lib import sync_timedb_mode_heartbeat as mode_heartbeat
 from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
     ArchiveMembersPopulateStalledError,
     ArchiveMembersRedisConnectionError,
@@ -4562,6 +4563,74 @@ def run_sync_timedb_supervisor_loop(
   ingest_t0 = time.time()
   startup_gate_cleared_t0 = None
   run_startup_maintenance = startdate == "all"
+  newest_first = startdate == "current"
+  proximity_days = int(cfg.get_sync_ingest_current_proximity_days())
+
+  def _day_chunk_gate_prefix():
+    return "youngest_day_chunk_gate" if newest_first else "oldest_day_chunk_gate"
+
+  def _day_gate_tar_key():
+    return "youngest_tar" if newest_first else "oldest_tar"
+
+  def _optional_heartbeat_redis_client():
+    try:
+      from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+          get_archive_members_redis_client,
+      )
+      return get_archive_members_redis_client(required=False)
+    except Exception:
+      return None
+
+  def _publish_current_mode_heartbeat(active_paths):
+    if not newest_first:
+      return None
+    try:
+      return mode_heartbeat.publish_current_heartbeat(
+          archive_dir=directory,
+          active_paths=active_paths,
+          daily_archive_dir=tgz_archive_dir,
+          redis_client=_optional_heartbeat_redis_client(),
+      )
+    except Exception as exc:
+      log_print(
+          "sync_timedb: current heartbeat publish failed err=%s" % exc,
+          flush=True,
+      )
+      return None
+
+  def _all_should_exit_for_current_proximity(pending_paths):
+    if startdate != "all" or not pending_paths:
+      return False
+    next_path = pending_paths[0]
+    next_day = mode_heartbeat.calendar_day_from_stats_path(
+        next_path, tgz_archive_dir)
+    if next_day is None:
+      return False
+    try:
+      heartbeat = mode_heartbeat.read_current_heartbeat(
+          archive_dir=directory,
+          redis_client=_optional_heartbeat_redis_client(),
+      )
+    except Exception:
+      return False
+    if not mode_heartbeat.should_all_exit_for_current_proximity(
+        next_pending_day=next_day,
+        heartbeat=heartbeat,
+        proximity_days=proximity_days,
+    ):
+      return False
+    log_print(
+        "sync_timedb: all exiting near current"
+        " next_pending_day=%s current_oldest_active_day=%s"
+        " proximity_days=%d"
+        % (
+            next_day.isoformat(),
+            heartbeat.get("oldest_active_day"),
+            proximity_days,
+        ),
+        flush=True,
+    )
+    return True
 
   pending_archive_tasks = []
   _archive_heap_seq = itertools.count()
@@ -5205,6 +5274,7 @@ def run_sync_timedb_supervisor_loop(
       tar_norm = oldest_checkpoint_incomplete_tar(
           unprocessed,
           tgz_archive_dir=tgz_archive_dir,
+            newest_first=newest_first,
       )
       blocked = (
           _checkpoint_unblocked_paths_for_tar(unprocessed, tar_norm)
@@ -5464,11 +5534,13 @@ def run_sync_timedb_supervisor_loop(
   def _apply_handoff_priority_to_pending(pending):
     if not handoff_priority_paths:
       return list(pending or ())
-    blocked = sort_pending_stats_paths_oldest_first(handoff_priority_paths)
+    blocked = sort_pending_stats_paths_oldest_first(
+        handoff_priority_paths, newest_first=newest_first)
     return prepend_checkpoint_incomplete_paths_to_pending(
         pending,
         blocked,
         exclude=inflight_archive_paths,
+        newest_first=newest_first,
     )
 
   def _cap_pending_stats_with_handoff_priority(
@@ -5485,11 +5557,14 @@ def run_sync_timedb_supervisor_loop(
           blocked_paths=blocked_reserved,
           handoff_priority_paths=handoff_priority_paths,
           log_fn=log_print,
+          newest_first=newest_first,
       )
     return cap_pending_stats_file_list(
-        sort_pending_stats_paths_oldest_first(list(paths or ())),
+        sort_pending_stats_paths_oldest_first(
+            list(paths or ()), newest_first=newest_first),
         ingest_queue_max,
         log_fn=log_print,
+        newest_first=newest_first,
     )
 
   def _resolve_closed_paths_for_cap():
@@ -5505,6 +5580,7 @@ def run_sync_timedb_supervisor_loop(
     reconcile_refs["last_unprocessed_by_tar"] = None
     reconcile_refs["last_reconcile_oldest_tar"] = ""
     reconcile_refs["last_reconcile_incomplete_n"] = None
+    reconcile_refs["last_reconcile_newest_first"] = None
     reconcile_refs["last_cap_pending_monotonic"] = 0.0
 
   def _store_pending_reconcile_unprocessed_cache(
@@ -5517,6 +5593,7 @@ def run_sync_timedb_supervisor_loop(
     reconcile_refs["last_unprocessed_by_tar"] = unprocessed
     reconcile_refs["last_reconcile_oldest_tar"] = oldest_tar or ""
     reconcile_refs["last_reconcile_incomplete_n"] = int(incomplete_n)
+    reconcile_refs["last_reconcile_newest_first"] = bool(newest_first)
     reconcile_refs["last_cap_pending_monotonic"] = (
         time.monotonic() if mono_now is None else float(mono_now)
     )
@@ -5531,6 +5608,8 @@ def run_sync_timedb_supervisor_loop(
         last_incomplete_n=reconcile_refs.get("last_reconcile_incomplete_n"),
         last_oldest_tar=reconcile_refs.get("last_reconcile_oldest_tar") or "",
         stall_incomplete_n=reconcile_refs.get("oldest_day_gate_stall_blocked_n"),
+        newest_first=newest_first,
+        last_newest_first=reconcile_refs.get("last_reconcile_newest_first"),
     )
 
   def _cap_pending_after_rescan(paths, *, handoff=False, idle_refill=False):
@@ -5589,13 +5668,17 @@ def run_sync_timedb_supervisor_loop(
       tar_norm = reconcile_refs.get("last_reconcile_oldest_tar") or ""
     else:
       tar_norm = oldest_checkpoint_incomplete_tar(
-          unprocessed, tgz_archive_dir=tgz_archive_dir)
+          unprocessed,
+          tgz_archive_dir=tgz_archive_dir,
+          newest_first=newest_first)
     all_unprocessed = sort_pending_stats_paths_oldest_first(
         _all_checkpoint_unblocked_paths(unprocessed),
+        newest_first=newest_first,
     )
     blocked = (
         sort_pending_stats_paths_oldest_first(
             _checkpoint_unblocked_paths_for_tar(unprocessed, tar_norm),
+            newest_first=newest_first,
         )
         if tar_norm
         else []
@@ -5634,6 +5717,7 @@ def run_sync_timedb_supervisor_loop(
           max_size=ingest_queue_max,
           processed_exclude=reconcile_exclude,
           log_fn=log_print,
+          newest_first=newest_first,
       )
     log_print(
         "sync_timedb: pending reconcile cap done elapsed_s=%.3f "
@@ -5678,9 +5762,14 @@ def run_sync_timedb_supervisor_loop(
     if len(successful_paths) != len(stats_files_chunk):
       return
     log_print(
-        "sync_timedb: oldest_day_chunk_gate_cross_day_db_complete oldest_tar=%s "
+        "sync_timedb: %s_cross_day_db_complete %s=%s "
         "path_n=%d"
-        % (oldest_tar_for_chunk or "", len(stats_files_chunk)),
+        % (
+            _day_chunk_gate_prefix(),
+            _day_gate_tar_key(),
+            oldest_tar_for_chunk or "",
+            len(stats_files_chunk),
+        ),
         flush=True,
     )
     reconcile_refs["oldest_day_gate_stall_blocked_n"] = None
@@ -5702,12 +5791,14 @@ def run_sync_timedb_supervisor_loop(
       _invalidate_host_scan_hints_for_paths(failed_chunk_paths)
     # Non-prefix chunks (oldest-tar / handoff) must use set-difference, not
     # pending[len(chunk):] — that requeues in-flight chunk paths and drops head.
-    tail = pending_minus_chunk(pending_stats_files, stats_files_chunk)
+    tail = pending_minus_chunk(
+        pending_stats_files, stats_files_chunk, newest_first=newest_first)
     successful_set = set(successful_paths)
     tail = [path for path in tail if path not in successful_set]
     if failed_chunk_paths:
       failed_chunk_paths = sort_pending_stats_paths_oldest_first(
           failed_chunk_paths,
+          newest_first=newest_first,
       )
       failed_set = set(failed_chunk_paths)
       requeue_exclude = (
@@ -5787,6 +5878,7 @@ def run_sync_timedb_supervisor_loop(
           supplement_queue=supplement_queue,
           processed_exclude=exclude,
           log_fn=None,
+          newest_first=newest_first,
       )
 
     stall_diagnostics.chunk_batch_size = len(paths)
@@ -6271,6 +6363,7 @@ def run_sync_timedb_supervisor_loop(
         startup_closed_paths=closed_paths,
         force_snapshot_paths=idle_refill,
         log_fn=log_print,
+        newest_first=newest_first,
     )
     log_print(
         "sync_timedb: pending rescan done pending=%d elapsed_s=%.3f"
@@ -6692,8 +6785,10 @@ def run_sync_timedb_supervisor_loop(
                 host_name_ext,
                 _rescan_processed_exclusions(),
                 host_scan_hints=host_scan_hints,
+                newest_first=newest_first,
             ),
             processed_exclude=_rescan_processed_exclusions(),
+            newest_first=newest_first,
         ),
     )
     day_close_rescan_pending = False
@@ -6721,7 +6816,8 @@ def run_sync_timedb_supervisor_loop(
     else:
       log_print(
           "sync_timedb: startup maintenance skipped "
-          "(pass 'all' for full-archive startup pass)",
+          "(CLI 'current' and date-range skip heavy startup; "
+          "pass 'all' for full-archive startup pass)",
           flush=True,
       )
       startup_archive_scan.mark_startup_heavy_maintenance_finished()
@@ -6744,6 +6840,7 @@ def run_sync_timedb_supervisor_loop(
                 pending_stats_files,
                 discovered,
                 processed_exclude=_rescan_processed_exclusions(),
+                newest_first=newest_first,
             ),
             idle_refill=True,
         )
@@ -6766,6 +6863,7 @@ def run_sync_timedb_supervisor_loop(
                 pending_stats_files,
                 discovered,
                 processed_exclude=_rescan_processed_exclusions(),
+                newest_first=newest_first,
             ),
             idle_refill=True,
         )
@@ -6802,6 +6900,11 @@ def run_sync_timedb_supervisor_loop(
           break
 
       while pending_stats_files:
+        if _all_should_exit_for_current_proximity(pending_stats_files):
+          # Clear pending so the outer loop can idle-exit (run_once) instead of
+          # re-entering this chunk loop forever with the same proximate head.
+          pending_stats_files = []
+          break
         _maybe_wait_tree_rss_before_chunk(ingest_pool, archive_pool)
         _maybe_apply_day_close_rescan()
         idle_since_empty_queue = None
@@ -6826,6 +6929,7 @@ def run_sync_timedb_supervisor_loop(
           oldest_tar_for_chunk = oldest_checkpoint_incomplete_tar(
               unprocessed_for_chunk,
               tgz_archive_dir=tgz_archive_dir,
+                    newest_first=newest_first,
           )
           blocked_for_store = (
               _checkpoint_unblocked_paths_for_tar(
@@ -6844,6 +6948,7 @@ def run_sync_timedb_supervisor_loop(
           oldest_tar_for_chunk = oldest_checkpoint_incomplete_tar(
               unprocessed_for_chunk,
               tgz_archive_dir=tgz_archive_dir,
+                    newest_first=newest_first,
           )
         raw_blocked_paths = (
             aligned_on_disk_unprocessed_paths_for_tar(
@@ -6865,9 +6970,14 @@ def run_sync_timedb_supervisor_loop(
         incomplete_n = len(blocked_paths)
         if raw_blocked_paths and incomplete_n == 0:
           log_print(
-              "sync_timedb: oldest_day_chunk_gate_all_db_complete oldest_tar=%s "
+              "sync_timedb: %s_all_db_complete %s=%s "
               "raw_incomplete_n=%d"
-              % (oldest_tar_for_chunk, len(raw_blocked_paths)),
+              % (
+                  _day_chunk_gate_prefix(),
+                  _day_gate_tar_key(),
+                  oldest_tar_for_chunk,
+                  len(raw_blocked_paths),
+              ),
               flush=True,
           )
         handoff_inflight_n = 0
@@ -6911,6 +7021,10 @@ def run_sync_timedb_supervisor_loop(
             chunk_size=chunk_size,
             handoff_priority_paths=handoff_priority_paths,
             log_fn=log_print,
+            newest_first=newest_first,
+        )
+        _publish_current_mode_heartbeat(
+            list(inflight_archive_paths) + list(stats_files_chunk or ()),
         )
         if oldest_tar_for_chunk and (incomplete_n or handoff_inflight_n):
           oldest_aligned_in_chunk_n = sum(
@@ -6937,16 +7051,19 @@ def run_sync_timedb_supervisor_loop(
               - handoff_lead_in_chunk_n,
           )
           log_print(
-              "sync_timedb: oldest_day_chunk_gate oldest_tar=%s incomplete_n=%d "
+              "sync_timedb: %s %s=%s incomplete_n=%d "
               "handoff_inflight_n=%d handoff_priority_n=%d handoff_cross_day_n=%d "
-              "oldest_tar_checkpoint_pending_n=%d "
+              "%s_checkpoint_pending_n=%d "
               "chunk_day_histogram=%s chunk_len=%d chunk_pad_n=%d"
               % (
+                  _day_chunk_gate_prefix(),
+                  _day_gate_tar_key(),
                   oldest_tar_for_chunk,
                   incomplete_n,
                   handoff_inflight_n,
                   handoff_priority_n,
                   handoff_cross_day_n,
+                  _day_gate_tar_key(),
                   incomplete_n,
                   build_chunk_day_histogram(stats_files_chunk, tgz_archive_dir),
                   len(stats_files_chunk),
@@ -7025,11 +7142,13 @@ def run_sync_timedb_supervisor_loop(
                 if cross_day_mismatch_n:
                   stall_detail = "cross_day_bucket"
                 log_print(
-                    "sync_timedb: oldest_day_chunk_gate_stall oldest_tar=%s "
+                    "sync_timedb: %s_stall %s=%s "
                     "incomplete_n=%d blocked_in_pending_n=%d inflight_oldest_n=%d "
                     "pending_oldest_n=%d fallback_n=%d cross_day_mismatch_n=%d "
                     "calendar_tar_histogram=%s detail=%s"
                     % (
+                        _day_chunk_gate_prefix(),
+                        _day_gate_tar_key(),
                         oldest_tar_for_chunk,
                         incomplete_n,
                         blocked_in_pending_n,
@@ -7100,6 +7219,7 @@ def run_sync_timedb_supervisor_loop(
         pending_minus = pending_minus_chunk(
             pending_stats_files,
             stats_files_chunk,
+            newest_first=newest_first,
         )
         if cfg.get_sync_ingest_giant_pool_supplement_enabled():
           supplement_queue = int(
@@ -7112,12 +7232,14 @@ def run_sync_timedb_supervisor_loop(
                 closed_paths=closed_for_tail,
                 supplement_queue=supplement_queue,
                 log_fn=None,
+                newest_first=newest_first,
             )
           else:
             giant_pending_tail = cap_pending_stats_file_list(
                 pending_minus,
                 supplement_queue,
                 log_fn=None,
+                newest_first=newest_first,
             )
         else:
           giant_pending_tail = pending_minus
@@ -7340,13 +7462,19 @@ def run_sync_timedb_supervisor_loop(
                       host_name_ext,
                       _rescan_processed_exclusions(),
                       host_scan_hints=host_scan_hints,
+                      newest_first=newest_first,
                   ),
                   processed_exclude=_rescan_processed_exclusions(),
+                  newest_first=newest_first,
               ),
           )
           log_print(
-              "Rescanned after %d chunks; pending files (oldest first): %d"
-              % (rescan_every_chunks, len(pending_stats_files)))
+              "Rescanned after %d chunks; pending files (%s): %d"
+              % (
+                  rescan_every_chunks,
+                  "newest first" if newest_first else "oldest first",
+                  len(pending_stats_files),
+              ))
 
         _finalize_archive_slots_if_needed(
             force=True,
@@ -7448,7 +7576,7 @@ def parse_sync_timedb_argv(argv):
 
   if (
       len(argv_for_dates) == 2
-      and argv_for_dates[1] != "all"
+      and argv_for_dates[1] not in ("all", "current")
   ):
     try:
       single_day = datetime.strptime(argv_for_dates[1], "%Y-%m-%d")
@@ -7458,8 +7586,8 @@ def parse_sync_timedb_argv(argv):
       startdate = single_day
       enddate = datetime.combine(single_day.date(), datetime.max.time())
 
-  if len(argv_for_dates) > 1 and argv_for_dates[1] == 'all':
-    startdate = 'all'
+  if len(argv_for_dates) > 1 and argv_for_dates[1] in ('all', 'current'):
+    startdate = argv_for_dates[1]
     enddate = None
 
   return run_once, startdate, enddate
@@ -7472,6 +7600,10 @@ def run_sync_timedb_supervisor_from_parsed(run_once, startdate, enddate):
     log_print(
         "###Date Range of stats files to ingest: entire archive directory "
         "(no date filter)####")
+  elif startdate == 'current':
+    log_print(
+        "###Date Range of stats files to ingest: entire archive directory "
+        "(no date filter; newest-first / current mode)####")
   else:
     log_date_range("stats files to ingest", startdate, enddate)
 

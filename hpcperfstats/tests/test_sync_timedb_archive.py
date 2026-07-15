@@ -8935,6 +8935,67 @@ def test_supplement_at_max_replaces_with_older_closed_paths(tmp_path):
   assert any("pending cap supplement replace" in line for line in logs)
 
 
+def test_newest_first_pending_helpers_preserve_dispatch_order(tmp_path):
+  """Newest-first mode keeps the newest retained paths at the dispatch head."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      cap_pending_stats_file_list,
+      merge_rescan_discovered_into_pending,
+      sort_pending_stats_paths_oldest_first,
+  )
+
+  host_dir = tmp_path / "host.cluster.test"
+  host_dir.mkdir()
+  base_epoch = int(datetime(2026, 6, 1, tzinfo=timezone.utc).timestamp())
+  paths = []
+  for offset in range(3):
+    path = host_dir / str(base_epoch + offset)
+    path.write_text("1\n", encoding="utf-8")
+    paths.append(str(path))
+
+  assert sort_pending_stats_paths_oldest_first(paths, newest_first=True) == list(
+      reversed(paths))
+  assert cap_pending_stats_file_list(
+      paths,
+      2,
+      log_fn=None,
+      newest_first=True,
+  ) == [paths[2], paths[1]]
+  assert merge_rescan_discovered_into_pending(
+      [paths[0]],
+      [paths[2], paths[1]],
+      newest_first=True,
+  ) == [paths[2], paths[1], paths[0]]
+
+
+def test_collect_and_rescan_newest_first_treat_current_as_unfiltered(tmp_path):
+  """Current mode scans all closed paths and returns newest paths first."""
+  host_dir = tmp_path / ("host." + _ARCH_HOST_SUFFIX)
+  host_dir.mkdir()
+  base_epoch = int(datetime(2026, 6, 1, tzinfo=timezone.utc).timestamp())
+  paths = []
+  for offset in range(3):
+    path = host_dir / str(base_epoch + offset)
+    path.write_text("1\n", encoding="utf-8")
+    paths.append(str(path))
+
+  expected = list(reversed(paths))
+  assert collect_stats_files_in_range(
+      str(tmp_path),
+      "current",
+      None,
+      _ARCH_HOST_SUFFIX,
+      newest_first=True,
+  ) == expected
+  assert rescan_pending_stats_files(
+      str(tmp_path),
+      "current",
+      None,
+      _ARCH_HOST_SUFFIX,
+      processed_files=set(),
+      newest_first=True,
+  ) == expected
+
+
 @pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
 def test_atomic_seal_refuses_unreadable_tar(tmp_path):
   """Fix A: refuse seal when tar fails full readability scan."""

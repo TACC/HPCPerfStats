@@ -435,8 +435,8 @@ def stats_path_ingest_sort_epoch(stats_path):
     return None
 
 
-def sort_pending_stats_paths_oldest_first(paths):
-  """Return ``paths`` sorted oldest-first by :func:`stats_path_ingest_sort_epoch`."""
+def sort_pending_stats_paths_oldest_first(paths, *, newest_first=False):
+  """Return paths sorted by epoch, reversing for newest-first dispatch."""
   indexed = []
   for index, path in enumerate(paths or ()):
     if not path:
@@ -444,10 +444,13 @@ def sort_pending_stats_paths_oldest_first(paths):
     epoch = stats_path_ingest_sort_epoch(path)
     indexed.append(((epoch is None, epoch), index, path))
   indexed.sort(key=lambda item: item[0])
-  return [path for _, _, path in indexed]
+  ordered = [path for _, _, path in indexed]
+  if newest_first:
+    ordered.reverse()
+  return ordered
 
 
-def pending_minus_chunk(pending, chunk):
+def pending_minus_chunk(pending, chunk, *, newest_first=False):
   """Return ``pending`` paths whose normpath is not in ``chunk`` (oldest-first order).
 
   ``select_ingest_chunk_paths`` often returns a non-prefix subset of pending.
@@ -473,6 +476,7 @@ def merge_rescan_discovered_into_pending(
     discovered,
     *,
     processed_exclude=None,
+    newest_first=False,
 ):
   """Union incremental rescan results with in-memory pending; oldest-first.
 
@@ -494,7 +498,7 @@ def merge_rescan_discovered_into_pending(
       continue
     seen.add(path)
     merged.append(path)
-  return sort_pending_stats_paths_oldest_first(merged)
+  return sort_pending_stats_paths_oldest_first(merged, newest_first=newest_first)
 
 
 def resolve_idle_rescan_closed_paths(
@@ -517,11 +521,13 @@ def supplement_pending_paths_from_closed_paths(
     max_size,
     processed_exclude=None,
     log_fn=log_print,
+    newest_first=False,
 ):
-  """Merge snapshot ``closed_paths`` into pending and retain oldest ``max_size``.
+  """Merge snapshot ``closed_paths`` into pending and retain mode-ordered ``max_size``.
 
   Always unions ``closed_paths`` (minus exclude) even when ``paths`` is already at
-  ``max_size``, so older snapshot entries can displace newer queue heads.
+  ``max_size``, so older snapshot entries can displace newer queue heads under
+  oldest-first (and newer displace older under ``newest_first=True``).
   """
   max_size = max(1, int(max_size))
   exclude = set(processed_exclude or ())
@@ -540,14 +546,16 @@ def supplement_pending_paths_from_closed_paths(
     supplemented += 1
   if not supplemented and not closed_paths:
     return cap_pending_stats_file_list(
-        sort_pending_stats_paths_oldest_first(result),
+        sort_pending_stats_paths_oldest_first(result, newest_first=newest_first),
         max_size,
         log_fn=log_fn,
+        newest_first=newest_first,
     )
   capped = cap_pending_stats_file_list(
-      sort_pending_stats_paths_oldest_first(result),
+      sort_pending_stats_paths_oldest_first(result, newest_first=newest_first),
       max_size,
       log_fn=log_fn,
+      newest_first=newest_first,
   )
   if supplemented and log_fn is not None:
     at_max_before = len(before) >= max_size
@@ -582,6 +590,7 @@ def build_giant_supplement_pending_tail(
     supplement_queue,
     processed_exclude=None,
     log_fn=log_print,
+    newest_first=False,
 ):
   """Build giant-supplement ``pending_tail`` capped at ``supplement_queue``.
 
@@ -594,6 +603,7 @@ def build_giant_supplement_pending_tail(
       max_size=max(1, int(supplement_queue)),
       processed_exclude=processed_exclude,
       log_fn=log_fn,
+      newest_first=newest_first,
   )
 
 
@@ -604,14 +614,28 @@ def cap_pending_stats_with_blocked_retention(
     blocked_paths=None,
     handoff_priority_paths=None,
     log_fn=log_print,
+    newest_first=False,
 ):
   """Cap pending while preserving blocked head and handoff priority paths."""
   max_size = max(1, int(max_size))
-  merged = sort_pending_stats_paths_oldest_first(list(paths or ()))
+  merged = sort_pending_stats_paths_oldest_first(
+      list(paths or ()),
+      newest_first=newest_first,
+  )
   blocked = list(blocked_paths or ())
+  if newest_first:
+    blocked = sort_pending_stats_paths_oldest_first(
+        blocked,
+        newest_first=True,
+    )
   handoff = list(handoff_priority_paths or ())
   if not blocked and not handoff:
-    return cap_pending_stats_file_list(merged, max_size, log_fn=log_fn)
+    return cap_pending_stats_file_list(
+        merged,
+        max_size,
+        log_fn=log_fn,
+        newest_first=newest_first,
+    )
   reserved = list(blocked)
   reserved_set = set(reserved)
   priority_n = len(handoff)
@@ -829,8 +853,14 @@ def ingest_stream_past_calendar_day(
     pending_stats_paths,
     max_sort_epoch_for_day,
     first_timestamp_by_path=None,
+    newest_first=False,
 ):
-  """True when oldest-first ingest stream has moved past ``day_date``."""
+  """True when the ingest stream has moved past ``day_date``.
+
+  Oldest-first (default) compares the **minimum** pending sort epoch.
+  Newest-first compares the **maximum** pending sort epoch so day-close
+  coupling does not treat ancient backlog as "still on" the day.
+  """
   if day_date is None:
     return False
   fmap = first_timestamp_by_path or {}
@@ -841,15 +871,20 @@ def ingest_stream_past_calendar_day(
     return True
   if max_sort_epoch_for_day is None:
     return True
-  min_pending = None
+  extremum = None
   for path in pending_stats_paths:
     epoch = stats_path_ingest_sort_epoch(path)
     if epoch is None:
       continue
-    min_pending = epoch if min_pending is None else min(min_pending, epoch)
-  if min_pending is None:
+    if extremum is None:
+      extremum = epoch
+    elif newest_first:
+      extremum = max(extremum, epoch)
+    else:
+      extremum = min(extremum, epoch)
+  if extremum is None:
     return True
-  return min_pending > max_sort_epoch_for_day
+  return extremum > max_sort_epoch_for_day
 
 
 def daily_tar_eligible_for_day_close_submit(
@@ -2294,8 +2329,13 @@ def tail_eligible_days_from_unprocessed(
   return result
 
 
-def oldest_checkpoint_incomplete_tar(unprocessed_by_tar, *, tgz_archive_dir):
-  """Return oldest daily ``.tar`` with tar-aligned on-disk unprocessed paths."""
+def oldest_checkpoint_incomplete_tar(
+    unprocessed_by_tar,
+    *,
+    tgz_archive_dir,
+    newest_first=False,
+):
+  """Return the selected daily tar with tar-aligned on-disk unprocessed paths."""
   if not tgz_archive_dir or not unprocessed_by_tar:
     return ""
   ranked = []
@@ -2332,7 +2372,7 @@ def oldest_checkpoint_incomplete_tar(unprocessed_by_tar, *, tgz_archive_dir):
   if not ranked:
     return ""
   ranked.sort(key=lambda item: item[0])
-  return ranked[0][1]
+  return ranked[-1][1] if newest_first else ranked[0][1]
 
 
 def build_chunk_day_histogram(paths, tgz_archive_dir):
@@ -2360,6 +2400,7 @@ def reconcile_orphan_inflight_for_oldest_tar(
     reclaim_throttle_s=30.0,
     now=None,
     log_fn=None,
+    newest_first=False,
 ):
   """Return blocked inflight paths with no active archive job or pending append."""
   import time
@@ -2527,8 +2568,9 @@ def select_ingest_chunk_paths(
     chunk_size,
     handoff_priority_paths=None,
     log_fn=None,
+    newest_first=False,
 ):
-  """While oldest checkpoint-blocked tar has work, restrict chunk to that tar only."""
+  """While the selected checkpoint-blocked tar has work, restrict chunk to it."""
   target_chunk_size = int(chunk_size)
   if target_chunk_size <= 0:
     return []
@@ -2620,10 +2662,17 @@ def select_ingest_chunk_paths(
     ]
     if not aligned_blocked and pending_list:
       if log_fn is not None:
+        gate_name = (
+            "youngest_day_chunk_gate_cross_day_defer"
+            if newest_first else "oldest_day_chunk_gate_cross_day_defer"
+        )
+        tar_name = "youngest_tar" if newest_first else "oldest_tar"
         log_fn(
-            "sync_timedb: oldest_day_chunk_gate_cross_day_defer oldest_tar=%s "
+            "sync_timedb: %s %s=%s "
             "calendar_days=%s incomplete_n=%d pending_n=%d"
             % (
+                gate_name,
+                tar_name,
                 oldest_tar_norm,
                 build_chunk_day_histogram(checkpoint_incomplete_on_disk, tgz_archive_dir),
                 len(checkpoint_incomplete_on_disk),
@@ -2634,10 +2683,17 @@ def select_ingest_chunk_paths(
       return handoff_lead + tail
     if aligned_blocked:
       if log_fn is not None:
+        gate_name = (
+            "youngest_day_chunk_gate_fallback"
+            if newest_first else "oldest_day_chunk_gate_fallback"
+        )
+        tar_name = "youngest_tar" if newest_first else "oldest_tar"
         log_fn(
-            "sync_timedb: oldest_day_chunk_gate_fallback oldest_tar=%s "
+            "sync_timedb: %s %s=%s "
             "calendar_days=%s incomplete_n=%d"
             % (
+                gate_name,
+                tar_name,
                 oldest_tar_norm,
                 build_chunk_day_histogram(aligned_blocked, tgz_archive_dir),
                 len(aligned_blocked),
@@ -2646,10 +2702,17 @@ def select_ingest_chunk_paths(
       oldest_only = aligned_blocked
     else:
       if log_fn is not None:
+        gate_name = (
+            "youngest_day_chunk_gate_fallback"
+            if newest_first else "oldest_day_chunk_gate_fallback"
+        )
+        tar_name = "youngest_tar" if newest_first else "oldest_tar"
         log_fn(
-            "sync_timedb: oldest_day_chunk_gate_fallback oldest_tar=%s "
+            "sync_timedb: %s %s=%s "
             "calendar_days=%s incomplete_n=%d"
             % (
+                gate_name,
+                tar_name,
                 oldest_tar_norm,
                 build_chunk_day_histogram(checkpoint_incomplete_on_disk, tgz_archive_dir),
                 len(checkpoint_incomplete_on_disk),
@@ -2671,10 +2734,17 @@ def select_ingest_chunk_paths(
       if len(oldest_slice) + len(pad) >= target_chunk_size:
         break
   if pad and log_fn is not None:
+    gate_name = (
+        "youngest_day_chunk_gate_pad"
+        if newest_first else "oldest_day_chunk_gate_pad"
+    )
+    tar_name = "youngest_tar" if newest_first else "oldest_tar"
     log_fn(
-        "sync_timedb: oldest_day_chunk_gate_pad oldest_tar=%s "
+        "sync_timedb: %s %s=%s "
         "oldest_n=%d chunk_pad_n=%d chunk_target=%d"
         % (
+            gate_name,
+            tar_name,
             oldest_tar_norm,
             len(oldest_slice),
             len(pad),
@@ -2720,6 +2790,7 @@ def prepend_checkpoint_incomplete_paths_to_pending(
     blocked_paths,
     *,
     exclude=None,
+    newest_first=False,
 ):
   """Merge ``blocked_paths`` at the head of ``pending`` (deduped, order preserved)."""
   exclude_set = set(exclude or ())
@@ -2750,13 +2821,19 @@ def try_reuse_pending_reconcile_unprocessed_cache(
     last_incomplete_n,
     last_oldest_tar,
     stall_incomplete_n=None,
+    newest_first=False,
+    last_newest_first=None,
 ):
   """Return ``(cached, oldest_tar, incomplete_n, reason)`` when skip is safe.
 
   Skips a full live unprocessed rebuild when the prior reconcile fingerprint
-  (oldest tar + incomplete_n) is still within ``ttl_s``.
+  (target tar + incomplete_n + ordering mode) is still within ``ttl_s``.
   """
   if cached is None:
+    return None
+  if last_newest_first is not None and bool(last_newest_first) != bool(
+      newest_first
+  ):
     return None
   try:
     age = float(mono_now) - float(last_mono or 0.0)
@@ -6987,7 +7064,7 @@ def _collect_stats_files_in_host_dir(
     else:
       sort_epoch = st_mtime
 
-    if startdate == "all":
+    if startdate in ("all", "current"):
       stats_files.append((stats_file.path, sort_epoch))
       continue
 
@@ -7012,6 +7089,8 @@ def collect_stats_files_in_range(
     host_scan_hints=None,
     force_full_scan=False,
     log_fn=None,
+    *,
+    newest_first=False,
 ):
   """Scan ``archive_dir`` for stats files in immediate subdirs whose names end
   with ``host_name_ext`` (same value as ``DEFAULT.host_name_ext`` in ini).
@@ -7019,10 +7098,11 @@ def collect_stats_files_in_range(
   Skips the live segment: epoch files still hard-linked to ``current`` (same
   inode) are omitted so sync does not race with listend appends.
 
-  When startdate is ``'all'``, every eligible file is returned (no date
+  When startdate is ``'all'`` or ``'current'``, every eligible file is returned (no date
   filtering). Otherwise files are included if mtime or filename epoch falls in
   (startdate - 1 day, enddate]. Returns paths sorted oldest-first (by filename
-  epoch when numeric, else mtime). If ``host_name_ext`` is empty after strip,
+  epoch when numeric, else mtime), unless ``newest_first`` is requested. If
+  ``host_name_ext`` is empty after strip,
   returns an empty list.
   """
   suffix = (host_name_ext or "").strip()
@@ -7077,6 +7157,8 @@ def collect_stats_files_in_range(
   # Sort by effective timestamp ascending (oldest files first); None values
   # sort last. Then return just the paths.
   stats_files.sort(key=lambda item: (item[1] is None, item[1]))
+  if newest_first:
+    stats_files.reverse()
   if log_fn is not None and len(host_dirs) > 1:
     log_fn(
         "collect_stats_files_in_range: hosts=%d workers=%d paths=%d elapsed_s=%.3f"
@@ -7104,8 +7186,9 @@ def rescan_pending_stats_files(
     force_snapshot_paths=False,
     log_fn=None,
     progress_interval=5000,
+    newest_first=False,
 ):
-  """Return oldest-first files still pending after excluding processed files."""
+  """Return ordered files still pending after excluding processed files."""
   should_force_full = True
   if isinstance(host_scan_hints, dict):
     should_force_full = (
@@ -7117,11 +7200,16 @@ def rescan_pending_stats_files(
   use_snapshot = (
       (should_force_full or force_snapshot_paths)
       and startup_closed_paths is not None
-      and startdate in ("all", None, "")
+      and startdate in ("all", "current", None, "")
       and enddate in (None, "")
   )
   if use_snapshot:
     discovered_files = list(startup_closed_paths)
+    if newest_first:
+      discovered_files = sort_pending_stats_paths_oldest_first(
+          discovered_files,
+          newest_first=True,
+      )
   else:
     discovered_files = collect_stats_files_in_range(
         directory,
@@ -7130,6 +7218,7 @@ def rescan_pending_stats_files(
         host_name_ext,
         host_scan_hints=host_scan_hints,
         force_full_scan=should_force_full,
+        newest_first=newest_first,
     )
   if isinstance(processed_files, set):
     exclude = processed_files
@@ -7161,22 +7250,32 @@ def rescan_pending_stats_files(
   return result
 
 
-def cap_pending_stats_file_list(paths, max_size, log_fn=log_print):
-  """Return oldest-first pending paths capped to ``max_size`` (memory bound).
+def cap_pending_stats_file_list(
+    paths,
+    max_size,
+    log_fn=log_print,
+    *,
+    newest_first=False,
+):
+  """Return ordered pending paths capped to ``max_size`` (memory bound).
 
   When truncating, newer paths are dropped and the oldest ``max_size`` entries
-  are retained (supervisor ingest order).
+  are retained by default. Newest-first mode retains the newest paths at the
+  dispatch head.
   """
   max_size = max(1, int(max_size))
   if len(paths) <= max_size:
-    return paths
+    return list(paths)
   if log_fn is not None:
     log_fn(
         "Pending stats file list truncated pending=%d max=%d"
         % (len(paths), max_size),
         flush=True,
     )
-  return list(paths[:max_size])
+  if not newest_first:
+    return list(paths[:max_size])
+  ordered = sort_pending_stats_paths_oldest_first(paths)
+  return list(reversed(ordered[-max_size:]))
 
 
 def build_archive_mapping(

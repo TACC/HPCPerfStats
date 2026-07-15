@@ -110,11 +110,13 @@ def iter_giant_supplement_paths(
     large_max_bytes=None,
     limit=None,
     exclude=None,
+    newest_first=False,
 ):
-  """Oldest-first two-pass supplement: ``<max_bytes`` then ``[max_bytes, large_max)``.
+  """Ordered two-pass supplement: ``<max_bytes`` then ``[max_bytes, large_max)``.
 
   Soft max defaults to 1 GiB; large max defaults to 8 GiB. Paths at/above
-  ``large_max_bytes`` are never selected. Each path is yielded at most once.
+  ``large_max_bytes`` are never selected. Each path is yielded at most once;
+  callers supply ``pending_tail`` in the intended dispatch order.
   """
   if max_bytes is None:
     max_bytes = int(cfg.get_sync_ingest_giant_pool_supplement_max_bytes())

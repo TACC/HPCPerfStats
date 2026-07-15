@@ -826,6 +826,7 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
 
   importlib.reload(cfg)
   assert cfg.get_sync_ingest_queue_max_size() == 3000
+  assert cfg.get_sync_ingest_current_proximity_days() == 2
   assert cfg.get_sync_ingest_chunk_size() == 3000
   assert cfg.get_sync_ingest_chunk_size() == cfg.get_sync_ingest_queue_max_size()
   assert cfg.get_sync_archive_queue_max_size() == 1000
@@ -869,6 +870,7 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
       "total_cores = 4",
       "total_cores = 4\n"
       "sync_ingest_queue_max_size = 111\n"
+      "sync_ingest_current_proximity_days = -3\n"
       "sync_archive_queue_max_size = 222\n"
       "sync_archive_retry_max_attempts = 7\n"
       "sync_archive_retry_backoff_base_seconds = 2.5\n"
@@ -897,6 +899,7 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
 
   importlib.reload(cfg)
   assert cfg.get_sync_ingest_queue_max_size() == 111
+  assert cfg.get_sync_ingest_current_proximity_days() == 0
   assert cfg.get_sync_ingest_chunk_size() == 111
   assert cfg.get_sync_archive_queue_max_size() == 222
   assert cfg.get_sync_archive_retry_max_attempts() == 7
@@ -1191,7 +1194,7 @@ def test_archive_janitor_and_dispatch_defaults(temp_ini, monkeypatch):
   assert cfg.get_sync_day_close_manifest_stale_seconds() == 7200.0
   assert cfg.get_sync_day_close_raw_removal_max_deletes_per_pass() == 0
   assert cfg.get_archive_keep_uncompressed_tar() is False
-  assert cfg.get_archive_today_uncompressed_tar_grace_hours() == 8.0
+  assert cfg.get_archive_today_uncompressed_tar_grace_hours() == 24.0
   assert cfg.get_archive_maintenance_idle_seconds() == 300.0
   assert cfg.get_sync_archive_max_inflight_jobs() == cfg.get_sync_archive_pool_processes()
   assert cfg.get_sync_archive_worker_stall_seconds() == 600.0

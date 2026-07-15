@@ -100,6 +100,7 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_overprovision_archive_multiplier"),
     ("PIPELINE", "sync_overprovision_metrics_multiplier"),
     ("PIPELINE", "sync_ingest_queue_max_size"),
+    ("PIPELINE", "sync_ingest_current_proximity_days"),
     ("PIPELINE", "sync_archive_queue_max_size"),
     ("PIPELINE", "sync_timedb_archive_max_concurrent_sealed_days"),
     ("PIPELINE", "sync_archive_retry_max_attempts"),
@@ -281,6 +282,7 @@ INI_OPTION_DEFAULTS = {
     'sync_overprovision_archive_multiplier': '1.0',
     'sync_overprovision_metrics_multiplier': '1.0',
     'sync_ingest_queue_max_size': '3000',
+    'sync_ingest_current_proximity_days': '2',
     'sync_archive_queue_max_size': '1000',
     'sync_timedb_archive_max_concurrent_sealed_days': '1',
     'sync_archive_retry_max_attempts': '5',
@@ -339,7 +341,7 @@ INI_OPTION_DEFAULTS = {
     'archive_dir': None,
     'daily_archive_dir': None,
     'archive_keep_uncompressed_tar': 'no',
-    'archive_today_uncompressed_tar_grace_hours': '8.0',
+    'archive_today_uncompressed_tar_grace_hours': '24.0',
     'archive_zstd_threads': '0',
     'ingest_zstd_threads': '4',
     'archive_zstd_level': '7',
@@ -2388,6 +2390,12 @@ def get_sync_ingest_queue_max_size():
   """Bound for in-memory ingest work queue (default 3000; no-supplement process queue)."""
   _ensure_cfg_loaded()
   return max(1, _pipeline_getint("sync_ingest_queue_max_size"))
+
+
+def get_sync_ingest_current_proximity_days():
+  """Days within which CLI ``all`` exits when near a live ``current`` heartbeat (default 2)."""
+  _ensure_cfg_loaded()
+  return max(0, _pipeline_getint("sync_ingest_current_proximity_days"))
 
 
 def get_sync_archive_queue_max_size():

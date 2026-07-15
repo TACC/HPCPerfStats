@@ -280,6 +280,9 @@ sync_pool_process_cap = 16
 # Max in-memory ingest work queue size (default 3000; also drives ingest chunk size).
 sync_ingest_queue_max_size = 3000
 
+# Days within which CLI all exits when near a live current heartbeat (default 2).
+sync_ingest_current_proximity_days = 2
+
 # Max in-memory archive work queue size (default 1000).
 # sync_archive_queue_max_size = 1000
 
@@ -444,8 +447,8 @@ sync_ingest_malloc_trim_after_file = yes
 # Prior days drop at seal when raw is gone; calendar-today uses grace hours below.
 # archive_keep_uncompressed_tar = no
 
-# Hours after local midnight to retain today's uncompressed .tar when global keep is off (default 8).
-# archive_today_uncompressed_tar_grace_hours = 8
+# Hours after local midnight to retain today's uncompressed .tar when global keep is off (default 24).
+archive_today_uncompressed_tar_grace_hours = 24
 
 # zstd -T thread count for niced seal/restore/decompress; 0 uses -T0 (all cores per job, default).
 # archive_zstd_threads = 0
