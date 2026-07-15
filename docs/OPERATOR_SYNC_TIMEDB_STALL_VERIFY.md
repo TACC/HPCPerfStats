@@ -114,8 +114,9 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs --timestamps pipeline 2>&1 > /tmp/pipeline-full.log
 python3 scripts/measure_pipeline_ingest_rate.py --log-file /tmp/pipeline-full.log --since-minutes 240
 
-# Skip pre-boot lines (after last startup maintenance idle / pending rescan)
-python3 scripts/measure_pipeline_ingest_rate.py --log-file /tmp/pipeline-full.log --boot-only
+# Default window starts at last ``startup ingest gate cleared`` (excludes supervisor startup).
+# Opt in to pre-gate lines only when comparing full container uptime:
+python3 scripts/measure_pipeline_ingest_rate.py --log-file /tmp/pipeline-full.log --include-startup
 ```
 
 Stdout prints only outcome keys (`listend_closed_per_min`, `sync_full_ingest_per_min`, `verdict_full_ingest`, `eta_hours_*`, etc.). **WINNING** means sync is catching up or even; **LOSING** means listend outruns sync. Warnings go to stderr.

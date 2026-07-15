@@ -204,10 +204,63 @@ def test_boot_only_skips_pre_boot_lines(mod):
         _ts(71) + "ingest file path=/arch/host/1 outcome=ingested elapsed_s=1.0 ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
         _ts(72) + "ingest file path=/arch/host/2 outcome=ingested elapsed_s=1.0 ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
     ]
-    outcomes = mod.analyze_lines(lines, boot_only=True)
+    # Default excludes startup; --boot-only remains an explicit alias.
+    outcomes = mod.analyze_lines(lines)
     assert outcomes["backlog_at_start"] == "100"
     assert outcomes["backlog_latest"] == "80"
     assert outcomes["ingest_queue_depth_latest"] == "80"
+    assert "T10:05:00" in outcomes["ingest_start_utc"] or outcomes["ingest_start_utc"].endswith(
+        "10:05:00+00:00"
+    )
+
+
+def test_measurement_window_starts_at_ingest_gate_not_startup(mod):
+    """Elapsed window must begin at gate cleared, not supervisor startup lines."""
+    lines = [
+        _ts(0) + "sync_timedb: startup maintenance pass reason=startup",
+        _ts(30) + "sync_timedb: pending rescan done pending=5000 elapsed_s=120.0",
+        _ts(60) + "startup ingest gate cleared; ingest may begin",
+        _ts(61) + "sync_timedb: pending rescan done pending=4000 elapsed_s=1.0",
+        _ts(90) + "Pending stats file list truncated pending=3500 max=2000",
+        _ts(120)
+        + "ingest file path=/arch/host/1 outcome=ingested elapsed_s=1.0 "
+        "ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
+    ]
+    outcomes = mod.analyze_lines(lines)
+    # 60 min of startup must not inflate the window: gate@60 → last@120 = 60 min.
+    assert float(outcomes["window_minutes"]) == pytest.approx(60.0, abs=0.1)
+    assert outcomes["backlog_at_start"] == "4000"
+    assert float(outcomes["elapsed_hours"]) == pytest.approx(1.0, abs=0.01)
+
+
+def test_later_pending_rescans_do_not_move_ingest_start(mod):
+    """Catch-up pending rescans must not reset the measurement window."""
+    lines = [
+        _ts(0) + "startup ingest gate cleared; ingest may begin",
+        _ts(1) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
+        _ts(30) + "sync_timedb: pending rescan done pending=800 elapsed_s=1.0",
+        _ts(60) + "sync_timedb: pending rescan done pending=600 elapsed_s=1.0",
+        _ts(90)
+        + "ingest file path=/arch/host/1 outcome=ingested elapsed_s=1.0 "
+        "ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
+    ]
+    outcomes = mod.analyze_lines(lines)
+    assert float(outcomes["window_minutes"]) == pytest.approx(90.0, abs=0.1)
+    assert outcomes["backlog_at_start"] == "1000"
+
+
+def test_include_startup_keeps_pre_gate_window(mod):
+    lines = [
+        _ts(0) + "sync_timedb: pending rescan done pending=9999 elapsed_s=1.0",
+        _ts(60) + "startup ingest gate cleared; ingest may begin",
+        _ts(90) + "sync_timedb: pending rescan done pending=100 elapsed_s=1.0",
+        _ts(120)
+        + "ingest file path=/arch/host/1 outcome=ingested elapsed_s=1.0 "
+        "ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
+    ]
+    outcomes = mod.analyze_lines(lines, exclude_startup=False)
+    assert float(outcomes["window_minutes"]) == pytest.approx(120.0, abs=0.1)
+    assert outcomes["backlog_at_start"] == "9999"
 
 
 def test_since_minutes_window(mod):
@@ -256,8 +309,10 @@ def test_stdout_only_key_count(mod):
     assert len(lines) == 25
     assert "ingest_queue_depth_latest=" in text
     assert "ingest_queue_depth_at_start=" in text
+    assert "ingest_start_utc=" in text
     assert "estimated_finish_local=" in text
     assert "estimated_finish_basis=" in text
+    assert "container_start_utc=" not in text
 
 
 def test_cli_script_runs_from_repo(tmp_path):

@@ -13,6 +13,11 @@ Do **not** mix those with ``Throughput telemetry … backlog=N``, which is cappe
 in-memory ``len(pending_stats_files)`` (≤ sync_ingest_queue_max_size, often 2000).
 Queue occupancy is reported separately as ingest_queue_depth_*.
 
+The measurement window starts at **ingest start** by default (last
+``startup ingest gate cleared; ingest may begin``), not supervisor/startup
+maintenance. Use ``--include-startup`` to measure from the first timestamped
+line. Fallback when no gate line is present: last ``chunk imap start``.
+
 ``estimated_finish_local`` is log_end (or now) plus the first usable ETA among
 empirical / full_ingest / archive_done, formatted in the host local timezone
 (``YYYY-MM-DD HH:MM:SS ±HHMM``). ``estimated_finish_basis`` names which ETA was used.
@@ -77,7 +82,10 @@ _THROUGHPUT_BACKLOG_RE = re.compile(
 )
 _BOOT_MARKERS = (
     "startup ingest gate cleared; ingest may begin",
-    "sync_timedb: pending rescan done pending=",
+)
+# Used only when no ingest-gate line is present in the log dump.
+_INGEST_START_FALLBACK_MARKERS = (
+    "sync_timedb: chunk imap start",
 )
 # Disk pending ≫ queue depth by at least this factor → saturation WARN.
 _QUEUE_SATURATION_DISK_FACTOR = 2
@@ -170,27 +178,41 @@ def _record_timestamp(metrics: LogMetrics, ts: Optional[datetime]) -> None:
         metrics.last_ts = ts
 
 
-def _find_boot_cutoff(lines: Iterable[str]) -> Optional[int]:
-    """Return index of last boot marker line (inclusive), or None."""
-    last_idx: Optional[int] = None
+def _find_ingest_start_cutoff(lines: Iterable[str]) -> Optional[int]:
+    """Return index of last ingest-start marker line (inclusive), or None.
+
+    Prefer ``startup ingest gate cleared`` so later catch-up ``pending rescan
+    done`` lines do not shrink the window. Fall back to ``chunk imap start``.
+    """
+    last_gate: Optional[int] = None
+    last_fallback: Optional[int] = None
     for idx, line in enumerate(lines):
         _, body = _strip_log_prefix(line)
         if any(marker in body for marker in _BOOT_MARKERS):
-            last_idx = idx
-    return last_idx
+            last_gate = idx
+        elif any(marker in body for marker in _INGEST_START_FALLBACK_MARKERS):
+            last_fallback = idx
+    if last_gate is not None:
+        return last_gate
+    return last_fallback
+
+
+def _find_boot_cutoff(lines: Iterable[str]) -> Optional[int]:
+    """Alias for :func:`_find_ingest_start_cutoff` (historical name)."""
+    return _find_ingest_start_cutoff(lines)
 
 
 def _iter_filtered_lines(
     lines: Iterable[str],
     *,
     since_minutes: Optional[float],
-    boot_only: bool,
+    exclude_startup: bool,
     reference_end: Optional[datetime] = None,
 ) -> Iterator[tuple[Optional[datetime], str]]:
     materialized = list(lines)
     start_idx = 0
-    if boot_only:
-        boot_idx = _find_boot_cutoff(materialized)
+    if exclude_startup:
+        boot_idx = _find_ingest_start_cutoff(materialized)
         if boot_idx is not None:
             start_idx = boot_idx
 
@@ -218,13 +240,16 @@ def parse_log_lines(
     lines: Iterable[str],
     *,
     since_minutes: Optional[float] = None,
-    boot_only: bool = False,
+    exclude_startup: bool = True,
+    boot_only: Optional[bool] = None,
 ) -> LogMetrics:
+    if boot_only is not None:
+        exclude_startup = bool(boot_only)
     metrics = LogMetrics()
     for ts, body in _iter_filtered_lines(
         lines,
         since_minutes=since_minutes,
-        boot_only=boot_only,
+        exclude_startup=exclude_startup,
     ):
         _record_timestamp(metrics, ts)
 
@@ -266,13 +291,16 @@ def _report_count_from_unlink_sum(
     lines: Iterable[str],
     *,
     since_minutes: Optional[float] = None,
-    boot_only: bool = False,
+    exclude_startup: bool = True,
+    boot_only: Optional[bool] = None,
 ) -> int:
+    if boot_only is not None:
+        exclude_startup = bool(boot_only)
     count = 0
     for _ts, body in _iter_filtered_lines(
         lines,
         since_minutes=since_minutes,
-        boot_only=boot_only,
+        exclude_startup=exclude_startup,
     ):
         if _LISTEND_UNLINKS_RE.search(body):
             count += 1
@@ -284,8 +312,11 @@ def resolve_window_minutes(
     *,
     lines: Optional[Iterable[str]] = None,
     since_minutes: Optional[float] = None,
-    boot_only: bool = False,
+    exclude_startup: bool = True,
+    boot_only: Optional[bool] = None,
 ) -> float:
+    if boot_only is not None:
+        exclude_startup = bool(boot_only)
     if since_minutes is not None and since_minutes > 0:
         return float(since_minutes)
     if metrics.first_ts is not None and metrics.last_ts is not None:
@@ -296,7 +327,7 @@ def resolve_window_minutes(
         report_count = _report_count_from_unlink_sum(
             lines,
             since_minutes=since_minutes,
-            boot_only=boot_only,
+            exclude_startup=exclude_startup,
         )
         if report_count > 0:
             return report_count * LISTEND_REPORT_WINDOW_MINUTES
@@ -479,7 +510,7 @@ def build_outcomes(
         "verdict_archive_done": verdict_archive,
         "backlog_gap_full_ingest_per_min": _fmt_rate(listend_rate - ingest_rate),
         "backlog_gap_archive_done_per_min": _fmt_rate(listend_rate - archive_rate),
-        "container_start_utc": _fmt_ts(metrics.first_ts),
+        "ingest_start_utc": _fmt_ts(metrics.first_ts),
         "log_end_utc": _fmt_ts(metrics.last_ts),
         "elapsed_hours": f"{elapsed_hours:.3f}",
         "backlog_at_start": _fmt_optional_int(backlog_start),
@@ -559,7 +590,7 @@ def format_stdout(outcomes: dict[str, str]) -> str:
         "verdict_archive_done",
         "backlog_gap_full_ingest_per_min",
         "backlog_gap_archive_done_per_min",
-        "container_start_utc",
+        "ingest_start_utc",
         "log_end_utc",
         "elapsed_hours",
         "backlog_at_start",
@@ -582,19 +613,22 @@ def analyze_lines(
     lines: Iterable[str],
     *,
     since_minutes: Optional[float] = None,
-    boot_only: bool = False,
+    exclude_startup: bool = True,
+    boot_only: Optional[bool] = None,
 ) -> dict[str, str]:
+    if boot_only is not None:
+        exclude_startup = bool(boot_only)
     line_list = list(lines)
     metrics = parse_log_lines(
         line_list,
         since_minutes=since_minutes,
-        boot_only=boot_only,
+        exclude_startup=exclude_startup,
     )
     window = resolve_window_minutes(
         metrics,
         lines=line_list,
         since_minutes=since_minutes,
-        boot_only=boot_only,
+        exclude_startup=exclude_startup,
     )
     if window < 1.0:
         raise ValueError(
@@ -659,9 +693,20 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Only analyze log lines with timestamps in the last N minutes",
     )
     parser.add_argument(
+        "--include-startup",
+        action="store_true",
+        help=(
+            "Include pre-ingest startup lines in the measurement window "
+            "(default starts at last 'startup ingest gate cleared')"
+        ),
+    )
+    parser.add_argument(
         "--boot-only",
         action="store_true",
-        help="Skip lines before last startup/pending-rescan boot marker",
+        help=(
+            "Deprecated alias: startup is already excluded by default "
+            "(same as omitting --include-startup)"
+        ),
     )
     return parser.parse_args(argv)
 
@@ -687,7 +732,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         outcomes = analyze_lines(
             lines,
             since_minutes=args.since_minutes,
-            boot_only=args.boot_only,
+            exclude_startup=not args.include_startup,
         )
     except (ValueError, RuntimeError, OSError) as exc:
         print("ERROR: %s" % exc, file=sys.stderr)
