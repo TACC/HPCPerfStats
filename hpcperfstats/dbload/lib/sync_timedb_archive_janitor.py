@@ -184,6 +184,7 @@ class ArchiveJanitor:
       get_chunk_day_tokens=None,
       get_startup_ingest_gate_cleared=None,
       process_title: str = "sync_timedb.py",
+      day_close_enabled: bool = True,
   ):
     self.archive_data_dir = archive_data_dir
     self.host_name_ext = host_name_ext
@@ -213,6 +214,8 @@ class ArchiveJanitor:
         get_startup_ingest_gate_cleared or (lambda: True)
     )
     self.process_title = process_title
+    # CLI ``backlog`` dual-mode: ingest only; ``current``/date-range own day-close.
+    self.day_close_enabled = bool(day_close_enabled)
     self._defer_tracker = JanitorDeferTracker()
     self._allow_tick_chaining = True
     self._maintenance_pass_cached_inputs = None
@@ -285,6 +288,8 @@ class ArchiveJanitor:
           debt_migrated = True
           continue
         if kind in _DAY_PIPELINE_KINDS:
+          if not self.day_close_enabled:
+            continue
           tar_norm = os.path.normpath(tar_path)
           if kind != DebtKind.DAY_CLOSE:
             debt_migrated = True
@@ -404,6 +409,8 @@ class ArchiveJanitor:
     return True
 
   def _enqueue_day_close(self, tar_path: str, *, persist: bool = True) -> bool:
+    if not self.day_close_enabled:
+      return False
     with self._debt_lock:
       added = self._enqueue_day_close_locked(tar_path, persist=False)
       if persist:
@@ -839,6 +846,8 @@ class ArchiveJanitor:
       disqualified: Optional[Set[str]] = None,
   ) -> Tuple[bool, str]:
     """Enqueue manifest + ``DAY_CLOSE`` debt when checkpoint-complete eligibility passes."""
+    if not self.day_close_enabled:
+      return False, "day_close_disabled"
     coord = self.day_close_manifest_coordinator
     if coord is not None:
       if hasattr(coord, "enqueue_day_close_result"):
@@ -1002,6 +1011,8 @@ class ArchiveJanitor:
       slot_budget: Optional[int] = None,
       entries=None,
   ) -> Set[str]:
+    if not self.day_close_enabled:
+      return set()
     if not self.tgz_archive_dir:
       return set()
     if entries is None:
@@ -1445,6 +1456,11 @@ class ArchiveJanitor:
             flush=True,
         )
         self._pending_signal = True
+        return
+
+      if not self.day_close_enabled:
+        # CLI ``backlog`` dual-mode: ingest-only; do not discover/enqueue/close.
+        self._ticks_completed += 1
         return
 
       tick_t0 = time.time()
@@ -1932,6 +1948,8 @@ class ArchiveJanitor:
       validation_cache,
       disqualified: Set[str],
   ) -> bool:
+    if not self.day_close_enabled:
+      return False
     tar_norm = os.path.normpath(tar_path)
     coord = self.day_raw_removal_coordinator
     if not self._day_phase_at_least(tar_norm, "sealed"):

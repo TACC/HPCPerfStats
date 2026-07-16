@@ -575,7 +575,7 @@ def build_archive_maintenance_snapshot(
   snap_t0 = time.time()
   hints_data = load_archive_maint_hints(archive_data_dir)
   closed_paths = collect_stats_files_in_range(
-      archive_data_dir, "all", None, host_name_ext, log_fn=log_fn)
+      archive_data_dir, "backlog", None, host_name_ext, log_fn=log_fn)
   first_timestamp_by_path, head_identity_by_path, head_read_stats = (
       collect_head_metadata_for_paths(
           closed_paths, hints_data=hints_data, log_fn=log_fn)

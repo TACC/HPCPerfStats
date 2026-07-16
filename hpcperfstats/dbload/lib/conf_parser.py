@@ -2409,7 +2409,7 @@ def get_sync_ingest_rescan_full_every():
 
 
 def get_sync_ingest_current_proximity_days():
-  """Days within which CLI ``all`` exits when near a live ``current`` heartbeat (default 2)."""
+  """Days within which CLI ``backlog`` exits when near a live ``current`` heartbeat (default 2)."""
   _ensure_cfg_loaded()
   return max(0, _pipeline_getint("sync_ingest_current_proximity_days"))
 

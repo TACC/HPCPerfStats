@@ -20,7 +20,7 @@ Attach the `test_runs/day-close-loop-regression-battery-*.log` path to the PR or
 |------|------|---------------|
 | **T0 smoke** | T+15 min after deploy | Pipeline up; at least one `chunk ingest summary` **or** documented giant-chunk defer (not an error by itself); optional boot thread census (below) |
 | **T1 progress** | T+4 h **or** after first giant `archive_job_done` for backlog head day | Oldest `waiting_on_ingest` day: `unprocessed` **not frozen** vs prior sample; no repeating `oldest_day_chunk_gate_stall` with same `incomplete_n` |
-| **T1 progress (`current`)** | Same window while CLI ``current`` (newest-first) runs | Descending `epochs=` on `chunk dispatch begin`; `youngest_day_chunk_gate` / `youngest_day_chunk_gate_pad` (not ascending oldest-gate for ``all``); heartbeat sidecar/Redis advances with active work |
+| **T1 progress (`current`)** | Same window while CLI ``current`` (newest-first) runs | Descending `epochs=` on `chunk dispatch begin`; `youngest_day_chunk_gate` / `youngest_day_chunk_gate_pad` (not ascending oldest-gate for ``backlog``); heartbeat sidecar/Redis advances with active work |
 | **T2 catch-up** | T+24 h or when head day advances | New `chunk ingest summary` cadence; June-scale head day `unprocessed` trending down; `ingest_stall_watchdog` absent |
 
 ### T0 / T1 — find-based pending discovery (every chunk + mtime window)
@@ -344,11 +344,16 @@ grep 'pending reconcile cap' /tmp/pipeline-full.log | tail -20
 
 ### T1 — CLI ``current`` (newest-first) dual verify
 
-Run **one** recommended ``current`` process per archive (last writer wins the heartbeat; multiple ``current`` processes are unsupported). Pair with ``all`` for backlog; ``all`` exits when its next oldest pending day is within ``sync_ingest_current_proximity_days`` (default **2**) of ``current``'s fresh heartbeat.
+Run **one** recommended ``current`` process per archive (last writer wins the heartbeat; multiple ``current`` processes are unsupported). Pair with ``backlog`` for backlog ingest; ``backlog`` exits when its next oldest pending day is within ``sync_ingest_current_proximity_days`` (default **2**) of ``current``'s fresh heartbeat.
+
+**Dual-mode day-close ownership (2026-07):** CLI ``backlog`` is **ingest-only for the cold path** — it must **not** discover, enqueue, or run ``DAY_CLOSE`` (no immediate day_close, no janitor seal/verify/delete). Startup snapshot + boot handoff for ingest catch-up still run. Expect log ``day_close disabled mode=backlog owner=current_or_date_range``. ``current`` (or a date-range run) owns day-close and the day-close sidecars (``.sync_timedb_async_day_close.json``, ``.sync_archive_maint_hints.json`` day_phases/debt, ``.sync_timedb_day_raw_removal/``). Heartbeat remains one-way (``current`` writes / ``backlog`` reads). Shared ingest checkpoint / append metadata may still be written by both processes.
 
 ```bash
+# T1 — dual-mode: all must not run day_close; current may
+grep -E 'day_close disabled mode=backlog|janitor: day_close |discover_ready_day_close|newest-first / current mode|backlog exiting near current' /tmp/pipeline-full.log | tail -80
+
 # T1 — current scheduling (descending epochs / youngest gate)
-grep -E 'chunk dispatch begin|youngest_day_chunk_gate|newest-first / current mode|all exiting near current' /tmp/pipeline-full.log | tail -80
+grep -E 'chunk dispatch begin|youngest_day_chunk_gate|newest-first / current mode|backlog exiting near current' /tmp/pipeline-full.log | tail -80
 
 grep -E 'youngest_day_chunk_gate(_pad|_stall|_cross_day_defer|_fallback)? ' /tmp/pipeline-full.log | tail -40
 
@@ -356,7 +361,9 @@ grep -E 'youngest_day_chunk_gate(_pad|_stall|_cross_day_defer|_fallback)? ' /tmp
 ls -la /path/to/archive/.sync_timedb_current_heartbeat.json 2>/dev/null || true
 ```
 
-**Pass (T1 ``current``):** ``chunk dispatch begin`` ``epochs=`` trend **descending** (newest first); expect **`youngest_day_chunk_gate`** / **`youngest_day_chunk_gate_pad`** (not the ``all`` ``oldest_day_*`` grammar for the same run). Missing/stale heartbeat must **not** stop ``all`` — only a fresh heartbeat near the pending head day triggers ``all exiting near current``.
+**Pass (T1 dual-mode):** under concurrent ``current``+``backlog``, only ``current`` emits ``janitor: day_close`` / ``discover_ready_day_close`` work for overlapping days; ``backlog`` shows ``day_close disabled mode=backlog`` and proximity exit near the head. Solo ``backlog`` (no ``current``) will **not** seal/delete — cold path requires ``current`` or a date-range run.
+
+**Pass (T1 ``current``):** ``chunk dispatch begin`` ``epochs=`` trend **descending** (newest first); expect **`youngest_day_chunk_gate`** / **`youngest_day_chunk_gate_pad`** (not the ``backlog`` ``oldest_day_*`` grammar for the same run). Missing/stale heartbeat must **not** stop ``backlog`` — only a fresh heartbeat near the pending head day triggers ``backlog exiting near current``.
 
 **Pass (T1 — aligned backlog / day-close skip fix, 2026-07):** `oldest_tar` must be a day with **tar-aligned** on-disk unprocessed (filename/mtime calendar day matches the tar), not a day whose only remaining map entries are cross-day misbuckets (e.g. May-27 `oldest_tar` with `calendar_days={'2026-07-03': 1}` only). Day-close candidate lines: `unprocessed=` is **aligned** count; optional `unprocessed_cross_day_n=` for misbucketed paths that do **not** block that day. **`processed_but_on_disk=`** is aligned leftover closed raw; optional **`processed_cross_day_n=`** for first_ts misbuckets that must **not** reopen that calendar day. **`chunk dispatch begin`** / **`chunk imap start`** must not sit on a later month (e.g. June-07) while earlier days still report **aligned** `unprocessed>0`. Cap may log **`pending cap supplement replace`** when a full queue is rebuilt from older snapshot/unprocessed paths; **`pending cap supplement skipped reason=no_closed_paths`** is OK after accrual trim when Phase-B all-unprocessed merge already filled the head.
 

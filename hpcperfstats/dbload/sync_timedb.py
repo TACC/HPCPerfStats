@@ -3,15 +3,15 @@
 
 **Hot path (supervisor thread):** discover → ingest → checkpoint → dispatch append (up to ``sync_archive_pool_processes`` concurrent daily-tar slots; one day per slot). Ingest never blocks on seal, zstd, raw delete, or uncompressed ``.tar`` removal.
 
-**Cold path (``ArchiveJanitor`` coordinator thread):** day-debt queue drained within ``archive_janitor_budget_seconds`` using a ``ThreadPoolExecutor`` of up to ``sync_day_close_max_inflight`` (default **4**) parallel ``DAY_CLOSE`` workers (continuous refill on completion). Each tick discovers checkpoint-complete ``DAY_CLOSE`` candidates and enqueues debt (same inflight cap). Workers run seal → verify → delete → tar_drop (steady-state ingest is not gated on raw deletion). Snapshot/hints refresh at supervisor startup (CLI ``all`` only) and on scheduled maintenance passes. Per-day lock cleanup (once per tick), dedupe-before-seal, and DB head-ingest gate unchanged. Progress persists in ``.sync_archive_maint_hints.json`` v2 (``debt_queue``, ``day_phases``).
+**Cold path (``ArchiveJanitor`` coordinator thread):** day-debt queue drained within ``archive_janitor_budget_seconds`` using a ``ThreadPoolExecutor`` of up to ``sync_day_close_max_inflight`` (default **4**) parallel ``DAY_CLOSE`` workers (continuous refill on completion). Each tick discovers checkpoint-complete ``DAY_CLOSE`` candidates and enqueues debt (same inflight cap). Workers run seal → verify → delete → tar_drop (steady-state ingest is not gated on raw deletion). Snapshot/hints refresh on scheduled maintenance passes for day-close-enabled modes (``current`` / date-range). Per-day lock cleanup (once per tick), dedupe-before-seal, and DB head-ingest gate unchanged. Progress persists in ``.sync_archive_maint_hints.json`` v2 (``debt_queue``, ``day_phases``).
 
-**Startup maintenance (``all`` only):** when ``startdate == 'all'``, the janitor thread builds the canonical snapshot and may discover/enqueue ``DAY_CLOSE`` debt, but does not run ``_close_one_day`` until the supervisor clears the ingest gate. Boot handoff discovery runs once on the first main-loop iteration after gate clear. Date-range runs skip startup maintenance and begin ingest immediately.
+**Startup / dual-mode day-close ownership:** CLI ``backlog`` keeps startup archive snapshot + boot handoff for ingest catch-up, but is **ingest-only for the cold path** (``day_close_enabled=False``): no discover/enqueue/tick/immediate ``DAY_CLOSE``. CLI ``current`` and date-range own day-close and day-close sidecars. Boot handoff runs once per supervisor start when day-raw-removal is enabled. Proximity heartbeat still stops ``backlog`` ingest near ``current`` head.
 
 Append and raw delete stay DB-gated when ``sync_archive_require_db_ingest=yes``. Finalize uses soft defer (``allow_defer``) under ingest backlog instead of blocking the supervisor.
 
 When the ingest queue is empty, rescans for new stats files. After a rescan still finds nothing pending, it sleeps ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` (default 30s) and exits the loop iteration (continuous mode repeats).
 
-CLI: no args uses a sliding window (see ``days_to_process``) through now. One ``YYYY-MM-DD`` ingests that calendar day only. Two dates ``YYYY-MM-DD YYYY-MM-DD`` set an explicit range. First arg ``all`` scans every host stats dir under ``archive_dir`` (subdirs whose names end with ``DEFAULT.host_name_ext`` from ini). Prefix ``once`` to exit after one idle rescan (no 300s sleep), e.g. ``once all`` or ``once 2024-01-15``.
+CLI: no args uses a sliding window (see ``days_to_process``) through now. One ``YYYY-MM-DD`` ingests that calendar day only. Two dates ``YYYY-MM-DD YYYY-MM-DD`` set an explicit range. First arg ``backlog`` scans every host stats dir under ``archive_dir`` (subdirs whose names end with ``DEFAULT.host_name_ext`` from ini). Prefix ``once`` to exit after one idle rescan (no 300s sleep), e.g. ``once backlog`` or ``once 2024-01-15``.
 
 DB access is process-safe: pool workers use close_old_connections() at task start and connections.close_all() at task end so connections do not linger between files. Writes are serialized with a shared lock.
 
@@ -4571,7 +4571,11 @@ def run_sync_timedb_supervisor_loop(
   ingest_first_durability = bool(cfg.get_sync_enable_ingest_first_durability_mode())
   ingest_t0 = time.time()
   startup_gate_cleared_t0 = None
-  run_startup_maintenance = startdate == "all"
+  # Startup snapshot + boot handoff remain required for CLI ``backlog`` ingest
+  # catch-up. Day-close discover/enqueue/close is gated separately so ``backlog``
+  # never owns cold-path seal/verify/delete (``current`` / date-range do).
+  run_startup_maintenance = startdate == "backlog"
+  day_close_enabled = startdate != "backlog"
   newest_first = startdate == "current"
   proximity_days = int(cfg.get_sync_ingest_current_proximity_days())
 
@@ -4608,7 +4612,7 @@ def run_sync_timedb_supervisor_loop(
       return None
 
   def _all_should_exit_for_current_proximity(pending_paths):
-    if startdate != "all" or not pending_paths:
+    if startdate != "backlog" or not pending_paths:
       return False
     next_path = pending_paths[0]
     next_day = mode_heartbeat.calendar_day_from_stats_path(
@@ -4622,14 +4626,14 @@ def run_sync_timedb_supervisor_loop(
       )
     except Exception:
       return False
-    if not mode_heartbeat.should_all_exit_for_current_proximity(
+    if not mode_heartbeat.should_backlog_exit_for_current_proximity(
         next_pending_day=next_day,
         heartbeat=heartbeat,
         proximity_days=proximity_days,
     ):
       return False
     log_print(
-        "sync_timedb: all exiting near current"
+        "sync_timedb: backlog exiting near current"
         " next_pending_day=%s current_oldest_active_day=%s"
         " proximity_days=%d"
         % (
@@ -5056,6 +5060,8 @@ def run_sync_timedb_supervisor_loop(
         )
 
   def _maybe_enqueue_immediate_day_close(*, context: str):
+    if not day_close_enabled:
+      return
     if not tgz_archive_dir:
       return
     defer_day_close, defer_reason, defer_extra = (
@@ -6429,6 +6435,7 @@ def run_sync_timedb_supervisor_loop(
       get_chunk_day_tokens=_get_chunk_day_tokens,
       get_startup_ingest_gate_cleared=_get_startup_ingest_gate_cleared,
       process_title=SYNC_TIMEDB_PROCESS_TITLE,
+      day_close_enabled=day_close_enabled,
   )
   _ARCHIVE_JANITOR_REF["janitor"] = archive_janitor
   reconcile_refs["get_startup_snapshot"] = startup_archive_scan.get_snapshot
@@ -6437,6 +6444,8 @@ def run_sync_timedb_supervisor_loop(
   )
 
   def _async_enqueue_day_close(tar_norm, reason):
+    if not day_close_enabled:
+      return False
     if archive_janitor._enqueue_day_close(tar_norm):
       archive_janitor.signal_work_available()
       return True
@@ -6733,7 +6742,11 @@ def run_sync_timedb_supervisor_loop(
 
   def _process_boot_handoffs_once():
     nonlocal pending_stats_files, boot_handoffs_processed
-    if boot_handoffs_processed or not run_startup_maintenance:
+    # Boot handoff is ingest recovery from incomplete day-close manifests /
+    # closed-raw leftovers. It is independent of ``run_startup_maintenance``
+    # (all-only heavy snapshot) so date-range / current day-close owners can
+    # still requeue handoff paths once per supervisor start.
+    if boot_handoffs_processed:
       return
     boot_handoffs_processed = True
     if day_raw_removal is None or not day_raw_removal.enabled:
@@ -6809,6 +6822,12 @@ def run_sync_timedb_supervisor_loop(
 
   try:
     _ensure_daily_archive_dir_exists()
+    if not day_close_enabled:
+      log_print(
+          "sync_timedb: day_close disabled mode=backlog "
+          "owner=current_or_date_range",
+          flush=True,
+      )
     if run_startup_maintenance:
       log_print(cfg.format_sync_timedb_non_default_settings_line(), flush=True)
       log_print("sync_timedb: maintenance pass reason=startup", flush=True)
@@ -6825,8 +6844,8 @@ def run_sync_timedb_supervisor_loop(
     else:
       log_print(
           "sync_timedb: startup maintenance skipped "
-          "(CLI 'current' and date-range skip heavy startup; "
-          "pass 'all' for full-archive startup pass)",
+          "(CLI 'backlog' only; 'current' and date-range begin ingest "
+          "without heavy startup snapshot)",
           flush=True,
       )
       startup_archive_scan.mark_startup_heavy_maintenance_finished()
@@ -7583,9 +7602,15 @@ def parse_sync_timedb_argv(argv):
   startdate, enddate = parse_start_end_dates(
       argv_for_dates, default_start, default_end)
 
+  if len(argv_for_dates) > 1 and argv_for_dates[1] == "all":
+    raise SystemExit(
+        "sync_timedb: CLI mode 'all' was renamed to 'backlog' "
+        "(use: sync_timedb.py backlog)"
+    )
+
   if (
       len(argv_for_dates) == 2
-      and argv_for_dates[1] not in ("all", "current")
+      and argv_for_dates[1] not in ("backlog", "current")
   ):
     try:
       single_day = datetime.strptime(argv_for_dates[1], "%Y-%m-%d")
@@ -7595,7 +7620,7 @@ def parse_sync_timedb_argv(argv):
       startdate = single_day
       enddate = datetime.combine(single_day.date(), datetime.max.time())
 
-  if len(argv_for_dates) > 1 and argv_for_dates[1] in ('all', 'current'):
+  if len(argv_for_dates) > 1 and argv_for_dates[1] in ('backlog', 'current'):
     startdate = argv_for_dates[1]
     enddate = None
 
@@ -7605,7 +7630,7 @@ def parse_sync_timedb_argv(argv):
 def run_sync_timedb_supervisor_from_parsed(run_once, startdate, enddate):
   """Run one supervisor session after ``database_startup()`` (CLI or in-process tests)."""
   _reset_sync_runtime_caches()
-  if startdate == 'all':
+  if startdate == 'backlog':
     log_print(
         "###Date Range of stats files to ingest: entire archive directory "
         "(no date filter)####")
@@ -7693,7 +7718,7 @@ def run_sync_timedb_supervisor_from_parsed(run_once, startdate, enddate):
 
 
 def run_ingest_entire_archive_once_for_tests():
-  """In-process equivalent of ``python sync_timedb.py once all``.
+  """In-process equivalent of ``python sync_timedb.py once backlog``.
 
   Uses the active Django database (e.g. pytest-django ``test_*``), unlike a
   subprocess which would connect to ``[DEFAULT] dbname`` from ini only. Forces
@@ -7703,7 +7728,7 @@ def run_ingest_entire_archive_once_for_tests():
   os.environ[_SYNC_TIMEDB_INGEST_INLINE_ENV] = "1"
   try:
     database_startup()
-    run_sync_timedb_supervisor_from_parsed(True, "all", None)
+    run_sync_timedb_supervisor_from_parsed(True, "backlog", None)
   finally:
     if old_inline is None:
       os.environ.pop(_SYNC_TIMEDB_INGEST_INLINE_ENV, None)

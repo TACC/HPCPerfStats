@@ -1,6 +1,6 @@
-"""Transient heartbeat so CLI ``all`` can exit near an active ``current`` run.
+"""Transient heartbeat so CLI ``backlog`` can exit near an active ``current`` run.
 
-Not a persistence-contract artifact — missing/stale/corrupt → fail-open (``all`` continues).
+Not a persistence-contract artifact — missing/stale/corrupt → fail-open (``backlog`` continues).
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ __all__ = [
     "oldest_active_day_from_paths",
     "publish_current_heartbeat",
     "read_current_heartbeat",
-    "should_all_exit_for_current_proximity",
+    "should_backlog_exit_for_current_proximity",
 ]
 
 
@@ -211,13 +211,13 @@ def read_current_heartbeat(
   return payload
 
 
-def should_all_exit_for_current_proximity(
+def should_backlog_exit_for_current_proximity(
     *,
     next_pending_day,
     heartbeat,
     proximity_days: int,
 ) -> bool:
-  """True when ``all``'s next oldest pending day is within proximity of heartbeat D."""
+  """True when ``backlog``'s next oldest pending day is within proximity of heartbeat D."""
   if not heartbeat:
     return False
   pending = _coerce_day(next_pending_day)

@@ -77,7 +77,7 @@ def test_filter_skips_inode_matching_current():
   out = sf.filter_and_sort_find_records(
       [active, closed],
       _HOST_SUFFIX,
-      "all",
+      "backlog",
       None,
       {host: 99},
   )

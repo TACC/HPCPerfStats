@@ -7,7 +7,7 @@ Uncompressed ``YYYY-MM-DD.tar`` is never opened; unsealed days are skipped.
 CLI (explicit dates required):
   sync_timedb_archive.py YYYY-MM-DD              # single sealed day
   sync_timedb_archive.py YYYY-MM-DD YYYY-MM-DD   # inclusive range
-  sync_timedb_archive.py all                     # all sealed days under daily_archive_dir
+  sync_timedb_archive.py backlog                     # all sealed days under daily_archive_dir
   sync_timedb_archive.py /path/to/day.tar.zst    # explicit sealed path(s)
 
 Ingest uses Django ORM bulk paths via ``sync_timedb.add_stats_file_to_db``. Heavy
@@ -73,7 +73,7 @@ from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
 
 _DATE_ARG_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _USAGE = (
-    "usage: sync_timedb_archive.py <YYYY-MM-DD> [YYYY-MM-DD] | all | "
+    "usage: sync_timedb_archive.py <YYYY-MM-DD> [YYYY-MM-DD] | backlog | "
     "<path.tar.zst> | <path.tar.gz>"
 )
 
@@ -106,15 +106,19 @@ def parse_sync_timedb_archive_argv(argv):
   """Parse argv into ``(mode, startdate, enddate, path_args)``.
 
   ``mode`` is ``'date'`` or ``'paths'``. For ``'date'``, ``startdate`` is
-  ``datetime`` or ``'all'``; ``enddate`` is ``datetime`` or ``None`` (all/range).
+  ``datetime`` or ``'backlog'``; ``enddate`` is ``datetime`` or ``None`` (all/range).
   """
   if len(argv) < 2:
     raise SystemExit(_USAGE)
   args = list(argv[1:])
   if args[0] == "all":
+    raise SystemExit(
+        "sync_timedb_archive: CLI mode 'all' was renamed to 'backlog'"
+    )
+  if args[0] == "backlog":
     if len(args) > 1:
       raise SystemExit(_USAGE)
-    return "date", "all", None, []
+    return "date", "backlog", None, []
 
   if len(args) <= 2 and all(_DATE_ARG_RE.match(a) for a in args):
     from datetime import datetime

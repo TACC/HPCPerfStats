@@ -120,7 +120,9 @@ Exit **124** / `Pool imap stalled` / `MultiprocessingWorkerExitError` come from 
 | `get_existing_archive_members_for_daily_archive` | Ingest lookup | L1 cache → populate wait → local scan fallback |
 | `sync_timedb_archive.py` backfill | Sealed-only CLI | `iter_sealed_daily_archive_member_paths` (no `.tar` restore) |
 
-**Archive CLI vs supervisor prewarm boundary:** `sync_timedb_archive.py` is an operator/CLI backfill tool — it scans **sealed** archives only and never calls `ensure_daily_tar_restored_for_append` or supervisor chunk prewarm. The supervisor and ingest workers own hot-path Redis populate via `request_archive_members_populate_and_wait`; janitor owns day-close seal/verify/delete. Do not route CLI scans through prewarm or maintenance snapshots.
+**Dual-mode day-close ownership:** CLI ``current`` (and date-range) run the janitor day-close path (session thread executor **B** + seal/verify/delete). CLI ``backlog`` keeps ingest/archive append pools but sets ``day_close_enabled=False`` so it never discovers, enqueues, or executes ``DAY_CLOSE``. Proximity heartbeat stops ``backlog`` ingest near ``current``; it does not transfer day-close ownership.
+
+**Archive CLI vs supervisor prewarm boundary:** `sync_timedb_archive.py` is an operator/CLI backfill tool — it scans **sealed** archives only and never calls `ensure_daily_tar_restored_for_append` or supervisor chunk prewarm. The supervisor and ingest workers own hot-path Redis populate via `request_archive_members_populate_and_wait`; janitor owns day-close seal/verify/delete on day-close-enabled modes. Do not route CLI scans through prewarm or maintenance snapshots.
 
 **Defer split:** janitor day-close defer checks `ingest_tar_hot` (ingest pool activity). Populate-pool tar scans **also** defer on `archive_append_inflight` (append worker holds day until merge). Both keys are intentional — see `sync-timedb-ingest-pool-io-coordination.mdc` §8b.
 

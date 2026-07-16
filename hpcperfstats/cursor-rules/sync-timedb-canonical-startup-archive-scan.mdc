@@ -8,7 +8,7 @@ globs: hpcperfstats/dbload/sync_timedb*.py
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-At supervisor boot **when CLI `startdate == 'all'`**, **one** `collect_stats_files_in_range` (+ one head-metadata pass via `build_archive_maintenance_snapshot`) must be shared by janitor startup maintenance and the first supervisor rescan. Do not let each subsystem walk the full raw tree independently. Date-range runs (`startdate` not **`all`**) skip startup maintenance entirely and must not trigger coordinator snapshot waits on first rescan.
+At supervisor boot **when CLI `startdate == 'backlog'`**, **one** `collect_stats_files_in_range` (+ one head-metadata pass via `build_archive_maintenance_snapshot`) must be shared by janitor startup maintenance and the first supervisor rescan. Do not let each subsystem walk the full raw tree independently. Date-range runs (`startdate` not **`backlog`**) skip startup maintenance entirely and must not trigger coordinator snapshot waits on first rescan.
 
 ## Canonical modules
 
@@ -23,9 +23,9 @@ At supervisor boot **when CLI `startdate == 'all'`**, **one** `collect_stats_fil
 
 ## Required behavior
 
-- **Janitor** `run_heavy_maintenance_pass(reason=startup)` adopts an already-published coordinator snapshot when present; otherwise calls `begin_build()` before `build_archive_maintenance_snapshot`; `abort_build()` on build failure; `publish` in success path. **Only when supervisor `startdate == 'all'`.**
-- **Supervisor rescan** (`_get_startup_snapshot_for_rescan`) may single-flight fallback-build after **`sync_startup_snapshot_wait_seconds`** (default **300**, min **120**). **Only when `startdate == 'all'`**; date-range runs skip this call.
-- **`note_startup_maintenance_pending()`** from supervisor on `signal_scheduled_maintenance_pass(reason=startup)` extends effective wait while janitor builds. **Only when `startdate == 'all'`.**
+- **Janitor** `run_heavy_maintenance_pass(reason=startup)` adopts an already-published coordinator snapshot when present; otherwise calls `begin_build()` before `build_archive_maintenance_snapshot`; `abort_build()` on build failure; `publish` in success path. **Only when supervisor `startdate == 'backlog'`.**
+- **Supervisor rescan** (`_get_startup_snapshot_for_rescan`) may single-flight fallback-build after **`sync_startup_snapshot_wait_seconds`** (default **300**, min **120**). **Only when `startdate == 'backlog'`**; date-range runs skip this call.
+- **`note_startup_maintenance_pending()`** from supervisor on `signal_scheduled_maintenance_pass(reason=startup)` extends effective wait while janitor builds. **Only when `startdate == 'backlog'`.**
 - While `_building` is true, waiters **must not** start parallel collects.
 - **Publish deep-copies** `mapping` / `remaining_raw_by_gz` list values via `copy_archive_maintenance_snapshot` — trim clears heavy lists on accrual object only; coordinator retains `closed_paths` for unmapped disqualify.
 - **Derive, do not rescan:** janitor **`DAY_CLOSE`** discover remaining map, first supervisor `rescan_pending_stats_files` (when range is full tree), and **`_cap_pending_after_rescan` / checkpoint reconcile** (`build_live_unprocessed_by_tar_for_reconcile`) use the shared snapshot — **coordinator** while startup ingest gate not cleared, **janitor accrual** when gate cleared and accrual `mapping` present; live `force_full_scan` only as fallback.

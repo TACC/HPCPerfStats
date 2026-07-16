@@ -67,7 +67,7 @@ def test_r27_missing_or_corrupt_heartbeat_fails_open(tmp_path, contents):
   )
 
   assert value is None
-  assert not heartbeat.should_all_exit_for_current_proximity(
+  assert not heartbeat.should_backlog_exit_for_current_proximity(
       next_pending_day=date(2024, 1, 2),
       heartbeat=value,
       proximity_days=2,
@@ -104,7 +104,7 @@ def test_r28_sidecar_is_archive_local_and_written_atomically(tmp_path, monkeypat
 
 @pytest.mark.parametrize("delta, expected", [(-3, False), (-2, True), (0, True), (2, True), (3, False)])
 def test_r29_proximity_boundary_is_inclusive_calendar_days(delta, expected):
-  assert heartbeat.should_all_exit_for_current_proximity(
+  assert heartbeat.should_backlog_exit_for_current_proximity(
       next_pending_day=date(2024, 1, 10),
       heartbeat={
           "oldest_active_day": (date(2024, 1, 10) + timedelta(days=delta)).isoformat(),

@@ -745,6 +745,26 @@ def test_janitor_load_hints_restores_debt_on_init(monkeypatch, tmp_path):
   assert {d.kind for d in janitor._debt_heap} == {DebtKind.DAY_CLOSE}
 
 
+def test_load_hints_skips_day_close_debt_when_disabled(tmp_path):
+  """CLI all (day_close_enabled=False) must not reload DAY_CLOSE debt from hints."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import save_archive_maint_hints
+
+  archive_dir = str(tmp_path / "archive")
+  os.makedirs(archive_dir)
+  save_archive_maint_hints(
+      archive_dir,
+      host_dirs={},
+      paths={},
+      validated_days={},
+      debt_queue=[
+          {"kind": DebtKind.DAY_CLOSE.value, "tar_path": "/tmp/2026-01-01.tar"},
+          {"kind": DebtKind.RAW_REMOVE.value, "tar_path": "/tmp/2026-01-02.tar"},
+      ],
+  )
+  janitor = _make_janitor(archive_data_dir=archive_dir, day_close_enabled=False)
+  assert janitor.debt_depth() == 0
+
+
 def test_load_hints_drops_legacy_lock_cleanup_dedupe_debt(monkeypatch, tmp_path):
   from hpcperfstats.dbload.lib.sync_timedb_archive_maint import save_archive_maint_hints
 
@@ -1032,7 +1052,7 @@ def test_janitor_tar_drop_blocked_when_parsable_unmapped_closed_raw(
         collect_stats_files_in_range,
     )
     closed_paths = collect_stats_files_in_range(
-        str(archive_dir), "all", None, ".hpc",
+        str(archive_dir), "backlog", None, ".hpc",
     )
     # Parsable closed raw absent from a stale/partial mapping still blocks the day.
     return collect_days_with_unmapped_closed_raw(
@@ -3770,3 +3790,123 @@ def test_janitor_reconcile_before_discover_order(monkeypatch, tmp_path):
   janitor._run_tick_body()
   assert order.index("reconcile") < order.index("discover:tick")
   assert order.index("recover") < order.index("discover:tick")
+
+
+def test_discover_noop_when_day_close_disabled(tmp_path, monkeypatch):
+  """day_close_enabled=False must not enqueue DAY_CLOSE on discover."""
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2020-01-09.tar"))
+  open(tar_path, "wb").close()
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      day_close_enabled=False,
+      get_day_close_candidate_inputs=lambda: {
+          "inflight_paths": set(),
+          "pending_append_by_daily_tar": {},
+          "in_flight_archive_tars": set(),
+          "pending_archive_task_tars": set(),
+          "unmapped_closed_raw_tars": set(),
+          "unprocessed_by_tar": {},
+      },
+  )
+  monkeypatch.setattr(
+      janitor_mod,
+      "build_remaining_raw_stats_by_daily_gz",
+      lambda *args, **kwargs: {},
+  )
+  monkeypatch.setattr(
+      janitor_mod,
+      "classify_day_close_candidates",
+      lambda **_k: [
+          {
+              "tar_path": tar_path,
+              "status": "ready_for_enqueue",
+              "reasons": ["awaiting_janitor_discover"],
+              "unprocessed": 0,
+          },
+      ],
+  )
+  newly = janitor._discover_and_enqueue_ready_day_close(reason="tick")
+  assert newly == set()
+  assert janitor.debt_depth() == 0
+  ok, reason = janitor._enqueue_eligible_day_close(
+      tar_path, reason="test", disqualified=set(),
+  )
+  assert ok is False
+  assert reason == "day_close_disabled"
+  assert janitor._enqueue_day_close(tar_path) is False
+
+
+def test_janitor_tick_skips_day_close_when_disabled(tmp_path, monkeypatch):
+  """Tick must not discover or close when day_close_enabled=False."""
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2020-01-10.tar"))
+  open(tar_path, "wb").close()
+  close_calls = []
+  discover_calls = []
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      day_close_enabled=False,
+  )
+  monkeypatch.setattr(janitor_mod, "close_old_connections", lambda: None)
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor,
+      "_discover_and_enqueue_ready_day_close",
+      lambda self, **kwargs: discover_calls.append(kwargs.get("reason")) or set(),
+  )
+  monkeypatch.setattr(
+      janitor,
+      "_close_one_day",
+      lambda *a, **k: close_calls.append(True) or False,
+  )
+  # Pre-seed debt as if hints loaded leftover DAY_CLOSE from a peer process.
+  with janitor._debt_lock:
+    janitor._enqueue_day_close_locked(tar_path, persist=False)
+  assert janitor.debt_depth() == 1
+  janitor.signal_work_available()
+  janitor._run_tick_body()
+  assert discover_calls == []
+  assert close_calls == []
+  assert janitor.debt_depth() == 1
+
+
+def test_janitor_still_discovers_when_day_close_enabled(tmp_path, monkeypatch):
+  """Default day_close_enabled=True keeps discover/enqueue."""
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2020-02-01.tar"))
+  open(tar_path, "wb").close()
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      day_close_enabled=True,
+      get_day_close_candidate_inputs=lambda: {
+          "inflight_paths": set(),
+          "pending_append_by_daily_tar": {},
+          "in_flight_archive_tars": set(),
+          "pending_archive_task_tars": set(),
+          "unmapped_closed_raw_tars": set(),
+          "unprocessed_by_tar": {},
+      },
+  )
+  monkeypatch.setattr(
+      janitor_mod,
+      "build_remaining_raw_stats_by_daily_gz",
+      lambda *args, **kwargs: {},
+  )
+  monkeypatch.setattr(
+      janitor_mod,
+      "classify_day_close_candidates",
+      lambda **_k: [
+          {
+              "tar_path": tar_path,
+              "status": "ready_for_enqueue",
+              "reasons": ["awaiting_janitor_discover"],
+              "unprocessed": 0,
+          },
+      ],
+  )
+  newly = janitor._discover_and_enqueue_ready_day_close(reason="tick")
+  assert tar_path in newly
+  assert janitor.debt_depth() >= 1

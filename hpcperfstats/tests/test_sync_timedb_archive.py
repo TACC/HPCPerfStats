@@ -3178,7 +3178,7 @@ def test_collect_stats_files_in_range_parallel_multi_host(monkeypatch, tmp_path)
   logs = []
   result = collect_stats_files_in_range(
       str(tmp_path),
-      "all",
+      "backlog",
       None,
       _ARCH_HOST_SUFFIX,
       log_fn=lambda msg, **kw: logs.append(msg),
@@ -3234,7 +3234,7 @@ def test_rescan_pending_incremental_uses_mtime_find(monkeypatch, tmp_path):
   hints = {"__rescan_count__": 1}
   pending = rescan_pending_stats_files(
       str(tmp_path),
-      "all",
+      "backlog",
       None,
       _ARCH_HOST_SUFFIX,
       set(),
@@ -3262,7 +3262,7 @@ def test_rescan_pending_full_every_n_uses_full_find(monkeypatch, tmp_path):
   hints = {"__rescan_count__": 0}
   rescan_pending_stats_files(
       str(tmp_path),
-      "all",
+      "backlog",
       None,
       _ARCH_HOST_SUFFIX,
       set(),
@@ -3314,7 +3314,7 @@ def test_collect_stats_files_in_range_uses_filename_epoch_when_mtime_outside(tmp
 
 
 def test_collect_stats_files_in_range_all_no_date_filter(tmp_path):
-  """startdate 'all' includes every stats file regardless of mtime/filename age."""
+  """startdate 'backlog' includes every stats file regardless of mtime/filename age."""
   cn = tmp_path / ("c572-001." + _ARCH_HOST_SUFFIX)
   cn.mkdir()
   old_epoch = int(datetime(2018, 1, 1, 12, 0, 0).timestamp())
@@ -3327,7 +3327,7 @@ def test_collect_stats_files_in_range_all_no_date_filter(tmp_path):
   os.utime(cn / str(new_epoch), (t_new, t_new))
 
   result = collect_stats_files_in_range(
-      str(tmp_path), "all", None, _ARCH_HOST_SUFFIX)
+      str(tmp_path), "backlog", None, _ARCH_HOST_SUFFIX)
   basenames = sorted(os.path.basename(p) for p in result)
   assert basenames == [str(old_epoch), str(new_epoch)]
 
@@ -3554,7 +3554,7 @@ def test_rescan_pending_stats_files_uses_hints_with_periodic_full_sweep(tmp_path
   hints = {}
   first = rescan_pending_stats_files(
       str(tmp_path),
-      "all",
+      "backlog",
       None,
       _ARCH_HOST_SUFFIX,
       set(),
@@ -3563,7 +3563,7 @@ def test_rescan_pending_stats_files_uses_hints_with_periodic_full_sweep(tmp_path
   )
   second = rescan_pending_stats_files(
       str(tmp_path),
-      "all",
+      "backlog",
       None,
       _ARCH_HOST_SUFFIX,
       set(),
@@ -3572,7 +3572,7 @@ def test_rescan_pending_stats_files_uses_hints_with_periodic_full_sweep(tmp_path
   )
   third = rescan_pending_stats_files(
       str(tmp_path),
-      "all",
+      "backlog",
       None,
       _ARCH_HOST_SUFFIX,
       set(),
@@ -3901,14 +3901,20 @@ def test_parse_sync_timedb_archive_argv_single_day():
   assert paths == []
 
 
-def test_parse_sync_timedb_archive_argv_all():
+def test_parse_sync_timedb_archive_argv_backlog():
   mode, start, end, paths = parse_sync_timedb_archive_argv(
-      ["sync_timedb_archive.py", "all"],
+      ["sync_timedb_archive.py", "backlog"],
   )
   assert mode == "date"
-  assert start == "all"
+  assert start == "backlog"
   assert end is None
   assert paths == []
+
+
+def test_parse_sync_timedb_archive_argv_rejects_legacy_all():
+  with pytest.raises(SystemExit) as exc:
+    parse_sync_timedb_archive_argv(["sync_timedb_archive.py", "all"])
+  assert "renamed to" in str(exc.value) and "backlog" in str(exc.value)
 
 
 def test_parse_argv_rejects_plain_tar_path():
@@ -4545,7 +4551,7 @@ def test_quarantine_unparsable_closed_raw_moves_file_and_writes_manifest(tmp_pat
   assert entries[0]["original_path"] == str(raw_path)
   assert entries[0]["reason"] == helpers.UNPARSABLE_RAW_QUARANTINE_REASON
   discovered = helpers.collect_stats_files_in_range(
-      str(archive_dir), "all", None, ".hpc")
+      str(archive_dir), "backlog", None, ".hpc")
   assert str(raw_path) not in discovered
 
 
@@ -4663,7 +4669,7 @@ def test_unparsable_unmapped_does_not_disqualify_day(tmp_path):
   raw_path = host_dir / str(day_epoch)
   raw_path.write_text("not-a-stats-line\n")
   closed_paths = helpers.collect_stats_files_in_range(
-      str(archive_dir), "all", None, ".hpc")
+      str(archive_dir), "backlog", None, ".hpc")
   mapping = helpers.build_archive_mapping(closed_paths, str(daily_dir))
   result = helpers.collect_days_with_unmapped_closed_raw(
       closed_paths, mapping, str(daily_dir))
@@ -6374,7 +6380,7 @@ def test_stats_path_ingest_sort_epoch_matches_collect_order(tmp_path):
   assert stats_path_ingest_sort_epoch(str(older)) == 1000
   assert stats_path_ingest_sort_epoch(str(newer)) == 2000
   collected = collect_stats_files_in_range(
-      str(tmp_path), "all", None, ".hpc", force_full_scan=True)
+      str(tmp_path), "backlog", None, ".hpc", force_full_scan=True)
   assert collected == [str(older), str(newer)]
 
 
@@ -8488,7 +8494,7 @@ def test_rescan_force_snapshot_paths_uses_closed_list_despite_rescan_count(
   )
   result = helpers.rescan_pending_stats_files(
       str(tmp_path),
-      "all",
+      "backlog",
       None,
       "cluster.test",
       set(),

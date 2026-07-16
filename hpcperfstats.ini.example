@@ -286,7 +286,7 @@ sync_ingest_rescan_mtime_days = 1
 # Force full-age find every N incremental pending rescans (default 100).
 sync_ingest_rescan_full_every = 100
 
-# Days within which CLI all exits when near a live current heartbeat (default 2).
+# Days within which CLI backlog exits when near a live current heartbeat (default 2).
 sync_ingest_current_proximity_days = 2
 
 # Max in-memory archive work queue size (default 1000).

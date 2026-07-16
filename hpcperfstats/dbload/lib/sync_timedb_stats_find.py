@@ -355,7 +355,7 @@ def filter_and_sort_find_records(
     except (TypeError, ValueError):
       sort_epoch = int(rec.mtime)
 
-    if startdate in ("all", "current"):
+    if startdate in ("backlog", "current"):
       selected.append((rec, sort_epoch))
       continue
 

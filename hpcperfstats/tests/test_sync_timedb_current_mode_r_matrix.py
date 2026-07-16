@@ -1,4 +1,4 @@
-"""Automated coverage for plan remediations R1–R40 (CLI ``current`` / ``all``).
+"""Automated coverage for plan remediations R1–R40 (CLI ``current`` / ``backlog``).
 
 Each test cites its R# in the name or docstring and fails on the listed Bad change.
 """
@@ -401,9 +401,9 @@ def test_r20_process_titles_unchanged_for_mode():
     "argv, expected_start, expected_newest",
     [
         (["sync_timedb.py", "current"], "current", True),
-        (["sync_timedb.py", "all"], "all", False),
+        (["sync_timedb.py", "backlog"], "backlog", False),
         (["sync_timedb.py", "once", "current"], "current", True),
-        (["sync_timedb.py", "once", "all"], "all", False),
+        (["sync_timedb.py", "once", "backlog"], "backlog", False),
     ],
 )
 def test_r21_r24_r25_argv_current_wiring(monkeypatch, argv, expected_start, expected_newest):
@@ -449,15 +449,16 @@ def test_r25_date_range_argv_is_not_newest_first(monkeypatch):
 
 def test_r21_full_archive_discovery_includes_current_string():
   src = HELPERS_SRC.read_text(encoding="utf-8")
-  assert 'startdate in ("all", "current")' in src or "in ('all', 'current')" in src
+  assert 'startdate in ("backlog", "current")' in src or "in ('backlog', 'current')" in src
 
 
-def test_r22_r23_startup_maintenance_all_only_current_skips():
-  """R22/R23: current skips heavy startup; all keeps it."""
+def test_r22_r23_startup_maintenance_backlog_only_current_skips():
+  """R22/R23: backlog keeps startup snapshot/handoff; day-close disabled for backlog."""
   src = SUPERVISOR_SRC.read_text(encoding="utf-8")
-  assert 'run_startup_maintenance = startdate == "all"' in src
+  assert 'run_startup_maintenance = startdate == "backlog"' in src
+  assert 'day_close_enabled = startdate != "backlog"' in src
   assert 'newest_first = startdate == "current"' in src
-  assert 'run_startup_maintenance = startdate in ("all", "current")' not in src
+  assert 'run_startup_maintenance = startdate in ("backlog", "current")' not in src
 
 
 # --- R26–R32: heartbeat (unit module already covers core; lock supervisor wire) ---
@@ -602,7 +603,7 @@ def test_r_grace_default_24_locked():
 def test_r_all_proximity_exit_helper_wired_in_chunk_loop():
   src = SUPERVISOR_SRC.read_text(encoding="utf-8")
   assert "if _all_should_exit_for_current_proximity(pending_stats_files):" in src
-  assert 'startdate != "all"' in src or 'startdate == "all"' in src
+  assert 'startdate != "backlog"' in src or 'startdate == "backlog"' in src
 
 
 def test_r_janitor_contract_mentions_newest_first_and_proximity():
@@ -838,7 +839,7 @@ def test_r26_e2e_current_publishes_heartbeat_sidecar(monkeypatch, tmp_path):
 
 
 def test_r_e2e_all_exits_when_pending_near_current_heartbeat(monkeypatch, tmp_path):
-  """Coordination e2e: ``all`` exits near a fresh ``current`` heartbeat."""
+  """Coordination e2e: ``backlog`` exits near a fresh ``current`` heartbeat."""
   shutdown_requested[0] = False
   logs = []
   archive_dir = tmp_path / "archive"
@@ -911,14 +912,14 @@ def test_r_e2e_all_exits_when_pending_near_current_heartbeat(monkeypatch, tmp_pa
     with pool:
       st.run_sync_timedb_supervisor_loop(
           str(archive_dir),
-          "all",
+          "backlog",
           None,
           ".test",
           object(),
           pool,
           run_once=True,
       )
-    assert any("all exiting near current" in ln for ln in logs), "\n".join(logs[-40:])
+    assert any("backlog exiting near current" in ln for ln in logs), "\n".join(logs[-40:])
     assert len(ingested) == 0
   finally:
     shutdown_requested[0] = False

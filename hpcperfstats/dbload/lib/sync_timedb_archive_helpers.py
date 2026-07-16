@@ -1470,7 +1470,7 @@ def collect_unmapped_closed_raw_daily_tars(
   so unmapped closed segments still disqualify seal / ``.tar`` removal.
   """
   closed_paths = collect_stats_files_in_range(
-      archive_data_dir, "all", None, host_name_ext)
+      archive_data_dir, "backlog", None, host_name_ext)
   if not closed_paths:
     return frozenset()
   mapping = build_archive_mapping(closed_paths, tgz_archive_dir)
@@ -1950,7 +1950,7 @@ def build_unprocessed_raw_by_daily_tar(
   else:
     closed_paths = collect_stats_files_in_range(
         archive_data_dir,
-        "all",
+        "backlog",
         None,
         host_name_ext,
         force_full_scan=True,
@@ -5246,7 +5246,7 @@ def remove_verified_archived_raw_files(
     mapping = maintenance_snapshot.mapping
   else:
     paths = collect_stats_files_in_range(
-        archive_data_dir, "all", None, host_name_ext)
+        archive_data_dir, "backlog", None, host_name_ext)
     if not paths:
       return
     mapping = build_archive_mapping(paths, tgz_archive_dir)
@@ -6011,14 +6011,14 @@ def collect_sealed_daily_archive_paths_in_range(
 ):
   """Return ``(sealed_paths, skipped_tar_only_count)`` for the date range.
 
-  ``startdate`` may be ``'all'`` to scan every sealed day under ``daily_archive_dir``.
+  ``startdate`` may be ``'backlog'`` to scan every sealed day under ``daily_archive_dir``.
   Calendar-day ranges are inclusive on both ends.
   """
   from hpcperfstats.dbload.lib.date_utils import daterange
 
   paths = []
   skipped_tar_only = 0
-  if startdate == "all":
+  if startdate == "backlog":
     for day in iter_daily_sealed_archive_calendar_days(daily_archive_dir):
       sealed = resolve_sealed_archive_path_for_ingest(
           day.strftime("%Y-%m-%d"),
@@ -7052,7 +7052,7 @@ def collect_stats_files_in_range(
   scanned. ``host_scan_hints`` still tracks ``__rescan_count__`` for callers;
   per-host dir-mtime skip is retired (find is cheap enough).
 
-  When startdate is ``'all'`` or ``'current'``, every eligible file is returned
+  When startdate is ``'backlog'`` or ``'current'``, every eligible file is returned
   (no date filtering). Otherwise files are included if mtime or filename epoch
   falls in (startdate - 1 day, enddate]. Returns paths sorted oldest-first
   unless ``newest_first``. Empty ``host_name_ext`` returns ``[]``.
@@ -7119,7 +7119,7 @@ def rescan_pending_stats_files(
   use_snapshot = (
       (should_force_full or force_snapshot_paths)
       and startup_closed_paths is not None
-      and startdate in ("all", "current", None, "")
+      and startdate in ("backlog", "current", None, "")
       and enddate in (None, "")
   )
   if use_snapshot:

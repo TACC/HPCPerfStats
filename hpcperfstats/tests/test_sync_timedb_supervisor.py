@@ -317,7 +317,7 @@ def test_periodic_maintenance_always_runs_gated_tar_removal(monkeypatch, tmp_pat
         archive_pool = _FakeArchivePool()
         archive_pool.__enter__()
         try:
-            st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), archive_pool, run_once=True)
+            st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), archive_pool, run_once=True)
         finally:
             archive_pool.__exit__(None, None, None)
         assert len(tar_removal_calls) == 0
@@ -346,7 +346,7 @@ def test_supervisor_wires_ingest_ready_fn_into_day_raw_removal(monkeypatch, tmp_
         monkeypatch.setattr(st, 'tgz_archive_dir', str(daily_dir))
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         assert captured['ingest_ready_fn'] is st.stats_file_head_ingested_in_db
     finally:
         shutdown_requested[0] = False
@@ -372,7 +372,7 @@ def test_supervisor_calls_ensure_persistence_contract_at_startup(monkeypatch, tm
         monkeypatch.setattr(st, 'tgz_archive_dir', str(daily_dir))
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         assert contract_calls == [str(archive_dir)]
     finally:
         shutdown_requested[0] = False
@@ -398,7 +398,7 @@ def test_parse_sync_timedb_argv_defaults_include_current_day(monkeypatch):
     assert startdate == datetime(2026, 4, 14, 0, 0, 0) - st.timedelta(days=st.days_to_process)
     assert enddate == datetime(2026, 4, 14, 10, 30, 45)
 
-def test_parse_sync_timedb_argv_once_and_all(monkeypatch):
+def test_parse_sync_timedb_argv_once_and_backlog(monkeypatch):
 
     class _FakeDateTime(datetime):
 
@@ -406,10 +406,16 @@ def test_parse_sync_timedb_argv_once_and_all(monkeypatch):
         def today(cls):
             return cls(2026, 4, 14, 10, 30, 45)
     monkeypatch.setattr(st, 'datetime', _FakeDateTime)
-    run_once, startdate, enddate = st.parse_sync_timedb_argv(['sync_timedb.py', 'once', 'all'])
+    run_once, startdate, enddate = st.parse_sync_timedb_argv(['sync_timedb.py', 'once', 'backlog'])
     assert run_once is True
-    assert startdate == 'all'
+    assert startdate == 'backlog'
     assert enddate is None
+
+
+def test_parse_sync_timedb_argv_rejects_legacy_all_flag():
+    with pytest.raises(SystemExit) as exc:
+        st.parse_sync_timedb_argv(['sync_timedb.py', 'all'])
+    assert 'renamed to' in str(exc.value) and 'backlog' in str(exc.value)
 
 def test_parse_sync_timedb_argv_single_date_end_of_that_day(monkeypatch):
     """One YYYY-MM-DD ingests that calendar day only, not through today."""
@@ -487,7 +493,7 @@ def test_run_sync_timedb_supervisor_from_parsed_resets_runtime_caches(monkeypatc
             return _Pool()
     monkeypatch.setattr(st.multiprocessing, 'Manager', lambda: _Manager())
     monkeypatch.setattr(st.multiprocessing, 'get_context', lambda _name: _Context())
-    st.run_sync_timedb_supervisor_from_parsed(run_once=True, startdate='all', enddate=None)
+    st.run_sync_timedb_supervisor_from_parsed(run_once=True, startdate='backlog', enddate=None)
     assert readiness._HEAD_DB_CACHE == {}
     assert readiness._PATH_READY_CACHE == {}
     assert st._HOST_ITIMES_CACHE == {}
@@ -534,7 +540,7 @@ def test_supervisor_sleeps_once_then_exits_after_empty_full_rescan(monkeypatch, 
         archive_pool = _FakeArchivePool()
         archive_pool.__enter__()
         try:
-            st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), archive_pool)
+            st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), archive_pool)
         finally:
             archive_pool.__exit__(None, None, None)
         assert sleeps == [st.EMPTY_QUEUE_RESCAN_SLEEP_SECONDS]
@@ -567,7 +573,7 @@ def test_supervisor_runs_full_archive_maintenance_before_rescan_when_idle(monkey
         archive_pool = _FakeArchivePool()
         archive_pool.__enter__()
         try:
-            st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), archive_pool, run_once=True)
+            st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), archive_pool, run_once=True)
         finally:
             archive_pool.__exit__(None, None, None)
         assert events[0] == 'rescan'
@@ -611,7 +617,7 @@ def test_supervisor_rescans_before_full_maintenance_when_queue_empty(monkeypatch
         archive_pool = _FakeArchivePool()
         archive_pool.__enter__()
         try:
-            st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), archive_pool)
+            st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), archive_pool)
         finally:
             archive_pool.__exit__(None, None, None)
         assert events[:2] == ['rescan', 'rescan']
@@ -645,7 +651,7 @@ def test_supervisor_runs_startup_archive_maintenance_when_daily_tars_above_thres
         archive_pool = _FakeArchivePool()
         archive_pool.__enter__()
         try:
-            st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), archive_pool, run_once=True)
+            st.run_sync_timedb_supervisor_loop('/tmp/archive', 'backlog', None, '.hpc', object(), archive_pool, run_once=True)
         finally:
             archive_pool.__exit__(None, None, None)
         assert events[0] == 'rescan'
@@ -674,7 +680,7 @@ def test_supervisor_run_once_exits_without_idle_sleep_when_empty(monkeypatch):
         archive_pool = _FakeArchivePool()
         archive_pool.__enter__()
         try:
-            st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), archive_pool, run_once=True)
+            st.run_sync_timedb_supervisor_loop('/tmp/archive', 'backlog', None, '.hpc', object(), archive_pool, run_once=True)
         finally:
             archive_pool.__exit__(None, None, None)
         assert sleeps == []
@@ -697,7 +703,7 @@ def test_supervisor_does_not_log_queue_watermarks(monkeypatch):
         archive_pool = _FakeArchivePool()
         archive_pool.__enter__()
         try:
-            st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), archive_pool, run_once=True)
+            st.run_sync_timedb_supervisor_loop('/tmp/archive', 'backlog', None, '.hpc', object(), archive_pool, run_once=True)
         finally:
             archive_pool.__exit__(None, None, None)
     finally:
@@ -733,7 +739,7 @@ def test_supervisor_logs_completed_file_with_global_remaining(monkeypatch):
         archive_pool = _FakeArchivePool()
         archive_pool.__enter__()
         try:
-            st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), archive_pool, run_once=True)
+            st.run_sync_timedb_supervisor_loop('/tmp/archive', 'backlog', None, '.hpc', object(), archive_pool, run_once=True)
         finally:
             archive_pool.__exit__(None, None, None)
         completed_lines = [ln for ln in logs if "ingest file path=" in ln]
@@ -785,7 +791,7 @@ def test_periodic_maintenance_runs_with_backlog_and_logs_context(monkeypatch):
         archive_pool = _FakeArchivePool()
         archive_pool.__enter__()
         try:
-            st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), archive_pool, run_once=True)
+            st.run_sync_timedb_supervisor_loop('/tmp/archive', 'backlog', None, '.hpc', object(), archive_pool, run_once=True)
         finally:
             archive_pool.__exit__(None, None, None)
         assert not any(('Archive debt accrual deferred' in line for line in logs))
@@ -850,7 +856,7 @@ def test_failed_ingest_is_not_marked_processed(monkeypatch):
         archive_pool = _FakeArchivePool()
         archive_pool.__enter__()
         try:
-            st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), archive_pool)
+            st.run_sync_timedb_supervisor_loop('/tmp/archive', 'backlog', None, '.hpc', object(), archive_pool)
         finally:
             archive_pool.__exit__(None, None, None)
         assert path not in seen_processed[1]
@@ -896,7 +902,7 @@ def test_checkpoint_flush_is_coalesced(monkeypatch, tmp_path):
         archive_pool = _FakeArchivePool()
         archive_pool.__enter__()
         try:
-            st.run_sync_timedb_supervisor_loop(str(tmp_path), 'all', None, '.hpc', object(), archive_pool, run_once=True)
+            st.run_sync_timedb_supervisor_loop(str(tmp_path), 'backlog', None, '.hpc', object(), archive_pool, run_once=True)
         finally:
             archive_pool.__exit__(None, None, None)
         assert writes['count'] == 1
@@ -947,7 +953,7 @@ def test_rescan_excludes_inflight_archive_paths(monkeypatch):
         monkeypatch.setattr(st, 'rescan_every_chunks', 1)
         monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
         monkeypatch.setattr(st, '_path_fingerprint', lambda p: {'path': p, 'size': 1, 'mtime': 1})
-        st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), _ArchivePool())
+        st.run_sync_timedb_supervisor_loop('/tmp/archive', 'backlog', None, '.hpc', object(), _ArchivePool())
         assert target in seen_processed[1]
     finally:
         shutdown_requested[0] = False
@@ -1007,7 +1013,7 @@ def test_archive_retry_backoff_requeues_failed_archive(monkeypatch):
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
         monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
         archive_pool = _FakeArchivePoolRetry()
-        st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), archive_pool, run_once=True)
+        st.run_sync_timedb_supervisor_loop('/tmp/archive', 'backlog', None, '.hpc', object(), archive_pool, run_once=True)
         assert archive_pool.calls >= 2
     finally:
         shutdown_requested[0] = False
@@ -1034,7 +1040,7 @@ def test_retry_queue_dispatch_uses_retry_at_order_not_insertion(monkeypatch):
             def map_async(self, _fn, items):
                 dispatched.append(list(items))
                 return _fake_map_async_result([True for _ in items])
-        st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), _ArchivePoolOrder(), run_once=True)
+        st.run_sync_timedb_supervisor_loop('/tmp/archive', 'backlog', None, '.hpc', object(), _ArchivePoolOrder(), run_once=True)
         assert dispatched
         first_dispatch = dispatched[0]
         assert first_dispatch == [('/tmp/day-due.tar.gz', ['/tmp/due'])]
@@ -1098,7 +1104,7 @@ def test_nonblocking_finalize_queues_new_archive_work_when_busy(monkeypatch, tmp
                     return _ArchiveResult(False)
                 return _ArchiveResult(True)
         archive_pool = _ArchivePoolBusy()
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), archive_pool, run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), archive_pool, run_once=True)
         assert archive_pool.calls == 1
         assert len(dispatched) == 1
         assert dispatched[0][0][0].endswith('a.tar.gz')
@@ -1137,7 +1143,7 @@ def test_archive_dispatch_by_tgz_groups_respects_archive_queue_max(monkeypatch):
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
         monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
         monkeypatch.setattr(st, 'log_print', lambda *args, **kwargs: logs.append(' '.join((str(a) for a in args))))
-        st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), _ArchivePoolCapture(), run_once=True)
+        st.run_sync_timedb_supervisor_loop('/tmp/archive', 'backlog', None, '.hpc', object(), _ArchivePoolCapture(), run_once=True)
         assert dispatched
         # First wave is capped by archive_queue_max=2 (one day per slot).
         assert len(dispatched[0]) == 1
@@ -1188,7 +1194,7 @@ def test_archive_overflow_drains_on_finalize_without_new_chunk(monkeypatch):
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
         monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
         monkeypatch.setattr(st, 'log_print', lambda *args, **kwargs: logs.append(' '.join((str(a) for a in args))))
-        st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), _ArchivePoolCapture(), run_once=True)
+        st.run_sync_timedb_supervisor_loop('/tmp/archive', 'backlog', None, '.hpc', object(), _ArchivePoolCapture(), run_once=True)
         assert len(dispatched) == 3
         assert all(len(batch) == 1 for batch in dispatched)
         days = [batch[0][0] for batch in dispatched]
@@ -1263,7 +1269,7 @@ def test_periodic_maintenance_logs_deferred_when_archive_finalize_pending(monkey
         monkeypatch.setattr(st, 'log_print', log_print_capture)
         monkeypatch.setattr(st, 'async_result_get_watch_pool', lambda *_a, **_k: [True])
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda _s: None)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _ArchivePoolNeverReady(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _ArchivePoolNeverReady(), run_once=True)
         assert any(('Archive finalize deferred' in line for line in logs))
         assert not any(('Archive maintenance due but deferred' in line for line in logs))
         assert not any(('forced two-phase archive maintenance' in line for line in logs))
@@ -1315,7 +1321,7 @@ def test_periodic_maintenance_runs_forced_two_phase_when_defer_cap_exceeded(monk
                     def get(self):
                         return [True]
                 return _R()
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _ReadyArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _ReadyArchivePool(), run_once=True)
         assert janitor_signals['n'] >= 1
         assert not any(('forced two-phase archive maintenance' in line for line in logs))
     finally:
@@ -1361,7 +1367,7 @@ def test_continuous_backlog_triggers_forced_maintenance(monkeypatch, tmp_path):
 
             def map_async(self, _fn, _items):
                 return _NeverReady()
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _ArchivePoolNeverReady(), run_once=False)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _ArchivePoolNeverReady(), run_once=False)
         assert any(('sync_timedb: maintenance pass reason=startup' in line for line in logs))
         assert not any(('Archive debt accrual deferred' in line for line in logs))
         assert not any(('Archive janitor accrue reason=' in line for line in logs))
@@ -1429,7 +1435,7 @@ def test_dead_letter_replay_runs_before_idle_sleep(monkeypatch):
                 self.calls += 1
                 return _fake_map_async_result([True])
         ap = _ArchivePoolReplay()
-        st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), ap, run_once=True)
+        st.run_sync_timedb_supervisor_loop('/tmp/archive', 'backlog', None, '.hpc', object(), ap, run_once=True)
         assert ap.calls >= 1
     finally:
         shutdown_requested[0] = False
@@ -1527,7 +1533,7 @@ def test_sync_timedb_exits_on_redis_unavailable_during_ingest(monkeypatch):
         archive_pool.__enter__()
         try:
             with pytest.raises(SystemExit) as excinfo:
-                st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), archive_pool, run_once=True)
+                st.run_sync_timedb_supervisor_loop('/tmp/archive', 'backlog', None, '.hpc', object(), archive_pool, run_once=True)
             assert excinfo.value.code == 1
         finally:
             archive_pool.__exit__(None, None, None)
@@ -1929,7 +1935,7 @@ def test_empty_primary_mapping_falls_back_to_mtime_archive(monkeypatch, tmp_path
                 archive_calls['n'] += 1
                 archive_calls['items'].append(items)
                 return _fake_map_async_result([True for _ in items])
-        st.run_sync_timedb_supervisor_loop(str(tmp_path), 'all', None, '', object(), _ArchivePoolCapture(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(tmp_path), 'backlog', None, '', object(), _ArchivePoolCapture(), run_once=True)
         assert archive_calls['n'] >= 1
         assert archive_calls['items'][0]
     finally:
@@ -1970,7 +1976,7 @@ def test_finally_path_finalizes_inflight_archive(monkeypatch, tmp_path):
             def map_async(self, _fn, _items):
                 return _fake_map_async_result([True])
         with pytest.raises(RuntimeError):
-            st.run_sync_timedb_supervisor_loop(str(tmp_path), 'all', None, '', object(), _ArchivePoolDone(), run_once=True)
+            st.run_sync_timedb_supervisor_loop(str(tmp_path), 'backlog', None, '', object(), _ArchivePoolDone(), run_once=True)
         assert processed['n'] >= 1
     finally:
         shutdown_requested[0] = False
@@ -2011,7 +2017,7 @@ def test_archive_result_mismatch_retries_unmatched(monkeypatch, tmp_path):
                 call_no = self.calls
                 return _fake_map_async_result([] if call_no == 1 else [True])
         ap = _ArchivePoolMismatch()
-        st.run_sync_timedb_supervisor_loop(str(tmp_path), 'all', None, '', object(), ap, run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(tmp_path), 'backlog', None, '', object(), ap, run_once=True)
         assert ap.calls >= 2
     finally:
         shutdown_requested[0] = False
@@ -2098,7 +2104,7 @@ def test_supervisor_ingests_oldest_pending_paths_first(monkeypatch):
         archive_pool = _FakeArchivePool()
         archive_pool.__enter__()
         try:
-            st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), archive_pool, run_once=True)
+            st.run_sync_timedb_supervisor_loop('/tmp/archive', 'backlog', None, '.hpc', object(), archive_pool, run_once=True)
         finally:
             archive_pool.__exit__(None, None, None)
         assert ingested_order == pending
@@ -2110,7 +2116,7 @@ def test_rescan_pending_stats_files_reuses_set_without_copy(monkeypatch):
     discovered = ['/pending/1', '/pending/2', '/done/1']
     monkeypatch.setattr(helpers, 'collect_stats_files_in_range', lambda *_a, **_k: list(discovered))
     processed = {'/done/1'}
-    result = helpers.rescan_pending_stats_files('/arc', 'all', None, '.hpc', processed)
+    result = helpers.rescan_pending_stats_files('/arc', 'backlog', None, '.hpc', processed)
     assert result == ['/pending/1', '/pending/2']
     assert processed == {'/done/1'}
 
@@ -2157,7 +2163,7 @@ def test_ingest_pool_worker_exit_propagates_from_supervisor(monkeypatch):
     archive_pool.__enter__()
     try:
         with pytest.raises(MultiprocessingWorkerExitError) as excinfo:
-            st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), archive_pool, run_once=True)
+            st.run_sync_timedb_supervisor_loop('/tmp/archive', 'backlog', None, '.hpc', object(), archive_pool, run_once=True)
     finally:
         archive_pool.__exit__(None, None, None)
     assert excinfo.value.exit_code == 137
@@ -2212,7 +2218,7 @@ def test_stall_teardown_preserves_exit_124_not_137(monkeypatch):
     archive_pool.__enter__()
     try:
         with pytest.raises(MultiprocessingPoolStallError) as excinfo:
-            st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), archive_pool, run_once=True)
+            st.run_sync_timedb_supervisor_loop('/tmp/archive', 'backlog', None, '.hpc', object(), archive_pool, run_once=True)
     finally:
         archive_pool.__exit__(None, None, None)
     assert excinfo.value.exit_code == 124
@@ -2267,7 +2273,7 @@ def test_supervisor_stall_hard_exits_before_archive_pool_context(monkeypatch):
     archive_pool.__enter__()
     try:
         with pytest.raises(SystemExit) as excinfo:
-            st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), archive_pool, run_once=True)
+            st.run_sync_timedb_supervisor_loop('/tmp/archive', 'backlog', None, '.hpc', object(), archive_pool, run_once=True)
         assert excinfo.value.code == 124
     finally:
         archive_pool.__exit__(None, None, None)
@@ -2327,7 +2333,7 @@ def test_stall_teardown_uses_nonblocking_coordinator_shutdown(monkeypatch):
     archive_pool.__enter__()
     try:
         with pytest.raises(MultiprocessingPoolStallError):
-            st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), archive_pool, run_once=True)
+            st.run_sync_timedb_supervisor_loop('/tmp/archive', 'backlog', None, '.hpc', object(), archive_pool, run_once=True)
     finally:
         archive_pool.__exit__(None, None, None)
     assert janitor_shutdown == [False]
@@ -2369,7 +2375,7 @@ def test_finalize_invalidates_members_cache(monkeypatch):
     monkeypatch.setattr(st.connections, 'close_all', lambda: None)
     monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
     try:
-        st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), _ArchivePoolSuccess(), run_once=True)
+        st.run_sync_timedb_supervisor_loop('/tmp/archive', 'backlog', None, '.hpc', object(), _ArchivePoolSuccess(), run_once=True)
     finally:
         shutdown_requested[0] = False
     assert archive_compressed in invalidated
@@ -2412,7 +2418,7 @@ def test_archive_finalize_skips_invalidate_when_tar_append_redis_merge_succeeded
     monkeypatch.setattr(st.connections, 'close_all', lambda: None)
     monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
     try:
-        st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), _ArchivePoolMergeWarm(), run_once=True)
+        st.run_sync_timedb_supervisor_loop('/tmp/archive', 'backlog', None, '.hpc', object(), _ArchivePoolMergeWarm(), run_once=True)
     finally:
         shutdown_requested[0] = False
     assert not invalidated
@@ -2524,7 +2530,7 @@ def test_ingest_first_archive_abandoned_after_retries_exhausted(monkeypatch, tmp
         def map_async(self, _fn, items):
             return _fake_map_async_result([False for _ in items])
     try:
-        st.run_sync_timedb_supervisor_loop(str(tmp_path / 'archive'), 'all', None, '.hpc', object(), _AlwaysFailArchive(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(tmp_path / 'archive'), 'backlog', None, '.hpc', object(), _AlwaysFailArchive(), run_once=True)
     finally:
         shutdown_requested[0] = False
     assert any(('ingest_first_archive_abandoned_raw' in line for line in logs)), logs[-30:]
@@ -2601,7 +2607,7 @@ def test_archive_finalize_cardinality_mismatch_retries_unmatched(monkeypatch, tm
     monkeypatch.setattr(st, 'tgz_archive_dir', str(tmp_path))
     monkeypatch.setattr(st, 'log_print', lambda msg, *a, **kw: logs.append(str(msg)))
     try:
-        st.run_sync_timedb_supervisor_loop(str(tmp_path / 'archive'), 'all', None, '.hpc', object(), _ShortResultArchive(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(tmp_path / 'archive'), 'backlog', None, '.hpc', object(), _ShortResultArchive(), run_once=True)
     finally:
         shutdown_requested[0] = False
     mismatch_lines = [line for line in logs if 'Archive result cardinality mismatch:' in line]
@@ -2667,7 +2673,7 @@ def test_checkpoint_flush_logs_oserror_and_preserves_dirty(monkeypatch, tmp_path
     monkeypatch.setattr(st, '_save_sync_checkpoint', failing_save)
     monkeypatch.setattr(st, 'SYNC_TIMEDB_CHECKPOINT_FLUSH_EVERY_FILES', 1)
     try:
-        st.run_sync_timedb_supervisor_loop(str(tmp_path / 'archive'), 'all', None, '.hpc', object(), object(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(tmp_path / 'archive'), 'backlog', None, '.hpc', object(), object(), run_once=True)
     finally:
         shutdown_requested[0] = False
     assert flush_calls['n'] >= 1
@@ -2880,15 +2886,15 @@ def test_post_chunk_hygiene_does_not_signal_chunk_boundary_maintenance(monkeypat
         monkeypatch.setattr(st, 'rescan_every_chunks', 1)
         monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
         monkeypatch.setattr(st, '_path_fingerprint', lambda p: {'path': p, 'size': 1, 'mtime': 1})
-        st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
-        assert 'startup' in scheduled_reasons
+        st.run_sync_timedb_supervisor_loop('/tmp/archive', 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        assert 'startup' not in scheduled_reasons
         assert 'every_n_chunks' not in scheduled_reasons
         assert 'ingest_queue_empty' not in scheduled_reasons
     finally:
         shutdown_requested[0] = False
 
-def test_supervisor_runs_startup_maintenance_with_all_flag(monkeypatch, capsys):
-    """``startdate=all`` schedules janitor startup maintenance pass."""
+def test_supervisor_runs_startup_maintenance_with_backlog_flag(monkeypatch, capsys):
+    """``startdate=backlog`` runs startup snapshot/handoff but disables day-close."""
     shutdown_requested[0] = False
     scheduled_reasons = []
     try:
@@ -2907,10 +2913,12 @@ def test_supervisor_runs_startup_maintenance_with_all_flag(monkeypatch, capsys):
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
         monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp')
-        st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop('/tmp/archive', 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         assert 'startup' in scheduled_reasons
         out = capsys.readouterr().out
-        assert 'sync_timedb: non-default settings:' in out
+        assert 'maintenance pass reason=startup' in out
+        assert 'day_close disabled mode=backlog' in out
+        assert 'startup ingest gate cleared; ingest may begin' in out
     finally:
         shutdown_requested[0] = False
 
@@ -2984,6 +2992,7 @@ def test_supervisor_module_has_no_live_archive_maintenance_pipeline_calls():
         assert name not in src
 
 def test_supervisor_scheduled_day_close_at_startup(monkeypatch, tmp_path):
+    """CLI ``backlog`` must not schedule startup day-close maintenance."""
     shutdown_requested[0] = False
     scheduled_calls = []
     try:
@@ -3006,8 +3015,8 @@ def test_supervisor_scheduled_day_close_at_startup(monkeypatch, tmp_path):
         monkeypatch.setattr(st, 'tgz_archive_dir', str(daily_dir))
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
-        assert 'startup' in scheduled_calls
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        assert 'startup' not in scheduled_calls
     finally:
         shutdown_requested[0] = False
 
@@ -3029,7 +3038,7 @@ def test_supervisor_startup_log_no_accrual_interval(monkeypatch, tmp_path):
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
         monkeypatch.setattr(st, 'tgz_archive_dir', str(daily_dir))
         monkeypatch.setattr(st, 'log_print', lambda *args, **kwargs: logs.append(' '.join((str(a) for a in args))))
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         assert any(('sync_timedb: day_close immediate enqueue' in line for line in logs))
         assert not any(('archive janitor accrual interval' in line for line in logs))
     finally:
@@ -3071,8 +3080,8 @@ def test_supervisor_does_not_signal_ingest_queue_empty_at_chunk_drain(monkeypatc
         monkeypatch.setattr(st, 'rescan_every_chunks', 100)
         monkeypatch.setattr(st, 'tgz_archive_dir', str(daily_dir))
         monkeypatch.setattr(st, '_path_fingerprint', lambda p: {'path': p, 'size': 1, 'mtime': 1})
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
-        assert 'startup' in scheduled_reasons
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        assert 'startup' not in scheduled_reasons
         assert 'ingest_queue_empty' not in scheduled_reasons
         assert 'every_n_chunks' not in scheduled_reasons
     finally:
@@ -3100,7 +3109,7 @@ def test_supervisor_idle_loop_does_not_signal_queue_empty_pass(monkeypatch, tmp_
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
         monkeypatch.setattr(st, 'tgz_archive_dir', str(daily_dir))
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         assert scheduled_reasons == ['startup']
     finally:
         shutdown_requested[0] = False
@@ -3128,7 +3137,7 @@ def test_supervisor_startup_empty_queue_no_duplicate_drain_pass(monkeypatch, tmp
         monkeypatch.setattr(st, 'close_old_connections', lambda: None)
         monkeypatch.setattr(st.connections, 'close_all', lambda: None)
         monkeypatch.setattr(st, 'tgz_archive_dir', str(daily_dir))
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         assert scheduled_reasons == ['startup']
     finally:
         shutdown_requested[0] = False
@@ -3220,7 +3229,7 @@ def test_supervisor_reconcile_cap_uses_coordinator_snapshot_no_live_collect(monk
         monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp/daily')
         monkeypatch.setattr(st, '_path_fingerprint', lambda p: {'path': p, 'size': 1, 'mtime': 1})
         st.run_sync_timedb_supervisor_loop(
-            '/tmp/archive', 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True,
+            '/tmp/archive', 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True,
         )
         out = capsys.readouterr().out
         assert 'startup ingest gate cleared; ingest may begin' in out
@@ -3262,7 +3271,7 @@ def test_supervisor_startup_blocks_ingest_until_maintenance_idle(monkeypatch):
         monkeypatch.setattr(st, 'rescan_every_chunks', 100)
         monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp/daily')
         monkeypatch.setattr(st, '_path_fingerprint', lambda p: {'path': p, 'size': 1, 'mtime': 1})
-        st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop('/tmp/archive', 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         assert heavy_pass_calls['n'] >= 1
         assert ingest_calls['n'] == 1
     finally:
@@ -3354,7 +3363,7 @@ def test_supervisor_ingest_proceeds_without_day_close_delete_gate(monkeypatch):
         monkeypatch.setattr(st, 'rescan_every_chunks', 100)
         monkeypatch.setattr(st, 'tgz_archive_dir', '/tmp/daily')
         monkeypatch.setattr(st, '_path_fingerprint', lambda p: {'path': p, 'size': 1, 'mtime': 1})
-        st.run_sync_timedb_supervisor_loop('/tmp/archive', 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop('/tmp/archive', 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         assert ingest_calls['n'] >= 1
     finally:
         shutdown_requested[0] = False
@@ -3395,8 +3404,8 @@ def test_supervisor_does_not_signal_every_n_chunks_maintenance(monkeypatch, tmp_
         monkeypatch.setattr(st, 'rescan_every_chunks', 10)
         monkeypatch.setattr(st, 'tgz_archive_dir', str(daily_dir))
         monkeypatch.setattr(st, '_path_fingerprint', lambda p: {'path': p, 'size': 1, 'mtime': 1})
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
-        assert 'startup' in scheduled_reasons
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        assert 'startup' not in scheduled_reasons
         assert 'every_n_chunks' not in scheduled_reasons
     finally:
         shutdown_requested[0] = False
@@ -3483,7 +3492,7 @@ def test_supervisor_enqueues_immediate_day_close_on_day_drain(monkeypatch, tmp_p
         tar_day1 = os.path.normpath(os.path.join(daily_dir, '2020-01-01.tar'))
         open(tar_day1, 'wb').close()
         _patch_days_ingest_complete(monkeypatch, lambda _unprocessed, **kwargs: [tar_day1])
-        st.run_sync_timedb_supervisor_loop(archive_dir, 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(archive_dir, datetime(2019, 1, 1), None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         _assert_immediate_day_close_reason(immediate_events, tar_path=tar_day1)
     finally:
         shutdown_requested[0] = False
@@ -3506,7 +3515,7 @@ def test_supervisor_does_not_immediate_day_close_mid_day(monkeypatch, tmp_path):
         monkeypatch.setattr(st, 'add_stats_file_to_db', stop_after_first_ingest)
         tar_day1 = os.path.normpath(os.path.join(daily_dir, '2020-01-01.tar'))
         open(tar_day1, 'wb').close()
-        st.run_sync_timedb_supervisor_loop(archive_dir, 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(archive_dir, datetime(2019, 1, 1), None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         chunk_end_hits = [event for event in immediate_events if event[0] == tar_day1 and event[1] == 'day_ingest_complete:chunk_end']
         assert not chunk_end_hits
     finally:
@@ -3522,7 +3531,7 @@ def test_supervisor_day_close_at_most_one_batch_late(monkeypatch, tmp_path):
         tar_day1 = os.path.normpath(os.path.join(daily_dir, '2020-01-01.tar'))
         open(tar_day1, 'wb').close()
         _patch_days_ingest_complete(monkeypatch, lambda _unprocessed, **kwargs: [tar_day1])
-        st.run_sync_timedb_supervisor_loop(archive_dir, 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(archive_dir, datetime(2019, 1, 1), None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         immediate_indices = [idx for idx, event in enumerate(immediate_events) if event[0] == tar_day1 and event[1] in _DEFAULT_IMMEDIATE_DAY_CLOSE_CONTEXTS]
         assert immediate_indices
         assert immediate_indices[0] <= 1
@@ -3542,7 +3551,7 @@ def test_supervisor_checks_day_close_every_batch(monkeypatch, tmp_path):
         day2_epoch = int(datetime(2020, 1, 2, 12, tzinfo=timezone.utc).timestamp())
         archive_dir, _daily_dir = _supervisor_two_day_ingest_patches(monkeypatch, tmp_path, paths=['/fake/stats/%d' % day1_epoch, '/fake/stats/%d' % day2_epoch])
         _patch_days_ingest_complete(monkeypatch, counting_scan)
-        st.run_sync_timedb_supervisor_loop(archive_dir, 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(archive_dir, datetime(2019, 1, 1), None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         assert len(find_calls) >= 2
     finally:
         shutdown_requested[0] = False
@@ -3575,7 +3584,7 @@ def test_immediate_day_close_submits_checkpoint_complete_not_chunk_touched_only(
             'enqueue_day_close',
             spy_enqueue_day_close,
         )
-        st.run_sync_timedb_supervisor_loop(archive_dir, 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(archive_dir, datetime(2019, 1, 1), None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         _assert_immediate_day_close_reason(submitted, tar_path=tar_day1)
     finally:
         shutdown_requested[0] = False
@@ -3612,7 +3621,7 @@ def test_immediate_day_close_retries_after_transient_disqualify(monkeypatch, tmp
             'enqueue_day_close',
             tracking_enqueue,
         )
-        st.run_sync_timedb_supervisor_loop(archive_dir, 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(archive_dir, datetime(2019, 1, 1), None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         assert enqueue_calls.count(tar_day1) >= 2
     finally:
         shutdown_requested[0] = False
@@ -3639,12 +3648,13 @@ def test_day_close_unprocessed_build_passes_accrual_snapshot(monkeypatch, tmp_pa
         monkeypatch.setattr(st, 'build_unprocessed_raw_by_daily_tar', recording_unprocessed)
         monkeypatch.setattr(archive_helpers, 'build_unprocessed_raw_by_daily_tar', recording_unprocessed)
         open(os.path.join(daily_dir, '2020-01-01.tar'), 'wb').close()
-        st.run_sync_timedb_supervisor_loop(archive_dir, 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(archive_dir, datetime(2019, 1, 1), None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         assert fake_accrual in seen_snapshots
     finally:
         shutdown_requested[0] = False
 
 def test_immediate_day_close_coexists_with_startup_scheduled_pass(monkeypatch, tmp_path):
+    """Date-range keeps immediate day_close; no startup maintenance required."""
     shutdown_requested[0] = False
     scheduled_reasons = []
     immediate_events = []
@@ -3661,9 +3671,27 @@ def test_immediate_day_close_coexists_with_startup_scheduled_pass(monkeypatch, t
         open(os.path.join(daily_dir, '2020-01-01.tar'), 'wb').close()
         tar_day1 = os.path.normpath(os.path.join(daily_dir, '2020-01-01.tar'))
         _patch_days_ingest_complete(monkeypatch, lambda _unprocessed, **kwargs: [tar_day1])
-        st.run_sync_timedb_supervisor_loop(archive_dir, 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
-        assert 'startup' in scheduled_reasons
+        st.run_sync_timedb_supervisor_loop(archive_dir, datetime(2019, 1, 1), None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        assert 'startup' not in scheduled_reasons
         _assert_immediate_day_close_reason(immediate_events)
+    finally:
+        shutdown_requested[0] = False
+
+def test_backlog_mode_skips_immediate_day_close(monkeypatch, tmp_path, capsys):
+    """CLI all must not enqueue immediate day_close."""
+    shutdown_requested[0] = False
+    immediate_events = []
+    try:
+        day1_epoch = int(datetime(2020, 1, 1, 12, tzinfo=timezone.utc).timestamp())
+        day2_epoch = int(datetime(2020, 1, 2, 12, tzinfo=timezone.utc).timestamp())
+        archive_dir, daily_dir = _supervisor_two_day_ingest_patches(monkeypatch, tmp_path, paths=['/fake/stats/%d' % day1_epoch, '/fake/stats/%d' % day2_epoch], immediate_spy=lambda tar, reason: immediate_events.append((os.path.normpath(tar), reason)))
+        open(os.path.join(daily_dir, '2020-01-01.tar'), 'wb').close()
+        tar_day1 = os.path.normpath(os.path.join(daily_dir, '2020-01-01.tar'))
+        _patch_days_ingest_complete(monkeypatch, lambda _unprocessed, **kwargs: [tar_day1])
+        st.run_sync_timedb_supervisor_loop(archive_dir, 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        assert immediate_events == []
+        out = capsys.readouterr().out
+        assert 'day_close disabled mode=backlog' in out
     finally:
         shutdown_requested[0] = False
 
@@ -3685,7 +3713,7 @@ def test_chunk_10_immediate_check_after_boundary_finalize(monkeypatch, tmp_path)
         open(os.path.join(daily_dir, '2020-01-01.tar'), 'wb').close()
         tar_day1 = os.path.normpath(os.path.join(daily_dir, '2020-01-01.tar'))
         _patch_days_ingest_complete(monkeypatch, lambda _unprocessed, **kwargs: [tar_day1])
-        st.run_sync_timedb_supervisor_loop(archive_dir, 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(archive_dir, datetime(2019, 1, 1), None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         _assert_immediate_day_close_reason(order)
         assert 'every_n_chunks' not in scheduled_reasons
     finally:
@@ -3704,7 +3732,7 @@ def test_immediate_day_close_on_idle_finalize_without_chunk(monkeypatch, tmp_pat
             shutdown_requested[0] = True
             return []
         monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), datetime(2019, 1, 1), None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         assert 'day_ingest_complete:idle_finalize' in immediate_reasons
     finally:
         shutdown_requested[0] = False
@@ -3734,7 +3762,7 @@ def test_supervisor_failed_ingest_requeues_at_pending_head(monkeypatch, tmp_path
         monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
         monkeypatch.setattr(st, 'add_stats_file_to_db', fake_add)
         monkeypatch.setattr(st.cfg, 'get_sync_ingest_chunk_size', lambda: 1)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         assert ingest_order[:2] == [fail_path, fail_path]
         assert ok_path in ingest_order
     finally:
@@ -3760,7 +3788,7 @@ def test_supervisor_reconcile_prepends_oldest_blocked_before_chunk(monkeypatch, 
             ingest_order.append(path)
             return (path, True, True, 0.0)
         monkeypatch.setattr(st, 'add_stats_file_to_db', fake_add)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         assert ingest_order[0] == blocked_path
         assert other_path in ingest_order
     finally:
@@ -3855,7 +3883,7 @@ def test_supervisor_startup_handoff_paths_ingested_at_queue_head(monkeypatch, tm
         monkeypatch.setattr(archive_helpers, 'build_unprocessed_raw_by_daily_tar', lambda *_a, **_k: {})
         monkeypatch.setattr(st, 'days_ingest_complete_by_checkpoint', lambda *_a, **_k: [])
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         out = capsys.readouterr().out
         assert 'startup ingest gate cleared; ingest may begin' in out
         idle_idx = out.index('startup ingest gate cleared; ingest may begin')
@@ -3913,7 +3941,7 @@ def test_immediate_day_close_respects_sync_day_close_max_inflight(monkeypatch, t
             'active_discover_cap_tar_paths',
             _active,
         )
-        st.run_sync_timedb_supervisor_loop(archive_dir, 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(archive_dir, datetime(2019, 1, 1), None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         assert len(submitted) == 1
         assert submitted[0] == tar_paths[0]
     finally:
@@ -4108,7 +4136,7 @@ def test_recover_startup_handoff_incremental_one_tar_per_drain_spin(monkeypatch,
         monkeypatch.setattr(archive_helpers, 'build_live_unprocessed_by_tar_for_reconcile', lambda *_a, **_k: {})
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'shutdown', lambda self, wait=True: None)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         out = capsys.readouterr().out
         assert 'boot handoff discover' in out
         requeue_lines = [line for line in out.splitlines() if 'day_close handoff requeue' in line and 'skip' not in line]
@@ -4212,7 +4240,7 @@ def test_cap_pending_after_handoff_uses_snapshot_during_startup_gate(monkeypatch
         monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
         monkeypatch.setattr(st, 'add_stats_file_to_db', lambda _lock, path, **_k: (path, True, True, 0.0))
         monkeypatch.setattr(st.cfg, 'get_sync_ingest_chunk_size', lambda: 1)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         out = capsys.readouterr().out
         assert 'handoff_light=1' in out
         assert live_reconcile_calls['n'] == 0
@@ -4300,7 +4328,7 @@ def test_handoff_skips_duplicate_requeue_same_boot(monkeypatch, tmp_path, capsys
         monkeypatch.setattr(archive_helpers, 'build_live_unprocessed_by_tar_for_reconcile', lambda *_a, **_k: {})
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'shutdown', lambda self, wait=True: None)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         boot_out = capsys.readouterr().out
         assert boot_out.count('day_close handoff requeue') == 1
         assert coord_holder
@@ -4398,7 +4426,7 @@ def test_handoff_requeue_skips_same_boot_duplicate_after_first_handoff(monkeypat
         monkeypatch.setattr(archive_helpers, 'build_live_unprocessed_by_tar_for_reconcile', lambda *_a, **_k: {})
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'shutdown', lambda self, wait=True: None)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         boot_out = capsys.readouterr().out
         assert boot_out.count('day_close handoff requeue') == 1
         assert coord_holder
@@ -4499,7 +4527,7 @@ def test_handoff_requeue_allowed_when_paths_remain_after_same_boot(monkeypatch, 
         monkeypatch.setattr(archive_helpers, 'build_live_unprocessed_by_tar_for_reconcile', lambda *_a, **_k: {})
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'shutdown', lambda self, wait=True: None)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         boot_out = capsys.readouterr().out
         assert boot_out.count('day_close handoff requeue') == 1
         assert coord_holder
@@ -4599,7 +4627,7 @@ def test_oldest_day_chunk_gate_log_includes_handoff_priority_n(monkeypatch, tmp_
             if args and 'oldest_day_chunk_gate' in str(args[0]):
                 gate_logs.append(' '.join(str(a) for a in args))
         monkeypatch.setattr(st, 'log_print', capture_gate)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         assert gate_logs
         assert any('handoff_priority_n=' in line for line in gate_logs)
         assert any('handoff_cross_day_n=' in line for line in gate_logs)
@@ -4901,7 +4929,7 @@ def test_supervisor_oldest_day_chunk_gate_inflight_starvation(monkeypatch, tmp_p
         monkeypatch.setattr(st, 'days_ingest_complete_by_checkpoint', lambda *_a, **_k: [])
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
         monkeypatch.setattr(st, 'log_print', lambda *args, **kw: gate_logs.append(' '.join((str(a) for a in args))) if args and 'oldest_day_chunk_gate' in str(args[0]) else None)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         assert gate_logs
         assert ingest_batches
         assert all((path in handoff for path in ingest_batches))
@@ -5013,7 +5041,7 @@ def test_supervisor_chunk_gate_cross_day_stall_dispatches_pending_head(monkeypat
         monkeypatch.setattr(st, 'reconcile_orphan_inflight_for_oldest_tar', track_reconcile)
         monkeypatch.setattr(st, 'days_ingest_complete_by_checkpoint', lambda *_a, **_k: [])
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         assert str(tail_obj) in ingest_batches
     finally:
         shutdown_requested[0] = False
@@ -5114,7 +5142,7 @@ def test_supervisor_chunk_gate_unblocks_when_blocked_excluded_from_processed(mon
         monkeypatch.setattr(archive_helpers, 'build_unprocessed_raw_by_daily_tar', lambda *_a, **_k: {tar_a: list(blocked)})
         monkeypatch.setattr(st, 'days_ingest_complete_by_checkpoint', lambda *_a, **_k: [])
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         assert ingest_batches
         assert any((path in blocked for path in ingest_batches))
         # Pad fills remaining slots from later-day pending after oldest-day blocked paths.
@@ -5325,7 +5353,7 @@ def test_handoff_giant_day_slice_ingest(monkeypatch, tmp_path):
         monkeypatch.setattr(st, 'days_ingest_complete_by_checkpoint', lambda *_a, **_k: [])
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
         _supervisor_shutdown_on_startup_idle(monkeypatch)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         assert len(ingest_calls) == 0
         combined = '\n'.join(log_lines)
         assert 'handoff_mode=steady_chunk' in combined
@@ -5427,7 +5455,7 @@ def test_closed_raw_handoff_uses_steady_chunk_not_giant_day_slice(monkeypatch, t
         monkeypatch.setattr(st, '_path_fingerprint', lambda p: {'path': p, 'size': 1, 'mtime': 1})
         monkeypatch.setattr(st, 'ensure_persistence_contract', lambda *_a, **_k: None)
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         assert coord_holder
         coord_holder[0].on_handoff_to_ingest(tar_norm, paths, 'closed_raw_submit_guard')
         out = capsys.readouterr().out
@@ -5520,7 +5548,7 @@ def test_giant_day_slice_gated_to_startup_handoff_recover_only(monkeypatch, tmp_
         monkeypatch.setattr(st, 'ensure_persistence_contract', lambda *_a, **_k: None)
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
         _supervisor_shutdown_on_startup_idle(monkeypatch)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         boot_out = capsys.readouterr().out
         assert len(ingest_calls) == 0
         assert 'startup handoff giant-day ingest begin' not in boot_out
@@ -5623,7 +5651,7 @@ def test_startup_waits_snapshot_before_handoff(monkeypatch, tmp_path, capsys):
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
         _supervisor_shutdown_on_startup_idle(monkeypatch)
         st.run_sync_timedb_supervisor_loop(
-            str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True,
+            str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True,
         )
         assert 'snapshot_wait_poll' in events
         assert 'snapshot_ready' in events
@@ -5739,7 +5767,7 @@ def test_finalize_day_close_deferred_when_handoff_priority_pending(monkeypatch, 
         monkeypatch.setattr(archive_helpers, 'build_live_unprocessed_by_tar_for_reconcile', lambda *_a, **_k: {})
         monkeypatch.setattr(archive_helpers, 'days_ingest_complete_by_checkpoint', lambda *_a, **_k: [tar_norm])
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _ArchivePoolSuccess(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), datetime(2019, 1, 1), None, '.hpc', object(), _ArchivePoolSuccess(), run_once=True)
         out = capsys.readouterr().out
         assert 'archive_finalize defer immediate day_close reason=handoff_priority' in out
         assert 'post_finalize_reconcile' in out
@@ -5843,7 +5871,7 @@ def test_post_finalize_reconcile_clears_blocked_before_handoff(monkeypatch, tmp_
         monkeypatch.setattr(StartupArchiveScanCoordinator, 'wait_for_snapshot', lambda self, *, allow_build=False: None)
         monkeypatch.setattr(archive_helpers, 'build_live_unprocessed_by_tar_for_reconcile', fake_unprocessed)
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _ArchivePoolSuccess(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _ArchivePoolSuccess(), run_once=True)
         out = capsys.readouterr().out
         assert 'post_finalize_reconcile' in out
         assert 'incomplete_n=0' in out
@@ -5924,7 +5952,7 @@ def test_handoff_giant_day_does_not_block_main_on_immediate_day_close(monkeypatc
         monkeypatch.setattr(st, '_path_fingerprint', lambda p: {'path': p, 'size': 1, 'mtime': 1})
         monkeypatch.setattr(st, 'ensure_persistence_contract', lambda *_a, **_k: None)
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), datetime(2019, 1, 1), None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         assert coord_holder
         coord_holder[0].on_handoff_to_ingest(tar_norm, paths, 'closed_raw_submit_guard')
         out = capsys.readouterr().out
@@ -6015,7 +6043,7 @@ def test_startup_handoff_no_giant_slice_manifest_done_0522(monkeypatch, tmp_path
         monkeypatch.setattr(st, 'ensure_persistence_contract', lambda *_a, **_k: None)
         monkeypatch.setattr(archive_helpers, 'build_live_unprocessed_by_tar_for_reconcile', lambda *_a, **_k: {})
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         out = capsys.readouterr().out
         assert kick_calls
         assert 'startup handoff giant-day ingest begin' not in out
@@ -6118,7 +6146,7 @@ def test_startup_same_boot_duplicate_kicks_delete_not_skip(monkeypatch, tmp_path
         monkeypatch.setattr(st, 'ensure_persistence_contract', lambda *_a, **_k: None)
         monkeypatch.setattr(archive_helpers, 'build_live_unprocessed_by_tar_for_reconcile', lambda *_a, **_k: {})
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         boot_out = capsys.readouterr().out
         assert boot_out.count('day_close handoff requeue') == 1
         assert coord_holder
@@ -6424,7 +6452,7 @@ def test_handoff_light_when_drain_disabled(monkeypatch, tmp_path, capsys):
         monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
         monkeypatch.setattr(st, 'add_stats_file_to_db', lambda _lock, path, **_k: (path, True, True, 0.0))
         monkeypatch.setattr(st.cfg, 'get_sync_ingest_chunk_size', lambda: 1)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
         out = capsys.readouterr().out
         assert 'handoff_light=1' in out
         assert live_reconcile_calls['n'] == 0
@@ -6554,7 +6582,7 @@ def test_chunk_end_defers_immediate_day_close_when_handoff_pending(monkeypatch, 
         monkeypatch.setattr(archive_helpers, 'build_live_unprocessed_by_tar_for_reconcile', lambda *_a, **_k: {})
         monkeypatch.setattr(archive_helpers, 'days_ingest_complete_by_checkpoint', lambda *_a, **_k: [tar_norm])
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _ArchivePoolSuccess(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), datetime(2019, 1, 1), None, '.hpc', object(), _ArchivePoolSuccess(), run_once=True)
         out = capsys.readouterr().out
         assert 'immediate day_close defer context=chunk_end reason=handoff_priority' in out
         assert 'chunk ingest summary' in out
@@ -6683,7 +6711,7 @@ def test_chunk_end_submits_immediate_day_close_despite_closed_raw_on_disk(monkey
             ),
         )
         # Do not silence janitor: autouse inline executors run ticks without real threads.
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _ArchivePoolSuccess(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), datetime(2019, 1, 1), None, '.hpc', object(), _ArchivePoolSuccess(), run_once=True)
         out = capsys.readouterr().out
         assert 'closed_raw_guard' not in out
         assert submit_calls
@@ -6802,9 +6830,11 @@ def test_arch_june04_handoff_after_giant_finalize_dispatches_chunk(monkeypatch, 
         monkeypatch.setattr(archive_helpers, 'build_live_unprocessed_by_tar_for_reconcile', lambda *_a, **_k: {})
         monkeypatch.setattr(archive_helpers, 'days_ingest_complete_by_checkpoint', lambda *_a, **_k: [tar_norm])
         monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'signal_work_available', lambda self: None)
-        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'all', None, '.hpc', object(), _ArchivePoolSuccess(), run_once=True)
+        st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _ArchivePoolSuccess(), run_once=True)
         out = capsys.readouterr().out
-        assert 'archive_finalize defer immediate day_close reason=handoff_priority' in out or 'immediate day_close defer context=chunk_end reason=handoff_priority' in out
+        # Dual-mode: CLI ``backlog`` never day-closes, so handoff priority cannot
+        # defer day_close (it is skipped). Assert handoff + chunk progress.
+        assert 'day_close disabled mode=backlog' in out
         assert chunk_summaries
         assert 'day_close handoff requeue' in out
     finally:
