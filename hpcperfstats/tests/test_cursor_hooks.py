@@ -89,6 +89,63 @@ def test_extract_read_rule_basenames_from_transcript():
   assert len(read_names) == 1
 
 
+def test_is_cursor_rule_read_path_accepts_workspace_symlink():
+  # Canonical authoritative path counts.
+  assert lib.is_cursor_rule_read_path(
+      "/repo/HPCPerfStats/hpcperfstats/cursor-rules/plan-creation-contract.mdc"
+  )
+  # Monitor rule path counts.
+  assert lib.is_cursor_rule_read_path(MONITOR_RULE_PATH)
+  # Workspace `.cursor/rules/` symlink path must also count (regression:
+  # reads opened via the symlink previously did not satisfy the plan gate).
+  assert lib.is_cursor_rule_read_path(
+      "/ws/.cursor/rules/plan-creation-contract.mdc"
+  )
+  # Non-rule reads are still excluded.
+  assert not lib.is_cursor_rule_read_path("/repo/hpcperfstats/dbload/sync_timedb.py")
+  assert not lib.is_cursor_rule_read_path("/ws/.cursor/rules/README.md")
+
+
+def test_extract_read_rule_basenames_accepts_workspace_symlink_path():
+  rows = [
+      {
+          "role": "assistant",
+          "message": {
+              "content": [
+                  {
+                      "type": "tool_use",
+                      "name": "Read",
+                      "input": {"path": "/ws/.cursor/rules/plan-live-disk-sync.mdc"},
+                  },
+              ],
+          },
+      },
+  ]
+  read_names = lib.extract_read_rule_basenames(rows)
+  assert "plan-live-disk-sync.mdc" in read_names
+
+
+def test_plan_authoring_precreate_read_issues_clears_with_symlink_reads():
+  base = "/ws/.cursor/rules/"
+  content = [
+      {
+          "type": "tool_use",
+          "name": "Read",
+          "input": {"path": f"{base}{name}"},
+      }
+      for name in lib.PLAN_AUTHORING_REQUIRED_MDC
+  ]
+  content.append(
+      {
+          "type": "tool_use",
+          "name": "Read",
+          "input": {"path": "/ws/.cursor/rules/../docs/plans/PLAN_TEMPLATE.md"},
+      },
+  )
+  rows = [{"role": "assistant", "message": {"content": content}}]
+  assert lib.plan_authoring_precreate_read_issues(rows) == []
+
+
 def test_domain_rule_read_issues_flags_missing_read():
   assistant_text = (
       "## Agent rule dispatch\n\n"

@@ -1118,13 +1118,15 @@ def full_file_rule_read_issues(
 
 def is_cursor_rule_read_path(path: str) -> bool:
     normalized = (path or "").replace("\\", "/")
+    if not normalized.endswith(".mdc"):
+        return False
     return (
-        "cursor-rules/" in normalized
-        and normalized.endswith(".mdc")
-        and (
-            "monitor/cursor-rules/" in normalized
-            or "hpcperfstats/cursor-rules/" in normalized
-        )
+        "hpcperfstats/cursor-rules/" in normalized
+        or "monitor/cursor-rules/" in normalized
+        # Workspace exposes rules via the `.cursor/rules/` symlink -> the
+        # authoritative `hpcperfstats/cursor-rules/` dir; reads opened through
+        # that symlink path must count the same as the canonical path.
+        or ".cursor/rules/" in normalized
     )
 
 
