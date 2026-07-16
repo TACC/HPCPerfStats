@@ -82,6 +82,7 @@ from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
     maintain_ingest_pool_after_supervisor_retire,
     pool_workers_all_idle,
     probe_ingest_pool_dispatch,
+    reclaim_excess_ingest_pool_children,
     reap_pool_worker_pids,
     reap_zombie_children_of_self,
     retire_pool_worker_pid,
@@ -1883,6 +1884,14 @@ def _imap_ingest_paths_batched(
         initargs=initargs,
         pool_kind_log_label="ingest-pool",
     )
+    try:
+      reclaim_excess_ingest_pool_children(
+          new_pool,
+          expected=thread_count,
+          context="idle_pool_recover",
+      )
+    except Exception:
+      pass
     alive_workers = alive_pool_worker_count(new_pool)
     if alive_workers <= 0:
       log_print(

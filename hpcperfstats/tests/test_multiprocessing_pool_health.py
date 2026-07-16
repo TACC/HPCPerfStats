@@ -1868,6 +1868,11 @@ def test_maintain_ingest_pool_proactive_swap_abandons_old_pool(monkeypatch):
     return True
 
   monkeypatch.setattr(mph, "terminate_pool_bounded", fake_terminate)
+  monkeypatch.setattr(
+      mph,
+      "reclaim_excess_ingest_pool_children",
+      lambda *a, **k: [],
+  )
   new_pool = object()
   old_pool = SimpleNamespace(_pool=[_AliveWorker()])
   out = mph.maintain_ingest_pool_after_supervisor_retire(
@@ -1879,6 +1884,109 @@ def test_maintain_ingest_pool_proactive_swap_abandons_old_pool(monkeypatch):
   assert terminate_calls[0].get("abandon_after_kill") is True
   assert terminate_calls[0].get("kill_workers_first") is True
   assert terminate_calls[0].get("context") == "proactive_swap"
+
+
+def test_terminate_pool_bounded_abandon_kills_ppid_census_orphans(monkeypatch):
+  """Abandon must SIGKILL ingest-pool children of main, not only pool._pool."""
+  logs = []
+  census_calls = []
+  monkeypatch.setattr(
+      mph,
+      "log_print",
+      lambda msg, flush=False: logs.append(msg),
+  )
+  monkeypatch.setattr(
+      mph,
+      "_aggressive_terminate_pool_workers",
+      lambda pool, **kwargs: None,
+  )
+  monkeypatch.setattr(
+      mph,
+      "reap_zombie_children_of_self",
+      lambda **kwargs: None,
+  )
+
+  def fake_census(**kwargs):
+    census_calls.append(dict(kwargs))
+    return [9001, 9002]
+
+  monkeypatch.setattr(mph, "kill_ingest_pool_children_by_ppid_census", fake_census)
+
+  class _Pool:
+    _pool = [_AliveWorker(pid=100)]
+
+  ok = mph.terminate_pool_bounded(
+      _Pool(),
+      context="proactive_swap",
+      kill_workers_first=True,
+      abandon_after_kill=True,
+  )
+  assert ok is True
+  assert census_calls
+  assert census_calls[0].get("context") == "proactive_swap"
+  assert any("outcome=abandoned" in line for line in logs)
+
+
+def test_reclaim_excess_ingest_pool_children_kills_orphans_keeps_pool(monkeypatch):
+  """When child_ingest > configured, cull orphans not in pool._pool."""
+  killed = []
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_processes",
+      lambda: 2,
+  )
+  monkeypatch.setattr(
+      mph,
+      "list_ingest_pool_child_pids_of_self",
+      lambda: [10, 11, 20, 21],
+  )
+  monkeypatch.setattr(
+      mph,
+      "_sigkill_pool_worker_pids",
+      lambda pids, **kwargs: killed.extend(list(pids)),
+  )
+  monkeypatch.setattr(mph, "log_print", lambda *a, **k: None)
+  pool = SimpleNamespace(_pool=[_AliveWorker(pid=10), _AliveWorker(pid=11)])
+  culled = mph.reclaim_excess_ingest_pool_children(
+      pool,
+      context="post_retire_maintenance",
+  )
+  assert sorted(culled) == [20, 21]
+  assert sorted(killed) == [20, 21]
+
+
+def test_maintain_ingest_pool_reclaims_when_alive_over_cap(monkeypatch):
+  """Entry reclaim runs even when probe succeeds (no swap path)."""
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
+      lambda: 0,
+  )
+  monkeypatch.setattr(mph, "reap_pool_worker_pids", lambda *a, **k: [])
+  monkeypatch.setattr(mph, "reap_zombie_children_of_self", lambda **k: None)
+  monkeypatch.setattr(mph, "_iter_dead_pool_worker_processes", lambda pool: [])
+  monkeypatch.setattr(
+      mph,
+      "_pool_recycle_gate_metrics",
+      lambda *a, **k: {
+          "alive": 24,
+          "expected_total": 24,
+          "materialized": 24,
+          "gap": 0,
+          "dead_n": 0,
+      },
+  )
+  monkeypatch.setattr(mph, "probe_ingest_pool_dispatch", lambda *a, **k: True)
+  reclaim_calls = []
+
+  def fake_reclaim(pool=None, **kwargs):
+    reclaim_calls.append({"pool": pool, **kwargs})
+    return [50, 51]
+
+  monkeypatch.setattr(mph, "reclaim_excess_ingest_pool_children", fake_reclaim)
+  pool = SimpleNamespace(_pool=[_AliveWorker()])
+  out = mph.maintain_ingest_pool_after_supervisor_retire(pool)
+  assert out is pool
+  assert reclaim_calls
+  assert reclaim_calls[0].get("context") == "post_retire_maintenance"
 
 
 def test_probe_ingest_pool_dispatch_success_and_failure():
@@ -1900,6 +2008,31 @@ def test_probe_ingest_pool_dispatch_success_and_failure():
       raise RuntimeError("dead taskqueue")
 
   assert mph.probe_ingest_pool_dispatch(_FailPool(), context="test") is False
+
+
+def test_probe_ingest_pool_dispatch_logs_timeout_error_typename(monkeypatch):
+  """Empty str(TimeoutError) must still log TimeoutError in err=."""
+  logs = []
+  monkeypatch.setattr(
+      mph,
+      "log_print",
+      lambda msg, flush=False: logs.append(msg),
+  )
+
+  class _TimeoutAsync:
+    def get(self, timeout=None):
+      del timeout
+      raise multiprocessing.TimeoutError()
+
+  class _TimeoutPool:
+    def apply_async(self, fn, args):
+      del fn, args
+      return _TimeoutAsync()
+
+  assert mph.probe_ingest_pool_dispatch(_TimeoutPool(), context="post_retire") is False
+  assert any(
+      "dispatch_probe failed" in line and "TimeoutError" in line for line in logs
+  )
 
 
 def test_maintain_ingest_pool_after_supervisor_retire_noop_when_maxtasks_positive(

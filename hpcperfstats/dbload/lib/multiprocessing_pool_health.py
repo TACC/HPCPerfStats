@@ -969,6 +969,133 @@ def reap_zombie_children_of_self(*, context=""):
   return reaped
 
 
+_INGEST_POOL_WORKER_CMDLINE_MARK = "[worker:ingest-pool]"
+
+
+def _read_proc_cmdline(pid):
+  """Return decoded ``/proc/<pid>/cmdline`` (nulls → spaces) or ``""``."""
+  try:
+    with open("/proc/%d/cmdline" % int(pid), "rb") as handle:
+      raw = handle.read()
+  except OSError:
+    return ""
+  if not raw:
+    return ""
+  return raw.replace(b"\x00", b" ").decode("utf-8", errors="replace").strip()
+
+
+def _iter_direct_child_pids(*, self_pid=None):
+  """Yield PIDs of live (non-zombie) direct children of this process."""
+  parent = int(self_pid) if self_pid is not None else os.getpid()
+  try:
+    entries = os.listdir("/proc")
+  except OSError:
+    return
+  for name in entries:
+    if not name.isdigit():
+      continue
+    pid = int(name)
+    if pid == parent:
+      continue
+    try:
+      with open("/proc/%d/stat" % pid, "r", encoding="ascii") as proc_stat:
+        stat_line = proc_stat.read()
+    except OSError:
+      continue
+    rparen = stat_line.rfind(")")
+    if rparen < 0 or rparen + 2 >= len(stat_line):
+      continue
+    rest = stat_line[rparen + 2 :].split()
+    if len(rest) < 2:
+      continue
+    if rest[0] == "Z":
+      continue
+    try:
+      ppid = int(rest[1])
+    except (TypeError, ValueError):
+      continue
+    if ppid == parent:
+      yield pid
+
+
+def list_ingest_pool_child_pids_of_self(*, self_pid=None):
+  """Direct children whose cmdline matches ``[worker:ingest-pool]``."""
+  mark = _INGEST_POOL_WORKER_CMDLINE_MARK
+  out = []
+  for pid in _iter_direct_child_pids(self_pid=self_pid):
+    cmdline = _read_proc_cmdline(pid)
+    if mark in cmdline:
+      out.append(int(pid))
+  return out
+
+
+def kill_ingest_pool_children_by_ppid_census(*, context="", keep_pids=None):
+  """SIGKILL ingest-pool children of main except optional ``keep_pids``.
+
+  Used on abandon/recreate so orphans left out of ``pool._pool`` cannot survive
+  a proactive swap (operator census ``child_ingest`` growing past configured).
+  """
+  keep = {int(p) for p in (keep_pids or ()) if p is not None}
+  targets = [
+      pid
+      for pid in list_ingest_pool_child_pids_of_self()
+      if pid not in keep
+  ]
+  if not targets:
+    return []
+  log_print(
+      "INFO: pool_recover ppid_census kill context=%s n=%d pids=%s"
+      % (context or "ppid_census", len(targets), targets[:24]),
+      flush=True,
+  )
+  _sigkill_pool_worker_pids(
+      targets,
+      context=context or "ppid_census",
+      blocking_reap_s=0.2,
+  )
+  return targets
+
+
+def reclaim_excess_ingest_pool_children(pool=None, *, expected=None, context=""):
+  """Cull ingest-pool children of main when count exceeds configured processes.
+
+  Keeps alive PIDs from ``pool._pool`` when possible; orphans not registered on
+  the live Pool are SIGKILL'd first.
+  """
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  if expected is None:
+    expected = int(cfg.get_sync_ingest_pool_processes())
+  expected = max(0, int(expected))
+  children = list_ingest_pool_child_pids_of_self()
+  if len(children) <= expected:
+    return []
+  keep = set(_alive_pool_worker_pids(pool)) if pool is not None else set()
+  keep = {pid for pid in keep if pid in children}
+  if len(keep) > expected:
+    keep = set(sorted(keep)[:expected])
+  extras = [pid for pid in children if pid not in keep]
+  if not extras:
+    return []
+  log_print(
+      "ERROR: ingest pool child_ingest over cap alive=%d expected=%d "
+      "culling_n=%d context=%s"
+      % (
+          len(children),
+          expected,
+          len(extras),
+          context or "reclaim",
+      ),
+      flush=True,
+  )
+  _sigkill_pool_worker_pids(
+      extras,
+      context=context or "reclaim_excess",
+      blocking_reap_s=0.2,
+  )
+  return extras
+
+
 def warn_unreaped_zombie_children(*, context=""):
   """Log WARN when direct zombie children remain after a reap attempt."""
   zombies = list(_iter_zombie_child_pids())
@@ -1090,7 +1217,9 @@ def terminate_pool_bounded(
 
   When ``abandon_after_kill=True`` (idle-pool recover / proactive swap), SIGKILL
   known worker PIDs and **do not** call stdlib ``Pool.terminate()`` / join — that
-  path can hang forever in ``_help_stuff_finish`` (RC-C).
+  path can hang forever in ``_help_stuff_finish`` (RC-C). Also SIGKILL every
+  direct child whose cmdline matches ``[worker:ingest-pool]`` (PPID census) so
+  orphans left out of ``pool._pool`` cannot double the live cohort on recreate.
   """
   if active_pool is None:
     return True
@@ -1110,6 +1239,14 @@ def terminate_pool_bounded(
         sigkill_first=bool(abandon_after_kill),
     )
   if abandon_after_kill:
+    # Orphans may sit under main outside pool._pool after retire/swap.
+    try:
+      kill_ingest_pool_children_by_ppid_census(
+          context=context or "abandon_pool",
+          keep_pids=(),
+      )
+    except Exception:
+      pass
     log_print(
         "INFO: pool_recover terminate outcome=abandoned context=%s "
         "workers_before=%d"
@@ -1187,9 +1324,10 @@ def probe_ingest_pool_dispatch(pool, timeout_s=10.0, *, context=""):
     )
     return True
   except Exception as exc:
+    err_s = str(exc).strip() or type(exc).__name__
     log_print(
         "ERROR: pool_recover respawn dispatch_probe failed context=%s err=%s"
-        % (context or "pool", exc),
+        % (context or "pool", err_s),
         flush=True,
     )
     return False
@@ -1208,6 +1346,10 @@ def maintain_ingest_pool_after_supervisor_retire(
     return pool
   if cfg.get_sync_ingest_pool_maxtasksperchild() > 0:
     return pool
+  reclaim_excess_ingest_pool_children(
+      pool,
+      context="post_retire_maintenance",
+  )
   reap_pool_worker_pids(pool, context="post_retire_maintenance")
   reap_zombie_children_of_self(context="post_retire_maintenance")
   dead_procs = list(_iter_dead_pool_worker_processes(pool))
@@ -1241,7 +1383,7 @@ def maintain_ingest_pool_after_supervisor_retire(
           flush=True,
       )
       try:
-        # RC-N: abandon+kill old workers before returning a fresh Pool.
+        # RC-N: abandon+kill old workers (pool._pool + PPID census) before recreate.
         terminate_pool_bounded(
             pool,
             timeout_s=5.0,
@@ -1249,11 +1391,16 @@ def maintain_ingest_pool_after_supervisor_retire(
             kill_workers_first=True,
             abandon_after_kill=True,
         )
-        return recreate_pool_fn()
+        new_pool = recreate_pool_fn()
+        reclaim_excess_ingest_pool_children(
+            new_pool,
+            context="post_proactive_swap",
+        )
+        return new_pool
       except Exception as exc:
         log_print(
             "ERROR: ingest pool proactive swap failed err=%s"
-            % exc,
+            % (str(exc).strip() or type(exc).__name__),
             flush=True,
         )
   return pool
