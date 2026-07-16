@@ -26,6 +26,7 @@ At supervisor boot **when CLI `startdate == 'backlog'`**, **one** `collect_stats
 - **Janitor** `run_heavy_maintenance_pass(reason=startup)` adopts an already-published coordinator snapshot when present; otherwise calls `begin_build()` before `build_archive_maintenance_snapshot`; `abort_build()` on build failure; `publish` in success path. **Only when supervisor `startdate == 'backlog'`.**
 - **Supervisor rescan** (`_get_startup_snapshot_for_rescan`) may single-flight fallback-build after **`sync_startup_snapshot_wait_seconds`** (default **300**, min **120**). **Only when `startdate == 'backlog'`**; date-range runs skip this call.
 - **`note_startup_maintenance_pending()`** from supervisor on `signal_scheduled_maintenance_pass(reason=startup)` extends effective wait while janitor builds. **Only when `startdate == 'backlog'`.**
+- **Janitor tick when `day_close_enabled=False` (CLI `backlog`):** `_run_tick_body` must still drain `_pending_maintenance_pass_reason` via `run_scheduled_maintenance_pass` **before** returning — do **not** early-return past pending startup maintenance. Skipping that drain deadlocks supervisor `wait_for_snapshot` (pending extends the wait timeout forever while the snapshot never publishes). Day-close discover/enqueue/`_close_one_day` remain no-ops. Regression: **`test_disabled_day_close_tick_runs_pending_maintenance_pass`**.
 - While `_building` is true, waiters **must not** start parallel collects.
 - **Publish deep-copies** `mapping` / `remaining_raw_by_gz` list values via `copy_archive_maintenance_snapshot` — trim clears heavy lists on accrual object only; coordinator retains `closed_paths` for unmapped disqualify.
 - **Derive, do not rescan:** janitor **`DAY_CLOSE`** discover remaining map, first supervisor `rescan_pending_stats_files` (when range is full tree), and **`_cap_pending_after_rescan` / checkpoint reconcile** (`build_live_unprocessed_by_tar_for_reconcile`) use the shared snapshot — **coordinator** while startup ingest gate not cleared, **janitor accrual** when gate cleared and accrual `mapping` present; live `force_full_scan` only as fallback.
@@ -49,6 +50,7 @@ At supervisor boot **when CLI `startdate == 'backlog'`**, **one** `collect_stats
 ## Tests
 
 - `hpcperfstats/tests/test_sync_timedb_startup_archive_scan.py`
+- `test_disabled_day_close_tick_runs_pending_maintenance_pass` in `test_sync_timedb_janitor.py` (backlog day_close-disabled tick still drains startup maintenance)
 - `test_build_remaining_raw_accepts_snapshot_no_nested_collect` in `test_sync_timedb_archive.py`
 - `test_unmapped_disqualify_uses_coordinator_after_accrual_trim` in `test_sync_timedb_archive.py`
 - `test_live_unprocessed_reconcile_uses_snapshot_no_collect` in `test_sync_timedb_archive.py`

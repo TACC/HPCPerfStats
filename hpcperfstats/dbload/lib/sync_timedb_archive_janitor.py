@@ -1459,7 +1459,14 @@ class ArchiveJanitor:
         return
 
       if not self.day_close_enabled:
-        # CLI ``backlog`` dual-mode: ingest-only; do not discover/enqueue/close.
+        # CLI ``backlog`` dual-mode: ingest-only for day-close, but still run
+        # pending scheduled maintenance so startup snapshot publishes
+        # (supervisor blocks in wait_for_snapshot until it lands).
+        with self._maintenance_pass_lock:
+          pass_reason = self._pending_maintenance_pass_reason
+          self._pending_maintenance_pass_reason = None
+        if pass_reason:
+          self.run_scheduled_maintenance_pass(reason=pass_reason)
         self._ticks_completed += 1
         return
 

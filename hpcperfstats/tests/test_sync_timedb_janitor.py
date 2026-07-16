@@ -3872,6 +3872,29 @@ def test_janitor_tick_skips_day_close_when_disabled(tmp_path, monkeypatch):
   assert janitor.debt_depth() == 1
 
 
+def test_disabled_day_close_tick_runs_pending_maintenance_pass(monkeypatch):
+  """CLI backlog: day_close disabled must still drain pending startup maintenance.
+
+  Otherwise supervisor wait_for_snapshot deadlocks: note_startup_maintenance_pending
+  extends the wait while the janitor never publishes the snapshot.
+  """
+  janitor = _make_janitor(day_close_enabled=False)
+  monkeypatch.setattr(janitor_mod, "close_old_connections", lambda: None)
+  monkeypatch.setattr(janitor, "signal_work_available", lambda: None)
+  monkeypatch.setattr(janitor, "_rss_over_limit", lambda: False)
+  maint_calls = []
+
+  def _spy_maint(*, reason):
+    maint_calls.append(reason)
+
+  monkeypatch.setattr(janitor, "run_scheduled_maintenance_pass", _spy_maint)
+  janitor.signal_scheduled_maintenance_pass(reason="startup")
+  assert janitor._pending_maintenance_pass_reason == "startup"
+  janitor._run_tick_body()
+  assert maint_calls == ["startup"]
+  assert janitor._pending_maintenance_pass_reason is None
+
+
 def test_janitor_still_discovers_when_day_close_enabled(tmp_path, monkeypatch):
   """Default day_close_enabled=True keeps discover/enqueue."""
   daily_dir = tmp_path / "daily"
