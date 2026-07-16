@@ -43,7 +43,7 @@ RUN /bin/bash -o pipefail -c "useradd -u 901860 -ms /bin/bash hpcperfstats \
     && apt-get update -y \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
-       supervisor rsync syslog-ng zstd util-linux \
+       supervisor rsync syslog-ng zstd util-linux time \
        net-tools lsof procps gdb strace netcat-openbsd \
        vim nano \
     && apt-get clean \
