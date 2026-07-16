@@ -19,6 +19,12 @@ _DEFAULT_INI = None
 def pytest_configure(config):
   """Set default INI path for tests. Django is configured by site/lib/machine/tests conftest when loaded."""
   global _DEFAULT_INI
+  # macOS: Homebrew GNU findutils provides ``gfind`` with -printf (BSD find does not).
+  import shutil
+
+  gfind = shutil.which("gfind")
+  if gfind:
+    os.environ.setdefault("HPCPERFSTATS_FIND_BIN", gfind)
   if os.environ.get("HPCPERFSTATS_INI"):
     return
   fd, _DEFAULT_INI = tempfile.mkstemp(suffix=".ini")

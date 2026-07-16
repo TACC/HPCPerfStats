@@ -83,6 +83,26 @@ def test_maint_hints_skip_reread_when_unchanged(monkeypatch, tmp_path):
   assert read_paths == []
 
 
+def test_maint_fingerprints_prefer_find_printf_cache(tmp_path):
+  """C9: path/host fingerprints use find -printf cache when present."""
+  from hpcperfstats.dbload.lib import sync_timedb_stats_find as sf
+
+  arch_suffix = "cluster.maint.findfp"
+  host = tmp_path / ("n." + arch_suffix)
+  path = _write_stats_segment(host, 1700000500)
+  sf.clear_fingerprint_caches()
+  sf.update_fingerprint_caches_from_records(
+      [
+          sf.FindStatsRecord(
+              path=path, mtime=1700000500.0, size=42, inode=7
+          )
+      ]
+  )
+  assert maint._path_fingerprint(path) == (1700000500, 42)
+  assert maint._host_dir_fingerprint(str(host)) == (1700000500, 1)
+  sf.clear_fingerprint_caches()
+
+
 def test_save_and_load_archive_maint_hints_roundtrip(tmp_path, monkeypatch):
   monkeypatch.setattr(cfg, "get_sync_archive_maint_hints", lambda: True)
   archive_dir = str(tmp_path)

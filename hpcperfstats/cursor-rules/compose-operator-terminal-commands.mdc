@@ -265,6 +265,9 @@ Some production hosts use **podman-compose** with project name `-p hpcperfstats`
 | `docker compose logs pipeline --tail=N` (any N) | **Empty or stale grep** on long-running pipeline — stall lines are often **outside** the tail window (podman-compose retains full stdout buffer) | `docker compose logs pipeline 2>&1` **without `--tail`**, then `grep -E '…'`; optional `\| tail -40` **after** grep |
 | `docker compose -f docker-compose.app.yaml … exec redis` (app overlay only) | **`missing services [redis]`** — `docker-compose.app.yaml` defines only `web` and `pipeline`; infra (`redis`, `db`, …) is in base `docker-compose.yaml` | `docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec redis …` |
 | Async DAY_CLOSE manifest: `entries[:15]` | **`entries` is a dict** keyed by tar path, not a list → **KeyError** | `sorted(data.get('entries', {}).items())[:15]` or filter by on-disk `.tar` days |
+| `find … \| wc -l` under nested `sh -lc` / podman quoting | **False zero** — pipeline/quoting can drop find stdout; `wc -l` reports 0 while find never ran | Prefer **`find … -printf '.' \| wc -c`** (one byte per match) inside `bash -lc` |
+| `/usr/bin/time find …` inside pipeline image | **`/usr/bin/time: No such file or directory`** — find never runs; printed counts are fake | Use bash builtin: `TIMEFORMAT='elapsed_sec=%R'; { time find …; } 2>&1` |
+| Treat `find: …fnctl.lock: No such file or directory` as fatal | Concurrent ingest unlinks lock sidecars mid-walk; find exit 1 with usable stdout is expected | Count/parse stdout records; treat fnctl.lock ENOENT stderr as non-fatal noise |
 
 **Good** — podman service check + filtered log tail (paths from INI first):
 

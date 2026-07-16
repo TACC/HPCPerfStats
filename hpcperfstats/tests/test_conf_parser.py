@@ -826,6 +826,8 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
 
   importlib.reload(cfg)
   assert cfg.get_sync_ingest_queue_max_size() == 3000
+  assert cfg.get_sync_ingest_rescan_mtime_days() == 1
+  assert cfg.get_sync_ingest_rescan_full_every() == 100
   assert cfg.get_sync_ingest_current_proximity_days() == 2
   assert cfg.get_sync_ingest_chunk_size() == 3000
   assert cfg.get_sync_ingest_chunk_size() == cfg.get_sync_ingest_queue_max_size()
@@ -870,6 +872,8 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
       "total_cores = 4",
       "total_cores = 4\n"
       "sync_ingest_queue_max_size = 111\n"
+      "sync_ingest_rescan_mtime_days = 3\n"
+      "sync_ingest_rescan_full_every = 50\n"
       "sync_ingest_current_proximity_days = -3\n"
       "sync_archive_queue_max_size = 222\n"
       "sync_archive_retry_max_attempts = 7\n"
@@ -899,6 +903,8 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
 
   importlib.reload(cfg)
   assert cfg.get_sync_ingest_queue_max_size() == 111
+  assert cfg.get_sync_ingest_rescan_mtime_days() == 3
+  assert cfg.get_sync_ingest_rescan_full_every() == 50
   assert cfg.get_sync_ingest_current_proximity_days() == 0
   assert cfg.get_sync_ingest_chunk_size() == 111
   assert cfg.get_sync_archive_queue_max_size() == 222
@@ -925,6 +931,31 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_archive_members_redis_max_payload_bytes() == 1048576
   monkeypatch.setenv("HPCPERFSTATS_SYNC_INGEST_PER_FILE_TIMEOUT_S", "45")
   assert cfg.get_sync_ingest_per_file_timeout_s() == 45.0
+
+
+def test_sync_ingest_rescan_mtime_and_full_every_clamp(temp_ini, monkeypatch):
+  """C12: rescan mtime_days and full_every default 1/100; invalid clamps to ≥1."""
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  importlib.reload(cfg)
+  assert cfg.get_sync_ingest_rescan_mtime_days() == 1
+  assert cfg.get_sync_ingest_rescan_full_every() == 100
+
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+      "total_cores = 4",
+      "total_cores = 4\n"
+      "sync_ingest_rescan_mtime_days = 0\n"
+      "sync_ingest_rescan_full_every = -5\n",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  importlib.reload(cfg)
+  assert cfg.get_sync_ingest_rescan_mtime_days() == 1
+  assert cfg.get_sync_ingest_rescan_full_every() == 1
 
 
 def test_sync_host_itimes_cache_max_timestamps_per_entry(temp_ini, monkeypatch):

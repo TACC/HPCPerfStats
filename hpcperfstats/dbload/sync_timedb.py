@@ -300,7 +300,7 @@ chunk_size = cfg.get_sync_ingest_chunk_size()
 # Max paths per ``tar -T`` batch (limits list-file size; argv stays tiny).
 tar_append_batch_size = 256
 # Rescan stats directory after this many processed chunks
-rescan_every_chunks = 10
+rescan_every_chunks = 1
 # Bound processed-file tracking to avoid unbounded set growth in long runs.
 processed_files_max_size = 200000
 SYNC_TIMEDB_CHECKPOINT_BASENAME = ".sync_timedb_state.json"

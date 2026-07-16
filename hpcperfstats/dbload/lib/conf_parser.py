@@ -100,6 +100,8 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_overprovision_archive_multiplier"),
     ("PIPELINE", "sync_overprovision_metrics_multiplier"),
     ("PIPELINE", "sync_ingest_queue_max_size"),
+    ("PIPELINE", "sync_ingest_rescan_mtime_days"),
+    ("PIPELINE", "sync_ingest_rescan_full_every"),
     ("PIPELINE", "sync_ingest_current_proximity_days"),
     ("PIPELINE", "sync_archive_queue_max_size"),
     ("PIPELINE", "sync_timedb_archive_max_concurrent_sealed_days"),
@@ -282,6 +284,8 @@ INI_OPTION_DEFAULTS = {
     'sync_overprovision_archive_multiplier': '1.0',
     'sync_overprovision_metrics_multiplier': '1.0',
     'sync_ingest_queue_max_size': '3000',
+    'sync_ingest_rescan_mtime_days': '1',
+    'sync_ingest_rescan_full_every': '100',
     'sync_ingest_current_proximity_days': '2',
     'sync_archive_queue_max_size': '1000',
     'sync_timedb_archive_max_concurrent_sealed_days': '1',
@@ -2390,6 +2394,18 @@ def get_sync_ingest_queue_max_size():
   """Bound for in-memory ingest work queue (default 3000; no-supplement process queue)."""
   _ensure_cfg_loaded()
   return max(1, _pipeline_getint("sync_ingest_queue_max_size"))
+
+
+def get_sync_ingest_rescan_mtime_days():
+  """Incremental pending rescan find ``-mtime -N`` window in days (default 1)."""
+  _ensure_cfg_loaded()
+  return max(1, _pipeline_getint("sync_ingest_rescan_mtime_days"))
+
+
+def get_sync_ingest_rescan_full_every():
+  """Force full-age find every N incremental rescans (default 100)."""
+  _ensure_cfg_loaded()
+  return max(1, _pipeline_getint("sync_ingest_rescan_full_every"))
 
 
 def get_sync_ingest_current_proximity_days():

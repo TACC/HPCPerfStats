@@ -14,6 +14,12 @@ import pandas as pd
 import pytest
 from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
 
+
+def test_rescan_every_chunks_default_is_one():
+  """C11: supervisor rescans pending after every ingest chunk."""
+  assert st.rescan_every_chunks == 1
+
+
 def _fake_map_async_result(value):
     """``AsyncResult`` double with ``ready()`` for ``ArchiveDispatchCoordinator``."""
 

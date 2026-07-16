@@ -23,6 +23,23 @@ Attach the `test_runs/day-close-loop-regression-battery-*.log` path to the PR or
 | **T1 progress (`current`)** | Same window while CLI ``current`` (newest-first) runs | Descending `epochs=` on `chunk dispatch begin`; `youngest_day_chunk_gate` / `youngest_day_chunk_gate_pad` (not ascending oldest-gate for ``all``); heartbeat sidecar/Redis advances with active work |
 | **T2 catch-up** | T+24 h or when head day advances | New `chunk ingest summary` cadence; June-scale head day `unprocessed` trending down; `ingest_stall_watchdog` absent |
 
+### T0 / T1 — find-based pending discovery (every chunk + mtime window)
+
+After deploy of **GNU find `-printf` stats discovery** (`sync_timedb_stats_find`, `rescan_every_chunks=1`, `sync_ingest_rescan_mtime_days=1`): multi-hour silent gaps between `pending rescan done` / `find_stats` lines on ``current``/idle must **not** return. Discovery must complete in seconds (operator baseline: full archive ~0.7s, `-mtime -1` ~2s on ~350k files).
+
+```bash
+# T0 — find cadence after deploy (full pipeline log; never --tail before grep)
+podman-compose -p hpcperfstats logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+grep -E 'find_stats paths=|collect_stats_files_in_range: find paths=|Rescanned after 1 chunks|pending rescan done' /tmp/pipeline-full.log | tail -80
+
+# T0 — fail-closed signature (should be absent on GNU find images)
+grep -E 'FindStatsDiscoveryError|does not support -printf|GNU find not found' /tmp/pipeline-full.log | tail -20 || true
+```
+
+**Pass (T0):** `find_stats` / `collect_stats_files_in_range: find` lines appear with small `elapsed_s` (typically **&lt;5s**); after ingest chunks expect **`Rescanned after 1 chunks`**; no multi-hour silence with only occasional `idle_finalize`.
+
+**Pass (T1):** under backlog or ``current``, pending rediscovery continues every chunk without reintroducing Python `scandir`+`stat` wall-clock stalls; incremental lines show `mtime_days=1` (or configured N) except full sweeps / startup / maint (`mtime_days=None`).
+
 ### Archive/delete DB gate (host head+tail OR zero-host ingest mark)
 
 When **`sync_archive_require_db_ingest=yes`**, tar append and raw delete require **either**:

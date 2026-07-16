@@ -13,7 +13,6 @@ from pathlib import Path
 
 import pytest
 
-import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.dbload.lib.archive_compress import (
     DAILY_ARCHIVE_ZST_SUFFIX,
     archive_gz_members_contained_in_zst,
@@ -3162,18 +3161,15 @@ def test_collect_stats_files_in_range_sorted_oldest_first(tmp_path):
 
 
 def test_collect_stats_files_in_range_parallel_multi_host(monkeypatch, tmp_path):
-  """Multi-host collect uses ingest pool cap and preserves oldest-first order."""
-  monkeypatch.setattr(cfg, "get_sync_ingest_pool_processes", lambda: 4)
+  """Multi-host collect uses GNU find and preserves oldest-first order."""
   base_ts = datetime(2020, 6, 15, 12, 0, 0)
   epochs = [
       int((base_ts + timedelta(minutes=offset)).timestamp())
       for offset in [2, 0, 1]
   ]
-  host_dirs = []
   for host_idx in range(3):
     cn = tmp_path / ("cn%03d." % host_idx + _ARCH_HOST_SUFFIX)
     cn.mkdir()
-    host_dirs.append(cn)
     ts = epochs[host_idx]
     p = cn / str(ts)
     p.write_text("x")
@@ -3190,7 +3186,15 @@ def test_collect_stats_files_in_range_parallel_multi_host(monkeypatch, tmp_path)
   assert len(result) == 3
   assert result == sorted(result, key=lambda path: int(os.path.basename(path)))
   joined = "\n".join(logs)
-  assert "collect_stats_files_in_range: hosts=3 workers=3" in joined
+  assert "find_stats paths=3" in joined or "collect_stats_files_in_range: find paths=3" in joined
+  assert "mtime_days=None" in joined
+
+
+def test_collect_no_longer_uses_scandir_host_loop():
+  """Host-dir scandir collect helper was retired in favor of GNU find."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  assert not hasattr(helpers, "_collect_stats_files_in_host_dir")
 
 
 def test_rescan_pending_stats_files_excludes_processed_and_keeps_oldest_first(tmp_path):
@@ -3214,6 +3218,79 @@ def test_rescan_pending_stats_files_excludes_processed_and_keeps_oldest_first(tm
 
   assert [os.path.basename(p) for p in pending] == [str(old_epoch), str(mid_epoch)]
 
+
+def test_rescan_pending_incremental_uses_mtime_find(monkeypatch, tmp_path):
+  """Incremental rescan passes mtime_days into find-backed collect."""
+  calls = []
+
+  def _spy_collect(*args, **kwargs):
+    calls.append(dict(kwargs))
+    return ["/archive/h/1"]
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.collect_stats_files_in_range",
+      _spy_collect,
+  )
+  hints = {"__rescan_count__": 1}
+  pending = rescan_pending_stats_files(
+      str(tmp_path),
+      "all",
+      None,
+      _ARCH_HOST_SUFFIX,
+      set(),
+      host_scan_hints=hints,
+      full_rescan_every=100,
+      mtime_days=1,
+  )
+  assert pending == ["/archive/h/1"]
+  assert calls and calls[0].get("force_full_scan") is False
+  assert calls[0].get("mtime_days") == 1
+
+
+def test_rescan_pending_full_every_n_uses_full_find(monkeypatch, tmp_path):
+  """Every full_rescan_everyth rescan forces full-age find (mtime_days cleared)."""
+  calls = []
+
+  def _spy_collect(*args, **kwargs):
+    calls.append(dict(kwargs))
+    return []
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.collect_stats_files_in_range",
+      _spy_collect,
+  )
+  hints = {"__rescan_count__": 0}
+  rescan_pending_stats_files(
+      str(tmp_path),
+      "all",
+      None,
+      _ARCH_HOST_SUFFIX,
+      set(),
+      host_scan_hints=hints,
+      full_rescan_every=2,
+      mtime_days=1,
+  )
+  assert calls[0].get("force_full_scan") is True
+  assert calls[0].get("mtime_days") is None
+
+
+def test_build_unprocessed_uses_find_backed_collect(monkeypatch, tmp_path):
+  """Unprocessed-raw builder inherits find-backed collect_stats_files_in_range."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  seen = {}
+
+  def _spy(directory, startdate, enddate, host_name_ext, **kwargs):
+    seen["called"] = True
+    seen["directory"] = directory
+    return []
+
+  monkeypatch.setattr(helpers, "collect_stats_files_in_range", _spy)
+  helpers.build_unprocessed_raw_by_daily_tar(
+      str(tmp_path), _ARCH_HOST_SUFFIX, str(tmp_path / "daily")
+  )
+  assert seen.get("called") is True
+  assert seen.get("directory") == str(tmp_path)
 
 def test_collect_stats_files_in_range_uses_filename_epoch_when_mtime_outside(tmp_path):
   """Filename epoch within range causes inclusion even if mtime is outside."""
@@ -3465,17 +3542,20 @@ def test_collect_first_timestamps_by_path(tmp_path):
 
 
 def test_rescan_pending_stats_files_uses_hints_with_periodic_full_sweep(tmp_path):
+  """``__rescan_count__`` advances; full sweep every N still rediscovers paths."""
   host = tmp_path / ("n." + _ARCH_HOST_SUFFIX)
   host.mkdir()
   ts = int(datetime(2020, 6, 15, 12, 0, 0).timestamp())
   f1 = host / str(ts)
   f1.write_text("x")
-  os.utime(f1, (ts, ts))
+  # Recent mtime so incremental -mtime find still sees the file.
+  now = time.time()
+  os.utime(f1, (now, now))
   hints = {}
   first = rescan_pending_stats_files(
       str(tmp_path),
-      datetime(2020, 6, 1),
-      datetime(2020, 7, 1),
+      "all",
+      None,
       _ARCH_HOST_SUFFIX,
       set(),
       host_scan_hints=hints,
@@ -3483,8 +3563,8 @@ def test_rescan_pending_stats_files_uses_hints_with_periodic_full_sweep(tmp_path
   )
   second = rescan_pending_stats_files(
       str(tmp_path),
-      datetime(2020, 6, 1),
-      datetime(2020, 7, 1),
+      "all",
+      None,
       _ARCH_HOST_SUFFIX,
       set(),
       host_scan_hints=hints,
@@ -3492,16 +3572,17 @@ def test_rescan_pending_stats_files_uses_hints_with_periodic_full_sweep(tmp_path
   )
   third = rescan_pending_stats_files(
       str(tmp_path),
-      datetime(2020, 6, 1),
-      datetime(2020, 7, 1),
+      "all",
+      None,
       _ARCH_HOST_SUFFIX,
       set(),
       host_scan_hints=hints,
       full_rescan_every=2,
   )
   assert len(first) == 1
-  assert len(second) in (0, 1)
+  assert len(second) == 1  # incremental mtime find still sees recent file
   assert len(third) == 1
+  assert hints.get("__rescan_count__") == 3
 
 
 def _patch_archive_gate_pass(monkeypatch):

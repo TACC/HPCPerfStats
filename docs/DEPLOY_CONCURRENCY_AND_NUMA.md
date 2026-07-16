@@ -86,7 +86,7 @@ Kernel OOM may kill an ingest pool worker (`[worker:ingest-pool]`) with a **tran
 
 **Post-fix disk-release progress grep:** `janitor: discover_ready_day_close`, `janitor: day_close enqueue`, `Archive janitor tick done` (expect `debt_popped>0` or progressing day-close), `sync_timedb: startup archive scan ready`, `sync_timedb: pending rescan done`, `idle_rescan_snapshot_source=`, `pending cap supplement from snapshot`.
 
-**Idle queue drain:** after **`pending=0`**, supervisor idle rescan uses coordinator/accrual **`closed_paths`** (not incremental tree walk every cycle) and **`merge_rescan_discovered_into_pending`** before cap — same parity as periodic **`rescan_every_chunks`** path.
+**Idle queue drain:** after **`pending=0`**, supervisor idle rescan uses coordinator/accrual **`closed_paths`** when available, else GNU **`find`** discovery (`sync_timedb_stats_find`: `-printf` path/mtime/size/inode; incremental **`sync_ingest_rescan_mtime_days`** default **1**; full-age find on startup/maint / every **`sync_ingest_rescan_full_every`**), then **`merge_rescan_discovered_into_pending`** before cap — same parity as every-chunk **`rescan_every_chunks=1`** path. Discovery does **not** re-`os.stat` fields find already emitted.
 
 **Forensics checklist:** inside the pipeline container read `memory.max`, `memory.current`, `memory.peak`, `memory.events` (`oom_kill`); `ps -eo pid,rss:10,cmd` for `[worker:ingest-pool]` vs `[main]`; `find` largest raw stats paths. Log a short packet under **`test_runs/`** when investigating.
 
@@ -307,6 +307,8 @@ Chunk handlers call **`hard_exit_pool_worker_error`** (`os._exit`) immediately a
 | `sync_ingest_per_file_timeout_max_s` | 86400 | Ceiling seconds (**24h**) for any file; no hard file-size reject |
 | `sync_ingest_giant_pool_supplement_enabled` | yes | Backfill idle pool slots from pending tail while **≥ 2 GiB** giants run |
 | `sync_ingest_queue_max_size` | 3000 | No-supplement in-memory pending/process queue; **also** ingest chunk size (`get_sync_ingest_chunk_size` alias — no separate INI key) |
+| `sync_ingest_rescan_mtime_days` | 1 | Incremental pending rescan: GNU `find -mtime -N` window (days); full-age find on startup/maint and every `sync_ingest_rescan_full_every` |
+| `sync_ingest_rescan_full_every` | 100 | Force full-age find every N incremental pending rescans (supervisor also rescans after **every** chunk via `rescan_every_chunks=1`) |
 | `sync_ingest_giant_pool_supplement_queue_multiplier` | 2 | Supplement reservoir = queue × multiplier (default **6000**) at batch start **and** mid-imap refresh |
 | `sync_ingest_giant_pool_supplement_max_bytes` | 1073741824 | Soft max for preferred supplement pass (**1 GiB** exclusive) |
 | `sync_ingest_giant_pool_supplement_large_max_bytes` | 8589934592 | Hard max for second pass (**8 GiB** exclusive; ≥ stays chunk-only) |

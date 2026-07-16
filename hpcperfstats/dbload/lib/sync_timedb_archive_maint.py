@@ -93,7 +93,12 @@ def _maybe_log_parallel_task_progress(
 
 
 def _path_fingerprint(path: str) -> Optional[Tuple[int, int]]:
-  """Return ``(mtime, size)`` hint key; does not hash file contents."""
+  """Return ``(mtime, size)`` hint key; prefers last find ``-printf`` cache."""
+  from hpcperfstats.dbload.lib.sync_timedb_stats_find import lookup_path_fingerprint
+
+  cached = lookup_path_fingerprint(path)
+  if cached is not None:
+    return cached
   try:
     st = os.stat(path)
     return int(st.st_mtime), int(st.st_size)
@@ -102,6 +107,14 @@ def _path_fingerprint(path: str) -> Optional[Tuple[int, int]]:
 
 
 def _host_dir_fingerprint(host_dir: str) -> Optional[Tuple[int, int]]:
+  """Return ``(mtime, file_count)``; prefers last find ``-printf`` cache."""
+  from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
+      lookup_host_dir_fingerprint,
+  )
+
+  cached = lookup_host_dir_fingerprint(host_dir)
+  if cached is not None:
+    return cached
   try:
     count = 0
     for entry in os.scandir(host_dir):

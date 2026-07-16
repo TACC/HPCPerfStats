@@ -7016,6 +7016,9 @@ def stats_file_is_active_segment(stats_path):
   epoch-named file; both names refer to the same inode until the next ``$``,
   when ``current`` is unlinked from that inode. Only then is the epoch file a
   complete, stable segment. Same-inode-as-``current`` means still active.
+
+  Discovery uses GNU find inode maps (see ``sync_timedb_stats_find``); this
+  helper remains for single-path checks and unit tests.
   """
   host_dir = os.path.dirname(stats_path)
   current_path = os.path.join(host_dir, "current")
@@ -7025,60 +7028,6 @@ def stats_file_is_active_segment(stats_path):
     return os.path.samefile(stats_path, current_path)
   except OSError:
     return False
-
-
-def _collect_stats_files_in_host_dir(
-    host_dir,
-    startdate,
-    enddate,
-):
-  """Return ``[(path, sort_epoch), ...]`` for one host stats directory."""
-  stats_files = []
-  for stats_file in os.scandir(host_dir):
-    if not stats_file.is_file() or stats_file.name.startswith("."):
-      continue
-    if _is_lock_file_name(stats_file.name):
-      continue
-    if stats_file.name.startswith("current"):
-      continue
-    if stats_file_is_active_segment(stats_file.path):
-      continue
-    try:
-      st_info = stats_file.stat()
-      st_mtime = int(st_info.st_mtime)
-      fdate_mtime = datetime.fromtimestamp(st_mtime)
-    except Exception as e:
-      log_print("error in obtaining timestamp of raw data files: ", str(e))
-      continue
-
-    fdate_name = None
-    try:
-      fname_epoch = int(os.path.basename(stats_file.path))
-      fdate_name = datetime.fromtimestamp(fname_epoch)
-    except Exception:
-      pass
-
-    sort_epoch = None
-    if fdate_name is not None:
-      sort_epoch = int(os.path.basename(stats_file.path))
-    else:
-      sort_epoch = st_mtime
-
-    if startdate in ("all", "current"):
-      stats_files.append((stats_file.path, sort_epoch))
-      continue
-
-    def _in_range(ts):
-      if ts is None:
-        return False
-      return not (ts <= startdate - timedelta(days=1) or ts > enddate)
-
-    in_range_mtime = _in_range(fdate_mtime)
-    in_range_name = _in_range(fdate_name)
-    if not (in_range_mtime or in_range_name):
-      continue
-    stats_files.append((stats_file.path, sort_epoch))
-  return stats_files
 
 
 def collect_stats_files_in_range(
@@ -7091,86 +7040,51 @@ def collect_stats_files_in_range(
     log_fn=None,
     *,
     newest_first=False,
+    mtime_days=None,
 ):
-  """Scan ``archive_dir`` for stats files in immediate subdirs whose names end
-  with ``host_name_ext`` (same value as ``DEFAULT.host_name_ext`` in ini).
+  """Discover stats files under ``archive_dir`` via GNU find ``-printf``.
 
-  Skips the live segment: epoch files still hard-linked to ``current`` (same
-  inode) are omitted so sync does not race with listend appends.
+  Skips the live segment: epoch files whose inode matches host ``current`` are
+  omitted so sync does not race with listend appends.
 
-  When startdate is ``'all'`` or ``'current'``, every eligible file is returned (no date
-  filtering). Otherwise files are included if mtime or filename epoch falls in
-  (startdate - 1 day, enddate]. Returns paths sorted oldest-first (by filename
-  epoch when numeric, else mtime), unless ``newest_first`` is requested. If
-  ``host_name_ext`` is empty after strip,
-  returns an empty list.
+  When ``mtime_days`` is a positive int, find uses ``-mtime -N`` (incremental
+  rescan). When ``None`` (or ``force_full_scan``), the full archive ages are
+  scanned. ``host_scan_hints`` still tracks ``__rescan_count__`` for callers;
+  per-host dir-mtime skip is retired (find is cheap enough).
+
+  When startdate is ``'all'`` or ``'current'``, every eligible file is returned
+  (no date filtering). Otherwise files are included if mtime or filename epoch
+  falls in (startdate - 1 day, enddate]. Returns paths sorted oldest-first
+  unless ``newest_first``. Empty ``host_name_ext`` returns ``[]``.
   """
+  from hpcperfstats.dbload.lib.sync_timedb_stats_find import discover_stats_records
+
   suffix = (host_name_ext or "").strip()
   if not suffix:
     return []
-  host_dirs = []
-  for entry in os.scandir(directory):
-    if entry.is_file() or not entry.is_dir():
-      continue
-    if not entry.name.endswith(suffix):
-      continue
-    if isinstance(host_scan_hints, dict) and not force_full_scan:
-      try:
-        dir_mtime = int(entry.stat().st_mtime)
-      except OSError:
-        dir_mtime = -1
-      prev_mtime = host_scan_hints.get(entry.path)
-      host_scan_hints[entry.path] = dir_mtime
-      if prev_mtime is not None and prev_mtime == dir_mtime:
-        continue
-    host_dirs.append(entry.path)
-
+  effective_mtime = None if force_full_scan else mtime_days
   collect_t0 = time.monotonic()
-  stats_files = []
-  if len(host_dirs) <= 1:
-    for host_dir in host_dirs:
-      stats_files.extend(
-          _collect_stats_files_in_host_dir(host_dir, startdate, enddate)
-      )
-  else:
-    max_workers = min(len(host_dirs), max(1, int(cfg.get_sync_ingest_pool_processes())))
-    if max_workers <= 1:
-      for host_dir in host_dirs:
-        stats_files.extend(
-            _collect_stats_files_in_host_dir(host_dir, startdate, enddate)
-        )
-    else:
-      def _scan_host(host_dir):
-        return _collect_stats_files_in_host_dir(host_dir, startdate, enddate)
-
-      for _host_dir, partial, err in iter_bounded_thread_pool(
-          host_dirs,
-          _scan_host,
-          max_workers=max_workers,
-          thread_role="archive-collect",
-      ):
-        if err is not None:
-          raise err
-        if partial:
-          stats_files.extend(partial)
-
-  # Sort by effective timestamp ascending (oldest files first); None values
-  # sort last. Then return just the paths.
-  stats_files.sort(key=lambda item: (item[1] is None, item[1]))
-  if newest_first:
-    stats_files.reverse()
-  if log_fn is not None and len(host_dirs) > 1:
+  records = discover_stats_records(
+      directory,
+      startdate,
+      enddate,
+      host_name_ext,
+      mtime_days=effective_mtime,
+      newest_first=newest_first,
+      log_fn=log_fn,
+  )
+  paths = [rec.path for rec in records]
+  if log_fn is not None:
     log_fn(
-        "collect_stats_files_in_range: hosts=%d workers=%d paths=%d elapsed_s=%.3f"
+        "collect_stats_files_in_range: find paths=%d elapsed_s=%.3f mtime_days=%s"
         % (
-            len(host_dirs),
-            min(len(host_dirs), max(1, int(cfg.get_sync_ingest_pool_processes()))),
-            len(stats_files),
+            len(paths),
             time.monotonic() - collect_t0,
+            "None" if effective_mtime is None else str(int(effective_mtime)),
         ),
         flush=True,
     )
-  return [path for path, _ in stats_files]
+  return paths
 
 
 def rescan_pending_stats_files(
@@ -7180,15 +7094,20 @@ def rescan_pending_stats_files(
     host_name_ext,
     processed_files,
     host_scan_hints=None,
-    full_rescan_every=10,
+    full_rescan_every=None,
     startup_closed_paths=None,
     *,
     force_snapshot_paths=False,
     log_fn=None,
     progress_interval=5000,
     newest_first=False,
+    mtime_days=None,
 ):
   """Return ordered files still pending after excluding processed files."""
+  if full_rescan_every is None:
+    full_rescan_every = cfg.get_sync_ingest_rescan_full_every()
+  if mtime_days is None:
+    mtime_days = cfg.get_sync_ingest_rescan_mtime_days()
   should_force_full = True
   if isinstance(host_scan_hints, dict):
     should_force_full = (
@@ -7219,6 +7138,8 @@ def rescan_pending_stats_files(
         host_scan_hints=host_scan_hints,
         force_full_scan=should_force_full,
         newest_first=newest_first,
+        mtime_days=None if should_force_full else mtime_days,
+        log_fn=log_fn,
     )
   if isinstance(processed_files, set):
     exclude = processed_files

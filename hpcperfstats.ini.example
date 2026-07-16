@@ -280,6 +280,12 @@ sync_pool_process_cap = 16
 # Max in-memory ingest work queue size (default 3000; also drives ingest chunk size).
 sync_ingest_queue_max_size = 3000
 
+# Incremental pending rescan: GNU find -mtime -N days (default 1 = last 24h).
+sync_ingest_rescan_mtime_days = 1
+
+# Force full-age find every N incremental pending rescans (default 100).
+sync_ingest_rescan_full_every = 100
+
 # Days within which CLI all exits when near a live current heartbeat (default 2).
 sync_ingest_current_proximity_days = 2
 
