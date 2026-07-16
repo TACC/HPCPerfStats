@@ -412,6 +412,22 @@ grep -E 'Files marked for archival: 0|archive_job_begin' /tmp/pipeline-full.log 
 
 **Pass (T2):** Every **`pending rescan begin`** is followed by **`pending rescan done`** within minutes (not ~862s **`startup archive scan ready wait_s`** on MainThread alone). **`idle_rescan_snapshot_source=accrual|coordinator`** appears on idle refill. **`pending cap supplement`** or **`capped_pending`** near **`ingest_queue_max`** after queue drain despite **`incomplete_n=2`** cross-day stragglers. **`oldest_day_chunk_gate_cross_day_db_complete`** after all-**`db_skip=head_tail`** defer chunks. During large-day pre-seal, **`pre_seal_verify classify progress`** should show rising **`verified_n/N`** within one worker session, then **`pre_seal_verify complete`** — **`verify budget exhausted`** must **not** appear (removed). **`pre_seal_verify start`** without **`complete`** for >5m is a failure. No **`archive_job_begin`** for unrelated calendar days immediately after **`Files marked for archival: 0`** chunks.
 
+### T0 / T1 verify — enqueued but `days_started=0` (stale/ghost deferred trap, 2026-07)
+
+**Failure signature (pre-fix / hpcperfstats03):** discover reports **`enqueued≥1`** (or repeated **`janitor: day_close enqueue`**) while the same or next tick ends with **`debt_popped=0 days_started=0 debt_remaining>0`** and **`active_workers=0`**. Async day-close sidecar shows heap days with **`status=deferred`** and **`detail=stale_manifest_recovery`** or **`ghost_manifest_reconcile`** (not classic **`waiting_on_ingest`**). No **`day-close-N`** worker progress lines. Multi-hour tick **`duration_s`** here is time spent in reconcile/discover before fill, not live workers.
+
+```bash
+# T0 — enqueue-without-start signature
+grep -E 'discover_ready_day_close|Archive janitor tick done|janitor: tick zero_pop|stale manifest recovery|ghost manifest reconcile|day_close enqueue' /tmp/pipeline-full.log | tail -100
+
+# T0 — sidecar: deferred stale/ghost vs queued (INI archive path first)
+# Look for status=deferred detail=stale_manifest_recovery|ghost_manifest_reconcile on debt_queue days
+```
+
+**Pass (T0 after fix redeploy):** after stale/ghost reconcile lines, expect those tars restored to **`status=queued`** (detail cleared); subsequent **`Archive janitor tick done`** shows **`debt_popped>0`** / **`days_started>0`** when free slots exist, or durable **`janitor: tick zero_pop … disqualified_on_heap=`** when the heap is truly all disqualified (then chain-wake). Must **not** repeat **`enqueued≥1`** + **`debt_popped=0 days_started=0`** for hours with **`active_workers=0`** while non-ingest deferred rows sit on the debt heap.
+
+**Pass (T1):** backlog head days progress through seal/verify/delete; **`waiting_on_ingest`** deferred remains only for true ingest handoff (do not auto-promote). Partial seal (`.tar` + `.tar.zst` present) still runs day-close workers.
+
 ### T1 verify — day-close idle threads + discover cap split (2026-07)
 
 After deploy of **day-close idle thread recovery**, confirm discover enqueues NEW ready days when debt heap is non-empty but pool workers are idle, and mid-tick refill uses free slots.

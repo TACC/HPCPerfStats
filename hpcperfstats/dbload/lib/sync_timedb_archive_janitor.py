@@ -1581,6 +1581,19 @@ class ArchiveJanitor:
 
       _fill_free_slots()
       if not in_flight and debt_popped == 0:
+        free_slots = self._day_close_free_slots()
+        remaining = self.debt_depth()
+        if remaining > 0 and free_slots > 0:
+          heap_tars = self._debt_heap_tar_paths()
+          blocked = sorted(heap_tars & set(disqualified))
+          sample = ",".join(blocked[:8]) if blocked else ""
+          self.log_fn(
+              "janitor: tick zero_pop debt_remaining=%d free_slots=%d "
+              "disqualified_on_heap=%d sample_tars=%s"
+              % (remaining, free_slots, len(blocked), sample or "-"),
+              flush=True,
+          )
+          self.signal_work_available()
         self._ticks_completed += 1
         self.log_fn(
             "Archive janitor tick done days=%d debt_remaining=%d duration_s=%.3f "

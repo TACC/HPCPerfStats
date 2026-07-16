@@ -76,9 +76,11 @@ def test_submit_day_close_idempotent_when_queued(tmp_path):
   archive_dir = str(tmp_path / "archive")
   os.makedirs(archive_dir)
   enqueue_calls = {"n": 0}
+  debt_heap = set()
 
-  def enqueue_fn(_tar_norm, _reason):
+  def enqueue_fn(tar_norm, _reason):
     enqueue_calls["n"] += 1
+    debt_heap.add(os.path.normpath(tar_norm))
     return True
 
   coord = async_dc_mod.DayCloseManifestCoordinator(
@@ -88,6 +90,7 @@ def test_submit_day_close_idempotent_when_queued(tmp_path):
       local_tz=None,
       log_fn=lambda *_a, **_k: None,
       get_disqualified_daily_tars=lambda: set(),
+      get_inflight_tar_paths_fn=lambda: set(debt_heap),
       enqueue_day_close_fn=enqueue_fn,
   )
   tar_path = os.path.normpath(str(tmp_path / "daily" / "2020-01-02.tar"))
@@ -444,3 +447,195 @@ def test_clear_deferred_waiting_on_ingest_removes_entry(tmp_path):
   assert coord.clear_deferred_waiting_on_ingest(tar_path) is True
   assert coord.entry_progress_snapshot(tar_path) == {}
   assert coord.clear_deferred_waiting_on_ingest(tar_path) is False
+
+
+@pytest.mark.django_db(databases=[])
+def test_reconcile_manifest_ghost_sets_queued_after_debt_push(tmp_path):
+  """Ghost reconcile must leave status=queued (not limbo deferred) after debt push."""
+  archive_dir = str(tmp_path / "archive")
+  os.makedirs(archive_dir)
+  tar_path = os.path.normpath(str(tmp_path / "daily" / "2020-06-08.tar"))
+  os.makedirs(os.path.dirname(tar_path), exist_ok=True)
+  reenqueued = []
+
+  def _enqueue_fn(tar, reason=""):
+    reenqueued.append((tar, reason))
+    return True
+
+  coord = async_dc_mod.DayCloseManifestCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=str(tmp_path / "daily"),
+      local_tz=None,
+      log_fn=lambda *_a, **_k: None,
+      get_disqualified_daily_tars=lambda: set(),
+      get_inflight_tar_paths_fn=lambda: set(),
+      enqueue_day_close_fn=_enqueue_fn,
+  )
+  coord._set_entry_status(tar_path, "queued")
+  fixed = coord.reconcile_manifest_with_debt_heap(
+      debt_tar_paths=set(),
+      live_worker_tars=set(),
+  )
+  assert fixed == 1
+  assert reenqueued == [(tar_path, "ghost_manifest_reconcile")]
+  snap = coord.entry_progress_snapshot(tar_path)
+  assert snap.get("status") == "queued"
+  entry = async_dc_mod._load_manifest(coord._manifest_path)["entries"][tar_path]
+  assert entry.get("detail") not in ("ghost_manifest_reconcile",)
+
+
+@pytest.mark.django_db(databases=[])
+def test_stale_manifest_recovery_reenqueues_and_sets_queued(tmp_path, monkeypatch):
+  """Worker-slot stale recovery must restore queued + debt, not limbo deferred."""
+  archive_dir = str(tmp_path / "archive")
+  os.makedirs(archive_dir)
+  manifest_path = async_dc_mod.manifest_path(archive_dir)
+  tar_norm = os.path.normpath(str(tmp_path / "daily" / "2020-06-07.tar"))
+  os.makedirs(os.path.dirname(tar_norm), exist_ok=True)
+  payload = {
+      "version": 1,
+      "entries": {
+          tar_norm: {
+              "status": "queued",
+              "last_progress": "queued",
+              "last_progress_at": time.time() - 10_000,
+          },
+      },
+  }
+  with open(manifest_path, "w", encoding="utf-8") as fh:
+    json.dump(payload, fh)
+
+  enqueued = []
+
+  def _enqueue_fn(tar, reason=""):
+    enqueued.append((tar, reason))
+    return True
+
+  monkeypatch.setattr(
+      async_dc_mod.cfg, "get_sync_day_close_manifest_stale_seconds", lambda: 1.0,
+  )
+  coord = async_dc_mod.DayCloseManifestCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=str(tmp_path / "daily"),
+      local_tz=None,
+      log_fn=lambda *_a, **_k: None,
+      get_disqualified_daily_tars=lambda: set(),
+      get_inflight_tar_paths_fn=lambda: set(),
+      enqueue_day_close_fn=_enqueue_fn,
+  )
+  assert enqueued == [(tar_norm, "stale_manifest_recovery")]
+  entry = async_dc_mod._load_manifest(coord._manifest_path)["entries"][tar_norm]
+  assert entry["status"] == "queued"
+  assert entry.get("detail") != "stale_manifest_recovery"
+
+
+@pytest.mark.django_db(databases=[])
+def test_stale_manifest_recovery_restores_queued_when_already_on_heap(
+    tmp_path, monkeypatch,
+):
+  """Debt push False (already on heap) must still clear limbo deferred."""
+  archive_dir = str(tmp_path / "archive")
+  os.makedirs(archive_dir)
+  manifest_path = async_dc_mod.manifest_path(archive_dir)
+  tar_norm = os.path.normpath(str(tmp_path / "daily" / "2020-06-07.tar"))
+  os.makedirs(os.path.dirname(tar_norm), exist_ok=True)
+  payload = {
+      "version": 1,
+      "entries": {
+          tar_norm: {
+              "status": "queued",
+              "last_progress": "queued",
+              "last_progress_at": time.time() - 10_000,
+          },
+      },
+  }
+  with open(manifest_path, "w", encoding="utf-8") as fh:
+    json.dump(payload, fh)
+
+  def _enqueue_fn(_tar, _reason=""):
+    return False
+
+  monkeypatch.setattr(
+      async_dc_mod.cfg, "get_sync_day_close_manifest_stale_seconds", lambda: 1.0,
+  )
+  coord = async_dc_mod.DayCloseManifestCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=str(tmp_path / "daily"),
+      local_tz=None,
+      log_fn=lambda *_a, **_k: None,
+      get_disqualified_daily_tars=lambda: set(),
+      get_inflight_tar_paths_fn=lambda: {tar_norm},
+      enqueue_day_close_fn=_enqueue_fn,
+  )
+  entry = async_dc_mod._load_manifest(coord._manifest_path)["entries"][tar_norm]
+  assert entry["status"] == "queued"
+  assert entry.get("detail") != "stale_manifest_recovery"
+
+
+@pytest.mark.django_db(databases=[])
+def test_enqueue_promotes_non_ingest_deferred_already_on_heap(tmp_path):
+  """deferred+stale_manifest_recovery on heap must promote to queued (not silent already_inflight)."""
+  archive_dir = str(tmp_path / "archive")
+  os.makedirs(archive_dir)
+  tar_path = os.path.normpath(str(tmp_path / "daily" / "2020-06-07.tar"))
+  os.makedirs(os.path.dirname(tar_path), exist_ok=True)
+  enqueue_calls = []
+
+  def _enqueue_fn(tar, reason=""):
+    enqueue_calls.append((tar, reason))
+    return True
+
+  coord = async_dc_mod.DayCloseManifestCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=str(tmp_path / "daily"),
+      local_tz=None,
+      log_fn=lambda *_a, **_k: None,
+      get_disqualified_daily_tars=lambda: set(),
+      get_inflight_tar_paths_fn=lambda: {tar_path},
+      enqueue_day_close_fn=_enqueue_fn,
+  )
+  coord._set_entry_status(
+      tar_path,
+      "deferred",
+      detail="stale_manifest_recovery",
+  )
+  ok, reason = coord.enqueue_day_close_result(tar_path, reason="discover_ready_tick")
+  assert ok is True
+  assert reason != "already_inflight"
+  snap = coord.entry_progress_snapshot(tar_path)
+  assert snap.get("status") == "queued"
+  # Already on heap: promote in place without a second debt push.
+  assert enqueue_calls == []
+
+
+@pytest.mark.django_db(databases=[])
+def test_enqueue_does_not_promote_waiting_on_ingest_deferred(tmp_path):
+  """True waiting_on_ingest deferred on heap must stay deferred (already_inflight)."""
+  archive_dir = str(tmp_path / "archive")
+  os.makedirs(archive_dir)
+  tar_path = os.path.normpath(str(tmp_path / "daily" / "2020-06-07.tar"))
+  os.makedirs(os.path.dirname(tar_path), exist_ok=True)
+
+  coord = async_dc_mod.DayCloseManifestCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=str(tmp_path / "daily"),
+      local_tz=None,
+      log_fn=lambda *_a, **_k: None,
+      get_disqualified_daily_tars=lambda: set(),
+      get_inflight_tar_paths_fn=lambda: {tar_path},
+      enqueue_day_close_fn=lambda *_a, **_k: True,
+  )
+  coord._set_entry_status(
+      tar_path,
+      "deferred",
+      detail="waiting_on_ingest",
+  )
+  ok, reason = coord.enqueue_day_close_result(tar_path, reason="discover_ready_tick")
+  assert ok is True
+  assert reason == "already_inflight"
+  assert coord.entry_progress_snapshot(tar_path).get("status") == "deferred"

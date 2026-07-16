@@ -1922,13 +1922,21 @@ def test_janitor_chains_ticks_while_debt_remains(monkeypatch, tmp_path):
   assert signal_count["n"] >= 1
 
 
-def test_janitor_does_not_chain_on_all_disqualified_noop(monkeypatch, tmp_path):
+def test_janitor_zero_pop_all_disqualified_logs_and_wakes(monkeypatch, tmp_path):
+  """Heap>0 + free_slots>0 + debt_popped=0 must durable-log disqualify ∩ heap and wake."""
   signal_count = {"n": 0}
   tar_path = str(tmp_path / "2026-01-01.tar")
   open(tar_path, "wb").close()
+  tar_norm = os.path.normpath(tar_path)
+  logs: list[str] = []
+
+  def log_fn(msg, **_kwargs):
+    logs.append(str(msg))
+
   janitor = _make_janitor(
       tgz_archive_dir=str(tmp_path),
-      get_disqualified_daily_tars=lambda: {os.path.normpath(tar_path)},
+      get_disqualified_daily_tars=lambda: {tar_norm},
+      log_fn=log_fn,
   )
   janitor._allow_tick_chaining = True
   real_signal = janitor.signal_work_available
@@ -1938,13 +1946,23 @@ def test_janitor_does_not_chain_on_all_disqualified_noop(monkeypatch, tmp_path):
     return real_signal()
 
   janitor.signal_work_available = counting_signal
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor,
+      "_discover_and_enqueue_ready_day_close",
+      lambda self, **kwargs: None,
+  )
   janitor._enqueue_debt(DebtKind.DAY_CLOSE, tar_path, persist=False)
   janitor._run_tick_body()
   assert janitor.debt_depth() == 1
-  assert signal_count["n"] == 0
+  assert any(
+      "debt_popped=0" in line and "disqualified" in line.lower()
+      for line in logs
+  ) or any("zero_pop" in line or "all_disqualified" in line for line in logs)
+  assert signal_count["n"] >= 1
 
 
 def test_janitor_does_not_chain_when_mid_tick_only_requeues_disqualified(monkeypatch, tmp_path):
+  """All-disqualified / zero-pop may wake once; must not require progress flags for that wake."""
   signal_count = {"n": 0}
   tar_path = str(tmp_path / "2026-01-01.tar")
   open(tar_path, "wb").close()
@@ -1969,10 +1987,17 @@ def test_janitor_does_not_chain_when_mid_tick_only_requeues_disqualified(monkeyp
     return real_signal()
 
   janitor.signal_work_available = counting_signal
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor,
+      "_discover_and_enqueue_ready_day_close",
+      lambda self, **kwargs: None,
+  )
   janitor._enqueue_debt(DebtKind.DAY_CLOSE, tar_path, persist=False)
   janitor._run_tick_body()
   assert janitor.debt_depth() == 1
-  assert signal_count["n"] == 0
+  # Zero-pop durable wake is allowed once; follow-up ticks still need real progress
+  # or in-flight workers to chain via finally.
+  assert signal_count["n"] >= 1
 
 
 def test_janitor_day_close_runs_close_one_day_on_debt(monkeypatch, tmp_path):

@@ -129,6 +129,7 @@ class DayCloseManifestCoordinator:
       return
     now = time.time()
     recovered: list[str] = []
+    worker_slot_recovered: list[str] = []
     downgraded: list[str] = []
     with self._lock:
       for tar_norm, entry in list(self._manifest.get("entries", {}).items()):
@@ -151,6 +152,7 @@ class DayCloseManifestCoordinator:
         entry["detail"] = "stale_manifest_recovery"
         entry["recovered_at"] = now
         recovered.append(tar_norm)
+        worker_slot_recovered.append(tar_norm)
       for tar_norm, entry in list(self._manifest.get("entries", {}).items()):
         if not isinstance(entry, dict):
           continue
@@ -175,6 +177,35 @@ class DayCloseManifestCoordinator:
           "janitor: day_close stale manifest recovery tar=%s" % tar_norm,
           flush=True,
       )
+    # Worker-slot stale rows must re-enter debt as queued (not limbo deferred).
+    for tar_norm in worker_slot_recovered:
+      enqueued = False
+      if self.enqueue_day_close_fn is not None:
+        try:
+          enqueued = bool(
+              self.enqueue_day_close_fn(tar_norm, "stale_manifest_recovery")
+          )
+        except Exception:
+          enqueued = False
+      on_heap = False
+      if self.get_inflight_tar_paths_fn is not None:
+        try:
+          on_heap = tar_norm in set(self.get_inflight_tar_paths_fn() or ())
+        except Exception:
+          on_heap = False
+      # Already-on-heap returns False from debt push; still restore queued.
+      if not enqueued and not on_heap:
+        continue
+      with self._lock:
+        entry = self._manifest.get("entries", {}).get(tar_norm)
+        if not isinstance(entry, dict):
+          entry = {"tar_path": tar_norm}
+          self._manifest.setdefault("entries", {})[tar_norm] = entry
+        entry["status"] = "queued"
+        entry["reason"] = "stale_manifest_recovery"
+        entry.pop("detail", None)
+        entry["submitted_at"] = time.time()
+        self._touch_manifest_locked("queued", tar_norm=tar_norm)
 
   def reconcile_supervisor_raw_delete_pending(self, *, reason: str) -> int:
     """Legacy no-op; janitor owns delete on ``DAY_CLOSE`` debt."""
@@ -308,11 +339,27 @@ class DayCloseManifestCoordinator:
           "janitor: day_close ghost manifest reconcile tar=%s" % tar_norm,
           flush=True,
       )
+      enqueued = False
       if self.enqueue_day_close_fn is not None:
         try:
-          self.enqueue_day_close_fn(tar_norm, "ghost_manifest_reconcile")
+          enqueued = bool(
+              self.enqueue_day_close_fn(tar_norm, "ghost_manifest_reconcile")
+          )
         except Exception:
-          pass
+          enqueued = False
+      if not enqueued:
+        continue
+      # Debt push succeeded: restore worker-slot queued (not limbo deferred).
+      with self._lock:
+        entry = self._manifest.get("entries", {}).get(tar_norm)
+        if not isinstance(entry, dict):
+          entry = {"tar_path": tar_norm}
+          self._manifest.setdefault("entries", {})[tar_norm] = entry
+        entry["status"] = "queued"
+        entry["reason"] = "ghost_manifest_reconcile"
+        entry.pop("detail", None)
+        entry["submitted_at"] = time.time()
+        self._touch_manifest_locked("queued", tar_norm=tar_norm)
     return len(reenqueue)
 
   def clear_deferred_waiting_on_ingest(self, tar_path: str) -> bool:
@@ -514,8 +561,30 @@ class DayCloseManifestCoordinator:
     with self._lock:
       entry = self._manifest.get("entries", {}).get(tar_norm)
       if _is_day_close_pipeline_pending_entry(entry):
-        if tar_norm in inflight:
+        # Non-ingest deferred (stale/ghost): promote when already on the debt
+        # heap; otherwise fall through to debt push + queued. Waiting-on-ingest
+        # deferred stays deferred. Other pending statuses are idempotent only
+        # when already on the debt heap (ghost queued without debt must re-push).
+        if (
+            str(entry.get("status") or "") == "deferred"
+            and not _is_deferred_waiting_on_ingest_entry(entry)
+        ):
+          if tar_norm in inflight:
+            entry["status"] = "queued"
+            entry["reason"] = reason or "promoted_from_deferred"
+            entry.pop("detail", None)
+            entry["submitted_at"] = time.time()
+            self._touch_manifest_locked("queued", tar_norm=tar_norm)
+            self.log_fn(
+                "janitor: day_close enqueue tar=%s reason=%s"
+                % (tar_norm, reason or "promoted_from_deferred"),
+                flush=True,
+            )
+            return True, reason or "promoted_from_deferred"
+          # Not on heap yet — fall through to enqueue_day_close_fn.
+        elif tar_norm in inflight or _is_deferred_waiting_on_ingest_entry(entry):
           return True, "already_inflight"
+        # Pending worker-slot without heap debt — fall through to re-push.
       elif tar_norm in inflight:
         return True, "already_inflight"
     enqueued = False
