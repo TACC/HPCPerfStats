@@ -4182,10 +4182,13 @@ def archive_stats_files(archive_info):
 
 
 def _lookup_existing_members_for_archive_append(archive_fname, archive_tar_fname):
-  """Return (members, members_source) for archive append; Redis-first when L2 on."""
-  if not os.path.exists(archive_tar_fname):
-    return {}, "tar_scan"
+  """Return (members, members_source) for archive append; Redis/sealed before tar.
+
+  Works when sibling ``.tar`` is missing: Redis L2 or sealed stream can still
+  supply membership so noop appends skip multi-hour decompress restore.
+  """
   canonical = normalize_daily_compressed_path(archive_fname)
+  tar_exists = os.path.exists(archive_tar_fname)
   if cfg.get_sync_archive_members_redis_enabled():
     from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
         archive_members_redis_enabled,
@@ -4199,16 +4202,24 @@ def _lookup_existing_members_for_archive_append(archive_fname, archive_tar_fname
       keys = build_archive_members_redis_keys(
           _daily_archive_members_cache_key(canonical),
       )
-      members_source = (
-          "redis" if redis_members_cache_is_fully_warm(keys) else "tar_scan"
-      )
+      was_warm = redis_members_cache_is_fully_warm(keys)
       from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
           archive_pre_append_member_lookup_context,
       )
       with archive_pre_append_member_lookup_context():
         members = get_existing_archive_members_for_daily_archive(canonical)
+      if was_warm:
+        members_source = "redis"
+      elif not tar_exists:
+        members_source = "sealed_stream"
+      else:
+        members_source = "tar_scan"
       return members, members_source
-  return get_existing_archive_members(archive_tar_fname), "tar_scan"
+  if tar_exists:
+    return get_existing_archive_members(archive_tar_fname), "tar_scan"
+  # Redis off + sealed-only day: local sealed scan (no mutable tar).
+  members = get_existing_archive_members_for_daily_archive(canonical)
+  return members, ("sealed_stream" if members else "tar_scan")
 
 
 def _log_archive_job_begin(archive_tar_fname, members_source):
@@ -4250,8 +4261,41 @@ def _archive_stats_files_body(archive_info):
     append_inflight_set = True
     existing_members = {}
     zst_path, gz_path = compressed_sibling_paths(archive_tar_fname)
-    sealed_exists = os.path.isfile(zst_path) or os.path.isfile(gz_path)
+    sealed_exists = (
+        os.path.isfile(zst_path)
+        or os.path.isfile(gz_path)
+        or (
+            os.path.isfile(archive_fname)
+            and bool(detect_compressed_format(archive_fname))
+        )
+    )
 
+    # Membership before restore: Redis/sealed can answer to_add without
+    # materializing a multi-hundred-GB mutable .tar (noop sealed days).
+    if sealed_exists or os.path.exists(archive_tar_fname):
+      existing_members, members_source = _lookup_existing_members_for_archive_append(
+          archive_fname, archive_tar_fname,
+      )
+      _ensure_job_begin_logged(members_source)
+
+    mapped_n = len(stats_files)
+    stats_files_to_tar = filter_files_to_add_to_archive(
+        stats_files, existing_members, debug=DEBUG)
+    to_add_n = len(stats_files_to_tar)
+    appended_n = 0
+    if not stats_files_to_tar:
+      job_outcome = "ok"
+      log_print(
+          "INFO: archive_job_duty day=%s mapped=%d to_add=%d appended=%d"
+          % (day_token, mapped_n, to_add_n, appended_n),
+          flush=True,
+      )
+      return ArchiveAppendOutcome(
+          skip_finalize_invalidate=True,
+          skipped_paths=skipped_oversized,
+      )
+
+    # Restore / decompress only when append will mutate the daily tar.
     if not os.path.exists(archive_tar_fname):
       if os.path.isfile(zst_path):
         if not _decompress_compressed_archive(zst_path):
@@ -4284,11 +4328,6 @@ def _archive_stats_files_body(archive_info):
           flush=True,
       )
       return False
-    if os.path.exists(archive_tar_fname):
-      existing_members, members_source = _lookup_existing_members_for_archive_append(
-          archive_fname, archive_tar_fname,
-      )
-      _ensure_job_begin_logged(members_source)
 
     # Corrupt/truncated .tar can make Python's tarfile reader return {} while GNU
     # tar still refuses append (exit 2). Recover before append so we never raise
@@ -4325,14 +4364,23 @@ def _archive_stats_files_body(archive_info):
             archive_fname, archive_tar_fname,
         )
         _ensure_job_begin_logged(members_source)
+        stats_files_to_tar = filter_files_to_add_to_archive(
+            stats_files, existing_members, debug=DEBUG)
+        to_add_n = len(stats_files_to_tar)
+        if not stats_files_to_tar:
+          job_outcome = "ok"
+          log_print(
+              "INFO: archive_job_duty day=%s mapped=%d to_add=%d appended=%d"
+              % (day_token, mapped_n, to_add_n, appended_n),
+              flush=True,
+          )
+          return ArchiveAppendOutcome(
+              skip_finalize_invalidate=True,
+              skipped_paths=skipped_oversized,
+          )
       else:
         existing_members = {}
 
-    mapped_n = len(stats_files)
-    stats_files_to_tar = filter_files_to_add_to_archive(
-        stats_files, existing_members, debug=DEBUG)
-    to_add_n = len(stats_files_to_tar)
-    appended_n = 0
     if stats_files_to_tar:
       if not _restore_daily_tar_or_log_failure(
           archive_tar_fname, context="before append"):
@@ -5332,14 +5380,15 @@ def run_sync_timedb_supervisor_loop(
       )
       _reconcile_pending_with_oldest_checkpoint_incomplete()
       archive_finalize_needs_post_reconcile = False
-      defer_day_close, defer_reason, defer_extra = (
-          _should_defer_immediate_day_close()
-      )
-      if defer_day_close:
-        _log_immediate_day_close_defer("archive_finalize", defer_reason, defer_extra)
-        archive_janitor.signal_work_available()
-      else:
-        _maybe_enqueue_immediate_day_close(context="archive_finalize")
+      if day_close_enabled:
+        defer_day_close, defer_reason, defer_extra = (
+            _should_defer_immediate_day_close()
+        )
+        if defer_day_close:
+          _log_immediate_day_close_defer("archive_finalize", defer_reason, defer_extra)
+          archive_janitor.signal_work_available()
+        else:
+          _maybe_enqueue_immediate_day_close(context="archive_finalize")
 
   def _finalize_archive_slot(slot, *, force=False, allow_defer=False, context=""):
     ready_fn = getattr(slot.async_result, "ready", None)
@@ -5379,6 +5428,12 @@ def run_sync_timedb_supervisor_loop(
           lambda slot: _finalize_archive_slot(
               slot, force=True, context=context or "prune_ready"))
       if finalized:
+        _maybe_reap_supervisor_pool_children_throttled(
+            ingest_pool,
+            archive_pool,
+            populate_pool_controller,
+            context="archive_finalize_prune",
+        )
         _dispatch_due_archive_retries(allow_idle_stale=True)
       return bool(archive_dispatch.slots)
 
@@ -5411,6 +5466,13 @@ def run_sync_timedb_supervisor_loop(
         _dispatch_due_archive_retries(allow_idle_stale=True)
       else:
         archive_dispatch.slots.append(slot)
+    if finalized_any:
+      _maybe_reap_supervisor_pool_children_throttled(
+          ingest_pool,
+          archive_pool,
+          populate_pool_controller,
+          context="archive_finalize",
+      )
     return finalized_any
 
   def _flush_checkpoint_if_needed(force=False):

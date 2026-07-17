@@ -135,6 +135,19 @@ grep -E 'Archive dispatch submitted=|pending_archive_heap|archive_job_duty|disco
 
 **T0/T1 — multi-day mapping with pool ≪ N (site example pool=6):** after `Archive mapping: N tar(s)` with N larger than pool (or with overflow from an earlier narrow wave), expect later `archive_job_begin` / `Archive dispatch submitted=` for overflow calendar days **before** the next `chunk imap start` / IMAP for a new ingest chunk. Tiny `Archived batch (2|5|…)` plus `archive_job_duty … to_add=… appended=…` means Redis/tar already-present skips — not a missing day. If `post_finalize_reconcile oldest_tar=` advances past days that never logged `archive_job_*`, that is a drain regression.
 
+### T0/T1 — noop sealed archive job (membership before restore)
+
+**Unhealthy (pre-fix):** sealed day missing sibling `.tar` → `archive decompress restore` / `_decompress_compressed_archive` for multi-hundred-GB days, then `archive_job_begin … members_source=tar_scan`, then `archive_job_duty … to_add=0 appended=0` after 1h+ (`Archive worker stall detected` warn-only). Slots stay full while oldest incomplete drains slowly.
+
+**Healthy (post-fix):** membership from Redis/sealed **before** decompress. When candidates are already members:
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+  grep -E 'archive_job_begin|archive_job_duty|archive decompress restore|Archive worker stall detected|Zombie child reap|archive_finalize_prune' | tail -80
+```
+
+Expect `archive_job_begin … members_source=redis|sealed_stream` and `archive_job_duty … to_add=0` **without** a preceding multi-hour `archive decompress restore` for that day. When `to_add>0`, restore then append remains required (fail-closed). CLI `backlog` must **not** emit `immediate day_close defer` / `archive_finalize defer immediate day_close` (day_close disabled). Archive finalize/prune should eventually log `Zombie child reap` / throttled reap under load (`maxtasksperchild=1` recycle).
+
 ### Pipeline ingest rate (listend vs sync_timedb)
 
 Measure closed-segment production rate vs full-ingest and archive-done consumption from **full** pipeline logs (requires `--timestamps` for accurate windows and backlog ETA):
