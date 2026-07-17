@@ -297,8 +297,6 @@ days_to_process = 5
 
 # How many files to process and archive at once (alias of sync_ingest_queue_max_size).
 chunk_size = cfg.get_sync_ingest_chunk_size()
-# Max paths per ``tar -T`` batch (limits list-file size; argv stays tiny).
-tar_append_batch_size = 256
 # Rescan stats directory after this many processed chunks
 rescan_every_chunks = 1
 # Bound processed-file tracking to avoid unbounded set growth in long runs.
@@ -4083,7 +4081,7 @@ def _append_to_tar(tar_path, file_paths):
   paths so argv stays tiny and absolute ``-T`` path warnings are avoided.
   Always passes ``--posix`` (pax) so members larger than 8 GiB - 1 succeed on
   pax-capable archives. Skips paths that disappeared before append (race).
-  Batches via ``tar_append_batch_size``.
+  Batches via ``sync_timedb_tar_append_batch_size`` (default 1024).
   """
   if not file_paths:
     return
@@ -4095,7 +4093,7 @@ def _append_to_tar(tar_path, file_paths):
         "restored sibling: %s" % tar_path,
     )
   # Amortize subprocess overhead for large archive bursts.
-  batch = max(1, int(tar_append_batch_size))
+  batch = max(1, int(cfg.get_sync_timedb_tar_append_batch_size()))
   if len(file_paths) >= 512:
     batch = max(batch, 256)
   elif len(file_paths) >= 128:

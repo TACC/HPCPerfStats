@@ -79,7 +79,7 @@ _USAGE = (
 
 
 def _archive_worker_process_count():
-  """Archive ingest pool size (default 4); matches ``get_sync_archive_pool_processes``."""
+  """Archive ingest pool size (default 2); matches ``get_sync_archive_pool_processes``."""
   return cfg.get_sync_archive_pool_processes()
 
 

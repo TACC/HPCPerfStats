@@ -29,7 +29,6 @@ def test_get_debug_true(temp_ini, monkeypatch):
   content = content.replace("debug = no", "debug = yes")
   with open(temp_ini, "w") as f:
     f.write(content)
-  monkeypatch.setenv("SYNC_ARCHIVE_POOL_PROCESS_CAP", "64")
   monkeypatch.delenv("SYNC_POOL_PROCESS_CAP", raising=False)
   monkeypatch.setenv("SYNC_ENABLE_CPUSET_PRIORITY_BUDGET", "0")
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
@@ -509,42 +508,34 @@ def test_sync_ingest_pool_respects_cap(temp_ini, monkeypatch):
   assert cfg.get_sync_ingest_pool_processes() == 2
 
 
-def test_sync_archive_pool_respects_cap(temp_ini, monkeypatch):
-  with open(temp_ini) as f:
-    content = f.read()
-  content = content.replace(
-      "total_cores = 4",
-      "total_cores = 64\nsync_pool_process_cap = 8\nsync_archive_pool_process_cap = 2",
-  )
-  with open(temp_ini, "w") as f:
-    f.write(content)
-  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
-  import importlib
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-  importlib.reload(cfg)
-  monkeypatch.setattr(cfg.os, "cpu_count", lambda: 64)
-  assert cfg.get_sync_ingest_pool_processes() == 8
-  assert cfg.get_sync_archive_pool_processes() == 2
-
-
-def test_sync_archive_pool_default_is_four_without_cpuset(temp_ini, monkeypatch):
-  with open(temp_ini) as f:
-    content = f.read()
-  content = content.replace(
-      "total_cores = 4",
-      "total_cores = 4\nsync_archive_pool_process_cap = 64",
-  )
-  with open(temp_ini, "w") as f:
-    f.write(content)
-  monkeypatch.setenv("SYNC_ARCHIVE_POOL_PROCESS_CAP", "64")
+def test_sync_archive_pool_processes_ini_knob_default_and_override(temp_ini, monkeypatch):
+  """Archive slots come only from sync_archive_pool_processes (default 2)."""
+  monkeypatch.delenv("SYNC_ARCHIVE_POOL_PROCESS_CAP", raising=False)
   monkeypatch.delenv("SYNC_POOL_PROCESS_CAP", raising=False)
-  monkeypatch.setenv("SYNC_ENABLE_CPUSET_PRIORITY_BUDGET", "0")
+  monkeypatch.setenv("SYNC_ENABLE_CPUSET_PRIORITY_BUDGET", "1")
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
   import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   monkeypatch.setattr(cfg.os, "cpu_count", lambda: 64)
-  assert cfg.get_sync_archive_pool_processes() == 4
+  assert cfg.get_sync_archive_pool_processes() == 2
+  assert not hasattr(cfg, "get_sync_archive_pool_process_cap")
+  with open(temp_ini) as f:
+    content = f.read()
+  if "sync_archive_pool_processes" not in content:
+    content = content.replace(
+        "total_cores = 4",
+        "total_cores = 4\nsync_archive_pool_processes = 5",
+    )
+  else:
+    content = content.replace(
+        "sync_archive_pool_processes = 2",
+        "sync_archive_pool_processes = 5",
+    )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  importlib.reload(cfg)
+  assert cfg.get_sync_archive_pool_processes() == 5
 
 
 def test_cpuset_priority_budget_derivation_defaults(temp_ini, monkeypatch):
@@ -556,12 +547,11 @@ def test_cpuset_priority_budget_derivation_defaults(temp_ini, monkeypatch):
   budget = cfg.derive_pipeline_cpuset_priority_budget()
   assert budget["effective_cores"] == 4
   assert budget["sync_ingest_cap"] >= 1
-  assert budget["sync_archive_cap"] >= 1
+  assert budget["sync_archive_cap"] == cfg.get_sync_archive_pool_processes()
   assert budget["metrics_cap"] >= 1
   assert budget["reserve_cap"] >= 1
   assert (
       budget["sync_ingest_cap"]
-      + budget["sync_archive_cap"]
       + budget["metrics_cap"]
       + budget["reserve_cap"]
   ) <= budget["headroom_cap"]
@@ -759,7 +749,6 @@ def test_cpuset_priority_budget_overprovision_mode(temp_ini, monkeypatch):
       "sync_enable_overprovision_mode = yes\n"
       "sync_budget_overcommit_factor = 1.25\n"
       "sync_overprovision_ingest_multiplier = 1.20\n"
-      "sync_overprovision_archive_multiplier = 1.10\n"
       "sync_overprovision_metrics_multiplier = 0.90",
   )
   with open(temp_ini, "w") as f:
@@ -836,6 +825,7 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_archive_retry_backoff_base_seconds() == 1.0
   assert cfg.get_sync_archive_retry_backoff_max_seconds() == 60.0
   assert cfg.get_sync_checkpoint_flush_batch_size() == 100
+  assert cfg.get_sync_timedb_tar_append_batch_size() == 1024
   assert cfg.get_sync_bulk_create_batch_size() == 10000
   assert cfg.get_sync_pool_stall_abort_after_timeouts() == 17320
   assert cfg.get_sync_pool_poll_timeout_s() == 5.0
@@ -880,6 +870,7 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
       "sync_archive_retry_backoff_base_seconds = 2.5\n"
       "sync_archive_retry_backoff_max_seconds = 12.5\n"
       "sync_checkpoint_flush_batch_size = 42\n"
+      "sync_timedb_tar_append_batch_size = 2048\n"
       "sync_pool_stall_abort_after_timeouts = 90\n"
       "sync_pool_poll_timeout_s = 2.5\n"
       "sync_pool_stall_defer_log_interval_s = 30\n"
@@ -912,6 +903,7 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_archive_retry_backoff_base_seconds() == 2.5
   assert cfg.get_sync_archive_retry_backoff_max_seconds() == 12.5
   assert cfg.get_sync_checkpoint_flush_batch_size() == 42
+  assert cfg.get_sync_timedb_tar_append_batch_size() == 2048
   assert cfg.get_sync_pool_stall_abort_after_timeouts() == 90
   assert cfg.get_sync_pool_poll_timeout_s() == 2.5
   assert cfg.get_sync_pool_stall_defer_log_interval_s() == 30.0
@@ -1242,7 +1234,7 @@ def test_archive_janitor_and_dispatch_defaults(temp_ini, monkeypatch):
   assert not hasattr(cfg, "get_machine_name")
   assert cfg.get_sync_day_close_manifest_stale_seconds() == 7200.0
   assert cfg.get_sync_pool_process_cap() == 16
-  assert cfg.get_sync_archive_pool_process_cap() is None
+  assert not hasattr(cfg, "get_sync_archive_pool_process_cap")
 
 
 def test_day_close_max_inflight_default_4(temp_ini, monkeypatch):

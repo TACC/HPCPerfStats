@@ -1484,7 +1484,7 @@ def test_sliding_window_refills_idle_worker_slot(monkeypatch):
 
 
 def test_archive_worker_process_count_uses_sync_archive_pool(monkeypatch):
-  """Archive multiprocessing pool uses get_sync_archive_pool_processes (default 4)."""
+  """Archive multiprocessing pool uses get_sync_archive_pool_processes (default 2)."""
   monkeypatch.setattr(sta.cfg, "get_sync_archive_pool_processes", lambda: 4)
   assert sta._archive_worker_process_count() == 4
   monkeypatch.setattr(sta.cfg, "get_sync_archive_pool_processes", lambda: 2)
@@ -2668,6 +2668,39 @@ def test_append_to_tar_argv_always_includes_posix(monkeypatch, tmp_path):
   assert "-C" in captured[0] and captured[0][captured[0].index("-C") + 1] == "/"
   assert "-r" in captured[1] and "--posix" in captured[1]
   assert "-C" in captured[1] and captured[1][captured[1].index("-C") + 1] == "/"
+
+
+def test_append_to_tar_respects_ini_batch_size(monkeypatch, tmp_path):
+  """sync_timedb_tar_append_batch_size caps paths per tar -T invocation."""
+  from hpcperfstats.dbload import sync_timedb as st
+
+  paths = []
+  for i in range(5):
+    p = tmp_path / ("seg%d" % i)
+    p.write_bytes(b"x")
+    paths.append(str(p))
+  tar_path = tmp_path / "2024-06-01.tar"
+  captured = []
+
+  class _Ok:
+    returncode = 0
+    stdout = ""
+    stderr = ""
+
+  def _run(args, **_kwargs):
+    captured.append(list(args))
+    if "-c" in args or not tar_path.exists():
+      tar_path.write_bytes(b"ustar\0")
+    return _Ok()
+
+  monkeypatch.setattr(
+      st.cfg, "get_sync_timedb_tar_append_batch_size", lambda: 2,
+  )
+  monkeypatch.setattr(st.subprocess, "run", _run)
+  monkeypatch.setattr(
+      st, "file_write_lock", lambda *_a, **_k: contextlib.nullcontext())
+  st._append_to_tar(str(tar_path), paths)
+  assert len(captured) == 3
 
 
 def test_format_tar_append_failure_log_includes_stderr():

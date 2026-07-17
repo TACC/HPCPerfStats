@@ -55,6 +55,10 @@ def test_dead_day_close_knobs_removed_from_registry_and_example():
       "sync_archive_require_db_head_ingest",
       "sync_day_close_async_stale_seconds",
       "archive_pool_process_cap",
+      "sync_archive_pool_process_cap",
+      "sync_budget_archive_ratio",
+      "sync_budget_min_archive_percent",
+      "sync_overprovision_archive_multiplier",
   }
   registry_options = {option for _section, option, _default in cfg.INI_OPTION_REGISTRY}
   assert not (dead & registry_options)
@@ -62,7 +66,7 @@ def test_dead_day_close_knobs_removed_from_registry_and_example():
   text = path.read_text(encoding="utf-8")
   for key in dead:
     # Word-boundary match so ``archive_pool_process_cap`` does not hit
-    # ``sync_archive_pool_process_cap``.
+    # ``sync_archive_pool_processes``.
     assert not re.search(r"(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])" % re.escape(key), text), (
         "dead key still documented in example: %s" % key
     )

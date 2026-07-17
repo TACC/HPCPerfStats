@@ -235,20 +235,18 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Cap sync_timedb ingest pool and metadata discovery threads; imap inflight equals pool size (default 16).
 sync_pool_process_cap = 16
 
-# Cap sync_timedb archive pool processes when set (unset = no extra cap).
-# sync_archive_pool_process_cap =
+# Concurrent daily-tar append slots / archive spawn pool size (default 2).
+sync_archive_pool_processes = 2
 
 # Max concurrent sealed-day streams for sync_timedb_archive backfill (default 1).
 # sync_timedb_archive_max_concurrent_sealed_days = 1
 
-# Enable cpuset-aware S/A/M budget for sync and metrics (default yes).
+# Enable cpuset-aware S/M budget for sync ingest and metrics (default yes).
+# Archive slots are fixed by sync_archive_pool_processes (not budgeted).
 # sync_enable_cpuset_priority_budget = yes
 
 # Fraction of effective cores for sync ingest cap (default 0.60).
 # sync_budget_ingest_ratio = 0.60
-
-# Fraction for sync archive cap (default 0.15).
-# sync_budget_archive_ratio = 0.15
 
 # Fraction for metrics cap (default 0.20).
 # sync_budget_metrics_ratio = 0.20
@@ -259,20 +257,14 @@ sync_pool_process_cap = 16
 # Minimum metrics percent floor (default 10).
 # sync_budget_min_metrics_percent = 10
 
-# Minimum archive percent floor (default 10).
-# sync_budget_min_archive_percent = 10
-
 # Bounded overprovision mode for budget derivation (default no).
 # sync_enable_overprovision_mode = no
 
-# Overcommit factor for S+A+M+R cap (default 1.00).
+# Overcommit factor for S+M+R cap (default 1.00).
 # sync_budget_overcommit_factor = 1.00
 
 # Ingest multiplier when overprovision on (default 1.00).
 # sync_overprovision_ingest_multiplier = 1.00
-
-# Archive multiplier when overprovision on (default 1.00).
-# sync_overprovision_archive_multiplier = 1.00
 
 # Metrics multiplier when overprovision on (default 1.00).
 # sync_overprovision_metrics_multiplier = 1.00
@@ -303,6 +295,9 @@ sync_ingest_current_proximity_days = 2
 
 # Processed-file checkpoint writes per batch (default 100).
 # sync_checkpoint_flush_batch_size = 100
+
+# Max raw paths per tar -T append batch in sync_timedb (default 1024).
+sync_timedb_tar_append_batch_size = 1024
 
 # host_data/proc_data bulk_create batch size and incremental parse flush threshold (default 10000).
 # Also drives archive DB gate sample stride (batch_size // 2 timestamp lines, plus last line at EOF).

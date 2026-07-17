@@ -54,7 +54,8 @@ Ingest is treated as always-on: the supervisor no longer runs blocking seal/raw/
 | **`archive_janitor_debt_max_entries`** | **`200`** | In-memory debt cap; lowest-priority entries evicted with a warning when full |
 | **`archive_janitor_raw_paths_per_tick`** | **`1000`** | Incremental raw deletes per `RAW_REMOVE` debt item (large-day safety) |
 | **`archive_maintenance_idle_seconds`** | **`300`** | Optional idle-only 2× budget bonus (not required for progress) |
-| **`sync_archive_pool_processes`** | **`4`** (or cpuset budget / cap) | Archive spawn pool workers **and** concurrent daily-tar append slots (one day per slot) |
+| **`sync_archive_pool_processes`** | **`2`** | Sole knob: archive spawn pool workers **and** concurrent daily-tar append slots (one day per slot) |
+| **`sync_timedb_tar_append_batch_size`** | **`1024`** | Max raw paths per ``tar -T`` append invocation (amortizes subprocess/seek; argv stays tiny via ``-T``) |
 | **`sync_archive_max_inflight_jobs`** | *(deprecated / ignored)* | Legacy key; **`get_sync_archive_max_inflight_jobs()`** aliases pool size so a site value of **`2`** cannot under-feed a larger pool |
 | **`sync_archive_worker_stall_seconds`** | **`600`** | Log stalled append workers (observability) |
 | **`sync_enable_ingest_first_durability_mode`** | **`yes`** | Checkpoint after DB even when append is deferred |
@@ -153,11 +154,11 @@ Compose sets **`max_connections=500`** with **reduced `work_mem` / parallel gath
 `sync_timedb` and `update_metrics` now support a cpuset-aware priority budget from `conf_parser.derive_pipeline_cpuset_priority_budget()`:
 
 - `S` (sync ingest cap): default `floor(0.60 * C)`
-- `A` (sync archive cap): default `floor(0.15 * C)`
 - `M` (metrics cap): default `floor(0.20 * C)`
 - `R` (reserve for maintenance/jitter): default `floor(0.05 * C)`
+- Archive append slots: fixed by **`sync_archive_pool_processes`** (default **2**) — not budget-derived
 
-Where `C = min(total_cores, os.cpu_count())` for the pipeline container cpuset. If `S + A + M + R` exceeds `C`, the reducer lowers `M` first, then `A`, then `S` (sync-first policy). Minimum floors for `M` and `A` are configurable to keep bounded forward progress in normal-class work.
+Where `C = min(total_cores, os.cpu_count())` for the pipeline container cpuset. If `S + M + R` exceeds `C`, the reducer lowers `M` first, then `S` (sync-first policy). A minimum floor for `M` is configurable to keep bounded forward progress in normal-class work.
 
 Priority buckets used for accounting and deprioritization:
 
@@ -169,18 +170,16 @@ Relevant ini keys (all under **`[PIPELINE]`** unless noted):
 
 - `sync_enable_cpuset_priority_budget`
 - `sync_budget_ingest_ratio`
-- `sync_budget_archive_ratio`
 - `sync_budget_metrics_ratio`
 - `sync_budget_reserve_ratio`
 - `sync_budget_min_metrics_percent`
-- `sync_budget_min_archive_percent`
+- `sync_archive_pool_processes` (sole archive append / archive-pool size knob)
 - `pipeline_overlap_mode` (`balanced` or `ingest_priority`)
 - `metrics_ingest_priority_scale`
 - `metrics_min_processes`
 - `sync_enable_overprovision_mode`
 - `sync_budget_overcommit_factor`
 - `sync_overprovision_ingest_multiplier`
-- `sync_overprovision_archive_multiplier`
 - `sync_overprovision_metrics_multiplier`
 
 Archive append and day-close concurrency are fixed caps only (**`sync_archive_pool_processes`** for append slots, **`sync_day_close_max_inflight`** for day-close — one calendar day / daily tar per slot). Overflow calendar days drain on slot finalize (not only on the next ingest chunk). There is no adaptive queue burst/backoff or soft queue watermark logging.

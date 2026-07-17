@@ -86,18 +86,15 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "metrics_readiness_start_margin_seconds"),
     ("PIPELINE", "metrics_readiness_end_margin_seconds"),
     ("PIPELINE", "sync_pool_process_cap"),
-    ("PIPELINE", "sync_archive_pool_process_cap"),
+    ("PIPELINE", "sync_archive_pool_processes"),
     ("PIPELINE", "sync_enable_cpuset_priority_budget"),
     ("PIPELINE", "sync_budget_ingest_ratio"),
-    ("PIPELINE", "sync_budget_archive_ratio"),
     ("PIPELINE", "sync_budget_metrics_ratio"),
     ("PIPELINE", "sync_budget_reserve_ratio"),
     ("PIPELINE", "sync_budget_min_metrics_percent"),
-    ("PIPELINE", "sync_budget_min_archive_percent"),
     ("PIPELINE", "sync_enable_overprovision_mode"),
     ("PIPELINE", "sync_budget_overcommit_factor"),
     ("PIPELINE", "sync_overprovision_ingest_multiplier"),
-    ("PIPELINE", "sync_overprovision_archive_multiplier"),
     ("PIPELINE", "sync_overprovision_metrics_multiplier"),
     ("PIPELINE", "sync_ingest_queue_max_size"),
     ("PIPELINE", "sync_ingest_rescan_mtime_days"),
@@ -109,6 +106,7 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_archive_retry_backoff_base_seconds"),
     ("PIPELINE", "sync_archive_retry_backoff_max_seconds"),
     ("PIPELINE", "sync_checkpoint_flush_batch_size"),
+    ("PIPELINE", "sync_timedb_tar_append_batch_size"),
     ("PIPELINE", "sync_host_itimes_cache_max_timestamps_per_entry"),
     ("PIPELINE", "sync_pool_poll_timeout_s"),
     ("PIPELINE", "sync_pool_stall_defer_log_interval_s"),
@@ -270,18 +268,15 @@ INI_OPTION_DEFAULTS = {
     'metrics_readiness_start_margin_seconds': '600',
     'metrics_readiness_end_margin_seconds': '600',
     'sync_pool_process_cap': '16',
-    'sync_archive_pool_process_cap': None,
+    'sync_archive_pool_processes': '2',
     'sync_enable_cpuset_priority_budget': 'yes',
     'sync_budget_ingest_ratio': '0.6',
-    'sync_budget_archive_ratio': '0.15',
     'sync_budget_metrics_ratio': '0.2',
     'sync_budget_reserve_ratio': '0.05',
     'sync_budget_min_metrics_percent': '10',
-    'sync_budget_min_archive_percent': '10',
     'sync_enable_overprovision_mode': 'no',
     'sync_budget_overcommit_factor': '1.0',
     'sync_overprovision_ingest_multiplier': '1.0',
-    'sync_overprovision_archive_multiplier': '1.0',
     'sync_overprovision_metrics_multiplier': '1.0',
     'sync_ingest_queue_max_size': '3000',
     'sync_ingest_rescan_mtime_days': '1',
@@ -293,6 +288,7 @@ INI_OPTION_DEFAULTS = {
     'sync_archive_retry_backoff_base_seconds': '1',
     'sync_archive_retry_backoff_max_seconds': '60',
     'sync_checkpoint_flush_batch_size': '100',
+    'sync_timedb_tar_append_batch_size': '1024',
     'sync_host_itimes_cache_max_timestamps_per_entry': '100000',
     'sync_pool_poll_timeout_s': '5',
     'sync_pool_stall_defer_log_interval_s': '60',
@@ -1242,19 +1238,6 @@ def get_sync_pool_process_cap():
   return 16
 
 
-def get_sync_archive_pool_process_cap():
-  """If set, caps archive-side pool in ``sync_timedb``. Env ``SYNC_ARCHIVE_POOL_PROCESS_CAP``."""
-  env = os.environ.get("SYNC_ARCHIVE_POOL_PROCESS_CAP", "").strip()
-  if env:
-    return int(env)
-  _ensure_cfg_loaded()
-  if _pipeline_has_option("sync_archive_pool_process_cap"):
-    return int(
-        _ini_option("PIPELINE", "sync_archive_pool_process_cap", legacy_sections=_PIPELINE_LEGACY)
-    )
-  return None
-
-
 def get_sync_ingest_pool_processes():
   """Worker count for ``sync_timedb`` after ``sync_pool_process_cap``."""
   if get_sync_enable_cpuset_priority_budget():
@@ -1265,12 +1248,12 @@ def get_sync_ingest_pool_processes():
 
 
 def get_sync_archive_pool_processes():
-  """Archive pool size in ``sync_timedb`` and ``sync_timedb_archive`` (default 4)."""
-  if get_sync_enable_cpuset_priority_budget():
-    raw = derive_pipeline_cpuset_priority_budget()["sync_archive_cap"]
-  else:
-    raw = 4
-  return _apply_sync_pool_cap(raw, get_sync_archive_pool_process_cap())
+  """Archive pool size / concurrent daily-tar append slots (INI default 2).
+
+  Sole source of archive append concurrency — not derived from cpuset budget.
+  """
+  _ensure_cfg_loaded()
+  return max(1, _pipeline_getint("sync_archive_pool_processes"))
 
 
 def get_sync_timedb_archive_max_concurrent_sealed_days():
@@ -2252,61 +2235,51 @@ def get_sync_enable_cpuset_priority_budget():
 
 
 def derive_pipeline_cpuset_priority_budget():
-  """Return cpuset-aware thread budget dict for sync/metrics with reserve.
+  """Return cpuset-aware thread budget dict for sync ingest/metrics with reserve.
 
   Buckets:
   - real_time: sync ingest workers + listener/feed path
-  - normal: sync archive workers + metrics pool
+  - normal: metrics pool (archive append slots are fixed via
+    ``sync_archive_pool_processes``, not budgeted here)
   - best_effort: maintenance and optional test/browser load
   """
   c = max(1, int(get_effective_cores()))
   ingest_ratio = _budget_ratio("sync_budget_ingest_ratio")
-  archive_ratio = _budget_ratio("sync_budget_archive_ratio")
   metrics_ratio = _budget_ratio("sync_budget_metrics_ratio")
   reserve_ratio = _budget_ratio("sync_budget_reserve_ratio")
 
   s = max(1, int(math.floor(ingest_ratio * c)))
-  a = max(1, int(math.floor(archive_ratio * c)))
   m = max(1, int(math.floor(metrics_ratio * c)))
   r = max(1, int(math.floor(reserve_ratio * c)))
 
   if get_sync_enable_overprovision_mode():
     s = max(1, int(math.floor(s * get_sync_overprovision_ingest_multiplier())))
-    a = max(1, int(math.floor(a * get_sync_overprovision_archive_multiplier())))
     m = max(1, int(math.floor(m * get_sync_overprovision_metrics_multiplier())))
 
-  total = s + a + m + r
+  total = s + m + r
   cap = max(1, int(math.floor(c * get_sync_budget_overcommit_factor())))
   while total > cap:
     if m > 1:
       m -= 1
-    elif a > 1:
-      a -= 1
     elif s > 1:
       s -= 1
     else:
       break
-    total = s + a + m + r
+    total = s + m + r
 
   min_metrics = _budget_floor_percent("sync_budget_min_metrics_percent")
-  min_archive = _budget_floor_percent("sync_budget_min_archive_percent")
   m_min = max(1, int(math.floor((min_metrics / 100.0) * c)))
-  a_min = max(1, int(math.floor((min_archive / 100.0) * c)))
   if m < m_min:
     take = min(s - 1, m_min - m)
     if take > 0:
       s -= take
       m += take
-  if a < a_min:
-    take = min(s - 1, a_min - a)
-    if take > 0:
-      s -= take
-      a += take
 
   return {
       "effective_cores": c,
       "sync_ingest_cap": max(1, s),
-      "sync_archive_cap": max(1, a),
+      # Informational mirror of the sole archive-slot knob (not budget-derived).
+      "sync_archive_cap": max(1, int(get_sync_archive_pool_processes())),
       "metrics_cap": max(1, m),
       "reserve_cap": max(1, r),
       "headroom_cap": cap,
@@ -2329,17 +2302,6 @@ def get_sync_overprovision_ingest_multiplier():
       "SYNC_OVERPROVISION_INGEST_MULTIPLIER",
       "PIPELINE",
       "sync_overprovision_ingest_multiplier",
-      lower=1.00,
-      upper=2.50,
-      legacy_sections=_PIPELINE_LEGACY,
-  )
-
-
-def get_sync_overprovision_archive_multiplier():
-  return _env_or_cfg_bounded_float(
-      "SYNC_OVERPROVISION_ARCHIVE_MULTIPLIER",
-      "PIPELINE",
-      "sync_overprovision_archive_multiplier",
       lower=1.00,
       upper=2.50,
       legacy_sections=_PIPELINE_LEGACY,
@@ -2442,6 +2404,12 @@ def get_sync_checkpoint_flush_batch_size():
   """Number of processed-file state transitions between checkpoint writes (default 100)."""
   _ensure_cfg_loaded()
   return max(1, _pipeline_getint("sync_checkpoint_flush_batch_size"))
+
+
+def get_sync_timedb_tar_append_batch_size():
+  """Max raw paths per ``tar -T`` append batch in sync_timedb (default 1024)."""
+  _ensure_cfg_loaded()
+  return max(1, _pipeline_getint("sync_timedb_tar_append_batch_size"))
 
 
 def get_sync_bulk_create_batch_size():
@@ -2605,7 +2573,6 @@ _PIPELINE_PATH_OPTIONS = frozenset({
 _PIPELINE_DERIVED_AUDIT_SKIP = frozenset()
 
 _SYNC_TIMEDB_CONFIG_AUDIT_ENV_KEYS = (
-    "SYNC_ARCHIVE_POOL_PROCESS_CAP",
     "HPCPERFSTATS_METRICS_COMPUTE_BATCH_MAX_SINGLE_JOB_S",
     "HPCPERFSTATS_METRICS_COMPUTE_BATCH_MAX_WINDOW_S",
     "HPCPERFSTATS_METRICS_COMPUTE_BATCH_UNKNOWN_RUNTIME_S",
