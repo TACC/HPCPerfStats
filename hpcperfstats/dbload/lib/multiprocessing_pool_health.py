@@ -1689,6 +1689,7 @@ def imap_sliding_window_watch_pool(
   full_redispatch_thrash_seen = False
   pool_recover_attempted = False
   idle_recover_skip_logged = False
+  idle_redispatch_skip_logged = False
   duplicate_dispatch_warned = set()
   duplicate_dispatch_suppressed_n = {}
   active_pool = pool
@@ -2012,15 +2013,20 @@ def imap_sliding_window_watch_pool(
   def _attempt_idle_reconcile(*, queue_yields=False):
     nonlocal idle_reconcile_rounds, idle_polls_since_reconcile
     nonlocal consecutive_timeouts, polls_since_last_yield, idle_pool_warned
-    nonlocal full_redispatch_thrash_seen
+    nonlocal full_redispatch_thrash_seen, idle_redispatch_skip_logged
     if not pending_async or not pool_workers_all_idle(active_pool):
       idle_polls_since_reconcile = 0
       return []
     pending_before = len(pending_async)
+    pending_paths = _in_flight_paths()
+    # populate_wait / populate_enqueue: workers look wchan-idle but are live.
+    # Skip pool_recover AND idle redispatch (same skip_fn); orphan collect OK.
+    skip_reason = _idle_recover_skip_reason(pending_paths)
     # After a full-redispatch thrash with still-idle workers, recover once
     # instead of burning remaining redispatch rounds into a dead taskqueue.
     if (
-        full_redispatch_thrash_seen
+        not skip_reason
+        and full_redispatch_thrash_seen
         and not pool_recover_attempted
         and callable(on_idle_pool_stuck_after_redispatch)
     ):
@@ -2032,6 +2038,16 @@ def imap_sliding_window_watch_pool(
       # Recover failed — still allow one more redispatch cycle below.
     allow_redispatch = idle_reconcile_rounds < max_reconcile_rounds
     if full_redispatch_thrash_seen and pool_recover_attempted:
+      allow_redispatch = False
+    if skip_reason:
+      if not idle_redispatch_skip_logged:
+        idle_redispatch_skip_logged = True
+        log_print(
+            "INFO: pool imap idle reconcile redispatch skipped reason=%s "
+            "pending_async_n=%d context=%s"
+            % (skip_reason, len(pending_async), context or "pool"),
+            flush=True,
+        )
       allow_redispatch = False
     collected, redispatched = reconcile_idle_pending_async(
         active_pool,

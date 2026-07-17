@@ -2262,3 +2262,61 @@ def test_idle_pool_recover_skipped_when_skip_fn_returns_reason(monkeypatch):
   assert recover_calls["n"] == 0
   assert any("pool_recover skipped" in line for line in logs)
 
+
+def test_idle_redispatch_skipped_when_skip_fn_returns_populate_wait(monkeypatch):
+  """populate_wait skip must disable idle redispatch (not only pool_recover)."""
+  monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 1000)
+  monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 3)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
+  recover_calls = {"n": 0}
+  redispatch_calls = {"n": 0}
+  logs = []
+
+  def on_recover(pool, pending_paths, pending_async, fn):
+    recover_calls["n"] += 1
+    del pool, pending_paths, pending_async, fn
+
+  monkeypatch.setattr(
+      mph, "log_print", lambda msg, flush=False: logs.append(msg),
+  )
+
+  class _FinishablePool(_ManualPool):
+    def apply_async(self, fn, args=()):
+      ar = super().apply_async(fn, args)
+      self._last_ar = ar
+      return ar
+
+  stuck_pool = _FinishablePool()
+  polls = {"n": 0}
+
+  def skip_fn(pending_paths):
+    del pending_paths
+    polls["n"] += 1
+    # Several idle-reconcile polls while skip is active, then orphan-collect.
+    if polls["n"] >= 8 and hasattr(stuck_pool, "_last_ar"):
+      stuck_pool._last_ar.finish()
+    return "populate_wait day=2026-06-07 reason=populate_enqueue"
+
+  def on_redispatch(path):
+    redispatch_calls["n"] += 1
+    del path
+
+  gen = mph.imap_sliding_window_watch_pool(
+      stuck_pool,
+      lambda path: path,
+      ["stuck_path"],
+      max_inflight=1,
+      poll_timeout_s=0.01,
+      stall_abort_polls_fn=lambda in_flight: 100000,
+      on_idle_pool_stuck_after_redispatch=on_recover,
+      on_reconcile_redispatch=on_redispatch,
+      skip_idle_pool_recover_fn=skip_fn,
+  )
+  results = list(gen)
+  assert results == ["stuck_path"]
+  assert recover_calls["n"] == 0
+  assert redispatch_calls["n"] == 0
+  assert not any("redispatch round=" in line for line in logs)
+  assert any("redispatch skipped" in line for line in logs)
+
