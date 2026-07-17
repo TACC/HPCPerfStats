@@ -36,7 +36,23 @@ grep -E 'find_stats paths=|collect_stats_files_in_range: find paths=|Rescanned a
 grep -E 'FindStatsDiscoveryError|does not support -printf|GNU find not found' /tmp/pipeline-full.log | tail -20 || true
 ```
 
-**Pass (T0):** `find_stats` / `collect_stats_files_in_range: find` lines appear with small `elapsed_s` (typically **&lt;5s**); after ingest chunks expect **`Rescanned after 1 chunks`**; no multi-hour silence with only occasional `idle_finalize`.
+**Pass (T0):** `find_stats` / `collect_stats_files_in_range: find` lines appear with small `elapsed_s` (typically **&lt;5s**); after ingest chunks expect **`Rescan boundary after 1 chunks`** (or legacy **`Rescanned after 1 chunks`**); no multi-hour silence with only occasional `idle_finalize`.
+
+### T0 / T1 verify — between-chunk exclude / handoff no full-snapshot stall (2026-07)
+
+After deploy of **chunk-stall / startup fast-start** (MainThread must not build `build_archive_maintenance_snapshot` during `_rescan_processed_exclusions` / handoff):
+
+**Failure signature (pre-fix):** after `chunk_archive_elapsed` + `Archive finalize deferred context=rescan_every_chunks`, MainThread sits in `_rescan_processed_exclusions` → `rescan_exclude_paths` → `handoff_paths_for_ingest` → `build_archive_maintenance_snapshot` / `collect_head_metadata_for_paths` for ~hour; no next `chunk imap start` / `chunk prewarm begin`. py-spy DUMP1==DUMP2 on that stack while ingest workers idle.
+
+**Pass (T0):** next `chunk imap start` (or `chunk prewarm begin`) within a normal between-chunk window after `Archive finalize deferred` — **not** an hour-scale gap. Expect `sync_timedb: async pending rescan begin|complete|merge` and/or `Rescan boundary after … async_inflight=`; do **not** see MainThread stuck in `build_archive_maintenance_snapshot` on the exclude path.
+
+```bash
+# T0 — between-chunk cadence (full pipeline log; never --tail before grep)
+podman-compose -p hpcperfstats logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+grep -E 'Archive finalize deferred context=rescan_every_chunks|Rescan boundary after|async pending rescan|chunk imap start|chunk prewarm begin' /tmp/pipeline-full.log | tail -100
+```
+
+**Pass (T1):** under backlog with day-close handoff active, `waiting_on_ingest` paths stay excluded from pending until requeued; no premature tar_drop of days with closed raw still on disk; ingest continues while async find runs (`pending empty while async rescan in flight` may appear briefly without idle archival sleep).
 
 **Pass (T1):** under backlog or ``current``, pending rediscovery continues every chunk without reintroducing Python `scandir`+`stat` wall-clock stalls; incremental lines show `mtime_days=1` (or configured N) except full sweeps / startup / maint (`mtime_days=None`).
 

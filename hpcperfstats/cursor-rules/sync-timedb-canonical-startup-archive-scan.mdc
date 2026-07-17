@@ -30,7 +30,8 @@ At supervisor boot **when CLI `startdate == 'backlog'`**, **one** `collect_stats
 - While `_building` is true, waiters **must not** start parallel collects.
 - **Publish deep-copies** `mapping` / `remaining_raw_by_gz` list values via `copy_archive_maintenance_snapshot` — trim clears heavy lists on accrual object only; coordinator retains `closed_paths` for unmapped disqualify.
 - **Derive, do not rescan:** janitor **`DAY_CLOSE`** discover remaining map, first supervisor `rescan_pending_stats_files` (when range is full tree), and **`_cap_pending_after_rescan` / checkpoint reconcile** (`build_live_unprocessed_by_tar_for_reconcile`) use the shared snapshot — **coordinator** while startup ingest gate not cleared, **janitor accrual** when gate cleared and accrual `mapping` present; live `force_full_scan` only as fallback.
-- **`build_remaining_raw_stats_by_daily_gz`** must accept `maintenance_snapshot=` and **never** nest `build_archive_maintenance_snapshot` when provided.
+- **Handoff/exclude derive (2026-07):** `day_raw_removal.get_maintenance_snapshot` prefers accrual `remaining_raw_by_gz`, else coordinator snapshot. MainThread `rescan_exclude_paths` / handoff must **not** nest `build_archive_maintenance_snapshot` when snapshot is None — use `allow_full_snapshot=False` + day-scoped listing. Heavy janitor/coordinator builds remain allowed.
+- **`build_remaining_raw_stats_by_daily_gz`** must accept `maintenance_snapshot=` and **never** nest `build_archive_maintenance_snapshot` when provided; when `allow_full_snapshot=False` and snapshot is None, return `{}` (caller uses day-scoped helper).
 - **Boot handoff discover:** supervisor **`_process_boot_handoffs_once()`** runs **once** at the first main-loop iteration **after** `_mark_startup_ingest_gate_cleared()` (not during the startup prep block). Uses **`discover_manifest_handoffs`** + **`discover_closed_raw_on_disk_handoffs`** (manifest-first predicates before **`paths_for_closed_raw_handoff_requeue`**). Handoff paths enter **`handoff_priority_paths`** via steady-chunk enqueue only (no synchronous giant-day ingest).
 - **DAY_CLOSE at startup:** janitor may **`_discover_and_enqueue_ready_day_close`** during startup heavy pass and tick discover; **`_close_one_day` execution** is deferred until **`get_startup_ingest_gate_cleared()`** returns true (`janitor: tick deferred day_close_execution reason=startup_prep`).
 - **`build_archive_maintenance_snapshot(build_ready_set=False)`** skips **`collect_gate_identities_for_paths`** (gate tail reads); mapping uses head metadata only.
@@ -56,6 +57,7 @@ At supervisor boot **when CLI `startdate == 'backlog'`**, **one** `collect_stats
 - `test_live_unprocessed_reconcile_uses_snapshot_no_collect` in `test_sync_timedb_archive.py`
 - `test_arch_no_startup_day_close_preflight_in_supervisor` in `test_sync_timedb_architecture_contract.py`
 - `test_run_scheduled_maintenance_pass_discovers_awaiting_janitor_discover_on_startup` in `test_sync_timedb_janitor.py`
+- `hpcperfstats/tests/test_sync_timedb_chunk_stall_faststart.py` (MainThread exclude/handoff no full snapshot; async pending rescan)
 
 ## Overlap
 

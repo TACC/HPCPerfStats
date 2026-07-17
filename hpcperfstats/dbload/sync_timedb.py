@@ -122,7 +122,6 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     build_chunk_day_histogram,
     build_live_unprocessed_by_tar_for_reconcile,
     build_day_close_disqualified_daily_tars,
-    build_remaining_raw_stats_by_daily_gz,
     build_unprocessed_raw_by_daily_tar,
     build_tar_append_member_map,
     clear_daily_archive_members_cache,
@@ -5708,7 +5707,7 @@ def run_sync_timedb_supervisor_loop(
     blocked_set = set(all_unprocessed)
     reconcile_exclude = (
         (processed_files | inflight_archive_paths) - blocked_set
-    )
+    ) | _rescan_processed_exclusions()
     reserved_blocked = blocked[:chunk_size] if tar_norm else None
     capped = _cap_pending_stats_with_handoff_priority(
         prepend_checkpoint_incomplete_paths_to_pending(
@@ -6354,7 +6353,7 @@ def run_sync_timedb_supervisor_loop(
 
   day_raw_removal.get_maintenance_snapshot = _get_maintenance_snapshot_for_day_raw
 
-  def _rescan_pending_with_progress(*, idle_refill=False):
+  def _rescan_pending_with_progress(*, idle_refill=False, processed_exclude=None):
     rescan_t0 = time.time()
     log_print("sync_timedb: pending rescan begin", flush=True)
     closed_paths = _startup_closed_paths_for_rescan(idle_refill=idle_refill)
@@ -6368,12 +6367,17 @@ def run_sync_timedb_supervisor_loop(
     elif closed_paths is None and idle_refill:
       _get_startup_snapshot_for_rescan(idle_refill=True)
       closed_paths = _startup_closed_paths_for_rescan(idle_refill=True)
+    exclude = (
+        set(processed_exclude)
+        if processed_exclude is not None
+        else _rescan_processed_exclusions()
+    )
     paths = rescan_pending_stats_files(
         directory,
         startdate,
         enddate,
         host_name_ext,
-        _rescan_processed_exclusions(),
+        exclude,
         host_scan_hints=host_scan_hints,
         startup_closed_paths=closed_paths,
         force_snapshot_paths=idle_refill,
@@ -6392,6 +6396,108 @@ def run_sync_timedb_supervisor_loop(
         context="pending_rescan",
     )
     return paths
+
+  from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
+      SessionSingleFlightExecutor,
+  )
+
+  pending_rescan_executor = SessionSingleFlightExecutor(
+      thread_name_prefix="sync-timedb-pending-rescan",
+      process_title=SYNC_TIMEDB_PROCESS_TITLE,
+      thread_role="pending-rescan",
+      enabled=True,
+  )
+  pending_rescan_future = None
+
+  def _pending_rescan_in_flight():
+    return (
+        pending_rescan_future is not None
+        and not pending_rescan_future.done()
+    )
+
+  def _merge_pending_rescan_discovered(discovered):
+    nonlocal pending_stats_files
+    processed_exclude = _rescan_processed_exclusions()
+    pending_stats_files = _cap_pending_after_rescan(
+        merge_rescan_discovered_into_pending(
+            pending_stats_files,
+            discovered,
+            processed_exclude=processed_exclude,
+            newest_first=newest_first,
+        ),
+    )
+    log_print(
+        "sync_timedb: async pending rescan merge pending=%d"
+        % len(pending_stats_files),
+        flush=True,
+    )
+
+  def _drain_pending_rescan_future():
+    """Merge a completed async rescan; return True when a merge ran."""
+    nonlocal pending_rescan_future
+    if pending_rescan_future is None:
+      return False
+    if not pending_rescan_future.done():
+      return False
+    future = pending_rescan_future
+    pending_rescan_future = None
+    try:
+      discovered = future.result()
+    except Exception as exc:
+      log_print(
+          "sync_timedb: async pending rescan failed err=%s" % exc,
+          flush=True,
+      )
+      return False
+    log_print(
+        "sync_timedb: async pending rescan complete discovered=%d"
+        % len(discovered or ()),
+        flush=True,
+    )
+    _merge_pending_rescan_discovered(discovered or [])
+    return True
+
+  def _start_pending_rescan_async(*, idle_refill=False):
+    """Single-flight background find; MainThread keeps ingesting known pending."""
+    nonlocal pending_rescan_future
+    if _pending_rescan_in_flight():
+      return False
+    if pending_rescan_future is not None and pending_rescan_future.done():
+      _drain_pending_rescan_future()
+    processed_exclude = _rescan_processed_exclusions()
+    exclude_snap = set(processed_exclude)
+    log_print("sync_timedb: async pending rescan begin", flush=True)
+
+    def _job():
+      return _rescan_pending_with_progress(
+          idle_refill=idle_refill,
+          processed_exclude=exclude_snap,
+      )
+
+    pending_rescan_future = pending_rescan_executor.submit(_job)
+    return True
+
+  def _supplement_pending_while_rescan_inflight():
+    """Known-pending / closed_paths fill while async find is incomplete (R23)."""
+    nonlocal pending_stats_files
+    if not _pending_rescan_in_flight():
+      return
+    if len(pending_stats_files) >= ingest_queue_max:
+      return
+    closed_paths = _startup_closed_paths_for_rescan(idle_refill=False)
+    if not closed_paths:
+      return
+    processed_exclude = _rescan_processed_exclusions()
+    pending_stats_files = _cap_pending_after_rescan(
+        supplement_pending_paths_from_closed_paths(
+            pending_stats_files,
+            closed_paths=closed_paths,
+            max_size=ingest_queue_max,
+            processed_exclude=processed_exclude,
+            log_fn=log_print,
+            newest_first=newest_first,
+        ),
+    )
 
   def _get_ingest_pool_in_flight_count():
     if active_chunk_ingest_tracker is None:
@@ -6488,11 +6594,16 @@ def run_sync_timedb_supervisor_loop(
       day_phases = dict(archive_janitor._day_phases)
     remaining = _get_accrual_remaining_raw_by_gz()
     if remaining is None:
-      remaining = build_remaining_raw_stats_by_daily_gz(
-          directory,
-          host_name_ext,
-          tgz_archive_dir,
-      )
+      # Never build a full-tree maintenance snapshot on MainThread for enqueue
+      # eligibility. Prefer startup coordinator snapshot; else empty map (janitor
+      # heavy pass / day-scoped paths refresh census asynchronously).
+      startup_snap = startup_archive_scan.get_snapshot()
+      if startup_snap is not None and getattr(
+          startup_snap, "remaining_raw_by_gz", None,
+      ):
+        remaining = dict(startup_snap.remaining_raw_by_gz)
+      else:
+        remaining = {}
     return daily_tar_eligible_for_day_close_submit(
         tar_norm,
         unprocessed_by_tar=captured.get("unprocessed_by_tar"),
@@ -6797,6 +6908,7 @@ def run_sync_timedb_supervisor_loop(
       file_states.pop(path, None)
       if isinstance(host_scan_hints, dict):
         host_scan_hints.pop(path, None)
+    processed_exclude = _rescan_processed_exclusions()
     pending_stats_files = _cap_pending_after_rescan(
         merge_rescan_discovered_into_pending(
             pending_stats_files,
@@ -6805,11 +6917,11 @@ def run_sync_timedb_supervisor_loop(
                 startdate,
                 enddate,
                 host_name_ext,
-                _rescan_processed_exclusions(),
+                processed_exclude,
                 host_scan_hints=host_scan_hints,
                 newest_first=newest_first,
             ),
-            processed_exclude=_rescan_processed_exclusions(),
+            processed_exclude=processed_exclude,
             newest_first=newest_first,
         ),
     )
@@ -6856,18 +6968,49 @@ def run_sync_timedb_supervisor_loop(
       _maybe_apply_day_close_rescan()
 
       if not pending_stats_files:
+        _drain_pending_rescan_future()
+        if pending_stats_files:
+          idle_since_empty_queue = None
+          reconcile_refs["suppress_idle_archive_retries"] = False
+          for p in pending_stats_files:
+            _transition_file_state(file_states, p, SyncFileState.DISCOVERED)
+          log_print(
+              "Number of host stats files to process = ",
+              len(pending_stats_files),
+              flush=True,
+          )
+          chunk_counter = 0
+          worker_idle_loops = 0
+          continue
+        # R27: do not treat pending empty as idle archival while scan-ahead runs.
+        if _pending_rescan_in_flight():
+          log_print(
+              "sync_timedb: pending empty while async rescan in flight; "
+              "defer idle archive",
+              flush=True,
+          )
+          _supplement_pending_while_rescan_inflight()
+          if pending_stats_files:
+            idle_since_empty_queue = None
+            continue
+          sleep_until_shutdown(1.0)
+          continue
         if idle_since_empty_queue is None:
           idle_since_empty_queue = time.time()
         archive_janitor.signal_work_available()
         _dispatch_due_archive_retries(allow_idle_stale=False)
         _finalize_archive_slots_if_needed(force=True, context="pre_rescan")
         _maybe_enqueue_immediate_day_close(context="idle_finalize")
-        discovered = _rescan_pending_with_progress(idle_refill=True)
+        processed_exclude = _rescan_processed_exclusions()
+        discovered = _rescan_pending_with_progress(
+            idle_refill=True,
+            processed_exclude=processed_exclude,
+        )
         pending_stats_files = _cap_pending_after_rescan(
             merge_rescan_discovered_into_pending(
                 pending_stats_files,
                 discovered,
-                processed_exclude=_rescan_processed_exclusions(),
+                processed_exclude=processed_exclude,
                 newest_first=newest_first,
             ),
             idle_refill=True,
@@ -6885,12 +7028,16 @@ def run_sync_timedb_supervisor_loop(
           worker_idle_loops = 0
           continue
         archive_janitor.signal_work_available()
-        discovered = _rescan_pending_with_progress(idle_refill=True)
+        processed_exclude = _rescan_processed_exclusions()
+        discovered = _rescan_pending_with_progress(
+            idle_refill=True,
+            processed_exclude=processed_exclude,
+        )
         pending_stats_files = _cap_pending_after_rescan(
             merge_rescan_discovered_into_pending(
                 pending_stats_files,
                 discovered,
-                processed_exclude=_rescan_processed_exclusions(),
+                processed_exclude=processed_exclude,
                 newest_first=newest_first,
             ),
             idle_refill=True,
@@ -7475,38 +7622,33 @@ def run_sync_timedb_supervisor_loop(
         active_chunk_ingest_tracker = None
 
         if chunk_counter % rescan_every_chunks == 0:
+          # Merge completed scan-ahead first; never block MainThread on find.
+          _drain_pending_rescan_future()
+          scan_inflight = _pending_rescan_in_flight()
           _finalize_archive_slots_if_needed(
               force=True,
-              allow_defer=bool(pending_stats_files),
+              allow_defer=bool(pending_stats_files) or scan_inflight,
               context="rescan_every_chunks",
           )
-          pending_stats_files = _cap_pending_after_rescan(
-              merge_rescan_discovered_into_pending(
-                  pending_stats_files,
-                  rescan_pending_stats_files(
-                      directory,
-                      startdate,
-                      enddate,
-                      host_name_ext,
-                      _rescan_processed_exclusions(),
-                      host_scan_hints=host_scan_hints,
-                      newest_first=newest_first,
-                  ),
-                  processed_exclude=_rescan_processed_exclusions(),
-                  newest_first=newest_first,
-              ),
-          )
+          _supplement_pending_while_rescan_inflight()
+          if not scan_inflight:
+            _start_pending_rescan_async(idle_refill=False)
+            _supplement_pending_while_rescan_inflight()
           log_print(
-              "Rescanned after %d chunks; pending files (%s): %d"
+              "Rescan boundary after %d chunks; pending files (%s): %d "
+              "async_inflight=%s"
               % (
                   rescan_every_chunks,
                   "newest first" if newest_first else "oldest first",
                   len(pending_stats_files),
+                  "yes" if _pending_rescan_in_flight() else "no",
               ))
 
         _finalize_archive_slots_if_needed(
             force=True,
-            allow_defer=bool(pending_stats_files),
+            allow_defer=(
+                bool(pending_stats_files) or _pending_rescan_in_flight()
+            ),
             context="end_of_batch",
         )
         archive_janitor.signal_work_available()
@@ -7560,6 +7702,10 @@ def run_sync_timedb_supervisor_loop(
     reconcile_refs["chunk_day_tokens"] = set()
     active_chunk_ingest_tracker = None
     preflight_shutdown_wait = not pool_worker_exit
+    try:
+      pending_rescan_executor.shutdown(wait=False)
+    except Exception:
+      pass
     if day_close_manifest is not None:
       day_close_manifest.shutdown(wait=preflight_shutdown_wait)
     if day_raw_removal is not None:

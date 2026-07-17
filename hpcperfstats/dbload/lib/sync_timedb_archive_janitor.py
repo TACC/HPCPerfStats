@@ -491,18 +491,27 @@ class ArchiveJanitor:
     else:
       self.run_light_maintenance_pass(reason=reason)
 
+  def _remaining_raw_from_accrual_only(self) -> dict:
+    """Accrual remaining map only — never builds a full-tree snapshot."""
+    with self._accrual_snapshot_lock:
+      accrual_snapshot = self._accrual_snapshot
+    if accrual_snapshot is None:
+      return {}
+    return build_remaining_raw_stats_by_daily_gz(
+        self.archive_data_dir,
+        self.host_name_ext,
+        self.tgz_archive_dir,
+        maintenance_snapshot=accrual_snapshot,
+        allow_full_snapshot=False,
+    )
+
   def run_light_maintenance_pass(self, *, reason: str):
     """Refresh candidate report from accrual only; no full-tree collect."""
     if not self.tgz_archive_dir:
       return
     with self._accrual_snapshot_lock:
       accrual_snapshot = self._accrual_snapshot
-    remaining = build_remaining_raw_stats_by_daily_gz(
-        self.archive_data_dir,
-        self.host_name_ext,
-        self.tgz_archive_dir,
-        maintenance_snapshot=accrual_snapshot,
-    )
+    remaining = self._remaining_raw_from_accrual_only()
     self.log_fn(
         "janitor: light maintenance pass reason=%s accrual_closed_paths=%d"
         % (
@@ -644,15 +653,8 @@ class ArchiveJanitor:
           ),
           flush=True,
       )
-      with self._accrual_snapshot_lock:
-        accrual_snapshot = self._accrual_snapshot
       remaining_t0 = time.time()
-      remaining = build_remaining_raw_stats_by_daily_gz(
-          self.archive_data_dir,
-          self.host_name_ext,
-          self.tgz_archive_dir,
-          maintenance_snapshot=accrual_snapshot,
-      )
+      remaining = self._remaining_raw_from_accrual_only()
       sub_remaining_map_s = time.time() - remaining_t0
       report_t0 = time.time()
       # One classify for candidate report + discover (startup heavy pass was ~2×).
@@ -774,14 +776,7 @@ class ArchiveJanitor:
     if not self.tgz_archive_dir or not os.path.isdir(self.tgz_archive_dir):
       return
     disqualified = set(self.get_disqualified_daily_tars())
-    with self._accrual_snapshot_lock:
-      accrual_snapshot = self._accrual_snapshot
-    remaining = build_remaining_raw_stats_by_daily_gz(
-        self.archive_data_dir,
-        self.host_name_ext,
-        self.tgz_archive_dir,
-        maintenance_snapshot=accrual_snapshot,
-    )
+    remaining = self._remaining_raw_from_accrual_only()
     seen = set()
     candidates = []
     for tar_path in iter_daily_tar_paths(self.tgz_archive_dir):
@@ -883,14 +878,7 @@ class ArchiveJanitor:
       disqualified = set(self.get_disqualified_daily_tars())
     with self._hints_state_lock:
       day_phases = dict(self._day_phases)
-    with self._accrual_snapshot_lock:
-      accrual_snapshot = self._accrual_snapshot
-    remaining = build_remaining_raw_stats_by_daily_gz(
-        self.archive_data_dir,
-        self.host_name_ext,
-        self.tgz_archive_dir,
-        maintenance_snapshot=accrual_snapshot,
-    )
+    remaining = self._remaining_raw_from_accrual_only()
     eligible, skip_reason = daily_tar_eligible_for_day_close_submit(
         tar_norm,
         unprocessed_by_tar=inputs.get("unprocessed_by_tar"),
@@ -1019,14 +1007,7 @@ class ArchiveJanitor:
       inputs = self._get_maintenance_pass_candidate_inputs()
       if not isinstance(inputs, dict):
         inputs = {}
-      with self._accrual_snapshot_lock:
-        accrual_snapshot = self._accrual_snapshot
-      remaining = build_remaining_raw_stats_by_daily_gz(
-          self.archive_data_dir,
-          self.host_name_ext,
-          self.tgz_archive_dir,
-          maintenance_snapshot=accrual_snapshot,
-      )
+      remaining = self._remaining_raw_from_accrual_only()
       entries = self._build_day_close_candidate_entries(
           remaining_raw_by_gz=remaining,
           newly_queued_tars=set(),
@@ -1399,12 +1380,16 @@ class ArchiveJanitor:
       return cached
     with self._accrual_snapshot_lock:
       accrual_snapshot = self._accrual_snapshot
+    # Prefer accrual; otherwise day-scoped collect — never full-tree snapshot
+    # on the janitor tick hot path (head-lock contention with MainThread).
     fresh = build_remaining_raw_for_daily_tar(
         self.archive_data_dir,
         self.host_name_ext,
         self.tgz_archive_dir,
         tar_norm,
         maintenance_snapshot=accrual_snapshot,
+        allow_full_snapshot=False,
+        log_fn=self.log_fn,
     )
     self._tick_remaining_raw_cache[tar_norm] = fresh
     return fresh

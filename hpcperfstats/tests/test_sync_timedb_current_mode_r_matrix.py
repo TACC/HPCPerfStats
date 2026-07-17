@@ -576,11 +576,12 @@ def test_r38_no_orphan_new_current_mode_rule_file():
 
 
 def test_r39_idle_refill_merge_threads_newest_first():
-  """R39: idle refill merge sites pass newest_first."""
+  """R39: idle refill merge sites pass newest_first; exclusions once-reuse."""
   src = SUPERVISOR_SRC.read_text(encoding="utf-8")
   assert "idle_refill=True" in src
-  # Both idle merge call sites include newest_first near processed_exclude.
-  assert src.count("processed_exclude=_rescan_processed_exclusions()") >= 2
+  # Once-reuse: assign local processed_exclude, never kwargs-inline call.
+  assert src.count("processed_exclude=_rescan_processed_exclusions()") == 0
+  assert src.count("processed_exclude = _rescan_processed_exclusions()") >= 2
   assert src.count("newest_first=newest_first") >= 20
 
 

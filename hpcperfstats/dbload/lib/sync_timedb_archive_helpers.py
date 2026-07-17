@@ -2913,6 +2913,7 @@ def daily_tar_filesystem_quiescent(
         tgz_archive_dir,
         tar_norm,
         maintenance_snapshot=maintenance_snapshot,
+        allow_full_snapshot=False,
     )
     for paths in scoped.values():
       if paths:
@@ -5387,6 +5388,8 @@ def build_remaining_raw_stats_by_daily_gz(
     tgz_archive_dir,
     *,
     maintenance_snapshot=None,
+    allow_full_snapshot=True,
+    log_fn=None,
 ):
   """Map each daily ``.tar.zst`` to closed raw stats paths still on disk for that day.
 
@@ -5397,9 +5400,21 @@ def build_remaining_raw_stats_by_daily_gz(
 
   Files with no parseable first timestamp are omitted from the mapping and do not
   block removal (same as archival bootstrap).
+
+  When ``maintenance_snapshot`` is None and ``allow_full_snapshot`` is False,
+  returns ``{}`` instead of building a full-tree maintenance snapshot (MainThread
+  / handoff hot path must not collect head metadata for the entire archive).
   """
   if maintenance_snapshot is not None:
     return dict(maintenance_snapshot.remaining_raw_by_gz or {})
+  if not allow_full_snapshot:
+    if log_fn:
+      log_fn(
+          "sync_timedb: remaining_raw skip full snapshot "
+          "(allow_full_snapshot=False; prefer day-scoped or published snapshot)",
+          flush=True,
+      )
+    return {}
   from hpcperfstats.dbload.lib.sync_timedb_archive_maint import (
       build_archive_maintenance_snapshot,
   )
@@ -5409,9 +5424,67 @@ def build_remaining_raw_stats_by_daily_gz(
       host_name_ext,
       tgz_archive_dir,
       build_ready_set=False,
-      log_fn=None,
+      log_fn=log_fn,
   )
   return snapshot.remaining_raw_by_gz
+
+
+def build_day_scoped_closed_raw_by_gz(
+    archive_data_dir,
+    host_name_ext,
+    tgz_archive_dir,
+    tar_path,
+    *,
+    log_fn=None,
+):
+  """Closed raw for one daily ``.tar`` without full-tree head metadata.
+
+  Uses date-scoped ``collect_stats_files_in_range`` plus filename/mtime alignment
+  (``stats_path_aligned_to_daily_tar``). Does **not** call
+  ``build_archive_maintenance_snapshot`` or read first-timestamp heads.
+  """
+  tar_norm = os.path.normpath(str(tar_path or ""))
+  day = calendar_date_from_daily_tar_path(tar_norm)
+  if not tar_norm or day is None or not archive_data_dir or not tgz_archive_dir:
+    return {}
+  # collect_stats_files_in_range expects datetime bounds (not ISO strings).
+  # Inclusive calendar day: end must be past midnight so noon segments match
+  # ``ts > enddate`` filter (same as single-day ingest windows).
+  day_start = datetime(day.year, day.month, day.day)
+  day_end = day_start + timedelta(days=1)
+  paths = collect_stats_files_in_range(
+      archive_data_dir,
+      day_start,
+      day_end,
+      host_name_ext,
+      force_full_scan=True,
+      log_fn=None,
+  )
+  aligned = []
+  for path in paths or ():
+    if not path or not os.path.isfile(path):
+      continue
+    if stats_file_is_active_segment(path):
+      continue
+    if not stats_path_aligned_to_daily_tar(
+        path,
+        tar_norm,
+        tgz_archive_dir=tgz_archive_dir,
+    ):
+      continue
+    aligned.append(path)
+  if not aligned:
+    return {}
+  zst_path, _gz_path = compressed_sibling_paths(tar_norm)
+  if log_fn:
+    log_fn(
+        "sync_timedb: day-scoped closed_raw tar=%s paths=%d "
+        "(no full maintenance snapshot)"
+        % (os.path.basename(tar_norm), len(aligned)),
+        flush=True,
+    )
+  return {zst_path: aligned}
+
 
 def build_remaining_raw_for_daily_tar(
     archive_data_dir,
@@ -5420,15 +5493,63 @@ def build_remaining_raw_for_daily_tar(
     tar_path,
     *,
     maintenance_snapshot=None,
+    allow_full_snapshot=True,
+    log_fn=None,
 ):
-  """Day-scoped ``remaining_raw_by_gz`` for one daily ``.tar`` path."""
+  """Day-scoped ``remaining_raw_by_gz`` for one daily ``.tar`` path.
+
+  Prefer ``maintenance_snapshot``. When absent and ``allow_full_snapshot`` is
+  False (MainThread handoff/exclude), use ``build_day_scoped_closed_raw_by_gz``
+  instead of a full-tree ``build_archive_maintenance_snapshot``.
+  """
+  tar_norm = os.path.normpath(tar_path)
+  if maintenance_snapshot is not None:
+    full = build_remaining_raw_stats_by_daily_gz(
+        archive_data_dir,
+        host_name_ext,
+        tgz_archive_dir,
+        maintenance_snapshot=maintenance_snapshot,
+        allow_full_snapshot=False,
+        log_fn=log_fn,
+    )
+    scoped = {}
+    for gz_key, paths in (full or {}).items():
+      if not paths:
+        continue
+      if os.path.normpath(daily_tar_path_from_compressed(gz_key)) == tar_norm:
+        scoped[gz_key] = paths
+    filtered = filter_remaining_raw_aligned_to_tar(
+        scoped,
+        tar_norm,
+        tgz_archive_dir=tgz_archive_dir,
+    )
+    if filtered or allow_full_snapshot:
+      return filtered
+    # Snapshot published but this tar has no remaining entries — day-scoped
+    # refresh so unmanifested closed raw is not silently omitted (R2).
+    return build_day_scoped_closed_raw_by_gz(
+        archive_data_dir,
+        host_name_ext,
+        tgz_archive_dir,
+        tar_norm,
+        log_fn=log_fn,
+    )
+  if not allow_full_snapshot:
+    return build_day_scoped_closed_raw_by_gz(
+        archive_data_dir,
+        host_name_ext,
+        tgz_archive_dir,
+        tar_norm,
+        log_fn=log_fn,
+    )
   full = build_remaining_raw_stats_by_daily_gz(
       archive_data_dir,
       host_name_ext,
       tgz_archive_dir,
-      maintenance_snapshot=maintenance_snapshot,
+      maintenance_snapshot=None,
+      allow_full_snapshot=True,
+      log_fn=log_fn,
   )
-  tar_norm = os.path.normpath(tar_path)
   scoped = {}
   for gz_key, paths in (full or {}).items():
     if not paths:

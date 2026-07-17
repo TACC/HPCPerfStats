@@ -269,12 +269,17 @@ class _DayRawRemovalState:
       return None
 
   def _build_remaining_raw_for_daily_tar(self) -> Dict[str, List[str]]:
+    # MainThread handoff/exclude must never fall through to a full-tree
+    # build_archive_maintenance_snapshot (hour-scale head metadata). Prefer the
+    # published accrual/coordinator snapshot; otherwise day-scoped collect.
     return build_remaining_raw_for_daily_tar(
         self.archive_data_dir,
         self.host_name_ext,
         self.tgz_archive_dir,
         self.tar_path,
         maintenance_snapshot=self._resolve_maintenance_snapshot(),
+        allow_full_snapshot=False,
+        log_fn=self.log_fn,
     )
 
   def _manifest_paths_on_disk(self) -> List[str]:
@@ -1892,7 +1897,11 @@ class DayRawRemovalCoordinator:
     return False
 
   def rescan_exclude_paths(self) -> Set[str]:
-    """Paths that must stay out of pending rescan during handoff/delete drain."""
+    """Paths that must stay out of pending rescan during handoff/delete drain.
+
+    Computes handoff/requeue paths **once** per tracked day. Does not use
+    ``handoff_paths_for_ingest()`` as a boolean probe (that builds remaining-raw).
+    """
     excluded: Set[str] = set()
     with self._days_lock:
       tar_paths = list(self._days.keys())
@@ -1900,8 +1909,9 @@ class DayRawRemovalCoordinator:
       state = self._get_or_create_day(tar_norm)
       if not (
           state.delete_phase_done()
-          or state.handoff_paths_for_ingest()
-          or state.should_handoff_day_close_to_ingest()
+          or state.verification_complete()
+          or state.has_active_raw_removal_work()
+          or state.waiting_on_ingest_at_startup()
       ):
         continue
       excluded.update(self.paths_for_closed_raw_handoff_requeue(tar_norm))
