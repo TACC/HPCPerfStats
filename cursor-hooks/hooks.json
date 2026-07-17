@@ -3,6 +3,11 @@
   "hooks": {
     "preToolUse": [
       {
+        "command": ".cursor/hooks/record-rule-reads.py",
+        "matcher": "Read|ReadFile",
+        "timeout": 10
+      },
+      {
         "command": ".cursor/hooks/check-pre-create-plan-reads.py",
         "matcher": "CreatePlan|Write|StrReplace",
         "timeout": 10

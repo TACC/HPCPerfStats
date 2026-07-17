@@ -16,6 +16,7 @@ from hpc_hook_lib import (  # noqa: E402
     full_file_rule_read_issues,
     is_live_plan_disk_path,
     last_turn_rows,
+    ledger_full_file_basenames_this_turn,
     load_json_stdin,
     operator_discovery_issues,
     operator_discovery_needs_full_rule_reads,
@@ -64,9 +65,16 @@ def main() -> int:
     if operator_discovery_needs_full_rule_reads(markdown):
         transcript_path = payload.get("transcript_path")
         if transcript_path:
-            rows = last_turn_rows(parse_transcript_lines(transcript_path))
+            full_rows = parse_transcript_lines(transcript_path)
+            rows = last_turn_rows(full_rows)
             issues.extend(
-                full_file_rule_read_issues(rows, OPERATOR_FULL_READ_REQUIRED_MDC),
+                full_file_rule_read_issues(
+                    rows,
+                    OPERATOR_FULL_READ_REQUIRED_MDC,
+                    extra_full_file_basenames=ledger_full_file_basenames_this_turn(
+                        transcript_path, full_rows,
+                    ),
+                ),
             )
 
     if not issues:

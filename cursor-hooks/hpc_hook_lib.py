@@ -992,10 +992,25 @@ def turn_create_plan_pending_disk_write(rows: list[dict]) -> bool:
     return turn_had_create_plan(rows) and not turn_had_live_plan_disk_write(rows)
 
 
-def plan_authoring_precreate_read_issues(transcript_rows: list[dict]) -> list[str]:
-    """Required Read tool calls before the first CreatePlan in this turn."""
-    issues = domain_rule_read_issues(list(PLAN_AUTHORING_REQUIRED_MDC), transcript_rows)
-    issues.extend(plan_template_read_issues(transcript_rows))
+def plan_authoring_precreate_read_issues(
+    transcript_rows: list[dict],
+    extra_read_basenames: Iterable[str] = (),
+    extra_has_template: bool = False,
+) -> list[str]:
+    """Required Read tool calls before the first CreatePlan in this turn.
+
+    ``extra_read_basenames`` / ``extra_has_template`` come from the rule-read
+    ledger and cover this turn's Reads that the lagging transcript has not yet
+    persisted (see ``record_rule_read_to_ledger``).
+    """
+    issues = domain_rule_read_issues(
+        list(PLAN_AUTHORING_REQUIRED_MDC),
+        transcript_rows,
+        extra_read_basenames=extra_read_basenames,
+    )
+    issues.extend(
+        plan_template_read_issues(transcript_rows, extra_has_template=extra_has_template),
+    )
     return issues
 
 
@@ -1109,11 +1124,19 @@ def operator_discovery_needs_full_rule_reads(plan_markdown: str) -> bool:
 def full_file_rule_read_issues(
     rows: list[dict],
     basenames: Iterable[str] = OPERATOR_FULL_READ_REQUIRED_MDC,
+    extra_full_file_basenames: Iterable[str] = (),
 ) -> list[str]:
-    """Require full-file Reads (no limit/offset); partial Read does not count."""
+    """Require full-file Reads (no limit/offset); partial Read does not count.
+
+    ``extra_full_file_basenames`` come from the rule-read ledger for this turn's
+    full-file Reads the lagging transcript has not yet persisted.
+    """
+    extra = {str(name).lower() for name in extra_full_file_basenames}
     issues: list[str] = []
     for name in basenames:
         if turn_had_full_file_rule_read(rows, name):
+            continue
+        if name.lower() in extra:
             continue
         if read_event_indices_for_rule(rows, name):
             issues.append(
@@ -1140,6 +1163,156 @@ def is_cursor_rule_read_path(path: str) -> bool:
         # that symlink path must count the same as the canonical path.
         or ".cursor/rules/" in normalized
     )
+
+
+# --- Rule-read ledger -------------------------------------------------------
+# Cursor writes the live turn's tool calls to ``transcript_path`` only after the
+# turn ends, so mid-turn ``preToolUse`` read-gates cannot see this turn's Read
+# parts and would deny every plan Write no matter how many rules were Read. A
+# ``preToolUse`` recorder hook matching ``Read``/``ReadFile`` persists each
+# cursor-rule / PLAN_TEMPLATE Read to this sidecar at Read time; the plan-write
+# gates union the ledger with the (lagging) transcript. The current turn is
+# keyed by the transcript's persisted user-row count (stable while the turn is
+# in flight), so entries from prior turns are ignored automatically.
+RULE_READ_LEDGER_SUFFIX = ".hpc_rule_reads.jsonl"
+
+
+def rule_read_ledger_path(transcript_path: str | None) -> Path | None:
+    if not transcript_path:
+        return None
+    return Path(str(transcript_path) + RULE_READ_LEDGER_SUFFIX)
+
+
+def transcript_user_row_count(rows: list[dict]) -> int:
+    """Turn marker: user rows persisted in the transcript (stable mid-turn)."""
+    return sum(
+        1 for row in rows if isinstance(row, dict) and row.get("role") == "user"
+    )
+
+
+def _read_ledger_entries(ledger: Path) -> list[dict]:
+    if not ledger.is_file():
+        return []
+    entries: list[dict] = []
+    try:
+        raw = ledger.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            entries.append(obj)
+    return entries
+
+
+def record_rule_read_to_ledger(
+    transcript_path: str | None,
+    tool_name: str | None,
+    tool_input: dict,
+) -> bool:
+    """Persist a cursor-rule / PLAN_TEMPLATE Read for the current turn.
+
+    Returns True when an entry was written. No-op for non-Read tools or reads of
+    unrelated paths. Only the current turn's entries are retained so the sidecar
+    never grows without bound.
+    """
+    if canonical_tool_name(tool_name) != "Read" or not isinstance(tool_input, dict):
+        return False
+    path = (
+        tool_input.get("path")
+        or tool_input.get("file_path")
+        or tool_input.get("target_file")
+    )
+    if not path:
+        return False
+    path = str(path)
+    is_template = is_plan_template_read_path(path)
+    if not (is_cursor_rule_read_path(path) or is_template):
+        return False
+    ledger = rule_read_ledger_path(transcript_path)
+    if ledger is None:
+        return False
+    user_rows = transcript_user_row_count(
+        parse_transcript_lines(str(transcript_path)),
+    )
+    entry = {
+        "basename": Path(path).name.lower(),
+        "template": bool(is_template),
+        "partial": tool_input.get("limit") is not None
+        or tool_input.get("offset") is not None,
+        "user_rows": user_rows,
+    }
+    kept = [
+        e
+        for e in _read_ledger_entries(ledger)
+        if int(e.get("user_rows", -1)) == user_rows
+    ]
+    kept.append(entry)
+    try:
+        ledger.write_text(
+            "".join(json.dumps(e) + "\n" for e in kept),
+            encoding="utf-8",
+        )
+    except OSError:
+        return False
+    return True
+
+
+def _ledger_entries_this_turn(
+    transcript_path: str | None,
+    full_rows: list[dict],
+) -> list[dict]:
+    """Ledger entries recorded during the current turn.
+
+    ``full_rows`` must be the complete transcript (not ``last_turn_rows``) so the
+    user-row turn marker matches what ``record_rule_read_to_ledger`` computed.
+    """
+    ledger = rule_read_ledger_path(transcript_path)
+    if ledger is None:
+        return []
+    current = transcript_user_row_count(full_rows)
+    return [
+        e
+        for e in _read_ledger_entries(ledger)
+        if int(e.get("user_rows", -1)) == current
+    ]
+
+
+def ledger_read_basenames_this_turn(
+    transcript_path: str | None,
+    full_rows: list[dict],
+) -> set[str]:
+    return {
+        str(e.get("basename", "")).lower()
+        for e in _ledger_entries_this_turn(transcript_path, full_rows)
+        if e.get("basename")
+    }
+
+
+def ledger_has_template_read_this_turn(
+    transcript_path: str | None,
+    full_rows: list[dict],
+) -> bool:
+    return any(
+        e.get("template") for e in _ledger_entries_this_turn(transcript_path, full_rows)
+    )
+
+
+def ledger_full_file_basenames_this_turn(
+    transcript_path: str | None,
+    full_rows: list[dict],
+) -> set[str]:
+    return {
+        str(e.get("basename", "")).lower()
+        for e in _ledger_entries_this_turn(transcript_path, full_rows)
+        if e.get("basename") and not e.get("partial")
+    }
 
 
 def extract_read_rule_basenames(rows: list[dict]) -> set[str]:
@@ -1209,10 +1382,15 @@ def plan_template_read_event_indices(rows: list[dict]) -> list[int]:
     return indices
 
 
-def plan_template_read_issues(transcript_rows: list[dict]) -> list[str]:
+def plan_template_read_issues(
+    transcript_rows: list[dict],
+    extra_has_template: bool = False,
+) -> list[str]:
     first_closeable = first_closeable_event_index(transcript_rows)
     read_indices = plan_template_read_event_indices(transcript_rows)
     if not read_indices:
+        if extra_has_template:
+            return []
         return ["PLAN_TEMPLATE.md not read via Read tool"]
     if first_closeable is not None and min(read_indices) > first_closeable:
         return ["PLAN_TEMPLATE.md read after CreatePlan"]
@@ -1243,8 +1421,13 @@ def plan_content_issues(plan_markdown: str) -> list[str]:
     return missing
 
 
-def domain_rule_read_issues(required_rules: list[str], transcript_rows: list[dict]) -> list[str]:
+def domain_rule_read_issues(
+    required_rules: list[str],
+    transcript_rows: list[dict],
+    extra_read_basenames: Iterable[str] = (),
+) -> list[str]:
     first_closeable = first_closeable_event_index(transcript_rows)
+    extra = {str(name).lower() for name in extra_read_basenames}
     issues: list[str] = []
     for rule in sorted(required_rules, key=str.lower):
         if rule.lower() in READ_VERIFY_EXEMPT_MDC:
@@ -1252,10 +1435,16 @@ def domain_rule_read_issues(required_rules: list[str], transcript_rows: list[dic
         if not cursor_rule_file_exists(rule):
             continue
         read_indices = read_event_indices_for_rule(transcript_rows, rule)
-        if not read_indices:
-            issues.append(f"Rule not read: {rule}")
-        elif first_closeable is not None and min(read_indices) > first_closeable:
-            issues.append(f"Rule read after first edit/plan: {rule}")
+        if read_indices:
+            if first_closeable is not None and min(read_indices) > first_closeable:
+                issues.append(f"Rule read after first edit/plan: {rule}")
+            continue
+        # Ledger fallback: Read happened this turn but the transcript file has
+        # not persisted it yet (record_rule_read_to_ledger). preToolUse fires
+        # before any edit, so there is no ordering to enforce here.
+        if rule.lower() in extra:
+            continue
+        issues.append(f"Rule not read: {rule}")
     return issues
 
 

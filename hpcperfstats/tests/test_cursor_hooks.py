@@ -1346,6 +1346,213 @@ def test_check_pre_create_plan_reads_allows_live_plan_write_after_readfile_reads
   assert data.get("permission") == "allow"
 
 
+def _one_user_row_transcript(tmp_path, name="lag.jsonl"):
+  """Transcript with a single user row and no persisted assistant tool calls.
+
+  Simulates Cursor's mid-turn transcript lag: the live turn's Read parts are not
+  yet flushed, so the read-gate must rely on the rule-read ledger.
+  """
+  transcript = tmp_path / name
+  transcript.write_text(
+      json.dumps({"role": "user", "message": {"content": "do the thing"}}) + "\n",
+      encoding="utf-8",
+  )
+  return transcript
+
+
+def test_record_rule_read_to_ledger_writes_current_turn_entry(tmp_path):
+  transcript = _one_user_row_transcript(tmp_path)
+  wrote = lib.record_rule_read_to_ledger(
+      str(transcript),
+      "Read",
+      {"path": "/repo/HPCPerfStats/hpcperfstats/cursor-rules/plan-creation-contract.mdc"},
+  )
+  assert wrote is True
+  full_rows = lib.parse_transcript_lines(str(transcript))
+  basenames = lib.ledger_read_basenames_this_turn(str(transcript), full_rows)
+  assert "plan-creation-contract.mdc" in basenames
+
+
+def test_record_rule_read_to_ledger_ignores_unrelated_paths(tmp_path):
+  transcript = _one_user_row_transcript(tmp_path)
+  wrote = lib.record_rule_read_to_ledger(
+      str(transcript),
+      "Read",
+      {"path": "/repo/HPCPerfStats/hpcperfstats/dbload/sync_timedb.py"},
+  )
+  assert wrote is False
+  ledger = lib.rule_read_ledger_path(str(transcript))
+  assert ledger is not None and not ledger.is_file()
+
+
+def test_record_rule_read_to_ledger_accepts_readfile_and_template(tmp_path):
+  transcript = _one_user_row_transcript(tmp_path)
+  assert lib.record_rule_read_to_ledger(
+      str(transcript),
+      "ReadFile",
+      {"path": "/repo/HPCPerfStats/docs/plans/PLAN_TEMPLATE.md"},
+  ) is True
+  full_rows = lib.parse_transcript_lines(str(transcript))
+  assert lib.ledger_has_template_read_this_turn(str(transcript), full_rows) is True
+
+
+def test_ledger_reads_scoped_to_current_turn(tmp_path):
+  transcript = _one_user_row_transcript(tmp_path)
+  ledger = lib.rule_read_ledger_path(str(transcript))
+  # A stale entry from a prior turn (different user-row count) must not count.
+  ledger.write_text(
+      json.dumps(
+          {
+              "basename": "plan-live-disk-sync.mdc",
+              "template": False,
+              "partial": False,
+              "user_rows": 99,
+          },
+      )
+      + "\n",
+      encoding="utf-8",
+  )
+  full_rows = lib.parse_transcript_lines(str(transcript))
+  assert lib.ledger_read_basenames_this_turn(str(transcript), full_rows) == set()
+
+
+def test_plan_authoring_precreate_read_issues_satisfied_by_ledger_only():
+  rows = [{"role": "user", "message": {"content": "go"}}]
+  extra = {name for name in lib.PLAN_AUTHORING_REQUIRED_MDC}
+  issues = lib.plan_authoring_precreate_read_issues(
+      rows,
+      extra_read_basenames=extra,
+      extra_has_template=True,
+  )
+  assert issues == []
+
+
+def test_full_file_rule_read_issues_satisfied_by_ledger_extra():
+  rows = [{"role": "user", "message": {"content": "go"}}]
+  issues = lib.full_file_rule_read_issues(
+      rows,
+      lib.OPERATOR_FULL_READ_REQUIRED_MDC,
+      extra_full_file_basenames=set(lib.OPERATOR_FULL_READ_REQUIRED_MDC),
+  )
+  assert issues == []
+
+
+def test_record_rule_reads_hook_allows_and_records(tmp_path):
+  transcript = _one_user_row_transcript(tmp_path, "recorder.jsonl")
+  payload = {
+      "tool_name": "Read",
+      "tool_input": {
+          "path": "/repo/HPCPerfStats/hpcperfstats/cursor-rules/plan-live-disk-sync.mdc",
+      },
+      "transcript_path": str(transcript),
+  }
+  script = HOOKS_DIR / "record-rule-reads.py"
+  proc = subprocess.run(
+      [sys.executable, str(script)],
+      input=json.dumps(payload),
+      capture_output=True,
+      text=True,
+      check=False,
+  )
+  assert proc.returncode == 0
+  assert json.loads(proc.stdout.strip()).get("permission") == "allow"
+  full_rows = lib.parse_transcript_lines(str(transcript))
+  assert "plan-live-disk-sync.mdc" in lib.ledger_read_basenames_this_turn(
+      str(transcript), full_rows,
+  )
+
+
+def test_check_pre_create_plan_reads_allows_plan_write_when_reads_only_in_ledger(tmp_path):
+  # Reproduces the transcript-lag deadlock: the current turn's Reads are not in
+  # the transcript yet, but the recorder hook persisted them to the ledger.
+  transcript = _one_user_row_transcript(tmp_path, "ledger-gate.jsonl")
+  base = "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
+  recorder = HOOKS_DIR / "record-rule-reads.py"
+  read_paths = [f"{base}{name}" for name in lib.PLAN_AUTHORING_REQUIRED_MDC]
+  read_paths.append("/repo/HPCPerfStats/docs/plans/PLAN_TEMPLATE.md")
+  for path in read_paths:
+    proc = subprocess.run(
+        [sys.executable, str(recorder)],
+        input=json.dumps(
+            {
+                "tool_name": "Read",
+                "tool_input": {"path": path},
+                "transcript_path": str(transcript),
+            },
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0
+
+  payload = {
+      "tool_name": "Write",
+      "tool_input": {
+          "path": ".cursor/plans/foo.plan.md",
+          "contents": _minimal_plan_markdown(),
+      },
+      "transcript_path": str(transcript),
+  }
+  script = HOOKS_DIR / "check-pre-create-plan-reads.py"
+  proc = subprocess.run(
+      [sys.executable, str(script)],
+      input=json.dumps(payload),
+      capture_output=True,
+      text=True,
+      check=False,
+  )
+  assert proc.returncode == 0
+  assert json.loads(proc.stdout.strip()).get("permission") == "allow"
+
+
+def test_check_pre_create_plan_reads_still_denies_when_ledger_missing_rule(tmp_path):
+  transcript = _one_user_row_transcript(tmp_path, "ledger-partial.jsonl")
+  base = "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
+  recorder = HOOKS_DIR / "record-rule-reads.py"
+  # Record all required rules EXCEPT deploy-ini-with-code-no-phase-zero.mdc.
+  read_paths = [
+      f"{base}{name}"
+      for name in lib.PLAN_AUTHORING_REQUIRED_MDC
+      if name != "deploy-ini-with-code-no-phase-zero.mdc"
+  ]
+  read_paths.append("/repo/HPCPerfStats/docs/plans/PLAN_TEMPLATE.md")
+  for path in read_paths:
+    subprocess.run(
+        [sys.executable, str(recorder)],
+        input=json.dumps(
+            {
+                "tool_name": "Read",
+                "tool_input": {"path": path},
+                "transcript_path": str(transcript),
+            },
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+  payload = {
+      "tool_name": "Write",
+      "tool_input": {
+          "path": ".cursor/plans/foo.plan.md",
+          "contents": _minimal_plan_markdown(),
+      },
+      "transcript_path": str(transcript),
+  }
+  script = HOOKS_DIR / "check-pre-create-plan-reads.py"
+  proc = subprocess.run(
+      [sys.executable, str(script)],
+      input=json.dumps(payload),
+      capture_output=True,
+      text=True,
+      check=False,
+  )
+  assert proc.returncode == 0
+  data = json.loads(proc.stdout.strip())
+  assert data.get("permission") == "deny"
+  assert "deploy-ini-with-code-no-phase-zero" in data.get("agent_message", "")
+
+
 def test_check_block_until_plan_disk_denies_shell_after_create_plan(tmp_path):
   transcript = tmp_path / "block-disk.jsonl"
   transcript.write_text(

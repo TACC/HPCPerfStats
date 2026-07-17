@@ -15,6 +15,8 @@ from hpc_hook_lib import (  # noqa: E402
     emit_deny,
     is_live_plan_disk_path,
     last_turn_rows,
+    ledger_has_template_read_this_turn,
+    ledger_read_basenames_this_turn,
     load_json_stdin,
     parse_transcript_lines,
     plan_authoring_precreate_read_issues,
@@ -57,8 +59,17 @@ def main() -> int:
         emit_allow()
         return 0
 
-    rows = last_turn_rows(parse_transcript_lines(transcript_path))
-    issues = plan_authoring_precreate_read_issues(rows)
+    full_rows = parse_transcript_lines(transcript_path)
+    rows = last_turn_rows(full_rows)
+    issues = plan_authoring_precreate_read_issues(
+        rows,
+        extra_read_basenames=ledger_read_basenames_this_turn(
+            transcript_path, full_rows,
+        ),
+        extra_has_template=ledger_has_template_read_this_turn(
+            transcript_path, full_rows,
+        ),
+    )
     if not issues:
         emit_allow()
         return 0
