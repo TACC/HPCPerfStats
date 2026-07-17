@@ -1804,6 +1804,7 @@ def test_recover_does_not_clear_pending_before_new_pool_ready(monkeypatch):
 
 def test_maintain_ingest_pool_refuses_swap_while_replacement_lagging(monkeypatch):
   """RC-M: gap>0 must not proactive-swap."""
+  mph.reset_post_retire_maintain_coalesce_for_tests()
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
       lambda: 0,
@@ -1841,6 +1842,7 @@ def test_maintain_ingest_pool_refuses_swap_while_replacement_lagging(monkeypatch
 
 def test_maintain_ingest_pool_proactive_swap_abandons_old_pool(monkeypatch):
   """RC-N: proactive swap must abandon+kill old pool before recreate."""
+  mph.reset_post_retire_maintain_coalesce_for_tests()
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
       lambda: 0,
@@ -1956,6 +1958,7 @@ def test_reclaim_excess_ingest_pool_children_kills_orphans_keeps_pool(monkeypatc
 
 def test_maintain_ingest_pool_reclaims_when_alive_over_cap(monkeypatch):
   """Entry reclaim runs even when probe succeeds (no swap path)."""
+  mph.reset_post_retire_maintain_coalesce_for_tests()
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
       lambda: 0,
@@ -1974,6 +1977,8 @@ def test_maintain_ingest_pool_reclaims_when_alive_over_cap(monkeypatch):
           "dead_n": 0,
       },
   )
+  # Idle so probe still runs (busy path skips probe by design).
+  monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
   monkeypatch.setattr(mph, "probe_ingest_pool_dispatch", lambda *a, **k: True)
   reclaim_calls = []
 
@@ -2051,6 +2056,129 @@ def test_maintain_ingest_pool_after_supervisor_retire_noop_when_maxtasks_positiv
   pool = object()
   assert mph.maintain_ingest_pool_after_supervisor_retire(pool) is pool
   assert probe_calls == []
+
+
+def test_maintain_skips_probe_when_workers_busy(monkeypatch):
+  """Busy post_retire must not dispatch_probe (false TimeoutError thrash)."""
+  mph.reset_post_retire_maintain_coalesce_for_tests()
+  logs = []
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
+      lambda: 0,
+  )
+  monkeypatch.setattr(mph, "reap_pool_worker_pids", lambda *a, **k: [])
+  monkeypatch.setattr(mph, "reap_zombie_children_of_self", lambda **k: None)
+  monkeypatch.setattr(mph, "_iter_dead_pool_worker_processes", lambda pool: [])
+  monkeypatch.setattr(
+      mph,
+      "_pool_recycle_gate_metrics",
+      lambda *a, **k: {
+          "alive": 32,
+          "expected_total": 32,
+          "materialized": 32,
+          "gap": 0,
+          "dead_n": 0,
+      },
+  )
+  monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: False)
+  monkeypatch.setattr(mph, "reclaim_excess_ingest_pool_children", lambda *a, **k: [])
+  monkeypatch.setattr(mph, "log_print", lambda msg, flush=False: logs.append(msg))
+  probe_calls = []
+  monkeypatch.setattr(
+      mph,
+      "probe_ingest_pool_dispatch",
+      lambda *a, **k: probe_calls.append(True) or False,
+  )
+  recreate_calls = []
+  pool = SimpleNamespace(_pool=[_AliveWorker(pid=i) for i in range(32)])
+  out = mph.maintain_ingest_pool_after_supervisor_retire(
+      pool,
+      recreate_pool_fn=lambda: recreate_calls.append(True) or object(),
+  )
+  assert out is pool
+  assert probe_calls == []
+  assert recreate_calls == []
+  assert any("skip_probe" in line and "workers_busy" in line for line in logs)
+
+
+def test_reclaim_never_kills_registered_pool_workers(monkeypatch):
+  """Census over-cap must cull orphans only — never truncate registered keep."""
+  killed = []
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_processes",
+      lambda: 2,
+  )
+  # Three registered keep PIDs (> expected=2) plus one orphan.
+  monkeypatch.setattr(
+      mph,
+      "list_ingest_pool_child_pids_of_self",
+      lambda: [10, 11, 12, 99],
+  )
+  monkeypatch.setattr(
+      mph,
+      "_sigkill_pool_worker_pids",
+      lambda pids, **kwargs: killed.extend(list(pids)),
+  )
+  monkeypatch.setattr(mph, "log_print", lambda *a, **k: None)
+  pool = SimpleNamespace(
+      _pool=[
+          _AliveWorker(pid=10),
+          _AliveWorker(pid=11),
+          _AliveWorker(pid=12),
+      ],
+  )
+  culled = mph.reclaim_excess_ingest_pool_children(
+      pool,
+      context="post_retire_maintenance",
+  )
+  assert culled == [99]
+  assert killed == [99]
+
+
+def test_post_retire_maintain_coalesced_under_load(monkeypatch):
+  """Second maintain within coalesce window while busy skips reclaim+probe."""
+  mph.reset_post_retire_maintain_coalesce_for_tests()
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
+      lambda: 0,
+  )
+  monkeypatch.setattr(mph, "reap_pool_worker_pids", lambda *a, **k: [])
+  monkeypatch.setattr(mph, "reap_zombie_children_of_self", lambda **k: None)
+  monkeypatch.setattr(mph, "_iter_dead_pool_worker_processes", lambda pool: [])
+  monkeypatch.setattr(
+      mph,
+      "_pool_recycle_gate_metrics",
+      lambda *a, **k: {
+          "alive": 32,
+          "expected_total": 32,
+          "materialized": 32,
+          "gap": 0,
+          "dead_n": 0,
+      },
+  )
+  monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: False)
+  reclaim_calls = []
+  monkeypatch.setattr(
+      mph,
+      "reclaim_excess_ingest_pool_children",
+      lambda *a, **k: reclaim_calls.append(True) or [],
+  )
+  probe_calls = []
+  monkeypatch.setattr(
+      mph,
+      "probe_ingest_pool_dispatch",
+      lambda *a, **k: probe_calls.append(True) or True,
+  )
+  logs = []
+  monkeypatch.setattr(mph, "log_print", lambda msg, flush=False: logs.append(msg))
+  pool = SimpleNamespace(_pool=[_AliveWorker()])
+  assert mph.maintain_ingest_pool_after_supervisor_retire(pool) is pool
+  assert len(reclaim_calls) == 1
+  assert probe_calls == []
+  assert mph.maintain_ingest_pool_after_supervisor_retire(pool) is pool
+  assert len(reclaim_calls) == 1
+  assert probe_calls == []
+  assert any("coalesced" in line and "workers_busy" in line for line in logs)
 
 
 def test_full_redispatch_thrash_triggers_immediate_recover_same_round(monkeypatch):

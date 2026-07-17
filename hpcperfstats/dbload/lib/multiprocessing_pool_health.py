@@ -29,6 +29,17 @@ _WARNED_SLOW_RECYCLE_PIDS_BY_POOL = {}
 _SUPERVISOR_RETIRE_PIDS_BY_POOL = {}
 _RECYCLE_TRACKING_MAX_PIDS = 256
 
+# Coalesce busy post_retire maintain calls so timeout waves do not thrash
+# reclaim/probe every ~10s (production exit-124 cascade).
+_POST_RETIRE_MAINTAIN_COALESCE_S = 5.0
+_last_post_retire_maintain_monotonic = 0.0
+
+
+def reset_post_retire_maintain_coalesce_for_tests():
+  """Reset coalesce wall clock (unit tests only)."""
+  global _last_post_retire_maintain_monotonic
+  _last_post_retire_maintain_monotonic = 0.0
+
 
 class MultiprocessingWorkerExitError(RuntimeError):
   """Raised when a pool worker process is no longer alive."""
@@ -1060,7 +1071,9 @@ def reclaim_excess_ingest_pool_children(pool=None, *, expected=None, context="")
   """Cull ingest-pool children of main when count exceeds configured processes.
 
   Keeps alive PIDs from ``pool._pool`` when possible; orphans not registered on
-  the live Pool are SIGKILL'd first.
+  the live Pool are SIGKILL'd first. Registered workers are **never** culled
+  even when ``len(keep) > expected`` (retire/replacement races must not
+  SIGKILL the live cohort).
   """
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
@@ -1072,8 +1085,7 @@ def reclaim_excess_ingest_pool_children(pool=None, *, expected=None, context="")
     return []
   keep = set(_alive_pool_worker_pids(pool)) if pool is not None else set()
   keep = {pid for pid in keep if pid in children}
-  if len(keep) > expected:
-    keep = set(sorted(keep)[:expected])
+  # Never truncate keep — registered workers stay alive; only orphans cull.
   extras = [pid for pid in children if pid not in keep]
   if not extras:
     return []
@@ -1342,10 +1354,28 @@ def maintain_ingest_pool_after_supervisor_retire(
   """Post-retire health check when ``maxtasksperchild=0`` (supervisor SIGTERM retire)."""
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
+  global _last_post_retire_maintain_monotonic
+
   if pool is None:
     return pool
   if cfg.get_sync_ingest_pool_maxtasksperchild() > 0:
     return pool
+  now = time.monotonic()
+  workers_busy = not pool_workers_all_idle(pool)
+  if (
+      workers_busy
+      and _last_post_retire_maintain_monotonic > 0.0
+      and (now - _last_post_retire_maintain_monotonic)
+      < _POST_RETIRE_MAINTAIN_COALESCE_S
+  ):
+    log_print(
+        "INFO: post_retire_maintenance coalesced reason=workers_busy "
+        "window_s=%.1f"
+        % _POST_RETIRE_MAINTAIN_COALESCE_S,
+        flush=True,
+    )
+    return pool
+  _last_post_retire_maintain_monotonic = now
   reclaim_excess_ingest_pool_children(
       pool,
       context="post_retire_maintenance",
@@ -1375,6 +1405,15 @@ def maintain_ingest_pool_after_supervisor_retire(
         flush=True,
     )
     # RC-M: refuse further retire/swap while replacement is still lagging.
+    return pool
+  # Busy pool: skip dispatch_probe — a 10s apply_async behind long in-flight
+  # tasks raises TimeoutError and was mis-read as a dead taskqueue, driving
+  # reclaim/SIGKILL thrash toward exit 124.
+  if not pool_workers_all_idle(pool):
+    log_print(
+        "INFO: post_retire_maintenance skip_probe reason=workers_busy",
+        flush=True,
+    )
     return pool
   if not probe_ingest_pool_dispatch(pool, context="post_retire_maintenance"):
     if pool_workers_all_idle(pool) and callable(recreate_pool_fn):

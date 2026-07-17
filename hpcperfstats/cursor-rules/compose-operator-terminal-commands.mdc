@@ -74,6 +74,27 @@ tar = daily_tar_path_for_stats_path(p, tgz) if os.path.isfile(p) else None
 day = calendar_date_from_daily_tar_path(tar) if tar else None
 ```
 
+**Anti-pattern — inventing unparsable-raw `manifest.json`:** do **not** probe `os.path.join(archive_dir, ".sync_timedb_unparsable_raw", "manifest.json")`. Quarantine **files** live under **`.sync_timedb_unparsable_raw/`**; the JSON sidecar is **`{archive_dir}/.sync_timedb_unparsable_raw.json`** via **`manifest_path_for_archive(archive_dir)`** (`sync_timedb_archive_helpers`). Wrong path prints `manifest_exists False` even when quarantine moves are happening (hpcperfstats03, 2026-07-17).
+
+```bash
+docker compose exec pipeline su hpcperfstats -c 'python3 -c "
+from hpcperfstats.dbload.lib import conf_parser as cfg
+from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+    manifest_path_for_archive,
+    quarantine_dir_for_archive,
+)
+import json, os
+arch = cfg.get_archive_dir_path()
+mf = manifest_path_for_archive(arch)
+qd = quarantine_dir_for_archive(arch)
+print(\"archive_dir\", arch, \"manifest\", mf, \"exists\", os.path.isfile(mf))
+print(\"quarantine_dir\", qd, \"isdir\", os.path.isdir(qd))
+if os.path.isfile(mf):
+  doc = json.load(open(mf))
+  print(\"manifest_keys\", list(doc)[:20] if isinstance(doc, dict) else type(doc).__name__)
+"'
+```
+
 **Anti-pattern — Django/ORM imports without bootstrap (hpcperfstats03 lesson):** importing `sync_timedb_ingest_readiness`, `host_data`, or other Django models from bare `python3 -c` inside pipeline raises **`ImproperlyConfigured`**. Call **`ensure_django()`** first:
 
 ```bash

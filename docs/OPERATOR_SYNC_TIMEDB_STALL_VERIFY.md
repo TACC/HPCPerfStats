@@ -695,6 +695,20 @@ docker compose logs pipeline 2>&1 | grep -E 'dispatch_probe failed|proactive swa
 
 **Pass (T0):** `child_ingest` equals configured processes shortly after any `proactive swap` / idle recover. **Pass (T1):** census stays ≤ configured across further per-file timeouts; thin `in_flight_n` under long budgets is a separate utilization question, not proof of orphans.
 
+### T0 / T1 — post_retire timeout→quarantine thrash → exit 124 (2026-07-17)
+
+**Failure signature (pre-fix):** under `maxtasksperchild=0` + `recycle_on_failure=True`, a timeout wave logs **`Quarantined unparsable raw`** / **`outcome=quarantine … fail_reason=ingest per-file timeout`** (file moved to DLO; manifest `reason=ingest_parse_failed` + `error_detail` containing the timeout string) then every retire runs **`post_retire_maintenance`**: **`dispatch_probe failed … TimeoutError`** on a busy pool, **`child_ingest over cap alive≫expected`** with **`Pool terminate SIGKILL`**, eventually **`idle_pool_ghost_inflight` / `idle_pool_taskqueue_dead`** → **`hard exit code=124`**.
+
+**Acceptance (post-deploy):**
+
+- **No** `outcome=quarantine` whose `fail_reason` contains `ingest per-file timeout` (timeouts must stay `outcome=timeout` / `ingest_ok=no` with the raw path still under `archive_dir`).
+- **No** repeating `dispatch_probe failed … context=post_retire_maintenance` every ~10s while the chunk is busy; expect **`skip_probe reason=workers_busy`** and/or **`post_retire_maintenance coalesced reason=workers_busy`**.
+- `child_ingest` returns to configured `ingest_pool_processes` without SIGKILL thrash of registered keep; no hard exit **124** from this cascade.
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'dispatch_probe failed|skip_probe reason=workers_busy|post_retire_maintenance coalesced|child_ingest over cap|outcome=quarantine|fail_reason=ingest per-file timeout|idle_pool_ghost_inflight|idle_pool_taskqueue_dead|hard exit code=124|Pool terminate SIGKILL' | tail -80
+```
+
 **Duplicate dispatch suppressed flood (T1, post-fix 2026-07-09):** dense `WARN: pool imap duplicate dispatch suppressed path=<timestamp>` lines (basename-only) during fast `db_skip` usually meant **non-prefix chunk accounting** — `pending[len(chunk):]` re-offered in-flight paths after `select_ingest_chunk_paths` (oldest-tar / handoff). **Post-fix:** pending advance and giant-supplement tail use **`pending_minus_chunk`** (normpath set-difference); chunk paths are deduped before imap; WARN shows **`path=host/basename`** (and `suppressed_n=` on first hit). Steady-state expect **near-zero** duplicate-suppressed WARNs; shared timestamp basenames across hosts are distinct (`c637-051/1780788583` vs `c637-062/1780788583`). Occasional single WARNs during idle reconcile redispatch remain benign.
 
 **Worker memory soak (T1/T2, default `maxtasksperchild=0`):** enable **`sync_ingest_worker_memory_telemetry=yes`** and grep **`sync_timedb worker_memory: event=batch_summary`**. Anti-collapse: **`tasks_on_worker_p50≥10`** on small-file batches; **`keep_worker`** dominates **`retires_total`**; **`failure_reap_pct`** / **`rss_reap_pct`** low outside RSS pressure. Supervisor retire kinds are **failure + RSS only** (no `giant_reap`). Example:

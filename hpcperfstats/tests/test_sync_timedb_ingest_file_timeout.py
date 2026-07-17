@@ -882,3 +882,106 @@ def test_parse_still_times_out_without_populate_wait(monkeypatch, tmp_path):
         lambda: time.sleep(0.4),
     )
   assert excinfo.value.stage == "parse"
+
+
+def test_ingest_timeout_during_streaming_parse_not_quarantined(monkeypatch, tmp_path):
+  """SIGALRM / IngestPerFileTimeoutError inside streaming parse must not DLO."""
+  stats_file = tmp_path / "host.hpc" / "1784000000"
+  stats_file.parent.mkdir(parents=True)
+  stats_file.write_text("x", encoding="utf-8")
+  target = str(stats_file)
+  quarantine_calls = []
+
+  monkeypatch.setattr(st, "close_old_connections", lambda: None)
+  monkeypatch.setattr(st.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(st, "parse_stats_file_path", lambda _p: ("host.hpc", "1784000000"))
+  monkeypatch.setattr(st, "stats_file_is_active_segment", lambda _p: False)
+  monkeypatch.setattr(st, "_should_stream_stats_file", lambda *_a, **_k: True)
+  monkeypatch.setattr(
+      st,
+      "_resolve_streaming_ingest_start",
+      lambda *_a, **_k: (False, (0, True)),
+  )
+
+  def boom(*_a, **_k):
+    raise st.IngestPerFileTimeoutError(target, "ingest", 933.4)
+
+  monkeypatch.setattr(st, "parse_stats_file_streaming", boom)
+  monkeypatch.setattr(
+      st,
+      "_quarantine_failed_ingest_parse",
+      lambda path, error_detail=None: quarantine_calls.append((path, error_detail)) or True,
+  )
+  monkeypatch.setattr(st, "update_worker_substage", lambda *_a, **_k: None)
+  monkeypatch.setattr(st, "record_worker_stage", lambda *_a, **_k: None)
+  monkeypatch.setattr(st, "_log_long_ingest_timeout_budget_if_needed", lambda *_a, **_k: None)
+  monkeypatch.setattr(st, "_log_ingest_per_file_timeout", lambda *_a, **_k: None)
+  # Disable SIGALRM wrapper so the raised timeout is caught by the outer handler.
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 0.0)
+
+  result = st._parse_stats_file_payload(target)
+  (
+      out_path,
+      payload,
+      need_archival,
+      ingest_ok,
+      elapsed_s,
+      meta,
+  ) = st._unpack_parse_payload_result(result)
+  assert out_path == target
+  assert payload is None
+  assert need_archival is False
+  assert ingest_ok is False
+  assert meta.get("outcome") == "timeout"
+  assert meta.get("archive_skip") == "timeout"
+  assert elapsed_s >= 0.0
+  assert quarantine_calls == []
+  assert stats_file.exists()
+
+
+def test_parse_exception_still_quarantines_non_timeout(monkeypatch, tmp_path):
+  """Ordinary parse ValueError still routes to DLO quarantine."""
+  archive_dir = tmp_path / "archive"
+  host_dir = archive_dir / "host.hpc"
+  host_dir.mkdir(parents=True)
+  raw_path = host_dir / "bad_raw"
+  raw_path.write_text("1778200758 job1 cn001\n", encoding="utf-8")
+  target = str(raw_path)
+
+  monkeypatch.setattr(st, "close_old_connections", lambda: None)
+  monkeypatch.setattr(st.cfg, "get_archive_dir_path", lambda: str(archive_dir))
+  monkeypatch.setattr(st, "parse_stats_file_path", lambda _p: ("host.hpc", "bad_raw"))
+  monkeypatch.setattr(st, "stats_file_is_active_segment", lambda _p: False)
+  monkeypatch.setattr(
+      st,
+      "load_stats_file_lines",
+      lambda *_a, **_k: (["1778200758 job1 cn001\n"], None),
+  )
+  monkeypatch.setattr(
+      st,
+      "parse_first_timestamp_line",
+      lambda _lines: ("1778200758", "job1", "cn001"),
+  )
+  monkeypatch.setattr(st, "head_timestamp_present_in_db", lambda *_a, **_k: False)
+  monkeypatch.setattr(st, "update_worker_substage", lambda *_a, **_k: None)
+
+  def boom(*_a, **_k):
+    raise ValueError("corrupt stats line")
+
+  monkeypatch.setattr(st, "parse_stats_lines", boom)
+
+  (
+      out_path,
+      payload,
+      need_archival,
+      ingest_ok,
+      _elapsed,
+      meta,
+  ) = st._unpack_parse_payload_result(st._parse_stats_file_payload(target))
+  assert out_path == target
+  assert payload is None
+  assert need_archival is False
+  assert ingest_ok is True
+  assert meta.get("outcome") == "quarantine"
+  assert "corrupt stats line" in str(meta.get("fail_reason") or "")
+  assert not raw_path.exists()

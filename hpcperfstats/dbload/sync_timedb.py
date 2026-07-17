@@ -3029,6 +3029,22 @@ def _parse_failure_after_quarantine(stats_file, parse_elapsed, error_detail=None
   return (stats_file, None, False, False, parse_elapsed, meta)
 
 
+def _reraise_if_ingest_control_flow(exc):
+  """Do not swallow timeout / lookup-budget control flow into DLO quarantine.
+
+  Bare ``except Exception`` around parse helpers previously converted
+  ``IngestPerFileTimeoutError`` into ``outcome=quarantine`` /
+  ``reason=ingest_parse_failed``, permanently dead-lettering paths that must
+  remain on disk for retry (``ingest_ok=False``, ``outcome=timeout``).
+  """
+  if isinstance(
+      exc,
+      (IngestPerFileTimeoutError, IngestArchiveLookupBudgetExceededError),
+  ):
+    raise exc
+  return
+
+
 def _parse_stats_file_payload(stats_file, stats_file_contents=None, *, use_ingest_timer=True):
   """Parse stats file into payload for deferred DB writer stage.
 
@@ -3249,6 +3265,7 @@ def _parse_stats_file_payload_impl_streaming(stats_file):
             exclude_types_list=exclude_types,
         )
       except Exception as e:
+        _reraise_if_ingest_control_flow(e)
         return _parse_failure_after_quarantine(
             stats_file, _parse_elapsed(), error_detail=str(e),
         )
@@ -3356,6 +3373,7 @@ def _add_stats_file_to_db_streaming_incremental(lock, stats_file, t0):
               exclude_types_list=exclude_types,
           )
         except Exception as e:
+          _reraise_if_ingest_control_flow(e)
           failure = _parse_failure_after_quarantine(
               stats_file, _parse_elapsed(), error_detail=str(e),
           )
@@ -3528,6 +3546,7 @@ def _parse_stats_file_payload_impl(stats_file, stats_file_contents=None):
             exclude_types_list=exclude_types,
         )
       except Exception as e:
+        _reraise_if_ingest_control_flow(e)
         return _parse_failure_after_quarantine(
             stats_file, _parse_elapsed(), error_detail=str(e),
         )
