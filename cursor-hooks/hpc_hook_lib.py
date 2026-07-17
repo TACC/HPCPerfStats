@@ -10,6 +10,8 @@ EDIT_TOOL_NAMES = frozenset(
     {"Write", "StrReplace", "EditNotebook", "Delete", "ApplyPatch"},
 )
 
+READ_TOOL_NAMES = frozenset({"Read", "ReadFile"})
+
 PLAN_TOOL_NAMES = frozenset({"CreatePlan"})
 
 PLAN_TEMPLATE_READ_SUFFIX = "docs/plans/PLAN_TEMPLATE.md"
@@ -375,10 +377,20 @@ def tool_name_from_tool_part(part: dict) -> str | None:
     return None
 
 
+def canonical_tool_name(tool_name: str | None) -> str | None:
+    if not tool_name:
+        return None
+    # Some Cursor tool transcripts include namespaced tool ids.
+    base = str(tool_name).rsplit(".", 1)[-1]
+    if base in READ_TOOL_NAMES:
+        return "Read"
+    return base
+
+
 def edit_payload_from_tool_part(part: dict) -> dict | None:
     if not isinstance(part, dict):
         return None
-    tool_name = tool_name_from_tool_part(part)
+    tool_name = canonical_tool_name(tool_name_from_tool_part(part))
     if tool_name not in EDIT_TOOL_NAMES:
         return None
     if part.get("type") == "tool_use":
@@ -988,7 +1000,7 @@ def plan_authoring_precreate_read_issues(transcript_rows: list[dict]) -> list[st
 
 
 def is_allowed_tool_while_plan_disk_pending(tool_name: str, tool_input: dict) -> bool:
-    if tool_name == "Read":
+    if canonical_tool_name(tool_name) == "Read":
         return True
     if tool_name in ("Write", "StrReplace"):
         for key in ("path", "file_path", "target_file"):
@@ -1047,7 +1059,7 @@ def read_input_from_tool_part(part: dict) -> dict | None:
     elif part.get("type") == "tool_call":
         tool_name = part.get("tool_name") or part.get("name")
         payload = part.get("input") or part.get("arguments") or {}
-    if tool_name != "Read" or not isinstance(payload, dict):
+    if canonical_tool_name(tool_name) != "Read" or not isinstance(payload, dict):
         return None
     return payload
 

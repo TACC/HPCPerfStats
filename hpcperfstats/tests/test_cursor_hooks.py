@@ -146,6 +146,27 @@ def test_plan_authoring_precreate_read_issues_clears_with_symlink_reads():
   assert lib.plan_authoring_precreate_read_issues(rows) == []
 
 
+def test_plan_authoring_precreate_read_issues_accepts_readfile_tool_name():
+  base = "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
+  content = [
+      {
+          "type": "tool_use",
+          "name": "ReadFile",
+          "input": {"path": f"{base}{name}"},
+      }
+      for name in lib.PLAN_AUTHORING_REQUIRED_MDC
+  ]
+  content.append(
+      {
+          "type": "tool_use",
+          "name": "ReadFile",
+          "input": {"path": "/repo/HPCPerfStats/docs/plans/PLAN_TEMPLATE.md"},
+      },
+  )
+  rows = [{"role": "assistant", "message": {"content": content}}]
+  assert lib.plan_authoring_precreate_read_issues(rows) == []
+
+
 def test_domain_rule_read_issues_flags_missing_read():
   assistant_text = (
       "## Agent rule dispatch\n\n"
@@ -1282,6 +1303,49 @@ def test_check_pre_create_plan_reads_denies_without_reads(tmp_path):
   assert "compose-operator-terminal-commands" in data.get("agent_message", "")
 
 
+def test_check_pre_create_plan_reads_allows_live_plan_write_after_readfile_reads(tmp_path):
+  base = "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
+  content = [
+      {
+          "type": "tool_use",
+          "name": "ReadFile",
+          "input": {"path": f"{base}{name}"},
+      }
+      for name in lib.PLAN_AUTHORING_REQUIRED_MDC
+  ]
+  content.append(
+      {
+          "type": "tool_use",
+          "name": "ReadFile",
+          "input": {"path": "/repo/HPCPerfStats/docs/plans/PLAN_TEMPLATE.md"},
+      },
+  )
+  transcript = tmp_path / "pre-create-readfile.jsonl"
+  transcript.write_text(
+      json.dumps({"role": "assistant", "message": {"content": content}}) + "\n",
+      encoding="utf-8",
+  )
+  payload = {
+      "tool_name": "Write",
+      "tool_input": {
+          "path": ".cursor/plans/foo.plan.md",
+          "contents": _minimal_plan_markdown(),
+      },
+      "transcript_path": str(transcript),
+  }
+  script = HOOKS_DIR / "check-pre-create-plan-reads.py"
+  proc = subprocess.run(
+      [sys.executable, str(script)],
+      input=json.dumps(payload),
+      capture_output=True,
+      text=True,
+      check=False,
+  )
+  assert proc.returncode == 0
+  data = json.loads(proc.stdout.strip())
+  assert data.get("permission") == "allow"
+
+
 def test_check_block_until_plan_disk_denies_shell_after_create_plan(tmp_path):
   transcript = tmp_path / "block-disk.jsonl"
   transcript.write_text(
@@ -1347,6 +1411,44 @@ def test_check_block_until_plan_disk_allows_plan_write_after_create_plan(tmp_pat
           "path": ".cursor/plans/foo-bar.plan.md",
           "contents": _minimal_plan_markdown(),
       },
+      "transcript_path": str(transcript),
+  }
+  script = HOOKS_DIR / "check-block-until-plan-disk.py"
+  proc = subprocess.run(
+      [sys.executable, str(script)],
+      input=json.dumps(payload),
+      capture_output=True,
+      text=True,
+      check=False,
+  )
+  assert proc.returncode == 0
+  data = json.loads(proc.stdout.strip())
+  assert data.get("permission") == "allow"
+
+
+def test_check_block_until_plan_disk_allows_readfile_after_create_plan(tmp_path):
+  transcript = tmp_path / "allow-readfile.jsonl"
+  transcript.write_text(
+      json.dumps(
+          {
+              "role": "assistant",
+              "message": {
+                  "content": [
+                      {
+                          "type": "tool_use",
+                          "name": "CreatePlan",
+                          "input": {"name": "foo-bar", "plan": "x"},
+                      },
+                  ],
+              },
+          },
+      )
+      + "\n",
+      encoding="utf-8",
+  )
+  payload = {
+      "tool_name": "ReadFile",
+      "tool_input": {"path": "/repo/HPCPerfStats/docs/plans/PLAN_TEMPLATE.md"},
       "transcript_path": str(transcript),
   }
   script = HOOKS_DIR / "check-block-until-plan-disk.py"
@@ -1728,6 +1830,34 @@ def test_full_file_rule_read_issues_rejects_partial_limit():
   issues = lib.full_file_rule_read_issues(rows)
   assert any("Partial Read" in item and "compose-operator" in item for item in issues)
   assert not any("operator-command-lessons" in item for item in issues)
+
+
+def test_full_file_rule_read_issues_accepts_readfile_tool_name():
+  base = "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
+  rows = [
+      {
+          "role": "assistant",
+          "message": {
+              "content": [
+                  {
+                      "type": "tool_use",
+                      "name": "ReadFile",
+                      "input": {
+                          "path": f"{base}compose-operator-terminal-commands.mdc",
+                      },
+                  },
+                  {
+                      "type": "tool_use",
+                      "name": "ReadFile",
+                      "input": {
+                          "path": f"{base}operator-command-lessons-learned.mdc",
+                      },
+                  },
+              ],
+          },
+      },
+  ]
+  assert lib.full_file_rule_read_issues(rows) == []
 
 
 def test_operator_discovery_needs_full_rule_reads():
