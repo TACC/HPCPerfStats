@@ -99,6 +99,20 @@ describe("interactive-ready drift guard", () => {
     expect(thumbs).toMatch(/filterIdentitySearchParamsKey/);
     expect(combo).toMatch(/filterIdentitySearchParamsKey/);
   });
+
+  it("forbids nested max-h list virtualizers on JobList / JobMonitor / AdminMonitor", () => {
+    for (const name of ["JobList.tsx", "JobMonitor.tsx", "AdminMonitor.tsx"] as const) {
+      const text = readFileSync(join(SRC_ROOT, "views", name), "utf8");
+      expect(text).not.toMatch(/useVirtualizer/);
+      expect(text).not.toMatch(/max-h-\[(?:70|60)vh\]\s+overflow-auto/);
+    }
+  });
+
+  it("BokehEmbed yields to main thread before prepare/embed", () => {
+    const embed = readFileSync(join(SRC_ROOT, "components/BokehEmbed.tsx"), "utf8");
+    expect(embed).toMatch(/yieldToMainThread/);
+    expect(embed).toMatch(/prepareBokehJsonItemForEmbed/);
+  });
 });
 
 describe("buildHostPlotParamsFromSearch", () => {

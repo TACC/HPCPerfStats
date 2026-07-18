@@ -23,6 +23,7 @@ import {
   LIST_EMBED_STAGGER_MS,
 } from "../utils/bokeh-embed-defaults";
 import { prepareBokehJsonItemForEmbed } from "../utils/remap-bokeh-json-item-ids";
+import { yieldToMainThread } from "../utils/yield-main-thread";
 import { parseBokehJsonItem } from "@/schemas/api/bokeh-json-item-schema";
 import { waitForBokehEmbedDocumentIdle } from "../utils/bokeh-when-document-idle";
 import { ensureBokehLoaded } from "../bokehInit";
@@ -450,40 +451,48 @@ export default function BokehEmbed({
               }
               disposeBokehViewsForTarget(el);
               el.innerHTML = "";
-              const embedPayload = prepareBokehJsonItemForEmbed(item);
-              const embedResult = window.Bokeh.embed.embed_item(embedPayload, id);
-              return Promise.resolve(embedResult)
-                .then((views) => waitForBokehEmbedDocumentIdle(views))
-                .then(() => delayMs(effectiveSettleMs))
-                .then(() => {
-                  if (cancelled) return;
-                  if (!isEmbedTargetRenderable(el)) {
-                    failEmbed("Chart container changed before render completed.");
-                    return;
-                  }
-                  function markPlotReady() {
+              // Yield so Close / Links / sort stay interactive during enlarge clone+embed.
+              return yieldToMainThread().then(() => {
+                if (cancelled || !containerRef.current) return;
+                if (!isEmbedTargetRenderable(el)) {
+                  failEmbed("Chart container changed before embed.");
+                  return;
+                }
+                const embedPayload = prepareBokehJsonItemForEmbed(item);
+                const embedResult = window.Bokeh.embed.embed_item(embedPayload, id);
+                return Promise.resolve(embedResult)
+                  .then((views) => waitForBokehEmbedDocumentIdle(views))
+                  .then(() => delayMs(effectiveSettleMs))
+                  .then(() => {
                     if (cancelled) return;
                     if (!isEmbedTargetRenderable(el)) {
                       failEmbed("Chart container changed before render completed.");
                       return;
                     }
-                    scheduleBokehLayoutReflow();
-                    if (maximizeMode) maximizeEmbeddedPlot(id, maximizeMode);
-                    setPlotReady(true);
-                    if (onPlotReadyChange) onPlotReadyChange(true);
-                  }
-                  if (typeof requestAnimationFrame === "function") {
-                    requestAnimationFrame(() => requestAnimationFrame(markPlotReady));
-                  } else {
-                    markPlotReady();
-                  }
-                })
-                .catch((err: unknown) => {
-                  if (cancelled) return;
-                  const message =
-                    err instanceof Error ? err.message : "Embed failed";
-                  failEmbed(message);
-                });
+                    function markPlotReady() {
+                      if (cancelled) return;
+                      if (!isEmbedTargetRenderable(el)) {
+                        failEmbed("Chart container changed before render completed.");
+                        return;
+                      }
+                      scheduleBokehLayoutReflow();
+                      if (maximizeMode) maximizeEmbeddedPlot(id, maximizeMode);
+                      setPlotReady(true);
+                      if (onPlotReadyChange) onPlotReadyChange(true);
+                    }
+                    if (typeof requestAnimationFrame === "function") {
+                      requestAnimationFrame(() => requestAnimationFrame(markPlotReady));
+                    } else {
+                      markPlotReady();
+                    }
+                  })
+                  .catch((err: unknown) => {
+                    if (cancelled) return;
+                    const message =
+                      err instanceof Error ? err.message : "Embed failed";
+                    failEmbed(message);
+                  });
+              });
             } catch (err) {
               console.warn("Bokeh embed_item failed:", err);
               if (!cancelled) {

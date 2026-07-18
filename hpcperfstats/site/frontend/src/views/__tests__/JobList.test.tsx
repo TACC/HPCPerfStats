@@ -170,6 +170,97 @@ describe("JobList", () => {
     expect(table).toHaveAttribute("aria-busy", "true");
   });
 
+  it("uses document-scroll table without nested max-h virtualizer", async () => {
+    setJobListQueryMock({
+      data: {
+        job_list: [
+          {
+            jid: "12345",
+            performance: {
+              label: "OK",
+              tone: "success",
+              aria_label: "OK",
+            },
+            username: "alice",
+            account: "acct",
+            start_time: "2024-01-01T00:00:00Z",
+            end_time: "2024-01-01T01:00:00Z",
+            runtime: 3600,
+            queue: "normal",
+            jobname: "job1",
+            state: "COMPLETED",
+            ncores: 32,
+            nhosts: 2,
+            node_hrs: 64,
+          },
+        ],
+        nj: 1,
+        aggregates: {},
+        qname: "Jobs",
+        order_by: "-end_time",
+        pagination: { page: 1, num_pages: 1 },
+      },
+    });
+
+    renderJobList();
+
+    await waitFor(() => {
+      expect(screen.getByRole("link", { name: "12345" })).toBeInTheDocument();
+    });
+    const jobLink = screen.getByRole("link", { name: "12345" });
+    expect(jobLink).toHaveAttribute("href", expect.stringMatching(/\/machine\/job\/12345\/?$/));
+    const table = document.getElementById("job-list-table");
+    expect(table?.innerHTML ?? "").not.toMatch(/max-h-\[70vh\]/);
+    expect(table?.querySelector("[style*='absolute']")).toBeNull();
+  });
+
+  it("keeps job TextLink hit-testable while tableBusy and histogramsUpdating", async () => {
+    setJobListQueryMock({
+      data: {
+        job_list: [
+          {
+            jid: "999",
+            performance: {
+              label: "OK",
+              tone: "success",
+              aria_label: "OK",
+            },
+            username: "bob",
+            account: "acct",
+            start_time: "2024-01-01T00:00:00Z",
+            end_time: "2024-01-01T01:00:00Z",
+            runtime: 3600,
+            queue: "normal",
+            jobname: "job9",
+            state: "COMPLETED",
+            ncores: 1,
+            nhosts: 1,
+            node_hrs: 1,
+          },
+        ],
+        nj: 1,
+        aggregates: {},
+        qname: "Jobs",
+        order_by: "-end_time",
+        pagination: { page: 1, num_pages: 1 },
+      },
+      tableBusy: true,
+    });
+    setJobListHistogramsMock({ histogramsUpdating: true });
+
+    renderJobList();
+
+    await waitFor(() => {
+      expect(screen.getByRole("link", { name: "999" })).toBeInTheDocument();
+    });
+    const table = document.getElementById("job-list-table");
+    expect(table?.className).not.toContain("pointer-events-none");
+    expect(screen.getByRole("link", { name: "999" })).toHaveAttribute(
+      "href",
+      expect.stringMatching(/\/machine\/job\/999\/?$/),
+    );
+  });
+
   it("shows updating distributions banner while histograms refresh", async () => {
     setJobListQueryMock({
       data: {

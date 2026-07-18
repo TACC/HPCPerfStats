@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useAdminMonitorSectionQuery } from "@/hooks/use-admin-monitor-section";
 import { ChevronRight } from "lucide-react";
 import type {
@@ -382,21 +381,6 @@ export default function AdminMonitor() {
     return sortedRabbitHostStats.slice(start, start + ADMIN_MONITOR_HOST_PAGE_SIZE);
   }, [sortedRabbitHostStats, rabbitHostTablePage, rabbitHostTablePageCount]);
 
-  const hostTableScrollRef = useRef<HTMLDivElement | null>(null);
-  const rabbitHostTableScrollRef = useRef<HTMLDivElement | null>(null);
-  const hostRowVirtualizer = useVirtualizer({
-    count: paginatedHostStats.length,
-    getScrollElement: () => hostTableScrollRef.current,
-    estimateSize: () => 40,
-    overscan: 8,
-  });
-  const rabbitHostRowVirtualizer = useVirtualizer({
-    count: paginatedRabbitHostStats.length,
-    getScrollElement: () => rabbitHostTableScrollRef.current,
-    estimateSize: () => 40,
-    overscan: 8,
-  });
-
   const formatHostTime = (value: string | null | undefined) => {
     if (!value) return "—";
     const d = new Date(value);
@@ -455,7 +439,7 @@ export default function AdminMonitor() {
                   Non Responding Hosts - 36 Hours
                 </Button>
               </div>
-              <div ref={hostTableScrollRef} className="max-h-[60vh] overflow-auto rounded-md border">
+              <div className="rounded-md border">
               <Table className="border-0 text-sm">
                 <TableCaption className="sr-only">
                   Monitor agents reporting host data. Sort by host, last timestamp, or
@@ -520,42 +504,15 @@ export default function AdminMonitor() {
                     </TableHead>
                   </TableRow>
                 </TableHeader>
-                <TableBody
-                  style={{
-                    height: paginatedHostStats.length
-                      ? `${hostRowVirtualizer.getTotalSize()}px`
-                      : undefined,
-                    position: "relative",
-                  }}
-                >
-                  {(() => {
-                    const virtualItems = hostRowVirtualizer.getVirtualItems();
-                    const rows =
-                      virtualItems.length > 0
-                        ? virtualItems.map((virtualRow) => ({
-                            row: paginatedHostStats[virtualRow.index],
-                            key: `${paginatedHostStats[virtualRow.index]?.host}-${virtualRow.index}`,
-                            style: {
-                              position: "absolute" as const,
-                              top: 0,
-                              left: 0,
-                              width: "100%",
-                              transform: `translateY(${virtualRow.start}px)`,
-                            },
-                          }))
-                        : paginatedHostStats.map((row, i) => ({
-                            row,
-                            key: `${row.host}-${i}`,
-                            style: undefined as CSSProperties | undefined,
-                          }));
-                    return rows.map(({ row, key, style }) => {
+                <TableBody>
+                  {paginatedHostStats.map((row, i) => {
                     const badge =
                       BADGE_MAP[(row.age_bucket as FreshnessBucket) || "gt_week"] ||
                       BADGE_MAP.gt_week;
                     const rowClass =
                       ROW_CLASS[(row.age_bucket as FreshnessBucket) || "gt_week"] || "";
                     return (
-                      <TableRow key={key} className={rowClass} style={style}>
+                      <TableRow key={`${row.host}-${i}`} className={rowClass}>
                         <TableCell>{row.host}</TableCell>
                         <TableCell>{formatHostTime(row.last_time)}</TableCell>
                         <TableCell>
@@ -563,8 +520,7 @@ export default function AdminMonitor() {
                         </TableCell>
                       </TableRow>
                     );
-                    });
-                  })()}
+                  })}
                   {fqdnHostStats.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={3} className="text-center">
@@ -804,7 +760,7 @@ export default function AdminMonitor() {
           )}
           {!rabbitHostInitialLoading && !rabbitHostError && (
             <>
-            <div ref={rabbitHostTableScrollRef} className="max-h-[60vh] overflow-auto rounded-md border">
+            <div className="rounded-md border">
             <Table className="border-0 text-sm">
                 <TableCaption className="sr-only">
                   Hosts seen via RabbitMQ and their last data timestamps. Sort by host, last
@@ -886,42 +842,15 @@ export default function AdminMonitor() {
                     </TableHead>
                   </TableRow>
                 </TableHeader>
-                <TableBody
-                  style={{
-                    height: paginatedRabbitHostStats.length
-                      ? `${rabbitHostRowVirtualizer.getTotalSize()}px`
-                      : undefined,
-                    position: "relative",
-                  }}
-                >
-                  {(() => {
-                    const virtualItems = rabbitHostRowVirtualizer.getVirtualItems();
-                    const rows =
-                      virtualItems.length > 0
-                        ? virtualItems.map((virtualRow) => ({
-                            row: paginatedRabbitHostStats[virtualRow.index],
-                            key: `${paginatedRabbitHostStats[virtualRow.index]?.host}-${virtualRow.index}`,
-                            style: {
-                              position: "absolute" as const,
-                              top: 0,
-                              left: 0,
-                              width: "100%",
-                              transform: `translateY(${virtualRow.start}px)`,
-                            },
-                          }))
-                        : paginatedRabbitHostStats.map((row, i) => ({
-                            row,
-                            key: `${row.host}-${i}`,
-                            style: undefined as CSSProperties | undefined,
-                          }));
-                    return rows.map(({ row, key, style }) => {
+                <TableBody>
+                  {paginatedRabbitHostStats.map((row, i) => {
                     const badge =
                       BADGE_MAP[(row.age_bucket as FreshnessBucket) || "gt_week"] ||
                       BADGE_MAP.gt_week;
                     const rowClass =
                       ROW_CLASS[(row.age_bucket as FreshnessBucket) || "gt_week"] || "";
                     return (
-                      <TableRow key={key} className={rowClass} style={style}>
+                      <TableRow key={`${row.host}-${i}`} className={rowClass}>
                         <TableCell>{row.host}</TableCell>
                         <TableCell>{formatHostTime(row.last_time)}</TableCell>
                         <TableCell>
@@ -929,8 +858,7 @@ export default function AdminMonitor() {
                         </TableCell>
                       </TableRow>
                     );
-                    });
-                  })()}
+                  })}
                   {fqdnRabbitHostStats.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={3} className="text-center">

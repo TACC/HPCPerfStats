@@ -9,6 +9,11 @@ vi.mock("../bokehInit", () => ({
   ensureBokehLoaded: vi.fn(() => Promise.resolve(globalThis.window?.Bokeh)),
 }));
 
+const yieldToMainThreadMock = vi.fn(() => Promise.resolve());
+vi.mock("@/utils/yield-main-thread", () => ({
+  yieldToMainThread: () => yieldToMainThreadMock(),
+}));
+
 function renderBokehEmbed(ui, session = null) {
   return render(<SessionContext.Provider value={session}>{ui}</SessionContext.Provider>);
 }
@@ -22,7 +27,7 @@ function embedViewsWithIdleDoc() {
 
 describe("BokehEmbed", () => {
   afterEach(() => {
-    vi.restoreAllMocks();
+    yieldToMainThreadMock.mockClear();
     delete window.Bokeh;
   });
 
@@ -47,6 +52,27 @@ describe("BokehEmbed", () => {
     expect(targetId).toBe("bokeh-test-slot");
     expect(payload.doc.root_ids).toEqual(item.doc.root_ids);
     expect(payload).not.toBe(item);
+  });
+
+  it("yields to main thread before embed_item", async () => {
+    const embedItem = vi.fn(() => Promise.resolve(embedViewsWithIdleDoc()));
+    window.Bokeh = { embed: { embed_item: embedItem } };
+
+    renderBokehEmbed(
+      <BokehEmbed
+        item={VALID_BOKEH_JSON_ITEM}
+        id="bokeh-yield-test"
+        plotName="Yield plot"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(embedItem).toHaveBeenCalledTimes(1);
+    });
+    expect(yieldToMainThreadMock).toHaveBeenCalled();
+    expect(yieldToMainThreadMock.mock.invocationCallOrder[0]).toBeLessThan(
+      embedItem.mock.invocationCallOrder[0],
+    );
   });
 
   it("waits for Bokeh document idle after embed_item before signaling plot ready", async () => {

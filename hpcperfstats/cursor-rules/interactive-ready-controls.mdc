@@ -37,6 +37,9 @@ alwaysApply: false
 - Mounting Bokeh into `hidden` or zero-size subtrees.
 - Modal backdrop blocking unrelated page chrome when `modal={false}` — omit overlay ([`dialog.tsx`](hpcperfstats/site/frontend/src/components/ui/dialog.tsx) `showOverlay={false}`).
 - Focus trap stealing Tab when focus is outside the trapped panel ([`useFocusTrap.ts`](hpcperfstats/site/frontend/src/hooks/useFocusTrap.ts)).
+- Nested `max-h-* overflow-auto` **list scrollers** for **paginated** tables when document scroll is available — one page scrollbar only ([`JobList.tsx`](hpcperfstats/site/frontend/src/views/JobList.tsx)).
+- Absolute-positioned `<tr>` virtualization inside a semantic `<table>` (breaks header/body column alignment).
+- Synchronous Bokeh `prepareBokehJsonItemForEmbed` / `embed_item` for large payloads without yielding to the main thread first ([`yield-main-thread.ts`](hpcperfstats/site/frontend/src/utils/yield-main-thread.ts)).
 
 ## URL scoped updates (site-wide)
 
@@ -70,15 +73,15 @@ Reference hooks: [`use-job-list.ts`](hpcperfstats/site/frontend/src/hooks/use-jo
 
 ## Reference implementations
 
-- **JobList** — table first; deferred `filter_options`; distributions default open / always fetch; histogram params omit `order_by`/`page`; virtualized rows; `JobList.test.tsx` (`tableBusy` not pointer-blocked).
+- **JobList** — table first; deferred `filter_options`; distributions default open / always fetch; histogram params omit `order_by`/`page`; **document-scroll** table rows (no nested max-h virtualizer); `JobList.test.tsx` (`tableBusy` not pointer-blocked).
 - **JobDetail** — `initialLoading` only on first paint; tabs stay mounted during `detailsLoading`; plots clear on `pk` only; deep-link test in `JobDetail.test.tsx`.
 - **HostDetail / TypeDetail** — `keepPreviousData` + `detailBusy` (no full-page blank on refetch).
-- **JobMonitor / AdminMonitor / ClusterDashboard** — progressive `*Busy` + virtualization where lists are large.
+- **JobMonitor / AdminMonitor / ClusterDashboard** — progressive `*Busy`; paginated tables use document scroll (no nested list scrollers).
 
 ## Tests
 
 - Extend Vitest when changing loading UX: assert shown controls lack blocking `pointer-events-none` on parent containers.
-- Run drift guard: `src/utils/interactive-ready-drift.test.ts` (scoped-render contracts for hist params, Host/Type busy, plots-on-pk, AdminMonitor keepPrevious).
+- Run drift guard: `src/utils/interactive-ready-drift.test.ts` (scoped-render contracts for hist params, Host/Type busy, plots-on-pk, AdminMonitor keepPrevious; **no nested max-h + useVirtualizer** in JobList/JobMonitor/AdminMonitor).
 
 ## Overlap
 
