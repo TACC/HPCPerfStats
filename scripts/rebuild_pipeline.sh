@@ -38,6 +38,11 @@ Rebuild web/pipeline image (Python only) without npm frontend-builder. Preserves
 live STATIC_ROOT/frontend from the running web container, stops pipeline then web,
 builds --target hpcperfstats-pipeline-refresh, and recreates web then pipeline.
 
+IMPORTANT: This does NOT ship SPA/OpenAPI/Orval fixes. After frontend changes run:
+  ./scripts/rebuild_frontend.sh
+Otherwise the browser keeps the previous /machine/ bundle (stale job-list date filter,
+hollow Bokeh Zod, etc.).
+
 Options:
   --dry-run                 Print planned steps only
   --build-only              Preserve frontend + build image; do not stop/start
@@ -258,6 +263,8 @@ start_app_containers() {
   fi
   echo "Recreating pipeline on refreshed image ..."
   compose_recreate_pipeline_after_image_refresh
+  echo "Pipeline image refresh complete (SPA bundle unchanged)."
+  echo "If you changed frontend/OpenAPI, also run: ./scripts/rebuild_frontend.sh"
 }
 
 cleanup() {

@@ -186,6 +186,16 @@ JOB_LIST_HISTOGRAMS_BATCH_SCHEMA = extend_schema(
             location=OpenApiParameter.QUERY,
             description="Comma-separated metric names (default: runtime,nhosts,queue_wait)",
         ),
+        # Same browse/filter query keys as job_list — SPA spreads listApiParams into the batch URL.
+        OpenApiParameter(name="end_time__date", type=str, location=OpenApiParameter.QUERY),
+        OpenApiParameter(name="end_time__date__gte", type=str, location=OpenApiParameter.QUERY),
+        OpenApiParameter(name="end_time__date__lte", type=str, location=OpenApiParameter.QUERY),
+        OpenApiParameter(name="username", type=str, location=OpenApiParameter.QUERY),
+        OpenApiParameter(name="account", type=str, location=OpenApiParameter.QUERY),
+        OpenApiParameter(name="queue", type=str, location=OpenApiParameter.QUERY),
+        OpenApiParameter(name="host", type=str, location=OpenApiParameter.QUERY),
+        OpenApiParameter(name="state", type=str, location=OpenApiParameter.QUERY),
+        OpenApiParameter(name="performance_sort_rank", type=str, location=OpenApiParameter.QUERY),
     ],
     responses={
         200: os.JobListHistogramBatchResponseSerializer,

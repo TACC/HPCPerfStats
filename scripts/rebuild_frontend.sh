@@ -100,6 +100,7 @@ build_in_docker() {
 
 verify_build_output() {
   verify_spa_shells "${STATIC_FRONTEND}" "host build"
+  verify_job_list_date_filter_in_spa_build "${STATIC_FRONTEND}" "host build"
   print_deploy_fingerprint "host build" "${STATIC_FRONTEND}/machine/index.html"
   echo "Built frontend static export: ${STATIC_FRONTEND}"
 }

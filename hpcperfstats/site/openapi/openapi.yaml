@@ -837,10 +837,46 @@ paths:
         Query param ``metrics`` is comma-separated (default: runtime,nhosts,queue_wait).
       parameters:
       - in: query
+        name: account
+        schema:
+          type: string
+      - in: query
+        name: end_time__date
+        schema:
+          type: string
+      - in: query
+        name: end_time__date__gte
+        schema:
+          type: string
+      - in: query
+        name: end_time__date__lte
+        schema:
+          type: string
+      - in: query
+        name: host
+        schema:
+          type: string
+      - in: query
         name: metrics
         schema:
           type: string
         description: 'Comma-separated metric names (default: runtime,nhosts,queue_wait)'
+      - in: query
+        name: performance_sort_rank
+        schema:
+          type: string
+      - in: query
+        name: queue
+        schema:
+          type: string
+      - in: query
+        name: state
+        schema:
+          type: string
+      - in: query
+        name: username
+        schema:
+          type: string
       tags:
       - jobs
       security:

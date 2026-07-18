@@ -178,6 +178,32 @@ verify_spa_shells() {
   echo "Verified SPA shells under ${label}: ${REQUIRED_SPA_SHELLS[*]}"
 }
 
+# Fail closed if the built SPA still has the pre-2026-07 job-list date allowlist
+# (include_filter_options/host/jid only — drops calendar end_time__date → full job table).
+verify_job_list_date_filter_in_spa_build() {
+  local base_dir="$1"
+  local label="${2:-${base_dir}}"
+  local chunks_dir="${base_dir}/_next/static/chunks"
+  local hit=""
+
+  if [[ ! -d "${chunks_dir}" ]]; then
+    echo "verify_job_list_date_filter_in_spa_build: no chunks under ${label} (${chunks_dir})" >&2
+    return 1
+  fi
+
+  # Fixed allowlist embeds these keys adjacent in the minified Set initializer.
+  hit="$(
+    grep -R -l -F 'include_filter_options","host","jid","end_time__date' "${chunks_dir}" 2>/dev/null | head -n 1 || true
+  )"
+  if [[ -z "${hit}" ]]; then
+    echo "verify_job_list_date_filter_in_spa_build: ${label} is missing end_time__date job-list allowlist." >&2
+    echo "  Stale SPA serves unfiltered /api/jobs/ for /machine/date/… (hundreds of thousands of rows)." >&2
+    echo "  Rebuild with scripts/rebuild_frontend.sh — rebuild_pipeline.sh does NOT refresh the SPA." >&2
+    return 1
+  fi
+  echo "Verified job-list date filter allowlist in SPA build (${label}): $(basename "${hit}")"
+}
+
 verify_spa_shells_via_compose() {
   local container_dir="$1"
   local label="$2"

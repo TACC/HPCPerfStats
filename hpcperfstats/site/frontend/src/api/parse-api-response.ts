@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { normalizeApiPath, resolveResponseSchema } from "./response-schema-registry";
+import { restoreStrippedBokehFields } from "./restore-stripped-bokeh-fields";
 import { isDevEnvironment } from "@/utils/is-dev-environment";
 
 export function parseApiResponse<T>(
@@ -21,5 +22,5 @@ export function parseApiResponse<T>(
     }
     throw new Error(`API response validation failed: ${routeLabel}${detail}`);
   }
-  return parsed.data as T;
+  return restoreStrippedBokehFields(payload, parsed.data) as T;
 }
