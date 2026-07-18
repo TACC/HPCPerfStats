@@ -334,11 +334,12 @@ Chunk handlers call **`hard_exit_pool_worker_error`** (`os._exit`) immediately a
 ../.venv/bin/python3 scripts/invalidate_archive_members.py \
   --day YYYY-MM-DD --dry-run --compose-dir .
 
-# Invalidate one day and restart pipeline (default)
+  # Invalidate one day and restart pipeline (default)
 ../.venv/bin/python3 scripts/invalidate_archive_members.py \
   --day YYYY-MM-DD --compose-dir .
 
 # All days (requires --yes); --no-restart for Redis-only
+# Prefer python3.12+ / project venv if host ``python3`` is older than 3.12.
 ../.venv/bin/python3 scripts/invalidate_archive_members.py \
   --all --yes --compose-dir .
 ```

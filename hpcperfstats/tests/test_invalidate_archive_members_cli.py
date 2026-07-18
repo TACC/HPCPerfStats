@@ -57,6 +57,7 @@ def test_script_help_imports_without_editable_install():
   )
   assert completed.returncode == 0, completed.stderr
   assert "ModuleNotFoundError" not in (completed.stderr or "")
+  assert "TypeError" not in (completed.stderr or "")
   assert "Invalidate archive membership" in (completed.stdout or "")
 
 
@@ -64,6 +65,31 @@ def test_script_sys_path_bootstrap_inserts_repo_root():
   source = _SCRIPT.read_text(encoding="utf-8")
   assert "_REPO_ROOT" in source
   assert "sys.path.insert(0, str(_REPO_ROOT))" in source
+  assert "_ensure_python_version" in source
+  assert "_MIN_PY" in source
+
+
+def test_cli_import_path_avoids_print_utils():
+  """Regression: host CLI must not import print_utils (PEP 604 on old python3)."""
+  import re
+
+  source = _SCRIPT.read_text(encoding="utf-8")
+  assert "sync_timedb_archive_members_redis" not in source
+  assert not re.search(
+      r"^\s*(from|import)\s+.*print_utils", source, flags=re.M,
+  )
+  assert "invalidate_archive_members_ops" in source
+  ops_path = (
+      _REPO / "hpcperfstats" / "dbload" / "lib" / "invalidate_archive_members_ops.py"
+  )
+  ops_src = ops_path.read_text(encoding="utf-8")
+  assert not re.search(
+      r"^\s*(from|import)\s+.*print_utils", ops_src, flags=re.M,
+  )
+  assert not re.search(
+      r"^\s*(from|import)\s+.*conf_parser", ops_src, flags=re.M,
+  )
+  assert "invalidate_archive_members_redis_bulk" in ops_src
 
 
 def test_cli_all_without_yes_errors(cli, compose_dir):

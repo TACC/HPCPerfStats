@@ -6,31 +6,81 @@ Redis transport is ``docker compose exec -T redis redis-cli`` (no published
 Redis port required). After a successful non-dry-run invalidate, restarts the
 ``pipeline`` service so worker L1 member caches are cold.
 
+Requires Python >= 3.12 (project ``requires-python``). When the host default
+``python3`` is older, this script re-execs a suitable interpreter if found.
+
 Examples (from checkout root)::
 
-  # Dry-run one day (no DELETE, no restart)
   python3 scripts/invalidate_archive_members.py --day 2026-06-08 --dry-run
-
-  # Invalidate one day and restart pipeline
   python3 scripts/invalidate_archive_members.py --day 2026-06-08
-
-  # Invalidate all days (requires --yes) without restart
   python3 scripts/invalidate_archive_members.py --all --yes --no-restart
 """
 from __future__ import annotations
 
 import argparse
+import os
+import shutil
 import sys
 from pathlib import Path
 
-# Repo root (directory containing pyproject.toml) — required for bare
-# ``python3 scripts/...`` without an editable install (production hosts).
+_MIN_PY = (3, 12)
 _REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _candidate_pythons():
+  """Yield executable paths that may satisfy requires-python >= 3.12."""
+  seen = set()
+  names = (
+      _REPO_ROOT / ".venv" / "bin" / "python3",
+      _REPO_ROOT.parent / ".venv" / "bin" / "python3",
+      shutil.which("python3.12"),
+      shutil.which("python3.13"),
+      shutil.which("python3.14"),
+  )
+  for raw in names:
+    if not raw:
+      continue
+    path = str(Path(raw).resolve())
+    if path in seen:
+      continue
+    seen.add(path)
+    if os.path.isfile(path) and os.access(path, os.X_OK):
+      yield path
+
+
+def _ensure_python_version():
+  """Re-exec under Python >= 3.12 when the current interpreter is too old."""
+  if sys.version_info >= _MIN_PY:
+    return
+  script = str(Path(__file__).resolve())
+  for candidate in _candidate_pythons():
+    # Avoid infinite re-exec loops.
+    if os.path.samefile(candidate, sys.executable):
+      continue
+    os.execv(candidate, [candidate, script] + sys.argv[1:])
+  sys.stderr.write(
+      "ERROR: scripts/invalidate_archive_members.py requires Python >= %s.%s "
+      "(found %s.%s). Use the project venv or python3.12+, for example:\n"
+      "  %s/../.venv/bin/python3 scripts/invalidate_archive_members.py ...\n"
+      "  python3.12 scripts/invalidate_archive_members.py ...\n"
+      % (
+          _MIN_PY[0],
+          _MIN_PY[1],
+          sys.version_info[0],
+          sys.version_info[1],
+          _REPO_ROOT,
+      ),
+  )
+  raise SystemExit(2)
+
+
+_ensure_python_version()
+
 if str(_REPO_ROOT) not in sys.path:
   sys.path.insert(0, str(_REPO_ROOT))
 
 
-def _resolve_compose_dir(explicit: str | None) -> Path:
+def _resolve_compose_dir(explicit):
   if explicit:
     path = Path(explicit).expanduser().resolve()
   else:
@@ -45,7 +95,7 @@ def _resolve_compose_dir(explicit: str | None) -> Path:
   return path
 
 
-def _build_parser() -> argparse.ArgumentParser:
+def _build_parser():
   parser = argparse.ArgumentParser(
       description=(
           "Invalidate archive membership Redis L2 (--all or --day), then "
@@ -109,7 +159,7 @@ def _build_parser() -> argparse.ArgumentParser:
   return parser
 
 
-def _direct_redis_client(url: str):
+def _direct_redis_client(url):
   import redis
 
   client = redis.Redis.from_url(url, decode_responses=True)
@@ -117,22 +167,21 @@ def _direct_redis_client(url: str):
   return client
 
 
-def main(argv=None) -> int:
+def main(argv=None):
   parser = _build_parser()
   args = parser.parse_args(argv)
 
   if args.all and not args.dry_run and not args.yes:
     parser.error("--all requires --yes (or use --dry-run)")
 
-  from hpcperfstats.dbload.lib.invalidate_archive_members_ops import (  # noqa: E402
+  # Import only the lightweight ops module (no print_utils / conf_parser).
+  from hpcperfstats.dbload.lib.invalidate_archive_members_ops import (
       ComposeRedisCliClient,
       DEFAULT_COMPOSE_PROJECT,
       compose_argv,
       format_compose_cmd_for_log,
-      restart_pipeline_compose,
-  )
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (  # noqa: E402
       invalidate_archive_members_redis_bulk,
+      restart_pipeline_compose,
   )
 
   compose_dir = _resolve_compose_dir(args.compose_dir)

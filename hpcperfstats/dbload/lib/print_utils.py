@@ -8,6 +8,8 @@ When a daemon role is set via set_log_role() (wired from process_title hooks),
 the prefix becomes [script_name:role], e.g. [sync_timedb:thread:archive-janitor].
 Canonical implementation; hpcperfstats-tools may keep a copy for standalone use.
 """
+from __future__ import annotations
+
 import contextvars
 import inspect
 import sys

@@ -1724,66 +1724,6 @@ def invalidate_archive_members_redis(cache_key):
   client.delete(*delete_keys)
 
 
-_MEMBERSHIP_IDENTITY_SCAN_PREFIXES = (
-    _HASH_PREFIX,
-    _COMPLETE_PREFIX,
-    _LOCK_PREFIX,
-    _INVALIDATE_PENDING_PREFIX,
-)
-_MEMBERSHIP_DAY_EXACT_SCAN_PREFIXES = (
-    _DEGRADED_PREFIX,
-    _DAY_SKIP_PREFIX,
-    _DEDUPE_HINT_PREFIX,
-    _POPULATE_QUEUED_PREFIX,
-)
-_PROTECTED_COORD_PREFIXES = (
-    _INGEST_TAR_HOT_PREFIX,
-    _ARCHIVE_APPEND_INFLIGHT_PREFIX,
-    _DAILY_TAR_RESTORE_PREFIX,
-)
-
-
-def _normalize_bulk_day_tokens(day_tokens):
-  """Validate and normalize calendar day tokens (``YYYY-MM-DD``)."""
-  if day_tokens is None:
-    return None
-  normalized = []
-  for raw in day_tokens:
-    token = str(raw or "").strip()
-    if not token or token == "unknown":
-      raise ValueError("day token must be YYYY-MM-DD, got %r" % (raw,))
-    try:
-      date_cls.fromisoformat(token)
-    except ValueError as exc:
-      raise ValueError("day token must be YYYY-MM-DD, got %r" % (token,)) from exc
-    normalized.append(token)
-  return sorted(set(normalized))
-
-
-def _bulk_membership_scan_patterns(day_tokens):
-  patterns = []
-  if day_tokens is None:
-    for prefix in _MEMBERSHIP_IDENTITY_SCAN_PREFIXES:
-      patterns.append("%s:*" % prefix)
-    for prefix in _MEMBERSHIP_DAY_EXACT_SCAN_PREFIXES:
-      patterns.append("%s:*" % prefix)
-    return patterns
-  for day in day_tokens:
-    for prefix in _MEMBERSHIP_IDENTITY_SCAN_PREFIXES:
-      patterns.append("%s:%s:*" % (prefix, day))
-    for prefix in _MEMBERSHIP_DAY_EXACT_SCAN_PREFIXES:
-      patterns.append("%s:%s" % (prefix, day))
-  return patterns
-
-
-def _is_protected_coord_redis_key(key: str) -> bool:
-  text = str(key)
-  for prefix in _PROTECTED_COORD_PREFIXES:
-    if text == prefix or text.startswith(prefix + ":"):
-      return True
-  return False
-
-
 def invalidate_archive_members_redis_bulk(
     *,
     day_tokens=None,
@@ -1792,60 +1732,22 @@ def invalidate_archive_members_redis_bulk(
 ):
   """Bulk-clear archive membership Redis L2 (operator recovery).
 
-  ``day_tokens=None`` clears all membership-related key families (hash / complete /
-  lock / invalidate_pending / degraded / day_skip / dedupe_hint / populate_queued)
-  and the populate queue list. Otherwise only keys for those calendar days.
-
-  Does **not** delete ``ingest_tar_hot``, ``archive_append_inflight``, or
-  ``daily_tar_restore`` coordination keys.
-
-  Returns ``{"scanned": int, "deleted": int, "dry_run": bool, "days": list}``.
-  When ``client`` is omitted and Redis is unavailable, also sets
-  ``"error": "redis_unavailable"`` with zero counts.
+  Thin wrapper: resolves a Redis client when omitted, then delegates to
+  :func:`hpcperfstats.dbload.lib.invalidate_archive_members_ops.invalidate_archive_members_redis_bulk`
+  (stdlib-safe for the host CLI; no ``print_utils`` import on that path).
   """
-  days = _normalize_bulk_day_tokens(day_tokens)
-  result = {
-      "scanned": 0,
-      "deleted": 0,
-      "dry_run": bool(dry_run),
-      "days": list(days) if days is not None else [],
-  }
+  from hpcperfstats.dbload.lib import invalidate_archive_members_ops as ops
+
   if client is None:
     try:
       client = get_archive_members_redis_client(required=False)
     except ArchiveMembersRedisUnavailableError:
       client = None
-    if client is None:
-      result["error"] = "redis_unavailable"
-      return result
-
-  found = set()
-  for pattern in _bulk_membership_scan_patterns(days):
-    for key in client.scan_iter(match=pattern, count=200):
-      text = str(key)
-      if _is_protected_coord_redis_key(text):
-        continue
-      found.add(text)
-  if days is None:
-    found.add(_POPULATE_QUEUE_KEY)
-
-  result["scanned"] = len(found)
-  if dry_run or not found:
-    return result
-
-  deleted = 0
-  batch = []
-  for key in sorted(found):
-    batch.append(key)
-    if len(batch) >= 200:
-      client.delete(*batch)
-      deleted += len(batch)
-      batch.clear()
-  if batch:
-    client.delete(*batch)
-    deleted += len(batch)
-  result["deleted"] = deleted
-  return result
+  return ops.invalidate_archive_members_redis_bulk(
+      day_tokens=day_tokens,
+      dry_run=dry_run,
+      client=client,
+  )
 
 
 def list_dedupe_hint_day_tokens(client=None) -> list:
