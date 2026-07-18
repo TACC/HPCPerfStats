@@ -212,6 +212,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
     ArchiveMembersRedisConnectionError,
     ArchiveMembersRedisUnavailableError,
     IngestArchiveLookupBudgetExceededError,
+    archive_append_inflight_for_day,
     archive_members_populate_shows_progress_for_day,
     archive_members_redis_enabled,
     build_archive_members_redis_keys,
@@ -671,6 +672,10 @@ def _prewarm_archive_members_redis_for_days(
             canonical,
         )
         source = consume_archive_members_populate_source(canonical)
+        # Wait may re-resolve to a post-append identity (T1→T2); do not warm-check
+        # the frozen entry-time keys (empty-after-prewarm with members_n>0).
+        cache_key = _daily_archive_members_cache_key(canonical)
+        keys = build_archive_members_redis_keys(cache_key)
         if not redis_members_cache_is_fully_warm(keys):
           client = None
           try:
@@ -694,6 +699,32 @@ def _prewarm_archive_members_redis_for_days(
           )
           if complete and not (members or {}):
             source = source or "empty_archive"
+          elif archive_append_inflight_for_day(day_token) and (
+              attempt < len(_FNCTL_POPULATE_RETRY_DELAYS_S)
+          ):
+            prewarm_recovered = True
+            last_transient_exc = ArchiveMembersRedisUnavailableError(
+                "archive members Redis cold after prewarm during "
+                "archive_append_inflight for day=%s canonical=%s "
+                "source=%s members_n=%d"
+                % (
+                    day_token,
+                    canonical,
+                    source or "none",
+                    len(members or {}),
+                ),
+            )
+            log_print(
+                "WARNING: archive_append_inflight during archive members "
+                "prewarm day=%s attempt=%d/%d: retrying after identity drift"
+                % (
+                    day_token,
+                    attempt + 1,
+                    len(_FNCTL_POPULATE_RETRY_DELAYS_S) + 1,
+                ),
+                flush=True,
+            )
+            continue
           else:
             maybe_clear_orphan_incomplete_archive_members_redis(keys)
             raise ArchiveMembersRedisUnavailableError(

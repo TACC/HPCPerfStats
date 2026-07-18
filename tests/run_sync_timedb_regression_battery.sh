@@ -47,7 +47,7 @@ EOF
   esac
 done
 
-BATTERY_FILTER='handoff or handoff_priority or archive_finalize or post_finalize or phase_done or same_boot or closed_raw or chunk_gate or orphan_inflight or tar_drop or pipeline_complete or rescan or defer_day_close or manifest_fast or closed_raw_persists or reconcile_orphan or test_arch_ or architecture or ingest_stall_watchdog or oldest_day_unprocessed_frozen or budget_exit_nonblocking or reconcile_before_discover or on_disk_equals_unprocessed or never_streams_sealed_when_populate_pool_down or redis_populate_before_idle_ghost or lock_held_stall_recoverable or find_stats or printf or rescan_mtime or rescan_full or rescan_every_chunks or gfind or disabled_day_close or pending_maintenance or chunk_stall or allow_full or day_scoped or async_inflight or pending_rescan'
+BATTERY_FILTER='handoff or handoff_priority or archive_finalize or post_finalize or phase_done or same_boot or closed_raw or chunk_gate or orphan_inflight or tar_drop or pipeline_complete or rescan or defer_day_close or manifest_fast or closed_raw_persists or reconcile_orphan or test_arch_ or architecture or ingest_stall_watchdog or oldest_day_unprocessed_frozen or budget_exit_nonblocking or reconcile_before_discover or on_disk_equals_unprocessed or never_streams_sealed_when_populate_pool_down or redis_populate_before_idle_ghost or lock_held_stall_recoverable or find_stats or printf or rescan_mtime or rescan_full or rescan_every_chunks or gfind or disabled_day_close or pending_maintenance or chunk_stall or allow_full or day_scoped or async_inflight or pending_rescan or identity_drift or prewarm_fails_loud or prewarm_retries_while'
 
 set +e
 "$PYTHON" -m pytest -q \

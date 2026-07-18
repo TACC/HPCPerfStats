@@ -423,7 +423,19 @@ grep 'janitor: day_close candidate' /tmp/pipeline-full.log | grep -E 'waiting_on
 grep -E 'discover_ready|missing_tar|processed_cross_day_n|processed_but_on_disk|filesystem_complete' /tmp/pipeline-full.log | tail -60
 ```
 
-**Pass (T1 — empty Redis after prewarm):** After `chunk prewarm complete` with a day token other than `no_daily_archive` / `day_ingest_skip`, Redis must be warm (`dbsize` / `archive_members*` keys) and **`chunk imap start`** must appear. **Failure signature (pre-fix):** `…:prewarmed` (or similar) with `dbsize=0` and no `chunk_elapsed` / no `chunk imap start`. **Post-fix:** supervisor **exits** with `archive members Redis empty after prewarm` rather than hanging.
+**Pass (T1 — empty Redis after prewarm):** After `chunk prewarm complete` with a day token other than `no_daily_archive` / `day_ingest_skip`, Redis must be warm (`dbsize` / `archive_members*` keys) and **`chunk imap start`** must appear. **Failure signature (pre-fix, claimed success hang):** `…:prewarmed` (or similar) with `dbsize=0` and no `chunk_elapsed` / no `chunk imap start`. **Post-fix (true empty):** supervisor **exits** with `archive members Redis empty after prewarm` rather than hanging.
+
+**T0 / T1 — prewarm identity drift during tar append (2026-07):** concurrent `archive_pool` append/merge can change the Redis identity fingerprint while chunk prewarm holds entry-time keys.
+
+```bash
+# T0 — false empty-after-prewarm during append (unhealthy)
+grep -E 'populate_wait identity_drift|empty after prewarm|archive members Redis L2 contract failed|tar_append redis merge|archive_job_done' /tmp/pipeline-full.log | tail -80
+
+# T1 — healthy: identity_drift may appear, but prewarm re-resolves / retries; no L2 exit
+grep -E 'populate_wait identity_drift|archive_append_inflight during archive members prewarm|chunk prewarm complete|chunk imap start|empty after prewarm' /tmp/pipeline-full.log | tail -80
+```
+
+**Unhealthy:** `INFO: populate_wait identity_drift day=…` then `ERROR: archive members Redis empty after prewarm … source=none members_n=N` (N often >0) + `L2 contract failed` while the same day shows `tar_append redis merge` / `archive_job_done`. **Healthy:** drift and/or `WARNING: archive_append_inflight during archive members prewarm … retrying` then `chunk prewarm complete` with `redis_warm` / populate source and **`chunk imap start`** — no empty-after-prewarm L2 exit.
 
 **Compare dispatch vs completion:**
 

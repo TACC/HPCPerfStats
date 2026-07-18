@@ -1715,6 +1715,127 @@ def test_prewarm_fails_loud_when_redis_empty_after_populate(monkeypatch, tmp_pat
     assert 'empty after prewarm' in exits[0]
 
 
+def test_prewarm_succeeds_after_tar_identity_drift_to_warm_key(monkeypatch, tmp_path):
+    """Wait may warm T2 while prewarm still held T1 keys — re-resolve before warm check.
+
+    Operator signature: populate_wait identity_drift + empty after prewarm with
+    members_n>0 / source=none during concurrent tar_append redis merge.
+    """
+    import hpcperfstats.dbload.lib.sync_timedb_archive_members_redis as redis_mod
+
+    tgz_dir = tmp_path / 'daily'
+    tgz_dir.mkdir()
+    day = '2026-06-13'
+    sealed = tgz_dir / ('%s.tar.zst' % day)
+    sealed.write_bytes(b'zst')
+    (tgz_dir / ('%s.tar' % day)).write_bytes(b'tar')
+    resolve_n = {'n': 0}
+    warm_keys = []
+    exits = []
+
+    def _cache_key(canonical):
+        resolve_n['n'] += 1
+        # Entry resolve = T1 (pre-append); post-wait re-resolve = T2 (post-merge).
+        if resolve_n['n'] == 1:
+            return (canonical, (1, 100), (10, 1000))
+        return (canonical, (1, 100), (20, 2000))
+
+    def _warm(keys):
+        warm_keys.append(keys.hash_key)
+        return keys.hash_key.endswith(':20:2000')
+
+    def _populate(_canonical, *, role='supervisor'):
+        del role
+        return {'host/member': 1}
+
+    monkeypatch.setattr(st, 'archive_members_redis_enabled', lambda: True)
+    monkeypatch.setattr(st, 'tgz_archive_dir', str(tgz_dir))
+    monkeypatch.setattr(
+        archive_helpers, '_daily_archive_members_cache_key', _cache_key,
+    )
+    monkeypatch.setattr(st, 'redis_members_cache_is_fully_warm', _warm)
+    monkeypatch.setattr(
+        redis_mod, 'request_archive_members_populate_and_wait', _populate,
+    )
+    monkeypatch.setattr(
+        st, 'consume_archive_members_populate_source', lambda _c: None,
+    )
+    monkeypatch.setattr(
+        redis_mod,
+        'get_archive_members_redis_client',
+        lambda required=False: None,
+    )
+    monkeypatch.setattr(
+        st, 'archive_append_inflight_for_day', lambda _day: False,
+    )
+    monkeypatch.setattr(
+        st,
+        '_exit_on_archive_members_redis_unavailable',
+        lambda exc: exits.append(str(exc)) or (_ for _ in ()).throw(SystemExit(1)),
+    )
+    summary = st._prewarm_archive_members_redis_for_days([(str(sealed), day)])
+    assert not exits
+    assert '%s:redis_warm' % day in summary or '%s:' % day in summary
+    assert 'empty after prewarm' not in summary
+    assert any(k.endswith(':20:2000') for k in warm_keys), warm_keys
+    assert resolve_n['n'] >= 2
+
+
+def test_prewarm_retries_while_archive_append_inflight_then_warms(
+    monkeypatch, tmp_path,
+):
+    """Cold current identity during append_inflight is retryable, not immediate L2 fatal."""
+    import hpcperfstats.dbload.lib.sync_timedb_archive_members_redis as redis_mod
+
+    tgz_dir = tmp_path / 'daily'
+    tgz_dir.mkdir()
+    day = '2026-06-13'
+    sealed = tgz_dir / ('%s.tar.zst' % day)
+    sealed.write_bytes(b'zst')
+    (tgz_dir / ('%s.tar' % day)).write_bytes(b'tar')
+    attempt = {'n': 0}
+    exits = []
+
+    def _warm(_keys):
+        # Cold until second populate attempt completes.
+        return attempt['n'] >= 2
+
+    def _populate(_canonical, *, role='supervisor'):
+        del role
+        attempt['n'] += 1
+        return {'host/member': 1} if attempt['n'] >= 2 else {}
+
+    monkeypatch.setattr(st, 'archive_members_redis_enabled', lambda: True)
+    monkeypatch.setattr(st, 'tgz_archive_dir', str(tgz_dir))
+    monkeypatch.setattr(st, 'redis_members_cache_is_fully_warm', _warm)
+    monkeypatch.setattr(
+        archive_helpers, '_FNCTL_POPULATE_RETRY_DELAYS_S', (0.0,),
+    )
+    monkeypatch.setattr(
+        redis_mod, 'request_archive_members_populate_and_wait', _populate,
+    )
+    monkeypatch.setattr(
+        st, 'consume_archive_members_populate_source', lambda _c: 'tar_populated',
+    )
+    monkeypatch.setattr(
+        redis_mod,
+        'get_archive_members_redis_client',
+        lambda required=False: None,
+    )
+    monkeypatch.setattr(
+        st, 'archive_append_inflight_for_day', lambda _day: True,
+    )
+    monkeypatch.setattr(
+        st,
+        '_exit_on_archive_members_redis_unavailable',
+        lambda exc: exits.append(str(exc)) or (_ for _ in ()).throw(SystemExit(1)),
+    )
+    summary = st._prewarm_archive_members_redis_for_days([(str(sealed), day)])
+    assert not exits
+    assert attempt['n'] >= 2
+    assert day in summary
+
+
 def test_invalidation_hook_can_trigger_reprewarm(monkeypatch, tmp_path):
     prewarm_days = []
     monkeypatch.setattr(st, '_prewarm_archive_members_redis_for_day_token', lambda day_token: prewarm_days.append(day_token))
