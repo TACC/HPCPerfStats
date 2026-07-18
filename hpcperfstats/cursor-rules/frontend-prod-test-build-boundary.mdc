@@ -71,6 +71,7 @@ When touching this boundary:
 2. Update **`test_dockerignore_test_artifacts.py`** if `frontend/test/` layout or dockerignore patterns change (`dockerignore-test-artifacts-sync.mdc`).
 3. Run **`copy-next-export.production.test.ts`** and **`npm run typecheck:all`**.
 4. Document **`build` vs `build:prod`** in `docs/TESTING.md` when commands change (`testing-doc-sync.mdc`).
+5. Remember compose **`staticfiles_data`** masks image `STATIC_ROOT`: from-scratch rebuilds land SPA via **`spa_static_root_heal`** fingerprint sync in **`django_startup.sh`** (`nginx-static-url-prefix.mdc`); `rebuild_frontend.sh` remains an optional SPA-only hot path.
 
 ## Overlap
 

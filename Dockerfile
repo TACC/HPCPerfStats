@@ -86,6 +86,9 @@ COPY --chown=hpcperfstats:hpcperfstats . .
 
 # Cloud-synced checkouts may not preserve host execute bits; compose invokes these
 # scripts directly as container commands.
+# django_startup.sh runs collectstatic + spa_static_root_heal on every web start:
+# that fingerprint heal is what lands a new SPA into compose staticfiles_data after
+# a from-scratch image rebuild (image collectstatic alone cannot write the volume).
 RUN chmod +x \
     /home/hpcperfstats/services-conf/django_startup.sh \
     /home/hpcperfstats/services-conf/supervisor_startup.sh
@@ -113,7 +116,11 @@ COPY --from=frontend-builder --chown=hpcperfstats:hpcperfstats \
     /tmp/frontend-static \
     /home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend
 
-# collectstatic here: fail-fast at image build (and supports runs without a
-# compose volume over STATIC_ROOT). Compose still runs collectstatic on web
-# startup because staticfiles_data masks the image layer at /home/hpcperfstats/staticfiles.
+# Image collectstatic: fail-fast at build and for runs without a compose volume
+# over STATIC_ROOT. Compose mounts named volume staticfiles_data at
+# /home/hpcperfstats/staticfiles, which masks this image layer — build cannot
+# sync the live volume. After recreate, django_startup.sh (above) runs
+# collectstatic on the volume, then spa_static_root_heal fingerprint-compares
+# package vs volume machine/index.html and replaces STATIC_ROOT/frontend on
+# drift. Optional SPA-only hot path: scripts/rebuild_frontend.sh (no full rebuild).
 RUN /bin/bash -o pipefail -c "/usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput"

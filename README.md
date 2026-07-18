@@ -387,16 +387,20 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    migrations (`manage.py makemigrations` and `manage.py migrate`) and
    `collectstatic` so **`STATIC_ROOT`** (the volume nginx serves as `/static/`)
    is populated before Gunicorn starts. After `collectstatic`, startup verifies
-   SPA shells under **`STATIC_ROOT/frontend/{machine,pub}/index.html`**. If those
-   files are missing but the image package still has them (for example a named
-   volume left over from a Vite-era layout after upgrading to the Next export),
-   startup **auto-heals** by replacing `STATIC_ROOT/frontend` from package static.
-   If the package image itself lacks the shells, web fail-closes — rebuild with
-   target **`hpcperfstats-full`** or run **`./scripts/rebuild_frontend.sh`**.
+   SPA shells under **`STATIC_ROOT/frontend/{machine,pub}/index.html`** and
+   compares a **sha256 fingerprint** of package vs volume `machine/index.html`.
+   If shells are missing (for example a Vite-era volume after upgrading to the
+   Next export), or fingerprints **differ** after a from-scratch image rebuild
+   while **`staticfiles_data`** still holds an older Next tree, startup
+   **auto-heals** by replacing `STATIC_ROOT/frontend` from package static.
+   Image build `collectstatic` alone cannot update the named volume (it masks
+   the image layer). If the package image itself lacks the shells, web
+   fail-closes — rebuild target **`hpcperfstats-full`** (primary) or run
+   **`./scripts/rebuild_frontend.sh`** (SPA-only hot path).
 
    The compose DB service includes explicit PostgreSQL checkpoint/memory tuning (`max_connections`, `shared_buffers`, `work_mem`, `maintenance_work_mem`, `autovacuum_work_mem`, `checkpoint_*`, `min_wal_size`, `max_wal_size`, and parallel-worker caps) plus `shm_size`. Keep these aligned with host RAM and service memory limits; tune upward one notch at a time only after confirming checkpoint stability and no OOM events.
 
-   If you change the codebase, bring the containers down, make your changes, and then rebuild and start the stack again.
+   If you change the codebase, bring the containers down, make your changes, and then rebuild and start the stack again. A full **`docker compose up --build`** (or equivalent from-scratch image rebuild) plus recreating **`web`** is the primary way to land SPA fixes: startup fingerprint heal syncs the new package frontend into **`staticfiles_data`**. Use **`./scripts/rebuild_frontend.sh`** only when you want an SPA-only refresh without rebuilding the image.
 
 ---
 
@@ -406,7 +410,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 |------|---------|
 | Build and start container stack | `sudo docker compose up --build -d` |
 | Stop and remove containers | `sudo docker compose down` |
-| Rebuild SPA in running stack (no pipeline restart) | `./scripts/rebuild_frontend.sh` |
+| Rebuild SPA in running stack (optional hot path; no pipeline restart) | `./scripts/rebuild_frontend.sh` |
 | Rebuild web/pipeline image after Python-only changes (preserves live frontend, no npm) | `./scripts/rebuild_pipeline.sh` |
 | Rebuild just the app and keep persistent services running | `docker compose -f docker-compose.app.yaml down && docker compose stop -t 120 db proxy && docker compose start db && docker compose -f docker-compose.app.yaml up --build -d && docker compose start proxy` |
 | View logs  | `sudo docker compose logs` |

@@ -12,12 +12,23 @@ from hpcperfstats.site.lib.spa_static_root_heal import (
   missing_required_shells,
   package_has_required_shells,
   resolve_package_frontend_dir,
+  spa_shell_fingerprint,
 )
 
 
 def _write(path: Path, text: str = "shell") -> None:
   path.parent.mkdir(parents=True, exist_ok=True)
   path.write_text(text, encoding="utf-8")
+
+
+def test_spa_shell_fingerprint_hashes_machine_index(tmp_path: Path):
+  frontend = tmp_path / "frontend"
+  _write(frontend / "machine" / "index.html", "content-a")
+  fp_a = spa_shell_fingerprint(frontend)
+  assert len(fp_a) == 64
+  _write(frontend / "machine" / "index.html", "content-b")
+  assert spa_shell_fingerprint(frontend) != fp_a
+  assert spa_shell_fingerprint(tmp_path / "missing") == ""
 
 
 def test_ensure_spa_shells_heals_vite_volume(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
@@ -73,27 +84,63 @@ def test_ensure_spa_shells_fails_when_package_missing(
   assert missing_required_shells(volume)
 
 
-def test_ensure_spa_shells_noop_when_already_present(
+def test_ensure_spa_shells_noop_when_fingerprints_match(
   tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ):
+  """Shells present with identical machine/index.html content → noop."""
   package = tmp_path / "pkg" / "frontend"
-  _write(package / "machine" / "index.html", "pkg-machine")
+  _write(package / "machine" / "index.html", "same-shell")
   _write(package / "pub" / "index.html", "pkg-pub")
+  _write(package / "_next" / "new.js", "pkg-asset")
 
   static_root = tmp_path / "staticfiles"
   volume = static_root / "frontend"
-  _write(volume / "machine" / "index.html", "existing-machine")
-  _write(volume / "pub" / "index.html", "existing-pub")
+  _write(volume / "machine" / "index.html", "same-shell")
+  _write(volume / "pub" / "index.html", "vol-pub")
+  _write(volume / "_next" / "old.js", "vol-asset")
 
   ensure_spa_shells_in_static_root(
     static_root=static_root,
     package_frontend=package,
   )
 
-  assert (volume / "machine" / "index.html").read_text(encoding="utf-8") == "existing-machine"
+  assert (volume / "machine" / "index.html").read_text(encoding="utf-8") == "same-shell"
+  assert (volume / "_next" / "old.js").is_file()
+  assert not (volume / "_next" / "new.js").is_file()
   out = capsys.readouterr().out
   assert "Verified SPA shells" in out
   assert "auto-healed" not in out
+  assert "fingerprint" not in out.lower()
+
+
+def test_ensure_spa_shells_replaces_on_fingerprint_drift(
+  tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+  """Shells present but machine/index.html content differs → replace volume."""
+  package = tmp_path / "pkg" / "frontend"
+  _write(package / "machine" / "index.html", "pkg-machine-new")
+  _write(package / "pub" / "index.html", "pkg-pub")
+  _write(package / "_next" / "chunk.js", "new-asset")
+
+  static_root = tmp_path / "staticfiles"
+  volume = static_root / "frontend"
+  _write(volume / "machine" / "index.html", "vol-machine-old")
+  _write(volume / "pub" / "index.html", "vol-pub")
+  _write(volume / "_next" / "stale.js", "old-asset")
+
+  ensure_spa_shells_in_static_root(
+    static_root=static_root,
+    package_frontend=package,
+  )
+
+  assert (volume / "machine" / "index.html").read_text(encoding="utf-8") == "pkg-machine-new"
+  assert (volume / "pub" / "index.html").read_text(encoding="utf-8") == "pkg-pub"
+  assert (volume / "_next" / "chunk.js").is_file()
+  assert not (volume / "_next" / "stale.js").is_file()
+  out = capsys.readouterr().out
+  assert "fingerprint" in out.lower()
+  assert "auto-healed from package static" in out
+  assert "Verified SPA shells in STATIC_ROOT" in out
 
 
 def test_package_has_required_shells_and_resolve(tmp_path: Path):

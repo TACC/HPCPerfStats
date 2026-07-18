@@ -79,3 +79,16 @@ def test_hpcperfstats_full_is_last_dockerfile_stage():
   assert stages[-1] == "hpcperfstats-full"
   assert stages.index("hpcperfstats-pipeline-refresh") < stages.index("hpcperfstats-full")
   assert "COPY --from=frontend-builder" in _stage_body(dockerfile, "hpcperfstats-full")
+
+
+def test_dockerfile_documents_spa_volume_fingerprint_heal_contract():
+  """From-scratch rebuild lands SPA via django_startup heal, not image collectstatic alone."""
+  dockerfile = (_repo_root() / "Dockerfile").read_text()
+  assert "django_startup.sh" in dockerfile
+  assert "spa_static_root_heal" in dockerfile
+  assert "staticfiles_data" in dockerfile
+  assert "fingerprint" in dockerfile.lower()
+  assert "services-conf/django_startup.sh" in dockerfile
+  full = _stage_body(dockerfile, "hpcperfstats-full")
+  assert "masks" in full.lower() or "mask" in full.lower()
+  assert "collectstatic --noinput" in full

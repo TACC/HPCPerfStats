@@ -4,10 +4,15 @@ Persistent ``staticfiles_data`` volumes can retain a Vite-era ``frontend/`` tree
 where ``collectstatic`` reports unmodified files and never materializes
 ``machine/index.html`` / ``pub/index.html``. When the image package static still
 has those shells, replace ``STATIC_ROOT/frontend`` from package static.
+
+Volumes can also retain an older Next export whose shells exist but whose
+``machine/index.html`` (and hashed chunks) differ from the image package after a
+from-scratch Docker rebuild. Compare sha256 fingerprints and replace on drift.
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import sys
@@ -16,6 +21,7 @@ from pathlib import Path
 from typing import TextIO
 
 REQUIRED_SPA_SHELLS: tuple[str, ...] = ("machine/index.html", "pub/index.html")
+_MACHINE_SHELL = "machine/index.html"
 
 
 def missing_required_shells(
@@ -31,6 +37,14 @@ def package_has_required_shells(
   required: Sequence[str] = REQUIRED_SPA_SHELLS,
 ) -> bool:
   return not missing_required_shells(package_frontend, required)
+
+
+def spa_shell_fingerprint(frontend_root: str | Path) -> str:
+  """Return sha256 hex of ``machine/index.html``, or ``\"\"`` if missing."""
+  path = Path(frontend_root) / _MACHINE_SHELL
+  if not path.is_file():
+    return ""
+  return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def resolve_package_frontend_dir(
@@ -89,6 +103,68 @@ def _atomic_replace_frontend(package_frontend: Path, dest_frontend: Path) -> Non
       shutil.rmtree(backup, ignore_errors=True)
 
 
+def _fail_missing_shells(
+  *,
+  dest_frontend: Path,
+  package: Path,
+  missing: list[str],
+  required: Sequence[str],
+  err_stream: TextIO,
+) -> None:
+  print(
+    "ERROR: collectstatic did not produce required SPA shell(s):",
+    file=err_stream,
+  )
+  for path in missing:
+    print(f"  missing: {path}", file=err_stream)
+  pkg_missing = (
+    missing_required_shells(package, required) if package.is_dir() else list(required)
+  )
+  print(
+    "  package frontend also missing required shell(s) "
+    f"(dir={package}, missing={pkg_missing})",
+    file=err_stream,
+  )
+  for marker in _vite_volume_markers(dest_frontend):
+    print(f"  stale volume marker: {marker}", file=err_stream)
+  print(
+    "  Build image target hpcperfstats-full (or run scripts/rebuild_frontend.sh) "
+    "so package static includes machine/ and pub/ SPA shells.",
+    file=err_stream,
+  )
+  raise SystemExit(1)
+
+
+def _heal_and_verify(
+  *,
+  package: Path,
+  dest_frontend: Path,
+  required: Sequence[str],
+  reason: str,
+  out_stream: TextIO,
+  err_stream: TextIO,
+) -> None:
+  print(
+    f"SPA frontend auto-healed from package static ({reason}): "
+    f"{package} -> {dest_frontend}",
+    file=out_stream,
+  )
+  _atomic_replace_frontend(package, dest_frontend)
+  still_missing = missing_required_shells(dest_frontend, required)
+  if still_missing:
+    print(
+      "ERROR: SPA frontend auto-heal failed; shells still missing:",
+      file=err_stream,
+    )
+    for path in still_missing:
+      print(f"  missing: {path}", file=err_stream)
+    raise SystemExit(1)
+  print(
+    "Verified SPA shells in STATIC_ROOT: " + ", ".join(required),
+    file=out_stream,
+  )
+
+
 def ensure_spa_shells_in_static_root(
   *,
   static_root: str | Path,
@@ -107,57 +183,55 @@ def ensure_spa_shells_in_static_root(
   dest_frontend = Path(static_root) / "frontend"
   package = Path(package_frontend)
   missing = missing_required_shells(dest_frontend, required)
+
   if not missing:
-    print(
-      "Verified SPA shells in STATIC_ROOT: " + ", ".join(required),
-      file=out_stream,
+    pkg_fp = spa_shell_fingerprint(package)
+    vol_fp = spa_shell_fingerprint(dest_frontend)
+    if pkg_fp and pkg_fp == vol_fp:
+      print(
+        "Verified SPA shells in STATIC_ROOT: " + ", ".join(required),
+        file=out_stream,
+      )
+      return
+    # Shells exist but package/volume machine/index.html content diverges
+    # (typical after from-scratch image rebuild while staticfiles_data persists).
+    if not package.is_dir() or not package_has_required_shells(package, required):
+      _fail_missing_shells(
+        dest_frontend=dest_frontend,
+        package=package,
+        missing=list(missing) or [str(dest_frontend / _MACHINE_SHELL)],
+        required=required,
+        err_stream=err_stream,
+      )
+    _heal_and_verify(
+      package=package,
+      dest_frontend=dest_frontend,
+      required=required,
+      reason=(
+        f"content fingerprint drift machine/index.html "
+        f"pkg={pkg_fp[:12] or 'MISSING'} vol={vol_fp[:12] or 'MISSING'}"
+      ),
+      out_stream=out_stream,
+      err_stream=err_stream,
     )
     return
 
   if not package.is_dir() or not package_has_required_shells(package, required):
-    print(
-      "ERROR: collectstatic did not produce required SPA shell(s):",
-      file=err_stream,
+    _fail_missing_shells(
+      dest_frontend=dest_frontend,
+      package=package,
+      missing=missing,
+      required=required,
+      err_stream=err_stream,
     )
-    for path in missing:
-      print(f"  missing: {path}", file=err_stream)
-    pkg_missing = (
-      missing_required_shells(package, required)
-      if package.is_dir()
-      else list(required)
-    )
-    print(
-      "  package frontend also missing required shell(s) "
-      f"(dir={package}, missing={pkg_missing})",
-      file=err_stream,
-    )
-    for marker in _vite_volume_markers(dest_frontend):
-      print(f"  stale volume marker: {marker}", file=err_stream)
-    print(
-      "  Build image target hpcperfstats-full (or run scripts/rebuild_frontend.sh) "
-      "so package static includes machine/ and pub/ SPA shells.",
-      file=err_stream,
-    )
-    raise SystemExit(1)
 
-  print(
-    "SPA frontend auto-healed from package static (stale volume): "
-    f"{package} -> {dest_frontend}",
-    file=out_stream,
-  )
-  _atomic_replace_frontend(package, dest_frontend)
-  still_missing = missing_required_shells(dest_frontend, required)
-  if still_missing:
-    print(
-      "ERROR: SPA frontend auto-heal failed; shells still missing:",
-      file=err_stream,
-    )
-    for path in still_missing:
-      print(f"  missing: {path}", file=err_stream)
-    raise SystemExit(1)
-  print(
-    "Verified SPA shells in STATIC_ROOT: " + ", ".join(required),
-    file=out_stream,
+  _heal_and_verify(
+    package=package,
+    dest_frontend=dest_frontend,
+    required=required,
+    reason="stale volume",
+    out_stream=out_stream,
+    err_stream=err_stream,
   )
 
 
