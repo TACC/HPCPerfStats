@@ -9,6 +9,7 @@ contended locks are skipped when ``--lock-timeout`` is 0 (default); re-run after
 Environment:
   HPCPERFSTATS_INI  Path to site config (default search includes
                     /home/hpcperfstats/hpcperfstats.ini).
+  Bootstraps Django via ensure_django() before remaining-raw / ORM gates.
 
 Examples:
   HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini \\
@@ -125,6 +126,11 @@ def main(argv=None):
   args = _build_arg_parser().parse_args(argv)
   if args.ini:
     os.environ["HPCPERFSTATS_INI"] = args.ini
+
+  # Remaining-raw gate imports ORM (host_data) via archive maintenance snapshot.
+  from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
+
+  ensure_django()
 
   import hpcperfstats.dbload.lib.conf_parser as cfg_mod
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (

@@ -568,6 +568,11 @@ def build_archive_maintenance_snapshot(
     log_fn=log_print,
 ) -> ArchiveMaintenanceSnapshot:
   """One collect pass, head+tail gate metadata, mapping, optional ready set."""
+  # CLI/scripts (e.g. migrate_daily_archive_gz_to_zst) may call this without
+  # a prior django.setup(); ingest_readiness imports host_data models.
+  from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
+
+  ensure_django()
   from hpcperfstats.dbload.lib.sync_timedb_ingest_readiness import (
       build_head_ingest_ready_set,
   )

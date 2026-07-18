@@ -107,7 +107,7 @@ if os.path.isfile(mf):
 docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec redis sh -lc 'redis-cli GET "hpcperfstats:sync_timedb:archive_populate_degraded:v1:YYYY-MM-DD"; redis-cli GET "hpcperfstats:sync_timedb:archive_day_ingest_skip:v1:YYYY-MM-DD"; redis-cli --scan --pattern "*archive_members:hash:v1:YYYY-MM-DD*" | head -20'
 ```
 
-**Anti-pattern — Django/ORM imports without bootstrap (hpcperfstats03 lesson):** importing `sync_timedb_ingest_readiness`, `host_data`, or other Django models from bare `python3 -c` inside pipeline raises **`ImproperlyConfigured`**. Call **`ensure_django()`** first:
+**Anti-pattern — Django/ORM imports without bootstrap (hpcperfstats03 lesson):** importing `sync_timedb_ingest_readiness`, `host_data`, or other Django models from bare `python3 -c` inside pipeline raises **`ImproperlyConfigured`**. Same failure for older images of **`scripts/migrate_daily_archive_gz_to_zst.py`** before it called **`ensure_django()`** (path: remaining-raw gate → archive maintenance snapshot → `host_data`). Call **`ensure_django()`** first (migrate script does this after deploy of the bootstrap fix):
 
 ```bash
 docker compose exec pipeline su hpcperfstats -c 'python3 -c "
