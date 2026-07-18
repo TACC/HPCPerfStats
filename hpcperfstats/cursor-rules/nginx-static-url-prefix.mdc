@@ -22,6 +22,7 @@ globs: services-conf/nginx*
 
 - **`collectstatic`** (see [`services-conf/django_startup.sh`](services-conf/django_startup.sh)) populates **`STATIC_ROOT`** so the volume nginx reads stays complete (admin assets, app static, built SPA hashed files).
 - Built frontend output lives under `hpcperfstats/site/hpcperfstats_site/static/frontend/` before collection.
+- **SPA shell auto-heal:** after `collectstatic`, startup calls [`spa_static_root_heal`](hpcperfstats/site/lib/spa_static_root_heal.py). If **`STATIC_ROOT/frontend/{machine,pub}/index.html`** are missing but package static still has them (typical Vite-era volume after a Next export upgrade), it **replaces** `STATIC_ROOT/frontend` from package static and then verifies. If the package also lacks shells, startup **fail-closes** with diagnostics (do not weaken this).
 - **[`ReactSPAView`](hpcperfstats/site/hpcperfstats_site/views.py)** may read **`index.html`** from `STATIC_ROOT` / `STATICFILES_DIRS` for `/machine/` — that is **HTML shell delivery**, not serving arbitrary `/static/...` URLs from Django.
 
 ## Local development

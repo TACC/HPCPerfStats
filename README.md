@@ -386,7 +386,13 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    On first startup (or after updating the code), the `web` container runs Django
    migrations (`manage.py makemigrations` and `manage.py migrate`) and
    `collectstatic` so **`STATIC_ROOT`** (the volume nginx serves as `/static/`)
-   is populated before Gunicorn starts.
+   is populated before Gunicorn starts. After `collectstatic`, startup verifies
+   SPA shells under **`STATIC_ROOT/frontend/{machine,pub}/index.html`**. If those
+   files are missing but the image package still has them (for example a named
+   volume left over from a Vite-era layout after upgrading to the Next export),
+   startup **auto-heals** by replacing `STATIC_ROOT/frontend` from package static.
+   If the package image itself lacks the shells, web fail-closes — rebuild with
+   target **`hpcperfstats-full`** or run **`./scripts/rebuild_frontend.sh`**.
 
    The compose DB service includes explicit PostgreSQL checkpoint/memory tuning (`max_connections`, `shared_buffers`, `work_mem`, `maintenance_work_mem`, `autovacuum_work_mem`, `checkpoint_*`, `min_wal_size`, `max_wal_size`, and parallel-worker caps) plus `shm_size`. Keep these aligned with host RAM and service memory limits; tune upward one notch at a time only after confirming checkpoint stability and no OOM events.
 

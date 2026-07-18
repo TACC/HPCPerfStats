@@ -301,6 +301,7 @@ Some production hosts use **podman-compose** with project name `-p hpcperfstats`
 | `find … \| wc -l` under nested `sh -lc` / podman quoting | **False zero** — pipeline/quoting can drop find stdout; `wc -l` reports 0 while find never ran | Prefer **`find … -printf '.' \| wc -c`** (one byte per match) inside `bash -lc` |
 | `/usr/bin/time find …` inside pipeline image | **`/usr/bin/time: No such file or directory`** — find never runs; printed counts are fake | Use bash builtin: `TIMEFORMAT='elapsed_sec=%R'; { time find …; } 2>&1` |
 | Treat `find: …fnctl.lock: No such file or directory` as fatal | Concurrent ingest unlinks lock sidecars mid-walk; find exit 1 with usable stdout is expected | Count/parse stdout records; treat fnctl.lock ENOENT stderr as non-fatal noise |
+| `docker compose … up -d web` after a crash-loop | **podman-compose** may fail with **name already in use** / exit **125** when `hpcperfstats_web_1` still exists | Prefer `podman start hpcperfstats_web_1` (or `podman rm -f hpcperfstats_web_1` then `up -d web`). SPA shell missing after Vite→Next upgrade is auto-healed by `django_startup` / `spa_static_root_heal` once `web` actually starts with a Next package image |
 
 **Good** — podman service check + filtered log tail (paths from INI first):
 

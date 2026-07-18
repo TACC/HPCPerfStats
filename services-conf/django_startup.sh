@@ -68,27 +68,15 @@ chown -R hpcperfstats:hpcperfstats /hpcperfstats/
 /usr/local/bin/python3 hpcperfstats/site/manage.py makemigrations
 /usr/local/bin/python3 hpcperfstats/site/manage.py migrate
 /usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput
+# Fail-closed SPA shells; auto-heal Vite-era STATIC_ROOT/frontend from package Next export.
 /usr/local/bin/python3 - <<'PY'
 import os
-import sys
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "hpcperfstats.site.hpcperfstats_site.settings")
 import django
 django.setup()
-from django.conf import settings
+from hpcperfstats.site.lib.spa_static_root_heal import ensure_spa_shells_from_django_settings
 
-required = ("machine/index.html", "pub/index.html")
-frontend_root = os.path.join(settings.STATIC_ROOT, "frontend")
-missing = [
-  os.path.join(frontend_root, rel)
-  for rel in required
-  if not os.path.isfile(os.path.join(frontend_root, rel))
-]
-if missing:
-  print("ERROR: collectstatic did not produce required SPA shell(s):", file=sys.stderr)
-  for path in missing:
-    print(f"  missing: {path}", file=sys.stderr)
-  raise SystemExit(1)
-print("Verified SPA shells in STATIC_ROOT: " + ", ".join(required))
+ensure_spa_shells_from_django_settings()
 PY
 
 # Gunicorn workers: WEB_CONCURRENCY overrides; else min(2*base+1, max_gunicorn_workers)

@@ -92,3 +92,13 @@ def test_django_startup_script_waits_for_redis():
 
   assert "wait_for_redis_available" in content
 
+
+def test_django_startup_invokes_spa_static_root_heal():
+  repo_root = Path(__file__).resolve().parents[2]
+  script_path = repo_root / "services-conf" / "django_startup.sh"
+  content = script_path.read_text()
+
+  assert "collectstatic --noinput" in content
+  assert "ensure_spa_shells_from_django_settings" in content
+  assert "hpcperfstats.site.lib.spa_static_root_heal" in content
+
