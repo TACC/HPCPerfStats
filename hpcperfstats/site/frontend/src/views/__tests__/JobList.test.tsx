@@ -185,14 +185,12 @@ describe("JobList", () => {
 
     renderJobList();
 
-    fireEvent.click(screen.getByRole("button", { name: /distributions for this job selection/i }));
-
     await waitFor(() => {
       expect(screen.getByText("Updating distributions…")).toBeInTheDocument();
     });
   });
 
-  it("enables histogram fetch on desktop when distributions panel is expanded", async () => {
+  it("enables histogram fetch by default without expanding distributions", async () => {
     Object.defineProperty(window, "matchMedia", {
       writable: true,
       configurable: true,
@@ -223,15 +221,12 @@ describe("JobList", () => {
 
     await waitFor(() => {
       const lastCall = vi.mocked(useJobListHistograms).mock.calls.at(-1);
-      expect(lastCall?.[2]).toBe(false);
+      expect(lastCall?.[2]).toBe(true);
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /distributions for this job selection/i }));
-
-    await waitFor(() => {
-      const expandedCall = vi.mocked(useJobListHistograms).mock.calls.at(-1);
-      expect(expandedCall?.[2]).toBe(true);
-    });
+    expect(
+      screen.getByRole("button", { name: /distributions for this job selection/i }),
+    ).toHaveAttribute("aria-expanded", "true");
   });
 
   it("uses sticky in-page z-index on table headers, not modal tier", async () => {
@@ -684,7 +679,7 @@ describe("JobList", () => {
     expect(screen.queryByRole("columnheader", { name: "Sample Count" })).not.toBeInTheDocument();
   });
 
-  it("on narrow viewports uses Jobs and Charts tabs and jump link opens Charts", async () => {
+  it("on narrow viewports shows Jobs and Charts tabs with distributions open by default", async () => {
     Object.defineProperty(window, "matchMedia", {
       writable: true,
       configurable: true,
@@ -750,17 +745,16 @@ describe("JobList", () => {
 
     const distSection = document.getElementById("job-list-distributions");
     expect(distSection).toBeTruthy();
-    expect(distSection).toHaveAttribute("hidden");
+    expect(distSection).not.toHaveAttribute("hidden");
 
     await waitFor(() => {
-      expect(document.querySelector(".histogram-thumbnails-grid")).toBeNull();
+      expect(document.querySelector(".histogram-thumbnails-grid")).toBeTruthy();
     });
 
     fireEvent.click(screen.getByRole("link", { name: /jump to histograms/i }));
 
-    expect(nextNavigationMock.router.replace).toHaveBeenCalledWith(
-      expect.stringMatching(/view=charts/),
-    );
+    // Jump keeps users on the always-visible Distributions panel (no Charts tab navigation).
+    expect(nextNavigationMock.router.replace).not.toHaveBeenCalled();
 
     view.unmount();
     renderJobList("/jobs?view=charts");
@@ -769,7 +763,7 @@ describe("JobList", () => {
       expect(screen.getByRole("tab", { name: /^charts$/i })).toHaveAttribute("aria-selected", "true");
     });
     await waitFor(() => {
-      expect(document.getElementById("job-list-distributions")).not.toHaveAttribute("hidden");
+      expect(document.getElementById("job-list-distributions")).toBeTruthy();
     });
     await waitFor(() => {
       expect(document.querySelector(".histogram-thumbnails-grid")).toBeTruthy();
@@ -1023,8 +1017,6 @@ describe("JobList", () => {
     await waitFor(() => {
       expect(screen.getByText("Jobs = 0")).toBeInTheDocument();
     });
-
-    fireEvent.click(screen.getByRole("button", { name: /distributions for this job selection/i }));
 
     await waitFor(() => {
       expect(

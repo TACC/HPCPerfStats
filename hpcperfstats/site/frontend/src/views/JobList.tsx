@@ -188,7 +188,7 @@ export default function JobList() {
   const pathname = usePathname();
   const router = useRouter();
   const [histogramReloadKey, setHistogramReloadKey] = useState(0);
-  const [distributionsOpen, setDistributionsOpen] = useState(false);
+  const [distributionsOpen, setDistributionsOpen] = useState(true);
   const { openExtendedSearch } = useExtendedSearchLayout();
   const listViewTab = readTabFromSearchParams(rawSearchParams, "view", "jobs");
   const isLgUp = useMinWidth(992);
@@ -215,8 +215,8 @@ export default function JobList() {
     !initialLoading && !!jobListData,
   );
 
-  const histogramsEnabled =
-    (!isLgUp && listViewTab === "charts") || (isLgUp && distributionsOpen);
+  // Always fetch histograms while JobList is mounted (distributions default open).
+  const histogramsEnabled = true;
   const { histograms, metricHistStatus, batchError, histogramsUpdating } =
     useJobListHistograms(listApiParams, histogramReloadKey, histogramsEnabled, jobsFetching);
 
@@ -345,14 +345,7 @@ export default function JobList() {
 
   function handleJumpToDistributions(event: MouseEvent<HTMLAnchorElement>) {
     event.preventDefault();
-    if (isLgUp) {
-      setDistributionsOpen(true);
-      window.requestAnimationFrame(() => {
-        document.getElementById("job-list-distributions")?.scrollIntoView({ block: "start" });
-      });
-      return;
-    }
-    setListViewTab("charts");
+    setDistributionsOpen(true);
     window.requestAnimationFrame(() => {
       document.getElementById("job-list-distributions")?.scrollIntoView({ block: "start" });
     });
@@ -367,9 +360,8 @@ export default function JobList() {
     });
   }
 
-  // Narrow viewports hide this section with the HTML `hidden` attribute while the
-  // Jobs tab is active; Bokeh must not embed into a zero-size subtree (see BokehEmbed).
-  const distributionPlotsVisible = isLgUp || listViewTab === "charts";
+  // Embed when the Distributions panel is open (default). Avoid zero-size embeds.
+  const distributionPlotsVisible = distributionsOpen;
 
   // Single source of truth for the pagination control; rendered above and below
   // the job table so users can navigate from either end of long lists.
@@ -555,30 +547,28 @@ export default function JobList() {
         </p>
       ) : null}
 
-      {isLgUp ? (
-        <Collapsible
-          open={distributionsOpen}
-          onOpenChange={setDistributionsOpen}
-          className="job-list-distributions mb-4"
+      <Collapsible
+        open={distributionsOpen}
+        onOpenChange={setDistributionsOpen}
+        className="job-list-distributions mb-4"
+      >
+        <section
+          id="job-list-distributions"
+          aria-label="Distributions for this job selection"
         >
-          <section
-            id="job-list-distributions"
-            aria-label="Distributions for this job selection"
-          >
-            <CollapsibleTrigger className="flex w-full cursor-pointer items-center gap-2 text-left">
-              <h2 className="text-lg font-medium">Distributions for this job selection</h2>
-              <ChevronDownIcon
-                className={cn(
-                  "ml-auto size-4 shrink-0 transition-transform",
-                  distributionsOpen && "rotate-180",
-                )}
-                aria-hidden
-              />
-            </CollapsibleTrigger>
-            <CollapsibleContent className="pt-3">{distributionsBody}</CollapsibleContent>
-          </section>
-        </Collapsible>
-      ) : null}
+          <CollapsibleTrigger className="flex w-full cursor-pointer items-center gap-2 text-left">
+            <h2 className="text-lg font-medium">Distributions for this job selection</h2>
+            <ChevronDownIcon
+              className={cn(
+                "ml-auto size-4 shrink-0 transition-transform",
+                distributionsOpen && "rotate-180",
+              )}
+              aria-hidden
+            />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="pt-3">{distributionsBody}</CollapsibleContent>
+        </section>
+      </Collapsible>
 
       <JobListHeaderFilters
         filterOptions={filterOptions}
@@ -738,21 +728,11 @@ export default function JobList() {
       </div>
 
       {!isLgUp ? (
-        <section
-          id="job-list-distributions"
-          role="tabpanel"
-          className="job-list-distributions mb-4"
-          aria-label="Distributions for this job selection"
-          hidden={listViewTab !== "charts"}
-        >
-          <h2 className="mb-2 text-lg font-medium">Distributions for this job selection</h2>
-          {distributionsBody}
-          <p className="mt-2 mb-0 text-center text-sm">
-            <a href="#job-list-table" onClick={handleBackToJobTable} className={textLinkClassName()}>
-              Continue to job table
-            </a>
-          </p>
-        </section>
+        <p className="mt-2 mb-4 text-center text-sm" hidden={listViewTab !== "charts"}>
+          <a href="#job-list-table" onClick={handleBackToJobTable} className={textLinkClassName()}>
+            Continue to job table
+          </a>
+        </p>
       ) : null}
     </>
   );

@@ -24,7 +24,7 @@ alwaysApply: false
 
 1. **First paint, zero data** — full-page `LoadingMessage` / skeleton with **no** interactive chrome (Search, TypeDetail pattern).
 2. **Refetch with prior data** — `keepPreviousData` + `tableBusy` / `sectionBusy`: dim + `aria-busy`, **never** `pointer-events-none` on containers holding links ([`JobList.tsx`](hpcperfstats/site/frontend/src/views/JobList.tsx) test contract).
-3. **Secondary sections** — hide, collapse, or skeleton until ready; fetch on expand/tab (JobList filter options + distributions).
+3. **Secondary sections** — hide, collapse, or skeleton until ready where appropriate; JobList **filter options** may defer until first paint, but **distributions** default open and fetch on JobList mount (optional Collapsible collapse after).
 4. **User-initiated in-flight action** — `disabled` on the **same** button the user clicked (`rotating` on PageApiKey) is allowed.
 5. **Bokeh** — defer embed until section visible (`deferEmbedUntilVisible` default); no Unavailable while `isLoading` ([`design-focused-spa-ux.mdc`](design-focused-spa-ux.mdc), [`job-plot-artifacts-caching.mdc`](job-plot-artifacts-caching.mdc)).
 
@@ -50,7 +50,7 @@ Reference hooks: [`use-job-list.ts`](hpcperfstats/site/frontend/src/hooks/use-jo
 
 ## Reference implementations
 
-- **JobList** — table first; deferred `filter_options`; lazy histograms; `JobList.test.tsx` (`tableBusy` not pointer-blocked).
+- **JobList** — table first; deferred `filter_options`; distributions default open / always fetch; `JobList.test.tsx` (`tableBusy` not pointer-blocked).
 - **JobDetail** — `initialLoading` only on first paint; tabs stay mounted during `detailsLoading`; deep-link test in `JobDetail.test.tsx`.
 
 ## Tests

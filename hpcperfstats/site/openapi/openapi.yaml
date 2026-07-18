@@ -1148,33 +1148,6 @@ components:
         xalt_stats:
           type: object
           additionalProperties: {}
-    BokehDoc:
-      type: object
-      description: Bokeh json_item document container.
-      properties:
-        roots:
-          type: array
-          items:
-            $ref: '#/components/schemas/BokehDocRootNode'
-        root_ids:
-          type: array
-          items: {}
-          description: Alternate root id list when roots omit explicit ids.
-    BokehDocRootNode:
-      type: object
-      description: Minimal Bokeh json_item root node (``doc.roots[]`` entry).
-      properties:
-        id:
-          description: Root model id (string or number) referenced by Bokeh.embed.
-    BokehJsonItem:
-      type: object
-      description: Minimal Bokeh embed payload (``Bokeh.embed.embed_item`` json_item
-        document).
-      properties:
-        doc:
-          $ref: '#/components/schemas/BokehDoc'
-      required:
-      - doc
     DropStaffResponse:
       type: object
       properties:
@@ -1251,8 +1224,6 @@ components:
         host:
           type: string
         plot_item:
-          allOf:
-          - $ref: '#/components/schemas/BokehJsonItem'
           nullable: true
         plot_unavailable_reason:
           type: string
@@ -1418,15 +1389,11 @@ components:
           type: integer
           nullable: true
         multiprecision_cpu_plot_item:
-          allOf:
-          - $ref: '#/components/schemas/BokehJsonItem'
           nullable: true
         multiprecision_cpu_unavailable_reason:
           type: string
           nullable: true
         multiprecision_gpu_plot_item:
-          allOf:
-          - $ref: '#/components/schemas/BokehJsonItem'
           nullable: true
         multiprecision_gpu_unavailable_reason:
           type: string
@@ -1596,12 +1563,8 @@ components:
         title:
           type: string
         plot_item_thumb:
-          allOf:
-          - $ref: '#/components/schemas/BokehJsonItem'
           nullable: true
         plot_item_full:
-          allOf:
-          - $ref: '#/components/schemas/BokehJsonItem'
           nullable: true
         plot_unavailable_reason:
           type: string
@@ -1775,8 +1738,6 @@ components:
         mdiv:
           type: string
         mplot_item:
-          allOf:
-          - $ref: '#/components/schemas/BokehJsonItem'
           nullable: true
         mplot_unavailable_reason:
           type: string
@@ -1786,8 +1747,6 @@ components:
         rdiv:
           type: string
         rplot_item:
-          allOf:
-          - $ref: '#/components/schemas/BokehJsonItem'
           nullable: true
         rplot_unavailable_reason:
           type: string
@@ -1797,8 +1756,6 @@ components:
         grdiv:
           type: string
         grplot_item:
-          allOf:
-          - $ref: '#/components/schemas/BokehJsonItem'
           nullable: true
         grplot_unavailable_reason:
           type: string
@@ -1818,8 +1775,6 @@ components:
         plot:
           type: string
         plot_item:
-          allOf:
-          - $ref: '#/components/schemas/BokehJsonItem'
           nullable: true
         unavailable_reason:
           type: string
@@ -1862,8 +1817,6 @@ components:
         title:
           type: string
         bokeh_histogram_json_item:
-          allOf:
-          - $ref: '#/components/schemas/BokehJsonItem'
           nullable: true
     PublicDashboardExpansionFactorSection:
       type: object
@@ -1903,8 +1856,6 @@ components:
         expansion_factor_definition:
           type: string
         bokeh_histogram_json_item:
-          allOf:
-          - $ref: '#/components/schemas/BokehJsonItem'
           nullable: true
     SacctIngestResponse:
       type: object
@@ -1938,8 +1889,6 @@ components:
         jobid:
           type: string
         tplot_item:
-          allOf:
-          - $ref: '#/components/schemas/BokehJsonItem'
           nullable: true
         tplot_unavailable_reason:
           type: string

@@ -213,6 +213,45 @@ describe("parse-api-response", () => {
     expect(parseApiResponse("GET", "/api/jobs/histograms/batch/", wire)).toEqual(wire);
   });
 
+  it("preserves Bokeh root type/attributes through histogram batch parse (no Zod strip)", () => {
+    const richThumb = {
+      doc: {
+        root_ids: ["p1006"],
+        roots: [
+          {
+            id: "p1006",
+            type: "object",
+            name: "Figure",
+            attributes: { title: "Number of jobs by cpu hours" },
+          },
+        ],
+      },
+      root_id: "p1006",
+    };
+    const wire = {
+      nj: 3,
+      histogram_nj: 3,
+      histogram_sampled: false,
+      histograms: [
+        {
+          group: "metric",
+          metric: "runtime",
+          title: "Number of jobs by cpu hours",
+          plot_item_thumb: richThumb,
+          plot_item_full: richThumb,
+          plot_unavailable_reason: null,
+        },
+      ],
+    };
+    const parsed = parseApiResponse("GET", "/api/jobs/histograms/batch/", wire) as typeof wire;
+    const thumb = parsed.histograms[0].plot_item_thumb as typeof richThumb;
+    expect(thumb.doc.roots[0].type).toBe("object");
+    expect(thumb.doc.roots[0].attributes).toEqual({
+      title: "Number of jobs by cpu hours",
+    });
+    expect(thumb.root_id).toBe("p1006");
+  });
+
   it("validates pub cluster dashboard bundle", () => {
     expect(() =>
       parseApiResponse("GET", "/api/pub/cluster-dashboard/", {

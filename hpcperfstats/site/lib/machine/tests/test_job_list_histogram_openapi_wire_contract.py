@@ -1,6 +1,8 @@
 """Lock job list histogram batch JSON wire shape to OpenAPI serializers."""
 from __future__ import annotations
 
+import pytest
+
 from hpcperfstats.site.lib.machine.openapi_serializers import JobListHistogramBatchResponseSerializer
 
 JOB_LIST_HISTOGRAM_BATCH_WIRE_EXAMPLE = {
@@ -31,6 +33,7 @@ JOB_LIST_HISTOGRAM_BATCH_WIRE_EXAMPLE = {
 }
 
 
+@pytest.mark.machine_unit_mock
 def test_job_list_histogram_batch_wire_example_matches_openapi_serializers():
     ser = JobListHistogramBatchResponseSerializer(data=JOB_LIST_HISTOGRAM_BATCH_WIRE_EXAMPLE)
     assert ser.is_valid(), ser.errors

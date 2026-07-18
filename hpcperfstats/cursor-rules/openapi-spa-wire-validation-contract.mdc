@@ -83,7 +83,7 @@ Wire tests: `JOB_MONITOR_GPU_BATCH_WIRE` in `test_openapi_wire_contracts.py`; ba
 
 | Wire field | Actual Django shape | Wrong OpenAPI guess |
 |------------|---------------------|---------------------|
-| `*_plot_item`, `plot_item_thumb/full`, `bokeh_histogram_json_item` | Bokeh `json_item` document with `doc.roots[]` / `doc.root_ids[]` | `JSONField` / `zod.unknown()` — wire tests pass `{ type: "plot" }` but embed fails; use `BokehJsonItemSerializer` in `openapi_serializers.py` and `OPENAPI_BOKEH_JSON_ITEM` in `test/wire-audit/wire-audit-cases.ts` |
+| `*_plot_item`, `plot_item_thumb/full`, `bokeh_histogram_json_item` | Full Bokeh `json_item` tree (`doc.roots[]` with `type` / `attributes`, `root_id`, …) | Thin nested Serializer modeling only `{ doc: { roots: [{ id }] } }` → Orval Zod **strips** embed fields → BokehJS `reference p… isn't known`. Use opaque **`JSONField`** (`BokehJsonItemField` in `openapi_serializers.py`) so Zod is `unknown()` and preserves the tree. Wire fixtures must include at least `type` on a root (`OPENAPI_BOKEH_JSON_ITEM` / `VALID_BOKEH_JSON_ITEM`). |
 | Bokeh trust boundary | Structural validation via `parseBokehJsonItem` before `Bokeh.embed` | Not an HTML sanitizer — trusted HTTPS + auth server content |
 
 ## New SPA endpoint checklist

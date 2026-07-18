@@ -2,7 +2,15 @@ import type { JobsRetrieveParams } from "@/api/generated/models/jobsRetrievePara
 import { EXTENDED_SEARCH_ALLOWED_PARAM_NAMES } from "./extended-search-parameters";
 
 const JOB_LIST_PAGINATION_KEYS = new Set(["page", "order_by", "performance_sort_rank"]);
-const JOB_LIST_EXTRA_KEYS = new Set(["include_filter_options", "host", "jid"]);
+/** Browse/calendar date keys + host/jid; must stay aligned with job-list-header-filter-params time keys. */
+const JOB_LIST_EXTRA_KEYS = new Set([
+  "include_filter_options",
+  "host",
+  "jid",
+  "end_time__date",
+  "end_time__date__gte",
+  "end_time__date__lte",
+]);
 
 const METRIC_FILTER_KEY = /^metrics_[a-zA-Z0-9_.-]+__(?:gte|lte)$/;
 

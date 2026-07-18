@@ -38,7 +38,7 @@ HPCPerfStats serves researchers and operators who expect clear hierarchy, honest
 - Backdrop wrapper uses **`pointer-events-none`** so main content (job table links) stays clickable; panel uses **`pointer-events-auto`**. Outside clicks close via document **`pointerdown`** capture (excluding panel and toggle).
 - Call **`onClose`** after successful navigate from extended search.
 - Collapse mobile `navOpen` / `extendedSearchOpen` on route change (pathname or query-string navigation).
-- Job list **distributions** collapsible defaults **closed** on desktop; histogram fetch and Bokeh embed run only after expand (see **`interactive-ready-controls.mdc`**).
+- Job list **distributions** collapsible defaults **open** on all breakpoints; histogram fetch runs on JobList mount (optional Collapsible collapse after). See **`interactive-ready-controls.mdc`** / **`frontend-stack-wiring-contract.mdc`**.
 
 ## Wayfinding
 
