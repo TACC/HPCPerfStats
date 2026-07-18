@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useLayoutEffect, useCallback, useId } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useId, useMemo } from "react";
 import { useSearchParams, usePathname } from "next/navigation";
 import type { BokehJsonItem } from "@/types/bokeh";
 import type { JobListHistogramEntry } from "@/types/view-models";
@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import BokehPlotWithLimitation from "./BokehPlotWithLimitation";
 import LoadingMessage from "./LoadingMessage";
+import { filterIdentitySearchParamsKey } from "@/utils/filter-identity-params";
 
 const THUMB_SIZE = { width: 280, height: 200 };
 /** Slightly larger prefetch margin than BokehEmbed default so off-screen thumbs start loading sooner. */
@@ -48,6 +49,10 @@ function HistogramThumbnail({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const searchParamsKey = searchParams.toString();
+  const filterIdentityKey = useMemo(
+    () => filterIdentitySearchParamsKey(new URLSearchParams(searchParamsKey)),
+    [searchParamsKey],
+  );
   const [expanded, setExpanded] = useState(false);
   const [hasOpened, setHasOpened] = useState(false);
   const [popoverLayoutReady, setPopoverLayoutReady] = useState(false);
@@ -87,7 +92,7 @@ function HistogramThumbnail({
     setExpanded(false);
     setHasOpened(false);
     setPopoverLayoutReady(false);
-  }, [searchParamsKey, pathname]);
+  }, [filterIdentityKey, pathname]);
 
   useEffect(() => {
     if (embedAllowed) return;

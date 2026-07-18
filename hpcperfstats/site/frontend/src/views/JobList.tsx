@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
-import { useMemo, useState } from "react";
-import type { MouseEvent } from "react";
+import { useMemo, useRef, useState } from "react";
+import type { CSSProperties, MouseEvent } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { ChevronDownIcon } from "lucide-react";
 import { TextLink, textLinkClassName } from "@/components/TextLink";
 import type { JobListEntry } from "@/api/generated/models/jobListEntry";
@@ -51,7 +52,7 @@ import PageBreadcrumbs from "../components/PageBreadcrumbs";
 import { useExtendedSearchLayout } from "../context/extended-search-layout-context";
 import { formatDateTime } from "../utils/formatDateTime";
 import { formatDecimalStandard } from "../utils/formatDecimal";
-import { buildJobListApiParams } from "../utils/build-job-list-api-params";
+import { buildJobListApiParams, buildJobListHistogramApiParams } from "../utils/build-job-list-api-params";
 import {
   buildJobListActiveFilterLines,
 } from "../utils/job-list-filter-summary";
@@ -200,6 +201,11 @@ export default function JobList() {
     [asURLSearchParams, paramsFromRoute],
   );
 
+  const histogramApiParams = useMemo(
+    () => buildJobListHistogramApiParams(asURLSearchParams, paramsFromRoute),
+    [asURLSearchParams, paramsFromRoute],
+  );
+
   const {
     data,
     error,
@@ -218,7 +224,12 @@ export default function JobList() {
   // Always fetch histograms while JobList is mounted (distributions default open).
   const histogramsEnabled = true;
   const { histograms, metricHistStatus, batchError, histogramsUpdating } =
-    useJobListHistograms(listApiParams, histogramReloadKey, histogramsEnabled, jobsFetching);
+    useJobListHistograms(
+      histogramApiParams,
+      histogramReloadKey,
+      histogramsEnabled,
+      jobsFetching,
+    );
 
   function setListViewTab(tab: "jobs" | "charts") {
     const next = searchParamsWithTab(rawSearchParams, "view", tab === "jobs" ? null : tab);
@@ -246,6 +257,15 @@ export default function JobList() {
       serverSummary: jobListData?.filter_summary,
     });
   }, [asURLSearchParams, paramsFromRoute, jobListData?.order_by, jobListData?.filter_summary]);
+
+  const jobRowsForVirtual = jobListData?.job_list ?? [];
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: jobRowsForVirtual.length,
+    getScrollElement: () => tableScrollRef.current,
+    estimateSize: () => 44,
+    overscan: 12,
+  });
 
   if (error) return <BannerErrorMessage message={error} />;
   if (!initialLoading && !jobListData) return null;
@@ -609,7 +629,8 @@ export default function JobList() {
         id="job-list-table"
         aria-busy={tableBusy || showTableSkeleton}
       >
-        <Table className="border text-sm max-lg:[&_tbody_tr]:scroll-mt-28">
+        <div ref={tableScrollRef} className="max-h-[70vh] overflow-auto rounded-md border">
+        <Table className="border-0 text-sm max-lg:[&_tbody_tr]:scroll-mt-28">
           <TableCaption className="sr-only">
             Job list for {qname}. {nj} jobs.
           </TableCaption>
@@ -629,7 +650,14 @@ export default function JobList() {
             ))}
           </TableRow>
         </TableHeader>
-        <TableBody>
+        <TableBody
+          style={{
+            height: !showTableSkeleton && job_list.length
+              ? `${rowVirtualizer.getTotalSize()}px`
+              : undefined,
+            position: "relative",
+          }}
+        >
           {showTableSkeleton
             ? [1, 2, 3, 4, 5].map((i) => (
                 <TableRow key={`skeleton-${i}`}>
@@ -658,8 +686,29 @@ export default function JobList() {
             </TableRow>
           ) : null}
           {!showTableSkeleton
-            ? job_list.map((job) => (
-            <TableRow key={job.jid}>
+            ? (() => {
+            const virtualItems = rowVirtualizer.getVirtualItems();
+            // jsdom / zero-height scroll parent: virtualizer returns no items — render all.
+            const rowsToRender =
+              virtualItems.length > 0
+                ? virtualItems.map((virtualRow) => ({
+                    job: job_list[virtualRow.index],
+                    key: job_list[virtualRow.index]?.jid ?? String(virtualRow.index),
+                    style: {
+                      position: "absolute" as const,
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      transform: `translateY(${virtualRow.start}px)`,
+                    },
+                  }))
+                : job_list.map((job) => ({
+                    job,
+                    key: job.jid,
+                    style: undefined as CSSProperties | undefined,
+                  }));
+            return rowsToRender.map(({ job, key, style }) => (
+            <TableRow key={key} style={style}>
               <TableCell>
                 <TextLink href={`/machine/job/${job.jid}/`}>{job.jid}</TextLink>
               </TableCell>
@@ -712,10 +761,12 @@ export default function JobList() {
               <TableCell>{formatDecimalStandard(job.node_hrs)}</TableCell>
               <TableCell>{job.jobname}</TableCell>
             </TableRow>
-          ))
+            ));
+          })()
             : null}
         </TableBody>
         </Table>
+        </div>
       </div>
 
       {renderPaginationNav("bottom")}

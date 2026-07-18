@@ -125,5 +125,5 @@ Keep **`audit-wire-drift.mts`** case list in sync with `EXACT_RESPONSE_SCHEMAS` 
 - **`openapi-spa-wire-validation-contract.mdc`** — wire JSON vs OpenAPI vs Zod validation.
 - **`react-next-ts-cursor-rule.mdc`** — stack conventions and parse boundary.
 - **`testing-best-practices.mdc`** — RTL, mock layers, pre-merge matrix.
-- **`interactive-ready-controls.mdc`** — hide/skeleton until ready; shown controls immediately interactive.
+- **`interactive-ready-controls.mdc`** — hide/skeleton until ready; shown controls immediately interactive; **URL scoped updates** (filter identity vs presentation keys; every refetching view in the map must use `*Busy` / keepPreviousData and must not clear secondary UI on sort/page/tab).
 - **`web-pages-e2e-test-maintenance.mdc`** — Playwright when user-visible flows change.

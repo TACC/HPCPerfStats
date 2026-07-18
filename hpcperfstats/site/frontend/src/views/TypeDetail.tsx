@@ -21,12 +21,13 @@ import { useMachineRouteParams } from "../hooks/use-machine-route-params";
 import { buildAsyncPageTitle } from "../utils/async-page-title";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 import { useTypeDetailQuery } from "@/hooks/use-type-detail";
+import { cn } from "@/lib/utils";
 
 export default function TypeDetail() {
   const { flatParams } = useMachineRouteParams();
   const jid = flatParams.jid ?? "";
   const typeName = flatParams.typeName ?? "";
-  const { data, error, loading } = useTypeDetailQuery(jid, typeName);
+  const { data, error, loading, detailBusy } = useTypeDetailQuery(jid, typeName);
 
   const typeLabel = data?.type_name || typeName;
   useDocumentTitle(
@@ -40,7 +41,7 @@ export default function TypeDetail() {
   );
 
   if (loading) return <LoadingMessage message="Loading type detail…" />;
-  if (error) return <BannerErrorMessage message={error} />;
+  if (error && !data) return <BannerErrorMessage message={error} />;
   if (!data) return null;
 
   const {
@@ -59,7 +60,15 @@ export default function TypeDetail() {
   };
 
   return (
-    <>
+    <div className={cn(detailBusy && "opacity-55")} aria-busy={detailBusy}>
+      {detailBusy ? (
+        <p className="mb-2 text-sm text-muted-foreground" role="status">
+          Updating type detail…
+        </p>
+      ) : null}
+      {error ? (
+        <BannerErrorMessage variant="inline" className="mb-3" message={error} />
+      ) : null}
       <PageBreadcrumbs
         items={[
           { label: "Browse", to: "/machine/" },
@@ -94,7 +103,7 @@ export default function TypeDetail() {
           </TableCaption>
           <TableHeader>
             <TableRow>
-              <TableHead scope="col">record</TableHead>
+              <TableHead scope="col">time</TableHead>
               {schema.map((key) => (
                 <TableHead key={key} scope="col">
                   {key}
@@ -116,6 +125,6 @@ export default function TypeDetail() {
           </TableBody>
         </Table>
       )}
-    </>
+    </div>
   );
 }

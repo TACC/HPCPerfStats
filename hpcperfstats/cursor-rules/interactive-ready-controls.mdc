@@ -38,6 +38,26 @@ alwaysApply: false
 - Modal backdrop blocking unrelated page chrome when `modal={false}` — omit overlay ([`dialog.tsx`](hpcperfstats/site/frontend/src/components/ui/dialog.tsx) `showOverlay={false}`).
 - Focus trap stealing Tab when focus is outside the trapped panel ([`useFocusTrap.ts`](hpcperfstats/site/frontend/src/hooks/useFocusTrap.ts)).
 
+## URL scoped updates (site-wide)
+
+Query-string / path changes must **not** remount or blank surfaces whose **identity** did not change. Separate keys:
+
+| Kind | Examples | Effect |
+|------|----------|--------|
+| **Identity / filter** | `end_time__date`, `username`, `queue`, host/`pk`/`jid` path segments | May refetch primary **and** filter-dependent secondary data |
+| **Presentation** | `order_by`, `page`, `view`/`tab` (local chrome) | Refetch **primary** with `keepPreviousData` / `*Busy`; must **not** clear secondary panels, enlarge dialogs, or filter popovers |
+
+### Required
+
+1. Secondary fetches (JobList histograms, HostDetail plot params) use a **filter-identity** param set — strip presentation keys before the request key.
+2. Do **not** `setX(null)` on secondary state when only presentation keys change; use an updating flag (`histogramsUpdating`, `*Busy`) until new identity data arrives.
+3. Enlarge / filter combobox open state resets on **filter-identity** key only (not full `searchParams.toString()`). Layout nav chrome may still reset on full QS.
+4. If a hook exposes `tableBusy` / `detailBusy` / `sectionBusy` / `refetchBusy`, the view **must** use it — never full-page `LoadingMessage` on refetch when prior data exists.
+5. First paint with zero data may still use full-page `LoadingMessage` / skeleton.
+6. Clear job plots only when **`pk`** changes — not when a tab `enabled` flag toggles.
+
+Helpers: [`filter-identity-params.ts`](hpcperfstats/site/frontend/src/utils/filter-identity-params.ts), [`build-job-list-api-params.ts`](hpcperfstats/site/frontend/src/utils/build-job-list-api-params.ts) (`buildJobListHistogramApiParams`).
+
 ## Thin-hook loading shapes
 
 | Flag | Meaning |
@@ -50,17 +70,19 @@ Reference hooks: [`use-job-list.ts`](hpcperfstats/site/frontend/src/hooks/use-jo
 
 ## Reference implementations
 
-- **JobList** — table first; deferred `filter_options`; distributions default open / always fetch; `JobList.test.tsx` (`tableBusy` not pointer-blocked).
-- **JobDetail** — `initialLoading` only on first paint; tabs stay mounted during `detailsLoading`; deep-link test in `JobDetail.test.tsx`.
+- **JobList** — table first; deferred `filter_options`; distributions default open / always fetch; histogram params omit `order_by`/`page`; virtualized rows; `JobList.test.tsx` (`tableBusy` not pointer-blocked).
+- **JobDetail** — `initialLoading` only on first paint; tabs stay mounted during `detailsLoading`; plots clear on `pk` only; deep-link test in `JobDetail.test.tsx`.
+- **HostDetail / TypeDetail** — `keepPreviousData` + `detailBusy` (no full-page blank on refetch).
+- **JobMonitor / AdminMonitor / ClusterDashboard** — progressive `*Busy` + virtualization where lists are large.
 
 ## Tests
 
 - Extend Vitest when changing loading UX: assert shown controls lack blocking `pointer-events-none` on parent containers.
-- Run drift guard: `src/utils/interactive-ready-drift.test.ts`.
+- Run drift guard: `src/utils/interactive-ready-drift.test.ts` (scoped-render contracts for hist params, Host/Type busy, plots-on-pk, AdminMonitor keepPrevious).
 
 ## Overlap
 
 - [`design-focused-spa-ux.mdc`](design-focused-spa-ux.mdc) — labels, Bokeh loading vs unavailable, job-list pagination.
-- [`frontend-stack-wiring-contract.mdc`](frontend-stack-wiring-contract.mdc) — view → hook → API map and hook test layer.
+- [`frontend-stack-wiring-contract.mdc`](frontend-stack-wiring-contract.mdc) — view → hook → API map and hook test layer; URL scoped updates apply to every refetching view in the map.
 - [`wcag-aa-mobile-web.mdc`](wcag-aa-mobile-web.mdc) — keyboard reachability; focus trap scope.
 - [`job-plot-artifacts-caching.mdc`](job-plot-artifacts-caching.mdc) — Bokeh defer policy on list/dashboard surfaces.

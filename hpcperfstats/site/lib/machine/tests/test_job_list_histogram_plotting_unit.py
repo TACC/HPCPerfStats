@@ -57,6 +57,31 @@ def test_histogram_queryset_for_plotting_returns_full_queryset():
     assert histogram_sampled is False
 
 
+def test_build_histogram_queryset_orders_by_jid_not_user_order_by():
+    """Presentation order_by must not drive histogram plot materialization."""
+    from hpcperfstats.site.lib.machine.api import _build_histogram_queryset
+
+    factory = RequestFactory()
+    request = factory.get(
+        "/api/jobs/histograms/batch/",
+        {"order_by": "-metrics_distinct_time_count", "end_time__date": "2024-01-15"},
+    )
+    mock_qs = MagicMock()
+    ordered = MagicMock()
+    mock_qs.order_by.return_value = ordered
+    ordered.count.return_value = 3
+
+    with patch(
+        "hpcperfstats.site.lib.machine.api._build_job_list_queryset_from_request",
+        return_value=(mock_qs, {"order_by": "-metrics_distinct_time_count"}, {}, "-metrics_distinct_time_count"),
+    ):
+        job_list_qs, nj, _fields, _cur = _build_histogram_queryset(request)
+
+    mock_qs.order_by.assert_called_with("jid")
+    assert job_list_qs is ordered
+    assert nj == 3
+
+
 def test_job_list_histograms_batch_uses_full_nj_when_large():
     from hpcperfstats.site.lib.machine.api import job_list_histograms_batch
 

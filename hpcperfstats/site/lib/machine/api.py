@@ -1636,7 +1636,7 @@ def _build_histogram_queryset(request):
     Build the base queryset and metric filters for histogram endpoints.
 
     Returns (job_list_qs, nj, fields, cur_metrics) where:
-    - job_list_qs: filtered and ordered queryset
+    - job_list_qs: filtered queryset ordered by jid (presentation order_by ignored)
     - nj: count of jobs in queryset
     - fields: normalized/expanded query params dict
     - cur_metrics: dict of metric_name__op -> value (from query params)
@@ -1647,6 +1647,8 @@ def _build_histogram_queryset(request):
             extra_excluded_fields=_JOB_LIST_QUERY_FIELD_EXCLUDES_HISTOGRAM,
             annotate_all=True,
         )
+        # Histogram bins are order-invariant; skip user order_by (expensive metric sorts).
+        job_list_qs = job_list_qs.order_by("jid")
         nj = job_list_qs.count()
         return job_list_qs, nj, fields, cur_metrics
     except Exception:

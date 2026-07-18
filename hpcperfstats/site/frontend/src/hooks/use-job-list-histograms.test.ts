@@ -321,7 +321,7 @@ describe("useJobListHistograms", () => {
     });
   });
 
-  it("clears prior histogram entries when filter params change before debounce", async () => {
+  it("keeps prior histogram entries while filter params change before debounce", async () => {
     vi.mocked(jobsHistogramsBatchRetrieve).mockResolvedValue(mockBatchResponse());
 
     const { result, rerender } = renderHook(
@@ -334,12 +334,33 @@ describe("useJobListHistograms", () => {
     await waitFor(() => {
       expect(result.current.histograms?.length).toBeGreaterThan(0);
     });
+    const prior = result.current.histograms;
 
     rerender({ params: { ...STABLE_PARAMS, queue: "normal" } });
 
-    expect(result.current.histograms).toBeNull();
+    expect(result.current.histograms).toBe(prior);
     expect(result.current.histogramsUpdating).toBe(true);
     expect(result.current.metricHistStatus.runtime.loading).toBe(true);
+  });
+
+  it("does not refetch when only presentation keys change (caller strips them)", async () => {
+    vi.mocked(jobsHistogramsBatchRetrieve).mockResolvedValue(mockBatchResponse());
+
+    const filterOnly = { end_time__date: "2024-01-15", queue: "normal" };
+    const { rerender } = renderHook(
+      ({ params }) => useJobListHistograms(params, 0, true),
+      { initialProps: { params: filterOnly } },
+    );
+
+    await advanceDebounce();
+    await waitFor(() => {
+      expect(jobsHistogramsBatchRetrieve).toHaveBeenCalledTimes(1);
+    });
+
+    // Same filter identity — page/order_by must not be in hist params.
+    rerender({ params: { ...filterOnly } });
+    await advanceDebounce();
+    expect(jobsHistogramsBatchRetrieve).toHaveBeenCalledTimes(1);
   });
 
   it("sets histogramsUpdating immediately when params change", async () => {

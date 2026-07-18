@@ -5,6 +5,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { filterIdentitySearchParamsKey } from "@/utils/filter-identity-params";
 
 type FilterMultiComboboxProps = {
   id: string;
@@ -34,11 +35,15 @@ export default function FilterMultiCombobox({
   const [query, setQuery] = useState("");
   const searchParams = useSearchParams();
   const searchParamsKey = searchParams.toString();
+  const filterIdentityKey = useMemo(
+    () => filterIdentitySearchParamsKey(new URLSearchParams(searchParamsKey)),
+    [searchParamsKey],
+  );
 
   useEffect(() => {
     setOpen(false);
     setQuery("");
-  }, [searchParamsKey]);
+  }, [filterIdentityKey]);
 
   useEffect(() => {
     if (!panelOpen) {

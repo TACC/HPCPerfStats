@@ -1,3 +1,5 @@
+import { stripPresentationParams } from "./filter-identity-params";
+
 /** Merge query-string params with JobList route params (path segments). */
 export function buildJobListApiParams(
   searchParams: URLSearchParams,
@@ -23,4 +25,15 @@ export function buildJobListApiParams(
   if (queue) params.queue = queue;
   if (host) params.host = host;
   return params;
+}
+
+/**
+ * Filter-identity params for histogram batch — omit page/order_by/tab chrome
+ * so sort/pagination does not refetch or clear distributions.
+ */
+export function buildJobListHistogramApiParams(
+  searchParams: URLSearchParams,
+  routeParams: Record<string, string | string[] | undefined>,
+): Record<string, string> {
+  return stripPresentationParams(buildJobListApiParams(searchParams, routeParams));
 }

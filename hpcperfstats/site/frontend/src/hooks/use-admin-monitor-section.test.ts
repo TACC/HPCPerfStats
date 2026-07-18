@@ -32,6 +32,7 @@ describe("useAdminMonitorSectionQuery", () => {
         query: expect.objectContaining({
           enabled: true,
           queryKey: ["adminMonitor", "hosts", 0],
+          placeholderData: expect.anything(),
         }),
       }),
     );

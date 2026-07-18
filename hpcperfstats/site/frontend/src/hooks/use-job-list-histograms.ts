@@ -99,10 +99,16 @@ export function useJobListHistograms(
       return;
     }
 
-    setHistograms(null);
-    setMetricHistStatus(createInitialMetricStatus(true));
+    // Keep previous embeds visible while filter-identity refetch runs (sort/page
+    // must not reach this effect — callers pass stripPresentationParams keys).
+    setMetricHistStatus((prev) => {
+      const next = createInitialMetricStatus(true);
+      for (const metric of JOB_LIST_HISTOGRAM_METRICS) {
+        if (prev[metric]?.error) next[metric] = { loading: true, error: null };
+      }
+      return next;
+    });
     setBatchError(null);
-    setSampleMeta(NO_JOBS_META);
     setHistogramsUpdating(true);
 
     const controller = new AbortController();
@@ -183,7 +189,7 @@ export function useJobListHistograms(
         console.warn("Failed to load job list histogram batch:", err);
         setMetricHistStatus(metricStatusFromBatchError(message));
         setBatchError(message);
-        setHistograms(null);
+        // Keep prior histograms on transient failure so enlarge/Close stay mounted.
         setSampleMeta(NO_JOBS_META);
         setHistogramsUpdating(false);
       }

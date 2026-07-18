@@ -1,6 +1,7 @@
+import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { buildHostPlotParamsFromSearch } from "../views/HostDetail";
 
 const SRC_ROOT = join(import.meta.dirname, "..");
 
@@ -53,5 +54,63 @@ describe("interactive-ready drift guard", () => {
       "utf8",
     );
     expect(trapTest).toMatch(/outside|does not preventDefault Tab when focus is outside/i);
+  });
+
+  it("JobList histograms use filter-identity params (no order_by/page)", () => {
+    const jobList = readFileSync(join(SRC_ROOT, "views/JobList.tsx"), "utf8");
+    expect(jobList).toMatch(/buildJobListHistogramApiParams/);
+    expect(jobList).toMatch(/useJobListHistograms\(\s*histogramApiParams/);
+  });
+
+  it("HostDetail and TypeDetail use detailBusy (not bare loading blank on refetch)", () => {
+    const host = readFileSync(join(SRC_ROOT, "views/HostDetail.tsx"), "utf8");
+    const type = readFileSync(join(SRC_ROOT, "views/TypeDetail.tsx"), "utf8");
+    expect(host).toMatch(/detailBusy/);
+    expect(type).toMatch(/detailBusy/);
+    const hostHook = readFileSync(join(SRC_ROOT, "hooks/use-host-plot.ts"), "utf8");
+    const typeHook = readFileSync(join(SRC_ROOT, "hooks/use-type-detail.ts"), "utf8");
+    expect(hostHook).toMatch(/keepPreviousData/);
+    expect(typeHook).toMatch(/keepPreviousData/);
+  });
+
+  it("use-job-plots clears on pk change via prevPkRef (not enabled alone)", () => {
+    const plots = readFileSync(join(SRC_ROOT, "hooks/use-job-plots.ts"), "utf8");
+    expect(plots).toMatch(/prevPkRef/);
+    expect(plots).toMatch(/pkChanged/);
+  });
+
+  it("AdminMonitor section hook uses keepPreviousData", () => {
+    const hook = readFileSync(
+      join(SRC_ROOT, "hooks/use-admin-monitor-section.ts"),
+      "utf8",
+    );
+    expect(hook).toMatch(/keepPreviousData/);
+  });
+
+  it("HistogramThumbnails and FilterMultiCombobox reset on filter identity", () => {
+    const thumbs = readFileSync(
+      join(SRC_ROOT, "components/HistogramThumbnails.tsx"),
+      "utf8",
+    );
+    const combo = readFileSync(
+      join(SRC_ROOT, "components/FilterMultiCombobox.tsx"),
+      "utf8",
+    );
+    expect(thumbs).toMatch(/filterIdentitySearchParamsKey/);
+    expect(combo).toMatch(/filterIdentitySearchParamsKey/);
+  });
+});
+
+describe("buildHostPlotParamsFromSearch", () => {
+  it("ignores unrelated query keys for plot identity", () => {
+    const a = buildHostPlotParamsFromSearch(
+      "n1",
+      "end_time__gte=2024-01-01T00:00:00&end_time__lte=now()&order_by=-end_time",
+    );
+    const b = buildHostPlotParamsFromSearch(
+      "n1",
+      "end_time__gte=2024-01-01T00:00:00&end_time__lte=now()&foo=bar",
+    );
+    expect(a).toEqual(b);
   });
 });

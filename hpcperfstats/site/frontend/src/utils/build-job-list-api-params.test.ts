@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildJobListApiParams } from "./build-job-list-api-params";
+import {
+  buildJobListApiParams,
+  buildJobListHistogramApiParams,
+} from "./build-job-list-api-params";
 
 describe("buildJobListApiParams", () => {
   it("merges route filters over query entries", () => {
@@ -35,5 +38,22 @@ describe("buildJobListApiParams", () => {
     const params = buildJobListApiParams(sp, {});
     expect(params.queue).toBe("debug");
     expect(params.page).toBe("3");
+  });
+});
+
+describe("buildJobListHistogramApiParams", () => {
+  it("strips page and order_by while keeping filter identity", () => {
+    const sp = new URLSearchParams(
+      "page=2&order_by=-runtime&queue=normal&end_time__date=2024-01-15&view=charts",
+    );
+    const params = buildJobListHistogramApiParams(sp, { username: "alice" });
+    expect(params).toEqual({
+      queue: "normal",
+      end_time__date: "2024-01-15",
+      username: "alice",
+    });
+    expect(params.page).toBeUndefined();
+    expect(params.order_by).toBeUndefined();
+    expect(params.view).toBeUndefined();
   });
 });

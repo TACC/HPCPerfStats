@@ -18,6 +18,7 @@ export function useJobPlotsQuery(pk: string, enabled: boolean) {
   const [plotsFetchFailed, setPlotsFetchFailed] = useState(false);
   const plotsFetchGenRef = useRef(0);
   const plotsRetryCancelRef = useRef<(() => void) | null>(null);
+  const prevPkRef = useRef<string>("");
 
   const fetchAllJobPlotsWithPolling = useCallback(
     async (cancelledCheck: () => boolean): Promise<void> => {
@@ -92,15 +93,34 @@ export function useJobPlotsQuery(pk: string, enabled: boolean) {
   }, [fetchAllJobPlotsWithPolling]);
 
   useEffect(() => {
-    if (!pk || !enabled) return;
+    if (!pk) {
+      setPlots(null);
+      setPlotsLoading(false);
+      setPlotsFetchFailed(false);
+      prevPkRef.current = "";
+      plotsRetryCancelRef.current?.();
+      plotsRetryCancelRef.current = null;
+      return;
+    }
+
+    if (!enabled) {
+      plotsRetryCancelRef.current?.();
+      plotsRetryCancelRef.current = null;
+      return;
+    }
+
+    const pkChanged = prevPkRef.current !== pk;
+    prevPkRef.current = pk;
 
     let cancelled = false;
     const cancelledCheck = (): boolean => cancelled;
 
-    setPlots(null);
-    setPlotsLoading(true);
-    setPlotsFetchFailed(false);
-    setPlots(createEmptyJobPlotsState(true));
+    if (pkChanged) {
+      setPlots(createEmptyJobPlotsState(true));
+      setPlotsLoading(true);
+      setPlotsFetchFailed(false);
+    }
+
     void fetchAllJobPlotsWithPolling(cancelledCheck);
 
     return () => {

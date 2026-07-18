@@ -13,26 +13,44 @@ import { useStableSearchParamsKey } from "../hooks/use-stable-search-params";
 import { buildAsyncPageTitle } from "../utils/async-page-title";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 import { useHostPlotQuery } from "@/hooks/use-host-plot";
+import { cn } from "@/lib/utils";
+
+/** Host plot identity: host + end_time range only (ignore unrelated QS). */
+export function buildHostPlotParamsFromSearch(
+  host: string,
+  searchParamsKey: string,
+): { host: string; end_time__gte: string; end_time__lte: string } | null {
+  if (!host) return null;
+  const params = new URLSearchParams(searchParamsKey);
+  let end_time__gte = params.get("end_time__gte") || "";
+  const end_time__lte = params.get("end_time__lte") || "now()";
+  if (!end_time__gte) {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    end_time__gte = d.toISOString().slice(0, 19);
+  }
+  return { host, end_time__gte, end_time__lte };
+}
+
+function hostPlotIdentityKey(host: string, searchParamsKey: string): string {
+  const params = new URLSearchParams(searchParamsKey);
+  return `${host}|${params.get("end_time__gte") || ""}|${params.get("end_time__lte") || ""}`;
+}
 
 export default function HostDetail() {
   const { flatParams } = useMachineRouteParams();
   const host = flatParams.host ?? "";
   const searchParamsKey = useStableSearchParamsKey();
+  const identityKey = hostPlotIdentityKey(host, searchParamsKey);
 
-  const plotParams = useMemo(() => {
-    if (!host) return null;
-    const params = new URLSearchParams(searchParamsKey);
-    let end_time__gte = params.get("end_time__gte") || "";
-    const end_time__lte = params.get("end_time__lte") || "now()";
-    if (!end_time__gte) {
-      const d = new Date();
-      d.setDate(d.getDate() - 1);
-      end_time__gte = d.toISOString().slice(0, 19);
-    }
-    return { host, end_time__gte, end_time__lte };
-  }, [host, searchParamsKey]);
+  const plotParams = useMemo(
+    () => buildHostPlotParamsFromSearch(host, searchParamsKey),
+    // identityKey encodes host + end_time only
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- scoped identity
+    [identityKey],
+  );
 
-  const { data, error, loading } = useHostPlotQuery(plotParams);
+  const { data, error, loading, detailBusy } = useHostPlotQuery(plotParams);
 
   useDocumentTitle(
     buildAsyncPageTitle({
@@ -46,7 +64,7 @@ export default function HostDetail() {
   );
 
   if (loading) return <LoadingMessage message="Loading host plot…" />;
-  if (error) return <BannerErrorMessage message={error} />;
+  if (error && !data) return <BannerErrorMessage message={error} />;
   if (!data) return null;
 
   const hostName = String(data.host ?? host);
@@ -57,7 +75,15 @@ export default function HostDetail() {
       : null;
 
   return (
-    <>
+    <div className={cn(detailBusy && "opacity-55")} aria-busy={detailBusy}>
+      {detailBusy ? (
+        <p className="mb-2 text-sm text-muted-foreground" role="status">
+          Updating host plot…
+        </p>
+      ) : null}
+      {error ? (
+        <BannerErrorMessage variant="inline" className="mb-3" message={error} />
+      ) : null}
       <PageBreadcrumbs
         items={[
           { label: "Browse", to: "/machine/" },
@@ -86,6 +112,6 @@ export default function HostDetail() {
           unavailableReason={plot_unavailable_reason}
         />
       </div>
-    </>
+    </div>
   );
 }

@@ -2,6 +2,7 @@ import { useAdminMonitorRetrieve } from "@/api/generated/admin/admin";
 import { getErrorMessage } from "@/api/get-error-message";
 import { selectOrvalData } from "@/api/orval-response";
 import type { AdminMonitorSectionResponse } from "@/types/view-models";
+import { keepPreviousData } from "@tanstack/react-query";
 
 export type UseAdminMonitorSectionQueryOptions<T> = {
   section: string;
@@ -27,13 +28,14 @@ export function useAdminMonitorSectionQuery<T>({
         enabled,
         queryKey: ["adminMonitor", section, refreshSeq],
         select: selectOrvalData,
+        placeholderData: keepPreviousData,
       },
     },
   );
 
   const picked = data ? pickResponse(data as unknown as AdminMonitorSectionResponse) : null;
   const initialLoading = enabled && isLoading && picked == null;
-  const sectionBusy = enabled && isFetching && !isLoading;
+  const sectionBusy = enabled && isFetching && !isLoading && picked != null;
 
   return {
     data: picked,
