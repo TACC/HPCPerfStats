@@ -17,9 +17,23 @@ services:
 
   redis:
     image: redis:8.8.0-alpine3.23
-    command: ["redis-server", "--appendonly", "no", "--maxmemory", "8gb", "--maxmemory-policy", "allkeys-lru"]
+    command:
+      - redis-server
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - 16gb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --io-threads
+      - "4"
+      - --io-threads-do-reads
+      - "yes"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+        - CMD
+        - redis-cli
+        - ping
       interval: 5s
       timeout: 3s
       retries: 10
@@ -40,7 +54,9 @@ services:
     healthcheck:
       # Only validate that nginx is accepting TCP connections.
       # TLS may not be ready yet (certs), and some routes may return 4xx.
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 80 || exit 1"]
+      test:
+        - CMD-SHELL
+        - nc -z 127.0.0.1 80 || exit 1
       interval: 5s
       timeout: 3s
       retries: 10
@@ -117,10 +133,8 @@ services:
     restart: always
     healthcheck:
       test:
-        [
-          "CMD-SHELL",
-          "pg_isready -U hpcperfstats -h 127.0.0.1 -p 5432",
-        ]
+        - CMD-SHELL
+        - pg_isready -U hpcperfstats -h 127.0.0.1 -p 5432
       interval: 5s
       timeout: 3s
       retries: 10
@@ -144,7 +158,9 @@ services:
       - RABBITMQ_DEFAULT_PASS=guest
     healthcheck:
       # `rabbitmq-diagnostics ping` returns non-zero if the node is not ready.
-      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping || exit 1"]
+      test:
+        - CMD-SHELL
+        - rabbitmq-diagnostics -q ping || exit 1
       interval: 5s
       timeout: 3s
       retries: 10

@@ -19,6 +19,31 @@ def test_docker_compose_has_healthchecks_for_core_services():
   assert "rabbitmq-diagnostics" in content
 
 
+def test_docker_compose_commands_and_healthchecks_use_yaml_list_form():
+  """Regression: keep argv/healthcheck tests as YAML block lists, not flow [...]."""
+  repo_root = Path(__file__).resolve().parents[2]
+  compose_path = repo_root / "docker-compose.yaml"
+  content = compose_path.read_text()
+
+  assert "command: [" not in content
+  assert "test:\n        [" not in content
+  assert 'test: ["' not in content
+  assert "command:\n      - redis-server\n" in content
+  assert "      - --maxmemory\n      - 16gb\n" in content
+  assert "      - --io-threads\n      - \"4\"\n" in content
+  assert "test:\n        - CMD\n        - redis-cli\n        - ping\n" in content
+  assert "test:\n        - CMD-SHELL\n        - nc -z 127.0.0.1 80 || exit 1\n" in content
+  assert (
+      "test:\n        - CMD-SHELL\n"
+      "        - rabbitmq-diagnostics -q ping || exit 1\n"
+  ) in content
+  assert (
+      "test:\n        - CMD-SHELL\n"
+      "        - pg_isready -U hpcperfstats -h 127.0.0.1 -p 5432\n"
+  ) in content
+  assert "command:\n      - -c\n      - max_connections=500\n" in content
+
+
 def test_docker_compose_rabbitmq_defaults_to_guest_credentials():
   repo_root = Path(__file__).resolve().parents[2]
   compose_path = repo_root / "docker-compose.yaml"
