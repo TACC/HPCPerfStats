@@ -2813,6 +2813,50 @@ def test_janitor_tick_defers_day_close_execution_before_ingest_gate_cleared(
   )
 
 
+def test_janitor_discover_deferred_until_snapshot_ready(tmp_path, monkeypatch):
+  """Discover skipped while get_day_close_allowed is False after gate clear."""
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2020-01-12.tar"))
+  open(tar_path, "wb").close()
+  log_lines = []
+  discover_calls = []
+
+  def capture_log(msg, flush=False):
+    del flush
+    log_lines.append(str(msg))
+
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      log_fn=capture_log,
+      get_startup_ingest_gate_cleared=lambda: True,
+      get_day_close_allowed=lambda: False,
+      get_day_close_candidate_inputs=lambda: {
+          "inflight_paths": set(),
+          "pending_append_by_daily_tar": {},
+          "in_flight_archive_tars": set(),
+          "pending_archive_task_tars": set(),
+          "unmapped_closed_raw_tars": set(),
+          "unprocessed_by_tar": {},
+      },
+  )
+  monkeypatch.setattr(janitor, "get_ingest_pool_in_flight_count", lambda: 0)
+  monkeypatch.setattr(janitor, "get_chunk_in_progress", lambda: False)
+  monkeypatch.setattr(
+      janitor,
+      "_discover_and_enqueue_ready_day_close",
+      lambda **_k: discover_calls.append(1),
+  )
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor,
+      "_run_tick_lock_cleanup",
+      lambda self: 0,
+  )
+  janitor._run_tick_body()
+  assert discover_calls == []
+  assert any("day_close_not_allowed" in line for line in log_lines)
+
+
 def test_no_async_day_close_worker_submit_on_discover(tmp_path, monkeypatch):
   """Discover enqueues debt only; does not start day-close pool workers."""
   daily_dir = tmp_path / "daily"

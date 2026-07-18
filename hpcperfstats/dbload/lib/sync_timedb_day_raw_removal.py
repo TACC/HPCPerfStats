@@ -144,6 +144,7 @@ class _DayRawRemovalState:
       get_maintenance_snapshot: Optional[Callable[[], Any]] = None,
       get_ingest_active_skip_paths: Optional[Callable[[], Set[str]]] = None,
       classify_quarantine_skip_path: Optional[Callable[[str], str]] = None,
+      get_allow_day_scoped_closed_raw: Optional[Callable[[], bool]] = None,
   ):
     self.tar_path = os.path.normpath(tar_path)
     self.archive_data_dir = archive_data_dir
@@ -155,6 +156,9 @@ class _DayRawRemovalState:
     self.get_maintenance_snapshot = get_maintenance_snapshot
     self.get_ingest_active_skip_paths = get_ingest_active_skip_paths
     self.classify_quarantine_skip_path = classify_quarantine_skip_path
+    self.get_allow_day_scoped_closed_raw = (
+        get_allow_day_scoped_closed_raw or (lambda: True)
+    )
     day_date = calendar_date_from_daily_tar_path(self.tar_path)
     if day_date is None:
       raise ValueError("invalid daily tar path: %s" % tar_path)
@@ -272,12 +276,16 @@ class _DayRawRemovalState:
     # MainThread handoff/exclude must never fall through to a full-tree
     # build_archive_maintenance_snapshot (hour-scale head metadata). Prefer the
     # published accrual/coordinator snapshot; otherwise day-scoped collect.
+    # Pre-ingest (CLI current/date-range): skip day-scoped census — manifest-only.
+    snap = self._resolve_maintenance_snapshot()
+    if snap is None and not self.get_allow_day_scoped_closed_raw():
+      return {}
     return build_remaining_raw_for_daily_tar(
         self.archive_data_dir,
         self.host_name_ext,
         self.tgz_archive_dir,
         self.tar_path,
-        maintenance_snapshot=self._resolve_maintenance_snapshot(),
+        maintenance_snapshot=snap,
         allow_full_snapshot=False,
         log_fn=self.log_fn,
     )
@@ -787,6 +795,9 @@ class _DayRawRemovalState:
   def handoff_paths_for_ingest(self) -> List[str]:
     """Closed raw on disk whose manifest entry is missing or retryable."""
     if self.delete_phase_done():
+      return self._manifest_retryable_paths_on_disk()
+    # Pre-ingest: no day-scoped census — known manifest retryables only.
+    if not self.get_allow_day_scoped_closed_raw():
       return self._manifest_retryable_paths_on_disk()
     with self._lock:
       entries = dict(self._manifest.get("entries", {}))
@@ -1603,6 +1614,7 @@ class DayRawRemovalCoordinator:
     self.on_pipeline_complete = on_pipeline_complete
     self.on_handoff_to_ingest = on_handoff_to_ingest
     self.get_maintenance_snapshot = get_maintenance_snapshot
+    self.get_allow_day_scoped_closed_raw = lambda: True
     self.enabled = True
     self._days: Dict[str, _DayRawRemovalState] = {}
     self._days_lock = threading.Lock()
@@ -1634,6 +1646,7 @@ class DayRawRemovalCoordinator:
           get_maintenance_snapshot=self.get_maintenance_snapshot,
           get_ingest_active_skip_paths=self.get_ingest_active_skip_paths,
           classify_quarantine_skip_path=self.classify_quarantine_skip_path,
+          get_allow_day_scoped_closed_raw=self.get_allow_day_scoped_closed_raw,
       )
       self._days[tar_norm] = state
       return state

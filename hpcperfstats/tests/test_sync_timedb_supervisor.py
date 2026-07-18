@@ -3841,6 +3841,7 @@ def test_chunk_10_immediate_check_after_boundary_finalize(monkeypatch, tmp_path)
         shutdown_requested[0] = False
 
 def test_immediate_day_close_on_idle_finalize_without_chunk(monkeypatch, tmp_path):
+    """Empty pending before ingest_going must not idle_finalize day-close."""
     shutdown_requested[0] = False
     immediate_reasons = []
     try:
@@ -3854,7 +3855,184 @@ def test_immediate_day_close_on_idle_finalize_without_chunk(monkeypatch, tmp_pat
             return []
         monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
         st.run_sync_timedb_supervisor_loop(str(archive_dir), datetime(2019, 1, 1), None, '.hpc', object(), _FakeArchivePool(), run_once=True)
-        assert 'day_ingest_complete:idle_finalize' in immediate_reasons
+        assert 'day_ingest_complete:idle_finalize' not in immediate_reasons
+    finally:
+        shutdown_requested[0] = False
+
+
+def test_current_empty_pending_rescans_before_idle_finalize(monkeypatch, tmp_path, capsys):
+    """Empty path: cheap rescan first; idle_finalize deferred until snapshot ready."""
+    shutdown_requested[0] = False
+    immediate_reasons = []
+    rescan_order = []
+    try:
+        archive_dir, daily_dir = _supervisor_two_day_ingest_patches(
+            monkeypatch,
+            tmp_path,
+            paths=[],
+            immediate_spy=lambda _tar, reason: immediate_reasons.append(reason),
+        )
+        tar_day1 = os.path.normpath(os.path.join(daily_dir, '2020-01-01.tar'))
+        open(tar_day1, 'wb').close()
+        _patch_days_ingest_complete(monkeypatch, lambda _unprocessed, **kwargs: [tar_day1])
+
+        def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
+            rescan_order.append('rescan')
+            if len(rescan_order) >= 2:
+                shutdown_requested[0] = True
+            return []
+
+        monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
+        st.run_sync_timedb_supervisor_loop(
+            str(archive_dir),
+            'current',
+            None,
+            '.hpc',
+            object(),
+            _FakeArchivePool(),
+            run_once=True,
+        )
+        out = capsys.readouterr().out
+        assert rescan_order
+        assert 'day_ingest_complete:idle_finalize' not in immediate_reasons
+        assert 'idle_finalize deferred' in out or 'awaiting_ingest_or_startup_snapshot' in out
+    finally:
+        shutdown_requested[0] = False
+
+
+def test_current_async_snapshot_after_ingest_going(monkeypatch, tmp_path, capsys):
+    """First chunk sets ingest_going; snapshot builds async; second chunk while building."""
+    shutdown_requested[0] = False
+    from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+    import threading
+    import time as time_mod
+
+    build_started = threading.Event()
+    release_build = threading.Event()
+    build_calls = []
+    chunk_dispatches = []
+
+    try:
+        path1 = '/fake/stats/1000'
+        path2 = '/fake/stats/2000'
+        archive_dir, _daily_dir = _supervisor_two_day_ingest_patches(
+            monkeypatch, tmp_path, paths=[path1, path2],
+        )
+        monkeypatch.setattr(st.cfg, 'get_sync_ingest_chunk_size', lambda: 1)
+
+        def slow_build(*_a, **_k):
+            build_calls.append(1)
+            build_started.set()
+            release_build.wait(timeout=5.0)
+            return ArchiveMaintenanceSnapshot(
+                closed_paths=[],
+                remaining_raw_by_gz={},
+            )
+
+        monkeypatch.setattr(
+            'hpcperfstats.dbload.lib.sync_timedb_archive_maint.build_archive_maintenance_snapshot',
+            slow_build,
+        )
+
+        rescan_n = {'n': 0}
+
+        def fake_rescan(*_a, **_k):
+            rescan_n['n'] += 1
+            if rescan_n['n'] == 1:
+                return [path1, path2]
+            return []
+
+        def fake_add(_lock, path, **_k):
+            chunk_dispatches.append(path)
+            if len(chunk_dispatches) == 1:
+                assert build_started.wait(timeout=2.0), 'snapshot build should start after first chunk'
+            if len(chunk_dispatches) >= 2:
+                release_build.set()
+                shutdown_requested[0] = True
+            return (path, True, True, 0.0)
+
+        monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
+        monkeypatch.setattr(st, 'add_stats_file_to_db', fake_add)
+        monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
+
+        st.run_sync_timedb_supervisor_loop(
+            str(archive_dir),
+            'current',
+            None,
+            '.hpc',
+            object(),
+            _FakeArchivePool(),
+            run_once=True,
+        )
+        # Allow snapshot thread to finish publish after release.
+        deadline = time_mod.time() + 3.0
+        while time_mod.time() < deadline and len(build_calls) < 1:
+            time_mod.sleep(0.05)
+        release_build.set()
+        time_mod.sleep(0.2)
+        out = capsys.readouterr().out
+        assert 'ingest_going=yes' in out
+        assert 'post-ingest startup archive scan' in out
+        assert len(chunk_dispatches) >= 2
+        assert len(build_calls) >= 1
+    finally:
+        release_build.set()
+        shutdown_requested[0] = False
+
+
+def test_immediate_day_close_after_ingest_and_snapshot(monkeypatch, tmp_path):
+    """After ingest_going + snapshot publish, idle/chunk day-close may enqueue."""
+    shutdown_requested[0] = False
+    immediate_reasons = []
+    from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+
+    try:
+        path1 = '/fake/stats/1000'
+        archive_dir, daily_dir = _supervisor_two_day_ingest_patches(
+            monkeypatch,
+            tmp_path,
+            paths=[path1],
+            immediate_spy=lambda _tar, reason: immediate_reasons.append(reason),
+        )
+        tar_day1 = os.path.normpath(os.path.join(daily_dir, '2020-01-01.tar'))
+        open(tar_day1, 'wb').close()
+        _patch_days_ingest_complete(monkeypatch, lambda _unprocessed, **kwargs: [tar_day1])
+        monkeypatch.setattr(
+            'hpcperfstats.dbload.lib.sync_timedb_archive_maint.build_archive_maintenance_snapshot',
+            lambda *_a, **_k: ArchiveMaintenanceSnapshot(
+                closed_paths=[], remaining_raw_by_gz={},
+            ),
+        )
+        rescan_n = {'n': 0}
+
+        def fake_rescan(*_a, **_k):
+            rescan_n['n'] += 1
+            if rescan_n['n'] == 1:
+                return [path1]
+            shutdown_requested[0] = True
+            return []
+
+        monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
+        monkeypatch.setattr(st, 'add_stats_file_to_db', lambda *_a, **_k: (_a[1], True, True, 0.0))
+        monkeypatch.setattr(st, '_sync_timedb_ingest_inline_requested', lambda: True)
+        monkeypatch.setattr(st.cfg, 'get_sync_ingest_chunk_size', lambda: 1)
+        st.run_sync_timedb_supervisor_loop(
+            str(archive_dir),
+            datetime(2019, 1, 1),
+            None,
+            '.hpc',
+            object(),
+            _FakeArchivePool(),
+            run_once=True,
+        )
+        # Snapshot publish is async; allow a brief wait then assert chunk_end and/or idle.
+        import time as time_mod
+        deadline = time_mod.time() + 3.0
+        while time_mod.time() < deadline and not immediate_reasons:
+            time_mod.sleep(0.05)
+        assert any(
+            r.startswith('day_ingest_complete:') for r in immediate_reasons
+        ), immediate_reasons
     finally:
         shutdown_requested[0] = False
 

@@ -4674,6 +4674,11 @@ def run_sync_timedb_supervisor_loop(
   day_close_enabled = startdate != "backlog"
   newest_first = startdate == "current"
   proximity_days = int(cfg.get_sync_ingest_current_proximity_days())
+  # Ingest-first day-close gate (CLI current/date-range): day-close discover /
+  # idle_finalize wait until first non-empty chunk + post-ingest snapshot publish.
+  ingest_going = False
+  startup_snapshot_ready = bool(run_startup_maintenance)
+  post_ingest_snapshot_kicked = False
 
   def _day_chunk_gate_prefix():
     return "youngest_day_chunk_gate" if newest_first else "oldest_day_chunk_gate"
@@ -5155,8 +5160,19 @@ def run_sync_timedb_supervisor_loop(
             flush=True,
         )
 
+  def _get_day_close_allowed():
+    return bool(day_close_enabled and ingest_going and startup_snapshot_ready)
+
+  def _get_allow_day_scoped_closed_raw():
+    # Backlog has blocking startup snapshot; current/date-range wait for ingest.
+    if run_startup_maintenance:
+      return True
+    return bool(ingest_going)
+
   def _maybe_enqueue_immediate_day_close(*, context: str):
     if not day_close_enabled:
+      return
+    if not _get_day_close_allowed():
       return
     if not tgz_archive_dir:
       return
@@ -6463,6 +6479,7 @@ def run_sync_timedb_supervisor_loop(
     return startup_archive_scan.get_snapshot()
 
   day_raw_removal.get_maintenance_snapshot = _get_maintenance_snapshot_for_day_raw
+  day_raw_removal.get_allow_day_scoped_closed_raw = _get_allow_day_scoped_closed_raw
 
   def _rescan_pending_with_progress(*, idle_refill=False, processed_exclude=None):
     rescan_t0 = time.time()
@@ -6519,6 +6536,12 @@ def run_sync_timedb_supervisor_loop(
       enabled=True,
   )
   pending_rescan_future = None
+  post_ingest_snapshot_executor = SessionSingleFlightExecutor(
+      thread_name_prefix="sync-timedb-startup-snapshot",
+      process_title=SYNC_TIMEDB_PROCESS_TITLE,
+      thread_role="startup-snapshot",
+      enabled=not run_startup_maintenance,
+  )
 
   def _pending_rescan_in_flight():
     return (
@@ -6651,6 +6674,7 @@ def run_sync_timedb_supervisor_loop(
       get_chunk_in_progress=_get_chunk_in_progress,
       get_chunk_day_tokens=_get_chunk_day_tokens,
       get_startup_ingest_gate_cleared=_get_startup_ingest_gate_cleared,
+      get_day_close_allowed=_get_day_close_allowed,
       process_title=SYNC_TIMEDB_PROCESS_TITLE,
       day_close_enabled=day_close_enabled,
   )
@@ -6767,6 +6791,71 @@ def run_sync_timedb_supervisor_loop(
   boot_handoffs_processed = False
   startup_ingest_gate_cleared = False
   startup_gate_cleared_logged = False
+
+  def _build_post_ingest_startup_snapshot():
+    """Full maintenance snapshot on dedicated thread after first ingest chunk."""
+    nonlocal startup_snapshot_ready
+    from hpcperfstats.dbload.lib.sync_timedb_archive_maint import (
+        build_archive_maintenance_snapshot,
+    )
+    try:
+      startup_archive_scan.begin_build()
+      log_print(
+          "sync_timedb: post-ingest startup archive scan begin",
+          flush=True,
+      )
+      snapshot = build_archive_maintenance_snapshot(
+          directory,
+          host_name_ext,
+          tgz_archive_dir,
+          build_ready_set=False,
+          log_fn=log_print,
+      )
+      startup_archive_scan.publish(snapshot)
+      published = startup_archive_scan.get_snapshot()
+      archive_janitor.adopt_published_startup_snapshot(published)
+      startup_archive_scan.mark_startup_heavy_maintenance_finished()
+      startup_snapshot_ready = True
+      archive_janitor.signal_work_available()
+      log_print(
+          "sync_timedb: post-ingest startup archive scan ready "
+          "closed_paths=%d"
+          % len((published.closed_paths if published else None) or ()),
+          flush=True,
+      )
+    except Exception as exc:
+      try:
+        startup_archive_scan.abort_build()
+      except Exception:
+        pass
+      log_print(
+          "ERROR: post-ingest startup archive scan failed err=%s" % exc,
+          flush=True,
+      )
+
+  def _note_ingest_going_and_kick_post_ingest_snapshot():
+    """First non-empty chunk: unlock day-scoped exclude; kick async snapshot."""
+    nonlocal ingest_going, post_ingest_snapshot_kicked, startup_snapshot_ready
+    if not ingest_going:
+      ingest_going = True
+      log_print(
+          "sync_timedb: ingest_going=yes (first non-empty chunk)",
+          flush=True,
+      )
+    if run_startup_maintenance:
+      startup_snapshot_ready = True
+      return
+    if post_ingest_snapshot_kicked:
+      return
+    if not post_ingest_snapshot_executor.is_active:
+      return
+    post_ingest_snapshot_kicked = True
+    startup_archive_scan.note_startup_maintenance_pending()
+    log_print(
+        "sync_timedb: kicking async post-ingest startup archive snapshot",
+        flush=True,
+    )
+    post_ingest_snapshot_executor.submit(_build_post_ingest_startup_snapshot)
 
   def _mark_startup_ingest_gate_cleared():
     nonlocal startup_ingest_gate_cleared
@@ -6981,12 +7070,16 @@ def run_sync_timedb_supervisor_loop(
         continue
       seen_tars.add(tar_norm)
       handoff_entries.append((tar_norm, paths, "boot_manifest_handoff"))
-    for tar_norm, paths in day_raw_removal.discover_closed_raw_on_disk_handoffs():
-      tar_norm = os.path.normpath(str(tar_norm or ""))
-      if not tar_norm or tar_norm in seen_tars:
-        continue
-      seen_tars.add(tar_norm)
-      handoff_entries.append((tar_norm, paths, "boot_closed_raw_handoff"))
+    # CLI current/date-range: skip discover_closed_raw_on_disk_handoffs until
+    # ingest_going (day-scoped census storm). Backlog keeps closed-raw discover
+    # (blocking startup snapshot + day-scoped allowed).
+    if run_startup_maintenance:
+      for tar_norm, paths in day_raw_removal.discover_closed_raw_on_disk_handoffs():
+        tar_norm = os.path.normpath(str(tar_norm or ""))
+        if not tar_norm or tar_norm in seen_tars:
+          continue
+        seen_tars.add(tar_norm)
+        handoff_entries.append((tar_norm, paths, "boot_closed_raw_handoff"))
     if not handoff_entries:
       return
     log_print(
@@ -7067,11 +7160,12 @@ def run_sync_timedb_supervisor_loop(
     else:
       log_print(
           "sync_timedb: startup maintenance skipped "
-          "(CLI 'backlog' only; 'current' and date-range begin ingest "
-          "without heavy startup snapshot)",
+          "(CLI 'backlog' only; 'current' and date-range begin ingest first, "
+          "then async full startup snapshot before day-close)",
           flush=True,
       )
-      startup_archive_scan.mark_startup_heavy_maintenance_finished()
+      # Do not mark_startup_heavy_maintenance_finished here — that waits for
+      # post-ingest async snapshot publish (ingest_going → snapshot ready).
       _mark_startup_ingest_gate_cleared()
 
     while not shutdown_requested[0]:
@@ -7108,10 +7202,9 @@ def run_sync_timedb_supervisor_loop(
           continue
         if idle_since_empty_queue is None:
           idle_since_empty_queue = time.time()
-        archive_janitor.signal_work_available()
+        # Ingest-first: cheap rescan before idle_finalize / day-close signal.
         _dispatch_due_archive_retries(allow_idle_stale=False)
         _finalize_archive_slots_if_needed(force=True, context="pre_rescan")
-        _maybe_enqueue_immediate_day_close(context="idle_finalize")
         processed_exclude = _rescan_processed_exclusions()
         discovered = _rescan_pending_with_progress(
             idle_refill=True,
@@ -7138,7 +7231,6 @@ def run_sync_timedb_supervisor_loop(
           chunk_counter = 0
           worker_idle_loops = 0
           continue
-        archive_janitor.signal_work_available()
         processed_exclude = _rescan_processed_exclusions()
         discovered = _rescan_pending_with_progress(
             idle_refill=True,
@@ -7169,7 +7261,17 @@ def run_sync_timedb_supervisor_loop(
           log_print("Worker idle loops while waiting for pending files: %d" % worker_idle_loops)
           log_print("No pending stats files after rescan", flush=True)
           _finalize_archive_slots_if_needed(force=True)
-          _maybe_enqueue_immediate_day_close(context="idle_finalize")
+          if _get_day_close_allowed():
+            archive_janitor.signal_work_available()
+            _maybe_enqueue_immediate_day_close(context="idle_finalize")
+          else:
+            log_print(
+                "sync_timedb: idle_finalize deferred "
+                "reason=awaiting_ingest_or_startup_snapshot "
+                "ingest_going=%s startup_snapshot_ready=%s"
+                % (ingest_going, startup_snapshot_ready),
+                flush=True,
+            )
           log_print(
               "Sleeping %s s before exiting sync_timedb"
               % EMPTY_QUEUE_RESCAN_SLEEP_SECONDS,
@@ -7498,6 +7600,8 @@ def run_sync_timedb_supervisor_loop(
             for p in stats_files_chunk
             if p
         }
+        if stats_files_chunk:
+          _note_ingest_going_and_kick_post_ingest_snapshot()
         chunk_in_progress = True
         reconcile_refs["chunk_day_tokens"] = set(
             build_chunk_day_histogram(stats_files_chunk, tgz_archive_dir).keys(),
@@ -7815,6 +7919,10 @@ def run_sync_timedb_supervisor_loop(
     preflight_shutdown_wait = not pool_worker_exit
     try:
       pending_rescan_executor.shutdown(wait=False)
+    except Exception:
+      pass
+    try:
+      post_ingest_snapshot_executor.shutdown(wait=False)
     except Exception:
       pass
     if day_close_manifest is not None:

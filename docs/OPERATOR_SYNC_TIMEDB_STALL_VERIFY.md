@@ -23,6 +23,21 @@ Attach the `test_runs/day-close-loop-regression-battery-*.log` path to the PR or
 | **T1 progress (`current`)** | Same window while CLI ``current`` (newest-first) runs | Descending `epochs=` on `chunk dispatch begin`; `youngest_day_chunk_gate` / `youngest_day_chunk_gate_pad` (not ascending oldest-gate for ``backlog``); heartbeat sidecar/Redis advances with active work |
 | **T2 catch-up** | T+24 h or when head day advances | New `chunk ingest summary` cadence; June-scale head day `unprocessed` trending down; `ingest_stall_watchdog` absent |
 
+### T0 / T1 — ingest-first then async snapshot then day-close (CLI `current` / date-range, 2026-07)
+
+**Failure signature (pre-fix):** on ``current``, empty pending → MainThread `day-scoped closed_raw` / `idle_finalize` / janitor `day_close` discover for older months **before** any `chunk dispatch begin` / `chunk ingest summary`.
+
+```bash
+# T0 — order of operations (full pipeline log; never --tail before grep)
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'chunk dispatch begin|ingest_going=yes|post-ingest startup archive scan|idle_finalize deferred|day_close_not_allowed|day_ingest_complete:idle_finalize|day-scoped closed_raw' | head -80
+```
+
+**Fail (T0):** `idle_finalize` / `day_close_not_allowed` absent while `day-scoped closed_raw` or `day_ingest_complete:idle_finalize` appears **before** the first `chunk dispatch begin`.
+
+**Pass (T0):** first `chunk dispatch begin` (or `ingest_going=yes`) **before** day-close discover/execution; then `post-ingest startup archive scan begin|ready` (or `janitor: adopted post-ingest startup snapshot`); only after that may `day_ingest_complete:` / janitor discover proceed. Empty queue may log `idle_finalize deferred reason=awaiting_ingest_or_startup_snapshot`.
+
+**Pass (T1):** under ``current`` with older-month closed raw present, newest-day chunks continue while the async snapshot builds (`post-ingest startup archive scan begin` without blocking the next `chunk dispatch`); after `… scan ready`, janitor day-close for older days may start without starving ingest (populate BRPOP still prefers ingest-hot — see populate-queue section).
+
 ### T0 / T1 — `wait_for_member_match` + `redis_warm` false non-defer → exit 124 (2026-07)
 
 **Failure signature (pre-fix):** `ERROR: Pool imap stalled` with `stall_defer=off defer_reason=redis_warm`, `effective_ingest_timeout_s=-`, small in-flight `batch_max_ingest_timeout_s` ≈ floor, then `hard exit code=124`. py-spy on ingest-pool workers shows idle `wait_for_member_match` → `daily_archive_has_member_with_size` / tar-append decision while calendar-day Redis reports `complete=1`.

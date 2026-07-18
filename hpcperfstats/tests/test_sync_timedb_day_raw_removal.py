@@ -1790,3 +1790,31 @@ def test_pre_seal_verify_completes_large_day_without_budget_log(tmp_path, monkey
   assert "verified_n=1000/2500" in progress_logs[0]
   assert "verified_n=2500/2500" in progress_logs[-1]
   assert not any("budget exhausted" in line for line in logs)
+
+
+def test_rescan_exclude_skips_day_scoped_before_ingest_going(tmp_path, monkeypatch):
+  """Pre-ingest: no day-scoped closed_raw census when allow flag is false."""
+  day = datetime(2022, 7, 1)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, _zst = _seal_day(tmp_path, seg, day)
+  day_scoped_calls = []
+
+  def spy_day_scoped(*_a, **_k):
+    day_scoped_calls.append(1)
+    return {}
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+      spy_day_scoped,
+  )
+  # Prefer gating before helper: allow=False + no snapshot must short-circuit.
+  coord = _make_coordinator(tmp_path)
+  coord.get_allow_day_scoped_closed_raw = lambda: False
+  state = coord._get_or_create_day(tar_path)
+  assert state._build_remaining_raw_for_daily_tar() == {}
+  assert day_scoped_calls == []
+  # When allow is True, helper is invoked (spy records).
+  coord.get_allow_day_scoped_closed_raw = lambda: True
+  state.get_allow_day_scoped_closed_raw = lambda: True
+  state._build_remaining_raw_for_daily_tar()
+  assert day_scoped_calls == [1]

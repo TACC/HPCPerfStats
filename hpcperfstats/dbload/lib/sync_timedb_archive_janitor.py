@@ -183,6 +183,7 @@ class ArchiveJanitor:
       get_chunk_in_progress=None,
       get_chunk_day_tokens=None,
       get_startup_ingest_gate_cleared=None,
+      get_day_close_allowed=None,
       process_title: str = "sync_timedb.py",
       day_close_enabled: bool = True,
   ):
@@ -213,6 +214,8 @@ class ArchiveJanitor:
     self.get_startup_ingest_gate_cleared = (
         get_startup_ingest_gate_cleared or (lambda: True)
     )
+    # When set, False skips discover + day-close fill (ingest-first / snapshot gate).
+    self.get_day_close_allowed = get_day_close_allowed or (lambda: True)
     self.process_title = process_title
     # CLI ``backlog`` dual-mode: ingest only; ``current``/date-range own day-close.
     self.day_close_enabled = bool(day_close_enabled)
@@ -258,6 +261,41 @@ class ArchiveJanitor:
     if snap is None or not snap.mapping:
       return None
     return snap
+
+  def adopt_published_startup_snapshot(self, snapshot) -> None:
+    """Install a coordinator-published snapshot into accrual without heavy-pass defer.
+
+    Used by post-ingest async snapshot on CLI ``current`` / date-range so accrual
+    lands while ingest chunks continue (``run_heavy_maintenance_pass`` would defer).
+    """
+    if snapshot is None:
+      return
+    adopted = copy_archive_maintenance_snapshot(snapshot)
+    with self._accrual_snapshot_lock:
+      self._accrual_snapshot = adopted
+    try:
+      from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+          invalidate_unmapped_disqualify_cache,
+      )
+      invalidate_unmapped_disqualify_cache()
+    except Exception:
+      pass
+    try:
+      self._persist_hints(
+          paths_hint=snapshot_paths_hint_entries(
+              adopted.closed_paths,
+              adopted.first_timestamp_by_path,
+              adopted.head_identity_by_path,
+          ),
+          host_dirs_hint=snapshot_host_dirs_from_paths(adopted.closed_paths),
+      )
+    except Exception:
+      pass
+    self.log_fn(
+        "janitor: adopted post-ingest startup snapshot closed_paths=%d"
+        % len(adopted.closed_paths or ()),
+        flush=True,
+    )
 
   def _load_hints_state(self):
     prior = load_archive_maint_hints(self.archive_data_dir) or {}
@@ -1478,7 +1516,6 @@ class ArchiveJanitor:
               debt_tar_paths=self._debt_heap_tar_paths(),
               live_worker_tars=self._day_close_live_worker_tar_paths(),
           )
-      self._discover_and_enqueue_ready_day_close(reason="tick")
       with self._maintenance_pass_lock:
         pass_reason = self._pending_maintenance_pass_reason
         self._pending_maintenance_pass_reason = None
@@ -1486,6 +1523,20 @@ class ArchiveJanitor:
         maint_t0 = time.time()
         self.run_scheduled_maintenance_pass(reason=pass_reason)
         maintenance_pass_s += time.time() - maint_t0
+      # Ingest-first / post-ingest snapshot: skip discover + day-close fill until
+      # supervisor reports ingest_going and startup_snapshot_ready.
+      if not self.get_day_close_allowed():
+        with self._debt_lock:
+          debt_depth = len(self._debt_heap)
+        self.log_fn(
+            "janitor: tick deferred day_close reason=day_close_not_allowed "
+            "debt_depth=%d maintenance_pass_s=%.3f"
+            % (debt_depth, maintenance_pass_s),
+            flush=True,
+        )
+        self._ticks_completed += 1
+        return
+      self._discover_and_enqueue_ready_day_close(reason="tick")
       if not self.get_startup_ingest_gate_cleared():
         with self._debt_lock:
           debt_depth = len(self._debt_heap)

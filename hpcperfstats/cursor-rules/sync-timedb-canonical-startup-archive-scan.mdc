@@ -8,7 +8,9 @@ globs: hpcperfstats/dbload/sync_timedb*.py
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-At supervisor boot **when CLI `startdate == 'backlog'`**, **one** `collect_stats_files_in_range` (+ one head-metadata pass via `build_archive_maintenance_snapshot`) must be shared by janitor startup maintenance and the first supervisor rescan. Do not let each subsystem walk the full raw tree independently. Date-range runs (`startdate` not **`backlog`**) skip startup maintenance entirely and must not trigger coordinator snapshot waits on first rescan.
+At supervisor boot **when CLI `startdate == 'backlog'`**, **one** `collect_stats_files_in_range` (+ one head-metadata pass via `build_archive_maintenance_snapshot`) must be shared by janitor startup maintenance and the first supervisor rescan. Do not let each subsystem walk the full raw tree independently.
+
+**CLI `current` / date-range (ingest-first, 2026-07):** skip the **blocking** boot startup snapshot (`run_startup_maintenance` is False). Clear the ingest gate immediately so chunks may begin. After the **first non-empty chunk** (`ingest_going`), kick **one** async full `build_archive_maintenance_snapshot` on a dedicated `SessionSingleFlightExecutor` role `startup-snapshot` (not the janitor heavy pass — heavy defers while chunk/in-flight). Worker: `begin_build` → build → coordinator `publish` → janitor `adopt_published_startup_snapshot` → `mark_startup_heavy_maintenance_finished` → `signal_work_available`. MainThread **never waits**; later chunks may run while `_building`. Day-close discover/fill/`idle_finalize` unlock only when **`startup_snapshot_ready`** (implies `ingest_going`). Pre-`ingest_going`: no day-scoped MainThread census (`get_allow_day_scoped_closed_raw`); boot handoff is **manifest-only**.
 
 ## Canonical modules
 
@@ -24,8 +26,8 @@ At supervisor boot **when CLI `startdate == 'backlog'`**, **one** `collect_stats
 ## Required behavior
 
 - **Janitor** `run_heavy_maintenance_pass(reason=startup)` adopts an already-published coordinator snapshot when present; otherwise calls `begin_build()` before `build_archive_maintenance_snapshot`; `abort_build()` on build failure; `publish` in success path. **Only when supervisor `startdate == 'backlog'`.**
-- **Supervisor rescan** (`_get_startup_snapshot_for_rescan`) may single-flight fallback-build after **`sync_startup_snapshot_wait_seconds`** (default **300**, min **120**). **Only when `startdate == 'backlog'`**; date-range runs skip this call.
-- **`note_startup_maintenance_pending()`** from supervisor on `signal_scheduled_maintenance_pass(reason=startup)` extends effective wait while janitor builds. **Only when `startdate == 'backlog'`.**
+- **Supervisor rescan** (`_get_startup_snapshot_for_rescan`) may single-flight fallback-build after **`sync_startup_snapshot_wait_seconds`** (default **300**, min **120**). **Only when `startdate == 'backlog'`** for the blocking wait path; date-range / ``current`` idle refill may wait briefly on a published post-ingest snapshot but must not block first ingest.
+- **`note_startup_maintenance_pending()`** from supervisor on `signal_scheduled_maintenance_pass(reason=startup)` (backlog) **or** when kicking the post-ingest async snapshot (``current``/date-range) extends effective wait while the snapshot builds.
 - **Janitor tick when `day_close_enabled=False` (CLI `backlog`):** `_run_tick_body` must still drain `_pending_maintenance_pass_reason` via `run_scheduled_maintenance_pass` **before** returning — do **not** early-return past pending startup maintenance. Skipping that drain deadlocks supervisor `wait_for_snapshot` (pending extends the wait timeout forever while the snapshot never publishes). Day-close discover/enqueue/`_close_one_day` remain no-ops. Regression: **`test_disabled_day_close_tick_runs_pending_maintenance_pass`**.
 - While `_building` is true, waiters **must not** start parallel collects.
 - **Publish deep-copies** `mapping` / `remaining_raw_by_gz` list values via `copy_archive_maintenance_snapshot` — trim clears heavy lists on accrual object only; coordinator retains `closed_paths` for unmapped disqualify.
