@@ -2285,3 +2285,201 @@ def test_invalidate_archive_members_redis_bulk_dry_run(_redis_test_env, tmp_path
   assert result["scanned"] >= 1
   assert result["deleted"] == 0
   assert fake.get(keys.complete_key) == "1"
+
+
+def test_clear_stale_incomplete_noop_silent_when_empty(_redis_test_env, tmp_path):
+  """Empty Redis must not WARN on clear_stale (post-orphan stampede)."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      clear_stale_incomplete_archive_members_redis,
+  )
+
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  logs = []
+  assert clear_stale_incomplete_archive_members_redis(
+      keys, client=_redis_test_env, log_fn=lambda m, **_k: logs.append(m),
+  ) is False
+  assert logs == []
+
+
+def test_stale_incomplete_log_rate_limited_cluster_wide(_redis_test_env, tmp_path):
+  """Two processes sharing Redis NX gate emit at most one stale-incomplete WARN."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_members_redis as amr
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      clear_stale_incomplete_archive_members_redis,
+  )
+
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  logs = []
+
+  def _log(msg, **_kwargs):
+    logs.append(msg)
+
+  _redis_test_env.set(keys.degraded_key, "1")
+  assert clear_stale_incomplete_archive_members_redis(
+      keys, client=_redis_test_env, log_fn=_log,
+  ) is True
+  assert sum(1 for m in logs if "clearing stale incomplete" in m) == 1
+
+  # Simulate another process: clear process-local gate, re-set incomplete keys.
+  amr._STALE_INCOMPLETE_LOG_STATE.clear()
+  _redis_test_env.set(keys.degraded_key, "1")
+  assert clear_stale_incomplete_archive_members_redis(
+      keys, client=_redis_test_env, log_fn=_log,
+  ) is True
+  assert sum(1 for m in logs if "clearing stale incomplete" in m) == 1
+
+
+def test_degraded_waiters_single_flight_clear_and_enqueue(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  """N degraded waiters: one clear+enqueue; peers wait only."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      clear_stale_incomplete_archive_members_redis,
+      request_archive_members_populate_and_wait,
+  )
+
+  day = "2026-06-02"
+  zst = tmp_path / ("%s.tar.zst" % day)
+  zst.write_bytes(b"sealed-bytes")
+  canonical = str(zst)
+  keys = build_archive_members_redis_keys(_daily_archive_members_cache_key(canonical))
+  _redis_test_env.set(keys.degraded_key, "1")
+  enqueued = []
+  clear_logs = []
+  barrier = threading.Barrier(5)
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".enqueue_archive_members_populate",
+      lambda path, day_token: enqueued.append((path, day_token)) or True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".wait_for_complete_members",
+      lambda *a, **k: {},
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      "._ensure_populate_pool_running_for_enqueue",
+      lambda: type("C", (), {"is_running": lambda self: True})(),
+  )
+
+  real_clear = clear_stale_incomplete_archive_members_redis
+
+  def _counting_clear(keys_arg, *, client=None, log_fn=None):
+    def _log(msg, **kwargs):
+      clear_logs.append(msg)
+      if log_fn is not None:
+        log_fn(msg, **kwargs)
+
+    return real_clear(keys_arg, client=client, log_fn=_log)
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".clear_stale_incomplete_archive_members_redis",
+      _counting_clear,
+  )
+
+  errors = []
+
+  def _worker():
+    try:
+      barrier.wait(timeout=5)
+      request_archive_members_populate_and_wait(canonical)
+    except Exception as exc:  # noqa: BLE001 — collect for assert
+      errors.append(exc)
+
+  threads = [threading.Thread(target=_worker) for _ in range(5)]
+  for t in threads:
+    t.start()
+  for t in threads:
+    t.join(timeout=10)
+  assert not errors
+  assert len(enqueued) == 1
+  assert sum(1 for m in clear_logs if "clearing stale incomplete" in m) <= 1
+
+
+def test_dead_owner_orphan_then_waiters_single_flight_recover(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  """Dead lock owner → orphan wipe once; N waiters ≤1 stale WARN and ≤1 re-enqueue."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      clear_stale_incomplete_archive_members_redis,
+      maybe_clear_orphan_incomplete_archive_members_redis,
+      request_archive_members_populate_and_wait,
+  )
+
+  day = "2026-06-02"
+  zst = tmp_path / ("%s.tar.zst" % day)
+  zst.write_bytes(b"sealed-bytes")
+  canonical = str(zst)
+  keys = build_archive_members_redis_keys(_daily_archive_members_cache_key(canonical))
+  # Partial sealed populate (orphan after dead owner released lock).
+  mapping = {"host/%d" % i: str(i + 1) for i in range(50)}
+  _redis_test_env.hset(keys.hash_key, mapping=mapping)
+  _redis_test_env.set(keys.complete_key, "0")
+
+  orphan_logs = []
+  assert maybe_clear_orphan_incomplete_archive_members_redis(
+      keys,
+      client=_redis_test_env,
+      log_fn=lambda m, **_k: orphan_logs.append(m),
+  ) is True
+  assert len(orphan_logs) == 1
+  assert _redis_test_env.hlen(keys.hash_key) == 0
+
+  # After orphan wipe, degraded/incomplete recovery stampede (as in backlog).
+  _redis_test_env.set(keys.degraded_key, "1")
+  enqueued = []
+  clear_logs = []
+  barrier = threading.Barrier(6)
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".enqueue_archive_members_populate",
+      lambda path, day_token: enqueued.append((path, day_token)) or True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".wait_for_complete_members",
+      lambda *a, **k: {},
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      "._ensure_populate_pool_running_for_enqueue",
+      lambda: type("C", (), {"is_running": lambda self: True})(),
+  )
+
+  real_clear = clear_stale_incomplete_archive_members_redis
+
+  def _counting_clear(keys_arg, *, client=None, log_fn=None):
+    def _log(msg, **kwargs):
+      clear_logs.append(msg)
+      if log_fn is not None:
+        log_fn(msg, **kwargs)
+
+    return real_clear(keys_arg, client=client, log_fn=_log)
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".clear_stale_incomplete_archive_members_redis",
+      _counting_clear,
+  )
+
+  errors = []
+
+  def _worker():
+    try:
+      barrier.wait(timeout=5)
+      request_archive_members_populate_and_wait(canonical)
+    except Exception as exc:  # noqa: BLE001
+      errors.append(exc)
+
+  threads = [threading.Thread(target=_worker) for _ in range(6)]
+  for t in threads:
+    t.start()
+  for t in threads:
+    t.join(timeout=10)
+  assert not errors
+  assert len(enqueued) == 1
+  assert sum(1 for m in clear_logs if "clearing stale incomplete" in m) <= 1

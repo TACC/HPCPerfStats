@@ -45,6 +45,12 @@ _POPULATE_PREFER_REASON_RANK = {
 }
 _IDENTITY_DRIFT_LOG_INTERVAL_S = 120.0
 _STALE_INCOMPLETE_LOG_INTERVAL_S = 60.0
+# Cluster-wide WARN gate (spawn pool cannot share process-local state).
+_STALE_INCOMPLETE_LOG_REDIS_TTL_S = 300
+_STALE_INCOMPLETE_LOG_PREFIX = "%s:stale_incomplete_log:v1" % _KEY_PREFIX
+# Single-flight clear+re-enqueue after orphan / degraded / incomplete-after-lock.
+_POPULATE_RECOVER_TTL_S = 60
+_POPULATE_RECOVER_PREFIX = "%s:archive_populate_recover:v1" % _KEY_PREFIX
 _IDENTITY_DRIFT_LOG_STATE: Dict[str, Dict[str, float]] = {}
 _APPEND_INFLIGHT_DEFER_LOG_STATE: Dict[str, Dict[str, float]] = {}
 _STALE_INCOMPLETE_LOG_STATE: Dict[str, Dict[str, float]] = {}
@@ -302,6 +308,7 @@ def reset_archive_members_redis_client_for_tests():
   global _REDIS_CLIENT, _REDIS_CLIENT_URL
   _REDIS_CLIENT = None
   _REDIS_CLIENT_URL = None
+  _STALE_INCOMPLETE_LOG_STATE.clear()
 
 
 def verify_archive_members_redis_startup():
@@ -665,6 +672,49 @@ def maybe_clear_orphan_incomplete_archive_members_redis(
   return True
 
 
+def _incomplete_state_keys_present(client, keys: ArchiveMembersRedisKeys) -> bool:
+  """True when any incomplete populate key exists (hash/complete/progress/…)."""
+  for key in (
+      keys.hash_key,
+      keys.complete_key,
+      keys.progress_key,
+      keys.degraded_key,
+      keys.invalidate_pending_key,
+  ):
+    if client.exists(key):
+      return True
+  return False
+
+
+def _stale_incomplete_log_redis_key(day_token: str) -> str:
+  return "%s:%s" % (_STALE_INCOMPLETE_LOG_PREFIX, day_token)
+
+
+def _populate_recover_redis_key(day_token: str) -> str:
+  return "%s:%s" % (_POPULATE_RECOVER_PREFIX, day_token)
+
+
+def _try_acquire_populate_recovery_gate(client, day_token: str) -> bool:
+  """Single-flight clear+re-enqueue after orphan/degraded/incomplete recovery.
+
+  Returns True for the recovery leader (or when day_token is unknown / Redis
+  SET fails open so recovery still progresses).
+  """
+  if not day_token or day_token == "unknown":
+    return True
+  try:
+    return bool(
+        client.set(
+            _populate_recover_redis_key(day_token),
+            "1",
+            nx=True,
+            ex=_POPULATE_RECOVER_TTL_S,
+        ),
+    )
+  except Exception:
+    return True
+
+
 def clear_stale_incomplete_archive_members_redis(
     keys: ArchiveMembersRedisKeys,
     *,
@@ -675,12 +725,16 @@ def clear_stale_incomplete_archive_members_redis(
 
   Used after lock release without ``complete=1`` so a new single-flight can
   acquire the lock (degraded must be cleared for ``_try_acquire_populate_lock``).
+  No-ops silently when no incomplete keys are present (avoids WARN stampede
+  after orphan wipe).
   """
   if client is None:
     client = get_archive_members_redis_client(required=True)
   if client.exists(keys.lock_key):
     return False
   if client.get(keys.complete_key) == "1":
+    return False
+  if not _incomplete_state_keys_present(client, keys):
     return False
   hlen = _hash_member_count(client, keys)
   _log_stale_incomplete_if_allowed(
@@ -693,6 +747,7 @@ def clear_stale_incomplete_archive_members_redis(
           client.get(keys.complete_key) or "-",
       ),
       log_fn=log_fn,
+      client=client,
   )
   client.delete(
       keys.hash_key,
@@ -1255,8 +1310,9 @@ def _log_stale_incomplete_if_allowed(
     message: str,
     *,
     log_fn=log_print,
+    client=None,
 ) -> None:
-  """Rate-limit stale incomplete populate logs to once per calendar day."""
+  """Rate-limit stale incomplete WARNs cluster-wide (Redis NX) + process-local."""
   if not day_token or day_token == "unknown":
     log_fn(message, flush=True)
     return
@@ -1267,6 +1323,25 @@ def _log_stale_incomplete_if_allowed(
     _STALE_INCOMPLETE_LOG_STATE[day_token] = state
   last_log_mono = float(state.get("last_log_mono") or 0.0)
   if now_mono - last_log_mono < _STALE_INCOMPLETE_LOG_INTERVAL_S:
+    state["suppressed"] = float(state.get("suppressed") or 0.0) + 1.0
+    return
+  redis_allowed = True
+  try:
+    redis_client = client
+    if redis_client is None:
+      redis_client = get_archive_members_redis_client(required=False)
+    if redis_client is not None:
+      redis_allowed = bool(
+          redis_client.set(
+              _stale_incomplete_log_redis_key(day_token),
+              "1",
+              nx=True,
+              ex=_STALE_INCOMPLETE_LOG_REDIS_TTL_S,
+          ),
+      )
+  except Exception:
+    redis_allowed = True
+  if not redis_allowed:
     state["suppressed"] = float(state.get("suppressed") or 0.0) + 1.0
     return
   suppressed_n = int(state.get("suppressed") or 0)
@@ -1357,7 +1432,6 @@ def _recover_populate_wait_after_stale_lock(
     canonical="",
 ):
   """Re-enqueue populate after incomplete lock release when *canonical* is known."""
-  del client
   if not canonical:
     return
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
@@ -1365,6 +1439,8 @@ def _recover_populate_wait_after_stale_lock(
       normalize_daily_compressed_path,
   )
   if not daily_archive_populate_source_exists(normalize_daily_compressed_path(canonical)):
+    return
+  if not _try_acquire_populate_recovery_gate(client, keys.day_token):
     return
   enqueue_archive_members_populate(canonical, keys.day_token)
 
@@ -2336,9 +2412,10 @@ def request_archive_members_populate_and_wait(
     elif populate_degraded_is_set(keys, client=client):
       if get_archive_day_ingest_skip(keys, client=client) is not None:
         return {}
-      # Recoverable: clear degraded and wait with re-enqueue (identity may have drifted).
-      clear_stale_incomplete_archive_members_redis(keys, client=client)
-      _enqueue_or_run_archive_members_populate(canonical, keys.day_token)
+      # Recoverable: one waiter clears+reenqueues; peers only wait (no stampede).
+      if _try_acquire_populate_recovery_gate(client, keys.day_token):
+        clear_stale_incomplete_archive_members_redis(keys, client=client)
+        _enqueue_or_run_archive_members_populate(canonical, keys.day_token)
       members = wait_for_complete_members(
           keys,
           sealed_path=sealed_path,
@@ -2346,7 +2423,18 @@ def request_archive_members_populate_and_wait(
           canonical=canonical,
       )
     else:
-      _enqueue_or_run_archive_members_populate(canonical, keys.day_token)
+      # Cold path, or peers that arrived after a recovery leader cleared degraded.
+      # While recovery gate is held, skip re-enqueue (leader already queued work).
+      recover_held = False
+      if keys.day_token and keys.day_token != "unknown":
+        try:
+          recover_held = bool(
+              client.exists(_populate_recover_redis_key(keys.day_token)),
+          )
+        except Exception:
+          recover_held = False
+      if not recover_held:
+        _enqueue_or_run_archive_members_populate(canonical, keys.day_token)
       members = wait_for_complete_members(
           keys,
           sealed_path=sealed_path,

@@ -839,6 +839,20 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
   tail -40
 ```
 
+**Bucket E1 — Sealed-only dead populate-lock owner → orphan wipe → stale-clear stampede (T0/T1, 2026-06-02 class):** hash suffix **`…:YYYY-MM-DD:sealed_mtime:sealed_size:none:none`** (sealed present, **no** sibling `.tar`). Pre-fix sequence: workers in `populate_queue_wait` / `archive_member_lookup:redis_wait`; idle reconcile correctly skips recover (`reason=populate_wait`); then **`populate lock owner pid=… dead; releasing stale lock`** → **`clearing orphan incomplete … hlen≈N complete=0`** (partial sealed map wiped) → flood of **`clearing stale incomplete … hlen=0 complete=-`** from many ingest-pool workers + main (process-local log gate cannot coalesce).
+
+**Post-fix pass:** at most **one** orphan clear WARN; **at most one** stale-incomplete WARN per day within Redis NX TTL (~300s); **one** recovery re-enqueue (peers wait only); noop clears are silent; populate recovers to `complete=1` without WARN stampede. Redis census keys (correct names):
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec redis sh -lc 'echo "=== scan"; redis-cli --scan --pattern "*archive_members:hash:v1:YYYY-MM-DD*" | head -20; echo "=== degraded"; redis-cli GET "hpcperfstats:sync_timedb:archive_populate_degraded:v1:YYYY-MM-DD"; echo "=== day_skip"; redis-cli GET "hpcperfstats:sync_timedb:archive_day_ingest_skip:v1:YYYY-MM-DD"'
+```
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+  grep -E 'YYYY-MM-DD|lock owner pid=|clearing orphan incomplete|clearing stale incomplete|populate incomplete after lock release|pool imap idle reconcile' | \
+  grep -v 'suppressed_n=' | head -80
+```
+
 **Bucket E2 — Dirty-tar populate EOF thrash + self-hot + exit 124 (T0/T1, 2026-06-07 class):** pre-fix loop shows `populate_source_decision … dirty=True sealed_exists=True use_tar=True` then `transient tar populate EOF during hot/append` while Redis census has **`tar_hot=True`** / **`append_inflight=False`** (waiter self-hot alone), orphan clear `hlen≈6500`, stale clear `hlen=0`, forever retry; workers wchan-idle in populate wait → **`pool_recover exceeded wall_s=30.0`** → exit **124** `idle_pool_taskqueue_dead`. Candidate counters `unprocessed_cross_day_n` / `processed_cross_day_n` are **diagnostic only** (misbucket census) — they do **not** set `waiting_on_ingest` by themselves. Flood of `Unable to find first timestamp in N path(s)` after day-close delete is rate-limited/summarized (not the crash driver).
 
 ```bash

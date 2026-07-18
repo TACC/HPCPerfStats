@@ -95,6 +95,18 @@ if os.path.isfile(mf):
 "'
 ```
 
+**Anti-pattern — wrong archive_populate Redis key names:** do **not** scan/GET `*populate_degraded*` or `hpcperfstats:sync_timedb:populate_degraded:v1:{day}`. Real day-scoped keys are:
+
+| Concern | Redis key |
+|---------|-----------|
+| Populate degraded | `hpcperfstats:sync_timedb:archive_populate_degraded:v1:{day}` |
+| Day ingest skip | `hpcperfstats:sync_timedb:archive_day_ingest_skip:v1:{day}` |
+| Member HASH | `hpcperfstats:sync_timedb:archive_members:hash:v1:{day}:…` |
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec redis sh -lc 'redis-cli GET "hpcperfstats:sync_timedb:archive_populate_degraded:v1:YYYY-MM-DD"; redis-cli GET "hpcperfstats:sync_timedb:archive_day_ingest_skip:v1:YYYY-MM-DD"; redis-cli --scan --pattern "*archive_members:hash:v1:YYYY-MM-DD*" | head -20'
+```
+
 **Anti-pattern — Django/ORM imports without bootstrap (hpcperfstats03 lesson):** importing `sync_timedb_ingest_readiness`, `host_data`, or other Django models from bare `python3 -c` inside pipeline raises **`ImproperlyConfigured`**. Call **`ensure_django()`** first:
 
 ```bash
