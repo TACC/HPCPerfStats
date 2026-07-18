@@ -709,6 +709,20 @@ docker compose logs pipeline 2>&1 | grep -E 'idle reconcile redispatch|redispatc
 docker compose logs pipeline 2>&1 | grep -E 'pool_recover skipped|redispatch skipped|redispatch round=|idle_pool_taskqueue_dead' | tail -80
 ```
 
+### T1 verify — CLI ``current`` June populate vs July gate (two-queue contention, 2026-07-17)
+
+**Failure signature (pre-fix, operator-verified on hpcperfstats03):** under CLI ``current``, July ingest gate is healthy (`youngest_tar=2026-07-17.tar`, **`chunk_pad_n=0`**, `chunk_day_histogram` / `chunk prewarm … days=['2026-07-17']` only) while populate-pool still logs June `populate_source_decision` interleaved with MainThread **`day_close enqueue … reason=day_ingest_complete:idle_finalize`** / janitor `day_close` for early June. Idle reconcile may show **`populate_wait day=2026-06-…`** and falsely skip recover/redispatch for July pending (global `ingest_tar_hot` scan). **Not** cross-day chunk pad (pad falsified when `chunk_pad_n=0`).
+
+**Pass (T1):**
+- Idle skip only when **pending-path** calendar days are populate-hot (`pool_recover skipped` / `redispatch skipped` reason names the pending day, not an unrelated June day while July paths are pending).
+- Populate-pool prefers ingest-hot days (`chunk_prewarm` / `populate_wait` over bare `populate_enqueue`) so July chunk prewarm is not indefinitely blocked behind cold June day-close populate on the shared FIFO queue.
+- June day-close populate may still appear when no ingest-hot jobs are waiting; July gate/prewarm stay July-only when `chunk_pad_n=0`.
+
+```bash
+# T1 — June populate vs July gate / false populate_wait skip (full pipeline log; never --tail before grep)
+docker compose logs pipeline 2>&1 | grep -E 'youngest_day_chunk_gate_pad|chunk_pad_n=|chunk prewarm|populate_source_decision|day_close enqueue|idle_finalize|pool_recover skipped|redispatch skipped|populate_wait day=' | tail -120
+```
+
 ### T0 / T1 — ingest-pool orphan census (2× / N× after swap, 2026-07-16)
 
 **Failure signature (pre-fix):** INI `ingest_pool_processes=N` but `ps` under main shows **`child_ingest` ≫ N** (often ~2× then grows: 48 → 71+) after **`dispatch_probe failed … err=`** (empty = `TimeoutError`) → **`proactive swap`** / idle `outcome=abandoned` that SIGKILL'd only `pool._pool`. Orphans sit in `queues.get` while a thin live cohort does work.

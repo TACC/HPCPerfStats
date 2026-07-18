@@ -30,6 +30,19 @@ _INGEST_TAR_HOT_PREFIX = "%s:ingest_tar_hot:v1" % _KEY_PREFIX
 _ARCHIVE_APPEND_INFLIGHT_PREFIX = "%s:archive_append_inflight:v1" % _KEY_PREFIX
 _DAILY_TAR_RESTORE_PREFIX = "%s:daily_tar_restore:v1" % _KEY_PREFIX
 _POPULATE_QUEUED_TTL_SECONDS = 3600
+# Bounded peek when preferring ingest-hot jobs over cold FIFO day-close work.
+_POPULATE_QUEUE_PREFER_PEEK_N = 64
+_POPULATE_PREFER_INGEST_HOT_REASONS = frozenset({
+    "chunk_prewarm",
+    "populate_wait",
+    "populate_enqueue",
+})
+# Higher rank wins when multiple queued days are ingest-hot.
+_POPULATE_PREFER_REASON_RANK = {
+    "chunk_prewarm": 3,
+    "populate_wait": 2,
+    "populate_enqueue": 1,
+}
 _IDENTITY_DRIFT_LOG_INTERVAL_S = 120.0
 _STALE_INCOMPLETE_LOG_INTERVAL_S = 60.0
 _IDENTITY_DRIFT_LOG_STATE: Dict[str, Dict[str, float]] = {}
@@ -1767,6 +1780,32 @@ def _calendar_day_hint_from_stats_path(path: str) -> str:
     return ""
 
 
+def _calendar_days_for_idle_skip_path(path: str, tgz_archive_dir: str = "") -> list:
+  """Calendar days to check for idle-skip for one pending path (not global)."""
+  days = []
+  seen = set()
+  day = _calendar_day_hint_from_stats_path(path)
+  if day and day not in seen:
+    seen.add(day)
+    days.append(day)
+  if not tgz_archive_dir or not path:
+    return days
+  try:
+    from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+        _derive_stats_path_date,
+    )
+
+    derived = _derive_stats_path_date(path)
+  except Exception:
+    return days
+  if derived is None:
+    return days
+  token = derived.strftime("%Y-%m-%d")
+  if token not in seen:
+    days.append(token)
+  return days
+
+
 def idle_pool_recover_skip_reason_for_paths(
     paths,
     tgz_archive_dir: str = "",
@@ -1777,44 +1816,20 @@ def idle_pool_recover_skip_reason_for_paths(
   still holds live work — recovering within ``IDLE_POOL_RECOVER_WALL_S`` causes
   false-positive exit 124.
 
-  Path basename epochs can disagree with the Redis populate calendar day (cross-day
-  pending), so also scan any live ``ingest_tar_hot`` self-populate reasons.
+  Only calendar days derived from **pending paths** (filename epoch and, when
+  ``tgz_archive_dir`` is set, tar-aligned derive) are checked. Unrelated days
+  with ``ingest_tar_hot`` (e.g. day-close June while July is pending) must not
+  skip recover/redispatch for the pending work.
   """
   for path in paths or ():
-    day = _calendar_day_hint_from_stats_path(path)
-    if not day:
-      continue
-    reason = ingest_tar_hot_reason_for_day(day)
-    if reason in ("populate_wait", "populate_enqueue", "chunk_prewarm"):
-      return "populate_wait day=%s reason=%s" % (day, reason)
-    if tgz_archive_dir and archive_members_populate_shows_progress_for_day(
-        day, tgz_archive_dir,
-    ):
-      return "populate_progress day=%s" % day
-  if not archive_members_redis_enabled():
-    return ""
-  client = get_archive_members_redis_client(required=False)
-  if client is None:
-    return ""
-  prefix = "%s:" % _INGEST_TAR_HOT_PREFIX
-  scan_iter = getattr(client, "scan_iter", None)
-  keys_iter = ()
-  if callable(scan_iter):
-    keys_iter = list(scan_iter(match=prefix + "*", count=64))
-  else:
-    # FakeRedis / minimal clients: fall back to KEYS when present.
-    keys_fn = getattr(client, "keys", None)
-    if callable(keys_fn):
-      keys_iter = list(keys_fn(prefix + "*") or ())
-    else:
-      keys_iter = []
-  for key in keys_iter:
-    raw = client.get(key)
-    reason = str(raw) if raw else ""
-    if reason not in ("populate_wait", "populate_enqueue", "chunk_prewarm"):
-      continue
-    day = str(key).rsplit(":", 1)[-1]
-    return "populate_wait day=%s reason=%s" % (day, reason)
+    for day in _calendar_days_for_idle_skip_path(path, tgz_archive_dir):
+      reason = ingest_tar_hot_reason_for_day(day)
+      if reason in ("populate_wait", "populate_enqueue", "chunk_prewarm"):
+        return "populate_wait day=%s reason=%s" % (day, reason)
+      if tgz_archive_dir and archive_members_populate_shows_progress_for_day(
+          day, tgz_archive_dir,
+      ):
+        return "populate_progress day=%s" % day
   return ""
 
 
@@ -2002,15 +2017,7 @@ def enqueue_archive_members_populate(canonical_path, day_token):
   return True
 
 
-def archive_members_populate_queue_brpop(*, timeout_s=1.0):
-  """Blocking pop for populate-pool worker; returns job dict or None."""
-  client = get_archive_members_redis_client(required=True)
-  timeout_s = max(0.1, float(timeout_s))
-  result = client.brpop(_POPULATE_QUEUE_KEY, timeout=timeout_s)
-  if not result:
-    return None
-  _key, raw = result
-  del _key
+def _parse_populate_queue_job(raw):
   try:
     job = json.loads(raw)
   except (TypeError, ValueError):
@@ -2018,6 +2025,81 @@ def archive_members_populate_queue_brpop(*, timeout_s=1.0):
   if not isinstance(job, dict):
     return None
   return job
+
+
+def _populate_prefer_reason_rank(day_token: str) -> int:
+  """Return prefer rank for a day (0 = not ingest-hot / cold day-close)."""
+  if not day_token:
+    return 0
+  reason = ingest_tar_hot_reason_for_day(day_token)
+  if reason not in _POPULATE_PREFER_INGEST_HOT_REASONS:
+    return 0
+  return int(_POPULATE_PREFER_REASON_RANK.get(reason, 0))
+
+
+def _try_pop_populate_prefer_ingest_hot(client, *, peek_n=None):
+  """Pop highest-rank ingest-hot job within a bounded FIFO peek, or None.
+
+  LPUSH + BRPOP is oldest-first. Day-close cold jobs share this queue with
+  chunk prewarm; prefer ``chunk_prewarm`` / ``populate_wait`` over bare
+  ``populate_enqueue``, and any ingest-hot over days with no hot key.
+  """
+  peek_n = max(1, int(peek_n if peek_n is not None else _POPULATE_QUEUE_PREFER_PEEK_N))
+  lrange = getattr(client, "lrange", None)
+  lrem = getattr(client, "lrem", None)
+  if not callable(lrange) or not callable(lrem):
+    return None
+  # LPUSH list: index 0 = newest, -1 = oldest (next BRPOP). LRANGE -n -1 is
+  # left-to-right within that window (newer … older).
+  items = list(lrange(_POPULATE_QUEUE_KEY, -peek_n, -1) or ())
+  if not items:
+    return None
+  fifo_head_raw = items[-1]
+  best_rank = 0
+  best_job = None
+  best_raw = None
+  # Oldest-first so equal ranks keep FIFO order.
+  for raw in reversed(items):
+    job = _parse_populate_queue_job(raw)
+    if job is None:
+      continue
+    day = str(job.get("day_token") or "")
+    rank = _populate_prefer_reason_rank(day)
+    if rank <= 0:
+      continue
+    if rank > best_rank:
+      best_rank = rank
+      best_job = job
+      best_raw = raw
+  if best_job is None or best_raw is None or best_rank <= 0:
+    return None
+  # Preferred job is already the FIFO head — let BRPOP take it.
+  if best_raw == fifo_head_raw:
+    return None
+  removed = int(lrem(_POPULATE_QUEUE_KEY, 1, best_raw) or 0)
+  if removed <= 0:
+    return None
+  return best_job
+
+
+def archive_members_populate_queue_brpop(*, timeout_s=1.0):
+  """Blocking pop for populate-pool worker; returns job dict or None.
+
+  Prefers ingest-hot calendar days (``chunk_prewarm`` / ``populate_wait`` over
+  ``populate_enqueue``) within a bounded peek so day-close cold populate cannot
+  indefinitely starve July chunk prewarm on the shared FIFO queue.
+  """
+  client = get_archive_members_redis_client(required=True)
+  preferred = _try_pop_populate_prefer_ingest_hot(client)
+  if preferred is not None:
+    return preferred
+  timeout_s = max(0.1, float(timeout_s))
+  result = client.brpop(_POPULATE_QUEUE_KEY, timeout=timeout_s)
+  if not result:
+    return None
+  _key, raw = result
+  del _key
+  return _parse_populate_queue_job(raw)
 
 
 def _ensure_populate_pool_running_for_enqueue():

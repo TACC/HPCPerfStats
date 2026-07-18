@@ -111,6 +111,57 @@ class FakeRedis:
       self._lists.setdefault(key, []).insert(0, value)
       return len(self._lists[key])
 
+  def lrange(self, key, start, end):
+    with self._lock:
+      bucket = list(self._lists.get(key) or ())
+    n = len(bucket)
+    if n == 0:
+      return []
+    if start < 0:
+      start = max(0, n + start)
+    if end < 0:
+      end = n + end
+    end = min(n - 1, end)
+    if start > end or start >= n:
+      return []
+    return bucket[start : end + 1]
+
+  def lrem(self, key, count, value):
+    with self._lock:
+      bucket = self._lists.get(key)
+      if not bucket:
+        return 0
+      removed = 0
+      if count == 0:
+        kept = [item for item in bucket if item != value]
+        removed = len(bucket) - len(kept)
+        if kept:
+          self._lists[key] = kept
+        else:
+          del self._lists[key]
+        return removed
+      if count > 0:
+        kept = []
+        for item in bucket:
+          if item == value and removed < count:
+            removed += 1
+            continue
+          kept.append(item)
+      else:
+        kept = []
+        to_remove = -count
+        for item in reversed(bucket):
+          if item == value and removed < to_remove:
+            removed += 1
+            continue
+          kept.append(item)
+        kept.reverse()
+      if kept:
+        self._lists[key] = kept
+      else:
+        del self._lists[key]
+      return removed
+
   def brpop(self, key, timeout=0):
     deadline = time.monotonic() + float(timeout)
     while True:
@@ -2001,21 +2052,49 @@ def test_idle_pool_recover_skip_reason_for_populate_wait(
   assert idle_pool_recover_skip_reason_for_paths([path]) == ""
 
 
-def test_idle_pool_recover_skip_reason_scans_hot_when_path_day_mismatches(
+def test_idle_pool_recover_skip_reason_ignores_unrelated_day_hot(
     _redis_test_env, tmp_path,
 ):
-  """Cross-day pending basename must still skip when another day has populate_wait."""
+  """July pending must not idle-skip solely because June has populate_wait."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      clear_ingest_tar_hot,
       idle_pool_recover_skip_reason_for_paths,
       set_ingest_tar_hot,
   )
 
-  set_ingest_tar_hot("2026-06-07", reason="populate_wait")
-  # Production crash path epoch maps to 2026-06-08 UTC, not 06-07.
-  path = "/archive/i614-141.vista.tacc.utexas.edu/1780895555"
-  reason = idle_pool_recover_skip_reason_for_paths([path])
+  set_ingest_tar_hot("2026-06-02", reason="populate_wait")
+  # 2026-07-17 12:00:00 UTC
+  july_path = "/archive/host/1784289600"
+  assert idle_pool_recover_skip_reason_for_paths([july_path]) == ""
+  set_ingest_tar_hot("2026-07-17", reason="chunk_prewarm")
+  reason = idle_pool_recover_skip_reason_for_paths([july_path])
   assert "populate_wait" in reason
-  assert "2026-06-07" in reason
+  assert "2026-07-17" in reason
+  clear_ingest_tar_hot("2026-06-02")
+  clear_ingest_tar_hot("2026-07-17")
+
+
+def test_populate_queue_brpop_prefers_ingest_hot_over_cold_fifo(
+    _redis_test_env, tmp_path,
+):
+  """Cold June queued first must not block July chunk_prewarm populate."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      archive_members_populate_queue_brpop,
+      enqueue_archive_members_populate,
+      set_ingest_tar_hot,
+  )
+
+  june_tar = str(tmp_path / "2026-06-02.tar")
+  july_tar = str(tmp_path / "2026-07-17.tar")
+  assert enqueue_archive_members_populate(june_tar, "2026-06-02")
+  assert enqueue_archive_members_populate(july_tar, "2026-07-17")
+  set_ingest_tar_hot("2026-07-17", reason="chunk_prewarm")
+  job = archive_members_populate_queue_brpop(timeout_s=0.2)
+  assert job is not None
+  assert job.get("day_token") == "2026-07-17"
+  job2 = archive_members_populate_queue_brpop(timeout_s=0.2)
+  assert job2 is not None
+  assert job2.get("day_token") == "2026-06-02"
 
 
 def test_populate_defers_dirty_tar_scan_when_append_inflight_and_sealed_known(
