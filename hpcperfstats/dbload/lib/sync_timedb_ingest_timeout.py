@@ -78,7 +78,7 @@ def stall_abort_polls_for_paths(paths):
 
 
 def default_giant_supplement_trigger_budget_s():
-  """Default trigger budget: resolved timeout at 2 GiB under current INI slope."""
+  """Default trigger budget: 2 GiB under historical slope (floor-900 anchor + per_mib)."""
   per_mib = float(cfg.get_sync_ingest_per_file_timeout_s_per_mib())
   return 900.0 + 2048.0 * per_mib
 

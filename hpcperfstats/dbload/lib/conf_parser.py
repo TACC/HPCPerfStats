@@ -297,7 +297,7 @@ INI_OPTION_DEFAULTS = {
     'sync_pool_worker_recycle_grace_seconds': '60',
     'sync_pool_idle_reconcile_max_rounds': '3',
     'sync_pool_idle_reconcile_polls_per_round': '4',
-    'sync_ingest_per_file_timeout_s': '900',
+    'sync_ingest_per_file_timeout_s': '3600',
     'sync_ingest_per_file_timeout_max_s': '86400',
     'sync_ingest_per_file_timeout_s_per_mib': '2.783203125',
     'sync_ingest_giant_pool_supplement_enabled': 'yes',
@@ -1971,16 +1971,19 @@ def get_sync_ingest_per_file_timeout_s():
     return 0.0
 
 
-# 30 GiB × per_mib + floor reaches max at default slope.
+# 30 GiB × per_mib + historical floor-900 slope reaches max at default slope.
+# Floor default (3600) is independent; keep per_mib anchored to (86400−900)/30720.
 _SYNC_INGEST_PER_FILE_TIMEOUT_REFERENCE_MIB = 30720  # 30 GiB
 _SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S_DEFAULT = 86400.0  # 24h at reference size
+_SYNC_INGEST_PER_FILE_TIMEOUT_SLOPE_FLOOR_S = 900.0  # historical slope anchor
 _SYNC_INGEST_PER_FILE_TIMEOUT_S_PER_MIB_DEFAULT = (
-    (_SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S_DEFAULT - 900.0)
+    (_SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S_DEFAULT - _SYNC_INGEST_PER_FILE_TIMEOUT_SLOPE_FLOOR_S)
     / _SYNC_INGEST_PER_FILE_TIMEOUT_REFERENCE_MIB
 )
 # 2 GiB ingest budget at default slope (giant pool supplement trigger).
 _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S_DEFAULT = (
-    900.0 + 2048.0 * _SYNC_INGEST_PER_FILE_TIMEOUT_S_PER_MIB_DEFAULT
+    _SYNC_INGEST_PER_FILE_TIMEOUT_SLOPE_FLOOR_S
+    + 2048.0 * _SYNC_INGEST_PER_FILE_TIMEOUT_S_PER_MIB_DEFAULT
 )
 _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES_DEFAULT = 1073741824  # 1 GiB
 _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_LARGE_MAX_BYTES_DEFAULT = 8589934592  # 8 GiB

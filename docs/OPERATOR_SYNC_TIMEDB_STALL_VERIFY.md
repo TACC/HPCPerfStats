@@ -721,6 +721,28 @@ docker compose logs pipeline 2>&1 | grep -E 'dispatch_probe failed|proactive swa
 
 **Pass (T0):** `child_ingest` equals configured processes shortly after any `proactive swap` / idle recover. **Pass (T1):** census stays ≤ configured across further per-file timeouts; thin `in_flight_n` under long budgets is a separate utilization question, not proof of orphans.
 
+### T0 / T1 — ingest per-file timeout floor 3600 (throughput near-miss, 2026-07)
+
+**Failure signature (pre-fix / old floor 900):** under `ingest_pool_processes=32`, many paths die with `ERROR: ingest per-file timeout … stage=ingest` / `outcome=timeout` at **elapsed == size-scaled budget** (~925–1654s for small/mid files). Slow cohort can still finish on retry (e.g. ~14 MiB in **2304.7s**). Not an idle/stall class if `remaining` advances.
+
+**Acceptance (post-deploy with floor 3600 + WARN min 7200):**
+
+- `sync_ingest_per_file_timeout_s` reads **3600** (or site override ≥3600) inside the pipeline image.
+- Timeout rate drops vs pre-deploy; slow successes with `elapsed_s` in the 1800–3600 band complete as `outcome=ingested`.
+- `WARN: ingest per-file timeout budget` is uncommon except for multi‑GiB / ≥7200s budgets (not every file).
+- `remaining=` still trends down; no `ERROR: Pool imap stalled` / exit **124** from this alone.
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline su hpcperfstats -c 'python3 -c "
+from hpcperfstats.dbload.lib import conf_parser as cfg
+print(\"per_file_timeout_s\", cfg.get_sync_ingest_per_file_timeout_s())
+print(\"per_mib\", cfg.get_sync_ingest_per_file_timeout_s_per_mib())
+print(\"max_s\", cfg.get_sync_ingest_per_file_timeout_max_s())
+"'
+
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'ingest per-file timeout|outcome=timeout|outcome=ingested|WARN: ingest per-file timeout budget|remaining=' | tail -80
+```
+
 ### T0 / T1 — post_retire timeout→quarantine thrash → exit 124 (2026-07-17)
 
 **Failure signature (pre-fix):** under `maxtasksperchild=0` + `recycle_on_failure=True`, a timeout wave logs **`Quarantined unparsable raw`** / **`outcome=quarantine … fail_reason=ingest per-file timeout`** (file moved to DLO; manifest `reason=ingest_parse_failed` + `error_detail` containing the timeout string) then every retire runs **`post_retire_maintenance`**: **`dispatch_probe failed … TimeoutError`** on a busy pool, **`child_ingest over cap alive≫expected`** with **`Pool terminate SIGKILL`**, eventually **`idle_pool_ghost_inflight` / `idle_pool_taskqueue_dead`** → **`hard exit code=124`**.

@@ -328,8 +328,8 @@ sync_timedb_tar_append_batch_size = 1024
 # Idle polls between reconcile redispatch rounds when workers are idle (default 4).
 # sync_pool_idle_reconcile_polls_per_round = 4
 
-# Per ingest pool task wall-clock floor seconds; 0 disables all per-file timeouts (default 900).
-# sync_ingest_per_file_timeout_s = 900
+# Per ingest pool task wall-clock floor seconds; 0 disables all per-file timeouts (default 3600).
+sync_ingest_per_file_timeout_s = 3600
 
 # Size-proportional ingest timeout: resolved = clamp(floor + ceil_mib(size) * per_mib, floor, max).
 # Default per_mib ((86400-900)/30720) maps 30 GiB to max; larger files cap at max (no file-size reject).

@@ -30,12 +30,14 @@ def _patch_stats_file_size_bytes(monkeypatch, fn):
   )
 
 
+# Slope keeps historical (86400−900)/30720 anchor; floor default is independent (3600).
 _PER_MIB_DEFAULT = (86400.0 - 900.0) / 30720.0
+_FLOOR_DEFAULT = 3600.0
 _MAX_TIMEOUT_DEFAULT = 86400.0
 
 
 def _default_timeout_getters(monkeypatch):
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 900.0)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: _FLOOR_DEFAULT)
   monkeypatch.setattr(
       st.cfg,
       "get_sync_ingest_per_file_timeout_s_per_mib",
@@ -49,11 +51,11 @@ def _default_timeout_getters(monkeypatch):
 @pytest.mark.parametrize(
     ("size_bytes", "expected_timeout"),
     [
-        (0, 900.0),
-        (_mib_bytes(66), 900.0 + 66.0 * _PER_MIB_DEFAULT),
-        (_mib_bytes(2048), 6600.0),
-        (_mib_bytes(512), 900.0 + 512.0 * _PER_MIB_DEFAULT),
-        (_mib_bytes(5120), 900.0 + 5120.0 * _PER_MIB_DEFAULT),
+        (0, _FLOOR_DEFAULT),
+        (_mib_bytes(66), _FLOOR_DEFAULT + 66.0 * _PER_MIB_DEFAULT),
+        (_mib_bytes(2048), _FLOOR_DEFAULT + 2048.0 * _PER_MIB_DEFAULT),
+        (_mib_bytes(512), _FLOOR_DEFAULT + 512.0 * _PER_MIB_DEFAULT),
+        (_mib_bytes(5120), _FLOOR_DEFAULT + 5120.0 * _PER_MIB_DEFAULT),
         (_mib_bytes(30720), _MAX_TIMEOUT_DEFAULT),
         (_mib_bytes(35000), _MAX_TIMEOUT_DEFAULT),
     ],
@@ -90,17 +92,36 @@ def test_run_ingest_timed_uses_resolved_timeout(monkeypatch, tmp_path):
 
   monkeypatch.setattr(st.signal, "setitimer", fake_setitimer, raising=False)
   monkeypatch.setattr(st, "record_worker_stage", lambda *_a, **_k: None)
-  monkeypatch.setattr(st, "clear_worker_stage", lambda: None)
+  monkeypatch.setattr(st, "clear_worker_stage", lambda: None, raising=False)
   monkeypatch.setattr(st, "_log_long_ingest_timeout_budget_if_needed", lambda *_a, **_k: None)
 
   st._run_ingest_timed(str(stats_file), "parse", lambda: "ok")
   assert any(math.isclose(value, 86400.0, rel_tol=0, abs_tol=0.01) for value in seen)
 
 
+def test_ingest_per_file_timeout_log_min_default():
+  assert st.INGEST_PER_FILE_TIMEOUT_LOG_MIN_S == 7200.0
+
+
+def test_c672_017_class_budget_covers_slow_cohort_success(monkeypatch, tmp_path):
+  """~14.3 MiB path that needed 2304.7s must clear under shipped floor 3600."""
+  _default_timeout_getters(monkeypatch)
+  stats_file = tmp_path / "c672-017-class"
+  size_bytes = 14984928  # operator paste: c672-017
+  stats_file.write_bytes(b"x")
+  _patch_stats_file_size_bytes(monkeypatch, lambda _p: size_bytes)
+  resolved = st.resolve_ingest_per_file_timeout_s(str(stats_file))
+  assert resolved >= 2305.0
+  assert resolved == pytest.approx(
+      _FLOOR_DEFAULT + 15.0 * _PER_MIB_DEFAULT, abs=0.05,
+  )
+
+
 def test_long_timeout_budget_logs_warning(monkeypatch, tmp_path, capsys):
   _default_timeout_getters(monkeypatch)
   stats_file = tmp_path / "segment"
-  size_bytes = _mib_bytes(512)
+  # Budget must exceed WARN min 7200: 3600 + MiB×per_mib ≥ 7200 → ≥~1294 MiB.
+  size_bytes = _mib_bytes(1500)
   stats_file.write_bytes(b"x")
   _patch_stats_file_size_bytes(monkeypatch, lambda _p: size_bytes)
   monkeypatch.setattr(st, "record_worker_stage", lambda *_a, **_k: None)
@@ -119,7 +140,8 @@ def test_long_timeout_budget_skips_small_files(monkeypatch, tmp_path, capsys):
   _default_timeout_getters(monkeypatch)
   stats_file = tmp_path / "segment"
   size_bytes = _mib_bytes(66)
-  stats_file.write_bytes(b"x" * size_bytes)
+  stats_file.write_bytes(b"x")
+  _patch_stats_file_size_bytes(monkeypatch, lambda _p: size_bytes)
   timeout_s = st.resolve_ingest_per_file_timeout_s(str(stats_file))
   assert timeout_s < st.INGEST_PER_FILE_TIMEOUT_LOG_MIN_S
   st._log_long_ingest_timeout_budget_if_needed(str(stats_file), timeout_s)
@@ -153,7 +175,7 @@ def test_stall_abort_polls_for_batch_small_files(monkeypatch, tmp_path):
   small.write_bytes(b"x" * 1024)
   _patch_stats_file_size_bytes(monkeypatch, lambda _p: 1024)
   polls = st._stall_abort_polls_for_batch([str(small)])
-  assert polls == 181
+  assert polls == int(_FLOOR_DEFAULT / 5.0) + 1
 
 
 def test_stall_abort_polls_for_batch_large_file(monkeypatch, tmp_path):
@@ -246,19 +268,24 @@ def test_raise_if_ingest_per_file_deadline_uses_effective_timeout(monkeypatch):
 
 
 def test_giant_trigger_budget_2gib_boundary(monkeypatch, tmp_path):
+  """Trigger stays 6600s wall; with floor 3600, crossover is ~1078 MiB (not 2 GiB)."""
   _default_timeout_getters(monkeypatch)
   monkeypatch.setattr(
       st.cfg,
       "get_sync_ingest_giant_pool_supplement_trigger_budget_s",
       lambda: 6600.0,
   )
-  under = tmp_path / "under2g"
+  under = tmp_path / "under_trigger"
   at2g = tmp_path / "at2g"
+  # 3600 + mib×per_mib >= 6600 → mib >= ceil(3000/per_mib) ≈ 1078
+  under_mib = 1077
+  assert _FLOOR_DEFAULT + under_mib * _PER_MIB_DEFAULT < 6600.0
+  assert _FLOOR_DEFAULT + 2048.0 * _PER_MIB_DEFAULT >= 6600.0
 
   def _size_for(path):
     if "at2g" in str(path):
       return _mib_bytes(2048)
-    return _mib_bytes(2047)
+    return _mib_bytes(under_mib)
 
   _patch_stats_file_size_bytes(monkeypatch, _size_for)
   assert ingest_timeout_mod.is_giant_ingest_budget(str(under)) is False
@@ -846,7 +873,7 @@ def test_ingest_populate_wait_survives_sigalrm(monkeypatch, tmp_path):
 
   threading.Thread(target=_finish_populate, daemon=True).start()
   monkeypatch.setattr(st, "record_worker_stage", lambda *_a, **_k: None)
-  monkeypatch.setattr(st, "clear_worker_stage", lambda: None)
+  monkeypatch.setattr(st, "clear_worker_stage", lambda: None, raising=False)
   monkeypatch.setattr(st, "_log_long_ingest_timeout_budget_if_needed", lambda *_a, **_k: None)
 
   stats_file = tmp_path / "segment"
@@ -868,7 +895,7 @@ def test_parse_still_times_out_without_populate_wait(monkeypatch, tmp_path):
   monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s_per_mib", lambda: 0.0)
   monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 0.1)
   monkeypatch.setattr(st, "record_worker_stage", lambda *_a, **_k: None)
-  monkeypatch.setattr(st, "clear_worker_stage", lambda: None)
+  monkeypatch.setattr(st, "clear_worker_stage", lambda: None, raising=False)
   monkeypatch.setattr(st, "_log_long_ingest_timeout_budget_if_needed", lambda *_a, **_k: None)
 
   stats_file = tmp_path / "segment"
