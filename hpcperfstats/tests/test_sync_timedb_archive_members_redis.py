@@ -1119,6 +1119,94 @@ def test_populate_wait_succeeds_when_tar_identity_drifts_to_warm_key(
   assert result["members"] == {"host/a": 10}
 
 
+def test_wait_for_member_match_reresolves_warm_sealed_when_canonical(
+    _redis_test_env, tmp_path,
+):
+  """Locked incomplete identity must not hang when sealed warm exists for canonical."""
+  day = "2026-07-17"
+  tar = tmp_path / ("%s.tar" % day)
+  zst = tmp_path / ("%s.tar.zst" % day)
+  tar.write_bytes(b"v1")
+  canonical = str(zst)
+  keys_dirty = build_archive_members_redis_keys(
+      _daily_archive_members_cache_key(canonical),
+  )
+  _redis_test_env.set(keys_dirty.lock_key, "tok:1", ex=30)
+  _redis_test_env.set(keys_dirty.complete_key, "0")
+  tar.write_bytes(b"v1-appended")
+  keys_warm = build_archive_members_redis_keys(
+      _daily_archive_members_cache_key(canonical),
+  )
+  assert keys_dirty.hash_key != keys_warm.hash_key
+  _redis_test_env.hset(keys_warm.hash_key, mapping={"host/m": "42"})
+  _redis_test_env.set(keys_warm.complete_key, "1")
+  t0 = time.monotonic()
+  matched = wait_for_member_match(
+      keys_dirty,
+      "host/m",
+      42,
+      canonical=canonical,
+      respect_ingest_deadline=False,
+  )
+  assert matched is True
+  assert time.monotonic() - t0 < 2.0
+
+
+def test_member_match_call_passes_canonical(monkeypatch):
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
+
+  captured = {}
+
+  def _fake_wait(keys, member_name, expected_size, **kwargs):
+    captured["kwargs"] = kwargs
+    captured["member"] = member_name
+    return True
+
+  class _Client:
+    def exists(self, key):
+      return 1
+
+    def get(self, key):
+      return None
+
+    def hget(self, *args):
+      return None
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".wait_for_member_match",
+      _fake_wait,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".populate_degraded_is_set",
+      lambda *_a, **_k: False,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics"
+      ".update_worker_substage",
+      lambda *_a, **_k: None,
+  )
+  monkeypatch.setattr(
+      helpers,
+      "_raise_if_ingest_day_skipped",
+      lambda *_a, **_k: None,
+  )
+  keys = build_archive_members_redis_keys(
+      _daily_archive_members_cache_key("/data/2026-07-17.tar.zst"),
+  )
+  helpers._member_match_via_redis_or_sealed_point(
+      "/data/2026-07-17.tar.zst",
+      "day:test",
+      keys,
+      "/data/2026-07-17.tar.zst",
+      "host/m",
+      10,
+      client=_Client(),
+  )
+  assert captured.get("kwargs", {}).get("canonical") == "/data/2026-07-17.tar.zst"
+
+
 def test_incomplete_after_lock_release_reenqueues_before_fatal(
     _redis_test_env, tmp_path, monkeypatch,
 ):

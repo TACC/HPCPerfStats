@@ -23,6 +23,19 @@ Attach the `test_runs/day-close-loop-regression-battery-*.log` path to the PR or
 | **T1 progress (`current`)** | Same window while CLI ``current`` (newest-first) runs | Descending `epochs=` on `chunk dispatch begin`; `youngest_day_chunk_gate` / `youngest_day_chunk_gate_pad` (not ascending oldest-gate for ``backlog``); heartbeat sidecar/Redis advances with active work |
 | **T2 catch-up** | T+24 h or when head day advances | New `chunk ingest summary` cadence; June-scale head day `unprocessed` trending down; `ingest_stall_watchdog` absent |
 
+### T0 / T1 — `wait_for_member_match` + `redis_warm` false non-defer → exit 124 (2026-07)
+
+**Failure signature (pre-fix):** `ERROR: Pool imap stalled` with `stall_defer=off defer_reason=redis_warm`, `effective_ingest_timeout_s=-`, small in-flight `batch_max_ingest_timeout_s` ≈ floor, then `hard exit code=124`. py-spy on ingest-pool workers shows idle `wait_for_member_match` → `daily_archive_has_member_with_size` / tar-append decision while calendar-day Redis reports `complete=1`.
+
+```bash
+# T0 — stall / exit124 signatures (full pipeline log; never --tail before grep)
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'Pool imap stalled|defer_reason=redis_warm|defer_reason=member_match_wait|hard exit code=124|effective_ingest_timeout_s=' | tail -80
+```
+
+**Pass (T0):** no new `ERROR: Pool imap stalled` + `defer_reason=redis_warm` while workers are in member-match wait. Expect either imap completions, `stall deferred` with `defer_reason=member_match_wait` / `worker_progress_active` / `long_ingest_budget`, or `effective_ingest_timeout_s` numeric (not `-`). Stall wall should exceed in-flight `batch_max` by ~120s grace.
+
+**Pass (T1):** under combined ingest with warm July Redis + concurrent June populate, ingest continues without exit 124 on the redis_warm small-window path; `chunk ingest summary` cadence resumes after large-file / member-wait windows.
+
 ### T0 / T1 — find-based pending discovery (every chunk + mtime window)
 
 After deploy of **GNU find `-printf` stats discovery** (`sync_timedb_stats_find`, `rescan_every_chunks=1`, `sync_ingest_rescan_mtime_days=1`): multi-hour silent gaps between `pending rescan done` / `find_stats` lines on ``current``/idle must **not** return. Discovery must complete in seconds (operator baseline: full archive ~0.7s, `-mtime -1` ~2s on ~350k files).

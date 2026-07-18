@@ -175,7 +175,8 @@ def test_stall_abort_polls_for_batch_small_files(monkeypatch, tmp_path):
   small.write_bytes(b"x" * 1024)
   _patch_stats_file_size_bytes(monkeypatch, lambda _p: 1024)
   polls = st._stall_abort_polls_for_batch([str(small)])
-  assert polls == int(_FLOOR_DEFAULT / 5.0) + 1
+  grace = ingest_timeout_mod.STALL_ABORT_GRACE_S
+  assert polls == int((_FLOOR_DEFAULT + grace) / 5.0) + 1
 
 
 def test_stall_abort_polls_for_batch_large_file(monkeypatch, tmp_path):
@@ -188,8 +189,9 @@ def test_stall_abort_polls_for_batch_large_file(monkeypatch, tmp_path):
   _patch_stats_file_size_bytes(monkeypatch, lambda _p: size_bytes)
   expected_timeout = st.resolve_ingest_per_file_timeout_s(str(large))
   polls = st._stall_abort_polls_for_batch([str(large)])
+  grace = ingest_timeout_mod.STALL_ABORT_GRACE_S
   assert expected_timeout == 86400.0
-  assert polls == int(expected_timeout / 5.0) + 1
+  assert polls == int((expected_timeout + grace) / 5.0) + 1
 
 
 def test_stall_abort_polls_scales_to_30gib_budget(monkeypatch, tmp_path):
@@ -201,8 +203,25 @@ def test_stall_abort_polls_scales_to_30gib_budget(monkeypatch, tmp_path):
   giant.write_bytes(b"x")
   _patch_stats_file_size_bytes(monkeypatch, lambda _p: size_bytes)
   polls = st._stall_abort_polls_for_batch([str(giant)])
-  assert polls == int(86400.0 / 5.0) + 1
+  grace = ingest_timeout_mod.STALL_ABORT_GRACE_S
+  assert polls == int((86400.0 + grace) / 5.0) + 1
   assert polls < 17320
+
+
+def test_stall_abort_polls_includes_grace_beyond_batch_max(monkeypatch, tmp_path):
+  _default_timeout_getters(monkeypatch)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 900.0)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 17320)
+  small = tmp_path / "small"
+  small.write_bytes(b"x" * 1024)
+  _patch_stats_file_size_bytes(monkeypatch, lambda _p: 1024)
+  batch_max = st.resolve_ingest_per_file_timeout_s(str(small))
+  polls = ingest_timeout_mod.stall_abort_polls_for_paths([str(small)])
+  grace = ingest_timeout_mod.STALL_ABORT_GRACE_S
+  wall_s = polls * 5.0
+  assert wall_s >= batch_max + grace - 5.0
+  assert polls == int((batch_max + grace) / 5.0) + 1
 
 
 def test_stall_abort_polls_respects_ini_ceiling(monkeypatch, tmp_path):

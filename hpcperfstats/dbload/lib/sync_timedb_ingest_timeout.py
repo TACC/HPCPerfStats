@@ -59,6 +59,10 @@ def max_ingest_per_file_timeout_for_paths(paths):
   return best
 
 
+# Extra wall beyond in-flight batch_max so per-file SIGALRM / imap results can land.
+STALL_ABORT_GRACE_S = 120.0
+
+
 def stall_abort_polls_for_paths(paths):
   """Poll-timeout abort count for in-flight paths (floor .. INI ceiling)."""
   poll_s = float(cfg.get_sync_pool_poll_timeout_s())
@@ -72,8 +76,11 @@ def stall_abort_polls_for_paths(paths):
     batch_max_s = max_ingest_per_file_timeout_for_paths(paths)
     if batch_max_s <= 0.0:
       batch_max_s = floor_s if floor_s > 0.0 else poll_s
-  dynamic_polls = int(batch_max_s / poll_s) + 1
-  min_polls = int(floor_s / poll_s) + 1 if floor_s > 0.0 else 1
+  grace_s = float(STALL_ABORT_GRACE_S)
+  dynamic_polls = int((batch_max_s + grace_s) / poll_s) + 1
+  min_polls = (
+      int((floor_s + grace_s) / poll_s) + 1 if floor_s > 0.0 else 1
+  )
   return max(1, min(ceiling_polls, max(min_polls, dynamic_polls)))
 
 
@@ -316,6 +323,9 @@ def stall_abort_polls_for_sealed_archives(sealed_paths, *, member_counts=None):
     )
     if batch_max_s <= 0.0:
       batch_max_s = floor_s if floor_s > 0.0 else poll_s
-  dynamic_polls = int(batch_max_s / poll_s) + 1
-  min_polls = int(floor_s / poll_s) + 1 if floor_s > 0.0 else 1
+  grace_s = float(STALL_ABORT_GRACE_S)
+  dynamic_polls = int((batch_max_s + grace_s) / poll_s) + 1
+  min_polls = (
+      int((floor_s + grace_s) / poll_s) + 1 if floor_s > 0.0 else 1
+  )
   return max(1, min(ceiling_polls, max(min_polls, dynamic_polls)))

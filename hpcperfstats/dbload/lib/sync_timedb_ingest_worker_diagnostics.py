@@ -62,7 +62,9 @@ def apply_ingest_pool_worker_init(script_name, pool_kind, registry):
     pass
 
 
-def record_worker_stage(path, stage, *, substage=None, lookup_mode=None):
+def record_worker_stage(
+    path, stage, *, substage=None, lookup_mode=None, timeout_s=None,
+):
   registry = _resolve_registry()
   if registry is None:
     return
@@ -75,6 +77,11 @@ def record_worker_stage(path, stage, *, substage=None, lookup_mode=None):
     payload["substage"] = str(substage)
   if lookup_mode:
     payload["lookup_mode"] = str(lookup_mode)
+  if timeout_s is not None:
+    try:
+      payload["timeout_s"] = "%.1f" % float(timeout_s)
+    except (TypeError, ValueError):
+      payload["timeout_s"] = str(timeout_s)
   pid = str(os.getpid())
   try:
     registry[pid] = payload
@@ -148,6 +155,7 @@ def update_worker_substage(substage, **extra):
     if not entry:
       return
     entry["substage"] = str(substage)
+    entry["t0"] = time.monotonic()
     for key, value in extra.items():
       if value is not None:
         entry[key] = str(value)
@@ -165,16 +173,23 @@ def count_worker_registry_entries(registry):
     return 0
 
 
-def format_worker_stages_snapshot(registry, *, max_entries=16):
+def format_worker_stages_snapshot(
+    registry, *, max_entries=16, prefer_paths=None,
+):
   if registry is None:
     return "-"
   now = time.monotonic()
-  parts = []
+  prefer_norm = {
+      os.path.normpath(str(path))
+      for path in (prefer_paths or ())
+      if path
+  }
+  ranked = []
   try:
     items = list(registry.items())
   except Exception:
     return "-"
-  for pid, raw in items[: max(0, int(max_entries))]:
+  for pid, raw in items:
     if not isinstance(raw, dict):
       continue
     path = raw.get("path") or ""
@@ -185,7 +200,22 @@ def format_worker_stages_snapshot(registry, *, max_entries=16):
       stage = "%s:%s" % (stage, lookup_mode)
     t0 = raw.get("t0")
     age_s = max(0.0, now - float(t0)) if t0 is not None else 0.0
-    parts.append("%s:%s:%s:%.0f" % (pid, stage, basename, age_s))
+    line = "%s:%s:%s:%.0f" % (pid, stage, basename, age_s)
+    stage_l = str(stage).lower()
+    path_norm = os.path.normpath(path) if path else ""
+    if path_norm and path_norm in prefer_norm:
+      prefer = 0
+    elif stage_l.startswith((
+        "ingest", "parse", "db_", "archive_member", "dispatch",
+    )):
+      prefer = 1
+    elif "populate" in stage_l:
+      prefer = 3
+    else:
+      prefer = 2
+    ranked.append((prefer, age_s, line))
+  ranked.sort(key=lambda item: (item[0], item[1]))
+  parts = [item[2] for item in ranked[: max(0, int(max_entries))]]
   return ",".join(parts) if parts else "-"
 
 
@@ -205,6 +235,64 @@ def iter_alive_pool_worker_pids(pool):
       pid = getattr(proc, "pid", None)
       if pid is not None:
         yield str(pid)
+
+
+def worker_registry_shows_member_match_wait(
+    registry,
+    *,
+    pool=None,
+    alive_pids=None,
+    progress_grace_s=None,
+):
+  """True when an alive worker is in archive_member_lookup redis_wait."""
+  if registry is None:
+    return False
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  if progress_grace_s is None:
+    try:
+      progress_grace_s = float(
+          cfg.get_sync_archive_members_redis_populate_max_seconds(),
+      )
+    except Exception:
+      progress_grace_s = 7200.0
+    if progress_grace_s <= 0.0:
+      floor_s = float(cfg.get_sync_ingest_per_file_timeout_s())
+      progress_grace_s = floor_s if floor_s > 0.0 else 900.0
+  else:
+    progress_grace_s = float(progress_grace_s)
+  if alive_pids is None and pool is not None:
+    alive_pids = set(iter_alive_pool_worker_pids(pool))
+  elif alive_pids is not None:
+    alive_pids = {str(pid) for pid in alive_pids}
+  else:
+    alive_pids = set()
+  now = time.monotonic()
+  try:
+    items = list(registry.items())
+  except Exception:
+    return False
+  for pid, raw in items:
+    pid_s = str(pid)
+    if pid_s.startswith("dispatch:"):
+      continue
+    if alive_pids and pid_s not in alive_pids:
+      continue
+    if not isinstance(raw, dict):
+      continue
+    lookup_mode = str(raw.get("lookup_mode") or "")
+    substage = str(raw.get("substage") or "")
+    if lookup_mode != "redis_wait" and substage != "archive_member_lookup":
+      continue
+    if lookup_mode and lookup_mode != "redis_wait":
+      continue
+    t0 = raw.get("t0")
+    if t0 is None:
+      continue
+    age_s = max(0.0, now - float(t0))
+    if age_s < progress_grace_s:
+      return True
+  return False
 
 
 def worker_registry_shows_recent_progress(

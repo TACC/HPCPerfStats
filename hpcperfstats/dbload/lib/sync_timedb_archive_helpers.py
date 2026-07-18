@@ -4093,6 +4093,7 @@ def _member_match_via_redis_or_sealed_point(
         return wait_for_member_match(
             keys, member_name, expected_size, sealed_path=sealed_path,
             respect_ingest_deadline=False,
+            canonical=canonical,
         )
       raise
 
@@ -4106,6 +4107,7 @@ def _member_match_via_redis_or_sealed_point(
     return wait_for_member_match(
         keys, member_name, expected_size, sealed_path=sealed_path,
         respect_ingest_deadline=False,
+        canonical=canonical,
     )
 
   try:
@@ -4119,6 +4121,7 @@ def _member_match_via_redis_or_sealed_point(
       return wait_for_member_match(
           keys, member_name, expected_size, sealed_path=sealed_path,
           respect_ingest_deadline=False,
+          canonical=canonical,
       )
 
 

@@ -182,6 +182,7 @@ from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
     record_worker_stage,
     seed_dispatch_worker_stages,
     update_worker_substage,
+    worker_registry_shows_member_match_wait,
     worker_registry_shows_recent_progress,
 )
 from hpcperfstats.dbload.lib.sync_timedb_worker_memory import (
@@ -415,7 +416,7 @@ def _run_ingest_timed(stats_file, stage, fn, *, enable_sigalrm=True):
     deadline_token = set_ingest_task_deadline_monotonic(
         time.monotonic() + timeout_s,
     )
-  record_worker_stage(stats_file, stage)
+  record_worker_stage(stats_file, stage, timeout_s=timeout_s)
   _log_long_ingest_timeout_budget_if_needed(stats_file, timeout_s)
   try:
     if timeout_s <= 0.0 or not enable_sigalrm or not hasattr(signal, "SIGALRM"):
@@ -1088,14 +1089,10 @@ def _ingest_stall_defer_state(
   )
   if defer_on:
     return True, defer_reason
-  pipeline = (
-      getattr(stall_diagnostics, "ingest_pipeline", "")
-      if stall_diagnostics is not None
-      else ""
-  )
-  if pipeline == "sealed_archive_backfill" or _sample_looks_like_sealed_archives(sample):
-    if worker_registry_shows_recent_progress(registry, pool=active_pool):
-      return True, "worker_progress_active"
+  if worker_registry_shows_member_match_wait(registry, pool=active_pool):
+    return True, "member_match_wait"
+  if worker_registry_shows_recent_progress(registry, pool=active_pool):
+    return True, "worker_progress_active"
   day_hint_resolved = day_hint
   if not day_hint_resolved:
     if callable(day_hint_from_sample_fn) and sample:
@@ -1235,7 +1232,10 @@ def _build_ingest_stall_log_suffix(
   worker_registry = diag.worker_registry
   if worker_registry is not None:
     prune_stale_worker_stages(worker_registry, max_age_s=900.0)
-  worker_stages = format_worker_stages_snapshot(worker_registry)
+  worker_stages = format_worker_stages_snapshot(
+      worker_registry,
+      prefer_paths=sample,
+  )
   registry_n = count_worker_registry_entries(worker_registry)
   effective_timeout_s = _max_effective_ingest_timeout_from_registry(worker_registry)
   effective_text = (
@@ -1429,6 +1429,7 @@ def _make_ingest_stall_poll_fn(
         getattr(stall_diagnostics, "worker_registry", None)
         if stall_diagnostics is not None
         else None,
+        prefer_paths=sample,
     )
     if defer_reason == "long_ingest_budget":
       effective = _max_effective_ingest_timeout_from_registry(

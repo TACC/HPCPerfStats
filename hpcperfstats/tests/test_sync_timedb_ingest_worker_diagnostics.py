@@ -35,6 +35,38 @@ def test_format_worker_stages_snapshot_empty():
   assert format_worker_stages_snapshot({}) == "-"
 
 
+def test_format_worker_stages_prefers_ingest_over_populate():
+  registry = {
+      "167": {
+          "path": "/data/daily/2026-06-02.tar.zst",
+          "stage": "populate_queue_wait",
+          "t0": 100.0,
+      },
+      "142": {
+          "path": "/data/host.example/1784310055",
+          "stage": "ingest",
+          "substage": "parse",
+          "t0": 100.0,
+      },
+  }
+  snapshot = format_worker_stages_snapshot(
+      registry,
+      prefer_paths=["/data/host.example/1784310055"],
+  )
+  assert snapshot.index("1784310055") < snapshot.index("populate_queue_wait")
+
+
+def test_record_worker_stage_timeout_s_roundtrip():
+  registry = {}
+  set_worker_diagnostics_registry(registry)
+  try:
+    record_worker_stage("/tmp/a", "ingest", timeout_s=975.1)
+    pid = str(os.getpid())
+    assert registry[pid]["timeout_s"] == "975.1"
+  finally:
+    set_worker_diagnostics_registry(None)
+
+
 def test_count_worker_registry_entries():
   registry = {}
   set_worker_diagnostics_registry(registry)
