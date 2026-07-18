@@ -464,6 +464,19 @@ grep -E 'discover_ready_day_close|Archive janitor tick done|janitor: tick zero_p
 
 **Pass (T1):** backlog head days progress through seal/verify/delete; **`waiting_on_ingest`** deferred remains only for true ingest handoff (do not auto-promote). Partial seal (`.tar` + `.tar.zst` present) still runs day-close workers.
 
+### T0 / T1 verify — zero_pop budget starvation before fill (2026-07-17)
+
+**Failure signature (pre-fix):** repeating **`janitor: tick zero_pop debt_remaining=N free_slots=N disqualified_on_heap=0 sample_tars=-`** with **`debt_popped=0 days_started=0`** and **`active_workers=0`**, often after multi-minute/hour **`duration_s`** spent in discover/reconcile. Drain budget was armed **before** `get_disqualified_daily_tars` / lock cleanup, so fill never entered; empty `sample_tars` is **not** proof the heap is clear.
+
+**Acceptance (post-deploy):**
+
+- Log **`janitor: tick debt_drain_begin budget_s=… debt_remaining=… free_slots=…`** after prefill.
+- When `debt_remaining>0` and `free_slots>0`, expect **`debt_popped>0`** / **`days_started>0`** (or zero_pop with **`disqualified_on_heap>0`** + sample tars + **`budget_remaining_s=`**), not endless `sample_tars=-` starvation.
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'debt_drain_begin|tick zero_pop|Archive janitor tick done|days_started=' | tail -80
+```
+
 ### T1 verify — day-close idle threads + discover cap split (2026-07)
 
 After deploy of **day-close idle thread recovery**, confirm discover enqueues NEW ready days when debt heap is non-empty but pool workers are idle, and mid-tick refill uses free slots.

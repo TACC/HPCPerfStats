@@ -1497,8 +1497,10 @@ class ArchiveJanitor:
         )
         self._ticks_completed += 1
         return
-      # Debt-drain budget starts after scheduled maintenance (not wall-clock for the whole tick).
-      budget_deadline = time.time() + self._effective_tick_budget()
+      # Prefill bookkeeping (disqualified scan + lock cleanup) is outside the
+      # debt-drain budget — arming early let slow get_disqualified burn
+      # archive_janitor_budget_seconds so _fill_free_slots never entered
+      # (zero_pop with free_slots>0 / sample_tars=- forever).
       disqualified = set(self.get_disqualified_daily_tars())
       self._consume_dedupe_hints(disqualified)
       self._tick_remaining_raw_cache = {}
@@ -1518,6 +1520,21 @@ class ArchiveJanitor:
       # Do not re-pop the same calendar day within one tick after a partial/failed
       # attempt (avoids busy-spinning the pool until budget expires).
       attempted_tars: Set[str] = set()
+
+      # Debt-drain budget starts at fill (after maintenance + prefill), not
+      # wall-clock for the whole tick.
+      drain_budget_s = self._effective_tick_budget()
+      budget_deadline = time.time() + drain_budget_s
+      self.log_fn(
+          "janitor: tick debt_drain_begin budget_s=%.3f debt_remaining=%d "
+          "free_slots=%d"
+          % (
+              drain_budget_s,
+              self.debt_depth(),
+              self._day_close_free_slots(),
+          ),
+          flush=True,
+      )
 
       def _budget_ok() -> bool:
         return time.time() < budget_deadline
@@ -1595,10 +1612,17 @@ class ArchiveJanitor:
           heap_tars = self._debt_heap_tar_paths()
           blocked = sorted(heap_tars & set(disqualified))
           sample = ",".join(blocked[:8]) if blocked else ""
+          budget_remaining_s = budget_deadline - time.time()
           self.log_fn(
               "janitor: tick zero_pop debt_remaining=%d free_slots=%d "
-              "disqualified_on_heap=%d sample_tars=%s"
-              % (remaining, free_slots, len(blocked), sample or "-"),
+              "disqualified_on_heap=%d sample_tars=%s budget_remaining_s=%.3f"
+              % (
+                  remaining,
+                  free_slots,
+                  len(blocked),
+                  sample or "-",
+                  budget_remaining_s,
+              ),
               flush=True,
           )
           self.signal_work_available()

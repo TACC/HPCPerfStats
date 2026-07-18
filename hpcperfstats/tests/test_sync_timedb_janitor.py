@@ -1978,7 +1978,107 @@ def test_janitor_zero_pop_all_disqualified_logs_and_wakes(monkeypatch, tmp_path)
       "debt_popped=0" in line and "disqualified" in line.lower()
       for line in logs
   ) or any("zero_pop" in line or "all_disqualified" in line for line in logs)
+  assert any("budget_remaining_s=" in line for line in logs if "zero_pop" in line)
   assert signal_count["n"] >= 1
+
+
+def test_janitor_fill_pops_when_disqualified_scan_exceeds_budget(monkeypatch, tmp_path):
+  """Prefill get_disqualified slower than budget must not starve fill (budget arms at fill)."""
+  import time as time_mod
+
+  tar_path = str(tmp_path / "2026-06-01.tar")
+  open(tar_path, "wb").close()
+  tar_norm = os.path.normpath(tar_path)
+  logs: list[str] = []
+  close_calls: list[str] = []
+  disq_calls = {"n": 0}
+
+  def log_fn(msg, **_kwargs):
+    logs.append(str(msg))
+
+  def slow_then_empty():
+    disq_calls["n"] += 1
+    # First (prefill) call exceeds short drain budget; fill still must pop.
+    if disq_calls["n"] == 1:
+      time_mod.sleep(0.12)
+    return set()
+
+  class _FakeCoord:
+    def is_complete(self, _tar):
+      return False
+
+    def active_or_submitted_tar_paths(self):
+      return set()
+
+    def recover_stale_manifest_entries(self):
+      return None
+
+    def reconcile_manifest_with_debt_heap(self, **_kwargs):
+      return 0
+
+  janitor = _make_janitor(
+      tgz_archive_dir=str(tmp_path),
+      get_disqualified_daily_tars=slow_then_empty,
+      log_fn=log_fn,
+      day_close_manifest_coordinator=_FakeCoord(),
+  )
+  monkeypatch.setattr(
+      janitor_mod.cfg, "get_archive_janitor_budget_seconds", lambda: 0.05,
+  )
+  monkeypatch.setattr(
+      janitor_mod.cfg, "get_archive_janitor_debt_high_watermark", lambda: 10**9,
+  )
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor,
+      "_discover_and_enqueue_ready_day_close",
+      lambda self, **kwargs: set(),
+  )
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor,
+      "_run_tick_lock_cleanup",
+      lambda self: 0,
+  )
+
+  def _track_close(tar_path_arg, **_kwargs):
+    close_calls.append(os.path.normpath(tar_path_arg))
+    return True
+
+  monkeypatch.setattr(janitor, "_close_one_day", _track_close)
+  janitor._enqueue_debt(DebtKind.DAY_CLOSE, tar_path, persist=False)
+  janitor._run_tick_body()
+  assert any("debt_drain_begin" in line for line in logs)
+  assert close_calls == [tar_norm]
+  assert not any(
+      "zero_pop" in line and "debt_remaining=1" in line for line in logs
+  )
+
+
+def test_janitor_zero_pop_logs_budget_remaining(monkeypatch, tmp_path):
+  """All-disqualified zero_pop must include budget_remaining_s= token."""
+  tar_path = str(tmp_path / "2026-01-02.tar")
+  open(tar_path, "wb").close()
+  tar_norm = os.path.normpath(tar_path)
+  logs: list[str] = []
+
+  def log_fn(msg, **_kwargs):
+    logs.append(str(msg))
+
+  janitor = _make_janitor(
+      tgz_archive_dir=str(tmp_path),
+      get_disqualified_daily_tars=lambda: {tar_norm},
+      log_fn=log_fn,
+  )
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor,
+      "_discover_and_enqueue_ready_day_close",
+      lambda self, **kwargs: None,
+  )
+  janitor._enqueue_debt(DebtKind.DAY_CLOSE, tar_path, persist=False)
+  janitor._run_tick_body()
+  zero_lines = [line for line in logs if "zero_pop" in line]
+  assert zero_lines
+  assert all("budget_remaining_s=" in line for line in zero_lines)
+  assert any("disqualified_on_heap=1" in line for line in zero_lines)
 
 
 def test_janitor_does_not_chain_when_mid_tick_only_requeues_disqualified(monkeypatch, tmp_path):
