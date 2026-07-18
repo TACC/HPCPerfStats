@@ -866,4 +866,14 @@ docker compose logs pipeline --since 24h 2>&1 | grep -E 'day_close defer|day_clo
 
 **Unhealthy:** populate waits full **`populate_max_seconds`** with **`daily_tar_restore`** stuck (no `daily_tar_restore end`); gated prewarm with **`gated_tar_restore=True`** and no **`archive decompress restore begin`** / no `zstd -d` for that day while MainThread is busy; repeated fnctl timeout without preceding defer/yield/restore-wait logs; defer streak with no progress past **`defer_cap_exceeded`** without seal/dedupe completion.
 
+**T0 / T1 — membership invalidate after sealed→tar restore:** successful `decompress_compressed_to_tar` (gated prewarm / `ensure_daily_tar_restored_for_append` / corrupt replace) must log **`Archive members cache invalidated … reason=tar_restore_pre`** then **`reason=tar_restore`** so sealed+`tar=None` Redis maps cannot stay warm and skip populate. Expect a cold re-prewarm / populate for that day after restore — **not** a stall from thrashing the same day forever.
+
+```bash
+# T0/T1 — restore invalidates memberships (full pipeline log; never --tail before grep)
+podman-compose -p hpcperfstats logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+grep -E 'archive decompress restore begin|Archive members cache invalidated.*reason=tar_restore|daily_tar_restore (begin|end)|chunk prewarm' /tmp/pipeline-full.log | tail -80
+```
+
+**Pass:** after a gated restore day, both `tar_restore_pre` and `tar_restore` invalidate lines appear near `archive decompress restore begin` / `daily_tar_restore end ok=yes`; subsequent prewarm/populate for that day proceeds (cold or re-warm). **Fail:** restore completes (`daily_tar_restore end ok=yes`) but no `reason=tar_restore` invalidate, while Redis stays warm under sealed+`tar=None` and prewarm skips with `redis_warm` without rescanning.
+
 **Why ingest/archive stay on spawn:** CPU/RSS isolation, `maxtasksperchild` recycle, L1 host cache, and pool stall diagnostics (`Pool imap stalled`, exit **124**). Janitor and startup coordinators use **session thread executors** by design (two-queue model).

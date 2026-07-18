@@ -374,6 +374,16 @@ def decompress_compressed_to_tar(
       except OSError:
         pass
       return False
+    # Sealed membership maps are untrusted; drop pre-identity L1/Redis before
+    # replace so warm sealed+tar=None keys cannot skip post-restore populate.
+    from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+        invalidate_after_daily_tar_mutation,
+    )
+    invalidate_after_daily_tar_mutation(
+        compressed_path,
+        reason="tar_restore_pre",
+        log_fn=log_print,
+    )
     try:
       with file_write_lock(tar_path):
         os.replace(tmp_path, tar_path)
@@ -385,14 +395,21 @@ def decompress_compressed_to_tar(
         pass
       return False
     zstd_drop_page_cache_for_paths(compressed_path, tar_path)
+    remove_ok = True
     if remove_compressed:
       try:
         with file_write_lock(compressed_path):
           if os.path.isfile(compressed_path):
             os.remove(compressed_path)
       except OSError:
-        return False
-    return True
+        remove_ok = False
+    # Post-identity drop (tar present; sealed may be gone when remove_compressed).
+    invalidate_after_daily_tar_mutation(
+        tar_path,
+        reason="tar_restore",
+        log_fn=log_print,
+    )
+    return remove_ok
   finally:
     if day_token:
       clear_daily_tar_restore_in_progress(

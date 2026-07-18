@@ -9379,6 +9379,58 @@ def test_decompress_restore_keeps_zst_on_active_ingest_day(monkeypatch, tmp_path
   assert zst_path.is_file()
 
 
+@pytest.mark.skipif(
+    not shutil.which("zstd"), reason="zstd not on PATH",
+)
+def test_ensure_daily_tar_restored_invalidates_stale_redis_warm(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  """Sealed+tar=None Redis warm must clear after ensure_daily_tar_restored."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      build_archive_members_redis_keys,
+      redis_members_cache_is_fully_warm,
+      store_complete_members_in_redis,
+  )
+  from hpcperfstats.dbload.lib.zstd_cli import zstd_compress_tar_to_file
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import FakeRedis
+
+  tar_path = tmp_path / "2026-06-08.tar"
+  zst_path = tmp_path / "2026-06-08.tar.zst"
+  member = tmp_path / "raw.txt"
+  member.write_text("data")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(member), arcname="host/raw")
+  zstd_compress_tar_to_file(str(tar_path), str(zst_path), 1, 6)
+  tar_path.unlink()
+
+  canonical = helpers.normalize_daily_compressed_path(str(zst_path))
+  sealed_only_key = helpers._daily_archive_members_cache_key(canonical)
+  assert sealed_only_key[2] is None
+  keys = build_archive_members_redis_keys(sealed_only_key)
+  fake_redis = FakeRedis()
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: fake_redis,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
+  )
+  monkeypatch.setattr(
+      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
+  )
+  store_complete_members_in_redis(
+      keys, {"host/raw": 4}, saw_duplicates=False,
+  )
+  assert redis_members_cache_is_fully_warm(keys, client=fake_redis)
+
+  assert helpers.ensure_daily_tar_restored_for_append(str(tar_path), 1) is True
+  assert tar_path.is_file()
+  assert zst_path.is_file()
+  assert not redis_members_cache_is_fully_warm(keys, client=fake_redis)
+
+
 def test_ensure_restore_does_not_build_full_maint_snapshot(monkeypatch, tmp_path):
   """Gated restore must reach decompress without full remaining-raw census."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers

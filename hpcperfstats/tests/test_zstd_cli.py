@@ -343,6 +343,61 @@ def test_decompress_compressed_to_tar_round_trip_removes_zst(tmp_path):
   assert not zst_path.is_file()
 
 
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_decompress_compressed_to_tar_invalidates_members_pre_and_post(
+    monkeypatch, tmp_path,
+):
+  """Successful sealed→tar restore must invalidate pre- and post-identity caches."""
+  tar_path = tmp_path / "2024-01-04.tar"
+  zst_path = tmp_path / "2024-01-04.tar.zst"
+  member = tmp_path / "m.txt"
+  member.write_text("ok")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(member), arcname="m.txt")
+  zstd_compress_tar_to_file(str(tar_path), str(zst_path), 1, 6)
+  tar_path.unlink()
+
+  invalidated = []
+
+  def _capture(path, **kw):
+    invalidated.append((path, kw.get("reason")))
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers"
+      ".invalidate_after_daily_tar_mutation",
+      _capture,
+  )
+
+  assert decompress_compressed_to_tar(str(zst_path), str(tar_path), 1)
+  assert invalidated == [
+      (str(zst_path), "tar_restore_pre"),
+      (str(tar_path), "tar_restore"),
+  ]
+  assert tar_path.is_file()
+  assert not zst_path.is_file()
+
+
+def test_decompress_compressed_to_tar_failure_does_not_invalidate(
+    monkeypatch, tmp_path,
+):
+  """Failed decompress must not touch membership caches."""
+  zst_path = tmp_path / "2024-01-05.tar.zst"
+  tar_path = tmp_path / "2024-01-05.tar"
+  zst_path.write_bytes(b"not-valid-zst")
+  invalidated = []
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers"
+      ".invalidate_after_daily_tar_mutation",
+      lambda path, **kw: invalidated.append((path, kw.get("reason"))),
+  )
+
+  assert not decompress_compressed_to_tar(str(zst_path), str(tar_path), 1)
+  assert invalidated == []
+  assert zst_path.is_file()
+  assert not tar_path.is_file()
+
+
 def test_zstd_decompress_stdout_tolerates_sigpipe_after_reader_closes_pipe():
   class _FakeProc:
     args = ["/usr/bin/zstd", "-d", "-c", "-T1", "-q", "/tmp/x.zst"]

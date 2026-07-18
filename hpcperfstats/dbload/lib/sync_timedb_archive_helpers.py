@@ -3514,7 +3514,7 @@ def invalidate_after_daily_tar_mutation(
     reason=None,
     log_fn=None,
 ):
-  """Canonical hook after mutating a daily archive (append, dedupe, seal, bootstrap).
+  """Canonical hook after mutating a daily archive (append, dedupe, seal, bootstrap, restore).
 
   Accepts ``YYYY-MM-DD.tar``, ``.tar.zst``, or legacy ``.tar.gz``; invalidates L1
   and Redis member maps for the canonical daily compressed key.
