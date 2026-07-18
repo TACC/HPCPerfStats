@@ -267,3 +267,58 @@ def test_dispatch_log_includes_pending_stats_count(monkeypatch):
   )
   assert stats["pending_stats"] == 42
   assert any("pending_stats=42" in line for line in logs)
+
+
+def test_dispatch_skips_restore_blocked_day_submits_unblocked(monkeypatch):
+  """Oldest restore-blocked day must not occupy a slot; newer free day submits."""
+  from hpcperfstats.dbload.lib import sync_timedb_archive_dispatch as dispatch_mod
+
+  submitted = []
+  overflow = []
+  logs = []
+  now = 1_700_000_000.0
+  monkeypatch.setattr(dispatch_mod.time, "time", lambda: now)
+  monkeypatch.setattr(
+      dispatch_mod,
+      "daily_tar_restore_in_progress_for_day",
+      lambda day: day == "2026-01-01",
+  )
+
+  class _Pool:
+    def map_async(self, fn, items):
+      submitted.append(list(items))
+      return MagicMock(ready=lambda: False)
+
+  coordinator = ArchiveDispatchCoordinator(
+      archive_pool=_Pool(),
+      max_inflight=1,
+      archive_stats_files_fn=MagicMock(),
+      log_fn=lambda *args, **kwargs: logs.append(" ".join(str(a) for a in args)),
+      pending_stats_count_fn=lambda: 0,
+  )
+  items = [
+      ("/tmp/2026-01-01.tar.gz", ["blocked"]),
+      ("/tmp/2026-01-02.tar.gz", ["free"]),
+  ]
+
+  def _enqueue(item, retry_at=None):
+    overflow.append((item, retry_at))
+
+  stats = coordinator.dispatch_disjoint_items(
+      items,
+      archive_queue_max=10,
+      build_deferred_paths_fn=lambda x: x,
+      track_pending_append_fn=lambda x: None,
+      transition_queued_fn=lambda p: None,
+      enqueue_overflow_fn=_enqueue,
+  )
+  assert stats["submitted"] == 1
+  assert len(submitted) == 1
+  assert submitted[0][0][0].endswith("2026-01-02.tar.gz")
+  assert len(overflow) == 1
+  assert overflow[0][0][0].endswith("2026-01-01.tar.gz")
+  assert overflow[0][1] == now + dispatch_mod.ARCHIVE_RESTORE_DISPATCH_BACKOFF_S
+  assert any(
+      "Archive dispatch skip day=2026-01-01 reason=daily_tar_restore" in line
+      for line in logs
+  )

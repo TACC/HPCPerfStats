@@ -3479,6 +3479,7 @@ def clear_daily_archive_members_cache():
 
 
 _ARCHIVE_MEMBERS_INVALIDATION_HOOK = None
+_DEFERRED_PREWARM_FLUSH_HOOK = None
 
 
 def set_archive_members_invalidation_hook(hook):
@@ -3491,6 +3492,34 @@ def reset_archive_members_invalidation_hook_for_tests():
   """Clear invalidation hook (unit tests)."""
   global _ARCHIVE_MEMBERS_INVALIDATION_HOOK
   _ARCHIVE_MEMBERS_INVALIDATION_HOOK = None
+
+
+def set_deferred_prewarm_flush_hook(hook):
+  """Register supervisor callback after daily_tar_restore clears."""
+  global _DEFERRED_PREWARM_FLUSH_HOOK
+  _DEFERRED_PREWARM_FLUSH_HOOK = hook
+
+
+def reset_deferred_prewarm_flush_hook_for_tests():
+  """Clear deferred-prewarm flush hook (unit tests)."""
+  global _DEFERRED_PREWARM_FLUSH_HOOK
+  _DEFERRED_PREWARM_FLUSH_HOOK = None
+
+
+def notify_daily_tar_restore_cleared(day_token):
+  """Flush deferred sync re-prewarm after restore key is cleared."""
+  hook = _DEFERRED_PREWARM_FLUSH_HOOK
+  if hook is None or not day_token:
+    return
+  try:
+    hook(day_token)
+  except TypeError:
+    try:
+      hook()
+    except Exception:
+      pass
+  except Exception:
+    pass
 
 
 def _notify_archive_members_invalidation(canonical, day_token=None, reason=None):

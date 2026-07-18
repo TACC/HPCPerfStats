@@ -8,7 +8,7 @@ globs: hpcperfstats/dbload/sync_timedb*.py,hpcperfstats/dbload/lib/sync_timedb_a
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-**Law:** ingest/populate/append is the **hot path**; janitor seal/dedupe/delete/tar-drop is the **cold path**. Janitor **defers before write** and **cooperatively yields mid-mutation** when ingest signals need the same daily tar after a janitor-first lock — **except daily tar restore from sealed** (missing or corrupt `.tar`), where restore runs to completion and populate **waits** on `daily_tar_restore`.
+**Law:** ingest/populate/append is the **hot path**; janitor seal/dedupe/delete/tar-drop is the **cold path**. Janitor **defers before write** and **cooperatively yields mid-mutation** when ingest signals need the same daily tar after a janitor-first lock — **except daily tar restore from sealed** (missing or corrupt `.tar`), where restore runs to completion and populate **waits** on `daily_tar_restore`. **Archive append dispatch** must still **skip** restore-blocked calendar days (overflow + short backoff) so free archive-pool slots drain other heap days; restore ownership stays on the decompress/day-close thread.
 
 ## Required patterns
 
@@ -19,6 +19,7 @@ globs: hpcperfstats/dbload/sync_timedb*.py,hpcperfstats/dbload/lib/sync_timedb_a
 | `try_file_write_lock` (`timeout_seconds=0`) | `file_locking.py` |
 | `ingest_tar_hot` Redis key | `sync_timedb_archive_members_redis.py` |
 | `daily_tar_restore` Redis key + populate wait | `sync_timedb_archive_members_redis.py` |
+| Restore-blocked day skip in `dispatch_disjoint_items` | `sync_timedb_archive_dispatch.py` |
 | `ArchiveJanitor.signal_day_close_yield` | `sync_timedb_archive_janitor.py` |
 | In-operation yield polls (5s) in dedupe + zstd Popen | `sync_timedb_archive_helpers.py`, `zstd_cli.py` |
 
@@ -29,6 +30,9 @@ globs: hpcperfstats/dbload/sync_timedb*.py,hpcperfstats/dbload/lib/sync_timedb_a
 - `janitor: day_close yield signal tar=… reason=…`
 - `populate: wait daily_tar_restore day=…`
 - `archive: daily_tar_restore begin|end day=… reason=missing_tar|corrupt_tar`
+- `Archive dispatch skip day=… reason=daily_tar_restore`
+- `INFO: archive_job soft_skip day=… reason=daily_tar_restore`
+- `INFO: deferred prewarm flush day=… reason=tar_restore_end`
 
 ## Starvation
 

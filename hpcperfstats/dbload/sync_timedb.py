@@ -167,6 +167,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     raw_stats_path_tar_append_decision,
     rescan_pending_stats_files,
     set_archive_members_invalidation_hook,
+    set_deferred_prewarm_flush_hook,
     stats_file_is_active_segment,
     stats_path_ingest_sort_epoch,
     verify_tar_archive_readable,
@@ -2318,15 +2319,38 @@ class ArchiveAppendOutcome:
   skip_finalize_invalidate: bool = True
   # Oversized paths skipped after convert_fail_skip (still finalized as archived).
   skipped_paths: tuple = ()
+  # Restore race: requeue on heap without burning archive_retry attempts.
+  soft_requeue: bool = False
 
   def __bool__(self):
     return self.ok
+
+
+# Invalidation reasons that must not sync-re-prewarm while a hold blocks waiters.
+DEFER_SYNC_PREWARM_INVALIDATION_REASONS = frozenset({
+    "archive_finalize",
+    "tar_restore_pre",
+    "tar_restore",
+})
+
+# Match dispatch restore-skip backoff (sync_timedb_archive_dispatch).
+ARCHIVE_RESTORE_SOFT_REQUEUE_BACKOFF_S = 15.0
+
+
+def should_defer_sync_prewarm_for_invalidation_reason(reason):
+  return reason in DEFER_SYNC_PREWARM_INVALIDATION_REASONS
+
+
+def _archive_append_outcome_is_soft_requeue(result):
+  return isinstance(result, ArchiveAppendOutcome) and bool(result.soft_requeue)
 
 
 def _archive_task_succeeded(result):
   if result is False or result is None:
     return False
   if isinstance(result, ArchiveAppendOutcome):
+    if result.soft_requeue:
+      return False
     return result.ok
   return bool(result)
 
@@ -4285,8 +4309,25 @@ def _archive_stats_files_body(archive_info):
       job_outcome = "ok"
       return ArchiveAppendOutcome(skip_finalize_invalidate=True)
     from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+        daily_tar_restore_in_progress_for_day,
         set_archive_append_inflight,
     )
+    if (
+        day_token
+        and day_token != "?"
+        and daily_tar_restore_in_progress_for_day(day_token)
+    ):
+      job_outcome = "soft_skip"
+      log_print(
+          "INFO: archive_job soft_skip day=%s reason=daily_tar_restore"
+          % day_token,
+          flush=True,
+      )
+      return ArchiveAppendOutcome(
+          ok=False,
+          soft_requeue=True,
+          skip_finalize_invalidate=True,
+      )
     set_archive_append_inflight(day_token, reason="archive_job")
     append_inflight_set = True
     existing_members = {}
@@ -4854,11 +4895,11 @@ def run_sync_timedb_supervisor_loop(
       return
     archive_items = [d["task"].archive_info for d in due_tasks]
 
-    def _enqueue_overflow(item):
+    def _enqueue_overflow(item, retry_at=None):
       _enqueue_archive_task({
           "task": ArchiveTask(archive_info=item, attempt=1),
           "paths": list(item[1]),
-          "retry_at": time.time(),
+          "retry_at": time.time() if retry_at is None else float(retry_at),
       })
 
     stats = archive_dispatch.dispatch_disjoint_items(
@@ -5261,6 +5302,25 @@ def run_sync_timedb_supervisor_loop(
     for task_payload, result in zip(deferred_paths, results):
       archive_task = task_payload["task"]
       archive_paths = task_payload["paths"]
+      if _archive_append_outcome_is_soft_requeue(result):
+        retry_at = time.time() + ARCHIVE_RESTORE_SOFT_REQUEUE_BACKOFF_S
+        for p in archive_paths:
+          _transition_file_state(file_states, p, SyncFileState.ARCHIVE_QUEUED)
+          _discard_inflight_archive_path(p)
+        _enqueue_archive_task({
+            "task": ArchiveTask(
+                archive_info=archive_task.archive_info,
+                attempt=archive_task.attempt,
+            ),
+            "paths": archive_paths,
+            "retry_at": retry_at,
+        })
+        log_print(
+            "Archive soft_requeue reason=daily_tar_restore paths=%d delay_s=%.2f"
+            % (len(archive_paths), max(0.0, retry_at - time.time())),
+            flush=True,
+        )
+        continue
       if _archive_task_succeeded(result):
         skip_finalize_invalidate = (
             isinstance(result, ArchiveAppendOutcome)
@@ -6228,11 +6288,11 @@ def run_sync_timedb_supervisor_loop(
       _track_pending_append_groups(archive_items_all)
       for p in deferred_paths:
         _transition_file_state(file_states, p, SyncFileState.ARCHIVE_QUEUED)
-      def _enqueue_overflow_item(item):
+      def _enqueue_overflow_item(item, retry_at=None):
         _enqueue_archive_task({
             "task": ArchiveTask(archive_info=item, attempt=1),
             "paths": list(item[1]),
-            "retry_at": time.time(),
+            "retry_at": time.time() if retry_at is None else float(retry_at),
         })
         for p in item[1]:
           _transition_file_state(file_states, p, SyncFileState.ARCHIVE_QUEUED)
@@ -6760,14 +6820,25 @@ def run_sync_timedb_supervisor_loop(
     deferred_archive_finalize_prewarm_days.clear()
     for day_token in days:
       log_print(
-          "INFO: deferred prewarm flush day=%s reason=archive_finalize"
+          "INFO: deferred prewarm flush day=%s reason=deferred_invalidation"
           % day_token,
           flush=True,
       )
       _prewarm_archive_members_redis_for_day_token(day_token)
 
+  def _flush_deferred_prewarm_for_day(day_token):
+    if not day_token or day_token not in deferred_archive_finalize_prewarm_days:
+      return
+    deferred_archive_finalize_prewarm_days.discard(day_token)
+    log_print(
+        "INFO: deferred prewarm flush day=%s reason=tar_restore_end"
+        % day_token,
+        flush=True,
+    )
+    _prewarm_archive_members_redis_for_day_token(day_token)
+
   def _archive_members_invalidation_hook(_canonical, day_token, reason=None):
-    if reason == "archive_finalize":
+    if should_defer_sync_prewarm_for_invalidation_reason(reason):
       if day_token:
         deferred_archive_finalize_prewarm_days.add(day_token)
       return
@@ -6786,6 +6857,7 @@ def run_sync_timedb_supervisor_loop(
     _prewarm_archive_members_redis_for_day_token(day_token)
 
   set_archive_members_invalidation_hook(_archive_members_invalidation_hook)
+  set_deferred_prewarm_flush_hook(_flush_deferred_prewarm_for_day)
 
   handoff_requeued_tars_this_boot = set()
   boot_handoffs_processed = False
@@ -7782,11 +7854,11 @@ def run_sync_timedb_supervisor_loop(
           _track_pending_append_groups(archive_items_all)
           for p in deferred_paths:
             _transition_file_state(file_states, p, SyncFileState.ARCHIVE_QUEUED)
-          def _enqueue_overflow_item(item):
+          def _enqueue_overflow_item(item, retry_at=None):
             _enqueue_archive_task({
                 "task": ArchiveTask(archive_info=item, attempt=1),
                 "paths": list(item[1]),
-                "retry_at": time.time(),
+                "retry_at": time.time() if retry_at is None else float(retry_at),
             })
             for p in item[1]:
               _transition_file_state(file_states, p, SyncFileState.ARCHIVE_QUEUED)

@@ -2046,6 +2046,14 @@ def clear_daily_tar_restore_in_progress(day_token: str, *, ok: bool = True, reas
         % (day_token, "yes" if ok else "no", reason or "missing_tar"),
         flush=True,
     )
+  try:
+    from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+        notify_daily_tar_restore_cleared,
+    )
+
+    notify_daily_tar_restore_cleared(day_token)
+  except Exception:
+    pass
 
 
 def daily_tar_restore_in_progress_for_day(day_token: str) -> bool:

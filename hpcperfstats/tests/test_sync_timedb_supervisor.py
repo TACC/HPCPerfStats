@@ -2552,7 +2552,7 @@ def test_invalidation_hook_defers_prewarm_on_archive_finalize(monkeypatch, tmp_p
     monkeypatch.setattr(st, '_prewarm_archive_members_redis_for_day_token', lambda day_token: prewarm_days.append(day_token))
 
     def _hook(_canonical, day_token, reason=None):
-        if reason == 'archive_finalize':
+        if st.should_defer_sync_prewarm_for_invalidation_reason(reason):
             if day_token:
                 deferred_days.add(day_token)
             return
@@ -2577,6 +2577,68 @@ def test_invalidation_hook_defers_prewarm_on_archive_finalize(monkeypatch, tmp_p
         assert flushed == ['2026-05-22']
     finally:
         archive_helpers.reset_archive_members_invalidation_hook_for_tests()
+
+def test_invalidation_hook_defers_prewarm_on_tar_restore_reasons(monkeypatch, tmp_path):
+    """tar_restore_pre/tar_restore must not sync-re-prewarm (self-deadlock vs restore key)."""
+    prewarm_days = []
+    monkeypatch.setattr(st, '_prewarm_archive_members_redis_for_day_token', lambda day_token: prewarm_days.append(day_token))
+    deferred_days = set()
+
+    def _hook(_canonical, day_token, reason=None):
+        if st.should_defer_sync_prewarm_for_invalidation_reason(reason):
+            if day_token:
+                deferred_days.add(day_token)
+            return
+        if day_token:
+            st._prewarm_archive_members_redis_for_day_token(day_token)
+
+    archive_helpers.set_archive_members_invalidation_hook(_hook)
+    try:
+        zst = tmp_path / '2026-06-05.tar.zst'
+        zst.write_bytes(b'sealed')
+        for reason in ('tar_restore_pre', 'tar_restore'):
+            prewarm_days.clear()
+            deferred_days.clear()
+            archive_helpers.invalidate_after_daily_tar_mutation(
+                str(zst), reason=reason, log_fn=lambda *_a, **_k: None,
+            )
+            assert prewarm_days == []
+            assert deferred_days == {'2026-06-05'}
+    finally:
+        archive_helpers.reset_archive_members_invalidation_hook_for_tests()
+
+def test_clear_daily_tar_restore_notifies_deferred_prewarm_flush(monkeypatch):
+    flushed = []
+    archive_helpers.set_deferred_prewarm_flush_hook(lambda day: flushed.append(day))
+    try:
+        from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+            clear_daily_tar_restore_in_progress,
+            reset_archive_members_redis_client_for_tests,
+            set_daily_tar_restore_in_progress,
+        )
+        from hpcperfstats.tests.test_sync_timedb_archive_members_redis import FakeRedis
+        reset_archive_members_redis_client_for_tests()
+        fake = FakeRedis()
+        monkeypatch.setattr(
+            'hpcperfstats.dbload.lib.sync_timedb_archive_members_redis'
+            '.get_archive_members_redis_client',
+            lambda required=True: fake,
+        )
+        monkeypatch.setattr(
+            'hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled',
+            lambda: True,
+        )
+        set_daily_tar_restore_in_progress(
+            '2026-06-05', reason='missing_tar', caller='test',
+        )
+        clear_daily_tar_restore_in_progress('2026-06-05', ok=True, reason='missing_tar')
+        assert flushed == ['2026-06-05']
+    finally:
+        archive_helpers.reset_deferred_prewarm_flush_hook_for_tests()
+        from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+            reset_archive_members_redis_client_for_tests,
+        )
+        reset_archive_members_redis_client_for_tests()
 
 def test_handoff_reingest_allows_archived_to_written_transition():
     file_states = {'/tmp/handoff.raw': st.SyncFileState.ARCHIVED}

@@ -7857,10 +7857,62 @@ def test_archive_stats_files_skips_restore_when_to_add_zero_sealed(
   )
 
 
+def test_archive_stats_files_body_soft_skips_when_daily_tar_restore(
+    monkeypatch, tmp_path,
+):
+  """Restore in progress → soft_requeue before append_inflight (no slot park)."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_members_redis as redis_mod
+  import hpcperfstats.dbload.sync_timedb as st
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      reset_archive_members_redis_client_for_tests,
+  )
+
+  reset_archive_members_redis_client_for_tests()
+  raw = tmp_path / "1709123456"
+  raw.write_text("1709123456 job1 cn001\n")
+  archive_key = str(tmp_path / "2024-03-06.tar.zst")
+  Path(archive_key).write_bytes(b"sealed")
+
+  inflight_calls = []
+  monkeypatch.setattr(redis_mod, "daily_tar_restore_in_progress_for_day", lambda day: True)
+  monkeypatch.setattr(
+      redis_mod,
+      "set_archive_append_inflight",
+      lambda *a, **k: inflight_calls.append((a, k)),
+  )
+  logs = []
+  monkeypatch.setattr(st, "log_print", lambda msg, **kw: logs.append(str(msg)))
+  _patch_archive_gate_pass(monkeypatch)
+
+  result = st._archive_stats_files_body((archive_key, [str(raw)]))
+  assert isinstance(result, st.ArchiveAppendOutcome)
+  assert result.ok is False
+  assert result.soft_requeue is True
+  assert inflight_calls == []
+  assert any("soft_skip" in line and "daily_tar_restore" in line for line in logs)
+  assert st._archive_task_succeeded(result) is False
+
+
+def test_archive_append_soft_requeue_keeps_attempt():
+  """Finalize soft_requeue must requeue without burning archive_retry attempts."""
+  import hpcperfstats.dbload.sync_timedb as st
+
+  assert st.ArchiveAppendOutcome(ok=False, soft_requeue=True).soft_requeue
+  assert st._archive_append_outcome_is_soft_requeue(
+      st.ArchiveAppendOutcome(ok=False, soft_requeue=True),
+  )
+  assert not st._archive_append_outcome_is_soft_requeue(False)
+  assert not st._archive_append_outcome_is_soft_requeue(
+      st.ArchiveAppendOutcome(ok=True),
+  )
+
+
 def test_archive_stats_files_restores_when_to_add_positive_sealed(
     monkeypatch, tmp_path,
 ):
   """Missing .tar + sealed + path not in members → decompress then append."""
+  import tarfile
+
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
   import hpcperfstats.dbload.sync_timedb as st
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (

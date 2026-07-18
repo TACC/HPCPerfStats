@@ -7,6 +7,39 @@ from typing import Any, Callable, Dict, List, Set
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
 
+# Short backoff when a heap day is blocked on daily_tar_restore (no new INI).
+ARCHIVE_RESTORE_DISPATCH_BACKOFF_S = 15.0
+
+
+def daily_tar_restore_in_progress_for_day(day_token: str) -> bool:
+  """Indirection so unit tests can monkeypatch restore checks on this module."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      daily_tar_restore_in_progress_for_day as _impl,
+  )
+
+  return _impl(day_token)
+
+
+def _day_token_for_archive_item(item) -> str:
+  from hpcperfstats.dbload.lib.archive_compress import daily_tar_path_from_compressed
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      calendar_date_from_daily_tar_path,
+  )
+
+  day = calendar_date_from_daily_tar_path(daily_tar_path_from_compressed(item[0]))
+  return day.isoformat() if day is not None else ""
+
+
+def _enqueue_overflow_compat(enqueue_overflow_fn, item, *, retry_at=None):
+  """Call overflow enqueue with optional retry_at; tolerate 1-arg test lambdas."""
+  if retry_at is None:
+    enqueue_overflow_fn(item)
+    return
+  try:
+    enqueue_overflow_fn(item, retry_at=retry_at)
+  except TypeError:
+    enqueue_overflow_fn(item)
+
 
 @dataclass
 class ArchiveJobSlot:
@@ -146,8 +179,17 @@ class ArchiveDispatchCoordinator:
     max_submit = min(free_slots, max(1, int(archive_queue_max)))
     to_dispatch = []
     overflow = []
+    restore_backoff_items = []
+    restore_skip_days = []
+    now = time.time()
+    restore_retry_at = now + ARCHIVE_RESTORE_DISPATCH_BACKOFF_S
     for item in archive_items_all:
       tar = self._daily_tar_for_item(item)
+      day_token = _day_token_for_archive_item(item)
+      if day_token and daily_tar_restore_in_progress_for_day(day_token):
+        restore_backoff_items.append(item)
+        restore_skip_days.append(day_token)
+        continue
       if tar in occupied:
         overflow.append(item)
         continue
@@ -158,9 +200,22 @@ class ArchiveDispatchCoordinator:
       occupied.add(tar)
 
     if not to_dispatch:
-      for item in archive_items_all:
-        enqueue_overflow_fn(item)
+      for item in restore_backoff_items:
+        _enqueue_overflow_compat(
+            enqueue_overflow_fn, item, retry_at=restore_retry_at,
+        )
         stats["queued"] += 1
+      for item in archive_items_all:
+        if item in restore_backoff_items:
+          continue
+        _enqueue_overflow_compat(enqueue_overflow_fn, item)
+        stats["queued"] += 1
+      for day_token in sorted(set(restore_skip_days)):
+        self.log_fn(
+            "Archive dispatch skip day=%s reason=daily_tar_restore"
+            % day_token,
+            flush=True,
+        )
       return stats
 
     dispatch_t0 = time.time()
@@ -181,11 +236,23 @@ class ArchiveDispatchCoordinator:
       stats["submitted"] += 1
 
     stats["dispatch_s"] = max(0.0, time.time() - dispatch_t0)
-    stats["deferred_groups"] = len(overflow)
+    stats["deferred_groups"] = len(overflow) + len(restore_backoff_items)
 
-    for item in overflow:
-      enqueue_overflow_fn(item)
+    for item in restore_backoff_items:
+      _enqueue_overflow_compat(
+          enqueue_overflow_fn, item, retry_at=restore_retry_at,
+      )
       stats["queued"] += 1
+    for item in overflow:
+      _enqueue_overflow_compat(enqueue_overflow_fn, item)
+      stats["queued"] += 1
+
+    for day_token in sorted(set(restore_skip_days)):
+      self.log_fn(
+          "Archive dispatch skip day=%s reason=daily_tar_restore"
+          % day_token,
+          flush=True,
+      )
 
     stats["pending_stats"] = self.pending_stats_count_fn()
     self.log_fn(

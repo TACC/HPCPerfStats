@@ -163,6 +163,20 @@ grep -E 'Archive dispatch submitted=|pending_archive_heap|archive_job_duty|disco
 
 **T0/T1 — multi-day mapping with pool ≪ N (site example pool=6):** after `Archive mapping: N tar(s)` with N larger than pool (or with overflow from an earlier narrow wave), expect later `archive_job_begin` / `Archive dispatch submitted=` for overflow calendar days **before** the next `chunk imap start` / IMAP for a new ingest chunk. Tiny `Archived batch (2|5|…)` plus `archive_job_duty … to_add=… appended=…` means Redis/tar already-present skips — not a missing day. If `post_finalize_reconcile oldest_tar=` advances past days that never logged `archive_job_*`, that is a drain regression.
 
+### T0/T1 — restore self-wait + dispatch skip blocked days (2026-07)
+
+**Unhealthy (pre-fix):** day-close or append restore sets `daily_tar_restore`, then mid-restore `tar_restore_pre` invalidate triggers sync re-prewarm while `chunk_in_progress` → flood of `populate: wait daily_tar_restore` with **no** `daily_tar_restore end` in the same window (hook waits on the key the restore thread still holds). Archive slots may also park on the blocked calendar day while other heap days sit idle.
+
+```bash
+# T0 — restore self-wait (unhealthy) vs clear+deferred prewarm (healthy)
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+  grep -E 'daily_tar_restore begin|daily_tar_restore end|populate: wait daily_tar_restore|deferred prewarm flush|Archive dispatch skip|archive_job_begin|archive_job soft_skip' | tail -120
+```
+
+**Pass (T0):** `daily_tar_restore begin` is followed by `daily_tar_restore end` without a multi-hour gap of only `populate: wait daily_tar_restore`. After end, expect `deferred prewarm flush … reason=tar_restore_end` (or chunk-boundary `deferred_invalidation`) rather than sync wait during restore. When another day is restore-blocked, expect `Archive dispatch skip day=… reason=daily_tar_restore` and a later `archive_job_begin` for a **different** calendar day while the blocked day backs off.
+
+**Pass (T1):** under scarce `sync_archive_pool_processes`, heap drain continues for unblocked days; restore-blocked days reappear after backoff (`Archive soft_requeue` / due drain) once restore clears — not permanent slot starvation on the blocked head day.
+
 ### T0/T1 — noop sealed archive job (membership before restore)
 
 **Unhealthy (pre-fix):** sealed day missing sibling `.tar` → `archive decompress restore` / `_decompress_compressed_archive` for multi-hundred-GB days, then `archive_job_begin … members_source=tar_scan`, then `archive_job_duty … to_add=0 appended=0` after 1h+ (`Archive worker stall detected` warn-only). Slots stay full while oldest incomplete drains slowly.
