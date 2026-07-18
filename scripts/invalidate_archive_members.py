@@ -1,31 +1,33 @@
 #!/usr/bin/env python3
 """Host CLI: bulk-invalidate archive membership Redis L2, then restart pipeline.
 
-Run from the Compose checkout (directory with ``docker-compose.yaml``), using the
-workspace venv or an installed script entry. Default Redis transport is
-``docker compose exec -T redis redis-cli`` (no published Redis port required).
-After a successful non-dry-run invalidate, restarts the ``pipeline`` service so
-worker L1 member caches are cold.
+Run from the Compose checkout (directory with ``docker-compose.yaml``). Default
+Redis transport is ``docker compose exec -T redis redis-cli`` (no published
+Redis port required). After a successful non-dry-run invalidate, restarts the
+``pipeline`` service so worker L1 member caches are cold.
 
-Examples::
+Examples (from checkout root)::
 
   # Dry-run one day (no DELETE, no restart)
-  .venv/bin/python3 -m hpcperfstats.dbload.invalidate_archive_members \\
-      --day 2026-06-08 --dry-run --compose-dir .
+  python3 scripts/invalidate_archive_members.py --day 2026-06-08 --dry-run
 
   # Invalidate one day and restart pipeline
-  .venv/bin/python3 -m hpcperfstats.dbload.invalidate_archive_members \\
-      --day 2026-06-08 --compose-dir .
+  python3 scripts/invalidate_archive_members.py --day 2026-06-08
 
   # Invalidate all days (requires --yes) without restart
-  .venv/bin/python3 -m hpcperfstats.dbload.invalidate_archive_members \\
-      --all --yes --no-restart --compose-dir .
+  python3 scripts/invalidate_archive_members.py --all --yes --no-restart
 """
 from __future__ import annotations
 
 import argparse
 import sys
 from pathlib import Path
+
+# Repo root (directory containing pyproject.toml) — required for bare
+# ``python3 scripts/...`` without an editable install (production hosts).
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+  sys.path.insert(0, str(_REPO_ROOT))
 
 
 def _resolve_compose_dir(explicit: str | None) -> Path:
@@ -122,14 +124,14 @@ def main(argv=None) -> int:
   if args.all and not args.dry_run and not args.yes:
     parser.error("--all requires --yes (or use --dry-run)")
 
-  from hpcperfstats.dbload.lib.invalidate_archive_members_ops import (
+  from hpcperfstats.dbload.lib.invalidate_archive_members_ops import (  # noqa: E402
       ComposeRedisCliClient,
       DEFAULT_COMPOSE_PROJECT,
       compose_argv,
       format_compose_cmd_for_log,
       restart_pipeline_compose,
   )
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (  # noqa: E402
       invalidate_archive_members_redis_bulk,
   )
 
@@ -171,7 +173,9 @@ def main(argv=None) -> int:
     print("ERROR: Redis unavailable", file=sys.stderr)
     return 2
 
-  scope_label = "all days" if day_tokens is None else ",".join(result.get("days") or day_tokens)
+  scope_label = (
+      "all days" if day_tokens is None else ",".join(result.get("days") or day_tokens)
+  )
   print(
       "archive_members_invalidate scanned=%s deleted=%s dry_run=%s days=%s"
       % (
@@ -186,7 +190,9 @@ def main(argv=None) -> int:
     if args.dry_run:
       print("dry-run: skipped docker compose restart pipeline")
     else:
-      print("no-restart: Redis cleared; worker L1 may stay warm until manual recycle")
+      print(
+          "no-restart: Redis cleared; worker L1 may stay warm until manual recycle",
+      )
     return 0
 
   restart_cmd = compose_argv(project=project, compose_files=compose_files)
@@ -210,6 +216,4 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-  # Allow ``python -m hpcperfstats.dbload.invalidate_archive_members`` and
-  # script-files install without requiring package __main__ wiring beyond this.
   sys.exit(main())

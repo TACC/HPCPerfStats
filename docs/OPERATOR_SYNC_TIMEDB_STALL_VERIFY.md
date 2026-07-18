@@ -924,15 +924,15 @@ After a mass tar crash (or when many days need membership reassessment), restore
 ```bash
 # Working directory: Compose checkout with docker-compose.yaml (typically HPCPerfStats/)
 # Dry-run first (counts only; no DELETE; no restart)
-../.venv/bin/python3 hpcperfstats/dbload/invalidate_archive_members.py \
+../.venv/bin/python3 scripts/invalidate_archive_members.py \
   --day YYYY-MM-DD --dry-run --compose-dir .
 
 # Real invalidate for one day (SCAN+DELETE via compose redis-cli; then restart pipeline)
-../.venv/bin/python3 hpcperfstats/dbload/invalidate_archive_members.py \
+../.venv/bin/python3 scripts/invalidate_archive_members.py \
   --day YYYY-MM-DD --compose-dir .
 
 # All days (requires --yes). Opt out of restart with --no-restart if you will recycle separately.
-../.venv/bin/python3 hpcperfstats/dbload/invalidate_archive_members.py \
+../.venv/bin/python3 scripts/invalidate_archive_members.py \
   --all --yes --compose-dir .
 ```
 

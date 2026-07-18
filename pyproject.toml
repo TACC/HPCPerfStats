@@ -85,10 +85,10 @@ script-files = [
   "hpcperfstats/dbload/sync_acct.py",
   "hpcperfstats/dbload/sync_timedb.py",
   "hpcperfstats/dbload/sync_timedb_archive.py",
-  "hpcperfstats/dbload/invalidate_archive_members.py",
   "hpcperfstats/listend.py",
   "hpcperfstats/listend_drain.py",
   "scripts/apply_compose_cpu_pinning.py",
+  "scripts/invalidate_archive_members.py",
 ]
 
 [tool.setuptools.packages.find]

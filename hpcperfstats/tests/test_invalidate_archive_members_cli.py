@@ -1,13 +1,37 @@
-"""Tests for host archive-members invalidate CLI (compose restart mocked)."""
+"""Tests for host archive-members invalidate CLI (scripts/ + compose restart mocked)."""
 from __future__ import annotations
+
+import importlib.util
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
-from hpcperfstats.dbload import invalidate_archive_members as cli
 from hpcperfstats.dbload.lib.invalidate_archive_members_ops import (
     compose_argv,
     restart_pipeline_compose,
 )
+
+_REPO = Path(__file__).resolve().parents[2]
+_SCRIPT = _REPO / "scripts" / "invalidate_archive_members.py"
+
+
+def _load_cli():
+  """Load scripts/invalidate_archive_members.py as a module (repo-root bootstrap)."""
+  spec = importlib.util.spec_from_file_location(
+      "invalidate_archive_members_cli",
+      _SCRIPT,
+  )
+  assert spec is not None and spec.loader is not None
+  mod = importlib.util.module_from_spec(spec)
+  spec.loader.exec_module(mod)
+  return mod
+
+
+@pytest.fixture
+def cli():
+  return _load_cli()
 
 
 @pytest.fixture
@@ -16,7 +40,33 @@ def compose_dir(tmp_path):
   return tmp_path
 
 
-def test_cli_all_without_yes_errors(compose_dir, monkeypatch):
+def test_script_help_imports_without_editable_install():
+  """Regression: bare ``python3 scripts/...`` must not raise ModuleNotFoundError.
+
+  Production hosts often lack ``pip install -e``; scripts bootstrap repo root onto
+  ``sys.path`` (same pattern as ``apply_compose_cpu_pinning.py``).
+  """
+  env = {k: v for k, v in __import__("os").environ.items() if k != "PYTHONPATH"}
+  completed = subprocess.run(
+      [sys.executable, str(_SCRIPT), "--help"],
+      cwd=str(_REPO),
+      env=env,
+      capture_output=True,
+      text=True,
+      check=False,
+  )
+  assert completed.returncode == 0, completed.stderr
+  assert "ModuleNotFoundError" not in (completed.stderr or "")
+  assert "Invalidate archive membership" in (completed.stdout or "")
+
+
+def test_script_sys_path_bootstrap_inserts_repo_root():
+  source = _SCRIPT.read_text(encoding="utf-8")
+  assert "_REPO_ROOT" in source
+  assert "sys.path.insert(0, str(_REPO_ROOT))" in source
+
+
+def test_cli_all_without_yes_errors(cli, compose_dir):
   with pytest.raises(SystemExit) as exc:
     cli.main([
         "--all",
@@ -25,7 +75,7 @@ def test_cli_all_without_yes_errors(compose_dir, monkeypatch):
   assert exc.value.code == 2
 
 
-def test_cli_all_and_day_mutually_exclusive(compose_dir):
+def test_cli_all_and_day_mutually_exclusive(cli, compose_dir):
   with pytest.raises(SystemExit) as exc:
     cli.main([
         "--all",
@@ -35,7 +85,7 @@ def test_cli_all_and_day_mutually_exclusive(compose_dir):
   assert exc.value.code == 2
 
 
-def test_cli_dry_run_skips_restart(compose_dir, monkeypatch):
+def test_cli_dry_run_skips_restart(cli, compose_dir, monkeypatch):
   calls = []
 
   class _Client:
@@ -62,7 +112,7 @@ def test_cli_dry_run_skips_restart(compose_dir, monkeypatch):
   assert calls == []
 
 
-def test_cli_no_restart_skips_compose_restart(compose_dir, monkeypatch):
+def test_cli_no_restart_skips_compose_restart(cli, compose_dir, monkeypatch):
   calls = []
 
   class _Client:
@@ -89,7 +139,7 @@ def test_cli_no_restart_skips_compose_restart(compose_dir, monkeypatch):
   assert calls == []
 
 
-def test_cli_success_restarts_pipeline(compose_dir, monkeypatch):
+def test_cli_success_restarts_pipeline(cli, compose_dir, monkeypatch):
   calls = []
 
   class _Client:
@@ -117,7 +167,7 @@ def test_cli_success_restarts_pipeline(compose_dir, monkeypatch):
   assert calls[0]["project"] == "hpcperfstats"
 
 
-def test_cli_all_yes_restarts(compose_dir, monkeypatch):
+def test_cli_all_yes_restarts(cli, compose_dir, monkeypatch):
   calls = []
 
   class _Client:
