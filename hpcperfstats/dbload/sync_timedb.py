@@ -4722,6 +4722,7 @@ def run_sync_timedb_supervisor_loop(
   ingest_going = False
   startup_snapshot_ready = bool(run_startup_maintenance)
   post_ingest_snapshot_kicked = False
+  post_ingest_snapshot_failed = False
 
   def _day_chunk_gate_prefix():
     return "youngest_day_chunk_gate" if newest_first else "oldest_day_chunk_gate"
@@ -6868,7 +6869,7 @@ def run_sync_timedb_supervisor_loop(
 
   def _build_post_ingest_startup_snapshot():
     """Full maintenance snapshot on dedicated thread after first ingest chunk."""
-    nonlocal startup_snapshot_ready
+    nonlocal startup_snapshot_ready, post_ingest_snapshot_failed
     from hpcperfstats.dbload.lib.sync_timedb_archive_maint import (
         build_archive_maintenance_snapshot,
     )
@@ -6902,20 +6903,34 @@ def run_sync_timedb_supervisor_loop(
         startup_archive_scan.abort_build()
       except Exception:
         pass
+      post_ingest_snapshot_failed = True
       log_print(
           "ERROR: post-ingest startup archive scan failed err=%s" % exc,
           flush=True,
       )
 
-  def _note_ingest_going_and_kick_post_ingest_snapshot():
-    """First non-empty chunk: unlock day-scoped exclude; kick async snapshot."""
+  def _note_ingest_going_and_kick_post_ingest_snapshot(
+      *,
+      reason="first_non_empty_chunk",
+  ):
+    """Unlock day-close gate; kick async post-ingest snapshot when needed.
+
+    Called on the first non-empty ingest chunk, or after a confirmed empty
+    pending rescan on day-close-enabled modes (empty_pending_after_rescan).
+    """
     nonlocal ingest_going, post_ingest_snapshot_kicked, startup_snapshot_ready
     if not ingest_going:
       ingest_going = True
-      log_print(
-          "sync_timedb: ingest_going=yes (first non-empty chunk)",
-          flush=True,
-      )
+      if reason == "empty_pending_after_rescan":
+        log_print(
+            "sync_timedb: ingest_going=yes reason=empty_pending_after_rescan",
+            flush=True,
+        )
+      else:
+        log_print(
+            "sync_timedb: ingest_going=yes (first non-empty chunk)",
+            flush=True,
+        )
     if run_startup_maintenance:
       startup_snapshot_ready = True
       return
@@ -7335,6 +7350,12 @@ def run_sync_timedb_supervisor_loop(
           log_print("Worker idle loops while waiting for pending files: %d" % worker_idle_loops)
           log_print("No pending stats files after rescan", flush=True)
           _finalize_archive_slots_if_needed(force=True)
+          # Empty after full rescan on current/date-range: unlock day-close the
+          # same way as first chunk (ingest phase done with nothing to ingest).
+          if day_close_enabled:
+            _note_ingest_going_and_kick_post_ingest_snapshot(
+                reason="empty_pending_after_rescan",
+            )
           if _get_day_close_allowed():
             archive_janitor.signal_work_available()
             _maybe_enqueue_immediate_day_close(context="idle_finalize")
@@ -7347,20 +7368,56 @@ def run_sync_timedb_supervisor_loop(
                 flush=True,
             )
           if (
-              _get_day_close_allowed()
-              and archive_janitor.has_day_close_work()
+              day_close_enabled
+              and post_ingest_snapshot_failed
+              and not startup_snapshot_ready
           ):
-            janitor_stats = archive_janitor.stats()
             log_print(
-                "sync_timedb: idle ingest; day_close work remaining "
-                "debt=%d inflight=%d; polling %.0fs"
-                % (
-                    janitor_stats["janitor_debt_depth"],
-                    janitor_stats.get("janitor_day_close_inflight", 0),
-                    float(EMPTY_QUEUE_DAY_CLOSE_POLL_SECONDS),
-                ),
+                "ERROR: sync_timedb: empty-queue day-close unlock aborted "
+                "reason=post_ingest_snapshot_failed",
                 flush=True,
             )
+            log_print(
+                "Sleeping %s s before exiting sync_timedb"
+                % EMPTY_QUEUE_RESCAN_SLEEP_SECONDS,
+                flush=True,
+            )
+            if run_once:
+              log_print(
+                  "sync_timedb once mode: no pending files, exiting supervisor loop",
+                  flush=True,
+              )
+              break
+            sleep_until_shutdown(EMPTY_QUEUE_RESCAN_SLEEP_SECONDS)
+            _flush_checkpoint_if_needed(force=True)
+            break
+          awaiting_snapshot = bool(
+              day_close_enabled and not startup_snapshot_ready
+          )
+          day_close_busy = bool(
+              _get_day_close_allowed()
+              and archive_janitor.has_day_close_work()
+          )
+          if awaiting_snapshot or day_close_busy:
+            if awaiting_snapshot:
+              log_print(
+                  "sync_timedb: idle ingest; awaiting startup_snapshot; "
+                  "polling %.0fs"
+                  % float(EMPTY_QUEUE_DAY_CLOSE_POLL_SECONDS),
+                  flush=True,
+              )
+            else:
+              janitor_stats = archive_janitor.stats()
+              log_print(
+                  "sync_timedb: idle ingest; day_close work remaining "
+                  "debt=%d inflight=%d; polling %.0fs"
+                  % (
+                      janitor_stats["janitor_debt_depth"],
+                      janitor_stats.get("janitor_day_close_inflight", 0),
+                      float(EMPTY_QUEUE_DAY_CLOSE_POLL_SECONDS),
+                  ),
+                  flush=True,
+              )
             sleep_until_shutdown(EMPTY_QUEUE_DAY_CLOSE_POLL_SECONDS)
             continue
           log_print(

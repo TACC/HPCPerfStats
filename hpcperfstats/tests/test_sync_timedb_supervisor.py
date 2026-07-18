@@ -3923,10 +3923,15 @@ def test_immediate_day_close_on_idle_finalize_without_chunk(monkeypatch, tmp_pat
 
 
 def test_current_empty_pending_rescans_before_idle_finalize(monkeypatch, tmp_path, capsys):
-    """Empty path: cheap rescan first; idle_finalize deferred until snapshot ready."""
+    """Empty path: rescan first, then unlock day-close (ingest_going + snapshot kick)."""
     shutdown_requested[0] = False
     immediate_reasons = []
     rescan_order = []
+    from concurrent.futures import Future
+    from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
+        SessionSingleFlightExecutor,
+    )
+
     try:
         archive_dir, daily_dir = _supervisor_two_day_ingest_patches(
             monkeypatch,
@@ -3938,13 +3943,36 @@ def test_current_empty_pending_rescans_before_idle_finalize(monkeypatch, tmp_pat
         open(tar_day1, 'wb').close()
         _patch_days_ingest_complete(monkeypatch, lambda _unprocessed, **kwargs: [tar_day1])
 
+        # Keep post-ingest snapshot forever incomplete so stay-alive polls.
+        orig_submit = SessionSingleFlightExecutor.submit
+
+        def selective_submit(self, fn, *args, **kwargs):
+            if self.thread_role == 'startup-snapshot':
+                return Future()
+            return orig_submit(self, fn, *args, **kwargs)
+
+        monkeypatch.setattr(SessionSingleFlightExecutor, 'submit', selective_submit)
+
         def fake_rescan(_directory, _start, _end, _ext, _processed, **_kwargs):
             rescan_order.append('rescan')
-            if len(rescan_order) >= 2:
-                shutdown_requested[0] = True
             return []
 
+        poll_s = float(st.EMPTY_QUEUE_DAY_CLOSE_POLL_SECONDS)
+        sleeps = []
+
+        def fake_sleep(secs):
+            sleeps.append(secs)
+            if secs == poll_s:
+                shutdown_requested[0] = True
+
         monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
+        monkeypatch.setattr(st, 'sleep_until_shutdown', fake_sleep)
+        monkeypatch.setattr(
+            janitor_mod.ArchiveJanitor,
+            'has_day_close_work',
+            lambda self: False,
+        )
+
         st.run_sync_timedb_supervisor_loop(
             str(archive_dir),
             'current',
@@ -3956,8 +3984,11 @@ def test_current_empty_pending_rescans_before_idle_finalize(monkeypatch, tmp_pat
         )
         out = capsys.readouterr().out
         assert rescan_order
-        assert 'day_ingest_complete:idle_finalize' not in immediate_reasons
-        assert 'idle_finalize deferred' in out or 'awaiting_ingest_or_startup_snapshot' in out
+        assert 'ingest_going=yes reason=empty_pending_after_rescan' in out
+        assert 'kicking async post-ingest startup archive snapshot' in out
+        assert 'awaiting startup_snapshot' in out
+        assert poll_s in sleeps
+        assert st.EMPTY_QUEUE_RESCAN_SLEEP_SECONDS not in sleeps
     finally:
         shutdown_requested[0] = False
 
@@ -4021,6 +4052,76 @@ def test_empty_pending_polls_while_day_close_work_then_exits(monkeypatch, tmp_pa
         assert st.EMPTY_QUEUE_RESCAN_SLEEP_SECONDS not in sleeps
         assert 'day_close work remaining' in out
         assert 'once mode: no pending files, exiting supervisor loop' in out
+    finally:
+        shutdown_requested[0] = False
+
+
+def test_current_empty_pending_unlocks_day_close_and_stays_alive(monkeypatch, tmp_path, capsys):
+    """Empty start unlocks ingest_going; short-polls while snapshot incomplete."""
+    shutdown_requested[0] = False
+    sleeps = []
+    from concurrent.futures import Future
+    from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
+        SessionSingleFlightExecutor,
+    )
+
+    poll_s = float(st.EMPTY_QUEUE_DAY_CLOSE_POLL_SECONDS)
+
+    try:
+        archive_dir, daily_dir = _supervisor_two_day_ingest_patches(
+            monkeypatch,
+            tmp_path,
+            paths=[],
+        )
+        tar_day1 = os.path.normpath(os.path.join(daily_dir, '2020-01-01.tar'))
+        open(tar_day1, 'wb').close()
+        _patch_days_ingest_complete(monkeypatch, lambda _unprocessed, **kwargs: [tar_day1])
+
+        orig_submit = SessionSingleFlightExecutor.submit
+
+        def selective_submit(self, fn, *args, **kwargs):
+            if self.thread_role == 'startup-snapshot':
+                return Future()
+            return orig_submit(self, fn, *args, **kwargs)
+
+        monkeypatch.setattr(SessionSingleFlightExecutor, 'submit', selective_submit)
+
+        def fake_rescan(*_a, **_k):
+            return []
+
+        def fake_sleep(secs):
+            sleeps.append(secs)
+            if sleeps.count(poll_s) >= 3:
+                shutdown_requested[0] = True
+
+        monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
+        monkeypatch.setattr(st, 'sleep_until_shutdown', fake_sleep)
+        monkeypatch.setattr(
+            janitor_mod.ArchiveJanitor,
+            'has_day_close_work',
+            lambda self: False,
+        )
+        monkeypatch.setattr(
+            janitor_mod.ArchiveJanitor,
+            'signal_work_available',
+            lambda self: None,
+        )
+
+        st.run_sync_timedb_supervisor_loop(
+            str(archive_dir),
+            'current',
+            None,
+            '.hpc',
+            object(),
+            _FakeArchivePool(),
+            run_once=True,
+        )
+        out = capsys.readouterr().out
+        assert 'ingest_going=yes reason=empty_pending_after_rescan' in out
+        assert 'kicking async post-ingest startup archive snapshot' in out
+        assert 'awaiting startup_snapshot' in out
+        assert sleeps.count(poll_s) >= 1
+        assert st.EMPTY_QUEUE_RESCAN_SLEEP_SECONDS not in sleeps
     finally:
         shutdown_requested[0] = False
 

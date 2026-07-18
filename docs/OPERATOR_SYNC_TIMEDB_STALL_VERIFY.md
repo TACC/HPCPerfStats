@@ -34,9 +34,24 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 **Fail (T0):** `idle_finalize` / `day_close_not_allowed` absent while `day-scoped closed_raw` or `day_ingest_complete:idle_finalize` appears **before** the first `chunk dispatch begin`.
 
-**Pass (T0):** first `chunk dispatch begin` (or `ingest_going=yes`) **before** day-close discover/execution; then `post-ingest startup archive scan begin|ready` (or `janitor: adopted post-ingest startup snapshot`); only after that may `day_ingest_complete:` / janitor discover proceed. Empty queue may log `idle_finalize deferred reason=awaiting_ingest_or_startup_snapshot`.
+**Pass (T0):** first `chunk dispatch begin` (or `ingest_going=yes`) **before** day-close discover/execution; then `post-ingest startup archive scan begin|ready` (or `janitor: adopted post-ingest startup snapshot`); only after that may `day_ingest_complete:` / janitor discover proceed. Empty queue may log `idle_finalize deferred reason=awaiting_ingest_or_startup_snapshot` until unlock/snapshot; see empty-queue unlock section below.
 
 **Pass (T1):** under ``current`` with older-month closed raw present, newest-day chunks continue while the async snapshot builds (`post-ingest startup archive scan begin` without blocking the next `chunk dispatch`); after `… scan ready`, janitor day-close for older days may start without starving ingest (populate BRPOP still prefers ingest-hot — see populate-queue section).
+
+### T0 / T1 — empty-queue unlock day-close (no pending ingest, 2026-07)
+
+**Failure signature (pre-fix, operator-verified on hpcperfstats01):** ``current`` with **no** host stats to ingest but many mutable `daily_archive/*.tar` files → loop of `idle_finalize deferred … ingest_going=False startup_snapshot_ready=False` then `Sleeping 30 s before exiting sync_timedb` → supervisord restart forever; never `ingest_going=yes reason=empty_pending_after_rescan`, never `post-ingest startup archive scan`, never day-close drain.
+
+```bash
+# T0 — empty-queue unlock + stay-alive (full pipeline log; never --tail before grep)
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'ingest_going=yes reason=empty_pending_after_rescan|kicking async post-ingest|awaiting startup_snapshot|day_close work remaining|idle_finalize deferred|Sleeping .* before exiting sync_timedb' | head -80
+```
+
+**Fail (T0):** empty pending + deferred forever with `ingest_going=False` and 30s exit while `daily_tar_count` &gt; 0 (INI `daily_archive_dir` still has `.tar` files).
+
+**Pass (T0):** after confirmed empty rescan on ``current``/date-range, expect `ingest_going=yes reason=empty_pending_after_rescan` and `kicking async post-ingest startup archive snapshot`; then `awaiting startup_snapshot` and/or `day_close work remaining` short polls (1s) — **not** immediate 30s exit. When snapshot ready and day-close idle, expect the usual 30s / `run_once` exit.
+
+**Pass (T1):** with a large daily-tar backlog and empty ingest queue, day-close discover/debt progresses (`janitor: day_close` / debt drain) without a restart loop; new stats files during poll resume `chunk dispatch`.
 
 ### T0 / T1 — idle empty stay-alive while day-close remains (2026-07)
 
