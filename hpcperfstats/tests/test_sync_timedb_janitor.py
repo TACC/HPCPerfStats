@@ -166,6 +166,47 @@ def test_enqueue_debt_dedupes_same_kind_and_tar():
   assert janitor.debt_depth() == 1
 
 
+def test_has_day_close_work_true_for_debt_inflight_tick_and_pending_signal():
+  janitor = _make_janitor()
+  assert janitor.has_day_close_work() is False
+  assert janitor.stats()["janitor_day_close_inflight"] == 0
+
+  janitor._enqueue_debt(DebtKind.DAY_CLOSE, "/tmp/2026-01-01.tar", persist=False)
+  assert janitor.has_day_close_work() is True
+  janitor._debt_heap.clear()
+  janitor._debt_seen.clear()
+  assert janitor.has_day_close_work() is False
+
+  class _PendingFuture:
+    def done(self):
+      return False
+
+  debt = DayDebt(
+      sort_index=_debt_sort_key(DebtKind.DAY_CLOSE, "/tmp/2026-01-02.tar"),
+      kind=DebtKind.DAY_CLOSE,
+      tar_path="/tmp/2026-01-02.tar",
+  )
+  with janitor._day_close_in_flight_lock:
+    janitor._day_close_in_flight[_PendingFuture()] = debt
+  assert janitor.has_day_close_work() is True
+  assert janitor.stats()["janitor_day_close_inflight"] == 1
+  with janitor._day_close_in_flight_lock:
+    janitor._day_close_in_flight.clear()
+
+  janitor._tick_depth = 1
+  assert janitor.has_day_close_work() is True
+  janitor._tick_depth = 0
+
+  janitor._pending_signal = True
+  assert janitor.has_day_close_work() is True
+  janitor._pending_signal = False
+
+  janitor._future = _PendingFuture()
+  assert janitor.has_day_close_work() is True
+  janitor._future = None
+  assert janitor.has_day_close_work() is False
+
+
 def test_debt_queue_payload_serializes_heap_entries():
   janitor = _make_janitor()
   janitor._enqueue_debt(DebtKind.TAR_DROP, "/tmp/2026-01-02.tar", persist=False)

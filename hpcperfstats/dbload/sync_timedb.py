@@ -9,7 +9,7 @@
 
 Append and raw delete stay DB-gated when ``sync_archive_require_db_ingest=yes``. Finalize uses soft defer (``allow_defer``) under ingest backlog instead of blocking the supervisor.
 
-When the ingest queue is empty, rescans for new stats files. After a rescan still finds nothing pending, it sleeps ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` (default 30s) and exits the loop iteration (continuous mode repeats).
+When the ingest queue is empty, rescans for new stats files. After a rescan still finds nothing pending: if day-close is allowed and the janitor still has work (debt / in-flight / tick), short-poll and continue so day-close can finish; otherwise sleep ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` (default 30s) and exit the loop iteration (continuous mode repeats).
 
 CLI: no args uses a sliding window (see ``days_to_process``) through now. One ``YYYY-MM-DD`` ingests that calendar day only. Two dates ``YYYY-MM-DD YYYY-MM-DD`` set an explicit range. First arg ``backlog`` scans every host stats dir under ``archive_dir`` (subdirs whose names end with ``DEFAULT.host_name_ext`` from ini). Prefix ``once`` to exit after one idle rescan (no 300s sleep), e.g. ``once backlog`` or ``once 2024-01-15``.
 
@@ -310,6 +310,8 @@ SYNC_TIMEDB_CHECKPOINT_FLUSH_EVERY_FILES = cfg.get_sync_checkpoint_flush_batch_s
 # When no pending files remain after final sealing, sleep this long (seconds)
 # before exiting sync_timedb. Interruptible via shutdown_requested / SIGTERM path.
 EMPTY_QUEUE_RESCAN_SLEEP_SECONDS = 30
+# Short poll while day-close work remains (avoid 30s exit + janitor teardown).
+EMPTY_QUEUE_DAY_CLOSE_POLL_SECONDS = 1.0
 
 # Emit DB lock-wait logs only for sustained contention.
 LOCK_WAIT_LOG_THRESHOLD_SECONDS = 30.0
@@ -7344,6 +7346,23 @@ def run_sync_timedb_supervisor_loop(
                 % (ingest_going, startup_snapshot_ready),
                 flush=True,
             )
+          if (
+              _get_day_close_allowed()
+              and archive_janitor.has_day_close_work()
+          ):
+            janitor_stats = archive_janitor.stats()
+            log_print(
+                "sync_timedb: idle ingest; day_close work remaining "
+                "debt=%d inflight=%d; polling %.0fs"
+                % (
+                    janitor_stats["janitor_debt_depth"],
+                    janitor_stats.get("janitor_day_close_inflight", 0),
+                    float(EMPTY_QUEUE_DAY_CLOSE_POLL_SECONDS),
+                ),
+                flush=True,
+            )
+            sleep_until_shutdown(EMPTY_QUEUE_DAY_CLOSE_POLL_SECONDS)
+            continue
           log_print(
               "Sleeping %s s before exiting sync_timedb"
               % EMPTY_QUEUE_RESCAN_SLEEP_SECONDS,

@@ -493,6 +493,29 @@ class ArchiveJanitor:
     with self._debt_lock:
       return len(self._debt_heap)
 
+  def day_close_inflight_count(self) -> int:
+    with self._day_close_in_flight_lock:
+      return len(self._day_close_in_flight)
+
+  def has_day_close_work(self) -> bool:
+    """True when debt, day-close workers, or a janitor tick/signal remain.
+
+    Used by the supervisor empty-queue path to stay alive (short poll) instead of
+    sleeping ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` and exiting while cold-path work
+    is still outstanding.
+    """
+    if self.debt_depth() > 0:
+      return True
+    if self.day_close_inflight_count() > 0:
+      return True
+    if self._tick_depth > 0:
+      return True
+    if self._pending_signal:
+      return True
+    if self._future is not None and not self._future.done():
+      return True
+    return False
+
   def signal_work_available(self):
     """Schedule a single-flight janitor tick (non-blocking)."""
     if self._future is not None and not self._future.done():
@@ -2349,6 +2372,7 @@ class ArchiveJanitor:
     defer_reason = self.tick_defer_reason()
     return {
         "janitor_debt_depth": self.debt_depth(),
+        "janitor_day_close_inflight": self.day_close_inflight_count(),
         "janitor_ticks_completed": self._ticks_completed,
         "janitor_budget_throttled": self._budget_throttled_count,
         "janitor_tick_defer_reason": defer_reason,

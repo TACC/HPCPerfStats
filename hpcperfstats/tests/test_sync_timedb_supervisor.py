@@ -3962,6 +3962,69 @@ def test_current_empty_pending_rescans_before_idle_finalize(monkeypatch, tmp_pat
         shutdown_requested[0] = False
 
 
+def test_empty_pending_polls_while_day_close_work_then_exits(monkeypatch, tmp_path, capsys):
+    """After ingest+snapshot, empty pending short-polls while day-close work remains."""
+    shutdown_requested[0] = False
+    sleeps = []
+    has_work_seq = [True, True, False]
+    day_epoch = int(datetime(2020, 1, 1, 12, tzinfo=timezone.utc).timestamp())
+    path = '/fake/stats/%d' % day_epoch
+    try:
+        archive_dir, daily_dir = _supervisor_two_day_ingest_patches(
+            monkeypatch,
+            tmp_path,
+            paths=[path],
+        )
+        tar_day1 = os.path.normpath(os.path.join(daily_dir, '2020-01-01.tar'))
+        open(tar_day1, 'wb').close()
+        _patch_days_ingest_complete(monkeypatch, lambda _unprocessed, **kwargs: [tar_day1])
+
+        rescan_n = {'n': 0}
+
+        def fake_rescan(*_a, **_k):
+            rescan_n['n'] += 1
+            if rescan_n['n'] == 1:
+                return [path]
+            return []
+
+        def fake_has_work(self):
+            del self
+            if has_work_seq:
+                return has_work_seq.pop(0)
+            return False
+
+        def fake_sleep(secs):
+            sleeps.append(secs)
+
+        monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
+        monkeypatch.setattr(st, 'sleep_until_shutdown', fake_sleep)
+        monkeypatch.setattr(janitor_mod.ArchiveJanitor, 'has_day_close_work', fake_has_work)
+        # Allow real signal_work so idle_finalize path runs; stay-alive uses has_work patch.
+        monkeypatch.setattr(
+            janitor_mod.ArchiveJanitor,
+            'signal_work_available',
+            lambda self: None,
+        )
+
+        st.run_sync_timedb_supervisor_loop(
+            str(archive_dir),
+            datetime(2019, 1, 1),
+            None,
+            '.hpc',
+            object(),
+            _FakeArchivePool(),
+            run_once=True,
+        )
+        out = capsys.readouterr().out
+        poll_s = float(st.EMPTY_QUEUE_DAY_CLOSE_POLL_SECONDS)
+        assert sleeps.count(poll_s) >= 2
+        assert st.EMPTY_QUEUE_RESCAN_SLEEP_SECONDS not in sleeps
+        assert 'day_close work remaining' in out
+        assert 'once mode: no pending files, exiting supervisor loop' in out
+    finally:
+        shutdown_requested[0] = False
+
+
 def test_current_async_snapshot_after_ingest_going(monkeypatch, tmp_path, capsys):
     """First chunk sets ingest_going; snapshot builds async; second chunk while building."""
     shutdown_requested[0] = False
@@ -4040,7 +4103,6 @@ def test_current_async_snapshot_after_ingest_going(monkeypatch, tmp_path, capsys
     finally:
         release_build.set()
         shutdown_requested[0] = False
-
 
 def test_immediate_day_close_after_ingest_and_snapshot(monkeypatch, tmp_path):
     """After ingest_going + snapshot publish, idle/chunk day-close may enqueue."""

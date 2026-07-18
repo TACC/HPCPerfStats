@@ -38,6 +38,21 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 **Pass (T1):** under ``current`` with older-month closed raw present, newest-day chunks continue while the async snapshot builds (`post-ingest startup archive scan begin` without blocking the next `chunk dispatch`); after `… scan ready`, janitor day-close for older days may start without starving ingest (populate BRPOP still prefers ingest-hot — see populate-queue section).
 
+### T0 / T1 — idle empty stay-alive while day-close remains (2026-07)
+
+**Failure signature (pre-fix):** pending empty after rescan → `Sleeping 30 s before exiting sync_timedb` → supervisor `break` → `archive_janitor.shutdown` while `janitor: day_close` / debt / in-flight DAY_CLOSE still running.
+
+```bash
+# T0 — idle stay-alive vs premature exit (full pipeline log; never --tail before grep)
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'day_close work remaining|Sleeping .* before exiting sync_timedb|once mode: no pending files|janitor: day_close|Archive janitor tick done|janitor_debt' | head -80
+```
+
+**Fail (T0):** `Sleeping 30 s before exiting sync_timedb` (or process exit) while the same window still shows active `janitor: day_close` / non-zero debt / in-flight day-close workers — without intervening `day_close work remaining` poll lines.
+
+**Pass (T0):** when ingest queue is empty but day-close debt/inflight remains (and day-close is allowed), expect `idle ingest; day_close work remaining debt=… inflight=…; polling 1s` (short poll, no 30s exit). When both ingest and day-close are idle, expect the usual `Sleeping 30 s before exiting sync_timedb` (continuous) or `once mode: no pending files` (`run_once`).
+
+**Pass (T1):** under ``current``/date-range after newest-first ingest drains, day-close for older months continues without a 30s supervisor teardown gap; new stats discovery during poll resumes `chunk dispatch` promptly.
+
 ### T0 / T1 — `wait_for_member_match` + `redis_warm` false non-defer → exit 124 (2026-07)
 
 **Failure signature (pre-fix):** `ERROR: Pool imap stalled` with `stall_defer=off defer_reason=redis_warm`, `effective_ingest_timeout_s=-`, small in-flight `batch_max_ingest_timeout_s` ≈ floor, then `hard exit code=124`. py-spy on ingest-pool workers shows idle `wait_for_member_match` → `daily_archive_has_member_with_size` / tar-append decision while calendar-day Redis reports `complete=1`.
