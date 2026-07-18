@@ -327,6 +327,24 @@ Chunk handlers call **`hard_exit_pool_worker_error`** (`os._exit`) immediately a
 | `sync_archive_members_redis_max_payload_bytes` | 8388608 | Refuse oversized HASH populate |
 | `sync_archive_members_populate_pool_processes` | 4 | Dedicated `populate-pool` workers for sealed/tar Redis L2 streaming (ingest/archive pools enqueue + wait only) |
 
+**Operator bulk Redis L2 invalidate (host, post-crash membership reassessment):** restore-only invalidation does not clear warm Redis for existing on-disk tar identities. From the Compose checkout, run the host CLI (uses `docker compose exec -T redis redis-cli` by default; then restarts `pipeline` so worker L1 is cold):
+
+```bash
+# Dry-run one day (no DELETE, no restart)
+../.venv/bin/python3 hpcperfstats/dbload/invalidate_archive_members.py \
+  --day YYYY-MM-DD --dry-run --compose-dir .
+
+# Invalidate one day and restart pipeline (default)
+../.venv/bin/python3 hpcperfstats/dbload/invalidate_archive_members.py \
+  --day YYYY-MM-DD --compose-dir .
+
+# All days (requires --yes); --no-restart for Redis-only
+../.venv/bin/python3 hpcperfstats/dbload/invalidate_archive_members.py \
+  --all --yes --compose-dir .
+```
+
+See `docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md` (T0 host invalidate) and `sync-timedb-ingest-pool-io-coordination.mdc` §16a.
+
 **Post-deploy populate-pool verification (`pipeline` logs):**
 
 ```bash

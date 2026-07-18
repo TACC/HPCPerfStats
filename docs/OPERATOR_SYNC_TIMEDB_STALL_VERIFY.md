@@ -890,4 +890,25 @@ grep -E 'archive decompress restore begin|Archive members cache invalidated.*rea
 
 **Pass:** after a gated restore day, both `tar_restore_pre` and `tar_restore` invalidate lines appear near `archive decompress restore begin` / `daily_tar_restore end ok=yes`; subsequent prewarm/populate for that day proceeds (cold or re-warm). **Fail:** restore completes (`daily_tar_restore end ok=yes`) but no `reason=tar_restore` invalidate, while Redis stays warm under sealed+`tar=None` and prewarm skips with `redis_warm` without rescanning.
 
+### T0 — host bulk membership invalidate + pipeline restart (post-crash)
+
+After a mass tar crash (or when many days need membership reassessment), restore-only invalidate is not enough: warm Redis L2 for existing on-disk tar identities stays hot, and worker **L1** survives a Redis clear until process recycle. Use the **host-side** CLI (not `docker compose exec pipeline` as primary):
+
+```bash
+# Working directory: Compose checkout with docker-compose.yaml (typically HPCPerfStats/)
+# Dry-run first (counts only; no DELETE; no restart)
+../.venv/bin/python3 hpcperfstats/dbload/invalidate_archive_members.py \
+  --day YYYY-MM-DD --dry-run --compose-dir .
+
+# Real invalidate for one day (SCAN+DELETE via compose redis-cli; then restart pipeline)
+../.venv/bin/python3 hpcperfstats/dbload/invalidate_archive_members.py \
+  --day YYYY-MM-DD --compose-dir .
+
+# All days (requires --yes). Opt out of restart with --no-restart if you will recycle separately.
+../.venv/bin/python3 hpcperfstats/dbload/invalidate_archive_members.py \
+  --all --yes --compose-dir .
+```
+
+**Pass (T0):** dry-run prints `scanned=… deleted=0 dry_run=True` and does not restart; real `--day` prints `deleted=` matching scanned membership keys, then `pipeline restart requested ok`; after pipeline is up, expect cold `chunk prewarm` / populate for that day (not sticky `redis_warm` on a known-stale map). Coordination keys (`ingest_tar_hot`, `archive_append_inflight`, `daily_tar_restore`) remain. **Fail:** `--all` without `--yes` (non-dry); Redis cleared but no restart when L1 must be cold (omit `--no-restart`); wrong `--compose-dir` / project.
+
 **Why ingest/archive stay on spawn:** CPU/RSS isolation, `maxtasksperchild` recycle, L1 host cache, and pool stall diagnostics (`Pool imap stalled`, exit **124**). Janitor and startup coordinators use **session thread executors** by design (two-queue model).

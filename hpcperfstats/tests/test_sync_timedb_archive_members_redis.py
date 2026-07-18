@@ -22,6 +22,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
     get_archive_day_ingest_skip,
     get_archive_members_redis_client,
     invalidate_archive_members_redis,
+    invalidate_archive_members_redis_bulk,
     list_dedupe_hint_day_tokens,
     merge_appended_members_into_redis,
     populate_archive_members_redis,
@@ -101,10 +102,11 @@ class FakeRedis:
       for key in keys:
         self._kv.pop(key, None)
         self._hash.pop(key, None)
+        self._lists.pop(key, None)
 
   def exists(self, key):
     with self._lock:
-      return 1 if key in self._kv else 0
+      return 1 if (key in self._kv or key in self._hash or key in self._lists) else 0
 
   def lpush(self, key, value):
     with self._lock:
@@ -219,7 +221,9 @@ class FakeRedis:
     del count
     prefix = match.rstrip("*") if match else ""
     with self._lock:
-      keys = [key for key in sorted(self._kv) if key.startswith(prefix)]
+      # HASH maps live in `_hash`; string markers / progress in `_kv`; queue in `_lists`.
+      universe = set(self._kv) | set(self._hash) | set(self._lists)
+      keys = [key for key in sorted(universe) if key.startswith(prefix)]
     for key in keys:
       yield key
 
@@ -2118,3 +2122,78 @@ def test_populate_defers_dirty_tar_scan_when_append_inflight_and_sealed_known(
   assert _populate_scan_should_defer(
       keys, sealed, scanning_mutable_tar=True,
   ) is False
+
+
+def test_invalidate_archive_members_redis_bulk_all(_redis_test_env, tmp_path):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      archive_append_inflight_for_day,
+      daily_tar_restore_in_progress_for_day,
+      enqueue_archive_members_populate,
+      ingest_tar_hot_for_day,
+      set_archive_append_inflight,
+      set_daily_tar_restore_in_progress,
+      set_ingest_tar_hot,
+  )
+
+  fake = _redis_test_env
+  keys_a = build_archive_members_redis_keys(
+      _sample_cache_key(tmp_path, "2026-06-01"),
+  )
+  keys_b = build_archive_members_redis_keys(
+      _sample_cache_key(tmp_path, "2026-06-02"),
+  )
+  store_complete_members_in_redis(keys_a, {"a": 1})
+  store_complete_members_in_redis(keys_b, {"b": 2})
+  set_archive_day_ingest_skip(fake, keys_a, "test", "bulk")
+  assert enqueue_archive_members_populate(str(tmp_path / "2026-06-01.tar"), "2026-06-01")
+  set_ingest_tar_hot("2026-06-01", reason="chunk_prewarm")
+  set_archive_append_inflight("2026-06-01", reason="archive_job")
+  set_daily_tar_restore_in_progress(
+      "2026-06-01", reason="missing_tar", caller="test",
+  )
+
+  result = invalidate_archive_members_redis_bulk(
+      day_tokens=None, dry_run=False, client=fake,
+  )
+  assert result["scanned"] >= 2
+  assert result["deleted"] == result["scanned"]
+  assert result["dry_run"] is False
+  assert fake.get(keys_a.complete_key) is None
+  assert fake.get(keys_b.complete_key) is None
+  assert get_archive_day_ingest_skip(keys_a, client=fake) is None
+  assert ingest_tar_hot_for_day("2026-06-01") is True
+  assert archive_append_inflight_for_day("2026-06-01") is True
+  assert daily_tar_restore_in_progress_for_day("2026-06-01") is True
+
+
+def test_invalidate_archive_members_redis_bulk_by_day(_redis_test_env, tmp_path):
+  fake = _redis_test_env
+  keys_keep = build_archive_members_redis_keys(
+      _sample_cache_key(tmp_path, "2026-06-01"),
+  )
+  keys_drop = build_archive_members_redis_keys(
+      _sample_cache_key(tmp_path, "2026-06-02"),
+  )
+  store_complete_members_in_redis(keys_keep, {"keep": 1})
+  store_complete_members_in_redis(keys_drop, {"drop": 2})
+
+  result = invalidate_archive_members_redis_bulk(
+      day_tokens=["2026-06-02"], dry_run=False, client=fake,
+  )
+  assert result["days"] == ["2026-06-02"]
+  assert result["deleted"] >= 1
+  assert fake.get(keys_keep.complete_key) == "1"
+  assert fake.get(keys_drop.complete_key) is None
+
+
+def test_invalidate_archive_members_redis_bulk_dry_run(_redis_test_env, tmp_path):
+  fake = _redis_test_env
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  store_complete_members_in_redis(keys, {"m": 1})
+  result = invalidate_archive_members_redis_bulk(
+      day_tokens=None, dry_run=True, client=fake,
+  )
+  assert result["dry_run"] is True
+  assert result["scanned"] >= 1
+  assert result["deleted"] == 0
+  assert fake.get(keys.complete_key) == "1"
