@@ -310,8 +310,9 @@ SYNC_TIMEDB_CHECKPOINT_FLUSH_EVERY_FILES = cfg.get_sync_checkpoint_flush_batch_s
 # When no pending files remain after final sealing, sleep this long (seconds)
 # before exiting sync_timedb. Interruptible via shutdown_requested / SIGTERM path.
 EMPTY_QUEUE_RESCAN_SLEEP_SECONDS = 30
-# Short poll while day-close work remains (avoid 30s exit + janitor teardown).
-EMPTY_QUEUE_DAY_CLOSE_POLL_SECONDS = 1.0
+# Poll while day-close work remains (avoid 30s exit + janitor teardown).
+# 5 minutes: day-close is slow; 1s polls flooded logs without speeding progress.
+EMPTY_QUEUE_DAY_CLOSE_POLL_SECONDS = 300.0
 
 # Emit DB lock-wait logs only for sustained contention.
 LOCK_WAIT_LOG_THRESHOLD_SECONDS = 30.0

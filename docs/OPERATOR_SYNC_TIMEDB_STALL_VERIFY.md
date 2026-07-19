@@ -49,7 +49,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 **Fail (T0):** empty pending + deferred forever with `ingest_going=False` and 30s exit while `daily_tar_count` &gt; 0 (INI `daily_archive_dir` still has `.tar` files).
 
-**Pass (T0):** after confirmed empty rescan on ``current``/date-range, expect `ingest_going=yes reason=empty_pending_after_rescan` and `kicking async post-ingest startup archive snapshot`; then `awaiting startup_snapshot` and/or `day_close work remaining` short polls (1s) — **not** immediate 30s exit. When snapshot ready and day-close idle, expect the usual 30s / `run_once` exit.
+**Pass (T0):** after confirmed empty rescan on ``current``/date-range, expect `ingest_going=yes reason=empty_pending_after_rescan` and `kicking async post-ingest startup archive snapshot`; then `awaiting startup_snapshot` and/or `day_close work remaining` polls (`EMPTY_QUEUE_DAY_CLOSE_POLL_SECONDS`, default **300s**) — **not** immediate 30s exit. When snapshot ready and day-close idle, expect the usual 30s / `run_once` exit.
 
 **Pass (T1):** with a large daily-tar backlog and empty ingest queue, day-close discover/debt progresses (`janitor: day_close` / debt drain) without a restart loop; new stats files during poll resume `chunk dispatch`.
 
@@ -64,7 +64,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 **Fail (T0):** `Sleeping 30 s before exiting sync_timedb` (or process exit) while the same window still shows active `janitor: day_close` / non-zero debt / in-flight day-close workers — without intervening `day_close work remaining` poll lines.
 
-**Pass (T0):** when ingest queue is empty but day-close debt/inflight remains (and day-close is allowed), expect `idle ingest; day_close work remaining debt=… inflight=…; polling 1s` (short poll, no 30s exit). When both ingest and day-close are idle, expect the usual `Sleeping 30 s before exiting sync_timedb` (continuous) or `once mode: no pending files` (`run_once`).
+**Pass (T0):** when ingest queue is empty but day-close debt/inflight remains (and day-close is allowed), expect `idle ingest; day_close work remaining debt=… inflight=…; polling 300s` (5 min poll, no 30s exit). When both ingest and day-close are idle, expect the usual `Sleeping 30 s before exiting sync_timedb` (continuous) or `once mode: no pending files` (`run_once`).
 
 **Pass (T1):** under ``current``/date-range after newest-first ingest drains, day-close for older months continues without a 30s supervisor teardown gap; new stats discovery during poll resumes `chunk dispatch` promptly.
 

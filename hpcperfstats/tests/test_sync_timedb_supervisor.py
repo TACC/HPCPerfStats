@@ -4048,16 +4048,18 @@ def test_empty_pending_polls_while_day_close_work_then_exits(monkeypatch, tmp_pa
         )
         out = capsys.readouterr().out
         poll_s = float(st.EMPTY_QUEUE_DAY_CLOSE_POLL_SECONDS)
+        assert poll_s == 300.0
         assert sleeps.count(poll_s) >= 2
         assert st.EMPTY_QUEUE_RESCAN_SLEEP_SECONDS not in sleeps
         assert 'day_close work remaining' in out
+        assert 'polling 300s' in out
         assert 'once mode: no pending files, exiting supervisor loop' in out
     finally:
         shutdown_requested[0] = False
 
 
 def test_current_empty_pending_unlocks_day_close_and_stays_alive(monkeypatch, tmp_path, capsys):
-    """Empty start unlocks ingest_going; short-polls while snapshot incomplete."""
+    """Empty start unlocks ingest_going; polls while snapshot incomplete."""
     shutdown_requested[0] = False
     sleeps = []
     from concurrent.futures import Future
