@@ -410,6 +410,62 @@ else
 fi
 AM_CONDITIONAL([AMD_GPU], [test x$amd_gpu = xtrue])
 
+intel_gpu_user_requested=no
+AC_ARG_ENABLE([intel-gpu],
+[  --enable-intel-gpu	Enable Intel Data Center GPU (PVC) via XPU Manager dlopen (default is auto-detect)],
+[case "${enableval}" in
+  yes) intel_gpu=true; intel_gpu_user_requested=yes ;;
+  no)  intel_gpu=false ;;
+  *) AC_MSG_ERROR([bad value ${enableval} for --enable-intel-gpu]) ;;
+esac],
+[intel_gpu=auto])
+
+intel_gpu_autodetect_result="not-run"
+if test "x$intel_gpu" = "xauto"; then
+  intel_gpu=false
+  intel_gpu_autodetect_result="no-intel-dc"
+  if test -f "${srcdir}/scripts/gpu_lspci_probe.sh"; then
+    if sh "${srcdir}/scripts/gpu_lspci_probe.sh" intel; then
+      intel_gpu=true
+      intel_gpu_autodetect_result="intel-dc-found"
+    fi
+  else
+    AC_PATH_PROG([LSPCI], [lspci], [no])
+    if test "x$LSPCI" != "xno"; then
+      if $LSPCI -nn 2>/dev/null | awk -v vendor=intel -f "${srcdir}/scripts/gpu_lspci_detect.awk"; then
+        intel_gpu=true
+        intel_gpu_autodetect_result="intel-dc-found"
+      fi
+    else
+      intel_gpu_autodetect_result="lspci-missing"
+    fi
+  fi
+fi
+
+if test "x$intel_gpu" = "xtrue"; then
+  save_CPPFLAGS=$CPPFLAGS
+  CPPFLAGS="-I${srcdir}/third_party/intel-xpum ${CPPFLAGS}"
+  AC_CHECK_HEADERS([xpum_api.h xpum_structs.h], [intel_gpu=true],
+    [if test "x$intel_gpu_user_requested" = "xyes"; then
+       AC_MSG_ERROR([Unable to find xpum_api.h/xpum_structs.h (see third_party/intel-xpum/README)])
+     else
+       intel_gpu=false
+       intel_gpu_autodetect_result="${intel_gpu_autodetect_result}-no-hdr"
+       AC_MSG_NOTICE([Intel GPU enabled but XPUM headers are missing; disabling intel_gpu])
+     fi])
+  CPPFLAGS=$save_CPPFLAGS
+  if test "x$intel_gpu" = "xtrue"; then
+    intel_gpu_autodetect_result="${intel_gpu_autodetect_result}-vendored-hdr"
+  fi
+fi
+
+if test "x$intel_gpu" = "xtrue"; then
+  AC_MSG_NOTICE([Intel GPU summary: enabled (runtime libxpum dlopen); detect=${intel_gpu_autodetect_result}])
+else
+  AC_MSG_NOTICE([Intel GPU summary: disabled; detect=${intel_gpu_autodetect_result}])
+fi
+AM_CONDITIONAL([INTEL_GPU], [test x$intel_gpu = xtrue])
+
 AC_ARG_ENABLE([opa],
 [  --enable-opa		Enable Intel Omnipath Fabric support (default is false)],
 [case "${enableval}" in
@@ -527,6 +583,9 @@ if test "x$gpu" = "xtrue"; then
 fi
 if test "x$amd_gpu" = "xtrue"; then
   MONITOR_FEATURE_CPPFLAGS="$MONITOR_FEATURE_CPPFLAGS -DMONITOR_WITH_AMD_GPU"
+fi
+if test "x$intel_gpu" = "xtrue"; then
+  MONITOR_FEATURE_CPPFLAGS="$MONITOR_FEATURE_CPPFLAGS -DMONITOR_WITH_INTEL_GPU"
 fi
 if test "x$opa" = "xtrue"; then
   MONITOR_FEATURE_CPPFLAGS="$MONITOR_FEATURE_CPPFLAGS -DMONITOR_WITH_OPA"

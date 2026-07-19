@@ -1,0 +1,52 @@
+---
+description: Intel XPU Manager (libxpum) integration for intel_gpu / PVC
+globs:
+  - HPCPerfStats/monitor/src/*intel_gpu*
+  - HPCPerfStats/monitor/src/*xpum*
+  - HPCPerfStats/monitor/third_party/intel-xpum/**
+  - HPCPerfStats/monitor/tests/test_xpum*
+  - HPCPerfStats/monitor/tests/test_intel_gpu*
+alwaysApply: false
+---
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+# Monitor: XPU Manager (XPUM) integration
+
+## Scope
+
+- **`intel_gpu`** is optional and gated at **configure** (`--enable-intel-gpu` / `MONITOR_WITH_INTEL_GPU` / `AM_CONDITIONAL([INTEL_GPU])`).
+- Compile **only** against vendored headers in **`third_party/intel-xpum/`** (pinned XPUM **1.2.33**). Do **not** use system `/usr/include` for the monitor build.
+- **Runtime `dlopen`** of `libxpum` in `xpum_gpu_dyn.c` (paths `/usr/lib64/libxpum.so`, `libxpum.so.1`, `libxpum.so`; override **`HPCPERFSTATS_XPUM_LIB`**). No link-time `-lxpum`.
+
+## Lifecycle
+
+- Before `xpumInit`: set `XPUM_DISABLE_PERIODIC_METRIC_MONITOR=1` (on-demand pulls) and an explicit `XPUM_METRICS` list that includes PCIe counters when needed (defaults omit 34/35).
+- Init → `xpumGetDeviceList` → per-device `xpumGetRealtimeMetrics` (fallback `xpumGetStats`) → optional `xpumGetFabricThroughputStats` for Xe Link.
+- Prefer **device-level** rows (not per-tile device names) in v1.
+- On prepare/collect failure: miss-streak then `st_enabled=0`; never crash the daemon.
+
+## Metrics / scale
+
+- XPUM values are magnified by `scale` — always divide `value` (or `accumulated`/`avg`) by `scale` when `scale != 0`.
+- `XPUM_STATS_MEMORY_USED` is **bytes**; emit `gpu_mem_used_mb`. Total from `XPUM_DEVICE_PROPERTY_MEMORY_PHYSICAL_SIZE_BYTE` when available.
+- Cumulative PCIe / Xe Link keys use schema **`E,W=64`**. Do **not** emit NvLink-named keys (`gpu_nvlink_*`).
+- Level Zero Metrics / pipe counters (`fp64_active`, tensor, …) are **out of scope for v1**.
+
+## Detection
+
+- PCI: `gpu_pci_line_indicates_intel_datacenter_gpu()` — Display/`[0380]` + Ponte Vecchio / Data Center GPU Max / `[8086:0bd5]`; exclude Matrox and client iGPU lines.
+- Runtime force: `HPCPERFSTATS_FORCE_INTEL_GPU`.
+- hwdetect disables `intel_gpu` when PCI probe is negative (unless forced).
+
+## Testing
+
+- Schema: `test_intel_gpu_schema_contract.c`
+- Dyn stubs: `test_xpum_gpu_dyn.c`
+- PCI + awk parity + configure auto: fixtures / `test_monitor_configure_intel_gpu_auto.sh`
+
+## Overlap
+
+- **monitor-dcgm-integration** — NVIDIA DCGM patterns (do not mix XPUM into DCGM sessions).
+- **monitor-shm-validation-probe-parity** — `probe_intel_gpu_devices()` must stay aligned with `intel_gpu.c` device ids.
+- **monitor-jitter-and-fidelity-priority** — no Level Zero metric streamer on the sample path.

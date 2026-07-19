@@ -43,7 +43,7 @@ endif
 
 AM_CPPFLAGS = -I$(top_srcdir)/src $(monitor_unit_cppflags)
 
-check_PROGRAMS = test_cpuid_signature test_likwid_rapl_scale test_likwid_uncore_profiles test_likwid_uncore_adapter test_host_edac_mem_topology test_intel_skx_imc_schema test_intel_icx_imc_schema test_intel_spr_imc_schema test_string1 test_stats_buffer_data_append test_stats_buffer_uts test_stats_buffer_rows test_path_collect test_path_open_fail_once test_path_read test_sys_iter test_procfile_parse test_msr_io test_intel_mmconfig test_monitor_log test_monitor_options_kv test_pscanf test_schema_parse test_stats_file_format test_stats_file_format_extra test_stats_text_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_roofline_detect_fixture test_nfs_schema_subset test_ib_schema_contract test_host_schema_contract test_lustre_schema_contract test_opa_schema_contract test_opa_sysfs_map test_opa_mad_backoff test_ib_hca_is_opa_hfi test_opa_lspci_match test_lnet_schema_contract test_arm_aarch64_imc_schema test_amd_x86_pmc_schema test_metric_profiler test_hwdetect_policy test_hwdetect_lspci test_gpu_pci_detect test_dcgm_gpu_dyn test_ib_port_state test_ib_port_collectible test_ib_foreach_hca_port test_ib_family test_stats_runtime_type_controls test_stats_runtime_collect test_collect_tier_table test_collect_phase test_collect_tier_gate test_stats_set_tier_gate test_dict test_host_key_alias test_schema_emit test_procfile_kv test_collect_str test_nvidia_gpu_estimate test_daemonize
+check_PROGRAMS = test_cpuid_signature test_likwid_rapl_scale test_likwid_uncore_profiles test_likwid_uncore_adapter test_host_edac_mem_topology test_intel_skx_imc_schema test_intel_icx_imc_schema test_intel_spr_imc_schema test_string1 test_stats_buffer_data_append test_stats_buffer_uts test_stats_buffer_rows test_path_collect test_path_open_fail_once test_path_read test_sys_iter test_procfile_parse test_msr_io test_intel_mmconfig test_monitor_log test_monitor_options_kv test_pscanf test_schema_parse test_stats_file_format test_stats_file_format_extra test_stats_text_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_roofline_detect_fixture test_nfs_schema_subset test_ib_schema_contract test_host_schema_contract test_lustre_schema_contract test_opa_schema_contract test_opa_sysfs_map test_opa_mad_backoff test_ib_hca_is_opa_hfi test_opa_lspci_match test_lnet_schema_contract test_arm_aarch64_imc_schema test_amd_x86_pmc_schema test_metric_profiler test_hwdetect_policy test_hwdetect_lspci test_gpu_pci_detect test_intel_gpu_schema_contract test_xpum_gpu_dyn test_dcgm_gpu_dyn test_ib_port_state test_ib_port_collectible test_ib_foreach_hca_port test_ib_family test_stats_runtime_type_controls test_stats_runtime_collect test_collect_tier_table test_collect_phase test_collect_tier_gate test_stats_set_tier_gate test_dict test_host_key_alias test_schema_emit test_procfile_kv test_collect_str test_nvidia_gpu_estimate test_daemonize
 if INFINIBAND
 check_PROGRAMS += test_ib_mad_backoff test_ib_mad_decode test_ib_mad_sw_swap
 endif
@@ -62,6 +62,7 @@ check-local:
 	$(SHELL) '$(srcdir)/test_static_bundle_configure_flags.sh'
 	$(SHELL) '$(srcdir)/test_gpu_lspci_detect_parity.sh'
 	$(SHELL) '$(srcdir)/test_monitor_configure_amd_auto.sh' || test $$? -eq 77
+	$(SHELL) '$(srcdir)/test_monitor_configure_intel_gpu_auto.sh' || test $$? -eq 77
 	$(SHELL) '$(srcdir)/test_make_dist_extra_dist_prereqs.sh'
 	$(SHELL) '$(srcdir)/test_prepare_monitor_tree_clean.sh'
 	$(SHELL) '$(srcdir)/test_hpc_debug_build_configure.sh'
@@ -77,7 +78,7 @@ if RABBITMQ
 	fi
 endif
 
-EXTRA_DIST = test_monitor_configure_help.sh.in test_static_bundle_configure_flags.sh test_gpu_lspci_detect_parity.sh test_monitor_configure_amd_auto.sh fixtures/gpu_lspci_lines.tsv fixtures/opa_lspci_lines.tsv test_make_dist_extra_dist_prereqs.sh test_prepare_monitor_tree_clean.sh test_hpc_debug_build_configure.sh test_rpm_debug_shm_verify.sh test_net_debug_trace_format.sh run_tests.sh README.md test_ring_buffer.c test_ring_buffer_stubs.c test_stats_buffer_collect.c test_stats_buffer_collect_stubs.c test_stats_buffer_collect_stubs.h test_debug_shm_emit_fixture.c test_debug_shm_emit_fixture.h test_debug_shm_emit_validate.c test_debug_shm_emit_validate.h test_debug_shm_emit_golden.c test_debug_shm_schema_mirror.c test_shm_message_correctness.sh test_shm_validation_lib.sh test_shm_validation_lib.py test_host_edac_mem_topology.c expected/debug_shm_fast.txt expected/debug_shm_full.txt expected/synthetic_fixture/schema expected/synthetic_fixture/fast expected/synthetic_fixture/full expected/synthetic_fixture/monitor-build-capabilities.json expected/synthetic_fixture/expectations_synthetic_debug_tier1.json test_stats_buffer_rows.c test_stats_runtime_collect.c test_ib_family.c test_ib_mad_backoff.c test_ib_mad_decode.c test_ib_mad_stubs.c test_ib_mad_sw_swap.c test_nvidia_gpu_estimate.c test_roofline_detect_fixture.c test_daemonize.c test_path_open_fail_once.c test_monitor_timing.c test_stats_text_format.c test_arm_aarch64_imc_schema.c test_amd_x86_pmc_schema.c test_rabbitmq_integration.sh rmq_integration_validate.py requirements-rabbitmq-integration.txt scripts/bootstrap_local_rabbitmq.sh $(top_srcdir)/scripts/check_unsafe_c_patterns.sh $(top_srcdir)/scripts/check_unsafe_c_patterns.allowlist $(top_srcdir)/scripts/check_emitted_variable_names.py $(top_srcdir)/scripts/emit_build_capabilities.py $(top_srcdir)/scripts/build_message_expectations.py $(top_srcdir)/scripts/validate_shm_messages.py $(top_srcdir)/scripts/lib/message_parse.py $(top_srcdir)/scripts/lib/row_validate.py $(top_srcdir)/scripts/lib/payload_parse.py $(top_srcdir)/scripts/lib/device_validate.py $(top_srcdir)/scripts/lib/listend_contract.py $(top_srcdir)/scripts/lib/host_live_probes.py $(top_srcdir)/scripts/lib/value_plausibility.py $(top_srcdir)/scripts/lib/live_spot_check.py $(top_srcdir)/scripts/lib/golden_diff.py $(top_srcdir)/scripts/lib/__init__.py
+EXTRA_DIST = test_monitor_configure_help.sh.in test_static_bundle_configure_flags.sh test_gpu_lspci_detect_parity.sh test_monitor_configure_amd_auto.sh test_monitor_configure_intel_gpu_auto.sh fixtures/gpu_lspci_lines.tsv fixtures/opa_lspci_lines.tsv test_make_dist_extra_dist_prereqs.sh test_prepare_monitor_tree_clean.sh test_hpc_debug_build_configure.sh test_rpm_debug_shm_verify.sh test_net_debug_trace_format.sh run_tests.sh README.md test_ring_buffer.c test_ring_buffer_stubs.c test_stats_buffer_collect.c test_stats_buffer_collect_stubs.c test_stats_buffer_collect_stubs.h test_debug_shm_emit_fixture.c test_debug_shm_emit_fixture.h test_debug_shm_emit_validate.c test_debug_shm_emit_validate.h test_debug_shm_emit_golden.c test_debug_shm_schema_mirror.c test_shm_message_correctness.sh test_shm_validation_lib.sh test_shm_validation_lib.py test_host_edac_mem_topology.c expected/debug_shm_fast.txt expected/debug_shm_full.txt expected/synthetic_fixture/schema expected/synthetic_fixture/fast expected/synthetic_fixture/full expected/synthetic_fixture/monitor-build-capabilities.json expected/synthetic_fixture/expectations_synthetic_debug_tier1.json test_stats_buffer_rows.c test_stats_runtime_collect.c test_ib_family.c test_ib_mad_backoff.c test_ib_mad_decode.c test_ib_mad_stubs.c test_ib_mad_sw_swap.c test_nvidia_gpu_estimate.c test_roofline_detect_fixture.c test_daemonize.c test_path_open_fail_once.c test_monitor_timing.c test_stats_text_format.c test_arm_aarch64_imc_schema.c test_amd_x86_pmc_schema.c test_rabbitmq_integration.sh rmq_integration_validate.py requirements-rabbitmq-integration.txt scripts/bootstrap_local_rabbitmq.sh $(top_srcdir)/scripts/check_unsafe_c_patterns.sh $(top_srcdir)/scripts/check_unsafe_c_patterns.allowlist $(top_srcdir)/scripts/check_emitted_variable_names.py $(top_srcdir)/scripts/emit_build_capabilities.py $(top_srcdir)/scripts/build_message_expectations.py $(top_srcdir)/scripts/validate_shm_messages.py $(top_srcdir)/scripts/lib/message_parse.py $(top_srcdir)/scripts/lib/row_validate.py $(top_srcdir)/scripts/lib/payload_parse.py $(top_srcdir)/scripts/lib/device_validate.py $(top_srcdir)/scripts/lib/listend_contract.py $(top_srcdir)/scripts/lib/host_live_probes.py $(top_srcdir)/scripts/lib/value_plausibility.py $(top_srcdir)/scripts/lib/live_spot_check.py $(top_srcdir)/scripts/lib/golden_diff.py $(top_srcdir)/scripts/lib/__init__.py
 
 if RABBITMQ
 .PHONY: check-rabbitmq-integration
@@ -348,6 +349,14 @@ test_dcgm_gpu_dyn_SOURCES = \
 
 test_dcgm_gpu_dyn_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/third_party/nvidia-dcgm
 
+test_intel_gpu_schema_contract_SOURCES = test_intel_gpu_schema_contract.c
+test_intel_gpu_schema_contract_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/src
+
+test_xpum_gpu_dyn_SOURCES = \
+	test_xpum_gpu_dyn.c \
+	$(top_srcdir)/src/xpum_gpu_dyn.c
+test_xpum_gpu_dyn_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/third_party/intel-xpum
+
 test_ib_port_state_SOURCES = \
 	test_ib_port_state.c \
 	$(top_srcdir)/src/ib_port_state.c
@@ -566,6 +575,8 @@ test_hwdetect_policy_LDADD = $(LDADD)
 test_hwdetect_lspci_LDADD = $(LDADD)
 test_gpu_pci_detect_LDADD = $(LDADD)
 test_dcgm_gpu_dyn_LDADD = $(LDADD) -ldl
+test_intel_gpu_schema_contract_LDADD = $(LDADD)
+test_xpum_gpu_dyn_LDADD = $(LDADD) -ldl
 test_ib_port_state_LDADD = $(LDADD)
 test_ib_port_collectible_LDADD = $(LDADD)
 test_ib_foreach_hca_port_LDADD = $(LDADD)

@@ -1,0 +1,14 @@
+Intel XPU Manager (XPUM) C API headers vendored for monitor builds.
+
+The monitor compiles `intel_gpu` against these headers only — never system
+`/usr/include`. At runtime `libxpum` is dlopen'd (`xpum_gpu_dyn.c`); override
+with `HPCPERFSTATS_XPUM_LIB`.
+
+Source: https://github.com/intel/xpumanager
+Pinned tag: V1.2.33 (matches Stampede3 `xpumanager-1.2.33` RPM)
+
+Files:
+  xpum_api.h
+  xpum_structs.h
+
+License: MIT (see SPDX headers in each file).

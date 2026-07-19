@@ -431,6 +431,20 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
     },
     {
+        "id": "monitor_xpum",
+        "patterns": [
+            "HPCPerfStats/monitor/src/*intel_gpu*",
+            "HPCPerfStats/monitor/src/*xpum*",
+            "HPCPerfStats/monitor/third_party/intel-xpum/**",
+            "monitor/src/*intel_gpu*",
+            "monitor/src/*xpum*",
+            "monitor/third_party/intel-xpum/**",
+        ],
+        "rules": [
+            "monitor-xpum-integration.mdc",
+        ],
+    },
+    {
         "id": "monitor_debug_shm",
         "patterns": [
             "HPCPerfStats/monitor/src/*debug*",
@@ -474,6 +488,7 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
             "HPCPerfStats/monitor/src/block.c",
             "HPCPerfStats/monitor/src/ib.c",
             "HPCPerfStats/monitor/src/opa.c",
+            "HPCPerfStats/monitor/src/intel_gpu.c",
             "HPCPerfStats/monitor/src/cpu.c",
             "HPCPerfStats/monitor/src/intel_spr_imc.c",
             "HPCPerfStats/monitor/scripts/lib/host_live_probes.py",
@@ -486,6 +501,7 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
             "monitor/src/block.c",
             "monitor/src/ib.c",
             "monitor/src/opa.c",
+            "monitor/src/intel_gpu.c",
             "monitor/src/cpu.c",
             "monitor/src/intel_spr_imc.c",
             "monitor/scripts/lib/host_live_probes.py",

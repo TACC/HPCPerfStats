@@ -42,3 +42,20 @@ int gpu_pci_line_indicates_amd(const char *line_lower)
   return strstr(line_lower, "advanced micro devices") != NULL
       || strstr(line_lower, " amd/ati ") != NULL;
 }
+
+int gpu_pci_line_indicates_intel_datacenter_gpu(const char *line_lower)
+{
+  int class_ok;
+
+  if (line_lower == NULL)
+    return 0;
+  if (strstr(line_lower, "matrox") != NULL)
+    return 0;
+  class_ok = gpu_pci_line_is_gpu_class(line_lower)
+      || strstr(line_lower, "[0380]") != NULL;
+  if (!class_ok)
+    return 0;
+  return strstr(line_lower, "ponte vecchio") != NULL
+      || strstr(line_lower, "data center gpu max") != NULL
+      || strstr(line_lower, "[8086:0bd5]") != NULL;
+}

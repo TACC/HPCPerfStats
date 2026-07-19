@@ -266,6 +266,41 @@ def probe_nvidia_gpu_devices() -> list[str]:
     return devs
 
 
+def probe_intel_gpu_devices() -> list[str]:
+    """intel_gpu device ids as decimal strings; count Stampede3 PVC lspci lines.
+
+    Mirrors intel_gpu.c XPUM device rows (\"0\"..\"N-1\") when XPUM enumerates
+    one id per Data Center GPU Max / Ponte Vecchio PCI function.
+    """
+    import subprocess
+
+    try:
+        out = subprocess.check_output(["lspci", "-nn"], text=True, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.CalledProcessError):
+        return []
+    n = 0
+    for line in out.splitlines():
+        low = line.lower()
+        if "matrox" in low:
+            continue
+        class_ok = (
+            "display controller" in low
+            or "3d controller" in low
+            or "vga compatible controller" in low
+            or "[0380]" in low
+            or "accelerator" in low
+        )
+        if not class_ok:
+            continue
+        if (
+            "ponte vecchio" in low
+            or "data center gpu max" in low
+            or "[8086:0bd5]" in low
+        ):
+            n += 1
+    return [str(i) for i in range(n)]
+
+
 def _edac_mc_root() -> Path:
     env = os.environ.get("HPCPERFSTATS_EDAC_MC_ROOT", "")
     if env:
@@ -382,6 +417,9 @@ def default_devices_for_type(type_name: str) -> list[str] | None:
         return devs if devs else None
     if type_name == "nvidia_gpu":
         devs = probe_nvidia_gpu_devices()
+        return devs if devs else None
+    if type_name == "intel_gpu":
+        devs = probe_intel_gpu_devices()
         return devs if devs else None
     if type_name == "intel_x86_uncore_imc_spr":
         return probe_spr_imc_devices()

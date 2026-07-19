@@ -10,7 +10,7 @@ test -f "${FIXTURE}"
 test -f "${AWK}"
 
 fail=0
-while IFS="$(printf '\t')" read -r line expect_nvidia expect_amd _rest; do
+while IFS="$(printf '\t')" read -r line expect_nvidia expect_amd expect_intel _rest; do
   case "${line}" in
     ''|'#'*) continue ;;
   esac
@@ -25,10 +25,17 @@ while IFS="$(printf '\t')" read -r line expect_nvidia expect_amd _rest; do
     got_amd=1
   fi
 
-  if test "${got_nvidia}" != "${expect_nvidia}" || test "${got_amd}" != "${expect_amd}"; then
+  got_intel=0
+  if printf '%s\n' "${line}" | awk -v vendor=intel -f "${AWK}"; then
+    got_intel=1
+  fi
+
+  if test "${got_nvidia}" != "${expect_nvidia}" \
+      || test "${got_amd}" != "${expect_amd}" \
+      || test "${got_intel}" != "${expect_intel}"; then
     echo "parity mismatch for line: ${line}" >&2
-    echo "  expected nvidia=${expect_nvidia} amd=${expect_amd}" >&2
-    echo "  got      nvidia=${got_nvidia} amd=${got_amd}" >&2
+    echo "  expected nvidia=${expect_nvidia} amd=${expect_amd} intel=${expect_intel}" >&2
+    echo "  got      nvidia=${got_nvidia} amd=${got_amd} intel=${got_intel}" >&2
     fail=1
   fi
 done < "${FIXTURE}"

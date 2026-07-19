@@ -93,6 +93,7 @@ struct hwdetect_probe_cache {
   long long cached_mono_us;
   int has_nvidia_gpu;
   int has_amd_gpu;
+  int has_intel_gpu;
   int has_ib;
   int has_opa;
 };
@@ -142,6 +143,7 @@ int hwdetect_should_disable_nvidia_gpu(int has_nvidia_gpu)
 
 void hwdetect_probe_optional_stack_presence(int *has_nvidia_gpu,
                                             int *has_amd_gpu,
+                                            int *has_intel_gpu,
                                             int *has_ib,
                                             int *has_opa)
 {
@@ -152,6 +154,7 @@ void hwdetect_probe_optional_stack_presence(int *has_nvidia_gpu,
   long long elapsed_us = -1;
   int nvidia = 0;
   int amd = 0;
+  int intel = 0;
   int ib = 0;
   int opa = 0;
   FILE *fp = popen("lspci -nn 2>/dev/null", "r");
@@ -164,6 +167,8 @@ void hwdetect_probe_optional_stack_presence(int *has_nvidia_gpu,
       *has_nvidia_gpu = g_probe_cache.has_nvidia_gpu;
     if (has_amd_gpu != NULL)
       *has_amd_gpu = g_probe_cache.has_amd_gpu;
+    if (has_intel_gpu != NULL)
+      *has_intel_gpu = g_probe_cache.has_intel_gpu;
     if (has_ib != NULL)
       *has_ib = g_probe_cache.has_ib;
     if (has_opa != NULL)
@@ -177,6 +182,8 @@ void hwdetect_probe_optional_stack_presence(int *has_nvidia_gpu,
       *has_nvidia_gpu = sysfs_proc_indicates_nvidia_gpu();
     if (has_amd_gpu != NULL)
       *has_amd_gpu = 0;
+    if (has_intel_gpu != NULL)
+      *has_intel_gpu = 0;
     if (has_ib != NULL)
       *has_ib = infiniband_sysfs_has_devices();
     if (has_opa != NULL)
@@ -190,6 +197,8 @@ void hwdetect_probe_optional_stack_presence(int *has_nvidia_gpu,
       nvidia = 1;
     if (gpu_pci_line_indicates_amd(line))
       amd = 1;
+    if (gpu_pci_line_indicates_intel_datacenter_gpu(line))
+      intel = 1;
     if (strstr(line, "infiniband") != NULL || strstr(line, "[0207]") != NULL)
       ib = 1;
     if (strstr(line, "omnipath") != NULL || strstr(line, "hfi") != NULL
@@ -210,6 +219,8 @@ void hwdetect_probe_optional_stack_presence(int *has_nvidia_gpu,
     *has_nvidia_gpu = nvidia;
   if (has_amd_gpu != NULL)
     *has_amd_gpu = amd;
+  if (has_intel_gpu != NULL)
+    *has_intel_gpu = intel;
   if (has_ib != NULL)
     *has_ib = ib;
   if (has_opa != NULL)
@@ -220,6 +231,7 @@ void hwdetect_probe_optional_stack_presence(int *has_nvidia_gpu,
     g_probe_cache.cached_mono_us = now_mono_us;
     g_probe_cache.has_nvidia_gpu = nvidia;
     g_probe_cache.has_amd_gpu = amd;
+    g_probe_cache.has_intel_gpu = intel;
     g_probe_cache.has_ib = ib;
     g_probe_cache.has_opa = opa;
   }
@@ -236,13 +248,19 @@ void auto_disable_optional_stats_by_lspci(void)
 {
   int has_nvidia_gpu = 0;
   int has_amd_gpu = 0;
+  int has_intel_gpu = 0;
   int has_ib = 0;
   int has_opa = 0;
 
-  hwdetect_probe_optional_stack_presence(&has_nvidia_gpu, &has_amd_gpu, &has_ib, &has_opa);
+  hwdetect_probe_optional_stack_presence(&has_nvidia_gpu, &has_amd_gpu, &has_intel_gpu,
+                                         &has_ib, &has_opa);
   if (env_truthy("HPCPERFSTATS_FORCE_NVIDIA_GPU")) {
     TRACE("hwdetect: HPCPERFSTATS_FORCE_NVIDIA_GPU is active; forcing nvidia_gpu enable\n");
     has_nvidia_gpu = 1;
+  }
+  if (env_truthy("HPCPERFSTATS_FORCE_INTEL_GPU")) {
+    TRACE("hwdetect: HPCPERFSTATS_FORCE_INTEL_GPU is active; forcing intel_gpu enable\n");
+    has_intel_gpu = 1;
   }
 
   if (hwdetect_should_disable_nvidia_gpu(has_nvidia_gpu)) {
@@ -251,6 +269,8 @@ void auto_disable_optional_stats_by_lspci(void)
   }
   if (!has_amd_gpu)
     disable_type_if_present("amd_gpu");
+  if (!has_intel_gpu)
+    disable_type_if_present("intel_gpu");
   if (!has_ib)
     ib_family_disable_all();
   if (!has_opa)

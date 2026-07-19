@@ -229,10 +229,14 @@ monitor_lspci_sees_amd() {
   sh "${MONITOR_DIR}/scripts/gpu_lspci_probe.sh" amd
 }
 
+monitor_lspci_sees_intel() {
+  sh "${MONITOR_DIR}/scripts/gpu_lspci_probe.sh" intel
+}
+
 # Prints detection summary and sets STATIC_BUNDLE_FEAT_FLAGS (configure --disable-* list).
 static_bundle_print_detection_summary() {
   STATIC_BUNDLE_FEAT_FLAGS=()
-  local mach cpu_backend likwid_build lspci_path pci_nvidia pci_amd ib_ok opa_ok dcgm_ok amd_ok
+  local mach cpu_backend likwid_build lspci_path pci_nvidia pci_amd pci_intel ib_ok opa_ok dcgm_ok amd_ok intel_ok
 
   mach="$(uname -m 2>/dev/null || echo unknown)"
   if is_x86_build_host; then
@@ -247,10 +251,12 @@ static_bundle_print_detection_summary() {
     lspci_path="$(command -v lspci)"
     if monitor_lspci_sees_nvidia; then pci_nvidia=detected; else pci_nvidia="not detected"; fi
     if monitor_lspci_sees_amd; then pci_amd=detected; else pci_amd="not detected"; fi
+    if monitor_lspci_sees_intel; then pci_intel=detected; else pci_intel="not detected"; fi
   else
     lspci_path="(not in PATH; configure GPU auto-detect may be limited)"
     pci_nvidia=n/a
     pci_amd=n/a
+    pci_intel=n/a
   fi
 
   if monitor_probe_infiniband_stack; then
@@ -295,6 +301,15 @@ EOF
     STATIC_BUNDLE_FEAT_FLAGS+=(--disable-amd-gpu)
   fi
 
+  # Fleet RPM: compile intel_gpu against vendored XPUM headers; runtime dlopen libxpum.
+  if test -f "${MONITOR_DIR}/third_party/intel-xpum/xpum_api.h"; then
+    intel_ok="vendored-hdr (runtime libxpum dlopen)"
+    STATIC_BUNDLE_FEAT_FLAGS+=(--enable-intel-gpu)
+  else
+    intel_ok="not detected"
+    STATIC_BUNDLE_FEAT_FLAGS+=(--disable-intel-gpu)
+  fi
+
   printf '\n'
   printf '%s\n' "=== Static bundle: build host detection (before any compile) ==="
   printf '%-36s %s\n' "Machine (uname -m):" "${mach}"
@@ -303,10 +318,12 @@ EOF
   printf '%-36s %s\n' "lspci:" "${lspci_path}"
   printf '%-36s %s\n' "PCI class hint (NVIDIA GPU):" "${pci_nvidia}"
   printf '%-36s %s\n' "PCI class hint (AMD GPU):" "${pci_amd}"
+  printf '%-36s %s\n' "PCI class hint (Intel DC GPU):" "${pci_intel}"
   printf '%-36s %s\n' "InfiniBand devel (libibmad + headers):" "${ib_ok}"
   printf '%-36s %s\n' "Omni-Path STL MAD (liboib_utils):" "${opa_ok}"
   printf '%-36s %s\n' "NVIDIA DCGM link (libdcgm + vendored hdr):" "${dcgm_ok}"
   printf '%-36s %s\n' "AMD GPUPerfAPI header (gpu_perf_api.h):" "${amd_ok}"
+  printf '%-36s %s\n' "Intel XPUM (vendored hdr / dlopen):" "${intel_ok}"
   if test "${#STATIC_BUNDLE_FEAT_FLAGS[@]}" -gt 0; then
     printf '%-36s %s\n' "Extra configure flags from probes:" "${STATIC_BUNDLE_FEAT_FLAGS[*]}"
   else

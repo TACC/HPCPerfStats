@@ -18,7 +18,7 @@ C implementation of the **hpcperfstats** data collector: either a **RabbitMQ dae
 - **RabbitMQ build** (typical for `hpcperfstatsd`): `monitor.c`, `monitor_cli.c`, `monitor_daemon.c`, `stats_buffer.c`, AMQP + libev + LIKWID as configured.
 - **Non–RabbitMQ build**: `main.c`, `stats_file.c`, `stats_file_format.c` — local file client and archive I/O.
 
-Configure selects sources via Automake conditionals; use **`./configure --help`** for options (including **`--enable-all-static`**, **`--enable-legacy-pmcs`**, **`--enable-metric-profiler`**, **`--with-metric-profiler-backend={none,ebpf}`**, and **`--enable-opa`**).
+Configure selects sources via Automake conditionals; use **`./configure --help`** for options (including **`--enable-all-static`**, **`--enable-legacy-pmcs`**, **`--enable-metric-profiler`**, **`--with-metric-profiler-backend={none,ebpf}`**, **`--enable-opa`**, and **`--enable-intel-gpu`**).
 
 ### Omni-Path / Cornelis (`host_opa`)
 
@@ -28,6 +28,13 @@ Configure selects sources via Automake conditionals; use **`./configure --help`*
 - **`--enable-opa`:** links Cornelis/Intel IFS **`liboib_utils`** (+ `oib_utils.h`) for STL Performance MAD (full KEYS). Requires IFS devel packages on the build host. `scripts/build_static_bundle.sh` probes for `liboib_utils` and passes `--enable-opa` when the link probe succeeds.
 - **`host_ib` never claims `hfi1_*` HCAs** — those belong to `host_opa` only.
 - Stampede3 PCI examples: Cornelis CN5000 HFI (SPR); Intel Omni-Path HFI Silicon 100 Series (ICX/SKX/H100).
+
+### Intel Data Center GPU / PVC (`intel_gpu`)
+
+- **`--enable-intel-gpu={auto,yes,no}`** (default **auto** via `scripts/gpu_lspci_probe.sh intel`). Compiles against vendored **`third_party/intel-xpum/`** headers (XPUM **1.2.33** only — not system `/usr/include`).
+- Runtime **`dlopen`** of `libxpum` (`/usr/lib64/libxpum.so`, `libxpum.so.1`, …); override with **`HPCPERFSTATS_XPUM_LIB`**. No link-time `-lxpum`.
+- Stampede3 PVC: four Data Center GPU Max 1550 (`[8086:0bd5]` / Ponte Vecchio) → device rows `"0"`…`"3"`; keys align conceptually with `nvidia_gpu` / `amd_gpu` (Xe Link keys, not NvLink). Level Zero pipe metrics are deferred.
+- Force enable for testing: **`HPCPERFSTATS_FORCE_INTEL_GPU`**. Static bundle enables intel_gpu when vendored headers are present (fleet RPM).
 
 ## Metric profiler build options
 
@@ -56,6 +63,7 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 | Intel CPUID / generation gating | `cpuid.c`, `intel_cpuid_match.c`, `intel_processor.c` |
 | LIKWID core + uncore PMU | `likwid_pmc_adapter.c`, `likwid_uncore_adapter.c`, `likwid_uncore_profiles.c` |
 | Omni-Path / Cornelis HFI (`host_opa`) | `opa.c`, `opa_sysfs.c`, `opa_mad_backoff.c`, `host_opa.h` (sysfs always; STL MAD with `--enable-opa`) |
+| Intel Data Center GPU / PVC (`intel_gpu`) | `intel_gpu.c`, `intel_gpu.h`, `xpum_gpu_dyn.c` (vendored `third_party/intel-xpum/`; runtime `libxpum` dlopen) |
 | IB vs HFI routing | `ib_common.c` (`ib_hca_is_opa_hfi`), `ib_family.c` |
 
 Intel PMU collection uses **LIKWID only** on x86 (see [LIKWID_MIGRATION.md](LIKWID_MIGRATION.md)).

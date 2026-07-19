@@ -41,8 +41,10 @@ BuildRequires: pciutils
 # InfiniBand (libibmad + headers): omit on hosts where IB support is unwanted.
 # Omni-Path STL MAD (--enable-opa): optional; requires Cornelis/Intel IFS liboib_utils.
 # host_opa sysfs collection is always built (hfi1_*); MAD is additive when IFS is present.
+# Intel PVC / XPU Manager (--enable-intel-gpu): vendored third_party/intel-xpum headers; runtime dlopen libxpum.
 # BuildRequires: libibmad-devel
 # BuildRequires: (site-specific) cornelis-opa / opa-liboib_utils devel for --enable-opa
+# RuntimeRequires (PVC nodes): xpumanager providing libxpum.so — not a BuildRequires (dlopen).
 BuildRequires: rdma-core-devel
 
 # Non-x86: configure auto-selects DCGM CPU backend (libdcgm). EL9 + NVIDIA repos ship

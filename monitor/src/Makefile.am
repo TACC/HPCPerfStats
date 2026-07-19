@@ -329,6 +329,17 @@ hpcperfstatsd_SOURCES += \
 	amd_gpu.h
 endif
 
+if INTEL_GPU
+TYPES += \
+	intel_gpu.c
+hpcperfstatsd_SOURCES += \
+	intel_gpu.h \
+	xpum_gpu_dyn.c \
+	xpum_gpu_dyn.h
+hpcperfstatsd_CPPFLAGS += \
+	-I$(top_srcdir)/third_party/intel-xpum
+endif
+
 EXTRA_DIST = hpcperfstats.conf hpcperfstats.service hpcperfstatsd.sysconfig \
 	$(top_srcdir)/scripts/build_static_bundle.sh \
 	$(top_srcdir)/scripts/ensure_dotbuild_prefix_static.sh \

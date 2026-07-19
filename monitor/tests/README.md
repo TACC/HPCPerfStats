@@ -23,6 +23,8 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_opa_mad_backoff.c` | OPA MAD failure backoff |
 | `test_ib_hca_is_opa_hfi.c` | HFI vs IB HCA classification |
 | `test_opa_lspci_match.c` | Stampede3 Cornelis/OPA lspci fixture match |
+| `test_intel_gpu_schema_contract.c` | Intel PVC `intel_gpu` KEYS contract (Xe Link, no NvLink) |
+| `test_xpum_gpu_dyn.c` | XPUM dlopen stubs / missing-lib / hooks |
 | `test_lnet_schema_contract.c` | LNet collector schema token contract |
 | `test_likwid_rapl_scale.c` | RAPL energy scaling helper sanity checks |
 | `test_string1.c` | `wsep` / `strsep_ne` (header-only `string1.h`) |

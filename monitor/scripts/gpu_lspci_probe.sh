@@ -1,11 +1,11 @@
 #!/bin/sh
-# Probe live lspci -nn output for NVIDIA or AMD GPU class lines.
-# Usage: gpu_lspci_probe.sh nvidia|amd
+# Probe live lspci -nn output for NVIDIA, AMD, or Intel Data Center GPU class lines.
+# Usage: gpu_lspci_probe.sh nvidia|amd|intel
 set -e
 
-vendor="${1:?usage: gpu_lspci_probe.sh nvidia|amd}"
+vendor="${1:?usage: gpu_lspci_probe.sh nvidia|amd|intel}"
 case "${vendor}" in
-  nvidia|amd) ;;
+  nvidia|amd|intel) ;;
   *)
     echo "gpu_lspci_probe.sh: unknown vendor '${vendor}'" >&2
     exit 2

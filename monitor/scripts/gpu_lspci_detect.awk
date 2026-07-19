@@ -1,4 +1,4 @@
-# Shared NVIDIA/AMD GPU PCI line heuristics for configure and build_static_bundle.
+# Shared NVIDIA/AMD/Intel DC GPU PCI line heuristics for configure and build_static_bundle.
 # Must stay aligned with src/gpu_pci_detect.c (see tests/test_gpu_lspci_detect_parity.sh).
 
 function is_gpu_class(l,    n) {
@@ -8,6 +8,7 @@ function is_gpu_class(l,    n) {
   if (index(n, "display controller")) return 1
   if (index(n, "processing accelerators")) return 1
   if (index(n, "accelerator")) return 1
+  if (index(n, "[0380]")) return 1
   return 0
 }
 
@@ -40,18 +41,31 @@ function line_amd(l,    n) {
   return 0
 }
 
+function line_intel_dc(l,    n) {
+  n = tolower(l)
+  if (index(n, "matrox")) return 0
+  if (!is_gpu_class(n)) return 0
+  if (index(n, "ponte vecchio")) return 1
+  if (index(n, "data center gpu max")) return 1
+  if (index(n, "[8086:0bd5]")) return 1
+  return 0
+}
+
 BEGIN {
   found_nvidia = 0
   found_amd = 0
+  found_intel = 0
 }
 
 {
   if (line_nvidia($0)) found_nvidia = 1
   if (line_amd($0)) found_amd = 1
+  if (line_intel_dc($0)) found_intel = 1
 }
 
 END {
   if (vendor == "nvidia") exit(found_nvidia ? 0 : 1)
   if (vendor == "amd") exit(found_amd ? 0 : 1)
+  if (vendor == "intel") exit(found_intel ? 0 : 1)
   exit 1
 }

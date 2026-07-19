@@ -20,6 +20,10 @@ extern struct stats_type intel_spr_imc_stats_type;
 extern struct stats_type amd_gpu_stats_type;
 #endif
 
+#if defined(MONITOR_WITH_INTEL_GPU)
+extern struct stats_type intel_gpu_stats_type;
+#endif
+
 #if defined(MONITOR_WITH_HARDWARE) && defined(MONITOR_CPU_BACKEND_DCGM) \
     && defined(MONITOR_HOST_IS_ARM)
 extern struct stats_type arm_imc_stats_type;
@@ -93,6 +97,9 @@ struct stats_type *const stats_type_table[] = {
   &intel_skx_imc_stats_type,
   &intel_icx_imc_stats_type,
   &intel_spr_imc_stats_type,
+#endif
+#if defined(MONITOR_WITH_INTEL_GPU)
+  &intel_gpu_stats_type,
 #endif
 #if defined(MONITOR_WITH_LUSTRE)
   &llite_stats_type,

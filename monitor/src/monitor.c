@@ -123,12 +123,14 @@ static void monitor_log_optional_driver_probe(void)
 {
   int has_nvidia_gpu = 0;
   int has_amd_gpu = 0;
+  int has_intel_gpu = 0;
   int has_ib = 0;
   int has_opa = 0;
   int has_nvidia_devnode = 0;
   int has_dcgm_lib = 0;
 
-  hwdetect_probe_optional_stack_presence(&has_nvidia_gpu, &has_amd_gpu, &has_ib, &has_opa);
+  hwdetect_probe_optional_stack_presence(&has_nvidia_gpu, &has_amd_gpu, &has_intel_gpu,
+                                         &has_ib, &has_opa);
   has_nvidia_devnode = (access("/dev/nvidia0", F_OK) == 0) ? 1 : 0;
   has_dcgm_lib = (access("/usr/lib64/libdcgm.so", F_OK) == 0
                    || access("/usr/lib64/libdcgm.so.4", F_OK) == 0
@@ -137,11 +139,12 @@ static void monitor_log_optional_driver_probe(void)
 
   monitor_log_info(
       "Driver/stack probe: nvidia_gpu=%s (devnode=%s, libdcgm=%s), amd_gpu=%s, "
-      "infiniband=%s, opa=%s\n",
+      "intel_gpu=%s, infiniband=%s, opa=%s\n",
       has_nvidia_gpu ? "detected" : "not detected",
       has_nvidia_devnode ? "yes" : "no",
       has_dcgm_lib ? "yes" : "no",
       has_amd_gpu ? "detected" : "not detected",
+      has_intel_gpu ? "detected" : "not detected",
       has_ib ? "detected" : "not detected",
       has_opa ? "detected" : "not detected");
 }

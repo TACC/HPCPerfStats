@@ -116,6 +116,7 @@ static const struct {
 
   { "nvidia_gpu", "gpu_count" },
   { "amd_gpu", "gpu_count" },
+  { "intel_gpu", "gpu_count" },
 };
 
 void collect_tier_set_enabled(int enabled)
