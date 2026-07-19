@@ -24,6 +24,11 @@ export type BokehEmbedProps = {
   embedStaggerIndex?: number;
   /** When false, defer Bokeh embed until the plot container is visible in layout. */
   embedAllowed?: boolean;
+  /**
+   * List/dashboard preview: non-interactive canvas (pointer-events none),
+   * no global resize reflow cascade, no continuous maximize-on-resize listener.
+   */
+  previewMode?: boolean;
 };
 
 export type BokehPlotWithLimitationProps = BokehEmbedProps & {

@@ -233,6 +233,63 @@ describe("HistogramThumbnails", () => {
     expect(shell).toHaveClass("w-[280px]");
   });
 
+  it("uses previewMode on desktop thumbs but not on enlarge dialog embed", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      configurable: true,
+      value: vi.fn().mockImplementation((query) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+
+    const embedItem = vi.fn().mockResolvedValue(embedViewsWithIdleDoc());
+    window.Bokeh = { embed: { embed_item: embedItem } };
+
+    const { container } = renderHistograms(
+      <HistogramThumbnails
+        embedAllowed
+        histograms={[
+          {
+            title: "Jobs by queue",
+            plot_item_thumb: VALID_BOKEH_ITEM,
+            plot_item_full: VALID_BOKEH_ITEM,
+          },
+        ]}
+      />,
+    );
+
+    await waitFor(() => expect(embedItem).toHaveBeenCalled());
+    await waitFor(() => {
+      const thumb = container.querySelector(".histogram-thumbnail-shell [data-bokeh-preview='true']");
+      expect(thumb).toBeTruthy();
+      expect(thumb).toHaveClass("pointer-events-none");
+    });
+    expect(
+      screen.getByRole("button", { name: "Jobs by queue: enlarge chart" }),
+    ).not.toHaveClass("pointer-events-none");
+
+    await user.click(
+      screen.getByRole("button", { name: "Jobs by queue: enlarge chart" }),
+    );
+    expect(await screen.findByTestId("histogram-enlarge-dialog")).toBeInTheDocument();
+    await waitFor(() => {
+      const full = document.querySelector(
+        "[data-testid='histogram-enlarge-dialog'] .bokeh-embed",
+      );
+      expect(full).toBeTruthy();
+      expect(full).not.toHaveAttribute("data-bokeh-preview");
+      expect(full).not.toHaveClass("pointer-events-none");
+    });
+  });
+
   it("does not show zero-size embed failure in the thumbnail shell", async () => {
     Object.defineProperty(window, "matchMedia", {
       writable: true,

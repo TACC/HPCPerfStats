@@ -188,6 +188,7 @@ function HistogramThumbnail({
             unavailableReason={unavailableReason}
             embedAllowed={embedAllowed}
             embedStaggerIndex={index}
+            previewMode
             intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
             wrapperClassName="min-h-[280px] w-full"
           />
@@ -217,6 +218,7 @@ function HistogramThumbnail({
               embedStaggerIndex={index}
               embedMinHeightPx={THUMB_SIZE.height}
               maximizeInContainer="width"
+              previewMode
               intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
               wrapperClassName="h-[200px] w-[280px] min-h-[200px] min-w-0 overflow-hidden [&_.bokeh-embed-wrapper]:h-full [&_.bokeh-embed-wrapper]:w-full [&_.bokeh-embed-wrapper]:max-w-full [&_.bokeh-embed-wrapper]:min-w-0 [&_.bokeh-embed-wrapper]:overflow-hidden [&_.bokeh-embed]:box-border [&_.bokeh-embed]:h-full [&_.bokeh-embed]:min-h-[200px] [&_.bokeh-embed]:w-full [&_.bokeh-embed]:max-w-full [&_.bokeh-embed]:min-w-0 [&_.bokeh-embed]:overflow-hidden [&_.bokeh-embed_.bk-root]:max-w-full!"
             />

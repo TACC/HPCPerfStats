@@ -27,10 +27,11 @@ alwaysApply: false
 3. **Secondary sections** — hide, collapse, or skeleton until ready where appropriate; JobList **filter options** may defer until first paint, but **distributions** default open and fetch on JobList mount (optional Collapsible collapse after).
 4. **User-initiated in-flight action** — `disabled` on the **same** button the user clicked (`rotating` on PageApiKey) is allowed.
 5. **Bokeh** — defer embed until section visible (`deferEmbedUntilVisible` default); no Unavailable while `isLoading` ([`design-focused-spa-ux.mdc`](design-focused-spa-ux.mdc), [`job-plot-artifacts-caching.mdc`](job-plot-artifacts-caching.mdc)).
+6. **Bokeh list/dashboard preview** — Job-list (and same-pattern) thumbnail/grid embeds must use **`previewMode`** on [`BokehEmbed`](hpcperfstats/site/frontend/src/components/BokehEmbed.tsx): `pointer-events-none` on the **plot root only** (`.bokeh-embed`), skip global `scheduleBokehLayoutReflow` / continuous maximize-on-`resize`. Enlarge / full interactive embeds must **not** set `previewMode`.
 
 ## Forbidden patterns
 
-- `pointer-events-none` on a parent wrapping sort links, table rows, or pagination (except `aria-hidden` decorative spans).
+- `pointer-events-none` on a parent wrapping sort links, table rows, or pagination (except `aria-hidden` decorative spans). **Allowed/required** on preview plot canvases when `previewMode` is set (not on Enlarge controls or table chrome).
 - In-page sticky headers/tabs above **`--z-sticky-inpage`** (10) except portaled modal/floating UI — never reuse modal-tier z-index (e.g. `z-1010`) on table headers.
 - Visible combobox/select/button rendered `disabled` while options or section data load — use skeleton rows or omit the control ([`JobListHeaderFilters.tsx`](hpcperfstats/site/frontend/src/components/JobListHeaderFilters.tsx)).
 - Full-page skeleton replacing an already-rendered interactive surface on refetch.
@@ -40,6 +41,7 @@ alwaysApply: false
 - Nested `max-h-* overflow-auto` **list scrollers** for **paginated** tables when document scroll is available — one page scrollbar only ([`JobList.tsx`](hpcperfstats/site/frontend/src/views/JobList.tsx)).
 - Absolute-positioned `<tr>` virtualization inside a semantic `<table>` (breaks header/body column alignment).
 - Synchronous Bokeh `prepareBokehJsonItemForEmbed` / `embed_item` for large payloads without yielding to the main thread first ([`yield-main-thread.ts`](hpcperfstats/site/frontend/src/utils/yield-main-thread.ts)).
+- List/dashboard histogram thumbs that omit `previewMode` (live interactive canvas + global resize reflow after ready).
 
 ## URL scoped updates (site-wide)
 
@@ -73,7 +75,7 @@ Reference hooks: [`use-job-list.ts`](hpcperfstats/site/frontend/src/hooks/use-jo
 
 ## Reference implementations
 
-- **JobList** — table first; deferred `filter_options`; distributions default open / always fetch; histogram params omit `order_by`/`page`; **document-scroll** table rows (no nested max-h virtualizer); `JobList.test.tsx` (`tableBusy` not pointer-blocked).
+- **JobList** — table first; deferred `filter_options`; distributions default open / always fetch; histogram params omit `order_by`/`page`; **document-scroll** table rows (no nested max-h virtualizer); histogram thumbs/mobile grid use **`previewMode`**; Enlarge stays interactive; `JobList.test.tsx` (`tableBusy` not pointer-blocked).
 - **JobDetail** — `initialLoading` only on first paint; tabs stay mounted during `detailsLoading`; plots clear on `pk` only; deep-link test in `JobDetail.test.tsx`.
 - **HostDetail / TypeDetail** — `keepPreviousData` + `detailBusy` (no full-page blank on refetch).
 - **JobMonitor / AdminMonitor / ClusterDashboard** — progressive `*Busy`; paginated tables use document scroll (no nested list scrollers).

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { vi, afterEach, describe, expect, it } from "vitest";
 import BokehEmbed from "./BokehEmbed";
 import { SessionContext } from "../session-context";
@@ -25,10 +25,24 @@ function embedViewsWithIdleDoc() {
   return { roots: [{ model: { document: doc } }] };
 }
 
+/** scheduleBokehLayoutReflow uses nested rAF + 72ms; maximize adds another nested-rAF resize. */
+async function drainBokehResizeBroadcasts() {
+  await new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setTimeout(resolve, 100);
+      });
+    });
+  });
+}
+
 describe("BokehEmbed", () => {
-  afterEach(() => {
+  afterEach(async () => {
+    cleanup();
     yieldToMainThreadMock.mockClear();
     delete window.Bokeh;
+    // Unmount cancels embed effects but not already-queued resize broadcasts.
+    await drainBokehResizeBroadcasts();
   });
 
   it("keeps json_item target in layout (not display:none) while embedding", async () => {
@@ -228,7 +242,46 @@ describe("BokehEmbed", () => {
     await waitFor(() => {
       expect(addSpy.mock.calls.some((call) => call[0] === "resize")).toBe(true);
     });
+    await drainBokehResizeBroadcasts();
     addSpy.mockRestore();
+  });
+
+  it("previewMode skips global resize reflow and maximize resize listener; marks plot non-interactive", async () => {
+    await drainBokehResizeBroadcasts();
+    const addSpy = vi.spyOn(window, "addEventListener");
+    const dispatchSpy = vi.spyOn(window, "dispatchEvent");
+    const embedItem = vi.fn(() => Promise.resolve(embedViewsWithIdleDoc()));
+    window.Bokeh = { embed: { embed_item: embedItem } };
+
+    const { container } = renderBokehEmbed(
+      <BokehEmbed
+        item={VALID_BOKEH_JSON_ITEM}
+        id="bokeh-preview-test"
+        plotName="Preview"
+        maximizeInContainer="width"
+        previewMode
+      />,
+    );
+
+    await waitFor(() => expect(embedItem).toHaveBeenCalled());
+    await waitFor(() => {
+      const slot = container.querySelector("#bokeh-preview-test");
+      expect(slot).toHaveClass("pointer-events-none");
+      expect(slot).toHaveAttribute("data-bokeh-preview", "true");
+    });
+    expect(screen.getByRole("region", { name: "Chart preview: Preview" })).toBeInTheDocument();
+
+    // Allow rAF / settle timers from maximize/reflow paths to flush; previewMode must
+    // not emit global resize or register a maximize-on-resize listener.
+    await drainBokehResizeBroadcasts();
+    const resizeDispatches = dispatchSpy.mock.calls.filter(
+      (call) => call[0] instanceof Event && call[0].type === "resize",
+    );
+    expect(resizeDispatches).toHaveLength(0);
+    expect(addSpy.mock.calls.some((call) => call[0] === "resize")).toBe(false);
+
+    addSpy.mockRestore();
+    dispatchSpy.mockRestore();
   });
 
   it("defers embed until IntersectionObserver reports intersecting when deferEmbedUntilVisible is true", async () => {

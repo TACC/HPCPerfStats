@@ -113,6 +113,25 @@ describe("interactive-ready drift guard", () => {
     expect(embed).toMatch(/yieldToMainThread/);
     expect(embed).toMatch(/prepareBokehJsonItemForEmbed/);
   });
+
+  it("JobList histogram thumbs use previewMode; Enlarge path does not", () => {
+    const thumbs = readFileSync(
+      join(SRC_ROOT, "components/HistogramThumbnails.tsx"),
+      "utf8",
+    );
+    expect(thumbs).toMatch(/previewMode/);
+    // Desktop thumb + mobile grid set previewMode; enlarge dialog block must not.
+    const enlargeBlock = thumbs.slice(thumbs.indexOf("histogram-thumbnail-popover-plot"));
+    expect(enlargeBlock).not.toMatch(/previewMode/);
+    const rule = readFileSync(
+      join(
+        SRC_ROOT,
+        "../../../cursor-rules/interactive-ready-controls.mdc",
+      ),
+      "utf8",
+    );
+    expect(rule).toMatch(/previewMode/);
+  });
 });
 
 describe("buildHostPlotParamsFromSearch", () => {

@@ -209,11 +209,21 @@ function waitForNonZeroLayout(el: HTMLElement | null, options: LayoutWaitOptions
   });
 }
 
+type MaximizeEmbeddedPlotOptions = {
+  /** When false, skip synthetic window.resize (previewMode one-shot layout). */
+  broadcastResize?: boolean;
+};
+
 /**
  * @param {string} targetId
  * @param {"stretch_both" | "stretch_width"} mode stretch_width: full width, intrinsic height (scrollable zoom)
  */
-function maximizeEmbeddedPlot(targetId: string, mode: "stretch_both" | "stretch_width" = "stretch_both") {
+function maximizeEmbeddedPlot(
+  targetId: string,
+  mode: "stretch_both" | "stretch_width" = "stretch_both",
+  options: MaximizeEmbeddedPlotOptions = {},
+) {
+  const { broadcastResize = true } = options;
   const targetEl =
     typeof document !== "undefined" ? document.getElementById(targetId) : null;
   if (!targetEl) return;
@@ -272,7 +282,7 @@ function maximizeEmbeddedPlot(targetId: string, mode: "stretch_both" | "stretch_
   forceFillBokehDom();
   window.setTimeout(repaint, 0);
 
-  if (typeof window !== "undefined") {
+  if (broadcastResize && typeof window !== "undefined") {
     // Defer past layout: an immediate resize can run Bokeh measure before nested
     // Figure/Axis views finish building (Bokeh 3.9 → `is_valid` on undefined ranges).
     requestAnimationFrame(() => {
@@ -311,6 +321,7 @@ const BOKEH_EMBED_MIN_HEIGHT_PX = 280;
  * @param {string} [intersectionRootMargin] Passed to IntersectionObserver (default `100px 0px`).
  * @param {number} [intersectionThreshold] Passed to IntersectionObserver (default 0.01).
  * @param {number} [embedSettleAfterIdleMs] After Bokeh document idle, delay this many ms before releasing the global embed lock (default 24 in production, 0 in Vitest).
+ * @param {boolean} [previewMode] List/dashboard preview: pointer-events none on plot root; skip global resize reflow and continuous maximize-on-resize.
  */
 export default function BokehEmbed({
   item,
@@ -331,6 +342,7 @@ export default function BokehEmbed({
   embedSettleAfterIdleMs,
   embedAllowed = true,
   embedStaggerIndex = 0,
+  previewMode = false,
 }: BokehEmbedProps) {
   const session = useSession();
   const canViewErrorDetails = !!session?.is_staff;
@@ -475,8 +487,14 @@ export default function BokehEmbed({
                         failEmbed("Chart container changed before render completed.");
                         return;
                       }
-                      scheduleBokehLayoutReflow();
-                      if (maximizeMode) maximizeEmbeddedPlot(id, maximizeMode);
+                      if (!previewMode) {
+                        scheduleBokehLayoutReflow();
+                      }
+                      if (maximizeMode) {
+                        maximizeEmbeddedPlot(id, maximizeMode, {
+                          broadcastResize: !previewMode,
+                        });
+                      }
                       setPlotReady(true);
                       if (onPlotReadyChange) onPlotReadyChange(true);
                     }
@@ -534,6 +552,7 @@ export default function BokehEmbed({
     effectiveSettleMs,
     embedAllowed,
     embedStaggerMs,
+    previewMode,
     failEmbed,
   ]);
 
@@ -547,7 +566,7 @@ export default function BokehEmbed({
   }, [embedAllowed, onPlotReadyChange]);
 
   useEffect(() => {
-    if (!plotReady || !maximizeMode) return;
+    if (!plotReady || !maximizeMode || previewMode) return;
     function onResize() {
       const el = typeof document !== "undefined" ? document.getElementById(id) : null;
       if (!isEmbedTargetRenderable(el) || !maximizeMode) return;
@@ -555,7 +574,7 @@ export default function BokehEmbed({
     }
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [plotReady, maximizeMode, id]);
+  }, [plotReady, maximizeMode, previewMode, id]);
 
   useEffect(() => {
     if (!errorDetailsOpen) return;
@@ -666,7 +685,13 @@ export default function BokehEmbed({
 
   const regionLabel =
     embedAriaLabel ??
-    (plotName ? `Interactive chart: ${plotName}` : "Interactive chart");
+    (previewMode
+      ? plotName
+        ? `Chart preview: ${plotName}`
+        : "Chart preview"
+      : plotName
+        ? `Interactive chart: ${plotName}`
+        : "Interactive chart");
   const describedBy =
     ariaDescribedBy && String(ariaDescribedBy).trim()
       ? String(ariaDescribedBy).trim()
@@ -690,7 +715,11 @@ export default function BokehEmbed({
         {overlayActive ? placeholderOverlay : null}
         <div
           id={id}
-          className="bokeh-embed max-md:max-w-full max-md:[&_.bk-root]:max-w-full! max-md:[&_canvas]:max-w-full! max-md:[&_svg]:max-w-full!"
+          className={cn(
+            "bokeh-embed max-md:max-w-full max-md:[&_.bk-root]:max-w-full! max-md:[&_canvas]:max-w-full! max-md:[&_svg]:max-w-full!",
+            previewMode && "pointer-events-none",
+          )}
+          data-bokeh-preview={previewMode ? "true" : undefined}
           style={plotTargetLayoutStyle}
         />
       </div>
