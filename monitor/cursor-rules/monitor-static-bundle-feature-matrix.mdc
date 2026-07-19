@@ -1,5 +1,5 @@
 ---
-description: How static bundle configure flags map to collectors (IB sysfs vs MAD, GPU, etc.)
+description: How static bundle configure flags map to collectors (IB sysfs vs MAD, GPU, Stampede3 fleet)
 globs:
   - HPCPerfStats/monitor/scripts/build_static_bundle.sh
   - HPCPerfStats/monitor/configure.ac
@@ -9,10 +9,20 @@ alwaysApply: false
 
 # Monitor static bundle: feature matrix vs `--disable-*`
 
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
 - **Canonical build**: **`HPCPerfStats/monitor/scripts/build_static_bundle.sh`** probes the host and may pass **`--disable-infiniband`**, **`--disable-gpu`**, **`--disable-amd-gpu`**, etc., when matching devel stacks are missing. See **monitor-static-build-verification** for verification steps.
 - **Infiniband**:
   - Disabling **does not always mean “no IB counters.”** Some paths use **sysfs** (`/sys/class/infiniband`) without libibverbs/MAD; others require **MAD** / full verbs stack.
   - When changing IB-related code, state clearly whether the change affects **sysfs-only**, **MAD**, or **both**, and whether **`--disable-infiniband`** is expected to remove all IB-related output.
+  - **Fleet / dlopen:** **`--enable-ib-mad-dlopen`** compiles MAD against vendored `third_party/ibmad-shim/` and loads `libibmad` at runtime — **no** `-libmad` in `NEEDED`, **no** BuildRequires on InfiniBand devel for fleet RPMs.
+- **Omni-Path**:
+  - Sysfs `host_opa` is always built. Link-time **`--enable-opa`** needs IFS/`liboib_utils` on the build host.
+  - **Fleet:** **`--enable-opa-mad-dlopen`** uses vendored `third_party/oib-shim/` + runtime `dlopen` of `liboib_utils` (`HPCPERFSTATS_OIB_LIB`). Do **not** document dual IB+OPA BuildRequires as the Stampede3 fleet path.
+- **Stampede3 one-build RPM**:
+  - Entrypoint: **`scripts/prepare_rpmbuild_stampede3.sh`** → calls **`prepare_rpmbuild_dirs.sh`** and prints the **same** `rpmbuild -ba` footer (no alternate `_topdir` / second spec).
+  - Fleet signal: **`HPCS_BUNDLE_FLEET=stampede3`** and/or **`scripts/fleet/stampede3.force`** in the dist tarball so **`%build`** still applies the matrix.
+  - Matrix: `--enable-ib-mad-dlopen`, `--enable-opa-mad-dlopen`, `--disable-amd-gpu`, `--enable-intel-gpu` when XPUM headers are vendored; never auto `--disable-infiniband` solely for missing build-host PCI/devel.
 - **GPU paths**: NVIDIA vs AMD have separate disable flags; **`--disable-gpu`** vs vendor-specific options must stay consistent with **`configure.ac`** and **`build_static_bundle.sh`**.
 - **CPU counters / DCGM**: Backend selection (LIKWID vs DCGM) interacts with GPU libraries and headers; see **monitor-dcgm-integration** when touching DCGM or `cpu_counter_metrics.c`.
 - **Docs**: If behavior changes, update **`README.md`** or packaging notes per **monitor-readme-maintenance** when user-visible flags or outputs change.

@@ -551,6 +551,7 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
         "rules": [
             "monitor-static-build-verification.mdc",
+            "monitor-static-bundle-feature-matrix.mdc",
             "monitor-dual-verify-cross-and-static.mdc",
             "monitor-post-verify-distclean.mdc",
             "monitor-build-clean-workspace.mdc",
@@ -605,6 +606,7 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
         "rules": [
             "agent-discipline-core.mdc",
             "implementation-review-workflow.mdc",
+            "implementation-workflow-discipline.mdc",
             "plan-template-enforcement.mdc",
             "cursor-rules-maker.mdc",
             "monitor-cursor-rules-sync.mdc",

@@ -65,7 +65,7 @@ Use the **Read** tool on the listed `HPCPerfStats/monitor/cursor-rules/<file>.md
 | Trigger paths | Read these rules |
 |---------------|------------------|
 | `HPCPerfStats/monitor/configure.ac`, `Makefile.am`, `src/Makefile.am` | `configure-autoconf-awk-m4.mdc`, `monitor-c-conventions.mdc` |
-| `HPCPerfStats/monitor/scripts/**`, `hpcperfstats.spec` | `monitor-static-build-verification.mdc`, `monitor-dual-verify-cross-and-static.mdc`, `monitor-post-verify-distclean.mdc`, `monitor-build-clean-workspace.mdc`, `monitor-version-and-packaging.mdc`, `monitor-local-build-deps.mdc` |
+| `HPCPerfStats/monitor/scripts/**`, `hpcperfstats.spec` | `monitor-static-build-verification.mdc`, `monitor-static-bundle-feature-matrix.mdc`, `monitor-dual-verify-cross-and-static.mdc`, `monitor-post-verify-distclean.mdc`, `monitor-build-clean-workspace.mdc`, `monitor-version-and-packaging.mdc`, `monitor-local-build-deps.mdc` |
 | `HPCPerfStats/monitor/**` (substantive C/build change) | `global-testing-discipline.mdc` |
 
 ### Tests and bugfixes
@@ -85,7 +85,7 @@ Use the **Read** tool on the listed `HPCPerfStats/monitor/cursor-rules/<file>.md
 
 | Trigger paths | Read these rules |
 |---------------|------------------|
-| `HPCPerfStats/monitor/cursor-rules/*.mdc`, `.cursor/rules/**` | `agent-discipline-core.mdc`, `implementation-review-workflow.mdc`, `plan-template-enforcement.mdc`, `cursor-rules-maker.mdc`, `monitor-cursor-rules-sync.mdc` |
+| `HPCPerfStats/monitor/cursor-rules/*.mdc`, `.cursor/rules/**` | `agent-discipline-core.mdc`, `implementation-review-workflow.mdc`, `implementation-workflow-discipline.mdc`, `plan-template-enforcement.mdc`, `cursor-rules-maker.mdc`, `monitor-cursor-rules-sync.mdc` |
 | `.cursor/**`, `HPCPerfStats/.cursor/**`, `cursor-hooks/**` | `monitor-cursor-rules-sync.mdc`, `workspace-single-cursor-directory.mdc` |
 | `cursor-hooks/**`, `test_cursor_hooks.py` | `global-testing-discipline.mdc` |
 

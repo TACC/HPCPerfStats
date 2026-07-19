@@ -224,15 +224,36 @@ AM_CONDITIONAL([CPU_BACKEND_DCGM],
   [test x$hardware = xtrue -a x$cpu_counter_backend = xdcgm])
 
 AC_ARG_ENABLE([infiniband],
-[  --enable-infiniband	Enable Infiniband support (default is true)],
+[  --enable-infiniband	Enable InfiniBand MAD support (default is true; use --enable-ib-mad-dlopen for fleet)],
 [case "${enableval}" in
-  yes) MONITOR_CFG_INFINIBAND_LIBS ;;
+  yes) : ;;
   no)  infiniband=false ;;
   *) AC_MSG_ERROR([bad value ${enableval} for --enable-infiniband]) ;;
 esac],
-[MONITOR_CFG_INFINIBAND_LIBS
-])
+[infiniband=])
+
+AC_ARG_ENABLE([ib-mad-dlopen],
+[AS_HELP_STRING([--enable-ib-mad-dlopen],
+  [Compile host_ib MAD against vendored mad.h and dlopen libibmad at runtime (no -libmad; Stampede3 fleet)])],
+[case "${enableval}" in
+  yes) ib_mad_dlopen=true ;;
+  no)  ib_mad_dlopen=false ;;
+  *) AC_MSG_ERROR([bad value ${enableval} for --enable-ib-mad-dlopen]) ;;
+esac],
+[ib_mad_dlopen=false])
+
+if test "x$ib_mad_dlopen" = xtrue; then
+  infiniband=true
+  AC_MSG_NOTICE([InfiniBand MAD: runtime libibmad dlopen (vendored third_party/ibmad-shim)])
+elif test "x$infiniband" = xfalse; then
+  :
+elif test "x$infiniband" = x; then
+  MONITOR_CFG_INFINIBAND_LIBS
+elif test "x$infiniband" != xfalse; then
+  MONITOR_CFG_INFINIBAND_LIBS
+fi
 AM_CONDITIONAL([INFINIBAND], [test x$infiniband = xtrue])
+AM_CONDITIONAL([IB_MAD_DLOPEN], [test x$infiniband = xtrue -a x$ib_mad_dlopen = xtrue])
 
 AC_ARG_ENABLE([lustre],
 [  --enable-lustre	Enable Lustre support (default is true)],
@@ -467,16 +488,35 @@ fi
 AM_CONDITIONAL([INTEL_GPU], [test x$intel_gpu = xtrue])
 
 AC_ARG_ENABLE([opa],
-[  --enable-opa		Enable Intel Omnipath Fabric support (default is false)],
+[  --enable-opa		Enable Omni-Path STL MAD via link-time liboib_utils (default is false)],
 [case "${enableval}" in
-  yes) opa=true
-  MONITOR_CFG_OPA_LIBS
-  ;;
-  no)  opa=false ;;
+  yes) opa_link=true ;;
+  no)  opa_link=false ;;
   *) AC_MSG_ERROR([bad value ${enableval} for --enable-opa]) ;;
 esac],
-[opa=false])
+[opa_link=false])
+
+AC_ARG_ENABLE([opa-mad-dlopen],
+[AS_HELP_STRING([--enable-opa-mad-dlopen],
+  [Compile host_opa STL MAD against vendored oib-shim and dlopen liboib_utils at runtime (Stampede3 fleet)])],
+[case "${enableval}" in
+  yes) opa_mad_dlopen=true ;;
+  no)  opa_mad_dlopen=false ;;
+  *) AC_MSG_ERROR([bad value ${enableval} for --enable-opa-mad-dlopen]) ;;
+esac],
+[opa_mad_dlopen=false])
+
+opa=false
+if test "x$opa_mad_dlopen" = xtrue; then
+  opa=true
+  AC_MSG_NOTICE([Omni-Path STL MAD: runtime liboib_utils dlopen (vendored third_party/oib-shim)])
+elif test "x$opa_link" = xtrue; then
+  opa=true
+  MONITOR_CFG_OPA_LIBS
+fi
 AM_CONDITIONAL([OPA], [test x$opa = xtrue])
+AM_CONDITIONAL([OPA_MAD_DLOPEN], [test x$opa = xtrue -a x$opa_mad_dlopen = xtrue])
+AM_CONDITIONAL([OPA_LINK], [test x$opa = xtrue -a x$opa_mad_dlopen != xtrue])
 
 AC_ARG_ENABLE([metric-profiler],
 [AS_HELP_STRING([--enable-metric-profiler], [Enable per-collect timing profiler (default: no)])],
@@ -571,6 +611,9 @@ if test "x$hardware" = "xtrue"; then
 fi
 if test "x$infiniband" = "xtrue"; then
   MONITOR_FEATURE_CPPFLAGS="$MONITOR_FEATURE_CPPFLAGS -DMONITOR_WITH_INFINIBAND"
+  if test "x$ib_mad_dlopen" = "xtrue"; then
+    MONITOR_FEATURE_CPPFLAGS="$MONITOR_FEATURE_CPPFLAGS -DMONITOR_IB_MAD_DLOPEN"
+  fi
 fi
 if test "x$lustre" = "xtrue"; then
   MONITOR_FEATURE_CPPFLAGS="$MONITOR_FEATURE_CPPFLAGS -DMONITOR_WITH_LUSTRE"
@@ -589,6 +632,9 @@ if test "x$intel_gpu" = "xtrue"; then
 fi
 if test "x$opa" = "xtrue"; then
   MONITOR_FEATURE_CPPFLAGS="$MONITOR_FEATURE_CPPFLAGS -DMONITOR_WITH_OPA"
+  if test "x$opa_mad_dlopen" = "xtrue"; then
+    MONITOR_FEATURE_CPPFLAGS="$MONITOR_FEATURE_CPPFLAGS -DMONITOR_OPA_MAD_DLOPEN"
+  fi
 fi
 if test "x$monitor_arch_arm" = "xtrue"; then
   MONITOR_FEATURE_CPPFLAGS="$MONITOR_FEATURE_CPPFLAGS -DMONITOR_HOST_IS_ARM"

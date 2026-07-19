@@ -4,8 +4,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <time.h>
-#include <infiniband/umad.h>
-#include <infiniband/mad.h>
+#include "ib_mad_api.h"
 #include "stats.h"
 #include "trace.h"
 #include "pscanf.h"

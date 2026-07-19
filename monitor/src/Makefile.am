@@ -266,18 +266,35 @@ endif
 if INFINIBAND
 TYPES	 += \
 	ib_mad.c
+if IB_MAD_DLOPEN
+hpcperfstatsd_SOURCES += \
+	ib_mad_dyn.c \
+	ib_mad_dyn.h \
+	ib_mad_api.h
+hpcperfstatsd_CPPFLAGS += \
+	-I$(top_srcdir)/third_party/ibmad-shim
+endif
 endif
 
 hpcperfstatsd_LDFLAGS =
-# host_opa always built (sysfs); STL MAD path requires --enable-opa + liboib_utils.
+# host_opa always built (sysfs); STL MAD via --enable-opa (link) or --enable-opa-mad-dlopen.
 TYPES += \
 	opa.c \
 	opa_sysfs.c \
 	opa_mad_backoff.c
 if OPA
+if OPA_MAD_DLOPEN
+hpcperfstatsd_SOURCES += \
+	opa_mad_dyn.c \
+	opa_mad_dyn.h \
+	opa_mad_api.h
+hpcperfstatsd_CPPFLAGS += \
+	-I$(top_srcdir)/third_party/oib-shim
+else
 hpcperfstatsd_LDFLAGS += \
 		-lpthread \
 		-lmemusage
+endif
 endif
 
 if LUSTRE
@@ -343,4 +360,7 @@ endif
 EXTRA_DIST = hpcperfstats.conf hpcperfstats.service hpcperfstatsd.sysconfig \
 	$(top_srcdir)/scripts/build_static_bundle.sh \
 	$(top_srcdir)/scripts/ensure_dotbuild_prefix_static.sh \
+	$(top_srcdir)/scripts/prepare_rpmbuild_stampede3.sh \
+	$(top_srcdir)/scripts/fleet/stampede3.force \
+	$(top_srcdir)/scripts/fleet/README \
 	$(top_srcdir)/scripts/lib/monitor_tree_clean.sh

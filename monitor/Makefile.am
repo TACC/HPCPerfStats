@@ -30,4 +30,12 @@ EXTRA_DIST = README README.md \
 	third_party/nvidia-dcgm/dcgm_fields.h \
 	third_party/intel-xpum/README \
 	third_party/intel-xpum/xpum_api.h \
-	third_party/intel-xpum/xpum_structs.h
+	third_party/intel-xpum/xpum_structs.h \
+	third_party/ibmad-shim/README \
+	third_party/ibmad-shim/infiniband/mad.h \
+	third_party/ibmad-shim/infiniband/umad.h \
+	third_party/oib-shim/README \
+	third_party/oib-shim/oib_utils.h \
+	third_party/oib-shim/iba/stl_shim.h \
+	third_party/oib-shim/iba/stl_pa.h \
+	third_party/oib-shim/iba/stl_sm.h

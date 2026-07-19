@@ -1,0 +1,8 @@
+# ibmad-shim
+
+Vendored **compile-time** InfiniBand MAD headers for fleet / `--enable-ib-mad-dlopen`
+builds. The monitor does **not** link `-libmad`; `src/ib_mad_dyn.c` loads
+`libibmad.so*` at runtime (`HPCPERFSTATS_IBMAD_LIB` override).
+
+- `infiniband/mad.h` — copied from rdma-core / OpenIB (BSD+GPL dual license).
+- `infiniband/umad.h` — empty stub (`ib_mad.c` does not call umad APIs).

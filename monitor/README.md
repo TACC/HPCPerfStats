@@ -25,9 +25,36 @@ Configure selects sources via Automake conditionals; use **`./configure --help`*
 - **`host_opa` is always built.** It collects Cornelis CN5000 and Intel Omni-Path HFI 100 Series devices (`hfi1_*` under `/sys/class/infiniband`). Device ids use a slash (`hfi1_0/1`), not the IB dot form.
 - **Sysfs fallback (default):** reads overlapping utilization counters from `ports/N/counters` (verified on Stampede3 OPA100 + CN5000). Maps `port_*_packets` → schema `*_pkts`; missing files (e.g. CN5000 without `multicast_*`) are skipped. STL-only keys (FECN/BECN, bubbles, …) stay empty without MAD. HFI `hw_counters` are not mapped into KEYS.
 - **Collectible ports only:** inactive/DOWN ports are skipped (`ib_port_collectible`) — e.g. CN5000 dual-port with port1 Offline emits only `hfi1_0/2`.
-- **`--enable-opa`:** links Cornelis/Intel IFS **`liboib_utils`** (+ `oib_utils.h`) for STL Performance MAD (full KEYS). Requires IFS devel packages on the build host. `scripts/build_static_bundle.sh` probes for `liboib_utils` and passes `--enable-opa` when the link probe succeeds.
+- **`--enable-opa-mad-dlopen`:** compiles STL MAD against vendored `third_party/oib-shim/` and **`dlopen`s `liboib_utils`** at runtime (`HPCPERFSTATS_OIB_LIB`). No link-time `-loib_utils`. Stampede3 fleet default. If the `.so` is missing, MAD fails open and sysfs continues.
+- **`--enable-opa`:** legacy link-time Cornelis/Intel IFS **`liboib_utils`** (+ system `oib_utils.h`). Requires IFS devel on the build host.
 - **`host_ib` never claims `hfi1_*` HCAs** — those belong to `host_opa` only.
 - Stampede3 PCI examples: Cornelis CN5000 HFI (SPR); Intel Omni-Path HFI Silicon 100 Series (ICX/SKX/H100).
+
+### InfiniBand MAD (`host_ib`)
+
+- **Sysfs** counters under `/sys/class/infiniband` (non-`hfi1_*`) are always compiled.
+- **`--enable-ib-mad-dlopen`:** compiles MAD against vendored `third_party/ibmad-shim/` and **`dlopen`s `libibmad`** (`HPCPERFSTATS_IBMAD_LIB`). No link-time `-libmad`. Stampede3 fleet default.
+- **`--enable-infiniband` (default, non-fleet):** link-time `-libmad` when devel is present; bundle may pass `--disable-infiniband` when the probe fails (sysfs-only).
+
+### Stampede3 one-build RPM
+
+One x86_64 RPM covers all Stampede3 LSPCI profiles (skx/icx/spr/h100/pvc/amd-rtx) after PVC + OPA collectors land:
+
+```bash
+cd HPCPerfStats/monitor
+./scripts/prepare_rpmbuild_stampede3.sh              # or --debug-build
+# Footer is identical to a normal prepare:
+rpmbuild -ba --define "_topdir ${PWD}/rpmbuild" "${PWD}/rpmbuild/SPECS/hpcperfstats.spec"
+```
+
+| Queue | Collectors (when hardware/libs present) | Runtime libs for full fidelity |
+|-------|------------------------------------------|--------------------------------|
+| skx / icx / spr | `host_opa` (sysfs); CPU/LIKWID | `liboib_utils` optional (MAD) |
+| h100 | `nvidia_gpu` + `host_ib` + `host_opa` | `libdcgm`, `libibmad`; `liboib_utils` optional |
+| pvc | `intel_gpu` + `host_opa` | `libxpum` / xpumanager; `liboib_utils` optional |
+| amd-rtx | NVIDIA Blackwell + IB + OPA + AMD CPU (not `amd_gpu`) | `libdcgm`, `libibmad`; `liboib_utils` optional |
+
+Fleet matrix (`HPCS_BUNDLE_FLEET=stampede3` or `scripts/fleet/stampede3.force` in the tarball): `--enable-ib-mad-dlopen`, `--enable-opa-mad-dlopen`, `--disable-amd-gpu`, `--enable-intel-gpu` when vendored XPUM headers exist. Binary `NEEDED` must not list `libibmad` / `liboib_utils`.
 
 ### Intel Data Center GPU / PVC (`intel_gpu`)
 
@@ -62,8 +89,9 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 | DEBUG shm mirror (`@fast`/`@full` snapshots) | `stats_buffer_debug_shm.c`, `stats_buffer_debug_shm.h` (`DEBUG` builds only). |
 | Intel CPUID / generation gating | `cpuid.c`, `intel_cpuid_match.c`, `intel_processor.c` |
 | LIKWID core + uncore PMU | `likwid_pmc_adapter.c`, `likwid_uncore_adapter.c`, `likwid_uncore_profiles.c` |
-| Omni-Path / Cornelis HFI (`host_opa`) | `opa.c`, `opa_sysfs.c`, `opa_mad_backoff.c`, `host_opa.h` (sysfs always; STL MAD with `--enable-opa`) |
+| Omni-Path / Cornelis HFI (`host_opa`) | `opa.c`, `opa_sysfs.c`, `opa_mad_backoff.c`, `opa_mad_dyn.c`, `host_opa.h` (sysfs always; STL MAD via `--enable-opa-mad-dlopen` or link-time `--enable-opa`) |
 | Intel Data Center GPU / PVC (`intel_gpu`) | `intel_gpu.c`, `intel_gpu.h`, `xpum_gpu_dyn.c` (vendored `third_party/intel-xpum/`; runtime `libxpum` dlopen) |
+| IB MAD dlopen | `ib_mad.c`, `ib_mad_dyn.c`, `ib_mad_api.h` (vendored `third_party/ibmad-shim/` when `--enable-ib-mad-dlopen`) |
 | IB vs HFI routing | `ib_common.c` (`ib_hca_is_opa_hfi`), `ib_family.c` |
 
 Intel PMU collection uses **LIKWID only** on x86 (see [LIKWID_MIGRATION.md](LIKWID_MIGRATION.md)).

@@ -84,6 +84,15 @@ HPCS_BUNDLE_REQUIRE_DCGM_GPU="${HPCS_BUNDLE_REQUIRE_DCGM_GPU:-0}"
 # Populated by static_bundle_print_detection_summary(); used by build_monitor (no second probe pass).
 STATIC_BUNDLE_FEAT_FLAGS=()
 
+# Stampede3 fleet: HPCS_BUNDLE_FLEET=stampede3 (prepare wrapper) or scripts/fleet/stampede3.force
+# (ships in make dist so rpm %build still applies the matrix without env).
+fleet_stampede3_enabled() {
+  if test "${HPCS_BUNDLE_FLEET:-}" = "stampede3"; then
+    return 0
+  fi
+  test -f "${MONITOR_DIR}/scripts/fleet/stampede3.force"
+}
+
 static_bundle_release_build_enabled() {
   case "${HPC_BUNDLE_RELEASE_BUILD:-0}" in
   1 | yes | YES | true | TRUE | on | ON) return 0 ;;
@@ -259,19 +268,35 @@ static_bundle_print_detection_summary() {
     pci_intel=n/a
   fi
 
-  if monitor_probe_infiniband_stack; then
-    ib_ok=detected
+  if fleet_stampede3_enabled; then
+    ib_ok="fleet-dlopen (Stampede3; vendored ibmad-shim; no -libmad)"
+    opa_ok="fleet-dlopen (Stampede3; vendored oib-shim; no -loib_utils)"
+    STATIC_BUNDLE_FEAT_FLAGS+=(--enable-ib-mad-dlopen)
+    STATIC_BUNDLE_FEAT_FLAGS+=(--enable-opa-mad-dlopen)
+    STATIC_BUNDLE_FEAT_FLAGS+=(--disable-amd-gpu)
+    amd_ok="disabled (Stampede3 profiles have no AMD GPUs)"
   else
-    ib_ok="not detected"
-    STATIC_BUNDLE_FEAT_FLAGS+=(--disable-infiniband)
-  fi
+    if monitor_probe_infiniband_stack; then
+      ib_ok=detected
+    else
+      ib_ok="not detected"
+      STATIC_BUNDLE_FEAT_FLAGS+=(--disable-infiniband)
+    fi
 
-  # host_opa sysfs path is always built; --enable-opa adds STL MAD via liboib_utils.
-  if monitor_probe_opa_oib_utils; then
-    opa_ok=detected
-    STATIC_BUNDLE_FEAT_FLAGS+=(--enable-opa)
-  else
-    opa_ok="not detected (host_opa sysfs-only; pass --enable-opa when IFS/liboib_utils present)"
+    # host_opa sysfs path is always built; --enable-opa adds STL MAD via liboib_utils.
+    if monitor_probe_opa_oib_utils; then
+      opa_ok=detected
+      STATIC_BUNDLE_FEAT_FLAGS+=(--enable-opa)
+    else
+      opa_ok="not detected (host_opa sysfs-only; pass --enable-opa or --enable-opa-mad-dlopen)"
+    fi
+
+    if monitor_probe_amd_gpup_perfapi_sdk; then
+      amd_ok=detected
+    else
+      amd_ok="not detected"
+      STATIC_BUNDLE_FEAT_FLAGS+=(--disable-amd-gpu)
+    fi
   fi
 
   if monitor_probe_dcgm_vendor_link; then
@@ -294,13 +319,6 @@ EOF
     fi
   fi
 
-  if monitor_probe_amd_gpup_perfapi_sdk; then
-    amd_ok=detected
-  else
-    amd_ok="not detected"
-    STATIC_BUNDLE_FEAT_FLAGS+=(--disable-amd-gpu)
-  fi
-
   # Fleet RPM: compile intel_gpu against vendored XPUM headers; runtime dlopen libxpum.
   if test -f "${MONITOR_DIR}/third_party/intel-xpum/xpum_api.h"; then
     intel_ok="vendored-hdr (runtime libxpum dlopen)"
@@ -315,12 +333,17 @@ EOF
   printf '%-36s %s\n' "Machine (uname -m):" "${mach}"
   printf '%-36s %s\n' "CPU counter backend (configure auto):" "${cpu_backend}"
   printf '%-36s %s\n' "LIKWID static dependency build:" "${likwid_build}"
+  if fleet_stampede3_enabled; then
+    printf '%-36s %s\n' "Fleet matrix:" "stampede3 (HPCS_BUNDLE_FLEET or scripts/fleet/stampede3.force)"
+  else
+    printf '%-36s %s\n' "Fleet matrix:" "(none)"
+  fi
   printf '%-36s %s\n' "lspci:" "${lspci_path}"
   printf '%-36s %s\n' "PCI class hint (NVIDIA GPU):" "${pci_nvidia}"
   printf '%-36s %s\n' "PCI class hint (AMD GPU):" "${pci_amd}"
   printf '%-36s %s\n' "PCI class hint (Intel DC GPU):" "${pci_intel}"
-  printf '%-36s %s\n' "InfiniBand devel (libibmad + headers):" "${ib_ok}"
-  printf '%-36s %s\n' "Omni-Path STL MAD (liboib_utils):" "${opa_ok}"
+  printf '%-36s %s\n' "InfiniBand MAD:" "${ib_ok}"
+  printf '%-36s %s\n' "Omni-Path STL MAD:" "${opa_ok}"
   printf '%-36s %s\n' "NVIDIA DCGM link (libdcgm + vendored hdr):" "${dcgm_ok}"
   printf '%-36s %s\n' "AMD GPUPerfAPI header (gpu_perf_api.h):" "${amd_ok}"
   printf '%-36s %s\n' "Intel XPUM (vendored hdr / dlopen):" "${intel_ok}"

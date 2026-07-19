@@ -12,7 +12,7 @@
 #include "opa_mad_backoff.h"
 
 #if defined(MONITOR_WITH_OPA)
-#include "oib_utils.h"
+#include "opa_mad_api.h"
 #include "iba/stl_pa.h"
 #include "iba/stl_sm.h"
 #endif
@@ -90,11 +90,8 @@ static void opa_publish_port_counters(struct stats *stats,
 {
   if (stats == NULL || rsp == NULL)
     return;
-#define X(n, r...) \
-  do { \
-    stats_set(stats, #n, rsp->Port[0].n); \
-    TRACE(#n "%20" pr_iu64 "\n"); \
-  } while (0)
+  /* KEYS expands to comma-separated X(...) — X must be an expression, not a statement. */
+#define X(n, r...) stats_set(stats, #n, rsp->Port[0].n)
   KEYS;
 #undef X
 }

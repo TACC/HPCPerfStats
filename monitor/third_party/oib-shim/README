@@ -1,0 +1,11 @@
+# oib-shim
+
+Minimal **compile-time** Cornelis/Intel IFS ABI stubs for `--enable-opa-mad-dlopen`
+fleet builds. The monitor does **not** link `-loib_utils`; `src/opa_mad_dyn.c`
+loads `liboib_utils.so*` at runtime (`HPCPERFSTATS_OIB_LIB` override).
+
+These shims are sufficient to **compile** the `host_opa` MAD path without IFS
+devel on the build host. STL structure layouts and BSWAP macros are best-effort;
+when `liboib_utils` is absent (Stampede3 inventory 2026-07-19), the daemon uses
+sysfs `host_opa`. Verify layouts against real IFS headers before relying on MAD
+fidelity after co-installing IFS.
