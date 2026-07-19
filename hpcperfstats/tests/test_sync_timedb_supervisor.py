@@ -7227,6 +7227,14 @@ def test_chunk_end_defers_immediate_day_close_when_handoff_pending(monkeypatch, 
         assert 'immediate day_close defer context=chunk_end reason=handoff_priority' in out
         assert 'chunk ingest summary' in out
         assert 'day_close handoff requeue' in out
+        # Handoff defer must not force an extra full live rebuild after the defer
+        # log when no later chunk dispatch needs a fresh reconcile.
+        defer_idx = out.rfind(
+            'immediate day_close defer context=chunk_end reason=handoff_priority'
+        )
+        after_defer = out[defer_idx:]
+        if 'chunk dispatch begin' not in after_defer:
+            assert 'pending reconcile cap begin' not in after_defer
     finally:
         shutdown_requested[0] = False
 

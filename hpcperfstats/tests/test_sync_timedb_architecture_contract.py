@@ -386,6 +386,23 @@ def test_arch_chunk_boundary_may_finalize_append_slots_only():
   assert "_maybe_enqueue_immediate_day_close" not in slot_fn
 
 
+def test_arch_handoff_priority_defer_skips_full_pending_reconcile():
+  """handoff_priority day_close defer must not re-run full pending reconcile."""
+  source = inspect.getsource(st.run_sync_timedb_supervisor_loop)
+  maybe = source.split("def _maybe_enqueue_immediate_day_close", 1)[1]
+  maybe = maybe.split("\n  def ", 1)[0]
+  assert 'defer_reason != "handoff_priority"' in maybe
+  assert "_reconcile_pending_with_oldest_checkpoint_incomplete()" in maybe
+  assert st.PENDING_RECONCILE_UNPROCESSED_HARD_CEILING_S >= 900.0
+  assert (
+      st.PENDING_RECONCILE_UNPROCESSED_HARD_CEILING_S
+      > st.PENDING_RECONCILE_UNPROCESSED_TTL_S
+  )
+  cached_fn = source.split("def _cached_unprocessed_reusable_for_cap", 1)[1]
+  cached_fn = cached_fn.split("\n  def ", 1)[0]
+  assert "hard_ceiling_s=PENDING_RECONCILE_UNPROCESSED_HARD_CEILING_S" in cached_fn
+
+
 def test_arch_second_enqueue_during_drain_processed_same_pass(monkeypatch, tmp_path):
   """Re-enqueue while draining extends the same janitor tick pass."""
   tar1 = str(tmp_path / "2026-01-01.tar")

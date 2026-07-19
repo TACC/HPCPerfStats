@@ -2823,11 +2823,18 @@ def try_reuse_pending_reconcile_unprocessed_cache(
     stall_incomplete_n=None,
     newest_first=False,
     last_newest_first=None,
+    hard_ceiling_s=None,
 ):
   """Return ``(cached, oldest_tar, incomplete_n, reason)`` when skip is safe.
 
   Skips a full live unprocessed rebuild when the prior reconcile fingerprint
-  (target tar + incomplete_n + ordering mode) is still within ``ttl_s``.
+  (target tar + incomplete_n + ordering mode) is still valid.
+
+  Soft ``ttl_s`` only forces a refresh when the incomplete fingerprint is
+  missing or zero. A valid fingerprint (``incomplete_n > 0`` + tar) may reuse
+  past soft TTL until ``hard_ceiling_s`` (default: max(soft TTL, 900s)) or the
+  caller invalidates the cache — otherwise caps whose wall time exceeds soft
+  TTL never amortize and rebuild forever.
   """
   if cached is None:
     return None
@@ -2839,8 +2846,6 @@ def try_reuse_pending_reconcile_unprocessed_cache(
     age = float(mono_now) - float(last_mono or 0.0)
   except (TypeError, ValueError):
     return None
-  if age >= float(ttl_s):
-    return None
   try:
     last_inc = int(last_incomplete_n) if last_incomplete_n is not None else None
   except (TypeError, ValueError):
@@ -2850,11 +2855,22 @@ def try_reuse_pending_reconcile_unprocessed_cache(
     stall_n = int(stall_incomplete_n) if stall_incomplete_n is not None else None
   except (TypeError, ValueError):
     stall_n = None
-  if stall_n and stall_n > 0 and last_inc == stall_n and last_tar:
-    return cached, last_tar, last_inc, "oldest_day_gate_stall_unchanged"
-  if last_inc is None or last_inc <= 0 or not last_tar:
+  soft_ttl = float(ttl_s)
+  if hard_ceiling_s is None:
+    ceiling = max(soft_ttl, 900.0)
+  else:
+    ceiling = max(soft_ttl, float(hard_ceiling_s))
+  has_fingerprint = last_inc is not None and last_inc > 0 and bool(last_tar)
+  if has_fingerprint:
+    if age >= ceiling:
+      return None
+    if stall_n and stall_n > 0 and last_inc == stall_n:
+      return cached, last_tar, last_inc, "oldest_day_gate_stall_unchanged"
+    return cached, last_tar, last_inc, "unchanged_incomplete"
+  # No fingerprint: soft TTL only; never reuse zero/missing incomplete.
+  if age >= soft_ttl:
     return None
-  return cached, last_tar, last_inc, "unchanged_incomplete"
+  return None
 
 
 def build_live_unprocessed_by_tar_for_reconcile(

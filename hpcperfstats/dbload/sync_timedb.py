@@ -987,8 +987,11 @@ def _in_flight_file_meta_from_paths(paths, max_n=10):
 
 
 INGEST_STALL_WATCHDOG_IDLE_S = 1800.0
-# Skip full live unprocessed rebuild when oldest incomplete snapshot is unchanged.
+# Soft TTL: force refresh when incomplete fingerprint is absent/zero.
 PENDING_RECONCILE_UNPROCESSED_TTL_S = 120.0
+# Hard ceiling: valid incomplete fingerprint may reuse past soft TTL (caps often
+# take 200–400s; soft-only expiry caused perpetual full rebuilds).
+PENDING_RECONCILE_UNPROCESSED_HARD_CEILING_S = 900.0
 _SUPERVISOR_CHILD_REAP_INTERVAL_S = 60.0
 _last_supervisor_child_reap_mono = 0.0
 
@@ -5226,7 +5229,12 @@ def run_sync_timedb_supervisor_loop(
     )
     if defer_day_close:
       _log_immediate_day_close_defer(context, defer_reason, defer_extra)
-      if context in ("chunk_end", "archive_finalize", "idle_finalize"):
+      # handoff_priority: do not re-run full pending reconcile — chunk-boundary
+      # reconcile before dispatch already refreshes the queue (reconcile-tax stall).
+      if (
+          defer_reason != "handoff_priority"
+          and context in ("chunk_end", "archive_finalize", "idle_finalize")
+      ):
         _reconcile_pending_with_oldest_checkpoint_incomplete()
       return
     disqualified = _janitor_disqualified_daily_tars()
@@ -5810,6 +5818,7 @@ def run_sync_timedb_supervisor_loop(
         last_mono=reconcile_refs.get("last_cap_pending_monotonic", 0.0),
         mono_now=mono_now,
         ttl_s=PENDING_RECONCILE_UNPROCESSED_TTL_S,
+        hard_ceiling_s=PENDING_RECONCILE_UNPROCESSED_HARD_CEILING_S,
         last_incomplete_n=reconcile_refs.get("last_reconcile_incomplete_n"),
         last_oldest_tar=reconcile_refs.get("last_reconcile_oldest_tar") or "",
         stall_incomplete_n=reconcile_refs.get("oldest_day_gate_stall_blocked_n"),

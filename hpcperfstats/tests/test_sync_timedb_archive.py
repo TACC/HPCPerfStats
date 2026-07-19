@@ -8265,7 +8265,7 @@ def test_select_ingest_chunk_paths_oldest_tar_1500_paths(tmp_path):
 
 
 def test_try_reuse_pending_reconcile_unprocessed_cache_skip_vs_rescan():
-  """Same oldest+incomplete within TTL reuses cache; TTL expiry or zero incomplete rescans."""
+  """Same oldest+incomplete reuses past soft TTL until hard ceiling; zero incomplete rescans."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       try_reuse_pending_reconcile_unprocessed_cache,
   )
@@ -8285,15 +8285,29 @@ def test_try_reuse_pending_reconcile_unprocessed_cache_skip_vs_rescan():
   assert reused[2] == 72
   assert reused[3] == "unchanged_incomplete"
 
-  expired = try_reuse_pending_reconcile_unprocessed_cache(
+  # Past soft TTL (120s) but under hard ceiling — still reuse (reconcile-tax fix).
+  past_soft = try_reuse_pending_reconcile_unprocessed_cache(
       cached=cached,
       last_mono=100.0,
       mono_now=230.0,
       ttl_s=120.0,
+      hard_ceiling_s=900.0,
       last_incomplete_n=72,
       last_oldest_tar="/archive/2020-01-01.tar",
   )
-  assert expired is None
+  assert past_soft is not None
+  assert past_soft[3] == "unchanged_incomplete"
+
+  past_ceiling = try_reuse_pending_reconcile_unprocessed_cache(
+      cached=cached,
+      last_mono=100.0,
+      mono_now=1000.0 + 100.0,
+      ttl_s=120.0,
+      hard_ceiling_s=900.0,
+      last_incomplete_n=72,
+      last_oldest_tar="/archive/2020-01-01.tar",
+  )
+  assert past_ceiling is None
 
   zero_inc = try_reuse_pending_reconcile_unprocessed_cache(
       cached=cached,
@@ -8316,6 +8330,20 @@ def test_try_reuse_pending_reconcile_unprocessed_cache_skip_vs_rescan():
   )
   assert stall is not None
   assert stall[3] == "oldest_day_gate_stall_unchanged"
+
+  # Stall fingerprint also reuses past soft TTL until hard ceiling.
+  stall_past_soft = try_reuse_pending_reconcile_unprocessed_cache(
+      cached=cached,
+      last_mono=100.0,
+      mono_now=350.0,
+      ttl_s=120.0,
+      hard_ceiling_s=900.0,
+      last_incomplete_n=72,
+      last_oldest_tar="/archive/2020-01-01.tar",
+      stall_incomplete_n=72,
+  )
+  assert stall_past_soft is not None
+  assert stall_past_soft[3] == "oldest_day_gate_stall_unchanged"
 
 
 def test_handoff_priority_cap_explicit_wave_when_priority_exceeds_max():

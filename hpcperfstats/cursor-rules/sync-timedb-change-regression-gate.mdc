@@ -56,6 +56,12 @@ Per **`plan-creation-contract.mdc`**, every live plan touching `sync_timedb` YAM
 
 Hooks validate plan disk YAML when `CreatePlan` triggers sync_timedb paths (`sync_timedb_plan_todo_issues`).
 
+## Between-chunk pending reconcile (handoff + TTL)
+
+- **`handoff_priority` day_close defer** (`_maybe_enqueue_immediate_day_close`) must **not** call `_reconcile_pending_with_oldest_checkpoint_incomplete` — chunk-boundary reconcile before dispatch is enough. Double full rebuilds on every defer caused multi-minute tax (hpcperfstats03, 2026-07).
+- Soft TTL (`PENDING_RECONCILE_UNPROCESSED_TTL_S`, 120s) must **not** be shorter than typical cap `elapsed_s` for valid incomplete fingerprints — reuse until invalidate or **`PENDING_RECONCILE_UNPROCESSED_HARD_CEILING_S`** (~900s) via `try_reuse_pending_reconcile_unprocessed_cache(..., hard_ceiling_s=...)`. Soft TTL still forces refresh when incomplete was zero / no fingerprint.
+- Regression: `test_arch_handoff_priority_defer_skips_full_pending_reconcile`, `test_try_reuse_pending_reconcile_unprocessed_cache_skip_vs_rescan`.
+
 ## Forbidden without plan amend
 
 - One-line supervisor `continue`/`return` stall patches without failing-first test named for the RC

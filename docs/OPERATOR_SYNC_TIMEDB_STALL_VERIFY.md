@@ -406,22 +406,24 @@ podman-compose logs pipeline 2>&1 | grep -E \
 
 ### T0 / T1 verify — gated chunk pad + between-chunk reconcile amortize (2026-07)
 
-After deploy of **pad gated chunks / cut between-chunk tax** (Choice C): under saturated pending (`ingest_queue_max` ≈ `chunk_size`) with frozen `oldest_tar` / `incomplete_n>0`, chunks must fill toward `chunk_size` and reconcile must not dominate the duty cycle with multi‑minute identical accrual rescans.
+After deploy of **pad gated chunks / cut between-chunk tax** (Choice C) and the **reconcile-tax** follow-up (handoff defer skip + hard-ceiling cache reuse): under saturated pending (`ingest_queue_max` ≈ `chunk_size`) with frozen `oldest_tar` / `incomplete_n>0`, chunks must fill toward `chunk_size` and reconcile must not dominate the duty cycle with multi‑minute identical accrual rescans.
+
+**Archive signal:** prefer `archive_job_begin` / `archive_job_done` / `Archived batch` / `Archive mapping` — **not** a bare `tar` grep (misses Redis-noop days and worker-role lines).
 
 ```bash
 # Full log first (never --tail before grep on backlog sites).
 podman-compose logs pipeline 2>&1 | tee /tmp/pipeline-full.log
 
-# T0 — pad + skip signals under backlog
-grep -E 'oldest_day_chunk_gate |oldest_day_chunk_gate_pad|chunk_pad_n=|pending reconcile cap skipped|pending reconcile cap (begin|done)' /tmp/pipeline-full.log | tail -80
+# T0 — pad + skip + archive_job (not bare tar) + handoff defer
+grep -E 'oldest_day_chunk_gate |youngest_day_chunk_gate |oldest_day_chunk_gate_pad|chunk_pad_n=|pending reconcile cap skipped|pending reconcile cap (begin|done)|immediate day_close defer|archive_job_(begin|done)|Archived batch|chunk dispatch begin' /tmp/pipeline-full.log | tail -120
 
 # T1 — chunk_len near chunk_size when pending saturated (INI chunk_size=3000 → expect chunk_len≈3000)
-grep -E 'oldest_day_chunk_gate .*chunk_len=' /tmp/pipeline-full.log | tail -40
+grep -E 'oldest_day_chunk_gate .*chunk_len=|youngest_day_chunk_gate .*chunk_len=' /tmp/pipeline-full.log | tail -40
 ```
 
-**Pass (T0):** `oldest_day_chunk_gate` / `chunk ingest summary` continues; when oldest day has fewer paths than `chunk_size` and pending is full, expect **`chunk_pad_n>`0** and **`chunk_len`** near configured **`chunk_size`** (not steady `chunk_len≪chunk_size` like pre-fix `419` vs `3000`). Under frozen `incomplete_n` + same `oldest_tar`, expect **`pending reconcile cap skipped reason=unchanged_incomplete`** (or `oldest_day_gate_stall_unchanged`) between waves — not back-to-back **`pending reconcile cap begin/done source=accrual`** with **`elapsed_s` hundreds–thousands** and identical `incomplete_n`.
+**Pass (T0):** `oldest_day_chunk_gate` / `youngest_day_chunk_gate` / `chunk ingest summary` continues; when oldest/youngest day has fewer paths than `chunk_size` and pending is full, expect **`chunk_pad_n>`0** and **`chunk_len`** near configured **`chunk_size`** (not steady `chunk_len≪chunk_size` like pre-fix `419` vs `3000`). Under frozen `incomplete_n` + same gate tar, expect **`pending reconcile cap skipped reason=unchanged_incomplete`** (or `oldest_day_gate_stall_unchanged`) between waves — including when prior cap **`elapsed_s` > soft TTL 120s** (hard ceiling ~900s) — not back-to-back **`pending reconcile cap begin/done source=accrual`** with **`elapsed_s` hundreds–thousands** and identical `incomplete_n`. After `archive_job_done`, expect `chunk dispatch begin` within minutes (not ~14 min of duplicate accrual rebuilds). `immediate day_close defer … handoff_priority` may appear; it must **not** be followed by another full reconcile solely for that defer.
 
-**Pass (T1):** Oldest-day paths still lead the chunk (`epochs` / sample still prioritize head day); padded later-day paths may appear **after** oldest paths within the same chunk. Reconcile skip must clear after ingest progress / oldest advance (`incomplete_n` change) — next wave may show a full **`pending reconcile cap begin`** again.
+**Pass (T1):** Oldest/youngest-day paths still lead the chunk (`epochs` / sample still prioritize head day); padded later-day paths may appear **after** head-day paths within the same chunk. Reconcile skip must clear after ingest progress / oldest advance (`incomplete_n` change) or hard-ceiling expiry — next wave may show a full **`pending reconcile cap begin`** again.
 
 ### T1 verify — ingest oldest-first (hpcperfstats03 / cross_day_bucket gate defer)
 
