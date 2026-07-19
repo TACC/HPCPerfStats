@@ -780,6 +780,13 @@ docker compose logs pipeline 2>&1 | grep -E 'idle reconcile redispatch|redispatc
 
 **Expect:** redispatch → `pool_recover` with **`pool_recover done`** and **`terminate outcome=abandoned`** (or **124** `idle_pool_taskqueue_dead` within recover wall); **never** hang after `workers_before=` with no outcome; **`dispatch_probe ok`** and resumed ingest on success; **no** `likely_cause=unknown` on ghost fatals; after swap/recover, **`child_ingest` equals INI `ingest_pool_processes`** (see census below).
 
+**Post-recover sticky-attempted ghost (T1, 2026-07-19, hpcperfstats03):** pre-fix sequence was **`redispatch round=1/3`** → successful **`pool_recover done collected_n=0 pending_async_n=N`** (abandon + `dispatch_probe ok`) → **second** **`redispatch round=1/3`** → **`idle_pool_ghost_inflight` / `idle_pool_taskqueue_dead`** → hard exit **124** with trailing **`likely_cause=unknown`**. Root cause: successful recover cleared thrash/rounds but left **`pool_recover_attempted=True`**, so the ghost gate treated thrash+attempted as immediate fatal at round **1** without a second recover. **Post-fix:** successful recover **resets** `pool_recover_attempted` and increments `recover_count` (cap **`IDLE_POOL_RECOVER_MAX=3`**); a later thrash may recover again; after the cap, expect **`pool_recover cap exceeded`** → **124** `idle_pool_taskqueue_dead`; hard exit must **not** print `likely_cause=unknown` when `exc.likely_cause=idle_pool_taskqueue_dead`.
+
+```bash
+# T1 — post-recover second thrash / recover cap (full pipeline log; never --tail before grep)
+docker compose logs pipeline 2>&1 | grep -E 'idle reconcile pool_recover|pool_recover done|pool_recover cap exceeded|redispatch round=|idle_pool_ghost_inflight|hard exit code=124|likely_cause=unknown' | tail -80
+```
+
 ### T0 / T1 — populate_wait idle redispatch skip (2026-07-17)
 
 **Failure signature (pre-fix):** `INFO: pool imap idle reconcile pool_recover skipped reason=populate_wait…` (or `populate_enqueue`) correctly skips recover, but the same idle window still emits **`redispatch round=1/3…3/3`** with identical `pending_sample` / `redispatched_n=pending_async_n` while workers sit in `futex_wait_queue` during Redis populate wait.

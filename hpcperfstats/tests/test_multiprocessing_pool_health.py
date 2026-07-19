@@ -430,6 +430,32 @@ def test_hard_exit_pool_worker_error_uses_os_exit(monkeypatch):
   assert any("hard exit code=124" in line for line in logs)
 
 
+def test_hard_exit_ghost_preserves_taskqueue_dead_likely_cause(monkeypatch):
+  """Ghost fatals must not overlay diagnostics likely_cause=unknown."""
+  exit_codes = []
+  logs = []
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.multiprocessing_pool_health.log_print",
+      lambda msg, flush=False: logs.append(msg),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.multiprocessing_pool_health.os._exit",
+      lambda code: exit_codes.append(code),
+  )
+  exc = mph.MultiprocessingPoolStallError(
+      "pool imap idle workers with pending async",
+      dead_pids=[],
+      context="idle_pool_ghost_inflight",
+      exit_code=124,
+      likely_cause="idle_pool_taskqueue_dead",
+  )
+  mph.hard_exit_pool_worker_error(exc)
+  assert exit_codes == [124]
+  joined = "\n".join(logs)
+  assert "likely_cause=idle_pool_taskqueue_dead" in joined
+  assert "likely_cause=unknown" not in joined
+
+
 def test_handle_pool_worker_exit_fatal_hard_exits_without_terminate(monkeypatch):
   import hpcperfstats.dbload.sync_timedb as st
 
@@ -2210,6 +2236,81 @@ def test_full_redispatch_thrash_triggers_immediate_recover_same_round(monkeypatc
   results = list(gen)
   assert results == ["stuck_path"]
   assert recover_calls["n"] == 1
+
+
+def test_post_recover_thrash_allows_second_recover(monkeypatch):
+  """Sticky pool_recover_attempted must not block a second thrash recover."""
+  monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 1000)
+  monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 3)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
+  stuck_pool = _ManualPool()
+  recover_calls = {"n": 0}
+  logs = []
+  monkeypatch.setattr(mph, "log_print", lambda msg, flush=False: logs.append(msg))
+
+  def on_recover(pool, pending_paths, pending_async, fn):
+    recover_calls["n"] += 1
+    del pool, pending_paths
+    pending_async.clear()
+    new_pool = _ManualPool()
+    ar = new_pool.apply_async(fn, ("stuck_path",))
+    if recover_calls["n"] >= 2:
+      ar.finish()
+    pending_async[ar] = "stuck_path"
+    return {"pool": new_pool, "collected": []}
+
+  gen = mph.imap_sliding_window_watch_pool(
+      stuck_pool,
+      lambda path: path,
+      ["stuck_path"],
+      max_inflight=1,
+      poll_timeout_s=0.01,
+      stall_abort_polls_fn=lambda in_flight: 100000,
+      on_idle_pool_stuck_after_redispatch=on_recover,
+  )
+  results = list(gen)
+  assert results == ["stuck_path"]
+  assert recover_calls["n"] == 2
+  assert not any("idle_pool_ghost_inflight" in line for line in logs)
+
+
+def test_pool_recover_cap_fatals_taskqueue_dead(monkeypatch):
+  """After IDLE_POOL_RECOVER_MAX successes, next thrash must exit 124."""
+  monkeypatch.setattr(mph, "IDLE_POOL_RECOVER_MAX", 2)
+  monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 1000)
+  monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 3)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
+  stuck_pool = _ManualPool()
+  recover_calls = {"n": 0}
+  logs = []
+  monkeypatch.setattr(mph, "log_print", lambda msg, flush=False: logs.append(msg))
+
+  def on_recover(pool, pending_paths, pending_async, fn):
+    recover_calls["n"] += 1
+    del pool, pending_paths
+    pending_async.clear()
+    new_pool = _ManualPool()
+    ar = new_pool.apply_async(fn, ("stuck_path",))
+    pending_async[ar] = "stuck_path"
+    return {"pool": new_pool, "collected": []}
+
+  gen = mph.imap_sliding_window_watch_pool(
+      stuck_pool,
+      lambda path: path,
+      ["stuck_path"],
+      max_inflight=1,
+      poll_timeout_s=0.01,
+      stall_abort_polls_fn=lambda in_flight: 100000,
+      on_idle_pool_stuck_after_redispatch=on_recover,
+  )
+  with pytest.raises(mph.MultiprocessingPoolStallError) as excinfo:
+    list(gen)
+  assert excinfo.value.exit_code == 124
+  assert excinfo.value.likely_cause == "idle_pool_taskqueue_dead"
+  assert recover_calls["n"] == 2
+  assert any("pool_recover cap exceeded" in line for line in logs)
 
 
 def test_idle_pool_recover_skipped_when_skip_fn_returns_reason(monkeypatch):

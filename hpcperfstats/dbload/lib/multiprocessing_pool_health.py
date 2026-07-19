@@ -1617,6 +1617,8 @@ def imap_unordered_watch_pool(
 _IDLE_POOL_TASKQUEUE_DEAD_CAUSE = "idle_pool_taskqueue_dead"
 # Wall-clock budget for sync one-shot recover (RC-F/G/H); never soft-hang forever.
 IDLE_POOL_RECOVER_WALL_S = 30.0
+# Max successful idle-pool recovers per sliding-window imap session.
+IDLE_POOL_RECOVER_MAX = 3
 
 
 def imap_sliding_window_watch_pool(
@@ -1649,7 +1651,8 @@ def imap_sliding_window_watch_pool(
 
   When a full-redispatch reconcile thrash leaves workers idle with the same pending
   set, optional ``on_idle_pool_stuck_after_redispatch`` may recreate the Pool and
-  rebuild ``pending_async`` (one attempt per sliding-window session).
+  rebuild ``pending_async`` (up to ``IDLE_POOL_RECOVER_MAX`` successful recovers
+  per sliding-window session; each success resets ``pool_recover_attempted``).
 
   Optional ``skip_idle_pool_recover_fn(pending_paths)`` returning a non-empty reason
   skips recover / ghost fatal while workers are blocked in populate_wait with live
@@ -1688,6 +1691,7 @@ def imap_sliding_window_watch_pool(
   warn_thresholds = _stall_warning_thresholds(stall_abort_after)
   full_redispatch_thrash_seen = False
   pool_recover_attempted = False
+  pool_recover_count = 0
   idle_recover_skip_logged = False
   idle_redispatch_skip_logged = False
   duplicate_dispatch_warned = set()
@@ -1893,15 +1897,39 @@ def imap_sliding_window_watch_pool(
       )
 
   def _try_pool_recover_after_thrash():
-    """One-shot Pool recreate after full-redispatch thrash.
+    """Pool recreate after full-redispatch thrash (capped per imap session).
 
-    Returns ``None`` on failure, or a (possibly empty) list of ``(path, item)``
-    collected via skip on success.
+    Returns ``None`` on skip / already-in-flight, or a (possibly empty) list of
+    ``(path, item)`` collected via skip on success. Raises stall exit **124** when
+    ``IDLE_POOL_RECOVER_MAX`` successful recovers are exhausted.
     """
-    nonlocal active_pool, pool_recover_attempted, full_redispatch_thrash_seen
+    nonlocal active_pool, pool_recover_attempted, pool_recover_count
+    nonlocal full_redispatch_thrash_seen
     nonlocal consecutive_timeouts, polls_since_last_yield, idle_pool_warned
     nonlocal idle_reconcile_rounds, idle_polls_since_reconcile
-    if pool_recover_attempted or not callable(on_idle_pool_stuck_after_redispatch):
+    if not callable(on_idle_pool_stuck_after_redispatch):
+      return None
+    if pool_recover_count >= int(IDLE_POOL_RECOVER_MAX):
+      log_print(
+          "ERROR: pool imap idle reconcile pool_recover cap exceeded "
+          "recover_count=%d max=%d pending_async_n=%d context=%s"
+          % (
+              int(pool_recover_count),
+              int(IDLE_POOL_RECOVER_MAX),
+              len(pending_async),
+              context or "pool",
+          ),
+          flush=True,
+      )
+      raise MultiprocessingPoolStallError(
+          "idle pool recover cap exceeded recover_count=%d max=%d"
+          % (int(pool_recover_count), int(IDLE_POOL_RECOVER_MAX)),
+          dead_pids=[],
+          context=context,
+          exit_code=124,
+          likely_cause=_IDLE_POOL_TASKQUEUE_DEAD_CAUSE,
+      )
+    if pool_recover_attempted:
       return None
     pending_before = len(pending_async)
     pending_paths = list(_in_flight_paths())
@@ -1915,8 +1943,14 @@ def imap_sliding_window_watch_pool(
     ]
     log_print(
         "INFO: pool imap idle reconcile pool_recover pending_async_n=%d "
-        "pending_sample=%s context=%s"
-        % (pending_before, pending_sample, context or "pool"),
+        "recover_count=%d/%d pending_sample=%s context=%s"
+        % (
+            pending_before,
+            int(pool_recover_count) + 1,
+            int(IDLE_POOL_RECOVER_MAX),
+            pending_sample,
+            context or "pool",
+        ),
         flush=True,
     )
     # RC-F/G/H: wall-clock abort — never soft-hang MainThread on recover.
@@ -2000,10 +2034,19 @@ def imap_sliding_window_watch_pool(
     consecutive_timeouts = 0
     polls_since_last_yield = 0
     idle_pool_warned = False
+    # Allow a later thrash to recover again (sticky-attempted was exit-124 RC).
+    pool_recover_attempted = False
+    pool_recover_count += 1
     log_print(
         "INFO: pool imap idle reconcile pool_recover done "
-        "collected_n=%d pending_async_n=%d context=%s"
-        % (len(collected), len(pending_async), context or "pool"),
+        "collected_n=%d pending_async_n=%d recover_count=%d/%d context=%s"
+        % (
+            len(collected),
+            len(pending_async),
+            int(pool_recover_count),
+            int(IDLE_POOL_RECOVER_MAX),
+            context or "pool",
+        ),
         flush=True,
     )
     _submit_until_cap()
@@ -2152,13 +2195,15 @@ def imap_sliding_window_watch_pool(
       )
     if polls_since_last_yield < ghost_abort_polls:
       return
-    if idle_reconcile_rounds < max_reconcile_rounds and not (
-        full_redispatch_thrash_seen and pool_recover_attempted
+    # Do not fatal on thrash+stale-attempted after a successful recover reset
+    # rounds to 0/1 — wait for more rounds or recover-cap exhaustion.
+    recover_cap_exceeded = pool_recover_count >= int(IDLE_POOL_RECOVER_MAX)
+    if (
+        idle_reconcile_rounds < max_reconcile_rounds
+        and not recover_cap_exceeded
     ):
       return
-    taskqueue_dead = bool(
-        full_redispatch_thrash_seen and pool_recover_attempted
-    ) or (
+    taskqueue_dead = bool(recover_cap_exceeded) or (
         idle_reconcile_rounds >= max_reconcile_rounds
         and full_redispatch_thrash_seen
     )
@@ -2312,7 +2357,12 @@ def hard_exit_pool_worker_error(exc: MultiprocessingWorkerExitError) -> None:
   seal) finish; stall/OOM exit handlers must use ``os._exit`` instead.
   """
   likely_cause = getattr(exc, "likely_cause", "") or ""
-  diagnostics = getattr(exc, "diagnostics", None) or {}
+  diagnostics = dict(getattr(exc, "diagnostics", None) or {})
+  # Ghost/stall fatals often have empty dead_workers; prefer exc.likely_cause
+  # over inferred ``unknown`` in the diagnostics suffix.
+  diag_cause = str(diagnostics.get("likely_cause") or "").strip()
+  if likely_cause and diag_cause in ("", "unknown"):
+    diagnostics["likely_cause"] = likely_cause
   extra = ""
   if likely_cause or diagnostics:
     extra = " " + _format_pool_worker_death_diagnostics(
