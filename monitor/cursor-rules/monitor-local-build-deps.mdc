@@ -44,6 +44,10 @@ CPU backend:
 
 - x86: `--with-cpu-counter-backend=likwid` (default on x86_64).
 
+## TACC hosts
+
+On Stampede3 / other TACC systems (`*.tacc.utexas.edu`), load build tools via **Lmod** before the static bundle (e.g. `module load cmake` for rabbitmq-c). See **tacc-lmod-build-environment** — agent shells often need `/opt/apps/modulefiles` on `MODULEPATH` first.
+
 ## Verification
 
 - **Canonical**: run **`scripts/build_static_bundle.sh`**, then **`make check`** in **`monitor/.build-static`**. Full policy: **monitor-static-build-verification** (always applied in this workspace).

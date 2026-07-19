@@ -1,0 +1,88 @@
+---
+description: On TACC HPC (SSH), use Lmod modules for toolchain/deps — never assume OS packages alone
+globs:
+  - HPCPerfStats/monitor/scripts/**
+  - HPCPerfStats/monitor/configure.ac
+  - HPCPerfStats/monitor/hpcperfstats.spec
+alwaysApply: false
+---
+
+# TACC Lmod build environment (SSH-connected hosts)
+
+**Activation:** `alwaysApply: false` — **Read this file** before any Shell build/verify on a **TACC** host (`*.tacc.utexas.edu`, or `$TACC_SYSTEM` set), and when editing monitor build scripts / Autotools / packaging that agents will run on TACC. Triggered rules are mandatory, not optional.
+
+TACC manages compilers and third-party tools with **[Lmod](https://tacc.utexas.edu/research/tacc-research/lmod/)**. Catalog: **[Software List](https://tacc.utexas.edu/use-tacc/software-list/)**. Stampede3 build guidance: **[Building Software](https://docs.tacc.utexas.edu/hpc/stampede3/#building)**.
+
+## Detect TACC before assuming a bare Linux toolbox
+
+Treat the session as TACC when any of these hold:
+
+- `hostname -f` ends in `.tacc.utexas.edu` (e.g. `stampede3`, `frontera`, `lonestar6`, `vista`, `horizon`)
+- `$TACC_SYSTEM` / `$TACC_DOMAIN` is set (from `/etc/profile.d/z00_tacc_login.sh`)
+- `/opt/apps/lmod/lmod/init/bash` exists
+
+Do **not** treat “command not found” for `cmake`, recent `gcc`, `intel`, `impi`, etc. as a reason to rewrite build scripts or download ad-hoc binaries until you have searched Lmod.
+
+## Fix broken agent MODULEPATH first
+
+Cursor/agent shells often inherit a **non-TACC** `MODULEPATH` (e.g. `/usr/share/Modules/modulefiles`, `/etc/scl/modulefiles`). TACC’s `/etc/profile.d/z01_lmod.sh` only prepends `/opt/apps/modulefiles` when `MODULEPATH` is **unset**, so a polluted path hides all TACC modules (`module avail cmake` → empty).
+
+**Before** `module load` on TACC:
+
+```bash
+# Prefer full Lmod init when available
+if test -f /opt/apps/lmod/lmod/init/bash; then
+  # shellcheck disable=SC1091
+  . /opt/apps/lmod/lmod/init/bash
+fi
+case ":${MODULEPATH:-}:" in
+  *:/opt/apps/modulefiles:*) ;;
+  *) export MODULEPATH="/opt/apps/modulefiles${MODULEPATH:+:${MODULEPATH}}" ;;
+esac
+```
+
+Then verify: `module avail cmake 2>&1 | head` shows `/opt/apps/modulefiles` entries.
+
+## Discover and load software (law)
+
+| Need | Command |
+|------|---------|
+| List matching modules | `module avail <name>` or `module keyword <name>` |
+| Full versions / help | `module spider <name>` then `module spider <name>/<ver>` |
+| Enable on PATH | `module load <name>` or `module load <name>/<ver>` |
+| See loaded set | `module list` |
+| Undo | `module unload <name>` / `module purge` (careful) |
+
+**Examples (monitor static bundle / Stampede3 prepare):**
+
+```bash
+module load cmake          # required for rabbitmq-c in build_static_bundle.sh
+# Optional newer GNU (avoid relying only on ancient system gcc when docs say so):
+# module load gcc
+```
+
+Confirm after load: `command -v cmake && cmake --version`.
+
+## Stampede3 / TACC build practices (relevant subset)
+
+From [Stampede3 Building Software](https://docs.tacc.utexas.edu/hpc/stampede3/#building):
+
+- Prefer **modules** over OS-default toolchains; check the **Software List** before installing into `$HOME`.
+- **Intel** (`module load intel`, OneAPI `icx`/`icpx`/`ifx`) is the site-recommended suite for science apps; **GNU** via `module load gcc` when you need gcc/g++/gfortran — avoid depending on the distro “system gcc” alone when a gcc module is available.
+- Use module-provided **`$TACC_*_INC` / `$TACC_*_LIB`** (and similar) for `-I`/`-L` when linking site libraries; modules usually update `LD_LIBRARY_PATH`.
+- Architecture flags (Intel): prefer `$TACC_VEC_FLAGS` (typically `-xCORE-AVX512`) over `-xHost` on login/SPR hosts so binaries still run on SKX/ICX/SPR. Monitor Autotools/RPM paths that intentionally use **gcc** + site `CFLAGS` may keep existing GCC flags — do not blindly swap the monitor daemon to `icx` without an explicit product decision.
+- **Heavy compiles**: prefer compute nodes (`idev` / batch), not login nodes ([TACC Good Conduct](https://docs.tacc.utexas.edu/basics/conduct/)).
+
+## Monitor workspace specifics
+
+- Canonical verify remains **`scripts/build_static_bundle.sh`** / **`prepare_rpmbuild_stampede3.sh`** (**monitor-static-build-verification**, **monitor-static-bundle-feature-matrix**).
+- Host prep for deps on Stampede3: ensure **`cmake`** (and any other missing Autotools helpers) are **module-loaded in the same Shell** that runs the script.
+- Log verify output under **`test_runs/`** (**test-runs-output-directory**).
+- Do **not** add `BuildRequires: cmake` workarounds that assume rpmbuild hosts lack Lmod — document operator `module load` instead when the failure is agent/login env.
+
+## Overlap
+
+- **monitor-local-build-deps** — local `.build/prefix` / static `.a` layout
+- **monitor-static-build-verification** — canonical bundle + `make check`
+- **monitor-build-clean-workspace** — clean tree before compile
+- **python-venv-enforcement** — project `.venv` still used for Python tooling (orthogonal to Lmod C/cmake)

@@ -557,6 +557,7 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
             "monitor-build-clean-workspace.mdc",
             "configure-autoconf-awk-m4.mdc",
             "monitor-local-build-deps.mdc",
+            "tacc-lmod-build-environment.mdc",
             "global-testing-discipline.mdc",
         ],
     },
