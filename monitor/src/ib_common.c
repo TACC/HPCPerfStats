@@ -4,11 +4,43 @@
 #include <string.h>
 #include <ctype.h>
 #include <limits.h>
+#include <dirent.h>
 
 #include "path_open_fail_once.h"
 #include "sys_iter.h"
 #include "ib_common.h"
 #include "ib_port_state.h"
+
+int ib_hca_is_opa_hfi(const char *hca)
+{
+  if (hca == NULL || hca[0] == '\0')
+    return 0;
+  /* Linux hfi1 driver: hfi1_0, hfi1_1, … (Cornelis CN5000 and Intel OPA 100). */
+  if (strncmp(hca, "hfi1", 4) != 0)
+    return 0;
+  return hca[4] == '\0' || hca[4] == '_';
+}
+
+int ib_sysfs_has_opa_hfi(void)
+{
+  DIR *d;
+  struct dirent *ent;
+  int found = 0;
+
+  d = opendir("/sys/class/infiniband");
+  if (d == NULL)
+    return 0;
+  while ((ent = readdir(d)) != NULL) {
+    if (ent->d_name[0] == '.')
+      continue;
+    if (ib_hca_is_opa_hfi(ent->d_name)) {
+      found = 1;
+      break;
+    }
+  }
+  closedir(d);
+  return found;
+}
 
 static int ib_port_read_state_file(const char *path, char *buf, size_t buf_len)
 {
@@ -82,6 +114,8 @@ static void ib_hca_iter_each(const char *base, const char *name, void *ctx)
   struct ib_port_iter_ctx pc;
 
   if (hc == NULL || hc->fn == NULL || name == NULL)
+    return;
+  if (ib_hca_is_opa_hfi(name))
     return;
   snprintf(ports_path, sizeof(ports_path), "%s/%s/ports", base, name);
   pc.fn = hc->fn;

@@ -55,9 +55,7 @@ extern struct stats_type numa_stats_type;
 extern struct stats_type nvidia_gpu_stats_type;
 #endif
 
-#if defined(MONITOR_WITH_OPA)
 extern struct stats_type opa_stats_type;
-#endif
 
 extern struct stats_type proc_stats_type;
 extern struct stats_type ps_stats_type;
@@ -110,9 +108,7 @@ struct stats_type *const stats_type_table[] = {
 #if defined(MONITOR_WITH_GPU)
   &nvidia_gpu_stats_type,
 #endif
-#if defined(MONITOR_WITH_OPA)
   &opa_stats_type,
-#endif
   &proc_stats_type,
   &ps_stats_type,
   &roofline_hw_peak_stats_type,

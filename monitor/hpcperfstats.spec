@@ -39,6 +39,10 @@ BuildRequires: tar
 # configure auto-detects NVIDIA/AMD GPUs via lspci during %%build.
 BuildRequires: pciutils
 # InfiniBand (libibmad + headers): omit on hosts where IB support is unwanted.
+# Omni-Path STL MAD (--enable-opa): optional; requires Cornelis/Intel IFS liboib_utils.
+# host_opa sysfs collection is always built (hfi1_*); MAD is additive when IFS is present.
+# BuildRequires: libibmad-devel
+# BuildRequires: (site-specific) cornelis-opa / opa-liboib_utils devel for --enable-opa
 BuildRequires: rdma-core-devel
 
 # Non-x86: configure auto-selects DCGM CPU backend (libdcgm). EL9 + NVIDIA repos ship
@@ -53,7 +57,8 @@ BuildRequires: (datacenter-gpu-manager-4-devel or libdcgm-devel)
 %description
 This package provides the hpcperfstatsd daemon, along with a systemd unit for
 control. The daemon publishes job-level host statistics (CPU, memory, optional
-InfiniBand, Lustre, NVIDIA DCGM GPU, AMD GPU, etc.).
+InfiniBand, Omni-Path/Cornelis HFI via host_opa, Lustre, NVIDIA DCGM GPU, AMD
+GPU, etc.).
 
 The binary is linked with pre-built static libev, rabbitmq-c, and (on x86)
 LIKWID archives that are included in the source tarball from

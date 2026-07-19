@@ -18,7 +18,16 @@ C implementation of the **hpcperfstats** data collector: either a **RabbitMQ dae
 - **RabbitMQ build** (typical for `hpcperfstatsd`): `monitor.c`, `monitor_cli.c`, `monitor_daemon.c`, `stats_buffer.c`, AMQP + libev + LIKWID as configured.
 - **Non–RabbitMQ build**: `main.c`, `stats_file.c`, `stats_file_format.c` — local file client and archive I/O.
 
-Configure selects sources via Automake conditionals; use **`./configure --help`** for options (including **`--enable-all-static`**, **`--enable-legacy-pmcs`**, **`--enable-metric-profiler`**, and **`--with-metric-profiler-backend={none,ebpf}`**).
+Configure selects sources via Automake conditionals; use **`./configure --help`** for options (including **`--enable-all-static`**, **`--enable-legacy-pmcs`**, **`--enable-metric-profiler`**, **`--with-metric-profiler-backend={none,ebpf}`**, and **`--enable-opa`**).
+
+### Omni-Path / Cornelis (`host_opa`)
+
+- **`host_opa` is always built.** It collects Cornelis CN5000 and Intel Omni-Path HFI 100 Series devices (`hfi1_*` under `/sys/class/infiniband`). Device ids use a slash (`hfi1_0/1`), not the IB dot form.
+- **Sysfs fallback (default):** reads overlapping utilization counters from `ports/N/counters` (verified on Stampede3 OPA100 + CN5000). Maps `port_*_packets` → schema `*_pkts`; missing files (e.g. CN5000 without `multicast_*`) are skipped. STL-only keys (FECN/BECN, bubbles, …) stay empty without MAD. HFI `hw_counters` are not mapped into KEYS.
+- **Collectible ports only:** inactive/DOWN ports are skipped (`ib_port_collectible`) — e.g. CN5000 dual-port with port1 Offline emits only `hfi1_0/2`.
+- **`--enable-opa`:** links Cornelis/Intel IFS **`liboib_utils`** (+ `oib_utils.h`) for STL Performance MAD (full KEYS). Requires IFS devel packages on the build host. `scripts/build_static_bundle.sh` probes for `liboib_utils` and passes `--enable-opa` when the link probe succeeds.
+- **`host_ib` never claims `hfi1_*` HCAs** — those belong to `host_opa` only.
+- Stampede3 PCI examples: Cornelis CN5000 HFI (SPR); Intel Omni-Path HFI Silicon 100 Series (ICX/SKX/H100).
 
 ## Metric profiler build options
 
@@ -46,6 +55,8 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 | DEBUG shm mirror (`@fast`/`@full` snapshots) | `stats_buffer_debug_shm.c`, `stats_buffer_debug_shm.h` (`DEBUG` builds only). |
 | Intel CPUID / generation gating | `cpuid.c`, `intel_cpuid_match.c`, `intel_processor.c` |
 | LIKWID core + uncore PMU | `likwid_pmc_adapter.c`, `likwid_uncore_adapter.c`, `likwid_uncore_profiles.c` |
+| Omni-Path / Cornelis HFI (`host_opa`) | `opa.c`, `opa_sysfs.c`, `opa_mad_backoff.c`, `host_opa.h` (sysfs always; STL MAD with `--enable-opa`) |
+| IB vs HFI routing | `ib_common.c` (`ib_hca_is_opa_hfi`), `ib_family.c` |
 
 Intel PMU collection uses **LIKWID only** on x86 (see [LIKWID_MIGRATION.md](LIKWID_MIGRATION.md)).
 **Uncore collectors (IMC/CHA)** target SKX+ server parts only: Cascade Lake

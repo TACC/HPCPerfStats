@@ -55,6 +55,7 @@ def probe_net_devices() -> list[str]:
 
 
 def probe_ib_devices() -> list[str]:
+    """host_ib devices: non-OPA HCAs only (hfi1_* is host_opa)."""
     ib_base = Path("/sys/class/infiniband")
     if not ib_base.is_dir():
         return []
@@ -62,12 +63,98 @@ def probe_ib_devices() -> list[str]:
     for hca in sorted(ib_base.iterdir()):
         if not hca.is_dir():
             continue
+        if _hca_is_opa_hfi(hca.name):
+            continue
         ports = hca / "ports"
         if not ports.is_dir():
             continue
         for port in sorted(ports.iterdir()):
             if port.is_dir() and port.name.isdigit():
                 devs.append(f"{hca.name}.{port.name}")
+    return devs
+
+
+def _hca_is_opa_hfi(name: str) -> bool:
+    """Match ib_hca_is_opa_hfi() in ib_common.c."""
+    if not name.startswith("hfi1"):
+        return False
+    return len(name) == 4 or name[4] == "_"
+
+
+def _ib_port_logic_active(state_line: str | None) -> bool:
+    """Match ib_port_logic_active() in ib_port_state.c (case-sensitive text)."""
+    if state_line is None:
+        return False
+    s = state_line.lstrip()
+    if not s:
+        return False
+    # Numeric prefix 4 == ACTIVE wins (even before inactive/active text).
+    num = ""
+    for ch in s:
+        if ch.isdigit():
+            num += ch
+        else:
+            break
+    if num != "" and int(num) == 4:
+        return True
+    # C uses strstr on the original line (case-sensitive).
+    if "inactive" in state_line:
+        return False
+    return "active" in state_line
+
+
+def _ib_port_phys_link_up(phys_line: str | None) -> bool:
+    """Match ib_port_phys_link_up() in ib_port_state.c (case-sensitive text)."""
+    if phys_line is None:
+        return False
+    s = phys_line.lstrip()
+    if not s:
+        return False
+    num = ""
+    for ch in s:
+        if ch.isdigit():
+            num += ch
+        else:
+            break
+    if num != "" and int(num) == 5:
+        return True
+    return "link_up" in phys_line or "linkup" in phys_line
+
+
+def _ib_port_collectible(hca_ports: Path, port_name: str) -> bool:
+    """Match ib_port_collectible() — ACTIVE state or phys LinkUp."""
+    port_dir = hca_ports / port_name
+    try:
+        state = (port_dir / "state").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        state = None
+    if _ib_port_logic_active(state):
+        return True
+    try:
+        phys = (port_dir / "phys_state").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return _ib_port_phys_link_up(phys)
+
+
+def probe_opa_devices() -> list[str]:
+    """host_opa devices: collectible hfi1_N/P (slash); mirrors opa.c + ib_port_collectible."""
+    ib_base = Path("/sys/class/infiniband")
+    if not ib_base.is_dir():
+        return []
+    devs: list[str] = []
+    for hca in sorted(ib_base.iterdir()):
+        if not hca.is_dir() or not _hca_is_opa_hfi(hca.name):
+            continue
+        ports = hca / "ports"
+        if not ports.is_dir():
+            continue
+        for port in sorted(ports.iterdir()):
+            if not port.is_dir() or not port.name.isdigit():
+                continue
+            if not _ib_port_collectible(ports, port.name):
+                continue
+            devs.append(f"{hca.name}/{port.name}")
     return devs
 
 
@@ -276,6 +363,8 @@ def default_devices_for_type(type_name: str) -> list[str] | None:
         return probe_net_devices()
     if type_name == "host_ib":
         return probe_ib_devices()
+    if type_name == "host_opa":
+        return probe_opa_devices()
     if type_name == "host_block":
         return probe_block_devices()
     if type_name in ("host_mem", "host_numa"):

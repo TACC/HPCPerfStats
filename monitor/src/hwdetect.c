@@ -9,6 +9,7 @@
 #include "stats.h"
 #include "trace.h"
 #include "ib_family.h"
+#include "ib_common.h"
 #include "gpu_pci_detect.h"
 
 static void disable_type_if_present(const char *name)
@@ -26,11 +27,12 @@ static void to_lower_ascii(char *s)
   }
 }
 
-/* lspci can omit the word "infiniband" for some Mellanox lines; class 0207 is InfiniBand. */
+/* Non-OPA HCAs only — hfi1_* is host_opa, not host_ib (Stampede3 OPA-only nodes). */
 static int infiniband_sysfs_has_devices(void)
 {
   DIR *d;
   struct dirent *ent;
+  int found = 0;
 
   d = opendir("/sys/class/infiniband");
   if (d == NULL)
@@ -38,11 +40,13 @@ static int infiniband_sysfs_has_devices(void)
   while ((ent = readdir(d)) != NULL) {
     if (ent->d_name[0] == '.')
       continue;
-    closedir(d);
-    return 1;
+    if (ib_hca_is_opa_hfi(ent->d_name))
+      continue;
+    found = 1;
+    break;
   }
   closedir(d);
-  return 0;
+  return found;
 }
 
 /*
@@ -176,7 +180,7 @@ void hwdetect_probe_optional_stack_presence(int *has_nvidia_gpu,
     if (has_ib != NULL)
       *has_ib = infiniband_sysfs_has_devices();
     if (has_opa != NULL)
-      *has_opa = 0;
+      *has_opa = ib_sysfs_has_opa_hfi();
     return;
   }
 
@@ -188,13 +192,16 @@ void hwdetect_probe_optional_stack_presence(int *has_nvidia_gpu,
       amd = 1;
     if (strstr(line, "infiniband") != NULL || strstr(line, "[0207]") != NULL)
       ib = 1;
-    if (strstr(line, "omnipath") != NULL || strstr(line, "hfi") != NULL)
+    if (strstr(line, "omnipath") != NULL || strstr(line, "hfi") != NULL
+        || strstr(line, "cornelis") != NULL || strstr(line, "cn5000") != NULL)
       opa = 1;
   }
   pclose(fp);
 
   if (!ib)
     ib = infiniband_sysfs_has_devices();
+  if (!opa)
+    opa = ib_sysfs_has_opa_hfi();
 
   if (!nvidia)
     nvidia = sysfs_proc_indicates_nvidia_gpu();

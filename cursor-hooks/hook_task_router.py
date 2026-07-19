@@ -408,7 +408,11 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
         "id": "monitor_ib",
         "patterns": [
             "HPCPerfStats/monitor/src/*ib*",
+            "HPCPerfStats/monitor/src/opa.c",
+            "HPCPerfStats/monitor/src/opa_sysfs.*",
             "monitor/src/*ib*",
+            "monitor/src/opa.c",
+            "monitor/src/opa_sysfs.*",
         ],
         "rules": [
             "monitor-ib-sysfs-parsing.mdc",
@@ -469,6 +473,7 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
             "HPCPerfStats/monitor/src/numa.c",
             "HPCPerfStats/monitor/src/block.c",
             "HPCPerfStats/monitor/src/ib.c",
+            "HPCPerfStats/monitor/src/opa.c",
             "HPCPerfStats/monitor/src/cpu.c",
             "HPCPerfStats/monitor/src/intel_spr_imc.c",
             "HPCPerfStats/monitor/scripts/lib/host_live_probes.py",
@@ -480,6 +485,7 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
             "monitor/src/numa.c",
             "monitor/src/block.c",
             "monitor/src/ib.c",
+            "monitor/src/opa.c",
             "monitor/src/cpu.c",
             "monitor/src/intel_spr_imc.c",
             "monitor/scripts/lib/host_live_probes.py",

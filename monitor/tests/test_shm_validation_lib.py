@@ -107,6 +107,62 @@ class HostLiveProbeTests(unittest.TestCase):
             self.assertEqual(default_devices_for_type("host_numa"), ["0", "1"])
         self.assertEqual(default_devices_for_type("host_ps"), ["-"])
 
+    def test_probe_ib_skips_hfi_probe_opa_slash(self) -> None:
+        import tempfile
+        from unittest.mock import patch
+
+        from lib.host_live_probes import probe_ib_devices, probe_opa_devices
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ib = Path(tmp)
+            hfi = ib / "hfi1_0"
+            p1 = hfi / "ports" / "1"
+            p1.mkdir(parents=True)
+            (p1 / "state").write_text("4: ACTIVE\n", encoding="utf-8")
+            (p1 / "phys_state").write_text("5: LinkUp\n", encoding="utf-8")
+            mlx = ib / "mlx5_0"
+            (mlx / "ports" / "1").mkdir(parents=True)
+
+            real_path = Path
+
+            def fake_path(arg: str) -> Path:
+                if arg == "/sys/class/infiniband":
+                    return ib
+                return real_path(arg)
+
+            with patch("lib.host_live_probes.Path", side_effect=fake_path):
+                self.assertEqual(probe_ib_devices(), ["mlx5_0.1"])
+                self.assertEqual(probe_opa_devices(), ["hfi1_0/1"])
+
+    def test_probe_opa_skips_down_cn5000_port(self) -> None:
+        """CN5000 dual-port: DOWN port1 must not appear; ACTIVE port2 must (opa.c)."""
+        import tempfile
+        from unittest.mock import patch
+
+        from lib.host_live_probes import probe_opa_devices
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ib = Path(tmp)
+            hfi = ib / "hfi1_0"
+            p1 = hfi / "ports" / "1"
+            p2 = hfi / "ports" / "2"
+            p1.mkdir(parents=True)
+            p2.mkdir(parents=True)
+            (p1 / "state").write_text("1: DOWN\n", encoding="utf-8")
+            (p1 / "phys_state").write_text("9: <unknown>\n", encoding="utf-8")
+            (p2 / "state").write_text("4: ACTIVE\n", encoding="utf-8")
+            (p2 / "phys_state").write_text("5: LinkUp\n", encoding="utf-8")
+
+            real_path = Path
+
+            def fake_path(arg: str) -> Path:
+                if arg == "/sys/class/infiniband":
+                    return ib
+                return real_path(arg)
+
+            with patch("lib.host_live_probes.Path", side_effect=fake_path):
+                self.assertEqual(probe_opa_devices(), ["hfi1_0/2"])
+
     def test_probe_net_includes_up_lo(self) -> None:
         import tempfile
         from unittest.mock import patch

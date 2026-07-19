@@ -204,6 +204,11 @@ monitor_probe_infiniband_stack() {
 int main(void){return 0;}' -libmad -libumad
 }
 
+monitor_probe_opa_oib_utils() {
+  monitor_link_probe '#include <oib_utils.h>
+int main(void){return 0;}' -loib_utils -libmad -libumad -libverbs -lpublic -lpthread
+}
+
 monitor_probe_dcgm_vendor_link() {
   local inc="-I${MONITOR_DIR}/third_party/nvidia-dcgm"
   monitor_link_probe '#include <dcgm_agent.h>
@@ -227,7 +232,7 @@ monitor_lspci_sees_amd() {
 # Prints detection summary and sets STATIC_BUNDLE_FEAT_FLAGS (configure --disable-* list).
 static_bundle_print_detection_summary() {
   STATIC_BUNDLE_FEAT_FLAGS=()
-  local mach cpu_backend likwid_build lspci_path pci_nvidia pci_amd ib_ok dcgm_ok amd_ok
+  local mach cpu_backend likwid_build lspci_path pci_nvidia pci_amd ib_ok opa_ok dcgm_ok amd_ok
 
   mach="$(uname -m 2>/dev/null || echo unknown)"
   if is_x86_build_host; then
@@ -253,6 +258,14 @@ static_bundle_print_detection_summary() {
   else
     ib_ok="not detected"
     STATIC_BUNDLE_FEAT_FLAGS+=(--disable-infiniband)
+  fi
+
+  # host_opa sysfs path is always built; --enable-opa adds STL MAD via liboib_utils.
+  if monitor_probe_opa_oib_utils; then
+    opa_ok=detected
+    STATIC_BUNDLE_FEAT_FLAGS+=(--enable-opa)
+  else
+    opa_ok="not detected (host_opa sysfs-only; pass --enable-opa when IFS/liboib_utils present)"
   fi
 
   if monitor_probe_dcgm_vendor_link; then
@@ -291,6 +304,7 @@ EOF
   printf '%-36s %s\n' "PCI class hint (NVIDIA GPU):" "${pci_nvidia}"
   printf '%-36s %s\n' "PCI class hint (AMD GPU):" "${pci_amd}"
   printf '%-36s %s\n' "InfiniBand devel (libibmad + headers):" "${ib_ok}"
+  printf '%-36s %s\n' "Omni-Path STL MAD (liboib_utils):" "${opa_ok}"
   printf '%-36s %s\n' "NVIDIA DCGM link (libdcgm + vendored hdr):" "${dcgm_ok}"
   printf '%-36s %s\n' "AMD GPUPerfAPI header (gpu_perf_api.h):" "${amd_ok}"
   if test "${#STATIC_BUNDLE_FEAT_FLAGS[@]}" -gt 0; then

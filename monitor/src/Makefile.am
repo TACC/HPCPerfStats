@@ -269,9 +269,12 @@ TYPES	 += \
 endif
 
 hpcperfstatsd_LDFLAGS =
+# host_opa always built (sysfs); STL MAD path requires --enable-opa + liboib_utils.
+TYPES += \
+	opa.c \
+	opa_sysfs.c \
+	opa_mad_backoff.c
 if OPA
-TYPES	+= \
-	opa.c
 hpcperfstatsd_LDFLAGS += \
 		-lpthread \
 		-lmemusage
@@ -293,6 +296,9 @@ hpcperfstatsd_SOURCES += \
 	ib_port_state.h \
 	ib_family.h \
 	ib_mad.h \
+	host_opa.h \
+	opa_sysfs.h \
+	opa_mad_backoff.h \
 	$(TYPES)
 
 hpcperfstatsd_LDFLAGS += \

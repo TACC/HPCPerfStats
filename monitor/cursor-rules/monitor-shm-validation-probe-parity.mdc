@@ -6,6 +6,7 @@ globs:
   - HPCPerfStats/monitor/src/numa.c
   - HPCPerfStats/monitor/src/block.c
   - HPCPerfStats/monitor/src/ib.c
+  - HPCPerfStats/monitor/src/opa.c
   - HPCPerfStats/monitor/src/cpu.c
   - HPCPerfStats/monitor/src/intel_spr_imc.c
   - HPCPerfStats/monitor/scripts/lib/host_live_probes.py
@@ -38,7 +39,8 @@ Do **not** invent probe filters (e.g. skipping `lo`) unless the C collector does
 | `host_numa` | `numa.c` | NUMA node id | `probe_numa_node_devices()` |
 | `host_cpu` | `cpu.c` | logical CPU index from `/proc/stat` | `probe_cpu_devices()` |
 | `host_block` | `block.c` | block device names from `/proc/diskstats` | `probe_block_devices()` |
-| `host_ib` | `ib.c` | `hca.port` from sysfs | `probe_ib_devices()` |
+| `host_ib` | `ib.c` / `ib_family.c` | `hca.port` from sysfs (non-`hfi1_*`) | `probe_ib_devices()` |
+| `host_opa` | `opa.c` | `hfi1_N/P` (slash); **collectible** ports only (`ib_port_collectible`) | `probe_opa_devices()` |
 | `host_nfs` | `nfs.c` | NFS **mount path** (`mnt` token) from mountstats | `probe_nfs_mount_devices()` |
 | `lustre_*` | `osc.c` / `mdc.c` / `llite.c` | Lustre mount path via OBD→lov map | `probe_lustre_obd_devices()` |
 | `host_tmpfs` | `tmpfs.c` | `/tmp` when tmpfs | `probe_tmpfs_devices()` |

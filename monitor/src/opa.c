@@ -1,36 +1,23 @@
-/* host_opa — Intel Omni-Path (OPA) port counters via STL performance MADs. */
+/* host_opa — Omni-Path / Cornelis HFI port counters (STL MAD + sysfs fallback). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <dirent.h>
-#include <errno.h>
-#include "pscanf.h"
+
 #include "stats.h"
 #include "trace.h"
-#include "path_open_fail_once.h"
 #include "sys_iter.h"
+#include "ib_common.h"
+#include "host_opa.h"
+#include "opa_sysfs.h"
+#include "opa_mad_backoff.h"
+
+#if defined(MONITOR_WITH_OPA)
 #include "oib_utils.h"
 #include "iba/stl_pa.h"
 #include "iba/stl_sm.h"
+#endif
 
-#define KEYS \
-  X(port_xmit_data, "E", ""), \
-  X(port_rcv_data, "E", ""), \
-  X(port_xmit_pkts, "E", ""), \
-  X(port_rcv_pkts, "E", ""), \
-  X(port_multicast_xmit_pkts, "E", ""), \
-  X(port_multicast_rcv_pkts, "E", ""), \
-  X(port_xmit_wait, "E", ""), \
-  X(sw_port_congestion, "E", ""), \
-  X(port_rcv_fecn, "E", ""), \
-  X(port_rcv_becn, "E", ""), \
-  X(port_xmit_time_cong, "E", ""), \
-  X(port_xmit_wasted_bw, "E", ""), \
-  X(port_xmit_wait_data, "E", ""), \
-  X(port_rcv_bubble, "E", ""), \
-  X(port_mark_fecn, "E", ""), \
-  X(port_error_counter_summary, "E", "")
-
+#if defined(MONITOR_WITH_OPA)
 uint64_t g_transactID = 0xffffffff12340000;
 #define RESP_WAIT_TIME 1000
 
@@ -112,7 +99,7 @@ static void opa_publish_port_counters(struct stats *stats,
 #undef X
 }
 
-static int collect_hfi_port(struct stats *stats, uint32_t port)
+static int collect_hfi_port_mad(struct stats *stats, uint32_t port)
 {
   struct oib_port *mad_port = NULL;
   STL_SMP smp;
@@ -134,8 +121,6 @@ static int collect_hfi_port(struct stats *stats, uint32_t port)
   }
 
   if (oib_get_port_state(mad_port) != IB_PORT_ACTIVE) {
-    fprintf(stderr, "WARNING port (%s:%d) is not ACTIVE!\n",
-            oib_get_hfi_name(mad_port), oib_get_hfi_port_num(mad_port));
     ERROR("skipping inactive port %u", port);
     goto out;
   }
@@ -154,33 +139,58 @@ static int collect_hfi_port(struct stats *stats, uint32_t port)
     oib_close_port(mad_port);
   return rc;
 }
+#endif /* MONITOR_WITH_OPA */
 
 struct opa_port_ctx {
   struct stats_type *type;
   const char *hfi;
 };
 
+static void opa_collect_one_port(struct stats *stats, const char *hfi, int port)
+{
+  int mad_ok = 0;
+
+  if (stats == NULL || hfi == NULL)
+    return;
+
+#if defined(MONITOR_WITH_OPA)
+  if (opa_mad_collect_cycle_ok()) {
+    if (collect_hfi_port_mad(stats, (uint32_t) port) == 0) {
+      opa_mad_note_success();
+      mad_ok = 1;
+    } else {
+      opa_mad_note_failure();
+    }
+  }
+#endif
+  if (!mad_ok)
+    (void) opa_sysfs_collect_port(stats, hfi, port);
+}
+
 static void opa_port_each(const char *base, const char *name, void *ctx)
 {
   struct opa_port_ctx *pc = (struct opa_port_ctx *) ctx;
   int port;
+  char *endp = NULL;
   char dev[80];
   struct stats *stats;
 
   (void) base;
   if (pc == NULL || name == NULL)
     return;
-  port = atoi(name);
-  if (port <= 0)
+  port = (int) strtol(name, &endp, 10);
+  if (endp == name || *endp != '\0' || port <= 0)
+    return;
+  if (!ib_port_collectible(pc->hfi, port))
     return;
 
   snprintf(dev, sizeof(dev), "%s/%d", pc->hfi, port);
-  TRACE("IB HFI `%s', port %d, dev `%s'\n", pc->hfi, port, dev);
+  TRACE("OPA HFI `%s', port %d, dev `%s'\n", pc->hfi, port, dev);
   stats = get_current_stats(pc->type, dev);
   if (stats == NULL)
     return;
 
-  (void) collect_hfi_port(stats, (uint32_t) port);
+  opa_collect_one_port(stats, pc->hfi, port);
 }
 
 static void opa_hfi_each(const char *base, const char *name, void *ctx)
@@ -191,13 +201,15 @@ static void opa_hfi_each(const char *base, const char *name, void *ctx)
 
   if (type == NULL || name == NULL)
     return;
+  if (!ib_hca_is_opa_hfi(name))
+    return;
   snprintf(ports_path, sizeof(ports_path), "%s/%s/ports", base, name);
   sys_iter_for_each(ports_path, opa_port_each, &pc);
 }
 
 static void collect_opa(struct stats_type *type)
 {
-  if (type == NULL)
+  if (type == NULL || !type->st_enabled)
     return;
   sys_iter_for_each("/sys/class/infiniband", opa_hfi_each, type);
 }

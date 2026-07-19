@@ -1,0 +1,5 @@
+# Stampede3 / Omni-Path lspci line fragments (lowercased match tokens for fixtures).
+# Format: tag<TAB>line (gpu_pci style; used by test_hwdetect opa string checks via comments).
+# Real lines from Stampede3-LSPCI profiles (spr / icx).
+spr_cn5000	Fabric controller: Cornelis Networks CN5000 HFI Silicon, Dual Port, BGA [discrete]
+icx_opa100	Fabric controller: Intel Corporation Omni-Path HFI Silicon 100 Series [discrete] (rev 11)

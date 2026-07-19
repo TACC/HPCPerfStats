@@ -2,7 +2,11 @@
 description: IB sysfs line parsers — avoid substring false positives
 globs:
   - HPCPerfStats/monitor/src/ib_port_state.*
+  - HPCPerfStats/monitor/src/ib_common.*
+  - HPCPerfStats/monitor/src/opa.c
+  - HPCPerfStats/monitor/src/opa_sysfs.*
   - HPCPerfStats/monitor/tests/test_ib_port_state.c
+  - HPCPerfStats/monitor/tests/test_ib_hca_is_opa_hfi.c
 alwaysApply: false
 ---
 
@@ -23,5 +27,11 @@ alwaysApply: false
 ## MAD eligibility
 
 Port collectibility uses these parsers — false positives cause extra MAD I/O. Fix parsers at source, not only in `ib_mad.c`.
+
+## HFI / Omni-Path routing (`ib_hca_is_opa_hfi`)
+
+- Devices named `hfi1` / `hfi1_*` are **Cornelis CN5000 / Intel Omni-Path** and belong to **`host_opa`**, not **`host_ib`**.
+- `ib_foreach_hca_port` skips OPA HFIs; `opa.c` walks only those names.
+- `hwdetect` treats `cornelis` / `cn5000` / `omnipath` / `hfi` lspci tokens and `/sys/class/infiniband/hfi1_*` as OPA present; IB sysfs fallback ignores HFI-only nodes.
 
 Cross-links: **monitor-c-new-function-unittests**, **traceback-fix-discipline**.
