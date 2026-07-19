@@ -1,0 +1,220 @@
+0000:00:00.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Root Complex
+0000:00:00.2 IOMMU: Advanced Micro Devices, Inc. [AMD] Turin IOMMU (rev 01)
+0000:00:00.3 Root Complex Event Collector: Advanced Micro Devices, Inc. [AMD] Turin RCEC
+0000:00:01.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:00:01.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Turin GPP Bridge
+0000:00:02.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:00:03.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:00:04.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:00:05.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:00:07.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:00:07.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Turin Internal PCIe GPP Bridge to Bus [D:C]
+0000:00:14.0 SMBus: Advanced Micro Devices, Inc. [AMD] FCH SMBus Controller (rev 71)
+0000:00:14.3 ISA bridge: Advanced Micro Devices, Inc. [AMD] FCH LPC Bridge (rev 51)
+0000:00:18.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Data Fabric; Function 0
+0000:00:18.1 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Data Fabric; Function 1
+0000:00:18.2 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Data Fabric; Function 2
+0000:00:18.3 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Data Fabric; Function 3
+0000:00:18.4 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Data Fabric; Function 4
+0000:00:18.5 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Data Fabric; Function 5
+0000:00:18.6 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Data Fabric; Function 6
+0000:00:18.7 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Data Fabric; Function 7
+0000:00:19.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Data Fabric; Function 0
+0000:00:19.1 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Data Fabric; Function 1
+0000:00:19.2 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Data Fabric; Function 2
+0000:00:19.3 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Data Fabric; Function 3
+0000:00:19.4 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Data Fabric; Function 4
+0000:00:19.5 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Data Fabric; Function 5
+0000:00:19.6 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Data Fabric; Function 6
+0000:00:19.7 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Data Fabric; Function 7
+0000:01:00.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0000:02:00.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0000:02:01.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0000:02:02.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0000:02:03.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0000:02:04.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0000:03:00.0 3D controller: NVIDIA Corporation GB202GL [RTX PRO 6000 Blackwell Server Edition] (rev a1)
+0000:05:00.0 Non-Volatile memory controller: KIOXIA Corporation NVMe SSD Controller CD8P EDSFF (rev 01)
+0000:06:00.0 Fabric controller: Intel Corporation Omni-Path HFI Silicon 100 Series [discrete] (rev 10)
+0000:08:00.0 Non-Essential Instrumentation [1300]: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Function
+0000:3e:00.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Root Complex
+0000:3e:00.3 Root Complex Event Collector: Advanced Micro Devices, Inc. [AMD] Turin RCEC
+0000:3e:01.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:3e:01.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Turin GPP Bridge
+0000:3e:02.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:3f:00.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0000:40:00.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0000:40:01.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0000:40:02.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0000:40:03.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0000:41:00.0 Non-Volatile memory controller: KIOXIA Corporation NVMe SSD Controller CD8P EDSFF (rev 01)
+0000:42:00.0 3D controller: NVIDIA Corporation GB202GL [RTX PRO 6000 Blackwell Server Edition] (rev a1)
+0000:7a:00.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Root Complex
+0000:7a:00.2 IOMMU: Advanced Micro Devices, Inc. [AMD] Turin IOMMU (rev 01)
+0000:7a:01.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:7a:02.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:7a:03.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:7a:04.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:7a:05.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:7a:07.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:7a:07.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Turin Internal PCIe GPP Bridge to Bus [D:C]
+0000:7b:00.0 Non-Essential Instrumentation [1300]: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Function
+0000:7b:00.4 USB controller: Advanced Micro Devices, Inc. [AMD] Turin USB 3.1 xHCI (rev da)
+0000:7c:00.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Root Complex
+0000:7c:01.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:7c:02.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:7e:00.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Root Complex
+0000:7e:01.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:7e:02.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:80:00.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Root Complex
+0000:80:00.2 IOMMU: Advanced Micro Devices, Inc. [AMD] Turin IOMMU (rev 01)
+0000:80:01.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:80:02.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:80:03.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:80:03.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Turin GPP Bridge
+0000:80:03.3 PCI bridge: Advanced Micro Devices, Inc. [AMD] Turin GPP Bridge
+0000:80:03.4 PCI bridge: Advanced Micro Devices, Inc. [AMD] Turin GPP Bridge
+0000:80:04.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:80:05.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:80:07.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:80:07.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Turin Internal PCIe GPP Bridge to Bus [D:C]
+0000:81:00.0 Non-Volatile memory controller: Marvell Technology Group Ltd. 88NR2241 Non-Volatile memory controller (rev 20)
+0000:82:00.0 PCI bridge: PLDA PCI Express Bridge (rev 02)
+0000:83:00.0 VGA compatible controller: Matrox Electronics Systems Ltd. Integrated Matrox G200eW3 Graphics Controller (rev 08)
+0000:84:00.0 USB controller: Renesas Electronics Corp. uPD720201 USB 3.0 Host Controller (rev 03)
+0000:85:00.0 Non-Essential Instrumentation [1300]: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Function
+0000:85:00.5 Encryption controller: Advanced Micro Devices, Inc. [AMD] Turin CCP/ASP
+0000:88:00.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Root Complex
+0000:88:00.3 Root Complex Event Collector: Advanced Micro Devices, Inc. [AMD] Turin RCEC
+0000:88:01.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:88:01.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Turin GPP Bridge
+0000:88:02.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:89:00.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0000:8a:00.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0000:8a:01.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0000:8a:02.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0000:8a:03.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0000:8a:1f.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0000:8b:00.0 Non-Volatile memory controller: KIOXIA Corporation NVMe SSD Controller CD8P EDSFF (rev 01)
+0000:8c:00.0 3D controller: NVIDIA Corporation GB202GL [RTX PRO 6000 Blackwell Server Edition] (rev a1)
+0000:8f:00.0 Serial Attached SCSI controller: Broadcom / LSI PCIe Switch management endpoint (rev b0)
+0000:c4:00.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Root Complex
+0000:c4:00.2 IOMMU: Advanced Micro Devices, Inc. [AMD] Turin IOMMU (rev 01)
+0000:c4:00.3 Root Complex Event Collector: Advanced Micro Devices, Inc. [AMD] Turin RCEC
+0000:c4:01.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:c4:01.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Turin GPP Bridge
+0000:c4:02.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:c4:03.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:c4:04.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:c4:05.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:c4:07.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0000:c4:07.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Turin Internal PCIe GPP Bridge to Bus [D:C]
+0000:c4:07.2 PCI bridge: Advanced Micro Devices, Inc. [AMD] Turin Internal PCIe GPP Bridge to Bus [D:C]
+0000:c5:00.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0000:c6:00.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0000:c6:01.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0000:c6:02.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0000:c6:03.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0000:c6:04.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0000:c6:1f.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0000:c7:00.0 3D controller: NVIDIA Corporation GB202GL [RTX PRO 6000 Blackwell Server Edition] (rev a1)
+0000:c8:00.0 Ethernet controller: Mellanox Technologies MT2894 Family [ConnectX-6 Lx]
+0000:c8:00.1 Ethernet controller: Mellanox Technologies MT2894 Family [ConnectX-6 Lx]
+0000:c9:00.0 Non-Volatile memory controller: KIOXIA Corporation NVMe SSD Controller CD8P EDSFF (rev 01)
+0000:ca:00.0 Infiniband controller: Mellanox Technologies MT28908 Family [ConnectX-6]
+0000:cc:00.0 Serial Attached SCSI controller: Broadcom / LSI PCIe Switch management endpoint (rev b0)
+0000:cd:00.0 Non-Essential Instrumentation [1300]: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Function
+0000:cd:00.4 USB controller: Advanced Micro Devices, Inc. [AMD] Turin USB 3.1 xHCI (rev da)
+0000:ce:00.0 SATA controller: Advanced Micro Devices, Inc. [AMD] FCH SATA Controller [AHCI mode] (rev 93)
+0000:ce:00.1 SATA controller: Advanced Micro Devices, Inc. [AMD] FCH SATA Controller [AHCI mode] (rev 93)
+0001:00:00.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Root Complex
+0001:00:00.2 IOMMU: Advanced Micro Devices, Inc. [AMD] Turin IOMMU (rev 01)
+0001:00:00.3 Root Complex Event Collector: Advanced Micro Devices, Inc. [AMD] Turin RCEC
+0001:00:01.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:00:01.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Turin GPP Bridge
+0001:00:02.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:00:03.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:00:04.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:00:05.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:00:07.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:00:07.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Turin Internal PCIe GPP Bridge to Bus [D:C]
+0001:01:00.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0001:02:00.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0001:02:01.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0001:02:02.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0001:02:03.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0001:02:04.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0001:04:00.0 3D controller: NVIDIA Corporation GB202GL [RTX PRO 6000 Blackwell Server Edition] (rev a1)
+0001:08:00.0 Non-Essential Instrumentation [1300]: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Function
+0001:3e:00.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Root Complex
+0001:3e:00.3 Root Complex Event Collector: Advanced Micro Devices, Inc. [AMD] Turin RCEC
+0001:3e:01.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:3e:01.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Turin GPP Bridge
+0001:3e:02.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:3f:00.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0001:40:00.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0001:40:01.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0001:40:02.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0001:40:03.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0001:40:1f.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0001:44:00.0 3D controller: NVIDIA Corporation GB202GL [RTX PRO 6000 Blackwell Server Edition] (rev a1)
+0001:45:00.0 Serial Attached SCSI controller: Broadcom / LSI PCIe Switch management endpoint (rev b0)
+0001:7a:00.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Root Complex
+0001:7a:00.2 IOMMU: Advanced Micro Devices, Inc. [AMD] Turin IOMMU (rev 01)
+0001:7a:01.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:7a:02.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:7a:03.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:7a:04.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:7a:05.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:7a:07.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:7a:07.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Turin Internal PCIe GPP Bridge to Bus [D:C]
+0001:7b:00.0 Non-Essential Instrumentation [1300]: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Function
+0001:7c:00.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Root Complex
+0001:7c:01.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:7c:02.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:7e:00.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Root Complex
+0001:7e:01.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:7e:02.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:80:00.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Root Complex
+0001:80:00.2 IOMMU: Advanced Micro Devices, Inc. [AMD] Turin IOMMU (rev 01)
+0001:80:01.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:80:02.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:80:03.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:80:04.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:80:05.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:80:07.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:80:07.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Turin Internal PCIe GPP Bridge to Bus [D:C]
+0001:81:00.0 Non-Essential Instrumentation [1300]: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Function
+0001:81:00.5 Encryption controller: Advanced Micro Devices, Inc. [AMD] Turin CCP/ASP
+0001:88:00.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Root Complex
+0001:88:00.3 Root Complex Event Collector: Advanced Micro Devices, Inc. [AMD] Turin RCEC
+0001:88:01.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:88:01.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Turin GPP Bridge
+0001:88:02.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:89:00.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0001:8a:00.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0001:8a:01.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0001:8a:02.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0001:8a:03.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0001:8a:1f.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0001:8e:00.0 3D controller: NVIDIA Corporation GB202GL [RTX PRO 6000 Blackwell Server Edition] (rev a1)
+0001:8f:00.0 Serial Attached SCSI controller: Broadcom / LSI PCIe Switch management endpoint (rev b0)
+0001:c4:00.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin Root Complex
+0001:c4:00.2 IOMMU: Advanced Micro Devices, Inc. [AMD] Turin IOMMU (rev 01)
+0001:c4:00.3 Root Complex Event Collector: Advanced Micro Devices, Inc. [AMD] Turin RCEC
+0001:c4:01.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:c4:01.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Turin GPP Bridge
+0001:c4:02.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:c4:03.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:c4:04.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:c4:05.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:c4:07.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Host Bridge
+0001:c4:07.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Turin Internal PCIe GPP Bridge to Bus [D:C]
+0001:c5:00.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0001:c6:00.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0001:c6:01.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0001:c6:02.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0001:c6:03.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0001:c6:04.0 PCI bridge: Broadcom / LSI PEX890xx PCIe Gen 5 Switch (rev b0)
+0001:c8:00.0 3D controller: NVIDIA Corporation GB202GL [RTX PRO 6000 Blackwell Server Edition] (rev a1)
+0001:cc:00.0 Non-Essential Instrumentation [1300]: Advanced Micro Devices, Inc. [AMD] Turin PCIe Dummy Function

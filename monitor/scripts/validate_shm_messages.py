@@ -27,6 +27,10 @@ from lib.row_validate import (  # noqa: E402
     validate_sample_payload,
     validate_schema_tail_rows,
 )
+from lib.tacc_system_profiles import (  # noqa: E402
+    check_profile_type_contract,
+    resolve_system,
+)
 from lib.value_plausibility import check_plausibility  # noqa: E402
 
 
@@ -49,6 +53,55 @@ def capability_gate(caps: dict, manifest: dict) -> None:
         raise SystemExit(
             f"capability slug mismatch: manifest={want!r} live={live!r}"
         )
+
+
+def profile_gate(
+    manifest: dict,
+    *,
+    profile: str | None,
+    system: str | None,
+    types_present: set[str],
+    relax_profile_contract: bool,
+) -> list[str]:
+    """Validate --profile vs manifest and optional type contract. Returns errors."""
+    errors: list[str] = []
+    man_profile = manifest.get("tacc_profile")
+    man_system = manifest.get("tacc_system")
+
+    if profile is None and man_profile is None:
+        return errors
+
+    if profile is not None:
+        try:
+            resolved = resolve_system(profile, system)
+        except ValueError as exc:
+            return [f"FAIL profile: {exc}"]
+        if man_profile is not None and man_profile != profile:
+            errors.append(
+                f"FAIL profile mismatch: manifest tacc_profile={man_profile!r} "
+                f"--profile={profile!r}"
+            )
+        if man_system is not None and man_system != resolved:
+            errors.append(
+                f"FAIL system mismatch: manifest tacc_system={man_system!r} "
+                f"resolved={resolved!r}"
+            )
+        use_profile = profile
+        use_system = resolved
+    else:
+        use_profile = man_profile
+        use_system = man_system
+
+    if use_profile:
+        errors.extend(
+            check_profile_type_contract(
+                types_present,
+                use_profile,
+                system=use_system,
+                relax=relax_profile_contract,
+            )
+        )
+    return errors
 
 
 def schema_keys_from_manifest(manifest: dict) -> dict[str, list[str]]:
@@ -285,7 +338,25 @@ def main() -> int:
         "--golden-dir",
         type=Path,
         default=None,
-        help="Optional byte diff vs shm_*_<slug>.txt goldens",
+        help="Optional byte diff vs shm_*_<slug>[__<profile>].txt goldens",
+    )
+    p.add_argument(
+        "--profile",
+        type=str,
+        default=None,
+        help="TACC queue profile (e.g. h100); enables profile type contract",
+    )
+    p.add_argument(
+        "--system",
+        type=str,
+        default=None,
+        choices=("stampede3", "vista"),
+        help="TACC system (default: infer from --profile)",
+    )
+    p.add_argument(
+        "--relax-profile-contract",
+        action="store_true",
+        help="Skip require/forbid type checks for --profile",
     )
     p.add_argument(
         "--spot-check-max-age",
@@ -344,12 +415,27 @@ def main() -> int:
 
     caps = load_json(args.capabilities)
     manifest = load_json(args.manifest)
-    capability_gate(caps, manifest)
+    try:
+        capability_gate(caps, manifest)
+    except SystemExit as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
 
     is_fixture = args.fixture_dir is not None
     shm_dir = args.fixture_dir if is_fixture else args.shm_dir
     schema_by_type = schema_keys_from_manifest(manifest)
     enable_slow = manifest.get("enable_slow_tier", True)
+
+    profile_errors = profile_gate(
+        manifest,
+        profile=args.profile,
+        system=args.system,
+        types_present=set(schema_by_type),
+        relax_profile_contract=args.relax_profile_contract,
+    )
+    if profile_errors:
+        print("\n".join(profile_errors), file=sys.stderr)
+        return 1
 
     if args.wait_shm_seconds > 0 and not is_fixture:
         try:
@@ -467,11 +553,13 @@ def main() -> int:
 
     if args.golden_dir and not errors:
         slug = manifest.get("capability_slug", "")
+        profile = args.profile or manifest.get("tacc_profile")
         golden_errors = compare_golden_shm(
             shm_dir,
             args.golden_dir,
             slug,
             enable_slow_tier=enable_slow,
+            profile=profile,
         )
         if golden_errors:
             errors.extend(golden_errors)

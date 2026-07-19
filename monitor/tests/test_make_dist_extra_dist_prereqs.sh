@@ -23,6 +23,8 @@ for path in \
   scripts/lib/value_plausibility.py \
   scripts/lib/live_spot_check.py \
   scripts/lib/golden_diff.py \
+  scripts/lib/tacc_system_profiles.py \
+  scripts/validate_stampede3_profile.sh \
   scripts/lib/daemon_conf.py \
   scripts/lib/shm_snapshot.py \
   scripts/lib/cross_sample_validate.py \
@@ -43,6 +45,11 @@ grep -q 'scripts/lib/message_parse.py' scripts/prepare_rpmbuild_dirs.sh \
   || { echo "prepare_rpmbuild_dirs.sh must preflight scripts/lib/message_parse.py" >&2; exit 1; }
 grep -q 'scripts/rpm_debug_shm_verify.sh' scripts/prepare_rpmbuild_dirs.sh \
   || { echo "prepare_rpmbuild_dirs.sh must preflight scripts/rpm_debug_shm_verify.sh" >&2; exit 1; }
+
+grep -q 'scripts/lib/tacc_system_profiles.py' scripts/prepare_rpmbuild_dirs.sh \
+  || { echo "prepare_rpmbuild_dirs.sh must preflight scripts/lib/tacc_system_profiles.py" >&2; exit 1; }
+grep -q 'scripts/validate_stampede3_profile.sh' scripts/prepare_rpmbuild_dirs.sh \
+  || { echo "prepare_rpmbuild_dirs.sh must preflight scripts/validate_stampede3_profile.sh" >&2; exit 1; }
 
 for hdr in host_cpu.h host_mem.h host_net.h host_ps.h; do
   test -f "src/${hdr}" \

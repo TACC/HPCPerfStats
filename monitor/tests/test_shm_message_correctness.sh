@@ -10,7 +10,7 @@ VALIDATOR="${MONITOR_ROOT}/scripts/validate_shm_messages.py"
 SYNTHETIC_DIR="${MONITOR_ROOT}/tests/expected/synthetic_fixture"
 EXPECTED_DIR="${MONITOR_ROOT}/tests/expected"
 
-if [[ ! -x "${VENV_PY}" ]]; then
+if [[ ! -x "${VENV_PY}" ]] || ! "${VENV_PY}" -c "import sys" >/dev/null 2>&1; then
   VENV_PY="$(command -v python3)"
 fi
 

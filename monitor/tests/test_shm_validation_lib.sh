@@ -5,7 +5,7 @@ set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REPO_ROOT="$(cd "${ROOT}/../.." && pwd)"
 VENV_PY="${REPO_ROOT}/.venv/bin/python3"
-if test ! -x "${VENV_PY}"; then
+if test ! -x "${VENV_PY}" || ! "${VENV_PY}" -c "import sys" >/dev/null 2>&1; then
   VENV_PY="$(command -v python3)"
 fi
 

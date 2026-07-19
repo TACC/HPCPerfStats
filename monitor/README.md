@@ -56,6 +56,20 @@ rpmbuild -ba --define "_topdir ${PWD}/rpmbuild" "${PWD}/rpmbuild/SPECS/hpcperfst
 
 Fleet matrix (`HPCS_BUNDLE_FLEET=stampede3` or `scripts/fleet/stampede3.force` in the tarball): `--enable-ib-mad-dlopen`, `--enable-opa-mad-dlopen`, `--disable-amd-gpu`, `--enable-intel-gpu` when vendored XPUM headers exist. Binary `NEEDED` must not list `libibmad` / `liboib_utils`.
 
+**Per-queue shm validate (one binary × six profiles):** after installing the same DEBUG fleet RPM/binary on a node of each queue class, run:
+
+```bash
+# On each of skx, icx, spr, h100, pvc, amd-rtx (same CAPS_JSON / fleet slug):
+./scripts/validate_stampede3_profile.sh --profile h100
+```
+
+Artifacts: `expectations_<slug>__<profile>.json` and
+`test_runs/monitor/validate_<slug>__<profile>_YYYY-MM-DD.txt`. Profile names and
+LSPCI dumps live under `tests/fixtures/stampede3_lspci_profiles/` (in git).
+
+**Vista LSPCI fixtures (future validate):** `tests/fixtures/vista_lspci_profiles/{gg,gh}`
+are vendored for a future Vista path; the Stampede3 wrapper rejects `gg`/`gh`.
+
 ### Intel Data Center GPU / PVC (`intel_gpu`)
 
 - **`--enable-intel-gpu={auto,yes,no}`** (default **auto** via `scripts/gpu_lspci_probe.sh intel`). Compiles against vendored **`third_party/intel-xpum/`** headers (XPUM **1.2.33** only — not system `/usr/include`).
@@ -238,8 +252,15 @@ Debug RPM installs `sample_freq=30` and `sample_freq_slow=60` in
 `/etc/hpcperfstats/hpcperfstats.conf` (see `hpcperfstats.spec` `hpc_debug_build`
 block); cross-sample wait bounds are derived from that file at validate time.
 Optional emit drift check: copy shm files to
-`tests/expected/shm_{schema,fast,full}_<slug>.txt` and pass
-`--golden-dir tests/expected`.
+`tests/expected/shm_{schema,fast,full}_<slug>[__<profile>].txt` and pass
+`--golden-dir tests/expected` (and `--profile` when using profile-scoped goldens).
+
+Stampede3 fleet DEBUG builds emit slug tokens `ibdyn` / `opadyn` / `intelgpu` when
+those macros are compiled in, plus JSON `fleet: "stampede3"` when the fleet
+signature matches. Prefer `./scripts/validate_stampede3_profile.sh --profile …`
+so expectations/reports include the `__<profile>` suffix and the type-presence
+contract (e.g. h100 requires `nvidia_gpu`+`host_ib`+`host_opa`). Sysfs `host_opa`
+is always built; slug tokens `opa`/`opadyn` reflect MAD compile flags.
 
 For **debug RPM**, use `./scripts/prepare_rpmbuild_dirs.sh --debug-build` — it prints a
 single chained command:
@@ -258,9 +279,11 @@ CROSS_SAMPLE_CHECK=1 ./scripts/rpm_debug_shm_verify.sh
 ```
 
 **Capability slug** — `monitor-build-capabilities.json` includes
-`capability_slug` (compile flags + `slowtier0`/`slowtier1`). Golden fixtures
+`capability_slug` (compile flags + `slowtier0`/`slowtier1`; Stampede3 fleet may
+add `ibdyn`/`opadyn`/`intelgpu` and `fleet: "stampede3"`). Golden fixtures
 and expectations must use the same slug in filenames
-(`tests/expected/shm_*_<slug>.txt`, `expectations_<slug>.json`). CI runs
+(`tests/expected/shm_*_<slug>.txt`, `expectations_<slug>.json`; optional
+`__<profile>` suffix for multi-queue fleet validates). CI runs
 `tests/test_shm_message_correctness.sh` (synthetic fixture always; live slug
 goldens when present; **exit 77 skip** otherwise). Local run logs belong under
 **`<workspace-root>/test_runs/`** (see **test-runs-output-directory**).

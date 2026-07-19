@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build expectations_<capability_slug>.json from build capabilities + host probes."""
+"""Build expectations_<capability_slug>[__<profile>].json from capabilities + host probes."""
 from __future__ import annotations
 
 import argparse
@@ -22,6 +22,10 @@ from lib.message_parse import (  # noqa: E402
     schema_key_name,
 )
 from lib.payload_parse import observed_devices_from_shm  # noqa: E402
+from lib.tacc_system_profiles import (  # noqa: E402
+    expectations_basename,
+    resolve_system,
+)
 
 
 def load_capabilities(path: Path) -> dict:
@@ -43,6 +47,8 @@ def build_manifest(
     *,
     shm_dir: Path | None,
     enable_slow_tier: bool,
+    profile: str | None = None,
+    system: str | None = None,
 ) -> dict:
     slug = capabilities["capability_slug"]
     schema = schema_from_shm(shm_dir) if shm_dir else None
@@ -65,7 +71,7 @@ def build_manifest(
                 entry["devices"] = devices
             types[type_name] = entry
 
-    return {
+    doc: dict = {
         "capability_slug": slug,
         "compile_capabilities": capabilities,
         "host_fqdn": probe_host_fqdn(),
@@ -73,6 +79,11 @@ def build_manifest(
         "enable_slow_tier": enable_slow_tier,
         "types": types,
     }
+    if profile:
+        tacc_system = resolve_system(profile, system)
+        doc["tacc_system"] = tacc_system
+        doc["tacc_profile"] = profile
+    return doc
 
 
 def main() -> int:
@@ -81,6 +92,19 @@ def main() -> int:
     p.add_argument("--shm-dir", type=Path, default=None)
     p.add_argument("--enable-slow-tier", type=int, default=1, choices=(0, 1))
     p.add_argument("--out", type=Path, default=None)
+    p.add_argument(
+        "--profile",
+        type=str,
+        default=None,
+        help="TACC queue profile (e.g. h100, skx); stamps tacc_profile into manifest",
+    )
+    p.add_argument(
+        "--system",
+        type=str,
+        default=None,
+        choices=("stampede3", "vista"),
+        help="TACC system (default: infer from --profile fixture set)",
+    )
     args = p.parse_args()
 
     caps = load_capabilities(args.capabilities)
@@ -90,11 +114,18 @@ def main() -> int:
         env = os.environ.get("HPCPERFSTATS_DEBUG_SHM_DIR", "/dev/shm/hpcperfstatsd-debug")
         shm_dir = Path(env)
 
-    manifest = build_manifest(
-        caps,
-        shm_dir=shm_dir,
-        enable_slow_tier=bool(args.enable_slow_tier),
-    )
+    try:
+        manifest = build_manifest(
+            caps,
+            shm_dir=shm_dir,
+            enable_slow_tier=bool(args.enable_slow_tier),
+            profile=args.profile,
+            system=args.system,
+        )
+    except ValueError as exc:
+        print(f"build_message_expectations: {exc}", file=sys.stderr)
+        return 2
+
     if not manifest["types"]:
         print(
             "build_message_expectations: no schema from shm; start daemon or pass --shm-dir",
@@ -102,7 +133,9 @@ def main() -> int:
         )
         return 1
 
-    out = args.out or args.capabilities.parent / f"expectations_{slug}.json"
+    out = args.out or (
+        args.capabilities.parent / expectations_basename(slug, args.profile)
+    )
     out.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(f"Wrote {out}")
     return 0

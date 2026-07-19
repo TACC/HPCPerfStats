@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from lib.tacc_system_profiles import golden_basename
+
 
 def _read_norm(path: Path) -> str:
     return path.read_text(encoding="utf-8").replace("\r\n", "\n")
@@ -14,12 +16,13 @@ def compare_golden_shm(
     slug: str,
     *,
     enable_slow_tier: bool,
+    profile: str | None = None,
 ) -> list[str]:
     errors: list[str] = []
-    pairs = [("schema", f"shm_schema_{slug}.txt")]
+    pairs = [("schema", golden_basename("schema", slug, profile))]
     if enable_slow_tier:
-        pairs.append(("fast", f"shm_fast_{slug}.txt"))
-    pairs.append(("full", f"shm_full_{slug}.txt"))
+        pairs.append(("fast", golden_basename("fast", slug, profile)))
+    pairs.append(("full", golden_basename("full", slug, profile)))
 
     for shm_name, golden_name in pairs:
         live = shm_dir / shm_name

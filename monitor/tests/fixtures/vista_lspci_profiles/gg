@@ -1,0 +1,18 @@
+0000:00:00.0 PCI bridge: NVIDIA Corporation Device 22b2
+0000:01:00.0 Infiniband controller: Mellanox Technologies MT2910 Family [ConnectX-7]
+0002:00:00.0 PCI bridge: NVIDIA Corporation Device 22b2
+0004:00:00.0 PCI bridge: NVIDIA Corporation Device 22b2
+0006:00:00.0 PCI bridge: NVIDIA Corporation Device 22b2
+0007:00:00.0 PCI bridge: NVIDIA Corporation Device 22b8
+0008:00:00.0 PCI bridge: NVIDIA Corporation Device 22b9
+0008:01:00.0 PCI bridge: ASPEED Technology, Inc. AST1150 PCI-to-PCI Bridge (rev 06)
+0008:02:00.0 VGA compatible controller: ASPEED Technology, Inc. ASPEED Graphics Family (rev 52)
+0010:00:00.0 PCI bridge: NVIDIA Corporation Device 22b2
+0012:00:00.0 PCI bridge: NVIDIA Corporation Device 22b2
+0014:00:00.0 PCI bridge: NVIDIA Corporation Device 22b2
+0015:00:00.0 PCI bridge: NVIDIA Corporation Device 22b8
+0015:01:00.0 Non-Volatile memory controller: Sandisk Corp WD PC SN810 / Black SN850 NVMe SSD (rev 01)
+0016:00:00.0 PCI bridge: NVIDIA Corporation Device 22b2
+0017:00:00.0 PCI bridge: NVIDIA Corporation Device 22b8
+0018:00:00.0 PCI bridge: NVIDIA Corporation Device 22b9
+0018:01:00.0 USB controller: Renesas Electronics Corp. uPD720201 USB 3.0 Host Controller (rev 03)

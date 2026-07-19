@@ -4,11 +4,14 @@ globs:
   - HPCPerfStats/monitor/scripts/emit_build_capabilities.py
   - HPCPerfStats/monitor/scripts/build_message_expectations.py
   - HPCPerfStats/monitor/scripts/validate_shm_messages.py
+  - HPCPerfStats/monitor/scripts/validate_stampede3_profile.sh
   - HPCPerfStats/monitor/scripts/lib/*
   - HPCPerfStats/monitor/tests/test_shm_message_correctness.sh
   - HPCPerfStats/monitor/tests/expected/shm_*
   - HPCPerfStats/monitor/tests/expected/capabilities_*
   - HPCPerfStats/monitor/tests/expected/expectations_*
+  - HPCPerfStats/monitor/tests/fixtures/stampede3_lspci_profiles/**
+  - HPCPerfStats/monitor/tests/fixtures/vista_lspci_profiles/**
 alwaysApply: false
 ---
 
@@ -24,26 +27,39 @@ alwaysApply: false
 
 - Emitted by `scripts/emit_build_capabilities.py` → `<builddir>/monitor-build-capabilities.json`.
 - `make capabilities` in configured build tree; `build_static_bundle.sh` invokes unless `SKIP_CAPABILITIES=1`.
-- Slug tokens (omit absent): `arch`, `ver`, `debug`, `hw`, `ib`, `nvgpu`, `amdgpu`, `lustre`, `opa`, `dcgm|likwid|none`, `slowtier0|slowtier1`.
-- **All fixtures** use slug in filename: `expectations_<slug>.json`, `tests/expected/shm_{schema,fast,full}_<slug>.txt`.
+- Slug tokens (omit absent): `arch`, `ver`, `debug`, `hw`, `ib`, `ibdyn`, `nvgpu`, `amdgpu`, `intelgpu`, `lustre`, `opa`, `opadyn`, `dcgm|likwid|none`, `slowtier0|slowtier1`.
+- Stampede3 fleet signature → JSON `fleet: "stampede3"` when `ib_mad_dlopen` + `opa_mad_dlopen` + `intel_gpu` and not `amd_gpu` (not a slug token).
+- **Fixtures** use slug in filename: `expectations_<slug>.json`, `tests/expected/shm_{schema,fast,full}_<slug>.txt`.
+- **Profile-scoped** (Stampede3 one-binary × queue): `expectations_<slug>__<profile>.json`, `shm_*_<slug>__<profile>.txt` — profile is host/run identity, not compile identity.
 - Validator **layer 0**: manifest slug must match capabilities JSON; exit 2 on mismatch.
 - CI/integration: **exit 77 skip** when no goldens for live slug — never fall back to generic golden.
+
+## TACC LSPCI profile fixtures
+
+| System | In-tree path | Profiles |
+|--------|--------------|----------|
+| Stampede3 | `tests/fixtures/stampede3_lspci_profiles/` | `skx`, `icx`, `spr`, `h100`, `pvc`, `amd-rtx` |
+| Vista (future) | `tests/fixtures/vista_lspci_profiles/` | `gg`, `gh` |
+
+Registry + type contracts: `scripts/lib/tacc_system_profiles.py`. Operator wrapper (Stampede3 only): `scripts/validate_stampede3_profile.sh --profile <name>`.
 
 ## Artifacts
 
 | Local (gitignored) | Committed |
 |--------------------|-----------|
 | `test_runs/monitor/validate_<slug>_*.txt` | `tests/expected/shm_*_<slug>.txt` |
-| `test_runs/monitor/shm_snapshot_<host>_<slug>/` | `scripts/lib/*.py` |
+| `test_runs/monitor/validate_<slug>__<profile>_*.txt` | `scripts/lib/*.py` |
+| `test_runs/monitor/shm_snapshot_<host>_<slug>/` | `tests/fixtures/{stampede3,vista}_lspci_profiles/` |
 
 ## Data-host runbook
 
 1. **Static DEBUG build:** `build_static_bundle.sh` with `--enable-debug` → `make -C .build-static capabilities`.
 2. **Debug RPM:** `prepare_rpmbuild_dirs.sh --debug-build` → `rpmbuild ... && ./scripts/rpm_debug_shm_verify.sh` (install main RPM, validate shm).
 3. Run daemon; read `schema`/`fast`/`full` from shm.
-4. `build_message_expectations.py --capabilities … --shm-dir … --enable-slow-tier … --out expectations_<slug>.json`.
-5. `validate_shm_messages.py --capabilities … --manifest … --shm-dir …` (optional `--report` under `test_runs/monitor/`).
-6. **Cross-sample (L5):** `--cross-sample-check` captures two shm reads using **active** `/etc/hpcperfstats/hpcperfstats.conf` timing (debug RPM: `sample_freq=30`, `sample_freq_slow=60` per `hpcperfstats.spec`); checks header timestamp cadence and schema `E` counter monotonicity. CI: `--cross-sample-fixture-dir tests/expected/cross_sample_fixture`. Debug verify: `CROSS_SAMPLE_CHECK=1 ./scripts/rpm_debug_shm_verify.sh`.
+4. `build_message_expectations.py --capabilities … --shm-dir … --enable-slow-tier … [--profile …] --out expectations_<slug>[__<profile>].json`.
+5. `validate_shm_messages.py --capabilities … --manifest … --shm-dir … [--profile …]` (optional `--report` under `test_runs/monitor/`).
+6. **Stampede3 fleet (one binary × six queues):** on each queue class node, `./scripts/validate_stampede3_profile.sh --profile <skx|icx|spr|h100|pvc|amd-rtx>`.
+7. **Cross-sample (L5):** `--cross-sample-check` captures two shm reads using **active** `/etc/hpcperfstats/hpcperfstats.conf` timing (debug RPM: `sample_freq=30`, `sample_freq_slow=60` per `hpcperfstats.spec`); checks header timestamp cadence and schema `E` counter monotonicity. CI: `--cross-sample-fixture-dir tests/expected/cross_sample_fixture`. Debug verify: `CROSS_SAMPLE_CHECK=1 ./scripts/rpm_debug_shm_verify.sh`.
 
 ## Cross-sample flags
 
@@ -60,7 +76,7 @@ Debug RPM installed conf is **never** the git `src/hpcperfstats.conf` template (
 ## Tests
 
 - C: `test_stats_buffer_debug_shm.c`, `test_debug_shm_schema_mirror.c` (**monitor-debug-shm**).
-- Shell: `test_shm_message_correctness.sh` (slug-aware).
-- Python via repo `.venv` (**python-venv-enforcement**).
+- Shell: `test_shm_message_correctness.sh` (slug-aware), `test_validate_stampede3_profile.sh`.
+- Python via repo `.venv` (**python-venv-enforcement**): `test_shm_validation_lib.py` (emitter fleet tokens, profile contracts, fixtures).
 
 Cross-links: **monitor-collect-tier-gating**, **monitor-schema-keys-headers**, **monitor-c-testing-standards**, **test-runs-output-directory**, **monitor-shm-validation-probe-parity** (collector ↔ probe sync).

@@ -127,6 +127,8 @@ for distfile in \
   scripts/lib/value_plausibility.py \
   scripts/lib/live_spot_check.py \
   scripts/lib/golden_diff.py \
+  scripts/lib/tacc_system_profiles.py \
+  scripts/validate_stampede3_profile.sh \
   scripts/lib/daemon_conf.py \
   scripts/lib/shm_snapshot.py \
   scripts/lib/cross_sample_validate.py \

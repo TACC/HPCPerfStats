@@ -24,7 +24,21 @@ from lib.row_validate import (  # noqa: E402
     validate_metric_row,
     validate_sample_payload,
 )
+from lib.tacc_system_profiles import (  # noqa: E402
+    STAMPEDE3,
+    VISTA,
+    check_profile_type_contract,
+    expectations_basename,
+    golden_basename,
+    resolve_system,
+    stampede3_profiles,
+    vista_profiles,
+)
 from lib.value_plausibility import check_plausibility  # noqa: E402
+
+# Import emitter helpers for fleet slug tests
+import emit_build_capabilities as ebc  # noqa: E402
+
 
 SYNTHETIC = MONITOR / "tests" / "expected" / "synthetic_fixture"
 CROSS_SAMPLE = MONITOR / "tests" / "expected" / "cross_sample_fixture"
@@ -515,6 +529,144 @@ class GoldenDiffTests(unittest.TestCase):
             golden.write_text("different\n", encoding="utf-8")
             errs = compare_golden_shm(td, td, slug, enable_slow_tier=False)
             self.assertTrue(any("differs" in e for e in errs))
+
+    def test_golden_with_profile_suffix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            td = Path(tmp)
+            golden_dir = td / "goldens"
+            golden_dir.mkdir()
+            slug = "fleet_slug"
+            profile = "h100"
+            text = "123 1 host\nnvidia_gpu 0 @full 1 2 3\n"
+            (td / "full").write_text(text, encoding="utf-8")
+            (golden_dir / golden_basename("full", slug, profile)).write_text(
+                text, encoding="utf-8"
+            )
+            errs = compare_golden_shm(
+                td, golden_dir, slug, enable_slow_tier=False, profile=profile
+            )
+            self.assertEqual(errs, [])
+
+
+class TaccSystemProfilesTests(unittest.TestCase):
+    def test_fixture_dirs_complete(self) -> None:
+        self.assertEqual(
+            stampede3_profiles(),
+            frozenset({"skx", "icx", "spr", "h100", "pvc", "amd-rtx"}),
+        )
+        self.assertEqual(vista_profiles(), frozenset({"gg", "gh"}))
+
+    def test_resolve_system(self) -> None:
+        self.assertEqual(resolve_system("h100"), STAMPEDE3)
+        self.assertEqual(resolve_system("gg"), VISTA)
+        self.assertEqual(resolve_system("gh", "vista"), VISTA)
+        with self.assertRaises(ValueError):
+            resolve_system("nope")
+
+    def test_artifact_names(self) -> None:
+        self.assertEqual(
+            expectations_basename("slug", "h100"), "expectations_slug__h100.json"
+        )
+        self.assertEqual(expectations_basename("slug"), "expectations_slug.json")
+        self.assertEqual(
+            golden_basename("schema", "slug", "skx"), "shm_schema_slug__skx.txt"
+        )
+
+    def test_stampede3_contract_h100(self) -> None:
+        ok = {"nvidia_gpu", "host_ib", "host_opa", "cpu"}
+        self.assertEqual(check_profile_type_contract(ok, "h100"), [])
+        bad = check_profile_type_contract({"host_opa"}, "h100")
+        self.assertTrue(any("missing" in e for e in bad))
+        forbid = check_profile_type_contract(ok | {"amd_gpu"}, "amd-rtx")
+        self.assertTrue(any("forbidden" in e for e in forbid))
+
+    def test_vista_provisional_contracts(self) -> None:
+        self.assertEqual(
+            check_profile_type_contract({"host_ib", "cpu"}, "gg"), []
+        )
+        self.assertEqual(
+            check_profile_type_contract({"nvidia_gpu", "host_ib"}, "gh"), []
+        )
+        miss = check_profile_type_contract({"cpu"}, "gh")
+        self.assertTrue(any("missing" in e for e in miss))
+        opa = check_profile_type_contract({"host_ib", "host_opa"}, "gg")
+        self.assertTrue(any("forbidden" in e for e in opa))
+
+    def test_relax_skips_contract(self) -> None:
+        self.assertEqual(
+            check_profile_type_contract(set(), "h100", relax=True), []
+        )
+
+
+class EmitBuildCapabilitiesFleetTests(unittest.TestCase):
+    def test_slug_tokens_dyn_intel(self) -> None:
+        features = {"HARDWARE", "INFINIBAND", "OPA", "INTEL_GPU", "GPU"}
+        slug = ebc.build_capability_slug(
+            arch="x86_64",
+            version="1.0",
+            debug=True,
+            features=features,
+            cpu_backend="likwid",
+            tier="slowtier1",
+            ib_mad_dlopen=True,
+            opa_mad_dlopen=True,
+        )
+        self.assertIn("ibdyn", slug)
+        self.assertIn("opadyn", slug)
+        self.assertIn("intelgpu", slug)
+        self.assertIn("-ib-", f"-{slug}-")
+        self.assertIn("-opa-", f"-{slug}-")
+        self.assertIn("-nvgpu-", f"-{slug}-")
+
+    def test_slug_omits_dyn_when_absent(self) -> None:
+        slug = ebc.build_capability_slug(
+            arch="x86_64",
+            version="1.0",
+            debug=False,
+            features={"INFINIBAND"},
+            cpu_backend=None,
+            tier="slowtier0",
+            ib_mad_dlopen=False,
+            opa_mad_dlopen=False,
+        )
+        self.assertNotIn("ibdyn", slug)
+        self.assertNotIn("opadyn", slug)
+        self.assertNotIn("intelgpu", slug)
+
+    def test_fleet_stampede3_signature(self) -> None:
+        self.assertEqual(
+            ebc._fleet_stampede3(
+                ib_mad_dlopen=True,
+                opa_mad_dlopen=True,
+                features={"INTEL_GPU"},
+            ),
+            "stampede3",
+        )
+        self.assertIsNone(
+            ebc._fleet_stampede3(
+                ib_mad_dlopen=True,
+                opa_mad_dlopen=True,
+                features={"INTEL_GPU", "AMD_GPU"},
+            )
+        )
+
+    def test_parse_makefile_dyn_macros(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            td = Path(tmp)
+            src = td / "src"
+            src.mkdir()
+            (src / "Makefile").write_text(
+                "DEFS = -DMONITOR_WITH_INFINIBAND -DMONITOR_WITH_OPA "
+                "-DMONITOR_WITH_INTEL_GPU -DMONITOR_IB_MAD_DLOPEN "
+                "-DMONITOR_OPA_MAD_DLOPEN -DMONITOR_CPU_BACKEND_LIKWID -DDEBUG\n",
+                encoding="utf-8",
+            )
+            features, cpu, debug, ibdyn, opadyn = ebc._parse_src_makefile(td)
+            self.assertIn("INTEL_GPU", features)
+            self.assertTrue(ibdyn)
+            self.assertTrue(opadyn)
+            self.assertTrue(debug)
+            self.assertEqual(cpu, "likwid")
 
 
 if __name__ == "__main__":

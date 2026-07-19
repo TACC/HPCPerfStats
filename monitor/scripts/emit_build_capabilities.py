@@ -25,6 +25,8 @@ _RE_CONFIG_LOG_BOOL = re.compile(
 _RE_PACKAGE_VERSION = re.compile(r'#define\s+PACKAGE_VERSION\s+"([^"]+)"')
 _RE_MONITOR_WITH = re.compile(r"-DMONITOR_WITH_([A-Z_]+)")
 _RE_CPU_BACKEND = re.compile(r"-DMONITOR_CPU_BACKEND_([A-Z]+)")
+_RE_IB_MAD_DLOPEN = re.compile(r"-DMONITOR_IB_MAD_DLOPEN\b")
+_RE_OPA_MAD_DLOPEN = re.compile(r"-DMONITOR_OPA_MAD_DLOPEN\b")
 
 
 def _read_text(path: Path) -> str:
@@ -50,13 +52,17 @@ def _parse_config_log(build_dir: Path) -> dict[str, bool]:
     return out
 
 
-def _parse_src_makefile(build_dir: Path) -> tuple[set[str], str | None, bool]:
+def _parse_src_makefile(
+    build_dir: Path,
+) -> tuple[set[str], str | None, bool, bool, bool]:
     text = _read_text(build_dir / "src" / "Makefile")
     features = set(_RE_MONITOR_WITH.findall(text))
     cpu_m = _RE_CPU_BACKEND.search(text)
     cpu_backend = cpu_m.group(1).lower() if cpu_m else None
     debug = "-DDEBUG" in text
-    return features, cpu_backend, debug
+    ib_mad_dlopen = bool(_RE_IB_MAD_DLOPEN.search(text))
+    opa_mad_dlopen = bool(_RE_OPA_MAD_DLOPEN.search(text))
+    return features, cpu_backend, debug, ib_mad_dlopen, opa_mad_dlopen
 
 
 def _package_version(build_dir: Path) -> str:
@@ -97,6 +103,8 @@ def build_capability_slug(
     features: set[str],
     cpu_backend: str | None,
     tier: str,
+    ib_mad_dlopen: bool = False,
+    opa_mad_dlopen: bool = False,
 ) -> str:
     parts: list[str] = [arch, f"ver{version}"]
     if debug:
@@ -105,14 +113,20 @@ def build_capability_slug(
         parts.append("hw")
     if "INFINIBAND" in features:
         parts.append("ib")
+    if ib_mad_dlopen:
+        parts.append("ibdyn")
     if "GPU" in features:
         parts.append("nvgpu")
     if "AMD_GPU" in features:
         parts.append("amdgpu")
+    if "INTEL_GPU" in features:
+        parts.append("intelgpu")
     if "LUSTRE" in features:
         parts.append("lustre")
     if "OPA" in features:
         parts.append("opa")
+    if opa_mad_dlopen:
+        parts.append("opadyn")
     if cpu_backend:
         parts.append(cpu_backend)
     elif "HARDWARE" in features:
@@ -127,13 +141,33 @@ def build_capability_slug(
     return slug
 
 
+def _fleet_stampede3(
+    *,
+    ib_mad_dlopen: bool,
+    opa_mad_dlopen: bool,
+    features: set[str],
+) -> str | None:
+    """Return 'stampede3' when compiled matrix matches fleet signature."""
+    if (
+        ib_mad_dlopen
+        and opa_mad_dlopen
+        and "INTEL_GPU" in features
+        and "AMD_GPU" not in features
+    ):
+        return "stampede3"
+    return None
+
+
 def emit_capabilities(build_dir: Path, tier: str) -> dict:
     cfg_log = _parse_config_log(build_dir)
-    features, cpu_backend, debug_from_make = _parse_src_makefile(build_dir)
+    features, cpu_backend, debug_from_make, ib_mad_dlopen, opa_mad_dlopen = (
+        _parse_src_makefile(build_dir)
+    )
     debug = cfg_log.get("debug", False) or debug_from_make
     version = _package_version(build_dir)
     host_cpu = _host_cpu(build_dir)
     arch = _normalize_arch(host_cpu)
+    intel_gpu = "INTEL_GPU" in features
 
     slug = build_capability_slug(
         arch=arch,
@@ -142,9 +176,17 @@ def emit_capabilities(build_dir: Path, tier: str) -> dict:
         features=features,
         cpu_backend=cpu_backend,
         tier=tier,
+        ib_mad_dlopen=ib_mad_dlopen,
+        opa_mad_dlopen=opa_mad_dlopen,
     )
 
-    return {
+    fleet = _fleet_stampede3(
+        ib_mad_dlopen=ib_mad_dlopen,
+        opa_mad_dlopen=opa_mad_dlopen,
+        features=features,
+    )
+
+    doc: dict = {
         "capability_slug": slug,
         "package_version": version,
         "host_cpu": host_cpu,
@@ -157,6 +199,9 @@ def emit_capabilities(build_dir: Path, tier: str) -> dict:
             "amd_gpu": cfg_log.get("amd_gpu", "AMD_GPU" in features),
             "lustre": cfg_log.get("lustre", "LUSTRE" in features),
             "opa": cfg_log.get("opa", "OPA" in features),
+            "intel_gpu": intel_gpu,
+            "ib_mad_dlopen": ib_mad_dlopen,
+            "opa_mad_dlopen": opa_mad_dlopen,
             "cpu_backend": cpu_backend or "none",
             "slow_tier": tier,
         },
@@ -164,6 +209,9 @@ def emit_capabilities(build_dir: Path, tier: str) -> dict:
         "build_dir": str(build_dir.resolve()),
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
+    if fleet:
+        doc["fleet"] = fleet
+    return doc
 
 
 def main() -> int:

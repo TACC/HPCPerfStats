@@ -1,0 +1,325 @@
+00:00.0 System peripheral: Intel Corporation Ice Lake Memory Map/VT-d (rev 04)
+00:00.1 System peripheral: Intel Corporation Ice Lake Mesh 2 PCIe (rev 04)
+00:00.2 System peripheral: Intel Corporation Ice Lake RAS (rev 04)
+00:00.4 Host bridge: Intel Corporation Ice Lake IEH
+00:02.0 System peripheral: Intel Corporation Ice Lake MSM
+00:02.1 System peripheral: Intel Corporation Ice Lake PMON MSM
+00:02.4 Non-Essential Instrumentation [1300]: Intel Corporation Ice Lake NorthPeak (rev 01)
+00:11.0 Unassigned class [ff00]: Intel Corporation C620 Series Chipset Family MROM 0 (rev 0a)
+00:11.5 SATA controller: Intel Corporation C620 Series Chipset Family SSATA Controller [AHCI mode] (rev 0a)
+00:14.0 USB controller: Intel Corporation C620 Series Chipset Family USB 3.0 xHCI Controller (rev 0a)
+00:14.2 Signal processing controller: Intel Corporation C620 Series Chipset Family Thermal Subsystem (rev 0a)
+00:16.0 Communication controller: Intel Corporation C620 Series Chipset Family MEI Controller #1 (rev 0a)
+00:16.1 Communication controller: Intel Corporation C620 Series Chipset Family MEI Controller #2 (rev 0a)
+00:16.4 Communication controller: Intel Corporation C620 Series Chipset Family MEI Controller #3 (rev 0a)
+00:17.0 SATA controller: Intel Corporation C620 Series Chipset Family SATA Controller [AHCI mode] (rev 0a)
+00:1c.0 PCI bridge: Intel Corporation C620 Series Chipset Family PCI Express Root Port #1 (rev fa)
+00:1c.4 PCI bridge: Intel Corporation C620 Series Chipset Family PCI Express Root Port #5 (rev fa)
+00:1c.5 PCI bridge: Intel Corporation C620 Series Chipset Family PCI Express Root Port #6 (rev fa)
+00:1f.0 ISA bridge: Intel Corporation Device a1cb (rev 0a)
+00:1f.2 Memory controller: Intel Corporation C620 Series Chipset Family Power Management Controller (rev 0a)
+00:1f.4 SMBus: Intel Corporation C620 Series Chipset Family SMBus (rev 0a)
+00:1f.5 Serial bus controller: Intel Corporation C620 Series Chipset Family SPI Controller (rev 0a)
+02:00.0 PCI bridge: PLDA PCI Express Bridge (rev 02)
+03:00.0 VGA compatible controller: Matrox Electronics Systems Ltd. Integrated Matrox G200eW3 Graphics Controller (rev 04)
+04:00.0 Ethernet controller: Broadcom Inc. and subsidiaries NetXtreme BCM5720 Gigabit Ethernet PCIe
+04:00.1 Ethernet controller: Broadcom Inc. and subsidiaries NetXtreme BCM5720 Gigabit Ethernet PCIe
+16:00.0 System peripheral: Intel Corporation Ice Lake Memory Map/VT-d (rev 04)
+16:00.1 System peripheral: Intel Corporation Ice Lake Mesh 2 PCIe (rev 04)
+16:00.2 System peripheral: Intel Corporation Ice Lake RAS (rev 04)
+16:00.4 Host bridge: Intel Corporation Ice Lake IEH
+30:00.0 System peripheral: Intel Corporation Ice Lake Memory Map/VT-d (rev 04)
+30:00.1 System peripheral: Intel Corporation Ice Lake Mesh 2 PCIe (rev 04)
+30:00.2 System peripheral: Intel Corporation Ice Lake RAS (rev 04)
+30:00.4 Host bridge: Intel Corporation Ice Lake IEH
+30:04.0 PCI bridge: Intel Corporation Ice Lake PCI Express Root Port C (rev 04)
+30:05.0 PCI bridge: Intel Corporation Ice Lake PCI Express Root Port D (rev 04)
+31:00.0 Ethernet controller: Broadcom Inc. and subsidiaries NetXtreme BCM5720 Gigabit Ethernet PCIe
+31:00.1 Ethernet controller: Broadcom Inc. and subsidiaries NetXtreme BCM5720 Gigabit Ethernet PCIe
+32:00.0 Ethernet controller: Broadcom Inc. and subsidiaries NetXtreme BCM5720 Gigabit Ethernet PCIe
+32:00.1 Ethernet controller: Broadcom Inc. and subsidiaries NetXtreme BCM5720 Gigabit Ethernet PCIe
+4a:00.0 System peripheral: Intel Corporation Ice Lake Memory Map/VT-d (rev 04)
+4a:00.1 System peripheral: Intel Corporation Ice Lake Mesh 2 PCIe (rev 04)
+4a:00.2 System peripheral: Intel Corporation Ice Lake RAS (rev 04)
+4a:00.4 Host bridge: Intel Corporation Ice Lake IEH
+4a:02.0 PCI bridge: Intel Corporation Ice Lake PCI Express Root Port A (rev 04)
+4b:00.0 Fabric controller: Intel Corporation Omni-Path HFI Silicon 100 Series [discrete] (rev 11)
+64:00.0 System peripheral: Intel Corporation Ice Lake Memory Map/VT-d (rev 04)
+64:00.1 System peripheral: Intel Corporation Ice Lake Mesh 2 PCIe (rev 04)
+64:00.2 System peripheral: Intel Corporation Ice Lake RAS (rev 04)
+64:00.4 Host bridge: Intel Corporation Ice Lake IEH
+64:04.0 PCI bridge: Intel Corporation Ice Lake PCI Express Root Port C (rev 04)
+65:00.0 RAID bus controller: Broadcom / LSI MegaRAID Tri-Mode SAS3416 (rev 01)
+7e:00.0 System peripheral: Intel Corporation Ice Lake Ubox Registers
+7e:00.1 System peripheral: Intel Corporation Ice Lake Ubox Registers
+7e:00.2 System peripheral: Intel Corporation Ice Lake Ubox Registers
+7e:00.3 Host bridge: Intel Corporation Ice Lake IEH
+7e:00.5 System peripheral: Intel Corporation Ice Lake Ubox Registers
+7e:02.0 System peripheral: Intel Corporation Ice Lake UPI Misc
+7e:02.1 System peripheral: Intel Corporation Ice Lake UPI Link/Phy0
+7e:02.2 System peripheral: Intel Corporation Ice Lake UPI Phy0 Registers
+7e:03.0 System peripheral: Intel Corporation Ice Lake UPI Misc
+7e:03.1 System peripheral: Intel Corporation Ice Lake UPI Link/Phy0
+7e:03.2 System peripheral: Intel Corporation Ice Lake UPI Phy0 Registers
+7e:04.0 System peripheral: Intel Corporation Ice Lake UPI Misc
+7e:04.1 System peripheral: Intel Corporation Ice Lake UPI Link/Phy0
+7e:04.2 System peripheral: Intel Corporation Ice Lake UPI Phy0 Registers
+7e:04.3 System peripheral: Intel Corporation Device 3443
+7e:05.0 System peripheral: Intel Corporation Ice Lake UPI Mesh Stop Registers
+7e:05.1 System peripheral: Intel Corporation Ice Lake UPI PMON0 Registers
+7e:05.2 System peripheral: Intel Corporation Ice Lake UPI PMON1 Registers
+7e:06.0 System peripheral: Intel Corporation Ice Lake UPI Mesh Stop Registers
+7e:06.1 System peripheral: Intel Corporation Ice Lake UPI PMON0 Registers
+7e:06.2 System peripheral: Intel Corporation Ice Lake UPI PMON1 Registers
+7e:07.0 System peripheral: Intel Corporation Ice Lake UPI Mesh Stop Registers
+7e:07.1 System peripheral: Intel Corporation Ice Lake UPI PMON0 Registers
+7e:07.2 System peripheral: Intel Corporation Ice Lake UPI PMON1 Registers
+7e:0b.0 System peripheral: Intel Corporation Ice Lake PCU Registers
+7e:0b.1 System peripheral: Intel Corporation Ice Lake PCU Registers
+7e:0b.2 System peripheral: Intel Corporation Ice Lake PCU Registers
+7e:0c.0 Performance counters: Intel Corporation Ice Lake Integrated Memory Controller
+7e:0d.0 Performance counters: Intel Corporation Ice Lake Integrated Memory Controller
+7e:0e.0 Performance counters: Intel Corporation Ice Lake Integrated Memory Controller
+7e:0f.0 Performance counters: Intel Corporation Ice Lake Integrated Memory Controller
+7e:1a.0 Performance counters: Intel Corporation Ice Lake DDRIO Registers
+7e:1b.0 Performance counters: Intel Corporation Ice Lake DDRIO Registers
+7e:1c.0 Performance counters: Intel Corporation Ice Lake DDRIO Registers
+7e:1d.0 Performance counters: Intel Corporation Ice Lake DDRIO Registers
+7f:00.0 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:00.1 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:00.2 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:00.3 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:00.4 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:00.5 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:00.6 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:00.7 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:01.0 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:01.1 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:01.2 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:01.3 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:01.4 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:01.5 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:01.6 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:01.7 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:02.0 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:02.1 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:02.2 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:02.3 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:02.4 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:02.5 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:02.6 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:02.7 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:03.0 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:03.1 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:03.2 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:03.3 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:03.4 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:03.5 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:03.6 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:03.7 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:04.0 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:04.1 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:04.2 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:04.3 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:04.4 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:04.5 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:04.6 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:04.7 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0a.0 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0a.1 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0a.2 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0a.3 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0a.4 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0a.5 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0a.6 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0a.7 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0b.0 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0b.1 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0b.2 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0b.3 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0b.4 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0b.5 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0b.6 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0b.7 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0c.0 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0c.1 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0c.2 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0c.3 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0c.4 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0c.5 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0c.6 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0c.7 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0d.0 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0d.1 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0d.2 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0d.3 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0d.4 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0d.5 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0d.6 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0d.7 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0e.0 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0e.1 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0e.2 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0e.3 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0e.4 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0e.5 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0e.6 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:0e.7 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:1d.0 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:1d.1 System peripheral: Intel Corporation Ice Lake CHA Registers
+7f:1e.0 System peripheral: Intel Corporation Ice Lake PCU Registers (rev 06)
+7f:1e.1 System peripheral: Intel Corporation Ice Lake PCU Registers (rev 06)
+7f:1e.2 System peripheral: Intel Corporation Ice Lake PCU Registers (rev 06)
+7f:1e.3 System peripheral: Intel Corporation Ice Lake PCU Registers (rev 06)
+7f:1e.4 System peripheral: Intel Corporation Ice Lake PCU Registers (rev 06)
+7f:1e.5 System peripheral: Intel Corporation Ice Lake PCU Registers (rev 06)
+7f:1e.6 System peripheral: Intel Corporation Ice Lake PCU Registers (rev 06)
+7f:1e.7 System peripheral: Intel Corporation Device 345f (rev 06)
+80:00.0 System peripheral: Intel Corporation Ice Lake Memory Map/VT-d (rev 04)
+80:00.1 System peripheral: Intel Corporation Ice Lake Mesh 2 PCIe (rev 04)
+80:00.2 System peripheral: Intel Corporation Ice Lake RAS (rev 04)
+80:00.4 Host bridge: Intel Corporation Ice Lake IEH
+80:02.0 System peripheral: Intel Corporation Ice Lake MSM
+80:02.1 System peripheral: Intel Corporation Ice Lake PMON MSM
+80:02.4 Non-Essential Instrumentation [1300]: Intel Corporation Ice Lake NorthPeak (rev 01)
+97:00.0 System peripheral: Intel Corporation Ice Lake Memory Map/VT-d (rev 04)
+97:00.1 System peripheral: Intel Corporation Ice Lake Mesh 2 PCIe (rev 04)
+97:00.2 System peripheral: Intel Corporation Ice Lake RAS (rev 04)
+97:00.4 Host bridge: Intel Corporation Ice Lake IEH
+b0:00.0 System peripheral: Intel Corporation Ice Lake Memory Map/VT-d (rev 04)
+b0:00.1 System peripheral: Intel Corporation Ice Lake Mesh 2 PCIe (rev 04)
+b0:00.2 System peripheral: Intel Corporation Ice Lake RAS (rev 04)
+b0:00.4 Host bridge: Intel Corporation Ice Lake IEH
+c9:00.0 System peripheral: Intel Corporation Ice Lake Memory Map/VT-d (rev 04)
+c9:00.1 System peripheral: Intel Corporation Ice Lake Mesh 2 PCIe (rev 04)
+c9:00.2 System peripheral: Intel Corporation Ice Lake RAS (rev 04)
+c9:00.4 Host bridge: Intel Corporation Ice Lake IEH
+e2:00.0 System peripheral: Intel Corporation Ice Lake Memory Map/VT-d (rev 04)
+e2:00.1 System peripheral: Intel Corporation Ice Lake Mesh 2 PCIe (rev 04)
+e2:00.2 System peripheral: Intel Corporation Ice Lake RAS (rev 04)
+e2:00.4 Host bridge: Intel Corporation Ice Lake IEH
+fe:00.0 System peripheral: Intel Corporation Ice Lake Ubox Registers
+fe:00.1 System peripheral: Intel Corporation Ice Lake Ubox Registers
+fe:00.2 System peripheral: Intel Corporation Ice Lake Ubox Registers
+fe:00.3 Host bridge: Intel Corporation Ice Lake IEH
+fe:00.5 System peripheral: Intel Corporation Ice Lake Ubox Registers
+fe:02.0 System peripheral: Intel Corporation Ice Lake UPI Misc
+fe:02.1 System peripheral: Intel Corporation Ice Lake UPI Link/Phy0
+fe:02.2 System peripheral: Intel Corporation Ice Lake UPI Phy0 Registers
+fe:03.0 System peripheral: Intel Corporation Ice Lake UPI Misc
+fe:03.1 System peripheral: Intel Corporation Ice Lake UPI Link/Phy0
+fe:03.2 System peripheral: Intel Corporation Ice Lake UPI Phy0 Registers
+fe:04.0 System peripheral: Intel Corporation Ice Lake UPI Misc
+fe:04.1 System peripheral: Intel Corporation Ice Lake UPI Link/Phy0
+fe:04.2 System peripheral: Intel Corporation Ice Lake UPI Phy0 Registers
+fe:04.3 System peripheral: Intel Corporation Device 3443
+fe:05.0 System peripheral: Intel Corporation Ice Lake UPI Mesh Stop Registers
+fe:05.1 System peripheral: Intel Corporation Ice Lake UPI PMON0 Registers
+fe:05.2 System peripheral: Intel Corporation Ice Lake UPI PMON1 Registers
+fe:06.0 System peripheral: Intel Corporation Ice Lake UPI Mesh Stop Registers
+fe:06.1 System peripheral: Intel Corporation Ice Lake UPI PMON0 Registers
+fe:06.2 System peripheral: Intel Corporation Ice Lake UPI PMON1 Registers
+fe:07.0 System peripheral: Intel Corporation Ice Lake UPI Mesh Stop Registers
+fe:07.1 System peripheral: Intel Corporation Ice Lake UPI PMON0 Registers
+fe:07.2 System peripheral: Intel Corporation Ice Lake UPI PMON1 Registers
+fe:0b.0 System peripheral: Intel Corporation Ice Lake PCU Registers
+fe:0b.1 System peripheral: Intel Corporation Ice Lake PCU Registers
+fe:0b.2 System peripheral: Intel Corporation Ice Lake PCU Registers
+fe:0c.0 Performance counters: Intel Corporation Ice Lake Integrated Memory Controller
+fe:0d.0 Performance counters: Intel Corporation Ice Lake Integrated Memory Controller
+fe:0e.0 Performance counters: Intel Corporation Ice Lake Integrated Memory Controller
+fe:0f.0 Performance counters: Intel Corporation Ice Lake Integrated Memory Controller
+fe:1a.0 Performance counters: Intel Corporation Ice Lake DDRIO Registers
+fe:1b.0 Performance counters: Intel Corporation Ice Lake DDRIO Registers
+fe:1c.0 Performance counters: Intel Corporation Ice Lake DDRIO Registers
+fe:1d.0 Performance counters: Intel Corporation Ice Lake DDRIO Registers
+ff:00.0 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:00.1 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:00.2 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:00.3 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:00.4 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:00.5 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:00.6 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:00.7 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:01.0 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:01.1 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:01.2 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:01.3 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:01.4 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:01.5 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:01.6 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:01.7 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:02.0 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:02.1 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:02.2 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:02.3 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:02.4 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:02.5 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:02.6 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:02.7 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:03.0 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:03.1 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:03.2 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:03.3 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:03.4 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:03.5 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:03.6 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:03.7 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:04.0 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:04.1 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:04.2 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:04.3 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:04.4 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:04.5 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:04.6 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:04.7 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0a.0 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0a.1 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0a.2 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0a.3 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0a.4 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0a.5 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0a.6 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0a.7 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0b.0 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0b.1 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0b.2 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0b.3 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0b.4 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0b.5 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0b.6 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0b.7 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0c.0 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0c.1 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0c.2 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0c.3 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0c.4 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0c.5 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0c.6 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0c.7 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0d.0 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0d.1 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0d.2 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0d.3 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0d.4 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0d.5 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0d.6 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0d.7 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0e.0 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0e.1 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0e.2 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0e.3 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0e.4 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0e.5 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0e.6 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:0e.7 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:1d.0 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:1d.1 System peripheral: Intel Corporation Ice Lake CHA Registers
+ff:1e.0 System peripheral: Intel Corporation Ice Lake PCU Registers (rev 06)
+ff:1e.1 System peripheral: Intel Corporation Ice Lake PCU Registers (rev 06)
+ff:1e.2 System peripheral: Intel Corporation Ice Lake PCU Registers (rev 06)
+ff:1e.3 System peripheral: Intel Corporation Ice Lake PCU Registers (rev 06)
+ff:1e.4 System peripheral: Intel Corporation Ice Lake PCU Registers (rev 06)
+ff:1e.5 System peripheral: Intel Corporation Ice Lake PCU Registers (rev 06)
+ff:1e.6 System peripheral: Intel Corporation Ice Lake PCU Registers (rev 06)
+ff:1e.7 System peripheral: Intel Corporation Device 345f (rev 06)
