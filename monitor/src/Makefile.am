@@ -184,6 +184,8 @@ TYPES 	= \
 	host_edac_mem_topology.c \
 	host_edac_mem_topology.h \
 	proc.c \
+	proc_status.c \
+	proc_status.h \
 	ps.c \
 	sysv_shm.c \
 	tmpfs.c \

@@ -2,7 +2,6 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <errno.h>
 #include <string.h>
 #include <dirent.h>
 #include <fnmatch.h>
@@ -17,7 +16,7 @@
 #include "trace.h"
 #include "string1.h"
 #include "monitor_log.h"
-#include "host_key_alias.h"
+#include "proc_status.h"
 
 #define KEYS \
   X(uid, "", "user id"), \
@@ -89,6 +88,7 @@ static int proc_status_copy_field(char *dst, size_t dst_size, const char *src)
 static void proc_collect_pid(struct stats_type *type, const char *pid)
 {
   struct stats *stats = NULL;
+  struct proc_status_pending pending;
   char path[32];
   char process[512];
   FILE *file = NULL;
@@ -110,6 +110,7 @@ static void proc_collect_pid(struct stats_type *type, const char *pid)
     goto out;
   setvbuf(file, file_buf, _IOFBF, sizeof(file_buf));
 
+  proc_status_pending_init(&pending);
   name[0] = '\0';
   cmask[0] = '\0';
   mmask[0] = '\0';
@@ -140,19 +141,15 @@ static void proc_collect_pid(struct stats_type *type, const char *pid)
         goto out;
       mmask_ready = 1;
     }
+    /* Kernel status order: Uid, Vm*, and Threads before affinity masks. Defer
+     * until Name+masks create the row, then flush pending (see proc_status.c). */
     if (stats == NULL && name_ready && cmask_ready && mmask_ready) {
       snprintf(process, sizeof(process), "%s/%s/%s/%s", name, pid, cmask, mmask);
       stats = get_current_stats(type, process);
+      if (stats != NULL)
+	proc_status_pending_flush(&pending, stats);
     }
-    if (stats != NULL) {
-      errno = 0;
-      key[strlen(key) - 1] = '\0';
-      {
-        unsigned long long val = strtoull(rest, NULL, 0);
-        if (errno == 0)
-          host_key_alias_emit(stats, key, val);
-      }
-    }
+    proc_status_emit_or_defer_kv(stats, &pending, key, rest);
   }
 
  out:
