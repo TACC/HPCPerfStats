@@ -13,7 +13,10 @@ MONITOR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(MONITOR / "scripts"))
 
 from lib.device_validate import validate_devices_in_payload  # noqa: E402
-from lib.golden_diff import compare_golden_shm  # noqa: E402
+from lib.golden_diff import (  # noqa: E402
+    compare_golden_shm,
+    resolve_optin_golden_dir,
+)
 from lib.listend_contract import (  # noqa: E402
     listend_host_from_schema,
     validate_schema_listend_contract,
@@ -517,8 +520,9 @@ class GoldenDiffTests(unittest.TestCase):
                 text = (SYNTHETIC / name).read_text(encoding="utf-8")
                 (td / name).write_text(text, encoding="utf-8")
                 (golden_dir / f"shm_{name}_{slug}.txt").write_text(text, encoding="utf-8")
-            errs = compare_golden_shm(td, golden_dir, slug, enable_slow_tier=True)
+            errs, compared = compare_golden_shm(td, golden_dir, slug, enable_slow_tier=True)
             self.assertEqual(errs, [])
+            self.assertEqual(compared, 3)
 
     def test_golden_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -527,8 +531,60 @@ class GoldenDiffTests(unittest.TestCase):
             (td / "full").write_text("123 1 host\nhost_ps - 1 2 3 4\n", encoding="utf-8")
             golden = td / f"shm_full_{slug}.txt"
             golden.write_text("different\n", encoding="utf-8")
-            errs = compare_golden_shm(td, td, slug, enable_slow_tier=False)
+            errs, compared = compare_golden_shm(td, td, slug, enable_slow_tier=False)
+            self.assertEqual(compared, 1)
             self.assertTrue(any("differs" in e for e in errs))
+
+    def test_golden_zero_compared(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            td = Path(tmp)
+            (td / "full").write_text("123 1 host\n", encoding="utf-8")
+            errs, compared = compare_golden_shm(
+                td, td, "missing_slug", enable_slow_tier=False
+            )
+            self.assertEqual(errs, [])
+            self.assertEqual(compared, 0)
+
+    def test_resolve_optin_not_requested(self) -> None:
+        self.assertIsNone(
+            resolve_optin_golden_dir(
+                monitor_dir=MONITOR,
+                slug="x",
+                golden_dir_env=None,
+                golden_check=False,
+                enable_slow_tier=True,
+            )
+        )
+
+    def test_resolve_optin_auto_finds_temp(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = Path(tmp)
+            expected = mon / "tests" / "expected"
+            expected.mkdir(parents=True)
+            slug = "live_slug"
+            (expected / f"shm_full_{slug}.txt").write_text("x\n", encoding="utf-8")
+            path = resolve_optin_golden_dir(
+                monitor_dir=mon,
+                slug=slug,
+                golden_dir_env="auto",
+                golden_check=False,
+                enable_slow_tier=False,
+            )
+            self.assertEqual(path, expected.resolve())
+
+    def test_resolve_optin_missing_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            mon = Path(tmp)
+            (mon / "tests" / "expected").mkdir(parents=True)
+            self.assertIsNone(
+                resolve_optin_golden_dir(
+                    monitor_dir=mon,
+                    slug="absent",
+                    golden_dir_env="auto",
+                    golden_check=True,
+                    enable_slow_tier=True,
+                )
+            )
 
     def test_golden_with_profile_suffix(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -542,10 +598,11 @@ class GoldenDiffTests(unittest.TestCase):
             (golden_dir / golden_basename("full", slug, profile)).write_text(
                 text, encoding="utf-8"
             )
-            errs = compare_golden_shm(
+            errs, compared = compare_golden_shm(
                 td, golden_dir, slug, enable_slow_tier=False, profile=profile
             )
             self.assertEqual(errs, [])
+            self.assertEqual(compared, 1)
 
 
 class TaccSystemProfilesTests(unittest.TestCase):

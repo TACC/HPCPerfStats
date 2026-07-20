@@ -10,13 +10,21 @@
 #     ./scripts/validate_stampede3_profile.sh --profile skx
 #
 # Env (optional): CAPS_JSON, BUILD_DIR, HPCPERFSTATS_DEBUG_SHM_DIR,
-#   ENABLE_SLOW_TIER, WORKSPACE_ROOT, GOLDEN_DIR, WAIT_SHM_SECONDS,
-#   STRICT_LIVE_SPOT_CHECK, STRICT_PLAUSIBILITY, CROSS_SAMPLE_CHECK,
-#   HPCPERFSTATS_CONF, RELAX_PROFILE_CONTRACT
+#   ENABLE_SLOW_TIER, WORKSPACE_ROOT, WAIT_SHM_SECONDS, HPCPERFSTATS_CONF,
+#   RELAX_PROFILE_CONTRACT,
+#   CROSS_SAMPLE_CHECK / STRICT_* (default 1; set 0 to disable),
+#   GOLDEN_DIR=/path|auto or GOLDEN_CHECK=1 (opt-in golden diff)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MONITOR_DIR="${MONITOR_DIR:-${SCRIPT_DIR}/..}"
+
+env_flag_on() {
+  case "${1:-1}" in
+  0 | false | FALSE | no | NO | off | OFF) return 1 ;;
+  *) return 0 ;;
+  esac
+}
 
 resolve_workspace_root() {
   local monitor_dir="$1"
@@ -164,19 +172,52 @@ main() {
   else
     validate_args+=(--wait-shm-seconds 30)
   fi
-  if test "${STRICT_LIVE_SPOT_CHECK:-0}" = "1"; then
+  if env_flag_on "${STRICT_LIVE_SPOT_CHECK:-1}"; then
     validate_args+=(--strict-live-spot-check)
   fi
-  if test "${STRICT_PLAUSIBILITY:-0}" = "1"; then
+  if env_flag_on "${STRICT_PLAUSIBILITY:-1}"; then
     validate_args+=(--strict-plausibility)
   fi
-  if test -n "${GOLDEN_DIR:-}"; then
-    validate_args+=(--golden-dir "${GOLDEN_DIR}")
-  fi
-  if test "${CROSS_SAMPLE_CHECK:-0}" = "1"; then
+  if env_flag_on "${CROSS_SAMPLE_CHECK:-1}"; then
     validate_args+=(--cross-sample-check --cross-sample-wait-full)
+    if env_flag_on "${STRICT_CROSS_SAMPLE:-1}"; then
+      validate_args+=(--strict-cross-sample)
+    fi
     if test -n "${HPCPERFSTATS_CONF:-}"; then
       validate_args+=(--conf "${HPCPERFSTATS_CONF}")
+    fi
+  fi
+  if test "${GOLDEN_CHECK:-0}" = "1" || test -n "${GOLDEN_DIR:-}"; then
+    resolved_golden="$(
+      MONITOR_DIR="${monitor_dir}" SLUG="${slug}" PROFILE="${profile}" \
+      ENABLE_SLOW="${enable_slow}" \
+      GOLDEN_DIR="${GOLDEN_DIR:-}" GOLDEN_CHECK="${GOLDEN_CHECK:-0}" \
+      "${py}" - <<'PY'
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(os.environ["MONITOR_DIR"]) / "scripts"))
+from lib.golden_diff import resolve_optin_golden_dir
+
+slow = os.environ.get("ENABLE_SLOW", "1")
+enable_slow = slow not in ("0", "false", "FALSE", "no", "NO", "off", "OFF")
+path = resolve_optin_golden_dir(
+    monitor_dir=Path(os.environ["MONITOR_DIR"]),
+    slug=os.environ["SLUG"],
+    golden_dir_env=os.environ.get("GOLDEN_DIR") or None,
+    golden_check=os.environ.get("GOLDEN_CHECK", "0") == "1",
+    enable_slow_tier=enable_slow,
+    profile=os.environ.get("PROFILE") or None,
+)
+print(path if path is not None else "")
+PY
+    )"
+    if test -n "${resolved_golden}"; then
+      echo "Using golden dir: ${resolved_golden}"
+      validate_args+=(--golden-dir "${resolved_golden}")
+    else
+      echo "WARN: golden opted in but no matching shm_*_${slug}__${profile} files"
     fi
   fi
 

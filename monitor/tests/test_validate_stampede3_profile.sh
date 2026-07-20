@@ -27,4 +27,12 @@ grep -qi vista /tmp/vsp_err.$$ || {
 }
 
 rm -f /tmp/vsp_out.$$ /tmp/vsp_err.$$
+
+grep -q 'CROSS_SAMPLE_CHECK:-1' "${WRAP}" \
+  || { echo "validate_stampede3_profile.sh must default CROSS_SAMPLE_CHECK on" >&2; exit 1; }
+grep -q 'STRICT_LIVE_SPOT_CHECK:-1' "${WRAP}" \
+  || { echo "validate_stampede3_profile.sh must default STRICT_LIVE_SPOT_CHECK on" >&2; exit 1; }
+grep -q 'GOLDEN_CHECK:-0' "${WRAP}" \
+  || { echo "validate_stampede3_profile.sh must keep golden opt-in" >&2; exit 1; }
+
 echo "test_validate_stampede3_profile.sh passed"

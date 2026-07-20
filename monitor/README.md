@@ -243,18 +243,17 @@ python3 scripts/validate_shm_messages.py \
 ```
 
 Validation layers: structural (schema keys, row width, tier markers, uint values,
-manifest device IDs, listend host contract), plausibility warnings
-(`--strict-plausibility` to fail), live `/proc`/`/sys` spot checks on the
-data host (`--live-spot-check`, default on live shm; `--no-live-spot-check` for
-fixtures), and optional **cross-sample** checks (`--cross-sample-check`:
-timestamp cadence vs active conf + monotonic `E` counters across two snapshots).
-Debug RPM installs `sample_freq=30` and `sample_freq_slow=60` in
-`/etc/hpcperfstats/hpcperfstats.conf` (see `hpcperfstats.spec` `hpc_debug_build`
-block); cross-sample wait bounds are derived from that file at validate time.
-Optional emit drift check: copy shm files to
-`tests/expected/shm_{schema,fast,full}_<slug>[__<profile>].txt` and pass
-`--golden-dir tests/expected` (and `--profile` when using profile-scoped goldens).
+manifest device IDs, listend host contract); **strict** plausibility and live
+`/proc`/`/sys` spot checks by default on debug verify (`STRICT_*=0` to soften);
+and **cross-sample** cadence + `E`-counter monotonicity by default
+(`CROSS_SAMPLE_CHECK=0` to disable). Debug RPM installs `sample_freq=30` and
+`sample_freq_slow=60` in `/etc/hpcperfstats/hpcperfstats.conf`; cross-sample wait
+bounds are derived from that file at validate time.
 
+Optional emit drift check (opt-in): copy shm files to
+`tests/expected/shm_{schema,fast,full}_<slug>[__<profile>].txt` and set
+`GOLDEN_DIR=auto` / `GOLDEN_CHECK=1` or `GOLDEN_DIR=/path` (and `--profile` when
+using profile-scoped goldens).
 Stampede3 fleet DEBUG builds emit slug tokens `ibdyn` / `opadyn` / `intelgpu` when
 those macros are compiled in, plus JSON `fleet: "stampede3"` when the fleet
 signature matches. Prefer `./scripts/validate_stampede3_profile.sh --profile …`
@@ -272,11 +271,10 @@ rpmbuild -ba ... hpc_debug_build 1 ... && ./scripts/rpm_debug_shm_verify.sh
 Run from `HPCPerfStats/monitor/`. No exports needed. Re-validate only:
 `SKIP_INSTALL=1 ./scripts/rpm_debug_shm_verify.sh`
 
-Cross-sample monotonic/cadence verify (debug RPM 30s/60s conf):
-
-```bash
-CROSS_SAMPLE_CHECK=1 ./scripts/rpm_debug_shm_verify.sh
-```
+Defaults include cross-sample + strict checks (~`FULL` post-install sleep, then
+~`sample_freq_slow` for a second full snapshot). Soften with
+`CROSS_SAMPLE_CHECK=0 STRICT_PLAUSIBILITY=0 STRICT_LIVE_SPOT_CHECK=0`.
+Opt-in golden: `GOLDEN_CHECK=1` or `GOLDEN_DIR=auto`.
 
 **Capability slug** — `monitor-build-capabilities.json` includes
 `capability_slug` (compile flags + `slowtier0`/`slowtier1`; Stampede3 fleet may

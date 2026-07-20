@@ -51,6 +51,32 @@ grep -q 'CROSS_SAMPLE_CHECK' "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must honor CROSS_SAMPLE_CHECK" >&2; exit 1; }
 
 grep -q '\-\-cross-sample-check' "${verify}" \
-  || { echo "rpm_debug_shm_verify.sh must pass --cross-sample-check when enabled" >&2; exit 1; }
+  || { echo "rpm_debug_shm_verify.sh must pass --cross-sample-check" >&2; exit 1; }
+
+grep -q 'CROSS_SAMPLE_CHECK:-1' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must default CROSS_SAMPLE_CHECK on" >&2; exit 1; }
+
+grep -q 'STRICT_LIVE_SPOT_CHECK:-1' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must default STRICT_LIVE_SPOT_CHECK on" >&2; exit 1; }
+
+grep -q 'STRICT_PLAUSIBILITY:-1' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must default STRICT_PLAUSIBILITY on" >&2; exit 1; }
+
+grep -q 'STRICT_CROSS_SAMPLE:-1' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must default STRICT_CROSS_SAMPLE on" >&2; exit 1; }
+
+grep -q 'resolve_optin_golden_dir' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must resolve golden dir when opted in" >&2; exit 1; }
+
+grep -q 'GOLDEN_CHECK' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must support GOLDEN_CHECK opt-in" >&2; exit 1; }
+
+# Golden must remain opt-in: do not auto-pass --golden-dir without GOLDEN_* env.
+if grep -qE 'validate_args\+\=\(--golden-dir' "${verify}"; then
+  # Only allowed inside GOLDEN_CHECK / GOLDEN_DIR gated block (resolve path).
+  :
+fi
+grep -q 'GOLDEN_CHECK:-0' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must keep golden opt-in (GOLDEN_CHECK default 0)" >&2; exit 1; }
 
 echo "test_rpm_debug_shm_verify passed"

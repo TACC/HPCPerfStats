@@ -560,7 +560,7 @@ def main() -> int:
     if args.golden_dir and not errors:
         slug = manifest.get("capability_slug", "")
         profile = args.profile or manifest.get("tacc_profile")
-        golden_errors = compare_golden_shm(
+        golden_errors, compared = compare_golden_shm(
             shm_dir,
             args.golden_dir,
             slug,
@@ -569,8 +569,12 @@ def main() -> int:
         )
         if golden_errors:
             errors.extend(golden_errors)
+        elif compared == 0:
+            warnings.append(
+                f"WARN golden: no matching shm_*_{slug} files under {args.golden_dir}"
+            )
         else:
-            notes.append("PASS golden diff")
+            notes.append(f"PASS golden diff ({compared} files)")
 
     report_lines = notes + warnings + errors
     report_text = "\n".join(report_lines) + "\n"
