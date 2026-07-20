@@ -330,6 +330,30 @@ _SUMMARY_SINGLE_SPECS = [
     (
         "nvidia_gpu",
         "value",
+        ["tensor_imma_active"],
+        "nv_tensor_imma_active",
+        1.0,
+        "GPU tensor IMMA (INT8/INT4) [%]",
+    ),
+    (
+        "nvidia_gpu",
+        "value",
+        ["tensor_hmma_active"],
+        "nv_tensor_hmma_active",
+        1.0,
+        "GPU tensor HMMA (FP16/BF16) [%]",
+    ),
+    (
+        "nvidia_gpu",
+        "value",
+        ["tensor_dfma_active"],
+        "nv_tensor_dfma_active",
+        1.0,
+        "GPU tensor DFMA (FP64) [%]",
+    ),
+    (
+        "nvidia_gpu",
+        "value",
         ["tensor_active"],
         "nv_tensor_active",
         1.0,
@@ -403,6 +427,9 @@ _SUMMARY_ALLOW_PARTIAL_NULL = frozenset({
     "nv_mem_used_mb",
     "nv_mem_total_mb",
     "nv_gpu_count",
+    "nv_tensor_imma_active",
+    "nv_tensor_hmma_active",
+    "nv_tensor_dfma_active",
     "nv_tensor_active",
     "nv_sm_occupancy",
     "nv_fp16_active",
@@ -434,6 +461,22 @@ _SUMMARY_SKIP_PLOT_METRICS = frozenset({
     "dcg_cpu_power_w",
     "amd_pkg_w",
 })
+
+# Prefer IMMA/HMMA/DFMA Summary subplots over lumped tensor_active (any-pipe).
+_SUMMARY_TENSOR_SPLIT_METRICS = (
+    "nv_tensor_imma_active",
+    "nv_tensor_hmma_active",
+    "nv_tensor_dfma_active",
+)
+
+
+def _summary_has_tensor_split_series(df):
+  """True when any tensor-pipe split column has at least one non-null sample."""
+  for name in _SUMMARY_TENSOR_SPLIT_METRICS:
+    if name in df.columns and df[name].notna().any():
+      return True
+  return False
+
 
 # First typename with full host/time coverage wins (same column name).
 _SUMMARY_FIRST_WIN_SPECS = (
@@ -729,8 +772,11 @@ def _summary_plot_order_key(metric_name):
       "nv_mem_used_mb": 510,
       "nv_mem_util_pct": 520,
       # --- 6) GPU FLOPS / tensors ---
+      "nv_tensor_imma_active": 600,
+      "nv_tensor_hmma_active": 605,
+      "nv_tensor_dfma_active": 610,
       "nv_tensor_active": 600,
-      "nv_sm_occupancy": 610,
+      "nv_sm_occupancy": 615,
       "nv_fp16_active": 620,
       "nv_fp32_active": 630,
       "nv_gpu_mem_bw_gbs": 640,
@@ -1091,12 +1137,15 @@ class SummaryPlot():
     df["time"] = to_datetime(df["time"], utc=True)
 
     render_specs = []
+    skip_lumped_tensor = _summary_has_tensor_split_series(df)
     for typ, val, events, name, conv, label in metrics:
       if name not in df.columns:
         continue
       if name == "node_power_est_w" and not df[name].notna().any():
         continue
       if name in _SUMMARY_SKIP_PLOT_METRICS:
+        continue
+      if name == "nv_tensor_active" and skip_lumped_tensor:
         continue
       if name == "freq":
         freq_max = df[name].max()

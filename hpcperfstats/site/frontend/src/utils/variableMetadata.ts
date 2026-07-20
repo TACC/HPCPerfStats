@@ -631,10 +631,29 @@ const SUMMARY_PLOT_METRIC_METADATA = {
     researcherUse:
       "GPU OOM risk and fragmentation patterns when viewed over time.",
   },
-  nv_tensor_active: {
-    description: "Tensor core / tensor pipe activity percentage from DCGM (NVIDIA).",
+  nv_tensor_imma_active: {
+    description:
+      "IMMA (INT8/INT4) tensor-pipe activity percentage from DCGM when available.",
     researcherUse:
-      "Whether time sits in tensor-heavy paths when tuning precision or framework settings.",
+      "INT8/INT4 tensor-core phases when tuning quantized or mixed-precision kernels.",
+  },
+  nv_tensor_hmma_active: {
+    description:
+      "HMMA (FP16/BF16) tensor-pipe activity percentage from DCGM when available.",
+    researcherUse:
+      "FP16/BF16 tensor-core phases versus scalar FP pipes for precision policy changes.",
+  },
+  nv_tensor_dfma_active: {
+    description:
+      "DFMA (FP64) tensor-pipe activity percentage from DCGM when available.",
+    researcherUse:
+      "FP64 tensor-path activity versus scalar FP64 for double-precision GPU kernels.",
+  },
+  nv_tensor_active: {
+    description:
+      "Lumped any-tensor-pipe activity percentage from DCGM; shown only when IMMA/HMMA/DFMA splits are absent.",
+    researcherUse:
+      "Fallback any-pipe tensor activity when IMMA/HMMA/DFMA splits are not present.",
   },
   nv_sm_occupancy: {
     description: "Streaming multiprocessor occupancy percentage from DCGM when available.",

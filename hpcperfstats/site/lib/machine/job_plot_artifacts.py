@@ -71,7 +71,7 @@ PAYLOAD_ENCODING_GZIP_JSON = "gzip_json"
 
 # Bump when plot artifact semantics change (independent of Bokeh version).
 # See hpcperfstats/cursor-rules/job-plot-artifacts-caching.mdc and machine/tests/test_job_plot_artifacts.py.
-APP_PLOT_ARTIFACT_SCHEMA_VERSION = 10
+APP_PLOT_ARTIFACT_SCHEMA_VERSION = 11
 
 JOB_PLOT_JSON_KEYS: Dict[str, Tuple[str, str]] = {
     kind: (spec.json_item_key, spec.unavailable_reason_key)

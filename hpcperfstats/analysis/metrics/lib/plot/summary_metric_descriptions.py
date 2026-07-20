@@ -83,8 +83,18 @@ SUMMARY_METRIC_DESCRIPTIONS: dict[str, str] = {
     "nv_mem_util_pct": (
         "GPU memory utilization percentage from DCGM mem_util when available."
     ),
+    "nv_tensor_imma_active": (
+        "IMMA (INT8/INT4) tensor-pipe activity percentage from DCGM when available."
+    ),
+    "nv_tensor_hmma_active": (
+        "HMMA (FP16/BF16) tensor-pipe activity percentage from DCGM when available."
+    ),
+    "nv_tensor_dfma_active": (
+        "DFMA (FP64) tensor-pipe activity percentage from DCGM when available."
+    ),
     "nv_tensor_active": (
-        "Tensor core / tensor pipe activity percentage from DCGM (NVIDIA)."
+        "Lumped any-tensor-pipe activity percentage from DCGM; shown only when "
+        "IMMA/HMMA/DFMA splits are absent."
     ),
     "nv_sm_occupancy": (
         "Streaming multiprocessor occupancy percentage from DCGM when available."
@@ -209,8 +219,17 @@ SUMMARY_METRIC_RESEARCHER_USE: dict[str, str] = {
     "nv_mem_util_pct": (
         "GPU OOM risk and fragmentation patterns when viewed over time."
     ),
+    "nv_tensor_imma_active": (
+        "INT8/INT4 tensor-core phases when tuning quantized or mixed-precision kernels."
+    ),
+    "nv_tensor_hmma_active": (
+        "FP16/BF16 tensor-core phases versus scalar FP pipes for precision policy changes."
+    ),
+    "nv_tensor_dfma_active": (
+        "FP64 tensor-path activity versus scalar FP64 for double-precision GPU kernels."
+    ),
     "nv_tensor_active": (
-        "Whether time sits in tensor-heavy paths when tuning precision or framework settings."
+        "Fallback any-pipe tensor activity when IMMA/HMMA/DFMA splits are not present."
     ),
     "nv_sm_occupancy": (
         "Occupancy-limited kernels versus other GPU bottlenecks."

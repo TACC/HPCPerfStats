@@ -672,6 +672,12 @@ def test_summaryplot_orders_buckets_cpu_memory_compute_gpu_subblocks_network():
         return pd.DataFrame([("n1.cluster", t0, 8192.0)], columns=["host", "time", "sum_val"])
       if ev == ["gpu_count"]:
         return pd.DataFrame([("n1.cluster", t0, 2.0)], columns=["host", "time", "sum_val"])
+      if ev == ["tensor_imma_active"]:
+        return pd.DataFrame([("n1.cluster", t0, 8.0)], columns=["host", "time", "sum_val"])
+      if ev == ["tensor_hmma_active"]:
+        return pd.DataFrame([("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"])
+      if ev == ["tensor_dfma_active"]:
+        return pd.DataFrame([("n1.cluster", t0, 4.0)], columns=["host", "time", "sum_val"])
       if ev == ["tensor_active"]:
         return pd.DataFrame([("n1.cluster", t0, 12.0)], columns=["host", "time", "sum_val"])
       if ev == ["power_usage"]:
@@ -704,9 +710,100 @@ def test_summaryplot_orders_buckets_cpu_memory_compute_gpu_subblocks_network():
   assert captured_metrics.index("mem") < captured_metrics.index("flops64b")
   assert captured_metrics.index("flops64b") < captured_metrics.index("nv_gpu_util")
   assert captured_metrics.index("nv_gpu_util") < captured_metrics.index("nv_mem_used_mb")
-  assert captured_metrics.index("nv_mem_used_mb") < captured_metrics.index("nv_tensor_active")
-  assert captured_metrics.index("nv_tensor_active") < captured_metrics.index("nv_power_w")
+  assert captured_metrics.index("nv_mem_used_mb") < captured_metrics.index("nv_tensor_imma_active")
+  assert captured_metrics.index("nv_tensor_imma_active") < captured_metrics.index(
+      "nv_tensor_hmma_active"
+  )
+  assert captured_metrics.index("nv_tensor_hmma_active") < captured_metrics.index(
+      "nv_tensor_dfma_active"
+  )
+  assert captured_metrics.index("nv_tensor_dfma_active") < captured_metrics.index("nv_power_w")
+  assert "nv_tensor_active" not in captured_metrics
   assert captured_metrics.index("nv_power_w") < captured_metrics.index("ibbw")
+
+
+def test_summaryplot_prefers_tensor_splits_over_lumped_pipe():
+  """When IMMA/HMMA/DFMA aggregates exist, plot splits and skip lumped nv_tensor_active."""
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
+  empty = pd.DataFrame(columns=["host", "time", "sum_val"])
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv
+    ev = list(events)
+    if _is_cpu_type(typ) and val_col == "arc" and ev == ["user", "system", "nice"]:
+      return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
+    if typ == "nvidia_gpu" and val_col == "value":
+      if ev == ["tensor_imma_active"]:
+        return pd.DataFrame([("n1.cluster", t0, 8.0)], columns=["host", "time", "sum_val"])
+      if ev == ["tensor_hmma_active"]:
+        return pd.DataFrame([("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"])
+      if ev == ["tensor_dfma_active"]:
+        return pd.DataFrame([("n1.cluster", t0, 4.0)], columns=["host", "time", "sum_val"])
+      if ev == ["tensor_active"]:
+        return pd.DataFrame([("n1.cluster", t0, 12.0)], columns=["host", "time", "sum_val"])
+      return empty
+    return empty
+
+  jt = MagicMock()
+  jt.host_list = ["n1.cluster"]
+  jt.get_host_time_df.return_value = base
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+
+  summary = SummaryPlot(jt)
+  captured_metrics = []
+
+  def fake_plot_metric(df, metric, label, y_range_end=None, x_range=None):
+    del df, label, y_range_end, x_range
+    captured_metrics.append(metric)
+    return figure(width=100, height=60)
+
+  summary.plot_metric = fake_plot_metric
+  fig = summary.plot()
+  assert fig is not None
+  assert "nv_tensor_imma_active" in captured_metrics
+  assert "nv_tensor_hmma_active" in captured_metrics
+  assert "nv_tensor_dfma_active" in captured_metrics
+  assert "nv_tensor_active" not in captured_metrics
+
+
+def test_summaryplot_lumped_tensor_fallback_when_splits_absent():
+  """AMD / stacks without split PROF fields still plot lumped nv_tensor_active."""
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
+  empty = pd.DataFrame(columns=["host", "time", "sum_val"])
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv
+    ev = list(events)
+    if _is_cpu_type(typ) and val_col == "arc" and ev == ["user", "system", "nice"]:
+      return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
+    if typ == "nvidia_gpu" and val_col == "value":
+      if ev == ["tensor_active"]:
+        return pd.DataFrame([("n1.cluster", t0, 12.0)], columns=["host", "time", "sum_val"])
+      return empty
+    return empty
+
+  jt = MagicMock()
+  jt.host_list = ["n1.cluster"]
+  jt.get_host_time_df.return_value = base
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+
+  summary = SummaryPlot(jt)
+  captured_metrics = []
+
+  def fake_plot_metric(df, metric, label, y_range_end=None, x_range=None):
+    del df, label, y_range_end, x_range
+    captured_metrics.append(metric)
+    return figure(width=100, height=60)
+
+  summary.plot_metric = fake_plot_metric
+  fig = summary.plot()
+  assert fig is not None
+  assert "nv_tensor_active" in captured_metrics
+  assert "nv_tensor_imma_active" not in captured_metrics
+  assert "nv_tensor_hmma_active" not in captured_metrics
+  assert "nv_tensor_dfma_active" not in captured_metrics
 
 
 def test_summaryplot_orders_lustre_nfs_before_network():

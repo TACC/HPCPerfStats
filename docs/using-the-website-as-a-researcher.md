@@ -181,6 +181,7 @@ This section covers job-detail surfaces beyond scalar metrics.
 ### 6.1 Summary plot
 
 - Diagnostic use: fastest phase/host outlier scan across CPU, memory, network, I/O, and GPU traces; the bottom **Hardware error rates** panel overlays job-wide sums of InfiniBand, Ethernet, and OPA error counter rates when those streams exist.
+- GPU tensor traces: when IMMA/HMMA/DFMA splits are present, Summary shows separate tensor-pipe subplots for those kinds (preferred over a single lumped tensor-pipe series). The lumped any-pipe tensor series appears only when those splits are absent.
 - Performance recommendation: always pair with Metrics tab; peaks in summary often explain extreme scalar maxima and telemetry behavior<sup>[12](#ref-12)</sup>.
 
 ### 6.2 Roofline tab (CPU + GPU)
@@ -310,6 +311,7 @@ Use these numbered references when you want background on terms used throughout 
 | 2026-06-04 | Documented unified InfiniBand collector typename `host_ib` (replaces separate `ib_ext` / switch types in schema examples). |
 | 2026-06-05 | Job list filter summary, empty-result UX, expanded-search AND/end-time semantics, navbar Find Job, job-detail breadcrumbs, shareable `?tab=` analysis tabs, partial-load retry behavior, canonical vs legacy device type names in Device data. |
 | 2026-06-05 | Job detail Metrics tab short labels expanded to describe what is measured; units appear only in the bracket suffix beside each row (no unit tokens in label text). |
+| 2026-07-20 | Summary plot GPU tensors: IMMA/HMMA/DFMA split time series preferred over lumped tensor-pipe; lumped fallback when splits absent. |
 | 2026-07-19 | Dual NFS+Lustre Resources/FSIO; Multiprecision Mix busy-FLOPS-only (CPU FP_ARITH shares, GPU tensor splits + hover %); `avg_cpuusage` job-total busy cores vs `ncores`; fabric peak on same basis as `avg_ibbw`; `avg_sharedfs_*` Insufficient = coverage gate. |
 
 
