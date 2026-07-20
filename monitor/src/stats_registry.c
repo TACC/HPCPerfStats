@@ -41,13 +41,11 @@ extern struct stats_type ib_stats_type;
 
 #if defined(MONITOR_WITH_LUSTRE)
 extern struct stats_type llite_stats_type;
+extern struct stats_type mdc_stats_type;
+extern struct stats_type osc_stats_type;
 #endif
 
 extern struct stats_type lnet_stats_type;
-
-#if defined(MONITOR_WITH_LUSTRE)
-extern struct stats_type mdc_stats_type;
-#endif
 
 extern struct stats_type mem_stats_type;
 
@@ -103,11 +101,10 @@ struct stats_type *const stats_type_table[] = {
 #endif
 #if defined(MONITOR_WITH_LUSTRE)
   &llite_stats_type,
+  &mdc_stats_type,
+  &osc_stats_type,
 #endif
   &lnet_stats_type,
-#if defined(MONITOR_WITH_LUSTRE)
-  &mdc_stats_type,
-#endif
   &mem_stats_type,
   &net_stats_type,
   &nfs_stats_type,

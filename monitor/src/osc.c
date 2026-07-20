@@ -1,46 +1,59 @@
 /* lustre_osc — Lustre object storage client stats from /proc/fs/lustre/osc. */
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <dirent.h>
 #include "stats.h"
 #include "fileio.h"
 #include "trace.h"
 #include "string1.h"
 #include "lustre_obd_to_mnt.h"
+#include "lustre_proc_stats.h"
+#include "lustre_osc.h"
 #include "path_open_fail_once.h"
 #include "sys_iter.h"
 
 #define OSC_DIR_PATH "/proc/fs/lustre/osc"
 
-#define KEYS \
-  X(read_bytes, "E,U=B", ""), \
-  X(write_bytes, "E,U=B", ""), \
-  X(ost_destroy, "E", ""), \
-  X(ost_punch, "E", ""), \
-  X(ost_read, "E", ""), \
-  X(ost_setattr, "E", ""), \
-  X(ost_statfs, "E", ""), \
-  X(ost_write, "E", ""), \
-  X(reqs, "E", ""), \
-  X(wait, "E,U=us", "")
+static const char *const osc_stats_names[] = {
+  "osc_stats",
+  "stats",
+};
 
-static void osc_apply_stats_line(struct stats *stats, const char *key, const char *line)
+static void osc_apply_stats_line(struct stats *stats, const char *key,
+                                 const char *rest)
 {
   unsigned long long count = 0;
   unsigned long long sum = 0;
+  int n;
 
-  if (stats == NULL || key == NULL || line == NULL)
+  if (stats == NULL || key == NULL || rest == NULL)
     return;
-  if (sscanf(line, "%llu samples %*s %*u %*u %llu", &count, &sum) != 2)
+
+  n = lustre_parse_samples_count(rest, &count, &sum);
+  if (n == 0)
     return;
 
   if (strcmp(key, "req_waittime") == 0) {
     stats_inc(stats, "reqs", count);
     stats_inc(stats, "wait", sum);
-  } else if (strcmp(key, "read_bytes") == 0 || strcmp(key, "write_bytes") == 0) {
-    stats_inc(stats, key, sum);
-  } else {
+  } else if (strcmp(key, "read_bytes") == 0
+             || strcmp(key, "lockless_read_bytes") == 0) {
+    stats_inc(stats, "read_bytes", n == 2 ? sum : count);
+  } else if (strcmp(key, "write_bytes") == 0
+             || strcmp(key, "lockless_write_bytes") == 0) {
+    stats_inc(stats, "write_bytes", n == 2 ? sum : count);
+  } else if (strcmp(key, "ost_destroy") == 0
+             || strcmp(key, "ost_punch") == 0
+             || strcmp(key, "ost_read") == 0
+             || strcmp(key, "ost_setattr") == 0
+             || strcmp(key, "ost_statfs") == 0
+             || strcmp(key, "ost_write") == 0
+             || strcmp(key, "reqs") == 0
+             || strcmp(key, "wait") == 0) {
     stats_inc(stats, key, count);
+  } else {
+    stats_inc(stats, "reqs", count);
   }
 }
 
@@ -55,16 +68,12 @@ static void osc_collect_fs(struct stats *stats, const char *d_name)
   if (stats == NULL || d_name == NULL)
     return;
 
-  if (asprintf(&path, "%s/%s/stats", OSC_DIR_PATH, d_name) < 0) {
-    ERROR("cannot create path: %m\n");
+  if (lustre_fopen_obd_named(OSC_DIR_PATH, d_name, osc_stats_names,
+                             sizeof(osc_stats_names) / sizeof(osc_stats_names[0]),
+                             &path, &file) < 0)
     return;
-  }
 
-  file = path_file_fopen_read(path);
-  if (file == NULL)
-    goto out;
   setvbuf(file, file_buf, _IOFBF, sizeof(file_buf));
-
   while (getline(&line_buf, &line_buf_size, file) >= 0) {
     char *line = line_buf;
     char *key = wsep(&line);
@@ -74,10 +83,8 @@ static void osc_collect_fs(struct stats *stats, const char *d_name)
     osc_apply_stats_line(stats, key, line);
   }
 
- out:
   free(line_buf);
-  if (file != NULL)
-    fclose(file);
+  fclose(file);
   free(path);
 }
 

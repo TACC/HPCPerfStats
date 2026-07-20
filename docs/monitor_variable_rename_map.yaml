@@ -151,6 +151,46 @@ events:
   tx_bytes: sw_tx_bytes
   rx_packets: sw_rx_packets
   tx_packets: sw_tx_packets
+# Type-scoped renames (avoid colliding with generic keys like read/open on other types).
+type_events:
+  lustre_llite:
+    read: vfs_read_ops
+    write: vfs_write_ops
+    read_bytes: vfs_read_bytes
+    write_bytes: vfs_write_bytes
+    direct_read: vfs_direct_read_bytes
+    direct_write: vfs_direct_write_bytes
+    osc_read: vfs_osc_read_bytes
+    osc_write: vfs_osc_write_bytes
+    dirty_pages_hits: vfs_dirty_page_hits
+    dirty_pages_misses: vfs_dirty_page_misses
+    ioctl: vfs_ioctl_ops
+    open: vfs_open_ops
+    close: vfs_close_ops
+    mmap: vfs_mmap_ops
+    seek: vfs_seek_ops
+    fsync: vfs_fsync_ops
+    setattr: vfs_setattr_ops
+    truncate: vfs_truncate_ops
+    flock: vfs_flock_ops
+    getattr: vfs_getattr_ops
+    statfs: vfs_statfs_ops
+    alloc_inode: vfs_alloc_inode_ops
+    setxattr: vfs_setxattr_ops
+    getxattr: vfs_getxattr_ops
+    listxattr: vfs_listxattr_ops
+    removexattr: vfs_removexattr_ops
+    inode_permission: vfs_inode_permission_ops
+    readdir: vfs_readdir_ops
+    create: vfs_create_ops
+    lookup: vfs_lookup_ops
+    link: vfs_link_ops
+    unlink: vfs_unlink_ops
+    symlink: vfs_symlink_ops
+    mkdir: vfs_mkdir_ops
+    rmdir: vfs_rmdir_ops
+    mknod: vfs_mknod_ops
+    rename: vfs_rename_ops
 file_event_overrides:
   intel_pcu.c:
     instr_retired: pcu_ctr0

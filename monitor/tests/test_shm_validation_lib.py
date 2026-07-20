@@ -389,6 +389,55 @@ class PlausibilityTests(unittest.TestCase):
         )
         self.assertTrue(any("mem_total < mem_free" in e for e in errors))
 
+    def test_host_tmpfs_missing_silent_when_not_tmpfs(self) -> None:
+        """Schema lists host_tmpfs but /tmp is not tmpfs → no missing-type WARN."""
+        manifest = {
+            "enable_slow_tier": True,
+            "types": {
+                "host_tmpfs": {
+                    "schema_keys": ["bytes_used,E,U=B", "bytes_avail,E,U=B"],
+                    "devices": [],
+                }
+            },
+        }
+        schema = {"host_tmpfs": manifest["types"]["host_tmpfs"]["schema_keys"]}
+        # Header-only sample: no metric rows (host_tmpfs absent from payload).
+        body = "1234567890.0 0 golden_host\n"
+        _, warnings, _ = check_plausibility(
+            manifest,
+            schema,
+            full_body=body,
+            fast_body=None,
+            schema_body=None,
+            no_freshness=True,
+            strict=False,
+        )
+        self.assertFalse(any("host_tmpfs" in w and "missing" in w for w in warnings))
+
+    def test_host_tmpfs_missing_warns_when_expected(self) -> None:
+        """Manifest devices show /tmp tmpfs → missing row WARNs."""
+        manifest = {
+            "enable_slow_tier": True,
+            "types": {
+                "host_tmpfs": {
+                    "schema_keys": ["bytes_used,E,U=B", "bytes_avail,E,U=B"],
+                    "devices": ["/tmp"],
+                }
+            },
+        }
+        schema = {"host_tmpfs": manifest["types"]["host_tmpfs"]["schema_keys"]}
+        body = "1234567890.0 0 golden_host\n"
+        _, warnings, _ = check_plausibility(
+            manifest,
+            schema,
+            full_body=body,
+            fast_body=None,
+            schema_body=None,
+            no_freshness=True,
+            strict=False,
+        )
+        self.assertTrue(any("host_tmpfs" in w and "missing" in w for w in warnings))
+
 
 class CrossSampleTests(unittest.TestCase):
     def test_schema_token_is_event_counter(self) -> None:

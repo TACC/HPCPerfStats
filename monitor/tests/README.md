@@ -18,6 +18,7 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_ib_schema_contract.c` | `ib.h` KEYS rename contract |
 | `test_host_schema_contract.c` | Host collector schema token contract |
 | `test_lustre_schema_contract.c` | Lustre collector schema token contract |
+| `test_lustre_proc_stats.c` | Modern/legacy Lustre stats line parse + file open order |
 | `test_opa_schema_contract.c` | OPA collector schema token contract (`host_opa.h`) |
 | `test_opa_sysfs_map.c` | hfi1 sysfs filename → schema key map |
 | `test_opa_mad_backoff.c` | OPA MAD failure backoff |

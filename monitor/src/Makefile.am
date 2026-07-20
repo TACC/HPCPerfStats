@@ -308,10 +308,16 @@ endif
 if LUSTRE
 hpcperfstatsd_SOURCES += \
 	lustre_obd_to_mnt.c \
-	lustre_obd_to_mnt.h
+	lustre_obd_to_mnt.h \
+	lustre_proc_stats.c \
+	lustre_proc_stats.h \
+	lustre_mdc.h \
+	lustre_osc.h \
+	lustre_llite.h
 
 TYPES += \
 	mdc.c \
+	osc.c \
 	llite.c
 endif
 

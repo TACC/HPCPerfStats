@@ -53,6 +53,16 @@ def check_plausibility(
         )
         for type_name in schema_by_type:
             if type_name not in full_rows:
+                # host_tmpfs only emits when /tmp is tmpfs (tmpfs.c). Schema may
+                # still list the type when compiled in; skip presence WARN unless
+                # manifest devices (from probe_tmpfs_devices) expect /tmp.
+                if type_name == "host_tmpfs":
+                    devices = (
+                        manifest.get("types", {}).get("host_tmpfs", {}).get("devices")
+                        or []
+                    )
+                    if not devices:
+                        continue
                 warn(f"type {type_name!r} missing from full payload")
 
         for type_name, rows in full_rows.items():

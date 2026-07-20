@@ -229,21 +229,30 @@ def _lustre_sb_mount_map() -> dict[str, str]:
 
 
 def probe_lustre_obd_devices(obd_subdir: str) -> list[str]:
-    """Mount paths for lustre_osc/mdc/llite rows (osc.c, mdc.c, llite.c)."""
+    """Mount paths for lustre_osc/mdc/llite rows (osc.c, mdc.c, llite.c).
+
+    Prefers /proc/fs/lustre/<obd>. For lustre_llite, also walks
+    /sys/fs/lustre/llite when proc llite is absent (modern capacity path).
+    """
     sb_map = _lustre_sb_mount_map()
-    base = Path(f"/proc/fs/lustre/{obd_subdir}")
     mounts: list[str] = []
-    if not base.is_dir():
-        return []
-    for p in sorted(base.iterdir()):
-        if not p.is_dir() or p.name.startswith("."):
-            continue
-        name = p.name
-        if len(name) < 16:
-            continue
-        mnt = sb_map.get(name[-16:])
-        if mnt:
-            mounts.append(mnt)
+
+    def _collect_from(base: Path) -> None:
+        if not base.is_dir():
+            return
+        for p in sorted(base.iterdir()):
+            if not p.is_dir() or p.name.startswith("."):
+                continue
+            name = p.name
+            if len(name) < 16:
+                continue
+            mnt = sb_map.get(name[-16:])
+            if mnt:
+                mounts.append(mnt)
+
+    _collect_from(Path(f"/proc/fs/lustre/{obd_subdir}"))
+    if obd_subdir == "llite" and not mounts:
+        _collect_from(Path("/sys/fs/lustre/llite"))
     return sorted(set(mounts))
 
 

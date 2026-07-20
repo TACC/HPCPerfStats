@@ -44,7 +44,7 @@ Do **not** invent probe filters (e.g. skipping `lo`) unless the C collector does
 | `host_ib` | `ib.c` / `ib_family.c` | `hca.port` from sysfs (non-`hfi1_*`) | `probe_ib_devices()` |
 | `host_opa` | `opa.c` | `hfi1_N/P` (slash); **collectible** ports only (`ib_port_collectible`) | `probe_opa_devices()` |
 | `host_nfs` | `nfs.c` | NFS **mount path** (`mnt` token) from mountstats | `probe_nfs_mount_devices()` |
-| `lustre_*` | `osc.c` / `mdc.c` / `llite.c` | Lustre mount path via OBD→lov map | `probe_lustre_obd_devices()` |
+| `lustre_*` | `osc.c` / `mdc.c` / `llite.c` | Lustre mount path via OBD→lov map; `lustre_llite` also `/sys/fs/lustre/llite` capacity | `probe_lustre_obd_devices()` (proc first; sysfs llite fallback) |
 | `host_tmpfs` | `tmpfs.c` | `/tmp` when tmpfs | `probe_tmpfs_devices()` |
 | `nvidia_gpu` | `nvidia_gpu.c` | `"0"`..`"N-1"` GPU index | `probe_nvidia_gpu_devices()` |
 | `intel_gpu` | `intel_gpu.c` | `"0"`..`"N-1"` XPUM device id | `probe_intel_gpu_devices()` |
