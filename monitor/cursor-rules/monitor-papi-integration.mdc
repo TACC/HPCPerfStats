@@ -35,6 +35,7 @@ alwaysApply: false
 - Per-CPU `PAPI_CPU_ATTACH` + `PAPI_DOM_ALL` for system-wide counts; multiplexing allowed when counters are scarce (six active events may saturate Grace PMU).
 - Check `PAPI_set_multiplex` / cap active events to `PAPI_num_hwctrs()`; raise soft `RLIMIT_NOFILE` before the attach loop when needed.
 - **Release-visible** one-shot warn: `ok_cpus` / `nr_cpus` / `n_active` (and first-fail `PAPI_strerror` when partial). Do not disable `host_cpu_hw` on partial attach. Rate-limit `PAPI_read` failures.
+- **Lifetime vs DCGM soft-fail:** PAPI must **survive** DCGM `UpdateAllFields` soft-reset. Do not destroy PAPI when only the DCGM session is torn down. Ops smoke: frozen mid-row with `ok_cpus≈nr_cpus` ⇒ check journal for DCGM soft-reset (not attach holes).
 - Keep collect hot-path bounded; do not add unbounded per-sample work.
 
 ## Overlap

@@ -170,6 +170,7 @@ test_cpu_counter_dcgm_publish_SOURCES = \
 	test_stats_stub.c \
 	$(top_srcdir)/src/cpu_counter_metrics_dcgm_publish.c \
 	$(top_srcdir)/src/cpu_counter_metrics_dcgm_util.c
+# Force DCGM backend define for pure publish math; no -ldcgm / vendor headers required.
 test_cpu_counter_dcgm_publish_CPPFLAGS = $(AM_CPPFLAGS) -DMONITOR_CPU_BACKEND_DCGM
 
 test_cpu_counter_papi_map_SOURCES = \

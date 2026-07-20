@@ -15,9 +15,8 @@
 #include "cpuid.h"
 #include "monitor_log.h"
 #ifdef MONITOR_CPU_BACKEND_DCGM
-#include "dcgm_agent.h"
-#include "dcgm_fields.h"
-#include "dcgm_structs.h"
+/* No libdcgm headers: publish/accumulate are pure math over shared state (unit-tested
+ * without DCGM on LIKWID and foreign cross trees). */
 #include "cpu_counter_metrics_dcgm_state.h"
 #include "cpu_counter_metrics_dcgm_publish.h"
 

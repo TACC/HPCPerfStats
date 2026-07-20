@@ -97,3 +97,17 @@ unsigned long long dcgm_watts_dbl_to_ull(double v)
     return ULLONG_MAX;
   return (unsigned long long) (v + 0.5);
 }
+
+int dcgm_host_cpu_hw_collect_active(int dcgm_ready, int papi_ready, int util_bufs_ok)
+{
+  return (dcgm_ready || papi_ready || util_bufs_ok) ? 1 : 0;
+}
+
+int dcgm_backend_retry_due(time_t now, time_t retry_after)
+{
+  if (retry_after <= 0)
+    return 1;
+  if (now <= 0)
+    return 0;
+  return (now >= retry_after) ? 1 : 0;
+}

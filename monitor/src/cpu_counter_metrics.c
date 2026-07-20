@@ -702,9 +702,35 @@ static void dcgm_cpu_watch_cleanup(void)
   g_dcgm_watch_active = 0;
 }
 
+static void dcgm_backend_teardown_session(void)
+{
+  /* Drop DCGM watches/handle only — keep util accumulators, jiffy bufs, and PAPI. */
+  dcgm_cpu_watch_cleanup();
+  dcgm_cpu_sock_watch_cleanup();
+
+  free(g_dcgm_sample_cache);
+  g_dcgm_sample_cache = NULL;
+  free(g_dcgm_sample_valid);
+  g_dcgm_sample_valid = NULL;
+  free(g_dcgm_last_ts);
+  g_dcgm_last_ts = NULL;
+
+  if (g_dcgm_handle != (dcgmHandle_t) NULL) {
+    if (g_dcgm_cpu_use_disconnect)
+      (void) dcgmDisconnect(g_dcgm_handle);
+    else
+      (void) dcgmStopEmbedded(g_dcgm_handle);
+    g_dcgm_handle = (dcgmHandle_t) NULL;
+  }
+  (void) dcgmShutdown();
+
+  g_dcgm_cpu_use_disconnect = 0;
+  g_dcgm_ready = 0;
+}
+
 static void dcgm_backend_cleanup(void)
 {
-  dcgm_cpu_watch_cleanup();
+  dcgm_backend_teardown_session();
 #ifdef MONITOR_CPU_PAPI_FLOPS
   cpu_counter_metrics_papi_cleanup();
 #endif
@@ -728,30 +754,21 @@ static void dcgm_backend_cleanup(void)
   free(g_dcgm_fp_128_s); g_dcgm_fp_128_s = NULL;
   free(g_dcgm_fp_256_s); g_dcgm_fp_256_s = NULL;
   free(g_dcgm_fp_512_s); g_dcgm_fp_512_s = NULL;
-  free(g_dcgm_last_ts); g_dcgm_last_ts = NULL;
   free(g_dcjm_prev); g_dcjm_prev = NULL;
   free(g_dcjm_cur); g_dcjm_cur = NULL;
-  free(g_dcgm_sample_cache); g_dcgm_sample_cache = NULL;
-  free(g_dcgm_sample_valid); g_dcgm_sample_valid = NULL;
 
   if (g_dcgm_proc_stat != NULL) {
     fclose(g_dcgm_proc_stat);
     g_dcgm_proc_stat = NULL;
   }
 
-  if (g_dcgm_handle != (dcgmHandle_t) NULL) {
-    if (g_dcgm_cpu_use_disconnect)
-      (void) dcgmDisconnect(g_dcgm_handle);
-    else
-      (void) dcgmStopEmbedded(g_dcgm_handle);
-    g_dcgm_handle = (dcgmHandle_t) NULL;
-  }
-  (void) dcgmShutdown();
-
-  g_dcgm_cpu_use_disconnect = 0;
   g_dcgm_stat_seeded = 0;
   g_dcgm_mono_prev_us = 0;
-  g_dcgm_ready = 0;
+}
+
+static int dcgm_util_bufs_ok(void)
+{
+  return (g_dcgm_ctr0 != NULL && g_dcjm_prev != NULL && g_dcjm_cur != NULL) ? 1 : 0;
 }
 
 static int dcgm_cpu_watch_install(void)
@@ -817,83 +834,124 @@ static int dcgm_backend_begin(struct stats_type *type)
   size_t n = (size_t) nr_cpus;
   dcgmReturn_t rc;
   time_t now = time(NULL);
+  int keep_degraded;
+  int need_alloc;
 
-  if (g_dcgm_retry_after > 0 && now > 0 && now < g_dcgm_retry_after) {
-    type->st_enabled = 0;
+  if (!dcgm_backend_retry_due(now, g_dcgm_retry_after))
     return 0;
-  }
 
   if (g_dcgm_ready)
     return 0;
-  /* Defensive: if prior init failed halfway, release leftovers first. */
-  dcgm_backend_cleanup();
+
+  keep_degraded = 0;
+#ifdef MONITOR_CPU_PAPI_FLOPS
+  if (cpu_counter_metrics_papi_ready())
+    keep_degraded = 1;
+#endif
+  if (dcgm_util_bufs_ok())
+    keep_degraded = 1;
+
+  /* Soft-failed sessions already tore down the handle; full cleanup only when
+   * restarting with no retained util/PAPI state. */
+  if (keep_degraded)
+    dcgm_backend_teardown_session();
+  else
+    dcgm_backend_cleanup();
 
   rc = dcgmInit();
   if (rc != DCGM_ST_OK) {
     ERROR("DCGM CPU backend init failed\n");
-    type->st_enabled = 0;
+    if (!keep_degraded)
+      type->st_enabled = 0;
+    else
+      g_dcgm_retry_after = now + 60;
     return 0;
   }
   rc = monitor_dcgm_attach_for_process(&g_dcgm_handle, &g_dcgm_cpu_use_disconnect);
   if (rc != DCGM_ST_OK || g_dcgm_handle == (dcgmHandle_t) NULL) {
     ERROR("DCGM CPU backend attach failed\n");
     (void) dcgmShutdown();
-    type->st_enabled = 0;
+    g_dcgm_handle = (dcgmHandle_t) NULL;
+    if (!keep_degraded)
+      type->st_enabled = 0;
+    else
+      g_dcgm_retry_after = now + 60;
     return 0;
   }
-  g_dcgm_ctr0 = (unsigned long long *) calloc(n, sizeof(*g_dcgm_ctr0));
-  g_dcgm_ctr1 = (unsigned long long *) calloc(n, sizeof(*g_dcgm_ctr1));
-  g_dcgm_ctr2 = (unsigned long long *) calloc(n, sizeof(*g_dcgm_ctr2));
-  g_dcgm_ctr3 = (unsigned long long *) calloc(n, sizeof(*g_dcgm_ctr3));
-  g_dcgm_ctr4 = (unsigned long long *) calloc(n, sizeof(*g_dcgm_ctr4));
-  g_dcgm_ctr5 = (unsigned long long *) calloc(n, sizeof(*g_dcgm_ctr5));
-  g_dcgm_inst = (unsigned long long *) calloc(n, sizeof(*g_dcgm_inst));
-  g_dcgm_aperf = (unsigned long long *) calloc(n, sizeof(*g_dcgm_aperf));
-  g_dcgm_mperf = (unsigned long long *) calloc(n, sizeof(*g_dcgm_mperf));
-  g_dcgm_arm_est_flops = (unsigned long long *) calloc(n, sizeof(*g_dcgm_arm_est_flops));
-  g_dcgm_arm_dram_bytes = (unsigned long long *) calloc(n, sizeof(*g_dcgm_arm_dram_bytes));
-  g_dcgm_fp_sca_d = (unsigned long long *) calloc(n, sizeof(*g_dcgm_fp_sca_d));
-  g_dcgm_fp_128_d = (unsigned long long *) calloc(n, sizeof(*g_dcgm_fp_128_d));
-  g_dcgm_fp_256_d = (unsigned long long *) calloc(n, sizeof(*g_dcgm_fp_256_d));
-  g_dcgm_fp_512_d = (unsigned long long *) calloc(n, sizeof(*g_dcgm_fp_512_d));
-  g_dcgm_fp_sca_s = (unsigned long long *) calloc(n, sizeof(*g_dcgm_fp_sca_s));
-  g_dcgm_fp_128_s = (unsigned long long *) calloc(n, sizeof(*g_dcgm_fp_128_s));
-  g_dcgm_fp_256_s = (unsigned long long *) calloc(n, sizeof(*g_dcgm_fp_256_s));
-  g_dcgm_fp_512_s = (unsigned long long *) calloc(n, sizeof(*g_dcgm_fp_512_s));
-  g_dcgm_last_ts = (long long *) calloc(n, sizeof(*g_dcgm_last_ts));
-  g_dcjm_prev = (struct dcgm_cpu_jifs *) calloc(n, sizeof(*g_dcjm_prev));
-  g_dcjm_cur = (struct dcgm_cpu_jifs *) calloc(n, sizeof(*g_dcjm_cur));
-  g_dcgm_sample_cache = (struct dcgm_cpu_sample *)calloc(n, sizeof(*g_dcgm_sample_cache));
-  g_dcgm_sample_valid = (unsigned char *)calloc(n, sizeof(*g_dcgm_sample_valid));
-  if (g_dcgm_ctr0 == NULL || g_dcgm_ctr1 == NULL || g_dcgm_ctr2 == NULL ||
-      g_dcgm_ctr3 == NULL || g_dcgm_ctr4 == NULL || g_dcgm_ctr5 == NULL ||
-      g_dcgm_inst == NULL || g_dcgm_aperf == NULL || g_dcgm_mperf == NULL ||
-      g_dcgm_arm_est_flops == NULL || g_dcgm_arm_dram_bytes == NULL ||
-      g_dcgm_fp_sca_d == NULL || g_dcgm_fp_128_d == NULL ||
-      g_dcgm_fp_256_d == NULL || g_dcgm_fp_512_d == NULL ||
-      g_dcgm_fp_sca_s == NULL || g_dcgm_fp_128_s == NULL ||
-      g_dcgm_fp_256_s == NULL || g_dcgm_fp_512_s == NULL ||
-      g_dcgm_last_ts == NULL || g_dcjm_prev == NULL || g_dcjm_cur == NULL ||
-      g_dcgm_sample_cache == NULL || g_dcgm_sample_valid == NULL) {
-    ERROR("DCGM CPU backend allocation failed\n");
-    dcgm_backend_cleanup();
-    type->st_enabled = 0;
+
+  need_alloc = !dcgm_util_bufs_ok();
+  if (need_alloc) {
+    g_dcgm_ctr0 = (unsigned long long *) calloc(n, sizeof(*g_dcgm_ctr0));
+    g_dcgm_ctr1 = (unsigned long long *) calloc(n, sizeof(*g_dcgm_ctr1));
+    g_dcgm_ctr2 = (unsigned long long *) calloc(n, sizeof(*g_dcgm_ctr2));
+    g_dcgm_ctr3 = (unsigned long long *) calloc(n, sizeof(*g_dcgm_ctr3));
+    g_dcgm_ctr4 = (unsigned long long *) calloc(n, sizeof(*g_dcgm_ctr4));
+    g_dcgm_ctr5 = (unsigned long long *) calloc(n, sizeof(*g_dcgm_ctr5));
+    g_dcgm_inst = (unsigned long long *) calloc(n, sizeof(*g_dcgm_inst));
+    g_dcgm_aperf = (unsigned long long *) calloc(n, sizeof(*g_dcgm_aperf));
+    g_dcgm_mperf = (unsigned long long *) calloc(n, sizeof(*g_dcgm_mperf));
+    g_dcgm_arm_est_flops = (unsigned long long *) calloc(n, sizeof(*g_dcgm_arm_est_flops));
+    g_dcgm_arm_dram_bytes = (unsigned long long *) calloc(n, sizeof(*g_dcgm_arm_dram_bytes));
+    g_dcgm_fp_sca_d = (unsigned long long *) calloc(n, sizeof(*g_dcgm_fp_sca_d));
+    g_dcgm_fp_128_d = (unsigned long long *) calloc(n, sizeof(*g_dcgm_fp_128_d));
+    g_dcgm_fp_256_d = (unsigned long long *) calloc(n, sizeof(*g_dcgm_fp_256_d));
+    g_dcgm_fp_512_d = (unsigned long long *) calloc(n, sizeof(*g_dcgm_fp_512_d));
+    g_dcgm_fp_sca_s = (unsigned long long *) calloc(n, sizeof(*g_dcgm_fp_sca_s));
+    g_dcgm_fp_128_s = (unsigned long long *) calloc(n, sizeof(*g_dcgm_fp_128_s));
+    g_dcgm_fp_256_s = (unsigned long long *) calloc(n, sizeof(*g_dcgm_fp_256_s));
+    g_dcgm_fp_512_s = (unsigned long long *) calloc(n, sizeof(*g_dcgm_fp_512_s));
+    g_dcjm_prev = (struct dcgm_cpu_jifs *) calloc(n, sizeof(*g_dcjm_prev));
+    g_dcjm_cur = (struct dcgm_cpu_jifs *) calloc(n, sizeof(*g_dcjm_cur));
+    if (g_dcgm_ctr0 == NULL || g_dcgm_ctr1 == NULL || g_dcgm_ctr2 == NULL ||
+	g_dcgm_ctr3 == NULL || g_dcgm_ctr4 == NULL || g_dcgm_ctr5 == NULL ||
+	g_dcgm_inst == NULL || g_dcgm_aperf == NULL || g_dcgm_mperf == NULL ||
+	g_dcgm_arm_est_flops == NULL || g_dcgm_arm_dram_bytes == NULL ||
+	g_dcgm_fp_sca_d == NULL || g_dcgm_fp_128_d == NULL ||
+	g_dcgm_fp_256_d == NULL || g_dcgm_fp_512_d == NULL ||
+	g_dcgm_fp_sca_s == NULL || g_dcgm_fp_128_s == NULL ||
+	g_dcgm_fp_256_s == NULL || g_dcgm_fp_512_s == NULL ||
+	g_dcjm_prev == NULL || g_dcjm_cur == NULL) {
+      ERROR("DCGM CPU backend allocation failed\n");
+      dcgm_backend_cleanup();
+      type->st_enabled = 0;
+      return 0;
+    }
+    g_dcgm_mono_prev_us = 0;
+    g_dcgm_stat_seeded = 0;
+  }
+
+  if (g_dcgm_last_ts == NULL)
+    g_dcgm_last_ts = (long long *) calloc(n, sizeof(*g_dcgm_last_ts));
+  if (g_dcgm_sample_cache == NULL)
+    g_dcgm_sample_cache = (struct dcgm_cpu_sample *)calloc(n, sizeof(*g_dcgm_sample_cache));
+  if (g_dcgm_sample_valid == NULL)
+    g_dcgm_sample_valid = (unsigned char *)calloc(n, sizeof(*g_dcgm_sample_valid));
+  if (g_dcgm_last_ts == NULL || g_dcgm_sample_cache == NULL || g_dcgm_sample_valid == NULL) {
+    ERROR("DCGM CPU sample cache allocation failed\n");
+    if (!keep_degraded) {
+      dcgm_backend_cleanup();
+      type->st_enabled = 0;
+    } else {
+      dcgm_backend_teardown_session();
+    }
     return 0;
   }
+
   if (dcgm_cpu_watch_install() != 0)
     TRACE("DCGM CPU watch not active; samples may use slower live queries\n");
   if (dcgm_topology_build_sock_power_map() != 0)
     TRACE("DCGM CPU socket power mapping unavailable (sysfs packages vs DCGM_FE_CPU)\n");
   else if (dcgm_cpu_sock_watch_install() != 0)
     TRACE("DCGM CPU socket power field watch not active; using entity reads\n");
-  g_dcgm_mono_prev_us = 0;
-  g_dcgm_stat_seeded = 0;
 #ifdef MONITOR_CPU_PAPI_FLOPS
-  if (cpu_counter_metrics_papi_begin(type) != 0)
-    TRACE("PAPI FLOPs/cycles begin returned error; continuing with DCGM util/power only\n");
+  if (!cpu_counter_metrics_papi_ready()) {
+    if (cpu_counter_metrics_papi_begin(type) != 0)
+      TRACE("PAPI FLOPs/cycles begin returned error; continuing with DCGM util/power only\n");
+  }
 #endif
   g_dcgm_ready = 1;
   g_dcgm_retry_after = 0;
+  type->st_enabled = 1;
   return 0;
 }
 #endif
@@ -1008,6 +1066,20 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
   dcgmReturn_t update_rc = DCGM_ST_OK;
   struct timespec t0, t1;
   long long update_elapsed_us = 0;
+  int papi_ready = 0;
+  time_t now = time(NULL);
+
+#ifdef MONITOR_CPU_PAPI_FLOPS
+  papi_ready = cpu_counter_metrics_papi_ready();
+#endif
+
+  /* Re-init DCGM after soft-fail backoff without requiring daemon restart. */
+  if (!g_dcgm_ready && dcgm_backend_retry_due(now, g_dcgm_retry_after))
+    (void) dcgm_backend_begin(type);
+
+#ifdef MONITOR_CPU_PAPI_FLOPS
+  papi_ready = cpu_counter_metrics_papi_ready();
+#endif
 
   if (g_dcgm_ready) {
     if (clock_gettime(CLOCK_MONOTONIC, &t0) != 0) {
@@ -1024,19 +1096,19 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
     if (update_rc != DCGM_ST_OK) {
       g_dcgm_update_failures++;
       monitor_log_warn(
-	  "cpu_counter_metrics: dcgmUpdateAllFields failed rc=%d (failures=%lu); resetting DCGM backend\n",
+	  "cpu_counter_metrics: dcgmUpdateAllFields failed rc=%d (failures=%lu); soft-reset DCGM (keep PAPI/util)\n",
 	  (int)update_rc, g_dcgm_update_failures);
-      dcgm_backend_cleanup();
+      dcgm_backend_teardown_session();
       g_dcgm_retry_after = time(NULL) + 60;
     }
   }
   if (g_dcgm_ready && g_dcgm_ncpu_entities > 0)
     dcgm_cpu_refresh_socket_power();
-  if (g_dcgm_ready && g_dcjm_cur != NULL && g_dcjm_prev != NULL && nr_cpus > 0)
+  if (dcgm_util_bufs_ok())
     proc_stat_ok = (dcgm_proc_stat_read_cpus(g_dcjm_cur, nr_cpus) == 0);
   if (g_dcgm_ready)
     dcgm_cpu_refresh_sample_cache();
-  if (g_dcgm_ready) {
+  if (dcgm_host_cpu_hw_collect_active(g_dcgm_ready, papi_ready, dcgm_util_bufs_ok())) {
     struct timespec mono;
 
     if (clock_gettime(CLOCK_MONOTONIC, &mono) == 0) {
@@ -1056,63 +1128,64 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
     stats = get_current_stats(type, cpu);
     if (stats == NULL)
       continue;
-    if (
 #ifdef MONITOR_CPU_BACKEND_DCGM
-        g_dcgm_ready
-#else
-        cpu_counter_metrics_likwid_ready()
-#endif
-    ) {
-#ifdef MONITOR_CPU_BACKEND_DCGM
+    if (!dcgm_host_cpu_hw_collect_active(g_dcgm_ready, papi_ready, dcgm_util_bufs_ok()))
+      continue;
+    {
       struct dcgm_cpu_sample sample;
       long long delta_us = delta_us_collect;
-      int rd;
+      int rd = -1;
 
-      if (g_dcgm_watch_active && g_dcgm_sample_valid != NULL && g_dcgm_sample_cache != NULL
-	  && g_dcgm_sample_valid[i]) {
-	sample = g_dcgm_sample_cache[i];
-	rd = 0;
-      } else {
-	memset(&sample, 0, sizeof(sample));
-	rd = read_dcgm_cpu_sample(i, &sample);
+      memset(&sample, 0, sizeof(sample));
+      if (g_dcgm_ready) {
+	if (g_dcgm_watch_active && g_dcgm_sample_valid != NULL && g_dcgm_sample_cache != NULL
+	    && g_dcgm_sample_valid[i]) {
+	  sample = g_dcgm_sample_cache[i];
+	  rd = 0;
+	} else {
+	  rd = read_dcgm_cpu_sample(i, &sample);
+	}
+	if (rd == 0)
+	  dcgm_cpu_scale_util_if_fraction(&sample);
       }
-      if (rd == 0)
-	dcgm_cpu_scale_util_if_fraction(&sample);
       if ((rd != 0 || sample.util_total <= 0.0) && proc_stat_ok && g_dcgm_stat_seeded)
 	dcgm_cpu_sample_from_jiffy_diff(&sample, &g_dcjm_cur[i], &g_dcjm_prev[i]);
 
       if (rd == 0 && sample.ts > 0) {
-	if (g_dcgm_last_ts[i] > 0 && sample.ts > g_dcgm_last_ts[i]) {
+	if (g_dcgm_last_ts != NULL && g_dcgm_last_ts[i] > 0 && sample.ts > g_dcgm_last_ts[i]) {
 	  long long dts = sample.ts - g_dcgm_last_ts[i];
 
 	  if (dts > 0 && dts < 3600LL * 1000000LL)
 	    delta_us = dts;
 	}
-	g_dcgm_last_ts[i] = sample.ts;
+	if (g_dcgm_last_ts != NULL)
+	  g_dcgm_last_ts[i] = sample.ts;
       }
 
       if (sample.clock_khz <= 0.0)
 	sample.clock_khz = dcgm_cpu_nominal_freq_khz(i);
 
-      dcgm_accumulate_from_util_sample(i, &sample, delta_us);
-      publish_dcgm_cpu_stats(stats, i);
+      if (dcgm_util_bufs_ok()) {
+	dcgm_accumulate_from_util_sample(i, &sample, delta_us);
+	publish_dcgm_cpu_stats(stats, i);
+      }
 #ifdef MONITOR_CPU_PAPI_FLOPS
-      if (cpu_counter_metrics_papi_ready())
+      if (papi_ready)
 	cpu_counter_metrics_papi_collect_cpu(stats, i);
 #endif
       continue;
+    }
 #else
+    if (cpu_counter_metrics_likwid_ready()) {
       uint64_t ctls[8] = {0};
       if (likwid_pmc_adapter_read_cpu(stats, i, ctls, 8, 8) == 0)
         continue;
-#endif
     }
-#ifndef MONITOR_CPU_BACKEND_DCGM
     fallback_fill(stats, cpu);
 #endif
   }
 #ifdef MONITOR_CPU_BACKEND_DCGM
-  if (g_dcgm_ready && proc_stat_ok && g_dcjm_prev != NULL && g_dcjm_cur != NULL && nr_cpus > 0) {
+  if (dcgm_util_bufs_ok() && proc_stat_ok && nr_cpus > 0) {
     memcpy(g_dcjm_prev, g_dcjm_cur, (size_t) nr_cpus * sizeof(*g_dcjm_prev));
     g_dcgm_stat_seeded = 1;
   }
