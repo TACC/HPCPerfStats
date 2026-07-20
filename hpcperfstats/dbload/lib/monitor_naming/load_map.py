@@ -45,6 +45,23 @@ def event_renames() -> dict[str, str]:
     return dict(load_monitor_rename_map().get("events") or {})
 
 
+def type_event_renames() -> dict[str, dict[str, str]]:
+    """Canonical st_name -> {legacy_event -> canonical_event} (type-scoped).
+
+    Use for colliding keys (e.g. lustre_llite ``open`` / ``read``). Do **not**
+    dump these into the global ``events:`` map.
+    """
+    raw = load_monitor_rename_map().get("type_events") or {}
+    out: dict[str, dict[str, str]] = {}
+    if not isinstance(raw, dict):
+        return out
+    for typ, mapping in raw.items():
+        if not isinstance(mapping, dict):
+            continue
+        out[str(typ)] = {str(k): str(v) for k, v in mapping.items()}
+    return out
+
+
 def legacy_type_names() -> frozenset[str]:
     return frozenset(type_renames().keys())
 

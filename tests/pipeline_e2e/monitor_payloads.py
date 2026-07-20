@@ -6,10 +6,21 @@ Emits canonical typenames/events (post monitor naming scheme) for
 from __future__ import annotations
 
 _LLITE_EVENTS = [
-    "open", "close", "mmap", "fsync", "setattr", "truncate", "flock", "getattr",
-    "statfs", "alloc_inode", "setxattr", "listxattr", "removexattr", "readdir",
-    "create", "lookup", "link", "unlink", "symlink", "mkdir", "rmdir", "mknod",
-    "rename", "read_bytes", "write_bytes",
+    "vfs_open_ops", "vfs_close_ops", "vfs_mmap_ops", "vfs_fsync_ops",
+    "vfs_setattr_ops", "vfs_truncate_ops", "vfs_flock_ops", "vfs_getattr_ops",
+    "vfs_statfs_ops", "vfs_alloc_inode_ops", "vfs_setxattr_ops", "vfs_listxattr_ops",
+    "vfs_removexattr_ops", "vfs_readdir_ops", "vfs_create_ops", "vfs_lookup_ops",
+    "vfs_link_ops", "vfs_unlink_ops", "vfs_symlink_ops", "vfs_mkdir_ops",
+    "vfs_rmdir_ops", "vfs_mknod_ops", "vfs_rename_ops",
+    "vfs_read_bytes", "vfs_write_bytes",
+]
+
+_LLITE_CAPACITY_EVENTS = [
+    ("fs_bytes_total", "U=B"),
+    ("fs_bytes_free", "U=B"),
+    ("fs_bytes_avail", "U=B"),
+    ("fs_files_total", ""),
+    ("fs_files_free", ""),
 ]
 
 _INTEL_GPR8_EVENTS = [
@@ -30,6 +41,11 @@ _INTEL_GPR8_EVENTS = [
 def monitor_schema_header(fqdn: str) -> str:
   """``$`` schema block: software counters + Intel PMC/IMC + GPU + fabric types."""
   llite_schema = " ".join("%s,E" % e for e in _LLITE_EVENTS)
+  llite_cap = " ".join(
+      ("%s,%s" % (name, flags) if flags else name)
+      for name, flags in _LLITE_CAPACITY_EVENTS
+  )
+  llite_schema = "%s %s" % (llite_schema, llite_cap)
   intel_pmc_schema = " ".join(_INTEL_GPR8_EVENTS)
   return """$tacc_stats 2.3.5
 $hostname {fqdn}
@@ -97,7 +113,15 @@ def _numa_line(scale: int) -> str:
 
 def _llite_line(scale: int) -> str:
   vals = [str(500 + i * 10 + scale) for i in range(len(_LLITE_EVENTS))]
-  return "lustre_llite scratch %s\n" % " ".join(vals)
+  # Capacity gauges (sysfs): large fixed totals with free/avail slightly below.
+  cap = [
+      str(10**12),
+      str(10**12 - 10**9 - scale),
+      str(10**12 - 2 * 10**9 - scale),
+      str(10**8),
+      str(10**8 - 1000 - scale),
+  ]
+  return "lustre_llite scratch %s\n" % " ".join(vals + cap)
 
 
 def _ib_line(scale: int) -> str:

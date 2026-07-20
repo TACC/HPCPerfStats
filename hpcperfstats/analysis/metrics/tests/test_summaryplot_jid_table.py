@@ -735,11 +735,11 @@ def test_summaryplot_orders_lustre_nfs_before_network():
         return pd.DataFrame([("n1.cluster", t0, 2.0)], columns=["host", "time", "sum_val"])
       return empty
     if typ in ("lustre_llite", "llite") and val_col == "arc":
-      if ev == ["read_bytes"]:
+      if "vfs_read_bytes" in ev or ev == ["read_bytes"]:
         return pd.DataFrame([("n1.cluster", t0, 1024.0)], columns=["host", "time", "sum_val"])
-      if ev == ["write_bytes"]:
+      if "vfs_write_bytes" in ev or ev == ["write_bytes"]:
         return pd.DataFrame([("n1.cluster", t0, 2048.0)], columns=["host", "time", "sum_val"])
-      if ev == llite_meta_events:
+      if set(llite_meta_events).issubset(set(ev)) or ev == llite_meta_events:
         return pd.DataFrame([("n1.cluster", t0, 64.0)], columns=["host", "time", "sum_val"])
       return empty
     if typ in ("host_nfs", "nfs") and val_col == "arc":
@@ -812,12 +812,12 @@ def test_summaryplot_lustre_and_nfs_read_write_use_per_host_time_series():
           columns=["host", "time", "sum_val"],
       )
     if typ in ("lustre_llite", "llite") and val_col == "arc":
-      if ev == ["read_bytes"]:
+      if "vfs_read_bytes" in ev or ev == ["read_bytes"]:
         return pd.DataFrame(
             [("n1.cluster", t0, 10.0), ("n2.cluster", t1, 20.0)],
             columns=["host", "time", "sum_val"],
         )
-      if ev == ["write_bytes"]:
+      if "vfs_write_bytes" in ev or ev == ["write_bytes"]:
         return pd.DataFrame(
             [("n1.cluster", t1, 30.0), ("n2.cluster", t0, 40.0)],
             columns=["host", "time", "sum_val"],
@@ -878,6 +878,7 @@ def test_summaryplot_liops_and_nfs_iops_are_separate_per_host():
   base = pd.DataFrame([("n1.cluster", t0), ("n2.cluster", t0)], columns=["host", "time"])
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
   fp64 = list(INTEL_FP_ARITH_DOUBLE_EVENTS)
+  llite_meta = list(LLITE_METADATA_IOPS_EVENTS)
 
   def get_aggregate_df(typ, val_col, events, conv=1.0):
     del conv
@@ -888,31 +889,7 @@ def test_summaryplot_liops_and_nfs_iops_are_separate_per_host():
           columns=["host", "time", "sum_val"],
       )
     if typ in ("lustre_llite", "llite") and val_col == "arc":
-      if ev == [
-          "open",
-          "close",
-          "mmap",
-          "fsync",
-          "setattr",
-          "truncate",
-          "flock",
-          "getattr",
-          "statfs",
-          "alloc_inode",
-          "setxattr",
-          "listxattr",
-          "removexattr",
-          "readdir",
-          "create",
-          "lookup",
-          "link",
-          "unlink",
-          "symlink",
-          "mkdir",
-          "rmdir",
-          "mknod",
-          "rename",
-      ]:
+      if set(llite_meta).issubset(set(ev)) or any(e.startswith("vfs_") and e.endswith("_ops") for e in ev):
         return pd.DataFrame(
             [("n1.cluster", t0, 70.0), ("n2.cluster", t0, 40.0)],
             columns=["host", "time", "sum_val"],

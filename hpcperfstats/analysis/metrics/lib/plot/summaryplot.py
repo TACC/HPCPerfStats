@@ -103,7 +103,7 @@ def _summary_type_events_feasible(schema, typ, events):
     return True
   if not events:
     return any(t in schema for t in type_probe_names(typ))
-  probed_events = set(events_probe_names(list(events)))
+  probed_events = set(events_probe_names(list(events), typ=typ))
   for t in type_probe_names(typ):
     if t not in schema:
       continue
@@ -124,7 +124,7 @@ def _get_agg_if_feasible(jt, typ, val_col, events, conv):
   schema = raw_schema if isinstance(raw_schema, dict) else {}
   if not _summary_type_events_feasible(schema, typ, events):
     return _empty_agg_df()
-  ev = events_probe_names(list(events))
+  ev = events_probe_names(list(events), typ=typ)
   for t in type_probe_names(typ):
     if not _summary_type_events_feasible(schema, t, events):
       continue
@@ -295,8 +295,8 @@ _SUMMARY_SINGLE_SPECS = [
         1,
         "Lustre IOPS [#/s]",
     ),
-    ("lustre_llite", "arc", ["read_bytes"], "lustre_read_mb_s", _BYTES_TO_MB, "Lustre read [MB/s]"),
-    ("lustre_llite", "arc", ["write_bytes"], "lustre_write_mb_s", _BYTES_TO_MB, "Lustre write [MB/s]"),
+    ("lustre_llite", "arc", ["vfs_read_bytes"], "lustre_read_mb_s", _BYTES_TO_MB, "Lustre read [MB/s]"),
+    ("lustre_llite", "arc", ["vfs_write_bytes"], "lustre_write_mb_s", _BYTES_TO_MB, "Lustre write [MB/s]"),
     (
         "host_nfs",
         "arc",

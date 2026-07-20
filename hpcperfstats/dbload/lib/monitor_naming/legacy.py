@@ -4,6 +4,7 @@ from __future__ import annotations
 from hpcperfstats.dbload.lib.monitor_naming.load_map import (
     event_renames,
     load_monitor_rename_map,
+    type_event_renames,
     type_renames,
 )
 
@@ -19,6 +20,9 @@ TYPE_LEGACY_TO_CANONICAL[MONITOR_LEGACY_KNL_IMC_TYPE] = MONITOR_LEGACY_KNL_IMC_T
 LEGACY_TYPENAMES: frozenset[str] = frozenset(TYPE_LEGACY_TO_CANONICAL.keys())
 
 EVENT_LEGACY_TO_CANONICAL: dict[str, str] = dict(event_renames())
+
+# Type-scoped event renames keyed by canonical st_name (from YAML type_events).
+TYPE_EVENT_LEGACY_TO_CANONICAL: dict[str, dict[str, str]] = type_event_renames()
 
 # Intel IMC types in legacy DB / archives (probe order matches old utils.py).
 LEGACY_INTEL_IMC_STATS_TYPES = (

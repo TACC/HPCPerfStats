@@ -247,13 +247,13 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
   },
   detail_fsio_llite_read_mb: {
     description:
-      "Total Lustre llite read_bytes delta over the job window (MB), for job-detail FSIO (same path as live host_data when metrics are missing).",
+      "Total Lustre llite vfs_read_bytes delta over the job window (MB), for job-detail FSIO (same path as live host_data when metrics are missing).",
     researcherUse:
       "Parallel file read volume on Lustre when llite telemetry is present.",
   },
   detail_fsio_llite_write_mb: {
     description:
-      "Total Lustre llite write_bytes delta over the job window (MB), for job-detail FSIO.",
+      "Total Lustre llite vfs_write_bytes delta over the job window (MB), for job-detail FSIO.",
     researcherUse:
       "Parallel file write volume on Lustre when llite telemetry is present.",
   },
@@ -677,19 +677,19 @@ const SUMMARY_PLOT_METRIC_METADATA = {
   },
   lustre_read_mb_s: {
     description:
-      "Lustre client read bandwidth from llite read_bytes deltas, in MB/s (NFS is plotted separately).",
+      "Lustre client read bandwidth from llite vfs_read_bytes deltas, in MB/s (NFS is plotted separately).",
     researcherUse:
       "Read-heavy parallel I/O and checkpoint patterns; correlate with CPU idle regions.",
   },
   lustre_write_mb_s: {
     description:
-      "Lustre client write bandwidth from llite write_bytes deltas, in MB/s (NFS is plotted separately).",
+      "Lustre client write bandwidth from llite vfs_write_bytes deltas, in MB/s (NFS is plotted separately).",
     researcherUse:
       "Write-heavy I/O storms and checkpoint bursts.",
   },
   liops: {
     description:
-      "Lustre client metadata and inode operation rate from summed llite operation counters (open, close, getattr, etc.), per second.",
+      "Lustre client metadata and inode operation rate from summed llite vfs_*_ops counters (open, close, getattr, etc.), per second.",
     researcherUse:
       "Metadata-heavy I/O (small files, directory storms) versus bulk read/write.",
   },

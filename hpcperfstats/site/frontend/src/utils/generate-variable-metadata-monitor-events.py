@@ -311,7 +311,8 @@ DESC: dict[str, str] = {
     "SSE_DOUBLE_SCALAR": "Intel core PMU: retired SSE/AVX double-precision scalar FP operations (legacy FLOP proxy).",
     "SSE_DOUBLE_PACKED": "Intel core PMU: retired SSE/AVX packed double-precision FP operations (legacy FLOP proxy).",
     "SIMD_DOUBLE_256": "Intel core PMU: retired 256-bit packed double-precision SIMD FP operations (legacy FLOP proxy).",
-    # Lustre llite: /proc/fs/lustre/llite/*/stats (monitor llite.c; llite_opcode_table lineage).
+    # Lustre llite: /proc/fs/lustre/llite/*/stats (monitor llite.c; vfs_* KEYS).
+    # Legacy opcode names kept for historical host_data tooltips.
     "alloc_inode": "Lustre llite: inode allocation operations counted in per-mount `/proc/fs/lustre/llite/*/stats`.",
     "close": "Lustre llite: `close(2)` operation count per mount (`/proc/fs/lustre/llite/*/stats`).",
     "create": "Lustre llite: file create operation count.",
@@ -332,10 +333,10 @@ DESC: dict[str, str] = {
     "open": "Lustre llite: `open(2)` operation count.",
     "osc_read": "Lustre llite: bytes attributed to OSC read path in llite stats (byte sum field; complements OSC counters).",
     "osc_write": "Lustre llite: bytes attributed to OSC write path in llite stats (byte sum field; complements OSC counters).",
-    "read": "Lustre llite: `read(2)` syscall operation count (volume is in `read_bytes`, not return-value based in llite stats).",
+    "read": "Lustre llite: `read(2)` syscall operation count (volume is in `read_bytes` / `vfs_read_bytes`).",
     "read_bytes": (
         "Cumulative bytes read on the Lustre client from llite or OSC `/proc/fs/lustre/*/stats` "
-        "(llite counts requested read size per `read(2)`; OSC aggregates byte totals from OST RPCs)."
+        "(legacy name; canonical emit is `vfs_read_bytes`)."
     ),
     "readdir": "Lustre llite: `readdir` operation count.",
     "removexattr": "Lustre llite: `removexattr` syscall count.",
@@ -348,8 +349,53 @@ DESC: dict[str, str] = {
     "symlink": "Lustre llite: `symlink` creation operation count.",
     "truncate": "Lustre llite: `truncate` operation count.",
     "unlink": "Lustre llite: `unlink` operation count.",
-    "write": "Lustre llite: `write(2)` syscall operation count (byte volume in `write_bytes`).",
-    "write_bytes": "Cumulative bytes written on the Lustre client from llite or OSC `/proc/fs/lustre/*/stats`.",
+    "write": "Lustre llite: `write(2)` syscall operation count (byte volume in `write_bytes` / `vfs_write_bytes`).",
+    "write_bytes": (
+        "Cumulative bytes written on the Lustre client from llite or OSC `/proc/fs/lustre/*/stats` "
+        "(legacy name; canonical emit is `vfs_write_bytes`)."
+    ),
+    "vfs_read_ops": "Lustre llite: `read(2)` operation count (canonical vfs_* KEY; volume in `vfs_read_bytes`).",
+    "vfs_write_ops": "Lustre llite: `write(2)` operation count (canonical vfs_* KEY; volume in `vfs_write_bytes`).",
+    "vfs_read_bytes": "Lustre llite: cumulative bytes read on this client mount (canonical vfs_* KEY from `/proc/fs/lustre/llite/*/stats`).",
+    "vfs_write_bytes": "Lustre llite: cumulative bytes written on this client mount (canonical vfs_* KEY).",
+    "vfs_direct_read_bytes": "Lustre llite: cumulative direct-I/O read bytes on this mount.",
+    "vfs_direct_write_bytes": "Lustre llite: cumulative direct-I/O write bytes on this mount.",
+    "vfs_osc_read_bytes": "Lustre llite: bytes attributed to the OSC read path in llite stats.",
+    "vfs_osc_write_bytes": "Lustre llite: bytes attributed to the OSC write path in llite stats.",
+    "vfs_dirty_page_hits": "Lustre llite: dirty client-page cache hits.",
+    "vfs_dirty_page_misses": "Lustre llite: dirty client-page cache misses.",
+    "vfs_ioctl_ops": "Lustre llite: `ioctl` operation count on this mount.",
+    "vfs_open_ops": "Lustre llite: `open(2)` operation count (canonical vfs_* KEY).",
+    "vfs_close_ops": "Lustre llite: `close(2)` operation count (canonical vfs_* KEY).",
+    "vfs_mmap_ops": "Lustre llite: `mmap` operation count (canonical vfs_* KEY).",
+    "vfs_seek_ops": "Lustre llite: `seek` operation count (canonical vfs_* KEY).",
+    "vfs_fsync_ops": "Lustre llite: `fsync` operation count (canonical vfs_* KEY).",
+    "vfs_setattr_ops": "Lustre llite: `setattr` metadata updates (canonical vfs_* KEY).",
+    "vfs_truncate_ops": "Lustre llite: `truncate` operation count (canonical vfs_* KEY).",
+    "vfs_flock_ops": "Lustre llite: advisory `flock` operation count (canonical vfs_* KEY).",
+    "vfs_getattr_ops": "Lustre llite: getattr / stat-style metadata operation count (canonical vfs_* KEY).",
+    "vfs_statfs_ops": "Lustre llite: `statfs` operation count (canonical vfs_* KEY).",
+    "vfs_alloc_inode_ops": "Lustre llite: inode allocation operations (canonical vfs_* KEY).",
+    "vfs_setxattr_ops": "Lustre llite: `setxattr` syscall count (canonical vfs_* KEY).",
+    "vfs_getxattr_ops": "Lustre llite: `getxattr` syscall count (canonical vfs_* KEY).",
+    "vfs_listxattr_ops": "Lustre llite: `listxattr` syscall count (canonical vfs_* KEY).",
+    "vfs_removexattr_ops": "Lustre llite: `removexattr` syscall count (canonical vfs_* KEY).",
+    "vfs_inode_permission_ops": "Lustre llite: inode permission check count (canonical vfs_* KEY).",
+    "vfs_readdir_ops": "Lustre llite: `readdir` operation count (canonical vfs_* KEY).",
+    "vfs_create_ops": "Lustre llite: file create operation count (canonical vfs_* KEY).",
+    "vfs_lookup_ops": "Lustre llite: pathname `lookup` operation count (canonical vfs_* KEY).",
+    "vfs_link_ops": "Lustre llite: hard `link` operation count (canonical vfs_* KEY).",
+    "vfs_unlink_ops": "Lustre llite: `unlink` operation count (canonical vfs_* KEY).",
+    "vfs_symlink_ops": "Lustre llite: `symlink` creation operation count (canonical vfs_* KEY).",
+    "vfs_mkdir_ops": "Lustre llite: `mkdir` operation count (canonical vfs_* KEY).",
+    "vfs_rmdir_ops": "Lustre llite: `rmdir` operation count (canonical vfs_* KEY).",
+    "vfs_mknod_ops": "Lustre llite: `mknod` operation count (canonical vfs_* KEY).",
+    "vfs_rename_ops": "Lustre llite: `rename` operation count (canonical vfs_* KEY).",
+    "fs_bytes_total": "Lustre llite mount capacity: total bytes from sysfs (gauge; not a rate).",
+    "fs_bytes_free": "Lustre llite mount capacity: free bytes from sysfs (gauge).",
+    "fs_bytes_avail": "Lustre llite mount capacity: available bytes for unprivileged users from sysfs (gauge).",
+    "fs_files_total": "Lustre llite mount capacity: total inode count from sysfs (gauge).",
+    "fs_files_free": "Lustre llite mount capacity: free inode count from sysfs (gauge).",
     # Lustre OSC: /proc/fs/lustre/osc/*/stats (monitor osc.c; req_waittime aggregation).
     "reqs": "Lustre OSC: sample count taken from `req_waittime` lines in `/proc/fs/lustre/osc/*/stats` (paired with `wait`).",
     "wait": (

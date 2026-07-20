@@ -35,7 +35,11 @@ from hpcperfstats.site.lib.machine.cache_utils import (
     make_cache_key,
     make_cache_key_bounded,
 )
-from hpcperfstats.dbload.lib.monitor_naming.resolve import events_probe_names, type_probe_names
+from hpcperfstats.dbload.lib.monitor_naming.resolve import (
+    canonical_event_name_for_type,
+    events_probe_names,
+    type_probe_names,
+)
 from hpcperfstats.site.lib.machine.models import host_data, job_data
 
 # Chunk host__in on host_data for large jobs; single queries with thousands of
@@ -1163,7 +1167,7 @@ class jid_table:
     """Aggregate val_col (e.g. 'arc' or 'value') for given type and events. Returns DataFrame with columns host, time, sum_val (sum * conv). Result is cached per (jid, typ, val_col, events).
         """
     _incr_summary_aggregate_count_if_active()
-    probed_events = events_probe_names(events)
+    probed_events = events_probe_names(events, typ=typ)
     events_key = ":".join(sorted(probed_events))
 
     def _fn_pandas_groupby():
@@ -1314,19 +1318,33 @@ class jid_table:
     return result if result is not None else queryset_to_dataframe(None)
 
   def get_llite_delta_by_event(self):
-    """Lustre read_bytes/write_bytes sum(delta) by event for this job (cached).
+    """Lustre vfs_read_bytes/vfs_write_bytes sum(delta) by event for this job (cached).
 
+    Dual-reads legacy ``read_bytes``/``write_bytes``; returned ``event`` values are
+    canonicalized to ``vfs_*``.
         """
     from django.db.models import Sum
 
+    byte_events = ["vfs_read_bytes", "vfs_write_bytes"]
+
     def _llite_fn():
-      for typ in type_probe_names("llite"):
+      for typ in type_probe_names("lustre_llite"):
+        probed = events_probe_names(byte_events, typ=typ)
         qs = (self._host_data_qs(
             type=typ,
-            event__in=["read_bytes", "write_bytes"],
+            event__in=probed,
         ).values("event").annotate(delta_sum=Sum("delta")).order_by("event"))
         df = queryset_to_dataframe(qs)
         if not df.empty:
+          if "event" in df.columns:
+            df = df.copy()
+            df["event"] = df["event"].map(
+                lambda e: canonical_event_name_for_type(typ, str(e)))
+            df = (
+                df.groupby("event", as_index=False)["delta_sum"]
+                .sum()
+                .sort_values("event")
+            )
           return df
       return queryset_to_dataframe(None)
 
@@ -1672,7 +1690,7 @@ class HostDataProvider:
       val_col = "arc"
     from django.db.models import Sum
 
-    probed_events = events_probe_names(events)
+    probed_events = events_probe_names(events, typ=typ)
     df = None
     for candidate_typ in type_probe_names(typ):
       qs = (

@@ -109,16 +109,16 @@ SUMMARY_METRIC_DESCRIPTIONS: dict[str, str] = {
         "PCIe plus NVLink byte rate from DCGM gpu_io_link_total_bytes, in GB/s."
     ),
     "lustre_read_mb_s": (
-        "Lustre client read bandwidth from llite read_bytes deltas, in MB/s "
+        "Lustre client read bandwidth from llite vfs_read_bytes deltas, in MB/s "
         "(NFS is plotted separately)."
     ),
     "lustre_write_mb_s": (
-        "Lustre client write bandwidth from llite write_bytes deltas, in MB/s "
+        "Lustre client write bandwidth from llite vfs_write_bytes deltas, in MB/s "
         "(NFS is plotted separately)."
     ),
     "liops": (
         "Lustre client metadata and inode operation rate from summed llite "
-        "operation counters (open, close, getattr, etc.), per second."
+        "vfs_*_ops counters (open, close, getattr, etc.), per second."
     ),
     "nfs_read_mb_s": (
         "NFS client read throughput from normal, direct, and server read "

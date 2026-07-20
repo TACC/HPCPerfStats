@@ -64,6 +64,43 @@ def test_events_probe_names_gpu_mem_util_includes_legacy_alias():
   assert "gpu_mem_util" in names
 
 
+def test_lustre_llite_type_scoped_event_probes():
+  """type_events.lustre_llite dual-reads without polluting global open/read."""
+  from hpcperfstats.dbload.lib.monitor_naming.resolve import (
+      event_probe_names,
+      event_probe_names_for_type,
+  )
+
+  names = event_probe_names_for_type("lustre_llite", "read_bytes")
+  assert names[0] == "vfs_read_bytes"
+  assert "read_bytes" in names
+
+  names_llite = event_probe_names_for_type("llite", "getattr")
+  assert names_llite[0] == "vfs_getattr_ops"
+  assert "getattr" in names_llite
+
+  names_canon = event_probe_names_for_type("lustre_llite", "vfs_open_ops")
+  assert names_canon[0] == "vfs_open_ops"
+  assert "open" in names_canon
+
+  # Global open must not steal llite mapping (collides with other types).
+  global_open = event_probe_names("open")
+  assert "vfs_open_ops" not in global_open
+  assert events_probe_names(["open"]) == list(global_open)
+
+  # Capacity gauges are type-local but have no legacy aliases.
+  cap = event_probe_names_for_type("lustre_llite", "fs_bytes_total")
+  assert cap[0] == "fs_bytes_total"
+
+
+def test_events_probe_names_with_typ_expands_llite_bytes():
+  names = events_probe_names(["vfs_read_bytes", "vfs_write_bytes"], typ="lustre_llite")
+  assert "vfs_read_bytes" in names
+  assert "read_bytes" in names
+  assert "vfs_write_bytes" in names
+  assert "write_bytes" in names
+
+
 def test_dram_cas_read_write_pairs_includes_legacy():
   pairs = dram_cas_read_write_pairs()
   assert ("dram_cas_reads", "dram_cas_writes") in pairs

@@ -48,6 +48,7 @@ from hpcperfstats.dbload.lib.monitor_naming.canonical import (
 )
 from hpcperfstats.dbload.lib.monitor_naming.resolve import (
     events_probe_names,
+    event_probe_names_for_type,
     amd_df_type_names,
     amd_pmc_type_names,
     arm_est_flops_event_names,
@@ -69,6 +70,9 @@ from hpcperfstats.site.lib.machine.models import host_data, job_data, metrics_da
 from hpcperfstats.analysis.metrics.lib.job_detail_fsio import (
     compute_job_detail_fsio_metric_rows,
     fsio_job_detail_catalog,
+)
+from hpcperfstats.analysis.metrics.lib.llite_metadata_iops_events import (
+    LLITE_METADATA_IOPS_EVENTS,
 )
 from hpcperfstats.analysis.metrics.lib.db_retry import run_with_db_retry
 from hpcperfstats.dbload.lib.db_unavailable import DatabaseUnavailableExit
@@ -265,9 +269,9 @@ def _hashable_metric_events_signature(events):
   return tuple(_coerce_metrics_identity_str(e) for e in events)
 
 
-def _flatten_event_names_for_host_data_query(events):
+def _flatten_event_names_for_host_data_query(events, typ=None):
   """Expand nested sequences and legacy event aliases for ``event__in`` queries."""
-  return events_probe_names(events)
+  return events_probe_names(events, typ=typ)
 
 
 def _sanitize_metrics_compute_rows(rows):
@@ -532,6 +536,24 @@ def _schema_has_events(schema, *event_names):
   if schema is None:
     return False
   return all(name in schema for name in event_names)
+
+
+def _schema_has_events_for_type(schema, typ, *event_names):
+  """True when each event resolves via type-scoped dual-read into ``schema``."""
+  if schema is None:
+    return False
+  for name in event_names:
+    if not any(p in schema for p in event_probe_names_for_type(typ, name)):
+      return False
+  return True
+
+
+def _schema_event_index(schema, typ, event_name):
+  """Column index for ``event_name`` under ``typ``, preferring canonical probe order."""
+  for probe in event_probe_names_for_type(typ, event_name):
+    if probe in schema:
+      return schema[probe].index
+  raise KeyError(event_name)
 
 
 class _Host:
@@ -1078,7 +1100,7 @@ def _host_data_metric_rows_batched(
       return rows_cache[cache_key]
   batch = jid_table._coerce_jid_table_host_query_batch_size(
       jid_table.JID_TABLE_HOST_QUERY_BATCH)
-  ev = _flatten_event_names_for_host_data_query(events)
+  ev = _flatten_event_names_for_host_data_query(events, typ=typename)
   rows = []
   for i in range(0, len(host_list), batch):
     chunk = host_list[i:i + batch]
@@ -1124,18 +1146,13 @@ class Metrics():
         },
         "avg_sharedfs_iops": {
             "typename": LUSTRE_LLITE_TYPE,
-            "events": [
-                "open", "close", "mmap", "fsync", "setattr", "truncate",
-                "flock", "getattr", "statfs", "alloc_inode", "setxattr",
-                "listxattr", "removexattr", "readdir", "create", "lookup",
-                "link", "unlink", "symlink", "mkdir", "rmdir", "mknod", "rename"
-            ],
+            "events": list(LLITE_METADATA_IOPS_EVENTS),
             "conv": 1,
             "units": "iops"
         },
         "avg_sharedfs_bw": {
             "typename": LUSTRE_LLITE_TYPE,
-            "events": ["read_bytes", "write_bytes"],
+            "events": ["vfs_read_bytes", "vfs_write_bytes"],
             "conv": 1.0 / (1024 * 1024),
             "units": "MB/s"
         },
@@ -1773,13 +1790,8 @@ class Metrics():
     used = []
     llite = self.job_arc(
         jt,
-        typename="llite",
-        events=[
-            "open", "close", "mmap", "fsync", "setattr", "truncate", "flock",
-            "getattr", "statfs", "alloc_inode", "setxattr", "listxattr",
-            "removexattr", "readdir", "create", "lookup", "link", "unlink",
-            "symlink", "mkdir", "rmdir", "mknod", "rename",
-        ],
+        typename=LUSTRE_LLITE_TYPE,
+        events=list(LLITE_METADATA_IOPS_EVENTS),
         conv=1,
         units="iops",
         cache=cache,
@@ -1814,8 +1826,8 @@ class Metrics():
     used = []
     llite = self.job_arc(
         jt,
-        typename="llite",
-        events=["read_bytes", "write_bytes"],
+        typename=LUSTRE_LLITE_TYPE,
+        events=["vfs_read_bytes", "vfs_write_bytes"],
         conv=conv,
         units="MB/s",
         cache=cache,
@@ -2693,51 +2705,30 @@ class max_lnetbw():
 
 
 class max_mds():
-  """Maximum Lustre MDS operations (iops) from llite open/close/mmap/fsync/... events.
+  """Maximum Lustre MDS operations (iops) from llite vfs_*_ops (dual-read legacy).
 
     """
 
   def compute_metric(self, u):
     max_mds = 0
-    typename = "llite"
-    schema, _stats = u.get_type(typename)
-    mds_cols = [
-        "open", "close", "mmap", "fsync", "setattr", "truncate", "flock",
-        "getattr", "statfs", "alloc_inode", "setxattr", "listxattr",
-        "removexattr", "readdir", "create", "lookup", "link", "unlink",
-        "symlink", "mkdir", "rmdir", "mknod", "rename",
-    ]
-    if schema is not None and _schema_has_events(schema, *mds_cols):
-      col_idx = [schema[c].index for c in mds_cols]
+    typename = LUSTRE_LLITE_TYPE
+    schema, _stats, resolved_typ = resolve_get_type(u, type_probe_names(typename))
+    mds_cols = list(LLITE_METADATA_IOPS_EVENTS)
+    if schema is not None and _schema_has_events_for_type(
+        schema, resolved_typ or typename, *mds_cols
+    ):
+      col_idx = [
+          _schema_event_index(schema, resolved_typ or typename, c) for c in mds_cols
+      ]
       cluster_peak = _peak_interval_rate_from_cluster_mean(
-          u, typename, col_idx, 1)
+          u, resolved_typ or typename, col_idx, 1)
       if cluster_peak is not None:
         return cluster_peak, typename, 'iops'
       for hostname, stats in _stats.items():
-        mds_sum = (
-            stats[:, schema["open"].index] +
-            stats[:, schema["close"].index] +
-            stats[:, schema["mmap"].index] +
-            stats[:, schema["fsync"].index] +
-            stats[:, schema["setattr"].index] +
-            stats[:, schema["truncate"].index] +
-            stats[:, schema["flock"].index] +
-            stats[:, schema["getattr"].index] +
-            stats[:, schema["statfs"].index] +
-            stats[:, schema["alloc_inode"].index] +
-            stats[:, schema["setxattr"].index] +
-            stats[:, schema["listxattr"].index] +
-            stats[:, schema["removexattr"].index] +
-            stats[:, schema["readdir"].index] +
-            stats[:, schema["create"].index] +
-            stats[:, schema["lookup"].index] +
-            stats[:, schema["link"].index] +
-            stats[:, schema["unlink"].index] +
-            stats[:, schema["symlink"].index] +
-            stats[:, schema["mkdir"].index] +
-            stats[:, schema["rmdir"].index] +
-            stats[:, schema["mknod"].index] +
-            stats[:, schema["rename"].index])
+        mds_sum = None
+        for idx in col_idx:
+          col = stats[:, idx]
+          mds_sum = col if mds_sum is None else mds_sum + col
         mds_diff = _per_interval_rate(mds_sum, u.t)
         fin = mds_diff[np.isfinite(mds_diff)]
         if fin.size > 0:
@@ -2758,9 +2749,9 @@ class max_mds():
         if fin.size > 0:
           max_mds = max(max_mds, fin.max())
     if max_mds == 0:
-      return None, "llite", 'iops'
+      return None, typename, 'iops'
     value = max_mds
-    return value, "llite", 'iops'
+    return value, typename, 'iops'
 
 
 class max_packetrate():

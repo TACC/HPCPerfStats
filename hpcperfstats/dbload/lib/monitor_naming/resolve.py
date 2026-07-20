@@ -242,8 +242,23 @@ def canonical_type_name(typ: str) -> str:
     return leg.TYPE_LEGACY_TO_CANONICAL.get(typ, typ)
 
 
+def _type_scoped_event_map(typ: str | None) -> dict[str, str]:
+    """Legacy→canonical event map for ``typ``, or empty when type has no type_events."""
+    if not typ:
+        return {}
+    canon_typ = canonical_type_name(typ)
+    mapping = leg.TYPE_EVENT_LEGACY_TO_CANONICAL.get(canon_typ)
+    if mapping:
+        return mapping
+    return leg.TYPE_EVENT_LEGACY_TO_CANONICAL.get(typ) or {}
+
+
 def event_probe_names(event: str) -> tuple[str, ...]:
-    """host_data.event values to try (canonical first)."""
+    """host_data.event values to try (canonical first) using the **global** events map.
+
+    For type-scoped renames (llite ``open`` / ``read_bytes``), use
+    ``event_probe_names_for_type`` so global ``open`` is not rewritten.
+    """
     seen: set[str] = set()
     out: list[str] = []
 
@@ -262,21 +277,70 @@ def event_probe_names(event: str) -> tuple[str, ...]:
     return tuple(out)
 
 
-def events_probe_names(events) -> list[str]:
-    """Flatten events and include legacy aliases for host_data queries."""
+def event_probe_names_for_type(typ: str, event: str) -> tuple[str, ...]:
+    """host_data.event probes for a typename (type_events when present, else global)."""
+    te_map = _type_scoped_event_map(typ)
+    if not te_map:
+        return event_probe_names(event)
+
+    seen: set[str] = set()
+    out: list[str] = []
+
+    def add(name: str | None) -> None:
+        if name and name not in seen:
+            seen.add(name)
+            out.append(name)
+
+    canon = te_map.get(event)
+    if canon is None and event in te_map.values():
+        canon = event
+    if canon is None:
+        # Event is unrelated to this type's rename map (e.g. capacity gauges).
+        return event_probe_names(event)
+
+    add(canon)
+    for leg_name, canon_name in te_map.items():
+        if canon_name == canon:
+            add(leg_name)
+    add(event)
+    return tuple(out)
+
+
+def canonical_event_name_for_type(typ: str, event: str) -> str:
+    """Map a stored host_data.event to its canonical name for ``typ`` when known."""
+    te_map = _type_scoped_event_map(typ)
+    if not te_map:
+        return leg.EVENT_LEGACY_TO_CANONICAL.get(event, event)
+    if event in te_map:
+        return te_map[event]
+    if event in te_map.values():
+        return event
+    return leg.EVENT_LEGACY_TO_CANONICAL.get(event, event)
+
+
+def events_probe_names(events, typ: str | None = None) -> list[str]:
+    """Flatten events and include legacy aliases for host_data queries.
+
+    Pass ``typ`` (e.g. ``lustre_llite`` / ``llite``) so type-scoped renames apply.
+    """
     if not events:
         return []
+    probe = (
+        (lambda e: event_probe_names_for_type(typ, e))
+        if typ
+        else event_probe_names
+    )
     out: list[str] = []
     seen: set[str] = set()
     for e in events:
         if isinstance(e, (list, tuple)):
             for sub in e:
-                for name in event_probe_names(str(sub)):
+                for name in probe(str(sub)):
                     if name not in seen:
                         seen.add(name)
                         out.append(name)
         else:
-            for name in event_probe_names(str(e)):
+            for name in probe(str(e)):
                 if name not in seen:
                     seen.add(name)
                     out.append(name)

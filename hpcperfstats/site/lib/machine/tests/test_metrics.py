@@ -444,7 +444,7 @@ def test_job_arc_avg_sharedfs_iops_includes_nfs_when_available():
   """avg_sharedfs_iops sums llite and nfs operation counters when both exist."""
 
   def fake_job_arc(self, jt, **kw):
-    if kw.get("typename") == "llite":
+    if kw.get("typename") in ("llite", "lustre_llite"):
       return 20.0
     if kw.get("typename") == "nfs":
       return 5.0
@@ -462,7 +462,7 @@ def test_job_arc_avg_sharedfs_bw_falls_back_to_nfs():
   """avg_sharedfs_bw uses nfs byte counters when llite counters are absent."""
 
   def fake_job_arc(self, jt, **kw):
-    if kw.get("typename") == "llite":
+    if kw.get("typename") in ("llite", "lustre_llite"):
       return None
     if kw.get("typename") == "nfs":
       return 7.0
@@ -480,7 +480,7 @@ def test_job_arc_avg_sharedfs_bw_sums_llite_and_nfs():
   """avg_sharedfs_bw sums Lustre and NFS when both contribute."""
 
   def fake_job_arc(self, jt, **kw):
-    if kw.get("typename") == "llite":
+    if kw.get("typename") in ("llite", "lustre_llite"):
       return 11.0
     if kw.get("typename") == "nfs":
       return 4.0
@@ -510,6 +510,7 @@ def test_job_arc_avg_ibbw_falls_back_to_ethernet():
   assert typename == "net"
 
 
+@pytest.mark.machine_unit_mock
 def test_max_mds_uses_nfs_ops_when_llite_missing():
   """max_mds falls back to nfs READ_ops/WRITE_ops when llite telemetry is missing."""
   schema_nfs = _Schema(["READ_ops", "WRITE_ops"])
@@ -523,7 +524,7 @@ def test_max_mds_uses_nfs_ops_when_llite_missing():
     job = type("J", (), {"cluster_mean_by_type": {}})()
 
     def get_type(self, typename):
-      if typename == "llite":
+      if typename in ("llite", "lustre_llite"):
         return None, {}
       if typename == "nfs":
         return schema_nfs, {"h1": stats}
@@ -532,7 +533,90 @@ def test_max_mds_uses_nfs_ops_when_llite_missing():
   value, typename, units = max_mds().compute_metric(MockU())
   assert value is not None
   assert value == pytest.approx(14.0)
-  assert typename == "llite"
+  assert typename == "lustre_llite"
+  assert units == "iops"
+
+
+def _legacy_llite_metadata_event_names():
+  """Proc opcode names corresponding to LLITE_METADATA_IOPS_EVENTS (pre-vfs_* archives)."""
+  from hpcperfstats.analysis.metrics.lib.llite_metadata_iops_events import (
+      LLITE_METADATA_IOPS_EVENTS,
+  )
+
+  out = []
+  for name in LLITE_METADATA_IOPS_EVENTS:
+    assert name.startswith("vfs_") and name.endswith("_ops")
+    out.append(name[len("vfs_"): -len("_ops")])
+  return out
+
+
+@pytest.mark.machine_unit_mock
+def test_max_mds_uses_legacy_llite_opcode_schema():
+  """Old-archive getattr/open KEYS still resolve via type-scoped dual-read."""
+  from hpcperfstats.analysis.metrics.lib.llite_metadata_iops_events import (
+      LLITE_METADATA_IOPS_EVENTS,
+  )
+
+  legacy = _legacy_llite_metadata_event_names()
+  assert len(legacy) == len(LLITE_METADATA_IOPS_EVENTS)
+  n = len(legacy)
+  schema = _Schema(legacy)
+  # Cumulative: interval1 sum Δ=140 → 14 iops; interval2 sum Δ=160 → 16 iops.
+  row0 = np.zeros(n, dtype=np.float64)
+  row1 = row0.copy()
+  row1[0] = 100.0
+  row1[1] = 40.0
+  row2 = row1.copy()
+  row2[0] = 220.0
+  row2[1] = 80.0
+  stats = np.vstack([row0, row1, row2])
+
+  class MockU:
+    t = np.array([0.0, 10.0, 20.0], dtype=np.float64)
+    job = type("J", (), {"cluster_mean_by_type": {}})()
+
+    def get_type(self, typename):
+      if typename in ("llite", "lustre_llite"):
+        return schema, {"h1": stats}
+      return None, {}
+
+  value, typename, units = max_mds().compute_metric(MockU())
+  assert value == pytest.approx(16.0)
+  assert typename == "lustre_llite"
+  assert units == "iops"
+
+
+@pytest.mark.machine_unit_mock
+def test_max_mds_uses_canonical_vfs_ops_schema():
+  """New-emit vfs_*_ops KEYS resolve without legacy aliases."""
+  from hpcperfstats.analysis.metrics.lib.llite_metadata_iops_events import (
+      LLITE_METADATA_IOPS_EVENTS,
+  )
+
+  events = list(LLITE_METADATA_IOPS_EVENTS)
+  n = len(events)
+  schema = _Schema(events)
+  row0 = np.zeros(n, dtype=np.float64)
+  row1 = row0.copy()
+  row1[0] = 100.0
+  row1[1] = 40.0
+  row2 = row1.copy()
+  row2[0] = 220.0
+  row2[1] = 80.0
+  stats = np.vstack([row0, row1, row2])
+
+  class MockU:
+    t = np.array([0.0, 10.0, 20.0], dtype=np.float64)
+    job = type("J", (), {"cluster_mean_by_type": {}})()
+
+    def get_type(self, typename):
+      if typename == "lustre_llite":
+        return schema, {"h1": stats}
+      return None, {}
+
+  value, typename, units = max_mds().compute_metric(MockU())
+  assert value == pytest.approx(16.0)
+  assert typename == "lustre_llite"
   assert units == "iops"
 
 

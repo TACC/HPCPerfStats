@@ -263,14 +263,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Application / library code:** hpcperfstats/site/lib/machine/management/commands/pg_connection_stats.py
 
-### `alloc_inode`
-
-- **Definition:** Lustre llite: inode allocation operations counted in per-mount `/proc/fs/lustre/llite/*/stats`.
-- **Domain:** Lustre client (llite / mdc / osc)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
-
 ### `allocstall`
 
 - **Definition:** Kernel VM statistic from /proc/vmstat (Linux kernel documentation).
@@ -393,14 +385,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/dbload/lib/sync_timedb_parsing.py
 - **Tests:** hpcperfstats/site/lib/machine/tests/test_metrics.py
 
-### `close`
-
-- **Definition:** Lustre llite: `close(2)` operation count per mount (`/proc/fs/lustre/llite/*/stats`).
-- **Domain:** Lustre client (llite / mdc / osc)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_update_metrics.py
-
 ### `collisions`
 
 - **Definition:** Ethernet collision counter (half-duplex legacy).
@@ -505,14 +489,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
-### `create`
-
-- **Definition:** Lustre llite: file create operation count.
-- **Domain:** Lustre client (llite / mdc / osc)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
-
 ### `ctxt`
 
 - **Definition:** Context switches (global, from /proc/stat via ps stats type).
@@ -591,22 +567,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `dirty_pages_hits`
-
-- **Definition:** Lustre llite: dirty client-page cache hits (samples line in `/proc/fs/lustre/llite/*/stats`).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Lustre dirty-page cache hits/misses on the client; low hit rates with heavy write loads can push more work to OSS and increase observed write latency.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `dirty_pages_misses`
-
-- **Definition:** Lustre llite: dirty client-page cache misses; high misses vs hits can mean poor cache reuse.
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Lustre dirty-page cache hits/misses on the client; low hit rates with heavy write loads can push more work to OSS and increase observed write latency.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `dispatch_stall_cycles0`
@@ -746,14 +706,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** tmpfs growth on compute nodes can exhaust RAM-backed `/dev/shm` or job-local buffers; relate to staging or MPI shared-memory use.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
-### `flock`
-
-- **Definition:** Lustre llite: advisory `flock` operation count.
-- **Domain:** Lustre client (llite / mdc / osc)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
-
 ### `fp16_active`
 
 - **Definition:** FP16 pipe activity percent (DCGM PROF on NVIDIA; shared KEY on `amd_gpu`).
@@ -876,28 +828,44 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/dbload/lib/monitor_naming/canonical.py
 - **Tests:** hpcperfstats/analysis/metrics/tests/test_utils_get_type.py
 
-### `fsync`
+### `fs_bytes_avail`
 
-- **Definition:** Lustre llite: `fsync` operation count.
-- **Domain:** Lustre client (llite / mdc / osc)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
-
-### `getattr`
-
-- **Definition:** Lustre llite: getattr / stat-style metadata operation count.
-- **Domain:** Lustre client (llite / mdc / osc)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
-
-### `getxattr`
-
-- **Definition:** Lustre llite: `getxattr` syscall count.
+- **Definition:** Lustre llite mount capacity: available bytes for unprivileged users from sysfs (gauge).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Lustre llite operation counter; unusually high `getxattr`/`inode_permission` rates often accompany metadata-heavy tools or security modules scanning many files.
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `fs_bytes_free`
+
+- **Definition:** Lustre llite mount capacity: free bytes from sysfs (gauge).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `fs_bytes_total`
+
+- **Definition:** Lustre llite mount capacity: total bytes from sysfs (gauge; not a rate).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `fs_files_free`
+
+- **Definition:** Lustre llite mount capacity: free inode count from sysfs (gauge).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `fs_files_total`
+
+- **Definition:** Lustre llite mount capacity: total inode count from sysfs (gauge).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `gpu_count`
@@ -1164,14 +1132,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
-### `inode_permission`
-
-- **Definition:** Lustre llite: inode permission check count (security / ACL path activity).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Lustre llite operation counter; unusually high `getxattr`/`inode_permission` rates often accompany metadata-heavy tools or security modules scanning many files.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
 ### `inode_use`
 
 - **Definition:** VFS: inodes in use (inode-state).
@@ -1211,14 +1171,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** Block device I/O
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Compare read vs write mix and IOPS to `io_ticks` / queue time to separate throughput limits from latency or scheduler backlog. Sudden merge drops or rising `in_flight` often precede local filesystem or single-device saturation on a node.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `ioctl`
-
-- **Definition:** Lustre llite: `ioctl` operation count on this mount.
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Lustre llite operation counter; unusually high `getxattr`/`inode_permission` rates often accompany metadata-heavy tools or security modules scanning many files.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `iowait`
@@ -1277,14 +1229,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** MDC/OSC/LDLM counters expose client–server metadata and lock behavior; spikes during specific job steps often indicate small-file churn, lock contention, or aggressive stat/cache behavior.
 - **Tests:** hpcperfstats/site/lib/machine/tests/test_jid_table.py
 
-### `link`
-
-- **Definition:** Lustre llite: hard `link` operation count.
-- **Domain:** Lustre client (llite / mdc / osc)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
-
 ### `link_downed`
 
 - **Definition:** InfiniBand port counter: failed link error recoveries (link went down; monitor comment in ib.c).
@@ -1298,14 +1242,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
-
-### `listxattr`
-
-- **Definition:** Lustre llite: `listxattr` syscall count.
-- **Domain:** Lustre client (llite / mdc / osc)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
 
 ### `llc_lookup_data_read_local`
 
@@ -1361,14 +1297,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** NUMA allocator and access counters guide process placement: rising `numa_miss` or `other_node` with compute-bound jobs suggests binding or first-touch policy tuning.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `lookup`
-
-- **Definition:** Lustre llite: pathname `lookup` operation count.
-- **Domain:** Lustre client (llite / mdc / osc)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
 
 ### `ls_dispatch`
 
@@ -1514,30 +1442,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/dbload/lib/monitor_naming/canonical.py
 - **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
 
-### `mkdir`
-
-- **Definition:** Lustre llite: `mkdir` operation count.
-- **Domain:** Lustre client (llite / mdc / osc)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
-
-### `mknod`
-
-- **Definition:** Lustre llite: `mknod` operation count.
-- **Domain:** Lustre client (llite / mdc / osc)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
-
-### `mmap`
-
-- **Definition:** Lustre llite: `mmap` operation count.
-- **Domain:** Lustre client (llite / mdc / osc)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
-
 ### `module_power_usage`
 
 - **Definition:** NVIDIA-only (`nvidia_gpu` / DCGM): module-scope power (watts) on integrated packages. Omitted from `amd_gpu` KEYS.
@@ -1657,30 +1561,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
 - **Tests:** hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py
-
-### `open`
-
-- **Definition:** Lustre llite: `open(2)` operation count.
-- **Domain:** Lustre client (llite / mdc / osc)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
-
-### `osc_read`
-
-- **Definition:** Lustre llite: bytes attributed to OSC read path in llite stats (byte sum field; complements OSC counters).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `osc_write`
-
-- **Definition:** Lustre llite: bytes attributed to OSC write path in llite stats (byte sum field; complements OSC counters).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `ost_destroy`
 
@@ -2163,45 +2043,14 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** Compare read vs write mix and IOPS to `io_ticks` / queue time to separate throughput limits from latency or scheduler backlog. Sudden merge drops or rising `in_flight` often precede local filesystem or single-device saturation on a node.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
-### `read`
-
-- **Definition:** Lustre llite: `read(2)` syscall operation count (volume is in `read_bytes`, not return-value based in llite stats).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Lustre llite operation counter; unusually high `getxattr`/`inode_permission` rates often accompany metadata-heavy tools or security modules scanning many files.
-- **Application / library code:** hpcperfstats/dbload/lib/sync_timedb_archive_maint.py
-
 ### `read_bytes`
 
-- **Definition:** Cumulative bytes read on the Lustre client from llite or OSC `/proc/fs/lustre/*/stats` (llite counts requested read size per `read(2)`; OSC aggregates byte totals from OST RPCs).
+- **Definition:** Cumulative bytes read on the Lustre client from llite or OSC `/proc/fs/lustre/*/stats` (legacy name; canonical emit is `vfs_read_bytes`).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** `llite`
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/gen/jid_table.py; hpcperfstats/analysis/metrics/lib/job_detail_fsio.py; hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/site/lib/machine/job_detail_artifacts.py
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/job_detail_fsio.py; hpcperfstats/site/lib/machine/job_detail_artifacts.py
 - **Tests:** hpcperfstats/analysis/metrics/tests/test_job_detail_fsio.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_jid_table.py; hpcperfstats/site/lib/machine/tests/test_job_detail_artifacts_prewarm.py; hpcperfstats/site/lib/machine/tests/test_job_detail_fsio.py
-
-### `readdir`
-
-- **Definition:** Lustre llite: `readdir` operation count.
-- **Domain:** Lustre client (llite / mdc / osc)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
-
-### `removexattr`
-
-- **Definition:** Lustre llite: `removexattr` syscall count.
-- **Domain:** Lustre client (llite / mdc / osc)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
-
-### `rename`
-
-- **Definition:** Lustre llite: `rename` operation count.
-- **Domain:** Lustre client (llite / mdc / osc)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
 
 ### `reqs`
 
@@ -2242,14 +2091,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `rmdir`
-
-- **Definition:** Lustre llite: `rmdir` operation count.
-- **Domain:** Lustre client (llite / mdc / osc)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
 
 ### `route_bytes`
 
@@ -2372,14 +2213,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py
 - **Tests:** hpcperfstats/analysis/metrics/tests/test_metrics_schema_guards.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
 
-### `seek`
-
-- **Definition:** Lustre llite: `seek` operation count.
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Lustre llite operation counter; unusually high `getxattr`/`inode_permission` rates often accompany metadata-heavy tools or security modules scanning many files.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
 ### `segs_used`
 
 - **Definition:** System V shared memory: number of segments in use.
@@ -2403,22 +2236,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/gen/jid_table.py; hpcperfstats/analysis/metrics/lib/job_detail_fsio.py; hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
 - **Tests:** hpcperfstats/analysis/metrics/tests/test_job_detail_fsio.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
-
-### `setattr`
-
-- **Definition:** Lustre llite: `setattr` metadata updates (mode/owner/size, etc.).
-- **Domain:** Lustre client (llite / mdc / osc)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
-
-### `setxattr`
-
-- **Definition:** Lustre llite: `setxattr` syscall count.
-- **Domain:** Lustre client (llite / mdc / osc)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
 
 ### `sf_evictions_mes`
 
@@ -2475,14 +2292,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** Break down non-user CPU time to distinguish disk wait (`iowait`), interrupt storms (`irq`/`softirq`), and low-priority work (`nice`) from useful compute.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
-### `statfs`
-
-- **Definition:** Lustre llite: `statfs` operation count.
-- **Domain:** Lustre client (llite / mdc / osc)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
-
 ### `sw_port_congestion`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
@@ -2529,14 +2338,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
-
-### `symlink`
-
-- **Definition:** Lustre llite: `symlink` creation operation count.
-- **Domain:** Lustre client (llite / mdc / osc)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
 
 ### `sysio_power_usage`
 
@@ -2647,14 +2448,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** Compare read vs write mix and IOPS to `io_ticks` / queue time to separate throughput limits from latency or scheduler backlog. Sudden merge drops or rising `in_flight` often precede local filesystem or single-device saturation on a node.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
-### `truncate`
-
-- **Definition:** Lustre llite: `truncate` operation count.
-- **Domain:** Lustre client (llite / mdc / osc)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
-
 ### `tx_aborted_errors`
 
 - **Definition:** Linux netdev: aborted transmissions (driver or hardware abort).
@@ -2745,14 +2538,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
-### `unlink`
-
-- **Definition:** Lustre llite: `unlink` operation count.
-- **Domain:** Lustre client (llite / mdc / osc)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
-
 ### `user`
 
 - **Definition:** Cumulative CPU time in user mode (per-core counter; units per Linux /proc/stat, typically jiffies).
@@ -2760,6 +2545,302 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Typical `host_data.type` values:** `cpu`
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
 - **Tests:** hpcperfstats/analysis/metrics/tests/test_job_for_metrics.py; hpcperfstats/analysis/metrics/tests/test_metrics_schema_guards.py; hpcperfstats/analysis/metrics/tests/test_metrics_telemetry_bounds.py; hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_job_detail_artifacts_prewarm.py; hpcperfstats/site/lib/machine/tests/test_job_detail_fsio.py; hpcperfstats/site/lib/machine/tests/test_metrics.py; hpcperfstats/site/lib/machine/tests/test_update_metrics_diagnosis_compose.py; hpcperfstats/site/lib/machine/tests/test_update_metrics_telemetry_coverage_compose.py
+
+### `vfs_alloc_inode_ops`
+
+- **Definition:** Lustre llite: inode allocation operations (canonical vfs_* KEY).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+
+### `vfs_close_ops`
+
+- **Definition:** Lustre llite: `close(2)` operation count (canonical vfs_* KEY).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+
+### `vfs_create_ops`
+
+- **Definition:** Lustre llite: file create operation count (canonical vfs_* KEY).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+
+### `vfs_direct_read_bytes`
+
+- **Definition:** Lustre llite: cumulative direct-I/O read bytes on this mount.
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `vfs_direct_write_bytes`
+
+- **Definition:** Lustre llite: cumulative direct-I/O write bytes on this mount.
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `vfs_dirty_page_hits`
+
+- **Definition:** Lustre llite: dirty client-page cache hits.
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `vfs_dirty_page_misses`
+
+- **Definition:** Lustre llite: dirty client-page cache misses.
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `vfs_flock_ops`
+
+- **Definition:** Lustre llite: advisory `flock` operation count (canonical vfs_* KEY).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+
+### `vfs_fsync_ops`
+
+- **Definition:** Lustre llite: `fsync` operation count (canonical vfs_* KEY).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+
+### `vfs_getattr_ops`
+
+- **Definition:** Lustre llite: getattr / stat-style metadata operation count (canonical vfs_* KEY).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+
+### `vfs_getxattr_ops`
+
+- **Definition:** Lustre llite: `getxattr` syscall count (canonical vfs_* KEY).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `vfs_inode_permission_ops`
+
+- **Definition:** Lustre llite: inode permission check count (canonical vfs_* KEY).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `vfs_ioctl_ops`
+
+- **Definition:** Lustre llite: `ioctl` operation count on this mount.
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `vfs_link_ops`
+
+- **Definition:** Lustre llite: hard `link` operation count (canonical vfs_* KEY).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+
+### `vfs_listxattr_ops`
+
+- **Definition:** Lustre llite: `listxattr` syscall count (canonical vfs_* KEY).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+
+### `vfs_lookup_ops`
+
+- **Definition:** Lustre llite: pathname `lookup` operation count (canonical vfs_* KEY).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+
+### `vfs_mkdir_ops`
+
+- **Definition:** Lustre llite: `mkdir` operation count (canonical vfs_* KEY).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+
+### `vfs_mknod_ops`
+
+- **Definition:** Lustre llite: `mknod` operation count (canonical vfs_* KEY).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+
+### `vfs_mmap_ops`
+
+- **Definition:** Lustre llite: `mmap` operation count (canonical vfs_* KEY).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+
+### `vfs_open_ops`
+
+- **Definition:** Lustre llite: `open(2)` operation count (canonical vfs_* KEY).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+
+### `vfs_osc_read_bytes`
+
+- **Definition:** Lustre llite: bytes attributed to the OSC read path in llite stats.
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `vfs_osc_write_bytes`
+
+- **Definition:** Lustre llite: bytes attributed to the OSC write path in llite stats.
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `vfs_read_bytes`
+
+- **Definition:** Lustre llite: cumulative bytes read on this client mount (canonical vfs_* KEY from `/proc/fs/lustre/llite/*/stats`).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/gen/jid_table.py; hpcperfstats/analysis/metrics/lib/job_detail_fsio.py; hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_job_detail_fsio.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
+
+### `vfs_read_ops`
+
+- **Definition:** Lustre llite: `read(2)` operation count (canonical vfs_* KEY; volume in `vfs_read_bytes`).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `vfs_readdir_ops`
+
+- **Definition:** Lustre llite: `readdir` operation count (canonical vfs_* KEY).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+
+### `vfs_removexattr_ops`
+
+- **Definition:** Lustre llite: `removexattr` syscall count (canonical vfs_* KEY).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+
+### `vfs_rename_ops`
+
+- **Definition:** Lustre llite: `rename` operation count (canonical vfs_* KEY).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+
+### `vfs_rmdir_ops`
+
+- **Definition:** Lustre llite: `rmdir` operation count (canonical vfs_* KEY).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+
+### `vfs_seek_ops`
+
+- **Definition:** Lustre llite: `seek` operation count (canonical vfs_* KEY).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+
+### `vfs_setattr_ops`
+
+- **Definition:** Lustre llite: `setattr` metadata updates (canonical vfs_* KEY).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+
+### `vfs_setxattr_ops`
+
+- **Definition:** Lustre llite: `setxattr` syscall count (canonical vfs_* KEY).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+
+### `vfs_statfs_ops`
+
+- **Definition:** Lustre llite: `statfs` operation count (canonical vfs_* KEY).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+
+### `vfs_symlink_ops`
+
+- **Definition:** Lustre llite: `symlink` creation operation count (canonical vfs_* KEY).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+
+### `vfs_truncate_ops`
+
+- **Definition:** Lustre llite: `truncate` operation count (canonical vfs_* KEY).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+
+### `vfs_unlink_ops`
+
+- **Definition:** Lustre llite: `unlink` operation count (canonical vfs_* KEY).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+
+### `vfs_write_bytes`
+
+- **Definition:** Lustre llite: cumulative bytes written on this client mount (canonical vfs_* KEY).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/gen/jid_table.py; hpcperfstats/analysis/metrics/lib/job_detail_fsio.py; hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_job_detail_fsio.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
+
+### `vfs_write_ops`
+
+- **Definition:** Lustre llite: `write(2)` operation count (canonical vfs_* KEY; volume in `vfs_write_bytes`).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `vm_data`
 
@@ -2889,21 +2970,13 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** Compare read vs write mix and IOPS to `io_ticks` / queue time to separate throughput limits from latency or scheduler backlog. Sudden merge drops or rising `in_flight` often precede local filesystem or single-device saturation on a node.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
-### `write`
-
-- **Definition:** Lustre llite: `write(2)` syscall operation count (byte volume in `write_bytes`).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Lustre llite operation counter; unusually high `getxattr`/`inode_permission` rates often accompany metadata-heavy tools or security modules scanning many files.
-- **Application / library code:** hpcperfstats/dbload/sync_timedb.py
-- **Tests:** hpcperfstats/site/lib/machine/tests/test_api_coverage_closure.py
-
 ### `write_bytes`
 
-- **Definition:** Cumulative bytes written on the Lustre client from llite or OSC `/proc/fs/lustre/*/stats`.
+- **Definition:** Cumulative bytes written on the Lustre client from llite or OSC `/proc/fs/lustre/*/stats` (legacy name; canonical emit is `vfs_write_bytes`).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** `llite`
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/gen/jid_table.py; hpcperfstats/analysis/metrics/lib/job_detail_fsio.py; hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/site/lib/machine/job_detail_artifacts.py
+- **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/job_detail_fsio.py; hpcperfstats/site/lib/machine/job_detail_artifacts.py
 - **Tests:** hpcperfstats/analysis/metrics/tests/test_job_detail_fsio.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_jid_table.py; hpcperfstats/site/lib/machine/tests/test_job_detail_artifacts_prewarm.py; hpcperfstats/site/lib/machine/tests/test_job_detail_fsio.py
 
 ### `writeback`

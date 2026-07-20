@@ -191,7 +191,7 @@ See `HPCPerfStats/docs/monitor_variable_rename_map.yaml` for rename-map entries.
 | `lustre_osc` | Built and registered when `--enable-lustre` (previously source-only) |
 | `lustre_llite` KEYS | Renamed to usable `vfs_*` names; capacity gauges `fs_bytes_*` / `fs_files_*` from `/sys/fs/lustre/llite` |
 | Legacy proc llite | Still parsed; opcodes emitted under **new** KEY names only |
-| Consumer follow-up | Separate plan: `.cursor/plans/lustre_llite_consumer_followup.plan.md` (do not deploy dashboards that hard-code old KEY strings without that work) |
+| Consumer follow-up | Separate plan: `.cursor/plans/lustre-llite-consumer-followup.plan.md` (ship consumer dual-read first or same release; do not deploy dashboards that hard-code old KEY strings without that work) |
 
 Old→new llite event map lives under `type_events.lustre_llite` in
 `HPCPerfStats/docs/monitor_variable_rename_map.yaml`.

@@ -8,6 +8,8 @@ import pandas as pd
 
 from hpcperfstats.analysis.metrics.lib.llite_metadata_iops_events import (
     LLITE_METADATA_IOPS_EVENTS,
+    LLITE_READ_BYTES_EVENTS,
+    LLITE_WRITE_BYTES_EVENTS,
 )
 
 logger = logging.getLogger(__name__)
@@ -116,8 +118,12 @@ def compute_job_detail_fsio_metric_rows(jt: Any) -> List[Dict[str, Any]]:
     if not llite_df.empty and "delta_sum" in llite_df.columns:
       llite_df = llite_df.copy()
       llite_df["delta_mb"] = llite_df["delta_sum"].fillna(0) / (1024 * 1024)
-      read_row = llite_df[llite_df["event"] == "read_bytes"]
-      write_row = llite_df[llite_df["event"] == "write_bytes"]
+      read_row = llite_df[llite_df["event"] == "vfs_read_bytes"]
+      write_row = llite_df[llite_df["event"] == "vfs_write_bytes"]
+      if read_row.empty:
+        read_row = llite_df[llite_df["event"] == "read_bytes"]
+      if write_row.empty:
+        write_row = llite_df[llite_df["event"] == "write_bytes"]
       read_val = float(read_row["delta_mb"].iloc[0]) if len(read_row) else 0.0
       write_val = float(write_row["delta_mb"].iloc[0]) if len(write_row) else 0.0
       llite_read, llite_write = read_val, write_val
@@ -141,8 +147,8 @@ def compute_job_detail_fsio_metric_rows(jt: Any) -> List[Dict[str, Any]]:
   llite_peak_iops: Optional[float] = None
   if llite_ok:
     llite_peak_mb = _max_job_wide_combined_read_write_mb_s(
-        jt, "llite", ("read_bytes",), ("write_bytes",))
-    llite_peak_iops = _max_job_wide_arc_sum(jt, "llite", LLITE_METADATA_IOPS_EVENTS, 1.0)
+        jt, "lustre_llite", LLITE_READ_BYTES_EVENTS, LLITE_WRITE_BYTES_EVENTS)
+    llite_peak_iops = _max_job_wide_arc_sum(jt, "lustre_llite", LLITE_METADATA_IOPS_EVENTS, 1.0)
 
   nfs_peak_mb: Optional[float] = None
   nfs_peak_iops: Optional[float] = None
@@ -204,7 +210,7 @@ def _row(metric: str, row_type: str, units: str, val: Optional[float], reason: O
 def extend_fsio_payload_lists_with_peaks(fsio: Dict[str, Any], jt: Any) -> None:
   """Mutate ``fsio`` ``llite`` / ``nfs`` lists from legacy length-2 to ``[r,w,peak_mb_s,peak_iops]``."""
   specs: Tuple[Tuple[str, Tuple[str, ...], Tuple[str, ...], Tuple[str, ...]], ...] = (
-      ("llite", ("read_bytes",), ("write_bytes",), LLITE_METADATA_IOPS_EVENTS),
+      ("llite", LLITE_READ_BYTES_EVENTS, LLITE_WRITE_BYTES_EVENTS, LLITE_METADATA_IOPS_EVENTS),
       ("nfs", _NFS_READ_EVENTS, _NFS_WRITE_EVENTS, _NFS_IOPS_EVENTS),
   )
   for key, read_ev, write_ev, iops_ev in specs:

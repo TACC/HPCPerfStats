@@ -8,6 +8,11 @@ from hpcperfstats.analysis.metrics.lib.job_detail_fsio import (
     extend_fsio_payload_lists_with_peaks,
     fsio_job_detail_catalog,
 )
+from hpcperfstats.analysis.metrics.lib.llite_metadata_iops_events import (
+    LLITE_METADATA_IOPS_EVENTS,
+    LLITE_READ_BYTES_EVENTS,
+    LLITE_WRITE_BYTES_EVENTS,
+)
 
 
 def test_fsio_job_detail_catalog_has_eight_metrics():
@@ -24,29 +29,31 @@ def test_fsio_job_detail_catalog_has_eight_metrics():
   ]
 
 
-def test_compute_llite_populates_llite_rows_and_omits_nfs_when_nfs_absent():
+def _llite_agg(typ, val_col, events, conv=1.0, *, peak_mb=10.0, peak_iops=100.0):
+  del val_col, conv
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  ev = list(events)
+  if typ in ("llite", "lustre_llite") and ev == list(LLITE_READ_BYTES_EVENTS):
+    return pd.DataFrame([("n1", t0, 4.0)], columns=["host", "time", "sum_val"])
+  if typ in ("llite", "lustre_llite") and ev == list(LLITE_WRITE_BYTES_EVENTS):
+    return pd.DataFrame([("n1", t0, 6.0)], columns=["host", "time", "sum_val"])
+  if typ in ("llite", "lustre_llite") and ev == list(LLITE_METADATA_IOPS_EVENTS):
+    return pd.DataFrame([("n1", t0, peak_iops)], columns=["host", "time", "sum_val"])
+  if typ in ("llite", "lustre_llite") and len(ev) > 2:
+    return pd.DataFrame([("n1", t0, peak_iops)], columns=["host", "time", "sum_val"])
+  return pd.DataFrame(columns=["host", "time", "sum_val"])
+
+
+def test_compute_llite_populates_llite_rows_and_omits_nfs_when_nfs_absent():
   jt = MagicMock()
   jt.get_llite_delta_by_event.return_value = pd.DataFrame(
       [
-          {"event": "read_bytes", "delta_sum": 1048576.0},
-          {"event": "write_bytes", "delta_sum": 2097152.0},
+          {"event": "vfs_read_bytes", "delta_sum": 1048576.0},
+          {"event": "vfs_write_bytes", "delta_sum": 2097152.0},
       ]
   )
   jt.get_nfs_delta_totals_mb.return_value = None
-
-  def _agg(typ, val_col, events, conv=1.0):
-    del val_col, conv
-    ev = list(events)
-    if typ == "llite" and ev == ["read_bytes"]:
-      return pd.DataFrame([("n1", t0, 4.0)], columns=["host", "time", "sum_val"])
-    if typ == "llite" and ev == ["write_bytes"]:
-      return pd.DataFrame([("n1", t0, 6.0)], columns=["host", "time", "sum_val"])
-    if typ == "llite" and len(ev) > 2:
-      return pd.DataFrame([("n1", t0, 100.0)], columns=["host", "time", "sum_val"])
-    return pd.DataFrame(columns=["host", "time", "sum_val"])
-
-  jt.get_aggregate_df.side_effect = _agg
+  jt.get_aggregate_df.side_effect = _llite_agg
   rows = compute_job_detail_fsio_metric_rows(jt)
   by_m = {r["metric"]: r for r in rows}
   assert by_m["detail_fsio_llite_read_mb"]["value"] == 1.0
@@ -57,8 +64,8 @@ def test_compute_llite_populates_llite_rows_and_omits_nfs_when_nfs_absent():
   assert by_m["detail_fsio_nfs_write_mb"]["value"] is None
 
 
-def test_compute_dual_llite_and_nfs_when_both_present():
-  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+def test_compute_llite_accepts_legacy_read_bytes_event_names():
+  """get_llite_delta may still surface legacy names before canonicalize; FSIO accepts both."""
   jt = MagicMock()
   jt.get_llite_delta_by_event.return_value = pd.DataFrame(
       [
@@ -66,17 +73,30 @@ def test_compute_dual_llite_and_nfs_when_both_present():
           {"event": "write_bytes", "delta_sum": 2097152.0},
       ]
   )
+  jt.get_nfs_delta_totals_mb.return_value = None
+  jt.get_aggregate_df.side_effect = _llite_agg
+  rows = compute_job_detail_fsio_metric_rows(jt)
+  by_m = {r["metric"]: r for r in rows}
+  assert by_m["detail_fsio_llite_read_mb"]["value"] == 1.0
+  assert by_m["detail_fsio_llite_write_mb"]["value"] == 2.0
+
+
+def test_compute_dual_llite_and_nfs_when_both_present():
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  jt = MagicMock()
+  jt.get_llite_delta_by_event.return_value = pd.DataFrame(
+      [
+          {"event": "vfs_read_bytes", "delta_sum": 1048576.0},
+          {"event": "vfs_write_bytes", "delta_sum": 2097152.0},
+      ]
+  )
   jt.get_nfs_delta_totals_mb.return_value = [10.0, 20.0]
 
   def _agg(typ, val_col, events, conv=1.0):
-    del val_col, conv
+    base = _llite_agg(typ, val_col, events, conv)
+    if not base.empty:
+      return base
     ev = list(events)
-    if typ == "llite" and ev == ["read_bytes"]:
-      return pd.DataFrame([("n1", t0, 4.0)], columns=["host", "time", "sum_val"])
-    if typ == "llite" and ev == ["write_bytes"]:
-      return pd.DataFrame([("n1", t0, 6.0)], columns=["host", "time", "sum_val"])
-    if typ == "llite" and len(ev) > 2:
-      return pd.DataFrame([("n1", t0, 100.0)], columns=["host", "time", "sum_val"])
     if typ == "nfs" and set(ev) == {"normal_read", "direct_read", "server_read"}:
       return pd.DataFrame([("n1", t0, 1.0)], columns=["host", "time", "sum_val"])
     if typ == "nfs" and set(ev) == {"normal_write", "direct_write", "server_write"}:
@@ -124,21 +144,9 @@ def test_compute_nfs_when_no_llite():
 
 
 def test_extend_fsio_payload_lists_with_peaks_fills_legacy_two_tuple():
-  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   jt = MagicMock()
-
-  def _agg(typ, val_col, events, conv=1.0):
-    del val_col, conv
-    ev = list(events)
-    if typ == "llite" and ev == ["read_bytes"]:
-      return pd.DataFrame([("n1", t0, 4.0)], columns=["host", "time", "sum_val"])
-    if typ == "llite" and ev == ["write_bytes"]:
-      return pd.DataFrame([("n1", t0, 6.0)], columns=["host", "time", "sum_val"])
-    if typ == "llite" and len(ev) > 2:
-      return pd.DataFrame([("n1", t0, 9.0)], columns=["host", "time", "sum_val"])
-    return pd.DataFrame(columns=["host", "time", "sum_val"])
-
-  jt.get_aggregate_df.side_effect = _agg
+  jt.get_aggregate_df.side_effect = lambda *a, **k: _llite_agg(
+      *a, **k, peak_iops=9.0)
   fsio = {"llite": [1.0, 2.0]}
   extend_fsio_payload_lists_with_peaks(fsio, jt)
   assert fsio["llite"] == [1.0, 2.0, 10.0, 9.0]
