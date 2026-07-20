@@ -52,6 +52,17 @@ grep -q 'scripts/lib/tacc_system_profiles.py' scripts/prepare_rpmbuild_dirs.sh \
 grep -q 'scripts/validate_stampede3_profile.sh' scripts/prepare_rpmbuild_dirs.sh \
   || { echo "prepare_rpmbuild_dirs.sh must preflight scripts/validate_stampede3_profile.sh" >&2; exit 1; }
 
+grep -q 'scripts/gpu_lspci_probe.sh' scripts/prepare_rpmbuild_dirs.sh \
+  || { echo "prepare_rpmbuild_dirs.sh must preflight scripts/gpu_lspci_probe.sh" >&2; exit 1; }
+
+for script in scripts/gpu_lspci_probe.sh scripts/gpu_lspci_detect.awk; do
+  grep -q "${script}" src/Makefile.am \
+    || { echo "src/Makefile.am EXTRA_DIST must list ${script}" >&2; exit 1; }
+done
+
+grep -q 'verify_dist_tarball_build_scripts' scripts/prepare_rpmbuild_dirs.sh \
+  || { echo "prepare_rpmbuild_dirs.sh must verify gpu_lspci scripts in dist tarball" >&2; exit 1; }
+
 for hdr in host_cpu.h host_mem.h host_net.h host_ps.h; do
   test -f "src/${hdr}" \
     || { echo "missing src/${hdr} (required for RPM build)" >&2; exit 1; }

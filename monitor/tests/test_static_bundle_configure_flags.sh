@@ -29,6 +29,9 @@ esac
 grep -q 'print-configure-flags' ./scripts/prepare_rpmbuild_dirs.sh \
   || { echo "prepare_rpmbuild_dirs.sh must invoke --print-configure-flags" >&2; exit 1; }
 
+grep -q 'monitor_gpu_lspci_probe_script' ./scripts/build_static_bundle.sh \
+  || { echo "build_static_bundle.sh must guard gpu_lspci_probe when scripts are absent" >&2; exit 1; }
+
 # Stampede3 fleet marker forces MAD dlopen (never PCI-only --disable-infiniband).
 fleet_flags="$(HPCS_BUNDLE_FLEET=stampede3 ./scripts/build_static_bundle.sh --print-configure-flags 2>/dev/null)"
 echo "${fleet_flags}" | grep -q -- '--enable-ib-mad-dlopen' \

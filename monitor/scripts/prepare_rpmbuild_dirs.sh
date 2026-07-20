@@ -136,6 +136,8 @@ for distfile in \
   scripts/lib/monitor_tree_clean.sh \
   scripts/rpm_debug_shm_verify.sh \
   scripts/prepare_rpmbuild_stampede3.sh \
+  scripts/gpu_lspci_probe.sh \
+  scripts/gpu_lspci_detect.awk \
   scripts/fleet/README
 do
   if test ! -f "${MONITOR_DIR}/${distfile}"; then
@@ -251,6 +253,7 @@ fi
 
 dist_top="${tarbase}-${ver}"
 verify_dist_tarball_host_headers "${MONITOR_DIR}/${tb}" "${dist_top}"
+verify_dist_tarball_build_scripts "${MONITOR_DIR}/${tb}" "${dist_top}"
 
 cp -f "${MONITOR_DIR}/${tb}" "${sources_dir}/${tb}"
 monitor_tree_clean_post_dist "${MONITOR_DIR}" "${tb}"

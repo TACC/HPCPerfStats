@@ -91,3 +91,26 @@ verify_dist_tarball_host_headers() {
   fi
   return 0
 }
+
+verify_dist_tarball_build_scripts() {
+  local tarball="${1:?tarball required}"
+  local tarbase="${2:?tarbase required}"
+  local missing=0
+  local script
+
+  for script in \
+    scripts/gpu_lspci_probe.sh \
+    scripts/gpu_lspci_detect.awk
+  do
+    if ! tar tzf "${tarball}" "${tarbase}/${script}" >/dev/null 2>&1; then
+      echo "Source tarball missing ${tarbase}/${script}" >&2
+      missing=1
+    fi
+  done
+
+  if test "${missing}" -ne 0; then
+    echo "Add missing scripts to EXTRA_DIST in src/Makefile.am (see build_static_bundle.sh)." >&2
+    return 1
+  fi
+  return 0
+}

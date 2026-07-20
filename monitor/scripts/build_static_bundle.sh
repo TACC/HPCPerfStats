@@ -251,16 +251,29 @@ monitor_probe_amd_gpup_perfapi_sdk() {
 }
 
 # Match runtime hwdetect / gpu_pci_detect.c (scripts/gpu_lspci_probe.sh); summary only.
+monitor_gpu_lspci_probe_script() {
+  test -f "${MONITOR_DIR}/scripts/gpu_lspci_probe.sh" \
+    && test -f "${MONITOR_DIR}/scripts/gpu_lspci_detect.awk"
+}
+
+monitor_lspci_sees_vendor() {
+  local vendor="${1:?vendor required}"
+  if ! monitor_gpu_lspci_probe_script; then
+    return 1
+  fi
+  sh "${MONITOR_DIR}/scripts/gpu_lspci_probe.sh" "${vendor}"
+}
+
 monitor_lspci_sees_nvidia() {
-  sh "${MONITOR_DIR}/scripts/gpu_lspci_probe.sh" nvidia
+  monitor_lspci_sees_vendor nvidia
 }
 
 monitor_lspci_sees_amd() {
-  sh "${MONITOR_DIR}/scripts/gpu_lspci_probe.sh" amd
+  monitor_lspci_sees_vendor amd
 }
 
 monitor_lspci_sees_intel() {
-  sh "${MONITOR_DIR}/scripts/gpu_lspci_probe.sh" intel
+  monitor_lspci_sees_vendor intel
 }
 
 # Prints detection summary and sets STATIC_BUNDLE_FEAT_FLAGS (configure --disable-* list).
