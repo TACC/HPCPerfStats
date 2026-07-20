@@ -64,7 +64,7 @@ readonly REPO_ROOT="$(cd "${MONITOR_DIR}/../.." && pwd)"
 STATIC_PIN_LIBEV_VERSION="4.33"
 STATIC_PIN_RABBITMQ_C_VERSION="0.17.0"
 # LIKWID: Git tag name without a leading "v" (archive is .../tags/v${VER}.tar.gz).
-STATIC_PIN_LIKWID_VERSION="5.5.1"
+STATIC_PIN_LIKWID_VERSION="5.5.2rc2"
 STATIC_PIN_LIBBPF_VERSION="1.7.0"
 # PAPI: used on aarch64 with DCGM CPU backend for PMU SP/DP FLOPs + cycles.
 STATIC_PIN_PAPI_VERSION="7.2.0"

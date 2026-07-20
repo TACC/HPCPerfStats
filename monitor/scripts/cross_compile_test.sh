@@ -12,7 +12,7 @@ readonly REPO_ROOT="$(cd "${MONITOR_DIR}/../.." && pwd)"
 # Keep pins aligned with scripts/build_static_bundle.sh where applicable.
 LIBEV_VER="${LIBEV_VER:-4.33}"
 RABBITMQ_VER="${RABBITMQ_VER:-0.17.0}"
-LIKWID_TAG="${LIKWID_TAG:-5.5.1}"
+LIKWID_TAG="${LIKWID_TAG:-5.5.2rc2}"
 LIBBPF_VER="${LIBBPF_VER:-1.7.0}"
 PAPI_VER="${PAPI_VER:-7.2.0}"
 QEMU_VER="${QEMU_VER:-11.0.1}"
