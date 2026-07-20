@@ -29,7 +29,7 @@ HPCPerfStats ingests **`host_data.type`** values produced by the monitor executa
 - **Legacy archive ingest** (schema lines with `CTL*`/`CTR*` or legacy `st_name` in `LEGACY_HARDWARE_DECODE_TYPES`) uses `sync_timedb_parsing_legacy.py` only; persisted rows keep legacy names.
 - **Intel CPU roofline:** FLOPS from `core_pmc_types_probe_order()`; DRAM BW from `imc_types_probe_order()` + `dram_cas_read_write_pairs()`.
 - **AMD:** `amd_x86_pmc` + `amd_x86_uncore_df` → `amd64_epyc_2s_default` peak row when both present in schema.
-- **ARM / Grace:** `arm_aarch64_imc` and/or `host_cpu_hw` synthetic counters (`arm_est_flops`, `ARM_DRAM_BW_BYTES`).
+- **ARM / Grace:** `arm_aarch64_imc` and/or `host_cpu_hw` synthetic counters (`arm_est_flops`, `ARM_DRAM_BW_BYTES`). Grace also emits scalar FP (`fp_arith_inst_retired_scalar_single` / `_scalar_double`) and int ops (`arm_int8_ops` / `arm_int16_ops`); analysis maps scalars into `avg_flops64b`/`avg_flops32b` when Intel FP_ARITH is absent, and int ops into `avg_arm_int*_ops` for the CPU Multiprecision Mix pie (busy-ops shares). Do not fold ints into `arm_est_flops` / `avg_flops`. Analysis-only — do not edit `monitor/` without approval.
 
 ## Rules when the monitor or schema changes
 

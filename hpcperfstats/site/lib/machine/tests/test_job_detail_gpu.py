@@ -56,8 +56,9 @@ def _patch_job_detail_context(api_module, jid, gpu_agg, gpu_count_cached=None):
   multiprecision_payload = {
       "cpu_plot_item": None,
       "cpu_unavailable_reason": (
-          "Missing CPU busy-FLOPS mix metrics in job metrics "
-          "(need positive avg_flops64b / avg_flops32b shares)."
+          "Missing CPU busy-ops mix metrics in job metrics "
+          "(need positive avg_flops64b / avg_flops32b / avg_arm_int16_ops / "
+          "avg_arm_int8_ops shares)."
       ),
       "gpu_plot_item": None,
       "gpu_unavailable_reason": (
@@ -488,7 +489,7 @@ def test_multiprecision_mix_payload_staff_reasons_align_with_plot_tabs():
   """Unavailable reasons follow the same Missing-/metrics style for CPU and GPU pies."""
   payload = job_detail_artifacts_mod._multiprecision_mix_payload({})
   cpu_r = payload["cpu_unavailable_reason"] or ""
-  assert "Missing CPU busy-FLOPS mix metrics in job metrics" in cpu_r
+  assert "Missing CPU busy-ops mix metrics in job metrics" in cpu_r
   assert "avg_flops64b" in cpu_r
   gpu_r = payload["gpu_unavailable_reason"] or ""
   assert "Missing GPU precision-width mix metrics in job metrics" in gpu_r

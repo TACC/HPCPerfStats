@@ -347,6 +347,73 @@ def test_job_arc_avg_flops_arm_counter_fallback():
   assert typename in ("host_cpu_hw", "cpu_counter_metrics")
 
 
+@pytest.mark.machine_unit_mock
+def test_job_arc_avg_flops_precision_grace_scalar_fallback():
+  """avg_flops64b/32b use Grace scalar events when Intel FP_ARITH is absent."""
+
+  def fake_job_arc(self, jt, **kw):
+    typ = kw.get("typename")
+    ev = list(kw.get("events") or [])
+    if typ in ("host_cpu_hw", "cpu_counter_metrics"):
+      if ev == ["fp_arith_inst_retired_scalar_double"]:
+        return 2.5
+      if ev == ["fp_arith_inst_retired_scalar_single"]:
+        return 7.5
+    return None
+
+  with patch.object(Metrics, "job_arc", fake_job_arc):
+    m = Metrics()
+    v64, t64 = m._job_arc_avg_flops_precision(
+        object(),
+        list(m.simple_metrics_list["avg_flops64b"]["events"]),
+        grace_scalar_events=("fp_arith_inst_retired_scalar_double",),
+    )
+    v32, t32 = m._job_arc_avg_flops_precision(
+        object(),
+        list(m.simple_metrics_list["avg_flops32b"]["events"]),
+        grace_scalar_events=("fp_arith_inst_retired_scalar_single",),
+    )
+  assert abs(v64 - 2.5) < 1e-9
+  assert abs(v32 - 7.5) < 1e-9
+  assert t64 in ("host_cpu_hw", "cpu_counter_metrics")
+  assert t32 in ("host_cpu_hw", "cpu_counter_metrics")
+
+
+@pytest.mark.machine_unit_mock
+def test_job_arc_avg_flops_precision_prefers_intel_over_grace():
+  """Intel FP_ARITH wins for precision metrics even when Grace scalars exist."""
+
+  def fake_job_arc(self, jt, **kw):
+    typ = kw.get("typename")
+    ev = list(kw.get("events") or [])
+    if typ in ("intel_x86_pmc_gpr8", "intel_8pmc3") and "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE" in ev:
+      return 9.0
+    if typ in ("host_cpu_hw", "cpu_counter_metrics") and ev == [
+        "fp_arith_inst_retired_scalar_double"
+    ]:
+      return 1.0
+    return None
+
+  with patch.object(Metrics, "job_arc", fake_job_arc):
+    m = Metrics()
+    value, typename = m._job_arc_avg_flops_precision(
+        object(),
+        list(m.simple_metrics_list["avg_flops64b"]["events"]),
+        grace_scalar_events=("fp_arith_inst_retired_scalar_double",),
+    )
+  assert abs(value - 9.0) < 1e-9
+  assert typename in ("intel_x86_pmc_gpr8", "intel_8pmc3")
+
+
+@pytest.mark.machine_unit_mock
+def test_job_metrics_catalog_includes_avg_arm_int_ops():
+  metrics = {entry["metric"] for entry in job_metrics_catalog_entries()}
+  assert "avg_arm_int8_ops" in metrics
+  assert "avg_arm_int16_ops" in metrics
+  assert "avg_arm_int8_ops" in JOB_METRIC_SHORT_LABELS
+  assert "avg_arm_int16_ops" in JOB_METRIC_SHORT_LABELS
+
+
 def test_job_arc_avg_mbw_arm_counter_fallback():
   """avg_mbw falls back to host_cpu_hw ARM_DRAM_BW_BYTES when IMC rows are absent."""
 

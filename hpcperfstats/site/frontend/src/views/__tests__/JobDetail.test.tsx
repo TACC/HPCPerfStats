@@ -61,7 +61,7 @@ const minimalJobDetailResponse = {
   gpu_count: null,
   multiprecision_cpu_plot_item: null,
   multiprecision_cpu_unavailable_reason:
-    "Missing CPU busy-FLOPS mix metrics in job metrics (need positive avg_flops64b / avg_flops32b shares).",
+    "Missing CPU busy-ops mix metrics in job metrics (need positive avg_flops64b / avg_flops32b / avg_arm_int16_ops / avg_arm_int8_ops shares).",
   multiprecision_gpu_plot_item: null,
   multiprecision_gpu_unavailable_reason:
     "Missing GPU busy-pipe mix counters in host_data (no renderable precision mix rows).",

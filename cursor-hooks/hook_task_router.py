@@ -96,6 +96,17 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
             "pipeline-metrics-e2e-maintenance.mdc",
             "update-metrics-job-listing-new-data-type.mdc",
             "update-metrics-batch-resilience.mdc",
+            "monitor-analysis-architecture-sync.mdc",
+        ],
+    },
+    {
+        "id": "monitor_analysis_naming",
+        "patterns": [
+            "docs/monitor_variable_rename_map.yaml",
+            "hpcperfstats/dbload/lib/monitor_naming/**",
+        ],
+        "rules": [
+            "monitor-analysis-architecture-sync.mdc",
         ],
     },
     {
@@ -180,6 +191,26 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
             "frontend-stack-wiring-contract.mdc",
             "interactive-ready-controls.mdc",
             "design-focused-spa-ux.mdc",
+        ],
+    },
+    {
+        "id": "variable_metadata",
+        "patterns": [
+            "hpcperfstats/site/frontend/src/utils/variableMetadata*.ts",
+            "hpcperfstats/site/frontend/src/utils/variableMetadata*.js",
+            "hpcperfstats/site/frontend/src/utils/generate-variable-metadata-monitor-events.py",
+            "hpcperfstats/site/frontend/src/utils/jobMetricDisplayLabels.ts",
+            "hpcperfstats/analysis/metrics/lib/plot/job_detail_bokeh_plot_descriptions.py",
+            "hpcperfstats/analysis/metrics/lib/plot/summary_metric_descriptions.py",
+            "docs/MONITOR_VARIABLES.md",
+            "docs/regenerate_monitor_variables_catalog.py",
+            "docs/augment_monitor_variables_diagnostics.py",
+        ],
+        "rules": [
+            "variable-metadata-cross-source-sync.mdc",
+            "variable-metadata-monitor-contract.mdc",
+            "search-metric-artifact-sync.mdc",
+            "researcher-job-detail-doc-sync.mdc",
         ],
     },
     {

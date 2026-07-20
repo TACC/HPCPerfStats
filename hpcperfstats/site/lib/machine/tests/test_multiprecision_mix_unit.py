@@ -12,8 +12,9 @@ pytestmark = pytest.mark.machine_unit_mock
 def test_multiprecision_mix_payload_staff_reasons_align_with_plot_tabs():
   payload = jda._multiprecision_mix_payload({})
   cpu_r = payload["cpu_unavailable_reason"] or ""
-  assert "Missing CPU busy-FLOPS mix metrics in job metrics" in cpu_r
+  assert "Missing CPU busy-ops mix metrics in job metrics" in cpu_r
   assert "avg_flops64b" in cpu_r
+  assert "avg_arm_int8_ops" in cpu_r
   gpu_r = payload["gpu_unavailable_reason"] or ""
   assert "Missing GPU precision-width mix metrics in job metrics" in gpu_r
   assert "avg_*_active" in gpu_r
@@ -76,3 +77,37 @@ def test_multiprecision_mix_payload_from_metric_values():
   assert payload["gpu_unavailable_reason"] is None
   assert payload["cpu_plot_item"] is not None
   assert payload["gpu_plot_item"] is not None
+
+
+def test_multiprecision_cpu_pie_includes_grace_int_wedges():
+  payload = jda._multiprecision_mix_payload(
+      {
+          "avg_flops64b": 10.0,
+          "avg_flops32b": 20.0,
+          "avg_arm_int16_ops": 30.0,
+          "avg_arm_int8_ops": 40.0,
+      }
+  )
+  assert payload["cpu_unavailable_reason"] is None
+  assert payload["cpu_plot_item"] is not None
+  mix = jda._precision_mix_from_metric_values(
+      {
+          "avg_flops64b": 10.0,
+          "avg_flops32b": 20.0,
+          "avg_arm_int16_ops": 30.0,
+          "avg_arm_int8_ops": 40.0,
+      },
+      jda._CPU_PRECISION_METRIC_TO_LABEL,
+  )
+  assert mix == {"FP64": 10.0, "FP32": 20.0, "INT16": 30.0, "INT8": 40.0}
+  assert jda._CPU_PRECISION_LABEL_ORDER == ("FP64", "FP32", "INT16", "INT8")
+  assert jda.APP_DETAIL_ARTIFACT_SCHEMA_VERSION == 8
+
+
+def test_multiprecision_cpu_pie_omits_zero_int_wedges():
+  mix = jda._precision_mix_from_metric_values(
+      {"avg_flops64b": 40.0, "avg_flops32b": 60.0, "avg_arm_int8_ops": 0.0},
+      jda._CPU_PRECISION_METRIC_TO_LABEL,
+  )
+  assert mix == {"FP64": 40.0, "FP32": 60.0}
+  assert "INT8" not in mix

@@ -42,6 +42,9 @@ from hpcperfstats.dbload.lib.monitor_naming.resolve import (
     core_pmc_types_probe_order,
     dram_cas_read_write_pairs,
     events_probe_names,
+    grace_fp_scalar_double_event_names,
+    grace_fp_scalar_single_event_names,
+    host_cpu_hw_type_names,
     imc_types_probe_order,
     instr_retired_event_names,
     mperf_event_names,
@@ -202,6 +205,12 @@ def _intel_core_tries(events, conv):
   """(typename, events, conv) rows for Intel PMC and host_cpu_hw."""
   ev = list(events)
   return [(t, ev, conv) for t in core_pmc_types_probe_order()]
+
+
+def _grace_fp_scalar_tries(events, conv):
+  """(typename, events, conv) rows for Grace host_cpu_hw scalar FP only."""
+  ev = list(events)
+  return [(t, ev, conv) for t in host_cpu_hw_type_names()]
 
 
 # One aggregate per row (fixed typename); used for AMD, fabric, etc.
@@ -432,13 +441,19 @@ _SUMMARY_FIRST_WIN_SPECS = (
         "name": "flops64b",
         "val_col": "arc",
         "label": "CPU FLOPS64b[GF]",
-        "tries": _intel_core_tries(INTEL_FP_ARITH_DOUBLE_EVENTS, 1e-9),
+        "tries": (
+            _intel_core_tries(INTEL_FP_ARITH_DOUBLE_EVENTS, 1e-9)
+            + _grace_fp_scalar_tries(grace_fp_scalar_double_event_names(), 1e-9)
+        ),
     },
     {
         "name": "flops32b",
         "val_col": "arc",
         "label": "CPU FLOPS32b[GF]",
-        "tries": _intel_core_tries(INTEL_FP_ARITH_SINGLE_EVENTS, 1e-9),
+        "tries": (
+            _intel_core_tries(INTEL_FP_ARITH_SINGLE_EVENTS, 1e-9)
+            + _grace_fp_scalar_tries(grace_fp_scalar_single_event_names(), 1e-9)
+        ),
     },
     {
         "name": "instr",

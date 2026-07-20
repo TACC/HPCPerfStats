@@ -30,9 +30,12 @@ def _extract_js_object_keys(js_text: str, object_name: str) -> set[str]:
 
 def test_metric_catalog_entries_have_variable_metadata_definitions():
   repo_root = Path(__file__).resolve().parents[2]
-  js_path = repo_root / "hpcperfstats" / "site" / "frontend" / "src" / "utils" / "variableMetadata.js"
-  js_text = _read_text(js_path)
-  metadata_keys = _extract_js_object_keys(js_text, "JOB_ACCOUNTING_AND_DERIVED_METADATA")
+  meta_path = (
+      repo_root / "hpcperfstats" / "site" / "frontend" / "src" / "utils"
+      / "variableMetadata.ts"
+  )
+  meta_text = _read_text(meta_path)
+  metadata_keys = _extract_js_object_keys(meta_text, "JOB_ACCOUNTING_AND_DERIVED_METADATA")
   catalog_metrics = {row["metric"] for row in job_metrics_catalog_entries()}
   missing = sorted(catalog_metrics - metadata_keys)
   assert not missing, f"Missing metadata definitions for catalog metrics: {missing}"
@@ -40,9 +43,12 @@ def test_metric_catalog_entries_have_variable_metadata_definitions():
 
 def test_summary_plot_metadata_keys_match_python_descriptions():
   repo_root = Path(__file__).resolve().parents[2]
-  js_path = repo_root / "hpcperfstats" / "site" / "frontend" / "src" / "utils" / "variableMetadata.js"
-  js_text = _read_text(js_path)
-  summary_keys = _extract_js_object_keys(js_text, "SUMMARY_PLOT_METRIC_METADATA")
+  meta_path = (
+      repo_root / "hpcperfstats" / "site" / "frontend" / "src" / "utils"
+      / "variableMetadata.ts"
+  )
+  meta_text = _read_text(meta_path)
+  summary_keys = _extract_js_object_keys(meta_text, "SUMMARY_PLOT_METRIC_METADATA")
   py_keys = set(SUMMARY_METRIC_DESCRIPTIONS.keys())
   assert summary_keys == py_keys
 
@@ -54,9 +60,9 @@ def test_summary_plot_researcher_use_keys_match_description_keys():
 def test_generated_monitor_metadata_header_references_authoritative_rule_path():
   repo_root = Path(__file__).resolve().parents[2]
   gen_path = repo_root / "hpcperfstats" / "site" / "frontend" / "src" / "utils" / "generate-variable-metadata-monitor-events.py"
-  js_out_path = repo_root / "hpcperfstats" / "site" / "frontend" / "src" / "utils" / "variableMetadataMonitorEvents.js"
+  out_path = repo_root / "hpcperfstats" / "site" / "frontend" / "src" / "utils" / "variableMetadataMonitorEvents.ts"
   gen_text = _read_text(gen_path)
-  js_text = _read_text(js_out_path)
+  out_text = _read_text(out_path)
   expected = "HPCPerfStats/hpcperfstats/cursor-rules/variable-metadata-monitor-contract.mdc"
   assert expected in gen_text
-  assert expected in js_text
+  assert expected in out_text

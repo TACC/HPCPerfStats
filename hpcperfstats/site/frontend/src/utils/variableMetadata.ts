@@ -1,7 +1,7 @@
 /**
  * Tooltip copy keyed by metric / event short name (before units in brackets).
  *
- * Merge order: monitor `host_data.event` names (see variableMetadataMonitorEvents.js),
+ * Merge order: monitor `host_data.event` names (see variableMetadataMonitorEvents.ts),
  * then job accounting / derived metrics / API-only fields (this file). Later entries win
  * on purpose so UI-specific wording overrides generic monitor text.
  *
@@ -180,15 +180,27 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
   },
   avg_flops64b: {
     description:
-      "Average double-precision floating-point throughput (GFLOP/s) from Intel FP_ARITH double events (same basis as summary flops64b).",
+      "Average double-precision floating-point throughput (GFLOP/s) from Intel FP_ARITH double events, or Grace host_cpu_hw scalar double when Intel FP is absent (same basis as summary flops64b).",
     researcherUse:
-      "Use with avg_flops32b and the Multiprecision Mix pie to see FP64 share of busy FLOPS.",
+      "Use with avg_flops32b and the Multiprecision Mix pie to see FP64 share of busy arithmetic.",
   },
   avg_flops32b: {
     description:
-      "Average single-precision floating-point throughput (GFLOP/s) from Intel FP_ARITH single events (same basis as summary flops32b).",
+      "Average single-precision floating-point throughput (GFLOP/s) from Intel FP_ARITH single events, or Grace host_cpu_hw scalar single when Intel FP is absent (same basis as summary flops32b).",
     researcherUse:
-      "Use with avg_flops64b and the Multiprecision Mix pie to see FP32 share of busy FLOPS.",
+      "Use with avg_flops64b and the Multiprecision Mix pie to see FP32 share of busy arithmetic.",
+  },
+  avg_arm_int8_ops: {
+    description:
+      "Average Grace INT8 arithmetic operation rate (Gops/s) from host_cpu_hw arm_int8_ops (ASE_SVE_INT8_SPEC). Not included in arm_est_flops / avg_flops.",
+    researcherUse:
+      "INT8 wedge of the CPU Multiprecision Mix on Grace; compare with FP64/FP32 busy-ops shares.",
+  },
+  avg_arm_int16_ops: {
+    description:
+      "Average Grace INT16 arithmetic operation rate (Gops/s) from host_cpu_hw arm_int16_ops (ASE_SVE_INT16_SPEC). Not included in arm_est_flops / avg_flops.",
+    researcherUse:
+      "INT16 wedge of the CPU Multiprecision Mix on Grace; compare with FP64/FP32 busy-ops shares.",
   },
   avg_mbw: {
     description:
@@ -740,9 +752,9 @@ const JOB_DETAIL_BOKEH_PLOT_METADATA = {
   },
   jobDetailPlot_multiprecision_cpu: {
     description:
-      "CPU multiprecision mix: wedge areas show each precision's share of busy FLOPS only (idle excluded), from Intel FP_ARITH-based avg_flops64b and avg_flops32b job metrics.",
+      "CPU multiprecision mix: wedge areas show each width's share of busy arithmetic rates only (idle excluded), from avg_flops64b / avg_flops32b (Intel FP_ARITH or Grace scalar FP) and Grace avg_arm_int16_ops / avg_arm_int8_ops when present. INT ops and FLOPS are mixed as relative busy-ops shares, not identical units.",
     researcherUse:
-      "Compare FP64 versus FP32 busy-FLOPS mix when tuning numerical precision; vectorization width metrics remain separate.",
+      "Compare FP64 versus FP32 (and INT16/INT8 on Grace) busy-ops mix when tuning numerical precision; vectorization width metrics remain separate.",
   },
   jobDetailPlot_multiprecision_gpu: {
     description:

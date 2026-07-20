@@ -38,7 +38,7 @@ USAGE_ROOTS = [
 
 SKIP_USAGE_FILES = frozenset(
     {
-        "hpcperfstats/site/frontend/src/utils/variableMetadataMonitorEvents.js",
+        "hpcperfstats/site/frontend/src/utils/variableMetadataMonitorEvents.ts",
         "hpcperfstats/site/frontend/src/utils/generate-variable-metadata-monitor-events.py",
     }
 )

@@ -126,8 +126,10 @@ This section lists the metrics shown in the Job detail **Metrics** tab and how t
 | `avg_gpu_mem_bw_gbps` | Average GPU memory bandwidth | Mean GPU memory-bandwidth rate | High with moderate utilization can indicate memory-bound kernels. |
 | `avg_fabric_mb_per_avg_tensor` | Fabric bandwidth per tensor activity | Fabric MB per average tensor activity | Communication intensity normalized by tensor activity for GPU+MPI workloads. |
 | `avg_flops` | Average floating-point throughput | Mean achieved FLOP rate | Baseline compute throughput for CPU-side arithmetic. |
-| `avg_flops64b` | Average double-precision FLOP rate | Mean FP64 GFLOP/s from Intel FP_ARITH doubles | FP64 share of busy FLOPS in Multiprecision Mix. |
-| `avg_flops32b` | Average single-precision FLOP rate | Mean FP32 GFLOP/s from Intel FP_ARITH singles | FP32 share of busy FLOPS in Multiprecision Mix. |
+| `avg_flops64b` | Average double-precision FLOP rate | Mean FP64 GFLOP/s from Intel FP_ARITH doubles, or Grace scalar double when Intel absent | FP64 share of busy ops in Multiprecision Mix. |
+| `avg_flops32b` | Average single-precision FLOP rate | Mean FP32 GFLOP/s from Intel FP_ARITH singles, or Grace scalar single when Intel absent | FP32 share of busy ops in Multiprecision Mix. |
+| `avg_arm_int8_ops` | Average Grace INT8 operation rate | Mean INT8 Gops/s from host_cpu_hw `arm_int8_ops` | INT8 busy-ops share on Grace Multiprecision Mix (not in `avg_flops`). |
+| `avg_arm_int16_ops` | Average Grace INT16 operation rate | Mean INT16 Gops/s from host_cpu_hw `arm_int16_ops` | INT16 busy-ops share on Grace Multiprecision Mix (not in `avg_flops`). |
 | `avg_mbw` | Average DRAM memory bandwidth | Mean DRAM bandwidth | High with low FLOPs suggests memory-bound CPU phases. |
 | `avg_freq` | Average effective CPU frequency | Mean CPU frequency | Drops may indicate power/thermal policy or throttling. |
 | `avg_ethbw` | Average Ethernet bandwidth | Mean Ethernet bandwidth | Useful for TCP/object-store workflows that bypass IB paths<sup>[16](#ref-16)</sup>. |
@@ -193,8 +195,8 @@ This section covers job-detail surfaces beyond scalar metrics.
 
 ### 6.3 Multiprecision Mix tab (CPU and GPU)
 
-- Diagnostic use: quantify mixed-precision path composition (DP/SP/tensor) as a share of **busy** FLOPS / active pipes only (no idle wedge)<sup>[6](#ref-6)</sup>.
-- CPU pie: wedges come from FLOP-weighted FP64/FP32 rates (`avg_flops64b` / `avg_flops32b`), not vectorization-within-width percentages.
+- Diagnostic use: quantify mixed-precision path composition (DP/SP/tensor, and Grace INT16/INT8 when present) as a share of **busy** arithmetic rates only (no idle wedge)<sup>[6](#ref-6)</sup>.
+- CPU pie: wedges come from rate-weighted FP64/FP32 (`avg_flops64b` / `avg_flops32b`, Intel or Grace scalar) plus Grace INT16/INT8 (`avg_arm_int16_ops` / `avg_arm_int8_ops`) when positive — a busy-ops mix, not identical physical units; not vectorization-within-width percentages.
 - GPU pie: hover shows share of busy percent; wedges label Tensor IMMA (INT8/INT4), Tensor HMMA (FP16/BF16), and Tensor DFMA (FP64) when those splits are present (preferred over lumped tensor activity). CPU half/bf16/tf32/fp8 appear only when the monitor emits them.
 - Width behavior: each pie includes the precision widths that have usable positive metrics for that job/architecture; missing widths are omitted rather than treated as errors.
 - Recommendation: when model/code changes precision policy, compare this tab first, then check throughput/utilization deltas.

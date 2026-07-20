@@ -47,14 +47,15 @@ ARTIFACT_KIND_MULTIPRECISION_MIX = "multiprecision_mix"
 
 # Staff-visible unavailable reasons (API detail); align phrasing with summary/roofline plot builders.
 _CPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON = (
-    "Missing CPU busy-FLOPS mix metrics in job metrics "
-    "(need positive avg_flops64b / avg_flops32b shares)."
+    "Missing CPU busy-ops mix metrics in job metrics "
+    "(need positive avg_flops64b / avg_flops32b / avg_arm_int16_ops / "
+    "avg_arm_int8_ops shares)."
 )
 _GPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON = (
     "Missing GPU precision-width mix metrics in job metrics "
     "(need positive avg_*_active shares)."
 )
-APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 7
+APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 8
 
 _FSIO_FINGERPRINT_METRIC_NAMES = tuple(
     sorted(name for name, _t, _u in fsio_job_detail_catalog())
@@ -272,6 +273,8 @@ def _gpu_detail_from_metric_values(metric_values: Dict[str, Optional[float]]) ->
 _CPU_PRECISION_METRIC_TO_LABEL = {
     "avg_flops64b": "FP64",
     "avg_flops32b": "FP32",
+    "avg_arm_int16_ops": "INT16",
+    "avg_arm_int8_ops": "INT8",
 }
 
 _GPU_TENSOR_SPLIT_METRICS = (
@@ -290,7 +293,7 @@ _GPU_PRECISION_METRIC_TO_LABEL = {
     "avg_fp64_active": "FP64",
 }
 
-_CPU_PRECISION_LABEL_ORDER = ("FP64", "FP32")
+_CPU_PRECISION_LABEL_ORDER = ("FP64", "FP32", "INT16", "INT8")
 _GPU_PRECISION_LABEL_ORDER = (
     "Tensor IMMA (INT8/INT4)",
     "Tensor HMMA (FP16/BF16)",

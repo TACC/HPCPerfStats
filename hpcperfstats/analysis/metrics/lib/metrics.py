@@ -33,6 +33,7 @@ from hpcperfstats.dbload.lib.multiprocessing_pool_health import abort_if_pool_wo
 from hpcperfstats.analysis.metrics.lib.gen.utils import utils
 from hpcperfstats.dbload.lib.monitor_naming.canonical import (
     HOST_BLOCK_TYPE,
+    HOST_CPU_HW_TYPE,
     HOST_CPU_TYPE,
     HOST_IB_TYPE,
     HOST_LNET_TYPE,
@@ -51,9 +52,13 @@ from hpcperfstats.dbload.lib.monitor_naming.resolve import (
     amd_pmc_type_names,
     arm_est_flops_event_names,
     arm_imc_types_probe_order,
+    arm_int16_ops_event_names,
+    arm_int8_ops_event_names,
     core_pmc_types_probe_order,
     dram_cas_read_write_pairs,
     fp_ops_retired_event_names,
+    grace_fp_scalar_double_event_names,
+    grace_fp_scalar_single_event_names,
     host_cpu_hw_type_names,
     imc_types_probe_order,
     resolve_get_type,
@@ -1201,6 +1206,18 @@ class Metrics():
             "conv": 1e-9,
             "units": "GF",
         },
+        "avg_arm_int8_ops": {
+            "typename": HOST_CPU_HW_TYPE,
+            "events": [arm_int8_ops_event_names()[0]],
+            "conv": 1e-9,
+            "units": "Gops",
+        },
+        "avg_arm_int16_ops": {
+            "typename": HOST_CPU_HW_TYPE,
+            "events": [arm_int16_ops_event_names()[0]],
+            "conv": 1e-9,
+            "units": "Gops",
+        },
         "avg_gpu_mem_bw_gbps": {
             "typename": "nvidia_gpu",
             "events": ["gpu_mem_bw_bytes_rate"],
@@ -1586,8 +1603,16 @@ class Metrics():
       cache[cache_key] = value
     return value
 
-  def _job_arc_avg_flops_precision(self, jt, events, cache=None, rows_cache=None):
-    """GFLOP/s from Intel FP_ARITH events for one precision width (64b or 32b)."""
+  def _job_arc_avg_flops_precision(
+      self,
+      jt,
+      events,
+      cache=None,
+      rows_cache=None,
+      *,
+      grace_scalar_events=None,
+  ):
+    """GFLOP/s from Intel FP_ARITH; else Grace host_cpu_hw scalar events."""
     for core_typ in core_pmc_types_probe_order():
       v = self.job_arc(
           jt,
@@ -1600,6 +1625,20 @@ class Metrics():
       )
       if v is not None and float(v) > 0:
         return v, core_typ
+    if grace_scalar_events:
+      for hw_typ in host_cpu_hw_type_names():
+        for flop_ev in grace_scalar_events:
+          v = self.job_arc(
+              jt,
+              typename=hw_typ,
+              events=[flop_ev],
+              conv=1e-9,
+              units="GF",
+              cache=cache,
+              rows_cache=rows_cache,
+          )
+          if v is not None and float(v) > 0:
+            return v, hw_typ
     return None, None
 
   def _job_arc_avg_flops(self, jt, cache=None, rows_cache=None):
@@ -1970,6 +2009,7 @@ class Metrics():
               list(INTEL_FP_ARITH_DOUBLE_EVENTS),
               cache=simple_metric_cache,
               rows_cache=host_data_rows_cache,
+              grace_scalar_events=grace_fp_scalar_double_event_names(),
           )
           row_type = flops_typename or metric_obj["typename"]
         elif metric_name == "avg_flops32b":
@@ -1978,6 +2018,7 @@ class Metrics():
               list(INTEL_FP_ARITH_SINGLE_EVENTS),
               cache=simple_metric_cache,
               rows_cache=host_data_rows_cache,
+              grace_scalar_events=grace_fp_scalar_single_event_names(),
           )
           row_type = flops_typename or metric_obj["typename"]
         elif metric_name == "avg_mbw":

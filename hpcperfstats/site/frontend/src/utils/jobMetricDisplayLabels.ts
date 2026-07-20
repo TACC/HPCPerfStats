@@ -24,6 +24,8 @@ const JOB_METRIC_SHORT_LABELS = {
   avg_flops: "Average floating-point throughput",
   avg_flops64b: "Average double-precision FLOP rate",
   avg_flops32b: "Average single-precision FLOP rate",
+  avg_arm_int8_ops: "Average Grace INT8 operation rate",
+  avg_arm_int16_ops: "Average Grace INT16 operation rate",
   avg_mbw: "Average DRAM memory bandwidth",
   avg_freq: "Average effective CPU frequency",
   avg_ethbw: "Average Ethernet bandwidth",

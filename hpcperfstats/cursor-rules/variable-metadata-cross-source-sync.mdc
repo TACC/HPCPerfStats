@@ -2,6 +2,7 @@
 description: Keep variable and metric tooltip metadata synchronized across generator, React, Python summary text, and docs
 globs:
   - "**/variableMetadata.js"
+  - "**/variableMetadataMonitorEvents.ts"
   - "**/variableMetadataMonitorEvents.js"
   - "**/variableMetadata.test.js"
   - "**/generate-variable-metadata-monitor-events.py"
@@ -22,7 +23,7 @@ Tooltip and help text for metrics/events live in **several files**. After changi
 | Layer | Authoritative / hand-edited | Generated or paired copy |
 |-------|-----------------------------|---------------------------|
 | Monitor `host_data.event` names | Monitor `KEYS` macros + dbload renames (see `variable-metadata-monitor-contract.mdc`) | — |
-| Per-event descriptions | `hpcperfstats/site/frontend/src/utils/generate-variable-metadata-monitor-events.py` (`DESC`, `generic()`, `collect_all_names()` extras) | `variableMetadataMonitorEvents.js` (`MONITOR_EVENT_METADATA`) |
+| Per-event descriptions | `hpcperfstats/site/frontend/src/utils/generate-variable-metadata-monitor-events.py` (`DESC`, `generic()`, `collect_all_names()` extras) | `variableMetadataMonitorEvents.ts` (`MONITOR_EVENT_METADATA`) |
 | Merged UI map | `variableMetadata.js` (`JOB_ACCOUNTING_AND_DERIVED_METADATA`, `SUMMARY_PLOT_METRIC_METADATA`) spread over `MONITOR_EVENT_METADATA` | `VARIABLE_METADATA` / `getDescriptionForVariable` |
 | Job catalog metrics | `metrics.py` + `variableMetadata.js` `JOB_ACCOUNTING_*` | See `variable-metadata-derived-metrics-sync.mdc` |
 | Summary subplot column help | **`variableMetadata.js` → `SUMMARY_PLOT_METRIC_METADATA`** | **`hpcperfstats/analysis/metrics/lib/plot/summary_metric_descriptions.py` → `SUMMARY_METRIC_DESCRIPTIONS`** — **same keys, same prose** (see comment at top of `summary_metric_descriptions.py`) |
@@ -30,7 +31,7 @@ Tooltip and help text for metrics/events live in **several files**. After changi
 | Operator catalog + diagnostics | Regen scripts (below) | `docs/MONITOR_VARIABLES.md` |
 | Diagnostic bullets for unwired events | `docs/augment_monitor_variables_diagnostics.py` (`diagnostic_for_key`, wiring heuristics) | Inserted into `MONITOR_VARIABLES.md` when augment runs |
 
-**Do not hand-edit** `variableMetadataMonitorEvents.js` or the variable **catalog** section of `MONITOR_VARIABLES.md`; regenerate them.
+**Do not hand-edit** `variableMetadataMonitorEvents.ts` or the variable **catalog** section of `MONITOR_VARIABLES.md`; regenerate them.
 
 ## Regeneration commands (repo root = `HPCPerfStats/` with `.venv`)
 

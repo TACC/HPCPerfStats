@@ -2,6 +2,7 @@
 description: Contract between monitor host_data events and frontend variable metadata
 globs:
   - "**/generate-variable-metadata-monitor-events.py"
+  - "**/variableMetadataMonitorEvents.ts"
   - "**/variableMetadataMonitorEvents.js"
   - "**/variableMetadata.js"
   - "**/docs/MONITOR_VARIABLES.md"
@@ -15,12 +16,12 @@ alwaysApply: false
 
 ## Canonical UI map
 
-- **Generated module:** `hpcperfstats/site/frontend/src/utils/variableMetadataMonitorEvents.js`  
+- **Generated module:** `hpcperfstats/site/frontend/src/utils/variableMetadataMonitorEvents.ts`  
   Export: `MONITOR_EVENT_METADATA` — each key is an event name; each value is `{ description: string }`.
 - **Generator:** `hpcperfstats/site/frontend/src/utils/generate-variable-metadata-monitor-events.py`  
   Run from repo root:  
   `python3 hpcperfstats/site/frontend/src/utils/generate-variable-metadata-monitor-events.py`
-- **Merged export:** `hpcperfstats/site/frontend/src/utils/variableMetadata.js`  
+- **Merged export:** `hpcperfstats/site/frontend/src/utils/variableMetadata.ts`  
   Merges `MONITOR_EVENT_METADATA` with job accounting and derived-metric entries (later keys override monitor text when both exist).
 
 ## Required actions when changing the monitor
@@ -28,7 +29,7 @@ alwaysApply: false
 **Do not edit** `HPCPerfStats/monitor/` under normal workspace guardrails. When monitor changes **are** approved and merged:
 
 1. If new `KEYS` / `ARM_IMC_KEYS` / `CPU_COUNTER_METRICS_KEYS` / NFS `EVENT_KEYS` / `BYTE_KEYS` / `XPRT_KEYS` event names are added, or ingest maps new counter aliases into `host_data.event`, update the generator if needed (extra names, or `DESC` entries in the script for clarity).
-2. Regenerate `variableMetadataMonitorEvents.js` with the command above.
+2. Regenerate `variableMetadataMonitorEvents.ts` with the command above.
 3. Regenerate the operator catalog and diagnostics: from repo root,  
    `.venv/bin/python docs/regenerate_monitor_variables_catalog.py` then  
    `.venv/bin/python docs/augment_monitor_variables_diagnostics.py`  

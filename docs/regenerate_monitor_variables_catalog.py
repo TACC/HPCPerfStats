@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rebuild docs/MONITOR_VARIABLES.md from variableMetadataMonitorEvents.js + repo reference scan.
+"""Rebuild docs/MONITOR_VARIABLES.md from variableMetadataMonitorEvents.ts + repo reference scan.
 
 Run from repo root (HPCPerfStats/) with .venv:
   .venv/bin/python docs/regenerate_monitor_variables_catalog.py
@@ -15,7 +15,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 DOC = Path(__file__).resolve().parent / "MONITOR_VARIABLES.md"
-JS = REPO / "hpcperfstats/site/frontend/src/utils/variableMetadataMonitorEvents.js"
+JS = REPO / "hpcperfstats/site/frontend/src/utils/variableMetadataMonitorEvents.ts"
 GENERATOR = REPO / "hpcperfstats/site/frontend/src/utils/generate-variable-metadata-monitor-events.py"
 
 sys.path.insert(0, str(REPO))
@@ -128,7 +128,7 @@ def _scan_refs(keys: list[str]) -> dict[str, list[str]]:
 
 SKIP_IN_REFS = frozenset(
     {
-        "hpcperfstats/site/frontend/src/utils/variableMetadataMonitorEvents.js",
+        "hpcperfstats/site/frontend/src/utils/variableMetadataMonitorEvents.ts",
         "hpcperfstats/site/frontend/src/utils/generate-variable-metadata-monitor-events.py",
     }
 )
@@ -381,7 +381,7 @@ def main() -> int:
 
 This document catalogs **`host_data.event` names** that the HPCPerfStats monitor can publish (aligned with `HPCPerfStats/monitor/src` `KEYS` macros and the generator in `hpcperfstats/site/frontend/src/utils/generate-variable-metadata-monitor-events.py`).
 
-**Regenerating definitions:** run `python3 hpcperfstats/site/frontend/src/utils/generate-variable-metadata-monitor-events.py` to refresh `variableMetadataMonitorEvents.js`.
+**Regenerating definitions:** run `python3 hpcperfstats/site/frontend/src/utils/generate-variable-metadata-monitor-events.py` to refresh `variableMetadataMonitorEvents.ts`.
 
 **Diagnostic bullets** (for events not wired into job metrics/plots) are added by `docs/augment_monitor_variables_diagnostics.py` after this catalog is regenerated.
 
@@ -414,7 +414,7 @@ This document catalogs **`host_data.event` names** that the HPCPerfStats monitor
 | Roofline | DRAM CAS + FLOPs for arithmetic intensity | `analysis/metrics/lib/plot/roofline.py`, `roofline_peaks.py` |
 | Node power estimate | Combine RAPL / DCGM CPU / GPU power fields | `analysis/metrics/lib/gen/node_power_est.py` |
 | API & type detail | JSON for job/host/type explorers | `site/lib/machine/api.py` |
-| UI tooltips | Human-readable event text | `site/frontend/src/utils/variableMetadata.js` (`getDescriptionForVariable`), `variableMetadataMonitorEvents.js` |
+| UI tooltips | Human-readable event text | `site/frontend/src/utils/variableMetadata.js` (`getDescriptionForVariable`), `variableMetadataMonitorEvents.ts` |
 
 ### By monitor `host_data.type` (`stats_type.st_name`)
 
@@ -475,7 +475,7 @@ Exact `st_name` values are in `HPCPerfStats/monitor/src/*.c` (grep `.st_name`). 
 
 Every event name below is stored in **`host_data.event`** when the monitor emits it (subject to site `exclude_types` / hardware maps). All such rows flow through the **universal pipeline** in the table above through the ORM model.
 
-The **Additional references** subsection per variable lists repository files that contain a **string literal** with that event name (metrics, plots, tests, metadata). It excludes the generated `variableMetadataMonitorEvents.js` blob and the generator script’s description table, so you see *behavioral* references only. Files named `test_*.py` under `analysis/metrics/lib/plot/` are unit tests for plotting even when the path does not contain a `tests/` directory; treat them like other test modules when tracing usage.
+The **Additional references** subsection per variable lists repository files that contain a **string literal** with that event name (metrics, plots, tests, metadata). It excludes the generated `variableMetadataMonitorEvents.ts` blob and the generator script’s description table, so you see *behavioral* references only. Files named `test_*.py` under `analysis/metrics/lib/plot/` are unit tests for plotting even when the path does not contain a `tests/` directory; treat them like other test modules when tracing usage.
 
 **PMC note:** `CTL*` / `CTR*` (and some `V*_CTL*` / `V*_CTR*`) names appear in **`!` schema lines** in raw archives; dbload maps them to logical events (for example `INST_RETIRED`) before insert. Those logical names are what appear in `host_data.event` for PMC rows.
 

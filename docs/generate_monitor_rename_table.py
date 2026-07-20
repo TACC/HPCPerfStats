@@ -27,7 +27,7 @@ DOWNSTREAM = [
     "hpcperfstats/dbload/lib/sync_timedb_parsing_legacy.py",
     "hpcperfstats/analysis/metrics/lib/metrics.py",
     "tests/pipeline_e2e/monitor_payloads.py",
-    "hpcperfstats/site/frontend/src/utils/variableMetadataMonitorEvents.js",
+    "hpcperfstats/site/frontend/src/utils/variableMetadataMonitorEvents.ts",
     "hpcperfstats/site/frontend/src/utils/variableMetadataMonitorEventsLegacy.js",
     "docs/MONITOR_VARIABLES.md",
 ]

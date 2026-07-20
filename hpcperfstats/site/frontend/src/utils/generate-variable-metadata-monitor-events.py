@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Emit variableMetadataMonitorEvents.js from HPCPerfStats/monitor schema KEYS macros."""
+"""Emit variableMetadataMonitorEvents.ts from HPCPerfStats/monitor schema KEYS macros."""
 from __future__ import annotations
 
 import re
@@ -8,7 +8,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[5]
 MONITOR_SRC = REPO / "monitor" / "src"
-OUT = Path(__file__).resolve().parent / "variableMetadataMonitorEvents.js"
+OUT = Path(__file__).resolve().parent / "variableMetadataMonitorEvents.ts"
 SKIP_NAMES = frozenset({"uint32_t", "uint64_t", "k", "t", "m", "f", "n"})
 # Retired monitor collectors (KNL/MIC, legacy PascalCase aliases); omitted from MONITOR_EVENT_METADATA.
 RETIRED_EVENT_NAMES = frozenset({
@@ -375,6 +375,25 @@ DESC: dict[str, str] = {
     "tx_fifo_errors": "Linux netdev: transmit FIFO errors (underrun/overrun, driver dependent).",
     "tx_heartbeat_errors": "Linux netdev: heartbeat / half-duplex loss-of-carrier style errors.",
     "tx_window_errors": "Linux netdev: classic transmitter window errors on outbound frames.",
+    # Grace / ARM host_cpu_hw PAPI (cpu_counter_metrics).
+    "arm_est_flops": (
+        "Grace host_cpu_hw: estimated floating-point operations per interval as SP+DP scalar "
+        "only (does not include arm_int8_ops / arm_int16_ops)."
+    ),
+    "arm_int8_ops": (
+        "Grace host_cpu_hw: INT8 arithmetic operations from ASE_SVE_INT8_SPEC "
+        "(PAPI fail-soft may report zero)."
+    ),
+    "arm_int16_ops": (
+        "Grace host_cpu_hw: INT16 arithmetic operations from ASE_SVE_INT16_SPEC "
+        "(PAPI fail-soft may report zero)."
+    ),
+    "fp_arith_inst_retired_scalar_double": (
+        "Grace host_cpu_hw: retired scalar double-precision FP arithmetic instructions."
+    ),
+    "fp_arith_inst_retired_scalar_single": (
+        "Grace host_cpu_hw: retired scalar single-precision FP arithmetic instructions."
+    ),
     # Linux /proc/vmstat transparent hugepages (monitor vm.c).
     "thp_fault_alloc": "Linux /proc/vmstat: transparent hugepage allocations satisfied on fault.",
     "thp_fault_fallback": "Linux /proc/vmstat: THP fault handling fell back to small pages.",

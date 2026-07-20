@@ -219,6 +219,24 @@ def arm_est_flops_event_names() -> tuple[str, ...]:
     return _names_canonical_then_legacy(canon.ARM_EST_FLOPS, leg.LEGACY_ARM_EST_FLOPS)
 
 
+def arm_int8_ops_event_names() -> tuple[str, ...]:
+    return _names_canonical_then_legacy(canon.ARM_INT8_OPS, leg.LEGACY_ARM_INT8_OPS)
+
+
+def arm_int16_ops_event_names() -> tuple[str, ...]:
+    return _names_canonical_then_legacy(canon.ARM_INT16_OPS, leg.LEGACY_ARM_INT16_OPS)
+
+
+def grace_fp_scalar_double_event_names() -> tuple[str, ...]:
+    """Grace host_cpu_hw scalar FP64 event (canonical only; no Intel uppercase)."""
+    return (canon.GRACE_FP_ARITH_SCALAR_DOUBLE,)
+
+
+def grace_fp_scalar_single_event_names() -> tuple[str, ...]:
+    """Grace host_cpu_hw scalar FP32 event (canonical only; no Intel uppercase)."""
+    return (canon.GRACE_FP_ARITH_SCALAR_SINGLE,)
+
+
 def canonical_type_name(typ: str) -> str:
     """Map legacy st_name to canonical for peak tables and docs."""
     return leg.TYPE_LEGACY_TO_CANONICAL.get(typ, typ)

@@ -1,6 +1,6 @@
 /**
  * Legacy monitor event keys (historical host_data only). Canonical keys live in
- * variableMetadataMonitorEvents.js. Do not add new entries here.
+ * variableMetadataMonitorEvents.ts. Do not add new entries here.
  */
 export const MONITOR_EVENT_METADATA_LEGACY = {
   CTL0: { description: "Performance event select register (programs the paired general-purpose counter)." },

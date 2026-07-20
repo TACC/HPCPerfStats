@@ -28,7 +28,7 @@ Typenames must match the **shipped** monitor `st_name` values for new ingest. Hi
 - **Optional true-roof contract**: `host_roofline_peak` events (`cpu_peak_fp64_flops_per_s`, `cpu_peak_dram_bw_bytes_per_s`, `cpu_peak_hbm_bw_bytes_per_s`, GPU peaks) when present. CPU memory roof bandwidth sums DDR and HBM peaks when HBM is positive.
 - **Intel**: One table row per canonical IMC typename in `INTEL_IMC_STATS_TYPES` (e.g. `intel_x86_uncore_imc_hsw`, `intel_x86_uncore_imc_skx`).
 - **AMD**: `amd_x86_pmc` + `amd_x86_uncore_df` → `amd64_epyc_2s_default` peak row.
-- **ARM Grace-class**: `arm_aarch64_imc` and/or `host_cpu_hw` synthetic counters (`arm_est_flops`, `ARM_DRAM_BW_BYTES`).
+- **ARM Grace-class**: `arm_aarch64_imc` and/or `host_cpu_hw` synthetic counters (`arm_est_flops`, `ARM_DRAM_BW_BYTES`). Precision split uses Grace scalar FP (`fp_arith_inst_retired_scalar_*`) for `avg_flops64b`/`32b` when Intel FP_ARITH is absent; INT ops (`arm_int8_ops` / `arm_int16_ops`) feed `avg_arm_int*_ops` and the CPU Multiprecision Mix pie (not folded into `arm_est_flops`).
 - **Cursor rule**: `hpcperfstats/cursor-rules/monitor-analysis-architecture-sync.mdc`.
 
 ## GPU (NVIDIA, AMD)

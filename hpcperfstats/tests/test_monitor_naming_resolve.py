@@ -31,10 +31,30 @@ def test_type_probe_names_canonical_then_legacy():
   assert "cpu" in names
 
 
-def test_events_probe_names_fp_ops_and_flops():
-  names = events_probe_names(["fp_ops_retired"])
-  assert "fp_ops_retired" in names
-  assert "FLOPS" in names
+def test_arm_int_ops_event_names_dual_read():
+  from hpcperfstats.dbload.lib.monitor_naming.resolve import (
+      arm_int16_ops_event_names,
+      arm_int8_ops_event_names,
+      grace_fp_scalar_double_event_names,
+      grace_fp_scalar_single_event_names,
+  )
+
+  assert arm_int8_ops_event_names()[0] == "arm_int8_ops"
+  assert "ARM_INT8_OPS" in arm_int8_ops_event_names()
+  assert arm_int16_ops_event_names()[0] == "arm_int16_ops"
+  assert "ARM_INT16_OPS" in arm_int16_ops_event_names()
+  assert grace_fp_scalar_double_event_names() == (
+      "fp_arith_inst_retired_scalar_double",
+  )
+  assert grace_fp_scalar_single_event_names() == (
+      "fp_arith_inst_retired_scalar_single",
+  )
+
+
+def test_events_probe_names_arm_int8_includes_legacy_alias():
+  names = events_probe_names(["arm_int8_ops"])
+  assert "arm_int8_ops" in names
+  assert "ARM_INT8_OPS" in names
 
 
 def test_events_probe_names_gpu_mem_util_includes_legacy_alias():

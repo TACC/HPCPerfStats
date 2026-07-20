@@ -37,7 +37,7 @@ def path_is_analysis_wired(p: str) -> bool:
         return True
     if "site/lib/machine/api.py" in p:
         return True
-    if "site/frontend/src/" in p and "variableMetadataMonitorEvents.js" not in p:
+    if "site/frontend/src/" in p and "variableMetadataMonitorEvents.ts" not in p:
         if "generate-variable-metadata-monitor-events.py" in p:
             return False
         return True
