@@ -14,11 +14,11 @@ alwaysApply: false
 
 | Source | Keys |
 |--------|------|
-| **DCGM** | `cpu_util_*_accum_us`, `dcgm_cpu_power_util_w`, `dcgm_cpu_power_limit_w`, `arm_dram_bw_bytes`; **fail-soft** `cpu_clock_est_cycles` / `aperf` / `mperf` (util×freq) |
+| **DCGM** | `cpu_util_*_accum_us`, `dcgm_cpu_power_util_w`, `dcgm_cpu_power_limit_w`, `arm_dram_bw_bytes`; **fail-soft** `cpu_clock_est_cycles` (= **active** util×freq), `aperf` (=act), `mperf` (=ref) |
 | **PAPI** | Overwrites `aperf` / `mperf` / `cpu_clock_est_cycles` **only when measured cycles &gt; 0**; owns `fp_arith_inst_retired_scalar_*`, `arm_est_flops` (= SP+DP only), `arm_int8_ops`, `arm_int16_ops`, optional `instr_retired` |
 
 - aarch64 **`auto` stays `--with-cpu-counter-backend=dcgm`**. PAPI is an additive layer (`MONITOR_CPU_PAPI_FLOPS`), not a separate exclusive backend.
-- **Fail-soft cycles (mandatory on Grace):** always accumulate and publish DCGM util×freq cycle estimates even when `MONITOR_CPU_PAPI_FLOPS` is set. PAPI must **not** clear those keys on `read_ok_but_zero`. Do **not** publish DCGM-synthesized FLOPs/instr under PAPI (SP/DP/`arm_est_flops` stay PAPI-owned).
+- **Fail-soft cycles (mandatory on Grace):** always accumulate and publish DCGM util×freq estimates even when `MONITOR_CPU_PAPI_FLOPS` is set: **`cpu_clock_est_cycles` and `aperf` = active** (flat when util≈0); **`mperf` = reference** (wall×freq). PAPI must **not** clear those keys on `read_ok_but_zero`. Do **not** publish DCGM-synthesized FLOPs/instr under PAPI (SP/DP/`arm_est_flops` stay PAPI-owned).
 - Emit contract: every PAPI collect that has SP/DP must set **both** scalar keys **and** `arm_est_flops = SP + DP`. Do **not** fold int8/int16 into `arm_est_flops`.
 - Integer ops: resolve native **`ASE_SVE_INT8_SPEC`** / **`ASE_SVE_INT16_SPEC`** → emit **`arm_int8_ops`** / **`arm_int16_ops`**; fail-soft to 0 if unavailable.
 - Packed 128/256/512 FP buckets stay 0 unless a future event maps them.

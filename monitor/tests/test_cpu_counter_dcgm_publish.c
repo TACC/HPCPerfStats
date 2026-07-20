@@ -109,14 +109,14 @@ static void test_accumulate_from_util_sample(void)
   assert(s_ctr3[0] == 5000000ULL);
   assert(s_ctr4[0] == 5000000ULL);
 #ifdef MONITOR_CPU_PAPI_FLOPS
-  /* Hybrid: util + util×freq cycles accumulate; FLOPs/instr stay 0 (PAPI-owned). */
-  assert(s_ctr5[0] == 2000000000ULL);
+  /* Hybrid: util + act cycles (ctr5/aperf); mperf=ref; FLOPs/instr stay 0 (PAPI-owned). */
+  assert(s_ctr5[0] == 1000000000ULL);
   assert(s_mperf[0] == 2000000000ULL);
   assert(s_aperf[0] == 1000000000ULL);
   assert(s_inst[0] == 0ULL);
   assert(s_arm_flops[0] == 0ULL);
 #else
-  assert(s_ctr5[0] == 2000000000ULL);
+  assert(s_ctr5[0] == 1000000000ULL);
   assert(s_mperf[0] == 2000000000ULL);
   assert(s_aperf[0] == 1000000000ULL);
   assert(s_inst[0] == 600000000ULL);
@@ -125,8 +125,27 @@ static void test_accumulate_from_util_sample(void)
   dcgm_accumulate_from_util_sample(0, &sample, 0);
   assert(s_ctr0[0] == 50000000ULL);
 
+  /* Idle util=0: ctr5/aperf flat; mperf still advances (ref). */
+  reset_dcgm_arrays();
+  sample.util_total = 0.0;
+  sample.util_user = 0.0;
+  sample.util_sys = 0.0;
+  sample.util_irq = 0.0;
+  sample.util_nice = 0.0;
+  sample.clock_khz = 2000000.0;
+  dcgm_accumulate_from_util_sample(0, &sample, 1000000LL);
+  assert(s_ctr0[0] == 0ULL);
+  assert(s_ctr5[0] == 0ULL);
+  assert(s_aperf[0] == 0ULL);
+  assert(s_mperf[0] == 2000000000ULL);
+
   /* Util must accumulate even when clock_khz is missing. */
   reset_dcgm_arrays();
+  sample.util_total = 50.0;
+  sample.util_user = 30.0;
+  sample.util_sys = 10.0;
+  sample.util_irq = 5.0;
+  sample.util_nice = 5.0;
   sample.clock_khz = 0.0;
   dcgm_accumulate_from_util_sample(0, &sample, 1000000LL);
   assert(s_ctr0[0] == 50000000ULL);

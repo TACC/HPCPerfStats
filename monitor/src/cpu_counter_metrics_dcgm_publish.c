@@ -100,10 +100,10 @@ void dcgm_accumulate_from_util_sample(int i, struct dcgm_cpu_sample *sample, lon
   g_dcgm_arm_dram_bytes[i] +=
       (unsigned long long)((act_cycles * ARM_APPROX_DRAM_BYTES_PER_ACTIVE_CYCLE) + 0.5);
 
-  /* util×freq cycles always — fail-soft under sparse PAPI (Grace attach≠counting). */
+  /* Fail-soft under sparse PAPI: mperf=ref, aperf=act, ctr5=act (cpu_clock_est_cycles). */
   g_dcgm_mperf[i] += (unsigned long long)(ref_cycles + 0.5);
   g_dcgm_aperf[i] += (unsigned long long)(act_cycles + 0.5);
-  g_dcgm_ctr5[i] += (unsigned long long)((sample->clock_khz * (double)delta_us) / 1000.0 + 0.5);
+  g_dcgm_ctr5[i] += (unsigned long long)(act_cycles + 0.5);
 
 #ifndef MONITOR_CPU_PAPI_FLOPS
   /* Synthetic FLOPs/instr only when PAPI overlay is not compiled in. */
