@@ -39,14 +39,12 @@ def extract_x_keys(lines: list[str]) -> set[str]:
     out: set[str] = set()
     for line in lines:
         s = line.strip()
-        if s.startswith("#") or not s.startswith("X("):
+        if s.startswith("#"):
             continue
-        m = re.match(r"X\(\s*([A-Za-z0-9_]+)\s*,", s)
-        if not m:
-            continue
-        k = m.group(1)
-        if k not in SKIP_NAMES and len(k) >= 2:
-            out.add(k)
+        # KEYS macros often put multiple X(name, ...) entries on one continuation line.
+        for k in re.findall(r"X\(\s*([A-Za-z0-9_]+)\s*,", s):
+            if k not in SKIP_NAMES and len(k) >= 2:
+                out.add(k)
     return out
 
 
@@ -421,7 +419,19 @@ DESC: dict[str, str] = {
     "tx_fifo_errors": "Linux netdev: transmit FIFO errors (underrun/overrun, driver dependent).",
     "tx_heartbeat_errors": "Linux netdev: heartbeat / half-duplex loss-of-carrier style errors.",
     "tx_window_errors": "Linux netdev: classic transmitter window errors on outbound frames.",
-    # Grace / ARM host_cpu_hw PAPI (cpu_counter_metrics).
+    # Grace / ARM host_cpu_hw (cpu_counter_metrics): DCGM fail-soft cycles + PAPI overlay.
+    "mperf": (
+        "Reference cycles (wall/TSC-like). Grace DCGM fail-soft: ref = clock_khz * delta_t_us / 1000; "
+        "on x86, MSR/FIXED reference cycle counters rename to this key."
+    ),
+    "aperf": (
+        "Active cycles (util-scaled). Grace DCGM fail-soft: act = mperf * (util_total / 100); "
+        "on x86, MSR/FIXED actual/unhalted cycle counters rename to this key."
+    ),
+    "cpu_clock_est_cycles": (
+        "Active cycles (same as aperf under Grace DCGM fail-soft util-scaled estimate). "
+        "PAPI may overwrite when measured cycles are nonzero."
+    ),
     "arm_est_flops": (
         "Grace host_cpu_hw: estimated floating-point operations per interval as SP+DP scalar "
         "only (does not include arm_int8_ops / arm_int16_ops)."
