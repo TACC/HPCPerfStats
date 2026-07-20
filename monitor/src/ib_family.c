@@ -15,14 +15,14 @@ static void ib_sysfs_collect_port(struct stats *stats, const char *hca, int port
     return;
 
   snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%d/counters", hca, port);
-  (void) path_collect_key_value_dir(path, stats);
+  (void)path_collect_key_value_dir(path, stats);
   snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%d/hw_counters", hca, port);
-  (void) path_collect_key_value_dir(path, stats);
+  (void)path_collect_key_value_dir(path, stats);
 }
 
 static void ib_family_collect_port(const char *hca, int port, void *ctx)
 {
-  struct stats_type *type = (struct stats_type *) ctx;
+  struct stats_type *type = (struct stats_type *)ctx;
   char id[80];
   struct stats *stats;
 

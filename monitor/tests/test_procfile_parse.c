@@ -40,7 +40,7 @@ int main(void)
 {
   /* Three lines, last with no trailing newline. */
   char *p = write_tmp("alpha 1\nbeta 2\ngamma");
-  struct line_log ll = { 0 };
+  struct line_log ll = {0};
 
   assert(procfile_for_each_line(p, collect_line_cb, &ll) == 0);
   assert(ll.n == 3);
@@ -62,8 +62,7 @@ int main(void)
 
   /* Missing path returns -1. */
   ll.n = 0;
-  assert(procfile_for_each_line("/nonexistent/hps_procfile_x",
-                                collect_line_cb, &ll) == -1);
+  assert(procfile_for_each_line("/nonexistent/hps_procfile_x", collect_line_cb, &ll) == -1);
   assert(ll.n == 0);
 
   /* Returning non-zero from callback stops iteration. */
@@ -73,7 +72,7 @@ int main(void)
   size_t cap_orig = sizeof(ll.lines) / sizeof(ll.lines[0]);
   (void)cap_orig;
 
-  struct line_log ll2 = { 0 };
+  struct line_log ll2 = {0};
   /* Use the existing callback pattern but simulate small buffer. */
   ll2.n = sizeof(ll2.lines) / sizeof(ll2.lines[0]) - 2;
   assert(procfile_for_each_line(p, collect_line_cb, &ll2) == 0);

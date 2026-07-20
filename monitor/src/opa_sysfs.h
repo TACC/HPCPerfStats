@@ -17,12 +17,10 @@ const char *opa_sysfs_hw_schema_key_for_file(const char *sysfs_name);
 int opa_sysfs_collect_port(struct stats *stats, const char *hca, int port);
 
 /* Classic-only collect (no hw fallback). Returns 0 if any key set, else -1. */
-int opa_sysfs_collect_classic_counters(struct stats *stats, const char *hca,
-                                       int port);
+int opa_sysfs_collect_classic_counters(struct stats *stats, const char *hca, int port);
 
 /* hw_counters utilization map only. Returns 0 if any key set, else -1. */
-int opa_sysfs_collect_hw_counters(struct stats *stats, const char *hca,
-                                  int port);
+int opa_sysfs_collect_hw_counters(struct stats *stats, const char *hca, int port);
 
 /* Test hook: override sysfs root (default "/sys"). Pass NULL to restore. */
 void opa_sysfs_test_set_root(const char *root);

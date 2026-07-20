@@ -3,8 +3,7 @@
 
 #include "stats.h"
 
-void papi_map_counters_to_host_cpu_hw(struct stats *stats,
-				     const struct papi_cpu_hw_counters *c)
+void papi_map_counters_to_host_cpu_hw(struct stats *stats, const struct papi_cpu_hw_counters *c)
 {
   unsigned long long sp = 0;
   unsigned long long dp = 0;

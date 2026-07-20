@@ -16,12 +16,11 @@
 /* Event counters.  See fs/nfs/iostat.h and nfs_show_stats() in
  * fs/nfs/super.c. */
 
-#define EVENT_KEYS \
-  X(delay,             "E", "")
+#define EVENT_KEYS X(delay, "E", "")
 
 static void nfs_collect_mnt_events(struct stats *stats, char *str)
 {
-#define X(k,r...) #k
+#define X(k, r...) #k
   str_collect_key_list(str, stats, EVENT_KEYS, NULL);
 #undef X
 }
@@ -29,17 +28,13 @@ static void nfs_collect_mnt_events(struct stats *stats, char *str)
 /* "bytes" counters, also from nfs_show_stats(). */
 /* TODO Add U=P for page sized units. */
 
-#define BYTE_KEYS \
-  X(normal_read,  "E,U=B", ""), \
-  X(normal_write, "E,U=B", ""), \
-  X(direct_read,  "E,U=B", ""), \
-  X(direct_write, "E,U=B", ""), \
-  X(server_read,  "E,U=B", ""), \
-  X(server_write, "E,U=B", "")
+#define BYTE_KEYS                                                                                  \
+  X(normal_read, "E,U=B", ""), X(normal_write, "E,U=B", ""), X(direct_read, "E,U=B", ""),          \
+      X(direct_write, "E,U=B", ""), X(server_read, "E,U=B", ""), X(server_write, "E,U=B", "")
 
 static void nfs_collect_mnt_bytes(struct stats *stats, char *str)
 {
-#define X(k,r...) #k
+#define X(k, r...) #k
   str_collect_key_list(str, stats, BYTE_KEYS, NULL);
 #undef X
 }
@@ -53,10 +48,9 @@ static void nfs_collect_mnt_bytes(struct stats *stats, char *str)
  * flight, see xprt_transmit().  Similarly for xprt_bklog_u to get
  * average backlog queue length. */
 
-#define XPRT_KEYS \
-  X(xprt_bad_xids, "E", ""), \
-  X(xprt_req_u,    "E", "accumulated sum of requests in flight"), \
-  X(xprt_bklog_u,  "E", "backlog queue utilization")
+#define XPRT_KEYS                                                                                  \
+  X(xprt_bad_xids, "E", ""), X(xprt_req_u, "E", "accumulated sum of requests in flight"),          \
+      X(xprt_bklog_u, "E", "backlog queue utilization")
 
 static void nfs_collect_mnt_xprt(struct stats *stats, char *str)
 {
@@ -76,7 +70,7 @@ static void nfs_collect_mnt_xprt(struct stats *stats, char *str)
   if (str == NULL)
     return;
 
-#define X(k,r...) #k
+#define X(k, r...) #k
   str_collect_key_list(str, stats, XPRT_KEYS, NULL);
 #undef X
 }
@@ -85,15 +79,13 @@ static void nfs_collect_mnt_xprt(struct stats *stats, char *str)
  * include/linux/sunrpc/metrics.h and rpc_print_iostats() in
  * net/sunrpc/stats.c. */
 
-#define _OP_DIAG_KEYS(o) \
-  X(o##_ops,        "E",      "count of "#o" RPC ops"), \
-  X(o##_timeouts,   "E",      "count of "#o" major timeouts"), \
-  X(o##_queue,      "E,U=ms", "time "#o" RPC queued for send"), \
-  X(o##_rtt,        "E,U=ms", "RTT for "#o" RPC")
+#define _OP_DIAG_KEYS(o)                                                                           \
+  X(o##_ops, "E", "count of " #o " RPC ops"),                                                      \
+      X(o##_timeouts, "E", "count of " #o " major timeouts"),                                      \
+      X(o##_queue, "E,U=ms", "time " #o " RPC queued for send"),                                   \
+      X(o##_rtt, "E,U=ms", "RTT for " #o " RPC")
 
-#define OP_KEYS \
-  _OP_DIAG_KEYS(read),  \
-  _OP_DIAG_KEYS(write)
+#define OP_KEYS _OP_DIAG_KEYS(read), _OP_DIAG_KEYS(write)
 
 /* /proc/self/mountstats per-op line order:
  * ops, ntrans, timeouts, bytes_sent, bytes_recv, queue, rtt, execute. */
@@ -139,8 +131,8 @@ static void nfs_collect_mnt_op(struct stats *stats, const char *op, char *str)
 
 /* Return 0 if nfs_collect() should re-read *p_line, -1 on EOF / parse error. */
 
-static int nfs_collect_mnt_read_events_xprt_section(struct stats *stats, FILE *file,
-                                                    char **p_line, size_t *p_line_size)
+static int nfs_collect_mnt_read_events_xprt_section(struct stats *stats, FILE *file, char **p_line,
+                                                    size_t *p_line_size)
 {
   while (1) {
     if (getline(p_line, p_line_size, file) < 0)
@@ -168,8 +160,8 @@ static int nfs_collect_mnt_read_events_xprt_section(struct stats *stats, FILE *f
   return 1;
 }
 
-static int nfs_collect_mnt_read_per_op_section(struct stats *stats, FILE *file,
-                                               char **p_line, size_t *p_line_size)
+static int nfs_collect_mnt_read_per_op_section(struct stats *stats, FILE *file, char **p_line,
+                                               size_t *p_line_size)
 {
   while (1) {
     if (getline(p_line, p_line_size, file) < 0)
@@ -191,8 +183,7 @@ static int nfs_collect_mnt_read_per_op_section(struct stats *stats, FILE *file,
   }
 }
 
-static int nfs_collect_mnt(struct stats *stats, FILE *file,
-                           char **p_line, size_t *p_line_size)
+static int nfs_collect_mnt(struct stats *stats, FILE *file, char **p_line, size_t *p_line_size)
 {
   int rc = nfs_collect_mnt_read_events_xprt_section(stats, file, p_line, p_line_size);
   if (rc <= 0)
@@ -213,8 +204,8 @@ static inline int strip_crud(char **str, const char *crud)
 }
 
 /* Parse one mountstats header line; return stats row or NULL to skip. */
-static struct stats *nfs_collect_mount_stats(struct stats_type *type, char *line,
-                                             char **dev_out, char **mnt_out)
+static struct stats *nfs_collect_mount_stats(struct stats_type *type, char *line, char **dev_out,
+                                             char **mnt_out)
 {
   char *rest;
   char *dev;
@@ -242,8 +233,7 @@ static struct stats *nfs_collect_mount_stats(struct stats_type *type, char *line
 
   ver = wsep(&rest);
   if (strcmp(ver, "1.0") != 0 && strcmp(ver, "1.1") != 0) {
-    TRACE("nfs: mount `%s', device `%s' has unknown statvers `%s' (skip)\n",
-          mnt, dev, ver);
+    TRACE("nfs: mount `%s', device `%s' has unknown statvers `%s' (skip)\n", mnt, dev, ver);
     return NULL;
   }
 
@@ -290,16 +280,16 @@ static void nfs_collect(struct stats_type *type)
       goto skip_getline;
   }
 
- out:
+out:
   free(line);
   if (file != NULL)
     fclose(file);
 }
 
 struct stats_type nfs_stats_type = {
-  .st_name = "host_nfs",
-  .st_collect = &nfs_collect,
+    .st_name = "host_nfs",
+    .st_collect = &nfs_collect,
 #define X SCHEMA_DEF
-  .st_schema_def = JOIN(KEYS),
+    .st_schema_def = JOIN(KEYS),
 #undef X
 };

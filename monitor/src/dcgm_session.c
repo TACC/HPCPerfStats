@@ -17,7 +17,7 @@ static dcgmReturn_t monitor_dcgm_try_embedded(dcgmHandle_t *outh)
   ep.severity = DcgmLoggingSeverityNone;
 
   rc = dcgmStartEmbedded_v2(&ep);
-  if (rc == DCGM_ST_OK && ep.dcgmHandle != (dcgmHandle_t) 0) {
+  if (rc == DCGM_ST_OK && ep.dcgmHandle != (dcgmHandle_t)0) {
     *outh = ep.dcgmHandle;
     return DCGM_ST_OK;
   }
@@ -49,23 +49,23 @@ dcgmReturn_t monitor_dcgm_attach_for_process(dcgmHandle_t *outh, int *use_discon
     return DCGM_ST_BADPARAM;
 
   *use_disconnect = 0;
-  *outh = (dcgmHandle_t) 0;
+  *outh = (dcgmHandle_t)0;
 
   rc = monitor_dcgm_try_embedded(outh);
-  if (rc == DCGM_ST_OK && *outh != (dcgmHandle_t) 0)
+  if (rc == DCGM_ST_OK && *outh != (dcgmHandle_t)0)
     return DCGM_ST_OK;
 
-  (void) dcgmShutdown();
+  (void)dcgmShutdown();
   rc = dcgmInit();
   if (rc != DCGM_ST_OK)
     return rc;
 
   rc = monitor_dcgm_connect_loopback(outh);
-  if (rc == DCGM_ST_OK && *outh != (dcgmHandle_t) 0) {
+  if (rc == DCGM_ST_OK && *outh != (dcgmHandle_t)0) {
     *use_disconnect = 1;
     return DCGM_ST_OK;
   }
 
-  (void) dcgmShutdown();
+  (void)dcgmShutdown();
   return (rc != DCGM_ST_OK) ? rc : DCGM_ST_INIT_ERROR;
 }

@@ -22,36 +22,30 @@ enum stats_row_tier {
   STATS_ROW_FULL = 2,
 };
 
-size_t stats_format_schema_entry_suffix(char *buf, size_t cap,
-                                        struct schema_entry *se);
+size_t stats_format_schema_entry_suffix(char *buf, size_t cap, struct schema_entry *se);
 
-void stats_format_emit_property_banner(stats_format_emit_fn emit, void *opaque,
-                                       int prop_char, const char *prog,
-                                       const char *vers, const char *nodename,
+void stats_format_emit_property_banner(stats_format_emit_fn emit, void *opaque, int prop_char,
+                                       const char *prog, const char *vers, const char *nodename,
                                        const char *sysname, const char *machine,
                                        const char *release, const char *version,
                                        unsigned long long uptime);
 
-void stats_format_emit_schema_line(stats_format_emit_fn emit, void *opaque,
-                                   int schema_char, struct stats_type *type);
+void stats_format_emit_schema_line(stats_format_emit_fn emit, void *opaque, int schema_char,
+                                   struct stats_type *type);
 
-void stats_format_emit_mark_multiline(stats_format_emit_fn emit, void *opaque,
-                                      int mark_char, const char *payload);
+void stats_format_emit_mark_multiline(stats_format_emit_fn emit, void *opaque, int mark_char,
+                                      const char *payload);
 
 /* Append formatted text to *markp (newline between prior and new); frees/replaces *markp. */
 int stats_format_append_mark_va(char **markp, const char *fmt, va_list ap);
 
-int stats_format_snprintf_stats_row(char *buf, size_t cap,
-                                    struct stats_type *type,
+int stats_format_snprintf_stats_row(char *buf, size_t cap, struct stats_type *type,
                                     struct stats *stats);
 
 /* Tier-aware row formatter. STATS_ROW_LEGACY matches the legacy row exactly. */
-int stats_format_snprintf_stats_row_tier(char *buf, size_t cap,
-                                         struct stats_type *type,
-                                         struct stats *stats,
-                                         enum stats_row_tier tier);
+int stats_format_snprintf_stats_row_tier(char *buf, size_t cap, struct stats_type *type,
+                                         struct stats *stats, enum stats_row_tier tier);
 
-void stats_format_fprint_stats_row(FILE *f, struct stats_type *type,
-                                   struct stats *stats);
+void stats_format_fprint_stats_row(FILE *f, struct stats_type *type, struct stats *stats);
 
 #endif

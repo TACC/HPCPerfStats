@@ -10,12 +10,12 @@ void stats_set(struct stats *stats, const char *key, unsigned long long val)
 
 int pscanf(const char *path, const char *fmt, ...)
 {
-  (void) path;
-  (void) fmt;
+  (void)path;
+  (void)fmt;
   return -1;
 }
 
 void monitor_log_warn(const char *fmt, ...)
 {
-  (void) fmt;
+  (void)fmt;
 }

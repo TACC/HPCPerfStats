@@ -10,10 +10,9 @@
 #include "trace.h"
 #include "path_open_fail_once.h"
 
-#define KEYS \
-  X(bytes_used, "U=B", "bytes used"), \
-  X(bytes_avail, "U=B", "bytes available"), \
-  X(files_used, "", "files used")
+#define KEYS                                                                                       \
+  X(bytes_used, "U=B", "bytes used"), X(bytes_avail, "U=B", "bytes available"),                    \
+      X(files_used, "", "files used")
 
 static void tmpfs_collect(struct stats_type *type)
 {
@@ -57,15 +56,15 @@ static void tmpfs_collect(struct stats_type *type)
     stats_set(stats, "files_used", files_used);
   }
 
- out:
+out:
   if (me_file != NULL)
     endmntent(me_file);
 }
 
 struct stats_type tmpfs_stats_type = {
-  .st_name = "host_tmpfs",
-  .st_collect = &tmpfs_collect,
+    .st_name = "host_tmpfs",
+    .st_collect = &tmpfs_collect,
 #define X SCHEMA_DEF
-  .st_schema_def = JOIN(KEYS),
+    .st_schema_def = JOIN(KEYS),
 #undef X
 };

@@ -50,7 +50,7 @@ int likwid_pmc_adapter_init(int nr_threads)
   int *cpus = NULL;
   if (nr_threads <= 0)
     return -1;
-  cpus = (int *) malloc((size_t) nr_threads * sizeof(*cpus));
+  cpus = (int *)malloc((size_t)nr_threads * sizeof(*cpus));
   if (cpus == NULL) {
     ERROR("cannot allocate LIKWID cpu map: %m\n");
     return -1;
@@ -73,11 +73,11 @@ int likwid_pmc_adapter_init(int nr_threads)
   }
   g_initialized = 1;
   rc = 0;
- out:
+out:
   free(cpus);
   return rc;
 #else
-  (void) nr_threads;
+  (void)nr_threads;
   return -1;
 #endif
 }
@@ -108,12 +108,12 @@ int likwid_pmc_adapter_setup_events(const char *event_string)
     if (saved_stderr >= 0) {
       null_fd = open("/dev/null", O_WRONLY);
       if (null_fd >= 0)
-        (void) dup2(null_fd, STDERR_FILENO);
+        (void)dup2(null_fd, STDERR_FILENO);
     }
   }
   g_group = perfmon_addEventSet(event_string);
   if (quiet && saved_stderr >= 0) {
-    (void) dup2(saved_stderr, STDERR_FILENO);
+    (void)dup2(saved_stderr, STDERR_FILENO);
     close(saved_stderr);
     saved_stderr = -1;
   }
@@ -128,7 +128,7 @@ int likwid_pmc_adapter_setup_events(const char *event_string)
     if (saved_stderr >= 0) {
       null_fd = open("/dev/null", O_WRONLY);
       if (null_fd >= 0)
-        (void) dup2(null_fd, STDERR_FILENO);
+        (void)dup2(null_fd, STDERR_FILENO);
     }
   }
   if (perfmon_setupCounters(g_group) < 0)
@@ -136,7 +136,7 @@ int likwid_pmc_adapter_setup_events(const char *event_string)
   if (perfmon_startCounters() < 0)
     goto err;
   if (quiet && saved_stderr >= 0) {
-    (void) dup2(saved_stderr, STDERR_FILENO);
+    (void)dup2(saved_stderr, STDERR_FILENO);
     close(saved_stderr);
   }
   if (quiet && null_fd >= 0)
@@ -144,14 +144,14 @@ int likwid_pmc_adapter_setup_events(const char *event_string)
   return 0;
 err:
   if (quiet && saved_stderr >= 0) {
-    (void) dup2(saved_stderr, STDERR_FILENO);
+    (void)dup2(saved_stderr, STDERR_FILENO);
     close(saved_stderr);
   }
   if (quiet && null_fd >= 0)
     close(null_fd);
   return -1;
 #else
-  (void) event_string;
+  (void)event_string;
   return -1;
 #endif
 }
@@ -189,18 +189,12 @@ static void likwid_pmc_adapter_zero_fp_arith_stats(struct stats *stats)
   stats_set(stats, "fp_arith_inst_retired_512b_packed_single", 0);
 }
 
-static void likwid_pmc_adapter_apply_one_event(struct stats *stats,
-                                                const char *counter_name,
-                                                const char *event_name,
-                                                unsigned long long val,
-                                                unsigned long long *inst_retired,
-                                                unsigned long long *aperf,
-                                                unsigned long long *mperf,
-                                                int *have_inst, int *have_aperf,
-                                                int *have_mperf,
-                                                int *have_fixed0,
-                                                int *have_fixed1,
-                                                int *have_fixed2)
+static void likwid_pmc_adapter_apply_one_event(struct stats *stats, const char *counter_name,
+                                               const char *event_name, unsigned long long val,
+                                               unsigned long long *inst_retired,
+                                               unsigned long long *aperf, unsigned long long *mperf,
+                                               int *have_inst, int *have_aperf, int *have_mperf,
+                                               int *have_fixed0, int *have_fixed1, int *have_fixed2)
 {
   char keybuf[128];
   const char *schema_key;
@@ -243,15 +237,10 @@ static void likwid_pmc_adapter_apply_one_event(struct stats *stats,
   }
 }
 
-static void likwid_pmc_adapter_publish_semantic_counters(struct stats *stats,
-                                                         unsigned long long inst,
-                                                         unsigned long long aperf_val,
-                                                         unsigned long long mperf_val,
-                                                         int have_inst, int have_aperf,
-                                                         int have_mperf,
-                                                         int have_fixed0,
-                                                         int have_fixed1,
-                                                         int have_fixed2)
+static void likwid_pmc_adapter_publish_semantic_counters(
+    struct stats *stats, unsigned long long inst, unsigned long long aperf_val,
+    unsigned long long mperf_val, int have_inst, int have_aperf, int have_mperf, int have_fixed0,
+    int have_fixed1, int have_fixed2)
 {
   if (have_inst) {
     stats_set(stats, "instr_retired", inst);
@@ -293,8 +282,8 @@ static int read_msr_u64_cpu(int cpu, uint64_t reg, unsigned long long *val)
   return 0;
 }
 
-int likwid_pmc_adapter_read_cpu(struct stats *stats, int cpu, uint64_t *events,
-                                int nr_events, int max_ctrs)
+int likwid_pmc_adapter_read_cpu(struct stats *stats, int cpu, uint64_t *events, int nr_events,
+                                int max_ctrs)
 {
 #ifdef HAVE_LIKWID
   int i = 0;
@@ -321,34 +310,28 @@ int likwid_pmc_adapter_read_cpu(struct stats *stats, int cpu, uint64_t *events,
   for (i = 0; i < n_events; i++) {
     const char *counter_name = perfmon_getCounterName(g_group, i);
     const char *event_name = perfmon_getEventName(g_group, i);
-    unsigned long long val =
-        (unsigned long long)perfmon_getResult(g_group, i, cpu);
+    unsigned long long val = (unsigned long long)perfmon_getResult(g_group, i, cpu);
 
-    likwid_pmc_adapter_apply_one_event(stats, counter_name, event_name, val,
-                                       &inst_retired, &aperf, &mperf,
-                                       &have_inst, &have_aperf, &have_mperf,
-                                       &have_fixed0, &have_fixed1, &have_fixed2);
+    likwid_pmc_adapter_apply_one_event(stats, counter_name, event_name, val, &inst_retired, &aperf,
+                                       &mperf, &have_inst, &have_aperf, &have_mperf, &have_fixed0,
+                                       &have_fixed1, &have_fixed2);
   }
-  if (!have_inst &&
-      read_msr_u64_cpu(cpu, (uint64_t)MSR_PERF_INST_RETIRED, &inst_retired) == 0)
+  if (!have_inst && read_msr_u64_cpu(cpu, (uint64_t)MSR_PERF_INST_RETIRED, &inst_retired) == 0)
     have_inst = 1;
-  if (!have_aperf &&
-      read_msr_u64_cpu(cpu, (uint64_t)MSR_PERF_APERF, &aperf) == 0)
+  if (!have_aperf && read_msr_u64_cpu(cpu, (uint64_t)MSR_PERF_APERF, &aperf) == 0)
     have_aperf = 1;
-  if (!have_mperf &&
-      read_msr_u64_cpu(cpu, (uint64_t)MSR_PERF_MPERF, &mperf) == 0)
+  if (!have_mperf && read_msr_u64_cpu(cpu, (uint64_t)MSR_PERF_MPERF, &mperf) == 0)
     have_mperf = 1;
-  likwid_pmc_adapter_publish_semantic_counters(stats, inst_retired, aperf, mperf,
-                                               have_inst, have_aperf, have_mperf,
-                                               have_fixed0, have_fixed1,
+  likwid_pmc_adapter_publish_semantic_counters(stats, inst_retired, aperf, mperf, have_inst,
+                                               have_aperf, have_mperf, have_fixed0, have_fixed1,
                                                have_fixed2);
   return 0;
 #else
-  (void) stats;
-  (void) cpu;
-  (void) events;
-  (void) nr_events;
-  (void) max_ctrs;
+  (void)stats;
+  (void)cpu;
+  (void)events;
+  (void)nr_events;
+  (void)max_ctrs;
   return -1;
 #endif
 }

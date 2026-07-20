@@ -65,9 +65,9 @@ static void mem_collect(struct stats_type *type)
 }
 
 struct stats_type mem_stats_type = {
-  .st_name = "host_mem",
-  .st_collect = &mem_collect,
+    .st_name = "host_mem",
+    .st_collect = &mem_collect,
 #define X SCHEMA_DEF
-  .st_schema_def = JOIN(KEYS),
+    .st_schema_def = JOIN(KEYS),
 #undef X
 };

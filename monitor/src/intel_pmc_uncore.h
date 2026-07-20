@@ -15,26 +15,26 @@
 #include "pscanf.h"
 #include "pci.h"
 
-#define BOX_CTL        0xF4
+#define BOX_CTL 0xF4
 
-#define CTL0           0xD8
-#define CTL1           0xDC
-#define CTL2           0xE0
-#define CTL3           0xE4
+#define CTL0 0xD8
+#define CTL1 0xDC
+#define CTL2 0xE0
+#define CTL3 0xE4
 
-#define B_CTR0         0xA0
-#define A_CTR0         0xA4
-#define B_CTR1         0xA8
-#define A_CTR1         0xAC
-#define B_CTR2         0xB0
-#define A_CTR2         0xB4
-#define B_CTR3         0xB8
-#define A_CTR3         0xBC
+#define B_CTR0 0xA0
+#define A_CTR0 0xA4
+#define B_CTR1 0xA8
+#define A_CTR1 0xAC
+#define B_CTR2 0xB0
+#define A_CTR2 0xB4
+#define B_CTR3 0xB8
+#define A_CTR3 0xBC
 
 /* Fixed counters are available on IMC */
-#define FIXED_CTL      0xF0
-#define B_FIXED_CTR    0xD0
-#define A_FIXED_CTR    0xD4
+#define FIXED_CTL 0xF0
+#define B_FIXED_CTR 0xD0
+#define A_FIXED_CTR 0xD4
 
 static int intel_pmc_uncore_begin_dev(char *bus_dev, uint32_t *events, size_t nr_events)
 {
@@ -58,16 +58,14 @@ static int intel_pmc_uncore_begin_dev(char *bus_dev, uint32_t *events, size_t nr
     ERROR("cannot enable freeze of counters: %m\n");
     goto out;
   }
-  
+
   /* Select Events for Uncore counters, CTLx registers are 4 bits apart */
   int i;
   for (i = 0; i < nr_events; i++) {
-    TRACE("PCI Address %08X, event %016lX\n", CTL0 + 4*i, (unsigned long) events[i]);
-    if (pwrite(pci_fd, &events[i], sizeof(events[i]), CTL0 + 4*i) < 0) { 
-      ERROR("cannot write event %016lX to PCI Address %08X through `%s': %m\n", 
-            (unsigned long) events[i],
-            (unsigned) CTL0 + 4*i,
-            pci_path);
+    TRACE("PCI Address %08X, event %016lX\n", CTL0 + 4 * i, (unsigned long)events[i]);
+    if (pwrite(pci_fd, &events[i], sizeof(events[i]), CTL0 + 4 * i) < 0) {
+      ERROR("cannot write event %016lX to PCI Address %08X through `%s': %m\n",
+            (unsigned long)events[i], (unsigned)CTL0 + 4 * i, pci_path);
       goto out;
     }
   }
@@ -80,7 +78,7 @@ static int intel_pmc_uncore_begin_dev(char *bus_dev, uint32_t *events, size_t nr
 
   rc = 0;
 
- out:
+out:
   if (pci_fd >= 0)
     close(pci_fd);
 
@@ -88,9 +86,8 @@ static int intel_pmc_uncore_begin_dev(char *bus_dev, uint32_t *events, size_t nr
 }
 
 static void intel_pmc_uncore_collect_dev(struct stats_type *type, char *bus_dev,
-					 const char *const *event_keys,
-					 int nr_events,
-					 const char *fixed_ctr_key)
+                                         const char *const *event_keys, int nr_events,
+                                         const char *fixed_ctr_key)
 {
   struct stats *stats = NULL;
   char pci_path[80];
@@ -114,16 +111,14 @@ static void intel_pmc_uncore_collect_dev(struct stats_type *type, char *bus_dev,
   for (int i = 0; i < nr_events; i++) {
     uint32_t val_a, val_b;
     uint64_t val = 0;
-    unsigned int reg_low = B_CTR0 + (unsigned int) i * 8U;
-    unsigned int reg_high = A_CTR0 + (unsigned int) i * 8U;
-    const char *key = (event_keys != NULL && event_keys[i] != NULL)
-			  ? event_keys[i]
-			  : "unnamed_counter";
+    unsigned int reg_low = B_CTR0 + (unsigned int)i * 8U;
+    unsigned int reg_high = A_CTR0 + (unsigned int)i * 8U;
+    const char *key =
+        (event_keys != NULL && event_keys[i] != NULL) ? event_keys[i] : "unnamed_counter";
 
-    if (pread(pci_fd, &val_a, sizeof(val_a), reg_high) < 0
-	|| pread(pci_fd, &val_b, sizeof(val_b), reg_low) < 0) {
-      ERROR("cannot read `%s' (%08X,%08X) through `%s': %m\n", key,
-	    reg_high, reg_low, pci_path);
+    if (pread(pci_fd, &val_a, sizeof(val_a), reg_high) < 0 ||
+        pread(pci_fd, &val_b, sizeof(val_b), reg_low) < 0) {
+      ERROR("cannot read `%s' (%08X,%08X) through `%s': %m\n", key, reg_high, reg_low, pci_path);
       continue;
     }
     val = val_a;
@@ -133,18 +128,17 @@ static void intel_pmc_uncore_collect_dev(struct stats_type *type, char *bus_dev,
   if (fixed_ctr_key != NULL) {
     uint32_t val_a, val_b;
     uint64_t val = 0;
-    if (pread(pci_fd, &val_a, sizeof(val_a), A_FIXED_CTR) < 0
-	|| pread(pci_fd, &val_b, sizeof(val_b), B_FIXED_CTR) < 0)
-      ERROR("cannot read `%s' (%08X,%08X) through `%s': %m\n", fixed_ctr_key,
-	    A_FIXED_CTR, B_FIXED_CTR, pci_path);
+    if (pread(pci_fd, &val_a, sizeof(val_a), A_FIXED_CTR) < 0 ||
+        pread(pci_fd, &val_b, sizeof(val_b), B_FIXED_CTR) < 0)
+      ERROR("cannot read `%s' (%08X,%08X) through `%s': %m\n", fixed_ctr_key, A_FIXED_CTR,
+            B_FIXED_CTR, pci_path);
     else {
       val = val_a;
       stats_set(stats, fixed_ctr_key, (val << 32) + val_b);
     }
   }
 
- out:
+out:
   if (pci_fd >= 0)
     close(pci_fd);
 }
-

@@ -14,8 +14,7 @@ extern const char monitor_cli_lit_rmq_password[];
 extern const char monitor_cli_lit_dumpfile_dir[];
 extern const char monitor_cli_lit_jobid_file_path[];
 
-void monitor_cli_heap_dup_setting(char **slot, const char *default_literal,
-				    const char *value);
+void monitor_cli_heap_dup_setting(char **slot, const char *default_literal, const char *value);
 void monitor_cli_print_usage(FILE *stream);
 void monitor_cli_parse_args(int argc, char *argv[], int *daemonmode_out);
 void monitor_cli_free_heap(void);

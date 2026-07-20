@@ -20,11 +20,11 @@ char jobid[80] = "job42";
 double send_freq = 1.0;
 int nr_cpus = 1;
 int n_pmcs = 0;
-processor_t processor = (processor_t) 0;
+processor_t processor = (processor_t)0;
 
 int stats_buffer_test_send_hook(struct stats_buffer *sf)
 {
-  (void) sf;
+  (void)sf;
   return 0;
 }
 
@@ -54,12 +54,12 @@ static const char *golden_srcdir(void)
 
 static int golden_path(char *buf, size_t cap, const char *tier_file)
 {
-  return snprintf(buf, cap, "%s/expected/%s", golden_srcdir(), tier_file) >= (int) cap;
+  return snprintf(buf, cap, "%s/expected/%s", golden_srcdir(), tier_file) >= (int)cap;
 }
 
 static int shm_tier_path(char *buf, size_t cap, const char *tier_file)
 {
-  return snprintf(buf, cap, "%s/%s", g_shm_base, tier_file) >= (int) cap;
+  return snprintf(buf, cap, "%s/%s", g_shm_base, tier_file) >= (int)cap;
 }
 
 static int read_file_text(const char *path, char **out, size_t *out_len)
@@ -84,9 +84,9 @@ static int read_file_text(const char *path, char **out, size_t *out_len)
       char *nr = realloc(buf, cap * 2);
 
       if (nr == NULL) {
-	free(buf);
-	fclose(f);
-	return -1;
+        free(buf);
+        fclose(f);
+        return -1;
       }
       buf = nr;
       cap *= 2;
@@ -129,8 +129,7 @@ static void print_diff(const char *label, const char *expected, const char *actu
   fputs("+++\n", stderr);
 }
 
-static int compare_or_update_golden(const char *tier_file, const char *actual,
-				    size_t actual_len)
+static int compare_or_update_golden(const char *tier_file, const char *actual, size_t actual_len)
 {
   char golden_file[512];
   char *expected = NULL;
@@ -150,18 +149,17 @@ static int compare_or_update_golden(const char *tier_file, const char *actual,
   }
 
   if (read_file_text(golden_file, &expected, &expected_len) != 0) {
-    fprintf(stderr, "missing golden file %s (run UPDATE_DEBUG_SHM_GOLDEN=1)\n",
-	    golden_file);
+    fprintf(stderr, "missing golden file %s (run UPDATE_DEBUG_SHM_GOLDEN=1)\n", golden_file);
     return -1;
   }
 
   if (expected_len != actual_len || memcmp(expected, actual, actual_len) != 0) {
     print_diff(tier_file, expected, actual);
     fprintf(stderr,
-	    "golden mismatch for %s\n"
-	    "Re-run: UPDATE_DEBUG_SHM_GOLDEN=1 make -C <builddir> check "
-	    "TESTS=test_debug_shm_emit_golden\n",
-	    tier_file);
+            "golden mismatch for %s\n"
+            "Re-run: UPDATE_DEBUG_SHM_GOLDEN=1 make -C <builddir> check "
+            "TESTS=test_debug_shm_emit_golden\n",
+            tier_file);
     free(expected);
     return -1;
   }
@@ -177,7 +175,7 @@ static const char *shm_tier_basename(enum stats_row_tier tier)
 }
 
 static int collect_and_check_tier(enum collect_phase phase, enum stats_row_tier tier,
-				  const char *golden_file)
+                                  const char *golden_file)
 {
   struct stats_buffer sf;
   char shm_file[512];
@@ -207,15 +205,14 @@ static int collect_and_check_tier(enum collect_phase phase, enum stats_row_tier 
     goto out;
   }
   if (test_debug_shm_emit_validate_payload(payload, payload_len, tier) != 0) {
-    fprintf(stderr, "driver shape validation failed for %s payload\n",
-	    shm_tier_basename(tier));
+    fprintf(stderr, "driver shape validation failed for %s payload\n", shm_tier_basename(tier));
     goto out;
   }
   if (compare_or_update_golden(golden_file, payload, payload_len) != 0)
     goto out;
   rc = 0;
 
- out:
+out:
   free(payload);
   stats_buffer_close(&sf);
   return rc;

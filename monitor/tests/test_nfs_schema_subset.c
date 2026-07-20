@@ -8,31 +8,31 @@
 /* nfs.c link stubs: this test validates schema text only. */
 int str_collect_key_list(const char *str, struct stats *stats, ...)
 {
-  (void) str;
-  (void) stats;
+  (void)str;
+  (void)stats;
   return 0;
 }
 
 int str_collect_prefix_key_list(const char *str, struct stats *stats, const char *prefix, ...)
 {
-  (void) str;
-  (void) stats;
-  (void) prefix;
+  (void)str;
+  (void)stats;
+  (void)prefix;
   return 0;
 }
 
 struct stats *get_current_stats(struct stats_type *type, const char *dev)
 {
-  (void) type;
-  (void) dev;
+  (void)type;
+  (void)dev;
   return NULL;
 }
 
 void stats_set(struct stats *s, const char *key, unsigned long long val)
 {
-  (void) s;
-  (void) key;
-  (void) val;
+  (void)s;
+  (void)key;
+  (void)val;
 }
 
 extern struct stats_type nfs_stats_type;

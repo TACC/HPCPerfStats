@@ -26,8 +26,7 @@ static int ps_stat_line_cb(char *line, void *ctx)
    * verbose interrupt line. */
   if (strncmp(line, "cpu", 3) == 0)
     return 0;
-  if (strncmp(line, "intr", 4) == 0 &&
-      (line[4] == ' ' || line[4] == '\t' || line[4] == '\0'))
+  if (strncmp(line, "intr", 4) == 0 && (line[4] == ' ' || line[4] == '\t' || line[4] == '\0'))
     return 0;
 
   proc_kv_into_stats(stats, line);
@@ -48,17 +47,14 @@ static void ps_collect_loadavg(struct stats *stats)
   memset(load, 0, sizeof(load));
 
   /* Ignore last_pid (sixth field). */
-  if (pscanf(path, "%llu.%llu %llu.%llu %llu.%llu %llu/%llu",
-             &load[0][0], &load[0][1],
-             &load[1][0], &load[1][1],
-             &load[2][0], &load[2][1],
-             &nr_running, &nr_threads) != 8) {
+  if (pscanf(path, "%llu.%llu %llu.%llu %llu.%llu %llu/%llu", &load[0][0], &load[0][1], &load[1][0],
+             &load[1][1], &load[2][0], &load[2][1], &nr_running, &nr_threads) != 8) {
     TRACE("ps: short or malformed `%s'\n", path);
     return;
   }
 
-  stats_set(stats, "load_1",  load[0][0] * 100 + load[0][1]);
-  stats_set(stats, "load_5",  load[1][0] * 100 + load[1][1]);
+  stats_set(stats, "load_1", load[0][0] * 100 + load[0][1]);
+  stats_set(stats, "load_5", load[1][0] * 100 + load[1][1]);
   stats_set(stats, "load_15", load[2][0] * 100 + load[2][1]);
   stats_set(stats, "nr_running", nr_running);
   stats_set(stats, "nr_threads", nr_threads);
@@ -76,9 +72,9 @@ static void ps_collect(struct stats_type *type)
 }
 
 struct stats_type ps_stats_type = {
-  .st_name = "host_ps",
-  .st_collect = &ps_collect,
+    .st_name = "host_ps",
+    .st_collect = &ps_collect,
 #define X SCHEMA_DEF
-  .st_schema_def = JOIN(KEYS),
+    .st_schema_def = JOIN(KEYS),
 #undef X
 };

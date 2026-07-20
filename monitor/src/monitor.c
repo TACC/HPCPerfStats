@@ -78,11 +78,11 @@ static void monitor_start_timers_and_jobid_watcher(struct sf_ring_buffer *rb)
    * fresh daemon rotates listend `current` immediately; this timer only handles periodic rotation.
    */
   rotate_timer.data = (void *)rb;
-  ev_timer_init(&rotate_timer, monitor_daemon_rotate_timer_cb, (double)MONITOR_DAEMON_SCHEMA_ROTATE_SEC,
-		(double)MONITOR_DAEMON_SCHEMA_ROTATE_SEC);
+  ev_timer_init(&rotate_timer, monitor_daemon_rotate_timer_cb,
+                (double)MONITOR_DAEMON_SCHEMA_ROTATE_SEC, (double)MONITOR_DAEMON_SCHEMA_ROTATE_SEC);
   ev_timer_start(EV_DEFAULT, &rotate_timer);
   monitor_log_info("Setting hpcperfstatsd schema header rotation every %ds\n",
-		   MONITOR_DAEMON_SCHEMA_ROTATE_SEC);
+                   MONITOR_DAEMON_SCHEMA_ROTATE_SEC);
 
   fd_watcher.data = (void *)rb;
   ev_stat_init(&fd_watcher, monitor_daemon_fd_cb, jobid_file_path, EV_READ);
@@ -92,7 +92,8 @@ static void monitor_start_timers_and_jobid_watcher(struct sf_ring_buffer *rb)
   sample_timer.data = (void *)rb;
   ev_timer_init(&sample_timer, monitor_daemon_sample_timer_cb, 0.0, 0.0);
   monitor_daemon_reanchor_sample_timer(EV_DEFAULT, sample_freq);
-  monitor_log_info("Setting hpcperfstatsd sample frequency to %.1fs (epoch-aligned)\n", sample_freq);
+  monitor_log_info("Setting hpcperfstatsd sample frequency to %.1fs (epoch-aligned)\n",
+                   sample_freq);
 
   send_timer.data = (void *)rb;
   /* First tick ASAP so queued samples drain soon after startup; repeat stays send_freq. */
@@ -104,8 +105,8 @@ static void monitor_start_timers_and_jobid_watcher(struct sf_ring_buffer *rb)
   ev_timer_init(&rmq_io_timer, monitor_rmq_io_tick_cb, 10.0, 10.0);
   ev_timer_start(EV_DEFAULT, &rmq_io_timer);
   monitor_log_info("RMQ connection I/O service interval 10.0s (AMQP heartbeats)\n");
-  monitor_log_info("Setting hpcperfstatsd buffer capacity to %d samples (%.2fh)\n",
-                   max_buffer_size, buffer_hours);
+  monitor_log_info("Setting hpcperfstatsd buffer capacity to %d samples (%.2fh)\n", max_buffer_size,
+                   buffer_hours);
 
   monitor_load_initial_jobid();
 }
@@ -113,7 +114,8 @@ static void monitor_start_timers_and_jobid_watcher(struct sf_ring_buffer *rb)
 static void monitor_require_server_or_exit(void)
 {
   if (server == NULL) {
-    monitor_log_info("Must specify a server to send data to with -s [--server] argument or conf file.\n");
+    monitor_log_info(
+        "Must specify a server to send data to with -s [--server] argument or conf file.\n");
     exit(0);
   }
   monitor_log_info("hpcperfstatsd data to server %s on port %s.\n", server, port);
@@ -129,24 +131,21 @@ static void monitor_log_optional_driver_probe(void)
   int has_nvidia_devnode = 0;
   int has_dcgm_lib = 0;
 
-  hwdetect_probe_optional_stack_presence(&has_nvidia_gpu, &has_amd_gpu, &has_intel_gpu,
-                                         &has_ib, &has_opa);
+  hwdetect_probe_optional_stack_presence(&has_nvidia_gpu, &has_amd_gpu, &has_intel_gpu, &has_ib,
+                                         &has_opa);
   has_nvidia_devnode = (access("/dev/nvidia0", F_OK) == 0) ? 1 : 0;
-  has_dcgm_lib = (access("/usr/lib64/libdcgm.so", F_OK) == 0
-                   || access("/usr/lib64/libdcgm.so.4", F_OK) == 0
-                   || access("/usr/lib/libdcgm.so", F_OK) == 0
-                   || access("/usr/lib/libdcgm.so.4", F_OK) == 0) ? 1 : 0;
+  has_dcgm_lib =
+      (access("/usr/lib64/libdcgm.so", F_OK) == 0 || access("/usr/lib64/libdcgm.so.4", F_OK) == 0 ||
+       access("/usr/lib/libdcgm.so", F_OK) == 0 || access("/usr/lib/libdcgm.so.4", F_OK) == 0)
+          ? 1
+          : 0;
 
-  monitor_log_info(
-      "Driver/stack probe: nvidia_gpu=%s (devnode=%s, libdcgm=%s), amd_gpu=%s, "
-      "intel_gpu=%s, infiniband=%s, opa=%s\n",
-      has_nvidia_gpu ? "detected" : "not detected",
-      has_nvidia_devnode ? "yes" : "no",
-      has_dcgm_lib ? "yes" : "no",
-      has_amd_gpu ? "detected" : "not detected",
-      has_intel_gpu ? "detected" : "not detected",
-      has_ib ? "detected" : "not detected",
-      has_opa ? "detected" : "not detected");
+  monitor_log_info("Driver/stack probe: nvidia_gpu=%s (devnode=%s, libdcgm=%s), amd_gpu=%s, "
+                   "intel_gpu=%s, infiniband=%s, opa=%s\n",
+                   has_nvidia_gpu ? "detected" : "not detected", has_nvidia_devnode ? "yes" : "no",
+                   has_dcgm_lib ? "yes" : "no", has_amd_gpu ? "detected" : "not detected",
+                   has_intel_gpu ? "detected" : "not detected",
+                   has_ib ? "detected" : "not detected", has_opa ? "detected" : "not detected");
 }
 
 int main(int argc, char *argv[])
@@ -194,9 +193,9 @@ int main(int argc, char *argv[])
    * rotation until those publishes succeed (head-of-line blocking).
    */
   monitor_daemon_rotate_collect_flush(&ring_buffer);
-  monitor_log_info(
-      "Startup schema/`$` banner publish attempted (ring depth afterward=%d; nonzero=publish backlog)\n",
-      ring_buffer.q_count);
+  monitor_log_info("Startup schema/`$` banner publish attempted (ring depth afterward=%d; "
+                   "nonzero=publish backlog)\n",
+                   ring_buffer.q_count);
 
   monitor_daemon_replay_dumpfiles_if_present(&ring_buffer);
   monitor_start_timers_and_jobid_watcher(&ring_buffer);

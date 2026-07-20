@@ -32,9 +32,9 @@ static unsigned long long s_fp_sca_s[2];
 static unsigned long long s_fp_128_s[2];
 static unsigned long long s_fp_256_s[2];
 static unsigned long long s_fp_512_s[2];
-static int s_power_slot[2] = { 0, 1 };
-static double s_power_util[2] = { 50.5, 0.0 };
-static double s_power_limit[2] = { 200.0, 0.0 };
+static int s_power_slot[2] = {0, 1};
+static double s_power_util[2] = {50.5, 0.0};
+static double s_power_limit[2] = {200.0, 0.0};
 
 unsigned long long *g_dcgm_ctr0 = s_ctr0;
 unsigned long long *g_dcgm_ctr1 = s_ctr1;

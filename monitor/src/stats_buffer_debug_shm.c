@@ -30,8 +30,8 @@ static const char *stats_buffer_debug_shm_base_dir(void)
     return g_debug_shm_base_dir;
   env = getenv(STATS_BUFFER_DEBUG_SHM_ENV_DIR);
   if (env != NULL && env[0] != '\0') {
-    if (snprintf(g_debug_shm_base_dir_buf, sizeof(g_debug_shm_base_dir_buf),
-                 "%s", env) >= (int) sizeof(g_debug_shm_base_dir_buf))
+    if (snprintf(g_debug_shm_base_dir_buf, sizeof(g_debug_shm_base_dir_buf), "%s", env) >=
+        (int)sizeof(g_debug_shm_base_dir_buf))
       g_debug_shm_base_dir = STATS_BUFFER_DEBUG_SHM_DEFAULT_BASE;
     else
       g_debug_shm_base_dir = g_debug_shm_base_dir_buf;
@@ -63,26 +63,24 @@ static const char *stats_buffer_debug_shm_kind_name(enum stats_buffer_debug_shm_
   }
 }
 
-static int stats_buffer_debug_shm_write_atomic(const char *final_path,
-					       const char *tmp_path,
-					       const void *data, size_t len)
+static int stats_buffer_debug_shm_write_atomic(const char *final_path, const char *tmp_path,
+                                               const void *data, size_t len)
 {
   int fd;
   size_t off = 0;
 
-  fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC,
-	    STATS_BUFFER_DEBUG_SHM_FILE_MODE);
+  fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, STATS_BUFFER_DEBUG_SHM_FILE_MODE);
   if (fd < 0)
     return -1;
   while (off < len) {
-    ssize_t n = write(fd, (const char *) data + off, len - off);
+    ssize_t n = write(fd, (const char *)data + off, len - off);
 
     if (n < 0) {
       close(fd);
       unlink(tmp_path);
       return -1;
     }
-    off += (size_t) n;
+    off += (size_t)n;
   }
   if (close(fd) < 0) {
     unlink(tmp_path);
@@ -96,7 +94,7 @@ static int stats_buffer_debug_shm_write_atomic(const char *final_path,
 }
 
 void stats_buffer_debug_shm_write_payload(const struct stats_buffer *sf,
-					  enum stats_buffer_debug_shm_payload_kind kind)
+                                          enum stats_buffer_debug_shm_payload_kind kind)
 {
   char final_path[PATH_MAX];
   char tmp_path[PATH_MAX];
@@ -108,19 +106,15 @@ void stats_buffer_debug_shm_write_payload(const struct stats_buffer *sf,
 
   base = stats_buffer_debug_shm_base_dir();
   name = stats_buffer_debug_shm_kind_name(kind);
-  if (snprintf(final_path, sizeof(final_path), "%s/%s", base, name)
-      >= (int) sizeof(final_path))
+  if (snprintf(final_path, sizeof(final_path), "%s/%s", base, name) >= (int)sizeof(final_path))
     return;
-  if (snprintf(tmp_path, sizeof(tmp_path), "%s/%s.tmp", base, name)
-      >= (int) sizeof(tmp_path))
+  if (snprintf(tmp_path, sizeof(tmp_path), "%s/%s.tmp", base, name) >= (int)sizeof(tmp_path))
     return;
-  if (stats_buffer_debug_shm_write_atomic(final_path, tmp_path,
-					  sf->sf_data, sf->sf_data_len) < 0)
+  if (stats_buffer_debug_shm_write_atomic(final_path, tmp_path, sf->sf_data, sf->sf_data_len) < 0)
     monitor_log_debug("debug_shm: write %s: %m\n", final_path);
 }
 
-void stats_buffer_debug_shm_write_sample(const struct stats_buffer *sf,
-					 enum stats_row_tier tier)
+void stats_buffer_debug_shm_write_sample(const struct stats_buffer *sf, enum stats_row_tier tier)
 {
   enum stats_buffer_debug_shm_payload_kind kind;
 

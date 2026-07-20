@@ -35,9 +35,9 @@ static unsigned long long clamp_double_to_ull(double v)
 {
   if (v <= 0.0)
     return 0ULL;
-  if (v >= (double) ULLONG_MAX)
+  if (v >= (double)ULLONG_MAX)
     return ULLONG_MAX;
-  return (unsigned long long) (v + 0.5);
+  return (unsigned long long)(v + 0.5);
 }
 
 static unsigned long long ull_add_sat(unsigned long long a, unsigned long long b)
@@ -64,7 +64,7 @@ static void dcgm_field_value_watts(const dcgmFieldValue_v1 *v, double *out)
     return;
   }
   if (v->fieldType == DCGM_FT_INT64)
-    *out = (double) v->value.i64;
+    *out = (double)v->value.i64;
   else
     *out = 0.0;
 }
@@ -79,7 +79,7 @@ static void dcgm_field_value_u64(const dcgmFieldValue_v1 *v, uint64_t *out)
     if (v->value.i64 <= 0)
       *out = 0;
     else
-      *out = (uint64_t) v->value.i64;
+      *out = (uint64_t)v->value.i64;
     return;
   }
   *out = 0;
@@ -113,13 +113,11 @@ static void nvidia_gpu_io_link_accumulate(unsigned int gid, const dcgm_data_t *r
                   nvidia_gpu_link_u64_delta(row->prof_nvlink_rx_bytes, &g_io_prev_nvlink_rx[gid]));
 }
 
-static int list_field_values(unsigned int gpu_id,
-                             dcgmFieldValue_v1 *values,
-                             int num_values,
+static int list_field_values(unsigned int gpu_id, dcgmFieldValue_v1 *values, int num_values,
                              void *userdata)
 {
   int i;
-  dcgm_data_t *data = (dcgm_data_t *) userdata;
+  dcgm_data_t *data = (dcgm_data_t *)userdata;
 
   if (gpu_id >= DCGM_MAX_NUM_DEVICES)
     return -1;
@@ -127,96 +125,93 @@ static int list_field_values(unsigned int gpu_id,
     if (values[i].status != DCGM_ST_OK)
       continue;
     switch (values[i].fieldId) {
-      case DCGM_FI_DEV_GPU_TEMP:
-        data[gpu_id].temperature = values[i].value.i64;
-        break;
-      case DCGM_FI_DEV_POWER_USAGE:
-        dcgm_field_value_watts(&values[i], &data[gpu_id].power_usage);
-        break;
-      case DCGM_FI_DEV_SYSIO_POWER_UTIL_CURRENT:
-        dcgm_field_value_watts(&values[i], &data[gpu_id].sysio_power_usage);
-        break;
-      case DCGM_FI_DEV_MODULE_POWER_UTIL_CURRENT:
-        dcgm_field_value_watts(&values[i], &data[gpu_id].module_power_usage);
-        break;
-      case DCGM_FI_DEV_GPU_UTIL:
-        data[gpu_id].gpu_util = values[i].value.i64;
-        break;
-      case DCGM_FI_DEV_MEM_COPY_UTIL:
-        data[gpu_id].mem_util = values[i].value.i64;
-        break;
-      case DCGM_FI_DEV_FB_TOTAL:
-        data[gpu_id].fb_total_mb = values[i].value.i64;
-        break;
-      case DCGM_FI_DEV_FB_USED:
-        data[gpu_id].fb_used_mb = values[i].value.i64;
-        break;
-      case DCGM_FI_DEV_FB_FREE:
-        data[gpu_id].fb_free_mb = values[i].value.i64;
-        break;
-      case DCGM_FI_DEV_SM_CLOCK:
-        data[gpu_id].sm_clock = values[i].value.i64;
-        break;
-      case DCGM_FI_DEV_PCIE_REPLAY_COUNTER:
-        data[gpu_id].pcie_replay_counter = values[i].value.i64;
-        break;
-      case DCGM_FI_PROF_DRAM_ACTIVE:
-        (void) bounded_ratio(values[i].value.dbl, &data[gpu_id].dram_active);
-        break;
-      case DCGM_FI_PROF_SM_ACTIVE:
-        (void) bounded_ratio(values[i].value.dbl, &data[gpu_id].sm_active);
-        break;
-      case DCGM_FI_PROF_SM_OCCUPANCY:
-        (void) bounded_ratio(values[i].value.dbl, &data[gpu_id].sm_occupancy);
-        break;
-      case DCGM_FI_PROF_PIPE_FP64_ACTIVE:
-        (void) bounded_ratio(values[i].value.dbl, &data[gpu_id].fp64_active);
-        break;
-      case DCGM_FI_PROF_PIPE_FP32_ACTIVE:
-        (void) bounded_ratio(values[i].value.dbl, &data[gpu_id].fp32_active);
-        break;
-      case DCGM_FI_PROF_PIPE_FP16_ACTIVE:
-        (void) bounded_ratio(values[i].value.dbl, &data[gpu_id].fp16_active);
-        break;
-      case DCGM_FI_PROF_PIPE_TENSOR_ACTIVE:
-        (void) bounded_ratio(values[i].value.dbl, &data[gpu_id].tensor_active);
-        break;
-      case DCGM_FI_PROF_PIPE_TENSOR_IMMA_ACTIVE:
-        (void) bounded_ratio(values[i].value.dbl, &data[gpu_id].tensor_imma_active);
-        break;
-      case DCGM_FI_PROF_PIPE_TENSOR_HMMA_ACTIVE:
-        (void) bounded_ratio(values[i].value.dbl, &data[gpu_id].tensor_hmma_active);
-        break;
-      case DCGM_FI_PROF_PIPE_TENSOR_DFMA_ACTIVE:
-        (void) bounded_ratio(values[i].value.dbl, &data[gpu_id].tensor_dfma_active);
-        break;
-      case DCGM_FI_DEV_CLOCK_THROTTLE_REASONS:
-        data[gpu_id].clocks_event_reasons = values[i].value.i64;
-        break;
-      case DCGM_FI_PROF_PCIE_TX_BYTES:
-        dcgm_field_value_u64(&values[i], &data[gpu_id].prof_pcie_tx_bytes);
-        break;
-      case DCGM_FI_PROF_PCIE_RX_BYTES:
-        dcgm_field_value_u64(&values[i], &data[gpu_id].prof_pcie_rx_bytes);
-        break;
-      case DCGM_FI_PROF_NVLINK_TX_BYTES:
-        dcgm_field_value_u64(&values[i], &data[gpu_id].prof_nvlink_tx_bytes);
-        break;
-      case DCGM_FI_PROF_NVLINK_RX_BYTES:
-        dcgm_field_value_u64(&values[i], &data[gpu_id].prof_nvlink_rx_bytes);
-        break;
-      default:
-        break;
+    case DCGM_FI_DEV_GPU_TEMP:
+      data[gpu_id].temperature = values[i].value.i64;
+      break;
+    case DCGM_FI_DEV_POWER_USAGE:
+      dcgm_field_value_watts(&values[i], &data[gpu_id].power_usage);
+      break;
+    case DCGM_FI_DEV_SYSIO_POWER_UTIL_CURRENT:
+      dcgm_field_value_watts(&values[i], &data[gpu_id].sysio_power_usage);
+      break;
+    case DCGM_FI_DEV_MODULE_POWER_UTIL_CURRENT:
+      dcgm_field_value_watts(&values[i], &data[gpu_id].module_power_usage);
+      break;
+    case DCGM_FI_DEV_GPU_UTIL:
+      data[gpu_id].gpu_util = values[i].value.i64;
+      break;
+    case DCGM_FI_DEV_MEM_COPY_UTIL:
+      data[gpu_id].mem_util = values[i].value.i64;
+      break;
+    case DCGM_FI_DEV_FB_TOTAL:
+      data[gpu_id].fb_total_mb = values[i].value.i64;
+      break;
+    case DCGM_FI_DEV_FB_USED:
+      data[gpu_id].fb_used_mb = values[i].value.i64;
+      break;
+    case DCGM_FI_DEV_FB_FREE:
+      data[gpu_id].fb_free_mb = values[i].value.i64;
+      break;
+    case DCGM_FI_DEV_SM_CLOCK:
+      data[gpu_id].sm_clock = values[i].value.i64;
+      break;
+    case DCGM_FI_DEV_PCIE_REPLAY_COUNTER:
+      data[gpu_id].pcie_replay_counter = values[i].value.i64;
+      break;
+    case DCGM_FI_PROF_DRAM_ACTIVE:
+      (void)bounded_ratio(values[i].value.dbl, &data[gpu_id].dram_active);
+      break;
+    case DCGM_FI_PROF_SM_ACTIVE:
+      (void)bounded_ratio(values[i].value.dbl, &data[gpu_id].sm_active);
+      break;
+    case DCGM_FI_PROF_SM_OCCUPANCY:
+      (void)bounded_ratio(values[i].value.dbl, &data[gpu_id].sm_occupancy);
+      break;
+    case DCGM_FI_PROF_PIPE_FP64_ACTIVE:
+      (void)bounded_ratio(values[i].value.dbl, &data[gpu_id].fp64_active);
+      break;
+    case DCGM_FI_PROF_PIPE_FP32_ACTIVE:
+      (void)bounded_ratio(values[i].value.dbl, &data[gpu_id].fp32_active);
+      break;
+    case DCGM_FI_PROF_PIPE_FP16_ACTIVE:
+      (void)bounded_ratio(values[i].value.dbl, &data[gpu_id].fp16_active);
+      break;
+    case DCGM_FI_PROF_PIPE_TENSOR_ACTIVE:
+      (void)bounded_ratio(values[i].value.dbl, &data[gpu_id].tensor_active);
+      break;
+    case DCGM_FI_PROF_PIPE_TENSOR_IMMA_ACTIVE:
+      (void)bounded_ratio(values[i].value.dbl, &data[gpu_id].tensor_imma_active);
+      break;
+    case DCGM_FI_PROF_PIPE_TENSOR_HMMA_ACTIVE:
+      (void)bounded_ratio(values[i].value.dbl, &data[gpu_id].tensor_hmma_active);
+      break;
+    case DCGM_FI_PROF_PIPE_TENSOR_DFMA_ACTIVE:
+      (void)bounded_ratio(values[i].value.dbl, &data[gpu_id].tensor_dfma_active);
+      break;
+    case DCGM_FI_DEV_CLOCK_THROTTLE_REASONS:
+      data[gpu_id].clocks_event_reasons = values[i].value.i64;
+      break;
+    case DCGM_FI_PROF_PCIE_TX_BYTES:
+      dcgm_field_value_u64(&values[i], &data[gpu_id].prof_pcie_tx_bytes);
+      break;
+    case DCGM_FI_PROF_PCIE_RX_BYTES:
+      dcgm_field_value_u64(&values[i], &data[gpu_id].prof_pcie_rx_bytes);
+      break;
+    case DCGM_FI_PROF_NVLINK_TX_BYTES:
+      dcgm_field_value_u64(&values[i], &data[gpu_id].prof_nvlink_tx_bytes);
+      break;
+    case DCGM_FI_PROF_NVLINK_RX_BYTES:
+      dcgm_field_value_u64(&values[i], &data[gpu_id].prof_nvlink_rx_bytes);
+      break;
+    default:
+      break;
     }
   }
   return 0;
 }
 
-static int nvidia_gpu_collect_dev(struct stats *stats,
-                                  const dcgm_data_t *row,
-                                  unsigned int gid,
-                                  int gpu_count,
-                                  long long delta_us)
+static int nvidia_gpu_collect_dev(struct stats *stats, const dcgm_data_t *row, unsigned int gid,
+                                  int gpu_count, long long delta_us)
 {
   struct nvidia_gpu_estimate_input est_in;
   double flops_rate;
@@ -241,15 +236,17 @@ static int nvidia_gpu_collect_dev(struct stats *stats,
   nvidia_gpu_io_link_accumulate(gid, row);
 
   if (delta_us > 0) {
-    double dt_sec = (double) delta_us / 1000000.0;
+    double dt_sec = (double)delta_us / 1000000.0;
     delta_flops = clamp_double_to_ull(flops_rate * dt_sec);
     delta_mem_bytes = clamp_double_to_ull(mem_bw_rate * dt_sec);
     delta_mem_read_bytes = delta_mem_bytes / 2ULL;
     delta_mem_write_bytes = delta_mem_bytes - delta_mem_read_bytes;
     g_gpu_est_flops[gid] = ull_add_sat(g_gpu_est_flops[gid], delta_flops);
     g_gpu_est_mem_total_bytes[gid] = ull_add_sat(g_gpu_est_mem_total_bytes[gid], delta_mem_bytes);
-    g_gpu_est_mem_read_bytes[gid] = ull_add_sat(g_gpu_est_mem_read_bytes[gid], delta_mem_read_bytes);
-    g_gpu_est_mem_write_bytes[gid] = ull_add_sat(g_gpu_est_mem_write_bytes[gid], delta_mem_write_bytes);
+    g_gpu_est_mem_read_bytes[gid] =
+        ull_add_sat(g_gpu_est_mem_read_bytes[gid], delta_mem_read_bytes);
+    g_gpu_est_mem_write_bytes[gid] =
+        ull_add_sat(g_gpu_est_mem_write_bytes[gid], delta_mem_write_bytes);
   }
 
   stats_set(stats, "temperature", I64_TO_LLU(row->temperature));
@@ -285,7 +282,7 @@ static int nvidia_gpu_collect_dev(struct stats *stats,
   stats_set(stats, "gpu_mem_write_bytes", g_gpu_est_mem_write_bytes[gid]);
   stats_set(stats, "gpu_mem_total_bytes", g_gpu_est_mem_total_bytes[gid]);
   stats_set(stats, "gpu_io_link_total_bytes", g_gpu_io_link_total_bytes[gid]);
-  stats_set(stats, "gpu_count", (unsigned long long) (gpu_count < 0 ? 0 : gpu_count));
+  stats_set(stats, "gpu_count", (unsigned long long)(gpu_count < 0 ? 0 : gpu_count));
   return 0;
 }
 
@@ -300,8 +297,7 @@ static void nvidia_gpu_collect(struct stats_type *type)
   {
     struct timespec mono;
     if (clock_gettime(CLOCK_MONOTONIC, &mono) == 0) {
-      long long now_us =
-          (long long) mono.tv_sec * 1000000LL + (long long) mono.tv_nsec / 1000LL;
+      long long now_us = (long long)mono.tv_sec * 1000000LL + (long long)mono.tv_nsec / 1000LL;
       if (g_gpu_prev_collect_us > 0 && now_us > g_gpu_prev_collect_us)
         delta_us = now_us - g_gpu_prev_collect_us;
       g_gpu_prev_collect_us = now_us;
@@ -315,7 +311,7 @@ static void nvidia_gpu_collect(struct stats_type *type)
    * dcgmGetLatestValues passes each GPU's DCGM id (not 0..ndev-1) to list_field_values.
    * Size the scratch array by DCGM_MAX_NUM_DEVICES so callbacks never write past the end.
    */
-  dcgm_data = (dcgm_data_t *) calloc((size_t) DCGM_MAX_NUM_DEVICES, sizeof(*dcgm_data));
+  dcgm_data = (dcgm_data_t *)calloc((size_t)DCGM_MAX_NUM_DEVICES, sizeof(*dcgm_data));
   if (dcgm_data == NULL) {
     fail_stage = NVIDIA_GPU_FAIL_ALLOC;
     ERROR("Failed to allocate DCGM data buffer\n");
@@ -347,7 +343,8 @@ static void nvidia_gpu_collect(struct stats_type *type)
       g_nvidia_gpu_stats_alloc_skips++;
       continue;
     }
-    if (nvidia_gpu_collect_dev(stats, &dcgm_data[gid], gid, g_nvidia_gpu_runtime_ndev, delta_us) == 0)
+    if (nvidia_gpu_collect_dev(stats, &dcgm_data[gid], gid, g_nvidia_gpu_runtime_ndev, delta_us) ==
+        0)
       nr++;
   }
 
@@ -364,26 +361,26 @@ out:
    * subset on first attach). Keep the type enabled so later cycles can recover.
    */
   if (nr == 0)
-    monitor_log_warn("nvidia_gpu: no device rows emitted this cycle; stage=%d init=%lu attach=%lu discover=%lu group=%lu add=%lu fg=%lu watch=%lu alloc=%lu fetch=%lu gid_oob=%lu stats_null=%lu\n",
-                     fail_stage,
-                     g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_DCGM_INIT],
-                     g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_ATTACH],
-                     g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_DISCOVERY],
-                     g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_GROUP_CREATE],
-                     g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_GROUP_ADD_DEVICE],
-                     g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_FIELD_GROUP_CREATE],
-                     g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_WATCH_FIELDS],
-                     g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_ALLOC],
-                     g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_FETCH],
-                     g_nvidia_gpu_gid_oob_skips,
-                     g_nvidia_gpu_stats_alloc_skips);
+    monitor_log_warn(
+        "nvidia_gpu: no device rows emitted this cycle; stage=%d init=%lu attach=%lu discover=%lu "
+        "group=%lu add=%lu fg=%lu watch=%lu alloc=%lu fetch=%lu gid_oob=%lu stats_null=%lu\n",
+        fail_stage, g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_DCGM_INIT],
+        g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_ATTACH],
+        g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_DISCOVERY],
+        g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_GROUP_CREATE],
+        g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_GROUP_ADD_DEVICE],
+        g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_FIELD_GROUP_CREATE],
+        g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_WATCH_FIELDS],
+        g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_ALLOC],
+        g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_FETCH], g_nvidia_gpu_gid_oob_skips,
+        g_nvidia_gpu_stats_alloc_skips);
 }
 
 //! Definition of stats entry for this type
 struct stats_type nvidia_gpu_stats_type = {
-  .st_name = "nvidia_gpu",
-  .st_collect = &nvidia_gpu_collect,
+    .st_name = "nvidia_gpu",
+    .st_collect = &nvidia_gpu_collect,
 #define X SCHEMA_DEF
-  .st_schema_def = JOIN(KEYS),
+    .st_schema_def = JOIN(KEYS),
 #undef X
 };

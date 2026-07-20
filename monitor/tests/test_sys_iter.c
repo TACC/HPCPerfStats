@@ -53,7 +53,7 @@ int main(void)
   make_file(root, ".dotfile");
   make_file(root, "gamma");
 
-  struct visit_log vl = { 0 };
+  struct visit_log vl = {0};
   int rc = sys_iter_for_each(root, visit_cb, &vl);
 
   assert(rc == 0);
@@ -67,10 +67,14 @@ int main(void)
   /* cleanup */
   char path[512];
 
-  snprintf(path, sizeof(path), "%s/alpha", root);  unlink(path);
-  snprintf(path, sizeof(path), "%s/beta", root);   unlink(path);
-  snprintf(path, sizeof(path), "%s/.dotfile", root); unlink(path);
-  snprintf(path, sizeof(path), "%s/gamma", root);  unlink(path);
+  snprintf(path, sizeof(path), "%s/alpha", root);
+  unlink(path);
+  snprintf(path, sizeof(path), "%s/beta", root);
+  unlink(path);
+  snprintf(path, sizeof(path), "%s/.dotfile", root);
+  unlink(path);
+  snprintf(path, sizeof(path), "%s/gamma", root);
+  unlink(path);
   rmdir(root);
 
   /* Missing directory: returns -1, callback never invoked. */
@@ -86,7 +90,8 @@ int main(void)
   make_file(root, "x");
   rc = sys_iter_for_each(root, NULL, NULL);
   assert(rc == 0);
-  snprintf(path, sizeof(path), "%s/x", root); unlink(path);
+  snprintf(path, sizeof(path), "%s/x", root);
+  unlink(path);
   rmdir(root);
 
   puts("test_sys_iter passed");

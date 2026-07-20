@@ -29,14 +29,14 @@ static int likwid_uncore_quiet_stderr(int *saved_stderr, int *null_fd)
     return 0;
   *null_fd = open("/dev/null", O_WRONLY);
   if (*null_fd >= 0)
-    (void) dup2(*null_fd, STDERR_FILENO);
+    (void)dup2(*null_fd, STDERR_FILENO);
   return 1;
 }
 
 static void likwid_uncore_restore_stderr(int saved_stderr, int null_fd)
 {
   if (saved_stderr >= 0) {
-    (void) dup2(saved_stderr, STDERR_FILENO);
+    (void)dup2(saved_stderr, STDERR_FILENO);
     close(saved_stderr);
   }
   if (null_fd >= 0)
@@ -44,8 +44,8 @@ static void likwid_uncore_restore_stderr(int saved_stderr, int null_fd)
 }
 
 #ifdef HAVE_LIKWID
-static int likwid_uncore_try_eventset(const char *events, int *group_out,
-                                      int saved_stderr, int null_fd, int quiet)
+static int likwid_uncore_try_eventset(const char *events, int *group_out, int saved_stderr,
+                                      int null_fd, int quiet)
 {
   int group;
 
@@ -79,23 +79,19 @@ static int likwid_uncore_adapter_begin_spr(struct stats_type *type)
   if (g_profile_ready[LIKWID_UNCORE_PROFILE_IMC_SPR])
     return 0;
 
-  (void) host_edac_scan_mem_classes(&has_ddr, &has_hbm);
+  (void)host_edac_scan_mem_classes(&has_ddr, &has_hbm);
   n_order = likwid_spr_imc_eventset_try_order(has_ddr, has_hbm, order,
-                                              (int) (sizeof(order)
-                                                     / sizeof(order[0])));
+                                              (int)(sizeof(order) / sizeof(order[0])));
   quiet = likwid_uncore_quiet_stderr(&saved_stderr, &null_fd);
   for (i = 0; i < n_order; i++) {
     const char *events = likwid_spr_imc_eventset_string(order[i]);
     int group = -1;
 
-    if (likwid_uncore_try_eventset(events, &group, saved_stderr, null_fd,
-                                   quiet) == 0) {
+    if (likwid_uncore_try_eventset(events, &group, saved_stderr, null_fd, quiet) == 0) {
       g_profile_group[LIKWID_UNCORE_PROFILE_IMC_SPR] = group;
       g_profile_ready[LIKWID_UNCORE_PROFILE_IMC_SPR] = 1;
       if (i > 0) {
-        monitor_log_warn(
-            "intel_x86_uncore_imc_spr: using LIKWID fallback eventset index %d\n",
-            i);
+        monitor_log_warn("intel_x86_uncore_imc_spr: using LIKWID fallback eventset index %d\n", i);
       }
       return 0;
     }
@@ -107,8 +103,7 @@ static int likwid_uncore_adapter_begin_spr(struct stats_type *type)
 }
 #endif
 
-int likwid_uncore_adapter_begin(struct stats_type *type,
-                                likwid_uncore_profile_t profile)
+int likwid_uncore_adapter_begin(struct stats_type *type, likwid_uncore_profile_t profile)
 {
 #ifdef HAVE_LIKWID
   const char *events = NULL;
@@ -162,10 +157,8 @@ err:
 #endif
 }
 
-void likwid_uncore_adapter_emit_counter(struct stats_type *type,
-                                        likwid_uncore_profile_t profile,
-                                        const char *counter_name,
-                                        unsigned long long val)
+void likwid_uncore_adapter_emit_counter(struct stats_type *type, likwid_uncore_profile_t profile,
+                                        const char *counter_name, unsigned long long val)
 {
   char dev[32];
   const char *key = NULL;
@@ -173,16 +166,14 @@ void likwid_uncore_adapter_emit_counter(struct stats_type *type,
 
   if (type == NULL || counter_name == NULL)
     return;
-  if (likwid_uncore_profile_map_counter(profile, counter_name, dev,
-                                        sizeof(dev), &key) < 0)
+  if (likwid_uncore_profile_map_counter(profile, counter_name, dev, sizeof(dev), &key) < 0)
     return;
   stats = get_current_stats(type, dev);
   if (stats != NULL && key != NULL)
     stats_set(stats, key, val);
 }
 
-void likwid_uncore_adapter_collect(struct stats_type *type,
-                                   likwid_uncore_profile_t profile)
+void likwid_uncore_adapter_collect(struct stats_type *type, likwid_uncore_profile_t profile)
 {
 #ifdef HAVE_LIKWID
   int i;
@@ -198,12 +189,10 @@ void likwid_uncore_adapter_collect(struct stats_type *type,
 
   n_events = perfmon_getNumberOfEvents(g_profile_group[profile]);
   for (i = 0; i < n_events; i++) {
-    const char *counter_name =
-        perfmon_getCounterName(g_profile_group[profile], i);
+    const char *counter_name = perfmon_getCounterName(g_profile_group[profile], i);
     unsigned long long val;
 
-    val = (unsigned long long)perfmon_getResult(g_profile_group[profile], i,
-                                                thread_id);
+    val = (unsigned long long)perfmon_getResult(g_profile_group[profile], i, thread_id);
     likwid_uncore_adapter_emit_counter(type, profile, counter_name, val);
   }
 #else

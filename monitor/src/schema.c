@@ -38,7 +38,7 @@ static int schema_fill_entry_array(struct schema *sc)
   size_t i = 0;
   char *key;
 
-  sc->sc_ent = (struct schema_entry **) calloc(sc->sc_len, sizeof(*sc->sc_ent));
+  sc->sc_ent = (struct schema_entry **)calloc(sc->sc_len, sizeof(*sc->sc_ent));
   if (sc->sc_ent == NULL && sc->sc_len != 0) {
     ERROR("cannot allocate schema entries: %m\n");
     return -1;
@@ -48,8 +48,7 @@ static int schema_fill_entry_array(struct schema *sc)
     struct schema_entry *se = key_to_schema_entry(key);
 
     sc->sc_ent[se->se_index] = se;
-    TRACE("i %zu, d_key `%s', se_key `%s', se_index %u\n",
-          i, key, se->se_key, se->se_index);
+    TRACE("i %zu, d_key `%s', se_key `%s', se_index %u\n", i, key, se->se_key, se->se_index);
   }
   return 0;
 }
@@ -83,7 +82,7 @@ int schema_init(struct schema *sc, const char *def)
     if (se == NULL)
       goto err_abort;
 
-    se->se_index = (unsigned int) nr_se++;
+    se->se_index = (unsigned int)nr_se++;
     if (dict_set(&sc->sc_dict, se->se_key) < 0) {
       free(se->se_unit);
       free(se->se_desc);
@@ -99,9 +98,9 @@ int schema_init(struct schema *sc, const char *def)
   rc = 0;
   goto err;
 
- err_abort:
+err_abort:
   schema_init_abort(sc);
- err:
+err:
   free(cpy);
   return rc;
 }

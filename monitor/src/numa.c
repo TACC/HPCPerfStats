@@ -16,13 +16,9 @@
 // local_node 24910136
 // other_node 41244896
 
-#define KEYS \
-  X(numa_hit, "E", ""), \
-  X(numa_miss, "E", ""), \
-  X(numa_foreign, "E", ""), \
-  X(interleave_hit, "E", ""), \
-  X(local_node, "E", ""), \
-  X(other_node, "E", "")
+#define KEYS                                                                                       \
+  X(numa_hit, "E", ""), X(numa_miss, "E", ""), X(numa_foreign, "E", ""),                           \
+      X(interleave_hit, "E", ""), X(local_node, "E", ""), X(other_node, "E", "")
 
 static void numa_collect_each(const char *base, const char *name, void *ctx)
 {
@@ -49,9 +45,9 @@ static void numa_collect(struct stats_type *type)
 }
 
 struct stats_type numa_stats_type = {
-  .st_name = "host_numa",
-  .st_collect = &numa_collect,
+    .st_name = "host_numa",
+    .st_collect = &numa_collect,
 #define X SCHEMA_DEF
-  .st_schema_def = JOIN(KEYS),
+    .st_schema_def = JOIN(KEYS),
 #undef X
 };

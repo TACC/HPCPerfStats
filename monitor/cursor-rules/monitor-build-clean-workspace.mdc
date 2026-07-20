@@ -32,6 +32,7 @@ Ship `monitor_tree_clean.sh` via `src/Makefile.am` `EXTRA_DIST` so RPM tarballs 
 |--------|-------------|
 | `prepare_rpmbuild_dirs.sh` | `monitor_tree_clean_pre_dist` before dist; `monitor_tree_clean_post_dist` after copy to `rpmbuild/SOURCES/` |
 | `build_static_bundle.sh` | Source clean helper; `monitor_tree_clean_build_static` in `build_monitor()`; honor `SKIP_CLEAN=1` |
+| `run_asan_check.sh` | Removes stale `.build-asan` before configure (honors `SKIP_CLEAN=1`); see **monitor-asan-cpp-linter-gate** |
 | `cross_compile_test.sh` | `rm -rf` foreign monitor build root before `configure` in `build_foreign_monitor()` |
 
 ## Relation to other rules

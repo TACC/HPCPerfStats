@@ -48,15 +48,12 @@ static void stats_file_write_property_banner(struct stats_file *sf)
   uname(&uts_buf);
   pscanf("/proc/uptime", "%llu", &uptime);
 
-  stats_format_emit_property_banner(stats_file_emit, sf, SF_PROPERTY_CHAR,
-                                    STATS_PROGRAM, STATS_VERSION,
-                                    uts_buf.nodename, uts_buf.sysname,
-                                    uts_buf.machine, uts_buf.release,
-                                    uts_buf.version, uptime);
+  stats_format_emit_property_banner(stats_file_emit, sf, SF_PROPERTY_CHAR, STATS_PROGRAM,
+                                    STATS_VERSION, uts_buf.nodename, uts_buf.sysname,
+                                    uts_buf.machine, uts_buf.release, uts_buf.version, uptime);
 }
 
-static int sf_rd_dispatch_header_line(struct stats_file *sf, char *first,
-                                      char *line, int line_nr)
+static int sf_rd_dispatch_header_line(struct stats_file *sf, char *first, char *line, int line_nr)
 {
   struct stats_type *type;
   stats_file_header_directive_kind_t kind;
@@ -132,7 +129,7 @@ static int sf_rd_hdr(struct stats_file *sf)
       goto err;
   }
 
- out:
+out:
   if (ferror(sf->sf_file)) {
   err:
     rc = -1;

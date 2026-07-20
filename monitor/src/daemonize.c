@@ -86,8 +86,7 @@ static void daemonize_write_pid_lock(void)
   if (pid_fd < 0)
     daemonize_exit_on_failure();
   if (lockf(pid_fd, F_TLOCK, 0) < 0) {
-    monitor_log_error("%s already found. Abort second instance.\n",
-                      pid_file_name);
+    monitor_log_error("%s already found. Abort second instance.\n", pid_file_name);
     daemonize_exit_on_failure();
   }
   if (ftruncate(pid_fd, 0) != 0)

@@ -1,0 +1,17 @@
+# HPCPerfStats monitor C style — matches monitor-c-conventions (2-space, K&R/Linux braces).
+BasedOnStyle: LLVM
+Language: Cpp
+IndentWidth: 2
+TabWidth: 2
+UseTab: Never
+ColumnLimit: 100
+BreakBeforeBraces: Linux
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: Empty
+IndentCaseLabels: false
+PointerAlignment: Right
+SortIncludes: false
+ReflowComments: false
+# Keep legacy macros / includes stable for Autotools and KEYS headers.
+KeepEmptyLinesAtTheStartOfBlocks: true

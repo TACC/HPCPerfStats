@@ -16,7 +16,7 @@ static int rec_n;
 
 void stats_set(struct stats *stats, const char *key, unsigned long long val)
 {
-  (void) stats;
+  (void)stats;
   assert(rec_n < MAX_REC);
   snprintf(rec_key[rec_n], sizeof(rec_key[0]), "%s", key);
   rec_val[rec_n] = val;
@@ -44,7 +44,7 @@ static int rec_find(const char *key, unsigned long long *out)
 static int allow_only(void *ctx, struct stats *stats, const char *key)
 {
   const char *const *allowed = ctx;
-  (void) stats;
+  (void)stats;
   for (; *allowed != NULL; allowed++)
     if (strcmp(*allowed, key) == 0)
       return 1;
@@ -55,7 +55,7 @@ static int allow_only(void *ctx, struct stats *stats, const char *key)
 static struct stats *dummy_stats(void)
 {
   static int placeholder;
-  return (struct stats *) &placeholder;
+  return (struct stats *)&placeholder;
 }
 
 static void write_file(const char *path, const char *content)
@@ -70,7 +70,7 @@ static void test_dir_filtered(void)
 {
   char dir[] = "/tmp/hps_gate_dirXXXXXX";
   char path[256];
-  const char *allowed[] = { "rx_bytes", NULL };
+  const char *allowed[] = {"rx_bytes", NULL};
 
   assert(mkdtemp(dir) != NULL);
   snprintf(path, sizeof(path), "%s/rx_bytes", dir);
@@ -79,8 +79,7 @@ static void test_dir_filtered(void)
   write_file(path, "5\n");
 
   rec_reset();
-  assert(path_collect_key_value_dir_filtered(dir, dummy_stats(), allow_only,
-                                             (void *) allowed) == 0);
+  assert(path_collect_key_value_dir_filtered(dir, dummy_stats(), allow_only, (void *)allowed) == 0);
   {
     unsigned long long v = 0;
     assert(rec_find("rx_bytes", &v) && v == 100ULL);
@@ -98,15 +97,14 @@ static void test_key_value_filtered(void)
 {
   char file[] = "/tmp/hps_gate_kvXXXXXX";
   int fd = mkstemp(file);
-  const char *allowed[] = { "k2", NULL };
+  const char *allowed[] = {"k2", NULL};
 
   assert(fd >= 0);
   close(fd);
   write_file(file, "k1 1\nk2 2\nk3 3\n");
 
   rec_reset();
-  assert(path_collect_key_value_filtered(file, dummy_stats(), allow_only,
-                                         (void *) allowed) == 0);
+  assert(path_collect_key_value_filtered(file, dummy_stats(), allow_only, (void *)allowed) == 0);
   {
     unsigned long long v = 0;
     assert(rec_find("k2", &v) && v == 2ULL);
@@ -126,7 +124,7 @@ static void test_key_list_filtered(void)
 {
   char file[] = "/tmp/hps_gate_klXXXXXX";
   int fd = mkstemp(file);
-  const char *allowed[] = { "b", NULL };
+  const char *allowed[] = {"b", NULL};
 
   assert(fd >= 0);
   close(fd);
@@ -134,8 +132,8 @@ static void test_key_list_filtered(void)
 
   rec_reset();
   /* All three values consumed positionally, only "b" stored. */
-  assert(path_collect_key_list_filtered(file, dummy_stats(), allow_only,
-                                        (void *) allowed, "a", "b", "c", NULL) == 3);
+  assert(path_collect_key_list_filtered(file, dummy_stats(), allow_only, (void *)allowed, "a", "b",
+                                        "c", NULL) == 3);
   {
     unsigned long long v = 0;
     assert(rec_find("b", &v) && v == 20ULL);
@@ -150,14 +148,14 @@ static void test_global_hook(void)
 {
   char file[] = "/tmp/hps_gate_hookXXXXXX";
   int fd = mkstemp(file);
-  const char *allowed[] = { "k1", NULL };
+  const char *allowed[] = {"k1", NULL};
 
   assert(fd >= 0);
   close(fd);
   write_file(file, "k1 7\nk2 8\n");
 
   /* With the hook installed, non-filtered helper gates by the predicate. */
-  collect_set_key_active_hook(allow_only, (void *) allowed);
+  collect_set_key_active_hook(allow_only, (void *)allowed);
   rec_reset();
   assert(path_collect_key_value(file, dummy_stats()) == 0);
   assert(rec_find("k1", NULL));

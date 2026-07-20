@@ -15,11 +15,9 @@
 #include "likwid_rapl.h"
 #include "rapl_likwid_stats.h"
 
-#define KEYS \
-  X(pkg_energy, "E,W=32,U=mJ", ""), \
-  X(pp0_energy, "E,W=32,U=mJ", ""), \
-  X(pp1_energy, "E,W=32,U=mJ", ""), \
-  X(dram_energy, "E,W=32,U=mJ", "")
+#define KEYS                                                                                       \
+  X(pkg_energy, "E,W=32,U=mJ", ""), X(pp0_energy, "E,W=32,U=mJ", ""),                              \
+      X(pp1_energy, "E,W=32,U=mJ", ""), X(dram_energy, "E,W=32,U=mJ", "")
 
 static int intel_rapl_begin(struct stats_type *type)
 {
@@ -44,13 +42,11 @@ static void intel_rapl_collect(struct stats_type *type)
     char pkg[80];
 
     snprintf(cpu, sizeof(cpu), "%d", i);
-    cpuid_read_cpu_topology(cpu, &pkg_id, &core_id, &smt_id,
-          &nr_cores);
+    cpuid_read_cpu_topology(cpu, &pkg_id, &core_id, &smt_id, &nr_cores);
 
     if (core_id == 0 && smt_id == 0) {
       snprintf(pkg, sizeof(pkg), "%d", pkg_id);
-      rapl_likwid_intel_collect_pkg(type, pkg, atoi(cpu),
-              (unsigned)pkg_id);
+      rapl_likwid_intel_collect_pkg(type, pkg, atoi(cpu), (unsigned)pkg_id);
     }
   }
 }

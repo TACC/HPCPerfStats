@@ -11,7 +11,7 @@
 #include "schema.h"
 #include "trace.h"
 
-#define SCHEMA_DEF(k,o,d,r...) " " #k "," o
+#define SCHEMA_DEF(k, o, d, r...) " " #k "," o
 
 /* Fixed size avoids a trailing flexible array in static struct stats_type objects.
  * NVC++/LLVM mis-sized st_name[] for some names (e.g. host_sysv_shm); longest current
@@ -30,10 +30,10 @@ struct stats_type {
   int (*st_begin)(struct stats_type *type);
   void (*st_collect)(struct stats_type *type);
   char *st_schema_def;
-  unsigned int st_schema_def_owned:1;
+  unsigned int st_schema_def_owned : 1;
   struct schema st_schema;
   struct dict st_current_dict;
-  unsigned int st_enabled:1, st_selected:1;
+  unsigned int st_enabled : 1, st_selected : 1;
   char st_name[STATS_TYPE_NAME_MAX];
 };
 
@@ -48,8 +48,8 @@ struct stats {
 
 static inline struct stats *key_to_stats(const char *key)
 {
-  size_t s_dev_offset = ((struct stats *) NULL)->s_dev - (char *) NULL;
-  return (struct stats *) (key - s_dev_offset);
+  size_t s_dev_offset = ((struct stats *)NULL)->s_dev - (char *)NULL;
+  return (struct stats *)(key - s_dev_offset);
 }
 
 int stats_type_init(struct stats_type *type);

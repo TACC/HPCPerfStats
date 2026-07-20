@@ -16,7 +16,7 @@
  */
 int main(void)
 {
-  struct intel_mmconfig empty = { -1, MAP_FAILED, 0, 0 };
+  struct intel_mmconfig empty = {-1, MAP_FAILED, 0, 0};
 
   /* Closing a never-opened struct is a no-op. */
   intel_mmconfig_close(&empty);
@@ -30,7 +30,7 @@ int main(void)
    * helper by also constructing an alternate path? Not possible: helper
    * hard-codes /dev/mem. So just assert that a regular non-root invocation
    * either succeeds (if running with permissions) or returns -1 cleanly. */
-  struct intel_mmconfig mm = { -1, MAP_FAILED, 0, 0 };
+  struct intel_mmconfig mm = {-1, MAP_FAILED, 0, 0};
   int rc = intel_mmconfig_open(&mm, 0x80000000, 4096);
 
   if (rc == 0) {

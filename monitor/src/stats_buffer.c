@@ -38,7 +38,7 @@ static long stats_buffer_monotonic_us(void)
 
   if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
     return -1;
-  return (long) ts.tv_sec * 1000000L + (long) ts.tv_nsec / 1000L;
+  return (long)ts.tv_sec * 1000000L + (long)ts.tv_nsec / 1000L;
 }
 
 static void stats_buf_emit(void *opaque, const char *fmt, ...)
@@ -47,8 +47,8 @@ static void stats_buf_emit(void *opaque, const char *fmt, ...)
   va_list ap;
 
   va_start(ap, fmt);
-  if (stats_buffer_data_append_vfmt(&sf->sf_data, &sf->sf_data_len, &sf->sf_data_cap, fmt,
-				    ap) < 0) {
+  if (stats_buffer_data_append_vfmt(&sf->sf_data, &sf->sf_data_len, &sf->sf_data_cap, fmt, ap) <
+      0) {
     /* Best-effort on OOM (buffer unchanged). */
   }
   va_end(ap);
@@ -85,9 +85,8 @@ int stats_wr_hdr(struct stats_buffer *sf)
   pscanf("/proc/uptime", "%llu", &uptime);
 
   stats_format_emit_property_banner(stats_buf_emit, sf, SF_PROPERTY_CHAR, STATS_PROGRAM,
-				    STATS_VERSION, uts->nodename, uts->sysname,
-				    uts->machine, uts->release,
-				    uts->version, uptime);
+                                    STATS_VERSION, uts->nodename, uts->sysname, uts->machine,
+                                    uts->release, uts->version, uptime);
 
   {
     size_t i = 0;
@@ -95,7 +94,7 @@ int stats_wr_hdr(struct stats_buffer *sf)
 
     while ((type = stats_type_for_each(&i)) != NULL) {
       if (!type->st_enabled)
-	continue;
+        continue;
 
       TRACE("type %s, schema_len %zu\n", type->st_name, type->st_schema.sc_len);
       stats_format_emit_schema_line(stats_buf_emit, sf, SF_SCHEMA_CHAR, type);
@@ -105,7 +104,8 @@ int stats_wr_hdr(struct stats_buffer *sf)
   return 0;
 }
 
-int stats_buffer_open(struct stats_buffer *sf, const char *host, const char *port, const char *queue, const char *user, const char *password)
+int stats_buffer_open(struct stats_buffer *sf, const char *host, const char *port,
+                      const char *queue, const char *user, const char *password)
 {
   int rc = 0;
   memset(sf, 0, sizeof(*sf));
@@ -121,8 +121,8 @@ int stats_buffer_open(struct stats_buffer *sf, const char *host, const char *por
   sf->sf_queue = strdup(queue);
   sf->sf_user = strdup(user);
   sf->sf_password = strdup(password);
-  if (sf->sf_host == NULL || sf->sf_port == NULL || sf->sf_queue == NULL
-      || sf->sf_user == NULL || sf->sf_password == NULL) {
+  if (sf->sf_host == NULL || sf->sf_port == NULL || sf->sf_queue == NULL || sf->sf_user == NULL ||
+      sf->sf_password == NULL) {
     stats_buffer_close(sf);
     return -1;
   }
@@ -131,8 +131,8 @@ int stats_buffer_open(struct stats_buffer *sf, const char *host, const char *por
   str_trim_inplace(sf->sf_port);
   str_trim_inplace(sf->sf_queue);
   str_trim_inplace(sf->sf_user);
-  if (sf->sf_host[0] == '\0' || sf->sf_port[0] == '\0' || sf->sf_queue[0] == '\0'
-      || sf->sf_user[0] == '\0') {
+  if (sf->sf_host[0] == '\0' || sf->sf_port[0] == '\0' || sf->sf_queue[0] == '\0' ||
+      sf->sf_user[0] == '\0') {
     stats_buffer_close(sf);
     return -1;
   }
@@ -143,7 +143,7 @@ int stats_buffer_open(struct stats_buffer *sf, const char *host, const char *por
 int stats_buffer_close(struct stats_buffer *sf)
 {
   int rc = 0;
-  
+
   free(sf->sf_data);
   free(sf->sf_host);
   free(sf->sf_port);
@@ -169,8 +169,7 @@ static void stats_buffer_append_mark_lines(struct stats_buffer *sf)
   if (sf->sf_mark == NULL)
     return;
 
-  stats_format_emit_mark_multiline(stats_buf_emit, sf, SF_MARK_CHAR,
-				   sf->sf_mark);
+  stats_format_emit_mark_multiline(stats_buf_emit, sf, SF_MARK_CHAR, sf->sf_mark);
 }
 
 /* Choose the sample-row tier for this payload. The `$`-always-full rule is
@@ -178,16 +177,14 @@ static void stats_buffer_append_mark_lines(struct stats_buffer *sf)
  * never go sparse. */
 static enum stats_row_tier stats_buffer_collect_row_tier(const struct stats_buffer *sf)
 {
-  return stats_buffer_row_tier_decide(stats_buffer_is_schema_payload(sf),
-                                      collect_tier_enabled(),
-                                      (int) collect_tier_get_phase());
+  return stats_buffer_row_tier_decide(stats_buffer_is_schema_payload(sf), collect_tier_enabled(),
+                                      (int)collect_tier_get_phase());
 }
 
 enum stats_row_tier stats_buffer_payload_row_tier(const struct stats_buffer *sf)
 {
-  return stats_buffer_row_tier_decide(stats_buffer_is_schema_payload(sf),
-				      collect_tier_enabled(),
-				      (int) collect_tier_get_phase());
+  return stats_buffer_row_tier_decide(stats_buffer_is_schema_payload(sf), collect_tier_enabled(),
+                                      (int)collect_tier_get_phase());
 }
 
 int stats_buffer_collect(struct stats_buffer *sf)
@@ -207,19 +204,18 @@ int stats_buffer_collect(struct stats_buffer *sf)
     goto out;
   }
 #endif
-  header_len = snprintf(header, sizeof(header), "\n%f %s %s\n",
-			time.tv_sec + 1e-9 * time.tv_nsec, jobid, stats_buffer_cached_uts()->nodename);
-  if (header_len < 0 || (size_t)header_len >= sizeof(header)
-      || stats_buffer_data_append_bytes(&sf->sf_data, &sf->sf_data_len,
-					&sf->sf_data_cap, header,
-					(size_t)header_len) < 0) {
+  header_len = snprintf(header, sizeof(header), "\n%f %s %s\n", time.tv_sec + 1e-9 * time.tv_nsec,
+                        jobid, stats_buffer_cached_uts()->nodename);
+  if (header_len < 0 || (size_t)header_len >= sizeof(header) ||
+      stats_buffer_data_append_bytes(&sf->sf_data, &sf->sf_data_len, &sf->sf_data_cap, header,
+                                     (size_t)header_len) < 0) {
     rc = -1;
     goto out;
   }
 
   stats_buffer_append_mark_lines(sf);
   stats_buffer_append_enabled_type_rows(sf, stats_buffer_collect_row_tier(sf));
- out:
+out:
   return rc;
 }
 
@@ -237,19 +233,16 @@ int stats_buffer_resend(struct stats_buffer *sf)
   return stats_buffer_send_payload(sf);
 }
 
-int ring_buffer_insert(
-  struct stats_buffer *sf, 
-  struct sf_ring_buffer *w, 
-  int max_buffer_size, 
-  int allow_ring_buffer_overwrite)
-{ 
+int ring_buffer_insert(struct stats_buffer *sf, struct sf_ring_buffer *w, int max_buffer_size,
+                       int allow_ring_buffer_overwrite)
+{
   int rc = 0;
   struct sf_queue *q_new;
   struct sf_queue *victim = NULL;
-  
+
   /* Case 1: Empty buffer */
   if (w->q_count == 0) {
-    q_new = (struct sf_queue *) calloc(1, sizeof(struct sf_queue));
+    q_new = (struct sf_queue *)calloc(1, sizeof(struct sf_queue));
     if (q_new == NULL) {
       rc = -1;
       goto out;
@@ -263,7 +256,7 @@ int ring_buffer_insert(
     w->q_count += 1;
     goto out;
   }
-  
+
   /* Case 2: Full buffer */
   if (w->q_count >= max_buffer_size && max_buffer_size != -1) {
     if (!allow_ring_buffer_overwrite) {
@@ -302,20 +295,20 @@ int ring_buffer_insert(
     w->d_count += 1;
     goto out;
   }
-  
+
   /* Case 3: Otherwise */
-  q_new = (struct sf_queue *) calloc(1, sizeof(struct sf_queue));
+  q_new = (struct sf_queue *)calloc(1, sizeof(struct sf_queue));
   if (q_new == NULL) {
     rc = -1;
     goto out;
   }
   q_new->sf = sf;
   insque(q_new, w->q);
-  w->q = q_new; 
+  w->q = q_new;
   w->q_count += 1;
 
-  out:
-    return rc;
+out:
+  return rc;
 }
 
 static void ring_buffer_drop_first(struct sf_ring_buffer *w)
@@ -348,7 +341,7 @@ static void ring_buffer_drop_first(struct sf_ring_buffer *w)
 }
 
 void ring_buffer_resend_limited(struct sf_ring_buffer *w, int max_batches, long max_runtime_us,
-				int *processed_entries)
+                                int *processed_entries)
 {
   enum { max_batch_entries = 10 };
   int batches = 0;
@@ -376,7 +369,7 @@ void ring_buffer_resend_limited(struct sf_ring_buffer *w, int max_batches, long 
         break;
       w->r_count++;
       if (processed_entries != NULL)
-	(*processed_entries)++;
+        (*processed_entries)++;
       ring_buffer_drop_first(w);
       batches++;
       goto maybe_budget_break;
@@ -443,7 +436,7 @@ void ring_buffer_resend_limited(struct sf_ring_buffer *w, int max_batches, long 
     if (max_runtime_us > 0 && started_us > 0) {
       long now_us = stats_buffer_monotonic_us();
       if (now_us > 0 && now_us - started_us >= max_runtime_us)
-	break;
+        break;
     }
   }
 }
@@ -469,22 +462,16 @@ int stats_buffer_write_file(struct stats_buffer *sf, char *path)
     ERROR("error writing to `%s': %m\n", path);
     rc = -1;
   }
-  out:
-    if (sf_file != NULL)
-      fclose(sf_file);
-    return rc;
+out:
+  if (sf_file != NULL)
+    fclose(sf_file);
+  return rc;
 }
 
-int ring_buffer_load_file(
-  FILE *sf_file, 
-  struct sf_ring_buffer *w, 
-  const char *host, 
-  const char *port, 
-  const char *queue,
-  const char *user,
-  const char *password,
-  int max_buffer_size, 
-  int allow_ring_buffer_overwrite)
+int ring_buffer_load_file(FILE *sf_file, struct sf_ring_buffer *w, const char *host,
+                          const char *port, const char *queue, const char *user,
+                          const char *password, int max_buffer_size,
+                          int allow_ring_buffer_overwrite)
 {
   int n_stats = 0;
   int stats_start = 0;
@@ -493,7 +480,7 @@ int ring_buffer_load_file(
   size_t line_buf_size = 0;
 
   struct stats_buffer *sf;
-  sf = (struct stats_buffer *) malloc(sizeof(*sf));
+  sf = (struct stats_buffer *)malloc(sizeof(*sf));
   if (sf == NULL) {
     rc = -1;
     goto out;
@@ -509,21 +496,20 @@ int ring_buffer_load_file(
     free(sf);
     goto out;
   }
-  while (getline(&line_buf, &line_buf_size, sf_file) != -1)  {
+  while (getline(&line_buf, &line_buf_size, sf_file) != -1) {
     if (line_buf[0] == '\n' && stats_start == 0)
-        continue;
-    if (line_buf[0] != '\n')  {
-      if (stats_buffer_data_append_fmt(&sf->sf_data, &sf->sf_data_len, &sf->sf_data_cap,
-                                       "%s", line_buf) < 0) {
+      continue;
+    if (line_buf[0] != '\n') {
+      if (stats_buffer_data_append_fmt(&sf->sf_data, &sf->sf_data_len, &sf->sf_data_cap, "%s",
+                                       line_buf) < 0) {
         /* Best-effort on OOM. */
       }
       if (stats_start == 0)
-          stats_start = 1;
-    }
-    else {
+        stats_start = 1;
+    } else {
       n_stats++;
       rc = ring_buffer_insert(sf, w, -1, allow_ring_buffer_overwrite);
-      sf = (struct stats_buffer *) malloc(sizeof(struct stats_buffer));
+      sf = (struct stats_buffer *)malloc(sizeof(struct stats_buffer));
       if (sf == NULL) {
         TRACE("Failed allocating data buffer : %m\n");
         rc = -1;
@@ -548,7 +534,7 @@ int ring_buffer_load_file(
   w->l_count += n_stats;
   TRACE("Loaded %d stats from dumpfile\n", n_stats);
 
-  out:
-    free(line_buf);
-    return rc;
+out:
+  free(line_buf);
+  return rc;
 }

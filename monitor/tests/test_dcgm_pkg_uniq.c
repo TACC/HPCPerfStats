@@ -6,8 +6,8 @@
 
 static int cmp_int(const void *a, const void *b)
 {
-  int x = *(const int *) a;
-  int y = *(const int *) b;
+  int x = *(const int *)a;
+  int y = *(const int *)b;
 
   if (x < y)
     return -1;
@@ -18,9 +18,9 @@ static int cmp_int(const void *a, const void *b)
 
 int main(void)
 {
-  int a[] = { 0, 1, 0, 1 };
-  int b[] = { 7 };
-  int c[] = { 3, 3, 3 };
+  int a[] = {0, 1, 0, 1};
+  int b[] = {7};
+  int c[] = {3, 3, 3};
 
   qsort(a, 4, sizeof(a[0]), cmp_int);
   assert(dcgm_count_unique_sorted_ints(a, 4) == 2);

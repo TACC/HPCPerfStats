@@ -9,20 +9,19 @@
 
 static int g_fake_open_calls;
 
-static int fake_oib_open_port_by_num(struct oib_port **port, uint8 hfi,
-                                     uint32 port_num)
+static int fake_oib_open_port_by_num(struct oib_port **port, uint8 hfi, uint32 port_num)
 {
-  (void) hfi;
-  (void) port_num;
+  (void)hfi;
+  (void)port_num;
   g_fake_open_calls++;
   if (port != NULL)
-    *port = (struct oib_port *) (uintptr_t) 0x1;
+    *port = (struct oib_port *)(uintptr_t)0x1;
   return 0;
 }
 
 static void fake_oib_close_port(struct oib_port *port)
 {
-  (void) port;
+  (void)port;
 }
 
 static void test_load_missing_lib_fails(void)

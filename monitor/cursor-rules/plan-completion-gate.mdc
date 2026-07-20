@@ -99,6 +99,7 @@ When behavior changes, also run **`logic-change-checklist.mdc`** mentally and co
 
 - Executed tests reported with pass/fail; blockers documented per **`test-first-discipline.mdc`**.
 - Run artifacts under **`test_runs/`**, not **`docs/`**, per **`test-runs-output-directory.mdc`**.
+- When closing a **plan** that touched monitor C/tests/scripts: **`run_asan_check.sh`** and **`run_cpp_linter.sh`** per **`monitor-asan-cpp-linter-gate.mdc`** (additive to dual-verify; no git hooks).
 - Plan frontmatter: all implementation todos `status: completed` (or explicit deferral documented) before reporting done.
 
 ## Narrow exceptions

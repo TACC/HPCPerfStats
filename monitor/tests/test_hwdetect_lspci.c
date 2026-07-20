@@ -8,13 +8,11 @@
 
 struct stats_type *stats_type_get(const char *name)
 {
-  (void) name;
+  (void)name;
   return NULL;
 }
 
-void ib_family_disable_all(void)
-{
-}
+void ib_family_disable_all(void) {}
 
 static void test_invalidate_probe_cache_idempotent(void)
 {

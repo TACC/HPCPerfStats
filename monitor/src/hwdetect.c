@@ -22,7 +22,7 @@ static void disable_type_if_present(const char *name)
 static void to_lower_ascii(char *s)
 {
   while (*s != '\0') {
-    *s = (char) tolower((unsigned char) *s);
+    *s = (char)tolower((unsigned char)*s);
     s++;
   }
 }
@@ -67,9 +67,9 @@ static int env_truthy(const char *name)
   const char *v = getenv(name);
   if (v == NULL)
     return 0;
-  return strcmp(v, "1") == 0 || strcmp(v, "true") == 0 || strcmp(v, "true") == 0
-      || strcmp(v, "yes") == 0 || strcmp(v, "yes") == 0 || strcmp(v, "on") == 0
-      || strcmp(v, "on") == 0;
+  return strcmp(v, "1") == 0 || strcmp(v, "true") == 0 || strcmp(v, "true") == 0 ||
+         strcmp(v, "yes") == 0 || strcmp(v, "yes") == 0 || strcmp(v, "on") == 0 ||
+         strcmp(v, "on") == 0;
 }
 
 static int env_int_or_default(const char *name, int fallback)
@@ -84,7 +84,7 @@ static int env_int_or_default(const char *name, int fallback)
     return fallback;
   if (parsed > 1000000L)
     return 1000000;
-  return (int) parsed;
+  return (int)parsed;
 }
 
 static unsigned long g_nvidia_detect_miss_streak = 0;
@@ -107,7 +107,7 @@ static long long hwdetect_monotonic_us(void)
 
   if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
     return -1;
-  return (long long) ts.tv_sec * 1000000LL + (long long) ts.tv_nsec / 1000LL;
+  return (long long)ts.tv_sec * 1000000LL + (long long)ts.tv_nsec / 1000LL;
 }
 
 void hwdetect_reset_nvidia_disable_state(void)
@@ -125,15 +125,14 @@ int hwdetect_should_disable_nvidia_gpu(int has_nvidia_gpu)
   int miss_threshold = env_int_or_default("HPCPERFSTATS_NVIDIA_DISABLE_MISS_THRESHOLD", 1);
   if (has_nvidia_gpu) {
     if (g_nvidia_detect_miss_streak > 0) {
-      TRACE("hwdetect: nvidia probe recovered after %lu miss(es)\n",
-            g_nvidia_detect_miss_streak);
+      TRACE("hwdetect: nvidia probe recovered after %lu miss(es)\n", g_nvidia_detect_miss_streak);
     }
     g_nvidia_detect_miss_streak = 0;
     return 0;
   }
 
   g_nvidia_detect_miss_streak++;
-  if ((int) g_nvidia_detect_miss_streak < miss_threshold) {
+  if ((int)g_nvidia_detect_miss_streak < miss_threshold) {
     TRACE("hwdetect: nvidia miss streak %lu/%d; not disabling nvidia_gpu yet\n",
           g_nvidia_detect_miss_streak, miss_threshold);
     return 0;
@@ -141,15 +140,12 @@ int hwdetect_should_disable_nvidia_gpu(int has_nvidia_gpu)
   return 1;
 }
 
-void hwdetect_probe_optional_stack_presence(int *has_nvidia_gpu,
-                                            int *has_amd_gpu,
-                                            int *has_intel_gpu,
-                                            int *has_ib,
-                                            int *has_opa)
+void hwdetect_probe_optional_stack_presence(int *has_nvidia_gpu, int *has_amd_gpu,
+                                            int *has_intel_gpu, int *has_ib, int *has_opa)
 {
   long long now_mono_us = hwdetect_monotonic_us();
   int ttl_sec = env_int_or_default("HPCPERFSTATS_LSPCI_CACHE_TTL_SEC", 300);
-  long long ttl_us = (long long) ttl_sec * 1000000LL;
+  long long ttl_us = (long long)ttl_sec * 1000000LL;
   long long started_us = now_mono_us;
   long long elapsed_us = -1;
   int nvidia = 0;
@@ -160,8 +156,8 @@ void hwdetect_probe_optional_stack_presence(int *has_nvidia_gpu,
   FILE *fp = popen("lspci -nn 2>/dev/null", "r");
   char line[1024];
 
-  if (g_probe_cache.valid && now_mono_us > 0 && ttl_us > 0
-      && now_mono_us - g_probe_cache.cached_mono_us <= ttl_us) {
+  if (g_probe_cache.valid && now_mono_us > 0 && ttl_us > 0 &&
+      now_mono_us - g_probe_cache.cached_mono_us <= ttl_us) {
     g_probe_cache_hits++;
     if (has_nvidia_gpu != NULL)
       *has_nvidia_gpu = g_probe_cache.has_nvidia_gpu;
@@ -201,8 +197,8 @@ void hwdetect_probe_optional_stack_presence(int *has_nvidia_gpu,
       intel = 1;
     if (strstr(line, "infiniband") != NULL || strstr(line, "[0207]") != NULL)
       ib = 1;
-    if (strstr(line, "omnipath") != NULL || strstr(line, "hfi") != NULL
-        || strstr(line, "cornelis") != NULL || strstr(line, "cn5000") != NULL)
+    if (strstr(line, "omnipath") != NULL || strstr(line, "hfi") != NULL ||
+        strstr(line, "cornelis") != NULL || strstr(line, "cn5000") != NULL)
       opa = 1;
   }
   pclose(fp);
@@ -238,8 +234,8 @@ void hwdetect_probe_optional_stack_presence(int *has_nvidia_gpu,
   if (started_us > 0) {
     elapsed_us = hwdetect_monotonic_us() - started_us;
     if (elapsed_us > 50000LL) {
-      TRACE("hwdetect probe slow: elapsed_us=%lld cache_hits=%lu cache_misses=%lu\n",
-            elapsed_us, g_probe_cache_hits, g_probe_cache_misses);
+      TRACE("hwdetect probe slow: elapsed_us=%lld cache_hits=%lu cache_misses=%lu\n", elapsed_us,
+            g_probe_cache_hits, g_probe_cache_misses);
     }
   }
 }
@@ -252,8 +248,8 @@ void auto_disable_optional_stats_by_lspci(void)
   int has_ib = 0;
   int has_opa = 0;
 
-  hwdetect_probe_optional_stack_presence(&has_nvidia_gpu, &has_amd_gpu, &has_intel_gpu,
-                                         &has_ib, &has_opa);
+  hwdetect_probe_optional_stack_presence(&has_nvidia_gpu, &has_amd_gpu, &has_intel_gpu, &has_ib,
+                                         &has_opa);
   if (env_truthy("HPCPERFSTATS_FORCE_NVIDIA_GPU")) {
     TRACE("hwdetect: HPCPERFSTATS_FORCE_NVIDIA_GPU is active; forcing nvidia_gpu enable\n");
     has_nvidia_gpu = 1;

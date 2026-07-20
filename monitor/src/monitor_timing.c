@@ -41,11 +41,10 @@ long long monitor_collect_slow_slot(double now_sec, double period)
 
   if (!isfinite(now_sec) || now_sec < 0.0)
     now_sec = 0.0;
-  return (long long) floor(now_sec / normalized_period);
+  return (long long)floor(now_sec / normalized_period);
 }
 
-int monitor_collect_should_run_slow(double now_sec, long long last_slow_slot,
-				    double period)
+int monitor_collect_should_run_slow(double now_sec, long long last_slow_slot, double period)
 {
   return monitor_collect_slow_slot(now_sec, period) != last_slow_slot;
 }

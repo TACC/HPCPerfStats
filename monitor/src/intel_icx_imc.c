@@ -20,10 +20,10 @@ static void intel_icx_imc_collect(struct stats_type *type)
 }
 
 struct stats_type intel_icx_imc_stats_type = {
-  .st_name = "intel_x86_uncore_imc_icx",
-  .st_begin = &intel_icx_imc_begin,
-  .st_collect = &intel_icx_imc_collect,
+    .st_name = "intel_x86_uncore_imc_icx",
+    .st_begin = &intel_icx_imc_begin,
+    .st_collect = &intel_icx_imc_collect,
 #define X SCHEMA_DEF
-  .st_schema_def = JOIN(KEYS),
+    .st_schema_def = JOIN(KEYS),
 #undef X
 };

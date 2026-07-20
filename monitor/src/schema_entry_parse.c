@@ -17,7 +17,7 @@ static void schema_apply_one_option(struct schema_entry *se, char *opt)
 
   strsep(&opt_arg, "=");
 
-  switch (toupper((unsigned char) *opt)) {
+  switch (toupper((unsigned char)*opt)) {
   default:
     TRACE("unknown schema option `%s'\n", opt);
     break;
@@ -33,12 +33,12 @@ static void schema_apply_one_option(struct schema_entry *se, char *opt)
     break;
   case 'W':
     if (opt_arg != NULL)
-      se->se_width = (unsigned int) strtoul(opt_arg, NULL, 0);
+      se->se_width = (unsigned int)strtoul(opt_arg, NULL, 0);
     break;
   case 'R':
     /* Rate/collection tier: R=S marks a slow-tier key; R=F (or anything else)
      * leaves the default fast tier. */
-    if (opt_arg != NULL && toupper((unsigned char) *opt_arg) == 'S')
+    if (opt_arg != NULL && toupper((unsigned char)*opt_arg) == 'S')
       se->se_collect_tier = COLLECT_TIER_SLOW;
     else
       se->se_collect_tier = COLLECT_TIER_FAST;
@@ -52,7 +52,7 @@ static int schema_copy_entry_key(struct schema_entry *se, const char *key)
   int n;
 
   n = snprintf(se->se_key, key_len + 1, "%s", key);
-  return (n >= 0 && (size_t) n <= key_len) ? 0 : -1;
+  return (n >= 0 && (size_t)n <= key_len) ? 0 : -1;
 }
 
 struct schema_entry *parse_schema_entry(char *str)
@@ -64,7 +64,7 @@ struct schema_entry *parse_schema_entry(char *str)
   if (str == NULL)
     return NULL;
 
-  while (isspace((unsigned char) *str))
+  while (isspace((unsigned char)*str))
     str++;
 
   key = strsep(&str, ",");
@@ -72,7 +72,7 @@ struct schema_entry *parse_schema_entry(char *str)
     return NULL;
 
   key_len = strlen(key);
-  se = (struct schema_entry *) malloc(sizeof(*se) + key_len + 1);
+  se = (struct schema_entry *)malloc(sizeof(*se) + key_len + 1);
   if (se == NULL)
     return NULL;
 
@@ -96,10 +96,8 @@ struct schema_entry *parse_schema_entry(char *str)
     schema_apply_one_option(se, opt);
   }
 
-  TRACE("se_key `%s', se_type %u, se_width %u, se_unit %s, se_desc `%s'\n",
-        se->se_key, se->se_type, se->se_width,
-        se->se_unit ? se->se_unit : "none",
-        se->se_desc ? se->se_desc : "none");
+  TRACE("se_key `%s', se_type %u, se_width %u, se_unit %s, se_desc `%s'\n", se->se_key, se->se_type,
+        se->se_width, se->se_unit ? se->se_unit : "none", se->se_desc ? se->se_desc : "none");
 
   return se;
 }

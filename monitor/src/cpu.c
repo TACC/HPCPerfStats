@@ -71,19 +71,19 @@ static void cpu_collect(struct stats_type *type)
     if (stats == NULL)
       continue;
 
-#define X(k,r...) #k
+#define X(k, r...) #k
     str_collect_key_list(rest, stats, KEYS, NULL);
 #undef X
   }
 
- out:
+out:
   free(line);
 }
 
 struct stats_type cpu_stats_type = {
-  .st_name = "host_cpu",
-  .st_collect = &cpu_collect,
+    .st_name = "host_cpu",
+    .st_collect = &cpu_collect,
 #define X SCHEMA_DEF
-  .st_schema_def = JOIN(KEYS),
+    .st_schema_def = JOIN(KEYS),
 #undef X
 };

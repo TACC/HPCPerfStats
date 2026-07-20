@@ -8,8 +8,7 @@
 processor_t processor;
 int nr_cpus = 1;
 
-int
-main(void)
+int main(void)
 {
   processor = SAPPHIRE_RAPIDS;
   assert(likwid_rapl_is_supported_intel_processor() == 1);

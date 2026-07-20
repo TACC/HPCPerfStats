@@ -15,7 +15,6 @@ double monitor_timing_seconds_until_next_boundary(double now, double period);
  * advanced past `last_slow_slot` (use last_slow_slot < 0 to force the first
  * tick to run slow). */
 long long monitor_collect_slow_slot(double now_sec, double period);
-int monitor_collect_should_run_slow(double now_sec, long long last_slow_slot,
-				    double period);
+int monitor_collect_should_run_slow(double now_sec, long long last_slow_slot, double period);
 
 #endif

@@ -10,8 +10,7 @@
 
 #define PROCFILE_IO_BUF 4096
 
-int procfile_for_each_line_skip(const char *path, size_t skip,
-                                procfile_line_fn cb, void *ctx)
+int procfile_for_each_line_skip(const char *path, size_t skip, procfile_line_fn cb, void *ctx)
 {
   FILE *file;
   char io_buf[PROCFILE_IO_BUF];

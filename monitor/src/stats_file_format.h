@@ -10,7 +10,7 @@ struct schema_entry;
 
 typedef enum {
   STATS_FILE_HDR_UNKNOWN = -1,
-  STATS_FILE_HDR_SCHEMA = '!',   /* type schema line */
+  STATS_FILE_HDR_SCHEMA = '!', /* type schema line */
   STATS_FILE_HDR_DEVICES = '@',
   STATS_FILE_HDR_COMMENT = '#',
   STATS_FILE_HDR_PROPERTY = '$',

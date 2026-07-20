@@ -15,7 +15,7 @@ int ib_port_logic_active(const char *state_line)
   if (state_line == NULL)
     return 0;
   p = state_line;
-  while (*p != '\0' && isspace((unsigned char) *p))
+  while (*p != '\0' && isspace((unsigned char)*p))
     p++;
   v = strtoul(p, &endp, 10);
   if (endp != p && v == 4)
@@ -37,7 +37,7 @@ int ib_port_phys_link_up(const char *phys_line)
   if (phys_line == NULL)
     return 0;
   p = phys_line;
-  while (*p != '\0' && isspace((unsigned char) *p))
+  while (*p != '\0' && isspace((unsigned char)*p))
     p++;
   v = strtoul(p, &endp, 10);
   if (endp != p && v == 5)

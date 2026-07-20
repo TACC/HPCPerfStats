@@ -17,11 +17,11 @@ char jobid[80] = "job42";
 double send_freq = 1.0;
 int nr_cpus = 1;
 int n_pmcs = 0;
-processor_t processor = (processor_t) 0;
+processor_t processor = (processor_t)0;
 
 int stats_buffer_test_send_hook(struct stats_buffer *sf)
 {
-  (void) sf;
+  (void)sf;
   return 0;
 }
 
@@ -60,7 +60,7 @@ static int read_file_text(const char *path, char *buf, size_t cap)
   n = fread(buf, 1, cap - 1, f);
   buf[n] = '\0';
   fclose(f);
-  return (int) n;
+  return (int)n;
 }
 
 static void build_collect_payload(struct stats_buffer *sf, enum collect_phase phase)
@@ -86,7 +86,7 @@ static void test_fast_writes_fast_only(void)
   char fast_path[512];
   char full_path[512];
   char buf[1024];
-  const unsigned long long vals[2] = { 11, 22 };
+  const unsigned long long vals[2] = {11, 22};
 
   assert(stats_buffer_collect_fixture_init(&fx, "a,E b,E,R=S", vals, 2) == 0);
   build_collect_payload(&sf, COLLECT_FAST_ONLY);
@@ -111,7 +111,7 @@ static void test_full_writes_full_only(void)
   struct stats_buffer sf;
   char full_path[512];
   char buf[1024];
-  const unsigned long long vals[2] = { 11, 22 };
+  const unsigned long long vals[2] = {11, 22};
 
   assert(stats_buffer_collect_fixture_init(&fx, "a,E b,E,R=S", vals, 2) == 0);
   build_collect_payload(&sf, COLLECT_FULL);
@@ -133,7 +133,7 @@ static void test_legacy_writes_full(void)
   struct stats_buffer sf;
   char full_path[512];
   char buf[1024];
-  const unsigned long long vals[2] = { 11, 22 };
+  const unsigned long long vals[2] = {11, 22};
 
   assert(stats_buffer_collect_fixture_init(&fx, "a,E b,E,R=S", vals, 2) == 0);
   collect_tier_set_enabled(0);

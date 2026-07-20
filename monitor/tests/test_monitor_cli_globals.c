@@ -43,7 +43,7 @@ ev_timer rotate_timer;
 
 void monitor_daemon_conf_set_buffer_max(int value)
 {
-	max_buffer_size = value;
+  max_buffer_size = value;
 }
 
 void test_monitor_cli_reset_globals(void)

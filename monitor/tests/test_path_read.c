@@ -8,15 +8,15 @@
 #include "path_read.h"
 
 static const struct path_read_opts collect_opts = {
-  .skip_known_bad  = 1,
-  .report_errors   = 0,
-  .detect_overflow = 0,
+    .skip_known_bad = 1,
+    .report_errors = 0,
+    .detect_overflow = 0,
 };
 
 static const struct path_read_opts pscanf_opts = {
-  .skip_known_bad  = 0,
-  .report_errors   = 0,
-  .detect_overflow = 1,
+    .skip_known_bad = 0,
+    .report_errors = 0,
+    .detect_overflow = 1,
 };
 
 static char *make_tmp(const char *body, size_t len)

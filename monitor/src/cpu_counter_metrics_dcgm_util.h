@@ -12,8 +12,7 @@ struct dcgm_cpu_jifs {
 
 double dcgm_clamp_percent(double v);
 void dcgm_cpu_scale_util_if_fraction(struct dcgm_cpu_sample *s);
-void dcgm_cpu_sample_from_jiffy_diff(struct dcgm_cpu_sample *s,
-                                     const struct dcgm_cpu_jifs *cur,
+void dcgm_cpu_sample_from_jiffy_diff(struct dcgm_cpu_sample *s, const struct dcgm_cpu_jifs *cur,
                                      const struct dcgm_cpu_jifs *prev);
 int dcgm_count_unique_sorted_ints(const int *sorted, int n);
 /* True for NVIDIA DCGM_FP64_BLANK and blank-family sentinels (>= blank). */

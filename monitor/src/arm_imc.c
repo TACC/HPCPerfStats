@@ -53,8 +53,8 @@ static void arm_aarch64_imc_cleanup(void)
   g_arm_aarch64_imc_n = 0;
 }
 
-static long perf_event_open_wrap(struct perf_event_attr *attr, pid_t pid, int cpu,
-                                 int group_fd, unsigned long flags)
+static long perf_event_open_wrap(struct perf_event_attr *attr, pid_t pid, int cpu, int group_fd,
+                                 unsigned long flags)
 {
   return syscall(__NR_perf_event_open, attr, pid, cpu, group_fd, flags);
 }
@@ -80,7 +80,7 @@ static int read_u64_path(const char *path, uint64_t *v)
   x = strtoull(buf, &end, 0);
   if (end == buf)
     return -1;
-  *v = (uint64_t) x;
+  *v = (uint64_t)x;
   return 0;
 }
 
@@ -100,7 +100,7 @@ static int first_cpu_from_cpumask(const char *path)
   if (n <= 0)
     return -1;
   buf[n] = '\0';
-  for (i = 0; i < (int) n; i++) {
+  for (i = 0; i < (int)n; i++) {
     char c = buf[i];
     int val = -1, b;
 
@@ -128,7 +128,7 @@ static int parse_field_bits(const char *s, int *lo, int *hi)
 
   if (s == NULL || lo == NULL || hi == NULL)
     return -1;
-  colon = strchr((char *) s, ':');
+  colon = strchr((char *)s, ':');
   if (colon == NULL)
     return -1;
   colon++;
@@ -156,8 +156,8 @@ static void set_bits_u64(unsigned long long *dst, int lo, int hi, unsigned long 
   *dst |= (value & mask) << lo;
 }
 
-static int apply_event_token(const char *pmu_dir, struct perf_event_attr *attr,
-                             const char *key, uint64_t value)
+static int apply_event_token(const char *pmu_dir, struct perf_event_attr *attr, const char *key,
+                             uint64_t value)
 {
   char path[512];
   char fmt[128];
@@ -166,7 +166,7 @@ static int apply_event_token(const char *pmu_dir, struct perf_event_attr *attr,
 
   if (pmu_dir == NULL || attr == NULL || key == NULL)
     return -1;
-  if (snprintf(path, sizeof(path), "%s/format/%s", pmu_dir, key) >= (int) sizeof(path))
+  if (snprintf(path, sizeof(path), "%s/format/%s", pmu_dir, key) >= (int)sizeof(path))
     return -1;
   fd = open(path, O_RDONLY);
   if (fd < 0)
@@ -210,13 +210,13 @@ static int event_attr_from_alias(const char *pmu_dir, const char *alias,
   attr->inherit = 0;
   attr->read_format = 0;
 
-  if (snprintf(path, sizeof(path), "%s/type", pmu_dir) >= (int) sizeof(path))
+  if (snprintf(path, sizeof(path), "%s/type", pmu_dir) >= (int)sizeof(path))
     return -1;
   if (read_u64_path(path, &type) != 0)
     return -1;
-  attr->type = (uint32_t) type;
+  attr->type = (uint32_t)type;
 
-  if (snprintf(path, sizeof(path), "%s/events/%s", pmu_dir, alias) >= (int) sizeof(path))
+  if (snprintf(path, sizeof(path), "%s/events/%s", pmu_dir, alias) >= (int)sizeof(path))
     return -1;
   fd = open(path, O_RDONLY);
   if (fd < 0)
@@ -258,7 +258,7 @@ static int open_arm_aarch64_imc_counter(const char *pmu_dir, const char *cpumask
   for (i = 0; aliases[i] != NULL; i++) {
     if (event_attr_from_alias(pmu_dir, aliases[i], &attr) != 0)
       continue;
-    fd = (int) perf_event_open_wrap(&attr, -1, cpu, -1, 0);
+    fd = (int)perf_event_open_wrap(&attr, -1, cpu, -1, 0);
     if (fd >= 0)
       return fd;
   }
@@ -279,19 +279,15 @@ static int arm_aarch64_imc_register_pmu(const char *pmu_name)
   int fd_r;
   int fd_w;
   struct arm_aarch64_imc_dev *dev;
-  const char *read_aliases[] = {
-    "cas_count_read", "read_cas", "reads", "read_bytes", NULL
-  };
-  const char *write_aliases[] = {
-    "cas_count_write", "write_cas", "writes", "write_bytes", NULL
-  };
+  const char *read_aliases[] = {"cas_count_read", "read_cas", "reads", "read_bytes", NULL};
+  const char *write_aliases[] = {"cas_count_write", "write_cas", "writes", "write_bytes", NULL};
 
   if (g_arm_aarch64_imc_n >= ARM_AARCH64_IMC_MAX_DEVS)
     return 0;
-  if (snprintf(pmu_dir, sizeof(pmu_dir), "/sys/bus/event_source/devices/%s", pmu_name)
-      >= (int) sizeof(pmu_dir))
+  if (snprintf(pmu_dir, sizeof(pmu_dir), "/sys/bus/event_source/devices/%s", pmu_name) >=
+      (int)sizeof(pmu_dir))
     return 0;
-  if (snprintf(cpumask, sizeof(cpumask), "%s/cpumask", pmu_dir) >= (int) sizeof(cpumask))
+  if (snprintf(cpumask, sizeof(cpumask), "%s/cpumask", pmu_dir) >= (int)sizeof(cpumask))
     return 0;
 
   fd_r = open_arm_aarch64_imc_counter(pmu_dir, cpumask, read_aliases);
@@ -337,7 +333,7 @@ static int arm_aarch64_imc_begin(struct stats_type *type)
       continue;
     if (!arm_aarch64_imc_probe_pmu(de->d_name))
       continue;
-    (void) arm_aarch64_imc_register_pmu(de->d_name);
+    (void)arm_aarch64_imc_register_pmu(de->d_name);
   }
   closedir(d);
   if (g_arm_aarch64_imc_n == 0)
@@ -361,9 +357,9 @@ static void arm_aarch64_imc_collect(struct stats_type *type)
 
     if (!dev->valid)
       continue;
-    if (read(dev->fd_read, &cur_r, sizeof(cur_r)) != (ssize_t) sizeof(cur_r))
+    if (read(dev->fd_read, &cur_r, sizeof(cur_r)) != (ssize_t)sizeof(cur_r))
       continue;
-    if (read(dev->fd_write, &cur_w, sizeof(cur_w)) != (ssize_t) sizeof(cur_w))
+    if (read(dev->fd_write, &cur_w, sizeof(cur_w)) != (ssize_t)sizeof(cur_w))
       continue;
     if (dev->last_read > 0 && cur_r >= dev->last_read)
       d_r = cur_r - dev->last_read;
@@ -382,10 +378,10 @@ static void arm_aarch64_imc_collect(struct stats_type *type)
 }
 
 struct stats_type arm_imc_stats_type = {
-  .st_begin = &arm_aarch64_imc_begin,
-  .st_collect = &arm_aarch64_imc_collect,
+    .st_begin = &arm_aarch64_imc_begin,
+    .st_collect = &arm_aarch64_imc_collect,
 #define X SCHEMA_DEF
-  .st_schema_def = JOIN(ARM_AARCH64_IMC_KEYS),
+    .st_schema_def = JOIN(ARM_AARCH64_IMC_KEYS),
 #undef X
-  .st_name = ARM_AARCH64_IMC_ST_NAME,
+    .st_name = ARM_AARCH64_IMC_ST_NAME,
 };

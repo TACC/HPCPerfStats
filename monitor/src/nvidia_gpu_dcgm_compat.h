@@ -7,9 +7,9 @@
 #include "dcgm_gpu_api.h"
 
 #ifndef DCGM_FI_DEV_CLOCK_THROTTLE_REASONS
-# ifdef DCGM_FI_DEV_CLOCKS_EVENT_REASONS
-#  define DCGM_FI_DEV_CLOCK_THROTTLE_REASONS DCGM_FI_DEV_CLOCKS_EVENT_REASONS
-# endif
+#ifdef DCGM_FI_DEV_CLOCKS_EVENT_REASONS
+#define DCGM_FI_DEV_CLOCK_THROTTLE_REASONS DCGM_FI_DEV_CLOCKS_EVENT_REASONS
+#endif
 #endif
 
 #ifndef DCGM_FI_PROF_PCIE_TX_BYTES
@@ -40,9 +40,9 @@
 #define DCGM_FI_PROF_PIPE_TENSOR_DFMA_ACTIVE 1015
 #endif
 
-#define DBL_TO_LLU(x) ((unsigned long long) ((x) + 0.5))
-#define DBL_TO_LLU_PERCENT(x) ((unsigned long long) ((100.0 * (x)) + 0.5))
-#define I64_TO_LLU(x) ((unsigned long long) (x))
+#define DBL_TO_LLU(x) ((unsigned long long)((x) + 0.5))
+#define DBL_TO_LLU_PERCENT(x) ((unsigned long long)((100.0 * (x)) + 0.5))
+#define I64_TO_LLU(x) ((unsigned long long)(x))
 
 static inline const char *nvidia_gpu_dcgm_err(dcgmReturn_t rc)
 {

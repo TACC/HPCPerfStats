@@ -28,25 +28,23 @@ static inline int stats_buffer_debug_shm_sample_wanted(int write_hdr, int payloa
 void stats_buffer_debug_shm_init(void);
 void stats_buffer_debug_shm_write_payload(const struct stats_buffer *sf,
                                           enum stats_buffer_debug_shm_payload_kind kind);
-void stats_buffer_debug_shm_write_sample(const struct stats_buffer *sf,
-                                         enum stats_row_tier tier);
+void stats_buffer_debug_shm_write_sample(const struct stats_buffer *sf, enum stats_row_tier tier);
 #else
-static inline void stats_buffer_debug_shm_init(void)
-{
-}
+static inline void stats_buffer_debug_shm_init(void) {}
 
-static inline void stats_buffer_debug_shm_write_payload(const struct stats_buffer *sf,
-                                                        enum stats_buffer_debug_shm_payload_kind kind)
+static inline void
+stats_buffer_debug_shm_write_payload(const struct stats_buffer *sf,
+                                     enum stats_buffer_debug_shm_payload_kind kind)
 {
-  (void) sf;
-  (void) kind;
+  (void)sf;
+  (void)kind;
 }
 
 static inline void stats_buffer_debug_shm_write_sample(const struct stats_buffer *sf,
                                                        enum stats_row_tier tier)
 {
-  (void) sf;
-  (void) tier;
+  (void)sf;
+  (void)tier;
 }
 #endif
 

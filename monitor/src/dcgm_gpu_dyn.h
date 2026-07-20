@@ -22,24 +22,22 @@ struct dcgm_gpu_dyn_test_hooks {
   dcgmReturn_t (*dcgmConnect_v2)(char *ipAddress, dcgmConnectV2Params_t *connectParams,
                                  dcgmHandle_t *pDcgmHandle);
   dcgmReturn_t (*dcgmDisconnect)(dcgmHandle_t pDcgmHandle);
-  dcgmReturn_t (*dcgmGetAllDevices)(dcgmHandle_t pDcgmHandle, unsigned int gpuIdList[],
-                                    int *count);
-  dcgmReturn_t (*dcgmGetAllSupportedDevices)(dcgmHandle_t pDcgmHandle,
-                                             unsigned int gpuIdList[], int *count);
+  dcgmReturn_t (*dcgmGetAllDevices)(dcgmHandle_t pDcgmHandle, unsigned int gpuIdList[], int *count);
+  dcgmReturn_t (*dcgmGetAllSupportedDevices)(dcgmHandle_t pDcgmHandle, unsigned int gpuIdList[],
+                                             int *count);
   dcgmReturn_t (*dcgmGetEntityGroupEntities)(dcgmHandle_t dcgmHandle,
                                              dcgm_field_entity_group_t entityGroup,
                                              dcgm_field_eid_t entities[], int *numEntities,
                                              unsigned int flags);
-  dcgmReturn_t (*dcgmGroupCreate)(dcgmHandle_t pDcgmHandle, dcgmGroupType_t type,
-                                  char *groupName, dcgmGpuGrp_t *pDcgmGroupId);
+  dcgmReturn_t (*dcgmGroupCreate)(dcgmHandle_t pDcgmHandle, dcgmGroupType_t type, char *groupName,
+                                  dcgmGpuGrp_t *pDcgmGroupId);
   dcgmReturn_t (*dcgmGroupDestroy)(dcgmHandle_t pDcgmHandle, dcgmGpuGrp_t groupId);
   dcgmReturn_t (*dcgmGroupAddDevice)(dcgmHandle_t pDcgmHandle, dcgmGpuGrp_t groupId,
                                      unsigned int gpuId);
   dcgmReturn_t (*dcgmFieldGroupCreate)(dcgmHandle_t dcgmHandle, int numFieldIds,
                                        unsigned short *fieldIds, char *fieldGroupName,
                                        dcgmFieldGrp_t *dcgmFieldGroupId);
-  dcgmReturn_t (*dcgmFieldGroupDestroy)(dcgmHandle_t dcgmHandle,
-                                        dcgmFieldGrp_t dcgmFieldGroupId);
+  dcgmReturn_t (*dcgmFieldGroupDestroy)(dcgmHandle_t dcgmHandle, dcgmFieldGrp_t dcgmFieldGroupId);
   dcgmReturn_t (*dcgmWatchFields)(dcgmHandle_t pDcgmHandle, dcgmGpuGrp_t groupId,
                                   dcgmFieldGrp_t fieldGroupId, long long updateFreq,
                                   double maxKeepAge, int maxKeepSamples);

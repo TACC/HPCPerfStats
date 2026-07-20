@@ -3,17 +3,22 @@
 #ifndef _CPUID_H_
 #define _CPUID_H_
 
-typedef enum { 
-  AMD_10H, AMD_17H, AMD_19H,
-  NEHALEM, WESTMERE, 
-  SANDYBRIDGE, IVYBRIDGE, 
-  HASWELL, BROADWELL,
+typedef enum {
+  AMD_10H,
+  AMD_17H,
+  AMD_19H,
+  NEHALEM,
+  WESTMERE,
+  SANDYBRIDGE,
+  IVYBRIDGE,
+  HASWELL,
+  BROADWELL,
   SKYLAKE,
   CASCADE_LAKE,
   ICELAKE_SERVER,
   SAPPHIRE_RAPIDS
 } processor_t;
-  
+
 // Return 1 for true and 0 for false
 int percore_signature(processor_t p, char *cpu, int *nr_events);
 processor_t signature(int *n_pmcs);

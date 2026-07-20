@@ -28,7 +28,7 @@ static long long roofline_monotonic_us(void)
 
   if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
     return -1;
-  return (long long) ts.tv_sec * 1000000LL + (long long) ts.tv_nsec / 1000LL;
+  return (long long)ts.tv_sec * 1000000LL + (long long)ts.tv_nsec / 1000LL;
 }
 
 static int roofline_env_int_or_default(const char *name, int fallback)
@@ -43,7 +43,7 @@ static int roofline_env_int_or_default(const char *name, int fallback)
     return fallback;
   if (parsed > 1000000L)
     return 1000000;
-  return (int) parsed;
+  return (int)parsed;
 }
 
 static enum roofline_emit_mode roofline_get_emit_mode(void)
@@ -75,8 +75,8 @@ static void roofline_hw_peak_collect(struct stats_type *type)
     should_emit = 1;
   } else if (mode == ROOFLINE_EMIT_PERIODIC) {
     int period_samples = roofline_env_int_or_default("HPCPERFSTATS_ROOFLINE_PERIOD_SAMPLES", 10);
-    should_emit = stats_collect_on_changeover
-	|| (g_roofline_collect_calls % (unsigned long) period_samples) == 0;
+    should_emit = stats_collect_on_changeover ||
+                  (g_roofline_collect_calls % (unsigned long)period_samples) == 0;
   } else {
     should_emit = stats_collect_on_changeover;
   }
@@ -84,9 +84,8 @@ static void roofline_hw_peak_collect(struct stats_type *type)
   if (!should_emit) {
     g_roofline_design_skip_calls++;
     if ((g_roofline_design_skip_calls % 128UL) == 1UL) {
-      fprintf(stderr,
-              "host_roofline_peak: skipped by cadence mode=%d (changeover=%d, skips=%lu)\n",
-              (int) mode, stats_collect_on_changeover, g_roofline_design_skip_calls);
+      fprintf(stderr, "host_roofline_peak: skipped by cadence mode=%d (changeover=%d, skips=%lu)\n",
+              (int)mode, stats_collect_on_changeover, g_roofline_design_skip_calls);
     }
     return;
   }
@@ -104,8 +103,7 @@ static void roofline_hw_peak_collect(struct stats_type *type)
     if (started_us > 0) {
       elapsed_us = roofline_monotonic_us() - started_us;
       if (elapsed_us > 100000L) {
-        fprintf(stderr,
-                "host_roofline_peak: one-shot detect elapsed_us=%lld source=%llu\n",
+        fprintf(stderr, "host_roofline_peak: one-shot detect elapsed_us=%lld source=%llu\n",
                 elapsed_us, g_roofline_cache.gpu_source);
       }
     }
@@ -123,9 +121,9 @@ static void roofline_hw_peak_collect(struct stats_type *type)
 }
 
 struct stats_type roofline_hw_peak_stats_type = {
-  .st_collect = &roofline_hw_peak_collect,
+    .st_collect = &roofline_hw_peak_collect,
 #define X SCHEMA_DEF
-  .st_schema_def = JOIN(KEYS),
+    .st_schema_def = JOIN(KEYS),
 #undef X
-  .st_name = "host_roofline_peak",
+    .st_name = "host_roofline_peak",
 };

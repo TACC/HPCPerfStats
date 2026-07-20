@@ -5,9 +5,9 @@
 #include "trace.h"
 #include "dict.h"
 
-#define DICT_HASH_DUMMY (((hash_t) 1) << (8 * sizeof(hash_t) - 1))
+#define DICT_HASH_DUMMY (((hash_t)1) << (8 * sizeof(hash_t) - 1))
 #define DICT_TABLE_LEN_MIN 8
-#define DICT_TABLE_LEN_MAX (((size_t) 1) << (8 * sizeof(size_t) - 1))
+#define DICT_TABLE_LEN_MAX (((size_t)1) << (8 * sizeof(size_t) - 1))
 #define PERTURB_SHIFT 5
 
 hash_t dict_strhash(const char *s)
@@ -17,13 +17,13 @@ hash_t dict_strhash(const char *s)
 
   if (s == NULL)
     return 0;
-  p = (const unsigned char *) s;
+  p = (const unsigned char *)s;
   x = *p << 7;
 
   for (; *p != 0; p++)
     x = (1000003 * x) ^ *p;
 
-  x ^= p - (const unsigned char *) s;
+  x ^= p - (const unsigned char *)s;
 
   return x & ~DICT_HASH_DUMMY;
 }
@@ -40,7 +40,7 @@ int dict_init(struct dict *dict, size_t count)
     table_len *= 2;
 
   memset(dict, 0, sizeof(struct dict));
-  dict->d_table = (struct dict_entry *) calloc(table_len, sizeof(struct dict_entry));
+  dict->d_table = (struct dict_entry *)calloc(table_len, sizeof(struct dict_entry));
   if (dict->d_table == NULL)
     return -1;
 
@@ -48,7 +48,7 @@ int dict_init(struct dict *dict, size_t count)
   return 0;
 }
 
-void dict_destroy(struct dict *dict, void (*key_dtor)(void*))
+void dict_destroy(struct dict *dict, void (*key_dtor)(void *))
 {
   if (key_dtor != NULL) {
     size_t i;
@@ -63,13 +63,13 @@ void dict_destroy(struct dict *dict, void (*key_dtor)(void*))
 /* new_table_len must be a power of two. */
 static int dict_resize(struct dict *dict, size_t new_table_len)
 {
-  TRACE("table_len %zu, load %zu, count %zu, new_table_len %zu\n",
-        dict->d_table_len, dict->d_load, dict->d_count, new_table_len);
+  TRACE("table_len %zu, load %zu, count %zu, new_table_len %zu\n", dict->d_table_len, dict->d_load,
+        dict->d_count, new_table_len);
 
   struct dict_entry *table, *old_table;
   size_t mask, old_table_len;
 
-  table = (struct dict_entry *) calloc(new_table_len, sizeof(struct dict_entry));
+  table = (struct dict_entry *)calloc(new_table_len, sizeof(struct dict_entry));
   if (table == NULL)
     return -1;
 
@@ -189,9 +189,9 @@ int dict_entry_set(struct dict *dict, struct dict_entry *ent, hash_t hash, char 
   }
 
   dict->d_load++;
- out_dummy:
+out_dummy:
   dict->d_count++;
- out_exist:
+out_exist:
   ent->d_hash = hash;
   ent->d_key = key;
 
@@ -243,8 +243,8 @@ int dict_set(struct dict *dict, char *key)
   ent = dict_entry_ref(dict, hash, key);
 
   if (ent->d_key != NULL) {
-    TRACE("overwriting old key `%s', hash %zu, with new key `%s' hash %zu\n",
-          ent->d_key, ent->d_hash, key, hash);
+    TRACE("overwriting old key `%s', hash %zu, with new key `%s' hash %zu\n", ent->d_key,
+          ent->d_hash, key, hash);
     ent->d_key = key;
     return 0;
   }

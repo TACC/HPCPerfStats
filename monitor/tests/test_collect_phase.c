@@ -12,35 +12,53 @@
 void cpu_stats_invalidate_file_caches(void) {}
 void net_stats_invalidate_iface_cache(void) {}
 void auto_disable_optional_stats_by_lspci(void) {}
-void metric_profiler_collect_begin(const char *name) { (void) name; }
-void metric_profiler_collect_end(const char *name) { (void) name; }
+void metric_profiler_collect_begin(const char *name)
+{
+  (void)name;
+}
+void metric_profiler_collect_end(const char *name)
+{
+  (void)name;
+}
 void metric_profiler_cycle_begin(void) {}
-void metric_profiler_cycle_end(FILE *stream) { (void) stream; }
-void monitor_log_error(const char *fmt, ...) { (void) fmt; }
-void monitor_log_warn(const char *fmt, ...) { (void) fmt; }
+void metric_profiler_cycle_end(FILE *stream)
+{
+  (void)stream;
+}
+void monitor_log_error(const char *fmt, ...)
+{
+  (void)fmt;
+}
+void monitor_log_warn(const char *fmt, ...)
+{
+  (void)fmt;
+}
 void collect_set_key_active_hook(collect_key_active_fn fn, void *ctx)
 {
-  (void) fn;
-  (void) ctx;
+  (void)fn;
+  (void)ctx;
 }
 
 int stats_type_init(struct stats_type *type)
 {
-  (void) type;
+  (void)type;
   return 0;
 }
 
-void stats_type_destroy(struct stats_type *type) { (void) type; }
+void stats_type_destroy(struct stats_type *type)
+{
+  (void)type;
+}
 
 struct stats_type *stats_type_for_each(size_t *i)
 {
-  (void) i;
+  (void)i;
   return NULL;
 }
 
 struct stats_type *stats_type_get(const char *name)
 {
-  (void) name;
+  (void)name;
   return NULL;
 }
 
@@ -126,8 +144,7 @@ static void test_tier_disabled_stays_full(void)
   long long last_slot = 5;
 
   collect_tier_set_enabled(0);
-  assert(stats_runtime_collect_phase_for_tick(30.0, &last_slot, 600.0)
-         == COLLECT_FULL);
+  assert(stats_runtime_collect_phase_for_tick(30.0, &last_slot, 600.0) == COLLECT_FULL);
   assert(collect_tier_get_phase() == COLLECT_FULL);
   assert(last_slot == 5);
   collect_tier_set_enabled(1);

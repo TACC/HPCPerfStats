@@ -21,6 +21,7 @@ Loaded every agent turn. Keep these short; do not add more `alwaysApply: true` f
 Notable contracts (see filename in `HPCPerfStats/monitor/cursor-rules/`):
 
 - **`monitor-static-build-verification.mdc`** / **`monitor-dual-verify-cross-and-static.mdc`** — canonical static bundle + cross-compile gates
+- **`monitor-asan-cpp-linter-gate.mdc`** — plan-close ASan + full-tree clang-format/clang-tidy (scripts only; no git hooks)
 - **`tacc-lmod-build-environment.mdc`** — on TACC SSH hosts: Lmod `module avail`/`module load`, fix agent MODULEPATH, Stampede3 build practices
 - **`monitor-build-clean-workspace.mdc`** — pre-compile clean workspace in `prepare_rpmbuild_dirs.sh`, `build_static_bundle.sh`, `cross_compile_test.sh`
 - **`monitor-workspace-contract.mdc`** — scope and listend consumer contract

@@ -18,7 +18,7 @@ static int tier_of(struct stats_type *type, const char *key)
 {
   int idx = schema_ref(&type->st_schema, key);
   assert(idx >= 0);
-  return (int) type->st_schema.sc_ent[idx]->se_collect_tier;
+  return (int)type->st_schema.sc_ent[idx]->se_collect_tier;
 }
 
 static void test_disabled_keeps_all_fast(void)
@@ -62,8 +62,7 @@ static void test_error_suffix_rule(void)
   struct stats_type type;
 
   collect_tier_set_enabled(1);
-  make_type(&type, "host_net",
-            "rx_bytes,E rx_crc_errors,E tx_errors,E collisions,E rx_dropped,E");
+  make_type(&type, "host_net", "rx_bytes,E rx_crc_errors,E tx_errors,E collisions,E rx_dropped,E");
   collect_tier_apply_to_type(&type);
   assert(tier_of(&type, "rx_crc_errors") == COLLECT_TIER_SLOW); /* *_errors rule */
   assert(tier_of(&type, "tx_errors") == COLLECT_TIER_SLOW);     /* *_errors rule */
@@ -98,8 +97,7 @@ static void test_key_active_by_phase(void)
   int fast_idx, slow_idx;
 
   collect_tier_set_enabled(1);
-  make_type(&type, "host_numa",
-            "numa_hit,E interleave_hit,E");
+  make_type(&type, "host_numa", "numa_hit,E interleave_hit,E");
   collect_tier_apply_to_type(&type);
   fast_idx = schema_ref(&type.st_schema, "numa_hit");
   slow_idx = schema_ref(&type.st_schema, "interleave_hit");

@@ -42,8 +42,10 @@ static void test_map_sp_dp_sum_and_cycles(void)
   assert(test_stats_stub_find(&stub, "mperf", &val) && val == 999ULL);
   assert(test_stats_stub_find(&stub, "cpu_clock_est_cycles", &val) && val == 999ULL);
   assert(test_stats_stub_find(&stub, "instr_retired", &val) && val == 42ULL);
-  assert(test_stats_stub_find(&stub, "fp_arith_inst_retired_128b_packed_double", &val) && val == 0ULL);
-  assert(test_stats_stub_find(&stub, "fp_arith_inst_retired_256b_packed_single", &val) && val == 0ULL);
+  assert(test_stats_stub_find(&stub, "fp_arith_inst_retired_128b_packed_double", &val) &&
+         val == 0ULL);
+  assert(test_stats_stub_find(&stub, "fp_arith_inst_retired_256b_packed_single", &val) &&
+         val == 0ULL);
 
   test_stats_stub_unbind();
 }

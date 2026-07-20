@@ -18,11 +18,11 @@ static void test_null_input_zeroes_outputs(void)
 static void test_fp_mix_clamped_and_scaled(void)
 {
   struct nvidia_gpu_estimate_input in = {
-    .fp64_active = 0.25,
-    .fp32_active = 0.25,
-    .fp16_active = 0.0,
-    .tensor_active = 0.0,
-    .mem_util = 0.0,
+      .fp64_active = 0.25,
+      .fp32_active = 0.25,
+      .fp16_active = 0.0,
+      .tensor_active = 0.0,
+      .mem_util = 0.0,
   };
   double flops;
   double mem_bw;
@@ -35,11 +35,11 @@ static void test_fp_mix_clamped_and_scaled(void)
 static void test_mem_util_scales_bandwidth(void)
 {
   struct nvidia_gpu_estimate_input in = {
-    .fp64_active = 0.0,
-    .fp32_active = 0.0,
-    .fp16_active = 0.0,
-    .tensor_active = 0.0,
-    .mem_util = 50.0,
+      .fp64_active = 0.0,
+      .fp32_active = 0.0,
+      .fp16_active = 0.0,
+      .tensor_active = 0.0,
+      .mem_util = 50.0,
   };
   double flops;
   double mem_bw;
@@ -74,11 +74,11 @@ static void test_link_u64_delta_null_prev(void)
 static void test_over_one_mix_clamped(void)
 {
   struct nvidia_gpu_estimate_input in = {
-    .fp64_active = 2.0,
-    .fp32_active = 0.0,
-    .fp16_active = 0.0,
-    .tensor_active = 0.0,
-    .mem_util = -5.0,
+      .fp64_active = 2.0,
+      .fp32_active = 0.0,
+      .fp16_active = 0.0,
+      .tensor_active = 0.0,
+      .mem_util = -5.0,
   };
   double flops;
   double mem_bw;

@@ -13,7 +13,7 @@ struct stats_file {
   char *sf_data;
   char *sf_host;
   char *sf_port;
-  unsigned int sf_empty:1;
+  unsigned int sf_empty : 1;
 };
 
 int stats_file_open(struct stats_file *sf, const char *path);

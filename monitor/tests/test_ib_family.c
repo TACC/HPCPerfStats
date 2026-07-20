@@ -14,9 +14,9 @@ int ib_mad_ext_collect_cycle_ok(void)
 
 void ib_mad_ext_collect_port(struct stats *stats, const char *hca, int port)
 {
-  (void) stats;
-  (void) hca;
-  (void) port;
+  (void)stats;
+  (void)hca;
+  (void)port;
 }
 
 int ib_mad_sw_collect_cycle_ok(void)
@@ -26,9 +26,9 @@ int ib_mad_sw_collect_cycle_ok(void)
 
 void ib_mad_sw_collect_port(struct stats *stats, const char *hca, int port)
 {
-  (void) stats;
-  (void) hca;
-  (void) port;
+  (void)stats;
+  (void)hca;
+  (void)port;
 }
 #endif
 
@@ -46,15 +46,15 @@ struct stats_type *stats_type_get(const char *name)
 
 struct stats *get_current_stats(struct stats_type *type, const char *dev)
 {
-  (void) type;
-  (void) dev;
+  (void)type;
+  (void)dev;
   return NULL;
 }
 
 int path_collect_key_value_dir(const char *path, struct stats *stats)
 {
-  (void) path;
-  (void) stats;
+  (void)path;
+  (void)stats;
   return 0;
 }
 

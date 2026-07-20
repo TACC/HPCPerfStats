@@ -38,11 +38,11 @@ static void alarm_handler(int sig)
 static int open_lock_timeout(const char *path, int timeout)
 {
   struct sigaction alarm_action = {
-    .sa_handler = &alarm_handler,
+      .sa_handler = &alarm_handler,
   };
   struct flock lock = {
-    .l_type = F_WRLCK,
-    .l_whence = SEEK_SET,
+      .l_type = F_WRLCK,
+      .l_whence = SEEK_SET,
   };
 
   if (path_open_is_skipped(path))
@@ -121,8 +121,7 @@ static void main_select_types_named_in_argv(char **arg_list, size_t arg_count)
   }
 }
 
-static void main_init_enable_and_collect_types(main_cmd_t cmd, int enable_all,
-					       int select_all)
+static void main_init_enable_and_collect_types(main_cmd_t cmd, int enable_all, int select_all)
 {
   stats_runtime_main_prepare_spec spec = {
       .enable_all = enable_all,
@@ -136,9 +135,8 @@ static void main_init_enable_and_collect_types(main_cmd_t cmd, int enable_all,
   metric_profiler_cycle_end(stderr);
 }
 
-static void main_apply_mark_or_jobid(struct stats_file *sf, main_cmd_t cmd,
-				     const char *mark, const char *cmd_str,
-				     char **arg_list, size_t arg_count)
+static void main_apply_mark_or_jobid(struct stats_file *sf, main_cmd_t cmd, const char *mark,
+                                     const char *cmd_str, char **arg_list, size_t arg_count)
 {
   if (mark != NULL)
     stats_file_mark(sf, "%s", mark);
@@ -174,9 +172,9 @@ int main(int argc, char *argv[])
   int rc = 0;
 
   struct option opts[] = {
-    { "help", 0, 0, 'h' },
-    { "mark", 0, 0, 'm' },
-    { NULL, 0, 0, 0 },
+      {"help", 0, 0, 'h'},
+      {"mark", 0, 0, 'm'},
+      {NULL, 0, 0, 0},
   };
 
   int c;
@@ -253,6 +251,6 @@ int main(int argc, char *argv[])
 
   main_destroy_all_types();
 
- out:
+out:
   return rc;
 }

@@ -27,7 +27,7 @@ static void test_collect_fast_phase_sparse_rows(void)
 {
   struct stats_buffer_collect_fixture fx;
   struct stats_buffer sf;
-  const unsigned long long vals[2] = { 11, 22 };
+  const unsigned long long vals[2] = {11, 22};
 
   assert(stats_buffer_collect_fixture_init(&fx, "a,E b,E,R=S", vals, 2) == 0);
   collect_tier_set_enabled(1);
@@ -53,7 +53,7 @@ static void test_collect_full_phase_emits_slow_keys(void)
 {
   struct stats_buffer_collect_fixture fx;
   struct stats_buffer sf;
-  const unsigned long long vals[2] = { 11, 22 };
+  const unsigned long long vals[2] = {11, 22};
 
   assert(stats_buffer_collect_fixture_init(&fx, "a,E b,E,R=S", vals, 2) == 0);
   collect_tier_set_enabled(1);

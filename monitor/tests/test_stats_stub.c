@@ -16,7 +16,7 @@ void test_stats_set_stub(struct stats *stats, const char *key, unsigned long lon
 {
   struct test_stats_stub *stub = g_test_stats_stub;
 
-  (void) stats;
+  (void)stats;
   if (stub == NULL || key == NULL)
     return;
   assert(stub->n < TEST_STATS_STUB_MAX);

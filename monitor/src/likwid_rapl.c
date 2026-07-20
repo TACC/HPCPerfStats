@@ -23,20 +23,17 @@
 #define MSR_AMD_CORE_ENERGY_STATUS 0xC001029Au
 #define MSR_AMD_PKG_ENERGY_STATUS 0xC001029Bu
 
-unsigned long long
-likwid_rapl_raw_to_mj(uint32_t raw, double joules_per_lsb)
+unsigned long long likwid_rapl_raw_to_mj(uint32_t raw, double joules_per_lsb)
 {
   return (unsigned long long)((double)raw * joules_per_lsb * 1000.0 + 0.5);
 }
 
-uint32_t
-likwid_rapl_energy_status_lo32(uint64_t raw_u64)
+uint32_t likwid_rapl_energy_status_lo32(uint64_t raw_u64)
 {
   return (uint32_t)(raw_u64 & 0xffffffffu);
 }
 
-int
-likwid_rapl_is_supported_intel_processor(void)
+int likwid_rapl_is_supported_intel_processor(void)
 {
   switch (processor) {
   case SKYLAKE:
@@ -49,8 +46,7 @@ likwid_rapl_is_supported_intel_processor(void)
   }
 }
 
-int
-likwid_rapl_is_supported_amd_processor(void)
+int likwid_rapl_is_supported_amd_processor(void)
 {
   switch (processor) {
   case AMD_17H:
@@ -61,18 +57,14 @@ likwid_rapl_is_supported_amd_processor(void)
   }
 }
 
-int
-likwid_rapl_is_supported_processor(void)
+int likwid_rapl_is_supported_processor(void)
 {
-  return likwid_rapl_is_supported_intel_processor()
-         || likwid_rapl_is_supported_amd_processor();
+  return likwid_rapl_is_supported_intel_processor() || likwid_rapl_is_supported_amd_processor();
 }
 
 #ifdef HAVE_LIKWID
 
-static void
-try_read_mj(int cpu_id, uint32_t msr, int domain, unsigned long long *mj,
-            int *has)
+static void try_read_mj(int cpu_id, uint32_t msr, int domain, unsigned long long *mj, int *has)
 {
   /* LIKWID power_read writes uint64_t; a uint32_t local overflows the stack. */
   uint64_t raw_u64 = 0;
@@ -88,32 +80,25 @@ try_read_mj(int cpu_id, uint32_t msr, int domain, unsigned long long *mj,
   *has = 1;
 }
 
-static void
-collect_intel_socket_mj(int cpu_id, unsigned long long *pkg_mj,
-                          unsigned long long *core_mj,
-                          unsigned long long *dram_mj, int *has_pkg,
-                          int *has_core, int *has_dram,
-                          unsigned long long *pp1_mj, int *has_pp1)
+static void collect_intel_socket_mj(int cpu_id, unsigned long long *pkg_mj,
+                                    unsigned long long *core_mj, unsigned long long *dram_mj,
+                                    int *has_pkg, int *has_core, int *has_dram,
+                                    unsigned long long *pp1_mj, int *has_pp1)
 {
   *has_pkg = *has_core = *has_dram = 0;
   try_read_mj(cpu_id, MSR_PKG_ENERGY_STATUS_INTEL, (int)PKG, pkg_mj, has_pkg);
-  try_read_mj(cpu_id, MSR_PP0_ENERGY_STATUS_INTEL, (int)PP0, core_mj,
-              has_core);
-  try_read_mj(cpu_id, MSR_DRAM_ENERGY_STATUS_INTEL, (int)DRAM, dram_mj,
-              has_dram);
+  try_read_mj(cpu_id, MSR_PP0_ENERGY_STATUS_INTEL, (int)PP0, core_mj, has_core);
+  try_read_mj(cpu_id, MSR_DRAM_ENERGY_STATUS_INTEL, (int)DRAM, dram_mj, has_dram);
   if (pp1_mj != NULL && has_pp1 != NULL) {
     *has_pp1 = 0;
     *pp1_mj = 0;
-    try_read_mj(cpu_id, MSR_PP1_ENERGY_STATUS_INTEL, (int)PP1, pp1_mj,
-                has_pp1);
+    try_read_mj(cpu_id, MSR_PP1_ENERGY_STATUS_INTEL, (int)PP1, pp1_mj, has_pp1);
   }
 }
 
-static void
-collect_amd_socket_mj(int cpu_id, unsigned long long *pkg_mj,
-                        unsigned long long *core_mj,
-                        unsigned long long *dram_mj, int *has_pkg,
-                        int *has_core, int *has_dram)
+static void collect_amd_socket_mj(int cpu_id, unsigned long long *pkg_mj,
+                                  unsigned long long *core_mj, unsigned long long *dram_mj,
+                                  int *has_pkg, int *has_core, int *has_dram)
 {
   *has_pkg = *has_core = *has_dram = 0;
   *dram_mj = 0;
@@ -123,20 +108,17 @@ collect_amd_socket_mj(int cpu_id, unsigned long long *pkg_mj,
 
 #endif /* HAVE_LIKWID */
 
-int
-likwid_rapl_collect_socket_mj(int cpu_id, unsigned int socket_id,
-                              unsigned long long *pkg_mj,
-                              unsigned long long *core_mj,
-                              unsigned long long *dram_mj, int *has_pkg,
-                              int *has_core, int *has_dram,
-                              unsigned long long *pp1_mj, int *has_pp1)
+int likwid_rapl_collect_socket_mj(int cpu_id, unsigned int socket_id, unsigned long long *pkg_mj,
+                                  unsigned long long *core_mj, unsigned long long *dram_mj,
+                                  int *has_pkg, int *has_core, int *has_dram,
+                                  unsigned long long *pp1_mj, int *has_pp1)
 {
 #ifdef HAVE_LIKWID
   PowerInfo_t pi;
 
   (void)socket_id;
-  if (pkg_mj == NULL || core_mj == NULL || dram_mj == NULL || has_pkg == NULL ||
-      has_core == NULL || has_dram == NULL)
+  if (pkg_mj == NULL || core_mj == NULL || dram_mj == NULL || has_pkg == NULL || has_core == NULL ||
+      has_dram == NULL)
     return -1;
   *pkg_mj = *core_mj = *dram_mj = 0;
   *has_pkg = *has_core = *has_dram = 0;
@@ -154,17 +136,15 @@ likwid_rapl_collect_socket_mj(int cpu_id, unsigned int socket_id,
     return -1;
   }
 #if defined(MONITOR_ARCH_INTEL)
-  collect_intel_socket_mj(cpu_id, pkg_mj, core_mj, dram_mj, has_pkg, has_core,
-                          has_dram, pp1_mj, has_pp1);
+  collect_intel_socket_mj(cpu_id, pkg_mj, core_mj, dram_mj, has_pkg, has_core, has_dram, pp1_mj,
+                          has_pp1);
 #elif defined(MONITOR_ARCH_AMD)
-  collect_amd_socket_mj(cpu_id, pkg_mj, core_mj, dram_mj, has_pkg, has_core,
-                        has_dram);
+  collect_amd_socket_mj(cpu_id, pkg_mj, core_mj, dram_mj, has_pkg, has_core, has_dram);
 #else
   (void)cpu_id;
   return -1;
 #endif
-  return (*has_pkg || *has_core || *has_dram
-          || (has_pp1 != NULL && *has_pp1)) ? 0 : -1;
+  return (*has_pkg || *has_core || *has_dram || (has_pp1 != NULL && *has_pp1)) ? 0 : -1;
 #else
   (void)cpu_id;
   (void)socket_id;

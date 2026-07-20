@@ -14,8 +14,7 @@ static void test_parse_classic_samples(void)
   unsigned long long sum = 0;
   int n;
 
-  n = lustre_parse_samples_count(
-      "123 samples [bytes] 1 2 456789", &count, &sum);
+  n = lustre_parse_samples_count("123 samples [bytes] 1 2 456789", &count, &sum);
   assert(n == 2);
   assert(count == 123ULL);
   assert(sum == 456789ULL);
@@ -52,7 +51,7 @@ static void test_fopen_prefer_modern(void)
   FILE *fp;
   char *path_out = NULL;
   FILE *fp_out = NULL;
-  static const char *const names[] = { "md_stats", "stats" };
+  static const char *const names[] = {"md_stats", "stats"};
   char buf[64];
 
   root = mkdtemp(tmpl);

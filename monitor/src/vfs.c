@@ -7,15 +7,15 @@
 #include "collect.h"
 #include "trace.h"
 
-#define KEYS \
-  X(dentry_use, "", "number of directory entries in use"), \
-  X(file_use, "", "number of file handles in use"), \
-  X(inode_use, "", "number of inodes in use")
+#define KEYS                                                                                       \
+  X(dentry_use, "", "number of directory entries in use"),                                         \
+      X(file_use, "", "number of file handles in use"),                                            \
+      X(inode_use, "", "number of inodes in use")
 
 static void vfs_collect(struct stats_type *type)
 {
   struct stats *stats = NULL;
-#define X(k,r...) k = 0
+#define X(k, r...) k = 0
   unsigned long long KEYS;
 #undef X
 
@@ -23,7 +23,7 @@ static void vfs_collect(struct stats_type *type)
   if (stats == NULL)
     return;
 
-/* $ cat /proc/sys/fs/dentry-state
+  /* $ cat /proc/sys/fs/dentry-state
    850986 838906 45 0 0 0
 
    This file contains six numbers, nr_dentry, nr_unused, age_limit
@@ -35,11 +35,10 @@ static void vfs_collect(struct stats_type *type)
    shrink_dcache_pages() and the dcache t pruned yet. */
 
   unsigned long long dentry_alloc = 0, dentry_free = 0;
-  if (path_collect_list("/proc/sys/fs/dentry-state",
-                        &dentry_alloc, &dentry_free, NULL) == 2)
+  if (path_collect_list("/proc/sys/fs/dentry-state", &dentry_alloc, &dentry_free, NULL) == 2)
     dentry_use = dentry_alloc - dentry_free;
 
-/* $ cat /proc/sys/fs/file-nr
+  /* $ cat /proc/sys/fs/file-nr
    6080 0 1174404
 
    Historically, the three values in file-nr denoted the number of
@@ -51,7 +50,7 @@ static void vfs_collect(struct stats_type *type)
 
   path_collect_single("/proc/sys/fs/file-nr", &file_use);
 
-/* $ cat /proc/sys/fs/inode-state
+  /* $ cat /proc/sys/fs/inode-state
    168192 59759 0 0 0 0 0
 
    This file contains seven numbers: nr_inodes, nr_free_inodes,
@@ -63,19 +62,18 @@ static void vfs_collect(struct stats_type *type)
    prune the inode list instead of allocating more. */
 
   unsigned long long inode_alloc = 0, inode_free = 0;
-  if (path_collect_list("/proc/sys/fs/inode-state",
-                        &inode_alloc, &inode_free, NULL) == 2)
+  if (path_collect_list("/proc/sys/fs/inode-state", &inode_alloc, &inode_free, NULL) == 2)
     inode_use = inode_alloc - inode_free;
 
-#define X(k,r...) stats_set(stats, #k, k)
+#define X(k, r...) stats_set(stats, #k, k)
   KEYS;
 #undef X
 }
 
 struct stats_type vfs_stats_type = {
-  .st_name = "host_vfs",
-  .st_collect = &vfs_collect,
+    .st_name = "host_vfs",
+    .st_collect = &vfs_collect,
 #define X SCHEMA_DEF
-  .st_schema_def = JOIN(KEYS),
+    .st_schema_def = JOIN(KEYS),
 #undef X
 };

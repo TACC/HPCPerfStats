@@ -41,8 +41,7 @@ static void test_schema_key_map(void)
   k = likwid_pmc_schema_key_from_event("MEM_INST_RETIRED_ALL_LOADS", buf, sizeof(buf));
   assert(k != NULL && strcmp(k, "mem_load_uops_retired_l1_hit") == 0);
 
-  k = likwid_pmc_schema_key_from_event("FP_ARITH_INST_RETIRED_SCALAR_DOUBLE", buf,
-				       sizeof(buf));
+  k = likwid_pmc_schema_key_from_event("FP_ARITH_INST_RETIRED_SCALAR_DOUBLE", buf, sizeof(buf));
   assert(k != NULL && strcmp(k, "fp_arith_inst_retired_scalar_double") == 0);
 
   assert(likwid_pmc_schema_key_from_event(NULL, buf, sizeof(buf)) == NULL);

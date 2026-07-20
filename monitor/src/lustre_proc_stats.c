@@ -7,8 +7,7 @@
 #include "fileio.h"
 #include "string1.h"
 
-int lustre_parse_samples_count(const char *rest, unsigned long long *count,
-                               unsigned long long *sum)
+int lustre_parse_samples_count(const char *rest, unsigned long long *count, unsigned long long *sum)
 {
   unsigned long long c = 0;
   unsigned long long s = 0;
@@ -35,8 +34,7 @@ int lustre_parse_samples_count(const char *rest, unsigned long long *count,
   return 0;
 }
 
-int lustre_parse_kv_ull(const char *line, const char *want_key,
-                        unsigned long long *value)
+int lustre_parse_kv_ull(const char *line, const char *want_key, unsigned long long *value)
 {
   char *buf = NULL;
   char *p;
@@ -65,14 +63,12 @@ int lustre_parse_kv_ull(const char *line, const char *want_key,
   return 0;
 }
 
-int lustre_fopen_obd_named(const char *dir, const char *d_name,
-                           const char *const *names, size_t nnames,
-                           char **path_out, FILE **fp_out)
+int lustre_fopen_obd_named(const char *dir, const char *d_name, const char *const *names,
+                           size_t nnames, char **path_out, FILE **fp_out)
 {
   size_t i;
 
-  if (dir == NULL || d_name == NULL || names == NULL || path_out == NULL
-      || fp_out == NULL)
+  if (dir == NULL || d_name == NULL || names == NULL || path_out == NULL || fp_out == NULL)
     return -1;
 
   *path_out = NULL;

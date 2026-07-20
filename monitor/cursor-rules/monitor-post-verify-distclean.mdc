@@ -32,4 +32,4 @@ State that **`make distclean`** ran in the relevant build directory after succes
 
 ## Relation to other rules
 
-This supplements **global-testing-discipline** and **monitor-static-build-verification** (canonical **`build_static_bundle.sh`** + **`make check`**): those rules require *running* tests; this rule requires *cleaning up* the Autotools tree afterward when verification succeeded.
+This supplements **global-testing-discipline** and **monitor-static-build-verification** (canonical **`build_static_bundle.sh`** + **`make check`**): those rules require *running* tests; this rule requires *cleaning up* the Autotools tree afterward when verification succeeded. **`run_asan_check.sh`** distcleans **`.build-asan`** the same way (see **monitor-asan-cpp-linter-gate**).

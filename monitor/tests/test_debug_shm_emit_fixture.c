@@ -28,12 +28,12 @@ static const struct {
   const char *schema;
   const char *dev;
 } g_emit_type_defs[EMIT_FIXTURE_N_TYPES] = {
-  { "emit_extra", "load_1, load_5,", "dev0" },
-  { "emit_fast", "cycles,E instr_retired,E", "dev0" },
-  { "emit_mixed", "rx_bytes,E tx_bytes,E,R=S link_up,E", "dev0" },
-  { "host_mem", "mem_total,U=KB mem_free,U=KB dirty,U=KB", "mem" },
-  { "host_net", "rx_bytes,E,U=B tx_bytes,E,U=B collisions,E", "eth0" },
-  { "host_ps", "ctxt,E processes,E load_1, load_5,", "-" },
+    {"emit_extra", "load_1, load_5,", "dev0"},
+    {"emit_fast", "cycles,E instr_retired,E", "dev0"},
+    {"emit_mixed", "rx_bytes,E tx_bytes,E,R=S link_up,E", "dev0"},
+    {"host_mem", "mem_total,U=KB mem_free,U=KB dirty,U=KB", "mem"},
+    {"host_net", "rx_bytes,E,U=B tx_bytes,E,U=B collisions,E", "eth0"},
+    {"host_ps", "ctxt,E processes,E load_1, load_5,", "-"},
 };
 
 void cpu_stats_invalidate_file_caches(void) {}
@@ -41,8 +41,8 @@ void net_stats_invalidate_iface_cache(void) {}
 
 int pscanf(const char *path, const char *fmt, ...)
 {
-  (void) path;
-  (void) fmt;
+  (void)path;
+  (void)fmt;
   return 0;
 }
 
@@ -64,12 +64,11 @@ static void emit_fixture_free_stats(struct stats *stats)
 
 static void emit_fixture_free_dict_key(void *key)
 {
-  emit_fixture_free_stats(key_to_stats((const char *) key));
+  emit_fixture_free_stats(key_to_stats((const char *)key));
 }
 
-static int emit_fixture_init_one(struct emit_fixture_type *slot,
-				 const char *name, const char *schema_def,
-				 const char *dev)
+static int emit_fixture_init_one(struct emit_fixture_type *slot, const char *name,
+                                 const char *schema_def, const char *dev)
 {
   size_t k;
   size_t n;
@@ -93,7 +92,7 @@ static int emit_fixture_init_one(struct emit_fixture_type *slot,
   if (slot->stats->s_val == NULL || slot->stats->s_val_present == NULL)
     return -1;
   for (k = 0; k < n; k++) {
-    slot->stats->s_val[k] = 10ULL + (unsigned long long) k;
+    slot->stats->s_val[k] = 10ULL + (unsigned long long)k;
     slot->stats->s_val_present[k] = 1;
   }
   strcpy(slot->stats->s_dev, dev);
@@ -110,8 +109,7 @@ int test_debug_shm_emit_fixture_init(void)
   collect_tier_set_enabled(1);
   for (i = 0; i < EMIT_FIXTURE_N_TYPES; i++) {
     if (emit_fixture_init_one(&g_emit_types[i], g_emit_type_defs[i].name,
-			      g_emit_type_defs[i].schema,
-			      g_emit_type_defs[i].dev) < 0) {
+                              g_emit_type_defs[i].schema, g_emit_type_defs[i].dev) < 0) {
       test_debug_shm_emit_fixture_teardown();
       return -1;
     }

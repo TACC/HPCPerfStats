@@ -6,18 +6,11 @@
 
 /* Field order matches lustre lnet/router_proc.c; see kernel comment in tree. */
 
-#define KEYS \
-  X(msgs_alloc, "E", ""), \
-  X(msgs_alloc_max, "E", ""), \
-  X(errors, "E", ""), \
-  X(tx_msgs, "E", ""), \
-  X(rx_msgs, "E", ""), \
-  X(route_msgs, "E", ""), \
-  X(rx_msgs_dropped, "E", ""), \
-  X(tx_bytes, "E,U=B", ""), \
-  X(rx_bytes, "E,U=B", ""), \
-  X(route_bytes, "E,U=B", ""), \
-  X(rx_bytes_dropped, "E,U=B", "")
+#define KEYS                                                                                       \
+  X(msgs_alloc, "E", ""), X(msgs_alloc_max, "E", ""), X(errors, "E", ""), X(tx_msgs, "E", ""),     \
+      X(rx_msgs, "E", ""), X(route_msgs, "E", ""), X(rx_msgs_dropped, "E", ""),                    \
+      X(tx_bytes, "E,U=B", ""), X(rx_bytes, "E,U=B", ""), X(route_bytes, "E,U=B", ""),             \
+      X(rx_bytes_dropped, "E,U=B", "")
 
 static void lnet_collect(struct stats_type *type)
 {
@@ -35,9 +28,9 @@ static void lnet_collect(struct stats_type *type)
 }
 
 struct stats_type lnet_stats_type = {
-  .st_name = "host_lnet",
-  .st_collect = &lnet_collect,
+    .st_name = "host_lnet",
+    .st_collect = &lnet_collect,
 #define X SCHEMA_DEF
-  .st_schema_def = JOIN(KEYS),
+    .st_schema_def = JOIN(KEYS),
 #undef X
 };

@@ -15,16 +15,16 @@ static unsigned long long clamp_rate(double v)
 {
   if (v <= 0.0)
     return 0ULL;
-  if (v >= (double) ULLONG_MAX)
+  if (v >= (double)ULLONG_MAX)
     return ULLONG_MAX;
-  return (unsigned long long) (v + 0.5);
+  return (unsigned long long)(v + 0.5);
 }
 static int read_first_line(const char *path, char *buf, size_t cap)
 {
   FILE *f = fopen(path, "re");
   if (f == NULL)
     return -1;
-  if (fgets(buf, (int) cap, f) == NULL) {
+  if (fgets(buf, (int)cap, f) == NULL) {
     fclose(f);
     return -1;
   }
@@ -36,14 +36,14 @@ static int roofline_path_join2(char *dst, size_t cap, const char *a, const char 
 {
   int n;
   n = snprintf(dst, cap, "%s/%s", a, b);
-  return (n > 0 && (size_t) n < cap) ? 0 : -1;
+  return (n > 0 && (size_t)n < cap) ? 0 : -1;
 }
 
 static int roofline_path_join3(char *dst, size_t cap, const char *a, const char *b, const char *c)
 {
   int n;
   n = snprintf(dst, cap, "%s/%s/%s", a, b, c);
-  return (n > 0 && (size_t) n < cap) ? 0 : -1;
+  return (n > 0 && (size_t)n < cap) ? 0 : -1;
 }
 
 static int read_long_long_from_file(const char *path, long long *out)
@@ -134,7 +134,7 @@ static double detect_cpu_peak_flops_per_s(void)
       }
     }
     if (khz > 0)
-      sum_hz += (double) khz * 1000.0;
+      sum_hz += (double)khz * 1000.0;
   }
 
   if (sum_hz <= 0.0) {
@@ -160,7 +160,7 @@ static double detect_cpu_peak_flops_per_s(void)
 
 static double parse_pcie_gtps(const char *s)
 {
-  while (*s != '\0' && !isdigit((unsigned char) *s))
+  while (*s != '\0' && !isdigit((unsigned char)*s))
     s++;
   if (*s == '\0')
     return 0.0;
@@ -186,11 +186,11 @@ static double pcie_lane_bytes_per_s(double gtps)
 
 static int parse_link_width(const char *s)
 {
-  while (*s != '\0' && !isdigit((unsigned char) *s))
+  while (*s != '\0' && !isdigit((unsigned char)*s))
     s++;
   if (*s == '\0')
     return 0;
-  return (int) strtol(s, NULL, 10);
+  return (int)strtol(s, NULL, 10);
 }
 
 typedef struct {
@@ -200,8 +200,8 @@ typedef struct {
 
 static void sum_edac_dimm_bw(long long mtps, int is_hbm, void *ctx)
 {
-  edac_bw_ctx_t *bw = (edac_bw_ctx_t *) ctx;
-  double dimm_bw = (double) mtps * 1000000.0 * 8.0;
+  edac_bw_ctx_t *bw = (edac_bw_ctx_t *)ctx;
+  double dimm_bw = (double)mtps * 1000000.0 * 8.0;
 
   if (is_hbm) {
     if (bw->hbm_bw != NULL)
@@ -221,7 +221,7 @@ static void detect_cpu_peak_edac_bw_bytes_per_s(double *ddr_bw, double *hbm_bw)
     *hbm_bw = 0.0;
   ctx.ddr_bw = ddr_bw;
   ctx.hbm_bw = hbm_bw;
-  (void) host_edac_foreach_dimm(sum_edac_dimm_bw, &ctx);
+  (void)host_edac_foreach_dimm(sum_edac_dimm_bw, &ctx);
 }
 
 static double detect_cpu_peak_dram_bw_bytes_per_s(void)
@@ -230,7 +230,7 @@ static double detect_cpu_peak_dram_bw_bytes_per_s(void)
   double hbm_bw = 0.0;
 
   detect_cpu_peak_edac_bw_bytes_per_s(&ddr_bw, &hbm_bw);
-  (void) hbm_bw;
+  (void)hbm_bw;
   return ddr_bw;
 }
 
@@ -243,9 +243,9 @@ static double parse_max_mhz_from_dpm_table(const char *path)
     return 0.0;
   while (fgets(line, sizeof(line), f) != NULL) {
     char *p = line;
-    while (*p != '\0' && !isdigit((unsigned char) *p))
+    while (*p != '\0' && !isdigit((unsigned char)*p))
       p++;
-    if (isdigit((unsigned char) *p)) {
+    if (isdigit((unsigned char)*p)) {
       double mhz = strtod(p, NULL);
       if (mhz > max_mhz)
         max_mhz = mhz;
@@ -262,7 +262,8 @@ static void detect_gpu_peaks_from_sysfs(double *flops, double *mem_bw, double *i
   if (dir == NULL)
     return;
   while ((ent = readdir(dir)) != NULL) {
-    char speed_path[256], width_path[256], speed_line[128], width_line[128], bw_path[256], mclk_path[256];
+    char speed_path[256], width_path[256], speed_line[128], width_line[128], bw_path[256],
+        mclk_path[256];
     double gtps;
     int width;
     long long mem_bw_attr = 0;
@@ -270,24 +271,20 @@ static void detect_gpu_peaks_from_sysfs(double *flops, double *mem_bw, double *i
     if (strncmp(ent->d_name, "card", 4) != 0 || strchr(ent->d_name, '-') != NULL)
       continue;
     if (roofline_path_join3(speed_path, sizeof(speed_path), "/sys/class/drm", ent->d_name,
-			    "device/max_link_speed")
-	!= 0)
+                            "device/max_link_speed") != 0)
       continue;
     if (roofline_path_join3(width_path, sizeof(width_path), "/sys/class/drm", ent->d_name,
-			    "device/max_link_width")
-	!= 0)
+                            "device/max_link_width") != 0)
       continue;
     if (roofline_path_join3(bw_path, sizeof(bw_path), "/sys/class/drm", ent->d_name,
-			    "device/mem_info_max_bandwidth")
-	!= 0)
+                            "device/mem_info_max_bandwidth") != 0)
       continue;
     if (roofline_path_join3(mclk_path, sizeof(mclk_path), "/sys/class/drm", ent->d_name,
-			    "device/pp_dpm_mclk")
-	!= 0)
+                            "device/pp_dpm_mclk") != 0)
       continue;
 
     if (read_long_long_from_file(bw_path, &mem_bw_attr) == 0 && mem_bw_attr > 0)
-      *mem_bw += (double) mem_bw_attr;
+      *mem_bw += (double)mem_bw_attr;
     else {
       mclk_mhz = parse_max_mhz_from_dpm_table(mclk_path);
       if (mclk_mhz > 0.0) {
@@ -302,15 +299,15 @@ static void detect_gpu_peaks_from_sysfs(double *flops, double *mem_bw, double *i
     gtps = parse_pcie_gtps(speed_line);
     width = parse_link_width(width_line);
     if (gtps > 0.0 && width > 0)
-      *io_bw += pcie_lane_bytes_per_s(gtps) * (double) width;
+      *io_bw += pcie_lane_bytes_per_s(gtps) * (double)width;
   }
   closedir(dir);
-  (void) flops;
+  (void)flops;
 }
 
 static double nvidia_fp64_ratio_from_cc(int major, int minor, const char *name)
 {
-  (void) name;
+  (void)name;
   if (major >= 9)
     return 0.5;
   if (major == 8)
@@ -348,9 +345,9 @@ static int nvidia_cuda_cores_per_sm(int major, int minor, const char *name)
 
 static double detect_nvidia_fp64_peak_via_nvidia_smi(void)
 {
-  FILE *fp = popen(
-      "nvidia-smi --query-gpu=name,cuda.cores,clocks.max.sm,compute_cap --format=csv,noheader,nounits 2>/dev/null",
-      "r");
+  FILE *fp = popen("nvidia-smi --query-gpu=name,cuda.cores,clocks.max.sm,compute_cap "
+                   "--format=csv,noheader,nounits 2>/dev/null",
+                   "r");
   char line[768];
   double total = 0.0;
 
@@ -377,19 +374,19 @@ static double detect_nvidia_fp64_peak_via_nvidia_smi(void)
       continue;
 
     {
-      size_t n = (size_t) (comma1 - s);
+      size_t n = (size_t)(comma1 - s);
       if (n >= sizeof(name))
         n = sizeof(name) - 1;
       memcpy(name, s, n);
       name[n] = '\0';
     }
-    cores = (int) strtol(comma1 + 1, NULL, 10);
+    cores = (int)strtol(comma1 + 1, NULL, 10);
     sm_mhz = strtod(comma2 + 1, NULL);
     if (sscanf(comma3 + 1, " %d.%d", &maj, &min) != 2)
       maj = min = 0;
     ratio = nvidia_fp64_ratio_from_cc(maj, min, name);
     if (cores > 0 && sm_mhz > 0.0)
-      total += (double) cores * (sm_mhz * 1.0e6) * 2.0 * ratio;
+      total += (double)cores * (sm_mhz * 1.0e6) * 2.0 * ratio;
   }
   pclose(fp);
   return total;
@@ -426,23 +423,23 @@ static double detect_nvidia_fp64_peak_via_nvml(void)
   if (lib == NULL)
     return 0.0;
 
-  p_nvmlInit_v2 = (fn_nvmlInit_v2) dlsym(lib, "nvmlInit_v2");
-  p_nvmlShutdown = (fn_nvmlShutdown) dlsym(lib, "nvmlShutdown");
-  p_nvmlDeviceGetCount_v2 = (fn_nvmlDeviceGetCount_v2) dlsym(lib, "nvmlDeviceGetCount_v2");
+  p_nvmlInit_v2 = (fn_nvmlInit_v2)dlsym(lib, "nvmlInit_v2");
+  p_nvmlShutdown = (fn_nvmlShutdown)dlsym(lib, "nvmlShutdown");
+  p_nvmlDeviceGetCount_v2 = (fn_nvmlDeviceGetCount_v2)dlsym(lib, "nvmlDeviceGetCount_v2");
   p_nvmlDeviceGetHandleByIndex_v2 =
-      (fn_nvmlDeviceGetHandleByIndex_v2) dlsym(lib, "nvmlDeviceGetHandleByIndex_v2");
-  p_nvmlDeviceGetName = (fn_nvmlDeviceGetName) dlsym(lib, "nvmlDeviceGetName");
+      (fn_nvmlDeviceGetHandleByIndex_v2)dlsym(lib, "nvmlDeviceGetHandleByIndex_v2");
+  p_nvmlDeviceGetName = (fn_nvmlDeviceGetName)dlsym(lib, "nvmlDeviceGetName");
   p_nvmlDeviceGetCudaComputeCapability =
-      (fn_nvmlDeviceGetCudaComputeCapability) dlsym(lib, "nvmlDeviceGetCudaComputeCapability");
+      (fn_nvmlDeviceGetCudaComputeCapability)dlsym(lib, "nvmlDeviceGetCudaComputeCapability");
   p_nvmlDeviceGetMultiProcessorCount =
-      (fn_nvmlDeviceGetMultiProcessorCount) dlsym(lib, "nvmlDeviceGetMultiProcessorCount");
+      (fn_nvmlDeviceGetMultiProcessorCount)dlsym(lib, "nvmlDeviceGetMultiProcessorCount");
   p_nvmlDeviceGetMaxClockInfo =
-      (fn_nvmlDeviceGetMaxClockInfo) dlsym(lib, "nvmlDeviceGetMaxClockInfo");
+      (fn_nvmlDeviceGetMaxClockInfo)dlsym(lib, "nvmlDeviceGetMaxClockInfo");
 
-  if (p_nvmlInit_v2 == NULL || p_nvmlShutdown == NULL || p_nvmlDeviceGetCount_v2 == NULL
-      || p_nvmlDeviceGetHandleByIndex_v2 == NULL || p_nvmlDeviceGetName == NULL
-      || p_nvmlDeviceGetCudaComputeCapability == NULL || p_nvmlDeviceGetMultiProcessorCount == NULL
-      || p_nvmlDeviceGetMaxClockInfo == NULL) {
+  if (p_nvmlInit_v2 == NULL || p_nvmlShutdown == NULL || p_nvmlDeviceGetCount_v2 == NULL ||
+      p_nvmlDeviceGetHandleByIndex_v2 == NULL || p_nvmlDeviceGetName == NULL ||
+      p_nvmlDeviceGetCudaComputeCapability == NULL || p_nvmlDeviceGetMultiProcessorCount == NULL ||
+      p_nvmlDeviceGetMaxClockInfo == NULL) {
     dlclose(lib);
     return 0.0;
   }
@@ -468,7 +465,7 @@ static double detect_nvidia_fp64_peak_via_nvml(void)
 
     if (p_nvmlDeviceGetHandleByIndex_v2(i, &dev) != NVML_SUCCESS)
       continue;
-    if (p_nvmlDeviceGetName(dev, name, (unsigned int) sizeof(name)) != NVML_SUCCESS)
+    if (p_nvmlDeviceGetName(dev, name, (unsigned int)sizeof(name)) != NVML_SUCCESS)
       snprintf(name, sizeof(name), "%s", "unknown");
     if (p_nvmlDeviceGetCudaComputeCapability(dev, &cc_major, &cc_minor) != NVML_SUCCESS)
       continue;
@@ -479,7 +476,7 @@ static double detect_nvidia_fp64_peak_via_nvml(void)
 
     cores_per_sm = nvidia_cuda_cores_per_sm(cc_major, cc_minor, name);
     fp64_ratio = nvidia_fp64_ratio_from_cc(cc_major, cc_minor, name);
-    total += (double) sm_count * (double) cores_per_sm * (double) sm_mhz * 1.0e6 * 2.0 * fp64_ratio;
+    total += (double)sm_count * (double)cores_per_sm * (double)sm_mhz * 1.0e6 * 2.0 * fp64_ratio;
   }
 
   p_nvmlShutdown();
@@ -489,8 +486,9 @@ static double detect_nvidia_fp64_peak_via_nvml(void)
 
 static double amd_fp64_ratio_from_gfx(const char *gfx)
 {
-  if (strstr(gfx, "gfx90a") != NULL || strstr(gfx, "gfx940") != NULL || strstr(gfx, "gfx941") != NULL
-      || strstr(gfx, "gfx942") != NULL || strstr(gfx, "gfx908") != NULL || strstr(gfx, "gfx906") != NULL)
+  if (strstr(gfx, "gfx90a") != NULL || strstr(gfx, "gfx940") != NULL ||
+      strstr(gfx, "gfx941") != NULL || strstr(gfx, "gfx942") != NULL ||
+      strstr(gfx, "gfx908") != NULL || strstr(gfx, "gfx906") != NULL)
     return 0.5;
   return 1.0 / 16.0;
 }
@@ -511,7 +509,7 @@ static double detect_amd_fp64_peak_via_rocminfo(void)
       char *g = strstr(line, "gfx");
       if (g != NULL) {
         size_t n = 0;
-        while (g[n] != '\0' && !isspace((unsigned char) g[n]) && n + 1 < sizeof(gfx))
+        while (g[n] != '\0' && !isspace((unsigned char)g[n]) && n + 1 < sizeof(gfx))
           n++;
         memcpy(gfx, g, n);
         gfx[n] = '\0';
@@ -519,7 +517,7 @@ static double detect_amd_fp64_peak_via_rocminfo(void)
     } else if (strstr(line, "Compute Unit:") != NULL) {
       char *p = strchr(line, ':');
       if (p != NULL)
-        cu = (int) strtol(p + 1, NULL, 10);
+        cu = (int)strtol(p + 1, NULL, 10);
     } else if (strstr(line, "Max Clock Freq. (MHz):") != NULL) {
       char *p = strchr(line, ':');
       if (p != NULL)
@@ -527,7 +525,7 @@ static double detect_amd_fp64_peak_via_rocminfo(void)
     } else if (line[0] == '\n' || line[0] == '\r') {
       if (cu > 0 && mhz > 0.0 && gfx[0] != '\0') {
         double ratio = amd_fp64_ratio_from_gfx(gfx);
-        total += (double) cu * 128.0 * ratio * (mhz * 1.0e6);
+        total += (double)cu * 128.0 * ratio * (mhz * 1.0e6);
       }
       cu = 0;
       mhz = 0.0;
@@ -536,7 +534,7 @@ static double detect_amd_fp64_peak_via_rocminfo(void)
   }
   if (cu > 0 && mhz > 0.0 && gfx[0] != '\0') {
     double ratio = amd_fp64_ratio_from_gfx(gfx);
-    total += (double) cu * 128.0 * ratio * (mhz * 1.0e6);
+    total += (double)cu * 128.0 * ratio * (mhz * 1.0e6);
   }
   pclose(fp);
   return total;
@@ -571,7 +569,7 @@ void roofline_hw_peak_detect_fill_cache(struct roofline_cached_peaks *cache)
   if (cache == NULL)
     return;
   if (getenv("HPCPERFSTATS_SKIP_HW_PROBE") != NULL) {
-    cpu_flops = (nr_cpus > 0) ? (double) nr_cpus * 1.0e9 : 1.0e9;
+    cpu_flops = (nr_cpus > 0) ? (double)nr_cpus * 1.0e9 : 1.0e9;
     cpu_bw = 1.0e9;
     cpu_hbm_bw = 0.0;
   } else {

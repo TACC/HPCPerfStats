@@ -36,9 +36,9 @@ extern double send_freq;
 #define RMQ_RECONNECT_BACKOFF_MIN_SEC 2
 
 static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buffer *sf,
-				  amqp_socket_t **socket_out, int *channel_opened_out);
+                                  amqp_socket_t **socket_out, int *channel_opened_out);
 static int rmq_declare_queue_and_bind_to_exchange(amqp_connection_state_t conn,
-						  struct stats_buffer *sf);
+                                                  struct stats_buffer *sf);
 
 #ifdef DEBUG
 /* Decode rabbitmq-c failures for DEBUG builds (ERROR -> stdout when RABBITMQ+DEBUG). */
@@ -87,14 +87,14 @@ static void rmq_debug_log_rpc_reply(const char *ctx, amqp_rpc_reply_t r)
 
       rmq_debug_append_reply_text(textbuf, sizeof(textbuf), &m->reply_text);
       ERROR("%s: connection.close reply_code=%u class_id=%u method_id=%u text=%s", ctx,
-	    (unsigned)m->reply_code, (unsigned)m->class_id, (unsigned)m->method_id, textbuf);
+            (unsigned)m->reply_code, (unsigned)m->class_id, (unsigned)m->method_id, textbuf);
     } else if (r.reply.id == AMQP_CHANNEL_CLOSE_METHOD && r.reply.decoded != NULL) {
       amqp_channel_close_t *m = (amqp_channel_close_t *)r.reply.decoded;
       char textbuf[256];
 
       rmq_debug_append_reply_text(textbuf, sizeof(textbuf), &m->reply_text);
       ERROR("%s: channel.close reply_code=%u class_id=%u method_id=%u text=%s", ctx,
-	    (unsigned)m->reply_code, (unsigned)m->class_id, (unsigned)m->method_id, textbuf);
+            (unsigned)m->reply_code, (unsigned)m->class_id, (unsigned)m->method_id, textbuf);
     }
     return;
   default:
@@ -130,8 +130,8 @@ static int rmq_connect_backoff_active(void)
     return 0;
   if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
     return 0;
-  if (now.tv_sec < rmq_backoff_until.tv_sec
-      || (now.tv_sec == rmq_backoff_until.tv_sec && now.tv_nsec < rmq_backoff_until.tv_nsec))
+  if (now.tv_sec < rmq_backoff_until.tv_sec ||
+      (now.tv_sec == rmq_backoff_until.tv_sec && now.tv_nsec < rmq_backoff_until.tv_nsec))
     return 1;
   rmq_backoff_until_valid = 0;
   return 0;
@@ -228,8 +228,8 @@ static int rmq_stored_matches(struct stats_buffer *sf)
 {
   if (rmq_stored_host == NULL)
     return 0;
-  return strcmp(rmq_stored_host, sf->sf_host) == 0 && strcmp(rmq_stored_port, sf->sf_port) == 0
-	 && strcmp(rmq_stored_user, sf->sf_user) == 0 && strcmp(rmq_stored_pass, sf->sf_password) == 0;
+  return strcmp(rmq_stored_host, sf->sf_host) == 0 && strcmp(rmq_stored_port, sf->sf_port) == 0 &&
+         strcmp(rmq_stored_user, sf->sf_user) == 0 && strcmp(rmq_stored_pass, sf->sf_password) == 0;
 }
 
 static int rmq_stored_save(struct stats_buffer *sf)
@@ -239,7 +239,8 @@ static int rmq_stored_save(struct stats_buffer *sf)
   rmq_stored_port = strdup(sf->sf_port);
   rmq_stored_user = strdup(sf->sf_user);
   rmq_stored_pass = strdup(sf->sf_password);
-  if (rmq_stored_host == NULL || rmq_stored_port == NULL || rmq_stored_user == NULL || rmq_stored_pass == NULL) {
+  if (rmq_stored_host == NULL || rmq_stored_port == NULL || rmq_stored_user == NULL ||
+      rmq_stored_pass == NULL) {
     rmq_stored_free();
     return -1;
   }
@@ -264,8 +265,9 @@ static int rmq_ensure_connected(struct stats_buffer *sf)
 
   if (rmq_connect_backoff_active()) {
 #ifdef DEBUG
-    ERROR("RMQ: connect backoff active, skipping connect attempt (capped min(send_freq,%ds), floor %ds)",
-	  RMQ_RECONNECT_BACKOFF_CAP_SEC, RMQ_RECONNECT_BACKOFF_MIN_SEC);
+    ERROR("RMQ: connect backoff active, skipping connect attempt (capped min(send_freq,%ds), floor "
+          "%ds)",
+          RMQ_RECONNECT_BACKOFF_CAP_SEC, RMQ_RECONNECT_BACKOFF_MIN_SEC);
 #endif
     return -1;
   }
@@ -276,7 +278,8 @@ static int rmq_ensure_connected(struct stats_buffer *sf)
     rmq_stored_free();
 
 #ifdef DEBUG
-  ERROR("RMQ: connecting to %s:%s user=%s vhost=%s", sf->sf_host, sf->sf_port, sf->sf_user, RMQ_VHOST);
+  ERROR("RMQ: connecting to %s:%s user=%s vhost=%s", sf->sf_host, sf->sf_port, sf->sf_user,
+        RMQ_VHOST);
 #endif
 
   rmq_conn = amqp_new_connection();
@@ -335,7 +338,7 @@ static int rmq_ensure_queue(struct stats_buffer *sf)
 }
 
 static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buffer *sf,
-				    amqp_socket_t **socket_out, int *channel_opened_out)
+                                  amqp_socket_t **socket_out, int *channel_opened_out)
 {
   amqp_socket_t *socket = amqp_tcp_socket_new(conn);
   struct timeval connect_tv;
@@ -397,7 +400,7 @@ static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buf
 
   {
     amqp_rpc_reply_t ret = amqp_login(conn, RMQ_VHOST, 0, 131072, heartbeat_sec,
-					AMQP_SASL_METHOD_PLAIN, sf->sf_user, sf->sf_password);
+                                      AMQP_SASL_METHOD_PLAIN, sf->sf_user, sf->sf_password);
 
     if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
 #ifdef DEBUG
@@ -440,13 +443,14 @@ static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buf
   return 0;
 }
 
-static int rmq_declare_queue_and_bind_to_exchange(amqp_connection_state_t conn, struct stats_buffer *sf)
+static int rmq_declare_queue_and_bind_to_exchange(amqp_connection_state_t conn,
+                                                  struct stats_buffer *sf)
 {
 #ifdef DEBUG
   ERROR("Attempt declare queue on RMQ server\n");
 #endif
-  amqp_queue_declare_ok_t *r = amqp_queue_declare(conn, RMQ_CHANNEL, amqp_cstring_bytes(sf->sf_queue),
-						  0, 1, 0, 0, amqp_empty_table);
+  amqp_queue_declare_ok_t *r = amqp_queue_declare(
+      conn, RMQ_CHANNEL, amqp_cstring_bytes(sf->sf_queue), 0, 1, 0, 0, amqp_empty_table);
   amqp_rpc_reply_t ret = amqp_get_rpc_reply(conn);
   if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
 #ifdef DEBUG
@@ -464,7 +468,7 @@ static int rmq_declare_queue_and_bind_to_exchange(amqp_connection_state_t conn, 
   }
 
   amqp_queue_bind(conn, RMQ_CHANNEL, reply_to_queue, amqp_cstring_bytes(RMQ_EXCHANGE),
-		  amqp_cstring_bytes(sf->sf_queue), amqp_empty_table);
+                  amqp_cstring_bytes(sf->sf_queue), amqp_empty_table);
   ret = amqp_get_rpc_reply(conn);
   amqp_bytes_free(reply_to_queue);
   if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
@@ -484,14 +488,9 @@ static int rmq_publish_text_payload(amqp_connection_state_t conn, struct stats_b
   props._flags = AMQP_BASIC_CONTENT_TYPE_FLAG | AMQP_BASIC_DELIVERY_MODE_FLAG;
   props.content_type = amqp_cstring_bytes("text/plain");
   props.delivery_mode = 2; /* persistent delivery mode */
-  int status = amqp_basic_publish(conn,
-				  RMQ_CHANNEL,
-				  amqp_cstring_bytes(RMQ_EXCHANGE),
-				  amqp_cstring_bytes(sf->sf_queue),
-				  0,
-				  0,
-				  &props,
-				  amqp_cstring_bytes(sf->sf_data));
+  int status = amqp_basic_publish(conn, RMQ_CHANNEL, amqp_cstring_bytes(RMQ_EXCHANGE),
+                                  amqp_cstring_bytes(sf->sf_queue), 0, 0, &props,
+                                  amqp_cstring_bytes(sf->sf_data));
   if (status != AMQP_STATUS_OK) {
 #ifdef DEBUG
     rmq_debug_log_amqp_status("RMQ amqp_basic_publish", status);
@@ -572,4 +571,3 @@ void stats_buffer_rmq_service_io(void)
     }
   }
 }
-

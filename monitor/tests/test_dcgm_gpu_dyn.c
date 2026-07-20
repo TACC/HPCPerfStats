@@ -17,7 +17,7 @@ static dcgmReturn_t fake_dcgmInit(void)
 
 static const char *fake_errorString(dcgmReturn_t result)
 {
-  (void) result;
+  (void)result;
   return "fake-dcgm-error";
 }
 
@@ -34,8 +34,8 @@ static void test_load_missing_lib_fails(void)
   setenv("HPCPERFSTATS_DCGM_LIB", "/nonexistent/libdcgm.so.test-missing", 1);
   assert(dcgm_gpu_dyn_load() < 0);
   assert(dcgm_gpu_dyn_loaded() == 0);
-  assert(strstr(dcgm_gpu_dyn_last_error(), "nonexistent") != NULL
-         || dcgm_gpu_dyn_last_error()[0] != '\0');
+  assert(strstr(dcgm_gpu_dyn_last_error(), "nonexistent") != NULL ||
+         dcgm_gpu_dyn_last_error()[0] != '\0');
   unsetenv("HPCPERFSTATS_DCGM_LIB");
 }
 

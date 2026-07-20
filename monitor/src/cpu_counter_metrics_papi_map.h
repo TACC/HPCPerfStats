@@ -29,7 +29,6 @@ struct papi_cpu_hw_counters {
  *   aperf / mperf / cpu_clock_est_cycles from cycles
  * Packed FP width buckets are zeroed. Does not touch util or DCGM power keys.
  */
-void papi_map_counters_to_host_cpu_hw(struct stats *stats,
-				     const struct papi_cpu_hw_counters *c);
+void papi_map_counters_to_host_cpu_hw(struct stats *stats, const struct papi_cpu_hw_counters *c);
 
 #endif

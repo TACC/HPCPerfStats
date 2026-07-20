@@ -41,7 +41,7 @@ static int token_is_uint(const char *tok)
   if (tok == NULL || tok[0] == '\0')
     return 0;
   for (i = 0; tok[i] != '\0'; i++) {
-    if (!isdigit((unsigned char) tok[i]))
+    if (!isdigit((unsigned char)tok[i]))
       return 0;
   }
   return 1;
@@ -53,10 +53,10 @@ static int st_name_looks_like_driver(const char *name)
 
   if (name == NULL || name[0] == '\0')
     return 0;
-  if (!islower((unsigned char) name[0]))
+  if (!islower((unsigned char)name[0]))
     return 0;
   for (i = 0; name[i] != '\0'; i++) {
-    unsigned char c = (unsigned char) name[i];
+    unsigned char c = (unsigned char)name[i];
 
     if (!(islower(c) || isdigit(c) || c == '_'))
       return 0;
@@ -71,14 +71,13 @@ static int dev_looks_plausible(const char *dev)
   if (dev == NULL || dev[0] == '\0')
     return 0;
   for (i = 0; dev[i] != '\0'; i++) {
-    if (isspace((unsigned char) dev[i]))
+    if (isspace((unsigned char)dev[i]))
       return 0;
   }
   return 1;
 }
 
-static size_t schema_value_count_for_tier(const struct stats_type *type,
-					enum stats_row_tier tier)
+static size_t schema_value_count_for_tier(const struct stats_type *type, enum stats_row_tier tier)
 {
   size_t k;
   size_t n = 0;
@@ -86,8 +85,7 @@ static size_t schema_value_count_for_tier(const struct stats_type *type,
   if (type == NULL)
     return 0;
   for (k = 0; k < type->st_schema.sc_len; k++) {
-    if (tier == STATS_ROW_FAST
-	&& type->st_schema.sc_ent[k]->se_collect_tier == COLLECT_TIER_SLOW)
+    if (tier == STATS_ROW_FAST && type->st_schema.sc_ent[k]->se_collect_tier == COLLECT_TIER_SLOW)
       continue;
     n++;
   }
@@ -162,13 +160,12 @@ static int validate_driver_row(const char *line, enum stats_row_tier payload_tie
       row_tier = STATS_ROW_FULL;
       value_start = 3;
     } else {
-      fprintf(stderr, "emit_validate: %s missing @fast/@full token: %s\n",
-	      fields[0], line);
+      fprintf(stderr, "emit_validate: %s missing @fast/@full token: %s\n", fields[0], line);
       return -1;
     }
     if (row_tier != payload_tier) {
-      fprintf(stderr, "emit_validate: %s tier %s does not match payload tier\n",
-	      fields[0], fields[2]);
+      fprintf(stderr, "emit_validate: %s tier %s does not match payload tier\n", fields[0],
+              fields[2]);
       return -1;
     }
   } else {
@@ -183,25 +180,21 @@ static int validate_driver_row(const char *line, enum stats_row_tier payload_tie
   value_count = nfields - value_start;
   expect = schema_value_count_for_tier(type, row_tier);
   if (value_count != expect) {
-    fprintf(stderr,
-	    "emit_validate: %s dev=%s expected %zu values for %s row, got %zu: %s\n",
-	    fields[0], fields[1], expect,
-	    row_tier == STATS_ROW_FAST ? "@fast" : "@full",
-	    value_count, line);
+    fprintf(stderr, "emit_validate: %s dev=%s expected %zu values for %s row, got %zu: %s\n",
+            fields[0], fields[1], expect, row_tier == STATS_ROW_FAST ? "@fast" : "@full",
+            value_count, line);
     return -1;
   }
   for (i = value_start; i < nfields; i++) {
     if (!token_is_uint(fields[i])) {
-      fprintf(stderr, "emit_validate: %s non-numeric value %s in %s\n",
-	      fields[0], fields[i], line);
+      fprintf(stderr, "emit_validate: %s non-numeric value %s in %s\n", fields[0], fields[i], line);
       return -1;
     }
   }
   return 0;
 }
 
-int test_debug_shm_emit_validate_payload(const char *payload, size_t len,
-					 enum stats_row_tier tier)
+int test_debug_shm_emit_validate_payload(const char *payload, size_t len, enum stats_row_tier tier)
 {
   char *copy;
   char *line;
@@ -225,8 +218,8 @@ int test_debug_shm_emit_validate_payload(const char *payload, size_t len,
       continue;
     if (!saw_header) {
       if (validate_sample_header(line) != 0) {
-	rc = -1;
-	break;
+        rc = -1;
+        break;
       }
       saw_header = 1;
       continue;

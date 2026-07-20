@@ -9,7 +9,7 @@
 #include "stats.h"
 #include "stats_registry.h"
 
-struct stats_type *const stats_type_table[] = { NULL };
+struct stats_type *const stats_type_table[] = {NULL};
 const size_t stats_type_nr = 0;
 static struct stats_type g_type;
 static unsigned long long g_vals[5];
@@ -21,14 +21,13 @@ static void setup_host_mem_type(void)
 {
   memset(&g_type, 0, sizeof(g_type));
   snprintf(g_type.st_name, sizeof(g_type.st_name), "%s", "host_mem");
-  assert(schema_init(&g_type.st_schema,
-                     "mem_total mem_free active inactive dirty") == 0);
+  assert(schema_init(&g_type.st_schema, "mem_total mem_free active inactive dirty") == 0);
   collect_tier_set_enabled(1);
   collect_tier_apply_to_type(&g_type);
   memset(g_vals, 0, sizeof(g_vals));
   memset(g_present, 0, sizeof(g_present));
   memset(g_stats_storage, 0, sizeof(g_stats_storage));
-  g_stats = (struct stats *) g_stats_storage;
+  g_stats = (struct stats *)g_stats_storage;
   g_stats->s_type = &g_type;
   g_stats->s_val = g_vals;
   g_stats->s_val_present = g_present;
@@ -77,7 +76,7 @@ static int tier_key_active_hook(void *ctx, struct stats *stats, const char *key)
 {
   int idx;
 
-  (void) ctx;
+  (void)ctx;
   if (stats == NULL || key == NULL)
     return 1;
   idx = schema_ref(&stats->s_type->st_schema, key);
@@ -92,9 +91,8 @@ static void test_str_collect_key_list_uses_runtime_hook(void)
   collect_tier_set_phase(COLLECT_FAST_ONLY);
   collect_set_key_active_hook(tier_key_active_hook, NULL);
 
-  assert(str_collect_key_list("100 200 300 400", g_stats,
-                              "mem_total", "mem_free", "active", "inactive",
-                              NULL) == 4);
+  assert(str_collect_key_list("100 200 300 400", g_stats, "mem_total", "mem_free", "active",
+                              "inactive", NULL) == 4);
   assert(g_vals[0] == 100ULL);
   assert(g_vals[1] == 200ULL);
   assert(g_vals[2] == 300ULL);

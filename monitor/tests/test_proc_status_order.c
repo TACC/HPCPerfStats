@@ -16,7 +16,7 @@ void stats_set(struct stats *stats, const char *key, unsigned long long val)
 static struct stats g_dummy_stats;
 
 static void assert_stub_ull(const struct test_stats_stub *stub, const char *key,
-			    unsigned long long expect)
+                            unsigned long long expect)
 {
   unsigned long long val = 0;
 
@@ -59,7 +59,7 @@ static void test_pending_cap(void)
 
   proc_status_pending_init(&pend);
   for (i = 0; i < PROC_STATUS_PENDING_MAX; i++)
-    assert(proc_status_pending_push(&pend, "Uid", (unsigned long long) i) == 0);
+    assert(proc_status_pending_push(&pend, "Uid", (unsigned long long)i) == 0);
   assert(proc_status_pending_push(&pend, "VmRSS", 1ULL) == -1);
   assert(pend.n == PROC_STATUS_PENDING_MAX);
 }
@@ -78,23 +78,23 @@ static void test_realistic_status_order(void)
     const char *key;
     const char *rest;
   } lines[] = {
-    { "Name:", "myjob" },
-    { "State:", "R (running)" },
-    { "Uid:", "1000\t1000\t1000\t1000" },
-    { "VmPeak:", "123456 kB" },
-    { "VmSize:", "120000 kB" },
-    { "VmLck:", "0 kB" },
-    { "VmHWM:", "8192 kB" },
-    { "VmRSS:", "4096 kB" },
-    { "VmData:", "2048 kB" },
-    { "VmStk:", "136 kB" },
-    { "VmExe:", "4 kB" },
-    { "VmLib:", "3000 kB" },
-    { "VmPTE:", "64 kB" },
-    { "VmSwap:", "0 kB" },
-    { "Threads:", "8" },
-    { "Cpus_allowed_list:", "0-71" },
-    { "Mems_allowed_list:", "0" },
+      {"Name:", "myjob"},
+      {"State:", "R (running)"},
+      {"Uid:", "1000\t1000\t1000\t1000"},
+      {"VmPeak:", "123456 kB"},
+      {"VmSize:", "120000 kB"},
+      {"VmLck:", "0 kB"},
+      {"VmHWM:", "8192 kB"},
+      {"VmRSS:", "4096 kB"},
+      {"VmData:", "2048 kB"},
+      {"VmStk:", "136 kB"},
+      {"VmExe:", "4 kB"},
+      {"VmLib:", "3000 kB"},
+      {"VmPTE:", "64 kB"},
+      {"VmSwap:", "0 kB"},
+      {"Threads:", "8"},
+      {"Cpus_allowed_list:", "0-71"},
+      {"Mems_allowed_list:", "0"},
   };
   size_t i;
 

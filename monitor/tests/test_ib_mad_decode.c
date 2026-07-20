@@ -25,21 +25,21 @@ static uint64_t g_rcv_pkts;
 
 static void fake_mad_decode_field(uint8_t *buf, enum MAD_FIELDS field, void *val)
 {
-  (void) buf;
+  (void)buf;
   if (val == NULL)
     return;
   switch (field) {
   case IB_PC_EXT_XMT_BYTES_F:
-    *(uint64_t *) val = g_xmt_bytes;
+    *(uint64_t *)val = g_xmt_bytes;
     break;
   case IB_PC_EXT_RCV_BYTES_F:
-    *(uint64_t *) val = g_rcv_bytes;
+    *(uint64_t *)val = g_rcv_bytes;
     break;
   case IB_PC_EXT_XMT_PKTS_F:
-    *(uint64_t *) val = g_xmt_pkts;
+    *(uint64_t *)val = g_xmt_pkts;
     break;
   case IB_PC_EXT_RCV_PKTS_F:
-    *(uint64_t *) val = g_rcv_pkts;
+    *(uint64_t *)val = g_rcv_pkts;
     break;
   default:
     memset(val, 0, sizeof(uint64_t));

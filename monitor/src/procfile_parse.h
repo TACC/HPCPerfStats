@@ -27,7 +27,6 @@ int procfile_for_each_line(const char *path, procfile_line_fn cb, void *ctx);
 
 /* Like procfile_for_each_line but skips the first `skip` lines (e.g. the
  * header in /proc/sysvipc/shm). */
-int procfile_for_each_line_skip(const char *path, size_t skip,
-                                procfile_line_fn cb, void *ctx);
+int procfile_for_each_line_skip(const char *path, size_t skip, procfile_line_fn cb, void *ctx);
 
 #endif

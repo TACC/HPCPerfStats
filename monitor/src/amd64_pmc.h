@@ -21,11 +21,10 @@
 #include "trace.h"
 #include "cpuid.h"
 
-
 // From https://developer.amd.com/resources/developer-guides-manuals/
 // Open-Source Register Reference for AMD Family 17h Processors
 //
-// CTLs p. 136 
+// CTLs p. 136
 // MSRC001_020[0...A] [Performance Event Select [5:0]] (Core::X86::Msr::PERF_CTL)
 //
 // CTRs p. 138
@@ -47,53 +46,42 @@
 #define MSR_PERF_CTR4 0xC0010209
 #define MSR_PERF_CTR5 0xC001020B
 
-#define MSR_PERF_INST_RETIRED  0xC00000E9
-#define MSR_PERF_APERF         0xC00000E8
-#define MSR_PERF_MPERF         0xC00000E7
+#define MSR_PERF_INST_RETIRED 0xC00000E9
+#define MSR_PERF_APERF 0xC00000E8
+#define MSR_PERF_MPERF 0xC00000E7
 
-#define MSR_HW_CONFIG   0xC0010015
-
+#define MSR_HW_CONFIG 0xC0010015
 
 // SSE/AVX operations p. 151
 // PMCx003 [Retired SSE/AVX Operations] (Core::X86::Pmc::Core::FpRetSseAvxOps)
 // Cannot separate single or double precision flops in epyc2 even though manual says otherwise
-#define FLOPS_SINGLE             PERF_EVENT(0x03, 0x0F) /* Counts single precision, add, multiply, divide & sqrt FLOPs. */
-#define FLOPS_DOUBLE             PERF_EVENT(0x03, 0xF0) /* Counts double precision, add, multiply, divide & sqrt FLOPs. */
+#define FLOPS_SINGLE                                                                               \
+  PERF_EVENT(0x03, 0x0F) /* Counts single precision, add, multiply, divide & sqrt FLOPs. */
+#define FLOPS_DOUBLE                                                                               \
+  PERF_EVENT(0x03, 0xF0) /* Counts double precision, add, multiply, divide & sqrt FLOPs. */
 
-#define FLOPS                    PERF_EVENT(0x03, 0xFF) //0x43FF03
-#define MERGE                    0xF004000FF  // FLOPS need merge because events incr > 16 / cycle
-#define BRANCH_INST_RETIRED      PERF_EVENT(0xC2, 0x00)
+#define FLOPS PERF_EVENT(0x03, 0xFF) //0x43FF03
+#define MERGE 0xF004000FF            // FLOPS need merge because events incr > 16 / cycle
+#define BRANCH_INST_RETIRED PERF_EVENT(0xC2, 0x00)
 #define BRANCH_INST_RETIRED_MISS PERF_EVENT(0xC3, 0x00)
-#define DISPATCH_STALL_CYCLES1   PERF_EVENT(0xAF, 0x08) 
-#define DISPATCH_STALL_CYCLES0   PERF_EVENT(0xAE, 0xFF) 
+#define DISPATCH_STALL_CYCLES1 PERF_EVENT(0xAF, 0x08)
+#define DISPATCH_STALL_CYCLES0 PERF_EVENT(0xAE, 0xFF)
 
-#define KEYS \
-  X(fp_ops_retired, "E,W=48", ""), \
-  X(fp_ops_merge, "E,W=48", ""), \
-  X(branch_inst_retired, "E,W=48", ""), \
-  X(branch_inst_retired_miss, "E,W=48", ""), \
-  X(dispatch_stall_cycles1, "E,W=48", ""), \
-  X(dispatch_stall_cycles0, "E,W=48", ""), \
-  X(instr_retired, "E,W=48", ""), \
-  X(aperf, "E,W=48", ""), \
-  X(mperf, "E,W=48", "")
+#define KEYS                                                                                       \
+  X(fp_ops_retired, "E,W=48", ""), X(fp_ops_merge, "E,W=48", ""),                                  \
+      X(branch_inst_retired, "E,W=48", ""), X(branch_inst_retired_miss, "E,W=48", ""),             \
+      X(dispatch_stall_cycles1, "E,W=48", ""), X(dispatch_stall_cycles0, "E,W=48", ""),            \
+      X(instr_retired, "E,W=48", ""), X(aperf, "E,W=48", ""), X(mperf, "E,W=48", "")
 
-#define DF_KEYS \
-  X(dram_chan0_bytes, "E,W=48", ""), \
-  X(dram_chan1_bytes, "E,W=48", ""), \
-  X(dram_chan2_bytes, "E,W=48", ""), \
-  X(dram_chan3_bytes, "E,W=48", "")
+#define DF_KEYS                                                                                    \
+  X(dram_chan0_bytes, "E,W=48", ""), X(dram_chan1_bytes, "E,W=48", ""),                            \
+      X(dram_chan2_bytes, "E,W=48", ""), X(dram_chan3_bytes, "E,W=48", "")
 
-
-#define PERF_EVENT(event_select, unit_mask) \
-  ( (event_select & 0xFF) \
-  | (unit_mask << 8) \
-  | (1UL << 16) /* Count in user mode (CPL == 0). */ \
-  | (1UL << 17) /* Count in OS mode (CPL > 0). */ \
-  | (1UL << 22) /* Enable. */ \
+#define PERF_EVENT(event_select, unit_mask)                                                        \
+  ((event_select & 0xFF) | (unit_mask << 8) | (1UL << 16) /* Count in user mode (CPL == 0). */     \
+   | (1UL << 17)                                          /* Count in OS mode (CPL > 0). */        \
+   | (1UL << 22)                                          /* Enable. */                            \
   )
-
-
 
 /* LEGACY 10H Counters and Events
  * Left in case 10H needs to be added back
@@ -142,5 +130,3 @@ v   be used to track events in the Northbridge. Northbridge events
 //#define UserCycles    (PERF_EVENT(0x76, 0x00) & ~(1UL << 17))
 //#define DCacheSysFills PERF_EVENT(0x42, 0x01) /* Counts DCache fills from beyond the L2 cache. */
 //#define SSEFLOPS       PERF_EVENT(0x03, 0x7F) /* Counts single & double, add, multiply, divide & sqrt FLOPs. */
-
-

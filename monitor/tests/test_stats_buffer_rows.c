@@ -18,7 +18,7 @@ static struct stats_type g_type;
 static size_t g_type_iter;
 
 static struct stats *make_test_stats(struct stats_type *type, const char *dev,
-				     const unsigned long long *vals, size_t nvals)
+                                     const unsigned long long *vals, size_t nvals)
 {
   size_t n = type->st_schema.sc_len;
   struct stats *s = malloc(sizeof(*s) + strlen(dev) + 1);
@@ -56,7 +56,7 @@ struct stats_type *stats_type_for_each(size_t *i)
 
 static void setup_type(void)
 {
-  const unsigned long long vals[4] = { 10, 20, 30, 40 };
+  const unsigned long long vals[4] = {10, 20, 30, 40};
   struct stats *s;
 
   memset(&g_type, 0, sizeof(g_type));
@@ -71,7 +71,7 @@ static void setup_type(void)
 
 static void free_stats_dict_key(void *key)
 {
-  struct stats *s = key_to_stats((const char *) key);
+  struct stats *s = key_to_stats((const char *)key);
 
   if (s == NULL)
     return;

@@ -11,7 +11,7 @@
 
 static void stats_format_append_type_flag(char **p, char *end, int is_control)
 {
-  if ((size_t) (end - *p) < 3)
+  if ((size_t)(end - *p) < 3)
     return;
   if (is_control) {
     memcpy(*p, ",C", 3);
@@ -22,8 +22,7 @@ static void stats_format_append_type_flag(char **p, char *end, int is_control)
   }
 }
 
-size_t stats_format_schema_entry_suffix(char *buf, size_t cap,
-                                        struct schema_entry *se)
+size_t stats_format_schema_entry_suffix(char *buf, size_t cap, struct schema_entry *se)
 {
   char tmp[96];
   char *p = tmp;
@@ -40,32 +39,32 @@ size_t stats_format_schema_entry_suffix(char *buf, size_t cap,
     stats_format_append_type_flag(&p, end, 0);
 
   if (se->se_unit != NULL) {
-    int n = snprintf(p, (size_t) (end - p), ",U=%s", se->se_unit);
+    int n = snprintf(p, (size_t)(end - p), ",U=%s", se->se_unit);
 
-    if (n > 0 && (size_t) n < (size_t) (end - p))
+    if (n > 0 && (size_t)n < (size_t)(end - p))
       p += n;
     else
       p = end;
   }
   if (se->se_width != 0) {
-    int n = snprintf(p, (size_t) (end - p), ",W=%u", se->se_width);
+    int n = snprintf(p, (size_t)(end - p), ",W=%u", se->se_width);
 
-    if (n > 0 && (size_t) n < (size_t) (end - p))
+    if (n > 0 && (size_t)n < (size_t)(end - p))
       p += n;
     else
       p = end;
   }
   if (se->se_collect_tier == COLLECT_TIER_SLOW) {
-    int n = snprintf(p, (size_t) (end - p), ",R=S");
+    int n = snprintf(p, (size_t)(end - p), ",R=S");
 
-    if (n > 0 && (size_t) n < (size_t) (end - p))
+    if (n > 0 && (size_t)n < (size_t)(end - p))
       p += n;
     else
       p = end;
   }
 
   {
-    size_t len = (size_t) (p - tmp);
+    size_t len = (size_t)(p - tmp);
 
     if (buf != NULL && cap > len)
       memcpy(buf, tmp, len + 1);
@@ -73,9 +72,8 @@ size_t stats_format_schema_entry_suffix(char *buf, size_t cap,
   }
 }
 
-void stats_format_emit_property_banner(stats_format_emit_fn emit, void *opaque,
-                                       int prop_char, const char *prog,
-                                       const char *vers, const char *nodename,
+void stats_format_emit_property_banner(stats_format_emit_fn emit, void *opaque, int prop_char,
+                                       const char *prog, const char *vers, const char *nodename,
                                        const char *sysname, const char *machine,
                                        const char *release, const char *version,
                                        unsigned long long uptime)
@@ -83,20 +81,15 @@ void stats_format_emit_property_banner(stats_format_emit_fn emit, void *opaque,
   if (emit == NULL)
     return;
 
-  emit(opaque, "%c%s %s\n", prop_char, prog != NULL ? prog : "",
-       vers != NULL ? vers : "");
+  emit(opaque, "%c%s %s\n", prop_char, prog != NULL ? prog : "", vers != NULL ? vers : "");
   emit(opaque, "%chostname %s\n", prop_char, nodename != NULL ? nodename : "");
-  emit(opaque, "%cuname %s %s %s %s\n", prop_char,
-       sysname != NULL ? sysname : "",
-       machine != NULL ? machine : "",
-       release != NULL ? release : "",
+  emit(opaque, "%cuname %s %s %s %s\n", prop_char, sysname != NULL ? sysname : "",
+       machine != NULL ? machine : "", release != NULL ? release : "",
        version != NULL ? version : "");
-  emit(opaque, "%cuptime %llu\n", prop_char,
-       (unsigned long long) uptime);
+  emit(opaque, "%cuptime %llu\n", prop_char, (unsigned long long)uptime);
 }
 
-static void stats_format_emit_one_schema_entry(stats_format_emit_fn emit,
-                                               void *opaque,
+static void stats_format_emit_one_schema_entry(stats_format_emit_fn emit, void *opaque,
                                                struct schema_entry *se)
 {
   char suf[96];
@@ -105,7 +98,7 @@ static void stats_format_emit_one_schema_entry(stats_format_emit_fn emit,
 
   stats_format_schema_entry_suffix(suf, sizeof(suf), se);
   n = snprintf(entry, sizeof(entry), " %s%s", se->se_key, suf);
-  if (n > 0 && (size_t) n < sizeof(entry))
+  if (n > 0 && (size_t)n < sizeof(entry))
     emit(opaque, "%s", entry);
   else {
     emit(opaque, " %s", se->se_key);
@@ -113,8 +106,8 @@ static void stats_format_emit_one_schema_entry(stats_format_emit_fn emit,
   }
 }
 
-void stats_format_emit_schema_line(stats_format_emit_fn emit, void *opaque,
-                                   int schema_char, struct stats_type *type)
+void stats_format_emit_schema_line(stats_format_emit_fn emit, void *opaque, int schema_char,
+                                   struct stats_type *type)
 {
   size_t j;
 
@@ -127,8 +120,8 @@ void stats_format_emit_schema_line(stats_format_emit_fn emit, void *opaque,
   emit(opaque, "\n");
 }
 
-void stats_format_emit_mark_multiline(stats_format_emit_fn emit, void *opaque,
-                                      int mark_char, const char *payload)
+void stats_format_emit_mark_multiline(stats_format_emit_fn emit, void *opaque, int mark_char,
+                                      const char *payload)
 {
   const char *str;
 
@@ -142,7 +135,7 @@ void stats_format_emit_mark_multiline(stats_format_emit_fn emit, void *opaque,
     if (eol == NULL)
       eol = str + strlen(str);
 
-    emit(opaque, "%c%.*s\n", mark_char, (int) (eol - str), str);
+    emit(opaque, "%c%.*s\n", mark_char, (int)(eol - str), str);
     str = eol;
     if (*str == '\n')
       str++;
@@ -183,8 +176,7 @@ int stats_format_append_mark_va(char **markp, const char *fmt, va_list ap)
   return 0;
 }
 
-static int stats_format_row_key_emitted(struct stats_type *type, size_t k,
-                                        enum stats_row_tier tier)
+static int stats_format_row_key_emitted(struct stats_type *type, size_t k, enum stats_row_tier tier)
 {
   /* FAST rows carry only fast-tier keys; LEGACY/FULL carry every key. */
   if (tier != STATS_ROW_FAST)
@@ -192,10 +184,8 @@ static int stats_format_row_key_emitted(struct stats_type *type, size_t k,
   return type->st_schema.sc_ent[k]->se_collect_tier == COLLECT_TIER_FAST;
 }
 
-static int stats_format_append_values(char *buf, size_t cap, size_t used,
-                                      struct stats_type *type,
-                                      struct stats *stats,
-                                      enum stats_row_tier tier)
+static int stats_format_append_values(char *buf, size_t cap, size_t used, struct stats_type *type,
+                                      struct stats *stats, enum stats_row_tier tier)
 {
   size_t k;
   char *p = buf + used;
@@ -205,17 +195,16 @@ static int stats_format_append_values(char *buf, size_t cap, size_t used,
   for (k = 0; k < type->st_schema.sc_len; k++) {
     if (!stats_format_row_key_emitted(type, k, tier))
       continue;
-    n = snprintf(p, rem, " %llu",
-                 (unsigned long long) stats->s_val[k]);
+    n = snprintf(p, rem, " %llu", (unsigned long long)stats->s_val[k]);
     if (n < 0)
       return -1;
-    if ((size_t) n >= rem)
-      return (int) (used + (size_t) n + 64);
+    if ((size_t)n >= rem)
+      return (int)(used + (size_t)n + 64);
     p += n;
-    rem -= (size_t) n;
-    used += (size_t) n;
+    rem -= (size_t)n;
+    used += (size_t)n;
   }
-  return (int) used;
+  return (int)used;
 }
 
 static const char *stats_format_row_tier_token(enum stats_row_tier tier)
@@ -231,36 +220,30 @@ static const char *stats_format_row_tier_token(enum stats_row_tier tier)
   }
 }
 
-int stats_format_snprintf_stats_row_tier(char *buf, size_t cap,
-                                         struct stats_type *type,
-                                         struct stats *stats,
-                                         enum stats_row_tier tier)
+int stats_format_snprintf_stats_row_tier(char *buf, size_t cap, struct stats_type *type,
+                                         struct stats *stats, enum stats_row_tier tier)
 {
   int n;
 
   if (buf == NULL || type == NULL || stats == NULL || cap == 0)
     return -1;
 
-  n = snprintf(buf, cap, "%s %s%s", type->st_name, stats->s_dev,
-               stats_format_row_tier_token(tier));
+  n = snprintf(buf, cap, "%s %s%s", type->st_name, stats->s_dev, stats_format_row_tier_token(tier));
   if (n < 0)
     return -1;
-  if ((size_t) n >= cap)
+  if ((size_t)n >= cap)
     return n + 64;
 
-  return stats_format_append_values(buf, cap, (size_t) n, type, stats, tier);
+  return stats_format_append_values(buf, cap, (size_t)n, type, stats, tier);
 }
 
-int stats_format_snprintf_stats_row(char *buf, size_t cap,
-                                    struct stats_type *type,
+int stats_format_snprintf_stats_row(char *buf, size_t cap, struct stats_type *type,
                                     struct stats *stats)
 {
-  return stats_format_snprintf_stats_row_tier(buf, cap, type, stats,
-                                              STATS_ROW_LEGACY);
+  return stats_format_snprintf_stats_row_tier(buf, cap, type, stats, STATS_ROW_LEGACY);
 }
 
-void stats_format_fprint_stats_row(FILE *f, struct stats_type *type,
-                                   struct stats *stats)
+void stats_format_fprint_stats_row(FILE *f, struct stats_type *type, struct stats *stats)
 {
   char stackbuf[4096];
   int n;
@@ -269,13 +252,13 @@ void stats_format_fprint_stats_row(FILE *f, struct stats_type *type,
     return;
 
   n = stats_format_snprintf_stats_row(stackbuf, sizeof(stackbuf), type, stats);
-  if (n >= 0 && (size_t) n < sizeof(stackbuf)) {
+  if (n >= 0 && (size_t)n < sizeof(stackbuf)) {
     fprintf(f, "%s\n", stackbuf);
     return;
   }
 
   fprintf(f, "%s %s", type->st_name, stats->s_dev);
   for (size_t k = 0; k < type->st_schema.sc_len; k++)
-    fprintf(f, " %llu", (unsigned long long) stats->s_val[k]);
+    fprintf(f, " %llu", (unsigned long long)stats->s_val[k]);
   fprintf(f, "\n");
 }

@@ -18,28 +18,22 @@ struct opa_sysfs_map_entry {
  * opa_sysfs_collect_port falls back to hw_counters (see opa_sysfs_hw_map).
  */
 static const struct opa_sysfs_map_entry opa_sysfs_map[] = {
-  { "port_xmit_data", "port_xmit_data" },
-  { "port_rcv_data", "port_rcv_data" },
-  { "port_xmit_packets", "port_xmit_pkts" },
-  { "port_rcv_packets", "port_rcv_pkts" },
-  { "multicast_xmit_packets", "port_multicast_xmit_pkts" },
-  { "multicast_rcv_packets", "port_multicast_rcv_pkts" },
-  { "port_xmit_wait", "port_xmit_wait" },
-  { NULL, NULL }
-};
+    {"port_xmit_data", "port_xmit_data"},
+    {"port_rcv_data", "port_rcv_data"},
+    {"port_xmit_packets", "port_xmit_pkts"},
+    {"port_rcv_packets", "port_rcv_pkts"},
+    {"multicast_xmit_packets", "port_multicast_xmit_pkts"},
+    {"multicast_rcv_packets", "port_multicast_rcv_pkts"},
+    {"port_xmit_wait", "port_xmit_wait"},
+    {NULL, NULL}};
 
 /*
  * CN5000 NDR utilization under ports/N/hw_counters (verified c512-122).
  * Do not map DmaWait / RcvHdrOvr* / comma-named files into KEYS (v1).
  */
 static const struct opa_sysfs_map_entry opa_sysfs_hw_map[] = {
-  { "TxWords", "port_xmit_data" },
-  { "RxWords", "port_rcv_data" },
-  { "TxPkt", "port_xmit_pkts" },
-  { "RxPkt", "port_rcv_pkts" },
-  { "TxWait", "port_xmit_wait" },
-  { NULL, NULL }
-};
+    {"TxWords", "port_xmit_data"}, {"RxWords", "port_rcv_data"}, {"TxPkt", "port_xmit_pkts"},
+    {"RxPkt", "port_rcv_pkts"},    {"TxWait", "port_xmit_wait"}, {NULL, NULL}};
 
 static const char *g_opa_sysfs_root = "/sys";
 
@@ -48,8 +42,7 @@ void opa_sysfs_test_set_root(const char *root)
   g_opa_sysfs_root = (root != NULL && root[0] != '\0') ? root : "/sys";
 }
 
-static const char *lookup_map(const struct opa_sysfs_map_entry *table,
-                              const char *sysfs_name)
+static const char *lookup_map(const struct opa_sysfs_map_entry *table, const char *sysfs_name)
 {
   size_t i;
 
@@ -72,8 +65,7 @@ const char *opa_sysfs_hw_schema_key_for_file(const char *sysfs_name)
   return lookup_map(opa_sysfs_hw_map, sysfs_name);
 }
 
-static int collect_from_map(struct stats *stats, const char *hca, int port,
-                            const char *subdir,
+static int collect_from_map(struct stats *stats, const char *hca, int port, const char *subdir,
                             const struct opa_sysfs_map_entry *table)
 {
   char path[256];
@@ -85,9 +77,8 @@ static int collect_from_map(struct stats *stats, const char *hca, int port,
     return -1;
 
   for (i = 0; table[i].sysfs_name != NULL; i++) {
-    snprintf(path, sizeof(path),
-             "%s/class/infiniband/%s/ports/%d/%s/%s",
-             g_opa_sysfs_root, hca, port, subdir, table[i].sysfs_name);
+    snprintf(path, sizeof(path), "%s/class/infiniband/%s/ports/%d/%s/%s", g_opa_sysfs_root, hca,
+             port, subdir, table[i].sysfs_name);
     if (pscanf(path, "%llu", &val) != 1)
       continue;
     stats_set(stats, table[i].schema_key, val);
@@ -96,14 +87,12 @@ static int collect_from_map(struct stats *stats, const char *hca, int port,
   return n_ok > 0 ? 0 : -1;
 }
 
-int opa_sysfs_collect_classic_counters(struct stats *stats, const char *hca,
-                                       int port)
+int opa_sysfs_collect_classic_counters(struct stats *stats, const char *hca, int port)
 {
   return collect_from_map(stats, hca, port, "counters", opa_sysfs_map);
 }
 
-int opa_sysfs_collect_hw_counters(struct stats *stats, const char *hca,
-                                  int port)
+int opa_sysfs_collect_hw_counters(struct stats *stats, const char *hca, int port)
 {
   return collect_from_map(stats, hca, port, "hw_counters", opa_sysfs_hw_map);
 }

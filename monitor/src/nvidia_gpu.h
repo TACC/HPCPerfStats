@@ -9,41 +9,52 @@
 /* Minimal non-PROF list for stacks where DCGM profiling watches are not permissioned/supported. */
 #define NVIDIA_GPU_DCGM_NBASIC 12
 
-#define KEYS \
-  X(gpu_util, "", "GPU utilization in %"), \
-  X(gpu_mem_util, "", "Memory utilization in %"), \
-  X(gpu_mem_total_mb, "U=MB", "Total GPU framebuffer memory (device-reported MB)"), \
-  X(gpu_mem_used_mb, "U=MB", "Used GPU framebuffer memory (device-reported MB)"), \
-  X(gpu_mem_free_mb, "U=MB", "Free GPU framebuffer memory (device-reported MB)"), \
-  X(gpu_sm_clock, "", "SM clock from DCGM (device-reported units)"), \
-  X(power_usage, "U=W", "Power draw in Watts"), \
-  X(sysio_power_usage, "U=W", "DCGM SysIO instantaneous power (W) when exposed; do not sum with power_usage/module without vendor guidance"), \
-  X(module_power_usage, "U=W", "DCGM module-scope power (W) on superchips when exposed; may overlap GPU+Grace readings—avoid double-counting in totals"), \
-  X(temperature, "U=C", "GPU temperature in C"), \
-  X(fp64_active, "", "Ratio of cycles fp64 pipes are active (in %)"), \
-  X(sm_active, "", "Ratio of cycles an SM has at least one warp assigned (in %)"), \
-  X(sm_occupancy, "", "Ratio of resident warps on an SM (in %)"), \
-  X(fp32_active, "", "Ratio of cycles fp32 pipes are active (in %)"), \
-  X(fp16_active, "", "Ratio of cycles fp16 pipes are active (in %)"), \
-  X(tensor_active, "", "Ratio of cycles any tensor pipe is active (in %)"), \
-  X(tensor_imma_active, "", "DCGM tensor IMMA pipe duty cycle (in %); int/low-precision tensor path — use as FP8-adjacent signal only, not dedicated FP8 FLOPs"), \
-  X(tensor_hmma_active, "", "DCGM tensor HMMA pipe duty cycle (in %); overlaps tensor_active (1004) on some stacks — excluded from gpu_flops fp_mix with tensor_imma_active"), \
-  X(tensor_dfma_active, "", "DCGM tensor DFMA pipe duty cycle (in %); FP64 tensor path — excluded from gpu_flops fp_mix"), \
-  X(gpu_dram_active, "", "Ratio of cycles device memory interface is active (in %)"), \
-  X(gpu_pcie_tx_bytes, "E,W=64,U=B", "DCGM PROF PCIe transmit byte counter (monotonic)"), \
-  X(gpu_pcie_rx_bytes, "E,W=64,U=B", "DCGM PROF PCIe receive byte counter (monotonic)"), \
-  X(gpu_nvlink_tx_bytes, "E,W=64,U=B", "DCGM PROF NvLink transmit byte counter (monotonic)"), \
-  X(gpu_nvlink_rx_bytes, "E,W=64,U=B", "DCGM PROF NvLink receive byte counter (monotonic)"), \
-  X(gpu_pcie_replay_counter, "E,W=64", "DCGM PCIe replay counter (monotonic)"), \
-  X(clocks_event_reasons, "", "Bitmask of GPU clock slowdown reasons"), \
-  X(gpu_flops_rate, "U=FLOP/s", "Estimated GPU floating-point rate (FLOP/s)"), \
-  X(gpu_mem_bw_bytes_rate, "U=B/s", "Estimated GPU memory bandwidth (bytes/s)"), \
-  X(gpu_flops, "E,W=64,U=FLOP", "Estimated cumulative floating-point operations"), \
-  X(gpu_mem_read_bytes, "E,W=64,U=B", "Estimated cumulative GPU memory read bytes"), \
-  X(gpu_mem_write_bytes, "E,W=64,U=B", "Estimated cumulative GPU memory write bytes"), \
-  X(gpu_mem_total_bytes, "E,W=64,U=B", "Estimated cumulative GPU memory total bytes"), \
-  X(gpu_io_link_total_bytes, "E,W=64,U=B", "Cumulative PCIe plus NvLink link bytes (DCGM PROF TX/RX; not HBM/DRAM framebuffer)"), \
-  X(gpu_count, "", "Number of GPUs on this node (DCGM-visible; same value on each device row)")
+#define KEYS                                                                                       \
+  X(gpu_util, "", "GPU utilization in %"), X(gpu_mem_util, "", "Memory utilization in %"),         \
+      X(gpu_mem_total_mb, "U=MB", "Total GPU framebuffer memory (device-reported MB)"),            \
+      X(gpu_mem_used_mb, "U=MB", "Used GPU framebuffer memory (device-reported MB)"),              \
+      X(gpu_mem_free_mb, "U=MB", "Free GPU framebuffer memory (device-reported MB)"),              \
+      X(gpu_sm_clock, "", "SM clock from DCGM (device-reported units)"),                           \
+      X(power_usage, "U=W", "Power draw in Watts"),                                                \
+      X(sysio_power_usage, "U=W",                                                                  \
+        "DCGM SysIO instantaneous power (W) when exposed; do not sum with power_usage/module "     \
+        "without vendor guidance"),                                                                \
+      X(module_power_usage, "U=W",                                                                 \
+        "DCGM module-scope power (W) on superchips when exposed; may overlap GPU+Grace "           \
+        "readings—avoid double-counting in totals"),                                               \
+      X(temperature, "U=C", "GPU temperature in C"),                                               \
+      X(fp64_active, "", "Ratio of cycles fp64 pipes are active (in %)"),                          \
+      X(sm_active, "", "Ratio of cycles an SM has at least one warp assigned (in %)"),             \
+      X(sm_occupancy, "", "Ratio of resident warps on an SM (in %)"),                              \
+      X(fp32_active, "", "Ratio of cycles fp32 pipes are active (in %)"),                          \
+      X(fp16_active, "", "Ratio of cycles fp16 pipes are active (in %)"),                          \
+      X(tensor_active, "", "Ratio of cycles any tensor pipe is active (in %)"),                    \
+      X(tensor_imma_active, "",                                                                    \
+        "DCGM tensor IMMA pipe duty cycle (in %); int/low-precision tensor path — use as "         \
+        "FP8-adjacent signal only, not dedicated FP8 FLOPs"),                                      \
+      X(tensor_hmma_active, "",                                                                    \
+        "DCGM tensor HMMA pipe duty cycle (in %); overlaps tensor_active (1004) on some stacks — " \
+        "excluded from gpu_flops fp_mix with tensor_imma_active"),                                 \
+      X(tensor_dfma_active, "",                                                                    \
+        "DCGM tensor DFMA pipe duty cycle (in %); FP64 tensor path — excluded from gpu_flops "     \
+        "fp_mix"),                                                                                 \
+      X(gpu_dram_active, "", "Ratio of cycles device memory interface is active (in %)"),          \
+      X(gpu_pcie_tx_bytes, "E,W=64,U=B", "DCGM PROF PCIe transmit byte counter (monotonic)"),      \
+      X(gpu_pcie_rx_bytes, "E,W=64,U=B", "DCGM PROF PCIe receive byte counter (monotonic)"),       \
+      X(gpu_nvlink_tx_bytes, "E,W=64,U=B", "DCGM PROF NvLink transmit byte counter (monotonic)"),  \
+      X(gpu_nvlink_rx_bytes, "E,W=64,U=B", "DCGM PROF NvLink receive byte counter (monotonic)"),   \
+      X(gpu_pcie_replay_counter, "E,W=64", "DCGM PCIe replay counter (monotonic)"),                \
+      X(clocks_event_reasons, "", "Bitmask of GPU clock slowdown reasons"),                        \
+      X(gpu_flops_rate, "U=FLOP/s", "Estimated GPU floating-point rate (FLOP/s)"),                 \
+      X(gpu_mem_bw_bytes_rate, "U=B/s", "Estimated GPU memory bandwidth (bytes/s)"),               \
+      X(gpu_flops, "E,W=64,U=FLOP", "Estimated cumulative floating-point operations"),             \
+      X(gpu_mem_read_bytes, "E,W=64,U=B", "Estimated cumulative GPU memory read bytes"),           \
+      X(gpu_mem_write_bytes, "E,W=64,U=B", "Estimated cumulative GPU memory write bytes"),         \
+      X(gpu_mem_total_bytes, "E,W=64,U=B", "Estimated cumulative GPU memory total bytes"),         \
+      X(gpu_io_link_total_bytes, "E,W=64,U=B",                                                     \
+        "Cumulative PCIe plus NvLink link bytes (DCGM PROF TX/RX; not HBM/DRAM framebuffer)"),     \
+      X(gpu_count, "",                                                                             \
+        "Number of GPUs on this node (DCGM-visible; same value on each device row)")
 
 typedef struct dcgm_data {
   int64_t mem_util;

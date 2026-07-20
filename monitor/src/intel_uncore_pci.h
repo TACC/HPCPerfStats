@@ -22,10 +22,8 @@ struct intel_uncore_pci_cfg {
   int nr_events;
 };
 
-int intel_uncore_pci_begin(const struct intel_uncore_pci_cfg *cfg,
-         struct stats_type *type);
+int intel_uncore_pci_begin(const struct intel_uncore_pci_cfg *cfg, struct stats_type *type);
 
-void intel_uncore_pci_collect(const struct intel_uncore_pci_cfg *cfg,
-            struct stats_type *type);
+void intel_uncore_pci_collect(const struct intel_uncore_pci_cfg *cfg, struct stats_type *type);
 
 #endif

@@ -14,7 +14,7 @@ void proc_status_pending_init(struct proc_status_pending *p)
 }
 
 int proc_status_pending_push(struct proc_status_pending *p, const char *kernel_key,
-			     unsigned long long val)
+                             unsigned long long val)
 {
   size_t len;
 
@@ -45,7 +45,7 @@ void proc_status_pending_flush(struct proc_status_pending *p, struct stats *stat
 }
 
 void proc_status_emit_or_defer_kv(struct stats *stats, struct proc_status_pending *p,
-				  const char *key_with_colon, const char *rest)
+                                  const char *key_with_colon, const char *rest)
 {
   char key[64];
   size_t len;
@@ -75,5 +75,5 @@ void proc_status_emit_or_defer_kv(struct stats *stats, struct proc_status_pendin
   if (stats != NULL)
     host_key_alias_emit(stats, key, val);
   else
-    (void) proc_status_pending_push(p, key, val);
+    (void)proc_status_pending_push(p, key, val);
 }

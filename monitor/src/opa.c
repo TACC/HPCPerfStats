@@ -27,7 +27,7 @@ static int opa_count_ports(uint64 portmask)
   int nports = 0;
 
   for (i = 0; i < MAX_PM_PORTS; i++) {
-    if ((portmask >> i) & (uint64) 1)
+    if ((portmask >> i) & (uint64)1)
       nports++;
   }
   return nports;
@@ -35,14 +35,14 @@ static int opa_count_ports(uint64 portmask)
 
 static void opa_init_port_counters_mad(STL_PERF_MAD *mad, uint32_t port)
 {
-  STL_DATA_PORT_COUNTERS_REQ *req = (STL_DATA_PORT_COUNTERS_REQ *) &mad->PerfData;
-  uint64 portmask = (uint64) 1 << port;
+  STL_DATA_PORT_COUNTERS_REQ *req = (STL_DATA_PORT_COUNTERS_REQ *)&mad->PerfData;
+  uint64 portmask = (uint64)1 << port;
   uint32 attrmod;
 
   MemoryClear(mad, sizeof(*mad));
   req->PortSelectMask[3] = portmask;
   req->VLSelectMask = 0x1;
-  attrmod = (uint32) opa_count_ports(portmask) << 24;
+  attrmod = (uint32)opa_count_ports(portmask) << 24;
   BSWAP_STL_DATA_PORT_COUNTERS_REQ(req);
 
   mad->common.BaseVersion = STL_BASE_VERSION;
@@ -72,21 +72,20 @@ static int opa_send_port_counters_mad(struct oib_port *mad_port, STL_PERF_MAD *m
     return -1;
   }
 
-  BSWAP_MAD_HEADER((MAD *) mad);
+  BSWAP_MAD_HEADER((MAD *)mad);
   addr.lid = lid;
   addr.qpn = 1;
   addr.qkey = QP1_WELL_KNOWN_Q_KEY;
   addr.pkey = pkey;
   addr.sl = 0;
-  status = oib_send_recv_mad_no_alloc(mad_port, (uint8_t *) mad,
+  status = oib_send_recv_mad_no_alloc(mad_port, (uint8_t *)mad,
                                       sizeof(STL_DATA_PORT_COUNTERS_REQ) + sizeof(MAD_COMMON),
-                                      &addr, (uint8_t *) mad, &recv_size, RESP_WAIT_TIME, 0);
-  BSWAP_MAD_HEADER((MAD *) mad);
+                                      &addr, (uint8_t *)mad, &recv_size, RESP_WAIT_TIME, 0);
+  BSWAP_MAD_HEADER((MAD *)mad);
   return (status == FSUCCESS) ? 0 : -1;
 }
 
-static void opa_publish_port_counters(struct stats *stats,
-                                      STL_DATA_PORT_COUNTERS_RSP *rsp)
+static void opa_publish_port_counters(struct stats *stats, STL_DATA_PORT_COUNTERS_RSP *rsp)
 {
   if (stats == NULL || rsp == NULL)
     return;
@@ -100,7 +99,7 @@ static int collect_hfi_port_mad(struct stats *stats, uint32_t port)
 {
   struct oib_port *mad_port = NULL;
   STL_SMP smp;
-  STL_PERF_MAD *mad = (STL_PERF_MAD *) &smp;
+  STL_PERF_MAD *mad = (STL_PERF_MAD *)&smp;
   STL_DATA_PORT_COUNTERS_REQ *req;
   STL_DATA_PORT_COUNTERS_RSP *rsp;
   IB_LID lid;
@@ -110,9 +109,9 @@ static int collect_hfi_port_mad(struct stats *stats, uint32_t port)
     return -1;
 
   opa_init_port_counters_mad(mad, port);
-  req = (STL_DATA_PORT_COUNTERS_REQ *) &mad->PerfData;
+  req = (STL_DATA_PORT_COUNTERS_REQ *)&mad->PerfData;
 
-  if (oib_open_port_by_num(&mad_port, (uint8) 0, port) != 0) {
+  if (oib_open_port_by_num(&mad_port, (uint8)0, port) != 0) {
     ERROR("cannot open MAD port %u\n", port);
     goto out;
   }
@@ -126,12 +125,12 @@ static int collect_hfi_port_mad(struct stats *stats, uint32_t port)
   if (opa_send_port_counters_mad(mad_port, mad, lid) != 0)
     goto out;
 
-  rsp = (STL_DATA_PORT_COUNTERS_RSP *) req;
+  rsp = (STL_DATA_PORT_COUNTERS_RSP *)req;
   BSWAP_STL_DATA_PORT_COUNTERS_RSP(rsp);
   opa_publish_port_counters(stats, rsp);
   rc = 0;
 
- out:
+out:
   if (mad_port != NULL)
     oib_close_port(mad_port);
   return rc;
@@ -152,7 +151,7 @@ static void opa_collect_one_port(struct stats *stats, const char *hfi, int port)
 
 #if defined(MONITOR_WITH_OPA)
   if (opa_mad_collect_cycle_ok()) {
-    if (collect_hfi_port_mad(stats, (uint32_t) port) == 0) {
+    if (collect_hfi_port_mad(stats, (uint32_t)port) == 0) {
       opa_mad_note_success();
       mad_ok = 1;
     } else {
@@ -161,21 +160,21 @@ static void opa_collect_one_port(struct stats *stats, const char *hfi, int port)
   }
 #endif
   if (!mad_ok)
-    (void) opa_sysfs_collect_port(stats, hfi, port);
+    (void)opa_sysfs_collect_port(stats, hfi, port);
 }
 
 static void opa_port_each(const char *base, const char *name, void *ctx)
 {
-  struct opa_port_ctx *pc = (struct opa_port_ctx *) ctx;
+  struct opa_port_ctx *pc = (struct opa_port_ctx *)ctx;
   int port;
   char *endp = NULL;
   char dev[80];
   struct stats *stats;
 
-  (void) base;
+  (void)base;
   if (pc == NULL || name == NULL)
     return;
-  port = (int) strtol(name, &endp, 10);
+  port = (int)strtol(name, &endp, 10);
   if (endp == name || *endp != '\0' || port <= 0)
     return;
   if (!ib_port_collectible(pc->hfi, port))
@@ -192,9 +191,9 @@ static void opa_port_each(const char *base, const char *name, void *ctx)
 
 static void opa_hfi_each(const char *base, const char *name, void *ctx)
 {
-  struct stats_type *type = (struct stats_type *) ctx;
+  struct stats_type *type = (struct stats_type *)ctx;
   char ports_path[160];
-  struct opa_port_ctx pc = { type, name };
+  struct opa_port_ctx pc = {type, name};
 
   if (type == NULL || name == NULL)
     return;
@@ -212,9 +211,9 @@ static void collect_opa(struct stats_type *type)
 }
 
 struct stats_type opa_stats_type = {
-  .st_name = "host_opa",
-  .st_collect = &collect_opa,
+    .st_name = "host_opa",
+    .st_collect = &collect_opa,
 #define X SCHEMA_DEF
-  .st_schema_def = JOIN(KEYS),
+    .st_schema_def = JOIN(KEYS),
 #undef X
 };

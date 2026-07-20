@@ -11,13 +11,11 @@ int lustre_parse_samples_count(const char *rest, unsigned long long *count,
                                unsigned long long *sum);
 
 /* Parse "key<sep>value" lines (tabs/spaces); returns 0 on success. */
-int lustre_parse_kv_ull(const char *line, const char *want_key,
-                        unsigned long long *value);
+int lustre_parse_kv_ull(const char *line, const char *want_key, unsigned long long *value);
 
 /* Try opening dir/d_name/<names[i]> in order. On success sets *path_out (caller
  * frees) and *fp_out (caller fclose). Returns 0 on success, -1 if none open. */
-int lustre_fopen_obd_named(const char *dir, const char *d_name,
-                           const char *const *names, size_t nnames,
-                           char **path_out, FILE **fp_out);
+int lustre_fopen_obd_named(const char *dir, const char *d_name, const char *const *names,
+                           size_t nnames, char **path_out, FILE **fp_out);
 
 #endif

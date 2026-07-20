@@ -38,7 +38,7 @@ static void test_heap_dup_replaces_heap_value(void)
 static void test_parse_sets_server(void)
 {
   next_cli_test();
-  char *argv[] = { "prog", "-s", "rmq.example", NULL };
+  char *argv[] = {"prog", "-s", "rmq.example", NULL};
   int dm = -1;
   monitor_cli_parse_args(3, argv, &dm);
   assert(dm == 0);
@@ -48,7 +48,7 @@ static void test_parse_sets_server(void)
 static void test_parse_double_config_replaces(void)
 {
   next_cli_test();
-  char *argv[] = { "prog", "-c", "/tmp/a", "-c", "/tmp/b", NULL };
+  char *argv[] = {"prog", "-c", "/tmp/a", "-c", "/tmp/b", NULL};
   int dm;
   monitor_cli_parse_args(5, argv, &dm);
   assert(conf_file_name != NULL);
@@ -58,7 +58,7 @@ static void test_parse_double_config_replaces(void)
 static void test_parse_long_configfile_option(void)
 {
   next_cli_test();
-  char *argv[] = { "prog", "--configfile", "/etc/hpcperfstats.conf", NULL };
+  char *argv[] = {"prog", "--configfile", "/etc/hpcperfstats.conf", NULL};
   int dm = 0;
 
   monitor_cli_parse_args(3, argv, &dm);
@@ -69,7 +69,7 @@ static void test_parse_long_configfile_option(void)
 static void test_parse_long_config_hyphen_option(void)
 {
   next_cli_test();
-  char *argv[] = { "prog", "--config-file", "/tmp/z.cfg", NULL };
+  char *argv[] = {"prog", "--config-file", "/tmp/z.cfg", NULL};
   int dm = 0;
 
   monitor_cli_parse_args(3, argv, &dm);
@@ -80,7 +80,7 @@ static void test_parse_long_config_hyphen_option(void)
 static void test_parse_daemon_flag(void)
 {
   next_cli_test();
-  char *argv[] = { "prog", "-d" };
+  char *argv[] = {"prog", "-d"};
   int dm = 0;
   monitor_cli_parse_args(2, argv, &dm);
   assert(dm == 1);
@@ -89,7 +89,7 @@ static void test_parse_daemon_flag(void)
 static void test_parse_collection_profile_option(void)
 {
   next_cli_test();
-  char *argv[] = { "prog", "--collection-profile", "minimal", NULL };
+  char *argv[] = {"prog", "--collection-profile", "minimal", NULL};
   int dm = 0;
   monitor_cli_parse_args(3, argv, &dm);
   assert(collection_profile != NULL);
@@ -99,7 +99,7 @@ static void test_parse_collection_profile_option(void)
 static void test_parse_disable_types_option(void)
 {
   next_cli_test();
-  char *argv[] = { "prog", "--disable-types", "host_proc,nvidia_gpu", NULL };
+  char *argv[] = {"prog", "--disable-types", "host_proc,nvidia_gpu", NULL};
   int dm = 0;
   monitor_cli_parse_args(3, argv, &dm);
   assert(disable_types != NULL);
@@ -113,7 +113,7 @@ static void test_help_invokes_usage_and_exits_zero(void)
   if (pid == 0) {
     test_monitor_cli_reset_globals();
     optind = 1;
-    char *argv[] = { "prog", "-h" };
+    char *argv[] = {"prog", "-h"};
     int dm = 0;
     monitor_cli_parse_args(2, argv, &dm);
     _exit(99);
@@ -127,8 +127,8 @@ static void test_free_heap_resets_queue_to_default(void)
 {
   next_cli_test();
   monitor_cli_heap_dup_setting(&jobid_file_path, monitor_cli_lit_jobid_file_path,
-			       "/tmp/jobid_path");
-  char *argv[] = { "prog", "-q", "myqueue" };
+                               "/tmp/jobid_path");
+  char *argv[] = {"prog", "-q", "myqueue"};
   int dm;
   monitor_cli_parse_args(3, argv, &dm);
   assert(queue != (char *)monitor_cli_lit_queue);

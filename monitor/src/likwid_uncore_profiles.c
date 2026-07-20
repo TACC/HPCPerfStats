@@ -3,77 +3,76 @@
 #include "likwid_uncore_profiles.h"
 #include "intel_processor.h"
 
-#define MBOX4_IMC_EVENTS \
-  "MBOX0C0 CAS_COUNT_RD,MBOX0C1 CAS_COUNT_WR," \
-  "MBOX1C0 CAS_COUNT_RD,MBOX1C1 CAS_COUNT_WR," \
-  "MBOX2C0 CAS_COUNT_RD,MBOX2C1 CAS_COUNT_WR," \
+#define MBOX4_IMC_EVENTS                                                                           \
+  "MBOX0C0 CAS_COUNT_RD,MBOX0C1 CAS_COUNT_WR,"                                                     \
+  "MBOX1C0 CAS_COUNT_RD,MBOX1C1 CAS_COUNT_WR,"                                                     \
+  "MBOX2C0 CAS_COUNT_RD,MBOX2C1 CAS_COUNT_WR,"                                                     \
   "MBOX3C0 CAS_COUNT_RD,MBOX3C1 CAS_COUNT_WR"
 
-#define MBOX6_IMC_EVENTS \
-  MBOX4_IMC_EVENTS "," \
-  "MBOX4C0 CAS_COUNT_RD,MBOX4C1 CAS_COUNT_WR," \
-  "MBOX5C0 CAS_COUNT_RD,MBOX5C1 CAS_COUNT_WR"
+#define MBOX6_IMC_EVENTS                                                                           \
+  MBOX4_IMC_EVENTS ","                                                                             \
+                   "MBOX4C0 CAS_COUNT_RD,MBOX4C1 CAS_COUNT_WR,"                                    \
+                   "MBOX5C0 CAS_COUNT_RD,MBOX5C1 CAS_COUNT_WR"
 
-#define MBOX16_IMC_EVENTS \
-  MBOX6_IMC_EVENTS "," \
-  "MBOX6C0 CAS_COUNT_RD,MBOX6C1 CAS_COUNT_WR," \
-  "MBOX7C0 CAS_COUNT_RD,MBOX7C1 CAS_COUNT_WR," \
-  "MBOX8C0 CAS_COUNT_RD,MBOX8C1 CAS_COUNT_WR," \
-  "MBOX9C0 CAS_COUNT_RD,MBOX9C1 CAS_COUNT_WR," \
-  "MBOX10C0 CAS_COUNT_RD,MBOX10C1 CAS_COUNT_WR," \
-  "MBOX11C0 CAS_COUNT_RD,MBOX11C1 CAS_COUNT_WR," \
-  "MBOX12C0 CAS_COUNT_RD,MBOX12C1 CAS_COUNT_WR," \
-  "MBOX13C0 CAS_COUNT_RD,MBOX13C1 CAS_COUNT_WR," \
-  "MBOX14C0 CAS_COUNT_RD,MBOX14C1 CAS_COUNT_WR," \
-  "MBOX15C0 CAS_COUNT_RD,MBOX15C1 CAS_COUNT_WR"
+#define MBOX16_IMC_EVENTS                                                                          \
+  MBOX6_IMC_EVENTS ","                                                                             \
+                   "MBOX6C0 CAS_COUNT_RD,MBOX6C1 CAS_COUNT_WR,"                                    \
+                   "MBOX7C0 CAS_COUNT_RD,MBOX7C1 CAS_COUNT_WR,"                                    \
+                   "MBOX8C0 CAS_COUNT_RD,MBOX8C1 CAS_COUNT_WR,"                                    \
+                   "MBOX9C0 CAS_COUNT_RD,MBOX9C1 CAS_COUNT_WR,"                                    \
+                   "MBOX10C0 CAS_COUNT_RD,MBOX10C1 CAS_COUNT_WR,"                                  \
+                   "MBOX11C0 CAS_COUNT_RD,MBOX11C1 CAS_COUNT_WR,"                                  \
+                   "MBOX12C0 CAS_COUNT_RD,MBOX12C1 CAS_COUNT_WR,"                                  \
+                   "MBOX13C0 CAS_COUNT_RD,MBOX13C1 CAS_COUNT_WR,"                                  \
+                   "MBOX14C0 CAS_COUNT_RD,MBOX14C1 CAS_COUNT_WR,"                                  \
+                   "MBOX15C0 CAS_COUNT_RD,MBOX15C1 CAS_COUNT_WR"
 
-#define MDEV4_ICX_EVENTS \
-  "MDEV0C0 DDR_READ_BYTES,MDEV0C1 DDR_WRITE_BYTES," \
-  "MDEV1C0 DDR_READ_BYTES,MDEV1C1 DDR_WRITE_BYTES," \
-  "MDEV2C0 DDR_READ_BYTES,MDEV2C1 DDR_WRITE_BYTES," \
+#define MDEV4_ICX_EVENTS                                                                           \
+  "MDEV0C0 DDR_READ_BYTES,MDEV0C1 DDR_WRITE_BYTES,"                                                \
+  "MDEV1C0 DDR_READ_BYTES,MDEV1C1 DDR_WRITE_BYTES,"                                                \
+  "MDEV2C0 DDR_READ_BYTES,MDEV2C1 DDR_WRITE_BYTES,"                                                \
   "MDEV3C0 DDR_READ_BYTES,MDEV3C1 DDR_WRITE_BYTES"
 
-#define HBM16_EVENTS \
-  "HBM0C0 CAS_COUNT_RD,HBM0C1 CAS_COUNT_WR," \
-  "HBM1C0 CAS_COUNT_RD,HBM1C1 CAS_COUNT_WR," \
-  "HBM2C0 CAS_COUNT_RD,HBM2C1 CAS_COUNT_WR," \
-  "HBM3C0 CAS_COUNT_RD,HBM3C1 CAS_COUNT_WR," \
-  "HBM4C0 CAS_COUNT_RD,HBM4C1 CAS_COUNT_WR," \
-  "HBM5C0 CAS_COUNT_RD,HBM5C1 CAS_COUNT_WR," \
-  "HBM6C0 CAS_COUNT_RD,HBM6C1 CAS_COUNT_WR," \
-  "HBM7C0 CAS_COUNT_RD,HBM7C1 CAS_COUNT_WR," \
-  "HBM8C0 CAS_COUNT_RD,HBM8C1 CAS_COUNT_WR," \
-  "HBM9C0 CAS_COUNT_RD,HBM9C1 CAS_COUNT_WR," \
-  "HBM10C0 CAS_COUNT_RD,HBM10C1 CAS_COUNT_WR," \
-  "HBM11C0 CAS_COUNT_RD,HBM11C1 CAS_COUNT_WR," \
-  "HBM12C0 CAS_COUNT_RD,HBM12C1 CAS_COUNT_WR," \
-  "HBM13C0 CAS_COUNT_RD,HBM13C1 CAS_COUNT_WR," \
-  "HBM14C0 CAS_COUNT_RD,HBM14C1 CAS_COUNT_WR," \
+#define HBM16_EVENTS                                                                               \
+  "HBM0C0 CAS_COUNT_RD,HBM0C1 CAS_COUNT_WR,"                                                       \
+  "HBM1C0 CAS_COUNT_RD,HBM1C1 CAS_COUNT_WR,"                                                       \
+  "HBM2C0 CAS_COUNT_RD,HBM2C1 CAS_COUNT_WR,"                                                       \
+  "HBM3C0 CAS_COUNT_RD,HBM3C1 CAS_COUNT_WR,"                                                       \
+  "HBM4C0 CAS_COUNT_RD,HBM4C1 CAS_COUNT_WR,"                                                       \
+  "HBM5C0 CAS_COUNT_RD,HBM5C1 CAS_COUNT_WR,"                                                       \
+  "HBM6C0 CAS_COUNT_RD,HBM6C1 CAS_COUNT_WR,"                                                       \
+  "HBM7C0 CAS_COUNT_RD,HBM7C1 CAS_COUNT_WR,"                                                       \
+  "HBM8C0 CAS_COUNT_RD,HBM8C1 CAS_COUNT_WR,"                                                       \
+  "HBM9C0 CAS_COUNT_RD,HBM9C1 CAS_COUNT_WR,"                                                       \
+  "HBM10C0 CAS_COUNT_RD,HBM10C1 CAS_COUNT_WR,"                                                     \
+  "HBM11C0 CAS_COUNT_RD,HBM11C1 CAS_COUNT_WR,"                                                     \
+  "HBM12C0 CAS_COUNT_RD,HBM12C1 CAS_COUNT_WR,"                                                     \
+  "HBM13C0 CAS_COUNT_RD,HBM13C1 CAS_COUNT_WR,"                                                     \
+  "HBM14C0 CAS_COUNT_RD,HBM14C1 CAS_COUNT_WR,"                                                     \
   "HBM15C0 CAS_COUNT_RD,HBM15C1 CAS_COUNT_WR"
 
 #define SPR_DDR_ONLY_EVENTS MBOX16_IMC_EVENTS
 #define SPR_HBM_ONLY_EVENTS HBM16_EVENTS
 #define SPR_DDR_HBM_EVENTS MBOX16_IMC_EVENTS "," HBM16_EVENTS
 
-#define CHA_SKX_CBOX_EVENTS \
-  "CBOX0C0 LLC_LOOKUP_DATA_READ,CBOX1C0 LLC_LOOKUP_DATA_READ," \
-  "CBOX2C0 LLC_LOOKUP_DATA_READ,CBOX3C0 LLC_LOOKUP_DATA_READ," \
-  "CBOX4C0 LLC_LOOKUP_DATA_READ,CBOX5C0 LLC_LOOKUP_DATA_READ," \
-  "CBOX6C0 LLC_LOOKUP_DATA_READ,CBOX7C0 LLC_LOOKUP_DATA_READ," \
-  "CBOX0C1 LLC_VICTIMS_M_STATE,CBOX1C1 LLC_VICTIMS_M_STATE," \
-  "CBOX2C1 LLC_VICTIMS_M_STATE,CBOX3C1 LLC_VICTIMS_M_STATE," \
-  "CBOX4C1 LLC_VICTIMS_M_STATE,CBOX5C1 LLC_VICTIMS_M_STATE," \
+#define CHA_SKX_CBOX_EVENTS                                                                        \
+  "CBOX0C0 LLC_LOOKUP_DATA_READ,CBOX1C0 LLC_LOOKUP_DATA_READ,"                                     \
+  "CBOX2C0 LLC_LOOKUP_DATA_READ,CBOX3C0 LLC_LOOKUP_DATA_READ,"                                     \
+  "CBOX4C0 LLC_LOOKUP_DATA_READ,CBOX5C0 LLC_LOOKUP_DATA_READ,"                                     \
+  "CBOX6C0 LLC_LOOKUP_DATA_READ,CBOX7C0 LLC_LOOKUP_DATA_READ,"                                     \
+  "CBOX0C1 LLC_VICTIMS_M_STATE,CBOX1C1 LLC_VICTIMS_M_STATE,"                                       \
+  "CBOX2C1 LLC_VICTIMS_M_STATE,CBOX3C1 LLC_VICTIMS_M_STATE,"                                       \
+  "CBOX4C1 LLC_VICTIMS_M_STATE,CBOX5C1 LLC_VICTIMS_M_STATE,"                                       \
   "CBOX6C1 LLC_VICTIMS_M_STATE,CBOX7C1 LLC_VICTIMS_M_STATE"
 
 static const char *const profile_events[LIKWID_UNCORE_PROFILE_COUNT] = {
-  [LIKWID_UNCORE_PROFILE_IMC_SKX] = MBOX6_IMC_EVENTS,
-  [LIKWID_UNCORE_PROFILE_IMC_ICX] = MDEV4_ICX_EVENTS,
-  [LIKWID_UNCORE_PROFILE_IMC_SPR] = SPR_DDR_HBM_EVENTS,
-  [LIKWID_UNCORE_PROFILE_CHA_SKX] = CHA_SKX_CBOX_EVENTS,
+    [LIKWID_UNCORE_PROFILE_IMC_SKX] = MBOX6_IMC_EVENTS,
+    [LIKWID_UNCORE_PROFILE_IMC_ICX] = MDEV4_ICX_EVENTS,
+    [LIKWID_UNCORE_PROFILE_IMC_SPR] = SPR_DDR_HBM_EVENTS,
+    [LIKWID_UNCORE_PROFILE_CHA_SKX] = CHA_SKX_CBOX_EVENTS,
 };
 
-int likwid_uncore_profile_matches_processor(likwid_uncore_profile_t profile,
-                                            processor_t p)
+int likwid_uncore_profile_matches_processor(likwid_uncore_profile_t profile, processor_t p)
 {
   switch (profile) {
   case LIKWID_UNCORE_PROFILE_IMC_SKX:
@@ -135,8 +134,7 @@ static void spr_imc_try_append(likwid_spr_imc_eventset_t *out, int *n, int cap,
   (*n)++;
 }
 
-int likwid_spr_imc_eventset_try_order(int has_ddr, int has_hbm,
-                                      likwid_spr_imc_eventset_t *out,
+int likwid_spr_imc_eventset_try_order(int has_ddr, int has_hbm, likwid_spr_imc_eventset_t *out,
                                       int out_cap)
 {
   likwid_spr_imc_eventset_t primary;
@@ -160,8 +158,7 @@ int likwid_spr_imc_eventset_try_order(int has_ddr, int has_hbm,
   return n;
 }
 
-static const char *counter_name_base(const char *counter_name, char *work,
-                                     size_t work_len)
+static const char *counter_name_base(const char *counter_name, char *work, size_t work_len)
 {
   const char *state;
 
@@ -170,15 +167,15 @@ static const char *counter_name_base(const char *counter_name, char *work,
   state = strstr(counter_name, ":STATE=");
   if (state == NULL)
     return counter_name;
-  if ((size_t) (state - counter_name) >= work_len)
+  if ((size_t)(state - counter_name) >= work_len)
     return counter_name;
-  memcpy(work, counter_name, (size_t) (state - counter_name));
+  memcpy(work, counter_name, (size_t)(state - counter_name));
   work[state - counter_name] = '\0';
   return work;
 }
 
-static int map_mbox_hbm_mdev(const char *counter_name, char *dev_out,
-                             size_t dev_len, const char **key_out)
+static int map_mbox_hbm_mdev(const char *counter_name, char *dev_out, size_t dev_len,
+                             const char **key_out)
 {
   unsigned int idx = 0;
   char ch[4];
@@ -215,8 +212,7 @@ static int map_mbox_hbm_mdev(const char *counter_name, char *dev_out,
   return -1;
 }
 
-static int map_cbox(const char *counter_name, char *dev_out, size_t dev_len,
-                    const char **key_out)
+static int map_cbox(const char *counter_name, char *dev_out, size_t dev_len, const char **key_out)
 {
   unsigned int idx = 0;
   char ch[4];
@@ -239,10 +235,8 @@ static int map_cbox(const char *counter_name, char *dev_out, size_t dev_len,
   return 0;
 }
 
-int likwid_uncore_profile_map_counter(likwid_uncore_profile_t profile,
-                                      const char *counter_name,
-                                      char *dev_out, size_t dev_len,
-                                      const char **key_out)
+int likwid_uncore_profile_map_counter(likwid_uncore_profile_t profile, const char *counter_name,
+                                      char *dev_out, size_t dev_len, const char **key_out)
 {
   switch (profile) {
   case LIKWID_UNCORE_PROFILE_CHA_SKX:

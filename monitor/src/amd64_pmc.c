@@ -37,8 +37,7 @@ static int amd64_pmc_begin_cpu(char *cpu)
     break;
   default:
     /* Expected on Intel; begin() gates before the per-CPU loop. */
-    TRACE("Processor model/family %d not supported by amd_x86_pmc\n",
-          processor);
+    TRACE("Processor model/family %d not supported by amd_x86_pmc\n", processor);
     return -1;
   }
 
@@ -63,19 +62,13 @@ static void amd64_pmc_collect_cpu(struct stats_type *type, char *cpu)
 {
   int msr_fd = -1;
   struct stats *stats = NULL;
-  static const uint64_t ctr_msrs[6] = {
-    MSR_PERF_CTR0, MSR_PERF_CTR1, MSR_PERF_CTR2,
-    MSR_PERF_CTR3, MSR_PERF_CTR4, MSR_PERF_CTR5
-  };
-  static const char *const zen_ctr_keys[6] = {
-    "fp_ops_retired", "fp_ops_merge", "branch_inst_retired",
-    "branch_inst_retired_miss", "dispatch_stall_cycles1",
-    "dispatch_stall_cycles0"
-  };
+  static const uint64_t ctr_msrs[6] = {MSR_PERF_CTR0, MSR_PERF_CTR1, MSR_PERF_CTR2,
+                                       MSR_PERF_CTR3, MSR_PERF_CTR4, MSR_PERF_CTR5};
+  static const char *const zen_ctr_keys[6] = {"fp_ops_retired",         "fp_ops_merge",
+                                              "branch_inst_retired",    "branch_inst_retired_miss",
+                                              "dispatch_stall_cycles1", "dispatch_stall_cycles0"};
   static const char *const legacy_ctr_keys[4] = {
-    "fp_ops_retired", "fp_ops_merge", "dispatch_stall_cycles1",
-    "dispatch_stall_cycles0"
-  };
+      "fp_ops_retired", "fp_ops_merge", "dispatch_stall_cycles1", "dispatch_stall_cycles0"};
   const char *const *ctr_keys = zen_ctr_keys;
   int n_ctr_keys = 6;
   int i;
@@ -95,8 +88,8 @@ static void amd64_pmc_collect_cpu(struct stats_type *type, char *cpu)
   for (i = 0; i < n_ctr_keys; i++) {
     uint64_t val = 0;
     if (msr_read_u64(msr_fd, ctr_msrs[i], &val) < 0)
-      TRACE("cannot read `%s' (%08X) for cpu `%s': %m\n",
-            ctr_keys[i], (unsigned int)ctr_msrs[i], cpu);
+      TRACE("cannot read `%s' (%08X) for cpu `%s': %m\n", ctr_keys[i], (unsigned int)ctr_msrs[i],
+            cpu);
     else
       stats_set(stats, ctr_keys[i], val);
   }

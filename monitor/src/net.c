@@ -50,7 +50,7 @@ static long long net_monotonic_us(void)
 
   if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
     return -1;
-  return (long long) ts.tv_sec * 1000000LL + (long long) ts.tv_nsec / 1000LL;
+  return (long long)ts.tv_sec * 1000000LL + (long long)ts.tv_nsec / 1000LL;
 }
 
 void net_stats_invalidate_iface_cache(void)
@@ -150,9 +150,9 @@ static void net_collect(struct stats_type *type)
 }
 
 struct stats_type net_stats_type = {
-  .st_name = "host_net",
-  .st_collect = &net_collect,
+    .st_name = "host_net",
+    .st_collect = &net_collect,
 #define X SCHEMA_DEF
-  .st_schema_def = JOIN(KEYS),
+    .st_schema_def = JOIN(KEYS),
 #undef X
 };

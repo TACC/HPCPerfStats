@@ -16,12 +16,11 @@
 #define OSC_DIR_PATH "/proc/fs/lustre/osc"
 
 static const char *const osc_stats_names[] = {
-  "osc_stats",
-  "stats",
+    "osc_stats",
+    "stats",
 };
 
-static void osc_apply_stats_line(struct stats *stats, const char *key,
-                                 const char *rest)
+static void osc_apply_stats_line(struct stats *stats, const char *key, const char *rest)
 {
   unsigned long long count = 0;
   unsigned long long sum = 0;
@@ -37,20 +36,14 @@ static void osc_apply_stats_line(struct stats *stats, const char *key,
   if (strcmp(key, "req_waittime") == 0) {
     stats_inc(stats, "reqs", count);
     stats_inc(stats, "wait", sum);
-  } else if (strcmp(key, "read_bytes") == 0
-             || strcmp(key, "lockless_read_bytes") == 0) {
+  } else if (strcmp(key, "read_bytes") == 0 || strcmp(key, "lockless_read_bytes") == 0) {
     stats_inc(stats, "read_bytes", n == 2 ? sum : count);
-  } else if (strcmp(key, "write_bytes") == 0
-             || strcmp(key, "lockless_write_bytes") == 0) {
+  } else if (strcmp(key, "write_bytes") == 0 || strcmp(key, "lockless_write_bytes") == 0) {
     stats_inc(stats, "write_bytes", n == 2 ? sum : count);
-  } else if (strcmp(key, "ost_destroy") == 0
-             || strcmp(key, "ost_punch") == 0
-             || strcmp(key, "ost_read") == 0
-             || strcmp(key, "ost_setattr") == 0
-             || strcmp(key, "ost_statfs") == 0
-             || strcmp(key, "ost_write") == 0
-             || strcmp(key, "reqs") == 0
-             || strcmp(key, "wait") == 0) {
+  } else if (strcmp(key, "ost_destroy") == 0 || strcmp(key, "ost_punch") == 0 ||
+             strcmp(key, "ost_read") == 0 || strcmp(key, "ost_setattr") == 0 ||
+             strcmp(key, "ost_statfs") == 0 || strcmp(key, "ost_write") == 0 ||
+             strcmp(key, "reqs") == 0 || strcmp(key, "wait") == 0) {
     stats_inc(stats, key, count);
   } else {
     stats_inc(stats, "reqs", count);
@@ -69,8 +62,8 @@ static void osc_collect_fs(struct stats *stats, const char *d_name)
     return;
 
   if (lustre_fopen_obd_named(OSC_DIR_PATH, d_name, osc_stats_names,
-                             sizeof(osc_stats_names) / sizeof(osc_stats_names[0]),
-                             &path, &file) < 0)
+                             sizeof(osc_stats_names) / sizeof(osc_stats_names[0]), &path,
+                             &file) < 0)
     return;
 
   setvbuf(file, file_buf, _IOFBF, sizeof(file_buf));
@@ -90,11 +83,11 @@ static void osc_collect_fs(struct stats *stats, const char *d_name)
 
 static void osc_each(const char *base, const char *name, void *ctx)
 {
-  struct stats_type *type = (struct stats_type *) ctx;
+  struct stats_type *type = (struct stats_type *)ctx;
   const char *mnt;
   struct stats *stats;
 
-  (void) base;
+  (void)base;
   if (type == NULL || name == NULL)
     return;
 
@@ -119,9 +112,9 @@ static void osc_collect(struct stats_type *type)
 }
 
 struct stats_type osc_stats_type = {
-  .st_name = "lustre_osc",
-  .st_collect = &osc_collect,
+    .st_name = "lustre_osc",
+    .st_collect = &osc_collect,
 #define X SCHEMA_DEF
-  .st_schema_def = JOIN(KEYS),
+    .st_schema_def = JOIN(KEYS),
 #undef X
 };

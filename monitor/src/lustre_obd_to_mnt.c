@@ -37,12 +37,12 @@ static char *lustre_sb_mnt_alloc(const char *sb_hex, const char *mnt_prefix)
   sb_mnt = malloc(need);
   if (sb_mnt == NULL)
     return NULL;
-  if (snprintf(sb_mnt, LUSTRE_SB_MNT_OFFSET, "%s", sb_hex) >= (int) LUSTRE_SB_MNT_OFFSET) {
+  if (snprintf(sb_mnt, LUSTRE_SB_MNT_OFFSET, "%s", sb_hex) >= (int)LUSTRE_SB_MNT_OFFSET) {
     free(sb_mnt);
     return NULL;
   }
-  if (snprintf(sb_mnt + LUSTRE_SB_MNT_OFFSET, need - LUSTRE_SB_MNT_OFFSET, "%s",
-               mnt_prefix) >= (int) (need - LUSTRE_SB_MNT_OFFSET)) {
+  if (snprintf(sb_mnt + LUSTRE_SB_MNT_OFFSET, need - LUSTRE_SB_MNT_OFFSET, "%s", mnt_prefix) >=
+      (int)(need - LUSTRE_SB_MNT_OFFSET)) {
     free(sb_mnt);
     return NULL;
   }
@@ -60,7 +60,7 @@ static int lustre_sb_dict_add_lov(const char *lov_name)
   if (!lustre_lov_name_valid(lov_name))
     return -1;
 
-  if (snprintf(lov_copy, sizeof(lov_copy), "%s", lov_name) >= (int) sizeof(lov_copy))
+  if (snprintf(lov_copy, sizeof(lov_copy), "%s", lov_name) >= (int)sizeof(lov_copy))
     return -1;
 
   sb = lov_copy + strlen(lov_copy) - LUSTRE_SB_HEX_LEN;
@@ -100,12 +100,11 @@ static void lustre_sb_dict_load_lov_dir(DIR *lov_dir)
       ERROR("invalid lov name `%s'\n", de->d_name);
       continue;
     }
-    (void) lustre_sb_dict_add_lov(de->d_name);
+    (void)lustre_sb_dict_add_lov(de->d_name);
   }
 }
 
-__attribute__((constructor))
-static void sb_dict_init(void)
+__attribute__((constructor)) static void sb_dict_init(void)
 {
   const char *lov_dir_path = "/proc/fs/lustre/lov";
   DIR *lov_dir = NULL;
@@ -121,7 +120,7 @@ static void sb_dict_init(void)
 
   lustre_sb_dict_load_lov_dir(lov_dir);
 
- out:
+out:
   if (lov_dir != NULL)
     closedir(lov_dir);
 

@@ -11,15 +11,15 @@
 static void to_lower_ascii(char *s)
 {
   while (*s != '\0') {
-    *s = (char) tolower((unsigned char) *s);
+    *s = (char)tolower((unsigned char)*s);
     s++;
   }
 }
 
 static int line_matches_opa(const char *line)
 {
-  return strstr(line, "omnipath") != NULL || strstr(line, "hfi") != NULL
-      || strstr(line, "cornelis") != NULL || strstr(line, "cn5000") != NULL;
+  return strstr(line, "omnipath") != NULL || strstr(line, "hfi") != NULL ||
+         strstr(line, "cornelis") != NULL || strstr(line, "cn5000") != NULL;
 }
 
 static void test_fixture_lines(void)

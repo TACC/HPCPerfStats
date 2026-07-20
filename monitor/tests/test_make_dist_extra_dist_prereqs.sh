@@ -32,7 +32,9 @@ for path in \
   scripts/lib/cross_sample_stimulus.py \
   scripts/rpm_debug_shm_verify.sh \
   scripts/gpu_lspci_probe.sh \
-  scripts/gpu_lspci_detect.awk
+  scripts/gpu_lspci_detect.awk \
+  scripts/run_asan_check.sh \
+  scripts/run_cpp_linter.sh
 do
   test -f "${path}" \
     || { echo "missing ${path} (required for make dist)" >&2; exit 1; }
@@ -61,7 +63,8 @@ grep -q 'scripts/validate_stampede3_profile.sh' scripts/prepare_rpmbuild_dirs.sh
 grep -q 'scripts/gpu_lspci_probe.sh' scripts/prepare_rpmbuild_dirs.sh \
   || { echo "prepare_rpmbuild_dirs.sh must preflight scripts/gpu_lspci_probe.sh" >&2; exit 1; }
 
-for script in scripts/gpu_lspci_probe.sh scripts/gpu_lspci_detect.awk; do
+for script in scripts/gpu_lspci_probe.sh scripts/gpu_lspci_detect.awk \
+  scripts/run_asan_check.sh scripts/run_cpp_linter.sh; do
   grep -q "${script}" src/Makefile.am \
     || { echo "src/Makefile.am EXTRA_DIST must list ${script}" >&2; exit 1; }
 done

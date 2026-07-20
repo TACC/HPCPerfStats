@@ -51,7 +51,7 @@ static int ib_port_read_state_file(const char *path, char *buf, size_t buf_len)
   f = path_file_fopen_read(path);
   if (f == NULL)
     return 0;
-  if (fgets(buf, (int) buf_len, f) == NULL) {
+  if (fgets(buf, (int)buf_len, f) == NULL) {
     fclose(f);
     return 0;
   }
@@ -85,11 +85,11 @@ struct ib_port_iter_ctx {
 
 static void ib_port_iter_each(const char *base, const char *name, void *ctx)
 {
-  struct ib_port_iter_ctx *pc = (struct ib_port_iter_ctx *) ctx;
+  struct ib_port_iter_ctx *pc = (struct ib_port_iter_ctx *)ctx;
   char *endp = NULL;
   long pn;
 
-  (void) base;
+  (void)base;
   if (pc == NULL || pc->fn == NULL || name == NULL)
     return;
   pn = strtol(name, &endp, 10);
@@ -97,9 +97,9 @@ static void ib_port_iter_each(const char *base, const char *name, void *ctx)
     return;
   if (pn < 1 || pn > INT_MAX)
     return;
-  if (!ib_port_collectible(pc->hca, (int) pn))
+  if (!ib_port_collectible(pc->hca, (int)pn))
     return;
-  pc->fn(pc->hca, (int) pn, pc->user_ctx);
+  pc->fn(pc->hca, (int)pn, pc->user_ctx);
 }
 
 struct ib_hca_iter_ctx {
@@ -109,7 +109,7 @@ struct ib_hca_iter_ctx {
 
 static void ib_hca_iter_each(const char *base, const char *name, void *ctx)
 {
-  struct ib_hca_iter_ctx *hc = (struct ib_hca_iter_ctx *) ctx;
+  struct ib_hca_iter_ctx *hc = (struct ib_hca_iter_ctx *)ctx;
   char ports_path[160];
   struct ib_port_iter_ctx pc;
 
@@ -126,7 +126,7 @@ static void ib_hca_iter_each(const char *base, const char *name, void *ctx)
 
 void ib_foreach_hca_port(ib_hca_port_fn fn, void *ctx)
 {
-  struct ib_hca_iter_ctx hc = { fn, ctx };
+  struct ib_hca_iter_ctx hc = {fn, ctx};
 
   if (fn == NULL)
     return;

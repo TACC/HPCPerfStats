@@ -17,9 +17,9 @@ void stats_set(struct stats *stats, const char *key, unsigned long long val)
 static struct stats g_dummy_stats;
 
 static const struct path_read_opts collect_read_opts = {
-  .skip_known_bad  = 1,
-  .report_errors   = 0,
-  .detect_overflow = 0,
+    .skip_known_bad = 1,
+    .report_errors = 0,
+    .detect_overflow = 0,
 };
 
 static char *write_temp_file(const char *content)
@@ -28,7 +28,7 @@ static char *write_temp_file(const char *content)
   int fd = mkstemp(tmpl);
 
   assert(fd >= 0);
-  assert(write(fd, content, strlen(content)) == (ssize_t) strlen(content));
+  assert(write(fd, content, strlen(content)) == (ssize_t)strlen(content));
   close(fd);
   return strdup(tmpl);
 }
@@ -88,8 +88,7 @@ static void test_str_collect_prefix_key_list(void)
 
   path = write_temp_file("1 2\n");
   read_temp_into(content, sizeof(content), path);
-  assert(str_collect_prefix_key_list(content, &g_dummy_stats, "pfx_",
-                                     "a", "b", NULL) == 2);
+  assert(str_collect_prefix_key_list(content, &g_dummy_stats, "pfx_", "a", "b", NULL) == 2);
   assert(test_stats_stub_find(&stub, "pfx_a", &val) && val == 1ULL);
   assert(test_stats_stub_find(&stub, "pfx_b", &val) && val == 2ULL);
 

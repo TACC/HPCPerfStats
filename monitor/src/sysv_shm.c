@@ -11,9 +11,9 @@
 //
 // "%10d %10d  %4o %10u %5u %5u  %5d %5u %5u %5u %5u %10lu %10lu %10lu\n"
 
-#define KEYS \
-  X(mem_used, "U=B", "System V shared memory used"), \
-  X(segs_used, "", "number of System V shared segments used")
+#define KEYS                                                                                       \
+  X(mem_used, "U=B", "System V shared memory used"),                                               \
+      X(segs_used, "", "number of System V shared segments used")
 
 struct sysv_shm_acc {
   unsigned long long mem_used;
@@ -35,14 +35,13 @@ static int sysv_shm_line_cb(char *line, void *ctx)
 static void sysv_shm_collect(struct stats_type *type)
 {
   struct stats *stats = get_current_stats(type, NULL);
-  struct sysv_shm_acc acc = { 0, 0 };
+  struct sysv_shm_acc acc = {0, 0};
 
   if (stats == NULL)
     return;
 
   /* Skip the one-line header. */
-  if (procfile_for_each_line_skip("/proc/sysvipc/shm", 1,
-                                  sysv_shm_line_cb, &acc) < 0)
+  if (procfile_for_each_line_skip("/proc/sysvipc/shm", 1, sysv_shm_line_cb, &acc) < 0)
     return;
 
   stats_set(stats, "mem_used", acc.mem_used);
@@ -50,9 +49,9 @@ static void sysv_shm_collect(struct stats_type *type)
 }
 
 struct stats_type sysv_shm_stats_type = {
-  .st_name = "host_sysv_shm",
-  .st_collect = &sysv_shm_collect,
+    .st_name = "host_sysv_shm",
+    .st_collect = &sysv_shm_collect,
 #define X SCHEMA_DEF
-  .st_schema_def = JOIN(KEYS),
+    .st_schema_def = JOIN(KEYS),
 #undef X
 };

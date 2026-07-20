@@ -10,9 +10,9 @@ struct stats;
 struct stats_type;
 
 typedef struct stats_runtime_main_prepare_spec {
-	int enable_all;
-	int select_all;
-	int call_begin;
+  int enable_all;
+  int select_all;
+  int call_begin;
 } stats_runtime_main_prepare_spec;
 
 void stats_runtime_teardown(void);
@@ -35,8 +35,7 @@ void stats_runtime_collect_enabled_metrics(int require_selected);
  * \param sink may be NULL or sink->finalize may be NULL.
  */
 int stats_runtime_collect_cycle(FILE *profiler_stream, void *opaque,
-				const struct stats_sink_ops *sink,
-				int require_selected);
+                                const struct stats_sink_ops *sink, int require_selected);
 
 /* Two-tier collect phase control (thin wrappers over collect_tier). */
 void stats_runtime_set_collect_phase(enum collect_phase phase);
@@ -46,8 +45,7 @@ int stats_schema_key_active_this_phase(const struct stats_type *type, int idx);
 /*! Decide and apply the collect phase for one fast-timer tick. Updates
  *  *last_slow_slot and the global phase; returns the chosen phase. Pass
  *  *last_slow_slot < 0 on the first tick to force a full (slow) collection. */
-enum collect_phase stats_runtime_collect_phase_for_tick(double now_sec,
-							long long *last_slow_slot,
-							double sample_freq_slow);
+enum collect_phase stats_runtime_collect_phase_for_tick(double now_sec, long long *last_slow_slot,
+                                                        double sample_freq_slow);
 
 #endif

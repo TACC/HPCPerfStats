@@ -11,8 +11,8 @@ struct stats_buffer_collect_fixture {
 };
 
 int stats_buffer_collect_fixture_init(struct stats_buffer_collect_fixture *fx,
-				      const char *schema_def,
-				      const unsigned long long *vals, size_t nvals);
+                                      const char *schema_def, const unsigned long long *vals,
+                                      size_t nvals);
 void stats_buffer_collect_fixture_teardown(struct stats_buffer_collect_fixture *fx);
 
 #endif

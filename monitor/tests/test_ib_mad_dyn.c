@@ -9,20 +9,20 @@
 
 static int g_fake_open_calls;
 
-static struct ibmad_port *fake_mad_rpc_open_port(char *dev_name, int dev_port,
-                                                 int *mgmt_classes, int num_classes)
+static struct ibmad_port *fake_mad_rpc_open_port(char *dev_name, int dev_port, int *mgmt_classes,
+                                                 int num_classes)
 {
-  (void) dev_name;
-  (void) dev_port;
-  (void) mgmt_classes;
-  (void) num_classes;
+  (void)dev_name;
+  (void)dev_port;
+  (void)mgmt_classes;
+  (void)num_classes;
   g_fake_open_calls++;
-  return (struct ibmad_port *) (uintptr_t) 0x1;
+  return (struct ibmad_port *)(uintptr_t)0x1;
 }
 
 static void fake_mad_rpc_close_port(struct ibmad_port *srcport)
 {
-  (void) srcport;
+  (void)srcport;
 }
 
 static void test_load_missing_lib_fails(void)
@@ -46,7 +46,7 @@ static void test_injected_hooks(void)
   ib_mad_dyn_test_set_hooks(&hooks);
 
   g_fake_open_calls = 0;
-  assert(ib_mad_dyn_mad_rpc_open_port((char *) "mlx5_0", 1, NULL, 0) != NULL);
+  assert(ib_mad_dyn_mad_rpc_open_port((char *)"mlx5_0", 1, NULL, 0) != NULL);
   assert(g_fake_open_calls == 1);
   ib_mad_dyn_mad_rpc_close_port(NULL);
 

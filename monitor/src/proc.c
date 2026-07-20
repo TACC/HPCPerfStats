@@ -18,20 +18,14 @@
 #include "monitor_log.h"
 #include "proc_status.h"
 
-#define KEYS \
-  X(uid, "", "user id"), \
-  X(vm_peak, "U=kB", "Peak vm size"), \
-  X(vm_size, "U=kB", "Current vm size"), \
-  X(vm_lck, "U=kB", "Locked mem size"), \
-  X(vm_hwm, "U=kB", "Peak resident set size"), \
-  X(vm_rss, "U=kB", "Current resident set size"), \
-  X(vm_data, "U=kB", "size of data"), \
-  X(vm_stk, "U=kB", "size of stack"), \
-  X(vm_exe, "U=kB", "size of text"), \
-  X(vm_lib, "U=kB", "shared lib code size"), \
-  X(vm_pte, "U=kB", "page table entry size"), \
-  X(vm_swap, "U=kB", "swapped vm size"), \
-  X(threads, "", "number of threads")
+#define KEYS                                                                                       \
+  X(uid, "", "user id"), X(vm_peak, "U=kB", "Peak vm size"),                                       \
+      X(vm_size, "U=kB", "Current vm size"), X(vm_lck, "U=kB", "Locked mem size"),                 \
+      X(vm_hwm, "U=kB", "Peak resident set size"), X(vm_rss, "U=kB", "Current resident set size"), \
+      X(vm_data, "U=kB", "size of data"), X(vm_stk, "U=kB", "size of stack"),                      \
+      X(vm_exe, "U=kB", "size of text"), X(vm_lib, "U=kB", "shared lib code size"),                \
+      X(vm_pte, "U=kB", "page table entry size"), X(vm_swap, "U=kB", "swapped vm size"),           \
+      X(threads, "", "number of threads")
 
 static unsigned long g_proc_collect_failures;
 static time_t g_proc_collect_skip_until;
@@ -69,8 +63,8 @@ static int proc_status_skip_process_name(const char *name)
 {
   if (name == NULL)
     return 1;
-  return !strcmp(name, "bash") || !strcmp(name, "ssh")
-      || !strcmp(name, "sshd") || !strcmp(name, "metacity");
+  return !strcmp(name, "bash") || !strcmp(name, "ssh") || !strcmp(name, "sshd") ||
+         !strcmp(name, "metacity");
 }
 
 static int proc_status_copy_field(char *dst, size_t dst_size, const char *src)
@@ -147,12 +141,12 @@ static void proc_collect_pid(struct stats_type *type, const char *pid)
       snprintf(process, sizeof(process), "%s/%s/%s/%s", name, pid, cmask, mmask);
       stats = get_current_stats(type, process);
       if (stats != NULL)
-	proc_status_pending_flush(&pending, stats);
+        proc_status_pending_flush(&pending, stats);
     }
     proc_status_emit_or_defer_kv(stats, &pending, key, rest);
   }
 
- out:
+out:
   free(line);
   if (file != NULL)
     fclose(file);
@@ -176,10 +170,9 @@ static int proc_filter_pid(const struct dirent *dir)
   }
 
   pwd = getpwuid(dirinfo.st_uid);
-  if (pwd == NULL || !strcmp("postfix", pwd->pw_name)
-      || !strcmp("rpc", pwd->pw_name) || !strcmp("rpcuser", pwd->pw_name)
-      || !strcmp("dbus", pwd->pw_name) || !strcmp("daemon", pwd->pw_name)
-      || !strcmp("ntp", pwd->pw_name))
+  if (pwd == NULL || !strcmp("postfix", pwd->pw_name) || !strcmp("rpc", pwd->pw_name) ||
+      !strcmp("rpcuser", pwd->pw_name) || !strcmp("dbus", pwd->pw_name) ||
+      !strcmp("daemon", pwd->pw_name) || !strcmp("ntp", pwd->pw_name))
     return 0;
 
   return 1;
@@ -213,9 +206,8 @@ static void proc_collect(struct stats_type *type)
       time_t elapsed = time(NULL) - started;
 
       if (elapsed >= warn_sec) {
-        monitor_log_warn(
-            "proc collector: long cycle elapsed=%lds scanned=%d; cooling down %ds\n",
-            (long)elapsed, n_scanned, cooldown_sec);
+        monitor_log_warn("proc collector: long cycle elapsed=%lds scanned=%d; cooling down %ds\n",
+                         (long)elapsed, n_scanned, cooldown_sec);
         g_proc_collect_skip_until = time(NULL) + cooldown_sec;
       }
     }
@@ -223,9 +215,9 @@ static void proc_collect(struct stats_type *type)
 }
 
 struct stats_type proc_stats_type = {
-  .st_name = "host_proc",
-  .st_collect = &proc_collect,
+    .st_name = "host_proc",
+    .st_collect = &proc_collect,
 #define X SCHEMA_DEF
-  .st_schema_def = JOIN(KEYS),
+    .st_schema_def = JOIN(KEYS),
 #undef X
 };

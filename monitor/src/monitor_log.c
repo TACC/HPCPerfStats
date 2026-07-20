@@ -22,11 +22,11 @@ void monitor_log_set_stream(FILE *stream)
 #ifdef DEBUG
 static void monitor_log_va_diag(const char *fmt, va_list ap)
 {
-# ifdef RABBITMQ
+#ifdef RABBITMQ
   vfprintf(stdout, fmt, ap);
-# else
+#else
   vfprintf(stderr, fmt, ap);
-# endif
+#endif
 }
 #endif
 
@@ -52,23 +52,23 @@ void monitor_log_warn(const char *fmt, ...)
     return;
   va_start(ap, fmt);
 #ifdef DEBUG
-# ifdef RABBITMQ
+#ifdef RABBITMQ
   vfprintf(stdout, fmt, ap);
-# else
-  vfprintf(stderr, fmt, ap);
-# endif
 #else
-# ifdef RABBITMQ
+  vfprintf(stderr, fmt, ap);
+#endif
+#else
+#ifdef RABBITMQ
   {
     char buf[2048];
 
     vsnprintf(buf, sizeof(buf), fmt, ap);
     syslog(LOG_WARNING, "%s: %s", program_invocation_short_name, buf);
   }
-# else
+#else
   fprintf(stderr, "%s: ", program_invocation_short_name);
   vfprintf(stderr, fmt, ap);
-# endif
+#endif
 #endif
   va_end(ap);
 }
@@ -81,23 +81,23 @@ void monitor_log_error(const char *fmt, ...)
     return;
   va_start(ap, fmt);
 #ifdef DEBUG
-# ifdef RABBITMQ
+#ifdef RABBITMQ
   vfprintf(stdout, fmt, ap);
-# else
-  vfprintf(stderr, fmt, ap);
-# endif
 #else
-# ifdef RABBITMQ
+  vfprintf(stderr, fmt, ap);
+#endif
+#else
+#ifdef RABBITMQ
   {
     char buf[2048];
 
     vsnprintf(buf, sizeof(buf), fmt, ap);
     syslog(LOG_ERR, "%s: %s", program_invocation_short_name, buf);
   }
-# else
+#else
   fprintf(stderr, "%s: ", program_invocation_short_name);
   vfprintf(stderr, fmt, ap);
-# endif
+#endif
 #endif
   va_end(ap);
 }

@@ -17,26 +17,26 @@ struct likwid_event_alias {
 
 /* Explicit aliases where LIKWID name != schema snake_case. */
 static const struct likwid_event_alias g_event_aliases[] = {
-  { "INSTR_RETIRED_ANY", "instr_retired_any" },
-  { "CPU_CLK_UNHALTED_CORE", "cycles_unhalted_core" },
-  { "CPU_CLK_UNHALTED_REF", "cycles_unhalted_ref" },
-  { "MEM_INST_RETIRED_ALL_LOADS", "mem_load_uops_retired_l1_hit" },
-  { "MEM_LOAD_UOPS_RETIRED_L1_HIT", "mem_load_uops_retired_l1_hit" },
-  { "MEM_LOAD_UOPS_RETIRED_L2_HIT", "mem_load_uops_retired_l2_hit" },
-  { "MEM_LOAD_UOPS_RETIRED_LLC_HIT", "mem_load_uops_retired_llc_hit" },
-  { "L1D_REPLACEMENT", "l1d_replacement" },
-  { "RETIRED_INSTRUCTIONS", "retired_instructions" },
-  { "RETIRED_BRANCH_INSTR", "retired_branch_instr" },
-  { "RETIRED_MISP_BRANCH_INSTR", "retired_misp_branch_instr" },
-  { "LS_DISPATCH", "ls_dispatch" },
-  { "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE", "fp_arith_inst_retired_scalar_double" },
-  { "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE", "fp_arith_inst_retired_128b_packed_double" },
-  { "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE", "fp_arith_inst_retired_256b_packed_double" },
-  { "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE", "fp_arith_inst_retired_512b_packed_double" },
-  { "FP_ARITH_INST_RETIRED_SCALAR_SINGLE", "fp_arith_inst_retired_scalar_single" },
-  { "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE", "fp_arith_inst_retired_128b_packed_single" },
-  { "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE", "fp_arith_inst_retired_256b_packed_single" },
-  { "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE", "fp_arith_inst_retired_512b_packed_single" },
+    {"INSTR_RETIRED_ANY", "instr_retired_any"},
+    {"CPU_CLK_UNHALTED_CORE", "cycles_unhalted_core"},
+    {"CPU_CLK_UNHALTED_REF", "cycles_unhalted_ref"},
+    {"MEM_INST_RETIRED_ALL_LOADS", "mem_load_uops_retired_l1_hit"},
+    {"MEM_LOAD_UOPS_RETIRED_L1_HIT", "mem_load_uops_retired_l1_hit"},
+    {"MEM_LOAD_UOPS_RETIRED_L2_HIT", "mem_load_uops_retired_l2_hit"},
+    {"MEM_LOAD_UOPS_RETIRED_LLC_HIT", "mem_load_uops_retired_llc_hit"},
+    {"L1D_REPLACEMENT", "l1d_replacement"},
+    {"RETIRED_INSTRUCTIONS", "retired_instructions"},
+    {"RETIRED_BRANCH_INSTR", "retired_branch_instr"},
+    {"RETIRED_MISP_BRANCH_INSTR", "retired_misp_branch_instr"},
+    {"LS_DISPATCH", "ls_dispatch"},
+    {"FP_ARITH_INST_RETIRED_SCALAR_DOUBLE", "fp_arith_inst_retired_scalar_double"},
+    {"FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE", "fp_arith_inst_retired_128b_packed_double"},
+    {"FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE", "fp_arith_inst_retired_256b_packed_double"},
+    {"FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE", "fp_arith_inst_retired_512b_packed_double"},
+    {"FP_ARITH_INST_RETIRED_SCALAR_SINGLE", "fp_arith_inst_retired_scalar_single"},
+    {"FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE", "fp_arith_inst_retired_128b_packed_single"},
+    {"FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE", "fp_arith_inst_retired_256b_packed_single"},
+    {"FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE", "fp_arith_inst_retired_512b_packed_single"},
 };
 
 static int str_eq_nocase(const char *a, const char *b)
@@ -72,8 +72,7 @@ int likwid_pmc_fixc_index(const char *counter_name)
   return -1;
 }
 
-const char *likwid_pmc_schema_key_from_event(const char *event_name, char *buf,
-					     size_t buflen)
+const char *likwid_pmc_schema_key_from_event(const char *event_name, char *buf, size_t buflen)
 {
   size_t i;
   size_t n;

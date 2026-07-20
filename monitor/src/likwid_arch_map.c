@@ -27,8 +27,8 @@ static int str_eq_nocase(const char *a, const char *b)
   if (a == NULL || b == NULL)
     return 0;
   while (*a != '\0' && *b != '\0') {
-    ca = (unsigned char) *a++;
-    cb = (unsigned char) *b++;
+    ca = (unsigned char)*a++;
+    cb = (unsigned char)*b++;
     if (tolower(ca) != tolower(cb))
       return 0;
   }

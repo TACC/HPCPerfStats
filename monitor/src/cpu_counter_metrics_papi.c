@@ -62,8 +62,8 @@ static void papi_raise_nofile_for_attach(void)
     rl.rlim_cur = rl.rlim_max;
   if (setrlimit(RLIMIT_NOFILE, &rl) != 0)
     monitor_log_warn(
-	"cpu_counter_metrics_papi: setrlimit(RLIMIT_NOFILE) soft=%llu failed errno=%d\n",
-	(unsigned long long)rl.rlim_cur, errno);
+        "cpu_counter_metrics_papi: setrlimit(RLIMIT_NOFILE) soft=%llu failed errno=%d\n",
+        (unsigned long long)rl.rlim_cur, errno);
 }
 
 static void papi_log_affinity_context(void)
@@ -85,25 +85,22 @@ static void papi_log_affinity_context(void)
     if (off + 8 < sizeof(buf)) {
       int n = snprintf(buf + off, sizeof(buf) - off, "%s%d", first ? "" : ",", i);
       if (n > 0)
-	off += (size_t)n;
+        off += (size_t)n;
       first = 0;
     }
   }
-  monitor_log_warn(
-      "cpu_counter_metrics_papi: affinity allowed_cpus=%d sample=[%s]\n",
-      n_allowed, buf);
+  monitor_log_warn("cpu_counter_metrics_papi: affinity allowed_cpus=%d sample=[%s]\n", n_allowed,
+                   buf);
 }
 
 static void papi_log_begin_status(int ok_cpus, int first_fail_cpu, int first_fail_rc)
 {
-  monitor_log_warn(
-      "cpu_counter_metrics_papi: begin ok_cpus=%d nr_cpus=%d n_active=%d\n",
-      ok_cpus, nr_cpus, g_n_active);
+  monitor_log_warn("cpu_counter_metrics_papi: begin ok_cpus=%d nr_cpus=%d n_active=%d\n", ok_cpus,
+                   nr_cpus, g_n_active);
   if (papi_is_partial_attach(ok_cpus, nr_cpus) && first_fail_cpu >= 0) {
-    monitor_log_warn(
-	"cpu_counter_metrics_papi: first attach fail cpu=%d rc=%d (%s)\n",
-	first_fail_cpu, first_fail_rc,
-	first_fail_rc != PAPI_OK ? PAPI_strerror(first_fail_rc) : "unknown");
+    monitor_log_warn("cpu_counter_metrics_papi: first attach fail cpu=%d rc=%d (%s)\n",
+                     first_fail_cpu, first_fail_rc,
+                     first_fail_rc != PAPI_OK ? PAPI_strerror(first_fail_rc) : "unknown");
     papi_log_affinity_context();
   }
 }
@@ -142,12 +139,12 @@ static int papi_resolve_event(int preset, const char *const *native_names, int *
 
 static int papi_probe_active_events(void)
 {
-  static const char *sp_names[] = { "FP_SCALE_OPS_SPEC", "VFP_SPEC", NULL };
-  static const char *dp_names[] = { "ASE_SVE_FP64_SPEC", NULL };
-  static const char *cyc_names[] = { "CPU_CYCLES", NULL };
-  static const char *ins_names[] = { "INST_RETIRED", NULL };
-  static const char *int8_names[] = { "ASE_SVE_INT8_SPEC", NULL };
-  static const char *int16_names[] = { "ASE_SVE_INT16_SPEC", NULL };
+  static const char *sp_names[] = {"FP_SCALE_OPS_SPEC", "VFP_SPEC", NULL};
+  static const char *dp_names[] = {"ASE_SVE_FP64_SPEC", NULL};
+  static const char *cyc_names[] = {"CPU_CYCLES", NULL};
+  static const char *ins_names[] = {"INST_RETIRED", NULL};
+  static const char *int8_names[] = {"ASE_SVE_INT8_SPEC", NULL};
+  static const char *int16_names[] = {"ASE_SVE_INT16_SPEC", NULL};
   int code;
 
   g_n_active = 0;
@@ -194,9 +191,8 @@ static void papi_cap_active_to_hwctrs(void)
   hw = PAPI_num_hwctrs();
   n = papi_shrink_active_count(g_n_active, hw);
   if (n < g_n_active) {
-    monitor_log_warn(
-	"cpu_counter_metrics_papi: capping events n_active=%d -> %d (hwctrs=%d)\n",
-	g_n_active, n, hw);
+    monitor_log_warn("cpu_counter_metrics_papi: capping events n_active=%d -> %d (hwctrs=%d)\n",
+                     g_n_active, n, hw);
     g_n_active = n;
   }
 }
@@ -262,10 +258,10 @@ void cpu_counter_metrics_papi_cleanup(void)
   if (g_eventset != NULL) {
     for (i = 0; i < nr_cpus; i++) {
       if (g_eventset[i] != PAPI_NULL) {
-	(void)PAPI_stop(g_eventset[i], NULL);
-	PAPI_cleanup_eventset(g_eventset[i]);
-	PAPI_destroy_eventset(&g_eventset[i]);
-	g_eventset[i] = PAPI_NULL;
+        (void)PAPI_stop(g_eventset[i], NULL);
+        PAPI_cleanup_eventset(g_eventset[i]);
+        PAPI_destroy_eventset(&g_eventset[i]);
+        g_eventset[i] = PAPI_NULL;
       }
     }
     free(g_eventset);
@@ -306,8 +302,8 @@ int cpu_counter_metrics_papi_begin(struct stats_type *type)
 
   rc = PAPI_multiplex_init();
   if (rc != PAPI_OK)
-    monitor_log_warn("cpu_counter_metrics_papi: PAPI_multiplex_init rc=%d (%s)\n",
-		     rc, PAPI_strerror(rc));
+    monitor_log_warn("cpu_counter_metrics_papi: PAPI_multiplex_init rc=%d (%s)\n", rc,
+                     PAPI_strerror(rc));
 
   (void)PAPI_set_domain(PAPI_DOM_ALL);
 
@@ -373,9 +369,8 @@ void cpu_counter_metrics_papi_collect_cpu(struct stats *stats, int cpu)
   if (rc != PAPI_OK) {
     if (!g_papi_read_warned) {
       g_papi_read_warned = 1;
-      monitor_log_warn(
-	  "cpu_counter_metrics_papi: PAPI_read failed cpu=%d rc=%d (%s)\n",
-	  cpu, rc, PAPI_strerror(rc));
+      monitor_log_warn("cpu_counter_metrics_papi: PAPI_read failed cpu=%d rc=%d (%s)\n", cpu, rc,
+                       PAPI_strerror(rc));
     }
     return;
   }

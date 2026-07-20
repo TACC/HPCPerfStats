@@ -14,7 +14,6 @@ int likwid_pmc_fixc_index(const char *counter_name);
  * Map LIKWID event name to a schema key. Returns static alias string or
  * lowercase copy in buf; NULL if inputs invalid / buf too small.
  */
-const char *likwid_pmc_schema_key_from_event(const char *event_name, char *buf,
-					     size_t buflen);
+const char *likwid_pmc_schema_key_from_event(const char *event_name, char *buf, size_t buflen);
 
 #endif

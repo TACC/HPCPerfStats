@@ -42,8 +42,8 @@ static int path_read_open(const char *path, const struct path_read_opts *opts)
   return fd;
 }
 
-static int path_read_grow(char **buf, size_t *cap,
-                          const char *path, const struct path_read_opts *opts)
+static int path_read_grow(char **buf, size_t *cap, const char *path,
+                          const struct path_read_opts *opts)
 {
   size_t ncap;
   char *nb;
@@ -77,8 +77,7 @@ int path_read_small(const char *path, char *buf, size_t bufsz, size_t *out_len,
 
   if (path == NULL || buf == NULL || out_len == NULL || opts == NULL) {
     if (opts != NULL && opts->report_errors)
-      ERROR("path_read_small: invalid arguments for `%s'\n",
-            path != NULL ? path : "(null)");
+      ERROR("path_read_small: invalid arguments for `%s'\n", path != NULL ? path : "(null)");
     errno = EINVAL;
     return -1;
   }

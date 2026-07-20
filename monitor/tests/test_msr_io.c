@@ -21,10 +21,8 @@ int main(void)
   assert(fd >= 0);
 
   /* Pre-fill 4 MSR-sized slots. */
-  uint64_t fill[4] = { 0x1111111111111111ULL,
-                       0x2222222222222222ULL,
-                       0x3333333333333333ULL,
-                       0x4444444444444444ULL };
+  uint64_t fill[4] = {0x1111111111111111ULL, 0x2222222222222222ULL, 0x3333333333333333ULL,
+                      0x4444444444444444ULL};
 
   assert(write(fd, fill, sizeof(fill)) == (ssize_t)sizeof(fill));
 

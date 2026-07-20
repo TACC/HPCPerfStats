@@ -66,7 +66,7 @@ static void test_daemonize_writes_pid_lock_file(void)
     assert(fscanf(f, "%ld", &gp) == 1);
     fclose(f);
     assert(gp > 1);
-    grandchild = (pid_t) gp;
+    grandchild = (pid_t)gp;
   }
 
   kill(grandchild, SIGTERM);

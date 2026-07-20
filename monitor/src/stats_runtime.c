@@ -20,12 +20,11 @@ static char *g_type_profile;
 static char *g_disabled_types_csv;
 
 /* collect.c read-gating hook: skip reads for keys inactive in the current phase. */
-static int stats_runtime_collect_key_active(void *ctx, struct stats *stats,
-                                            const char *key)
+static int stats_runtime_collect_key_active(void *ctx, struct stats *stats, const char *key)
 {
   int idx;
 
-  (void) ctx;
+  (void)ctx;
   if (stats == NULL || key == NULL)
     return 1;
   idx = schema_ref(&stats->s_type->st_schema, key);
@@ -92,14 +91,13 @@ static long long stats_runtime_monotonic_us(void)
 
   if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
     return -1;
-  return (long long) ts.tv_sec * 1000000LL + (long long) ts.tv_nsec / 1000LL;
+  return (long long)ts.tv_sec * 1000000LL + (long long)ts.tv_nsec / 1000LL;
 }
 
 static void stats_runtime_init_enabled_type(struct stats_type *type)
 {
   if (stats_type_init(type) < 0) {
-    monitor_log_error("stats_runtime: disabling `%s` due to init failure\n",
-                      type->st_name);
+    monitor_log_error("stats_runtime: disabling `%s` due to init failure\n", type->st_name);
     type->st_enabled = 0;
     return;
   }
@@ -220,8 +218,7 @@ void stats_runtime_main_prepare_types(const stats_runtime_main_prepare_spec *spe
     if (!type->st_enabled)
       continue;
     if (stats_type_init(type) < 0) {
-      monitor_log_error("stats_runtime: disabling `%s` due to init failure\n",
-                        type->st_name);
+      monitor_log_error("stats_runtime: disabling `%s` due to init failure\n", type->st_name);
       type->st_enabled = 0;
       continue;
     }
@@ -234,8 +231,7 @@ void stats_runtime_main_prepare_types(const stats_runtime_main_prepare_spec *spe
 }
 
 int stats_runtime_collect_cycle(FILE *profiler_stream, void *opaque,
-                                const struct stats_sink_ops *sink,
-                                int require_selected)
+                                const struct stats_sink_ops *sink, int require_selected)
 {
   int rc = 0;
   FILE *prof_out = profiler_stream != NULL ? profiler_stream : stderr;
@@ -266,8 +262,7 @@ int stats_schema_key_active_this_phase(const struct stats_type *type, int idx)
   return collect_tier_key_active(type, idx);
 }
 
-enum collect_phase stats_runtime_collect_phase_for_tick(double now_sec,
-                                                        long long *last_slow_slot,
+enum collect_phase stats_runtime_collect_phase_for_tick(double now_sec, long long *last_slow_slot,
                                                         double sample_freq_slow)
 {
   enum collect_phase phase = COLLECT_FAST_ONLY;

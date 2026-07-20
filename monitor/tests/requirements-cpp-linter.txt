@@ -1,0 +1,6 @@
+# Pip tools for scripts/run_cpp_linter.sh (not git hooks).
+# Install into workspace .venv after loading the matching Python module:
+#   module load python/3.12.11   # TACC example
+#   .venv/bin/pip install -r HPCPerfStats/monitor/tests/requirements-cpp-linter.txt
+clang-format==19.1.7
+clang-tidy==19.1.0.1

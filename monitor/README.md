@@ -8,7 +8,7 @@ C implementation of the **hpcperfstats** data collector: either a **RabbitMQ dae
 |------|---------|
 | `src/` | Production C sources and headers (`hpcperfstatsd`, collectors, schema, buffers). |
 | `tests/` | `check` targets: C unit drivers, shell regression, `Makefile.am`, `run_tests.sh`. Details: [tests/README.md](tests/README.md). |
-| `scripts/` | Static bundle and prefix helpers (`build_static_bundle.sh`, `ensure_dotbuild_prefix_static.sh`). |
+| `scripts/` | Static bundle and prefix helpers (`build_static_bundle.sh`, `ensure_dotbuild_prefix_static.sh`); plan-close **`run_asan_check.sh`** and **`run_cpp_linter.sh`**. |
 | `m4/`, `configure.ac` | Autotools. |
 | `README` | Legacy reference for **on-disk stats archive** format (headers, schema lines, record groups). |
 | `LIKWID_MIGRATION.md`, `VARIORUM_MIGRATION.md` | Architecture / RAPL migration notes. |
@@ -411,7 +411,16 @@ Use these steps on a **representative host** (same kernel, privilege level, and 
 
 3. **Cleanup** (optional after a successful verify pass): from the same build tree root, **`make distclean`** removes generated Makefiles and artifacts unless you need to keep the tree configured.
 
-See **monitor-static-build-verification** and **global-testing-discipline** in `monitor/cursor-rules/` for project expectations.
+See **monitor-static-build-verification**, **monitor-dual-verify-cross-and-static**, and **monitor-asan-cpp-linter-gate** in `monitor/cursor-rules/` for project expectations.
+
+4. **Plan-close ASan + cpp-linter** (additive; required when closing a plan that touched monitor C/tests/scripts — no git hooks):
+
+   ```bash
+   ./scripts/run_asan_check.sh
+   ./scripts/run_cpp_linter.sh
+   ```
+
+   Install clang tools into the workspace `.venv` when needed: `pip install -r tests/requirements-cpp-linter.txt` (after loading the matching Python module on TACC). Logs land under workspace `test_runs/asan-check-*.log` and `test_runs/cpp-linter-*.log`.
 
 ## Cross-compile smoke (qemu-user)
 

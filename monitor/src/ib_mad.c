@@ -11,16 +11,16 @@
 #include "monitor_log.h"
 #include "ib_mad.h"
 
-#define IB_PC_EXT_F \
-  X(uint32_t, port_select, IB_PC_EXT_PORT_SELECT_F) \
-  X(uint32_t, counter_select, IB_PC_EXT_COUNTER_SELECT_F) \
-  X(uint64_t, port_xmit_data, IB_PC_EXT_XMT_BYTES_F) \
-  X(uint64_t, port_rcv_data, IB_PC_EXT_RCV_BYTES_F) \
-  X(uint64_t, port_xmit_pkts, IB_PC_EXT_XMT_PKTS_F) \
-  X(uint64_t, port_rcv_pkts, IB_PC_EXT_RCV_PKTS_F) \
-  X(uint64_t, port_unicast_xmit_pkts, IB_PC_EXT_XMT_UPKTS_F) \
-  X(uint64_t, port_unicast_rcv_pkts, IB_PC_EXT_RCV_UPKTS_F) \
-  X(uint64_t, port_multicast_xmit_pkts, IB_PC_EXT_XMT_MPKTS_F) \
+#define IB_PC_EXT_F                                                                                \
+  X(uint32_t, port_select, IB_PC_EXT_PORT_SELECT_F)                                                \
+  X(uint32_t, counter_select, IB_PC_EXT_COUNTER_SELECT_F)                                          \
+  X(uint64_t, port_xmit_data, IB_PC_EXT_XMT_BYTES_F)                                               \
+  X(uint64_t, port_rcv_data, IB_PC_EXT_RCV_BYTES_F)                                                \
+  X(uint64_t, port_xmit_pkts, IB_PC_EXT_XMT_PKTS_F)                                                \
+  X(uint64_t, port_rcv_pkts, IB_PC_EXT_RCV_PKTS_F)                                                 \
+  X(uint64_t, port_unicast_xmit_pkts, IB_PC_EXT_XMT_UPKTS_F)                                       \
+  X(uint64_t, port_unicast_rcv_pkts, IB_PC_EXT_RCV_UPKTS_F)                                        \
+  X(uint64_t, port_multicast_xmit_pkts, IB_PC_EXT_XMT_MPKTS_F)                                     \
   X(uint64_t, port_multicast_rcv_pkts, IB_PC_EXT_RCV_MPKTS_F)
 
 static unsigned long g_ib_mad_ext_fail_streak;
@@ -50,8 +50,8 @@ static int ib_mad_collect_cycle_ok(unsigned long *fail_streak, time_t *skip_unti
     return 0;
   if (fail_streak != NULL && *fail_streak >= fail_threshold) {
     *skip_until = time(NULL) + cooldown_sec;
-    monitor_log_warn("host_ib %s: too many failures (%lu), skipping for %ds\n",
-                     label, *fail_streak, cooldown_sec);
+    monitor_log_warn("host_ib %s: too many failures (%lu), skipping for %ds\n", label, *fail_streak,
+                     cooldown_sec);
     return 0;
   }
   return 1;
@@ -59,25 +59,23 @@ static int ib_mad_collect_cycle_ok(unsigned long *fail_streak, time_t *skip_unti
 
 int ib_mad_ext_collect_cycle_ok(void)
 {
-  return ib_mad_collect_cycle_ok(&g_ib_mad_ext_fail_streak, &g_ib_mad_ext_skip_until,
-                                 "mad_ext");
+  return ib_mad_collect_cycle_ok(&g_ib_mad_ext_fail_streak, &g_ib_mad_ext_skip_until, "mad_ext");
 }
 
 int ib_mad_sw_collect_cycle_ok(void)
 {
-  return ib_mad_collect_cycle_ok(&g_ib_mad_sw_fail_streak, &g_ib_mad_sw_skip_until,
-                                 "mad_sw");
+  return ib_mad_collect_cycle_ok(&g_ib_mad_sw_fail_streak, &g_ib_mad_sw_skip_until, "mad_sw");
 }
 
 void ib_mad_ext_decode_counters(struct stats *stats, uint8_t *mad_buf)
 {
   if (stats == NULL || mad_buf == NULL)
     return;
-#define X(t, m, f) \
-  do { \
-    t m; \
-    mad_decode_field(mad_buf, f, &m); \
-    stats_set(stats, #m, m); \
+#define X(t, m, f)                                                                                 \
+  do {                                                                                             \
+    t m;                                                                                           \
+    mad_decode_field(mad_buf, f, &m);                                                              \
+    stats_set(stats, #m, m);                                                                       \
   } while (0);
   IB_PC_EXT_F;
 #undef X
@@ -87,7 +85,7 @@ static void ib_mad_ext_query_lid_port(struct stats *stats, char *hca, int lid, i
 {
   struct ibmad_port *mad_port = NULL;
   int mgmt_class = IB_PERFORMANCE_CLASS;
-  ib_portid_t portid = { .lid = lid };
+  ib_portid_t portid = {.lid = lid};
   uint8_t mad_buf[1024];
   int timeout = 0;
 
@@ -110,7 +108,7 @@ static void ib_mad_ext_query_lid_port(struct stats *stats, char *hca, int lid, i
   g_ib_mad_ext_fail_streak = 0;
   ib_mad_ext_decode_counters(stats, mad_buf);
 
- out:
+out:
   if (mad_port != NULL)
     mad_rpc_close_port(mad_port);
 }
@@ -131,7 +129,7 @@ void ib_mad_ext_collect_port(struct stats *stats, const char *hca, int port)
   }
 
   TRACE("IB HCA %s, port %d, lid %x\n", hca, port, lid);
-  ib_mad_ext_query_lid_port(stats, (char *) hca, (int) lid, port);
+  ib_mad_ext_query_lid_port(stats, (char *)hca, (int)lid, port);
 }
 
 static int ib_mad_sw_query_switch_counters(struct ibmad_port *mad_port, int mad_timeout,
@@ -139,18 +137,23 @@ static int ib_mad_sw_query_switch_counters(struct ibmad_port *mad_port, int mad_
                                            uint64_t *tx_bytes, uint64_t *tx_packets)
 {
   ib_portid_t sw_port_id = {
-    .drpath = {
-      .cnt = 1,
-      .p = { 0, 1, },
-    },
+      .drpath =
+          {
+              .cnt = 1,
+              .p =
+                  {
+                      0,
+                      1,
+                  },
+          },
   };
   uint8_t sw_info[64];
   int sw_lid;
   int sw_port;
   uint8_t sw_pma[1024];
 
-  if (mad_port == NULL || rx_bytes == NULL || rx_packets == NULL
-      || tx_bytes == NULL || tx_packets == NULL)
+  if (mad_port == NULL || rx_bytes == NULL || rx_packets == NULL || tx_bytes == NULL ||
+      tx_packets == NULL)
     return -1;
 
   memset(sw_info, 0, sizeof(sw_info));
@@ -177,9 +180,8 @@ static int ib_mad_sw_query_switch_counters(struct ibmad_port *mad_port, int mad_
   return 0;
 }
 
-void ib_mad_sw_publish_tx_rx_swap(struct stats *stats, uint64_t sw_rx_bytes,
-                                         uint64_t sw_rx_packets, uint64_t sw_tx_bytes,
-                                         uint64_t sw_tx_packets)
+void ib_mad_sw_publish_tx_rx_swap(struct stats *stats, uint64_t sw_rx_bytes, uint64_t sw_rx_packets,
+                                  uint64_t sw_tx_bytes, uint64_t sw_tx_packets)
 {
   if (stats == NULL)
     return;
@@ -194,7 +196,10 @@ void ib_mad_sw_collect_port(struct stats *stats, const char *hca, int port)
 {
   struct ibmad_port *mad_port = NULL;
   int mad_timeout = 15;
-  int mad_classes[] = { IB_SMI_DIRECT_CLASS, IB_PERFORMANCE_CLASS, };
+  int mad_classes[] = {
+      IB_SMI_DIRECT_CLASS,
+      IB_PERFORMANCE_CLASS,
+  };
   uint64_t sw_rx_bytes = 0;
   uint64_t sw_rx_packets = 0;
   uint64_t sw_tx_bytes = 0;
@@ -203,7 +208,7 @@ void ib_mad_sw_collect_port(struct stats *stats, const char *hca, int port)
   if (stats == NULL || hca == NULL)
     return;
 
-  mad_port = mad_rpc_open_port((char *) hca, port, mad_classes, 2);
+  mad_port = mad_rpc_open_port((char *)hca, port, mad_classes, 2);
   if (mad_port == NULL) {
     g_ib_mad_sw_fail_streak++;
     ERROR("cannot open MAD port for HCA `%s' port %d\n", hca, port);
@@ -217,12 +222,12 @@ void ib_mad_sw_collect_port(struct stats *stats, const char *hca, int port)
   }
   g_ib_mad_sw_fail_streak = 0;
 
-  TRACE("sw_rx_bytes %lu, sw_rx_packets %lu, sw_tx_bytes %lu, sw_tx_packets %lu\n",
-        sw_rx_bytes, sw_rx_packets, sw_tx_bytes, sw_tx_packets);
+  TRACE("sw_rx_bytes %lu, sw_rx_packets %lu, sw_tx_bytes %lu, sw_tx_packets %lu\n", sw_rx_bytes,
+        sw_rx_packets, sw_tx_bytes, sw_tx_packets);
 
   ib_mad_sw_publish_tx_rx_swap(stats, sw_rx_bytes, sw_rx_packets, sw_tx_bytes, sw_tx_packets);
 
- out:
+out:
   if (mad_port != NULL)
     mad_rpc_close_port(mad_port);
 }

@@ -33,8 +33,8 @@ int pci_map_create(char ***dev_paths, int *nr, int *ids, int nr_ids)
         continue;
 
       char bus_dir_path[PATH_MAX];
-      if (snprintf(bus_dir_path, sizeof(bus_dir_path), "%s/%s",
-                   pci_dir_path, bus_no->d_name) >= (int)sizeof(bus_dir_path))
+      if (snprintf(bus_dir_path, sizeof(bus_dir_path), "%s/%s", pci_dir_path, bus_no->d_name) >=
+          (int)sizeof(bus_dir_path))
         continue;
 
       DIR *bus_dir = path_opendir_or_record_fail(bus_dir_path);
@@ -50,9 +50,8 @@ int pci_map_create(char ***dev_paths, int *nr, int *ids, int nr_ids)
           if (dev_fun_no->d_type == DT_DIR)
             continue;
 
-          if (snprintf(dev_fun_path, sizeof(dev_fun_path), "%s/%s/%s",
-                       pci_dir_path, bus_no->d_name, dev_fun_no->d_name)
-              >= (int)sizeof(dev_fun_path))
+          if (snprintf(dev_fun_path, sizeof(dev_fun_path), "%s/%s/%s", pci_dir_path, bus_no->d_name,
+                       dev_fun_no->d_name) >= (int)sizeof(dev_fun_path))
             continue;
 
           if (path_open_is_skipped(dev_fun_path))
@@ -83,8 +82,7 @@ int pci_map_create(char ***dev_paths, int *nr, int *ids, int nr_ids)
                   char *slot;
                   size_t slot_len;
 
-                  tmp_dev_paths = (char **)realloc(*dev_paths,
-                                                   (size_t)(*nr + 1) * sizeof(char *));
+                  tmp_dev_paths = (char **)realloc(*dev_paths, (size_t)(*nr + 1) * sizeof(char *));
                   if (tmp_dev_paths == NULL) {
                     TRACE("dev path realloc failed\n");
                     continue;
@@ -99,8 +97,8 @@ int pci_map_create(char ***dev_paths, int *nr, int *ids, int nr_ids)
                   (*dev_paths)[*nr] = slot;
 
                   {
-                    int wrote = snprintf((*dev_paths)[*nr], slot_len, "%s/%s",
-                                         bus_no->d_name, dev_fun_no->d_name);
+                    int wrote = snprintf((*dev_paths)[*nr], slot_len, "%s/%s", bus_no->d_name,
+                                         dev_fun_no->d_name);
                     if (wrote < 0 || (size_t)wrote >= slot_len) {
                       free((*dev_paths)[*nr]);
                       (*dev_paths)[*nr] = NULL;
@@ -126,7 +124,7 @@ int pci_map_create(char ***dev_paths, int *nr, int *ids, int nr_ids)
 
   rc = 0;
 
- out:
+out:
   if (pci_dir != NULL)
     closedir(pci_dir);
   return rc;

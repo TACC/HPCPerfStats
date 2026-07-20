@@ -10,9 +10,9 @@
 #define PSCANF_SMALL_BUF 4096
 
 static const struct path_read_opts pscanf_read_opts = {
-  .skip_known_bad  = 0,
-  .report_errors   = 0,
-  .detect_overflow = 1,
+    .skip_known_bad = 0,
+    .report_errors = 0,
+    .detect_overflow = 1,
 };
 
 int pscanf(const char *path, const char *fmt, ...)

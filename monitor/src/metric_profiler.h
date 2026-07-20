@@ -13,11 +13,20 @@ void metric_profiler_record_metric(const char *type_name, const char *dev, const
                                    unsigned long long wall_ns, unsigned long long cpu_ns);
 #else
 static inline void metric_profiler_cycle_begin(void) {}
-static inline void metric_profiler_cycle_end(FILE *out) { (void)out; }
-static inline void metric_profiler_collect_begin(const char *type_name) { (void)type_name; }
-static inline void metric_profiler_collect_end(const char *type_name) { (void)type_name; }
-static inline void metric_profiler_record_metric(const char *type_name, const char *dev, const char *key,
-                                                 unsigned long long wall_ns,
+static inline void metric_profiler_cycle_end(FILE *out)
+{
+  (void)out;
+}
+static inline void metric_profiler_collect_begin(const char *type_name)
+{
+  (void)type_name;
+}
+static inline void metric_profiler_collect_end(const char *type_name)
+{
+  (void)type_name;
+}
+static inline void metric_profiler_record_metric(const char *type_name, const char *dev,
+                                                 const char *key, unsigned long long wall_ns,
                                                  unsigned long long cpu_ns)
 {
   (void)type_name;

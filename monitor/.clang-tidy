@@ -1,0 +1,16 @@
+---
+# C-safe clang-tidy checks for HPCPerfStats/monitor (no C++ modernize rewrites).
+# Narrow set kept green without a full compile_commands.json; widen in follow-ups.
+Checks: >
+  -*,
+  bugprone-suspicious-memset-usage,
+  bugprone-sizeof-expression,
+  bugprone-macro-repeated-side-effects
+# Only promote selected checks; parse noise from incomplete flags must not fail the gate
+# when a compile DB is absent (script still prefers config.h from .build-static).
+WarningsAsErrors: >
+  bugprone-suspicious-memset-usage,
+  bugprone-sizeof-expression,
+  bugprone-macro-repeated-side-effects
+HeaderFilterRegex: '.*'
+FormatStyle: file

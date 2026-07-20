@@ -6,15 +6,14 @@
 #include "cpuid.h"
 #include "stats.h"
 
-typedef void (*intel_topology_pkg_leader_cb)(void *ctx, char *cpu, int pkg_id,
-					     int nr_cores);
+typedef void (*intel_topology_pkg_leader_cb)(void *ctx, char *cpu, int pkg_id, int nr_cores);
 
 /*
  * Invoke cb once per package using the first logical cpu with core_id==0 and
  * smt_id==0 (same selection as the legacy SNB/CBO uncore drivers).
  */
-static inline void intel_topology_foreach_pkg_leader_core(
-    void *ctx, intel_topology_pkg_leader_cb cb)
+static inline void intel_topology_foreach_pkg_leader_core(void *ctx,
+                                                          intel_topology_pkg_leader_cb cb)
 {
   int i;
 

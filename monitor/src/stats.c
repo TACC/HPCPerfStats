@@ -22,8 +22,7 @@ static unsigned long long stats_now_ns(clockid_t cid)
 
   if (clock_gettime(cid, &ts) != 0)
     return 0;
-  return (unsigned long long) ts.tv_sec * 1000000000ULL
-         + (unsigned long long) ts.tv_nsec;
+  return (unsigned long long)ts.tv_sec * 1000000000ULL + (unsigned long long)ts.tv_nsec;
 }
 
 static void stats_record_metric_profile(struct stats *stats, const char *key,
@@ -59,7 +58,7 @@ void key_stats_destroy(void *key)
 {
   if (key == NULL)
     return;
-  stats_destroy(key_to_stats((const char *) key));
+  stats_destroy(key_to_stats((const char *)key));
 }
 
 void stats_type_destroy(struct stats_type *type)
@@ -122,7 +121,7 @@ static int stats_copy_device_name(struct stats *stats, const char *dev)
   int n;
 
   n = snprintf(stats->s_dev, dev_len + 1, "%s", dev);
-  return (n >= 0 && (size_t) n <= dev_len) ? 0 : -1;
+  return (n >= 0 && (size_t)n <= dev_len) ? 0 : -1;
 }
 
 static struct stats *stats_create(struct stats_type *type, const char *dev)
@@ -136,15 +135,15 @@ static struct stats *stats_create(struct stats_type *type, const char *dev)
     return NULL;
 
   dev_len = strlen(dev);
-  stats = (struct stats *) malloc(sizeof(*stats) + dev_len + 1);
+  stats = (struct stats *)malloc(sizeof(*stats) + dev_len + 1);
   if (stats == NULL)
     goto err;
 
-  val = (unsigned long long *) calloc(type->st_schema.sc_len, sizeof(*stats->s_val));
+  val = (unsigned long long *)calloc(type->st_schema.sc_len, sizeof(*stats->s_val));
   if (val == NULL && type->st_schema.sc_len != 0)
     goto err;
 
-  present = (unsigned char *) calloc(type->st_schema.sc_len, sizeof(*present));
+  present = (unsigned char *)calloc(type->st_schema.sc_len, sizeof(*present));
   if (present == NULL && type->st_schema.sc_len != 0)
     goto err;
 
@@ -157,7 +156,7 @@ static struct stats *stats_create(struct stats_type *type, const char *dev)
 
   return stats;
 
- err:
+err:
   free(stats);
   free(val);
   free(present);
@@ -177,8 +176,7 @@ void stats_clear_present(struct stats *stats)
 {
   if (stats == NULL || stats->s_val_present == NULL)
     return;
-  memset(stats->s_val_present, 0,
-         stats->s_type->st_schema.sc_len * sizeof(*stats->s_val_present));
+  memset(stats->s_val_present, 0, stats->s_type->st_schema.sc_len * sizeof(*stats->s_val_present));
 }
 
 struct stats *get_current_stats(struct stats_type *type, const char *dev)
@@ -228,9 +226,8 @@ void stats_set(struct stats *stats, const char *key, unsigned long long val)
 
   i = schema_ref(&stats->s_type->st_schema, key);
 
-  TRACE("%s %s %s %llu %d\n",
-        stats->s_type->st_name, stats->s_dev, key,
-        (unsigned long long) val, i);
+  TRACE("%s %s %s %llu %d\n", stats->s_type->st_name, stats->s_dev, key, (unsigned long long)val,
+        i);
 
   if (i >= 0) {
     if (!collect_tier_key_active(stats->s_type, i))
@@ -257,9 +254,8 @@ void stats_inc(struct stats *stats, const char *key, unsigned long long val)
 
   i = schema_ref(&stats->s_type->st_schema, key);
 
-  TRACE("%s %s %s %llu %d\n",
-        stats->s_type->st_name, stats->s_dev, key,
-        (unsigned long long) val, i);
+  TRACE("%s %s %s %llu %d\n", stats->s_type->st_name, stats->s_dev, key, (unsigned long long)val,
+        i);
 
   if (i >= 0) {
     if (!collect_tier_key_active(stats->s_type, i))

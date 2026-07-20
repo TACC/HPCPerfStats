@@ -31,8 +31,7 @@ static int stats_buffer_data_ensure_cap(char **data, size_t *cap, size_t need)
   return 0;
 }
 
-int stats_buffer_data_append_bytes(char **data, size_t *len, size_t *cap,
-                                   const void *p, size_t n)
+int stats_buffer_data_append_bytes(char **data, size_t *len, size_t *cap, const void *p, size_t n)
 {
   size_t need;
 
@@ -50,9 +49,8 @@ int stats_buffer_data_append_bytes(char **data, size_t *len, size_t *cap,
   return 0;
 }
 
-static int stats_buffer_data_try_vfmt_inplace(char **data, size_t *len,
-                                              size_t *cap, const char *fmt,
-                                              va_list ap)
+static int stats_buffer_data_try_vfmt_inplace(char **data, size_t *len, size_t *cap,
+                                              const char *fmt, va_list ap)
 {
   size_t avail;
   va_list aq;
@@ -67,16 +65,15 @@ static int stats_buffer_data_try_vfmt_inplace(char **data, size_t *len,
   va_end(aq);
   if (n < 0)
     return -1;
-  if ((size_t) n < avail) {
-    *len += (size_t) n;
+  if ((size_t)n < avail) {
+    *len += (size_t)n;
     return 0;
   }
   return 1;
 }
 
-static int stats_buffer_data_append_vfmt_grow(char **data, size_t *len,
-                                              size_t *cap, const char *fmt,
-                                              va_list ap, size_t add)
+static int stats_buffer_data_append_vfmt_grow(char **data, size_t *len, size_t *cap,
+                                              const char *fmt, va_list ap, size_t add)
 {
   size_t need = *len + add + 1;
   va_list aq;
@@ -91,8 +88,8 @@ static int stats_buffer_data_append_vfmt_grow(char **data, size_t *len,
   return 0;
 }
 
-int stats_buffer_data_append_vfmt(char **data, size_t *len, size_t *cap,
-                                  const char *fmt, va_list ap)
+int stats_buffer_data_append_vfmt(char **data, size_t *len, size_t *cap, const char *fmt,
+                                  va_list ap)
 {
   int try_rc;
   size_t add;
@@ -114,12 +111,11 @@ int stats_buffer_data_append_vfmt(char **data, size_t *len, size_t *cap,
   if (n < 0)
     return -1;
 
-  add = (size_t) n;
+  add = (size_t)n;
   return stats_buffer_data_append_vfmt_grow(data, len, cap, fmt, ap, add);
 }
 
-int stats_buffer_data_append_fmt(char **data, size_t *len, size_t *cap,
-                                 const char *fmt, ...)
+int stats_buffer_data_append_fmt(char **data, size_t *len, size_t *cap, const char *fmt, ...)
 {
   va_list ap;
   int r;

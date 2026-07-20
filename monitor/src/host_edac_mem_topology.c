@@ -24,7 +24,7 @@ static int read_first_line(const char *path, char *buf, size_t cap)
 
   if (f == NULL)
     return -1;
-  if (fgets(buf, (int) cap, f) == NULL) {
+  if (fgets(buf, (int)cap, f) == NULL) {
     fclose(f);
     return -1;
   }
@@ -36,15 +36,14 @@ static int path_join2(char *dst, size_t cap, const char *a, const char *b)
 {
   int n = snprintf(dst, cap, "%s/%s", a, b);
 
-  return (n > 0 && (size_t) n < cap) ? 0 : -1;
+  return (n > 0 && (size_t)n < cap) ? 0 : -1;
 }
 
-static int path_join3(char *dst, size_t cap, const char *a, const char *b,
-                      const char *c)
+static int path_join3(char *dst, size_t cap, const char *a, const char *b, const char *c)
 {
   int n = snprintf(dst, cap, "%s/%s/%s", a, b, c);
 
-  return (n > 0 && (size_t) n < cap) ? 0 : -1;
+  return (n > 0 && (size_t)n < cap) ? 0 : -1;
 }
 
 static int read_long_long_from_file(const char *path, long long *out)
@@ -69,8 +68,7 @@ static int dimm_mem_type_is_hbm(const char *mem_type)
   return strstr(mem_type, "HBM") != NULL || strstr(mem_type, "hbm") != NULL;
 }
 
-static void visit_dimm(const char *mcpath, const char *dimm_name,
-                       host_edac_dimm_fn fn, void *ctx,
+static void visit_dimm(const char *mcpath, const char *dimm_name, host_edac_dimm_fn fn, void *ctx,
                        int *has_ddr, int *has_hbm)
 {
   char speed_path[384];
@@ -79,15 +77,13 @@ static void visit_dimm(const char *mcpath, const char *dimm_name,
   long long mtps = 0;
   int is_hbm = 0;
 
-  if (path_join3(speed_path, sizeof(speed_path), mcpath, dimm_name,
-                 "dimm_mem_speed") != 0)
+  if (path_join3(speed_path, sizeof(speed_path), mcpath, dimm_name, "dimm_mem_speed") != 0)
     return;
   if (read_long_long_from_file(speed_path, &mtps) != 0 || mtps <= 0)
     return;
 
-  if (path_join3(type_path, sizeof(type_path), mcpath, dimm_name,
-                 "dimm_mem_type") == 0
-      && read_first_line(type_path, type_line, sizeof(type_line)) == 0)
+  if (path_join3(type_path, sizeof(type_path), mcpath, dimm_name, "dimm_mem_type") == 0 &&
+      read_first_line(type_path, type_line, sizeof(type_line)) == 0)
     is_hbm = dimm_mem_type_is_hbm(type_line);
 
   if (has_ddr != NULL || has_hbm != NULL) {
@@ -102,8 +98,7 @@ static void visit_dimm(const char *mcpath, const char *dimm_name,
     fn(mtps, is_hbm, ctx);
 }
 
-static void walk_edac_mc(host_edac_dimm_fn fn, void *ctx,
-                         int *has_ddr, int *has_hbm)
+static void walk_edac_mc(host_edac_dimm_fn fn, void *ctx, int *has_ddr, int *has_hbm)
 {
   DIR *mcdir;
   struct dirent *mc;

@@ -42,8 +42,8 @@ static int mkdir_p(const char *path)
   return mkdir(buf, 0755);
 }
 
-static void install_dimm(const char *root, const char *mc, const char *dimm,
-                         const char *speed, const char *mem_type)
+static void install_dimm(const char *root, const char *mc, const char *dimm, const char *speed,
+                         const char *mem_type)
 {
   char path[512];
 
@@ -59,8 +59,7 @@ static void setup_ddr_only(const char *root);
 static void setup_hbm_only(const char *root);
 static void setup_mixed(const char *root);
 
-static void with_edac_root(const char *fixture_name,
-                           void (*setup)(const char *root),
+static void with_edac_root(const char *fixture_name, void (*setup)(const char *root),
                            void (*verify)(void))
 {
   char root[512];
@@ -68,8 +67,7 @@ static void with_edac_root(const char *fixture_name,
 
   if (tmpdir == NULL || tmpdir[0] == '\0')
     tmpdir = "/tmp";
-  snprintf(root, sizeof(root), "%s/hpc_edac_%s_%d", tmpdir, fixture_name,
-           (int) getpid());
+  snprintf(root, sizeof(root), "%s/hpc_edac_%s_%d", tmpdir, fixture_name, (int)getpid());
   mkdir_p(root);
   setenv("HPCPERFSTATS_EDAC_MC_ROOT", root, 1);
   setup(root);
@@ -131,7 +129,7 @@ static void test_scan_missing_mc(void)
 
   if (tmpdir == NULL || tmpdir[0] == '\0')
     tmpdir = "/tmp";
-  snprintf(root, sizeof(root), "%s/hpc_edac_missing_%d", tmpdir, (int) getpid());
+  snprintf(root, sizeof(root), "%s/hpc_edac_missing_%d", tmpdir, (int)getpid());
   setenv("HPCPERFSTATS_EDAC_MC_ROOT", root, 1);
   assert(host_edac_scan_mem_classes(&has_ddr, &has_hbm) == 0);
   assert(has_ddr == 0);
@@ -147,8 +145,8 @@ typedef struct {
 
 static void sum_bw(long long mtps, int is_hbm, void *ctx)
 {
-  bw_sum_t *s = (bw_sum_t *) ctx;
-  double dimm_bw = (double) mtps * 1000000.0 * 8.0;
+  bw_sum_t *s = (bw_sum_t *)ctx;
+  double dimm_bw = (double)mtps * 1000000.0 * 8.0;
 
   s->count++;
   if (is_hbm)

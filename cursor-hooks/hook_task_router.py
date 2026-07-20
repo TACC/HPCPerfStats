@@ -433,6 +433,7 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
             "monitor-c-conventions.mdc",
             "monitor-jitter-and-fidelity-priority.mdc",
             "monitor-c-refactor-standards.mdc",
+            "monitor-asan-cpp-linter-gate.mdc",
         ],
     },
     {
@@ -602,6 +603,7 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
             "monitor-local-build-deps.mdc",
             "tacc-lmod-build-environment.mdc",
             "global-testing-discipline.mdc",
+            "monitor-asan-cpp-linter-gate.mdc",
         ],
     },
     {
@@ -615,6 +617,7 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
             "monitor-c-new-function-unittests.mdc",
             "global-testing-discipline.mdc",
             "traceback-fix-discipline.mdc",
+            "monitor-asan-cpp-linter-gate.mdc",
         ],
     },
     {

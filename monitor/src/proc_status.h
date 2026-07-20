@@ -23,7 +23,7 @@ void proc_status_pending_init(struct proc_status_pending *p);
 
 /* Push only when host_key_alias_lookup(key) is non-NULL. Returns 0 or -1 (full). */
 int proc_status_pending_push(struct proc_status_pending *p, const char *kernel_key,
-			     unsigned long long val);
+                             unsigned long long val);
 
 void proc_status_pending_flush(struct proc_status_pending *p, struct stats *stats);
 
@@ -32,6 +32,6 @@ void proc_status_pending_flush(struct proc_status_pending *p, struct stats *stat
  * If stats is ready, emit via host_key_alias; else defer aliased keys.
  */
 void proc_status_emit_or_defer_kv(struct stats *stats, struct proc_status_pending *p,
-				  const char *key_with_colon, const char *rest);
+                                  const char *key_with_colon, const char *rest);
 
 #endif

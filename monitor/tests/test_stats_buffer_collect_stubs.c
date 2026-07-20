@@ -37,8 +37,8 @@ struct stats_type *stats_type_for_each(size_t *i)
 }
 
 int stats_buffer_collect_fixture_init(struct stats_buffer_collect_fixture *fx,
-				      const char *schema_def,
-				      const unsigned long long *vals, size_t nvals)
+                                      const char *schema_def, const unsigned long long *vals,
+                                      size_t nvals)
 {
   size_t k;
   size_t n;

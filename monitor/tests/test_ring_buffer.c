@@ -239,7 +239,7 @@ static void test_collect_assembles_tier_rows(void)
 {
   struct stats_buffer_collect_fixture fx;
   struct stats_buffer *sf;
-  const unsigned long long vals[2] = { 5, 6 };
+  const unsigned long long vals[2] = {5, 6};
 
   assert(stats_buffer_collect_fixture_init(&fx, "a,E b,E,R=S", vals, 2) == 0);
   collect_tier_set_enabled(1);

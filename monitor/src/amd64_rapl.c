@@ -13,16 +13,13 @@
 #include "likwid_rapl.h"
 #include "rapl_likwid_stats.h"
 
-#define KEYS \
-  X(core_energy, "E,W=32,U=mJ", ""), \
-  X(pkg_energy, "E,W=32,U=mJ", "")
+#define KEYS X(core_energy, "E,W=32,U=mJ", ""), X(pkg_energy, "E,W=32,U=mJ", "")
 
 static int amd64_rapl_begin_cpu(char *cpu)
 {
   (void)cpu;
   if (!likwid_rapl_is_supported_amd_processor()) {
-    TRACE("Processor model/family %d not supported by AMD LIKWID RAPL\n",
-          processor);
+    TRACE("Processor model/family %d not supported by AMD LIKWID RAPL\n", processor);
     return -1;
   }
   return 0;
@@ -39,13 +36,9 @@ static void amd64_rapl_collect(struct stats_type *type)
 
     snprintf(cpu, sizeof(cpu), "%d", i);
 
-    if (cpuid_read_cpu_topology(cpu, &pkg, &core, &smt, &nr_core) &&
-        (smt == 0)) {
+    if (cpuid_read_cpu_topology(cpu, &pkg, &core, &smt, &nr_core) && (smt == 0)) {
       snprintf(pkg_str, sizeof(pkg_str), "%d", pkg);
-      rapl_likwid_amd_collect_socket_cpu(type, pkg_str,
-                 atoi(cpu),
-                 (unsigned)pkg,
-                 core);
+      rapl_likwid_amd_collect_socket_cpu(type, pkg_str, atoi(cpu), (unsigned)pkg, core);
     }
   }
 }
@@ -56,8 +49,7 @@ static int amd64_rapl_begin(struct stats_type *type)
   int i;
 
   if (!likwid_rapl_is_supported_amd_processor()) {
-    TRACE("amd_x86_rapl disabled: processor %d is not AMD Zen RAPL capable\n",
-          processor);
+    TRACE("amd_x86_rapl disabled: processor %d is not AMD Zen RAPL capable\n", processor);
     type->st_enabled = 0;
     return -1;
   }
@@ -68,8 +60,7 @@ static int amd64_rapl_begin(struct stats_type *type)
 
     snprintf(cpu, sizeof(cpu), "%d", i);
 
-    if (cpuid_read_cpu_topology(cpu, &pkg, &core, &smt, &nr_core) &&
-        (core == 0) && (smt == 0)) {
+    if (cpuid_read_cpu_topology(cpu, &pkg, &core, &smt, &nr_core) && (core == 0) && (smt == 0)) {
       if (amd64_rapl_begin_cpu(cpu) == 0)
         nr++;
     }

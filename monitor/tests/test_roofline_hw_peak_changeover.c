@@ -22,8 +22,8 @@ static int g_get_current_stats_calls = 0;
 
 struct stats *get_current_stats(struct stats_type *type, const char *dev)
 {
-  (void) type;
-  (void) dev;
+  (void)type;
+  (void)dev;
   g_get_current_stats_calls++;
   memset(&g_stats, 0, sizeof(g_stats));
   return &g_stats;
@@ -31,7 +31,7 @@ struct stats *get_current_stats(struct stats_type *type, const char *dev)
 
 void stats_set(struct stats *stats, const char *key, unsigned long long val)
 {
-  (void) stats;
+  (void)stats;
   if (strcmp(key, "cpu_peak_fp64_flops_per_s") == 0) {
     g_cpu_peak_fp64_flops_per_s = val;
   } else if (strcmp(key, "cpu_peak_source") == 0) {

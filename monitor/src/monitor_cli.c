@@ -14,8 +14,7 @@ const char monitor_cli_lit_rmq_password[] = "hpcperfstats";
 const char monitor_cli_lit_dumpfile_dir[] = "/tmp/hpcperfstats";
 const char monitor_cli_lit_jobid_file_path[] = "/var/run/stats_jobid";
 
-void monitor_cli_heap_dup_setting(char **slot, const char *default_literal,
-                                  const char *value)
+void monitor_cli_heap_dup_setting(char **slot, const char *default_literal, const char *value)
 {
   if (slot == NULL || default_literal == NULL || value == NULL)
     return;
@@ -61,18 +60,15 @@ void monitor_cli_free_heap(void)
     free(rmq_user);
   rmq_user = (char *)monitor_cli_lit_rmq_user;
 
-  if (rmq_password != NULL &&
-      rmq_password != (char *)monitor_cli_lit_rmq_password)
+  if (rmq_password != NULL && rmq_password != (char *)monitor_cli_lit_rmq_password)
     free(rmq_password);
   rmq_password = (char *)monitor_cli_lit_rmq_password;
 
-  if (dumpfile_dir != NULL &&
-      dumpfile_dir != (char *)monitor_cli_lit_dumpfile_dir)
+  if (dumpfile_dir != NULL && dumpfile_dir != (char *)monitor_cli_lit_dumpfile_dir)
     free(dumpfile_dir);
   dumpfile_dir = (char *)monitor_cli_lit_dumpfile_dir;
 
-  if (jobid_file_path != NULL &&
-      jobid_file_path != (char *)monitor_cli_lit_jobid_file_path)
+  if (jobid_file_path != NULL && jobid_file_path != (char *)monitor_cli_lit_jobid_file_path)
     free(jobid_file_path);
   jobid_file_path = (char *)monitor_cli_lit_jobid_file_path;
 }

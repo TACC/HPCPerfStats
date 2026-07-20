@@ -15,7 +15,7 @@ static char *write_tmp_line(const char *body)
   size_t len = strlen(body);
 
   assert(fd >= 0);
-  assert(write(fd, body, len) == (ssize_t) len);
+  assert(write(fd, body, len) == (ssize_t)len);
   close(fd);
   return strdup(tmpl);
 }
@@ -25,7 +25,7 @@ static void read_first_line(const char *path, char *buf, size_t bufsz)
   FILE *f = fopen(path, "r");
 
   assert(f != NULL);
-  assert(fgets(buf, (int) bufsz, f) != NULL);
+  assert(fgets(buf, (int)bufsz, f) != NULL);
   fclose(f);
 }
 

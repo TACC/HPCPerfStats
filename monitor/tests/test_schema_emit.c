@@ -23,7 +23,7 @@ static void capture_emit(void *opaque, const char *fmt, ...)
   n = vsnprintf(cap->buf + cap->len, sizeof(cap->buf) - cap->len, fmt, ap);
   va_end(ap);
   if (n > 0)
-    cap->len += (size_t) n;
+    cap->len += (size_t)n;
 }
 
 static void test_emit_property_banner(void)
@@ -31,9 +31,8 @@ static void test_emit_property_banner(void)
   struct emit_capture cap;
 
   memset(&cap, 0, sizeof(cap));
-  stats_format_emit_property_banner(capture_emit, &cap, '$', "hpcperfstats", "1.2.3",
-                                    "node1", "Linux", "aarch64", "6.1.0", "#1",
-                                    12345ULL);
+  stats_format_emit_property_banner(capture_emit, &cap, '$', "hpcperfstats", "1.2.3", "node1",
+                                    "Linux", "aarch64", "6.1.0", "#1", 12345ULL);
   assert(strstr(cap.buf, "$hpcperfstats 1.2.3\n") != NULL);
   assert(strstr(cap.buf, "$hostname node1\n") != NULL);
   assert(strstr(cap.buf, "$uname Linux aarch64 6.1.0 #1\n") != NULL);
@@ -41,8 +40,7 @@ static void test_emit_property_banner(void)
 
   cap.len = 0;
   cap.buf[0] = '\0';
-  stats_format_emit_property_banner(NULL, &cap, '$', "x", "y", "z", "L", "m", "r",
-                                    "v", 0ULL);
+  stats_format_emit_property_banner(NULL, &cap, '$', "x", "y", "z", "L", "m", "r", "v", 0ULL);
   assert(cap.len == 0);
 }
 

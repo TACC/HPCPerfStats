@@ -9,18 +9,14 @@ typedef int (*gpa_init_fn_t)(void);
 
 static int try_gpa_initialize(void)
 {
-  static const char *libs[] = {
-    "libGPUPerfAPICounters.so",
-    "libGPUPerfAPI.so",
-    NULL
-  };
+  static const char *libs[] = {"libGPUPerfAPICounters.so", "libGPUPerfAPI.so", NULL};
   int i;
 
   for (i = 0; libs[i] != NULL; i++) {
     void *h = dlopen(libs[i], RTLD_LAZY | RTLD_LOCAL);
 
     if (h != NULL) {
-      gpa_init_fn_t init_fn = (gpa_init_fn_t) dlsym(h, "GpaInitialize");
+      gpa_init_fn_t init_fn = (gpa_init_fn_t)dlsym(h, "GpaInitialize");
 
       if (init_fn != NULL) {
         int rc = init_fn();
@@ -84,9 +80,9 @@ static void amd_gpu_collect(struct stats_type *type)
 }
 
 struct stats_type amd_gpu_stats_type = {
-  .st_collect = &amd_gpu_collect,
+    .st_collect = &amd_gpu_collect,
 #define X SCHEMA_DEF
-  .st_schema_def = JOIN(KEYS),
+    .st_schema_def = JOIN(KEYS),
 #undef X
-  .st_name = "amd_gpu",
+    .st_name = "amd_gpu",
 };

@@ -8,25 +8,25 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define DCGM_GPU_DYN_SYM_LIST \
-  X(dcgmInit) \
-  X(dcgmShutdown) \
-  X(dcgmStartEmbedded) \
-  X(dcgmStartEmbedded_v2) \
-  X(dcgmStopEmbedded) \
-  X(dcgmConnect_v2) \
-  X(dcgmDisconnect) \
-  X(dcgmGetAllDevices) \
-  X(dcgmGetAllSupportedDevices) \
-  X(dcgmGetEntityGroupEntities) \
-  X(dcgmGroupCreate) \
-  X(dcgmGroupDestroy) \
-  X(dcgmGroupAddDevice) \
-  X(dcgmFieldGroupCreate) \
-  X(dcgmFieldGroupDestroy) \
-  X(dcgmWatchFields) \
-  X(dcgmUpdateAllFields) \
-  X(dcgmGetLatestValues) \
+#define DCGM_GPU_DYN_SYM_LIST                                                                      \
+  X(dcgmInit)                                                                                      \
+  X(dcgmShutdown)                                                                                  \
+  X(dcgmStartEmbedded)                                                                             \
+  X(dcgmStartEmbedded_v2)                                                                          \
+  X(dcgmStopEmbedded)                                                                              \
+  X(dcgmConnect_v2)                                                                                \
+  X(dcgmDisconnect)                                                                                \
+  X(dcgmGetAllDevices)                                                                             \
+  X(dcgmGetAllSupportedDevices)                                                                    \
+  X(dcgmGetEntityGroupEntities)                                                                    \
+  X(dcgmGroupCreate)                                                                               \
+  X(dcgmGroupDestroy)                                                                              \
+  X(dcgmGroupAddDevice)                                                                            \
+  X(dcgmFieldGroupCreate)                                                                          \
+  X(dcgmFieldGroupDestroy)                                                                         \
+  X(dcgmWatchFields)                                                                               \
+  X(dcgmUpdateAllFields)                                                                           \
+  X(dcgmGetLatestValues)                                                                           \
   X(errorString)
 
 #define X(name) static __typeof__(name) *p_##name;
@@ -88,8 +88,8 @@ static int dcgm_gpu_dyn_bind_symbols(void)
 {
   void *lib = g_dcgm_handle;
 
-#define X(name) \
-  if (dcgm_gpu_dyn_resolve_one(lib, #name, (void **) &p_##name) < 0) \
+#define X(name)                                                                                    \
+  if (dcgm_gpu_dyn_resolve_one(lib, #name, (void **)&p_##name) < 0)                                \
     return -1;
   DCGM_GPU_DYN_SYM_LIST
 #undef X
@@ -110,12 +110,7 @@ void dcgm_gpu_dyn_test_set_hooks(const struct dcgm_gpu_dyn_test_hooks *hooks)
 
 int dcgm_gpu_dyn_load(void)
 {
-  static const char *default_libs[] = {
-    "libdcgm.so.4",
-    "libdcgm.so.3",
-    "libdcgm.so",
-    NULL
-  };
+  static const char *default_libs[] = {"libdcgm.so.4", "libdcgm.so.3", "libdcgm.so", NULL};
   const char *override;
   size_t i;
 
@@ -166,9 +161,9 @@ void dcgm_gpu_dyn_unload(void)
 #undef X
 }
 
-#define DCGM_GPU_DYN_CALL(name, ...) \
-  (g_test_hooks_active && g_test_hooks != NULL && g_test_hooks->name != NULL \
-       ? g_test_hooks->name(__VA_ARGS__) \
+#define DCGM_GPU_DYN_CALL(name, ...)                                                               \
+  (g_test_hooks_active && g_test_hooks != NULL && g_test_hooks->name != NULL                       \
+       ? g_test_hooks->name(__VA_ARGS__)                                                           \
        : (p_##name != NULL ? p_##name(__VA_ARGS__) : DCGM_ST_UNINITIALIZED))
 
 dcgmReturn_t dcgm_gpu_dyn_dcgmInit(void)

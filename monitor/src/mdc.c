@@ -16,8 +16,8 @@
 #define MDC_DIR_PATH "/proc/fs/lustre/mdc"
 
 static const char *const mdc_stats_names[] = {
-  "md_stats",
-  "stats",
+    "md_stats",
+    "stats",
 };
 
 /* Map modern/legacy opcode names onto existing lustre_mdc KEYS. */
@@ -39,22 +39,16 @@ static const char *mdc_map_key(const char *key)
     return "mds_getattr_lock";
   if (strcmp(key, "fsync") == 0)
     return "mds_sync";
-  if (strcmp(key, "ldlm_cancel") == 0
-      || strcmp(key, "mds_close") == 0
-      || strcmp(key, "mds_getattr") == 0
-      || strcmp(key, "mds_getattr_lock") == 0
-      || strcmp(key, "mds_getxattr") == 0
-      || strcmp(key, "mds_readpage") == 0
-      || strcmp(key, "mds_statfs") == 0
-      || strcmp(key, "mds_sync") == 0
-      || strcmp(key, "reqs") == 0
-      || strcmp(key, "wait") == 0)
+  if (strcmp(key, "ldlm_cancel") == 0 || strcmp(key, "mds_close") == 0 ||
+      strcmp(key, "mds_getattr") == 0 || strcmp(key, "mds_getattr_lock") == 0 ||
+      strcmp(key, "mds_getxattr") == 0 || strcmp(key, "mds_readpage") == 0 ||
+      strcmp(key, "mds_statfs") == 0 || strcmp(key, "mds_sync") == 0 || strcmp(key, "reqs") == 0 ||
+      strcmp(key, "wait") == 0)
     return key;
   return NULL;
 }
 
-static void mdc_apply_stats_line(struct stats *stats, const char *key,
-                                 const char *rest)
+static void mdc_apply_stats_line(struct stats *stats, const char *key, const char *rest)
 {
   unsigned long long count = 0;
   unsigned long long sum = 0;
@@ -93,8 +87,8 @@ static void mdc_collect_fs(struct stats *stats, const char *d_name)
     return;
 
   if (lustre_fopen_obd_named(MDC_DIR_PATH, d_name, mdc_stats_names,
-                             sizeof(mdc_stats_names) / sizeof(mdc_stats_names[0]),
-                             &path, &file) < 0)
+                             sizeof(mdc_stats_names) / sizeof(mdc_stats_names[0]), &path,
+                             &file) < 0)
     return;
 
   setvbuf(file, file_buf, _IOFBF, sizeof(file_buf));
@@ -114,11 +108,11 @@ static void mdc_collect_fs(struct stats *stats, const char *d_name)
 
 static void mdc_each(const char *base, const char *name, void *ctx)
 {
-  struct stats_type *type = (struct stats_type *) ctx;
+  struct stats_type *type = (struct stats_type *)ctx;
   const char *mnt;
   struct stats *stats;
 
-  (void) base;
+  (void)base;
   if (type == NULL || name == NULL)
     return;
 
@@ -143,9 +137,9 @@ static void mdc_collect(struct stats_type *type)
 }
 
 struct stats_type mdc_stats_type = {
-  .st_name = "lustre_mdc",
-  .st_collect = &mdc_collect,
+    .st_name = "lustre_mdc",
+    .st_collect = &mdc_collect,
 #define X SCHEMA_DEF
-  .st_schema_def = JOIN(KEYS),
+    .st_schema_def = JOIN(KEYS),
 #undef X
 };

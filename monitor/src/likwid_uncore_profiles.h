@@ -11,13 +11,10 @@ typedef enum {
   LIKWID_UNCORE_PROFILE_COUNT
 } likwid_uncore_profile_t;
 
-int likwid_uncore_profile_matches_processor(likwid_uncore_profile_t profile,
-                                            processor_t p);
+int likwid_uncore_profile_matches_processor(likwid_uncore_profile_t profile, processor_t p);
 const char *likwid_uncore_profile_eventset(likwid_uncore_profile_t profile);
-int likwid_uncore_profile_map_counter(likwid_uncore_profile_t profile,
-                                      const char *counter_name,
-                                      char *dev_out, size_t dev_len,
-                                      const char **key_out);
+int likwid_uncore_profile_map_counter(likwid_uncore_profile_t profile, const char *counter_name,
+                                      char *dev_out, size_t dev_len, const char **key_out);
 
 typedef enum {
   LIKWID_SPR_IMC_EVT_DDR_HBM = 0,
@@ -26,8 +23,7 @@ typedef enum {
 } likwid_spr_imc_eventset_t;
 
 const char *likwid_spr_imc_eventset_string(likwid_spr_imc_eventset_t variant);
-int likwid_spr_imc_eventset_try_order(int has_ddr, int has_hbm,
-                                      likwid_spr_imc_eventset_t *out,
+int likwid_spr_imc_eventset_try_order(int has_ddr, int has_hbm, likwid_spr_imc_eventset_t *out,
                                       int out_cap);
 
 #endif

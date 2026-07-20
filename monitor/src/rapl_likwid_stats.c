@@ -8,9 +8,8 @@
 #include "trace.h"
 #include <stdlib.h>
 
-void rapl_likwid_intel_collect_pkg(struct stats_type *type,
-           const char *pkg_key, int cpu_lineno,
-           unsigned pkg_id)
+void rapl_likwid_intel_collect_pkg(struct stats_type *type, const char *pkg_key, int cpu_lineno,
+                                   unsigned pkg_id)
 {
   struct stats *stats = NULL;
   unsigned long long pkg_mj = 0;
@@ -28,11 +27,9 @@ void rapl_likwid_intel_collect_pkg(struct stats_type *type,
   if (stats == NULL)
     return;
 
-  if (likwid_rapl_collect_socket_mj(cpu_lineno, pkg_id, &pkg_mj, &core_mj,
-           &dram_mj, &has_pkg, &has_core,
-           &has_dram, &pp1_mj, &has_pp1) < 0) {
-    TRACE("unable to collect LIKWID RAPL energy for pkg %u (cpu %d)\n",
-          pkg_id, cpu_lineno);
+  if (likwid_rapl_collect_socket_mj(cpu_lineno, pkg_id, &pkg_mj, &core_mj, &dram_mj, &has_pkg,
+                                    &has_core, &has_dram, &pp1_mj, &has_pp1) < 0) {
+    TRACE("unable to collect LIKWID RAPL energy for pkg %u (cpu %d)\n", pkg_id, cpu_lineno);
     return;
   }
 
@@ -46,11 +43,8 @@ void rapl_likwid_intel_collect_pkg(struct stats_type *type,
     stats_set(stats, "dram_energy", dram_mj);
 }
 
-void rapl_likwid_amd_collect_socket_cpu(struct stats_type *type,
-          const char *socket_key,
-          int cpu_lineno,
-          unsigned socket_id,
-          int topology_core_id)
+void rapl_likwid_amd_collect_socket_cpu(struct stats_type *type, const char *socket_key,
+                                        int cpu_lineno, unsigned socket_id, int topology_core_id)
 {
   struct stats *stats = NULL;
   unsigned long long pkg_mj = 0;
@@ -64,12 +58,9 @@ void rapl_likwid_amd_collect_socket_cpu(struct stats_type *type,
   if (stats == NULL)
     return;
 
-  if (likwid_rapl_collect_socket_mj(cpu_lineno, socket_id, &pkg_mj,
-           &core_mj, &dram_mj, &has_pkg,
-           &has_core, &has_dram, NULL,
-           NULL) < 0) {
-    TRACE("unable to collect LIKWID RAPL energy for socket %s (cpu %d)\n",
-          socket_key, cpu_lineno);
+  if (likwid_rapl_collect_socket_mj(cpu_lineno, socket_id, &pkg_mj, &core_mj, &dram_mj, &has_pkg,
+                                    &has_core, &has_dram, NULL, NULL) < 0) {
+    TRACE("unable to collect LIKWID RAPL energy for socket %s (cpu %d)\n", socket_key, cpu_lineno);
     return;
   }
 

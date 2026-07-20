@@ -9,8 +9,8 @@
 
 static int cmp_int(const void *a, const void *b)
 {
-  int x = *(const int *) a;
-  int y = *(const int *) b;
+  int x = *(const int *)a;
+  int y = *(const int *)b;
 
   if (x < y)
     return -1;
@@ -57,12 +57,28 @@ static void test_scale_util_if_fraction(void)
 static void test_sample_from_jiffy_diff(void)
 {
   struct dcgm_cpu_jifs prev = {
-    .u = 10, .nice = 0, .sys = 10, .idle = 80, .iow = 0,
-    .irq = 0, .sft = 0, .stl = 0, .gu = 0, .gn = 0,
+      .u = 10,
+      .nice = 0,
+      .sys = 10,
+      .idle = 80,
+      .iow = 0,
+      .irq = 0,
+      .sft = 0,
+      .stl = 0,
+      .gu = 0,
+      .gn = 0,
   };
   struct dcgm_cpu_jifs cur = {
-    .u = 12, .nice = 0, .sys = 12, .idle = 80, .iow = 0,
-    .irq = 0, .sft = 0, .stl = 0, .gu = 0, .gn = 0,
+      .u = 12,
+      .nice = 0,
+      .sys = 12,
+      .idle = 80,
+      .iow = 0,
+      .irq = 0,
+      .sft = 0,
+      .stl = 0,
+      .gu = 0,
+      .gn = 0,
   };
   struct dcgm_cpu_sample s;
 
@@ -88,9 +104,9 @@ static void test_sample_from_jiffy_diff(void)
 
 static void test_count_unique_sorted_ints(void)
 {
-  int a[] = { 0, 0, 1, 1 };
-  int b[] = { 7 };
-  int c[] = { 3, 3, 3 };
+  int a[] = {0, 0, 1, 1};
+  int b[] = {7};
+  int c[] = {3, 3, 3};
 
   assert(dcgm_count_unique_sorted_ints(NULL, 4) == 0);
   assert(dcgm_count_unique_sorted_ints(a, 0) == 0);

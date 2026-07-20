@@ -10,8 +10,8 @@
 #include <stdint.h>
 #include <unistd.h>
 
-int amd64_pmu_msr_program_selects(char *cpu, uint64_t ctl0_msr,
-          const uint64_t *events, int n_events)
+int amd64_pmu_msr_program_selects(char *cpu, uint64_t ctl0_msr, const uint64_t *events,
+                                  int n_events)
 {
   int rc = -1;
   int msr_fd = -1;
@@ -22,11 +22,9 @@ int amd64_pmu_msr_program_selects(char *cpu, uint64_t ctl0_msr,
     goto out;
 
   for (i = 0; i < n_events; i++) {
-    unsigned int addr =
-        (unsigned int)(ctl0_msr + (uint64_t)i * 2u);
+    unsigned int addr = (unsigned int)(ctl0_msr + (uint64_t)i * 2u);
 
-    TRACE("MSR %08X, event %016llX\n", addr,
-          (unsigned long long)events[i]);
+    TRACE("MSR %08X, event %016llX\n", addr, (unsigned long long)events[i]);
     if (msr_write_u64(msr_fd, addr, events[i]) < 0) {
       ERROR("cannot write event %016llX to MSR %08X for cpu `%s': %m\n",
             (unsigned long long)events[i], addr, cpu);
@@ -42,9 +40,7 @@ out:
   return rc;
 }
 
-int amd64_pmu_core_program_counters_with_hwcr(char *cpu,
-                const uint64_t *events,
-                int n_events)
+int amd64_pmu_core_program_counters_with_hwcr(char *cpu, const uint64_t *events, int n_events)
 {
   int rc = -1;
   int msr_fd = -1;
@@ -56,11 +52,9 @@ int amd64_pmu_core_program_counters_with_hwcr(char *cpu,
     goto out;
 
   for (i = 0; i < n_events; i++) {
-    unsigned int addr =
-        (unsigned int)((uint64_t)MSR_PERF_CTL0 + (uint64_t)i * 2u);
+    unsigned int addr = (unsigned int)((uint64_t)MSR_PERF_CTL0 + (uint64_t)i * 2u);
 
-    TRACE("MSR %08X, event %016llX\n", addr,
-          (unsigned long long)events[i]);
+    TRACE("MSR %08X, event %016llX\n", addr, (unsigned long long)events[i]);
     if (msr_write_u64(msr_fd, addr, events[i]) < 0) {
       ERROR("cannot write event %016llX to MSR %08X for cpu `%s': %m\n",
             (unsigned long long)events[i], addr, cpu);
@@ -75,8 +69,8 @@ int amd64_pmu_core_program_counters_with_hwcr(char *cpu,
   }
   hwcr |= (1ULL << 30);
   if (msr_write_u64(msr_fd, MSR_HW_CONFIG, hwcr) < 0) {
-    ERROR("cannot enable instr retired ctr at MSR %08X for cpu `%s': %m\n",
-          (unsigned)MSR_HW_CONFIG, cpu);
+    ERROR("cannot enable instr retired ctr at MSR %08X for cpu `%s': %m\n", (unsigned)MSR_HW_CONFIG,
+          cpu);
     goto out;
   }
 

@@ -63,7 +63,7 @@ static void test_schema_payload_written(void)
   {
     FILE *f = fopen(schema_path, "r");
     assert(f != NULL);
-    assert(fgets(buf, (int) sizeof(buf), f) != NULL);
+    assert(fgets(buf, (int)sizeof(buf), f) != NULL);
     fclose(f);
   }
   assert(strncmp(buf, "$hpcperfstats", 13) == 0);

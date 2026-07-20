@@ -6,12 +6,11 @@
 #include "schema.h"
 #include "stats_file_format.h"
 
-static struct schema_entry *make_entry(const char *key, unsigned int se_type,
-				       const char *unit, unsigned int width)
+static struct schema_entry *make_entry(const char *key, unsigned int se_type, const char *unit,
+                                       unsigned int width)
 {
   size_t klen = strlen(key);
-  struct schema_entry *se =
-      (struct schema_entry *)malloc(sizeof(*se) + klen + 1);
+  struct schema_entry *se = (struct schema_entry *)malloc(sizeof(*se) + klen + 1);
   assert(se != NULL);
   memset(se, 0, sizeof(*se));
   strcpy(se->se_key, key);
@@ -96,8 +95,7 @@ static void test_mark_null_file_is_noop(void)
 
 static void test_suffix_control_event_unit_width(void)
 {
-  struct schema_entry *se =
-      make_entry("k", SE_EVENT, "ms", 4);
+  struct schema_entry *se = make_entry("k", SE_EVENT, "ms", 4);
   char *out = NULL;
   size_t n = 0;
   FILE *f = open_memstream(&out, &n);

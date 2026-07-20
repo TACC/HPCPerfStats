@@ -5,7 +5,7 @@
  *  (e.g. assemble payload into a stats_buffer).
  */
 struct stats_sink_ops {
-	int (*finalize)(void *opaque);
+  int (*finalize)(void *opaque);
 };
 
 #endif

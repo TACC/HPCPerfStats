@@ -35,8 +35,7 @@ static unsigned long long dcgm_jifs_nid(const struct dcgm_cpu_jifs *j)
   return j->u + j->nice + j->sys + j->irq + j->sft + j->stl + j->gu + j->gn;
 }
 
-void dcgm_cpu_sample_from_jiffy_diff(struct dcgm_cpu_sample *s,
-                                     const struct dcgm_cpu_jifs *cur,
+void dcgm_cpu_sample_from_jiffy_diff(struct dcgm_cpu_sample *s, const struct dcgm_cpu_jifs *cur,
                                      const struct dcgm_cpu_jifs *prev)
 {
   unsigned long long pt, ct, pn, cn;
@@ -55,15 +54,15 @@ void dcgm_cpu_sample_from_jiffy_diff(struct dcgm_cpu_sample *s,
   d_nid = cn - pn;
   if (d_tot == 0)
     return;
-  s->util_total = dcgm_clamp_percent(100.0 * (double) d_nid / (double) d_tot);
+  s->util_total = dcgm_clamp_percent(100.0 * (double)d_nid / (double)d_tot);
   d_u = (cur->u >= prev->u) ? (cur->u - prev->u) : 0;
   d_ni = (cur->nice >= prev->nice) ? (cur->nice - prev->nice) : 0;
   d_sy = (cur->sys >= prev->sys) ? (cur->sys - prev->sys) : 0;
   d_iq = (cur->irq >= prev->irq) ? (cur->irq - prev->irq) : 0;
   d_sft = (cur->sft >= prev->sft) ? (cur->sft - prev->sft) : 0;
-  s->util_user = dcgm_clamp_percent(100.0 * (double) (d_u + d_ni) / (double) d_tot);
-  s->util_sys = dcgm_clamp_percent(100.0 * (double) d_sy / (double) d_tot);
-  s->util_irq = dcgm_clamp_percent(100.0 * (double) (d_iq + d_sft) / (double) d_tot);
+  s->util_user = dcgm_clamp_percent(100.0 * (double)(d_u + d_ni) / (double)d_tot);
+  s->util_sys = dcgm_clamp_percent(100.0 * (double)d_sy / (double)d_tot);
+  s->util_irq = dcgm_clamp_percent(100.0 * (double)(d_iq + d_sft) / (double)d_tot);
   s->util_nice = 0.0;
 }
 
@@ -93,9 +92,9 @@ unsigned long long dcgm_watts_dbl_to_ull(double v)
 {
   if (dcgm_fp64_value_is_blank(v) || v <= 0.0)
     return 0ULL;
-  if (v >= (double) ULLONG_MAX)
+  if (v >= (double)ULLONG_MAX)
     return ULLONG_MAX;
-  return (unsigned long long) (v + 0.5);
+  return (unsigned long long)(v + 0.5);
 }
 
 int dcgm_host_cpu_hw_collect_active(int dcgm_ready, int papi_ready, int util_bufs_ok)

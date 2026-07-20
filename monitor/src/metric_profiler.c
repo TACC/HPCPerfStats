@@ -69,13 +69,13 @@ static unsigned long long clamp_wait(unsigned long long wall_ns, unsigned long l
   return wall_ns - cpu_ns;
 }
 
-static struct metric_entry *find_or_add_metric(const char *type_name, const char *dev, const char *key)
+static struct metric_entry *find_or_add_metric(const char *type_name, const char *dev,
+                                               const char *key)
 {
   size_t i;
   for (i = 0; i < g_metrics_len; i++) {
-    if (strcmp(g_metrics[i].type_name, type_name) == 0
-        && strcmp(g_metrics[i].dev, dev) == 0
-        && strcmp(g_metrics[i].key, key) == 0)
+    if (strcmp(g_metrics[i].type_name, type_name) == 0 && strcmp(g_metrics[i].dev, dev) == 0 &&
+        strcmp(g_metrics[i].key, key) == 0)
       return &g_metrics[i];
   }
   if (g_metrics_len >= PROF_MAX_METRICS) {
@@ -83,7 +83,8 @@ static struct metric_entry *find_or_add_metric(const char *type_name, const char
     return NULL;
   }
   memset(&g_metrics[g_metrics_len], 0, sizeof(g_metrics[g_metrics_len]));
-  snprintf(g_metrics[g_metrics_len].type_name, sizeof(g_metrics[g_metrics_len].type_name), "%s", type_name);
+  snprintf(g_metrics[g_metrics_len].type_name, sizeof(g_metrics[g_metrics_len].type_name), "%s",
+           type_name);
   snprintf(g_metrics[g_metrics_len].dev, sizeof(g_metrics[g_metrics_len].dev), "%s", dev);
   snprintf(g_metrics[g_metrics_len].key, sizeof(g_metrics[g_metrics_len].key), "%s", key);
   g_metrics[g_metrics_len].wall_ns_min = ~0ULL;
@@ -134,7 +135,8 @@ static void emit_report(FILE *out)
   for (i = 0; i < g_types_len; i++) {
     const struct type_entry *t = &g_types[i];
     fprintf(out,
-            "metric-profiler:type=%s calls=%llu wall_ns=%llu cpu_ns=%llu wait_ns=%llu avg_wall_ns=%llu\n",
+            "metric-profiler:type=%s calls=%llu wall_ns=%llu cpu_ns=%llu wait_ns=%llu "
+            "avg_wall_ns=%llu\n",
             t->type_name, t->calls, t->wall_ns_total, t->cpu_ns_total, t->wait_ns_total,
             t->calls ? t->wall_ns_total / t->calls : 0ULL);
   }

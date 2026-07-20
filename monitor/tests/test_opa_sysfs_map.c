@@ -22,7 +22,7 @@ static int g_nrec;
 
 void stats_set(struct stats *stats, const char *key, unsigned long long val)
 {
-  (void) stats;
+  (void)stats;
   if (key == NULL || g_nrec >= MAX_REC)
     return;
   snprintf(g_recs[g_nrec].key, sizeof(g_recs[g_nrec].key), "%s", key);
@@ -44,7 +44,7 @@ static unsigned long long find_rec(const char *key)
     if (strcmp(g_recs[i].key, key) == 0)
       return g_recs[i].val;
   }
-  return (unsigned long long) -1;
+  return (unsigned long long)-1;
 }
 
 static int has_rec(const char *key)
@@ -60,20 +60,15 @@ static int has_rec(const char *key)
 
 static void test_classic_mapped_keys(void)
 {
-  assert(strcmp(opa_sysfs_schema_key_for_file("port_xmit_data"),
-                "port_xmit_data") == 0);
-  assert(strcmp(opa_sysfs_schema_key_for_file("port_rcv_data"),
-                "port_rcv_data") == 0);
-  assert(strcmp(opa_sysfs_schema_key_for_file("port_xmit_packets"),
-                "port_xmit_pkts") == 0);
-  assert(strcmp(opa_sysfs_schema_key_for_file("port_rcv_packets"),
-                "port_rcv_pkts") == 0);
+  assert(strcmp(opa_sysfs_schema_key_for_file("port_xmit_data"), "port_xmit_data") == 0);
+  assert(strcmp(opa_sysfs_schema_key_for_file("port_rcv_data"), "port_rcv_data") == 0);
+  assert(strcmp(opa_sysfs_schema_key_for_file("port_xmit_packets"), "port_xmit_pkts") == 0);
+  assert(strcmp(opa_sysfs_schema_key_for_file("port_rcv_packets"), "port_rcv_pkts") == 0);
   assert(strcmp(opa_sysfs_schema_key_for_file("multicast_xmit_packets"),
-                 "port_multicast_xmit_pkts") == 0);
+                "port_multicast_xmit_pkts") == 0);
   assert(strcmp(opa_sysfs_schema_key_for_file("multicast_rcv_packets"),
-                 "port_multicast_rcv_pkts") == 0);
-  assert(strcmp(opa_sysfs_schema_key_for_file("port_xmit_wait"),
-                "port_xmit_wait") == 0);
+                "port_multicast_rcv_pkts") == 0);
+  assert(strcmp(opa_sysfs_schema_key_for_file("port_xmit_wait"), "port_xmit_wait") == 0);
 }
 
 static void test_classic_unmapped_and_null(void)
@@ -87,16 +82,11 @@ static void test_classic_unmapped_and_null(void)
 
 static void test_hw_mapped_keys(void)
 {
-  assert(strcmp(opa_sysfs_hw_schema_key_for_file("TxWords"),
-                "port_xmit_data") == 0);
-  assert(strcmp(opa_sysfs_hw_schema_key_for_file("RxWords"),
-                "port_rcv_data") == 0);
-  assert(strcmp(opa_sysfs_hw_schema_key_for_file("TxPkt"),
-                "port_xmit_pkts") == 0);
-  assert(strcmp(opa_sysfs_hw_schema_key_for_file("RxPkt"),
-                "port_rcv_pkts") == 0);
-  assert(strcmp(opa_sysfs_hw_schema_key_for_file("TxWait"),
-                "port_xmit_wait") == 0);
+  assert(strcmp(opa_sysfs_hw_schema_key_for_file("TxWords"), "port_xmit_data") == 0);
+  assert(strcmp(opa_sysfs_hw_schema_key_for_file("RxWords"), "port_rcv_data") == 0);
+  assert(strcmp(opa_sysfs_hw_schema_key_for_file("TxPkt"), "port_xmit_pkts") == 0);
+  assert(strcmp(opa_sysfs_hw_schema_key_for_file("RxPkt"), "port_rcv_pkts") == 0);
+  assert(strcmp(opa_sysfs_hw_schema_key_for_file("TxWait"), "port_xmit_wait") == 0);
 }
 
 static void test_hw_unmapped_and_null(void)
@@ -143,7 +133,7 @@ static void rm_tree(const char *root)
   if (root == NULL)
     return;
   snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
-  (void) system(cmd);
+  (void)system(cmd);
 }
 
 static void test_collect_classic_success_skips_hw(void)
@@ -151,7 +141,7 @@ static void test_collect_classic_success_skips_hw(void)
   char *root = make_fixture_root();
   char path[512];
   char buf[sizeof(struct stats) + 64];
-  struct stats *stats = (struct stats *) buf;
+  struct stats *stats = (struct stats *)buf;
 
   snprintf(path, sizeof(path), "%s/class", root);
   mkdir_p(path);
@@ -163,21 +153,16 @@ static void test_collect_classic_success_skips_hw(void)
   mkdir_p(path);
   snprintf(path, sizeof(path), "%s/class/infiniband/hfi1_0/ports/2", root);
   mkdir_p(path);
-  snprintf(path, sizeof(path), "%s/class/infiniband/hfi1_0/ports/2/counters",
-           root);
+  snprintf(path, sizeof(path), "%s/class/infiniband/hfi1_0/ports/2/counters", root);
   mkdir_p(path);
-  snprintf(path, sizeof(path), "%s/class/infiniband/hfi1_0/ports/2/hw_counters",
-           root);
+  snprintf(path, sizeof(path), "%s/class/infiniband/hfi1_0/ports/2/hw_counters", root);
   mkdir_p(path);
 
-  snprintf(path, sizeof(path),
-           "%s/class/infiniband/hfi1_0/ports/2/counters/port_xmit_data", root);
+  snprintf(path, sizeof(path), "%s/class/infiniband/hfi1_0/ports/2/counters/port_xmit_data", root);
   write_ull(path, 111ULL);
-  snprintf(path, sizeof(path),
-           "%s/class/infiniband/hfi1_0/ports/2/counters/port_rcv_data", root);
+  snprintf(path, sizeof(path), "%s/class/infiniband/hfi1_0/ports/2/counters/port_rcv_data", root);
   write_ull(path, 222ULL);
-  snprintf(path, sizeof(path),
-           "%s/class/infiniband/hfi1_0/ports/2/hw_counters/TxWords", root);
+  snprintf(path, sizeof(path), "%s/class/infiniband/hfi1_0/ports/2/hw_counters/TxWords", root);
   write_ull(path, 999999ULL);
 
   reset_recs();
@@ -200,7 +185,7 @@ static void test_collect_classic_miss_uses_hw(void)
   char *root = make_fixture_root();
   char path[512];
   char buf[sizeof(struct stats) + 64];
-  struct stats *stats = (struct stats *) buf;
+  struct stats *stats = (struct stats *)buf;
 
   snprintf(path, sizeof(path), "%s/class", root);
   mkdir_p(path);
@@ -213,30 +198,22 @@ static void test_collect_classic_miss_uses_hw(void)
   snprintf(path, sizeof(path), "%s/class/infiniband/hfi1_0/ports/2", root);
   mkdir_p(path);
   /* Classic counters dir empty / missing files → n_ok==0 (CN5000 EINVAL case). */
-  snprintf(path, sizeof(path), "%s/class/infiniband/hfi1_0/ports/2/counters",
-           root);
+  snprintf(path, sizeof(path), "%s/class/infiniband/hfi1_0/ports/2/counters", root);
   mkdir_p(path);
-  snprintf(path, sizeof(path), "%s/class/infiniband/hfi1_0/ports/2/hw_counters",
-           root);
+  snprintf(path, sizeof(path), "%s/class/infiniband/hfi1_0/ports/2/hw_counters", root);
   mkdir_p(path);
 
-  snprintf(path, sizeof(path),
-           "%s/class/infiniband/hfi1_0/ports/2/hw_counters/TxWords", root);
+  snprintf(path, sizeof(path), "%s/class/infiniband/hfi1_0/ports/2/hw_counters/TxWords", root);
   write_ull(path, 1001ULL);
-  snprintf(path, sizeof(path),
-           "%s/class/infiniband/hfi1_0/ports/2/hw_counters/RxWords", root);
+  snprintf(path, sizeof(path), "%s/class/infiniband/hfi1_0/ports/2/hw_counters/RxWords", root);
   write_ull(path, 1002ULL);
-  snprintf(path, sizeof(path),
-           "%s/class/infiniband/hfi1_0/ports/2/hw_counters/TxPkt", root);
+  snprintf(path, sizeof(path), "%s/class/infiniband/hfi1_0/ports/2/hw_counters/TxPkt", root);
   write_ull(path, 1003ULL);
-  snprintf(path, sizeof(path),
-           "%s/class/infiniband/hfi1_0/ports/2/hw_counters/RxPkt", root);
+  snprintf(path, sizeof(path), "%s/class/infiniband/hfi1_0/ports/2/hw_counters/RxPkt", root);
   write_ull(path, 1004ULL);
-  snprintf(path, sizeof(path),
-           "%s/class/infiniband/hfi1_0/ports/2/hw_counters/TxWait", root);
+  snprintf(path, sizeof(path), "%s/class/infiniband/hfi1_0/ports/2/hw_counters/TxWait", root);
   write_ull(path, 1005ULL);
-  snprintf(path, sizeof(path),
-           "%s/class/infiniband/hfi1_0/ports/2/hw_counters/DmaWait", root);
+  snprintf(path, sizeof(path), "%s/class/infiniband/hfi1_0/ports/2/hw_counters/DmaWait", root);
   write_ull(path, 777ULL);
 
   reset_recs();
@@ -258,7 +235,7 @@ static void test_collect_classic_miss_uses_hw(void)
 static void test_collect_null_and_bad_port(void)
 {
   char buf[sizeof(struct stats) + 64];
-  struct stats *stats = (struct stats *) buf;
+  struct stats *stats = (struct stats *)buf;
 
   assert(opa_sysfs_collect_port(NULL, "hfi1_0", 2) == -1);
   assert(opa_sysfs_collect_port(stats, NULL, 2) == -1);

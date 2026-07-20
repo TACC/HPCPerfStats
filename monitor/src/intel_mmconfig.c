@@ -44,9 +44,7 @@ int intel_mmconfig_open(struct intel_mmconfig *out, uint64_t base, uint64_t size
     return -1;
   }
 
-  map = (uint32_t *)mmap(NULL, (size_t)size,
-                         PROT_READ | PROT_WRITE, MAP_SHARED,
-                         fd, (off_t)base);
+  map = (uint32_t *)mmap(NULL, (size_t)size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, (off_t)base);
   if (map == MAP_FAILED) {
     saved = errno;
     ERROR("cannot mmap `%s': %m\n", intel_mmconfig_path);

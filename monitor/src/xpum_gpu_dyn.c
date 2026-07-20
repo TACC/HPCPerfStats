@@ -6,13 +6,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define XPUM_GPU_DYN_SYM_LIST \
-  X(xpumInit) \
-  X(xpumShutdown) \
-  X(xpumGetDeviceList) \
-  X(xpumGetDeviceProperties) \
-  X(xpumGetRealtimeMetrics) \
-  X(xpumGetStats) \
+#define XPUM_GPU_DYN_SYM_LIST                                                                      \
+  X(xpumInit)                                                                                      \
+  X(xpumShutdown)                                                                                  \
+  X(xpumGetDeviceList)                                                                             \
+  X(xpumGetDeviceProperties)                                                                       \
+  X(xpumGetRealtimeMetrics)                                                                        \
+  X(xpumGetStats)                                                                                  \
   X(xpumGetFabricThroughputStats)
 
 #define X(name) static __typeof__(name) *p_##name;
@@ -74,8 +74,8 @@ static int xpum_gpu_dyn_bind_symbols(void)
 {
   void *lib = g_xpum_handle;
 
-#define X(name) \
-  if (xpum_gpu_dyn_resolve_one(lib, #name, (void **) &p_##name) < 0) \
+#define X(name)                                                                                    \
+  if (xpum_gpu_dyn_resolve_one(lib, #name, (void **)&p_##name) < 0)                                \
     return -1;
   XPUM_GPU_DYN_SYM_LIST
 #undef X
@@ -96,12 +96,7 @@ void xpum_gpu_dyn_test_set_hooks(const struct xpum_gpu_dyn_test_hooks *hooks)
 
 int xpum_gpu_dyn_load(void)
 {
-  static const char *default_libs[] = {
-    "/usr/lib64/libxpum.so",
-    "libxpum.so.1",
-    "libxpum.so",
-    NULL
-  };
+  static const char *default_libs[] = {"/usr/lib64/libxpum.so", "libxpum.so.1", "libxpum.so", NULL};
   const char *override;
   size_t i;
 
@@ -152,9 +147,9 @@ void xpum_gpu_dyn_unload(void)
 #undef X
 }
 
-#define XPUM_GPU_DYN_CALL(name, ...) \
-  (g_xpum_test_hooks_active && g_xpum_test_hooks != NULL && g_xpum_test_hooks->name != NULL \
-       ? g_xpum_test_hooks->name(__VA_ARGS__) \
+#define XPUM_GPU_DYN_CALL(name, ...)                                                               \
+  (g_xpum_test_hooks_active && g_xpum_test_hooks != NULL && g_xpum_test_hooks->name != NULL        \
+       ? g_xpum_test_hooks->name(__VA_ARGS__)                                                      \
        : (p_##name != NULL ? p_##name(__VA_ARGS__) : XPUM_GENERIC_ERROR))
 
 xpum_result_t xpum_gpu_dyn_xpumInit(void)
