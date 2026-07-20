@@ -308,8 +308,8 @@ describe("JobDetail", () => {
     expect(container.querySelectorAll(".job-detail-metrics-table")).toHaveLength(1);
   });
 
-  it("splits job-level metrics into two tables for wide layout when more than one metric", async () => {
-    const twoMetrics = {
+  it("splits job-level metrics row-major into two tables for wide layout when more than one metric", async () => {
+    const fourMetrics = {
       ...minimalJobDetailResponse,
       metrics_list: [
         {
@@ -326,17 +326,57 @@ describe("JobDetail", () => {
           value: 100,
           no_data_reason: null,
         },
+        {
+          metric: "avg_cpuusage",
+          type: "pmc",
+          units: "cores",
+          value: 64,
+          no_data_reason: null,
+        },
+        {
+          metric: "avg_flops64b",
+          type: "pmc",
+          units: "GFLOP/s",
+          value: 12,
+          no_data_reason: null,
+        },
       ],
     };
-    setJobDetailQueryMock({ data: twoMetrics });
+    setJobDetailQueryMock({ data: fourMetrics });
 
     const { container } = renderJobDetail("12345");
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
     });
-    expect(
-      container.querySelectorAll(".job-detail-metrics-two-col .job-detail-metrics-table"),
-    ).toHaveLength(2);
+
+    const tables = container.querySelectorAll(
+      ".job-detail-metrics-two-col .job-detail-metrics-table",
+    );
+    expect(tables).toHaveLength(2);
+
+    const leftLabels = Array.from(tables[0]?.querySelectorAll("tbody tr") ?? []).map(
+      (row) => row.textContent ?? "",
+    );
+    const rightLabels = Array.from(tables[1]?.querySelectorAll("tbody tr") ?? []).map(
+      (row) => row.textContent ?? "",
+    );
+
+    expect(leftLabels).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Average effective CPU frequency"),
+        expect.stringContaining("Average CPU cores in use"),
+      ]),
+    );
+    expect(rightLabels).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Average DRAM memory bandwidth"),
+        expect.stringContaining("Average double-precision FLOP rate"),
+      ]),
+    );
+    expect(leftLabels[0]).toContain("Average effective CPU frequency");
+    expect(rightLabels[0]).toContain("Average DRAM memory bandwidth");
+    expect(leftLabels[1]).toContain("Average CPU cores in use");
+    expect(rightLabels[1]).toContain("Average double-precision FLOP rate");
   });
 
   it("shows no_data_reason text for staff when a metric has no numeric value", async () => {

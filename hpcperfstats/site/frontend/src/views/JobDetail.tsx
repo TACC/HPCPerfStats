@@ -383,9 +383,8 @@ export default function JobDetail() {
   }));
 
   const metricsListFull: JobMetricDisplayRow[] = (metrics_list || []) as JobMetricDisplayRow[];
-  const metricsSplitIdx = Math.ceil(metricsListFull.length / 2);
-  const metricsTableLeft = metricsListFull.slice(0, metricsSplitIdx);
-  const metricsTableRight = metricsListFull.slice(metricsSplitIdx);
+  const metricsTableLeft = metricsListFull.filter((_, index) => index % 2 === 0);
+  const metricsTableRight = metricsListFull.filter((_, index) => index % 2 === 1);
 
   function metricTableRows(list: JobMetricDisplayRow[]): ReactNode {
     return list.map((obj) => (

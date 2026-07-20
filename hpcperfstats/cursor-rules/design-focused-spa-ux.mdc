@@ -56,6 +56,7 @@ HPCPerfStats serves researchers and operators who expect clear hierarchy, honest
 ## Overlay z-index scale
 
 - In-page sticky chrome (browse tabs, job-detail analysis tabs): **`--z-sticky-inpage`** (10) — beats page content only.
+- When stacking sticky in-page chrome with sticky table headers (Job List Jobs/Charts tabs + thead), measure the chrome height (`ResizeObserver` or layout effect) into a CSS custom property (for example **`--job-list-sticky-chrome-h`**) and bind thead `top` plus scroll-margin to that var. Use the same breakpoint as Tailwind **`lg` (1024px)** for JS tab mount and `max-lg:` sticky rules — do not hardcode mismatched rem guesses (`top-14` vs `scroll-pt-28`).
 - Modal backdrops (extended search, histogram thumbnail): **`--z-modal-backdrop`** (1040).
 - Portaled floating UI (Shadcn popover, dropdown, select): **`--z-floating-overlay`** / `z-[1050]` — must paint above backdrops and sticky in-page layers.
 - When adding new portaled overlays, grep for `z-50` and legacy `z-index: 1015` debt; extend `overlay-z-index.test.ts` if the contract changes.

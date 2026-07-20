@@ -286,7 +286,7 @@ describe("JobList", () => {
       writable: true,
       configurable: true,
       value: vi.fn().mockImplementation((query) => ({
-        matches: query.includes("min-width: 992px"),
+        matches: query.includes("min-width: 1024px"),
         media: query,
         onchange: null,
         addEventListener: vi.fn(),
@@ -325,7 +325,7 @@ describe("JobList", () => {
       writable: true,
       configurable: true,
       value: vi.fn().mockImplementation((query: string) => ({
-        matches: query.includes("min-width: 992px"),
+        matches: query.includes("min-width: 1024px"),
         media: query,
         onchange: null,
         addListener: vi.fn(),
@@ -356,6 +356,78 @@ describe("JobList", () => {
     const headerRow = screen.getAllByRole("columnheader")[0]?.closest("thead");
     expect(headerRow?.className).toContain("z-[var(--z-sticky-inpage)]");
     expect(headerRow?.className).not.toContain("z-[1010]");
+  });
+
+  it("measures narrow sticky Jobs/Charts chrome into --job-list-sticky-chrome-h", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      configurable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: query.includes("min-width: 1024px") ? false : true,
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+
+    const rectSpy = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: Element,
+    ) {
+      if (this.classList.contains("sticky")) {
+        return {
+          height: 56,
+          width: 320,
+          top: 0,
+          left: 0,
+          right: 320,
+          bottom: 56,
+          x: 0,
+          y: 0,
+          toJSON: () => ({}),
+        };
+      }
+      return {
+        height: 0,
+        width: 0,
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      };
+    });
+
+    setJobListQueryMock({
+      data: {
+        job_list: [{ jid: "job1", username: "u", account: "p", start_time: "", end_time: "", runtime: 1, queue: "q", state: "COMPLETED", ncores: 1, nhosts: 1, node_hrs: 1 }],
+        nj: 1,
+        aggregates: {},
+        qname: "Jobs",
+        order_by: "-end_time",
+        pagination: { page: 1, num_pages: 1 },
+      },
+    });
+
+    renderJobList();
+
+    await waitFor(() => {
+      const table = document.getElementById("job-list-table");
+      expect(table?.style.getPropertyValue("--job-list-sticky-chrome-h")).toBe("56px");
+    });
+
+    const headerRow = screen.getAllByRole("columnheader")[0]?.closest("thead");
+    expect(headerRow?.className).toContain("max-lg:[&_th]:top-[var(--job-list-sticky-chrome-h,0px)]");
+    expect(document.getElementById("job-list-table")?.className).toContain(
+      "max-lg:scroll-mt-[calc(var(--job-list-sticky-chrome-h,0px)+2.5rem)]",
+    );
+
+    rectSpy.mockRestore();
   });
 
   it("shows date queue and sort together in active filters after browse normalization", async () => {
@@ -428,7 +500,7 @@ describe("JobList", () => {
       writable: true,
       configurable: true,
       value: vi.fn().mockImplementation((query) => ({
-        matches: query.includes("min-width: 992px") ? false : true,
+        matches: query.includes("min-width: 1024px") ? false : true,
         media: query,
         onchange: null,
         addEventListener: vi.fn(),
@@ -469,7 +541,7 @@ describe("JobList", () => {
       writable: true,
       configurable: true,
       value: vi.fn().mockImplementation((query) => ({
-        matches: query.includes("min-width: 992px") ? false : true,
+        matches: query.includes("min-width: 1024px") ? false : true,
         media: query,
         onchange: null,
         addEventListener: vi.fn(),
@@ -560,7 +632,7 @@ describe("JobList", () => {
     Object.defineProperty(window, "matchMedia", {
       writable: true,
       value: vi.fn().mockImplementation((query: string) => ({
-        matches: query.includes("min-width: 992px"),
+        matches: query.includes("min-width: 1024px"),
         media: query,
         onchange: null,
         addListener: vi.fn(),
@@ -775,7 +847,7 @@ describe("JobList", () => {
       writable: true,
       configurable: true,
       value: vi.fn().mockImplementation((query) => ({
-        matches: query.includes("min-width: 992px") ? false : true,
+        matches: query.includes("min-width: 1024px") ? false : true,
         media: query,
         onchange: null,
         addEventListener: vi.fn(),
@@ -866,7 +938,7 @@ describe("JobList", () => {
       writable: true,
       configurable: true,
       value: vi.fn().mockImplementation((query) => ({
-        matches: query.includes("min-width: 992px") ? false : true,
+        matches: query.includes("min-width: 1024px") ? false : true,
         media: query,
         onchange: null,
         addEventListener: vi.fn(),

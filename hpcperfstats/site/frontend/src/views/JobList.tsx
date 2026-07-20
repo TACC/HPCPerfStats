@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { ChevronDownIcon } from "lucide-react";
 import { TextLink, textLinkClassName } from "@/components/TextLink";
@@ -182,6 +182,9 @@ function buildJobListTitle({ error, loading, data, routeCtx }: BuildJobListTitle
   return routeCtx ? `Job list · ${routeCtx}` : "Job list";
 }
 
+/** Match Tailwind `lg` (1024px) so JS tab mount aligns with `max-lg:` sticky rules. */
+const JOB_LIST_LG_MIN_WIDTH_PX = 1024;
+
 export default function JobList() {
   const session = useSession();
   const isStaff = !!session?.is_staff;
@@ -194,7 +197,39 @@ export default function JobList() {
   const [distributionsOpen, setDistributionsOpen] = useState(true);
   const { openExtendedSearch } = useExtendedSearchLayout();
   const listViewTab = readTabFromSearchParams(rawSearchParams, "view", "jobs");
-  const isLgUp = useMinWidth(992);
+  const isLgUp = useMinWidth(JOB_LIST_LG_MIN_WIDTH_PX);
+  const stickyTabsRef = useRef<HTMLDivElement>(null);
+  const jobListTableRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const tableEl = jobListTableRef.current;
+    if (!tableEl) return;
+
+    const syncStickyChromeHeight = () => {
+      if (isLgUp) {
+        tableEl.style.setProperty("--job-list-sticky-chrome-h", "0px");
+        return;
+      }
+      const tabsEl = stickyTabsRef.current;
+      const heightPx = tabsEl ? `${Math.ceil(tabsEl.getBoundingClientRect().height)}px` : "0px";
+      tableEl.style.setProperty("--job-list-sticky-chrome-h", heightPx);
+    };
+
+    syncStickyChromeHeight();
+
+    const tabsEl = stickyTabsRef.current;
+    if (!tabsEl || isLgUp) {
+      return;
+    }
+
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const observer = new ResizeObserver(syncStickyChromeHeight);
+    observer.observe(tabsEl);
+    return () => observer.disconnect();
+  }, [isLgUp, listViewTab]);
 
   const asURLSearchParams = searchParams;
 
@@ -621,20 +656,24 @@ export default function JobList() {
       />
 
       {!isLgUp && (
-        <Tabs
-          value={listViewTab}
-          onValueChange={(value) => setListViewTab(value as "jobs" | "charts")}
+        <div
+          ref={stickyTabsRef}
           className="sticky top-0 z-[var(--z-sticky-inpage)] mb-2 bg-background pt-1"
         >
-          <TabsList
-            variant="line"
-            className="w-full justify-start overflow-x-auto [scrollbar-width:thin] flex-nowrap"
-            aria-label="Jobs list and charts"
+          <Tabs
+            value={listViewTab}
+            onValueChange={(value) => setListViewTab(value as "jobs" | "charts")}
           >
-            <TabsTrigger value="jobs">Jobs</TabsTrigger>
-            <TabsTrigger value="charts">Charts</TabsTrigger>
-          </TabsList>
-        </Tabs>
+            <TabsList
+              variant="line"
+              className="w-full justify-start overflow-x-auto [scrollbar-width:thin] flex-nowrap"
+              aria-label="Jobs list and charts"
+            >
+              <TabsTrigger value="jobs">Jobs</TabsTrigger>
+              <TabsTrigger value="charts">Charts</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
       )}
 
       <div
@@ -645,20 +684,22 @@ export default function JobList() {
       {renderPaginationNav("top")}
 
       <div
+        ref={jobListTableRef}
         className={cn(
           tableBusy && "opacity-55",
           "max-md:[&_table]:text-sm max-md:[&_td]:whitespace-nowrap max-md:[&_td]:px-1 max-md:[&_td]:py-[0.35rem] max-md:[&_th]:whitespace-nowrap max-md:[&_th]:px-1 max-md:[&_th]:py-[0.35rem]",
-          "max-lg:scroll-pt-28",
+          "max-lg:scroll-mt-[calc(var(--job-list-sticky-chrome-h,0px)+2.5rem)]",
         )}
+        style={{ ["--job-list-sticky-chrome-h" as string]: "0px" }}
         id="job-list-table"
         aria-busy={tableBusy || showTableSkeleton}
       >
         <div className="rounded-md border">
-        <Table className="border-0 text-sm max-lg:[&_tbody_tr]:scroll-mt-28">
+        <Table className="border-0 text-sm">
           <TableCaption className="sr-only">
             Job list for {qname}. {nj} jobs.
           </TableCaption>
-          <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-[var(--z-sticky-inpage)] [&_th]:bg-background [&_th]:shadow-[0_1px_0_var(--border)] max-lg:[&_th]:top-14">
+          <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-[var(--z-sticky-inpage)] [&_th]:bg-background [&_th]:shadow-[0_1px_0_var(--border)] max-lg:[&_th]:top-[var(--job-list-sticky-chrome-h,0px)]">
             <TableRow>
               {columns.map(({ label, field, sortable }) => (
               <TableHead key={field} scope="col" aria-sort={ariaSortForField(field, sortable)}>
