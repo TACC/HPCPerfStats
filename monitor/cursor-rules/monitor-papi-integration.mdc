@@ -32,10 +32,12 @@ alwaysApply: false
 ## Runtime
 
 - Prefer PAPI presets (`PAPI_TOT_CYC`, `PAPI_SP_OPS`, `PAPI_DP_OPS`, `PAPI_TOT_INS`); fall back to documented native names; int8/int16 are native-only; fail-soft (log once, leave metrics 0) — never crash the daemon.
-- Per-CPU `PAPI_CPU_ATTACH` + `PAPI_DOM_ALL` for system-wide counts; multiplexing allowed when counters are scarce (six active events may saturate Grace PMU).
-- Check `PAPI_set_multiplex` / cap active events to `PAPI_num_hwctrs()`; raise soft `RLIMIT_NOFILE` before the attach loop when needed.
-- **Release-visible** one-shot warn: `ok_cpus` / `nr_cpus` / `n_active` (and first-fail `PAPI_strerror` when partial). Do not disable `host_cpu_hw` on partial attach. Rate-limit `PAPI_read` failures.
-- **Lifetime vs DCGM soft-fail:** PAPI must **survive** DCGM `UpdateAllFields` soft-reset. Do not destroy PAPI when only the DCGM session is torn down. Ops smoke: frozen mid-row with `ok_cpus≈nr_cpus` ⇒ check journal for DCGM soft-reset (not attach holes).
+- Per-CPU `PAPI_CPU_ATTACH` + `PAPI_DOM_ALL` for system-wide counts. **Attach ≠ counting** on Grace: arming many events × all CPUs can leave most CPUs `read_ok_but_zero` under load.
+- **System-wide default:** arm **CYC** (required) and **INS** only. Do **not** arm SP/DP/INT8/INT16 on all CPUs by default (PMU starvation). After begin, **cycle census**; if attach looks full but nonzero cycle CPUs are below `max(4, nr_cpus/8)`, reshrink to **CYC-only** and re-attach.
+- Multiplex / `PAPI_num_hwctrs()` cap: keep **CYC first** when shrinking. Raise soft `RLIMIT_NOFILE` before the attach loop when needed.
+- **Release-visible** warns: `ok_cpus` / `nr_cpus` / `n_active`, cycle census (`nonzero`/`zero`/`read_fail`), reshrink path. Do not disable `host_cpu_hw` on partial attach. Rate-limit `PAPI_read` failures.
+- **Lifetime vs DCGM soft-fail:** PAPI must **survive** DCGM `UpdateAllFields` soft-reset. Do not destroy PAPI when only the DCGM session is torn down.
+- **Ops smoke (Grace):** stress util-busy CPUs that previously showed util↑ cycles=0; expect `cpu_clock_est_cycles`/`aperf` (`$9`/`$22`) to **advance**. Intel KEYS indices 6–16 stay 0 on hybrid (**by design**). Frozen mid-row + live soft `host_cpu` with `ok_cpus≈nr_cpus` ⇒ also check journal for DCGM soft-reset.
 - Keep collect hot-path bounded; do not add unbounded per-sample work.
 
 ## Overlap

@@ -197,6 +197,110 @@ static void papi_cap_active_to_hwctrs(void)
   }
 }
 
+static int papi_setup_cpu_eventset(int cpu, int *out_rc);
+
+/* Grace: arming SP/DP/INT on all CPUs starves PMU — keep CYC(+INS) only. */
+static int papi_apply_system_wide_filter(int filter_mode)
+{
+  int n;
+
+  n = papi_filter_system_wide_events(g_active_slots, g_active_codes, g_n_active, filter_mode);
+  g_n_active = n;
+  return g_n_active;
+}
+
+static void papi_destroy_all_eventsets(void)
+{
+  int i;
+
+  if (g_eventset == NULL)
+    return;
+  for (i = 0; i < nr_cpus; i++) {
+    if (g_eventset[i] != PAPI_NULL) {
+      (void)PAPI_stop(g_eventset[i], NULL);
+      PAPI_cleanup_eventset(g_eventset[i]);
+      PAPI_destroy_eventset(&g_eventset[i]);
+      g_eventset[i] = PAPI_NULL;
+    }
+  }
+}
+
+static int papi_attach_all_cpus(int *ok_cpus_out, int *first_fail_cpu, int *first_fail_rc)
+{
+  int i;
+  int ok_cpus = 0;
+
+  if (ok_cpus_out == NULL)
+    return -1;
+  if (first_fail_cpu != NULL)
+    *first_fail_cpu = -1;
+  if (first_fail_rc != NULL)
+    *first_fail_rc = PAPI_OK;
+
+  for (i = 0; i < nr_cpus; i++) {
+    int fail_rc = PAPI_OK;
+
+    if (papi_setup_cpu_eventset(i, &fail_rc) == 0) {
+      ok_cpus++;
+    } else if (first_fail_cpu != NULL && *first_fail_cpu < 0) {
+      *first_fail_cpu = i;
+      if (first_fail_rc != NULL)
+        *first_fail_rc = fail_rc;
+    }
+  }
+  *ok_cpus_out = ok_cpus;
+  return 0;
+}
+
+/*
+ * Attach≠counting: after start, many CPUs may read OK but return 0 cycles.
+ * Count how many eventsets report nonzero CYC (idle CPUs may be zero — threshold
+ * accounts for that; mass-zero with full attach still triggers reshrink).
+ */
+static void papi_census_cycle_counts(int *nonzero_out, int *zero_out, int *fail_out)
+{
+  long long vals[PAPI_SLOT_N];
+  int i;
+  int j;
+  int nonzero = 0;
+  int zero = 0;
+  int fail = 0;
+
+  for (i = 0; i < nr_cpus; i++) {
+    int rc;
+    unsigned long long cyc = 0;
+    int have_cyc = 0;
+
+    if (g_eventset == NULL || g_eventset[i] == PAPI_NULL) {
+      fail++;
+      continue;
+    }
+    memset(vals, 0, sizeof(vals));
+    rc = PAPI_read(g_eventset[i], vals);
+    if (rc != PAPI_OK) {
+      fail++;
+      continue;
+    }
+    for (j = 0; j < g_n_active; j++) {
+      if (g_active_slots[j] == PAPI_SLOT_CYC) {
+        cyc = (unsigned long long)vals[j];
+        have_cyc = 1;
+        break;
+      }
+    }
+    if (!have_cyc || cyc == 0)
+      zero++;
+    else
+      nonzero++;
+  }
+  if (nonzero_out != NULL)
+    *nonzero_out = nonzero;
+  if (zero_out != NULL)
+    *zero_out = zero;
+  if (fail_out != NULL)
+    *fail_out = fail;
+}
+
 static int papi_setup_cpu_eventset(int cpu, int *out_rc)
 {
   int es = PAPI_NULL;
@@ -283,6 +387,9 @@ int cpu_counter_metrics_papi_begin(struct stats_type *type)
   int ok_cpus = 0;
   int first_fail_cpu = -1;
   int first_fail_rc = PAPI_OK;
+  int nz = 0;
+  int zc = 0;
+  int fl = 0;
 
   (void)type;
   cpu_counter_metrics_papi_cleanup();
@@ -312,6 +419,14 @@ int cpu_counter_metrics_papi_begin(struct stats_type *type)
     return 0;
   }
 
+  /* System-wide: do not arm SP/DP/INT on all CPUs (PMU starvation). */
+  if (papi_apply_system_wide_filter(PAPI_SW_FILTER_CYC_INS) <= 0) {
+    papi_warn_once("no PAPI_TOT_CYC for system-wide attach; FLOPs/cycles disabled");
+    return 0;
+  }
+  monitor_log_warn("cpu_counter_metrics_papi: system-wide events n_active=%d (CYC-first)\n",
+                   g_n_active);
+
   papi_cap_active_to_hwctrs();
   if (g_n_active <= 0) {
     papi_warn_once("no usable PAPI events after hwctr cap; disabled");
@@ -328,17 +443,7 @@ int cpu_counter_metrics_papi_begin(struct stats_type *type)
   for (i = 0; i < nr_cpus; i++)
     g_eventset[i] = PAPI_NULL;
 
-  for (i = 0; i < nr_cpus; i++) {
-    int fail_rc = PAPI_OK;
-
-    if (papi_setup_cpu_eventset(i, &fail_rc) == 0) {
-      ok_cpus++;
-    } else if (first_fail_cpu < 0) {
-      first_fail_cpu = i;
-      first_fail_rc = fail_rc;
-    }
-  }
-
+  (void)papi_attach_all_cpus(&ok_cpus, &first_fail_cpu, &first_fail_rc);
   papi_log_begin_status(ok_cpus, first_fail_cpu, first_fail_rc);
 
   if (ok_cpus <= 0) {
@@ -347,8 +452,46 @@ int cpu_counter_metrics_papi_begin(struct stats_type *type)
     return 0;
   }
 
+  /* Let cycle counters advance before attach≠counting census (begin-only). */
+  (void)usleep(100000);
+
+  papi_census_cycle_counts(&nz, &zc, &fl);
+  monitor_log_warn(
+      "cpu_counter_metrics_papi: cycle census nonzero=%d zero=%d read_fail=%d n_active=%d\n", nz,
+      zc, fl, g_n_active);
+
+  if (papi_census_needs_reshrink(nz, ok_cpus, nr_cpus) && g_n_active > 1) {
+    monitor_log_warn(
+        "cpu_counter_metrics_papi: mass read_ok_but_zero; reshrink to CYC-only and re-attach\n");
+    papi_destroy_all_eventsets();
+    if (papi_apply_system_wide_filter(PAPI_SW_FILTER_CYC_ONLY) <= 0) {
+      papi_warn_once("CYC-only filter failed after census");
+      cpu_counter_metrics_papi_cleanup();
+      return 0;
+    }
+    papi_raise_nofile_for_attach();
+    ok_cpus = 0;
+    first_fail_cpu = -1;
+    first_fail_rc = PAPI_OK;
+    (void)papi_attach_all_cpus(&ok_cpus, &first_fail_cpu, &first_fail_rc);
+    papi_log_begin_status(ok_cpus, first_fail_cpu, first_fail_rc);
+    if (ok_cpus <= 0) {
+      papi_warn_once("PAPI re-attach failed for all CPUs after CYC-only shrink");
+      cpu_counter_metrics_papi_cleanup();
+      return 0;
+    }
+    (void)usleep(100000);
+    papi_census_cycle_counts(&nz, &zc, &fl);
+    monitor_log_warn("cpu_counter_metrics_papi: post-reshrink census nonzero=%d zero=%d "
+                     "read_fail=%d n_active=%d\n",
+                     nz, zc, fl, g_n_active);
+    if (papi_census_needs_reshrink(nz, ok_cpus, nr_cpus))
+      monitor_log_warn("cpu_counter_metrics_papi: cycles still sparse after CYC-only "
+                       "(attach≠counting on Grace PMU)\n");
+  }
+
   g_papi_ready = 1;
-  TRACE("papi begin: ok_cpus=%d n_active=%d\n", ok_cpus, g_n_active);
+  TRACE("papi begin: ok_cpus=%d n_active=%d nonzero_cyc=%d\n", ok_cpus, g_n_active, nz);
   return 0;
 }
 
