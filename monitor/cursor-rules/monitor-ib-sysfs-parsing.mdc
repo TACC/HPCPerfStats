@@ -34,4 +34,11 @@ Port collectibility uses these parsers — false positives cause extra MAD I/O. 
 - `ib_foreach_hca_port` skips OPA HFIs; `opa.c` walks only those names.
 - `hwdetect` treats `cornelis` / `cn5000` / `omnipath` / `hfi` lspci tokens and `/sys/class/infiniband/hfi1_*` as OPA present; IB sysfs fallback ignores HFI-only nodes.
 
+## `host_opa` sysfs counters (`opa_sysfs.c`)
+
+- **Primary:** `ports/N/counters/` IB-style names (`port_xmit_data`, `port_*_packets` → `*_pkts`, …).
+- **CN5000 NDR:** classic `counters/` files may **exist but read EINVAL**. When classic collect sets **zero** keys, fall back to **`ports/N/hw_counters`**: `TxWords`→`port_xmit_data`, `RxWords`→`port_rcv_data`, `TxPkt`→`port_xmit_pkts`, `RxPkt`→`port_rcv_pkts`, `TxWait`→`port_xmit_wait`.
+- If classic already set any key, **do not overwrite** with hw (OPA100 stays primary).
+- Do **not** map `DmaWait`, `RcvHdrOvr*`, or comma-named hw files into KEYS (v1). Bounded hot-path: only the five utilization files above.
+
 Cross-links: **monitor-c-new-function-unittests**, **traceback-fix-discipline**.

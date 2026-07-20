@@ -21,7 +21,7 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_lustre_schema_contract.c` | Lustre collector schema token contract |
 | `test_lustre_proc_stats.c` | Modern/legacy Lustre stats line parse + file open order |
 | `test_opa_schema_contract.c` | OPA collector schema token contract (`host_opa.h`) |
-| `test_opa_sysfs_map.c` | hfi1 sysfs filename → schema key map |
+| `test_opa_sysfs_map.c` | hfi1 classic + hw_counters filename → KEYS; classic-miss → hw fallback |
 | `test_opa_mad_backoff.c` | OPA MAD failure backoff |
 | `test_ib_hca_is_opa_hfi.c` | HFI vs IB HCA classification |
 | `test_opa_lspci_match.c` | Stampede3 Cornelis/OPA lspci fixture match |
