@@ -67,16 +67,10 @@ static const char *intel_icx_eventset(void)
 
 static const char *intel_spr_eventset(int n_pmcs)
 {
-  if (n_pmcs >= 8) {
-    return "INSTR_RETIRED_ANY:FIXC0,CPU_CLK_UNHALTED_CORE:FIXC1,CPU_CLK_UNHALTED_REF:FIXC2,"
-           "MEM_LOAD_UOPS_RETIRED_L1_HIT:PMC0,MEM_LOAD_UOPS_RETIRED_L2_HIT:PMC1,"
-           "MEM_LOAD_UOPS_RETIRED_LLC_HIT:PMC2,L1D_REPLACEMENT:PMC3,"
-           "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE:PMC4,"
-           "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE:PMC5,"
-           "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE:PMC6,"
-           "FP_ARITH_INST_RETIRED_SCALAR_SINGLE:PMC7";
-  }
-  return intel_eventset();
+  /* SPR: use ICX-validated LIKWID names. SKX-era MEM_LOAD_UOPS_RETIRED_*
+   * are missing on SPR in LIKWID 5.5.x; extra FP PMCs often hit "in use". */
+  (void)n_pmcs;
+  return intel_icx_eventset();
 }
 
 const char *likwid_arch_eventset_for_processor(processor_t p, int n_pmcs)

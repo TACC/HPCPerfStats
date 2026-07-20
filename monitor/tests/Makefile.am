@@ -43,13 +43,15 @@ endif
 
 AM_CPPFLAGS = -I$(top_srcdir)/src $(monitor_unit_cppflags)
 
-check_PROGRAMS = test_cpuid_signature test_likwid_rapl_scale test_likwid_rapl_support test_likwid_uncore_profiles test_likwid_uncore_adapter test_host_edac_mem_topology test_intel_skx_imc_schema test_intel_icx_imc_schema test_intel_spr_imc_schema test_string1 test_stats_buffer_data_append test_stats_buffer_uts test_stats_buffer_rows test_path_collect test_path_open_fail_once test_path_read test_sys_iter test_procfile_parse test_msr_io test_intel_mmconfig test_monitor_log test_monitor_options_kv test_pscanf test_schema_parse test_stats_file_format test_stats_file_format_extra test_stats_text_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_cpu_counter_papi_map test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_roofline_detect_fixture test_nfs_schema_subset test_ib_schema_contract test_host_schema_contract test_lustre_schema_contract test_lustre_proc_stats test_opa_schema_contract test_opa_sysfs_map test_opa_mad_backoff test_ib_hca_is_opa_hfi test_opa_lspci_match test_lnet_schema_contract test_arm_aarch64_imc_schema test_amd_x86_pmc_schema test_metric_profiler test_hwdetect_policy test_hwdetect_lspci test_gpu_pci_detect test_intel_gpu_schema_contract test_xpum_gpu_dyn test_dcgm_gpu_dyn test_ib_mad_dyn test_opa_mad_dyn test_ib_port_state test_ib_port_collectible test_ib_foreach_hca_port test_ib_family test_stats_runtime_type_controls test_stats_runtime_collect test_collect_tier_table test_collect_phase test_collect_tier_gate test_stats_set_tier_gate test_dict test_host_key_alias test_schema_emit test_procfile_kv test_collect_str test_nvidia_gpu_estimate test_daemonize
+check_PROGRAMS = test_cpuid_signature test_likwid_rapl_scale test_likwid_rapl_support test_likwid_pmc_schema_map test_likwid_arch_map_spr test_likwid_uncore_profiles test_likwid_uncore_adapter test_host_edac_mem_topology test_intel_skx_imc_schema test_intel_icx_imc_schema test_intel_spr_imc_schema test_string1 test_stats_buffer_data_append test_stats_buffer_uts test_stats_buffer_rows test_path_collect test_path_open_fail_once test_path_read test_sys_iter test_procfile_parse test_msr_io test_intel_mmconfig test_monitor_log test_monitor_options_kv test_pscanf test_schema_parse test_stats_file_format test_stats_file_format_extra test_stats_text_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_cpu_counter_papi_map test_cpu_counter_papi_util test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_roofline_detect_fixture test_nfs_schema_subset test_ib_schema_contract test_host_schema_contract test_lustre_schema_contract test_lustre_proc_stats test_opa_schema_contract test_opa_sysfs_map test_opa_mad_backoff test_ib_hca_is_opa_hfi test_opa_lspci_match test_lnet_schema_contract test_arm_aarch64_imc_schema test_amd_x86_pmc_schema test_metric_profiler test_hwdetect_policy test_hwdetect_lspci test_gpu_pci_detect test_intel_gpu_schema_contract test_xpum_gpu_dyn test_dcgm_gpu_dyn test_ib_mad_dyn test_opa_mad_dyn test_ib_port_state test_ib_port_collectible test_ib_foreach_hca_port test_ib_family test_stats_runtime_type_controls test_stats_runtime_collect test_collect_tier_table test_collect_phase test_collect_tier_gate test_stats_set_tier_gate test_dict test_host_key_alias test_schema_emit test_procfile_kv test_collect_str test_nvidia_gpu_estimate test_daemonize
 if INFINIBAND
 check_PROGRAMS += test_ib_mad_backoff test_ib_mad_decode test_ib_mad_sw_swap
 endif
 if CPU_BACKEND_DCGM
-check_PROGRAMS += test_dcgm_pkg_uniq test_cpu_counter_dcgm_util test_cpu_counter_dcgm_publish
+check_PROGRAMS += test_dcgm_pkg_uniq
 endif
+# Pure DCGM util/publish math must run on LIKWID hosts too (blank watts, util@clock=0).
+check_PROGRAMS += test_cpu_counter_dcgm_util test_cpu_counter_dcgm_publish
 if RABBITMQ
 check_PROGRAMS += test_monitor_cli test_ring_buffer test_stats_buffer_collect test_stats_buffer_debug_shm test_debug_shm_emit_golden test_debug_shm_schema_mirror test_monitor_timing
 endif
@@ -96,6 +98,14 @@ test_likwid_rapl_scale_SOURCES = \
 test_likwid_rapl_support_SOURCES = \
 	test_likwid_rapl_support.c \
 	$(top_srcdir)/src/likwid_rapl.c
+
+test_likwid_pmc_schema_map_SOURCES = \
+	test_likwid_pmc_schema_map.c \
+	$(top_srcdir)/src/likwid_pmc_schema_map.c
+
+test_likwid_arch_map_spr_SOURCES = \
+	test_likwid_arch_map_spr.c \
+	$(top_srcdir)/src/likwid_arch_map.c
 
 test_cpuid_signature_SOURCES = \
 	test_cpuid_signature.c \
@@ -153,17 +163,23 @@ test_collect_str_SOURCES = \
 test_cpu_counter_dcgm_util_SOURCES = \
 	test_cpu_counter_dcgm_util.c \
 	$(top_srcdir)/src/cpu_counter_metrics_dcgm_util.c
+test_cpu_counter_dcgm_util_CPPFLAGS = $(AM_CPPFLAGS) -DMONITOR_CPU_BACKEND_DCGM
 
 test_cpu_counter_dcgm_publish_SOURCES = \
 	test_cpu_counter_dcgm_publish.c \
 	test_stats_stub.c \
 	$(top_srcdir)/src/cpu_counter_metrics_dcgm_publish.c \
 	$(top_srcdir)/src/cpu_counter_metrics_dcgm_util.c
+test_cpu_counter_dcgm_publish_CPPFLAGS = $(AM_CPPFLAGS) -DMONITOR_CPU_BACKEND_DCGM
 
 test_cpu_counter_papi_map_SOURCES = \
 	test_cpu_counter_papi_map.c \
 	test_stats_stub.c \
 	$(top_srcdir)/src/cpu_counter_metrics_papi_map.c
+
+test_cpu_counter_papi_util_SOURCES = \
+	test_cpu_counter_papi_util.c \
+	$(top_srcdir)/src/cpu_counter_metrics_papi_util.c
 
 test_string1_SOURCES = test_string1.c
 
@@ -565,6 +581,8 @@ endif
 # Link flags/libs match the configured tree (LDFLAGS/LIBS from configure).
 test_likwid_rapl_scale_LDADD = $(LDADD) -lm
 test_likwid_rapl_support_LDADD = $(LDADD) -lm
+test_likwid_pmc_schema_map_LDADD = $(LDADD)
+test_likwid_arch_map_spr_LDADD = $(LDADD)
 test_likwid_uncore_adapter_LDADD = $(LDADD)
 if LIKWID
 test_likwid_uncore_adapter_LDADD += -lm
@@ -576,6 +594,7 @@ test_procfile_kv_LDADD = $(LDADD)
 test_collect_str_LDADD = $(LDADD)
 test_cpu_counter_dcgm_util_LDADD = $(LDADD)
 test_cpu_counter_dcgm_publish_LDADD = $(LDADD)
+test_cpu_counter_papi_util_LDADD = $(LDADD)
 test_string1_LDADD = $(LDADD)
 test_stats_buffer_data_append_LDADD = $(LDADD)
 test_stats_buffer_uts_LDADD = $(LDADD)

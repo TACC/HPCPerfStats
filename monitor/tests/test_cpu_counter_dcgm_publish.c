@@ -124,6 +124,16 @@ static void test_accumulate_from_util_sample(void)
 
   dcgm_accumulate_from_util_sample(0, &sample, 0);
   assert(s_ctr0[0] == 50000000ULL);
+
+  /* Util must accumulate even when clock_khz is missing. */
+  reset_dcgm_arrays();
+  sample.clock_khz = 0.0;
+  dcgm_accumulate_from_util_sample(0, &sample, 1000000LL);
+  assert(s_ctr0[0] == 50000000ULL);
+  assert(s_ctr1[0] == 30000000ULL);
+  assert(s_ctr5[0] == 0ULL);
+  assert(s_arm_dram[0] == 0ULL);
+  assert(s_mperf[0] == 0ULL);
 }
 
 static void test_publish_dcgm_cpu_stats(void)
@@ -155,6 +165,14 @@ static void test_publish_dcgm_cpu_stats(void)
 #endif
   assert(test_stats_stub_find(&stub, "dcgm_cpu_power_util_w", &val) && val == 51ULL);
   assert(test_stats_stub_find(&stub, "dcgm_cpu_power_limit_w", &val) && val == 199ULL);
+
+  /* Blank sentinel must publish as 0 W. */
+  test_stats_stub_reset(&stub);
+  s_power_util[0] = 44.0;
+  s_power_limit[0] = 140737488355328.0;
+  publish_dcgm_cpu_stats(&g_dummy_stats, 0);
+  assert(test_stats_stub_find(&stub, "dcgm_cpu_power_util_w", &val) && val == 44ULL);
+  assert(test_stats_stub_find(&stub, "dcgm_cpu_power_limit_w", &val) && val == 0ULL);
 
   test_stats_stub_unbind();
 }

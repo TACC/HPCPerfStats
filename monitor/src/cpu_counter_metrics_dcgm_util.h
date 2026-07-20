@@ -15,6 +15,8 @@ void dcgm_cpu_sample_from_jiffy_diff(struct dcgm_cpu_sample *s,
                                      const struct dcgm_cpu_jifs *cur,
                                      const struct dcgm_cpu_jifs *prev);
 int dcgm_count_unique_sorted_ints(const int *sorted, int n);
+/* True for NVIDIA DCGM_FP64_BLANK and blank-family sentinels (>= blank). */
+int dcgm_fp64_value_is_blank(double v);
 unsigned long long dcgm_watts_dbl_to_ull(double v);
 
 #endif

@@ -81,9 +81,17 @@ int dcgm_count_unique_sorted_ints(const int *sorted, int n)
   return nu;
 }
 
+/* Match third_party/nvidia-dcgm/dcgm_structs.h DCGM_FP64_BLANK / IS_BLANK. */
+#define DCGM_CPU_FP64_BLANK 140737488355328.0
+
+int dcgm_fp64_value_is_blank(double v)
+{
+  return (v >= DCGM_CPU_FP64_BLANK) ? 1 : 0;
+}
+
 unsigned long long dcgm_watts_dbl_to_ull(double v)
 {
-  if (v <= 0.0)
+  if (dcgm_fp64_value_is_blank(v) || v <= 0.0)
     return 0ULL;
   if (v >= (double) ULLONG_MAX)
     return ULLONG_MAX;

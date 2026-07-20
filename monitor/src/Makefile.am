@@ -240,10 +240,12 @@ TYPES += \
 if CPU_PAPI_FLOPS
 TYPES += \
 	cpu_counter_metrics_papi.c \
-	cpu_counter_metrics_papi_map.c
+	cpu_counter_metrics_papi_map.c \
+	cpu_counter_metrics_papi_util.c
 hpcperfstatsd_SOURCES += \
 	cpu_counter_metrics_papi.h \
-	cpu_counter_metrics_papi_map.h
+	cpu_counter_metrics_papi_map.h \
+	cpu_counter_metrics_papi_util.h
 endif
 if MONITOR_ARCH_ARM
 TYPES += \
@@ -260,6 +262,8 @@ hpcperfstatsd_SOURCES += \
 	likwid_rapl.c \
 	likwid_pmc_adapter.h \
 	likwid_pmc_adapter.c \
+	likwid_pmc_schema_map.h \
+	likwid_pmc_schema_map.c \
 	likwid_arch_map.h \
 	likwid_arch_map.c \
 	likwid_uncore_adapter.h \

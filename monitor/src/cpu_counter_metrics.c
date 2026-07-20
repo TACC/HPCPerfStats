@@ -669,9 +669,9 @@ static void dcgm_cpu_refresh_socket_power(void)
       else
 	lim = (double) vals[1].value.i64;
     }
-    if (u < 0.0)
+    if (u < 0.0 || dcgm_fp64_value_is_blank(u))
       u = 0.0;
-    if (lim < 0.0)
+    if (lim < 0.0 || dcgm_fp64_value_is_blank(lim))
       lim = 0.0;
     g_dcgm_sock_power_util[j] = u;
     g_dcgm_sock_power_limit[j] = lim;

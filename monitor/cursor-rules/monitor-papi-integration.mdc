@@ -33,6 +33,8 @@ alwaysApply: false
 
 - Prefer PAPI presets (`PAPI_TOT_CYC`, `PAPI_SP_OPS`, `PAPI_DP_OPS`, `PAPI_TOT_INS`); fall back to documented native names; int8/int16 are native-only; fail-soft (log once, leave metrics 0) — never crash the daemon.
 - Per-CPU `PAPI_CPU_ATTACH` + `PAPI_DOM_ALL` for system-wide counts; multiplexing allowed when counters are scarce (six active events may saturate Grace PMU).
+- Check `PAPI_set_multiplex` / cap active events to `PAPI_num_hwctrs()`; raise soft `RLIMIT_NOFILE` before the attach loop when needed.
+- **Release-visible** one-shot warn: `ok_cpus` / `nr_cpus` / `n_active` (and first-fail `PAPI_strerror` when partial). Do not disable `host_cpu_hw` on partial attach. Rate-limit `PAPI_read` failures.
 - Keep collect hot-path bounded; do not add unbounded per-sample work.
 
 ## Overlap

@@ -30,6 +30,11 @@ unsupported (`processor_t`-1).
 | `st_name` | LIKWID profile | Notes |
 |-----------|----------------|-------|
 | `host_cpu_hw` | `likwid_arch_eventset_for_processor()` | Auto-disables `intel_x86_pmc_gpr4/8` when active |
+
+`host_cpu_hw` LIKWID notes:
+
+- LIKWID returns **UPPERCASE** event names (`INSTR_RETIRED_ANY`, …). Adapter maps them to schema snake_case via `likwid_pmc_schema_map.c` before `stats_set`; FIXC* is matched case-insensitively. Skip LIKWID invalid sentinel `1ULL<<63`.
+- **Sapphire Rapids** eventset matches ICX (`MEM_INST_RETIRED_ALL_*` + `L1D_REPLACEMENT` + FIXC0–2). Do not use SKX-era `MEM_LOAD_UOPS_RETIRED_*` (missing in LIKWID for SPR).
 | `intel_x86_rapl` | LIKWID RAPL (`likwid_rapl.c`) | Intel-only begin (`likwid_rapl_is_supported_intel_processor`) |
 | `amd_x86_rapl` | LIKWID RAPL (`likwid_rapl.c`) | AMD Zen-only begin (`likwid_rapl_is_supported_amd_processor`) |
 

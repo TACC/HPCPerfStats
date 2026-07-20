@@ -2,14 +2,18 @@
 #ifdef MONITOR_CPU_PAPI_FLOPS
 
 #include <errno.h>
+#include <sched.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <unistd.h>
 
 #include <papi.h>
 
 #include "cpu_counter_metrics_papi.h"
 #include "cpu_counter_metrics_papi_map.h"
+#include "cpu_counter_metrics_papi_util.h"
 #include "monitor_log.h"
 #include "stats.h"
 #include "trace.h"
@@ -28,6 +32,7 @@ enum {
 
 static int g_papi_ready;
 static int g_papi_warned;
+static int g_papi_read_warned;
 static int *g_eventset; /* per CPU; PAPI_NULL if unused */
 /* Ordered list of event codes actually added to each eventset. */
 static int g_active_codes[PAPI_SLOT_N];
@@ -40,6 +45,67 @@ static void papi_warn_once(const char *msg)
     return;
   g_papi_warned = 1;
   monitor_log_warn("cpu_counter_metrics_papi: %s\n", msg);
+}
+
+static void papi_raise_nofile_for_attach(void)
+{
+  struct rlimit rl;
+  rlim_t want;
+
+  want = papi_desired_nofile_soft(nr_cpus, g_n_active);
+  if (getrlimit(RLIMIT_NOFILE, &rl) != 0)
+    return;
+  if (rl.rlim_cur >= want)
+    return;
+  rl.rlim_cur = want;
+  if (rl.rlim_max != RLIM_INFINITY && rl.rlim_cur > rl.rlim_max)
+    rl.rlim_cur = rl.rlim_max;
+  if (setrlimit(RLIMIT_NOFILE, &rl) != 0)
+    monitor_log_warn(
+	"cpu_counter_metrics_papi: setrlimit(RLIMIT_NOFILE) soft=%llu failed errno=%d\n",
+	(unsigned long long)rl.rlim_cur, errno);
+}
+
+static void papi_log_affinity_context(void)
+{
+  cpu_set_t set;
+  int i;
+  int n_allowed = 0;
+  char buf[160];
+  size_t off = 0;
+  int first = 1;
+
+  CPU_ZERO(&set);
+  if (sched_getaffinity(0, sizeof(set), &set) != 0)
+    return;
+  for (i = 0; i < CPU_SETSIZE && i < nr_cpus + 256; i++) {
+    if (!CPU_ISSET(i, &set))
+      continue;
+    n_allowed++;
+    if (off + 8 < sizeof(buf)) {
+      int n = snprintf(buf + off, sizeof(buf) - off, "%s%d", first ? "" : ",", i);
+      if (n > 0)
+	off += (size_t)n;
+      first = 0;
+    }
+  }
+  monitor_log_warn(
+      "cpu_counter_metrics_papi: affinity allowed_cpus=%d sample=[%s]\n",
+      n_allowed, buf);
+}
+
+static void papi_log_begin_status(int ok_cpus, int first_fail_cpu, int first_fail_rc)
+{
+  monitor_log_warn(
+      "cpu_counter_metrics_papi: begin ok_cpus=%d nr_cpus=%d n_active=%d\n",
+      ok_cpus, nr_cpus, g_n_active);
+  if (papi_is_partial_attach(ok_cpus, nr_cpus) && first_fail_cpu >= 0) {
+    monitor_log_warn(
+	"cpu_counter_metrics_papi: first attach fail cpu=%d rc=%d (%s)\n",
+	first_fail_cpu, first_fail_rc,
+	first_fail_rc != PAPI_OK ? PAPI_strerror(first_fail_rc) : "unknown");
+    papi_log_affinity_context();
+  }
 }
 
 static int papi_resolve_event(int preset, const char *const *native_names, int *out_code)
@@ -120,16 +186,34 @@ static int papi_probe_active_events(void)
   return g_n_active;
 }
 
-static int papi_setup_cpu_eventset(int cpu)
+static void papi_cap_active_to_hwctrs(void)
+{
+  int hw;
+  int n;
+
+  hw = PAPI_num_hwctrs();
+  n = papi_shrink_active_count(g_n_active, hw);
+  if (n < g_n_active) {
+    monitor_log_warn(
+	"cpu_counter_metrics_papi: capping events n_active=%d -> %d (hwctrs=%d)\n",
+	g_n_active, n, hw);
+    g_n_active = n;
+  }
+}
+
+static int papi_setup_cpu_eventset(int cpu, int *out_rc)
 {
   int es = PAPI_NULL;
   int rc;
   int i;
   PAPI_option_t opt;
 
+  if (out_rc != NULL)
+    *out_rc = PAPI_OK;
+
   rc = PAPI_create_eventset(&es);
   if (rc != PAPI_OK)
-    return -1;
+    goto fail;
 
   rc = PAPI_assign_eventset_component(es, 0);
   if (rc != PAPI_OK)
@@ -142,7 +226,11 @@ static int papi_setup_cpu_eventset(int cpu)
   if (rc != PAPI_OK)
     goto fail;
 
-  (void)PAPI_set_multiplex(es);
+  rc = PAPI_set_multiplex(es);
+  if (rc != PAPI_OK) {
+    /* Without multiplex, Grace often cannot hold six events — shrink. */
+    papi_cap_active_to_hwctrs();
+  }
 
   for (i = 0; i < g_n_active; i++) {
     rc = PAPI_add_event(es, g_active_codes[i]);
@@ -158,6 +246,8 @@ static int papi_setup_cpu_eventset(int cpu)
   return 0;
 
 fail:
+  if (out_rc != NULL)
+    *out_rc = rc;
   if (es != PAPI_NULL) {
     PAPI_cleanup_eventset(es);
     PAPI_destroy_eventset(&es);
@@ -195,9 +285,13 @@ int cpu_counter_metrics_papi_begin(struct stats_type *type)
   int i;
   int rc;
   int ok_cpus = 0;
+  int first_fail_cpu = -1;
+  int first_fail_rc = PAPI_OK;
 
   (void)type;
   cpu_counter_metrics_papi_cleanup();
+  g_papi_warned = 0;
+  g_papi_read_warned = 0;
 
   if (nr_cpus <= 0) {
     papi_warn_once("nr_cpus <= 0; PAPI FLOPs/cycles disabled");
@@ -210,13 +304,25 @@ int cpu_counter_metrics_papi_begin(struct stats_type *type)
     return 0;
   }
 
-  (void)PAPI_multiplex_init();
+  rc = PAPI_multiplex_init();
+  if (rc != PAPI_OK)
+    monitor_log_warn("cpu_counter_metrics_papi: PAPI_multiplex_init rc=%d (%s)\n",
+		     rc, PAPI_strerror(rc));
+
   (void)PAPI_set_domain(PAPI_DOM_ALL);
 
   if (papi_probe_active_events() <= 0) {
     papi_warn_once("no usable PAPI events; FLOPs/cycles disabled");
     return 0;
   }
+
+  papi_cap_active_to_hwctrs();
+  if (g_n_active <= 0) {
+    papi_warn_once("no usable PAPI events after hwctr cap; disabled");
+    return 0;
+  }
+
+  papi_raise_nofile_for_attach();
 
   g_eventset = calloc((size_t)nr_cpus, sizeof(*g_eventset));
   if (g_eventset == NULL) {
@@ -227,9 +333,17 @@ int cpu_counter_metrics_papi_begin(struct stats_type *type)
     g_eventset[i] = PAPI_NULL;
 
   for (i = 0; i < nr_cpus; i++) {
-    if (papi_setup_cpu_eventset(i) == 0)
+    int fail_rc = PAPI_OK;
+
+    if (papi_setup_cpu_eventset(i, &fail_rc) == 0) {
       ok_cpus++;
+    } else if (first_fail_cpu < 0) {
+      first_fail_cpu = i;
+      first_fail_rc = fail_rc;
+    }
   }
+
+  papi_log_begin_status(ok_cpus, first_fail_cpu, first_fail_rc);
 
   if (ok_cpus <= 0) {
     papi_warn_once("PAPI CPU attach failed for all CPUs");
@@ -256,8 +370,15 @@ void cpu_counter_metrics_papi_collect_cpu(struct stats *stats, int cpu)
 
   memset(vals, 0, sizeof(vals));
   rc = PAPI_read(g_eventset[cpu], vals);
-  if (rc != PAPI_OK)
+  if (rc != PAPI_OK) {
+    if (!g_papi_read_warned) {
+      g_papi_read_warned = 1;
+      monitor_log_warn(
+	  "cpu_counter_metrics_papi: PAPI_read failed cpu=%d rc=%d (%s)\n",
+	  cpu, rc, PAPI_strerror(rc));
+    }
     return;
+  }
 
   memset(&c, 0, sizeof(c));
   for (i = 0; i < g_n_active; i++) {

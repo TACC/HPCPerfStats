@@ -80,16 +80,21 @@ void dcgm_accumulate_from_util_sample(int i, struct dcgm_cpu_sample *sample,
   double ref_cycles;
   double act_cycles;
 
-  if (delta_us <= 0 || sample->clock_khz <= 0.0)
+  if (delta_us <= 0 || sample == NULL)
     return;
-  ref_cycles = (sample->clock_khz * (double) delta_us) / 1000.0;
-  act_cycles = ref_cycles * (sample->util_total / 100.0);
-  /* Util accumulators always from DCGM/proc. */
+
+  /* Util accumulators always from DCGM/proc — do not require clock_khz. */
   g_dcgm_ctr0[i] += (unsigned long long) ((sample->util_total * (double) delta_us) + 0.5);
   g_dcgm_ctr1[i] += (unsigned long long) ((sample->util_user * (double) delta_us) + 0.5);
   g_dcgm_ctr2[i] += (unsigned long long) ((sample->util_sys * (double) delta_us) + 0.5);
   g_dcgm_ctr3[i] += (unsigned long long) ((sample->util_irq * (double) delta_us) + 0.5);
   g_dcgm_ctr4[i] += (unsigned long long) ((sample->util_nice * (double) delta_us) + 0.5);
+
+  if (sample->clock_khz <= 0.0)
+    return;
+
+  ref_cycles = (sample->clock_khz * (double) delta_us) / 1000.0;
+  act_cycles = ref_cycles * (sample->util_total / 100.0);
   g_dcgm_arm_dram_bytes[i] +=
       (unsigned long long) ((act_cycles * ARM_APPROX_DRAM_BYTES_PER_ACTIVE_CYCLE) + 0.5);
 #ifndef MONITOR_CPU_PAPI_FLOPS
@@ -114,8 +119,6 @@ void dcgm_accumulate_from_util_sample(int i, struct dcgm_cpu_sample *sample,
     g_dcgm_fp_sca_s[i] += (unsigned long long) (flops32_sca + 0.5);
     g_dcgm_fp_128_s[i] += (unsigned long long) (flops32_vec / 4.0 + 0.5);
   }
-#else
-  (void)ref_cycles;
 #endif
 }
 

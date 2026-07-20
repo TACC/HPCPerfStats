@@ -13,6 +13,7 @@
 #include "stats.h"
 #include "msr_io.h"
 #include "likwid_pmc_adapter.h"
+#include "likwid_pmc_schema_map.h"
 #include "amd64_pmc.h"
 
 #ifdef HAVE_LIKWID
@@ -158,16 +159,19 @@ err:
 static void set_counter_by_name(struct stats *stats, const char *counter_name,
                                 unsigned long long value)
 {
+  int fixc;
+
   if (counter_name == NULL || stats == NULL)
     return;
-  if (strcmp(counter_name, "fixc0") == 0)
+  if (likwid_pmc_result_is_invalid(value))
+    return;
+  fixc = likwid_pmc_fixc_index(counter_name);
+  if (fixc == 0)
     stats_set(stats, "instr_retired", value);
-  else if (strcmp(counter_name, "fixc1") == 0)
+  else if (fixc == 1)
     stats_set(stats, "aperf", value);
-  else if (strcmp(counter_name, "fixc2") == 0)
+  else if (fixc == 2)
     stats_set(stats, "mperf", value);
-  else
-    (void)value;
 }
 
 #ifdef HAVE_LIKWID
@@ -198,31 +202,42 @@ static void likwid_pmc_adapter_apply_one_event(struct stats *stats,
                                                 int *have_fixed1,
                                                 int *have_fixed2)
 {
+  char keybuf[128];
+  const char *schema_key;
+  int fixc;
+
+  if (likwid_pmc_result_is_invalid(val))
+    return;
+
   set_counter_by_name(stats, counter_name, val);
-  if (counter_name != NULL && strcmp(counter_name, "fixc0") == 0) {
+  fixc = likwid_pmc_fixc_index(counter_name);
+  if (fixc == 0) {
     *inst_retired = val;
     *have_fixed0 = 1;
     *have_inst = 1;
-  } else if (counter_name != NULL && strcmp(counter_name, "fixc1") == 0) {
+  } else if (fixc == 1) {
     *aperf = val;
     *have_fixed1 = 1;
     *have_aperf = 1;
-  } else if (counter_name != NULL && strcmp(counter_name, "fixc2") == 0) {
+  } else if (fixc == 2) {
     *mperf = val;
     *have_fixed2 = 1;
     *have_mperf = 1;
   }
   if (event_name == NULL)
     return;
-  stats_set(stats, event_name, val);
-  if (strcmp(event_name, "instr_retired_any") == 0 ||
-      strcmp(event_name, "retired_instructions") == 0) {
+  schema_key = likwid_pmc_schema_key_from_event(event_name, keybuf, sizeof(keybuf));
+  if (schema_key == NULL)
+    return;
+  stats_set(stats, schema_key, val);
+  if (strcmp(schema_key, "instr_retired_any") == 0 ||
+      strcmp(schema_key, "retired_instructions") == 0) {
     *inst_retired = val;
     *have_inst = 1;
-  } else if (strcmp(event_name, "cycles_unhalted_core") == 0) {
+  } else if (strcmp(schema_key, "cycles_unhalted_core") == 0) {
     *aperf = val;
     *have_aperf = 1;
-  } else if (strcmp(event_name, "cycles_unhalted_ref") == 0) {
+  } else if (strcmp(schema_key, "cycles_unhalted_ref") == 0) {
     *mperf = val;
     *have_mperf = 1;
   }

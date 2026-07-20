@@ -108,6 +108,12 @@ static void test_watts_dbl_to_ull(void)
   assert(dcgm_watts_dbl_to_ull(0.0) == 0ULL);
   assert(dcgm_watts_dbl_to_ull(50.4) == 50ULL);
   assert(dcgm_watts_dbl_to_ull(50.6) == 51ULL);
+  /* DCGM_FP64_BLANK and blank-family must not emit as watts. */
+  assert(dcgm_fp64_value_is_blank(140737488355328.0));
+  assert(dcgm_fp64_value_is_blank(140737488355329.0));
+  assert(!dcgm_fp64_value_is_blank(500.0));
+  assert(dcgm_watts_dbl_to_ull(140737488355328.0) == 0ULL);
+  assert(dcgm_watts_dbl_to_ull(140737488355330.0) == 0ULL);
 }
 
 int main(void)
