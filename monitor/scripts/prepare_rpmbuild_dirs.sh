@@ -263,18 +263,14 @@ echo "Build binary and source RPMs with:"
 if test "${debug_build}" = "1"; then
   echo ""
   echo "Build, install, and validate /dev/shm (from ${MONITOR_DIR}):"
-  echo "  ${debug_rpmbuild} \\"
-  echo "    && ./scripts/rpm_debug_shm_verify.sh"
-  echo ""
-  echo "Re-validate only (RPM installed, daemon running):"
-  echo "  SKIP_INSTALL=1 ./scripts/rpm_debug_shm_verify.sh"
+  echo "  ${debug_rpmbuild} && ./scripts/rpm_debug_shm_verify.sh"
 else
   echo ""
   echo "Recommended (release / production):"
   echo "  ${release_rpmbuild}"
   echo ""
   echo "Optional debug (symbols + --enable-debug /dev/shm mirror):"
-  echo "  ${debug_rpmbuild}"
+  echo "  ${debug_rpmbuild} && ./scripts/rpm_debug_shm_verify.sh"
   cat <<EOF
 
 DEBUG /dev/shm mirror (debug RPM only):
