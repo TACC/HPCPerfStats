@@ -1,6 +1,5 @@
 import type { MouseEvent } from "react";
 import {
-  hrefFromPathAndSearch,
   replacePathIfChanged,
   type ReplacePathOptions,
 } from "./replace-path-if-changed";
@@ -63,11 +62,4 @@ export function softPresentationClick(
     searchParamsFromSamePathHref(href, pathname),
     currentSearchParams,
   );
-}
-
-export function softPresentationHref(
-  pathname: string,
-  params: URLSearchParams,
-): string {
-  return hrefFromPathAndSearch(pathname, params);
 }
