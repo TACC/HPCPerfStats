@@ -391,7 +391,7 @@ def default_devices_for_type(type_name: str) -> list[str] | None:
     if type_name == "host_cpu":
         cpus = probe_cpu_devices()
         return cpus if cpus else None
-    if type_name == "cpu_counter_metrics":
+    if type_name in ("host_cpu_hw", "cpu_counter_metrics"):
         cpus = probe_cpu_devices()
         return cpus if cpus else None
     if type_name == "host_net":

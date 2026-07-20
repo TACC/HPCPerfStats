@@ -32,6 +32,7 @@ from lib.tacc_system_profiles import (  # noqa: E402
     resolve_system,
 )
 from lib.value_plausibility import check_plausibility  # noqa: E402
+from lib.papi_shm_validate import check_papi_schema_contract  # noqa: E402
 
 
 def load_json(path: Path) -> dict:
@@ -508,6 +509,11 @@ def main() -> int:
     if full_body:
         sample_bodies["full"] = full_body
     validate_sample_hosts(manifest, sample_bodies, errors)
+
+    if not errors:
+        papi_notes, papi_err = check_papi_schema_contract(manifest, caps=caps)
+        notes.extend(papi_notes)
+        errors.extend(papi_err)
 
     if not errors:
         p_notes, p_warn, p_err = check_plausibility(

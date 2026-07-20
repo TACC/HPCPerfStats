@@ -48,6 +48,7 @@ Use the **Read** tool on the listed `HPCPerfStats/monitor/cursor-rules/<file>.md
 | `HPCPerfStats/monitor/src/**` | `monitor-c-conventions.mdc`, `monitor-jitter-and-fidelity-priority.mdc`, `monitor-c-refactor-standards.mdc` |
 | `HPCPerfStats/monitor/src/*ib*.c`, `opa.c` / `opa_sysfs.*`, IB sysfs parsers | `monitor-ib-sysfs-parsing.mdc` |
 | `HPCPerfStats/monitor/src/*dcgm*`, `*gpu*` | `monitor-dcgm-integration.mdc` |
+| `HPCPerfStats/monitor/src/*papi*`, `cpu_counter_metrics*` (PAPI hybrid / FLOPs map) | `monitor-papi-integration.mdc` |
 | `HPCPerfStats/monitor/src/*intel_gpu*`, `*xpum*`, `third_party/intel-xpum/**` | `monitor-xpum-integration.mdc` |
 | DEBUG shm mirror paths | `monitor-debug-shm.mdc` |
 | Shm message correctness scripts, slug goldens | `monitor-shm-message-correctness.mdc` |

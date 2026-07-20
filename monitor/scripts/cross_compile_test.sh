@@ -14,12 +14,14 @@ LIBEV_VER="${LIBEV_VER:-4.33}"
 RABBITMQ_VER="${RABBITMQ_VER:-0.17.0}"
 LIKWID_TAG="${LIKWID_TAG:-5.5.1}"
 LIBBPF_VER="${LIBBPF_VER:-1.7.0}"
+PAPI_VER="${PAPI_VER:-7.2.0}"
 QEMU_VER="${QEMU_VER:-11.0.1}"
 
 LIBEV_URL_FMT="${LIBEV_URL_FMT:-http://dist.schmorp.de/libev/libev-%s.tar.gz}"
 RABBITMQ_C_URL_FMT="${RABBITMQ_C_URL_FMT:-https://github.com/alanxz/rabbitmq-c/archive/refs/tags/v%s.tar.gz}"
 LIKWID_URL_FMT="${LIKWID_URL_FMT:-https://github.com/RRZE-HPC/likwid/archive/refs/tags/v%s.tar.gz}"
 LIBBPF_URL_FMT="${LIBBPF_URL_FMT:-https://github.com/libbpf/libbpf/archive/refs/tags/v%s.tar.gz}"
+PAPI_URL_FMT="${PAPI_URL_FMT:-https://icl.utk.edu/projects/papi/downloads/papi-%s.tar.gz}"
 QEMU_URL_FMT="${QEMU_URL_FMT:-https://download.qemu.org/qemu-%s.tar.xz}"
 
 TARGETS="${TARGETS:-aarch64-linux-gnu powerpc64le-linux-gnu riscv64-linux-gnu}"
@@ -1016,6 +1018,34 @@ build_foreign_libbpf() {
     bash -c "set -euo pipefail; cd '${d}/src' && make -j'${JOBS}' BUILD_STATIC_ONLY=y OBJDIR=build DESTDIR= && make install PREFIX='${prefix}' BUILD_STATIC_ONLY=y OBJDIR=build DESTDIR="
 }
 
+build_foreign_papi() {
+  local target="$1"
+  local sysroot="$2"
+  local srcroot prefix d t
+  srcroot="$(foreign_src_root "${target}")"
+  prefix="$(foreign_prefix "${target}")"
+  d="${srcroot}/papi-${PAPI_VER}"
+  t="${srcroot}/papi-${PAPI_VER}.tar.gz"
+
+  mkdir -p "${srcroot}"
+  if test ! -d "${d}"; then
+    fetch_url "$(printf "${PAPI_URL_FMT}" "${PAPI_VER}")" "${t}"
+    extract_tar_if_missing_dir "${t}" "${d}" "${srcroot}"
+  fi
+  test -d "${d}/src" || fail "Could not locate PAPI source directory at ${d}/src"
+
+  run_foreign "${target}" "${sysroot}" bash -c "
+    set -euo pipefail
+    cd '${d}/src'
+    rm -f Makefile config.status
+    export CC=gcc
+    export CFLAGS='-O2 -fPIC'
+    ./configure --prefix='${prefix}' --with-static-lib=yes --with-shared-lib=no --with-tests=no --disable-fortran
+    make -j'${JOBS}' libpapi.a
+    make install-lib
+  "
+}
+
 build_foreign_deps() {
   local target="$1"
   local sysroot="$2"
@@ -1034,7 +1064,8 @@ build_foreign_deps() {
   if is_x86_triplet "${target}"; then
     build_foreign_likwid "${target}" "${sysroot}" || return $?
   else
-    echo "Foreign ${target}: skipping LIKWID for non-x86 triplet"
+    echo "Foreign ${target}: skipping LIKWID for non-x86 triplet; building PAPI"
+    build_foreign_papi "${target}" "${sysroot}" || return $?
   fi
   if test "${WANT_METRIC_PROFILER_EBPF}" = "1"; then
     build_foreign_libbpf "${target}" "${sysroot}" || return $?

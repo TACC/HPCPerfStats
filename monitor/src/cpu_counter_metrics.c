@@ -21,6 +21,9 @@
 #include "cpu_counter_metrics_dcgm_state.h"
 #include "cpu_counter_metrics_dcgm_publish.h"
 #include "cpu_counter_metrics_dcgm_util.h"
+#ifdef MONITOR_CPU_PAPI_FLOPS
+#include "cpu_counter_metrics_papi.h"
+#endif
 #else
 #include "amd64_pmc.h"
 #undef KEYS
@@ -702,6 +705,9 @@ static void dcgm_cpu_watch_cleanup(void)
 static void dcgm_backend_cleanup(void)
 {
   dcgm_cpu_watch_cleanup();
+#ifdef MONITOR_CPU_PAPI_FLOPS
+  cpu_counter_metrics_papi_cleanup();
+#endif
 
   free(g_dcgm_ctr0); g_dcgm_ctr0 = NULL;
   free(g_dcgm_ctr1); g_dcgm_ctr1 = NULL;
@@ -882,6 +888,10 @@ static int dcgm_backend_begin(struct stats_type *type)
     TRACE("DCGM CPU socket power field watch not active; using entity reads\n");
   g_dcgm_mono_prev_us = 0;
   g_dcgm_stat_seeded = 0;
+#ifdef MONITOR_CPU_PAPI_FLOPS
+  if (cpu_counter_metrics_papi_begin(type) != 0)
+    TRACE("PAPI FLOPs/cycles begin returned error; continuing with DCGM util/power only\n");
+#endif
   g_dcgm_ready = 1;
   g_dcgm_retry_after = 0;
   return 0;
@@ -1086,6 +1096,10 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
 
       dcgm_accumulate_from_util_sample(i, &sample, delta_us);
       publish_dcgm_cpu_stats(stats, i);
+#ifdef MONITOR_CPU_PAPI_FLOPS
+      if (cpu_counter_metrics_papi_ready())
+	cpu_counter_metrics_papi_collect_cpu(stats, i);
+#endif
       continue;
 #else
       uint64_t ctls[8] = {0};

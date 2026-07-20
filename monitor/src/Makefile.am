@@ -237,6 +237,14 @@ TYPES += \
 	cpu_counter_metrics_dcgm_state.h \
 	cpu_counter_metrics_dcgm_util.c \
 	cpu_counter_metrics_dcgm_util.h
+if CPU_PAPI_FLOPS
+TYPES += \
+	cpu_counter_metrics_papi.c \
+	cpu_counter_metrics_papi_map.c
+hpcperfstatsd_SOURCES += \
+	cpu_counter_metrics_papi.h \
+	cpu_counter_metrics_papi_map.h
+endif
 if MONITOR_ARCH_ARM
 TYPES += \
 	arm_imc.c

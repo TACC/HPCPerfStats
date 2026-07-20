@@ -108,10 +108,19 @@ static void test_accumulate_from_util_sample(void)
   assert(s_ctr2[0] == 10000000ULL);
   assert(s_ctr3[0] == 5000000ULL);
   assert(s_ctr4[0] == 5000000ULL);
+#ifdef MONITOR_CPU_PAPI_FLOPS
+  /* Hybrid: util still accumulates; synthetic cycles/FLOPs stay 0. */
+  assert(s_ctr5[0] == 0ULL);
+  assert(s_mperf[0] == 0ULL);
+  assert(s_aperf[0] == 0ULL);
+  assert(s_inst[0] == 0ULL);
+  assert(s_arm_flops[0] == 0ULL);
+#else
   assert(s_ctr5[0] == 2000000000ULL);
   assert(s_mperf[0] == 2000000000ULL);
   assert(s_aperf[0] == 1000000000ULL);
   assert(s_inst[0] == 600000000ULL);
+#endif
 
   dcgm_accumulate_from_util_sample(0, &sample, 0);
   assert(s_ctr0[0] == 50000000ULL);
@@ -135,9 +144,15 @@ static void test_publish_dcgm_cpu_stats(void)
 
   publish_dcgm_cpu_stats(&g_dummy_stats, 0);
   assert(test_stats_stub_find(&stub, "cpu_util_total_accum_us", &val) && val == 111ULL);
+#ifdef MONITOR_CPU_PAPI_FLOPS
+  assert(!test_stats_stub_find(&stub, "instr_retired", &val));
+  assert(!test_stats_stub_find(&stub, "aperf", &val));
+  assert(!test_stats_stub_find(&stub, "mperf", &val));
+#else
   assert(test_stats_stub_find(&stub, "instr_retired", &val) && val == 222ULL);
   assert(test_stats_stub_find(&stub, "aperf", &val) && val == 333ULL);
   assert(test_stats_stub_find(&stub, "mperf", &val) && val == 444ULL);
+#endif
   assert(test_stats_stub_find(&stub, "dcgm_cpu_power_util_w", &val) && val == 51ULL);
   assert(test_stats_stub_find(&stub, "dcgm_cpu_power_limit_w", &val) && val == 199ULL);
 

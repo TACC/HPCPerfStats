@@ -41,6 +41,10 @@ def validate_devices_in_payload(
             raise ValueError(
                 f"host_cpu: {len(seen[type_name])} rows, expected {len(devices)} CPU devices"
             )
+        if type_name == "host_cpu_hw" and len(seen[type_name]) != len(devices):
+            raise ValueError(
+                f"host_cpu_hw: {len(seen[type_name])} rows, expected {len(devices)} CPU devices"
+            )
         if type_name in ("host_mem", "host_numa") and len(seen[type_name]) != len(devices):
             raise ValueError(
                 f"{type_name}: {len(seen[type_name])} rows, expected {len(devices)} NUMA nodes"

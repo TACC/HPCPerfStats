@@ -431,6 +431,18 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
     },
     {
+        "id": "monitor_papi",
+        "patterns": [
+            "HPCPerfStats/monitor/src/*papi*",
+            "HPCPerfStats/monitor/src/cpu_counter_metrics*",
+            "monitor/src/*papi*",
+            "monitor/src/cpu_counter_metrics*",
+        ],
+        "rules": [
+            "monitor-papi-integration.mdc",
+        ],
+    },
+    {
         "id": "monitor_xpum",
         "patterns": [
             "HPCPerfStats/monitor/src/*intel_gpu*",

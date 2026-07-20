@@ -149,6 +149,19 @@ def keys_in_file(path: Path, macro_cache: dict[tuple[str, str], set[str]]) -> se
     return keys
 
 
+def _resolve_st_name_macro(macro: str, c_path: Path) -> str | None:
+    """Resolve .st_name = FOO when FOO is #define FOO \"literal\" in sibling .h or .c."""
+    candidates = [c_path.with_suffix(".h"), c_path]
+    pat = re.compile(rf'#define\s+{re.escape(macro)}\s+"([^"]+)"')
+    for path in candidates:
+        if not path.is_file():
+            continue
+        m = pat.search(path.read_text(encoding="utf-8", errors="replace"))
+        if m:
+            return m.group(1)
+    return None
+
+
 def collect_emitted_by_type(*, include_ingest_aliases: bool = True) -> dict[str, set[str]]:
     by_type: dict[str, set[str]] = defaultdict(set)
     macro_cache: dict[tuple[str, str], set[str]] = {}
@@ -158,6 +171,10 @@ def collect_emitted_by_type(*, include_ingest_aliases: bool = True) -> dict[str,
         text = path.read_text(encoding="utf-8", errors="replace")
         for m in re.finditer(r'\.st_name\s*=\s*"([^"]+)"', text):
             type_files.append((m.group(1), path))
+        for m in re.finditer(r'\.st_name\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*,', text):
+            resolved = _resolve_st_name_macro(m.group(1), path)
+            if resolved:
+                type_files.append((resolved, path))
 
     for st_name, path in type_files:
         by_type[st_name] |= keys_in_file(path, macro_cache)

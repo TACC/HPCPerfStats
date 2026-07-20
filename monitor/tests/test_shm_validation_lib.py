@@ -585,10 +585,15 @@ class TaccSystemProfilesTests(unittest.TestCase):
             check_profile_type_contract({"host_ib", "cpu"}, "gg"), []
         )
         self.assertEqual(
-            check_profile_type_contract({"nvidia_gpu", "host_ib"}, "gh"), []
+            check_profile_type_contract(
+                {"nvidia_gpu", "host_ib", "host_cpu_hw"}, "gh"
+            ),
+            [],
         )
         miss = check_profile_type_contract({"cpu"}, "gh")
         self.assertTrue(any("missing" in e for e in miss))
+        miss_hw = check_profile_type_contract({"nvidia_gpu", "host_ib"}, "gh")
+        self.assertTrue(any("host_cpu_hw" in e for e in miss_hw))
         opa = check_profile_type_contract({"host_ib", "host_opa"}, "gg")
         self.assertTrue(any("forbidden" in e for e in opa))
 
@@ -596,6 +601,129 @@ class TaccSystemProfilesTests(unittest.TestCase):
         self.assertEqual(
             check_profile_type_contract(set(), "h100", relax=True), []
         )
+
+
+class PapiShmValidateTests(unittest.TestCase):
+    def _papi_manifest(self, *, keys: list[str] | None = None, hybrid: bool = True) -> dict:
+        required = [
+            "aperf",
+            "mperf",
+            "cpu_clock_est_cycles",
+            "fp_arith_inst_retired_scalar_single",
+            "fp_arith_inst_retired_scalar_double",
+            "arm_est_flops",
+            "arm_int8_ops",
+            "arm_int16_ops",
+        ]
+        names = keys if keys is not None else required
+        doc: dict = {
+            "capability_slug": "test",
+            "enable_slow_tier": True,
+            "types": {
+                "host_cpu_hw": {
+                    "schema_keys": [f"{k},E" for k in names],
+                    "schema_key_names": names,
+                    "devices": ["0"],
+                }
+            },
+        }
+        if hybrid:
+            doc["compile_capabilities"] = {
+                "configure": {"papi_hybrid": True, "cpu_backend": "dcgm"}
+            }
+        return doc
+
+    def test_schema_contract_pass(self) -> None:
+        from lib.papi_shm_validate import check_papi_schema_contract
+
+        notes, errors = check_papi_schema_contract(self._papi_manifest())
+        self.assertEqual(errors, [])
+        self.assertTrue(any("PASS papi schema" in n for n in notes))
+
+    def test_schema_contract_missing_int_keys(self) -> None:
+        from lib.papi_shm_validate import check_papi_schema_contract
+
+        keys = [
+            "aperf",
+            "mperf",
+            "cpu_clock_est_cycles",
+            "fp_arith_inst_retired_scalar_single",
+            "fp_arith_inst_retired_scalar_double",
+            "arm_est_flops",
+        ]
+        _, errors = check_papi_schema_contract(self._papi_manifest(keys=keys))
+        self.assertTrue(any("arm_int8_ops" in e for e in errors))
+        self.assertTrue(any("arm_int16_ops" in e for e in errors))
+
+    def test_hybrid_requires_host_cpu_hw(self) -> None:
+        from lib.papi_shm_validate import check_papi_schema_contract
+
+        man = {
+            "types": {},
+            "compile_capabilities": {"configure": {"papi_hybrid": True}},
+        }
+        _, errors = check_papi_schema_contract(man)
+        self.assertTrue(any("missing type" in e for e in errors))
+
+    def test_flops_invariant_warn(self) -> None:
+        from lib.papi_shm_validate import check_papi_row_invariants
+
+        warns = check_papi_row_invariants(
+            {
+                "fp_arith_inst_retired_scalar_single": 10,
+                "fp_arith_inst_retired_scalar_double": 20,
+                "arm_est_flops": 99,
+            },
+            type_name="host_cpu_hw",
+            dev="0",
+        )
+        self.assertTrue(any("arm_est_flops" in w for w in warns))
+
+    def test_flops_invariant_ok(self) -> None:
+        from lib.papi_shm_validate import check_papi_row_invariants
+
+        warns = check_papi_row_invariants(
+            {
+                "fp_arith_inst_retired_scalar_single": 10,
+                "fp_arith_inst_retired_scalar_double": 20,
+                "arm_est_flops": 30,
+                "arm_int8_ops": 1,
+                "arm_int16_ops": 2,
+                "aperf": 5,
+                "mperf": 5,
+                "cpu_clock_est_cycles": 5,
+            },
+            type_name="host_cpu_hw",
+            dev="0",
+        )
+        self.assertEqual(warns, [])
+
+    def test_host_cpu_hw_devices_probe(self) -> None:
+        from lib.host_live_probes import default_devices_for_type
+
+        with patch(
+            "lib.host_live_probes.probe_cpu_devices", return_value=["0", "1", "2"]
+        ):
+            self.assertEqual(default_devices_for_type("host_cpu_hw"), ["0", "1", "2"])
+
+    def test_plausibility_flags_papi_flops_mismatch(self) -> None:
+        man = self._papi_manifest()
+        schema = {"host_cpu_hw": man["types"]["host_cpu_hw"]["schema_keys"]}
+        vals = ["5", "5", "5", "10", "20", "99", "1", "2"]
+        body = (
+            "1234567890.0 0 golden_host\n"
+            f"host_cpu_hw 0 @full {' '.join(vals)}\n"
+        )
+        _, warnings, _ = check_plausibility(
+            man,
+            schema,
+            full_body=body,
+            fast_body=None,
+            schema_body=None,
+            no_freshness=True,
+            strict=False,
+        )
+        self.assertTrue(any("arm_est_flops" in w for w in warnings))
 
 
 class EmitBuildCapabilitiesFleetTests(unittest.TestCase):
@@ -661,12 +789,26 @@ class EmitBuildCapabilitiesFleetTests(unittest.TestCase):
                 "-DMONITOR_OPA_MAD_DLOPEN -DMONITOR_CPU_BACKEND_LIKWID -DDEBUG\n",
                 encoding="utf-8",
             )
-            features, cpu, debug, ibdyn, opadyn = ebc._parse_src_makefile(td)
+            features, cpu, debug, ibdyn, opadyn, papi = ebc._parse_src_makefile(td)
             self.assertIn("INTEL_GPU", features)
             self.assertTrue(ibdyn)
             self.assertTrue(opadyn)
             self.assertTrue(debug)
             self.assertEqual(cpu, "likwid")
+            self.assertFalse(papi)
+
+    def test_parse_makefile_papi_hybrid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            td = Path(tmp)
+            src = td / "src"
+            src.mkdir()
+            (src / "Makefile").write_text(
+                "DEFS = -DMONITOR_CPU_BACKEND_DCGM -DMONITOR_CPU_PAPI_FLOPS\n",
+                encoding="utf-8",
+            )
+            _f, cpu, _d, _i, _o, papi = ebc._parse_src_makefile(td)
+            self.assertEqual(cpu, "dcgm")
+            self.assertTrue(papi)
 
 
 if __name__ == "__main__":

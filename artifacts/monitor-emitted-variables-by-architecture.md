@@ -4,7 +4,7 @@ Inventory of variables emitted by **hpcperfstatsd** (`HPCPerfStats/monitor/`), o
 
 **Source of truth:** `KEYS` / `SCHEMA_DEF` macros in `monitor/src/` (`stats.h`), registered in `stats_registry.c`. Naming rules: `HPCPerfStats/docs/MONITOR_NAMING_SCHEME.md`.
 
-Generated: 2026-06-04 (`docs/regenerate_monitor_emitted_variables_by_architecture.py`).
+Generated: 2026-07-19 (`docs/regenerate_monitor_emitted_variables_by_architecture.py`).
 
 **Sample row format:**
 
@@ -258,6 +258,7 @@ Present in every normal daemon build (`stats_registry.c`).
 
 - `cpu_peak_dram_bw_bytes_per_s`
 - `cpu_peak_fp64_flops_per_s`
+- `cpu_peak_hbm_bw_bytes_per_s`
 - `cpu_peak_source`
 - `gpu_peak_fp64_flops_per_s`
 - `gpu_peak_io_link_bw_bytes_per_s`
@@ -270,6 +271,49 @@ Present in every normal daemon build (`stats_registry.c`).
 ## 2. x86_64 (LIKWID + hardware enabled)
 
 Requires `--with-cpu-counter-backend=likwid` (x86 default) and `--enable-hardware`.
+
+### CPU counters — `host_cpu_hw` (per CPU)
+
+*LIKWID x86 path; schema includes ARM/DCGM placeholders.*
+
+- `aperf`
+- `arm_dram_bw_bytes`
+- `arm_est_flops`
+- `arm_int16_ops`
+- `arm_int8_ops`
+- `cpu_clock_est_cycles`
+- `cpu_util_irq_accum_us`
+- `cpu_util_nice_accum_us`
+- `cpu_util_sys_accum_us`
+- `cpu_util_total_accum_us`
+- `cpu_util_user_accum_us`
+- `cycles_unhalted_core`
+- `cycles_unhalted_ref`
+- `dcgm_cpu_power_limit_w`
+- `dcgm_cpu_power_util_w`
+- `dram_chan0_bytes`
+- `dram_chan1_bytes`
+- `dram_chan2_bytes`
+- `dram_chan3_bytes`
+- `fp_arith_inst_retired_128b_packed_double`
+- `fp_arith_inst_retired_128b_packed_single`
+- `fp_arith_inst_retired_256b_packed_double`
+- `fp_arith_inst_retired_256b_packed_single`
+- `fp_arith_inst_retired_512b_packed_double`
+- `fp_arith_inst_retired_512b_packed_single`
+- `fp_arith_inst_retired_scalar_double`
+- `fp_arith_inst_retired_scalar_single`
+- `instr_retired`
+- `instr_retired_any`
+- `l1d_replacement`
+- `ls_dispatch`
+- `mem_load_uops_retired_l1_hit`
+- `mem_load_uops_retired_l2_hit`
+- `mem_load_uops_retired_llc_hit`
+- `mperf`
+- `retired_branch_instr`
+- `retired_instructions`
+- `retired_misp_branch_instr`
 
 ### Energy — `intel_x86_rapl` (per socket, Intel)
 
@@ -335,78 +379,12 @@ Requires `--with-cpu-counter-backend=likwid` (x86 default) and `--enable-hardwar
 - `resource_stalls_any`
 - `simd_fp_256_packed_double`
 
-### Intel CBO SNB/IVB — `intel_x86_uncore_cbo_snb` (per core index)
-
-*Same keys as `intel_x86_uncore_cbo_ivb`.*
-
-- `counter0_occupancy`
-- `llc_lookup_data_read`
-- `llc_lookup_write`
-- `ring_iv_used`
-
-### Intel CBO SNB/IVB — `intel_x86_uncore_cbo_ivb` (per core index)
-
-- `counter0_occupancy`
-- `llc_lookup_data_read`
-- `llc_lookup_write`
-- `ring_iv_used`
-
-### Intel CBO HSW/BDW — `intel_x86_uncore_cbo_hsw` (per core index)
-
-*Same keys as `intel_x86_uncore_cbo_bdw`.*
-
-- `llc_lookup_data_read`
-- `llc_lookup_write`
-- `ring_iv_used`
-- `rx_r_occupancy`
-
-### Intel CBO HSW/BDW — `intel_x86_uncore_cbo_bdw` (per core index)
-
-- `llc_lookup_data_read`
-- `llc_lookup_write`
-- `ring_iv_used`
-- `rx_r_occupancy`
-
 ### Intel CHA SKX — `intel_x86_uncore_cha_skx` (per core index)
 
 - `bypass_cha_imc_all`
 - `llc_lookup_data_read_local`
 - `llc_lookup_write`
 - `sf_evictions_mes`
-
-### Intel IMC SNB — `intel_x86_uncore_imc_snb` (per PCI device)
-
-*Same keys as IVB/HSW/BDW IMC variants.*
-
-- `dram_act_count`
-- `dram_cas_reads`
-- `dram_cas_writes`
-- `dram_fixed_ctr`
-- `dram_pre_count_miss`
-
-### Intel IMC IVB — `intel_x86_uncore_imc_ivb` (per PCI device)
-
-- `dram_act_count`
-- `dram_cas_reads`
-- `dram_cas_writes`
-- `dram_fixed_ctr`
-- `dram_pre_count_miss`
-
-### Intel IMC HSW — `intel_x86_uncore_imc_hsw` (per PCI device)
-
-- `dram_act_count`
-- `dram_cas_reads`
-- `dram_cas_writes`
-- `dram_fixed_ctr`
-- `dram_pre_count_miss`
-
-### Intel IMC BDW — `intel_x86_uncore_imc_bdw` (per PCI device)
-
-- `dram_act_count`
-- `dram_cas_reads`
-- `dram_cas_writes`
-- `dram_fixed_ctr`
-- `dram_pre_count_miss`
 
 ### Intel IMC SKX — `intel_x86_uncore_imc_skx` (per PCI device)
 
@@ -415,112 +393,59 @@ Requires `--with-cpu-counter-backend=likwid` (x86 default) and `--enable-hardwar
 - `dram_cas_writes`
 - `dram_pre_count_miss`
 
-### Intel QPI SNB — `intel_x86_uncore_qpi_snb`
-
-*Same keys across SNB/IVB/HSW/BDW QPI types.*
-
-- `g1_drs_data`
-- `g2_ncb_data`
-- `tx_l_flits_g1_hom`
-- `tx_l_flits_g1_snp`
-
-### Intel QPI IVB — `intel_x86_uncore_qpi_ivb`
-
-- `g1_drs_data`
-- `g2_ncb_data`
-- `tx_l_flits_g1_hom`
-- `tx_l_flits_g1_snp`
-
-### Intel QPI HSW — `intel_x86_uncore_qpi_hsw`
-
-- `g1_drs_data`
-- `g2_ncb_data`
-- `tx_l_flits_g1_hom`
-- `tx_l_flits_g1_snp`
-
-### Intel QPI BDW — `intel_x86_uncore_qpi_bdw`
-
-- `g1_drs_data`
-- `g2_ncb_data`
-- `tx_l_flits_g1_hom`
-- `tx_l_flits_g1_snp`
-
-### Intel HA SNB — `intel_x86_uncore_hau_snb`
-
-*Same keys across SNB/IVB/HSW/BDW HA types.*
-
-- `clockticks`
-- `imc_writes`
-- `requests_reads`
-- `requests_writes`
-
-### Intel HA IVB — `intel_x86_uncore_hau_ivb`
-
-- `clockticks`
-- `imc_writes`
-- `requests_reads`
-- `requests_writes`
-
-### Intel HA HSW — `intel_x86_uncore_hau_hsw`
-
-- `clockticks`
-- `imc_writes`
-- `requests_reads`
-- `requests_writes`
-
-### Intel HA BDW — `intel_x86_uncore_hau_bdw`
-
-- `clockticks`
-- `imc_writes`
-- `requests_reads`
-- `requests_writes`
-
-### Intel R2PCI SNB — `intel_x86_uncore_r2pci_snb`
-
-*Same keys across SNB/IVB/HSW/BDW R2PCI types.*
-
-- `ring_ad_used_all`
-- `ring_ak_used_all`
-- `ring_bl_used_all`
-- `tx_r_inserts`
-
-### Intel R2PCI IVB — `intel_x86_uncore_r2pci_ivb`
-
-- `ring_ad_used_all`
-- `ring_ak_used_all`
-- `ring_bl_used_all`
-- `tx_r_inserts`
-
-### Intel R2PCI HSW — `intel_x86_uncore_r2pci_hsw`
-
-- `ring_ad_used_all`
-- `ring_ak_used_all`
-- `ring_bl_used_all`
-- `tx_r_inserts`
-
-### Intel R2PCI BDW — `intel_x86_uncore_r2pci_bdw`
-
-- `ring_ad_used_all`
-- `ring_ak_used_all`
-- `ring_bl_used_all`
-- `tx_r_inserts`
-
-### Intel PCU — `intel_x86_pcu` (per socket; SNB–BDW)
-
-*Uses `pcu_ctr0`/`pcu_ctr1` for fixed PCU counters.*
-
-- `freq_max_power_cycles`
-- `freq_max_temp_cycles`
-- `freq_min_io_cycles`
-- `freq_min_snoop_cycles`
-- `pcu_ctr0`
-- `pcu_ctr1`
-
 ---
 
 ## 3. aarch64 / ARM (DCGM + hardware)
 
 Requires `--with-cpu-counter-backend=dcgm` (non-x86 default) and `--enable-hardware`.
+
+### CPU counters — `host_cpu_hw` (per CPU)
+
+*DCGM backend; many x86 PMU schema slots may be zero.*
+
+- `aperf`
+- `arm_dram_bw_bytes`
+- `arm_est_flops`
+- `arm_int16_ops`
+- `arm_int8_ops`
+- `cpu_clock_est_cycles`
+- `cpu_util_irq_accum_us`
+- `cpu_util_nice_accum_us`
+- `cpu_util_sys_accum_us`
+- `cpu_util_total_accum_us`
+- `cpu_util_user_accum_us`
+- `cycles_unhalted_core`
+- `cycles_unhalted_ref`
+- `dcgm_cpu_power_limit_w`
+- `dcgm_cpu_power_util_w`
+- `dram_chan0_bytes`
+- `dram_chan1_bytes`
+- `dram_chan2_bytes`
+- `dram_chan3_bytes`
+- `fp_arith_inst_retired_128b_packed_double`
+- `fp_arith_inst_retired_128b_packed_single`
+- `fp_arith_inst_retired_256b_packed_double`
+- `fp_arith_inst_retired_256b_packed_single`
+- `fp_arith_inst_retired_512b_packed_double`
+- `fp_arith_inst_retired_512b_packed_single`
+- `fp_arith_inst_retired_scalar_double`
+- `fp_arith_inst_retired_scalar_single`
+- `instr_retired`
+- `instr_retired_any`
+- `l1d_replacement`
+- `ls_dispatch`
+- `mem_load_uops_retired_l1_hit`
+- `mem_load_uops_retired_l2_hit`
+- `mem_load_uops_retired_llc_hit`
+- `mperf`
+- `retired_branch_instr`
+- `retired_instructions`
+- `retired_misp_branch_instr`
+
+### ARM memory controller — `arm_aarch64_imc` (per PMU device)
+
+- `dram_cas_reads`
+- `dram_cas_writes`
 
 ---
 
@@ -681,7 +606,7 @@ Requires `--with-cpu-counter-backend=dcgm` (non-x86 default) and `--enable-hardw
 | `arm_aarch64_imc` | — | — | ✓ | — | ARM host + DCGM |
 | GPU / IB ext / Lustre / OPA / MIC | — | if configured | if configured | if configured | respective `--enable-*` |
 
-**Approximate scale:** ~184 keys in common types; x86 hardware adds ~145 more across Intel/AMD types (generation-specific; one variant active per machine); optional subsystems add ~117 more.
+**Approximate scale:** ~185 keys in common types; x86 hardware adds ~93 more across Intel/AMD types (generation-specific; one variant active per machine); optional subsystems add ~117 more.
 
 ---
 

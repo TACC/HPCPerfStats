@@ -23,6 +23,8 @@ int main(void)
   assert(strstr(cpu_counter_schema_def, " aperf,") != NULL);
   assert(strstr(cpu_counter_schema_def, " dcgm_cpu_power_util_w,U=W") != NULL);
   assert(strstr(cpu_counter_schema_def, " dcgm_cpu_power_limit_w,U=W") != NULL);
+  assert(strstr(cpu_counter_schema_def, " arm_int8_ops,") != NULL);
+  assert(strstr(cpu_counter_schema_def, " arm_int16_ops,") != NULL);
   assert_forbidden_legacy_keys_absent(cpu_counter_schema_def);
   printf("test_cpu_counter_metrics_schema passed\n");
   return 0;

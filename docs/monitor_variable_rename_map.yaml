@@ -60,6 +60,8 @@ events:
   ACT_COUNT: dram_act_count
   APERF: aperf
   ARM_EST_FLOPS: arm_est_flops
+  ARM_INT8_OPS: arm_int8_ops
+  ARM_INT16_OPS: arm_int16_ops
   Active: active
   AnonHugePages: anon_huge_pages
   AnonPages: anon_pages

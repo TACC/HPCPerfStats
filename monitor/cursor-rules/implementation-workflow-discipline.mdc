@@ -39,6 +39,7 @@ Use these during **plan**, **implement**, **self-review**, and **verification** 
 | [monitor-shm-validation-probe-parity.mdc](monitor-shm-validation-probe-parity.mdc) | Collector `dev` ↔ `host_live_probes.py` sync |
 | [monitor-ib-sysfs-parsing.mdc](monitor-ib-sysfs-parsing.mdc) | IB port state parsers |
 | [monitor-xpum-integration.mdc](monitor-xpum-integration.mdc) | Intel PVC / XPU Manager (`intel_gpu`) |
+| [monitor-papi-integration.mdc](monitor-papi-integration.mdc) | aarch64 DCGM+PAPI hybrid FLOPs/cycles |
 | [monitor-cursor-rules-sync.mdc](monitor-cursor-rules-sync.mdc) | Edit both `.cursor/rules/` and `monitor/cursor-rules/` |
 | [python-venv-enforcement.mdc](python-venv-enforcement.mdc) | Python tooling: repo `.venv` |
 | [workspace-single-cursor-directory.mdc](workspace-single-cursor-directory.mdc) | Single `<workspace_root>/.cursor/`; symlink layout |

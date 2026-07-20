@@ -17,9 +17,9 @@ alwaysApply: false
 - **RAPL energy** (Intel/AMD `intel_rapl` / `amd64_rapl`): **LIKWID only** via `src/likwid_rapl.c` (`power_read` / `power_getEnergyUnit`). Do **not** reintroduce **libvariorum** or `variorum_get_energy_json` without an explicit product decision.
 - **PMU / CPU counters (x86)**: LIKWID through `cpu_counter_metrics.c` and `likwid_pmc_adapter.c`. The adapter uses **`ACCESSMODE_DIRECT`** so LIKWID can initialize RAPL; do not switch to `ACCESSMODE_PERF` without checking upstream LIKWID RAPL behavior.
 - **RabbitMQ / libev**: unchanged.
-- **DCGM / GPUPerfAPI**: unchanged for GPU and non-x86 CPU backends.
+- **DCGM / GPUPerfAPI / PAPI**: GPU path unchanged. Non-x86 CPU is **DCGM util/power + static PAPI** for SP/DP FLOPs, cycles, and int8/int16 ops (`MONITOR_CPU_PAPI_FLOPS`; see **`monitor-papi-integration.mdc`**).
 
-Pinned versions for scripted builds: see `HPCPerfStats/monitor/scripts/build_static_bundle.sh` (`STATIC_PIN_*`). The bundle installs **libev**, **rabbitmq-c**, and **LIKWID** static archives into `PREFIX` (no separate hwloc/jansson build for Variorum). **rabbitmq-c** tarballs are fetched from **`alanxz/rabbitmq-c`** (default `STATIC_PIN_RABBITMQ_C_URL_FMT`); override with **`RABBITMQ_C_URL_FMT`** for mirrors.
+Pinned versions for scripted builds: see `HPCPerfStats/monitor/scripts/build_static_bundle.sh` (`STATIC_PIN_*`). The bundle installs **libev**, **rabbitmq-c**, **LIKWID** (x86), and **PAPI** (non-x86) static archives into `PREFIX` (no separate hwloc/jansson build for Variorum). **rabbitmq-c** tarballs are fetched from **`alanxz/rabbitmq-c`** (default `STATIC_PIN_RABBITMQ_C_URL_FMT`); override with **`RABBITMQ_C_URL_FMT`** for mirrors.
 
 ## Static compile (`--enable-all-static`)
 

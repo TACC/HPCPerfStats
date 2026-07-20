@@ -48,7 +48,7 @@ _VISTA_CONTRACTS: dict[str, dict[str, set[str]]] = {
         "forbid": {"host_opa", "intel_gpu", "amd_gpu"},
     },
     "gh": {
-        "require": {"nvidia_gpu", "host_ib"},
+        "require": {"nvidia_gpu", "host_ib", "host_cpu_hw"},
         "forbid": {"host_opa", "intel_gpu", "amd_gpu"},
     },
 }

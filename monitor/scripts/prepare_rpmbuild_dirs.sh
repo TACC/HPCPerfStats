@@ -125,6 +125,7 @@ for distfile in \
   scripts/lib/listend_contract.py \
   scripts/lib/host_live_probes.py \
   scripts/lib/value_plausibility.py \
+  scripts/lib/papi_shm_validate.py \
   scripts/lib/live_spot_check.py \
   scripts/lib/golden_diff.py \
   scripts/lib/tacc_system_profiles.py \
@@ -200,6 +201,16 @@ Unable to link a trivial LIKWID program from PREFIX=${PREFIX}.
 Check that liblikwid*.a archives match this host/toolchain and that no stale build artifacts remain.
 Try:
   rm -rf "${PREFIX}" "${SRCDIR}"
+  PREFIX="${PREFIX}" SRCDIR="${SRCDIR}" ./scripts/build_static_bundle.sh --deps-only
+EOF
+    exit 1
+  fi
+else
+  if ! have_static_archive_basename "libpapi.a"; then
+    cat <<EOF >&2
+PAPI static archive was not found under ${PREFIX}/lib or ${PREFIX}/lib64.
+Expected: libpapi.a (aarch64 / non-x86 DCGM+PAPI hybrid CPU path)
+Rebuild deps with SKIP_DEPS unset:
   PREFIX="${PREFIX}" SRCDIR="${SRCDIR}" ./scripts/build_static_bundle.sh --deps-only
 EOF
     exit 1

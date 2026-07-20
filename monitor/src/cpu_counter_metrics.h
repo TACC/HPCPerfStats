@@ -37,6 +37,8 @@
   X(fp_arith_inst_retired_256b_packed_single, "E,W=48", ""), \
   X(fp_arith_inst_retired_512b_packed_single, "E,W=48", ""), \
   X(arm_est_flops, "E,W=64,U=FLOP", ""), \
+  X(arm_int8_ops, "E,W=48", ""), \
+  X(arm_int16_ops, "E,W=48", ""), \
   X(arm_dram_bw_bytes, "E,W=64,U=B", ""), \
   X(dcgm_cpu_power_util_w, "U=W", "Grace DCGM per-socket CPU power (W); same value on each core in that socket"), \
   X(dcgm_cpu_power_limit_w, "U=W", "Grace DCGM per-socket CPU power limit (W); same value on each core in that socket")

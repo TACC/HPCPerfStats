@@ -4,6 +4,7 @@ from __future__ import annotations
 import time
 
 from .message_parse import schema_key_name
+from .papi_shm_validate import check_papi_row_invariants
 from .payload_parse import rows_by_type, sample_header_timestamp
 
 
@@ -69,6 +70,10 @@ def check_plausibility(
                     cap = max(len(cpus) * 10000, 10000)
                     if vals["load_1"] > cap:
                         warn(f"host_ps load_1={vals['load_1']} exceeds heuristic cap {cap}")
+                for msg in check_papi_row_invariants(
+                    vals, type_name=type_name, dev=row.dev
+                ):
+                    warn(msg)
 
     if schema_body and full_body is None:
         pass

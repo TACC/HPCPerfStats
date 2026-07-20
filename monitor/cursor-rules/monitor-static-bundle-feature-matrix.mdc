@@ -24,5 +24,5 @@ alwaysApply: false
   - Fleet signal: **`HPCS_BUNDLE_FLEET=stampede3`** and/or **`scripts/fleet/stampede3.force`** in the dist tarball so **`%build`** still applies the matrix.
   - Matrix: `--enable-ib-mad-dlopen`, `--enable-opa-mad-dlopen`, `--disable-amd-gpu`, `--enable-intel-gpu` when XPUM headers are vendored; never auto `--disable-infiniband` solely for missing build-host PCI/devel.
 - **GPU paths**: NVIDIA vs AMD have separate disable flags; **`--disable-gpu`** vs vendor-specific options must stay consistent with **`configure.ac`** and **`build_static_bundle.sh`**.
-- **CPU counters / DCGM**: Backend selection (LIKWID vs DCGM) interacts with GPU libraries and headers; see **monitor-dcgm-integration** when touching DCGM or `cpu_counter_metrics.c`.
+- **CPU counters / DCGM / PAPI**: x86 uses LIKWID; aarch64 uses DCGM util/power plus static PAPI for SP/DP FLOPs, cycles, and int8/int16 ops (`MONITOR_CPU_PAPI_FLOPS`). See **monitor-dcgm-integration** and **monitor-papi-integration** when touching `cpu_counter_metrics*`.
 - **Docs**: If behavior changes, update **`README.md`** or packaging notes per **monitor-readme-maintenance** when user-visible flags or outputs change.

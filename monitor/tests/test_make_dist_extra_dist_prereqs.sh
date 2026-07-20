@@ -21,6 +21,7 @@ for path in \
   scripts/lib/listend_contract.py \
   scripts/lib/host_live_probes.py \
   scripts/lib/value_plausibility.py \
+  scripts/lib/papi_shm_validate.py \
   scripts/lib/live_spot_check.py \
   scripts/lib/golden_diff.py \
   scripts/lib/tacc_system_profiles.py \

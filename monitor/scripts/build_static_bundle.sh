@@ -66,12 +66,15 @@ STATIC_PIN_RABBITMQ_C_VERSION="0.17.0"
 # LIKWID: Git tag name without a leading "v" (archive is .../tags/v${VER}.tar.gz).
 STATIC_PIN_LIKWID_VERSION="5.5.1"
 STATIC_PIN_LIBBPF_VERSION="1.7.0"
+# PAPI: used on aarch64 with DCGM CPU backend for PMU SP/DP FLOPs + cycles.
+STATIC_PIN_PAPI_VERSION="7.2.0"
 # Optional: override tarball base URLs (must contain a single %s for version where used).
 STATIC_PIN_LIBEV_URL_FMT="http://dist.schmorp.de/libev/libev-%s.tar.gz"
 # rabbitmq-c: source-of-truth repo is alanxz/rabbitmq-c; github.com/rabbitmq/rabbitmq-c archive URLs return 404.
 STATIC_PIN_RABBITMQ_C_URL_FMT="https://github.com/alanxz/rabbitmq-c/archive/refs/tags/v%s.tar.gz"
 STATIC_PIN_LIKWID_URL_FMT="https://github.com/RRZE-HPC/likwid/archive/refs/tags/v%s.tar.gz"
 STATIC_PIN_LIBBPF_URL_FMT="https://github.com/libbpf/libbpf/archive/refs/tags/v%s.tar.gz"
+STATIC_PIN_PAPI_URL_FMT="https://icl.utk.edu/projects/papi/downloads/papi-%s.tar.gz"
 # =============================================================================
 
 PREFIX="${PREFIX:-${REPO_ROOT}/.build/prefix-static}"
@@ -142,10 +145,12 @@ LIBEV_VER="${LIBEV_VER:-${STATIC_PIN_LIBEV_VERSION}}"
 RABBITMQ_VER="${RABBITMQ_VER:-${STATIC_PIN_RABBITMQ_C_VERSION}}"
 LIKWID_TAG="${LIKWID_TAG:-${STATIC_PIN_LIKWID_VERSION}}"
 LIBBPF_VER="${LIBBPF_VER:-${STATIC_PIN_LIBBPF_VERSION}}"
+PAPI_VER="${PAPI_VER:-${STATIC_PIN_PAPI_VERSION}}"
 LIBEV_URL_FMT="${LIBEV_URL_FMT:-${STATIC_PIN_LIBEV_URL_FMT}}"
 RABBITMQ_C_URL_FMT="${RABBITMQ_C_URL_FMT:-${STATIC_PIN_RABBITMQ_C_URL_FMT}}"
 LIKWID_URL_FMT="${LIKWID_URL_FMT:-${STATIC_PIN_LIKWID_URL_FMT}}"
 LIBBPF_URL_FMT="${LIBBPF_URL_FMT:-${STATIC_PIN_LIBBPF_URL_FMT}}"
+PAPI_URL_FMT="${PAPI_URL_FMT:-${STATIC_PIN_PAPI_URL_FMT}}"
 
 WANT_METRIC_PROFILER_EBPF=0
 
@@ -453,6 +458,55 @@ build_libbpf() {
   make install PREFIX="${PREFIX}" BUILD_STATIC_ONLY=y OBJDIR=build DESTDIR= CC="${CC_FOR_BUILD:-cc}" HOSTCC="${HOSTCC_FOR_BUILD:-cc}"
 }
 
+build_papi() {
+  local d="${SRCDIR}/papi-${PAPI_VER}"
+  local t="${SRCDIR}/papi-${PAPI_VER}.tar.gz"
+  # libpfm (bundled) fails under nvc pointer arithmetic; prefer gcc/clang for PAPI.
+  local papi_cc="gcc"
+  local papi_cflags="-O2 -fPIC"
+
+  if test ! -d "$d"; then
+    fetch_url "$(printf "${PAPI_URL_FMT}" "${PAPI_VER}")" "$t"
+    tar -C "${SRCDIR}" -xzf "$t"
+    if test ! -d "$d"; then
+      echo "Could not locate extracted PAPI directory ${d}" >&2
+      exit 1
+    fi
+  fi
+  if ! command -v "${papi_cc}" >/dev/null 2>&1; then
+    if command -v clang >/dev/null 2>&1; then
+      papi_cc="clang"
+    else
+      echo "error: build_papi needs gcc or clang (nvc cannot build bundled libpfm)" >&2
+      exit 1
+    fi
+  fi
+  cd "${d}/src"
+  # Force a clean configure when switching compilers or prefix.
+  rm -f Makefile config.status
+  # Export CC/CFLAGS for configure and recursive makes; do not pass CC= on the
+  # make command line (breaks libpfm's include paths when CC absorbs extra flags).
+  (
+    export CC="${papi_cc}"
+    export CFLAGS="${papi_cflags}"
+    # Skip Fortran/tests: nvc/nvfortran and qemu foreign builds break PAPI test targets.
+    ./configure --prefix="${PREFIX}" \
+      --with-static-lib=yes \
+      --with-shared-lib=no \
+      --with-tests=no \
+      --disable-fortran
+    make -j"${JOBS}" libpapi.a
+    make install-lib
+  ) || {
+    echo "error: build_papi configure/make/install failed" >&2
+    exit 1
+  }
+  if test ! -f "${PREFIX}/lib/libpapi.a" && test ! -f "${PREFIX}/lib64/libpapi.a"; then
+    echo "error: build_papi did not install libpapi.a under ${PREFIX}" >&2
+    exit 1
+  fi
+}
+
 configure_arg_requests_ebpf() {
   local arg
   for arg in "$@"; do
@@ -542,9 +596,10 @@ EOF
 EOF
   else
     cat <<'EOF'
-- On non-x86, this path links rabbitmq-c and libev statically; the CPU counter backend is
-  DCGM (system libdcgm), not LIKWID. C headers ship under third_party/nvidia-dcgm; you still
-  need libdcgm from NVIDIA DCGM. Match header and library generations when possible.
+- On non-x86, this path links rabbitmq-c, libev, and PAPI statically. The CPU counter backend
+  is DCGM (system libdcgm) for util/power plus PAPI for SP/DP FLOPs, cycles, and int8/int16 ops. C headers for
+  DCGM ship under third_party/nvidia-dcgm; you still need libdcgm from NVIDIA DCGM. Match
+  header and library generations when possible.
 EOF
   fi
   cat <<'EOF'
@@ -576,7 +631,9 @@ build_static_dependencies() {
       echo "Pinned static deps (x86): likwid=${LIKWID_TAG}"
       build_likwid
     else
-      echo "Skipping LIKWID build on $(uname -m) (monitor uses DCGM CPU backend here, not LIKWID)." >&2
+      echo "Skipping LIKWID build on $(uname -m) (monitor uses DCGM CPU + PAPI FLOPs here)." >&2
+      echo "Pinned static deps (non-x86): papi=${PAPI_VER}"
+      build_papi
     fi
     if test "${WANT_METRIC_PROFILER_EBPF}" = "1"; then
       echo "Pinned static deps (metric profiler ebpf): libbpf=${LIBBPF_VER}"
@@ -589,8 +646,8 @@ usage_exit() {
   cat <<EOF
 Usage: $(basename "$0") [--deps-only] [--print-configure-flags] [--release] [CONFIGURE_ARGS...]
 
-  --deps-only   Build and install static archives (libev, rabbitmq-c, and LIKWID on x86)
-                into PREFIX only. Use this when monitor configure
+  --deps-only   Build and install static archives (libev, rabbitmq-c; LIKWID on x86;
+                PAPI on non-x86) into PREFIX only. Use this when monitor configure
                 --enable-all-static fails at link time with missing static .a
                 archives.
 
@@ -661,7 +718,7 @@ main() {
     if is_x86_build_host; then
       echo "Expected archives include: libev.a librabbitmq.a liblikwid.a liblikwid-hwloc.a liblikwid-lua.a"
     else
-      echo "Expected archives include: libev.a librabbitmq.a (LIKWID not built on this architecture)."
+      echo "Expected archives include: libev.a librabbitmq.a libpapi.a (LIKWID not built on this architecture)."
     fi
     if test "${WANT_METRIC_PROFILER_EBPF}" = "1"; then
       echo "Expected archives include: libbpf.a (metric profiler eBPF backend selected)."

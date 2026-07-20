@@ -11,7 +11,7 @@ alwaysApply: false
 
 For **HPCPerfStats/monitor** code, dependency wiring, Autotools changes, or **`hpcperfstats.spec`** / packaging edits, **do not** treat simpler checks as sufficient verification:
 
-- Do **not** rely on ad-hoc `configure && make` or `make check` alone when the build tree is using **system** `librabbitmq` / `libev` / LIKWID without the **pinned static prefix** produced by the bundle scripts.
+- Do **not** rely on ad-hoc `configure && make` or `make check` alone when the build tree is using **system** `librabbitmq` / `libev` / LIKWID / PAPI without the **pinned static prefix** produced by the bundle scripts. On aarch64 the prefix must include **`libpapi.a`** for the DCGM+PAPI hybrid CPU path.
 - Do **not** skip the static path because it is slower; it is the **source-of-truth** link and configure path for this project.
 - When **`HPCPerfStats/monitor/hpcperfstats.spec`** changes, do **not** skip **spec verification** below; the spec **`%build`** invokes the same static bundle path and must stay consistent with **`configure.ac`** (**monitor-version-and-packaging**).
 

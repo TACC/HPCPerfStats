@@ -1,0 +1,42 @@
+---
+description: PAPI hybrid FLOPs/cycles overlay on aarch64 DCGM host_cpu_hw
+globs:
+  - HPCPerfStats/monitor/src/**/*papi*
+  - HPCPerfStats/monitor/src/cpu_counter_metrics*
+alwaysApply: false
+---
+
+# Monitor: PAPI integration (Grace / aarch64 hybrid)
+
+**Activation:** when editing PAPI sources, `cpu_counter_metrics*`, or aarch64 static/configure paths that enable `MONITOR_CPU_PAPI_FLOPS`.
+
+## Hybrid ownership (same `host_cpu_hw` type)
+
+| Source | Keys |
+|--------|------|
+| **DCGM** | `cpu_util_*_accum_us`, `dcgm_cpu_power_util_w`, `dcgm_cpu_power_limit_w`, `arm_dram_bw_bytes` |
+| **PAPI** | `aperf`, `mperf`, `cpu_clock_est_cycles`, `fp_arith_inst_retired_scalar_single`, `fp_arith_inst_retired_scalar_double`, `arm_est_flops` (= SP+DP only), `arm_int8_ops`, `arm_int16_ops`, optional `instr_retired` |
+
+- aarch64 **`auto` stays `--with-cpu-counter-backend=dcgm`**. PAPI is an additive layer (`MONITOR_CPU_PAPI_FLOPS`), not a separate exclusive backend.
+- When `MONITOR_CPU_PAPI_FLOPS` is defined, **do not** write DCGM-synthesized cycles/FLOPs (`dcgm_accumulate_from_util_sample` / `publish_dcgm_cpu_stats` gates). Single writer per key.
+- Emit contract: every PAPI collect that has SP/DP must set **both** scalar keys **and** `arm_est_flops = SP + DP`. Do **not** fold int8/int16 into `arm_est_flops`.
+- Integer ops: resolve native **`ASE_SVE_INT8_SPEC`** / **`ASE_SVE_INT16_SPEC`** → emit **`arm_int8_ops`** / **`arm_int16_ops`**; fail-soft to 0 if unavailable.
+- Packed 128/256/512 FP buckets stay 0 unless a future event maps them.
+
+## Static link
+
+- Build static `libpapi.a` via `scripts/build_static_bundle.sh` `build_papi()` on non-x86 (`STATIC_PIN_PAPI_*`; pin **7.2.0**).
+- `configure.ac` must `AC_SEARCH_LIBS([PAPI_library_init], [papi], …)` **before** the `-Wl,-Bstatic` wrap so `-lpapi` (and `-lpfm` when needed) join the static group.
+- `prepare_rpmbuild_dirs.sh` requires `libpapi.a` on non-x86.
+
+## Runtime
+
+- Prefer PAPI presets (`PAPI_TOT_CYC`, `PAPI_SP_OPS`, `PAPI_DP_OPS`, `PAPI_TOT_INS`); fall back to documented native names; int8/int16 are native-only; fail-soft (log once, leave metrics 0) — never crash the daemon.
+- Per-CPU `PAPI_CPU_ATTACH` + `PAPI_DOM_ALL` for system-wide counts; multiplexing allowed when counters are scarce (six active events may saturate Grace PMU).
+- Keep collect hot-path bounded; do not add unbounded per-sample work.
+
+## Overlap
+
+- **`monitor-dcgm-integration.mdc`** — DCGM sessions, GPU path, util/power; PAPI owns cycle/FLOP/int-op keys on aarch64 hybrid.
+- **`monitor-local-build-deps.mdc`** / **`monitor-static-build-verification.mdc`** — static PREFIX pins.
+- **`monitor-emitted-variable-naming.mdc`** — portable key names.

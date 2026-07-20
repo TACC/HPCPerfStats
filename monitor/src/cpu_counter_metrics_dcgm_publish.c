@@ -34,18 +34,12 @@ void publish_dcgm_cpu_stats(struct stats *stats, int i)
   stats_set(stats, "cpu_util_sys_accum_us", g_dcgm_ctr2[i]);
   stats_set(stats, "cpu_util_irq_accum_us", g_dcgm_ctr3[i]);
   stats_set(stats, "cpu_util_nice_accum_us", g_dcgm_ctr4[i]);
+#ifndef MONITOR_CPU_PAPI_FLOPS
   stats_set(stats, "cpu_clock_est_cycles", g_dcgm_ctr5[i]);
   /* Match Intel LIKWID FIXC0..2 mapping (INSTR_RETIRED / core unhalted / ref). */
   stats_set(stats, "instr_retired", g_dcgm_inst[i]);
   stats_set(stats, "aperf", g_dcgm_aperf[i]);
   stats_set(stats, "mperf", g_dcgm_mperf[i]);
-  stats_set(stats, "instr_retired", g_dcgm_inst[i]);
-  stats_set(stats, "aperf", g_dcgm_aperf[i]);
-  stats_set(stats, "mperf", g_dcgm_mperf[i]);
-  stats_set(stats, "dram_chan0_bytes", 0);
-  stats_set(stats, "dram_chan1_bytes", 0);
-  stats_set(stats, "dram_chan2_bytes", 0);
-  stats_set(stats, "dram_chan3_bytes", 0);
   stats_set(stats, "fp_arith_inst_retired_scalar_double", g_dcgm_fp_sca_d[i]);
   stats_set(stats, "fp_arith_inst_retired_128b_packed_double", g_dcgm_fp_128_d[i]);
   stats_set(stats, "fp_arith_inst_retired_256b_packed_double", g_dcgm_fp_256_d[i]);
@@ -55,6 +49,11 @@ void publish_dcgm_cpu_stats(struct stats *stats, int i)
   stats_set(stats, "fp_arith_inst_retired_256b_packed_single", g_dcgm_fp_256_s[i]);
   stats_set(stats, "fp_arith_inst_retired_512b_packed_single", g_dcgm_fp_512_s[i]);
   stats_set(stats, "arm_est_flops", g_dcgm_arm_est_flops[i]);
+#endif
+  stats_set(stats, "dram_chan0_bytes", 0);
+  stats_set(stats, "dram_chan1_bytes", 0);
+  stats_set(stats, "dram_chan2_bytes", 0);
+  stats_set(stats, "dram_chan3_bytes", 0);
   stats_set(stats, "arm_dram_bw_bytes", g_dcgm_arm_dram_bytes[i]);
   if (g_dcgm_logical_to_power_slot != NULL && i >= 0 && i < nr_cpus) {
     int slot = g_dcgm_logical_to_power_slot[i];
@@ -78,23 +77,29 @@ void publish_dcgm_cpu_stats(struct stats *stats, int i)
 void dcgm_accumulate_from_util_sample(int i, struct dcgm_cpu_sample *sample,
 					     long long delta_us)
 {
+  double ref_cycles;
+  double act_cycles;
+
   if (delta_us <= 0 || sample->clock_khz <= 0.0)
     return;
-  double ref_cycles = (sample->clock_khz * (double) delta_us) / 1000.0;
-  double act_cycles = ref_cycles * (sample->util_total / 100.0);
-  g_dcgm_mperf[i] += (unsigned long long) (ref_cycles + 0.5);
-  g_dcgm_aperf[i] += (unsigned long long) (act_cycles + 0.5);
-  g_dcgm_inst[i] += (unsigned long long) ((ref_cycles * (sample->util_user / 100.0)) + 0.5);
+  ref_cycles = (sample->clock_khz * (double) delta_us) / 1000.0;
+  act_cycles = ref_cycles * (sample->util_total / 100.0);
+  /* Util accumulators always from DCGM/proc. */
   g_dcgm_ctr0[i] += (unsigned long long) ((sample->util_total * (double) delta_us) + 0.5);
   g_dcgm_ctr1[i] += (unsigned long long) ((sample->util_user * (double) delta_us) + 0.5);
   g_dcgm_ctr2[i] += (unsigned long long) ((sample->util_sys * (double) delta_us) + 0.5);
   g_dcgm_ctr3[i] += (unsigned long long) ((sample->util_irq * (double) delta_us) + 0.5);
   g_dcgm_ctr4[i] += (unsigned long long) ((sample->util_nice * (double) delta_us) + 0.5);
+  g_dcgm_arm_dram_bytes[i] +=
+      (unsigned long long) ((act_cycles * ARM_APPROX_DRAM_BYTES_PER_ACTIVE_CYCLE) + 0.5);
+#ifndef MONITOR_CPU_PAPI_FLOPS
+  /* Synthetic cycles/FLOPs only when PAPI overlay is not compiled in. */
+  g_dcgm_mperf[i] += (unsigned long long) (ref_cycles + 0.5);
+  g_dcgm_aperf[i] += (unsigned long long) (act_cycles + 0.5);
+  g_dcgm_inst[i] += (unsigned long long) ((ref_cycles * (sample->util_user / 100.0)) + 0.5);
   g_dcgm_ctr5[i] += (unsigned long long) ((sample->clock_khz * (double) delta_us) / 1000.0 + 0.5);
   g_dcgm_arm_est_flops[i] +=
       (unsigned long long) ((act_cycles * ARM_APPROX_FLOPS_PER_ACTIVE_CYCLE) + 0.5);
-  g_dcgm_arm_dram_bytes[i] +=
-      (unsigned long long) ((act_cycles * ARM_APPROX_DRAM_BYTES_PER_ACTIVE_CYCLE) + 0.5);
   {
     double total_flops = act_cycles * ARM_APPROX_FLOPS_PER_ACTIVE_CYCLE;
     double flops64 = total_flops * ARM_APPROX_FP64_FLOP_SHARE;
@@ -109,6 +114,9 @@ void dcgm_accumulate_from_util_sample(int i, struct dcgm_cpu_sample *sample,
     g_dcgm_fp_sca_s[i] += (unsigned long long) (flops32_sca + 0.5);
     g_dcgm_fp_128_s[i] += (unsigned long long) (flops32_vec / 4.0 + 0.5);
   }
+#else
+  (void)ref_cycles;
+#endif
 }
 
 #endif

@@ -104,6 +104,7 @@ esac
 
 likwid=false
 dcgm_checked=false
+cpu_papi_flops=false
 CPU_COUNTER_BACKEND_CPPFLAG=""
 MONITOR_ARCH_CPPFLAG=""
 
@@ -173,6 +174,24 @@ if test "x$cpu_counter_backend" = "xdcgm"; then
   dcgm_checked=true
   CPU_COUNTER_BACKEND_CPPFLAG="-DMONITOR_CPU_BACKEND_DCGM"
   MONITOR_ARCH_CPPFLAG=""
+  dnl Grace / aarch64 hybrid: DCGM util+power + static PAPI for FLOPs/cycles.
+  cpu_papi_flops=false
+  if test "x$is_x86" != "xtrue"; then
+    AC_CHECK_HEADERS([papi.h], [],
+      [AC_MSG_ERROR([papi.h required for non-x86 DCGM CPU backend (PAPI FLOPs/cycles hybrid)])])
+    AC_SEARCH_LIBS([PAPI_library_init], [papi], [have_papi=yes],
+      [AC_MSG_ERROR([Unable to find libpapi (required for non-x86 DCGM+PAPI hybrid CPU path)])],
+      [-lpfm -lm])
+    case " ${LIBS} " in
+      *" -lpfm "*) ;;
+      *)
+        AC_CHECK_LIB([pfm], [pfm_initialize], [LIBS="$LIBS -lpfm"], [])
+        ;;
+    esac
+    CPU_COUNTER_BACKEND_CPPFLAG="${CPU_COUNTER_BACKEND_CPPFLAG} -DMONITOR_CPU_PAPI_FLOPS"
+    cpu_papi_flops=true
+    AC_MSG_NOTICE([CPU counter hybrid: DCGM util/power + PAPI FLOPs/cycles])
+  fi
 elif test "x$cpu_counter_backend" = "xlikwid"; then
   CPU_COUNTER_BACKEND_CPPFLAG="-DMONITOR_CPU_BACKEND_LIKWID"
 fi
@@ -222,6 +241,8 @@ AM_CONDITIONAL([CPU_BACKEND_LIKWID],
   [test x$hardware = xtrue -a x$cpu_counter_backend = xlikwid])
 AM_CONDITIONAL([CPU_BACKEND_DCGM],
   [test x$hardware = xtrue -a x$cpu_counter_backend = xdcgm])
+AM_CONDITIONAL([CPU_PAPI_FLOPS],
+  [test x$hardware = xtrue -a x$cpu_counter_backend = xdcgm -a x$cpu_papi_flops = xtrue])
 
 AC_ARG_ENABLE([infiniband],
 [  --enable-infiniband	Enable InfiniBand MAD support (default is true; use --enable-ib-mad-dlopen for fleet)],
