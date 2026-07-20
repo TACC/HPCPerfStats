@@ -1,0 +1,3 @@
+# Valgrind Memcheck suppressions for monitor plan-close gate (run_valgrind_check.sh).
+# Add braced entries only for proven false positives (third-party / glibc), with a short rationale.
+# This file intentionally starts with no suppressions.

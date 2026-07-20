@@ -1,16 +1,17 @@
 ---
-description: Plan-close gate — run ASan make check and full-tree clang-format/clang-tidy (no git hooks)
+description: Plan-close gate — Valgrind Memcheck make check and full-tree clang-format/clang-tidy (no git hooks)
 globs:
   - HPCPerfStats/monitor/src/**
   - HPCPerfStats/monitor/tests/**
-  - HPCPerfStats/monitor/scripts/run_asan_check.sh
+  - HPCPerfStats/monitor/scripts/run_valgrind_check.sh
+  - HPCPerfStats/monitor/scripts/valgrind.supp
   - HPCPerfStats/monitor/scripts/run_cpp_linter.sh
   - HPCPerfStats/monitor/.clang-format
   - HPCPerfStats/monitor/.clang-tidy
 alwaysApply: false
 ---
 
-# Monitor ASan + cpp-linter plan-close gate
+# Monitor Valgrind + cpp-linter plan-close gate
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
@@ -18,7 +19,7 @@ alwaysApply: false
 
 Before finishing **any plan implementation** that edits monitor C sources, tests, Autotools, or verify scripts under `HPCPerfStats/monitor/`, both of the following must succeed and be logged under **`test_runs/`**:
 
-1. **`./scripts/run_asan_check.sh`** — ASan-instrumented configure/build in **`.build-asan`**, then **`make check`**, then **`make distclean`** (unless `SKIP_DISTCLEAN=1` for a same-turn follow-up).
+1. **`./scripts/run_valgrind_check.sh`** — configure/build in **`.build-valgrind`** (`-g -O1`, **`--enable-all-static`**), then **`make check`** with Valgrind Memcheck via Automake `LOG_COMPILER`/`LOG_FLAGS`, then **`make distclean`** (unless `SKIP_DISTCLEAN=1` for a same-turn follow-up).
 2. **`./scripts/run_cpp_linter.sh`** — **clang-format** `--dry-run -Werror` and **clang-tidy** on **all** of `src/**/*.{c,h}` and `tests/**/*.{c,h}` (not changed-files-only; `third_party/` excluded).
 
 This gate is **additive** to dual-verify (`build_static_bundle.sh` + `cross_compile_test.sh`). It does **not** replace the static bundle or foreign cross smoke.
@@ -33,10 +34,11 @@ This gate is **additive** to dual-verify (`build_static_bundle.sh` + `cross_comp
 
 | Need | Hint |
 |------|------|
-| libasan / ASan link | On TACC: `module load gcc/<ver>` that ships `libasan` (system gcc may lack it). |
-| `vm.overcommit_memory=2` | Classic ASan cannot reserve shadow memory — run on a host with overcommit 0/1, or document the blocker in `test_runs/`. |
+| `valgrind` | On TACC: fix MODULEPATH then `module load valgrind` (see **tacc-lmod-build-environment**). Script fails with a clear hint if missing. |
+| Suppressions | [`scripts/valgrind.supp`](../scripts/valgrind.supp) — start minimal; add only proven false positives. |
+| Leak fail gate | `--errors-for-leak-kinds=definite` + `--error-exitcode=1` (possible/reachable noise does not fail by default). |
 | clang-format / clang-tidy | `module load python/…` then `.venv/bin/pip install -r tests/requirements-cpp-linter.txt` |
-| compile_commands.json | Optional for tidy (`bear`, or point `COMPILE_COMMANDS`); without it the script passes `-std=gnu11 -Isrc`. |
+| compile_commands.json | Optional for tidy (`bear`, or point `COMPILE_COMMANDS`); without it the script passes `-std=gnu11 -Isrc`. Prefer `.build-static` or `.build-valgrind` compile DB when present. |
 
 ## Config
 
@@ -48,9 +50,9 @@ Apply format with `CLANG_FORMAT_FIX=1 ./scripts/run_cpp_linter.sh` when establis
 ## Overlap
 
 - **`monitor-dual-verify-cross-and-static.mdc`** — static + cross still required for substantive C.
-- **`monitor-static-build-verification.mdc`** — canonical static path; ASan uses a separate `.build-asan` tree.
-- **`monitor-post-verify-distclean.mdc`** — ASan script distcleans `.build-asan` after success.
-- **`monitor-build-clean-workspace.mdc`** — ASan script removes stale `.build-asan` before configure.
+- **`monitor-static-build-verification.mdc`** — canonical static path; Valgrind uses a separate `.build-valgrind` tree.
+- **`monitor-post-verify-distclean.mdc`** — Valgrind script distcleans `.build-valgrind` after success.
+- **`monitor-build-clean-workspace.mdc`** — Valgrind script removes stale `.build-valgrind` (and leftover `.build-asan`) before configure.
 - **`plan-completion-gate.mdc`** / **`PLAN_TEMPLATE.md`** — checklist and testing matrix cite this gate.
 - **`tacc-lmod-build-environment.mdc`** — MODULEPATH / `module load` before assuming missing tools.
-- **`test-runs-output-directory.mdc`** — logs under `test_runs/asan-check-*.log` and `test_runs/cpp-linter-*.log`.
+- **`test-runs-output-directory.mdc`** — logs under `test_runs/valgrind-check-*.log` and `test_runs/cpp-linter-*.log`.

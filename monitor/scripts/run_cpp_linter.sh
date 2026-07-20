@@ -133,16 +133,16 @@ if test "${SKIP_CLANG_TIDY:-0}" != "1"; then
   if test -n "${COMPILE_COMMANDS:-}" && test -f "${COMPILE_COMMANDS}"; then
     TIDY_ARGS+=(-p "$(dirname "${COMPILE_COMMANDS}")")
     log "clang-tidy using compile DB: ${COMPILE_COMMANDS}"
-  elif test -f "${MONITOR_DIR}/.build-asan/compile_commands.json"; then
-    TIDY_ARGS+=(-p "${MONITOR_DIR}/.build-asan")
-    log "clang-tidy using compile DB: ${MONITOR_DIR}/.build-asan/compile_commands.json"
+  elif test -f "${MONITOR_DIR}/.build-valgrind/compile_commands.json"; then
+    TIDY_ARGS+=(-p "${MONITOR_DIR}/.build-valgrind")
+    log "clang-tidy using compile DB: ${MONITOR_DIR}/.build-valgrind/compile_commands.json"
   elif test -f "${MONITOR_DIR}/.build-static/compile_commands.json"; then
     TIDY_ARGS+=(-p "${MONITOR_DIR}/.build-static")
     log "clang-tidy using compile DB: ${MONITOR_DIR}/.build-static/compile_commands.json"
   else
     # Prefer a configured Autotools tree so config.h / STATS_* macros resolve.
     local_cfg=""
-    for cand in "${MONITOR_DIR}/.build-static" "${MONITOR_DIR}/.build-asan" "${MONITOR_DIR}"; do
+    for cand in "${MONITOR_DIR}/.build-static" "${MONITOR_DIR}/.build-valgrind" "${MONITOR_DIR}"; do
       if test -f "${cand}/config.h"; then
         local_cfg="${cand}"
         break

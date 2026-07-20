@@ -57,6 +57,23 @@ static struct stats_buffer *make_payload_buf(const char *payload)
   return sf;
 }
 
+/* Caller retains ownership when ring_buffer_insert returns -1. */
+static void free_payload_buf(struct stats_buffer *sf)
+{
+  if (sf == NULL)
+    return;
+  stats_buffer_close(sf);
+  free(sf);
+}
+
+/* Drain via successful resend so Memcheck sees no definite leaks at process exit. */
+static void drain_ring(struct sf_ring_buffer *w)
+{
+  reset_hook();
+  ring_buffer_resend(w);
+  assert(w->q_count == 0);
+}
+
 static void test_insert_empty_and_append(void)
 {
   struct sf_ring_buffer w;
@@ -65,15 +82,20 @@ static void test_insert_empty_and_append(void)
   assert(w.q_count == 1);
   assert(ring_buffer_insert(make_payload_buf("b\n"), &w, 10, 1) == 0);
   assert(w.q_count == 2);
+  drain_ring(&w);
 }
 
 static void test_insert_full_no_overwrite(void)
 {
   struct sf_ring_buffer w;
+  struct stats_buffer *rejected;
   memset(&w, 0, sizeof(w));
   assert(ring_buffer_insert(make_payload_buf("a\n"), &w, 1, 0) == 0);
-  assert(ring_buffer_insert(make_payload_buf("b\n"), &w, 1, 0) == -1);
+  rejected = make_payload_buf("b\n");
+  assert(ring_buffer_insert(rejected, &w, 1, 0) == -1);
+  free_payload_buf(rejected);
   assert(w.q_count == 1);
+  drain_ring(&w);
 }
 
 static void test_insert_full_overwrite(void)
@@ -83,15 +105,20 @@ static void test_insert_full_overwrite(void)
   assert(ring_buffer_insert(make_payload_buf("a\n"), &w, 1, 1) == 0);
   assert(ring_buffer_insert(make_payload_buf("b\n"), &w, 1, 1) == 0);
   assert(w.q_count == 1);
+  drain_ring(&w);
 }
 
 static void test_insert_full_schema_protected(void)
 {
   struct sf_ring_buffer w;
+  struct stats_buffer *rejected;
   memset(&w, 0, sizeof(w));
   assert(ring_buffer_insert(make_payload_buf("$hdr\n"), &w, 1, 1) == 0);
-  assert(ring_buffer_insert(make_payload_buf("new\n"), &w, 1, 1) == -1);
+  rejected = make_payload_buf("new\n");
+  assert(ring_buffer_insert(rejected, &w, 1, 1) == -1);
+  free_payload_buf(rejected);
   assert(w.q_count == 1);
+  drain_ring(&w);
 }
 
 static void test_insert_full_prefers_non_schema_victim(void)
@@ -117,6 +144,7 @@ static void test_insert_full_prefers_non_schema_victim(void)
   }
   assert(saw_schema == 1);
   assert(saw_new == 1);
+  drain_ring(&w);
 }
 
 static void test_resend_single_drains(void)
@@ -170,7 +198,7 @@ static void test_resend_stops_on_send_failure(void)
   ring_buffer_resend(&w);
   assert(w.status != 0);
   assert(w.q_count == 1);
-  reset_hook();
+  drain_ring(&w);
 }
 
 static void test_resend_limited_batches(void)
@@ -208,6 +236,7 @@ static void test_load_file_two_records(void)
   assert(w.q_count == 2);
   assert(w.l_count == 2);
   fclose(f);
+  drain_ring(&w);
 }
 
 static void test_load_file_leading_blank_skipped(void)
@@ -223,6 +252,7 @@ static void test_load_file_leading_blank_skipped(void)
   assert(ring_buffer_load_file(f, &w, "127.0.0.1", "5672", "q", "u", "p", -1, 1) == 0);
   assert(w.q_count == 1);
   fclose(f);
+  drain_ring(&w);
 }
 
 static void test_load_file_open_fails(void)
@@ -249,13 +279,13 @@ static void test_collect_assembles_tier_rows(void)
   assert(stats_buffer_collect(sf) == 0);
   assert(strstr(sf->sf_data, "host_tt dev0 @fast 5") != NULL);
   assert(strstr(sf->sf_data, " 6") == NULL);
-  stats_buffer_close(sf);
+  free_payload_buf(sf);
 
   collect_tier_set_phase(COLLECT_FULL);
   sf = make_payload_buf("");
   assert(stats_buffer_collect(sf) == 0);
   assert(strstr(sf->sf_data, "host_tt dev0 @full 5 6") != NULL);
-  stats_buffer_close(sf);
+  free_payload_buf(sf);
   stats_buffer_collect_fixture_teardown(&fx);
 }
 

@@ -33,7 +33,8 @@ for path in \
   scripts/rpm_debug_shm_verify.sh \
   scripts/gpu_lspci_probe.sh \
   scripts/gpu_lspci_detect.awk \
-  scripts/run_asan_check.sh \
+  scripts/run_valgrind_check.sh \
+  scripts/valgrind.supp \
   scripts/run_cpp_linter.sh
 do
   test -f "${path}" \
@@ -64,7 +65,7 @@ grep -q 'scripts/gpu_lspci_probe.sh' scripts/prepare_rpmbuild_dirs.sh \
   || { echo "prepare_rpmbuild_dirs.sh must preflight scripts/gpu_lspci_probe.sh" >&2; exit 1; }
 
 for script in scripts/gpu_lspci_probe.sh scripts/gpu_lspci_detect.awk \
-  scripts/run_asan_check.sh scripts/run_cpp_linter.sh; do
+  scripts/run_valgrind_check.sh scripts/valgrind.supp scripts/run_cpp_linter.sh; do
   grep -q "${script}" src/Makefile.am \
     || { echo "src/Makefile.am EXTRA_DIST must list ${script}" >&2; exit 1; }
 done

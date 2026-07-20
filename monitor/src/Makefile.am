@@ -381,7 +381,8 @@ EXTRA_DIST = hpcperfstats.conf hpcperfstats.service hpcperfstatsd.sysconfig \
 	$(top_srcdir)/scripts/build_static_bundle.sh \
 	$(top_srcdir)/scripts/ensure_dotbuild_prefix_static.sh \
 	$(top_srcdir)/scripts/prepare_rpmbuild_stampede3.sh \
-	$(top_srcdir)/scripts/run_asan_check.sh \
+	$(top_srcdir)/scripts/run_valgrind_check.sh \
+	$(top_srcdir)/scripts/valgrind.supp \
 	$(top_srcdir)/scripts/run_cpp_linter.sh \
 	$(top_srcdir)/scripts/gpu_lspci_probe.sh \
 	$(top_srcdir)/scripts/gpu_lspci_detect.awk \

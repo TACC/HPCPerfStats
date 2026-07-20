@@ -30,7 +30,7 @@ Use these during **plan**, **implement**, **self-review**, and **verification** 
 | [tacc-lmod-build-environment.mdc](tacc-lmod-build-environment.mdc) | TACC SSH hosts: Lmod modules + Stampede3 build practices |
 | [monitor-build-clean-workspace.mdc](monitor-build-clean-workspace.mdc) | Pre-compile clean workspace in build scripts |
 | [monitor-dual-verify-cross-and-static.mdc](monitor-dual-verify-cross-and-static.mdc) | Static bundle + cross-compile |
-| [monitor-asan-cpp-linter-gate.mdc](monitor-asan-cpp-linter-gate.mdc) | Plan-close ASan `make check` + full-tree clang-format/clang-tidy (no git hooks) |
+| [monitor-valgrind-cpp-linter-gate.mdc](monitor-valgrind-cpp-linter-gate.mdc) | Plan-close Valgrind Memcheck `make check` + full-tree clang-format/clang-tidy (no git hooks) |
 | [monitor-collect-tier-gating.mdc](monitor-collect-tier-gating.mdc) | Two-tier collect/emit |
 | [monitor-schema-keys-headers.mdc](monitor-schema-keys-headers.mdc) | Shared KEYS headers |
 | [monitor-consumer-schema-migration.mdc](monitor-consumer-schema-migration.mdc) | Breaking output migrations |

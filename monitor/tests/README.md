@@ -101,10 +101,10 @@ make -C .build-static check
 ./tests/run_tests.sh /path/to/your/build-tree
 ```
 
-**Plan-close extras** (additive to dual-verify; **monitor-asan-cpp-linter-gate** — no git hooks):
+**Plan-close extras** (additive to dual-verify; **monitor-valgrind-cpp-linter-gate** — no git hooks):
 
 ```bash
-./scripts/run_asan_check.sh
+./scripts/run_valgrind_check.sh
 ./scripts/run_cpp_linter.sh
 # clang tools: .venv/bin/pip install -r tests/requirements-cpp-linter.txt
 ```

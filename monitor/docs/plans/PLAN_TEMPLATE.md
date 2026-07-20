@@ -80,14 +80,14 @@ Every behavior change needs at least one **regression and/or unit test** at the 
 |------|--------|----------|
 | `test_…` | `HPCPerfStats/monitor/tests/test_*.c` | What it proves |
 
-**Pre-merge verification matrix** (`global-testing-discipline.mdc`, `monitor-dual-verify-cross-and-static.mdc`, `monitor-asan-cpp-linter-gate.mdc`) — pick the minimum tier:
+**Pre-merge verification matrix** (`global-testing-discipline.mdc`, `monitor-dual-verify-cross-and-static.mdc`, `monitor-valgrind-cpp-linter-gate.mdc`) — pick the minimum tier:
 
 | Change touches | Minimum run |
 |----------------|-------------|
 | Pure helper / parser in `src/` | Targeted `tests/test_*.c` via `make check` |
 | Substantive monitor C / Autotools | `scripts/build_static_bundle.sh` + `make check` in `.build-static` |
 | Same + foreign arch risk | Also `scripts/cross_compile_test.sh --force-foreign --fail-fast` |
-| Plan implementation closing (monitor C/tests/scripts) | Also `scripts/run_asan_check.sh` + `scripts/run_cpp_linter.sh` (logs under `test_runs/`) |
+| Plan implementation closing (monitor C/tests/scripts) | Also `scripts/run_valgrind_check.sh` + `scripts/run_cpp_linter.sh` (logs under `test_runs/`) |
 | `hpcperfstats.spec` / version fields | `rpmspec -P hpcperfstats.spec` |
 | After successful verify | `make distclean` in build dir per `monitor-post-verify-distclean.mdc` |
 
@@ -98,7 +98,7 @@ cd HPCPerfStats/monitor && ./scripts/build_static_bundle.sh
 make -C .build-static check
 ./scripts/cross_compile_test.sh --force-foreign --fail-fast
 make -C .build-static distclean
-./scripts/run_asan_check.sh
+./scripts/run_valgrind_check.sh
 ./scripts/run_cpp_linter.sh
 ```
 
