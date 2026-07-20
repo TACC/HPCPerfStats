@@ -6,6 +6,8 @@ import numpy as np
 from numpy import histogram, isfinite, log
 from pandas import to_numeric
 
+from bokeh.models import Range1d
+
 from .bokeh_embed import new_spa_embedded_figure
 
 local_timezone = cfg.get_local_timezone()
@@ -79,5 +81,14 @@ def job_hist(df, metric, label, width=600, height=400, title=None):
     plot.xaxis.axis_label = label
     plot.yaxis.axis_label = "# jobs"
     plot.quad(top=hist, bottom=0, left=edges[:-1], right=edges[1:])
+
+    # Equal outer chrome (y-axis labels vs last x tick) and equal data-range pad so
+    # job-list distribution thumbs are not clipped on the right (280×200 embeds).
+    plot.min_border_left = 40
+    plot.min_border_right = 40
+    xmin = float(edges[0])
+    xmax = float(edges[-1])
+    x_pad = max((xmax - xmin) * 0.05, 1e-6)
+    plot.x_range = Range1d(start=xmin - x_pad, end=xmax + x_pad)
 
     return plot

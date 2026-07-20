@@ -32,6 +32,7 @@ alwaysApply: false
 
 - Prefer **`bokeh_plot_layout.py`** + frontend for **container and zoom UX** without altering core plot semantics.
 - Coordinate **`hpcperfstats/analysis/metrics/lib/plot/`** changes with **`job-plot-artifacts-caching.mdc`** (fingerprints / schema version) and any **roofline / monitor type** rules if data shapes change.
+- **Job-list `job_hist`:** keep equal `min_border_left`/`min_border_right` and equal x-range pad (explicit `Range1d`); do not pad via HistogramThumbnails HTML/CSS.
 
 ## Overlap
 

@@ -54,6 +54,32 @@ def test_job_hist_y_range_strictly_positive_when_max_bin_count_equals_y_floor():
     _assert_positive_y_span(plot)
 
 
+def test_job_hist_symmetric_x_padding_and_borders():
+    """Job-list thumbs need equal left/right chrome and equal x-range pad."""
+    from hpcperfstats.site.lib.machine.views import job_hist
+
+    df = pd.DataFrame({"runtime": [1.0, 2.0, 3.0, 4.0, 5.0, 10.0]})
+    plot = job_hist(df, "runtime", "hours", width=280, height=200)
+    assert plot is not None
+    assert plot.min_border_left == 40
+    assert plot.min_border_right == 40
+    assert plot.min_border_left == plot.min_border_right
+
+    lefts = [float(x) for x in plot.renderers[0].data_source.data["left"]]
+    rights = [float(x) for x in plot.renderers[0].data_source.data["right"]]
+    first_edge = min(lefts)
+    last_edge = max(rights)
+    x_start = float(plot.x_range.start)
+    x_end = float(plot.x_range.end)
+    left_pad = first_edge - x_start
+    right_pad = x_end - last_edge
+    assert x_end > last_edge
+    assert left_pad > 0
+    assert abs(left_pad - right_pad) < 1e-9
+    span = last_edge - first_edge
+    assert left_pad == pytest.approx(max(span * 0.05, 1e-6), rel=0, abs=1e-12)
+
+
 def test_job_list_queue_bar_chart_y_range_strictly_positive_when_all_tops_zero():
     """All-zero vbar tops must still get a positive y span (Bokeh 3.9 embed)."""
     from hpcperfstats.site.lib.machine.api import _job_list_queue_bar_chart
