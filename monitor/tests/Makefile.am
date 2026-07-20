@@ -429,6 +429,12 @@ test_ib_mad_sw_swap_SOURCES += $(top_srcdir)/src/ib_mad_dyn.c
 test_ib_mad_backoff_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/third_party/ibmad-shim
 test_ib_mad_decode_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/third_party/ibmad-shim
 test_ib_mad_sw_swap_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/third_party/ibmad-shim
+else
+# Automake still emits *_CPPFLAGS when the IB_MAD_DLOPEN branch exists; an empty
+# program CPPFLAGS would drop AM_CPPFLAGS (-I src) and break non-dlopen builds.
+test_ib_mad_backoff_CPPFLAGS = $(AM_CPPFLAGS)
+test_ib_mad_decode_CPPFLAGS = $(AM_CPPFLAGS)
+test_ib_mad_sw_swap_CPPFLAGS = $(AM_CPPFLAGS)
 endif
 endif
 

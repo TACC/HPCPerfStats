@@ -21,8 +21,9 @@ alwaysApply: false
   - **Fleet:** **`--enable-opa-mad-dlopen`** uses vendored `third_party/oib-shim/` + runtime `dlopen` of `liboib_utils` (`HPCPERFSTATS_OIB_LIB`). Do **not** document dual IB+OPA BuildRequires as the Stampede3 fleet path.
 - **Stampede3 one-build RPM**:
   - Entrypoint: **`scripts/prepare_rpmbuild_stampede3.sh`** → calls **`prepare_rpmbuild_dirs.sh`** and prints the **same** `rpmbuild -ba` footer (no alternate `_topdir` / second spec).
-  - Fleet signal: **`HPCS_BUNDLE_FLEET=stampede3`** and/or **`scripts/fleet/stampede3.force`** in the dist tarball so **`%build`** still applies the matrix.
+  - Fleet signal (opt-in only): **`HPCS_BUNDLE_FLEET=stampede3`** and/or **`scripts/fleet/stampede3.force`** created by **`prepare_rpmbuild_stampede3.sh`** and embedded by **`dist-hook`** when present. Default **`prepare_rpmbuild_dirs.sh`** must **not** ship or require the force file (never commit it).
   - Matrix: `--enable-ib-mad-dlopen`, `--enable-opa-mad-dlopen`, `--disable-amd-gpu`, `--enable-intel-gpu` when XPUM headers are vendored; never auto `--disable-infiniband` solely for missing build-host PCI/devel.
+  - **intel-gpu on aarch64:** static bundle does **not** auto `--enable-intel-gpu` from vendored XPUM alone; requires fleet, or **`HPCS_BUNDLE_ENABLE_INTEL_GPU=1`**. x86 keeps vendored-header auto-enable.
 - **GPU paths**: NVIDIA vs AMD have separate disable flags; **`--disable-gpu`** vs vendor-specific options must stay consistent with **`configure.ac`** and **`build_static_bundle.sh`**.
 - **CPU counters / DCGM / PAPI**: x86 uses LIKWID; aarch64 uses DCGM util/power plus static PAPI for SP/DP FLOPs, cycles, and int8/int16 ops (`MONITOR_CPU_PAPI_FLOPS`). See **monitor-dcgm-integration** and **monitor-papi-integration** when touching `cpu_counter_metrics*`.
 - **Docs**: If behavior changes, update **`README.md`** or packaging notes per **monitor-readme-maintenance** when user-visible flags or outputs change.

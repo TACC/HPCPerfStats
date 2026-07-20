@@ -22,6 +22,10 @@ dist-hook:
 	  && { test -d "$(srcdir)/embedded-static-prefix/lib" || test -d "$(srcdir)/embedded-static-prefix/lib64"; } \
 	  || { echo "embedded-static-prefix/ is missing or incomplete." >&2; exit 1; }
 	cp -a "$(srcdir)/embedded-static-prefix" "$(distdir)/embedded-static-prefix"
+	@if test -f "$(srcdir)/scripts/fleet/stampede3.force"; then \
+	  $(MKDIR_P) "$(distdir)/scripts/fleet"; \
+	  cp -p "$(srcdir)/scripts/fleet/stampede3.force" "$(distdir)/scripts/fleet/stampede3.force"; \
+	fi
 
 EXTRA_DIST = README README.md \
 	third_party/nvidia-dcgm/README \

@@ -136,7 +136,7 @@ for distfile in \
   scripts/lib/monitor_tree_clean.sh \
   scripts/rpm_debug_shm_verify.sh \
   scripts/prepare_rpmbuild_stampede3.sh \
-  scripts/fleet/stampede3.force
+  scripts/fleet/README
 do
   if test ! -f "${MONITOR_DIR}/${distfile}"; then
     echo "Missing file required for make dist: ${MONITOR_DIR}/${distfile}" >&2

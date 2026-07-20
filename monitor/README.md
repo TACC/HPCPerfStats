@@ -54,7 +54,7 @@ rpmbuild -ba --define "_topdir ${PWD}/rpmbuild" "${PWD}/rpmbuild/SPECS/hpcperfst
 | pvc | `intel_gpu` + `host_opa` | `libxpum` / xpumanager; `liboib_utils` optional |
 | amd-rtx | NVIDIA Blackwell + IB + OPA + AMD CPU (not `amd_gpu`) | `libdcgm`, `libibmad`; `liboib_utils` optional |
 
-Fleet matrix (`HPCS_BUNDLE_FLEET=stampede3` or `scripts/fleet/stampede3.force` in the tarball): `--enable-ib-mad-dlopen`, `--enable-opa-mad-dlopen`, `--disable-amd-gpu`, `--enable-intel-gpu` when vendored XPUM headers exist. Binary `NEEDED` must not list `libibmad` / `liboib_utils`.
+Fleet matrix (opt-in via `prepare_rpmbuild_stampede3.sh`: `HPCS_BUNDLE_FLEET=stampede3` and/or `scripts/fleet/stampede3.force` created for that dist only — never commit the force file; default `prepare_rpmbuild_dirs.sh` does not ship it): `--enable-ib-mad-dlopen`, `--enable-opa-mad-dlopen`, `--disable-amd-gpu`, `--enable-intel-gpu` when vendored XPUM headers exist. Binary `NEEDED` must not list `libibmad` / `liboib_utils`. On aarch64, default prepares do not auto-enable intel-gpu from vendored headers alone (`HPCS_BUNDLE_ENABLE_INTEL_GPU=1` or Stampede3 fleet required).
 
 **Per-queue shm validate (one binary × six profiles):** after installing the same DEBUG fleet RPM/binary on a node of each queue class, run:
 
@@ -75,7 +75,7 @@ are vendored for a future Vista path; the Stampede3 wrapper rejects `gg`/`gh`.
 - **`--enable-intel-gpu={auto,yes,no}`** (default **auto** via `scripts/gpu_lspci_probe.sh intel`). Compiles against vendored **`third_party/intel-xpum/`** headers (XPUM **1.2.33** only — not system `/usr/include`).
 - Runtime **`dlopen`** of `libxpum` (`/usr/lib64/libxpum.so`, `libxpum.so.1`, …); override with **`HPCPERFSTATS_XPUM_LIB`**. No link-time `-lxpum`.
 - Stampede3 PVC: four Data Center GPU Max 1550 (`[8086:0bd5]` / Ponte Vecchio) → device rows `"0"`…`"3"`; keys align conceptually with `nvidia_gpu` / `amd_gpu` (Xe Link keys, not NvLink). Level Zero pipe metrics are deferred.
-- Force enable for testing: **`HPCPERFSTATS_FORCE_INTEL_GPU`**. Static bundle enables intel_gpu when vendored headers are present (fleet RPM).
+- Force enable for testing: **`HPCPERFSTATS_FORCE_INTEL_GPU`**. Static bundle enables intel_gpu when vendored headers are present on **x86**, or on aarch64 only with Stampede3 fleet / **`HPCS_BUNDLE_ENABLE_INTEL_GPU=1`**.
 
 ## Metric profiler build options
 

@@ -42,4 +42,32 @@ if echo "${fleet_flags}" | grep -q -- '--disable-infiniband'; then
   exit 1
 fi
 
+# Without fleet env and without stampede3.force, do not apply MAD dlopen matrix.
+if test -f ./scripts/fleet/stampede3.force; then
+  echo "scripts/fleet/stampede3.force must not be present for default-flag regression" >&2
+  exit 1
+fi
+if echo "${flags}" | grep -q -- '--enable-ib-mad-dlopen'; then
+  echo "default prepare must not pass --enable-ib-mad-dlopen without fleet" >&2
+  exit 1
+fi
+if echo "${flags}" | grep -q -- '--enable-opa-mad-dlopen'; then
+  echo "default prepare must not pass --enable-opa-mad-dlopen without fleet" >&2
+  exit 1
+fi
+
+# aarch64: vendored XPUM alone must not enable intel-gpu; opt-in env restores it.
+case "$(uname -m)" in
+  aarch64 | arm64)
+    echo "${flags}" | grep -q -- '--disable-intel-gpu' \
+      || { echo "aarch64 default must pass --disable-intel-gpu without fleet/opt-in" >&2; exit 1; }
+    opt_in_flags="$(HPCS_BUNDLE_ENABLE_INTEL_GPU=1 ./scripts/build_static_bundle.sh --print-configure-flags 2>/dev/null)"
+    echo "${opt_in_flags}" | grep -q -- '--enable-intel-gpu' \
+      || { echo "HPCS_BUNDLE_ENABLE_INTEL_GPU=1 must pass --enable-intel-gpu on aarch64" >&2; exit 1; }
+    fleet_intel="$(HPCS_BUNDLE_FLEET=stampede3 ./scripts/build_static_bundle.sh --print-configure-flags 2>/dev/null)"
+    echo "${fleet_intel}" | grep -q -- '--enable-intel-gpu' \
+      || { echo "stampede3 fleet must pass --enable-intel-gpu when XPUM headers exist" >&2; exit 1; }
+    ;;
+esac
+
 echo "test_static_bundle_configure_flags passed"

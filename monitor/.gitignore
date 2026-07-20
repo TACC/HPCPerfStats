@@ -45,3 +45,5 @@ Makefile.in
 /.build*
 /rpmbuild
 /embedded-static-prefix
+# Opt-in Stampede3 fleet marker (created by prepare_rpmbuild_stampede3.sh; never commit)
+/scripts/fleet/stampede3.force

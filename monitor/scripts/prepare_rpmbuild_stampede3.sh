@@ -8,7 +8,8 @@
 #
 # Fleet matrix (IB/OPA MAD dlopen, --disable-amd-gpu, intel_gpu when vendored):
 #   HPCS_BUNDLE_FLEET=stampede3 for this prepare host, and
-#   scripts/fleet/stampede3.force shipped in make dist for rpm %build.
+#   scripts/fleet/stampede3.force created here and embedded by dist-hook for rpm %build.
+#   Do not commit stampede3.force; default prepare_rpmbuild_dirs.sh does not ship it.
 #
 set -euo pipefail
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

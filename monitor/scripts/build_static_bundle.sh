@@ -87,13 +87,29 @@ HPCS_BUNDLE_REQUIRE_DCGM_GPU="${HPCS_BUNDLE_REQUIRE_DCGM_GPU:-0}"
 # Populated by static_bundle_print_detection_summary(); used by build_monitor (no second probe pass).
 STATIC_BUNDLE_FEAT_FLAGS=()
 
-# Stampede3 fleet: HPCS_BUNDLE_FLEET=stampede3 (prepare wrapper) or scripts/fleet/stampede3.force
-# (ships in make dist so rpm %build still applies the matrix without env).
+# Stampede3 fleet: HPCS_BUNDLE_FLEET=stampede3 (prepare_rpmbuild_stampede3.sh) and/or
+# scripts/fleet/stampede3.force when that prepare created it and dist-hook embedded it.
+# Default prepare must not ship the force file (opt-in only; never commit the marker).
 fleet_stampede3_enabled() {
   if test "${HPCS_BUNDLE_FLEET:-}" = "stampede3"; then
     return 0
   fi
   test -f "${MONITOR_DIR}/scripts/fleet/stampede3.force"
+}
+
+# Vendored XPUM headers alone must not enable intel_gpu on aarch64 (Grace/Vista).
+# Enable when: Stampede3 fleet, x86 build host, or HPCS_BUNDLE_ENABLE_INTEL_GPU=1.
+intel_gpu_bundle_auto_enable() {
+  if fleet_stampede3_enabled; then
+    return 0
+  fi
+  if is_x86_build_host; then
+    return 0
+  fi
+  case "${HPCS_BUNDLE_ENABLE_INTEL_GPU:-0}" in
+  1 | yes | YES | true | TRUE | on | ON) return 0 ;;
+  *) return 1 ;;
+  esac
 }
 
 static_bundle_release_build_enabled() {
@@ -324,10 +340,13 @@ EOF
     fi
   fi
 
-  # Fleet RPM: compile intel_gpu against vendored XPUM headers; runtime dlopen libxpum.
-  if test -f "${MONITOR_DIR}/third_party/intel-xpum/xpum_api.h"; then
+  # Intel GPU: vendored XPUM headers + arch/fleet/opt-in gate (see intel_gpu_bundle_auto_enable).
+  if test -f "${MONITOR_DIR}/third_party/intel-xpum/xpum_api.h" && intel_gpu_bundle_auto_enable; then
     intel_ok="vendored-hdr (runtime libxpum dlopen)"
     STATIC_BUNDLE_FEAT_FLAGS+=(--enable-intel-gpu)
+  elif test -f "${MONITOR_DIR}/third_party/intel-xpum/xpum_api.h"; then
+    intel_ok="vendored-hdr present; disabled (non-x86 without fleet/HPCS_BUNDLE_ENABLE_INTEL_GPU=1)"
+    STATIC_BUNDLE_FEAT_FLAGS+=(--disable-intel-gpu)
   else
     intel_ok="not detected"
     STATIC_BUNDLE_FEAT_FLAGS+=(--disable-intel-gpu)
