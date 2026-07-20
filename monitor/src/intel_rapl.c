@@ -23,8 +23,8 @@
 
 static int intel_rapl_begin(struct stats_type *type)
 {
-  if (!likwid_rapl_is_supported_processor()) {
-    TRACE("intel_rapl disabled because processor is not LIKWID RAPL capable\n");
+  if (!likwid_rapl_is_supported_intel_processor()) {
+    TRACE("intel_rapl disabled because processor is not Intel LIKWID RAPL capable\n");
     type->st_enabled = 0;
     return -1;
   }

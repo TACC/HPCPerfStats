@@ -29,12 +29,16 @@ likwid_rapl_raw_to_mj(uint32_t raw, double joules_per_lsb)
   return (unsigned long long)((double)raw * joules_per_lsb * 1000.0 + 0.5);
 }
 
+uint32_t
+likwid_rapl_energy_status_lo32(uint64_t raw_u64)
+{
+  return (uint32_t)(raw_u64 & 0xffffffffu);
+}
+
 int
-likwid_rapl_is_supported_processor(void)
+likwid_rapl_is_supported_intel_processor(void)
 {
   switch (processor) {
-  case AMD_17H:
-  case AMD_19H:
   case SKYLAKE:
   case CASCADE_LAKE:
   case ICELAKE_SERVER:
@@ -45,22 +49,42 @@ likwid_rapl_is_supported_processor(void)
   }
 }
 
+int
+likwid_rapl_is_supported_amd_processor(void)
+{
+  switch (processor) {
+  case AMD_17H:
+  case AMD_19H:
+    return 1;
+  default:
+    return 0;
+  }
+}
+
+int
+likwid_rapl_is_supported_processor(void)
+{
+  return likwid_rapl_is_supported_intel_processor()
+         || likwid_rapl_is_supported_amd_processor();
+}
+
 #ifdef HAVE_LIKWID
 
 static void
 try_read_mj(int cpu_id, uint32_t msr, int domain, unsigned long long *mj,
             int *has)
 {
-  uint32_t raw = 0;
+  /* LIKWID power_read writes uint64_t; a uint32_t local overflows the stack. */
+  uint64_t raw_u64 = 0;
   double eu;
   *has = 0;
   *mj = 0;
-  if (power_read(cpu_id, (uint64_t)msr, &raw) != 0)
+  if (power_read(cpu_id, (uint64_t)msr, &raw_u64) != 0)
     return;
   eu = power_getEnergyUnit(domain);
   if (eu <= 0.0)
     return;
-  *mj = likwid_rapl_raw_to_mj(raw, eu);
+  *mj = likwid_rapl_raw_to_mj(likwid_rapl_energy_status_lo32(raw_u64), eu);
   *has = 1;
 }
 

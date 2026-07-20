@@ -27,7 +27,8 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_intel_gpu_schema_contract.c` | Intel PVC `intel_gpu` KEYS contract (Xe Link, no NvLink) |
 | `test_xpum_gpu_dyn.c` | XPUM dlopen stubs / missing-lib / hooks |
 | `test_lnet_schema_contract.c` | LNet collector schema token contract |
-| `test_likwid_rapl_scale.c` | RAPL energy scaling helper sanity checks |
+| `test_likwid_rapl_scale.c` | RAPL energy scaling + `uint64_t`→lo32 truncate contract |
+| `test_likwid_rapl_support.c` | Intel vs AMD RAPL processor support gates (SPR ≠ AMD) |
 | `test_string1.c` | `wsep` / `strsep_ne` (header-only `string1.h`) |
 | `test_stats_buffer_data_append.c` | `stats_buffer_data_append` (RMQ payload string growth) |
 | `test_stats_buffer_uts.c` | `stats_buffer_ensure_uts_cached` / `stats_buffer_uts_cache_reset` |
@@ -172,7 +173,7 @@ Some drivers are omitted or skipped depending on the configured build:
 | Condition | Affected tests |
 |-----------|----------------|
 | `CPU_BACKEND_DCGM` | `test_cpu_counter_dcgm_util`, `test_cpu_counter_dcgm_publish`, `test_dcgm_pkg_uniq` |
-| `LIKWID` | `test_likwid_rapl_scale` links production `likwid_rapl.c`; otherwise inline fallback |
+| (always) | `test_likwid_rapl_scale` / `test_likwid_rapl_support` link production `likwid_rapl.c` (helpers do not require LIKWID at link for scale/support asserts) |
 | `RABBITMQ` | `test_monitor_cli`, `test_ring_buffer`, `test_stats_buffer_collect`, `test_stats_buffer_debug_shm`, `test_debug_shm_emit_golden`, `test_monitor_timing` |
 | `DEBUG` | `test_stats_buffer_debug_shm`, `test_debug_shm_emit_golden` (meaningful assertions; otherwise skipped) |
 | `INFINIBAND` | `test_ib_mad_backoff`, `test_ib_mad_decode` |

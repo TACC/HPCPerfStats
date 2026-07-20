@@ -36,7 +36,9 @@ static int amd64_pmc_begin_cpu(char *cpu)
     events = amd64_pmc_events_zen;
     break;
   default:
-    ERROR("Processor model/family %d not supported\n", processor);
+    /* Expected on Intel; begin() gates before the per-CPU loop. */
+    TRACE("Processor model/family %d not supported by amd_x86_pmc\n",
+          processor);
     return -1;
   }
 
@@ -123,6 +125,17 @@ static int amd64_pmc_begin(struct stats_type *type)
 {
   int nr = 0;
   int i;
+
+  switch (processor) {
+  case AMD_10H:
+  case AMD_17H:
+  case AMD_19H:
+    break;
+  default:
+    TRACE("amd_x86_pmc disabled: processor %d is not AMD\n", processor);
+    type->st_enabled = 0;
+    return -1;
+  }
 
   for (i = 0; i < nr_cpus; i++) {
     char cpu[80];

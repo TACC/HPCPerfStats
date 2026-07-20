@@ -9,6 +9,12 @@
 
 unsigned long long likwid_rapl_raw_to_mj(uint32_t raw, double joules_per_lsb);
 
+/* Low 32 bits of a LIKWID power_read uint64_t (RAPL energy status field). */
+uint32_t likwid_rapl_energy_status_lo32(uint64_t raw_u64);
+
+int likwid_rapl_is_supported_intel_processor(void);
+int likwid_rapl_is_supported_amd_processor(void);
+/* OR of Intel and AMD helpers (legacy callers). Prefer vendor-specific helpers. */
 int likwid_rapl_is_supported_processor(void);
 
 int likwid_rapl_collect_socket_mj(int cpu_id, unsigned int socket_id,

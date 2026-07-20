@@ -20,8 +20,8 @@
 static int amd64_rapl_begin_cpu(char *cpu)
 {
   (void)cpu;
-  if (!likwid_rapl_is_supported_processor()) {
-    TRACE("Processor model/family %d not supported by LIKWID RAPL\n",
+  if (!likwid_rapl_is_supported_amd_processor()) {
+    TRACE("Processor model/family %d not supported by AMD LIKWID RAPL\n",
           processor);
     return -1;
   }
@@ -54,6 +54,13 @@ static int amd64_rapl_begin(struct stats_type *type)
 {
   int nr = 0;
   int i;
+
+  if (!likwid_rapl_is_supported_amd_processor()) {
+    TRACE("amd_x86_rapl disabled: processor %d is not AMD Zen RAPL capable\n",
+          processor);
+    type->st_enabled = 0;
+    return -1;
+  }
 
   for (i = 0; i < nr_cpus; i++) {
     char cpu[80];

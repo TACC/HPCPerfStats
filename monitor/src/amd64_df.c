@@ -91,6 +91,17 @@ static int amd64_df_begin(struct stats_type *type)
   int nr = 0;
   int i;
 
+  switch (processor) {
+  case AMD_17H:
+  case AMD_19H:
+    break;
+  default:
+    TRACE("amd_x86_uncore_df disabled: processor %d is not AMD Zen\n",
+          processor);
+    type->st_enabled = 0;
+    return -1;
+  }
+
   for (i = 0; i < nr_cpus; i++) {
     char cpu[80];
     int pkg, core, smt, nr_core;
