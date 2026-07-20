@@ -419,12 +419,12 @@ int cpu_counter_metrics_papi_begin(struct stats_type *type)
     return 0;
   }
 
-  /* System-wide: do not arm SP/DP/INT on all CPUs (PMU starvation). */
-  if (papi_apply_system_wide_filter(PAPI_SW_FILTER_CYC_INS) <= 0) {
+  /* System-wide: CYC-only by default (Grace: CYC+INS still starves; journal locked). */
+  if (papi_apply_system_wide_filter(PAPI_SW_FILTER_CYC_ONLY) <= 0) {
     papi_warn_once("no PAPI_TOT_CYC for system-wide attach; FLOPs/cycles disabled");
     return 0;
   }
-  monitor_log_warn("cpu_counter_metrics_papi: system-wide events n_active=%d (CYC-first)\n",
+  monitor_log_warn("cpu_counter_metrics_papi: system-wide events n_active=%d (CYC-only)\n",
                    g_n_active);
 
   papi_cap_active_to_hwctrs();
@@ -460,34 +460,36 @@ int cpu_counter_metrics_papi_begin(struct stats_type *type)
       "cpu_counter_metrics_papi: cycle census nonzero=%d zero=%d read_fail=%d n_active=%d\n", nz,
       zc, fl, g_n_active);
 
-  if (papi_census_needs_reshrink(nz, ok_cpus, nr_cpus) && g_n_active > 1) {
-    monitor_log_warn(
-        "cpu_counter_metrics_papi: mass read_ok_but_zero; reshrink to CYC-only and re-attach\n");
-    papi_destroy_all_eventsets();
-    if (papi_apply_system_wide_filter(PAPI_SW_FILTER_CYC_ONLY) <= 0) {
-      papi_warn_once("CYC-only filter failed after census");
-      cpu_counter_metrics_papi_cleanup();
-      return 0;
+  if (papi_census_needs_reshrink(nz, ok_cpus, nr_cpus)) {
+    if (g_n_active > 1) {
+      monitor_log_warn(
+          "cpu_counter_metrics_papi: mass read_ok_but_zero; reshrink to CYC-only and re-attach\n");
+      papi_destroy_all_eventsets();
+      if (papi_apply_system_wide_filter(PAPI_SW_FILTER_CYC_ONLY) <= 0) {
+        papi_warn_once("CYC-only filter failed after census");
+        cpu_counter_metrics_papi_cleanup();
+        return 0;
+      }
+      papi_raise_nofile_for_attach();
+      ok_cpus = 0;
+      first_fail_cpu = -1;
+      first_fail_rc = PAPI_OK;
+      (void)papi_attach_all_cpus(&ok_cpus, &first_fail_cpu, &first_fail_rc);
+      papi_log_begin_status(ok_cpus, first_fail_cpu, first_fail_rc);
+      if (ok_cpus <= 0) {
+        papi_warn_once("PAPI re-attach failed for all CPUs after CYC-only shrink");
+        cpu_counter_metrics_papi_cleanup();
+        return 0;
+      }
+      (void)usleep(100000);
+      papi_census_cycle_counts(&nz, &zc, &fl);
+      monitor_log_warn("cpu_counter_metrics_papi: post-reshrink census nonzero=%d zero=%d "
+                       "read_fail=%d n_active=%d\n",
+                       nz, zc, fl, g_n_active);
     }
-    papi_raise_nofile_for_attach();
-    ok_cpus = 0;
-    first_fail_cpu = -1;
-    first_fail_rc = PAPI_OK;
-    (void)papi_attach_all_cpus(&ok_cpus, &first_fail_cpu, &first_fail_rc);
-    papi_log_begin_status(ok_cpus, first_fail_cpu, first_fail_rc);
-    if (ok_cpus <= 0) {
-      papi_warn_once("PAPI re-attach failed for all CPUs after CYC-only shrink");
-      cpu_counter_metrics_papi_cleanup();
-      return 0;
-    }
-    (void)usleep(100000);
-    papi_census_cycle_counts(&nz, &zc, &fl);
-    monitor_log_warn("cpu_counter_metrics_papi: post-reshrink census nonzero=%d zero=%d "
-                     "read_fail=%d n_active=%d\n",
-                     nz, zc, fl, g_n_active);
     if (papi_census_needs_reshrink(nz, ok_cpus, nr_cpus))
       monitor_log_warn("cpu_counter_metrics_papi: cycles still sparse after CYC-only "
-                       "(attach≠counting on Grace PMU)\n");
+                       "(attach≠counting; util×freq fail-soft fills cycles)\n");
   }
 
   g_papi_ready = 1;

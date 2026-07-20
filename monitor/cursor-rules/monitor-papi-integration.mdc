@@ -14,11 +14,11 @@ alwaysApply: false
 
 | Source | Keys |
 |--------|------|
-| **DCGM** | `cpu_util_*_accum_us`, `dcgm_cpu_power_util_w`, `dcgm_cpu_power_limit_w`, `arm_dram_bw_bytes` |
-| **PAPI** | `aperf`, `mperf`, `cpu_clock_est_cycles`, `fp_arith_inst_retired_scalar_single`, `fp_arith_inst_retired_scalar_double`, `arm_est_flops` (= SP+DP only), `arm_int8_ops`, `arm_int16_ops`, optional `instr_retired` |
+| **DCGM** | `cpu_util_*_accum_us`, `dcgm_cpu_power_util_w`, `dcgm_cpu_power_limit_w`, `arm_dram_bw_bytes`; **fail-soft** `cpu_clock_est_cycles` / `aperf` / `mperf` (util×freq) |
+| **PAPI** | Overwrites `aperf` / `mperf` / `cpu_clock_est_cycles` **only when measured cycles &gt; 0**; owns `fp_arith_inst_retired_scalar_*`, `arm_est_flops` (= SP+DP only), `arm_int8_ops`, `arm_int16_ops`, optional `instr_retired` |
 
 - aarch64 **`auto` stays `--with-cpu-counter-backend=dcgm`**. PAPI is an additive layer (`MONITOR_CPU_PAPI_FLOPS`), not a separate exclusive backend.
-- When `MONITOR_CPU_PAPI_FLOPS` is defined, **do not** write DCGM-synthesized cycles/FLOPs (`dcgm_accumulate_from_util_sample` / `publish_dcgm_cpu_stats` gates). Single writer per key.
+- **Fail-soft cycles (mandatory on Grace):** always accumulate and publish DCGM util×freq cycle estimates even when `MONITOR_CPU_PAPI_FLOPS` is set. PAPI must **not** clear those keys on `read_ok_but_zero`. Do **not** publish DCGM-synthesized FLOPs/instr under PAPI (SP/DP/`arm_est_flops` stay PAPI-owned).
 - Emit contract: every PAPI collect that has SP/DP must set **both** scalar keys **and** `arm_est_flops = SP + DP`. Do **not** fold int8/int16 into `arm_est_flops`.
 - Integer ops: resolve native **`ASE_SVE_INT8_SPEC`** / **`ASE_SVE_INT16_SPEC`** → emit **`arm_int8_ops`** / **`arm_int16_ops`**; fail-soft to 0 if unavailable.
 - Packed 128/256/512 FP buckets stay 0 unless a future event maps them.
@@ -32,16 +32,16 @@ alwaysApply: false
 ## Runtime
 
 - Prefer PAPI presets (`PAPI_TOT_CYC`, `PAPI_SP_OPS`, `PAPI_DP_OPS`, `PAPI_TOT_INS`); fall back to documented native names; int8/int16 are native-only; fail-soft (log once, leave metrics 0) — never crash the daemon.
-- Per-CPU `PAPI_CPU_ATTACH` + `PAPI_DOM_ALL` for system-wide counts. **Attach ≠ counting** on Grace: arming many events × all CPUs can leave most CPUs `read_ok_but_zero` under load.
-- **System-wide default:** arm **CYC** (required) and **INS** only. Do **not** arm SP/DP/INT8/INT16 on all CPUs by default (PMU starvation). After begin, **cycle census**; if attach looks full but nonzero cycle CPUs are below `max(4, nr_cpus/8)`, reshrink to **CYC-only** and re-attach.
+- Per-CPU `PAPI_CPU_ATTACH` + `PAPI_DOM_ALL` for system-wide counts. **Attach ≠ counting** on Grace: even **CYC-only × all CPUs** can leave most CPUs `read_ok_but_zero` (ops: begin census `nonzero≈1`).
+- **System-wide default:** arm **CYC only** (do not arm INS/SP/DP/INT on all CPUs). Keep begin **cycle census** + warn when sparse; util×freq fail-soft fills user-visible cycles.
 - Multiplex / `PAPI_num_hwctrs()` cap: keep **CYC first** when shrinking. Raise soft `RLIMIT_NOFILE` before the attach loop when needed.
-- **Release-visible** warns: `ok_cpus` / `nr_cpus` / `n_active`, cycle census (`nonzero`/`zero`/`read_fail`), reshrink path. Do not disable `host_cpu_hw` on partial attach. Rate-limit `PAPI_read` failures.
+- **Release-visible** warns: `ok_cpus` / `nr_cpus` / `n_active`, cycle census (`nonzero`/`zero`/`read_fail`), sparse-after-CYC-only. Do not disable `host_cpu_hw` on partial attach. Rate-limit `PAPI_read` failures.
 - **Lifetime vs DCGM soft-fail:** PAPI must **survive** DCGM `UpdateAllFields` soft-reset. Do not destroy PAPI when only the DCGM session is torn down.
-- **Ops smoke (Grace):** stress util-busy CPUs that previously showed util↑ cycles=0; expect `cpu_clock_est_cycles`/`aperf` (`$9`/`$22`) to **advance**. Intel KEYS indices 6–16 stay 0 on hybrid (**by design**). Frozen mid-row + live soft `host_cpu` with `ok_cpus≈nr_cpus` ⇒ also check journal for DCGM soft-reset.
+- **Ops smoke (Grace):** util-busy CPUs must show advancing `$9`/`$22` (estimate or measured). Intel KEYS indices 6–16 stay 0 on hybrid (**by design**). Journal unit is often **`hpcperfstats`** (not `hpcperfstatsd`).
 - Keep collect hot-path bounded; do not add unbounded per-sample work.
 
 ## Overlap
 
-- **`monitor-dcgm-integration.mdc`** — DCGM sessions, GPU path, util/power; PAPI owns cycle/FLOP/int-op keys on aarch64 hybrid.
+- **`monitor-dcgm-integration.mdc`** — DCGM sessions, GPU path, util/power; hybrid fail-soft cycles + PAPI measured overwrite.
 - **`monitor-local-build-deps.mdc`** / **`monitor-static-build-verification.mdc`** — static PREFIX pins.
 - **`monitor-emitted-variable-naming.mdc`** — portable key names.

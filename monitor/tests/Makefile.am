@@ -51,7 +51,8 @@ if CPU_BACKEND_DCGM
 check_PROGRAMS += test_dcgm_pkg_uniq
 endif
 # Pure DCGM util/publish math must run on LIKWID hosts too (blank watts, util@clock=0).
-check_PROGRAMS += test_cpu_counter_dcgm_util test_cpu_counter_dcgm_publish
+check_PROGRAMS += test_cpu_counter_dcgm_util test_cpu_counter_dcgm_publish \
+	test_cpu_counter_dcgm_publish_papi
 if RABBITMQ
 check_PROGRAMS += test_monitor_cli test_ring_buffer test_stats_buffer_collect test_stats_buffer_debug_shm test_debug_shm_emit_golden test_debug_shm_schema_mirror test_monitor_timing
 endif
@@ -179,6 +180,16 @@ test_cpu_counter_dcgm_publish_SOURCES = \
 	$(top_srcdir)/src/cpu_counter_metrics_dcgm_util.c
 # Force DCGM backend define for pure publish math; no -ldcgm / vendor headers required.
 test_cpu_counter_dcgm_publish_CPPFLAGS = $(AM_CPPFLAGS) -DMONITOR_CPU_BACKEND_DCGM
+
+# Same sources with hybrid PAPI gate — locks util×freq cycle fail-soft under MONITOR_CPU_PAPI_FLOPS.
+test_cpu_counter_dcgm_publish_papi_SOURCES = \
+	test_cpu_counter_dcgm_publish.c \
+	test_stats_stub.c \
+	$(top_srcdir)/src/cpu_counter_metrics_dcgm_publish.c \
+	$(top_srcdir)/src/cpu_counter_metrics_dcgm_util.c
+test_cpu_counter_dcgm_publish_papi_CPPFLAGS = $(AM_CPPFLAGS) -DMONITOR_CPU_BACKEND_DCGM \
+	-DMONITOR_CPU_PAPI_FLOPS
+test_cpu_counter_dcgm_publish_papi_CFLAGS = $(AM_CFLAGS)
 
 test_cpu_counter_papi_map_SOURCES = \
 	test_cpu_counter_papi_map.c \
@@ -603,6 +614,7 @@ test_procfile_kv_LDADD = $(LDADD)
 test_collect_str_LDADD = $(LDADD)
 test_cpu_counter_dcgm_util_LDADD = $(LDADD)
 test_cpu_counter_dcgm_publish_LDADD = $(LDADD)
+test_cpu_counter_dcgm_publish_papi_LDADD = $(LDADD)
 test_cpu_counter_papi_util_LDADD = $(LDADD)
 test_string1_LDADD = $(LDADD)
 test_stats_buffer_data_append_LDADD = $(LDADD)

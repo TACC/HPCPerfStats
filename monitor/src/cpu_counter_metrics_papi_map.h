@@ -26,9 +26,11 @@ struct papi_cpu_hw_counters {
  *   fp_arith_inst_retired_scalar_single / _scalar_double
  *   arm_est_flops = SP + DP (never includes int ops)
  *   arm_int8_ops / arm_int16_ops from ASE_SVE_INT{8,16}_SPEC
- *   aperf / mperf / cpu_clock_est_cycles from cycles
+ *   aperf / mperf / cpu_clock_est_cycles from cycles only when cycles > 0
+ *     (leave DCGM util×freq estimate in place on read_ok_but_zero)
  * Packed FP width buckets are zeroed. Does not touch util or DCGM power keys.
  */
+int papi_should_overwrite_cycle_keys(unsigned long long cycles);
 void papi_map_counters_to_host_cpu_hw(struct stats *stats, const struct papi_cpu_hw_counters *c);
 
 #endif

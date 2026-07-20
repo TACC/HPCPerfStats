@@ -3,6 +3,11 @@
 
 #include "stats.h"
 
+int papi_should_overwrite_cycle_keys(unsigned long long cycles)
+{
+  return (cycles > 0) ? 1 : 0;
+}
+
 void papi_map_counters_to_host_cpu_hw(struct stats *stats, const struct papi_cpu_hw_counters *c)
 {
   unsigned long long sp = 0;
@@ -41,9 +46,12 @@ void papi_map_counters_to_host_cpu_hw(struct stats *stats, const struct papi_cpu
   stats_set(stats, "fp_arith_inst_retired_256b_packed_single", 0);
   stats_set(stats, "fp_arith_inst_retired_512b_packed_single", 0);
 
-  stats_set(stats, "aperf", cycles);
-  stats_set(stats, "mperf", cycles);
-  stats_set(stats, "cpu_clock_est_cycles", cycles);
+  /* Leave DCGM util×freq estimate when PAPI returns 0 (Grace sparse attach). */
+  if (papi_should_overwrite_cycle_keys(cycles)) {
+    stats_set(stats, "aperf", cycles);
+    stats_set(stats, "mperf", cycles);
+    stats_set(stats, "cpu_clock_est_cycles", cycles);
+  }
   if (c->have_instr)
     stats_set(stats, "instr_retired", instr);
 }

@@ -109,10 +109,10 @@ static void test_accumulate_from_util_sample(void)
   assert(s_ctr3[0] == 5000000ULL);
   assert(s_ctr4[0] == 5000000ULL);
 #ifdef MONITOR_CPU_PAPI_FLOPS
-  /* Hybrid: util still accumulates; synthetic cycles/FLOPs stay 0. */
-  assert(s_ctr5[0] == 0ULL);
-  assert(s_mperf[0] == 0ULL);
-  assert(s_aperf[0] == 0ULL);
+  /* Hybrid: util + util×freq cycles accumulate; FLOPs/instr stay 0 (PAPI-owned). */
+  assert(s_ctr5[0] == 2000000000ULL);
+  assert(s_mperf[0] == 2000000000ULL);
+  assert(s_aperf[0] == 1000000000ULL);
   assert(s_inst[0] == 0ULL);
   assert(s_arm_flops[0] == 0ULL);
 #else
@@ -146,6 +146,7 @@ static void test_publish_dcgm_cpu_stats(void)
   test_stats_stub_bind(&stub);
 
   s_ctr0[0] = 111ULL;
+  s_ctr5[0] = 888ULL;
   s_inst[0] = 222ULL;
   s_aperf[0] = 333ULL;
   s_mperf[0] = 444ULL;
@@ -154,10 +155,12 @@ static void test_publish_dcgm_cpu_stats(void)
 
   publish_dcgm_cpu_stats(&g_dummy_stats, 0);
   assert(test_stats_stub_find(&stub, "cpu_util_total_accum_us", &val) && val == 111ULL);
+  assert(test_stats_stub_find(&stub, "cpu_clock_est_cycles", &val) && val == 888ULL);
 #ifdef MONITOR_CPU_PAPI_FLOPS
+  /* Hybrid fail-soft: publish cycle estimates; leave FLOPs/instr to PAPI. */
   assert(!test_stats_stub_find(&stub, "instr_retired", &val));
-  assert(!test_stats_stub_find(&stub, "aperf", &val));
-  assert(!test_stats_stub_find(&stub, "mperf", &val));
+  assert(test_stats_stub_find(&stub, "aperf", &val) && val == 333ULL);
+  assert(test_stats_stub_find(&stub, "mperf", &val) && val == 444ULL);
 #else
   assert(test_stats_stub_find(&stub, "instr_retired", &val) && val == 222ULL);
   assert(test_stats_stub_find(&stub, "aperf", &val) && val == 333ULL);
@@ -188,7 +191,11 @@ int main(void)
   test_publish_dcgm_cpu_stats();
 
   test_stats_stub_unbind();
+#ifdef MONITOR_CPU_PAPI_FLOPS
+  printf("test_cpu_counter_dcgm_publish_papi passed\n");
+#else
   printf("test_cpu_counter_dcgm_publish passed\n");
+#endif
   return 0;
 }
 
