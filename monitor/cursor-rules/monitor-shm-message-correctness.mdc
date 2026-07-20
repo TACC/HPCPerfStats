@@ -81,8 +81,12 @@ When golden is opted in, verify resolves `${MONITOR}/tests/expected` (or the giv
 | `--cross-sample-check` | Poll for second snapshot; cadence + E-key monotonic checks |
 | `--cross-sample-wait-full` | Also wait for `full` tier advance |
 | `--conf PATH` | Override active conf (default: discover from running daemon / systemd) |
-| `--cross-sample-fixture-dir` | Deterministic `t0/`/`t1/` + `fixture_timing.json` (CI) |
+| `--cross-sample-fixture-dir` | Deterministic `t0/`/`t1/` + `fixture_timing.json` (CI; no stimulus) |
 | `--strict-cross-sample` | Promote cadence/monotonic WARN to FAIL |
+| `--no-cross-sample-stimulus` | Disable live CPU+/tmp(/Lustre) stimulus during capture (default: on for live) |
+
+Live cross-sample classifies allow-flat-zero / allow-flat keys, aggregates all-zero
+`host_cpu_hw` flats, and checks must-move canaries after stimulus.
 
 Debug RPM installed conf is **never** the git `src/hpcperfstats.conf` template (600s slow tier); validator reads the installed file or daemon `-c` path.
 

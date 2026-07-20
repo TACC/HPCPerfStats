@@ -29,6 +29,7 @@ for path in \
   scripts/lib/daemon_conf.py \
   scripts/lib/shm_snapshot.py \
   scripts/lib/cross_sample_validate.py \
+  scripts/lib/cross_sample_stimulus.py \
   scripts/rpm_debug_shm_verify.sh \
   scripts/gpu_lspci_probe.sh \
   scripts/gpu_lspci_detect.awk
@@ -46,6 +47,11 @@ grep -q 'scripts/lib/message_parse.py' scripts/prepare_rpmbuild_dirs.sh \
   || { echo "prepare_rpmbuild_dirs.sh must preflight scripts/lib/message_parse.py" >&2; exit 1; }
 grep -q 'scripts/rpm_debug_shm_verify.sh' scripts/prepare_rpmbuild_dirs.sh \
   || { echo "prepare_rpmbuild_dirs.sh must preflight scripts/rpm_debug_shm_verify.sh" >&2; exit 1; }
+
+grep -q 'scripts/lib/cross_sample_validate.py' scripts/prepare_rpmbuild_dirs.sh \
+  || { echo "prepare_rpmbuild_dirs.sh must preflight scripts/lib/cross_sample_validate.py" >&2; exit 1; }
+grep -q 'scripts/lib/cross_sample_stimulus.py' scripts/prepare_rpmbuild_dirs.sh \
+  || { echo "prepare_rpmbuild_dirs.sh must preflight scripts/lib/cross_sample_stimulus.py" >&2; exit 1; }
 
 grep -q 'scripts/lib/tacc_system_profiles.py' scripts/prepare_rpmbuild_dirs.sh \
   || { echo "prepare_rpmbuild_dirs.sh must preflight scripts/lib/tacc_system_profiles.py" >&2; exit 1; }

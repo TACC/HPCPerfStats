@@ -39,7 +39,7 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_shm_message_correctness.sh` | Python validator on `tests/expected/synthetic_fixture/`; optional slug goldens (exit 77 skip) |
 | `scripts/emit_build_capabilities.py` | Writes `monitor-build-capabilities.json` + `capability_slug` (`make capabilities`) |
 | `scripts/build_message_expectations.py` | Host probes + shm `schema` → `expectations_<slug>.json` |
-| `scripts/validate_shm_messages.py` | Validates shm `schema`/`fast`/`full` against expectations manifest |
+| `scripts/validate_shm_messages.py` | Validates shm `schema`/`fast`/`full` against expectations manifest; live `--cross-sample-check` injects brief host stimulus by default (`--no-cross-sample-stimulus` to disable) |
 | `test_stats_runtime_collect.c` | `stats_runtime_collect_cycle`, `stats_schema_key_active_this_phase` |
 | `test_path_collect.c` | `path_collect_single` / `path_collect_list` (`open`/`read` path I/O) |
 | `test_path_read.c` | `path_read_small` / `path_read_alloc` (incl. `PATH_READ_ALLOC_MAX`, NULL guards) |

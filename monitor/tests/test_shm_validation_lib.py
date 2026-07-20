@@ -534,6 +534,258 @@ class CrossSampleTests(unittest.TestCase):
         )
         self.assertTrue(any("decreased" in w for w in warnings))
 
+    def test_allow_flat_zero_silences_errors(self) -> None:
+        from lib.cross_sample_validate import run_cross_sample_checks
+        from lib.daemon_conf import DaemonTiming
+        from lib.shm_snapshot import SnapshotPair
+
+        manifest = {
+            "enable_slow_tier": True,
+            "types": {
+                "host_net": {
+                    "schema_keys": [
+                        "rx_bytes,E,U=B",
+                        "rx_errors,E",
+                        "tx_errors,E",
+                    ],
+                    "schema_key_names": ["rx_bytes", "rx_errors", "tx_errors"],
+                }
+            },
+        }
+        schema = {k: v["schema_keys"] for k, v in manifest["types"].items()}
+        timing = DaemonTiming(30.0, 60.0, 300.0, True)
+        pair = SnapshotPair(
+            kind="full",
+            ts_a=1000.0,
+            ts_b=1060.0,
+            body_a="1000.0 job h\nhost_net eth0 @full 100 0 0\n",
+            body_b="1060.0 job h\nhost_net eth0 @full 100 0 0\n",
+        )
+        notes, warnings, errors = run_cross_sample_checks(
+            manifest,
+            schema,
+            timing=timing,
+            fast_pair=None,
+            full_pair=pair,
+            strict=False,
+            active_conf_note="test",
+        )
+        self.assertFalse(errors)
+        self.assertTrue(any("rx_bytes" in w and "flat" in w for w in warnings))
+        self.assertFalse(any("rx_errors" in w for w in warnings))
+        self.assertFalse(any("tx_errors" in w for w in warnings))
+        self.assertTrue(any("allow-flat-zero" in n for n in notes))
+
+    def test_host_cpu_hw_all_zero_aggregated(self) -> None:
+        from lib.cross_sample_validate import run_cross_sample_checks
+        from lib.daemon_conf import DaemonTiming
+        from lib.shm_snapshot import SnapshotPair
+
+        manifest = {
+            "enable_slow_tier": True,
+            "types": {
+                "host_cpu_hw": {
+                    "schema_keys": ["cycles,E", "instr,E", "arm_est_flops,E"],
+                    "schema_key_names": ["cycles", "instr", "arm_est_flops"],
+                }
+            },
+        }
+        schema = {k: v["schema_keys"] for k, v in manifest["types"].items()}
+        timing = DaemonTiming(30.0, 60.0, 300.0, True)
+        pair = SnapshotPair(
+            kind="full",
+            ts_a=1000.0,
+            ts_b=1060.0,
+            body_a="1000.0 job h\nhost_cpu_hw 0 @full 0 0 0\n",
+            body_b="1060.0 job h\nhost_cpu_hw 0 @full 0 0 0\n",
+        )
+        _, warnings, errors = run_cross_sample_checks(
+            manifest,
+            schema,
+            timing=timing,
+            fast_pair=None,
+            full_pair=pair,
+            strict=False,
+            active_conf_note="test",
+        )
+        self.assertFalse(errors)
+        self.assertEqual(len([w for w in warnings if "host_cpu_hw" in w]), 1)
+        self.assertTrue(any("all E-keys flat at 0" in w for w in warnings))
+        self.assertFalse(any("cycles: flat" in w for w in warnings))
+
+    def test_host_cpu_nonzero_flat_still_warns(self) -> None:
+        from lib.cross_sample_validate import run_cross_sample_checks
+        from lib.daemon_conf import DaemonTiming
+        from lib.shm_snapshot import SnapshotPair
+
+        manifest = {
+            "enable_slow_tier": True,
+            "types": {
+                "host_cpu": {
+                    "schema_keys": ["user,E,U=cs", "system,E,U=cs", "idle,E,U=cs"],
+                    "schema_key_names": ["user", "system", "idle"],
+                }
+            },
+        }
+        schema = {k: v["schema_keys"] for k, v in manifest["types"].items()}
+        timing = DaemonTiming(30.0, 60.0, 300.0, True)
+        pair = SnapshotPair(
+            kind="full",
+            ts_a=1000.0,
+            ts_b=1060.0,
+            body_a="1000.0 job h\nhost_cpu 0 @full 10 20 30\n",
+            body_b="1060.0 job h\nhost_cpu 0 @full 10 20 30\n",
+        )
+        _, warnings, _ = run_cross_sample_checks(
+            manifest,
+            schema,
+            timing=timing,
+            fast_pair=None,
+            full_pair=pair,
+            strict=False,
+            active_conf_note="test",
+        )
+        self.assertTrue(any("user" in w and "flat at 10" in w for w in warnings))
+
+    def test_canary_fail_and_pass(self) -> None:
+        from lib.cross_sample_validate import run_cross_sample_checks
+        from lib.daemon_conf import DaemonTiming
+        from lib.shm_snapshot import SnapshotPair
+
+        manifest = {
+            "enable_slow_tier": True,
+            "types": {
+                "host_cpu": {
+                    "schema_keys": ["user,E,U=cs", "idle,E,U=cs"],
+                    "schema_key_names": ["user", "idle"],
+                },
+                "host_vm": {
+                    "schema_keys": ["pgfault,E"],
+                    "schema_key_names": ["pgfault"],
+                },
+            },
+        }
+        schema = {k: v["schema_keys"] for k, v in manifest["types"].items()}
+        timing = DaemonTiming(30.0, 60.0, 300.0, True)
+        stuck = SnapshotPair(
+            kind="full",
+            ts_a=1000.0,
+            ts_b=1060.0,
+            body_a="1000.0 job h\nhost_cpu 0 @full 1 2\nhost_vm - @full 5\n",
+            body_b="1060.0 job h\nhost_cpu 0 @full 1 2\nhost_vm - @full 5\n",
+        )
+        notes, warnings, _ = run_cross_sample_checks(
+            manifest,
+            schema,
+            timing=timing,
+            fast_pair=None,
+            full_pair=stuck,
+            strict=False,
+            active_conf_note="test",
+            check_canaries=True,
+        )
+        self.assertTrue(any("canary host_cpu" in w for w in warnings))
+        self.assertTrue(any("canary host_vm/host_block" in w for w in warnings))
+
+        moving = SnapshotPair(
+            kind="full",
+            ts_a=1000.0,
+            ts_b=1060.0,
+            body_a="1000.0 job h\nhost_cpu 0 @full 1 2\nhost_vm - @full 5\n",
+            body_b="1060.0 job h\nhost_cpu 0 @full 5 2\nhost_vm - @full 9\n",
+        )
+        notes, warnings, _ = run_cross_sample_checks(
+            manifest,
+            schema,
+            timing=timing,
+            fast_pair=None,
+            full_pair=moving,
+            strict=False,
+            active_conf_note="test",
+            check_canaries=True,
+        )
+        self.assertFalse(any("canary" in w for w in warnings))
+        self.assertTrue(any("canary host_cpu" in n for n in notes))
+        self.assertTrue(any("canary host_vm/host_block" in n for n in notes))
+
+    def test_cadence_boundary_epsilon(self) -> None:
+        from lib.cross_sample_validate import run_cross_sample_checks
+        from lib.daemon_conf import DaemonTiming
+        from lib.shm_snapshot import SnapshotPair
+
+        manifest = {
+            "enable_slow_tier": True,
+            "types": {
+                "host_net": {
+                    "schema_keys": ["rx_bytes,E,U=B"],
+                    "schema_key_names": ["rx_bytes"],
+                }
+            },
+        }
+        schema = {k: v["schema_keys"] for k, v in manifest["types"].items()}
+        timing = DaemonTiming(30.0, 60.0, 300.0, True)
+        # full_cadence_max = 1.5 * 60 = 90; delta slightly over due to float noise
+        pair = SnapshotPair(
+            kind="full",
+            ts_a=1000.0,
+            ts_b=1000.0 + 90.0 + 5e-7,
+            body_a="1000.0 job h\nhost_net eth0 @full 1\n",
+            body_b="1090.0 job h\nhost_net eth0 @full 2\n",
+        )
+        notes, warnings, errors = run_cross_sample_checks(
+            manifest,
+            schema,
+            timing=timing,
+            fast_pair=None,
+            full_pair=pair,
+            strict=False,
+            active_conf_note="test",
+        )
+        self.assertFalse(errors)
+        self.assertFalse(any("outside" in w for w in warnings))
+        self.assertTrue(any("full_ts" in n for n in notes))
+
+        over = SnapshotPair(
+            kind="full",
+            ts_a=1000.0,
+            ts_b=1000.0 + 90.0 + 0.01,
+            body_a="1000.0 job h\nhost_net eth0 @full 1\n",
+            body_b="1090.01 job h\nhost_net eth0 @full 2\n",
+        )
+        _, warnings, _ = run_cross_sample_checks(
+            manifest,
+            schema,
+            timing=timing,
+            fast_pair=None,
+            full_pair=over,
+            strict=False,
+            active_conf_note="test",
+        )
+        self.assertTrue(any("outside" in w for w in warnings))
+
+    def test_stimulus_context_cleans_up(self) -> None:
+        from lib.cross_sample_stimulus import cross_sample_stimulus
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            with patch(
+                "lib.cross_sample_stimulus._probe_lustre_mount", return_value=None
+            ):
+                with cross_sample_stimulus(
+                    n_cpu_workers=1,
+                    tmp_dir=tmp_path,
+                    io_bytes=64 * 1024,
+                    io_interval_sec=0.05,
+                    enable_lustre=False,
+                ) as stim:
+                    self.assertFalse(stim.touched_lustre)
+                    # Let IO loop run once
+                    import time
+
+                    time.sleep(0.12)
+            leftovers = list(tmp_path.glob("hpcperfstats_cross_sample_stim_*"))
+            self.assertEqual(leftovers, [])
+
     def test_wait_for_timestamp_advance(self) -> None:
         from lib.shm_snapshot import wait_for_timestamp_advance
 

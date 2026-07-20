@@ -133,6 +133,7 @@ for distfile in \
   scripts/lib/daemon_conf.py \
   scripts/lib/shm_snapshot.py \
   scripts/lib/cross_sample_validate.py \
+  scripts/lib/cross_sample_stimulus.py \
   scripts/lib/monitor_tree_clean.sh \
   scripts/rpm_debug_shm_verify.sh \
   scripts/prepare_rpmbuild_stampede3.sh \

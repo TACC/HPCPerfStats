@@ -11,6 +11,7 @@ from pathlib import Path
 MONITOR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(MONITOR / "scripts"))
 
+from lib.cross_sample_stimulus import cross_sample_stimulus  # noqa: E402
 from lib.cross_sample_validate import run_cross_sample_checks  # noqa: E402
 from lib.daemon_conf import discover_active_conf, load_fixture_timing  # noqa: E402
 from lib.device_validate import validate_devices_in_payload  # noqa: E402
@@ -246,6 +247,8 @@ def _run_cross_sample_validation(
             return notes, warnings, errors, full_body
         timing = load_fixture_timing(timing_path)
         conf_note = f"fixture {timing_path}"
+        use_stimulus = False
+        touched_lustre = False
         try:
             if enable_slow and (fixture_dir / "t0" / "fast").is_file():
                 fast_pair = load_fixture_pair(fixture_dir, "fast")
@@ -269,18 +272,40 @@ def _run_cross_sample_validation(
         if active.conf_path is not None:
             conf_note += f" ({active.conf_path})"
 
+        use_stimulus = not getattr(args, "no_cross_sample_stimulus", False)
+        touched_lustre = False
         try:
-            if enable_slow:
-                fast_pair = capture_pair(shm_dir, "fast", timing=timing)
-                if args.cross_sample_save_dir:
-                    save_snapshot_pair(fast_pair, args.cross_sample_save_dir)
-            if args.cross_sample_wait_full or not enable_slow:
-                full_pair = capture_pair(shm_dir, "full", timing=timing)
-                if args.cross_sample_save_dir:
-                    save_snapshot_pair(full_pair, args.cross_sample_save_dir)
+            if use_stimulus:
+                with cross_sample_stimulus() as stim:
+                    notes.append(
+                        "PASS cross_sample stimulus: CPU+/tmp"
+                        + ("+lustre" if stim.touched_lustre else "")
+                    )
+                    if enable_slow:
+                        fast_pair = capture_pair(shm_dir, "fast", timing=timing)
+                        if args.cross_sample_save_dir:
+                            save_snapshot_pair(fast_pair, args.cross_sample_save_dir)
+                    if args.cross_sample_wait_full or not enable_slow:
+                        full_pair = capture_pair(shm_dir, "full", timing=timing)
+                        if args.cross_sample_save_dir:
+                            save_snapshot_pair(full_pair, args.cross_sample_save_dir)
+                    touched_lustre = stim.touched_lustre
+            else:
+                notes.append("NOTE cross_sample stimulus: disabled (--no-cross-sample-stimulus)")
+                if enable_slow:
+                    fast_pair = capture_pair(shm_dir, "fast", timing=timing)
+                    if args.cross_sample_save_dir:
+                        save_snapshot_pair(fast_pair, args.cross_sample_save_dir)
+                if args.cross_sample_wait_full or not enable_slow:
+                    full_pair = capture_pair(shm_dir, "full", timing=timing)
+                    if args.cross_sample_save_dir:
+                        save_snapshot_pair(full_pair, args.cross_sample_save_dir)
         except (OSError, ValueError, TimeoutError) as exc:
             errors.append(f"FAIL cross_sample capture: {exc}")
             return notes, warnings, errors, full_body
+
+    # Fixture path never injects stimulus; live path runs canaries when stimulus is on.
+    check_canaries = bool(use_stimulus)
 
     cs_notes, cs_warn, cs_err = run_cross_sample_checks(
         manifest,
@@ -290,6 +315,8 @@ def _run_cross_sample_validation(
         full_pair=full_pair,
         strict=args.strict_cross_sample,
         active_conf_note=conf_note,
+        check_canaries=check_canaries,
+        touched_lustre=touched_lustre,
     )
     notes.extend(cs_notes)
     warnings.extend(cs_warn)
@@ -375,7 +402,11 @@ def main() -> int:
         "--cross-sample-check",
         action="store_true",
         default=False,
-        help="Capture two snapshots; check timestamp cadence and E-counter monotonicity",
+        help=(
+            "Capture two snapshots; check timestamp cadence and E-counter monotonicity. "
+            "Live capture injects brief host stimulus by default "
+            "(see --no-cross-sample-stimulus)."
+        ),
     )
     p.add_argument("--no-cross-sample-check", action="store_true")
     p.add_argument(
@@ -411,6 +442,14 @@ def main() -> int:
         "--strict-cross-sample",
         action="store_true",
         help="Treat cross-sample warnings as errors",
+    )
+    p.add_argument(
+        "--no-cross-sample-stimulus",
+        action="store_true",
+        help=(
+            "Disable brief CPU+/tmp(/Lustre) load during live cross-sample capture "
+            "(default: inject stimulus so flats mean stuck/unused, not quiet node)"
+        ),
     )
     args = p.parse_args()
 

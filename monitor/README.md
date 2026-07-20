@@ -259,7 +259,11 @@ Validation layers: structural (schema keys, row width, tier markers, uint values
 manifest device IDs, listend host contract); **strict** plausibility and live
 `/proc`/`/sys` spot checks by default on debug verify (`STRICT_*=0` to soften);
 and **cross-sample** cadence + `E`-counter monotonicity by default
-(`CROSS_SAMPLE_CHECK=0` to disable). Debug RPM installs `sample_freq=30` and
+(`CROSS_SAMPLE_CHECK=0` to disable). Live cross-sample injects brief CPU + `/tmp`
+IO (and Lustre touch when a mount is present) so flat counters mean stuck/unused
+rather than a quiet node; disable with `--no-cross-sample-stimulus`. Sparse
+error/idle flats at 0 are classified (silenced or aggregated); must-move canaries
+emit one WARN per stuck class. Debug RPM installs `sample_freq=30` and
 `sample_freq_slow=60` in `/etc/hpcperfstats/hpcperfstats.conf`; cross-sample wait
 bounds are derived from that file at validate time.
 
