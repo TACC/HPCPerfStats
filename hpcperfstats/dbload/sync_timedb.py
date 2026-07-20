@@ -13,7 +13,7 @@ When the ingest queue is empty, rescans for new stats files. After a rescan stil
 
 CLI: no args uses a sliding window (see ``days_to_process``) through now. One ``YYYY-MM-DD`` ingests that calendar day only. Two dates ``YYYY-MM-DD YYYY-MM-DD`` set an explicit range. First arg ``backlog`` scans every host stats dir under ``archive_dir`` (subdirs whose names end with ``DEFAULT.host_name_ext`` from ini). Prefix ``once`` to exit after one idle rescan (no 300s sleep), e.g. ``once backlog`` or ``once 2024-01-15``.
 
-DB access is process-safe: pool workers use close_old_connections() at task start and connections.close_all() at task end so connections do not linger between files. Writes are serialized with a shared lock.
+DB access is process-safe: pool workers use close_old_connections() at task start and connections.close_all() at task end so connections do not linger between files. Writes are serialized with a shared lock. After bulk_create failure (including SIGALRM cancel), the write path re-raises ingest control-flow timeouts, resets the Django/psycopg connection, then retries under the same write lock — never single-insert on a mid-command connection.
 
 """
 import contextvars
@@ -56,7 +56,13 @@ ensure_django()
 
 SYNC_TIMEDB_PROCESS_TITLE = "sync_timedb.py"
 
-from django.db import IntegrityError, close_old_connections, connections
+from django.db import (
+    DEFAULT_DB_ALIAS,
+    IntegrityError,
+    InterfaceError,
+    close_old_connections,
+    connections,
+)
 from django.db.utils import DatabaseError, OperationalError
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
@@ -2764,6 +2770,45 @@ def _invalidate_jid_caches(stats, proc_stats):
     pass
 
 
+@contextmanager
+def _held_ingest_write_lock(write_lock, stats_file, kind):
+  """Acquire write lock; always release (including deadline raises inside)."""
+  lock_wait_t0 = time.time()
+  write_lock.acquire()
+  try:
+    _log_db_lock_wait(kind, stats_file, time.time() - lock_wait_t0)
+    yield
+  finally:
+    write_lock.release()
+
+
+def _reset_ingest_db_connection_after_write_error():
+  """Best-effort rollback + close so the next ORM call gets a fresh socket.
+
+  Required after interrupted ``bulk_create`` (e.g. SIGALRM) before single-row
+  fallback; otherwise psycopg raises ``another command is already in progress``.
+  """
+  try:
+    connections[DEFAULT_DB_ALIAS].rollback()
+  except Exception:
+    pass
+  try:
+    close_old_connections()
+  except Exception:
+    pass
+
+
+def _is_psycopg_connection_desync(exc):
+  """True for wire-protocol errors that warrant connection reset (ingest write path)."""
+  if isinstance(exc, (InterfaceError, OperationalError)):
+    return True
+  msg = str(exc).lower()
+  return (
+      "already in progress" in msg
+      or "lost synchronization" in msg
+  )
+
+
 def _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archival=True):
   """Persist parsed payload into DB using fixed-size batches and lock sharding."""
   update_worker_substage("db_write")
@@ -2779,23 +2824,20 @@ def _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archiva
         proc_objs = [
             proc_data(jid=row.jid, host=row.host, proc=row.proc) for row in batch
         ]
-        lock_wait_t0 = time.time()
-        write_lock.acquire()
-        lock_wait = time.time() - lock_wait_t0
-        _log_db_lock_wait("proc", stats_file, lock_wait)
-        _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_proc")
-        try:
+        with _held_ingest_write_lock(write_lock, stats_file, "proc"):
+          _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_proc")
           proc_data.objects.bulk_create(proc_objs, ignore_conflicts=True)
-        finally:
-          write_lock.release()
     except Exception as e:
+      _reraise_if_ingest_control_flow(e)
       if is_database_unavailable_error(e):
         log_and_raise_database_unavailable(
             e, context="sync_timedb proc_data bulk_create"
         )
       if DEBUG:
         log_print("error in proc_data bulk_create: %s\nFile %s" % (e, stats_file))
-      _insert_proc_data_individually(proc_stats)
+      _reset_ingest_db_connection_after_write_error()
+      with _held_ingest_write_lock(write_lock, stats_file, "proc"):
+        _insert_proc_data_individually(proc_stats)
   except Exception:
     raise
   try:
@@ -2813,23 +2855,20 @@ def _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archiva
           if not batch:
             break
           host_objs = [host_data_instance_from_stats_row(row) for row in batch]
-          lock_wait_t0 = time.time()
-          write_lock.acquire()
-          lock_wait = time.time() - lock_wait_t0
-          _log_db_lock_wait("host", stats_file, lock_wait)
-          _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_host")
-          try:
+          with _held_ingest_write_lock(write_lock, stats_file, "host"):
+            _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_host")
             host_data.objects.bulk_create(host_objs, ignore_conflicts=True)
-          finally:
-            write_lock.release()
     except Exception as e:
+      _reraise_if_ingest_control_flow(e)
       if is_database_unavailable_error(e):
         log_and_raise_database_unavailable(
             e, context="sync_timedb host_data bulk_create"
         )
       if DEBUG:
         log_print("error in host_data bulk_create:", str(e))
-      need_archival = _insert_host_data_individually(stats)
+      _reset_ingest_db_connection_after_write_error()
+      with _held_ingest_write_lock(write_lock, stats_file, "host"):
+        need_archival = _insert_host_data_individually(stats)
   except Exception:
     raise
 
@@ -4058,17 +4097,40 @@ def _insert_rows_individually(
     error_prefix,
     return_non_integrity_errors=False,
 ):
-  """Insert rows one-by-one and count duplicate violations."""
+  """Insert rows one-by-one and count duplicate violations.
+
+  On psycopg connection desync (``another command is already in progress``),
+  reset once, retry the current row, then abort the loop so remaining rows do
+  not spam identical errors on a dead connection.
+  """
   unique_violations = 0
   non_integrity_errors = 0
+  desync_reset_used = False
   for row in rows:
     try:
       save_row(row)
+      continue
     except IntegrityError:
       unique_violations += 1
+      continue
     except Exception as e:
+      if (not desync_reset_used) and _is_psycopg_connection_desync(e):
+        desync_reset_used = True
+        _reset_ingest_db_connection_after_write_error()
+        try:
+          save_row(row)
+          continue
+        except IntegrityError:
+          unique_violations += 1
+          continue
+        except Exception as e2:
+          non_integrity_errors += 1
+          log_print(error_prefix, str(e2), "row:", row)
+          break
       non_integrity_errors += 1
       log_print(error_prefix, str(e), "row:", row)
+      if _is_psycopg_connection_desync(e):
+        break
   if return_non_integrity_errors:
     return unique_violations, non_integrity_errors
   return unique_violations

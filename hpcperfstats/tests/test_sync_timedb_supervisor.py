@@ -2165,6 +2165,142 @@ def test_insert_host_data_individually_uses_force_insert():
         st._insert_host_data_individually(df)
     mock_inst.save.assert_called_once_with(force_insert=True)
 
+
+class _CountingLock:
+  """Minimal lock that records acquire/release for write-path tests."""
+
+  def __init__(self):
+    self.acquires = 0
+    self.releases = 0
+    self.held = 0
+
+  def acquire(self, *args, **kwargs):
+    del args, kwargs
+    self.acquires += 1
+    self.held += 1
+
+  def release(self):
+    self.releases += 1
+    self.held -= 1
+
+
+def test_write_stats_payload_timeout_not_swallowed_into_single_insert(monkeypatch):
+  """SIGALRM / IngestPerFileTimeoutError must not fall through to individual inserts."""
+  calls = {'insert_proc': 0, 'insert_host': 0, 'reset': 0}
+
+  def boom_bulk(*_a, **_k):
+    raise st.IngestPerFileTimeoutError('/tmp/stats0', 'db_write_proc', 1.0)
+
+  monkeypatch.setattr(st, 'update_worker_substage', lambda *_a, **_k: None)
+  monkeypatch.setattr(st, 'bulk_create_batch_size', lambda: 100)
+  monkeypatch.setattr(st, '_raise_if_ingest_per_file_deadline_exceeded', lambda *_a, **_k: None)
+  monkeypatch.setattr(st, '_log_db_lock_wait', lambda *_a, **_k: None)
+  monkeypatch.setattr(st, '_reset_ingest_db_connection_after_write_error', lambda: calls.__setitem__('reset', calls['reset'] + 1))
+  monkeypatch.setattr(
+      st,
+      '_insert_proc_data_individually',
+      lambda *_a, **_k: calls.__setitem__('insert_proc', calls['insert_proc'] + 1),
+  )
+  monkeypatch.setattr(
+      st,
+      '_insert_host_data_individually',
+      lambda *_a, **_k: calls.__setitem__('insert_host', calls['insert_host'] + 1),
+  )
+  monkeypatch.setattr(st.proc_data.objects, 'bulk_create', boom_bulk)
+  proc_df = pd.DataFrame([{'jid': '1', 'host': 'h', 'proc': 'p'}])
+  stats_df = pd.DataFrame(columns=['host', 'type', 'event', 'unit', 'time', 'value', 'delta', 'arc'])
+  lock = _CountingLock()
+  with pytest.raises(st.IngestPerFileTimeoutError):
+    st._write_stats_payload_to_db(lock, '/tmp/stats0', stats_df, proc_df)
+  assert calls['insert_proc'] == 0
+  assert calls['insert_host'] == 0
+  assert calls['reset'] == 0
+  assert lock.acquires == lock.releases
+
+
+def test_write_stats_payload_resets_connection_and_holds_lock_on_fallback(monkeypatch):
+  """Ordinary bulk_create failure resets DB then single-inserts under write_lock."""
+  order = []
+  lock = _CountingLock()
+
+  def fail_bulk(*_a, **_k):
+    order.append('bulk')
+    raise RuntimeError('bulk failed')
+
+  def reset():
+    order.append('reset')
+
+  def insert_proc(_df):
+    order.append('insert_proc')
+    assert lock.held == 1
+
+  def insert_host(_df):
+    order.append('insert_host')
+    assert lock.held == 1
+    return True
+
+  monkeypatch.setattr(st, 'update_worker_substage', lambda *_a, **_k: None)
+  monkeypatch.setattr(st, 'bulk_create_batch_size', lambda: 100)
+  monkeypatch.setattr(st, '_raise_if_ingest_per_file_deadline_exceeded', lambda *_a, **_k: None)
+  monkeypatch.setattr(st, '_log_db_lock_wait', lambda *_a, **_k: None)
+  monkeypatch.setattr(st, '_reset_ingest_db_connection_after_write_error', reset)
+  monkeypatch.setattr(st, '_insert_proc_data_individually', insert_proc)
+  monkeypatch.setattr(st, '_insert_host_data_individually', insert_host)
+  monkeypatch.setattr(st, '_invalidate_jid_caches', lambda *_a, **_k: None)
+  monkeypatch.setattr(st.proc_data.objects, 'bulk_create', fail_bulk)
+  monkeypatch.setattr(st.host_data.objects, 'bulk_create', fail_bulk)
+  proc_df = pd.DataFrame([{'jid': '1', 'host': 'h', 'proc': 'p'}])
+  row_time = pd.Timestamp('2026-04-05 07:40:44+0000', tz='UTC')
+  stats_df = pd.DataFrame([{
+      'host': 'h', 'type': 'net', 'event': 'rx_bytes', 'unit': 'B',
+      'time': row_time, 'value': 1.0, 'delta': 0.0, 'arc': 0.0,
+  }])
+  path, need_archival, ok = st._write_stats_payload_to_db(
+      lock, '/tmp/stats0', stats_df, proc_df)
+  assert path == '/tmp/stats0'
+  assert ok is True
+  assert need_archival is True
+  assert order == [
+      'bulk', 'reset', 'insert_proc',
+      'bulk', 'reset', 'insert_host',
+  ]
+  assert lock.acquires == lock.releases
+  assert lock.acquires >= 2
+
+
+def test_insert_rows_individually_desync_resets_once_then_aborts(monkeypatch):
+  """InterfaceError mid-fallback: one reset+retry, then stop without N log lines."""
+  from django.db import InterfaceError
+
+  logs = []
+  monkeypatch.setattr(st, 'log_print', lambda *a, **_k: logs.append(' '.join(str(x) for x in a)))
+  resets = {'n': 0}
+  monkeypatch.setattr(
+      st,
+      '_reset_ingest_db_connection_after_write_error',
+      lambda: resets.__setitem__('n', resets['n'] + 1),
+  )
+  attempts = {'n': 0}
+
+  def save_row(_row):
+    attempts['n'] += 1
+    raise InterfaceError('sending query failed: another command is already in progress')
+
+  rows = [(1,), (2,), (3,)]
+  unique, non_int = st._insert_rows_individually(
+      rows=rows,
+      save_row=save_row,
+      error_prefix='error in single host_data insert:',
+      return_non_integrity_errors=True,
+  )
+  assert unique == 0
+  assert non_int == 1
+  assert resets['n'] == 1
+  # First fail → reset → retry fail → abort (2 save attempts), not 3+
+  assert attempts['n'] == 2
+  assert len(logs) == 1
+
+
 def test_sync_timedb_uses_fixed_batch_sizes_not_adaptive_helpers():
     """Ingest uses fixed chunk and bulk_create batch sizes (no runtime tuning)."""
     # Module constant is import-time queue max (default 3000); supervisor rebinds per loop.

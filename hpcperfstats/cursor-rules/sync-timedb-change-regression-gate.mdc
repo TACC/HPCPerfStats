@@ -56,6 +56,17 @@ Per **`plan-creation-contract.mdc`**, every live plan touching `sync_timedb` YAM
 
 Hooks validate plan disk YAML when `CreatePlan` triggers sync_timedb paths (`sync_timedb_plan_todo_issues`).
 
+## Write-path connection reset (bulk_create → single-insert)
+
+After a failed ``proc_data`` / ``host_data`` ``bulk_create`` in ``_write_stats_payload_to_db``:
+
+1. **Re-raise** ingest control-flow (``IngestPerFileTimeoutError`` / archive lookup budget) via ``_reraise_if_ingest_control_flow`` — never convert timeouts into single-insert fallback.
+2. **Reset** the Django/psycopg connection (``rollback`` + ``close_old_connections``) before ``_insert_*_individually``; a mid-command socket otherwise yields ``another command is already in progress`` on every remaining row.
+3. **Hold** ``write_lock`` for the entire individual-insert pass (same serialization as bulk batches); deadline checks must not acquire the lock outside a ``try/finally`` that releases it.
+4. On InterfaceError / desync during a row ``save``, reset **once**, retry that row once, then **abort** the file write path — do not log N identical desync lines for the rest of the frame.
+
+Regression: ``test_write_stats_payload_timeout_not_swallowed_into_single_insert``, ``test_write_stats_payload_resets_connection_and_holds_lock_on_fallback``, ``test_insert_rows_individually_desync_resets_once_then_aborts`` in ``test_sync_timedb_supervisor.py``. Post-deploy T0: see ``docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`` (InterfaceError spam section).
+
 ## Between-chunk pending reconcile (handoff + TTL)
 
 - **`handoff_priority` day_close defer** (`_maybe_enqueue_immediate_day_close`) must **not** call `_reconcile_pending_with_oldest_checkpoint_incomplete` — chunk-boundary reconcile before dispatch is enough. Double full rebuilds on every defer caused multi-minute tax (hpcperfstats03, 2026-07).

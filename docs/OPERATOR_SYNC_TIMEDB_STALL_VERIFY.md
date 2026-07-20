@@ -997,6 +997,24 @@ grep -E 'archive decompress restore begin|Archive members cache invalidated.*rea
 
 **Pass:** after a gated restore day, both `tar_restore_pre` and `tar_restore` invalidate lines appear near `archive decompress restore begin` / `daily_tar_restore end ok=yes`; subsequent prewarm/populate for that day proceeds (cold or re-warm). **Fail:** restore completes (`daily_tar_restore end ok=yes`) but no `reason=tar_restore` invalidate, while Redis stays warm under sealed+`tar=None` and prewarm skips with `redis_warm` without rescanning.
 
+### T0 — ingest InterfaceError / ``another command is already in progress`` (2026-07)
+
+**Failure signature (pre-fix):** ingest-pool workers spam ``error in single host_data insert:`` / ``error in single proc_data insert:`` with ``sending query failed: another command is already in progress`` after a failed ``bulk_create`` (often interleaved with ``IngestPerFileTimeoutError`` / SIGALRM ``_handler``). Cascading single-insert logs for every remaining row in the frame.
+
+**Root cause (fixed):** write path swallowed timeouts into individual fallback without ``rollback`` / ``close_old_connections``, and did not hold ``write_lock`` on fallback. See ``sync-timedb-change-regression-gate.mdc`` → *Write-path connection reset*.
+
+```bash
+# T0 — InterfaceError spam check (full pipeline log; never --tail before grep)
+docker compose logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+grep -E 'another command is already in progress|error in single (host_data|proc_data) insert' /tmp/pipeline-full.log | tail -80
+```
+
+**Pass (T0):** after redeploy, no cascading identical ``already in progress`` lines on single-insert fallback during normal ingest; occasional one-line desync + abort for a file is acceptable if rare. Chunk ingest / archive progress continues.
+
+**Fail (T0):** dozens/hundreds of identical ``already in progress`` lines per file after ``bulk_create`` failure or per-file timeout.
+
+**T1/T2 stall matrix:** N/A for this fix unless ``tests/run_sync_timedb_regression_battery.sh`` regresses or handoff/chunk_gate signatures reappear — then use the standard T1/T2 tiers above.
+
 ### T0 — host bulk membership invalidate + pipeline restart (post-crash)
 
 After a mass tar crash (or when many days need membership reassessment), restore-only invalidate is not enough: warm Redis L2 for existing on-disk tar identities stays hot, and worker **L1** survives a Redis clear until process recycle. Use the **host-side** CLI (not `docker compose exec pipeline` as primary):
