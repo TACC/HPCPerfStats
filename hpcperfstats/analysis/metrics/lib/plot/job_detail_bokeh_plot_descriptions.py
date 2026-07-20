@@ -28,17 +28,19 @@ JOB_DETAIL_BOKEH_HELP: Dict[str, HelpPair] = {
         "relative to the link roof.",
     ),
     "jobDetailPlot_multiprecision_cpu": (
-        "CPU multiprecision mix: wedge areas show the fraction of CPU floating-point "
-        "work attributed to each precision lane (from job-level metrics), as a share of "
-        "the total that is classified.",
-        "Compare FP64 versus vectorized FP32/16 activity when tuning vectorization and "
-        "numerical stability.",
+        "CPU multiprecision mix: wedge areas show each precision's share of busy FLOPS "
+        "only (idle excluded), from Intel FP_ARITH-based avg_flops64b and avg_flops32b "
+        "job metrics.",
+        "Compare FP64 versus FP32 busy-FLOPS mix when tuning numerical precision; "
+        "vectorization width metrics remain separate.",
     ),
     "jobDetailPlot_multiprecision_gpu": (
-        "GPU multiprecision mix: wedge areas show the fraction of GPU floating-point "
-        "activity by precision (from host telemetry across the job window), as a share "
-        "of classified GPU FLOPS.",
-        "Use it to spot FP16-heavy kernels versus FP32/64-dominated phases.",
+        "GPU multiprecision mix: wedge areas show each active pipe's share of busy GPU "
+        "activity only (idle excluded). Hover shows share of busy percent. Tensor "
+        "IMMA (INT8/INT4), Tensor HMMA (FP16/BF16), and Tensor DFMA (FP64) splits are "
+        "preferred over lumped tensor_active when present.",
+        "Use it to spot FP16-heavy kernels versus FP32/64 or tensor-pipe-dominated "
+        "phases.",
     ),
     "summary_hardware_error_rates": (
         "Hardware error rates: each line is one counter channel summed across hosts at "

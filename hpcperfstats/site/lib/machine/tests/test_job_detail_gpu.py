@@ -56,8 +56,8 @@ def _patch_job_detail_context(api_module, jid, gpu_agg, gpu_count_cached=None):
   multiprecision_payload = {
       "cpu_plot_item": None,
       "cpu_unavailable_reason": (
-          "Missing CPU precision-width mix metrics in job metrics "
-          "(need positive vecpercent_* shares)."
+          "Missing CPU busy-FLOPS mix metrics in job metrics "
+          "(need positive avg_flops64b / avg_flops32b shares)."
       ),
       "gpu_plot_item": None,
       "gpu_unavailable_reason": (
@@ -488,8 +488,8 @@ def test_multiprecision_mix_payload_staff_reasons_align_with_plot_tabs():
   """Unavailable reasons follow the same Missing-/metrics style for CPU and GPU pies."""
   payload = job_detail_artifacts_mod._multiprecision_mix_payload({})
   cpu_r = payload["cpu_unavailable_reason"] or ""
-  assert "Missing CPU precision-width mix metrics in job metrics" in cpu_r
-  assert "vecpercent_*" in cpu_r
+  assert "Missing CPU busy-FLOPS mix metrics in job metrics" in cpu_r
+  assert "avg_flops64b" in cpu_r
   gpu_r = payload["gpu_unavailable_reason"] or ""
   assert "Missing GPU precision-width mix metrics in job metrics" in gpu_r
   assert "avg_*_active" in gpu_r
@@ -524,8 +524,8 @@ def test_multiprecision_mix_payload_does_not_query_host_data(monkeypatch):
   host_data argument and renders the GPU pie from persisted ``avg_*_active``
   metric values. Backs the host-data-read-boundary policy for prewarm."""
   metric_values = {
-      "vecpercent_64b": 30.0,
-      "vecpercent_32b": 70.0,
+      "avg_flops64b": 30.0,
+      "avg_flops32b": 70.0,
       "avg_tensor_active": 12.0,
       "avg_fp16_active": 24.0,
       "avg_fp32_active": 36.0,
@@ -538,3 +538,4 @@ def test_multiprecision_mix_payload_does_not_query_host_data(monkeypatch):
   assert payload["gpu_plot_item"] is not None
   assert not hasattr(job_detail_artifacts_mod, "gpu_precision_mix_rows_for_job_window")
   assert not hasattr(job_detail_artifacts_mod, "reduce_gpu_precision_mix")
+

@@ -45,7 +45,7 @@ $uptime 1
 !host_lnet tx_bytes,E,U=B rx_bytes,E,U=B
 !host_opa PortXmitData,E PortRcvData,E PortXmitPkts,E PortRcvPkts,E PortXmitWait,E SwPortCongestion,E PortRcvFECN,E PortRcvBECN,E
 !host_nfs read_ops,E write_ops,E
-!nvidia_gpu gpu_util,E tensor_active,E gpu_mem_bw_bytes_rate,E power_usage,E gpu_io_link_total_bytes,E clocks_event_reasons,E module_power_usage,E gpu_count,E gpu_mem_util,E,R=S gpu_mem_used_mb,E,R=S
+!nvidia_gpu gpu_util,E tensor_active,E tensor_imma_active,E tensor_hmma_active,E tensor_dfma_active,E fp16_active,E fp32_active,E fp64_active,E gpu_mem_bw_bytes_rate,E power_usage,E gpu_io_link_total_bytes,E clocks_event_reasons,E module_power_usage,E gpu_count,E gpu_mem_util,E,R=S gpu_mem_used_mb,E,R=S
 !amd_gpu gpu_util,E tensor_active,E gpu_mem_bw_bytes_rate,E power_usage,E gpu_count,E
 !intel_x86_pmc_gpr8 {intel_pmc_schema}
 !intel_x86_uncore_imc_skx dram_cas_reads,E dram_cas_writes,E
@@ -125,15 +125,22 @@ def _nfs_line(scale: int) -> str:
 def _nvidia_fast_line(scale: int) -> str:
   """Fast-tier GPU sample (slow mem counters omitted)."""
   return (
-      "nvidia_gpu 0 @fast %.1f %.1f %.2f %.1f %.0f %d %.1f 1\n"
+      "nvidia_gpu 0 @fast "
+      "%.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.2f %.1f %.0f %d %.1f 1\n"
       % (
-          55.0 + (scale % 20),
-          12.0 + (scale % 5),
-          80.0 + scale * 0.1,
-          180.0 + scale,
-          1e8 + scale * 1e6,
-          3 + (scale % 4),
-          95.0 + (scale % 10),
+          55.0 + (scale % 20),  # gpu_util
+          12.0 + (scale % 5),  # tensor_active
+          4.0 + (scale % 3),  # tensor_imma_active
+          5.0 + (scale % 3),  # tensor_hmma_active
+          2.0 + (scale % 2),  # tensor_dfma_active
+          8.0 + (scale % 4),  # fp16_active
+          10.0 + (scale % 4),  # fp32_active
+          6.0 + (scale % 3),  # fp64_active
+          80.0 + scale * 0.1,  # gpu_mem_bw_bytes_rate
+          180.0 + scale,  # power_usage
+          1e8 + scale * 1e6,  # gpu_io_link_total_bytes
+          3 + (scale % 4),  # clocks_event_reasons
+          95.0 + (scale % 10),  # module_power_usage
       )
   )
 
@@ -141,10 +148,17 @@ def _nvidia_fast_line(scale: int) -> str:
 def _nvidia_full_line(scale: int) -> str:
   """Full-tier GPU sample including slow-tier memory counters."""
   return (
-      "nvidia_gpu 0 @full %.1f %.1f %.2f %.1f %.0f %d %.1f 1 %.1f %.0f\n"
+      "nvidia_gpu 0 @full "
+      "%.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.2f %.1f %.0f %d %.1f 1 %.1f %.0f\n"
       % (
           55.0 + (scale % 20),
           12.0 + (scale % 5),
+          4.0 + (scale % 3),
+          5.0 + (scale % 3),
+          2.0 + (scale % 2),
+          8.0 + (scale % 4),
+          10.0 + (scale % 4),
+          6.0 + (scale % 3),
           80.0 + scale * 0.1,
           180.0 + scale,
           1e8 + scale * 1e6,

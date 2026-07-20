@@ -372,6 +372,7 @@ def test_job_arc_avg_mbw_arm_counter_fallback():
   assert typename in ("host_cpu_hw", "cpu_counter_metrics")
 
 
+@pytest.mark.machine_unit_mock
 def test_job_arc_avg_sharedfs_iops_includes_nfs_when_available():
   """avg_sharedfs_iops sums llite and nfs operation counters when both exist."""
 
@@ -389,6 +390,7 @@ def test_job_arc_avg_sharedfs_iops_includes_nfs_when_available():
   assert typename == "llite"
 
 
+@pytest.mark.machine_unit_mock
 def test_job_arc_avg_sharedfs_bw_falls_back_to_nfs():
   """avg_sharedfs_bw uses nfs byte counters when llite counters are absent."""
 
@@ -406,11 +408,29 @@ def test_job_arc_avg_sharedfs_bw_falls_back_to_nfs():
   assert typename == "nfs"
 
 
+@pytest.mark.machine_unit_mock
+def test_job_arc_avg_sharedfs_bw_sums_llite_and_nfs():
+  """avg_sharedfs_bw sums Lustre and NFS when both contribute."""
+
+  def fake_job_arc(self, jt, **kw):
+    if kw.get("typename") == "llite":
+      return 11.0
+    if kw.get("typename") == "nfs":
+      return 4.0
+    return None
+
+  with patch.object(Metrics, "job_arc", fake_job_arc):
+    m = Metrics()
+    value, typename = m._job_arc_avg_sharedfs_bw(object())
+  assert abs(value - 15.0) < 1e-9
+  assert typename == "llite"
+
+
 def test_job_arc_avg_ibbw_falls_back_to_ethernet():
   """avg_ibbw uses net rx/tx bytes when host_ib/opa are unavailable."""
 
   def fake_job_arc(self, jt, **kw):
-    if kw.get("typename") in ("host_ib", "opa"):
+    if kw.get("typename") in ("host_ib", "host_opa", "opa"):
       return None
     if kw.get("typename") == "net":
       return 12.0
@@ -469,6 +489,7 @@ def test_avg_packetsize_falls_back_to_ethernet_packets():
   assert units == "MB"
 
 
+@pytest.mark.machine_unit_mock
 def test_max_fabricbw_falls_back_to_ethernet():
   """max_fabricbw uses net tx/rx byte rate when IB and OPA are absent."""
   schema = _Schema(["tx_bytes", "rx_bytes"])
@@ -479,7 +500,7 @@ def test_max_fabricbw_falls_back_to_ethernet():
     job = type("J", (), {"cluster_mean_by_type": {}})()
 
     def get_type(self, typename):
-      if typename in ("host_ib", "opa"):
+      if typename in ("host_ib", "host_opa", "opa"):
         return None, {}
       if typename == "net":
         return schema, {"h1": stats}
@@ -490,6 +511,79 @@ def test_max_fabricbw_falls_back_to_ethernet():
   assert value == pytest.approx(30.0 / (1024 * 1024))
   assert typename == "net"
   assert units == "MB/s"
+
+
+@pytest.mark.machine_unit_mock
+def test_max_fabricbw_rejects_packet_rate_scale_as_mb_s():
+  """Peak must use byte counters with MiB conversion, not ~5e9 packet-rate scale."""
+  schema = _Schema(["port_xmit_data", "port_rcv_data"])
+  # ~5e10 counter units over 10s without MiB conversion would look like ~5e9 "MB/s".
+  stats = np.array(
+      [[0.0, 0.0], [2.5e10, 2.5e10], [5.0e10, 5.0e10]], dtype=np.float64
+  )
+
+  class MockU:
+    t = np.array([0.0, 10.0, 20.0], dtype=np.float64)
+    job = type("J", (), {"cluster_mean_by_type": {}})()
+
+    def get_type(self, typename):
+      if typename == "host_ib":
+        return schema, {"h1": stats}
+      return None, {}
+
+  value, typename, units = max_fabricbw().compute_metric(MockU())
+  assert units == "MB/s"
+  assert typename == "host_ib"
+  # With MiB conversion: (5e10)/10 / (1024**2) ≈ 4768 MB/s — finite and << 5e9.
+  assert value is not None
+  assert value < 1e6
+  assert value == pytest.approx(5.0e10 / 10.0 / (1024 * 1024))
+
+
+@pytest.mark.machine_unit_mock
+def test_avg_cpuusage_sums_per_host_means():
+  """avg_cpuusage persists sum of per-host busy-core means (not mean-of-hosts)."""
+  import pandas as pd
+  from hpcperfstats.analysis.metrics.lib.metrics import Metrics
+
+  m = Metrics()
+  t0 = pd.Timestamp("2024-01-01 00:00:00")
+  t1 = pd.Timestamp("2024-01-01 00:05:00")
+  t2 = pd.Timestamp("2024-01-01 00:10:00")
+  rows = []
+  # Host a: buckets mean 1.0; host b: buckets mean 3.0 → sum 4.0 (mean would be 2.0).
+  for host, arc in (("a", 1.0), ("b", 3.0)):
+    for t in (t0, t1, t2):
+      rows.append({"host": host, "time": t, "arc": arc})
+
+  class FakeJt:
+    _base_filter = {
+        "host__in": ["a", "b"],
+        "time__gte": t0,
+        "time__lte": t2,
+    }
+
+  def fake_rows(*_a, **_k):
+    return rows
+
+  with patch(
+      "hpcperfstats.analysis.metrics.lib.metrics._host_data_metric_rows_batched",
+      fake_rows,
+  ), patch(
+      "hpcperfstats.analysis.metrics.lib.metrics.type_probe_names",
+      lambda typ: (typ,),
+  ), patch(
+      "hpcperfstats.analysis.metrics.lib.metrics._jid_table_host_data_time_kwargs",
+      lambda _base: {"time__gte": t0, "time__lte": t2},
+  ):
+    value = m.job_arc(
+        FakeJt(),
+        typename="host_cpu",
+        events=["user", "system", "nice"],
+        conv=1.0,
+        host_aggregate="sum",
+    )
+  assert value == pytest.approx(4.0)
 
 
 def test_max_packetrate_falls_back_to_ethernet():
@@ -783,12 +877,14 @@ def test_job_metrics_catalog_entries_matches_simple_plus_complex():
   assert "mem_hwm" in names
 
 
+@pytest.mark.machine_unit_mock
 def test_job_metric_short_labels_cover_catalog():
   """Every catalog metric has a Job detail short label (JS mirror must stay in sync)."""
   for entry in job_metrics_catalog_entries():
     assert entry["metric"] in JOB_METRIC_SHORT_LABELS, entry["metric"]
 
 
+@pytest.mark.machine_unit_mock
 def test_build_job_metrics_display_list_fills_catalog_when_no_rows():
   """With no DB rows, every catalog metric gets METRIC_NOT_COMPUTED_YET."""
   job = MagicMock()
@@ -798,6 +894,7 @@ def test_build_job_metrics_display_list_fills_catalog_when_no_rows():
   assert all(item["no_data_reason"] == METRIC_NOT_COMPUTED_YET for item in out)
 
 
+@pytest.mark.machine_unit_mock
 def test_build_job_metrics_display_list_merges_existing_row():
   """DB row for a metric name overrides catalog placeholder."""
   row = MagicMock()
@@ -815,6 +912,7 @@ def test_build_job_metrics_display_list_merges_existing_row():
   assert cpu["no_data_reason"] is None
 
 
+@pytest.mark.machine_unit_mock
 def test_build_job_metrics_display_list_shows_no_data_reason():
   row = MagicMock()
   row.metric = "mem_hwm"
@@ -830,6 +928,7 @@ def test_build_job_metrics_display_list_shows_no_data_reason():
   assert "memory" in mem["no_data_reason"].lower()
 
 
+@pytest.mark.machine_unit_mock
 def test_build_job_metrics_display_list_puts_not_computed_yet_last():
   """Rows with METRIC_NOT_COMPUTED_YET follow all rows with DB data or other reasons."""
   entries = job_metrics_catalog_entries()
@@ -852,6 +951,7 @@ def test_build_job_metrics_display_list_puts_not_computed_yet_last():
   assert out[0]["value"] == 1.0
 
 
+@pytest.mark.machine_unit_mock
 def test_build_job_metrics_display_list_keeps_empty_reason_ahead_of_not_computed():
   """Blank DB reason still counts as a present row and must not be sorted to the tail."""
   first = job_metrics_catalog_entries()[0]
@@ -868,6 +968,38 @@ def test_build_job_metrics_display_list_keeps_empty_reason_ahead_of_not_computed
   assert out[0]["metric"] == first["metric"]
   assert out[0]["no_data_reason"] == ""
   assert out[1]["no_data_reason"] == METRIC_NOT_COMPUTED_YET
+
+
+@pytest.mark.machine_unit_mock
+def test_build_job_metrics_display_list_tiers_valued_error_then_not_computed():
+  """Valued metrics, then Insufficient/error reasons, then Metric not computed."""
+  from hpcperfstats.analysis.metrics.lib.metrics import (
+      INSUFFICIENT_DATA_FOR_METRICS_PROCESSING,
+  )
+
+  entries = job_metrics_catalog_entries()
+  valued = entries[0]
+  errored = entries[1]
+  row_v = MagicMock()
+  row_v.metric = valued["metric"]
+  row_v.type = valued["type"]
+  row_v.units = valued["units"]
+  row_v.value = 1.0
+  row_v.no_data_reason = None
+  row_e = MagicMock()
+  row_e.metric = errored["metric"]
+  row_e.type = errored["type"]
+  row_e.units = errored["units"]
+  row_e.value = None
+  row_e.no_data_reason = INSUFFICIENT_DATA_FOR_METRICS_PROCESSING
+  job = MagicMock()
+  job.metrics_data_set.all.return_value = [row_e, row_v]
+  out = build_job_metrics_display_list(job)
+  assert out[0]["metric"] == valued["metric"]
+  assert out[0]["value"] == 1.0
+  assert out[1]["metric"] == errored["metric"]
+  assert out[1]["no_data_reason"] == INSUFFICIENT_DATA_FOR_METRICS_PROCESSING
+  assert out[2]["no_data_reason"] == METRIC_NOT_COMPUTED_YET
 
 
 def test_metrics_run_uses_supplied_pool(monkeypatch):

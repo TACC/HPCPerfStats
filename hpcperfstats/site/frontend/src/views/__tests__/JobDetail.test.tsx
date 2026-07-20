@@ -16,6 +16,11 @@ import {
   createEmptyJobPlotsState,
   plotsStateFromBatchResponse,
 } from "@/utils/job-detail-plots";
+import { replaceTabInHistory } from "@/utils/replace-tab-history";
+
+vi.mock("@/utils/replace-tab-history", () => ({
+  replaceTabInHistory: vi.fn(),
+}));
 
 vi.mock("@/hooks/use-job-detail", () => ({
   useJobDetailQuery: vi.fn(),
@@ -56,10 +61,10 @@ const minimalJobDetailResponse = {
   gpu_count: null,
   multiprecision_cpu_plot_item: null,
   multiprecision_cpu_unavailable_reason:
-    "Missing CPU precision-width mix metrics in job metrics (need positive vecpercent_* shares).",
+    "Missing CPU busy-FLOPS mix metrics in job metrics (need positive avg_flops64b / avg_flops32b shares).",
   multiprecision_gpu_plot_item: null,
   multiprecision_gpu_unavailable_reason:
-    "Missing GPU precision-width mix counters in host_data (no renderable precision mix rows).",
+    "Missing GPU busy-pipe mix counters in host_data (no renderable precision mix rows).",
   metrics_list: [],
   proc_list: [],
 };
@@ -620,7 +625,8 @@ describe("JobDetail", () => {
     expect(screen.getByRole("link", { name: "cpu" })).toHaveClass("underline");
   });
 
-  it("updates URL when Device data tab is selected", async () => {
+  it("syncs tab via history.replaceState helper (not router.replace) when Device data is selected", async () => {
+    vi.mocked(replaceTabInHistory).mockClear();
     setJobDetailQueryMock({ data: minimalJobDetailResponse });
     renderJobDetail("12345");
 
@@ -630,9 +636,51 @@ describe("JobDetail", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Device data" }));
 
-    expect(nextNavigationMock.router.replace).toHaveBeenCalledWith(
-      expect.stringMatching(/tab=device/),
+    expect(nextNavigationMock.router.replace).not.toHaveBeenCalled();
+    expect(replaceTabInHistory).toHaveBeenCalledWith(
+      "/machine/job/12345/",
+      expect.any(URLSearchParams),
+      "tab",
+      "device",
     );
+  });
+
+  it("formats avg_cpuusage as job-total out of ncores", async () => {
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        job_data: { ...minimalJobDetailResponse.job_data, ncores: 4608 },
+        metrics_list: [
+          {
+            metric: "avg_cpuusage",
+            value: 3445.05,
+            units: "#cores",
+            no_data_reason: null,
+          },
+        ],
+      },
+    });
+    renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByText("3,445.05 out of 4,608.00")).toBeInTheDocument();
+    });
+  });
+
+  it("labels dual FSIO rows as Lustre and NFS", async () => {
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        fsio: {
+          llite: [10, 20, 1, 2],
+          nfs: [3, 4, 0.5, 1],
+        },
+      },
+    });
+    renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByText("Lustre")).toBeInTheDocument();
+      expect(screen.getByText("NFS")).toBeInTheDocument();
+    });
   });
 
   it("deep-links to Device data without full-page skeleton when data exists", async () => {

@@ -32,7 +32,8 @@ def _mk_job(jid="detailtest1"):
 
 
 @pytest.mark.django_db
-def test_persist_job_detail_uses_metrics_no_data_without_fsio_fallback(monkeypatch):
+def test_persist_job_detail_null_fsio_metrics_allows_host_fallback(monkeypatch):
+  """Catalog FSIO keys with all-null values must not lock out host_data fallback."""
   job = _mk_job("detail-no-data-reuse")
   for metric_name in (
       "detail_fsio_llite_read_mb",
@@ -70,10 +71,19 @@ def test_persist_job_detail_uses_metrics_no_data_without_fsio_fallback(monkeypat
     end_time = job.end_time
 
     def get_llite_delta_by_event(self):
-      raise AssertionError("FSIO fallback should not run when metrics rows are present")
+      return pd.DataFrame(
+          [
+              {"event": "read_bytes", "delta_sum": 1048576.0},
+              {"event": "write_bytes", "delta_sum": 0.0},
+          ]
+      )
 
     def get_nfs_delta_totals_mb(self):
-      raise AssertionError("NFS fallback should not run when metrics rows are present")
+      return None
+
+    def get_aggregate_df(self, *args, **kwargs):
+      del args, kwargs
+      return pd.DataFrame(columns=["host", "time", "sum_val"])
 
   monkeypatch.setattr(
       "hpcperfstats.site.lib.machine.job_detail_artifacts.jid_table.jid_table",
@@ -82,8 +92,8 @@ def test_persist_job_detail_uses_metrics_no_data_without_fsio_fallback(monkeypat
 
   telemetry = {}
   jda.persist_job_detail_artifacts_for_jid(job.jid, context={"_telemetry": telemetry})
-  assert telemetry.get("detail_fsio_fallback_queries", 0) == 0
-  assert telemetry.get("detail_fsio_metrics_reused", 0) == 1
+  assert telemetry.get("detail_fsio_fallback_queries", 0) >= 1
+  assert telemetry.get("detail_fsio_metrics_reused", 0) == 0
 
 
 @pytest.mark.django_db
@@ -188,19 +198,19 @@ def test_persist_job_detail_records_type_detail_failure_as_fresh_unavailable(mon
 @pytest.mark.django_db
 def test_persist_job_detail_prewarms_multiprecision_mix_payload(monkeypatch):
   job = _mk_job("detail-multiprecision-mix")
-  for metric_name, metric_type, value in (
-      ("vecpercent_64b", "pmc", 40.0),
-      ("vecpercent_32b", "pmc", 60.0),
-      ("avg_tensor_active", "nvidia_gpu", 25.0),
-      ("avg_fp16_active", "nvidia_gpu", 25.0),
-      ("avg_fp32_active", "nvidia_gpu", 30.0),
-      ("avg_fp64_active", "nvidia_gpu", 20.0),
+  for metric_name, metric_type, value, units in (
+      ("avg_flops64b", "pmc", 40.0, "GF"),
+      ("avg_flops32b", "pmc", 60.0, "GF"),
+      ("avg_tensor_active", "nvidia_gpu", 25.0, "%"),
+      ("avg_fp16_active", "nvidia_gpu", 25.0, "%"),
+      ("avg_fp32_active", "nvidia_gpu", 30.0, "%"),
+      ("avg_fp64_active", "nvidia_gpu", 20.0, "%"),
   ):
     metrics_data.objects.create(
         jid=job,
         type=metric_type,
         metric=metric_name,
-        units="%",
+        units=units,
         value=value,
         no_data_reason=None,
     )
@@ -242,8 +252,8 @@ def test_persist_job_detail_multiprecision_gpu_uses_available_widths_only(monkey
   """GPU pie should render with whichever precision widths are present for the job."""
   job = _mk_job("detail-multiprecision-dynamic-widths")
   for metric_name, metric_type, value in (
-      ("vecpercent_64b", "pmc", 55.0),
-      ("vecpercent_32b", "pmc", 45.0),
+      ("avg_flops64b", "pmc", 55.0),
+      ("avg_flops32b", "pmc", 45.0),
       ("avg_tensor_active", "nvidia_gpu", 70.0),
       ("avg_fp16_active", "nvidia_gpu", 30.0),
   ):
@@ -292,14 +302,14 @@ def test_persist_job_detail_multiprecision_gpu_unavailable_without_metrics(monke
   (no host_data fallback)."""
   job = _mk_job("detail-multiprecision-no-gpu-metrics")
   for metric_name in (
-      "vecpercent_64b",
-      "vecpercent_32b",
+      "avg_flops64b",
+      "avg_flops32b",
   ):
     metrics_data.objects.create(
         jid=job,
         type="pmc",
         metric=metric_name,
-        units="%",
+        units="GF",
         value=50.0,
         no_data_reason=None,
     )

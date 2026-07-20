@@ -1,7 +1,7 @@
 "use client";
 
-import { useRouter, usePathname, useSearchParams } from "next/navigation";
-import { memo, useEffect } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
+import { memo, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { TextLink } from "@/components/TextLink";
 import { useJobDetailQuery } from "@/hooks/use-job-detail";
@@ -39,11 +39,9 @@ import PageBreadcrumbs from "../components/PageBreadcrumbs";
 import { getJobMetricShortLabel } from "../utils/jobMetricDisplayLabels";
 import {
   readTabFromSearchParams,
-  searchParamsWithTab,
 } from "../utils/sync-tab-search-param";
 import { useMachineRouteParams } from "../hooks/use-machine-route-params";
-import { useStableURLSearchParams } from "../hooks/use-stable-search-params";
-import { replacePathIfChanged } from "../utils/replace-path-if-changed";
+import { replaceTabInHistory } from "../utils/replace-tab-history";
 import { JOB_PLOT_CONFIGS } from "@/utils/job-detail-plots";
 
 const JOB_DETAIL_COMPACT_TABLE_CLASS =
@@ -138,14 +136,42 @@ const JOB_DETAIL_ANALYSIS_TABS: ReadonlySet<JobAnalysisTab> = new Set([
   "device",
 ]);
 
-function formatJobMetricCell(obj: JobMetricCell, isStaff: boolean): string {
+function fsioResourceLabel(key: string): string {
+  if (key === "llite") return "Lustre";
+  if (key === "nfs") return "NFS";
+  return key;
+}
+
+function formatJobMetricCell(
+  obj: JobMetricCell & { metric?: string },
+  isStaff: boolean,
+  ncores?: string | number | null,
+): string {
   if (obj.value != null && obj.value !== "") {
-    return formatDecimalStandard(obj.value);
+    const formatted = formatDecimalStandard(obj.value);
+    if (
+      obj.metric === "avg_cpuusage" &&
+      ncores != null &&
+      ncores !== "" &&
+      !Number.isNaN(Number(ncores))
+    ) {
+      return `${formatted} out of ${formatDecimalStandard(ncores)}`;
+    }
+    return formatted;
   }
   if (isStaff) {
     return obj.no_data_reason || "Data not available.";
   }
   return "Data not available.";
+}
+
+function analysisTabFromSearchParams(
+  searchParams: URLSearchParams | { get: (key: string) => string | null },
+): JobAnalysisTab {
+  const rawTab = readTabFromSearchParams(searchParams, "tab", "metrics");
+  return JOB_DETAIL_ANALYSIS_TABS.has(rawTab as JobAnalysisTab)
+    ? (rawTab as JobAnalysisTab)
+    : "metrics";
 }
 
 function buildJobDetailTitle({
@@ -206,9 +232,7 @@ export default function JobDetail() {
   const isStaff = !!session?.is_staff;
   const { flatParams } = useMachineRouteParams();
   const pk = flatParams.pk ?? "";
-  const searchParams = useStableURLSearchParams();
   const rawSearchParams = useSearchParams();
-  const router = useRouter();
   const pathname = usePathname();
   const {
     data: jobDetailData,
@@ -221,10 +245,16 @@ export default function JobDetail() {
     loadDetailWithoutDeferParts,
   } = useJobDetailQuery(pk);
   const data = jobDetailData as JobDetailViewData | null;
-  const rawTab = readTabFromSearchParams(rawSearchParams, "tab", "metrics");
-  const analysisTab: JobAnalysisTab = JOB_DETAIL_ANALYSIS_TABS.has(rawTab as JobAnalysisTab)
-    ? (rawTab as JobAnalysisTab)
-    : "metrics";
+  const [analysisTab, setAnalysisTabState] = useState<JobAnalysisTab>(() =>
+    analysisTabFromSearchParams(rawSearchParams),
+  );
+
+  useEffect(() => {
+    setAnalysisTabState(analysisTabFromSearchParams(rawSearchParams));
+    // Re-sync tab from URL when navigating to a different job identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- pk identity only
+  }, [pk]);
+
   const plotsEnabled =
     !!pk &&
     !initialLoading &&
@@ -248,12 +278,17 @@ export default function JobDetail() {
   }, [analysisTab, pk, initialLoading, loadFullDetail, loadDetailWithoutDeferParts]);
 
   function setAnalysisTab(tab: JobAnalysisTab): void {
-    const next = searchParamsWithTab(
-      rawSearchParams,
+    setAnalysisTabState(tab);
+    const current =
+      typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search)
+        : new URLSearchParams(rawSearchParams.toString());
+    replaceTabInHistory(
+      pathname,
+      current,
       "tab",
       tab === "metrics" ? null : tab,
     );
-    replacePathIfChanged(router, pathname, next, pathname, searchParams);
   }
 
   useDocumentTitle(buildJobDetailTitle({ error, loading: initialLoading, data, pk }));
@@ -370,7 +405,7 @@ export default function JobDetail() {
           />
         </TableHead>
         <TableCell className={obj.value != null && obj.value !== "" ? "" : "text-muted-foreground"}>
-          {formatJobMetricCell(obj, isStaff)}
+          {formatJobMetricCell(obj, isStaff, job.ncores)}
         </TableCell>
       </TableRow>
     ));
@@ -639,7 +674,9 @@ export default function JobDetail() {
                   ) : (
                     Object.entries(fsio).map(([key, val]) => (
                       <TableRow key={key}>
-                        <TableCell>{key}</TableCell>
+                        <TableCell>
+                          <b>{fsioResourceLabel(key)}</b>
+                        </TableCell>
                         <TableCell>{formatDecimalStandard((val as Array<number | null>)[0])}</TableCell>
                         <TableCell>{formatDecimalStandard((val as Array<number | null>)[1])}</TableCell>
                         <TableCell>
@@ -659,7 +696,6 @@ export default function JobDetail() {
                   )}
                 </TableBody>
             </Table>
-        </div>
         {(detailsLoading || gpu_active != null || gpu_count != null) && (
           <div className="mt-3">
             {detailsLoading && gpu_active == null && gpu_count == null ? (
@@ -682,6 +718,7 @@ export default function JobDetail() {
             )}
           </div>
         )}
+        </div>
         <div className="mt-2 flex flex-wrap gap-2">
           {isSafeHttpUrl(client_url) && (
             <a

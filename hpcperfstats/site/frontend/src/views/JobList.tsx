@@ -67,7 +67,10 @@ import {
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 import { useMachineRouteParams } from "../hooks/use-machine-route-params";
 import { useStableURLSearchParams } from "../hooks/use-stable-search-params";
-import { replacePathIfChanged } from "../utils/replace-path-if-changed";
+import {
+  softPresentationClick,
+  softReplacePresentationParams,
+} from "../utils/soft-presentation-nav";
 import {
   jobListPageHumanSummary,
   jobListRouteTitleContext,
@@ -232,7 +235,11 @@ export default function JobList() {
 
   function setListViewTab(tab: "jobs" | "charts") {
     const next = searchParamsWithTab(rawSearchParams, "view", tab === "jobs" ? null : tab);
-    replacePathIfChanged(router, pathname, next, pathname, searchParams);
+    softReplacePresentationParams(router, pathname, next, searchParams);
+  }
+
+  function navigatePresentationHref(event: MouseEvent<HTMLAnchorElement>, href: string) {
+    softPresentationClick(event, router, pathname, href, searchParams);
   }
 
   const selectionContext = useMemo(
@@ -390,6 +397,9 @@ export default function JobList() {
             size="default"
             className={paginateLinkClass}
             aria-label="First page"
+            onClick={(event) =>
+              navigatePresentationHref(event, `${pathname}?${paginationQuery(1)}`)
+            }
           >
             First
           </PaginationLink>
@@ -405,6 +415,12 @@ export default function JobList() {
                 href={`${pathname}?${paginationQuery(page - 1)}`}
                 className={paginateLinkClass}
                 aria-label="Previous page"
+                onClick={(event) =>
+                  navigatePresentationHref(
+                    event,
+                    `${pathname}?${paginationQuery(page - 1)}`,
+                  )
+                }
               >
                 «
               </PaginationLink>
@@ -426,6 +442,12 @@ export default function JobList() {
                   isActive={item === page}
                   className={item === page ? paginateActiveLinkClass : paginateLinkClass}
                   aria-label={`Page ${item}`}
+                  onClick={(event) =>
+                    navigatePresentationHref(
+                      event,
+                      `${pathname}?${paginationQuery(item)}`,
+                    )
+                  }
                 >
                   {item}
                 </PaginationLink>
@@ -438,6 +460,12 @@ export default function JobList() {
                 href={`${pathname}?${paginationQuery(page + 1)}`}
                 className={paginateLinkClass}
                 aria-label="Next page"
+                onClick={(event) =>
+                  navigatePresentationHref(
+                    event,
+                    `${pathname}?${paginationQuery(page + 1)}`,
+                  )
+                }
               >
                 »
               </PaginationLink>
@@ -454,6 +482,12 @@ export default function JobList() {
             size="default"
             className={paginateLinkClass}
             aria-label="Last page"
+            onClick={(event) =>
+              navigatePresentationHref(
+                event,
+                `${pathname}?${paginationQuery(num_pages)}`,
+              )
+            }
           >
             Last
           </PaginationLink>
@@ -629,7 +663,10 @@ export default function JobList() {
               {columns.map(({ label, field, sortable }) => (
               <TableHead key={field} scope="col" aria-sort={ariaSortForField(field, sortable)}>
                 {sortable && !showTableSkeleton ? (
-                  <TextLink href={sortLink(field)}>
+                  <TextLink
+                    href={sortLink(field)}
+                    onClick={(event) => navigatePresentationHref(event, sortLink(field))}
+                  >
                     {label}
                     {sortIndicator(field)}
                   </TextLink>

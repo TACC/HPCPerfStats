@@ -40,6 +40,8 @@ from hpcperfstats.dbload.lib.monitor_naming.canonical import (
     HOST_NUMA_TYPE,
     HOST_OPA_TYPE,
     INTEL_FP_ARITH_ALL_EVENTS,
+    INTEL_FP_ARITH_DOUBLE_EVENTS,
+    INTEL_FP_ARITH_SINGLE_EVENTS,
     INTEL_LEGACY_SSE_FLOP_EVENTS,
     LUSTRE_LLITE_TYPE,
 )
@@ -1151,6 +1153,24 @@ class Metrics():
             "conv": 0.0,
             "units": "%",
         },
+        "avg_tensor_imma_active": {
+            "typename": "nvidia_gpu",
+            "events": ["tensor_imma_active"],
+            "conv": 0.0,
+            "units": "%",
+        },
+        "avg_tensor_hmma_active": {
+            "typename": "nvidia_gpu",
+            "events": ["tensor_hmma_active"],
+            "conv": 0.0,
+            "units": "%",
+        },
+        "avg_tensor_dfma_active": {
+            "typename": "nvidia_gpu",
+            "events": ["tensor_dfma_active"],
+            "conv": 0.0,
+            "units": "%",
+        },
         "avg_fp16_active": {
             "typename": "nvidia_gpu",
             "events": ["fp16_active"],
@@ -1168,6 +1188,18 @@ class Metrics():
             "events": ["fp64_active"],
             "conv": 0.0,
             "units": "%",
+        },
+        "avg_flops64b": {
+            "typename": "pmc",
+            "events": list(INTEL_FP_ARITH_DOUBLE_EVENTS),
+            "conv": 1e-9,
+            "units": "GF",
+        },
+        "avg_flops32b": {
+            "typename": "pmc",
+            "events": list(INTEL_FP_ARITH_SINGLE_EVENTS),
+            "conv": 1e-9,
+            "units": "GF",
         },
         "avg_gpu_mem_bw_gbps": {
             "typename": "nvidia_gpu",
@@ -1400,12 +1432,15 @@ class Metrics():
               units=None,
               cache=None,
               rows_cache=None,
-              nonnegative_rate=False):
+              nonnegative_rate=False,
+              host_aggregate="mean"):
     """Aggregate arc by host and 5m time bucket via Django ORM.
 
     For each host: mean of per-bucket summed arc (after dropping the first bucket
-    per host). Returns the **arithmetic mean of those per-host values** across
-    hosts (all ``avg_*`` simple metrics use this path).
+    per host). By default returns the **arithmetic mean of those per-host
+    values** across hosts (most ``avg_*`` simple metrics). When
+    ``host_aggregate="sum"`` (``avg_cpuusage`` only), returns the **sum** of
+    per-host means (job-total busy cores).
 
     When ``nonnegative_rate`` is True, negative ``arc`` samples are dropped (NaN)
     before bucketing. Use for cumulative byte counters (fabric bandwidth) where
@@ -1420,6 +1455,7 @@ class Metrics():
     hosts = base.get("host__in") or []
     if not hosts:
       return None
+    agg = "sum" if host_aggregate == "sum" else "mean"
     cache_key = None
     if cache is not None:
       cache_key = (
@@ -1427,6 +1463,7 @@ class Metrics():
           _hashable_metric_events_signature(events),
           float(conv),
           bool(nonnegative_rate),
+          agg,
       )
       if cache_key in cache:
         return cache[cache_key]
@@ -1472,7 +1509,10 @@ class Metrics():
         cache[cache_key] = None
       return None
     per_host_vals = grouped.groupby("host")["sum"].mean()
-    value = float(per_host_vals.mean())
+    if agg == "sum":
+      value = float(per_host_vals.sum())
+    else:
+      value = float(per_host_vals.mean())
     if cache is not None:
       cache[cache_key] = value
     return value
@@ -1545,6 +1585,22 @@ class Metrics():
     if cache is not None:
       cache[cache_key] = value
     return value
+
+  def _job_arc_avg_flops_precision(self, jt, events, cache=None, rows_cache=None):
+    """GFLOP/s from Intel FP_ARITH events for one precision width (64b or 32b)."""
+    for core_typ in core_pmc_types_probe_order():
+      v = self.job_arc(
+          jt,
+          typename=core_typ,
+          events=list(events),
+          conv=1e-9,
+          units="GF",
+          cache=cache,
+          rows_cache=rows_cache,
+      )
+      if v is not None and float(v) > 0:
+        return v, core_typ
+    return None, None
 
   def _job_arc_avg_flops(self, jt, cache=None, rows_cache=None):
     """GFLOP/s from AMD PMC, else Intel FP_ARITH/SSE, else ARM host_cpu_hw estimate."""
@@ -1765,7 +1821,7 @@ class Metrics():
       return v, HOST_IB_TYPE
     v = self.job_arc(
         jt,
-        typename="opa",
+        typename=HOST_OPA_TYPE,
         events=["PortXmitData", "PortRcvData"],
         conv=1.0 / 125000,
         units="MB/s",
@@ -1774,7 +1830,7 @@ class Metrics():
         nonnegative_rate=True,
     )
     if v is not None:
-      return v, "opa"
+      return v, HOST_OPA_TYPE
     v = self.job_arc(
         jt,
         typename="net",
@@ -1896,9 +1952,33 @@ class Metrics():
         }
 
       for metric_name, metric_obj in self.simple_metrics_list.items():
-        if metric_name == "avg_flops":
+        if metric_name == "avg_cpuusage":
+          value = self.job_arc(
+              jt,
+              cache=simple_metric_cache,
+              rows_cache=host_data_rows_cache,
+              host_aggregate="sum",
+              **metric_obj)
+          row_type = metric_obj["typename"]
+        elif metric_name == "avg_flops":
           value, flops_typename = self._job_arc_avg_flops(
               jt, cache=simple_metric_cache, rows_cache=host_data_rows_cache)
+          row_type = flops_typename or metric_obj["typename"]
+        elif metric_name == "avg_flops64b":
+          value, flops_typename = self._job_arc_avg_flops_precision(
+              jt,
+              list(INTEL_FP_ARITH_DOUBLE_EVENTS),
+              cache=simple_metric_cache,
+              rows_cache=host_data_rows_cache,
+          )
+          row_type = flops_typename or metric_obj["typename"]
+        elif metric_name == "avg_flops32b":
+          value, flops_typename = self._job_arc_avg_flops_precision(
+              jt,
+              list(INTEL_FP_ARITH_SINGLE_EVENTS),
+              cache=simple_metric_cache,
+              rows_cache=host_data_rows_cache,
+          )
           row_type = flops_typename or metric_obj["typename"]
         elif metric_name == "avg_mbw":
           value, mbw_typename = self._job_arc_avg_mbw(
@@ -1935,12 +2015,18 @@ class Metrics():
             )
         elif metric_name in (
             "avg_tensor_active",
+            "avg_tensor_imma_active",
+            "avg_tensor_hmma_active",
+            "avg_tensor_dfma_active",
             "avg_fp16_active",
             "avg_fp32_active",
             "avg_fp64_active",
         ):
           metric_event = {
               "avg_tensor_active": "tensor_active",
+              "avg_tensor_imma_active": "tensor_imma_active",
+              "avg_tensor_hmma_active": "tensor_hmma_active",
+              "avg_tensor_dfma_active": "tensor_dfma_active",
               "avg_fp16_active": "fp16_active",
               "avg_fp32_active": "fp32_active",
               "avg_fp64_active": "fp64_active",
@@ -2218,8 +2304,15 @@ def build_job_metrics_display_list(job):
           "value": row.value,
           "no_data_reason": row.no_data_reason,
       })
-  # Job detail UI: show catalog metrics with values or other reasons first; missing rows last.
-  out.sort(key=lambda r: r.get("no_data_reason") == METRIC_NOT_COMPUTED_YET)
+  # Job detail UI tiers: valued metrics, then error/Insufficient, then not-computed last.
+  def _display_tier(row):
+    if row.get("value") is not None:
+      return 0
+    if row.get("no_data_reason") == METRIC_NOT_COMPUTED_YET:
+      return 2
+    return 1
+
+  out.sort(key=_display_tier)
   return out
 
 
@@ -2434,7 +2527,7 @@ class avg_packetsize():
       tb, rb = schema["port_xmit_data"].index, schema["port_rcv_data"].index
       conv2mb = 1024 * 1024
     else:
-      opa_schema, opa_stats = u.get_type("opa")
+      opa_schema, opa_stats, opa_typename = resolve_get_type(u, (HOST_OPA_TYPE,))
       if opa_schema is not None and _schema_has_events(
           opa_schema,
           "PortXmitPkts",
@@ -2442,13 +2535,13 @@ class avg_packetsize():
           "PortXmitData",
           "PortRcvData",
       ):
-        typename = "opa"
+        typename = opa_typename or HOST_OPA_TYPE
         schema, _stats = opa_schema, opa_stats
         tx, rx = schema["PortXmitPkts"].index, schema["PortRcvPkts"].index
         tb, rb = schema["PortXmitData"].index, schema["PortRcvData"].index
         conv2mb = 125000
       else:
-        net_schema, net_stats = u.get_type("net")
+        net_schema, net_stats, net_typename = resolve_get_type(u, ("net",))
         if net_schema is None or not _schema_has_events(
             net_schema,
             "tx_packets",
@@ -2457,7 +2550,7 @@ class avg_packetsize():
             "rx_bytes",
         ):
           return None, HOST_IB_TYPE, 'MB'
-        typename = "net"
+        typename = net_typename or "net"
         schema, _stats = net_schema, net_stats
         tx, rx = schema["tx_packets"].index, schema["rx_packets"].index
         tb, rb = schema["tx_bytes"].index, schema["rx_bytes"].index
@@ -2480,40 +2573,41 @@ class avg_packetsize():
     return value, typename, 'MB'
 
 
-class max_fabricbw():
-  """Maximum fabric bandwidth (MB/s) from host_ib or opa port data.
+# Fabric peak above this is treated as bad telemetry (bytes/s mislabeled as MB/s).
+_MAX_FABRIC_BW_SANITY_MB_S = 1_000_000.0
 
+
+class max_fabricbw():
+  """Maximum fabric bandwidth (MB/s) from host_ib or host_opa port data.
+
+  Uses the same MiB / OPA flit conversions as ``Metrics._job_arc_avg_ibbw``.
     """
 
   def compute_metric(self, u):
     max_bw = 0
-    ib_schema, ib_stats = u.get_type(HOST_IB_TYPE)
-    if ib_schema is not None and _schema_has_events(
-        ib_schema, "port_xmit_data", "port_rcv_data"):
-      typename = HOST_IB_TYPE
-      schema, _stats = ib_schema, ib_stats
+    schema, _stats, typename = resolve_get_type(u, (HOST_IB_TYPE,))
+    if schema is not None and _schema_has_events(
+        schema, "port_xmit_data", "port_rcv_data"):
       tx, rx = schema["port_xmit_data"].index, schema["port_rcv_data"].index
       conv2mb = 1024 * 1024
     else:
-      opa_schema, opa_stats = u.get_type("opa")
-      if opa_schema is not None and _schema_has_events(
-          opa_schema, "PortXmitData", "PortRcvData"):
-        typename = "opa"
-        schema, _stats = opa_schema, opa_stats
+      schema, _stats, typename = resolve_get_type(u, (HOST_OPA_TYPE,))
+      if schema is not None and _schema_has_events(
+          schema, "PortXmitData", "PortRcvData"):
         tx, rx = schema["PortXmitData"].index, schema["PortRcvData"].index
         conv2mb = 125000
       else:
-        net_schema, net_stats = u.get_type("net")
-        if net_schema is None or not _schema_has_events(
-            net_schema, "tx_bytes", "rx_bytes"):
+        schema, _stats, typename = resolve_get_type(u, ("net",))
+        if schema is None or not _schema_has_events(
+            schema, "tx_bytes", "rx_bytes"):
           return None, HOST_IB_TYPE, 'MB/s'
-        typename = "net"
-        schema, _stats = net_schema, net_stats
         tx, rx = schema["tx_bytes"].index, schema["rx_bytes"].index
         conv2mb = 1024 * 1024
     cluster_peak = _peak_interval_rate_from_cluster_mean(
         u, typename, [tx, rx], conv2mb)
     if cluster_peak is not None:
+      if cluster_peak > _MAX_FABRIC_BW_SANITY_MB_S:
+        return None, typename, 'MB/s'
       return cluster_peak, typename, 'MB/s'
     for hostname, stats in _stats.items():
       ratio = _per_interval_rate(_add_arrays(stats[:, tx], stats[:, rx]), u.t)
@@ -2523,6 +2617,8 @@ class max_fabricbw():
     if max_bw == 0:
       return None, typename, 'MB/s'
     value = max_bw / conv2mb
+    if value > _MAX_FABRIC_BW_SANITY_MB_S:
+      return None, typename, 'MB/s'
     return value, typename, 'MB/s'
 
 

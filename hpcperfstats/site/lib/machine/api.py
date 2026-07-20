@@ -289,7 +289,7 @@ def _gpu_detail_tuple_from_metrics(job):
 
 
 def _fsio_dict_from_metrics(job):
-    """Return job_detail-shaped fsio dict from metrics_data, or None if incomplete."""
+    """Return job_detail-shaped fsio dict from metrics_data (dual NFS+Lustre)."""
     by_m = {o.metric: o for o in job.metrics_data_set.all()}
 
     def _val(metric):
@@ -298,29 +298,26 @@ def _fsio_dict_from_metrics(job):
             return None
         return float(row.value)
 
+    out = {}
     lr = _val("detail_fsio_llite_read_mb")
     lw = _val("detail_fsio_llite_write_mb")
     if lr is not None and lw is not None:
-        return {
-            "llite": [
-                lr,
-                lw,
-                _val("detail_fsio_llite_peak_mb_s"),
-                _val("detail_fsio_llite_peak_iops"),
-            ],
-        }
+        out["llite"] = [
+            lr,
+            lw,
+            _val("detail_fsio_llite_peak_mb_s"),
+            _val("detail_fsio_llite_peak_iops"),
+        ]
     nr = _val("detail_fsio_nfs_read_mb")
     nw = _val("detail_fsio_nfs_write_mb")
     if nr is not None and nw is not None:
-        return {
-            "nfs": [
-                nr,
-                nw,
-                _val("detail_fsio_nfs_peak_mb_s"),
-                _val("detail_fsio_nfs_peak_iops"),
-            ],
-        }
-    return None
+        out["nfs"] = [
+            nr,
+            nw,
+            _val("detail_fsio_nfs_peak_mb_s"),
+            _val("detail_fsio_nfs_peak_iops"),
+        ]
+    return out or None
 
 
 def _compute_job_gpu_stats(job, j, job_cache_timeout, include_gpu_count=True):
@@ -2307,6 +2304,8 @@ def job_detail(request, pk):
     gpu_count = detail_payload.get("gpu_count")
     xalt_payload = None
     fsio = detail_payload.get("fsio") or {}
+    if not fsio:
+        fsio = _fsio_dict_from_metrics(job) or {}
     schema = detail_payload.get("schema") or {}
     proc_list = []
 

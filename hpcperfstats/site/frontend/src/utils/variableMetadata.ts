@@ -90,19 +90,19 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
   },
   avg_cpuusage: {
     description:
-      "Average number of CPU cores busy, inferred from cumulative user/system/nice CPU time deltas over the job window.",
+      "Job-total busy CPU cores: sum across hosts of each host's mean busy-core count from user/system/nice (not a mean-of-hosts). Compare with the job's allocated core count (ncores). Older rows computed before this change may still be mean-per-host until metrics are recomputed.",
     researcherUse:
-      "Persistently below expected parallel efficiency can mean synchronization, I/O wait, or OpenMP/MPI under-subscription; pairs with CPU-bound failure checks.",
+      "Persistently below allocated cores can mean synchronization, I/O wait, or OpenMP/MPI under-subscription; pairs with CPU-bound failure checks.",
   },
   avg_sharedfs_iops: {
     description:
-      "Average metadata and I/O operation rate for the shared filesystem named in the Shared File System section on this page (Lustre llite and/or NFS READ/WRITE operation counters over the job).",
+      "Average metadata and I/O operation rate summing Lustre llite and NFS READ/WRITE operation counters over the job when both are present. An Insufficient Data reason on this metric means the job failed the telemetry coverage gate, not that shared-filesystem counters were absent.",
     researcherUse:
       "Metadata-heavy jobs: small files, directory creation storms, or recursive listing in batch scripts.",
   },
   avg_sharedfs_bw: {
     description:
-      "Average read+write bandwidth for the shared filesystem named in the Shared File System section on this page (Lustre llite and/or NFS byte counters over the job).",
+      "Average read+write bandwidth summing Lustre llite and NFS byte counters over the job when both are present. An Insufficient Data reason on this metric means the job failed the telemetry coverage gate, not that FSIO totals were missing.",
     researcherUse:
       "Checkpoint and post-processing I/O; compare with Lustre/NFS summary subplots for time structure.",
   },
@@ -120,9 +120,27 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
   },
   avg_tensor_active: {
     description:
-      "Average DCGM tensor-pipe activity percentage (NVIDIA preferred; AMD GPU when the same field is populated).",
+      "Average DCGM tensor-pipe activity percentage (NVIDIA preferred; AMD GPU when the same field is populated). Prefer avg_tensor_imma/hmma/dfma_active when those splits are present.",
     researcherUse:
       "See whether time sits in tensor-heavy paths when changing precision or framework version.",
+  },
+  avg_tensor_imma_active: {
+    description:
+      "Average DCGM tensor IMMA pipe activity percentage (INT8/INT4 tensor path).",
+    researcherUse:
+      "Compare with HMMA/DFMA splits to see which tensor pipe dominates mixed-precision kernels.",
+  },
+  avg_tensor_hmma_active: {
+    description:
+      "Average DCGM tensor HMMA pipe activity percentage (FP16/BF16 tensor path).",
+    researcherUse:
+      "Useful when validating FP16/BF16 tensor-core usage versus scalar FP pipes.",
+  },
+  avg_tensor_dfma_active: {
+    description:
+      "Average DCGM tensor DFMA pipe activity percentage (FP64 tensor path).",
+    researcherUse:
+      "High DFMA with low FP64 scalar activity can indicate tensorized FP64 kernels.",
   },
   avg_fp16_active: {
     description:
@@ -159,6 +177,18 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
       "Average floating-point throughput (GFLOP/s) from AMD FLOPS PMC, Intel FP_ARITH or legacy SSE proxies, or ARM synthetic counters.",
     researcherUse:
       "Computational intensity over time; pair with fabric bytes and CPU roofline for bottleneck stories.",
+  },
+  avg_flops64b: {
+    description:
+      "Average double-precision floating-point throughput (GFLOP/s) from Intel FP_ARITH double events (same basis as summary flops64b).",
+    researcherUse:
+      "Use with avg_flops32b and the Multiprecision Mix pie to see FP64 share of busy FLOPS.",
+  },
+  avg_flops32b: {
+    description:
+      "Average single-precision floating-point throughput (GFLOP/s) from Intel FP_ARITH single events (same basis as summary flops32b).",
+    researcherUse:
+      "Use with avg_flops64b and the Multiprecision Mix pie to see FP32 share of busy FLOPS.",
   },
   avg_mbw: {
     description:
@@ -265,9 +295,9 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
   },
   max_fabricbw: {
     description:
-      "Peak fabric data rate (MB/s) from the largest interval rate of transmitted+received fabric bytes (IB/OPA preferred).",
+      "Peak fabric data rate (MB/s) from the largest interval rate of transmitted+received fabric bytes, using the same MiB and Omni-Path flit conversions as avg_ibbw (host_ib / host_opa / Ethernet).",
     researcherUse:
-      "Peak interconnect load for network-bound or collective-heavy phases.",
+      "Peak interconnect load for network-bound or collective-heavy phases; should be on the same scale as avg_ibbw, not packet-rate magnitude.",
   },
   max_lnetbw: {
     description:
@@ -710,15 +740,15 @@ const JOB_DETAIL_BOKEH_PLOT_METADATA = {
   },
   jobDetailPlot_multiprecision_cpu: {
     description:
-      "CPU multiprecision mix: wedge areas show the fraction of CPU floating-point work attributed to each precision lane (from job-level metrics), as a share of the total that is classified.",
+      "CPU multiprecision mix: wedge areas show each precision's share of busy FLOPS only (idle excluded), from Intel FP_ARITH-based avg_flops64b and avg_flops32b job metrics.",
     researcherUse:
-      "Compare FP64 versus vectorized FP32/16 activity when tuning vectorization and numerical stability.",
+      "Compare FP64 versus FP32 busy-FLOPS mix when tuning numerical precision; vectorization width metrics remain separate.",
   },
   jobDetailPlot_multiprecision_gpu: {
     description:
-      "GPU multiprecision mix: wedge areas show the fraction of GPU floating-point activity by precision (from host telemetry across the job window), as a share of classified GPU FLOPS.",
+      "GPU multiprecision mix: wedge areas show each active pipe's share of busy GPU activity only (idle excluded). Hover shows share of busy percent. Tensor IMMA (INT8/INT4), Tensor HMMA (FP16/BF16), and Tensor DFMA (FP64) splits are preferred over lumped tensor_active when present.",
     researcherUse:
-      "Use it to spot FP16-heavy kernels versus FP32/64-dominated phases.",
+      "Use it to spot FP16-heavy kernels versus FP32/64 or tensor-pipe-dominated phases.",
   },
 };
 

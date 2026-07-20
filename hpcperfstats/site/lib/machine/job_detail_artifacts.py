@@ -47,14 +47,39 @@ ARTIFACT_KIND_MULTIPRECISION_MIX = "multiprecision_mix"
 
 # Staff-visible unavailable reasons (API detail); align phrasing with summary/roofline plot builders.
 _CPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON = (
-    "Missing CPU precision-width mix metrics in job metrics "
-    "(need positive vecpercent_* shares)."
+    "Missing CPU busy-FLOPS mix metrics in job metrics "
+    "(need positive avg_flops64b / avg_flops32b shares)."
 )
 _GPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON = (
     "Missing GPU precision-width mix metrics in job metrics "
     "(need positive avg_*_active shares)."
 )
-APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 5
+APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 7
+
+_FSIO_FINGERPRINT_METRIC_NAMES = tuple(
+    sorted(name for name, _t, _u in fsio_job_detail_catalog())
+)
+
+
+def _fsio_metrics_fingerprint_map(job: job_data) -> Dict[str, str]:
+  """Stable text map of detail_fsio_* values for detail artifact fingerprints."""
+  by_m: Dict[str, Any] = {}
+  try:
+    for row in getattr(job, "metrics_data_set").all():
+      by_m[str(row.metric)] = row.value
+  except Exception:
+    by_m = {}
+  out: Dict[str, str] = {}
+  for name in _FSIO_FINGERPRINT_METRIC_NAMES:
+    v = by_m.get(name)
+    if v is None:
+      out[name] = ""
+    else:
+      try:
+        out[name] = f"{float(v):.6f}"
+      except (TypeError, ValueError):
+        out[name] = ""
+  return out
 
 
 def _compress_payload(payload: Dict[str, Any]) -> tuple[bytes, str]:
@@ -108,10 +133,11 @@ def compute_detail_input_fingerprint(job: job_data) -> str:
 
   payload = {
       "artifact_schema": APP_DETAIL_ARTIFACT_SCHEMA_VERSION,
+      "end_time": _safe_text(getattr(job, "end_time", "")),
+      "fsio_metrics": _fsio_metrics_fingerprint_map(job),
       "jid": _safe_text(getattr(job, "jid", "")),
       "metrics_distinct_time_count": _safe_text(getattr(job, "metrics_distinct_time_count", "")),
       "start_time": _safe_text(getattr(job, "start_time", "")),
-      "end_time": _safe_text(getattr(job, "end_time", "")),
   }
   canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
   return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -244,27 +270,40 @@ def _gpu_detail_from_metric_values(metric_values: Dict[str, Optional[float]]) ->
 
 
 _CPU_PRECISION_METRIC_TO_LABEL = {
-    "vecpercent_64b": "FP64",
-    "vecpercent_32b": "FP32",
-    # Presently unavailable in the CPU metrics catalog; omitted when missing.
-    "vecpercent_16b": "FP16",
-    "vecpercent_8b": "FP8",
+    "avg_flops64b": "FP64",
+    "avg_flops32b": "FP32",
 }
 
+_GPU_TENSOR_SPLIT_METRICS = (
+    "avg_tensor_imma_active",
+    "avg_tensor_hmma_active",
+    "avg_tensor_dfma_active",
+)
+
 _GPU_PRECISION_METRIC_TO_LABEL = {
+    "avg_tensor_imma_active": "Tensor IMMA (INT8/INT4)",
+    "avg_tensor_hmma_active": "Tensor HMMA (FP16/BF16)",
+    "avg_tensor_dfma_active": "Tensor DFMA (FP64)",
     "avg_tensor_active": "Tensor",
-    # Reserved labels populated only when the catalog persists matching metrics.
     "avg_fp16_active": "FP16",
     "avg_fp32_active": "FP32",
     "avg_fp64_active": "FP64",
 }
 
-_CPU_PRECISION_LABEL_ORDER = ("FP64", "FP32", "FP16", "FP8")
-_GPU_PRECISION_LABEL_ORDER = ("Tensor", "FP16", "FP32", "FP64")
+_CPU_PRECISION_LABEL_ORDER = ("FP64", "FP32")
+_GPU_PRECISION_LABEL_ORDER = (
+    "Tensor IMMA (INT8/INT4)",
+    "Tensor HMMA (FP16/BF16)",
+    "Tensor DFMA (FP64)",
+    "Tensor",
+    "FP16",
+    "FP32",
+    "FP64",
+)
 
 # Inset pie so title + bottom legend do not clip wedges (match summaryplot d3 Category10).
-_MULTIPRECISION_PIE_RADIUS = 0.75
-_MULTIPRECISION_PLOT_RANGE = 1.0
+_MULTIPRECISION_PIE_RADIUS = 0.72
+_MULTIPRECISION_PLOT_RANGE = 1.15
 
 
 def _ordered_precision_labels(
@@ -283,10 +322,13 @@ def _category10_palette_for_factors(factors: list[str]) -> list[str]:
 def _precision_mix_from_metric_values(
     metric_values: Dict[str, Optional[float]],
     metric_to_label: Dict[str, str],
+    *,
+    skip_metrics: Optional[set[str]] = None,
 ) -> Dict[str, float]:
+  skip = skip_metrics or set()
   out: Dict[str, float] = {}
   for metric_name, label in metric_to_label.items():
-    if metric_name not in metric_values:
+    if metric_name in skip or metric_name not in metric_values:
       continue
     try:
       value = float(metric_values.get(metric_name))
@@ -295,6 +337,23 @@ def _precision_mix_from_metric_values(
     if value > 0.0:
       out[label] = value
   return out
+
+
+def _gpu_precision_mix_from_metric_values(
+    metric_values: Dict[str, Optional[float]],
+) -> Dict[str, float]:
+  """Prefer tensor IMMA/HMMA/DFMA splits over lumped ``avg_tensor_active``."""
+  skip: set[str] = set()
+  for split_metric in _GPU_TENSOR_SPLIT_METRICS:
+    try:
+      if float(metric_values.get(split_metric) or 0.0) > 0.0:
+        skip.add("avg_tensor_active")
+        break
+    except (TypeError, ValueError):
+      continue
+  return _precision_mix_from_metric_values(
+      metric_values, _GPU_PRECISION_METRIC_TO_LABEL, skip_metrics=skip
+  )
 
 
 def _pie_item_from_precision_mix(
@@ -312,6 +371,7 @@ def _pie_item_from_precision_mix(
     return None, empty_reason
   labels = _ordered_precision_labels(list(precision_mix.keys()), label_order)
   values = [float(precision_mix[label]) for label in labels]
+  shares = [100.0 * value / total for value in values]
   palette = _category10_palette_for_factors(labels)
   starts = []
   ends = []
@@ -325,6 +385,7 @@ def _pie_item_from_precision_mix(
       data={
           "label": labels,
           "value": values,
+          "share": shares,
           "start": starts,
           "end": ends,
       }
@@ -332,15 +393,18 @@ def _pie_item_from_precision_mix(
   plot_span = _MULTIPRECISION_PLOT_RANGE
   p = figure(
       title=title,
-      height=340,
-      width=320,
+      height=400,
+      width=360,
       toolbar_location=None,
       tools="hover",
       x_range=(-plot_span, plot_span),
       y_range=(-plot_span, plot_span),
-      min_border_top=50,
-      min_border_bottom=72,
+      min_border_top=56,
+      min_border_bottom=88,
+      min_border_left=24,
+      min_border_right=24,
       match_aspect=True,
+      sizing_mode="fixed",
   )
   p.axis.visible = False
   p.grid.visible = False
@@ -361,7 +425,7 @@ def _pie_item_from_precision_mix(
   if hover is not None:
     hover.tooltips = [
         ("Width", "@label"),
-        ("Share (%)", "@value{0.00}"),
+        ("Share of busy (%)", "@share{0.00}"),
     ]
   p.legend.location = "bottom_center"
   p.legend.orientation = "horizontal"
@@ -379,9 +443,7 @@ def _multiprecision_mix_payload(
   cpu_mix = _precision_mix_from_metric_values(
       metric_values, _CPU_PRECISION_METRIC_TO_LABEL
   )
-  gpu_mix = _precision_mix_from_metric_values(
-      metric_values, _GPU_PRECISION_METRIC_TO_LABEL
-  )
+  gpu_mix = _gpu_precision_mix_from_metric_values(metric_values)
   cpu_plot_item, cpu_reason = _pie_item_from_precision_mix(
       precision_mix=cpu_mix,
       title="CPU Multiprecision Mix",
@@ -407,10 +469,16 @@ def _multiprecision_mix_payload(
 def _fsio_from_metric_values(
     metric_values: Dict[str, Optional[float]]
 ) -> tuple[Optional[Dict[str, Any]], bool]:
+  """Build dual NFS+Lustre fsio dict from metrics.
+
+  Returns ``({}, False)`` when catalog keys exist but all values are null so
+  host_data fallback can still run. Returns ``(None, False)`` when no FSIO
+  catalog keys are present in ``metric_values``.
+  """
   fsio_metrics = {name for name, _t, _u in fsio_job_detail_catalog()}
   if not fsio_metrics.intersection(metric_values.keys()):
     return None, False
-  out = {}
+  out: Dict[str, Any] = {}
   llite_read = metric_values.get("detail_fsio_llite_read_mb")
   llite_write = metric_values.get("detail_fsio_llite_write_mb")
   nfs_read = metric_values.get("detail_fsio_nfs_read_mb")
@@ -426,7 +494,6 @@ def _fsio_from_metric_values(
         llite_peak_mb,
         llite_peak_iops,
     ]
-    return out, True
   if nfs_read is not None or nfs_write is not None:
     out["nfs"] = [
         float(nfs_read or 0.0),
@@ -434,7 +501,9 @@ def _fsio_from_metric_values(
         nfs_peak_mb,
         nfs_peak_iops,
     ]
-    return out, True
+  if not out:
+    # Catalog rows present but all null — allow host_data fallback.
+    return {}, False
   return out, True
 
 
@@ -475,7 +544,7 @@ def persist_job_detail_artifacts_for_jid(jid: str, context: Optional[Dict[str, A
         telemetry.get("detail_fsio_metrics_reused", 0)
     ) + 1
   try:
-    if (not fsio) and (not fsio_from_metrics):
+    if (not fsio_from_metrics) and ("llite" not in fsio):
       if telemetry is not None:
         telemetry["detail_fsio_fallback_queries"] = int(
             telemetry.get("detail_fsio_fallback_queries", 0)
@@ -491,10 +560,14 @@ def persist_job_detail_artifacts_for_jid(jid: str, context: Optional[Dict[str, A
             float(write_row["delta_mb"].iloc[0]) if len(write_row) else 0.0,
         ]
   except Exception:
-    fsio = {}
+    pass
 
-  if ("llite" not in fsio) and (not fsio_from_metrics):
+  if (not fsio_from_metrics) and ("nfs" not in fsio):
     try:
+      if telemetry is not None and "llite" in fsio:
+        telemetry["detail_fsio_fallback_queries"] = int(
+            telemetry.get("detail_fsio_fallback_queries", 0)
+        ) + 1
       nfs = jt.get_nfs_delta_totals_mb()
       if nfs is not None:
         fsio["nfs"] = nfs

@@ -36,9 +36,11 @@ export function attachRouterMocks(): void {
   nextNavigationMock.router.push.mockImplementation((href: string) => {
     applyNavigationHref(href);
   });
-  nextNavigationMock.router.replace.mockImplementation((href: string) => {
-    applyNavigationHref(href);
-  });
+  nextNavigationMock.router.replace.mockImplementation(
+    (href: string, _options?: { scroll?: boolean }) => {
+      applyNavigationHref(href);
+    },
+  );
 }
 
 export const nextNavigationMock = {

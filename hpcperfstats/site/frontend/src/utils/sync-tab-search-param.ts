@@ -13,7 +13,7 @@ export function searchParamsWithTab(
 }
 
 export function readTabFromSearchParams(
-  searchParams: URLSearchParams,
+  searchParams: URLSearchParams | { get: (key: string) => string | null },
   key: string,
   defaultTab: string,
 ): string {

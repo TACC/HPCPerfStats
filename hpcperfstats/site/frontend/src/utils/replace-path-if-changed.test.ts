@@ -36,4 +36,19 @@ describe("replacePathIfChanged", () => {
     expect(replace).toHaveBeenCalledTimes(1);
     expect(replace).toHaveBeenCalledWith("/machine/jobs/?queue=normal");
   });
+
+  it("passes scroll:false when requested", () => {
+    const replace = vi.fn();
+    replacePathIfChanged(
+      { replace },
+      "/machine/jobs/",
+      new URLSearchParams("order_by=username"),
+      "/machine/jobs/",
+      new URLSearchParams(),
+      { scroll: false },
+    );
+    expect(replace).toHaveBeenCalledWith("/machine/jobs/?order_by=username", {
+      scroll: false,
+    });
+  });
 });

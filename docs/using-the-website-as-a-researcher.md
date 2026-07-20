@@ -111,18 +111,23 @@ This section lists the metrics shown in the Job detail **Metrics** tab and how t
 | Metric key | Short label | What it summarizes | Diagnostic / performance interpretation |
 | ---------- | ----------- | ------------------ | --------------------------------------- |
 | `avg_blockbw` | Average local block-device throughput | Mean local block-device throughput | High values indicate local scratch/checkpoint pressure; unexpected nonzero can reveal spill to local disk. |
-| `avg_cpuusage` | Average CPU cores in use | Mean CPU cores used (from user/system/nice) | Low vs allocated cores suggests under-subscription, waiting, serialization, or I/O/network stalls. |
-| `avg_sharedfs_iops` | Average shared filesystem operation rate | Mean shared filesystem metadata/op rate | High with low MB/s points to small-file metadata bottlenecks. |
-| `avg_sharedfs_bw` | Average shared filesystem read+write bandwidth | Mean shared filesystem bandwidth | Sustained high values indicate file I/O-heavy phases; correlate with runtime spikes/checkpoint windows. |
+| `avg_cpuusage` | Average CPU cores in use | Job-total busy cores (sum of per-host means from user/system/nice); compare with allocated `ncores`. Rows from older pipelines may still be mean-per-host until metrics recompute. | Low vs allocated cores suggests under-subscription, waiting, serialization, or I/O/network stalls. |
+| `avg_sharedfs_iops` | Average shared filesystem operation rate | Mean shared filesystem metadata/op rate (Lustre + NFS summed when both present). Insufficient Data here is a coverage gate, not “no FSIO”. | High with low MB/s points to small-file metadata bottlenecks. |
+| `avg_sharedfs_bw` | Average shared filesystem read+write bandwidth | Mean shared filesystem bandwidth (Lustre + NFS summed when both present). Insufficient Data here is a coverage gate, not “no FSIO”. | Sustained high values indicate file I/O-heavy phases; correlate with runtime spikes/checkpoint windows. |
 | `avg_ibbw` | Average high-speed fabric bandwidth | Mean InfiniBand/fabric byte throughput | High values with modest FLOP rate imply communication-heavy behavior<sup>[15](#ref-15)</sup>. |
 | `avg_fabric_mb_per_gflops` | Fabric traffic per floating-point work | Fabric MB per GFLOP | Communication intensity relative to compute; rising with scale often means weaker scaling efficiency. |
-| `avg_tensor_active` | Average GPU tensor-pipe activity | Mean tensor pipeline activity | Low on expected tensor workloads suggests kernels not reaching tensor paths. |
+| `avg_tensor_active` | Average GPU tensor-pipe activity | Mean lumped tensor pipeline activity (prefer IMMA/HMMA/DFMA splits when present) | Low on expected tensor workloads suggests kernels not reaching tensor paths. |
+| `avg_tensor_imma_active` | Average GPU tensor IMMA (INT8/INT4) activity | Mean IMMA tensor-pipe busy fraction | INT8/INT4 tensor path share for mixed-precision kernels. |
+| `avg_tensor_hmma_active` | Average GPU tensor HMMA (FP16/BF16) activity | Mean HMMA tensor-pipe busy fraction | FP16/BF16 tensor-core share versus scalar FP pipes. |
+| `avg_tensor_dfma_active` | Average GPU tensor DFMA (FP64) activity | Mean DFMA tensor-pipe busy fraction | FP64 tensor path versus scalar FP64. |
 | `avg_fp16_active` | Average GPU FP16 pipeline activity | Mean GPU FP16 pipeline activity | Confirms whether mixed-precision execution is using FP16-heavy kernels as expected. |
 | `avg_fp32_active` | Average GPU FP32 pipeline activity | Mean GPU FP32 pipeline activity | Tracks single-precision dominant GPU phases and precision-policy drift across runs. |
 | `avg_fp64_active` | Average GPU FP64 pipeline activity | Mean GPU FP64 pipeline activity | Surfaces double-precision-heavy GPU work that may reduce peak throughput. |
 | `avg_gpu_mem_bw_gbps` | Average GPU memory bandwidth | Mean GPU memory-bandwidth rate | High with moderate utilization can indicate memory-bound kernels. |
 | `avg_fabric_mb_per_avg_tensor` | Fabric bandwidth per tensor activity | Fabric MB per average tensor activity | Communication intensity normalized by tensor activity for GPU+MPI workloads. |
 | `avg_flops` | Average floating-point throughput | Mean achieved FLOP rate | Baseline compute throughput for CPU-side arithmetic. |
+| `avg_flops64b` | Average double-precision FLOP rate | Mean FP64 GFLOP/s from Intel FP_ARITH doubles | FP64 share of busy FLOPS in Multiprecision Mix. |
+| `avg_flops32b` | Average single-precision FLOP rate | Mean FP32 GFLOP/s from Intel FP_ARITH singles | FP32 share of busy FLOPS in Multiprecision Mix. |
 | `avg_mbw` | Average DRAM memory bandwidth | Mean DRAM bandwidth | High with low FLOPs suggests memory-bound CPU phases. |
 | `avg_freq` | Average effective CPU frequency | Mean CPU frequency | Drops may indicate power/thermal policy or throttling. |
 | `avg_ethbw` | Average Ethernet bandwidth | Mean Ethernet bandwidth | Useful for TCP/object-store workflows that bypass IB paths<sup>[16](#ref-16)</sup>. |
@@ -136,11 +141,11 @@ This section lists the metrics shown in the Job detail **Metrics** tab and how t
 | `detail_fsio_llite_peak_iops` | Peak Lustre client metadata operation rate | Peak aggregate Lustre metadata IOPS | Burst metadata load versus sustained streaming. |
 | `detail_fsio_nfs_read_mb` | Total NFS client read volume | Total NFS read MB | Aggregate client-side read volume for NFS-backed paths. |
 | `detail_fsio_nfs_write_mb` | Total NFS client write volume | Total NFS write MB | Aggregate client-side write volume for NFS-backed paths. |
-| `detail_fsio_nfs_peak_mb_s` | Peak NFS client read+write rate | Peak aggregate NFS client MB/s | Short burst NFS throughput when Lustre llite is absent. |
-| `detail_fsio_nfs_peak_iops` | Peak NFS client I/O operation rate | Peak aggregate NFS read/write op rate | Burst small-file or metadata-heavy NFS phases. |
+| `detail_fsio_nfs_peak_mb_s` | Peak NFS client read+write rate | Peak aggregate NFS client MB/s (shown alongside Lustre when both have data) | Short burst NFS throughput; dual NFS+Lustre rows appear when both clients report volume. |
+| `detail_fsio_nfs_peak_iops` | Peak NFS client I/O operation rate | Peak aggregate NFS read/write op rate (alongside Lustre when both present) | Burst small-file or metadata-heavy NFS phases. |
 | `avg_gpuutil` | Job GPU utilization (aggregate) | Mean GPU utilization (vendor-aware source priority) | Core accelerator utilization KPI; low values indicate feed/scheduling inefficiency. |
 | `avg_packetsize` | Mean fabric packet payload size | Mean network packet size | Small average packet sizes imply metadata/collective chatter overhead. |
-| `max_fabricbw` | Peak fabric data rate | Peak fabric bandwidth | Captures communication bursts that may not appear in averages. |
+| `max_fabricbw` | Peak fabric data rate | Peak fabric MB/s on the same conversion basis as `avg_ibbw` (not packet-rate scale) | Captures communication bursts that may not appear in averages. |
 | `max_lnetbw` | Peak Lustre LNET client data rate | Peak Lustre LNet bandwidth | Peak parallel file-system network pressure. |
 | `max_mds` | Peak shared filesystem metadata operation rate | Peak metadata operation rate | High peaks indicate metadata storms (create/unlink/readdir heavy phases). |
 | `max_packetrate` | Peak fabric packet rate | Peak packet rate | High with small packet size suggests message-rate overhead. |
@@ -188,13 +193,15 @@ This section covers job-detail surfaces beyond scalar metrics.
 
 ### 6.3 Multiprecision Mix tab (CPU and GPU)
 
-- Diagnostic use: quantify mixed-precision path composition (DP/SP/tensor) by timeline<sup>[6](#ref-6)</sup>.
+- Diagnostic use: quantify mixed-precision path composition (DP/SP/tensor) as a share of **busy** FLOPS / active pipes only (no idle wedge)<sup>[6](#ref-6)</sup>.
+- CPU pie: wedges come from FLOP-weighted FP64/FP32 rates (`avg_flops64b` / `avg_flops32b`), not vectorization-within-width percentages.
+- GPU pie: hover shows share of busy percent; wedges label Tensor IMMA (INT8/INT4), Tensor HMMA (FP16/BF16), and Tensor DFMA (FP64) when those splits are present (preferred over lumped tensor activity). CPU half/bf16/tf32/fp8 appear only when the monitor emits them.
 - Width behavior: each pie includes the precision widths that have usable positive metrics for that job/architecture; missing widths are omitted rather than treated as errors.
 - Recommendation: when model/code changes precision policy, compare this tab first, then check throughput/utilization deltas.
 
 ### 6.4 Resources panel (FSIO + GPU summary + logs)
 
-- Diagnostic use: rapid verification of I/O volume, burst peaks, and GPU occupancy before deep plotting.
+- Diagnostic use: rapid verification of I/O volume, burst peaks, and GPU occupancy before deep plotting. Lustre and NFS resource rows can both appear when both clients have data for the job.
 - Recommendation: if FS totals or **Peak MB/s** / **Peak IOPS** are high, check `FS MB/s`, `FS IOPS`, `MDS peak`, and LNET metrics for bottleneck type; this is usually an I/O bottleneck triage path<sup>[11](#ref-11)</sup>. GPU statistics sit above the log buttons so you scan filesystem and accelerator context together before opening logs.
 
 ### 6.5 Execution and hosts tab
@@ -301,5 +308,6 @@ Use these numbered references when you want background on terms used throughout 
 | 2026-06-04 | Documented unified InfiniBand collector typename `host_ib` (replaces separate `ib_ext` / switch types in schema examples). |
 | 2026-06-05 | Job list filter summary, empty-result UX, expanded-search AND/end-time semantics, navbar Find Job, job-detail breadcrumbs, shareable `?tab=` analysis tabs, partial-load retry behavior, canonical vs legacy device type names in Device data. |
 | 2026-06-05 | Job detail Metrics tab short labels expanded to describe what is measured; units appear only in the bracket suffix beside each row (no unit tokens in label text). |
+| 2026-07-19 | Dual NFS+Lustre Resources/FSIO; Multiprecision Mix busy-FLOPS-only (CPU FP_ARITH shares, GPU tensor splits + hover %); `avg_cpuusage` job-total busy cores vs `ncores`; fabric peak on same basis as `avg_ibbw`; `avg_sharedfs_*` Insufficient = coverage gate. |
 
 

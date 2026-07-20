@@ -17,6 +17,7 @@ _BYTES_TO_MB = 1 / (1024 * 1024)
 # Messages align with persisted ``no_data_reason`` for detail_fsio_* rows.
 NO_FSIO_LLITE_DATA = "No Lustre llite read/write byte deltas for this job"
 NO_FSIO_NFS_DATA = "No NFS client byte deltas for this job"
+# Retained for older persisted rows / tests that may still reference the string.
 NO_FSIO_NFS_WHEN_LLITE = "NFS totals omitted when Lustre llite data is used for job detail FSIO"
 NO_FSIO_LLITE_PEAK_MB_S = "No Lustre llite byte counter time series for peak MB/s"
 NO_FSIO_LLITE_PEAK_IOPS = "No Lustre llite metadata operation time series for peak IOPS"
@@ -107,7 +108,7 @@ def _max_job_wide_arc_sum(
 
 
 def compute_job_detail_fsio_metric_rows(jt: Any) -> List[Dict[str, Any]]:
-  """Build metrics_data-shaped dicts from ``jid_table`` (same rules as job_detail API)."""
+  """Build metrics_data-shaped dicts from ``jid_table`` (dual NFS + Lustre when both present)."""
   llite_read: Optional[float] = None
   llite_write: Optional[float] = None
   try:
@@ -125,13 +126,12 @@ def compute_job_detail_fsio_metric_rows(jt: Any) -> List[Dict[str, Any]]:
 
   nfs_read: Optional[float] = None
   nfs_write: Optional[float] = None
-  if llite_read is None and llite_write is None:
-    try:
-      nfs_totals = jt.get_nfs_delta_totals_mb()
-      if nfs_totals is not None:
-        nfs_read, nfs_write = float(nfs_totals[0]), float(nfs_totals[1])
-    except Exception:
-      pass
+  try:
+    nfs_totals = jt.get_nfs_delta_totals_mb()
+    if nfs_totals is not None:
+      nfs_read, nfs_write = float(nfs_totals[0]), float(nfs_totals[1])
+  except Exception:
+    pass
 
   rows: List[Dict[str, Any]] = []
   llite_ok = llite_read is not None and llite_write is not None
@@ -146,7 +146,7 @@ def compute_job_detail_fsio_metric_rows(jt: Any) -> List[Dict[str, Any]]:
 
   nfs_peak_mb: Optional[float] = None
   nfs_peak_iops: Optional[float] = None
-  if nfs_ok and not llite_ok:
+  if nfs_ok:
     nfs_peak_mb = _max_job_wide_combined_read_write_mb_s(
         jt, "nfs", _NFS_READ_EVENTS, _NFS_WRITE_EVENTS)
     nfs_peak_iops = _max_job_wide_arc_sum(jt, "nfs", _NFS_IOPS_EVENTS, 1.0)
@@ -171,25 +171,22 @@ def compute_job_detail_fsio_metric_rows(jt: Any) -> List[Dict[str, Any]]:
         else:
           rows.append(_row(metric_name, row_type, units, None, NO_FSIO_LLITE_PEAK_IOPS))
     else:
-      if llite_ok:
-        rows.append(_row(metric_name, row_type, units, None, NO_FSIO_NFS_WHEN_LLITE))
-      elif nfs_ok:
-        if metric_name == "detail_fsio_nfs_read_mb":
-          rows.append(_row(metric_name, row_type, units, float(nfs_read), None))
-        elif metric_name == "detail_fsio_nfs_write_mb":
-          rows.append(_row(metric_name, row_type, units, float(nfs_write), None))
-        elif metric_name == "detail_fsio_nfs_peak_mb_s":
-          if nfs_peak_mb is not None:
-            rows.append(_row(metric_name, row_type, units, nfs_peak_mb, None))
-          else:
-            rows.append(_row(metric_name, row_type, units, None, NO_FSIO_NFS_PEAK_MB_S))
-        else:
-          if nfs_peak_iops is not None:
-            rows.append(_row(metric_name, row_type, units, nfs_peak_iops, None))
-          else:
-            rows.append(_row(metric_name, row_type, units, None, NO_FSIO_NFS_PEAK_IOPS))
-      else:
+      if not nfs_ok:
         rows.append(_row(metric_name, row_type, units, None, NO_FSIO_NFS_DATA))
+      elif metric_name == "detail_fsio_nfs_read_mb":
+        rows.append(_row(metric_name, row_type, units, float(nfs_read), None))
+      elif metric_name == "detail_fsio_nfs_write_mb":
+        rows.append(_row(metric_name, row_type, units, float(nfs_write), None))
+      elif metric_name == "detail_fsio_nfs_peak_mb_s":
+        if nfs_peak_mb is not None:
+          rows.append(_row(metric_name, row_type, units, nfs_peak_mb, None))
+        else:
+          rows.append(_row(metric_name, row_type, units, None, NO_FSIO_NFS_PEAK_MB_S))
+      else:
+        if nfs_peak_iops is not None:
+          rows.append(_row(metric_name, row_type, units, nfs_peak_iops, None))
+        else:
+          rows.append(_row(metric_name, row_type, units, None, NO_FSIO_NFS_PEAK_IOPS))
 
   return rows
 

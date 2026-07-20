@@ -361,6 +361,19 @@ class TestFsioAndGpuDetailFromMetrics:
         assert "nfs" in out
         assert out["nfs"][0] == 5.0
 
+    def test_fsio_dual_llite_and_nfs_when_both_present(self):
+        from hpcperfstats.site.lib.machine import api
+
+        job = _make_metrics_job({
+            "detail_fsio_llite_read_mb": 10.0,
+            "detail_fsio_llite_write_mb": 20.0,
+            "detail_fsio_nfs_read_mb": 5.0,
+            "detail_fsio_nfs_write_mb": 6.0,
+        })
+        out = api._fsio_dict_from_metrics(job)
+        assert out["llite"][0] == 10.0
+        assert out["nfs"][0] == 5.0
+
     def test_fsio_returns_none_when_incomplete(self):
         from hpcperfstats.site.lib.machine import api
 
@@ -555,6 +568,11 @@ class TestBuildJobListQuerysetFromRequest:
             api, "expand_month_date_to_range", side_effect=lambda f: f
         ), patch.object(
             api, "get_job_list_order_by", return_value="-end_time"
+        ), patch.object(
+            # Header multi-value helper may consume username; keep partition mock sole owner.
+            api,
+            "apply_job_list_header_acct_multi_filters",
+            side_effect=lambda acct_data: (dict(acct_data), {}),
         ), patch.object(
             api, "partition_job_list_acct_filters", return_value=({"username": "alice"}, None)
         ), patch.object(

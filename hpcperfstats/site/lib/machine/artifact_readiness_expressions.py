@@ -197,9 +197,24 @@ class DetailArtifactInputFingerprintHex(Expression):
     )
     et_iso = iso_ts.format(tbl=jt, col=et)
     st_iso = iso_ts.format(tbl=jt, col=st)
+    # Keep key order + formatting aligned with
+    # ``compute_detail_input_fingerprint`` / ``_fsio_metrics_fingerprint_map``.
+    fsio_names = detail_cfg._FSIO_FINGERPRINT_METRIC_NAMES
+    fsio_parts = []
+    for name in fsio_names:
+      fsio_parts.append(
+          f"'{name}', COALESCE(("
+          f"SELECT CASE WHEN m.value IS NULL THEN ''::text "
+          f"ELSE to_char(m.value, 'FM999999999990.000000') END "
+          f"FROM metrics_data m "
+          f"WHERE m.jid = {jt}.{jcol} AND m.metric = '{name}' "
+          f"LIMIT 1), '')"
+      )
+    fsio_obj = "json_build_object(" + ", ".join(fsio_parts) + ")::text"
     inner = (
         f"'{{\"artifact_schema\":' || %s::text || "
         f"',\"end_time\":' || {et_iso} || "
+        f"',\"fsio_metrics\":' || {fsio_obj} || "
         f"',\"jid\":' || to_json(trim(both from {jt}.{jcol}::text))::text || "
         f"',\"metrics_distinct_time_count\":' || "
         f"to_json(COALESCE({jt}.{mdc}::text, ''))::text || "

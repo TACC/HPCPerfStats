@@ -922,6 +922,73 @@ describe("JobList", () => {
     });
   });
 
+  it("soft-navigates sort with router.replace scroll:false", async () => {
+    setJobListQueryMock({
+      data: {
+        job_list: [
+          {
+            jid: 1,
+            performance: {
+              label: "Summary available",
+              tone: "success",
+              aria_label: "Performance: Summary available",
+              sort_rank: 0,
+            },
+            username: "alice",
+            account: "acct",
+            start_time: "2024-01-01T00:00:00Z",
+            end_time: "2024-01-01T01:00:00Z",
+            runtime: 3600,
+            queue: "normal",
+            jobname: "job1",
+            state: "COMPLETED",
+            ncores: 32,
+            nhosts: 2,
+            node_hrs: 64,
+          },
+        ],
+        nj: 1,
+        aggregates: { total_node_hours: 64 },
+        qname: "Jobs",
+        order_by: "-end_time",
+        pagination: { page: 1, num_pages: 1 },
+      },
+    });
+    renderJobList("/jobs");
+    await waitFor(() => {
+      expect(screen.getByRole("link", { name: /^User/i })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("link", { name: /^User/i }));
+    expect(nextNavigationMock.router.replace).toHaveBeenCalledWith(
+      expect.stringMatching(/order_by=/),
+      { scroll: false },
+    );
+  });
+
+  it("soft-navigates pagination with router.replace scroll:false", async () => {
+    setJobListQueryMock({
+      data: {
+        job_list: [],
+        nj: 100,
+        aggregates: {},
+        qname: "Jobs",
+        order_by: "-end_time",
+        pagination: { page: 1, num_pages: 5 },
+      },
+    });
+    renderJobList("/jobs");
+    const topNav = await waitFor(() =>
+      screen.getByRole("navigation", { name: /Job list pagination \(top\)/i }),
+    );
+    // PaginationLink renders as role=button (Base UI Button + <a render>).
+    const nextLink = within(topNav).getByRole("button", { name: "Next page" });
+    fireEvent.click(nextLink);
+    expect(nextNavigationMock.router.replace).toHaveBeenCalledWith(
+      expect.stringMatching(/page=2/),
+      { scroll: false },
+    );
+  });
+
   it("renders pagination controls at the top and the bottom when multiple pages exist", async () => {
     setJobListQueryMock({ data:{
       job_list: [

@@ -60,8 +60,11 @@ Query-string / path changes must **not** remount or blank surfaces whose **ident
 4. If a hook exposes `tableBusy` / `detailBusy` / `sectionBusy` / `refetchBusy`, the view **must** use it — never full-page `LoadingMessage` on refetch when prior data exists.
 5. First paint with zero data may still use full-page `LoadingMessage` / skeleton.
 6. Clear job plots only when **`pk`** changes — not when a tab `enabled` flag toggles.
+7. **Soft presentation navigation** — JobList sort / pagination / `view` tab must use `router.replace` with `{ scroll: false }` (via [`soft-presentation-nav.ts`](hpcperfstats/site/frontend/src/utils/soft-presentation-nav.ts) / [`replace-path-if-changed.ts`](hpcperfstats/site/frontend/src/utils/replace-path-if-changed.ts)), not bare Next `<Link>` / `PaginationLink` default navigation that remounts the lazy view.
+8. **JobDetail analysis tabs** — keep tab in React `useState`; sync `?tab=` with [`replace-tab-history.ts`](hpcperfstats/site/frontend/src/utils/replace-tab-history.ts) (`history.replaceState`). Do **not** use `router.replace` for tab chrome (it remounts the lazy `JobDetail` under App Router).
+9. **Suspense flash** — after the first machine lazy view resolves, `machine-route-client` Suspense fallback must be `null` (not `"Loading page…"`) so query-only presentation nav does not blank the page.
 
-Helpers: [`filter-identity-params.ts`](hpcperfstats/site/frontend/src/utils/filter-identity-params.ts), [`build-job-list-api-params.ts`](hpcperfstats/site/frontend/src/utils/build-job-list-api-params.ts) (`buildJobListHistogramApiParams`).
+Helpers: [`filter-identity-params.ts`](hpcperfstats/site/frontend/src/utils/filter-identity-params.ts), [`build-job-list-api-params.ts`](hpcperfstats/site/frontend/src/utils/build-job-list-api-params.ts) (`buildJobListHistogramApiParams`), [`soft-presentation-nav.ts`](hpcperfstats/site/frontend/src/utils/soft-presentation-nav.ts), [`replace-tab-history.ts`](hpcperfstats/site/frontend/src/utils/replace-tab-history.ts).
 
 ## Thin-hook loading shapes
 
@@ -75,8 +78,8 @@ Reference hooks: [`use-job-list.ts`](hpcperfstats/site/frontend/src/hooks/use-jo
 
 ## Reference implementations
 
-- **JobList** — table first; deferred `filter_options`; distributions default open / always fetch; histogram params omit `order_by`/`page`; **document-scroll** table rows (no nested max-h virtualizer); histogram thumbs/mobile grid use **`previewMode`**; Enlarge stays interactive; `JobList.test.tsx` (`tableBusy` not pointer-blocked).
-- **JobDetail** — `initialLoading` only on first paint; tabs stay mounted during `detailsLoading`; plots clear on `pk` only; deep-link test in `JobDetail.test.tsx`.
+- **JobList** — table first; deferred `filter_options`; distributions default open / always fetch; histogram params omit `order_by`/`page`; **document-scroll** table rows (no nested max-h virtualizer); histogram thumbs/mobile grid use **`previewMode`**; Enlarge stays interactive; soft sort/pagination (`scroll: false`); `JobList.test.tsx` (`tableBusy` not pointer-blocked).
+- **JobDetail** — `initialLoading` only on first paint; tabs stay mounted during `detailsLoading`; tab chrome via `useState` + `history.replaceState`; plots clear on `pk` only; deep-link test in `JobDetail.test.tsx`.
 - **HostDetail / TypeDetail** — `keepPreviousData` + `detailBusy` (no full-page blank on refetch).
 - **JobMonitor / AdminMonitor / ClusterDashboard** — progressive `*Busy`; paginated tables use document scroll (no nested list scrollers).
 
