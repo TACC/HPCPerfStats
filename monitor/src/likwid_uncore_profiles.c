@@ -108,17 +108,6 @@ const char *likwid_spr_imc_eventset_string(likwid_spr_imc_eventset_t variant)
   }
 }
 
-static likwid_spr_imc_eventset_t spr_imc_primary_eventset(int has_ddr, int has_hbm)
-{
-  if (has_ddr && has_hbm)
-    return LIKWID_SPR_IMC_EVT_DDR_HBM;
-  if (has_ddr)
-    return LIKWID_SPR_IMC_EVT_DDR_ONLY;
-  if (has_hbm)
-    return LIKWID_SPR_IMC_EVT_HBM_ONLY;
-  return LIKWID_SPR_IMC_EVT_DDR_HBM;
-}
-
 static void spr_imc_try_append(likwid_spr_imc_eventset_t *out, int *n, int cap,
                                likwid_spr_imc_eventset_t variant)
 {
@@ -134,28 +123,40 @@ static void spr_imc_try_append(likwid_spr_imc_eventset_t *out, int *n, int cap,
   (*n)++;
 }
 
+/*
+ * Always prefer DDR+HBM first. Stampede3 SPR EDAC often labels only DDR (or
+ * reports empty has_* when dimm_mem_speed is missing); EDAC must not demote
+ * primary to DDR_ONLY and skip HBM PMU programming.
+ */
 int likwid_spr_imc_eventset_try_order(int has_ddr, int has_hbm, likwid_spr_imc_eventset_t *out,
                                       int out_cap)
 {
-  likwid_spr_imc_eventset_t primary;
   int n = 0;
+
+  (void)has_ddr;
+  (void)has_hbm;
 
   if (out == NULL || out_cap <= 0)
     return 0;
 
-  primary = spr_imc_primary_eventset(has_ddr, has_hbm);
-  spr_imc_try_append(out, &n, out_cap, primary);
-  if (primary == LIKWID_SPR_IMC_EVT_DDR_HBM) {
-    spr_imc_try_append(out, &n, out_cap, LIKWID_SPR_IMC_EVT_DDR_ONLY);
-    spr_imc_try_append(out, &n, out_cap, LIKWID_SPR_IMC_EVT_HBM_ONLY);
-  } else if (primary == LIKWID_SPR_IMC_EVT_DDR_ONLY) {
-    spr_imc_try_append(out, &n, out_cap, LIKWID_SPR_IMC_EVT_HBM_ONLY);
-    spr_imc_try_append(out, &n, out_cap, LIKWID_SPR_IMC_EVT_DDR_HBM);
-  } else {
-    spr_imc_try_append(out, &n, out_cap, LIKWID_SPR_IMC_EVT_DDR_HBM);
-    spr_imc_try_append(out, &n, out_cap, LIKWID_SPR_IMC_EVT_DDR_ONLY);
-  }
+  spr_imc_try_append(out, &n, out_cap, LIKWID_SPR_IMC_EVT_DDR_HBM);
+  spr_imc_try_append(out, &n, out_cap, LIKWID_SPR_IMC_EVT_DDR_ONLY);
+  spr_imc_try_append(out, &n, out_cap, LIKWID_SPR_IMC_EVT_HBM_ONLY);
   return n;
+}
+
+const char *likwid_spr_imc_eventset_variant_name(likwid_spr_imc_eventset_t variant)
+{
+  switch (variant) {
+  case LIKWID_SPR_IMC_EVT_DDR_HBM:
+    return "DDR_HBM";
+  case LIKWID_SPR_IMC_EVT_DDR_ONLY:
+    return "DDR_ONLY";
+  case LIKWID_SPR_IMC_EVT_HBM_ONLY:
+    return "HBM_ONLY";
+  default:
+    return "UNKNOWN";
+  }
 }
 
 static const char *counter_name_base(const char *counter_name, char *work, size_t work_len)

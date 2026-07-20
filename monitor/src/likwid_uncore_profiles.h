@@ -23,6 +23,7 @@ typedef enum {
 } likwid_spr_imc_eventset_t;
 
 const char *likwid_spr_imc_eventset_string(likwid_spr_imc_eventset_t variant);
+const char *likwid_spr_imc_eventset_variant_name(likwid_spr_imc_eventset_t variant);
 int likwid_spr_imc_eventset_try_order(int has_ddr, int has_hbm, likwid_spr_imc_eventset_t *out,
                                       int out_cap);
 

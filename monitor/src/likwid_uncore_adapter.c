@@ -44,6 +44,16 @@ static void likwid_uncore_restore_stderr(int saved_stderr, int null_fd)
 }
 
 #ifdef HAVE_LIKWID
+/* setupCounters programs the group; startCounters may already be running from host_cpu_hw. */
+static int likwid_uncore_finish_group(int group)
+{
+  if (perfmon_setupCounters(group) < 0)
+    return -1;
+  /* startCounters may fail if host_cpu_hw already started the session; setup is enough. */
+  (void)perfmon_startCounters();
+  return 0;
+}
+
 static int likwid_uncore_try_eventset(const char *events, int *group_out, int saved_stderr,
                                       int null_fd, int quiet)
 {
@@ -55,9 +65,7 @@ static int likwid_uncore_try_eventset(const char *events, int *group_out, int sa
   group = perfmon_addEventSet(events);
   if (group < 0)
     return -1;
-  if (perfmon_setupCounters(group) < 0)
-    return -1;
-  if (perfmon_startCounters() < 0)
+  if (likwid_uncore_finish_group(group) < 0)
     return -1;
   *group_out = group;
   if (quiet)
@@ -82,22 +90,43 @@ static int likwid_uncore_adapter_begin_spr(struct stats_type *type)
   (void)host_edac_scan_mem_classes(&has_ddr, &has_hbm);
   n_order = likwid_spr_imc_eventset_try_order(has_ddr, has_hbm, order,
                                               (int)(sizeof(order) / sizeof(order[0])));
-  quiet = likwid_uncore_quiet_stderr(&saved_stderr, &null_fd);
+  monitor_log_info("intel_x86_uncore_imc_spr: EDAC has_ddr=%d has_hbm=%d; trying %d eventset(s), "
+                   "primary %s\n",
+                   has_ddr, has_hbm, n_order,
+                   n_order > 0 ? likwid_spr_imc_eventset_variant_name(order[0]) : "none");
+
   for (i = 0; i < n_order; i++) {
     const char *events = likwid_spr_imc_eventset_string(order[i]);
     int group = -1;
+    int last = (i == n_order - 1);
+
+    /* Quiet early tries; leave LIKWID stderr visible on the last attempt. */
+    if (!last && !quiet)
+      quiet = likwid_uncore_quiet_stderr(&saved_stderr, &null_fd);
+    if (last && quiet) {
+      likwid_uncore_restore_stderr(saved_stderr, null_fd);
+      saved_stderr = -1;
+      null_fd = -1;
+      quiet = 0;
+    }
 
     if (likwid_uncore_try_eventset(events, &group, saved_stderr, null_fd, quiet) == 0) {
       g_profile_group[LIKWID_UNCORE_PROFILE_IMC_SPR] = group;
       g_profile_ready[LIKWID_UNCORE_PROFILE_IMC_SPR] = 1;
+      monitor_log_info("intel_x86_uncore_imc_spr: enabled with eventset %s (index %d)\n",
+                       likwid_spr_imc_eventset_variant_name(order[i]), i);
       if (i > 0) {
-        monitor_log_warn("intel_x86_uncore_imc_spr: using LIKWID fallback eventset index %d\n", i);
+        monitor_log_warn("intel_x86_uncore_imc_spr: using LIKWID fallback eventset %s (index %d)\n",
+                         likwid_spr_imc_eventset_variant_name(order[i]), i);
       }
       return 0;
     }
   }
   if (quiet)
     likwid_uncore_restore_stderr(saved_stderr, null_fd);
+  monitor_log_error("intel_x86_uncore_imc_spr: all LIKWID eventset variants failed "
+                    "(has_ddr=%d has_hbm=%d); disabling type\n",
+                    has_ddr, has_hbm);
   type->st_enabled = 0;
   return -1;
 }
@@ -113,10 +142,16 @@ int likwid_uncore_adapter_begin(struct stats_type *type, likwid_uncore_profile_t
 
   if (type == NULL || profile < 0 || profile >= LIKWID_UNCORE_PROFILE_COUNT)
     return -1;
-  if (!likwid_uncore_profile_matches_processor(profile, processor))
+  if (!likwid_uncore_profile_matches_processor(profile, processor)) {
+    monitor_log_info("%s: disabled (processor does not match uncore profile)\n",
+                     type->st_name != NULL ? type->st_name : "uncore");
     goto disable;
-  if (!cpu_counter_metrics_likwid_ready())
+  }
+  if (!cpu_counter_metrics_likwid_ready()) {
+    monitor_log_error("%s: disabled (LIKWID PMC session not ready; host_cpu_hw must init first)\n",
+                      type->st_name != NULL ? type->st_name : "uncore");
     goto disable;
+  }
 
   if (profile == LIKWID_UNCORE_PROFILE_IMC_SPR)
     return likwid_uncore_adapter_begin_spr(type);
@@ -132,9 +167,7 @@ int likwid_uncore_adapter_begin(struct stats_type *type, likwid_uncore_profile_t
   g_profile_group[profile] = perfmon_addEventSet(events);
   if (g_profile_group[profile] < 0)
     goto err;
-  if (perfmon_setupCounters(g_profile_group[profile]) < 0)
-    goto err;
-  if (perfmon_startCounters() < 0)
+  if (likwid_uncore_finish_group(g_profile_group[profile]) < 0)
     goto err;
   if (quiet)
     likwid_uncore_restore_stderr(saved_stderr, null_fd);
@@ -148,6 +181,8 @@ disable:
 err:
   if (quiet)
     likwid_uncore_restore_stderr(saved_stderr, null_fd);
+  monitor_log_error("%s: LIKWID eventset setup failed; disabling type\n",
+                    type->st_name != NULL ? type->st_name : "uncore");
   type->st_enabled = 0;
   return -1;
 #else

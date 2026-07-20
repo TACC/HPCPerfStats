@@ -59,30 +59,27 @@ static void test_spr_try_order(void)
 {
   likwid_spr_imc_eventset_t order[3];
   int n;
+  int has_ddr;
+  int has_hbm;
 
-  n = likwid_spr_imc_eventset_try_order(1, 0, order, 3);
-  assert(n == 3);
-  assert(order[0] == LIKWID_SPR_IMC_EVT_DDR_ONLY);
-  assert(order[1] == LIKWID_SPR_IMC_EVT_HBM_ONLY);
-  assert(order[2] == LIKWID_SPR_IMC_EVT_DDR_HBM);
+  /* Always DDR_HBM primary regardless of EDAC flags (Stampede3 HBM via LIKWID). */
+  for (has_ddr = 0; has_ddr <= 1; has_ddr++) {
+    for (has_hbm = 0; has_hbm <= 1; has_hbm++) {
+      n = likwid_spr_imc_eventset_try_order(has_ddr, has_hbm, order, 3);
+      assert(n == 3);
+      assert(order[0] == LIKWID_SPR_IMC_EVT_DDR_HBM);
+      assert(order[1] == LIKWID_SPR_IMC_EVT_DDR_ONLY);
+      assert(order[2] == LIKWID_SPR_IMC_EVT_HBM_ONLY);
+    }
+  }
 
-  n = likwid_spr_imc_eventset_try_order(0, 1, order, 3);
-  assert(n == 3);
-  assert(order[0] == LIKWID_SPR_IMC_EVT_HBM_ONLY);
-  assert(order[1] == LIKWID_SPR_IMC_EVT_DDR_HBM);
-  assert(order[2] == LIKWID_SPR_IMC_EVT_DDR_ONLY);
+  assert(strcmp(likwid_spr_imc_eventset_variant_name(LIKWID_SPR_IMC_EVT_DDR_HBM), "DDR_HBM") == 0);
+  assert(strcmp(likwid_spr_imc_eventset_variant_name(LIKWID_SPR_IMC_EVT_DDR_ONLY), "DDR_ONLY") ==
+         0);
+  assert(strcmp(likwid_spr_imc_eventset_variant_name(LIKWID_SPR_IMC_EVT_HBM_ONLY), "HBM_ONLY") == 0);
 
-  n = likwid_spr_imc_eventset_try_order(1, 1, order, 3);
-  assert(n == 3);
-  assert(order[0] == LIKWID_SPR_IMC_EVT_DDR_HBM);
-  assert(order[1] == LIKWID_SPR_IMC_EVT_DDR_ONLY);
-  assert(order[2] == LIKWID_SPR_IMC_EVT_HBM_ONLY);
-
-  n = likwid_spr_imc_eventset_try_order(0, 0, order, 3);
-  assert(n == 3);
-  assert(order[0] == LIKWID_SPR_IMC_EVT_DDR_HBM);
-  assert(order[1] == LIKWID_SPR_IMC_EVT_DDR_ONLY);
-  assert(order[2] == LIKWID_SPR_IMC_EVT_HBM_ONLY);
+  assert(likwid_spr_imc_eventset_try_order(1, 1, NULL, 3) == 0);
+  assert(likwid_spr_imc_eventset_try_order(1, 1, order, 0) == 0);
 }
 
 int main(void)
