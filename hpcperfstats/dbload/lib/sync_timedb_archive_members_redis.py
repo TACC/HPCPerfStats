@@ -2110,6 +2110,21 @@ def _populate_queued_key(day_token: str) -> str:
   return "%s:%s" % (_POPULATE_QUEUED_PREFIX, day_token)
 
 
+def clear_populate_queued(day_token: str) -> None:
+  """Clear the per-day populate enqueue NX key (claim / completion / failure)."""
+  if not day_token or day_token == "unknown":
+    return
+  if not archive_members_redis_enabled():
+    return
+  client = get_archive_members_redis_client(required=False)
+  if client is None:
+    return
+  try:
+    client.delete(_populate_queued_key(day_token))
+  except Exception:
+    pass
+
+
 def enqueue_archive_members_populate(canonical_path, day_token):
   """Enqueue one calendar day for populate-pool workers (deduped per day)."""
   if not day_token or day_token == "unknown":
@@ -2192,24 +2207,37 @@ def _try_pop_populate_prefer_ingest_hot(client, *, peek_n=None):
   return best_job
 
 
+def _claim_populate_queue_job(job):
+  """Clear populate_queued NX when a job is claimed from the queue."""
+  if not isinstance(job, dict):
+    return job
+  day_token = str(job.get("day_token") or "")
+  if day_token:
+    clear_populate_queued(day_token)
+  return job
+
+
 def archive_members_populate_queue_brpop(*, timeout_s=1.0):
   """Blocking pop for populate-pool worker; returns job dict or None.
 
   Prefers ingest-hot calendar days (``chunk_prewarm`` / ``populate_wait`` over
   ``populate_enqueue``) within a bounded peek so day-close cold populate cannot
   indefinitely starve July chunk prewarm on the shared FIFO queue.
+
+  Clears ``populate_queued`` NX on successful claim so a dead populate worker
+  cannot strand re-enqueue for the NX TTL (~1h).
   """
   client = get_archive_members_redis_client(required=True)
   preferred = _try_pop_populate_prefer_ingest_hot(client)
   if preferred is not None:
-    return preferred
+    return _claim_populate_queue_job(preferred)
   timeout_s = max(0.1, float(timeout_s))
   result = client.brpop(_POPULATE_QUEUE_KEY, timeout=timeout_s)
   if not result:
     return None
   _key, raw = result
   del _key
-  return _parse_populate_queue_job(raw)
+  return _claim_populate_queue_job(_parse_populate_queue_job(raw))
 
 
 def _ensure_populate_pool_running_for_enqueue():

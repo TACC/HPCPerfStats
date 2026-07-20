@@ -295,6 +295,44 @@ def worker_registry_shows_member_match_wait(
   return False
 
 
+def idle_pool_recover_skip_reason_for_registry_wait(paths, registry):
+  """Non-empty reason when pending paths show live redis_wait in the registry.
+
+  Ghost ``dispatch:`` placeholders are ignored — only real worker PID entries
+  whose ``path`` matches a pending normpath count. Skips idle recover/redispatch
+  even when ``ingest_tar_hot`` has already cleared.
+  """
+  if registry is None or not paths:
+    return ""
+  pending_norms = set()
+  for path in paths:
+    if not path:
+      continue
+    pending_norms.add(os.path.normpath(str(path)))
+  if not pending_norms:
+    return ""
+  try:
+    items = list(registry.items())
+  except Exception:
+    return ""
+  for pid, raw in items:
+    pid_s = str(pid)
+    if pid_s.startswith("dispatch:"):
+      continue
+    if not isinstance(raw, dict):
+      continue
+    path = str(raw.get("path") or "")
+    if not path or os.path.normpath(path) not in pending_norms:
+      continue
+    lookup_mode = str(raw.get("lookup_mode") or "")
+    substage = str(raw.get("substage") or "")
+    if lookup_mode == "redis_wait" or substage == "archive_member_lookup":
+      if lookup_mode and lookup_mode != "redis_wait":
+        continue
+      return "registry_redis_wait path=%s" % os.path.basename(path)
+  return ""
+
+
 def worker_registry_shows_recent_progress(
     registry,
     *,

@@ -2189,6 +2189,65 @@ def test_populate_queue_brpop_prefers_ingest_hot_over_cold_fifo(
   assert job2.get("day_token") == "2026-06-02"
 
 
+def test_populate_queued_cleared_on_brpop(_redis_test_env, tmp_path):
+  """BRPOP must clear populate_queued NX so a dead worker can re-enqueue."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      _populate_queued_key,
+      archive_members_populate_queue_brpop,
+      enqueue_archive_members_populate,
+      get_archive_members_redis_client,
+  )
+
+  day = "2026-07-20"
+  tar = str(tmp_path / ("%s.tar" % day))
+  assert enqueue_archive_members_populate(tar, day)
+  client = get_archive_members_redis_client(required=True)
+  assert client.exists(_populate_queued_key(day))
+  job = archive_members_populate_queue_brpop(timeout_s=0.2)
+  assert job is not None
+  assert job.get("day_token") == day
+  assert not client.exists(_populate_queued_key(day))
+  # Re-enqueue must succeed after claim (NX no longer held).
+  assert enqueue_archive_members_populate(tar, day) is True
+
+
+def test_idle_pool_recover_skip_reason_for_registry_redis_wait():
+  """Live registry redis_wait on a pending path skips recover even without hot."""
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+      idle_pool_recover_skip_reason_for_registry_wait,
+  )
+
+  path = "/archive/host/1784551059"
+  registry = {
+      "12345": {
+          "path": path,
+          "stage": "parse",
+          "substage": "archive_member_lookup",
+          "lookup_mode": "redis_wait",
+          "t0": 1.0,
+      },
+      "dispatch:%s" % path: {
+          "path": path,
+          "stage": "dispatched",
+          "t0": 1.0,
+      },
+  }
+  reason = idle_pool_recover_skip_reason_for_registry_wait(
+      [path], registry,
+  )
+  assert "registry_redis_wait" in reason
+  assert "1784551059" in reason
+  # Ghost dispatch alone must not skip.
+  assert idle_pool_recover_skip_reason_for_registry_wait(
+      [path],
+      {"dispatch:%s" % path: registry["dispatch:%s" % path]},
+  ) == ""
+  # Unrelated pending path must not skip.
+  assert idle_pool_recover_skip_reason_for_registry_wait(
+      ["/other/host/1"], registry,
+  ) == ""
+
+
 def test_populate_defers_dirty_tar_scan_when_append_inflight_and_sealed_known(
     _redis_test_env, tmp_path, monkeypatch,
 ):

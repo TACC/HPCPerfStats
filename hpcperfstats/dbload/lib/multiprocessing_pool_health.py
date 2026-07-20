@@ -1619,6 +1619,9 @@ _IDLE_POOL_TASKQUEUE_DEAD_CAUSE = "idle_pool_taskqueue_dead"
 IDLE_POOL_RECOVER_WALL_S = 30.0
 # Max successful idle-pool recovers per sliding-window imap session.
 IDLE_POOL_RECOVER_MAX = 3
+# Identical skip_no pending after this many probe-ok recovers → path soft-fail
+# (not process exit 124). Aligns with recover cap by default.
+IDLE_POOL_UNHEALED_RECOVER_MAX = 3
 
 
 def imap_sliding_window_watch_pool(
@@ -1641,6 +1644,7 @@ def imap_sliding_window_watch_pool(
     resolve_reconcile_skip_result=None,
     on_idle_pool_stuck_after_redispatch=None,
     skip_idle_pool_recover_fn=None,
+    soft_fail_unhealed_paths_fn=None,
 ):
   """Dispatch pool work with at most ``max_inflight`` concurrent ``apply_async`` tasks.
 
@@ -1657,6 +1661,12 @@ def imap_sliding_window_watch_pool(
   Optional ``skip_idle_pool_recover_fn(pending_paths)`` returning a non-empty reason
   skips recover / ghost fatal while workers are blocked in populate_wait with live
   pending work (prevents false-positive exit 124).
+
+  When the same pending normpaths remain after ``IDLE_POOL_UNHEALED_RECOVER_MAX``
+  probe-ok recovers (or recover cap is hit with non-empty pending), those paths are
+  soft-failed via ``soft_fail_unhealed_paths_fn`` (or a path-as-item default) and the
+  imap session continues — exit **124** is reserved for recover wall / probe fail /
+  empty soft-fail at cap (true taskqueue death).
   """
   if pool is None:
     return iter(())
@@ -1692,11 +1702,79 @@ def imap_sliding_window_watch_pool(
   full_redispatch_thrash_seen = False
   pool_recover_attempted = False
   pool_recover_count = 0
+  unhealed_recover_streak = 0
   idle_recover_skip_logged = False
   idle_redispatch_skip_logged = False
   duplicate_dispatch_warned = set()
   duplicate_dispatch_suppressed_n = {}
   active_pool = pool
+
+  def _pending_norm_fingerprint(paths=None):
+    if paths is None:
+      paths = list(pending_async.values())
+    return frozenset(
+        ingest_path_normpath(path)
+        for path in (paths or ())
+        if path
+    )
+
+  def _soft_fail_unhealed_paths(paths, *, escalate_reason):
+    """Drop stuck pending paths from the session; return (path, item) yields."""
+    nonlocal unhealed_recover_streak, pool_recover_attempted, pool_recover_count
+    nonlocal full_redispatch_thrash_seen, idle_reconcile_rounds
+    nonlocal idle_polls_since_reconcile, consecutive_timeouts
+    nonlocal polls_since_last_yield, idle_pool_warned
+    path_list = [path for path in (paths or ()) if path]
+    if not path_list:
+      return []
+    if callable(soft_fail_unhealed_paths_fn):
+      try:
+        packed = list(soft_fail_unhealed_paths_fn(path_list) or ())
+      except Exception:
+        packed = []
+    else:
+      packed = [(path, path) for path in path_list]
+    if not packed:
+      return []
+    drop_norms = {
+        ingest_path_normpath(path)
+        for path, _item in packed
+        if path
+    }
+    for async_result, path in list(pending_async.items()):
+      if ingest_path_normpath(path) in drop_norms:
+        pending_async.pop(async_result, None)
+    sample = [
+        os.path.basename(str(path))
+        for path, _item in packed[:5]
+        if path
+    ]
+    log_print(
+        "ERROR: pool imap idle reconcile path soft-fail "
+        "reason=idle_pool_unhealed_after_recover escalate=%s "
+        "path_n=%d recover_count=%d/%d unhealed_streak=%d "
+        "pending_sample=%s context=%s"
+        % (
+            escalate_reason,
+            len(packed),
+            int(pool_recover_count),
+            int(IDLE_POOL_RECOVER_MAX),
+            int(unhealed_recover_streak),
+            sample,
+            context or "pool",
+        ),
+        flush=True,
+    )
+    unhealed_recover_streak = 0
+    pool_recover_attempted = False
+    pool_recover_count = 0
+    full_redispatch_thrash_seen = False
+    idle_reconcile_rounds = 0
+    idle_polls_since_reconcile = 0
+    consecutive_timeouts = 0
+    polls_since_last_yield = 0
+    idle_pool_warned = False
+    return packed
 
   def _idle_recover_skip_reason(pending_paths):
     nonlocal idle_recover_skip_logged
@@ -1900,21 +1978,45 @@ def imap_sliding_window_watch_pool(
     """Pool recreate after full-redispatch thrash (capped per imap session).
 
     Returns ``None`` on skip / already-in-flight, or a (possibly empty) list of
-    ``(path, item)`` collected via skip on success. Raises stall exit **124** when
-    ``IDLE_POOL_RECOVER_MAX`` successful recovers are exhausted.
+    ``(path, item)`` collected via skip / unhealed soft-fail on success. Raises
+    stall exit **124** only for recover wall / probe fail / empty soft-fail at
+    recover cap (true taskqueue death). Identical pending after
+    ``IDLE_POOL_UNHEALED_RECOVER_MAX`` probe-ok recovers soft-fails those paths
+    instead of burning process exit.
     """
     nonlocal active_pool, pool_recover_attempted, pool_recover_count
     nonlocal full_redispatch_thrash_seen
     nonlocal consecutive_timeouts, polls_since_last_yield, idle_pool_warned
     nonlocal idle_reconcile_rounds, idle_polls_since_reconcile
+    nonlocal unhealed_recover_streak
     if not callable(on_idle_pool_stuck_after_redispatch):
       return None
     if pool_recover_count >= int(IDLE_POOL_RECOVER_MAX):
+      pending_cap_paths = list(_in_flight_paths())
+      cap_count = int(pool_recover_count)
+      soft_failed = _soft_fail_unhealed_paths(
+          pending_cap_paths,
+          escalate_reason="recover_cap",
+      )
+      if soft_failed:
+        log_print(
+            "ERROR: pool imap idle reconcile pool_recover cap exceeded "
+            "recover_count=%d max=%d pending_async_n=%d "
+            "action=path_soft_fail context=%s"
+            % (
+                cap_count,
+                int(IDLE_POOL_RECOVER_MAX),
+                len(pending_async),
+                context or "pool",
+            ),
+            flush=True,
+        )
+        return soft_failed
       log_print(
           "ERROR: pool imap idle reconcile pool_recover cap exceeded "
           "recover_count=%d max=%d pending_async_n=%d context=%s"
           % (
-              int(pool_recover_count),
+              cap_count,
               int(IDLE_POOL_RECOVER_MAX),
               len(pending_async),
               context or "pool",
@@ -1923,7 +2025,7 @@ def imap_sliding_window_watch_pool(
       )
       raise MultiprocessingPoolStallError(
           "idle pool recover cap exceeded recover_count=%d max=%d"
-          % (int(pool_recover_count), int(IDLE_POOL_RECOVER_MAX)),
+          % (cap_count, int(IDLE_POOL_RECOVER_MAX)),
           dead_pids=[],
           context=context,
           exit_code=124,
@@ -1933,6 +2035,7 @@ def imap_sliding_window_watch_pool(
       return None
     pending_before = len(pending_async)
     pending_paths = list(_in_flight_paths())
+    pending_norms_before = _pending_norm_fingerprint(pending_paths)
     if _idle_recover_skip_reason(pending_paths):
       return None
     pool_recover_attempted = True
@@ -2037,18 +2140,50 @@ def imap_sliding_window_watch_pool(
     # Allow a later thrash to recover again (sticky-attempted was exit-124 RC).
     pool_recover_attempted = False
     pool_recover_count += 1
+    pending_norms_after = _pending_norm_fingerprint()
+    if (
+        pending_norms_before
+        and pending_norms_after
+        and pending_norms_after == pending_norms_before
+    ):
+      unhealed_recover_streak += 1
+    else:
+      unhealed_recover_streak = 0
     log_print(
         "INFO: pool imap idle reconcile pool_recover done "
-        "collected_n=%d pending_async_n=%d recover_count=%d/%d context=%s"
+        "collected_n=%d pending_async_n=%d recover_count=%d/%d "
+        "unhealed_streak=%d/%d context=%s"
         % (
             len(collected),
             len(pending_async),
             int(pool_recover_count),
             int(IDLE_POOL_RECOVER_MAX),
+            int(unhealed_recover_streak),
+            int(IDLE_POOL_UNHEALED_RECOVER_MAX),
             context or "pool",
         ),
         flush=True,
     )
+    if (
+        unhealed_recover_streak >= int(IDLE_POOL_UNHEALED_RECOVER_MAX)
+        and pending_async
+    ):
+      soft_failed = _soft_fail_unhealed_paths(
+          list(pending_async.values()),
+          escalate_reason="unhealed_streak",
+      )
+      if soft_failed:
+        collected.extend(soft_failed)
+      elif not soft_failed and pending_async:
+        # Caller refused soft-fail while pending remains — treat as taskqueue death.
+        raise MultiprocessingPoolStallError(
+            "idle pool unhealed recover soft-fail empty recover_count=%d"
+            % int(pool_recover_count),
+            dead_pids=[],
+            context=context,
+            exit_code=124,
+            likely_cause=_IDLE_POOL_TASKQUEUE_DEAD_CAUSE,
+        )
     _submit_until_cap()
     _update_stall_abort_from_in_flight()
     return collected
@@ -2159,7 +2294,7 @@ def imap_sliding_window_watch_pool(
   health_ctx["idle_reconcile_fn"] = _idle_reconcile_for_recycle
 
   def _check_idle_pool_ghost():
-    nonlocal idle_pool_warned
+    nonlocal idle_pool_warned, polls_since_last_yield
     if not pending_async:
       return
     if not pool_workers_all_idle(active_pool):
@@ -2198,6 +2333,16 @@ def imap_sliding_window_watch_pool(
     # Do not fatal on thrash+stale-attempted after a successful recover reset
     # rounds to 0/1 — wait for more rounds or recover-cap exhaustion.
     recover_cap_exceeded = pool_recover_count >= int(IDLE_POOL_RECOVER_MAX)
+    if recover_cap_exceeded and pending_async:
+      soft_failed = _soft_fail_unhealed_paths(
+          list(pending_async.values()),
+          escalate_reason="ghost_recover_cap",
+      )
+      if soft_failed:
+        reconcile_pending_yields.extend(soft_failed)
+        polls_since_last_yield = 0
+        idle_pool_warned = False
+        return
     if (
         idle_reconcile_rounds < max_reconcile_rounds
         and not recover_cap_exceeded

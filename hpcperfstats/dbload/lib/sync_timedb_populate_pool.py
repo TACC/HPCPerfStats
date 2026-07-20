@@ -139,6 +139,7 @@ def _populate_pool_worker_entry(script_name, registry, shutdown):
   apply_ingest_pool_worker_init(script_name, "populate-pool", registry)
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       archive_members_populate_queue_brpop,
+      clear_populate_queued,
       reset_archive_members_redis_client_for_tests,
   )
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
@@ -152,7 +153,10 @@ def _populate_pool_worker_entry(script_name, registry, shutdown):
     if job is None:
       continue
     canonical = str(job.get("canonical") or "")
+    day_token = str(job.get("day_token") or "")
     if not canonical:
+      if day_token:
+        clear_populate_queued(day_token)
       continue
     try:
       record_worker_stage(canonical, "populate_scan")
@@ -164,6 +168,8 @@ def _populate_pool_worker_entry(script_name, registry, shutdown):
           flush=True,
       )
     finally:
+      if day_token:
+        clear_populate_queued(day_token)
       clear_worker_stage()
       from hpcperfstats.dbload.lib.sync_timedb_worker_memory import (
           release_spawn_pool_worker_memory,

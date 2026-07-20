@@ -185,6 +185,7 @@ from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
     clear_dispatch_worker_stages,
     count_worker_registry_entries,
     format_worker_stages_snapshot,
+    idle_pool_recover_skip_reason_for_registry_wait,
     prune_stale_worker_stages,
     record_worker_stage,
     seed_dispatch_worker_stages,
@@ -1988,6 +1989,28 @@ def _imap_ingest_paths_batched(
     )
     return {"pool": new_pool, "collected": collected}
 
+  def _skip_idle_pool_recover(pending_paths):
+    hot_reason = idle_pool_recover_skip_reason_for_paths(
+        pending_paths,
+        tgz_archive_dir=tgz_archive_dir,
+    )
+    if hot_reason:
+      return hot_reason
+    return idle_pool_recover_skip_reason_for_registry_wait(
+        pending_paths,
+        dispatch_registry,
+    )
+
+  def _soft_fail_unhealed_ingest_paths(paths):
+    packed = []
+    for path in paths or ():
+      if not path:
+        continue
+      if dispatch_registry is not None:
+        clear_dispatch_worker_stages(dispatch_registry, [path])
+      packed.append((path, _ingest_unhealed_recover_soft_fail_result(path)))
+    return packed
+
   def _current_ingest_pool():
     return pool_health_context.get("ingest_pool") or active_ingest_pool
 
@@ -2004,12 +2027,8 @@ def _imap_ingest_paths_batched(
       on_reconcile_redispatch=_on_reconcile_redispatch,
       resolve_reconcile_skip_result=_ingest_reconcile_skip_result,
       on_idle_pool_stuck_after_redispatch=_on_idle_pool_stuck_after_redispatch,
-      skip_idle_pool_recover_fn=lambda pending_paths: (
-          idle_pool_recover_skip_reason_for_paths(
-              pending_paths,
-              tgz_archive_dir=tgz_archive_dir,
-          )
-      ),
+      skip_idle_pool_recover_fn=_skip_idle_pool_recover,
+      soft_fail_unhealed_paths_fn=_soft_fail_unhealed_ingest_paths,
       on_stall_warning=_make_ingest_stall_warning_fn(
           tracker,
           pool=_current_ingest_pool,
@@ -3338,6 +3357,26 @@ def _ingest_reconcile_skip_result(stats_file):
       need_archival,
       ingest_ok,
       time.time() - t0,
+      meta,
+  )
+
+
+def _ingest_unhealed_recover_soft_fail_result(stats_file):
+  """Soft-fail one path after identical skip_no pending survives recover thrash.
+
+  Keeps the raw file on disk (``ingest_ok=False``, no quarantine) so a later
+  chunk/operator pass can retry; continues the imap session for peer paths.
+  """
+  meta = _ingest_outcome_meta(
+      outcome="soft_fail",
+      fail_reason="idle_pool_unhealed_after_recover",
+      reconcile_skip="yes",
+  )
+  return _pack_ingest_worker_result(
+      stats_file,
+      False,
+      False,
+      0.0,
       meta,
   )
 

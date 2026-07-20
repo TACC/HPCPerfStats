@@ -782,11 +782,24 @@ docker compose logs pipeline 2>&1 | grep -E 'idle reconcile redispatch|redispatc
 
 **Expect:** redispatch → `pool_recover` with **`pool_recover done`** and **`terminate outcome=abandoned`** (or **124** `idle_pool_taskqueue_dead` within recover wall); **never** hang after `workers_before=` with no outcome; **`dispatch_probe ok`** and resumed ingest on success; **no** `likely_cause=unknown` on ghost fatals; after swap/recover, **`child_ingest` equals INI `ingest_pool_processes`** (see census below).
 
-**Post-recover sticky-attempted ghost (T1, 2026-07-19, hpcperfstats03):** pre-fix sequence was **`redispatch round=1/3`** → successful **`pool_recover done collected_n=0 pending_async_n=N`** (abandon + `dispatch_probe ok`) → **second** **`redispatch round=1/3`** → **`idle_pool_ghost_inflight` / `idle_pool_taskqueue_dead`** → hard exit **124** with trailing **`likely_cause=unknown`**. Root cause: successful recover cleared thrash/rounds but left **`pool_recover_attempted=True`**, so the ghost gate treated thrash+attempted as immediate fatal at round **1** without a second recover. **Post-fix:** successful recover **resets** `pool_recover_attempted` and increments `recover_count` (cap **`IDLE_POOL_RECOVER_MAX=3`**); a later thrash may recover again; after the cap, expect **`pool_recover cap exceeded`** → **124** `idle_pool_taskqueue_dead`; hard exit must **not** print `likely_cause=unknown` when `exc.likely_cause=idle_pool_taskqueue_dead`.
+**Post-recover sticky-attempted ghost (T1, 2026-07-19, hpcperfstats03):** pre-fix sequence was **`redispatch round=1/3`** → successful **`pool_recover done collected_n=0 pending_async_n=N`** (abandon + `dispatch_probe ok`) → **second** **`redispatch round=1/3`** → **`idle_pool_ghost_inflight` / `idle_pool_taskqueue_dead`** → hard exit **124** with trailing **`likely_cause=unknown`**. Root cause: successful recover cleared thrash/rounds but left **`pool_recover_attempted=True`**, so the ghost gate treated thrash+attempted as immediate fatal at round **1** without a second recover. **Post-fix:** successful recover **resets** `pool_recover_attempted` and increments `recover_count` (cap **`IDLE_POOL_RECOVER_MAX=3`**); a later thrash may recover again; hard exit must **not** print `likely_cause=unknown` when `exc.likely_cause=idle_pool_taskqueue_dead`.
 
 ```bash
 # T1 — post-recover second thrash / recover cap (full pipeline log; never --tail before grep)
-docker compose logs pipeline 2>&1 | grep -E 'idle reconcile pool_recover|pool_recover done|pool_recover cap exceeded|redispatch round=|idle_pool_ghost_inflight|hard exit code=124|likely_cause=unknown' | tail -80
+docker compose logs pipeline 2>&1 | grep -E 'idle reconcile pool_recover|pool_recover done|pool_recover cap exceeded|path soft-fail|idle_pool_unhealed_after_recover|redispatch round=|idle_pool_ghost_inflight|hard exit code=124|likely_cause=unknown' | tail -80
+```
+
+### T0 / T1 — unhealed recover / single stuck skip_no path (2026-07-20)
+
+**Failure signature (pre-fix):** one unfinished path (often ~10–20 MiB, `head_ingested=False` → `skip_no`) stays on ghost **`dispatch:…`** for hours while peers show live `parse:*` / `db_write`. Idle reconcile runs **`pool_recover`** with **`dispatch_probe ok`**, resubmits the **same** pending, then burns **`recover_count=1/3…3/3`** → **`pool_recover cap exceeded`** → exit **124** `idle_pool_taskqueue_dead` even though the pool is healthy.
+
+**Pass (T0):** after **`IDLE_POOL_UNHEALED_RECOVER_MAX`** (default **3**) identical probe-ok recovers, expect **`ERROR: … path soft-fail reason=idle_pool_unhealed_after_recover`** (escalate=`unhealed_streak` or `recover_cap`); the stuck **full normpath** is removed from `pending_async`; imap / `chunk ingest summary` continues for peers. **Do not** treat a lone stuck path as process-level taskqueue death when probe succeeded.
+
+**Pass (T1):** **`pool_recover cap exceeded`** with **`action=path_soft_fail`** (or soft-fail before the fourth recover) — **not** hard exit **124** solely for identical `skip_no` pending. Exit **124** remains for recover wall hang, `dispatch_probe` failure, invalid recover return, or empty soft-fail at cap (true taskqueue death). Optional: **`pool_recover skipped reason=registry_redis_wait`** when a pending path has live `archive_member_lookup` / `redis_wait` (even if `ingest_tar_hot` cleared).
+
+```bash
+# T0 / T1 — unhealed recover quarantine vs recover-cap exit 124 (full pipeline log; never --tail before grep)
+docker compose logs pipeline 2>&1 | grep -E 'pool_recover done|unhealed_streak=|path soft-fail|idle_pool_unhealed_after_recover|pool_recover cap exceeded|registry_redis_wait|hard exit code=124|idle_pool_taskqueue_dead' | tail -80
 ```
 
 ### T0 / T1 — populate_wait idle redispatch skip (2026-07-17)

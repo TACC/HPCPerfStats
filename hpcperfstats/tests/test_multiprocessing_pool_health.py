@@ -2276,8 +2276,9 @@ def test_post_recover_thrash_allows_second_recover(monkeypatch):
 
 
 def test_pool_recover_cap_fatals_taskqueue_dead(monkeypatch):
-  """After IDLE_POOL_RECOVER_MAX successes, next thrash must exit 124."""
+  """Cap still fatals when soft-fail cannot quarantine (empty soft-fail)."""
   monkeypatch.setattr(mph, "IDLE_POOL_RECOVER_MAX", 2)
+  monkeypatch.setattr(mph, "IDLE_POOL_UNHEALED_RECOVER_MAX", 99)
   monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 1000)
   monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
   monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 3)
@@ -2304,11 +2305,108 @@ def test_pool_recover_cap_fatals_taskqueue_dead(monkeypatch):
       poll_timeout_s=0.01,
       stall_abort_polls_fn=lambda in_flight: 100000,
       on_idle_pool_stuck_after_redispatch=on_recover,
+      soft_fail_unhealed_paths_fn=lambda paths: [],
   )
   with pytest.raises(mph.MultiprocessingPoolStallError) as excinfo:
     list(gen)
   assert excinfo.value.exit_code == 124
   assert excinfo.value.likely_cause == "idle_pool_taskqueue_dead"
+  assert recover_calls["n"] == 2
+  assert any("pool_recover cap exceeded" in line for line in logs)
+
+
+def test_unhealed_recover_same_skip_no_quarantines_path_not_exit_124(monkeypatch):
+  """Identical pending after N probe-ok recovers → path soft-fail, not exit 124."""
+  monkeypatch.setattr(mph, "IDLE_POOL_RECOVER_MAX", 3)
+  monkeypatch.setattr(mph, "IDLE_POOL_UNHEALED_RECOVER_MAX", 3)
+  monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 1000)
+  monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 3)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
+  stuck_pool = _ManualPool()
+  recover_calls = {"n": 0}
+  soft_fail_calls = {"n": 0, "paths": None}
+  logs = []
+  monkeypatch.setattr(mph, "log_print", lambda msg, flush=False: logs.append(msg))
+
+  def on_recover(pool, pending_paths, pending_async, fn):
+    recover_calls["n"] += 1
+    del pool, pending_paths
+    pending_async.clear()
+    new_pool = _ManualPool()
+    ar = new_pool.apply_async(fn, ("/host/a/stuck_path",))
+    pending_async[ar] = "/host/a/stuck_path"
+    return {"pool": new_pool, "collected": []}
+
+  def soft_fail(paths):
+    soft_fail_calls["n"] += 1
+    soft_fail_calls["paths"] = list(paths)
+    return [
+        (path, (path, False, False, 0.0, {
+            "outcome": "soft_fail",
+            "fail_reason": "idle_pool_unhealed_after_recover",
+            "reconcile_skip": "yes",
+        }))
+        for path in paths
+    ]
+
+  gen = mph.imap_sliding_window_watch_pool(
+      stuck_pool,
+      lambda path: path,
+      ["/host/a/stuck_path"],
+      max_inflight=1,
+      poll_timeout_s=0.01,
+      stall_abort_polls_fn=lambda in_flight: 100000,
+      on_idle_pool_stuck_after_redispatch=on_recover,
+      soft_fail_unhealed_paths_fn=soft_fail,
+  )
+  results = list(gen)
+  assert soft_fail_calls["n"] == 1
+  assert soft_fail_calls["paths"] == ["/host/a/stuck_path"]
+  assert recover_calls["n"] == 3
+  assert len(results) == 1
+  assert results[0][4]["fail_reason"] == "idle_pool_unhealed_after_recover"
+  assert not any("pool_recover cap exceeded" in line for line in logs)
+  assert any("idle_pool_unhealed_after_recover" in line for line in logs)
+
+
+def test_healed_recover_different_pending_still_allows_cap(monkeypatch):
+  """Changing pending between recovers resets unhealed streak; empty soft-fail → 124."""
+  monkeypatch.setattr(mph, "IDLE_POOL_RECOVER_MAX", 2)
+  monkeypatch.setattr(mph, "IDLE_POOL_UNHEALED_RECOVER_MAX", 2)
+  monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 1000)
+  monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 3)
+  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
+  stuck_pool = _ManualPool()
+  recover_calls = {"n": 0}
+  logs = []
+  monkeypatch.setattr(mph, "log_print", lambda msg, flush=False: logs.append(msg))
+
+  def on_recover(pool, pending_paths, pending_async, fn):
+    recover_calls["n"] += 1
+    del pool, pending_paths
+    pending_async.clear()
+    new_pool = _ManualPool()
+    # Distinct pending each recover so unhealed streak never reaches max.
+    path = "stuck_path_%d" % recover_calls["n"]
+    ar = new_pool.apply_async(fn, (path,))
+    pending_async[ar] = path
+    return {"pool": new_pool, "collected": []}
+
+  gen = mph.imap_sliding_window_watch_pool(
+      stuck_pool,
+      lambda path: path,
+      ["stuck_path_0"],
+      max_inflight=1,
+      poll_timeout_s=0.01,
+      stall_abort_polls_fn=lambda in_flight: 100000,
+      on_idle_pool_stuck_after_redispatch=on_recover,
+      soft_fail_unhealed_paths_fn=lambda paths: [],
+  )
+  with pytest.raises(mph.MultiprocessingPoolStallError) as excinfo:
+    list(gen)
+  assert excinfo.value.exit_code == 124
   assert recover_calls["n"] == 2
   assert any("pool_recover cap exceeded" in line for line in logs)
 
