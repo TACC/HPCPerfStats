@@ -29,7 +29,8 @@ def test_fsio_job_detail_catalog_has_eight_metrics():
   ]
 
 
-def _llite_agg(typ, val_col, events, conv=1.0, *, peak_mb=10.0, peak_iops=100.0):
+def _llite_agg(typ, val_col, events, conv=1.0, *, peak_iops=100.0):
+  """Mock get_aggregate_df; peak MB/s comes from read(4)+write(6) combined series."""
   del val_col, conv
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   ev = list(events)
