@@ -117,7 +117,7 @@ static int likwid_uncore_spr_mbox_results_ok(int group)
   int n_mbox = 0;
   int n_ok = 0;
 
-  if (perfmon_readCounters() < 0)
+  if (perfmon_readGroupCounters(group) < 0)
     return -1;
   n_events = perfmon_getNumberOfEvents(group);
   for (i = 0; i < n_events; i++) {
@@ -158,7 +158,8 @@ static int likwid_uncore_adapter_begin_spr(struct stats_type *type)
   (void)host_edac_scan_mem_classes(&has_ddr, &has_hbm);
   n_order = likwid_spr_imc_eventset_try_order(has_ddr, has_hbm, order,
                                               (int)(sizeof(order) / sizeof(order[0])));
-  n_hbm = likwid_spr_imc_hbm_ladder_sizes(hbm_sizes, (int)(sizeof(hbm_sizes) / sizeof(hbm_sizes[0])));
+  n_hbm =
+      likwid_spr_imc_hbm_ladder_sizes(hbm_sizes, (int)(sizeof(hbm_sizes) / sizeof(hbm_sizes[0])));
   total_tries = n_order + n_hbm;
   monitor_log_info("intel_x86_uncore_imc_spr: EDAC has_ddr=%d has_hbm=%d; trying %d eventset(s), "
                    "primary %s (+ %d HBM ladder)\n",
@@ -349,7 +350,7 @@ void likwid_uncore_adapter_collect(struct stats_type *type, likwid_uncore_profil
     return;
   if (!g_profile_ready[profile] || g_profile_group[profile] < 0)
     return;
-  if (perfmon_readCounters() < 0)
+  if (perfmon_readGroupCounters(g_profile_group[profile]) < 0)
     return;
 
   n_events = perfmon_getNumberOfEvents(g_profile_group[profile]);

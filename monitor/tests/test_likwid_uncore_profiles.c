@@ -174,7 +174,8 @@ static void test_spr_try_order(void)
   assert(strcmp(likwid_spr_imc_eventset_variant_name(LIKWID_SPR_IMC_EVT_DDR_HBM), "DDR_HBM") == 0);
   assert(strcmp(likwid_spr_imc_eventset_variant_name(LIKWID_SPR_IMC_EVT_DDR_ONLY), "DDR_ONLY") ==
          0);
-  assert(strcmp(likwid_spr_imc_eventset_variant_name(LIKWID_SPR_IMC_EVT_HBM_ONLY), "HBM_ONLY") == 0);
+  assert(strcmp(likwid_spr_imc_eventset_variant_name(LIKWID_SPR_IMC_EVT_HBM_ONLY), "HBM_ONLY") ==
+         0);
 
   assert(likwid_spr_imc_eventset_try_order(1, 1, NULL, 3) == 0);
   assert(likwid_spr_imc_eventset_try_order(1, 1, order, 0) == 0);

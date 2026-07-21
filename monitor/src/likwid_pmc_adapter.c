@@ -305,7 +305,7 @@ int likwid_pmc_adapter_read_cpu(struct stats *stats, int cpu, uint64_t *events, 
   if (!g_initialized || g_group < 0 || stats == NULL || cpu < 0)
     return -1;
   likwid_pmc_adapter_zero_fp_arith_stats(stats);
-  if (perfmon_readCounters() < 0)
+  if (perfmon_readGroupCounters(g_group) < 0)
     return -1;
   n_events = perfmon_getNumberOfEvents(g_group);
   for (i = 0; i < n_events; i++) {
