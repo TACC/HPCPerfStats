@@ -70,10 +70,12 @@ AC_DEFUN([MONITOR_CFG_OPA_LIBS], [
 ])
 
 dnl Static librabbitmq.a needs -lrt (pkg-config Libs.private) on some hosts; try that first.
+dnl Unset Autoconf cache before the plain retry (same ac_cv_search_* key).
 have_rabbitmq=no
 AC_SEARCH_LIBS([amqp_new_connection], [rabbitmq], [have_rabbitmq=yes],
   [], [-lrt -pthread])
 if test "x${have_rabbitmq}" != xyes; then
+  AS_UNSET([ac_cv_search_amqp_new_connection])
   AC_SEARCH_LIBS([amqp_new_connection], [rabbitmq], [have_rabbitmq=yes],
     [AC_MSG_ERROR([Unable to find librabbitmq!])])
 fi

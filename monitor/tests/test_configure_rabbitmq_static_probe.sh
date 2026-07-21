@@ -1,5 +1,5 @@
 #!/bin/sh
-# Regression: static librabbitmq probe needs -lrt; cmake installs under lib/; prepare guards archives.
+# Regression: static librabbitmq probe (-lrt, cache unset); cmake lib/; -fPIC for PIE; prepare/SKIP_DEPS guards.
 set -e
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -23,6 +23,8 @@ awk '
   END { exit(found ? 0 : 1) }
 ' "${ac}" \
   || { echo "configure.ac: -lrt -pthread must be on amqp_new_connection AC_SEARCH_LIBS" >&2; exit 1; }
+grep -q 'AS_UNSET(\[ac_cv_search_amqp_new_connection\])' "${ac}" \
+  || { echo "configure.ac must AS_UNSET ac_cv_search_amqp_new_connection before plain retry" >&2; exit 1; }
 
 # Native + foreign rabbitmq-c: force lib/ (not lib64-only GNUInstallDirs).
 grep -q 'CMAKE_INSTALL_LIBDIR=lib' "${bundle}" \
@@ -31,6 +33,16 @@ grep -q 'lib/librabbitmq.a' "${bundle}" \
   || { echo "build_static_bundle.sh must assert PREFIX/lib/librabbitmq.a after install" >&2; exit 1; }
 grep -q 'CMAKE_INSTALL_LIBDIR=lib' "${cross}" \
   || { echo "cross_compile_test.sh must pass -DCMAKE_INSTALL_LIBDIR=lib for rabbitmq-c" >&2; exit 1; }
+
+# PIE-safe static deps: -fPIC in native builders + foreign rabbitmq/libev.
+grep -q 'append_fpic_flags' "${bundle}" \
+  || { echo "build_static_bundle.sh must define append_fpic_flags for embedded static deps" >&2; exit 1; }
+grep -q 'require_prefix_core_static_archives' "${bundle}" \
+  || { echo "build_static_bundle.sh must assert libev.a/librabbitmq.a before configure (SKIP_DEPS)" >&2; exit 1; }
+grep -q "CMAKE_C_FLAGS='-fPIC'" "${cross}" \
+  || { echo "cross_compile_test.sh foreign rabbitmq must pass -DCMAKE_C_FLAGS=-fPIC" >&2; exit 1; }
+grep -q "CFLAGS='-fPIC'" "${cross}" \
+  || { echo "cross_compile_test.sh foreign libev/likwid must use CFLAGS=-fPIC" >&2; exit 1; }
 
 # prepare: fail before make dist if core static deps missing (all arches).
 grep -q 'libev.a' "${prepare}" \

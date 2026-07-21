@@ -403,35 +403,73 @@ mkdir -p "${SRCDIR}" "${PREFIX}/include" "${PREFIX}/lib" "${PREFIX}/lib/pkgconfi
 export PATH="${PREFIX}/bin:${PATH}"
 export PKG_CONFIG_PATH="${PREFIX}/lib/pkgconfig:${PREFIX}/lib64/pkgconfig:${PKG_CONFIG_PATH:-}"
 
+# RPM %build links PIE (-fPIE / redhat-hardened-*); static .a must be -fPIC or Autoconf
+# AC_SEARCH_LIBS fails with R_*_ADR_PREL / "recompile with -fPIC" (Horizon aarch64).
+append_fpic_flags() {
+  local flags="${1-}"
+  case " ${flags} " in
+    *" -fPIC "* | *" -fpic "*) printf '%s' "${flags}" ;;
+    *) printf '%s' "${flags:+${flags} }-fPIC" ;;
+  esac
+}
+
+have_prefix_static_archive() {
+  local name="$1"
+  test -f "${PREFIX}/lib/${name}" || test -f "${PREFIX}/lib64/${name}"
+}
+
+require_prefix_core_static_archives() {
+  if ! have_prefix_static_archive "libev.a"; then
+    cat <<EOF >&2
+error: libev.a not found under ${PREFIX}/lib or ${PREFIX}/lib64.
+Rebuild deps (unset SKIP_DEPS) or re-run prepare_rpmbuild_dirs.sh / build_static_bundle.sh --deps-only.
+EOF
+    exit 1
+  fi
+  if ! have_prefix_static_archive "librabbitmq.a"; then
+    cat <<EOF >&2
+error: librabbitmq.a not found under ${PREFIX}/lib or ${PREFIX}/lib64.
+Rebuild deps (unset SKIP_DEPS) or re-run prepare_rpmbuild_dirs.sh / build_static_bundle.sh --deps-only.
+EOF
+    exit 1
+  fi
+}
+
 build_libev() {
   local d="${SRCDIR}/libev-${LIBEV_VER}"
   local t="${SRCDIR}/libev-${LIBEV_VER}.tar.gz"
+  local ev_cflags
   if test ! -d "$d"; then
     fetch_url "$(printf "${LIBEV_URL_FMT}" "${LIBEV_VER}")" "$t"
     tar -C "${SRCDIR}" -xzf "$t"
   fi
   cd "$d"
-  ./configure --prefix="${PREFIX}" --enable-static --disable-shared
-  make -j"${JOBS}"
+  ev_cflags="$(append_fpic_flags "${CFLAGS-}")"
+  # Reconfigure + clean so -fPIC applies even when the source tree was built earlier.
+  make distclean >/dev/null 2>&1 || true
+  CFLAGS="${ev_cflags}" ./configure --prefix="${PREFIX}" --enable-static --disable-shared
+  make -j"${JOBS}" CFLAGS="${ev_cflags}"
   make install
 }
 
 build_rabbitmq_c() {
   local d="${SRCDIR}/rabbitmq-c-${RABBITMQ_VER}"
   local t="${SRCDIR}/rabbitmq-c-${RABBITMQ_VER}.tar.gz"
+  local cmake_c_flags cmake_cxx_flags
   if test ! -d "$d"; then
     fetch_url "$(printf "${RABBITMQ_C_URL_FMT}" "${RABBITMQ_VER}")" "$t"
     tar -C "${SRCDIR}" -xzf "$t"
   fi
+  # Fresh build dir so CMAKE_C_FLAGS=-fPIC is not ignored by a stale cache.
+  rm -rf "${d}/build"
   mkdir -p "${d}/build"
   cd "${d}/build"
-  local -a cmake_extra=()
-  if test -n "${CFLAGS:-}"; then
-    cmake_extra+=(-DCMAKE_C_FLAGS="${CFLAGS}")
-  fi
-  if test -n "${CXXFLAGS:-}"; then
-    cmake_extra+=(-DCMAKE_CXX_FLAGS="${CXXFLAGS}")
-  fi
+  cmake_c_flags="$(append_fpic_flags "${CFLAGS-}")"
+  cmake_cxx_flags="$(append_fpic_flags "${CXXFLAGS-}")"
+  local -a cmake_extra=(
+    -DCMAKE_C_FLAGS="${cmake_c_flags}"
+    -DCMAKE_CXX_FLAGS="${cmake_cxx_flags}"
+  )
   cmake .. \
     -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
     -DCMAKE_INSTALL_LIBDIR=lib \
@@ -455,6 +493,7 @@ build_rabbitmq_c() {
 build_likwid() {
   local d="${SRCDIR}/likwid-${LIKWID_TAG}"
   local t="${SRCDIR}/likwid-${LIKWID_TAG}.tar.gz"
+  local likwid_cflags
   if test ! -d "$d"; then
     fetch_url "$(printf "${LIKWID_URL_FMT}" "${LIKWID_TAG}")" "$t"
     tar -C "${SRCDIR}" -xzf "$t"
@@ -471,10 +510,9 @@ build_likwid() {
   if grep -q '^SHARED_LIBRARY = true' config.mk 2>/dev/null; then
     sed -i 's/^SHARED_LIBRARY = true/SHARED_LIBRARY = false/' config.mk
   fi
-  local -a likwid_mk=()
-  if test -n "${CFLAGS:-}"; then
-    likwid_mk+=(CFLAGS="${CFLAGS}")
-  fi
+  likwid_cflags="$(append_fpic_flags "${CFLAGS-}")"
+  local -a likwid_mk=(CFLAGS="${likwid_cflags}")
+  make clean >/dev/null 2>&1 || true
   make -j"${JOBS}" PREFIX="${PREFIX}" INSTALLED_PREFIX="${PREFIX}" \
     BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false ACCESSMODE=direct \
     "${likwid_mk[@]}"
@@ -573,6 +611,8 @@ build_monitor() {
   fi
   export CPPFLAGS="-I${PREFIX}/include ${CPPFLAGS:-}"
   export LDFLAGS="-L${PREFIX}/lib -L${PREFIX}/lib64 ${LDFLAGS:-}"
+  # SKIP_DEPS=1 (RPM %build) must not reach configure without core static archives.
+  require_prefix_core_static_archives
   # Prefer static archives from our tree (no RPATH to PREFIX for runtime).
   local -a feat=("${STATIC_BUNDLE_FEAT_FLAGS[@]}")
   local -a cfg=(

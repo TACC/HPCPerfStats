@@ -944,8 +944,9 @@ build_foreign_libev() {
     extract_tar_if_missing_dir "${t}" "${d}" "${srcroot}"
   fi
 
+  # -fPIC: same PIE-safe contract as native build_static_bundle.sh (RPM hardened link).
   run_foreign "${target}" "${sysroot}" \
-    bash -c "set -euo pipefail; cd '${d}' && ./configure --host='${target}' --prefix='${prefix}' --enable-static --disable-shared && make -j'${JOBS}' && make install"
+    bash -c "set -euo pipefail; cd '${d}' && make distclean >/dev/null 2>&1 || true && CFLAGS='-fPIC' ./configure --host='${target}' --prefix='${prefix}' --enable-static --disable-shared && make -j'${JOBS}' CFLAGS='-fPIC' && make install"
 }
 
 build_foreign_rabbitmq_c() {
@@ -963,10 +964,11 @@ build_foreign_rabbitmq_c() {
     fetch_url "$(printf "${RABBITMQ_C_URL_FMT}" "${RABBITMQ_VER}")" "${t}"
     extract_tar_if_missing_dir "${t}" "${d}" "${srcroot}"
   fi
+  rm -rf "${b}"
   mkdir -p "${b}"
 
   run_foreign "${target}" "${sysroot}" \
-    bash -c "set -euo pipefail; cd '${b}' && cmake .. -DCMAKE_INSTALL_PREFIX='${prefix}' -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON -DENABLE_SSL_SUPPORT=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TOOLS=OFF -DBUILD_TESTS=OFF && cmake --build . -j'${JOBS}' && cmake --install . && test -f '${prefix}/lib/librabbitmq.a'"
+    bash -c "set -euo pipefail; cd '${b}' && cmake .. -DCMAKE_INSTALL_PREFIX='${prefix}' -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_C_FLAGS='-fPIC' -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON -DENABLE_SSL_SUPPORT=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TOOLS=OFF -DBUILD_TESTS=OFF && cmake --build . -j'${JOBS}' && cmake --install . && test -f '${prefix}/lib/librabbitmq.a'"
 }
 
 build_foreign_likwid() {
@@ -994,8 +996,9 @@ build_foreign_likwid() {
     if grep -q '^SHARED_LIBRARY = true' config.mk 2>/dev/null; then
       sed -i 's/^SHARED_LIBRARY = true/SHARED_LIBRARY = false/' config.mk
     fi
-    make -j'${JOBS}' PREFIX='${prefix}' INSTALLED_PREFIX='${prefix}' BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false ACCESSMODE=direct
-    make install PREFIX='${prefix}' INSTALLED_PREFIX='${prefix}' BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false ACCESSMODE=direct
+    make clean >/dev/null 2>&1 || true
+    make -j'${JOBS}' PREFIX='${prefix}' INSTALLED_PREFIX='${prefix}' BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false ACCESSMODE=direct CFLAGS='-fPIC'
+    make install PREFIX='${prefix}' INSTALLED_PREFIX='${prefix}' BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false ACCESSMODE=direct CFLAGS='-fPIC'
   "
 }
 
