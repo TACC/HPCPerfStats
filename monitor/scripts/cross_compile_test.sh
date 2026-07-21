@@ -966,7 +966,7 @@ build_foreign_rabbitmq_c() {
   mkdir -p "${b}"
 
   run_foreign "${target}" "${sysroot}" \
-    bash -c "set -euo pipefail; cd '${b}' && cmake .. -DCMAKE_INSTALL_PREFIX='${prefix}' -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON -DENABLE_SSL_SUPPORT=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TOOLS=OFF -DBUILD_TESTS=OFF && cmake --build . -j'${JOBS}' && cmake --install ."
+    bash -c "set -euo pipefail; cd '${b}' && cmake .. -DCMAKE_INSTALL_PREFIX='${prefix}' -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON -DENABLE_SSL_SUPPORT=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TOOLS=OFF -DBUILD_TESTS=OFF && cmake --build . -j'${JOBS}' && cmake --install . && test -f '${prefix}/lib/librabbitmq.a'"
 }
 
 build_foreign_likwid() {

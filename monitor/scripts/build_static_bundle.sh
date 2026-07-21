@@ -434,6 +434,7 @@ build_rabbitmq_c() {
   fi
   cmake .. \
     -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
+    -DCMAKE_INSTALL_LIBDIR=lib \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     "${cmake_extra[@]}" \
@@ -445,6 +446,10 @@ build_rabbitmq_c() {
     -DBUILD_TESTS=OFF
   cmake --build . -j"${JOBS}"
   cmake --install .
+  if test ! -f "${PREFIX}/lib/librabbitmq.a"; then
+    echo "error: build_rabbitmq_c did not install ${PREFIX}/lib/librabbitmq.a" >&2
+    exit 1
+  fi
 }
 
 build_likwid() {

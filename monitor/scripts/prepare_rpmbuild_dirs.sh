@@ -184,6 +184,26 @@ export CPPFLAGS="-I${PREFIX}/include ${CPPFLAGS:-}"
 export LDFLAGS="-L${PREFIX}/lib -L${PREFIX}/lib64 ${LDFLAGS:-}"
 export PKG_CONFIG_PATH="${PREFIX}/lib/pkgconfig:${PREFIX}/lib64/pkgconfig:${PKG_CONFIG_PATH:-}"
 
+# Always required (libev + rabbitmq-c on every arch).
+if ! have_static_archive_basename "libev.a"; then
+  cat <<EOF >&2
+libev static archive was not found under ${PREFIX}/lib or ${PREFIX}/lib64.
+Expected: libev.a
+Rebuild deps with SKIP_DEPS unset:
+  PREFIX="${PREFIX}" SRCDIR="${SRCDIR}" ./scripts/build_static_bundle.sh --deps-only
+EOF
+  exit 1
+fi
+if ! have_static_archive_basename "librabbitmq.a"; then
+  cat <<EOF >&2
+rabbitmq-c static archive was not found under ${PREFIX}/lib or ${PREFIX}/lib64.
+Expected: librabbitmq.a (cmake CMAKE_INSTALL_LIBDIR=lib installs under lib/)
+Rebuild deps with SKIP_DEPS unset:
+  PREFIX="${PREFIX}" SRCDIR="${SRCDIR}" ./scripts/build_static_bundle.sh --deps-only
+EOF
+  exit 1
+fi
+
 if is_x86_build_host; then
   if ! have_static_archive_basename "liblikwid.a" \
      || ! have_static_archive_basename "liblikwid-hwloc.a" \

@@ -69,8 +69,14 @@ AC_DEFUN([MONITOR_CFG_OPA_LIBS], [
   fi
 ])
 
+dnl Static librabbitmq.a needs -lrt (pkg-config Libs.private) on some hosts; try that first.
+have_rabbitmq=no
 AC_SEARCH_LIBS([amqp_new_connection], [rabbitmq], [have_rabbitmq=yes],
+  [], [-lrt -pthread])
+if test "x${have_rabbitmq}" != xyes; then
+  AC_SEARCH_LIBS([amqp_new_connection], [rabbitmq], [have_rabbitmq=yes],
     [AC_MSG_ERROR([Unable to find librabbitmq!])])
+fi
 if test "x${have_rabbitmq}" = xyes; then
    AC_CHECK_HEADERS([rabbitmq-c/amqp.h], [rabbitmq=true],
    [AC_MSG_ERROR([Unable to find rabbitmq-c/amqp.h (rabbitmq-c development headers)!])])
