@@ -83,4 +83,16 @@ done
 grep -q 'verify_dist_tarball_host_headers' scripts/prepare_rpmbuild_dirs.sh \
   || { echo "prepare_rpmbuild_dirs.sh must verify host_*.h in dist tarball" >&2; exit 1; }
 
+# Regression: doubled extensions break make dist (e.g. test_foo.c.c → no rule).
+if grep -nE '[[:alnum:]_.-]+\.c\.c([[:space:]]|$)' tests/Makefile.am src/Makefile.am; then
+  echo "FAIL: Makefile.am EXTRA_DIST/SOURCES must not list *.c.c paths" >&2
+  exit 1
+fi
+test -f tests/test_arm_aarch64_imc_schema.c \
+  || { echo "missing tests/test_arm_aarch64_imc_schema.c" >&2; exit 1; }
+grep -q 'test_arm_aarch64_imc_schema\.c\.c' tests/Makefile.am \
+  && { echo "FAIL: test_arm_aarch64_imc_schema.c.c still in tests/Makefile.am" >&2; exit 1; }
+grep -qE '(^|[[:space:]])test_arm_aarch64_imc_schema\.c([[:space:]]|$)' tests/Makefile.am \
+  || { echo "FAIL: tests/Makefile.am must list test_arm_aarch64_imc_schema.c" >&2; exit 1; }
+
 echo "test_make_dist_extra_dist_prereqs passed"
