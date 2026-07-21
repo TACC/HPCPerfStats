@@ -24,8 +24,13 @@ from hpcperfstats.dbload.lib.monitor_naming.resolve import (
     core_pmc_types_probe_order,
     dram_cas_read_write_pairs,
     fp_ops_retired_event_names,
+    hbm_cas_read_write_pairs,
     host_cpu_hw_type_names,
     imc_types_probe_order,
+)
+from hpcperfstats.analysis.metrics.lib.gen.imc_cas_bw import (
+    agg_sum_val_to_bw_frame,
+    combine_cas_bw_frames,
 )
 from hpcperfstats.analysis.metrics.lib.bokeh_job_embed import figure_embed_kw
 from hpcperfstats.analysis.metrics.lib.plot.roofline_peaks import (
@@ -145,9 +150,10 @@ def _intel_legacy_sse_flops_gf(jt, attempts):
 
 
 def _intel_imc_bw_gb(jt, attempts):
-    """Memory bandwidth (GB/s) from first IMC type with dram CAS read/write events."""
+    """Memory bandwidth (GB/s): per IMC type, sum usable dram_cas_* and hbm_cas_* (64 B/CAS)."""
     conv = 64 / (1024 ** 3)
     for imc_typ in imc_types_probe_order():
+        dram_bw = None
         for read_ev, write_ev in dram_cas_read_write_pairs():
             agg_bw, bw_src = _aggregate_arc(
                 jt, imc_typ, [read_ev, write_ev], conv
@@ -156,10 +162,24 @@ def _intel_imc_bw_gb(jt, attempts):
                 f"{imc_typ} rows(bw={len(agg_bw.index)}) "
                 f"events=({read_ev},{write_ev}) src(bw={bw_src})"
             )
-            if not agg_bw.empty and "sum_val" in agg_bw.columns:
-                return agg_bw.rename(columns={"sum_val": "bw_gb"})[
-                    ["host", "time", "bw_gb"]
-                ]
+            dram_bw = agg_sum_val_to_bw_frame(agg_bw)
+            if dram_bw is not None:
+                break
+        hbm_bw = None
+        for read_ev, write_ev in hbm_cas_read_write_pairs():
+            agg_bw, bw_src = _aggregate_arc(
+                jt, imc_typ, [read_ev, write_ev], conv
+            )
+            attempts.append(
+                f"{imc_typ} rows(hbm_bw={len(agg_bw.index)}) "
+                f"events=({read_ev},{write_ev}) src(bw={bw_src})"
+            )
+            hbm_bw = agg_sum_val_to_bw_frame(agg_bw)
+            if hbm_bw is not None:
+                break
+        combined = combine_cas_bw_frames(dram_bw, hbm_bw)
+        if combined is not None:
+            return combined
     return None
 
 

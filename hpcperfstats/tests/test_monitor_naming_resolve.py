@@ -8,6 +8,7 @@ from hpcperfstats.dbload.lib.monitor_naming.legacy import (
 from hpcperfstats.dbload.lib.monitor_naming.resolve import (
     dram_cas_read_write_pairs,
     events_probe_names,
+    hbm_cas_read_write_pairs,
     imc_types_probe_order,
     type_probe_names,
 )
@@ -105,6 +106,11 @@ def test_dram_cas_read_write_pairs_includes_legacy():
   pairs = dram_cas_read_write_pairs()
   assert ("dram_cas_reads", "dram_cas_writes") in pairs
   assert ("CAS_READS", "CAS_WRITES") in pairs
+
+
+def test_hbm_cas_read_write_pairs():
+  pairs = hbm_cas_read_write_pairs()
+  assert pairs == (("hbm_cas_reads", "hbm_cas_writes"),)
 
 
 def test_imc_types_probe_order_includes_legacy_knl_after_canonical():

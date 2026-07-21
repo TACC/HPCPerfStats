@@ -105,6 +105,77 @@ def test_roofline_intel_succeeds_with_non_skx_imc_bandwidth():
   assert hsw_canon in imc_types_probe_order()
 
 
+def test_roofline_spr_hbm_cas_only_yields_bandwidth():
+  """SPR with only hbm_cas_* still produces Intel roofline BW."""
+  import pandas as pd
+  from unittest.mock import MagicMock
+  from hpcperfstats.analysis.metrics.lib.plot.roofline import (
+      _intel_imc_bw_gb,
+      plot_and_reason_roofline_from_jid_table,
+  )
+
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  empty = pd.DataFrame(columns=["host", "time", "sum_val"])
+  spr = "intel_x86_uncore_imc_spr"
+  core_pmcs = ("intel_x86_pmc_gpr8", "intel_8pmc3", "intel_4pmc3")
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv
+    if val_col != "arc":
+      return empty
+    if typ in ("amd64_pmc", "amd64_df", "amd_x86_pmc", "amd_x86_uncore_df"):
+      return empty
+    if typ in core_pmcs:
+      if len(events) > 3:
+        return pd.DataFrame([("n1.cluster", t0, 3.0)], columns=["host", "time", "sum_val"])
+      return empty
+    if typ == spr and list(events) == ["hbm_cas_reads", "hbm_cas_writes"]:
+      return pd.DataFrame([("n1.cluster", t0, 0.75)], columns=["host", "time", "sum_val"])
+    return empty
+
+  jt = MagicMock()
+  jt.host_list = ["n1.cluster"]
+  jt.get_host_time_df.return_value = pd.DataFrame(
+      [("n1.cluster", t0)], columns=["host", "time"]
+  )
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+
+  bw = _intel_imc_bw_gb(jt, [])
+  assert bw is not None
+  assert abs(float(bw["bw_gb"].iloc[0]) - 0.75) < 1e-12
+
+  fig, reason = plot_and_reason_roofline_from_jid_table(jt)
+  assert fig is not None
+  assert reason is None
+
+
+def test_roofline_spr_sums_dram_and_hbm_cas_bandwidth():
+  """SPR with both CAS families sums DDR+HBM for measured BW."""
+  import pandas as pd
+  from unittest.mock import MagicMock
+  from hpcperfstats.analysis.metrics.lib.plot.roofline import _intel_imc_bw_gb
+
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  empty = pd.DataFrame(columns=["host", "time", "sum_val"])
+  spr = "intel_x86_uncore_imc_spr"
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv, val_col
+    if typ != spr:
+      return empty
+    if list(events) == ["dram_cas_reads", "dram_cas_writes"]:
+      return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
+    if list(events) == ["hbm_cas_reads", "hbm_cas_writes"]:
+      return pd.DataFrame([("n1.cluster", t0, 2.0)], columns=["host", "time", "sum_val"])
+    return empty
+
+  jt = MagicMock()
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+  bw = _intel_imc_bw_gb(jt, [])
+  assert bw is not None
+  assert abs(float(bw["bw_gb"].iloc[0]) - 3.0) < 1e-12
+
+
 def test_roofline_succeeds_with_cpu_counter_metrics_flops_and_imc_bw():
   """Intel roofline FLOPS can come from cpu_counter_metrics (aligned with avg_flops)."""
   from hpcperfstats.dbload.lib.monitor_naming.canonical import INTEL_FP_ARITH_ALL_EVENTS

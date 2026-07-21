@@ -1,7 +1,7 @@
 """Canonical monitor st_name and event keys (current hpcperfstatsd emission)."""
 from __future__ import annotations
 
-# Intel IMC types exposing dram_cas_reads / dram_cas_writes (roofline, mbw).
+# Intel IMC types exposing dram_cas_* (and on SPR also hbm_cas_*) for measured BW.
 INTEL_IMC_STATS_TYPES = (
     "intel_x86_uncore_imc_skx",
     "intel_x86_uncore_imc_icx",
@@ -59,6 +59,8 @@ INTEL_LEGACY_SSE_FLOP_EVENTS = (
 # Canonical event names
 DRAM_CAS_READS = "dram_cas_reads"
 DRAM_CAS_WRITES = "dram_cas_writes"
+HBM_CAS_READS = "hbm_cas_reads"
+HBM_CAS_WRITES = "hbm_cas_writes"
 INSTR_RETIRED = "instr_retired"
 APERF = "aperf"
 MPERF = "mperf"

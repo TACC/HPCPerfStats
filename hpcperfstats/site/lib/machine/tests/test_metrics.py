@@ -265,6 +265,7 @@ def test_job_arc_avg_flops_legacy_sse_when_fp_arith_missing():
 
 
 
+@pytest.mark.machine_unit_mock
 def test_job_arc_avg_mbw_uses_intel_imc_when_amd_df_empty():
   """avg_mbw tries AMD DF then Intel IMC dram CAS read/write events."""
 
@@ -289,6 +290,83 @@ def test_job_arc_avg_mbw_uses_intel_imc_when_amd_df_empty():
   assert typename in ("intel_x86_uncore_imc_skx", "intel_skx_imc")
 
 
+@pytest.mark.machine_unit_mock
+def test_job_arc_avg_mbw_spr_hbm_cas_only():
+  """avg_mbw uses SPR hbm_cas_* when dram_cas aggregates are empty."""
+
+  def fake_job_arc(self, jt, **kw):
+    if kw.get("typename") in ("amd64_df", "amd_x86_uncore_df"):
+      return None
+    if kw.get("typename") == "intel_x86_uncore_imc_spr":
+      ev = list(kw.get("events") or [])
+      if ev == ["hbm_cas_reads", "hbm_cas_writes"]:
+        return 3.25
+    return None
+
+  with patch.object(Metrics, "job_arc", fake_job_arc):
+    m = Metrics()
+    value, typename = m._job_arc_avg_mbw(object())
+  assert abs(value - 3.25) < 1e-9
+  assert typename == "intel_x86_uncore_imc_spr"
+
+
+@pytest.mark.machine_unit_mock
+def test_job_arc_avg_mbw_spr_sums_dram_and_hbm_cas():
+  """avg_mbw sums SPR dram_cas and hbm_cas scalars when both resolve."""
+
+  def fake_job_arc(self, jt, **kw):
+    if kw.get("typename") in ("amd64_df", "amd_x86_uncore_df"):
+      return None
+    if kw.get("typename") == "intel_x86_uncore_imc_spr":
+      ev = list(kw.get("events") or [])
+      if ev == ["dram_cas_reads", "dram_cas_writes"]:
+        return 1.0
+      if ev == ["hbm_cas_reads", "hbm_cas_writes"]:
+        return 2.0
+    return None
+
+  with patch.object(Metrics, "job_arc", fake_job_arc):
+    m = Metrics()
+    value, typename = m._job_arc_avg_mbw(object())
+  assert abs(value - 3.0) < 1e-9
+  assert typename == "intel_x86_uncore_imc_spr"
+
+
+@pytest.mark.machine_unit_mock
+def test_dram_bw_weighted_events_include_hbm_when_present():
+  from hpcperfstats.analysis.metrics.lib.metrics import (
+      _dram_bw_weighted_events_for_imbalance,
+  )
+
+  class _Schema(list):
+    pass
+
+  class MockU:
+    imc = "intel_x86_uncore_imc_spr"
+
+    def get_type(self, typename):
+      del typename
+      return None, {}
+
+  with patch(
+      "hpcperfstats.analysis.metrics.lib.metrics.resolve_get_type",
+      return_value=(
+          _Schema(
+              [
+                  "hbm_cas_reads",
+                  "hbm_cas_writes",
+              ]
+          ),
+          {"h1": object()},
+          "intel_x86_uncore_imc_spr",
+      ),
+  ):
+    typ, weighted = _dram_bw_weighted_events_for_imbalance(MockU())
+  assert typ == "intel_x86_uncore_imc_spr"
+  assert [e for e, _w in weighted] == ["hbm_cas_reads", "hbm_cas_writes"]
+
+
+@pytest.mark.machine_unit_mock
 def test_job_arc_avg_mbw_prefers_amd64_df():
   def fake_job_arc(self, jt, **kw):
     if kw.get("typename") in ("amd64_df", "amd_x86_uncore_df"):
@@ -414,6 +492,7 @@ def test_job_metrics_catalog_includes_avg_arm_int_ops():
   assert "avg_arm_int16_ops" in JOB_METRIC_SHORT_LABELS
 
 
+@pytest.mark.machine_unit_mock
 def test_job_arc_avg_mbw_arm_counter_fallback():
   """avg_mbw falls back to host_cpu_hw ARM_DRAM_BW_BYTES when IMC rows are absent."""
 

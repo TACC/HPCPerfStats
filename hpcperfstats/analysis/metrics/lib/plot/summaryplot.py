@@ -44,12 +44,17 @@ from hpcperfstats.dbload.lib.monitor_naming.resolve import (
     events_probe_names,
     grace_fp_scalar_double_event_names,
     grace_fp_scalar_single_event_names,
+    hbm_cas_read_write_pairs,
     host_cpu_hw_type_names,
     imc_types_probe_order,
     instr_retired_event_names,
     mperf_event_names,
     pkg_energy_event_names,
     type_probe_names,
+)
+from hpcperfstats.analysis.metrics.lib.gen.imc_cas_bw import (
+    agg_sum_val_to_bw_frame,
+    combine_cas_bw_frames,
 )
 
 from bokeh.layouts import gridplot
@@ -550,12 +555,50 @@ def _summary_nv_gpu_util_y_range_end(df):
 
 
 def _summary_intel_imc_bw_tries():
-  """Intel DRAM BW: first IMC type with dram CAS read/write rows."""
+  """Diagnostic tries: dram CAS pairs then hbm CAS pairs per IMC type."""
   tries = []
   for imc_typ in imc_types_probe_order():
     for read_ev, write_ev in dram_cas_read_write_pairs():
       tries.append((imc_typ, [read_ev, write_ev], _CAS_BW_CONV))
+    for read_ev, write_ev in hbm_cas_read_write_pairs():
+      tries.append((imc_typ, [read_ev, write_ev], _CAS_BW_CONV))
   return tries
+
+
+def _merge_intel_imc_cas_mbw(df, jt):
+  """Fill ``mbw`` from first IMC type with usable dram and/or hbm CAS BW (sum when both)."""
+  column_name = "mbw"
+  for imc_typ in imc_types_probe_order():
+    dram_bw = None
+    for read_ev, write_ev in dram_cas_read_write_pairs():
+      agg = _get_agg_if_feasible(
+          jt, imc_typ, "arc", [read_ev, write_ev], _CAS_BW_CONV
+      )
+      dram_bw = agg_sum_val_to_bw_frame(agg)
+      if dram_bw is not None:
+        break
+    hbm_bw = None
+    for read_ev, write_ev in hbm_cas_read_write_pairs():
+      agg = _get_agg_if_feasible(
+          jt, imc_typ, "arc", [read_ev, write_ev], _CAS_BW_CONV
+      )
+      hbm_bw = agg_sum_val_to_bw_frame(agg)
+      if hbm_bw is not None:
+        break
+    combined = combine_cas_bw_frames(dram_bw, hbm_bw)
+    if combined is None:
+      continue
+    merged = df.merge(
+        combined.rename(columns={"bw_gb": "sum_val"}),
+        on=["host", "time"],
+        how="left",
+    )
+    merged[column_name] = merged["sum_val"]
+    merged.drop(columns=["sum_val"], inplace=True)
+    if column_name in merged.columns and merged[column_name].isnull().values.any():
+      continue
+    return merged
+  return df
 
 
 def _merge_first_full_coverage(df, jt, column_name, val_col, tries):
@@ -1116,8 +1159,7 @@ class SummaryPlot():
           df, self.jt, fw["name"], fw["val_col"], fw["tries"])
       log.debug("time to compute %s: %s", fw["name"], time.time() - s)
 
-    df = _merge_first_full_coverage(
-        df, self.jt, "mbw", "arc", _summary_intel_imc_bw_tries())
+    df = _merge_intel_imc_cas_mbw(df, self.jt)
 
     df = _merge_cha_counter_arc_sum(df, self.jt)
     df = _merge_opa_fabric_if_no_ib_ext(df, self.jt)

@@ -60,11 +60,13 @@ from hpcperfstats.dbload.lib.monitor_naming.resolve import (
     fp_ops_retired_event_names,
     grace_fp_scalar_double_event_names,
     grace_fp_scalar_single_event_names,
+    hbm_cas_read_write_pairs,
     host_cpu_hw_type_names,
     imc_types_probe_order,
     resolve_get_type,
     type_probe_names,
 )
+from hpcperfstats.analysis.metrics.lib.gen.imc_cas_bw import combine_cas_bw_scalars
 from hpcperfstats.site.lib.machine.models import host_data, job_data, metrics_data
 
 from hpcperfstats.analysis.metrics.lib.job_detail_fsio import (
@@ -1742,6 +1744,7 @@ class Metrics():
         return v, df_typ
     cas_conv = 64 / (1024 ** 3)
     for imc_typ in imc_types_probe_order():
+      dram_v = None
       for read_ev, write_ev in dram_cas_read_write_pairs():
         v = self.job_arc(
             jt,
@@ -1753,7 +1756,25 @@ class Metrics():
             rows_cache=rows_cache,
         )
         if v is not None:
-          return v, imc_typ
+          dram_v = v
+          break
+      hbm_v = None
+      for read_ev, write_ev in hbm_cas_read_write_pairs():
+        v = self.job_arc(
+            jt,
+            typename=imc_typ,
+            events=[read_ev, write_ev],
+            conv=cas_conv,
+            units="GB/s",
+            cache=cache,
+            rows_cache=rows_cache,
+        )
+        if v is not None:
+          hbm_v = v
+          break
+      combined = combine_cas_bw_scalars(dram_v, hbm_v)
+      if combined is not None:
+        return combined, imc_typ
     for imc_typ in arm_imc_types_probe_order():
       for read_ev, write_ev in dram_cas_read_write_pairs():
         v = self.job_arc(
@@ -2977,6 +2998,7 @@ def _dram_bw_weighted_events_for_imbalance(u):
   schema_imc, _, imc_typ = resolve_get_type(u, (imc,))
   if schema_imc is None:
     return None, None
+  weighted = []
   for read_ev, write_ev in dram_cas_read_write_pairs():
     pair = []
     if read_ev in schema_imc:
@@ -2984,7 +3006,19 @@ def _dram_bw_weighted_events_for_imbalance(u):
     if write_ev in schema_imc:
       pair.append((write_ev, 1.0))
     if pair:
-      return imc_typ, pair
+      weighted.extend(pair)
+      break
+  for read_ev, write_ev in hbm_cas_read_write_pairs():
+    pair = []
+    if read_ev in schema_imc:
+      pair.append((read_ev, 1.0))
+    if write_ev in schema_imc:
+      pair.append((write_ev, 1.0))
+    if pair:
+      weighted.extend(pair)
+      break
+  if weighted:
+    return imc_typ, weighted
   return None, None
 
 

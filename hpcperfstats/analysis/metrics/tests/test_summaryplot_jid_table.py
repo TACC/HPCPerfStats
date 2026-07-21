@@ -55,11 +55,17 @@ def _is_cpu_type(typ):
 
 
 def _cas_events_match(events):
-  ev = list(events)
-  return ev in (
-      ["dram_cas_reads", "dram_cas_writes"],
-      ["CAS_READS", "CAS_WRITES"],
+  """True when aggregate events include a dram CAS R+W pair (canonical or legacy)."""
+  s = set(events)
+  return (
+      {"dram_cas_reads", "dram_cas_writes"}.issubset(s)
+      or {"CAS_READS", "CAS_WRITES"}.issubset(s)
   )
+
+
+def _hbm_cas_events_match(events):
+  """True when aggregate events include SPR hbm_cas R+W (probed list may add aliases)."""
+  return {"hbm_cas_reads", "hbm_cas_writes"}.issubset(set(events))
 
 
 def test_compute_summary_aggregate_prefetch_pool_size_caps_at_two(monkeypatch):
@@ -157,6 +163,80 @@ def test_summaryplot_plot_includes_mbw_from_first_intel_imc_with_data():
 
   fig = SummaryPlot(jt).plot()
   assert fig is not None
+
+
+def test_summaryplot_mbw_from_spr_hbm_cas_only():
+  """SPR HBM-only CAS yields summary mbw when dram_cas aggregates are empty."""
+  from hpcperfstats.analysis.metrics.lib.plot.summaryplot import SummaryPlot
+
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
+  empty = pd.DataFrame(columns=["host", "time", "sum_val"])
+  fp64 = list(INTEL_FP_ARITH_DOUBLE_EVENTS)
+  spr = "intel_x86_uncore_imc_spr"
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv
+    if val_col == "arc" and _is_cpu_type(typ) and "user" in events:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 0.25)], columns=["host", "time", "sum_val"]
+      )
+    if val_col != "arc":
+      return empty
+    if typ in ("amd64_pmc", "amd64_df", "amd_x86_pmc", "amd_x86_uncore_df"):
+      return empty
+    if typ in _INTEL_CORE_TYPES:
+      if list(events) == fp64:
+        return pd.DataFrame(
+            [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
+        )
+      return empty
+    if typ == spr and _hbm_cas_events_match(events):
+      return pd.DataFrame(
+          [("n1.cluster", t0, 7.0)], columns=["host", "time", "sum_val"]
+      )
+    return empty
+
+  jt = MagicMock()
+  jt.host_list = ["n1.cluster"]
+  jt.get_host_time_df.return_value = base
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+
+  fig = SummaryPlot(jt).plot()
+  assert fig is not None
+
+
+def test_summaryplot_mbw_sums_spr_dram_and_hbm_cas():
+  """When SPR has both dram and hbm CAS, summary mbw uses the summed series."""
+  from hpcperfstats.analysis.metrics.lib.plot.summaryplot import (
+      _merge_intel_imc_cas_mbw,
+  )
+
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
+  empty = pd.DataFrame(columns=["host", "time", "sum_val"])
+  spr = "intel_x86_uncore_imc_spr"
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv, val_col
+    if typ != spr:
+      return empty
+    if _cas_events_match(events):
+      return pd.DataFrame(
+          [("n1.cluster", t0, 1.5)], columns=["host", "time", "sum_val"]
+      )
+    if _hbm_cas_events_match(events):
+      return pd.DataFrame(
+          [("n1.cluster", t0, 2.5)], columns=["host", "time", "sum_val"]
+      )
+    return empty
+
+  jt = MagicMock()
+  jt.host_list = ["n1.cluster"]
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+  out = _merge_intel_imc_cas_mbw(base.copy(), jt)
+  assert "mbw" in out.columns
+  assert abs(float(out["mbw"].iloc[0]) - 4.0) < 1e-12
 
 
 def test_summaryplot_skips_freq_plot_when_ghz_never_exceeds_500():

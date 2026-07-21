@@ -63,6 +63,11 @@ def dram_cas_read_write_pairs() -> tuple[tuple[str, str], ...]:
     )
 
 
+def hbm_cas_read_write_pairs() -> tuple[tuple[str, str], ...]:
+    """(reads_event, writes_event) for SPR HBM CAS (canonical only; no legacy aliases)."""
+    return ((canon.HBM_CAS_READS, canon.HBM_CAS_WRITES),)
+
+
 def instr_retired_event_names() -> tuple[str, ...]:
     return _names_canonical_then_legacy(canon.INSTR_RETIRED, leg.LEGACY_INSTR_RETIRED)
 
