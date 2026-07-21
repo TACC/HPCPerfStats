@@ -2,6 +2,7 @@
  *  LIKWID uncore perfmon bridge for Intel IMC/CBO/CHA/QPI collectors.
  */
 
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
@@ -55,25 +56,35 @@ static int likwid_uncore_finish_group(int group)
 }
 
 /*
- * Try one eventset. On failure sets *fail_step to "addEventSet" or "setupCounters".
+ * Try one eventset. On failure sets *fail_step to "addEventSet" or "setupCounters"
+ * and *errno_out to errno captured at that step (0 if unused).
  * Returns 0 on success, -1 on failure.
  */
-static int likwid_uncore_try_eventset(const char *events, int *group_out, const char **fail_step)
+static int likwid_uncore_try_eventset(const char *events, int *group_out, const char **fail_step,
+                                      int *errno_out)
 {
   int group;
 
   if (fail_step != NULL)
     *fail_step = NULL;
+  if (errno_out != NULL)
+    *errno_out = 0;
   if (events == NULL || events[0] == '\0' || group_out == NULL)
     return -1;
 
+  errno = 0;
   group = perfmon_addEventSet(events);
   if (group < 0) {
+    if (errno_out != NULL)
+      *errno_out = errno;
     if (fail_step != NULL)
       *fail_step = "addEventSet";
     return -1;
   }
+  errno = 0;
   if (likwid_uncore_finish_group(group) < 0) {
+    if (errno_out != NULL)
+      *errno_out = errno;
     if (fail_step != NULL)
       *fail_step = "setupCounters";
     return -1;
@@ -125,6 +136,7 @@ static int likwid_uncore_adapter_begin_spr(struct stats_type *type)
     const char *label = likwid_spr_imc_eventset_variant_name(order[i]);
     const char *events = likwid_spr_imc_eventset_string(order[i]);
     const char *fail_step = NULL;
+    int fail_errno = 0;
     int group = -1;
     int last = (try_idx == total_tries - 1);
 
@@ -137,7 +149,7 @@ static int likwid_uncore_adapter_begin_spr(struct stats_type *type)
       quiet = 0;
     }
 
-    if (likwid_uncore_try_eventset(events, &group, &fail_step) == 0) {
+    if (likwid_uncore_try_eventset(events, &group, &fail_step, &fail_errno) == 0) {
       if (quiet) {
         likwid_uncore_restore_stderr(saved_stderr, null_fd);
         quiet = 0;
@@ -150,8 +162,8 @@ static int likwid_uncore_adapter_begin_spr(struct stats_type *type)
       null_fd = -1;
       quiet = 0;
     }
-    monitor_log_warn("intel_x86_uncore_imc_spr: eventset %s failed at %s\n", label,
-                     fail_step != NULL ? fail_step : "unknown");
+    monitor_log_warn("intel_x86_uncore_imc_spr: eventset %s failed at %s (errno=%d)\n", label,
+                     fail_step != NULL ? fail_step : "unknown", fail_errno);
     try_idx++;
   }
 
@@ -159,6 +171,7 @@ static int likwid_uncore_adapter_begin_spr(struct stats_type *type)
     char label[32];
     const char *events = likwid_spr_imc_hbm_channels_eventset(hbm_sizes[i]);
     const char *fail_step = NULL;
+    int fail_errno = 0;
     int group = -1;
     int last = (try_idx == total_tries - 1);
 
@@ -172,7 +185,7 @@ static int likwid_uncore_adapter_begin_spr(struct stats_type *type)
       quiet = 0;
     }
 
-    if (likwid_uncore_try_eventset(events, &group, &fail_step) == 0) {
+    if (likwid_uncore_try_eventset(events, &group, &fail_step, &fail_errno) == 0) {
       if (quiet) {
         likwid_uncore_restore_stderr(saved_stderr, null_fd);
         quiet = 0;
@@ -185,8 +198,8 @@ static int likwid_uncore_adapter_begin_spr(struct stats_type *type)
       null_fd = -1;
       quiet = 0;
     }
-    monitor_log_warn("intel_x86_uncore_imc_spr: eventset %s failed at %s\n", label,
-                     fail_step != NULL ? fail_step : "unknown");
+    monitor_log_warn("intel_x86_uncore_imc_spr: eventset %s failed at %s (errno=%d)\n", label,
+                     fail_step != NULL ? fail_step : "unknown", fail_errno);
     try_idx++;
   }
 

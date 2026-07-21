@@ -47,6 +47,9 @@ static void test_eventset_nonempty(void)
 {
   const char *ddr_only;
   const char *ddr_hbm;
+  const char *skx;
+  const char *icx;
+  const char *cha;
 
   assert(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_IMC_SKX) != NULL);
   assert(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_IMC_ICX) != NULL);
@@ -66,6 +69,66 @@ static void test_eventset_nonempty(void)
   assert(strstr(ddr_hbm, "MBOX12C0") == NULL);
   assert(strstr(ddr_hbm, "HBM0C0") != NULL);
   assert(strstr(ddr_hbm, "HBM15C0") != NULL);
+
+  /* LIKWID custom events require EVENT:COUNTER (colon), not COUNTER EVENT. */
+  assert(strstr(ddr_only, "CAS_COUNT_RD:MBOX0C0") != NULL);
+  assert(strstr(ddr_only, "CAS_COUNT_WR:MBOX0C1") != NULL);
+  assert(strstr(ddr_hbm, "CAS_COUNT_RD:HBM0C0") != NULL);
+  assert(strstr(ddr_only, "MBOX0C0 CAS_COUNT") == NULL);
+  assert(strstr(ddr_hbm, "HBM0C0 CAS_COUNT") == NULL);
+
+  skx = likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_IMC_SKX);
+  icx = likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_IMC_ICX);
+  cha = likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_CHA_SKX);
+  assert(strstr(skx, "CAS_COUNT_RD:MBOX0C0") != NULL);
+  assert(strstr(skx, "MBOX0C0 CAS_COUNT") == NULL);
+  assert(strstr(icx, "DDR_READ_BYTES:MDEV0C0") != NULL);
+  assert(strstr(icx, "MDEV0C0 DDR_READ") == NULL);
+  assert(strstr(cha, "LLC_LOOKUP_DATA_READ:CBOX0C0") != NULL);
+  assert(strstr(cha, "CBOX0C0 LLC_LOOKUP") == NULL);
+}
+
+static void assert_eventset_colon_tokens(const char *events)
+{
+  const char *p;
+  const char *comma;
+
+  assert(events != NULL);
+  assert(strchr(events, ':') != NULL);
+  p = events;
+  while (*p != '\0') {
+    comma = strchr(p, ',');
+    if (comma == NULL)
+      comma = p + strlen(p);
+    /* Each token must contain ':' (EVENT:COUNTER). */
+    assert(memchr(p, ':', (size_t)(comma - p)) != NULL);
+    /* Reject legacy counter-first space form inside a token. */
+    assert(memchr(p, ' ', (size_t)(comma - p)) == NULL);
+    if (*comma == '\0')
+      break;
+    p = comma + 1;
+  }
+}
+
+static void test_eventset_colon_format(void)
+{
+  int sizes[3];
+  int n;
+  int i;
+
+  assert_eventset_colon_tokens(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_IMC_SKX));
+  assert_eventset_colon_tokens(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_IMC_ICX));
+  assert_eventset_colon_tokens(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_IMC_SPR));
+  assert_eventset_colon_tokens(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_CHA_SKX));
+  assert_eventset_colon_tokens(likwid_spr_imc_eventset_string(LIKWID_SPR_IMC_EVT_DDR_ONLY));
+  assert_eventset_colon_tokens(likwid_spr_imc_eventset_string(LIKWID_SPR_IMC_EVT_HBM_ONLY));
+  assert_eventset_colon_tokens(likwid_spr_imc_eventset_string(LIKWID_SPR_IMC_EVT_DDR_HBM));
+
+  n = likwid_spr_imc_hbm_ladder_sizes(sizes, 3);
+  assert(n == 3);
+  for (i = 0; i < n; i++)
+    assert_eventset_colon_tokens(likwid_spr_imc_hbm_channels_eventset(sizes[i]));
+  assert_eventset_colon_tokens(likwid_spr_imc_hbm_channels_eventset(16));
 }
 
 static void test_hbm_ladder(void)
@@ -122,6 +185,7 @@ int main(void)
   test_profile_processor_match();
   test_counter_map();
   test_eventset_nonempty();
+  test_eventset_colon_format();
   test_hbm_ladder();
   test_spr_try_order();
   return 0;

@@ -3,72 +3,78 @@
 #include "likwid_uncore_profiles.h"
 #include "intel_processor.h"
 
+/*
+ * LIKWID perfmon_addEventSet: strings without ':' are treated as named
+ * performance groups (perfgroup_readGroup). Custom events must use
+ * EVENT:COUNTER (colon), matching core PMC form in likwid_arch_map.c.
+ */
+
 #define MBOX4_IMC_EVENTS                                                                           \
-  "MBOX0C0 CAS_COUNT_RD,MBOX0C1 CAS_COUNT_WR,"                                                     \
-  "MBOX1C0 CAS_COUNT_RD,MBOX1C1 CAS_COUNT_WR,"                                                     \
-  "MBOX2C0 CAS_COUNT_RD,MBOX2C1 CAS_COUNT_WR,"                                                     \
-  "MBOX3C0 CAS_COUNT_RD,MBOX3C1 CAS_COUNT_WR"
+  "CAS_COUNT_RD:MBOX0C0,CAS_COUNT_WR:MBOX0C1,"                                                     \
+  "CAS_COUNT_RD:MBOX1C0,CAS_COUNT_WR:MBOX1C1,"                                                     \
+  "CAS_COUNT_RD:MBOX2C0,CAS_COUNT_WR:MBOX2C1,"                                                     \
+  "CAS_COUNT_RD:MBOX3C0,CAS_COUNT_WR:MBOX3C1"
 
 #define MBOX6_IMC_EVENTS                                                                           \
   MBOX4_IMC_EVENTS ","                                                                             \
-                   "MBOX4C0 CAS_COUNT_RD,MBOX4C1 CAS_COUNT_WR,"                                    \
-                   "MBOX5C0 CAS_COUNT_RD,MBOX5C1 CAS_COUNT_WR"
+                   "CAS_COUNT_RD:MBOX4C0,CAS_COUNT_WR:MBOX4C1,"                                    \
+                   "CAS_COUNT_RD:MBOX5C0,CAS_COUNT_WR:MBOX5C1"
 
 /* LIKWID 5.5.2rc2 SPR counters.h defines MBOX0–11 only (not MBOX12–15). */
 #define MBOX12_IMC_EVENTS                                                                          \
   MBOX6_IMC_EVENTS ","                                                                             \
-                   "MBOX6C0 CAS_COUNT_RD,MBOX6C1 CAS_COUNT_WR,"                                    \
-                   "MBOX7C0 CAS_COUNT_RD,MBOX7C1 CAS_COUNT_WR,"                                    \
-                   "MBOX8C0 CAS_COUNT_RD,MBOX8C1 CAS_COUNT_WR,"                                    \
-                   "MBOX9C0 CAS_COUNT_RD,MBOX9C1 CAS_COUNT_WR,"                                    \
-                   "MBOX10C0 CAS_COUNT_RD,MBOX10C1 CAS_COUNT_WR,"                                  \
-                   "MBOX11C0 CAS_COUNT_RD,MBOX11C1 CAS_COUNT_WR"
+                   "CAS_COUNT_RD:MBOX6C0,CAS_COUNT_WR:MBOX6C1,"                                    \
+                   "CAS_COUNT_RD:MBOX7C0,CAS_COUNT_WR:MBOX7C1,"                                    \
+                   "CAS_COUNT_RD:MBOX8C0,CAS_COUNT_WR:MBOX8C1,"                                    \
+                   "CAS_COUNT_RD:MBOX9C0,CAS_COUNT_WR:MBOX9C1,"                                    \
+                   "CAS_COUNT_RD:MBOX10C0,CAS_COUNT_WR:MBOX10C1,"                                  \
+                   "CAS_COUNT_RD:MBOX11C0,CAS_COUNT_WR:MBOX11C1"
 
 #define MDEV4_ICX_EVENTS                                                                           \
-  "MDEV0C0 DDR_READ_BYTES,MDEV0C1 DDR_WRITE_BYTES,"                                                \
-  "MDEV1C0 DDR_READ_BYTES,MDEV1C1 DDR_WRITE_BYTES,"                                                \
-  "MDEV2C0 DDR_READ_BYTES,MDEV2C1 DDR_WRITE_BYTES,"                                                \
-  "MDEV3C0 DDR_READ_BYTES,MDEV3C1 DDR_WRITE_BYTES"
+  "DDR_READ_BYTES:MDEV0C0,DDR_WRITE_BYTES:MDEV0C1,"                                                \
+  "DDR_READ_BYTES:MDEV1C0,DDR_WRITE_BYTES:MDEV1C1,"                                                \
+  "DDR_READ_BYTES:MDEV2C0,DDR_WRITE_BYTES:MDEV2C1,"                                                \
+  "DDR_READ_BYTES:MDEV3C0,DDR_WRITE_BYTES:MDEV3C1"
 
-#define HBM1_EVENTS "HBM0C0 CAS_COUNT_RD,HBM0C1 CAS_COUNT_WR"
+#define HBM1_EVENTS "CAS_COUNT_RD:HBM0C0,CAS_COUNT_WR:HBM0C1"
 
 #define HBM4_EVENTS                                                                                \
   HBM1_EVENTS ","                                                                                  \
-              "HBM1C0 CAS_COUNT_RD,HBM1C1 CAS_COUNT_WR,"                                           \
-              "HBM2C0 CAS_COUNT_RD,HBM2C1 CAS_COUNT_WR,"                                           \
-              "HBM3C0 CAS_COUNT_RD,HBM3C1 CAS_COUNT_WR"
+              "CAS_COUNT_RD:HBM1C0,CAS_COUNT_WR:HBM1C1,"                                           \
+              "CAS_COUNT_RD:HBM2C0,CAS_COUNT_WR:HBM2C1,"                                           \
+              "CAS_COUNT_RD:HBM3C0,CAS_COUNT_WR:HBM3C1"
 
 #define HBM8_EVENTS                                                                                \
   HBM4_EVENTS ","                                                                                  \
-              "HBM4C0 CAS_COUNT_RD,HBM4C1 CAS_COUNT_WR,"                                           \
-              "HBM5C0 CAS_COUNT_RD,HBM5C1 CAS_COUNT_WR,"                                           \
-              "HBM6C0 CAS_COUNT_RD,HBM6C1 CAS_COUNT_WR,"                                           \
-              "HBM7C0 CAS_COUNT_RD,HBM7C1 CAS_COUNT_WR"
+              "CAS_COUNT_RD:HBM4C0,CAS_COUNT_WR:HBM4C1,"                                           \
+              "CAS_COUNT_RD:HBM5C0,CAS_COUNT_WR:HBM5C1,"                                           \
+              "CAS_COUNT_RD:HBM6C0,CAS_COUNT_WR:HBM6C1,"                                           \
+              "CAS_COUNT_RD:HBM7C0,CAS_COUNT_WR:HBM7C1"
 
 #define HBM16_EVENTS                                                                               \
   HBM8_EVENTS ","                                                                                  \
-              "HBM8C0 CAS_COUNT_RD,HBM8C1 CAS_COUNT_WR,"                                           \
-              "HBM9C0 CAS_COUNT_RD,HBM9C1 CAS_COUNT_WR,"                                           \
-              "HBM10C0 CAS_COUNT_RD,HBM10C1 CAS_COUNT_WR,"                                         \
-              "HBM11C0 CAS_COUNT_RD,HBM11C1 CAS_COUNT_WR,"                                         \
-              "HBM12C0 CAS_COUNT_RD,HBM12C1 CAS_COUNT_WR,"                                         \
-              "HBM13C0 CAS_COUNT_RD,HBM13C1 CAS_COUNT_WR,"                                         \
-              "HBM14C0 CAS_COUNT_RD,HBM14C1 CAS_COUNT_WR,"                                         \
-              "HBM15C0 CAS_COUNT_RD,HBM15C1 CAS_COUNT_WR"
+              "CAS_COUNT_RD:HBM8C0,CAS_COUNT_WR:HBM8C1,"                                           \
+              "CAS_COUNT_RD:HBM9C0,CAS_COUNT_WR:HBM9C1,"                                           \
+              "CAS_COUNT_RD:HBM10C0,CAS_COUNT_WR:HBM10C1,"                                         \
+              "CAS_COUNT_RD:HBM11C0,CAS_COUNT_WR:HBM11C1,"                                         \
+              "CAS_COUNT_RD:HBM12C0,CAS_COUNT_WR:HBM12C1,"                                         \
+              "CAS_COUNT_RD:HBM13C0,CAS_COUNT_WR:HBM13C1,"                                         \
+              "CAS_COUNT_RD:HBM14C0,CAS_COUNT_WR:HBM14C1,"                                         \
+              "CAS_COUNT_RD:HBM15C0,CAS_COUNT_WR:HBM15C1"
 
 #define SPR_DDR_ONLY_EVENTS MBOX12_IMC_EVENTS
 #define SPR_HBM_ONLY_EVENTS HBM16_EVENTS
 #define SPR_DDR_HBM_EVENTS MBOX12_IMC_EVENTS "," HBM16_EVENTS
 
 #define CHA_SKX_CBOX_EVENTS                                                                        \
-  "CBOX0C0 LLC_LOOKUP_DATA_READ,CBOX1C0 LLC_LOOKUP_DATA_READ,"                                     \
-  "CBOX2C0 LLC_LOOKUP_DATA_READ,CBOX3C0 LLC_LOOKUP_DATA_READ,"                                     \
-  "CBOX4C0 LLC_LOOKUP_DATA_READ,CBOX5C0 LLC_LOOKUP_DATA_READ,"                                     \
-  "CBOX6C0 LLC_LOOKUP_DATA_READ,CBOX7C0 LLC_LOOKUP_DATA_READ,"                                     \
-  "CBOX0C1 LLC_VICTIMS_M_STATE,CBOX1C1 LLC_VICTIMS_M_STATE,"                                       \
-  "CBOX2C1 LLC_VICTIMS_M_STATE,CBOX3C1 LLC_VICTIMS_M_STATE,"                                       \
-  "CBOX4C1 LLC_VICTIMS_M_STATE,CBOX5C1 LLC_VICTIMS_M_STATE,"                                       \
-  "CBOX6C1 LLC_VICTIMS_M_STATE,CBOX7C1 LLC_VICTIMS_M_STATE"
+  "LLC_LOOKUP_DATA_READ:CBOX0C0,LLC_LOOKUP_DATA_READ:CBOX1C0,"                                     \
+  "LLC_LOOKUP_DATA_READ:CBOX2C0,LLC_LOOKUP_DATA_READ:CBOX3C0,"                                     \
+  "LLC_LOOKUP_DATA_READ:CBOX4C0,LLC_LOOKUP_DATA_READ:CBOX5C0,"                                     \
+  "LLC_LOOKUP_DATA_READ:CBOX6C0,LLC_LOOKUP_DATA_READ:CBOX7C0,"                                     \
+  "LLC_VICTIMS_M_STATE:CBOX0C1,LLC_VICTIMS_M_STATE:CBOX1C1,"                                       \
+  "LLC_VICTIMS_M_STATE:CBOX2C1,LLC_VICTIMS_M_STATE:CBOX3C1,"                                       \
+  "LLC_VICTIMS_M_STATE:CBOX4C1,LLC_VICTIMS_M_STATE:CBOX5C1,"                                       \
+  "LLC_VICTIMS_M_STATE:CBOX6C1,LLC_VICTIMS_M_STATE:CBOX7C1"
 
 static const char *const profile_events[LIKWID_UNCORE_PROFILE_COUNT] = {
     [LIKWID_UNCORE_PROFILE_IMC_SKX] = MBOX6_IMC_EVENTS,

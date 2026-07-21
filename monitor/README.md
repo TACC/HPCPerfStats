@@ -116,7 +116,10 @@ registered (`intel_x86_pcu` and pre-SKX uncore types removed). SPR exposes DDR
 and HBM uncore keys (`dram_*`, `hbm_*`); SPR IMC LIKWID eventsets use **MBOX0–11**
 only (LIKWID 5.5 Sapphire Rapids counter table — not MBOX12–15), always try
 DDR+HBM first then DDR-only then HBM-only, then an HBM channel-count ladder
-(16→8→4→1). EDAC `has_ddr`/`has_hbm` are logged only.
+(16→8→4→1). EDAC `has_ddr`/`has_hbm` are logged only. Uncore custom event
+strings use LIKWID **`EVENT:COUNTER`** form (e.g. `CAS_COUNT_RD:MBOX0C0`);
+space-separated counter-first tokens are rejected by `perfmon_addEventSet`
+as named performance groups.
 `host_roofline_peak` adds
 `cpu_peak_hbm_bw_bytes_per_s` (EDAC HBM/DDR split, `peak_calc_version` 2).
 
