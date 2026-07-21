@@ -67,7 +67,10 @@ RAPL notes:
 
 - LIKWID `power_read(cpu, reg, uint64_t *data)` requires a **64-bit** buffer; energy status is the low 32 bits (`likwid_rapl_energy_status_lo32` → `likwid_rapl_raw_to_mj`).
 - Do not enable AMD RAPL/PMC/DF types on Intel (or Intel RAPL on AMD); shared `likwid_rapl_is_supported_processor()` is OR of both vendors and is not used for type begin.
+- **`amd_x86_rapl` begin requires `cpu_counter_metrics_likwid_ready()`** (same session gate as AMD DF). If `host_cpu_hw` begin fails, RAPL is **disabled** — it must not publish flat-zero rows.
 - **Flat-zero `core_energy` / `pkg_energy` on AMD is not healthy idle behavior** — it means `power_read` failed or RAPL was never initialized (typically `host_cpu_hw` / HPMinit did not run). Healthy sockets show large cumulative mJ.
+- AMD core eventset uses **`LS_DISPATCH_ALL`** (LIKWID Zen umask); bare `LS_DISPATCH` fails `perfmon_addEventSet` and silently used to disable `host_cpu_hw`.
+- `host_cpu_hw` begin failures log init vs eventset step and the event string (`likwid_backend_begin` / `likwid_pmc_adapter_setup_events`).
 | `intel_x86_uncore_imc_skx` | `IMC_SKX` (`MBOX*` CAS) | Cascade Lake / SKX server |
 | `intel_x86_uncore_imc_icx` | `IMC_ICX` (`MDEV*` DDR bytes) | Ice Lake server |
 | `intel_x86_uncore_imc_spr` | `IMC_SPR` (`MBOX*` + `HBM*` CAS) | DDR and HBM on same type |

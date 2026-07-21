@@ -9,9 +9,11 @@
 #include <string.h>
 #include "stats.h"
 #include "trace.h"
+#include "monitor_log.h"
 #include "cpuid.h"
 #include "likwid_rapl.h"
 #include "rapl_likwid_stats.h"
+#include "cpu_counter_metrics_likwid_begin.h"
 
 #define KEYS X(core_energy, "E,W=32,U=mJ", ""), X(pkg_energy, "E,W=32,U=mJ", "")
 
@@ -50,6 +52,13 @@ static int amd64_rapl_begin(struct stats_type *type)
 
   if (!likwid_rapl_is_supported_amd_processor()) {
     TRACE("amd_x86_rapl disabled: processor %d is not AMD Zen RAPL capable\n", processor);
+    type->st_enabled = 0;
+    return -1;
+  }
+
+  if (!cpu_counter_metrics_likwid_ready()) {
+    monitor_log_error(
+        "amd_x86_rapl: disabled (LIKWID PMC session not ready; host_cpu_hw must init first)\n");
     type->st_enabled = 0;
     return -1;
   }

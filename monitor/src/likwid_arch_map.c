@@ -17,8 +17,10 @@ static const char *intel_eventset(void)
 
 static const char *amd_eventset(void)
 {
+  /* LIKWID Zen2–Zen5 tables expose LS_DISPATCH_* umasks only (no bare LS_DISPATCH).
+   * Bare LS_DISPATCH fails perfmon_addEventSet on Turin (Zen5) and disables host_cpu_hw. */
   return "RETIRED_INSTRUCTIONS:PMC0,RETIRED_BRANCH_INSTR:PMC1,RETIRED_MISP_BRANCH_INSTR:PMC2,"
-         "LS_DISPATCH:PMC3";
+         "LS_DISPATCH_ALL:PMC3";
 }
 
 static int str_eq_nocase(const char *a, const char *b)

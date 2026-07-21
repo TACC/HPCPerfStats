@@ -25,6 +25,9 @@ alwaysApply: false
 - DF `st_name`s are family-named: `amd_x86_uncore_df_{rome,milan,genoa,turin}` (IMC pattern).
 - CPUID allowlists for EPYC are **server model ranges** only (`amd_cpuid_match.c`).
 - **Runtime begin order:** `stats_runtime.c` begins `host_cpu_hw` before other types so LIKWID `HPMinit` runs before AMD DF/RAPL begin. Registry table order stays `st_name` sorted for binary search.
+- **`amd_x86_rapl` begin** must require `cpu_counter_metrics_likwid_ready()` (same gate as DF). Flat RAPL `0 0` rows are a **failure mode**, not healthy idle — disable the type when LIKWID never initialized.
+- **Begin failures must be journal-visible:** `likwid_backend_begin` and `likwid_pmc_adapter_setup_events` log which step failed (`HPMinit` / `addEventSet` / `setupCounters` / `startCounters`) and the event string; do not rely on quiet stderr redirect alone.
+- **AMD core eventset:** use `LS_DISPATCH_ALL` (not bare `LS_DISPATCH`) — LIKWID Zen tables only define `LS_DISPATCH_*` umasks.
 
 See [LIKWID_MIGRATION.md](../LIKWID_MIGRATION.md).
 

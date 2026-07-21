@@ -47,8 +47,10 @@ int likwid_pmc_adapter_init(int nr_threads)
   int rc = -1;
   int i = 0;
   int *cpus = NULL;
-  if (nr_threads <= 0)
+  if (nr_threads <= 0) {
+    ERROR("LIKWID PMC init failed: nr_threads=%d\n", nr_threads);
     return -1;
+  }
   cpus = (int *)malloc((size_t)nr_threads * sizeof(*cpus));
   if (cpus == NULL) {
     ERROR("cannot allocate LIKWID cpu map: %m\n");
@@ -99,8 +101,10 @@ int likwid_pmc_adapter_setup_events(const char *event_string)
   int saved_stderr = -1;
   int null_fd = -1;
   int quiet = 0;
-  if (!g_initialized || event_string == NULL)
+  if (!g_initialized || event_string == NULL) {
+    ERROR("LIKWID setup_events: not initialized or null event string\n");
     return -1;
+  }
   quiet = likwid_env_setup_quiet();
   if (quiet) {
     saved_stderr = dup(STDERR_FILENO);
@@ -120,8 +124,10 @@ int likwid_pmc_adapter_setup_events(const char *event_string)
     close(null_fd);
     null_fd = -1;
   }
-  if (g_group < 0)
+  if (g_group < 0) {
+    ERROR("LIKWID perfmon_addEventSet failed for events=`%s`\n", event_string);
     return -1;
+  }
   if (quiet) {
     saved_stderr = dup(STDERR_FILENO);
     if (saved_stderr >= 0) {
@@ -130,10 +136,14 @@ int likwid_pmc_adapter_setup_events(const char *event_string)
         (void)dup2(null_fd, STDERR_FILENO);
     }
   }
-  if (perfmon_setupCounters(g_group) < 0)
+  if (perfmon_setupCounters(g_group) < 0) {
+    ERROR("LIKWID perfmon_setupCounters failed for events=`%s`\n", event_string);
     goto err;
-  if (perfmon_startCounters() < 0)
+  }
+  if (perfmon_startCounters() < 0) {
+    ERROR("LIKWID perfmon_startCounters failed for events=`%s`\n", event_string);
     goto err;
+  }
   if (quiet && saved_stderr >= 0) {
     (void)dup2(saved_stderr, STDERR_FILENO);
     close(saved_stderr);

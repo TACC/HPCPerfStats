@@ -28,10 +28,40 @@ static void test_icx_unchanged_shape(void)
   assert(strstr(es, "MEM_LOAD_UOPS_RETIRED_") == NULL);
 }
 
+static void test_amd_turin_uses_ls_dispatch_all(void)
+{
+  const char *es = likwid_arch_eventset_for_processor(AMD_TURIN, 6);
+  const char *p;
+
+  assert(es != NULL);
+  assert(strstr(es, "RETIRED_INSTRUCTIONS:PMC0") != NULL);
+  assert(strstr(es, "RETIRED_BRANCH_INSTR:PMC1") != NULL);
+  assert(strstr(es, "RETIRED_MISP_BRANCH_INSTR:PMC2") != NULL);
+  assert(strstr(es, "LS_DISPATCH_ALL:PMC3") != NULL);
+  /* Bare LS_DISPATCH has no default umask in LIKWID Zen tables. */
+  for (p = es; (p = strstr(p, "LS_DISPATCH")) != NULL; p++) {
+    assert(strncmp(p, "LS_DISPATCH_ALL", 15) == 0);
+  }
+}
+
+static void test_amd_genoa_same_core_eventset(void)
+{
+  const char *es = likwid_arch_eventset_for_processor(AMD_GENOA, 6);
+  const char *p;
+
+  assert(es != NULL);
+  assert(strstr(es, "LS_DISPATCH_ALL:PMC3") != NULL);
+  for (p = es; (p = strstr(p, "LS_DISPATCH")) != NULL; p++) {
+    assert(strncmp(p, "LS_DISPATCH_ALL", 15) == 0);
+  }
+}
+
 int main(void)
 {
   test_spr_eventset_no_skx_uops();
   test_icx_unchanged_shape();
+  test_amd_turin_uses_ls_dispatch_all();
+  test_amd_genoa_same_core_eventset();
   printf("test_likwid_arch_map_spr passed\n");
   return 0;
 }
