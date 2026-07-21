@@ -8,6 +8,10 @@
 #include <stdint.h>
 #include "stats.h"
 
+/* Default LIKWID_FORCE=1 if unset (C-API equivalent of likwid-perfctr -f).
+ * Operators may set LIKWID_FORCE=0 before init to opt out of PMC overwrite. */
+void likwid_pmc_adapter_ensure_force_env(void);
+
 int likwid_pmc_adapter_init(int nr_threads);
 void likwid_pmc_adapter_finalize(void);
 int likwid_pmc_adapter_setup_events(const char *event_string);

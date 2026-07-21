@@ -41,6 +41,33 @@ static int likwid_env_verbosity(void)
   return atoi(v);
 }
 
+#ifdef HAVE_LIKWID
+static void likwid_stderr_quiet_begin(int *saved_stderr, int *null_fd)
+{
+  *saved_stderr = -1;
+  *null_fd = -1;
+  *saved_stderr = dup(STDERR_FILENO);
+  if (*saved_stderr >= 0) {
+    *null_fd = open("/dev/null", O_WRONLY);
+    if (*null_fd >= 0)
+      (void)dup2(*null_fd, STDERR_FILENO);
+  }
+}
+
+static void likwid_stderr_quiet_end(int *saved_stderr, int *null_fd)
+{
+  if (*saved_stderr >= 0) {
+    (void)dup2(*saved_stderr, STDERR_FILENO);
+    close(*saved_stderr);
+    *saved_stderr = -1;
+  }
+  if (*null_fd >= 0) {
+    close(*null_fd);
+    *null_fd = -1;
+  }
+}
+#endif
+
 int likwid_pmc_adapter_init(int nr_threads)
 {
 #ifdef HAVE_LIKWID
@@ -51,6 +78,8 @@ int likwid_pmc_adapter_init(int nr_threads)
     ERROR("LIKWID PMC init failed: nr_threads=%d\n", nr_threads);
     return -1;
   }
+  /* Privileged host daemon: claim in-use PMCs (same as likwid-perfctr -f). */
+  likwid_pmc_adapter_ensure_force_env();
   cpus = (int *)malloc((size_t)nr_threads * sizeof(*cpus));
   if (cpus == NULL) {
     ERROR("cannot allocate LIKWID cpu map: %m\n");
@@ -101,64 +130,50 @@ int likwid_pmc_adapter_setup_events(const char *event_string)
   int saved_stderr = -1;
   int null_fd = -1;
   int quiet = 0;
+  int setup_rc = 0;
+  int start_rc = 0;
   if (!g_initialized || event_string == NULL) {
     ERROR("LIKWID setup_events: not initialized or null event string\n");
     return -1;
   }
   quiet = likwid_env_setup_quiet();
-  if (quiet) {
-    saved_stderr = dup(STDERR_FILENO);
-    if (saved_stderr >= 0) {
-      null_fd = open("/dev/null", O_WRONLY);
-      if (null_fd >= 0)
-        (void)dup2(null_fd, STDERR_FILENO);
-    }
-  }
+
+  if (quiet)
+    likwid_stderr_quiet_begin(&saved_stderr, &null_fd);
   g_group = perfmon_addEventSet(event_string);
-  if (quiet && saved_stderr >= 0) {
-    (void)dup2(saved_stderr, STDERR_FILENO);
-    close(saved_stderr);
-    saved_stderr = -1;
-  }
-  if (quiet && null_fd >= 0) {
-    close(null_fd);
-    null_fd = -1;
-  }
+  if (quiet)
+    likwid_stderr_quiet_end(&saved_stderr, &null_fd);
+  if (g_group < 0 && quiet)
+    g_group = perfmon_addEventSet(event_string);
   if (g_group < 0) {
     ERROR("LIKWID perfmon_addEventSet failed for events=`%s`\n", event_string);
     return -1;
   }
-  if (quiet) {
-    saved_stderr = dup(STDERR_FILENO);
-    if (saved_stderr >= 0) {
-      null_fd = open("/dev/null", O_WRONLY);
-      if (null_fd >= 0)
-        (void)dup2(null_fd, STDERR_FILENO);
-    }
-  }
-  if (perfmon_setupCounters(g_group) < 0) {
+
+  if (quiet)
+    likwid_stderr_quiet_begin(&saved_stderr, &null_fd);
+  setup_rc = perfmon_setupCounters(g_group);
+  if (quiet)
+    likwid_stderr_quiet_end(&saved_stderr, &null_fd);
+  if (setup_rc < 0 && quiet)
+    setup_rc = perfmon_setupCounters(g_group);
+  if (setup_rc < 0) {
     ERROR("LIKWID perfmon_setupCounters failed for events=`%s`\n", event_string);
-    goto err;
+    return -1;
   }
-  if (perfmon_startCounters() < 0) {
+
+  if (quiet)
+    likwid_stderr_quiet_begin(&saved_stderr, &null_fd);
+  start_rc = perfmon_startCounters();
+  if (quiet)
+    likwid_stderr_quiet_end(&saved_stderr, &null_fd);
+  if (start_rc < 0 && quiet)
+    start_rc = perfmon_startCounters();
+  if (start_rc < 0) {
     ERROR("LIKWID perfmon_startCounters failed for events=`%s`\n", event_string);
-    goto err;
+    return -1;
   }
-  if (quiet && saved_stderr >= 0) {
-    (void)dup2(saved_stderr, STDERR_FILENO);
-    close(saved_stderr);
-  }
-  if (quiet && null_fd >= 0)
-    close(null_fd);
   return 0;
-err:
-  if (quiet && saved_stderr >= 0) {
-    (void)dup2(saved_stderr, STDERR_FILENO);
-    close(saved_stderr);
-  }
-  if (quiet && null_fd >= 0)
-    close(null_fd);
-  return -1;
 #else
   (void)event_string;
   return -1;
