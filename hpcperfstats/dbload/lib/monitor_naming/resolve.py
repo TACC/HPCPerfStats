@@ -138,8 +138,45 @@ def amd_pmc_type_names() -> tuple[str, ...]:
     return _names_canonical_then_legacy(canon.AMD_PMC_TYPE, leg.LEGACY_AMD_PMC_TYPE)
 
 
+def amd_df_types_probe_order() -> tuple[str, ...]:
+    """AMD DF typenames: live family first, then historical bare / amd64_df."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for name in canon.AMD_DF_STATS_TYPES:
+        if name not in seen:
+            seen.add(name)
+            out.append(name)
+    for name in (canon.AMD_DF_TYPE, leg.LEGACY_AMD_DF_TYPE):
+        if name not in seen:
+            seen.add(name)
+            out.append(name)
+    return tuple(out)
+
+
 def amd_df_type_names() -> tuple[str, ...]:
-    return _names_canonical_then_legacy(canon.AMD_DF_TYPE, leg.LEGACY_AMD_DF_TYPE)
+    return amd_df_types_probe_order()
+
+
+def amd_df_bw_event_conv_tries() -> tuple[tuple[tuple[str, ...], float], ...]:
+    """(events, conv) for AMD DF BW: live byte counters first, then historical MBW."""
+    return (
+        (canon.DRAM_CHAN_BYTES_EVENTS, 1.0 / (1024 ** 3)),
+        (leg.LEGACY_AMD_DF_MBW_CHANNEL_EVENTS, 2.0 / (1024 ** 3)),
+    )
+
+
+def rapl_types_probe_order() -> tuple[str, ...]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for name in canon.INTEL_RAPL_STATS_TYPES + canon.AMD_RAPL_STATS_TYPES:
+        if name not in seen:
+            seen.add(name)
+            out.append(name)
+    for name in leg.LEGACY_INTEL_RAPL_STATS_TYPES + leg.LEGACY_AMD_RAPL_STATS_TYPES:
+        if name not in seen:
+            seen.add(name)
+            out.append(name)
+    return tuple(out)
 
 
 def host_cpu_hw_type_names() -> tuple[str, ...]:
@@ -354,6 +391,13 @@ def events_probe_names(events, typ: str | None = None) -> list[str]:
 
 def type_probe_names(typ: str) -> tuple[str, ...]:
     """host_data.type values to try for ORM queries (canonical first)."""
+    # Bare / legacy AMD DF → full family probe order (live family types first).
+    # Family types stay exact — do not alias rome/milan/… onto historical bare rows.
+    if typ in (canon.AMD_DF_TYPE, leg.LEGACY_AMD_DF_TYPE):
+        return amd_df_types_probe_order()
+    if typ in canon.AMD_DF_STATS_TYPES:
+        return (typ,)
+
     seen: set[str] = set()
     out: list[str] = []
 
@@ -364,11 +408,11 @@ def type_probe_names(typ: str) -> tuple[str, ...]:
 
     add(typ)
     add(leg.TYPE_LEGACY_TO_CANONICAL.get(typ))
-    canon = canonical_type_name(typ)
-    if canon != typ:
-        add(canon)
-    for leg_name, canon_name in leg.TYPE_LEGACY_TO_CANONICAL.items():
-        if canon_name == canon or canon_name == typ:
+    canon_name = canonical_type_name(typ)
+    if canon_name != typ:
+        add(canon_name)
+    for leg_name, mapped in leg.TYPE_LEGACY_TO_CANONICAL.items():
+        if mapped == canon_name or mapped == typ:
             add(leg_name)
     return tuple(out)
 

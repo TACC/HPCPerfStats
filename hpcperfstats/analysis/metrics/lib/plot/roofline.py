@@ -235,43 +235,44 @@ def _get_flops_bw_df_and_reason(jt):
     bw_gb = None
     attempts = []
 
-    # AMD: fp_ops_retired and MBW channels
-    amd_bw_events = [
-        "MBW_CHANNEL_0",
-        "MBW_CHANNEL_1",
-        "MBW_CHANNEL_2",
-        "MBW_CHANNEL_3",
-        "MBW_CHANNEL_4",
-        "MBW_CHANNEL_5",
-        "MBW_CHANNEL_6",
-        "MBW_CHANNEL_7",
-    ]
+    # AMD: fp_ops_retired and DF channel BW (family dram_chan*_bytes or historical MBW)
+    from hpcperfstats.dbload.lib.monitor_naming.canonical import AMD_DF_STATS_TYPES
+    from hpcperfstats.dbload.lib.monitor_naming.resolve import amd_df_bw_event_conv_tries
+
     for pmc_typ in amd_pmc_type_names():
         for flop_ev in fp_ops_retired_event_names():
             agg_flops, flops_src = _aggregate_arc(jt, pmc_typ, [flop_ev], 1e-9)
             for df_typ in amd_df_type_names():
-                agg_bw, bw_src = _aggregate_arc(
-                    jt,
-                    df_typ,
-                    amd_bw_events,
-                    2 / (1024 ** 3),
+                tries = (
+                    amd_df_bw_event_conv_tries()[:1]
+                    if df_typ in AMD_DF_STATS_TYPES
+                    else amd_df_bw_event_conv_tries()[::-1]
                 )
-                attempts.append(
-                    f"amd rows(flops={len(agg_flops.index)}, bw={len(agg_bw.index)}) "
-                    f"src(flops={flops_src}, bw={bw_src})"
-                )
-                if (
-                    not agg_flops.empty
-                    and "sum_val" in agg_flops.columns
-                    and not agg_bw.empty
-                    and "sum_val" in agg_bw.columns
-                ):
-                    flops_gf = agg_flops.rename(columns={"sum_val": "flops_gf"})[
-                        ["host", "time", "flops_gf"]
-                    ]
-                    bw_gb = agg_bw.rename(columns={"sum_val": "bw_gb"})[
-                        ["host", "time", "bw_gb"]
-                    ]
+                for bw_events, bw_conv in tries:
+                    agg_bw, bw_src = _aggregate_arc(
+                        jt,
+                        df_typ,
+                        list(bw_events),
+                        bw_conv,
+                    )
+                    attempts.append(
+                        f"amd rows(flops={len(agg_flops.index)}, bw={len(agg_bw.index)}) "
+                        f"src(flops={flops_src}, bw={bw_src})"
+                    )
+                    if (
+                        not agg_flops.empty
+                        and "sum_val" in agg_flops.columns
+                        and not agg_bw.empty
+                        and "sum_val" in agg_bw.columns
+                    ):
+                        flops_gf = agg_flops.rename(columns={"sum_val": "flops_gf"})[
+                            ["host", "time", "flops_gf"]
+                        ]
+                        bw_gb = agg_bw.rename(columns={"sum_val": "bw_gb"})[
+                            ["host", "time", "bw_gb"]
+                        ]
+                        break
+                if flops_gf is not None and bw_gb is not None:
                     break
             if flops_gf is not None and bw_gb is not None:
                 break

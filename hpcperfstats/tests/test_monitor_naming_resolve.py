@@ -121,6 +121,45 @@ def test_imc_types_probe_order_includes_legacy_knl_after_canonical():
   assert order.index("intel_x86_uncore_imc_skx") < order.index(INGEST_LEGACY_KNL_IMC_TYPE)
 
 
+def test_imc_types_probe_order_includes_icx_spr_short_forms():
+  order = imc_types_probe_order()
+  assert "intel_icx_imc" in order
+  assert "intel_spr_imc" in order
+
+
+def test_amd_df_types_probe_order_family_before_historical():
+  from hpcperfstats.dbload.lib.monitor_naming.resolve import amd_df_types_probe_order
+
+  order = amd_df_types_probe_order()
+  assert order[0] == "amd_x86_uncore_df_rome"
+  assert "amd_x86_uncore_df_milan" in order
+  assert "amd_x86_uncore_df_genoa" in order
+  assert "amd_x86_uncore_df_turin" in order
+  assert "amd_x86_uncore_df" in order
+  assert "amd64_df" in order
+  assert order.index("amd_x86_uncore_df_rome") < order.index("amd_x86_uncore_df")
+
+
+def test_type_probe_names_bare_amd_df_expands_to_family():
+  names = type_probe_names("amd_x86_uncore_df")
+  assert "amd_x86_uncore_df_rome" in names
+  assert names[0] == "amd_x86_uncore_df_rome"
+
+
+def test_type_probe_names_family_amd_df_stays_exact():
+  """Family DF must not alias onto historical bare amd_x86_uncore_df rows."""
+  names = type_probe_names("amd_x86_uncore_df_rome")
+  assert names == ("amd_x86_uncore_df_rome",)
+  assert "amd_x86_uncore_df" not in names
+  assert "amd64_df" not in names
+
+
+def test_mbw_channel_event_probe_includes_dram_chan():
+  names = events_probe_names(["MBW_CHANNEL_0"])
+  assert "MBW_CHANNEL_0" in names
+  assert "dram_chan0_bytes" in names
+
+
 def test_type_probe_names_host_ib_includes_retired_collectors():
   names = type_probe_names("host_ib")
   assert names[0] == "host_ib"

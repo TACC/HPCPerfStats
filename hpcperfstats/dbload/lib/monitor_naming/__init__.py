@@ -1,18 +1,24 @@
 """Monitor st_name and event naming: canonical (new monitor), legacy (historical host_data), resolve (dual-read)."""
 
 from hpcperfstats.dbload.lib.monitor_naming.canonical import (
+    AMD_DF_STATS_TYPES,
     AMD_DF_TYPE,
     AMD_PMC_TYPE,
+    AMD_RAPL_STATS_TYPES,
     ARM_IMC_STATS_TYPES,
     CHA_TYPENAME_PRIORITY,
+    DRAM_CHAN_BYTES_EVENTS,
     HOST_CPU_HW_TYPE,
     HOST_ROOFLINE_PEAK_TYPE,
     INTEL_CORE_PMC_TYPES_ORDERED,
     INTEL_IMC_STATS_TYPES,
+    INTEL_RAPL_STATS_TYPES,
     PMC_TYPENAME_PRIORITY,
 )
 from hpcperfstats.dbload.lib.monitor_naming.resolve import (
+    amd_df_bw_event_conv_tries,
     amd_df_type_names,
+    amd_df_types_probe_order,
     amd_pmc_type_names,
     core_pmc_types_probe_order,
     dram_cas_event_names,
@@ -20,19 +26,26 @@ from hpcperfstats.dbload.lib.monitor_naming.resolve import (
     imc_types_probe_order,
     instr_retired_event_names,
     pkg_energy_event_names,
+    rapl_types_probe_order,
 )
 
 __all__ = [
+    "AMD_DF_STATS_TYPES",
     "AMD_DF_TYPE",
     "AMD_PMC_TYPE",
+    "AMD_RAPL_STATS_TYPES",
     "ARM_IMC_STATS_TYPES",
     "CHA_TYPENAME_PRIORITY",
+    "DRAM_CHAN_BYTES_EVENTS",
     "HOST_CPU_HW_TYPE",
     "HOST_ROOFLINE_PEAK_TYPE",
     "INTEL_CORE_PMC_TYPES_ORDERED",
     "INTEL_IMC_STATS_TYPES",
+    "INTEL_RAPL_STATS_TYPES",
     "PMC_TYPENAME_PRIORITY",
+    "amd_df_bw_event_conv_tries",
     "amd_df_type_names",
+    "amd_df_types_probe_order",
     "amd_pmc_type_names",
     "core_pmc_types_probe_order",
     "dram_cas_event_names",
@@ -40,4 +53,5 @@ __all__ = [
     "imc_types_probe_order",
     "instr_retired_event_names",
     "pkg_energy_event_names",
+    "rapl_types_probe_order",
 ]

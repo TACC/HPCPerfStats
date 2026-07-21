@@ -14,7 +14,9 @@ This note summarizes how CPU/GPU vendors are handled in `hpcperfstats/analysis` 
 - **`utils.utils`**: Logical `pmc` uses `pmc_typename_priority()` (AMD and Intel GPR PMC before `host_cpu_hw`). IMC uses `imc_types_probe_order()`. CHA uses `cha_typename_priority()`.
 - **Summary plot**: Intel core metrics try `intel_x86_pmc_gpr8`, then `intel_x86_pmc_gpr4`, then `host_cpu_hw`. Measured memory `mbw` walks `imc_types_probe_order()` with `dram_cas_read_write_pairs()` and, on SPR, also `hbm_cas_read_write_pairs()` (sum when both present).
 - **Intel CHA (optional)**: When `intel_x86_uncore_cha_skx` is in the job schema, the summary grid may include combined CHA `arc` rates. New ingest excludes CHA typenames from `host_data` unless product policy changes.
-- **Roofline**: Intel FLOPS from `core_pmc_types_probe_order()` (FP_ARITH or legacy SSE proxies). Measured Intel BW uses DDR CAS and/or SPR HBM CAS (sum when both). AMD needs `amd_x86_pmc` + `amd_x86_uncore_df` MBW channels when exposed. Historical Intel KNL jobs may still have legacy IMC typenames in `host_data`, but KNL-specific nominal roofline peaks were retired from `roofline_peaks.py`.
+- **Roofline**: Intel FLOPS from `core_pmc_types_probe_order()` (FP_ARITH or legacy SSE proxies). Measured Intel BW uses DDR CAS and/or SPR HBM CAS (sum when both). AMD uses family DF (`amd_x86_uncore_df_{rome,milan,genoa,turin}` + `dram_chan*_bytes`) or historical `amd_x86_uncore_df`/`amd64_df` + `MBW_CHANNEL_*`, with FLOPS from `amd_x86_pmc` or `host_cpu_hw`. Historical Intel KNL jobs may still have legacy IMC typenames in `host_data`, but KNL-specific nominal roofline peaks were retired from `roofline_peaks.py`.
+- **`utils.u.imc`**: first match in `imc_types_probe_order()` present in schemas (includes `intel_icx_imc` / `intel_spr_imc` short forms).
+- **RAPL**: `intel_x86_rapl` / `amd_x86_rapl` package energy → summary `watts` / `amd_pkg_w` (sparse `watts` allowed like `amd_pkg_w`).
 
 ### Monitor ↔ analysis contract (`host_data.type`)
 
@@ -26,8 +28,8 @@ Typenames must match the **shipped** monitor `st_name` values for new ingest. Hi
 
 - **File**: `hpcperfstats/analysis/metrics/lib/plot/roofline_peaks.py` — `ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS`, `infer_cpu_roofline_peak_flops_and_bw_gbps(jt)`.
 - **Optional true-roof contract**: `host_roofline_peak` events (`cpu_peak_fp64_flops_per_s`, `cpu_peak_dram_bw_bytes_per_s`, `cpu_peak_hbm_bw_bytes_per_s`, GPU peaks) when present. CPU memory roof bandwidth sums DDR and HBM peaks when HBM is positive.
-- **Intel**: One table row per canonical IMC typename in `INTEL_IMC_STATS_TYPES` (e.g. `intel_x86_uncore_imc_hsw`, `intel_x86_uncore_imc_skx`).
-- **AMD**: `amd_x86_pmc` + `amd_x86_uncore_df` → `amd64_epyc_2s_default` peak row.
+- **Intel**: One table row per canonical IMC typename in `INTEL_IMC_STATS_TYPES` (live: `intel_x86_uncore_imc_skx` / `_icx` / `_spr`).
+- **AMD**: family DF + `host_cpu_hw` (or historical `amd_x86_pmc` + bare/`amd64_df`) → `amd64_epyc_2s_default` peak row.
 - **ARM Grace-class**: `arm_aarch64_imc` and/or `host_cpu_hw` synthetic counters (`arm_est_flops`, `ARM_DRAM_BW_BYTES`). Precision split uses Grace scalar FP (`fp_arith_inst_retired_scalar_*`) for `avg_flops64b`/`32b` when Intel FP_ARITH is absent; INT ops (`arm_int8_ops` / `arm_int16_ops`) feed `avg_arm_int*_ops` and the CPU Multiprecision Mix pie (not folded into `arm_est_flops`).
 - **Cursor rule**: `hpcperfstats/cursor-rules/monitor-analysis-architecture-sync.mdc`.
 

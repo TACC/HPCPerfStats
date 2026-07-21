@@ -112,60 +112,60 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 
 ### `MBW_CHANNEL_0`
 
-- **Definition:** AMD memory bandwidth counter for one DF DRAM channel (ingest maps encodings to MBW_CHANNEL_n).
+- **Definition:** Historical AMD DF DRAM channel bandwidth counter (legacy archives; dual-read with dram_chan0_bytes).
 - **Domain:** DRAM / memory controller
 - **Typical `host_data.type` values:** `amd64_df`
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/roofline.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/site/lib/machine/job_plot_artifacts.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/site/lib/machine/job_plot_artifacts.py
 - **Tests:** hpcperfstats/analysis/metrics/tests/test_hover_tooltips.py; hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py
 
 ### `MBW_CHANNEL_1`
 
-- **Definition:** AMD memory bandwidth counter for one DF DRAM channel (ingest maps encodings to MBW_CHANNEL_n).
+- **Definition:** Historical AMD DF DRAM channel bandwidth counter (legacy archives; dual-read with dram_chan1_bytes).
 - **Domain:** DRAM / memory controller
 - **Typical `host_data.type` values:** `amd64_df`
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/roofline.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/site/lib/machine/job_plot_artifacts.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/site/lib/machine/job_plot_artifacts.py
 
 ### `MBW_CHANNEL_2`
 
-- **Definition:** AMD memory bandwidth counter for one DF DRAM channel (ingest maps encodings to MBW_CHANNEL_n).
+- **Definition:** Historical AMD DF DRAM channel bandwidth counter (legacy archives; dual-read with dram_chan2_bytes).
 - **Domain:** DRAM / memory controller
 - **Typical `host_data.type` values:** `amd64_df`
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/roofline.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/site/lib/machine/job_plot_artifacts.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/site/lib/machine/job_plot_artifacts.py
 
 ### `MBW_CHANNEL_3`
 
-- **Definition:** AMD memory bandwidth counter for one DF DRAM channel (ingest maps encodings to MBW_CHANNEL_n).
+- **Definition:** Historical AMD DF DRAM channel bandwidth counter (legacy archives; dual-read with dram_chan3_bytes).
 - **Domain:** DRAM / memory controller
 - **Typical `host_data.type` values:** `amd64_df`
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/roofline.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/site/lib/machine/job_plot_artifacts.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/site/lib/machine/job_plot_artifacts.py
 
 ### `MBW_CHANNEL_4`
 
-- **Definition:** AMD memory bandwidth counter for one DF DRAM channel (ingest maps encodings to MBW_CHANNEL_n).
+- **Definition:** Historical AMD DF DRAM channel bandwidth counter for one DF DRAM channel (legacy 8-channel archives).
 - **Domain:** DRAM / memory controller
 - **Typical `host_data.type` values:** `amd64_df`
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/roofline.py; hpcperfstats/site/lib/machine/job_plot_artifacts.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/site/lib/machine/job_plot_artifacts.py
 
 ### `MBW_CHANNEL_5`
 
-- **Definition:** AMD memory bandwidth counter for one DF DRAM channel (ingest maps encodings to MBW_CHANNEL_n).
+- **Definition:** Historical AMD DF DRAM channel bandwidth counter for one DF DRAM channel (legacy 8-channel archives).
 - **Domain:** DRAM / memory controller
 - **Typical `host_data.type` values:** `amd64_df`
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/roofline.py; hpcperfstats/site/lib/machine/job_plot_artifacts.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/site/lib/machine/job_plot_artifacts.py
 
 ### `MBW_CHANNEL_6`
 
-- **Definition:** AMD memory bandwidth counter for one DF DRAM channel (ingest maps encodings to MBW_CHANNEL_n).
+- **Definition:** Historical AMD DF DRAM channel bandwidth counter for one DF DRAM channel (legacy 8-channel archives).
 - **Domain:** DRAM / memory controller
 - **Typical `host_data.type` values:** `amd64_df`
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/roofline.py; hpcperfstats/site/lib/machine/job_plot_artifacts.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/site/lib/machine/job_plot_artifacts.py
 
 ### `MBW_CHANNEL_7`
 
-- **Definition:** AMD memory bandwidth counter for one DF DRAM channel (ingest maps encodings to MBW_CHANNEL_n).
+- **Definition:** Historical AMD DF DRAM channel bandwidth counter for one DF DRAM channel (legacy 8-channel archives).
 - **Domain:** DRAM / memory controller
 - **Typical `host_data.type` values:** `amd64_df`
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/roofline.py; hpcperfstats/site/lib/machine/job_plot_artifacts.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/site/lib/machine/job_plot_artifacts.py
 
 ### `READ_ops`
 
@@ -330,22 +330,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Application / library code:** hpcperfstats/dbload/lib/monitor_naming/canonical.py
 
 ### `bounce`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `branch_inst_retired`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `branch_inst_retired_miss`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
@@ -553,22 +537,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
-### `dispatch_stall_cycles0`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `dispatch_stall_cycles1`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
 ### `dram_act_count`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
@@ -597,35 +565,33 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 
 ### `dram_chan0_bytes`
 
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Definition:** AMD DF DRAM channel 0 byte counter from amd_x86_uncore_df_{rome,milan,genoa,turin} (LIKWID).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py
 
 ### `dram_chan1_bytes`
 
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Definition:** AMD DF DRAM channel 1 byte counter from amd_x86_uncore_df_{rome,milan,genoa,turin} (LIKWID).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py
 
 ### `dram_chan2_bytes`
 
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Definition:** AMD DF DRAM channel 2 byte counter from amd_x86_uncore_df_{rome,milan,genoa,turin} (LIKWID).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py
 
 ### `dram_chan3_bytes`
 
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Definition:** AMD DF DRAM channel 3 byte counter from amd_x86_uncore_df_{rome,milan,genoa,turin} (LIKWID).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py
 
 ### `dram_energy`
 
@@ -795,22 +761,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `fp_ops_merge`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `fp_ops_retired`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/dbload/lib/monitor_naming/canonical.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_utils_get_type.py
 
 ### `fs_bytes_avail`
 
@@ -1061,19 +1011,21 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 
 ### `hbm_cas_reads`
 
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Definition:** SPR IMC HBM CAS read count (intel_x86_uncore_imc_spr); paired with hbm_cas_writes for measured HBM BW.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
+- **Application / library code:** hpcperfstats/dbload/lib/monitor_naming/canonical.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_roofline_jid_table.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/analysis/metrics/tests/test_utils_get_type.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
 
 ### `hbm_cas_writes`
 
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Definition:** SPR IMC HBM CAS write count (intel_x86_uncore_imc_spr); paired with hbm_cas_reads for measured HBM BW.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
+- **Application / library code:** hpcperfstats/dbload/lib/monitor_naming/canonical.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_roofline_jid_table.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
 
 ### `huge_pages_free`
 
@@ -1739,7 +1691,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 
 ### `pkg_energy`
 
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Definition:** CPU package energy (mJ) from intel_x86_rapl or amd_x86_rapl; drives summary watts / amd_pkg_w and node power estimates.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/gen/node_power_est.py; hpcperfstats/dbload/lib/monitor_naming/canonical.py

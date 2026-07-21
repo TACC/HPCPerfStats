@@ -114,6 +114,15 @@ def test_imc_first_match_follows_intel_imc_stats_order():
   assert u.imc == "intel_x86_uncore_imc_skx"
 
 
+def test_imc_short_form_spr_sets_u_imc():
+  """Historical intel_spr_imc schema key is selected via probe order."""
+  job = _MockJob()
+  job.schemas = {"intel_spr_imc": ["dram_cas_reads", "dram_cas_writes", "hbm_cas_reads"]}
+  job.hosts = {"h1": _MockHost({})}
+  u = utils(job)
+  assert u.imc == "intel_spr_imc"
+
+
 def test_pick_pmc_typename_set_build_handles_sequence_typenames():
   """Iterable schema labels may stringify nested sequences; ``set()`` must not crash."""
   keys = ["intel_x86_pmc_gpr8", ["legacy", "label"], "intel_x86_pmc_gpr4"]

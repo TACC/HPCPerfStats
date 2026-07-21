@@ -219,21 +219,9 @@ def _grace_fp_scalar_tries(events, conv):
 
 
 # One aggregate per row (fixed typename); used for AMD, fabric, etc.
+# amd_mbw is filled via _merge_amd_df_mbw (family DF + dual-read events).
 _SUMMARY_SINGLE_SPECS = [
     ("amd_x86_pmc", "arc", ["fp_ops_retired"], "amd_flops", 1e-9, "CPU FLOPS32b+64b[GF]"),
-    (
-        "amd_x86_uncore_df",
-        "arc",
-        [
-            "MBW_CHANNEL_0",
-            "MBW_CHANNEL_1",
-            "MBW_CHANNEL_2",
-            "MBW_CHANNEL_3",
-        ],
-        "amd_mbw",
-        2 / (1024 * 1024 * 1024),
-        "CPU DRAMBW[GB/s]",
-    ),
     (
         "amd_x86_pmc",
         "value",
@@ -443,6 +431,7 @@ _SUMMARY_ALLOW_PARTIAL_NULL = frozenset({
     "nv_power_w",
     "nv_module_power_w",
     "dcg_cpu_power_w",
+    "watts",
     "amd_pkg_w",
     "node_power_est_w",
     "nv_gpu_mem_bw_gbs",
@@ -598,6 +587,38 @@ def _merge_intel_imc_cas_mbw(df, jt):
     if column_name in merged.columns and merged[column_name].isnull().values.any():
       continue
     return merged
+  return df
+
+
+def _merge_amd_df_mbw(df, jt):
+  """Fill ``amd_mbw`` from family DF ``dram_chan*_bytes`` or historical ``MBW_CHANNEL_*``."""
+  from hpcperfstats.dbload.lib.monitor_naming.canonical import AMD_DF_STATS_TYPES
+  from hpcperfstats.dbload.lib.monitor_naming.resolve import (
+      amd_df_bw_event_conv_tries,
+      amd_df_types_probe_order,
+  )
+
+  column_name = "amd_mbw"
+  for df_typ in amd_df_types_probe_order():
+    tries = (
+        amd_df_bw_event_conv_tries()[:1]
+        if df_typ in AMD_DF_STATS_TYPES
+        else amd_df_bw_event_conv_tries()[::-1]
+    )
+    for events, conv in tries:
+      agg = _get_agg_if_feasible(jt, df_typ, "arc", list(events), conv)
+      if agg.empty or "sum_val" not in agg.columns:
+        continue
+      merged = df.merge(
+          agg[["host", "time", "sum_val"]],
+          on=["host", "time"],
+          how="left",
+      )
+      merged[column_name] = merged["sum_val"]
+      merged.drop(columns=["sum_val"], inplace=True)
+      if column_name in merged.columns and merged[column_name].isnull().values.any():
+        continue
+      return merged
   return df
 
 
@@ -768,6 +789,7 @@ def _summary_metric_specs():
   for fw in _SUMMARY_FIRST_WIN_SPECS:
     out.append(("", fw["val_col"], [], fw["name"], 0, fw["label"]))
   out.append(("intel_imc", "arc", [], "mbw", _CAS_BW_CONV, "CPU DRAMBW[GB/s]"))
+  out.append(("", "arc", [], "amd_mbw", 1 / (1024 ** 3), "CPU DRAMBW[GB/s]"))
   out.append(("", "", [], "cha_counter_arc_sum", 0, "CPU CHA uncore [#/s]"))
   out.append(("", "", [], "node_power_est_w", 0, "Est. node power (CPU+GPU) [W]"))
   return out
@@ -1160,6 +1182,7 @@ class SummaryPlot():
       log.debug("time to compute %s: %s", fw["name"], time.time() - s)
 
     df = _merge_intel_imc_cas_mbw(df, self.jt)
+    df = _merge_amd_df_mbw(df, self.jt)
 
     df = _merge_cha_counter_arc_sum(df, self.jt)
     df = _merge_opa_fabric_if_no_ib_ext(df, self.jt)

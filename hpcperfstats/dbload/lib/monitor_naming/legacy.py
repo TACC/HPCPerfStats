@@ -37,6 +37,8 @@ LEGACY_INTEL_IMC_STATS_TYPES = (
     INGEST_LEGACY_KNL_IMC_TYPE,
     MONITOR_LEGACY_KNL_IMC_TYPE,
     "intel_skx_imc",
+    "intel_icx_imc",
+    "intel_spr_imc",
 )
 
 LEGACY_ARM_IMC_STATS_TYPES = ("arm_imc",)
@@ -64,6 +66,10 @@ LEGACY_CHA_TYPENAME_PRIORITY = ("intel_skx_cha", "intel_knl_cha")
 
 LEGACY_AMD_PMC_TYPE = "amd64_pmc"
 LEGACY_AMD_DF_TYPE = "amd64_df"
+LEGACY_INTEL_RAPL_STATS_TYPES = ("intel_rapl",)
+LEGACY_AMD_RAPL_STATS_TYPES = ("amd64_rapl",)
+# Historical AMD DF channel events (pre-LIKWID family collectors).
+LEGACY_AMD_DF_MBW_CHANNEL_EVENTS = tuple(f"MBW_CHANNEL_{i}" for i in range(8))
 LEGACY_HOST_CPU_HW_TYPE = "cpu_counter_metrics"
 LEGACY_HOST_ROOFLINE_PEAK_TYPE = "roofline_hw_peak"
 

@@ -54,6 +54,13 @@ def test_infer_roofline_peaks_amd_default_when_amd_counters_present():
   assert (gf, bw) == ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS["amd64_epyc_2s_default"]
 
 
+def test_infer_roofline_peaks_amd_family_df_with_host_cpu_hw():
+  """Live EPYC: family DF + host_cpu_hw (no bare amd_x86_pmc / amd_x86_uncore_df)."""
+  jt = _make_jt({"amd_x86_uncore_df_genoa": [], "host_cpu_hw": []})
+  gf, bw = infer_cpu_roofline_peak_flops_and_bw_gbps(jt)
+  assert (gf, bw) == ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS["amd64_epyc_2s_default"]
+
+
 def test_infer_roofline_peaks_grace_when_arm_imc_present():
   jt = _make_jt({"arm_aarch64_imc": [], "host_cpu_hw": []})
   gf, bw = infer_cpu_roofline_peak_flops_and_bw_gbps(jt)

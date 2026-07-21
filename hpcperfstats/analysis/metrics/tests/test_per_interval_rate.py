@@ -222,6 +222,30 @@ def test_dram_bw_node_imbalance_amd_df():
   assert val > 40.0
 
 
+def test_dram_bw_node_imbalance_amd_family_df_dram_chan():
+  schema = metrics._Schema(["dram_chan0_bytes", "dram_chan1_bytes"])
+  hi = np.array([[0.0, 0.0], [20.0, 20.0], [80.0, 80.0]], dtype=np.float64)
+  lo = np.array([[0.0, 0.0], [10.0, 10.0], [40.0, 40.0]], dtype=np.float64)
+
+  class _Host:
+    def __init__(self, arr):
+      self.stats = {"amd_x86_uncore_df_milan": {"agg": arr}}
+
+  class _Job:
+    def __init__(self):
+      self.hosts = {"a": _Host(hi), "b": _Host(lo)}
+      self.schemas = {"amd_x86_uncore_df_milan": schema}
+      self.times = np.array([0.0, 1.0, 2.0], dtype=np.float64)
+      self.acct = {"cores": 1, "nodes": 2}
+
+  u = job_utils(_Job())
+  val, typename, units = metrics.dram_bw_node_imbalance().compute_metric(u)
+  assert typename == "amd_x86_uncore_df_milan"
+  assert units == "%"
+  assert val is not None
+  assert val > 40.0
+
+
 def test_lnet_node_imbalance_two_hosts():
   schema = metrics._Schema(["tx_bytes", "rx_bytes"])
   hi = np.array([[0.0, 0.0], [20.0, 20.0], [60.0, 60.0]], dtype=np.float64)

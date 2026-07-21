@@ -17,7 +17,18 @@ INTEL_CORE_PMC_TYPES_ORDERED = (
 )
 
 AMD_PMC_TYPE = "amd_x86_pmc"
+# Historical bare typename (removed from live monitor emit; dual-read only).
 AMD_DF_TYPE = "amd_x86_uncore_df"
+# Live LIKWID family DF collectors (rome → turin).
+AMD_DF_STATS_TYPES = (
+    "amd_x86_uncore_df_rome",
+    "amd_x86_uncore_df_milan",
+    "amd_x86_uncore_df_genoa",
+    "amd_x86_uncore_df_turin",
+)
+INTEL_RAPL_STATS_TYPES = ("intel_x86_rapl",)
+AMD_RAPL_STATS_TYPES = ("amd_x86_rapl",)
+DRAM_CHAN_BYTES_EVENTS = tuple(f"dram_chan{i}_bytes" for i in range(4))
 HOST_CPU_HW_TYPE = "host_cpu_hw"
 HOST_ROOFLINE_PEAK_TYPE = "host_roofline_peak"
 

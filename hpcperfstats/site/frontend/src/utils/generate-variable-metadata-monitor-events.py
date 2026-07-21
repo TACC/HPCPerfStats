@@ -450,6 +450,54 @@ DESC: dict[str, str] = {
     "fp_arith_inst_retired_scalar_single": (
         "Grace host_cpu_hw: retired scalar single-precision FP arithmetic instructions."
     ),
+    # Intel SPR IMC HBM CAS (intel_spr_imc.c); DDR CAS remain dram_cas_*.
+    "hbm_cas_reads": (
+        "SPR IMC HBM CAS read count (intel_x86_uncore_imc_spr); paired with hbm_cas_writes for measured HBM BW."
+    ),
+    "hbm_cas_writes": (
+        "SPR IMC HBM CAS write count (intel_x86_uncore_imc_spr); paired with hbm_cas_reads for measured HBM BW."
+    ),
+    # RAPL package energy (intel_rapl.c / amd_rapl.c).
+    "pkg_energy": (
+        "CPU package energy (mJ) from intel_x86_rapl or amd_x86_rapl; drives summary watts / amd_pkg_w and node power estimates."
+    ),
+    # Live AMD family DF (amd_x86_uncore_df.c); historical archives may use MBW_CHANNEL_*.
+    "dram_chan0_bytes": (
+        "AMD DF DRAM channel 0 byte counter from amd_x86_uncore_df_{rome,milan,genoa,turin} (LIKWID)."
+    ),
+    "dram_chan1_bytes": (
+        "AMD DF DRAM channel 1 byte counter from amd_x86_uncore_df_{rome,milan,genoa,turin} (LIKWID)."
+    ),
+    "dram_chan2_bytes": (
+        "AMD DF DRAM channel 2 byte counter from amd_x86_uncore_df_{rome,milan,genoa,turin} (LIKWID)."
+    ),
+    "dram_chan3_bytes": (
+        "AMD DF DRAM channel 3 byte counter from amd_x86_uncore_df_{rome,milan,genoa,turin} (LIKWID)."
+    ),
+    "MBW_CHANNEL_0": (
+        "Historical AMD DF DRAM channel bandwidth counter (legacy archives; dual-read with dram_chan0_bytes)."
+    ),
+    "MBW_CHANNEL_1": (
+        "Historical AMD DF DRAM channel bandwidth counter (legacy archives; dual-read with dram_chan1_bytes)."
+    ),
+    "MBW_CHANNEL_2": (
+        "Historical AMD DF DRAM channel bandwidth counter (legacy archives; dual-read with dram_chan2_bytes)."
+    ),
+    "MBW_CHANNEL_3": (
+        "Historical AMD DF DRAM channel bandwidth counter (legacy archives; dual-read with dram_chan3_bytes)."
+    ),
+    "MBW_CHANNEL_4": (
+        "Historical AMD DF DRAM channel bandwidth counter for one DF DRAM channel (legacy 8-channel archives)."
+    ),
+    "MBW_CHANNEL_5": (
+        "Historical AMD DF DRAM channel bandwidth counter for one DF DRAM channel (legacy 8-channel archives)."
+    ),
+    "MBW_CHANNEL_6": (
+        "Historical AMD DF DRAM channel bandwidth counter for one DF DRAM channel (legacy 8-channel archives)."
+    ),
+    "MBW_CHANNEL_7": (
+        "Historical AMD DF DRAM channel bandwidth counter for one DF DRAM channel (legacy 8-channel archives)."
+    ),
     # Linux /proc/vmstat transparent hugepages (monitor vm.c).
     "thp_fault_alloc": "Linux /proc/vmstat: transparent hugepage allocations satisfied on fault.",
     "thp_fault_fallback": "Linux /proc/vmstat: THP fault handling fell back to small pages.",
@@ -467,7 +515,10 @@ def generic(k: str) -> str:
     if re.match(r"V[13]_CTL\d+", k) or re.match(r"V[13]_CTR\d+", k):
         return "Intel uncore / mesh CHA counter or control register (Skylake-class naming)."
     if k.startswith("MBW_CHANNEL_"):
-        return "AMD memory bandwidth counter for one DF DRAM channel (ingest maps encodings to MBW_CHANNEL_n)."
+        return (
+            "Historical AMD DF DRAM channel bandwidth counter "
+            "(legacy archives; dual-read with dram_chan*_bytes when present)."
+        )
     if k.startswith("mds_") or k.startswith("ost_") or k.startswith("ldlm_"):
         return "Lustre client metadata (MDC) or OSC statistic from /proc/fs/lustre."
     if k.startswith("pg") or k in (

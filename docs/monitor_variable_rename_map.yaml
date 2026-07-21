@@ -84,6 +84,10 @@ events:
   EVENT_DRAM_CHANNEL_1: dram_chan1_bytes
   EVENT_DRAM_CHANNEL_2: dram_chan2_bytes
   EVENT_DRAM_CHANNEL_3: dram_chan3_bytes
+  MBW_CHANNEL_0: dram_chan0_bytes
+  MBW_CHANNEL_1: dram_chan1_bytes
+  MBW_CHANNEL_2: dram_chan2_bytes
+  MBW_CHANNEL_3: dram_chan3_bytes
   FIXED_CTR: dram_fixed_ctr
   FIXED_CTR0: instr_retired
   FIXED_CTR1: aperf

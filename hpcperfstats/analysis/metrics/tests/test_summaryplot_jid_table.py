@@ -1271,3 +1271,11 @@ def test_plot_hardware_error_rates_figure_returns_when_ib_errors_present():
   jt.get_aggregate_df.side_effect = _agg
   fig = plot_hardware_error_rates_figure(jt, None)
   assert fig is not None
+
+
+def test_summary_allow_partial_null_includes_watts():
+  """Sparse Intel RAPL must keep watts like amd_pkg_w (node-power merge)."""
+  from hpcperfstats.analysis.metrics.lib.plot.summaryplot import _SUMMARY_ALLOW_PARTIAL_NULL
+
+  assert "watts" in _SUMMARY_ALLOW_PARTIAL_NULL
+  assert "amd_pkg_w" in _SUMMARY_ALLOW_PARTIAL_NULL

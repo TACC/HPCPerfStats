@@ -8,16 +8,24 @@ from pathlib import Path
 import pytest
 
 from hpcperfstats.dbload.lib.monitor_naming.canonical import (
+    AMD_DF_STATS_TYPES,
     AMD_DF_TYPE,
     AMD_PMC_TYPE,
+    AMD_RAPL_STATS_TYPES,
     ARM_IMC_STATS_TYPES,
     INTEL_CORE_PMC_TYPES_ORDERED,
     INTEL_IMC_STATS_TYPES,
+    INTEL_RAPL_STATS_TYPES,
 )
 from hpcperfstats.dbload.lib.monitor_naming.legacy import (
     INGEST_LEGACY_KNL_IMC_TYPE,
     LEGACY_INTEL_IMC_STATS_TYPES,
     MONITOR_LEGACY_KNL_IMC_TYPE,
+)
+from hpcperfstats.dbload.lib.monitor_naming.resolve import (
+    amd_df_types_probe_order,
+    imc_types_probe_order,
+    rapl_types_probe_order,
 )
 from hpcperfstats.analysis.metrics.lib.plot.roofline_peaks import ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS
 
@@ -88,12 +96,34 @@ def test_knl_retired_from_canonical_lists_but_legacy_imc_remains():
   assert MONITOR_LEGACY_KNL_IMC_TYPE in LEGACY_INTEL_IMC_STATS_TYPES
 
 
-def test_monitor_st_names_cover_amd_roofline_prerequisites():
+def test_monitor_st_names_cover_amd_df_family_types():
+  """Live AMD DF is family-scoped; bare amd_x86_uncore_df is not emitted."""
   monitor = _monitor_st_names_from_sources()
-  for typename in (AMD_PMC_TYPE, AMD_DF_TYPE):
+  for typename in AMD_DF_STATS_TYPES:
     assert typename in monitor, (
-        f"{typename!r} must be emitted by monitor for AMD roofline prerequisites."
+        f"{typename!r} in AMD_DF_STATS_TYPES must match monitor .st_name."
     )
+  assert AMD_DF_TYPE not in monitor
+  assert AMD_PMC_TYPE not in monitor
+  for typename in AMD_DF_STATS_TYPES:
+    assert typename in amd_df_types_probe_order()
+
+
+def test_monitor_st_names_cover_rapl_types():
+  monitor = _monitor_st_names_from_sources()
+  for typename in INTEL_RAPL_STATS_TYPES + AMD_RAPL_STATS_TYPES:
+    assert typename in monitor, (
+        f"{typename!r} RAPL type must match monitor .st_name."
+    )
+    assert typename in rapl_types_probe_order()
+
+
+def test_legacy_imc_short_forms_include_icx_spr():
+  assert "intel_icx_imc" in LEGACY_INTEL_IMC_STATS_TYPES
+  assert "intel_spr_imc" in LEGACY_INTEL_IMC_STATS_TYPES
+  order = imc_types_probe_order()
+  assert "intel_icx_imc" in order
+  assert "intel_spr_imc" in order
 
 
 def test_ib_merged_to_host_ib_retired_separate_collectors():

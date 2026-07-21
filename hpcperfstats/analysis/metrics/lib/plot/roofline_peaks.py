@@ -32,6 +32,7 @@ from hpcperfstats.dbload.lib.monitor_naming.resolve import (
     amd_pmc_type_names,
     arm_imc_types_probe_order,
     canonical_type_name,
+    host_cpu_hw_type_names,
     host_roofline_peak_type_names,
     imc_types_probe_order,
 )
@@ -163,7 +164,10 @@ def infer_cpu_roofline_peak_flops_and_bw_gbps(jt: Any) -> Tuple[Optional[float],
         return row
 
   amd_pmc, amd_df = amd_pmc_type_names(), amd_df_type_names()
-  if any(t in keys for t in amd_pmc) and any(t in keys for t in amd_df):
+  hw = host_cpu_hw_type_names()
+  has_df = any(t in keys for t in amd_df)
+  has_amd_flops = any(t in keys for t in amd_pmc) or any(t in keys for t in hw)
+  if has_df and has_amd_flops:
     return ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS["amd64_epyc_2s_default"]
 
   for arm_typ in arm_imc_types_probe_order():

@@ -1258,6 +1258,10 @@ class Metrics():
         "avg_mbw": {
             "typename": "amd_x86_uncore_df",
             "events": [
+                "dram_chan0_bytes",
+                "dram_chan1_bytes",
+                "dram_chan2_bytes",
+                "dram_chan3_bytes",
                 "MBW_CHANNEL_0",
                 "MBW_CHANNEL_1",
                 "MBW_CHANNEL_2",
@@ -1267,7 +1271,7 @@ class Metrics():
                 "MBW_CHANNEL_6",
                 "MBW_CHANNEL_7",
             ],
-            "conv": 2 / (1024 * 1024 * 1024),
+            "conv": 1 / (1024 * 1024 * 1024),
             "units": "GB/s"
         }
     }
@@ -1719,29 +1723,27 @@ class Metrics():
     return None, None
 
   def _job_arc_avg_mbw(self, jt, cache=None, rows_cache=None):
-    """Memory bandwidth (GB/s): AMD DF MBW channels, else Intel/ARM IMC CAS sum."""
-    amd_bw_events = [
-        "MBW_CHANNEL_0",
-        "MBW_CHANNEL_1",
-        "MBW_CHANNEL_2",
-        "MBW_CHANNEL_3",
-        "MBW_CHANNEL_4",
-        "MBW_CHANNEL_5",
-        "MBW_CHANNEL_6",
-        "MBW_CHANNEL_7",
-    ]
+    """Memory bandwidth (GB/s): AMD DF channels, else Intel/ARM IMC CAS sum."""
+    from hpcperfstats.dbload.lib.monitor_naming.canonical import AMD_DF_STATS_TYPES
+    from hpcperfstats.dbload.lib.monitor_naming.resolve import amd_df_bw_event_conv_tries
+
     for df_typ in amd_df_type_names():
-      v = self.job_arc(
-          jt,
-          typename=df_typ,
-          events=amd_bw_events,
-          conv=2 / (1024 ** 3),
-          units="GB/s",
-          cache=cache,
-          rows_cache=rows_cache,
-      )
-      if v is not None:
-        return v, df_typ
+      if df_typ in AMD_DF_STATS_TYPES:
+        tries = amd_df_bw_event_conv_tries()[:1]
+      else:
+        tries = amd_df_bw_event_conv_tries()[::-1]
+      for events, conv in tries:
+        v = self.job_arc(
+            jt,
+            typename=df_typ,
+            events=list(events),
+            conv=conv,
+            units="GB/s",
+            cache=cache,
+            rows_cache=rows_cache,
+        )
+        if v is not None:
+          return v, df_typ
     cas_conv = 64 / (1024 ** 3)
     for imc_typ in imc_types_probe_order():
       dram_v = None
@@ -2985,13 +2987,16 @@ class flops_node_imbalance():
 
 def _dram_bw_weighted_events_for_imbalance(u):
   """Return (typename, [(event, weight), ...]) for DRAM CAS/MBW imbalance, or (None, None)."""
+  from hpcperfstats.dbload.lib.monitor_naming.canonical import DRAM_CHAN_BYTES_EVENTS
+  from hpcperfstats.dbload.lib.monitor_naming.legacy import LEGACY_AMD_DF_MBW_CHANNEL_EVENTS
+
   for df_typ in amd_df_type_names():
     schema_df, _, _ = resolve_get_type(u, (df_typ,))
     if schema_df is not None:
-      chans = [f"MBW_CHANNEL_{i}" for i in range(8)]
-      found = [c for c in chans if c in schema_df]
-      if found:
-        return df_typ, [(c, 1.0) for c in found]
+      for chans in (DRAM_CHAN_BYTES_EVENTS, LEGACY_AMD_DF_MBW_CHANNEL_EVENTS):
+        found = [c for c in chans if c in schema_df]
+        if found:
+          return df_typ, [(c, 1.0) for c in found]
   imc = u.imc
   if not imc:
     return None, None
