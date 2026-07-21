@@ -5,6 +5,9 @@ set -e
 cd "$(dirname "$0")/.." || exit 1
 test -f ./configure
 ./configure --help | grep -q 'enable-all-static'
-./configure --help | grep -q 'enable-legacy-pmcs'
 ./configure --help | grep -q 'enable-metric-profiler'
 ./configure --help | grep -q 'with-metric-profiler-backend'
+if ./configure --help | grep -q 'enable-legacy-pmcs'; then
+  echo "FAIL: --enable-legacy-pmcs must be removed from configure --help" >&2
+  exit 1
+fi

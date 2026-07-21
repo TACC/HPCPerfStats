@@ -34,6 +34,7 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_amd_df_likwid_profiles.c` | Golden LIKWID DF `EVENT:COUNTER` strings per EPYC gen |
 | `test_amd_x86_uncore_df_schema.c` | Family DF `st_name` + `dram_chan*_bytes` schema contract |
 | `test_amd_legacy_removed.sh` | Legacy `amd64_pmc`/`amd64_df` sources gone; registry has family DF only |
+| `test_intel_legacy_pmc_removed.sh` | Legacy Intel MSR gpr4/8 / `msr_io` / `fallback_fill` gone |
 | `test_string1.c` | `wsep` / `strsep_ne` (header-only `string1.h`) |
 | `test_stats_buffer_data_append.c` | `stats_buffer_data_append` (RMQ payload string growth) |
 | `test_stats_buffer_uts.c` | `stats_buffer_ensure_uts_cached` / `stats_buffer_uts_cache_reset` |
@@ -51,8 +52,6 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_path_read.c` | `path_read_small` / `path_read_alloc` (incl. `PATH_READ_ALLOC_MAX`, NULL guards) |
 | `test_sys_iter.c` | `sys_iter_for_each` (sysfs/sys iteration helper) |
 | `test_procfile_parse.c` | `procfile_parse_ws`, `proc_kv_into_stats` |
-| `test_msr_io.c` | `msr_open_cpu`, `msr_read_u64` |
-| `test_intel_mmconfig.c` | `intel_mmconfig_close` always; `intel_mmconfig_open` skipped on non-root hosts (see file comment) |
 | `test_monitor_log.c` | `monitor_log_*` facade |
 | `test_monitor_options_kv.c` | `monitor_options_apply_daemon_conf_kv` (NULL/unknown/empty keys) |
 | `test_pscanf.c` | `pscanf` (`open`/`read` + `vsscanf`) and `file_fopen_read` |
@@ -84,7 +83,7 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `scripts/bootstrap_local_rabbitmq.sh` | User-space RabbitMQ bootstrap/start/stop helper (must be in the source tree for `make dist` / RPM prepare) |
 | `rmq_integration_validate.py` | Consumes queue messages and validates listend-compatible payload shape |
 | `requirements-rabbitmq-integration.txt` | Python dependency pin for integration validator (`pika`) |
-| `test_monitor_configure_help.sh.in` | Regression (via `check-local`): `configure --help` mentions `--enable-all-static`, `--enable-legacy-pmcs`, `--enable-metric-profiler`, and `--with-metric-profiler-backend` |
+| `test_monitor_configure_help.sh.in` | Regression (via `check-local`): `configure --help` mentions `--enable-all-static`, `--enable-metric-profiler`, and `--with-metric-profiler-backend`; must **not** mention `--enable-legacy-pmcs` |
 | `test_likwid_read_group_counters.sh` | Regression (via `check-local`): PMC/uncore adapters call `perfmon_readGroupCounters` only (not bare `perfmon_readCounters`, which follows stolen `activeGroup`) |
 | `Makefile.am` | Automake `check_PROGRAMS` / `TESTS`; **keep `monitor_unit_cppflags` in sync** with `src/Makefile.am` `hpcperfstatsd_CPPFLAGS` for `-D` flags |
 | `run_tests.sh` | Convenience wrapper around `make check` in a build directory |
@@ -191,5 +190,4 @@ Some drivers are omitted or skipped depending on the configured build:
 | `RABBITMQ` | `test_monitor_cli`, `test_ring_buffer`, `test_stats_buffer_collect`, `test_stats_buffer_debug_shm`, `test_debug_shm_emit_golden`, `test_monitor_timing` |
 | `DEBUG` | `test_stats_buffer_debug_shm`, `test_debug_shm_emit_golden` (meaningful assertions; otherwise skipped) |
 | `INFINIBAND` | `test_ib_mad_backoff`, `test_ib_mad_decode` |
-| Root / `/dev/mem` | `test_intel_mmconfig` skips open probe when not root (see file comment) |
 | Live broker | `test_rabbitmq_integration.sh` — opt-in via `RUN_RMQ_INTEGRATION=1` or `check-rabbitmq-integration` |

@@ -19,13 +19,15 @@ programming in legacy `intel_*` collectors has been retired behind thin wrappers
 
 EPYC-only CPUID allowlists live in `amd_cpuid_match.c` (Naples / Ryzen models outside those ranges return unsupported).
 
-## Intel `host_cpu_hw` — idle FIXC zeros (not MSR)
+## Intel `host_cpu_hw` — LIKWID only (no MSR / no gpr*)
 
-On SKX / ICX / SPR, LIKWID owns core PMCs. Util/clock columns in `host_cpu_hw`
-stay 0 (Grace/DCGM only). FIXC may be all-zero on **idle** logical CPUs after
-warm-up; waking the CPU (affinity busyloop) makes FIXC advance. That is
-expected health, not a cue to reintroduce MSR readback/programming. Debug shm
-census: CPU id is `$2` when the row includes `@full`; FIXC are `$10–$12`.
+On SKX / ICX / SPR, LIKWID owns core PMCs. **Deleted:** `intel_4pmc3` /
+`intel_8pmc3` (`intel_x86_pmc_gpr4` / `gpr8`), `msr_io`, and `fallback_fill`.
+If LIKWID setup fails, `host_cpu_hw` is **disabled** (same fail-closed policy
+as EPYC). Util/clock columns in `host_cpu_hw` stay 0 (Grace/DCGM only). FIXC
+may be all-zero on **idle** logical CPUs after warm-up; waking the CPU
+(affinity busyloop) makes FIXC advance. Debug shm census: CPU id is `$2` when
+the row includes `@full`; FIXC are `$10–$12`.
 
 ## Supported Intel generations (SKX+)
 
@@ -52,7 +54,7 @@ unsupported (`processor_t`-1).
 
 | `st_name` | LIKWID profile | Notes |
 |-----------|----------------|-------|
-| `host_cpu_hw` | `likwid_arch_eventset_for_processor()` | Auto-disables `intel_x86_pmc_gpr4/8` when active |
+| `host_cpu_hw` | `likwid_arch_eventset_for_processor()` | LIKWID-only; no MSR / gpr* fallback |
 
 `host_cpu_hw` LIKWID notes:
 

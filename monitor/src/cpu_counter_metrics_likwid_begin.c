@@ -14,7 +14,6 @@
 
 #ifndef MONITOR_CPU_BACKEND_DCGM
 #include "cpuid.h"
-#include "amd_processor.h"
 #include "likwid_pmc_adapter.h"
 #include "likwid_arch_map.h"
 
@@ -22,7 +21,6 @@ static int g_likwid_ready;
 
 int likwid_backend_begin(struct stats_type *type)
 {
-  (void)type;
   if (likwid_pmc_adapter_init(nr_cpus) == 0 &&
       likwid_pmc_adapter_setup_events(likwid_arch_eventset_for_processor(processor, n_pmcs)) == 0) {
     g_likwid_ready = 1;
@@ -30,13 +28,9 @@ int likwid_backend_begin(struct stats_type *type)
   }
   likwid_pmc_adapter_finalize();
   g_likwid_ready = 0;
-  /* AMD EPYC: LIKWID-only — disable host_cpu_hw when setup fails (no MSR fallback). */
-  if (amd_processor_is_epyc(processor)) {
-    type->st_enabled = 0;
-    return -1;
-  }
-  type->st_enabled = 1;
-  return 0;
+  /* LIKWID-only (Intel + AMD): disable host_cpu_hw when setup fails (no MSR fallback). */
+  type->st_enabled = 0;
+  return -1;
 }
 
 int cpu_counter_metrics_likwid_ready(void)

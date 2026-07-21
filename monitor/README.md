@@ -18,7 +18,7 @@ C implementation of the **hpcperfstats** data collector: either a **RabbitMQ dae
 - **RabbitMQ build** (typical for `hpcperfstatsd`): `monitor.c`, `monitor_cli.c`, `monitor_daemon.c`, `stats_buffer.c`, AMQP + libev + LIKWID as configured.
 - **Non–RabbitMQ build**: `main.c`, `stats_file.c`, `stats_file_format.c` — local file client and archive I/O.
 
-Configure selects sources via Automake conditionals; use **`./configure --help`** for options (including **`--enable-all-static`**, **`--enable-legacy-pmcs`**, **`--enable-metric-profiler`**, **`--with-metric-profiler-backend={none,ebpf}`**, **`--enable-opa`**, and **`--enable-intel-gpu`**).
+Configure selects sources via Automake conditionals; use **`./configure --help`** for options (including **`--enable-all-static`**, **`--enable-metric-profiler`**, **`--with-metric-profiler-backend={none,ebpf}`**, **`--enable-opa`**, and **`--enable-intel-gpu`**).
 
 ### Omni-Path / Cornelis (`host_opa`)
 
@@ -110,6 +110,8 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 | IB vs HFI routing | `ib_common.c` (`ib_hca_is_opa_hfi`), `ib_family.c` |
 
 Intel PMU collection uses **LIKWID only** on x86 (see [LIKWID_MIGRATION.md](LIKWID_MIGRATION.md)).
+Legacy `intel_x86_pmc_gpr4` / `gpr8` MSR collectors and `fallback_fill` are **removed**.
+If LIKWID setup fails, `host_cpu_hw` is disabled (no MSR fallback).
 **AMD EPYC** (Rome → Turin) is also **LIKWID-only**: core via `host_cpu_hw`, DF via
 `amd_x86_uncore_df_{rome,milan,genoa,turin}`, RAPL via `amd_x86_rapl`. Legacy
 `amd_x86_pmc` / `amd_x86_uncore_df` MSR collectors are **removed** (no MSR fallback).
@@ -123,8 +125,7 @@ Grace DCGM/PAPI backend). Core FIXC fields (`instr_retired_any`,
 on ICX/SKX); they are not a failed LIKWID setup. Confirm with a busyloop on a
 census-zero CPU (`taskset -c N bash -c 'while true; do :; done'`) and re-check
 FIXC. With `@full` tier tokens, census awk must use **CPU = `$2`**, FIXC =
-**`$10 $11 $12`**. Do **not** treat this symptom as a reason to MSR-fallback
-or dual-program counters — keep LIKWID as the sole PMU owner.
+**`$10 $11 $12`**.
 
 **Uncore collectors (IMC/CHA)** target SKX+ server parts only: Cascade Lake
 (`06_55`), Ice Lake server (`06_6a`/`06_6c`), and Sapphire Rapids (`06_8f`).

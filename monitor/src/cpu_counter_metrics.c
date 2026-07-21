@@ -31,14 +31,6 @@
 #endif
 #include "cpu_counter_metrics.h"
 
-#define IA32_CTR0 0xC1
-#define IA32_CTR1 0xC2
-#define IA32_CTR2 0xC3
-#define IA32_CTR3 0xC4
-#define IA32_FIXED_CTR0 0x309
-#define IA32_FIXED_CTR1 0x30A
-#define IA32_FIXED_CTR2 0x30B
-
 #ifdef MONITOR_CPU_BACKEND_DCGM
 #ifndef DCGM_FI_DEV_CPU_UTIL_TOTAL
 #define DCGM_FI_DEV_CPU_UTIL_TOTAL 1100
@@ -987,94 +979,6 @@ static int dcgm_backend_begin(struct stats_type *type)
 }
 #endif
 
-#ifndef MONITOR_CPU_BACKEND_DCGM
-static int *g_msr_fd_cache;
-static int g_msr_fd_cache_n;
-
-static int read_msr_cached_fd(const char *cpu)
-{
-  int cpu_id = atoi(cpu);
-  int fd;
-  char path[80];
-
-  if (cpu_id < 0 || cpu_id >= nr_cpus)
-    return -1;
-  if (nr_cpus > g_msr_fd_cache_n) {
-    int *next = (int *)realloc(g_msr_fd_cache, (size_t)nr_cpus * sizeof(int));
-    int i;
-    if (next == NULL)
-      return -1;
-    for (i = g_msr_fd_cache_n; i < nr_cpus; i++)
-      next[i] = -1;
-    g_msr_fd_cache = next;
-    g_msr_fd_cache_n = nr_cpus;
-  }
-  if (g_msr_fd_cache[cpu_id] >= 0)
-    return g_msr_fd_cache[cpu_id];
-
-  snprintf(path, sizeof(path), "/dev/cpu/%s/msr", cpu);
-  fd = open(path, O_RDONLY);
-  if (fd < 0)
-    return -1;
-  g_msr_fd_cache[cpu_id] = fd;
-  return fd;
-}
-
-static int read_msr_u64(const char *cpu, uint64_t reg, uint64_t *val)
-{
-  int rc = -1;
-  int msr_fd = read_msr_cached_fd(cpu);
-  int cpu_id = atoi(cpu);
-  if (msr_fd < 0)
-    return -1;
-  if (pread(msr_fd, val, sizeof(*val), reg) == (ssize_t)sizeof(*val))
-    rc = 0;
-  else if (errno == EBADF || errno == EIO) {
-    close(msr_fd);
-    if (cpu_id >= 0 && cpu_id < g_msr_fd_cache_n)
-      g_msr_fd_cache[cpu_id] = -1;
-  }
-  return rc;
-}
-
-static void fallback_fill(struct stats *stats, const char *cpu)
-{
-  uint64_t v = 0;
-#ifdef MONITOR_ARCH_INTEL
-  if (read_msr_u64(cpu, IA32_CTR0, &v) == 0)
-    stats_set(stats, "mem_load_uops_retired_l1_hit", v);
-  if (read_msr_u64(cpu, IA32_CTR1, &v) == 0)
-    stats_set(stats, "mem_load_uops_retired_l2_hit", v);
-  if (read_msr_u64(cpu, IA32_CTR2, &v) == 0)
-    stats_set(stats, "mem_load_uops_retired_llc_hit", v);
-  if (read_msr_u64(cpu, IA32_CTR3, &v) == 0)
-    stats_set(stats, "l1d_replacement", v);
-  if (read_msr_u64(cpu, IA32_FIXED_CTR0, &v) == 0)
-    stats_set(stats, "instr_retired", v);
-  if (read_msr_u64(cpu, IA32_FIXED_CTR1, &v) == 0)
-    stats_set(stats, "aperf", v);
-  if (read_msr_u64(cpu, IA32_FIXED_CTR2, &v) == 0)
-    stats_set(stats, "mperf", v);
-#else
-  /* MONITOR_ARCH_AMD: LIKWID-only — no MSR PMC/DF fallback. */
-  (void)cpu;
-  (void)v;
-#endif
-  stats_set(stats, "fp_arith_inst_retired_scalar_double", 0);
-  stats_set(stats, "fp_arith_inst_retired_128b_packed_double", 0);
-  stats_set(stats, "fp_arith_inst_retired_256b_packed_double", 0);
-  stats_set(stats, "fp_arith_inst_retired_512b_packed_double", 0);
-  stats_set(stats, "fp_arith_inst_retired_scalar_single", 0);
-  stats_set(stats, "fp_arith_inst_retired_128b_packed_single", 0);
-  stats_set(stats, "fp_arith_inst_retired_256b_packed_single", 0);
-  stats_set(stats, "fp_arith_inst_retired_512b_packed_single", 0);
-  stats_set(stats, "arm_est_flops", 0);
-  stats_set(stats, "arm_dram_bw_bytes", 0);
-  stats_set(stats, "dcgm_cpu_power_util_w", 0ULL);
-  stats_set(stats, "dcgm_cpu_power_limit_w", 0ULL);
-}
-#endif
-
 static int cpu_counter_metrics_begin(struct stats_type *type)
 {
 #ifdef MONITOR_CPU_BACKEND_DCGM
@@ -1204,12 +1108,11 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
       continue;
     }
 #else
+    /* LIKWID-only: no MSR fallback when setup failed or read_cpu fails. */
     if (cpu_counter_metrics_likwid_ready()) {
       uint64_t ctls[8] = {0};
-      if (likwid_pmc_adapter_read_cpu(stats, i, ctls, 8, 8) == 0)
-        continue;
+      (void)likwid_pmc_adapter_read_cpu(stats, i, ctls, 8, 8);
     }
-    fallback_fill(stats, cpu);
 #endif
   }
 #ifdef MONITOR_CPU_BACKEND_DCGM

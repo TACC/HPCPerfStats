@@ -11,7 +11,6 @@
 #include <unistd.h>
 #include "trace.h"
 #include "stats.h"
-#include "msr_io.h"
 #include "likwid_pmc_adapter.h"
 #include "likwid_pmc_schema_map.h"
 #include "likwid_result_convert.h"

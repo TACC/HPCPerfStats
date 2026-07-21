@@ -1,29 +1,33 @@
 ---
-description: AMD EPYC Rome–Turin PMU via LIKWID only (family DF types, no MSR fallback)
+description: Intel + AMD EPYC PMU via LIKWID only (no MSR PMC fallback, no gpr4/8)
 globs:
   - HPCPerfStats/monitor/src/amd*.c
   - HPCPerfStats/monitor/src/amd*.h
+  - HPCPerfStats/monitor/src/cpu_counter_metrics*.c
+  - HPCPerfStats/monitor/src/cpu_counter_metrics_likwid_begin.*
+  - HPCPerfStats/monitor/src/likwid_pmc_adapter.*
   - HPCPerfStats/monitor/src/likwid_uncore_profiles.*
   - HPCPerfStats/monitor/src/likwid_arch_map.c
   - HPCPerfStats/monitor/src/cpuid.*
+  - HPCPerfStats/monitor/src/stats_registry.c
 alwaysApply: false
 ---
 
-# AMD EPYC LIKWID-only PMU
+# LIKWID-only PMU (Intel + AMD EPYC)
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**.
 
 ## Law
 
-- EPYC Rome/Milan/Genoa/Turin core + DF + RAPL go through **LIKWID** only.
+- **Intel** (`host_cpu_hw` on SKX/ICX/SPR) and **EPYC** Rome/Milan/Genoa/Turin core + DF + RAPL go through **LIKWID** only.
+- If LIKWID init/setup fails, **disable** `host_cpu_hw` (and DF on EPYC) — **no MSR fallback**, no `fallback_fill`, no `msr_io` core PMC path.
+- Do **not** reintroduce `intel_x86_pmc_gpr4` / `intel_x86_pmc_gpr8`, `intel_4pmc3` / `intel_8pmc3`, `msr_io`, or AMD `amd64_pmc` / native MSR `amd64_df` / emit `amd_x86_pmc` or bare `amd_x86_uncore_df`.
 - DF `st_name`s are family-named: `amd_x86_uncore_df_{rome,milan,genoa,turin}` (IMC pattern).
-- **No MSR fallback** if LIKWID init/read fails — disable the type.
-- Do not reintroduce `amd64_pmc` / native MSR `amd64_df` / emit `amd_x86_pmc` or bare `amd_x86_uncore_df`.
-- CPUID allowlists are **EPYC server model ranges** only (`amd_cpuid_match.c`).
+- CPUID allowlists for EPYC are **server model ranges** only (`amd_cpuid_match.c`).
 
-See [LIKWID_MIGRATION.md](../LIKWID_MIGRATION.md) AMD section.
+See [LIKWID_MIGRATION.md](../LIKWID_MIGRATION.md).
 
 ## Overlap
 
 - **monitor-emitted-variable-naming** — generation in type name
-- **monitor-consumer-schema-migration** — DF type split needs consumer follow-up
+- **monitor-consumer-schema-migration** — DF type split / retired gpr* need consumer follow-up for analysis prefs

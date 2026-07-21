@@ -573,17 +573,6 @@ AM_CONDITIONAL([METRIC_PROFILER], [test x$metric_profiler = xtrue])
 AM_CONDITIONAL([METRIC_PROFILER_BACKEND_EBPF],
   [test x$metric_profiler = xtrue && test x$metric_profiler_backend = xebpf])
 
-AC_ARG_ENABLE([legacy-pmcs],
-[AS_HELP_STRING([--enable-legacy-pmcs],
-  [Enable legacy monitoring paths (AMD Family 10h PMC programming)])],
-[case "${enableval}" in
-  yes) legacy_pmcs=true ;;
-  no)  legacy_pmcs=false ;;
-  *) AC_MSG_ERROR([bad value ${enableval} for --enable-legacy-pmcs]) ;;
-esac],
-[legacy_pmcs=false])
-AM_CONDITIONAL([LEGACY_PMCS], [test x$legacy_pmcs = xtrue])
-
 AC_ARG_ENABLE([debug],
 [  --enable-debug	Turn on debugging (default is false)],
 [case "${enableval}" in

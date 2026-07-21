@@ -77,10 +77,6 @@ hpcperfstatsd_SOURCES = \
 	procfile_parse.h \
 	procfile_parse.c \
 	procfile_kv.h \
-	msr_io.h \
-	msr_io.c \
-	intel_mmconfig.h \
-	intel_mmconfig.c \
 	fileio.h \
 	hwdetect.h \
 	hwdetect.c \
@@ -92,11 +88,7 @@ hpcperfstatsd_SOURCES = \
 	host_mem.h \
 	host_net.h \
 	host_ps.h \
-	intel_pmc3.h \
-	intel_pmc_uncore.h \
 	JOIN.h \
-	pci.h \
-	pci.c \
 	pscanf.c \
 	pscanf.h \
 	schema.h \
@@ -204,23 +196,12 @@ TYPES 	+= \
 	amd64_rapl.c \
 	intel_rapl.c \
 	amd_x86_uncore_df.c \
-	intel_4pmc3.c \
-	intel_8pmc3.c \
-	intel_pmc3_core.c \
-	intel_uncore_msr_box.c \
-	intel_uncore_pci.c \
 	intel_icx_imc.c \
 	intel_spr_imc.c \
 	intel_skx_cha.c \
 	intel_skx_imc.c
 hpcperfstatsd_SOURCES += \
 	cpu_counter_metrics.h \
-	intel_pmc3_core.h \
-	intel_topology_walk.h \
-	intel_uncore_mmio.h \
-	intel_uncore_mmio.c \
-	intel_uncore_msr_box.h \
-	intel_uncore_pci.h \
 	rapl_likwid_stats.h \
 	rapl_likwid_stats.c
 endif
