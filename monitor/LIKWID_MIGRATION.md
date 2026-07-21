@@ -19,6 +19,14 @@ programming in legacy `intel_*` collectors has been retired behind thin wrappers
 
 EPYC-only CPUID allowlists live in `amd_cpuid_match.c` (Naples / Ryzen models outside those ranges return unsupported).
 
+## Intel `host_cpu_hw` — idle FIXC zeros (not MSR)
+
+On SKX / ICX / SPR, LIKWID owns core PMCs. Util/clock columns in `host_cpu_hw`
+stay 0 (Grace/DCGM only). FIXC may be all-zero on **idle** logical CPUs after
+warm-up; waking the CPU (affinity busyloop) makes FIXC advance. That is
+expected health, not a cue to reintroduce MSR readback/programming. Debug shm
+census: CPU id is `$2` when the row includes `@full`; FIXC are `$10–$12`.
+
 ## Supported Intel generations (SKX+)
 
 Intel uncore collectors and LIKWID uncore profiles target **Skylake-X / Cascade

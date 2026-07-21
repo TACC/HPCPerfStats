@@ -113,6 +113,19 @@ Intel PMU collection uses **LIKWID only** on x86 (see [LIKWID_MIGRATION.md](LIKW
 **AMD EPYC** (Rome → Turin) is also **LIKWID-only**: core via `host_cpu_hw`, DF via
 `amd_x86_uncore_df_{rome,milan,genoa,turin}`, RAPL via `amd_x86_rapl`. Legacy
 `amd_x86_pmc` / `amd_x86_uncore_df` MSR collectors are **removed** (no MSR fallback).
+
+**`host_cpu_hw` on Intel LIKWID (SKX / ICX / SPR):** Leading util / clock /
+DCGM-style columns stay **0** by design (those keys are filled only on the
+Grace DCGM/PAPI backend). Core FIXC fields (`instr_retired_any`,
+`cycles_unhalted_core`, `cycles_unhalted_ref`, and mirrored
+`instr_retired` / `aperf` / `mperf`) advance when that logical CPU runs work.
+**Sparse all-zero FIXC rows after warm-up are expected on idle CPUs** (common
+on ICX/SKX); they are not a failed LIKWID setup. Confirm with a busyloop on a
+census-zero CPU (`taskset -c N bash -c 'while true; do :; done'`) and re-check
+FIXC. With `@full` tier tokens, census awk must use **CPU = `$2`**, FIXC =
+**`$10 $11 $12`**. Do **not** treat this symptom as a reason to MSR-fallback
+or dual-program counters — keep LIKWID as the sole PMU owner.
+
 **Uncore collectors (IMC/CHA)** target SKX+ server parts only: Cascade Lake
 (`06_55`), Ice Lake server (`06_6a`/`06_6c`), and Sapphire Rapids (`06_8f`).
 Sandybridge, Ivybridge, Haswell, and Broadwell are no longer classified or
