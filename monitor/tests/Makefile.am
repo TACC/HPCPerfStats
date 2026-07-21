@@ -123,6 +123,7 @@ test_likwid_uncore_adapter_SOURCES = \
 	test_stats_stub.c \
 	$(top_srcdir)/src/likwid_uncore_adapter.c \
 	$(top_srcdir)/src/likwid_uncore_profiles.c \
+	$(top_srcdir)/src/likwid_result_convert.c \
 	$(top_srcdir)/src/host_edac_mem_topology.c \
 	$(top_srcdir)/src/monitor_log.c \
 	$(top_srcdir)/src/intel_processor.c

@@ -1,9 +1,11 @@
 #include <assert.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "cpuid.h"
 #include "cpu_counter_metrics_likwid_begin.h"
+#include "likwid_result_convert.h"
 #include "likwid_uncore_adapter.h"
 #include "test_stats_stub.h"
 
@@ -59,9 +61,46 @@ static void test_emit_imc_and_cha_counters(void)
   test_stats_stub_unbind();
 }
 
+static void test_likwid_result_to_ull(void)
+{
+  unsigned long long out = 42;
+
+  assert(likwid_result_to_ull(123.7, LIKWID_RESULT_U48_MAX, &out) == 0);
+  assert(out == 123ULL);
+
+  out = 99;
+  assert(likwid_result_to_ull(0.0, LIKWID_RESULT_U48_MAX, &out) == 0);
+  assert(out == 0ULL);
+
+  out = 1;
+  assert(likwid_result_to_ull(NAN, LIKWID_RESULT_U48_MAX, &out) < 0);
+  assert(out == 1); /* unchanged on failure */
+
+  assert(likwid_result_to_ull(-1.0, LIKWID_RESULT_U48_MAX, &out) < 0);
+  assert(likwid_result_to_ull(INFINITY, LIKWID_RESULT_U48_MAX, &out) < 0);
+  assert(likwid_result_to_ull(-INFINITY, LIKWID_RESULT_U48_MAX, &out) < 0);
+
+  /* Above W=48 rejected (would become 2^63-style poison if cast blindly from NaN). */
+  assert(likwid_result_to_ull((double)LIKWID_RESULT_U48_MAX + 1.0, LIKWID_RESULT_U48_MAX, &out) <
+         0);
+  assert(likwid_result_to_ull((double)LIKWID_RESULT_U48_MAX, LIKWID_RESULT_U48_MAX, &out) == 0);
+  assert(out == LIKWID_RESULT_U48_MAX);
+
+  /* PMC path: no upper bound. */
+  assert(likwid_result_to_ull((double)LIKWID_RESULT_U48_MAX + 100.0, ~(unsigned long long)0,
+                              &out) == 0);
+  assert(out == LIKWID_RESULT_U48_MAX + 100ULL);
+
+  assert(likwid_result_to_ull(1.0, LIKWID_RESULT_U48_MAX, NULL) < 0);
+
+  /* Classic NaN→ull poison bit pattern must never be produced by the helper. */
+  assert(likwid_result_to_ull(NAN, ~(unsigned long long)0, &out) < 0);
+}
+
 int main(void)
 {
   test_emit_imc_and_cha_counters();
+  test_likwid_result_to_ull();
   printf("test_likwid_uncore_adapter passed\n");
   return 0;
 }

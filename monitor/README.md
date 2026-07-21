@@ -102,7 +102,7 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 | RMQ text payloads | `stats_buffer.c` + `stats_buffer_data_append.c` (persistent AMQP; cached `uname` for header + sample lines; batched rows; declare `syslog` INFO in `DEBUG` only). |
 | DEBUG shm mirror (`@fast`/`@full` snapshots) | `stats_buffer_debug_shm.c`, `stats_buffer_debug_shm.h` (`DEBUG` builds only). |
 | Intel CPUID / generation gating | `cpuid.c`, `intel_cpuid_match.c`, `intel_processor.c` |
-| LIKWID core + uncore PMU | `likwid_pmc_adapter.c`, `likwid_uncore_adapter.c`, `likwid_uncore_profiles.c` |
+| LIKWID core + uncore PMU | `likwid_pmc_adapter.c`, `likwid_uncore_adapter.c`, `likwid_uncore_profiles.c`, `likwid_result_convert.c` |
 | Omni-Path / Cornelis HFI (`host_opa`) | `opa.c`, `opa_sysfs.c`, `opa_mad_backoff.c`, `opa_mad_dyn.c`, `host_opa.h` (sysfs always; STL MAD via `--enable-opa-mad-dlopen` or link-time `--enable-opa`) |
 | Intel Data Center GPU / PVC (`intel_gpu`) | `intel_gpu.c`, `intel_gpu.h`, `xpum_gpu_dyn.c` (vendored `third_party/intel-xpum/`; runtime `libxpum` dlopen) |
 | IB MAD dlopen | `ib_mad.c`, `ib_mad_dyn.c`, `ib_mad_api.h` (vendored `third_party/ibmad-shim/` when `--enable-ib-mad-dlopen`) |
@@ -116,12 +116,20 @@ registered (`intel_x86_pcu` and pre-SKX uncore types removed). SPR exposes DDR
 and HBM uncore keys (`dram_*`, `hbm_*`); SPR IMC LIKWID eventsets use **MBOX0–11**
 only (LIKWID 5.5 Sapphire Rapids counter table — not MBOX12–15), always try
 DDR+HBM first then DDR-only then HBM-only, then an HBM channel-count ladder
-(16→8→4→1). EDAC `has_ddr`/`has_hbm` are logged only. Uncore custom event
+(16→8→4→1). After setup, if every MBOX result is non-finite (LIKWID `NaN`),
+that try is rejected and the ladder continues (often enabling HBM-only).
+Collect drops non-finite / out-of-range LIKWID doubles so they are never
+cast to `9223372036854775808` (`2^63`). EDAC `has_ddr`/`has_hbm` are logged
+only. Uncore custom event
 strings use LIKWID **`EVENT:COUNTER`** form (e.g. `CAS_COUNT_RD:MBOX0C0`);
 space-separated counter-first tokens are rejected by `perfmon_addEventSet`
 as named performance groups.
 `host_roofline_peak` adds
 `cpu_peak_hbm_bw_bytes_per_s` (EDAC HBM/DDR split, `peak_calc_version` 2).
+
+**Consumer follow-up (analysis):** roofline/mbw still probe `dram_cas_*` only;
+HBM-primary SPR needs `hbm_cas_*` pairs in analysis (see plan
+`spr-imc-mbox-nan`).
 
 ## Two-tier collection (fast/slow) and sparse rows
 

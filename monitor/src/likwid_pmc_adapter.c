@@ -14,6 +14,7 @@
 #include "msr_io.h"
 #include "likwid_pmc_adapter.h"
 #include "likwid_pmc_schema_map.h"
+#include "likwid_result_convert.h"
 #include "amd64_pmc.h"
 
 #ifdef HAVE_LIKWID
@@ -310,8 +311,12 @@ int likwid_pmc_adapter_read_cpu(struct stats *stats, int cpu, uint64_t *events, 
   for (i = 0; i < n_events; i++) {
     const char *counter_name = perfmon_getCounterName(g_group, i);
     const char *event_name = perfmon_getEventName(g_group, i);
-    unsigned long long val = (unsigned long long)perfmon_getResult(g_group, i, cpu);
+    unsigned long long val = 0;
+    double raw = perfmon_getResult(g_group, i, cpu);
 
+    /* No W=48 cap: APERF/MPERF and fixed counters may exceed 48 bits. */
+    if (likwid_result_to_ull(raw, ~(unsigned long long)0, &val) < 0)
+      continue;
     likwid_pmc_adapter_apply_one_event(stats, counter_name, event_name, val, &inst_retired, &aperf,
                                        &mperf, &have_inst, &have_aperf, &have_mperf, &have_fixed0,
                                        &have_fixed1, &have_fixed2);

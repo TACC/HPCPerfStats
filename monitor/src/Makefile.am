@@ -272,6 +272,8 @@ hpcperfstatsd_SOURCES += \
 	likwid_uncore_adapter.c \
 	likwid_uncore_profiles.h \
 	likwid_uncore_profiles.c \
+	likwid_result_convert.h \
+	likwid_result_convert.c \
 	intel_skx_imc.h \
 	intel_icx_imc.h \
 	intel_spr_imc.h

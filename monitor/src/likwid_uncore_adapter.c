@@ -10,6 +10,7 @@
 
 #include "cpu_counter_metrics_likwid_begin.h"
 #include "host_edac_mem_topology.h"
+#include "likwid_result_convert.h"
 #include "likwid_uncore_adapter.h"
 #include "monitor_log.h"
 #include "trace.h"
@@ -104,6 +105,38 @@ static int likwid_uncore_spr_enable(int group, const char *label, int index)
   return 0;
 }
 
+/*
+ * After setup, reject eventsets whose MBOX counters are all non-finite (NaN →
+ * 2^63 poison). HBM-only sets have no MBOX and always pass.
+ * Returns 0 if acceptable, -1 if all MBOX results are unusable.
+ */
+static int likwid_uncore_spr_mbox_results_ok(int group)
+{
+  int n_events;
+  int i;
+  int n_mbox = 0;
+  int n_ok = 0;
+
+  if (perfmon_readCounters() < 0)
+    return -1;
+  n_events = perfmon_getNumberOfEvents(group);
+  for (i = 0; i < n_events; i++) {
+    const char *counter_name = perfmon_getCounterName(group, i);
+    unsigned long long unused = 0;
+    double raw;
+
+    if (counter_name == NULL || strncmp(counter_name, "MBOX", 4) != 0)
+      continue;
+    n_mbox++;
+    raw = perfmon_getResult(group, i, 0);
+    if (likwid_result_to_ull(raw, LIKWID_RESULT_U48_MAX, &unused) == 0)
+      n_ok++;
+  }
+  if (n_mbox == 0)
+    return 0;
+  return n_ok > 0 ? 0 : -1;
+}
+
 static int likwid_uncore_adapter_begin_spr(struct stats_type *type)
 {
   likwid_spr_imc_eventset_t order[3];
@@ -150,11 +183,26 @@ static int likwid_uncore_adapter_begin_spr(struct stats_type *type)
     }
 
     if (likwid_uncore_try_eventset(events, &group, &fail_step, &fail_errno) == 0) {
+      if (likwid_uncore_spr_mbox_results_ok(group) == 0) {
+        if (quiet) {
+          likwid_uncore_restore_stderr(saved_stderr, null_fd);
+          quiet = 0;
+        }
+        return likwid_uncore_spr_enable(group, label, try_idx);
+      }
+      fail_step = "mboxResults";
+      fail_errno = 0;
+      monitor_log_warn("intel_x86_uncore_imc_spr: eventset %s failed at %s "
+                       "(all MBOX results non-finite)\n",
+                       label, fail_step);
       if (quiet) {
         likwid_uncore_restore_stderr(saved_stderr, null_fd);
+        saved_stderr = -1;
+        null_fd = -1;
         quiet = 0;
       }
-      return likwid_uncore_spr_enable(group, label, try_idx);
+      try_idx++;
+      continue;
     }
     if (quiet) {
       likwid_uncore_restore_stderr(saved_stderr, null_fd);
@@ -186,6 +234,7 @@ static int likwid_uncore_adapter_begin_spr(struct stats_type *type)
     }
 
     if (likwid_uncore_try_eventset(events, &group, &fail_step, &fail_errno) == 0) {
+      /* HBM ladder has no MBOX; mbox gate is a no-op pass. */
       if (quiet) {
         likwid_uncore_restore_stderr(saved_stderr, null_fd);
         quiet = 0;
@@ -306,9 +355,12 @@ void likwid_uncore_adapter_collect(struct stats_type *type, likwid_uncore_profil
   n_events = perfmon_getNumberOfEvents(g_profile_group[profile]);
   for (i = 0; i < n_events; i++) {
     const char *counter_name = perfmon_getCounterName(g_profile_group[profile], i);
-    unsigned long long val;
+    unsigned long long val = 0;
+    double raw;
 
-    val = (unsigned long long)perfmon_getResult(g_profile_group[profile], i, thread_id);
+    raw = perfmon_getResult(g_profile_group[profile], i, thread_id);
+    if (likwid_result_to_ull(raw, LIKWID_RESULT_U48_MAX, &val) < 0)
+      continue;
     likwid_uncore_adapter_emit_counter(type, profile, counter_name, val);
   }
 #else
