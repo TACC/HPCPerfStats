@@ -21,9 +21,9 @@ alwaysApply: false
 
 ## Lifecycle
 
-- Before `xpumInit`: set `XPUM_DISABLE_PERIODIC_METRIC_MONITOR=1` (on-demand pulls) and an explicit `XPUM_METRICS` list that includes PCIe counters when needed (defaults omit 34/35).
-- Init → `xpumGetDeviceList` → per-device `xpumGetRealtimeMetrics` (fallback `xpumGetStats`) → optional `xpumGetFabricThroughputStats` for Xe Link.
-- Prefer **device-level** rows (not per-tile device names) in v1.
+- Before `xpumInit`: set `XPUM_DISABLE_PERIODIC_METRIC_MONITOR=1` (on-demand pulls) and an explicit `XPUM_METRICS` list compatible with pinned **1.2.33** (`0,1,4,6-10,30,34,35,36` — IDs 37/38 are rejected on 1.2.33; include memory temp **30** for PVC).
+- Init → `xpumGetDeviceList` → per-device `xpumGetRealtimeMetrics` (pick best row, merge 2-tile rows when needed; fallback `xpumGetStats` when RT empty or missing POWER/ENERGY) → optional `xpumGetFabricThroughputStats` for Xe Link.
+- Prefer **device-level** rows when tied; merge per-tile rows on Max 1550 when a single row lacks POWER.
 - On prepare/collect failure: miss-streak then `st_enabled=0`; never crash the daemon.
 
 ## Metrics / scale

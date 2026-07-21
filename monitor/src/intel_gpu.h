@@ -18,4 +18,7 @@
       X(clocks_event_reasons, "", "Frequency throttle reason flags when available"),               \
       X(gpu_count, "", "Number of XPUM-visible Intel GPUs on this node")
 
+struct stats_type;
+extern struct stats_type intel_gpu_stats_type;
+
 #endif

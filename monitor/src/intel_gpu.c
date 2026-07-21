@@ -4,6 +4,8 @@
 #include <string.h>
 
 #include "intel_gpu.h"
+#include "intel_gpu_xpum_helpers.h"
+#include "monitor_log.h"
 #include "stats.h"
 #include "trace.h"
 #include "xpum_gpu_dyn.h"
@@ -14,20 +16,25 @@ static int g_xpum_ready;
 static int g_miss_streak;
 static xpum_device_id_t g_device_ids[XPUM_MAX_NUM_DEVICES];
 static int g_device_count;
+static unsigned char g_power_warned[XPUM_MAX_NUM_DEVICES];
 
-static double intel_gpu_scaled_u64(uint64_t value, uint32_t scale)
+#ifdef INTEL_GPU_TEST_BUILD
+void intel_gpu_test_reset(void)
 {
-  if (scale == 0)
-    return (double)value;
-  return (double)value / (double)scale;
+  g_xpum_ready = 0;
+  g_miss_streak = 0;
+  g_device_count = 0;
+  memset(g_device_ids, 0, sizeof(g_device_ids));
+  memset(g_power_warned, 0, sizeof(g_power_warned));
 }
+#endif
 
 static void intel_gpu_env_prepare(void)
 {
   /* On-demand pulls only — avoid XPUM background sampler jitter on HPC nodes. */
   setenv("XPUM_DISABLE_PERIODIC_METRIC_MONITOR", "1", 0);
-  /* Enable util/power/temp/mem + PCIe counters + fabric + throttle when supported. */
-  setenv("XPUM_METRICS", "0,1,4,6-10,34,35,37,38", 0);
+  /* XPUM 1.2.33: metric IDs 0–36 only (37/38 rejected). Include memory temp (30). */
+  setenv("XPUM_METRICS", "0,1,4,6-10,30,34,35,36", 0);
 }
 
 static int intel_gpu_lookup_mem_total_mb(xpum_device_id_t id, unsigned long long *out_mb)
@@ -50,20 +57,6 @@ static int intel_gpu_lookup_mem_total_mb(xpum_device_id_t id, unsigned long long
     }
   }
   return -1;
-}
-
-static const xpum_device_realtime_metric_t *
-intel_gpu_find_rt(const xpum_device_realtime_metrics_t *row, xpum_stats_type_t type)
-{
-  int i;
-
-  if (row == NULL)
-    return NULL;
-  for (i = 0; i < row->count && i < XPUM_STATS_MAX; i++) {
-    if (row->dataList[i].metricsType == type)
-      return &row->dataList[i];
-  }
-  return NULL;
 }
 
 static void intel_gpu_publish_from_rt(struct stats *stats,
@@ -102,6 +95,8 @@ static void intel_gpu_publish_from_rt(struct stats *stats,
               (unsigned long long)(intel_gpu_scaled_u64(m->value, m->scale) + 0.5));
 
   m = intel_gpu_find_rt(row, XPUM_STATS_GPU_CORE_TEMPERATURE);
+  if (m == NULL)
+    m = intel_gpu_find_rt(row, XPUM_STATS_MEMORY_TEMPERATURE);
   if (m != NULL)
     stats_set(stats, "temperature",
               (unsigned long long)(intel_gpu_scaled_u64(m->value, m->scale) + 0.5));
@@ -136,6 +131,8 @@ static void intel_gpu_publish_from_rt(struct stats *stats,
     stats_set(stats, "gpu_pcie_tx_bytes", 0);
 
   m = intel_gpu_find_rt(row, XPUM_STATS_FREQUENCY_THROTTLE_REASON_GPU);
+  if (m == NULL)
+    m = intel_gpu_find_rt(row, XPUM_STATS_FREQUENCY_THROTTLE);
   if (m != NULL)
     stats_set(stats, "clocks_event_reasons", (unsigned long long)m->value);
   else
@@ -181,7 +178,7 @@ static int intel_gpu_collect_one_rt(xpum_device_id_t id, xpum_device_realtime_me
 {
   xpum_device_realtime_metrics_t rows[8];
   uint32_t count = 0;
-  uint32_t i;
+  uint32_t best;
 
   if (out_row == NULL)
     return -1;
@@ -194,14 +191,11 @@ static int intel_gpu_collect_one_rt(xpum_device_id_t id, xpum_device_realtime_me
     count = (uint32_t)(sizeof(rows) / sizeof(rows[0]));
   if (xpum_gpu_dyn_xpumGetRealtimeMetrics(id, rows, &count) != XPUM_OK || count == 0)
     return -1;
-  /* Prefer device-level row (not tile) when present. */
-  for (i = 0; i < count; i++) {
-    if (!rows[i].isTileData) {
-      *out_row = rows[i];
-      return 0;
-    }
-  }
-  *out_row = rows[0];
+
+  best = intel_gpu_pick_best_rt_row(rows, count);
+  *out_row = rows[best];
+  if (!intel_gpu_row_is_usable(out_row))
+    intel_gpu_merge_tile_rows(rows, count, out_row);
   return 0;
 }
 
@@ -227,6 +221,7 @@ static int intel_gpu_collect_one_stats_fallback(xpum_device_id_t id,
     count = (uint32_t)(sizeof(rows) / sizeof(rows[0]));
   if (xpum_gpu_dyn_xpumGetStats(id, rows, &count, &begin, &end, 0) != XPUM_OK || count == 0)
     return -1;
+
   for (i = 0; i < count; i++) {
     if (!rows[i].isTileData)
       break;
@@ -310,6 +305,7 @@ static void intel_gpu_collect(struct stats_type *type)
     struct stats *stats;
     xpum_device_realtime_metrics_t row;
     unsigned long long mem_total_mb = 0;
+    int rt_ok;
 
     snprintf(dev, sizeof(dev), "%d", (int)g_device_ids[i]);
     stats = get_current_stats(type, dev);
@@ -317,12 +313,19 @@ static void intel_gpu_collect(struct stats_type *type)
       continue;
     (void)intel_gpu_lookup_mem_total_mb(g_device_ids[i], &mem_total_mb);
     memset(&row, 0, sizeof(row));
-    if (intel_gpu_collect_one_rt(g_device_ids[i], &row) != 0) {
+    rt_ok = intel_gpu_collect_one_rt(g_device_ids[i], &row);
+    if (rt_ok != 0 || !intel_gpu_row_is_usable(&row)) {
       if (intel_gpu_collect_one_stats_fallback(g_device_ids[i], &row) != 0)
         continue;
     }
     intel_gpu_publish_from_rt(stats, &row, mem_total_mb, g_device_count);
     intel_gpu_publish_xe_link(stats, g_device_ids[i]);
+    if (intel_gpu_find_rt(&row, XPUM_STATS_POWER) == NULL && i < XPUM_MAX_NUM_DEVICES &&
+        !g_power_warned[i]) {
+      monitor_log_warn("intel_gpu: device %d missing POWER after realtime/stats fallback\n",
+                       (int)g_device_ids[i]);
+      g_power_warned[i] = 1;
+    }
     ok_any = 1;
   }
 

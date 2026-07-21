@@ -84,6 +84,14 @@ def check_plausibility(
                     vals, type_name=type_name, dev=row.dev
                 ):
                     warn(msg)
+                if type_name == "intel_gpu":
+                    mem_total = vals.get("gpu_mem_total_mb", 0)
+                    power = vals.get("power_usage", 0)
+                    if mem_total > 0 and power == 0:
+                        warn(
+                            f"{type_name}/{row.dev}: gpu_mem_total_mb>0 but power_usage=0 "
+                            "(XPUM realtime/stats may be empty on PVC)"
+                        )
 
     if schema_body and full_body is None:
         pass

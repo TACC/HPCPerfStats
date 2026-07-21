@@ -74,6 +74,7 @@ are vendored for a future Vista path; the Stampede3 wrapper rejects `gg`/`gh`.
 
 - **`--enable-intel-gpu={auto,yes,no}`** (default **auto** via `scripts/gpu_lspci_probe.sh intel`). Compiles against vendored **`third_party/intel-xpum/`** headers (XPUM **1.2.33** only — not system `/usr/include`).
 - Runtime **`dlopen`** of `libxpum` (`/usr/lib64/libxpum.so`, `libxpum.so.1`, …); override with **`HPCPERFSTATS_XPUM_LIB`**. No link-time `-lxpum`.
+- Before `xpumInit`, monitor sets `XPUM_DISABLE_PERIODIC_METRIC_MONITOR=1` and `XPUM_METRICS=0,1,4,6-10,30,34,35,36` (1.2.33-safe; memory temp **30** for PVC). Collect picks/merges realtime rows and falls back to `xpumGetStats` when POWER is missing.
 - Stampede3 PVC: four Data Center GPU Max 1550 (`[8086:0bd5]` / Ponte Vecchio) → device rows `"0"`…`"3"`; keys align conceptually with `nvidia_gpu` / `amd_gpu` (Xe Link keys, not NvLink). Level Zero pipe metrics are deferred.
 - Force enable for testing: **`HPCPERFSTATS_FORCE_INTEL_GPU`**. Static bundle enables intel_gpu when vendored headers are present on **x86**, or on aarch64 only with Stampede3 fleet / **`HPCS_BUNDLE_ENABLE_INTEL_GPU=1`**.
 

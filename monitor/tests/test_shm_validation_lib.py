@@ -438,6 +438,49 @@ class PlausibilityTests(unittest.TestCase):
         )
         self.assertTrue(any("host_tmpfs" in w and "missing" in w for w in warnings))
 
+    def test_intel_gpu_mem_total_without_power_warns(self) -> None:
+        """PVC-style intel_gpu row: mem_total populated but power=0 → plausibility WARN."""
+        schema_keys = [
+            "gpu_util",
+            "gpu_mem_util",
+            "gpu_mem_total_mb,U=MB",
+            "gpu_mem_used_mb,U=MB",
+            "power_usage,U=W",
+            "temperature,U=C",
+            "gpu_sm_clock",
+            "sm_active",
+            "gpu_dram_active",
+            "gpu_pcie_rx_bytes,E,W=64,U=B",
+            "gpu_pcie_tx_bytes,E,W=64,U=B",
+            "gpu_xe_link_rx_bytes,E,W=64,U=B",
+            "gpu_xe_link_tx_bytes,E,W=64,U=B",
+            "clocks_event_reasons",
+            "gpu_count",
+        ]
+        manifest = {
+            "enable_slow_tier": True,
+            "types": {
+                "intel_gpu": {
+                    "schema_keys": schema_keys,
+                    "schema_key_names": [k.split(",")[0] for k in schema_keys],
+                    "devices": ["0"],
+                }
+            },
+        }
+        schema = {"intel_gpu": schema_keys}
+        vals = ["0", "0", "131072", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "4"]
+        body = "1234567890.0 0 golden_host\n" f"intel_gpu 0 @full {' '.join(vals)}\n"
+        _, warnings, _ = check_plausibility(
+            manifest,
+            schema,
+            full_body=body,
+            fast_body=None,
+            schema_body=None,
+            no_freshness=True,
+            strict=False,
+        )
+        self.assertTrue(any("power_usage=0" in w for w in warnings))
+
 
 class CrossSampleTests(unittest.TestCase):
     def test_schema_token_is_event_counter(self) -> None:

@@ -102,6 +102,10 @@ int xpum_gpu_dyn_load(void)
 
   if (g_xpum_loaded)
     return 0;
+  if (g_xpum_test_hooks_active) {
+    g_xpum_loaded = 1;
+    return 0;
+  }
 
   g_xpum_last_error[0] = '\0';
   override = getenv("HPCPERFSTATS_XPUM_LIB");
