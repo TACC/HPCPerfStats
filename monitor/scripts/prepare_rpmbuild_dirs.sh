@@ -288,6 +288,14 @@ if test "${debug_build}" = "1"; then
   echo ""
   echo "Build, install, and validate /dev/shm (from ${MONITOR_DIR}):"
   echo "  ${debug_rpmbuild} && ./scripts/rpm_debug_shm_verify.sh"
+  cat <<EOF
+
+Debug verify notes:
+  - Debug %install stashes monitor-build-capabilities.json under ${topdir}/debug-verify/
+    (survives EL10 rpmbuild rmbuild, which deletes BUILD/).
+  - rpm_debug_shm_verify.sh reads that stash; BUILD/.build-static is optional.
+  - Optional: add --noclean to rpmbuild only if you need to inspect the Autotools tree.
+EOF
 else
   echo ""
   echo "Recommended (release / production):"
@@ -303,6 +311,7 @@ DEBUG /dev/shm mirror (debug RPM only):
   - Payload mirror: /dev/shm/hpcperfstatsd-debug/{schema,fast,full}
   - Override base dir: HPCPERFSTATS_DEBUG_SHM_DIR
   - Release RPM (no hpc_debug_build) does not write /dev/shm files.
+  - Debug %install stashes capabilities under rpmbuild/debug-verify/ for verify after rmbuild.
   - Re-run with --debug-build for the full post-rpmbuild verification runbook.
 EOF
 fi

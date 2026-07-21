@@ -256,9 +256,12 @@ cd HPCPerfStats/monitor
 # verification runbook footer (manifest + validate_shm_messages.py).
 ```
 
-The footer uses paths under `rpmbuild/BUILD/hpcperfstats-<ver>/.build-static/` from
-the RPM `%build` tree. After install, `hpcperfstats.spec` `%post` starts
-`hpcperfstats.service`; shm
+The debug `%install` stashes `monitor-build-capabilities.json` under
+`rpmbuild/debug-verify/` (outside `BUILD/`). That path survives EL10
+`rpmbuild` **rmbuild**, which deletes `BUILD/hpcperfstats-<ver>/` after a
+successful package build. `./scripts/rpm_debug_shm_verify.sh` prefers the
+stash; `BUILD/.../.build-static` is only a fallback (e.g. `rpmbuild --noclean`).
+After install, `hpcperfstats.spec` `%post` starts `hpcperfstats.service`; shm
 payloads appear under `/dev/shm/hpcperfstatsd-debug/` (override with
 `HPCPERFSTATS_DEBUG_SHM_DIR`).
 

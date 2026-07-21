@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# Post-debug-rpmbuild: install main RPM (--replacepkgs), emit capabilities, validate /dev/shm.
+# Post-debug-rpmbuild: install main RPM (--replacepkgs), resolve capabilities, validate /dev/shm.
 #
 # Run from HPCPerfStats/monitor/ after debug rpmbuild (hpc_debug_build 1).
 # RPM_TOPDIR and DIST_TOP default from this checkout when unset.
+#
+# Capabilities: prefer %{_topdir}/debug-verify/monitor-build-capabilities.json (stashed
+# during debug %install; survives EL10 rmbuild). Fall back to emitting into
+# BUILD/.../.build-static when that tree still exists (--noclean / older rpm).
 #
 # Optional: ENABLE_SLOW_TIER, HPCPERFSTATS_DEBUG_SHM_DIR, WORKSPACE_ROOT,
 #           SKIP_INSTALL=1, SKIP_SHM_LS=1, FAST (default 30), FULL (default 60),
@@ -102,10 +106,57 @@ Run from HPCPerfStats/monitor/ after debug rpmbuild completes.
 RPM %post starts hpcperfstats.service on install/upgrade (see hpcperfstats.spec).
 Waits POST_INSTALL_SLEEP_SECONDS (default FULL=60) after install before validation.
 Debug RPM sets sample_freq=${FAST} and sample_freq_slow=${FULL} in hpcperfstats.conf.
+Capabilities come from rpmbuild/debug-verify/ (stashed at %install; survives EL10 rmbuild).
 Defaults: cross-sample + strict plausibility/live-spot/cross-sample (set *=0 to disable).
 Golden diff is opt-in: GOLDEN_DIR=/path|auto or GOLDEN_CHECK=1.
 Optional: SKIP_INSTALL=1 to re-validate without reinstall or post-install wait.
 EOF
+}
+
+ensure_capabilities_json() {
+  # Args: monitor_dir rpm_topdir dist_top py tier
+  # Echoes absolute path to monitor-build-capabilities.json on stdout.
+  local monitor_dir="$1"
+  local rpm_topdir="$2"
+  local dist_top="$3"
+  local py="$4"
+  local tier="$5"
+  local stash_dir stash_caps build_static_path
+
+  stash_dir="${rpm_topdir}/debug-verify"
+  stash_caps="${stash_dir}/monitor-build-capabilities.json"
+  build_static_path="${rpm_topdir}/BUILD/${dist_top}/.build-static"
+  mkdir -p "${stash_dir}"
+
+  if test -f "${stash_caps}"; then
+    echo "Using stashed capabilities: ${stash_caps}" >&2
+    printf '%s' "${stash_caps}"
+    return 0
+  fi
+
+  if test -d "${build_static_path}"; then
+    echo "Stash missing; emitting capabilities from ${build_static_path} ..." >&2
+    CAPABILITIES_TIER="${tier}" "${py}" "${monitor_dir}/scripts/emit_build_capabilities.py" \
+      --build-dir "${build_static_path}" \
+      --tier "${tier}"
+    if test ! -f "${build_static_path}/monitor-build-capabilities.json"; then
+      echo "ERROR: failed to emit ${build_static_path}/monitor-build-capabilities.json" >&2
+      return 1
+    fi
+    cp -f "${build_static_path}/monitor-build-capabilities.json" "${stash_caps}"
+    echo "Wrote stash ${stash_caps} (from BUILD tree)" >&2
+    printf '%s' "${stash_caps}"
+    return 0
+  fi
+
+  cat <<EOF >&2
+ERROR: debug-verify stash missing: ${stash_caps}
+EL10 rpmbuild removes BUILD/ after success (rmbuild); debug %install must copy
+monitor-build-capabilities.json into rpmbuild/debug-verify/.
+Re-run: prepare_rpmbuild_dirs.sh --debug-build, then debug rpmbuild (hpc_debug_build 1).
+Optional: rpmbuild --noclean keeps BUILD for inspection only; stash is the supported path.
+EOF
+  return 1
 }
 
 main() {
@@ -114,18 +165,16 @@ main() {
     return 0
   fi
 
-  local monitor_dir rpm_topdir dist_top ws py build_src build_static caps shm_dir tier enable_slow
-  local slug expectations report_dir
+  local monitor_dir rpm_topdir dist_top ws py caps shm_dir tier enable_slow
+  local slug expectations report_dir verify_dir
 
   monitor_dir="$(cd "${MONITOR_DIR}" && pwd)"
   rpm_topdir="${RPM_TOPDIR:-${monitor_dir}/rpmbuild}"
   dist_top="${DIST_TOP:-$(resolve_dist_top "${monitor_dir}")}"
   ws="${WORKSPACE_ROOT:-$(resolve_workspace_root "${monitor_dir}")}"
   py="$(resolve_python "${ws}")"
+  verify_dir="${rpm_topdir}/debug-verify"
 
-  build_src="${rpm_topdir}/BUILD/${dist_top}"
-  build_static="${build_src}/.build-static"
-  caps="${build_static}/monitor-build-capabilities.json"
   shm_dir="${HPCPERFSTATS_DEBUG_SHM_DIR:-/dev/shm/hpcperfstatsd-debug}"
   enable_slow="${ENABLE_SLOW_TIER:-1}"
   case "${enable_slow}" in
@@ -133,15 +182,12 @@ main() {
   *) tier="slowtier1" ;;
   esac
 
-  if test ! -d "${build_static}"; then
-    echo "ERROR: RPM build tree missing: ${build_static}" >&2
-    echo "Run debug rpmbuild first (prepare_rpmbuild_dirs.sh --debug-build)." >&2
+  caps="$(ensure_capabilities_json "${monitor_dir}" "${rpm_topdir}" "${dist_top}" "${py}" "${tier}")" \
+    || return 1
+  test -f "${caps}" || {
+    echo "ERROR: capabilities not found at ${caps}" >&2
     return 1
-  fi
-  if test ! -f "${build_static}/src/hpcperfstatsd"; then
-    echo "ERROR: debug daemon not built: ${build_static}/src/hpcperfstatsd" >&2
-    return 1
-  fi
+  }
 
   if test "${SKIP_INSTALL:-0}" != "1"; then
     install_main_daemon_rpm "${rpm_topdir}"
@@ -151,16 +197,13 @@ main() {
       echo "Waiting ${post_install_sleep}s after install for daemon shm payloads ..."
       sleep "${post_install_sleep}"
     fi
+  else
+    find_main_daemon_rpm "${rpm_topdir}" >/dev/null || {
+      echo "ERROR: main hpcperfstatsd RPM not found under ${rpm_topdir}/RPMS (SKIP_INSTALL=1)" >&2
+      echo "Run debug rpmbuild first (prepare_rpmbuild_dirs.sh --debug-build)." >&2
+      return 1
+    }
   fi
-
-  echo "Emitting ${caps} ..."
-  CAPABILITIES_TIER="${tier}" "${py}" "${monitor_dir}/scripts/emit_build_capabilities.py" \
-    --build-dir "${build_static}" \
-    --tier "${tier}"
-  test -f "${caps}" || {
-    echo "ERROR: failed to write ${caps}" >&2
-    return 1
-  }
 
   slug="$("${py}" -c "import json; print(json.load(open('${caps}'))['capability_slug'])")"
   echo "capability_slug=${slug}"
@@ -169,9 +212,9 @@ main() {
     ls -la "${shm_dir}"/{schema,fast,full}
   fi
 
-  expectations="${build_static}/expectations_${slug}.json"
+  expectations="${verify_dir}/expectations_${slug}.json"
   report_dir="${ws}/test_runs/monitor"
-  mkdir -p "${report_dir}"
+  mkdir -p "${report_dir}" "${verify_dir}"
 
   echo "Building expectations ..."
   "${py}" "${monitor_dir}/scripts/build_message_expectations.py" \

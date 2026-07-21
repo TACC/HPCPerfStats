@@ -46,4 +46,10 @@ test -x "${ROOT}/scripts/rpm_debug_shm_verify.sh" \
 grep -q 'emit_build_capabilities.py' "${ROOT}/scripts/rpm_debug_shm_verify.sh" \
   || { echo "rpm_debug_shm_verify.sh must emit capabilities before validation" >&2; exit 1; }
 
+grep -q '%{_topdir}/debug-verify' "${spec}" \
+  || { echo "hpcperfstats.spec must stash caps under %{_topdir}/debug-verify" >&2; exit 1; }
+
+grep -q 'debug-verify' "${prepare}" \
+  || { echo "prepare_rpmbuild_dirs.sh must document debug-verify" >&2; exit 1; }
+
 echo "test_hpc_debug_build_configure passed"

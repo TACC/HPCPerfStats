@@ -13,7 +13,7 @@
 Summary: Job-level Monitoring Client
 Name: hpcperfstatsd
 Version: 3.0
-Release: 5%{?dist}
+Release: 6%{?dist}
 License: GPL
 Vendor: Texas Advanced Computing Center
 Group: System Environment/Base
@@ -117,6 +117,16 @@ install -m 0755 .build-static/src/hpcperfstatsd %{buildroot}%{_sbindir}/hpcperfs
 install -m 0644 src/hpcperfstats.conf %{buildroot}%{_sysconfdir}/hpcperfstats/hpcperfstats.conf
 install -m 0644 src/hpcperfstatsd.sysconfig %{buildroot}%{_sysconfdir}/sysconfig/hpcperfstatsd
 install -m 0644 src/hpcperfstats.service %{buildroot}%{_unitdir}/hpcperfstats.service
+%if 0%{?hpc_debug_build}
+# Survive EL10 rpmbuild rmbuild: stash capabilities outside BUILD for rpm_debug_shm_verify.sh.
+mkdir -p "%{_topdir}/debug-verify"
+if test ! -f .build-static/monitor-build-capabilities.json; then
+  echo "ERROR: missing .build-static/monitor-build-capabilities.json (debug build must emit capabilities)" >&2
+  exit 1
+fi
+cp -f .build-static/monitor-build-capabilities.json \
+  "%{_topdir}/debug-verify/monitor-build-capabilities.json"
+%endif
 
 %files
 %{_sbindir}/hpcperfstatsd
@@ -142,6 +152,10 @@ fi
 %systemd_postun_with_restart hpcperfstats.service
 
 %changelog
+* Tue Jul 21 2026 sharrell@tacc.utexas.edu - 3.0-6
+- Debug %%install: stash monitor-build-capabilities.json under %%{_topdir}/debug-verify
+  so rpm_debug_shm_verify.sh works after EL10 rpmbuild rmbuild deletes BUILD/.
+
 * Sun Apr 05 2026 sharrell@tacc.utexas.edu - 3.0-5
 - Ship embedded-static-prefix inside the source tarball from prepare_rpmbuild_dirs.sh;
   %%build uses SKIP_DEPS=1 and only compiles hpcperfstatsd. Drop %%build-only dep tools

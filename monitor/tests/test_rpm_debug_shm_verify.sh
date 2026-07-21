@@ -1,17 +1,51 @@
 #!/bin/sh
-# Regression: rpm_debug_shm_verify.sh checks BUILD tree, main-RPM install, emits capabilities.
+# Regression: rpm_debug_shm_verify.sh prefers debug-verify stash; BUILD optional.
 set -e
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 verify="${ROOT}/scripts/rpm_debug_shm_verify.sh"
+spec="${ROOT}/hpcperfstats.spec"
+prepare="${ROOT}/scripts/prepare_rpmbuild_dirs.sh"
 
 test -x "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must be executable" >&2; exit 1; }
 
+# Missing stash + missing BUILD → clear stash error (not sole BUILD-tree dependency).
 err="$(RPM_TOPDIR=/tmp/hps_missing_rpmbuild DIST_TOP=hpcperfstats-3.0 MONITOR_DIR="${ROOT}" \
   SKIP_INSTALL=1 SKIP_SHM_LS=1 bash "${verify}" 2>&1)" || true
+echo "${err}" | grep -Fe 'debug-verify stash missing' >/dev/null \
+  || { echo "expected debug-verify stash missing error, got: ${err}" >&2; exit 1; }
 echo "${err}" | grep -Fe 'RPM build tree missing' >/dev/null \
-  || { echo "expected missing BUILD tree error, got: ${err}" >&2; exit 1; }
+  && { echo "must not hard-require BUILD/.build-static: ${err}" >&2; exit 1; }
+
+# Present stash + absent BUILD → past capabilities gate (Using stashed ...); may fail later on shm.
+tmpdir="$(mktemp -d /tmp/hps_rpm_debug_verify.XXXXXX)"
+cleanup() { rm -rf "${tmpdir}"; }
+trap cleanup EXIT
+mkdir -p "${tmpdir}/debug-verify" "${tmpdir}/RPMS/aarch64"
+printf '%s\n' '{"capability_slug":"fixture-slug","tier":"slowtier1"}' \
+  > "${tmpdir}/debug-verify/monitor-build-capabilities.json"
+touch "${tmpdir}/RPMS/aarch64/hpcperfstatsd-3.0-6.el10.aarch64.rpm"
+stash_out="$(RPM_TOPDIR="${tmpdir}" DIST_TOP=hpcperfstats-3.0 MONITOR_DIR="${ROOT}" \
+  SKIP_INSTALL=1 SKIP_SHM_LS=1 bash "${verify}" 2>&1)" || true
+echo "${stash_out}" | grep -Fe 'Using stashed capabilities' >/dev/null \
+  || { echo "expected Using stashed capabilities with present stash, got: ${stash_out}" >&2; exit 1; }
+echo "${stash_out}" | grep -Fe 'RPM build tree missing' >/dev/null \
+  && { echo "stash path must not require BUILD tree: ${stash_out}" >&2; exit 1; }
+echo "${stash_out}" | grep -Fe 'debug-verify stash missing' >/dev/null \
+  && { echo "must not report stash missing when stash exists: ${stash_out}" >&2; exit 1; }
+
+grep -q 'debug-verify' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must reference debug-verify stash" >&2; exit 1; }
+
+grep -q 'ensure_capabilities_json' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must define ensure_capabilities_json" >&2; exit 1; }
+
+grep -q '%{_topdir}/debug-verify' "${spec}" \
+  || { echo "hpcperfstats.spec must stash caps under %{_topdir}/debug-verify" >&2; exit 1; }
+
+grep -q 'debug-verify' "${prepare}" \
+  || { echo "prepare_rpmbuild_dirs.sh must document debug-verify stash" >&2; exit 1; }
 
 grep -q 'emit_build_capabilities.py' "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must emit capabilities before expectations" >&2; exit 1; }
@@ -71,11 +105,6 @@ grep -q 'resolve_optin_golden_dir' "${verify}" \
 grep -q 'GOLDEN_CHECK' "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must support GOLDEN_CHECK opt-in" >&2; exit 1; }
 
-# Golden must remain opt-in: do not auto-pass --golden-dir without GOLDEN_* env.
-if grep -qE 'validate_args\+\=\(--golden-dir' "${verify}"; then
-  # Only allowed inside GOLDEN_CHECK / GOLDEN_DIR gated block (resolve path).
-  :
-fi
 grep -q 'GOLDEN_CHECK:-0' "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must keep golden opt-in (GOLDEN_CHECK default 0)" >&2; exit 1; }
 

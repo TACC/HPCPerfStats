@@ -5,6 +5,7 @@ globs:
   - HPCPerfStats/monitor/scripts/build_message_expectations.py
   - HPCPerfStats/monitor/scripts/validate_shm_messages.py
   - HPCPerfStats/monitor/scripts/validate_stampede3_profile.sh
+  - HPCPerfStats/monitor/scripts/rpm_debug_shm_verify.sh
   - HPCPerfStats/monitor/scripts/lib/*
   - HPCPerfStats/monitor/tests/test_shm_message_correctness.sh
   - HPCPerfStats/monitor/tests/expected/shm_*
@@ -55,7 +56,7 @@ Registry + type contracts: `scripts/lib/tacc_system_profiles.py`. Operator wrapp
 ## Data-host runbook
 
 1. **Static DEBUG build:** `build_static_bundle.sh` with `--enable-debug` → `make -C .build-static capabilities`.
-2. **Debug RPM:** `prepare_rpmbuild_dirs.sh --debug-build` → `rpmbuild ... && ./scripts/rpm_debug_shm_verify.sh` (install main RPM, validate shm).
+2. **Debug RPM:** `prepare_rpmbuild_dirs.sh --debug-build` → `rpmbuild ... && ./scripts/rpm_debug_shm_verify.sh` (install main RPM, validate shm). Debug `%install` stashes `monitor-build-capabilities.json` under `rpmbuild/debug-verify/` so verify works after EL10 **rmbuild** deletes `BUILD/`.
 3. Run daemon; read `schema`/`fast`/`full` from shm.
 4. `build_message_expectations.py --capabilities … --shm-dir … --enable-slow-tier … [--profile …] --out expectations_<slug>[__<profile>].json`.
 5. `validate_shm_messages.py --capabilities … --manifest … --shm-dir … [--profile …]` (optional `--report` under `test_runs/monitor/`).
