@@ -36,7 +36,7 @@ _STAMPEDE3_CONTRACTS: dict[str, dict[str, set[str]]] = {
         "forbid": {"nvidia_gpu", "amd_gpu"},
     },
     "amd-rtx": {
-        "require": {"nvidia_gpu", "host_ib", "host_opa"},
+        "require": {"nvidia_gpu", "host_ib", "host_opa", "host_cpu_hw", "amd_x86_uncore_df_turin"},
         "forbid": {"amd_gpu", "intel_gpu"},
     },
 }

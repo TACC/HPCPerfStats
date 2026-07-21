@@ -938,6 +938,21 @@ class TaccSystemProfilesTests(unittest.TestCase):
         forbid = check_profile_type_contract(ok | {"amd_gpu"}, "amd-rtx")
         self.assertTrue(any("forbidden" in e for e in forbid))
 
+    def test_stampede3_contract_amd_rtx(self) -> None:
+        ok = {
+            "nvidia_gpu",
+            "host_ib",
+            "host_opa",
+            "host_cpu_hw",
+            "amd_x86_uncore_df_turin",
+        }
+        self.assertEqual(check_profile_type_contract(ok, "amd-rtx"), [])
+        miss = check_profile_type_contract(
+            {"nvidia_gpu", "host_ib", "host_opa"}, "amd-rtx"
+        )
+        self.assertTrue(any("host_cpu_hw" in e for e in miss))
+        self.assertTrue(any("amd_x86_uncore_df_turin" in e for e in miss))
+
     def test_vista_provisional_contracts(self) -> None:
         self.assertEqual(
             check_profile_type_contract({"host_ib", "cpu"}, "gg"), []

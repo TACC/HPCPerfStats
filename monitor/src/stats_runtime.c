@@ -7,6 +7,7 @@
 
 #include "collect.h"
 #include "collect_tier.h"
+#include "cpu_counter_metrics.h"
 #include "hwdetect.h"
 #include "metric_profiler.h"
 #include "monitor_log.h"
@@ -94,7 +95,7 @@ static long long stats_runtime_monotonic_us(void)
   return (long long)ts.tv_sec * 1000000LL + (long long)ts.tv_nsec / 1000LL;
 }
 
-static void stats_runtime_init_enabled_type(struct stats_type *type)
+static void stats_runtime_init_one_type(struct stats_type *type)
 {
   if (stats_type_init(type) < 0) {
     monitor_log_error("stats_runtime: disabling `%s` due to init failure\n", type->st_name);
@@ -102,8 +103,38 @@ static void stats_runtime_init_enabled_type(struct stats_type *type)
     return;
   }
   collect_tier_apply_to_type(type);
+}
+
+static void stats_runtime_begin_one_type(struct stats_type *type)
+{
   if (type->st_begin != NULL)
     (*type->st_begin)(type);
+}
+
+/*! Registry iteration is sorted by st_name; AMD DF/RAPL types sort before host_cpu_hw.
+ *  LIKWID HPMinit runs in host_cpu_hw begin, so begin that type first. */
+static void stats_runtime_begin_enabled_types(void)
+{
+  size_t i = 0;
+  struct stats_type *type;
+#if defined(MONITOR_WITH_HARDWARE) && defined(MONITOR_CPU_BACKEND_LIKWID)
+  struct stats_type *host_cpu_hw;
+
+  host_cpu_hw = stats_type_get(CPU_COUNTER_METRICS_ST_NAME);
+  if (host_cpu_hw != NULL && host_cpu_hw->st_enabled)
+    stats_runtime_begin_one_type(host_cpu_hw);
+#endif
+
+  i = 0;
+  while ((type = stats_type_for_each(&i)) != NULL) {
+    if (!type->st_enabled)
+      continue;
+#if defined(MONITOR_WITH_HARDWARE) && defined(MONITOR_CPU_BACKEND_LIKWID)
+    if (host_cpu_hw != NULL && type == host_cpu_hw)
+      continue;
+#endif
+    stats_runtime_begin_one_type(type);
+  }
 }
 
 void stats_runtime_teardown(void)
@@ -134,8 +165,9 @@ void stats_runtime_daemon_prepare_types(void)
   while ((type = stats_type_for_each(&i)) != NULL) {
     if (!type->st_enabled)
       continue;
-    stats_runtime_init_enabled_type(type);
+    stats_runtime_init_one_type(type);
   }
+  stats_runtime_begin_enabled_types();
   g_daemon_types_ready = 1;
 }
 
@@ -225,9 +257,9 @@ void stats_runtime_main_prepare_types(const stats_runtime_main_prepare_spec *spe
     collect_tier_apply_to_type(type);
     if (spec->select_all)
       type->st_selected = 1;
-    if (spec->call_begin && type->st_begin != NULL)
-      (*type->st_begin)(type);
   }
+  if (spec->call_begin)
+    stats_runtime_begin_enabled_types();
 }
 
 int stats_runtime_collect_cycle(FILE *profiler_stream, void *opaque,

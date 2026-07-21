@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
+#include "monitor_log.h"
 #include "stats.h"
 #include "trace.h"
 #include "cpuid.h"
@@ -58,6 +59,34 @@ int likwid_rapl_is_supported_processor(void)
 }
 
 #ifdef HAVE_LIKWID
+
+static int g_rapl_not_initialized_warned;
+static unsigned long g_rapl_read_fail_warned;
+
+static void likwid_rapl_warn_not_initialized(int cpu_id)
+{
+  if (g_rapl_not_initialized_warned)
+    return;
+  g_rapl_not_initialized_warned = 1;
+  monitor_log_warn("likwid_rapl: RAPL not initialized (cpu_id=%d); host_cpu_hw must begin first — "
+                   "energy reads will be zero until HPMinit succeeds\n",
+                   cpu_id);
+}
+
+static void likwid_rapl_warn_read_failed(unsigned int socket_id, int cpu_id)
+{
+  unsigned long mask;
+
+  if (socket_id >= (unsigned int)(sizeof(g_rapl_read_fail_warned) * 8))
+    return;
+  mask = 1UL << socket_id;
+  if (g_rapl_read_fail_warned & mask)
+    return;
+  g_rapl_read_fail_warned |= mask;
+  monitor_log_warn("likwid_rapl: power_read returned no energy for socket %u (cpu_id=%d); "
+                   "flat-zero RAPL is not healthy idle behavior\n",
+                   socket_id, cpu_id);
+}
 
 static void try_read_mj(int cpu_id, uint32_t msr, int domain, unsigned long long *mj, int *has)
 {
@@ -128,6 +157,7 @@ int likwid_rapl_collect_socket_mj(int cpu_id, unsigned int socket_id, unsigned l
   pi = get_powerInfo();
   if (pi == NULL || !pi->hasRAPL) {
     TRACE("likwid_rapl: RAPL not initialized (cpu_id=%d)\n", cpu_id);
+    likwid_rapl_warn_not_initialized(cpu_id);
     return -1;
   }
 #if defined(MONITOR_ARCH_INTEL)
@@ -139,7 +169,10 @@ int likwid_rapl_collect_socket_mj(int cpu_id, unsigned int socket_id, unsigned l
   (void)cpu_id;
   return -1;
 #endif
-  return (*has_pkg || *has_core || *has_dram || (has_pp1 != NULL && *has_pp1)) ? 0 : -1;
+  if (*has_pkg || *has_core || *has_dram || (has_pp1 != NULL && *has_pp1))
+    return 0;
+  likwid_rapl_warn_read_failed(socket_id, cpu_id);
+  return -1;
 #else
   (void)cpu_id;
   (void)socket_id;

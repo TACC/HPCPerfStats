@@ -67,6 +67,7 @@ RAPL notes:
 
 - LIKWID `power_read(cpu, reg, uint64_t *data)` requires a **64-bit** buffer; energy status is the low 32 bits (`likwid_rapl_energy_status_lo32` → `likwid_rapl_raw_to_mj`).
 - Do not enable AMD RAPL/PMC/DF types on Intel (or Intel RAPL on AMD); shared `likwid_rapl_is_supported_processor()` is OR of both vendors and is not used for type begin.
+- **Flat-zero `core_energy` / `pkg_energy` on AMD is not healthy idle behavior** — it means `power_read` failed or RAPL was never initialized (typically `host_cpu_hw` / HPMinit did not run). Healthy sockets show large cumulative mJ.
 | `intel_x86_uncore_imc_skx` | `IMC_SKX` (`MBOX*` CAS) | Cascade Lake / SKX server |
 | `intel_x86_uncore_imc_icx` | `IMC_ICX` (`MDEV*` DDR bytes) | Ice Lake server |
 | `intel_x86_uncore_imc_spr` | `IMC_SPR` (`MBOX*` + `HBM*` CAS) | DDR and HBM on same type |
@@ -77,5 +78,9 @@ via `likwid_uncore_adapter_emit_counter()`.
 
 ## Init order
 
-`host_cpu_hw` must begin before uncore collectors so `HPMinit` / `perfmon_init`
-run first (`stats_registry.c` ordering).
+`host_cpu_hw` must begin before LIKWID uncore collectors and RAPL so `HPMinit` /
+`perfmon_init` run first. The stats registry stays sorted by `st_name` for binary
+search (`stats_registry.h`); AMD DF and `amd_x86_rapl` sort **before** `host_cpu_hw`
+alphabetically. **`stats_runtime.c`** therefore uses a two-phase begin: init all
+enabled types, then call `host_cpu_hw` `st_begin` before every other type's begin.
+Intel IMC/CHA types already sort after `host_cpu_hw` and are unchanged.

@@ -43,7 +43,7 @@ endif
 
 AM_CPPFLAGS = -I$(top_srcdir)/src $(monitor_unit_cppflags)
 
-check_PROGRAMS = test_cpuid_signature test_amd_cpuid_match test_amd_df_likwid_profiles test_amd_x86_uncore_df_schema test_likwid_rapl_scale test_likwid_rapl_support test_likwid_pmc_schema_map test_likwid_arch_map_spr test_likwid_uncore_profiles test_likwid_uncore_adapter test_host_edac_mem_topology test_intel_skx_imc_schema test_intel_icx_imc_schema test_intel_spr_imc_schema test_string1 test_stats_buffer_data_append test_stats_buffer_uts test_stats_buffer_rows test_path_collect test_path_open_fail_once test_path_read test_sys_iter test_procfile_parse test_monitor_log test_monitor_options_kv test_pscanf test_schema_parse test_stats_file_format test_stats_file_format_extra test_stats_text_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_cpu_counter_papi_map test_cpu_counter_papi_util test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_roofline_detect_fixture test_nfs_schema_subset test_ib_schema_contract test_host_schema_contract test_lustre_schema_contract test_lustre_proc_stats test_opa_schema_contract test_opa_sysfs_map test_opa_mad_backoff test_ib_hca_is_opa_hfi test_opa_lspci_match test_lnet_schema_contract test_arm_aarch64_imc_schema test_metric_profiler test_hwdetect_policy test_hwdetect_lspci test_gpu_pci_detect test_intel_gpu_schema_contract test_xpum_gpu_dyn test_dcgm_gpu_dyn test_ib_mad_dyn test_opa_mad_dyn test_ib_port_state test_ib_port_collectible test_ib_foreach_hca_port test_ib_family test_stats_runtime_type_controls test_stats_runtime_collect test_collect_tier_table test_collect_phase test_collect_tier_gate test_stats_set_tier_gate test_dict test_host_key_alias test_proc_status_order test_schema_emit test_procfile_kv test_collect_str test_nvidia_gpu_estimate test_daemonize
+check_PROGRAMS = test_cpuid_signature test_amd_cpuid_match test_amd_df_likwid_profiles test_amd_x86_uncore_df_schema test_likwid_rapl_scale test_likwid_rapl_support test_likwid_pmc_schema_map test_likwid_arch_map_spr test_likwid_uncore_profiles test_likwid_uncore_adapter test_host_edac_mem_topology test_intel_skx_imc_schema test_intel_icx_imc_schema test_intel_spr_imc_schema test_string1 test_stats_buffer_data_append test_stats_buffer_uts test_stats_buffer_rows test_path_collect test_path_open_fail_once test_path_read test_sys_iter test_procfile_parse test_monitor_log test_monitor_options_kv test_pscanf test_schema_parse test_stats_file_format test_stats_file_format_extra test_stats_text_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_cpu_counter_papi_map test_cpu_counter_papi_util test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_roofline_detect_fixture test_nfs_schema_subset test_ib_schema_contract test_host_schema_contract test_lustre_schema_contract test_lustre_proc_stats test_opa_schema_contract test_opa_sysfs_map test_opa_mad_backoff test_ib_hca_is_opa_hfi test_opa_lspci_match test_lnet_schema_contract test_arm_aarch64_imc_schema test_metric_profiler test_hwdetect_policy test_hwdetect_lspci test_gpu_pci_detect test_intel_gpu_schema_contract test_xpum_gpu_dyn test_dcgm_gpu_dyn test_ib_mad_dyn test_opa_mad_dyn test_ib_port_state test_ib_port_collectible test_ib_foreach_hca_port test_ib_family test_stats_runtime_type_controls test_stats_runtime_likwid_begin_order test_stats_runtime_collect test_collect_tier_table test_collect_phase test_collect_tier_gate test_stats_set_tier_gate test_dict test_host_key_alias test_proc_status_order test_schema_emit test_procfile_kv test_collect_str test_nvidia_gpu_estimate test_daemonize
 if INFINIBAND
 check_PROGRAMS += test_ib_mad_backoff test_ib_mad_decode test_ib_mad_sw_swap
 endif
@@ -99,12 +99,14 @@ endif
 test_likwid_rapl_scale_SOURCES = \
 	test_likwid_rapl_scale.c \
 	$(top_srcdir)/src/likwid_rapl.c \
-	$(top_srcdir)/src/amd_processor.c
+	$(top_srcdir)/src/amd_processor.c \
+	$(top_srcdir)/src/monitor_log.c
 
 test_likwid_rapl_support_SOURCES = \
 	test_likwid_rapl_support.c \
 	$(top_srcdir)/src/likwid_rapl.c \
-	$(top_srcdir)/src/amd_processor.c
+	$(top_srcdir)/src/amd_processor.c \
+	$(top_srcdir)/src/monitor_log.c
 
 test_likwid_pmc_schema_map_SOURCES = \
 	test_likwid_pmc_schema_map.c \
@@ -496,6 +498,13 @@ test_stats_runtime_type_controls_SOURCES = \
 	$(top_srcdir)/src/monitor_timing.c \
 	$(top_srcdir)/src/dict.c
 
+test_stats_runtime_likwid_begin_order_SOURCES = \
+	test_stats_runtime_likwid_begin_order.c \
+	$(top_srcdir)/src/stats_runtime.c \
+	$(top_srcdir)/src/collect_tier.c \
+	$(top_srcdir)/src/monitor_timing.c \
+	$(top_srcdir)/src/dict.c
+
 test_stats_runtime_collect_SOURCES = \
 	test_stats_runtime_collect.c \
 	$(top_srcdir)/src/stats_runtime.c \
@@ -686,6 +695,7 @@ test_ib_mad_sw_swap_LDADD += -ldl
 endif
 endif
 test_stats_runtime_type_controls_LDADD = $(LDADD) -lm
+test_stats_runtime_likwid_begin_order_LDADD = $(LDADD) -lm
 test_stats_runtime_collect_LDADD = $(LDADD) -lm
 test_nvidia_gpu_estimate_LDADD = $(LDADD) -lm
 test_daemonize_LDADD = $(LDADD)

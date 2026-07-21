@@ -24,6 +24,7 @@ alwaysApply: false
 - Do **not** reintroduce `intel_x86_pmc_gpr4` / `intel_x86_pmc_gpr8`, `intel_4pmc3` / `intel_8pmc3`, `msr_io`, or AMD `amd64_pmc` / native MSR `amd64_df` / emit `amd_x86_pmc` or bare `amd_x86_uncore_df`.
 - DF `st_name`s are family-named: `amd_x86_uncore_df_{rome,milan,genoa,turin}` (IMC pattern).
 - CPUID allowlists for EPYC are **server model ranges** only (`amd_cpuid_match.c`).
+- **Runtime begin order:** `stats_runtime.c` begins `host_cpu_hw` before other types so LIKWID `HPMinit` runs before AMD DF/RAPL begin. Registry table order stays `st_name` sorted for binary search.
 
 See [LIKWID_MIGRATION.md](../LIKWID_MIGRATION.md).
 
