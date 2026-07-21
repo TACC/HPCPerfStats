@@ -43,6 +43,7 @@ def check_plausibility(
         if ts is not None and not no_freshness:
             age = abs(time.time() - ts)
             if age > 300:
+                # Stale samples (e.g. SEGV restart loop) must fail live verify under strict.
                 warn(f"sample timestamp age {age:.0f}s > 300s")
 
         full_rows = rows_by_type(

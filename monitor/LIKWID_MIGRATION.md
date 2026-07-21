@@ -69,6 +69,7 @@ RAPL notes:
 - Do not enable AMD RAPL/PMC/DF types on Intel (or Intel RAPL on AMD); shared `likwid_rapl_is_supported_processor()` is OR of both vendors and is not used for type begin.
 - **`amd_x86_rapl` begin requires `cpu_counter_metrics_likwid_ready()`** (same session gate as AMD DF). If `host_cpu_hw` begin fails, RAPL is **disabled** — it must not publish flat-zero rows.
 - **Flat-zero `core_energy` / `pkg_energy` on AMD is not healthy idle behavior** — it means `power_read` failed or RAPL was never initialized (typically `host_cpu_hw` / HPMinit did not run). Healthy sockets show large cumulative mJ.
+- **RAPL vendor path is runtime** (`likwid_rapl_collect_path`): EPYC uses AMD MSRs even when the binary was configured with `MONITOR_ARCH_INTEL`. Compile-time `#if MONITOR_ARCH_*` for RAPL collect caused SEGV in `power_read` on Turin.
 - AMD core eventset uses **`LS_DISPATCH_ALL`** (LIKWID Zen umask); bare `LS_DISPATCH` fails `perfmon_addEventSet` and silently used to disable `host_cpu_hw`.
 - **`LIKWID_FORCE`:** privileged host daemon defaults `LIKWID_FORCE=1` via `likwid_pmc_adapter_ensure_force_env()` before `HPMinit` (same effect as `likwid-perfctr -f`). Without force, LIKWID refuses in-use PMC0–PMC3 (`addEventSet` −22). Opt out with `LIKWID_FORCE=0`. Quiet setup (`HPCPERFSTATS_LIKWID_SETUP_QUIET`, default on) retries failed add/setup/start once with stderr restored so “in use” lines reach the journal.
 - `host_cpu_hw` begin failures log init vs eventset step and the event string (`likwid_backend_begin` / `likwid_pmc_adapter_setup_events`).

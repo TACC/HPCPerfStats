@@ -438,6 +438,24 @@ class PlausibilityTests(unittest.TestCase):
         )
         self.assertTrue(any("host_tmpfs" in w and "missing" in w for w in warnings))
 
+    def test_stale_sample_age_strict_is_error(self) -> None:
+        """Age >300s under strict must be an error (SEGV restart-loop / stale shm class)."""
+        manifest = {"enable_slow_tier": True, "types": {}}
+        schema: dict = {}
+        # Epoch far in the past relative to now.
+        body = "1000000000.0 0 golden_host\n"
+        _, warnings, errors = check_plausibility(
+            manifest,
+            schema,
+            full_body=body,
+            fast_body=None,
+            schema_body=None,
+            no_freshness=False,
+            strict=True,
+        )
+        self.assertEqual(warnings, [])
+        self.assertTrue(any("sample timestamp age" in e and "> 300s" in e for e in errors))
+
     def test_intel_gpu_mem_total_without_power_warns(self) -> None:
         """PVC-style intel_gpu row: mem_total populated but power=0 → plausibility WARN."""
         schema_keys = [

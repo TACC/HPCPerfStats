@@ -222,11 +222,21 @@ esac
 
 if test "x$monitor_arch" = "xauto"; then
   case "$host_cpu" in
-    x86_64|i?86) monitor_arch="intel" ;;
+    x86_64|i?86)
+      monitor_arch="intel"
+      # Prefer AuthenticAMD build hosts so MONITOR_ARCH_AMD matches the machine.
+      # RAPL MSR selection is runtime (likwid_rapl_collect_path); this flag must not
+      # force Intel power_read on EPYC.
+      if test -r /proc/cpuinfo && \
+         grep -m1 -E '^vendor_id[[:space:]]*:[[:space:]]*AuthenticAMD$' /proc/cpuinfo >/dev/null 2>&1; then
+        monitor_arch="amd"
+      fi
+      ;;
     aarch64|arm*|ppc64*|riscv64) monitor_arch="intel" ;;
     *) monitor_arch="intel" ;;
   esac
 fi
+AC_MSG_NOTICE([--with-monitor-arch resolved to: ${monitor_arch}])
 
 if test "x$cpu_counter_backend" = "xlikwid"; then
   if test "x$monitor_arch" = "xintel"; then

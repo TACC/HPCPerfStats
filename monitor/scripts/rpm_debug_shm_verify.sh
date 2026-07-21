@@ -205,6 +205,22 @@ main() {
     }
   fi
 
+  # Crash-loop / failed start leaves stale shm; do not treat it as a live sample.
+  # Only after install (SKIP_INSTALL=0): unit tests use SKIP_INSTALL=1 without a real daemon.
+  if test "${SKIP_INSTALL:-0}" != "1" && test "${SKIP_SYSTEMCTL_CHECK:-0}" != "1"; then
+    if command -v systemctl >/dev/null 2>&1; then
+      svc_state="$(systemctl is-active hpcperfstats.service 2>/dev/null || true)"
+      if test "${svc_state}" != "active"; then
+        echo "ERROR: hpcperfstats.service is '${svc_state:-unknown}' (want active); refusing shm validate" >&2
+        systemctl status hpcperfstats.service --no-pager -l 2>&1 | head -40 >&2 || true
+        return 1
+      fi
+      echo "hpcperfstats.service is active"
+    else
+      echo "WARN: systemctl not found; skipping hpcperfstats.service active check" >&2
+    fi
+  fi
+
   slug="$("${py}" -c "import json; print(json.load(open('${caps}'))['capability_slug'])")"
   echo "capability_slug=${slug}"
 

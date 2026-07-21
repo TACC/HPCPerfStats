@@ -47,7 +47,7 @@ Use the **Read** tool on the listed `HPCPerfStats/monitor/cursor-rules/<file>.md
 | Trigger paths | Read these rules |
 |---------------|------------------|
 | `HPCPerfStats/monitor/src/**` | `monitor-c-conventions.mdc`, `monitor-jitter-and-fidelity-priority.mdc`, `monitor-c-refactor-standards.mdc`, `monitor-valgrind-cpp-linter-gate.mdc` |
-| `HPCPerfStats/monitor/src/amd*.c`, `amd_cpuid_match*`, `amd_processor*`, `amd_x86_uncore_df*`, `cpu_counter_metrics*`, `cpu_counter_metrics_likwid_begin*`, `likwid_pmc_adapter*`, `likwid_uncore_profiles*`, `likwid_arch_map.c`, `cpuid.*`, `stats_registry.c` (LIKWID-only PMU) | `monitor-amd-epyc-likwid.mdc` |
+| `HPCPerfStats/monitor/src/amd*.c`, `amd_cpuid_match*`, `amd_processor*`, `amd_x86_uncore_df*`, `cpu_counter_metrics*`, `cpu_counter_metrics_likwid_begin*`, `likwid_pmc_adapter*`, `likwid_rapl*`, `likwid_uncore_profiles*`, `likwid_arch_map.c`, `cpuid.*`, `stats_registry.c`, `configure.ac` (LIKWID-only PMU / RAPL path) | `monitor-amd-epyc-likwid.mdc` |
 | `HPCPerfStats/monitor/src/*ib*.c`, `opa.c` / `opa_sysfs.*`, IB sysfs parsers | `monitor-ib-sysfs-parsing.mdc` |
 | `HPCPerfStats/monitor/src/*dcgm*`, `*gpu*` | `monitor-dcgm-integration.mdc` |
 | `HPCPerfStats/monitor/src/*papi*`, `cpu_counter_metrics*` (PAPI hybrid / FLOPs map) | `monitor-papi-integration.mdc` |

@@ -8,8 +8,10 @@ globs:
   - HPCPerfStats/monitor/src/likwid_pmc_adapter.*
   - HPCPerfStats/monitor/src/likwid_uncore_profiles.*
   - HPCPerfStats/monitor/src/likwid_arch_map.c
+  - HPCPerfStats/monitor/src/likwid_rapl.*
   - HPCPerfStats/monitor/src/cpuid.*
   - HPCPerfStats/monitor/src/stats_registry.c
+  - HPCPerfStats/monitor/configure.ac
 alwaysApply: false
 ---
 
@@ -28,6 +30,8 @@ alwaysApply: false
 - **`amd_x86_rapl` begin** must require `cpu_counter_metrics_likwid_ready()` (same gate as DF). Flat RAPL `0 0` rows are a **failure mode**, not healthy idle — disable the type when LIKWID never initialized.
 - **Begin failures must be journal-visible:** `likwid_backend_begin` and `likwid_pmc_adapter_setup_events` log which step failed (`HPMinit` / `addEventSet` / `setupCounters` / `startCounters`) and the event string; do not rely on quiet stderr redirect alone. On quiet setup failure, retry the failing LIKWID call once with stderr restored so “PMC in use” / force hints reach the journal.
 - **`LIKWID_FORCE` default:** `likwid_pmc_adapter_init` calls `likwid_pmc_adapter_ensure_force_env()` (`setenv("LIKWID_FORCE","1",0)`) so in-use core PMCs can be claimed (C-API equivalent of `likwid-perfctr -f`). Operators may opt out with `LIKWID_FORCE=0` before start.
+- **RAPL MSR path is runtime:** `likwid_rapl_collect_path()` / `likwid_rapl_collect_socket_mj` select AMD vs Intel MSRs from `processor` (EPYC → AMD). Do **not** gate RAPL `power_read` on `MONITOR_ARCH_*`. An Intel-`MONITOR_ARCH` binary on Turin that still used `collect_intel_socket_mj` SEGVs in `power_read` (amd-rtx live residual).
+- **Live amd-rtx healthy bar:** unit `active` (not core-dump restart loop), shm sample age &lt; 300s, `@full` has `host_cpu_hw` + `amd_x86_uncore_df_turin` + non-flat `amd_x86_rapl`. `rpm_debug_shm_verify` refuses validate when the service is not active after install.
 - **AMD core eventset:** use `LS_DISPATCH_ALL` (not bare `LS_DISPATCH`) — LIKWID Zen tables only define `LS_DISPATCH_*` umasks.
 
 See [LIKWID_MIGRATION.md](../LIKWID_MIGRATION.md).

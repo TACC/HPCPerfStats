@@ -96,6 +96,12 @@ grep -q 'STRICT_LIVE_SPOT_CHECK:-1' "${verify}" \
 grep -q 'STRICT_PLAUSIBILITY:-1' "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must default STRICT_PLAUSIBILITY on" >&2; exit 1; }
 
+grep -q 'is-active hpcperfstats.service' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must require active hpcperfstats.service after install" >&2; exit 1; }
+
+grep -q 'refusing shm validate' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must refuse validate when service not active" >&2; exit 1; }
+
 grep -q 'STRICT_CROSS_SAMPLE:-1' "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must default STRICT_CROSS_SAMPLE on" >&2; exit 1; }
 

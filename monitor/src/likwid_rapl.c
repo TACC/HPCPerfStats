@@ -58,6 +58,16 @@ int likwid_rapl_is_supported_processor(void)
   return likwid_rapl_is_supported_intel_processor() || likwid_rapl_is_supported_amd_processor();
 }
 
+int likwid_rapl_collect_path(void)
+{
+  /* Prefer AMD when processor is EPYC — even if binary was built with MONITOR_ARCH_INTEL. */
+  if (likwid_rapl_is_supported_amd_processor())
+    return LIKWID_RAPL_PATH_AMD;
+  if (likwid_rapl_is_supported_intel_processor())
+    return LIKWID_RAPL_PATH_INTEL;
+  return LIKWID_RAPL_PATH_NONE;
+}
+
 #ifdef HAVE_LIKWID
 
 static int g_rapl_not_initialized_warned;
@@ -160,15 +170,17 @@ int likwid_rapl_collect_socket_mj(int cpu_id, unsigned int socket_id, unsigned l
     likwid_rapl_warn_not_initialized(cpu_id);
     return -1;
   }
-#if defined(MONITOR_ARCH_INTEL)
-  collect_intel_socket_mj(cpu_id, pkg_mj, core_mj, dram_mj, has_pkg, has_core, has_dram, pp1_mj,
-                          has_pp1);
-#elif defined(MONITOR_ARCH_AMD)
-  collect_amd_socket_mj(cpu_id, pkg_mj, core_mj, dram_mj, has_pkg, has_core, has_dram);
-#else
-  (void)cpu_id;
-  return -1;
-#endif
+  switch (likwid_rapl_collect_path()) {
+  case LIKWID_RAPL_PATH_AMD:
+    collect_amd_socket_mj(cpu_id, pkg_mj, core_mj, dram_mj, has_pkg, has_core, has_dram);
+    break;
+  case LIKWID_RAPL_PATH_INTEL:
+    collect_intel_socket_mj(cpu_id, pkg_mj, core_mj, dram_mj, has_pkg, has_core, has_dram, pp1_mj,
+                            has_pp1);
+    break;
+  default:
+    return -1;
+  }
   if (*has_pkg || *has_core || *has_dram || (has_pp1 != NULL && *has_pp1))
     return 0;
   likwid_rapl_warn_read_failed(socket_id, cpu_id);
