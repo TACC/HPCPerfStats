@@ -2,6 +2,7 @@
 #include <string.h>
 #include "likwid_uncore_profiles.h"
 #include "intel_processor.h"
+#include "amd_processor.h"
 
 /*
  * LIKWID perfmon_addEventSet: strings without ':' are treated as named
@@ -76,11 +77,30 @@
   "LLC_VICTIMS_M_STATE:CBOX4C1,LLC_VICTIMS_M_STATE:CBOX5C1,"                                       \
   "LLC_VICTIMS_M_STATE:CBOX6C1,LLC_VICTIMS_M_STATE:CBOX7C1"
 
+/* LIKWID Zen2 MEM: only DRAM_CHANNEL_0/1 on DFC. */
+#define DF_ROME_EVENTS "DRAM_CHANNEL_0:DFC0,DRAM_CHANNEL_1:DFC1"
+
+/* LIKWID Zen3 MEM1: DRAM_CHANNEL_0–3 on DFC. */
+#define DF_MILAN_EVENTS                                                                            \
+  "DRAM_CHANNEL_0:DFC0,DRAM_CHANNEL_1:DFC1,DRAM_CHANNEL_2:DFC2,DRAM_CHANNEL_3:DFC3"
+
+/* LIKWID Zen4: DRAM_READS_LOCAL_CHANNEL_* on DFC (PPR-aligned encodings). */
+#define DF_GENOA_EVENTS                                                                            \
+  "DRAM_READS_LOCAL_CHANNEL_0:DFC0,DRAM_READS_LOCAL_CHANNEL_1:DFC1,"                               \
+  "DRAM_READS_LOCAL_CHANNEL_2:DFC2,DRAM_READS_LOCAL_CHANNEL_3:DFC3"
+
+/* LIKWID Zen5 MEM: UMC CAS reads (first four channels) → dram_chan*_bytes. */
+#define DF_TURIN_EVENTS "CAS_CMD_RD:UMC0C0,CAS_CMD_RD:UMC1C0,CAS_CMD_RD:UMC2C0,CAS_CMD_RD:UMC3C0"
+
 static const char *const profile_events[LIKWID_UNCORE_PROFILE_COUNT] = {
     [LIKWID_UNCORE_PROFILE_IMC_SKX] = MBOX6_IMC_EVENTS,
     [LIKWID_UNCORE_PROFILE_IMC_ICX] = MDEV4_ICX_EVENTS,
     [LIKWID_UNCORE_PROFILE_IMC_SPR] = SPR_DDR_HBM_EVENTS,
     [LIKWID_UNCORE_PROFILE_CHA_SKX] = CHA_SKX_CBOX_EVENTS,
+    [LIKWID_UNCORE_PROFILE_DF_ROME] = DF_ROME_EVENTS,
+    [LIKWID_UNCORE_PROFILE_DF_MILAN] = DF_MILAN_EVENTS,
+    [LIKWID_UNCORE_PROFILE_DF_GENOA] = DF_GENOA_EVENTS,
+    [LIKWID_UNCORE_PROFILE_DF_TURIN] = DF_TURIN_EVENTS,
 };
 
 int likwid_uncore_profile_matches_processor(likwid_uncore_profile_t profile, processor_t p)
@@ -93,6 +113,14 @@ int likwid_uncore_profile_matches_processor(likwid_uncore_profile_t profile, pro
     return intel_processor_is_icx(p);
   case LIKWID_UNCORE_PROFILE_IMC_SPR:
     return intel_processor_is_spr(p);
+  case LIKWID_UNCORE_PROFILE_DF_ROME:
+    return amd_processor_is_rome(p);
+  case LIKWID_UNCORE_PROFILE_DF_MILAN:
+    return amd_processor_is_milan(p);
+  case LIKWID_UNCORE_PROFILE_DF_GENOA:
+    return amd_processor_is_genoa(p);
+  case LIKWID_UNCORE_PROFILE_DF_TURIN:
+    return amd_processor_is_turin(p);
   default:
     return 0;
   }
@@ -274,6 +302,39 @@ static int map_cbox(const char *counter_name, char *dev_out, size_t dev_len, con
   return 0;
 }
 
+static int map_amd_df(const char *counter_name, char *dev_out, size_t dev_len, const char **key_out)
+{
+  unsigned int idx = 0;
+  char work[128];
+  const char *base = counter_name_base(counter_name, work, sizeof(work));
+
+  if (base == NULL || dev_out == NULL || key_out == NULL)
+    return -1;
+
+  snprintf(dev_out, dev_len, "df");
+
+  if (sscanf(base, "DFC%u", &idx) == 1) {
+    static const char *const dfc_keys[] = {"dram_chan0_bytes", "dram_chan1_bytes",
+                                           "dram_chan2_bytes", "dram_chan3_bytes"};
+    if (idx >= 4)
+      return -1;
+    *key_out = dfc_keys[idx];
+    return 0;
+  }
+
+  /* Turin UMC CAS_CMD_RD on UMC{N}C0 → dram_chanN_bytes. */
+  if (sscanf(base, "UMC%uC0", &idx) == 1) {
+    static const char *const umc_keys[] = {"dram_chan0_bytes", "dram_chan1_bytes",
+                                           "dram_chan2_bytes", "dram_chan3_bytes"};
+    if (idx >= 4)
+      return -1;
+    *key_out = umc_keys[idx];
+    return 0;
+  }
+
+  return -1;
+}
+
 int likwid_uncore_profile_map_counter(likwid_uncore_profile_t profile, const char *counter_name,
                                       char *dev_out, size_t dev_len, const char **key_out)
 {
@@ -284,6 +345,11 @@ int likwid_uncore_profile_map_counter(likwid_uncore_profile_t profile, const cha
   case LIKWID_UNCORE_PROFILE_IMC_ICX:
   case LIKWID_UNCORE_PROFILE_IMC_SPR:
     return map_mbox_hbm_mdev(counter_name, dev_out, dev_len, key_out);
+  case LIKWID_UNCORE_PROFILE_DF_ROME:
+  case LIKWID_UNCORE_PROFILE_DF_MILAN:
+  case LIKWID_UNCORE_PROFILE_DF_GENOA:
+  case LIKWID_UNCORE_PROFILE_DF_TURIN:
+    return map_amd_df(counter_name, dev_out, dev_len, key_out);
   default:
     return -1;
   }

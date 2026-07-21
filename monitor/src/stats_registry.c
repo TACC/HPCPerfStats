@@ -4,8 +4,10 @@
 #include "stats.h"
 
 #if defined(MONITOR_WITH_HARDWARE) && defined(MONITOR_CPU_BACKEND_LIKWID)
-extern struct stats_type amd64_df_stats_type;
-extern struct stats_type amd64_pmc_stats_type;
+extern struct stats_type amd_x86_uncore_df_rome_stats_type;
+extern struct stats_type amd_x86_uncore_df_milan_stats_type;
+extern struct stats_type amd_x86_uncore_df_genoa_stats_type;
+extern struct stats_type amd_x86_uncore_df_turin_stats_type;
 extern struct stats_type amd64_rapl_stats_type;
 extern struct stats_type intel_4pmc3_stats_type;
 extern struct stats_type intel_8pmc3_stats_type;
@@ -69,8 +71,10 @@ extern struct stats_type vm_stats_type;
 
 struct stats_type *const stats_type_table[] = {
 #if defined(MONITOR_WITH_HARDWARE) && defined(MONITOR_CPU_BACKEND_LIKWID)
-    &amd64_df_stats_type,
-    &amd64_pmc_stats_type,
+    &amd_x86_uncore_df_genoa_stats_type,
+    &amd_x86_uncore_df_milan_stats_type,
+    &amd_x86_uncore_df_rome_stats_type,
+    &amd_x86_uncore_df_turin_stats_type,
     &amd64_rapl_stats_type,
 #endif
 #if defined(MONITOR_WITH_AMD_GPU)

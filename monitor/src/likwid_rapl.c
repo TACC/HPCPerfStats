@@ -9,6 +9,7 @@
 #include "stats.h"
 #include "trace.h"
 #include "cpuid.h"
+#include "amd_processor.h"
 #include "likwid_rapl.h"
 
 #ifdef HAVE_LIKWID
@@ -48,13 +49,7 @@ int likwid_rapl_is_supported_intel_processor(void)
 
 int likwid_rapl_is_supported_amd_processor(void)
 {
-  switch (processor) {
-  case AMD_17H:
-  case AMD_19H:
-    return 1;
-  default:
-    return 0;
-  }
+  return amd_processor_is_epyc(processor);
 }
 
 int likwid_rapl_is_supported_processor(void)

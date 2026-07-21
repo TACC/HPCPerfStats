@@ -1,0 +1,29 @@
+---
+description: AMD EPYC Rome–Turin PMU via LIKWID only (family DF types, no MSR fallback)
+globs:
+  - HPCPerfStats/monitor/src/amd*.c
+  - HPCPerfStats/monitor/src/amd*.h
+  - HPCPerfStats/monitor/src/likwid_uncore_profiles.*
+  - HPCPerfStats/monitor/src/likwid_arch_map.c
+  - HPCPerfStats/monitor/src/cpuid.*
+alwaysApply: false
+---
+
+# AMD EPYC LIKWID-only PMU
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**.
+
+## Law
+
+- EPYC Rome/Milan/Genoa/Turin core + DF + RAPL go through **LIKWID** only.
+- DF `st_name`s are family-named: `amd_x86_uncore_df_{rome,milan,genoa,turin}` (IMC pattern).
+- **No MSR fallback** if LIKWID init/read fails — disable the type.
+- Do not reintroduce `amd64_pmc` / native MSR `amd64_df` / emit `amd_x86_pmc` or bare `amd_x86_uncore_df`.
+- CPUID allowlists are **EPYC server model ranges** only (`amd_cpuid_match.c`).
+
+See [LIKWID_MIGRATION.md](../LIKWID_MIGRATION.md) AMD section.
+
+## Overlap
+
+- **monitor-emitted-variable-naming** — generation in type name
+- **monitor-consumer-schema-migration** — DF type split needs consumer follow-up

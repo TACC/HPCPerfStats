@@ -10,6 +10,7 @@
 #include "path_open_fail_once.h"
 #include "cpuid.h"
 #include "intel_cpuid_match.h"
+#include "amd_cpuid_match.h"
 
 #if defined(__i386__) || defined(__x86_64__)
 
@@ -33,7 +34,7 @@ processor_t signature(int *n_pmcs)
   TRACE("vendor %s\n", vendor);
 
   cpuid(1, eax, ebx, ecx, edx);
-  char sig[6];
+  char sig[16];
   int model = (eax & 0x0FF) >> 4;
   int extended_model = (eax & 0xF0000) >> 12;
   int family_code = (eax & 0xF00) >> 8;
@@ -41,7 +42,7 @@ processor_t signature(int *n_pmcs)
   snprintf(sig, sizeof(sig), "%02x_%x", extended_family_code | family_code, extended_model | model);
   TRACE("sig %s\n", sig);
 
-  // Determine Processor Family and Model
+  /* Determine Processor Family and Model */
   if (strncmp(vendor, "GenuineIntel", 12) == 0) {
     cpuid(0x0A, eax, ebx, ecx, edx);
     *n_pmcs = (eax >> 8) & 0xFF;
@@ -53,23 +54,11 @@ processor_t signature(int *n_pmcs)
       return rc;
     }
   } else if (strncmp(vendor, "AuthenticAMD", 12) == 0) {
-    if (strncmp(sig, "8f_31", 5) == 0) {
-      TRACE("AMD_17H %s\n", sig);
+    rc = amd_cpuid_sig_to_processor(vendor, sig);
+    if (rc != (processor_t)-1) {
       *n_pmcs = 6;
-      TRACE("Number of PMCs = %d\n", *n_pmcs);
-      return AMD_17H;
-    }
-    if (strncmp(sig, "8f_49", 5) == 0) {
-      TRACE("AMD_17H %s\n", sig);
-      *n_pmcs = 6;
-      TRACE("Number of PMCs = %d\n", *n_pmcs);
-      return AMD_17H;
-    }
-    if (strncmp(sig, "af_1", 5) == 0) {
-      TRACE("AMD_19H %s\n", sig);
-      *n_pmcs = 6;
-      TRACE("Number of PMCs = %d\n", *n_pmcs);
-      return AMD_19H;
+      TRACE("AMD EPYC processor sig %s -> %d (n_pmcs=6)\n", sig, (int)rc);
+      return rc;
     }
   }
 

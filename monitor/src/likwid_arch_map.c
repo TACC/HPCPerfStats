@@ -76,6 +76,11 @@ static const char *intel_spr_eventset(int n_pmcs)
 const char *likwid_arch_eventset_for_processor(processor_t p, int n_pmcs)
 {
   switch (p) {
+  case AMD_ROME:
+  case AMD_MILAN:
+  case AMD_GENOA:
+  case AMD_TURIN:
+    return amd_eventset();
   case ICELAKE_SERVER:
     return intel_icx_eventset();
   case SAPPHIRE_RAPIDS:

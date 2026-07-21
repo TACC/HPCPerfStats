@@ -25,10 +25,6 @@
 #include "cpu_counter_metrics_papi.h"
 #endif
 #else
-#include "amd64_pmc.h"
-#undef KEYS
-#include "amd64_df.h"
-#undef KEYS
 #include "likwid_pmc_adapter.h"
 #include "likwid_arch_map.h"
 #include "cpu_counter_metrics_likwid_begin.h"
@@ -1060,32 +1056,9 @@ static void fallback_fill(struct stats *stats, const char *cpu)
   if (read_msr_u64(cpu, IA32_FIXED_CTR2, &v) == 0)
     stats_set(stats, "mperf", v);
 #else
-  if (read_msr_u64(cpu, MSR_PERF_CTR0, &v) == 0)
-    stats_set(stats, "fp_ops_retired", v);
-  if (read_msr_u64(cpu, MSR_PERF_CTR1, &v) == 0)
-    stats_set(stats, "fp_ops_merge", v);
-  if (read_msr_u64(cpu, MSR_PERF_CTR2, &v) == 0)
-    stats_set(stats, "branch_inst_retired", v);
-  if (read_msr_u64(cpu, MSR_PERF_CTR3, &v) == 0)
-    stats_set(stats, "branch_inst_retired_miss", v);
-  if (read_msr_u64(cpu, MSR_PERF_CTR4, &v) == 0)
-    stats_set(stats, "dispatch_stall_cycles1", v);
-  if (read_msr_u64(cpu, MSR_PERF_CTR5, &v) == 0)
-    stats_set(stats, "dispatch_stall_cycles0", v);
-  if (read_msr_u64(cpu, MSR_PERF_INST_RETIRED, &v) == 0)
-    stats_set(stats, "instr_retired", v);
-  if (read_msr_u64(cpu, MSR_PERF_APERF, &v) == 0)
-    stats_set(stats, "aperf", v);
-  if (read_msr_u64(cpu, MSR_PERF_MPERF, &v) == 0)
-    stats_set(stats, "mperf", v);
-  if (read_msr_u64(cpu, MSR_DF_CTR0, &v) == 0)
-    stats_set(stats, "dram_chan0_bytes", v);
-  if (read_msr_u64(cpu, MSR_DF_CTR1, &v) == 0)
-    stats_set(stats, "dram_chan1_bytes", v);
-  if (read_msr_u64(cpu, MSR_DF_CTR2, &v) == 0)
-    stats_set(stats, "dram_chan2_bytes", v);
-  if (read_msr_u64(cpu, MSR_DF_CTR3, &v) == 0)
-    stats_set(stats, "dram_chan3_bytes", v);
+  /* MONITOR_ARCH_AMD: LIKWID-only — no MSR PMC/DF fallback. */
+  (void)cpu;
+  (void)v;
 #endif
   stats_set(stats, "fp_arith_inst_retired_scalar_double", 0);
   stats_set(stats, "fp_arith_inst_retired_128b_packed_double", 0);

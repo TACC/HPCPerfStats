@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include "intel_cpuid_match.h"
+#include "amd_cpuid_match.h"
 
 static void test_intel_signatures(void)
 {
@@ -24,6 +25,7 @@ static void test_unknown(void)
   assert(intel_cpuid_sig_to_processor("AuthenticAMD", "06_55") == (processor_t)-1);
   assert(intel_cpuid_sig_to_processor("GenuineIntel", "06_99") == (processor_t)-1);
   assert(intel_cpuid_sig_to_processor(NULL, "06_55") == (processor_t)-1);
+  assert(amd_cpuid_sig_to_processor("GenuineIntel", "8f_31") == (processor_t)-1);
 }
 
 int main(void)

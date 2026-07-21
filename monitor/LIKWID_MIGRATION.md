@@ -1,10 +1,25 @@
-# LIKWID PMU migration (Intel)
+# LIKWID PMU migration (Intel + AMD EPYC)
 
 Intel core and uncore performance counters are collected through **LIKWID PMON**
 (`likwid_pmc_adapter.c`, `likwid_uncore_adapter.c`). Native MSR, PCI, and MMIO
 programming in legacy `intel_*` collectors has been retired behind thin wrappers.
 
-## Supported generations (SKX+)
+## AMD EPYC (Rome → Turin) — LIKWID only, no MSR fallback
+
+| `st_name` | LIKWID profile | CPUID |
+|-----------|----------------|-------|
+| `host_cpu_hw` | `likwid_arch_eventset_for_processor(AMD_*)` | Rome/Milan/Genoa/Turin |
+| `amd_x86_uncore_df_rome` | `DF_ROME` (`DRAM_CHANNEL_*:DFC*`) | Fam17h Models 30h–3Fh |
+| `amd_x86_uncore_df_milan` | `DF_MILAN` | Fam19h Models 00h–0Fh |
+| `amd_x86_uncore_df_genoa` | `DF_GENOA` (`DRAM_READS_LOCAL_CHANNEL_*:DFC*`) | Fam19h 10h–1Fh / A0h–AFh |
+| `amd_x86_uncore_df_turin` | `DF_TURIN` (`CAS_CMD_RD:UMC*C0`) | Fam1Ah Models 00h–1Fh |
+| `amd_x86_rapl` | LIKWID RAPL | same EPYC enums |
+
+**Deleted (no compile/link, no runtime fallback):** `amd64_pmc.c`, native MSR `amd64_df`, event tables / `amd64_pmu_core`, emit types `amd_x86_pmc` and `amd_x86_uncore_df`. If LIKWID setup fails on EPYC, `host_cpu_hw` and DF types stay disabled.
+
+EPYC-only CPUID allowlists live in `amd_cpuid_match.c` (Naples / Ryzen models outside those ranges return unsupported).
+
+## Supported Intel generations (SKX+)
 
 Intel uncore collectors and LIKWID uncore profiles target **Skylake-X / Cascade
 Lake**, **Ice Lake server**, and **Sapphire Rapids** only.

@@ -41,6 +41,16 @@ static void test_counter_map(void)
                                            sizeof(dev), &key) == 0);
   assert(strcmp(dev, "cbox4") == 0);
   assert(strcmp(key, "sf_evictions_mes") == 0);
+
+  assert(likwid_uncore_profile_map_counter(LIKWID_UNCORE_PROFILE_DF_MILAN, "DFC2", dev, sizeof(dev),
+                                           &key) == 0);
+  assert(strcmp(dev, "df") == 0);
+  assert(strcmp(key, "dram_chan2_bytes") == 0);
+
+  assert(likwid_uncore_profile_map_counter(LIKWID_UNCORE_PROFILE_DF_TURIN, "UMC1C0", dev,
+                                           sizeof(dev), &key) == 0);
+  assert(strcmp(dev, "df") == 0);
+  assert(strcmp(key, "dram_chan1_bytes") == 0);
 }
 
 static void test_eventset_nonempty(void)

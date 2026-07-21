@@ -102,6 +102,7 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 | RMQ text payloads | `stats_buffer.c` + `stats_buffer_data_append.c` (persistent AMQP; cached `uname` for header + sample lines; batched rows; declare `syslog` INFO in `DEBUG` only). |
 | DEBUG shm mirror (`@fast`/`@full` snapshots) | `stats_buffer_debug_shm.c`, `stats_buffer_debug_shm.h` (`DEBUG` builds only). |
 | Intel CPUID / generation gating | `cpuid.c`, `intel_cpuid_match.c`, `intel_processor.c` |
+| AMD EPYC CPUID / DF types | `amd_cpuid_match.c`, `amd_processor.c`, `amd_x86_uncore_df.c` |
 | LIKWID core + uncore PMU | `likwid_pmc_adapter.c`, `likwid_uncore_adapter.c`, `likwid_uncore_profiles.c`, `likwid_result_convert.c` |
 | Omni-Path / Cornelis HFI (`host_opa`) | `opa.c`, `opa_sysfs.c`, `opa_mad_backoff.c`, `opa_mad_dyn.c`, `host_opa.h` (sysfs always; STL MAD via `--enable-opa-mad-dlopen` or link-time `--enable-opa`) |
 | Intel Data Center GPU / PVC (`intel_gpu`) | `intel_gpu.c`, `intel_gpu.h`, `xpum_gpu_dyn.c` (vendored `third_party/intel-xpum/`; runtime `libxpum` dlopen) |
@@ -109,6 +110,9 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 | IB vs HFI routing | `ib_common.c` (`ib_hca_is_opa_hfi`), `ib_family.c` |
 
 Intel PMU collection uses **LIKWID only** on x86 (see [LIKWID_MIGRATION.md](LIKWID_MIGRATION.md)).
+**AMD EPYC** (Rome → Turin) is also **LIKWID-only**: core via `host_cpu_hw`, DF via
+`amd_x86_uncore_df_{rome,milan,genoa,turin}`, RAPL via `amd_x86_rapl`. Legacy
+`amd_x86_pmc` / `amd_x86_uncore_df` MSR collectors are **removed** (no MSR fallback).
 **Uncore collectors (IMC/CHA)** target SKX+ server parts only: Cascade Lake
 (`06_55`), Ice Lake server (`06_6a`/`06_6c`), and Sapphire Rapids (`06_8f`).
 Sandybridge, Ivybridge, Haswell, and Broadwell are no longer classified or

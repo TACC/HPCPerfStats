@@ -29,7 +29,11 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_xpum_gpu_dyn.c` | XPUM dlopen stubs / missing-lib / hooks |
 | `test_lnet_schema_contract.c` | LNet collector schema token contract |
 | `test_likwid_rapl_scale.c` | RAPL energy scaling + `uint64_t`→lo32 truncate contract |
-| `test_likwid_rapl_support.c` | Intel vs AMD RAPL processor support gates (SPR ≠ AMD) |
+| `test_likwid_rapl_support.c` | Intel vs AMD RAPL processor support gates (SPR ≠ AMD; EPYC enums) |
+| `test_amd_cpuid_match.c` | EPYC Rome/Milan/Genoa/Turin CPUID allowlists; Ryzen/unknown → `-1` |
+| `test_amd_df_likwid_profiles.c` | Golden LIKWID DF `EVENT:COUNTER` strings per EPYC gen |
+| `test_amd_x86_uncore_df_schema.c` | Family DF `st_name` + `dram_chan*_bytes` schema contract |
+| `test_amd_legacy_removed.sh` | Legacy `amd64_pmc`/`amd64_df` sources gone; registry has family DF only |
 | `test_string1.c` | `wsep` / `strsep_ne` (header-only `string1.h`) |
 | `test_stats_buffer_data_append.c` | `stats_buffer_data_append` (RMQ payload string growth) |
 | `test_stats_buffer_uts.c` | `stats_buffer_ensure_uts_cached` / `stats_buffer_uts_cache_reset` |

@@ -4,9 +4,11 @@
 #define _CPUID_H_
 
 typedef enum {
-  AMD_10H,
-  AMD_17H,
-  AMD_19H,
+  AMD_10H,   /* legacy enum; signature() never returns it */
+  AMD_ROME,  /* EPYC Zen2 Fam17h Models 30h-3Fh */
+  AMD_MILAN, /* EPYC Zen3 Fam19h Models 00h-0Fh */
+  AMD_GENOA, /* EPYC Zen4 Genoa/Bergamo/Siena */
+  AMD_TURIN, /* EPYC Zen5 Fam1Ah Models 00h-1Fh */
   NEHALEM,
   WESTMERE,
   SANDYBRIDGE,

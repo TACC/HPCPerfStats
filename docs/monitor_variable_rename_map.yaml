@@ -237,6 +237,8 @@ removed_legacy:
 - intel_x86_pmc_knl
 - intel_x86_uncore_edc_knl
 - intel_x86_uncore_mc_knl
+- amd_x86_pmc
+- amd_x86_uncore_df
 - CTL0
 - CTL1
 - CTL2

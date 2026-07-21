@@ -15,7 +15,6 @@
 #include "likwid_pmc_adapter.h"
 #include "likwid_pmc_schema_map.h"
 #include "likwid_result_convert.h"
-#include "amd64_pmc.h"
 
 #ifdef HAVE_LIKWID
 #include <likwid.h>
@@ -261,28 +260,6 @@ static void likwid_pmc_adapter_publish_semantic_counters(
 }
 #endif /* HAVE_LIKWID */
 
-static int read_msr_u64_cpu(int cpu, uint64_t reg, unsigned long long *val)
-{
-  char cpubuf[16];
-  int fd;
-  uint64_t tmp = 0;
-
-  if (cpu < 0 || val == NULL)
-    return -1;
-
-  snprintf(cpubuf, sizeof(cpubuf), "%d", cpu);
-  fd = msr_open_cpu(cpubuf, O_RDONLY);
-  if (fd < 0)
-    return -1;
-  if (msr_read_u64(fd, (unsigned int)reg, &tmp) < 0) {
-    close(fd);
-    return -1;
-  }
-  close(fd);
-  *val = (unsigned long long)tmp;
-  return 0;
-}
-
 int likwid_pmc_adapter_read_cpu(struct stats *stats, int cpu, uint64_t *events, int nr_events,
                                 int max_ctrs)
 {
@@ -321,12 +298,7 @@ int likwid_pmc_adapter_read_cpu(struct stats *stats, int cpu, uint64_t *events, 
                                        &mperf, &have_inst, &have_aperf, &have_mperf, &have_fixed0,
                                        &have_fixed1, &have_fixed2);
   }
-  if (!have_inst && read_msr_u64_cpu(cpu, (uint64_t)MSR_PERF_INST_RETIRED, &inst_retired) == 0)
-    have_inst = 1;
-  if (!have_aperf && read_msr_u64_cpu(cpu, (uint64_t)MSR_PERF_APERF, &aperf) == 0)
-    have_aperf = 1;
-  if (!have_mperf && read_msr_u64_cpu(cpu, (uint64_t)MSR_PERF_MPERF, &mperf) == 0)
-    have_mperf = 1;
+  /* No MSR fallback: LIKWID-only (Intel and AMD). */
   likwid_pmc_adapter_publish_semantic_counters(stats, inst_retired, aperf, mperf, have_inst,
                                                have_aperf, have_mperf, have_fixed0, have_fixed1,
                                                have_fixed2);

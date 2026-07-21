@@ -29,6 +29,7 @@ Notable contracts (see filename in `HPCPerfStats/monitor/cursor-rules/`):
 - **`monitor-shm-validation-probe-parity.mdc`** — collector `dev` enumeration must match `host_live_probes.py`
 - **`monitor-xpum-integration.mdc`** — Intel PVC / XPU Manager (`intel_gpu`, vendored headers, libxpum dlopen)
 - **`monitor-papi-integration.mdc`** — aarch64 DCGM+PAPI hybrid: PAPI SP/DP FLOPs, cycles, int8/int16 ops on `host_cpu_hw`
+- **`monitor-amd-epyc-likwid.mdc`** — EPYC Rome–Turin LIKWID-only core/DF/RAPL; family DF `st_name`s; no MSR fallback
 - **`plan-creation-contract.mdc`** / **`plan-template-enforcement.mdc`** — plan authoring; template at **`HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md`**
 
 Adding a new domain rule (same task, non-optional):

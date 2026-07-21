@@ -41,6 +41,7 @@ Use these during **plan**, **implement**, **self-review**, and **verification** 
 | [monitor-ib-sysfs-parsing.mdc](monitor-ib-sysfs-parsing.mdc) | IB port state parsers |
 | [monitor-xpum-integration.mdc](monitor-xpum-integration.mdc) | Intel PVC / XPU Manager (`intel_gpu`) |
 | [monitor-papi-integration.mdc](monitor-papi-integration.mdc) | aarch64 DCGM+PAPI hybrid FLOPs/cycles |
+| [monitor-amd-epyc-likwid.mdc](monitor-amd-epyc-likwid.mdc) | EPYC Rome–Turin LIKWID-only DF/core; no MSR fallback |
 | [monitor-cursor-rules-sync.mdc](monitor-cursor-rules-sync.mdc) | Edit both `.cursor/rules/` and `monitor/cursor-rules/` |
 | [python-venv-enforcement.mdc](python-venv-enforcement.mdc) | Python tooling: repo `.venv` |
 | [workspace-single-cursor-directory.mdc](workspace-single-cursor-directory.mdc) | Single `<workspace_root>/.cursor/`; symlink layout |

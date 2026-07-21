@@ -437,6 +437,28 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
     },
     {
+        "id": "monitor_amd_epyc_likwid",
+        "patterns": [
+            "HPCPerfStats/monitor/src/amd*",
+            "HPCPerfStats/monitor/src/amd_cpuid_match*",
+            "HPCPerfStats/monitor/src/amd_processor*",
+            "HPCPerfStats/monitor/src/amd_x86_uncore_df*",
+            "HPCPerfStats/monitor/src/likwid_uncore_profiles*",
+            "HPCPerfStats/monitor/src/likwid_arch_map.c",
+            "HPCPerfStats/monitor/src/cpuid.*",
+            "monitor/src/amd*",
+            "monitor/src/amd_cpuid_match*",
+            "monitor/src/amd_processor*",
+            "monitor/src/amd_x86_uncore_df*",
+            "monitor/src/likwid_uncore_profiles*",
+            "monitor/src/likwid_arch_map.c",
+            "monitor/src/cpuid.*",
+        ],
+        "rules": [
+            "monitor-amd-epyc-likwid.mdc",
+        ],
+    },
+    {
         "id": "monitor_ib",
         "patterns": [
             "HPCPerfStats/monitor/src/*ib*",

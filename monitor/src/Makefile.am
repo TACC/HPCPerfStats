@@ -52,8 +52,6 @@ hpcperfstatsd_CPPFLAGS += \
 endif
 
 hpcperfstatsd_SOURCES = \
-	amd64_pmc.h \
-	amd64_df.h \
 	collect.h \
 	collect.c \
 	collect_tier.h \
@@ -205,8 +203,7 @@ TYPES 	+= \
 	cpu_counter_metrics_likwid_begin.h \
 	amd64_rapl.c \
 	intel_rapl.c \
-	amd64_pmc.c \
-	amd64_df.c \
+	amd_x86_uncore_df.c \
 	intel_4pmc3.c \
 	intel_8pmc3.c \
 	intel_pmc3_core.c \
@@ -217,10 +214,6 @@ TYPES 	+= \
 	intel_skx_cha.c \
 	intel_skx_imc.c
 hpcperfstatsd_SOURCES += \
-	amd64_event_tables.h \
-	amd64_event_tables.c \
-	amd64_pmu_core.h \
-	amd64_pmu_core.c \
 	cpu_counter_metrics.h \
 	intel_pmc3_core.h \
 	intel_topology_walk.h \
@@ -276,7 +269,12 @@ hpcperfstatsd_SOURCES += \
 	likwid_result_convert.c \
 	intel_skx_imc.h \
 	intel_icx_imc.h \
-	intel_spr_imc.h
+	intel_spr_imc.h \
+	amd_x86_uncore_df.h \
+	amd_cpuid_match.h \
+	amd_cpuid_match.c \
+	amd_processor.h \
+	amd_processor.c
 endif
 
 if INFINIBAND
