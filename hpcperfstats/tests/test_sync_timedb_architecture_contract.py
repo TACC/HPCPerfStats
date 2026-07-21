@@ -127,6 +127,22 @@ def test_arch_chunk_boundary_does_not_invoke_delete_post_finalize_or_maintenance
     assert name not in chunk_section, "forbidden at chunk boundary: %s" % name
 
 
+def test_arch_post_finalize_stores_reconcile_fingerprint_before_cap():
+  """Live incomplete_n from post_finalize must refresh reuse fingerprint before cap.
+
+  Prevents unchanged_incomplete skip logging stale higher incomplete_n.
+  """
+  source = inspect.getsource(st.run_sync_timedb_supervisor_loop)
+  marker = 'sync_timedb: post_finalize_reconcile oldest_tar='
+  assert marker in source
+  after = source.split(marker, 1)[1]
+  before_reconcile = after.split(
+      "_reconcile_pending_with_oldest_checkpoint_incomplete()",
+      1,
+  )[0]
+  assert "_store_pending_reconcile_unprocessed_cache(" in before_reconcile
+
+
 def test_arch_phase_tar_dropped_does_not_skip_disk_predicate(tmp_path):
   """Phase 3c: tar_dropped hint alone does not clear day-close work when .tar remains."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (

@@ -710,31 +710,46 @@ def _prewarm_archive_members_redis_for_days(
           )
           if complete and not (members or {}):
             source = source or "empty_archive"
-          elif archive_append_inflight_for_day(day_token) and (
-              attempt < len(_FNCTL_POPULATE_RETRY_DELAYS_S)
+          elif attempt < len(_FNCTL_POPULATE_RETRY_DELAYS_S) and (
+              archive_append_inflight_for_day(day_token) or len(members or {}) > 0
           ):
             prewarm_recovered = True
             last_transient_exc = ArchiveMembersRedisUnavailableError(
-                "archive members Redis cold after prewarm during "
-                "archive_append_inflight for day=%s canonical=%s "
-                "source=%s members_n=%d"
+                "archive members Redis cold after prewarm for day=%s "
+                "canonical=%s source=%s members_n=%d append_inflight=%s"
                 % (
                     day_token,
                     canonical,
                     source or "none",
                     len(members or {}),
+                    archive_append_inflight_for_day(day_token),
                 ),
             )
-            log_print(
-                "WARNING: archive_append_inflight during archive members "
-                "prewarm day=%s attempt=%d/%d: retrying after identity drift"
-                % (
-                    day_token,
-                    attempt + 1,
-                    len(_FNCTL_POPULATE_RETRY_DELAYS_S) + 1,
-                ),
-                flush=True,
-            )
+            if archive_append_inflight_for_day(day_token):
+              log_print(
+                  "WARNING: archive_append_inflight during archive members "
+                  "prewarm day=%s attempt=%d/%d: retrying after identity drift"
+                  % (
+                      day_token,
+                      attempt + 1,
+                      len(_FNCTL_POPULATE_RETRY_DELAYS_S) + 1,
+                  ),
+                  flush=True,
+              )
+            else:
+              log_print(
+                  "WARNING: members returned but Redis cold during archive "
+                  "members prewarm day=%s attempt=%d/%d members_n=%d "
+                  "source=%s: retrying"
+                  % (
+                      day_token,
+                      attempt + 1,
+                      len(_FNCTL_POPULATE_RETRY_DELAYS_S) + 1,
+                      len(members or {}),
+                      source or "none",
+                  ),
+                  flush=True,
+              )
             continue
           else:
             maybe_clear_orphan_incomplete_archive_members_redis(keys)
@@ -5596,6 +5611,13 @@ def run_sync_timedb_supervisor_loop(
           "inflight_oldest_n=%d"
           % (tar_norm or "", len(blocked), inflight_oldest_n),
           flush=True,
+      )
+      # Refresh reuse fingerprint with live incomplete_n so the following cap
+      # cannot skip as unchanged_incomplete with a stale higher count.
+      _store_pending_reconcile_unprocessed_cache(
+          unprocessed,
+          oldest_tar=tar_norm or "",
+          incomplete_n=len(blocked),
       )
       _reconcile_pending_with_oldest_checkpoint_incomplete()
       archive_finalize_needs_post_reconcile = False

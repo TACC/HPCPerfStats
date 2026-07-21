@@ -8264,6 +8264,52 @@ def test_select_ingest_chunk_paths_oldest_tar_1500_paths(tmp_path):
   assert all(path in handoff_paths for path in chunk)
 
 
+def test_pending_reconcile_fingerprint_updates_when_incomplete_drops():
+  """post_finalize live incomplete_n must refresh reuse fingerprint.
+
+  Operator signature: post_finalize incomplete_n=1694 then cap skipped
+  unchanged_incomplete incomplete_n=2185 (stale fingerprint).
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      try_reuse_pending_reconcile_unprocessed_cache,
+  )
+
+  cached_old = {"/daily/2026-07-20.tar": ["a"] * 10}
+  cached_new = {"/daily/2026-07-20.tar": ["a"] * 5}
+  tar = "/hpcperfstats/daily_archive/2026-07-20.tar"
+  mono = 1000.0
+  stale = try_reuse_pending_reconcile_unprocessed_cache(
+      cached=cached_old,
+      last_mono=mono,
+      mono_now=mono + 30.0,
+      ttl_s=120.0,
+      hard_ceiling_s=900.0,
+      last_incomplete_n=2185,
+      last_oldest_tar=tar,
+      stall_incomplete_n=None,
+      newest_first=False,
+      last_newest_first=False,
+  )
+  assert stale is not None
+  assert stale[3] == "unchanged_incomplete"
+  assert stale[2] == 2185
+  fresh = try_reuse_pending_reconcile_unprocessed_cache(
+      cached=cached_new,
+      last_mono=mono + 31.0,
+      mono_now=mono + 60.0,
+      ttl_s=120.0,
+      hard_ceiling_s=900.0,
+      last_incomplete_n=1694,
+      last_oldest_tar=tar,
+      stall_incomplete_n=None,
+      newest_first=False,
+      last_newest_first=False,
+  )
+  assert fresh is not None
+  assert fresh[2] == 1694
+  assert fresh[3] == "unchanged_incomplete"
+
+
 def test_try_reuse_pending_reconcile_unprocessed_cache_skip_vs_rescan():
   """Same oldest+incomplete reuses past soft TTL until hard ceiling; zero incomplete rescans."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (

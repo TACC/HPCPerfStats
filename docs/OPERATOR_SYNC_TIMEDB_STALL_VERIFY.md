@@ -498,6 +498,18 @@ grep -E 'populate_wait identity_drift|archive_append_inflight during archive mem
 
 **Unhealthy:** `INFO: populate_wait identity_drift day=…` then `ERROR: archive members Redis empty after prewarm … source=none members_n=N` (N often >0) + `L2 contract failed` while the same day shows `tar_append redis merge` / `archive_job_done`. **Healthy:** drift and/or `WARNING: archive_append_inflight during archive members prewarm … retrying` then `chunk prewarm complete` with `redis_warm` / populate source and **`chunk imap start`** — no empty-after-prewarm L2 exit.
 
+**T0 / T1 — L1 hit + cold Redis (no append_inflight) (2026-07-21):** process L1 can return `members_n>0` with `source=none` while Redis stays cold; prewarm must **not** L2-exit on the first cold check when retries remain.
+
+```bash
+# T0 — false empty-after-prewarm from L1 / members_n>0 without inflight (unhealthy)
+grep -E 'members returned but Redis cold|empty after prewarm|L2 contract failed|Prewarming archive members Redis|chunk prewarm begin|chunk imap start' /tmp/pipeline-full.log | tail -80
+
+# T1 — healthy: WARNING members returned but Redis cold … retrying then warm / imap start
+grep -E 'members returned but Redis cold|archive_append_inflight during archive members prewarm|chunk prewarm complete|chunk imap start|empty after prewarm' /tmp/pipeline-full.log | tail -80
+```
+
+**Unhealthy:** `Prewarming …` then within ~10ms `ERROR: … empty after prewarm … source=none members_n=N` + `L2 contract failed` with **no** `members returned but Redis cold` / inflight WARN (often tar-only day, Redis `hlen=0`). **Healthy:** `WARNING: members returned but Redis cold … retrying` (and/or inflight WARN) then prewarm success and **`chunk imap start`** — no immediate L2 exit.
+
 **Compare dispatch vs completion:**
 
 ```bash

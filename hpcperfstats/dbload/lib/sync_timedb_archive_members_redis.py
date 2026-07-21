@@ -2327,7 +2327,11 @@ def request_archive_members_populate_and_wait(
     if cached is not None:
       # Empty L1 with Redis enabled is not proof of a warm day — fall through so
       # supervisor prewarm cannot claim success while Redis stays empty.
-      if cached or not archive_members_redis_enabled():
+      # Non-empty L1 also must not short-circuit when Redis L2 is cold (operator:
+      # empty after prewarm source=none members_n>0 within ~10ms).
+      if not archive_members_redis_enabled():
+        return dict(cached)
+      if cached and redis_members_cache_is_fully_warm(keys):
         return dict(cached)
     if not archive_members_redis_enabled():
       raise ArchiveMembersRedisUnavailableError(

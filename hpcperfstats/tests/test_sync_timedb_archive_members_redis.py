@@ -1301,6 +1301,50 @@ def test_request_populate_no_wait_when_no_daily_archive(
   assert not waited
 
 
+def test_request_populate_nonempty_l1_cold_redis_falls_through(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  """Non-empty process L1 must not satisfy wait when Redis L2 is cold.
+
+  Operator signature (2026-07-21): empty after prewarm source=none members_n>0
+  within ~10ms — L1 returned without Redis warm check.
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      _store_daily_archive_members_cache,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      request_archive_members_populate_and_wait,
+  )
+
+  day = "2026-06-16"
+  tar = tmp_path / ("%s.tar" % day)
+  tar.write_bytes(b"tar-body")
+  canonical = str(tmp_path / ("%s.tar.zst" % day))
+  _store_daily_archive_members_cache(
+      canonical,
+      {"host/a": 1, "host/b": 2},
+  )
+  enqueued = []
+  waited = []
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      "._enqueue_or_run_archive_members_populate",
+      lambda path, day_token: enqueued.append((path, day_token)),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".wait_for_complete_members",
+      lambda *args, **kwargs: waited.append((args, kwargs))
+      or {"host/a": 1, "host/b": 2, "host/c": 3},
+  )
+  members = request_archive_members_populate_and_wait(canonical)
+  assert enqueued, "cold Redis must enqueue/run populate despite non-empty L1"
+  assert waited, "cold Redis must wait for populate despite non-empty L1"
+  assert members.get("host/c") == 3
+  assert len(members) == 3
+
+
 def test_recovery_no_reenqueue_no_source(_redis_test_env, tmp_path, monkeypatch):
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.conf_parser"
