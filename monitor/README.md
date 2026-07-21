@@ -113,9 +113,10 @@ Intel PMU collection uses **LIKWID only** on x86 (see [LIKWID_MIGRATION.md](LIKW
 (`06_55`), Ice Lake server (`06_6a`/`06_6c`), and Sapphire Rapids (`06_8f`).
 Sandybridge, Ivybridge, Haswell, and Broadwell are no longer classified or
 registered (`intel_x86_pcu` and pre-SKX uncore types removed). SPR exposes DDR
-and HBM uncore keys (`dram_*`, `hbm_*`); the SPR IMC LIKWID eventset always
-tries DDR+HBM first, then DDR-only, then HBM-only (EDAC `has_ddr`/`has_hbm` are
-logged only — Stampede3 EDAC often omits HBM labels / `dimm_mem_speed`).
+and HBM uncore keys (`dram_*`, `hbm_*`); SPR IMC LIKWID eventsets use **MBOX0–11**
+only (LIKWID 5.5 Sapphire Rapids counter table — not MBOX12–15), always try
+DDR+HBM first then DDR-only then HBM-only, then an HBM channel-count ladder
+(16→8→4→1). EDAC `has_ddr`/`has_hbm` are logged only.
 `host_roofline_peak` adds
 `cpu_peak_hbm_bw_bytes_per_s` (EDAC HBM/DDR split, `peak_calc_version` 2).
 

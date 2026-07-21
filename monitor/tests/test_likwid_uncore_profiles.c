@@ -45,6 +45,9 @@ static void test_counter_map(void)
 
 static void test_eventset_nonempty(void)
 {
+  const char *ddr_only;
+  const char *ddr_hbm;
+
   assert(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_IMC_SKX) != NULL);
   assert(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_IMC_ICX) != NULL);
   assert(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_CHA_SKX) != NULL);
@@ -53,6 +56,38 @@ static void test_eventset_nonempty(void)
   assert(strstr(likwid_spr_imc_eventset_string(LIKWID_SPR_IMC_EVT_DDR_ONLY), "MBOX0C0") != NULL);
   assert(strstr(likwid_spr_imc_eventset_string(LIKWID_SPR_IMC_EVT_HBM_ONLY), "HBM0C0") != NULL);
   assert(strstr(likwid_spr_imc_eventset_string(LIKWID_SPR_IMC_EVT_DDR_ONLY), "HBM0C0") == NULL);
+
+  /* LIKWID SPR table is MBOX0–11 only — must not request MBOX12+. */
+  ddr_only = likwid_spr_imc_eventset_string(LIKWID_SPR_IMC_EVT_DDR_ONLY);
+  ddr_hbm = likwid_spr_imc_eventset_string(LIKWID_SPR_IMC_EVT_DDR_HBM);
+  assert(strstr(ddr_only, "MBOX11C0") != NULL);
+  assert(strstr(ddr_only, "MBOX12C0") == NULL);
+  assert(strstr(ddr_hbm, "MBOX11C0") != NULL);
+  assert(strstr(ddr_hbm, "MBOX12C0") == NULL);
+  assert(strstr(ddr_hbm, "HBM0C0") != NULL);
+  assert(strstr(ddr_hbm, "HBM15C0") != NULL);
+}
+
+static void test_hbm_ladder(void)
+{
+  int sizes[4];
+  int n;
+
+  assert(strstr(likwid_spr_imc_hbm_channels_eventset(16), "HBM15C0") != NULL);
+  assert(strstr(likwid_spr_imc_hbm_channels_eventset(8), "HBM7C0") != NULL);
+  assert(strstr(likwid_spr_imc_hbm_channels_eventset(8), "HBM8C0") == NULL);
+  assert(strstr(likwid_spr_imc_hbm_channels_eventset(4), "HBM3C0") != NULL);
+  assert(strstr(likwid_spr_imc_hbm_channels_eventset(4), "HBM4C0") == NULL);
+  assert(strstr(likwid_spr_imc_hbm_channels_eventset(1), "HBM0C0") != NULL);
+  assert(strstr(likwid_spr_imc_hbm_channels_eventset(1), "HBM1C0") == NULL);
+  assert(likwid_spr_imc_hbm_channels_eventset(0) == NULL);
+
+  n = likwid_spr_imc_hbm_ladder_sizes(sizes, 4);
+  assert(n == 3);
+  assert(sizes[0] == 8);
+  assert(sizes[1] == 4);
+  assert(sizes[2] == 1);
+  assert(likwid_spr_imc_hbm_ladder_sizes(NULL, 3) == 0);
 }
 
 static void test_spr_try_order(void)
@@ -87,6 +122,7 @@ int main(void)
   test_profile_processor_match();
   test_counter_map();
   test_eventset_nonempty();
+  test_hbm_ladder();
   test_spr_try_order();
   return 0;
 }
