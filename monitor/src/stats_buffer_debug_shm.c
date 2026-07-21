@@ -41,12 +41,21 @@ static const char *stats_buffer_debug_shm_base_dir(void)
   return g_debug_shm_base_dir;
 }
 
-void stats_buffer_debug_shm_init(void)
+/* Recreate base dir if missing (e.g. operator rm -rf /dev/shm/... mid-run). */
+static int stats_buffer_debug_shm_ensure_dir(void)
 {
   const char *base = stats_buffer_debug_shm_base_dir();
 
-  if (mkdir(base, STATS_BUFFER_DEBUG_SHM_DIR_MODE) < 0 && errno != EEXIST)
+  if (mkdir(base, STATS_BUFFER_DEBUG_SHM_DIR_MODE) < 0 && errno != EEXIST) {
     monitor_log_debug("debug_shm: mkdir %s: %m\n", base);
+    return -1;
+  }
+  return 0;
+}
+
+void stats_buffer_debug_shm_init(void)
+{
+  (void)stats_buffer_debug_shm_ensure_dir();
 }
 
 static const char *stats_buffer_debug_shm_kind_name(enum stats_buffer_debug_shm_payload_kind kind)
@@ -102,6 +111,9 @@ void stats_buffer_debug_shm_write_payload(const struct stats_buffer *sf,
   const char *name;
 
   if (sf == NULL || sf->sf_data == NULL || sf->sf_data_len == 0)
+    return;
+
+  if (stats_buffer_debug_shm_ensure_dir() < 0)
     return;
 
   base = stats_buffer_debug_shm_base_dir();

@@ -20,6 +20,7 @@ alwaysApply: false
 ## Implementation
 
 - **Permissions**: directory `0700`, files `0600` (payloads contain jobid, host, metrics).
+- **Dir resilience**: each write calls `stats_buffer_debug_shm_ensure_dir()` (`mkdir` + ignore `EEXIST`) so a mid-run `rm -rf` of the mirror dir is recreated on the next sample/schema write — daemon does not abort.
 - **Atomic write**: tmp + `rename`; log failures via `monitor_log_debug` (do not `(void)` discard).
 - **Env**: copy `HPCPERFSTATS_DEBUG_SHM_DIR` into owned storage — do not retain `getenv()` pointer.
 - **Gating**:

@@ -187,6 +187,41 @@ static void test_second_write_overwrites(void)
   free(sf.sf_data);
 }
 
+/* Regression: if the mirror dir is removed mid-run, recreate on next write. */
+static void test_recreate_dir_after_rm(void)
+{
+  struct stats_buffer sf;
+  char fast_path[512];
+  char schema_path[512];
+  char full_path[512];
+  char buf[256];
+  struct stat st;
+
+  snprintf(fast_path, sizeof(fast_path), "%s/fast", g_shm_base);
+  snprintf(schema_path, sizeof(schema_path), "%s/schema", g_shm_base);
+  snprintf(full_path, sizeof(full_path), "%s/full", g_shm_base);
+  unlink(fast_path);
+  unlink(schema_path);
+  unlink(full_path);
+  assert(rmdir(g_shm_base) == 0);
+  assert(stat(g_shm_base, &st) != 0);
+
+  memset(&sf, 0, sizeof(sf));
+  sf.sf_data = strdup("after-rmdir-payload\n");
+  assert(sf.sf_data != NULL);
+  sf.sf_data_len = strlen(sf.sf_data);
+  sf.sf_data_cap = sf.sf_data_len + 1;
+  stats_buffer_debug_shm_write_sample(&sf, STATS_ROW_FAST);
+
+  assert(stat(g_shm_base, &st) == 0);
+  assert(S_ISDIR(st.st_mode));
+  assert(path_exists(fast_path));
+  assert(read_file_text(fast_path, buf, sizeof(buf)) > 0);
+  assert(strcmp(buf, "after-rmdir-payload\n") == 0);
+
+  free(sf.sf_data);
+}
+
 #endif /* DEBUG */
 
 static void test_daemon_write_hdr_gate(void)
@@ -234,6 +269,7 @@ int main(void)
   assert(setup_shm_dir() == 0);
   test_schema_writes_schema_file();
   test_second_write_overwrites();
+  test_recreate_dir_after_rm();
   test_fast_writes_fast_only();
   test_full_writes_full_only();
   test_legacy_writes_full();

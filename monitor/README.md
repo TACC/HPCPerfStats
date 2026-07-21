@@ -229,7 +229,8 @@ outbound payloads** under **`/dev/shm/hpcperfstatsd-debug/`**:
 Override the base directory with **`HPCPERFSTATS_DEBUG_SHM_DIR`**. Payloads
 contain job id, hostname, and workload metrics — treat as sensitive on shared
 nodes. Files are created mode `0600` under a `0700` directory (atomic `*.tmp` +
-`rename`).
+`rename`). If the directory is removed while the daemon runs, the next sample
+recreates it (writes do not abort the process).
 
 **RPM debug path** (symbols + behavioral DEBUG for `/dev/shm`):
 
