@@ -22,6 +22,8 @@ static enum {
   RT_SCENARIO_EMPTY,
   RT_SCENARIO_TILE_MERGE,
   RT_SCENARIO_MEM_TEMP,
+  RT_SCENARIO_TILE_POWER_SUM,
+  RT_SCENARIO_DEVICE_AVG_VS_TILE_SUM,
 } g_rt_scenario = RT_SCENARIO_EMPTY;
 
 static xpum_result_t fake_xpumInit(void)
@@ -108,6 +110,63 @@ static void fill_mem_temp_rt_row(xpum_device_realtime_metrics_t rows[], uint32_t
   *count = 1;
 }
 
+/* Two tiles each ~147 W — package must be sum (294), not one tile. */
+static void fill_tile_power_sum_rows(xpum_device_realtime_metrics_t rows[], uint32_t *count)
+{
+  rows[0].deviceId = 0;
+  rows[0].isTileData = 1;
+  rows[0].tileId = 0;
+  rows[0].count = 2;
+  rows[0].dataList[0].metricsType = XPUM_STATS_POWER;
+  rows[0].dataList[0].value = 14700;
+  rows[0].dataList[0].scale = 100;
+  rows[0].dataList[1].metricsType = XPUM_STATS_GPU_FREQUENCY;
+  rows[0].dataList[1].value = 1600;
+  rows[0].dataList[1].scale = 1;
+
+  rows[1].deviceId = 0;
+  rows[1].isTileData = 1;
+  rows[1].tileId = 1;
+  rows[1].count = 1;
+  rows[1].dataList[0].metricsType = XPUM_STATS_POWER;
+  rows[1].dataList[0].value = 14700;
+  rows[1].dataList[0].scale = 100;
+
+  *count = 2;
+}
+
+/*
+ * Device row reports average-like ~147 W; tiles sum to ~294 W (xpumcli package).
+ * Prefer the larger (tile sum).
+ */
+static void fill_device_avg_vs_tile_sum_rows(xpum_device_realtime_metrics_t rows[], uint32_t *count)
+{
+  rows[0].deviceId = 0;
+  rows[0].isTileData = 0;
+  rows[0].count = 1;
+  rows[0].dataList[0].metricsType = XPUM_STATS_POWER;
+  rows[0].dataList[0].value = 14700;
+  rows[0].dataList[0].scale = 100;
+
+  rows[1].deviceId = 0;
+  rows[1].isTileData = 1;
+  rows[1].tileId = 0;
+  rows[1].count = 1;
+  rows[1].dataList[0].metricsType = XPUM_STATS_POWER;
+  rows[1].dataList[0].value = 14700;
+  rows[1].dataList[0].scale = 100;
+
+  rows[2].deviceId = 0;
+  rows[2].isTileData = 1;
+  rows[2].tileId = 1;
+  rows[2].count = 1;
+  rows[2].dataList[0].metricsType = XPUM_STATS_POWER;
+  rows[2].dataList[0].value = 14700;
+  rows[2].dataList[0].scale = 100;
+
+  *count = 3;
+}
+
 static xpum_result_t fake_xpumGetRealtimeMetrics(xpum_device_id_t deviceId,
                                                  xpum_device_realtime_metrics_t dataList[],
                                                  uint32_t *count)
@@ -116,7 +175,12 @@ static xpum_result_t fake_xpumGetRealtimeMetrics(xpum_device_id_t deviceId,
   if (count == NULL)
     return XPUM_GENERIC_ERROR;
   if (dataList == NULL) {
-    *count = (g_rt_scenario == RT_SCENARIO_TILE_MERGE) ? 2u : 1u;
+    if (g_rt_scenario == RT_SCENARIO_TILE_MERGE || g_rt_scenario == RT_SCENARIO_TILE_POWER_SUM)
+      *count = 2u;
+    else if (g_rt_scenario == RT_SCENARIO_DEVICE_AVG_VS_TILE_SUM)
+      *count = 3u;
+    else
+      *count = 1u;
     return XPUM_OK;
   }
   g_rt_fetch_calls++;
@@ -126,6 +190,12 @@ static xpum_result_t fake_xpumGetRealtimeMetrics(xpum_device_id_t deviceId,
     break;
   case RT_SCENARIO_MEM_TEMP:
     fill_mem_temp_rt_row(dataList, count);
+    break;
+  case RT_SCENARIO_TILE_POWER_SUM:
+    fill_tile_power_sum_rows(dataList, count);
+    break;
+  case RT_SCENARIO_DEVICE_AVG_VS_TILE_SUM:
+    fill_device_avg_vs_tile_sum_rows(dataList, count);
     break;
   case RT_SCENARIO_EMPTY:
   default:
@@ -271,13 +341,60 @@ static void test_mem_temp_publish(void)
   assert(test_stats_stub_find(&g_stub, "temperature", &val) && val == 29ULL);
 }
 
+static void test_helper_package_power_sum_tiles(void)
+{
+  xpum_device_realtime_metrics_t rows[2];
+  uint32_t count = 2;
+
+  fill_tile_power_sum_rows(rows, &count);
+  assert(intel_gpu_package_power_watts(rows, count) == 294.0);
+}
+
+static void test_helper_package_power_prefer_tile_sum(void)
+{
+  xpum_device_realtime_metrics_t rows[3];
+  uint32_t count = 3;
+
+  fill_device_avg_vs_tile_sum_rows(rows, &count);
+  assert(intel_gpu_package_power_watts(rows, count) == 294.0);
+}
+
+static void test_tile_power_sum_collect(void)
+{
+  unsigned long long val;
+
+  reset_test_state();
+  g_rt_scenario = RT_SCENARIO_TILE_POWER_SUM;
+  intel_gpu_stats_type.st_enabled = 1;
+  intel_gpu_stats_type.st_collect(&intel_gpu_stats_type);
+  assert(g_stats_fetch_calls == 0);
+  /* Must not publish a single tile (~147 W). */
+  assert(test_stats_stub_find(&g_stub, "power_usage", &val) && val == 294ULL);
+}
+
+static void test_device_avg_vs_tile_sum_collect(void)
+{
+  unsigned long long val;
+
+  reset_test_state();
+  g_rt_scenario = RT_SCENARIO_DEVICE_AVG_VS_TILE_SUM;
+  intel_gpu_stats_type.st_enabled = 1;
+  intel_gpu_stats_type.st_collect(&intel_gpu_stats_type);
+  assert(g_stats_fetch_calls == 0);
+  assert(test_stats_stub_find(&g_stub, "power_usage", &val) && val == 294ULL);
+}
+
 int main(void)
 {
   test_stats_stub_bind(&g_stub);
   test_helper_tile_merge();
+  test_helper_package_power_sum_tiles();
+  test_helper_package_power_prefer_tile_sum();
   test_empty_rt_stats_fallback();
   test_tile_merge_collect_power();
   test_mem_temp_publish();
+  test_tile_power_sum_collect();
+  test_device_avg_vs_tile_sum_collect();
   test_stats_stub_unbind();
   printf("test_intel_gpu_publish passed\n");
   return 0;

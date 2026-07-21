@@ -24,6 +24,8 @@ alwaysApply: false
 - Before `xpumInit`: set `XPUM_DISABLE_PERIODIC_METRIC_MONITOR=1` (on-demand pulls) and an explicit `XPUM_METRICS` list compatible with pinned **1.2.33** (`0,1,4,6-10,30,34,35,36` — IDs 37/38 are rejected on 1.2.33; include memory temp **30** for PVC).
 - Init → `xpumGetDeviceList` → per-device `xpumGetRealtimeMetrics` (pick best row, merge 2-tile rows when needed; fallback `xpumGetStats` when RT empty or missing POWER/ENERGY) → optional `xpumGetFabricThroughputStats` for Xe Link.
 - Prefer **device-level** rows when tied; merge per-tile rows on Max 1550 when a single row lacks POWER.
+- **Package power:** `intel_gpu_package_power_watts` — use device-level `XPUM_STATS_POWER` when present; else **sum** tile POWERS. If both exist, take the **larger** (device may be tile-average while `xpumcli dump` reports package ≈ tile sum). Do not publish a single tile's power as `power_usage`.
+- Note: `xpumcli dump -m` IDs (`XPUM_DUMP_*`, e.g. dump power = 1) differ from API `XPUM_STATS_*` (power = 4).
 - On prepare/collect failure: miss-streak then `st_enabled=0`; never crash the daemon.
 
 ## Metrics / scale

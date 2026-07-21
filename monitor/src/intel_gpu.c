@@ -174,6 +174,18 @@ static void intel_gpu_publish_xe_link(struct stats *stats, xpum_device_id_t id)
   stats_set(stats, "gpu_xe_link_tx_bytes", tx);
 }
 
+static void intel_gpu_apply_package_power(const xpum_device_realtime_metrics_t *rows,
+                                          uint32_t count, xpum_device_realtime_metrics_t *out_row)
+{
+  double package_w;
+
+  if (out_row == NULL)
+    return;
+  package_w = intel_gpu_package_power_watts(rows, count);
+  if (package_w >= 0.0)
+    (void)intel_gpu_row_set_power_watts(out_row, package_w);
+}
+
 static int intel_gpu_collect_one_rt(xpum_device_id_t id, xpum_device_realtime_metrics_t *out_row)
 {
   xpum_device_realtime_metrics_t rows[8];
@@ -196,18 +208,44 @@ static int intel_gpu_collect_one_rt(xpum_device_id_t id, xpum_device_realtime_me
   *out_row = rows[best];
   if (!intel_gpu_row_is_usable(out_row))
     intel_gpu_merge_tile_rows(rows, count, out_row);
+  /* Always resolve package POWER (device-level or sum of tiles) — do not publish one tile. */
+  intel_gpu_apply_package_power(rows, count, out_row);
   return 0;
+}
+
+static int intel_gpu_stats_row_to_rt(const xpum_device_stats_t *src,
+                                     xpum_device_realtime_metrics_t *dst)
+{
+  int j;
+
+  if (src == NULL || dst == NULL)
+    return -1;
+  memset(dst, 0, sizeof(*dst));
+  dst->deviceId = src->deviceId;
+  dst->isTileData = src->isTileData;
+  dst->tileId = src->tileId;
+  for (j = 0; j < src->count && j < XPUM_STATS_MAX; j++) {
+    dst->dataList[dst->count].metricsType = src->dataList[j].metricsType;
+    dst->dataList[dst->count].isCounter = src->dataList[j].isCounter;
+    dst->dataList[dst->count].value =
+        src->dataList[j].isCounter ? src->dataList[j].accumulated : src->dataList[j].avg;
+    dst->dataList[dst->count].scale = src->dataList[j].scale;
+    dst->count++;
+  }
+  return dst->count > 0 ? 0 : -1;
 }
 
 static int intel_gpu_collect_one_stats_fallback(xpum_device_id_t id,
                                                 xpum_device_realtime_metrics_t *out_row)
 {
   xpum_device_stats_t rows[8];
+  xpum_device_realtime_metrics_t as_rt[8];
   uint32_t count = 0;
   uint64_t begin = 0;
   uint64_t end = 0;
   uint32_t i;
-  int j;
+  uint32_t n_rt = 0;
+  uint32_t best;
 
   if (out_row == NULL)
     return -1;
@@ -223,23 +261,17 @@ static int intel_gpu_collect_one_stats_fallback(xpum_device_id_t id,
     return -1;
 
   for (i = 0; i < count; i++) {
-    if (!rows[i].isTileData)
-      break;
+    if (intel_gpu_stats_row_to_rt(&rows[i], &as_rt[n_rt]) == 0)
+      n_rt++;
   }
-  if (i >= count)
-    i = 0;
-  out_row->deviceId = rows[i].deviceId;
-  out_row->isTileData = rows[i].isTileData;
-  out_row->tileId = rows[i].tileId;
-  out_row->count = 0;
-  for (j = 0; j < rows[i].count && j < XPUM_STATS_MAX; j++) {
-    out_row->dataList[out_row->count].metricsType = rows[i].dataList[j].metricsType;
-    out_row->dataList[out_row->count].isCounter = rows[i].dataList[j].isCounter;
-    out_row->dataList[out_row->count].value =
-        rows[i].dataList[j].isCounter ? rows[i].dataList[j].accumulated : rows[i].dataList[j].avg;
-    out_row->dataList[out_row->count].scale = rows[i].dataList[j].scale;
-    out_row->count++;
-  }
+  if (n_rt == 0)
+    return -1;
+
+  best = intel_gpu_pick_best_rt_row(as_rt, n_rt);
+  *out_row = as_rt[best];
+  if (!intel_gpu_row_is_usable(out_row))
+    intel_gpu_merge_tile_rows(as_rt, n_rt, out_row);
+  intel_gpu_apply_package_power(as_rt, n_rt, out_row);
   return out_row->count > 0 ? 0 : -1;
 }
 
