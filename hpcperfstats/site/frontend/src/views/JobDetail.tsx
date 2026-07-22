@@ -47,6 +47,17 @@ import { JOB_PLOT_CONFIGS } from "@/utils/job-detail-plots";
 const JOB_DETAIL_COMPACT_TABLE_CLASS =
   "border text-sm [&_td]:px-[0.45rem] [&_td]:py-[0.2rem] [&_td]:align-middle [&_td]:leading-[1.3] [&_th]:px-[0.45rem] [&_th]:py-[0.2rem] [&_th]:align-middle [&_th]:leading-[1.3]";
 
+/** Format distinct stored artifact schema ints for staff diagnostics. */
+export function formatArtifactSchemaList(values: number[] | undefined | null): string {
+  if (!values || values.length === 0) return "none";
+  if (values.length === 1) return String(values[0]);
+  const sorted = [...values].sort((a, b) => a - b);
+  const consecutive =
+    sorted[sorted.length - 1]! - sorted[0]! === sorted.length - 1 &&
+    sorted.every((n, i) => i === 0 || n === sorted[i - 1]! + 1);
+  if (consecutive) return `${sorted[0]}–${sorted[sorted.length - 1]}`;
+  return sorted.join(", ");
+}
 
 type JobAnalysisTab =
   | "metrics"
@@ -107,6 +118,7 @@ type JobDetailViewData = JobDetailResponse & {
   metrics_list?: JobMetricDisplayRow[];
   proc_list?: string[];
   staff_metrics_distinct_time_count?: string | number | null;
+  staff_artifact_contract?: JobDetailResponse["staff_artifact_contract"];
 };
 
 type PlotPanelProps = {
@@ -333,6 +345,7 @@ export default function JobDetail() {
     metrics_list = [],
     proc_list = [],
     staff_metrics_distinct_time_count: staffMetricsDistinctTimeCount,
+    staff_artifact_contract: staffArtifactContract,
   } = detailData;
 
   const gpuStatsTableCellClass = {
@@ -523,20 +536,41 @@ export default function JobDetail() {
                 <div>{job.jobname}</div>
               </div>
               {isStaff ? (
-                <div className="col-span-full">
-                  <div className="text-muted-foreground">
-                    <VariableInfoLabel
-                      variableName="metrics_distinct_time_count"
-                      labelText="Sample Count"
-                      enableHelp
-                    />
-                  </div>
+                <div className="col-span-full space-y-2">
                   <div>
-                    {staffMetricsDistinctTimeCount != null &&
-                    String(staffMetricsDistinctTimeCount) !== ""
-                      ? formatDecimalStandard(staffMetricsDistinctTimeCount)
-                      : "Not computed yet."}
+                    <div className="text-muted-foreground">
+                      <VariableInfoLabel
+                        variableName="metrics_distinct_time_count"
+                        labelText="Sample Count"
+                        enableHelp
+                      />
+                    </div>
+                    <div>
+                      {staffMetricsDistinctTimeCount != null &&
+                      String(staffMetricsDistinctTimeCount) !== ""
+                        ? formatDecimalStandard(staffMetricsDistinctTimeCount)
+                        : "Not computed yet."}
+                    </div>
                   </div>
+                  {staffArtifactContract ? (
+                    <div>
+                      <div className="text-muted-foreground">
+                        <VariableInfoLabel
+                          variableName="staff_artifact_contract"
+                          labelText="Artifact schema"
+                          enableHelp
+                        />
+                      </div>
+                      <div>
+                        Current: plot {staffArtifactContract.current_plot}, detail{" "}
+                        {staffArtifactContract.current_detail}
+                      </div>
+                      <div>
+                        DB: plot {formatArtifactSchemaList(staffArtifactContract.db_plot)},
+                        detail {formatArtifactSchemaList(staffArtifactContract.db_detail)}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </div>

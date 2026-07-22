@@ -5,6 +5,8 @@ import pytest
 
 from hpcperfstats.site.lib.machine.openapi_serializers import JobDetailResponseSerializer
 
+pytestmark = pytest.mark.machine_unit_mock
+
 # Representative GET /api/jobs/{pk}/ payload from job_detail view assembly.
 JOB_DETAIL_WIRE_BASE = {
     "job_data": {
@@ -84,7 +86,25 @@ JOB_DETAIL_WIRE_NULL_STAFF_SAMPLE_COUNT = {
 }
 
 
+JOB_DETAIL_WIRE_STAFF_ARTIFACT_CONTRACT = {
+    **JOB_DETAIL_WIRE_BASE,
+    "staff_metrics_distinct_time_count": 1250,
+    "staff_artifact_contract": {
+        "current_plot": 11,
+        "current_detail": 8,
+        "db_plot": [10, 11],
+        "db_detail": [],
+    },
+}
+
+
 @pytest.mark.django_db(databases=[])
 def test_job_detail_wire_with_null_staff_metrics_distinct_time_count_matches_openapi_serializers():
     ser = JobDetailResponseSerializer(data=JOB_DETAIL_WIRE_NULL_STAFF_SAMPLE_COUNT)
+    assert ser.is_valid(), ser.errors
+
+
+@pytest.mark.django_db(databases=[])
+def test_job_detail_wire_with_staff_artifact_contract_matches_openapi_serializers():
+    ser = JobDetailResponseSerializer(data=JOB_DETAIL_WIRE_STAFF_ARTIFACT_CONTRACT)
     assert ser.is_valid(), ser.errors

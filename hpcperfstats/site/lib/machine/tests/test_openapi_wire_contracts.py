@@ -20,6 +20,8 @@ from hpcperfstats.site.lib.machine.openapi_serializers import (
     TypeDetailResponseSerializer,
 )
 
+pytestmark = pytest.mark.machine_unit_mock
+
 # Minimal Bokeh json_item document (matches frontend bokeh-fixtures.ts).
 VALID_BOKEH_JSON_ITEM = {
     "doc": {
@@ -134,6 +136,13 @@ JOB_DETAIL_WIRE = {
     "multiprecision_cpu_unavailable_reason": None,
     "multiprecision_gpu_plot_item": None,
     "multiprecision_gpu_unavailable_reason": None,
+    "staff_metrics_distinct_time_count": None,
+    "staff_artifact_contract": {
+        "current_plot": 11,
+        "current_detail": 8,
+        "db_plot": [11],
+        "db_detail": [8],
+    },
 }
 
 # --- Silent strip fixes (Zod passed but deleted wire keys) ---

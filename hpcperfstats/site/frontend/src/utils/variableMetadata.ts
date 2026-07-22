@@ -80,6 +80,12 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
       "Sum over job hosts of distinct sample timestamps in host_data for this job’s time window, as recorded when job-level metrics were last persisted. This is not the raw row count of host_data.",
     researcherUse: "Operators use sample count to diagnose sparse or broken sampling.",
   },
+  staff_artifact_contract: {
+    description:
+      "Staff-only diagnostic: current plot and detail artifact schema versions compiled into this deployment, plus the distinct non-null artifact_schema values stored on this job’s job_plot_artifact and job_detail_artifact rows. Fingerprints still decide cache hits; schema ints are for operators comparing code vs DB after a bump.",
+    researcherUse:
+      "When current and DB differ, plots or detail payloads may still be stale until recomputed; empty DB lists mean no rows or only legacy null schema columns.",
+  },
 
   // ===== Job-level derived metrics (hpcperfstats/analysis/metrics/lib/metrics.py catalog) =====
   avg_blockbw: {

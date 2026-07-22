@@ -195,6 +195,15 @@ class JobMetricRowSerializer(serializers.Serializer):
     no_data_reason = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
 
+class StaffArtifactContractSerializer(serializers.Serializer):
+    """Staff Job Detail: runtime vs stored plot/detail artifact schema versions."""
+
+    current_plot = serializers.IntegerField()
+    current_detail = serializers.IntegerField()
+    db_plot = serializers.ListField(child=serializers.IntegerField())
+    db_detail = serializers.ListField(child=serializers.IntegerField())
+
+
 class JobDetailResponseSerializer(serializers.Serializer):
     job_data = JobDetailJobSerializer(required=False)
     host_list = serializers.ListField(child=serializers.CharField(), required=False)
@@ -226,6 +235,7 @@ class JobDetailResponseSerializer(serializers.Serializer):
     staff_metrics_distinct_time_count = serializers.IntegerField(
         required=False, allow_null=True
     )
+    staff_artifact_contract = StaffArtifactContractSerializer(required=False)
 
 
 class JobPlotsResponseSerializer(serializers.Serializer):

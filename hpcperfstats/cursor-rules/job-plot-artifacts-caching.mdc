@@ -32,6 +32,7 @@ alwaysApply: false
 - **`compute_plot_input_fingerprint`** hashes job window, host list, `metrics_distinct_time_count`, **live** distinct time count (`LiveDistinctHostTimeCount` on PostgreSQL), `bokeh.__version__`, and **`APP_PLOT_ARTIFACT_SCHEMA_VERSION`**.
 - Full Bokeh bump steps (JS + Python pins, CDN test pin, fixtures) live in **`bokeh-version-and-vendor-patch-upgrade.mdc`**.
 - When plot **semantics** change without a Bokeh upgrade, bump **`APP_PLOT_ARTIFACT_SCHEMA_VERSION`** in `job_plot_artifacts.py` so old rows are not reused.
+- **Persisted `artifact_schema` column** (nullable `IntegerField` on **`job_plot_artifact`** and **`job_detail_artifact`**): every upsert writes the current `APP_*_ARTIFACT_SCHEMA_VERSION`. This is an **operator diagnostic** only — **fingerprint remains authoritative** for cache hit/miss. Staff Job Detail exposes runtime vs stored values via `staff_artifact_contract` (`current_plot` / `current_detail` plus distinct non-null `db_plot` / `db_detail`). Legacy rows with `NULL` are omitted from those lists. Do **not** bump `APP_*` solely to populate this column.
 
 ## Gaps and boundaries
 

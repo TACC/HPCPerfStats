@@ -257,6 +257,12 @@ export const WIRE_AUDIT_CASES: WireAuditCase[] = [
       multiprecision_gpu_unavailable_reason: null,
       derived_data_status: "ready",
       staff_metrics_distinct_time_count: null,
+      staff_artifact_contract: {
+        current_plot: 11,
+        current_detail: 8,
+        db_plot: [11],
+        db_detail: [8],
+      },
     },
   },
   {

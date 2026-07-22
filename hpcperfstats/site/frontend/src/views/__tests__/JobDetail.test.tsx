@@ -219,10 +219,38 @@ describe("JobDetail", () => {
     expect(screen.getByText("1,250.00")).toBeInTheDocument();
   });
 
+  it("shows Artifact schema for staff when API includes staff_artifact_contract", async () => {
+    setJobDetailQueryMock({ data: {
+      ...minimalJobDetailResponse,
+      staff_metrics_distinct_time_count: 1250,
+      staff_artifact_contract: {
+        current_plot: 11,
+        current_detail: 8,
+        db_plot: [10, 11],
+        db_detail: [],
+      },
+    } });
+
+    renderJobDetail("12345", { is_staff: true });
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
+    });
+    expect(screen.getByText("Artifact schema")).toBeInTheDocument();
+    expect(screen.getByText("Current: plot 11, detail 8")).toBeInTheDocument();
+    expect(screen.getByText("DB: plot 10–11, detail none")).toBeInTheDocument();
+  });
+
   it("does not show Sample Count table for non-staff", async () => {
     setJobDetailQueryMock({ data: {
       ...minimalJobDetailResponse,
       staff_metrics_distinct_time_count: 999,
+      staff_artifact_contract: {
+        current_plot: 11,
+        current_detail: 8,
+        db_plot: [11],
+        db_detail: [8],
+      },
     } });
 
     renderJobDetail("12345", { is_staff: false });
@@ -231,6 +259,7 @@ describe("JobDetail", () => {
       expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
     });
     expect(screen.queryByText("Sample Count")).not.toBeInTheDocument();
+    expect(screen.queryByText("Artifact schema")).not.toBeInTheDocument();
   });
 
   it("shows loading indicator while job detail is fetching", () => {

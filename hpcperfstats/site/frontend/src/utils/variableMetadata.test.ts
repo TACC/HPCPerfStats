@@ -80,6 +80,13 @@ describe("getDescriptionForVariable", () => {
     expect(getDescriptionForVariable("metrics_distinct_time_count")).toMatch(/distinct sample timestamps/i);
   });
 
+  it("documents staff_artifact_contract for staff Artifact schema help", () => {
+    expect(getDescriptionForVariable("staff_artifact_contract")).toMatch(/artifact schema/i);
+    expect(getVariableTooltipContent("staff_artifact_contract")?.researcherUse).toMatch(
+      /current and DB differ/i
+    );
+  });
+
   it("documents every Extended Search parameter metadata key", () => {
     expect(EXTENDED_SEARCH_ALLOWED_PARAM_NAMES).toHaveLength(
       EXTENDED_SEARCH_PARAMETER_DEFINITIONS.length,

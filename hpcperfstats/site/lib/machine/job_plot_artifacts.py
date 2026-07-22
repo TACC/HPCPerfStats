@@ -233,9 +233,15 @@ def upsert_job_plot_artifact(
           payload_compressed=compressed,
           payload_encoding=enc,
           input_fingerprint=input_fingerprint,
+          artifact_schema=APP_PLOT_ARTIFACT_SCHEMA_VERSION,
       )],
       update_conflicts=True,
-      update_fields=["payload_compressed", "payload_encoding", "input_fingerprint"],
+      update_fields=[
+          "payload_compressed",
+          "payload_encoding",
+          "input_fingerprint",
+          "artifact_schema",
+      ],
       unique_fields=["jid", "plot_kind", "layout"],
   )
 
@@ -264,12 +270,18 @@ def upsert_job_plot_artifact_batch(
             payload_compressed=compressed,
             payload_encoding=enc,
             input_fingerprint=input_fingerprint,
+            artifact_schema=APP_PLOT_ARTIFACT_SCHEMA_VERSION,
         )
     )
   job_plot_artifact.objects.bulk_create(
       objs,
       update_conflicts=True,
-      update_fields=["payload_compressed", "payload_encoding", "input_fingerprint"],
+      update_fields=[
+          "payload_compressed",
+          "payload_encoding",
+          "input_fingerprint",
+          "artifact_schema",
+      ],
       unique_fields=["jid", "plot_kind", "layout"],
   )
 

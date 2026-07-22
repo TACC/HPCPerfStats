@@ -251,6 +251,58 @@ def test_upsert_job_plot_artifact_batch_updates_existing_row():
       jid_id="batch1", plot_kind="summary_plot", layout="normal")
   out = decompress_plot_item_dict(bytes(row.payload_compressed), row.payload_encoding)
   assert out == {"plot_item": {"v": 2}, "unavailable_reason": None}
+  assert row.artifact_schema == plot_cfg.APP_PLOT_ARTIFACT_SCHEMA_VERSION
+
+
+@pytest.mark.django_db
+def test_upsert_job_plot_artifact_persists_artifact_schema():
+  from hpcperfstats.site.lib.machine import job_plot_artifacts as plot_cfg
+
+  now = timezone.now()
+  j = job_data.objects.create(
+      jid="schema1",
+      submit_time=now,
+      start_time=now,
+      end_time=now,
+      username="u1",
+      host_list=["n1"],
+      metrics_distinct_time_count=1,
+  )
+  fp = compute_plot_input_fingerprint(j, 1)
+  upsert_job_plot_artifact("schema1", "summary_plot", "normal", fp, {"x": 1})
+  row = job_plot_artifact.objects.get(
+      jid_id="schema1", plot_kind="summary_plot", layout="normal"
+  )
+  assert row.artifact_schema == plot_cfg.APP_PLOT_ARTIFACT_SCHEMA_VERSION
+
+
+@pytest.mark.django_db
+def test_upsert_job_detail_artifact_persists_artifact_schema():
+  from hpcperfstats.site.lib.machine import job_detail_artifacts as detail_cfg
+
+  now = timezone.now()
+  job_data.objects.create(
+      jid="dschema1",
+      submit_time=now,
+      start_time=now,
+      end_time=now,
+      username="u1",
+      host_list=["n1"],
+      metrics_distinct_time_count=1,
+  )
+  upsert_job_detail_artifact(
+      "dschema1",
+      ARTIFACT_KIND_JOB_DETAIL,
+      "",
+      "fp-detail-1",
+      {"ok": True},
+  )
+  row = job_detail_artifact.objects.get(
+      jid_id="dschema1",
+      artifact_kind=ARTIFACT_KIND_JOB_DETAIL,
+      artifact_scope="",
+  )
+  assert row.artifact_schema == detail_cfg.APP_DETAIL_ARTIFACT_SCHEMA_VERSION
 
 
 @pytest.mark.django_db

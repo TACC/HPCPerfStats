@@ -2406,6 +2406,9 @@ def job_detail(request, pk):
         )
     if request.session.get("is_staff", False):
         payload["staff_metrics_distinct_time_count"] = job.metrics_distinct_time_count
+        from .staff_artifact_contract import staff_artifact_contract_payload
+
+        payload["staff_artifact_contract"] = staff_artifact_contract_payload(job.jid)
 
     return Response(payload)
 

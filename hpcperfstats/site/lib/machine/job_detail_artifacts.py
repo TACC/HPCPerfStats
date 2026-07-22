@@ -161,10 +161,16 @@ def upsert_job_detail_artifact(
               payload_compressed=compressed,
               payload_encoding=encoding,
               input_fingerprint=input_fingerprint,
+              artifact_schema=APP_DETAIL_ARTIFACT_SCHEMA_VERSION,
           )
       ],
       update_conflicts=True,
-      update_fields=["payload_compressed", "payload_encoding", "input_fingerprint"],
+      update_fields=[
+          "payload_compressed",
+          "payload_encoding",
+          "input_fingerprint",
+          "artifact_schema",
+      ],
       unique_fields=["jid", "artifact_kind", "artifact_scope"],
   )
 

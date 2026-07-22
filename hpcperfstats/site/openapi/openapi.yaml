@@ -1437,6 +1437,8 @@ components:
         staff_metrics_distinct_time_count:
           type: integer
           nullable: true
+        staff_artifact_contract:
+          $ref: '#/components/schemas/StaffArtifactContract'
     JobListAggregates:
       type: object
       properties:
@@ -1917,6 +1919,28 @@ components:
       - is_staff
       - logged_in
       - username
+    StaffArtifactContract:
+      type: object
+      description: 'Staff Job Detail: runtime vs stored plot/detail artifact schema
+        versions.'
+      properties:
+        current_plot:
+          type: integer
+        current_detail:
+          type: integer
+        db_plot:
+          type: array
+          items:
+            type: integer
+        db_detail:
+          type: array
+          items:
+            type: integer
+      required:
+      - current_detail
+      - current_plot
+      - db_detail
+      - db_plot
     TypeDetailResponse:
       type: object
       properties:

@@ -8,6 +8,8 @@ import pytest
 import yaml
 from drf_spectacular.generators import SchemaGenerator
 
+pytestmark = pytest.mark.machine_unit_mock
+
 COMMITTED_SCHEMA = (
     Path(__file__).resolve().parents[3] / "openapi" / "openapi.yaml"
 )

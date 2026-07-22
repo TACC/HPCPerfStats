@@ -237,6 +237,8 @@ class job_plot_artifact(models.Model):
   payload_compressed = models.BinaryField()
   payload_encoding = models.CharField(max_length=32)
   input_fingerprint = models.CharField(max_length=64)
+  # APP_PLOT_ARTIFACT_SCHEMA_VERSION at write time; null = legacy pre-column rows.
+  artifact_schema = models.IntegerField(blank=True, null=True)
   created_at = models.DateTimeField(auto_now_add=True)
   updated_at = models.DateTimeField(auto_now=True)
 
@@ -268,6 +270,8 @@ class job_detail_artifact(models.Model):
   payload_compressed = models.BinaryField()
   payload_encoding = models.CharField(max_length=32)
   input_fingerprint = models.CharField(max_length=64)
+  # APP_DETAIL_ARTIFACT_SCHEMA_VERSION at write time; null = legacy pre-column rows.
+  artifact_schema = models.IntegerField(blank=True, null=True)
   created_at = models.DateTimeField(auto_now_add=True)
   updated_at = models.DateTimeField(auto_now=True)
 

@@ -1,12 +1,24 @@
-"""Staff-only job_detail field: staff_metrics_distinct_time_count (no live DB)."""
+"""Staff-only job_detail fields: sample count + artifact contract (no live DB)."""
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
+import pytest
 from django.test import RequestFactory
 
 from hpcperfstats.site.lib.machine import cache_utils as cu
+from hpcperfstats.site.lib.machine import job_detail_artifacts as detail_cfg
+from hpcperfstats.site.lib.machine import job_plot_artifacts as plot_cfg
+
+pytestmark = pytest.mark.machine_unit_mock
+
+_STAFF_CONTRACT_FIXTURE = {
+    "current_plot": plot_cfg.APP_PLOT_ARTIFACT_SCHEMA_VERSION,
+    "current_detail": detail_cfg.APP_DETAIL_ARTIFACT_SCHEMA_VERSION,
+    "db_plot": [plot_cfg.APP_PLOT_ARTIFACT_SCHEMA_VERSION],
+    "db_detail": [],
+}
 
 
 def _patch_job_detail_for_staff_count(api_module, jid, metrics_distinct_time_count):
@@ -45,6 +57,8 @@ def _patch_job_detail_for_staff_count(api_module, jid, metrics_distinct_time_cou
       patch.object(api_module, "get_site_content_cache_timeout", return_value=3600),
       patch.object(api_module.jid_table, "jid_table", return_value=mock_j),
       patch.object(api_module, "build_job_metrics_display_list", return_value=[]),
+      patch.object(api_module, "load_job_detail_artifact", return_value={}),
+      patch.object(api_module, "compute_detail_input_fingerprint", return_value="fp"),
       patch.object(api_module.cfg, "get_xalt_user", return_value=""),
       patch.object(api_module.cfg, "get_host_name_ext", return_value=""),
       patch.object(api_module, "cached_orm", side_effect=cached_se),
@@ -54,6 +68,10 @@ def _patch_job_detail_for_staff_count(api_module, jid, metrics_distinct_time_cou
           return_value=MagicMock(data={"jid": jid, "username": "u1"}),
       ),
       patch.object(api_module, "local_timezone", timezone.utc),
+      patch(
+          "hpcperfstats.site.lib.machine.staff_artifact_contract.staff_artifact_contract_payload",
+          return_value=dict(_STAFF_CONTRACT_FIXTURE),
+      ),
   )
 
 
@@ -76,6 +94,7 @@ def test_job_detail_includes_staff_metrics_distinct_time_count_for_staff():
 
   assert response.status_code == 200
   assert response.data["staff_metrics_distinct_time_count"] == 12_345
+  assert response.data["staff_artifact_contract"] == _STAFF_CONTRACT_FIXTURE
 
 
 def test_job_detail_includes_null_staff_metrics_distinct_time_count_for_staff():
@@ -98,6 +117,7 @@ def test_job_detail_includes_null_staff_metrics_distinct_time_count_for_staff():
   assert response.status_code == 200
   assert "staff_metrics_distinct_time_count" in response.data
   assert response.data["staff_metrics_distinct_time_count"] is None
+  assert response.data["staff_artifact_contract"] == _STAFF_CONTRACT_FIXTURE
 
 
 def test_job_detail_omits_staff_metrics_distinct_time_count_for_non_staff():
@@ -119,3 +139,4 @@ def test_job_detail_omits_staff_metrics_distinct_time_count_for_non_staff():
 
   assert response.status_code == 200
   assert "staff_metrics_distinct_time_count" not in response.data
+  assert "staff_artifact_contract" not in response.data

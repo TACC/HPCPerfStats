@@ -151,6 +151,21 @@ describe("parse-api-response", () => {
     expect(parseApiResponse("GET", "/api/jobs/745354/", wire)).toEqual(wire);
   });
 
+  it("accepts job detail with staff_artifact_contract", () => {
+    const wire = {
+      job_data: { jid: "745355" },
+      derived_data_status: "ready",
+      staff_metrics_distinct_time_count: 1250,
+      staff_artifact_contract: {
+        current_plot: 11,
+        current_detail: 8,
+        db_plot: [10, 11],
+        db_detail: [],
+      },
+    };
+    expect(parseApiResponse("GET", "/api/jobs/745355/", wire)).toEqual(wire);
+  });
+
   it("accepts type detail artifact wire keys", () => {
     const wire = {
       type_name: "cpu",
