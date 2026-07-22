@@ -21,6 +21,41 @@ _OPTION_LINE_RE = re.compile(
     r"^\s*#?\s*([A-Za-z_][A-Za-z0-9_]*)\s*=",
 )
 
+_ACTIVE_OPTION_LINE_RE = re.compile(
+    r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$",
+)
+
+
+def _ini_values_equal_registry_default(example_value, registry_default):
+  """True when *example_value* matches *registry_default* (exact or float)."""
+  if registry_default is None:
+    return False
+  if example_value == registry_default:
+    return True
+  try:
+    return float(example_value) == float(registry_default)
+  except (TypeError, ValueError):
+    return False
+
+
+def _parse_active_ini_options(path):
+  """Return {(section, option): value} for uncommented key lines only."""
+  text = path.read_text(encoding="utf-8")
+  section = None
+  active = {}
+  for line in text.splitlines():
+    stripped = line.strip()
+    if stripped.startswith("[") and stripped.endswith("]"):
+      section = stripped[1:-1].strip()
+      continue
+    if not section or not stripped or stripped.startswith("#"):
+      continue
+    match = _ACTIVE_OPTION_LINE_RE.match(stripped)
+    if not match:
+      continue
+    active[(section, match.group(1))] = match.group(2)
+  return active
+
 
 def _parse_documented_ini_options(path):
   """Return {(section, option), ...} from active and commented key lines."""
@@ -184,3 +219,29 @@ def test_ini_example_option_blocks_have_preceding_comment():
         "expected comment immediately above %s in section %s, got: %r"
         % (match.group(1), section, prev)
     )
+
+
+def test_ini_example_active_keys_do_not_equal_registry_defaults():
+  """Active example lines must not duplicate INI_OPTION_DEFAULTS (cleanliness)."""
+  path = _repo_ini_example_path()
+  active = _parse_active_ini_options(path)
+  defaults = {
+      (section, option): default
+      for section, option, default in cfg.INI_OPTION_REGISTRY
+  }
+  redundant = []
+  for key, value in sorted(active.items()):
+    default = defaults.get(key)
+    if _ini_values_equal_registry_default(value, default):
+      redundant.append("%s.%s=%s (default %r)" % (key[0], key[1], value, default))
+  assert not redundant, (
+      "hpcperfstats.ini.example has active keys at registry default "
+      "(comment them out): %s" % redundant
+  )
+
+
+def test_ini_values_equal_registry_default_float_normalize():
+  assert _ini_values_equal_registry_default("24", "24.0")
+  assert _ini_values_equal_registry_default("40", "40")
+  assert not _ini_values_equal_registry_default("True", "no")
+  assert not _ini_values_equal_registry_default("x", None)

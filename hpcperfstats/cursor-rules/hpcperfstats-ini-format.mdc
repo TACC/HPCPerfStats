@@ -25,6 +25,19 @@ option_name = value
 next_option = value
 ```
 
+## Example cleanliness (mandatory)
+
+Active (uncommented) keys in **`hpcperfstats.ini.example`** must be either:
+
+- **Required** — registry default is `None` (site identity, paths, secrets, integration endpoints), or
+- **Intentional overrides** — value differs from `INI_OPTION_DEFAULTS` / `INI_OPTION_REGISTRY` (for example `debug = True` while the code default is `no`).
+
+Do **not** leave an active line whose value equals the registry default (exact string match, or float-equal such as `24` vs `24.0`). Document those tunables as commented `# key = <default>` so operators see the default without duplicating it as an override.
+
+Enforcement: `test_hpcperfstats_ini_example.py::test_ini_example_active_keys_do_not_equal_registry_defaults`.
+
+When adding a new tunable whose example value is the registry default, add it **commented** in the example (still documented). Soften deploy guidance in **`deploy-ini-with-code-no-phase-zero.mdc`** accordingly.
+
 ## Section taxonomy
 
 | Section | Put keys here when… | Examples |
@@ -62,8 +75,8 @@ In the **same task**:
 2. Add or update the getter in **`dbload/lib/dbload/lib/conf_parser.py`** with primary section + legacy fallback in **`_ini_option()`** when migrating keys.
 3. Append **`(section, option, default)`** to **`INI_OPTION_REGISTRY`** (`default` is a str code fallback, or `None` when required).
 4. Ensure **`ini_section_placement.py`** covers the option (explicit map or prefix rule).
-5. Document the key in **`hpcperfstats.ini.example`** in the correct section and **`[DEFAULT]`** order.
-6. Run **`test_hpcperfstats_ini_example.py`**, **`test_ini_section_placement_contract.py`**, and relevant **`test_dbload/lib/dbload/lib/conf_parser.py`** cases.
+5. Document the key in **`hpcperfstats.ini.example`** in the correct section and **`[DEFAULT]`** order. If the example value equals the registry default, use a **commented** `# key = <default>` line (see **Example cleanliness** above); keep the key **active** only when it is required (`default is None`) or an intentional non-default override.
+6. Run **`test_hpcperfstats_ini_example.py`**, **`test_ini_section_placement_contract.py`**, and relevant **`test_conf_parser.py`** cases.
 
 ## Getter naming
 
@@ -74,7 +87,7 @@ In the **same task**:
 
 - **`hpcperfstats/dbload/lib/conf_parser.py`** → **`INI_OPTION_REGISTRY`**: every ini-backed `(section, option, default)` tuple; getters load fallbacks via **`ini_registry_default()`** / **`_pipeline_get()`**.
 - **`hpcperfstats/ini_section_placement.py`** → **`expected_section()`** / **`validate_registry_sections()`**.
-- **`hpcperfstats/tests/test_hpcperfstats_ini_example.py`**: example documents every registry entry; pinning keys last in `[DEFAULT]`.
+- **`hpcperfstats/tests/test_hpcperfstats_ini_example.py`**: example documents every registry entry; pinning keys last in `[DEFAULT]`; **no active key equals registry default** (exact or float-normalize).
 - **`hpcperfstats/tests/test_ini_section_placement_contract.py`**: registry matches placement contract.
 
 ## Env-only overrides (not ini keys)

@@ -29,7 +29,7 @@ timezone = America/Chicago
 secret_key = change-me-to-a-long-random-string
 
 # Ini cap on parallel workers (effective cores = min(this, os.cpu_count()); default 40).
-total_cores = 40
+# total_cores = 40
 
 # Django database engine backend.
 engine_name = django.db.backends.postgresql
@@ -233,10 +233,10 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # metrics_readiness_end_margin_seconds = 600
 
 # Cap sync_timedb ingest pool and metadata discovery threads; imap inflight equals pool size (default 16).
-sync_pool_process_cap = 16
+# sync_pool_process_cap = 16
 
 # Concurrent daily-tar append slots / archive spawn pool size (default 2).
-sync_archive_pool_processes = 2
+# sync_archive_pool_processes = 2
 
 # Max concurrent sealed-day streams for sync_timedb_archive backfill (default 1).
 # sync_timedb_archive_max_concurrent_sealed_days = 1
@@ -270,16 +270,16 @@ sync_archive_pool_processes = 2
 # sync_overprovision_metrics_multiplier = 1.00
 
 # Max in-memory ingest work queue size (default 3000; also drives ingest chunk size).
-sync_ingest_queue_max_size = 3000
+# sync_ingest_queue_max_size = 3000
 
 # Incremental pending rescan: GNU find -mtime -N days (default 1 = last 24h).
-sync_ingest_rescan_mtime_days = 1
+# sync_ingest_rescan_mtime_days = 1
 
 # Force full-age find every N incremental pending rescans (default 100).
-sync_ingest_rescan_full_every = 100
+# sync_ingest_rescan_full_every = 100
 
 # Days within which CLI backlog exits when near a live current heartbeat (default 2).
-sync_ingest_current_proximity_days = 2
+# sync_ingest_current_proximity_days = 2
 
 # Max in-memory archive work queue size (default 1000).
 # sync_archive_queue_max_size = 1000
@@ -297,7 +297,7 @@ sync_ingest_current_proximity_days = 2
 # sync_checkpoint_flush_batch_size = 100
 
 # Max raw paths per tar -T append batch in sync_timedb (default 1024).
-sync_timedb_tar_append_batch_size = 1024
+# sync_timedb_tar_append_batch_size = 1024
 
 # host_data/proc_data bulk_create batch size and incremental parse flush threshold (default 10000).
 # Also drives archive DB gate sample stride (batch_size // 2 timestamp lines, plus last line at EOF).
@@ -329,7 +329,7 @@ sync_timedb_tar_append_batch_size = 1024
 # sync_pool_idle_reconcile_polls_per_round = 4
 
 # Per ingest pool task wall-clock floor seconds; 0 disables all per-file timeouts (default 3600).
-sync_ingest_per_file_timeout_s = 3600
+# sync_ingest_per_file_timeout_s = 3600
 
 # Size-proportional ingest timeout: resolved = clamp(floor + ceil_mib(size) * per_mib, floor, max).
 # Default per_mib ((86400-900)/30720) maps 30 GiB to max; larger files cap at max (no file-size reject).
@@ -373,7 +373,7 @@ sync_ingest_per_file_timeout_s = 3600
 # sync_archive_members_redis_max_payload_bytes = 8388608
 
 # Dedicated workers that stream sealed/tar archives into Redis L2 (default 4).
-sync_archive_members_populate_pool_processes = 4
+# sync_archive_members_populate_pool_processes = 4
 
 # Write-lock shard count for sync ingest; auto if unset.
 # sync_write_lock_shards =
@@ -385,7 +385,7 @@ sync_archive_members_populate_pool_processes = 4
 # sync_supervisor_rss_check_every_n_chunks = 1
 
 # Process-tree RSS defer limit MiB (supervisor + pool workers); 0 off (default 110000).
-sync_process_tree_rss_limit_mb = 110000
+# sync_process_tree_rss_limit_mb = 110000
 
 # Check process-tree RSS every N ingest chunks (default 1).
 # sync_process_tree_rss_check_every_n_chunks = 1
@@ -406,13 +406,13 @@ sync_process_tree_rss_limit_mb = 110000
 # sync_ingest_giant_pool_supplement_enabled = yes
 
 # Soft max bytes for preferred supplement pass; exclusive upper bound (default 1 GiB).
-sync_ingest_giant_pool_supplement_max_bytes = 1073741824
+# sync_ingest_giant_pool_supplement_max_bytes = 1073741824
 
 # Hard max bytes for second-pass supplement; exclusive; paths at/above stay chunk-only (default 8 GiB).
-sync_ingest_giant_pool_supplement_large_max_bytes = 8589934592
+# sync_ingest_giant_pool_supplement_large_max_bytes = 8589934592
 
 # Supplement reservoir = ingest_queue_max * this at batch start and mid-imap refresh (default 2 => 6000).
-sync_ingest_giant_pool_supplement_queue_multiplier = 2
+# sync_ingest_giant_pool_supplement_queue_multiplier = 2
 
 # Min resolved per-file ingest budget (s) for in-flight path to count as giant (default 6600 ~= 2 GiB).
 # sync_ingest_giant_pool_supplement_trigger_budget_s = 6600
@@ -420,10 +420,10 @@ sync_ingest_giant_pool_supplement_queue_multiplier = 2
 # Recycle ingest pool workers after N files; 0 unlimited (default 0).
 # Ingest pool only; archive and sealed-archive spawn pools always maxtasksperchild=1.
 # Default 0: supervisor retires only on failure/RSS (not path size). Set 1 to recycle every file.
-sync_ingest_pool_maxtasksperchild = 0
+# sync_ingest_pool_maxtasksperchild = 0
 
 # Return freed worker heap to OS after each ingest task on Linux (default yes).
-sync_ingest_malloc_trim_after_file = yes
+# sync_ingest_malloc_trim_after_file = yes
 
 # Worker memory telemetry: one batch_summary line per ingest chunk (default no; enable for soak).
 # sync_ingest_worker_memory_telemetry = no
@@ -449,13 +449,13 @@ sync_ingest_malloc_trim_after_file = yes
 # archive_keep_uncompressed_tar = no
 
 # Hours after local midnight to retain today's uncompressed .tar when global keep is off (default 24).
-archive_today_uncompressed_tar_grace_hours = 24
+# archive_today_uncompressed_tar_grace_hours = 24
 
 # zstd -T thread count for niced seal/restore/decompress; 0 uses -T0 (all cores per job, default).
 # archive_zstd_threads = 0
 
 # zstd -T for un-niced ingest/populate sealed streams (default 4).
-ingest_zstd_threads = 4
+# ingest_zstd_threads = 4
 
 # Added nice for archive zstd subprocesses; 0 disables (default 10).
 # archive_zstd_nice = 10
