@@ -326,8 +326,8 @@ rpmbuild -ba ... hpc_debug_build 1 ... && ./scripts/rpm_debug_shm_verify.sh
 Run from `HPCPerfStats/monitor/`. No exports needed. Re-validate only:
 `SKIP_INSTALL=1 ./scripts/rpm_debug_shm_verify.sh`
 
-Defaults include cross-sample + strict checks (~`FULL` post-install sleep, then
-~`sample_freq_slow` for a second full snapshot). Soften with
+Defaults include cross-sample + strict checks (~`FULL` post-install
+`stress-ng --cpu 0` soak, then ~`sample_freq_slow` for a second full snapshot). Soften with
 `CROSS_SAMPLE_CHECK=0 STRICT_PLAUSIBILITY=0 STRICT_LIVE_SPOT_CHECK=0`.
 Opt-in golden: `GOLDEN_CHECK=1` or `GOLDEN_DIR=auto`.
 

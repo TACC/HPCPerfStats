@@ -65,6 +65,22 @@ grep -q 'FULL=' "${verify}" \
 grep -q 'POST_INSTALL_SLEEP_SECONDS:-\${FULL}' "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must default post-install sleep to FULL" >&2; exit 1; }
 
+grep -q 'ensure_stress_ng' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must define ensure_stress_ng" >&2; exit 1; }
+
+grep -q 'stress-ng --cpu 0' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must run stress-ng --cpu 0 for post-install soak" >&2; exit 1; }
+
+grep -q '\-\-timeout "\${post_install_sleep}s"' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must timeout stress-ng with post_install_sleep" >&2; exit 1; }
+
+grep -q 'dnf install -y stress-ng' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must dnf install stress-ng when missing" >&2; exit 1; }
+
+grep -E 'sleep "\$\{post_install_sleep\}"' "${verify}" \
+  && { echo "rpm_debug_shm_verify.sh must not bare-sleep post_install_sleep" >&2; exit 1; } \
+  || true
+
 grep -q 'hpcperfstatsd-\[0-9\]' "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must install main hpcperfstatsd RPM only" >&2; exit 1; }
 

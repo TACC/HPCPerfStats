@@ -10,7 +10,8 @@
 #
 # Optional: ENABLE_SLOW_TIER, HPCPERFSTATS_DEBUG_SHM_DIR, WORKSPACE_ROOT,
 #           SKIP_INSTALL=1, SKIP_SHM_LS=1, FAST (default 30), FULL (default 60),
-#           POST_INSTALL_SLEEP_SECONDS (defaults to FULL), WAIT_SHM_SECONDS,
+#           POST_INSTALL_SLEEP_SECONDS (defaults to FULL; soak via stress-ng --cpu 0),
+#           WAIT_SHM_SECONDS,
 #           CROSS_SAMPLE_CHECK (default 1; set 0 to disable),
 #           STRICT_LIVE_SPOT_CHECK / STRICT_PLAUSIBILITY / STRICT_CROSS_SAMPLE
 #             (default 1; set 0 to disable),
@@ -104,7 +105,8 @@ Usage: $(basename "$0")
 
 Run from HPCPerfStats/monitor/ after debug rpmbuild completes.
 RPM %post starts hpcperfstats.service on install/upgrade (see hpcperfstats.spec).
-Waits POST_INSTALL_SLEEP_SECONDS (default FULL=60) after install before validation.
+After install, runs stress-ng --cpu 0 for POST_INSTALL_SLEEP_SECONDS (default FULL=60)
+before validation (installs stress-ng via dnf/yum if missing).
 Debug RPM sets sample_freq=${FAST} and sample_freq_slow=${FULL} in hpcperfstats.conf.
 Capabilities come from rpmbuild/debug-verify/ (stashed at %install; survives EL10 rmbuild).
 Defaults: cross-sample + strict plausibility/live-spot/cross-sample (set *=0 to disable).
@@ -159,6 +161,25 @@ EOF
   return 1
 }
 
+ensure_stress_ng() {
+  if command -v stress-ng >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "stress-ng not found; installing via package manager ..."
+  if command -v dnf >/dev/null 2>&1; then
+    dnf install -y stress-ng
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y stress-ng
+  else
+    echo "ERROR: stress-ng missing and neither dnf nor yum is available" >&2
+    return 1
+  fi
+  if ! command -v stress-ng >/dev/null 2>&1; then
+    echo "ERROR: stress-ng still missing after package install" >&2
+    return 1
+  fi
+}
+
 main() {
   if test "${1:-}" = "-h" || test "${1:-}" = "--help"; then
     usage
@@ -167,6 +188,7 @@ main() {
 
   local monitor_dir rpm_topdir dist_top ws py caps shm_dir tier enable_slow
   local slug expectations report_dir verify_dir
+  local post_install_sleep
 
   monitor_dir="$(cd "${MONITOR_DIR}" && pwd)"
   rpm_topdir="${RPM_TOPDIR:-${monitor_dir}/rpmbuild}"
@@ -194,8 +216,9 @@ main() {
     echo "RPM %post enables and starts hpcperfstats.service (no extra restart here)."
     post_install_sleep="${POST_INSTALL_SLEEP_SECONDS:-${FULL}}"
     if test "${post_install_sleep}" -gt 0 2>/dev/null; then
-      echo "Waiting ${post_install_sleep}s after install for daemon shm payloads ..."
-      sleep "${post_install_sleep}"
+      ensure_stress_ng || return 1
+      echo "Running stress-ng --cpu 0 --timeout ${post_install_sleep}s after install (shm soak) ..."
+      stress-ng --cpu 0 --timeout "${post_install_sleep}s"
     fi
   else
     find_main_daemon_rpm "${rpm_topdir}" >/dev/null || {
