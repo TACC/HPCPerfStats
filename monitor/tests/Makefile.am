@@ -490,19 +490,22 @@ test_ib_mad_backoff_SOURCES = \
 	test_ib_mad_backoff.c \
 	test_ib_mad_stubs.c \
 	test_stats_stub.c \
-	$(top_srcdir)/src/ib_mad.c
+	$(top_srcdir)/src/ib_mad.c \
+	$(top_srcdir)/src/monitor_release_log.c
 
 test_ib_mad_decode_SOURCES = \
 	test_ib_mad_decode.c \
 	test_ib_mad_stubs.c \
 	test_stats_stub.c \
-	$(top_srcdir)/src/ib_mad.c
+	$(top_srcdir)/src/ib_mad.c \
+	$(top_srcdir)/src/monitor_release_log.c
 
 test_ib_mad_sw_swap_SOURCES = \
 	test_ib_mad_sw_swap.c \
 	test_ib_mad_stubs.c \
 	test_stats_stub.c \
-	$(top_srcdir)/src/ib_mad.c
+	$(top_srcdir)/src/ib_mad.c \
+	$(top_srcdir)/src/monitor_release_log.c
 
 if IB_MAD_DLOPEN
 test_ib_mad_backoff_SOURCES += $(top_srcdir)/src/ib_mad_dyn.c

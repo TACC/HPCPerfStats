@@ -9,6 +9,9 @@ globs:
   - HPCPerfStats/monitor/src/monitor_log.*
   - HPCPerfStats/monitor/src/monitor_release_log.*
   - HPCPerfStats/monitor/src/stats_buffer_rmq.c
+  - HPCPerfStats/monitor/src/ib_mad.c
+  - HPCPerfStats/monitor/src/nvidia_gpu.c
+  - HPCPerfStats/monitor/src/roofline_hw_peak.c
 alwaysApply: false
 ---
 
@@ -32,10 +35,15 @@ alwaysApply: false
 Release builds must stay quiet in the journal:
 
 1. **Startup** — compact block after types init: version, enabled `st_name`s, one conf/probe line (`monitor_log_release_startup_summary` in `monitor.c`). Conf key echoes use `monitor_log_debug` (no-op without `DEBUG`).
-2. **Hourly rollup** — `MONITOR_DAEMON_HOURLY_STATUS_SEC` (3600) `ev_timer` prints buffered/sent/resent and RMQ failure deltas. Tick-based `print_buffer_status` is DEBUG-only.
-3. **RMQ send failures** — first failure of each class logs `ERROR` immediately; further attempts only increment counters until success clears latches (`monitor_release_log_*` + `stats_buffer_rmq.c`).
-4. Keep rare events: jobid load/unload, config reload, shutdown, init hard-failures.
-5. Do **not** add logging on collect/sample hot paths (**monitor-jitter-and-fidelity-priority**).
+2. **Hourly rollup** — `MONITOR_DAEMON_HOURLY_STATUS_SEC` (3600) `ev_timer` prints buffered/sent/resent, RMQ failure deltas, and named failure deltas (`ring_resend_fail`, `ib_mad_fail`, `nvidia_zero`). Tick-based `print_buffer_status` is DEBUG-only.
+3. **Recurring failures (first-fail)** — first failure of each class logs immediately; further attempts only increment counters until success clears latches (`monitor_release_log_*` / `monitor_release_fail_*`):
+   - RMQ connect / queue / publish (`stats_buffer_rmq.c`)
+   - Ring buffer resend `status != 0` (`monitor_daemon.c`)
+   - IB MAD collect errors (`ib_mad.c`); libibmad `ibwarn` stderr is quieted around MAD open/query/close via `monitor_stderr_quiet_*`
+   - `nvidia_gpu` zero-row warn (`nvidia_gpu.c`)
+4. **RMQ detail** — per-attempt socket/login/publish `ERROR` strings are DEBUG-only; release relies on the latched class summary above.
+5. Keep rare events: jobid load/unload, config reload, shutdown, init hard-failures, IB MAD cooldown warn (streak threshold).
+6. Do **not** add logging on collect/sample hot paths (**monitor-jitter-and-fidelity-priority**). Roofline cadence-skip chatter is DEBUG-only.
 
 DEBUG builds keep verbose timer/status/RMQ TRACE-style chatter.
 

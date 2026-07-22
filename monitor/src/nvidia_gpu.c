@@ -18,6 +18,7 @@
 #include "trace.h"
 #include "nvidia_gpu_dcgm_compat.h"
 #include "nvidia_gpu_dcgm_watch.h"
+#include "monitor_release_log.h"
 
 static unsigned long long g_gpu_est_flops[DCGM_MAX_NUM_DEVICES];
 static unsigned long long g_gpu_est_mem_read_bytes[DCGM_MAX_NUM_DEVICES];
@@ -360,20 +361,26 @@ out:
    * transiently unavailable (hostengine restart, permission windows, unsupported PROF
    * subset on first attach). Keep the type enabled so later cycles can recover.
    */
-  if (nr == 0)
-    monitor_log_warn(
-        "nvidia_gpu: no device rows emitted this cycle; stage=%d init=%lu attach=%lu discover=%lu "
-        "group=%lu add=%lu fg=%lu watch=%lu alloc=%lu fetch=%lu gid_oob=%lu stats_null=%lu\n",
-        fail_stage, g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_DCGM_INIT],
-        g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_ATTACH],
-        g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_DISCOVERY],
-        g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_GROUP_CREATE],
-        g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_GROUP_ADD_DEVICE],
-        g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_FIELD_GROUP_CREATE],
-        g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_WATCH_FIELDS],
-        g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_ALLOC],
-        g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_FETCH], g_nvidia_gpu_gid_oob_skips,
-        g_nvidia_gpu_stats_alloc_skips);
+  if (nr == 0) {
+    if (monitor_release_fail_note(MONITOR_REL_FAIL_NVIDIA_ZERO, monitor_release_log_first_only()))
+      monitor_log_warn(
+          "nvidia_gpu: no device rows emitted this cycle; stage=%d init=%lu attach=%lu "
+          "discover=%lu "
+          "group=%lu add=%lu fg=%lu watch=%lu alloc=%lu fetch=%lu gid_oob=%lu stats_null=%lu "
+          "(count=%lu)\n",
+          fail_stage, g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_DCGM_INIT],
+          g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_ATTACH],
+          g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_DISCOVERY],
+          g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_GROUP_CREATE],
+          g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_GROUP_ADD_DEVICE],
+          g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_FIELD_GROUP_CREATE],
+          g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_WATCH_FIELDS],
+          g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_ALLOC],
+          g_nvidia_gpu_fail_counts[NVIDIA_GPU_FAIL_FETCH], g_nvidia_gpu_gid_oob_skips,
+          g_nvidia_gpu_stats_alloc_skips, monitor_release_fail_count(MONITOR_REL_FAIL_NVIDIA_ZERO));
+  } else {
+    monitor_release_fail_clear(MONITOR_REL_FAIL_NVIDIA_ZERO);
+  }
 }
 
 //! Definition of stats entry for this type

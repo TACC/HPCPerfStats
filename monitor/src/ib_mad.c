@@ -3,12 +3,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdarg.h>
 #include <time.h>
 #include "ib_mad_api.h"
 #include "stats.h"
 #include "trace.h"
 #include "pscanf.h"
 #include "monitor_log.h"
+#include "monitor_release_log.h"
 #include "ib_mad.h"
 
 #define IB_PC_EXT_F                                                                                \
@@ -57,6 +59,29 @@ static int ib_mad_collect_cycle_ok(unsigned long *fail_streak, time_t *skip_unti
   return 1;
 }
 
+/*! Count a MAD failure; emit ERROR only on first failure in release (always in DEBUG). */
+static void
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((format(printf, 1, 2)))
+#endif
+    ib_mad_report_fail(const char *fmt, ...)
+{
+  va_list ap;
+  char buf[256];
+
+  if (!monitor_release_fail_note(MONITOR_REL_FAIL_IB_MAD, monitor_release_log_first_only()))
+    return;
+  va_start(ap, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  ERROR("%s", buf);
+}
+
+static void ib_mad_note_success(void)
+{
+  monitor_release_fail_clear(MONITOR_REL_FAIL_IB_MAD);
+}
+
 int ib_mad_ext_collect_cycle_ok(void)
 {
   return ib_mad_collect_cycle_ok(&g_ib_mad_ext_fail_streak, &g_ib_mad_ext_skip_until, "mad_ext");
@@ -88,29 +113,39 @@ static void ib_mad_ext_query_lid_port(struct stats *stats, char *hca, int lid, i
   ib_portid_t portid = {.lid = lid};
   uint8_t mad_buf[1024];
   int timeout = 0;
+  int saved_stderr = -1;
+  int null_fd = -1;
 
   if (stats == NULL || hca == NULL)
     return;
 
+#ifndef DEBUG
+  monitor_stderr_quiet_begin(&saved_stderr, &null_fd);
+#endif
+
   mad_port = mad_rpc_open_port(hca, port, &mgmt_class, 1);
   if (mad_port == NULL) {
     g_ib_mad_ext_fail_streak++;
-    ERROR("cannot open mad rpc port: %m\n");
+    ib_mad_report_fail("cannot open mad rpc port: %m\n");
     goto out;
   }
 
   memset(mad_buf, 0, sizeof(mad_buf));
   if (pma_query_via(mad_buf, &portid, port, timeout, IB_GSI_PORT_COUNTERS_EXT, mad_port) == NULL) {
     g_ib_mad_ext_fail_streak++;
-    ERROR("cannot query performance counters: %m\n");
+    ib_mad_report_fail("cannot query performance counters: %m\n");
     goto out;
   }
   g_ib_mad_ext_fail_streak = 0;
+  ib_mad_note_success();
   ib_mad_ext_decode_counters(stats, mad_buf);
 
 out:
   if (mad_port != NULL)
     mad_rpc_close_port(mad_port);
+#ifndef DEBUG
+  monitor_stderr_quiet_end(&saved_stderr, &null_fd);
+#endif
 }
 
 void ib_mad_ext_collect_port(struct stats *stats, const char *hca, int port)
@@ -124,7 +159,7 @@ void ib_mad_ext_collect_port(struct stats *stats, const char *hca, int port)
   snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%i/lid", hca, port);
   if (pscanf(path, "%x", &lid) != 1) {
     g_ib_mad_ext_fail_streak++;
-    ERROR("cannot read lid of IB HCA `%s' port %d: %m\n", hca, port);
+    ib_mad_report_fail("cannot read lid of IB HCA `%s' port %d: %m\n", hca, port);
     return;
   }
 
@@ -158,7 +193,7 @@ static int ib_mad_sw_query_switch_counters(struct ibmad_port *mad_port, int mad_
 
   memset(sw_info, 0, sizeof(sw_info));
   if (smp_query_via(sw_info, &sw_port_id, IB_ATTR_PORT_INFO, 0, mad_timeout, mad_port) == NULL) {
-    ERROR("cannot query port info: %m\n");
+    ib_mad_report_fail("cannot query port info: %m\n");
     return -1;
   }
 
@@ -169,7 +204,8 @@ static int ib_mad_sw_query_switch_counters(struct ibmad_port *mad_port, int mad_
   memset(sw_pma, 0, sizeof(sw_pma));
   if (pma_query_via(sw_pma, &sw_port_id, sw_port, mad_timeout, IB_GSI_PORT_COUNTERS_EXT,
                     mad_port) == NULL) {
-    ERROR("cannot query performance counters of switch LID %d, port %d: %m\n", sw_lid, sw_port);
+    ib_mad_report_fail("cannot query performance counters of switch LID %d, port %d: %m\n", sw_lid,
+                       sw_port);
     return -1;
   }
 
@@ -204,14 +240,20 @@ void ib_mad_sw_collect_port(struct stats *stats, const char *hca, int port)
   uint64_t sw_rx_packets = 0;
   uint64_t sw_tx_bytes = 0;
   uint64_t sw_tx_packets = 0;
+  int saved_stderr = -1;
+  int null_fd = -1;
 
   if (stats == NULL || hca == NULL)
     return;
 
+#ifndef DEBUG
+  monitor_stderr_quiet_begin(&saved_stderr, &null_fd);
+#endif
+
   mad_port = mad_rpc_open_port((char *)hca, port, mad_classes, 2);
   if (mad_port == NULL) {
     g_ib_mad_sw_fail_streak++;
-    ERROR("cannot open MAD port for HCA `%s' port %d\n", hca, port);
+    ib_mad_report_fail("cannot open MAD port for HCA `%s' port %d\n", hca, port);
     goto out;
   }
 
@@ -221,6 +263,7 @@ void ib_mad_sw_collect_port(struct stats *stats, const char *hca, int port)
     goto out;
   }
   g_ib_mad_sw_fail_streak = 0;
+  ib_mad_note_success();
 
   TRACE("sw_rx_bytes %lu, sw_rx_packets %lu, sw_tx_bytes %lu, sw_tx_packets %lu\n", sw_rx_bytes,
         sw_rx_packets, sw_tx_bytes, sw_tx_packets);
@@ -230,6 +273,9 @@ void ib_mad_sw_collect_port(struct stats *stats, const char *hca, int port)
 out:
   if (mad_port != NULL)
     mad_rpc_close_port(mad_port);
+#ifndef DEBUG
+  monitor_stderr_quiet_end(&saved_stderr, &null_fd);
+#endif
 }
 
 void ib_mad_test_reset_backoff(void)

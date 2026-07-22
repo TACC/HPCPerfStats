@@ -1,5 +1,5 @@
 #!/bin/sh
-# Regression: release logging gates (startup summary, hourly timer, first-fail RMQ).
+# Regression: release logging gates (startup summary, hourly timer, first-fail classes).
 set -e
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -22,6 +22,28 @@ grep -q 'monitor_log_debug' src/monitor_options.c \
 # Conf apply path should not use monitor_log_info for routine key echoes.
 if grep -n 'monitor_log_info' src/monitor_options.c >/dev/null 2>&1; then
   echo "monitor_options.c must not use monitor_log_info for conf echoes" >&2
+  exit 1
+fi
+
+grep -q 'MONITOR_REL_FAIL_RING_RESEND' src/monitor_daemon.c \
+  || { echo "monitor_daemon.c must latch ring resend failures" >&2; exit 1; }
+grep -q 'ring_resend_fail_delta' src/monitor_daemon.c \
+  || { echo "hourly status must include ring_resend_fail_delta" >&2; exit 1; }
+grep -q 'ib_mad_fail_delta' src/monitor_daemon.c \
+  || { echo "hourly status must include ib_mad_fail_delta" >&2; exit 1; }
+grep -q 'monitor_stderr_quiet_begin' src/ib_mad.c \
+  || { echo "ib_mad.c must quiet stderr around MAD RPC" >&2; exit 1; }
+grep -q 'MONITOR_REL_FAIL_IB_MAD' src/ib_mad.c \
+  || { echo "ib_mad.c must use IB MAD first-fail counter" >&2; exit 1; }
+grep -q 'MONITOR_REL_FAIL_NVIDIA_ZERO' src/nvidia_gpu.c \
+  || { echo "nvidia_gpu.c must first-fail zero-row warnings" >&2; exit 1; }
+# Release must not emit ungated per-attempt socket/login detail ERROR strings.
+if grep -n 'ERROR("socket failed to open")' src/stats_buffer_rmq.c >/dev/null 2>&1; then
+  echo "stats_buffer_rmq.c must not emit ungated release socket ERROR" >&2
+  exit 1
+fi
+if grep -n 'ERROR("amqp login failed")' src/stats_buffer_rmq.c >/dev/null 2>&1; then
+  echo "stats_buffer_rmq.c must not emit ungated release login ERROR" >&2
   exit 1
 fi
 

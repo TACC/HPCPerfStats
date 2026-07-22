@@ -15,7 +15,6 @@
 #include "stats_buffer.h"
 #include "stats_buffer_rmq_internal.h"
 #include "trace.h"
-#include "monitor_log.h"
 #include "monitor_release_log.h"
 
 /* RMQ send interval from monitor_daemon.c; reconnect backoff uses min(send_freq, cap) with a floor. */
@@ -135,11 +134,7 @@ void stats_buffer_rmq_get_failure_counts(unsigned long *connect_failures,
 
 static int rmq_failure_log_first_only(void)
 {
-#ifdef DEBUG
-  return 0;
-#else
-  return 1;
-#endif
+  return monitor_release_log_first_only();
 }
 
 static void rmq_note_send_failure(const char *msg, unsigned long count, int *latched)
@@ -317,8 +312,6 @@ static int rmq_ensure_connected(struct stats_buffer *sf)
   if (rmq_conn == NULL) {
 #ifdef DEBUG
     ERROR("amqp_new_connection failed (out of memory?)");
-#else
-    ERROR("amqp_new_connection failed");
 #endif
     rmq_arm_connect_backoff();
     return -1;
@@ -383,8 +376,6 @@ static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buf
   if (!socket) {
 #ifdef DEBUG
     ERROR("RMQ: amqp_tcp_socket_new failed");
-#else
-    ERROR("socket failed to initialize");
 #endif
     return -1;
   }
@@ -395,8 +386,6 @@ static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buf
   if (sock_rc != AMQP_STATUS_OK) {
 #ifdef DEBUG
     rmq_debug_log_amqp_status("RMQ amqp_set_handshake_timeout", sock_rc);
-#else
-    ERROR("amqp handshake timeout setup failed");
 #endif
     return -1;
   }
@@ -407,8 +396,6 @@ static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buf
   if (sock_rc != AMQP_STATUS_OK) {
 #ifdef DEBUG
     rmq_debug_log_amqp_status("RMQ amqp_socket_open_noblock", sock_rc);
-#else
-    ERROR("socket failed to open");
 #endif
     return -1;
   }
@@ -416,8 +403,6 @@ static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buf
   if (rmq_apply_sock_timeouts(socket) < 0) {
 #ifdef DEBUG
     ERROR("RMQ: setsockopt SO_RCVTIMEO/SO_SNDTIMEO failed errno=%d (%s)", errno, strerror(errno));
-#else
-    ERROR("socket timeout setup failed");
 #endif
     return -1;
   }
@@ -436,8 +421,6 @@ static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buf
     if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
 #ifdef DEBUG
       rmq_debug_log_rpc_reply("RMQ amqp_login", ret);
-#else
-      ERROR("amqp login failed");
 #endif
       return -1;
     }
@@ -449,8 +432,6 @@ static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buf
   if (sock_rc != AMQP_STATUS_OK) {
 #ifdef DEBUG
     rmq_debug_log_amqp_status("RMQ amqp_set_rpc_timeout", sock_rc);
-#else
-    ERROR("amqp rpc timeout setup failed");
 #endif
     return -1;
   }
@@ -464,8 +445,6 @@ static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buf
     if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
 #ifdef DEBUG
       rmq_debug_log_rpc_reply("RMQ amqp_channel_open", ret);
-#else
-      ERROR("amqp channel open failed");
 #endif
       return -1;
     }
@@ -486,15 +465,15 @@ static int rmq_declare_queue_and_bind_to_exchange(amqp_connection_state_t conn,
   if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
 #ifdef DEBUG
     rmq_debug_log_rpc_reply("RMQ queue declare", ret);
-#else
-    monitor_log_error("queue declare failed\n");
 #endif
     return -1;
   }
 
   amqp_bytes_t reply_to_queue = amqp_bytes_malloc_dup(r->queue);
   if (reply_to_queue.bytes == NULL) {
+#ifdef DEBUG
     ERROR("Out of memory while copying queue name\n");
+#endif
     return -1;
   }
 
@@ -505,8 +484,6 @@ static int rmq_declare_queue_and_bind_to_exchange(amqp_connection_state_t conn,
   if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
 #ifdef DEBUG
     rmq_debug_log_rpc_reply("RMQ queue bind", ret);
-#else
-    monitor_log_error("queue bind failed\n");
 #endif
     return -1;
   }
@@ -525,8 +502,6 @@ static int rmq_publish_text_payload(amqp_connection_state_t conn, struct stats_b
   if (status != AMQP_STATUS_OK) {
 #ifdef DEBUG
     rmq_debug_log_amqp_status("RMQ amqp_basic_publish", status);
-#else
-    ERROR("amqp basic publish failed");
 #endif
     return -1;
   }

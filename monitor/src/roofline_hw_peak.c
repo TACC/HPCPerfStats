@@ -83,10 +83,12 @@ static void roofline_hw_peak_collect(struct stats_type *type)
 
   if (!should_emit) {
     g_roofline_design_skip_calls++;
+#ifdef DEBUG
     if ((g_roofline_design_skip_calls % 128UL) == 1UL) {
       fprintf(stderr, "host_roofline_peak: skipped by cadence mode=%d (changeover=%d, skips=%lu)\n",
               (int)mode, stats_collect_on_changeover, g_roofline_design_skip_calls);
     }
+#endif
     return;
   }
 

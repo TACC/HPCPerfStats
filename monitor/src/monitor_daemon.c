@@ -127,11 +127,16 @@ static void monitor_daemon_log_resend_stats(int q_before, int processed_entries,
   monitor_log_info("ring resend: before=%d processed=%d left=%d elapsed_us=%ld status=%d\n",
                    q_before, processed_entries, queue_remaining, elapsed_us, had_error);
 #else
-  /* Release: only surface resend errors; successes fold into the hourly rollup. */
-  if (!had_error)
+  /* Release: first-fail once; further failures only increment hourly counters. */
+  if (!had_error) {
+    monitor_release_fail_clear(MONITOR_REL_FAIL_RING_RESEND);
     return;
-  monitor_log_info("ring resend: before=%d processed=%d left=%d elapsed_us=%ld status=%d\n",
-                   q_before, processed_entries, queue_remaining, elapsed_us, had_error);
+  }
+  if (monitor_release_fail_note(MONITOR_REL_FAIL_RING_RESEND, monitor_release_log_first_only()))
+    monitor_log_info(
+        "ring resend: before=%d processed=%d left=%d elapsed_us=%ld status=%d (count=%lu)\n",
+        q_before, processed_entries, queue_remaining, elapsed_us, had_error,
+        monitor_release_fail_count(MONITOR_REL_FAIL_RING_RESEND));
 #endif
 }
 
@@ -694,7 +699,10 @@ void monitor_daemon_hourly_status_cb(struct ev_loop *loop, ev_timer *w_, int rev
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
   unsigned long rmq_c = 0, rmq_q = 0, rmq_p = 0;
   unsigned long d_c = 0, d_q = 0, d_p = 0;
+  unsigned long ring_c = 0, ib_c = 0, nv_c = 0;
+  unsigned long d_ring = 0, d_ib = 0, d_nv = 0;
   static unsigned long prev_c, prev_q, prev_p;
+  static unsigned long prev_ring, prev_ib, prev_nv;
   static int have_prev;
 
   (void)loop;
@@ -703,24 +711,36 @@ void monitor_daemon_hourly_status_cb(struct ev_loop *loop, ev_timer *w_, int rev
     return;
 
   stats_buffer_rmq_get_failure_counts(&rmq_c, &rmq_q, &rmq_p);
-  if (have_prev)
+  monitor_release_fail_get_counts(&ring_c, &ib_c, &nv_c);
+  if (have_prev) {
     monitor_release_log_failure_deltas(prev_c, prev_q, prev_p, rmq_c, rmq_q, rmq_p, &d_c, &d_q,
                                        &d_p);
-  else {
+    monitor_release_log_failure_deltas(prev_ring, prev_ib, prev_nv, ring_c, ib_c, nv_c, &d_ring,
+                                       &d_ib, &d_nv);
+  } else {
     d_c = rmq_c;
     d_q = rmq_q;
     d_p = rmq_p;
+    d_ring = ring_c;
+    d_ib = ib_c;
+    d_nv = nv_c;
   }
   prev_c = rmq_c;
   prev_q = rmq_q;
   prev_p = rmq_p;
+  prev_ring = ring_c;
+  prev_ib = ib_c;
+  prev_nv = nv_c;
   have_prev = 1;
 
   monitor_log_info("hourly status: buffered=%d/%d processed=%d sent=%d resent=%d "
                    "file_mode=%d rmq_fail_delta connect=%lu queue=%lu publish=%lu "
-                   "(total connect=%lu queue=%lu publish=%lu)\n",
+                   "(total connect=%lu queue=%lu publish=%lu) "
+                   "ring_resend_fail_delta=%lu ib_mad_fail_delta=%lu nvidia_zero_delta=%lu "
+                   "(total ring_resend=%lu ib_mad=%lu nvidia_zero=%lu)\n",
                    w->q_count, max_buffer_size, w->b_count, w->s_count, w->r_count,
-                   file_mode_enabled, d_c, d_q, d_p, rmq_c, rmq_q, rmq_p);
+                   file_mode_enabled, d_c, d_q, d_p, rmq_c, rmq_q, rmq_p, d_ring, d_ib, d_nv,
+                   ring_c, ib_c, nv_c);
 }
 
 void monitor_daemon_rotate_collect_flush(struct sf_ring_buffer *w)
