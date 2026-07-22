@@ -533,6 +533,30 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
     },
     {
+        "id": "monitor_debug_vs_symbols",
+        "patterns": [
+            "HPCPerfStats/monitor/configure.ac",
+            "HPCPerfStats/monitor/**/*.am",
+            "HPCPerfStats/monitor/src/monitor.c",
+            "HPCPerfStats/monitor/src/monitor_daemon.*",
+            "HPCPerfStats/monitor/src/monitor_options.c",
+            "HPCPerfStats/monitor/src/monitor_log.*",
+            "HPCPerfStats/monitor/src/monitor_release_log.*",
+            "HPCPerfStats/monitor/src/stats_buffer_rmq.c",
+            "monitor/configure.ac",
+            "monitor/**/*.am",
+            "monitor/src/monitor.c",
+            "monitor/src/monitor_daemon.*",
+            "monitor/src/monitor_options.c",
+            "monitor/src/monitor_log.*",
+            "monitor/src/monitor_release_log.*",
+            "monitor/src/stats_buffer_rmq.c",
+        ],
+        "rules": [
+            "monitor-debug-vs-symbols.mdc",
+        ],
+    },
+    {
         "id": "monitor_shm_message_correctness",
         "patterns": [
             "HPCPerfStats/monitor/scripts/emit_build_capabilities.py",

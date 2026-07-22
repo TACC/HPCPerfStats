@@ -34,6 +34,7 @@
 #include "monitor_timing.h"
 #include "monitor_log.h"
 #include "monitor_options.h"
+#include "monitor_release_log.h"
 #include "stats_sink.h"
 #include "stats_runtime.h"
 
@@ -62,6 +63,7 @@ int send_success_count_max = 3;
 ev_timer sample_timer;
 ev_timer send_timer;
 ev_timer rotate_timer;
+ev_timer hourly_status_timer;
 static int max_buffer_size_explicit = 0;
 static double sample_timer_period = 300.0;
 static unsigned long g_payload_build_drop_count;
@@ -114,20 +116,23 @@ static void monitor_daemon_log_resend_stats(int q_before, int processed_entries,
                                             int had_error, int queue_remaining)
 {
 #ifdef DEBUG
-  const unsigned log_every = 1u;
-#else
-  const unsigned log_every = 16u;
-#endif
   static unsigned long tick;
 
   if (!had_error && q_before <= 0)
     return;
   if (!had_error && elapsed_us < 20000L && processed_entries < 32 && queue_remaining <= 0 &&
-      (log_every > 1u && (tick++ % log_every) != 0u))
+      ((tick++ % 1u) != 0u))
     return;
 
   monitor_log_info("ring resend: before=%d processed=%d left=%d elapsed_us=%ld status=%d\n",
                    q_before, processed_entries, queue_remaining, elapsed_us, had_error);
+#else
+  /* Release: only surface resend errors; successes fold into the hourly rollup. */
+  if (!had_error)
+    return;
+  monitor_log_info("ring resend: before=%d processed=%d left=%d elapsed_us=%ld status=%d\n",
+                   q_before, processed_entries, queue_remaining, elapsed_us, had_error);
+#endif
 }
 
 static void monitor_daemon_log_timer_drift(const char *name, double now_s, double expected_period_s,
@@ -151,18 +156,26 @@ static void monitor_daemon_log_timer_drift(const char *name, double now_s, doubl
 
 static void monitor_daemon_log_ring_resend_line(void)
 {
+#ifdef DEBUG
   static unsigned seq;
   if (MONITOR_HOT_LOG_EVERY > 1u && (++seq % MONITOR_HOT_LOG_EVERY) != 1u)
     return;
   monitor_log_info("Resending stats in the ring buffer\n");
+#else
+  /* Silent in release; hourly rollup covers send progress. */
+#endif
 }
 
 static void monitor_daemon_log_dumpfile_resend_line(void)
 {
+#ifdef DEBUG
   static unsigned seq;
   if (MONITOR_HOT_LOG_EVERY > 1u && (++seq % MONITOR_HOT_LOG_EVERY) != 1u)
     return;
   monitor_log_info("Resending stats in the dumpfile\n");
+#else
+  /* Silent in release. */
+#endif
 }
 
 static struct stats_buffer *monitor_daemon_alloc_stats_buffer(void)
@@ -659,9 +672,6 @@ static void print_buffer_status(struct sf_ring_buffer *w)
 {
 #ifdef DEBUG
   const unsigned status_every = 1u;
-#else
-  const unsigned status_every = 64u;
-#endif
   static unsigned long status_tick;
   if (status_every > 1u && (status_tick++ % status_every) != 0u)
     return;
@@ -674,6 +684,43 @@ static void print_buffer_status(struct sf_ring_buffer *w)
       w->status, allow_ring_buffer_overwrite, file_mode_enabled, send_success_count,
       send_success_count_max, w->b_count, w->q_count, max_buffer_size, w->s_count, w->r_count,
       w->d_count, w->f_count, w->l_count);
+#else
+  (void)w; /* Release: hourly_status_timer replaces tick-based status chatter. */
+#endif
+}
+
+void monitor_daemon_hourly_status_cb(struct ev_loop *loop, ev_timer *w_, int revents)
+{
+  struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
+  unsigned long rmq_c = 0, rmq_q = 0, rmq_p = 0;
+  unsigned long d_c = 0, d_q = 0, d_p = 0;
+  static unsigned long prev_c, prev_q, prev_p;
+  static int have_prev;
+
+  (void)loop;
+  (void)revents;
+  if (w == NULL)
+    return;
+
+  stats_buffer_rmq_get_failure_counts(&rmq_c, &rmq_q, &rmq_p);
+  if (have_prev)
+    monitor_release_log_failure_deltas(prev_c, prev_q, prev_p, rmq_c, rmq_q, rmq_p, &d_c, &d_q,
+                                       &d_p);
+  else {
+    d_c = rmq_c;
+    d_q = rmq_q;
+    d_p = rmq_p;
+  }
+  prev_c = rmq_c;
+  prev_q = rmq_q;
+  prev_p = rmq_p;
+  have_prev = 1;
+
+  monitor_log_info("hourly status: buffered=%d/%d processed=%d sent=%d resent=%d "
+                   "file_mode=%d rmq_fail_delta connect=%lu queue=%lu publish=%lu "
+                   "(total connect=%lu queue=%lu publish=%lu)\n",
+                   w->q_count, max_buffer_size, w->b_count, w->s_count, w->r_count,
+                   file_mode_enabled, d_c, d_q, d_p, rmq_c, rmq_q, rmq_p);
 }
 
 void monitor_daemon_rotate_collect_flush(struct sf_ring_buffer *w)

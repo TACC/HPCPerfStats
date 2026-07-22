@@ -1,6 +1,7 @@
 #ifndef STATS_RUNTIME_H
 #define STATS_RUNTIME_H
 
+#include <stddef.h>
 #include <stdio.h>
 
 #include "collect_tier.h"
@@ -47,5 +48,9 @@ int stats_schema_key_active_this_phase(const struct stats_type *type, int idx);
  *  *last_slow_slot < 0 on the first tick to force a full (slow) collection. */
 enum collect_phase stats_runtime_collect_phase_for_tick(double now_sec, long long *last_slow_slot,
                                                         double sample_freq_slow);
+
+/*! Join enabled collector st_name values into buf (comma-separated).
+ *  Returns bytes written excluding NUL, or -1 on truncation/NULL buf. */
+int stats_runtime_format_enabled_type_names(char *buf, size_t cap);
 
 #endif

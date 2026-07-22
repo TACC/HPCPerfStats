@@ -16,6 +16,7 @@
 #include "stats_buffer_rmq_internal.h"
 #include "trace.h"
 #include "monitor_log.h"
+#include "monitor_release_log.h"
 
 /* RMQ send interval from monitor_daemon.c; reconnect backoff uses min(send_freq, cap) with a floor. */
 extern double send_freq;
@@ -116,6 +117,36 @@ static int rmq_backoff_until_valid;
 static unsigned long rmq_connect_failures;
 static unsigned long rmq_queue_failures;
 static unsigned long rmq_publish_failures;
+static int rmq_logged_connect_fail;
+static int rmq_logged_queue_fail;
+static int rmq_logged_publish_fail;
+
+void stats_buffer_rmq_get_failure_counts(unsigned long *connect_failures,
+                                         unsigned long *queue_failures,
+                                         unsigned long *publish_failures)
+{
+  if (connect_failures != NULL)
+    *connect_failures = rmq_connect_failures;
+  if (queue_failures != NULL)
+    *queue_failures = rmq_queue_failures;
+  if (publish_failures != NULL)
+    *publish_failures = rmq_publish_failures;
+}
+
+static int rmq_failure_log_first_only(void)
+{
+#ifdef DEBUG
+  return 0;
+#else
+  return 1;
+#endif
+}
+
+static void rmq_note_send_failure(const char *msg, unsigned long count, int *latched)
+{
+  if (monitor_release_log_should_emit(latched, rmq_failure_log_first_only()))
+    ERROR("%s (count=%lu)\n", msg, count);
+}
 
 static void rmq_clear_connect_backoff(void)
 {
@@ -512,13 +543,15 @@ int stats_buffer_send_payload(struct stats_buffer *sf)
 {
   if (rmq_ensure_connected(sf) < 0) {
     rmq_connect_failures++;
-    ERROR("RMQ connect/attach failed (count=%lu)\n", rmq_connect_failures);
+    rmq_note_send_failure("RMQ connect/attach failed", rmq_connect_failures,
+                          &rmq_logged_connect_fail);
     return -1;
   }
 
   if (rmq_ensure_queue(sf) < 0) {
     rmq_queue_failures++;
-    ERROR("RMQ queue declare/bind failed (count=%lu)\n", rmq_queue_failures);
+    rmq_note_send_failure("RMQ queue declare/bind failed", rmq_queue_failures,
+                          &rmq_logged_queue_fail);
     rmq_soft_disconnect();
     rmq_arm_connect_backoff();
     return -1;
@@ -526,12 +559,15 @@ int stats_buffer_send_payload(struct stats_buffer *sf)
 
   if (rmq_publish_text_payload(rmq_conn, sf) < 0) {
     rmq_publish_failures++;
-    ERROR("RMQ publish failed (count=%lu)\n", rmq_publish_failures);
+    rmq_note_send_failure("RMQ publish failed", rmq_publish_failures, &rmq_logged_publish_fail);
     rmq_soft_disconnect();
     rmq_arm_connect_backoff();
     return -1;
   }
 
+  monitor_release_log_clear_latch(&rmq_logged_connect_fail);
+  monitor_release_log_clear_latch(&rmq_logged_queue_fail);
+  monitor_release_log_clear_latch(&rmq_logged_publish_fail);
   rmq_clear_connect_backoff();
   return 0;
 }

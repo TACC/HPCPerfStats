@@ -34,6 +34,7 @@ int max_buffer_size = 0;
 ev_timer sample_timer;
 ev_timer send_timer;
 ev_timer rotate_timer;
+ev_timer hourly_status_timer;
 
 void monitor_daemon_conf_set_buffer_max(int value)
 {

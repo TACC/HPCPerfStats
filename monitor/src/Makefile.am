@@ -124,6 +124,8 @@ hpcperfstatsd_SOURCES += \
 	monitor_options.c \
 	monitor_daemon.c \
 	monitor_daemon.h \
+	monitor_release_log.c \
+	monitor_release_log.h \
 	monitor_timing.c \
 	monitor_timing.h \
 	stats_buffer_data_append.c \

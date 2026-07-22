@@ -81,32 +81,49 @@ static void monitor_start_timers_and_jobid_watcher(struct sf_ring_buffer *rb)
   ev_timer_init(&rotate_timer, monitor_daemon_rotate_timer_cb,
                 (double)MONITOR_DAEMON_SCHEMA_ROTATE_SEC, (double)MONITOR_DAEMON_SCHEMA_ROTATE_SEC);
   ev_timer_start(EV_DEFAULT, &rotate_timer);
+#ifdef DEBUG
   monitor_log_info("Setting hpcperfstatsd schema header rotation every %ds\n",
                    MONITOR_DAEMON_SCHEMA_ROTATE_SEC);
+#endif
 
   fd_watcher.data = (void *)rb;
   ev_stat_init(&fd_watcher, monitor_daemon_fd_cb, jobid_file_path, EV_READ);
   ev_stat_start(EV_DEFAULT, &fd_watcher);
+#ifdef DEBUG
   monitor_log_info("Starting hpcperfstatsd watching fd %s\n", jobid_file_path);
+#endif
 
   sample_timer.data = (void *)rb;
   ev_timer_init(&sample_timer, monitor_daemon_sample_timer_cb, 0.0, 0.0);
   monitor_daemon_reanchor_sample_timer(EV_DEFAULT, sample_freq);
+#ifdef DEBUG
   monitor_log_info("Setting hpcperfstatsd sample frequency to %.1fs (epoch-aligned)\n",
                    sample_freq);
+#endif
 
   send_timer.data = (void *)rb;
   /* First tick ASAP so queued samples drain soon after startup; repeat stays send_freq. */
   ev_timer_init(&send_timer, monitor_daemon_send_timer_cb, 0.0, send_freq);
   ev_timer_start(EV_DEFAULT, &send_timer);
+#ifdef DEBUG
   monitor_log_info("Setting hpcperfstatsd send frequency to %.1fs\n", send_freq);
+#endif
   /* rabbitmq-c sends AMQP heartbeats from wait_frame_inner; long send_freq with a broker-capped
    * heartbeat (e.g. 60s) otherwise yields "missed heartbeats from client" disconnects. */
   ev_timer_init(&rmq_io_timer, monitor_rmq_io_tick_cb, 10.0, 10.0);
   ev_timer_start(EV_DEFAULT, &rmq_io_timer);
+#ifdef DEBUG
   monitor_log_info("RMQ connection I/O service interval 10.0s (AMQP heartbeats)\n");
   monitor_log_info("Setting hpcperfstatsd buffer capacity to %d samples (%.2fh)\n", max_buffer_size,
                    buffer_hours);
+#endif
+
+#ifndef DEBUG
+  hourly_status_timer.data = (void *)rb;
+  ev_timer_init(&hourly_status_timer, monitor_daemon_hourly_status_cb,
+                (double)MONITOR_DAEMON_HOURLY_STATUS_SEC, (double)MONITOR_DAEMON_HOURLY_STATUS_SEC);
+  ev_timer_start(EV_DEFAULT, &hourly_status_timer);
+#endif
 
   monitor_load_initial_jobid();
 }
@@ -118,7 +135,23 @@ static void monitor_require_server_or_exit(void)
         "Must specify a server to send data to with -s [--server] argument or conf file.\n");
     exit(0);
   }
+#ifdef DEBUG
   monitor_log_info("hpcperfstatsd data to server %s on port %s.\n", server, port);
+#endif
+}
+
+static void monitor_fill_driver_probe(int *has_nvidia_gpu, int *has_amd_gpu, int *has_intel_gpu,
+                                      int *has_ib, int *has_opa, int *has_nvidia_devnode,
+                                      int *has_dcgm_lib)
+{
+  hwdetect_probe_optional_stack_presence(has_nvidia_gpu, has_amd_gpu, has_intel_gpu, has_ib,
+                                         has_opa);
+  *has_nvidia_devnode = (access("/dev/nvidia0", F_OK) == 0) ? 1 : 0;
+  *has_dcgm_lib =
+      (access("/usr/lib64/libdcgm.so", F_OK) == 0 || access("/usr/lib64/libdcgm.so.4", F_OK) == 0 ||
+       access("/usr/lib/libdcgm.so", F_OK) == 0 || access("/usr/lib/libdcgm.so.4", F_OK) == 0)
+          ? 1
+          : 0;
 }
 
 static void monitor_log_optional_driver_probe(void)
@@ -131,14 +164,8 @@ static void monitor_log_optional_driver_probe(void)
   int has_nvidia_devnode = 0;
   int has_dcgm_lib = 0;
 
-  hwdetect_probe_optional_stack_presence(&has_nvidia_gpu, &has_amd_gpu, &has_intel_gpu, &has_ib,
-                                         &has_opa);
-  has_nvidia_devnode = (access("/dev/nvidia0", F_OK) == 0) ? 1 : 0;
-  has_dcgm_lib =
-      (access("/usr/lib64/libdcgm.so", F_OK) == 0 || access("/usr/lib64/libdcgm.so.4", F_OK) == 0 ||
-       access("/usr/lib/libdcgm.so", F_OK) == 0 || access("/usr/lib/libdcgm.so.4", F_OK) == 0)
-          ? 1
-          : 0;
+  monitor_fill_driver_probe(&has_nvidia_gpu, &has_amd_gpu, &has_intel_gpu, &has_ib, &has_opa,
+                            &has_nvidia_devnode, &has_dcgm_lib);
 
   monitor_log_info("Driver/stack probe: nvidia_gpu=%s (devnode=%s, libdcgm=%s), amd_gpu=%s, "
                    "intel_gpu=%s, infiniband=%s, opa=%s\n",
@@ -146,6 +173,36 @@ static void monitor_log_optional_driver_probe(void)
                    has_dcgm_lib ? "yes" : "no", has_amd_gpu ? "detected" : "not detected",
                    has_intel_gpu ? "detected" : "not detected",
                    has_ib ? "detected" : "not detected", has_opa ? "detected" : "not detected");
+}
+
+static void monitor_log_release_startup_summary(void)
+{
+  char types_buf[2048];
+  int has_nvidia_gpu = 0;
+  int has_amd_gpu = 0;
+  int has_intel_gpu = 0;
+  int has_ib = 0;
+  int has_opa = 0;
+  int has_nvidia_devnode = 0;
+  int has_dcgm_lib = 0;
+  int n;
+
+  n = stats_runtime_format_enabled_type_names(types_buf, sizeof(types_buf));
+  if (n < 0)
+    snprintf(types_buf, sizeof(types_buf), "(truncated)");
+
+  monitor_fill_driver_probe(&has_nvidia_gpu, &has_amd_gpu, &has_intel_gpu, &has_ib, &has_opa,
+                            &has_nvidia_devnode, &has_dcgm_lib);
+
+  monitor_log_info("Started %s version %s\n", app_name, STATS_VERSION);
+  monitor_log_info("Enabled types: %s\n", types_buf[0] != '\0' ? types_buf : "(none)");
+  monitor_log_info(
+      "Config: server=%s port=%s sample_freq=%.1fs send_freq=%.1fs buffer=%d (%.2fh) "
+      "enable_slow_tier=%d sample_freq_slow=%.1fs; probe nvidia=%s amd=%s intel=%s ib=%s opa=%s\n",
+      server != NULL ? server : "(null)", port != NULL ? port : "(null)", sample_freq, send_freq,
+      max_buffer_size, buffer_hours, enable_slow_tier, sample_freq_slow,
+      has_nvidia_gpu ? "yes" : "no", has_amd_gpu ? "yes" : "no", has_intel_gpu ? "yes" : "no",
+      has_ib ? "yes" : "no", has_opa ? "yes" : "no");
 }
 
 int main(int argc, char *argv[])
@@ -167,7 +224,9 @@ int main(int argc, char *argv[])
     daemonize();
   }
 
+#ifdef DEBUG
   monitor_log_info("Started %s\n", app_name);
+#endif
 
   monitor_try_mk_dumpdir();
   stats_buffer_debug_shm_init();
@@ -178,7 +237,9 @@ int main(int argc, char *argv[])
 
   monitor_install_ev_handlers(&ring_buffer);
   monitor_require_server_or_exit();
+#ifdef DEBUG
   monitor_log_optional_driver_probe();
+#endif
 
   nr_cpus = sysconf(_SC_NPROCESSORS_ONLN);
   processor = signature(&n_pmcs);
@@ -187,15 +248,21 @@ int main(int argc, char *argv[])
     return EXIT_FAILURE;
   }
 
+#ifndef DEBUG
+  monitor_log_release_startup_summary();
+#endif
+
   /*
    * Empty ring: publish `$` before replay so listend recreates `current` on startup.
    * If replay ran first, backlog sits ahead of `$` in the ring and broker/RMQ ordering could delay
    * rotation until those publishes succeed (head-of-line blocking).
    */
   monitor_daemon_rotate_collect_flush(&ring_buffer);
+#ifdef DEBUG
   monitor_log_info("Startup schema/`$` banner publish attempted (ring depth afterward=%d; "
                    "nonzero=publish backlog)\n",
                    ring_buffer.q_count);
+#endif
 
   monitor_daemon_replay_dumpfiles_if_present(&ring_buffer);
   monitor_start_timers_and_jobid_watcher(&ring_buffer);

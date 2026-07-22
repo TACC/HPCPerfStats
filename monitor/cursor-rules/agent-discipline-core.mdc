@@ -53,6 +53,7 @@ Use the **Read** tool on the listed `HPCPerfStats/monitor/cursor-rules/<file>.md
 | `HPCPerfStats/monitor/src/*papi*`, `cpu_counter_metrics*` (PAPI hybrid / FLOPs map) | `monitor-papi-integration.mdc` |
 | `HPCPerfStats/monitor/src/*intel_gpu*`, `*xpum*`, `third_party/intel-xpum/**` | `monitor-xpum-integration.mdc` |
 | DEBUG shm mirror paths | `monitor-debug-shm.mdc` |
+| Release vs DEBUG logging (`monitor.c`, `monitor_daemon*`, `monitor_options.c`, `monitor_log*`, `monitor_release_log*`, `stats_buffer_rmq.c`, `configure.ac`, `*.am`) | `monitor-debug-vs-symbols.mdc` |
 | Shm message correctness scripts, slug goldens | `monitor-shm-message-correctness.mdc` |
 | Collector device enumeration (`net.c`, `mem.c`, …) or `host_live_probes.py` | `monitor-shm-validation-probe-parity.mdc` |
 

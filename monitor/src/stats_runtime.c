@@ -313,3 +313,34 @@ enum collect_phase stats_runtime_collect_phase_for_tick(double now_sec, long lon
   collect_tier_set_phase(phase);
   return phase;
 }
+
+int stats_runtime_format_enabled_type_names(char *buf, size_t cap)
+{
+  size_t i = 0;
+  size_t used = 0;
+  int first = 1;
+  struct stats_type *type;
+
+  if (buf == NULL || cap == 0)
+    return -1;
+  buf[0] = '\0';
+
+  while ((type = stats_type_for_each(&i)) != NULL) {
+    size_t name_len;
+    size_t need;
+
+    if (!type->st_enabled || type->st_name[0] == '\0')
+      continue;
+    name_len = strlen(type->st_name);
+    need = name_len + (first ? 0u : 1u);
+    if (used + need + 1u > cap)
+      return -1;
+    if (!first)
+      buf[used++] = ',';
+    memcpy(buf + used, type->st_name, name_len);
+    used += name_len;
+    buf[used] = '\0';
+    first = 0;
+  }
+  return (int)used;
+}

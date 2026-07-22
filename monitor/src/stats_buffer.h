@@ -65,6 +65,11 @@ void stats_buffer_runtime_caches_reset(void);
 /* Non-blocking AMQP I/O so rabbitmq-c can emit heartbeats between publishes (see amqp_login heartbeat note). */
 void stats_buffer_rmq_service_io(void);
 
+/*! Snapshot process-lifetime RMQ failure counters (connect / queue / publish). */
+void stats_buffer_rmq_get_failure_counts(unsigned long *connect_failures,
+                                         unsigned long *queue_failures,
+                                         unsigned long *publish_failures);
+
 #ifdef STATS_BUFFER_TEST_SEND_HOOK
 /* Unit tests provide this to exercise ring_buffer_resend without a live broker. */
 int stats_buffer_test_send_hook(struct stats_buffer *sf);

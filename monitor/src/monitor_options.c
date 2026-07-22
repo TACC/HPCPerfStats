@@ -147,89 +147,90 @@ void monitor_options_apply_daemon_conf_kv(const char *key, const char *value_lin
   if (strcmp(key, "server") == 0) {
     free(server);
     server = strdup(value_line);
-    monitor_log_info("%s: Setting server to %s based on file %s\n", app_name, server,
-                     conf_file_name);
+    monitor_log_debug("%s: Setting server to %s based on file %s\n", app_name, server,
+                      conf_file_name);
   }
   if (strcmp(key, "queue") == 0) {
     monitor_cli_heap_dup_setting(&queue, monitor_cli_lit_queue, value_line);
-    monitor_log_info("%s: Setting queue to %s based on file %s\n", app_name, queue, conf_file_name);
+    monitor_log_debug("%s: Setting queue to %s based on file %s\n", app_name, queue,
+                      conf_file_name);
   }
   if (strcmp(key, "port") == 0) {
     monitor_cli_heap_dup_setting(&port, monitor_cli_lit_port, value_line);
-    monitor_log_info("%s: Setting server port to %s based on file %s\n", app_name, port,
-                     conf_file_name);
+    monitor_log_debug("%s: Setting server port to %s based on file %s\n", app_name, port,
+                      conf_file_name);
   }
   if (strcmp(key, "user") == 0) {
     monitor_cli_heap_dup_setting(&rmq_user, monitor_cli_lit_rmq_user, value_line);
-    monitor_log_info("%s: Setting RMQ user to %s based on file %s\n", app_name, rmq_user,
-                     conf_file_name);
+    monitor_log_debug("%s: Setting RMQ user to %s based on file %s\n", app_name, rmq_user,
+                      conf_file_name);
   }
   if (strcmp(key, "password") == 0) {
     monitor_cli_heap_dup_setting(&rmq_password, monitor_cli_lit_rmq_password, value_line);
-    monitor_log_info("%s: Setting RMQ password from file %s\n", app_name, conf_file_name);
+    monitor_log_debug("%s: Setting RMQ password from file %s\n", app_name, conf_file_name);
   }
   if (strcmp(key, "buffer") == 0) {
     monitor_daemon_conf_set_buffer_max(atoi(value_line));
-    monitor_log_info("%s: Setting buffer size to %d based on file %s\n", app_name, max_buffer_size,
-                     conf_file_name);
+    monitor_log_debug("%s: Setting buffer size to %d based on file %s\n", app_name, max_buffer_size,
+                      conf_file_name);
   }
   if (strcmp(key, "sample_freq") == 0) {
     if (parse_double_arg(value_line, &sample_freq) == 0)
-      monitor_log_info("%s: Setting sample frequency to %f based on file %s\n", app_name,
-                       sample_freq, conf_file_name);
+      monitor_log_debug("%s: Setting sample frequency to %f based on file %s\n", app_name,
+                        sample_freq, conf_file_name);
     else
       monitor_log_warn("%s: ignoring invalid sample_freq `%s` in file %s\n", app_name, value_line,
                        conf_file_name);
   }
   if (strcmp(key, "sample_freq_slow") == 0) {
     if (parse_double_arg(value_line, &sample_freq_slow) == 0)
-      monitor_log_info("%s: Setting slow sample frequency to %f based on file %s\n", app_name,
-                       sample_freq_slow, conf_file_name);
+      monitor_log_debug("%s: Setting slow sample frequency to %f based on file %s\n", app_name,
+                        sample_freq_slow, conf_file_name);
     else
       monitor_log_warn("%s: ignoring invalid sample_freq_slow `%s` in file %s\n", app_name,
                        value_line, conf_file_name);
   }
   if (strcmp(key, "enable_slow_tier") == 0) {
     enable_slow_tier = (atoi(value_line) != 0) ? 1 : 0;
-    monitor_log_info("%s: Setting enable_slow_tier to %d based on file %s\n", app_name,
-                     enable_slow_tier, conf_file_name);
+    monitor_log_debug("%s: Setting enable_slow_tier to %d based on file %s\n", app_name,
+                      enable_slow_tier, conf_file_name);
   }
   if (strcmp(key, "send_freq") == 0) {
     if (parse_double_arg(value_line, &send_freq) == 0)
-      monitor_log_info("%s: Setting send frequency to %f based on file %s\n", app_name, send_freq,
-                       conf_file_name);
+      monitor_log_debug("%s: Setting send frequency to %f based on file %s\n", app_name, send_freq,
+                        conf_file_name);
     else
       monitor_log_warn("%s: ignoring invalid send_freq `%s` in file %s\n", app_name, value_line,
                        conf_file_name);
   }
   if (strcmp(key, "buffer_hours") == 0) {
     if (sscanf(value_line, "%lf", &buffer_hours) == 1)
-      monitor_log_info("%s: Setting buffer hours to %f based on file %s\n", app_name, buffer_hours,
-                       conf_file_name);
+      monitor_log_debug("%s: Setting buffer hours to %f based on file %s\n", app_name, buffer_hours,
+                        conf_file_name);
   }
   if (strcmp(key, "collection_profile") == 0) {
     free(collection_profile);
     collection_profile = strdup(value_line);
-    monitor_log_info("%s: Setting collection profile to %s based on file %s\n", app_name,
-                     collection_profile, conf_file_name);
+    monitor_log_debug("%s: Setting collection profile to %s based on file %s\n", app_name,
+                      collection_profile, conf_file_name);
   }
   if (strcmp(key, "disable_types") == 0) {
     free(disable_types);
     disable_types = strdup(value_line);
-    monitor_log_info("%s: Setting disabled types to `%s` based on file %s\n", app_name,
-                     disable_types, conf_file_name);
+    monitor_log_debug("%s: Setting disabled types to `%s` based on file %s\n", app_name,
+                      disable_types, conf_file_name);
   }
   if (strcmp(key, "freq") == 0) {
     if (parse_double_arg(value_line, &sample_freq) == 0)
-      monitor_log_info("%s: Deprecated key `freq` mapped to sample_freq=%f in file %s\n", app_name,
-                       sample_freq, conf_file_name);
+      monitor_log_debug("%s: Deprecated key `freq` mapped to sample_freq=%f in file %s\n", app_name,
+                        sample_freq, conf_file_name);
     else
       monitor_log_warn("%s: ignoring invalid deprecated freq `%s` in file %s\n", app_name,
                        value_line, conf_file_name);
   }
   if (strcmp(key, "jobid_file") == 0) {
     monitor_cli_heap_dup_setting(&jobid_file_path, monitor_cli_lit_jobid_file_path, value_line);
-    monitor_log_info("%s: Setting jobid file to %s based on file %s\n", app_name, jobid_file_path,
-                     conf_file_name);
+    monitor_log_debug("%s: Setting jobid file to %s based on file %s\n", app_name, jobid_file_path,
+                      conf_file_name);
   }
 }
