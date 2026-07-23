@@ -7,6 +7,8 @@ import tempfile
 import time
 from typing import Any, Callable, Dict, Optional, Tuple
 
+from hpcperfstats.dbload.lib.print_utils import ingest_logging
+
 # Bump when ANY persisted semantics change (day-close eligibility, checkpoint
 # shape, manifest phase meaning, delete-gate assumptions, hints debt, etc.).
 SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION = 6
@@ -89,7 +91,7 @@ def _unlink_path(path: str, log_fn: LogFn) -> None:
   except OSError as exc:
     if log_fn:
       log_fn(
-          "sync_timedb: persistence reset could not unlink %s: %s"
+          "persistence reset could not unlink %s: %s"
           % (path, exc),
           flush=True,
       )
@@ -108,7 +110,7 @@ def _unlink_tree(path: str, log_fn: LogFn) -> None:
       except OSError as exc:
         if log_fn:
           log_fn(
-              "sync_timedb: persistence reset could not rmdir %s: %s"
+              "persistence reset could not rmdir %s: %s"
               % (os.path.join(root, name), exc),
               flush=True,
           )
@@ -117,7 +119,7 @@ def _unlink_tree(path: str, log_fn: LogFn) -> None:
   except OSError as exc:
     if log_fn:
       log_fn(
-          "sync_timedb: persistence reset could not rmdir %s: %s" % (path, exc),
+          "persistence reset could not rmdir %s: %s" % (path, exc),
           flush=True,
       )
 
@@ -153,6 +155,13 @@ def ensure_persistence_contract(archive_data_dir: str, *, log_fn: LogFn = None) 
 
   Returns True when a reset ran (operators should expect full reprocess).
   """
+  with ingest_logging():
+    return _ensure_persistence_contract_inner(archive_data_dir, log_fn=log_fn)
+
+
+def _ensure_persistence_contract_inner(
+    archive_data_dir: str, *, log_fn: LogFn = None,
+) -> bool:
   if not archive_data_dir:
     return False
   os.makedirs(archive_data_dir, exist_ok=True)
@@ -161,7 +170,7 @@ def ensure_persistence_contract(archive_data_dir: str, *, log_fn: LogFn = None) 
   if on_disk == current:
     if log_fn:
       log_fn(
-          "sync_timedb: persistence contract v%d active" % current,
+          "persistence contract v%d active" % current,
           flush=True,
       )
     return False
@@ -173,7 +182,7 @@ def ensure_persistence_contract(archive_data_dir: str, *, log_fn: LogFn = None) 
   _save_json_atomic(persistence_contract_path(archive_data_dir), payload)
   if log_fn:
     log_fn(
-        "sync_timedb: persistence reset old=%s new=%d"
+        "persistence reset old=%s new=%d"
         % (on_disk if on_disk is not None else "missing", current),
         flush=True,
     )
@@ -215,7 +224,7 @@ def _validate_envelope(raw: Any, *, kind: str, log_fn: LogFn = None) -> bool:
         if int(schema) != expected:
           if log_fn:
             log_fn(
-                "sync_timedb: reject %s schema_version=%s expected=%s"
+                "reject %s schema_version=%s expected=%s"
                 % (kind, schema, expected),
                 flush=True,
             )
@@ -234,7 +243,7 @@ def _validate_envelope(raw: Any, *, kind: str, log_fn: LogFn = None) -> bool:
         if int(schema) != expected:
           if log_fn:
             log_fn(
-                "sync_timedb: reject archive_maint_hints schema_version=%s expected=%s"
+                "reject archive_maint_hints schema_version=%s expected=%s"
                 % (schema, expected),
                 flush=True,
             )
@@ -254,7 +263,7 @@ def _validate_envelope(raw: Any, *, kind: str, log_fn: LogFn = None) -> bool:
         if int(schema) != expected:
           if log_fn:
             log_fn(
-                "sync_timedb: reject %s schema_version=%s expected=%s"
+                "reject %s schema_version=%s expected=%s"
                 % (kind, schema, expected),
                 flush=True,
             )
@@ -267,7 +276,7 @@ def _validate_envelope(raw: Any, *, kind: str, log_fn: LogFn = None) -> bool:
     if not validate_manifest_payload(kind, raw):
       if log_fn:
         log_fn(
-            "sync_timedb: reject %s manifest missing required fields" % kind,
+            "reject %s manifest missing required fields" % kind,
             flush=True,
         )
       return False
@@ -281,7 +290,7 @@ def _validate_envelope(raw: Any, *, kind: str, log_fn: LogFn = None) -> bool:
         if int(schema) != expected:
           if log_fn:
             log_fn(
-                "sync_timedb: reject %s schema_version=%s expected=%s"
+                "reject %s schema_version=%s expected=%s"
                 % (kind, schema, expected),
                 flush=True,
             )

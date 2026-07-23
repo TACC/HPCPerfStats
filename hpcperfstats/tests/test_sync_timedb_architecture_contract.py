@@ -133,7 +133,7 @@ def test_arch_post_finalize_stores_reconcile_fingerprint_before_cap():
   Prevents unchanged_incomplete skip logging stale higher incomplete_n.
   """
   source = inspect.getsource(st.run_sync_timedb_supervisor_loop)
-  marker = 'sync_timedb: post_finalize_reconcile oldest_tar='
+  marker = 'post_finalize_reconcile oldest_tar='
   assert marker in source
   after = source.split(marker, 1)[1]
   before_reconcile = after.split(
@@ -405,7 +405,7 @@ def test_arch_chunk_boundary_may_finalize_append_slots_only():
 def test_arch_handoff_priority_defer_skips_full_pending_reconcile():
   """Per-day handoff defer must not re-run full pending reconcile on immediate enqueue."""
   source = inspect.getsource(st.run_sync_timedb_supervisor_loop)
-  maybe = source.split("def _maybe_enqueue_immediate_day_close", 1)[1]
+  maybe = source.split("def _maybe_enqueue_immediate_day_close_inner", 1)[1]
   maybe = maybe.split("\n  def ", 1)[0]
   assert "_should_defer_immediate_day_close_for_tar" in maybe
   assert "_reconcile_pending_with_oldest_checkpoint_incomplete()" not in maybe

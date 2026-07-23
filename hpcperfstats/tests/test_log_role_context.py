@@ -7,6 +7,8 @@ import pytest
 from hpcperfstats.dbload.lib.print_utils import (
     format_log_prefix,
     get_log_role,
+    ingest_logging,
+    janitorial_logging,
     log_print,
     set_log_role,
 )
@@ -109,3 +111,41 @@ def test_gunicorn_skips_log_role_on_process_title(monkeypatch):
   set_log_role(None)
   set_daemon_process_title(name="sync_timedb.py", role="main")
   assert get_log_role() is None
+
+
+@pytest.mark.usefixtures("sync_timedb_main")
+def test_janitor_body_prefix_respects_role(monkeypatch):
+  calls = []
+
+  def fake_print(*args, **kwargs):
+    calls.append(args)
+
+  monkeypatch.setattr(builtins, "print", fake_print)
+  set_log_role("main")
+  with janitorial_logging():
+    log_print("day-scoped closed_raw")
+  assert calls[0][1] == "janitor: day-scoped closed_raw"
+  calls.clear()
+  set_log_role("thread:archive-janitor")
+  with janitorial_logging():
+    log_print("janitor: discover_ready_day_close")
+  assert calls[0][1] == "discover_ready_day_close"
+
+
+@pytest.mark.usefixtures("sync_timedb_main")
+def test_ingest_body_prefix_main_only(monkeypatch):
+  calls = []
+
+  def fake_print(*args, **kwargs):
+    calls.append(args)
+
+  monkeypatch.setattr(builtins, "print", fake_print)
+  set_log_role("main")
+  with ingest_logging():
+    log_print("post_finalize_reconcile")
+  assert calls[0][1] == "ingest: post_finalize_reconcile"
+  calls.clear()
+  set_log_role("worker:ingest-pool")
+  with ingest_logging():
+    log_print("File successfully added to DB")
+  assert calls[0][1] == "File successfully added to DB"

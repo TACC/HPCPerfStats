@@ -53,8 +53,13 @@ Use a **distinct, stable `pool_kind`** per pool type in the same script (e.g. `i
 
 4. **Daemon threads only:** `set_daemon_thread_title(..., script_name="….py", role="…")`. Never change the **process** title for threads.
 5. **Log role mirrors title:** `set_daemon_process_title` and `set_daemon_thread_title` wire `print_utils.set_log_role()` so `log_print` emits `[script:role]` (e.g. `[sync_timedb:thread:archive-janitor]`) matching `top`/`ps` labels.
-6. **Gunicorn request paths:** do not add process or thread titles in `site.machine.api`, plot builders invoked per-request under gunicorn, or other WSGI hot paths unless product explicitly revisits that policy.
-7. **Tests:** extend [`hpcperfstats/tests/test_process_title.py`](hpcperfstats/tests/test_process_title.py) when adding pools or import paths that could affect gunicorn titles.
+6. **Body facets (outside brackets):** `janitorial_logging()` / `ingest_logging()` (and oneshot `janitorial=` / `ingest=` kwargs) add greppable body prefixes — never put `(janitorial)` / `(ingest)` inside the brackets.
+   - **`janitor:`** — janitorial work when the role does **not** contain `janitor`; if the role already contains `janitor` (`thread:archive-janitor`), strip a leading body `janitor:` so the line is not double-labeled.
+   - **`ingest:`** — **MainThread** ingest work / pre-work only (`role` is `main` or unset). Do **not** apply this facet to pool workers (`worker:ingest-pool`, populate-pool, etc.).
+   - Janitorial scope wins over ingest when both are entered (MainThread day-close stays `janitor:` only).
+   - Do not put a second `script_name:` in the message body; `log_print` strips a leading `{script}:` when the bracket already names the script.
+7. **Gunicorn request paths:** do not add process or thread titles in `site.machine.api`, plot builders invoked per-request under gunicorn, or other WSGI hot paths unless product explicitly revisits that policy.
+8. **Tests:** extend [`hpcperfstats/tests/test_process_title.py`](hpcperfstats/tests/test_process_title.py) when adding pools or import paths that could affect gunicorn titles; extend `test_print_utils.py` / `test_log_role_context.py` when changing body-facet rules.
 
 ## Overlap
 

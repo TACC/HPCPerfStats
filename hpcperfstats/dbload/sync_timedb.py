@@ -116,7 +116,7 @@ from hpcperfstats.dbload.lib.archive_compress import (
     daily_tar_path_from_compressed,
     detect_compressed_format,
 )
-from hpcperfstats.dbload.lib.print_utils import log_print
+from hpcperfstats.dbload.lib.print_utils import ingest_logging, janitorial_logging, log_print
 from hpcperfstats.dbload.lib.shutdown_utils import (
     shutdown_requested,
     send_sigchld_to_parent,
@@ -865,6 +865,22 @@ def _prewarm_archive_members_redis_for_chunk(
     skip_prewarm=False,
 ):
   """Single-flight populate on supervisor before imap when Redis L2 is cold."""
+  with ingest_logging():
+    return _prewarm_archive_members_redis_for_chunk_inner(
+        paths,
+        oldest_tar=oldest_tar,
+        gated_tar_restore=gated_tar_restore,
+        skip_prewarm=skip_prewarm,
+    )
+
+
+def _prewarm_archive_members_redis_for_chunk_inner(
+    paths,
+    *,
+    oldest_tar=None,
+    gated_tar_restore=False,
+    skip_prewarm=False,
+):
   if skip_prewarm:
     log_print(
         "INFO: chunk prewarm skipped reason=all_db_complete paths=%d"
@@ -887,7 +903,7 @@ def _prewarm_archive_members_redis_for_chunk(
         gated_tokens.add(oldest_token)
   day_tokens = sorted(set(day_map.values()))
   log_print(
-      "sync_timedb: chunk prewarm begin paths=%d days=%s oldest_tar=%s "
+      "chunk prewarm begin paths=%d days=%s oldest_tar=%s "
       "gated_tar_restore=%s"
       % (
           len(paths or ()),
@@ -903,7 +919,7 @@ def _prewarm_archive_members_redis_for_chunk(
       gated_tar_restore_day_tokens=gated_tokens,
   )
   log_print(
-      "sync_timedb: chunk prewarm complete elapsed_s=%.3f days=%s"
+      "chunk prewarm complete elapsed_s=%.3f days=%s"
       % (time.time() - prewarm_t0, summary),
       flush=True,
   )
@@ -911,6 +927,12 @@ def _prewarm_archive_members_redis_for_chunk(
 
 
 def _prewarm_archive_members_redis_for_sealed_chunk(sealed_paths):
+  """Prewarm Redis member maps for unique calendar days in a sealed archive chunk."""
+  with ingest_logging():
+    return _prewarm_archive_members_redis_for_sealed_chunk_inner(sealed_paths)
+
+
+def _prewarm_archive_members_redis_for_sealed_chunk_inner(sealed_paths):
   """Prewarm Redis member maps for unique calendar days in a sealed archive chunk."""
   day_items = []
   seen = set()
@@ -927,14 +949,14 @@ def _prewarm_archive_members_redis_for_sealed_chunk(sealed_paths):
     day_items.append((sealed_path, day_token))
   day_tokens = sorted({token for _, token in day_items})
   log_print(
-      "sync_timedb: archive chunk prewarm begin sealed_paths=%d days=%s"
+      "archive chunk prewarm begin sealed_paths=%d days=%s"
       % (len(day_items), day_tokens),
       flush=True,
   )
   prewarm_t0 = time.time()
   summary = _prewarm_archive_members_redis_for_days(day_items)
   log_print(
-      "sync_timedb: archive chunk prewarm complete elapsed_s=%.3f days=%s"
+      "archive chunk prewarm complete elapsed_s=%.3f days=%s"
       % (time.time() - prewarm_t0, summary),
       flush=True,
   )
@@ -4877,7 +4899,7 @@ def run_sync_timedb_supervisor_loop(
       )
     except Exception as exc:
       log_print(
-          "sync_timedb: current heartbeat publish failed err=%s" % exc,
+          "current heartbeat publish failed err=%s" % exc,
           flush=True,
       )
       return None
@@ -4904,7 +4926,7 @@ def run_sync_timedb_supervisor_loop(
     ):
       return False
     log_print(
-        "sync_timedb: backlog exiting near current"
+        "backlog exiting near current"
         " next_pending_day=%s current_oldest_active_day=%s"
         " proximity_days=%d"
         % (
@@ -5283,13 +5305,13 @@ def run_sync_timedb_supervisor_loop(
       )
     if parts:
       log_print(
-          "sync_timedb: checkpoint day-close progress oldest_days=%s"
+          "checkpoint day-close progress oldest_days=%s"
           % "; ".join(parts),
           flush=True,
       )
     if checkpoint_deferred_archive:
       log_print(
-          "sync_timedb: checkpoint deferred archive finalize count=%d"
+          "checkpoint deferred archive finalize count=%d"
           % checkpoint_deferred_archive,
           flush=True,
       )
@@ -5393,6 +5415,10 @@ def run_sync_timedb_supervisor_loop(
     return bool(ingest_going)
 
   def _maybe_enqueue_immediate_day_close(*, context: str):
+    with janitorial_logging():
+      return _maybe_enqueue_immediate_day_close_inner(context=context)
+
+  def _maybe_enqueue_immediate_day_close_inner(*, context: str):
     if not day_close_enabled:
       return
     if not _get_day_close_allowed():
@@ -5490,6 +5516,10 @@ def run_sync_timedb_supervisor_loop(
     return reclaimed
 
   def _apply_archive_finalize_results(deferred_paths, results):
+    with ingest_logging():
+      return _apply_archive_finalize_results_inner(deferred_paths, results)
+
+  def _apply_archive_finalize_results_inner(deferred_paths, results):
     nonlocal checkpoint_dirty_count
     nonlocal dead_letter_dirty
     nonlocal archive_finalize_needs_post_reconcile
@@ -5684,7 +5714,7 @@ def run_sync_timedb_supervisor_loop(
             )
         )
       log_print(
-          "sync_timedb: post_finalize_reconcile oldest_tar=%s incomplete_n=%d "
+          "post_finalize_reconcile oldest_tar=%s incomplete_n=%d "
           "inflight_oldest_n=%d"
           % (tar_norm or "", len(blocked), inflight_oldest_n),
           flush=True,
@@ -5840,6 +5870,19 @@ def run_sync_timedb_supervisor_loop(
       in_flight_paths=None,
   ):
     """ERROR when gate blocked but no chunk progress for INGEST_STALL_WATCHDOG_IDLE_S."""
+    with ingest_logging():
+      return _maybe_log_ingest_stall_watchdog_inner(
+          incomplete_n=incomplete_n,
+          oldest_tar=oldest_tar,
+          in_flight_paths=in_flight_paths,
+      )
+
+  def _maybe_log_ingest_stall_watchdog_inner(
+      *,
+      incomplete_n,
+      oldest_tar=None,
+      in_flight_paths=None,
+  ):
     if incomplete_n <= 0:
       return
     last_summary = reconcile_refs.get("last_chunk_ingest_summary_mono")
@@ -6022,13 +6065,19 @@ def run_sync_timedb_supervisor_loop(
     )
 
   def _cap_pending_after_rescan(paths, *, handoff=False, idle_refill=False):
+    with ingest_logging():
+      return _cap_pending_after_rescan_inner(
+          paths, handoff=handoff, idle_refill=idle_refill,
+      )
+
+  def _cap_pending_after_rescan_inner(paths, *, handoff=False, idle_refill=False):
     cap_t0 = time.time()
     _snapshot, source = _resolve_reconcile_maintenance_snapshot(
         prefer_startup=(handoff or idle_refill),
     )
     if idle_refill and _snapshot is not None:
       log_print(
-          "sync_timedb: idle cap reconcile source=%s pending_in=%d"
+          "idle cap reconcile source=%s pending_in=%d"
           % (source, len(paths or ())),
           flush=True,
       )
@@ -6037,7 +6086,7 @@ def run_sync_timedb_supervisor_loop(
         and _snapshot is not None
     ):
       log_print(
-          "sync_timedb: pending reconcile cap begin source=%s handoff=light"
+          "pending reconcile cap begin source=%s handoff=light"
           % source,
           flush=True,
       )
@@ -6045,7 +6094,7 @@ def run_sync_timedb_supervisor_loop(
           _apply_handoff_priority_to_pending(paths),
       )
       log_print(
-          "sync_timedb: pending reconcile cap done elapsed_s=%.3f "
+          "pending reconcile cap done elapsed_s=%.3f "
           "handoff_light=1 incomplete_n=0 capped_pending=%d"
           % (time.time() - cap_t0, len(capped)),
           flush=True,
@@ -6057,7 +6106,7 @@ def run_sync_timedb_supervisor_loop(
     if reuse is not None:
       unprocessed, tar_norm_cached, incomplete_cached, skip_reason = reuse
       log_print(
-          "sync_timedb: pending reconcile cap skipped "
+          "pending reconcile cap skipped "
           "reason=%s oldest_tar=%s incomplete_n=%d"
           % (skip_reason, tar_norm_cached or "", incomplete_cached),
           flush=True,
@@ -6066,7 +6115,7 @@ def run_sync_timedb_supervisor_loop(
       unprocessed = None
     if unprocessed is None:
       log_print(
-          "sync_timedb: pending reconcile cap begin source=%s" % source,
+          "pending reconcile cap begin source=%s" % source,
           flush=True,
       )
       unprocessed = _live_unprocessed_by_tar_for_reconcile()
@@ -6116,7 +6165,7 @@ def run_sync_timedb_supervisor_loop(
     closed_paths = _resolve_closed_paths_for_cap()
     if closed_paths is None:
       log_print(
-          "sync_timedb: pending cap supplement skipped reason=no_closed_paths",
+          "pending cap supplement skipped reason=no_closed_paths",
           flush=True,
       )
     elif len(capped) < ingest_queue_max or all_unprocessed:
@@ -6129,7 +6178,7 @@ def run_sync_timedb_supervisor_loop(
           newest_first=newest_first,
       )
     log_print(
-        "sync_timedb: pending reconcile cap done elapsed_s=%.3f "
+        "pending reconcile cap done elapsed_s=%.3f "
         "oldest_tar=%s incomplete_n=%d capped_pending=%d%s"
         % (
             time.time() - cap_t0,
@@ -6171,7 +6220,7 @@ def run_sync_timedb_supervisor_loop(
     if len(successful_paths) != len(stats_files_chunk):
       return
     log_print(
-        "sync_timedb: %s_cross_day_db_complete %s=%s "
+        "%s_cross_day_db_complete %s=%s "
         "path_n=%d"
         % (
             _day_chunk_gate_prefix(),
@@ -6258,6 +6307,27 @@ def run_sync_timedb_supervisor_loop(
       gated_tar_restore=False,
   ):
     """Ingest an explicit path list via pool imap or supervisor-thread fallback."""
+    with ingest_logging():
+      return _ingest_explicit_path_batch_inner(
+          paths,
+          context_label=context_label,
+          pending_total=pending_total,
+          batch_chunk_counter=batch_chunk_counter,
+          pending_tail=pending_tail,
+          oldest_tar=oldest_tar,
+          gated_tar_restore=gated_tar_restore,
+      )
+
+  def _ingest_explicit_path_batch_inner(
+      paths,
+      *,
+      context_label,
+      pending_total,
+      batch_chunk_counter,
+      pending_tail=None,
+      oldest_tar=None,
+      gated_tar_restore=False,
+  ):
     nonlocal pool_worker_exit, active_chunk_ingest_tracker, ingest_pool
 
     successful_paths = []
@@ -6307,7 +6377,7 @@ def run_sync_timedb_supervisor_loop(
     active_workers = 0
     imap_context = "sync_timedb %s" % context_label
     log_print(
-        "sync_timedb: chunk imap start paths=%d prewarm=%s context=%s"
+        "chunk imap start paths=%d prewarm=%s context=%s"
         % (
             len(paths or ()),
             stall_diagnostics.chunk_prewarm_summary or "-",
@@ -6553,7 +6623,7 @@ def run_sync_timedb_supervisor_loop(
     return successful_paths, failed_paths
 
   log_print(
-      "sync_timedb: day_close immediate enqueue after chunk_end, archive_finalize, "
+      "day_close immediate enqueue after chunk_end, archive_finalize, "
       "and idle_finalize; janitor tick discover is steady-state backstop; "
       "idle rescan sleep %s s"
       % (int(EMPTY_QUEUE_RESCAN_SLEEP_SECONDS),),
@@ -6702,7 +6772,7 @@ def run_sync_timedb_supervisor_loop(
         now = time.time()
         if now - last_log >= 30.0:
           log_print(
-              "sync_timedb: idle_rescan_snapshot_wait elapsed_s=%.1f"
+              "idle_rescan_snapshot_wait elapsed_s=%.1f"
               % (now - wait_t0),
               flush=True,
           )
@@ -6718,7 +6788,7 @@ def run_sync_timedb_supervisor_loop(
     if snap is not None and snap.closed_paths:
       if idle_refill:
         log_print(
-            "sync_timedb: idle_rescan_snapshot_source=coordinator closed_paths=%d"
+            "idle_rescan_snapshot_source=coordinator closed_paths=%d"
             % len(snap.closed_paths),
             flush=True,
         )
@@ -6727,7 +6797,7 @@ def run_sync_timedb_supervisor_loop(
       accrual = reconcile_refs["get_accrual_snapshot"]()
       if accrual is not None and accrual.closed_paths:
         log_print(
-            "sync_timedb: idle_rescan_snapshot_source=accrual closed_paths=%d"
+            "idle_rescan_snapshot_source=accrual closed_paths=%d"
             % len(accrual.closed_paths),
             flush=True,
         )
@@ -6751,8 +6821,15 @@ def run_sync_timedb_supervisor_loop(
   day_raw_removal.get_allow_day_scoped_closed_raw = _get_allow_day_scoped_closed_raw
 
   def _rescan_pending_with_progress(*, idle_refill=False, processed_exclude=None):
+    with ingest_logging():
+      return _rescan_pending_with_progress_inner(
+          idle_refill=idle_refill,
+          processed_exclude=processed_exclude,
+      )
+
+  def _rescan_pending_with_progress_inner(*, idle_refill=False, processed_exclude=None):
     rescan_t0 = time.time()
-    log_print("sync_timedb: pending rescan begin", flush=True)
+    log_print("pending rescan begin", flush=True)
     closed_paths = _startup_closed_paths_for_rescan(idle_refill=idle_refill)
     if (
         closed_paths is None
@@ -6782,7 +6859,7 @@ def run_sync_timedb_supervisor_loop(
         newest_first=newest_first,
     )
     log_print(
-        "sync_timedb: pending rescan done pending=%d elapsed_s=%.3f"
+        "pending rescan done pending=%d elapsed_s=%.3f"
         % (len(paths), time.time() - rescan_t0),
         flush=True,
     )
@@ -6830,7 +6907,7 @@ def run_sync_timedb_supervisor_loop(
         ),
     )
     log_print(
-        "sync_timedb: async pending rescan merge pending=%d"
+        "async pending rescan merge pending=%d"
         % len(pending_stats_files),
         flush=True,
     )
@@ -6848,12 +6925,12 @@ def run_sync_timedb_supervisor_loop(
       discovered = future.result()
     except Exception as exc:
       log_print(
-          "sync_timedb: async pending rescan failed err=%s" % exc,
+          "async pending rescan failed err=%s" % exc,
           flush=True,
       )
       return False
     log_print(
-        "sync_timedb: async pending rescan complete discovered=%d"
+        "async pending rescan complete discovered=%d"
         % len(discovered or ()),
         flush=True,
     )
@@ -6869,7 +6946,7 @@ def run_sync_timedb_supervisor_loop(
       _drain_pending_rescan_future()
     processed_exclude = _rescan_processed_exclusions()
     exclude_snap = set(processed_exclude)
-    log_print("sync_timedb: async pending rescan begin", flush=True)
+    log_print("async pending rescan begin", flush=True)
 
     def _job():
       return _rescan_pending_with_progress(
@@ -7090,7 +7167,7 @@ def run_sync_timedb_supervisor_loop(
     try:
       startup_archive_scan.begin_build()
       log_print(
-          "sync_timedb: post-ingest startup archive scan begin",
+          "post-ingest startup archive scan begin",
           flush=True,
       )
       snapshot = build_archive_maintenance_snapshot(
@@ -7107,7 +7184,7 @@ def run_sync_timedb_supervisor_loop(
       startup_snapshot_ready = True
       archive_janitor.signal_work_available()
       log_print(
-          "sync_timedb: post-ingest startup archive scan ready "
+          "post-ingest startup archive scan ready "
           "closed_paths=%d"
           % len((published.closed_paths if published else None) or ()),
           flush=True,
@@ -7137,12 +7214,12 @@ def run_sync_timedb_supervisor_loop(
       ingest_going = True
       if reason == "empty_pending_after_rescan":
         log_print(
-            "sync_timedb: ingest_going=yes reason=empty_pending_after_rescan",
+            "ingest_going=yes reason=empty_pending_after_rescan",
             flush=True,
         )
       else:
         log_print(
-            "sync_timedb: ingest_going=yes (first non-empty chunk)",
+            "ingest_going=yes (first non-empty chunk)",
             flush=True,
         )
     if run_startup_maintenance:
@@ -7155,7 +7232,7 @@ def run_sync_timedb_supervisor_loop(
     post_ingest_snapshot_kicked = True
     startup_archive_scan.note_startup_maintenance_pending()
     log_print(
-        "sync_timedb: kicking async post-ingest startup archive snapshot",
+        "kicking async post-ingest startup archive snapshot",
         flush=True,
     )
     post_ingest_snapshot_executor.submit(_build_post_ingest_startup_snapshot)
@@ -7173,7 +7250,7 @@ def run_sync_timedb_supervisor_loop(
       return
     startup_gate_cleared_logged = True
     log_print(
-        "sync_timedb: startup_elapsed_s=%.3f boot_handoff summary "
+        "startup_elapsed_s=%.3f boot_handoff summary "
         "handoff_requeued_tars=%d"
         % (
             startup_gate_cleared_t0 - ingest_t0,
@@ -7253,6 +7330,14 @@ def run_sync_timedb_supervisor_loop(
       paths,
       reason,
   ):
+    with janitorial_logging():
+      return _requeue_day_close_handoff_paths_inner(tar_norm, paths, reason)
+
+  def _requeue_day_close_handoff_paths_inner(
+      tar_norm,
+      paths,
+      reason,
+  ):
     nonlocal pending_stats_files
     tar_norm = os.path.normpath(str(tar_norm or ""))
     if not tar_norm:
@@ -7273,7 +7358,7 @@ def run_sync_timedb_supervisor_loop(
       ]
       if not new_paths:
         log_print(
-            "sync_timedb: day_close handoff requeue skip day=%s reason=%s "
+            "day_close handoff requeue skip day=%s reason=%s "
             "detail=same_boot_duplicate retryable_on_disk=%d"
             % (
                 calendar_date_from_daily_tar_path(tar_norm).isoformat()
@@ -7288,7 +7373,7 @@ def run_sync_timedb_supervisor_loop(
       requeued_paths = new_paths
     elif not requeued_paths:
       log_print(
-          "sync_timedb: day_close handoff requeue skip day=%s reason=%s "
+          "day_close handoff requeue skip day=%s reason=%s "
           "detail=paths=0 retryable_on_disk=%d"
           % (
               calendar_date_from_daily_tar_path(tar_norm).isoformat()
@@ -7318,7 +7403,7 @@ def run_sync_timedb_supervisor_loop(
           else tar_norm
       )
       log_print(
-          "sync_timedb: day_close handoff steady-chunk enqueue day=%s paths=%d "
+          "day_close handoff steady-chunk enqueue day=%s paths=%d "
           "handoff_mode=steady_chunk chunk_size=%d reason=%s"
           % (
               day_token,
@@ -7348,7 +7433,7 @@ def run_sync_timedb_supervisor_loop(
     derived = _derive_stats_path_date(sample_path)
     derived_day = derived.isoformat() if derived is not None else ""
     log_print(
-        "sync_timedb: day_close handoff requeue day=%s paths=%d reason=%s "
+        "day_close handoff requeue day=%s paths=%d reason=%s "
         "checkpoint_cleared=yes queue_head=yes sample_path=%s "
         "source_day=%s derived_day=%s"
         % (
@@ -7395,7 +7480,7 @@ def run_sync_timedb_supervisor_loop(
     if not handoff_entries:
       return
     log_print(
-        "sync_timedb: boot handoff discover tars=%d"
+        "boot handoff discover tars=%d"
         % len(handoff_entries),
         flush=True,
     )
@@ -7452,26 +7537,26 @@ def run_sync_timedb_supervisor_loop(
     _ensure_daily_archive_dir_exists()
     if not day_close_enabled:
       log_print(
-          "sync_timedb: day_close disabled mode=backlog "
+          "day_close disabled mode=backlog "
           "owner=current_or_date_range",
           flush=True,
       )
     if run_startup_maintenance:
       log_print(cfg.format_sync_timedb_non_default_settings_line(), flush=True)
-      log_print("sync_timedb: maintenance pass reason=startup", flush=True)
+      log_print("maintenance pass reason=startup", flush=True)
       startup_archive_scan.note_startup_maintenance_pending()
       archive_janitor.signal_scheduled_maintenance_pass(reason="startup")
       archive_janitor.enqueue_startup_debt()
       _get_startup_snapshot_for_rescan(idle_refill=False)
       _mark_startup_ingest_gate_cleared()
       log_print(
-          "sync_timedb: startup ingest gate cleared; ingest may begin "
+          "startup ingest gate cleared; ingest may begin "
           "(heavy maintenance may still run on janitor thread)",
           flush=True,
       )
     else:
       log_print(
-          "sync_timedb: startup maintenance skipped "
+          "startup maintenance skipped "
           "(CLI 'backlog' only; 'current' and date-range begin ingest first, "
           "then async full startup snapshot before day-close)",
           flush=True,
@@ -7502,7 +7587,7 @@ def run_sync_timedb_supervisor_loop(
         # R27: do not treat pending empty as idle archival while scan-ahead runs.
         if _pending_rescan_in_flight():
           log_print(
-              "sync_timedb: pending empty while async rescan in flight; "
+              "pending empty while async rescan in flight; "
               "defer idle archive",
               flush=True,
           )
@@ -7584,7 +7669,7 @@ def run_sync_timedb_supervisor_loop(
             _maybe_enqueue_immediate_day_close(context="idle_finalize")
           else:
             log_print(
-                "sync_timedb: idle_finalize deferred "
+                "idle_finalize deferred "
                 "reason=awaiting_ingest_or_startup_snapshot "
                 "ingest_going=%s startup_snapshot_ready=%s"
                 % (ingest_going, startup_snapshot_ready),
@@ -7624,7 +7709,7 @@ def run_sync_timedb_supervisor_loop(
           if awaiting_snapshot or day_close_busy:
             if awaiting_snapshot:
               log_print(
-                  "sync_timedb: idle ingest; awaiting startup_snapshot; "
+                  "idle ingest; awaiting startup_snapshot; "
                   "polling %.0fs"
                   % float(EMPTY_QUEUE_DAY_CLOSE_POLL_SECONDS),
                   flush=True,
@@ -7632,7 +7717,7 @@ def run_sync_timedb_supervisor_loop(
             else:
               janitor_stats = archive_janitor.stats()
               log_print(
-                  "sync_timedb: idle ingest; day_close work remaining "
+                  "idle ingest; day_close work remaining "
                   "debt=%d inflight=%d; polling %.0fs"
                   % (
                       janitor_stats["janitor_debt_depth"],
@@ -7729,7 +7814,7 @@ def run_sync_timedb_supervisor_loop(
         incomplete_n = len(blocked_paths)
         if raw_blocked_paths and incomplete_n == 0:
           log_print(
-              "sync_timedb: %s_all_db_complete %s=%s "
+              "%s_all_db_complete %s=%s "
               "raw_incomplete_n=%d"
               % (
                   _day_chunk_gate_prefix(),
@@ -7810,7 +7895,7 @@ def run_sync_timedb_supervisor_loop(
               - handoff_lead_in_chunk_n,
           )
           log_print(
-              "sync_timedb: %s %s=%s incomplete_n=%d "
+              "%s %s=%s incomplete_n=%d "
               "handoff_inflight_n=%d handoff_priority_n=%d handoff_cross_day_n=%d "
               "%s_checkpoint_pending_n=%d "
               "chunk_day_histogram=%s chunk_len=%d chunk_pad_n=%d"
@@ -7836,7 +7921,7 @@ def run_sync_timedb_supervisor_loop(
             if now - handoff_priority_stall_last_log >= 30.0:
               handoff_priority_stall_last_log = now
               log_print(
-                  "sync_timedb: handoff_priority_stall handoff_n=%d chunk_len=0 "
+                  "handoff_priority_stall handoff_n=%d chunk_len=0 "
                   "pending=%d oldest_tar=%s incomplete_n=%d"
                   % (
                       len(handoff_priority_paths),
@@ -7901,7 +7986,7 @@ def run_sync_timedb_supervisor_loop(
                 if cross_day_mismatch_n:
                   stall_detail = "cross_day_bucket"
                 log_print(
-                    "sync_timedb: %s_stall %s=%s "
+                    "%s_stall %s=%s "
                     "incomplete_n=%d blocked_in_pending_n=%d inflight_oldest_n=%d "
                     "pending_oldest_n=%d fallback_n=%d cross_day_mismatch_n=%d "
                     "calendar_tar_histogram=%s detail=%s"
@@ -7944,7 +8029,7 @@ def run_sync_timedb_supervisor_loop(
         if stats_files_chunk:
           dispatch_sample = stats_files_chunk[:5]
           log_print(
-              "sync_timedb: chunk dispatch begin chunk_n=%d pending_n=%d "
+              "chunk dispatch begin chunk_n=%d pending_n=%d "
               "paths_sample=%s epochs=%s"
               % (
                   chunk_counter,
@@ -7956,15 +8041,17 @@ def run_sync_timedb_supervisor_loop(
                   ],
               ),
               flush=True,
+              ingest=True,
           )
         stats_files_chunk, chunk_dup_n, _chunk_dup_sample = (
             dedupe_ingest_paths_preserve_order(stats_files_chunk)
         )
         if chunk_dup_n:
           log_print(
-              "sync_timedb: chunk dispatch deduped duplicate_n=%d chunk_n=%d"
+              "chunk dispatch deduped duplicate_n=%d chunk_n=%d"
               % (chunk_dup_n, len(stats_files_chunk)),
               flush=True,
+              ingest=True,
           )
         chunk_dispatch_paths = {
             os.path.normpath(p)
@@ -8024,12 +8111,12 @@ def run_sync_timedb_supervisor_loop(
 
         if chunk_counter == 0 and startup_gate_cleared_t0 is not None:
           log_print(
-              "sync_timedb: startup_elapsed_s %.3f"
+              "startup_elapsed_s %.3f"
               % (startup_gate_cleared_t0 - ingest_t0),
               flush=True,
           )
         log_print(
-            "sync_timedb: chunk_elapsed_s %.3f"
+            "chunk_elapsed_s %.3f"
             % (time.time() - chunk_t0),
             flush=True,
         )
@@ -8051,7 +8138,7 @@ def run_sync_timedb_supervisor_loop(
           )
         log_print("Files marked for archival: %d" % len(files_to_be_archived))
         log_print(
-            "sync_timedb: chunk ingest summary chunk=%d ingested_this_chunk=%d "
+            "chunk ingest summary chunk=%d ingested_this_chunk=%d "
             "checkpoint_immediate_n=%d archive_deferred_n=%d"
             % (
                 chunk_counter,
@@ -8066,6 +8153,7 @@ def run_sync_timedb_supervisor_loop(
                 ]),
             ),
             flush=True,
+            ingest=True,
         )
         worker_memory_accumulator.maybe_flush(
             chunk_counter,
@@ -8186,7 +8274,7 @@ def run_sync_timedb_supervisor_loop(
           )
         stall_diagnostics.chunk_archive_elapsed_s = time.time() - archive_t0
         log_print(
-            "sync_timedb: chunk_prewarm_elapsed_s=%.3f chunk_ingest_elapsed_s=%.3f "
+            "chunk_prewarm_elapsed_s=%.3f chunk_ingest_elapsed_s=%.3f "
             "chunk_archive_elapsed_s=%.3f"
             % (
                 stall_diagnostics.chunk_prewarm_elapsed_s,
@@ -8341,7 +8429,7 @@ def parse_sync_timedb_argv(argv):
 
   if len(argv_for_dates) > 1 and argv_for_dates[1] == "all":
     raise SystemExit(
-        "sync_timedb: CLI mode 'all' was renamed to 'backlog' "
+        "CLI mode 'all' was renamed to 'backlog' "
         "(use: sync_timedb.py backlog)"
     )
 

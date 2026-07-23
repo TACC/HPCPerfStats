@@ -102,7 +102,7 @@ After deploy of **chunk-stall / startup fast-start** (MainThread must not build 
 
 **Failure signature (pre-fix):** after `chunk_archive_elapsed` + `Archive finalize deferred context=rescan_every_chunks`, MainThread sits in `_rescan_processed_exclusions` → `rescan_exclude_paths` → `handoff_paths_for_ingest` → `build_archive_maintenance_snapshot` / `collect_head_metadata_for_paths` for ~hour; no next `chunk imap start` / `chunk prewarm begin`. py-spy DUMP1==DUMP2 on that stack while ingest workers idle.
 
-**Pass (T0):** next `chunk imap start` (or `chunk prewarm begin`) within a normal between-chunk window after `Archive finalize deferred` — **not** an hour-scale gap. Expect `sync_timedb: async pending rescan begin|complete|merge` and/or `Rescan boundary after … async_inflight=`; do **not** see MainThread stuck in `build_archive_maintenance_snapshot` on the exclude path.
+**Pass (T0):** next `chunk imap start` (or `chunk prewarm begin`) within a normal between-chunk window after `Archive finalize deferred` — **not** an hour-scale gap. Expect `async pending rescan begin|complete|merge` (optional body `ingest:` prefix) and/or `Rescan boundary after … async_inflight=`; do **not** see MainThread stuck in `build_archive_maintenance_snapshot` on the exclude path.
 
 ```bash
 # T0 — between-chunk cadence (full pipeline log; never --tail before grep)
@@ -683,6 +683,17 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 After deploy of log-role prefixes (2026-06), pipeline lines identify **which actor** emitted them. Greps for **`[sync_timedb]`** still match (substring).
 
+### Body facets (2026-07 — outside brackets)
+
+`log_print` may add a greppable body prefix **after** the brackets (never inside them):
+
+| Body prefix | When |
+|-------------|------|
+| `janitor:` | Janitorial work when the role does **not** already contain `janitor` (e.g. `[sync_timedb:main] janitor: …`, `[sync_timedb:thread:day-close-0] janitor: …`). Role `thread:archive-janitor` **strips** a redundant body `janitor:` so the line is not double-labeled. |
+| `ingest:` | **MainThread** ingest work / pre-work only (`[sync_timedb:main] ingest: pending reconcile …`, `chunk ingest summary`, `post_finalize_reconcile`, …). Pool workers (`worker:ingest-pool`, populate-pool) do **not** get this facet. |
+
+Prefer: `grep -E 'janitor:|ingest:|thread:archive-janitor|thread:day-close-'`. Do **not** expect a second `sync_timedb:` in the message body — brackets already name the script.
+
 ### Log prefix → actor
 
 | Log prefix | Process / thread | Responsibility |
@@ -693,6 +704,7 @@ After deploy of log-role prefixes (2026-06), pipeline lines identify **which act
 | `[sync_timedb:worker:db-writer-pool]` | Spawned DB writer | Split pipeline DB write stage |
 | `[sync_timedb:worker:archive-pool]` | Spawned archive append worker | **Hot-path tar append** (`map_async` dispatch) — **not** the janitor |
 | `[sync_timedb:thread:archive-janitor]` | Daemon thread in supervisor PID | Cold path: seal → verify → delete → tar-drop; boot **`DAY_CLOSE`** discover |
+| `[sync_timedb:thread:day-close-N]` | Day-close pool worker thread | Per-day seal → verify → delete → tar-drop |
 | `[sync_timedb:thread:startup-raw-removal-preflight]` | Daemon thread | Boot raw removal verify/delete |
 | `[sync_timedb:thread:startup-tail-ingest]` | Daemon thread | Optional tail ingest before steady state |
 | `[sync_timedb:thread:archive-discovery]` | Short-lived helper thread | Archive metadata scan during heavy maintenance |
@@ -706,9 +718,9 @@ When the prefix has no `:role` segment, use message substrings:
 
 | Substring | Likely actor |
 |-----------|----------------|
-| `chunk ingest summary`, `oldest_day_chunk_gate`, `handoff`, `startup_elapsed_s` | Main supervisor |
-| `janitor:`, `Archive janitor tick` | Janitor thread |
-| `janitor: discover_ready_day_close` | Janitor boot/steady-state DAY_CLOSE discover |
+| `chunk ingest summary`, `oldest_day_chunk_gate`, `handoff`, `startup_elapsed_s`, body `ingest:` | Main supervisor ingest / pre-work |
+| `janitor:`, `Archive janitor tick` | Janitor thread or MainThread day-close helpers |
+| `discover_ready_day_close` | Janitor boot/steady-state DAY_CLOSE discover (role may already say `archive-janitor`) |
 | `startup raw removal` | Startup raw removal preflight |
 | `Pool imap stalled`, `worker_stages` | Ingest or parse pool worker |
 | `Archive mapping`, `archive_job_done` (from worker context) | Often main coordinating append; append work runs on `archive-pool` workers |

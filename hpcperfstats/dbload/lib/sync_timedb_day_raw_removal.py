@@ -26,6 +26,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     validate_open_tar_for_raw_removal,
     validate_post_seal_tar_zst_parity,
 )
+from hpcperfstats.dbload.lib.print_utils import janitorial_logging
 from hpcperfstats.dbload.lib.sync_timedb_ingest_readiness import (
     filter_paths_head_ingested,
 )
@@ -394,18 +395,19 @@ class _DayRawRemovalState:
     )
     quarantine_n = self._count_quarantine_accrual_paths_on_disk()
     sealed = "ok" if sealed_ok else "missing"
-    self.log_fn(
-        "sync_timedb: tar_drop_skip day=%s reason=%s remaining_n=%d "
-        "quarantine_n=%d sealed=%s validation=ok"
-        % (
-            self.day_date.isoformat(),
-            reason,
-            remaining_n,
-            quarantine_n,
-            sealed,
-        ),
-        flush=True,
-    )
+    with janitorial_logging():
+      self.log_fn(
+          "tar_drop_skip day=%s reason=%s remaining_n=%d "
+          "quarantine_n=%d sealed=%s validation=ok"
+          % (
+              self.day_date.isoformat(),
+              reason,
+              remaining_n,
+              quarantine_n,
+              sealed,
+          ),
+          flush=True,
+      )
 
   def try_finish_tar_drop_if_ready(self) -> bool:
     """Drop ``.tar`` when sealed and no closed raw files remain on disk."""
@@ -1439,6 +1441,32 @@ def run_supervisor_day_raw_removal_delete_pass(
 
   Returns True when the caller should keep spinning the delete driver.
   """
+  with janitorial_logging():
+    return _run_supervisor_day_raw_removal_delete_pass_inner(
+        day_raw_removal,
+        day_close_manifest,
+        chunk_in_progress=chunk_in_progress,
+        chunk_calendar_day_hint=chunk_calendar_day_hint,
+        finalize_day_close_delete=finalize_day_close_delete,
+        sleep_fn=sleep_fn,
+        log_chunk_wait=log_chunk_wait,
+        on_delete_batch_begin=on_delete_batch_begin,
+        on_delete_batch_end=on_delete_batch_end,
+    )
+
+
+def _run_supervisor_day_raw_removal_delete_pass_inner(
+    day_raw_removal,
+    day_close_manifest,
+    *,
+    chunk_in_progress: bool,
+    chunk_calendar_day_hint: Optional[str] = None,
+    finalize_day_close_delete: Callable[[str], None],
+    sleep_fn: Callable[[float], None],
+    log_chunk_wait: Optional[Callable[[Optional[str], int], None]] = None,
+    on_delete_batch_begin: Optional[Callable[[], None]] = None,
+    on_delete_batch_end: Optional[Callable[[], None]] = None,
+) -> bool:
   if day_raw_removal is None or not day_raw_removal.enabled:
     return False
   reopen_fn = getattr(
@@ -1465,7 +1493,7 @@ def run_supervisor_day_raw_removal_delete_pass(
     still_present = [t for t in tar_drop_targets if os.path.isfile(t)]
     if still_present:
       day_raw_removal.log_fn(
-          "sync_timedb: tar_drop_deferred oldest=%s count=%d"
+          "tar_drop_deferred oldest=%s count=%d"
           % (still_present[0], len(still_present)),
           flush=True,
       )

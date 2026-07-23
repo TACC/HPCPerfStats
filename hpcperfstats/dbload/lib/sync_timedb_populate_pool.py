@@ -61,7 +61,7 @@ class PopulatePoolController:
     for index in range(n_workers):
       self._spawn_one(index)
     log_print(
-        "sync_timedb: populate-pool started workers=%d"
+        "populate-pool started workers=%d"
         % len(self._processes),
         flush=True,
     )

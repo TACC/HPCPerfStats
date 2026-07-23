@@ -1350,7 +1350,7 @@ def test_continuous_backlog_triggers_forced_maintenance(monkeypatch, tmp_path):
         def log_print_capture(*args, **kwargs):
             line = ' '.join((str(a) for a in args))
             logs.append(line)
-            if 'sync_timedb: maintenance pass reason=startup' in line:
+            if 'maintenance pass reason=startup' in line:
                 shutdown_requested[0] = True
         monkeypatch.setattr(st, 'log_print', log_print_capture)
         monkeypatch.setattr(st, 'sleep_until_shutdown', lambda _s: None)
@@ -1368,7 +1368,7 @@ def test_continuous_backlog_triggers_forced_maintenance(monkeypatch, tmp_path):
             def map_async(self, _fn, _items):
                 return _NeverReady()
         st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _ArchivePoolNeverReady(), run_once=False)
-        assert any(('sync_timedb: maintenance pass reason=startup' in line for line in logs))
+        assert any(('maintenance pass reason=startup' in line for line in logs))
         assert not any(('Archive debt accrual deferred' in line for line in logs))
         assert not any(('Archive janitor accrue reason=' in line for line in logs))
         assert not any(('forced two-phase archive maintenance' in line for line in logs))
@@ -1603,8 +1603,8 @@ def test_chunk_prewarm_logs_begin_and_complete(monkeypatch, tmp_path, capsys):
     _patch_prewarm_populate(monkeypatch)
     st._prewarm_archive_members_redis_for_chunk(paths)
     out = capsys.readouterr().out
-    begin_at = out.find('sync_timedb: chunk prewarm begin')
-    complete_at = out.find('sync_timedb: chunk prewarm complete')
+    begin_at = out.find('chunk prewarm begin')
+    complete_at = out.find('chunk prewarm complete')
     assert begin_at >= 0
     assert complete_at > begin_at
     assert "days=['2026-05-20']" in out
@@ -3459,7 +3459,7 @@ def test_supervisor_startup_log_no_accrual_interval(monkeypatch, tmp_path):
         monkeypatch.setattr(st, 'tgz_archive_dir', str(daily_dir))
         monkeypatch.setattr(st, 'log_print', lambda *args, **kwargs: logs.append(' '.join((str(a) for a in args))))
         st.run_sync_timedb_supervisor_loop(str(archive_dir), 'backlog', None, '.hpc', object(), _FakeArchivePool(), run_once=True)
-        assert any(('sync_timedb: day_close immediate enqueue' in line for line in logs))
+        assert any(('day_close immediate enqueue' in line for line in logs))
         assert not any(('archive janitor accrual interval' in line for line in logs))
     finally:
         shutdown_requested[0] = False
@@ -3594,7 +3594,7 @@ def _supervisor_shutdown_on_startup_idle(monkeypatch):
             state['idle'] = True
         if 'boot handoff discover' in msg:
             shutdown_requested[0] = True
-        elif state['idle'] and 'sync_timedb: pending rescan begin' in msg:
+        elif state['idle'] and 'pending rescan begin' in msg:
             shutdown_requested[0] = True
         return _orig_log(*args, **kwargs)
 

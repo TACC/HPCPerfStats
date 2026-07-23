@@ -42,7 +42,7 @@ from hpcperfstats.dbload.lib.file_locking import (
     file_read_lock_wait,
     file_write_lock,
 )
-from hpcperfstats.dbload.lib.print_utils import log_print
+from hpcperfstats.dbload.lib.print_utils import janitorial_logging, log_print
 
 
 def get_archive_zstd_thread_count():
@@ -564,19 +564,19 @@ def supplement_pending_paths_from_closed_paths(
       replaced = sum(1 for path in capped if path not in before_set)
       if replaced:
         log_fn(
-            "sync_timedb: pending cap supplement replace n=%d pending=%d"
+            "pending cap supplement replace n=%d pending=%d"
             % (replaced, len(capped)),
             flush=True,
         )
       elif supplemented:
         log_fn(
-            "sync_timedb: pending cap supplement from snapshot n=%d pending=%d"
+            "pending cap supplement from snapshot n=%d pending=%d"
             % (supplemented, len(capped)),
             flush=True,
         )
     else:
       log_fn(
-          "sync_timedb: pending cap supplement from snapshot n=%d pending=%d"
+          "pending cap supplement from snapshot n=%d pending=%d"
           % (supplemented, len(capped)),
           flush=True,
       )
@@ -2460,7 +2460,7 @@ def reconcile_orphan_inflight_for_oldest_tar(
       cross_day_reclaimed += 1
   if reclaimed and log_fn is not None:
     msg = (
-        "sync_timedb: orphan inflight reclaim oldest_tar=%s reclaimed_n=%d"
+        "orphan inflight reclaim oldest_tar=%s reclaimed_n=%d"
         % (oldest_tar_norm, len(reclaimed))
     )
     if cross_day_reclaimed:
@@ -2541,7 +2541,7 @@ def age_misbucket_handoff_priority_paths(
     handoff_priority_paths.discard(path)
     if log_fn is not None:
       log_fn(
-          "sync_timedb: handoff_priority_age path=%s source_day=%s "
+          "handoff_priority_age path=%s source_day=%s "
           "derived_day=%s reason=no_daily_archive"
           % (path, source_day, derived_day),
       )
@@ -2591,7 +2591,7 @@ def select_ingest_chunk_paths(
         if handoff_path_lacks_daily_archive(path, tgz_archive_dir):
           if log_fn is not None:
             log_fn(
-                "sync_timedb: handoff_cross_day_skip path=%s reason=no_daily_archive"
+                "handoff_cross_day_skip path=%s reason=no_daily_archive"
                 % path,
             )
           continue
@@ -2608,7 +2608,7 @@ def select_ingest_chunk_paths(
         if handoff_path_lacks_daily_archive(path, tgz_archive_dir):
           if log_fn is not None:
             log_fn(
-                "sync_timedb: handoff_cross_day_skip path=%s reason=no_daily_archive"
+                "handoff_cross_day_skip path=%s reason=no_daily_archive"
                 % path,
             )
           continue
@@ -2668,7 +2668,7 @@ def select_ingest_chunk_paths(
         )
         tar_name = "youngest_tar" if newest_first else "oldest_tar"
         log_fn(
-            "sync_timedb: %s %s=%s "
+            "%s %s=%s "
             "calendar_days=%s incomplete_n=%d pending_n=%d"
             % (
                 gate_name,
@@ -2689,7 +2689,7 @@ def select_ingest_chunk_paths(
         )
         tar_name = "youngest_tar" if newest_first else "oldest_tar"
         log_fn(
-            "sync_timedb: %s %s=%s "
+            "%s %s=%s "
             "calendar_days=%s incomplete_n=%d"
             % (
                 gate_name,
@@ -2708,7 +2708,7 @@ def select_ingest_chunk_paths(
         )
         tar_name = "youngest_tar" if newest_first else "oldest_tar"
         log_fn(
-            "sync_timedb: %s %s=%s "
+            "%s %s=%s "
             "calendar_days=%s incomplete_n=%d"
             % (
                 gate_name,
@@ -2740,7 +2740,7 @@ def select_ingest_chunk_paths(
     )
     tar_name = "youngest_tar" if newest_first else "oldest_tar"
     log_fn(
-        "sync_timedb: %s %s=%s "
+        "%s %s=%s "
         "oldest_n=%d chunk_pad_n=%d chunk_target=%d"
         % (
             gate_name,
@@ -5466,11 +5466,12 @@ def build_remaining_raw_stats_by_daily_gz(
     return dict(maintenance_snapshot.remaining_raw_by_gz or {})
   if not allow_full_snapshot:
     if log_fn:
-      log_fn(
-          "sync_timedb: remaining_raw skip full snapshot "
-          "(allow_full_snapshot=False; prefer day-scoped or published snapshot)",
-          flush=True,
-      )
+      with janitorial_logging():
+        log_fn(
+            "remaining_raw skip full snapshot "
+            "(allow_full_snapshot=False; prefer day-scoped or published snapshot)",
+            flush=True,
+        )
     return {}
   from hpcperfstats.dbload.lib.sync_timedb_archive_maint import (
       build_archive_maintenance_snapshot,
@@ -5534,12 +5535,13 @@ def build_day_scoped_closed_raw_by_gz(
     return {}
   zst_path, _gz_path = compressed_sibling_paths(tar_norm)
   if log_fn:
-    log_fn(
-        "sync_timedb: day-scoped closed_raw tar=%s paths=%d "
-        "(no full maintenance snapshot)"
-        % (os.path.basename(tar_norm), len(aligned)),
-        flush=True,
-    )
+    with janitorial_logging():
+      log_fn(
+          "day-scoped closed_raw tar=%s paths=%d "
+          "(no full maintenance snapshot)"
+          % (os.path.basename(tar_norm), len(aligned)),
+          flush=True,
+      )
   return {zst_path: aligned}
 
 
@@ -7338,7 +7340,7 @@ def rescan_pending_stats_files(
         and (index + 1) % progress_interval == 0
     ):
       log_fn(
-          "sync_timedb: pending rescan progress filtered_n=%d/%d elapsed_s=%.1f"
+          "pending rescan progress filtered_n=%d/%d elapsed_s=%.1f"
           % (
               index + 1,
               total,

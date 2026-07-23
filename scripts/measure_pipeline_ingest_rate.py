@@ -6,7 +6,8 @@ only summary outcome lines to stdout. Errors and caveats go to stderr.
 
 Backlog fields (backlog_at_start / backlog_latest / drained / empirical ETA) use
 **on-disk pending census only**:
-  - ``sync_timedb: pending rescan done pending=N`` (uncapped before queue cap)
+  - ``pending rescan done pending=N`` (uncapped before queue cap; optional
+    historical ``sync_timedb:`` / ``ingest:`` body prefixes)
   - ``Pending stats file list truncated pending=N max=M`` (uncapped N at truncate)
 
 Do **not** mix those with ``Throughput telemetry … backlog=N``, which is capped
@@ -66,13 +67,13 @@ _FULL_INGEST_RE = re.compile(
     r"(?=.*\bingest_ok=yes\b)(?=.*\bdb_skip=no\b)"
 )
 _CHUNK_IMMEDIATE_RE = re.compile(
-    r"sync_timedb: chunk ingest summary .*checkpoint_immediate_n=(\d+)"
+    r"(?:sync_timedb:\s+)?(?:ingest:\s+)?chunk ingest summary .*checkpoint_immediate_n=(\d+)"
 )
 _ARCHIVE_FINALIZE_RE = re.compile(
-    r"sync_timedb: checkpoint deferred archive finalize count=(\d+)"
+    r"(?:sync_timedb:\s+)?(?:ingest:\s+)?checkpoint deferred archive finalize count=(\d+)"
 )
 _PENDING_RESCAN_RE = re.compile(
-    r"sync_timedb: pending rescan done pending=(\d+)"
+    r"(?:sync_timedb:\s+)?(?:ingest:\s+)?pending rescan done pending=(\d+)"
 )
 _PENDING_TRUNCATE_RE = re.compile(
     r"Pending stats file list truncated pending=(\d+) max=(\d+)"
@@ -85,7 +86,7 @@ _BOOT_MARKERS = (
 )
 # Used only when no ingest-gate line is present in the log dump.
 _INGEST_START_FALLBACK_MARKERS = (
-    "sync_timedb: chunk imap start",
+    "chunk imap start",
 )
 # Disk pending ≫ queue depth by at least this factor → saturation WARN.
 _QUEUE_SATURATION_DISK_FACTOR = 2

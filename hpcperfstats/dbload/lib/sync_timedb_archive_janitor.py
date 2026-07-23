@@ -52,6 +52,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_maint import (
     snapshot_host_dirs_from_paths,
     snapshot_paths_hint_entries,
 )
+from hpcperfstats.dbload.lib.print_utils import janitorial_logging
 from hpcperfstats.dbload.lib.process_memory import read_process_rss_bytes
 from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
 from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
@@ -1412,21 +1413,22 @@ class ArchiveJanitor:
     role = "day-close-%d" % (role_id % max(1, self._day_close_pool_size))
 
     def _run():
-      set_daemon_thread_title(
-          "", script_name=self.process_title, role=role,
-      )
-      close_old_connections()
-      try:
-        tick_stats = {"days_started": 0}
-        return self._process_debt_item(
-            debt,
-            snapshot=snapshot,
-            validation_cache=validation_cache,
-            disqualified=disqualified,
-            tick_stats=tick_stats,
+      with janitorial_logging():
+        set_daemon_thread_title(
+            "", script_name=self.process_title, role=role,
         )
-      finally:
         close_old_connections()
+        try:
+          tick_stats = {"days_started": 0}
+          return self._process_debt_item(
+              debt,
+              snapshot=snapshot,
+              validation_cache=validation_cache,
+              disqualified=disqualified,
+              tick_stats=tick_stats,
+          )
+        finally:
+          close_old_connections()
 
     future = pool.submit(_run)
     with self._day_close_in_flight_lock:
@@ -1539,6 +1541,10 @@ class ArchiveJanitor:
     return blocking
 
   def _run_tick_body(self):
+    with janitorial_logging():
+      self._run_tick_body_inner()
+
+  def _run_tick_body_inner(self):
     set_daemon_thread_title(
         "", script_name=self.process_title, role="archive-janitor")
     self._tick_depth += 1
