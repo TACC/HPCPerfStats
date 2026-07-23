@@ -27,6 +27,7 @@ def test_job_hist_empty_bins_do_not_use_inverted_quads():
     df = pd.DataFrame({"runtime": [0.0, 0.0, 0.0, 100.0, 100.0, 100.0]})
     plot = job_hist(df, "runtime", "hours", width=280, height=200)
     assert plot is not None
+    assert plot.title.align == "center"
     tops = plot.renderers[0].data_source.data["top"]
     assert min(float(x) for x in tops) == 0.0
     assert max(float(x) for x in tops) >= 1.0

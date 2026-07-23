@@ -78,6 +78,7 @@ def job_hist(df, metric, label, width=600, height=400, title=None):
         width=width,
         y_range=(y_min, y_max),
     )
+    plot.title.align = "center"
     plot.xaxis.axis_label = label
     plot.yaxis.axis_label = "# jobs"
     plot.quad(top=hist, bottom=0, left=edges[:-1], right=edges[1:])

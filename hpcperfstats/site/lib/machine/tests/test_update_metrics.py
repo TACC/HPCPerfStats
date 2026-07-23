@@ -943,7 +943,15 @@ def test_compute_jid_outcomes_batch_calls_metrics_run_once(monkeypatch):
 
 @pytest.mark.machine_unit_mock
 def test_compute_jid_outcomes_batch_skip_prewarm_skips_plot_submit(monkeypatch):
+  """skip_prewarm skips plot pipeline submit but still persists job-detail artifacts."""
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: True)
+  detail_jids = []
+
+  def _persist(jid, context=None):
+    del context
+    detail_jids.append(jid)
+
+  monkeypatch.setattr(update_metrics, "persist_job_detail_artifacts_for_jid", _persist)
 
   class _M:
     def ensure_pool(self, pool_kind="metrics-pool"):
@@ -951,16 +959,57 @@ def test_compute_jid_outcomes_batch_skip_prewarm_skips_plot_submit(monkeypatch):
 
     def run(self, job_refs, pool=None):
       del pool
+      return [{
+          "jid": ref.jid,
+          "ok": True,
+          "status": "ok",
+          "error_type": None,
+          "error_message": None,
+          "persist_s": 0.0,
+      } for ref in job_refs]
 
   pipe = MagicMock()
   out = update_metrics._compute_jid_outcomes_batch(
-      [SimpleNamespace(jid="only")],
+      [SimpleNamespace(jid="only", artifact_only=False)],
       _M(),
       pipe,
       None,
   )
   pipe.submit.assert_not_called()
+  assert detail_jids == ["only"]
   assert [d["jid"] for d in out] == ["only"]
+  assert out[0]["ok"] is True
+
+
+@pytest.mark.machine_unit_mock
+def test_compute_jid_outcomes_batch_skip_prewarm_persists_artifact_only(monkeypatch):
+  """artifact_only + skip_prewarm must still write detail artifacts (no Metrics.run)."""
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: True)
+  detail_jids = []
+  monkeypatch.setattr(
+      update_metrics,
+      "persist_job_detail_artifacts_for_jid",
+      lambda jid, context=None: detail_jids.append(jid),
+  )
+
+  class _M:
+    def ensure_pool(self, pool_kind="metrics-pool"):
+      return None
+
+    def run(self, job_refs, pool=None):
+      raise AssertionError("artifact_only must not call Metrics.run")
+
+  pipe = MagicMock()
+  out = update_metrics._compute_jid_outcomes_batch(
+      [SimpleNamespace(jid="art-only", artifact_only=True)],
+      _M(),
+      pipe,
+      None,
+  )
+  pipe.submit.assert_not_called()
+  assert detail_jids == ["art-only"]
+  assert out[0]["ok"] is True
+  assert out[0]["jid"] == "art-only"
 
 
 @pytest.mark.machine_unit_mock

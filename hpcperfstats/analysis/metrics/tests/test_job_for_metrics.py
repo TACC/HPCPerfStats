@@ -32,8 +32,11 @@ class _FakeJidTable:
         {"host": "host1", "time": "2024-01-01T00:00:00Z", "type": "mem", "event": "used", "value": 100},
     ]
     df = pd.DataFrame(data)
-    # Ensure only requested columns are returned
-    return df[columns]
+    # Ensure only requested columns are returned; fill missing (e.g. arc).
+    for col in columns:
+      if col not in df.columns:
+        df[col] = np.nan
+    return df[list(columns)]
 
 
 class _FakeJidTableSparseSlowTier:
@@ -55,7 +58,11 @@ class _FakeJidTableSparseSlowTier:
         {"host": "host1", "time": "2024-01-01T00:10:00Z",
          "type": "host_tt", "event": "b", "value": 2500.0},
     ]
-    return pd.DataFrame(data)[columns]
+    df = pd.DataFrame(data)
+    for col in columns:
+      if col not in df.columns:
+        df[col] = np.nan
+    return df[list(columns)]
 
 
 def test_job_for_metrics_sparse_slow_tier_uses_nan_not_zero_fill():
@@ -121,7 +128,11 @@ class _FakeJidTableListyLabels:
         {"host": "host1", "time": "2024-01-01T00:05:00Z",
          "type": ["cpu", "lane"], "event": ["system"], "value": 6.0},
     ]
-    return pd.DataFrame(data)[columns]
+    df = pd.DataFrame(data)
+    for col in columns:
+      if col not in df.columns:
+        df[col] = np.nan
+    return df[list(columns)]
 
 
 def test_job_for_metrics_coerces_list_like_labels_before_groupby():

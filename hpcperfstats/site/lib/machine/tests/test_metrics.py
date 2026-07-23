@@ -28,6 +28,7 @@ from hpcperfstats.analysis.metrics.lib.metrics import (
     job_metrics_catalog_entries,
     max_fabricbw,
     max_gpu_clock_event_reasons,
+    max_gpu_link_gbps,
     max_gpu_power,
     max_mds,
     max_packetrate,
@@ -816,6 +817,7 @@ def test_avg_cpuusage_sums_per_host_means():
   assert value == pytest.approx(4.0)
 
 
+@pytest.mark.machine_unit_mock
 def test_max_packetrate_falls_back_to_ethernet():
   """max_packetrate uses net tx/rx packet rate when IB and OPA are absent."""
   schema = _Schema(["tx_packets", "rx_packets"])
@@ -823,7 +825,7 @@ def test_max_packetrate_falls_back_to_ethernet():
 
   class MockU:
     t = np.array([0.0, 10.0, 20.0], dtype=np.float64)
-    job = type("J", (), {"cluster_mean_by_type": {}})()
+    job = type("J", (), {"cluster_mean_by_type": {}, "cluster_mean_arc_by_type": {}})()
 
     def get_type(self, typename):
       if typename in ("host_ib", "opa"):
@@ -836,6 +838,79 @@ def test_max_packetrate_falls_back_to_ethernet():
   assert value == pytest.approx(14.0)
   assert typename == "net"
   assert units == "#/s"
+
+
+@pytest.mark.machine_unit_mock
+def test_max_packetrate_rejects_uint64_wrap_poison():
+  """Counter wrap (~2^63 packets / dt) must not become a huge peak rate."""
+  schema = _Schema(["port_xmit_pkts", "port_rcv_pkts"])
+  # Jump of 2**63 packets in 1s → ~9e18 #/s without sanity clamp.
+  stats = np.array([[0.0, 0.0], [float(2**63), 0.0]], dtype=np.float64)
+
+  class MockU:
+    t = np.array([0.0, 1.0], dtype=np.float64)
+    job = type("J", (), {"cluster_mean_by_type": {}, "cluster_mean_arc_by_type": {}})()
+
+    def get_type(self, typename):
+      if typename == "host_ib":
+        return schema, {"h1": stats}
+      return None, {}
+
+  value, typename, units = max_packetrate().compute_metric(MockU())
+  assert value is None
+  assert typename == "host_ib"
+  assert units == "#/s"
+
+
+@pytest.mark.machine_unit_mock
+def test_max_gpu_link_gbps_rejects_uint64_wrap_poison():
+  """``2**64 / 1e9``-class GPU link peaks must become no_data, not ~1.84e10 GB/s."""
+  schema = _Schema(["gpu_io_link_total_bytes"])
+  stats = np.array([[0.0], [float(2**64)]], dtype=np.float64)
+
+  class MockU:
+    t = np.array([0.0, 1.0], dtype=np.float64)
+    job = type("J", (), {"cluster_mean_by_type": {}, "cluster_mean_arc_by_type": {}})()
+
+    def get_type(self, typename):
+      if typename == "nvidia_gpu":
+        return schema, {"h1": stats}
+      return None, {}
+
+  value, typename, units = max_gpu_link_gbps().compute_metric(MockU())
+  assert value is None
+  assert typename == "nvidia_gpu"
+  assert units == "GB/s"
+
+
+@pytest.mark.machine_unit_mock
+def test_max_gpu_link_gbps_prefers_sane_arc_over_poison_value_diff():
+  """When ingest arc is present and sane, prefer it over wrap poisoned value dy/dt."""
+  schema = _Schema(["gpu_io_link_total_bytes"])
+  # Poisoned counters, but cluster arc says 12e9 bytes/s → 12 GB/s.
+  stats = np.array([[0.0], [float(2**63)]], dtype=np.float64)
+  arc_cm = np.array([[12e9], [12e9]], dtype=np.float64)
+
+  class MockU:
+    t = np.array([0.0, 1.0], dtype=np.float64)
+    job = type(
+        "J",
+        (),
+        {
+            "cluster_mean_by_type": {},
+            "cluster_mean_arc_by_type": {"nvidia_gpu": arc_cm},
+        },
+    )()
+
+    def get_type(self, typename):
+      if typename == "nvidia_gpu":
+        return schema, {"h1": stats}
+      return None, {}
+
+  value, typename, units = max_gpu_link_gbps().compute_metric(MockU())
+  assert value == pytest.approx(12.0)
+  assert typename == "nvidia_gpu"
+  assert units == "GB/s"
 
 
 def test_avg_gpuutil_amd_gpu_uses_gpu_util_column():

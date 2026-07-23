@@ -472,12 +472,56 @@ def _per_interval_rate(values, t):
   return out
 
 
-def _peak_interval_rate_from_cluster_mean(u, typename, column_indices, divisor):
-  """Peak dy/dt from sum of host-averaged columns at each global timestamp.
+# Reject counter-wrap poison (~2^63/dt or ~2^64/dt). Ceilings are far above any
+# physical fabric/GPU-link rate but well below uint64-wrap /1e9 display poison.
+_MAX_SANE_PACKETRATE = 1.0e10  # packets/s
+_MAX_SANE_GPU_LINK_GBPS = 1.0e5  # GB/s
 
-  Uses ``job.cluster_mean_by_type[typename]`` (see ``_JobForMetrics``). Falls
-  back is left to callers when this returns None.
+
+def _sane_peak_from_rates(rates, *, divisor=1.0, max_sane=None):
+  """Return max positive finite rate after optional physical ceiling, else None."""
+  fin = np.asarray(rates, dtype=np.float64)
+  fin = fin[np.isfinite(fin)]
+  if fin.size == 0:
+    return None
+  div = float(divisor) if divisor else 1.0
+  scaled = fin / div
+  positive = scaled[scaled > 0]
+  if positive.size == 0:
+    return None
+  if max_sane is not None:
+    positive = positive[positive <= float(max_sane)]
+    if positive.size == 0:
+      return None
+  return float(positive.max())
+
+
+def _peak_from_cluster_arc(u, typename, column_indices, divisor, max_sane=None):
+  """Peak of host-averaged ingest ``arc`` (already a rate) when available."""
+  cmap = getattr(u.job, "cluster_mean_arc_by_type", None) or {}
+  cm = cmap.get(typename)
+  if cm is None or cm.size == 0:
+    return None
+  s = np.zeros(cm.shape[0], dtype=np.float64)
+  for j in column_indices:
+    if j < 0 or j >= cm.shape[1]:
+      return None
+    s = s + cm[:, j]
+  return _sane_peak_from_rates(s, divisor=divisor, max_sane=max_sane)
+
+
+def _peak_interval_rate_from_cluster_mean(
+    u, typename, column_indices, divisor, max_sane=None):
+  """Peak rate from cluster means: prefer ``arc``, else dy/dt on ``value``.
+
+  Uses ``job.cluster_mean_arc_by_type`` / ``cluster_mean_by_type`` (see
+  ``_JobForMetrics``). ``max_sane`` is in the same units as the returned peak
+  (after ``divisor``). Returns None when only wrap-class poison remains.
   """
+  arc_peak = _peak_from_cluster_arc(
+      u, typename, column_indices, divisor, max_sane=max_sane)
+  if arc_peak is not None:
+    return arc_peak
   cmap = getattr(u.job, "cluster_mean_by_type", None) or {}
   cm = cmap.get(typename)
   if cm is None or cm.size == 0 or cm.shape[0] < 2:
@@ -488,13 +532,7 @@ def _peak_interval_rate_from_cluster_mean(u, typename, column_indices, divisor):
       return None
     s = s + cm[:, j]
   ratio = _per_interval_rate(s, u.t)
-  fin = ratio[np.isfinite(ratio)]
-  if fin.size == 0:
-    return None
-  peak = float(fin.max())
-  if divisor:
-    peak = peak / float(divisor)
-  return peak if peak > 0 else None
+  return _sane_peak_from_rates(ratio, divisor=divisor, max_sane=max_sane)
 
 
 class _EventIndex:
@@ -629,16 +667,19 @@ class _JobForMetrics:
     # global timestamp (for peak interval-rate metrics; avoids bogus diffs when
     # nodes share a time axis but sparse samples per host).
     self.cluster_mean_by_type = {}
+    # Same shape as cluster_mean_by_type but from ingest ``arc`` (already rates).
+    self.cluster_mean_arc_by_type = {}
     self.acct = {"cores": 1, "nodes": 1}
 
     df = jt.get_full_host_data_df(
-        columns=["host", "time", "type", "event", "value"])
+        columns=["host", "time", "type", "event", "value", "arc"])
     # If there is no time information, we cannot build a valid time axis; treat
     # as no data for this job (avoids KeyError when sorting by missing column).
     if df.empty or "time" not in df.columns:
       self.times = np.array([])
       self.per_host_distinct_time_sum = 0
       self.cluster_mean_by_type = {}
+      self.cluster_mean_arc_by_type = {}
       return
 
     # Global sorted time axis.
@@ -702,6 +743,24 @@ class _JobForMetrics:
         self.cluster_mean_by_type[typename] = np.full(
             (len(times_index), len(events)), np.nan, dtype=np.float64
         )
+      if "arc" in type_df.columns:
+        try:
+          arc_pivot = (
+              type_df[["time", "event", "arc"]]
+              .groupby(["time", "event"])["arc"]
+              .mean()
+              .unstack(fill_value=np.nan)
+          )
+          arc_pivot = arc_pivot.reindex(
+              index=times, fill_value=np.nan
+          ).reindex(columns=events, fill_value=np.nan)
+          self.cluster_mean_arc_by_type[typename] = np.ascontiguousarray(
+              arc_pivot.values, dtype=np.float64
+          )
+        except (ValueError, KeyError):
+          self.cluster_mean_arc_by_type[typename] = np.full(
+              (len(times_index), len(events)), np.nan, dtype=np.float64
+          )
 
       for host, host_df in type_df.groupby("host"):
         host_obj = self.hosts[host]
@@ -2807,15 +2866,16 @@ class max_packetrate():
         tx, rx = schema["tx_packets"].index, schema["rx_packets"].index
 
     cluster_peak = _peak_interval_rate_from_cluster_mean(
-        u, typename, [tx, rx], 1)
+        u, typename, [tx, rx], 1, max_sane=_MAX_SANE_PACKETRATE)
     if cluster_peak is not None:
       return cluster_peak, typename, '#/s'
 
     for hostname, stats in _stats.items():
       ratio = _per_interval_rate(_add_arrays(stats[:, tx], stats[:, rx]), u.t)
-      fin = ratio[np.isfinite(ratio)]
-      if fin.size > 0:
-        max_pr = max(max_pr, fin.max())
+      peak = _sane_peak_from_rates(
+          ratio, divisor=1.0, max_sane=_MAX_SANE_PACKETRATE)
+      if peak is not None:
+        max_pr = max(max_pr, peak)
     if max_pr == 0:
       return None, typename, '#/s'
     value = max_pr
@@ -3083,18 +3143,19 @@ class max_gpu_link_gbps():
       return None, typename, "GB/s"
     j = schema["gpu_io_link_total_bytes"].index
     cluster_peak = _peak_interval_rate_from_cluster_mean(
-        u, typename, [j], 1e9)
+        u, typename, [j], 1e9, max_sane=_MAX_SANE_GPU_LINK_GBPS)
     if cluster_peak is not None:
       return cluster_peak, typename, "GB/s"
     max_bw = 0.0
     for hostname, stats in _stats.items():
       ratio = _per_interval_rate(stats[:, j], u.t)
-      fin = ratio[np.isfinite(ratio)]
-      if fin.size > 0:
-        max_bw = max(max_bw, float(fin.max()))
+      peak = _sane_peak_from_rates(
+          ratio, divisor=1e9, max_sane=_MAX_SANE_GPU_LINK_GBPS)
+      if peak is not None:
+        max_bw = max(max_bw, peak)
     if max_bw <= 0:
       return None, typename, "GB/s"
-    return max_bw / 1e9, typename, "GB/s"
+    return max_bw, typename, "GB/s"
 
 
 class max_gpu_clock_event_reasons():

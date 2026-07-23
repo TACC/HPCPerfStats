@@ -42,6 +42,12 @@ If the failure reveals a **recurring** gap (not a one-off typo), also add a one-
 - Duplicate command blocks that already failed in an earlier plan for the same site.
 - Treat `ls *.fnctl.lock` / sidecar presence as a held lock — orphans are common; `fuser` often missing in pipeline image; use `try_file_write_lock` (see **Podman-compose sites** `fnctl.lock` row in `compose-operator-terminal-commands.mdc`).
 - `docker compose … up -d web` after a crash-loop on **podman-compose** — **name already in use** / exit **125**; use `podman start hpcperfstats_web_1` or `podman rm -f` then up (see **Podman-compose sites** in `compose-operator-terminal-commands.mdc`).
+- Treating `job_data.host_list` as a CSV `text` — **`btrim(text[]) does not exist`** (hpcperfstats03 2026-07-23); column is **`text[]`** — use `hd.host = ANY (j.host_list)` / `unnest(host_list)` (see **Anti-pattern — `job_data.host_list` is `text[]`** in `compose-operator-terminal-commands.mdc`).
+- Broad `host_data` wall-clock scans with **`ILIKE '%…%'`** / multi-host **`ANY(host_list)`** / **`OR hd.jid`** — **`canceling statement due to statement timeout`** (hpcperfstats03 2026-07-23); use **one host** (`host_list[1]`), exact `type`/`event` lists, and `SET statement_timeout` (see **Corrected — host_data …** in `compose-operator-terminal-commands.mdc`).
+- One-host exact-event **`GROUP BY` over full accounting `start`/`end`** still timed out at **120s** on a long job (hpcperfstats03 2026-07-23 JID 857260); use **telemetry time bounds** + **single event** + **`ORDER BY time DESC LIMIT N`**, or rely on **`metrics_data`** when already poisoned (see **Corrected — host_data poison / event probe** in `compose-operator-terminal-commands.mdc`).
+- Even **telemetry+LIMIT 20** one-host probes can **still timeout at 60s** (hpcperfstats03 2026-07-23 finding #7); when poison is already in **`metrics_data`**, skip raw `host_data` entirely (see **Anti-pattern — assume telemetry+LIMIT always finishes**).
+- No-artifact prevalence cohorts without **`metrics_distinct_time_count__gte=N`** measure incomplete-metrics noise, not 857260-class gaps (see **Anti-pattern — no-artifact cohorts without metrics readiness**).
+- Nested multi-line `manage.py shell -c` pastes can **mangle trailing queries** on podman-compose (hpcperfstats03 2026-07-23); prefer short scripts / fewer nested escapes (see **Anti-pattern — fragile nested `manage.py shell -c` pastes**).
 
 ## Same-task checklist
 

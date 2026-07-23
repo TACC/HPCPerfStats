@@ -214,6 +214,57 @@ docker compose logs pipeline
 
 Match **`README.md`** *Useful commands* and **`readme-installation-sync.mdc`** (`docker compose exec <service>` over hardcoded container names).
 
+### Anti-pattern — `job_data.host_list` is `text[]`, not a CSV string
+
+`job_data.host_list` is Django **`ArrayField`** → Postgres **`text[]`**. Operator SQL that does `trim(host_list)` / `string_to_array(host_list, ',')` fails with **`function pg_catalog.btrim(text[]) does not exist`** (hpcperfstats03, 2026-07-23).
+
+| Do | Don't |
+|----|-------|
+| `hd.host = ANY (j.host_list)` | `trim(both from j.host_list)` |
+| `unnest(j.host_list)` when you need one row per host | `string_to_array(j.host_list, ',')` |
+
+**Corrected — host_data poison / event probe (cheapest first):**
+
+`host_data` is a Timescale hypertable with **`(host, time DESC)`**. Even **one-host + exact `type`/`event` `GROUP BY` over full accounting `start_time`/`end_time`** can still hit **`canceling statement due to statement timeout`** at 120s on long jobs (hpcperfstats03, 2026-07-23, JID 857260, `metrics_distinct_time_count≈2745`). Prefer:
+
+1. Print **`job_data`** metadata only (instant).
+2. Use **`COALESCE(telemetry_first_time, start_time)` / `COALESCE(telemetry_last_time, end_time)`**.
+3. Probe **one** `(type, event)` with **`ORDER BY time DESC LIMIT N`** (no full-window aggregate).
+4. If poison is already confirmed in **`metrics_data`**, skip raw `host_data` and use the **web** cohort instead.
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec db psql -h localhost -U hpcperfstats -c "
+SELECT jid, start_time, end_time, telemetry_first_time, telemetry_last_time,
+       host_list[1] AS host0, cardinality(host_list) AS nhosts,
+       metrics_distinct_time_count
+FROM job_data WHERE jid = 'REPLACE_WITH_JOB_ID';
+" -c "
+SET statement_timeout = '60s';
+WITH j AS (
+  SELECT COALESCE(telemetry_first_time, start_time) AS t0,
+         COALESCE(telemetry_last_time, end_time) AS t1,
+         host_list[1] AS host0
+  FROM job_data WHERE jid = 'REPLACE_WITH_JOB_ID'
+)
+SELECT hd.time, hd.host, hd.type, hd.event, hd.value, hd.arc
+FROM host_data hd CROSS JOIN j
+WHERE hd.host = j.host0
+  AND hd.time >= j.t0 AND hd.time <= j.t1
+  AND hd.type = 'nvidia_gpu'
+  AND hd.event = 'gpu_io_link_total_bytes'
+ORDER BY hd.time DESC
+LIMIT 20;
+"
+```
+
+**Anti-pattern — broad `host_data` discovery with `ILIKE` / multi-host `ANY` / full-window `GROUP BY`:** do not ship Pending `db` blocks that `ILIKE '%gpu%'`, scan all job hosts, or aggregate every sample in a multi-day accounting window; use the cheapest-first pattern above.
+
+**Anti-pattern — assume telemetry+LIMIT always finishes:** even the corrected one-host `ORDER BY time DESC LIMIT 20` probe can still hit **`statement timeout`** at 60s on large hypertables (hpcperfstats03, 2026-07-23, finding #7). When **`metrics_data` already shows poison** (e.g. `max_gpu_link_gbps≈2^63/1e9` or `≈2^64/1e9`, `max_packetrate≫1e11`), **abandon raw `host_data`** for that diagnosis and continue from **`metrics_data` / web ORM** only.
+
+**Anti-pattern — no-artifact cohorts without metrics readiness:** listing jobs with empty `job_detail_artifact` ordered only by `-end_time` is dominated by **metrics-incomplete** rows (`metrics_distinct_time_count` None/0). Filter **`metrics_distinct_time_count__gte=N`** (site ops used **N=100**) to measure the **metrics-ready missing-detail** gap (857260-class).
+
+**Anti-pattern — fragile nested `manage.py shell -c` pastes:** multi-line `python … manage.py shell -c "…"` with nested escaped quotes through podman-compose often **mangles trailing queries** on paste (hpcperfstats03, 2026-07-23). Prefer a **short script file** in the container, or **one** `su hpcperfstats -c 'python3 -c "…"'` with minimal nesting (see **Podman-compose sites** nested-quoting rows).
+
 ## Container introspection tools (pipeline / web image)
 
 The **`hpcperfstats-base`** image ( **`pipeline`**, **`web`**, and siblings built from root **`Dockerfile`**) ships these **read-only diagnostic** tools. Prefer them over asking the operator to install packages on the host.

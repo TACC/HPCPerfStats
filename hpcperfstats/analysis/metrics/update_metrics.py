@@ -2940,8 +2940,9 @@ def _compute_jid_outcomes_batch(
   A single ``Metrics.run(job_refs, …)`` saturates the process pool; prewarm
   uses ``_PrewarmPipeline.submit`` + ``drain_some`` when ``pipeline_required``,
   or runs inline when configured. Set ``[PIPELINE] metrics_scheduler_skip_prewarm``
-  (or env ``HPCPERFSTATS_METRICS_SCHEDULER_SKIP_PREWARM``) to skip plot/detail
-  persistence for catch-up runs.
+  (or env ``HPCPERFSTATS_METRICS_SCHEDULER_SKIP_PREWARM``) to skip **plot**
+  persistence for catch-up runs; **job_detail / multiprecision** artifacts are
+  still persisted inline so Job Detail GPU/Mix surfaces are not left empty.
 
   When ``batch_timing`` is a dict, it is populated with ``metrics_wall_s``,
   ``prewarm_wall_s``, and ``batch_wall_s`` for scheduler watchdogs.
@@ -2965,8 +2966,8 @@ def _compute_jid_outcomes_batch(
   ]
   t_batch = time.monotonic()
   timing = {} if batch_timing is None else batch_timing
+  n = len(job_refs)
   if cfg.get_metrics_per_jid_phase_diagnostics_enabled():
-    n = len(job_refs)
     head = min(24, n)
     jids_head = ",".join(r.jid for r in job_refs[:head])
     ao_head = ",".join(
@@ -2975,9 +2976,9 @@ def _compute_jid_outcomes_batch(
     )
     suffix = "" if n <= head else " …(+{0} more)".format(n - head)
     log_print(
-      "metrics scheduler: phase=batch_compute size={0} jids[{1}]={2}{3} "
-      "artifact_only[{1}]={4}".format(n, head, jids_head, suffix, ao_head),
-      flush=True,
+        "metrics scheduler: phase=batch_compute size={0} jids[{1}]={2}{3} "
+        "artifact_only[{1}]={4}".format(n, head, jids_head, suffix, ao_head),
+        flush=True,
     )
   metrics_run_outcomes = []
   t_metrics_start = None
@@ -3193,15 +3194,32 @@ def _compute_jid_outcomes_batch(
     if base_outcome.get("ok"):
       successful_refs.append(ref)
   if skip_prewarm:
-    timing["prewarm_wall_s"] = 0.0
+    # Catch-up mode skips plot prewarm submit/drain, but Job Detail still needs
+    # job_detail + multiprecision_mix rows (SPA is artifact-only).
+    t_detail = time.monotonic()
+    for job_ref in successful_refs:
+      if shutdown_requested[0]:
+        break
+      try:
+        persist_job_detail_artifacts_for_jid(job_ref.jid)
+      except Exception as exc:
+        log_print(
+            "metrics scheduler: skip_prewarm detail persist failed "
+            "jid={0}; continuing: {1}".format(job_ref.jid, exc),
+            flush=True,
+        )
+    detail_elapsed = max(0.0, time.monotonic() - t_detail)
+    timing["prewarm_wall_s"] = detail_elapsed
     timing["batch_wall_s"] = max(0.0, time.monotonic() - t_batch)
     ordered = sorted(normalized, key=lambda item: item[0].jid)
+    batch_n = max(1, len(job_refs))
+    per_detail = detail_elapsed / batch_n
     return [
         _scheduler_jid_outcome(
             ok=bool(base_outcome.get("ok")),
             jid=ref.jid,
             metrics_s=(0.0 if bool(getattr(ref, "artifact_only", False)) else per_metrics),
-            prewarm_s=0.0,
+            prewarm_s=(per_detail if base_outcome.get("ok") else 0.0),
             telemetry=telem,
             batch_exception=False,
             fallback_failed=False,
