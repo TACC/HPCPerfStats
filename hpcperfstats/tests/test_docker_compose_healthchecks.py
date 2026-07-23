@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -80,6 +81,25 @@ def test_docker_compose_proxy_bakes_default_conf_and_mounts_shared_includes():
   assert (repo_root / "services-conf" / "parse_hpcperfstats_proxy_hosts.py").exists()
   assert (repo_root / "services-conf" / "write_nginx_proxy_allowed_hosts_include.py").exists()
   assert (repo_root / "services-conf" / "nginx.conf.example").exists()
+
+
+def test_proxy_dockerfile_pins_nginx_and_brotli_to_same_edge_version():
+  """Regression: apk world[nginx=X] breaks when Alpine edge advances; bump ARG intentionally."""
+  repo_root = Path(__file__).resolve().parents[2]
+  dockerfile = (repo_root / "services-conf" / "proxy.Dockerfile").read_text()
+  match = re.search(
+    r"^ARG NGINX_EDGE_VERSION=([0-9]+\.[0-9]+\.[0-9]+-r[0-9]+)\s*$",
+    dockerfile,
+    flags=re.MULTILINE,
+  )
+  assert match is not None, "proxy.Dockerfile must pin NGINX_EDGE_VERSION"
+  pinned = match.group(1)
+  # Current Alpine edge main (x86_64) nginx + nginx-mod-http-brotli; bump both ARG and this assert.
+  assert pinned == "1.30.4-r2"
+  assert "nginx=${NGINX_EDGE_VERSION}" in dockerfile
+  assert "nginx-mod-http-brotli=${NGINX_EDGE_VERSION}" in dockerfile
+  assert "ALPINE_EDGE_MAIN=" in dockerfile
+  assert "--repository=${ALPINE_EDGE_MAIN}" in dockerfile
 
 
 def test_docker_compose_app_uses_configurable_pipeline_ssh_mount():
