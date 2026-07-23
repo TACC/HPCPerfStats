@@ -31,6 +31,11 @@ fi
 # Normal prepare footer shape (documented in prepare_rpmbuild_dirs.sh).
 grep -q 'rpmbuild -ba' ./scripts/prepare_rpmbuild_dirs.sh \
   || { echo "prepare_rpmbuild_dirs.sh must print rpmbuild -ba footer" >&2; exit 1; }
+# Release path must not print the optional debug rpmbuild / verify runbook.
+if grep -q 'Optional debug' ./scripts/prepare_rpmbuild_dirs.sh; then
+  echo "prepare_rpmbuild_dirs.sh must not advertise optional debug on release path" >&2
+  exit 1
+fi
 
 # dist-hook embeds force when present (Stampede3 prepare path).
 grep -q 'stampede3.force' ./Makefile.am \

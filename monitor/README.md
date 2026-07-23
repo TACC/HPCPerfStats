@@ -43,7 +43,7 @@ One x86_64 RPM covers all Stampede3 LSPCI profiles (skx/icx/spr/h100/pvc/amd-rtx
 ```bash
 cd HPCPerfStats/monitor
 ./scripts/prepare_rpmbuild_stampede3.sh              # or --debug-build
-# Footer is identical to a normal prepare:
+# Footer prints only the requested rpmbuild (release by default):
 rpmbuild -ba --define "_topdir ${PWD}/rpmbuild" "${PWD}/rpmbuild/SPECS/hpcperfstats.spec"
 ```
 
@@ -252,8 +252,8 @@ recreates it (writes do not abort the process).
 ```bash
 cd HPCPerfStats/monitor
 ./scripts/prepare_rpmbuild_dirs.sh --debug-build
-# Run the printed debug rpmbuild line (hpc_debug_build 1), then copy/paste the
-# verification runbook footer (manifest + validate_shm_messages.py).
+# Run the printed debug rpmbuild && rpm_debug_shm_verify.sh line
+# (verify notes appear only with --debug-build).
 ```
 
 The debug `%install` stashes `monitor-build-capabilities.json` under

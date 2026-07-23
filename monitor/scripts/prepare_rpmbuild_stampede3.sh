@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Stampede3 fleet RPM prepare: export fleet env, ensure dist marker, then the
-# normal prepare_rpmbuild_dirs.sh path (same rpmbuild -ba footer).
+# normal prepare_rpmbuild_dirs.sh path (same footer: only the requested rpmbuild).
 #
 # Usage (from HPCPerfStats/monitor):
 #   ./scripts/prepare_rpmbuild_stampede3.sh

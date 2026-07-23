@@ -15,6 +15,9 @@
 #   ./scripts/prepare_rpmbuild_dirs.sh
 #   ./scripts/prepare_rpmbuild_dirs.sh --debug-build
 #
+# Footer: prints only the rpmbuild command for the requested build. Validation
+# notes and the debug verify chain appear only with --debug-build.
+#
 # Environment:
 #   SKIP_DEPS  If 1, skip rebuilding static deps when PREFIX already has the .a files
 #              (passed through to build_static_bundle.sh --deps-only). Prepare removes
@@ -40,9 +43,10 @@ while (($# > 0)); do
       cat <<EOF
 Usage: ./scripts/prepare_rpmbuild_dirs.sh [--debug-build]
 
-  --debug-build  Mark the debug rpmbuild command as recommended for this run.
-                 Debug RPM uses sample_freq=30 / sample_freq_slow=60 in hpcperfstats.conf.
-                 Prints build && install && /dev/shm validate as one chained command.
+  Default:           Print only the release rpmbuild -ba command.
+  --debug-build      Print only the debug rpmbuild (hpc_debug_build 1) chained with
+                     ./scripts/rpm_debug_shm_verify.sh, plus debug verify notes.
+                     Debug RPM uses sample_freq=30 / sample_freq_slow=60 in hpcperfstats.conf.
 
   Release (default): rpmbuild without hpc_debug_build — production RPM, no /dev/shm mirror.
   Debug (opt-in):    rpmbuild with hpc_debug_build 1 — -g symbols and --enable-debug.
@@ -283,9 +287,7 @@ echo "RPM tree ready under ${topdir}"
 echo ""
 release_rpmbuild="rpmbuild -ba --define \"_topdir ${topdir}\" \"${specs_dir}/hpcperfstats.spec\""
 debug_rpmbuild="rpmbuild -ba --define \"_topdir ${topdir}\" --define \"hpc_debug_build 1\" \"${specs_dir}/hpcperfstats.spec\""
-echo "Build binary and source RPMs with:"
 if test "${debug_build}" = "1"; then
-  echo ""
   echo "Build, install, and validate /dev/shm (from ${MONITOR_DIR}):"
   echo "  ${debug_rpmbuild} && ./scripts/rpm_debug_shm_verify.sh"
   cat <<EOF
@@ -295,23 +297,11 @@ Debug verify notes:
     (survives EL10 rpmbuild rmbuild, which deletes BUILD/).
   - rpm_debug_shm_verify.sh reads that stash; BUILD/.build-static is optional.
   - Optional: add --noclean to rpmbuild only if you need to inspect the Autotools tree.
-EOF
-else
-  echo ""
-  echo "Recommended (release / production):"
-  echo "  ${release_rpmbuild}"
-  echo ""
-  echo "Optional debug (symbols + --enable-debug /dev/shm mirror):"
-  echo "  ${debug_rpmbuild} && ./scripts/rpm_debug_shm_verify.sh"
-  cat <<EOF
-
-DEBUG /dev/shm mirror (debug RPM only):
-  - prepare does not install or start hpcperfstatsd.
   - After debug RPM install: systemctl start hpcperfstatsd (or run foreground).
   - Payload mirror: /dev/shm/hpcperfstatsd-debug/{schema,fast,full}
   - Override base dir: HPCPERFSTATS_DEBUG_SHM_DIR
-  - Release RPM (no hpc_debug_build) does not write /dev/shm files.
-  - Debug %install stashes capabilities under rpmbuild/debug-verify/ for verify after rmbuild.
-  - Re-run with --debug-build for the full post-rpmbuild verification runbook.
 EOF
+else
+  echo "Build binary and source RPMs with:"
+  echo "  ${release_rpmbuild}"
 fi

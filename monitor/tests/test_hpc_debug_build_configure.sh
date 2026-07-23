@@ -41,6 +41,14 @@ grep -q 'hpc_debug_build' "${prepare}" \
 grep -q '&& ./scripts/rpm_debug_shm_verify.sh' "${prepare}" \
   || { echo "prepare_rpmbuild_dirs.sh must chain rpmbuild with rpm_debug_shm_verify" >&2; exit 1; }
 
+# Release footer: only the release rpmbuild; debug verify chain gated on --debug-build.
+if grep -q 'Optional debug' "${prepare}"; then
+  echo "prepare_rpmbuild_dirs.sh must not advertise optional debug rpmbuild on release path" >&2
+  exit 1
+fi
+grep -q 'debug_build.*=.*"1"' "${prepare}" \
+  || { echo "prepare_rpmbuild_dirs.sh must gate debug footer on debug_build=1" >&2; exit 1; }
+
 test -x "${ROOT}/scripts/rpm_debug_shm_verify.sh" \
   || { echo "missing executable scripts/rpm_debug_shm_verify.sh" >&2; exit 1; }
 grep -q 'emit_build_capabilities.py' "${ROOT}/scripts/rpm_debug_shm_verify.sh" \
