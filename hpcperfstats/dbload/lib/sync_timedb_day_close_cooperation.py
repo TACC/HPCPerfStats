@@ -91,15 +91,16 @@ def _hot_path_contention_reasons(
   day_token = day.isoformat() if day is not None else ""
   if day_token and ingest_tar_hot_for_day(day_token):
     return True, "ingest_tar_hot"
-  if day_close_yield_event_set(tar_norm):
-    with _yield_lock:
-      return True, _yield_reasons.get(tar_norm, "yield_requested")
-  if (
+  populate_active = bool(
       day_token
       and tgz_archive_dir
       and archive_members_populate_shows_progress_for_day(day_token, tgz_archive_dir)
-  ):
+  )
+  if populate_active:
     return True, "populate_active"
+  # Sticky yield Event alone must not abort after hot/populate clear (F11c).
+  if day_close_yield_event_set(tar_norm):
+    clear_day_close_yield(tar_norm)
   return False, ""
 
 
@@ -151,9 +152,12 @@ def daily_tar_janitor_mutation_should_defer(
     chunk_in_progress: bool = False,
     chunk_day_tokens: Optional[Set[str]] = None,
 ) -> tuple[bool, str]:
-  """Pre-flight: janitor cold path should skip write and re-enqueue day-close."""
-  if defer_cap_exceeded:
-    return False, ""
+  """Pre-flight: janitor cold path should skip write and re-enqueue day-close.
+
+  ``defer_cap_exceeded`` stops aging forever but must **not** skip write-lock /
+  hot / populate / restore checks (F5). When those are clear, cap may proceed.
+  """
+  del defer_cap_exceeded  # aging handled by caller; still run safety checks
   from hpcperfstats.dbload.lib.file_locking import try_file_write_lock
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       calendar_date_from_daily_tar_path,

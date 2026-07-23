@@ -403,12 +403,12 @@ def test_arch_chunk_boundary_may_finalize_append_slots_only():
 
 
 def test_arch_handoff_priority_defer_skips_full_pending_reconcile():
-  """handoff_priority day_close defer must not re-run full pending reconcile."""
+  """Per-day handoff defer must not re-run full pending reconcile on immediate enqueue."""
   source = inspect.getsource(st.run_sync_timedb_supervisor_loop)
   maybe = source.split("def _maybe_enqueue_immediate_day_close", 1)[1]
   maybe = maybe.split("\n  def ", 1)[0]
-  assert 'defer_reason != "handoff_priority"' in maybe
-  assert "_reconcile_pending_with_oldest_checkpoint_incomplete()" in maybe
+  assert "_should_defer_immediate_day_close_for_tar" in maybe
+  assert "_reconcile_pending_with_oldest_checkpoint_incomplete()" not in maybe
   assert st.PENDING_RECONCILE_UNPROCESSED_HARD_CEILING_S >= 900.0
   assert (
       st.PENDING_RECONCILE_UNPROCESSED_HARD_CEILING_S

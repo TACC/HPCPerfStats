@@ -18,7 +18,10 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_janitor import ArchiveJanitor
 from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
     DayCloseYieldError,
     JanitorDeferTracker,
+    clear_day_close_yield,
     daily_tar_janitor_mutation_should_defer,
+    day_close_yield_event_set,
+    day_close_yield_requested,
     signal_day_close_yield,
 )
 from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
@@ -144,7 +147,8 @@ def test_dedupe_yields_mid_mutation_before_replace(monkeypatch, tmp_path):
   assert not os.path.isfile("%s.dedupe.tmp" % tar_path)
 
 
-def test_janitor_defer_cap_allows_bounded_write(monkeypatch, tmp_path):
+def test_janitor_defer_cap_still_defers_when_populate_active(monkeypatch, tmp_path):
+  """F5: defer_cap_exceeded must not skip hot/populate checks."""
   daily_dir = tmp_path / "daily"
   daily_dir.mkdir()
   tar_path = os.path.normpath(str(daily_dir / "2026-06-05.tar"))
@@ -163,8 +167,67 @@ def test_janitor_defer_cap_allows_bounded_write(monkeypatch, tmp_path):
       disqualified_daily_tars=set(),
       defer_cap_exceeded=True,
   )
+  assert defer is True
+  assert reason == "populate_active"
+
+
+def test_janitor_defer_cap_allows_proceed_when_hot_clear(monkeypatch, tmp_path):
+  """F5: after cap, proceed only when write-lock/hot/populate/restore are clear."""
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2026-06-05.tar"))
+  open(tar_path, "wb").close()
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".archive_members_populate_shows_progress_for_day",
+      lambda *_a, **_k: False,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".ingest_tar_hot_for_day",
+      lambda *_a, **_k: False,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".daily_tar_restore_in_progress_for_day",
+      lambda *_a, **_k: False,
+  )
+  defer, reason = daily_tar_janitor_mutation_should_defer(
+      tar_path,
+      tgz_archive_dir=str(daily_dir),
+      disqualified_daily_tars=set(),
+      defer_cap_exceeded=True,
+  )
   assert defer is False
   assert reason == ""
+
+
+def test_sticky_yield_event_cleared_when_hot_inactive(monkeypatch, tmp_path):
+  """F11c: sticky yield Event alone must not defer after hot/populate clear."""
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2026-06-06.tar"))
+  open(tar_path, "wb").close()
+  signal_day_close_yield(tar_path, reason="test_sticky")
+  assert day_close_yield_event_set(tar_path) is True
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".archive_members_populate_shows_progress_for_day",
+      lambda *_a, **_k: False,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".ingest_tar_hot_for_day",
+      lambda *_a, **_k: False,
+  )
+  requested, reason = day_close_yield_requested(
+      tar_path,
+      tgz_archive_dir=str(daily_dir),
+  )
+  assert requested is False
+  assert reason == ""
+  assert day_close_yield_event_set(tar_path) is False
+  clear_day_close_yield(tar_path)
 
 
 def test_daily_tar_restore_redis_signal_missing_tar(monkeypatch, tmp_path):

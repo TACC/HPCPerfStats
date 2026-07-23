@@ -839,6 +839,20 @@ class _DayRawRemovalState:
       entry = entries.get(path)
       if isinstance(entry, dict) and self._entry_is_retryable_skip(entry):
         retryable_count += 1
+    # F15: do not mark PHASE_DONE while retryable closed raw remains on disk.
+    if retryable_count > 0:
+      if self.log_fn:
+        self.log_fn(
+            "Day raw removal waiting_on_ingest (raw remains) day=%s "
+            "retryable=%d phase=%s"
+            % (
+                self.day_date.isoformat(),
+                retryable_count,
+                self.phase(),
+            ),
+            flush=True,
+        )
+      return
     with self._lock:
       self._manifest["phase"] = PHASE_DONE
       self._manifest["completed_at"] = time.time()

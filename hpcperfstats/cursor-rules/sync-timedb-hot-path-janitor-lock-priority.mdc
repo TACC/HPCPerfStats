@@ -36,7 +36,7 @@ globs: hpcperfstats/dbload/sync_timedb*.py,hpcperfstats/dbload/lib/sync_timedb_a
 
 ## Starvation
 
-After **3** defer ticks or **15 min** wall without hot-path signals, janitor may proceed with bounded `file_write_lock` — log `janitor: mutation proceed reason=defer_cap_exceeded`.
+After **3** defer ticks or **15 min** wall without hot-path signals, janitor may proceed with bounded `file_write_lock` — log `janitor: mutation proceed reason=defer_cap_exceeded`. **`defer_cap_exceeded` must still run write-lock / hot / populate / restore checks** (F5) — cap stops aging forever, it does **not** skip safety. Sticky yield Event alone must not abort after hot/populate clear (F11c).
 
 ## Overlap
 

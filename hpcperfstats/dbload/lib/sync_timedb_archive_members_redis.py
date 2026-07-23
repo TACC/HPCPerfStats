@@ -1280,12 +1280,17 @@ def wait_for_member_match(
             if size is None:
               return False
             return int(size) == expected_size
-          _recover_populate_wait_after_stale_lock(
+          recovered = _recover_populate_wait_after_stale_lock(
               client, keys, canonical=canonical,
           )
-        last_progress_monotonic = time.monotonic()
-        last_progress_ts = _read_populate_progress_ts(client, keys)
-        last_hlen = _hash_member_count(client, keys)
+          if recovered:
+            last_progress_monotonic = time.monotonic()
+            last_progress_ts = _read_populate_progress_ts(client, keys)
+            last_hlen = _hash_member_count(client, keys)
+        elif not canonical:
+          last_progress_monotonic = time.monotonic()
+          last_progress_ts = _read_populate_progress_ts(client, keys)
+          last_hlen = _hash_member_count(client, keys)
 
       if not client.exists(keys.lock_key):
         existing = _hgetall_members(client, keys)
@@ -1430,19 +1435,22 @@ def _recover_populate_wait_after_stale_lock(
     keys: ArchiveMembersRedisKeys,
     *,
     canonical="",
-):
-  """Re-enqueue populate after incomplete lock release when *canonical* is known."""
+) -> bool:
+  """Re-enqueue populate after incomplete lock release when *canonical* is known.
+
+  Returns True only when enqueue succeeded (caller may reset stall clock).
+  """
   if not canonical:
-    return
+    return False
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       daily_archive_populate_source_exists,
       normalize_daily_compressed_path,
   )
   if not daily_archive_populate_source_exists(normalize_daily_compressed_path(canonical)):
-    return
+    return False
   if not _try_acquire_populate_recovery_gate(client, keys.day_token):
-    return
-  enqueue_archive_members_populate(canonical, keys.day_token)
+    return False
+  return bool(enqueue_archive_members_populate(canonical, keys.day_token))
 
 
 def wait_for_complete_members(
@@ -1468,6 +1476,7 @@ def wait_for_complete_members(
   last_progress_ts = _read_populate_progress_ts(client, keys)
   last_hlen = _hash_member_count(client, keys)
   last_progress_monotonic = started
+  incomplete_recover_n = 0
 
   with populate_wait_ingest_sigalrm_guard(
       respect_ingest_deadline=respect_ingest_deadline,
@@ -1497,6 +1506,7 @@ def wait_for_complete_members(
       )
       if progress_seen:
         last_progress_monotonic = time.monotonic()
+        incomplete_recover_n = 0
 
       stale_lock_released = _check_populate_wait_limits(
           client,
@@ -1507,6 +1517,13 @@ def wait_for_complete_members(
           respect_ingest_deadline=respect_ingest_deadline,
       )
       if stale_lock_released:
+        if last_hlen <= 0:
+          incomplete_recover_n += 1
+          if incomplete_recover_n >= 3:
+            raise ArchiveMembersPopulateStalledError(
+                "Archive members populate incomplete after lock release "
+                "(empty recover bound): %s" % keys.hash_key,
+            )
         warm_members, keys = _maybe_reresolve_warm_members(
             client,
             keys,
@@ -1523,12 +1540,13 @@ def wait_for_complete_members(
               normalize_daily_compressed_path(canonical),
           ):
             return {}
-        _recover_populate_wait_after_stale_lock(
-            client, keys, canonical=canonical,
-        )
-        last_progress_monotonic = time.monotonic()
-        last_progress_ts = _read_populate_progress_ts(client, keys)
-        last_hlen = _hash_member_count(client, keys)
+          recovered = _recover_populate_wait_after_stale_lock(
+              client, keys, canonical=canonical,
+          )
+          if recovered:
+            last_progress_monotonic = time.monotonic()
+            last_progress_ts = _read_populate_progress_ts(client, keys)
+            last_hlen = _hash_member_count(client, keys)
 
       time.sleep(_wait_poll_seconds())
 

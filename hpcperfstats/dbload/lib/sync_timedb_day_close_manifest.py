@@ -50,6 +50,12 @@ def _is_worker_slot_pending_entry(entry) -> bool:
 
 
 def _is_deferred_waiting_on_ingest_entry(entry) -> bool:
+  """True for deferred handoff soft-state (waiting / empty / legacy detail).
+
+  Empty and ``legacy_raw_delete_pending`` details are treated as waiting so they
+  never fake-succeed enqueue (discover cap / immediate blacklist). Clear via
+  ``clear_deferred_waiting_on_ingest`` when handoff for that day drains.
+  """
   if not isinstance(entry, dict):
     return False
   if str(entry.get("status") or "") != "deferred":
@@ -123,10 +129,15 @@ class DayCloseManifestCoordinator:
   def recover_stale_manifest_entries(self) -> None:
     self._recover_stale_manifest_entries()
 
-  def _recover_stale_manifest_entries(self) -> None:
+  def _recover_stale_manifest_entries(self, *, live_worker_tars=None) -> None:
     stale_s = cfg.get_sync_day_close_manifest_stale_seconds()
     if stale_s <= 0:
       return
+    live_workers = {
+        os.path.normpath(t)
+        for t in (live_worker_tars or ())
+        if t
+    }
     now = time.time()
     recovered: list[str] = []
     worker_slot_recovered: list[str] = []
@@ -144,10 +155,13 @@ class DayCloseManifestCoordinator:
           continue
         if status not in ("submitted", "sealing", "raw_removal", "queued"):
           continue
+        tar_norm = os.path.normpath(tar_norm)
+        # Live day-close workers own the day — do not demote on stale clock.
+        if tar_norm in live_workers:
+          continue
         last_at = entry.get("last_progress_at") or entry.get("submitted_at")
         if last_at is None or now - float(last_at) < stale_s:
           continue
-        tar_norm = os.path.normpath(tar_norm)
         entry["status"] = "deferred"
         entry["detail"] = "stale_manifest_recovery"
         entry["recovered_at"] = now
@@ -261,8 +275,11 @@ class DayCloseManifestCoordinator:
     return waiting
 
   def active_or_submitted_tar_paths(self) -> Set[str]:
+    """Pipeline-active tars for stall diagnostics (excludes deferred waiting)."""
     with self._lock:
-      return set(self._active_tar_paths_unlocked())
+      active = set(self._active_tar_paths_unlocked())
+      active -= self._deferred_waiting_on_ingest_tar_paths_unlocked()
+      return active
 
   def manifest_worker_slot_tar_paths(self) -> Set[str]:
     with self._lock:
@@ -348,6 +365,11 @@ class DayCloseManifestCoordinator:
         except Exception:
           enqueued = False
       if not enqueued:
+        # F17: do not leave sticky ghost limbo — drop so classify can retry.
+        with self._lock:
+          entries = self._manifest.setdefault("entries", {})
+          entries.pop(tar_norm, None)
+          _save_manifest(self._manifest_path, self._manifest)
         continue
       # Debt push succeeded: restore worker-slot queued (not limbo deferred).
       with self._lock:
@@ -471,6 +493,12 @@ class DayCloseManifestCoordinator:
     self._set_entry_status(tar_norm, "deferred", detail="waiting_on_ingest")
     self._touch_manifest("deferred_waiting_on_ingest", tar_norm=tar_norm)
 
+  def notify_day_phase(self, tar_path: str, phase: str) -> None:
+    """Public phase notify (e.g. sealed) for supervisor re-prewarm hooks."""
+    tar_norm = os.path.normpath(tar_path or "")
+    if tar_norm and phase:
+      self._notify_phase(tar_norm, phase)
+
   def finalize_complete_if_filesystem(self, tar_path: str) -> bool:
     tar_norm = os.path.normpath(tar_path or "")
     if not tar_norm or not self._day_close_filesystem_complete(tar_norm):
@@ -582,7 +610,10 @@ class DayCloseManifestCoordinator:
             )
             return True, reason or "promoted_from_deferred"
           # Not on heap yet — fall through to enqueue_day_close_fn.
-        elif tar_norm in inflight or _is_deferred_waiting_on_ingest_entry(entry):
+        elif _is_deferred_waiting_on_ingest_entry(entry):
+          # Soft-state only: not queued work. Discover must not treat as success.
+          return False, "deferred_waiting_on_ingest"
+        elif tar_norm in inflight:
           return True, "already_inflight"
         # Pending worker-slot without heap debt — fall through to re-push.
       elif tar_norm in inflight:
@@ -622,6 +653,10 @@ class DayCloseManifestCoordinator:
   def _touch_manifest(self, stage: str, *, tar_norm: str = "") -> None:
     with self._lock:
       self._touch_manifest_locked(stage, tar_norm=tar_norm)
+
+  def touch_progress(self, stage: str, *, tar_path: str = "") -> None:
+    """Heartbeat last_progress during long seal/verify/delete (stale recovery)."""
+    self._touch_manifest(stage, tar_norm=os.path.normpath(tar_path or ""))
 
   def _set_entry_status(self, tar_norm: str, status: str, **extra) -> None:
     with self._lock:

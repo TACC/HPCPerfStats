@@ -1374,6 +1374,51 @@ def test_recovery_no_reenqueue_no_source(_redis_test_env, tmp_path, monkeypatch)
   assert not enqueued
 
 
+def test_recover_populate_wait_returns_bool_on_enqueue(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  """F8b: recover returns True only when enqueue succeeds."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      _recover_populate_wait_after_stale_lock,
+  )
+
+  day = "2026-06-14"
+  canonical = str(tmp_path / ("%s.tar.zst" % day))
+  Path(canonical).write_bytes(b"fake")
+  keys = build_archive_members_redis_keys(
+      _daily_archive_members_cache_key(canonical),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers"
+      ".daily_archive_populate_source_exists",
+      lambda _p: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      "._try_acquire_populate_recovery_gate",
+      lambda *_a, **_k: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".enqueue_archive_members_populate",
+      lambda *_a, **_k: False,
+  )
+  assert _recover_populate_wait_after_stale_lock(
+      _redis_test_env, keys, canonical=canonical,
+  ) is False
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".enqueue_archive_members_populate",
+      lambda *_a, **_k: True,
+  )
+  assert _recover_populate_wait_after_stale_lock(
+      _redis_test_env, keys, canonical=canonical,
+  ) is True
+  assert _recover_populate_wait_after_stale_lock(
+      _redis_test_env, keys, canonical="",
+  ) is False
+
+
 def test_read_lock_timeout_does_not_sticky_day_skip(_redis_test_env, tmp_path):
   """Fix G: transient fnctl lock timeout must not set archive_day_ingest_skip."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (

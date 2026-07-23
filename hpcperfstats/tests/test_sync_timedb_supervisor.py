@@ -3211,6 +3211,45 @@ def test_add_processed_path_prunes_file_states(monkeypatch, tmp_path):
     assert paths[1] in file_states
     assert paths[2] in file_states
 
+
+def test_add_processed_path_invokes_handoff_discard_callback(monkeypatch, tmp_path):
+    """F2: discarding a handoff path invokes on_handoff_path_discarded."""
+    path = str(tmp_path / 'handoff.raw')
+    Path(path).write_text('x', encoding='utf-8')
+    processed_files = set()
+    processed_files_order = deque()
+    checkpoint_entries = deque()
+    handoff = {path}
+    discarded = []
+    ok = st._add_processed_path(
+        path,
+        processed_files,
+        processed_files_order,
+        checkpoint_entries,
+        str(tmp_path / 'cp.json'),
+        handoff_priority_paths=handoff,
+        on_handoff_path_discarded=lambda p: discarded.append(p),
+    )
+    assert ok is True
+    assert path not in handoff
+    assert discarded == [path]
+
+
+def test_immediate_day_close_attempted_skips_deferred_waiting_reason():
+    """F1 contract: blacklist only when enqueue ok and reason not deferred/complete."""
+    # Mirrors _maybe_enqueue_immediate_day_close gate without full supervisor.
+    noop_reasons = ("already_complete", "deferred_waiting_on_ingest")
+    attempted = set()
+    for ok, reason, tar in (
+        (False, "deferred_waiting_on_ingest", "/tmp/a.tar"),
+        (True, "already_complete", "/tmp/b.tar"),
+        (True, "enqueued", "/tmp/c.tar"),
+        (True, "already_inflight", "/tmp/d.tar"),
+    ):
+        if ok and reason not in noop_reasons:
+            attempted.add(tar)
+    assert attempted == {"/tmp/c.tar", "/tmp/d.tar"}
+
 class _CapturingHygieneExecutor:
     """Records submitted callables instead of running them in a thread."""
 
@@ -7540,20 +7579,22 @@ def test_chunk_end_submits_immediate_day_close_despite_closed_raw_on_disk(monkey
 
         import hpcperfstats.dbload.lib.sync_timedb_day_close_manifest as async_day_close_mod
 
-        def _record_submit(self, tar, *, reason, disqualified_daily_tars=None):
+        def _record_submit_result(self, tar, reason="", *, disqualified_daily_tars=None):
             submit_calls.append((tar, reason))
-            return True
+            return True, reason or "enqueued"
 
         monkeypatch.setattr(
             async_day_close_mod.DayCloseManifestCoordinator,
-            'enqueue_day_close',
-            _record_submit,
+            'enqueue_day_close_result',
+            _record_submit_result,
         )
         monkeypatch.setattr(
             async_day_close_mod.DayCloseManifestCoordinator,
             'enqueue_day_close',
-            lambda self, tar, reason, *, disqualified_daily_tars=None: _record_submit(
-                self, tar, reason=reason, disqualified_daily_tars=disqualified_daily_tars,
+            lambda self, tar, reason="", *, disqualified_daily_tars=None: (
+                _record_submit_result(
+                    self, tar, reason, disqualified_daily_tars=disqualified_daily_tars,
+                )[0]
             ),
         )
         # Do not silence janitor: autouse inline executors run ticks without real threads.

@@ -614,7 +614,7 @@ def test_enqueue_promotes_non_ingest_deferred_already_on_heap(tmp_path):
 
 @pytest.mark.django_db(databases=[])
 def test_enqueue_does_not_promote_waiting_on_ingest_deferred(tmp_path):
-  """True waiting_on_ingest deferred on heap must stay deferred (already_inflight)."""
+  """True waiting_on_ingest deferred must not fake-succeed (F1)."""
   archive_dir = str(tmp_path / "archive")
   os.makedirs(archive_dir)
   tar_path = os.path.normpath(str(tmp_path / "daily" / "2020-06-07.tar"))
@@ -636,6 +636,58 @@ def test_enqueue_does_not_promote_waiting_on_ingest_deferred(tmp_path):
       detail="waiting_on_ingest",
   )
   ok, reason = coord.enqueue_day_close_result(tar_path, reason="discover_ready_tick")
-  assert ok is True
-  assert reason == "already_inflight"
+  assert ok is False
+  assert reason == "deferred_waiting_on_ingest"
   assert coord.entry_progress_snapshot(tar_path).get("status") == "deferred"
+
+
+@pytest.mark.django_db(databases=[])
+def test_active_or_submitted_excludes_deferred_waiting_on_ingest(tmp_path):
+  """F12: stall diagnostics must not count deferred waiting as pipeline-active."""
+  archive_dir = str(tmp_path / "archive")
+  os.makedirs(archive_dir)
+  tar_deferred = os.path.normpath(str(tmp_path / "daily" / "2020-01-01.tar"))
+  tar_queued = os.path.normpath(str(tmp_path / "daily" / "2020-01-02.tar"))
+  os.makedirs(os.path.dirname(tar_deferred), exist_ok=True)
+
+  coord = async_dc_mod.DayCloseManifestCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=str(tmp_path / "daily"),
+      local_tz=None,
+      log_fn=lambda *_a, **_k: None,
+      get_disqualified_daily_tars=lambda: set(),
+      get_inflight_tar_paths_fn=lambda: {tar_deferred},
+  )
+  coord._set_entry_status(tar_deferred, "deferred", detail="waiting_on_ingest")
+  coord._set_entry_status(tar_queued, "queued")
+  active = coord.active_or_submitted_tar_paths()
+  assert tar_deferred not in active
+  assert tar_queued in active
+
+
+@pytest.mark.django_db(databases=[])
+def test_touch_progress_updates_last_progress_at(tmp_path):
+  """F7: heartbeat touch_progress must refresh per-tar last_progress_at."""
+  archive_dir = str(tmp_path / "archive")
+  os.makedirs(archive_dir)
+  tar_path = os.path.normpath(str(tmp_path / "daily" / "2020-06-08.tar"))
+  os.makedirs(os.path.dirname(tar_path), exist_ok=True)
+  coord = async_dc_mod.DayCloseManifestCoordinator(
+      archive_data_dir=archive_dir,
+      host_name_ext="",
+      tgz_archive_dir=str(tmp_path / "daily"),
+      local_tz=None,
+      log_fn=lambda *_a, **_k: None,
+      get_disqualified_daily_tars=lambda: set(),
+      enqueue_day_close_fn=lambda *_a, **_k: True,
+  )
+  coord._set_entry_status(tar_path, "queued", submitted_at=1.0)
+  coord.touch_progress("seal", tar_path=tar_path)
+  snap = coord.entry_progress_snapshot(tar_path)
+  assert snap.get("last_progress") == "seal"
+  assert snap.get("last_progress_age_s") is not None
+  assert float(snap.get("last_progress_age_s")) < 5.0
+  with coord._lock:
+    entry = coord._manifest["entries"][tar_path]
+    assert float(entry.get("last_progress_at") or 0) > 1.0

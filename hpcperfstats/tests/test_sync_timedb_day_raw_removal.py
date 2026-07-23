@@ -310,9 +310,11 @@ def test_any_active_raw_removal_work_false_when_only_retryable_skips_remain(tmp_
   assert state.waiting_on_ingest_at_startup()
   assert coord.count_days_waiting_on_ingest() == 1
   state._mark_done_waiting_on_ingest()
-  assert not coord.any_needs_delete_phase()
+  # F15: retryable closed raw still on disk → leave phase; do not mark PHASE_DONE.
+  assert coord.phase(tar_path) != PHASE_DONE
+  assert coord.any_needs_delete_phase()
   assert not coord.any_active_raw_removal_work()
-  assert coord.count_days_waiting_on_ingest() == 0
+  assert coord.count_days_waiting_on_ingest() == 1
   assert seg.is_file()
 
 
@@ -350,11 +352,13 @@ def test_verification_complete_all_verified_deleted_retryable_skips_handoff(
   coord.begin_deleting(tar_path)
   deleted = coord.apply_batch_delete(tar_path)
   assert deleted == 0
-  assert coord.phase(tar_path) == PHASE_DONE
+  # F15: retryable raw remains → stay verification_complete/deleting, not PHASE_DONE.
+  assert coord.phase(tar_path) != PHASE_DONE
   assert retry_seg.is_file()
   assert coord.should_handoff_to_ingest(tar_path)
   handoff_paths = coord.complete_handoff_to_ingest(tar_path)
   assert retry_path in handoff_paths
+  assert coord.phase(tar_path) != PHASE_DONE
 
 
 def test_mixed_not_in_archive_and_quarantine_marks_done_waiting_on_ingest(
@@ -399,13 +403,30 @@ def test_mixed_not_in_archive_and_quarantine_marks_done_waiting_on_ingest(
   coord.begin_deleting(tar_path)
   deleted = coord.apply_batch_delete(tar_path)
   assert deleted == 0
-  assert coord.phase(tar_path) == PHASE_DONE
+  # F15: retryable raw remains → do not mark PHASE_DONE.
+  assert coord.phase(tar_path) != PHASE_DONE
   assert retry_seg.is_file()
   assert quar_seg.is_file()
   assert coord.should_handoff_to_ingest(tar_path)
   handoff_paths = coord.complete_handoff_to_ingest(tar_path)
   assert retry_path in handoff_paths
   assert quar_path not in handoff_paths
+  assert coord.phase(tar_path) != PHASE_DONE
+
+
+def test_mark_done_waiting_on_ingest_skips_phase_done_while_retryable(tmp_path):
+  """F15 focused: _mark_done_waiting_on_ingest leaves phase when retryable_count>0."""
+  day = datetime(2022, 7, 1)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, _zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
+  state = coord._get_or_create_day(tar_path)
+  state._verify_body()
+  phase_before = state.phase()
+  state._mark_done_waiting_on_ingest()
+  assert state.phase() == phase_before
+  assert state.phase() != PHASE_DONE
+  assert seg.is_file()
 
 
 def test_promote_phase_when_verifying_but_post_seal_complete(tmp_path):
@@ -522,10 +543,17 @@ def test_try_finish_tar_drop_drops_tar_when_raw_gone_and_phase_done(tmp_path):
   coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
   state = coord._get_or_create_day(tar_path)
   state._verify_body()
+  # F15: with retryable raw on disk, mark does not set PHASE_DONE.
   state._mark_done_waiting_on_ingest()
-  assert coord.phase(tar_path) == PHASE_DONE
+  assert coord.phase(tar_path) != PHASE_DONE
   assert os.path.isfile(tar_path)
   seg.unlink()
+  # Raw gone: force done so tar-drop finish path can run (mark needs handoff paths).
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["completed_at"] = time.time()
+    _save_manifest(state._manifest_path, state._manifest)
+  assert coord.phase(tar_path) == PHASE_DONE
   assert coord.any_needs_tar_drop_finish()
   assert tar_path in coord.days_needing_tar_drop_oldest_first()
   assert coord.try_finish_tar_drop_if_ready(tar_path)
@@ -587,7 +615,8 @@ def test_complete_handoff_marks_done_and_invokes_callback(tmp_path):
   _save_manifest(state._manifest_path, state._manifest)
   paths = coord.complete_handoff_to_ingest(tar_path, reason="unit_test")
   assert paths == [str(seg)]
-  assert coord.phase(tar_path) == PHASE_DONE
+  # F15: do not mark PHASE_DONE while retryable closed raw remains on disk.
+  assert coord.phase(tar_path) == PHASE_VERIFICATION_COMPLETE
   assert handoffs == [(os.path.normpath(tar_path), [str(seg)], "unit_test")]
 
 

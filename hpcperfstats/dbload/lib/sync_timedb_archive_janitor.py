@@ -375,9 +375,12 @@ class ArchiveJanitor:
     return items[:max_entries]
 
   def _trim_heap_to_max_entries_locked(self):
+    """Evict lowest-priority debts until at/under max (never heappop best)."""
     max_entries = cfg.get_archive_janitor_debt_max_entries()
     while len(self._debt_heap) > max_entries:
-      evicted = heapq.heappop(self._debt_heap)
+      evicted = max(self._debt_heap, key=lambda d: d.sort_index)
+      self._debt_heap.remove(evicted)
+      heapq.heapify(self._debt_heap)
       self._debt_seen.discard((evicted.kind.value, evicted.tar_path))
 
   def _evict_lowest_priority_debt_if_full_locked(self):
@@ -1064,6 +1067,7 @@ class ArchiveJanitor:
       return set()
     if not self.tgz_archive_dir:
       return set()
+    inputs = None
     if entries is None:
       inputs = self._get_maintenance_pass_candidate_inputs()
       if not isinstance(inputs, dict):
@@ -1086,38 +1090,64 @@ class ArchiveJanitor:
     newly_queued: Set[str] = set()
     skipped_inflight = 0
     skipped_eligible = 0
+    deferred_noop = 0
+    already_inflight_n = 0
     ready_for_enqueue_n = 0
     discover_reason = "discover_ready_%s" % reason
     slot_budget_n = None if slot_budget is None else max(0, int(slot_budget))
-    for entry in entries:
-      if entry.get("status") != "ready_for_enqueue":
-        continue
-      if "awaiting_janitor_discover" not in (entry.get("reasons") or ()):
-        continue
-      ready_for_enqueue_n += 1
-      if len(active) >= max_inflight:
-        skipped_inflight += 1
-        continue
-      if slot_budget_n is not None and len(newly_queued) >= slot_budget_n:
-        continue
-      tar_norm = os.path.normpath(entry["tar_path"])
-      ok, reject_reason = self._enqueue_eligible_day_close(
-          tar_norm,
-          reason=discover_reason,
-          disqualified=disqualified,
-      )
-      if ok:
-        newly_queued.add(tar_norm)
-        active.add(tar_norm)
-      else:
-        skipped_eligible += 1
-        if reject_reason and self.log_fn:
-          self.log_fn(
-              "janitor: discover_enqueue_reject tar=%s reason=%s"
-              % (tar_norm, reject_reason),
-              flush=True,
-          )
-    if newly_queued or skipped_inflight or ready_for_enqueue_n or skipped_eligible:
+    _discover_noop_reasons = frozenset({
+        "already_inflight",
+        "already_complete",
+        "deferred_waiting_on_ingest",
+    })
+    # F4: share classify unprocessed snapshot with submit_eligible for this wave.
+    if isinstance(inputs, dict):
+      self._day_close_submit_unprocessed_snapshot = inputs.get("unprocessed_by_tar")
+    else:
+      self._day_close_submit_unprocessed_snapshot = None
+    try:
+      for entry in entries:
+        if entry.get("status") != "ready_for_enqueue":
+          continue
+        if "awaiting_janitor_discover" not in (entry.get("reasons") or ()):
+          continue
+        ready_for_enqueue_n += 1
+        if len(active) >= max_inflight:
+          skipped_inflight += 1
+          continue
+        if slot_budget_n is not None and len(newly_queued) >= slot_budget_n:
+          continue
+        tar_norm = os.path.normpath(entry["tar_path"])
+        ok, reject_reason = self._enqueue_eligible_day_close(
+            tar_norm,
+            reason=discover_reason,
+            disqualified=disqualified,
+        )
+        if ok and reject_reason not in _discover_noop_reasons:
+          newly_queued.add(tar_norm)
+          active.add(tar_norm)
+        elif reject_reason == "deferred_waiting_on_ingest":
+          deferred_noop += 1
+        elif reject_reason in ("already_inflight", "already_complete"):
+          already_inflight_n += 1
+        else:
+          skipped_eligible += 1
+          if reject_reason and self.log_fn:
+            self.log_fn(
+                "janitor: discover_enqueue_reject tar=%s reason=%s"
+                % (tar_norm, reject_reason),
+                flush=True,
+            )
+    finally:
+      self._day_close_submit_unprocessed_snapshot = None
+    if (
+        newly_queued
+        or skipped_inflight
+        or ready_for_enqueue_n
+        or skipped_eligible
+        or deferred_noop
+        or already_inflight_n
+    ):
       breakdown: Dict[str, int] = {}
       if coord is not None and hasattr(coord, "discover_inflight_breakdown"):
         try:
@@ -1131,12 +1161,15 @@ class ArchiveJanitor:
       if reason == "tick_slot_free":
         log_suffix = " free_slots=%d" % free_slots
       self.log_fn(
-          "janitor: discover_ready_day_close enqueued=%d skipped_inflight=%d "
-          "skipped_eligible=%d ready_for_enqueue_n=%d max_inflight=%d active_workers=%d "
+          "janitor: discover_ready_day_close enqueued=%d deferred_noop=%d "
+          "already_inflight=%d skipped_inflight=%d skipped_eligible=%d "
+          "ready_for_enqueue_n=%d max_inflight=%d active_workers=%d "
           "deferred_waiting=%d debt_heap=%d manifest_pending=%d "
           "discover_cap=%d worker_occupancy=%d reason=%s%s"
           % (
               len(newly_queued),
+              deferred_noop,
+              already_inflight_n,
               skipped_inflight,
               skipped_eligible,
               ready_for_enqueue_n,
@@ -1422,6 +1455,8 @@ class ArchiveJanitor:
           continue
         norm_debt = _normalize_day_pipeline_debt(debt)
         if norm_debt.tar_path in selected_day_tars:
+          # Duplicate same-tar debt: re-push, do not silently drop (F9).
+          deferred.append(norm_debt)
           continue
         selected.append(norm_debt)
         selected_day_tars.add(norm_debt.tar_path)
@@ -1699,7 +1734,9 @@ class ArchiveJanitor:
               ),
               flush=True,
           )
-          self.signal_work_available()
+          # F11: do not busy-wake when every heap tar is seal-disqualified.
+          if not heap_tars or len(blocked) < len(heap_tars):
+            self.signal_work_available()
         self._ticks_completed += 1
         self.log_fn(
             "Archive janitor tick done days=%d debt_remaining=%d duration_s=%.3f "
@@ -1824,15 +1861,28 @@ class ArchiveJanitor:
           % (exc, traceback.format_exc()),
           flush=True,
       )
+      # F18: do not clear in-flight map while futures may still run.
+      join_deadline = time.time() + 30.0
       with self._day_close_in_flight_lock:
         stuck = list(self._day_close_in_flight.items())
-        self._day_close_in_flight.clear()
       for future, debt in stuck:
+        remaining = max(0.05, join_deadline - time.time())
         try:
-          future.result(timeout=0.1)
+          future.result(timeout=remaining)
         except Exception:
           pass
-        self._enqueue_debt(debt.kind, debt.tar_path, persist=False)
+        if future.done():
+          with self._day_close_in_flight_lock:
+            self._day_close_in_flight.pop(future, None)
+          self._enqueue_debt(debt.kind, debt.tar_path, persist=False)
+        else:
+          self.log_fn(
+              "Archive janitor tick error: leaving in-flight tar=%s "
+              "(future still running)"
+              % debt.tar_path,
+              flush=True,
+          )
+          self._pending_signal = True
       self._persist_hints()
     finally:
       close_old_connections()
@@ -2123,12 +2173,25 @@ class ArchiveJanitor:
               return self._handle_day_close_yield(tar_norm, exc)
       if not self._seal_one_day(tar_norm, disqualified=disqualified):
         return False
+      manifest = self.day_close_manifest_coordinator
+      if manifest is not None:
+        touch = getattr(manifest, "touch_progress", None)
+        if callable(touch):
+          touch("sealed", tar_path=tar_norm)
+        notify = getattr(manifest, "notify_day_phase", None)
+        if callable(notify):
+          notify(tar_norm, "sealed")
     if coord is not None:
       if not coord.post_seal_verification_complete(tar_norm):
         self.log_fn(
             "janitor: day_close post_seal_verify start tar=%s" % tar_norm,
             flush=True,
         )
+        manifest = self.day_close_manifest_coordinator
+        if manifest is not None:
+          touch = getattr(manifest, "touch_progress", None)
+          if callable(touch):
+            touch("post_seal_verify", tar_path=tar_norm)
         if not coord.run_post_seal_verify_sync(tar_norm):
           self._enqueue_day_close(tar_norm, persist=False)
           self._persist_hints()
@@ -2142,15 +2205,6 @@ class ArchiveJanitor:
         self._persist_hints()
         return False
       delete_disqualified = set(self.get_delete_disqualified_daily_tars())
-      if tar_norm in delete_disqualified:
-        self.log_fn(
-            "janitor: day_close delete deferred tar=%s reason=delete_disqualified"
-            % tar_norm,
-            flush=True,
-        )
-        self._enqueue_day_close(tar_norm, persist=False)
-        self._persist_hints()
-        return False
       delete_defer, _delete_reason = self._check_day_close_defer(
           tar_norm,
           phase="delete",

@@ -573,6 +573,56 @@ def test_janitor_debt_max_entries_logs_and_caps_heap(monkeypatch):
   assert janitor.debt_depth() == 2
 
 
+def test_trim_heap_evicts_lowest_priority_not_best(monkeypatch):
+  """F10: over-cap trim must drop max(sort_index), not heappop best."""
+  janitor = _make_janitor()
+  # Avoid mid-enqueue eviction so trim path is exercised alone.
+  monkeypatch.setattr(janitor_mod.cfg, "get_archive_janitor_debt_max_entries", lambda: 100)
+  oldest = "/tmp/2026-01-01.tar"
+  middle = "/tmp/2026-01-02.tar"
+  newest = "/tmp/2026-01-03.tar"
+  with janitor._debt_lock:
+    for tar in (oldest, middle, newest):
+      janitor._enqueue_day_close_locked(tar, persist=False)
+    assert len(janitor._debt_heap) == 3
+  monkeypatch.setattr(janitor_mod.cfg, "get_archive_janitor_debt_max_entries", lambda: 2)
+  with janitor._debt_lock:
+    janitor._trim_heap_to_max_entries_locked()
+    remaining = {d.tar_path for d in janitor._debt_heap}
+  assert len(remaining) == 2
+  assert newest not in remaining
+  assert oldest in remaining
+  assert middle in remaining
+
+
+def test_pop_eligible_debt_requeues_duplicate_same_tar(monkeypatch, tmp_path):
+  """F9: duplicate same-tar debts after first select must re-push, not discard."""
+  janitor = _make_janitor(tgz_archive_dir=str(tmp_path))
+  tar_a = os.path.normpath(str(tmp_path / "2026-01-01.tar"))
+  tar_b = os.path.normpath(str(tmp_path / "2026-01-02.tar"))
+  open(tar_a, "wb").close()
+  open(tar_b, "wb").close()
+  with janitor._debt_lock:
+    janitor._enqueue_day_close_locked(tar_a, persist=False)
+    # Inject a second DAY_CLOSE-shaped debt for tar_a (simulates duplicate).
+    dup = DayDebt(
+        sort_index=_debt_sort_key(DebtKind.DAY_CLOSE, tar_a),
+        kind=DebtKind.DAY_CLOSE,
+        tar_path=tar_a,
+        gz_path=tar_a + ".zst",
+    )
+    janitor._debt_heap.append(dup)
+    import heapq
+    heapq.heapify(janitor._debt_heap)
+    janitor._enqueue_day_close_locked(tar_b, persist=False)
+    selected = janitor._pop_eligible_debt_locked(set(), max_days=1)
+    remaining = {d.tar_path for d in janitor._debt_heap}
+  assert len(selected) == 1
+  assert selected[0].tar_path == tar_a
+  assert tar_a in remaining
+  assert tar_b in remaining
+
+
 def test_janitor_persisted_debt_queue_matches_heap_after_cap(monkeypatch):
   janitor = _make_janitor()
   monkeypatch.setattr(janitor_mod.cfg, "get_archive_janitor_debt_max_entries", lambda: 2)
@@ -1984,7 +2034,7 @@ def test_janitor_chains_ticks_while_debt_remains(monkeypatch, tmp_path):
 
 
 def test_janitor_zero_pop_all_disqualified_logs_and_wakes(monkeypatch, tmp_path):
-  """Heap>0 + free_slots>0 + debt_popped=0 must durable-log disqualify ∩ heap and wake."""
+  """Heap>0 + free_slots>0 + all-disqualified: log zero_pop but do not busy-wake (F11)."""
   signal_count = {"n": 0}
   tar_path = str(tmp_path / "2026-01-01.tar")
   open(tar_path, "wb").close()
@@ -2020,7 +2070,7 @@ def test_janitor_zero_pop_all_disqualified_logs_and_wakes(monkeypatch, tmp_path)
       for line in logs
   ) or any("zero_pop" in line or "all_disqualified" in line for line in logs)
   assert any("budget_remaining_s=" in line for line in logs if "zero_pop" in line)
-  assert signal_count["n"] >= 1
+  assert signal_count["n"] == 0
 
 
 def test_janitor_fill_pops_when_disqualified_scan_exceeds_budget(monkeypatch, tmp_path):
@@ -3038,6 +3088,8 @@ def test_discover_enqueues_when_deferred_waiting_on_ingest_not_worker_inflight(
   )
   newly_queued = janitor._discover_and_enqueue_ready_day_close(reason="tick")
   assert len(newly_queued) == 4
+  assert set(newly_queued) == set(ready_tars)
+  assert not (set(newly_queued) & set(deferred_tars))
   assert len(submitted) == 4
   discover_lines = [
       line for line in log_lines if "discover_ready_day_close" in line
@@ -3045,6 +3097,9 @@ def test_discover_enqueues_when_deferred_waiting_on_ingest_not_worker_inflight(
   assert discover_lines
   assert "deferred_waiting=4" in discover_lines[0]
   assert "skipped_inflight=0" in discover_lines[0]
+  assert "enqueued=4" in discover_lines[0]
+  assert "deferred_noop=" in discover_lines[0]
+  assert "already_inflight=" in discover_lines[0]
 
 
 def test_tar_drop_complete_when_tar_already_gone_and_sealed(tmp_path, monkeypatch):
@@ -3337,9 +3392,16 @@ def test_close_one_day_promotes_verifying_post_seal_and_deletes_or_handoffs(
   log_text = " ".join(
       str(c.args[0]) for c in log_fn.call_args_list if c.args
   )
-  assert "delete start" in log_text or coord.delete_phase_done(tar_norm)
+  assert "delete start" in log_text or coord.delete_phase_done(tar_norm) or (
+      coord.verification_complete(tar_norm)
+  )
   assert coord.verification_complete(tar_norm) or coord.delete_phase_done(tar_norm)
-  assert result is True or coord.delete_phase_done(tar_norm)
+  # F15: waiting_on_ingest with raw on disk may re-enqueue without PHASE_DONE.
+  assert (
+      result is True
+      or coord.delete_phase_done(tar_norm)
+      or coord.should_handoff_to_ingest(tar_norm)
+  )
 
 
 def test_close_one_day_delete_start_when_verification_complete_verified_on_disk(
@@ -4118,3 +4180,110 @@ def test_janitor_still_discovers_when_day_close_enabled(tmp_path, monkeypatch):
   newly = janitor._discover_and_enqueue_ready_day_close(reason="tick")
   assert tar_path in newly
   assert janitor.debt_depth() >= 1
+
+
+def test_delete_disqualified_routes_through_defer_tracker(monkeypatch, tmp_path):
+  """F11b: delete_disqualified must hit _check_day_close_defer (record_defer), not early return."""
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2026-06-10.tar"))
+  open(tar_path, "wb").close()
+  open(str(daily_dir / "2026-06-10.tar.zst"), "wb").close()
+  defer_calls = []
+
+  class _Coord:
+    def pre_seal_verification_complete(self, _t):
+      return True
+
+    def post_seal_verification_complete(self, _t):
+      return True
+
+    def verification_complete(self, _t):
+      return True
+
+    def delete_phase_done(self, _t):
+      return False
+
+    def should_handoff_before_seal(self, _t):
+      return False
+
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      day_raw_removal_coordinator=_Coord(),
+      get_delete_disqualified_daily_tars=lambda: {tar_path},
+  )
+  _mark_day_sealed(janitor, tar_path)
+  real_check = janitor._check_day_close_defer
+
+  def _spy_check(tar, *, phase, disqualified, delete_disqualified=None):
+    defer_calls.append((phase, delete_disqualified))
+    return real_check(
+        tar,
+        phase=phase,
+        disqualified=disqualified,
+        delete_disqualified=delete_disqualified,
+    )
+
+  monkeypatch.setattr(janitor, "_check_day_close_defer", _spy_check)
+  monkeypatch.setattr(
+      janitor,
+      "_blocking_remaining_raw_for_tar",
+      lambda *_a, **_k: {},
+  )
+  ok = janitor._close_one_day(
+      tar_path,
+      snapshot=None,
+      validation_cache={},
+      disqualified=set(),
+  )
+  assert ok is False
+  assert any(phase == "delete" for phase, _ in defer_calls)
+  delete_call = next(c for c in defer_calls if c[0] == "delete")
+  assert tar_path in (delete_call[1] or set())
+  # record_defer ran via real _check_day_close_defer → debt re-enqueue.
+  with janitor._defer_tracker._lock:
+    tracked = tar_path in janitor._defer_tracker._by_tar
+  assert tracked or janitor.debt_depth() >= 1
+
+
+def test_discover_stashes_unprocessed_snapshot_for_submit(tmp_path, monkeypatch):
+  """F4: discover must stash classify unprocessed snapshot for submit eligibility."""
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2020-03-01.tar"))
+  open(tar_path, "wb").close()
+  seen = {"snap": "unset"}
+
+  def _enqueue(tar_norm, reason="", *, disqualified=None):
+    seen["snap"] = getattr(
+        janitor, "_day_close_submit_unprocessed_snapshot", "missing",
+    )
+    return True, "enqueued"
+
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      get_day_close_candidate_inputs=lambda: {
+          "inflight_paths": set(),
+          "pending_append_by_daily_tar": {},
+          "in_flight_archive_tars": set(),
+          "pending_archive_task_tars": set(),
+          "unmapped_closed_raw_tars": set(),
+          "unprocessed_by_tar": {tar_path: []},
+      },
+  )
+  monkeypatch.setattr(janitor, "_enqueue_eligible_day_close", _enqueue)
+  monkeypatch.setattr(
+      janitor_mod,
+      "classify_day_close_candidates",
+      lambda **_k: [
+          {
+              "tar_path": tar_path,
+              "status": "ready_for_enqueue",
+              "reasons": ["awaiting_janitor_discover"],
+              "unprocessed": 0,
+          },
+      ],
+  )
+  janitor._discover_and_enqueue_ready_day_close(reason="tick")
+  assert seen["snap"] == {tar_path: []}
+  assert getattr(janitor, "_day_close_submit_unprocessed_snapshot", None) is None

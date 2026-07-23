@@ -150,6 +150,26 @@ grep -c 'oldest_day_chunk_gate_stall' /tmp/pipeline-full.log
 grep -c 'ingest_stall_watchdog' /tmp/pipeline-full.log
 ```
 
+### T0 / T1 — janitor discover fake-enqueue / sticky deferred / day-close stall (2026-07)
+
+**Failure signature (pre-fix):** `discover_ready_day_close enqueued=N … deferred_waiting=N debt_heap=0 active_workers=0` then `days_started=0` for many hours while many mutable `.tar` remain (`open_tar_n` high). Often paired with `checkpoint_incomplete` skips, `populate incomplete … none:none`, and `delete deferred … delete_disqualified` thrash on handoff days.
+
+```bash
+# T0 — fake-enqueue / honest counters (full pipeline log; never --tail before grep)
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+grep -E 'discover_ready_day_close|deferred_noop|deferred cleared|immediate day_close defer|delete deferred|zero_pop|populate incomplete after lock release|mutation proceed reason=defer_cap_exceeded' /tmp/pipeline-full.log | tail -80
+
+# T0 — open mutable daily tar census (INI paths first; single python3 -c — no nested sh -lc)
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline \
+  su hpcperfstats -c 'python3 -c "from hpcperfstats.dbload.lib import conf_parser as c; import os,glob; d=c.get_daily_archive_dir_path(); tars=sorted(glob.glob(os.path.join(d,\"????-??-??.tar\"))); print(\"daily\",d,\"open_tar_n\",len(tars)); print(\"sample\",tars[:8])"'
+```
+
+**Fail (T0):** repeating `enqueued=N` with `debt_heap=0` / `active_workers=0` / `days_started=0` while `deferred_waiting` stays flat and open `.tar` count does not fall; or `enqueued=` equals deferred count without `deferred_noop=` (old fake-ok contract).
+
+**Pass (T0):** discover lines show real `enqueued=` only when debt/workers advance; `deferred_noop=` / `already_inflight=` split soft-state; `deferred cleared` after handoff drain; immediate defer is per source day (other days can still enqueue); delete_disqualified ages via defer_cap rather than forever bounce; empty `none:none` incomplete recover is bounded (stall / fail-closed, not infinite stall-clock reset).
+
+**Pass (T1):** over hours, `open_tar_n` declines and `Archive janitor tick done … days_started≥1` / `days_completed` progress under continuous ingest; no multi-day spin of fake discover with zero debt.
+
 ### T0 / T1 — tar append exit 2 / large member (`out of off_t range`, 2026-07)
 
 Members larger than **8 GiB − 1** fail classic ustar without pax headers (`value N out of off_t range 0..8589934591`). Production always passes **`--posix`** on tar create/append (`-C /` + relative `-T` members). When the daily tar is **not pax-capable** (bare `POSIX tar archive` without pax headers; GNU labels need no convert), the **archive pool** job logs **`must_convert`**, attempts **extract + `tar --format=pax` recreate**, then appends. On convert failure: **`convert_fail_skip`** oversized members (original tar untouched) and continue with remaining paths. **`archive_job_done`** includes **`outcome=ok|fail`** (do not treat `archive_job_done` alone as success).
