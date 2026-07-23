@@ -4088,6 +4088,21 @@ def test_unniced_stream_uses_ingest_zstd_thread_count(monkeypatch, tmp_path):
 
 
 @pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_stream_compressed_archive_members_removes_read_lock_sidecar(tmp_path):
+  """Sealed-stream read must unlink *.fnctl.lock after release (parity with tar populate)."""
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
+
+  zst_p, _tar_p = _write_sealed_daily_archive(tmp_path, day="2026-06-08")
+  lock_path = zst_p + ".fnctl.lock"
+  assert not os.path.isfile(lock_path)
+  readable, members, _dups, err = helpers._stream_compressed_archive_members(zst_p)
+  assert readable is True
+  assert err is None
+  assert members
+  assert not os.path.isfile(lock_path)
+
+
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
 def test_stream_archive_skips_oversize_member(monkeypatch, tmp_path):
   zst_p, _tar_p = _write_sealed_daily_archive(tmp_path, day="2024-03-11")
   monkeypatch.setattr(

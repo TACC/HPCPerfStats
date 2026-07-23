@@ -7,6 +7,7 @@ import pytest
 
 from hpcperfstats.dbload.lib.file_locking import (
     cleanup_orphan_fnctl_lock_sidecars,
+    cleanup_orphan_fnctl_lock_sidecars_for_targets,
     cleanup_stale_fnctl_lock_sidecars,
     file_read_lock_wait,
     file_write_lock,
@@ -178,6 +179,49 @@ def test_cleanup_orphan_fnctl_lock_sidecars_does_not_remove_active_lock(tmp_path
   t.start()
   assert held.wait(timeout=1)
   assert cleanup_orphan_fnctl_lock_sidecars(str(tmp_path)) == 0
+  assert lock_path.exists()
+  release.set()
+  t.join(timeout=1)
+
+
+def test_cleanup_orphan_fnctl_lock_sidecars_for_targets_removes_uncontended(tmp_path):
+  tar = tmp_path / "2026-06-08.tar"
+  zst = tmp_path / "2026-06-08.tar.zst"
+  other = tmp_path / "2026-06-09.tar"
+  tar.write_text("t")
+  zst.write_text("z")
+  other.write_text("o")
+  tar_lock = tmp_path / "2026-06-08.tar.fnctl.lock"
+  zst_lock = tmp_path / "2026-06-08.tar.zst.fnctl.lock"
+  other_lock = tmp_path / "2026-06-09.tar.fnctl.lock"
+  tar_lock.write_text("")
+  zst_lock.write_text("")
+  other_lock.write_text("")
+  removed = cleanup_orphan_fnctl_lock_sidecars_for_targets(
+      [str(tar), str(zst)],
+  )
+  assert removed == 2
+  assert not tar_lock.exists()
+  assert not zst_lock.exists()
+  assert other_lock.exists()
+
+
+def test_cleanup_orphan_fnctl_lock_sidecars_for_targets_preserves_held_flock(tmp_path):
+  target = tmp_path / "held.tar"
+  target.write_text("x")
+  lock_path = tmp_path / "held.tar.fnctl.lock"
+  held = threading.Event()
+  release = threading.Event()
+
+  def _hold_writer():
+    with file_write_lock(str(target), timeout_seconds=1):
+      held.set()
+      release.wait(timeout=2)
+
+  t = threading.Thread(target=_hold_writer, daemon=True)
+  t.start()
+  assert held.wait(timeout=1)
+  assert cleanup_orphan_fnctl_lock_sidecars_for_targets([str(target)]) == 0
   assert lock_path.exists()
   release.set()
   t.join(timeout=1)

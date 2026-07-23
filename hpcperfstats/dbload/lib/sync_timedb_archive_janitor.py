@@ -18,7 +18,7 @@ from django.db import close_old_connections
 from hpcperfstats.dbload.lib.archive_compress import compressed_sibling_paths
 from hpcperfstats.dbload.lib.file_locking import (
     cleanup_orphan_fnctl_lock_sidecars,
-    cleanup_stale_fnctl_lock_sidecars,
+    cleanup_orphan_fnctl_lock_sidecars_for_targets,
 )
 from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     atomic_seal_tar_to_zst,
@@ -1250,13 +1250,30 @@ class ArchiveJanitor:
     )
 
     manifest_dir = day_removal_manifest_dir(self.archive_data_dir)
-    return cleanup_orphan_fnctl_lock_sidecars(manifest_dir)
+    removed = cleanup_orphan_fnctl_lock_sidecars(manifest_dir)
+    # Debt-day-targeted daily .tar / sealed sibling orphans (not full-tree walk).
+    with self._debt_lock:
+      debt_tars = [
+          d.tar_path
+          for d in self._debt_heap
+          if d.kind in _DAY_PIPELINE_KINDS and d.tar_path
+      ]
+    targets = []
+    for tar_path in debt_tars:
+      targets.append(tar_path)
+      zst_path, gz_path = compressed_sibling_paths(tar_path)
+      targets.append(zst_path)
+      targets.append(gz_path)
+    removed += cleanup_orphan_fnctl_lock_sidecars_for_targets(targets)
+    return removed
 
   def _run_scheduled_archive_lock_cleanup(self, *, reason: str = "") -> int:
     if reason == "startup":
       return self._run_tick_lock_cleanup()
-    removed = cleanup_stale_fnctl_lock_sidecars(self.archive_data_dir)
-    removed += cleanup_stale_fnctl_lock_sidecars(self.tgz_archive_dir)
+    # Non-startup heavy: orphan (expiry=0) so recent read-lock leave-behinds
+    # do not wait for the ~4h stale mtime gate.
+    removed = cleanup_orphan_fnctl_lock_sidecars(self.archive_data_dir)
+    removed += cleanup_orphan_fnctl_lock_sidecars(self.tgz_archive_dir)
     return removed
 
   def _get_maintenance_pass_candidate_inputs(self) -> Dict[str, Any]:

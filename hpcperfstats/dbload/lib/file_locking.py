@@ -163,6 +163,28 @@ def cleanup_orphan_fnctl_lock_sidecars(directory, *, now=None):
   )
 
 
+def cleanup_orphan_fnctl_lock_sidecars_for_targets(target_paths, *, now=None):
+  """Remove uncontended lock sidecars for specific targets (no directory walk).
+
+  Used for debt-day-targeted daily ``.tar`` / sealed sibling cleanup on janitor
+  ticks. Never unlinks while an exclusive flock probe fails (live SH/EX holder).
+  """
+  if now is None:
+    now = time.time()
+  removed = 0
+  seen = set()
+  for path in target_paths or ():
+    if not path:
+      continue
+    norm = os.path.normpath(path)
+    if norm in seen:
+      continue
+    seen.add(norm)
+    if _maybe_reset_stale_lock_file(norm, now, 0):
+      removed += 1
+  return removed
+
+
 @contextmanager
 def file_write_lock(target_path,
                     timeout_seconds=READ_WAIT_TIMEOUT_SECONDS,

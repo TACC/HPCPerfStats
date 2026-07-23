@@ -3819,12 +3819,21 @@ def _archive_members_fnctl_read_lock_timeout_seconds():
   return cfg.get_sync_archive_members_fnctl_read_lock_timeout_seconds()
 
 
+@contextlib.contextmanager
 def _archive_file_read_lock_wait(target_path):
-  """Shared read-lock wait for archive populate/verify (INI-backed timeout)."""
-  return file_read_lock_wait(
-      target_path,
-      timeout_seconds=_archive_members_fnctl_read_lock_timeout_seconds(),
-  )
+  """Shared read-lock wait for archive populate/verify (INI-backed timeout).
+
+  Best-effort unlinks the read-lock sidecar after release (parity with tar
+  populate) so sealed-stream ``*.tar.zst.fnctl.lock`` files do not accumulate.
+  """
+  try:
+    with file_read_lock_wait(
+        target_path,
+        timeout_seconds=_archive_members_fnctl_read_lock_timeout_seconds(),
+    ):
+      yield
+  finally:
+    _remove_read_lock_sidecar(target_path)
 
 
 def _populate_tar_file_read_lock_wait(target_path):

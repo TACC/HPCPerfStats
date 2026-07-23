@@ -1030,7 +1030,35 @@ docker compose logs pipeline --since 24h 2>&1 | grep -E 'day_close defer|day_clo
 
 **Healthy:** `janitor: day_close defer … reason=populate_active|ingest_tar_hot|daily_tar_restore|write_lock_contended`; `janitor: day_close yield … reason=chunk_prewarm|ingest_tar_hot` during dedupe/seal overlap; `populate: wait daily_tar_restore day=…` then successful populate; `archive: daily_tar_restore begin|end reason=missing_tar|corrupt_tar`; gated prewarm shows **`archive decompress restore begin`** for the oldest incomplete day before long decompress; sealed-only finished days do **not** storm `discover_ready_*` / `zstd -t` after persistence reset; tar-drop after delete-path unlink completes without false **`waiting_on_ingest`** when `handoff_paths=0`.
 
-**Unhealthy:** populate waits full **`populate_max_seconds`** with **`daily_tar_restore`** stuck (no `daily_tar_restore end`); gated prewarm with **`gated_tar_restore=True`** and no **`archive decompress restore begin`** / no `zstd -d` for that day while MainThread is busy; repeated fnctl timeout without preceding defer/yield/restore-wait logs; defer streak with no progress past **`defer_cap_exceeded`** without seal/dedupe completion.
+**`write_lock_contended` vs orphan `*.fnctl.lock` (T0/T1):** Sidecar files under `daily_archive` are **not** proof of a held flock. `write_lock_contended` means exclusive `try_file_write_lock` on the daily `.tar` failed (live SH/EX holder). Prefer an in-container `try_file_write_lock` probe (and `lsof`); **`fuser` is often absent** in the pipeline image (`which fuser` → empty). Read-lock leave-behinds and sealed-stream orphans are cleaned by debt-day tick + non-startup heavy orphan passes — do **not** treat `ls *.fnctl.lock` alone as a stall.
+
+```bash
+# T0 — flock probe vs orphan sidecar (INI paths; prefer try_file_write_lock over fuser)
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline su hpcperfstats -c 'python3 -c "
+from hpcperfstats.dbload.lib import conf_parser as cfg
+from hpcperfstats.dbload.lib.file_locking import try_file_write_lock
+import os, shutil
+d = cfg.get_daily_archive_dir_path()
+print(\"fuser\", shutil.which(\"fuser\"), \"lsof\", shutil.which(\"lsof\"))
+for day in (\"YYYY-MM-DD\",):
+  tar = os.path.join(d, day + \".tar\")
+  lock = tar + \".fnctl.lock\"
+  print(\"probe\", tar, \"lock_exists_before\", os.path.isfile(lock))
+  try:
+    with try_file_write_lock(tar):
+      print(\"try_file_write_lock\", day, \"OK_uncontended\")
+  except Exception as e:
+    print(\"try_file_write_lock\", day, type(e).__name__, str(e)[:120])
+  print(\"lock_exists_after\", day, os.path.isfile(lock))
+"'
+```
+
+```bash
+# T0 — day_close defer / lock_cleanup greps (full pipeline log; never --tail before grep)
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'janitor: day_close defer.*write_lock_contended|janitor: lock_cleanup|day_close seal start' | tail -40
+```
+
+**Unhealthy:** populate waits full **`populate_max_seconds`** with **`daily_tar_restore`** stuck (no `daily_tar_restore end`); gated prewarm with **`gated_tar_restore=True`** and no **`archive decompress restore begin`** / no `zstd -d` for that day while MainThread is busy; repeated fnctl timeout without preceding defer/yield/restore-wait logs; defer streak with no progress past **`defer_cap_exceeded`** without seal/dedupe completion; multi-hour `write_lock_contended` **with** `try_file_write_lock` still failing (true live holder stuck) — distinct from leftover orphan sidecars where the probe returns `OK_uncontended`.
 
 **T0 / T1 — membership invalidate after sealed→tar restore:** successful `decompress_compressed_to_tar` (gated prewarm / `ensure_daily_tar_restored_for_append` / corrupt replace) must log **`Archive members cache invalidated … reason=tar_restore_pre`** then **`reason=tar_restore`** so sealed+`tar=None` Redis maps cannot stay warm and skip populate. Expect a cold re-prewarm / populate for that day after restore — **not** a stall from thrashing the same day forever.
 

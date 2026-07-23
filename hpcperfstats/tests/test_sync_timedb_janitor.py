@@ -340,7 +340,6 @@ def test_janitor_tick_debt_budget_excludes_scheduled_maintenance_pass(
 
   monkeypatch.setattr(janitor_mod.time, "time", fake_time)
   monkeypatch.setattr(janitor_mod, "close_old_connections", lambda: None)
-  monkeypatch.setattr(janitor_mod, "cleanup_stale_fnctl_lock_sidecars", lambda *_a, **_k: 0)
   monkeypatch.setattr(janitor, "run_scheduled_maintenance_pass", slow_maintenance)
   monkeypatch.setattr(
       janitor_mod.ArchiveJanitor,
@@ -379,7 +378,6 @@ def test_janitor_tick_budget_interrupt_requeues_remaining_debt(monkeypatch, tmp_
 
   monkeypatch.setattr(janitor_mod.time, "time", fake_time)
   monkeypatch.setattr(janitor_mod, "close_old_connections", lambda: None)
-  monkeypatch.setattr(janitor_mod, "cleanup_stale_fnctl_lock_sidecars", lambda *_a, **_k: 0)
   monkeypatch.setattr(
       janitor_mod.ArchiveJanitor,
       "_run_tick_lock_cleanup",
@@ -2560,17 +2558,19 @@ def test_startup_heavy_pass_manifest_only_lock_cleanup(monkeypatch, tmp_path):
   daily_dir.mkdir()
   janitor = _make_janitor(tgz_archive_dir=str(daily_dir))
   janitor.startup_snapshot_coordinator = None
-  stale_calls = []
   orphan_calls = []
+  scheduled_calls = []
   logs = []
-
-  def fake_stale(*_a, **_k):
-    stale_calls.append(1)
-    return 0
 
   def fake_orphan(*_a, **_k):
     orphan_calls.append(1)
     return 1
+
+  original_scheduled = janitor_mod.ArchiveJanitor._run_scheduled_archive_lock_cleanup
+
+  def tracking_scheduled(self, *, reason=""):
+    scheduled_calls.append(reason)
+    return original_scheduled(self, reason=reason)
 
   snapshot = ArchiveMaintenanceSnapshot(
       closed_paths=[],
@@ -2581,14 +2581,18 @@ def test_startup_heavy_pass_manifest_only_lock_cleanup(monkeypatch, tmp_path):
       head_identity_by_path={},
   )
   monkeypatch.setattr(janitor_mod, "build_archive_maintenance_snapshot", lambda *_a, **_k: snapshot)
-  monkeypatch.setattr(janitor_mod, "cleanup_stale_fnctl_lock_sidecars", fake_stale)
   monkeypatch.setattr(janitor_mod, "cleanup_orphan_fnctl_lock_sidecars", fake_orphan)
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor,
+      "_run_scheduled_archive_lock_cleanup",
+      tracking_scheduled,
+  )
   monkeypatch.setattr(janitor, "get_ingest_pool_in_flight_count", lambda: 0)
   monkeypatch.setattr(janitor, "get_chunk_in_progress", lambda: False)
   janitor.log_fn = lambda msg, **_kw: logs.append(str(msg))
   janitor.run_heavy_maintenance_pass(reason="startup")
-  assert stale_calls == []
-  assert orphan_calls
+  assert scheduled_calls == ["startup"]
+  assert orphan_calls  # manifest-only tick path uses orphan, not full-tree
   assert any("heavy maintenance sub_phases" in line for line in logs)
   assert any("lock_cleanup_s=" in line for line in logs)
 
@@ -2685,10 +2689,10 @@ def test_non_startup_heavy_pass_full_archive_lock_cleanup(monkeypatch, tmp_path)
   daily_dir = tmp_path / "daily"
   daily_dir.mkdir()
   janitor = _make_janitor(tgz_archive_dir=str(daily_dir))
-  stale_calls = {"n": 0}
+  orphan_calls = {"n": 0}
 
-  def fake_stale(*_a, **_k):
-    stale_calls["n"] += 1
+  def fake_orphan(*_a, **_k):
+    orphan_calls["n"] += 1
     return 0
 
   snapshot = ArchiveMaintenanceSnapshot(
@@ -2700,11 +2704,59 @@ def test_non_startup_heavy_pass_full_archive_lock_cleanup(monkeypatch, tmp_path)
       head_identity_by_path={},
   )
   monkeypatch.setattr(janitor_mod, "build_archive_maintenance_snapshot", lambda *_a, **_k: snapshot)
-  monkeypatch.setattr(janitor_mod, "cleanup_stale_fnctl_lock_sidecars", fake_stale)
+  monkeypatch.setattr(janitor_mod, "cleanup_orphan_fnctl_lock_sidecars", fake_orphan)
   monkeypatch.setattr(janitor, "get_ingest_pool_in_flight_count", lambda: 0)
   monkeypatch.setattr(janitor, "get_chunk_in_progress", lambda: False)
   janitor.run_heavy_maintenance_pass(reason="every_n_chunks")
-  assert stale_calls["n"] == 2
+  assert orphan_calls["n"] == 2
+
+
+def test_tick_lock_cleanup_removes_debt_day_daily_tar_orphans(monkeypatch, tmp_path):
+  """Debt-day tick cleanup removes uncontended .tar/.zst sidecars; preserves held flock."""
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = str(daily_dir / "2026-06-08.tar")
+  zst_path = str(daily_dir / "2026-06-08.tar.zst")
+  open(tar_path, "wb").close()
+  open(zst_path, "wb").close()
+  tar_lock = tar_path + ".fnctl.lock"
+  zst_lock = zst_path + ".fnctl.lock"
+  open(tar_lock, "wb").close()
+  open(zst_lock, "wb").close()
+
+  held_tar = str(daily_dir / "2026-06-09.tar")
+  open(held_tar, "wb").close()
+  held_lock = held_tar + ".fnctl.lock"
+  held = threading.Event()
+  release = threading.Event()
+
+  def _hold_writer():
+    from hpcperfstats.dbload.lib.file_locking import file_write_lock
+
+    with file_write_lock(held_tar, timeout_seconds=1):
+      held.set()
+      release.wait(timeout=5)
+
+  holder = threading.Thread(target=_hold_writer, daemon=True)
+  holder.start()
+  assert held.wait(timeout=1)
+
+  # Avoid walking day-removal manifest dir (may not exist under tmp archive root).
+  monkeypatch.setattr(
+      janitor_mod,
+      "cleanup_orphan_fnctl_lock_sidecars",
+      lambda *_a, **_k: 0,
+  )
+  janitor = _make_janitor(tgz_archive_dir=str(daily_dir))
+  janitor._enqueue_debt(DebtKind.DAY_CLOSE, tar_path, persist=False)
+  janitor._enqueue_debt(DebtKind.DAY_CLOSE, held_tar, persist=False)
+  removed = janitor._run_tick_lock_cleanup()
+  assert removed >= 2
+  assert not os.path.isfile(tar_lock)
+  assert not os.path.isfile(zst_lock)
+  assert os.path.isfile(held_lock)
+  release.set()
+  holder.join(timeout=2)
 
 
 def test_janitor_tick_discovers_and_submits_without_startup_reason(
@@ -3624,7 +3676,6 @@ def test_janitor_budget_partial_tick_schedules_followup(monkeypatch, tmp_path):
 
   monkeypatch.setattr(janitor_mod.time, "time", fake_time)
   monkeypatch.setattr(janitor_mod, "close_old_connections", lambda: None)
-  monkeypatch.setattr(janitor_mod, "cleanup_stale_fnctl_lock_sidecars", lambda *_a, **_k: 0)
   monkeypatch.setattr(
       janitor_mod.ArchiveJanitor,
       "_run_tick_lock_cleanup",
@@ -3983,7 +4034,6 @@ def test_janitor_budget_exit_nonblocking_leaves_in_flight(monkeypatch, tmp_path)
   monkeypatch.setattr(janitor_mod.time, "time", fake_time)
   monkeypatch.setattr(janitor_mod, "wait", fake_wait)
   monkeypatch.setattr(janitor_mod, "close_old_connections", lambda: None)
-  monkeypatch.setattr(janitor_mod, "cleanup_stale_fnctl_lock_sidecars", lambda *_a, **_k: 0)
   monkeypatch.setattr(
       janitor_mod.ArchiveJanitor, "_run_tick_lock_cleanup", lambda self: 0,
   )
@@ -4023,7 +4073,6 @@ def test_janitor_reconcile_before_discover_order(monkeypatch, tmp_path):
   janitor.day_close_manifest_coordinator = coord
 
   monkeypatch.setattr(janitor_mod, "close_old_connections", lambda: None)
-  monkeypatch.setattr(janitor_mod, "cleanup_stale_fnctl_lock_sidecars", lambda *_a, **_k: 0)
   monkeypatch.setattr(
       janitor_mod.ArchiveJanitor, "_run_tick_lock_cleanup", lambda self: 0,
   )
