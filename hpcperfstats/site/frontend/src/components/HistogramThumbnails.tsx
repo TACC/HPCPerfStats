@@ -175,11 +175,11 @@ function HistogramThumbnail({
     };
   }, [isMobile, plotItemThumb]);
 
-  /* Mobile: full histogram only, no popover, container sized for viewport */
+  /* Mobile: full histogram only, no popover, container sized for viewport.
+     Chart title lives inside the Bokeh figure — do not duplicate it outside. */
   if (isMobile) {
     return (
       <div className="flex w-full max-w-full flex-col justify-stretch">
-        <div className="mb-2 text-base font-semibold max-md:mb-2">{safeTitle}</div>
         <div className="max-h-[min(400px,50vh)] min-h-[280px] w-full overflow-auto rounded-[var(--radius)] border border-border bg-background max-md:max-h-[min(400px,50vh)]">
           <BokehPlotWithLimitation
             item={plotItemFull}
@@ -199,7 +199,6 @@ function HistogramThumbnail({
 
   return (
     <div className="histogram-thumbnail-wrapper flex flex-col items-center justify-start">
-      <div className="histogram-desktop-title mb-[0.35rem] max-w-[280px] text-center text-[0.95rem] font-semibold">{safeTitle}</div>
       <div
         className="histogram-thumbnail-card box-border flex flex-col overflow-hidden rounded-[var(--radius)] border border-border bg-muted"
         style={{ width: THUMB_SIZE.width }}
@@ -248,8 +247,9 @@ function HistogramThumbnail({
           className="max-w-[calc(100vw-2rem)] sm:max-w-4xl"
           data-testid="histogram-enlarge-dialog"
         >
-          <DialogHeader className="flex-row flex-wrap items-center justify-between gap-2 space-y-0">
-            <DialogTitle className="min-w-0 flex-1 text-base">{safeTitle}</DialogTitle>
+          <DialogHeader className="flex-row flex-wrap items-center justify-end gap-2 space-y-0">
+            {/* Visually hidden: title is already drawn inside the Bokeh figure. */}
+            <DialogTitle className="sr-only">{safeTitle}</DialogTitle>
             <Button
               ref={closeButtonRef}
               type="button"

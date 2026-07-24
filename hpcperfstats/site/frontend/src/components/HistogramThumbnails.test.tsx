@@ -56,7 +56,7 @@ describe("HistogramThumbnails", () => {
     delete window.Bokeh;
   });
 
-  it("exposes a labelled region and a visible desktop chart title", () => {
+  it("exposes a labelled region without duplicating the chart title outside the figure", () => {
     Object.defineProperty(window, "matchMedia", {
       writable: true,
       configurable: true,
@@ -90,7 +90,7 @@ describe("HistogramThumbnails", () => {
     expect(
       screen.getByRole("region", { name: "Histogram charts for this job list" }),
     ).toBeInTheDocument();
-    expect(screen.getAllByText("Jobs by queue").length).toBeGreaterThanOrEqual(1);
+    expect(document.querySelector(".histogram-desktop-title")).toBeNull();
     expect(
       screen.getByRole("button", {
         name: "Jobs by queue: enlarge chart",
