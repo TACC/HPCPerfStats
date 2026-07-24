@@ -64,13 +64,17 @@ def mean_node_power_est_w(jt):
   return float(s.mean())
 
 
-def _has_cpu_and_gpu_power_fragments(df):
-  """True when both a CPU power column and GPU power appear with finite samples."""
+def _has_cpu_power_fragments(df):
+  """True when a CPU power column appears with finite samples.
+
+  GPU power is optional: watt-hours integrate ``node_power_est_w``, which may
+  include GPU when present. Module-only estimates without a CPU side fail this
+  gate.
+  """
   cpu_cols = [
       c for c in ("dcg_cpu_power_w", "watts", "amd_pkg_w") if c in df.columns
   ]
-  gpu_cols = [c for c in ("nv_power_w", "nv_module_power_w") if c in df.columns]
-  if not cpu_cols or not gpu_cols:
+  if not cpu_cols:
     return False
 
   def _col_has_finite(col):
@@ -79,23 +83,21 @@ def _has_cpu_and_gpu_power_fragments(df):
       return False
     return bool(np.isfinite(s.astype(float).to_numpy()).any())
 
-  has_cpu = any(_col_has_finite(c) for c in cpu_cols)
-  has_gpu = any(_col_has_finite(c) for c in gpu_cols)
-  return bool(has_cpu and has_gpu)
+  return bool(any(_col_has_finite(c) for c in cpu_cols))
 
 
 def job_cpu_gpu_watt_hours(jt):
-  """∫ node_power_est_w dt per host (Wh), summed across hosts; None if CPU+GPU gate fails.
+  """∫ node_power_est_w dt per host (Wh), summed across hosts; None if CPU gate fails.
 
-  Requires finite CPU and GPU power fragments in the estimate dataframe (not
-  module-only without a CPU side). Integrates watts × seconds / 3600.
+  Requires finite CPU power fragments in the estimate dataframe (GPU optional;
+  not module-only without a CPU side). Integrates watts × seconds / 3600.
   """
   import pandas as pd
 
   df = build_node_power_est_dataframe(jt)
   if df.empty or "node_power_est_w" not in df.columns:
     return None
-  if not _has_cpu_and_gpu_power_fragments(df):
+  if not _has_cpu_power_fragments(df):
     return None
 
   total_wh = 0.0

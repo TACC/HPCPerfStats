@@ -72,3 +72,27 @@ JOB_METRIC_SHORT_LABELS: dict[str, str] = {
     "vecpercent_32b": "Single-precision vector FLOP share (%)",
     "avg_vector_width_32b": "Effective vector width (single precision)",
 }
+
+
+def job_has_gpu_for_watt_hours_label(gpu_count) -> bool:
+    """True when job GPU count is a positive number (watt-hours title wording)."""
+    if gpu_count is None or gpu_count == "":
+        return False
+    try:
+        return float(gpu_count) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def get_job_watt_hours_short_label(has_gpu: bool) -> str:
+    """Metrics-table short label: omit +GPU when the job has no GPUs."""
+    if has_gpu:
+        return "CPU+GPU watt-hours for job"
+    return "CPU watt-hours for job"
+
+
+def get_job_watt_hours_resources_title(has_gpu: bool) -> str:
+    """Resources card title: omit +GPU when the job has no GPUs."""
+    if has_gpu:
+        return "CPU+GPU Watt Hours for Job"
+    return "CPU Watt Hours for Job"

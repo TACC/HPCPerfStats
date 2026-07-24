@@ -36,7 +36,12 @@ import { useSession } from "../session-context";
 import { VariableInfoLabel } from "../components/VariableInfoLabel";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
 import PageBreadcrumbs from "../components/PageBreadcrumbs";
-import { getJobMetricShortLabel } from "../utils/jobMetricDisplayLabels";
+import {
+  getJobMetricShortLabel,
+  getJobWattHoursResourcesTitle,
+  getJobWattHoursShortLabel,
+  jobHasGpuForWattHoursLabel,
+} from "../utils/jobMetricDisplayLabels";
 import {
   readTabFromSearchParams,
 } from "../utils/sync-tab-search-param";
@@ -598,6 +603,7 @@ export default function JobDetail() {
   const metricsTableLeft = metricsListFull.filter((_, index) => index % 2 === 0);
   const metricsTableRight = metricsListFull.filter((_, index) => index % 2 === 1);
   const gpuCountForMetrics = resolveGpuCountForDisplay(gpu_count, metrics_list || []);
+  const wattHoursHasGpu = jobHasGpuForWattHoursLabel(gpuCountForMetrics);
   const wattHoursMetric = (metrics_list || []).find(
     (m) => m.metric === "job_cpu_gpu_watt_hours" && m.value != null,
   );
@@ -616,7 +622,9 @@ export default function JobDetail() {
             labelText={
               obj.metric === EFFECTIVE_VECTOR_WIDTH_METRIC
                 ? EFFECTIVE_VECTOR_WIDTH_LABEL
-                : getJobMetricShortLabel(obj.metric)
+                : obj.metric === "job_cpu_gpu_watt_hours"
+                  ? getJobWattHoursShortLabel(wattHoursHasGpu)
+                  : getJobMetricShortLabel(obj.metric)
             }
             enableHelp
             suffixBeforeHelp={
@@ -890,12 +898,14 @@ export default function JobDetail() {
             {wattHoursMetric ? (
               <Table className="mb-3 border text-sm">
                 <TableCaption className="sr-only">
-                  CPU and GPU energy for job {job.jid}
+                  {wattHoursHasGpu
+                    ? `CPU and GPU energy for job ${job.jid}`
+                    : `CPU energy for job ${job.jid}`}
                 </TableCaption>
                 <TableBody>
                   <TableRow>
                     <TableCell className="border border-border">
-                      <b>CPU+GPU Watt Hours for Job</b>
+                      <b>{getJobWattHoursResourcesTitle(wattHoursHasGpu)}</b>
                     </TableCell>
                     <TableCell className="border border-border text-right">
                       {formatDecimalStandard(wattHoursMetric.value)}

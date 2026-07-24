@@ -70,6 +70,25 @@ const JOB_METRIC_SHORT_LABELS = {
   avg_vector_width_32b: "Effective vector width (single precision)",
 };
 
+/** True when job GPU count is a positive number (for watt-hours title wording). */
+export function jobHasGpuForWattHoursLabel(
+  gpuCount: string | number | null | undefined,
+): boolean {
+  if (gpuCount == null || gpuCount === "") return false;
+  const n = Number(gpuCount);
+  return !Number.isNaN(n) && n > 0;
+}
+
+/** Metrics-table short label: omit +GPU when the job has no GPUs. */
+export function getJobWattHoursShortLabel(hasGpu: boolean): string {
+  return hasGpu ? "CPU+GPU watt-hours for job" : "CPU watt-hours for job";
+}
+
+/** Resources card title: omit +GPU when the job has no GPUs. */
+export function getJobWattHoursResourcesTitle(hasGpu: boolean): string {
+  return hasGpu ? "CPU+GPU Watt Hours for Job" : "CPU Watt Hours for Job";
+}
+
 export function getJobMetricShortLabel(metric: string | null | undefined): string {
   if (metric == null || typeof metric !== "string") return "";
   return (

@@ -1023,7 +1023,7 @@ def test_build_job_metrics_display_list_hides_duplicate_avg_gpuutil():
 
 @pytest.mark.machine_unit_mock
 def test_job_cpu_gpu_watt_hours_integrates_and_gates():
-  """Watt-hours requires CPU+GPU fragments; integrates W×s/3600 per host."""
+  """Watt-hours requires CPU fragments (GPU optional); integrates W×s/3600 per host."""
   import pandas as pd
   from hpcperfstats.analysis.metrics.lib.gen import node_power_est as npe
 
@@ -1049,6 +1049,10 @@ def test_job_cpu_gpu_watt_hours_integrates_and_gates():
 
   df_cpu_only = df.drop(columns=["nv_power_w"])
   with patch.object(npe, "build_node_power_est_dataframe", return_value=df_cpu_only):
+    assert npe.job_cpu_gpu_watt_hours(FakeJt()) == pytest.approx(6000.0 / 3600.0)
+
+  df_no_cpu = df.drop(columns=["dcg_cpu_power_w"])
+  with patch.object(npe, "build_node_power_est_dataframe", return_value=df_no_cpu):
     assert npe.job_cpu_gpu_watt_hours(FakeJt()) is None
 
 

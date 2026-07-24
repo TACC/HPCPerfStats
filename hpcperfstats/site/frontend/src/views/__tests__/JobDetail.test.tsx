@@ -757,10 +757,34 @@ describe("JobDetail", () => {
     });
   });
 
-  it("shows CPU+GPU watt-hours at the top of Resources when present", async () => {
+  it("shows CPU watt-hours at the top of Resources when present and job has no GPUs", async () => {
     setJobDetailQueryMock({
       data: {
         ...minimalJobDetailResponse,
+        gpu_count: null,
+        metrics_list: [
+          {
+            metric: "job_cpu_gpu_watt_hours",
+            value: 12.5,
+            units: "Wh",
+            no_data_reason: null,
+          },
+        ],
+      },
+    });
+    renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByText("CPU Watt Hours for Job")).toBeInTheDocument();
+      expect(screen.queryByText("CPU+GPU Watt Hours for Job")).not.toBeInTheDocument();
+      expect(screen.getByText(/12\.50\s*Wh/)).toBeInTheDocument();
+    });
+  });
+
+  it("shows CPU+GPU watt-hours at the top of Resources when present and job has GPUs", async () => {
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        gpu_count: 4,
         metrics_list: [
           {
             metric: "job_cpu_gpu_watt_hours",

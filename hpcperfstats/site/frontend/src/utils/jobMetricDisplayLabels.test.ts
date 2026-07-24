@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { getJobMetricShortLabel, JOB_METRIC_SHORT_LABELS } from "./jobMetricDisplayLabels";
+import {
+  getJobMetricShortLabel,
+  getJobWattHoursResourcesTitle,
+  getJobWattHoursShortLabel,
+  jobHasGpuForWattHoursLabel,
+  JOB_METRIC_SHORT_LABELS,
+} from "./jobMetricDisplayLabels";
 
 describe("getJobMetricShortLabel", () => {
   it("returns a known abbreviated label for catalog keys", () => {
@@ -17,7 +23,7 @@ describe("getJobMetricShortLabel", () => {
     expect(getJobMetricShortLabel("vecpercent_32b")).toMatch(/%/);
   });
 
-  it("labels job CPU+GPU watt-hours", () => {
+  it("labels job CPU+GPU watt-hours by default map entry", () => {
     expect(getJobMetricShortLabel("job_cpu_gpu_watt_hours")).toBe("CPU+GPU watt-hours for job");
   });
 
@@ -29,5 +35,25 @@ describe("getJobMetricShortLabel", () => {
     expect(getJobMetricShortLabel(null)).toBe("");
     expect(getJobMetricShortLabel(undefined)).toBe("");
     expect(getJobMetricShortLabel(1)).toBe("");
+  });
+});
+
+describe("job watt-hours GPU-aware labels", () => {
+  it("detects positive gpu_count", () => {
+    expect(jobHasGpuForWattHoursLabel(4)).toBe(true);
+    expect(jobHasGpuForWattHoursLabel("2")).toBe(true);
+    expect(jobHasGpuForWattHoursLabel(0)).toBe(false);
+    expect(jobHasGpuForWattHoursLabel(null)).toBe(false);
+    expect(jobHasGpuForWattHoursLabel("")).toBe(false);
+  });
+
+  it("omits +GPU from short label and Resources title when no GPU", () => {
+    expect(getJobWattHoursShortLabel(false)).toBe("CPU watt-hours for job");
+    expect(getJobWattHoursResourcesTitle(false)).toBe("CPU Watt Hours for Job");
+  });
+
+  it("keeps +GPU wording when GPUs are present", () => {
+    expect(getJobWattHoursShortLabel(true)).toBe("CPU+GPU watt-hours for job");
+    expect(getJobWattHoursResourcesTitle(true)).toBe("CPU+GPU Watt Hours for Job");
   });
 });

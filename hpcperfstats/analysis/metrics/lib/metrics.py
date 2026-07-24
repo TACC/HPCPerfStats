@@ -429,7 +429,7 @@ _COMPLEX_NO_DATA_REASONS = {
     "max_node_power_est_w": "No usable node power estimate telemetry",
     "avg_node_power_est_w": "No usable node power estimate telemetry",
     "job_cpu_gpu_watt_hours": (
-        "No usable CPU+GPU power estimate for job energy (watt-hours)"
+        "No usable CPU power estimate for job energy (watt-hours)"
     ),
     "max_gpu_link_gbps": "No usable GPU PCIe/NVLink byte telemetry",
     "max_gpu_clock_event_reasons": "No usable GPU clock event reason telemetry",

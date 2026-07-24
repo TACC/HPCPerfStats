@@ -367,9 +367,9 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
   },
   job_cpu_gpu_watt_hours: {
     description:
-      "Estimated CPU+GPU energy for the job in watt-hours: integrate node_power_est_w over time per host (trapezoid), then sum hosts. Requires usable CPU and GPU power fragments in the estimate (not module-only without a CPU side).",
+      "Estimated on-node energy for the job in watt-hours: integrate node_power_est_w over time per host (trapezoid), then sum hosts. Requires usable CPU power fragments; GPU power is included when present. Not module-only without a CPU side.",
     researcherUse:
-      "Total on-node energy for comparing jobs or estimating cost when BMC/PDU meters are unavailable.",
+      "Total on-node energy for comparing jobs or estimating cost when BMC/PDU meters are unavailable. On Job Detail, the Resources title omits +GPU when the job has no GPUs.",
   },
   max_gpu_link_gbps: {
     description:
