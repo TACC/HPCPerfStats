@@ -413,7 +413,7 @@ class TestJobDetailView:
         from hpcperfstats.site.lib.machine import api
 
         request = RequestFactory().get("/api/jobs/j1/")
-        request.session = {"username": "u", "is_staff": True}
+        request.session = {"username": "u", "is_staff": False}
         job = self._mock_job()
         jt = MagicMock()
         jt.acct_host_list = ["n1.example.com"]
@@ -430,12 +430,12 @@ class TestJobDetailView:
             api, "JobListSerializer"
         ) as mock_ser, patch.object(api.cfg, "get_xalt_user", return_value=""), patch.object(
             api, "_collect_future_results_with_deadline",
-            return_value=({"proc_list": ["proc-a"]}, set()),
+            return_value=({"proc_list": [{"host": "n1", "proc": "proc-a", "threads": 1}]}, set()),
         ):
             mock_ser.return_value.data = {"jid": "j1"}
             response = api.job_detail(request, "j1")
         assert response.status_code == 200
-        assert response.data["proc_list"] == ["proc-a"]
+        assert response.data["proc_list"] == [{"host": "n1", "proc": "proc-a", "threads": 1}]
 
     def test_light_mode_skips_heavy_fetches(self):
         from hpcperfstats.site.lib.machine import api

@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useState, useEffect, type ReactNode } from "react";
+import { X } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
@@ -92,9 +93,25 @@ export function VariableInfoLabel({
           aria-label={`${variableName} description`}
           sideOffset={2}
           className={cn(
-            "variable-info-tooltip variable-info-tooltip-portal w-auto max-w-[min(560px,calc(100vw-16px))] min-w-[min(420px,calc(100vw-16px))] p-2 text-sm font-normal",
+            "variable-info-tooltip variable-info-tooltip-portal relative w-auto max-w-[min(560px,calc(100vw-16px))] min-w-[min(420px,calc(100vw-16px))] p-2 text-sm font-normal",
+            pinnedOpen && "pt-7",
           )}
         >
+          {pinnedOpen ? (
+            <button
+              type="button"
+              data-testid="variable-info-close"
+              aria-label="Close help"
+              className="absolute right-1.5 top-1.5 inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 text-muted-foreground hover:text-foreground"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setPinnedOpen(false);
+              }}
+            >
+              <X className="h-3.5 w-3.5" aria-hidden />
+            </button>
+          ) : null}
           <span className="variable-info-tooltip-definition">{description}</span>
           {researcherUse ? (
             <>

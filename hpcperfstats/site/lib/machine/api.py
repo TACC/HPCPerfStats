@@ -2286,13 +2286,32 @@ def job_detail(request, pk):
 
         close_old_connections()
         try:
+            value_fields = (
+                "host",
+                "proc",
+                "device",
+                "uid",
+                "vm_peak",
+                "vm_size",
+                "vm_lck",
+                "vm_hwm",
+                "vm_rss",
+                "vm_data",
+                "vm_stk",
+                "vm_exe",
+                "vm_lib",
+                "vm_pte",
+                "vm_swap",
+                "threads",
+            )
+            # One row per (host, proc) via unique_together; values() dicts (not flat names).
             return cached_orm(
                 f"{KEY_PROC_LIST}:{job.jid}",
                 job_cache_timeout,
                 lambda: list(
                     proc_data.objects.filter(jid=job.jid)
-                    .values_list("proc", flat=True)
-                    .distinct()
+                    .order_by("host", "proc")
+                    .values(*value_fields)
                 ),
             )
         finally:

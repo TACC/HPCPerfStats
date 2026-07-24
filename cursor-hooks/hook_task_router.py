@@ -191,6 +191,7 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
             "frontend-stack-wiring-contract.mdc",
             "interactive-ready-controls.mdc",
             "design-focused-spa-ux.mdc",
+            "job-detail-analysis-tab-consistency.mdc",
         ],
     },
     {

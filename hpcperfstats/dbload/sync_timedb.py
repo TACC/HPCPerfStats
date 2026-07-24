@@ -266,6 +266,7 @@ from hpcperfstats.dbload.lib.sync_timedb_persistence import (
 )
 from hpcperfstats.dbload.lib.sync_timedb_parsing import (
     EVENTMAPS_BY_TYPE,
+    HOST_PROC_KEYS,
     DeltaCarryState,
     build_stats_dataframes,
     compute_deltas_and_arc,
@@ -2878,11 +2879,16 @@ def _write_stats_payload_to_db(lock, stats_file, stats, proc_stats, need_archiva
         if not batch:
           break
         proc_objs = [
-            proc_data(jid=row.jid, host=row.host, proc=row.proc) for row in batch
+            proc_data(**_proc_data_row_kwargs(row)) for row in batch
         ]
         with _held_ingest_write_lock(write_lock, stats_file, "proc"):
           _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_proc")
-          proc_data.objects.bulk_create(proc_objs, ignore_conflicts=True)
+          proc_data.objects.bulk_create(
+              proc_objs,
+              update_conflicts=True,
+              unique_fields=["jid", "host", "proc"],
+              update_fields=_PROC_DATA_UPDATE_FIELDS,
+          )
     except Exception as e:
       _reraise_if_ingest_control_flow(e)
       if is_database_unavailable_error(e):
@@ -4127,13 +4133,53 @@ def _batch_remove_processed_paths(
   return len(path_set)
 
 
+def _proc_field_or_none(row, name):
+  """Return a scalar proc_data field from an itertuples row, mapping NaN to None."""
+  val = getattr(row, name, None)
+  if val is None:
+    return None
+  try:
+    # pandas may emit float('nan') for missing numeric cells.
+    if val != val:  # noqa: PLR0124 — NaN check without importing math/pandas
+      return None
+  except Exception:
+    pass
+  return val
+
+
+_PROC_DATA_UPDATE_FIELDS = ("device",) + HOST_PROC_KEYS
+
+
+def _proc_data_row_kwargs(row):
+  """Build kwargs for proc_data create/update from a parsed DataFrame row."""
+  kwargs = {
+      "jid": row.jid,
+      "host": row.host,
+      "proc": row.proc,
+      "device": _proc_field_or_none(row, "device"),
+  }
+  for key in HOST_PROC_KEYS:
+    kwargs[key] = _proc_field_or_none(row, key)
+  return kwargs
+
+
 def _insert_proc_data_individually(proc_stats_df):
-  """Fallback: insert proc_data rows one by one, skipping duplicates.
+  """Fallback: upsert proc_data rows one by one (update on unique conflict).
 
     """
+  def _save_proc_row(row):
+    kwargs = _proc_data_row_kwargs(row)
+    defaults = {k: kwargs[k] for k in _PROC_DATA_UPDATE_FIELDS}
+    proc_data.objects.update_or_create(
+        jid=kwargs["jid"],
+        host=kwargs["host"],
+        proc=kwargs["proc"],
+        defaults=defaults,
+    )
+
   unique_violations = _insert_rows_individually(
       rows=proc_stats_df.itertuples(index=False),
-      save_row=lambda row: proc_data(jid=row.jid, host=row.host, proc=row.proc).save(),
+      save_row=_save_proc_row,
       error_prefix="error in single proc_data insert:",
   )
   if DEBUG:

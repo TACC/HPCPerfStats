@@ -55,7 +55,7 @@ _GPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON = (
     "Missing GPU precision-width mix metrics in job metrics "
     "(need positive avg_*_active shares)."
 )
-APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 8
+APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 9
 
 _FSIO_FINGERPRINT_METRIC_NAMES = tuple(
     sorted(name for name, _t, _u in fsio_job_detail_catalog())
@@ -310,9 +310,9 @@ _GPU_PRECISION_LABEL_ORDER = (
     "FP64",
 )
 
-# Inset pie so title + bottom legend do not clip wedges (match summaryplot d3 Category10).
-_MULTIPRECISION_PIE_RADIUS = 0.72
-_MULTIPRECISION_PLOT_RANGE = 1.15
+# Inset pie so SPA h3 + bottom legend do not clip wedges (match summaryplot d3 Category10).
+_MULTIPRECISION_PIE_RADIUS = 0.68
+_MULTIPRECISION_PLOT_RANGE = 1.2
 
 
 def _ordered_precision_labels(
@@ -400,16 +400,18 @@ def _pie_item_from_precision_mix(
       }
   )
   plot_span = _MULTIPRECISION_PLOT_RANGE
+  del title  # SPA section h3 is the user-facing title; Bokeh title clipped wedges.
+  # Title cleared: SPA renders the section h3; Bokeh title duplicated and clipped wedges.
   p = figure(
-      title=title,
-      height=400,
+      title="",
+      height=420,
       width=360,
       toolbar_location=None,
       tools="hover",
       x_range=(-plot_span, plot_span),
       y_range=(-plot_span, plot_span),
-      min_border_top=56,
-      min_border_bottom=88,
+      min_border_top=24,
+      min_border_bottom=96,
       min_border_left=24,
       min_border_right=24,
       match_aspect=True,

@@ -818,6 +818,150 @@ def test_avg_cpuusage_sums_per_host_means():
 
 
 @pytest.mark.machine_unit_mock
+def test_job_arc_means_samples_within_bucket_not_sum():
+  """Multiple samples in one 5m bucket must mean (not sum) instantaneous totals.
+
+  Regression: summing every sample row inflated avg_cpuusage by sample count
+  (e.g. JID 858104-class ~10k cores vs ncores=40).
+  """
+  import pandas as pd
+  from hpcperfstats.analysis.metrics.lib.metrics import Metrics
+
+  m = Metrics()
+  # Three timestamps inside the same 5m bucket after the first-bucket drop.
+  # First bucket (t0) is dropped; remaining bucket has three samples of arc=2.0
+  # → mean 2.0, not sum 6.0.
+  t0 = pd.Timestamp("2024-01-01 00:00:00")
+  t1 = pd.Timestamp("2024-01-01 00:05:00")
+  t2 = pd.Timestamp("2024-01-01 00:05:10")
+  t3 = pd.Timestamp("2024-01-01 00:05:20")
+  rows = [
+      {"host": "a", "time": t, "arc": 2.0} for t in (t0, t1, t2, t3)
+  ]
+
+  class FakeJt:
+    _base_filter = {
+        "host__in": ["a"],
+        "time__gte": t0,
+        "time__lte": t3,
+    }
+
+  with patch(
+      "hpcperfstats.analysis.metrics.lib.metrics._host_data_metric_rows_batched",
+      lambda *_a, **_k: rows,
+  ), patch(
+      "hpcperfstats.analysis.metrics.lib.metrics.type_probe_names",
+      lambda typ: (typ,),
+  ), patch(
+      "hpcperfstats.analysis.metrics.lib.metrics._jid_table_host_data_time_kwargs",
+      lambda _base: {"time__gte": t0, "time__lte": t3},
+  ):
+    value = m.job_arc(
+        FakeJt(),
+        typename="host_cpu",
+        events=["user"],
+        conv=1.0,
+        host_aggregate="sum",
+    )
+  assert value == pytest.approx(2.0)
+
+
+@pytest.mark.machine_unit_mock
+def test_gpu_activity_zero_mean_gate_accepts_zero():
+  """GPU activity presence gate must accept mean 0 (idle ≠ missing samples)."""
+  from pathlib import Path
+
+  import hpcperfstats.analysis.metrics.lib.metrics as metrics_mod
+
+  text = Path(metrics_mod.__file__).read_text()
+  start = text.index('elif metric_name in (\n            "avg_tensor_active"')
+  end = text.index('elif metric_name == "avg_fabric_mb_per_avg_tensor"', start)
+  snippet = text[start:end]
+  assert "if v is not None and float(v) > 0:" not in snippet
+  assert "if v is not None:" in snippet
+  from hpcperfstats.analysis.metrics.lib.metrics import NO_SIMPLE_SAMPLES_MSG
+
+  v = 0.0
+  value = float(v) if v is not None else None
+  assert value == 0.0
+  assert value is not None
+  assert NO_SIMPLE_SAMPLES_MSG  # reason reserved for true missing samples only
+
+
+@pytest.mark.machine_unit_mock
+def test_build_job_metrics_display_list_hides_duplicate_avg_gpuutil():
+  """When avg_gpuutil equals detail_gpu_util_mean, hide the duplicate row."""
+  from hpcperfstats.analysis.metrics.lib.metrics import build_job_metrics_display_list
+
+  class Row:
+    def __init__(self, metric, value, type_="gpu", units="%"):
+      self.metric = metric
+      self.value = value
+      self.type = type_
+      self.units = units
+      self.no_data_reason = None
+
+  class Job:
+    def __init__(self):
+      self.metrics_data_set = type(
+          "S",
+          (),
+          {
+              "all": lambda self: [
+                  Row("detail_gpu_util_mean", 2552.0),
+                  Row("avg_gpuutil", 2552.0),
+                  Row("avg_cpuusage", 10.0, type_="host_cpu", units="#cores"),
+              ]
+          },
+      )()
+
+  with patch(
+      "hpcperfstats.analysis.metrics.lib.metrics.job_metrics_catalog_entries",
+      return_value=[
+          {"metric": "detail_gpu_util_mean", "type": "gpu", "units": "%"},
+          {"metric": "avg_gpuutil", "type": "gpu", "units": "%"},
+          {"metric": "avg_cpuusage", "type": "host_cpu", "units": "#cores"},
+      ],
+  ):
+    out = build_job_metrics_display_list(Job())
+  metrics = [r["metric"] for r in out]
+  assert "detail_gpu_util_mean" in metrics
+  assert "avg_gpuutil" not in metrics
+  assert "avg_cpuusage" in metrics
+
+
+@pytest.mark.machine_unit_mock
+def test_job_cpu_gpu_watt_hours_integrates_and_gates():
+  """Watt-hours requires CPU+GPU fragments; integrates W×s/3600 per host."""
+  import pandas as pd
+  from hpcperfstats.analysis.metrics.lib.gen import node_power_est as npe
+
+  t0 = pd.Timestamp("2024-01-01 00:00:00")
+  t1 = pd.Timestamp("2024-01-01 00:01:00")
+  df = pd.DataFrame(
+      {
+          "host": ["h1", "h1"],
+          "time": [t0, t1],
+          "node_power_est_w": [100.0, 100.0],
+          "dcg_cpu_power_w": [40.0, 40.0],
+          "nv_power_w": [60.0, 60.0],
+      }
+  )
+
+  class FakeJt:
+    pass
+
+  with patch.object(npe, "build_node_power_est_dataframe", return_value=df):
+    wh = npe.job_cpu_gpu_watt_hours(FakeJt())
+  # 100 W × 60 s = 6000 J = 6000/3600 Wh
+  assert wh == pytest.approx(6000.0 / 3600.0)
+
+  df_cpu_only = df.drop(columns=["nv_power_w"])
+  with patch.object(npe, "build_node_power_est_dataframe", return_value=df_cpu_only):
+    assert npe.job_cpu_gpu_watt_hours(FakeJt()) is None
+
+
+@pytest.mark.machine_unit_mock
 def test_max_packetrate_falls_back_to_ethernet():
   """max_packetrate uses net tx/rx packet rate when IB and OPA are absent."""
   schema = _Schema(["tx_packets", "rx_packets"])

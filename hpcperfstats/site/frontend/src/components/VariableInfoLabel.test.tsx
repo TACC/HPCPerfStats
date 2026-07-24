@@ -121,6 +121,20 @@ describe("VariableInfoLabel", () => {
     expect(help).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("closes pinned help panel with the X button", async () => {
+    render(
+      <VariableInfoLabel variableName="utilization" labelText="utilization" enableHelp />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /help: utilization/i }));
+    const panel = await screen.findByTestId("variable-info-tooltip");
+    expect(panel).toHaveAttribute("data-open");
+    fireEvent.click(screen.getByTestId("variable-info-close"));
+    expect(screen.getByRole("button", { name: /help: utilization/i })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+  });
+
   it("closes pinned help panel on Escape", async () => {
     render(
       <VariableInfoLabel variableName="utilization" labelText="utilization" enableHelp />,

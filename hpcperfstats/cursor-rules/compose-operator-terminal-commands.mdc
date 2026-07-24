@@ -214,6 +214,22 @@ docker compose logs pipeline
 
 Match **`README.md`** *Useful commands* and **`readme-installation-sync.mdc`** (`docker compose exec <service>` over hardcoded container names).
 
+### Anti-pattern — inventing `job_data.metrics_complete`
+
+`job_data` has **no** `metrics_complete` field. Operator ORM `.values("metrics_complete")` raises **`FieldError: Cannot resolve keyword 'metrics_complete'`** (hpcperfstats03, 2026-07-23). Use **`metrics_distinct_time_count`** (and related telemetry fields) for metrics readiness.
+
+| Do | Don't |
+|----|-------|
+| `job_data.objects.filter(...).values("jid", "metrics_distinct_time_count", …)` | `.values("metrics_complete")` |
+
+### Anti-pattern — inventing `job_detail_artifact.schema_version` / `fingerprint`
+
+`job_detail_artifact` fields are **`artifact_kind`**, **`artifact_schema`**, **`artifact_scope`**, **`input_fingerprint`**, payload columns — not `schema_version` or `fingerprint`. Selecting invented names raises **`FieldError`** (hpcperfstats03, 2026-07-23).
+
+| Do | Don't |
+|----|-------|
+| `.values("artifact_kind", "artifact_schema", "artifact_scope", "input_fingerprint")` | `.values("schema_version", "fingerprint")` |
+
 ### Anti-pattern — `job_data.host_list` is `text[]`, not a CSV string
 
 `job_data.host_list` is Django **`ArrayField`** → Postgres **`text[]`**. Operator SQL that does `trim(host_list)` / `string_to_array(host_list, ',')` fails with **`function pg_catalog.btrim(text[]) does not exist`** (hpcperfstats03, 2026-07-23).

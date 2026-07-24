@@ -159,6 +159,20 @@ class metrics_data(models.Model):
     jid         VARCHAR(32) NOT NULL,
     host        VARCHAR(64),
     proc        VARCHAR(512),
+    device      VARCHAR(512),
+    uid         BIGINT,
+    vm_peak     BIGINT,
+    vm_size     BIGINT,
+    vm_lck      BIGINT,
+    vm_hwm      BIGINT,
+    vm_rss      BIGINT,
+    vm_data     BIGINT,
+    vm_stk      BIGINT,
+    vm_exe      BIGINT,
+    vm_lib      BIGINT,
+    vm_pte      BIGINT,
+    vm_swap     BIGINT,
+    threads     INTEGER,
     UNIQUE(jid, host, proc)
     );
 
@@ -200,12 +214,29 @@ class host_data(models.Model):
 
 
 class proc_data(models.Model):
-  """Process names observed per (jid, host). Table: proc_data.
+  """Per-process host_proc snapshot per (jid, host, proc). Table: proc_data.
 
-    """
+  ``device`` is the full monitor device token (name/pid/cmask/mmask); ``proc``
+  is the first path component (process name). Numeric columns mirror monitor
+  ``KEYS`` in ``monitor/src/proc.c``.
+  """
   jid = models.CharField(max_length=32, blank=True, null=True)
   host = models.CharField(max_length=64, blank=True, null=True)
   proc = models.CharField(max_length=512, blank=True, null=True)
+  device = models.CharField(max_length=512, blank=True, null=True)
+  uid = models.BigIntegerField(blank=True, null=True)
+  vm_peak = models.BigIntegerField(blank=True, null=True)
+  vm_size = models.BigIntegerField(blank=True, null=True)
+  vm_lck = models.BigIntegerField(blank=True, null=True)
+  vm_hwm = models.BigIntegerField(blank=True, null=True)
+  vm_rss = models.BigIntegerField(blank=True, null=True)
+  vm_data = models.BigIntegerField(blank=True, null=True)
+  vm_stk = models.BigIntegerField(blank=True, null=True)
+  vm_exe = models.BigIntegerField(blank=True, null=True)
+  vm_lib = models.BigIntegerField(blank=True, null=True)
+  vm_pte = models.BigIntegerField(blank=True, null=True)
+  vm_swap = models.BigIntegerField(blank=True, null=True)
+  threads = models.IntegerField(blank=True, null=True)
 
   class Meta:
     managed = True

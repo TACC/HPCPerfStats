@@ -62,3 +62,59 @@ def mean_node_power_est_w(jt):
   if s.empty:
     return None
   return float(s.mean())
+
+
+def _has_cpu_and_gpu_power_fragments(df):
+  """True when both a CPU power column and GPU power appear with finite samples."""
+  cpu_cols = [
+      c for c in ("dcg_cpu_power_w", "watts", "amd_pkg_w") if c in df.columns
+  ]
+  gpu_cols = [c for c in ("nv_power_w", "nv_module_power_w") if c in df.columns]
+  if not cpu_cols or not gpu_cols:
+    return False
+
+  def _col_has_finite(col):
+    s = df[col].dropna()
+    if s.empty:
+      return False
+    return bool(np.isfinite(s.astype(float).to_numpy()).any())
+
+  has_cpu = any(_col_has_finite(c) for c in cpu_cols)
+  has_gpu = any(_col_has_finite(c) for c in gpu_cols)
+  return bool(has_cpu and has_gpu)
+
+
+def job_cpu_gpu_watt_hours(jt):
+  """∫ node_power_est_w dt per host (Wh), summed across hosts; None if CPU+GPU gate fails.
+
+  Requires finite CPU and GPU power fragments in the estimate dataframe (not
+  module-only without a CPU side). Integrates watts × seconds / 3600.
+  """
+  import pandas as pd
+
+  df = build_node_power_est_dataframe(jt)
+  if df.empty or "node_power_est_w" not in df.columns:
+    return None
+  if not _has_cpu_and_gpu_power_fragments(df):
+    return None
+
+  total_wh = 0.0
+  any_host = False
+  for _host, g in df.groupby("host"):
+    g = g.dropna(subset=["node_power_est_w"]).sort_values("time")
+    if len(g) < 2:
+      continue
+    t = pd.to_datetime(g["time"])
+    t_s = (t - t.iloc[0]).dt.total_seconds().to_numpy(dtype=np.float64)
+    p = g["node_power_est_w"].to_numpy(dtype=np.float64)
+    if not np.isfinite(p).any():
+      continue
+    trapz = getattr(np, "trapezoid", None) or np.trapz
+    joules = float(trapz(p, t_s))
+    if not np.isfinite(joules) or joules < 0:
+      continue
+    total_wh += joules / 3600.0
+    any_host = True
+  if not any_host:
+    return None
+  return float(total_wh)

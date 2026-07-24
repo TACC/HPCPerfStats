@@ -262,7 +262,7 @@ _SUMMARY_SINGLE_SPECS = [
         ["PortXmitWait", "SwPortCongestion"],
         "opa_wait_cong",
         1.0,
-        "OPA wait+switch congestion [#/s]",
+        "OPA wait+cong [#/s]",
     ),
     (
         "host_opa",
@@ -270,7 +270,7 @@ _SUMMARY_SINGLE_SPECS = [
         ["PortRcvFECN", "PortRcvBECN"],
         "opa_ecn",
         1.0,
-        "OPA FECN+BECN [#/s]",
+        "OPA ECN [#/s]",
     ),
     (
         "host_numa",
@@ -278,7 +278,7 @@ _SUMMARY_SINGLE_SPECS = [
         ["numa_miss", "numa_foreign", "other_node"],
         "numa_remote_refs",
         1.0,
-        "CPU NUMA remote refs [#/s]",
+        "NUMA remote [#/s]",
     ),
     (
         "lustre_llite",
@@ -308,9 +308,9 @@ _SUMMARY_SINGLE_SPECS = [
     ),
     ("host_nfs", "arc", ["read_ops", "write_ops"], "nfs_iops", 1.0, "NFS IOPS [#/s]"),
     ("host_cpu", "arc", ["user", "system", "nice"], "cpu", 0.01,
-     "CPU Usage [#cores]"),
+     "CPU [#cores]"),
     ("nvidia_gpu", "value", ["gpu_util"], "nv_gpu_util", 1, "GPU util [%]"),
-    ("nvidia_gpu", "value", ["mem_used_mb"], "nv_mem_used_mb", 1 / 1024, "GPU MemUsed [GB]"),
+    ("nvidia_gpu", "value", ["mem_used_mb"], "nv_mem_used_mb", 1 / 1024, "GPU mem [GB]"),
     (
         "nvidia_gpu",
         "value",
@@ -326,7 +326,7 @@ _SUMMARY_SINGLE_SPECS = [
         ["tensor_imma_active"],
         "nv_tensor_imma_active",
         1.0,
-        "GPU tensor IMMA (INT8/INT4) [%]",
+        "GPU IMMA [%]",
     ),
     (
         "nvidia_gpu",
@@ -334,7 +334,7 @@ _SUMMARY_SINGLE_SPECS = [
         ["tensor_hmma_active"],
         "nv_tensor_hmma_active",
         1.0,
-        "GPU tensor HMMA (FP16/BF16) [%]",
+        "GPU HMMA [%]",
     ),
     (
         "nvidia_gpu",
@@ -342,7 +342,7 @@ _SUMMARY_SINGLE_SPECS = [
         ["tensor_dfma_active"],
         "nv_tensor_dfma_active",
         1.0,
-        "GPU tensor DFMA (FP64) [%]",
+        "GPU DFMA [%]",
     ),
     (
         "nvidia_gpu",
@@ -350,7 +350,7 @@ _SUMMARY_SINGLE_SPECS = [
         ["tensor_active"],
         "nv_tensor_active",
         1.0,
-        "GPU tensor pipe [%]",
+        "GPU tensor [%]",
     ),
     (
         "nvidia_gpu",
@@ -358,7 +358,7 @@ _SUMMARY_SINGLE_SPECS = [
         ["sm_occupancy"],
         "nv_sm_occupancy",
         1.0,
-        "GPU SM occupancy [%]",
+        "GPU SM occ. [%]",
     ),
     (
         "nvidia_gpu",
@@ -366,7 +366,7 @@ _SUMMARY_SINGLE_SPECS = [
         ["fp16_active"],
         "nv_fp16_active",
         1.0,
-        "GPU FP16 pipe [%]",
+        "GPU FP16 [%]",
     ),
     (
         "nvidia_gpu",
@@ -374,7 +374,7 @@ _SUMMARY_SINGLE_SPECS = [
         ["fp32_active"],
         "nv_fp32_active",
         1.0,
-        "GPU FP32 pipe [%]",
+        "GPU FP32 [%]",
     ),
     ("nvidia_gpu", "value", ["mem_util"], "nv_mem_util_pct", 1.0, "GPU mem util [%]"),
     ("nvidia_gpu", "value", ["power_usage"], "nv_power_w", 1.0, "GPU power [W]"),
@@ -384,7 +384,7 @@ _SUMMARY_SINGLE_SPECS = [
         ["module_power_usage"],
         "nv_module_power_w",
         1.0,
-        "GPU module power [W]",
+        "GPU module [W]",
     ),
     (
         "host_cpu_hw",
@@ -392,7 +392,7 @@ _SUMMARY_SINGLE_SPECS = [
         ["dcgm_cpu_power_util_w"],
         "dcg_cpu_power_w",
         1.0,
-        "Grace CPU power [W]",
+        "CPU power [W]",
     ),
     (
         "nvidia_gpu",
@@ -400,7 +400,7 @@ _SUMMARY_SINGLE_SPECS = [
         ["gpu_mem_bw_bytes_rate"],
         "nv_gpu_mem_bw_gbs",
         _BYTES_TO_GB,
-        "GPU HBM BW est. [GB/s]",
+        "GPU HBM BW [GB/s]",
     ),
     (
         "nvidia_gpu",
@@ -408,9 +408,9 @@ _SUMMARY_SINGLE_SPECS = [
         ["gpu_io_link_total_bytes"],
         "nv_gpu_link_gbs",
         _BYTES_TO_GB,
-        "GPU PCIe+NVLink [GB/s]",
+        "GPU link [GB/s]",
     ),
-    ("host_mem", "value", ["mem_used"], "mem", 1 / (1024 * 1024), "CPU MemUsed[GB]"),
+    ("host_mem", "value", ["mem_used"], "mem", 1 / (1024 * 1024), "CPU mem [GB]"),
 ]
 
 # Metrics that may be sampled on a sparse (host, time) grid vs the union grid from
@@ -791,7 +791,7 @@ def _summary_metric_specs():
   out.append(("intel_imc", "arc", [], "mbw", _CAS_BW_CONV, "CPU DRAMBW[GB/s]"))
   out.append(("", "arc", [], "amd_mbw", 1 / (1024 ** 3), "CPU DRAMBW[GB/s]"))
   out.append(("", "", [], "cha_counter_arc_sum", 0, "CPU CHA uncore [#/s]"))
-  out.append(("", "", [], "node_power_est_w", 0, "Est. node power (CPU+GPU) [W]"))
+  out.append(("", "", [], "node_power_est_w", 0, "Node power [W]"))
   return out
 
 
@@ -1054,7 +1054,8 @@ class SummaryPlot():
         y_range=Range1d(y_range_start, y_range_end),
         x_axis_label="Time",
         y_axis_label=label_text,
-        title=label_text,
+        title="",
+        min_border_left=72,
     )
     if x_range is not None:
       plot_kwargs["x_range"] = x_range
@@ -1062,6 +1063,8 @@ class SummaryPlot():
         **plot_kwargs,
     )
     plot.xaxis.ticker.desired_num_ticks = 5
+    plot.yaxis.axis_label_text_font_size = "9pt"
+    plot.xaxis.axis_label_text_font_size = "9pt"
     set_linear_axes_plain_numeric(plot)
     plot.xaxis.formatter = tz_aware_bokeh_tick_formatter()
 
@@ -1121,7 +1124,11 @@ class SummaryPlot():
     else:
       doc_text = description_for_summary_metric(metric)
       researcher_use = researcher_use_for_summary_metric(metric)
-    add_job_detail_bokeh_help_marker(plot, doc_text, researcher_use)
+    help_body = (
+        f"Time: sample timestamp (UTC) on the X axis. "
+        f"Y ({label_text}): {doc_text}"
+    )
+    add_job_detail_bokeh_help_marker(plot, help_body, researcher_use)
     log.debug("time to plot %s: %s", metric, time.time() - s)
     return plot
 

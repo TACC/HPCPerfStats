@@ -390,6 +390,7 @@ _COMPLEX_PLACEHOLDER_TYPE_UNITS = {
     "max_gpu_power": ("nvidia_gpu", "W"),
     "max_node_power_est_w": ("job", "W"),
     "avg_node_power_est_w": ("job", "W"),
+    "job_cpu_gpu_watt_hours": ("job", "Wh"),
     "max_gpu_link_gbps": ("nvidia_gpu", "GB/s"),
     "max_gpu_clock_event_reasons": ("nvidia_gpu", "#"),
     "gpu_util_node_imbalance": ("nvidia_gpu", "%"),
@@ -427,6 +428,9 @@ _COMPLEX_NO_DATA_REASONS = {
     "max_gpu_power": "No usable GPU power telemetry",
     "max_node_power_est_w": "No usable node power estimate telemetry",
     "avg_node_power_est_w": "No usable node power estimate telemetry",
+    "job_cpu_gpu_watt_hours": (
+        "No usable CPU+GPU power estimate for job energy (watt-hours)"
+    ),
     "max_gpu_link_gbps": "No usable GPU PCIe/NVLink byte telemetry",
     "max_gpu_clock_event_reasons": "No usable GPU clock event reason telemetry",
     "gpu_util_node_imbalance": "No usable GPU utilization telemetry for imbalance",
@@ -1340,6 +1344,7 @@ class Metrics():
         'max_fabricbw', 'max_lnetbw', 'max_mds', 'max_packetrate',
         'max_opa_congestion_rate', 'max_numa_remote_rate',
         'max_gpu_power', 'max_node_power_est_w', 'avg_node_power_est_w',
+        'job_cpu_gpu_watt_hours',
         'max_gpu_link_gbps', 'max_gpu_clock_event_reasons',
         'mem_hwm',
         'node_imbalance', 'time_imbalance', 'flops_node_imbalance',
@@ -1535,11 +1540,14 @@ class Metrics():
               host_aggregate="mean"):
     """Aggregate arc by host and 5m time bucket via Django ORM.
 
-    For each host: mean of per-bucket summed arc (after dropping the first bucket
-    per host). By default returns the **arithmetic mean of those per-host
-    values** across hosts (most ``avg_*`` simple metrics). When
-    ``host_aggregate="sum"`` (``avg_cpuusage`` only), returns the **sum** of
-    per-host means (job-total busy cores).
+    For each sample time: sum ``arc`` across events and devices (instantaneous
+    total). Within each 5m bucket: **mean** of those per-time totals (not a sum
+    of all rows — summing samples inflated rates by sample count). For each
+    host: mean of per-bucket values (after dropping the first bucket). By
+    default returns the **arithmetic mean of those per-host values** across
+    hosts (most ``avg_*`` simple metrics). When ``host_aggregate="sum"``
+    (``avg_cpuusage`` only), returns the **sum** of per-host means
+    (job-total busy cores).
 
     When ``nonnegative_rate`` is True, negative ``arc`` samples are dropped (NaN)
     before bucketing. Use for cumulative byte counters (fabric bandwidth) where
@@ -1586,12 +1594,14 @@ class Metrics():
       return None
     if nonnegative_rate:
       df["arc"] = df["arc"].where(df["arc"] >= 0)
-    # Floor timestamps to 5‑minute buckets.
     if not pd.api.types.is_datetime64_any_dtype(df["time"]):
       df["time"] = pd.to_datetime(df["time"])
-    df["bucket"] = df["time"].dt.floor("5min")
+    # Instantaneous total at each sample time (events × devices).
+    per_time = df.groupby(["host", "time"], as_index=False)["arc"].sum()
+    per_time["bucket"] = per_time["time"].dt.floor("5min")
+    # Mean of instantaneous totals within each 5m bucket (not sum of samples).
     grouped = (
-        df.groupby(["host", "bucket"], as_index=False)["arc"].sum().rename(
+        per_time.groupby(["host", "bucket"], as_index=False)["arc"].mean().rename(
             columns={"bucket": "time", "arc": "sum"}
         )
     )
@@ -2177,7 +2187,8 @@ class Metrics():
                 cache=simple_metric_cache,
                 rows_cache=host_data_rows_cache,
             )
-            if v is not None and float(v) > 0:
+            # Accept mean 0 when samples exist (idle ≠ missing telemetry).
+            if v is not None:
               value = float(v)
               row_type = gt
               break
@@ -2193,7 +2204,7 @@ class Metrics():
                 cache=simple_metric_cache,
                 rows_cache=host_data_rows_cache,
             )
-            if v is not None and float(v) > 0:
+            if v is not None:
               value = float(v)
               row_type = gt
               break
@@ -2328,6 +2339,12 @@ class Metrics():
           )
           value = _mean_npe(jt)
           typename, units = "job", "W"
+        elif metric_name == "job_cpu_gpu_watt_hours":
+          from hpcperfstats.analysis.metrics.lib.gen.node_power_est import (
+              job_cpu_gpu_watt_hours as _job_wh,
+          )
+          value = _job_wh(jt)
+          typename, units = "job", "Wh"
         else:
           value, typename, units = getattr(sys.modules[__name__],
                                            metric_name)().compute_metric(u)
@@ -2448,6 +2465,29 @@ def build_job_metrics_display_list(job):
     return 1
 
   out.sort(key=_display_tier)
+  # Hide duplicate avg_gpuutil when it equals detail_gpu_util_mean (same persist path).
+  mean_row = next(
+      (r for r in out if r.get("metric") == "detail_gpu_util_mean"),
+      None,
+  )
+  if mean_row is not None and mean_row.get("value") is not None:
+    try:
+      mean_v = float(mean_row["value"])
+    except (TypeError, ValueError):
+      mean_v = None
+    if mean_v is not None:
+      filtered = []
+      for r in out:
+        if r.get("metric") != "avg_gpuutil" or r.get("value") is None:
+          filtered.append(r)
+          continue
+        try:
+          if abs(float(r["value"]) - mean_v) < 1e-9:
+            continue
+        except (TypeError, ValueError):
+          pass
+        filtered.append(r)
+      out = filtered
   return out
 
 

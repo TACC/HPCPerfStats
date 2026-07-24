@@ -1401,7 +1401,7 @@ components:
         proc_list:
           type: array
           items:
-            type: string
+            $ref: '#/components/schemas/ProcListEntry'
         derived_data_status:
           type: string
         client_url:
@@ -1816,6 +1816,58 @@ components:
           nullable: true
         unavailable_reason:
           type: string
+          nullable: true
+    ProcListEntry:
+      type: object
+      description: One proc_data row returned in job_detail proc_list (host_proc KEYS).
+      properties:
+        host:
+          type: string
+          nullable: true
+        proc:
+          type: string
+          nullable: true
+        device:
+          type: string
+          nullable: true
+        uid:
+          type: integer
+          nullable: true
+        vm_peak:
+          type: integer
+          nullable: true
+        vm_size:
+          type: integer
+          nullable: true
+        vm_lck:
+          type: integer
+          nullable: true
+        vm_hwm:
+          type: integer
+          nullable: true
+        vm_rss:
+          type: integer
+          nullable: true
+        vm_data:
+          type: integer
+          nullable: true
+        vm_stk:
+          type: integer
+          nullable: true
+        vm_exe:
+          type: integer
+          nullable: true
+        vm_lib:
+          type: integer
+          nullable: true
+        vm_pte:
+          type: integer
+          nullable: true
+        vm_swap:
+          type: integer
+          nullable: true
+        threads:
+          type: integer
           nullable: true
     PublicClusterDashboard:
       type: object

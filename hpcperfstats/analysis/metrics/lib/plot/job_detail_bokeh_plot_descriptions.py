@@ -30,9 +30,9 @@ JOB_DETAIL_BOKEH_HELP: Dict[str, HelpPair] = {
     "jobDetailPlot_multiprecision_cpu": (
         "CPU multiprecision mix: wedge areas show each width's share of busy arithmetic "
         "rates only (idle excluded), from avg_flops64b / avg_flops32b (Intel FP_ARITH or "
-        "Grace scalar FP) and Grace avg_arm_int16_ops / avg_arm_int8_ops when present. "
+        "host_cpu_hw scalar FP) and avg_arm_int16_ops / avg_arm_int8_ops when present. "
         "INT ops and FLOPS are mixed as relative busy-ops shares, not identical units.",
-        "Compare FP64 versus FP32 (and INT16/INT8 on Grace) busy-ops mix when tuning "
+        "Compare FP64 versus FP32 (and INT16/INT8) busy-ops mix when tuning "
         "numerical precision; vectorization width metrics remain separate.",
     ),
     "jobDetailPlot_multiprecision_gpu": (

@@ -628,14 +628,15 @@ describe("JobDetail", () => {
     );
   });
 
-  it("renders plot-tab intro copy on the Multiprecision Mix tab", async () => {
+  it("does not render Host-level plot intro on the Multiprecision Mix tab", async () => {
     setJobDetailQueryMock({ data: minimalJobDetailResponse });
     renderJobDetail("12345", { is_staff: false }, "tab=multiprecisionMix");
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Job data" })).toBeInTheDocument();
     });
-    const intros = screen.getAllByText(/Host-level plot for this job/i);
-    expect(intros.length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText(/Host-level plot for this job/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "CPU Multiprecision Mix" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "GPU Multiprecision Mix" })).toBeInTheDocument();
   });
 
   it("shows staff plot error detail controls on Multiprecision Mix when reasons are present", async () => {
@@ -733,6 +734,104 @@ describe("JobDetail", () => {
     await waitFor(() => {
       expect(screen.getByText("3,445.05 out of 4,608.00")).toBeInTheDocument();
     });
+  });
+
+  it("formats detail_gpu_util_mean as value out of gpu_count times 100", async () => {
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        gpu_count: 40,
+        metrics_list: [
+          {
+            metric: "detail_gpu_util_mean",
+            value: 2552.256,
+            units: "%",
+            no_data_reason: null,
+          },
+        ],
+      },
+    });
+    renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByText("2,552.26 out of 4,000.00")).toBeInTheDocument();
+    });
+  });
+
+  it("shows CPU+GPU watt-hours at the top of Resources when present", async () => {
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        metrics_list: [
+          {
+            metric: "job_cpu_gpu_watt_hours",
+            value: 12.5,
+            units: "Wh",
+            no_data_reason: null,
+          },
+        ],
+      },
+    });
+    renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByText("CPU+GPU Watt Hours for Job")).toBeInTheDocument();
+      expect(screen.getByText(/12\.50\s*Wh/)).toBeInTheDocument();
+    });
+  });
+
+  it("renders multi-column Processes table for object proc_list entries", async () => {
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        proc_list: [
+          {
+            host: "c001",
+            proc: "streams_2.exe",
+            uid: 1001,
+            vm_rss: 2048,
+            vm_hwm: 4096,
+            vm_size: 8192,
+            threads: 4,
+          },
+        ],
+      },
+    });
+    renderJobDetail("12345", { is_staff: false }, "tab=processes");
+    await waitFor(() => {
+      expect(screen.getByRole("columnheader", { name: "Host" })).toBeInTheDocument();
+      expect(screen.getByRole("columnheader", { name: "Process" })).toBeInTheDocument();
+      expect(screen.getByRole("columnheader", { name: "UID" })).toBeInTheDocument();
+      expect(screen.getByRole("columnheader", { name: "RSS (kB)" })).toBeInTheDocument();
+      expect(screen.getByText("streams_2.exe")).toBeInTheDocument();
+      expect(screen.getByText("c001")).toBeInTheDocument();
+    });
+  });
+
+  it("combines DP and SP effective vector width into one Metrics row", async () => {
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        metrics_list: [
+          {
+            metric: "avg_vector_width_64b",
+            value: 12,
+            units: null,
+            no_data_reason: null,
+          },
+          {
+            metric: "avg_vector_width_32b",
+            value: 8,
+            units: null,
+            no_data_reason: null,
+          },
+        ],
+      },
+    });
+    renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByText("Effective vector width (DP / SP)")).toBeInTheDocument();
+      expect(screen.getByText("12.00 / 8.00")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Effective vector width (double precision)")).not.toBeInTheDocument();
   });
 
   it("labels dual FSIO rows as Lustre and NFS", async () => {

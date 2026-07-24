@@ -32,6 +32,24 @@ exclude_types = [
     "vfs",
 ]
 
+# Default host_proc KEYS matching monitor/src/proc.c. Proc-field ingest is a
+# T0 smoke contract (docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md), not a stall fix.
+HOST_PROC_KEYS = (
+    "uid",
+    "vm_peak",
+    "vm_size",
+    "vm_lck",
+    "vm_hwm",
+    "vm_rss",
+    "vm_data",
+    "vm_stk",
+    "vm_exe",
+    "vm_lib",
+    "vm_pte",
+    "vm_swap",
+    "threads",
+)
+
 # Back-compat re-export for callers/tests that referenced legacy eventmaps.
 EVENTMAPS_BY_TYPE = legacy_parsing.EVENTMAPS_BY_TYPE
 map_hardware_counter_vals = legacy_parsing.map_hardware_counter_vals
@@ -700,8 +718,34 @@ class IncrementalStatsParser:
         return
 
       if typ in ("proc", "host_proc"):
-        proc_name = (s.split()[1]).split("/")[0]
-        self.proc_stats.append({**self.line_ctx["tags2"], "proc": proc_name})
+        # device = full monitor token (name/pid/cmask/mmask); proc = name only.
+        proc_name = dev.split("/")[0]
+        schema_keys = (
+            self.schema.get(typ)
+            or self.schema.get("host_proc")
+            or self.schema.get("proc")
+            or list(HOST_PROC_KEYS)
+        )
+        vals_by_key = {}
+        for i, key in enumerate(schema_keys):
+          if i >= len(vals):
+            break
+          raw = vals[i]
+          try:
+            vals_by_key[key] = int(raw)
+          except (TypeError, ValueError):
+            try:
+              vals_by_key[key] = int(float(raw))
+            except (TypeError, ValueError):
+              vals_by_key[key] = None
+        row = {
+            **self.line_ctx["tags2"],
+            "proc": proc_name,
+            "device": dev,
+        }
+        for key in HOST_PROC_KEYS:
+          row[key] = vals_by_key.get(key)
+        self.proc_stats.append(row)
         return
 
       if typ not in self.schema:
@@ -800,7 +844,12 @@ def parse_stats_file_streaming(
 
 
 def build_stats_dataframes(stats_list, proc_stats_list):
-  proc_stats_df = DataFrame.from_records(proc_stats_list).drop_duplicates()
+  proc_stats_df = DataFrame.from_records(proc_stats_list)
+  if not proc_stats_df.empty:
+    # Later samples for the same (jid, host, proc) keep richer KEYS values.
+    proc_stats_df = proc_stats_df.drop_duplicates(
+        subset=["jid", "host", "proc"], keep="last"
+    )
   stats_df = DataFrame.from_records(stats_list)
   return stats_df, proc_stats_df
 

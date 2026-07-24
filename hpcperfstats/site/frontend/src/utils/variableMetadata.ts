@@ -198,15 +198,15 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
   },
   avg_arm_int8_ops: {
     description:
-      "Average Grace INT8 arithmetic operation rate (Gops/s) from host_cpu_hw arm_int8_ops (ASE_SVE_INT8_SPEC). Not included in arm_est_flops / avg_flops.",
+      "Average CPU INT8 arithmetic operation rate (Gops/s) from host_cpu_hw arm_int8_ops (ASE_SVE_INT8_SPEC). Not included in arm_est_flops / avg_flops.",
     researcherUse:
-      "INT8 wedge of the CPU Multiprecision Mix on Grace; compare with FP64/FP32 busy-ops shares.",
+      "INT8 wedge of the CPU Multiprecision Mix; compare with FP64/FP32 busy-ops shares.",
   },
   avg_arm_int16_ops: {
     description:
-      "Average Grace INT16 arithmetic operation rate (Gops/s) from host_cpu_hw arm_int16_ops (ASE_SVE_INT16_SPEC). Not included in arm_est_flops / avg_flops.",
+      "Average CPU INT16 arithmetic operation rate (Gops/s) from host_cpu_hw arm_int16_ops (ASE_SVE_INT16_SPEC). Not included in arm_est_flops / avg_flops.",
     researcherUse:
-      "INT16 wedge of the CPU Multiprecision Mix on Grace; compare with FP64/FP32 busy-ops shares.",
+      "INT16 wedge of the CPU Multiprecision Mix; compare with FP64/FP32 busy-ops shares.",
   },
   avg_mbw: {
     description:
@@ -241,9 +241,9 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
   },
   detail_gpu_util_mean: {
     description:
-      "Sum of per-device average GPU utilization (%) in the job window (same aggregate as job detail).",
+      "Sum of per-device average GPU utilization (%) in the job window (same aggregate as job detail). Displayed as value out of gpu_count×100 when GPU count is known.",
     researcherUse:
-      "Matches the job-detail GPU mean % and the catalog metric GPU % (avg_gpuutil).",
+      "Matches the job-detail GPU mean % and the catalog metric GPU % (avg_gpuutil). Compare against gpu_count×100 for capacity context.",
   },
   detail_gpu_count: {
     description:
@@ -364,6 +364,12 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
       "Mean estimated on-node power (watts) over samples where the estimate is defined (same construction as max_node_power_est_w).",
     researcherUse:
       "Average node power for energy-to-solution comparisons.",
+  },
+  job_cpu_gpu_watt_hours: {
+    description:
+      "Estimated CPU+GPU energy for the job in watt-hours: integrate node_power_est_w over time per host (trapezoid), then sum hosts. Requires usable CPU and GPU power fragments in the estimate (not module-only without a CPU side).",
+    researcherUse:
+      "Total on-node energy for comparing jobs or estimating cost when BMC/PDU meters are unavailable.",
   },
   max_gpu_link_gbps: {
     description:
@@ -777,9 +783,9 @@ const JOB_DETAIL_BOKEH_PLOT_METADATA = {
   },
   jobDetailPlot_multiprecision_cpu: {
     description:
-      "CPU multiprecision mix: wedge areas show each width's share of busy arithmetic rates only (idle excluded), from avg_flops64b / avg_flops32b (Intel FP_ARITH or Grace scalar FP) and Grace avg_arm_int16_ops / avg_arm_int8_ops when present. INT ops and FLOPS are mixed as relative busy-ops shares, not identical units.",
+      "CPU multiprecision mix: wedge areas show each width's share of busy arithmetic rates only (idle excluded), from avg_flops64b / avg_flops32b (Intel FP_ARITH or host_cpu_hw scalar FP) and avg_arm_int16_ops / avg_arm_int8_ops when present. INT ops and FLOPS are mixed as relative busy-ops shares, not identical units.",
     researcherUse:
-      "Compare FP64 versus FP32 (and INT16/INT8 on Grace) busy-ops mix when tuning numerical precision; vectorization width metrics remain separate.",
+      "Compare FP64 versus FP32 (and INT16/INT8) busy-ops mix when tuning numerical precision; vectorization width metrics remain separate.",
   },
   jobDetailPlot_multiprecision_gpu: {
     description:

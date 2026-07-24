@@ -116,7 +116,7 @@ type JobDetailViewData = JobDetailResponse & {
   multiprecision_gpu_plot_item?: BokehJsonItem | null;
   multiprecision_gpu_unavailable_reason?: string | null;
   metrics_list?: JobMetricDisplayRow[];
-  proc_list?: string[];
+  proc_list?: ProcListEntry[];
   staff_metrics_distinct_time_count?: string | number | null;
   staff_artifact_contract?: JobDetailResponse["staff_artifact_contract"];
 };
@@ -158,6 +158,7 @@ function formatJobMetricCell(
   obj: JobMetricCell & { metric?: string },
   isStaff: boolean,
   ncores?: string | number | null,
+  gpuCount?: string | number | null,
 ): string {
   if (obj.value != null && obj.value !== "") {
     const formatted = formatDecimalStandard(obj.value);
@@ -169,12 +170,156 @@ function formatJobMetricCell(
     ) {
       return `${formatted} out of ${formatDecimalStandard(ncores)}`;
     }
+    if (
+      (obj.metric === "detail_gpu_util_mean" || obj.metric === "detail_gpu_util_max") &&
+      gpuCount != null &&
+      gpuCount !== "" &&
+      !Number.isNaN(Number(gpuCount))
+    ) {
+      const outOf = Number(gpuCount) * 100;
+      return `${formatted} out of ${formatDecimalStandard(outOf)}`;
+    }
     return formatted;
   }
   if (isStaff) {
     return obj.no_data_reason || "Data not available.";
   }
   return "Data not available.";
+}
+
+const EFFECTIVE_VECTOR_WIDTH_METRIC = "avg_vector_width_combined";
+const EFFECTIVE_VECTOR_WIDTH_LABEL = "Effective vector width (DP / SP)";
+
+/** Combine DP/SP effective vector width into one Metrics-tab display row. */
+function buildMetricsDisplayList(metrics: JobMetricDisplayRow[]): JobMetricDisplayRow[] {
+  const width64 = metrics.find((m) => m.metric === "avg_vector_width_64b");
+  const width32 = metrics.find((m) => m.metric === "avg_vector_width_32b");
+  if (!width64 && !width32) {
+    return metrics;
+  }
+
+  const dpFormatted =
+    width64?.value != null && width64.value !== ""
+      ? formatDecimalStandard(width64.value)
+      : null;
+  const spFormatted =
+    width32?.value != null && width32.value !== ""
+      ? formatDecimalStandard(width32.value)
+      : null;
+  let combinedValue: string | number | null = null;
+  if (dpFormatted != null && spFormatted != null) {
+    combinedValue = `${dpFormatted} / ${spFormatted}`;
+  } else if (dpFormatted != null) {
+    combinedValue = dpFormatted;
+  } else if (spFormatted != null) {
+    combinedValue = spFormatted;
+  }
+
+  const combined: JobMetricDisplayRow = {
+    metric: EFFECTIVE_VECTOR_WIDTH_METRIC,
+    value: combinedValue,
+    units: null,
+    no_data_reason:
+      combinedValue == null
+        ? width64?.no_data_reason || width32?.no_data_reason || null
+        : null,
+  };
+
+  const out: JobMetricDisplayRow[] = [];
+  let inserted = false;
+  for (const row of metrics) {
+    if (row.metric === "avg_vector_width_64b" || row.metric === "avg_vector_width_32b") {
+      if (!inserted) {
+        out.push(combined);
+        inserted = true;
+      }
+      continue;
+    }
+    out.push(row);
+  }
+  return out;
+}
+
+type ProcListObject = {
+  host?: string | number | null;
+  proc?: string | number | null;
+  device?: string | number | null;
+  uid?: string | number | null;
+  vm_rss?: string | number | null;
+  vm_hwm?: string | number | null;
+  vm_size?: string | number | null;
+  threads?: string | number | null;
+};
+
+type ProcListEntry = string | ProcListObject;
+
+const PROC_TABLE_COLUMNS: ReadonlyArray<{ key: keyof ProcListObject; label: string }> = [
+  { key: "host", label: "Host" },
+  { key: "proc", label: "Process" },
+  { key: "uid", label: "UID" },
+  { key: "vm_rss", label: "RSS (kB)" },
+  { key: "vm_hwm", label: "HWM (kB)" },
+  { key: "vm_size", label: "Size (kB)" },
+  { key: "threads", label: "Threads" },
+];
+
+function cellText(value: string | number | null | undefined): string {
+  if (value == null || value === "") return "";
+  return String(value);
+}
+
+function buildProcTable(procList: ProcListEntry[]): {
+  columns: Array<{ key: string; label: string }>;
+  rows: Array<Record<string, string>>;
+} {
+  const legacyOnly = procList.every((entry) => typeof entry === "string");
+  if (legacyOnly) {
+    return {
+      columns: [{ key: "proc", label: "Process" }],
+      rows: procList.map((entry) => ({ proc: String(entry) })),
+    };
+  }
+
+  const rows = procList.map((entry) => {
+    if (typeof entry === "string") {
+      return { proc: entry };
+    }
+    const row: Record<string, string> = {};
+    for (const col of PROC_TABLE_COLUMNS) {
+      const text = cellText(entry[col.key]);
+      if (text) row[col.key] = text;
+    }
+    if (!row.proc && entry.device != null && String(entry.device) !== "") {
+      row.proc = String(entry.device);
+    }
+    return row;
+  });
+
+  const columns = PROC_TABLE_COLUMNS.filter((col) =>
+    rows.some((row) => row[col.key] != null && row[col.key] !== ""),
+  ).map((col) => ({ key: col.key, label: col.label }));
+
+  if (columns.length === 0) {
+    return {
+      columns: [{ key: "proc", label: "Process" }],
+      rows: rows.map((row) => ({ proc: row.proc || "" })),
+    };
+  }
+  return { columns, rows };
+}
+
+function resolveGpuCountForDisplay(
+  gpuCount: string | number | null | undefined,
+  metricsList: JobMetricDisplayRow[],
+): string | number | null {
+  if (gpuCount != null && gpuCount !== "" && !Number.isNaN(Number(gpuCount))) {
+    return gpuCount;
+  }
+  const detail = metricsList.find((m) => m.metric === "detail_gpu_count");
+  if (detail?.value != null && detail.value !== "" && !Number.isNaN(Number(detail.value))) {
+    return detail.value;
+  }
+  return null;
 }
 
 function analysisTabFromSearchParams(
@@ -395,17 +540,33 @@ export default function JobDetail() {
     unavailableReason: plots?.[config.key]?.unavailableReason ?? null,
   }));
 
-  const metricsListFull: JobMetricDisplayRow[] = (metrics_list || []) as JobMetricDisplayRow[];
+  const metricsListFull: JobMetricDisplayRow[] = buildMetricsDisplayList(
+    (metrics_list || []) as JobMetricDisplayRow[],
+  );
   const metricsTableLeft = metricsListFull.filter((_, index) => index % 2 === 0);
   const metricsTableRight = metricsListFull.filter((_, index) => index % 2 === 1);
+  const gpuCountForMetrics = resolveGpuCountForDisplay(gpu_count, metrics_list || []);
+  const wattHoursMetric = (metrics_list || []).find(
+    (m) =>
+      m.metric === "job_cpu_gpu_watt_hours" && m.value != null && m.value !== "",
+  );
+  const procTable = buildProcTable((proc_list || []) as ProcListEntry[]);
 
   function metricTableRows(list: JobMetricDisplayRow[]): ReactNode {
     return list.map((obj) => (
       <TableRow key={obj.metric}>
         <TableHead scope="row">
           <VariableInfoLabel
-            variableName={obj.metric}
-            labelText={getJobMetricShortLabel(obj.metric)}
+            variableName={
+              obj.metric === EFFECTIVE_VECTOR_WIDTH_METRIC
+                ? "avg_vector_width_64b"
+                : obj.metric
+            }
+            labelText={
+              obj.metric === EFFECTIVE_VECTOR_WIDTH_METRIC
+                ? EFFECTIVE_VECTOR_WIDTH_LABEL
+                : getJobMetricShortLabel(obj.metric)
+            }
             enableHelp
             suffixBeforeHelp={
               obj.units ? (
@@ -417,7 +578,7 @@ export default function JobDetail() {
           />
         </TableHead>
         <TableCell className={obj.value != null && obj.value !== "" ? "" : "text-muted-foreground"}>
-          {formatJobMetricCell(obj, isStaff, job.ncores)}
+          {formatJobMetricCell(obj, isStaff, job.ncores, gpuCountForMetrics)}
         </TableCell>
       </TableRow>
     ));
@@ -430,9 +591,6 @@ export default function JobDetail() {
     return (
       <div key={config.key} className="mb-3 w-full min-w-0 box-border">
         <h3 className="text-base font-medium">{config.plotName}</h3>
-        <p className="job-detail-plots-intro mb-2 max-w-[36rem] text-sm text-muted-foreground">
-          Host-level plot for this job. Loads progressively; chart width follows the panel below.
-        </p>
         {isTabActive ? (
           <PlotPanel
             item={panel.item}
@@ -678,6 +836,24 @@ export default function JobDetail() {
           Resources
         </h2>
         <div className="max-w-4xl">
+            {wattHoursMetric ? (
+              <Table className="mb-3 border text-sm">
+                <TableCaption className="sr-only">
+                  CPU and GPU energy for job {job.jid}
+                </TableCaption>
+                <TableBody>
+                  <TableRow>
+                    <TableCell className="border border-border">
+                      <b>CPU+GPU Watt Hours for Job</b>
+                    </TableCell>
+                    <TableCell className="border border-border text-right">
+                      {formatDecimalStandard(wattHoursMetric.value)}
+                      {wattHoursMetric.units ? ` ${wattHoursMetric.units}` : ""}
+                    </TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            ) : null}
             <Table className="border text-sm">
                 <TableCaption className="sr-only">
                   Shared file system I/O for job {job.jid}
@@ -882,10 +1058,6 @@ export default function JobDetail() {
               <div>
                 <div className="mb-3 w-full min-w-0 box-border">
                   <h3 className="text-base font-medium">CPU Multiprecision Mix</h3>
-                  <p className="job-detail-plots-intro mb-2 max-w-[36rem] text-sm text-muted-foreground">
-                    Host-level plot for this job. Loads progressively; chart width follows the panel
-                    below.
-                  </p>
                   {analysisTab === "multiprecisionMix" ? (
                     <PlotPanel
                       item={multiprecision_cpu_plot_item}
@@ -904,10 +1076,6 @@ export default function JobDetail() {
               <div>
                 <div className="mb-3 w-full min-w-0 box-border">
                   <h3 className="text-base font-medium">GPU Multiprecision Mix</h3>
-                  <p className="job-detail-plots-intro mb-2 max-w-[36rem] text-sm text-muted-foreground">
-                    Host-level plot for this job. Loads progressively; chart width follows the panel
-                    below.
-                  </p>
                   {analysisTab === "multiprecisionMix" ? (
                     <PlotPanel
                       item={multiprecision_gpu_plot_item}
@@ -937,13 +1105,19 @@ export default function JobDetail() {
                 </TableCaption>
                 <TableHeader>
                   <TableRow>
-                    <TableHead scope="col">Process</TableHead>
+                    {procTable.columns.map((col) => (
+                      <TableHead key={col.key} scope="col">
+                        {col.label}
+                      </TableHead>
+                    ))}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {(proc_list || []).map((proc, i) => (
-                    <TableRow key={`proc-${String(proc)}-${i}`}>
-                      <TableCell>{proc}</TableCell>
+                  {procTable.rows.map((row, i) => (
+                    <TableRow key={`proc-${row.proc ?? ""}-${row.host ?? ""}-${i}`}>
+                      {procTable.columns.map((col) => (
+                        <TableCell key={col.key}>{row[col.key] ?? ""}</TableCell>
+                      ))}
                     </TableRow>
                   ))}
                 </TableBody>

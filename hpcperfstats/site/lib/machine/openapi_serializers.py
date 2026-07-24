@@ -195,6 +195,27 @@ class JobMetricRowSerializer(serializers.Serializer):
     no_data_reason = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
 
+class ProcListEntrySerializer(serializers.Serializer):
+    """One proc_data row returned in job_detail proc_list (host_proc KEYS)."""
+
+    host = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    proc = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    device = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    uid = serializers.IntegerField(required=False, allow_null=True)
+    vm_peak = serializers.IntegerField(required=False, allow_null=True)
+    vm_size = serializers.IntegerField(required=False, allow_null=True)
+    vm_lck = serializers.IntegerField(required=False, allow_null=True)
+    vm_hwm = serializers.IntegerField(required=False, allow_null=True)
+    vm_rss = serializers.IntegerField(required=False, allow_null=True)
+    vm_data = serializers.IntegerField(required=False, allow_null=True)
+    vm_stk = serializers.IntegerField(required=False, allow_null=True)
+    vm_exe = serializers.IntegerField(required=False, allow_null=True)
+    vm_lib = serializers.IntegerField(required=False, allow_null=True)
+    vm_pte = serializers.IntegerField(required=False, allow_null=True)
+    vm_swap = serializers.IntegerField(required=False, allow_null=True)
+    threads = serializers.IntegerField(required=False, allow_null=True)
+
+
 class StaffArtifactContractSerializer(serializers.Serializer):
     """Staff Job Detail: runtime vs stored plot/detail artifact schema versions."""
 
@@ -216,7 +237,7 @@ class JobDetailResponseSerializer(serializers.Serializer):
     fsio = serializers.JSONField(required=False)
     xalt_data = serializers.DictField(required=False)
     schema = serializers.DictField(required=False)
-    proc_list = serializers.ListField(child=serializers.CharField(), required=False)
+    proc_list = serializers.ListField(child=ProcListEntrySerializer(), required=False)
     derived_data_status = serializers.CharField(required=False)
     client_url = serializers.CharField(required=False, allow_null=True)
     server_url = serializers.CharField(required=False, allow_null=True)

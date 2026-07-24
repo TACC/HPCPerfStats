@@ -1,0 +1,24 @@
+
+> hpcperfstats-frontend@0.0.1 pretest
+> npm run write-site-identity
+
+
+> hpcperfstats-frontend@0.0.1 write-site-identity
+> node scripts/write-site-identity.mjs
+
+write-site-identity: SITE_MACHINE_NAME from hpcperfstats.ini
+write-site-identity: SITE_MACHINE_SHORT_NAME=cluster_name
+write-site-identity: wrote /Users/sharrell/cursor-projects/HPCPerfStats/HPCPerfStats/hpcperfstats/site/frontend/src/config/site-identity.ts
+
+> hpcperfstats-frontend@0.0.1 test
+> vitest --run src/components/VariableInfoLabel.test.tsx src/views/__tests__/JobDetail.test.tsx src/utils/jobMetricDisplayLabels.test.ts
+
+
+ RUN  v4.1.10 /Users/sharrell/cursor-projects/HPCPerfStats/HPCPerfStats/hpcperfstats/site/frontend
+
+
+ Test Files  3 passed (3)
+      Tests  57 passed (57)
+   Start at  21:40:02
+   Duration  2.98s (transform 161ms, setup 235ms, import 573ms, tests 1.05s, environment 920ms)
+

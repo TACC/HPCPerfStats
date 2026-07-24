@@ -79,12 +79,12 @@ These fields come from batch accounting (e.g. Slurm) and define the **official**
 | ------------------------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Job overview**                | Compact high-value fields (jid, status, runtime, queue, user/project, cores/nodes, start/end)    | Fast triage before deeper telemetry checks.                                                                                                                    |
 | **Full scheduling record**      | Expanded accounting table with all core scheduler columns                                          | Audit exact scheduler/accounting values and formatting without leaving the page.                                                                               |
-| **Resources**                   | Shared filesystem totals (`fsio`, including peak throughput and peak IOPS when computable), GPU summary table, then client/server log links | Validate I/O<sup>[11](#ref-11)</sup> volume and burst rates, compare GPU allocation vs activity, then jump to external logs. |
+| **Resources**                   | CPU+GPU watt-hours (when available), shared filesystem totals (`fsio`, including peak throughput and peak IOPS when computable), GPU summary table, then client/server log links | Validate energy, I/O<sup>[11](#ref-11)</sup> volume and burst rates, compare GPU allocation vs activity, then jump to external logs. |
 | **Metrics (tab)**               | Full job-level metrics catalog (`metrics_list`) with short labels + help metadata                 | Single-place scalar bottleneck and imbalance summary.                                                                                                           |
 | **Summary plot (tab)**          | Host-level timeline plot with CPU, memory/NUMA<sup>[4](#ref-4)</sup>/DRAM, fabric/filesystem, GPU, and node-power traces | Best first visual scan for phase changes, host outliers, and cross-signal coupling (for example GPU drops while fabric spikes).                              |
 | **Roofline (tab)**              | CPU roofline and GPU roofline (PCIe/NVLink<sup>[7](#ref-7)</sup>)                                                        | Distinguish compute-limited vs bandwidth/link-limited behavior and prioritize the right optimization work.                                                     |
 | **Multiprecision Mix (tab)**    | CPU and GPU precision-activity panels over time                                                    | Verify whether the run is using expected mixed-precision paths<sup>[6](#ref-6)</sup> and detect precision mix drift across runs or code versions.                                         |
-| **Processes (tab)**             | Distinct process command lines (`proc_list`)                                                       | Confirm what actually executed (wrappers, launch depth, wrong env, etc.).                                                                                     |
+| **Processes (tab)**             | Per-host process table (`host`, name, UID, RSS/HWM/size, threads when ingested) | Confirm what actually executed and its memory footprint (wrappers, launch depth, wrong env, etc.). |
 | **Execution and hosts (tab)**   | XALT execution path/cwd/libset and host list                                                       | Environment drift, module/library mismatches, and host-level forensics.                                                                                       |
 | **Device data (tab)**           | Device type names and recorded performance events, with links to type-detail pages                  | Discover collected counter families and drill into per-type analysis.                                                                                          |
 
@@ -128,14 +128,14 @@ This section lists the metrics shown in the Job detail **Metrics** tab and how t
 | `avg_flops` | Average floating-point throughput | Mean achieved FLOP rate | Baseline compute throughput for CPU-side arithmetic. |
 | `avg_flops64b` | Average double-precision FLOP rate | Mean FP64 GFLOP/s from Intel FP_ARITH doubles, or Grace scalar double when Intel absent | FP64 share of busy ops in Multiprecision Mix. |
 | `avg_flops32b` | Average single-precision FLOP rate | Mean FP32 GFLOP/s from Intel FP_ARITH singles, or Grace scalar single when Intel absent | FP32 share of busy ops in Multiprecision Mix. |
-| `avg_arm_int8_ops` | Average Grace INT8 operation rate | Mean INT8 Gops/s from host_cpu_hw `arm_int8_ops` | INT8 busy-ops share on Grace Multiprecision Mix (not in `avg_flops`). |
-| `avg_arm_int16_ops` | Average Grace INT16 operation rate | Mean INT16 Gops/s from host_cpu_hw `arm_int16_ops` | INT16 busy-ops share on Grace Multiprecision Mix (not in `avg_flops`). |
+| `avg_arm_int8_ops` | Average CPU INT8 operation rate | Mean INT8 Gops/s from host_cpu_hw `arm_int8_ops` | INT8 busy-ops share on CPU Multiprecision Mix (not in `avg_flops`). |
+| `avg_arm_int16_ops` | Average CPU INT16 operation rate | Mean INT16 Gops/s from host_cpu_hw `arm_int16_ops` | INT16 busy-ops share on CPU Multiprecision Mix (not in `avg_flops`). |
 | `avg_mbw` | Average DRAM memory bandwidth | Mean DRAM bandwidth | High with low FLOPs suggests memory-bound CPU phases. |
 | `avg_freq` | Average effective CPU frequency | Mean CPU frequency | Drops may indicate power/thermal policy or throttling. |
 | `avg_ethbw` | Average Ethernet bandwidth | Mean Ethernet bandwidth | Useful for TCP/object-store workflows that bypass IB paths<sup>[16](#ref-16)</sup>. |
 | `detail_gpu_active` | GPUs with non-zero utilization | Number of active GPUs | Lower than allocated GPUs usually means mapping/launcher inefficiency. |
-| `detail_gpu_util_max` | Sum of per-GPU peak utilization | Max GPU utilization observed | Peak headroom check; high max with low mean often indicates bursty kernels. |
-| `detail_gpu_util_mean` | Sum of per-GPU mean utilization | Mean GPU utilization observed | Primary “are GPUs doing work?” scalar for the job. |
+| `detail_gpu_util_max` | Sum of per-GPU peak utilization | Max of per-GPU peaks, shown as value out of GPUs×100 | Peak headroom check; high max with low mean often indicates bursty kernels. |
+| `detail_gpu_util_mean` | Sum of per-GPU mean utilization | Sum of per-GPU means, shown as value out of GPUs×100 | Primary “are GPUs doing work?” scalar for the job. |
 | `detail_gpu_count` | Total GPUs on job | Total GPUs allocated | Sanity check against scheduler request and host topology. |
 | `detail_fsio_llite_read_mb` | Total Lustre client read volume | Total Lustre llite read MB | Aggregate client-side read volume for Lustre path. |
 | `detail_fsio_llite_write_mb` | Total Lustre client write volume | Total Lustre llite write MB | Aggregate client-side write volume for Lustre path. |
@@ -145,7 +145,8 @@ This section lists the metrics shown in the Job detail **Metrics** tab and how t
 | `detail_fsio_nfs_write_mb` | Total NFS client write volume | Total NFS write MB | Aggregate client-side write volume for NFS-backed paths. |
 | `detail_fsio_nfs_peak_mb_s` | Peak NFS client read+write rate | Peak aggregate NFS client MB/s (shown alongside Lustre when both have data) | Short burst NFS throughput; dual NFS+Lustre rows appear when both clients report volume. |
 | `detail_fsio_nfs_peak_iops` | Peak NFS client I/O operation rate | Peak aggregate NFS read/write op rate (alongside Lustre when both present) | Burst small-file or metadata-heavy NFS phases. |
-| `avg_gpuutil` | Job GPU utilization (aggregate) | Mean GPU utilization (vendor-aware source priority) | Core accelerator utilization KPI; low values indicate feed/scheduling inefficiency. |
+| `avg_gpuutil` | Job GPU utilization (aggregate) | Same aggregate as `detail_gpu_util_mean` when both exist (duplicate row hidden in UI) | Core accelerator utilization KPI; low values indicate feed/scheduling inefficiency. |
+| `job_cpu_gpu_watt_hours` | CPU+GPU watt-hours for job | ∫ estimated node power (CPU+GPU) over time, summed across hosts (Wh) | Top of Resources when both CPU and GPU power fragments exist; energy budget for the run. |
 | `avg_packetsize` | Mean fabric packet payload size | Mean network packet size | Small average packet sizes imply metadata/collective chatter overhead. |
 | `max_fabricbw` | Peak fabric data rate | Peak fabric MB/s on the same conversion basis as `avg_ibbw` (not packet-rate scale) | Captures communication bursts that may not appear in averages. |
 | `max_lnetbw` | Peak Lustre LNET client data rate | Peak Lustre LNet bandwidth | Peak parallel file-system network pressure. |
@@ -167,10 +168,10 @@ This section lists the metrics shown in the Job detail **Metrics** tab and how t
 | `lnet_node_imbalance` | LNET bandwidth imbalance across nodes | Node-level LNet imbalance | Uneven filesystem/network load distribution. |
 | `gpu_util_node_imbalance` | GPU utilization imbalance across nodes | Node-level GPU utilization imbalance | Multi-node training/inference skew across nodes. |
 | `tensor_node_imbalance` | Tensor-pipe activity imbalance across nodes | Node-level tensor-activity imbalance | Tensor kernels unevenly distributed across participating nodes. |
-| `vecpercent_64b` | Share of double-precision FLOPs from vector instructions | Percent of double-precision FLOPs done via vector widths > scalar | Low values on DP-heavy code suggest SIMD/vectorization opportunity<sup>[5](#ref-5)</sup>. |
-| `avg_vector_width_64b` | Effective vector width (double precision) | Average effective DP vector width | Closer to scalar indicates weak SIMD utilization in DP paths. |
-| `vecpercent_32b` | Share of single-precision FLOPs from vector instructions | Percent of single-precision FLOPs done via vector widths > scalar | Low values on SP-heavy code suggest vectorization opportunity<sup>[5](#ref-5)</sup>. |
-| `avg_vector_width_32b` | Effective vector width (single precision) | Average effective SP vector width | Low average width indicates scalar/short-vector dominated SP execution. |
+| `vecpercent_64b` | Double-precision vector FLOP share (%) | Percent (0–100) of double-precision FLOPs done via vector widths > scalar | Low values on DP-heavy code suggest SIMD/vectorization opportunity<sup>[5](#ref-5)</sup>. |
+| `avg_vector_width_64b` | Effective vector width (double precision) | Average effective DP vector width (UI may combine with SP as one DP/SP row) | Closer to scalar indicates weak SIMD utilization in DP paths. |
+| `vecpercent_32b` | Single-precision vector FLOP share (%) | Percent (0–100) of single-precision FLOPs done via vector widths > scalar | Low values on SP-heavy code suggest vectorization opportunity<sup>[5](#ref-5)</sup>. |
+| `avg_vector_width_32b` | Effective vector width (single precision) | Average effective SP vector width (UI may combine with DP as one DP/SP row) | Low average width indicates scalar/short-vector dominated SP execution. |
 
 ---
 
@@ -196,8 +197,8 @@ This section covers job-detail surfaces beyond scalar metrics.
 
 ### 6.3 Multiprecision Mix tab (CPU and GPU)
 
-- Diagnostic use: quantify mixed-precision path composition (DP/SP/tensor, and Grace INT16/INT8 when present) as a share of **busy** arithmetic rates only (no idle wedge)<sup>[6](#ref-6)</sup>.
-- CPU pie: wedges come from rate-weighted FP64/FP32 (`avg_flops64b` / `avg_flops32b`, Intel or Grace scalar) plus Grace INT16/INT8 (`avg_arm_int16_ops` / `avg_arm_int8_ops`) when positive — a busy-ops mix, not identical physical units; not vectorization-within-width percentages.
+- Diagnostic use: quantify mixed-precision path composition (DP/SP/tensor, and CPU INT16/INT8 when present) as a share of **busy** arithmetic rates only (no idle wedge)<sup>[6](#ref-6)</sup>.
+- CPU pie: wedges come from rate-weighted FP64/FP32 (`avg_flops64b` / `avg_flops32b`, Intel or ARM scalar) plus INT16/INT8 (`avg_arm_int16_ops` / `avg_arm_int8_ops`) when positive — a busy-ops mix, not identical physical units; not vectorization-within-width percentages.
 - GPU pie: hover shows share of busy percent; wedges label Tensor IMMA (INT8/INT4), Tensor HMMA (FP16/BF16), and Tensor DFMA (FP64) when those splits are present (preferred over lumped tensor activity). CPU half/bf16/tf32/fp8 appear only when the monitor emits them.
 - Width behavior: each pie includes the precision widths that have usable positive metrics for that job/architecture; missing widths are omitted rather than treated as errors.
 - Recommendation: when model/code changes precision policy, compare this tab first, then check throughput/utilization deltas.
@@ -313,5 +314,6 @@ Use these numbered references when you want background on terms used throughout 
 | 2026-06-05 | Job detail Metrics tab short labels expanded to describe what is measured; units appear only in the bracket suffix beside each row (no unit tokens in label text). |
 | 2026-07-20 | Summary plot GPU tensors: IMMA/HMMA/DFMA split time series preferred over lumped tensor-pipe; lumped fallback when splits absent. |
 | 2026-07-19 | Dual NFS+Lustre Resources/FSIO; Multiprecision Mix busy-FLOPS-only (CPU FP_ARITH shares, GPU tensor splits + hover %); `avg_cpuusage` job-total busy cores vs `ncores`; fabric peak on same basis as `avg_ibbw`; `avg_sharedfs_*` Insufficient = coverage gate. |
+| 2026-07-23 | Job Detail: Grace→CPU labels; GPU util out of GPUs×100; zero-mean activity ≠ missing; CPU+GPU watt-hours atop Resources; Processes multi-column; combined DP/SP vector width; Summary axis help + shorter labels; Multiprecision pie title/clip. |
 
 

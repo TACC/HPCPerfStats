@@ -275,17 +275,58 @@ def test_parse_stats_lines_with_missing_jid_placeholder_no_host_data_jid():
 
 
 def test_parse_stats_lines_proc_type():
-  """proc type lines add to proc_stats only (proc name is first path component)."""
+  """proc type lines add to proc_stats with device + KEYS (name is first path component)."""
   lines = [
       "1709123456 job1 cn001\n",
-      "proc usr/bin/foo 0\n",
+      "proc usr/bin/foo 1000 1 2 3 4 5 6 7 8 9 10 11 12\n",
   ]
   start_idx = 0
   stats_list, proc_list = parse_stats_lines(lines, start_idx)
   assert len(stats_list) == 0
   assert len(proc_list) == 1
   assert proc_list[0]["proc"] == "usr"
+  assert proc_list[0]["device"] == "usr/bin/foo"
   assert proc_list[0]["jid"] == "job1"
+  assert proc_list[0]["host"] == "cn001"
+  assert proc_list[0]["uid"] == 1000
+  assert proc_list[0]["vm_peak"] == 1
+  assert proc_list[0]["vm_rss"] == 5
+  assert proc_list[0]["threads"] == 12
+
+
+def test_parse_stats_lines_host_proc_schema_keys():
+  """host_proc with !schema KEYS line stores device + all numeric fields (T0 contract)."""
+  keys = (
+      "uid vm_peak vm_size vm_lck vm_hwm vm_rss "
+      "vm_data vm_stk vm_exe vm_lib vm_pte vm_swap threads"
+  )
+  lines = [
+      f"!host_proc {keys}\n",
+      "1709123456 job1 cn001\n",
+      "host_proc python/4242/0-7/0 1001 9000 8000 0 7000 6000 5000 4000 3000 2000 1000 500 8\n",
+  ]
+  stats_list, proc_list = parse_stats_lines(lines, start_idx=0)
+  assert stats_list == []
+  assert len(proc_list) == 1
+  row = proc_list[0]
+  assert row["proc"] == "python"
+  assert row["device"] == "python/4242/0-7/0"
+  assert row["jid"] == "job1"
+  assert row["host"] == "cn001"
+  assert row["time"] == 1709123456.0
+  assert row["uid"] == 1001
+  assert row["vm_peak"] == 9000
+  assert row["vm_size"] == 8000
+  assert row["vm_lck"] == 0
+  assert row["vm_hwm"] == 7000
+  assert row["vm_rss"] == 6000
+  assert row["vm_data"] == 5000
+  assert row["vm_stk"] == 4000
+  assert row["vm_exe"] == 3000
+  assert row["vm_lib"] == 2000
+  assert row["vm_pte"] == 1000
+  assert row["vm_swap"] == 500
+  assert row["threads"] == 8
 
 
 def test_parse_stats_lines_excluded_type():
@@ -331,18 +372,20 @@ def test_build_stats_dataframes_empty():
 
 
 def test_build_stats_dataframes_dedupe_proc():
-  """Duplicate proc_stats entries are deduplicated."""
+  """Duplicate (jid, host, proc) keep=last so richer later samples win."""
   stats_list = [
       {"time": 1.0, "host": "h", "type": "cpu", "dev": "0", "event": "a", "value": 1.0, "wid": 64, "mult": 1, "unit": "#"},
   ]
   proc_list = [
-      {"jid": "j", "host": "h", "proc": "p"},
-      {"jid": "j", "host": "h", "proc": "p"},
+      {"jid": "j", "host": "h", "proc": "p", "device": "p/1/0/0", "vm_rss": 10, "threads": 1},
+      {"jid": "j", "host": "h", "proc": "p", "device": "p/1/0/0", "vm_rss": 99, "threads": 4},
   ]
   stats_df, proc_df = build_stats_dataframes(stats_list, proc_list)
   assert len(stats_df) == 1
   assert len(proc_df) == 1
   assert proc_df.iloc[0]["proc"] == "p"
+  assert int(proc_df.iloc[0]["vm_rss"]) == 99
+  assert int(proc_df.iloc[0]["threads"]) == 4
 
 
 def test_build_stats_dataframes_records():

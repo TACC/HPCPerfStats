@@ -99,10 +99,31 @@ describe("parse-api-response", () => {
     expect(parseApiResponse("GET", "/api/pub/cluster-dashboard/", wire)).toEqual(wire);
   });
 
-  it("accepts job detail proc_list as string array", () => {
+  it("accepts job detail proc_list as object array", () => {
     const wire = {
       job_data: { jid: "123" },
-      proc_list: ["python", "mpirun"],
+      proc_list: [
+        {
+          host: "n001",
+          proc: "python",
+          device: "python/1234/0-31/0",
+          uid: 1000,
+          vm_rss: 102400,
+          vm_hwm: 204800,
+          vm_size: 512000,
+          threads: 4,
+        },
+        {
+          host: "n001",
+          proc: "mpirun",
+          device: "mpirun/5678/0-31/0",
+          uid: 1000,
+          vm_rss: 8192,
+          vm_hwm: 8192,
+          vm_size: 16384,
+          threads: 1,
+        },
+      ],
       derived_data_status: "ready",
     };
     expect(parseApiResponse("GET", "/api/jobs/123/", wire)).toEqual(wire);
