@@ -17,7 +17,7 @@ from .models import metrics_data
 # Threshold aligned with product copy: many sample times but no usable metric values.
 MONITORING_GAPS_MIN_DISTINCT_TIMES = 5
 # Jobs shorter than this (seconds) with no metrics rows get a specific label (same sort_rank).
-SHORT_RUNTIME_NO_METRICS_SECONDS = 120.0
+SHORT_RUNTIME_NO_METRICS_SECONDS = 600.0
 
 # Canonical performance status labels keyed by sort_rank (header filter + filter_options).
 PERFORMANCE_STATUS_BY_SORT_RANK = (

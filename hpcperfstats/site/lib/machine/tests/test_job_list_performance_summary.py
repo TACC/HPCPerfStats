@@ -68,12 +68,26 @@ class TestSummarizePerformance:
         assert out["sort_rank"] == 4
         assert out["label"] == "Not enough samples to summarize"
 
+    def test_short_runtime_threshold_is_600_seconds(self):
+        """Product contract: no-metrics jobs under 10 minutes are too short to measure."""
+        assert SHORT_RUNTIME_NO_METRICS_SECONDS == 600.0
+
     def test_rank_5_no_rows_short_runtime_label(self):
         out = summarize_performance(
             has_metrics_row=False,
             metrics_value_count=0,
             distinct_time_count=None,
             runtime=SHORT_RUNTIME_NO_METRICS_SECONDS - 1,
+        )
+        assert out["sort_rank"] == 5
+        assert out["label"] == "Too short to measure"
+
+    def test_rank_5_still_applies_just_under_600(self):
+        out = summarize_performance(
+            has_metrics_row=False,
+            metrics_value_count=0,
+            distinct_time_count=None,
+            runtime=599.0,
         )
         assert out["sort_rank"] == 5
         assert out["label"] == "Too short to measure"
