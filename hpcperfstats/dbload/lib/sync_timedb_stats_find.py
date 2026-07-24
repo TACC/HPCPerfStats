@@ -401,3 +401,164 @@ def discover_stats_records(
       current_inodes,
       newest_first=newest_first,
   )
+
+
+def _epoch_in_closed_window(
+    epoch_s: float,
+    window_start: datetime,
+    window_end: datetime,
+) -> bool:
+  """True when Unix epoch seconds fall in ``[window_start, window_end]``."""
+  try:
+    start_ts = float(window_start.timestamp())
+    end_ts = float(window_end.timestamp())
+  except (AttributeError, OSError, OverflowError, TypeError, ValueError):
+    return False
+  return start_ts <= float(epoch_s) <= end_ts
+
+
+def filter_host_scoped_window_records(
+    records: Iterable[FindStatsRecord],
+    host_fqdns: Sequence[str],
+    window_start: datetime,
+    window_end: datetime,
+    current_inodes: Optional[Dict[str, int]] = None,
+) -> List[FindStatsRecord]:
+  """Filter records to allowed host dirs and a closed datetime window.
+
+  Skips locks, ``current*``, dotfiles, and live ``current`` inodes (same as
+  continuous sync). Epoch basename is preferred; mtime is the fallback clock.
+  """
+  allow = {
+      str(h).strip()
+      for h in (host_fqdns or ())
+      if str(h or "").strip()
+  }
+  if not allow:
+    return []
+  current_inodes = current_inodes or {}
+  selected: List[Tuple[FindStatsRecord, Optional[int]]] = []
+  for rec in records:
+    path = rec.path
+    name = os.path.basename(path)
+    host_dir = os.path.dirname(path)
+    host_base = os.path.basename(host_dir)
+    if host_base not in allow:
+      continue
+    if name.startswith(".") or name.startswith("current"):
+      continue
+    if _is_lock_name(name):
+      continue
+    if current_inodes.get(host_dir) == rec.inode:
+      continue
+
+    sort_epoch: Optional[int] = None
+    in_window = False
+    try:
+      fname_epoch = int(name)
+      sort_epoch = fname_epoch
+      in_window = _epoch_in_closed_window(
+          fname_epoch, window_start, window_end,
+      )
+    except (TypeError, ValueError):
+      sort_epoch = int(rec.mtime)
+      in_window = _epoch_in_closed_window(
+          rec.mtime, window_start, window_end,
+      )
+    if not in_window:
+      continue
+    selected.append((rec, sort_epoch))
+
+  selected.sort(key=lambda item: (item[1] is None, item[1]))
+  return [rec for rec, _ in selected]
+
+
+def discover_host_scoped_stats_records(
+    archive_dir: str,
+    host_fqdns: Sequence[str],
+    window_start: datetime,
+    window_end: datetime,
+    *,
+    find_bin: Optional[str] = None,
+    log_fn: Optional[Callable[..., None]] = None,
+) -> List[FindStatsRecord]:
+  """Discover stats under named host dirs only (no full-archive find).
+
+  Runs GNU find per existing ``{archive_dir}/{fqdn}`` directory. Missing host
+  dirs are skipped. Does not walk unrelated hosts.
+  """
+  if not archive_dir or not os.path.isdir(archive_dir):
+    return []
+  hosts = [
+      str(h).strip()
+      for h in (host_fqdns or ())
+      if str(h or "").strip()
+  ]
+  if not hosts:
+    return []
+  bin_path = _resolve_find_bin(find_bin)
+  records: List[FindStatsRecord] = []
+  for host in hosts:
+    host_dir = os.path.join(archive_dir, host)
+    if not os.path.isdir(host_dir):
+      if log_fn is not None:
+        log_fn(
+            "jid discover: skip missing host_dir=%s" % host_dir,
+            flush=True,
+        )
+      continue
+    argv = [
+        bin_path,
+        host_dir,
+        "-mindepth",
+        "1",
+        "-maxdepth",
+        "1",
+        "-type",
+        "f",
+    ]
+    argv.extend(["-printf", FIND_PRINTF_FORMAT])
+    t0 = time.monotonic()
+    raw = _run_find_capture(argv, allow_fnctl_race_exit=True)
+    host_recs = parse_find_printf_records(raw)
+    if log_fn is not None:
+      log_fn(
+          "jid discover: host=%s find_records=%d elapsed_s=%.3f"
+          % (host, len(host_recs), time.monotonic() - t0),
+          flush=True,
+      )
+    records.extend(host_recs)
+
+  current_inodes = load_current_inode_map(archive_dir, find_bin=bin_path)
+  filtered = filter_host_scoped_window_records(
+      records,
+      hosts,
+      window_start,
+      window_end,
+      current_inodes,
+  )
+  update_fingerprint_caches_from_records(filtered)
+  return filtered
+
+
+def collect_host_scoped_stats_paths(
+    archive_dir: str,
+    host_fqdns: Sequence[str],
+    window_start: datetime,
+    window_end: datetime,
+    *,
+    find_bin: Optional[str] = None,
+    log_fn: Optional[Callable[..., None]] = None,
+) -> List[str]:
+  """Return sorted host-scoped stats paths in ``[window_start, window_end]``."""
+  return [
+      rec.path
+      for rec in discover_host_scoped_stats_records(
+          archive_dir,
+          host_fqdns,
+          window_start,
+          window_end,
+          find_bin=find_bin,
+          log_fn=log_fn,
+      )
+  ]

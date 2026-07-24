@@ -483,7 +483,16 @@ cd HPCPerfStats
 tests/run_sync_timedb_regression_battery.sh
 ```
 
-Logs to **`test_runs/day-close-loop-regression-battery-<timestamp>.log`**. Covers handoff, `archive_finalize`, chunk gate, `test_arch_*`, `ingest_stall_watchdog`, `oldest_day_unprocessed_frozen`, prewarm L1/cold-Redis (`l1_cold_redis`, `prewarm_retries`), and pending-reconcile fingerprint refresh. See **`sync-timedb-change-regression-gate.mdc`** and **`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`** (T0/T1/T2 tiered verify on backlog sites).
+Logs to **`test_runs/day-close-loop-regression-battery-<timestamp>.log`**. Covers handoff, `archive_finalize`, chunk gate, `test_arch_*`, `ingest_stall_watchdog`, `oldest_day_unprocessed_frozen`, prewarm L1/cold-Redis (`l1_cold_redis`, `prewarm_retries`), pending-reconcile fingerprint refresh, and **`--jid` ingest-only** (`test_sync_timedb_jid.py`). See **`sync-timedb-change-regression-gate.mdc`** and **`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`** (T0/T1/T2 tiered verify on backlog sites; `--jid` uses the smoke note there instead of stall tiers).
+
+**sync_timedb `--jid` one-shot (host unit):**
+
+```bash
+cd HPCPerfStats
+../.venv/bin/python3 -m pytest -q hpcperfstats/tests/test_sync_timedb_jid.py
+```
+
+Operator CLI (pipeline image, after `job_data` exists): `sync_timedb.py --jid <JID>` — ingest-only (±1h pad around job start/end); no archival/day-close. See **`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`** → *sync_timedb --jid smoke*.
 
 **sync_timedb ingest archive member cache (host, no compose):** on cloud-sync checkouts prefer `scripts/run_tests.py --no-django` (direct `pytest` on ProtonDrive can hang during collection). Targeted regressions:
 

@@ -14,6 +14,17 @@ Attach the `test_runs/day-close-loop-regression-battery-*.log` path to the PR or
 
 **After sync_timedb dedup-audit deploy (blocking/census split, persistence v6):** run the same battery pre-deploy; post-deploy use T0/T1/T2 below. Persistence v6 resets orphan `startup_*` sidecars on contract bump — expect one-time empty maint hints if the contract file was stale. No separate stall signature is expected from this audit alone; treat regressions like any other sync_timedb deploy.
 
+## sync_timedb `--jid` smoke (ingest-only; stall T0/T1 N/A)
+
+Surgical re-ingest for one job is **not** a backlog catch-up stall verify. Use this smoke instead of T0/T1/T2:
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline \
+  su hpcperfstats -c 'sync_timedb.py --jid REPLACE_WITH_JOB_ID'
+```
+
+**Pass:** exit **0**; logs show `sync_timedb --jid: jid=… hosts=…`, host-scoped discover counts, and `done … ok=…` (zero matching files is success). **Fail:** exit **1** (missing job / empty hosts / bad argv / all ingest failures). Expect **no** `ArchiveJanitor`, `day_close`, or archive dispatch lines from this process. Stall tiers above remain for continuous `backlog` / `current` deploys only.
+
 ## Post-deploy tiers
 
 | Tier | When | Pass criteria |

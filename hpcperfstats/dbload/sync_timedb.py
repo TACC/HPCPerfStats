@@ -11,7 +11,7 @@ Append and raw delete stay DB-gated when ``sync_archive_require_db_ingest=yes``.
 
 When the ingest queue is empty, rescans for new stats files. After a rescan still finds nothing pending: if day-close is allowed and the janitor still has work (debt / in-flight / tick), short-poll and continue so day-close can finish; otherwise sleep ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` (default 30s) and exit the loop iteration (continuous mode repeats).
 
-CLI: no args uses a sliding window (see ``days_to_process``) through now. One ``YYYY-MM-DD`` ingests that calendar day only. Two dates ``YYYY-MM-DD YYYY-MM-DD`` set an explicit range. First arg ``backlog`` scans every host stats dir under ``archive_dir`` (subdirs whose names end with ``DEFAULT.host_name_ext`` from ini). Prefix ``once`` to exit after one idle rescan (no 300s sleep), e.g. ``once backlog`` or ``once 2024-01-15``.
+CLI: no args uses a sliding window (see ``days_to_process``) through now. One ``YYYY-MM-DD`` ingests that calendar day only. Two dates ``YYYY-MM-DD YYYY-MM-DD`` set an explicit range. First arg ``backlog`` scans every host stats dir under ``archive_dir`` (subdirs whose names end with ``DEFAULT.host_name_ext`` from ini). Prefix ``once`` to exit after one idle rescan (no 300s sleep), e.g. ``once backlog`` or ``once 2024-01-15``. ``--jid <JID>`` / ``--jid=<JID>`` is a one-shot ingest-only path: resolve hosts and ±1h padded ``start_time``/``end_time`` from ``job_data``, discover only those hosts' archive stats files, write to the DB and update the ingest checkpoint, then exit (no archival, day-close, or janitor).
 
 DB access is process-safe: pool workers use close_old_connections() at task start and connections.close_all() at task end so connections do not linger between files. Writes are serialized with a shared lock. After bulk_create failure (including SIGALRM cancel), the write path re-raises ingest control-flow timeouts, resets the Django/psycopg connection, then retries under the same write lock — never single-insert on a mid-command connection.
 
@@ -3009,6 +3009,8 @@ def _archive_skip_token_for_outcome(outcome):
 
 def _need_archival_and_archive_skip_meta(stats_file, first_ts):
   """Tar-append decision for DB-complete ingest; returns meta fragment."""
+  if not should_archive:
+    return False, {"archive_skip": "should_archive_false"}
   need_archival, skip_reason = raw_stats_path_tar_append_decision(
       stats_file,
       tgz_archive_dir,
@@ -8620,6 +8622,157 @@ def parse_sync_timedb_argv(argv):
   return run_once, startdate, enddate
 
 
+def run_sync_timedb_jid_ingest(jid):
+  """One-shot ingest-only path for ``--jid`` (no archive / day-close / janitor).
+
+  Returns process exit code **0** on success (including zero matching files) or
+  **1** on missing job / empty hosts / fatal ingest failure.
+  """
+  from collections import deque
+
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      load_checkpoint_path_set,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_jid_scope import (
+      JobIngestScopeError,
+      resolve_job_ingest_scope,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_persistence import (
+      ensure_persistence_contract,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
+      collect_host_scoped_stats_paths,
+  )
+
+  global should_archive
+  prev_should_archive = should_archive
+  should_archive = False
+  try:
+    try:
+      scope = resolve_job_ingest_scope(jid)
+    except JobIngestScopeError as exc:
+      log_print("sync_timedb --jid: %s" % exc, flush=True)
+      return 1
+
+    host_name_ext = cfg.get_host_name_ext().strip()
+    if not host_name_ext:
+      log_print(
+          "ERROR: DEFAULT.host_name_ext must be set; sync_timedb --jid uses "
+          "archive subdirectories named with this suffix.",
+          flush=True,
+      )
+      return 1
+
+    archive_dir = cfg.get_archive_dir_path()
+    if not archive_dir or not os.path.isdir(archive_dir):
+      log_print(
+          "sync_timedb --jid: archive_dir missing or not a directory: %s"
+          % archive_dir,
+          flush=True,
+      )
+      return 1
+
+    ensure_persistence_contract(archive_dir, log_fn=log_print)
+    checkpoint_path = os.path.join(archive_dir, SYNC_TIMEDB_CHECKPOINT_BASENAME)
+
+    log_print(
+        "sync_timedb --jid: jid=%s hosts=%d window_start=%s window_end=%s"
+        % (
+            scope.jid,
+            len(scope.hosts),
+            scope.window_start.isoformat(),
+            scope.window_end.isoformat(),
+        ),
+        flush=True,
+    )
+
+    paths = collect_host_scoped_stats_paths(
+        archive_dir,
+        scope.hosts,
+        scope.window_start,
+        scope.window_end,
+        log_fn=log_print,
+    )
+    checkpoint_paths = load_checkpoint_path_set(checkpoint_path)
+    pending = [
+        p for p in paths
+        if os.path.normpath(p) not in checkpoint_paths
+    ]
+    log_print(
+        "sync_timedb --jid: discovered=%d pending_after_checkpoint=%d"
+        % (len(paths), len(pending)),
+        flush=True,
+    )
+
+    if not pending:
+      log_print("sync_timedb --jid: nothing to ingest jid=%s" % scope.jid, flush=True)
+      return 0
+
+    write_lock = threading.Lock()
+    checkpoint_entries = deque(_load_sync_checkpoint(checkpoint_path))
+    processed_files = set(checkpoint_paths)
+    processed_files_order = deque(processed_files)
+    ok_n = 0
+    fail_n = 0
+    for index, path in enumerate(pending):
+      if shutdown_requested[0]:
+        log_print("sync_timedb --jid: shutdown requested", flush=True)
+        break
+      result = add_stats_file_to_db(write_lock, path)
+      stats_fname, _need_archival, ingest_ok, elapsed_s, outcome_meta = (
+          _unpack_ingest_worker_result(result)
+      )
+      remaining = max(0, len(pending) - index - 1)
+      log_print(
+          "sync_timedb --jid: ingest path=%s ok=%s elapsed_s=%.3f remaining=%d "
+          "outcome=%s"
+          % (
+              stats_fname,
+              int(bool(ingest_ok)),
+              float(elapsed_s or 0.0),
+              remaining,
+              outcome_meta.get("outcome", ""),
+          ),
+          flush=True,
+      )
+      if not ingest_ok:
+        fail_n += 1
+        continue
+      ok_n += 1
+      _add_processed_path(
+          stats_fname,
+          processed_files,
+          processed_files_order,
+          checkpoint_entries,
+          checkpoint_path,
+      )
+      try:
+        _save_sync_checkpoint(checkpoint_path, checkpoint_entries)
+      except OSError as exc:
+        log_print(
+            "ERROR: sync_timedb --jid checkpoint flush failed path=%s: %s"
+            % (checkpoint_path, exc),
+            flush=True,
+        )
+        return 1
+
+    log_print(
+        "sync_timedb --jid: done jid=%s ok=%d fail=%d"
+        % (scope.jid, ok_n, fail_n),
+        flush=True,
+    )
+    return 1 if fail_n and ok_n == 0 else 0
+  finally:
+    should_archive = prev_should_archive
+    try:
+      from django.db import close_old_connections, connections
+
+      close_old_connections()
+      connections.close_all()
+    except Exception:
+      pass
+
+
 def run_sync_timedb_supervisor_from_parsed(run_once, startdate, enddate):
   """Run one supervisor session after ``database_startup()`` (CLI or in-process tests)."""
   _reset_sync_runtime_caches()
@@ -8744,6 +8897,16 @@ if __name__ == '__main__':
   try:
     set_daemon_process_title(name=SYNC_TIMEDB_PROCESS_TITLE, role="main")
     database_startup()
+    from hpcperfstats.dbload.lib.sync_timedb_jid_scope import (
+        parse_sync_timedb_jid_cli_arg,
+    )
+
+    jid, jid_err = parse_sync_timedb_jid_cli_arg(sys.argv)
+    if jid_err is not None:
+      log_print(jid_err, flush=True)
+      sys.exit(1)
+    if jid is not None:
+      sys.exit(run_sync_timedb_jid_ingest(jid))
     run_once, startdate, enddate = parse_sync_timedb_argv(sys.argv)
     run_sync_timedb_supervisor_from_parsed(run_once, startdate, enddate)
     if shutdown_requested[0]:
@@ -8757,6 +8920,7 @@ if __name__ == '__main__':
 
     hard_exit_pool_worker_error(exc)
   finally:
+    signal.signal(signal.SIGTERM, previous_sigterm_handler)
     # Best-effort cleanup + parent notification when SIGTERM is received.
     if sigterm_received["value"]:
       try:
