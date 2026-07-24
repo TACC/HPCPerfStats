@@ -58,6 +58,122 @@ def _make_janitor(**kwargs):
   return janitor
 
 
+def test_janitor_defer_tracker_write_lock_sticky_backoff():
+  """write_lock_contended sets sticky backoff so ticks skip re-pop thrash."""
+  tracker = JanitorDeferTracker()
+  tar = "/tmp/daily/2026-06-08.tar"
+  tracker.record_defer(tar, reason="write_lock_contended")
+  entry = tracker._by_tar[os.path.normpath(tar)]
+  assert float(entry["write_lock_until"]) > time.time()
+  assert tracker.write_lock_backoff_active(tar) is True
+  assert tracker.write_lock_backoff_skip_tars([tar]) == {os.path.normpath(tar)}
+  # Expired window → not active.
+  assert tracker.write_lock_backoff_active(
+      tar, now=float(entry["write_lock_until"]) + 1.0,
+  ) is False
+  # Other reasons do not set write_lock sticky window.
+  tracker2 = JanitorDeferTracker()
+  tracker2.record_defer(tar, reason="populate_active")
+  assert tracker2.write_lock_backoff_active(tar) is False
+
+
+def test_close_one_day_preflight_defers_write_lock_before_pre_seal(
+    monkeypatch, tmp_path,
+):
+  """Contended write lock must defer before pre_seal / dup scan (Track A)."""
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2026-06-08.tar"))
+  _write_tar_with_dupes(tar_path)
+  log_fn = MagicMock()
+  janitor = _make_janitor(tgz_archive_dir=str(daily_dir), log_fn=log_fn)
+  pre_seal_n = {"n": 0}
+  dup_n = {"n": 0}
+
+  class _Coord:
+    def pre_seal_verification_complete(self, _tar):
+      return False
+
+    def run_pre_seal_verify_sync(self, _tar):
+      pre_seal_n["n"] += 1
+      return True
+
+    def should_handoff_before_seal(self, _tar):
+      return False
+
+  janitor.day_raw_removal_coordinator = _Coord()
+
+  def _count_dup(_p):
+    dup_n["n"] += 1
+    return True
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_janitor"
+      ".tar_has_duplicate_file_members",
+      _count_dup,
+  )
+
+  @__import__("contextlib").contextmanager
+  def _contended(_path):
+    raise TimeoutError("contended")
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.file_locking.try_file_write_lock",
+      _contended,
+  )
+  result = janitor._close_one_day(
+      tar_path,
+      snapshot=None,
+      validation_cache={},
+      disqualified=set(),
+  )
+  assert result is False
+  assert pre_seal_n["n"] == 0
+  assert dup_n["n"] == 0
+  defer_logs = [
+      str(c)
+      for c in log_fn.call_args_list
+      if c and "day_close defer" in str(c) and "preflight" in str(c)
+  ]
+  assert defer_logs
+  assert "write_lock_contended" in defer_logs[-1]
+  assert janitor._defer_tracker.write_lock_backoff_active(tar_path) is True
+
+
+def test_fill_skips_write_lock_backoff_tar_without_starting_day(monkeypatch, tmp_path):
+  """Sticky backoff: heap tar is not submitted while write_lock_until active."""
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2026-06-08.tar"))
+  open(tar_path, "wb").close()
+  log_fn = MagicMock()
+  janitor = _make_janitor(tgz_archive_dir=str(daily_dir), log_fn=log_fn)
+  janitor._defer_tracker.record_defer(tar_path, reason="write_lock_contended")
+  assert janitor._defer_tracker.write_lock_backoff_active(tar_path)
+  janitor._enqueue_day_close(tar_path, persist=False)
+  monkeypatch.setattr(janitor, "get_day_close_allowed", lambda: True)
+  monkeypatch.setattr(janitor, "get_startup_ingest_gate_cleared", lambda: True)
+  monkeypatch.setattr(janitor, "_discover_and_enqueue_ready_day_close", lambda **_k: None)
+  monkeypatch.setattr(janitor, "_run_tick_lock_cleanup", lambda: 0)
+  monkeypatch.setattr(janitor, "_effective_tick_budget", lambda: 5.0)
+  submit_n = {"n": 0}
+
+  def _no_submit(*_a, **_k):
+    submit_n["n"] += 1
+    raise AssertionError("must not submit during write_lock backoff")
+
+  monkeypatch.setattr(janitor, "_submit_day_close_debt", _no_submit)
+  janitor._run_tick_body()
+  assert submit_n["n"] == 0
+  tick_logs = [
+      str(c)
+      for c in log_fn.call_args_list
+      if c and "Archive janitor tick done" in str(c)
+  ]
+  assert tick_logs
+  assert "days_started=0" in tick_logs[-1]
+
+
 def test_try_file_write_lock_raises_when_read_lock_held(tmp_path):
   target = tmp_path / "2026-06-05.tar"
   target.write_bytes(b"x")

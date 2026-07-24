@@ -1463,12 +1463,25 @@ def collect_unmapped_closed_raw_daily_tars(
     tgz_archive_dir,
     *,
     log_fn=log_print,
+    maintenance_snapshot=None,
+    closed_paths=None,
+    mapping=None,
 ):
   """Daily ``.tar`` paths with closed raw on disk not present in archive mapping.
 
   Bounded scan used when the janitor has no accrual snapshot (long ingest backlog)
   so unmapped closed segments still disqualify seal / ``.tar`` removal.
+
+  When a warm ``maintenance_snapshot`` (or explicit ``closed_paths`` + ``mapping``)
+  is provided, reuse those collections — never run a full ``collect_stats_files``
+  discover for day-scoped/unmapped (snapshot-first guard).
   """
+  if maintenance_snapshot is not None:
+    closed_paths = list(maintenance_snapshot.closed_paths or ())
+    mapping = dict(maintenance_snapshot.mapping or {})
+  if closed_paths is not None and mapping is not None:
+    return collect_days_with_unmapped_closed_raw(
+        closed_paths, mapping, tgz_archive_dir)
   closed_paths = collect_stats_files_in_range(
       archive_data_dir, "backlog", None, host_name_ext)
   if not closed_paths:
@@ -5494,30 +5507,40 @@ def build_day_scoped_closed_raw_by_gz(
     tar_path,
     *,
     log_fn=None,
+    maintenance_snapshot=None,
+    closed_paths_snapshot=None,
 ):
   """Closed raw for one daily ``.tar`` without full-tree head metadata.
 
   Uses date-scoped ``collect_stats_files_in_range`` plus filename/mtime alignment
   (``stats_path_aligned_to_daily_tar``). Does **not** call
   ``build_archive_maintenance_snapshot`` or read first-timestamp heads.
+
+  When ``maintenance_snapshot`` or ``closed_paths_snapshot`` is provided, filter
+  those paths only — forbid a full discover/collect for that day.
   """
   tar_norm = os.path.normpath(str(tar_path or ""))
   day = calendar_date_from_daily_tar_path(tar_norm)
   if not tar_norm or day is None or not archive_data_dir or not tgz_archive_dir:
     return {}
-  # collect_stats_files_in_range expects datetime bounds (not ISO strings).
-  # Inclusive calendar day: end must be past midnight so noon segments match
-  # ``ts > enddate`` filter (same as single-day ingest windows).
-  day_start = datetime(day.year, day.month, day.day)
-  day_end = day_start + timedelta(days=1)
-  paths = collect_stats_files_in_range(
-      archive_data_dir,
-      day_start,
-      day_end,
-      host_name_ext,
-      force_full_scan=True,
-      log_fn=None,
-  )
+  if maintenance_snapshot is not None:
+    closed_paths_snapshot = list(maintenance_snapshot.closed_paths or ())
+  if closed_paths_snapshot is not None:
+    paths = list(closed_paths_snapshot)
+  else:
+    # collect_stats_files_in_range expects datetime bounds (not ISO strings).
+    # Inclusive calendar day: end must be past midnight so noon segments match
+    # ``ts > enddate`` filter (same as single-day ingest windows).
+    day_start = datetime(day.year, day.month, day.day)
+    day_end = day_start + timedelta(days=1)
+    paths = collect_stats_files_in_range(
+        archive_data_dir,
+        day_start,
+        day_end,
+        host_name_ext,
+        force_full_scan=True,
+        log_fn=None,
+    )
   aligned = []
   for path in paths or ():
     if not path or not os.path.isfile(path):
@@ -7282,6 +7305,8 @@ def rescan_pending_stats_files(
     progress_interval=5000,
     newest_first=False,
     mtime_days=None,
+    prefer_incremental=False,
+    pending_pressure_n=None,
 ):
   """Return ordered files still pending after excluding processed files."""
   if full_rescan_every is None:
@@ -7296,6 +7321,18 @@ def rescan_pending_stats_files(
     host_scan_hints["__rescan_count__"] = int(
         host_scan_hints.get("__rescan_count__", 0)
     ) + 1
+  # Under high pending pressure, skip periodic full-age find (mtime incremental
+  # is enough; full find is cheap but still wasteful on every Nth chunk).
+  if prefer_incremental:
+    should_force_full = False
+  elif pending_pressure_n is not None:
+    try:
+      pressure = int(pending_pressure_n)
+    except (TypeError, ValueError):
+      pressure = 0
+    queue_max = int(cfg.get_sync_ingest_queue_max_size())
+    if pressure >= max(1, queue_max // 2):
+      should_force_full = False
   use_snapshot = (
       (should_force_full or force_snapshot_paths)
       and startup_closed_paths is not None

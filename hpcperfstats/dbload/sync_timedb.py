@@ -6820,14 +6820,19 @@ def run_sync_timedb_supervisor_loop(
   day_raw_removal.get_maintenance_snapshot = _get_maintenance_snapshot_for_day_raw
   day_raw_removal.get_allow_day_scoped_closed_raw = _get_allow_day_scoped_closed_raw
 
-  def _rescan_pending_with_progress(*, idle_refill=False, processed_exclude=None):
+  def _rescan_pending_with_progress(
+      *, idle_refill=False, processed_exclude=None, pending_pressure_n=None,
+  ):
     with ingest_logging():
       return _rescan_pending_with_progress_inner(
           idle_refill=idle_refill,
           processed_exclude=processed_exclude,
+          pending_pressure_n=pending_pressure_n,
       )
 
-  def _rescan_pending_with_progress_inner(*, idle_refill=False, processed_exclude=None):
+  def _rescan_pending_with_progress_inner(
+      *, idle_refill=False, processed_exclude=None, pending_pressure_n=None,
+  ):
     rescan_t0 = time.time()
     log_print("pending rescan begin", flush=True)
     closed_paths = _startup_closed_paths_for_rescan(idle_refill=idle_refill)
@@ -6857,6 +6862,7 @@ def run_sync_timedb_supervisor_loop(
         force_snapshot_paths=idle_refill,
         log_fn=log_print,
         newest_first=newest_first,
+        pending_pressure_n=pending_pressure_n,
     )
     log_print(
         "pending rescan done pending=%d elapsed_s=%.3f"
@@ -6882,6 +6888,13 @@ def run_sync_timedb_supervisor_loop(
       enabled=True,
   )
   pending_rescan_future = None
+  pending_reconcile_executor = SessionSingleFlightExecutor(
+      thread_name_prefix="sync-timedb-pending-reconcile",
+      process_title=SYNC_TIMEDB_PROCESS_TITLE,
+      thread_role="pending-reconcile",
+      enabled=True,
+  )
+  pending_reconcile_future = None
   post_ingest_snapshot_executor = SessionSingleFlightExecutor(
       thread_name_prefix="sync-timedb-startup-snapshot",
       process_title=SYNC_TIMEDB_PROCESS_TITLE,
@@ -6946,12 +6959,14 @@ def run_sync_timedb_supervisor_loop(
       _drain_pending_rescan_future()
     processed_exclude = _rescan_processed_exclusions()
     exclude_snap = set(processed_exclude)
+    pending_pressure = len(pending_stats_files)
     log_print("async pending rescan begin", flush=True)
 
     def _job():
       return _rescan_pending_with_progress(
           idle_refill=idle_refill,
           processed_exclude=exclude_snap,
+          pending_pressure_n=pending_pressure,
       )
 
     pending_rescan_future = pending_rescan_executor.submit(_job)
@@ -6978,6 +6993,108 @@ def run_sync_timedb_supervisor_loop(
             newest_first=newest_first,
         ),
     )
+
+  def _pending_reconcile_in_flight():
+    return (
+        pending_reconcile_future is not None
+        and not pending_reconcile_future.done()
+    )
+
+  def _drain_pending_reconcile_future():
+    """Merge a completed async live-unprocessed rebuild; never join."""
+    nonlocal pending_reconcile_future, pending_stats_files
+    if pending_reconcile_future is None:
+      return False
+    if not pending_reconcile_future.done():
+      return False
+    future = pending_reconcile_future
+    pending_reconcile_future = None
+    try:
+      unprocessed = future.result()
+    except Exception as exc:
+      log_print(
+          "async pending reconcile failed err=%s" % exc,
+          flush=True,
+      )
+      return False
+    if unprocessed is None:
+      return False
+    tar_norm = oldest_checkpoint_incomplete_tar(
+        unprocessed,
+        tgz_archive_dir=tgz_archive_dir,
+        newest_first=newest_first,
+    ) or ""
+    blocked = (
+        _checkpoint_unblocked_paths_for_tar(unprocessed, tar_norm)
+        if tar_norm
+        else []
+    )
+    _store_pending_reconcile_unprocessed_cache(
+        unprocessed,
+        oldest_tar=tar_norm,
+        incomplete_n=len(blocked),
+    )
+    pending_stats_files = _cap_pending_after_rescan(pending_stats_files)
+    log_print(
+        "async pending reconcile merge pending=%d oldest_tar=%s incomplete_n=%d"
+        % (len(pending_stats_files), tar_norm, len(blocked)),
+        flush=True,
+    )
+    return True
+
+  def _start_pending_reconcile_async():
+    """Single-flight live unprocessed rebuild; MainThread keeps known pending."""
+    nonlocal pending_reconcile_future
+    if _pending_reconcile_in_flight():
+      return False
+    if pending_reconcile_future is not None and pending_reconcile_future.done():
+      _drain_pending_reconcile_future()
+    pending_snap = list(pending_stats_files)
+    checkpoint_snap = _reconcile_checkpoint_paths()
+    snapshot, _source = _resolve_reconcile_maintenance_snapshot()
+    log_print("async pending reconcile begin", flush=True)
+
+    def _job():
+      return build_live_unprocessed_by_tar_for_reconcile(
+          directory,
+          host_name_ext,
+          tgz_archive_dir,
+          checkpoint_path=checkpoint_path,
+          checkpoint_paths=checkpoint_snap,
+          pending_stats_paths=pending_snap,
+          maintenance_snapshot=snapshot,
+      )
+
+    pending_reconcile_future = pending_reconcile_executor.submit(_job)
+    return True
+
+  def _reconcile_pending_nonblocking():
+    """Between-chunk reconcile: drain-if-done or kick async; never join.
+
+    Cache-hit path keeps a cheap MainThread cap. Cache-miss under known pending
+    kicks ``pending-reconcile`` and proceeds to imap on current pending.
+    """
+    nonlocal pending_stats_files
+    _drain_pending_reconcile_future()
+    mono_now = time.monotonic()
+    reuse = _cached_unprocessed_reusable_for_cap(mono_now=mono_now)
+    if reuse is not None:
+      pending_stats_files = _cap_pending_after_rescan(pending_stats_files)
+      return "cache_sync"
+    pending_n = len(pending_stats_files)
+    kicked = _start_pending_reconcile_async()
+    inflight = kicked or _pending_reconcile_in_flight()
+    reason = (
+        "known_pending_ge_chunk"
+        if pending_n >= chunk_size
+        else ("known_pending_nonempty" if pending_n > 0 else "pending_empty")
+    )
+    log_print(
+        "pending reconcile deferred async_kick=%s pending=%d reason=%s"
+        % ("yes" if inflight else "no", pending_n, reason),
+        flush=True,
+    )
+    return "async"
 
   def _get_ingest_pool_in_flight_count():
     if active_chunk_ingest_tracker is None:
@@ -7509,27 +7626,25 @@ def run_sync_timedb_supervisor_loop(
       file_states.pop(path, None)
       if isinstance(host_scan_hints, dict):
         host_scan_hints.pop(path, None)
-    processed_exclude = _rescan_processed_exclusions()
-    pending_stats_files = _cap_pending_after_rescan(
-        merge_rescan_discovered_into_pending(
-            pending_stats_files,
-            rescan_pending_stats_files(
-                directory,
-                startdate,
-                enddate,
-                host_name_ext,
-                processed_exclude,
-                host_scan_hints=host_scan_hints,
-                newest_first=newest_first,
-            ),
-            processed_exclude=processed_exclude,
-            newest_first=newest_first,
-        ),
-    )
+    # Coalesce onto async pending-rescan — never sync find+cap on MainThread
+    # under backlog (Track C). Drain merges when the future completes.
     day_close_rescan_pending = False
+    if _pending_rescan_in_flight():
+      log_print(
+          "Day raw removal pipeline complete; pending-rescan already inflight",
+          flush=True,
+      )
+      return
+    if _start_pending_rescan_async(idle_refill=False):
+      log_print(
+          "Day raw removal pipeline complete; kicked async pending rescan",
+          flush=True,
+      )
+      return
+    # Kick failed (executor disabled / race): restore flag for next boundary.
+    day_close_rescan_pending = True
     log_print(
-        "Day raw removal pipeline complete; rescanned pending=%d"
-        % len(pending_stats_files),
+        "Day raw removal pipeline complete; async rescan kick deferred",
         flush=True,
     )
 
@@ -7571,6 +7686,7 @@ def run_sync_timedb_supervisor_loop(
 
       if not pending_stats_files:
         _drain_pending_rescan_future()
+        _drain_pending_reconcile_future()
         if pending_stats_files:
           idle_since_empty_queue = None
           reconcile_refs["suppress_idle_archive_retries"] = False
@@ -7757,7 +7873,7 @@ def run_sync_timedb_supervisor_loop(
             allow_defer=True,
             context="chunk_boundary",
         )
-        _reconcile_pending_with_oldest_checkpoint_incomplete()
+        _reconcile_pending_nonblocking()
         if shutdown_requested[0]:
           log_print("Exiting due to SIGTERM")
           break
@@ -7940,7 +8056,7 @@ def run_sync_timedb_supervisor_loop(
               if reclaimed:
                 reconcile_refs["oldest_day_gate_stall_blocked_n"] = None
                 _invalidate_pending_reconcile_unprocessed_cache()
-                _reconcile_pending_with_oldest_checkpoint_incomplete()
+                _reconcile_pending_nonblocking()
                 _finalize_archive_slots_if_needed(
                     force=True,
                     allow_defer=True,
@@ -8299,6 +8415,7 @@ def run_sync_timedb_supervisor_loop(
         if chunk_counter % rescan_every_chunks == 0:
           # Merge completed scan-ahead first; never block MainThread on find.
           _drain_pending_rescan_future()
+          _drain_pending_reconcile_future()
           scan_inflight = _pending_rescan_in_flight()
           _finalize_archive_slots_if_needed(
               force=True,
@@ -8311,12 +8428,13 @@ def run_sync_timedb_supervisor_loop(
             _supplement_pending_while_rescan_inflight()
           log_print(
               "Rescan boundary after %d chunks; pending files (%s): %d "
-              "async_inflight=%s"
+              "async_inflight=%s reconcile_inflight=%s"
               % (
                   rescan_every_chunks,
                   "newest first" if newest_first else "oldest first",
                   len(pending_stats_files),
                   "yes" if _pending_rescan_in_flight() else "no",
+                  "yes" if _pending_reconcile_in_flight() else "no",
               ))
 
         _finalize_archive_slots_if_needed(
@@ -8379,6 +8497,10 @@ def run_sync_timedb_supervisor_loop(
     preflight_shutdown_wait = not pool_worker_exit
     try:
       pending_rescan_executor.shutdown(wait=False)
+    except Exception:
+      pass
+    try:
+      pending_reconcile_executor.shutdown(wait=False)
     except Exception:
       pass
     try:

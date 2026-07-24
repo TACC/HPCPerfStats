@@ -16,7 +16,8 @@ globs: hpcperfstats/dbload/sync_timedb*.py,hpcperfstats/dbload/lib/sync_timedb_a
 |-----------|--------|
 | `daily_tar_janitor_mutation_should_defer` | `sync_timedb_day_close_cooperation.py` |
 | `day_close_yield_requested` + `DayCloseYieldError` | `sync_timedb_day_close_cooperation.py` |
-| `try_file_write_lock` (`timeout_seconds=0`) | `file_locking.py` |
+| `try_file_write_lock` (**context manager**, non-blocking; contended → `TimeoutError`) | `file_locking.py` |
+| Sticky `write_lock_contended` backoff (`JanitorDeferTracker`) | `sync_timedb_day_close_cooperation.py` |
 | `ingest_tar_hot` Redis key | `sync_timedb_archive_members_redis.py` |
 | `daily_tar_restore` Redis key + populate wait | `sync_timedb_archive_members_redis.py` |
 | Restore-blocked day skip in `dispatch_disjoint_items` | `sync_timedb_archive_dispatch.py` |
@@ -25,7 +26,8 @@ globs: hpcperfstats/dbload/sync_timedb*.py,hpcperfstats/dbload/lib/sync_timedb_a
 
 ## Logs (operator grep)
 
-- `janitor: day_close defer tar=… phase=… reason=…`
+- `janitor: day_close defer tar=… phase=… reason=…` (`phase=preflight` before seal/dedupe)
+- `Archive janitor tick done … deferred_preflight_n=… deferred_reason_top=… leave_in_flight=… budget_exit=…`
 - `janitor: day_close yield tar=… phase=… reason=…`
 - `janitor: day_close yield signal tar=… reason=…`
 - `populate: wait daily_tar_restore day=…`
@@ -37,6 +39,8 @@ globs: hpcperfstats/dbload/sync_timedb*.py,hpcperfstats/dbload/lib/sync_timedb_a
 ## Starvation
 
 After **3** defer ticks or **15 min** wall without hot-path signals, janitor may proceed with bounded `file_write_lock` — log `janitor: mutation proceed reason=defer_cap_exceeded`. **`defer_cap_exceeded` must still run write-lock / hot / populate / restore checks** (F5) — cap stops aging forever, it does **not** skip safety. Sticky yield Event alone must not abort after hot/populate clear (F11c).
+
+**`write_lock_contended` sticky backoff:** after a live flock defer, `JanitorDeferTracker` sets `write_lock_until` (30s…300s escalate) so ticks **skip** re-popping that tar (coordinator `phase=preflight` before worker submit / before pre_seal). Do **not** busy-spin seal for 500s+ with `days_completed=0`.
 
 ## Overlap
 

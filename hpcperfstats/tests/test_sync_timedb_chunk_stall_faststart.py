@@ -413,6 +413,32 @@ def test_r25_single_flight_async_owner():
   assert src.count("_start_pending_rescan_async") >= 1
 
 
+def test_r29_async_pending_reconcile_nonblocking_chunk_start():
+  """R29: chunk start uses nonblocking reconcile; never future.result join."""
+  src = SUPERVISOR_SRC.read_text(encoding="utf-8")
+  assert 'thread_role="pending-reconcile"' in src
+  assert "_reconcile_pending_nonblocking" in src
+  assert "_start_pending_reconcile_async" in src
+  assert "_drain_pending_reconcile_future" in src
+  # Call site after chunk_boundary finalize (not the reap helper default arg).
+  marker = 'context="chunk_boundary",\n        )\n        _reconcile_pending_nonblocking()'
+  assert marker in src
+  # Drain must never wait on incomplete future.
+  drain = src.split("def _drain_pending_reconcile_future", 1)[1].split("\n  def ", 1)[0]
+  assert "if not pending_reconcile_future.done():" in drain
+  assert "return False" in drain
+  assert "future.result(timeout" not in drain
+
+
+def test_r30_day_close_rescan_kicks_async_not_sync_find():
+  """R30: day_close_rescan_pending kicks pending-rescan; no sync find on MainThread."""
+  src = inspect.getsource(st.run_sync_timedb_supervisor_loop)
+  fn = src.split("def _maybe_apply_day_close_rescan", 1)[1].split("\n  try:", 1)[0]
+  assert "_start_pending_rescan_async" in fn
+  assert "rescan_pending_stats_files(" not in fn
+  assert "kicked async pending rescan" in fn
+
+
 def test_r28_maintenance_snapshot_wired_before_first_exclude():
   """R28: day_raw get_maintenance_snapshot prefers accrual then coordinator."""
   src = inspect.getsource(st.run_sync_timedb_supervisor_loop)
@@ -452,3 +478,117 @@ def test_r22_day_raw_build_remaining_allow_full_false():
 
   src = inspect.getsource(drr._DayRawRemovalState._build_remaining_raw_for_daily_tar)
   assert "allow_full_snapshot=False" in src
+
+
+def test_snapshot_first_unmapped_skips_full_collect(monkeypatch):
+  """Warm snapshot must not call collect_stats_files_in_range for unmapped."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import ArchiveMaintenanceSnapshot
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      collect_unmapped_closed_raw_daily_tars,
+  )
+
+  collect_n = {"n": 0}
+
+  def _boom(*_a, **_k):
+    collect_n["n"] += 1
+    raise AssertionError("full collect forbidden when snapshot provided")
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.collect_stats_files_in_range",
+      _boom,
+  )
+  day = datetime(2026, 6, 8, 12, 0, 0)
+  path = "/raw/host/%d" % int(day.timestamp())
+  snap = ArchiveMaintenanceSnapshot(closed_paths=[path], mapping={})
+  result = collect_unmapped_closed_raw_daily_tars(
+      "/raw",
+      "cluster.test",
+      "/daily",
+      maintenance_snapshot=snap,
+  )
+  assert collect_n["n"] == 0
+  assert any("2026-06-08.tar" in p for p in result)
+
+
+def test_snapshot_first_day_scoped_skips_collect(monkeypatch, tmp_path):
+  """Warm closed_paths_snapshot skips date-scoped find for day-scoped helper."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      build_day_scoped_closed_raw_by_gz,
+  )
+
+  collect_n = {"n": 0}
+
+  def _boom(*_a, **_k):
+    collect_n["n"] += 1
+    raise AssertionError("collect forbidden when closed_paths_snapshot set")
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.collect_stats_files_in_range",
+      _boom,
+  )
+  day = datetime(2026, 6, 8)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, _zst = _seal_day(tmp_path, seg, day)
+  by_gz = build_day_scoped_closed_raw_by_gz(
+      str(tmp_path),
+      "cluster.integration.test",
+      str(tmp_path / "daily"),
+      tar_path,
+      closed_paths_snapshot=[str(seg)],
+  )
+  assert collect_n["n"] == 0
+  flat = [p for paths in by_gz.values() for p in paths]
+  assert str(seg) in flat
+
+
+def test_rescan_skips_force_full_under_pending_pressure(monkeypatch, tmp_path):
+  """High pending_pressure_n forces incremental mtime find (no force_full)."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      rescan_pending_stats_files,
+  )
+
+  seen = {}
+
+  def _fake_collect(*_a, **kwargs):
+    seen["force_full_scan"] = kwargs.get("force_full_scan")
+    seen["mtime_days"] = kwargs.get("mtime_days")
+    return []
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.collect_stats_files_in_range",
+      _fake_collect,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_queue_max_size",
+      lambda: 100,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_rescan_full_every",
+      lambda: 1,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_rescan_mtime_days",
+      lambda: 1,
+  )
+  hints = {"__rescan_count__": 0}
+  rescan_pending_stats_files(
+      str(tmp_path),
+      "current",
+      None,
+      "cluster.test",
+      set(),
+      host_scan_hints=hints,
+      pending_pressure_n=80,
+  )
+  assert seen.get("force_full_scan") is False
+  assert seen.get("mtime_days") == 1
+
+
+def test_tick_lock_cleanup_source_uses_targets_not_full_archive():
+  """Hot-path tick orphan cleanup must be debt-day targeted, not full archive walk."""
+  from hpcperfstats.dbload.lib import sync_timedb_archive_janitor as jan
+
+  src = inspect.getsource(jan.ArchiveJanitor._run_tick_lock_cleanup)
+  assert "cleanup_orphan_fnctl_lock_sidecars_for_targets" in src
+  assert "cleanup_orphan_fnctl_lock_sidecars(self.archive_data_dir)" not in src
+  assert "cleanup_orphan_fnctl_lock_sidecars(self.tgz_archive_dir)" not in src

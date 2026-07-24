@@ -11,6 +11,11 @@ from hpcperfstats.dbload.lib.print_utils import log_print
 DAY_CLOSE_YIELD_POLL_SECONDS = 5.0
 JANITOR_DEFER_CAP_TICKS = 3
 JANITOR_DEFER_CAP_WALL_SECONDS = 15 * 60
+# Sticky backoff when seal/dedupe hits live flock (write_lock_contended).
+# Prevents day-close ticks from re-popping the same tar and burning
+# hundreds of seconds on pre_seal/dup-scan before deferring again.
+WRITE_LOCK_BACKOFF_BASE_S = 30.0
+WRITE_LOCK_BACKOFF_MAX_S = 300.0
 
 
 class DayCloseYieldError(Exception):
@@ -231,7 +236,7 @@ class JanitorDeferTracker:
     self._lock = threading.Lock()
     self._by_tar: dict[str, dict] = {}
 
-  def record_defer(self, tar_path: str) -> None:
+  def record_defer(self, tar_path: str, *, reason: str = "") -> None:
     tar_norm = _tar_norm(tar_path)
     if not tar_norm:
       return
@@ -243,6 +248,49 @@ class JanitorDeferTracker:
       )
       entry["count"] = int(entry.get("count", 0)) + 1
       entry["last_ts"] = now
+      entry["last_reason"] = reason or ""
+      if reason == "write_lock_contended":
+        streak = int(entry.get("write_lock_streak", 0)) + 1
+        entry["write_lock_streak"] = streak
+        # 30s, 60s, 120s, 240s, then cap at WRITE_LOCK_BACKOFF_MAX_S
+        exp = min(max(0, streak - 1), 4)
+        delay = min(
+            WRITE_LOCK_BACKOFF_MAX_S,
+            WRITE_LOCK_BACKOFF_BASE_S * (2 ** exp),
+        )
+        entry["write_lock_until"] = now + float(delay)
+
+  def write_lock_backoff_active(
+      self,
+      tar_path: str,
+      *,
+      now: Optional[float] = None,
+  ) -> bool:
+    """True while sticky write_lock_contended backoff has not expired."""
+    tar_norm = _tar_norm(tar_path)
+    if not tar_norm:
+      return False
+    clock = time.time() if now is None else float(now)
+    with self._lock:
+      entry = self._by_tar.get(tar_norm)
+      if not entry:
+        return False
+      until = float(entry.get("write_lock_until", 0.0) or 0.0)
+      return until > clock
+
+  def write_lock_backoff_skip_tars(
+      self,
+      tar_paths,
+      *,
+      now: Optional[float] = None,
+  ) -> Set[str]:
+    """Subset of ``tar_paths`` still inside write_lock sticky backoff."""
+    clock = time.time() if now is None else float(now)
+    skipped: Set[str] = set()
+    for tar_path in tar_paths or ():
+      if self.write_lock_backoff_active(tar_path, now=clock):
+        skipped.add(_tar_norm(tar_path))
+    return skipped
 
   def defer_cap_exceeded(self, tar_path: str) -> bool:
     tar_norm = _tar_norm(tar_path)

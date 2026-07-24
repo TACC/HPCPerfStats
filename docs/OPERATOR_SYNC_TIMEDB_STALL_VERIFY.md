@@ -68,6 +68,40 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 **Pass (T1):** under ``current``/date-range after newest-first ingest drains, day-close for older months continues without a 30s supervisor teardown gap; new stats discovery during poll resumes `chunk dispatch` promptly.
 
+### T0 / T1 — day-close `write_lock_contended` thrash + async between-chunk reconcile (2026-07)
+
+**Failure signature (pre-fix, hpcperfstats03):** `Archive janitor tick done` with `debt_popped`/`days_started`>0 but **`days_completed=0`**, tick **`duration_s`≈500–1000**, `budget_exit leave_in_flight`, and repeated `janitor: day_close defer … reason=write_lock_contended` on the same June daily `.tar` while ingest holds flock. Separately, MainThread stuck in `_cap_pending_after_rescan` / live unprocessed rebuild between chunks under huge backlog (find itself is already async and cheap — **not** a `-newermt` problem).
+
+```bash
+# T0 — day-close thrash + tick summary (full pipeline log; never --tail before grep)
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'Archive janitor tick done|day_close defer.*write_lock_contended|deferred_preflight_n|deferred_reason_top|pending reconcile deferred|async pending reconcile|async pending rescan|kicked async pending rescan' | head -80
+```
+
+**Authoritative write_lock probe** (`try_file_write_lock` is a **context manager** — no `timeout_seconds=` kwarg, no `.release()`):
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline \
+  su hpcperfstats -c 'python3 -c "
+from hpcperfstats.dbload.lib import conf_parser as cfg
+from hpcperfstats.dbload.lib.file_locking import try_file_write_lock
+import os
+daily = cfg.get_daily_archive_dir_path()
+for day in (\"2026-06-08\", \"2026-06-09\"):
+  tar = os.path.join(daily, day + \".tar\")
+  try:
+    with try_file_write_lock(tar):
+      print(day, \"OK_uncontended\")
+  except TimeoutError:
+    print(day, \"write_lock_contended=True TimeoutError\")
+"'
+```
+
+**Fail (T0):** repeating multi-minute ticks with `days_completed=0` + `write_lock_contended` and **`days_started`** counting every contended pop (preflight thrash); or MainThread blocked in sync `pending reconcile cap begin` / live rebuild every chunk while `pending` already ≥ chunk size.
+
+**Pass (T0):** contended days log `day_close defer … phase=preflight reason=write_lock_contended` then tick summary shows `deferred_preflight_n≥1 deferred_reason_top=write_lock_contended` with **`days_started=0`** (or progress on other days) — not 500s+ zero-complete burns. Between chunks expect `pending reconcile deferred async_kick=yes` / `async pending reconcile begin|merge` and `async pending rescan` — **not** MainThread stuck in `_cap_pending_after_rescan` live rebuild under backlog. Day-close rescan after raw removal: `kicked async pending rescan` (not sync find on MainThread).
+
+**Pass (T1):** while ingest holds June tar locks, day-close advances other eligible days or backs off; when locks clear, seal completes (`days_completed>0`). Chunk ingest cadence continues without between-chunk reconcile waits.
+
 ### T0 / T1 — `wait_for_member_match` + `redis_warm` false non-defer → exit 124 (2026-07)
 
 **Failure signature (pre-fix):** `ERROR: Pool imap stalled` with `stall_defer=off defer_reason=redis_warm`, `effective_ingest_timeout_s=-`, small in-flight `batch_max_ingest_timeout_s` ≈ floor, then `hard exit code=124`. py-spy on ingest-pool workers shows idle `wait_for_member_match` → `daily_archive_has_member_with_size` / tar-append decision while calendar-day Redis reports `complete=1`.

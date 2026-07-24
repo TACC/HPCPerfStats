@@ -1271,6 +1271,19 @@ class ArchiveJanitor:
   def _run_scheduled_archive_lock_cleanup(self, *, reason: str = "") -> int:
     if reason == "startup":
       return self._run_tick_lock_cleanup()
+    pending_n = 0
+    try:
+      pending_n = int(self.get_pending_stats_count() or 0)
+    except Exception:
+      pending_n = 0
+    queue_max = 3000
+    try:
+      queue_max = int(cfg.get_sync_ingest_queue_max_size())
+    except Exception:
+      pass
+    # Under backlog, keep orphan cleanup debt-day-targeted (not full-tree walk).
+    if pending_n >= max(1, queue_max // 2):
+      return self._run_tick_lock_cleanup()
     # Non-startup heavy: orphan (expiry=0) so recent read-lock leave-behinds
     # do not wait for the ~4h stale mtime gate.
     removed = cleanup_orphan_fnctl_lock_sidecars(self.archive_data_dir)
@@ -1652,6 +1665,10 @@ class ArchiveJanitor:
       # Do not re-pop the same calendar day within one tick after a partial/failed
       # attempt (avoids busy-spinning the pool until budget expires).
       attempted_tars: Set[str] = set()
+      deferred_preflight_n = 0
+      deferred_reason_counts: Dict[str, int] = {}
+      leave_in_flight_n = 0
+      budget_exit_reason = ""
 
       # Debt-drain budget starts at fill (after maintenance + prefill), not
       # wall-clock for the whole tick.
@@ -1671,14 +1688,26 @@ class ArchiveJanitor:
       def _budget_ok() -> bool:
         return time.time() < budget_deadline
 
+      def _note_deferred_reason(reason: str) -> None:
+        nonlocal deferred_preflight_n
+        key = reason or "unknown"
+        deferred_preflight_n += 1
+        deferred_reason_counts[key] = int(deferred_reason_counts.get(key, 0)) + 1
+
+      def _write_lock_backoff_skip() -> Set[str]:
+        return self._defer_tracker.write_lock_backoff_skip_tars(
+            self._debt_heap_tar_paths(),
+        )
+
       def _fill_free_slots() -> int:
         nonlocal debt_popped, days_started, tick_mutated, disqualified
         nonlocal tick_made_progress, budget_throttled_this_tick
         started = 0
         while _budget_ok() and self._day_close_free_slots() > 0:
           disqualified = set(self.get_disqualified_daily_tars())
+          skip_tars = set(attempted_tars) | _write_lock_backoff_skip()
           debt = self._pop_one_day_close_debt(
-              disqualified, skip_tars=attempted_tars,
+              disqualified, skip_tars=skip_tars,
           )
           if debt is None:
             free_slots = self._day_close_free_slots()
@@ -1687,8 +1716,9 @@ class ArchiveJanitor:
                   reason="tick_slot_free",
                   slot_budget=free_slots,
               )
+              skip_tars = set(attempted_tars) | _write_lock_backoff_skip()
               debt = self._pop_one_day_close_debt(
-                  disqualified, skip_tars=attempted_tars,
+                  disqualified, skip_tars=skip_tars,
               )
             if debt is None:
               break
@@ -1698,6 +1728,19 @@ class ArchiveJanitor:
             self._enqueue_debt(debt.kind, debt.tar_path, persist=False)
             tick_mutated = True
             continue
+          if debt.kind == DebtKind.DAY_CLOSE:
+            # Coordinator preflight: do not start a worker that will only
+            # defer on write_lock / hot path (avoids zero-complete thrash).
+            defer, reason = self._check_day_close_defer(
+                debt.tar_path,
+                phase="preflight",
+                disqualified=disqualified,
+            )
+            if defer:
+              self._enqueue_debt(debt.kind, debt.tar_path, persist=False)
+              tick_mutated = True
+              _note_deferred_reason(reason)
+              continue
           if debt.kind != DebtKind.DAY_CLOSE:
             # Rare legacy debt: run on coordinator thread.
             try:
@@ -1761,15 +1804,27 @@ class ArchiveJanitor:
           if not heap_tars or len(blocked) < len(heap_tars):
             self.signal_work_available()
         self._ticks_completed += 1
+        deferred_reason_top = "-"
+        if deferred_reason_counts:
+          deferred_reason_top = max(
+              deferred_reason_counts.items(),
+              key=lambda item: item[1],
+          )[0]
         self.log_fn(
             "Archive janitor tick done days=%d debt_remaining=%d duration_s=%.3f "
-            "maintenance_pass_s=%.3f debt_popped=0 days_started=0 days_completed=%d"
+            "maintenance_pass_s=%.3f debt_popped=0 days_started=0 days_completed=%d "
+            "deferred_preflight_n=%d deferred_reason_top=%s "
+            "leave_in_flight=%d budget_exit=%s"
             % (
                 days_processed,
                 self.debt_depth(),
                 time.time() - tick_t0,
                 maintenance_pass_s,
                 days_processed,
+                deferred_preflight_n,
+                deferred_reason_top,
+                leave_in_flight_n,
+                budget_exit_reason or "-",
             ),
             flush=True,
         )
@@ -1788,6 +1843,7 @@ class ArchiveJanitor:
             if not _budget_ok():
               self._budget_throttled_count += 1
               budget_throttled_this_tick = True
+              budget_exit_reason = "leave_in_flight"
               self.log_fn(
                   "janitor: tick budget_exit debt_remaining=%d "
                   "scheduling_followup=yes"
@@ -1829,6 +1885,7 @@ class ArchiveJanitor:
           else:
             self._budget_throttled_count += 1
             budget_throttled_this_tick = True
+            budget_exit_reason = "leave_in_flight"
             self.log_fn(
                 "janitor: tick budget_exit debt_remaining=%d "
                 "scheduling_followup=yes"
@@ -1841,20 +1898,26 @@ class ArchiveJanitor:
         # ``_day_close_in_flight`` for cross-tick reap/fill. Do not drain-wait
         # (operator: duration_s=9217 class failure after budget_exit).
         if in_flight and budget_throttled_this_tick:
+          leave_in_flight_n = len(in_flight)
+          if not budget_exit_reason:
+            budget_exit_reason = "leave_in_flight"
           self.log_fn(
               "janitor: tick budget_exit leave_in_flight=%d "
               "(nonblocking; follow-up will reap/fill)"
-              % len(in_flight),
+              % leave_in_flight_n,
               flush=True,
           )
           in_flight.clear()
         elif in_flight:
           # Idle heap with workers still running: also non-blocking — done
           # callbacks + follow-up tick reap completions.
+          leave_in_flight_n = len(in_flight)
+          if not budget_exit_reason:
+            budget_exit_reason = "leave_in_flight"
           self.log_fn(
               "janitor: tick leave_in_flight=%d "
               "(nonblocking; follow-up will reap/fill)"
-              % len(in_flight),
+              % leave_in_flight_n,
               flush=True,
           )
           in_flight.clear()
@@ -1863,10 +1926,17 @@ class ArchiveJanitor:
           self._persist_hints()
 
         self._ticks_completed += 1
+        deferred_reason_top = "-"
+        if deferred_reason_counts:
+          deferred_reason_top = max(
+              deferred_reason_counts.items(),
+              key=lambda item: item[1],
+          )[0]
         self.log_fn(
             "Archive janitor tick done days=%d debt_remaining=%d duration_s=%.3f "
             "maintenance_pass_s=%.3f debt_popped=%d days_started=%d "
-            "days_completed=%d"
+            "days_completed=%d deferred_preflight_n=%d deferred_reason_top=%s "
+            "leave_in_flight=%d budget_exit=%s"
             % (
                 days_processed,
                 self.debt_depth(),
@@ -1875,6 +1945,10 @@ class ArchiveJanitor:
                 debt_popped,
                 days_started,
                 days_processed,
+                deferred_preflight_n,
+                deferred_reason_top,
+                leave_in_flight_n,
+                budget_exit_reason or "-",
             ),
             flush=True,
         )
@@ -2062,7 +2136,7 @@ class ArchiveJanitor:
         chunk_day_tokens=self._chunk_day_tokens(),
     )
     if defer:
-      self._defer_tracker.record_defer(tar_path)
+      self._defer_tracker.record_defer(tar_path, reason=reason)
       log_janitor_day_close_defer(
           tar_path,
           phase=phase,
@@ -2114,6 +2188,17 @@ class ArchiveJanitor:
     if not self.day_close_enabled:
       return False
     tar_norm = os.path.normpath(tar_path)
+    # Cheap write-lock / hot-path preflight before pre_seal / dup scan so
+    # live flock holders cannot burn hundreds of seconds per tick.
+    defer, _reason = self._check_day_close_defer(
+        tar_norm,
+        phase="preflight",
+        disqualified=disqualified,
+    )
+    if defer:
+      self._enqueue_day_close(tar_norm, persist=False)
+      self._persist_hints()
+      return False
     coord = self.day_raw_removal_coordinator
     if not self._day_phase_at_least(tar_norm, "sealed"):
       if coord is not None and not coord.pre_seal_verification_complete(tar_norm):
