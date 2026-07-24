@@ -3,7 +3,7 @@
 | Field | Value |
 |--------|--------|
 | **Status** | As-built reference (describes the current repository layout and contracts) |
-| **Last updated** | 2026-04-03 |
+| **Last updated** | 2026-07-24 |
 | **Scope** | Monitor daemon (C), Python ingest/analysis/site stack, Docker Compose deployment |
 
 This document follows a structure common to technical design docs (problem/context → goals → architecture → data → contracts → operations → risks/alternatives → open questions), aligned with practices described in industry write-ups on design documentation (for example [Google-style design doc flow](https://www.lodely.com/blog/design-docs-at-google) and similar architecture templates).
@@ -17,7 +17,7 @@ HPC centers need **multi-resolution visibility** into how jobs use nodes: CPU, m
 **HPCPerfStats** (formerly known as TACC Stats) addresses this by combining:
 
 1. A **lightweight node daemon** that samples hardware and ships UTF-8 text payloads to a message broker.
-2. An **off-cluster** Python stack that archives raw messages, loads structured rows into **PostgreSQL/TimescaleDB**, computes **aggregates and plots**, and serves a **Django + React** web application.
+2. An **off-cluster** Python stack that archives raw messages, loads structured rows into **PostgreSQL/TimescaleDB**, computes **aggregates and plots**, and serves a **Django + React (Next.js)** web application.
 
 ---
 
@@ -49,6 +49,8 @@ Operational signals used in this repo (not a complete SLO spec):
 
 ## 3. High-level architecture
 
+### 3.1 Data flow
+
 ```mermaid
 flowchart LR
   subgraph cluster["HPC cluster nodes"]
@@ -62,29 +64,59 @@ flowchart LR
   SA[sync_acct.py and/or API sacct ingest]
   UM[update_metrics.py]
   WEB[Django + Gunicorn]
-  FE[React SPA]
-  REDIS[(Redis cache)]
+  FE[React / Next.js SPA]
+  REDIS[(Redis container)]
   PXY[Nginx proxy]
 
   M -->|UTF-8 payloads| RMQ
   RMQ --> L
   L --> ARC
+  L -.->|recent-host keys| REDIS
   ARC --> ST
   ST --> DB
+  ST -.->|archive-members cache| REDIS
   SA --> DB
   DB --> UM
   UM --> DB
+  UM -.->|invalidate plot/job keys| REDIS
   WEB --> DB
   WEB --> REDIS
   FE --> WEB
   PXY --> WEB
-  L -.->|recent host keys| REDIS
+  PXY --> FE
+```
+
+### 3.2 Compose containers (central stack)
+
+All central services run on the Compose network **`hpcperfstats_net`**. Application images are defined in **`docker-compose.app.yaml`**; shared data-plane containers (**`db`**, **`redis`**, **`rabbitmq`**, **`proxy`**) live in **`docker-compose.yaml`**, which also `include`s the app file and optional CPU-pinning fragments.
+
+```mermaid
+flowchart TB
+  subgraph compose["Docker Compose project hpcperfstats"]
+    direction TB
+    PXY[proxy — Nginx TLS / static]
+    WEB[web — Django / Gunicorn]
+    PIPE[pipeline — supervisord ingest]
+    DB[(db — TimescaleDB / PostgreSQL 15)]
+    REDIS[redis — Redis 8.8 Alpine]
+    RMQ[rabbitmq — broker]
+  end
+
+  PXY -->|reverse proxy| WEB
+  WEB -->|SQL| DB
+  WEB -->|Django cache + plot L1| REDIS
+  PIPE -->|SQL| DB
+  PIPE -->|listend / sync_timedb keys| REDIS
+  PIPE -->|consume| RMQ
+  WEB -.->|depends_on healthy| DB
+  WEB -.->|depends_on healthy| REDIS
+  PIPE -.->|depends_on| WEB
 ```
 
 **Deployment split:**
 
 - **On nodes:** C monitor (`HPCPerfStats/monitor/`), typically via RPM/systemd (`hpcperfstats` service).
-- **Central stack:** Docker Compose (`docker-compose.yaml` includes `docker-compose.app.yaml` plus optional `docker-compose.cpu-pinning.infra.yaml` and `docker-compose.cpu-pinning.app.yaml`): `web`, `pipeline`, `db`, `redis`, `rabbitmq`, `proxy`.
+- **Central stack:** Docker Compose (`docker-compose.yaml` includes `docker-compose.app.yaml` plus optional `docker-compose.cpu-pinning.infra.yaml` and `docker-compose.cpu-pinning.app.yaml`): **`web`**, **`pipeline`**, **`db`**, **`redis`**, **`rabbitmq`**, **`proxy`**.
 
 ---
 
@@ -112,19 +144,19 @@ Primary maintainer contact appears in `pyproject.toml` authors (Texas Advanced C
 
 | Service | Role |
 |---------|------|
-| **web** | Builds from repo `Dockerfile`; runs Django via `services-conf/django_startup.sh`; exposes app port (default host `8000` via `HPCPERFSTATS_WEB_PORT`). Depends on healthy `db` and `redis`. |
-| **pipeline** | Same image as `web`; runs `supervisor_startup.sh` to supervise long-running ingest/processing programs (see §6.2). Uses the **`hpcperfstatsdata`** bind for archive, accounting, daily archive, and **cluster syslog** under **`/hpcperfstats/logs/`** (`docker-compose.app.yaml`). |
-| **db** | TimescaleDB/PostgreSQL 15 image; primary system of record for ingested and derived data. |
-| **redis** | Redis Open Source **8.8** (`redis:8.8.0-alpine3.23` in Compose); Django cache backend and auxiliary keys (e.g. listend recent-host tracking). Ephemeral cache only (`appendonly no`). |
-| **rabbitmq** | Broker for monitor→site message delivery. |
-| **proxy** | Nginx TLS/front door; **`docker-compose.yaml`** mounts **`services-conf/nginx.conf`** as **`default.conf`**; image build **`cp`**s **`nginx.conf`** or **`nginx.conf.example`** plus generated **`hps-proxy-allowed-hosts.inc`** from INI (see workspace guardrails). |
+| **web** | Builds from repo `Dockerfile` (`hpcperfstats-full`); runs Django via `services-conf/django_startup.sh`; exposes app port (default host `8000` via `HPCPERFSTATS_WEB_PORT`). **Depends on healthy `db` and healthy `redis`.** |
+| **pipeline** | Same image as `web`; runs `supervisor_startup.sh` to supervise long-running ingest/processing programs (see §6). Uses the **`hpcperfstatsdata`** bind for archive, accounting, daily archive, and **cluster syslog** under **`/hpcperfstats/logs/`** (`docker-compose.app.yaml`). Reaches **`db`**, **`redis`**, and **`rabbitmq`** on `hpcperfstats_net`. |
+| **db** | TimescaleDB on PostgreSQL 15 (`timescale/timescaledb:2.28.2-pg15`); primary system of record. Compose sets large **`shm_size`** and Postgres tuning (`shared_buffers`, timeouts, WAL) for concurrent Django + pipeline load. |
+| **redis** | **Dedicated Compose container** (`redis:8.8.0-alpine3.23` in `docker-compose.yaml`). Network alias **`redis`**. Ephemeral cache only (`appendonly no`); **`maxmemory` 16gb** with **`allkeys-lru`**; multi **`io-threads`**. Healthcheck: `redis-cli ping`. Django’s default cache backend and pipeline auxiliary keys (see §7.5). Not durable storage—do not treat Redis as a source of truth. |
+| **rabbitmq** | Broker for monitor→site message delivery (`rabbitmq:4.3.2-alpine`). |
+| **proxy** | Nginx TLS/front door; **`docker-compose.yaml`** mounts **`services-conf/nginx.conf`** as **`default.conf`**; image build **`cp`**s **`nginx.conf`** or **`nginx.conf.example`** plus generated **`hps-proxy-allowed-hosts.inc`** from INI (see workspace guardrails). Serves staticfiles/media and proxies API/HTML to **`web`**. |
 
 ### 5.3 Python package layout (concise)
 
-- **`hpcperfstats/listend.py`** — RabbitMQ consumer; archive writer (§7.2).
-- **`hpcperfstats/dbload/`** — Time-series and accounting loaders (`sync_timedb.py`, `sync_acct.py`, helpers).
-- **`hpcperfstats/analysis/`** — Metrics computation, plotting, roofline and vendor-specific logic.
-- **`hpcperfstats/site/`** — Django project, DRF APIs, React frontend under `site/frontend/`.
+- **`hpcperfstats/listend.py`** — RabbitMQ consumer; archive writer (§7.2); optional Redis recent-host tracking.
+- **`hpcperfstats/dbload/`** — Time-series and accounting loaders (`sync_timedb.py`, `sync_acct.py`, helpers); archive-members Redis coordination under `dbload/lib/`.
+- **`hpcperfstats/analysis/`** — Metrics computation, plotting, roofline and vendor-specific logic; **`update_metrics.py`** persists plot/detail artifacts after recompute.
+- **`hpcperfstats/site/`** — Django project, DRF APIs, OpenAPI schema, React/Next frontend under `site/frontend/`.
 
 ### 5.4 External API client
 
@@ -137,8 +169,8 @@ Primary maintainer contact appears in `pyproject.toml` authors (Texas Advanced C
 The example supervisor configuration (`services-conf/supervisord.conf.example`) defines long-running programs including:
 
 - **`listend.py`** — RabbitMQ listener (archive append/rotation).
-- **`sync_timedb.py backlog`** — Imports node-level data from the archive into the database; runs until stopped, rescans for new files after each wave, and sleeps when the queue is empty. Startup still runs the archive snapshot + boot handoff for ingest catch-up. Under dual-mode with ``current``, CLI **`all` is ingest-only for day-close** (no day-close discover / seal / delete). Date-window runs and CLI ``current`` own day-close.
-- **`update_metrics.py`** — Builds/updates job-indexed and secondary metrics from DB state.
+- **`sync_timedb.py backlog`** — Imports node-level data from the archive into the database; runs until stopped, rescans for new files after each wave, and sleeps when the queue is empty. Startup still runs the archive snapshot + boot handoff for ingest catch-up. Under dual-mode with ``current``, CLI **`all` is ingest-only for day-close** (no day-close discover / seal / delete). Date-window runs and CLI ``current`` own day-close. When enabled, **archive-members Redis** prewarm/coordination reduces repeated tar member scans (see `sync_timedb_archive_members_redis`).
+- **`update_metrics.py`** — Builds/updates job-indexed and secondary metrics from DB state; persists **`job_plot_artifact`** / **`job_detail_artifact`** and invalidates related Redis keys.
 
 It also includes **syslog-ng** (with **`render_syslog_ng_generated`** from **`[SYSLOG]`** in `hpcperfstats.ini`), **`seal_syslog_daily`** to pack prior-day per-host logs into **`logs/log_archive/YYYY-MM-DD-syslog.tar.gz`**, and related operational logging.
 
@@ -175,6 +207,7 @@ It also includes **syslog-ng** (with **`render_syslog_ng_generated`** from **`[S
 
 - Time-series and job tables are read by **`update_metrics.py`** to populate derived metrics used by the site and plots.
 - **Deterministic, DB-backed aggregation** is preferred over ad-hoc recompute (runtime/metrics safety rule).
+- Durable plot/detail embeds live in PostgreSQL as **`job_plot_artifact`** and **`job_detail_artifact`** (gzip JSON); Redis holds only short-TTL / L1 copies where configured.
 
 ### 7.4 Monitor ↔ analysis contract (`host_data.type`)
 
@@ -182,25 +215,42 @@ The monitor publishes **`host_data.type`** strings (from C `stats_type.st_name` 
 
 Canonical Python references (see `HPCPerfStats/hpcperfstats/cursor-rules/monitor-analysis-architecture-sync.mdc` and `hpcperfstats/analysis/README_ARCH_AGNOSTIC.md`):
 
-- `hpcperfstats/analysis/metrics/lib/gen/utils.py` — `INTEL_IMC_STATS_TYPES`, `ARM_IMC_STATS_TYPES`, `INTEL_CORE_PMC_TYPES_ORDERED`, `PMC_TYPENAME_PRIORITY`, etc.
+- `hpcperfstats/dbload/lib/monitor_naming/canonical.py` — `INTEL_IMC_STATS_TYPES` and related type name sets (legacy aliases in `monitor_naming/legacy.py`).
 - `hpcperfstats/analysis/metrics/lib/plot/roofline_peaks.py` — peak tables and inference.
 - `hpcperfstats/analysis/metrics/lib/plot/roofline.py` — merge logic.
+
+### 7.5 Redis roles (same container, multiple key namespaces)
+
+The **`redis` Compose service** is the single shared Redis instance. Django configures it via `cfg.get_redis_location()` (`django.core.cache.backends.redis.RedisCache`, key prefix `hpcperfstats`). Host pytest normally uses LocMem unless `HPCPERFSTATS_PYTEST_LIVE_REDIS=1` (compose Redis workflows).
+
+| Role | Typical consumers | Notes |
+|------|-------------------|--------|
+| **Django / ORM view cache** | `web` (`cache_utils.py`) | Versioned keys such as **`KEY_JOB`** (pickled `job_data`), site filter facets, GPU/XALT/proc helpers. Stale pickled prefetch must be refreshed on read when metrics rows change. |
+| **Job plot L1** | `web` (`job_plots` / `job_plot_artifacts`) | Short-lived Bokeh `json_item` embeds; oversized payloads may skip Redis. L2 durable store is **`job_plot_artifact`** in Postgres. |
+| **Invalidation** | `update_metrics`, ingest/sync paths | Deletes plot keysets and related job keys so recomputes are visible after refresh. |
+| **Archive-members coordination** | `pipeline` / `sync_timedb` | Optional Redis-backed member lists for sealed archive tars (`sync_timedb_archive_members_redis`). |
+| **listend auxiliaries** | `pipeline` / `listend.py` | Recent-host tracking and similar operational keys—not a substitute for the on-disk archive. |
+
+Operator tuning for this container (memory cap, LRU, threads) is in **`docker-compose.yaml`** under **`redis:`**; see also `docs/DEPLOY_CONCURRENCY_AND_NUMA.md` when aligning host/VM sizing.
 
 ---
 
 ## 8. Web application and APIs
 
-- **Django** serves the backend, **DRF** exposes JSON APIs consumed by the React SPA and by **hpcperfstats-tools**.
-- **React** SPA routes under **`/machine/`** (see web E2E test maintenance rules).
+- **Django** serves the backend; **DRF** exposes JSON APIs consumed by the React SPA and by **hpcperfstats-tools**.
+- **OpenAPI** schema under `site/openapi/` drives **orval**-generated TypeScript clients in the SPA (`frontend-stack-wiring-contract` / `openapi-orval-sync` rules).
+- **React / Next.js** SPA routes under **`/machine/`** (static export / Nginx delivery; see web E2E and frontend prod-build rules).
+- **Job Detail** surfaces include scheduler fields, Metrics, Summary and TypeDetail Bokeh embeds, Processes, and GPU / Multiprecision panels served from **`job_detail_artifact`** when present (researcher guide: `docs/using-the-website-as-a-researcher.md`).
 - **Display policy:** User-visible numbers and plot ticks must **not** use scientific notation (dedicated workspace rule: use shared formatters in Python/Bokeh and `formatDecimalStandard` / standard notation in JS).
 
 ---
 
 ## 9. Security, configuration, and operations
 
-- **Configuration** is driven by `hpcperfstats.ini` (container path commonly `/home/hpcperfstats/hpcperfstats.ini`) and files under `services-conf/`. `*.example` files document intended shapes; copy/rename per `README.md`.
+- **Configuration** is driven by `hpcperfstats.ini` (container path commonly `/home/hpcperfstats/hpcperfstats.ini`) and files under `services-conf/`. `*.example` files document intended shapes; copy/rename per `README.md`. **Immutable-image policy:** bake INI into the image; do not bind-mount a mutable INI over production containers unless an explicit local-dev exception applies.
 - **Secrets** (TLS certs, API keys) are environment- and deployment-specific; nginx and Django settings consume paths defined in compose and `services-conf/`.
 - **CSP** changes should be minimal and scoped when touching frontend pages (React workspace rule).
+- **Redis** holds no durable user data; flushing Redis is safe for correctness after a cold start (expect temporary cache misses and higher DB/plot rebuild cost). Archive files and Postgres remain authoritative.
 
 ---
 
@@ -208,7 +258,7 @@ Canonical Python references (see `HPCPerfStats/hpcperfstats/cursor-rules/monitor
 
 - **Python:** pytest with Django settings (`pyproject.toml`); many tests under `hpcperfstats/tests/` and `hpcperfstats/site/.../tests/`.
 - **Web E2E:** `test_web_pages_e2e.py` and Playwright `test_web_pages_browser_e2e.py` must be updated when web routes or SPA behavior changes.
-- **Compose workflows:** For DB/Redis-dependent tests, use the Docker Compose network so hostnames like `db` resolve (see `full-test-with-db-redis` and `local-compose-db-lifecycle-for-web-tests` rules).
+- **Compose workflows:** For DB/Redis-dependent tests, use the Docker Compose network so hostnames like `db` and **`redis`** resolve (see `full-test-with-db-redis` and `local-compose-db-lifecycle-for-web-tests` rules; Redis cache workflow: `tests/run_redis_cache_pytest_workflow.sh`).
 - **Testing entrypoints:** `HPCPerfStats/docs/TESTING.md` must stay in sync when test commands or runners change.
 
 ---
@@ -222,13 +272,15 @@ This section records **typical** tradeoffs implicit in the design—not a formal
 | Pull-based polling from nodes | Push via RabbitMQ decouples node connectivity from DB availability and buffers bursts. |
 | Single monolithic “do everything” container | Split **web** vs **pipeline** isolates request serving from long-running ingest loops. |
 | Only API-based accounting | File-based **`sync_acct.py`** remains supported for sites that batch-export `sacct` output to disk. |
+| Persist all plot payloads only in Redis | Durable **`job_plot_artifact` / `job_detail_artifact`** in Postgres survive Redis eviction; Redis is L1 / coordination only. |
+| Co-locate Redis inside the web image | A **dedicated `redis` Compose service** keeps cache lifecycle, healthchecks, and memory policy independent of Gunicorn restarts. |
 
 ---
 
 ## 12. Open questions and follow-ups
 
 - **Exact production scheduling** for `sync_acct.py` vs API-only ingest varies by site; document operator runbooks per deployment.
-- **Capacity planning** (RabbitMQ queue depth, archive storage growth, DB retention) is deployment-specific and not fully specified in-repo.
+- **Capacity planning** (RabbitMQ queue depth, archive storage growth, DB retention, Redis `maxmemory`) is deployment-specific and not fully specified in-repo.
 - **Per-site hostname allowlists and INI paths** (`HPCPERFSTATS_INI`) must match compose mounts—verify on each environment.
 
 ---
@@ -242,8 +294,10 @@ This section records **typical** tradeoffs implicit in the design—not a formal
 | Regenerate / augment `MONITOR_VARIABLES.md` | `docs/regenerate_monitor_variables_catalog.py`, `docs/augment_monitor_variables_diagnostics.py` |
 | Researcher-facing web UI guide | `docs/using-the-website-as-a-researcher.md` |
 | Architecture-agnostic analysis | `hpcperfstats/analysis/README_ARCH_AGNOSTIC.md` |
-| Compose topology | `docker-compose.yaml` (includes `docker-compose.app.yaml`, `docker-compose.cpu-pinning.*.yaml`) |
+| Compose topology (app + **redis** / db / rabbitmq / proxy) | `docker-compose.yaml`, `docker-compose.app.yaml` |
 | Supervisor programs (example) | `services-conf/supervisord.conf.example` |
+| Job plot / detail caching | `hpcperfstats/cursor-rules/job-plot-artifacts-caching.mdc`, `site/lib/machine/job_plot_artifacts.py` |
 | Workspace guardrails (monitor/tools/nginx/redis) | `HPCPerfStats/hpcperfstats/cursor-rules/workspace-guardrails.mdc` |
 | Monitor message contract | `HPCPerfStats/monitor/cursor-rules/monitor-workspace-contract.mdc` |
 | Monitor ↔ analysis type sync | `HPCPerfStats/hpcperfstats/cursor-rules/monitor-analysis-architecture-sync.mdc` |
+| Deploy concurrency / NUMA | `docs/DEPLOY_CONCURRENCY_AND_NUMA.md` |
