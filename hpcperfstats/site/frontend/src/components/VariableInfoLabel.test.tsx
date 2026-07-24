@@ -128,11 +128,14 @@ describe("VariableInfoLabel", () => {
     fireEvent.click(screen.getByRole("button", { name: /help: utilization/i }));
     const panel = await screen.findByTestId("variable-info-tooltip");
     expect(panel).toHaveAttribute("data-open");
+    expect(screen.getByTestId("variable-info-close")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("variable-info-close"));
     expect(screen.getByRole("button", { name: /help: utilization/i })).toHaveAttribute(
       "aria-expanded",
       "false",
     );
+    expect(screen.queryByTestId("variable-info-close")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("variable-info-tooltip")).not.toBeInTheDocument();
   });
 
   it("closes pinned help panel on Escape", async () => {
@@ -147,5 +150,6 @@ describe("VariableInfoLabel", () => {
       "aria-expanded",
       "false",
     );
+    expect(screen.queryByTestId("variable-info-tooltip")).not.toBeInTheDocument();
   });
 });

@@ -30,19 +30,25 @@ export function VariableInfoLabel({
   const text = labelText != null ? labelText : variableName;
   const tooltipBody = enableHelp ? getVariableTooltipContent(variableName) : null;
   const panelId = useId();
-  const [pinnedOpen, setPinnedOpen] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [pinned, setPinned] = useState(false);
+
+  function closeHelp() {
+    setPinned(false);
+    setOpen(false);
+  }
 
   useEffect(() => {
-    if (!pinnedOpen) return;
+    if (!pinned) return;
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
         e.preventDefault();
-        setPinnedOpen(false);
+        closeHelp();
       }
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [pinnedOpen]);
+  }, [pinned]);
 
   if (!tooltipBody) {
     return (
@@ -60,28 +66,37 @@ export function VariableInfoLabel({
       <span className="min-w-0">{text}</span>
       {suffixBeforeHelp}
       <Popover
-        open={pinnedOpen ? true : undefined}
+        open={open}
         onOpenChange={(next, details) => {
-          if (!next && pinnedOpen) {
+          // While pinned, ignore outside dismiss / hover-close; X and Escape call closeHelp().
+          if (!next && pinned) {
             details.cancel();
             return;
           }
-          if (!next) setPinnedOpen(false);
+          setOpen(next);
+          if (!next) setPinned(false);
         }}
         modal={false}
       >
         <span className="inline-flex shrink-0 items-baseline">
           <PopoverTrigger
             nativeButton
-            openOnHover={!pinnedOpen}
+            openOnHover={!pinned}
             delay={HELP_HOVER_OPEN_DELAY_MS}
             closeDelay={HELP_HOVER_CLOSE_DELAY_MS}
             className="relative inline-flex h-[1em] w-[0.85em] cursor-pointer items-start justify-center border-0 bg-transparent p-0 align-super text-[0.65em] font-semibold leading-none text-link select-none before:absolute before:-inset-2 before:content-['']"
             data-testid="variable-info-help"
-            aria-expanded={pinnedOpen}
-            aria-controls={pinnedOpen ? panelId : undefined}
+            aria-expanded={open}
+            aria-controls={open ? panelId : undefined}
             aria-label={`Help: ${variableName}`}
-            onClick={() => setPinnedOpen((prev) => !prev)}
+            onClick={() => {
+              if (pinned) {
+                closeHelp();
+                return;
+              }
+              setPinned(true);
+              setOpen(true);
+            }}
           >
             ?
           </PopoverTrigger>
@@ -94,10 +109,10 @@ export function VariableInfoLabel({
           sideOffset={2}
           className={cn(
             "variable-info-tooltip variable-info-tooltip-portal relative w-auto max-w-[min(560px,calc(100vw-16px))] min-w-[min(420px,calc(100vw-16px))] p-2 text-sm font-normal",
-            pinnedOpen && "pt-7",
+            pinned && "pt-7",
           )}
         >
-          {pinnedOpen ? (
+          {pinned ? (
             <button
               type="button"
               data-testid="variable-info-close"
@@ -106,7 +121,7 @@ export function VariableInfoLabel({
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                setPinnedOpen(false);
+                closeHelp();
               }}
             >
               <X className="h-3.5 w-3.5" aria-hidden />
