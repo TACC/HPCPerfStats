@@ -3369,6 +3369,171 @@ def test_compute_and_prewarm_jid_logs_when_full_pipeline_succeeds(monkeypatch):
 
 
 @pytest.mark.machine_unit_mock
+def test_parse_jid_cli_arg_forms():
+  assert update_metrics._parse_jid_cli_arg(["update_metrics.py"]) == (None, None)
+  assert update_metrics._parse_jid_cli_arg(
+      ["update_metrics.py", "--jid", "857260"]
+  ) == ("857260", None)
+  assert update_metrics._parse_jid_cli_arg(
+      ["update_metrics.py", "--jid=857260"]
+  ) == ("857260", None)
+  jid, err = update_metrics._parse_jid_cli_arg(["update_metrics.py", "--jid"])
+  assert jid is None and err and "usage" in err
+  jid, err = update_metrics._parse_jid_cli_arg(
+      ["update_metrics.py", "--jid", "857260", "2025-04-01"]
+  )
+  assert jid is None and err and "cannot be combined" in err
+
+
+@pytest.mark.machine_unit_mock
+def test_main_jid_recalculates_once_without_scheduler_or_sleep(monkeypatch):
+  """--jid uses _compute_and_prewarm_jid only; no date scheduler or sleep."""
+  calls = []
+
+  class _FakeQs:
+    def exists(self):
+      return True
+
+  class _FakeMgr:
+    def filter(self, **kwargs):
+      del kwargs
+      return _FakeQs()
+
+  class _FakeJobData:
+    objects = _FakeMgr()
+
+  monkeypatch.setattr(update_metrics, "job_data", _FakeJobData)
+  monkeypatch.setattr(
+      update_metrics,
+      "_compute_and_prewarm_jid",
+      lambda metrics_manager, prewarm_pipeline, job_ref, shared_pool, metrics_run_lock=None: (
+          calls.append(("compute", job_ref.jid, bool(job_ref.artifact_only))),
+          {
+              "ok": True,
+              "jid": job_ref.jid,
+              "metrics_s": 1.5,
+              "prewarm_s": 0.5,
+          },
+      )[-1],
+  )
+  monkeypatch.setattr(
+      update_metrics.metrics,
+      "Metrics",
+      lambda: SimpleNamespace(close_pool=lambda: calls.append("close_pool")),
+  )
+
+  class _FakePrewarm:
+    def finish(self):
+      calls.append("finish")
+
+  monkeypatch.setattr(update_metrics, "_PrewarmPipeline", _FakePrewarm)
+  scheduled = []
+  monkeypatch.setattr(
+      update_metrics,
+      "update_metrics_for_dates",
+      lambda dates: scheduled.append(dates),
+  )
+  monkeypatch.setattr(
+      update_metrics,
+      "parse_start_end_dates",
+      lambda *a, **k: (_ for _ in ()).throw(AssertionError("dates path")),
+  )
+  sleeps = []
+  monkeypatch.setattr(update_metrics, "sleep_until_shutdown", lambda secs: sleeps.append(secs))
+  monkeypatch.setattr(update_metrics, "log_print", lambda *a, **k: None)
+  update_metrics.shutdown_requested[0] = False
+
+  rc = update_metrics.main(
+      argv=["update_metrics.py", "--jid", "857260"],
+      sleep_after=True,
+  )
+  assert rc == 0
+  assert sleeps == []
+  assert scheduled == []
+  assert ("compute", "857260", False) in calls
+  assert "finish" in calls
+  assert "close_pool" in calls
+
+
+@pytest.mark.machine_unit_mock
+def test_main_jid_missing_job_exits_one(monkeypatch):
+  class _FakeQs:
+    def exists(self):
+      return False
+
+  class _FakeMgr:
+    def filter(self, **kwargs):
+      del kwargs
+      return _FakeQs()
+
+  class _FakeJobData:
+    objects = _FakeMgr()
+
+  monkeypatch.setattr(update_metrics, "job_data", _FakeJobData)
+  compute_calls = []
+  monkeypatch.setattr(
+      update_metrics,
+      "_compute_and_prewarm_jid",
+      lambda *a, **k: compute_calls.append(1) or {"ok": True},
+  )
+  monkeypatch.setattr(update_metrics, "log_print", lambda *a, **k: None)
+  rc = update_metrics.main(argv=["update_metrics.py", "--jid=missing"])
+  assert rc == 1
+  assert compute_calls == []
+
+
+@pytest.mark.machine_unit_mock
+def test_main_jid_compute_failure_exits_one(monkeypatch):
+  class _FakeQs:
+    def exists(self):
+      return True
+
+  class _FakeMgr:
+    def filter(self, **kwargs):
+      del kwargs
+      return _FakeQs()
+
+  class _FakeJobData:
+    objects = _FakeMgr()
+
+  monkeypatch.setattr(update_metrics, "job_data", _FakeJobData)
+  monkeypatch.setattr(
+      update_metrics,
+      "_compute_and_prewarm_jid",
+      lambda *a, **k: {"ok": False, "jid": "x", "metrics_s": 0.1, "prewarm_s": 0.0},
+  )
+  monkeypatch.setattr(
+      update_metrics.metrics,
+      "Metrics",
+      lambda: SimpleNamespace(close_pool=lambda: None),
+  )
+  monkeypatch.setattr(
+      update_metrics,
+      "_PrewarmPipeline",
+      lambda: SimpleNamespace(finish=lambda: None),
+  )
+  monkeypatch.setattr(update_metrics, "log_print", lambda *a, **k: None)
+  rc = update_metrics.main(argv=["update_metrics.py", "--jid", "x"])
+  assert rc == 1
+
+
+@pytest.mark.machine_unit_mock
+def test_main_jid_with_dates_exits_one_without_compute(monkeypatch):
+  compute_calls = []
+  monkeypatch.setattr(
+      update_metrics,
+      "_compute_and_prewarm_jid",
+      lambda *a, **k: compute_calls.append(1) or {"ok": True},
+  )
+  monkeypatch.setattr(update_metrics, "log_print", lambda *a, **k: None)
+  rc = update_metrics.main(
+      argv=["update_metrics.py", "--jid", "1", "2025-04-01"],
+  )
+  assert rc == 1
+  assert compute_calls == []
+
+
+@pytest.mark.machine_unit_mock
 def test_main_exits_on_scheduler_stall_without_sleep(monkeypatch):
   """Stall exit should terminate the process path and skip legacy post-run sleep."""
   monkeypatch.setattr(update_metrics, "_default_metrics_date_range", lambda: (

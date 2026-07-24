@@ -8,6 +8,12 @@ job-detail / type-detail artifact fingerprints (PostgreSQL only for the
 latter two). Runs Metrics().run(jobs_list). With no CLI date arguments,
 processes the last seven calendar days through today.
 
+One-shot operator path: ``update_metrics.py --jid <JID>`` (also ``--jid=<JID>``)
+recalculates metrics plus job-detail / multiprecision and plot artifacts for
+that job via ``_compute_and_prewarm_jid``, then exits (no date-range scheduler,
+no post-run sleep). Exit **0** on success, **1** on missing job / compute
+failure / bad argv. Do not combine ``--jid`` with positional date arguments.
+
 Processing order: **newest calendar day first**, and within each day **newest job
 first** (``end_time`` descending, then ``jid`` descending as a stable tiebreaker).
 
@@ -3933,11 +3939,104 @@ def update_metrics_for_dates(dates, rerun=False):
   )
 
 
+def _parse_jid_cli_arg(argv):
+  """Parse ``--jid`` / ``--jid=`` from argv.
+
+  Returns ``(jid, error)``:
+  - ``(None, None)`` — not a ``--jid`` invocation (use date-range path).
+  - ``(jid, None)`` — one-shot recalculate for ``jid``.
+  - ``(None, message)`` — usage / mutual-exclusion error (caller exits 1).
+  """
+  args = list(argv[1:]) if argv else []
+  jid = None
+  rest = []
+  i = 0
+  while i < len(args):
+    a = args[i]
+    if a == "--jid":
+      if i + 1 >= len(args) or str(args[i + 1]).startswith("-"):
+        return None, "usage: update_metrics.py --jid <JID>"
+      jid = str(args[i + 1]).strip()
+      i += 2
+      continue
+    if a.startswith("--jid="):
+      jid = a.split("=", 1)[1].strip()
+      i += 1
+      continue
+    rest.append(a)
+    i += 1
+  if jid is None:
+    return None, None
+  if not jid:
+    return None, "usage: update_metrics.py --jid <JID> (empty jid)"
+  if rest:
+    return None, (
+        "update_metrics.py --jid cannot be combined with date arguments: {0}"
+        .format(" ".join(rest))
+    )
+  return jid, None
+
+
+def _main_one_jid(jid):
+  """Recalculate metrics + detail/plot artifacts for one jid; return exit code."""
+  if not job_data.objects.filter(jid=jid).exists():
+    log_print(
+        "update_metrics --jid: job_data not found jid={0}".format(jid),
+        flush=True,
+    )
+    return 1
+  log_print(
+      "update_metrics --jid: recalculating jid={0}".format(jid),
+      flush=True,
+  )
+  ref = _candidate_ref(jid, artifact_only=False)
+  metrics_manager = metrics.Metrics()
+  prewarm_pipeline = _PrewarmPipeline()
+  outcome = None
+  try:
+    outcome = _compute_and_prewarm_jid(
+        metrics_manager, prewarm_pipeline, ref, None,
+    )
+  except Exception as exc:
+    log_print(
+        "update_metrics --jid: jid={0} failed: {1}".format(jid, exc),
+        flush=True,
+    )
+    return 1
+  finally:
+    try:
+      prewarm_pipeline.finish()
+    except Exception:
+      pass
+    try:
+      metrics_manager.close_pool()
+    except Exception:
+      pass
+  if outcome is None:
+    return 1
+  ok = bool(outcome.get("ok"))
+  log_print(
+      "update_metrics --jid: jid={0} ok={1} metrics_s={2:.1f} prewarm_s={3:.1f}"
+      .format(
+          jid,
+          int(ok),
+          float(outcome.get("metrics_s", 0.0) or 0.0),
+          float(outcome.get("prewarm_s", 0.0) or 0.0),
+      ),
+      flush=True,
+  )
+  return 0 if ok else 1
+
+
 def main(argv=None, sleep_after=None):
   """Entry point for updating metrics_data for a date or date range.
 
   When invoked as a script, argv defaults to sys.argv. Management commands
   can pass a custom argv list (e.g. parsed from options).
+
+  ``--jid <JID>`` / ``--jid=<JID>`` recalculates one job (metrics + detail +
+  plots) and returns exit code **0**/**1** without entering the date-range
+  scheduler or post-run sleep.
 
   If ``sleep_after`` is true, the function sleeps 60s at the end (legacy
   supervisor loop). Default is true when ``sleep_after`` is omitted.
@@ -3947,12 +4046,21 @@ def main(argv=None, sleep_after=None):
 
   Dates in the parsed range are processed **newest day first**; see module
   docstring for per-day job order.
+
+  Returns an integer process exit code (**0** success, **1** one-shot failure).
   """
   from hpcperfstats.dbload.lib.process_title import set_daemon_process_title
 
   set_daemon_process_title(name=UPDATE_METRICS_PROCESS_TITLE, role="main")
   if argv is None:
     argv = sys.argv
+
+  jid, jid_err = _parse_jid_cli_arg(argv)
+  if jid_err is not None:
+    log_print(jid_err, flush=True)
+    return 1
+  if jid is not None:
+    return _main_one_jid(jid)
 
   if sleep_after is None:
     env_sleep_after = os.environ.get(
@@ -4005,6 +4113,7 @@ def main(argv=None, sleep_after=None):
     close_old_connections()
     connections.close_all()
     sleep_until_shutdown(600)
+  return 0
 
 
 if __name__ == "__main__":
@@ -4014,9 +4123,11 @@ if __name__ == "__main__":
     previous_sigterm_handler, sigterm_received, _ = _install_sigterm_handler(
         exit_code=143
     )
-    main()
+    exit_code = main()
     if shutdown_requested[0]:
       sys.exit(143)
+    if exit_code:
+      sys.exit(int(exit_code))
   except DatabaseUnavailableExit:
     sys.exit(2)
   except MetricsSchedulerStallExit as exc:
