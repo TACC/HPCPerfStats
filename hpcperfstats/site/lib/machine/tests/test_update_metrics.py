@@ -3387,7 +3387,7 @@ def test_parse_jid_cli_arg_forms():
 
 @pytest.mark.machine_unit_mock
 def test_main_jid_recalculates_once_without_scheduler_or_sleep(monkeypatch):
-  """--jid uses _compute_and_prewarm_jid only; no date scheduler or sleep."""
+  """--jid invalidates caches, then uses _compute_and_prewarm_jid; no sleep."""
   calls = []
 
   class _FakeQs:
@@ -3403,6 +3403,13 @@ def test_main_jid_recalculates_once_without_scheduler_or_sleep(monkeypatch):
     objects = _FakeMgr()
 
   monkeypatch.setattr(update_metrics, "job_data", _FakeJobData)
+
+  def _fake_invalidate(jid):
+    calls.append(("invalidate", jid))
+
+  monkeypatch.setattr(
+      update_metrics, "_invalidate_caches_before_one_jid_recalc", _fake_invalidate
+  )
   monkeypatch.setattr(
       update_metrics,
       "_compute_and_prewarm_jid",
@@ -3450,9 +3457,41 @@ def test_main_jid_recalculates_once_without_scheduler_or_sleep(monkeypatch):
   assert rc == 0
   assert sleeps == []
   assert scheduled == []
+  assert calls[0] == ("invalidate", "857260")
   assert ("compute", "857260", False) in calls
+  assert calls.index(("invalidate", "857260")) < calls.index(
+      ("compute", "857260", False)
+  )
   assert "finish" in calls
   assert "close_pool" in calls
+
+
+@pytest.mark.machine_unit_mock
+def test_invalidate_caches_before_one_jid_recalc_calls_cache_helpers(monkeypatch):
+  """--jid invalidation must clear plot/detail artifacts, derived keys, and job cache."""
+  seen = []
+
+  monkeypatch.setattr(
+      "hpcperfstats.site.lib.machine.cache_utils.invalidate_job_plot_cache_keys_for_jids",
+      lambda jids: seen.append(("plots", list(jids))),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.site.lib.machine.cache_utils.invalidate_jid_derived_cache_keys",
+      lambda jids: seen.append(("derived", list(jids))),
+  )
+  deleted = []
+  monkeypatch.setattr(
+      "django.core.cache.cache.delete",
+      lambda key: deleted.append(key),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.site.lib.machine.cache_utils.make_job_detail_cache_key",
+      lambda jid: "job:v2:{0}".format(jid),
+  )
+
+  update_metrics._invalidate_caches_before_one_jid_recalc("857260")
+  assert seen == [("plots", ["857260"]), ("derived", ["857260"])]
+  assert deleted == ["job:v2:857260"]
 
 
 @pytest.mark.machine_unit_mock
@@ -3471,6 +3510,12 @@ def test_main_jid_missing_job_exits_one(monkeypatch):
 
   monkeypatch.setattr(update_metrics, "job_data", _FakeJobData)
   compute_calls = []
+  inv_calls = []
+  monkeypatch.setattr(
+      update_metrics,
+      "_invalidate_caches_before_one_jid_recalc",
+      lambda jid: inv_calls.append(jid),
+  )
   monkeypatch.setattr(
       update_metrics,
       "_compute_and_prewarm_jid",
@@ -3478,6 +3523,39 @@ def test_main_jid_missing_job_exits_one(monkeypatch):
   )
   monkeypatch.setattr(update_metrics, "log_print", lambda *a, **k: None)
   rc = update_metrics.main(argv=["update_metrics.py", "--jid=missing"])
+  assert rc == 1
+  assert inv_calls == []
+  assert compute_calls == []
+
+
+@pytest.mark.machine_unit_mock
+def test_main_jid_invalidate_failure_exits_one_without_compute(monkeypatch):
+  class _FakeQs:
+    def exists(self):
+      return True
+
+  class _FakeMgr:
+    def filter(self, **kwargs):
+      del kwargs
+      return _FakeQs()
+
+  class _FakeJobData:
+    objects = _FakeMgr()
+
+  monkeypatch.setattr(update_metrics, "job_data", _FakeJobData)
+  compute_calls = []
+  monkeypatch.setattr(
+      update_metrics,
+      "_invalidate_caches_before_one_jid_recalc",
+      lambda jid: (_ for _ in ()).throw(RuntimeError("redis down")),
+  )
+  monkeypatch.setattr(
+      update_metrics,
+      "_compute_and_prewarm_jid",
+      lambda *a, **k: compute_calls.append(1) or {"ok": True},
+  )
+  monkeypatch.setattr(update_metrics, "log_print", lambda *a, **k: None)
+  rc = update_metrics.main(argv=["update_metrics.py", "--jid", "x"])
   assert rc == 1
   assert compute_calls == []
 
@@ -3497,6 +3575,9 @@ def test_main_jid_compute_failure_exits_one(monkeypatch):
     objects = _FakeMgr()
 
   monkeypatch.setattr(update_metrics, "job_data", _FakeJobData)
+  monkeypatch.setattr(
+      update_metrics, "_invalidate_caches_before_one_jid_recalc", lambda jid: None
+  )
   monkeypatch.setattr(
       update_metrics,
       "_compute_and_prewarm_jid",

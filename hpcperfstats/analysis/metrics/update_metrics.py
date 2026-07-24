@@ -9,10 +9,11 @@ latter two). Runs Metrics().run(jobs_list). With no CLI date arguments,
 processes the last seven calendar days through today.
 
 One-shot operator path: ``update_metrics.py --jid <JID>`` (also ``--jid=<JID>``)
-recalculates metrics plus job-detail / multiprecision and plot artifacts for
-that job via ``_compute_and_prewarm_jid``, then exits (no date-range scheduler,
-no post-run sleep). Exit **0** on success, **1** on missing job / compute
-failure / bad argv. Do not combine ``--jid`` with positional date arguments.
+invalidates Redis/DB plot+detail artifacts and per-jid derived caches for that
+job, recalculates metrics plus job-detail / multiprecision and plot artifacts
+via ``_compute_and_prewarm_jid``, then exits (no date-range scheduler, no
+post-run sleep). Exit **0** on success, **1** on missing job / compute failure
+/ bad argv. Do not combine ``--jid`` with positional date arguments.
 
 Processing order: **newest calendar day first**, and within each day **newest job
 first** (``end_time`` descending, then ``jid`` descending as a stable tiebreaker).
@@ -3977,6 +3978,30 @@ def _parse_jid_cli_arg(argv):
   return jid, None
 
 
+def _invalidate_caches_before_one_jid_recalc(jid):
+  """Drop Redis + durable artifacts so --jid rebuilds are visible on the frontend.
+
+  Deletes job-plot Redis keys, ``job_plot_artifact`` / ``job_detail_artifact``
+  rows, public-metrics artifacts for the jid, per-jid derived Redis keys
+  (GPU agg, jid_table window, …), and the versioned job-detail ``KEY_JOB``
+  entry. Runs before ``_compute_and_prewarm_jid`` so fingerprint-matched
+  artifact skips cannot keep stale payloads after a formula/code change.
+  """
+  from hpcperfstats.site.lib.machine.cache_utils import (
+      invalidate_jid_derived_cache_keys,
+      invalidate_job_plot_cache_keys_for_jids,
+      make_job_detail_cache_key,
+  )
+  from django.core.cache import cache
+
+  invalidate_job_plot_cache_keys_for_jids([jid])
+  invalidate_jid_derived_cache_keys([jid])
+  try:
+    cache.delete(make_job_detail_cache_key(jid))
+  except Exception:
+    pass
+
+
 def _main_one_jid(jid):
   """Recalculate metrics + detail/plot artifacts for one jid; return exit code."""
   if not job_data.objects.filter(jid=jid).exists():
@@ -3986,9 +4011,19 @@ def _main_one_jid(jid):
     )
     return 1
   log_print(
-      "update_metrics --jid: recalculating jid={0}".format(jid),
+      "update_metrics --jid: invalidating caches then recalculating jid={0}"
+      .format(jid),
       flush=True,
   )
+  try:
+    _invalidate_caches_before_one_jid_recalc(jid)
+  except Exception as exc:
+    log_print(
+        "update_metrics --jid: cache invalidation failed jid={0}: {1}"
+        .format(jid, exc),
+        flush=True,
+    )
+    return 1
   ref = _candidate_ref(jid, artifact_only=False)
   metrics_manager = metrics.Metrics()
   prewarm_pipeline = _PrewarmPipeline()
