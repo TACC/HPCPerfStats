@@ -17,5 +17,6 @@ def test_json_item_contains_screen_space_help_label():
   )
   payload = json_item(p)
   blob = str(payload)
-  assert "x_units" in blob and "screen" in blob
   assert "?" in blob or "\\u003f" in blob
+  # Label uses data coordinates at the hit corner (not clipped screen x=-10).
+  assert '"x": -10' not in blob and "'x': -10" not in blob

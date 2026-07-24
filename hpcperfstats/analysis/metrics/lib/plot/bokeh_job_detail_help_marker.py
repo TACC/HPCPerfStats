@@ -107,16 +107,16 @@ def add_job_detail_bokeh_help_marker(
   )
   plot.add_tools(HoverTool(renderers=[hit], tooltips=tip))
 
+  # Data-space Label at the same corner as the hit target (screen x=-10 was
+  # clipped off the left edge after stretch_width embeds).
   lab = Label(
-      x=-10,
-      y=10,
-      x_units="screen",
-      y_units="screen",
+      x=hx,
+      y=hy,
       text="?",
       text_font_size="11px",
       text_color="#0d6efd",
-      text_align="right",
-      text_baseline="top",
+      text_align="center",
+      text_baseline="middle",
       level="overlay",
   )
   plot.add_layout(lab)

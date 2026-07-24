@@ -8,6 +8,7 @@ import BannerErrorMessage from "../components/BannerErrorMessage";
 import BokehPlotWithLimitation from "../components/BokehPlotWithLimitation";
 import LoadingMessage from "../components/LoadingMessage";
 import PageBreadcrumbs from "../components/PageBreadcrumbs";
+import { VariableInfoLabel } from "../components/VariableInfoLabel";
 import {
   Table,
   TableBody,
@@ -84,7 +85,13 @@ export default function TypeDetail() {
       <h1 className="mb-3 text-2xl font-semibold tracking-tight">
         Job {jobid} / Type {type_name}
       </h1>
-      <h2 className="mb-2 text-lg font-medium">Rates Aggregated over devices</h2>
+      <h2 className="mb-2 text-lg font-medium">
+        <VariableInfoLabel
+          variableName="typeDetailHeading_rates"
+          labelText="Rates Aggregated over devices"
+          enableHelp
+        />
+      </h2>
       <div className="graphs">
         <BokehPlotWithLimitation
           item={tplot_item}
@@ -93,7 +100,13 @@ export default function TypeDetail() {
           unavailableReason={tplot_unavailable_reason}
         />
       </div>
-      <h2 className="mt-4 mb-2 text-lg font-medium">Counts Aggregated over devices and hosts</h2>
+      <h2 className="mt-4 mb-2 text-lg font-medium">
+        <VariableInfoLabel
+          variableName="typeDetailHeading_counts"
+          labelText="Counts Aggregated over devices and hosts"
+          enableHelp
+        />
+      </h2>
       {stats_data.length === 0 ? (
         <p className="text-muted-foreground">No counter samples for this type on this job.</p>
       ) : (

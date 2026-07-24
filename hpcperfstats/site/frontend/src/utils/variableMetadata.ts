@@ -793,6 +793,22 @@ const JOB_DETAIL_BOKEH_PLOT_METADATA = {
     researcherUse:
       "Use it to spot FP16-heavy kernels versus FP32/64 or tensor-pipe-dominated phases.",
   },
+  jobDetailPlot_type_detail_rates: {
+    description:
+      "On-device rates: each subplot is one monitor event for this type, with one line per host over the job window. Values are device-aggregated rates (arc) or sampled values depending on the type.",
+    researcherUse:
+      "Use these to compare hosts and spot device-level imbalance or stalls for the selected type.",
+  },
+  typeDetailHeading_rates: {
+    description:
+      "Rates Aggregated over devices: time-series plots of per-host device rates for every event in this monitor type.",
+    researcherUse: "Scan for hosts or events that diverge from the job majority.",
+  },
+  typeDetailHeading_counts: {
+    description:
+      "Counts Aggregated over devices and hosts: table of summed counter samples across devices and hosts at each time for this type.",
+    researcherUse: "Use totals when comparing volume across events rather than rates.",
+  },
 };
 
 export const VARIABLE_METADATA = {

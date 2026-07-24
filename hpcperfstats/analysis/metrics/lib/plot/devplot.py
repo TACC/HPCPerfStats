@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Type-detail plot: Bokeh step plots per event for a given type (e.g. llite, cpu) using TypeDetailDataProvider.
+"""Type-detail plot: Bokeh continuous-line plots per event for a given type (e.g. llite, cpu).
 
+Uses TypeDetailDataProvider. Layout matches Summary: stretch_width figures in a
+2-column ``gridplot``.
 """
 import logging
 import time
@@ -9,12 +11,12 @@ log = logging.getLogger(__name__)
 
 from bokeh.layouts import gridplot
 from bokeh.models import ColumnDataSource, HoverTool, Range1d
-from bokeh.models.glyphs import Step
 from bokeh.palettes import d3
 from bokeh.plotting import figure
 
 from pandas import to_datetime
 
+from hpcperfstats.analysis.metrics.lib.bokeh_job_embed import figure_embed_kw
 from hpcperfstats.analysis.metrics.lib.gen.utils import (
     add_hover_plain_columns,
     clean_dataframe,
@@ -22,11 +24,18 @@ from hpcperfstats.analysis.metrics.lib.gen.utils import (
     set_linear_axes_plain_numeric,
     tz_aware_bokeh_tick_formatter,
 )
+from hpcperfstats.analysis.metrics.lib.plot.bokeh_job_detail_help_marker import (
+    add_job_detail_bokeh_help_marker,
+)
 from hpcperfstats.analysis.metrics.lib.plot.hover_html import hover_tooltip_html_host_time_value
+from hpcperfstats.analysis.metrics.lib.plot.job_detail_bokeh_plot_descriptions import (
+    description_for_job_detail_bokeh_plot,
+    researcher_use_for_job_detail_bokeh_plot,
+)
 
 
 class DevPlot:
-  """Type-detail plot using an ORM data provider (TypeDetailDataProvider). Replaces raw connection + temp table type_detail.
+  """Type-detail plot using an ORM data provider (TypeDetailDataProvider).
 
     """
 
@@ -38,7 +47,7 @@ class DevPlot:
     self.host_list = host_list
 
   def plot_metric(self, df, event, unit=None):
-    """Create one Bokeh figure with step glyphs per host for the given event (and optional unit label).
+    """Create one Bokeh figure with continuous lines per host for the given event.
 
         """
     s = time.time()
@@ -50,25 +59,34 @@ class DevPlot:
     ylabel = event + " (" + (unit or "") + ")"
 
     plot = figure(
-        width=400,
-        height=150,
-        x_axis_type="datetime",
-        y_range=Range1d(y_range_start, y_range_end),
-        y_axis_label=ylabel,
+        **figure_embed_kw(
+            150,
+            x_axis_type="datetime",
+            y_range=Range1d(y_range_start, y_range_end),
+            y_axis_label=ylabel,
+            x_axis_label="Time",
+            title="",
+            min_border_left=72,
+        )
     )
     set_linear_axes_plain_numeric(plot)
     plot.xaxis.formatter = tz_aware_bokeh_tick_formatter()
+    plot.yaxis.axis_label_text_font_size = "9pt"
+    plot.xaxis.axis_label_text_font_size = "9pt"
 
     circle_renderers = []
     for h in self.host_list:
+      host_df = df[df.host == h].sort_values("time")
       source = ColumnDataSource(
-          add_hover_plain_columns(df[df.host == h], [event], time_col="time"),
+          add_hover_plain_columns(host_df, [event], time_col="time"),
       )
-      plot.add_glyph(
-          source,
-          Step(x="time", y=event, mode="before", line_color=self.hc[h]),
+      plot.line(
+          x="time",
+          y=event,
+          source=source,
+          line_color=self.hc[h],
+          line_width=1.5,
       )
-      # Bokeh 3.4+: use scatter(size=...) instead of circle(size=...).
       circle = plot.scatter(
           x="time",
           y=event,
@@ -80,18 +98,26 @@ class DevPlot:
       )
       circle_renderers.append(circle)
 
-    # Hover shows which sample point (host) and value; no legend (identify line by hovering).
     plot.add_tools(
         HoverTool(
             tooltips=hover_tooltip_html_host_time_value(event, event),
             renderers=circle_renderers,
         )
     )
+    help_key = "jobDetailPlot_type_detail_rates"
+    add_job_detail_bokeh_help_marker(
+        plot,
+        description_for_job_detail_bokeh_plot(help_key) or (
+            f"Time: sample timestamp (UTC). Y ({ylabel}): device-aggregated "
+            f"rate or value for event {event}."
+        ),
+        researcher_use_for_job_detail_bokeh_plot(help_key),
+    )
     log.debug("time to plot %s: %s", event, time.time() - s)
     return plot
 
   def plot(self):
-    """Build host_time_df, merge aggregate per event, and return (df, gridplot of step plots).
+    """Build host_time_df, merge aggregate per event, and return (df, 2-col gridplot).
 
         """
     self.hc = {}
@@ -140,4 +166,5 @@ class DevPlot:
         continue
       plots += [self.plot_metric(df, event, unit)]
 
-    return df, gridplot(plots, ncols=len(plots) // 4 + 1 if plots else 1)
+    ncols = min(2, len(plots)) if plots else 1
+    return df, gridplot(plots, ncols=ncols, sizing_mode="stretch_width")

@@ -338,6 +338,20 @@ def test_ensure_job_metrics_data_prefetched_skips_non_job_data_instances():
   assert out is mock_job
 
 
+def test_ensure_job_metrics_data_prefetched_refreshes_stale_pickle_cache():
+  """Stale KEY_JOB pickled metrics_data_set must be dropped and re-fetched."""
+  from hpcperfstats.site.lib.machine import cache_utils
+  from hpcperfstats.site.lib.machine.models import job_data
+
+  job = job_data.__new__(job_data)
+  job._prefetched_objects_cache = {"metrics_data_set": ["stale"]}
+  with patch.object(cache_utils, "prefetch_related_objects") as mock_prefetch:
+    out = cache_utils.ensure_job_metrics_data_prefetched(job)
+  assert out is job
+  assert "metrics_data_set" not in job._prefetched_objects_cache
+  mock_prefetch.assert_called_once()
+
+
 def test_cached_non_staff_visible_accounts_uses_cached_orm():
   stored = {}
   mock_cache = MagicMock()

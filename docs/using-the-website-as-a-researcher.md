@@ -84,7 +84,7 @@ These fields come from batch accounting (e.g. Slurm) and define the **official**
 | **Summary plot (tab)**          | Host-level timeline plot with CPU, memory/NUMA<sup>[4](#ref-4)</sup>/DRAM, fabric/filesystem, GPU, and node-power traces | Best first visual scan for phase changes, host outliers, and cross-signal coupling (for example GPU drops while fabric spikes).                              |
 | **Roofline (tab)**              | CPU roofline and GPU roofline (PCIe/NVLink<sup>[7](#ref-7)</sup>)                                                        | Distinguish compute-limited vs bandwidth/link-limited behavior and prioritize the right optimization work.                                                     |
 | **Multiprecision Mix (tab)**    | CPU and GPU precision-activity panels over time                                                    | Verify whether the run is using expected mixed-precision paths<sup>[6](#ref-6)</sup> and detect precision mix drift across runs or code versions.                                         |
-| **Processes (tab)**             | Per-host process table (`host`, name, UID, RSS/HWM/size, threads when ingested) | Confirm what actually executed and its memory footprint (wrappers, launch depth, wrong env, etc.). |
+| **Processes (tab)**             | Process name first; expandable groups of hosts with average RSS/HWM/Size/Threads on the group header | Confirm what actually executed and its memory footprint (wrappers, launch depth, wrong env, etc.). |
 | **Execution and hosts (tab)**   | XALT execution path/cwd/libset and host list                                                       | Environment drift, module/library mismatches, and host-level forensics.                                                                                       |
 | **Device data (tab)**           | Device type names and recorded performance events, with links to type-detail pages                  | Discover collected counter families and drill into per-type analysis.                                                                                          |
 
@@ -315,5 +315,6 @@ Use these numbered references when you want background on terms used throughout 
 | 2026-07-20 | Summary plot GPU tensors: IMMA/HMMA/DFMA split time series preferred over lumped tensor-pipe; lumped fallback when splits absent. |
 | 2026-07-19 | Dual NFS+Lustre Resources/FSIO; Multiprecision Mix busy-FLOPS-only (CPU FP_ARITH shares, GPU tensor splits + hover %); `avg_cpuusage` job-total busy cores vs `ncores`; fabric peak on same basis as `avg_ibbw`; `avg_sharedfs_*` Insufficient = coverage gate. |
 | 2026-07-23 | Job Detail: Grace→CPU labels; GPU util out of GPUs×100; zero-mean activity ≠ missing; CPU+GPU watt-hours atop Resources; Processes multi-column; combined DP/SP vector width; Summary axis help + shorter labels; Multiprecision pie title/clip. |
+| 2026-07-24 | Residuals: pie legend below frame; GPU-link Summary clamp; continuous Summary lines; avg_cpuusage scaled to allocated ncores; TypeDetail 2-col + heading ?; Summary SPA help strip; Processes grouped by name with averages. |
 
 

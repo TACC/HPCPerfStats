@@ -51,6 +51,23 @@ JOB_DETAIL_BOKEH_HELP: Dict[str, HelpPair] = {
         "Spikes can flag link quality, congestion, or driver issues worth correlating "
         "with application slowdowns.",
     ),
+    "jobDetailPlot_type_detail_rates": (
+        "On-device rates: each subplot is one monitor event for this type, with one "
+        "line per host over the job window. Values are device-aggregated rates "
+        "(arc) or sampled values depending on the type.",
+        "Use these to compare hosts and spot device-level imbalance or stalls for "
+        "the selected type.",
+    ),
+    "typeDetailHeading_rates": (
+        "Rates Aggregated over devices: time-series plots of per-host device rates "
+        "for every event in this monitor type.",
+        "Scan for hosts or events that diverge from the job majority.",
+    ),
+    "typeDetailHeading_counts": (
+        "Counts Aggregated over devices and hosts: table of summed counter samples "
+        "across devices and hosts at each time for this type.",
+        "Use totals when comparing volume across events rather than rates.",
+    ),
 }
 
 

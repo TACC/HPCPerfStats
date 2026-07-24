@@ -104,6 +104,12 @@ describe("TypeDetail", () => {
     await waitFor(() => {
       expect(embedItem).toHaveBeenCalledTimes(1);
     });
+    expect(
+      screen.getByRole("button", { name: /Help: typeDetailHeading_rates/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Help: typeDetailHeading_counts/i }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "ctr_a" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "ctr_b" })).toBeInTheDocument();
     expect(screen.getByRole("rowheader", { name: "t0" })).toBeInTheDocument();

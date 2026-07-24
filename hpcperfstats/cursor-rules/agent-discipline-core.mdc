@@ -73,7 +73,8 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 | `hpcperfstats/site/lib/machine/tests/test_*openapi_wire_contract*.py` | `openapi-spa-wire-validation-contract.mdc` |
 | `hpcperfstats/site/frontend/src/utils/variableMetadata*.ts`, `generate-variable-metadata-monitor-events.py`, `docs/MONITOR_VARIABLES.md`, `docs/regenerate_monitor_variables_catalog.py` | `variable-metadata-cross-source-sync.mdc`, `variable-metadata-monitor-contract.mdc` |
 | Job Detail, Extended Search, metadata | `search-metric-artifact-sync.mdc`, `variable-metadata-cross-source-sync.mdc`, `variable-metadata-monitor-contract.mdc`, `researcher-job-detail-doc-sync.mdc`, `job-detail-analysis-tab-consistency.mdc` |
-| Plots / Bokeh embed | `job-plot-artifacts-caching.mdc`, `bokeh-layout-surface-split.mdc`, `no-scientific-notation-web.mdc` |
+| Plots / Bokeh embed | `job-plot-artifacts-caching.mdc`, `bokeh-layout-surface-split.mdc`, `no-scientific-notation-web.mdc`, `job-detail-bokeh-plot-help.mdc` |
+| `bokeh_job_detail_help_marker.py`, `job_detail_bokeh_plot_descriptions.py`, `summary_metric_descriptions.py`, `summaryplot.py`, `roofline.py`, `job_detail_artifacts.py`, `job_plot_artifacts.py`, Job Detail Bokeh help / Summary metric prose | `job-detail-bokeh-plot-help.mdc`, `job-plot-artifacts-caching.mdc`, `variable-metadata-cross-source-sync.mdc` |
 | `@bokeh/bokehjs` / `bokeh==` pins, `test_bokeh*.py`, Bokeh fixture regen | `bokeh-version-and-vendor-patch-upgrade.mdc` |
 | Frontend jest-axe / Playwright axe (`axe-test-utils`, page shell tests) | `frontend-a11y-regression.mdc` |
 | Web-facing pages | `web-pages-e2e-test-maintenance.mdc`, `web-pages-full-e2e-completion-gate.mdc` |

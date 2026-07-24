@@ -55,7 +55,7 @@ _GPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON = (
     "Missing GPU precision-width mix metrics in job metrics "
     "(need positive avg_*_active shares)."
 )
-APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 9
+APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 10
 
 _FSIO_FINGERPRINT_METRIC_NAMES = tuple(
     sorted(name for name, _t, _u in fsio_job_detail_catalog())
@@ -310,9 +310,9 @@ _GPU_PRECISION_LABEL_ORDER = (
     "FP64",
 )
 
-# Inset pie so SPA h3 + bottom legend do not clip wedges (match summaryplot d3 Category10).
-_MULTIPRECISION_PIE_RADIUS = 0.68
-_MULTIPRECISION_PLOT_RANGE = 1.2
+# Inset pie; legend is laid out *below* the figure (not inside the plot frame).
+_MULTIPRECISION_PIE_RADIUS = 0.78
+_MULTIPRECISION_PLOT_RANGE = 1.05
 
 
 def _ordered_precision_labels(
@@ -404,16 +404,16 @@ def _pie_item_from_precision_mix(
   # Title cleared: SPA renders the section h3; Bokeh title duplicated and clipped wedges.
   p = figure(
       title="",
-      height=420,
+      height=360,
       width=360,
       toolbar_location=None,
       tools="hover",
       x_range=(-plot_span, plot_span),
       y_range=(-plot_span, plot_span),
-      min_border_top=24,
-      min_border_bottom=96,
-      min_border_left=24,
-      min_border_right=24,
+      min_border_top=16,
+      min_border_bottom=16,
+      min_border_left=16,
+      min_border_right=16,
       match_aspect=True,
       sizing_mode="fixed",
   )
@@ -438,8 +438,13 @@ def _pie_item_from_precision_mix(
         ("Width", "@label"),
         ("Share of busy (%)", "@share{0.00}"),
     ]
-  p.legend.location = "bottom_center"
-  p.legend.orientation = "horizontal"
+  # Legend outside the plot frame so long GPU labels are not clipped by wedges.
+  if p.legend:
+    leg = p.legend[0]
+    leg.orientation = "horizontal"
+    leg.location = "center"
+    leg.label_text_font_size = "8pt"
+    p.add_layout(leg, "below")
   add_job_detail_bokeh_help_marker(
       p,
       description_for_job_detail_bokeh_plot(help_plot_key),

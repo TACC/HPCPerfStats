@@ -139,22 +139,19 @@ def _get_agg_if_feasible(jt, typ, val_col, events, conv):
   return _empty_agg_df()
 
 
-def _step_polyline_xy(times, values):
-  """Build x/y lists for a step-before polyline through (time, value) samples."""
+def _continuous_polyline_xy(times, values):
+  """Build x/y lists for a continuous polyline through (time, value) samples.
+
+  NaN values in ``values`` break Bokeh line segments (gaps). Callers that want
+  continuous segments across missing samples should drop NaNs before calling.
+  """
   if times is None or len(times) == 0:
     return [], []
   t = times.tolist() if hasattr(times, "tolist") else list(times)
   v = values.tolist() if hasattr(values, "tolist") else list(values)
   if len(t) != len(v):
     return [], []
-  xs = [t[0]]
-  ys = [v[0]]
-  for i in range(1, len(t)):
-    xs.append(t[i])
-    ys.append(v[i - 1])
-    xs.append(t[i])
-    ys.append(v[i])
-  return xs, ys
+  return t, v
 
 
 def compute_summary_aggregate_prefetch_pool_size(num_specs):
@@ -768,6 +765,22 @@ def _add_node_power_est_column(df):
   return df
 
 
+# Keep in sync with ``metrics._MAX_SANE_GPU_LINK_GBPS`` (avoid circular import).
+_MAX_SANE_GPU_LINK_GBPS = 1.0e5
+
+
+def _clamp_summary_gpu_link_rates(df):
+  """NaN-out wrap-class poison on ``nv_gpu_link_gbs`` so Y-range stays sane."""
+  if df is None or df.empty or "nv_gpu_link_gbs" not in df.columns:
+    return df
+  s = df["nv_gpu_link_gbs"]
+  poison = s.notna() & (s.abs() > _MAX_SANE_GPU_LINK_GBPS)
+  if poison.any():
+    df = df.copy()
+    df.loc[poison, "nv_gpu_link_gbs"] = np.nan
+  return df
+
+
 def iter_summary_aggregate_attempts():
   """Flat (typ, val_col, events, name, conv, label) for diagnostics."""
   for typ, val, events, name, conv, label in _SUMMARY_SINGLE_SPECS:
@@ -977,7 +990,7 @@ def plot_hardware_error_rates_figure(jt, x_range):
     sub = merged[["time", col]].dropna()
     if sub.empty:
       continue
-    xi, yi = _step_polyline_xy(sub["time"], sub[col])
+    xi, yi = _continuous_polyline_xy(sub["time"], sub[col])
     color = palette[i % len(palette)]
     src = ColumnDataSource(
         data={
@@ -1011,7 +1024,7 @@ def plot_hardware_error_rates_figure(jt, x_range):
 
 
 class SummaryPlot():
-  """Builds a grid of Bokeh step plots (one per metric) from jid_table aggregate DataFrames.
+  """Builds a grid of Bokeh continuous-line plots (one per metric) from jid_table aggregate DataFrames.
 
     """
 
@@ -1032,7 +1045,7 @@ class SummaryPlot():
       x_range=None,
       variable_description=None,
   ):
-    """Create one Bokeh figure with step-shaped lines and scatter hits per host.
+    """Create one Bokeh figure with continuous per-host lines and scatter hits.
 
         Uses one multi_line glyph plus one scatter (HoverTool on data) and a separate
         HoverTool on a small “?” marker for metric documentation.
@@ -1073,12 +1086,13 @@ class SummaryPlot():
     colors_list = []
     for h in self.host_list:
       host_key = str(h)
-      sub = df[(df["host"] == host_key) & df[metric].notna()].sort_values("time")
+      # Keep NaN samples so multi_line breaks segments across gaps.
+      sub = df[df["host"] == host_key].sort_values("time")
       if sub.empty:
         xs_list.append([])
         ys_list.append([])
       else:
-        xi, yi = _step_polyline_xy(sub["time"], sub[metric])
+        xi, yi = _continuous_polyline_xy(sub["time"], sub[metric])
         xs_list.append(xi)
         ys_list.append(yi)
       colors_list.append(self.hc[h])
@@ -1133,7 +1147,7 @@ class SummaryPlot():
     return plot
 
   def plot(self):
-    """Build host_time_df, merge all configured metrics (amd64_pmc, intel_8pmc3, llite, cpu, mem, etc.), and return a gridplot of step plots.
+    """Build host_time_df, merge all configured metrics (amd64_pmc, intel_8pmc3, llite, cpu, mem, etc.), and return a gridplot of continuous-line plots.
 
         """
     palette = _cycled_d3_category20_palette(len(self.host_list))
@@ -1194,6 +1208,7 @@ class SummaryPlot():
     df = _merge_cha_counter_arc_sum(df, self.jt)
     df = _merge_opa_fabric_if_no_ib_ext(df, self.jt)
     df = _add_node_power_est_column(df)
+    df = _clamp_summary_gpu_link_rates(df)
 
     metrics = _summary_metric_specs()
 

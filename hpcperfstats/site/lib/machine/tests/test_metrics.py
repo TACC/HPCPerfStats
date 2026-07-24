@@ -867,6 +867,97 @@ def test_job_arc_means_samples_within_bucket_not_sum():
 
 
 @pytest.mark.machine_unit_mock
+def test_job_arc_keeps_single_bucket_per_host():
+  """Single remaining 5m bucket must not be dropped (short-job defensive)."""
+  import pandas as pd
+  from hpcperfstats.analysis.metrics.lib.metrics import Metrics
+
+  m = Metrics()
+  t0 = pd.Timestamp("2024-01-01 00:00:00")
+  t1 = pd.Timestamp("2024-01-01 00:01:00")
+  rows = [
+      {"host": "a", "time": t0, "arc": 5.0},
+      {"host": "a", "time": t1, "arc": 5.0},
+  ]
+
+  class FakeJt:
+    _base_filter = {
+        "host__in": ["a"],
+        "time__gte": t0,
+        "time__lte": t1,
+    }
+
+  with patch(
+      "hpcperfstats.analysis.metrics.lib.metrics._host_data_metric_rows_batched",
+      lambda *_a, **_k: rows,
+  ), patch(
+      "hpcperfstats.analysis.metrics.lib.metrics.type_probe_names",
+      lambda typ: (typ,),
+  ), patch(
+      "hpcperfstats.analysis.metrics.lib.metrics._jid_table_host_data_time_kwargs",
+      lambda _base: {"time__gte": t0, "time__lte": t1},
+  ):
+    value = m.job_arc(
+        FakeJt(),
+        typename="host_cpu",
+        events=["user"],
+        conv=1.0,
+        host_aggregate="mean",
+    )
+  assert value == pytest.approx(5.0)
+
+
+@pytest.mark.machine_unit_mock
+def test_avg_cpuusage_scales_to_allocated_ncores():
+  """Node-wide /proc util scaled by ncores/nhosts (not raw host-wide busy cores)."""
+  import pandas as pd
+  from hpcperfstats.analysis.metrics.lib.metrics import Metrics
+
+  m = Metrics()
+  t0 = pd.Timestamp("2024-01-01 00:00:00")
+  t1 = pd.Timestamp("2024-01-01 00:05:00")
+  t2 = pd.Timestamp("2024-01-01 00:10:00")
+  # After first-bucket drop, remaining buckets: util = busy/(busy+idle) = 100/200 = 0.5
+  # cores_per_host = 2/2 = 1 → per-host mean 0.5; sum hosts = 1.0
+  rows_busy = []
+  rows_idle = []
+  for host in ("a", "b"):
+    for t in (t0, t1, t2):
+      rows_busy.append({"host": host, "time": t, "arc": 100.0})
+      rows_idle.append({"host": host, "time": t, "arc": 100.0})
+
+  class FakeJt:
+    _base_filter = {
+        "host__in": ["a", "b"],
+        "time__gte": t0,
+        "time__lte": t2,
+    }
+
+  class FakeJob:
+    ncores = 2
+    nhosts = 2
+
+  def fake_rows(tkw, hosts, typename, events, metric_column, rows_cache=None):
+    ev = set(events)
+    if ev & {"idle", "iowait", "irq", "softirq"}:
+      return list(rows_idle)
+    return list(rows_busy)
+
+  with patch(
+      "hpcperfstats.analysis.metrics.lib.metrics._host_data_metric_rows_batched",
+      fake_rows,
+  ), patch(
+      "hpcperfstats.analysis.metrics.lib.metrics.type_probe_names",
+      lambda typ: (typ,),
+  ), patch(
+      "hpcperfstats.analysis.metrics.lib.metrics._jid_table_host_data_time_kwargs",
+      lambda _base: {"time__gte": t0, "time__lte": t2},
+  ):
+    value = m._job_avg_cpuusage_allocated(FakeJt(), FakeJob())
+  assert value == pytest.approx(1.0)
+
+
+@pytest.mark.machine_unit_mock
 def test_gpu_activity_zero_mean_gate_accepts_zero():
   """GPU activity presence gate must accept mean 0 (idle ≠ missing samples)."""
   from pathlib import Path

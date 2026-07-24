@@ -127,6 +127,8 @@ type PlotPanelProps = {
   plotName: string;
   unavailableReason?: string | null;
   isLoading: boolean;
+  /** Default ``"width"``; set false for fixed-size pies that must not stretch. */
+  maximizeInContainer?: boolean | "width";
 };
 
 type PlotPanelInfo = {
@@ -254,8 +256,8 @@ type ProcListObject = {
 type ProcListEntry = string | ProcListObject;
 
 const PROC_TABLE_COLUMNS: ReadonlyArray<{ key: keyof ProcListObject; label: string }> = [
-  { key: "host", label: "Host" },
   { key: "proc", label: "Process" },
+  { key: "host", label: "Host" },
   { key: "uid", label: "UID" },
   { key: "vm_rss", label: "RSS (kB)" },
   { key: "vm_hwm", label: "HWM (kB)" },
@@ -263,20 +265,43 @@ const PROC_TABLE_COLUMNS: ReadonlyArray<{ key: keyof ProcListObject; label: stri
   { key: "threads", label: "Threads" },
 ];
 
+const PROC_AVG_KEYS = ["vm_rss", "vm_hwm", "vm_size", "threads"] as const;
+
 function cellText(value: string | number | null | undefined): string {
   if (value == null || value === "") return "";
   return String(value);
 }
 
+function meanNumericTexts(values: string[]): string {
+  const nums = values
+    .map((v) => Number(v))
+    .filter((n) => Number.isFinite(n));
+  if (nums.length === 0) return "";
+  const mean = nums.reduce((a, b) => a + b, 0) / nums.length;
+  return formatDecimalStandard(mean);
+}
+
+type ProcTableGroup = {
+  proc: string;
+  hostCount: number;
+  averages: Record<string, string>;
+  rows: Array<Record<string, string>>;
+};
+
 function buildProcTable(procList: ProcListEntry[]): {
   columns: Array<{ key: string; label: string }>;
+  groups: ProcTableGroup[];
+  /** Flat rows for legacy string-only lists. */
   rows: Array<Record<string, string>>;
+  legacyOnly: boolean;
 } {
   const legacyOnly = procList.every((entry) => typeof entry === "string");
   if (legacyOnly) {
     return {
       columns: [{ key: "proc", label: "Process" }],
+      groups: [],
       rows: procList.map((entry) => ({ proc: String(entry) })),
+      legacyOnly: true,
     };
   }
 
@@ -302,10 +327,36 @@ function buildProcTable(procList: ProcListEntry[]): {
   if (columns.length === 0) {
     return {
       columns: [{ key: "proc", label: "Process" }],
+      groups: [],
       rows: rows.map((row) => ({ proc: row.proc || "" })),
+      legacyOnly: true,
     };
   }
-  return { columns, rows };
+
+  const byProc = new Map<string, Array<Record<string, string>>>();
+  for (const row of rows) {
+    const name = row.proc || "(unnamed)";
+    const list = byProc.get(name) || [];
+    list.push(row);
+    byProc.set(name, list);
+  }
+  const groups: ProcTableGroup[] = Array.from(byProc.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([proc, groupRows]) => {
+      const averages: Record<string, string> = {};
+      for (const key of PROC_AVG_KEYS) {
+        if (!columns.some((c) => c.key === key)) continue;
+        averages[key] = meanNumericTexts(groupRows.map((r) => r[key] || ""));
+      }
+      return {
+        proc,
+        hostCount: groupRows.length,
+        averages,
+        rows: groupRows,
+      };
+    });
+
+  return { columns, groups, rows: [], legacyOnly: false };
 }
 
 function resolveGpuCountForDisplay(
@@ -362,6 +413,7 @@ const PlotPanel = memo(function PlotPanel({
   plotName,
   unavailableReason,
   isLoading,
+  maximizeInContainer = "width",
 }: PlotPanelProps) {
   const plotDescId = `${id}-plot-desc`;
   return (
@@ -378,7 +430,7 @@ const PlotPanel = memo(function PlotPanel({
         isLoadingExternal={isLoading}
         wrapperClassName="job-detail-plot-embed w-full min-w-0 min-h-[340px]"
         ariaDescribedBy={plotDescId}
-        maximizeInContainer="width"
+        maximizeInContainer={maximizeInContainer}
       />
     </div>
   );
@@ -997,6 +1049,14 @@ export default function JobDetail() {
             id="job-detail-panel-plot-summary"
             className="job-detail-single-plot-pane mt-0 [&_.job-detail-plots-intro]:mx-0 [&_.job-detail-plots-intro]:max-w-none [&_.job-detail-plots-intro]:text-start"
           >
+            <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+              <span>Metric help (also hover the blue ? on each subplot):</span>
+              <VariableInfoLabel variableName="cpu" labelText="CPU" enableHelp />
+              <VariableInfoLabel variableName="mem" labelText="Memory" enableHelp />
+              <VariableInfoLabel variableName="nv_gpu_util" labelText="GPU util" enableHelp />
+              <VariableInfoLabel variableName="nv_gpu_link_gbs" labelText="GPU link" enableHelp />
+              <VariableInfoLabel variableName="node_power_est_w" labelText="Node power" enableHelp />
+            </div>
             {renderSinglePlotPanel(
               plotConfigByKey.summary_plot,
               analysisTab === "summary",
@@ -1068,6 +1128,7 @@ export default function JobDetail() {
                         !multiprecision_cpu_plot_item &&
                         !multiprecision_cpu_unavailable_reason
                       }
+                      maximizeInContainer={false}
                     />
                   ) : null}
                 </div>
@@ -1086,6 +1147,7 @@ export default function JobDetail() {
                         !multiprecision_gpu_plot_item &&
                         !multiprecision_gpu_unavailable_reason
                       }
+                      maximizeInContainer={false}
                     />
                   ) : null}
                 </div>
@@ -1097,7 +1159,7 @@ export default function JobDetail() {
               <p className="text-muted-foreground mb-0">Loading processes…</p>
             ) : !(proc_list || []).length ? (
               <p className="text-muted-foreground mb-0">Data not available.</p>
-            ) : (
+            ) : procTable.legacyOnly ? (
               <Table className="border text-sm">
                 <TableCaption className="sr-only">
                   Processes recorded for job {job.jid}
@@ -1113,7 +1175,7 @@ export default function JobDetail() {
                 </TableHeader>
                 <TableBody>
                   {procTable.rows.map((row, i) => (
-                    <TableRow key={`proc-${row.proc ?? ""}-${row.host ?? ""}-${i}`}>
+                    <TableRow key={`proc-${row.proc ?? ""}-${i}`}>
                       {procTable.columns.map((col) => (
                         <TableCell key={col.key}>{row[col.key] ?? ""}</TableCell>
                       ))}
@@ -1121,6 +1183,64 @@ export default function JobDetail() {
                   ))}
                 </TableBody>
               </Table>
+            ) : (
+              <div className="space-y-2">
+                {procTable.groups.map((group) => (
+                  <Collapsible
+                    key={`proc-group-${group.proc}`}
+                    className="rounded-lg border px-3 py-2"
+                  >
+                    <CollapsibleTrigger className="flex w-full cursor-pointer flex-wrap items-baseline gap-x-3 gap-y-1 text-left text-sm">
+                      <span className="font-medium">{group.proc}</span>
+                      <span className="text-muted-foreground">
+                        {formatDecimalStandard(group.hostCount)} host
+                        {group.hostCount === 1 ? "" : "s"}
+                      </span>
+                      {PROC_AVG_KEYS.map((key) =>
+                        group.averages[key] ? (
+                          <span key={key} className="text-muted-foreground">
+                            avg{" "}
+                            {key === "vm_rss"
+                              ? "RSS"
+                              : key === "vm_hwm"
+                                ? "HWM"
+                                : key === "vm_size"
+                                  ? "Size"
+                                  : "Threads"}
+                            : {group.averages[key]}
+                            {key === "threads" ? "" : " kB"}
+                          </span>
+                        ) : null,
+                      )}
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <Table className="mt-2 border text-sm">
+                        <TableCaption className="sr-only">
+                          Hosts running {group.proc} for job {job.jid}
+                        </TableCaption>
+                        <TableHeader>
+                          <TableRow>
+                            {procTable.columns.map((col) => (
+                              <TableHead key={col.key} scope="col">
+                                {col.label}
+                              </TableHead>
+                            ))}
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {group.rows.map((row, i) => (
+                            <TableRow key={`proc-${group.proc}-${row.host ?? ""}-${i}`}>
+                              {procTable.columns.map((col) => (
+                                <TableCell key={col.key}>{row[col.key] ?? ""}</TableCell>
+                              ))}
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </CollapsibleContent>
+                  </Collapsible>
+                ))}
+              </div>
             )}
           </TabsContent>
           <TabsContent value="execHosts" id="job-detail-panel-exec-hosts" className="mt-0">

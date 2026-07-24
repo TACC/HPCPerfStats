@@ -394,6 +394,28 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
             "job-plot-artifacts-caching.mdc",
             "bokeh-layout-surface-split.mdc",
             "no-scientific-notation-web.mdc",
+            "job-detail-bokeh-plot-help.mdc",
+        ],
+    },
+    {
+        "id": "job_detail_bokeh_help",
+        "patterns": [
+            "hpcperfstats/analysis/metrics/lib/plot/bokeh_job_detail_help_marker.py",
+            "hpcperfstats/analysis/metrics/lib/plot/job_detail_bokeh_plot_descriptions.py",
+            "hpcperfstats/analysis/metrics/lib/plot/summary_metric_descriptions.py",
+            "hpcperfstats/analysis/metrics/lib/plot/summaryplot.py",
+            "hpcperfstats/analysis/metrics/lib/plot/roofline.py",
+            "hpcperfstats/site/lib/machine/job_detail_artifacts.py",
+            "hpcperfstats/site/lib/machine/job_plot_artifacts.py",
+            "hpcperfstats/site/frontend/src/utils/variableMetadata*.ts",
+            "hpcperfstats/site/frontend/src/utils/variableMetadata*.js",
+            "hpcperfstats/site/frontend/src/views/JobDetail.tsx",
+            "hpcperfstats/cursor-rules/job-detail-bokeh-plot-help.mdc",
+        ],
+        "rules": [
+            "job-detail-bokeh-plot-help.mdc",
+            "job-plot-artifacts-caching.mdc",
+            "variable-metadata-cross-source-sync.mdc",
         ],
     },
     {

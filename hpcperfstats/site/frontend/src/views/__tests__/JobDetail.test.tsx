@@ -792,17 +792,32 @@ describe("JobDetail", () => {
             vm_size: 8192,
             threads: 4,
           },
+          {
+            host: "c002",
+            proc: "streams_2.exe",
+            uid: 1001,
+            vm_rss: 1024,
+            vm_hwm: 2048,
+            vm_size: 4096,
+            threads: 2,
+          },
         ],
       },
     });
     renderJobDetail("12345", { is_staff: false }, "tab=processes");
     await waitFor(() => {
-      expect(screen.getByRole("columnheader", { name: "Host" })).toBeInTheDocument();
-      expect(screen.getByRole("columnheader", { name: "Process" })).toBeInTheDocument();
-      expect(screen.getByRole("columnheader", { name: "UID" })).toBeInTheDocument();
-      expect(screen.getByRole("columnheader", { name: "RSS (kB)" })).toBeInTheDocument();
       expect(screen.getByText("streams_2.exe")).toBeInTheDocument();
-      expect(screen.getByText("c001")).toBeInTheDocument();
+      expect(screen.getByText(/2(?:\.00)? hosts/i)).toBeInTheDocument();
+      expect(screen.getByText(/avg RSS/i)).toBeInTheDocument();
+    });
+  });
+
+  it("shows Summary metric help strip with VariableInfoLabel fallbacks", async () => {
+    setJobDetailQueryMock({ data: minimalJobDetailResponse });
+    renderJobDetail("12345", { is_staff: false }, "tab=summary");
+    await waitFor(() => {
+      expect(screen.getByText(/Metric help/i)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Help: cpu/i })).toBeInTheDocument();
     });
   });
 

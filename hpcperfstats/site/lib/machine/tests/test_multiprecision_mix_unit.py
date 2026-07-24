@@ -101,7 +101,29 @@ def test_multiprecision_cpu_pie_includes_grace_int_wedges():
   )
   assert mix == {"FP64": 10.0, "FP32": 20.0, "INT16": 30.0, "INT8": 40.0}
   assert jda._CPU_PRECISION_LABEL_ORDER == ("FP64", "FP32", "INT16", "INT8")
-  assert jda.APP_DETAIL_ARTIFACT_SCHEMA_VERSION == 9
+  assert jda.APP_DETAIL_ARTIFACT_SCHEMA_VERSION == 10
+
+
+def test_multiprecision_pie_legend_below_frame_with_long_labels():
+  """Legend is below the figure so long GPU labels do not clip wedges."""
+  item, reason = jda._pie_item_from_precision_mix(
+      precision_mix={
+          "Tensor IMMA (INT8/INT4)": 10.0,
+          "Tensor HMMA (FP16/BF16)": 20.0,
+          "Tensor DFMA (FP64)": 30.0,
+          "FP16": 5.0,
+      },
+      title="GPU Multiprecision Mix",
+      empty_reason="empty",
+      help_plot_key="jobDetailPlot_multiprecision_gpu",
+      label_order=jda._GPU_PRECISION_LABEL_ORDER,
+  )
+  assert reason is None
+  doc = json.dumps(item)
+  assert "fixed" in doc
+  assert "below" in doc
+  assert "Tensor IMMA (INT8/INT4)" in doc
+  assert "stretch_width" not in doc or '"sizing_mode": "fixed"' in doc or "fixed" in doc
 
 
 def test_multiprecision_cpu_pie_omits_zero_int_wedges():

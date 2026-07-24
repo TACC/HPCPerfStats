@@ -928,9 +928,16 @@ def _persist_metrics_batch(
 
   if wrote_metrics:
     try:
-      from hpcperfstats.site.lib.machine.cache_utils import invalidate_metrics_distinct_cache
+      from django.core.cache import cache as _job_detail_cache
+      from hpcperfstats.site.lib.machine.cache_utils import (
+          invalidate_metrics_distinct_cache,
+          make_job_detail_cache_key,
+      )
 
       invalidate_metrics_distinct_cache()
+      for jid in jids:
+        if jid:
+          _job_detail_cache.delete(make_job_detail_cache_key(jid))
     except Exception:
       pass
 
@@ -1184,6 +1191,27 @@ def _host_data_metric_rows_batched(
   if rows_cache is not None and cache_key is not None:
     rows_cache[cache_key] = rows
   return rows
+
+
+def _drop_first_bucket_per_host_if_safe(grouped):
+  """Drop the first 5m bucket per host only when a later bucket remains.
+
+  Short jobs that land in a single bucket must keep that sample; otherwise
+  ``job_arc`` / ``job_value_mean`` return None even when host_data exists.
+  """
+  if grouped is None or getattr(grouped, "empty", True):
+    return grouped
+  if "host" not in grouped.columns:
+    return grouped
+  keep_idx = []
+  for _host, g in grouped.groupby("host", sort=False):
+    if len(g) <= 1:
+      keep_idx.extend(list(g.index))
+    else:
+      keep_idx.extend(list(g.index[1:]))
+  if not keep_idx:
+    return grouped.iloc[0:0]
+  return grouped.loc[keep_idx]
 
 
 class Metrics():
@@ -1610,9 +1638,9 @@ class Metrics():
       if cache is not None:
         cache[cache_key] = None
       return None
-    # Drop first time sample per host to match original behaviour.
-    first_idx = grouped.groupby("host", group_keys=False).head(1).index
-    grouped = grouped.drop(index=first_idx)
+    # Drop first bucket per host when at least one later bucket remains
+    # (short jobs with a single bucket must keep that sample).
+    grouped = _drop_first_bucket_per_host_if_safe(grouped)
     if grouped.empty:
       if cache is not None:
         cache[cache_key] = None
@@ -1683,14 +1711,115 @@ class Metrics():
       if cache is not None:
         cache[cache_key] = None
       return None
-    first_idx = grouped.groupby("host", group_keys=False).head(1).index
-    grouped = grouped.drop(index=first_idx)
+    grouped = _drop_first_bucket_per_host_if_safe(grouped)
     if grouped.empty:
       if cache is not None:
         cache[cache_key] = None
       return None
     per_host_vals = grouped.groupby("host")["sum"].mean()
     value = float(per_host_vals.mean())
+    if cache is not None:
+      cache[cache_key] = value
+    return value
+
+  def _job_avg_cpuusage_allocated(
+      self, jt, job, cache=None, rows_cache=None):
+    """Job-total busy cores scaled to allocated ``ncores`` (not whole-node /proc).
+
+    ``host_cpu`` arcs are node-wide (collapsed per-CPU jiffies). Raw sum across
+    hosts can far exceed ``ncores`` on shared nodes. Scale each sample by
+    ``util = busy / (busy + idle-family)`` times ``ncores / nhosts``, then sum
+    per-host means (same bucketing as ``job_arc``).
+    """
+    import pandas as pd
+
+    if not getattr(jt, "_base_filter", None):
+      return None
+    base = jt._base_filter
+    hosts = base.get("host__in") or []
+    if not hosts:
+      return None
+    try:
+      ncores = float(getattr(job, "ncores", None) or 0)
+      nhosts = float(getattr(job, "nhosts", None) or 0)
+    except (TypeError, ValueError):
+      return None
+    if ncores <= 0 or nhosts <= 0:
+      return None
+    cores_per_host = ncores / nhosts
+    busy_events = ["user", "system", "nice"]
+    idle_events = ["idle", "iowait", "irq", "softirq"]
+    cache_key = None
+    if cache is not None:
+      cache_key = (
+          "avg_cpuusage_alloc",
+          float(ncores),
+          float(nhosts),
+      )
+      if cache_key in cache:
+        return cache[cache_key]
+    tkw = _jid_table_host_data_time_kwargs(base)
+    if not tkw:
+      return None
+
+    def _sum_arc_events(events):
+      rows = []
+      for typ in type_probe_names(HOST_CPU_TYPE):
+        rows = _host_data_metric_rows_batched(
+            tkw, hosts, typ, events, "arc", rows_cache=rows_cache)
+        if rows:
+          break
+      if not rows:
+        return None
+      df = pd.DataFrame(rows)
+      if df.empty:
+        return None
+      if not pd.api.types.is_datetime64_any_dtype(df["time"]):
+        df["time"] = pd.to_datetime(df["time"])
+      return (
+          df.groupby(["host", "time"], as_index=False)["arc"]
+          .sum()
+      )
+
+    busy = _sum_arc_events(busy_events)
+    if busy is None or busy.empty:
+      if cache is not None:
+        cache[cache_key] = None
+      return None
+    busy = busy.rename(columns={"arc": "busy"})
+    idle = _sum_arc_events(idle_events)
+    if idle is None or idle.empty:
+      value = self.job_arc(
+          jt,
+          typename=HOST_CPU_TYPE,
+          events=busy_events,
+          conv=0.01,
+          units="#cores",
+          cache=cache,
+          rows_cache=rows_cache,
+          host_aggregate="sum",
+      )
+      if cache is not None:
+        cache[cache_key] = value
+      return value
+    idle = idle.rename(columns={"arc": "idle"})
+    merged = busy.merge(idle, on=["host", "time"], how="left")
+    merged["idle"] = merged["idle"].fillna(0.0)
+    denom = merged["busy"] + merged["idle"]
+    util = (merged["busy"] / denom).where(denom > 0, 0.0).clip(0.0, 1.0)
+    merged["sum"] = util * cores_per_host
+    merged["bucket"] = merged["time"].dt.floor("5min")
+    grouped = (
+        merged.groupby(["host", "bucket"], as_index=False)["sum"]
+        .mean()
+        .rename(columns={"bucket": "time"})
+    )
+    grouped = _drop_first_bucket_per_host_if_safe(grouped)
+    if grouped.empty:
+      if cache is not None:
+        cache[cache_key] = None
+      return None
+    value = float(grouped.groupby("host")["sum"].mean().sum())
     if cache is not None:
       cache[cache_key] = value
     return value
@@ -2096,12 +2225,12 @@ class Metrics():
 
       for metric_name, metric_obj in self.simple_metrics_list.items():
         if metric_name == "avg_cpuusage":
-          value = self.job_arc(
+          value = self._job_avg_cpuusage_allocated(
               jt,
+              job,
               cache=simple_metric_cache,
               rows_cache=host_data_rows_cache,
-              host_aggregate="sum",
-              **metric_obj)
+          )
           row_type = metric_obj["typename"]
         elif metric_name == "avg_flops":
           value, flops_typename = self._job_arc_avg_flops(

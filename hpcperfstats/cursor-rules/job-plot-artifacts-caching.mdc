@@ -39,7 +39,9 @@ alwaysApply: false
 - **`type_detail`** and similar endpoints are **not** the same code path as `job_plots`; they do not automatically use `job_plot_artifact`. Extend caching there explicitly if those pages are hot.
 - Avoid **circular imports** between `api.py` and `update_metrics.py`; shared logic stays in **`job_plot_artifacts`** (and plot modules).
 - **Job Detail GPU / Multiprecision Mix** are served from **`job_detail_artifact`** (SPA is artifact-only). When **`[PIPELINE] metrics_scheduler_skip_prewarm`** is set, plot prewarm submit/drain is skipped, but **`persist_job_detail_artifacts_for_jid` must still run** for successful (and artifact-only) refs so empty detail/mix rows do not stick after metrics are complete. Empty detail artifacts hide GPU/Mix even when `metrics_data` already has GPU/fp/tensor values.
-- Peak fabric/GPU-link rates (`max_packetrate`, `max_gpu_link_gbps`) reject wrap-class poison (`~2^63`/`~2^64` counter jumps) and prefer ingest **`arc`** when present — see `metrics.py` `_peak_interval_rate_from_cluster_mean` / `_sane_peak_from_rates`.
+- Peak fabric/GPU-link rates (`max_packetrate`, `max_gpu_link_gbps`) reject wrap-class poison (`~2^63`/`~2^64` counter jumps) and prefer ingest **`arc`** when present — see `metrics.py` `_peak_interval_rate_from_cluster_mean` / `_sane_peak_from_rates`. Summary subplot ``nv_gpu_link_gbs`` applies the same ``_MAX_SANE_GPU_LINK_GBPS`` ceiling via ``summaryplot._clamp_summary_gpu_link_rates``.
+- **`avg_cpuusage`:** node-wide `/proc/stat` util × allocated ``ncores/nhosts``, summed across hosts (not raw host-wide busy-core sum).
+- Multiprecision pies: fixed sizing (no SPA width-stretch); legend laid out **below** the figure frame.
 
 ## Tests
 

@@ -1279,3 +1279,33 @@ def test_summary_allow_partial_null_includes_watts():
 
   assert "watts" in _SUMMARY_ALLOW_PARTIAL_NULL
   assert "amd_pkg_w" in _SUMMARY_ALLOW_PARTIAL_NULL
+
+
+def test_continuous_polyline_xy_keeps_sample_count():
+  from hpcperfstats.analysis.metrics.lib.plot.summaryplot import _continuous_polyline_xy
+
+  times = [1, 2, 3, 4]
+  values = [10.0, 20.0, 30.0, 40.0]
+  xs, ys = _continuous_polyline_xy(times, values)
+  assert len(xs) == 4
+  assert len(ys) == 4
+  assert ys == values
+
+
+def test_clamp_summary_gpu_link_rates_drops_poison():
+  import pandas as pd
+  from hpcperfstats.analysis.metrics.lib.plot.summaryplot import (
+      _MAX_SANE_GPU_LINK_GBPS,
+      _clamp_summary_gpu_link_rates,
+  )
+
+  df = pd.DataFrame(
+      {
+          "host": ["a", "a", "b"],
+          "nv_gpu_link_gbs": [1.0, _MAX_SANE_GPU_LINK_GBPS * 10, 2.0],
+      }
+  )
+  out = _clamp_summary_gpu_link_rates(df)
+  assert out["nv_gpu_link_gbs"].iloc[0] == 1.0
+  assert pd.isna(out["nv_gpu_link_gbs"].iloc[1])
+  assert out["nv_gpu_link_gbs"].iloc[2] == 2.0

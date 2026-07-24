@@ -233,7 +233,13 @@ def make_job_detail_cache_key(jid):
 
 
 def ensure_job_metrics_data_prefetched(job):
-  """Reattach metrics_data_set after Redis unpickle (prefetch cache does not survive pickle)."""
+  """Always refresh metrics_data_set from DB (Redis may pickle a stale prefetch).
+
+  Django can pickle ``_prefetched_objects_cache`` into KEY_JOB. Trusting that
+  cache after metrics persist left Job Detail Resources (e.g. watt-hours) blank
+  while ``metrics_data`` already had values. Drop any pickled prefetch and
+  re-query so display lists match the live catalog.
+  """
   if job is None:
     return job
   from hpcperfstats.site.lib.machine.models import job_data
@@ -241,8 +247,8 @@ def ensure_job_metrics_data_prefetched(job):
   if not isinstance(job, job_data):
     return job
   prefetched = getattr(job, "_prefetched_objects_cache", None)
-  if isinstance(prefetched, dict) and "metrics_data_set" in prefetched:
-    return job
+  if isinstance(prefetched, dict):
+    prefetched.pop("metrics_data_set", None)
   prefetch_related_objects([job], "metrics_data_set")
   return job
 
