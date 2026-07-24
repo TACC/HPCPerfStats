@@ -101,9 +101,10 @@ tacc_stats/pickler/*lock
 
 # Diagnosis workflow optional JSON (see docs/TESTING.md, HPCPERFSTATS_UM_DIAG_JSON_OUT)
 tmp/
+# Ephemeral test run logs (checkout-root test_runs/ + nested package copies)
 test_runs/*
 !test_runs/README.md
-
+hpcperfstats/test_runs/
 # -----------------------------------------------------------------------------
 # Frontend build output (Next.js export → copy-next-export.mjs → static/frontend).
 # Orval client under hpcperfstats/site/frontend/src/api/generated/ is gitignored

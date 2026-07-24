@@ -130,7 +130,7 @@ export default function Search() {
       </nav>
     ) : null;
 
-  const jumpToMonth = (month: string) => {
+  const jumpToMonth = (month: string | null) => {
     if (!month) return;
     const index = dateList.findIndex(([label]) => label === month);
     if (index < 0) {

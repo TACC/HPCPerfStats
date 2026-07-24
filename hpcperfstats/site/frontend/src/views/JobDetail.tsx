@@ -547,8 +547,7 @@ export default function JobDetail() {
   const metricsTableRight = metricsListFull.filter((_, index) => index % 2 === 1);
   const gpuCountForMetrics = resolveGpuCountForDisplay(gpu_count, metrics_list || []);
   const wattHoursMetric = (metrics_list || []).find(
-    (m) =>
-      m.metric === "job_cpu_gpu_watt_hours" && m.value != null && m.value !== "",
+    (m) => m.metric === "job_cpu_gpu_watt_hours" && m.value != null,
   );
   const procTable = buildProcTable((proc_list || []) as ProcListEntry[]);
 

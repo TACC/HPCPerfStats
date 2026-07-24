@@ -1,7 +1,0 @@
-============================= test session starts ==============================
-collected 2 items
-
-hpcperfstats/analysis/metrics/tests/test_job_metric_display_labels.py .  [ 50%]
-hpcperfstats/site/lib/machine/tests/test_metrics.py .                    [100%]
-
-============================== 2 passed in 0.75s ===============================
