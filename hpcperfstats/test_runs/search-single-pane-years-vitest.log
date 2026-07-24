@@ -1,0 +1,24 @@
+
+> hpcperfstats-frontend@0.0.1 pretest
+> npm run write-site-identity
+
+
+> hpcperfstats-frontend@0.0.1 write-site-identity
+> node scripts/write-site-identity.mjs
+
+write-site-identity: SITE_MACHINE_NAME from hpcperfstats.ini
+write-site-identity: SITE_MACHINE_SHORT_NAME=cluster_name
+write-site-identity: wrote /Users/sharrell/cursor-projects/HPCPerfStats/HPCPerfStats/hpcperfstats/site/frontend/src/config/site-identity.ts
+
+> hpcperfstats-frontend@0.0.1 test
+> vitest --run src/views/__tests__/Search.test.tsx
+
+
+ RUN  v4.1.10 /Users/sharrell/cursor-projects/HPCPerfStats/HPCPerfStats/hpcperfstats/site/frontend
+
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  21:56:34
+   Duration  1.24s (transform 66ms, setup 103ms, import 276ms, tests 428ms, environment 354ms)
+
