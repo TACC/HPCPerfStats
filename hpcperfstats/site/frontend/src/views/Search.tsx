@@ -93,40 +93,42 @@ export default function Search() {
     yearList.length > 0 ? (
       <nav
         aria-label="Years"
-        className="mb-3 flex flex-wrap items-center justify-end gap-2"
+        className="mb-3 rounded-[var(--radius)] border border-border bg-background p-3 sm:px-4 max-md:p-[0.65rem_0.75rem]"
       >
-        <ul className="m-0 flex list-none flex-wrap justify-end gap-2 p-0">
-          {yearChipYears.map((year) => (
-            <li key={year}>
-              <Link className={yearLinkClass} href={`/machine/year/${year}/`}>
-                {year}
-              </Link>
-            </li>
-          ))}
-        </ul>
-        {yearList.length > 12 ? (
-          <div className="min-w-[8rem]">
-            <Label htmlFor="search-year-jump" className="sr-only">
-              Jump to year
-            </Label>
-            <Select
-              onValueChange={(year) => {
-                if (year) router.push(`/machine/year/${year}/`);
-              }}
-            >
-              <SelectTrigger id="search-year-jump" className="h-7 max-w-48">
-                <SelectValue placeholder="All years…" />
-              </SelectTrigger>
-              <SelectContent>
-                {yearList.map((year) => (
-                  <SelectItem key={year} value={String(year)}>
-                    {year}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        ) : null}
+        <div className="flex flex-wrap items-center justify-start gap-2">
+          <ul className="m-0 flex list-none flex-wrap justify-start gap-2 p-0">
+            {yearChipYears.map((year) => (
+              <li key={year}>
+                <Link className={yearLinkClass} href={`/machine/year/${year}/`}>
+                  {year}
+                </Link>
+              </li>
+            ))}
+          </ul>
+          {yearList.length > 12 ? (
+            <div className="min-w-[8rem]">
+              <Label htmlFor="search-year-jump" className="sr-only">
+                Jump to year
+              </Label>
+              <Select
+                onValueChange={(year) => {
+                  if (year) router.push(`/machine/year/${year}/`);
+                }}
+              >
+                <SelectTrigger id="search-year-jump" className="h-7 max-w-48">
+                  <SelectValue placeholder="All years…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {yearList.map((year) => (
+                    <SelectItem key={year} value={String(year)}>
+                      {year}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
+        </div>
       </nav>
     ) : null;
 

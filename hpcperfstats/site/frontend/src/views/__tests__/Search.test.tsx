@@ -47,6 +47,12 @@ describe("Search", () => {
     expect(screen.queryByRole("tab", { name: /^calendar$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: /by year/i })).not.toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: /^years$/i })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: /^years$/i }).className).toMatch(
+      /border-border/,
+    );
+    expect(screen.getByRole("navigation", { name: /^years$/i }).className).not.toMatch(
+      /justify-end/,
+    );
     expect(screen.getByRole("link", { name: "2022" })).toHaveAttribute("href", "/machine/year/2022");
     expect(screen.getByRole("link", { name: "2023" })).toHaveAttribute("href", "/machine/year/2023");
     expect(
