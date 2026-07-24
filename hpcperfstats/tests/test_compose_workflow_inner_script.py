@@ -43,6 +43,27 @@ def test_compose_work_copy_base_dir_colima_safe_default():
   assert "/tmp/hpcperfstats-compose" in text
 
 
+@pytest.mark.parametrize(
+    "workflow_rel",
+    (
+        "tests/run_db_pytest_workflow.sh",
+        "tests/run_redis_cache_pytest_workflow.sh",
+        "tests/run_stress_host_data_workflow.sh",
+        "tests/run_update_metrics_diagnosis_workflow.sh",
+    ),
+)
+def test_workflow_args_file_under_home_cache(workflow_rel):
+  """Colima cannot bind-mount macOS mktemp under /var/folders; use $HOME/.cache.
+
+  Regression: when ARGS_FILE was plain ``mktemp``, Docker created a directory at
+  the container mount path and ignored forwarded pytest args.
+  """
+  text = (_REPO_ROOT / workflow_rel).read_text(encoding="utf-8")
+  assert "${HOME}/.cache/hpcperfstats-compose" in text
+  assert "pytest-extra-args.XXXXXX" in text
+  assert 'ARGS_FILE="$(mktemp)"' not in text
+
+
 def test_compose_web_repo_bind_mount_args_helper():
   text = (_REPO_ROOT / "tests/compose_test_cmd.sh").read_text(encoding="utf-8")
   assert "compose_web_repo_bind_mount_args" in text

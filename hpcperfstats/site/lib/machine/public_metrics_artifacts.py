@@ -24,7 +24,9 @@ from datetime import date, datetime
 from multiprocessing import TimeoutError as MultiprocessingTimeoutError
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from django.db import connection, transaction
 from django.db.models import F, Max, Min, Q
+from django.db.utils import OperationalError
 from django.utils import timezone as dj_tz
 
 from hpcperfstats.site.lib.machine.models import job_data, public_metrics_artifact
@@ -38,6 +40,11 @@ PAYLOAD_ENCODING_GZIP_JSON = "gzip_json"
 # Expansion-factor aggregates derived from scheduler timestamps only (see Carlson EF definitions).
 PUBLIC_EF_MONTH_DAILY = "ef_month_daily"
 PUBLIC_EF_YEAR_WEEKLY = "ef_year_weekly"
+
+# Best-effort invalidate under concurrent refresh (row locks on large payloads).
+# Fail fast vs waiting for the connection's full statement_timeout.
+_PUBLIC_METRICS_INVALIDATE_LOCK_TIMEOUT_MS = 2000
+_PUBLIC_METRICS_INVALIDATE_STATEMENT_TIMEOUT_MS = 5000
 
 # Task kind strings for :func:`_public_ef_period_worker` (pickled by multiprocessing).
 _PUBLIC_EF_KIND_MONTH = "month"
@@ -657,7 +664,13 @@ def assemble_public_monthly_metrics_bundle() -> Dict[str, Any]:
 
 
 def invalidate_public_metrics_artifacts_for_jids(jids: Iterable[str]) -> None:
-  """Mark EF aggregates stale for calendar periods touched by the given accounting rows."""
+  """Mark EF aggregates stale for calendar periods touched by the given accounting rows.
+
+  Updates one primary key at a time under a short PostgreSQL ``lock_timeout`` so
+  concurrent ``update_or_create`` / refresh holds do not wait until the session
+  ``statement_timeout`` (which previously logged ERROR with a full traceback).
+  Locked or timed-out rows are skipped with a warning; other periods still update.
+  """
   jid_list = [j for j in jids if j]
   if not jid_list:
     return
@@ -670,15 +683,13 @@ def invalidate_public_metrics_artifacts_for_jids(jids: Iterable[str]) -> None:
     years.add(str(et.year))
   try:
     if months:
-      public_metrics_artifact.objects.filter(
-          scope=PUBLIC_EF_MONTH_DAILY,
-          period_key__in=sorted(months),
-      ).update(rebuild_required=True)
+      _mark_public_metrics_rebuild_required(
+          PUBLIC_EF_MONTH_DAILY, sorted(months),
+      )
     if years:
-      public_metrics_artifact.objects.filter(
-          scope=PUBLIC_EF_YEAR_WEEKLY,
-          period_key__in=sorted(years),
-      ).update(rebuild_required=True)
+      _mark_public_metrics_rebuild_required(
+          PUBLIC_EF_YEAR_WEEKLY, sorted(years),
+      )
   except Exception:
     logger.exception("failed to mark public_metrics_artifact rows stale for jids")
 
@@ -686,6 +697,71 @@ def invalidate_public_metrics_artifacts_for_jids(jids: Iterable[str]) -> None:
 def invalidate_all_public_metrics_artifacts() -> None:
   """Mark every prewarmed public dashboard artifact row for rebuild."""
   try:
-    public_metrics_artifact.objects.all().update(rebuild_required=True)
+    pks = list(
+        public_metrics_artifact.objects.filter(rebuild_required=False).values_list(
+            "pk", flat=True,
+        )
+    )
+    _mark_public_metrics_rebuild_required_by_pks(pks)
   except Exception:
     logger.exception("failed to mark public_metrics_artifact rows stale")
+
+
+def _mark_public_metrics_rebuild_required(
+    scope: str,
+    period_keys: Sequence[str],
+) -> int:
+  """Mark matching non-stale rows ``rebuild_required``; return rows updated."""
+  if not period_keys:
+    return 0
+  pks = list(
+      public_metrics_artifact.objects.filter(
+          scope=scope,
+          period_key__in=list(period_keys),
+          rebuild_required=False,
+      ).values_list("pk", flat=True)
+  )
+  return _mark_public_metrics_rebuild_required_by_pks(pks)
+
+
+def _mark_public_metrics_rebuild_required_by_pks(pks: Sequence[int]) -> int:
+  """Per-pk rebuild flag updates with short lock/statement timeouts (Postgres)."""
+  updated_n = 0
+  for pk in pks:
+    try:
+      if _update_public_metrics_rebuild_required_one(int(pk)):
+        updated_n += 1
+    except OperationalError as exc:
+      # Expected under concurrent refresh holding the row; do not ERROR+traceback.
+      logger.warning(
+          "public_metrics_artifact rebuild mark skipped pk=%s: %s",
+          pk,
+          exc,
+      )
+  return updated_n
+
+
+def _update_public_metrics_rebuild_required_one(pk: int) -> bool:
+  """Return True when the row was marked ``rebuild_required``."""
+  using = getattr(connection, "alias", None) or "default"
+  with transaction.atomic(using=using):
+    if connection.vendor == "postgresql":
+      try:
+        with connection.cursor() as cursor:
+          cursor.execute(
+              "SET LOCAL lock_timeout = %s",
+              [_PUBLIC_METRICS_INVALIDATE_LOCK_TIMEOUT_MS],
+          )
+          cursor.execute(
+              "SET LOCAL statement_timeout = %s",
+              [_PUBLIC_METRICS_INVALIDATE_STATEMENT_TIMEOUT_MS],
+          )
+      except Exception as exc:
+        from django.test.testcases import DatabaseOperationForbidden
+
+        if not isinstance(exc, DatabaseOperationForbidden):
+          raise
+    n = public_metrics_artifact.objects.filter(
+        pk=pk, rebuild_required=False,
+    ).update(rebuild_required=True)
+  return int(n or 0) > 0

@@ -109,7 +109,10 @@ if [[ ! -f hpcperfstats.ini ]]; then
   cp hpcperfstats.ini.example hpcperfstats.ini
 fi
 
-ARGS_FILE="$(mktemp)"
+# Colima virtiofs only shares $HOME by default; macOS mktemp under /var/folders
+# is not mountable and Docker creates a directory at the container path instead.
+mkdir -p "${HOME}/.cache/hpcperfstats-compose"
+ARGS_FILE="$(mktemp "${HOME}/.cache/hpcperfstats-compose/pytest-extra-args.XXXXXX")"
 ARGS_FILE_OWNED=1
 if [[ ${#PYTEST_EXTRA[@]} -gt 0 ]]; then
   printf '%s\n' "${PYTEST_EXTRA[@]}" > "$ARGS_FILE"

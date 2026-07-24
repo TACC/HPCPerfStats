@@ -109,6 +109,120 @@ def test_invalidate_after_acct_ingest_marks_only_touched_ef_month_rows_stale():
 
 
 @pytest.mark.django_db
+def test_invalidate_public_metrics_survives_statement_timeout_on_one_row(
+    monkeypatch, caplog,
+):
+  """Lock/statement timeout on one pk must not abort marking other periods.
+
+  Regression for web ERROR: canceling statement due to statement timeout while
+  updating public_metrics_artifact during invalidate_public_metrics_artifacts_for_jids.
+  """
+  import gzip
+  import logging
+
+  from django.db.utils import OperationalError
+
+  from hpcperfstats.site.lib.machine import public_metrics_artifacts as pma
+
+  blob = gzip.compress(b"{}")
+  march = public_metrics_artifact.objects.create(
+      scope=PUBLIC_EF_MONTH_DAILY,
+      period_key="2024-03",
+      payload_compressed=blob,
+      payload_encoding=PAYLOAD_ENCODING_GZIP_JSON,
+      input_fingerprint="testfp",
+      rebuild_required=False,
+  )
+  april = public_metrics_artifact.objects.create(
+      scope=PUBLIC_EF_MONTH_DAILY,
+      period_key="2024-04",
+      payload_compressed=blob,
+      payload_encoding=PAYLOAD_ENCODING_GZIP_JSON,
+      input_fingerprint="testfp",
+      rebuild_required=False,
+  )
+  submit = datetime(2024, 3, 1, tzinfo=dj_tz.utc)
+  start = datetime(2024, 3, 1, 1, 0, 0, tzinfo=dj_tz.utc)
+  end = datetime(2024, 3, 15, 2, 0, 0, tzinfo=dj_tz.utc)
+  job_data.objects.create(
+      jid="acct_inval_timeout",
+      submit_time=submit,
+      start_time=start,
+      end_time=end,
+      runtime=float((end - start).total_seconds()),
+      ncores=4,
+      username="demo-user",
+      host_list=["n001.cluster.example"],
+  )
+  # Second job in April so both months are targeted.
+  end_apr = datetime(2024, 4, 2, 2, 0, 0, tzinfo=dj_tz.utc)
+  job_data.objects.create(
+      jid="acct_inval_timeout_apr",
+      submit_time=datetime(2024, 4, 1, tzinfo=dj_tz.utc),
+      start_time=datetime(2024, 4, 1, 1, 0, 0, tzinfo=dj_tz.utc),
+      end_time=end_apr,
+      runtime=3600.0,
+      ncores=4,
+      username="demo-user",
+      host_list=["n001.cluster.example"],
+  )
+
+  real_one = pma._update_public_metrics_rebuild_required_one
+
+  def _flaky(pk):
+    if int(pk) == int(march.pk):
+      raise OperationalError("canceling statement due to statement timeout")
+    return real_one(pk)
+
+  monkeypatch.setattr(pma, "_update_public_metrics_rebuild_required_one", _flaky)
+
+  with caplog.at_level(logging.WARNING, logger=pma.logger.name):
+    pma.invalidate_public_metrics_artifacts_for_jids(
+        ["acct_inval_timeout", "acct_inval_timeout_apr"],
+    )
+
+  march.refresh_from_db()
+  april.refresh_from_db()
+  assert not march.rebuild_required
+  assert april.rebuild_required
+  assert any(
+      "rebuild mark skipped" in r.message and str(march.pk) in r.message
+      for r in caplog.records
+  )
+  assert not any(r.levelno >= logging.ERROR for r in caplog.records)
+
+
+@pytest.mark.machine_unit_mock
+def test_mark_rebuild_by_pks_continues_after_statement_timeout(monkeypatch, caplog):
+  """Host-unit lock of the per-pk timeout skip path (no compose DB required)."""
+  import logging
+
+  from django.db.utils import OperationalError
+
+  from hpcperfstats.site.lib.machine import public_metrics_artifacts as pma
+
+  seen = []
+
+  def _flaky(pk):
+    seen.append(int(pk))
+    if int(pk) == 25:
+      raise OperationalError(
+          "canceling statement due to statement timeout\n"
+          "CONTEXT:  while updating tuple (25,3) in relation "
+          '"public_metrics_artifact"'
+      )
+    return True
+
+  monkeypatch.setattr(pma, "_update_public_metrics_rebuild_required_one", _flaky)
+  with caplog.at_level(logging.WARNING, logger=pma.logger.name):
+    n = pma._mark_public_metrics_rebuild_required_by_pks([25, 26, 27])
+  assert seen == [25, 26, 27]
+  assert n == 2
+  assert any("pk=25" in r.message for r in caplog.records)
+  assert not any(r.levelno >= logging.ERROR for r in caplog.records)
+
+
+@pytest.mark.django_db
 def test_public_ef_period_worker_closes_connections_before_reconcile(monkeypatch):
   import django.db
 
