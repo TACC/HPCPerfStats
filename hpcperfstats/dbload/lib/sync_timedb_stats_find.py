@@ -403,18 +403,62 @@ def discover_stats_records(
   )
 
 
-def _epoch_in_closed_window(
-    epoch_s: float,
+# Adjacent files beyond the padded --jid window (per host, sorted by epoch).
+JID_NEIGHBOR_FILES = 1
+
+
+def expand_sorted_records_with_window_neighbors(
+    sorted_items: Sequence[Tuple[FindStatsRecord, int]],
     window_start: datetime,
     window_end: datetime,
-) -> bool:
-  """True when Unix epoch seconds fall in ``[window_start, window_end]``."""
+    *,
+    neighbor_files: int = JID_NEIGHBOR_FILES,
+) -> List[FindStatsRecord]:
+  """Keep in-window records plus ±N neighbors from an epoch-sorted host list.
+
+  ``sorted_items`` must already be sorted ascending by epoch. When the core
+  (in-window) set is empty, take the last file before ``window_start`` and the
+  first file after ``window_end`` (when present).
+  """
+  if not sorted_items:
+    return []
+  n = max(0, int(neighbor_files))
   try:
     start_ts = float(window_start.timestamp())
     end_ts = float(window_end.timestamp())
   except (AttributeError, OSError, OverflowError, TypeError, ValueError):
-    return False
-  return start_ts <= float(epoch_s) <= end_ts
+    return []
+
+  epochs = [int(ep) for _, ep in sorted_items]
+  core_idxs = [
+      i for i, ep in enumerate(epochs)
+      if start_ts <= float(ep) <= end_ts
+  ]
+  take: set[int] = set()
+  if core_idxs:
+    lo = min(core_idxs)
+    hi = max(core_idxs)
+    take.update(range(lo, hi + 1))
+    for k in range(1, n + 1):
+      if lo - k >= 0:
+        take.add(lo - k)
+      if hi + k < len(sorted_items):
+        take.add(hi + k)
+  else:
+    last_before: Optional[int] = None
+    first_after: Optional[int] = None
+    for i, ep in enumerate(epochs):
+      if float(ep) < start_ts:
+        last_before = i
+      elif float(ep) > end_ts:
+        first_after = i
+        break
+    if last_before is not None:
+      take.add(last_before)
+    if first_after is not None:
+      take.add(first_after)
+
+  return [sorted_items[i][0] for i in sorted(take)]
 
 
 def filter_host_scoped_window_records(
@@ -423,11 +467,15 @@ def filter_host_scoped_window_records(
     window_start: datetime,
     window_end: datetime,
     current_inodes: Optional[Dict[str, int]] = None,
+    *,
+    neighbor_files: int = JID_NEIGHBOR_FILES,
 ) -> List[FindStatsRecord]:
-  """Filter records to allowed host dirs and a closed datetime window.
+  """Filter records to allowed hosts; keep padded window plus ±N neighbors.
 
   Skips locks, ``current*``, dotfiles, and live ``current`` inodes (same as
   continuous sync). Epoch basename is preferred; mtime is the fallback clock.
+  Neighbor expansion runs **independently per host** on that host's
+  epoch-sorted eligible list.
   """
   allow = {
       str(h).strip()
@@ -437,7 +485,7 @@ def filter_host_scoped_window_records(
   if not allow:
     return []
   current_inodes = current_inodes or {}
-  selected: List[Tuple[FindStatsRecord, Optional[int]]] = []
+  by_host: Dict[str, List[Tuple[FindStatsRecord, int]]] = {}
   for rec in records:
     path = rec.path
     name = os.path.basename(path)
@@ -452,24 +500,30 @@ def filter_host_scoped_window_records(
     if current_inodes.get(host_dir) == rec.inode:
       continue
 
-    sort_epoch: Optional[int] = None
-    in_window = False
     try:
-      fname_epoch = int(name)
-      sort_epoch = fname_epoch
-      in_window = _epoch_in_closed_window(
-          fname_epoch, window_start, window_end,
-      )
+      sort_epoch = int(name)
     except (TypeError, ValueError):
       sort_epoch = int(rec.mtime)
-      in_window = _epoch_in_closed_window(
-          rec.mtime, window_start, window_end,
-      )
-    if not in_window:
-      continue
-    selected.append((rec, sort_epoch))
+    by_host.setdefault(host_base, []).append((rec, sort_epoch))
 
-  selected.sort(key=lambda item: (item[1] is None, item[1]))
+  selected: List[Tuple[FindStatsRecord, int]] = []
+  for host_base in by_host:
+    items = by_host[host_base]
+    items.sort(key=lambda item: item[1])
+    for rec in expand_sorted_records_with_window_neighbors(
+        items,
+        window_start,
+        window_end,
+        neighbor_files=neighbor_files,
+    ):
+      name = os.path.basename(rec.path)
+      try:
+        ep = int(name)
+      except (TypeError, ValueError):
+        ep = int(rec.mtime)
+      selected.append((rec, ep))
+
+  selected.sort(key=lambda item: item[1])
   return [rec for rec, _ in selected]
 
 
@@ -550,7 +604,7 @@ def collect_host_scoped_stats_paths(
     find_bin: Optional[str] = None,
     log_fn: Optional[Callable[..., None]] = None,
 ) -> List[str]:
-  """Return sorted host-scoped stats paths in ``[window_start, window_end]``."""
+  """Return host-scoped stats paths in padded window plus ±1 file neighbors."""
   return [
       rec.path
       for rec in discover_host_scoped_stats_records(

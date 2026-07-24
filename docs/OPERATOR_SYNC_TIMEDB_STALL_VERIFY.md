@@ -23,7 +23,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
   su hpcperfstats -c 'sync_timedb.py --jid REPLACE_WITH_JOB_ID'
 ```
 
-**Pass:** exit **0**; logs show `sync_timedb --jid: jid=… hosts=…`, host-scoped discover counts, and `done … ok=…` (zero matching files is success). **Fail:** exit **1** (missing job / empty hosts / bad argv / all ingest failures). Expect **no** `ArchiveJanitor`, `day_close`, or archive dispatch lines from this process. Stall tiers above remain for continuous `backlog` / `current` deploys only.
+**Pass:** exit **0**; logs show `sync_timedb --jid: jid=… hosts=…`, host-scoped discover counts, and `done … ok=…` (zero matching files is success). Discovery uses the ±1h padded job window **plus** one earlier and one later raw stats file per host. **Fail:** exit **1** (missing job / empty hosts / bad argv / all ingest failures). Expect **no** `ArchiveJanitor`, `day_close`, or archive dispatch lines from this process. Stall tiers above remain for continuous `backlog` / `current` deploys only.
 
 ## Post-deploy tiers
 

@@ -1,6 +1,7 @@
 """Unit tests for sync_timedb --jid ingest-only helpers and entry."""
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -9,9 +10,19 @@ import pytest
 from hpcperfstats.dbload.lib import sync_timedb_jid_scope as jid_scope
 from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
     FindStatsRecord,
+    expand_sorted_records_with_window_neighbors,
     filter_host_scoped_window_records,
 )
 import hpcperfstats.dbload.sync_timedb as st
+
+
+def _rec(host_dir: str, epoch: int, inode: int = 1) -> FindStatsRecord:
+  return FindStatsRecord(
+      path="%s/%d" % (host_dir, epoch),
+      mtime=float(epoch),
+      size=10,
+      inode=inode,
+  )
 
 
 def test_parse_sync_timedb_jid_cli_arg_happy_space_and_equals():
@@ -111,26 +122,82 @@ def test_resolve_job_ingest_scope_missing_and_empty_hosts(monkeypatch):
     jid_scope.resolve_job_ingest_scope("j1")
 
 
-def test_filter_host_scoped_window_records_skips_outside_and_locks():
+def test_expand_neighbors_with_in_window_core():
+  start = datetime(2026, 7, 1, 12, 0, 0, tzinfo=timezone.utc)
+  end = datetime(2026, 7, 1, 14, 0, 0, tzinfo=timezone.utc)
+  host_dir = "/archive/c001.ex"
+  e_before = int(start.timestamp()) - 100
+  e_core0 = int(start.timestamp()) + 100
+  e_core1 = int(end.timestamp()) - 100
+  e_after = int(end.timestamp()) + 100
+  e_far = int(end.timestamp()) + 10_000
+  items = [
+      (_rec(host_dir, e_before, 1), e_before),
+      (_rec(host_dir, e_core0, 2), e_core0),
+      (_rec(host_dir, e_core1, 3), e_core1),
+      (_rec(host_dir, e_after, 4), e_after),
+      (_rec(host_dir, e_far, 5), e_far),
+  ]
+  selected = expand_sorted_records_with_window_neighbors(items, start, end)
+  assert [int(os.path.basename(r.path)) for r in selected] == [
+      e_before, e_core0, e_core1, e_after,
+  ]
+
+
+def test_expand_neighbors_empty_core_nearest_outside():
+  start = datetime(2026, 7, 1, 12, 0, 0, tzinfo=timezone.utc)
+  end = datetime(2026, 7, 1, 14, 0, 0, tzinfo=timezone.utc)
+  host_dir = "/archive/c001.ex"
+  e_before = int(start.timestamp()) - 500
+  e_earlier = int(start.timestamp()) - 50
+  e_after = int(end.timestamp()) + 50
+  e_later = int(end.timestamp()) + 500
+  items = [
+      (_rec(host_dir, e_before, 1), e_before),
+      (_rec(host_dir, e_earlier, 2), e_earlier),
+      (_rec(host_dir, e_after, 3), e_after),
+      (_rec(host_dir, e_later, 4), e_later),
+  ]
+  selected = expand_sorted_records_with_window_neighbors(items, start, end)
+  assert [int(os.path.basename(r.path)) for r in selected] == [
+      e_earlier, e_after,
+  ]
+
+
+def test_expand_neighbors_edges_sole_file_and_no_before_after():
+  start = datetime(2026, 7, 1, 12, 0, 0, tzinfo=timezone.utc)
+  end = datetime(2026, 7, 1, 14, 0, 0, tzinfo=timezone.utc)
+  host_dir = "/archive/c001.ex"
+  e_only = int(start.timestamp()) + 60
+  sole = expand_sorted_records_with_window_neighbors(
+      [(_rec(host_dir, e_only), e_only)], start, end,
+  )
+  assert [r.path for r in sole] == ["%s/%d" % (host_dir, e_only)]
+
+  e_core = int(start.timestamp()) + 60
+  no_before = expand_sorted_records_with_window_neighbors(
+      [(_rec(host_dir, e_core, 1), e_core)], start, end,
+  )
+  assert len(no_before) == 1
+
+  empty = expand_sorted_records_with_window_neighbors([], start, end)
+  assert empty == []
+
+
+def test_filter_host_scoped_window_records_skips_and_adds_neighbors():
   start = datetime(2026, 7, 1, 12, 0, 0, tzinfo=timezone.utc)
   end = datetime(2026, 7, 1, 14, 0, 0, tzinfo=timezone.utc)
   host = "c001.ex"
   host_dir = "/archive/%s" % host
+  e_before = int(start.timestamp()) - 30
   in_epoch = int(start.timestamp()) + 1800
-  out_epoch = int(end.timestamp()) + 3600
+  e_after = int(end.timestamp()) + 30
+  e_far = int(end.timestamp()) + 3600
   records = [
-      FindStatsRecord(
-          path="%s/%d" % (host_dir, in_epoch),
-          mtime=float(in_epoch),
-          size=10,
-          inode=1,
-      ),
-      FindStatsRecord(
-          path="%s/%d" % (host_dir, out_epoch),
-          mtime=float(out_epoch),
-          size=10,
-          inode=2,
-      ),
+      _rec(host_dir, e_before, 10),
+      _rec(host_dir, in_epoch, 1),
+      _rec(host_dir, e_after, 2),
+      _rec(host_dir, e_far, 6),
       FindStatsRecord(
           path="%s/%d.fnctl.lock" % (host_dir, in_epoch),
           mtime=float(in_epoch),
@@ -143,17 +210,42 @@ def test_filter_host_scoped_window_records_skips_outside_and_locks():
           size=1,
           inode=4,
       ),
-      FindStatsRecord(
-          path="/archive/other.ex/%d" % in_epoch,
-          mtime=float(in_epoch),
-          size=10,
-          inode=5,
-      ),
+      _rec("/archive/other.ex", in_epoch, 5),
   ]
   filtered = filter_host_scoped_window_records(
       records, [host], start, end, current_inodes={},
   )
-  assert [r.path for r in filtered] == ["%s/%d" % (host_dir, in_epoch)]
+  assert [os.path.basename(r.path) for r in filtered] == [
+      str(e_before), str(in_epoch), str(e_after),
+  ]
+
+
+def test_filter_host_scoped_neighbors_independent_per_host():
+  start = datetime(2026, 7, 1, 12, 0, 0, tzinfo=timezone.utc)
+  end = datetime(2026, 7, 1, 14, 0, 0, tzinfo=timezone.utc)
+  h1, h2 = "c001.ex", "c002.ex"
+  d1, d2 = "/archive/%s" % h1, "/archive/%s" % h2
+  e_core = int(start.timestamp()) + 100
+  e_before_h1 = int(start.timestamp()) - 10
+  e_before_h2 = int(start.timestamp()) - 20
+  e_after_h1 = int(end.timestamp()) + 10
+  records = [
+      _rec(d1, e_before_h1, 1),
+      _rec(d1, e_core, 2),
+      _rec(d1, e_after_h1, 3),
+      _rec(d2, e_before_h2, 4),
+      _rec(d2, e_core, 5),
+  ]
+  filtered = filter_host_scoped_window_records(
+      records, [h1, h2], start, end, current_inodes={},
+  )
+  by_host = {}
+  for r in filtered:
+    by_host.setdefault(os.path.basename(os.path.dirname(r.path)), []).append(
+        int(os.path.basename(r.path)),
+    )
+  assert by_host[h1] == [e_before_h1, e_core, e_after_h1]
+  assert by_host[h2] == [e_before_h2, e_core]
 
 
 def test_run_sync_timedb_jid_ingest_no_archive_or_janitor(monkeypatch, tmp_path):

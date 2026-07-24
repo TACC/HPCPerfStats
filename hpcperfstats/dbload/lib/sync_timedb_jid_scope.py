@@ -16,7 +16,10 @@ JID_WINDOW_PAD = timedelta(hours=1)
 
 @dataclass(frozen=True)
 class JobIngestScope:
-  """Hosts and padded time window for surgical archive ingest."""
+  """Hosts and padded time window for surgical archive ingest.
+
+  Neighbor ±1 files beyond the pad are applied at host-scoped discover/filter.
+  """
 
   jid: str
   hosts: Tuple[str, ...]

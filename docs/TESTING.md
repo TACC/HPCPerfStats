@@ -492,7 +492,7 @@ cd HPCPerfStats
 ../.venv/bin/python3 -m pytest -q hpcperfstats/tests/test_sync_timedb_jid.py
 ```
 
-Operator CLI (pipeline image, after `job_data` exists): `sync_timedb.py --jid <JID>` — ingest-only (±1h pad around job start/end); no archival/day-close. See **`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`** → *sync_timedb --jid smoke*.
+Operator CLI (pipeline image, after `job_data` exists): `sync_timedb.py --jid <JID>` — ingest-only (±1h pad around job start/end, plus one earlier and one later raw stats file per host); no archival/day-close. See **`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`** → *sync_timedb --jid smoke*.
 
 **sync_timedb ingest archive member cache (host, no compose):** on cloud-sync checkouts prefer `scripts/run_tests.py --no-django` (direct `pytest` on ProtonDrive can hang during collection). Targeted regressions:
 
