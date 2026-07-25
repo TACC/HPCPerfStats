@@ -852,7 +852,25 @@ pgrep -af "sync_timedb.*worker:" | head -10
 
 **Expect:** one `archive-janitor` thread when janitor enabled; optional `startup-*` threads during boot preflights; separate `[worker:ingest-pool]` / `[worker:archive-pool]` / `[worker:populate-pool]` PIDs (spawn), not threads for parse/append/populate hot path.
 
-**Defunct children (T0/T1):** under supervisor PID, `ps` must **not** accumulate `[sync_timedb.py ] <defunct>` zombies. Chunk-boundary reap + populate-pool `reap_and_restart` should clear them; mid-chunk throttled reap (stall poll / idle backstop) must also emit `Zombie child reap` or `Pool worker reap` when workers recycle during long imap. Grep pipeline logs for `Zombie child reap` and `WARN: unreaped zombie children` — failure if zombies span **past** the next `chunk ingest summary` / `chunk_prewarm_elapsed_s` line. If zombies persist with `exit_code=9` (SIGKILL) and no live `worker:populate-pool`, expect prewarm failures.
+**Defunct children (T0/T1):** under the real supervisor PID, `ps` must **not** accumulate `[sync_timedb.py ] <defunct>` zombies. Do not identify the supervisor with `pgrep -n`: forked `multiprocessing.Manager` helpers can inherit the `sync_timedb.py [main]` title, while the resource tracker appears as `python3 -B -c from multiprocessing.resource_tracker …`. The supervisor is the `[main]` process whose direct-child list contains those helpers, pool workers, or zombies; verify PID/PPID for every `[main]` candidate.
+
+Production Podman census (run from the checkout containing the deployment):
+
+```bash
+podman exec --env HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini hpcperfstats_pipeline_1 \
+  su hpcperfstats -c 'sh -lc "
+for p in \$(pgrep -f \"sync_timedb.py \\[main\\]\" || true); do
+  echo ===PID=\$p===
+  ps -o pid,ppid,stat,etime,rss,cmd -p \"\$p\" 2>/dev/null || true
+  echo ---children---
+  ps -o pid,ppid,stat,etime,cmd --ppid \"\$p\" 2>/dev/null || true
+  echo ---zombies---
+  ps -o pid,ppid,stat,etime,cmd --ppid \"\$p\" 2>/dev/null | grep -E \"[[:space:]]Z\" || true
+done
+"'
+```
+
+Chunk-boundary reap + populate-pool `reap_and_restart` should clear recycled children; mid-chunk throttled reap (stall poll / idle backstop) must also emit `Zombie child reap` or `Pool worker reap`. Archive append workers always use `maxtasksperchild=1`: during a long `archive_finalize` wait, supervisor child hygiene runs at the throttled interval (at most 60s), then each successful slot runs an unthrottled `archive_finalize_slot` reap. **Pass:** no direct-child zombie survives beyond one 60s finalize-reap interval while finalize is waiting; after slot completion, any result-delivery/worker-exit race is cleared by the immediate slot reap or the next chunk/poll hygiene surface. **Fail:** a zombie spans the next `chunk ingest summary` / `chunk_prewarm_elapsed_s`, remains more than 60s during archive finalize, or survives the first hygiene surface after `archive_job_done` / slot finalize. Grep pipeline logs for `archive_finalize_wait`, `archive_finalize_slot`, `Zombie child reap`, and `WARN: unreaped zombie children`. If zombies persist with `exit_code=9` (SIGKILL) and no live `worker:populate-pool`, expect prewarm failures.
 
 **False fatal exit 137 on maxtasksperchild recycle (T1):** during catch-up with fast `outcome=db_skip` lines, grep must show **`INFO: pool worker recycle in progress`** (and optional **`WARN: pool worker recycle slow`**) but **must not** show **`Pool worker exit: hard exit code=137`** with **`likely_cause=recycle`** while **`alive_workers`** shows replacements keeping pace (for example **15/16**, **19/22**, **23/24**, or **20/21** with `exitcode=0`). Pre-fix signature: **`grace_poll=1/2`**, **`grace_poll=2/2`**, then ERROR on a **third** dead PID. Post-fix (2026-07-08 hardening): tolerate healthy recycle when materialized workers are below **`sync_ingest_pool_processes`** / process cap during spawn; consecutive different dead PIDs at healthy alive counts are tolerated; fatal recycle-shaped exits log **`likely_cause=recycle_stuck`** (not bare **`recycle`**) plus **`ERROR: pool worker recycle gate rejected:`** with `alive`, `expected_total`, `materialized`, `gap`. **INI:** shipped default is **`sync_ingest_pool_maxtasksperchild=0`** (cooperative retire) — the bare **`maxtasksperchild`** key under `[PIPELINE]` is **not** read. **Archive pool** always recycles after one append task even when ingest uses **`sync_ingest_pool_maxtasksperchild=0`**. Ingest-only supervisor cooperative retire (`failure_reap` / `rss_reap` when **`maxtasksperchild=0`**) uses the same healthy-recycle contract (SIGTERM exitcode **-15** tracked per pool). Set **`maxtasks=1`** only when you want stdlib recycle after every file.
 

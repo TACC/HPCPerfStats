@@ -165,6 +165,38 @@ def test_async_result_get_watch_pool_returns_when_ready():
   ) == [True, False]
 
 
+def test_async_result_get_watch_pool_invokes_stall_poll_before_ready():
+  """Archive-finalize waits can run supervisor child hygiene on each timeout."""
+  pool = SimpleNamespace(_pool=[_AliveWorker()])
+  calls = []
+
+  class _TimeoutThenReadyAsyncResult:
+    def __init__(self):
+      self.calls = 0
+
+    def get(self, timeout=None):
+      del timeout
+      self.calls += 1
+      if self.calls == 1:
+        raise multiprocessing.TimeoutError()
+      return [True]
+
+  def _on_stall_poll(consecutive_timeouts, context, health_ctx):
+    calls.append((consecutive_timeouts, context, health_ctx))
+
+  assert mph.async_result_get_watch_pool(
+      _TimeoutThenReadyAsyncResult(),
+      pool,
+      poll_timeout_s=0.05,
+      context="archive_finalize",
+      on_stall_poll=_on_stall_poll,
+      pool_health_context={"archive_pool": pool},
+  ) == [True]
+  assert calls == [
+      (0, "archive_finalize", {"archive_pool": pool}),
+  ]
+
+
 class _CloseablePool:
   closed = False
   terminated = False

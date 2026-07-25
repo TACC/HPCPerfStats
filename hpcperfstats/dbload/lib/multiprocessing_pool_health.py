@@ -2466,6 +2466,7 @@ def async_result_get_watch_pool(
     *,
     poll_timeout_s=None,
     context="",
+    on_stall_poll=None,
     pool_health_context=None,
 ):
   """Like ``AsyncResult.get()`` but abort when a pool worker dies."""
@@ -2479,6 +2480,7 @@ def async_result_get_watch_pool(
   get_fn = getattr(async_result, "get", None)
   if not callable(get_fn):
     return None
+  consecutive_timeouts = 0
   while True:
     abort_if_pool_workers_dead(
         pool,
@@ -2492,6 +2494,16 @@ def async_result_get_watch_pool(
         # Test doubles and some pool adapters omit timeout= on get().
         return get_fn()
     except multiprocessing.TimeoutError:
+      if on_stall_poll is not None:
+        try:
+          on_stall_poll(
+              consecutive_timeouts,
+              context,
+              dict(pool_health_context or {}),
+          )
+        except Exception:
+          pass
+      consecutive_timeouts += 1
       continue
 
 

@@ -5797,16 +5797,36 @@ def run_sync_timedb_supervisor_loop(
             return False
       except Exception:
         pass
+
+    def _archive_finalize_stall_poll_reap(
+        _consecutive_timeouts,
+        _stall_context,
+        _pool_health_context,
+    ):
+      _maybe_reap_supervisor_pool_children_throttled(
+          ingest_pool,
+          archive_pool,
+          populate_pool_controller,
+          context="archive_finalize_wait",
+      )
+
     finalize_t0 = time.time()
     results = async_result_get_watch_pool(
         slot.async_result,
         archive_pool,
         poll_timeout_s=FINALIZE_POLL_TIMEOUT_SECONDS,
         context="archive_finalize",
+        on_stall_poll=_archive_finalize_stall_poll_reap,
     )
     perf_stats["archive_finalize_wait_s"] += max(0.0, time.time() - finalize_t0)
     perf_stats["archive_finalize_calls"] += 1
     _apply_archive_finalize_results(slot.deferred_paths, results)
+    _reap_supervisor_pool_children(
+        ingest_pool,
+        archive_pool,
+        populate_pool_controller,
+        context="archive_finalize_slot",
+    )
     return True
 
   def _finalize_archive_slots_if_needed(force=False, allow_defer=False, context=""):
@@ -5819,12 +5839,6 @@ def run_sync_timedb_supervisor_loop(
           lambda slot: _finalize_archive_slot(
               slot, force=True, context=context or "prune_ready"))
       if finalized:
-        _maybe_reap_supervisor_pool_children_throttled(
-            ingest_pool,
-            archive_pool,
-            populate_pool_controller,
-            context="archive_finalize_prune",
-        )
         _dispatch_due_archive_retries(allow_idle_stale=True)
       return bool(archive_dispatch.slots)
 
@@ -5857,13 +5871,6 @@ def run_sync_timedb_supervisor_loop(
         _dispatch_due_archive_retries(allow_idle_stale=True)
       else:
         archive_dispatch.slots.append(slot)
-    if finalized_any:
-      _maybe_reap_supervisor_pool_children_throttled(
-          ingest_pool,
-          archive_pool,
-          populate_pool_controller,
-          context="archive_finalize",
-      )
     return finalized_any
 
   def _flush_checkpoint_if_needed(force=False):

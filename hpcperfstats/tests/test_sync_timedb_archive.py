@@ -8034,15 +8034,34 @@ def test_lookup_members_source_sealed_stream_when_tar_missing(monkeypatch, tmp_p
   assert source == "sealed_stream"
 
 
-def test_finalize_archive_slots_source_calls_throttled_reap():
-  """Archive finalize/prune must invoke throttled supervisor child reap."""
+def test_finalize_archive_slot_watch_pool_passes_stall_poll_reap():
+  """Long archive-finalize waits must periodically reap supervisor children."""
   import inspect
   import hpcperfstats.dbload.sync_timedb as st
 
   source = inspect.getsource(st.run_sync_timedb_supervisor_loop)
-  assert 'context="archive_finalize_prune"' in source
-  assert source.count("_maybe_reap_supervisor_pool_children_throttled") >= 2
-  # Force-finalize branch uses context=archive_finalize (distinct from prune).
+  slot_source = source.split("def _finalize_archive_slot", 1)[1]
+  slot_source = slot_source.split("\n  def ", 1)[0]
+  assert "def _archive_finalize_stall_poll_reap" in slot_source
+  assert "on_stall_poll=_archive_finalize_stall_poll_reap" in slot_source
+  assert "_maybe_reap_supervisor_pool_children_throttled(" in slot_source
+  assert 'context="archive_finalize_wait"' in slot_source
+
+
+def test_apply_archive_finalize_triggers_unthrottled_supervisor_reap():
+  """Each completed maxtasksperchild=1 archive slot gets an immediate reap."""
+  import inspect
+  import hpcperfstats.dbload.sync_timedb as st
+
+  source = inspect.getsource(st.run_sync_timedb_supervisor_loop)
+  slot_source = source.split("def _finalize_archive_slot", 1)[1]
+  slot_source = slot_source.split("\n  def ", 1)[0]
+  apply_index = slot_source.index(
+      "_apply_archive_finalize_results(slot.deferred_paths, results)"
+  )
+  reap_index = slot_source.index("_reap_supervisor_pool_children(", apply_index)
+  assert reap_index > apply_index
+  assert 'context="archive_finalize_slot"' in slot_source
   assert 'context="archive_finalize"' in source
 
 
