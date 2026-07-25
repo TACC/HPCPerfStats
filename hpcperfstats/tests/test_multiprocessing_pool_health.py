@@ -1969,6 +1969,122 @@ def test_terminate_pool_bounded_kill_workers_first_before_terminate(monkeypatch)
   assert any("pool_recover terminate outcome=all_done" in line for line in logs)
 
 
+def test_terminate_pool_bounded_non_abandon_reaps_zombie_children(monkeypatch):
+  """RC-JT: join-timeout / non-abandon terminate must /proc-reap orphans."""
+  zombie_reap_calls = []
+  monkeypatch.setattr(mph, "log_print", lambda msg, flush=False: None)
+  monkeypatch.setattr(
+      mph,
+      "_wait_pool_processes_bounded",
+      lambda pool, timeout_s: (True, []),
+  )
+  monkeypatch.setattr(
+      mph,
+      "_reap_pool_worker_pids",
+      lambda pool, **kwargs: [],
+  )
+  monkeypatch.setattr(
+      mph,
+      "reap_zombie_children_of_self",
+      lambda **kwargs: zombie_reap_calls.append(dict(kwargs)),
+  )
+
+  class _TermPool:
+    _pool = [_AliveWorker()]
+
+    def terminate(self):
+      return None
+
+  ok = mph.terminate_pool_bounded(
+      _TermPool(),
+      timeout_s=0.1,
+      context="pool",
+      abandon_after_kill=False,
+  )
+  assert ok is True
+  assert zombie_reap_calls == [{"context": "pool"}]
+
+
+def test_terminate_pool_bounded_non_abandon_zombie_reap_failure_isolated(
+    monkeypatch,
+):
+  """RC-JT: zombie reap raise must not escape terminate_pool_bounded."""
+  monkeypatch.setattr(mph, "log_print", lambda msg, flush=False: None)
+  monkeypatch.setattr(
+      mph,
+      "_wait_pool_processes_bounded",
+      lambda pool, timeout_s: (True, []),
+  )
+  monkeypatch.setattr(
+      mph,
+      "_reap_pool_worker_pids",
+      lambda pool, **kwargs: [],
+  )
+
+  def _boom(**kwargs):
+    del kwargs
+    raise RuntimeError("reap boom")
+
+  monkeypatch.setattr(mph, "reap_zombie_children_of_self", _boom)
+
+  class _TermPool:
+    _pool = [_AliveWorker()]
+
+    def terminate(self):
+      return None
+
+  ok = mph.terminate_pool_bounded(
+      _TermPool(),
+      timeout_s=0.1,
+      context="pool",
+      abandon_after_kill=False,
+  )
+  assert ok is True
+
+
+def test_close_pool_bounded_join_timeout_reaches_zombie_reap(monkeypatch):
+  """RC-JT: close join-timeout path must call non-abandon terminate (+ reap)."""
+  terminate_calls = []
+
+  class _LingeringWorker:
+    pid = 7777
+
+    def is_alive(self):
+      return True
+
+  class _LingeringPool:
+    _pool = [_LingeringWorker()]
+
+    def close(self):
+      return None
+
+    def terminate(self):
+      return None
+
+  monkeypatch.setattr(
+      mph,
+      "_wait_pool_processes_bounded",
+      lambda pool, timeout_s: (False, [7777]),
+  )
+
+  def _fake_terminate(pool, timeout_s=30.0, **kwargs):
+    terminate_calls.append(
+        {
+            "timeout_s": timeout_s,
+            "abandon_after_kill": kwargs.get("abandon_after_kill", False),
+            "context": kwargs.get("context", ""),
+        }
+    )
+    return True
+
+  monkeypatch.setattr(mph, "terminate_pool_bounded", _fake_terminate)
+  monkeypatch.setattr(mph, "log_print", lambda msg, flush=False: None)
+
+  assert mph.close_pool_bounded(_LingeringPool(), timeout_s=0.05) is True
+  assert len(terminate_calls) == 1
+  assert terminate_calls[0]["abandon_after_kill"] is False
+
+
 def test_terminate_pool_bounded_abandon_skips_blocking_terminate(monkeypatch):
   """RC-C/W: blocking Pool.terminate() must not hang abandon-pool recover."""
   logs = []

@@ -1520,10 +1520,22 @@ def wait_for_complete_members(
         if last_hlen <= 0:
           incomplete_recover_n += 1
           if incomplete_recover_n >= 3:
-            raise ArchiveMembersPopulateStalledError(
-                "Archive members populate incomplete after lock release "
-                "(empty recover bound): %s" % keys.hash_key,
-            )
+            # RC-ER: identity drift during live tar append leaves empty HASH
+            # fingerprints; do not sys.exit(1) the supervisor mid-append.
+            day_token = str(getattr(keys, "day_token", "") or "")
+            if day_token and archive_append_inflight_for_day(day_token):
+              incomplete_recover_n = 0
+              log_print(
+                  "INFO: populate empty recover deferred day=%s "
+                  "reason=archive_append_inflight"
+                  % day_token,
+                  flush=True,
+              )
+            else:
+              raise ArchiveMembersPopulateStalledError(
+                  "Archive members populate incomplete after lock release "
+                  "(empty recover bound): %s" % keys.hash_key,
+              )
         warm_members, keys = _maybe_reresolve_warm_members(
             client,
             keys,

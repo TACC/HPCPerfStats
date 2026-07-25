@@ -2631,3 +2631,81 @@ def test_dead_owner_orphan_then_waiters_single_flight_recover(
   assert not errors
   assert len(enqueued) == 1
   assert sum(1 for m in clear_logs if "clearing stale incomplete" in m) <= 1
+
+
+def test_empty_recover_bound_fatal_when_append_idle(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  """RC-ER fail-closed: three empty recovers with append idle still raise."""
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser"
+      ".get_sync_archive_members_redis_populate_max_seconds",
+      lambda: 30,
+  )
+  mod = "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+  monkeypatch.setattr(
+      "%s._check_populate_wait_limits" % mod,
+      lambda *a, **k: True,
+  )
+  monkeypatch.setattr("%s._wait_poll_seconds" % mod, lambda: 0.001)
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  _redis_test_env.set(keys.complete_key, "0")
+  with pytest.raises(
+      ArchiveMembersPopulateStalledError,
+      match="empty recover bound",
+  ):
+    wait_for_complete_members(keys)
+
+
+def test_empty_recover_deferred_while_archive_append_inflight(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  """RC-ER: empty recover during append must not fatal the supervisor."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      clear_archive_append_inflight,
+      set_archive_append_inflight,
+  )
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser"
+      ".get_sync_archive_members_redis_populate_max_seconds",
+      lambda: 30,
+  )
+  mod = "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+  monkeypatch.setattr(
+      "%s._check_populate_wait_limits" % mod,
+      lambda *a, **k: True,
+  )
+  monkeypatch.setattr("%s._wait_poll_seconds" % mod, lambda: 0.001)
+  logs = []
+  monkeypatch.setattr(
+      "%s.log_print" % mod,
+      lambda msg, flush=False: logs.append(msg),
+  )
+  day = "2026-07-25"
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path, day=day))
+  _redis_test_env.set(keys.complete_key, "0")
+  set_archive_append_inflight(keys.day_token, reason="archive_job")
+  result = {"members": None, "exc": None}
+
+  def _waiter():
+    try:
+      result["members"] = wait_for_complete_members(keys)
+    except Exception as exc:  # noqa: BLE001
+      result["exc"] = exc
+
+  t_wait = threading.Thread(target=_waiter)
+  t_wait.start()
+  # Three empty recovers reset under append; then mark warm so waiter exits.
+  deadline = time.monotonic() + 5.0
+  while time.monotonic() < deadline:
+    if any("empty recover deferred" in line for line in logs):
+      break
+    time.sleep(0.01)
+  assert any("empty recover deferred" in line for line in logs), logs[:20]
+  _redis_test_env.hset(keys.hash_key, mapping={"host/a": "1"})
+  _redis_test_env.set(keys.complete_key, "1")
+  t_wait.join(timeout=3)
+  clear_archive_append_inflight(keys.day_token)
+  assert result["exc"] is None
+  assert result["members"] == {"host/a": 1}

@@ -5016,10 +5016,21 @@ def test_ingest_sealed_path_uses_populate_not_parallel_point(
   sealed = str(day_gz)
   populate_calls = {"n": 0}
   point_calls = {"n": 0}
+  fake = FakeRedis()
 
-  def _track_populate(_sealed_path, _cache_key):
+  def _track_populate(_sealed_path, _cache_key, tar_path=None):
+    del tar_path
     populate_calls["n"] += 1
-    return {"host/raw": 4}
+    members = {"host/raw": 4}
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+        build_archive_members_redis_keys,
+        store_complete_members_in_redis,
+    )
+    store_complete_members_in_redis(
+        build_archive_members_redis_keys(_cache_key),
+        members,
+    )
+    return members
 
   def _forbidden_point_lookup(*_a, **_k):
     point_calls["n"] += 1
@@ -5034,7 +5045,7 @@ def test_ingest_sealed_path_uses_populate_not_parallel_point(
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
       ".get_archive_members_redis_client",
-      lambda required=True: FakeRedis(),
+      lambda required=True: fake,
   )
   monkeypatch.setattr(
       helpers, "_populate_redis_members_from_sealed_scan", _track_populate,

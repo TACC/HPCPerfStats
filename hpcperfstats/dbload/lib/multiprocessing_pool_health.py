@@ -1421,6 +1421,13 @@ def terminate_pool_bounded(
         flush=True,
     )
   _reap_pool_worker_pids(active_pool, timeout_s=min(5.0, float(timeout_s)), context=context)
+  # RC-JT: orphans outside pool._pool (recycle races, census kills, abandoned
+  # cohorts) stay STAT=Z under [main] if we only waitpid tracked workers.
+  # Mirror the abandon branch — PID-specific /proc reap, never waitpid(-1).
+  try:
+    reap_zombie_children_of_self(context=context or "pool")
+  except Exception:
+    pass
   return all_done
 
 
