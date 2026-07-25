@@ -253,7 +253,15 @@ def dead_pool_worker_pids(pool):
   dead = []
   for proc in iter_pool_worker_processes(pool):
     is_alive_fn = getattr(proc, "is_alive", None)
-    if callable(is_alive_fn) and not is_alive_fn():
+    if not callable(is_alive_fn):
+      continue
+    try:
+      alive = bool(is_alive_fn())
+    except (ValueError, AssertionError, OSError):
+      alive = False
+    except Exception:
+      continue
+    if not alive:
       dead.append(getattr(proc, "pid", None))
   return [pid for pid in dead if pid is not None]
 
@@ -261,7 +269,16 @@ def dead_pool_worker_pids(pool):
 def _iter_dead_pool_worker_processes(pool):
   for proc in iter_pool_worker_processes(pool):
     is_alive_fn = getattr(proc, "is_alive", None)
-    if callable(is_alive_fn) and not is_alive_fn():
+    if not callable(is_alive_fn):
+      continue
+    try:
+      alive = bool(is_alive_fn())
+    except (ValueError, AssertionError, OSError):
+      # Closed or foreign Process objects raise; treat as dead for reap.
+      alive = False
+    except Exception:
+      continue
+    if not alive:
       yield proc
 
 
@@ -270,8 +287,15 @@ def alive_pool_worker_count(pool):
   alive = 0
   for proc in iter_pool_worker_processes(pool):
     is_alive_fn = getattr(proc, "is_alive", None)
-    if callable(is_alive_fn) and is_alive_fn():
-      alive += 1
+    if not callable(is_alive_fn):
+      continue
+    try:
+      if is_alive_fn():
+        alive += 1
+    except (ValueError, AssertionError, OSError):
+      continue
+    except Exception:
+      continue
   return alive
 
 
@@ -808,6 +832,54 @@ def _wait_pool_processes_bounded(active_pool, timeout_s):
   return len(alive) == 0, alive
 
 
+_WAITPID_OSERROR_LOGGED_PIDS = set()
+_WAITPID_OSERROR_LOGGED_MAX = 64
+_STALL_POLL_FAIL_LOG_INTERVAL_S = 30.0
+_last_stall_poll_fail_log_mono = 0.0
+_ZOMBIE_FIRST_SEEN_MONO = {}
+_ZOMBIE_AGE_ERROR_THRESHOLD_S = 60.0
+
+
+def reset_zombie_reap_observability_for_tests():
+  """Clear waitpid / stall-poll / zombie-age tracking (unit tests only)."""
+  global _last_stall_poll_fail_log_mono
+  _WAITPID_OSERROR_LOGGED_PIDS.clear()
+  _ZOMBIE_FIRST_SEEN_MONO.clear()
+  _last_stall_poll_fail_log_mono = 0.0
+
+
+def _log_waitpid_oserror(pid, exc):
+  """Log waitpid OSError once per pid so systematic failures are visible."""
+  try:
+    pid_int = int(pid)
+  except (TypeError, ValueError):
+    return
+  if pid_int in _WAITPID_OSERROR_LOGGED_PIDS:
+    return
+  if len(_WAITPID_OSERROR_LOGGED_PIDS) >= _WAITPID_OSERROR_LOGGED_MAX:
+    _WAITPID_OSERROR_LOGGED_PIDS.clear()
+  _WAITPID_OSERROR_LOGGED_PIDS.add(pid_int)
+  log_print(
+      "WARN: waitpid failed pid=%s errno=%s err=%s"
+      % (pid_int, getattr(exc, "errno", None), type(exc).__name__),
+      flush=True,
+  )
+
+
+def _log_on_stall_poll_failure(exc, *, context=""):
+  """Throttled WARN when an on_stall_poll callback raises (never silent)."""
+  global _last_stall_poll_fail_log_mono
+  now_mono = time.monotonic()
+  if now_mono - _last_stall_poll_fail_log_mono < _STALL_POLL_FAIL_LOG_INTERVAL_S:
+    return
+  _last_stall_poll_fail_log_mono = now_mono
+  log_print(
+      "WARN: on_stall_poll failed context=%s err=%s: %s"
+      % (context or "unknown", type(exc).__name__, exc),
+      flush=True,
+  )
+
+
 def _waitpid_pid_nonblocking(pid, *, timeout_s=0.5):
   """Return True when ``pid`` was reaped (or already gone)."""
   try:
@@ -816,7 +888,8 @@ def _waitpid_pid_nonblocking(pid, *, timeout_s=0.5):
       return True
   except ChildProcessError:
     return True
-  except OSError:
+  except OSError as exc:
+    _log_waitpid_oserror(pid, exc)
     return False
   deadline = time.monotonic() + max(0.0, float(timeout_s))
   while time.monotonic() < deadline:
@@ -826,10 +899,24 @@ def _waitpid_pid_nonblocking(pid, *, timeout_s=0.5):
         return True
     except ChildProcessError:
       return True
-    except OSError:
+    except OSError as exc:
+      _log_waitpid_oserror(pid, exc)
       return False
     time.sleep(0.05)
   return False
+
+
+def _safe_proc_is_alive(proc, *, default=True):
+  """Return process liveness; closed/foreign Process objects do not raise."""
+  is_alive_fn = getattr(proc, "is_alive", None)
+  if not callable(is_alive_fn):
+    return bool(default)
+  try:
+    return bool(is_alive_fn())
+  except (ValueError, AssertionError, OSError):
+    return False
+  except Exception:
+    return bool(default)
 
 
 def _reap_pool_worker_pids(pool, *, timeout_s=5.0, context=""):
@@ -842,12 +929,13 @@ def _reap_pool_worker_pids(pool, *, timeout_s=5.0, context=""):
       proc.join(timeout=0)
     except Exception:
       pass
-  pids = [
-      getattr(proc, "pid", None)
-      for proc in iter_pool_worker_processes(pool)
-      if getattr(proc, "pid", None) is not None
-      and not getattr(proc, "is_alive", lambda: True)()
-  ]
+  pids = []
+  for proc in iter_pool_worker_processes(pool):
+    pid = getattr(proc, "pid", None)
+    if pid is None:
+      continue
+    if not _safe_proc_is_alive(proc, default=True):
+      pids.append(pid)
   if not pids:
     return []
   deadline = time.monotonic() + max(0.1, float(timeout_s))
@@ -901,8 +989,7 @@ def retire_pool_worker_pid(pool, pid, *, context=""):
   retired = _SUPERVISOR_RETIRE_PIDS_BY_POOL.setdefault(pool_key, set())
   pid_int = int(getattr(proc, "pid", pid))
   retired.add(pid_int)
-  is_alive_fn = getattr(proc, "is_alive", None)
-  if callable(is_alive_fn) and is_alive_fn():
+  if _safe_proc_is_alive(proc, default=False):
     terminate_fn = getattr(proc, "terminate", None)
     if callable(terminate_fn):
       terminate_fn()
@@ -914,17 +1001,42 @@ def reset_supervisor_retire_tracking_for_tests():
   _SUPERVISOR_RETIRE_PIDS_BY_POOL.clear()
 
 
-def _process_stat_is_zombie(pid):
-  """Return True when ``/proc/<pid>/stat`` reports state ``Z``."""
+def _read_proc_stat_fields(pid):
+  """Return ``(state, ppid)`` from ``/proc/<pid>/stat``, or ``None``.
+
+  Reads bytes and decodes with replace so a non-ASCII ``comm`` cannot abort
+  a full ``/proc`` census with ``UnicodeDecodeError``.
+  """
   try:
-    with open("/proc/%d/stat" % int(pid), "r", encoding="ascii") as proc_stat:
-      stat_line = proc_stat.read()
+    with open("/proc/%d/stat" % int(pid), "rb") as proc_stat:
+      raw = proc_stat.read()
   except OSError:
-    return False
+    return None
+  try:
+    stat_line = raw.decode("utf-8", errors="replace")
+  except (TypeError, ValueError, UnicodeError):
+    return None
   rparen = stat_line.rfind(")")
   if rparen < 0 or rparen + 2 >= len(stat_line):
+    return None
+  # fields after ") ": state ppid ...
+  rest = stat_line[rparen + 2 :].split()
+  if len(rest) < 2:
+    return None
+  state = rest[0]
+  try:
+    ppid = int(rest[1])
+  except (TypeError, ValueError):
+    return None
+  return state, ppid
+
+
+def _process_stat_is_zombie(pid):
+  """Return True when ``/proc/<pid>/stat`` reports state ``Z``."""
+  fields = _read_proc_stat_fields(pid)
+  if fields is None:
     return False
-  return stat_line[rparen + 2] == "Z"
+  return fields[0] == "Z"
 
 
 def _iter_zombie_child_pids():
@@ -940,25 +1052,11 @@ def _iter_zombie_child_pids():
     pid = int(name)
     if pid == self_pid:
       continue
-    try:
-      with open("/proc/%d/stat" % pid, "r", encoding="ascii") as proc_stat:
-        stat_line = proc_stat.read()
-    except OSError:
+    fields = _read_proc_stat_fields(pid)
+    if fields is None:
       continue
-    rparen = stat_line.rfind(")")
-    if rparen < 0 or rparen + 2 >= len(stat_line):
-      continue
-    # fields after ") ": state ppid ...
-    rest = stat_line[rparen + 2 :].split()
-    if len(rest) < 2:
-      continue
-    if rest[0] != "Z":
-      continue
-    try:
-      ppid = int(rest[1])
-    except (TypeError, ValueError):
-      continue
-    if ppid == self_pid:
+    state, ppid = fields
+    if state == "Z" and ppid == self_pid:
       yield pid
 
 
@@ -971,6 +1069,7 @@ def reap_zombie_children_of_self(*, context=""):
   for pid in _iter_zombie_child_pids():
     if _waitpid_pid_nonblocking(pid, timeout_s=0.5):
       reaped.append(int(pid))
+      _ZOMBIE_FIRST_SEEN_MONO.pop(int(pid), None)
   if reaped:
     log_print(
         "Zombie child reap context=%s pids=%s"
@@ -1008,22 +1107,11 @@ def _iter_direct_child_pids(*, self_pid=None):
     pid = int(name)
     if pid == parent:
       continue
-    try:
-      with open("/proc/%d/stat" % pid, "r", encoding="ascii") as proc_stat:
-        stat_line = proc_stat.read()
-    except OSError:
+    fields = _read_proc_stat_fields(pid)
+    if fields is None:
       continue
-    rparen = stat_line.rfind(")")
-    if rparen < 0 or rparen + 2 >= len(stat_line):
-      continue
-    rest = stat_line[rparen + 2 :].split()
-    if len(rest) < 2:
-      continue
-    if rest[0] == "Z":
-      continue
-    try:
-      ppid = int(rest[1])
-    except (TypeError, ValueError):
+    state, ppid = fields
+    if state == "Z":
       continue
     if ppid == parent:
       yield pid
@@ -1109,14 +1197,41 @@ def reclaim_excess_ingest_pool_children(pool=None, *, expected=None, context="")
 
 
 def warn_unreaped_zombie_children(*, context=""):
-  """Log WARN when direct zombie children remain after a reap attempt."""
+  """Log WARN/ERROR when direct zombie children remain after a reap attempt.
+
+  Tracks first-seen monotonic age so a 200ms recycle transient and a multi-hour
+  leak are distinguishable; escalates to ERROR past the operator 60s bar.
+  """
   zombies = list(_iter_zombie_child_pids())
+  now_mono = time.monotonic()
+  alive_set = {int(pid) for pid in zombies}
+  for tracked in list(_ZOMBIE_FIRST_SEEN_MONO):
+    if tracked not in alive_set:
+      _ZOMBIE_FIRST_SEEN_MONO.pop(tracked, None)
   if not zombies:
     return
+  ages = []
+  for pid in zombies:
+    pid_int = int(pid)
+    first = _ZOMBIE_FIRST_SEEN_MONO.setdefault(pid_int, now_mono)
+    ages.append(now_mono - first)
+  max_age = max(ages) if ages else 0.0
   sample = zombies[:8]
+  sample_ages = [
+      "%.1f" % (now_mono - _ZOMBIE_FIRST_SEEN_MONO[int(pid)]) for pid in sample
+  ]
+  level = "ERROR" if max_age >= _ZOMBIE_AGE_ERROR_THRESHOLD_S else "WARN"
   log_print(
-      "WARN: unreaped zombie children context=%s count=%d sample_pids=%s"
-      % (context or "supervisor", len(zombies), sample),
+      "%s: unreaped zombie children context=%s count=%d "
+      "max_age_s=%.1f sample_pids=%s sample_age_s=%s"
+      % (
+          level,
+          context or "supervisor",
+          len(zombies),
+          max_age,
+          sample,
+          sample_ages,
+      ),
       flush=True,
   )
 
@@ -1132,11 +1247,11 @@ def _pid_is_alive(pid):
 def _alive_pool_worker_pids(pool):
   pids = []
   for proc in iter_pool_worker_processes(pool):
-    is_alive_fn = getattr(proc, "is_alive", None)
-    if callable(is_alive_fn) and is_alive_fn():
-      pid = getattr(proc, "pid", None)
-      if pid is not None:
-        pids.append(int(pid))
+    if not _safe_proc_is_alive(proc, default=False):
+      continue
+    pid = getattr(proc, "pid", None)
+    if pid is not None:
+      pids.append(int(pid))
   return pids
 
 
@@ -1269,6 +1384,9 @@ def terminate_pool_bounded(
       reap_zombie_children_of_self(context=context or "abandon_pool")
     except Exception:
       pass
+    # RC-8: drop retire tracking for abandoned pool identity so a recycled
+    # ``id(pool)`` cannot inherit a dead cohort's SIGTERM set.
+    _SUPERVISOR_RETIRE_PIDS_BY_POOL.pop(id(active_pool), None)
     return True
   try:
     active_pool.terminate()
@@ -1553,7 +1671,8 @@ def imap_unordered_watch_pool(
             ctx["in_flight_sample"] = sample_fn()
         try:
           deferred = bool(on_stall_poll(consecutive_timeouts, context, ctx))
-        except Exception:
+        except Exception as exc:
+          _log_on_stall_poll_failure(exc, context=context)
           deferred = False
       if deferred:
         consecutive_timeouts = 0
@@ -1915,10 +2034,11 @@ def imap_sliding_window_watch_pool(
         sample_fn = ctx.get("in_flight_sample_fn")
         if callable(sample_fn):
           ctx["in_flight_sample"] = sample_fn()
-      try:
-        deferred = bool(on_stall_poll(consecutive_timeouts, context, ctx))
-      except Exception:
-        deferred = False
+    try:
+      deferred = bool(on_stall_poll(consecutive_timeouts, context, ctx))
+    except Exception as exc:
+      _log_on_stall_poll_failure(exc, context=context)
+      deferred = False
     if deferred:
       consecutive_timeouts = 0
     else:
@@ -2501,8 +2621,8 @@ def async_result_get_watch_pool(
               context,
               dict(pool_health_context or {}),
           )
-        except Exception:
-          pass
+        except Exception as exc:
+          _log_on_stall_poll_failure(exc, context=context)
       consecutive_timeouts += 1
       continue
 

@@ -1,6 +1,7 @@
 """Regression tests for multiprocessing pool worker-death detection."""
 
 import multiprocessing
+import os
 import time
 from types import SimpleNamespace
 
@@ -739,10 +740,234 @@ def test_abort_recycle_grace_reaps_zombie_children(monkeypatch):
 
 def test_warn_unreaped_zombie_children_logs_when_zombies_remain(monkeypatch):
   logs = []
+  mph.reset_zombie_reap_observability_for_tests()
   monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
   monkeypatch.setattr(mph, "_iter_zombie_child_pids", lambda: iter([111, 222, 333]))
   mph.warn_unreaped_zombie_children(context="unit_warn")
   assert any("WARN: unreaped zombie children context=unit_warn count=3" in line for line in logs)
+  assert any("max_age_s=" in line for line in logs)
+  assert any("sample_age_s=" in line for line in logs)
+
+
+def test_warn_unreaped_zombie_children_escalates_to_error_past_threshold(monkeypatch):
+  logs = []
+  mph.reset_zombie_reap_observability_for_tests()
+  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  monkeypatch.setattr(mph, "_iter_zombie_child_pids", lambda: iter([555]))
+  mono = {"t": 1000.0}
+  monkeypatch.setattr(mph.time, "monotonic", lambda: mono["t"])
+  mph.warn_unreaped_zombie_children(context="age_warn")
+  assert any(line.startswith("WARN: unreaped zombie children") for line in logs)
+  logs.clear()
+  mono["t"] = 1061.0
+  mph.warn_unreaped_zombie_children(context="age_error")
+  assert any(
+      line.startswith("ERROR: unreaped zombie children context=age_error")
+      and "max_age_s=61.0" in line
+      for line in logs
+  )
+
+
+def test_reap_pool_worker_pids_survives_is_alive_value_error(monkeypatch):
+  """Closed Process.is_alive() must not abort pool reap (RC-1)."""
+  logs = []
+  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+
+  class _ClosedWorker:
+    pid = 7777
+
+    def is_alive(self):
+      raise ValueError("process object is closed")
+
+    def join(self, timeout=None):
+      del timeout
+
+  waitpids = []
+
+  def _waitpid(pid, flags):
+    waitpids.append(pid)
+    return (pid, 0)
+
+  monkeypatch.setattr(mph.os, "waitpid", _waitpid)
+  pool = SimpleNamespace(_pool=[_ClosedWorker()])
+  reaped = mph.reap_pool_worker_pids(pool, context="closed_proc")
+  assert reaped == [7777]
+  assert waitpids == [7777]
+
+
+def test_reap_pool_worker_pids_survives_is_alive_assertion_error(monkeypatch):
+  """Foreign Process.is_alive() AssertionError must not abort pool reap."""
+
+  class _ForeignWorker:
+    pid = 8888
+
+    def is_alive(self):
+      raise AssertionError("can only test a child process")
+
+    def join(self, timeout=None):
+      del timeout
+
+  waitpids = []
+
+  def _waitpid(pid, flags):
+    waitpids.append(pid)
+    return (pid, 0)
+
+  monkeypatch.setattr(mph.os, "waitpid", _waitpid)
+  pool = SimpleNamespace(_pool=[_ForeignWorker()])
+  assert mph.reap_pool_worker_pids(pool, context="foreign_proc") == [8888]
+
+
+def test_waitpid_oserror_logs_errno_once_per_pid(monkeypatch):
+  logs = []
+  mph.reset_zombie_reap_observability_for_tests()
+  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+
+  def _waitpid(pid, flags):
+    del flags
+    err = OSError("boom")
+    err.errno = 10
+    raise err
+
+  monkeypatch.setattr(mph.os, "waitpid", _waitpid)
+  assert mph._waitpid_pid_nonblocking(424242, timeout_s=0) is False
+  assert mph._waitpid_pid_nonblocking(424242, timeout_s=0) is False
+  matches = [
+      line for line in logs
+      if "WARN: waitpid failed pid=424242 errno=10" in line
+  ]
+  assert len(matches) == 1
+
+
+def test_async_result_get_watch_pool_logs_stall_poll_failure(monkeypatch):
+  logs = []
+  mph.reset_zombie_reap_observability_for_tests()
+  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  pool = SimpleNamespace(_pool=[_AliveWorker()])
+
+  class _TimeoutThenReadyAsyncResult:
+    def __init__(self):
+      self.calls = 0
+
+    def get(self, timeout=None):
+      del timeout
+      self.calls += 1
+      if self.calls == 1:
+        raise multiprocessing.TimeoutError()
+      return [True]
+
+  def _boom(*_a, **_k):
+    raise RuntimeError("stall poll boom")
+
+  assert mph.async_result_get_watch_pool(
+      _TimeoutThenReadyAsyncResult(),
+      pool,
+      poll_timeout_s=0.05,
+      context="archive_finalize",
+      on_stall_poll=_boom,
+  ) == [True]
+  assert any(
+      "WARN: on_stall_poll failed context=archive_finalize err=RuntimeError"
+      in line
+      for line in logs
+  )
+
+
+def test_imap_unordered_watch_pool_logs_stall_poll_failure(monkeypatch):
+  logs = []
+  mph.reset_zombie_reap_observability_for_tests()
+  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_pool_stall_abort_after_timeouts",
+      lambda: 50,
+  )
+  pool = _DeferStallPool(release_after=2)
+
+  def _boom(*_a, **_k):
+    raise RuntimeError("imap stall boom")
+
+  iterator = mph.imap_unordered_watch_pool(
+      pool,
+      lambda x: x,
+      [7],
+      poll_timeout_s=0.01,
+      on_stall_poll=_boom,
+  )
+  assert next(iterator) == 7
+  assert any(
+      "WARN: on_stall_poll failed context=" in line
+      and "err=RuntimeError" in line
+      for line in logs
+  )
+
+
+def test_read_proc_stat_fields_survives_non_ascii_comm(monkeypatch, tmp_path):
+  """Non-ASCII comm must not abort a /proc census (RC-4)."""
+  proc_root = tmp_path / "proc"
+  bad_pid = proc_root / "90001"
+  good_pid = proc_root / "90002"
+  bad_pid.mkdir(parents=True)
+  good_pid.mkdir(parents=True)
+  # Craft a stat line with non-ascii bytes in comm; bytes reader must survive.
+  (bad_pid / "stat").write_bytes(
+      b"90001 (bad\xffcomm) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
+  )
+  self_pid = os.getpid()
+  (good_pid / "stat").write_bytes(
+      ("90002 (zombie) Z %d 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
+       % self_pid).encode("ascii")
+  )
+
+  real_listdir = mph.os.listdir
+  real_open = open
+
+  def _listdir(path):
+    if path == "/proc":
+      return ["90001", "90002", str(self_pid)]
+    return real_listdir(path)
+
+  def _open(path, *args, **kwargs):
+    path_s = str(path)
+    if path_s.startswith("/proc/") and path_s.endswith("/stat"):
+      pid = path_s.split("/")[2]
+      mapped = proc_root / pid / "stat"
+      return real_open(mapped, *args, **kwargs)
+    return real_open(path, *args, **kwargs)
+
+  monkeypatch.setattr(mph.os, "listdir", _listdir)
+  monkeypatch.setattr("builtins.open", _open)
+  # utf-8 replace keeps state/ppid parseable after the closing paren.
+  assert mph._read_proc_stat_fields(90001) == ("S", 1)
+  assert list(mph._iter_zombie_child_pids()) == [90002]
+
+
+def test_iter_zombie_child_pids_skips_unreadable_and_continues(monkeypatch, tmp_path):
+  proc_root = tmp_path / "proc"
+  zombie = proc_root / "91001"
+  zombie.mkdir(parents=True)
+  self_pid = os.getpid()
+  (zombie / "stat").write_bytes(
+      ("91001 (z) Z %d 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
+       % self_pid).encode("ascii")
+  )
+  real_open = open
+
+  def _listdir(path):
+    if path == "/proc":
+      return ["91000", "91001"]
+    raise OSError("unexpected")
+
+  def _open(path, *args, **kwargs):
+    path_s = str(path)
+    if path_s == "/proc/91000/stat":
+      raise OSError("gone")
+    if path_s == "/proc/91001/stat":
+      return real_open(zombie / "stat", *args, **kwargs)
+    return real_open(path, *args, **kwargs)
+
+  monkeypatch.setattr(mph.os, "listdir", _listdir)
+  monkeypatch.setattr("builtins.open", _open)
+  assert list(mph._iter_zombie_child_pids()) == [91001]
 
 
 def test_reap_pool_worker_pids_logs_reaped(monkeypatch):

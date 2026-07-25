@@ -2237,10 +2237,38 @@ def _reap_supervisor_pool_children(
     *,
     context="chunk_boundary",
 ):
-  """Reap dead pool workers and zombies; restart dead populate-pool workers."""
-  reap_pool_worker_pids(ingest_pool, context="%s_ingest" % context)
-  reap_pool_worker_pids(archive_pool, context="%s_archive" % context)
-  reap_zombie_children_of_self(context=context)
+  """Reap dead pool workers and zombies; restart dead populate-pool workers.
+
+  Each step is fault-isolated so a closed/foreign ``Process.is_alive()`` raise
+  in pool reap cannot skip zombie ``waitpid`` or the unreaped-zombie WARN.
+  """
+  def _step(name, fn):
+    try:
+      fn()
+    except Exception as exc:
+      log_print(
+          "WARN: supervisor child hygiene step failed step=%s context=%s "
+          "err=%s: %s"
+          % (name, context, type(exc).__name__, exc),
+          flush=True,
+      )
+
+  _step(
+      "reap_ingest_pool",
+      lambda: reap_pool_worker_pids(
+          ingest_pool, context="%s_ingest" % context,
+      ),
+  )
+  _step(
+      "reap_archive_pool",
+      lambda: reap_pool_worker_pids(
+          archive_pool, context="%s_archive" % context,
+      ),
+  )
+  _step(
+      "reap_zombie_children",
+      lambda: reap_zombie_children_of_self(context=context),
+  )
   if populate_pool_controller is not None:
     try:
       populate_pool_controller.reap_and_restart()
@@ -2249,7 +2277,10 @@ def _reap_supervisor_pool_children(
           "WARN: populate-pool reap_and_restart failed: %s" % exc,
           flush=True,
       )
-  warn_unreaped_zombie_children(context=context)
+  _step(
+      "warn_unreaped_zombies",
+      lambda: warn_unreaped_zombie_children(context=context),
+  )
 
 
 def _maybe_reap_supervisor_pool_children_throttled(
@@ -6127,6 +6158,30 @@ def run_sync_timedb_supervisor_loop(
 
   def _cap_pending_after_rescan_inner(paths, *, handoff=False, idle_refill=False):
     cap_t0 = time.time()
+    # Long reconcile caps (observed up to ~310s) must still reap orphans.
+    _maybe_reap_supervisor_pool_children_throttled(
+        ingest_pool,
+        archive_pool,
+        populate_pool_controller,
+        context="pending_reconcile",
+    )
+    try:
+      return _cap_pending_after_rescan_body(
+          paths, handoff=handoff, idle_refill=idle_refill, cap_t0=cap_t0,
+      )
+    finally:
+      _maybe_reap_supervisor_pool_children_throttled(
+          ingest_pool,
+          archive_pool,
+          populate_pool_controller,
+          context="pending_reconcile",
+      )
+
+  def _cap_pending_after_rescan_body(
+      paths, *, handoff=False, idle_refill=False, cap_t0=None,
+  ):
+    if cap_t0 is None:
+      cap_t0 = time.time()
     _snapshot, source = _resolve_reconcile_maintenance_snapshot(
         prefer_startup=(handoff or idle_refill),
     )

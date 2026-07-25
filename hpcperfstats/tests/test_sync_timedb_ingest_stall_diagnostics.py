@@ -431,6 +431,63 @@ def test_reap_supervisor_pool_children_throttled(monkeypatch):
   assert len(reap_calls) == 2
 
 
+def test_reap_supervisor_pool_children_isolates_pool_reap_failure(monkeypatch):
+  """Pool reap raise must not skip zombie waitpid or unreaped WARN (RC-1)."""
+  logs = []
+  zombie_calls = []
+  warn_calls = []
+
+  def _boom_reap(*_a, **_k):
+    raise ValueError("process object is closed")
+
+  def _reap_zombies(*, context=""):
+    zombie_calls.append(context)
+    return [999]
+
+  def _warn(*, context=""):
+    warn_calls.append(context)
+
+  monkeypatch.setattr(st, "reap_pool_worker_pids", _boom_reap)
+  monkeypatch.setattr(st, "reap_zombie_children_of_self", _reap_zombies)
+  monkeypatch.setattr(st, "warn_unreaped_zombie_children", _warn)
+  monkeypatch.setattr(st, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+
+  st._reap_supervisor_pool_children(
+      object(), object(), None, context="fault_iso",
+  )
+  assert zombie_calls == ["fault_iso"]
+  assert warn_calls == ["fault_iso"]
+  assert any(
+      "WARN: supervisor child hygiene step failed step=reap_ingest_pool"
+      in line
+      for line in logs
+  )
+  assert any(
+      "WARN: supervisor child hygiene step failed step=reap_archive_pool"
+      in line
+      for line in logs
+  )
+
+
+def test_pending_reconcile_cap_invokes_throttled_reap():
+  """Pending-reconcile MainThread windows must run throttled child hygiene."""
+  import inspect
+  import hpcperfstats.dbload.sync_timedb as sync_mod
+
+  source = inspect.getsource(sync_mod.run_sync_timedb_supervisor_loop)
+  cap_source = source.split("def _cap_pending_after_rescan_inner", 1)[1]
+  cap_source = cap_source.split("\n  def _cap_pending_after_rescan_body", 1)[0]
+  assert "_maybe_reap_supervisor_pool_children_throttled(" in cap_source
+  assert 'context="pending_reconcile"' in cap_source
+  assert "finally:" in cap_source
+  body = source.split("def _cap_pending_after_rescan_body", 1)[1]
+  body = body.split("\n  def ", 1)[0]
+  assert "pending reconcile cap begin" in body
+  assert 'context="pending_reconcile"' in source.split(
+      "def _cap_pending_after_rescan_inner", 1,
+  )[1].split("def _reconcile_pending_with_oldest_checkpoint_incomplete", 1)[0]
+
+
 def test_ingest_stall_defer_redis_populate_before_idle_ghost(monkeypatch):
   """redis_populate_active must win over idle_pool_ghost during Redis wait."""
   monkeypatch.setattr(st, "pool_workers_all_idle", lambda _pool: True)
