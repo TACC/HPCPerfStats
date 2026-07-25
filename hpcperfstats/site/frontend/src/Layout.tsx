@@ -33,9 +33,10 @@ import {
 import { cn } from "@/lib/utils";
 import { useFocusTrap } from "./hooks/useFocusTrap";
 import { SITE_MACHINE_NAME } from "@/config/site-identity";
+import { isPortaledOverlayTarget } from "./utils/is-portaled-overlay-target";
+import { useRouteFocusMain } from "./utils/useRouteFocusMain";
 
 const ExtendedSearch = lazy(() => import("./components/ExtendedSearch"));
-import { useRouteFocusMain } from "./utils/useRouteFocusMain";
 
 type LayoutProps = {
   session: SessionData | null;
@@ -95,6 +96,8 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
       if (!(target instanceof Node)) return;
       if (extendedSearchPanelRef.current?.contains(target)) return;
       if (extendedSearchToggleRef.current?.contains(target)) return;
+      // Select/Popover/Dropdown portals mount under body, outside the panel.
+      if (isPortaledOverlayTarget(target)) return;
       closeExtendedSearch();
     }
     document.addEventListener("pointerdown", onPointerDown, true);

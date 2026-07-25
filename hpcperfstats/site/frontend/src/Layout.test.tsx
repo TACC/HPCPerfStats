@@ -17,7 +17,11 @@ const invalidateMutateAsync = vi.fn();
 
 vi.mock("./hooks/use-home-options", () => ({
   useHomeOptions: vi.fn(() => ({
-    options: { metrics: [], queues: [], states: [] },
+    options: {
+      metrics: [],
+      queues: ["normal", "development"],
+      states: ["COMPLETED", "FAILED"],
+    },
     error: null,
     loading: false,
   })),
@@ -217,6 +221,57 @@ describe("Layout", () => {
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: /extended search/i })).not.toBeInTheDocument();
     });
+  });
+
+  it("keeps extended search open when a queue option in the portaled select is chosen", async () => {
+    const user = userEvent.setup();
+    renderLayout({ logged_in: true, username: "alice", is_staff: false });
+    await user.click(screen.getByRole("button", { name: /extended search/i }));
+    expect(await screen.findByRole("dialog", { name: /extended search/i })).toBeInTheDocument();
+
+    const queueTrigger = await screen.findByRole("combobox", { name: /^queue/i });
+    await user.click(queueTrigger);
+    const option = await screen.findByRole("option", { name: "normal" });
+    await user.click(option);
+
+    expect(screen.getByRole("dialog", { name: /extended search/i })).toBeInTheDocument();
+    expect(queueTrigger).toHaveTextContent("normal");
+  });
+
+  it("keeps extended search open when help popover content is clicked", async () => {
+    const user = userEvent.setup();
+    renderLayout({ logged_in: true, username: "alice", is_staff: false });
+    await user.click(screen.getByRole("button", { name: /extended search/i }));
+    expect(await screen.findByRole("dialog", { name: /extended search/i })).toBeInTheDocument();
+
+    const helpButtons = await screen.findAllByRole("button", { name: /^help:/i });
+    expect(helpButtons.length).toBeGreaterThan(0);
+    await user.click(helpButtons[0]);
+    const popoverContent = await screen.findByTestId("variable-info-tooltip");
+    expect(popoverContent.closest('[data-slot="popover-content"]')).not.toBeNull();
+    await user.click(popoverContent);
+
+    expect(screen.getByRole("dialog", { name: /extended search/i })).toBeInTheDocument();
+  });
+
+  it("keeps extended search open when pointerdown hits a portaled select-content root", async () => {
+    const user = userEvent.setup();
+    renderLayout({ logged_in: true, username: "alice", is_staff: false });
+    await user.click(screen.getByRole("button", { name: /extended search/i }));
+    expect(await screen.findByRole("dialog", { name: /extended search/i })).toBeInTheDocument();
+
+    const portal = document.createElement("div");
+    portal.setAttribute("data-slot", "select-content");
+    const option = document.createElement("div");
+    option.setAttribute("role", "option");
+    option.textContent = "synthetic-queue";
+    portal.appendChild(option);
+    document.body.appendChild(portal);
+
+    option.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+
+    expect(screen.getByRole("dialog", { name: /extended search/i })).toBeInTheDocument();
+    portal.remove();
   });
 
   it("keeps main content links clickable while extended search is open", async () => {

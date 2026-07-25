@@ -43,6 +43,19 @@ alwaysApply: false
 - Synchronous Bokeh `prepareBokehJsonItemForEmbed` / `embed_item` for large payloads without yielding to the main thread first ([`yield-main-thread.ts`](hpcperfstats/site/frontend/src/utils/yield-main-thread.ts)).
 - List/dashboard histogram thumbs that omit `previewMode` (live interactive canvas + global resize reflow after ready).
 
+## Nested portaled overlays (outside-dismiss)
+
+Any custom outside-dismiss (dialog, drawer, collapse — including Extended Search in [`Layout.tsx`](hpcperfstats/site/frontend/src/Layout.tsx)) must treat portaled overlay roots as **inside** the open surface:
+
+- `data-slot="select-content"`
+- `data-slot="popover-content"`
+- `data-slot="dropdown-menu-content"`
+- `data-slot="dropdown-menu-sub-content"`
+
+Use [`isPortaledOverlayTarget`](hpcperfstats/site/frontend/src/utils/is-portaled-overlay-target.ts) (or an equivalent `closest` check). Do **not** rely solely on a panel `ref.contains(target)` — Select/Popover/Dropdown portals mount under `document.body`.
+
+**Regression required:** open the parent surface, open a nested Select/Popover, activate an option or click overlay content, and assert the parent stays open. Keep a separate case that a genuine outside click still closes the parent.
+
 ## URL scoped updates (site-wide)
 
 Query-string / path changes must **not** remount or blank surfaces whose **identity** did not change. Separate keys:
@@ -87,10 +100,11 @@ Reference hooks: [`use-job-list.ts`](hpcperfstats/site/frontend/src/hooks/use-jo
 
 - Extend Vitest when changing loading UX: assert shown controls lack blocking `pointer-events-none` on parent containers.
 - Run drift guard: `src/utils/interactive-ready-drift.test.ts` (scoped-render contracts for hist params, Host/Type busy, plots-on-pk, AdminMonitor keepPrevious; **no nested max-h + useVirtualizer** in JobList/JobMonitor/AdminMonitor).
+- Nested overlay dismiss: [`Layout.test.tsx`](hpcperfstats/site/frontend/src/Layout.test.tsx) — open Extended Search, choose a portaled Select option / click help popover; parent stays open; genuine outside click still closes.
 
 ## Overlap
 
-- [`design-focused-spa-ux.mdc`](design-focused-spa-ux.mdc) — labels, Bokeh loading vs unavailable, job-list pagination.
+- [`design-focused-spa-ux.mdc`](design-focused-spa-ux.mdc) — labels, Bokeh loading vs unavailable, job-list pagination; Extended Search overlay chrome.
 - [`frontend-stack-wiring-contract.mdc`](frontend-stack-wiring-contract.mdc) — view → hook → API map and hook test layer; URL scoped updates apply to every refetching view in the map.
 - [`wcag-aa-mobile-web.mdc`](wcag-aa-mobile-web.mdc) — keyboard reachability; focus trap scope.
 - [`job-plot-artifacts-caching.mdc`](job-plot-artifacts-caching.mdc) — Bokeh defer policy on list/dashboard surfaces.
