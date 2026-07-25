@@ -211,9 +211,45 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 **Fail (T0):** repeating `enqueued=N` with `debt_heap=0` / `active_workers=0` / `days_started=0` while `deferred_waiting` stays flat and open `.tar` count does not fall; or `enqueued=` equals deferred count without `deferred_noop=` (old fake-ok contract).
 
-**Pass (T0):** discover lines show real `enqueued=` only when debt/workers advance; `deferred_noop=` / `already_inflight=` split soft-state; `deferred cleared` after handoff drain; immediate defer is per source day (other days can still enqueue); delete_disqualified ages via defer_cap rather than forever bounce; empty `none:none` incomplete recover is bounded (stall / fail-closed, not infinite stall-clock reset).
+**Pass (T0):** discover lines show real `enqueued=` only when debt/workers advance; `deferred_noop=` / `already_inflight=` split soft-state; `deferred cleared` after handoff drain **or** orphan-deferred clear when RAM `handoff_priority_paths` pins are empty; immediate defer is per source day (other days can still enqueue); **`delete_disqualified` stays fail-closed** — `defer_cap_exceeded` may force a cold-path mutation only when hot/populate/write-lock are clear, and **never** authorizes delete through handoff/pending while the day remains delete-disqualified; empty `none:none` incomplete recover is bounded (stall / fail-closed, not infinite stall-clock reset).
 
 **Pass (T1):** over hours, `open_tar_n` declines and `Archive janitor tick done … days_started≥1` / `days_completed` progress under continuous ingest; no multi-day spin of fake discover with zero debt.
+
+### T0 / T1 — verifying×exclude×handoff deadlock / June closed_raw thrash (2026-07)
+
+**Failure signature (pre-fix):** stable `day-scoped closed_raw … paths=N` for a verifying day (e.g. 06-05 with all `skipped_not_in_archive`); no `day_close handoff requeue day=<that day>`; `chunk_day_histogram` omits the stuck day; async stays `deferred` / `waiting_on_ingest` with discover `deferred_noop≈ready_for_enqueue_n`; under CLI **current**, `handoff_cross_day_n == handoff_priority_n` and youngest-gate pads July while older deferred same-day pins starve.
+
+```bash
+# T0 — stuck verifying day vs handoff / histogram / orphan deferred
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+grep -E 'day-scoped closed_raw|day_close handoff requeue|verifying stuck handoff|post-ingest_going closed-raw|orphan deferred|chunk_day_histogram|youngest_day_chunk_gate|handoff_priority_age|deferred_noop|delete deferred.*delete_disqualified|defer_cap_exceeded' /tmp/pipeline-full.log | tail -120
+
+# T0 — day-raw-removal phase + async day_close for a stuck ISO day
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline \
+  su hpcperfstats -c 'python3 -c "
+from hpcperfstats.dbload.lib import conf_parser as c
+import json, os, glob
+d=c.get_archive_dir_path()
+raw=os.path.join(d,\".sync_timedb_day_raw_removal\")
+asyncp=os.path.join(d,\".sync_timedb_async_day_close.json\")
+day=\"2026-06-05\"
+mp=os.path.join(raw, day+\".json\")
+print(\"raw_manifest\", mp, \"exists\", os.path.isfile(mp))
+if os.path.isfile(mp):
+  m=json.load(open(mp)); print(\"phase\", m.get(\"phase\"), \"verify_stage\", m.get(\"verify_stage\"), \"entries\", len(m.get(\"entries\") or {}))
+  from collections import Counter
+  print(Counter((e or {}).get(\"status\") for e in (m.get(\"entries\") or {}).values() if isinstance(e, dict)))
+if os.path.isfile(asyncp):
+  a=json.load(open(asyncp)); e=(a.get(\"entries\") or {}).get(day) or (a.get(\"entries\") or {})
+  print(\"async_sample\", list(a.get(\"entries\", {}).items())[:3] if isinstance(a.get(\"entries\"), dict) else a)
+"'
+```
+
+**Fail (T0):** verifying day with retryables never appears in `day_close handoff requeue` / `chunk_day_histogram` for many hours; `deferred_noop` sticky while `handoff_priority_n=0` for that source day (orphan deferred); empty first boot requeue then permanent `same_boot_duplicate` for later pathful attempts.
+
+**Pass (T0):** after deploy, verifying/retryable days get `verifying stuck handoff` and/or `post-ingest_going closed-raw handoff discover` / `day_close handoff requeue`; orphan lines `orphan deferred cleared|rehandoff` when pins empty; same-day deferred pins appear in youngest-gate lead/histogram; **no** delete of delete-disqualified days solely because `defer_cap_exceeded`.
+
+**Pass (T1):** stuck June day census falls, async leaves `waiting_on_ingest`, tar-drop/`complete` progresses without multi-day closed_raw thrash on the same path count.
 
 ### T0 / T1 — tar append exit 2 / large member (`out of off_t range`, 2026-07)
 

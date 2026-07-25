@@ -7382,6 +7382,7 @@ def run_sync_timedb_supervisor_loop(
 
   handoff_requeued_tars_this_boot = set()
   boot_handoffs_processed = False
+  verifying_closed_raw_kicked_after_ingest_going = False
   startup_ingest_gate_cleared = False
   startup_gate_cleared_logged = False
 
@@ -7449,6 +7450,9 @@ def run_sync_timedb_supervisor_loop(
             "ingest_going=yes (first non-empty chunk)",
             flush=True,
         )
+      # CLI current/date-range skipped closed-raw boot discover; kick verifying /
+      # retryable days once after ingest_going (narrow path lists, not full census).
+      _kick_verifying_closed_raw_after_ingest_going()
     if run_startup_maintenance:
       startup_snapshot_ready = True
       return
@@ -7530,6 +7534,127 @@ def run_sync_timedb_supervisor_loop(
           clear_fn(source_tar)
       archive_janitor.signal_work_available()
     return len(clear_sources)
+
+  def _sweep_orphan_deferred_waiting_on_ingest():
+    """Clear or re-handoff deferred days whose RAM handoff pins are empty."""
+    if day_close_manifest is None:
+      return 0
+    deferred_fn = getattr(
+        day_close_manifest,
+        "deferred_waiting_on_ingest_tar_paths",
+        None,
+    )
+    if not callable(deferred_fn):
+      return 0
+    deferred_tars = deferred_fn() or set()
+    if not deferred_tars:
+      return 0
+    cleared_or_requeued = 0
+    for tar_norm in sorted(deferred_tars):
+      tar_norm = os.path.normpath(str(tar_norm or ""))
+      if not tar_norm:
+        continue
+      has_pin = any(
+          os.path.normpath(str(handoff_source_tar_by_path.get(path) or ""))
+          == tar_norm
+          for path in handoff_priority_paths
+      )
+      if has_pin:
+        continue
+      paths = []
+      if day_raw_removal is not None:
+        paths_fn = getattr(
+            day_raw_removal,
+            "paths_for_closed_raw_handoff_requeue",
+            None,
+        )
+        if callable(paths_fn):
+          paths = _filter_handoff_requeue_paths(paths_fn(tar_norm))
+      if paths:
+        log_print(
+            "orphan deferred rehandoff tar=%s paths=%d"
+            % (tar_norm, len(paths)),
+            flush=True,
+        )
+        _requeue_day_close_handoff_paths(
+            tar_norm,
+            paths,
+            "orphan_deferred_rehandoff",
+        )
+        cleared_or_requeued += 1
+        continue
+      clear_fn = getattr(
+          day_close_manifest,
+          "clear_deferred_waiting_on_ingest",
+          None,
+      )
+      if callable(clear_fn) and clear_fn(tar_norm):
+        log_print(
+            "orphan deferred cleared tar=%s reason=handoff_pins_empty"
+            % tar_norm,
+            flush=True,
+        )
+        archive_janitor.signal_work_available()
+        cleared_or_requeued += 1
+    return cleared_or_requeued
+
+  def _kick_verifying_closed_raw_after_ingest_going():
+    """CLI current/date-range: recover verifying/retryable days after ingest_going.
+
+    Boot skips ``discover_closed_raw_on_disk_handoffs`` until ingest_going to
+    avoid MainThread day-scoped census storms. Kick once with the same narrow
+    discover path backlog uses at startup.
+    """
+    nonlocal verifying_closed_raw_kicked_after_ingest_going
+    if verifying_closed_raw_kicked_after_ingest_going:
+      return
+    if run_startup_maintenance:
+      # Backlog already ran closed-raw discover at boot.
+      verifying_closed_raw_kicked_after_ingest_going = True
+      return
+    if day_raw_removal is None or not day_raw_removal.enabled:
+      verifying_closed_raw_kicked_after_ingest_going = True
+      return
+    verifying_closed_raw_kicked_after_ingest_going = True
+    discover = getattr(
+        day_raw_removal,
+        "discover_closed_raw_on_disk_handoffs",
+        None,
+    )
+    if not callable(discover):
+      return
+    handoffs = discover() or []
+    if not handoffs:
+      return
+    log_print(
+        "post-ingest_going closed-raw handoff discover tars=%d"
+        % len(handoffs),
+        flush=True,
+    )
+    requeue_fn = getattr(
+        day_raw_removal,
+        "requeue_closed_raw_paths_for_ingest",
+        None,
+    )
+    for tar_norm, paths in handoffs:
+      tar_norm = os.path.normpath(str(tar_norm or ""))
+      if not tar_norm:
+        continue
+      if callable(requeue_fn):
+        requeued = requeue_fn(
+            tar_norm,
+            reason="post_ingest_going_closed_raw_handoff",
+            paths=paths,
+        )
+        # Empty requeue must not same_boot-poison later pathful attempts.
+        if not requeued:
+          archive_janitor.signal_work_available()
+        continue
+      _requeue_day_close_handoff_paths(
+          tar_norm,
+          paths,
+          "post_ingest_going_closed_raw_handoff",
+      )
 
   def _filter_handoff_requeue_paths(paths):
     filtered = []
@@ -7719,7 +7844,8 @@ def run_sync_timedb_supervisor_loop(
             paths=paths,
         )
         if not requeued:
-          handoff_requeued_tars_this_boot.add(tar_norm)
+          # Do not mark same_boot — empty first touch must not poison later
+          # pathful requeues for this tar in the same boot.
           archive_janitor.signal_work_available()
         continue
       _requeue_day_close_handoff_paths(tar_norm, paths, reason)
@@ -8072,6 +8198,7 @@ def run_sync_timedb_supervisor_loop(
           )
         pending_paths_before_chunk = list(pending_stats_files)
         _age_misbucket_handoff_priority_paths()
+        _sweep_orphan_deferred_waiting_on_ingest()
         handoff_priority_n = len(handoff_priority_paths)
         if oldest_tar_for_chunk:
           handoff_cross_day_n = sum(
@@ -8082,6 +8209,15 @@ def run_sync_timedb_supervisor_loop(
                   tgz_archive_dir,
               )
           )
+        deferred_waiting_source_tars = set()
+        if day_close_manifest is not None:
+          deferred_fn = getattr(
+              day_close_manifest,
+              "deferred_waiting_on_ingest_tar_paths",
+              None,
+          )
+          if callable(deferred_fn):
+            deferred_waiting_source_tars = set(deferred_fn() or ())
         stats_files_chunk = select_ingest_chunk_paths(
             pending_stats_files,
             oldest_tar=oldest_tar_for_chunk,
@@ -8090,6 +8226,8 @@ def run_sync_timedb_supervisor_loop(
             tgz_archive_dir=tgz_archive_dir,
             chunk_size=chunk_size,
             handoff_priority_paths=handoff_priority_paths,
+            handoff_source_tar_by_path=handoff_source_tar_by_path,
+            deferred_waiting_source_tars=deferred_waiting_source_tars,
             log_fn=log_print,
             newest_first=newest_first,
         )

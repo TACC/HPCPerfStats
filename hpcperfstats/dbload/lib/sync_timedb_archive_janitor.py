@@ -2304,11 +2304,28 @@ class ArchiveJanitor:
           self._enqueue_day_close(tar_norm, persist=False)
           self._persist_hints()
           return False
-      # Recover VERIFYING+POST_SEAL inconsistency (silent re-enqueue trap).
+      # Recover VERIFYING+POST_SEAL / PRE_SEAL inconsistency (silent re-enqueue trap).
       promote = getattr(coord, "promote_phase_if_verify_stage_ahead", None)
       if callable(promote):
         promote(tar_norm)
       if not coord.verification_complete(tar_norm):
+        # Break verifying×exclude×handoff deadlock: retryables must enter the
+        # ingest universe even before verification_complete (handoff gate).
+        requeue = getattr(coord, "requeue_closed_raw_paths_for_ingest", None)
+        if callable(requeue):
+          paths_fn = getattr(coord, "paths_for_closed_raw_handoff_requeue", None)
+          paths = paths_fn(tar_norm) if callable(paths_fn) else []
+          if paths:
+            requeue(
+                tar_norm,
+                reason="verifying_stuck_retryables",
+                paths=paths,
+            )
+            self.log_fn(
+                "janitor: day_close verifying stuck handoff tar=%s paths=%d"
+                % (tar_norm, len(paths)),
+                flush=True,
+            )
         self._enqueue_day_close(tar_norm, persist=False)
         self._persist_hints()
         return False

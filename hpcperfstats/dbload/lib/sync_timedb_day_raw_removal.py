@@ -247,11 +247,27 @@ class _DayRawRemovalState:
 
     05-30 operator shape: ``phase=verifying`` + ``verify_stage=post_seal_complete``
     caused silent day-close re-enqueue (no delete start).
+
+    PRE_SEAL cousin: sealed day stuck ``phase=verifying`` + ``pre_seal_complete``
+    with only ingest-waiting retryables — promote so handoff/delete eligibility
+    matches the POST_SEAL trap fix (do not silent-reenqueue forever).
     """
     if self.verification_complete():
       return False
     stage = self.verify_stage()
-    if stage != VERIFY_STAGE_POST_SEAL:
+    promote_reason = ""
+    if stage == VERIFY_STAGE_POST_SEAL:
+      promote_reason = "verify_stage already post_seal"
+    elif stage == VERIFY_STAGE_PRE_SEAL:
+      if not self._only_waiting_on_ingest_blocks_completion():
+        return False
+      from hpcperfstats.dbload.lib.archive_compress import compressed_sibling_paths
+
+      zst_path, gz_path = compressed_sibling_paths(self.tar_path)
+      if not (os.path.isfile(zst_path) or os.path.isfile(gz_path)):
+        return False
+      promote_reason = "verify_stage pre_seal + sealed + waiting_on_ingest"
+    else:
       return False
     with self._lock:
       self._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
@@ -259,8 +275,8 @@ class _DayRawRemovalState:
     if self.log_fn:
       self.log_fn(
           "Day raw removal promote phase=verification_complete "
-          "(verify_stage already post_seal) day=%s"
-          % self.day_date.isoformat(),
+          "(%s) day=%s"
+          % (promote_reason, self.day_date.isoformat()),
           flush=True,
       )
     return True
@@ -1956,12 +1972,22 @@ class DayRawRemovalCoordinator:
 
     Computes handoff/requeue paths **once** per tracked day. Does not use
     ``handoff_paths_for_ingest()`` as a boolean probe (that builds remaining-raw).
+
+    Verifying×exclude×handoff deadlock: while ``phase=verifying`` and not yet
+    ``verification_complete``, retryables stay **eligible for pending** —
+    ``should_handoff_day_close_to_ingest`` requires verification_complete, so
+    excluding them starves both pending and handoff.
     """
     excluded: Set[str] = set()
     with self._days_lock:
       tar_paths = list(self._days.keys())
     for tar_norm in tar_paths:
       state = self._get_or_create_day(tar_norm)
+      if (
+          state.phase() == PHASE_VERIFYING
+          and not state.verification_complete()
+      ):
+        continue
       if not (
           state.delete_phase_done()
           or state.verification_complete()

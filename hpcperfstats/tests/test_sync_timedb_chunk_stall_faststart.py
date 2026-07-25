@@ -592,3 +592,31 @@ def test_tick_lock_cleanup_source_uses_targets_not_full_archive():
   assert "cleanup_orphan_fnctl_lock_sidecars_for_targets" in src
   assert "cleanup_orphan_fnctl_lock_sidecars(self.archive_data_dir)" not in src
   assert "cleanup_orphan_fnctl_lock_sidecars(self.tgz_archive_dir)" not in src
+
+
+def test_verifying_retryables_not_excluded_from_pending(tmp_path, monkeypatch):
+  """RC-A: phase=verifying + skipped_not_in_archive must not rescan-exclude.
+
+  Handoff requires verification_complete; excluding verifying retryables
+  starves both pending and handoff (06-05 deadlock).
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
+      PHASE_VERIFYING,
+  )
+
+  day = datetime(2026, 6, 5)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  calls = _spy_full_snapshot(monkeypatch)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), zst, "skipped_not_in_archive", "not_in_sealed")
+  with state._lock:
+    state._manifest["phase"] = PHASE_VERIFYING
+    state._manifest["skipped_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+  assert state.has_active_raw_removal_work()
+  assert not state.verification_complete()
+  assert str(seg) not in coord.rescan_exclude_paths()
+  assert str(seg) in coord.paths_for_closed_raw_handoff_requeue(tar_path)
+  assert calls["n"] == 0

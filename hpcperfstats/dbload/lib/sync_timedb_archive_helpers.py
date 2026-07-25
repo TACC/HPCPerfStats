@@ -2580,6 +2580,8 @@ def select_ingest_chunk_paths(
     tgz_archive_dir,
     chunk_size,
     handoff_priority_paths=None,
+    handoff_source_tar_by_path=None,
+    deferred_waiting_source_tars=None,
     log_fn=None,
     newest_first=False,
 ):
@@ -2591,43 +2593,63 @@ def select_ingest_chunk_paths(
   handoff_lead: list = []
   handoff_set = set(handoff_priority_paths or ())
   oldest_tar_norm = os.path.normpath(str(oldest_tar)) if oldest_tar else ""
+  deferred_sources = {
+      os.path.normpath(str(t))
+      for t in (deferred_waiting_source_tars or ())
+      if t
+  }
+  source_map = handoff_source_tar_by_path if isinstance(
+      handoff_source_tar_by_path, dict,
+  ) else {}
   if handoff_set and oldest_tar_norm and tgz_archive_dir:
     pending_set = set(pending_list)
     cross_day_handoff = []
-    for path in pending_list:
-      if path not in handoff_set:
-        continue
-      if oldest_tar_norm not in daily_tar_paths_for_stats_paths(
+    same_day_deferred_handoff = []
+    seen_lead: set = set()
+
+    def _consider_handoff_path(path):
+      if path in seen_lead:
+        return
+      source_tar = os.path.normpath(str(source_map.get(path) or ""))
+      derived_tars = daily_tar_paths_for_stats_paths(
           [path],
           tgz_archive_dir,
+      )
+      # Same-day preferential lead for deferred waiting source tars (CLI
+      # current youngest gate): pins for that source day must not ride the
+      # July pad forever — include even when gate tar ≠ source day.
+      if (
+          source_tar
+          and source_tar in deferred_sources
+          and source_tar in derived_tars
       ):
+        seen_lead.add(path)
+        same_day_deferred_handoff.append(path)
+        return
+      if oldest_tar_norm not in derived_tars:
         if handoff_path_lacks_daily_archive(path, tgz_archive_dir):
           if log_fn is not None:
             log_fn(
                 "handoff_cross_day_skip path=%s reason=no_daily_archive"
                 % path,
             )
-          continue
+          return
+        seen_lead.add(path)
         cross_day_handoff.append(path)
+
+    for path in pending_list:
+      if path not in handoff_set:
+        continue
+      _consider_handoff_path(path)
     for path in handoff_set:
       if path in pending_set:
         continue
       if not path or not os.path.isfile(path):
         continue
-      if oldest_tar_norm not in daily_tar_paths_for_stats_paths(
-          [path],
-          tgz_archive_dir,
-      ):
-        if handoff_path_lacks_daily_archive(path, tgz_archive_dir):
-          if log_fn is not None:
-            log_fn(
-                "handoff_cross_day_skip path=%s reason=no_daily_archive"
-                % path,
-            )
-          continue
-        cross_day_handoff.append(path)
-    if cross_day_handoff:
-      handoff_lead = cross_day_handoff[:target_chunk_size]
+      _consider_handoff_path(path)
+    lead_candidates = same_day_deferred_handoff + cross_day_handoff
+    if lead_candidates:
+      handoff_lead = lead_candidates[:target_chunk_size]
       if handoff_lead:
         pending_list = [
             path for path in pending_list if path not in set(handoff_lead)

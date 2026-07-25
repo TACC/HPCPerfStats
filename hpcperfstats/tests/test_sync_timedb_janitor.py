@@ -4295,6 +4295,65 @@ def test_delete_disqualified_routes_through_defer_tracker(monkeypatch, tmp_path)
   assert tracked or janitor.debt_depth() >= 1
 
 
+def test_close_one_day_verifying_stuck_requeues_retryables(monkeypatch, tmp_path):
+  """RC-A: verifying without verification_complete must handoff retryables, not silent requeue."""
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2026-06-05.tar"))
+  open(tar_path, "wb").close()
+  open(tar_path + ".zst", "wb").close()
+  path = str(tmp_path / "host" / "1780646400")
+  os.makedirs(os.path.dirname(path), exist_ok=True)
+  open(path, "w").write("1000 job cn001\n")
+  requeue_calls = []
+  logs = []
+
+  class _Coord:
+    enabled = True
+
+    def post_seal_verification_complete(self, _tar):
+      return True
+
+    def promote_phase_if_verify_stage_ahead(self, _tar):
+      return False
+
+    def verification_complete(self, _tar):
+      return False
+
+    def paths_for_closed_raw_handoff_requeue(self, _tar):
+      return [path]
+
+    def requeue_closed_raw_paths_for_ingest(self, tar, *, reason, paths=None):
+      requeue_calls.append((tar, reason, list(paths or [])))
+      return list(paths or [])
+
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      log_fn=lambda msg, **_k: logs.append(str(msg)),
+      day_raw_removal_coordinator=_Coord(),
+  )
+  _mark_day_sealed(janitor, tar_path)
+  monkeypatch.setattr(janitor, "_seal_one_day", lambda *_a, **_k: True)
+  monkeypatch.setattr(janitor, "_enqueue_day_close", lambda *_a, **_k: None)
+  monkeypatch.setattr(janitor, "_persist_hints", lambda: None)
+  monkeypatch.setattr(
+      janitor,
+      "_blocking_remaining_raw_for_tar",
+      lambda *_a, **_k: {},
+  )
+  ok = janitor._close_one_day(
+      tar_path,
+      snapshot=None,
+      validation_cache={},
+      disqualified=set(),
+  )
+  assert ok is False
+  assert requeue_calls
+  assert requeue_calls[0][1] == "verifying_stuck_retryables"
+  assert path in requeue_calls[0][2]
+  assert any("verifying stuck handoff" in line for line in logs)
+
+
 def test_discover_stashes_unprocessed_snapshot_for_submit(tmp_path, monkeypatch):
   """F4: discover must stash classify unprocessed snapshot for submit eligibility."""
   daily_dir = tmp_path / "daily"

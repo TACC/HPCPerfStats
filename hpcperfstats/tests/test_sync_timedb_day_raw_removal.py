@@ -22,6 +22,7 @@ from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
     PHASE_VERIFICATION_COMPLETE,
     PHASE_VERIFYING,
     VERIFY_STAGE_POST_SEAL,
+    VERIFY_STAGE_PRE_SEAL,
     DayRawRemovalCoordinator,
     _save_manifest,
     day_removal_manifest_path,
@@ -449,6 +450,27 @@ def test_promote_phase_when_verifying_but_post_seal_complete(tmp_path):
   assert coord.verification_complete(tar_path)
   assert coord.phase(tar_path) == PHASE_VERIFICATION_COMPLETE
   assert state._only_waiting_on_ingest_blocks_completion()
+
+
+def test_promote_phase_when_verifying_but_pre_seal_complete_sealed(tmp_path):
+  """PRE_SEAL cousin: verifying + pre_seal + sealed + retryables → promote."""
+  day = datetime(2026, 6, 5)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive")
+  with state._lock:
+    state._manifest["phase"] = PHASE_VERIFYING
+    state._manifest["verify_stage"] = VERIFY_STAGE_PRE_SEAL
+    state._manifest["skipped_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+  assert not state.verification_complete()
+  assert state._only_waiting_on_ingest_blocks_completion()
+  promoted = coord.promote_phase_if_verify_stage_ahead(tar_path)
+  assert promoted is True
+  assert coord.verification_complete(tar_path)
+  assert coord.phase(tar_path) == PHASE_VERIFICATION_COMPLETE
 
 
 def test_reopen_stale_done_clears_verify_stage(tmp_path):
