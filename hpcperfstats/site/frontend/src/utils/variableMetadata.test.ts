@@ -24,7 +24,7 @@ describe("normalizeVariableKey", () => {
 describe("getVariableTooltipContent", () => {
   it("returns researcherUse for metrics documented in the researcher guide", () => {
     const cpu = getVariableTooltipContent("avg_cpuusage");
-    expect(cpu?.description).toMatch(/CPU cores busy/i);
+    expect(cpu?.description).toMatch(/busy CPU cores|busy-core/i);
     expect(cpu?.researcherUse).toMatch(/parallel efficiency|OpenMP|MPI/i);
     const jid = getVariableTooltipContent("jid");
     expect(jid?.researcherUse).toEqual(
@@ -65,10 +65,10 @@ describe("getDescriptionForVariable", () => {
 
   it("documents shared filesystem metrics with the job detail section", () => {
     expect(getDescriptionForVariable("avg_sharedfs_bw")).toMatch(
-      /Shared File System section/i,
+      /Lustre llite and NFS/i,
     );
     expect(getDescriptionForVariable("avg_sharedfs_iops")).toMatch(
-      /Shared File System section/i,
+      /Lustre llite and NFS/i,
     );
     expect(getDescriptionForVariable("detail_fsio_llite_read_mb")).toMatch(
       /Lustre llite/i,

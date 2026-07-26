@@ -1,6 +1,6 @@
 # Security audit memo (HPCPerfStats)
 
-Internal reference for security posture review. **Last reviewed:** 2026-06-15 (frontend npm re-audit).
+Internal reference for security posture review. **Last reviewed:** 2026-07-26 (Dependabot npm sweep: Next 16.2.11+ and transitive overrides).
 
 ## Executive summary
 
@@ -10,7 +10,7 @@ HPCPerfStats combines a Django + DRF backend, session-based OAuth (Tapis) and ha
 
 1. Lightweight threat model: assets (sessions, API keys, DB, ingest payloads), trust boundaries (browser → nginx → Django → data stores), adversaries (anonymous abuse, authenticated users, stolen staff API keys).
 2. **pip-audit** inside the production **web** Docker image (`docker run --rm hpcperfstats pip-audit`, 2026-06-05): **no known vulnerabilities** in installed runtime deps (Django 6.0.6, cryptography 48.0.0, requests 2.34.2, pillow 12.2.0). Host `.venv` freeze (dev/test extras) still reports low-severity **idna** / **pip** advisories not present in the production image.
-3. **npm audit** in `hpcperfstats/site/frontend` (2026-06-15): **0** reported vulnerabilities after **`dompurify@^3.4.10`** and **`js-yaml@^4.2.0`** overrides (plus existing `esbuild` / `postcss` / `lodash` pins). Prior baseline 2026-06-12: **0**; new advisories surfaced **3 moderate** (`dompurify` via `@bokeh/bokehjs`, `js-yaml` via `orval`).
+3. **npm audit** in `hpcperfstats/site/frontend` (2026-07-26): **0** reported vulnerabilities after Dependabot sweep — `next@^16.2.11` plus raised/added `overrides` for `dompurify`, `postcss`, `brace-expansion`, `fast-uri`, `sharp`, and `@hono/node-server` (clears 15 open GitHub Dependabot alerts once the lockfile is pushed). Prior 2026-06-15: **0** after `dompurify` / `js-yaml` overrides.
 4. **bandit** (`-ll`, excluding `*/tests/*`) on `hpcperfstats/` (2026-06-05): **no high** findings; **6** medium B608 on SQL fragment builders (same modules as prior review); manual review confirms table/column identifiers come from internal constants, not request input. One B108 on `wsgi.py` `MPLCONFIGDIR=/tmp/` (matplotlib cache path; accepted).
 5. **Security regression tests** (host pytest, 2026-06-05): 9 passed (`test_settings_security`, throttles, API-key page, HTTP headers/cache); 5 compose-backed modules skipped/errored on host (`db` hostname). CI and compose workflows remain the gate for DB-dependent security tests.
 5. Manual review of [`settings.py`](../hpcperfstats/site/hpcperfstats_site/settings.py), [`middleware.py`](../hpcperfstats/site/hpcperfstats_site/middleware.py), [`oauth2.py`](../hpcperfstats/site/lib/machine/oauth2.py), [`api.py`](../hpcperfstats/site/lib/machine/api.py) (auth and staff gates), [`views.py`](../hpcperfstats/site/hpcperfstats_site/views.py) (`csp_report`), nginx templates under [`services-conf/`](../services-conf/), and high-risk patterns (`subprocess`, `cursor.execute`).
@@ -35,17 +35,23 @@ HPCPerfStats combines a Django + DRF backend, session-based OAuth (Tapis) and ha
 
 ### npm audit (frontend)
 
+**2026-07-26:** 0 vulnerabilities (690 packages audited). Remediation for GitHub Dependabot open alerts: direct **`next@^16.2.11`** (lock **16.2.12**) plus **`overrides`** floors — `dompurify@^3.4.12`, `postcss@^8.5.18`, `brace-expansion@^5.0.8`, `fast-uri@^3.1.4`, `sharp@^0.35.0`, `@hono/node-server@^2.0.5` (with existing `esbuild` / `js-yaml` / `lodash`). `npm ci`, `npm audit`, `typecheck:all`, and Vitest (562) verified. Log: [`test_runs/dependabot_npm_security_2026-07-26.md`](../test_runs/dependabot_npm_security_2026-07-26.md).
+
 **2026-06-15:** 0 vulnerabilities (774 packages audited). Remediation: added **`overrides`** for `dompurify@^3.4.10` (Bokeh transitive XSS advisories) and `js-yaml@^4.2.0` (Orval dev-time YAML parse DoS; `orval@7.21.0` still declares `4.1.1`). `npm ci` and `npm run generate:api` verified clean.
 
 **2026-06-12:** 0 vulnerabilities (577 packages audited). Remediation: `npm` **`overrides`** in [`hpcperfstats/site/frontend/package.json`](../hpcperfstats/site/frontend/package.json) to force patched transitive versions without breaking Orval 7.x / Next 15.x majors. Verification log: [`test_runs/npm_audit_remediation_2026-06-12.md`](../test_runs/npm_audit_remediation_2026-06-12.md).
 
 | Override | Reason |
 |----------|--------|
-| `dompurify@^3.4.10` | GHSA-x4vx-rjvf-j5p4 and related DOMPurify XSS / IN_PLACE bypass advisories (`@bokeh/bokehjs`) |
+| `dompurify@^3.4.12` | GHSA-c2j3-45gr-mqc4 custom-element sanitize bypass; prior XSS / IN_PLACE advisories (`@bokeh/bokehjs`) |
 | `js-yaml@^4.2.0` | GHSA-h67p-54hq-rp68 merge-key DoS (`orval` codegen) |
 | `esbuild@^0.28.1` | GHSA-gv7w-rqvm-qjhr, GHSA-g7r4-m6w7-qqqr (Orval + Vitest/Vite tree) |
-| `postcss@^8.5.15` | GHSA-qx2v-qp2m-jg93 (Next nested postcss) |
+| `postcss@^8.5.18` | GHSA-r28c-9q8g-f849 source map path traversal (Next nested postcss) |
 | `lodash@^4.18.1` | GHSA-r5fr-rjxr-66jc, GHSA-f23m-r3pf-42rh (`@stoplight/spectral-functions` via Orval) |
+| `brace-expansion@^5.0.8` | GHSA-mh99-v99m-4gvg / CVE-2026-14257 DoS OOM |
+| `fast-uri@^3.1.4` | GHSA-v2hh-gcrm-f6hx / CVE-2026-16221 host confusion |
+| `sharp@^0.35.0` | GHSA-f88m-g3jw-g9cj nested libvips CVEs (via `next`) |
+| `@hono/node-server@^2.0.5` | GHSA-frvp-7c67-39w9 Windows path traversal (via `@modelcontextprotocol/sdk` / shadcn) |
 
 ### bandit
 
@@ -96,3 +102,4 @@ No high-severity issues. Production-code medium B608 locations (2026-06-05): `an
 | 2026-05-07 | **`robots.txt`**: nginx serves a Vite-built static file; Allow-list registry is **`publicRobotsAllowPrefixes.js`** (edge headers in **`nginx-edge-security-headers.inc`**). |
 | 2026-06-05 | Scheduled re-audit: production-image **pip-audit** clean; **npm audit** clean; bandit unchanged (6 prod B608); dependency floors bumped in **`pyproject.toml`**; documented local compose-overlay audit workflow caveat (F9). |
 | 2026-06-13 | Frontend + API security remediation: F10 CSRF parity, F11 Orval Zod + Bokeh structural validation, F12 URL href guards; F5 CSP path-scoped + CustomJS removal (partial). |
+| 2026-07-26 | Dependabot npm sweep: `next@^16.2.11` + transitive overrides; local `npm audit` 0 (690 pkgs); Vitest 562 green. |

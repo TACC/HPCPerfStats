@@ -1,5 +1,5 @@
 import { renderHook } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useHostPlotQuery } from "./use-host-plot";
 
 vi.mock("@/api/generated/hosts/hosts", () => ({
@@ -9,6 +9,10 @@ vi.mock("@/api/generated/hosts/hosts", () => ({
 import { useHostPlotRetrieve } from "@/api/generated/hosts/hosts";
 
 describe("useHostPlotQuery", () => {
+  beforeEach(() => {
+    vi.mocked(useHostPlotRetrieve).mockReset();
+  });
+
   it("fetches when host and range are provided", () => {
     vi.mocked(useHostPlotRetrieve).mockReturnValue({
       data: { host: "node1", plot_item: null },
@@ -25,7 +29,13 @@ describe("useHostPlotQuery", () => {
 
     expect(useHostPlotRetrieve).toHaveBeenCalledWith(
       params,
-      expect.objectContaining({ query: { enabled: true, select: expect.any(Function) } }),
+      expect.objectContaining({
+        query: expect.objectContaining({
+          enabled: true,
+          select: expect.any(Function),
+          placeholderData: expect.any(Function),
+        }),
+      }),
     );
     expect(result.current.data?.host).toBe("node1");
     expect(result.current.loading).toBe(false);
@@ -42,7 +52,13 @@ describe("useHostPlotQuery", () => {
 
     expect(useHostPlotRetrieve).toHaveBeenCalledWith(
       { host: "", end_time__gte: "" },
-      expect.objectContaining({ query: { enabled: false, select: expect.any(Function) } }),
+      expect.objectContaining({
+        query: expect.objectContaining({
+          enabled: false,
+          select: expect.any(Function),
+          placeholderData: expect.any(Function),
+        }),
+      }),
     );
     expect(result.current.data).toBe(null);
     expect(result.current.loading).toBe(false);

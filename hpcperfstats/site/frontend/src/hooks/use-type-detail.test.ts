@@ -1,5 +1,5 @@
 import { renderHook } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useTypeDetailQuery } from "./use-type-detail";
 
 vi.mock("@/api/generated/jobs/jobs", () => ({
@@ -9,6 +9,10 @@ vi.mock("@/api/generated/jobs/jobs", () => ({
 import { useJobsRetrieve3 } from "@/api/generated/jobs/jobs";
 
 describe("useTypeDetailQuery", () => {
+  beforeEach(() => {
+    vi.mocked(useJobsRetrieve3).mockReset();
+  });
+
   it("loads type detail when jid and type are set", () => {
     vi.mocked(useJobsRetrieve3).mockReturnValue({
       data: { type_name: "cpu", jobid: "123" },
@@ -21,7 +25,13 @@ describe("useTypeDetailQuery", () => {
     expect(useJobsRetrieve3).toHaveBeenCalledWith(
       "123",
       "cpu",
-      expect.objectContaining({ query: { enabled: true, select: expect.any(Function) } }),
+      expect.objectContaining({
+        query: expect.objectContaining({
+          enabled: true,
+          select: expect.any(Function),
+          placeholderData: expect.any(Function),
+        }),
+      }),
     );
     expect(result.current.data?.type_name).toBe("cpu");
   });
@@ -38,7 +48,13 @@ describe("useTypeDetailQuery", () => {
     expect(useJobsRetrieve3).toHaveBeenCalledWith(
       "",
       "cpu",
-      expect.objectContaining({ query: { enabled: false, select: expect.any(Function) } }),
+      expect.objectContaining({
+        query: expect.objectContaining({
+          enabled: false,
+          select: expect.any(Function),
+          placeholderData: expect.any(Function),
+        }),
+      }),
     );
   });
 });

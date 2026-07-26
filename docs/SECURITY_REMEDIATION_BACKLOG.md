@@ -32,11 +32,13 @@ Prioritized follow-ups from [SECURITY_AUDIT.md](SECURITY_AUDIT.md). Update this 
 | Runtime API validation (F11) | Orval `@orval/zod` dual output (`generated-zod/`) + `parseApiResponse` in `customFetch`; `bokehJsonItemSchema` at Bokeh embed boundaries. |
 | URL href safety (F12) | `isSafeHttpUrl` + `encodeURIComponent` on Job Detail entity/external links; Vitest coverage. |
 | Bokeh CSP staging (F5) | Path-scoped CSP middleware; report-only without `unsafe-eval`; CustomJS hovers/ticks replaced with Python pre-formatting in analysis plots. |
+| Dependabot npm sweep (2026-07-26) | Cleared 15 open frontend Dependabot alerts: `next@^16.2.11` + overrides for `dompurify`, `postcss`, `brace-expansion`, `fast-uri`, `sharp`, `@hono/node-server`; `npm audit` 0; Vitest green. |
 
 ## History
 
 | Date       | Change |
 |------------|--------|
+| 2026-07-26 | Dependabot npm sweep: Next patch + transitive overrides; SECURITY_AUDIT npm snapshot updated; local `npm audit` clean (GitHub alert dismiss awaits push/rescan). |
 | 2026-05-06 | Initial backlog; marked CSP report fix done. |
 | 2026-05-06 | Closed all P0/P1 items from initial memo and moved them to Done with implementation notes. |
 | 2026-05-07 | Anonymous public metrics Done row aligned with **`/api/pub/cluster-dashboard/`** throttle + legacy env fallback. |
