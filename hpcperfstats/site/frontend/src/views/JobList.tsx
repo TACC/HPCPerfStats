@@ -314,13 +314,24 @@ export default function JobList() {
   } = jobListData ?? {};
   const totalNodeHours = aggregates.total_node_hours;
   const queueWaitMeanHours = aggregates.queue_wait_mean_hours;
-  const page = pagination.page ?? 1;
+  // Presentation chrome (page / order_by) reads the URL so keepPreviousData
+  // rows can lag without freezing the pager on the stale response page.
+  const orderBy = searchParams.get("order_by") || responseOrderBy;
+  const pageFromUrl = Number.parseInt(searchParams.get("page") ?? "", 10);
+  const page =
+    Number.isFinite(pageFromUrl) && pageFromUrl > 0
+      ? pageFromUrl
+      : (pagination.page ?? 1);
   const num_pages = pagination.num_pages ?? 1;
 
   const paginationParams = buildJobListApiParams(asURLSearchParams, paramsFromRoute);
 
   const paginationQuery = (pageNum: number) =>
-    new URLSearchParams({ ...paginationParams, page: String(pageNum) }).toString();
+    new URLSearchParams({
+      ...paginationParams,
+      order_by: orderBy,
+      page: String(pageNum),
+    }).toString();
 
   const columns: ColumnDef[] = [
     makeColumn(JOB_LIST_TABLE_HEADERS.jid, "jid", true),
@@ -344,7 +355,6 @@ export default function JobList() {
   }, {} as Record<SortField, SortDirection>);
 
   // Sort: all columns except name. order_by from URL/response: e.g. "-end_time" (desc) or "username" (asc).
-  const orderBy = searchParams.get("order_by") || responseOrderBy;
   const sortColumn = orderBy.startsWith("-") ? orderBy.slice(1) : orderBy;
   const sortDirection = orderBy.startsWith("-") ? "desc" : "asc";
   const sortQuery = (orderByValue: string) =>

@@ -65,6 +65,8 @@ Query-string / path changes must **not** remount or blank surfaces whose **ident
 | **Identity / filter** | `end_time__date`, `username`, `queue`, host/`pk`/`jid` path segments | May refetch primary **and** filter-dependent secondary data |
 | **Presentation** | `order_by`, `page`, `view`/`tab` (local chrome) | Refetch **primary** with `keepPreviousData` / `*Busy`; must **not** clear secondary panels, enlarge dialogs, or filter popovers |
 
+**Presentation chrome vs placeholder payload:** under `keepPreviousData`, table **rows** and server-only fields like `num_pages` may lag. Pagination **active page** (`aria-current` / `isActive`) and sort indicators must still read **`page` / `order_by` from the URL** — not from the stale response — so sort→paginate does not freeze on the previous page. Reference: [`JobList.tsx`](hpcperfstats/site/frontend/src/views/JobList.tsx); regression in `JobList.test.tsx` (URL page active while mock response still reports old `pagination.page` / `order_by`).
+
 ### Required
 
 1. Secondary fetches (JobList histograms, HostDetail plot params) use a **filter-identity** param set — strip presentation keys before the request key.
@@ -91,7 +93,7 @@ Reference hooks: [`use-job-list.ts`](hpcperfstats/site/frontend/src/hooks/use-jo
 
 ## Reference implementations
 
-- **JobList** — table first; deferred `filter_options`; distributions default open / always fetch; histogram params omit `order_by`/`page`; **document-scroll** table rows (no nested max-h virtualizer); histogram thumbs/mobile grid use **`previewMode`**; Enlarge stays interactive; soft sort/pagination (`scroll: false`); `JobList.test.tsx` (`tableBusy` not pointer-blocked).
+- **JobList** — table first; deferred `filter_options`; distributions default open / always fetch; histogram params omit `order_by`/`page`; **document-scroll** table rows (no nested max-h virtualizer); histogram thumbs/mobile grid use **`previewMode`**; Enlarge stays interactive; soft sort/pagination (`scroll: false`); pagination/`order_by` chrome from **URL** while rows may lag on `keepPreviousData`; `JobList.test.tsx` (`tableBusy` not pointer-blocked; stale-placeholder page active).
 - **JobDetail** — `initialLoading` only on first paint; tabs stay mounted during `detailsLoading`; tab chrome via `useState` + `history.replaceState`; plots clear on `pk` only; deep-link test in `JobDetail.test.tsx`.
 - **HostDetail / TypeDetail** — `keepPreviousData` + `detailBusy` (no full-page blank on refetch).
 - **JobMonitor / AdminMonitor / ClusterDashboard** — progressive `*Busy`; paginated tables use document scroll (no nested list scrollers).

@@ -1061,6 +1061,64 @@ describe("JobList", () => {
     );
   });
 
+  it("keeps pagination chrome on URL page while keepPreviousData still reports old page/sort", async () => {
+    // Simulates sort→page under placeholderData: URL already advanced, response lags.
+    setJobListQueryMock({
+      data: {
+        job_list: [],
+        nj: 100,
+        aggregates: {},
+        qname: "Jobs",
+        order_by: "-sample_count",
+        pagination: { page: 1, num_pages: 5 },
+      },
+      tableBusy: true,
+    });
+    renderJobList("/jobs?order_by=-start_time&page=2", { is_staff: true });
+    const topNav = await waitFor(() =>
+      screen.getByRole("navigation", { name: /Job list pagination \(top\)/i }),
+    );
+    const page2 = within(topNav).getByRole("button", { name: "Page 2" });
+    expect(page2).toHaveAttribute("aria-current", "page");
+    const page1 = within(topNav).getByRole("button", { name: "Page 1" });
+    expect(page1).not.toHaveAttribute("aria-current");
+    const page3 = within(topNav).getByRole("button", { name: "Page 3" });
+    expect(page3.getAttribute("href")).toMatch(/order_by=-start_time/);
+    expect(page3.getAttribute("href")).toMatch(/page=3/);
+  });
+
+  it("soft-navigates sort then page while preserving the new order_by", async () => {
+    setJobListQueryMock({
+      data: {
+        job_list: [],
+        nj: 100,
+        aggregates: {},
+        qname: "Jobs",
+        order_by: "-sample_count",
+        pagination: { page: 1, num_pages: 5 },
+      },
+    });
+    renderJobList("/jobs?order_by=-sample_count", { is_staff: true });
+    await waitFor(() => {
+      expect(screen.getByRole("link", { name: /^start time/i })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("link", { name: /^start time/i }));
+    expect(nextNavigationMock.router.replace).toHaveBeenCalledWith(
+      expect.stringMatching(/order_by=-start_time/),
+      { scroll: false },
+    );
+
+    const topNav = screen.getByRole("navigation", { name: /Job list pagination \(top\)/i });
+    fireEvent.click(within(topNav).getByRole("button", { name: "Page 2" }));
+    const lastReplace =
+      nextNavigationMock.router.replace.mock.calls[
+        nextNavigationMock.router.replace.mock.calls.length - 1
+      ];
+    expect(String(lastReplace[0])).toMatch(/order_by=-start_time/);
+    expect(String(lastReplace[0])).toMatch(/page=2/);
+    expect(lastReplace[1]).toEqual({ scroll: false });
+  });
+
   it("renders pagination controls at the top and the bottom when multiple pages exist", async () => {
     setJobListQueryMock({ data:{
       job_list: [
