@@ -37,6 +37,22 @@ def test_sleep_until_shutdown_full_duration(monkeypatch):
   assert calls == [5, 5, 2]
 
 
+def test_sleep_until_shutdown_invokes_on_tick(monkeypatch):
+  ticks = []
+
+  def fake_sleep(duration):
+    del duration
+
+  monkeypatch.setattr(shutdown_utils.time, "sleep", fake_sleep)
+  shutdown_utils.shutdown_requested[0] = False
+
+  shutdown_utils.sleep_until_shutdown(
+      12, interval=5, on_tick=lambda: ticks.append(1),
+  )
+
+  assert ticks == [1, 1, 1]
+
+
 def test_send_sigchld_to_parent_calls_os_kill(monkeypatch):
   calls = []
 

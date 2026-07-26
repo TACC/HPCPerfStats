@@ -514,7 +514,9 @@ def test_supervisor_sleeps_once_then_exits_after_empty_full_rescan(monkeypatch, 
         sleeps = []
         final_maintenance = {'calls': 0, 'remove_verified_tars_calls': 0}
 
-        def fake_sleep(secs):
+        def fake_sleep(secs, interval=5, on_tick=None):
+            if on_tick is not None:
+                on_tick()
             sleeps.append(secs)
 
         def fake_get_context(name):
@@ -668,7 +670,9 @@ def test_supervisor_run_once_exits_without_idle_sleep_when_empty(monkeypatch):
             return []
         sleeps = []
 
-        def fake_sleep(secs):
+        def fake_sleep(secs, interval=5, on_tick=None):
+            if on_tick is not None:
+                on_tick()
             sleeps.append(secs)
         monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
         monkeypatch.setattr(st, 'sleep_until_shutdown', fake_sleep)
@@ -830,7 +834,9 @@ def test_failed_ingest_is_not_marked_processed(monkeypatch):
             return []
         sleeps = []
 
-        def fake_sleep(secs):
+        def fake_sleep(secs, interval=5, on_tick=None):
+            if on_tick is not None:
+                on_tick()
             sleeps.append(secs)
             shutdown_requested[0] = True
 
@@ -4197,7 +4203,9 @@ def test_current_empty_pending_rescans_before_idle_finalize(monkeypatch, tmp_pat
         poll_s = float(st.EMPTY_QUEUE_DAY_CLOSE_POLL_SECONDS)
         sleeps = []
 
-        def fake_sleep(secs):
+        def fake_sleep(secs, interval=5, on_tick=None):
+            if on_tick is not None:
+                on_tick()
             sleeps.append(secs)
             if secs == poll_s:
                 shutdown_requested[0] = True
@@ -4261,7 +4269,9 @@ def test_empty_pending_polls_while_day_close_work_then_exits(monkeypatch, tmp_pa
                 return has_work_seq.pop(0)
             return False
 
-        def fake_sleep(secs):
+        def fake_sleep(secs, interval=5, on_tick=None):
+            if on_tick is not None:
+                on_tick()
             sleeps.append(secs)
 
         monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
@@ -4291,6 +4301,81 @@ def test_empty_pending_polls_while_day_close_work_then_exits(monkeypatch, tmp_pa
         assert 'day_close work remaining' in out
         assert 'polling 300s' in out
         assert 'once mode: no pending files, exiting supervisor loop' in out
+    finally:
+        shutdown_requested[0] = False
+
+
+def test_idle_day_close_poll_invokes_throttled_child_hygiene(
+    monkeypatch, tmp_path, capsys,
+):
+    """Branch Z-H2: empty-queue day-close poll must call throttled hygiene via on_tick."""
+    shutdown_requested[0] = False
+    hygiene_contexts = []
+    day_epoch = int(datetime(2020, 1, 1, 12, tzinfo=timezone.utc).timestamp())
+    path = '/fake/stats/%d' % day_epoch
+    try:
+        archive_dir, daily_dir = _supervisor_two_day_ingest_patches(
+            monkeypatch,
+            tmp_path,
+            paths=[path],
+        )
+        tar_day1 = os.path.normpath(os.path.join(daily_dir, '2020-01-01.tar'))
+        open(tar_day1, 'wb').close()
+        _patch_days_ingest_complete(
+            monkeypatch, lambda _unprocessed, **kwargs: [tar_day1],
+        )
+
+        rescan_n = {'n': 0}
+
+        def fake_rescan(*_a, **_k):
+            rescan_n['n'] += 1
+            if rescan_n['n'] == 1:
+                return [path]
+            return []
+
+        def fake_has_work(self):
+            del self
+            return True
+
+        poll_s = float(st.EMPTY_QUEUE_DAY_CLOSE_POLL_SECONDS)
+        sleeps = []
+
+        def fake_sleep(secs, interval=5, on_tick=None):
+            if on_tick is not None:
+                on_tick()
+            sleeps.append(secs)
+            if secs == poll_s:
+                shutdown_requested[0] = True
+
+        def fake_maybe_reap(*_a, **kwargs):
+            hygiene_contexts.append(kwargs.get('context') or '')
+            return True
+
+        monkeypatch.setattr(st, 'rescan_pending_stats_files', fake_rescan)
+        monkeypatch.setattr(st, 'sleep_until_shutdown', fake_sleep)
+        monkeypatch.setattr(
+            st, '_maybe_reap_supervisor_pool_children_throttled', fake_maybe_reap,
+        )
+        monkeypatch.setattr(
+            janitor_mod.ArchiveJanitor, 'has_day_close_work', fake_has_work,
+        )
+        monkeypatch.setattr(
+            janitor_mod.ArchiveJanitor,
+            'signal_work_available',
+            lambda self: None,
+        )
+
+        st.run_sync_timedb_supervisor_loop(
+            str(archive_dir),
+            datetime(2019, 1, 1),
+            None,
+            '.hpc',
+            object(),
+            _FakeArchivePool(),
+            run_once=True,
+        )
+        assert poll_s in sleeps
+        assert 'idle_day_close_poll' in hygiene_contexts
     finally:
         shutdown_requested[0] = False
 
@@ -4328,7 +4413,9 @@ def test_current_empty_pending_unlocks_day_close_and_stays_alive(monkeypatch, tm
         def fake_rescan(*_a, **_k):
             return []
 
-        def fake_sleep(secs):
+        def fake_sleep(secs, interval=5, on_tick=None):
+            if on_tick is not None:
+                on_tick()
             sleeps.append(secs)
             if sleeps.count(poll_s) >= 3:
                 shutdown_requested[0] = True

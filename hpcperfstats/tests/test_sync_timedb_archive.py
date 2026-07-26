@@ -7213,6 +7213,54 @@ def test_resolved_checkpoint_path_set_includes_memory_entries(tmp_path):
   assert str(raw_path) in merged
 
 
+def test_resolved_checkpoint_path_set_survives_concurrent_deque_mutation(
+    tmp_path,
+):
+  """Branch D: live deque mutation must not raise during resolve (exit status 1)."""
+  import threading
+  from collections import deque
+
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      resolved_checkpoint_path_set,
+  )
+
+  raw_path = tmp_path / "host" / "seg"
+  raw_path.parent.mkdir(parents=True)
+  raw_path.write_text("1000 job cn001\n")
+  checkpoint_path = str(tmp_path / ".sync_timedb_state.json")
+  stat = raw_path.stat()
+  base = {
+      "path": str(raw_path),
+      "size": int(stat.st_size),
+      "mtime": int(stat.st_mtime),
+  }
+  memory_entries = deque([dict(base)])
+  stop = threading.Event()
+
+  def mutator():
+    n = 0
+    while not stop.is_set():
+      n += 1
+      memory_entries.append({
+          "path": str(raw_path),
+          "size": int(stat.st_size),
+          "mtime": int(stat.st_mtime),
+          "n": n,
+      })
+      while len(memory_entries) > 32:
+        memory_entries.popleft()
+
+  worker = threading.Thread(target=mutator, daemon=True)
+  worker.start()
+  try:
+    for _ in range(400):
+      merged = resolved_checkpoint_path_set(checkpoint_path, memory_entries)
+      assert str(raw_path) in merged
+  finally:
+    stop.set()
+    worker.join(timeout=2.0)
+
+
 def test_build_live_unprocessed_blocked_drops_after_memory_checkpoint(
     tmp_path,
 ):

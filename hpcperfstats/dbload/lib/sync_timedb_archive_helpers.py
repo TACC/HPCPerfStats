@@ -1917,10 +1917,29 @@ def load_checkpoint_path_set(checkpoint_path):
   return matched
 
 
+def checkpoint_entries_snapshot(checkpoint_entries):
+  """Stable tuple copy of in-memory checkpoint entries for cross-thread reads.
+
+  Day-close / ingest threads append and ``popleft`` the live ``deque`` while
+  main-thread finalize/reconcile may iterate it. Iterating the live deque
+  raises ``RuntimeError: deque mutated during iteration`` and kills the
+  supervisor (hpcperfstats01 2026-07-26 exit status 1). Snapshot with a short
+  retry so a concurrent mutation during ``tuple()`` cannot crash the process.
+  """
+  if checkpoint_entries is None:
+    return ()
+  for _ in range(16):
+    try:
+      return tuple(checkpoint_entries)
+    except RuntimeError:
+      continue
+  return ()
+
+
 def resolved_checkpoint_path_set(checkpoint_path, checkpoint_entries=None):
   """Return checkpoint-complete paths from disk plus in-memory buffer entries."""
   paths = load_checkpoint_path_set(checkpoint_path)
-  for entry in checkpoint_entries or ():
+  for entry in checkpoint_entries_snapshot(checkpoint_entries):
     if not isinstance(entry, dict):
       continue
     path = entry.get("path")

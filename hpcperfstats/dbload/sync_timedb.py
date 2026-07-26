@@ -150,6 +150,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     prepend_checkpoint_incomplete_paths_to_pending,
     reconcile_orphan_inflight_for_oldest_tar,
     load_checkpoint_path_set,
+    checkpoint_entries_snapshot,
     resolved_checkpoint_path_set,
     daily_tar_paths_for_stats_paths,
     daily_tar_paths_from_pending_archive_tasks,
@@ -4078,9 +4079,10 @@ def _remove_processed_path(
   except ValueError:
     pass
   fp = _path_fingerprint(path)
+  snapshot = checkpoint_entries_snapshot(checkpoint_entries)
   if fp is not None:
     kept = deque()
-    for entry in checkpoint_entries:
+    for entry in snapshot:
       if (
           entry.get("path") == path
           and entry.get("size") == fp["size"]
@@ -4091,7 +4093,9 @@ def _remove_processed_path(
     checkpoint_entries.clear()
     checkpoint_entries.extend(kept)
   else:
-    kept = deque(entry for entry in checkpoint_entries if entry.get("path") != path)
+    kept = deque(
+        entry for entry in snapshot if entry.get("path") != path
+    )
     checkpoint_entries.clear()
     checkpoint_entries.extend(kept)
   if file_states is not None:
@@ -4146,7 +4150,7 @@ def _batch_remove_processed_paths(
       host_scan_hints.pop(path, None)
 
   kept = deque()
-  for entry in checkpoint_entries:
+  for entry in checkpoint_entries_snapshot(checkpoint_entries):
     path = entry.get("path")
     if path in paths_without_fp:
       continue
@@ -7884,6 +7888,23 @@ def run_sync_timedb_supervisor_loop(
         flush=True,
     )
 
+  def _sleep_idle_with_hygiene(seconds, *, context="idle_tick"):
+    """Idle sleep that cannot starve supervisor child hygiene.
+
+    Empty-queue day-close polls can sleep 300s; without mid-sleep reap,
+    recycle orphans stay STAT=Z for hours (Branch Z-H2 overnight dual-site).
+    Throttle inside ``_maybe_reap_…`` still caps work to once per 60s.
+    """
+    def _tick():
+      _maybe_reap_supervisor_pool_children_throttled(
+          ingest_pool,
+          archive_pool,
+          populate_pool_controller,
+          context=context,
+      )
+
+    sleep_until_shutdown(seconds, on_tick=_tick)
+
   try:
     _ensure_daily_archive_dir_exists()
     if not day_close_enabled:
@@ -7947,7 +7968,7 @@ def run_sync_timedb_supervisor_loop(
           if pending_stats_files:
             idle_since_empty_queue = None
             continue
-          sleep_until_shutdown(1.0)
+          _sleep_idle_with_hygiene(1.0, context="idle_rescan_inflight")
           continue
         if idle_since_empty_queue is None:
           idle_since_empty_queue = time.time()
@@ -8048,7 +8069,10 @@ def run_sync_timedb_supervisor_loop(
                   flush=True,
               )
               break
-            sleep_until_shutdown(EMPTY_QUEUE_RESCAN_SLEEP_SECONDS)
+            _sleep_idle_with_hygiene(
+                EMPTY_QUEUE_RESCAN_SLEEP_SECONDS,
+                context="idle_snapshot_failed",
+            )
             _flush_checkpoint_if_needed(force=True)
             break
           awaiting_snapshot = bool(
@@ -8078,7 +8102,10 @@ def run_sync_timedb_supervisor_loop(
                   ),
                   flush=True,
               )
-            sleep_until_shutdown(EMPTY_QUEUE_DAY_CLOSE_POLL_SECONDS)
+            _sleep_idle_with_hygiene(
+                EMPTY_QUEUE_DAY_CLOSE_POLL_SECONDS,
+                context="idle_day_close_poll",
+            )
             continue
           log_print(
               "Sleeping %s s before exiting sync_timedb"
@@ -8091,7 +8118,10 @@ def run_sync_timedb_supervisor_loop(
                 flush=True,
             )
             break
-          sleep_until_shutdown(EMPTY_QUEUE_RESCAN_SLEEP_SECONDS)
+          _sleep_idle_with_hygiene(
+              EMPTY_QUEUE_RESCAN_SLEEP_SECONDS,
+              context="idle_empty_rescan",
+          )
           _flush_checkpoint_if_needed(force=True)
           break
 

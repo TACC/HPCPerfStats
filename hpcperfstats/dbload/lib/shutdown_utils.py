@@ -34,11 +34,19 @@ def make_sigterm_handler(shutdown_flag_container, exit_code=143):
   return _handler
 
 
-def sleep_until_shutdown(seconds, interval=5):
+def sleep_until_shutdown(seconds, interval=5, on_tick=None):
   """Sleep for up to seconds, returning early if shutdown_requested[0] is True.
+
   interval: seconds between checks.
+  on_tick: optional callable invoked at the start of each interval slice
+  (used by sync_timedb idle paths for throttled supervisor child hygiene).
   """
   elapsed = 0
   while elapsed < seconds and not shutdown_requested[0]:
+    if on_tick is not None:
+      try:
+        on_tick()
+      except Exception:
+        pass
     time.sleep(min(interval, seconds - elapsed))
     elapsed += interval
