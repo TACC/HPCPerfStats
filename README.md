@@ -400,7 +400,9 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
    The compose DB service includes explicit PostgreSQL checkpoint/memory tuning (`max_connections`, `shared_buffers`, `work_mem`, `maintenance_work_mem`, `autovacuum_work_mem`, `checkpoint_*`, `min_wal_size`, `max_wal_size`, and parallel-worker caps) plus `shm_size`. Keep these aligned with host RAM and service memory limits; tune upward one notch at a time only after confirming checkpoint stability and no OOM events.
 
-   If you change the codebase, bring the containers down, make your changes, and then rebuild and start the stack again. A full **`docker compose up --build`** (or equivalent from-scratch image rebuild) plus recreating **`web`** is the primary way to land SPA fixes: startup fingerprint heal syncs the new package frontend into **`staticfiles_data`**. Use **`./scripts/rebuild_frontend.sh`** only when you want an SPA-only refresh without rebuilding the image.
+   If you change the codebase, bring the containers down, make your changes, and then rebuild and start the stack again. A full **`docker compose up --build`** (or equivalent from-scratch image rebuild) plus recreating **`web`** is the primary way to land SPA fixes: startup fingerprint heal syncs the new package frontend into **`staticfiles_data`**.    Use **`./scripts/rebuild_frontend.sh`** only when you want an SPA-only refresh without rebuilding the image.
+   SPA rebuilds and image builds bake the host git SHA into the staff actions menu (`HPCPERFSTATS_GIT_COMMIT`
+   build-arg / env → `SITE_GIT_COMMIT`); `.git` stays dockerignored and is never copied into the image context.
 
 ---
 

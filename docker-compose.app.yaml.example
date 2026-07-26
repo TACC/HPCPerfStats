@@ -11,6 +11,10 @@ services:
       context: ./
       dockerfile: Dockerfile
       target: hpcperfstats-full
+      # Host git SHA for staff SPA commit link (.git is dockerignored).
+      # rebuild_pipeline / compose build helpers set this; default hides the menu item.
+      args:
+        HPCPERFSTATS_GIT_COMMIT: ${HPCPERFSTATS_GIT_COMMIT:-unknown}
     image: hpcperfstats
     restart: always
     command: /home/hpcperfstats/services-conf/django_startup.sh

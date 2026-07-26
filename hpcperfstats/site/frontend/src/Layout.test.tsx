@@ -49,8 +49,20 @@ vi.mock("@/api/generated/admin/admin", async (importOriginal) => {
   };
 });
 
+const { siteIdentityMock } = vi.hoisted(() => ({
+  siteIdentityMock: {
+    SITE_MACHINE_NAME: "Fractal",
+    SITE_GIT_COMMIT: "abcdef1234567890abcdef1234567890abcdef12",
+  },
+}));
+
 vi.mock("@/config/site-identity", () => ({
-  SITE_MACHINE_NAME: "Fractal",
+  get SITE_MACHINE_NAME() {
+    return siteIdentityMock.SITE_MACHINE_NAME;
+  },
+  get SITE_GIT_COMMIT() {
+    return siteIdentityMock.SITE_GIT_COMMIT;
+  },
 }));
 
 function renderLayout(session, onSessionChange = vi.fn(), children = <div>Child content</div>) {
@@ -99,7 +111,7 @@ describe("Layout", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows all four staff menu items above page chrome", async () => {
+  it("shows staff menu items including GitHub commit link", async () => {
     const user = userEvent.setup();
     renderLayout({
       logged_in: true,
@@ -108,15 +120,57 @@ describe("Layout", () => {
     });
     await user.click(screen.getByRole("button", { name: "Staff actions" }));
     const items = await screen.findAllByRole("menuitem");
-    expect(items).toHaveLength(4);
+    expect(items).toHaveLength(5);
     expect(items.map((item) => item.textContent?.trim())).toEqual([
       "Job Failure Monitor",
       "HPCPerfStats Monitor",
       "Disable Staff Permissions",
       "Invalidate Cache For Page",
+      "abcdef1",
     ]);
+    const commitLink = screen.getByRole("menuitem", { name: "abcdef1" });
+    expect(commitLink).toHaveAttribute(
+      "href",
+      "https://github.com/TACC/HPCPerfStats/commit/abcdef1234567890abcdef1234567890abcdef12",
+    );
+    expect(commitLink).toHaveAttribute("target", "_blank");
+    expect(commitLink).toHaveAttribute("rel", "noopener noreferrer");
     for (const item of items) {
       expect(item).toBeVisible();
+    }
+  });
+
+  it("shows commit link in mobile staff section", async () => {
+    const user = userEvent.setup();
+    renderLayout({
+      logged_in: true,
+      username: "alice",
+      is_staff: true,
+    });
+    await user.click(screen.getByRole("button", { name: "Account and tools" }));
+    const commitLink = screen.getByRole("link", { name: "abcdef1" });
+    expect(commitLink).toHaveAttribute(
+      "href",
+      "https://github.com/TACC/HPCPerfStats/commit/abcdef1234567890abcdef1234567890abcdef12",
+    );
+  });
+
+  it("hides staff commit link when SITE_GIT_COMMIT is unset", async () => {
+    siteIdentityMock.SITE_GIT_COMMIT = "";
+    const user = userEvent.setup();
+    try {
+      renderLayout({
+        logged_in: true,
+        username: "alice",
+        is_staff: true,
+      });
+      await user.click(screen.getByRole("button", { name: "Staff actions" }));
+      const items = await screen.findAllByRole("menuitem");
+      expect(items).toHaveLength(4);
+      expect(screen.queryByRole("menuitem", { name: "abcdef1" })).toBeNull();
+    } finally {
+      siteIdentityMock.SITE_GIT_COMMIT =
+        "abcdef1234567890abcdef1234567890abcdef12";
     }
   });
 

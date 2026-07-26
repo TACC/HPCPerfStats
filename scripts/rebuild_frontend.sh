@@ -74,26 +74,33 @@ if [[ ! -f "${FRONTEND_DIR}/package.json" ]]; then
 fi
 
 build_on_host() {
+  local git_commit
   if ! command -v npm >/dev/null 2>&1; then
     echo "rebuild_frontend.sh: npm not found on PATH; retry with --docker-build" >&2
     exit 1
   fi
+  git_commit="$(resolve_hpcperfstats_git_commit)"
+  export HPCPERFSTATS_GIT_COMMIT="${git_commit}"
   cd "${FRONTEND_DIR}"
   if [[ "${SKIP_NPM_CI}" -eq 0 ]]; then
     npm ci
   fi
-  NEXT_TELEMETRY_DISABLED=1 npm run build:prod
+  NEXT_TELEMETRY_DISABLED=1 HPCPERFSTATS_GIT_COMMIT="${git_commit}" npm run build:prod
 }
 
 build_in_docker() {
   local npm_ci_cmd="npm ci"
+  local git_commit
   if [[ "${SKIP_NPM_CI}" -ne 0 ]]; then
     npm_ci_cmd="true"
   fi
+  git_commit="$(resolve_hpcperfstats_git_commit)"
+  export HPCPERFSTATS_GIT_COMMIT="${git_commit}"
   docker run --rm \
     -v "${REPO_ROOT}":/home/hpcperfstats \
     -w /home/hpcperfstats/hpcperfstats/site/frontend \
     -e NEXT_TELEMETRY_DISABLED=1 \
+    -e "HPCPERFSTATS_GIT_COMMIT=${git_commit}" \
     "${NODE_IMAGE}" \
     sh -lc "${npm_ci_cmd} && npm run build:prod"
 }

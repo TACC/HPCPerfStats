@@ -35,10 +35,24 @@ compose_web_image_name() {
   echo "hpcperfstats"
 }
 
+# Full commit SHA for SPA bake (Docker context excludes .git). Prefer env, else host git.
+resolve_hpcperfstats_git_commit() {
+  local from_env="${HPCPERFSTATS_GIT_COMMIT:-}"
+  if [[ -n "${from_env}" && "${from_env}" != "unknown" ]]; then
+    printf '%s\n' "${from_env}"
+    return 0
+  fi
+  if command -v git >/dev/null 2>&1 && git -C "${REPO_ROOT}" rev-parse HEAD >/dev/null 2>&1; then
+    git -C "${REPO_ROOT}" rev-parse HEAD
+    return 0
+  fi
+  printf '%s\n' "unknown"
+}
+
 # podman-compose does not forward `compose build --target`; use podman/docker build directly.
 build_web_image_with_target() {
   local target="$1"
-  local image_name dockerfile
+  local image_name dockerfile git_commit
 
   cd "${REPO_ROOT}"
   image_name="$(compose_web_image_name)"
@@ -47,6 +61,9 @@ build_web_image_with_target() {
     echo "build_web_image_with_target: Dockerfile not found at ${dockerfile}" >&2
     return 1
   fi
+
+  git_commit="$(resolve_hpcperfstats_git_commit)"
+  export HPCPERFSTATS_GIT_COMMIT="${git_commit}"
 
   if compose_backend_is_podman; then
     local build_cli=(podman build)
@@ -61,13 +78,15 @@ build_web_image_with_target() {
     echo "Building ${image_name} target=${target} via ${build_cli[*]} (podman-compose lacks compose build --target) ..."
     "${build_cli[@]}" \
       --target "${target}" \
+      --build-arg "HPCPERFSTATS_GIT_COMMIT=${git_commit}" \
       -f "${dockerfile}" \
       -t "${image_name}" \
       "${REPO_ROOT}"
     return 0
   fi
 
-  docker compose build web --target "${target}"
+  docker compose build web --target "${target}" \
+    --build-arg "HPCPERFSTATS_GIT_COMMIT=${git_commit}"
 }
 
 compose_cp_supported() {

@@ -57,6 +57,16 @@ if ! grep -qE 'podman build|docker build' "${HELPERS}"; then
   exit 1
 fi
 
+if ! grep -q 'resolve_hpcperfstats_git_commit' "${HELPERS}"; then
+  echo "compose_frontend_helpers.sh must define resolve_hpcperfstats_git_commit" >&2
+  exit 1
+fi
+
+if ! grep -q -- '--build-arg.*HPCPERFSTATS_GIT_COMMIT' "${HELPERS}"; then
+  echo "build_web_image_with_target must pass --build-arg HPCPERFSTATS_GIT_COMMIT" >&2
+  exit 1
+fi
+
 if ! grep -q 'docker compose stop -t.* pipeline' "${PIPELINE_SCRIPT}"; then
   echo "rebuild_pipeline.sh must stop pipeline with grace timeout" >&2
   exit 1

@@ -32,8 +32,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { useFocusTrap } from "./hooks/useFocusTrap";
-import { SITE_MACHINE_NAME } from "@/config/site-identity";
+import { SITE_GIT_COMMIT, SITE_MACHINE_NAME } from "@/config/site-identity";
 import { isPortaledOverlayTarget } from "./utils/is-portaled-overlay-target";
+import {
+  gitCommitHref,
+  isDisplayableGitCommit,
+  shortGitCommitLabel,
+} from "./utils/site-git-commit";
 import { useRouteFocusMain } from "./utils/useRouteFocusMain";
 
 const ExtendedSearch = lazy(() => import("./components/ExtendedSearch"));
@@ -57,6 +62,9 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
     (session && typeof session.machine_name === "string" ? session.machine_name : "") ||
     SITE_MACHINE_NAME
   ).trim();
+  const staffGitCommit = isDisplayableGitCommit(SITE_GIT_COMMIT)
+    ? SITE_GIT_COMMIT.trim()
+    : "";
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [extendedSearchOpen, setExtendedSearchOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
@@ -292,6 +300,22 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
                       >
                         Invalidate Cache For Page
                       </DropdownMenuItem>
+                      {staffGitCommit ? (
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            render={
+                              <a
+                                href={gitCommitHref(staffGitCommit)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              />
+                            }
+                          >
+                            {shortGitCommitLabel(staffGitCommit)}
+                          </DropdownMenuItem>
+                        </>
+                      ) : null}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 ) : null}
@@ -355,6 +379,23 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
                         >
                           Invalidate Cache For Page
                         </Button>
+                        {staffGitCommit ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full justify-start font-mono"
+                            render={
+                              <a
+                                href={gitCommitHref(staffGitCommit)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={() => setMoreMenuOpen(false)}
+                              />
+                            }
+                          >
+                            {shortGitCommitLabel(staffGitCommit)}
+                          </Button>
+                        ) : null}
                       </>
                     ) : null}
                     <Link href="/machine/api-key/" onClick={() => setMoreMenuOpen(false)}>
