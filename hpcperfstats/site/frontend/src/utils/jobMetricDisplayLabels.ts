@@ -54,7 +54,7 @@ const JOB_METRIC_SHORT_LABELS = {
   avg_node_power_est_w: "Mean estimated node power",
   job_cpu_gpu_watt_hours: "CPU+GPU watt-hours for job",
   max_gpu_link_gbps: "Peak GPU PCIe and NVLink data rate",
-  max_gpu_clock_event_reasons: "Peak GPU clock throttling reason flags",
+  max_gpu_clock_event_reasons: "Peak GPU clock throttling reasons",
   mem_hwm: "Peak process resident memory (high water mark)",
   node_imbalance: "CPU utilization imbalance across nodes",
   time_imbalance: "CPU rate imbalance over job timeline",

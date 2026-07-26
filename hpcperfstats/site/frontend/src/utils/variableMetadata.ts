@@ -379,9 +379,9 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
   },
   max_gpu_clock_event_reasons: {
     description:
-      "Largest observed DCGM GPU clock event reasons bitmask over the job (non-zero values indicate clock throttling was reported).",
+      "Peak DCGM GPU clock event reasons bitmask over the job. On Job Detail the Metrics cell shows the named throttle flags (for example SW power cap, HW thermal slowdown) instead of the raw integer; Extended Search and the API still use the numeric value.",
     researcherUse:
-      "Nonzero values warrant correlating with temperature, power cap, or workload burstiness.",
+      "Named flags identify why clocks were limited (power cap, thermal, sync boost, idle). Correlate with GPU power/temperature traces and workload bursts; nonzero search filters still use the numeric bitmask.",
   },
   mem_hwm: {
     description:

@@ -736,6 +736,33 @@ describe("JobDetail", () => {
     });
   });
 
+  it("shows decoded GPU clock throttle flag text instead of numeric mask", async () => {
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        metrics_list: [
+          {
+            metric: "max_gpu_clock_event_reasons",
+            value: 7,
+            units: "#",
+            no_data_reason: null,
+          },
+        ],
+      },
+    });
+    renderJobDetail("12345");
+    await waitFor(() => {
+      expect(
+        screen.getByText("GPU idle, Application clocks setting, SW power cap"),
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByText("7.00")).not.toBeInTheDocument();
+    expect(screen.queryByText("[#]")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Peak GPU clock throttling reasons"),
+    ).toBeInTheDocument();
+  });
+
   it("formats detail_gpu_util_mean as value out of gpu_count times 100", async () => {
     setJobDetailQueryMock({
       data: {

@@ -31,6 +31,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { cn } from "@/lib/utils";
 import { formatDateTime } from "../utils/formatDateTime";
 import { formatDecimalStandard } from "../utils/formatDecimal";
+import { formatGpuClockThrottleReasons } from "../utils/gpuClockThrottleReasons";
 import { isSafeHttpUrl } from "../utils/safe-external-url";
 import { useSession } from "../session-context";
 import { VariableInfoLabel } from "../components/VariableInfoLabel";
@@ -168,6 +169,10 @@ function formatJobMetricCell(
   gpuCount?: string | number | null,
 ): string {
   if (obj.value != null && obj.value !== "") {
+    if (obj.metric === "max_gpu_clock_event_reasons") {
+      const decoded = formatGpuClockThrottleReasons(Number(obj.value));
+      if (decoded) return decoded;
+    }
     const formatted = formatDecimalStandard(obj.value);
     if (
       obj.metric === "avg_cpuusage" &&
@@ -192,6 +197,22 @@ function formatJobMetricCell(
     return obj.no_data_reason || "Data not available.";
   }
   return "Data not available.";
+}
+
+function showMetricUnitsSuffix(
+  obj: JobMetricDisplayRow,
+): boolean {
+  if (!obj.units) return false;
+  // Decoded throttle flags are prose; hide the wire units [#].
+  if (
+    obj.metric === "max_gpu_clock_event_reasons" &&
+    obj.value != null &&
+    obj.value !== "" &&
+    formatGpuClockThrottleReasons(Number(obj.value))
+  ) {
+    return false;
+  }
+  return true;
 }
 
 const EFFECTIVE_VECTOR_WIDTH_METRIC = "avg_vector_width_combined";
@@ -628,7 +649,7 @@ export default function JobDetail() {
             }
             enableHelp
             suffixBeforeHelp={
-              obj.units ? (
+              showMetricUnitsSuffix(obj) ? (
                 <span className="font-normal whitespace-nowrap text-muted-foreground">
                   [{obj.units}]
                 </span>

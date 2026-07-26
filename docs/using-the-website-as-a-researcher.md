@@ -158,7 +158,7 @@ This section lists the metrics shown in the Job detail **Metrics** tab and how t
 | `max_node_power_est_w` | Peak estimated node power | Peak estimated node power | Useful for peak power envelope checks and cooling stress. |
 | `avg_node_power_est_w` | Mean estimated node power | Mean estimated node power | Energy-to-solution comparisons across runs/configurations. |
 | `max_gpu_link_gbps` | Peak GPU PCIe and NVLink data rate | Peak GPU link bandwidth (PCIe/NVLink aggregate path) | Host-device/device-device transfer pressure indicator. |
-| `max_gpu_clock_event_reasons` | Peak GPU clock throttling reason flags | Maximum clock event reason bitmask | Nonzero values suggest throttle/clock constraints; correlate with power/temp traces. |
+| `max_gpu_clock_event_reasons` | Peak GPU clock throttling reasons | DCGM clock-event bitmask (Job Detail shows decoded flag names; API/search stay numeric) | Named flags (power cap, thermal, sync boost, …) explain why clocks were limited; correlate with power/temp traces. |
 | `mem_hwm` | Peak process resident memory (high water mark) | High-water memory estimate (MemUsed-Slab-FilePages) | Compare with node RAM for host OOM risk<sup>[14](#ref-14)</sup>. |
 | `node_imbalance` | CPU utilization imbalance across nodes | Node-level CPU rate imbalance | High values indicate decomposition/rank imbalance. |
 | `time_imbalance` | CPU rate imbalance over job timeline | Temporal CPU imbalance across job timeline | Flags long underutilized windows or phase imbalance over time. |
