@@ -664,6 +664,15 @@ def _build_job_list_queryset_from_request(
             else F("metrics_distinct_time_count").asc(nulls_last=True)
         )
         queryset = queryset.order_by(sample_count_order)
+    elif order_by.lstrip("-") == "performance_sort_rank":
+        # Designation ranks 1 and 4 share performance_sort_group; jid is a stable
+        # secondary so they intermix as one bucket rather than sub-group by rank.
+        group_order = (
+            F("performance_sort_group").desc()
+            if order_by.startswith("-")
+            else F("performance_sort_group").asc()
+        )
+        queryset = queryset.order_by(group_order, "jid")
     else:
         queryset = queryset.order_by(order_by)
     return queryset, fields, cur_metrics, order_by

@@ -1,16 +1,19 @@
 """Job list performance column: classify metrics coverage for display and sort order.
 
-sort_rank semantics (ascending ``order_by("performance_sort_rank")`` matches product sort):
+sort_rank semantics (designation identity for filters / API ``performance.sort_rank``):
   0 — Summary available (at least one metrics_data row with non-null value).
   1 — Not summarized yet (no metrics_data rows; runtime null or >= SHORT threshold).
   2 — Monitoring gaps (rows exist, all values null, distinct_time_count >= 5).
   3 — Job too short or too few samples (rows, all null, 0 < distinct_time_count < 5).
-  4 — Not enough samples to summarize (rows, all null, distinct_time_count null or <= 0).
+  4 — Not summarized yet (UI label; rows, all null, distinct_time_count null or <= 0).
   5 — Too short to measure (no metrics_data rows; runtime < SHORT threshold).
+
+``performance_sort_group`` collapses designation ranks 1 and 4 into one primary sort
+bucket (group 1). Public ``order_by=performance_sort_rank`` orders by that group.
 """
 from __future__ import annotations
 
-from django.db.models import Case, Count, Exists, IntegerField, OuterRef, Q, Value, When
+from django.db.models import Case, Count, Exists, F, IntegerField, OuterRef, Q, Value, When
 
 from .models import metrics_data
 
@@ -20,12 +23,13 @@ MONITORING_GAPS_MIN_DISTINCT_TIMES = 5
 SHORT_RUNTIME_NO_METRICS_SECONDS = 600.0
 
 # Canonical performance status labels keyed by sort_rank (header filter + filter_options).
+# Ranks 1 and 4 share the same UI label; designation values stay distinct for filtering.
 PERFORMANCE_STATUS_BY_SORT_RANK = (
     (0, "Summary available"),
     (1, "Not summarized yet"),
     (2, "Monitoring gaps"),
     (3, "Job too short or too few samples"),
-    (4, "Not enough samples to summarize"),
+    (4, "Not summarized yet"),
     (5, "Too short to measure"),
 )
 
@@ -79,7 +83,8 @@ def summarize_performance(
                 "aria_label": aria_label_for(label),
                 "sort_rank": 3,
             }
-        label = "Not enough samples to summarize"
+        # Designation rank 4: same UI label as rank 1; distinct filter/API identity.
+        label = "Not summarized yet"
         return {
             "label": label,
             "tone": "warning",
@@ -104,7 +109,7 @@ def summarize_performance(
 
 
 def annotate_job_list_performance_fields(queryset):
-    """Add has_metrics_data, metrics_value_count, performance_sort_rank for job_data querysets."""
+    """Add has_metrics_data, metrics_value_count, performance_sort_rank, performance_sort_group."""
     md_exists = Exists(metrics_data.objects.filter(jid_id=OuterRef("jid")))
     mcount = Count(
         "metrics_data_set",
@@ -114,7 +119,7 @@ def annotate_job_list_performance_fields(queryset):
         has_metrics_data=md_exists,
         metrics_value_count=mcount,
     )
-    return qs.annotate(
+    qs = qs.annotate(
         performance_sort_rank=Case(
             When(metrics_value_count__gt=0, then=Value(0)),
             When(
@@ -145,6 +150,14 @@ def annotate_job_list_performance_fields(queryset):
                 then=Value(4),
             ),
             default=Value(5),
+            output_field=IntegerField(),
+        ),
+    )
+    # Ranks 1 and 4 share one primary sort bucket; other designation ranks keep their value.
+    return qs.annotate(
+        performance_sort_group=Case(
+            When(performance_sort_rank=4, then=Value(1)),
+            default=F("performance_sort_rank"),
             output_field=IntegerField(),
         ),
     )

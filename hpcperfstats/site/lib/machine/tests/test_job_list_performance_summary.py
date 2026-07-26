@@ -6,6 +6,7 @@ from hpcperfstats.site.lib.machine.job_list_performance import (
     MONITORING_GAPS_MIN_DISTINCT_TIMES,
     SHORT_RUNTIME_NO_METRICS_SECONDS,
     annotate_job_list_performance_fields,
+    performance_status_label,
     summarize_performance,
 )
 from hpcperfstats.site.lib.machine.models import job_data, metrics_data
@@ -61,6 +62,8 @@ class TestSummarizePerformance:
             runtime=3600.0,
         )
         assert out["sort_rank"] == 4
+        assert out["label"] == "Not summarized yet"
+        assert out["tone"] == "warning"
 
     def test_rank_4_null_distinct_times(self):
         out = summarize_performance(
@@ -70,7 +73,11 @@ class TestSummarizePerformance:
             runtime=3600.0,
         )
         assert out["sort_rank"] == 4
-        assert out["label"] == "Not enough samples to summarize"
+        assert out["label"] == "Not summarized yet"
+
+    def test_performance_status_label_ranks_1_and_4_match(self):
+        assert performance_status_label(1) == "Not summarized yet"
+        assert performance_status_label(4) == "Not summarized yet"
 
     def test_rank_5_no_rows_short_runtime_label(self):
         out = summarize_performance(
@@ -172,7 +179,7 @@ class TestAnnotateJobListPerformanceFields:
 
         qs = annotate_job_list_performance_fields(
             job_data.objects.filter(jid__in=["ord0", "ord4a", "ord1"])
-        ).order_by("performance_sort_rank", "jid")
+        ).order_by("performance_sort_group", "jid")
         assert [j.jid for j in qs] == ["ord0", "ord4a", "ord1"]
 
     def test_order_by_performance_sort_rank_descending(self):
@@ -182,11 +189,25 @@ class TestAnnotateJobListPerformanceFields:
 
         qs = annotate_job_list_performance_fields(
             job_data.objects.filter(jid__in=["des0", "des4a"])
-        ).order_by("-performance_sort_rank", "jid")
+        ).order_by("-performance_sort_group", "jid")
         assert [j.jid for j in qs] == ["des4a", "des0"]
 
+    def test_ranks_1_and_4_share_performance_sort_group(self):
+        self._create_job("grp1", dtc=None, runtime=SHORT_RUNTIME_NO_METRICS_SECONDS)
+        j4 = self._create_job("grp4", dtc=0)
+        metrics_data.objects.create(jid=j4, type="t", metric="m4", units="u", value=None)
+
+        qs = annotate_job_list_performance_fields(
+            job_data.objects.filter(jid__in=["grp1", "grp4"])
+        )
+        rows = {j.jid: j for j in qs}
+        assert rows["grp1"].performance_sort_rank == 1
+        assert rows["grp4"].performance_sort_rank == 4
+        assert rows["grp1"].performance_sort_group == 1
+        assert rows["grp4"].performance_sort_group == 1
+
     def test_order_by_performance_sort_rank_full_product_sequence(self):
-        """Ascending rank matches: summary, not summarized, gaps, few samples, not enough, too short."""
+        """Ascending group: summary, not-summarized bucket (1+4), gaps, few samples, too short."""
         j0 = self._create_job("full0", dtc=1)
         metrics_data.objects.create(jid=j0, type="t", metric="m0", units="u", value=1.0)
         self._create_job("full1", dtc=None, runtime=SHORT_RUNTIME_NO_METRICS_SECONDS)
@@ -202,15 +223,29 @@ class TestAnnotateJobListPerformanceFields:
             job_data.objects.filter(
                 jid__in=["full0", "full1", "full2", "full3", "full4", "full5"]
             )
-        ).order_by("performance_sort_rank", "jid")
+        ).order_by("performance_sort_group", "jid")
         assert [j.jid for j in qs] == [
             "full0",
             "full1",
+            "full4",
             "full2",
             "full3",
-            "full4",
             "full5",
         ]
+
+    def test_order_by_performance_sort_group_descending_keeps_bucket(self):
+        j0 = self._create_job("rev0", dtc=1)
+        metrics_data.objects.create(jid=j0, type="t", metric="m0", units="u", value=1.0)
+        self._create_job("rev1", dtc=None, runtime=SHORT_RUNTIME_NO_METRICS_SECONDS)
+        j2 = self._create_job("rev2", dtc=MONITORING_GAPS_MIN_DISTINCT_TIMES)
+        metrics_data.objects.create(jid=j2, type="t", metric="m2", units="u", value=None)
+        j4 = self._create_job("rev4", dtc=0)
+        metrics_data.objects.create(jid=j4, type="t", metric="m4", units="u", value=None)
+
+        qs = annotate_job_list_performance_fields(
+            job_data.objects.filter(jid__in=["rev0", "rev1", "rev2", "rev4"])
+        ).order_by("-performance_sort_group", "jid")
+        assert [j.jid for j in qs] == ["rev2", "rev1", "rev4", "rev0"]
 
 
 @pytest.mark.django_db
@@ -233,3 +268,46 @@ def test_job_list_serializer_exposes_performance_not_has_metrics():
     assert data["performance"]["sort_rank"] == 0
     assert data["performance"]["label"] == "Summary available"
     assert data["performance"]["tone"] == "success"
+
+
+@pytest.mark.django_db
+def test_build_job_list_orders_ranks_1_and_4_as_one_bucket():
+    """Public order_by=performance_sort_rank uses performance_sort_group + jid."""
+    from django.test import RequestFactory
+
+    from hpcperfstats.site.lib.machine.api import _build_job_list_queryset_from_request
+
+    now = timezone.now()
+
+    def _job(jid, *, dtc=None, runtime=3600.0):
+        return job_data.objects.create(
+            jid=jid,
+            submit_time=now,
+            start_time=now,
+            end_time=now,
+            runtime=runtime,
+            username="u",
+            host_list=["h1"],
+            metrics_distinct_time_count=dtc,
+        )
+
+    j0 = _job("api0", dtc=1)
+    metrics_data.objects.create(jid=j0, type="t", metric="m0", units="u", value=1.0)
+    _job("api1", dtc=None, runtime=SHORT_RUNTIME_NO_METRICS_SECONDS)
+    j4 = _job("api4", dtc=0)
+    metrics_data.objects.create(jid=j4, type="t", metric="m4", units="u", value=None)
+    j2 = _job("api2", dtc=MONITORING_GAPS_MIN_DISTINCT_TIMES)
+    metrics_data.objects.create(jid=j2, type="t", metric="m2", units="u", value=None)
+
+    factory = RequestFactory()
+    request = factory.get(
+        "/api/jobs/",
+        {"order_by": "performance_sort_rank", "username": "u"},
+    )
+    request.session = {"username": "admin", "is_staff": True}
+    qs, _fields, _cur, order_by = _build_job_list_queryset_from_request(
+        request, annotate_all=True
+    )
+    assert order_by == "performance_sort_rank"
+    assert [j.jid for j in qs] == ["api0", "api1", "api4", "api2"]
+
