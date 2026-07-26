@@ -10,6 +10,7 @@ types:
   proc: host_proc
   vfs: host_vfs
   nfs: host_nfs
+  beegfs: beegfs_client
   sysv_shm: host_sysv_shm
   tmpfs: host_tmpfs
   cpu_counter_metrics: host_cpu_hw

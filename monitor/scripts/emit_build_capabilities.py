@@ -19,7 +19,7 @@ MONITOR = Path(__file__).resolve().parents[1]
 DEFAULT_OUT = "monitor-build-capabilities.json"
 
 _RE_CONFIG_LOG_BOOL = re.compile(
-    r"^\s*(?:infiniband|gpu|amd_gpu|lustre|opa|hardware|debug)='(true|false)'",
+    r"^\s*(?:infiniband|gpu|amd_gpu|lustre|beegfs|opa|hardware|debug)='(true|false)'",
     re.MULTILINE,
 )
 _RE_PACKAGE_VERSION = re.compile(r'#define\s+PACKAGE_VERSION\s+"([^"]+)"')
@@ -125,6 +125,8 @@ def build_capability_slug(
         parts.append("intelgpu")
     if "LUSTRE" in features:
         parts.append("lustre")
+    if "BEEGFS" in features:
+        parts.append("beegfs")
     if "OPA" in features:
         parts.append("opa")
     if opa_mad_dlopen:
@@ -200,6 +202,7 @@ def emit_capabilities(build_dir: Path, tier: str) -> dict:
             "gpu": cfg_log.get("gpu", "GPU" in features),
             "amd_gpu": cfg_log.get("amd_gpu", "AMD_GPU" in features),
             "lustre": cfg_log.get("lustre", "LUSTRE" in features),
+            "beegfs": cfg_log.get("beegfs", "BEEGFS" in features),
             "opa": cfg_log.get("opa", "OPA" in features),
             "intel_gpu": intel_gpu,
             "ib_mad_dlopen": ib_mad_dlopen,

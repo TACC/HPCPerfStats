@@ -209,6 +209,33 @@ def probe_nfs_mount_devices() -> list[str]:
     return sorted(set(devs))
 
 
+def probe_beegfs_mount_devices() -> list[str]:
+    """BeeGFS client mount points from /proc/mounts (beegfs.c uses mnt_dir as dev)."""
+    # /proc/mounts: device mountpoint fstype options ...
+    mounts = Path("/proc/mounts")
+    if not mounts.is_file():
+        return []
+    devs: list[str] = []
+    try:
+        text = mounts.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        fstype = parts[2]
+        if fstype not in ("beegfs", "beegfs_nodev"):
+            continue
+        mnt = parts[1]
+        if mnt:
+            # Unescape octal sequences used in /proc/mounts (\040 for space).
+            mnt = mnt.replace("\\040", " ").replace("\\011", "\t").replace("\\012", "\n")
+            mnt = mnt.replace("\\134", "\\")
+            devs.append(mnt)
+    return sorted(set(devs))
+
+
 def _lustre_sb_mount_map() -> dict[str, str]:
     """Map 16-char Lustre superblock suffix to mount prefix (lustre_obd_to_mnt.c)."""
     lov = Path("/proc/fs/lustre/lov")
@@ -416,6 +443,9 @@ def default_devices_for_type(type_name: str) -> list[str] | None:
         return nodes if nodes else None
     if type_name == "host_nfs":
         devs = probe_nfs_mount_devices()
+        return devs if devs else None
+    if type_name == "beegfs_client":
+        devs = probe_beegfs_mount_devices()
         return devs if devs else None
     if type_name in ("lustre_osc", "lustre_mdc", "lustre_llite"):
         sub = type_name.replace("lustre_", "")

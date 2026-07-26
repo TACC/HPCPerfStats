@@ -1,0 +1,42 @@
+---
+description: BeeGFS client detection and bounded beegfs-ctl stats (never Sum:)
+globs:
+  - HPCPerfStats/monitor/src/beegfs*
+  - HPCPerfStats/monitor/tests/test_beegfs*
+  - HPCPerfStats/monitor/tests/fixtures/beegfs/**
+alwaysApply: false
+---
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+# Monitor: BeeGFS client (`beegfs_client`)
+
+## Detection
+
+- Enumerate mounts with fstype **`beegfs`** or **`beegfs_nodev`** (`/proc/mounts`).
+- Device id is the **mount path** (e.g. `/scratch`).
+- `/proc/fs/beegfs/<clientID>/` on BeeGFS **7.3.x** exposes config/state only — **no** cumulative I/O counter files (`ops-rd` / `MiB-rd` absent). Do not invent procfs counter parsers for 7.3.x.
+
+## Capacity (cheap, every sample)
+
+- `statvfs(3)` on the mount → `fs_bytes_*` / `fs_files_*` (same semantics as `lustre_llite`).
+
+## I/O and metadata (bounded `beegfs-ctl`)
+
+- On 7.3.x there is **no public linkable clientstats library**; use **`beegfs-ctl --clientstats`** (`--nodetype=storage` and `--nodetype=meta`).
+- Prefer **`--rwunit=B`** when supported (`B-rd` / `B-wr`); else parse `MiB-rd` / `MiB-wr` (scientific notation OK) and scale **× 1048576** to `vfs_read_bytes` / `vfs_write_bytes`.
+- Map ctl abbreviations to portable **`vfs_*`** keys (see `beegfs_client.h`); never emit raw `MiB-rd` / `ops-rd` / `unlnk` as KEY names.
+- **Never** ingest the cluster **`Sum:`** line as this host’s counters — select the **local** line via hostname / short hostname / local IPv4.
+- Pass **`--mount=<mnt>`** when supported; keep wall-time budget on ctl (timeout → skip; first-fail log; capacity still works).
+- **Jitter:** when `enable_slow_tier` is on, refresh ctl only on **`COLLECT_FULL`**; when off, at most once per `max(sample_freq, 30s)`. Emit ctl-derived keys only on refresh ticks (tier table marks `vfs_*` slow; `fs_*` stay fast).
+
+## Configure
+
+- **`--enable-beegfs`** default **yes**; `MONITOR_WITH_BEEGFS`; capability slug fragment **`beegfs`**.
+- Missing `beegfs-ctl` with mounts present: detect + capacity still work; **no** per-sample ERROR spam.
+
+## Tests
+
+- Schema contract rejects raw ctl names; ctl parse fixtures cover Sum ignore, MiB→bytes, hostname match.
+
+Cross-links: **monitor-jitter-and-fidelity-priority**, **monitor-emitted-variable-naming**, **monitor-collect-tier-gating**, **monitor-consumer-side-plan**.

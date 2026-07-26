@@ -56,6 +56,7 @@ Use the **Read** tool on the listed `HPCPerfStats/monitor/cursor-rules/<file>.md
 | Release vs DEBUG logging (`monitor.c`, `monitor_daemon*`, `monitor_options.c`, `monitor_log*`, `monitor_release_log*`, `stats_buffer_rmq.c`, `ib_mad.c`, `nvidia_gpu.c`, `roofline_hw_peak.c`, `configure.ac`, `*.am`) | `monitor-debug-vs-symbols.mdc` |
 | Shm message correctness scripts, slug goldens | `monitor-shm-message-correctness.mdc` |
 | Collector device enumeration (`net.c`, `mem.c`, …) or `host_live_probes.py` | `monitor-shm-validation-probe-parity.mdc` |
+| `HPCPerfStats/monitor/src/beegfs*`, `tests/test_beegfs*`, `tests/fixtures/beegfs/**` | `monitor-beegfs-procfs.mdc` |
 
 ### Emit contract, RabbitMQ, schema
 

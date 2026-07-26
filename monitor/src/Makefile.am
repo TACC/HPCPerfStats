@@ -311,6 +311,16 @@ TYPES += \
 	llite.c
 endif
 
+if BEEGFS
+hpcperfstatsd_SOURCES += \
+	beegfs_client.h \
+	beegfs_ctl_parse.h \
+	beegfs_ctl_parse.c
+
+TYPES += \
+	beegfs.c
+endif
+
 hpcperfstatsd_SOURCES += \
 	ib.h \
 	ib_common.h \

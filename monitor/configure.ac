@@ -304,6 +304,16 @@ esac],
 [lustre=true])
 AM_CONDITIONAL([LUSTRE], [test x$lustre = xtrue])
 
+AC_ARG_ENABLE([beegfs],
+[  --enable-beegfs	Enable BeeGFS client support (default is true)],
+[case "${enableval}" in
+  yes) beegfs=true ;;
+  no)  beegfs=false ;;
+  *) AC_MSG_ERROR([bad value ${enableval} for --enable-beegfs]) ;;
+esac],
+[beegfs=true])
+AM_CONDITIONAL([BEEGFS], [test x$beegfs = xtrue])
+
 gpu_user_requested=no
 AC_ARG_ENABLE([gpu],
 [  --enable-gpu		Enable Nvidia GPU support (default is auto-detect)],
@@ -645,6 +655,9 @@ if test "x$infiniband" = "xtrue"; then
 fi
 if test "x$lustre" = "xtrue"; then
   MONITOR_FEATURE_CPPFLAGS="$MONITOR_FEATURE_CPPFLAGS -DMONITOR_WITH_LUSTRE"
+fi
+if test "x$beegfs" = "xtrue"; then
+  MONITOR_FEATURE_CPPFLAGS="$MONITOR_FEATURE_CPPFLAGS -DMONITOR_WITH_BEEGFS"
 fi
 if test "x$gpu" = "xtrue"; then
   MONITOR_FEATURE_CPPFLAGS="$MONITOR_FEATURE_CPPFLAGS -DMONITOR_WITH_GPU"

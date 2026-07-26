@@ -59,7 +59,7 @@ BuildRequires: (datacenter-gpu-manager-4-devel or libdcgm-devel)
 %description
 This package provides the hpcperfstatsd daemon, along with a systemd unit for
 control. The daemon publishes job-level host statistics (CPU, memory, optional
-InfiniBand, Omni-Path/Cornelis HFI via host_opa, Lustre, NVIDIA DCGM GPU, AMD
+InfiniBand, Omni-Path/Cornelis HFI via host_opa, Lustre, BeeGFS client (beegfs_client), NVIDIA DCGM GPU, AMD
 GPU, etc.).
 
 The binary is linked with pre-built static libev, rabbitmq-c, and (on x86)

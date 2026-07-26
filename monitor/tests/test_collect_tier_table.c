@@ -80,6 +80,8 @@ static void test_key_is_slow_helper(void)
   assert(collect_tier_key_is_slow("host_net", "tx_errors") == 1);
   assert(collect_tier_key_is_slow("host_net", "tx_error") == 1);
   assert(collect_tier_key_is_slow("host_net", "rx_packets") == 0);
+  assert(collect_tier_key_is_slow("beegfs_client", "vfs_read_bytes") == 1);
+  assert(collect_tier_key_is_slow("beegfs_client", "fs_bytes_total") == 0);
   assert(collect_tier_key_is_slow("nonexistent_type", "whatever") == 0);
 }
 

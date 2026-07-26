@@ -1,0 +1,3 @@
+Sum:            9000 [sum]  100 [open]  90 [close]  200 [stat]  5 [sAttr]  3 [trunc]  40 [rddir]  8 [create]  2 [mkdir]  1 [rmdir]  4 [ren]  6 [unlnk]  0 [hardlnk]
+c512-122        50 [open]  45 [close]  80 [stat]  2 [sAttr]  1 [trunc]  10 [rddir]  4 [create]  1 [mkdir]  0 [rmdir]  2 [ren]  3 [unlnk]  1 [hardlnk]
+other-node      10 [open]  10 [close]  20 [stat]  0 [sAttr]  0 [trunc]  5 [rddir]  1 [create]  0 [mkdir]  0 [rmdir]  0 [ren]  0 [unlnk]  0 [hardlnk]

@@ -508,6 +508,20 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
     },
     {
+        "id": "monitor_beegfs",
+        "patterns": [
+            "HPCPerfStats/monitor/src/beegfs*",
+            "HPCPerfStats/monitor/tests/test_beegfs*",
+            "HPCPerfStats/monitor/tests/fixtures/beegfs/**",
+            "monitor/src/beegfs*",
+            "monitor/tests/test_beegfs*",
+            "monitor/tests/fixtures/beegfs/**",
+        ],
+        "rules": [
+            "monitor-beegfs-procfs.mdc",
+        ],
+    },
+    {
         "id": "monitor_gpu_dcgm",
         "patterns": [
             "HPCPerfStats/monitor/src/*dcgm*",
@@ -622,6 +636,7 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
             "HPCPerfStats/monitor/src/intel_gpu.c",
             "HPCPerfStats/monitor/src/cpu.c",
             "HPCPerfStats/monitor/src/intel_spr_imc.c",
+            "HPCPerfStats/monitor/src/beegfs.c",
             "HPCPerfStats/monitor/scripts/lib/host_live_probes.py",
             "HPCPerfStats/monitor/scripts/lib/device_validate.py",
             "HPCPerfStats/monitor/scripts/lib/live_spot_check.py",
@@ -635,6 +650,7 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
             "monitor/src/intel_gpu.c",
             "monitor/src/cpu.c",
             "monitor/src/intel_spr_imc.c",
+            "monitor/src/beegfs.c",
             "monitor/scripts/lib/host_live_probes.py",
             "monitor/scripts/lib/device_validate.py",
             "monitor/scripts/lib/live_spot_check.py",

@@ -106,6 +106,7 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 | AMD EPYC CPUID / DF types | `amd_cpuid_match.c`, `amd_processor.c`, `amd_x86_uncore_df.c` |
 | LIKWID core + uncore PMU | `likwid_pmc_adapter.c`, `likwid_uncore_adapter.c`, `likwid_uncore_profiles.c`, `likwid_result_convert.c` |
 | Omni-Path / Cornelis HFI (`host_opa`) | `opa.c`, `opa_sysfs.c`, `opa_mad_backoff.c`, `opa_mad_dyn.c`, `host_opa.h` (sysfs always; STL MAD via `--enable-opa-mad-dlopen` or link-time `--enable-opa`) |
+| BeeGFS client (`beegfs_client`) | `beegfs.c`, `beegfs_client.h`, `beegfs_ctl_parse.c` (mounts + `statvfs`; I/O via bounded `beegfs-ctl`) |
 | Intel Data Center GPU / PVC (`intel_gpu`) | `intel_gpu.c`, `intel_gpu.h`, `xpum_gpu_dyn.c` (vendored `third_party/intel-xpum/`; runtime `libxpum` dlopen) |
 | IB MAD dlopen | `ib_mad.c`, `ib_mad_dyn.c`, `ib_mad_api.h` (vendored `third_party/ibmad-shim/` when `--enable-ib-mad-dlopen`) |
 | IB vs HFI routing | `ib_common.c` (`ib_hca_is_opa_hfi`), `ib_family.c` |
@@ -229,6 +230,18 @@ See `HPCPerfStats/docs/monitor_variable_rename_map.yaml` for rename-map entries.
 
 Old→new llite event map lives under `type_events.lustre_llite` in
 `HPCPerfStats/docs/monitor_variable_rename_map.yaml`.
+
+### BeeGFS collector (`beegfs_client`)
+
+| Topic | Behavior |
+|-------|----------|
+| Detection | Mounts with fstype `beegfs` / `beegfs_nodev`; device id = mount path |
+| Capacity | `statvfs` → `fs_bytes_*` / `fs_files_*` every sample |
+| I/O / metadata | Bounded `beegfs-ctl --clientstats` (storage + meta); local node only — **never** cluster `Sum:` |
+| Units | Prefer `--rwunit=B`; else `MiB-*` × 1048576 → `vfs_*_bytes` |
+| Cadence | Slow/full when `enable_slow_tier`; else ≤ once per `max(sample_freq, 30s)` + wall timeout |
+| Configure | `--enable-beegfs` (default yes); capability slug fragment `beegfs` |
+| Consumer follow-up | Website FSIO still NFS+Lustre-only — dual-read `beegfs_client` in a separate authorized consumer task |
 
 ### DEBUG `/dev/shm` mirror (daemon only)
 

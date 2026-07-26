@@ -1,0 +1,8 @@
+# Anonymized snippet shaped like /proc/fs/beegfs/<clientID>/config on BeeGFS 7.3.x
+sysMgmtdHost                  = mgmt.example.invalid
+connClientPortUDP             = 8004
+connHelperdPortTCP            = 8006
+connFileReadSize              = 131072
+connFileWriteSize             = 131072
+tuneFileCacheType             = buffered
+cfgFile                       = /etc/beegfs/beegfs-client.conf

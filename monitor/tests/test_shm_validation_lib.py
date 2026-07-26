@@ -218,6 +218,22 @@ class HostLiveProbeTests(unittest.TestCase):
         with patch("lib.host_live_probes._read_lines", return_value=mountstats.splitlines()):
             self.assertEqual(probe_nfs_mount_devices(), ["/home1", "/home2"])
 
+    def test_probe_beegfs_mount_paths(self) -> None:
+        from unittest.mock import patch
+
+        from lib.host_live_probes import probe_beegfs_mount_devices
+
+        mounts = (
+            "beegfs_nodev /scratch beegfs rw,relatime,cfgFile=/etc/beegfs/beegfs-client.conf 0 0\n"
+            "beegfs_nodev /data beegfs_nodev rw,relatime 0 0\n"
+            "/dev/sda1 / boot ext4 rw,relatime 0 0\n"
+        )
+        with patch("lib.host_live_probes.Path") as mock_path:
+            inst = mock_path.return_value
+            inst.is_file.return_value = True
+            inst.read_text.return_value = mounts
+            self.assertEqual(probe_beegfs_mount_devices(), ["/data", "/scratch"])
+
     def test_merge_device_lists_observed_over_singleton(self) -> None:
         from lib.host_live_probes import merge_device_lists
 
@@ -1179,6 +1195,18 @@ class EmitBuildCapabilitiesFleetTests(unittest.TestCase):
         self.assertIn("-ib-", f"-{slug}-")
         self.assertIn("-opa-", f"-{slug}-")
         self.assertIn("-nvgpu-", f"-{slug}-")
+
+    def test_slug_includes_beegfs(self) -> None:
+        slug = ebc.build_capability_slug(
+            arch="x86_64",
+            version="1.0",
+            debug=False,
+            features={"LUSTRE", "BEEGFS"},
+            cpu_backend=None,
+            tier="slowtier1",
+        )
+        self.assertIn("-lustre-", f"-{slug}-")
+        self.assertIn("-beegfs-", f"-{slug}-")
 
     def test_slug_omits_dyn_when_absent(self) -> None:
         slug = ebc.build_capability_slug(

@@ -39,6 +39,10 @@ extern struct stats_type cpu_counter_metrics_stats_type;
 
 extern struct stats_type ib_stats_type;
 
+#if defined(MONITOR_WITH_BEEGFS)
+extern struct stats_type beegfs_stats_type;
+#endif
+
 #if defined(MONITOR_WITH_LUSTRE)
 extern struct stats_type llite_stats_type;
 extern struct stats_type mdc_stats_type;
@@ -81,6 +85,9 @@ struct stats_type *const stats_type_table[] = {
 #if defined(MONITOR_WITH_HARDWARE) && defined(MONITOR_CPU_BACKEND_DCGM) &&                         \
     defined(MONITOR_HOST_IS_ARM)
     &arm_imc_stats_type,
+#endif
+#if defined(MONITOR_WITH_BEEGFS)
+    &beegfs_stats_type,
 #endif
     &block_stats_type,
     &cpu_stats_type,

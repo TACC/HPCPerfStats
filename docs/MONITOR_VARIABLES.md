@@ -46,6 +46,7 @@ This document catalogs **`host_data.event` names** that the HPCPerfStats monitor
 | `amd64_pmc` | `amd64_pmc.c` | HW map → `FLOPS`, branch/stall events |
 | `amd64_rapl` | `amd64_rapl.c` | Package energy |
 | `arm_imc` | `arm_imc.c` | `CAS_READS` / `CAS_WRITES` |
+| `beegfs_client` | `beegfs.c` | BeeGFS client: `vfs_*` via `beegfs-ctl`, `fs_*` via `statvfs` (archive today; FSIO plots need consumer follow-up) |
 | `block` | `block.c` | Block sysfs counters |
 | `cpu` | `cpu.c` | Per-CPU jiffies |
 | `cpu_counter_metrics` | `cpu_counter_metrics.c` | Intel/AMD/ARM paths; DCGM CPU power; synthetic ARM metrics |
@@ -85,7 +86,7 @@ Exact `st_name` values are in `HPCPerfStats/monitor/src/*.c` (grep `.st_name`). 
 - **High-speed fabric:** `host_ib`, `opa` — `port_*`, `Port*` counters
 - **Ethernet / LNET:** `net`, `lnet` — `rx_bytes`, `tx_bytes`, …
 - **Local disk:** `block` — `rd_sectors`, `wr_sectors`, …
-- **Shared filesystem:** `llite`, `mdc`, `osc`, `nfs` — bytes, ops, Lustre `mds_*` / `ost_*`
+- **Shared filesystem:** `llite`, `mdc`, `osc`, `nfs`, `beegfs_client` — bytes, ops, Lustre `mds_*` / `ost_*`; BeeGFS uses portable `vfs_*` / `fs_*`
 - **Memory & NUMA:** `mem`, NUMA meminfo fields on `mem`, `numa`, `vm`
 - **Power:** `intel_rapl`, `amd64_rapl`, `cpu_counter_metrics` (`DCGM_CPU_POWER_*`), GPU power fields
 - **Process footprint:** `proc` — `VmRSS`, `VmHWM`, …
