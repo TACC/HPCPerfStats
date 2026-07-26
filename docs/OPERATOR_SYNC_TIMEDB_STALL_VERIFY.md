@@ -111,6 +111,20 @@ for day in (\"2026-06-08\", \"2026-06-09\"):
 
 **Pass (T0):** contended days log `day_close defer … phase=preflight reason=write_lock_contended` then tick summary shows `deferred_preflight_n≥1 deferred_reason_top=write_lock_contended` with **`days_started=0`** (or progress on other days) — not 500s+ zero-complete burns. Between chunks expect `pending reconcile deferred async_kick=yes` / `async pending reconcile begin|merge` and `async pending rescan` — **not** MainThread stuck in `_cap_pending_after_rescan` live rebuild under backlog. Day-close rescan after raw removal: `kicked async pending rescan` (not sync find on MainThread).
 
+### T0 / T1 — `chunk_in_progress_day` defer (Branch H healthy, 2026-07-26)
+
+```bash
+# T0 — chunk_in_progress_day vs active chunk (full pipeline log; never --tail before grep)
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+  grep -E 'Archive janitor tick done|deferred_reason_top=chunk_in_progress_day|chunk dispatch begin|chunk ingest summary|chunk_elapsed_s' | tail -80
+```
+
+**Pass (T0 / Branch H):** `deferred_reason_top=chunk_in_progress_day leave_in_flight=0 budget_exit=-` (or `budget_exit=leave_in_flight`) **interleaved** with `chunk dispatch begin` / `chunk ingest summary` / `chunk_elapsed_s`. Day-close correctly defers calendar days owned by the active imap chunk — **not** a stall.
+
+**Fail (Branch S):** hour-scale only `chunk_in_progress_day` with **no** chunk progress lines and flat day-close debt / frozen `days_completed=0` while debt remains — sticky tokens (not observed on hpcperfstats01 2026-07-26).
+
+**Do not** treat Branch H as the historical multi-hour `duration_s≈9217` after `budget_exit` hang.
+
 **Pass (T1):** while ingest holds June tar locks, day-close advances other eligible days or backs off; when locks clear, seal completes (`days_completed>0`). Chunk ingest cadence continues without between-chunk reconcile waits.
 
 ### T0 / T1 — `wait_for_member_match` + `redis_warm` false non-defer → exit 124 (2026-07)

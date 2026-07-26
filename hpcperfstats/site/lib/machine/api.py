@@ -125,6 +125,7 @@ from .oauth2 import check_for_tokens
 from .throttles import ExpensiveReadThrottle, StaffIngestThrottle
 from .query_utils import (
     apply_job_list_header_acct_multi_filters,
+    coerce_job_list_datetime_bounds,
     expand_month_date_to_range,
     get_job_list_order_by,
     normalize_job_list_query_params,
@@ -641,6 +642,7 @@ def _build_job_list_queryset_from_request(
     order_by = get_job_list_order_by(fields) or "-end_time"
     acct_data, header_multi_kwargs = apply_job_list_header_acct_multi_filters(acct_data)
     acct_kwargs, host_val = partition_job_list_acct_filters(acct_data)
+    acct_kwargs = coerce_job_list_datetime_bounds(acct_kwargs)
     queryset = job_data.objects.filter(**acct_kwargs, **header_multi_kwargs)
     if host_val:
         queryset = queryset.filter(host_list__contains=[host_val])

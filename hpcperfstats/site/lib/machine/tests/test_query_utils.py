@@ -1,6 +1,10 @@
 """Unit tests for query_utils date normalization and month expansion."""
 
+import pytest
+from django.utils import timezone as dj_tz
+
 from hpcperfstats.site.lib.machine.query_utils import (
+    coerce_job_list_datetime_bounds,
     expand_month_date_to_range,
     get_job_list_order_by,
     normalize_date_param,
@@ -127,3 +131,42 @@ class TestExpandMonthDateToRange:
     def test_no_end_time_date_unchanged(self):
         out = expand_month_date_to_range({"queue": "x"})
         assert out == {"queue": "x"}
+
+
+@pytest.mark.machine_unit_mock
+class TestCoerceJobListDatetimeBounds:
+    """Date-only end_time__gte/lte become aware local-day bounds (USE_TZ safe)."""
+
+    def test_date_only_gte_start_of_day_lte_end_of_day(self):
+        out = coerce_job_list_datetime_bounds(
+            {
+                "end_time__gte": "2026-07-25",
+                "end_time__lte": "2026-07-26",
+                "queue": "h100",
+            },
+        )
+        assert out["queue"] == "h100"
+        gte = out["end_time__gte"]
+        lte = out["end_time__lte"]
+        assert dj_tz.is_aware(gte)
+        assert dj_tz.is_aware(lte)
+        assert gte.hour == 0 and gte.minute == 0 and gte.second == 0
+        assert gte.date().isoformat() == "2026-07-25"
+        assert lte.date().isoformat() == "2026-07-26"
+        assert lte.hour == 23 and lte.minute == 59
+        assert lte > gte
+
+    def test_aware_iso_unchanged(self):
+        raw = "2026-07-25T12:30:00+00:00"
+        out = coerce_job_list_datetime_bounds({"end_time__gte": raw})
+        assert out["end_time__gte"] == raw
+
+    def test_naive_midnight_string_becomes_aware(self):
+        out = coerce_job_list_datetime_bounds(
+            {"end_time__lte": "2026-07-26T00:00:00"},
+        )
+        lte = out["end_time__lte"]
+        assert dj_tz.is_aware(lte)
+        assert lte.date().isoformat() == "2026-07-26"
+        # Midnight-only ISO without offset is treated as date-only end bound.
+        assert lte.hour == 23

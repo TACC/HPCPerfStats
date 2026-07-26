@@ -209,3 +209,103 @@ def expand_month_date_to_range(fields):
     out["end_time__date__gte"] = f"{y}-{month:02d}-01"
     out["end_time__date__lte"] = f"{y}-{month:02d}-{last_day:02d}"
     return out
+
+
+_DATE_ONLY_ISO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+_NAIVE_MIDNIGHT_ISO = re.compile(
+    r"^(\d{4})-(\d{2})-(\d{2})[T ]00:00:00(?:\.0+)?$",
+)
+_DATETIME_BOUND_KEYS_START = frozenset({
+    "end_time__gte",
+    "start_time__gte",
+})
+_DATETIME_BOUND_KEYS_END = frozenset({
+    "end_time__lte",
+    "start_time__lte",
+})
+
+
+def _calendar_day_from_bound_value(value):
+    """Return date for date-only / naive-midnight strings; else None (leave value)."""
+    from datetime import date as date_cls
+    from datetime import datetime as datetime_cls
+
+    if value is None or value == "":
+        return None
+    if isinstance(value, date_cls) and not isinstance(value, datetime_cls):
+        return value
+    if isinstance(value, datetime_cls):
+        if value.tzinfo is not None:
+            return None
+        if (
+            value.hour == 0
+            and value.minute == 0
+            and value.second == 0
+            and value.microsecond == 0
+        ):
+            return value.date()
+        return None
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    m = _DATE_ONLY_ISO.match(text)
+    if m:
+        return date_cls(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    m = _NAIVE_MIDNIGHT_ISO.match(text)
+    if m:
+        return date_cls(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    # Aware / offset ISO (…Z or ±HH:MM) — leave for Django.
+    if "T" in text.upper() and (
+        text.endswith("Z")
+        or "+" in text[10:]
+        or (text.count("-") >= 3 and text.rfind("-") > 10)
+    ):
+        return None
+    return None
+
+
+def _aware_local_day_start(day):
+    from datetime import datetime as datetime_cls
+    from datetime import time as time_cls
+
+    from django.utils import timezone as dj_tz
+
+    naive = datetime_cls.combine(day, time_cls.min)
+    return dj_tz.make_aware(naive, dj_tz.get_current_timezone())
+
+
+def _aware_local_day_end(day):
+    from datetime import datetime as datetime_cls
+    from datetime import time as time_cls
+
+    from django.utils import timezone as dj_tz
+
+    naive = datetime_cls.combine(day, time_cls(23, 59, 59, 999999))
+    return dj_tz.make_aware(naive, dj_tz.get_current_timezone())
+
+
+def coerce_job_list_datetime_bounds(acct_kwargs):
+    """Coerce date-only / naive-midnight DateTimeField bounds to aware local days.
+
+    SPA sends ``end_time__gte=YYYY-MM-DD&end_time__lte=YYYY-MM-DD``. Passing those
+    strings through ``filter(**kwargs)`` makes Django emit RuntimeWarning under
+    ``USE_TZ`` and treats ``__lte`` as midnight (excluding the end calendar day).
+    Date-only ``__gte`` → start of local day; date-only ``__lte`` → end of local day.
+    Full offset ISO timestamps are left unchanged.
+    """
+    if not acct_kwargs:
+        return acct_kwargs
+    out = dict(acct_kwargs)
+    for key in _DATETIME_BOUND_KEYS_START:
+        if key not in out:
+            continue
+        day = _calendar_day_from_bound_value(out[key])
+        if day is not None:
+            out[key] = _aware_local_day_start(day)
+    for key in _DATETIME_BOUND_KEYS_END:
+        if key not in out:
+            continue
+        day = _calendar_day_from_bound_value(out[key])
+        if day is not None:
+            out[key] = _aware_local_day_end(day)
+    return out

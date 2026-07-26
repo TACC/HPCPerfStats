@@ -28,6 +28,7 @@ globs: hpcperfstats/dbload/sync_timedb*.py,hpcperfstats/dbload/lib/sync_timedb_a
 
 - `janitor: day_close defer tar=… phase=… reason=…` (`phase=preflight` before seal/dedupe)
 - `Archive janitor tick done … deferred_preflight_n=… deferred_reason_top=… leave_in_flight=… budget_exit=…`
+- **`deferred_reason_top=chunk_in_progress_day`** with `leave_in_flight=0` during active `chunk dispatch begin` / `chunk ingest summary` is **healthy** (hot-path defer while imap owns that calendar day) — not sticky tokens and not the multi-hour `duration_s≈9217` budget hang. Fail only if hour-scale `chunk_in_progress_day` with **no** chunk progress and flat day-close debt.
 - `janitor: day_close yield tar=… phase=… reason=…`
 - `janitor: day_close yield signal tar=… reason=…`
 - `populate: wait daily_tar_restore day=…`

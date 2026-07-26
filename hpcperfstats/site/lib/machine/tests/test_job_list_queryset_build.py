@@ -1,6 +1,7 @@
 """Regression: job list queryset must tolerate search params and stray GET keys."""
 
-from datetime import timedelta
+import warnings
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -209,6 +210,52 @@ def test_job_list_queryset_filters_every_extended_search_accounting_parameter():
         request.session = {"username": "admin", "is_staff": True}
         qs, _fields, _cur_metrics, _order = _build_job_list_queryset_from_request(request)
         assert list(qs.values_list("jid", flat=True)) == [expected_jid], param
+
+
+@pytest.mark.django_db
+def test_job_list_date_only_end_time_bounds_no_naive_datetime_warning():
+    """Track W: date-only gte/lte must not warn under USE_TZ (hpcperfstats01 2026-07-26)."""
+    if connection.vendor != "postgresql":
+        pytest.skip("job_data.host_list ArrayField is PostgreSQL-specific in this project")
+
+    now = timezone.now()
+    day = (now - timedelta(days=1)).date()
+    afternoon = timezone.make_aware(
+        datetime.combine(day, datetime.min.time().replace(hour=15)),
+    )
+    job_data.objects.create(
+        jid="date-only-bounds-afternoon",
+        submit_time=afternoon - timedelta(hours=1),
+        start_time=afternoon - timedelta(minutes=30),
+        end_time=afternoon,
+        runtime=1800.0,
+        username="alice",
+        queue="h100",
+        host_list=["n001.cluster.example"],
+    )
+    factory = RequestFactory()
+    request = factory.get(
+        "/api/jobs/",
+        {
+            "end_time__gte": day.isoformat(),
+            "end_time__lte": day.isoformat(),
+            "queue": "h100",
+        },
+    )
+    request.session = {"username": "admin", "is_staff": True}
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        qs, _fields, _cur, _order = _build_job_list_queryset_from_request(request)
+        list(qs.values_list("jid", flat=True))
+    naive_end = [
+        w
+        for w in caught
+        if issubclass(w.category, RuntimeWarning)
+        and "job_data.end_time" in str(w.message)
+        and "naive datetime" in str(w.message)
+    ]
+    assert naive_end == []
+    assert list(qs.values_list("jid", flat=True)) == ["date-only-bounds-afternoon"]
 
 
 @pytest.mark.django_db
