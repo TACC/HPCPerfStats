@@ -36,8 +36,8 @@ import { SITE_GIT_COMMIT, SITE_MACHINE_NAME } from "@/config/site-identity";
 import { isPortaledOverlayTarget } from "./utils/is-portaled-overlay-target";
 import {
   gitCommitHref,
+  gitCommitMenuLabel,
   isDisplayableGitCommit,
-  shortGitCommitLabel,
 } from "./utils/site-git-commit";
 import { useRouteFocusMain } from "./utils/useRouteFocusMain";
 
@@ -312,7 +312,7 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
                               />
                             }
                           >
-                            {shortGitCommitLabel(staffGitCommit)}
+                            {gitCommitMenuLabel(staffGitCommit)}
                           </DropdownMenuItem>
                         </>
                       ) : null}
@@ -393,7 +393,7 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
                               />
                             }
                           >
-                            {shortGitCommitLabel(staffGitCommit)}
+                            {gitCommitMenuLabel(staffGitCommit)}
                           </Button>
                         ) : null}
                       </>

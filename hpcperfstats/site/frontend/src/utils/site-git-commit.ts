@@ -1,6 +1,6 @@
-/** GitHub commit URLs for the staff actions menu (baked SITE_GIT_COMMIT). */
+/** GitHub tree URLs for the staff actions menu (baked SITE_GIT_COMMIT). */
 
-export const GITHUB_COMMIT_BASE = "https://github.com/TACC/HPCPerfStats/commit/";
+export const GITHUB_TREE_BASE = "https://github.com/TACC/HPCPerfStats/tree/";
 
 export function isDisplayableGitCommit(value: string | undefined | null): boolean {
   const v = (value ?? "").trim();
@@ -11,6 +11,10 @@ export function shortGitCommitLabel(fullSha: string): string {
   return fullSha.trim().slice(0, 7).toLowerCase();
 }
 
+export function gitCommitMenuLabel(fullSha: string): string {
+  return `Current github commit: ${shortGitCommitLabel(fullSha)}`;
+}
+
 export function gitCommitHref(fullSha: string): string {
-  return `${GITHUB_COMMIT_BASE}${fullSha.trim().toLowerCase()}`;
+  return `${GITHUB_TREE_BASE}${fullSha.trim().toLowerCase()}`;
 }

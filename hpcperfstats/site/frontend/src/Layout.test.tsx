@@ -126,12 +126,14 @@ describe("Layout", () => {
       "HPCPerfStats Monitor",
       "Disable Staff Permissions",
       "Invalidate Cache For Page",
-      "abcdef1",
+      "Current github commit: abcdef1",
     ]);
-    const commitLink = screen.getByRole("menuitem", { name: "abcdef1" });
+    const commitLink = screen.getByRole("menuitem", {
+      name: "Current github commit: abcdef1",
+    });
     expect(commitLink).toHaveAttribute(
       "href",
-      "https://github.com/TACC/HPCPerfStats/commit/abcdef1234567890abcdef1234567890abcdef12",
+      "https://github.com/TACC/HPCPerfStats/tree/abcdef1234567890abcdef1234567890abcdef12",
     );
     expect(commitLink).toHaveAttribute("target", "_blank");
     expect(commitLink).toHaveAttribute("rel", "noopener noreferrer");
@@ -148,10 +150,12 @@ describe("Layout", () => {
       is_staff: true,
     });
     await user.click(screen.getByRole("button", { name: "Account and tools" }));
-    const commitLink = screen.getByRole("link", { name: "abcdef1" });
+    const commitLink = screen.getByRole("link", {
+      name: "Current github commit: abcdef1",
+    });
     expect(commitLink).toHaveAttribute(
       "href",
-      "https://github.com/TACC/HPCPerfStats/commit/abcdef1234567890abcdef1234567890abcdef12",
+      "https://github.com/TACC/HPCPerfStats/tree/abcdef1234567890abcdef1234567890abcdef12",
     );
   });
 
@@ -167,6 +171,7 @@ describe("Layout", () => {
       await user.click(screen.getByRole("button", { name: "Staff actions" }));
       const items = await screen.findAllByRole("menuitem");
       expect(items).toHaveLength(4);
+      expect(screen.queryByRole("menuitem", { name: /Current github commit:/ })).toBeNull();
       expect(screen.queryByRole("menuitem", { name: "abcdef1" })).toBeNull();
     } finally {
       siteIdentityMock.SITE_GIT_COMMIT =

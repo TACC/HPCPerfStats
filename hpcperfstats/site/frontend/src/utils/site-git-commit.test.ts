@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  GITHUB_COMMIT_BASE,
+  GITHUB_TREE_BASE,
   gitCommitHref,
+  gitCommitMenuLabel,
   isDisplayableGitCommit,
   shortGitCommitLabel,
 } from "./site-git-commit";
@@ -21,11 +22,14 @@ describe("site-git-commit", () => {
     expect(isDisplayableGitCommit(null)).toBe(false);
   });
 
-  it("builds short label and GitHub href", () => {
+  it("builds short label, menu label, and GitHub tree href", () => {
     const full = "Abcdef1234567890abcdef1234567890abcdef12";
     expect(shortGitCommitLabel(full)).toBe("abcdef1");
+    expect(gitCommitMenuLabel(full)).toBe("Current github commit: abcdef1");
     expect(gitCommitHref(full)).toBe(
-      `${GITHUB_COMMIT_BASE}abcdef1234567890abcdef1234567890abcdef12`,
+      `${GITHUB_TREE_BASE}abcdef1234567890abcdef1234567890abcdef12`,
     );
+    expect(gitCommitHref(full)).toContain("/tree/");
+    expect(gitCommitHref(full)).not.toContain("/commit/");
   });
 });
