@@ -28,6 +28,15 @@ alwaysApply: false
 
 Port collectibility uses these parsers — false positives cause extra MAD I/O. Fix parsers at source, not only in `ib_mad.c`.
 
+## `link_layer` (InfiniBand vs Ethernet)
+
+- Sysfs: `/sys/class/infiniband/<hca>/ports/<N>/link_layer` — kernel strings **`InfiniBand`** or **`Ethernet`** (Horizon may expose Ethernet as a **separate mlx5 HCA**, e.g. `mlx5_2`, not a second port under one card).
+- Pure parser: **`ib_port_link_layer_is_infiniband`** — accept InfiniBand (case-insensitive, trimmed); reject Ethernet / empty / NULL / unknown.
+- **`ib_port_collectible`**: after ACTIVE (`state` 4) or phys LinkUp, if `link_layer` **exists** require InfiniBand; if the file is **missing**, allow (legacy / HFI-compatible).
+- ACTIVE Ethernet (e.g. `state=4` + `link_layer=Ethernet`) must **not** enter `host_ib` sysfs/MAD — otherwise MAD failures poison the global fail streak for good IB HCAs.
+- Keep MAD PortInfo / PMA on true InfiniBand ports; filter at enumeration, not only inside `ib_mad.c`.
+- Sync **`probe_ib_devices()`** with the same collectible + link_layer rules (**monitor-shm-validation-probe-parity**).
+
 ## HFI / Omni-Path routing (`ib_hca_is_opa_hfi`)
 
 - Devices named `hfi1` / `hfi1_*` are **Cornelis CN5000 / Intel Omni-Path** and belong to **`host_opa`**, not **`host_ib`**.

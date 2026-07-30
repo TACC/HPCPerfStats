@@ -32,10 +32,28 @@ static void test_ib_port_phys_link_up_cases(void)
   assert(ib_port_phys_link_up("") == 0);
 }
 
+static void test_ib_port_link_layer_is_infiniband_cases(void)
+{
+  /* Horizon c109-001 strings. */
+  assert(ib_port_link_layer_is_infiniband("InfiniBand") == 1);
+  assert(ib_port_link_layer_is_infiniband("  InfiniBand\n") == 1);
+  assert(ib_port_link_layer_is_infiniband("infiniband") == 1);
+  assert(ib_port_link_layer_is_infiniband("INFINIBAND") == 1);
+
+  assert(ib_port_link_layer_is_infiniband("Ethernet") == 0);
+  assert(ib_port_link_layer_is_infiniband("  Ethernet\n") == 0);
+  assert(ib_port_link_layer_is_infiniband("RoCE") == 0);
+  assert(ib_port_link_layer_is_infiniband("InfiniBandEthernet") == 0);
+  assert(ib_port_link_layer_is_infiniband(NULL) == 0);
+  assert(ib_port_link_layer_is_infiniband("") == 0);
+  assert(ib_port_link_layer_is_infiniband("   ") == 0);
+}
+
 int main(void)
 {
   test_ib_port_logic_active_cases();
   test_ib_port_phys_link_up_cases();
+  test_ib_port_link_layer_is_infiniband_cases();
   printf("test_ib_port_state passed\n");
   return 0;
 }

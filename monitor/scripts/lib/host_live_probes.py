@@ -55,7 +55,11 @@ def probe_net_devices() -> list[str]:
 
 
 def probe_ib_devices() -> list[str]:
-    """host_ib devices: non-OPA HCAs only (hfi1_* is host_opa)."""
+    """host_ib devices: collectible non-OPA HCAs (hfi1_* is host_opa).
+
+    Mirrors ib_foreach_hca_port + ib_port_collectible (ACTIVE/LinkUp and
+    link_layer InfiniBand when the sysfs file is present).
+    """
     ib_base = Path("/sys/class/infiniband")
     if not ib_base.is_dir():
         return []
@@ -69,8 +73,11 @@ def probe_ib_devices() -> list[str]:
         if not ports.is_dir():
             continue
         for port in sorted(ports.iterdir()):
-            if port.is_dir() and port.name.isdigit():
-                devs.append(f"{hca.name}.{port.name}")
+            if not port.is_dir() or not port.name.isdigit():
+                continue
+            if not _ib_port_collectible(ports, port.name):
+                continue
+            devs.append(f"{hca.name}.{port.name}")
     return devs
 
 
@@ -121,20 +128,41 @@ def _ib_port_phys_link_up(phys_line: str | None) -> bool:
     return "link_up" in phys_line or "linkup" in phys_line
 
 
+def _ib_port_link_layer_is_infiniband(link_line: str | None) -> bool:
+    """Match ib_port_link_layer_is_infiniband() — InfiniBand only (case-insensitive)."""
+    if link_line is None:
+        return False
+    token = link_line.strip()
+    if not token:
+        return False
+    return token.casefold() == "infiniband"
+
+
 def _ib_port_collectible(hca_ports: Path, port_name: str) -> bool:
-    """Match ib_port_collectible() — ACTIVE state or phys LinkUp."""
+    """Match ib_port_collectible() — ACTIVE/LinkUp, then InfiniBand link_layer if present."""
     port_dir = hca_ports / port_name
     try:
         state = (port_dir / "state").read_text(encoding="utf-8", errors="replace")
     except OSError:
         state = None
+    state_or_phys_up = False
     if _ib_port_logic_active(state):
-        return True
-    try:
-        phys = (port_dir / "phys_state").read_text(encoding="utf-8", errors="replace")
-    except OSError:
+        state_or_phys_up = True
+    else:
+        try:
+            phys = (port_dir / "phys_state").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return False
+        if not _ib_port_phys_link_up(phys):
+            return False
+        state_or_phys_up = True
+    if not state_or_phys_up:
         return False
-    return _ib_port_phys_link_up(phys)
+    try:
+        link = (port_dir / "link_layer").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return True  # missing link_layer: allow (legacy / HFI)
+    return _ib_port_link_layer_is_infiniband(link)
 
 
 def probe_opa_devices() -> list[str]:

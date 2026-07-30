@@ -138,7 +138,11 @@ class HostLiveProbeTests(unittest.TestCase):
             (p1 / "state").write_text("4: ACTIVE\n", encoding="utf-8")
             (p1 / "phys_state").write_text("5: LinkUp\n", encoding="utf-8")
             mlx = ib / "mlx5_0"
-            (mlx / "ports" / "1").mkdir(parents=True)
+            mp1 = mlx / "ports" / "1"
+            mp1.mkdir(parents=True)
+            (mp1 / "state").write_text("4: ACTIVE\n", encoding="utf-8")
+            (mp1 / "phys_state").write_text("5: LinkUp\n", encoding="utf-8")
+            (mp1 / "link_layer").write_text("InfiniBand\n", encoding="utf-8")
 
             real_path = Path
 
@@ -150,6 +154,32 @@ class HostLiveProbeTests(unittest.TestCase):
             with patch("lib.host_live_probes.Path", side_effect=fake_path):
                 self.assertEqual(probe_ib_devices(), ["mlx5_0.1"])
                 self.assertEqual(probe_opa_devices(), ["hfi1_0/1"])
+
+    def test_probe_ib_skips_active_ethernet_horizon_shape(self) -> None:
+        """Horizon-style: ACTIVE Ethernet mlx HCA must not appear; InfiniBand must."""
+        import tempfile
+        from unittest.mock import patch
+
+        from lib.host_live_probes import probe_ib_devices
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ib = Path(tmp)
+            for name, link in (("mlx5_0", "InfiniBand"), ("mlx5_2", "Ethernet")):
+                p = ib / name / "ports" / "1"
+                p.mkdir(parents=True)
+                (p / "state").write_text("4: ACTIVE\n", encoding="utf-8")
+                (p / "phys_state").write_text("5: LinkUp\n", encoding="utf-8")
+                (p / "link_layer").write_text(f"{link}\n", encoding="utf-8")
+
+            real_path = Path
+
+            def fake_path(arg: str) -> Path:
+                if arg == "/sys/class/infiniband":
+                    return ib
+                return real_path(arg)
+
+            with patch("lib.host_live_probes.Path", side_effect=fake_path):
+                self.assertEqual(probe_ib_devices(), ["mlx5_0.1"])
 
     def test_probe_opa_skips_down_cn5000_port(self) -> None:
         """CN5000 dual-port: DOWN port1 must not appear; ACTIVE port2 must (opa.c)."""

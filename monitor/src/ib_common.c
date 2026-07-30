@@ -63,18 +63,31 @@ int ib_port_collectible(const char *hca, int port)
 {
   char path[160];
   char buf[96];
+  int state_or_phys_up = 0;
 
   if (hca == NULL)
     return 0;
 
   snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%d/state", hca, port);
   if (ib_port_read_state_file(path, buf, sizeof(buf)) && ib_port_logic_active(buf))
-    return 1;
+    state_or_phys_up = 1;
+  else {
+    snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%d/phys_state", hca, port);
+    if (!ib_port_read_state_file(path, buf, sizeof(buf)))
+      return 0;
+    if (!ib_port_phys_link_up(buf))
+      return 0;
+    state_or_phys_up = 1;
+  }
 
-  snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%d/phys_state", hca, port);
-  if (!ib_port_read_state_file(path, buf, sizeof(buf)))
+  if (!state_or_phys_up)
     return 0;
-  return ib_port_phys_link_up(buf);
+
+  /* Missing link_layer: allow (legacy / HFI). Present: require InfiniBand. */
+  snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%d/link_layer", hca, port);
+  if (!ib_port_read_state_file(path, buf, sizeof(buf)))
+    return 1;
+  return ib_port_link_layer_is_infiniband(buf);
 }
 
 struct ib_port_iter_ctx {

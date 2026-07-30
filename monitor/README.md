@@ -33,6 +33,7 @@ Configure selects sources via Automake conditionals; use **`./configure --help`*
 ### InfiniBand MAD (`host_ib`)
 
 - **Sysfs** counters under `/sys/class/infiniband` (non-`hfi1_*`) are always compiled.
+- Ports must be ACTIVE or phys LinkUp **and** `link_layer=InfiniBand` when that sysfs file exists (Ethernet-mode mlx HCAs, e.g. Horizon `mlx5_2`, are skipped so MAD is not attempted on them).
 - **`--enable-ib-mad-dlopen`:** compiles MAD against vendored `third_party/ibmad-shim/` and **`dlopen`s `libibmad`** (`HPCPERFSTATS_IBMAD_LIB`). No link-time `-libmad`. Stampede3 fleet default.
 - **`--enable-infiniband` (default, non-fleet):** link-time `-libmad` when devel is present; bundle may pass `--disable-infiniband` when the probe fails (sysfs-only).
 
