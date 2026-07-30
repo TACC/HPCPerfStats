@@ -106,6 +106,7 @@ int g_nvidia_gpu_warmup_done;
 static int g_nvidia_gpu_warmup_profile = -1;
 static int g_nvidia_gpu_runtime_ready;
 static int g_nvidia_gpu_runtime_remote;
+static int g_nvidia_gpu_session_held;
 int g_nvidia_gpu_runtime_ndev;
 static int g_nvidia_gpu_runtime_watch_profile = -1;
 dcgmHandle_t g_nvidia_gpu_runtime_handle = (dcgmHandle_t)0;
@@ -236,17 +237,10 @@ void nvidia_gpu_runtime_cleanup(void)
     (void)dcgmGroupDestroy(g_nvidia_gpu_runtime_handle, g_nvidia_gpu_runtime_group);
     g_nvidia_gpu_runtime_group = (dcgmGpuGrp_t)NULL;
   }
-  if (g_nvidia_gpu_runtime_handle != (dcgmHandle_t)0) {
-    if (g_nvidia_gpu_runtime_remote)
-      (void)dcgmDisconnect(g_nvidia_gpu_runtime_handle);
-#if !defined(MONITOR_CPU_BACKEND_DCGM)
-    else
-      (void)dcgmStopEmbedded(g_nvidia_gpu_runtime_handle);
-#endif
+  if (g_nvidia_gpu_session_held) {
+    monitor_dcgm_session_release();
+    g_nvidia_gpu_session_held = 0;
   }
-#if !defined(MONITOR_CPU_BACKEND_DCGM)
-  (void)dcgmShutdown();
-#endif
   g_nvidia_gpu_runtime_handle = (dcgmHandle_t)0;
   g_nvidia_gpu_runtime_remote = 0;
   g_nvidia_gpu_runtime_ndev = 0;
@@ -274,20 +268,16 @@ int nvidia_gpu_runtime_prepare(int *fail_stage)
   }
 #endif
 
-  rc = dcgmInit();
-  if (rc != DCGM_ST_OK) {
-    *fail_stage = NVIDIA_GPU_FAIL_DCGM_INIT;
-    ERROR("DCGM init failed: %s\n", dcgm_err(rc));
-    return -1;
-  }
-  rc = monitor_dcgm_attach_for_process(&g_nvidia_gpu_runtime_handle, &g_nvidia_gpu_runtime_remote);
+  rc = monitor_dcgm_session_acquire(&g_nvidia_gpu_runtime_handle, &g_nvidia_gpu_runtime_remote);
   if (rc != DCGM_ST_OK || g_nvidia_gpu_runtime_handle == (dcgmHandle_t)0) {
     *fail_stage = NVIDIA_GPU_FAIL_ATTACH;
     ERROR("DCGM attach failed (embedded or 127.0.0.1 hostengine): %s%s\n", dcgm_err(rc),
           rc == DCGM_ST_CONNECTION_NOT_VALID ? " (start nv-hostengine on this node?)" : "");
+    g_nvidia_gpu_session_held = 0;
     nvidia_gpu_runtime_cleanup();
     return -1;
   }
+  g_nvidia_gpu_session_held = 1;
   rc = nvidia_gpu_discover_gpu_ids(g_nvidia_gpu_runtime_handle, g_nvidia_gpu_runtime_gpu_ids,
                                    &g_nvidia_gpu_runtime_ndev);
   if (rc != DCGM_ST_OK) {

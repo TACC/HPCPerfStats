@@ -2,6 +2,12 @@
 #
 # This file is sourced by systemd (EnvironmentFile=-/etc/sysconfig/hpcperfstatsd).
 # Leave entries commented out to keep daemon defaults.
+#
+# libdcgm may exec `lshw -json` for serials. The unit sets PATH so
+# /usr/libexec/hpcperfstats/stubs/lshw (no module EEPROM probes) wins over
+# /usr/sbin/lshw — required on fleets with empty-cage mlx Ethernet (Horizon MCIA).
+# To override the unit PATH entirely, set a full PATH= here (EnvironmentFile
+# does not expand $PATH).
 
 # Disable selected stats types (comma-separated list, case-sensitive).
 # Example: disable expensive proc collector on jitter-sensitive nodes.

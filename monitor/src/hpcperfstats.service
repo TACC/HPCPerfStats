@@ -6,6 +6,8 @@ Type=simple
 # Default per-process soft FD limit is often 1024; collectors + LIKWID + dumpfiles can exceed it (EMFILE).
 LimitNOFILE=1048576
 EnvironmentFile=-/etc/sysconfig/hpcperfstatsd
+# Prefer stub lshw so libdcgm serial discovery does not probe empty mlx modules (MCIA dmesg).
+Environment=PATH=/usr/libexec/hpcperfstats/stubs:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 # Keep monitoring overhead off user-critical cores by default where admins set affinity.
 Nice=10
 IOSchedulingClass=idle

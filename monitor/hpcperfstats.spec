@@ -113,10 +113,12 @@ mkdir -p %{buildroot}%{_sbindir}/
 mkdir -p %{buildroot}%{_sysconfdir}/hpcperfstats/
 mkdir -p %{buildroot}%{_sysconfdir}/sysconfig/
 mkdir -p %{buildroot}%{_unitdir}/
+mkdir -p %{buildroot}%{_libexecdir}/hpcperfstats/stubs/
 install -m 0755 .build-static/src/hpcperfstatsd %{buildroot}%{_sbindir}/hpcperfstatsd
 install -m 0644 src/hpcperfstats.conf %{buildroot}%{_sysconfdir}/hpcperfstats/hpcperfstats.conf
 install -m 0644 src/hpcperfstatsd.sysconfig %{buildroot}%{_sysconfdir}/sysconfig/hpcperfstatsd
 install -m 0644 src/hpcperfstats.service %{buildroot}%{_unitdir}/hpcperfstats.service
+install -m 0755 scripts/stubs/lshw %{buildroot}%{_libexecdir}/hpcperfstats/stubs/lshw
 %if 0%{?hpc_debug_build}
 # Survive EL10 rpmbuild rmbuild: stash capabilities outside BUILD for rpm_debug_shm_verify.sh.
 mkdir -p "%{_topdir}/debug-verify"
@@ -134,6 +136,9 @@ cp -f .build-static/monitor-build-capabilities.json \
 %config(noreplace) %{_sysconfdir}/sysconfig/hpcperfstatsd
 %{_unitdir}/hpcperfstats.service
 %dir %{_sysconfdir}/hpcperfstats
+%dir %{_libexecdir}/hpcperfstats
+%dir %{_libexecdir}/hpcperfstats/stubs
+%{_libexecdir}/hpcperfstats/stubs/lshw
 
 %post
 # Pick up unit changes (new installs and upgrades) before preset/enable/start.

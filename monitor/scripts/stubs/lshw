@@ -1,0 +1,14 @@
+#!/bin/sh
+# Stub lshw for hpcperfstatsd (libdcgm serial discovery).
+#
+# NVIDIA libdcgm may exec `lshw -json` to read board/GPU serials. On hosts with
+# empty-cage mlx Ethernet ports (e.g. Horizon enP6s3f1np1), real lshw probes
+# module EEPROM and spams dmesg: mlx5_query_module_id / query_mcia_reg status 0x3.
+#
+# DCGM soft-fails on empty JSON ("Unexpected lshw json format"); monitor collectors
+# do not need those serials. Put this stub first on the daemon PATH
+# (/usr/libexec/hpcperfstats/stubs) via the systemd unit / sysconfig.
+#
+# Do not probe hardware, open netdevs, or call the real lshw.
+echo '{}'
+exit 0

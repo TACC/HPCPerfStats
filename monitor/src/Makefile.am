@@ -374,6 +374,7 @@ hpcperfstatsd_CPPFLAGS += \
 endif
 
 EXTRA_DIST = hpcperfstats.conf hpcperfstats.service hpcperfstatsd.sysconfig \
+	$(top_srcdir)/scripts/stubs/lshw \
 	$(top_srcdir)/scripts/build_static_bundle.sh \
 	$(top_srcdir)/scripts/ensure_dotbuild_prefix_static.sh \
 	$(top_srcdir)/scripts/prepare_rpmbuild_stampede3.sh \

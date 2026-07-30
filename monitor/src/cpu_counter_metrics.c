@@ -62,6 +62,7 @@ static unsigned long g_dcgm_update_failures;
 static time_t g_dcgm_retry_after;
 static dcgmHandle_t g_dcgm_handle = (dcgmHandle_t)NULL;
 static int g_dcgm_cpu_use_disconnect = 0;
+static int g_dcgm_cpu_session_held;
 static dcgmGpuGrp_t *g_dcgm_cpu_groups = NULL;
 static dcgmFieldGrp_t *g_dcgm_cpu_fgs = NULL;
 static int g_dcgm_cpu_nchunks = 0;
@@ -717,15 +718,11 @@ static void dcgm_backend_teardown_session(void)
   free(g_dcgm_last_ts);
   g_dcgm_last_ts = NULL;
 
-  if (g_dcgm_handle != (dcgmHandle_t)NULL) {
-    if (g_dcgm_cpu_use_disconnect)
-      (void)dcgmDisconnect(g_dcgm_handle);
-    else
-      (void)dcgmStopEmbedded(g_dcgm_handle);
-    g_dcgm_handle = (dcgmHandle_t)NULL;
+  if (g_dcgm_cpu_session_held) {
+    monitor_dcgm_session_release();
+    g_dcgm_cpu_session_held = 0;
   }
-  (void)dcgmShutdown();
-
+  g_dcgm_handle = (dcgmHandle_t)NULL;
   g_dcgm_cpu_use_disconnect = 0;
   g_dcgm_ready = 0;
 }
@@ -883,26 +880,18 @@ static int dcgm_backend_begin(struct stats_type *type)
   else
     dcgm_backend_cleanup();
 
-  rc = dcgmInit();
-  if (rc != DCGM_ST_OK) {
-    ERROR("DCGM CPU backend init failed\n");
-    if (!keep_degraded)
-      type->st_enabled = 0;
-    else
-      g_dcgm_retry_after = now + 60;
-    return 0;
-  }
-  rc = monitor_dcgm_attach_for_process(&g_dcgm_handle, &g_dcgm_cpu_use_disconnect);
+  rc = monitor_dcgm_session_acquire(&g_dcgm_handle, &g_dcgm_cpu_use_disconnect);
   if (rc != DCGM_ST_OK || g_dcgm_handle == (dcgmHandle_t)NULL) {
     ERROR("DCGM CPU backend attach failed\n");
-    (void)dcgmShutdown();
     g_dcgm_handle = (dcgmHandle_t)NULL;
+    g_dcgm_cpu_session_held = 0;
     if (!keep_degraded)
       type->st_enabled = 0;
     else
       g_dcgm_retry_after = now + 60;
     return 0;
   }
+  g_dcgm_cpu_session_held = 1;
 
   need_alloc = !dcgm_util_bufs_ok();
   if (need_alloc) {
