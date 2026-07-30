@@ -29,7 +29,9 @@ Pair every `chunk_elapsed_s` sample with:
 | `pending cap supplement from snapshot n=` **without** `pending cap supplement replace` | Zero-yield cap (RC-1 signature) — full snapshot walked, queue unchanged |
 | `post_finalize_reconcile` count per boundary | Should be **1** log line per finalize batch, with **one** following boundary cap (RC-2) — not 2–4 identical caps |
 | `ingest file path=… stats_rows=… stats_rows_parsed=…` rate | Per-file throughput; `stats_rows_parsed>0` with `stats_rows=0` + collapse WARN is a delta path defect, not a legitimate zero-host |
-| `giant pool supplement begin` during idle tail | RC-3 idle-slot fill; rare/absent with idle workers ⇒ supplement gated off |
+| `giant pool supplement begin` during idle tail | RC-3 idle-slot fill while a **batch-own** path is still in flight; rare/absent with idle workers ⇒ supplement gated off |
+| `giant pool supplement replenish` + `in_flight_giants=[]` for hours with **no** `chunk_elapsed_s` | **RC-E UnboundedReplenish** (pre-fix) — idle-slot OR without stop when only supplements remain; post-fix must see `giant pool supplement stop reason=batch_paths_complete` then chunk end |
+| `giant pool supplement stop reason=batch_paths_complete` | Healthy RC-E stop: original batch paths done; remaining in-flight supplements drain; next chunk drains backlog via pending cap |
 
 **Note:** above `sync_ingest_stream_duplicate_scan_bytes` (default 8 MiB), `parse_elapsed_s` spans the whole streaming parse+flush+DB loop — it does **not** exclude DB write.
 
@@ -896,6 +898,20 @@ When the prefix has no `:role` segment, use message substrings:
 **Shared stages (RC-A):** stall snapshots may show workers in **`populate_queue_wait`** while other workers parse giants. An idle-looking `populate_queue_wait` row next to `long_ingest_budget` is **normal shared-stage telemetry**, not proof that ingest is stuck on populate. Prefer `chunk ingest summary`, `giant pool supplement begin|replenish`, and busy `worker:ingest-pool` PIDs over a single stage token.
 
 **RC-D queue semantics:** no-supplement process queue = **`sync_ingest_queue_max_size`** (default **3000**). Ingest **chunk size** follows the same knob (`get_sync_ingest_chunk_size` alias — leftover `sync_ingest_chunk_size=` INI lines are ignored). Giant-supplement reservoir = **queue × `sync_ingest_giant_pool_supplement_queue_multiplier`** (default **2 → 6000**) at **batch start and mid-imap refresh**. Grep **`giant pool supplement replenish`** when giants run for hours with disk backlog; **`giant pool supplement empty reason=exhausted|size_filter`** when the reservoir has nothing eligible.
+
+**RC-E stop condition (2026-07):** pool supplement may run **only while a path from the batch's own set is in flight**. Primary-iterator exhausted + idle slots is the normal end-of-chunk condition — it must **not** by itself authorize unbounded replenish against a live-growing closed-path snapshot. **Fail (pre-fix / regression):** one `chunk imap start` then hours of `giant pool supplement replenish` / `begin … in_flight_giants=[]` with **no** `chunk_elapsed_s` / `chunk ingest summary`. **Pass:** `giant pool supplement stop reason=batch_paths_complete` after original paths complete; `chunk_elapsed_s` advances; healthy giant-tail still shows `supplement=yes` / `replenish` **while** the original giant remains in flight.
+
+```bash
+# T0/T1 — RC-E supplement stop vs unbounded replenish (full log; never --tail before grep)
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 \
+  | tee /tmp/pipeline-full.log >/dev/null
+echo "=== RC-E counts ==="
+grep -cE 'giant pool supplement stop reason=batch_paths_complete' /tmp/pipeline-full.log || true
+grep -cE 'giant pool supplement replenish' /tmp/pipeline-full.log || true
+grep -cE 'chunk_elapsed_s|chunk ingest summary' /tmp/pipeline-full.log || true
+echo "=== recent supplement/chunk ==="
+grep -E 'giant pool supplement|chunk_elapsed_s|chunk dispatch begin|chunk imap start|chunk ingest summary' /tmp/pipeline-full.log | tail -80
+```
 
 ```bash
 # Full pipeline log first (no --tail before grep)

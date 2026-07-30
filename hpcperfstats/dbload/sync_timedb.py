@@ -1734,8 +1734,22 @@ def _imap_ingest_paths_batched(
     pool_health_context["in_flight_sample_fn"] = (
         tracker.sample_in_flight if tracker is not None else None
     )
-  supplement_log_state = {"logged": False, "empty_logged": False, "replenish_n": 0}
+  supplement_log_state = {
+      "logged": False,
+      "empty_logged": False,
+      "replenish_n": 0,
+      "stop_logged": False,
+      "dispatched_n": 0,
+      "t0": time.time(),
+  }
   pending_tail_state = list(pending_tail or ())
+  # RC-E: freeze the batch's own paths so supplement can stop when only
+  # self-created supplement work remains in flight.
+  batch_own_normpaths = {
+      os.path.normpath(str(p))
+      for p in (paths or ())
+      if p
+  }
 
   def _supervisor_reap():
     _maybe_reap_supervisor_pool_children_throttled(
@@ -1744,6 +1758,12 @@ def _imap_ingest_paths_batched(
         populate_pool_controller,
         context="stall_poll",
     )
+
+  def _any_batch_path_in_flight(in_flight_paths):
+    for path in in_flight_paths or ():
+      if path and os.path.normpath(str(path)) in batch_own_normpaths:
+        return True
+    return False
 
   def _format_giant_in_flight_snapshot(in_flight_paths):
     entries = []
@@ -1812,6 +1832,24 @@ def _imap_ingest_paths_batched(
       return []
     if slots_needed <= 0:
       return []
+    # RC-E: supplement exists to fill idle slots while the batch waits on
+    # *its own* stragglers. Once no original-batch path is in flight, the
+    # batch is finished — returning more work would convert the normal
+    # end-of-chunk condition into an unbounded work-steal loop (RC-3 idle
+    # OR + mid-imap replenish against a live-growing closed snapshot).
+    if not _any_batch_path_in_flight(in_flight_paths):
+      if not supplement_log_state["stop_logged"]:
+        supplement_log_state["stop_logged"] = True
+        log_print(
+            "INFO: sync_timedb: giant pool supplement stop "
+            "reason=batch_paths_complete dispatched_n=%d elapsed_s=%.3f"
+            % (
+                int(supplement_log_state["dispatched_n"]),
+                time.time() - float(supplement_log_state["t0"]),
+            ),
+            flush=True,
+        )
+      return []
     # RC-3: idle slots (this callback only fires when the primary chunk
     # iterator is exhausted) OR the legacy giant-budget trigger.
     idle_ok = cfg.get_sync_ingest_idle_slot_supplement_enabled()
@@ -1859,6 +1897,7 @@ def _imap_ingest_paths_batched(
     if tracker is not None:
       for path in selected:
         tracker.note_dispatched(path)
+    supplement_log_state["dispatched_n"] += len(selected)
     if not supplement_log_state["logged"]:
       supplement_log_state["logged"] = True
       tail_sample = [

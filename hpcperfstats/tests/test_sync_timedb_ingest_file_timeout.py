@@ -699,6 +699,297 @@ def test_idle_slots_supplement_dispatches_below_giant_budget(
   assert "giant pool supplement begin" in out
 
 
+def test_imap_batch_terminates_with_ever_growing_closed_snapshot(
+    monkeypatch, tmp_path, capsys,
+):
+  """RC-E: idle-slot + always-fresh replenish must not keep one imap batch alive forever."""
+  from hpcperfstats.tests import test_multiprocessing_pool_health as mph_tests
+
+  chunk_path = str(tmp_path / "chunk0")
+  (tmp_path / "chunk0").write_bytes(b"x" * 100)
+  chunk = [chunk_path]
+  replenish_calls = []
+  refill_counter = {"n": 0}
+
+  def _replenish(exclude):
+    refill_counter["n"] += 1
+    replenish_calls.append(set(exclude or ()))
+    # Always yield a fresh eligible path (production: continuously refreshed snapshot).
+    path = tmp_path / ("refill_%05d" % refill_counter["n"])
+    path.write_bytes(b"x" * 100)
+    return [str(path)]
+
+  pool = mph_tests._ManualPool()
+  _default_timeout_getters(monkeypatch)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_giant_pool_supplement_enabled", lambda: True)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_idle_slot_supplement_enabled", lambda: True)
+  monkeypatch.setattr(st, "_effective_ingest_imap_inflight_cap", lambda _tc, _pc: 2)
+  monkeypatch.setattr(
+      st.cfg, "get_sync_ingest_giant_pool_supplement_trigger_budget_s", lambda: 1e9,
+  )
+  monkeypatch.setattr(
+      st.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: 10**9,
+  )
+  monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 0.01)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 100000)
+  _patch_stats_file_size_bytes(monkeypatch, lambda _p: 100)
+  tracker = st._IngestPoolInFlightTracker(chunk)
+  gen = st._imap_ingest_paths_batched(
+      pool,
+      lambda path: path,
+      chunk,
+      thread_count=2,
+      context="test rc-e ever growing snapshot",
+      tracker=tracker,
+      chunk_counter=0,
+      pending_count=10,
+      pending_tail=[],
+      replenish_pending_tail_fn=_replenish,
+  )
+
+  def consumer():
+    list(gen)
+
+  thread = threading.Thread(target=consumer, daemon=True)
+  thread.start()
+  deadline = time.monotonic() + 3.0
+  while pool.submit_count < 2 and time.monotonic() < deadline:
+    time.sleep(0.005)
+  assert pool.submit_count >= 2, "expected chunk + at least one replenish dispatch"
+  # Finish the original batch path first so RC-E stop can fire.
+  for ar, path in list(pool.inflight.items()):
+    if os.path.normpath(str(path)) == os.path.normpath(chunk_path):
+      ar.finish()
+  while pool.inflight and time.monotonic() < deadline:
+    for ar in list(pool.inflight):
+      ar.finish()
+    time.sleep(0.01)
+  thread.join(timeout=2.0)
+  assert not thread.is_alive(), (
+      "imap batch must terminate once original batch paths complete "
+      "(RC-E stop); replenish_calls=%d submit_count=%d"
+      % (len(replenish_calls), pool.submit_count)
+  )
+  out = capsys.readouterr().out
+  assert "reason=batch_paths_complete" in out
+  # Without the stop guard this would grow without bound; keep a soft ceiling for noise.
+  assert pool.submit_count < 50
+
+
+def test_supplement_stops_when_only_supplements_in_flight(
+    monkeypatch, tmp_path, capsys,
+):
+  """RC-E: once no original batch path remains in flight, supplement returns empty."""
+  from hpcperfstats.tests import test_multiprocessing_pool_health as mph_tests
+
+  chunk_path = str(tmp_path / "chunk0")
+  tail_path = str(tmp_path / "tail0")
+  (tmp_path / "chunk0").write_bytes(b"x" * 100)
+  (tmp_path / "tail0").write_bytes(b"x" * 100)
+  chunk = [chunk_path]
+  replenish_after_original_done = []
+
+  def _replenish(exclude):
+    # Called only when selection is empty; record whether original is still excluded
+    # (still in flight / batch_seen) vs post-stop (should never be reached after stop).
+    replenish_after_original_done.append(time.monotonic())
+    path = tmp_path / ("late_refill_%d" % len(replenish_after_original_done))
+    path.write_bytes(b"x" * 100)
+    return [str(path)]
+
+  pool = mph_tests._ManualPool()
+  _default_timeout_getters(monkeypatch)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_giant_pool_supplement_enabled", lambda: True)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_idle_slot_supplement_enabled", lambda: True)
+  monkeypatch.setattr(st, "_effective_ingest_imap_inflight_cap", lambda _tc, _pc: 2)
+  monkeypatch.setattr(
+      st.cfg, "get_sync_ingest_giant_pool_supplement_trigger_budget_s", lambda: 1e9,
+  )
+  monkeypatch.setattr(
+      st.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: 10**9,
+  )
+  monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 0.01)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 100000)
+  _patch_stats_file_size_bytes(monkeypatch, lambda _p: 100)
+  tracker = st._IngestPoolInFlightTracker(chunk)
+  gen = st._imap_ingest_paths_batched(
+      pool,
+      lambda path: path,
+      chunk,
+      thread_count=2,
+      context="test rc-e stop when only supplements",
+      tracker=tracker,
+      chunk_counter=0,
+      pending_count=10,
+      pending_tail=[tail_path],
+      replenish_pending_tail_fn=_replenish,
+  )
+
+  def consumer():
+    list(gen)
+
+  thread = threading.Thread(target=consumer, daemon=True)
+  thread.start()
+  deadline = time.monotonic() + 3.0
+  while pool.submit_count < 2 and time.monotonic() < deadline:
+    time.sleep(0.005)
+  submitted_before = pool.submit_count
+  assert chunk_path in list(pool.inflight.values())
+  assert tail_path in list(pool.inflight.values())
+  # Complete original; leave the supplement in flight so refill is attempted.
+  for ar, path in list(pool.inflight.items()):
+    if os.path.normpath(str(path)) == os.path.normpath(chunk_path):
+      ar.finish()
+      break
+  # Wait for sliding-window refill attempt after original completion.
+  settle = time.monotonic() + 0.4
+  while time.monotonic() < settle:
+    time.sleep(0.01)
+  assert pool.submit_count == submitted_before, (
+      "must not dispatch further supplements after original batch paths complete"
+  )
+  for ar in list(pool.inflight):
+    ar.finish()
+  while pool.inflight and time.monotonic() < deadline:
+    for ar in list(pool.inflight):
+      ar.finish()
+    time.sleep(0.01)
+  thread.join(timeout=2.0)
+  assert not thread.is_alive()
+  out = capsys.readouterr().out
+  assert "reason=batch_paths_complete" in out
+
+
+def test_supplement_continues_while_original_path_in_flight(
+    monkeypatch, tmp_path, capsys,
+):
+  """RC-E preserves RC-3: idle-slot fill while a non-giant original path is still in flight."""
+  from hpcperfstats.tests import test_multiprocessing_pool_health as mph_tests
+
+  small = tmp_path / "1780000011"
+  small.write_bytes(b"x" * 100)
+  tail_a = tmp_path / "1780000012"
+  tail_a.write_bytes(b"x" * 200)
+  chunk = [str(small)]
+  pending_tail = [str(tail_a)]
+  pool = mph_tests._ManualPool()
+
+  _default_timeout_getters(monkeypatch)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_giant_pool_supplement_enabled", lambda: True)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_idle_slot_supplement_enabled", lambda: True)
+  monkeypatch.setattr(st, "_effective_ingest_imap_inflight_cap", lambda _tc, _pc: 2)
+  monkeypatch.setattr(
+      st.cfg, "get_sync_ingest_giant_pool_supplement_trigger_budget_s", lambda: 1e9,
+  )
+  monkeypatch.setattr(
+      st.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: 10**9,
+  )
+  monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 0.01)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 100000)
+  _patch_stats_file_size_bytes(monkeypatch, lambda _p: 100)
+  tracker = st._IngestPoolInFlightTracker(chunk)
+  gen = st._imap_ingest_paths_batched(
+      pool,
+      lambda path: path,
+      chunk,
+      thread_count=2,
+      context="test rc-e continues with original",
+      tracker=tracker,
+      chunk_counter=0,
+      pending_count=10,
+      pending_tail=pending_tail,
+  )
+
+  def consumer():
+    list(gen)
+
+  thread = threading.Thread(target=consumer, daemon=True)
+  thread.start()
+  deadline = time.monotonic() + 2.0
+  while pool.submit_count < 2 and time.monotonic() < deadline:
+    time.sleep(0.005)
+  submitted = list(pool.inflight.values())
+  assert str(small) in submitted
+  assert str(tail_a) in submitted
+  for ar in list(pool.inflight):
+    ar.finish()
+  while pool.inflight and time.monotonic() < deadline:
+    for ar in list(pool.inflight):
+      ar.finish()
+    time.sleep(0.01)
+  thread.join(timeout=2.0)
+  out = capsys.readouterr().out
+  assert "giant pool supplement begin" in out
+
+
+def test_giant_in_flight_still_replenishes_mid_imap(monkeypatch, tmp_path, capsys):
+  """RC-E preserves RC-D: original-batch giant still authorizes mid-imap replenish."""
+  from hpcperfstats.tests import test_multiprocessing_pool_health as mph_tests
+
+  pool = mph_tests._ManualPool()
+  refill_a = str(tmp_path / "refill_a")
+  (tmp_path / "refill_a").write_bytes(b"x" * 100)
+  chunk = ["giant0"]
+  replenish_calls = []
+
+  def _replenish(exclude):
+    replenish_calls.append(set(exclude or ()))
+    return [refill_a]
+
+  _default_timeout_getters(monkeypatch)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_giant_pool_supplement_enabled", lambda: True)
+  monkeypatch.setattr(st, "_effective_ingest_imap_inflight_cap", lambda _tc, _pc: 3)
+  monkeypatch.setattr(
+      st.cfg, "get_sync_ingest_giant_pool_supplement_trigger_budget_s", lambda: 100.0,
+  )
+  monkeypatch.setattr(
+      st.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: 10**9,
+  )
+  monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 0.01)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 100000)
+
+  def _size_for(path):
+    base = os.path.basename(str(path))
+    if base.startswith("giant"):
+      return _mib_bytes(2048)
+    return 100
+
+  _patch_stats_file_size_bytes(monkeypatch, _size_for)
+  tracker = st._IngestPoolInFlightTracker(chunk)
+  gen = st._imap_ingest_paths_batched(
+      pool,
+      lambda path: path,
+      chunk,
+      thread_count=3,
+      context="test rc-e preserves giant replenish",
+      tracker=tracker,
+      chunk_counter=0,
+      pending_count=10,
+      pending_tail=[],
+      replenish_pending_tail_fn=_replenish,
+  )
+
+  def consumer():
+    list(gen)
+
+  thread = threading.Thread(target=consumer, daemon=True)
+  thread.start()
+  deadline = time.monotonic() + 2.0
+  while pool.submit_count < 2 and time.monotonic() < deadline:
+    time.sleep(0.005)
+  assert replenish_calls, "expected mid-imap replenish while original giant is in flight"
+  assert refill_a in list(pool.inflight.values())
+  for ar in list(pool.inflight):
+    ar.finish()
+  while pool.inflight and time.monotonic() < deadline:
+    for ar in list(pool.inflight):
+      ar.finish()
+    time.sleep(0.01)
+  thread.join(timeout=2.0)
+  captured = capsys.readouterr().out
+  assert "giant pool supplement replenish" in captured
+
+
 def test_build_giant_supplement_pending_tail_uses_supplement_queue(monkeypatch, tmp_path):
   """Startup reservoir ceiling is supplement_queue (= queue * multiplier), not bare queue."""
   from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers

@@ -75,6 +75,12 @@ Regression: ``test_write_stats_payload_timeout_not_swallowed_into_single_insert`
 - **Cache-hit cap is not cheap** while `supplement_pending_paths_from_closed_paths` can walk a ~400k closed-path snapshot: prefer sort-then-stat (RC-1) and **one cap per boundary**. Archive-finalize slots must set `archive_finalize_needs_post_reconcile` and let `_reconcile_pending_nonblocking` consume it once — never call `_reconcile_pending_with_oldest_checkpoint_incomplete` inline per finalize slot (RC-2).
 - Regression: `test_arch_handoff_priority_defer_skips_full_pending_reconcile`, `test_try_reuse_pending_reconcile_unprocessed_cache_skip_vs_rescan`, `test_arch_archive_finalize_defers_reconcile_to_chunk_boundary`.
 
+## Giant / idle pool supplement stop (RC-E)
+
+- **`_giant_pool_supplement_paths_fn`** may dispatch (and mid-imap replenish) **only while at least one path from the batch's own frozen set is still in flight**. Primary-iterator exhausted + idle slots is the **normal end-of-chunk** condition and must **never by itself** authorize unbounded work-steal against a live-growing closed-path snapshot (hpcperfstats03 2026-07: `in_flight_giants=[]` + repeated `giant pool supplement replenish` with **zero** `chunk_elapsed_s` for 6h+).
+- Idle-slot fill (RC-3) and giant-tail replenish (RC-D) remain valid **while a batch straggler blocks**; once only supplements remain in flight, return `[]` and log **`giant pool supplement stop reason=batch_paths_complete`**.
+- Regression: `test_imap_batch_terminates_with_ever_growing_closed_snapshot`, `test_supplement_stops_when_only_supplements_in_flight`, `test_supplement_continues_while_original_path_in_flight`, `test_giant_in_flight_still_replenishes_mid_imap` in `test_sync_timedb_ingest_file_timeout.py`.
+
 ## Forbidden without plan amend
 
 - One-line supervisor `continue`/`return` stall patches without failing-first test named for the RC
