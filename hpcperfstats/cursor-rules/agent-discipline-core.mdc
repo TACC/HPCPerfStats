@@ -48,7 +48,8 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 | `hpcperfstats/dbload/lib/sync_timedb_parsing.py`, collapse tests in `hpcperfstats/tests/test_sync_timedb.py` | `sync-timedb-parsing-collapse-vectorization.mdc` |
 | Startup archive scan | `sync-timedb-canonical-startup-archive-scan.mdc` |
 | Ingest pool + sealed archive / Redis members | `sync-timedb-ingest-pool-io-coordination.mdc`, `sync-timedb-hot-path-janitor-lock-priority.mdc`, `sync-timedb-anti-log-spam.mdc` (`sync_timedb_populate_pool.py`, populate queue, `request_archive_members_populate_and_wait`) |
-| `hpcperfstats/analysis/metrics/` | `runtime-resource-and-metrics-safety.mdc`, `pipeline-metrics-e2e-maintenance.mdc`, `update-metrics-job-listing-new-data-type.mdc`, `update-metrics-batch-resilience.mdc`, `monitor-analysis-architecture-sync.mdc` |
+| `hpcperfstats/analysis/metrics/` | `runtime-resource-and-metrics-safety.mdc`, `pipeline-metrics-e2e-maintenance.mdc`, `update-metrics-job-listing-new-data-type.mdc`, `update-metrics-batch-resilience.mdc`, `monitor-analysis-architecture-sync.mdc`, `gpu-host-data-source-priority.mdc` |
+| `gpu_job_detail_summary.py`, Job Detail GPU inventory / `nvidia_gpu`·`amd_gpu` precedence | `gpu-host-data-source-priority.mdc`, `monitor-analysis-architecture-sync.mdc` |
 | `docs/monitor_variable_rename_map.yaml`, `hpcperfstats/dbload/lib/monitor_naming/**` | `monitor-analysis-architecture-sync.mdc` |
 | Bug form / traceback / stall / timeout | `bugfix-and-perf-change-playbook.mdc`, `exhaustive-error-path-analysis.mdc`, `logic-change-checklist.mdc` |
 
@@ -72,7 +73,7 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 | `hpcperfstats/site/lib/machine/api.py`, `openapi_schema.py`, `openapi_serializers.py` | `openapi-orval-sync.mdc`, `openapi-spa-wire-validation-contract.mdc`, `api-breaking-change-contract.mdc` |
 | `hpcperfstats/site/lib/machine/tests/test_*openapi_wire_contract*.py` | `openapi-spa-wire-validation-contract.mdc` |
 | `hpcperfstats/site/frontend/src/utils/variableMetadata*.ts`, `generate-variable-metadata-monitor-events.py`, `docs/MONITOR_VARIABLES.md`, `docs/regenerate_monitor_variables_catalog.py` | `variable-metadata-cross-source-sync.mdc`, `variable-metadata-monitor-contract.mdc` |
-| Job Detail, Extended Search, metadata | `search-metric-artifact-sync.mdc`, `variable-metadata-cross-source-sync.mdc`, `variable-metadata-monitor-contract.mdc`, `researcher-job-detail-doc-sync.mdc`, `job-detail-analysis-tab-consistency.mdc` |
+| Job Detail, Extended Search, metadata | `search-metric-artifact-sync.mdc`, `variable-metadata-cross-source-sync.mdc`, `variable-metadata-monitor-contract.mdc`, `researcher-job-detail-doc-sync.mdc`, `job-detail-analysis-tab-consistency.mdc`, `gpu-host-data-source-priority.mdc` |
 | Plots / Bokeh embed | `job-plot-artifacts-caching.mdc`, `bokeh-layout-surface-split.mdc`, `no-scientific-notation-web.mdc`, `job-detail-bokeh-plot-help.mdc` |
 | `bokeh_job_detail_help_marker.py`, `job_detail_bokeh_plot_descriptions.py`, `summary_metric_descriptions.py`, `summaryplot.py`, `roofline.py`, `job_detail_artifacts.py`, `job_plot_artifacts.py`, Job Detail Bokeh help / Summary metric prose | `job-detail-bokeh-plot-help.mdc`, `job-plot-artifacts-caching.mdc`, `variable-metadata-cross-source-sync.mdc` |
 | `@bokeh/bokehjs` / `bokeh==` pins, `test_bokeh*.py`, Bokeh fixture regen | `bokeh-version-and-vendor-patch-upgrade.mdc` |

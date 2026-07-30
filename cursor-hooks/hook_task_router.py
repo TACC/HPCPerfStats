@@ -98,6 +98,22 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
             "update-metrics-job-listing-new-data-type.mdc",
             "update-metrics-batch-resilience.mdc",
             "monitor-analysis-architecture-sync.mdc",
+            "gpu-host-data-source-priority.mdc",
+        ],
+    },
+    {
+        "id": "gpu_host_data_source",
+        "patterns": [
+            "hpcperfstats/analysis/metrics/lib/gpu_job_detail_summary.py",
+            "hpcperfstats/analysis/metrics/lib/metrics.py",
+            "hpcperfstats/site/lib/machine/job_detail_artifacts.py",
+            "hpcperfstats/site/lib/machine/api.py",
+            "hpcperfstats/site/frontend/src/views/JobDetail.tsx",
+            "hpcperfstats/cursor-rules/gpu-host-data-source-priority.mdc",
+        ],
+        "rules": [
+            "gpu-host-data-source-priority.mdc",
+            "monitor-analysis-architecture-sync.mdc",
         ],
     },
     {

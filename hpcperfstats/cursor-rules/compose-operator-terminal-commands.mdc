@@ -273,6 +273,46 @@ LIMIT 20;
 "
 ```
 
+**Anti-pattern — `host_data.filter(jid=…)` for GPU power/util samples:** returns **empty** even when Job Detail shows GPU poison (hpcperfstats01, 2026-07-30, JID `3351747` — `power_usage`/`gpu_util`/`gpu_count` by `jid` printed nothing; `gpu_count distinct []`). Analysis and Job Detail use **`host__in` + accounting/telemetry time window** (`gpu_job_detail_summary.py`); many host stats rows do **not** carry the accounting `jid`. **Do not** treat empty jid-scoped GPU queries as “no GPU telemetry.”
+
+**Corrected — GPU poison probe (pipeline ORM, cheapest first):**
+
+1. `job_data` metadata (`host_list`, telemetry bounds, `metrics_distinct_time_count`).
+2. `metrics_data` for the jid (`max_gpu_power`, `avg_gpuutil`, `max_node_power_est_w`, …) — poison often already persisted here.
+3. Only then `host_data` by **`host_list[0]` + telemetry window** + exact `type`/`event`, `ORDER BY time DESC` / slice `[:N]` (same cheap path as the `db` psql block above).
+
+```bash
+docker compose exec pipeline su hpcperfstats -c 'python3 -c "
+from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
+ensure_django()
+from hpcperfstats.site.lib.machine.models import job_data, host_data, metrics_data
+jid = \"REPLACE_WITH_JOB_ID\"
+j = job_data.objects.filter(jid=jid).values(
+    \"jid\", \"start_time\", \"end_time\", \"telemetry_first_time\", \"telemetry_last_time\",
+    \"host_list\", \"metrics_distinct_time_count\",
+).first()
+print(\"job\", j)
+if not j:
+    raise SystemExit(0)
+print(\"metrics\", list(metrics_data.objects.filter(jid_id=jid).filter(
+    metric__in=[\"max_gpu_power\", \"avg_gpuutil\", \"max_node_power_est_w\",
+                \"avg_node_power_est_w\", \"detail_gpu_util_max\", \"detail_gpu_util_mean\"],
+).values_list(\"metric\", \"value\", \"units\", \"no_data_reason\")))
+hosts = j.get(\"host_list\") or []
+host0 = hosts[0] if hosts else None
+t0 = j.get(\"telemetry_first_time\") or j.get(\"start_time\")
+t1 = j.get(\"telemetry_last_time\") or j.get(\"end_time\")
+print(\"probe_host\", host0, \"t0\", t0, \"t1\", t1)
+if host0 and t0 and t1:
+    qs = host_data.objects.filter(
+        host=host0, type=\"nvidia_gpu\", event=\"power_usage\",
+        time__gte=t0, time__lte=t1,
+    ).order_by(\"-time\")[:20]
+    for r in qs:
+        print(r.time, r.host, r.dev, r.event, r.value)
+"'
+```
+
 **Anti-pattern — broad `host_data` discovery with `ILIKE` / multi-host `ANY` / full-window `GROUP BY`:** do not ship Pending `db` blocks that `ILIKE '%gpu%'`, scan all job hosts, or aggregate every sample in a multi-day accounting window; use the cheapest-first pattern above.
 
 **Anti-pattern — assume telemetry+LIMIT always finishes:** even the corrected one-host `ORDER BY time DESC LIMIT 20` probe can still hit **`statement timeout`** at 60s on large hypertables (hpcperfstats03, 2026-07-23, finding #7). When **`metrics_data` already shows poison** (e.g. `max_gpu_link_gbps≈2^63/1e9` or `≈2^64/1e9`, `max_packetrate≫1e11`), **abandon raw `host_data`** for that diagnosis and continue from **`metrics_data` / web ORM** only.
