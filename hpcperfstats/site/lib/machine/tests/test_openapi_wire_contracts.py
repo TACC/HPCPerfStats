@@ -138,6 +138,7 @@ JOB_DETAIL_WIRE = {
     "gpu_utilization_max": 95.0,
     "gpu_utilization_mean": 80.0,
     "gpu_count": 4,
+    "gpu_inventory": [],
     "metrics_list": [
         {
             "type": "cpu",
@@ -163,6 +164,10 @@ JOB_DETAIL_WIRE = {
         "current_detail": 8,
         "db_plot": [11],
         "db_detail": [8],
+        "note": (
+            "DB lists distinct non-null artifact_schema values only. "
+            "Empty/none does not mean plots are missing."
+        ),
     },
 }
 

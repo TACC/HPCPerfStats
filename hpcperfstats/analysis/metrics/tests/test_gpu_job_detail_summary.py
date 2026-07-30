@@ -45,6 +45,33 @@ def test_reduce_list_per_device_host_aware():
   assert mean == 90.0
 
 
+def test_reduce_skips_dcgm_blank_vmax():
+  from hpcperfstats.lib.dcgm_blank import DCGM_INT64_BLANK
+
+  agg = [
+      {
+          "host": "n1",
+          "dev": "0",
+          "event": "gpu_util",
+          "cnt": 4,
+          "vmax": float(DCGM_INT64_BLANK),
+          "vmean": float(DCGM_INT64_BLANK),
+      },
+      {
+          "host": "n1",
+          "dev": "1",
+          "event": "gpu_util",
+          "cnt": 4,
+          "vmax": 80.0,
+          "vmean": 40.0,
+      },
+  ]
+  active, mx, mean = reduce_gpu_agg_to_util_stats(agg)
+  assert active == 1
+  assert mx == 80.0
+  assert mean == 40.0
+
+
 def test_compute_job_gpu_summary_tuple_delegates(monkeypatch):
   from hpcperfstats.analysis.metrics.lib import gpu_job_detail_summary as g
 

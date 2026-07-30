@@ -120,6 +120,15 @@ type JobDetailViewData = JobDetailResponse & {
   gpu_utilization_max?: string | number | null;
   gpu_utilization_mean?: string | number | null;
   gpu_count?: string | number | null;
+  gpu_inventory?: Array<{
+    host?: string;
+    dev?: string;
+    type?: string;
+    util_max?: number | null;
+    util_mean?: number | null;
+    power_max_w?: number | null;
+    sample_count?: number | null;
+  }>;
   multiprecision_cpu_plot_item?: BokehJsonItem | null;
   multiprecision_cpu_unavailable_reason?: string | null;
   multiprecision_gpu_plot_item?: BokehJsonItem | null;
@@ -565,6 +574,7 @@ export default function JobDetail() {
     gpu_utilization_max,
     gpu_utilization_mean,
     gpu_count,
+    gpu_inventory = [],
     multiprecision_cpu_plot_item,
     multiprecision_cpu_unavailable_reason,
     multiprecision_gpu_plot_item,
@@ -607,6 +617,11 @@ export default function JobDetail() {
           : "",
     },
   ];
+  const gpuUtilOutOf =
+    gpu_count != null && Number(gpu_count) > 0
+      ? Number(gpu_count) * 100
+      : null;
+  const gpuInventoryRows = Array.isArray(gpu_inventory) ? gpu_inventory : [];
 
   const hasDeviceData = Object.keys(schema).length > 0;
   const plotConfigByKey = JOB_PLOT_CONFIGS.reduce<Record<JobPlotConfigKey, JobPlotConfig>>((acc, config) => {
@@ -844,12 +859,17 @@ export default function JobDetail() {
                         />
                       </div>
                       <div>
-                        Current: plot {staffArtifactContract.current_plot}, detail{" "}
+                        Runtime schema: plot {staffArtifactContract.current_plot}, detail{" "}
                         {staffArtifactContract.current_detail}
                       </div>
                       <div>
-                        DB: plot {formatArtifactSchemaList(staffArtifactContract.db_plot)},
-                        detail {formatArtifactSchemaList(staffArtifactContract.db_detail)}
+                        Stored schema column: plot{" "}
+                        {formatArtifactSchemaList(staffArtifactContract.db_plot)}, detail{" "}
+                        {formatArtifactSchemaList(staffArtifactContract.db_detail)}
+                      </div>
+                      <div className="text-muted-foreground text-xs mt-1">
+                        {staffArtifactContract.note ||
+                          "Stored schema none means no non-null artifact_schema values — plots may still come from Redis, legacy rows, or on-demand compute."}
                       </div>
                     </div>
                   ) : null}
@@ -1031,25 +1051,88 @@ export default function JobDetail() {
                   )}
                 </TableBody>
             </Table>
-        {(detailsLoading || gpu_active != null || gpu_count != null) && (
+        {(detailsLoading ||
+          gpu_active != null ||
+          gpu_count != null ||
+          gpuInventoryRows.length > 0) && (
           <div className="mt-3">
-            {detailsLoading && gpu_active == null && gpu_count == null ? (
+            {detailsLoading &&
+            gpu_active == null &&
+            gpu_count == null &&
+            gpuInventoryRows.length === 0 ? (
               <p className="text-muted-foreground mb-0" role="status">
                 Loading GPU statistics…
               </p>
             ) : (
-              <Table className="mb-0 border text-sm">
-                <TableBody>
-                  {gpuStatsRows.map((row) => (
-                    <TableRow key={row.key}>
-                      <TableCell className={gpuStatsTableCellClass.label}>
-                        <b>{row.label}</b>
-                      </TableCell>
-                      <TableCell className={gpuStatsTableCellClass.value}>{row.value}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <>
+                <Table className="mb-0 border text-sm">
+                  <TableBody>
+                    {gpuStatsRows.map((row) => (
+                      <TableRow key={row.key}>
+                        <TableCell className={gpuStatsTableCellClass.label}>
+                          <b>{row.label}</b>
+                        </TableCell>
+                        <TableCell className={gpuStatsTableCellClass.value}>
+                          {row.value}
+                          {row.key === "gpu_util_max" &&
+                          gpuUtilOutOf != null &&
+                          row.value
+                            ? ` (sum of per-GPU %; out of ${formatDecimalStandard(gpuUtilOutOf)})`
+                            : null}
+                          {row.key === "gpu_util_mean" &&
+                          gpuUtilOutOf != null &&
+                          row.value
+                            ? ` (sum of per-GPU %; out of ${formatDecimalStandard(gpuUtilOutOf)})`
+                            : null}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                {gpuInventoryRows.length > 0 ? (
+                  <div className="mt-3">
+                    <h3 className="text-sm font-medium mb-1">GPU inventory</h3>
+                    <p className="text-muted-foreground text-xs mb-2">
+                      One row per host device. Utilization is percent of that GPU (0–100);
+                      job totals above sum across devices.
+                    </p>
+                    <Table className="mb-0 border text-sm">
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Host</TableHead>
+                          <TableHead>Dev</TableHead>
+                          <TableHead className="text-right">Max util %</TableHead>
+                          <TableHead className="text-right">Mean util %</TableHead>
+                          <TableHead className="text-right">Peak power W</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {gpuInventoryRows.map((row, idx) => (
+                          <TableRow key={`${row.host ?? ""}-${row.dev ?? ""}-${idx}`}>
+                            <TableCell>{row.host ?? "—"}</TableCell>
+                            <TableCell>{row.dev ?? "—"}</TableCell>
+                            <TableCell className="text-right">
+                              {row.util_max != null
+                                ? formatDecimalStandard(row.util_max)
+                                : "—"}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {row.util_mean != null
+                                ? formatDecimalStandard(row.util_mean)
+                                : "—"}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {row.power_max_w != null
+                                ? formatDecimalStandard(row.power_max_w)
+                                : "—"}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                ) : null}
+              </>
             )}
           </div>
         )}

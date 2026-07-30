@@ -14,6 +14,11 @@ from hpcperfstats.dbload.lib.monitor_naming.canonical import (
 )
 from hpcperfstats.dbload.lib.monitor_naming.legacy import LEGACY_HOST_CPU_HW_TYPE
 from hpcperfstats.dbload.lib.monitor_naming.resolve import schema_needs_legacy_hardware_decode
+from hpcperfstats.lib.dcgm_blank import (
+    DCGM_FP64_BLANK,
+    is_dcgm_numeric_blank,
+    nan_out_dcgm_numeric_blanks,
+)
 
 # Types skipped on ingest (canonical monitor names).
 exclude_types = [
@@ -177,6 +182,8 @@ def _collapse_nvidia_gpu_group(group):
   """Apply-reference NVIDIA collapse; production path uses vectorized helper."""
   key = group.name
   event_name = key[_NVIDIA_GROUP_KEY_EVENT_INDEX] if isinstance(key, tuple) else key
+  group = group.copy()
+  group["value"] = nan_out_dcgm_numeric_blanks(group["value"].to_numpy(dtype=np.float64))
   if event_name in _NVIDIA_GPU_MAX_EVENTS:
     return pd.Series({
         "value": float(group["value"].max()),
@@ -196,7 +203,7 @@ def _collapse_nvidia_gpu_group(group):
     acc = 0
     mask64 = (1 << 64) - 1
     for v in group["value"]:
-      if pd.notna(v):
+      if pd.notna(v) and not is_dcgm_numeric_blank(v):
         acc |= int(v) & mask64
     return pd.Series({
         "value": float(acc & mask64),
@@ -217,11 +224,11 @@ _NVIDIA_GPU_KNOWN_EVENTS = frozenset().union(
 
 
 def _nvidia_bitwise_or_values(series):
-  """Bitwise OR of finite ``clocks_event_reasons`` values within one collapse group."""
+  """Bitwise OR of finite non-blank ``clocks_event_reasons`` within one collapse group."""
   acc = 0
   mask64 = (1 << 64) - 1
   for v in series:
-    if pd.notna(v):
+    if pd.notna(v) and not is_dcgm_numeric_blank(v):
       acc |= int(v) & mask64
   return float(acc & mask64)
 
@@ -241,8 +248,23 @@ def _groupby_sum_min_count(df, gcols):
   return grouped.drop(columns=["_value_n", "_delta_n"])
 
 
+def _nvidia_nan_out_dcgm_blanks(nv_df):
+  """Replace DCGM blank-family ``value`` entries with NaN before NVIDIA collapse."""
+  if nv_df.empty or "value" not in nv_df.columns:
+    return nv_df
+  vals = nv_df["value"].to_numpy(dtype=np.float64, copy=False)
+  # FP64 blank base also excludes INT64 blank family (larger magnitude).
+  blank = np.isfinite(vals) & (vals >= DCGM_FP64_BLANK)
+  if not blank.any():
+    return nv_df
+  out = nv_df.copy()
+  out["value"] = nan_out_dcgm_numeric_blanks(vals)
+  return out
+
+
 def _collapse_nvidia_gpu_vectorized(nv_df, gcols):
   """Collapse NVIDIA GPU metrics via native groupby aggregations (not groupby.apply)."""
+  nv_df = _nvidia_nan_out_dcgm_blanks(nv_df)
   parts = []
   sum_mask = (
       nv_df["event"].isin(_NVIDIA_GPU_SUM_EVENTS)

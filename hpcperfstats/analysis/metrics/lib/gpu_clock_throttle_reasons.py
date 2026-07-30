@@ -2,9 +2,13 @@
 
 Mirrors ``dcgm_fields.h`` ``DCGM_CLOCKS_THROTTLE_REASON_*`` and the SPA helper
 ``gpuClockThrottleReasons.ts``. Display-only; persisted metrics stay numeric.
+
+Blank-family and no-known-bit garbage masks return ``""`` (never ``unknown (0x…)``).
 """
 
 from __future__ import annotations
+
+from hpcperfstats.lib.dcgm_blank import is_dcgm_numeric_blank
 
 DCGM_CLOCK_THROTTLE_REASON_FLAGS: tuple[tuple[int, str], ...] = (
     (0x1, "GPU idle"),
@@ -20,33 +24,34 @@ DCGM_CLOCK_THROTTLE_REASON_FLAGS: tuple[tuple[int, str], ...] = (
 
 _KNOWN_BITS_MASK = 0
 for _bit, _ in DCGM_CLOCK_THROTTLE_REASON_FLAGS:
-    _KNOWN_BITS_MASK |= _bit
+  _KNOWN_BITS_MASK |= _bit
 
 
 def format_gpu_clock_throttle_reasons(mask: float | int | None) -> str:
-    """Format a DCGM clock-throttle bitmask as comma-separated flag names.
+  """Format a DCGM clock-throttle bitmask as comma-separated flag names.
 
-    Returns ``""`` for missing / non-finite / zero masks.
-    """
-    if mask is None:
-        return ""
-    try:
-        value = float(mask)
-    except (TypeError, ValueError):
-        return ""
-    if value != value:  # NaN
-        return ""
-    int_mask = int(value)
-    if int_mask == 0:
-        return ""
+  Returns ``""`` for missing / non-finite / zero / blank / no-known-bit masks.
+  Known bits only — residual garbage hex is never shown.
+  """
+  if mask is None:
+    return ""
+  if is_dcgm_numeric_blank(mask):
+    return ""
+  try:
+    value = float(mask)
+  except (TypeError, ValueError):
+    return ""
+  if value != value:  # NaN
+    return ""
+  int_mask = int(value)
+  if int_mask == 0:
+    return ""
 
-    # Match JS >>> 0 for non-negative display of the low 32 bits.
-    unsigned = int_mask & 0xFFFFFFFF
-    parts: list[str] = []
-    for bit, label in DCGM_CLOCK_THROTTLE_REASON_FLAGS:
-        if unsigned & bit:
-            parts.append(label)
-    unknown = unsigned & ~_KNOWN_BITS_MASK
-    if unknown:
-        parts.append(f"unknown (0x{unknown:x})")
-    return ", ".join(parts)
+  # Match JS >>> 0 for non-negative display of the low 32 bits.
+  unsigned = int_mask & 0xFFFFFFFF
+  parts: list[str] = []
+  for bit, label in DCGM_CLOCK_THROTTLE_REASON_FLAGS:
+    if unsigned & bit:
+      parts.append(label)
+  # Fail closed: unknown residual alone or with known bits is omitted.
+  return ", ".join(parts)

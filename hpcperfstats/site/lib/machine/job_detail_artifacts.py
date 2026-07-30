@@ -32,6 +32,8 @@ from hpcperfstats.analysis.metrics.lib.job_detail_fsio import (
 from hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary import (
     gpu_agg_rows_for_job_window,
     gpu_count_total_for_job_window,
+    gpu_inventory_for_job_window,
+    reduce_gpu_agg_to_util_stats,
 )
 import hpcperfstats.analysis.metrics.lib.gen.jid_table as jid_table
 import hpcperfstats.analysis.metrics.lib.plot as plots
@@ -55,7 +57,7 @@ _GPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON = (
     "Missing GPU precision-width mix metrics in job metrics "
     "(need positive avg_*_active shares)."
 )
-APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 10
+APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 11
 
 _FSIO_FINGERPRINT_METRIC_NAMES = tuple(
     sorted(name for name, _t, _u in fsio_job_detail_catalog())
@@ -207,25 +209,22 @@ def load_job_detail_artifact(
 
 def _gpu_detail_from_jid_table(jt: Any) -> Dict[str, Any]:
   rows = gpu_agg_rows_for_job_window(jt)
-  if not rows:
+  inventory = gpu_inventory_for_job_window(jt)
+  if not rows and not inventory:
     return {
         "gpu_active": None,
         "gpu_utilization_max": None,
         "gpu_utilization_mean": None,
         "gpu_count": None,
+        "gpu_inventory": [],
     }
-  vmax = sum(max(0.0, float(r.get("vmax") or 0.0)) for r in rows)
-  vmean = sum(max(0.0, float(r.get("vmean") or 0.0)) for r in rows)
-  active = sum(
-      1
-      for r in rows
-      if (float(r.get("vmax") or 0.0) > 0.0 and float(r.get("cnt") or 0.0) > 2.0)
-  )
+  active, vmax, vmean = reduce_gpu_agg_to_util_stats(rows)
   return {
-      "gpu_active": int(active),
-      "gpu_utilization_max": float(vmax),
-      "gpu_utilization_mean": float(vmean),
+      "gpu_active": active,
+      "gpu_utilization_max": vmax,
+      "gpu_utilization_mean": vmean,
       "gpu_count": gpu_count_total_for_job_window(jt),
+      "gpu_inventory": inventory,
   }
 
 
@@ -268,11 +267,16 @@ def _gpu_detail_from_metric_values(metric_values: Dict[str, Optional[float]]) ->
   util_max = metric_values.get("detail_gpu_util_max")
   util_mean = metric_values.get("detail_gpu_util_mean")
   count = metric_values.get("detail_gpu_count")
+  # All-null metric dict must not block host_data fallback (Resources visibility).
+  if active is None and util_max is None and util_mean is None and count is None:
+    return None
   return {
       "gpu_active": None if active is None else int(active),
       "gpu_utilization_max": util_max,
       "gpu_utilization_mean": util_mean,
       "gpu_count": None if count is None else int(count),
+      # Inventory always comes from host_data (per-device); filled at assemble time.
+      "gpu_inventory": [],
   }
 
 
@@ -594,6 +598,12 @@ def persist_job_detail_artifacts_for_jid(jid: str, context: Optional[Dict[str, A
 
   gpu_detail_from_metrics = _gpu_detail_from_metric_values(metric_values)
   gpu_detail = gpu_detail_from_metrics or _gpu_detail_from_jid_table(jt)
+  # Per-device inventory always from host_data (metrics_data has aggregates only).
+  if not gpu_detail.get("gpu_inventory"):
+    try:
+      gpu_detail["gpu_inventory"] = gpu_inventory_for_job_window(jt)
+    except Exception:
+      gpu_detail["gpu_inventory"] = []
   if telemetry is not None:
     if gpu_detail_from_metrics is not None:
       telemetry["detail_gpu_metrics_reused"] = int(

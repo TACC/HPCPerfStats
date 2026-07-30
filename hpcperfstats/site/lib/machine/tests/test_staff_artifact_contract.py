@@ -34,6 +34,7 @@ def test_staff_artifact_contract_payload_empty_when_no_rows():
   assert out["current_detail"] == detail_cfg.APP_DETAIL_ARTIFACT_SCHEMA_VERSION
   assert out["db_plot"] == []
   assert out["db_detail"] == []
+  assert "does not mean plots are missing" in (out.get("note") or "")
 
 
 @pytest.mark.django_db

@@ -35,6 +35,7 @@ from hpcperfstats.site.lib.machine.cache_utils import (
     make_cache_key,
     make_cache_key_bounded,
 )
+from hpcperfstats.lib.dcgm_blank import DCGM_FP64_BLANK
 from hpcperfstats.dbload.lib.monitor_naming.resolve import (
     canonical_event_name_for_type,
     events_probe_names,
@@ -1169,6 +1170,11 @@ class jid_table:
     _incr_summary_aggregate_count_if_active()
     probed_events = events_probe_names(events, typ=typ)
     events_key = ":".join(sorted(probed_events))
+    # GPU snapshot gauges: exclude DCGM blank-family before sum-across-dev.
+    _gpu_types = frozenset({"nvidia_gpu", "amd_gpu", "intel_gpu"})
+    reject_dcgm_blank = typ in _gpu_types or any(
+        t in _gpu_types for t in type_probe_names(typ)
+    )
 
     def _fn_pandas_groupby():
       hosts = [str(h) for h in self._base_filter.get("host__in") or []]
@@ -1187,7 +1193,10 @@ class jid_table:
               **tkw,
               type=candidate_typ,
               event__in=probed_events,
-          ).values("host", "time", val_col)
+          )
+          if reject_dcgm_blank and val_col in ("value", "delta", "arc"):
+            qs = qs.filter(**{f"{val_col}__lt": DCGM_FP64_BLANK})
+          qs = qs.values("host", "time", val_col)
           df_raw = queryset_to_dataframe(qs)
           if (
               not df_raw.empty
@@ -1241,14 +1250,16 @@ class jid_table:
         for host_chunk in _iter_acct_host_batches(hosts):
           chunk_frames = []
           for candidate_typ in type_probe_names(typ):
+            qs_base = host_data.objects.filter(
+                host__in=host_chunk,
+                **tkw,
+                type=candidate_typ,
+                event__in=probed_events,
+            )
+            if reject_dcgm_blank:
+              qs_base = qs_base.filter(**{f"{val_col}__lt": DCGM_FP64_BLANK})
             qs_sql = (
-                host_data.objects.filter(
-                    host__in=host_chunk,
-                    **tkw,
-                    type=candidate_typ,
-                    event__in=probed_events,
-                )
-                .values("host", "time")
+                qs_base.values("host", "time")
                 .annotate(sum_val=Coalesce(Sum(val_col), Value(0)))
                 .order_by("host", "time")
             )

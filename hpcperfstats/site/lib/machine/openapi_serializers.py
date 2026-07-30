@@ -223,6 +223,19 @@ class StaffArtifactContractSerializer(serializers.Serializer):
     current_detail = serializers.IntegerField()
     db_plot = serializers.ListField(child=serializers.IntegerField())
     db_detail = serializers.ListField(child=serializers.IntegerField())
+    note = serializers.CharField(required=False, allow_blank=True)
+
+
+class GpuInventoryEntrySerializer(serializers.Serializer):
+    """Per-(host,dev) GPU util/power for Job Detail Resources inventory."""
+
+    host = serializers.CharField()
+    dev = serializers.CharField()
+    type = serializers.CharField(required=False, allow_blank=True)
+    util_max = serializers.FloatField(required=False, allow_null=True)
+    util_mean = serializers.FloatField(required=False, allow_null=True)
+    power_max_w = serializers.FloatField(required=False, allow_null=True)
+    sample_count = serializers.IntegerField(required=False, allow_null=True)
 
 
 class JobDetailResponseSerializer(serializers.Serializer):
@@ -245,6 +258,10 @@ class JobDetailResponseSerializer(serializers.Serializer):
     gpu_utilization_max = serializers.FloatField(required=False, allow_null=True)
     gpu_utilization_mean = serializers.FloatField(required=False, allow_null=True)
     gpu_count = serializers.IntegerField(required=False, allow_null=True)
+    gpu_inventory = serializers.ListField(
+        child=GpuInventoryEntrySerializer(),
+        required=False,
+    )
     multiprecision_cpu_plot_item = BokehJsonItemField(required=False, allow_null=True)
     multiprecision_cpu_unavailable_reason = serializers.CharField(
         required=False, allow_null=True

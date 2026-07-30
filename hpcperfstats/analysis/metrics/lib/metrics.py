@@ -31,6 +31,10 @@ from django.db.utils import OperationalError, DatabaseError
 from hpcperfstats.analysis.metrics.lib.gen import jid_table
 from hpcperfstats.dbload.lib.multiprocessing_pool_health import abort_if_pool_workers_dead
 from hpcperfstats.analysis.metrics.lib.gen.utils import utils
+from hpcperfstats.lib.dcgm_blank import (
+    is_dcgm_numeric_blank,
+    nan_out_dcgm_numeric_blanks,
+)
 from hpcperfstats.dbload.lib.monitor_naming.canonical import (
     HOST_BLOCK_TYPE,
     HOST_CPU_HW_TYPE,
@@ -296,11 +300,17 @@ def _sanitize_metrics_compute_rows(rows):
   return out
 
 
-def _finite_amax(values):
-  """Return ``amax`` over finite entries, or ``None`` when none are finite."""
+def _finite_amax(values, *, reject_dcgm_blank=False):
+  """Return ``amax`` over finite entries, or ``None`` when none are finite.
+
+  When ``reject_dcgm_blank`` is True, DCGM blank-family sentinels are excluded
+  (GPU power / util / throttle gauges).
+  """
   arr = np.asarray(values, dtype=np.float64)
   if arr.size == 0:
     return None
+  if reject_dcgm_blank:
+    arr = nan_out_dcgm_numeric_blanks(arr)
   fin = arr[np.isfinite(arr)]
   if fin.size == 0:
     return None
@@ -2788,10 +2798,11 @@ class avg_gpuutil():
     ui = schema[event_name].index
     per_host = []
     for hostname, stats in _stats.items():
-      window = stats[1:-1, ui]
-      if window.size == 0:
+      window = nan_out_dcgm_numeric_blanks(stats[1:-1, ui])
+      finite = window[np.isfinite(window)]
+      if finite.size == 0:
         continue
-      per_host.append(float(mean(window)))
+      per_host.append(float(mean(finite)))
     if not per_host:
       return None
     value = float(mean(per_host))
@@ -2800,14 +2811,16 @@ class avg_gpuutil():
     return value, typename, '%'
 
   def compute_metric(self, u):
-    # nvidia: same order as summary plot / job_detail — try gpu_util, then utilization.
-    for event_name in ("gpu_util", "utilization"):
-      r = self._avg_gpuutil_for_event(u, "nvidia_gpu", event_name)
-      if r is not None:
-        return r
-    r = self._avg_gpuutil_for_event(u, "amd_gpu", "gpu_util")
-    if r is not None:
-      return r
+    # Prefer nvidia → amd → intel (no vendor merge); try gpu_util then utilization.
+    for typename, events in (
+        ("nvidia_gpu", ("gpu_util", "utilization")),
+        ("amd_gpu", ("gpu_util",)),
+        ("intel_gpu", ("gpu_util", "utilization")),
+    ):
+      for event_name in events:
+        r = self._avg_gpuutil_for_event(u, typename, event_name)
+        if r is not None:
+          return r
     return None, "gpu", '%'
 
 
@@ -3265,11 +3278,12 @@ def _node_imbalance_instantaneous_percent(u, typename, event_name):
   nt = u.nt
   max_per_t = np.full(nt, -np.inf, dtype=np.float64)
   for hostname, stats in _stats.items():
-    max_per_t = np.maximum(max_per_t, stats[:, j].astype(np.float64))
+    col = nan_out_dcgm_numeric_blanks(stats[:, j].astype(np.float64))
+    max_per_t = np.maximum(max_per_t, np.nan_to_num(col, nan=-np.inf))
   max_imbalance = []
   for hostname, stats in _stats.items():
-    v = stats[:, j].astype(np.float64)
-    valid = max_per_t > 0
+    v = nan_out_dcgm_numeric_blanks(stats[:, j].astype(np.float64))
+    valid = (max_per_t > 0) & np.isfinite(v)
     if not np.any(valid):
       max_imbalance.append(float("nan"))
       continue
@@ -3281,25 +3295,25 @@ def _node_imbalance_instantaneous_percent(u, typename, event_name):
 
 
 class max_gpu_power():
-  """Peak GPU power draw (W) from ``nvidia_gpu`` or ``amd_gpu`` samples."""
+  """Peak GPU power draw (W) from ``nvidia_gpu`` / ``amd_gpu`` / ``intel_gpu``."""
 
   def compute_metric(self, u):
-    mx = 0.0
-    used = None
-    for typename in ("nvidia_gpu", "amd_gpu"):
+    for typename in ("nvidia_gpu", "amd_gpu", "intel_gpu"):
       schema, _stats = u.get_type(typename)
       if schema is None or "power_usage" not in schema or not _stats:
         continue
       j = schema["power_usage"].index
+      mx = 0.0
+      used = False
       for hostname, stats in _stats.items():
         col = stats[:, j].astype(float)
-        peak = _finite_amax(col)
+        peak = _finite_amax(col, reject_dcgm_blank=True)
         if peak is not None:
           mx = max(mx, peak)
-          used = typename
-    if mx <= 0 or used is None:
-      return None, "nvidia_gpu", "W"
-    return mx, used, "W"
+          used = True
+      if used and mx > 0:
+        return mx, typename, "W"
+    return None, "nvidia_gpu", "W"
 
 
 class max_gpu_link_gbps():
@@ -3333,19 +3347,24 @@ class max_gpu_clock_event_reasons():
   def compute_metric(self, u):
     mx = 0
     used = None
-    for typename in ("nvidia_gpu", "amd_gpu"):
+    for typename in ("nvidia_gpu", "amd_gpu", "intel_gpu"):
       schema, _stats = u.get_type(typename)
       if schema is None or "clocks_event_reasons" not in schema or not _stats:
         continue
       j = schema["clocks_event_reasons"].index
+      vendor_hit = False
       for hostname, stats in _stats.items():
         col = stats[:, j].astype(np.float64)
-        peak = _finite_amax(col)
-        if peak is not None:
-          cmax = int(peak)
-          if cmax > mx:
-            mx = cmax
-            used = typename
+        peak = _finite_amax(col, reject_dcgm_blank=True)
+        if peak is None or is_dcgm_numeric_blank(peak):
+          continue
+        cmax = int(peak)
+        if cmax > mx:
+          mx = cmax
+          used = typename
+          vendor_hit = True
+      if vendor_hit:
+        break  # first vendor with usable samples wins
     if used is None or mx == 0:
       return None, "nvidia_gpu", "#"
     return float(mx), used, "#"
@@ -3388,6 +3407,7 @@ class gpu_util_node_imbalance():
     for typename, events in (
         ("nvidia_gpu", ("gpu_util", "utilization")),
         ("amd_gpu", ("gpu_util",)),
+        ("intel_gpu", ("gpu_util", "utilization")),
     ):
       for ev in events:
         v = _node_imbalance_instantaneous_percent(u, typename, ev)
@@ -3400,7 +3420,7 @@ class tensor_node_imbalance():
   """Tensor-pipe activity imbalance across nodes (``tensor_active`` snapshot)."""
 
   def compute_metric(self, u):
-    for typename in ("nvidia_gpu", "amd_gpu"):
+    for typename in ("nvidia_gpu", "amd_gpu", "intel_gpu"):
       v = _node_imbalance_instantaneous_percent(u, typename, "tensor_active")
       if v is not None:
         return v, typename, "%"

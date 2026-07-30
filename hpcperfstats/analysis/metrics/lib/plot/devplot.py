@@ -22,6 +22,7 @@ from hpcperfstats.analysis.metrics.lib.gen.utils import (
     clean_dataframe,
     non_degenerate_y_range_for_series,
     set_linear_axes_plain_numeric,
+    timestamps_as_cluster_naive,
     tz_aware_bokeh_tick_formatter,
 )
 from hpcperfstats.analysis.metrics.lib.plot.bokeh_job_detail_help_marker import (
@@ -52,7 +53,8 @@ class DevPlot:
         """
     s = time.time()
 
-    df = df[["time", "host", event]]
+    df = df[["time", "host", event]].copy()
+    df["time"] = timestamps_as_cluster_naive(to_datetime(df["time"], utc=True))
 
     y_range_start, y_range_end = non_degenerate_y_range_for_series(df[event])
 

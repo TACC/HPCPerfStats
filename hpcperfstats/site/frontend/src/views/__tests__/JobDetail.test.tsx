@@ -228,6 +228,7 @@ describe("JobDetail", () => {
         current_detail: 8,
         db_plot: [10, 11],
         db_detail: [],
+        note: "Empty/none does not mean plots are missing — Redis may still serve payloads.",
       },
     } });
 
@@ -237,8 +238,13 @@ describe("JobDetail", () => {
       expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
     });
     expect(screen.getByText("Artifact schema")).toBeInTheDocument();
-    expect(screen.getByText("Current: plot 11, detail 8")).toBeInTheDocument();
-    expect(screen.getByText("DB: plot 10–11, detail none")).toBeInTheDocument();
+    expect(screen.getByText("Runtime schema: plot 11, detail 8")).toBeInTheDocument();
+    expect(
+      screen.getByText("Stored schema column: plot 10–11, detail none"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/does not mean plots are missing/i),
+    ).toBeInTheDocument();
   });
 
   it("does not show Sample Count table for non-staff", async () => {
@@ -630,6 +636,45 @@ describe("JobDetail", () => {
     });
     expect(screen.getByText("Total GPUs allocated:")).toBeInTheDocument();
     expect(screen.getByText("4.00")).toBeInTheDocument();
+  });
+
+  it("shows GPU inventory table and util out-of scale when inventory present", async () => {
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        gpu_active: 2,
+        gpu_utilization_max: 160.0,
+        gpu_utilization_mean: 80.0,
+        gpu_count: 4,
+        gpu_inventory: [
+          {
+            host: "c561-007",
+            dev: "0",
+            type: "nvidia_gpu",
+            util_max: 90.0,
+            util_mean: 40.0,
+            power_max_w: 250.0,
+          },
+          {
+            host: "c561-007",
+            dev: "1",
+            type: "nvidia_gpu",
+            util_max: 70.0,
+            util_mean: 40.0,
+            power_max_w: 200.0,
+          },
+        ],
+      },
+    });
+
+    renderJobDetail("12345");
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
+    });
+    expect(screen.getByRole("heading", { name: "GPU inventory" })).toBeInTheDocument();
+    expect(screen.getAllByText("c561-007").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/out of 400\.00/).length).toBeGreaterThanOrEqual(1);
   });
 
   it("renders one Bokeh embed when a host-level plot tab is selected", async () => {

@@ -1206,6 +1206,34 @@ components:
           type: string
         login_url:
           type: string
+    GpuInventoryEntry:
+      type: object
+      description: Per-(host,dev) GPU util/power for Job Detail Resources inventory.
+      properties:
+        host:
+          type: string
+        dev:
+          type: string
+        type:
+          type: string
+        util_max:
+          type: number
+          format: double
+          nullable: true
+        util_mean:
+          type: number
+          format: double
+          nullable: true
+        power_max_w:
+          type: number
+          format: double
+          nullable: true
+        sample_count:
+          type: integer
+          nullable: true
+      required:
+      - dev
+      - host
     HomeMetricOption:
       type: object
       properties:
@@ -1424,6 +1452,10 @@ components:
         gpu_count:
           type: integer
           nullable: true
+        gpu_inventory:
+          type: array
+          items:
+            $ref: '#/components/schemas/GpuInventoryEntry'
         multiprecision_cpu_plot_item:
           nullable: true
         multiprecision_cpu_unavailable_reason:
@@ -1988,6 +2020,8 @@ components:
           type: array
           items:
             type: integer
+        note:
+          type: string
       required:
       - current_detail
       - current_plot

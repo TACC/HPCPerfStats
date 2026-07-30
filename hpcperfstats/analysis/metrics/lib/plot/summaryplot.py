@@ -30,6 +30,7 @@ from hpcperfstats.analysis.metrics.lib.gen.utils import (
     format_cluster_hover_datetime,
     non_degenerate_y_range_for_series,
     set_linear_axes_plain_numeric,
+    timestamps_as_cluster_naive,
     tz_aware_bokeh_tick_formatter,
 )
 from hpcperfstats.dbload.lib.monitor_naming.canonical import (
@@ -66,7 +67,7 @@ from bokeh.transform import factor_cmap
 from hpcperfstats.analysis.metrics.lib.plot import MSG_NO_METRIC_DATA
 from hpcperfstats.analysis.metrics.lib.bokeh_job_embed import figure_embed_kw
 from hpcperfstats.analysis.metrics.lib.plot.hover_html import hover_tooltip_html_host_time_value
-from hpcperfstats.analysis.metrics.lib.plot.job_window import job_window_timestamps_utc
+from hpcperfstats.analysis.metrics.lib.plot.job_window import job_window_bounds_local
 from hpcperfstats.analysis.metrics.lib.plot.summary_metric_descriptions import (
     description_for_summary_metric,
     researcher_use_for_summary_metric,
@@ -968,7 +969,9 @@ def plot_hardware_error_rates_figure(jt, x_range):
   if not merged[value_cols].to_numpy().any():
     return None
 
-  merged["time"] = to_datetime(merged["time"], utc=True)
+  merged["time"] = timestamps_as_cluster_naive(
+      to_datetime(merged["time"], utc=True)
+  )
 
   plot_kwargs = figure_embed_kw(
       150,
@@ -1054,6 +1057,7 @@ class SummaryPlot():
 
     df = df[["time", "host", metric]].copy()
     df["host"] = df["host"].astype(str)
+    df["time"] = timestamps_as_cluster_naive(to_datetime(df["time"], utc=True))
 
     y_range_start, y_range_end = non_degenerate_y_range_for_series(
         df[metric], y_range_end=y_range_end
@@ -1139,7 +1143,7 @@ class SummaryPlot():
       doc_text = description_for_summary_metric(metric)
       researcher_use = researcher_use_for_summary_metric(metric)
     help_body = (
-        f"Time: sample timestamp (UTC) on the X axis. "
+        f"Time: sample timestamp (cluster timezone) on the X axis. "
         f"Y ({label_text}): {doc_text}"
     )
     add_job_detail_bokeh_help_marker(plot, help_body, researcher_use)
@@ -1247,8 +1251,15 @@ class SummaryPlot():
 
     render_specs.sort(key=lambda item: _summary_plot_order_key(item[0]))
 
-    x_start, x_end = job_window_timestamps_utc(self.jt)
-    x_range = Range1d(x_start, x_end) if x_start is not None and x_end is not None else None
+    # Match plot series (cluster-naive wall clock) so Range1d aligns with glyphs.
+    x_start_l, x_end_l = job_window_bounds_local(self.jt)
+    if x_start_l is not None and x_end_l is not None:
+      x_range = Range1d(
+          x_start_l.tz_localize(None),
+          x_end_l.tz_localize(None),
+      )
+    else:
+      x_range = None
 
     plots = []
     for name, label, y_top in render_specs:

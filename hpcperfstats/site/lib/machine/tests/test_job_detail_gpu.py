@@ -228,7 +228,17 @@ def test_gpu_agg_rows_for_job_batches_host__in():
       return self
 
     def annotate(self, **kwargs):
-      return self
+      # Non-empty so nvidia_gpu wins and later vendors are not queried.
+      return [
+          {
+              "host": "h0.x",
+              "dev": "0",
+              "event": "gpu_util",
+              "cnt": 4,
+              "vmax": 1.0,
+              "vmean": 1.0,
+          }
+      ]
 
     def __iter__(self):
       return iter(())
@@ -368,10 +378,54 @@ def test_gpu_count_total_prefers_nvidia_gpu_over_amd_gpu():
         return _Query([{"host": "n1.example.com", "mv": 8.0}])
       if kwargs.get("type") == "amd_gpu":
         return _Query([{"host": "n1.example.com", "mv": 2.0}])
+      if kwargs.get("type") == "intel_gpu":
+        return _Query([{"host": "n1.example.com", "mv": 1.0}])
       return _Query([])
 
   with patch("hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary.host_data.objects", _Mgr()):
     assert gpu_count_total_for_job_window(j) == 8
+
+
+def test_gpu_count_total_uses_intel_when_nvidia_and_amd_absent():
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  j = MagicMock()
+  j.start_time = t0
+  j.end_time = t0
+  j.acct_host_list = ["n1.example.com"]
+
+  class _Query:
+    def __init__(self, rows):
+      self._rows = rows
+
+    def values(self, *args):
+      return self
+
+    def annotate(self, **kwargs):
+      return self._rows
+
+  class _Mgr:
+    def filter(self, **kwargs):
+      if kwargs.get("type") == "intel_gpu":
+        return _Query([{"host": "n1.example.com", "mv": 2.0}])
+      return _Query([])
+
+  with patch("hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary.host_data.objects", _Mgr()):
+    assert gpu_count_total_for_job_window(j) == 2
+
+
+def test_gpu_detail_from_metric_values_all_null_falls_through():
+  """All-null detail_gpu_* must not block host_data GPU fallback."""
+  assert (
+      job_detail_artifacts_mod._gpu_detail_from_metric_values(
+          {
+              "detail_gpu_active": None,
+              "detail_gpu_util_max": None,
+              "detail_gpu_util_mean": None,
+              "detail_gpu_count": None,
+          }
+      )
+      is None
+  )
 
 
 def test_gpu_count_total_returns_none_when_no_gpu_rows_exist():

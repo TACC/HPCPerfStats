@@ -101,7 +101,7 @@ def test_multiprecision_cpu_pie_includes_grace_int_wedges():
   )
   assert mix == {"FP64": 10.0, "FP32": 20.0, "INT16": 30.0, "INT8": 40.0}
   assert jda._CPU_PRECISION_LABEL_ORDER == ("FP64", "FP32", "INT16", "INT8")
-  assert jda.APP_DETAIL_ARTIFACT_SCHEMA_VERSION == 10
+  assert jda.APP_DETAIL_ARTIFACT_SCHEMA_VERSION == 11
 
 
 def test_multiprecision_pie_legend_below_frame_with_long_labels():

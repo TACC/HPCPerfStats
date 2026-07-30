@@ -2332,6 +2332,9 @@ def job_detail(request, pk):
     gpu_utilization_max = detail_payload.get("gpu_utilization_max")
     gpu_utilization_mean = detail_payload.get("gpu_utilization_mean")
     gpu_count = detail_payload.get("gpu_count")
+    gpu_inventory = detail_payload.get("gpu_inventory") or []
+    if not isinstance(gpu_inventory, list):
+        gpu_inventory = []
     xalt_payload = None
     fsio = detail_payload.get("fsio") or {}
     if not fsio:
@@ -2421,6 +2424,7 @@ def job_detail(request, pk):
         "gpu_utilization_max": gpu_utilization_max,
         "gpu_utilization_mean": gpu_utilization_mean,
         "gpu_count": gpu_count,
+        "gpu_inventory": gpu_inventory,
         "metrics_list": metrics_list,
         "proc_list": proc_list,
         "derived_data_status": "ready" if detail_payload else "loading",

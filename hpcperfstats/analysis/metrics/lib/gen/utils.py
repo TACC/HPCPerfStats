@@ -272,20 +272,39 @@ def format_plain_decimal(value, precision=2):
 
 
 def format_cluster_hover_datetime(value):
-  """Format Bokeh datetime or epoch-ms in the configured cluster timezone."""
+  """Format Bokeh datetime or epoch-ms in the configured cluster timezone.
+
+  Naive datetimes are treated as cluster wall clock (see
+  ``timestamps_as_cluster_naive``); aware/epoch-ms values convert from UTC.
+  """
   if value is None or value == "":
     return ""
   if isinstance(value, (int, float)) and math.isfinite(value):
     ts = pd.Timestamp(value, unit="ms", tz="UTC")
+    local = ts.tz_convert(ZoneInfo(local_timezone))
   else:
     ts = pd.Timestamp(value)
     if ts.tzinfo is None:
-      ts = ts.tz_localize("UTC")
-  local = ts.tz_convert(ZoneInfo(local_timezone))
+      # Cluster-naive plot series: already wall clock in ``local_timezone``.
+      local = ts
+    else:
+      local = ts.tz_convert(ZoneInfo(local_timezone))
   formatted = local.strftime("%I:%M %p")
   if formatted.startswith("0"):
     formatted = formatted[1:]
   return formatted
+
+
+def timestamps_as_cluster_naive(series):
+  """UTC (or naive-as-UTC) timestamps → naive cluster wall clock for Bokeh axes.
+
+  Bokeh 3.9 ``DatetimeTickFormatter`` has no timezone property and formats in
+  UTC. Shifting to naive cluster local makes axis ticks match
+  ``format_cluster_hover_datetime`` without CustomJS.
+  """
+  utc = pd.to_datetime(series, utc=True)
+  local = utc.dt.tz_convert(ZoneInfo(local_timezone))
+  return local.dt.tz_localize(None)
 
 
 def add_hover_plain_columns(df, numeric_cols, time_col="time"):
@@ -300,7 +319,11 @@ def add_hover_plain_columns(df, numeric_cols, time_col="time"):
 
 
 def tz_aware_bokeh_tick_formatter():
-  """Datetime axis labels via Bokeh built-in formatter (no CustomJS / unsafe-eval)."""
+  """Datetime axis labels for cluster-naive plot times (no CustomJS / unsafe-eval).
+
+  Callers must pass x values through ``timestamps_as_cluster_naive`` so tick
+  strings match hover (cluster INI timezone).
+  """
   return DatetimeTickFormatter(
       hours="%I:%M %p",
       minutes="%I:%M %p",

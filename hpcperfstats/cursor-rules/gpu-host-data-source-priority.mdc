@@ -7,27 +7,36 @@ alwaysApply: false
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-GPU-derived job-detail fields (including `gpu_count` and utilization summaries) must follow monitor-emitted `host_data.type` contracts and a deterministic source precedence.
+GPU-derived job-detail fields (including `gpu_count`, utilization summaries, and Resources inventory) must follow monitor-emitted `host_data.type` contracts and a deterministic source precedence.
 
 ## Source precedence contract
 
-- Prefer `nvidia_gpu` when present; otherwise use `amd_gpu` for equivalent GPU summary fields.
-- Do not merge NVIDIA and AMD streams into a mixed synthetic GPU type for a single field unless a feature explicitly requires mixed-vendor aggregation and tests are added.
-- For newly added GPU summary statistics from monitor payloads, wire the same precedence into API assembly and UI rendering in the same task.
+- Prefer `nvidia_gpu` when present; otherwise `amd_gpu`; otherwise `intel_gpu` (monitor PVC/XPUM path) for equivalent GPU summary fields.
+- Do **not** merge NVIDIA, AMD, and Intel streams into a mixed synthetic GPU type for a single field unless a feature explicitly requires mixed-vendor aggregation and tests are added.
+- For newly added GPU summary statistics from monitor payloads, wire the same precedence into analysis (`gpu_job_detail_summary.py`, metrics classes), API assembly, and UI rendering in the same task.
+
+## DCGM blank-family sentinels
+
+- NVIDIA DCGM blank-family values (`DCGM_FP64_BLANK` / `DCGM_INT64_BLANK` and offsets; see `hpcperfstats/lib/dcgm_blank.py` mirroring `dcgm_structs.h`) are **missing telemetry**, not real watts/%/bitmasks.
+- Reject blanks before sum/mean/max/OR in analysis, job-detail, plots, and nvidia ingest collapse. Soft clamps without blank semantics are forbidden.
+- Clock-throttle decode must not print `unknown (0x…)` for blank or no-known-bit garbage masks.
 
 ## Cross-layer consistency
 
-- Keep Django API assembly (`hpcperfstats/site/lib/machine/api.py`) and frontend consumers consistent for default/no-data behavior.
+- Keep Django API assembly (`hpcperfstats/site/lib/machine/api.py` / `job_detail_artifacts.py`) and frontend consumers consistent for default/no-data behavior.
 - Treat monitor `host_data.type` names as the contract. If monitor naming changes, update analysis/API precedence and tests together.
 - When adding a new GPU summary field, also update user-facing definitions/docs in the same task.
+- Complements `monitor-analysis-architecture-sync.mdc` for host_data type alignment.
 
 ## Required tests when behavior changes
 
-- Extend API tests covering:
- - NVIDIA-only payloads
- - AMD-only payloads
- - both-present precedence behavior
- - no-GPU fallback behavior
+- Extend API / summary tests covering:
+  - NVIDIA-only payloads
+  - AMD-only payloads
+  - Intel-only payloads
+  - both/triple-present precedence (first vendor wins; no merge)
+  - no-GPU fallback behavior
+  - DCGM blank rejection where applicable
 - If UI behavior changes, update web page E2E tests as required by `web-pages-e2e-test-maintenance.mdc`.
 
 ## Overlap

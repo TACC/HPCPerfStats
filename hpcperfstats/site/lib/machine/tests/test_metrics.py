@@ -1298,6 +1298,86 @@ def test_max_gpu_power_skips_nan_hosts_uses_finite_max():
 
 
 @pytest.mark.machine_unit_mock
+def test_max_gpu_power_rejects_dcgm_fp64_blank():
+  """4× DCGM_FP64_BLANK poison must not become max_gpu_power."""
+  from hpcperfstats.lib.dcgm_blank import DCGM_FP64_BLANK
+
+  schema = _Schema(["power_usage"])
+  blank_stats = np.array(
+      [[DCGM_FP64_BLANK], [DCGM_FP64_BLANK], [300.0]], dtype=np.float64
+  )
+
+  class MockU:
+    def get_type(self, typename):
+      if typename == "nvidia_gpu":
+        return schema, {"h1": blank_stats}
+      return None, {}
+
+  value, typename, units = max_gpu_power().compute_metric(MockU())
+  assert value == pytest.approx(300.0)
+  assert typename == "nvidia_gpu"
+
+
+@pytest.mark.machine_unit_mock
+def test_max_gpu_power_all_blank_returns_none():
+  from hpcperfstats.lib.dcgm_blank import DCGM_FP64_BLANK
+
+  schema = _Schema(["power_usage"])
+  blank_stats = np.array([[DCGM_FP64_BLANK], [4 * DCGM_FP64_BLANK]], dtype=np.float64)
+
+  class MockU:
+    def get_type(self, typename):
+      if typename == "nvidia_gpu":
+        return schema, {"h1": blank_stats}
+      return None, {}
+
+  value, _typename, units = max_gpu_power().compute_metric(MockU())
+  assert value is None
+  assert units == "W"
+
+
+@pytest.mark.machine_unit_mock
+def test_avg_gpuutil_rejects_dcgm_int64_blank():
+  from hpcperfstats.lib.dcgm_blank import DCGM_INT64_BLANK
+
+  schema = _Schema(["gpu_util"])
+  stats = np.array(
+      [[0.0], [float(DCGM_INT64_BLANK)], [40.0], [60.0]], dtype=np.float64
+  )
+
+  class MockU:
+    def get_type(self, typename):
+      if typename == "nvidia_gpu":
+        return schema, {"h1": stats}
+      return None, {}
+
+  value, typename, units = avg_gpuutil().compute_metric(MockU())
+  assert typename == "nvidia_gpu"
+  assert units == "%"
+  # window is stats[1:-1] → blank + 40; blank dropped → mean 40
+  assert value == pytest.approx(40.0)
+
+
+@pytest.mark.machine_unit_mock
+def test_max_gpu_clock_event_reasons_rejects_blank():
+  from hpcperfstats.lib.dcgm_blank import DCGM_INT64_BLANK
+
+  schema = _Schema(["clocks_event_reasons"])
+  stats = np.array([[float(DCGM_INT64_BLANK)], [7.0]], dtype=np.float64)
+
+  class MockU:
+    def get_type(self, typename):
+      if typename == "nvidia_gpu":
+        return schema, {"h1": stats}
+      return None, {}
+
+  value, typename, units = max_gpu_clock_event_reasons().compute_metric(MockU())
+  assert value == 7.0
+  assert typename == "nvidia_gpu"
+  assert units == "#"
+
+
+@pytest.mark.machine_unit_mock
 def test_mem_hwm_all_nan_returns_none():
   schema = _Schema(["MemUsed", "Slab", "FilePages"])
   stats = np.array([[np.nan, np.nan, np.nan]], dtype=np.float64)

@@ -48,6 +48,26 @@ JOB_DETAIL_WIRE_BASE = {
     "gpu_utilization_max": 95.0,
     "gpu_utilization_mean": 80.0,
     "gpu_count": 4,
+    "gpu_inventory": [
+        {
+            "host": "c561-007",
+            "dev": "0",
+            "type": "nvidia_gpu",
+            "util_max": 90.0,
+            "util_mean": 40.0,
+            "power_max_w": 250.0,
+            "sample_count": 100,
+        },
+        {
+            "host": "c561-007",
+            "dev": "1",
+            "type": "nvidia_gpu",
+            "util_max": 5.0,
+            "util_mean": 1.0,
+            "power_max_w": 80.0,
+            "sample_count": 100,
+        },
+    ],
     "xalt_data": {"exec_path": [], "cwd": [], "libset": []},
     "fsio": {},
     "schema": {},
@@ -115,6 +135,10 @@ JOB_DETAIL_WIRE_STAFF_ARTIFACT_CONTRACT = {
         "current_detail": 8,
         "db_plot": [10, 11],
         "db_detail": [],
+        "note": (
+            "DB lists distinct non-null artifact_schema values only. "
+            "Empty/none does not mean plots are missing."
+        ),
     },
 }
 

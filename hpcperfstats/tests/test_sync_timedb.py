@@ -770,6 +770,59 @@ def test_compute_deltas_and_arc_nvidia_sum_all_nan_yields_nan():
   assert pd.isna(collapsed.iloc[0]["delta"])
 
 
+def test_collapse_nvidia_gpu_excludes_dcgm_blanks_from_sum():
+  """Mixed blank + real power_usage must sum only real watts (not 4× blank)."""
+  from hpcperfstats.lib.dcgm_blank import DCGM_FP64_BLANK
+
+  stats_df = pd.DataFrame([
+      {
+          "host": "h", "type": "nvidia_gpu", "dev": "0",
+          "event": "power_usage", "unit": "W", "time": 100.0,
+          "value": DCGM_FP64_BLANK, "delta": 1.0,
+      },
+      {
+          "host": "h", "type": "nvidia_gpu", "dev": "1",
+          "event": "power_usage", "unit": "W", "time": 100.0,
+          "value": 250.0, "delta": 1.0,
+      },
+      {
+          "host": "h", "type": "nvidia_gpu", "dev": "2",
+          "event": "power_usage", "unit": "W", "time": 100.0,
+          "value": 300.0, "delta": 1.0,
+      },
+  ])
+  collapsed = _collapse_nvidia_gpu_vectorized(stats_df, _COLLAPSE_GROUP_COLS)
+  assert len(collapsed) == 1
+  assert float(collapsed.iloc[0]["value"]) == 550.0
+  # Apply reference must match.
+  expected = (
+      stats_df.groupby(_COLLAPSE_GROUP_COLS, observed=True)
+      .apply(_collapse_nvidia_gpu_group, include_groups=False)
+      .reset_index()
+  )
+  assert float(expected.iloc[0]["value"]) == 550.0
+
+
+def test_collapse_nvidia_gpu_or_skips_dcgm_int64_blank():
+  from hpcperfstats.lib.dcgm_blank import DCGM_INT64_BLANK
+
+  stats_df = pd.DataFrame([
+      {
+          "host": "h", "type": "nvidia_gpu", "dev": "0",
+          "event": "clocks_event_reasons", "unit": "#", "time": 100.0,
+          "value": float(DCGM_INT64_BLANK), "delta": 1.0,
+      },
+      {
+          "host": "h", "type": "nvidia_gpu", "dev": "1",
+          "event": "clocks_event_reasons", "unit": "#", "time": 100.0,
+          "value": 7.0, "delta": 1.0,
+      },
+  ])
+  collapsed = _collapse_nvidia_gpu_vectorized(stats_df, _COLLAPSE_GROUP_COLS)
+  assert len(collapsed) == 1
+  assert float(collapsed.iloc[0]["value"]) == 7.0
+
+
 def test_host_data_instance_from_stats_row_sets_jid_when_present():
   row_type = namedtuple(
       "Row",

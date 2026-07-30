@@ -93,6 +93,22 @@ def test_tz_aware_bokeh_tick_formatter_returns_datetime_formatter():
   assert isinstance(formatter, DatetimeTickFormatter)
 
 
+def test_timestamps_as_cluster_naive_matches_hover_wall_clock(monkeypatch):
+  """Axis-bound naive times share wall clock with format_cluster_hover_datetime."""
+  import pandas as pd
+
+  from hpcperfstats.analysis.metrics.lib.gen import utils as u
+
+  monkeypatch.setattr(u, "local_timezone", "America/Chicago")
+  utc = pd.Series([pd.Timestamp("2024-07-01T12:00:00Z")])
+  naive = u.timestamps_as_cluster_naive(utc)
+  # 12:00 UTC → 07:00 CDT in July
+  assert naive.iloc[0].hour == 7
+  assert naive.iloc[0].tzinfo is None
+  assert u.format_cluster_hover_datetime(naive.iloc[0]) == "7:00 AM"
+  assert u.format_cluster_hover_datetime(utc.iloc[0]) == "7:00 AM"
+
+
 def test_format_plain_decimal_avoids_scientific():
   from hpcperfstats.analysis.metrics.lib.gen.utils import format_plain_decimal
 
