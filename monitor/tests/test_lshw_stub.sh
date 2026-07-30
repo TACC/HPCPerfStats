@@ -37,4 +37,11 @@ out3="$(PATH="$(dirname "${STUB}"):${FAKE_BIN}:/usr/bin" lshw -json 2>"${FAKE_BI
 test "${out3}" = '{}' || { echo "PATH lshw want '{}'; got '${out3}'" >&2; exit 1; }
 ! grep -q REAL_LSHW_RAN "${FAKE_BIN}/err2" || { echo "PATH hit real lshw" >&2; exit 1; }
 
+# libdcgm execs absolute paths with a minimal env (strace: ~6 vars, argv[0]=absolute).
+# Stub must still emit {} with no PATH and no inherited env.
+out4="$(env -i "${STUB}" -json 2>"${FAKE_BIN}/err4")"
+err4="$(cat "${FAKE_BIN}/err4")"
+test "${out4}" = '{}' || { echo "env -i stub stdout want '{}'; got '${out4}'" >&2; exit 1; }
+test -z "${err4}" || { echo "env -i stub wrote stderr: ${err4}" >&2; exit 1; }
+
 echo "test_lshw_stub.sh passed"

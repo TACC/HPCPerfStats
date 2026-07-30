@@ -6,8 +6,9 @@
 # module EEPROM and spams dmesg: mlx5_query_module_id / query_mcia_reg status 0x3.
 #
 # DCGM soft-fails on empty JSON ("Unexpected lshw json format"); monitor collectors
-# do not need those serials. Put this stub first on the daemon PATH
-# (/usr/libexec/hpcperfstats/stubs) via the systemd unit / sysconfig.
+# do not need those serials. Enforcement is systemd BindReadOnlyPaths in
+# hpcperfstats.service (stub over /usr/bin/lshw and /usr/sbin/lshw); PATH alone
+# cannot intercept libdcgm's absolute execve.
 #
 # Do not probe hardware, open netdevs, or call the real lshw.
 echo '{}'

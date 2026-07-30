@@ -3,9 +3,13 @@
 # This file is sourced by systemd (EnvironmentFile=-/etc/sysconfig/hpcperfstatsd).
 # Leave entries commented out to keep daemon defaults.
 #
-# libdcgm may exec `lshw -json` for serials. The unit sets PATH so
-# /usr/libexec/hpcperfstats/stubs/lshw (no module EEPROM probes) wins over
-# /usr/sbin/lshw — required on fleets with empty-cage mlx Ethernet (Horizon MCIA).
+# libdcgm may exec absolute `/usr/bin/lshw` then `/usr/sbin/lshw` for serials
+# (minimal child env — PATH cannot intercept). hpcperfstats.service bind-mounts
+# /usr/libexec/hpcperfstats/stubs/lshw over those paths in the unit namespace
+# (required on fleets with empty-cage mlx Ethernet / Horizon MCIA).
+# Fallback if binds fail to start the unit: drop-in
+#   InaccessiblePaths=-/usr/bin/lshw -/usr/sbin/lshw
+# (DCGM soft-fails like ENOENT). PATH in the unit is only for bare `lshw`.
 # To override the unit PATH entirely, set a full PATH= here (EnvironmentFile
 # does not expand $PATH).
 

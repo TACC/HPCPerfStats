@@ -6,8 +6,14 @@ Type=simple
 # Default per-process soft FD limit is often 1024; collectors + LIKWID + dumpfiles can exceed it (EMFILE).
 LimitNOFILE=1048576
 EnvironmentFile=-/etc/sysconfig/hpcperfstatsd
-# Prefer stub lshw so libdcgm serial discovery does not probe empty mlx modules (MCIA dmesg).
+# Prefer stub lshw on PATH for bare `lshw` callers (harmless; not DCGM enforcement).
 Environment=PATH=/usr/libexec/hpcperfstats/stubs:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+# libdcgm serial discovery execs absolute /usr/bin/lshw then /usr/sbin/lshw with a
+# minimal env, so PATH cannot intercept it. Bind the no-op stub over both paths in
+# this unit's mount namespace only (no host-visible change) to keep real lshw from
+# probing empty-cage mlx module EEPROM (mlx5_query_module_id / query_mcia_reg 0x3).
+BindReadOnlyPaths=-/usr/libexec/hpcperfstats/stubs/lshw:/usr/bin/lshw
+BindReadOnlyPaths=-/usr/libexec/hpcperfstats/stubs/lshw:/usr/sbin/lshw
 # Keep monitoring overhead off user-critical cores by default where admins set affinity.
 Nice=10
 IOSchedulingClass=idle
