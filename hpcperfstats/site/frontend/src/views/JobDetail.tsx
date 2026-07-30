@@ -43,6 +43,7 @@ import {
   getJobWattHoursShortLabel,
   jobHasGpuForWattHoursLabel,
 } from "../utils/jobMetricDisplayLabels";
+import { groupJobMetricsBySourceSection } from "../utils/jobMetricSourceSections";
 import {
   readTabFromSearchParams,
 } from "../utils/sync-tab-search-param";
@@ -81,6 +82,8 @@ type JobPlotConfigKey = JobPlotConfig["key"];
 type JobMetricDisplayRow = JobMetricCell & {
   metric: string;
   units?: string | null;
+  /** Host-data / catalog lineage from API metrics_list[].type */
+  type?: string | null;
 };
 
 type JobSummaryRow = {
@@ -247,6 +250,7 @@ function buildMetricsDisplayList(metrics: JobMetricDisplayRow[]): JobMetricDispl
     metric: EFFECTIVE_VECTOR_WIDTH_METRIC,
     value: combinedValue,
     units: null,
+    type: width64?.type ?? width32?.type ?? "pmc",
     no_data_reason:
       combinedValue == null
         ? width64?.no_data_reason || width32?.no_data_reason || null
@@ -621,8 +625,7 @@ export default function JobDetail() {
   const metricsListFull: JobMetricDisplayRow[] = buildMetricsDisplayList(
     (metrics_list || []) as JobMetricDisplayRow[],
   );
-  const metricsTableLeft = metricsListFull.filter((_, index) => index % 2 === 0);
-  const metricsTableRight = metricsListFull.filter((_, index) => index % 2 === 1);
+  const metricsSourceSections = groupJobMetricsBySourceSection(metricsListFull);
   const gpuCountForMetrics = resolveGpuCountForDisplay(gpu_count, metrics_list || []);
   const wattHoursHasGpu = jobHasGpuForWattHoursLabel(gpuCountForMetrics);
   const wattHoursMetric = (metrics_list || []).find(
@@ -662,6 +665,47 @@ export default function JobDetail() {
         </TableCell>
       </TableRow>
     ));
+  }
+
+  function renderMetricsSectionTables(
+    sectionId: string,
+    rows: JobMetricDisplayRow[],
+  ): ReactNode {
+    if (rows.length === 0) {
+      return <p className="text-muted-foreground mb-0">Data not available.</p>;
+    }
+    const left = rows.filter((_, index) => index % 2 === 0);
+    const right = rows.filter((_, index) => index % 2 === 1);
+    if (right.length === 0) {
+      return (
+        <Table className={cn(JOB_DETAIL_COMPACT_TABLE_CLASS, "job-detail-metrics-table mb-0 w-full")}>
+          <TableCaption className="sr-only">
+            Job-level {sectionId} metrics for job {job.jid}
+          </TableCaption>
+          <TableBody>{metricTableRows(left)}</TableBody>
+        </Table>
+      );
+    }
+    return (
+      <div className="job-detail-metrics-two-col grid gap-3 lg:grid-cols-2">
+        <div>
+          <Table className={cn(JOB_DETAIL_COMPACT_TABLE_CLASS, "job-detail-metrics-table mb-0 w-full")}>
+            <TableCaption className="sr-only">
+              Job-level {sectionId} metrics for job {job.jid} (column 1)
+            </TableCaption>
+            <TableBody>{metricTableRows(left)}</TableBody>
+          </Table>
+        </div>
+        <div>
+          <Table className={cn(JOB_DETAIL_COMPACT_TABLE_CLASS, "job-detail-metrics-table mb-0 w-full")}>
+            <TableCaption className="sr-only">
+              Job-level {sectionId} metrics for job {job.jid} (column 2)
+            </TableCaption>
+            <TableBody>{metricTableRows(right)}</TableBody>
+          </Table>
+        </div>
+      </div>
+    );
   }
 
   function renderSinglePlotPanel(config: JobPlotConfig | undefined, isTabActive: boolean): ReactNode {
@@ -1113,29 +1157,14 @@ export default function JobDetail() {
               <p className="text-muted-foreground mb-0">Loading job-level metrics…</p>
             ) : !metrics_list.length ? (
               <p className="text-muted-foreground mb-0">Data not available.</p>
-            ) : metricsTableRight.length === 0 ? (
-              <Table className={cn(JOB_DETAIL_COMPACT_TABLE_CLASS, "job-detail-metrics-table mb-0 w-full")}>
-                  <TableCaption className="sr-only">Job-level metrics for job {job.jid}</TableCaption>
-                  <TableBody>{metricTableRows(metricsTableLeft)}</TableBody>
-              </Table>
             ) : (
-              <div className="job-detail-metrics-two-col grid gap-3 lg:grid-cols-2">
-                <div>
-                  <Table className={cn(JOB_DETAIL_COMPACT_TABLE_CLASS, "job-detail-metrics-table mb-0 w-full")}>
-                      <TableCaption className="sr-only">
-                        Job-level metrics for job {job.jid} (column 1)
-                      </TableCaption>
-                      <TableBody>{metricTableRows(metricsTableLeft)}</TableBody>
-                  </Table>
-                </div>
-                <div>
-                  <Table className={cn(JOB_DETAIL_COMPACT_TABLE_CLASS, "job-detail-metrics-table mb-0 w-full")}>
-                      <TableCaption className="sr-only">
-                        Job-level metrics for job {job.jid} (column 2)
-                      </TableCaption>
-                      <TableBody>{metricTableRows(metricsTableRight)}</TableBody>
-                  </Table>
-                </div>
+              <div className="job-detail-metrics-sections space-y-4">
+                {metricsSourceSections.map((section) => (
+                  <div key={section.id} className="job-detail-metrics-section">
+                    <h3 className="mb-2 text-base font-medium">{section.label}</h3>
+                    {renderMetricsSectionTables(section.id, section.rows)}
+                  </div>
+                ))}
               </div>
             )}
           </TabsContent>

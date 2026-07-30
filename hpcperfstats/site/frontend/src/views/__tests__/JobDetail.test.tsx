@@ -333,6 +333,9 @@ describe("JobDetail", () => {
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
     });
+    expect(screen.getByRole("heading", { name: "CPU", level: 3 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Network", level: 3 })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "GPU", level: 3 })).not.toBeInTheDocument();
     expect(container.querySelector(".job-detail-metrics-two-col")).toBeNull();
     expect(container.querySelectorAll(".job-detail-metrics-table")).toHaveLength(1);
   });
@@ -406,6 +409,117 @@ describe("JobDetail", () => {
     expect(rightLabels[0]).toContain("Average DRAM memory bandwidth");
     expect(leftLabels[1]).toContain("Average CPU cores in use");
     expect(rightLabels[1]).toContain("Average double-precision FLOP rate");
+  });
+
+  it("groups Metrics tab into source subsections with Memory/NUMA under CPU", async () => {
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        metrics_list: [
+          {
+            metric: "avg_freq",
+            type: "pmc",
+            units: "GHz",
+            value: 2.5,
+            no_data_reason: null,
+          },
+          {
+            metric: "mem_hwm",
+            type: "host_mem",
+            units: "GB",
+            value: 64,
+            no_data_reason: null,
+          },
+          {
+            metric: "max_numa_remote_rate",
+            type: "host_numa",
+            units: null,
+            value: 0.1,
+            no_data_reason: null,
+          },
+          {
+            metric: "detail_gpu_count",
+            type: "gpu",
+            units: null,
+            value: 4,
+            no_data_reason: null,
+          },
+          {
+            metric: "avg_sharedfs_bw",
+            type: "lustre_llite",
+            units: "MB/s",
+            value: 100,
+            no_data_reason: null,
+          },
+          {
+            metric: "avg_ibbw",
+            type: "host_ib",
+            units: "GB/s",
+            value: 50,
+            no_data_reason: null,
+          },
+          {
+            metric: "job_cpu_gpu_watt_hours",
+            type: "job",
+            units: "Wh",
+            value: 10,
+            no_data_reason: null,
+          },
+        ],
+      },
+    });
+
+    renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
+    });
+
+    const sectionHeadings = screen
+      .getAllByRole("heading", { level: 3 })
+      .map((el) => el.textContent)
+      .filter((t) =>
+        ["CPU", "GPU", "File System", "Network", "Misc"].includes(t ?? ""),
+      );
+    expect(sectionHeadings).toEqual([
+      "CPU",
+      "GPU",
+      "File System",
+      "Network",
+      "Misc",
+    ]);
+
+    const cpuSection = screen.getByRole("heading", { name: "CPU", level: 3 }).parentElement;
+    expect(cpuSection?.textContent).toMatch(/Peak process resident memory/);
+    expect(cpuSection?.textContent).toMatch(/Peak non-local NUMA memory access rate/);
+  });
+
+  it("hides empty GPU section and always shows Network with empty body", async () => {
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        metrics_list: [
+          {
+            metric: "avg_freq",
+            type: "pmc",
+            units: "GHz",
+            value: 2.5,
+            no_data_reason: null,
+          },
+        ],
+      },
+    });
+
+    renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "CPU", level: 3 })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("heading", { name: "GPU", level: 3 })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "File System", level: 3 })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Misc", level: 3 })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Network", level: 3 })).toBeInTheDocument();
+    const networkSection = screen.getByRole("heading", { name: "Network", level: 3 })
+      .parentElement;
+    expect(networkSection?.textContent).toMatch(/Data not available/);
   });
 
   it("shows no_data_reason text for staff when a metric has no numeric value", async () => {
@@ -879,12 +993,14 @@ describe("JobDetail", () => {
         metrics_list: [
           {
             metric: "avg_vector_width_64b",
+            type: "pmc",
             value: 12,
             units: null,
             no_data_reason: null,
           },
           {
             metric: "avg_vector_width_32b",
+            type: "pmc",
             value: 8,
             units: null,
             no_data_reason: null,
@@ -898,6 +1014,8 @@ describe("JobDetail", () => {
       expect(screen.getByText("12.00 / 8.00")).toBeInTheDocument();
     });
     expect(screen.queryByText("Effective vector width (double precision)")).not.toBeInTheDocument();
+    const cpuSection = screen.getByRole("heading", { name: "CPU", level: 3 }).parentElement;
+    expect(cpuSection?.textContent).toContain("Effective vector width (DP / SP)");
   });
 
   it("labels dual FSIO rows as Lustre and NFS", async () => {

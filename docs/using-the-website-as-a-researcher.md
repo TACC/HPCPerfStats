@@ -80,7 +80,7 @@ These fields come from batch accounting (e.g. Slurm) and define the **official**
 | **Job overview**                | Compact high-value fields (jid, status, runtime, queue, user/project, cores/nodes, start/end)    | Fast triage before deeper telemetry checks.                                                                                                                    |
 | **Full scheduling record**      | Expanded accounting table with all core scheduler columns                                          | Audit exact scheduler/accounting values and formatting without leaving the page.                                                                               |
 | **Resources**                   | CPU or CPU+GPU watt-hours (when CPU power is available; title omits +GPU when the job has no GPUs), shared filesystem totals (`fsio`, including peak throughput and peak IOPS when computable), GPU summary table, then client/server log links | Validate energy, I/O<sup>[11](#ref-11)</sup> volume and burst rates, compare GPU allocation vs activity, then jump to external logs. |
-| **Metrics (tab)**               | Full job-level metrics catalog (`metrics_list`) with short labels + help metadata                 | Single-place scalar bottleneck and imbalance summary.                                                                                                           |
+| **Metrics (tab)**               | Job-level metrics catalog (`metrics_list`) grouped into **CPU → GPU → File System → Network → Misc** subsections by each row’s monitor/catalog `type` (Memory/NUMA under CPU; IB/OPA/Ethernet/LNET under Network). Empty GPU/File System/Misc headings are omitted; **Network** always appears (empty body: Data not available.) | Faster subsystem triage—scan CPU vs fabric vs GPU scalars without scrolling a flat list.                                                                                                           |
 | **Summary plot (tab)**          | Host-level timeline plot with CPU, memory/NUMA<sup>[4](#ref-4)</sup>/DRAM, fabric/filesystem, GPU, and node-power traces | Best first visual scan for phase changes, host outliers, and cross-signal coupling (for example GPU drops while fabric spikes).                              |
 | **Roofline (tab)**              | CPU roofline and GPU roofline (PCIe/NVLink<sup>[7](#ref-7)</sup>)                                                        | Distinguish compute-limited vs bandwidth/link-limited behavior and prioritize the right optimization work.                                                     |
 | **Multiprecision Mix (tab)**    | CPU and GPU precision-activity panels over time                                                    | Verify whether the run is using expected mixed-precision paths<sup>[6](#ref-6)</sup> and detect precision mix drift across runs or code versions.                                         |
@@ -107,6 +107,8 @@ Lists each monitor **type** name present for the job (for example `host_cpu`, `h
 ## 5. Job-level metrics catalog
 
 This section lists the metrics shown in the Job detail **Metrics** tab and how to interpret them.
+
+On the page, rows are grouped under source subsections in fixed order **CPU → GPU → File System → Network → Misc**. Memory and NUMA metrics appear under **CPU**. Fabric metrics (InfiniBand, Omni-Path, Ethernet, LNET) appear under **Network**, which stays visible even when no network rows exist. GPU, File System, and Misc headings appear only when that section has at least one row. Within each subsection, order follows the API catalog (valued metrics before insufficient / not-computed).
 
 | Metric key | Short label | What it summarizes | Diagnostic / performance interpretation |
 | ---------- | ----------- | ------------------ | --------------------------------------- |
@@ -316,5 +318,6 @@ Use these numbered references when you want background on terms used throughout 
 | 2026-07-19 | Dual NFS+Lustre Resources/FSIO; Multiprecision Mix busy-FLOPS-only (CPU FP_ARITH shares, GPU tensor splits + hover %); `avg_cpuusage` job-total busy cores vs `ncores`; fabric peak on same basis as `avg_ibbw`; `avg_sharedfs_*` Insufficient = coverage gate. |
 | 2026-07-23 | Job Detail: Grace→CPU labels; GPU util out of GPUs×100; zero-mean activity ≠ missing; CPU+GPU watt-hours atop Resources; Processes multi-column; combined DP/SP vector width; Summary axis help + shorter labels; Multiprecision pie title/clip. |
 | 2026-07-24 | Residuals: pie legend below frame; GPU-link Summary clamp; continuous Summary lines; avg_cpuusage scaled to allocated ncores; TypeDetail 2-col + heading ?; Summary SPA help strip; Processes grouped by name with averages. |
+| 2026-07-30 | Metrics tab: source subsections CPU → GPU → File System → Network → Misc; Memory/NUMA under CPU; always-show Network; hide empty GPU/FS/Misc. |
 
 

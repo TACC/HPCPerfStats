@@ -25,6 +25,13 @@ Any new plot-class tab needs **`JobDetail.test.tsx`** coverage analogous to exis
 
 Follow neighboring tabs for typography (**`h3`** subsection headings), **`text-muted`** empty states (**Data not available.** where tables/lists would render), and role/tabpanel wiring (**`aria-labelledby`** / **`hidden`**).
 
+### Metrics tab source subsections
+
+- Group `metrics_list` rows by API **`type`** into ordered **`h3`** sections: **CPU → GPU → File System → Network → Misc** (map in [`jobMetricSourceSections.ts`](hpcperfstats/site/frontend/src/utils/jobMetricSourceSections.ts)).
+- **CPU** includes host CPU/PMC/IMC/DF/RAPL/CHA plus **`host_mem` / `host_numa`**; GPU includes `nvidia_gpu` / `amd_gpu` / **`intel_gpu`** / `gpu`; Network includes IB/OPA/Ethernet/LNET (`host_ib`, `host_opa`, `host_net`, `net`, `host_lnet`, `lnet`).
+- **Always show Network** (empty body: muted **Data not available.**). **Hide** empty GPU, File System, and Misc headings.
+- Preserve post-merge display order within each section (including combined DP/SP vector-width row under CPU). Two-column tables stay **per section**.
+
 ## Documentation
 
 When user-visible plot-tab behavior or semantics change, update **`docs/using-the-website-as-a-researcher.md`** per **`researcher-job-detail-doc-sync.mdc`**.
