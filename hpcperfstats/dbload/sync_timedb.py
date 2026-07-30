@@ -1812,7 +1812,13 @@ def _imap_ingest_paths_batched(
       return []
     if slots_needed <= 0:
       return []
-    if not any_giant_ingest_budget_in_flight(in_flight_paths):
+    # RC-3: idle slots (this callback only fires when the primary chunk
+    # iterator is exhausted) OR the legacy giant-budget trigger.
+    idle_ok = cfg.get_sync_ingest_idle_slot_supplement_enabled()
+    if not (
+        idle_ok
+        or any_giant_ingest_budget_in_flight(in_flight_paths)
+    ):
       return []
     exclude = _supplement_exclude(in_flight_paths)
     selected = _select_giant_supplement(slots_needed, exclude)
@@ -3018,6 +3024,7 @@ class IngestFileOutcome:
   db_skip: str = "no"
   parse_elapsed_s: float | None = None
   stats_rows: int | None = None
+  stats_rows_parsed: int | None = None
   proc_rows: int | None = None
   fail_reason: str | None = None
   archive_skip: str | None = None
@@ -3126,6 +3133,7 @@ def _ingest_file_outcome_from_worker(
       db_skip=db_skip,
       parse_elapsed_s=meta.get("parse_elapsed_s"),
       stats_rows=meta.get("stats_rows"),
+      stats_rows_parsed=meta.get("stats_rows_parsed"),
       proc_rows=meta.get("proc_rows"),
       fail_reason=meta.get("fail_reason"),
       archive_skip=meta.get("archive_skip"),
@@ -3151,6 +3159,8 @@ def _log_ingest_file_outcome(
     parts.append("parse_elapsed_s=%.1f" % float(outcome.parse_elapsed_s))
   if outcome.stats_rows is not None:
     parts.append("stats_rows=%d" % int(outcome.stats_rows))
+  if outcome.stats_rows_parsed is not None:
+    parts.append("stats_rows_parsed=%d" % int(outcome.stats_rows_parsed))
   if outcome.proc_rows is not None:
     parts.append("proc_rows=%d" % int(outcome.proc_rows))
   if outcome.fail_reason:
@@ -3190,6 +3200,7 @@ def _log_ingest_worker_result(result, *, remaining=None, supplement=False):
       ingest_ok=outcome.ingest_ok,
       outcome=outcome.outcome,
       stats_rows=outcome.stats_rows,
+      stats_rows_parsed=outcome.stats_rows_parsed,
       log_fn=log_print,
   )
 
@@ -3516,6 +3527,7 @@ def _add_stats_file_to_db_streaming_incremental(lock, stats_file, t0):
   parse_t0 = time.time()
   carry = DeltaCarryState()
   total_stats_rows = 0
+  total_stats_rows_parsed = 0
   total_proc_rows = 0
   need_archival = True
   ingest_ok = True
@@ -3525,7 +3537,9 @@ def _add_stats_file_to_db_streaming_incremental(lock, stats_file, t0):
     return time.time() - parse_t0
 
   def _on_chunk(stats_list, proc_stats_list):
-    nonlocal need_archival, ingest_ok, total_stats_rows, total_proc_rows
+    nonlocal need_archival, ingest_ok, total_stats_rows
+    nonlocal total_stats_rows_parsed, total_proc_rows
+    parsed_stats_n = len(stats_list) if stats_list else 0
     update_worker_substage("parse:dataframes")
     stats_chunk, proc_chunk = build_stats_dataframes(stats_list, proc_stats_list)
     del stats_list
@@ -3538,6 +3552,13 @@ def _add_stats_file_to_db_streaming_incremental(lock, stats_file, t0):
     stats_chunk = compute_deltas_and_arc_chunk(stats_chunk, carry=carry)
     chunk_stats_rows = len(stats_chunk)
     chunk_proc_rows = len(proc_chunk)
+    if parsed_stats_n > 0 and chunk_stats_rows == 0:
+      log_print(
+          "WARN: sync_timedb: nonempty stats frame collapsed to empty "
+          "delta/arc path=%s parsed_rows=%d"
+          % (stats_file, parsed_stats_n),
+          flush=True,
+      )
     stats_file_local, need_archival, chunk_ok = _write_stats_payload_to_db(
         lock,
         stats_file,
@@ -3551,6 +3572,7 @@ def _add_stats_file_to_db_streaming_incremental(lock, stats_file, t0):
       ingest_ok = False
     else:
       total_stats_rows += chunk_stats_rows
+      total_stats_rows_parsed += parsed_stats_n
       total_proc_rows += chunk_proc_rows
     _release_ingest_worker_heap()
 
@@ -3579,10 +3601,12 @@ def _add_stats_file_to_db_streaming_incremental(lock, stats_file, t0):
         start_line_idx, need_archival = result
         try:
           update_worker_substage("parse:accumulate")
+          # Feed the prefix (parse_start_idx) so schema registers; do not
+          # physically skip lines (RC-0).
           parse_stats_file_streaming_incremental(
               stats_file,
-              start_line_idx=start_line_idx,
-              parse_start_idx=0,
+              start_line_idx=0,
+              parse_start_idx=start_line_idx,
               flush_rows=flush_rows,
               on_chunk=_on_chunk,
               exclude_types_list=exclude_types,
@@ -3603,7 +3627,11 @@ def _add_stats_file_to_db_streaming_incremental(lock, stats_file, t0):
           return _pack_ingest_worker_result(
               _stats_file, _need, early_ok, time.time() - t0, outcome_meta,
           )
-        if total_stats_rows == 0 and total_proc_rows == 0:
+        if (
+            total_stats_rows_parsed == 0
+            and total_stats_rows == 0
+            and total_proc_rows == 0
+        ):
           if DEBUG:
             log_print("Unable to process stats file %s" % stats_file)
           failure = _parse_failure_after_quarantine(
@@ -3625,6 +3653,7 @@ def _add_stats_file_to_db_streaming_incremental(lock, stats_file, t0):
           outcome="ingested",
           parse_elapsed_s=_parse_elapsed(),
           stats_rows=total_stats_rows,
+          stats_rows_parsed=total_stats_rows_parsed,
           proc_rows=total_proc_rows,
       )
       return _pack_ingest_worker_result(
@@ -5802,15 +5831,16 @@ def run_sync_timedb_supervisor_loop(
           % (tar_norm or "", len(blocked), inflight_oldest_n),
           flush=True,
       )
-      # Refresh reuse fingerprint with live incomplete_n so the following cap
-      # cannot skip as unchanged_incomplete with a stale higher count.
+      # Refresh reuse fingerprint with live incomplete_n so the following
+      # chunk-boundary cap cannot skip as unchanged_incomplete with a stale
+      # higher count. Defer the actual reconcile to once-per-boundary
+      # ``_reconcile_pending_nonblocking`` (RC-2).
       _store_pending_reconcile_unprocessed_cache(
           unprocessed,
           oldest_tar=tar_norm or "",
           incomplete_n=len(blocked),
       )
-      _reconcile_pending_with_oldest_checkpoint_incomplete()
-      archive_finalize_needs_post_reconcile = False
+      archive_finalize_needs_post_reconcile = True
       if day_close_enabled:
         # F3: per-day handoff scoping lives inside immediate enqueue.
         _maybe_enqueue_immediate_day_close(context="archive_finalize")
@@ -7187,9 +7217,17 @@ def run_sync_timedb_supervisor_loop(
 
     Cache-hit path keeps a cheap MainThread cap. Cache-miss under known pending
     kicks ``pending-reconcile`` and proceeds to imap on current pending.
+
+    When archive finalize deferred a post-reconcile (RC-2), always run one
+    MainThread cap here so N finalize slots never multiply full caps.
     """
     nonlocal pending_stats_files
+    nonlocal archive_finalize_needs_post_reconcile
     _drain_pending_reconcile_future()
+    if archive_finalize_needs_post_reconcile:
+      pending_stats_files = _cap_pending_after_rescan(pending_stats_files)
+      archive_finalize_needs_post_reconcile = False
+      return "post_finalize"
     mono_now = time.monotonic()
     reuse = _cached_unprocessed_reusable_for_cap(mono_now=mono_now)
     if reuse is not None:

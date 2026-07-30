@@ -174,17 +174,24 @@ def maybe_record_zero_host_ingest_mark_from_outcome(
     ingest_ok: bool,
     outcome: str | None,
     stats_rows: int | None,
+    stats_rows_parsed: int | None = None,
     log_fn: LogFn = None,
     archive_data_dir: str | None = None,
 ) -> bool:
-  """Record mark when ingest succeeded with zero host rows (proc-only / empty stats)."""
+  """Record mark when ingest succeeded with zero host rows (proc-only / empty stats).
+
+  Gate on **parsed** stats records when provided. Post-collapse / post-write row
+  counts must not certify archive readiness (RC-0: resumed streaming could drop
+  all hardware rows then mark the file deletable).
+  """
   if not ingest_ok:
     return False
   if str(outcome or "") not in ("ingested", ""):
     return False
-  if stats_rows is None:
+  gate_rows = stats_rows_parsed if stats_rows_parsed is not None else stats_rows
+  if gate_rows is None:
     return False
-  if int(stats_rows) != 0:
+  if int(gate_rows) != 0:
     return False
   return record_zero_host_ingest_mark(
       path,

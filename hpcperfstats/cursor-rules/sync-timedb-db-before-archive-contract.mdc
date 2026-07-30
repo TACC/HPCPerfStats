@@ -24,7 +24,7 @@ Closed segment is archive/delete-ready when **either**:
 1. **Host head+tail** — both of:
    - The **first** digit-leading timestamp line's **hostname token** has at least one **`host_data`** row in the **same Unix second**.
    - The **last** digit-leading timestamp line's **hostname token** has at least one **`host_data`** row in the **same Unix second**.
-2. **Durable zero-host ingest mark** — successful ingest wrote **no new `host_data` rows** (`stats_rows=0` / empty host payload, typically `proc_rows>0`) and recorded a fingerprint mark under `{archive_dir}/.sync_timedb_zero_host_ingest_mark.json` (`sync_timedb_zero_host_ingest_mark.py`). **`proc_data` has no `time` column** — do not invent proc head/tail probes. Keep **`need_archival=True`** for these paths; do **not** clear archival marks as a substitute for gate readiness.
+2. **Durable zero-host ingest mark** — successful ingest wrote **no parsed host stats records** (`stats_rows_parsed=0` / empty host payload, typically `proc_rows>0`) and recorded a fingerprint mark under `{archive_dir}/.sync_timedb_zero_host_ingest_mark.json` (`sync_timedb_zero_host_ingest_mark.py`). Gate on **parsed** counts, never post-collapse write counts alone (RC-0). **`proc_data` has no `time` column** — do not invent proc head/tail probes. Keep **`need_archival=True`** for these paths; do **not** clear archival marks as a substitute for gate readiness.
 
 - Monitor fractional seconds; do not use exact `time=` equality (Unix-second windows).
 - **`host` must be the hostname token from the stats file line** (same field written to `host_data.host` during ingest). Do **not** use the archive path's parent directory name (often FQDN) for the DB lookup.

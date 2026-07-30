@@ -9785,6 +9785,97 @@ def test_supplement_at_max_replaces_with_older_closed_paths(tmp_path):
   assert any("pending cap supplement replace" in line for line in logs)
 
 
+def test_supplement_stats_only_retainable_candidates(tmp_path, monkeypatch):
+  """Full queue + exclusively newer closed candidates → zero isfile calls."""
+  import os as os_mod
+
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      supplement_pending_paths_from_closed_paths,
+  )
+
+  host_dir = tmp_path / "host.cluster.test"
+  host_dir.mkdir(parents=True)
+  older = []
+  newer = []
+  for index in range(5):
+    old_p = host_dir / str(1_700_000_000 + index)
+    new_p = host_dir / str(1_800_000_000 + index)
+    old_p.write_text("1\n", encoding="utf-8")
+    new_p.write_text("1\n", encoding="utf-8")
+    older.append(str(old_p))
+    newer.append(str(new_p))
+  isfile_calls = []
+  real_isfile = os_mod.path.isfile
+
+  def counting_isfile(path):
+    isfile_calls.append(path)
+    return real_isfile(path)
+
+  monkeypatch.setattr(os_mod.path, "isfile", counting_isfile)
+  capped = supplement_pending_paths_from_closed_paths(
+      older,
+      closed_paths=newer,
+      max_size=5,
+      processed_exclude=set(),
+      log_fn=lambda *_a, **_k: None,
+  )
+  assert capped == older
+  assert isfile_calls == []
+
+
+def test_supplement_result_matches_legacy_ordering(tmp_path):
+  """Sort-then-stat result matches legacy isfile-everything for both modes."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      cap_pending_stats_file_list,
+      sort_pending_stats_paths_oldest_first,
+      supplement_pending_paths_from_closed_paths,
+  )
+
+  host_dir = tmp_path / "host.cluster.test"
+  host_dir.mkdir(parents=True)
+  all_paths = []
+  for index in range(20):
+    path = host_dir / str(1_700_000_100 + (index * 7) % 20)
+    if not path.exists():
+      path.write_text("1\n", encoding="utf-8")
+    all_paths.append(str(path))
+  # Drop two paths from disk to exercise missing-file filtering.
+  os.unlink(all_paths[3])
+  os.unlink(all_paths[11])
+  before = all_paths[5:10]
+  closed = list(all_paths)
+
+  def legacy(paths, closed_paths, max_size, newest_first):
+    exclude = set()
+    seen = set(paths or ())
+    result = list(paths or ())
+    for path in closed_paths or ():
+      if not path or path in exclude or path in seen:
+        continue
+      if not os.path.isfile(path):
+        continue
+      seen.add(path)
+      result.append(path)
+    return cap_pending_stats_file_list(
+        sort_pending_stats_paths_oldest_first(result, newest_first=newest_first),
+        max_size,
+        log_fn=lambda *_a, **_k: None,
+        newest_first=newest_first,
+    )
+
+  for newest_first in (False, True):
+    got = supplement_pending_paths_from_closed_paths(
+        before,
+        closed_paths=closed,
+        max_size=8,
+        processed_exclude=set(),
+        log_fn=lambda *_a, **_k: None,
+        newest_first=newest_first,
+    )
+    expect = legacy(before, closed, 8, newest_first)
+    assert got == expect
+
+
 def test_newest_first_pending_helpers_preserve_dispatch_order(tmp_path):
   """Newest-first mode keeps the newest retained paths at the dispatch head."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (

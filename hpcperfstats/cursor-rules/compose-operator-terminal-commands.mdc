@@ -185,7 +185,7 @@ Long-running **`pipeline`** containers accumulate **days** of `[sync_timedb]` st
 
 ```bash
 docker compose -p hpcperfstats logs pipeline 2>&1 | \
-  grep -E 'startup drain blocked|chunk_wait_day_raw_delete|ingest file completed|day_close complete' | tail -40
+  grep -E 'startup drain blocked|chunk_wait_day_raw_delete|ingest file path=|day_close complete' | tail -40
 ```
 
 **Bad** — `--tail` truncates before the stall window (empty grep on podman-compose sites):
@@ -344,7 +344,7 @@ docker compose exec db psql -h localhost -U hpcperfstats -c "SELECT COUNT(*) FRO
 
 ```bash
 docker compose -p hpcperfstats logs pipeline 2>&1 | \
-  grep -E 'startup drain blocked|ingest file completed' | tail -20 && \
+  grep -E 'startup drain blocked|ingest file path=' | tail -20 && \
 docker compose exec pipeline su hpcperfstats -c 'ls -la "${archive_dir:-/hpcperfstats/archive}" 2>/dev/null | tail -5'
 ```
 
@@ -358,7 +358,10 @@ Some production hosts use **podman-compose** with project name `-p hpcperfstats`
 |--------------|--------------|-------------------|
 | `docker compose ps pipeline` | podman-compose treats `pipeline` as an unrecognized positional argument | `docker compose -p hpcperfstats ps \| grep pipeline` (or full `ps` table) |
 | Multi-line `su hpcperfstats -c 'tail … \| grep …'` with no matches | Non-zero exit when grep finds nothing; fragile quoting through podman-compose | `docker compose exec pipeline su hpcperfstats -c "sh -lc 'tail -200 /path/to/sync_timedb.log \| grep -E \"pattern1\|pattern2\" \|\| true'"` |
-| Host `$MAIN_PID` passed to `py-spy` inside `exec` | PID namespaces differ; host PID is invalid in container | Resolve PID inside container: `pgrep -f sync_timedb` then `py-spy dump --pid "$SUP"` (no `--nonblocking` on older py-spy) |
+| Host `$MAIN_PID` passed to `py-spy` inside `exec` | PID namespaces differ; host PID is invalid in container | Resolve PID inside container with a **supervisor selector**, then dump: `SUP=$(pgrep -f 'sync_timedb.py .[m]ain.' \| head -1); ps -p "$SUP" -o args=; py-spy dump --pid "$SUP"` (bracket class avoids self-match; verify `ps args` before dump — no `--nonblocking` on older py-spy) |
+| `pgrep -f sync_timedb \| head -1` for MainThread / py-spy | Matches an **ingest/archive pool worker** first on multi-process sites | Prefer `pgrep -f 'sync_timedb.py .[m]ain.'` (or equivalent title) and confirm `ps -p … -o args=` shows the supervisor, not `worker:ingest-pool` |
+| `pgrep -f` matching its own `su … -c` / `sh -lc` wrapper | Wrapper is often root-owned non-Python → `py-spy` **Permission Denied** | Use a **bracket class** in the pattern (`.[m]ain.`, `worker:ingest-[p]ool`) so the `pgrep` command line does not match itself; always `ps -p "$SUP" -o args=` before `py-spy` |
+| Stale log token `ingest file completed` | Current outcome line is `ingest file path=… outcome=… elapsed_s=… size_bytes=… parse_elapsed_s=… stats_rows=… proc_rows=…` | Grep `ingest file path=` (optional `stats_rows_parsed=`) |
 | `podman-compose exec … --pid "$SUP"` as a separate exec | **podman-compose eats `--pid`** — flag never reaches `py-spy` (`ParseIntError` / `InvalidDigit`) | Single `su hpcperfstats -c "sh -lc 'SUP=\$(pgrep …); py-spy dump --pid \"\$SUP\"'"` in one exec |
 | Nested `python3 -c \"…\"` inside `sh -lc` through podman-compose `exec` | Escaped quotes stripped → `c.read(/path/ini)` **SyntaxError** | Read INI with a single-quoted outer `su -c 'python3 -c "…"'` block, or `grep`/`awk` keys directly |
 | Nested multi-layer quoting for census (`sh -lc` + `python3 -c` + f-strings / mixed `'`/`"`) | podman-compose: **`unexpected EOF while looking for matching '"'`** (hpcperfstats03 2026-07-22 janitor stall census) | Prefer **one** `su hpcperfstats -c 'python3 -c "…"'` with a **single** Python string; avoid nested `sh -lc` around that python one-liner; or split INI path resolve then a second simple find block |

@@ -10,12 +10,14 @@ globs:
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-Multi-`dev` metric collapse in ingest parse (`_collapse_stats_with_deltas` and helpers) must use the fastest available vectorized path. Per-group `groupby.apply` is a known ~50× regression on GPU ingest workloads.
+Multi-`dev` metric collapse in ingest parse (`_collapse_stats_with_deltas` and helpers) must use the fastest available vectorized path. Per-group `groupby.apply` is a known ~50× regression on GPU ingest workloads. The same hot-path discipline applies to **counter/arc carry state** and **streaming resume**.
 
 ## Forbidden
 
 - `DataFrame.groupby(...).apply(...)` for multi-`dev` metric collapse in the ingest parse path.
 - Parallel collapse logic in `sync_timedb.py` — all routes go through `_collapse_stats_with_deltas`.
+- Carry-state loops of the form `for key, group in groupby(...): last = group.iloc[-1]` or `first_rows.iterrows()` + `.at[...]` / per-row `index.get_loc` in `_apply_counter_deltas` / `_apply_arc_and_finalize` (RC-4; production py-spy hit in `fast_xs` / `find_common_type`).
+- Streaming resume that fast-forwards with bare `fd.readline()` without feeding skipped lines through the parser (RC-0; empty `schema` silently drops every hardware stats line).
 
 ## Required — use the fastest available method
 
@@ -26,6 +28,13 @@ Multi-`dev` metric collapse in ingest parse (`_collapse_stats_with_deltas` and h
 | Bitwise OR (`clocks_event_reasons`) | `_nvidia_bitwise_or_values` on OR slice only |
 | Custom reducer (DCGM cluster-mean, dynamic gap) | `_collapse_dcg_cpu_power_vectorized` — explicit `for key, group in grouped` + NumPy helper, **not** `apply` |
 | New metric type / event class | Extend typed router in `_collapse_stats_with_deltas`; add equivalence test vs apply reference |
+| Last-row-per-group **carry** (`carry.raw` / `carry.arc`) | `groupby(...).tail(1)` (or native `last`) + array extraction into the carry dict — **never** `group.iloc[-1]` per group |
+| First-row carry application | Index-aligned / mapped assignment (`.loc[...]` once) — **never** `iterrows()` + `.at[...]` or per-row `index.get_loc` |
+| Streaming resume offset | Feed every line from offset 0 through `feed_line` / `feed_lines`; gate emission with parser `start_idx` (same as `parse_stats_lines`). Physical `readline` skip is forbidden. |
+
+## Resume state integrity (RC-0)
+
+Any parse that resumes at a mid-file line index must accumulate schema/state from the prefix. Reference: `parse_stats_lines` feeds all lines and gates only the digit-timestamp branch on `i >= start_idx`. Streaming entry points (`parse_stats_file_streaming`, `parse_stats_file_streaming_incremental`) must match that contract.
 
 ## Canonical helpers (`sync_timedb_parsing.py`)
 
@@ -34,13 +43,15 @@ Multi-`dev` metric collapse in ingest parse (`_collapse_stats_with_deltas` and h
 - `_collapse_nvidia_gpu_vectorized` — NVIDIA event-class native aggregations
 - `_collapse_dcg_cpu_power_vectorized` — DCGM explicit group loop
 - `_collapse_nvidia_gpu_group` / `_collapse_dcg_cpu_power_gauge_group` — apply-reference only (tests)
+- `_apply_counter_deltas` / `_apply_arc_and_finalize` — vectorized carry continuity for incremental flush
 
-## New collapse behavior
+## New collapse / carry behavior
 
-Add or extend an equivalence test (`vectorized` vs apply reference or golden fixture) per `every-error-regression-test.mdc` before merge.
+Add or extend an equivalence test (`vectorized` vs apply / row-wise reference or golden fixture) per `every-error-regression-test.mdc` before merge.
 
 ## Overlap
 
 - `bugfix-and-perf-change-playbook.mdc` — perf change verification
 - `duplicate-threshold-helper-mandate.mdc` — shared `_groupby_sum_min_count` for sum paths
 - `runtime-resource-and-metrics-safety.mdc` — ingest hot-path resource discipline
+- `sync-timedb-persistence-contract.mdc` — zero-host mark must use parsed row counts, not post-collapse lengths

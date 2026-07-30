@@ -631,6 +631,74 @@ def test_giant_supplement_replenish_uses_supplement_queue_excludes_inflight(
   assert "giant pool supplement replenish" in captured
 
 
+def test_idle_slots_supplement_dispatches_below_giant_budget(
+    monkeypatch, tmp_path, capsys,
+):
+  """RC-3: idle-slot OR allows supplement when in-flight budget is below giant trigger."""
+  import threading
+  import time
+
+  from hpcperfstats.tests import test_multiprocessing_pool_health as mph_tests
+
+  host = tmp_path / "host"
+  host.mkdir()
+  small = host / "1780000001"
+  small.write_bytes(b"x" * 100)
+  tail_a = host / "1780000002"
+  tail_a.write_bytes(b"x" * 200)
+  chunk = [str(small)]
+  pending_tail = [str(tail_a)]
+  pool = mph_tests._ManualPool()
+
+  _default_timeout_getters(monkeypatch)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_giant_pool_supplement_enabled", lambda: True)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_idle_slot_supplement_enabled", lambda: True)
+  monkeypatch.setattr(st, "_effective_ingest_imap_inflight_cap", lambda _tc, _pc: 2)
+  # Budget trigger is enormous so the small in-flight path is never a "giant".
+  monkeypatch.setattr(
+      st.cfg, "get_sync_ingest_giant_pool_supplement_trigger_budget_s", lambda: 1e9,
+  )
+  monkeypatch.setattr(
+      st.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: 10**9,
+  )
+  monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 0.01)
+  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 100000)
+  _patch_stats_file_size_bytes(monkeypatch, lambda _p: 100)
+  tracker = st._IngestPoolInFlightTracker(chunk)
+  gen = st._imap_ingest_paths_batched(
+      pool,
+      lambda path: path,
+      chunk,
+      thread_count=2,
+      context="test idle slot supplement",
+      tracker=tracker,
+      chunk_counter=0,
+      pending_count=10,
+      pending_tail=pending_tail,
+  )
+
+  def consumer():
+    list(gen)
+
+  thread = threading.Thread(target=consumer, daemon=True)
+  thread.start()
+  deadline = time.monotonic() + 2.0
+  while pool.submit_count < 2 and time.monotonic() < deadline:
+    time.sleep(0.005)
+  submitted = list(pool.inflight.values())
+  assert str(small) in submitted
+  assert str(tail_a) in submitted
+  for ar in list(pool.inflight):
+    ar.finish()
+  while pool.inflight and time.monotonic() < deadline:
+    for ar in list(pool.inflight):
+      ar.finish()
+    time.sleep(0.01)
+  thread.join(timeout=2.0)
+  out = capsys.readouterr().out
+  assert "giant pool supplement begin" in out
+
+
 def test_build_giant_supplement_pending_tail_uses_supplement_queue(monkeypatch, tmp_path):
   """Startup reservoir ceiling is supplement_queue (= queue * multiplier), not bare queue."""
   from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers

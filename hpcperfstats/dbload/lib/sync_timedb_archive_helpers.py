@@ -435,6 +435,16 @@ def stats_path_ingest_sort_epoch(stats_path):
     return None
 
 
+def _basename_ingest_sort_epoch(stats_path):
+  """Stat-free epoch from numeric basename only (``None`` when non-numeric)."""
+  if not stats_path:
+    return None
+  try:
+    return int(os.path.basename(stats_path))
+  except (TypeError, ValueError):
+    return None
+
+
 def sort_pending_stats_paths_oldest_first(paths, *, newest_first=False):
   """Return paths sorted by epoch, reversing for newest-first dispatch."""
   indexed = []
@@ -528,29 +538,99 @@ def supplement_pending_paths_from_closed_paths(
   Always unions ``closed_paths`` (minus exclude) even when ``paths`` is already at
   ``max_size``, so older snapshot entries can displace newer queue heads under
   oldest-first (and newer displace older under ``newest_first=True``).
+
+  Performance (RC-1): sort by the stat-free basename epoch first, then
+  ``os.path.isfile`` only candidates that can enter the retained window. When the
+  queue is already full and every candidate is on the wrong side of the cutoff,
+  skip all ``isfile`` calls (zero-yield snapshot case).
   """
   max_size = max(1, int(max_size))
   exclude = set(processed_exclude or ())
-  before = list(paths or ())
+  before = [path for path in (paths or ()) if path]
   before_set = set(before)
-  seen = set(before)
-  result = list(before)
-  supplemented = 0
+  candidates = []
   for path in closed_paths or ():
-    if not path or path in exclude or path in seen:
+    if not path or path in exclude or path in before_set:
       continue
+    candidates.append(path)
+  if not candidates:
+    return cap_pending_stats_file_list(
+        sort_pending_stats_paths_oldest_first(before, newest_first=newest_first),
+        max_size,
+        log_fn=log_fn,
+        newest_first=newest_first,
+    )
+
+  before_oldest = sort_pending_stats_paths_oldest_first(before, newest_first=False)
+  retainable = candidates
+  if len(before_oldest) >= max_size:
+    if newest_first:
+      cutoff = stats_path_ingest_sort_epoch(before_oldest[-max_size])
+    else:
+      cutoff = stats_path_ingest_sort_epoch(before_oldest[max_size - 1])
+    retainable = []
+    for path in candidates:
+      ep = _basename_ingest_sort_epoch(path)
+      if ep is None:
+        # Non-numeric basenames need getmtime; keep them for lazy isfile.
+        retainable.append(path)
+        continue
+      if cutoff is None:
+        retainable.append(path)
+        continue
+      if newest_first:
+        if ep >= cutoff:
+          retainable.append(path)
+      elif ep <= cutoff:
+        retainable.append(path)
+    if not retainable:
+      return cap_pending_stats_file_list(
+          sort_pending_stats_paths_oldest_first(before, newest_first=newest_first),
+          max_size,
+          log_fn=log_fn,
+          newest_first=newest_first,
+      )
+
+  def _candidate_epoch_key(path):
+    ep = _basename_ingest_sort_epoch(path)
+    return (ep is None, ep if ep is not None else 0, path)
+
+  if newest_first:
+    candidates_ordered = sorted(
+        retainable,
+        key=lambda path: (
+            _basename_ingest_sort_epoch(path) is None,
+            -(_basename_ingest_sort_epoch(path) or 0),
+            path,
+        ),
+    )
+  else:
+    candidates_ordered = sorted(retainable, key=_candidate_epoch_key)
+
+  result = list(before)
+  seen = set(before)
+  supplemented = 0
+  for path in candidates_ordered:
+    if path in seen:
+      continue
+    if len(result) >= max_size:
+      result_oldest = sort_pending_stats_paths_oldest_first(result, newest_first=False)
+      ep = _basename_ingest_sort_epoch(path)
+      if ep is not None:
+        if newest_first:
+          cutoff = stats_path_ingest_sort_epoch(result_oldest[-max_size])
+          if cutoff is not None and ep < cutoff:
+            break
+        else:
+          cutoff = stats_path_ingest_sort_epoch(result_oldest[max_size - 1])
+          if cutoff is not None and ep > cutoff:
+            break
     if not os.path.isfile(path):
       continue
     seen.add(path)
     result.append(path)
     supplemented += 1
-  if not supplemented and not closed_paths:
-    return cap_pending_stats_file_list(
-        sort_pending_stats_paths_oldest_first(result, newest_first=newest_first),
-        max_size,
-        log_fn=log_fn,
-        newest_first=newest_first,
-    )
+
   capped = cap_pending_stats_file_list(
       sort_pending_stats_paths_oldest_first(result, newest_first=newest_first),
       max_size,

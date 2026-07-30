@@ -417,6 +417,9 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Min resolved per-file ingest budget (s) for in-flight path to count as giant (default 6600 ~= 2 GiB).
 # sync_ingest_giant_pool_supplement_trigger_budget_s = 6600
 
+# Allow pending-tail supplement when workers are idle even without a giant budget (default yes).
+# sync_ingest_idle_slot_supplement_enabled = yes
+
 # Recycle ingest pool workers after N files; 0 unlimited (default 0).
 # Ingest pool only; archive and sealed-archive spawn pools always maxtasksperchild=1.
 # Default 0: supervisor retires only on failure/RSS (not path size). Set 1 to recycle every file.

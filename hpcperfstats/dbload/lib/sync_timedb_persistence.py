@@ -11,7 +11,7 @@ from hpcperfstats.dbload.lib.print_utils import ingest_logging
 
 # Bump when ANY persisted semantics change (day-close eligibility, checkpoint
 # shape, manifest phase meaning, delete-gate assumptions, hints debt, etc.).
-SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION = 6
+SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION = 7
 
 PERSISTENCE_CONTRACT_BASENAME = ".sync_timedb_persistence.json"
 

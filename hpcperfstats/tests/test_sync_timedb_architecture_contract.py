@@ -131,16 +131,37 @@ def test_arch_post_finalize_stores_reconcile_fingerprint_before_cap():
   """Live incomplete_n from post_finalize must refresh reuse fingerprint before cap.
 
   Prevents unchanged_incomplete skip logging stale higher incomplete_n.
+  Cap itself is deferred to chunk-boundary ``_reconcile_pending_nonblocking`` (RC-2).
   """
   source = inspect.getsource(st.run_sync_timedb_supervisor_loop)
   marker = 'post_finalize_reconcile oldest_tar='
   assert marker in source
   after = source.split(marker, 1)[1]
-  before_reconcile = after.split(
-      "_reconcile_pending_with_oldest_checkpoint_incomplete()",
+  before_flag = after.split(
+      "archive_finalize_needs_post_reconcile = True",
       1,
   )[0]
-  assert "_store_pending_reconcile_unprocessed_cache(" in before_reconcile
+  assert "_store_pending_reconcile_unprocessed_cache(" in before_flag
+  assert "_reconcile_pending_with_oldest_checkpoint_incomplete()" not in before_flag
+
+
+def test_arch_archive_finalize_defers_reconcile_to_chunk_boundary():
+  """RC-2: finalize sets deferred flag; boundary reconcile consumes it once."""
+  source = inspect.getsource(st.run_sync_timedb_supervisor_loop)
+  assert "archive_finalize_needs_post_reconcile = True" in source
+  # Inline per-slot reconcile must not remain after the fingerprint store.
+  finalize_inner = source.split(
+      "def _apply_archive_finalize_results_inner",
+      1,
+  )[1].split("def _finalize_archive_slot", 1)[0]
+  assert "_reconcile_pending_with_oldest_checkpoint_incomplete()" not in finalize_inner
+  nonblocking = source.split("def _reconcile_pending_nonblocking", 1)[1].split(
+      "def _get_ingest_pool_in_flight_count",
+      1,
+  )[0]
+  assert "if archive_finalize_needs_post_reconcile:" in nonblocking
+  assert "archive_finalize_needs_post_reconcile = False" in nonblocking
+  assert "_cap_pending_after_rescan(" in nonblocking
 
 
 def test_arch_phase_tar_dropped_does_not_skip_disk_predicate(tmp_path):

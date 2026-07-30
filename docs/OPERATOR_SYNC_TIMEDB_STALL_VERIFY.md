@@ -14,6 +14,29 @@ Attach the `test_runs/day-close-loop-regression-battery-*.log` path to the PR or
 
 **After sync_timedb dedup-audit deploy (blocking/census split, persistence v6):** run the same battery pre-deploy; post-deploy use T0/T1/T2 below. Persistence v6 resets orphan `startup_*` sidecars on contract bump — expect one-time empty maint hints if the contract file was stale. No separate stall signature is expected from this audit alone; treat regressions like any other sync_timedb deploy.
 
+**After chunk-cadence / RC-0 deploy (persistence v7):** contract bump clears poisoned `zero_host_ingest_mark` entries — expect a one-time re-gate/re-ingest of previously marked paths still on disk. Deleted-but-tarred raws (extract + re-ingest) are a separate operator restore decision after the fixed parser is live.
+
+## Chunk cadence attribution (T0 / T1)
+
+Pair every `chunk_elapsed_s` sample with:
+
+| Signal | What it tells you |
+|--------|-------------------|
+| `chunk_prewarm_elapsed_s=` / `chunk_ingest_elapsed_s=` / archive mapping elapsed | Phase split — ingest should dominate; multi-minute prewarm is unexpected |
+| Gap from prior chunk end → next `chunk dispatch begin` | Between-chunk tax; dominate with `pending reconcile cap` lines |
+| `pending cap supplement from snapshot n=` **without** `pending cap supplement replace` | Zero-yield cap (RC-1 signature) — full snapshot walked, queue unchanged |
+| `post_finalize_reconcile` count per boundary | Should be **1** log line per finalize batch, with **one** following boundary cap (RC-2) — not 2–4 identical caps |
+| `ingest file path=… stats_rows=… stats_rows_parsed=…` rate | Per-file throughput; `stats_rows_parsed>0` with `stats_rows=0` + collapse WARN is a delta path defect, not a legitimate zero-host |
+| `giant pool supplement begin` during idle tail | RC-3 idle-slot fill; rare/absent with idle workers ⇒ supplement gated off |
+
+**Note:** above `sync_ingest_stream_duplicate_scan_bytes` (default 8 MiB), `parse_elapsed_s` spans the whole streaming parse+flush+DB loop — it does **not** exclude DB write.
+
+```bash
+# T0 — cadence attribution (full pipeline log; never --tail before grep)
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+  grep -E 'chunk_elapsed_s|chunk_prewarm_elapsed_s|chunk_ingest_elapsed_s|chunk dispatch begin|pending reconcile cap|pending cap supplement|post_finalize_reconcile|giant pool supplement|stats_rows_parsed|collapsed to empty' | tail -80
+```
+
 ## sync_timedb `--jid` smoke (ingest-only; stall T0/T1 N/A)
 
 Surgical re-ingest for one job is **not** a backlog catch-up stall verify. Use this smoke instead of T0/T1/T2:

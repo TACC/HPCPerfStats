@@ -6,6 +6,7 @@ import pandas as pd
 from hpcperfstats.dbload.lib.io_helpers import host_data_instance_from_stats_row
 from hpcperfstats.dbload.lib.sync_timedb_parsing import (
     EVENTMAPS_BY_TYPE,
+    DeltaCarryState,
     _COLLAPSE_GROUP_COLS,
     _collapse_dcg_cpu_power_gauge_group,
     _collapse_dcg_cpu_power_vectorized,
@@ -14,12 +15,14 @@ from hpcperfstats.dbload.lib.sync_timedb_parsing import (
     _collapse_stats_with_deltas,
     build_stats_dataframes,
     compute_deltas_and_arc,
+    compute_deltas_and_arc_chunk,
     exclude_types,
     find_processing_start_index,
     load_stats_file_lines,
     parse_first_timestamp_line,
     parse_stats_file_path,
     parse_stats_file_streaming,
+    parse_stats_file_streaming_incremental,
     parse_stats_lines,
     stats_file_size_bytes,
 )
@@ -874,6 +877,146 @@ def test_parse_stats_file_streaming_matches_readlines_path(tmp_path):
   stream_stats, stream_proc = parse_stats_file_streaming(str(stats_file))
   assert stream_stats == expected_stats
   assert stream_proc == expected_proc
+
+
+def _resume_schema_fixture_lines():
+  """Header schema before resume offset; later samples must still emit stats."""
+  return [
+      "1709123456 job1 host.example.com\n",
+      "!cpu user\n",
+      "cpu 0 100\n",
+      "1709123457 job1 host.example.com\n",
+      "cpu 0 200\n",
+      "1709123458 job1 host.example.com\n",
+      "cpu 0 300\n",
+      "proc usr/bin/foo 1000 1 2 3 4 5 6 7 8 9 10 11 12\n",
+  ]
+
+
+def test_streaming_resume_registers_schema_from_skipped_header(tmp_path):
+  """RC-0: resume past !schema must still emit hardware stats rows."""
+  lines = _resume_schema_fixture_lines()
+  stats_file = tmp_path / "host.example.com" / "1709123456"
+  stats_file.parent.mkdir(parents=True)
+  stats_file.write_text("".join(lines), encoding="utf-8")
+  # Offset 3 is the second timestamp line — past the !cpu schema.
+  start_idx = 3
+  expected_stats, expected_proc = parse_stats_lines(lines, start_idx)
+  assert len(expected_stats) > 0
+  stream_stats, stream_proc = parse_stats_file_streaming(
+      str(stats_file),
+      start_line_idx=start_idx,
+  )
+  assert len(stream_stats) > 0
+  assert stream_stats == expected_stats
+  assert stream_proc == expected_proc
+
+
+def test_streaming_resume_matches_nonstreaming_parse(tmp_path):
+  """Both streaming entry points match parse_stats_lines for every resume offset."""
+  lines = _resume_schema_fixture_lines()
+  stats_file = tmp_path / "host.example.com" / "1709123456"
+  stats_file.parent.mkdir(parents=True)
+  stats_file.write_text("".join(lines), encoding="utf-8")
+  for start_idx in range(len(lines) + 1):
+    expected_stats, expected_proc = parse_stats_lines(lines, start_idx)
+    stream_stats, stream_proc = parse_stats_file_streaming(
+        str(stats_file),
+        start_line_idx=start_idx,
+    )
+    assert stream_stats == expected_stats, "streaming start_idx=%d" % start_idx
+    assert stream_proc == expected_proc, "streaming proc start_idx=%d" % start_idx
+    chunks = []
+
+    def on_chunk(stats_list, proc_list):
+      chunks.append((list(stats_list), list(proc_list)))
+
+    parse_stats_file_streaming_incremental(
+        str(stats_file),
+        start_line_idx=start_idx,
+        flush_rows=10_000,
+        on_chunk=on_chunk,
+    )
+    inc_stats = [row for stats, _proc in chunks for row in stats]
+    inc_proc = [row for _stats, proc in chunks for row in proc]
+    assert inc_stats == expected_stats, "incremental start_idx=%d" % start_idx
+    assert inc_proc == expected_proc, "incremental proc start_idx=%d" % start_idx
+
+
+def test_streaming_resume_emits_nothing_before_start_idx(tmp_path):
+  """Feeding the prefix must not emit samples before the resume offset."""
+  lines = _resume_schema_fixture_lines()
+  stats_file = tmp_path / "host.example.com" / "1709123456"
+  stats_file.parent.mkdir(parents=True)
+  stats_file.write_text("".join(lines), encoding="utf-8")
+  start_idx = 3
+  expected_stats, _ = parse_stats_lines(lines, start_idx)
+  full_stats, _ = parse_stats_lines(lines, 0)
+  assert len(full_stats) > len(expected_stats)
+  stream_stats, _ = parse_stats_file_streaming(
+      str(stats_file),
+      start_line_idx=start_idx,
+  )
+  assert stream_stats == expected_stats
+  times = {row["time"] for row in stream_stats}
+  assert 1709123456.0 not in times
+
+
+def test_zero_host_mark_not_recorded_when_stats_lines_parsed(monkeypatch, tmp_path):
+  """Parsed stats > 0 with zero written rows must not bypass head+tail via mark."""
+  from hpcperfstats.dbload import sync_timedb as st
+  from hpcperfstats.dbload.lib import sync_timedb_zero_host_ingest_mark as zhm
+
+  recorded = []
+
+  def fake_record(path, **kwargs):
+    recorded.append(path)
+    return True
+
+  monkeypatch.setattr(zhm, "record_zero_host_ingest_mark", fake_record)
+  outcome = st.IngestFileOutcome(
+      path=str(tmp_path / "seg"),
+      elapsed_s=1.0,
+      ingest_ok=True,
+      need_archival=True,
+      outcome="ingested",
+      stats_rows=0,
+      stats_rows_parsed=12,
+      proc_rows=3,
+  )
+  st._log_ingest_file_outcome(outcome)
+  zhm.maybe_record_zero_host_ingest_mark_from_outcome(
+      outcome.path,
+      ingest_ok=outcome.ingest_ok,
+      outcome=outcome.outcome,
+      stats_rows=outcome.stats_rows,
+      stats_rows_parsed=outcome.stats_rows_parsed,
+  )
+  assert recorded == []
+
+
+def test_nonempty_stats_frame_collapsing_to_empty_delta_logs_warning():
+  """Non-empty frame missing required delta cols must warn, not fail silently."""
+  import warnings
+
+  df = pd.DataFrame(
+      [
+          {
+              "time": 1.0,
+              "host": "h",
+              "type": "cpu",
+              "dev": "0",
+              "event": "user",
+              "unit": "",
+              "value": 1.0,
+          }
+      ]
+  )
+  with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    result = compute_deltas_and_arc_chunk(df, carry=DeltaCarryState())
+  assert result.empty
+  assert any("collapsed to empty" in str(w.message) for w in caught)
 
 
 def test_stats_file_size_bytes_reads_file(tmp_path):

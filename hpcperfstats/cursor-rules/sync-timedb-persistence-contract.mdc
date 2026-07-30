@@ -22,7 +22,7 @@ All operator sidecars under `{archive_data_dir}` share one versioned persistence
 `{archive_data_dir}/.sync_timedb_persistence.json`:
 
 ```json
-{"contract_version": 6, "written_at": 1710000000.0}
+{"contract_version": 7, "written_at": 1710000000.0}
 ```
 
 **Startup:** if missing or `contract_version != SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION`, call `reset_sync_timedb_persistence()` (unlink all registered artifacts **and** `LEGACY_ORPHAN_ARTIFACT_PATHS`), write fresh contract, proceed with empty in-memory state.
@@ -38,6 +38,15 @@ All operator sidecars under `{archive_data_dir}` share one versioned persistence
 | `day_raw_removal_dir` | `.sync_timedb_day_raw_removal/` |
 | `unparsable_raw` | `.sync_timedb_unparsable_raw.json` |
 | `zero_host_ingest_mark` | `.sync_timedb_zero_host_ingest_mark.json` (fingerprint → successful zero-host-row ingest; archive/delete OR path) |
+
+### Zero-host mark provenance (RC-0)
+
+The zero-host mark **bypasses** the head+tail DB proof in `sync-timedb-db-before-archive-contract.mdc`. Therefore:
+
+- Gate `maybe_record_zero_host_ingest_mark_from_outcome` on **parsed** stats record counts (`stats_rows_parsed`), never on a post-`compute_deltas_and_arc*` / post-write frame length alone.
+- Production failure signature: resumed streaming ingest logged `stats_rows=0` with large `proc_rows` because bare `fd.readline()` skipped the `!` schema block — every hardware line was dropped, then the file was marked archive-ready.
+- Legitimate proc-only / empty-stats files still mark when **parsed** stats rows are zero.
+- Bumping `SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION` clears poisoned marks via `reset_sync_timedb_persistence()` (required when this gate semantics change).
 
 **Legacy orphans (reset-only, v6+):** `.sync_timedb_startup_tar_seal.json`, `.sync_timedb_startup_raw_removal.json` — removed on contract bump; no loader.
 

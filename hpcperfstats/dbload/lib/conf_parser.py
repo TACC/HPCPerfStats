@@ -123,6 +123,7 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_ingest_giant_pool_supplement_large_max_bytes"),
     ("PIPELINE", "sync_ingest_giant_pool_supplement_queue_multiplier"),
     ("PIPELINE", "sync_ingest_giant_pool_supplement_trigger_budget_s"),
+    ("PIPELINE", "sync_ingest_idle_slot_supplement_enabled"),
     ("PIPELINE", "sync_archive_members_cache_enabled"),
     ("PIPELINE", "sync_archive_members_cache_max_entries"),
     ("PIPELINE", "sync_archive_members_redis_enabled"),
@@ -305,6 +306,7 @@ INI_OPTION_DEFAULTS = {
     'sync_ingest_giant_pool_supplement_large_max_bytes': '8589934592',
     'sync_ingest_giant_pool_supplement_queue_multiplier': '2',
     'sync_ingest_giant_pool_supplement_trigger_budget_s': '6600',
+    'sync_ingest_idle_slot_supplement_enabled': 'yes',
     'sync_archive_members_cache_enabled': 'yes',
     'sync_archive_members_cache_max_entries': '64',
     'sync_archive_members_redis_enabled': 'yes',
@@ -2042,6 +2044,29 @@ def get_sync_ingest_giant_pool_supplement_enabled():
   _ensure_cfg_loaded()
   try:
     return _pipeline_get("sync_ingest_giant_pool_supplement_enabled").strip().lower() in ("1", "true", "yes", "on")
+  except (TypeError, ValueError, OverflowError):
+    return True
+
+
+def get_sync_ingest_idle_slot_supplement_enabled():
+  """Allow giant-pool supplement when idle slots exist without a giant budget.
+
+  When enabled (default), ``supplement_paths_fn`` may dispatch from the pending
+  tail whenever the primary chunk iterator is exhausted and workers are idle,
+  even if no in-flight path meets the giant trigger budget (RC-3).
+  """
+  env = os.environ.get(
+      "HPCPERFSTATS_SYNC_INGEST_IDLE_SLOT_SUPPLEMENT_ENABLED", "",
+  ).strip().lower()
+  if env in ("1", "true", "yes", "on"):
+    return True
+  if env in ("0", "false", "no", "off"):
+    return False
+  _ensure_cfg_loaded()
+  try:
+    return _pipeline_get(
+        "sync_ingest_idle_slot_supplement_enabled",
+    ).strip().lower() in ("1", "true", "yes", "on")
   except (TypeError, ValueError, OverflowError):
     return True
 

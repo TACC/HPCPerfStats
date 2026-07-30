@@ -813,14 +813,18 @@ def parse_stats_file_streaming(
     batch_size=STREAM_PARSE_LINE_BATCH,
     exclude_types_list=None,
 ):
-  """Parse a large stats file in bounded batches without ``readlines()``."""
-  parser = IncrementalStatsParser(parse_start_idx, exclude_types_list)
+  """Parse a large stats file in bounded batches without ``readlines()``.
+
+  Resume offsets must feed the file prefix through the parser so ``!`` schema
+  lines register; emission is gated by ``start_idx`` (same as ``parse_stats_lines``).
+  Do not fast-forward with bare ``fd.readline()`` — that drops schema and silently
+  discards every hardware stats line (RC-0).
+  """
+  emission_start = max(int(start_line_idx or 0), int(parse_start_idx or 0))
+  parser = IncrementalStatsParser(emission_start, exclude_types_list)
   try:
     with file_read_lock_wait(stats_file):
       with open(stats_file, "r") as fd:
-        for _ in range(int(start_line_idx)):
-          if not fd.readline():
-            return parser.finish()
         while True:
           batch = []
           for _ in range(int(batch_size)):
@@ -884,35 +888,61 @@ def _stats_df_has_required_delta_cols(stats_df):
 
 
 def _apply_counter_deltas(stats_df, carry=None):
+  """Apply counter diffs; optional cross-flush ``carry.raw`` continuity.
+
+  Carry paths must stay vectorized (groupby head/tail + array extract).
+  """
   stats_df = stats_df.sort_values(by=_COUNTER_GROUP_COLS + ["time"]).copy()
   stats_df["delta"] = stats_df.groupby(
       _COUNTER_GROUP_COLS, observed=True)["value"].diff()
 
   if carry is not None and carry.raw:
-    first_rows = stats_df.groupby(_COUNTER_GROUP_COLS, observed=True).head(1)
-    for idx, row in first_rows.iterrows():
-      key = (row["host"], row["type"], row["dev"], row["event"])
-      prev = carry.raw.get(key)
-      if prev is None:
-        continue
-      delta = float(row["value"]) - float(prev["value"])
-      if delta < 0:
-        delta = 2 ** int(row["wid"]) + delta
-      stats_df.at[idx, "delta"] = delta * float(row["mult"])
+    first = stats_df.groupby(_COUNTER_GROUP_COLS, observed=True).head(1)
+    if not first.empty:
+      hosts = first["host"].to_numpy()
+      types = first["type"].to_numpy()
+      devs = first["dev"].to_numpy()
+      events = first["event"].to_numpy()
+      values = first["value"].to_numpy(dtype=np.float64, copy=False)
+      wids = first["wid"].to_numpy(copy=False)
+      mults = first["mult"].to_numpy(dtype=np.float64, copy=False)
+      idxs = first.index.to_numpy()
+      carry_deltas = np.full(len(first), np.nan, dtype=np.float64)
+      apply_mask = np.zeros(len(first), dtype=bool)
+      for i in range(len(first)):
+        prev = carry.raw.get((hosts[i], types[i], devs[i], events[i]))
+        if prev is None:
+          continue
+        delta = float(values[i]) - float(prev["value"])
+        if delta < 0:
+          delta = (2 ** int(wids[i])) + delta
+        carry_deltas[i] = delta * float(mults[i])
+        apply_mask[i] = True
+      if apply_mask.any():
+        stats_df.loc[idxs[apply_mask], "delta"] = carry_deltas[apply_mask]
 
   stats_df["delta"] = stats_df["delta"].mask(
       stats_df["delta"] < 0, 2 ** stats_df["wid"] + stats_df["delta"])
   stats_df["delta"] = stats_df["delta"] * stats_df["mult"]
 
   if carry is not None:
-    for key, group in stats_df.groupby(_COUNTER_GROUP_COLS, observed=True):
-      last = group.iloc[-1]
-      carry.raw[key] = {
-          "value": float(last["value"]),
-          "wid": int(last["wid"]),
-          "mult": float(last["mult"]),
-          "time": float(last["time"]),
-      }
+    last = stats_df.groupby(_COUNTER_GROUP_COLS, observed=True).tail(1)
+    if not last.empty:
+      hosts = last["host"].to_numpy()
+      types = last["type"].to_numpy()
+      devs = last["dev"].to_numpy()
+      events = last["event"].to_numpy()
+      values = last["value"].to_numpy(dtype=np.float64, copy=False)
+      wids = last["wid"].to_numpy(copy=False)
+      mults = last["mult"].to_numpy(dtype=np.float64, copy=False)
+      times = last["time"].to_numpy(dtype=np.float64, copy=False)
+      for i in range(len(last)):
+        carry.raw[(hosts[i], types[i], devs[i], events[i])] = {
+            "value": float(values[i]),
+            "wid": int(wids[i]),
+            "mult": float(mults[i]),
+            "time": float(times[i]),
+        }
 
   stats_df.drop(columns=["wid", "mult"], inplace=True)
   return stats_df
@@ -944,6 +974,11 @@ def _collapse_stats_with_deltas(stats_df):
 
 
 def _apply_arc_and_finalize(stats_df, carry=None):
+  """Compute arc rates; optional cross-flush ``carry.arc`` continuity.
+
+  Carry paths must stay vectorized (groupby head/tail + array extract /
+  Index.get_indexer once).
+  """
   deltat = stats_df.groupby(_ARC_GROUP_COLS, observed=True)["time"].diff()
   _dy = stats_df["delta"].to_numpy(dtype=np.float64, copy=False)
   _dt = deltat.to_numpy(dtype=np.float64, copy=False)
@@ -952,30 +987,59 @@ def _apply_arc_and_finalize(stats_df, carry=None):
   np.divide(_dy, _dt, out=_arc, where=_ok)
 
   if carry is not None and carry.arc:
-    first_rows = stats_df.groupby(_ARC_GROUP_COLS, observed=True).head(1)
-    for idx, row in first_rows.iterrows():
-      key = (row["host"], row["type"], row["event"])
-      prev = carry.arc.get(key)
-      if prev is None:
-        continue
-      dt = float(row["time"]) - float(prev["time"])
-      if dt > 0 and np.isfinite(row["delta"]):
-        _arc[stats_df.index.get_loc(idx)] = float(row["delta"]) / dt
+    first = stats_df.groupby(_ARC_GROUP_COLS, observed=True).head(1)
+    if not first.empty:
+      positions = stats_df.index.get_indexer(first.index)
+      hosts = first["host"].to_numpy()
+      types = first["type"].to_numpy()
+      events = first["event"].to_numpy()
+      times = first["time"].to_numpy(dtype=np.float64, copy=False)
+      deltas = first["delta"].to_numpy(dtype=np.float64, copy=False)
+      for i in range(len(first)):
+        pos = int(positions[i])
+        if pos < 0:
+          continue
+        prev = carry.arc.get((hosts[i], types[i], events[i]))
+        if prev is None:
+          continue
+        dt = float(times[i]) - float(prev["time"])
+        if dt > 0 and np.isfinite(deltas[i]):
+          _arc[pos] = float(deltas[i]) / dt
 
   stats_df = stats_df.copy()
   stats_df["arc"] = _arc
 
   if carry is not None:
-    for key, group in stats_df.groupby(_ARC_GROUP_COLS, observed=True):
-      last = group.iloc[-1]
-      carry.arc[key] = {"time": float(last["time"])}
+    last = stats_df.groupby(_ARC_GROUP_COLS, observed=True).tail(1)
+    if not last.empty:
+      hosts = last["host"].to_numpy()
+      types = last["type"].to_numpy()
+      events = last["event"].to_numpy()
+      times = last["time"].to_numpy(dtype=np.float64, copy=False)
+      for i in range(len(last)):
+        carry.arc[(hosts[i], types[i], events[i])] = {
+            "time": float(times[i]),
+        }
 
   stats_df["time"] = to_datetime(stats_df["time"], unit="s").dt.tz_localize("UTC")
   return stats_df.dropna(subset=["host", "type", "event", "time", "value"])
 
 
+def _warn_nonempty_stats_collapsed_to_empty(stats_df):
+  """Loud warning when a non-empty stats frame yields zero delta/arc rows."""
+  if stats_df is None or getattr(stats_df, "empty", True):
+    return
+  cols = [str(c) for c in list(stats_df.columns)]
+  warnings.warn(
+      "non-empty stats frame collapsed to empty delta/arc rows=%d cols=%s"
+      % (int(len(stats_df)), cols),
+      stacklevel=3,
+  )
+
+
 def compute_deltas_and_arc(stats_df):
   if not _stats_df_has_required_delta_cols(stats_df):
+    _warn_nonempty_stats_collapsed_to_empty(stats_df)
     return _empty_delta_arc_frame()
   stats_df = _apply_counter_deltas(stats_df.copy())
   stats_df = _collapse_stats_with_deltas(stats_df)
@@ -989,6 +1053,7 @@ def compute_deltas_and_arc_chunk(stats_df, *, carry):
   if carry is None:
     raise ValueError("carry is required for incremental delta computation")
   if not _stats_df_has_required_delta_cols(stats_df):
+    _warn_nonempty_stats_collapsed_to_empty(stats_df)
     return _empty_delta_arc_frame()
   stats_df = _apply_counter_deltas(stats_df, carry=carry)
   stats_df = _collapse_stats_with_deltas(stats_df)
@@ -1016,8 +1081,15 @@ def parse_stats_file_streaming_incremental(
     line_batch_size=STREAM_PARSE_LINE_BATCH,
     exclude_types_list=None,
 ):
-  """Parse a large stats file, flushing complete time samples via ``on_chunk``."""
-  parser = IncrementalStatsParser(parse_start_idx, exclude_types_list)
+  """Parse a large stats file, flushing complete time samples via ``on_chunk``.
+
+  Resume offsets must feed the file prefix through the parser so ``!`` schema
+  lines register; emission is gated by ``start_idx`` (same as ``parse_stats_lines``).
+  Do not fast-forward with bare ``fd.readline()`` — that drops schema and silently
+  discards every hardware stats line (RC-0).
+  """
+  emission_start = max(int(start_line_idx or 0), int(parse_start_idx or 0))
+  parser = IncrementalStatsParser(emission_start, exclude_types_list)
   pending_flush = False
   flush_rows = max(1, int(flush_rows))
 
@@ -1038,10 +1110,6 @@ def parse_stats_file_streaming_incremental(
   try:
     with file_read_lock_wait(stats_file):
       with open(stats_file, "r") as fd:
-        for _ in range(int(start_line_idx)):
-          if not fd.readline():
-            _emit_flush()
-            return
         while True:
           got_line = False
           for _ in range(int(line_batch_size)):

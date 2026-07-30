@@ -200,3 +200,31 @@ def test_reset_unlinks_legacy_orphan_artifacts(tmp_path):
   reset_sync_timedb_persistence(archive_dir, log_fn=lambda *_a, **_kw: None)
   for rel in persist_mod.LEGACY_ORPHAN_ARTIFACT_PATHS:
     assert not os.path.isfile(os.path.join(archive_dir, rel))
+
+
+@pytest.mark.django_db(databases=[])
+def test_persistence_contract_bump_clears_zero_host_marks(tmp_path):
+  """Version mismatch at startup must unlink poisoned zero-host marks (RC-0)."""
+  archive_dir = str(tmp_path / "archive")
+  os.makedirs(archive_dir)
+  mark_rel = PERSISTENCE_ARTIFACT_REGISTRY["zero_host_ingest_mark"]
+  mark_path = os.path.join(archive_dir, mark_rel)
+  with open(mark_path, "w", encoding="utf-8") as handle:
+    json.dump({"entries": [{"path": "/poisoned", "fp": "x"}]}, handle)
+  contract_path = persist_mod.persistence_contract_path(archive_dir)
+  with open(contract_path, "w", encoding="utf-8") as handle:
+    json.dump(
+        {
+            "contract_version": SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION - 1,
+            "written_at": 0.0,
+        },
+        handle,
+    )
+  reset_ran = ensure_persistence_contract(
+      archive_dir, log_fn=lambda *_a, **_kw: None
+  )
+  assert reset_ran is True
+  assert not os.path.isfile(mark_path)
+  with open(contract_path, encoding="utf-8") as handle:
+    payload = json.load(handle)
+  assert payload["contract_version"] == SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION

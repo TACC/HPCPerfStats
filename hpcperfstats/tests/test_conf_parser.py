@@ -837,6 +837,7 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
       (86400.0 - 900.0) / 30720.0,
   )
   assert cfg.get_sync_ingest_giant_pool_supplement_enabled() is True
+  assert cfg.get_sync_ingest_idle_slot_supplement_enabled() is True
   assert cfg.get_sync_ingest_giant_pool_supplement_max_bytes() == 1073741824
   assert cfg.get_sync_ingest_giant_pool_supplement_large_max_bytes() == 8589934592
   assert cfg.get_sync_ingest_giant_pool_supplement_queue_multiplier() == 2
