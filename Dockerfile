@@ -24,13 +24,21 @@ WORKDIR /home/hpcperfstats/hpcperfstats/site/frontend
 # Frontend source: cached until site/frontend changes.
 COPY --chown=node:node hpcperfstats/site/frontend/ ./
 
-# Context .git for write-site-identity git rev-parse (checkout root = /home/hpcperfstats).
-# Optional ARG/ENV override still wins when set to a real SHA (helpers / CI).
+# Context .git for SPA commit bake (checkout root = /home/hpcperfstats).
+# Optional ARG override; do not ENV=unknown before build — that leaves the SPA
+# with an empty SITE_GIT_COMMIT when git rev-parse also fails silently.
 COPY .git /home/hpcperfstats/.git
 ARG HPCPERFSTATS_GIT_COMMIT=unknown
-ENV HPCPERFSTATS_GIT_COMMIT=$HPCPERFSTATS_GIT_COMMIT
-
-RUN /bin/bash -o pipefail -c "npm run build:prod"
+RUN /bin/bash -o pipefail -c '\
+  set -euo pipefail; \
+  git config --global --add safe.directory /home/hpcperfstats; \
+  COMMIT="${HPCPERFSTATS_GIT_COMMIT:-unknown}"; \
+  if [[ -z "${COMMIT}" || "${COMMIT}" == "unknown" ]]; then \
+    COMMIT="$(git -C /home/hpcperfstats rev-parse HEAD)"; \
+  fi; \
+  export HPCPERFSTATS_GIT_COMMIT="${COMMIT}"; \
+  echo "frontend-builder: HPCPERFSTATS_GIT_COMMIT=${HPCPERFSTATS_GIT_COMMIT}"; \
+  npm run build:prod'
 
 WORKDIR /home/hpcperfstats
 RUN /bin/bash -o pipefail -c "\

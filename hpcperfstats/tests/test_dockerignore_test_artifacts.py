@@ -210,6 +210,10 @@ def test_dockerfile_copies_git_for_spa_bake_and_strips_from_runtime():
   assert "COPY .git /home/hpcperfstats/.git" in dockerfile
   assert "apk add --no-cache bash git" in dockerfile or "apk add --no-cache git" in dockerfile
   assert "rm -rf /home/hpcperfstats/.git" in dockerfile
+  # Must resolve SHA in the build RUN (not ENV=unknown before npm).
+  assert "git -C /home/hpcperfstats rev-parse HEAD" in dockerfile
+  assert "safe.directory" in dockerfile
+  assert "ENV HPCPERFSTATS_GIT_COMMIT=$HPCPERFSTATS_GIT_COMMIT" not in dockerfile
   # Strip must appear after the full-tree COPY into the Python base stage.
   copy_idx = dockerfile.find("COPY --chown=hpcperfstats:hpcperfstats . .")
   strip_idx = dockerfile.find("rm -rf /home/hpcperfstats/.git")
