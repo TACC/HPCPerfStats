@@ -64,6 +64,7 @@ Read this file in the **same task** when you:
 - Deploy scripts: **`scripts/rebuild_frontend.sh`**, **`scripts/rebuild_pipeline.sh`**, **`services-conf/`**.
 - Root **`README.md`** (referenced by **`pyproject.toml`** for `pip install`).
 - Root **`LICENSE`**, **`pyproject.toml`**, **`hpcperfstats.ini*`**.
+- **`.git/`** — intentional include for SPA commit bake (`Dockerfile` `frontend-builder` `COPY .git` + `git rev-parse`). **`hpcperfstats-base` must `rm -rf /home/hpcperfstats/.git` immediately after `COPY . .`** so the runtime image does not retain history. Keep **`.gitignore`** dockerignored.
 
 ## Overlap
 

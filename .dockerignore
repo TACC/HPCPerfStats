@@ -1,4 +1,6 @@
-.git
+# .git is intentionally IN the build context so frontend-builder can COPY it and
+# resolve SITE_GIT_COMMIT via git rev-parse. hpcperfstats-base strips .git after
+# COPY . . so the runtime image does not retain history.
 .gitignore
 .cursor
 .venv

@@ -35,7 +35,8 @@ compose_web_image_name() {
   echo "hpcperfstats"
 }
 
-# Full commit SHA for SPA bake (Docker context excludes .git). Prefer env, else host git.
+# Full commit SHA for SPA bake override (context may include .git for in-image
+# rev-parse). Prefer env when set, else host git for --build-arg / rebuild_frontend.
 resolve_hpcperfstats_git_commit() {
   local from_env="${HPCPERFSTATS_GIT_COMMIT:-}"
   if [[ -n "${from_env}" && "${from_env}" != "unknown" ]]; then

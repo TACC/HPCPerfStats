@@ -1,7 +1,7 @@
 # Build frontend assets in a dedicated node stage.
 # COPY is scoped to frontend inputs so Python/backend changes do not bust npm layers.
 FROM node:26.5.0-alpine3.23 AS frontend-builder
-RUN apk add --no-cache bash
+RUN apk add --no-cache bash git
 ENV NEXT_TELEMETRY_DISABLED=1
 
 WORKDIR /home/hpcperfstats/hpcperfstats/site/frontend
@@ -24,7 +24,9 @@ WORKDIR /home/hpcperfstats/hpcperfstats/site/frontend
 # Frontend source: cached until site/frontend changes.
 COPY --chown=node:node hpcperfstats/site/frontend/ ./
 
-# Host git SHA (context has no .git — pass via --build-arg / compose build.args).
+# Context .git for write-site-identity git rev-parse (checkout root = /home/hpcperfstats).
+# Optional ARG/ENV override still wins when set to a real SHA (helpers / CI).
+COPY .git /home/hpcperfstats/.git
 ARG HPCPERFSTATS_GIT_COMMIT=unknown
 ENV HPCPERFSTATS_GIT_COMMIT=$HPCPERFSTATS_GIT_COMMIT
 
@@ -87,6 +89,9 @@ RUN /bin/bash -o pipefail -c 'python3 -c "import tomllib; from pathlib import Pa
     && pip install --no-cache-dir -r /tmp/requirements.txt'
 
 COPY --chown=hpcperfstats:hpcperfstats . .
+
+# .git is in the build context for frontend-builder SPA bake only — do not ship history.
+RUN rm -rf /home/hpcperfstats/.git
 
 # Cloud-synced checkouts may not preserve host execute bits; compose invokes these
 # scripts directly as container commands.

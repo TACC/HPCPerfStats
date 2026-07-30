@@ -191,6 +191,31 @@ def test_root_readme_not_excluded_from_docker_build_context():
   assert not _is_excluded("README.md", patterns)
 
 
+def test_git_directory_not_excluded_from_docker_build_context():
+  """SPA bake copies .git into frontend-builder; must not be dockerignored."""
+  content = (_repo_root() / ".dockerignore").read_text()
+  lines = [
+      line.strip()
+      for line in content.splitlines()
+      if line.strip() and not line.strip().startswith("#")
+  ]
+  assert ".git" not in lines
+  assert ".git/" not in lines
+  patterns = _dockerignore_patterns(_repo_root())
+  assert not _is_excluded(".git/HEAD", patterns)
+
+
+def test_dockerfile_copies_git_for_spa_bake_and_strips_from_runtime():
+  dockerfile = (_repo_root() / "Dockerfile").read_text()
+  assert "COPY .git /home/hpcperfstats/.git" in dockerfile
+  assert "apk add --no-cache bash git" in dockerfile or "apk add --no-cache git" in dockerfile
+  assert "rm -rf /home/hpcperfstats/.git" in dockerfile
+  # Strip must appear after the full-tree COPY into the Python base stage.
+  copy_idx = dockerfile.find("COPY --chown=hpcperfstats:hpcperfstats . .")
+  strip_idx = dockerfile.find("rm -rf /home/hpcperfstats/.git")
+  assert copy_idx >= 0 and strip_idx > copy_idx
+
+
 def test_all_test_artifacts_excluded_from_docker_build_context():
   repo_root = _repo_root()
   patterns = _dockerignore_patterns(repo_root)

@@ -11,8 +11,8 @@ services:
       context: ./
       dockerfile: Dockerfile
       target: hpcperfstats-full
-      # Host git SHA for staff SPA commit link (.git is dockerignored).
-      # rebuild_pipeline / compose build helpers set this; default hides the menu item.
+      # Optional override for staff SPA commit link. Primary bake uses context .git
+      # (frontend-builder COPY + git rev-parse). Default unknown falls back to .git.
       args:
         HPCPERFSTATS_GIT_COMMIT: ${HPCPERFSTATS_GIT_COMMIT:-unknown}
     image: hpcperfstats
