@@ -83,6 +83,7 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         "rules": [
             "sync-timedb-ingest-pool-io-coordination.mdc",
             "sync-timedb-hot-path-janitor-lock-priority.mdc",
+            "sync-timedb-anti-log-spam.mdc",
         ],
     },
     {

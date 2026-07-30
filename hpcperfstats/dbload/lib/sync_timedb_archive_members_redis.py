@@ -48,12 +48,16 @@ _STALE_INCOMPLETE_LOG_INTERVAL_S = 60.0
 # Cluster-wide WARN gate (spawn pool cannot share process-local state).
 _STALE_INCOMPLETE_LOG_REDIS_TTL_S = 300
 _STALE_INCOMPLETE_LOG_PREFIX = "%s:stale_incomplete_log:v1" % _KEY_PREFIX
+# Cluster-wide empty-recover deferred INFO (multi ingest-pool waiters).
+_EMPTY_RECOVER_DEFER_LOG_REDIS_TTL_S = 300
+_EMPTY_RECOVER_DEFER_LOG_PREFIX = "%s:empty_recover_defer_log:v1" % _KEY_PREFIX
 # Single-flight clear+re-enqueue after orphan / degraded / incomplete-after-lock.
 _POPULATE_RECOVER_TTL_S = 60
 _POPULATE_RECOVER_PREFIX = "%s:archive_populate_recover:v1" % _KEY_PREFIX
 _IDENTITY_DRIFT_LOG_STATE: Dict[str, Dict[str, float]] = {}
 _APPEND_INFLIGHT_DEFER_LOG_STATE: Dict[str, Dict[str, float]] = {}
 _STALE_INCOMPLETE_LOG_STATE: Dict[str, Dict[str, float]] = {}
+_EMPTY_RECOVER_DEFER_LOG_STATE: Dict[str, Dict[str, float]] = {}
 
 _archive_pre_append_member_lookup = contextvars.ContextVar(
     "sync_timedb_archive_pre_append_member_lookup",
@@ -309,6 +313,9 @@ def reset_archive_members_redis_client_for_tests():
   _REDIS_CLIENT = None
   _REDIS_CLIENT_URL = None
   _STALE_INCOMPLETE_LOG_STATE.clear()
+  _EMPTY_RECOVER_DEFER_LOG_STATE.clear()
+  _IDENTITY_DRIFT_LOG_STATE.clear()
+  _APPEND_INFLIGHT_DEFER_LOG_STATE.clear()
 
 
 def verify_archive_members_redis_startup():
@@ -688,6 +695,10 @@ def _incomplete_state_keys_present(client, keys: ArchiveMembersRedisKeys) -> boo
 
 def _stale_incomplete_log_redis_key(day_token: str) -> str:
   return "%s:%s" % (_STALE_INCOMPLETE_LOG_PREFIX, day_token)
+
+
+def _empty_recover_defer_log_redis_key(day_token: str) -> str:
+  return "%s:%s" % (_EMPTY_RECOVER_DEFER_LOG_PREFIX, day_token)
 
 
 def _populate_recover_redis_key(day_token: str) -> str:
@@ -1310,45 +1321,60 @@ def _resolve_keys_for_canonical(canonical: str) -> ArchiveMembersRedisKeys:
   return build_archive_members_redis_keys(_daily_archive_members_cache_key(path))
 
 
-def _log_stale_incomplete_if_allowed(
+def _rate_limited_day_info_log(
+    state_dict: Dict[str, Dict[str, float]],
     day_token: str,
     message: str,
     *,
-    log_fn=log_print,
+    interval_s: float,
+    log_fn=None,
     client=None,
+    redis_key_fn: Optional[Callable[[str], str]] = None,
+    redis_ttl_s: float = 0.0,
+    skip_unknown_day: bool = True,
 ) -> None:
-  """Rate-limit stale incomplete WARNs cluster-wide (Redis NX) + process-local."""
+  """Emit *message* at most once per *interval_s* per day (optional Redis NX).
+
+  When *redis_key_fn* is set, a cluster-wide ``SET NX EX`` gate suppresses peers
+  in other processes. Redis errors fail open to process-local rate-limiting.
+  Appends `` suppressed_n=N`` when prior calls were suppressed in-process.
+  """
+  if log_fn is None:
+    log_fn = log_print
   if not day_token or day_token == "unknown":
+    if skip_unknown_day:
+      return
     log_fn(message, flush=True)
     return
   now_mono = time.monotonic()
-  state = _STALE_INCOMPLETE_LOG_STATE.get(day_token)
+  state = state_dict.get(day_token)
   if state is None:
     state = {"last_log_mono": 0.0, "suppressed": 0.0}
-    _STALE_INCOMPLETE_LOG_STATE[day_token] = state
+    state_dict[day_token] = state
   last_log_mono = float(state.get("last_log_mono") or 0.0)
-  if now_mono - last_log_mono < _STALE_INCOMPLETE_LOG_INTERVAL_S:
+  if now_mono - last_log_mono < float(interval_s):
     state["suppressed"] = float(state.get("suppressed") or 0.0) + 1.0
     return
-  redis_allowed = True
-  try:
-    redis_client = client
-    if redis_client is None:
-      redis_client = get_archive_members_redis_client(required=False)
-    if redis_client is not None:
-      redis_allowed = bool(
-          redis_client.set(
-              _stale_incomplete_log_redis_key(day_token),
-              "1",
-              nx=True,
-              ex=_STALE_INCOMPLETE_LOG_REDIS_TTL_S,
-          ),
-      )
-  except Exception:
+  if redis_key_fn is not None:
     redis_allowed = True
-  if not redis_allowed:
-    state["suppressed"] = float(state.get("suppressed") or 0.0) + 1.0
-    return
+    try:
+      redis_client = client
+      if redis_client is None:
+        redis_client = get_archive_members_redis_client(required=False)
+      if redis_client is not None:
+        redis_allowed = bool(
+            redis_client.set(
+                redis_key_fn(day_token),
+                "1",
+                nx=True,
+                ex=int(redis_ttl_s) if redis_ttl_s else 300,
+            ),
+        )
+    except Exception:
+      redis_allowed = True
+    if not redis_allowed:
+      state["suppressed"] = float(state.get("suppressed") or 0.0) + 1.0
+      return
   suppressed_n = int(state.get("suppressed") or 0)
   state["last_log_mono"] = now_mono
   state["suppressed"] = 0.0
@@ -1356,51 +1382,59 @@ def _log_stale_incomplete_if_allowed(
   log_fn("%s%s" % (message, suffix), flush=True)
 
 
+def _log_stale_incomplete_if_allowed(
+    day_token: str,
+    message: str,
+    *,
+    log_fn=None,
+    client=None,
+) -> None:
+  """Rate-limit stale incomplete WARNs cluster-wide (Redis NX) + process-local."""
+  _rate_limited_day_info_log(
+      _STALE_INCOMPLETE_LOG_STATE,
+      day_token,
+      message,
+      interval_s=_STALE_INCOMPLETE_LOG_INTERVAL_S,
+      log_fn=log_fn,
+      client=client,
+      redis_key_fn=_stale_incomplete_log_redis_key,
+      redis_ttl_s=_STALE_INCOMPLETE_LOG_REDIS_TTL_S,
+      skip_unknown_day=False,
+  )
+
+
 def _log_identity_drift_if_allowed(day_token: str, from_key: str, to_key: str) -> None:
   """Rate-limit identity_drift logs to once per calendar day per interval."""
-  if not day_token or day_token == "unknown":
-    return
-  now_mono = time.monotonic()
-  state = _IDENTITY_DRIFT_LOG_STATE.get(day_token)
-  if state is None:
-    state = {"last_log_mono": 0.0, "suppressed": 0.0}
-    _IDENTITY_DRIFT_LOG_STATE[day_token] = state
-  last_log_mono = float(state.get("last_log_mono") or 0.0)
-  if now_mono - last_log_mono < _IDENTITY_DRIFT_LOG_INTERVAL_S:
-    state["suppressed"] = float(state.get("suppressed") or 0.0) + 1.0
-    return
-  suppressed_n = int(state.get("suppressed") or 0)
-  state["last_log_mono"] = now_mono
-  state["suppressed"] = 0.0
-  suffix = (" suppressed_n=%d" % suppressed_n) if suppressed_n else ""
-  log_print(
-      "INFO: populate_wait identity_drift day=%s from=%s to=%s%s"
-      % (day_token, from_key, to_key, suffix),
-      flush=True,
+  _rate_limited_day_info_log(
+      _IDENTITY_DRIFT_LOG_STATE,
+      day_token,
+      "INFO: populate_wait identity_drift day=%s from=%s to=%s"
+      % (day_token, from_key, to_key),
+      interval_s=_IDENTITY_DRIFT_LOG_INTERVAL_S,
   )
 
 
 def _log_append_inflight_defer_if_allowed(day_token: str) -> None:
   """Rate-limit archive_append_inflight defer logs to once per calendar day."""
-  if not day_token or day_token == "unknown":
-    return
-  now_mono = time.monotonic()
-  state = _APPEND_INFLIGHT_DEFER_LOG_STATE.get(day_token)
-  if state is None:
-    state = {"last_log_mono": 0.0, "suppressed": 0.0}
-    _APPEND_INFLIGHT_DEFER_LOG_STATE[day_token] = state
-  last_log_mono = float(state.get("last_log_mono") or 0.0)
-  if now_mono - last_log_mono < _IDENTITY_DRIFT_LOG_INTERVAL_S:
-    state["suppressed"] = float(state.get("suppressed") or 0.0) + 1.0
-    return
-  suppressed_n = int(state.get("suppressed") or 0)
-  state["last_log_mono"] = now_mono
-  state["suppressed"] = 0.0
-  suffix = (" suppressed_n=%d" % suppressed_n) if suppressed_n else ""
-  log_print(
-      "populate: defer tar scan day=%s reason=archive_append_inflight%s"
-      % (day_token, suffix),
-      flush=True,
+  _rate_limited_day_info_log(
+      _APPEND_INFLIGHT_DEFER_LOG_STATE,
+      day_token,
+      "populate: defer tar scan day=%s reason=archive_append_inflight" % day_token,
+      interval_s=_IDENTITY_DRIFT_LOG_INTERVAL_S,
+  )
+
+
+def _log_empty_recover_deferred_if_allowed(day_token: str, *, client=None) -> None:
+  """Rate-limit RC-ER empty-recover deferred INFO (process-local + Redis NX)."""
+  _rate_limited_day_info_log(
+      _EMPTY_RECOVER_DEFER_LOG_STATE,
+      day_token,
+      "INFO: populate empty recover deferred day=%s "
+      "reason=archive_append_inflight" % day_token,
+      interval_s=_IDENTITY_DRIFT_LOG_INTERVAL_S,
+      client=client,
+      redis_key_fn=_empty_recover_defer_log_redis_key,
+      redis_ttl_s=_EMPTY_RECOVER_DEFER_LOG_REDIS_TTL_S,
   )
 
 
@@ -1525,12 +1559,7 @@ def wait_for_complete_members(
             day_token = str(getattr(keys, "day_token", "") or "")
             if day_token and archive_append_inflight_for_day(day_token):
               incomplete_recover_n = 0
-              log_print(
-                  "INFO: populate empty recover deferred day=%s "
-                  "reason=archive_append_inflight"
-                  % day_token,
-                  flush=True,
-              )
+              _log_empty_recover_deferred_if_allowed(day_token, client=client)
             else:
               raise ArchiveMembersPopulateStalledError(
                   "Archive members populate incomplete after lock release "

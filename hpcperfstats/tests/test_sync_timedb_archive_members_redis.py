@@ -1740,6 +1740,68 @@ def test_append_inflight_defer_log_rate_limited(monkeypatch):
   assert "suppressed_n=2" in defer_logs[1]
 
 
+def test_empty_recover_deferred_log_rate_limited(monkeypatch):
+  """RC-ER empty-recover INFO must rate-limit like append-inflight defer."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      _EMPTY_RECOVER_DEFER_LOG_STATE,
+      _log_empty_recover_deferred_if_allowed,
+  )
+
+  _EMPTY_RECOVER_DEFER_LOG_STATE.clear()
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      "._IDENTITY_DRIFT_LOG_INTERVAL_S",
+      0.05,
+  )
+  # Process-local interval only — Redis NX is covered by the cluster-wide test.
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=False: None,
+  )
+  logs = []
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis.log_print",
+      lambda msg, **kw: logs.append(msg),
+  )
+  day = "2026-07-29"
+  _log_empty_recover_deferred_if_allowed(day)
+  _log_empty_recover_deferred_if_allowed(day)
+  _log_empty_recover_deferred_if_allowed(day)
+  recover_logs = [line for line in logs if "empty recover deferred" in line]
+  assert len(recover_logs) == 1
+  assert "reason=archive_append_inflight" in recover_logs[0]
+  assert "suppressed_n=" not in recover_logs[0]
+  time.sleep(0.06)
+  _log_empty_recover_deferred_if_allowed(day)
+  recover_logs = [line for line in logs if "empty recover deferred" in line]
+  assert len(recover_logs) == 2
+  assert "suppressed_n=2" in recover_logs[1]
+
+
+def test_empty_recover_deferred_log_rate_limited_cluster_wide(
+    _redis_test_env, monkeypatch,
+):
+  """Two waiters sharing Redis NX emit at most one empty-recover deferred INFO."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_members_redis as amr
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      _EMPTY_RECOVER_DEFER_LOG_STATE,
+      _log_empty_recover_deferred_if_allowed,
+  )
+
+  _EMPTY_RECOVER_DEFER_LOG_STATE.clear()
+  monkeypatch.setattr(amr, "_IDENTITY_DRIFT_LOG_INTERVAL_S", 0.0)
+  logs = []
+  monkeypatch.setattr(amr, "log_print", lambda msg, **kw: logs.append(msg))
+  day = "2026-07-29"
+  _log_empty_recover_deferred_if_allowed(day, client=_redis_test_env)
+  # Simulate another process: clear process-local gate; Redis NX must suppress.
+  _EMPTY_RECOVER_DEFER_LOG_STATE.clear()
+  _log_empty_recover_deferred_if_allowed(day, client=_redis_test_env)
+  recover_logs = [line for line in logs if "empty recover deferred" in line]
+  assert len(recover_logs) == 1
+
+
 def test_tar_populate_eof_during_append_does_not_set_day_skip(
     _redis_test_env, tmp_path,
 ):
@@ -2666,12 +2728,14 @@ def test_empty_recover_bound_fatal_when_append_idle(
 def test_empty_recover_deferred_while_archive_append_inflight(
     _redis_test_env, tmp_path, monkeypatch,
 ):
-  """RC-ER: empty recover during append must not fatal the supervisor."""
+  """RC-ER: empty recover during append must not fatal; logs must not flood."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      _EMPTY_RECOVER_DEFER_LOG_STATE,
       clear_archive_append_inflight,
       set_archive_append_inflight,
   )
 
+  _EMPTY_RECOVER_DEFER_LOG_STATE.clear()
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.conf_parser"
       ".get_sync_archive_members_redis_populate_max_seconds",
@@ -2683,6 +2747,8 @@ def test_empty_recover_deferred_while_archive_append_inflight(
       lambda *a, **k: True,
   )
   monkeypatch.setattr("%s._wait_poll_seconds" % mod, lambda: 0.001)
+  # Keep interval large so many recover trips stay in one window.
+  monkeypatch.setattr("%s._IDENTITY_DRIFT_LOG_INTERVAL_S" % mod, 60.0)
   logs = []
   monkeypatch.setattr(
       "%s.log_print" % mod,
@@ -2702,19 +2768,25 @@ def test_empty_recover_deferred_while_archive_append_inflight(
 
   t_wait = threading.Thread(target=_waiter)
   t_wait.start()
-  # Three empty recovers reset under append; then mark warm so waiter exits.
+  # Many empty recovers under append; rate-limit must keep INFO to ≤1 before warm.
   deadline = time.monotonic() + 5.0
   while time.monotonic() < deadline:
     if any("empty recover deferred" in line for line in logs):
+      # Let several more recover trips accumulate under the same interval.
+      time.sleep(0.05)
       break
     time.sleep(0.01)
-  assert any("empty recover deferred" in line for line in logs), logs[:20]
+  recover_logs = [line for line in logs if "empty recover deferred" in line]
+  assert len(recover_logs) == 1, recover_logs[:20]
+  assert "reason=archive_append_inflight" in recover_logs[0]
   _redis_test_env.hset(keys.hash_key, mapping={"host/a": "1"})
   _redis_test_env.set(keys.complete_key, "1")
   t_wait.join(timeout=3)
   clear_archive_append_inflight(keys.day_token)
   assert result["exc"] is None
   assert result["members"] == {"host/a": 1}
+  # Still no flood after warm path exits.
+  assert len([line for line in logs if "empty recover deferred" in line]) == 1
 
 
 def test_try_acquire_daily_tar_restore_is_exclusive(_redis_test_env):
