@@ -23,9 +23,9 @@ from hpc_hook_lib import (  # noqa: E402
     profile_rules_dir_label,
     suggested_live_plan_disk_path,
     turn_had_closeable_work,
-    turn_had_create_plan,
+    turn_had_create_plan_union,
     turn_had_edits,
-    turn_had_live_plan_disk_write,
+    turn_had_live_plan_disk_write_union,
 )
 
 
@@ -49,18 +49,24 @@ def main() -> int:
     workspace_roots = payload.get("workspace_roots") or []
     rules_dir = profile_rules_dir_label(workspace_roots=workspace_roots)
 
-    rows = parse_transcript_lines(transcript_path)
-    turn_rows = last_turn_rows(rows)
+    full_rows = parse_transcript_lines(transcript_path)
+    turn_rows = last_turn_rows(full_rows)
     had_edits = turn_had_edits(turn_rows)
-    had_plan = turn_had_create_plan(turn_rows)
-    had_live_plan_disk = turn_had_live_plan_disk_write(turn_rows)
+    had_plan = turn_had_create_plan_union(
+        turn_rows, transcript_path, full_rows,
+    )
+    had_live_plan_disk = turn_had_live_plan_disk_write_union(
+        turn_rows, transcript_path, full_rows,
+    )
     # Plan turns always require close headings — no looks_like_task_close escape.
     plan_turn = had_plan or had_live_plan_disk
 
     # Hard gate: CreatePlan without a same-turn .cursor/plans/*.plan.md write always
     # blocks turn end (does not depend on "plan is ready" phrasing).
     if had_plan and not had_live_plan_disk:
-        disk_issues = plan_disk_sync_issues(turn_rows)
+        disk_issues = plan_disk_sync_issues(
+            turn_rows, transcript_path, full_rows,
+        )
         if disk_issues:
             suggested = ""
             for row in turn_rows:
@@ -83,7 +89,7 @@ def main() -> int:
             )
             return 0
 
-    if not turn_had_closeable_work(turn_rows):
+    if not turn_had_closeable_work(turn_rows) and not plan_turn:
         emit_json({})
         return 0
 
@@ -100,6 +106,8 @@ def main() -> int:
         assistant_text=assistant_text,
         transcript_rows=turn_rows,
         workspace_roots=workspace_roots,
+        transcript_path=transcript_path,
+        full_rows=full_rows,
     )
     if not issues:
         emit_json({})

@@ -40,8 +40,13 @@ def main() -> int:
         emit_allow()
         return 0
 
-    rows = last_turn_rows(parse_transcript_lines(transcript_path))
-    if not turn_create_plan_pending_disk_write(rows):
+    full_rows = parse_transcript_lines(transcript_path)
+    rows = last_turn_rows(full_rows)
+    if not turn_create_plan_pending_disk_write(
+        rows,
+        transcript_path=transcript_path,
+        full_rows=full_rows,
+    ):
         emit_allow()
         return 0
 

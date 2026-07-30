@@ -71,8 +71,8 @@ When facts are missing and the operator must run commands (`compose-operator-ter
 
 Cursor **`preToolUse`** / **`stop`** hooks (`cursor-hooks/`):
 
-1. **Deny** `Write`/`StrReplace` to `.cursor/plans/*.plan.md` until plan-authoring `.mdc` files + `PLAN_TEMPLATE.md` are Read this turn (same set as CreatePlan).
-2. **Stop always** runs the close-gate (Agent rule dispatch + Final code review + Post-implementation review + Read-before-edit proof) when CreatePlan ran **or** any live plan file was edited — no soft-phrasing escape hatch.
-3. After CreatePlan, pending disk sync is cleared by **any** same-turn live plan Write/StrReplace (before or after CreatePlan).
-4. When Operator discovery needs commands (`in progress` or Pending bash blocks), deny plan Write unless `compose-operator-terminal-commands.mdc` and `operator-command-lessons-learned.mdc` were Read **full-file** (no `limit`/`offset`) this turn.
-5. Edit-triggered rule Read checks use **this turn only** (`last_turn_rows`), not the full transcript.
+1. **Deny** `Write`/`StrReplace` to `.cursor/plans/*.plan.md` until plan-authoring `.mdc` files + `PLAN_TEMPLATE.md` are Read this turn (same set as CreatePlan). Mid-turn Reads are proven via the **turn-activity ledger** (`<transcript>.hpc_turn_activity.jsonl`, `fcntl.flock`) unioned with the lagging transcript — agents must not serialize Reads solely to paper over hook races.
+2. **Stop always** runs the close-gate (Agent rule dispatch + Final code review + Post-implementation review + Read-before-edit proof) when CreatePlan ran **or** any live plan file was edited (transcript **or** ledger) — no soft-phrasing escape hatch. Stop unions the same ledger for Read proof and CreatePlan↔disk sync.
+3. After CreatePlan, pending disk sync is cleared by **any** same-turn live plan Write/StrReplace recorded in the transcript **or** ledger (before or after CreatePlan). A leftover `.cursor/plans/*.plan.md` from a **prior** turn does **not** clear pending.
+4. When Operator discovery needs commands (`in progress` or Pending bash blocks), deny plan Write unless `compose-operator-terminal-commands.mdc` and `operator-command-lessons-learned.mdc` were Read **full-file** (no `limit`/`offset`) this turn (transcript **or** ledger).
+5. Edit-triggered rule Read checks use **this turn only** (`last_turn_rows` **unioned** with the ledger), not the full transcript / prior turns.

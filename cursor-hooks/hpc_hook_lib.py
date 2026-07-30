@@ -1,6 +1,8 @@
 """Shared helpers for HPCPerfStats Cursor hooks (stdlib only)."""
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import re
 from pathlib import Path
@@ -507,9 +509,16 @@ def extract_live_plan_disk_write_contents_from_transcript(rows: list[dict]) -> s
 def extract_plan_authority_markdown(
     rows: list[dict],
     workspace_roots: Iterable[str] | None = None,
+    transcript_path: str | None = None,
+    full_rows: list[dict] | None = None,
 ) -> str:
     """Authoritative plan body for hook validation — disk file, not CreatePlan tool."""
-    for plan_path in reversed(live_plan_disk_paths_from_rows(rows)):
+    paths = list(live_plan_disk_paths_from_rows(rows))
+    if transcript_path is not None and full_rows is not None:
+        for path in live_plan_disk_paths_from_ledger(transcript_path, full_rows):
+            if path not in paths:
+                paths.append(path)
+    for plan_path in reversed(paths):
         resolved = resolve_live_plan_disk_path(plan_path, workspace_roots)
         if resolved is not None:
             text = resolved.read_text(encoding="utf-8", errors="replace")
@@ -541,19 +550,6 @@ def is_live_plan_disk_path(path: str) -> bool:
 
 def turn_had_live_plan_disk_write(rows: list[dict]) -> bool:
     return any(is_live_plan_disk_path(path) for path in extract_edited_paths(rows))
-
-
-def plan_disk_sync_issues(transcript_rows: list[dict]) -> list[str]:
-    """CreatePlan or plan-close turns must also Write/StrReplace a .cursor/plans/*.plan.md file."""
-    had_create_plan = turn_had_create_plan(transcript_rows)
-    had_disk = turn_had_live_plan_disk_write(transcript_rows)
-    if had_create_plan and not had_disk:
-        return [
-            "Plan not written to disk: Write or StrReplace "
-            "<workspace>/.cursor/plans/*.plan.md required; CreatePlan/chat alone does not count "
-            "(plan-live-disk-sync.mdc)",
-        ]
-    return []
 
 
 def suggested_live_plan_disk_path(create_plan_payload: dict | None) -> str:
@@ -983,13 +979,41 @@ def operator_discovery_issues(plan_markdown: str) -> list[str]:
     return issues
 
 
-def turn_create_plan_pending_disk_write(rows: list[dict]) -> bool:
+def turn_create_plan_pending_disk_write(
+    rows: list[dict],
+    transcript_path: str | None = None,
+    full_rows: list[dict] | None = None,
+) -> bool:
     """True when CreatePlan ran this turn and no same-turn live plan disk write exists.
 
     Disk-first is allowed: any Write/StrReplace to ``.cursor/plans/*.plan.md`` in
     the same turn (before or after CreatePlan) clears the pending gate.
+    Transcript facts are OR'd with the turn-activity ledger (lag-safe).
     """
-    return turn_had_create_plan(rows) and not turn_had_live_plan_disk_write(rows)
+    had_create = turn_had_create_plan_union(rows, transcript_path, full_rows)
+    had_disk = turn_had_live_plan_disk_write_union(rows, transcript_path, full_rows)
+    return had_create and not had_disk
+
+
+def plan_disk_sync_issues(
+    transcript_rows: list[dict],
+    transcript_path: str | None = None,
+    full_rows: list[dict] | None = None,
+) -> list[str]:
+    """CreatePlan or plan-close turns must also Write/StrReplace a .cursor/plans/*.plan.md file."""
+    had_create_plan = turn_had_create_plan_union(
+        transcript_rows, transcript_path, full_rows,
+    )
+    had_disk = turn_had_live_plan_disk_write_union(
+        transcript_rows, transcript_path, full_rows,
+    )
+    if had_create_plan and not had_disk:
+        return [
+            "Plan not written to disk: Write or StrReplace "
+            "<workspace>/.cursor/plans/*.plan.md required; CreatePlan/chat alone does not count "
+            "(plan-live-disk-sync.mdc)",
+        ]
+    return []
 
 
 def plan_authoring_precreate_read_issues(
@@ -1165,19 +1189,38 @@ def is_cursor_rule_read_path(path: str) -> bool:
     )
 
 
-# --- Rule-read ledger -------------------------------------------------------
+# --- Turn-activity ledger ---------------------------------------------------
 # Cursor writes the live turn's tool calls to ``transcript_path`` only after the
-# turn ends, so mid-turn ``preToolUse`` read-gates cannot see this turn's Read
-# parts and would deny every plan Write no matter how many rules were Read. A
-# ``preToolUse`` recorder hook matching ``Read``/``ReadFile`` persists each
-# cursor-rule / PLAN_TEMPLATE Read to this sidecar at Read time; the plan-write
-# gates union the ledger with the (lagging) transcript. The current turn is
-# keyed by the transcript's persisted user-row count (stable while the turn is
-# in flight), so entries from prior turns are ignored automatically.
-RULE_READ_LEDGER_SUFFIX = ".hpc_rule_reads.jsonl"
+# turn ends, so mid-turn ``preToolUse`` / early ``stop`` cannot see this turn's
+# Read / CreatePlan / live-plan Write parts in the transcript alone. A
+# ``preToolUse`` recorder persists those events under ``fcntl.flock`` so gates
+# can union the ledger with the lagging transcript. Turn key =
+# ``transcript_user_row_count`` (stable mid-turn).
+#
+# Primary sidecar: ``.hpc_turn_activity.jsonl``. Legacy ``.hpc_rule_reads.jsonl``
+# is still read for compatibility (entries without ``kind`` count as reads).
+TURN_ACTIVITY_LEDGER_SUFFIX = ".hpc_turn_activity.jsonl"
+RULE_READ_LEDGER_SUFFIX = ".hpc_rule_reads.jsonl"  # legacy alias
+
+LEDGER_KIND_READ = "read"
+LEDGER_KIND_CREATE_PLAN = "create_plan"
+LEDGER_KIND_LIVE_PLAN_WRITE = "live_plan_write"
+
+_LEDGER_COMPACT_LINE_BUDGET = 400
+
+
+def turn_activity_ledger_path(transcript_path: str | None) -> Path | None:
+    if not transcript_path:
+        return None
+    return Path(str(transcript_path) + TURN_ACTIVITY_LEDGER_SUFFIX)
 
 
 def rule_read_ledger_path(transcript_path: str | None) -> Path | None:
+    """Primary turn-activity ledger path (legacy name kept for callers/tests)."""
+    return turn_activity_ledger_path(transcript_path)
+
+
+def legacy_rule_read_ledger_path(transcript_path: str | None) -> Path | None:
     if not transcript_path:
         return None
     return Path(str(transcript_path) + RULE_READ_LEDGER_SUFFIX)
@@ -1190,14 +1233,33 @@ def transcript_user_row_count(rows: list[dict]) -> int:
     )
 
 
-def _read_ledger_entries(ledger: Path) -> list[dict]:
-    if not ledger.is_file():
-        return []
-    entries: list[dict] = []
+def _ledger_entry_kind(entry: dict) -> str:
+    kind = entry.get("kind")
+    if isinstance(kind, str) and kind.strip():
+        return kind.strip()
+    return LEDGER_KIND_READ
+
+
+@contextlib.contextmanager
+def _with_ledger_lock(ledger: Path):
+    """Exclusive flock around ledger read-modify-write / append."""
+    lock_path = Path(str(ledger) + ".lock")
     try:
-        raw = ledger.read_text(encoding="utf-8", errors="replace")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock_path, "a+", encoding="utf-8") as lock_f:
+            fcntl.flock(lock_f.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_f.fileno(), fcntl.LOCK_UN)
     except OSError:
-        return []
+        # Fail open for lock acquisition — still attempt the body unlocked so a
+        # single-writer path keeps working; parallel races may remain if lock fails.
+        yield
+
+
+def _parse_ledger_text(raw: str) -> list[dict]:
+    entries: list[dict] = []
     for line in raw.splitlines():
         line = line.strip()
         if not line:
@@ -1211,77 +1273,164 @@ def _read_ledger_entries(ledger: Path) -> list[dict]:
     return entries
 
 
+def _read_ledger_entries(ledger: Path) -> list[dict]:
+    if not ledger.is_file():
+        return []
+    try:
+        raw = ledger.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    return _parse_ledger_text(raw)
+
+
+def _read_all_ledger_files(transcript_path: str | None) -> list[dict]:
+    """Entries from primary + legacy sidecars (no turn filter)."""
+    entries: list[dict] = []
+    primary = turn_activity_ledger_path(transcript_path)
+    legacy = legacy_rule_read_ledger_path(transcript_path)
+    for path in (primary, legacy):
+        if path is None:
+            continue
+        entries.extend(_read_ledger_entries(path))
+    return entries
+
+
+def _dedupe_ledger_entries(entries: list[dict]) -> list[dict]:
+    """Stable dedupe by (kind, basename|path|name) within a turn."""
+    seen: set[tuple[str, str]] = set()
+    out: list[dict] = []
+    for entry in entries:
+        kind = _ledger_entry_kind(entry)
+        key_tail = (
+            str(entry.get("basename") or "")
+            or str(entry.get("path") or "")
+            or str(entry.get("name") or "")
+            or json.dumps(entry, sort_keys=True)
+        ).lower()
+        key = (kind, key_tail)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(entry)
+    return out
+
+
+def _append_ledger_entry(ledger: Path, entry: dict, user_rows: int) -> bool:
+    """Append ``entry`` under flock; keep only current-turn lines (compact)."""
+    try:
+        with _with_ledger_lock(ledger):
+            kept = [
+                e
+                for e in _read_ledger_entries(ledger)
+                if int(e.get("user_rows", -1)) == user_rows
+            ]
+            kept.append(entry)
+            if len(kept) > _LEDGER_COMPACT_LINE_BUDGET:
+                kept = _dedupe_ledger_entries(kept)
+            text = "".join(json.dumps(e) + "\n" for e in kept)
+            tmp = Path(str(ledger) + ".tmp")
+            tmp.write_text(text, encoding="utf-8")
+            tmp.replace(ledger)
+        return True
+    except OSError:
+        return False
+
+
+def _tool_input_path(tool_input: dict) -> str:
+    for key in ("path", "file_path", "target_file", "target_notebook"):
+        value = tool_input.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def record_turn_activity(
+    transcript_path: str | None,
+    tool_name: str | None,
+    tool_input: dict,
+) -> bool:
+    """Persist Read / CreatePlan / live-plan Write for the current turn.
+
+    Returns True when an entry was written. Uses ``fcntl.flock`` so parallel
+    preToolUse recorders cannot drop each other's entries.
+    """
+    if not isinstance(tool_input, dict):
+        return False
+    ledger = turn_activity_ledger_path(transcript_path)
+    if ledger is None or not transcript_path:
+        return False
+    user_rows = transcript_user_row_count(
+        parse_transcript_lines(str(transcript_path)),
+    )
+    name = canonical_tool_name(tool_name)
+
+    if name == "Read":
+        path = _tool_input_path(tool_input)
+        if not path:
+            return False
+        is_template = is_plan_template_read_path(path)
+        if not (is_cursor_rule_read_path(path) or is_template):
+            return False
+        entry = {
+            "kind": LEDGER_KIND_READ,
+            "basename": Path(path).name.lower(),
+            "template": bool(is_template),
+            "partial": tool_input.get("limit") is not None
+            or tool_input.get("offset") is not None,
+            "user_rows": user_rows,
+        }
+        return _append_ledger_entry(ledger, entry, user_rows)
+
+    if name == "CreatePlan":
+        plan_name = tool_input.get("name")
+        entry = {
+            "kind": LEDGER_KIND_CREATE_PLAN,
+            "name": str(plan_name).strip() if plan_name else "",
+            "user_rows": user_rows,
+        }
+        return _append_ledger_entry(ledger, entry, user_rows)
+
+    if name in ("Write", "StrReplace"):
+        path = _tool_input_path(tool_input)
+        if not path or not is_live_plan_disk_path(path):
+            return False
+        entry = {
+            "kind": LEDGER_KIND_LIVE_PLAN_WRITE,
+            "path": path.replace("\\", "/"),
+            "user_rows": user_rows,
+        }
+        return _append_ledger_entry(ledger, entry, user_rows)
+
+    return False
+
+
 def record_rule_read_to_ledger(
     transcript_path: str | None,
     tool_name: str | None,
     tool_input: dict,
 ) -> bool:
-    """Persist a cursor-rule / PLAN_TEMPLATE Read for the current turn.
-
-    Returns True when an entry was written. No-op for non-Read tools or reads of
-    unrelated paths. Only the current turn's entries are retained so the sidecar
-    never grows without bound.
-    """
-    if canonical_tool_name(tool_name) != "Read" or not isinstance(tool_input, dict):
-        return False
-    path = (
-        tool_input.get("path")
-        or tool_input.get("file_path")
-        or tool_input.get("target_file")
-    )
-    if not path:
-        return False
-    path = str(path)
-    is_template = is_plan_template_read_path(path)
-    if not (is_cursor_rule_read_path(path) or is_template):
-        return False
-    ledger = rule_read_ledger_path(transcript_path)
-    if ledger is None:
-        return False
-    user_rows = transcript_user_row_count(
-        parse_transcript_lines(str(transcript_path)),
-    )
-    entry = {
-        "basename": Path(path).name.lower(),
-        "template": bool(is_template),
-        "partial": tool_input.get("limit") is not None
-        or tool_input.get("offset") is not None,
-        "user_rows": user_rows,
-    }
-    kept = [
-        e
-        for e in _read_ledger_entries(ledger)
-        if int(e.get("user_rows", -1)) == user_rows
-    ]
-    kept.append(entry)
-    try:
-        ledger.write_text(
-            "".join(json.dumps(e) + "\n" for e in kept),
-            encoding="utf-8",
-        )
-    except OSError:
-        return False
-    return True
+    """Persist a cursor-rule / PLAN_TEMPLATE Read (compat wrapper)."""
+    return record_turn_activity(transcript_path, tool_name, tool_input)
 
 
 def _ledger_entries_this_turn(
     transcript_path: str | None,
     full_rows: list[dict],
 ) -> list[dict]:
-    """Ledger entries recorded during the current turn.
+    """Ledger entries recorded during the current turn (deduped).
 
     ``full_rows`` must be the complete transcript (not ``last_turn_rows``) so the
-    user-row turn marker matches what ``record_rule_read_to_ledger`` computed.
+    user-row turn marker matches what ``record_turn_activity`` computed.
     """
-    ledger = rule_read_ledger_path(transcript_path)
-    if ledger is None:
+    if transcript_path is None:
         return []
     current = transcript_user_row_count(full_rows)
-    return [
+    entries = [
         e
-        for e in _read_ledger_entries(ledger)
+        for e in _read_all_ledger_files(transcript_path)
         if int(e.get("user_rows", -1)) == current
     ]
+    return _dedupe_ledger_entries(entries)
 
 
 def ledger_read_basenames_this_turn(
@@ -1291,7 +1440,7 @@ def ledger_read_basenames_this_turn(
     return {
         str(e.get("basename", "")).lower()
         for e in _ledger_entries_this_turn(transcript_path, full_rows)
-        if e.get("basename")
+        if _ledger_entry_kind(e) == LEDGER_KIND_READ and e.get("basename")
     }
 
 
@@ -1300,7 +1449,8 @@ def ledger_has_template_read_this_turn(
     full_rows: list[dict],
 ) -> bool:
     return any(
-        e.get("template") for e in _ledger_entries_this_turn(transcript_path, full_rows)
+        e.get("template") and _ledger_entry_kind(e) == LEDGER_KIND_READ
+        for e in _ledger_entries_this_turn(transcript_path, full_rows)
     )
 
 
@@ -1311,8 +1461,72 @@ def ledger_full_file_basenames_this_turn(
     return {
         str(e.get("basename", "")).lower()
         for e in _ledger_entries_this_turn(transcript_path, full_rows)
-        if e.get("basename") and not e.get("partial")
+        if (
+            _ledger_entry_kind(e) == LEDGER_KIND_READ
+            and e.get("basename")
+            and not e.get("partial")
+        )
     }
+
+
+def ledger_had_create_plan_this_turn(
+    transcript_path: str | None,
+    full_rows: list[dict],
+) -> bool:
+    return any(
+        _ledger_entry_kind(e) == LEDGER_KIND_CREATE_PLAN
+        for e in _ledger_entries_this_turn(transcript_path, full_rows)
+    )
+
+
+def ledger_had_live_plan_write_this_turn(
+    transcript_path: str | None,
+    full_rows: list[dict],
+) -> bool:
+    return any(
+        _ledger_entry_kind(e) == LEDGER_KIND_LIVE_PLAN_WRITE
+        for e in _ledger_entries_this_turn(transcript_path, full_rows)
+    )
+
+
+def live_plan_disk_paths_from_ledger(
+    transcript_path: str | None,
+    full_rows: list[dict],
+) -> list[str]:
+    paths: list[str] = []
+    seen: set[str] = set()
+    for entry in _ledger_entries_this_turn(transcript_path, full_rows):
+        if _ledger_entry_kind(entry) != LEDGER_KIND_LIVE_PLAN_WRITE:
+            continue
+        path = str(entry.get("path") or "").replace("\\", "/")
+        if path and is_live_plan_disk_path(path) and path not in seen:
+            seen.add(path)
+            paths.append(path)
+    return paths
+
+
+def turn_had_create_plan_union(
+    rows: list[dict],
+    transcript_path: str | None = None,
+    full_rows: list[dict] | None = None,
+) -> bool:
+    if turn_had_create_plan(rows):
+        return True
+    if transcript_path is not None and full_rows is not None:
+        return ledger_had_create_plan_this_turn(transcript_path, full_rows)
+    return False
+
+
+def turn_had_live_plan_disk_write_union(
+    rows: list[dict],
+    transcript_path: str | None = None,
+    full_rows: list[dict] | None = None,
+) -> bool:
+    if turn_had_live_plan_disk_write(rows):
+        return True
+    if transcript_path is not None and full_rows is not None:
+        return ledger_had_live_plan_write_this_turn(transcript_path, full_rows)
+    return False
 
 
 def extract_read_rule_basenames(rows: list[dict]) -> set[str]:
@@ -1609,11 +1823,20 @@ def rule_dual_registration_issues(work_paths: list[str]) -> list[str]:
 def plan_authority_content_issues(
     transcript_rows: list[dict],
     workspace_roots: Iterable[str] | None = None,
+    transcript_path: str | None = None,
+    full_rows: list[dict] | None = None,
 ) -> list[str]:
     """PLAN_TEMPLATE + operator-discovery gaps in the live disk plan."""
-    if not turn_had_live_plan_disk_write(transcript_rows):
+    if not turn_had_live_plan_disk_write_union(
+        transcript_rows, transcript_path, full_rows,
+    ):
         return []
-    plan_markdown = extract_plan_authority_markdown(transcript_rows, workspace_roots)
+    plan_markdown = extract_plan_authority_markdown(
+        transcript_rows,
+        workspace_roots,
+        transcript_path=transcript_path,
+        full_rows=full_rows,
+    )
     return [
         f"Plan disk content missing: {label}"
         for label in plan_content_issues(plan_markdown)
@@ -1625,12 +1848,31 @@ def close_gate_issues(
     assistant_text: str,
     transcript_rows: list[dict],
     workspace_roots: Iterable[str] | None = None,
+    transcript_path: str | None = None,
+    full_rows: list[dict] | None = None,
 ) -> list[str]:
+    full = full_rows if full_rows is not None else transcript_rows
+    extra_reads = (
+        ledger_read_basenames_this_turn(transcript_path, full)
+        if transcript_path
+        else set()
+    )
+    extra_template = (
+        ledger_has_template_read_this_turn(transcript_path, full)
+        if transcript_path
+        else False
+    )
     issues = missing_close_gate_sections(assistant_text)
     work_paths = extract_work_paths(transcript_rows, workspace_roots)
     issues.extend(triggered_rule_dispatch_issues(assistant_text, work_paths))
     required_rules = domain_rules_required(assistant_text, work_paths)
-    issues.extend(domain_rule_read_issues(required_rules, transcript_rows))
+    issues.extend(
+        domain_rule_read_issues(
+            required_rules,
+            transcript_rows,
+            extra_read_basenames=extra_reads,
+        ),
+    )
     issues.extend(rule_dual_registration_issues(work_paths))
     issues.extend(edge_cases_issues(assistant_text))
     issues.extend(
@@ -1640,12 +1882,32 @@ def close_gate_issues(
             work_paths,
         ),
     )
-    if turn_had_create_plan(transcript_rows):
-        issues.extend(plan_authority_content_issues(transcript_rows, workspace_roots))
-        issues.extend(plan_template_read_issues(transcript_rows))
-        issues.extend(plan_disk_sync_issues(transcript_rows))
+    if turn_had_create_plan_union(transcript_rows, transcript_path, full):
+        issues.extend(
+            plan_authority_content_issues(
+                transcript_rows,
+                workspace_roots,
+                transcript_path=transcript_path,
+                full_rows=full,
+            ),
+        )
+        issues.extend(
+            plan_template_read_issues(
+                transcript_rows,
+                extra_has_template=extra_template,
+            ),
+        )
+        issues.extend(
+            plan_disk_sync_issues(transcript_rows, transcript_path, full),
+        )
         plan_required = plan_authoring_required_mdc_rules(work_paths)
-        issues.extend(domain_rule_read_issues(plan_required, transcript_rows))
+        issues.extend(
+            domain_rule_read_issues(
+                plan_required,
+                transcript_rows,
+                extra_read_basenames=extra_reads,
+            ),
+        )
     return issues
 
 

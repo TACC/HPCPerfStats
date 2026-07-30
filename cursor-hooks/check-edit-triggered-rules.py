@@ -19,6 +19,8 @@ from hpc_hook_lib import (  # noqa: E402
     extract_work_paths,
     is_live_plan_disk_path,
     last_turn_rows,
+    ledger_has_template_read_this_turn,
+    ledger_read_basenames_this_turn,
     load_json_stdin,
     parse_transcript_lines,
     paths_from_plan_markdown,
@@ -106,11 +108,27 @@ def main() -> int:
 
     workspace_roots = payload.get("workspace_roots") or []
     # Turn-scoped only — prior-turn edits must not poison read-before-edit checks.
-    rows = last_turn_rows(parse_transcript_lines(transcript_path))
-    issues = domain_rule_read_issues(triggered, rows)
+    full_rows = parse_transcript_lines(transcript_path)
+    rows = last_turn_rows(full_rows)
+    extra_reads = ledger_read_basenames_this_turn(transcript_path, full_rows)
+    extra_template = ledger_has_template_read_this_turn(transcript_path, full_rows)
+    issues = domain_rule_read_issues(
+        triggered,
+        rows,
+        extra_read_basenames=extra_reads,
+    )
     if tool_name == "CreatePlan":
-        issues.extend(plan_template_read_issues(rows))
-        issues.extend(plan_authority_content_issues(rows, workspace_roots))
+        issues.extend(
+            plan_template_read_issues(rows, extra_has_template=extra_template),
+        )
+        issues.extend(
+            plan_authority_content_issues(
+                rows,
+                workspace_roots,
+                transcript_path=transcript_path,
+                full_rows=full_rows,
+            ),
+        )
     if edited_path and is_live_plan_disk_path(edited_path):
         tool_input = payload.get("tool_input") or {}
         inline_contents = ""
@@ -119,6 +137,8 @@ def main() -> int:
         plan_md = inline_contents.strip() or extract_plan_authority_markdown(
             rows,
             workspace_roots,
+            transcript_path=transcript_path,
+            full_rows=full_rows,
         )
         for label in plan_content_issues(plan_md):
             issues.append(f"Plan disk content missing: {label}")

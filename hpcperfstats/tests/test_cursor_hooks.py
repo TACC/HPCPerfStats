@@ -1553,6 +1553,219 @@ def test_check_pre_create_plan_reads_still_denies_when_ledger_missing_rule(tmp_p
   assert "deploy-ini-with-code-no-phase-zero" in data.get("agent_message", "")
 
 
+def test_record_turn_activity_parallel_reads_keep_all_entries(tmp_path):
+  """flock + RMW must not drop parallel Read ledger entries."""
+  import concurrent.futures
+
+  transcript = _one_user_row_transcript(tmp_path, "parallel.jsonl")
+  base = "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
+  names = list(lib.PLAN_AUTHORING_REQUIRED_MDC)
+
+  def _record(name: str) -> bool:
+    return lib.record_turn_activity(
+        str(transcript),
+        "Read",
+        {"path": f"{base}{name}"},
+    )
+
+  with concurrent.futures.ThreadPoolExecutor(max_workers=len(names)) as pool:
+    results = list(pool.map(_record, names))
+  assert all(results)
+  full_rows = lib.parse_transcript_lines(str(transcript))
+  got = lib.ledger_read_basenames_this_turn(str(transcript), full_rows)
+  assert got == {n.lower() for n in names}
+
+
+def test_ledger_create_plan_and_write_clear_pending_without_transcript(tmp_path):
+  transcript = _one_user_row_transcript(tmp_path, "pending-clear.jsonl")
+  assert lib.record_turn_activity(
+      str(transcript), "CreatePlan", {"name": "race-fix"},
+  )
+  assert lib.record_turn_activity(
+      str(transcript),
+      "Write",
+      {"path": ".cursor/plans/race-fix.plan.md", "contents": "x"},
+  )
+  full_rows = lib.parse_transcript_lines(str(transcript))
+  turn_rows = lib.last_turn_rows(full_rows)
+  assert lib.turn_create_plan_pending_disk_write(
+      turn_rows, transcript_path=str(transcript), full_rows=full_rows,
+  ) is False
+
+
+def test_stale_on_disk_plan_file_does_not_clear_pending(tmp_path):
+  transcript = _one_user_row_transcript(tmp_path, "stale-disk.jsonl")
+  # Prior-turn leftover file must not clear pending without a ledger/transcript Write.
+  leftover = tmp_path / "leftover.plan.md"
+  leftover.write_text("stale", encoding="utf-8")
+  assert lib.record_turn_activity(
+      str(transcript), "CreatePlan", {"name": "stale-case"},
+  )
+  full_rows = lib.parse_transcript_lines(str(transcript))
+  turn_rows = lib.last_turn_rows(full_rows)
+  assert lib.turn_create_plan_pending_disk_write(
+      turn_rows, transcript_path=str(transcript), full_rows=full_rows,
+  ) is True
+  assert leftover.is_file()
+
+
+def test_check_block_until_plan_disk_allows_when_write_only_in_ledger(tmp_path):
+  transcript = _one_user_row_transcript(tmp_path, "block-ledger-write.jsonl")
+  recorder = HOOKS_DIR / "record-rule-reads.py"
+  for tool_name, tool_input in (
+      ("CreatePlan", {"name": "ledger-write"}),
+      (
+          "Write",
+          {
+              "path": ".cursor/plans/ledger-write.plan.md",
+              "contents": _minimal_plan_markdown(),
+          },
+      ),
+  ):
+    proc = subprocess.run(
+        [sys.executable, str(recorder)],
+        input=json.dumps(
+            {
+                "tool_name": tool_name,
+                "tool_input": tool_input,
+                "transcript_path": str(transcript),
+            },
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0
+
+  payload = {
+      "tool_name": "Shell",
+      "tool_input": {"command": "echo ok"},
+      "transcript_path": str(transcript),
+  }
+  script = HOOKS_DIR / "check-block-until-plan-disk.py"
+  proc = subprocess.run(
+      [sys.executable, str(script)],
+      input=json.dumps(payload),
+      capture_output=True,
+      text=True,
+      check=False,
+  )
+  assert proc.returncode == 0
+  assert json.loads(proc.stdout.strip()).get("permission") == "allow"
+
+
+def test_close_gate_still_flags_create_plan_without_write_in_ledger_or_transcript(
+    tmp_path,
+):
+  transcript = _one_user_row_transcript(tmp_path, "close-true-pos.jsonl")
+  assert lib.record_turn_activity(
+      str(transcript), "CreatePlan", {"name": "true-pos"},
+  )
+  full_rows = lib.parse_transcript_lines(str(transcript))
+  turn_rows = lib.last_turn_rows(full_rows)
+  issues = lib.plan_disk_sync_issues(
+      turn_rows, str(transcript), full_rows,
+  )
+  assert issues
+  assert any("Plan not written to disk" in item for item in issues)
+
+
+def test_check_close_gate_accepts_reads_only_in_ledger(tmp_path):
+  """Stop must union ledger Reads so lagging transcript does not false-fail."""
+  transcript = _one_user_row_transcript(tmp_path, "close-ledger-reads.jsonl")
+  base = "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
+  recorder = HOOKS_DIR / "record-rule-reads.py"
+  for name in lib.PLAN_AUTHORING_REQUIRED_MDC:
+    subprocess.run(
+        [sys.executable, str(recorder)],
+        input=json.dumps(
+            {
+                "tool_name": "Read",
+                "tool_input": {"path": f"{base}{name}"},
+                "transcript_path": str(transcript),
+            },
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+  subprocess.run(
+      [sys.executable, str(recorder)],
+      input=json.dumps(
+          {
+              "tool_name": "Read",
+              "tool_input": {
+                  "path": "/repo/HPCPerfStats/docs/plans/PLAN_TEMPLATE.md",
+              },
+              "transcript_path": str(transcript),
+          },
+      ),
+      capture_output=True,
+      text=True,
+      check=False,
+  )
+  assert lib.record_turn_activity(
+      str(transcript), "CreatePlan", {"name": "close-ledger"},
+  )
+  assert lib.record_turn_activity(
+      str(transcript),
+      "Write",
+      {
+          "path": ".cursor/plans/close-ledger.plan.md",
+          "contents": _minimal_plan_markdown(),
+      },
+  )
+  # Put a real disk file where resolve can find it for content checks.
+  workspace_plans = tmp_path / ".cursor" / "plans"
+  workspace_plans.mkdir(parents=True)
+  (workspace_plans / "close-ledger.plan.md").write_text(
+      _minimal_plan_markdown(), encoding="utf-8",
+  )
+
+  close_text = (
+      "## Agent rule dispatch\n\n"
+      + ", ".join(lib.PLAN_AUTHORING_REQUIRED_MDC)
+      + "\n\n"
+      "## Final code review (senior engineer pass)\n\nok\n\n"
+      "## Post-implementation review\n\n"
+      "### Why it works\n\nworks\n\n"
+      "### Edge cases\n\n"
+      "- one\n- two\n- three\n\n"
+      "### Convention check\nok\n"
+  )
+  # Append assistant close text + no tool parts (lag simulation).
+  with transcript.open("a", encoding="utf-8") as fh:
+    fh.write(
+        json.dumps(
+            {
+                "role": "assistant",
+                "message": {"content": [{"type": "text", "text": close_text}]},
+            },
+        )
+        + "\n",
+    )
+
+  payload = {
+      "status": "completed",
+      "loop_count": 0,
+      "transcript_path": str(transcript),
+      "workspace_roots": [str(tmp_path)],
+  }
+  script = HOOKS_DIR / "check-close-gate.py"
+  proc = subprocess.run(
+      [sys.executable, str(script)],
+      input=json.dumps(payload),
+      capture_output=True,
+      text=True,
+      check=False,
+  )
+  assert proc.returncode == 0
+  data = json.loads(proc.stdout.strip() or "{}")
+  followup = data.get("followup_message") or ""
+  assert "Plan disk sync incomplete" not in followup
+  assert "Rule not read:" not in followup
+
+
 def test_check_block_until_plan_disk_denies_shell_after_create_plan(tmp_path):
   transcript = tmp_path / "block-disk.jsonl"
   transcript.write_text(

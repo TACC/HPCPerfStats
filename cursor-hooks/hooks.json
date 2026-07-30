@@ -4,7 +4,7 @@
     "preToolUse": [
       {
         "command": ".cursor/hooks/record-rule-reads.py",
-        "matcher": "Read|ReadFile",
+        "matcher": "Read|ReadFile|CreatePlan|Write|StrReplace",
         "timeout": 10
       },
       {
