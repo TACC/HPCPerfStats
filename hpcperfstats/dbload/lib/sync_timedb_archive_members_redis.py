@@ -2033,47 +2033,154 @@ def _populate_scan_should_defer(
   return True
 
 
-def set_daily_tar_restore_in_progress(
+def _daily_tar_restore_lease_seconds() -> int:
+  """Lease TTL for exclusive sealed→tar restore (renewed while decompressing)."""
+  try:
+    return max(60, int(cfg.get_sync_daily_tar_restore_lease_seconds()))
+  except Exception:
+    return max(60, int(_populate_max_seconds()) or 14400)
+
+
+def try_acquire_daily_tar_restore(
     day_token: str,
     *,
     reason: str,
     caller: str,
-) -> None:
+) -> str:
+  """Exclusive ``SET NX EX`` lease for materializing ``{day}.tar`` from sealed.
+
+  Returns the owner lease value on success, or ``""`` when another owner holds
+  the key / Redis is unavailable / day token is empty. Callers must only touch
+  ``{day}.tar.decomp.tmp`` when this returns a non-empty lease value.
+  """
   if not day_token or day_token == "unknown":
-    return
+    return ""
   if not archive_members_redis_enabled():
-    return
+    return ""
   client = get_archive_members_redis_client(required=False)
   if client is None:
-    return
-  value = "%s:%s" % (reason or "missing_tar", caller or "")
-  client.set(
-      _daily_tar_restore_key(day_token),
-      value,
-      ex=_populate_max_seconds(),
+    return ""
+  token = secrets.token_hex(16)
+  lease_value = "%s:%s:%s:%s" % (
+      reason or "missing_tar",
+      caller or "",
+      os.getpid(),
+      token,
   )
+  acquired = client.set(
+      _daily_tar_restore_key(day_token),
+      lease_value,
+      nx=True,
+      ex=_daily_tar_restore_lease_seconds(),
+  )
+  if not acquired:
+    return ""
   log_print(
       "archive: daily_tar_restore begin day=%s reason=%s caller=%s"
       % (day_token, reason or "missing_tar", caller or ""),
       flush=True,
   )
+  return lease_value
 
 
-def clear_daily_tar_restore_in_progress(day_token: str, *, ok: bool = True, reason: str = "") -> None:
+def renew_daily_tar_restore_lease(day_token: str, lease_value: str) -> bool:
+  """Refresh EXPIRE on the restore lease when still owned by ``lease_value``."""
+  if not day_token or not lease_value:
+    return False
+  if not archive_members_redis_enabled():
+    return False
+  client = get_archive_members_redis_client(required=False)
+  if client is None:
+    return False
+  key = _daily_tar_restore_key(day_token)
+  script = (
+      "if redis.call('get', KEYS[1]) == ARGV[1] then "
+      "return redis.call('expire', KEYS[1], ARGV[2]) else return 0 end"
+  )
+  try:
+    return bool(
+        client.eval(
+            script,
+            1,
+            key,
+            lease_value,
+            str(_daily_tar_restore_lease_seconds()),
+        )
+    )
+  except Exception:
+    raw = client.get(key)
+    if raw is not None and str(raw) == lease_value:
+      try:
+        client.expire(key, _daily_tar_restore_lease_seconds())
+        return True
+      except Exception:
+        return False
+    return False
+
+
+def set_daily_tar_restore_in_progress(
+    day_token: str,
+    *,
+    reason: str,
+    caller: str,
+) -> str:
+  """Acquire exclusive restore lease; return owner token or ``""`` on conflict.
+
+  Prefer ``try_acquire_daily_tar_restore`` at new call sites. This wrapper
+  remains for tests and older callers; it never overwrites an existing lease.
+  """
+  return try_acquire_daily_tar_restore(
+      day_token,
+      reason=reason,
+      caller=caller,
+  )
+
+
+def clear_daily_tar_restore_in_progress(
+    day_token: str,
+    *,
+    token: str = "",
+    ok: bool = True,
+    reason: str = "",
+) -> None:
+  """Compare-and-del restore lease. Non-owner / empty token is a no-op."""
   if not day_token or day_token == "unknown":
     return
+  cleared = False
+  end_reason = reason or "missing_tar"
   if archive_members_redis_enabled():
     client = get_archive_members_redis_client(required=False)
-    if client is not None:
-      if not reason:
-        raw = client.get(_daily_tar_restore_key(day_token))
-        if raw:
-          reason = str(raw).split(":", 1)[0]
-      client.delete(_daily_tar_restore_key(day_token))
-  if day_token:
+    if client is None:
+      return
+    key = _daily_tar_restore_key(day_token)
+    if not token:
+      # Owner-only release: refuse unconditional DELETE (dual-zstd race).
+      return
+    if not reason:
+      raw = client.get(key)
+      if raw:
+        end_reason = str(raw).split(":", 1)[0]
+    script = (
+        "if redis.call('get', KEYS[1]) == ARGV[1] then "
+        "return redis.call('del', KEYS[1]) else return 0 end"
+    )
+    try:
+      cleared = bool(client.eval(script, 1, key, token))
+    except Exception:
+      raw = client.get(key)
+      if raw is not None and str(raw) == token:
+        client.delete(key)
+        cleared = True
+    if not cleared:
+      return
+  elif not token:
+    return
+  else:
+    cleared = True
+  if cleared:
     log_print(
         "archive: daily_tar_restore end day=%s ok=%s reason=%s"
-        % (day_token, "yes" if ok else "no", reason or "missing_tar"),
+        % (day_token, "yes" if ok else "no", end_reason),
         flush=True,
     )
   try:

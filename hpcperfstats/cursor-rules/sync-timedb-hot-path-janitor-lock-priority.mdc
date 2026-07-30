@@ -8,7 +8,9 @@ globs: hpcperfstats/dbload/sync_timedb*.py,hpcperfstats/dbload/lib/sync_timedb_a
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-**Law:** ingest/populate/append is the **hot path**; janitor seal/dedupe/delete/tar-drop is the **cold path**. Janitor **defers before write** and **cooperatively yields mid-mutation** when ingest signals need the same daily tar after a janitor-first lock — **except daily tar restore from sealed** (missing or corrupt `.tar`), where restore runs to completion and populate **waits** on `daily_tar_restore`. **Archive append dispatch** must still **skip** restore-blocked calendar days (overflow + short backoff) so free archive-pool slots drain other heap days; restore ownership stays on the decompress/day-close thread.
+**Law:** ingest/populate/append is the **hot path**; janitor seal/dedupe/delete/tar-drop is the **cold path**. Janitor **defers before write** and **cooperatively yields mid-mutation** when ingest signals need the same daily tar after a janitor-first lock — **except daily tar restore from sealed** (missing or corrupt `.tar`), where restore runs to completion under an **exclusive owner-token lease** (`SET NX EX` + compare-and-del clear) and populate **waits** on `daily_tar_restore`. **Non-owner clears are forbidden** (loser must not `DELETE` the lease). **Day-close is single-flight per tar** across ticks (live-worker tars excluded from pop/enqueue). A day-close worker that loses the restore race **defers** (`reason=daily_tar_restore`) instead of blocking a pool slot for the full decompress. **Archive append dispatch** must still **skip** restore-blocked calendar days (overflow + short backoff) so free archive-pool slots drain other heap days; restore ownership stays on the decompress owner thread.
+
+**Operator signature of the dual-write bug:** two concurrent `zstd -d -o …/{day}.tar.decomp.tmp` processes (materialize-to-tar). That is **not** Redis populate — populate uses `zstd -d -c` (stdout pipe) under the populate lock.
 
 ## Required patterns
 
@@ -19,23 +21,26 @@ globs: hpcperfstats/dbload/sync_timedb*.py,hpcperfstats/dbload/lib/sync_timedb_a
 | `try_file_write_lock` (**context manager**, non-blocking; contended → `TimeoutError`) | `file_locking.py` |
 | Sticky `write_lock_contended` backoff (`JanitorDeferTracker`) | `sync_timedb_day_close_cooperation.py` |
 | `ingest_tar_hot` Redis key | `sync_timedb_archive_members_redis.py` |
-| `daily_tar_restore` Redis key + populate wait | `sync_timedb_archive_members_redis.py` |
+| `try_acquire_daily_tar_restore` / owner-token `clear_daily_tar_restore_in_progress` | `sync_timedb_archive_members_redis.py` |
+| Restore serialize + `{tar}.decomp` file lock when Redis off | `zstd_cli.py` `decompress_compressed_to_tar` |
+| Day-close live-worker skip in pop/enqueue | `sync_timedb_archive_janitor.py` |
 | Restore-blocked day skip in `dispatch_disjoint_items` | `sync_timedb_archive_dispatch.py` |
 | `ArchiveJanitor.signal_day_close_yield` | `sync_timedb_archive_janitor.py` |
 | In-operation yield polls (5s) in dedupe + zstd Popen | `sync_timedb_archive_helpers.py`, `zstd_cli.py` |
 
 ## Logs (operator grep)
 
-- `janitor: day_close defer tar=… phase=… reason=…` (`phase=preflight` before seal/dedupe)
+- `janitor: day_close defer tar=… phase=… reason=…` (`phase=preflight` before seal/dedupe; `phase=pre_seal_verify` + `reason=daily_tar_restore` when restore lease lost)
 - `Archive janitor tick done … deferred_preflight_n=… deferred_reason_top=… leave_in_flight=… budget_exit=…`
 - **`deferred_reason_top=chunk_in_progress_day`** with `leave_in_flight=0` during active `chunk dispatch begin` / `chunk ingest summary` is **healthy** (hot-path defer while imap owns that calendar day) — not sticky tokens and not the multi-hour `duration_s≈9217` budget hang. Fail only if hour-scale `chunk_in_progress_day` with **no** chunk progress and flat day-close debt.
 - `janitor: day_close yield tar=… phase=… reason=…`
 - `janitor: day_close yield signal tar=… reason=…`
 - `populate: wait daily_tar_restore day=…`
-- `archive: daily_tar_restore begin|end day=… reason=missing_tar|corrupt_tar`
+- `archive: daily_tar_restore begin|end day=… reason=missing_tar|corrupt_tar` — at most **one** begin per day until matching owner `end`
 - `Archive dispatch skip day=… reason=daily_tar_restore`
 - `INFO: archive_job soft_skip day=… reason=daily_tar_restore`
 - `INFO: deferred prewarm flush day=… reason=tar_restore_end`
+- Classify zstd: `zstd -d -c` = populate (expected multi-day parallelism across days); `zstd -d -o …decomp.tmp` = restore (**at most one** process site-wide per calendar day)
 
 ## Starvation
 

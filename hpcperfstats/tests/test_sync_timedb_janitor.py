@@ -4395,3 +4395,48 @@ def test_discover_stashes_unprocessed_snapshot_for_submit(tmp_path, monkeypatch)
   janitor._discover_and_enqueue_ready_day_close(reason="tick")
   assert seen["snap"] == {tar_path: []}
   assert getattr(janitor, "_day_close_submit_unprocessed_snapshot", None) is None
+
+
+def test_day_close_pop_skips_live_worker_tar(tmp_path):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_a = os.path.normpath(str(daily_dir / "2026-06-02.tar"))
+  tar_b = os.path.normpath(str(daily_dir / "2026-06-03.tar"))
+  open(tar_a, "wb").close()
+  open(tar_b, "wb").close()
+  janitor = _make_janitor(tgz_archive_dir=str(daily_dir))
+  with janitor._debt_lock:
+    janitor._enqueue_day_close_locked(tar_a, persist=False)
+    janitor._enqueue_day_close_locked(tar_b, persist=False)
+  live_debt = DayDebt(
+      sort_index=_debt_sort_key(DebtKind.DAY_CLOSE, tar_a),
+      kind=DebtKind.DAY_CLOSE,
+      tar_path=tar_a,
+  )
+  with janitor._day_close_in_flight_lock:
+    janitor._day_close_in_flight[object()] = live_debt
+  # Re-enqueue tar_a while live — must refuse.
+  assert janitor._enqueue_day_close(tar_a, persist=False) is False
+  debt = janitor._pop_one_day_close_debt(
+      set(),
+      skip_tars=janitor._day_close_live_worker_tar_paths(),
+  )
+  assert debt is not None
+  assert debt.tar_path == tar_b
+
+
+def test_enqueue_day_close_refuses_live_worker_tar(tmp_path):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_a = os.path.normpath(str(daily_dir / "2026-06-02.tar"))
+  open(tar_a, "wb").close()
+  janitor = _make_janitor(tgz_archive_dir=str(daily_dir))
+  live_debt = DayDebt(
+      sort_index=_debt_sort_key(DebtKind.DAY_CLOSE, tar_a),
+      kind=DebtKind.DAY_CLOSE,
+      tar_path=tar_a,
+  )
+  with janitor._day_close_in_flight_lock:
+    janitor._day_close_in_flight[object()] = live_debt
+  assert janitor._enqueue_day_close(tar_a, persist=False) is False
+  assert janitor.debt_depth() == 0

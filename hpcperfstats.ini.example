@@ -360,6 +360,9 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Tar populate fnctl read-lock wait uses this value when > 0 (else fnctl INI below).
 # sync_archive_members_redis_populate_max_seconds = 7200
 
+# Exclusive sealed→tar restore lease TTL (SET NX); renewed while zstd -o runs (default 14400).
+# sync_daily_tar_restore_lease_seconds = 14400
+
 # Shared fnctl read-lock wait for non-populate archive verify paths (default 180).
 # sync_archive_members_fnctl_read_lock_timeout_seconds = 180
 

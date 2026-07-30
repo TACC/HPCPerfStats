@@ -4729,12 +4729,21 @@ def validate_sealed_daily_archive_for_raw_removal(
   return result
 
 
-def ensure_daily_tar_restored_for_append(tar_path, zstd_threads):
+def ensure_daily_tar_restored_for_append(
+    tar_path,
+    zstd_threads,
+    *,
+    wait_for_other_owner: bool = True,
+):
   """Return True when sibling ``.tar`` exists or was restored from sealed backup.
 
   When no sealed ``.tar.zst`` / ``.tar.gz`` sibling exists, returns True so the
   caller may bootstrap a fresh ``.tar``. Returns False when a sealed sibling
   remains but restore did not produce ``tar_path``.
+
+  ``wait_for_other_owner=False`` (day-close pre_seal) returns False immediately
+  when another thread holds the exclusive restore lease, so the worker can
+  defer without blocking a day-close slot for the full decompress.
   """
   if os.path.isfile(tar_path):
     return True
@@ -4752,7 +4761,11 @@ def ensure_daily_tar_restored_for_append(tar_path, zstd_threads):
     )
   if os.path.isfile(zst_path):
     if decompress_compressed_to_tar(
-        zst_path, tar_path, zstd_threads, remove_compressed=remove_compressed,
+        zst_path,
+        tar_path,
+        zstd_threads,
+        remove_compressed=remove_compressed,
+        wait_for_other_owner=wait_for_other_owner,
     ):
       log_print(
           "INFO: archive decompress restore tar=%s from=%s remove_compressed=%s"
@@ -4762,7 +4775,11 @@ def ensure_daily_tar_restored_for_append(tar_path, zstd_threads):
       return True
   if os.path.isfile(gz_path):
     if decompress_compressed_to_tar(
-        gz_path, tar_path, zstd_threads, remove_compressed=remove_compressed,
+        gz_path,
+        tar_path,
+        zstd_threads,
+        remove_compressed=remove_compressed,
+        wait_for_other_owner=wait_for_other_owner,
     ):
       log_print(
           "INFO: archive decompress restore tar=%s from=%s remove_compressed=%s"

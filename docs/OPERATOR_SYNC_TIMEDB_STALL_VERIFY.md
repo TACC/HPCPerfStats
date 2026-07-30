@@ -16,6 +16,8 @@ Attach the `test_runs/day-close-loop-regression-battery-*.log` path to the PR or
 
 **After chunk-cadence / RC-0 deploy (persistence v7):** contract bump clears poisoned `zero_host_ingest_mark` entries — expect a one-time re-gate/re-ingest of previously marked paths still on disk. Deleted-but-tarred raws (extract + re-ingest) are a separate operator restore decision after the fixed parser is live.
 
+**After dual-zstd / exclusive restore deploy:** at most one `archive: daily_tar_restore begin` per calendar day until matching owner `end`; never two `zstd -d -o …decomp.tmp` for the same day. Classify: `zstd -d -c` = Redis populate (OK); `zstd -d -o …decomp.tmp` = sealed→tar restore (must be single-flight). On redeploy, stop pipeline, remove stale `*.tar.decomp.tmp` under INI `daily_archive_dir`, then up — see **T0 / T1 — exclusive daily tar restore (dual-zstd)** below.
+
 ## Chunk cadence attribution (T0 / T1)
 
 Pair every `chunk_elapsed_s` sample with:
@@ -1311,6 +1313,45 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 ```
 
 **Unhealthy:** populate waits full **`populate_max_seconds`** with **`daily_tar_restore`** stuck (no `daily_tar_restore end`); gated prewarm with **`gated_tar_restore=True`** and no **`archive decompress restore begin`** / no `zstd -d` for that day while MainThread is busy; repeated fnctl timeout without preceding defer/yield/restore-wait logs; defer streak with no progress past **`defer_cap_exceeded`** without seal/dedupe completion; multi-hour `write_lock_contended` **with** `try_file_write_lock` still failing (true live holder stuck) — distinct from leftover orphan sidecars where the probe returns `OK_uncontended`.
+
+### T0 / T1 — exclusive daily tar restore (dual-zstd / `decomp.tmp`, 2026-07)
+
+**Failure signature (pre-fix):** two concurrent `zstd -d -o …/YYYY-MM-DD.tar.decomp.tmp` processes on the same day; three day-close workers logging `daily_tar_restore begin` for one calendar day; `daily_tar_restore end ok=no` from a non-owner clearing the Redis key and reopening the gate.
+
+**Classify zstd cmdline:**
+
+| Cmdline | Path | Expected concurrency |
+|---------|------|----------------------|
+| `zstd -d -c` | Redis archive-members populate | One populate winner per day; OK across different days |
+| `zstd -d -o …decomp.tmp` | `decompress_compressed_to_tar` (sealed→tar) | **At most one** process site-wide per calendar day |
+
+**Deploy-time cleanup (single wave with code; no pre-code INI edit):**
+
+```bash
+# pipeline — stop, clear stale decomp.tmp under INI daily_archive_dir, up
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml stop pipeline && \
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml run --rm --no-deps pipeline su hpcperfstats -c 'python3 -c "
+from hpcperfstats.dbload.lib import conf_parser as cfg
+print(cfg.get_daily_archive_dir_path())
+"' && \
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml run --rm --no-deps pipeline su hpcperfstats -c 'sh -lc "
+rm -f \"$(python3 -c \"from hpcperfstats.dbload.lib import conf_parser as cfg; print(cfg.get_daily_archive_dir_path())\")\"/*.tar.decomp.tmp
+"' && \
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml up -d pipeline
+```
+
+**Post-restart verify (paste back):**
+
+```bash
+# pipeline — restore lease logs + live zstd census
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+  grep -E 'daily_tar_restore begin|daily_tar_restore end|day_close defer reason=daily_tar_restore|day_close pre_seal_verify' | tail -60 && \
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline su hpcperfstats -c 'sh -lc "
+ps -eo pid,lstart,etime,cmd | grep -E \"zstd -d\" | grep -v grep || true
+"'
+```
+
+**Pass (T0):** at most one `archive: daily_tar_restore begin` per calendar day until matching owner `end`; at most one `zstd -o …decomp.tmp` process; extra day-close workers may log `janitor: day_close defer … reason=daily_tar_restore` / `phase=pre_seal_verify`. **Fail (T0):** two `zstd -o …decomp.tmp` for the same day, or interleaved `begin` from multiple callers without owner `end`, or non-owner `end ok=no` reopening a second `begin` on the same day.
 
 **T0 / T1 — membership invalidate after sealed→tar restore:** successful `decompress_compressed_to_tar` (gated prewarm / `ensure_daily_tar_restored_for_append` / corrupt replace) must log **`Archive members cache invalidated … reason=tar_restore_pre`** then **`reason=tar_restore`** so sealed+`tar=None` Redis maps cannot stay warm and skip populate. Expect a cold re-prewarm / populate for that day after restore — **not** a stall from thrashing the same day forever.
 

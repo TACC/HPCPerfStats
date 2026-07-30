@@ -2832,10 +2832,13 @@ def test_clear_daily_tar_restore_notifies_deferred_prewarm_flush(monkeypatch):
             'hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled',
             lambda: True,
         )
-        set_daily_tar_restore_in_progress(
+        token = set_daily_tar_restore_in_progress(
             '2026-06-05', reason='missing_tar', caller='test',
         )
-        clear_daily_tar_restore_in_progress('2026-06-05', ok=True, reason='missing_tar')
+        assert token
+        clear_daily_tar_restore_in_progress(
+            '2026-06-05', token=token, ok=True, reason='missing_tar',
+        )
         assert flushed == ['2026-06-05']
     finally:
         archive_helpers.reset_deferred_prewarm_flush_hook_for_tests()

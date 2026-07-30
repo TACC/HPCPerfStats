@@ -210,12 +210,18 @@ class FakeRedis:
   def pipeline(self):
     return _FakePipeline(self)
 
-  def eval(self, script, _numkeys, key, token):
+  def eval(self, script, _numkeys, key, *argv):
     with self._lock:
-      if self._kv.get(key) == token:
-        self._kv.pop(key, None)
+      if not argv:
+        return 0
+      token = argv[0]
+      if self._kv.get(key) != token:
+        return 0
+      if "expire" in script and len(argv) >= 2:
+        # Lease renew: keep value, pretend EXPIRE succeeded.
         return 1
-      return 0
+      self._kv.pop(key, None)
+      return 1
 
   def scan_iter(self, match=None, count=100):
     del count
@@ -2709,3 +2715,64 @@ def test_empty_recover_deferred_while_archive_append_inflight(
   clear_archive_append_inflight(keys.day_token)
   assert result["exc"] is None
   assert result["members"] == {"host/a": 1}
+
+
+def test_try_acquire_daily_tar_restore_is_exclusive(_redis_test_env):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      clear_daily_tar_restore_in_progress,
+      daily_tar_restore_in_progress_for_day,
+      try_acquire_daily_tar_restore,
+  )
+
+  first = try_acquire_daily_tar_restore(
+      "2026-06-02", reason="missing_tar", caller="owner",
+  )
+  assert first
+  assert daily_tar_restore_in_progress_for_day("2026-06-02")
+  second = try_acquire_daily_tar_restore(
+      "2026-06-02", reason="missing_tar", caller="loser",
+  )
+  assert second == ""
+  clear_daily_tar_restore_in_progress(
+      "2026-06-02", token=first, ok=True, reason="missing_tar",
+  )
+  assert not daily_tar_restore_in_progress_for_day("2026-06-02")
+
+
+def test_clear_daily_tar_restore_ignores_non_owner_token(_redis_test_env, monkeypatch):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      clear_daily_tar_restore_in_progress,
+      daily_tar_restore_in_progress_for_day,
+      try_acquire_daily_tar_restore,
+  )
+  import hpcperfstats.dbload.lib.sync_timedb_archive_members_redis as mod
+
+  owner = try_acquire_daily_tar_restore(
+      "2026-06-02", reason="missing_tar", caller="owner",
+  )
+  assert owner
+  logs = []
+  monkeypatch.setattr(
+      mod,
+      "log_print",
+      lambda msg, flush=False: logs.append(msg),
+  )
+  clear_daily_tar_restore_in_progress(
+      "2026-06-02",
+      token="wrong-token",
+      ok=False,
+      reason="missing_tar",
+  )
+  assert daily_tar_restore_in_progress_for_day("2026-06-02")
+  assert not any("daily_tar_restore end" in line for line in logs)
+  clear_daily_tar_restore_in_progress(
+      "2026-06-02",
+      token="",
+      ok=False,
+      reason="missing_tar",
+  )
+  assert daily_tar_restore_in_progress_for_day("2026-06-02")
+  clear_daily_tar_restore_in_progress(
+      "2026-06-02", token=owner, ok=True, reason="missing_tar",
+  )
+  assert not daily_tar_restore_in_progress_for_day("2026-06-02")

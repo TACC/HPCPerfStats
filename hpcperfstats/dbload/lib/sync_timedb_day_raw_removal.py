@@ -1082,6 +1082,7 @@ class _DayRawRemovalState:
     if not ensure_daily_tar_restored_for_append(
         self.tar_path,
         cfg.get_archive_zstd_threads(),
+        wait_for_other_owner=False,
     ):
       if self.log_fn:
         self.log_fn(

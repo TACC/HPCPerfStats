@@ -131,6 +131,7 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_archive_members_redis_populate_lock_seconds"),
     ("PIPELINE", "sync_archive_members_redis_populate_stall_seconds"),
     ("PIPELINE", "sync_archive_members_redis_populate_max_seconds"),
+    ("PIPELINE", "sync_daily_tar_restore_lease_seconds"),
     ("PIPELINE", "sync_archive_members_fnctl_read_lock_timeout_seconds"),
     ("PIPELINE", "sync_archive_members_redis_wait_poll_seconds"),
     ("PIPELINE", "sync_archive_members_redis_hset_batch_size"),
@@ -314,6 +315,7 @@ INI_OPTION_DEFAULTS = {
     'sync_archive_members_redis_populate_lock_seconds': '3600',
     'sync_archive_members_redis_populate_stall_seconds': '120',
     'sync_archive_members_redis_populate_max_seconds': '7200',
+    'sync_daily_tar_restore_lease_seconds': '14400',
     'sync_archive_members_fnctl_read_lock_timeout_seconds': '180',
     'sync_archive_members_redis_wait_poll_seconds': '0.25',
     'sync_archive_members_redis_hset_batch_size': '500',
@@ -1889,6 +1891,15 @@ def get_sync_archive_members_redis_populate_max_seconds():
     return max(0, int(_pipeline_get("sync_archive_members_redis_populate_max_seconds")))
   except (TypeError, ValueError, OverflowError):
     return 7200
+
+
+def get_sync_daily_tar_restore_lease_seconds():
+  """Exclusive sealed→tar restore lease TTL (renewed while decompressing)."""
+  _ensure_cfg_loaded()
+  try:
+    return max(60, int(_pipeline_get("sync_daily_tar_restore_lease_seconds")))
+  except (TypeError, ValueError, OverflowError):
+    return 14400
 
 
 def get_sync_archive_members_fnctl_read_lock_timeout_seconds():

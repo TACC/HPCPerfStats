@@ -353,29 +353,52 @@ def test_daily_tar_restore_redis_signal_missing_tar(monkeypatch, tmp_path):
       "archive_members_redis_enabled",
       lambda: True,
   )
+
+  class _Client:
+    def set(self, k, v, ex=None, nx=False):
+      if nx and k in fake:
+        return False
+      fake[k] = v
+      return True
+
+    def delete(self, k):
+      fake.pop(k, None)
+
+    def exists(self, k):
+      return k in fake
+
+    def get(self, k):
+      return fake.get(k)
+
+    def eval(self, script, _n, key, *argv):
+      if not argv:
+        return 0
+      if fake.get(key) != argv[0]:
+        return 0
+      if "expire" in script:
+        return 1
+      fake.pop(key, None)
+      return 1
+
   monkeypatch.setattr(
       members_redis,
       "get_archive_members_redis_client",
-      lambda required=False: type(
-          "C",
-          (),
-          {
-              "set": lambda self, k, v, ex=None: fake.__setitem__(k, v),
-              "delete": lambda self, k: fake.pop(k, None),
-              "exists": lambda self, k: k in fake,
-              "get": lambda self, k: fake.get(k),
-          },
-      )(),
+      lambda required=False: _Client(),
   )
   monkeypatch.setattr(members_redis, "_populate_max_seconds", lambda: 60)
-  members_redis.set_daily_tar_restore_in_progress(
+  monkeypatch.setattr(
+      members_redis, "_daily_tar_restore_lease_seconds", lambda: 60,
+  )
+  token = members_redis.set_daily_tar_restore_in_progress(
       "2026-06-05",
       reason="missing_tar",
       caller="test",
   )
+  assert token
   assert members_redis.daily_tar_restore_in_progress_for_day("2026-06-05")
   members_redis.clear_daily_tar_restore_in_progress(
       "2026-06-05",
+      token=token,
       ok=True,
       reason="missing_tar",
   )
@@ -492,3 +515,48 @@ def test_seal_yields_during_zstd_subprocess_poll(monkeypatch, tmp_path):
         tgz_archive_dir=str(daily_dir),
     )
   assert not os.path.isfile(zst_path)
+
+
+def test_pre_seal_verify_defers_on_restore_conflict(monkeypatch, tmp_path):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2026-06-02.tar"))
+  logs = []
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      log_fn=lambda msg, **_k: logs.append(str(msg)),
+  )
+
+  class _Coord:
+    def pre_seal_verification_complete(self, _tar):
+      return False
+
+    def run_pre_seal_verify_sync(self, _tar):
+      return False
+
+  janitor.day_raw_removal_coordinator = _Coord()
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".daily_tar_restore_in_progress_for_day",
+      lambda _d: True,
+  )
+  monkeypatch.setattr(janitor, "_check_day_close_defer", lambda *a, **k: (False, ""))
+  monkeypatch.setattr(janitor, "_day_phase_at_least", lambda *a, **k: False)
+  enqueued = []
+  monkeypatch.setattr(
+      janitor,
+      "_enqueue_day_close",
+      lambda tar, persist=True: enqueued.append(os.path.normpath(tar)) or True,
+  )
+  monkeypatch.setattr(janitor, "_persist_hints", lambda: None)
+  result = janitor._close_one_day(
+      tar_path,
+      snapshot=None,
+      validation_cache={},
+      disqualified=set(),
+  )
+  assert result is False
+  assert enqueued == [tar_path]
+  assert any(
+      "defer" in line and "daily_tar_restore" in line for line in logs
+  ), logs

@@ -432,6 +432,9 @@ class ArchiveJanitor:
     tar_norm = os.path.normpath(tar_path) if tar_path else tar_path
     if not tar_norm or tar_norm == _LOCK_CLEANUP_TAR_SENTINEL:
       return False
+    # Cross-tick single-flight: refuse heap push while a live worker owns the tar.
+    if tar_norm in self._day_close_live_worker_tar_paths():
+      return False
     if self._day_pipeline_queued_locked(tar_norm):
       return False
     self._remove_day_pipeline_debts_for_tar_locked(tar_norm)
@@ -1705,7 +1708,11 @@ class ArchiveJanitor:
         started = 0
         while _budget_ok() and self._day_close_free_slots() > 0:
           disqualified = set(self.get_disqualified_daily_tars())
-          skip_tars = set(attempted_tars) | _write_lock_backoff_skip()
+          skip_tars = (
+              set(attempted_tars)
+              | _write_lock_backoff_skip()
+              | self._day_close_live_worker_tar_paths()
+          )
           debt = self._pop_one_day_close_debt(
               disqualified, skip_tars=skip_tars,
           )
@@ -1716,7 +1723,11 @@ class ArchiveJanitor:
                   reason="tick_slot_free",
                   slot_budget=free_slots,
               )
-              skip_tars = set(attempted_tars) | _write_lock_backoff_skip()
+              skip_tars = (
+                  set(attempted_tars)
+                  | _write_lock_backoff_skip()
+                  | self._day_close_live_worker_tar_paths()
+              )
               debt = self._pop_one_day_close_debt(
                   disqualified, skip_tars=skip_tars,
               )
@@ -2207,6 +2218,27 @@ class ArchiveJanitor:
             flush=True,
         )
         if not coord.run_pre_seal_verify_sync(tar_norm):
+          from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+              calendar_date_from_daily_tar_path as _calendar_date_from_daily_tar_path,
+          )
+          from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+              daily_tar_restore_in_progress_for_day,
+          )
+
+          # Local import alias avoids UnboundLocalError: a later branch also
+          # imports calendar_date_from_daily_tar_path into this function scope.
+          day = _calendar_date_from_daily_tar_path(tar_norm)
+          day_token = day.isoformat() if day is not None else ""
+          if day_token and daily_tar_restore_in_progress_for_day(day_token):
+            self._defer_tracker.record_defer(
+                tar_norm, reason="daily_tar_restore",
+            )
+            log_janitor_day_close_defer(
+                tar_norm,
+                phase="pre_seal_verify",
+                reason="daily_tar_restore",
+                log_fn=self.log_fn,
+            )
           self._enqueue_day_close(tar_norm, persist=False)
           self._persist_hints()
           return False

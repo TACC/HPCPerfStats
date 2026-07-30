@@ -7,6 +7,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Iterator
 from typing import BinaryIO
@@ -16,7 +17,7 @@ from hpcperfstats.dbload.lib.archive_compress import (
     DAILY_ARCHIVE_ZST_SUFFIX,
     detect_compressed_format,
 )
-from hpcperfstats.dbload.lib.file_locking import file_write_lock
+from hpcperfstats.dbload.lib.file_locking import file_write_lock, try_file_write_lock
 from hpcperfstats.dbload.lib.print_utils import log_print
 
 _GZIP_FORMAT = ("--format=gzip",)
@@ -321,10 +322,17 @@ def decompress_compressed_to_tar(
     remove_compressed: bool = True,
     restore_reason: str = "missing_tar",
     restore_caller: str = "decompress_compressed_to_tar",
+    wait_for_other_owner: bool = True,
     zstd_threads: int | None = None,
     num_threads: int | None = None,
 ) -> bool:
   """Decompress to a verified sibling ``.tar``; unlink compressed only on success.
+
+  Exclusive ownership: Redis ``daily_tar_restore`` ``SET NX`` lease when Redis L2
+  is enabled; otherwise ``{tar}.decomp`` file write lock. Losers never touch
+  ``.decomp.tmp`` or spawn a second ``zstd -o``. When ``wait_for_other_owner``
+  is False (day-close pre_seal), losers return False immediately so the worker
+  can defer and free its pool slot.
 
   ``thread_count`` is the canonical public parameter name. ``zstd_threads`` and
   ``num_threads`` are accepted as deprecated keyword aliases only.
@@ -335,23 +343,61 @@ def decompress_compressed_to_tar(
     thread_count = num_threads
   if not compressed_path or not os.path.isfile(compressed_path):
     return False
+  if os.path.isfile(tar_path):
+    return True
+  from hpcperfstats.dbload.lib import conf_parser as cfg
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       calendar_date_from_daily_tar_path,
+      invalidate_after_daily_tar_mutation,
+      notify_daily_tar_restore_cleared,
   )
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      archive_members_redis_enabled,
       clear_daily_tar_restore_in_progress,
-      set_daily_tar_restore_in_progress,
+      get_archive_members_redis_client,
+      renew_daily_tar_restore_lease,
+      try_acquire_daily_tar_restore,
+      wait_for_daily_tar_restore_before_populate,
   )
 
   day = calendar_date_from_daily_tar_path(tar_path or "")
   day_token = day.isoformat() if day is not None else ""
-  if day_token:
-    set_daily_tar_restore_in_progress(
-        day_token,
-        reason=restore_reason,
-        caller=restore_caller,
-    )
-  try:
+  lease_value = ""
+  use_redis_lease = False
+  if day_token and archive_members_redis_enabled():
+    client = get_archive_members_redis_client(required=False)
+    if client is not None:
+      use_redis_lease = True
+      lease_value = try_acquire_daily_tar_restore(
+          day_token,
+          reason=restore_reason,
+          caller=restore_caller,
+      )
+      if not lease_value:
+        if not wait_for_other_owner:
+          return False
+        wait_for_daily_tar_restore_before_populate(tar_path, log_fn=log_print)
+        return os.path.isfile(tar_path)
+
+  renew_stop = threading.Event()
+  renew_thread = None
+
+  def _renew_loop():
+    while not renew_stop.wait(60.0):
+      if lease_value and day_token:
+        renew_daily_tar_restore_lease(day_token, lease_value)
+
+  def _run_owned_restore() -> bool:
+    nonlocal renew_thread
+    if os.path.isfile(tar_path):
+      return True
+    if lease_value and day_token:
+      renew_thread = threading.Thread(
+          target=_renew_loop,
+          name="daily-tar-restore-renew",
+          daemon=True,
+      )
+      renew_thread.start()
     tmp_path = "%s.decomp.tmp" % tar_path
     try:
       if os.path.exists(tmp_path):
@@ -376,9 +422,6 @@ def decompress_compressed_to_tar(
       return False
     # Sealed membership maps are untrusted; drop pre-identity L1/Redis before
     # replace so warm sealed+tar=None keys cannot skip post-restore populate.
-    from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-        invalidate_after_daily_tar_mutation,
-    )
     invalidate_after_daily_tar_mutation(
         compressed_path,
         reason="tar_restore_pre",
@@ -410,13 +453,39 @@ def decompress_compressed_to_tar(
         log_fn=log_print,
     )
     return remove_ok
+
+  held_file_lock = False
+  try:
+    if use_redis_lease:
+      return _run_owned_restore()
+    decomp_lock_target = "%s.decomp" % tar_path
+    lease_s = max(60.0, float(cfg.get_sync_daily_tar_restore_lease_seconds()))
+    if wait_for_other_owner:
+      with file_write_lock(decomp_lock_target, timeout_seconds=lease_s):
+        held_file_lock = True
+        return _run_owned_restore()
+    try:
+      with try_file_write_lock(decomp_lock_target):
+        held_file_lock = True
+        return _run_owned_restore()
+    except TimeoutError:
+      return False
   finally:
-    if day_token:
+    renew_stop.set()
+    if renew_thread is not None and renew_thread.is_alive():
+      renew_thread.join(timeout=1.0)
+    if day_token and lease_value:
       clear_daily_tar_restore_in_progress(
           day_token,
+          token=lease_value,
           ok=os.path.isfile(tar_path),
           reason=restore_reason,
       )
+    elif held_file_lock and day_token:
+      try:
+        notify_daily_tar_restore_cleared(day_token)
+      except Exception:
+        pass
 
 
 def _wait_decompress_proc(proc: subprocess.Popen, args: list) -> None:
