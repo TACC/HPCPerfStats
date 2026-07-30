@@ -7562,6 +7562,76 @@ def test_chunk_end_defers_immediate_day_close_when_handoff_pending(monkeypatch, 
     finally:
         shutdown_requested[0] = False
 
+
+def test_immediate_day_close_defer_unaffected_by_held_back_handoff_days(tmp_path):
+    """F3: pins for older days held out of the chunk lead still defer day-close."""
+    from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+        daily_tar_paths_for_stats_paths,
+        select_ingest_chunk_paths,
+    )
+
+    daily_dir = tmp_path / 'daily'
+    daily_dir.mkdir()
+    jun07 = os.path.normpath(str(daily_dir / '2026-06-07.tar'))
+    jun09 = os.path.normpath(str(daily_dir / '2026-06-09.tar'))
+    jul_tar = os.path.normpath(str(daily_dir / '2026-07-15.tar'))
+    for tar in (jun07, jun09, jul_tar):
+        open(tar, 'wb').close()
+    d07 = datetime(2026, 6, 7, 12, tzinfo=timezone.utc)
+    d09 = datetime(2026, 6, 9, 12, tzinfo=timezone.utc)
+    d_jul = datetime(2026, 7, 15, 12, tzinfo=timezone.utc)
+    host = tmp_path / 'host'
+    host.mkdir()
+    p07 = host / 'jun07'
+    p09 = host / 'jun09'
+    p07.write_text('1000 job cn001\n')
+    p09.write_text('1000 job cn001\n')
+    os.utime(p07, (d07.timestamp(), d07.timestamp()))
+    os.utime(p09, (d09.timestamp(), d09.timestamp()))
+    jul_paths = []
+    for i in range(6):
+        path = host / ('jul_%d' % i)
+        path.write_text('2000 job cn002\n')
+        os.utime(path, (d_jul.timestamp(), d_jul.timestamp()))
+        jul_paths.append(str(path))
+    handoff = {str(p07), str(p09)}
+    source_map = {str(p07): jun07, str(p09): jun09}
+    chunk = select_ingest_chunk_paths(
+        list(jul_paths) + [str(p07), str(p09)],
+        oldest_tar=jul_tar,
+        unprocessed_by_tar={
+            jul_tar: jul_paths,
+            jun07: [str(p07)],
+            jun09: [str(p09)],
+        },
+        inflight_archive_paths=set(),
+        tgz_archive_dir=str(daily_dir),
+        chunk_size=4,
+        handoff_priority_paths=handoff,
+        handoff_source_tar_by_path=source_map,
+        newest_first=True,
+    )
+    assert str(p09) not in chunk
+    assert handoff == {str(p07), str(p09)}
+
+    def _f3_blocked_n(tar_norm, handoff_paths, source_by_path):
+        blocked_n = 0
+        for path in list(handoff_paths):
+            source = source_by_path.get(path)
+            if source and os.path.normpath(source) == tar_norm:
+                blocked_n += 1
+                continue
+            mapped = daily_tar_paths_for_stats_paths([path], str(daily_dir))
+            if tar_norm in mapped:
+                blocked_n += 1
+        return blocked_n
+
+    # Held-back 06-09 pins still block immediate day-close for that tar (F3).
+    assert _f3_blocked_n(jun09, handoff, source_map) >= 1
+    # 06-07 lead day also still protected while its pin remains.
+    assert _f3_blocked_n(jun07, handoff, source_map) >= 1
+
+
 def test_chunk_end_submits_immediate_day_close_despite_closed_raw_on_disk(monkeypatch, tmp_path, capsys):
     """Checkpoint-complete day with closed raw on disk still submits day_close at chunk_end."""
     shutdown_requested[0] = False

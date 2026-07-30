@@ -2604,7 +2604,14 @@ def select_ingest_chunk_paths(
     log_fn=None,
     newest_first=False,
 ):
-  """While the selected checkpoint-blocked tar has work, restrict chunk to it."""
+  """While the selected checkpoint-blocked tar has work, restrict chunk to it.
+
+  When the gate tar calendar day is **strictly newer** than the oldest day with
+  still-on-disk non-ingested work (handoff pins and/or aligned unprocessed),
+  prepend that **entire** oldest day uncapped (additive), then fill a full
+  ``chunk_size`` of gate/pad work. Other older days' pins stay in
+  ``handoff_priority_paths`` but are not prepended this chunk.
+  """
   target_chunk_size = int(chunk_size)
   if target_chunk_size <= 0:
     return []
@@ -2620,7 +2627,159 @@ def select_ingest_chunk_paths(
   source_map = handoff_source_tar_by_path if isinstance(
       handoff_source_tar_by_path, dict,
   ) else {}
-  if handoff_set and oldest_tar_norm and tgz_archive_dir:
+  inflight_set = set(inflight_archive_paths or ())
+  gate_day = calendar_date_from_daily_tar_path(oldest_tar_norm)
+  oldest_work_tar = ""
+  oldest_work_day = None
+  if tgz_archive_dir and (handoff_set or unprocessed_by_tar):
+    work_candidates = []
+    for tar_key, paths in (unprocessed_by_tar or {}).items():
+      tar_norm = os.path.normpath(str(tar_key or ""))
+      day = calendar_date_from_daily_tar_path(tar_norm)
+      if day is None:
+        continue
+      aligned = aligned_on_disk_unprocessed_paths_for_tar(
+          unprocessed_by_tar,
+          tar_norm,
+          tgz_archive_dir=tgz_archive_dir,
+      )
+      if any(path not in inflight_set for path in aligned):
+        work_candidates.append((day, tar_norm))
+    for path in handoff_set:
+      if not path or path in inflight_set:
+        continue
+      if not os.path.isfile(path):
+        continue
+      if handoff_path_lacks_daily_archive(path, tgz_archive_dir):
+        continue
+      source_tar = os.path.normpath(str(source_map.get(path) or ""))
+      derived = daily_tar_paths_for_stats_paths([path], tgz_archive_dir)
+      candidate_tar = ""
+      if source_tar and source_tar in derived:
+        candidate_tar = source_tar
+      elif derived:
+        # Prefer the calendar-oldest derived tar for this path.
+        dated = []
+        for tar_path in derived:
+          day = calendar_date_from_daily_tar_path(tar_path)
+          if day is not None:
+            dated.append((day, os.path.normpath(tar_path)))
+        if dated:
+          dated.sort(key=lambda item: item[0])
+          candidate_tar = dated[0][1]
+      if not candidate_tar:
+        continue
+      day = calendar_date_from_daily_tar_path(candidate_tar)
+      if day is None:
+        continue
+      work_candidates.append((day, candidate_tar))
+    if work_candidates:
+      work_candidates.sort(key=lambda item: item[0])
+      oldest_work_day, oldest_work_tar = work_candidates[0]
+
+  additive = bool(
+      gate_day is not None
+      and oldest_work_day is not None
+      and gate_day > oldest_work_day
+      and oldest_work_tar
+      and tgz_archive_dir
+  )
+
+  if additive:
+    pending_set = set(pending_list)
+    seen_lead: set = set()
+    lead_paths: list = []
+
+    def _path_maps_to_oldest_work(path):
+      source_tar = os.path.normpath(str(source_map.get(path) or ""))
+      if source_tar == oldest_work_tar:
+        return True
+      derived = daily_tar_paths_for_stats_paths([path], tgz_archive_dir)
+      return oldest_work_tar in derived
+
+    def _append_lead(path):
+      if path in seen_lead or path in inflight_set:
+        return
+      if not path:
+        return
+      seen_lead.add(path)
+      lead_paths.append(path)
+
+    for path in pending_list:
+      if path not in handoff_set:
+        continue
+      if handoff_path_lacks_daily_archive(path, tgz_archive_dir):
+        if log_fn is not None:
+          log_fn(
+              "handoff_cross_day_skip path=%s reason=no_daily_archive"
+              % path,
+          )
+        continue
+      if _path_maps_to_oldest_work(path):
+        _append_lead(path)
+    for path in handoff_set:
+      if path in pending_set:
+        continue
+      if not os.path.isfile(path):
+        continue
+      if handoff_path_lacks_daily_archive(path, tgz_archive_dir):
+        if log_fn is not None:
+          log_fn(
+              "handoff_cross_day_skip path=%s reason=no_daily_archive"
+              % path,
+          )
+        continue
+      if _path_maps_to_oldest_work(path):
+        _append_lead(path)
+    for path in aligned_on_disk_unprocessed_paths_for_tar(
+        unprocessed_by_tar,
+        oldest_work_tar,
+        tgz_archive_dir=tgz_archive_dir,
+    ):
+      if path in inflight_set:
+        continue
+      if not path or not os.path.isfile(path):
+        continue
+      _append_lead(path)
+
+    handoff_lead = lead_paths
+    deferred_days_n = 0
+    if handoff_set:
+      other_days = set()
+      for path in handoff_set:
+        if path in seen_lead:
+          continue
+        source_tar = os.path.normpath(str(source_map.get(path) or ""))
+        derived = daily_tar_paths_for_stats_paths([path], tgz_archive_dir)
+        for tar_path in derived:
+          day = calendar_date_from_daily_tar_path(tar_path)
+          if day is not None and day != oldest_work_day and day < gate_day:
+            other_days.add(day)
+        if source_tar and source_tar != oldest_work_tar:
+          day = calendar_date_from_daily_tar_path(source_tar)
+          if day is not None and day != oldest_work_day and day < gate_day:
+            other_days.add(day)
+      deferred_days_n = len(other_days)
+    if handoff_lead and log_fn is not None:
+      lead_day_s = (
+          oldest_work_day.isoformat() if oldest_work_day is not None else ""
+      )
+      log_fn(
+          "handoff_lead_day=%s handoff_lead_n=%d handoff_lead_uncapped=yes "
+          "handoff_deferred_days_n=%d chunk_target=%d"
+          % (
+              lead_day_s,
+              len(handoff_lead),
+              deferred_days_n,
+              target_chunk_size,
+          ),
+      )
+    if handoff_lead:
+      pending_list = [
+          path for path in pending_list if path not in set(handoff_lead)
+      ]
+    # Additive: do **not** subtract lead length from target_chunk_size.
+  elif handoff_set and oldest_tar_norm and tgz_archive_dir:
     pending_set = set(pending_list)
     cross_day_handoff = []
     same_day_deferred_handoff = []
@@ -2704,7 +2863,6 @@ def select_ingest_chunk_paths(
       )
   ]
   if not oldest_only and checkpoint_incomplete_on_disk:
-    inflight_set = set(inflight_archive_paths or ())
     aligned_blocked = [
         path
         for path in checkpoint_incomplete_paths_aligned_with_oldest_tar(

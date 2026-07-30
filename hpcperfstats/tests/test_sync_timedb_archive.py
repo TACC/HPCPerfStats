@@ -7105,8 +7105,10 @@ def test_select_ingest_chunk_paths_fallback_checkpoint_incomplete_on_disk(tmp_pa
       tgz_archive_dir=str(daily_dir),
       chunk_size=10,
   )
-  assert chunk == [str(blocked1), str(blocked2)]
-  assert str(newer) not in chunk
+  # Fallback pulls checkpoint-incomplete onto the chunk head, then pads.
+  assert chunk[:2] == [str(blocked1), str(blocked2)]
+  assert str(newer) in chunk
+  assert len(chunk) <= 10
 
 
 def test_select_ingest_chunk_paths_fallback_logs_calendar_days(tmp_path):
@@ -7138,7 +7140,8 @@ def test_select_ingest_chunk_paths_fallback_logs_calendar_days(tmp_path):
       chunk_size=10,
       log_fn=lambda msg: logs.append(str(msg)),
   )
-  assert chunk == [str(blocked1)]
+  assert chunk[0] == str(blocked1)
+  assert str(newer) in chunk
   assert any("oldest_day_chunk_gate_fallback" in line for line in logs)
   assert any("calendar_days=" in line for line in logs)
 
@@ -8850,6 +8853,267 @@ def test_select_ingest_chunk_same_day_deferred_lead_under_youngest_gate(tmp_path
   )
   assert chunk[0] == str(jun_handoff)
   assert str(jun_handoff) in chunk
+
+
+def test_select_ingest_chunk_additive_oldest_handoff_plus_chunk_size(tmp_path):
+  """Gate newer than oldest: uncapped oldest-day lead + full chunk_size (additive)."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      select_ingest_chunk_paths,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  jun_tar = os.path.normpath(str(daily_dir / "2026-06-07.tar"))
+  jul_tar = os.path.normpath(str(daily_dir / "2026-07-15.tar"))
+  open(jun_tar, "wb").close()
+  open(jul_tar, "wb").close()
+  d_jun = datetime(2026, 6, 7, 12, tzinfo=timezone.utc)
+  d_jul = datetime(2026, 7, 15, 12, tzinfo=timezone.utc)
+  host = tmp_path / "host"
+  host.mkdir()
+  lead_n = 50
+  chunk_size = 20
+  jun_paths = []
+  for i in range(lead_n):
+    path = host / ("jun_%d" % i)
+    path.write_text("1000 job cn001\n")
+    os.utime(path, (d_jun.timestamp(), d_jun.timestamp()))
+    jun_paths.append(str(path))
+  jul_paths = []
+  for i in range(chunk_size + 5):
+    path = host / ("jul_%d" % i)
+    path.write_text("2000 job cn002\n")
+    os.utime(path, (d_jul.timestamp(), d_jul.timestamp()))
+    jul_paths.append(str(path))
+  pending = list(jul_paths) + list(jun_paths)
+  handoff = set(jun_paths)
+  chunk = select_ingest_chunk_paths(
+      pending,
+      oldest_tar=jul_tar,
+      unprocessed_by_tar={
+          jul_tar: jul_paths,
+          jun_tar: jun_paths,
+      },
+      inflight_archive_paths=set(),
+      tgz_archive_dir=str(daily_dir),
+      chunk_size=chunk_size,
+      handoff_priority_paths=handoff,
+      handoff_source_tar_by_path={p: jun_tar for p in jun_paths},
+      newest_first=True,
+  )
+  assert len(chunk) == lead_n + chunk_size
+  assert set(chunk[:lead_n]) == set(jun_paths)
+  assert all(path in jul_paths for path in chunk[lead_n:])
+  assert len(chunk[lead_n:]) == chunk_size
+
+
+def test_select_ingest_chunk_no_additive_when_gate_is_oldest(tmp_path):
+  """When gate tar is the oldest incomplete day, total stays ≤ chunk_size."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      select_ingest_chunk_paths,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  jun_tar = os.path.normpath(str(daily_dir / "2026-06-07.tar"))
+  open(jun_tar, "wb").close()
+  d_jun = datetime(2026, 6, 7, 12, tzinfo=timezone.utc)
+  host = tmp_path / "host"
+  host.mkdir()
+  paths = []
+  for i in range(40):
+    path = host / ("jun_%d" % i)
+    path.write_text("1000 job cn001\n")
+    os.utime(path, (d_jun.timestamp(), d_jun.timestamp()))
+    paths.append(str(path))
+  chunk_size = 10
+  chunk = select_ingest_chunk_paths(
+      paths,
+      oldest_tar=jun_tar,
+      unprocessed_by_tar={jun_tar: paths},
+      inflight_archive_paths=set(),
+      tgz_archive_dir=str(daily_dir),
+      chunk_size=chunk_size,
+      handoff_priority_paths=set(paths[:5]),
+      handoff_source_tar_by_path={p: jun_tar for p in paths[:5]},
+      newest_first=False,
+  )
+  assert len(chunk) <= chunk_size
+
+
+def test_select_ingest_chunk_additive_lead_not_truncated_by_pending_cap(tmp_path):
+  """Oldest-day lead comes from pins/unprocessed even when absent from short pending."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      select_ingest_chunk_paths,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  jun_tar = os.path.normpath(str(daily_dir / "2026-06-07.tar"))
+  jul_tar = os.path.normpath(str(daily_dir / "2026-07-15.tar"))
+  open(jun_tar, "wb").close()
+  open(jul_tar, "wb").close()
+  d_jun = datetime(2026, 6, 7, 12, tzinfo=timezone.utc)
+  d_jul = datetime(2026, 7, 15, 12, tzinfo=timezone.utc)
+  host = tmp_path / "host"
+  host.mkdir()
+  jun_paths = []
+  for i in range(12):
+    path = host / ("jun_%d" % i)
+    path.write_text("1000 job cn001\n")
+    os.utime(path, (d_jun.timestamp(), d_jun.timestamp()))
+    jun_paths.append(str(path))
+  jul_paths = []
+  for i in range(8):
+    path = host / ("jul_%d" % i)
+    path.write_text("2000 job cn002\n")
+    os.utime(path, (d_jul.timestamp(), d_jul.timestamp()))
+    jul_paths.append(str(path))
+  # Pending holds only July — June lives only in handoff + unprocessed.
+  pending = list(jul_paths)
+  chunk = select_ingest_chunk_paths(
+      pending,
+      oldest_tar=jul_tar,
+      unprocessed_by_tar={
+          jul_tar: jul_paths,
+          jun_tar: jun_paths,
+      },
+      inflight_archive_paths=set(),
+      tgz_archive_dir=str(daily_dir),
+      chunk_size=5,
+      handoff_priority_paths=set(jun_paths),
+      handoff_source_tar_by_path={p: jun_tar for p in jun_paths},
+      newest_first=True,
+  )
+  assert set(jun_paths).issubset(set(chunk))
+  assert len(chunk) == 12 + 5
+
+
+def test_select_ingest_chunk_lead_covers_whole_day_not_only_pinned_paths(tmp_path):
+  """Whole-day lead = pins ∪ aligned unprocessed for the oldest day."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      select_ingest_chunk_paths,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  jun_tar = os.path.normpath(str(daily_dir / "2026-06-07.tar"))
+  jul_tar = os.path.normpath(str(daily_dir / "2026-07-15.tar"))
+  open(jun_tar, "wb").close()
+  open(jul_tar, "wb").close()
+  d_jun = datetime(2026, 6, 7, 12, tzinfo=timezone.utc)
+  d_jul = datetime(2026, 7, 15, 12, tzinfo=timezone.utc)
+  host = tmp_path / "host"
+  host.mkdir()
+  pinned = []
+  for i in range(3):
+    path = host / ("pin_%d" % i)
+    path.write_text("1000 job cn001\n")
+    os.utime(path, (d_jun.timestamp(), d_jun.timestamp()))
+    pinned.append(str(path))
+  unpinned = []
+  for i in range(7):
+    path = host / ("unp_%d" % i)
+    path.write_text("1000 job cn001\n")
+    os.utime(path, (d_jun.timestamp(), d_jun.timestamp()))
+    unpinned.append(str(path))
+  jul_paths = []
+  for i in range(6):
+    path = host / ("jul_%d" % i)
+    path.write_text("2000 job cn002\n")
+    os.utime(path, (d_jul.timestamp(), d_jul.timestamp()))
+    jul_paths.append(str(path))
+  all_jun = pinned + unpinned
+  chunk = select_ingest_chunk_paths(
+      list(jul_paths) + list(pinned),
+      oldest_tar=jul_tar,
+      unprocessed_by_tar={
+          jul_tar: jul_paths,
+          jun_tar: all_jun,
+      },
+      inflight_archive_paths=set(),
+      tgz_archive_dir=str(daily_dir),
+      chunk_size=4,
+      handoff_priority_paths=set(pinned),
+      handoff_source_tar_by_path={p: jun_tar for p in pinned},
+      newest_first=True,
+  )
+  assert set(all_jun).issubset(set(chunk))
+  assert len(chunk) == len(all_jun) + 4
+
+
+def test_select_ingest_chunk_leads_one_older_day_at_a_time(tmp_path):
+  """Only the calendar-oldest older day leads; other older pins stay out of the chunk."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      select_ingest_chunk_paths,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  jun07 = os.path.normpath(str(daily_dir / "2026-06-07.tar"))
+  jun09 = os.path.normpath(str(daily_dir / "2026-06-09.tar"))
+  jul_tar = os.path.normpath(str(daily_dir / "2026-07-15.tar"))
+  for tar in (jun07, jun09, jul_tar):
+    open(tar, "wb").close()
+  d07 = datetime(2026, 6, 7, 12, tzinfo=timezone.utc)
+  d09 = datetime(2026, 6, 9, 12, tzinfo=timezone.utc)
+  d_jul = datetime(2026, 7, 15, 12, tzinfo=timezone.utc)
+  host = tmp_path / "host"
+  host.mkdir()
+  p07 = host / "jun07"
+  p09 = host / "jun09"
+  p07.write_text("1000 job cn001\n")
+  p09.write_text("1000 job cn001\n")
+  os.utime(p07, (d07.timestamp(), d07.timestamp()))
+  os.utime(p09, (d09.timestamp(), d09.timestamp()))
+  jul_paths = []
+  for i in range(10):
+    path = host / ("jul_%d" % i)
+    path.write_text("2000 job cn002\n")
+    os.utime(path, (d_jul.timestamp(), d_jul.timestamp()))
+    jul_paths.append(str(path))
+  handoff = {str(p07), str(p09)}
+  source_map = {str(p07): jun07, str(p09): jun09}
+  chunk = select_ingest_chunk_paths(
+      list(jul_paths) + [str(p07), str(p09)],
+      oldest_tar=jul_tar,
+      unprocessed_by_tar={
+          jul_tar: jul_paths,
+          jun07: [str(p07)],
+          jun09: [str(p09)],
+      },
+      inflight_archive_paths=set(),
+      tgz_archive_dir=str(daily_dir),
+      chunk_size=5,
+      handoff_priority_paths=handoff,
+      handoff_source_tar_by_path=source_map,
+      newest_first=True,
+  )
+  assert str(p07) in chunk
+  assert str(p09) not in chunk
+  assert handoff == {str(p07), str(p09)}
+  assert len([p for p in chunk if p in jul_paths]) == 5
+  assert len(chunk) == 1 + 5
+
+  # After 06-07 drains, next chunk leads 06-09.
+  handoff_next = {str(p09)}
+  chunk2 = select_ingest_chunk_paths(
+      list(jul_paths) + [str(p09)],
+      oldest_tar=jul_tar,
+      unprocessed_by_tar={
+          jul_tar: jul_paths,
+          jun09: [str(p09)],
+      },
+      inflight_archive_paths=set(),
+      tgz_archive_dir=str(daily_dir),
+      chunk_size=5,
+      handoff_priority_paths=handoff_next,
+      handoff_source_tar_by_path={str(p09): jun09},
+      newest_first=True,
+  )
+  assert chunk2[0] == str(p09)
+  assert str(p09) in chunk2
+  assert len(chunk2) == 1 + 5
 
 
 def test_age_misbucket_handoff_priority_paths_clears_and_returns_source(tmp_path):
