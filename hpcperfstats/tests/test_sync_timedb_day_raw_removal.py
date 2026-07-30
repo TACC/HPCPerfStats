@@ -496,6 +496,11 @@ def test_reopen_stale_done_clears_verify_stage(tmp_path):
 def test_apply_batch_delete_marks_done_when_only_retryable_skips_remain(
     tmp_path, monkeypatch,
 ):
+  """F15: only-retryable remaining must not PHASE_DONE; handoff instead.
+
+  Stale expectation of PHASE_DONE with retryables on disk conflicted with F15
+  and Branch C (reclassify-under-deleting). Gate-fail paths stay deleting + handoff.
+  """
   day = datetime(2022, 6, 13)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
   tar_path, _zst = _seal_day(tmp_path, seg, day)
@@ -507,9 +512,10 @@ def test_apply_batch_delete_marks_done_when_only_retryable_skips_remain(
   coord.begin_deleting(tar_path)
   deleted = coord.apply_batch_delete(tar_path)
   assert deleted == 0
-  assert coord.phase(tar_path) == PHASE_DONE
-  assert state._needs_retry_after_ingest()
-  assert not coord.any_active_raw_removal_work()
+  # F15: retryable closed raw remains → refuse PHASE_DONE.
+  assert coord.phase(tar_path) != PHASE_DONE
+  assert coord.phase(tar_path) == PHASE_DELETING
+  assert state._needs_retry_after_ingest() or coord.should_handoff_to_ingest(tar_path)
   assert seg.is_file()
 
 
@@ -1012,6 +1018,66 @@ def test_closed_raw_handoff_manifest_fast_phase_done_many_retryable_skip(
   assert set(found[0][1]) == {str(seg) for seg in segs}
   assert coord2.closed_raw_paths_on_disk(tar_path) == [str(seg) for seg in segs]
   assert coord2.has_closed_raw_on_disk(tar_path)
+
+
+def test_branch_c_reclassify_under_deleting_upgrades_before_handoff(
+    tmp_path, monkeypatch,
+):
+  """Branch C (hpcperfstats03): phase=deleting + verified drained + sticky retryable.
+
+  F15 keeps phase=deleting while retryable_skips remain. Reclassify must run under
+  deleting (not only phase=done) so membership+DB-ready skips upgrade and delete
+  can finish instead of perpetual batch_delete_waiting_on_ingest handoff.
+  """
+  day = datetime(2026, 6, 7)
+  host = tmp_path / "n.cluster.integration.test"
+  host.mkdir(parents=True, exist_ok=True)
+  segs = []
+  for hour in (10, 11):
+    ts = int(datetime(day.year, day.month, day.day, hour, 0, 0).timestamp())
+    seg = host / str(ts)
+    seg.write_text("%d job1 cn001\nline\n" % ts)
+    os.utime(seg, (ts, ts))
+    segs.append(seg)
+  tar_path, zst = _seal_day(tmp_path, segs[0], day)
+  with tarfile.open(tar_path, "a") as tf:
+    tf.add(str(segs[1]), arcname=get_tar_member_name(str(segs[1])))
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: True)
+  monkeypatch.setattr(
+      cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0,
+  )
+  state = coord._get_or_create_day(tar_path)
+  # Verified path already deleted (verified_not_deleted=0).
+  state._record_entry(str(segs[0]), zst, "verified", "verified")
+  with state._lock:
+    state._manifest["entries"][str(segs[0])]["deleted"] = True
+    state._manifest["verified_count"] = 1
+  # Sticky retryable still on disk but now in tar + DB-ready.
+  state._record_entry(
+      str(segs[1]),
+      zst,
+      "skipped_not_in_archive",
+      "not_in_sealed_archive",
+  )
+  with state._lock:
+    state._manifest["phase"] = PHASE_DELETING
+    state._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
+    state._manifest["skipped_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+  segs[0].unlink()
+
+  assert coord.phase(tar_path) == PHASE_DELETING
+  assert not coord.delete_phase_done(tar_path)
+  assert segs[1].is_file()
+
+  deleted = coord.apply_batch_delete(tar_path)
+  entry = state._manifest["entries"][str(segs[1])]
+  assert entry["status"] == "verified", (
+      "Branch C: reclassify under deleting must upgrade retryable before handoff"
+  )
+  assert deleted == 1
+  assert not segs[1].is_file()
+  assert coord.delete_phase_done(tar_path)
 
 
 def test_reclassify_retryable_skip_upgrades_to_verified_when_tar_member(

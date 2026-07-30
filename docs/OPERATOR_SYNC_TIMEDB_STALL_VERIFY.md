@@ -265,6 +265,48 @@ if os.path.isfile(asyncp):
 
 **Pass (T1):** stuck June day census falls, async leaves `waiting_on_ingest`, tar-drop/`complete` progresses without multi-day closed_raw thrash on the same path count.
 
+### T0 / T1 — Branch C deleting×retryable sticky open tar (hpcperfstats03, 2026-07)
+
+**Failure signature (pre-fix):** many open mutable `daily_archive_dir/YYYY-MM-DD.tar` (`open_tar_n` high for days); sticky days sit in **`phase=deleting`** with **`verified_not_deleted=0`** but large **`retryable_skips`** that never clear; repeating `day_close handoff requeue … reason=batch_delete_waiting_on_ingest` with stable `paths=N` → `delete deferred … reason=delete_disqualified` → (healthy) Branch H `chunk_in_progress_day` while ingest owns those pins → cycle. Open `.tar` never reaches tar-drop.
+
+**Concurrent worseners (same path — amplifiers, not primary RC):** post-ingest re-handoff thrash without reclassify; broad fail-closed `delete_disqualified` while pins live (**preserve**); sticky `same_boot` handoff subset while hundreds of retryables remain; handoff/chunk path cap vs large skip sets; true DB-gate not ready for a subset; Branch H overlay latency (**preserve** — not RC).
+
+```bash
+# T0 — open tar census + sticky handoff / delete_disqualified / Branch H overlay
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline \
+  su hpcperfstats -c 'python3 -c "
+from hpcperfstats.dbload.lib import conf_parser as c
+import glob, os
+d=c.get_daily_archive_dir_path()
+open_n=len(glob.glob(os.path.join(d,\"????-??-??.tar\")))
+zst_n=len(glob.glob(os.path.join(d,\"????-??-??.tar.zst\")))
+print(\"open_tar_n\", open_n, \"sealed_zst_n\", zst_n, \"daily_archive_dir\", d)
+"'
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+grep -E 'batch_delete_waiting_on_ingest|delete deferred.*delete_disqualified|chunk_in_progress_day|day_close reclassify upgraded|Day raw removal reclassify' /tmp/pipeline-full.log | tail -80
+
+# T0 — day_raw_removal census for a sticky ISO day (replace DAY=)
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline \
+  su hpcperfstats -c 'python3 -c "
+from hpcperfstats.dbload.lib import conf_parser as c
+import json, os
+DAY=\"2026-06-07\"
+raw=os.path.join(c.get_archive_dir_path(),\".sync_timedb_day_raw_removal\", DAY+\".json\")
+m=json.load(open(raw))
+ents=m.get(\"entries\") or {}
+verified_not_deleted=sum(1 for e in ents.values() if isinstance(e,dict) and e.get(\"status\")==\"verified\" and not e.get(\"deleted\"))
+retryable=sum(1 for e in ents.values() if isinstance(e,dict) and str(e.get(\"status\",\"\")).startswith(\"skipped\") and e.get(\"status\")!=\"skipped_quarantine\")
+deleted=sum(1 for e in ents.values() if isinstance(e,dict) and e.get(\"deleted\"))
+print(\"phase\", m.get(\"phase\"), \"entries\", len(ents), \"verified_not_deleted\", verified_not_deleted, \"retryable_skips\", retryable, \"deleted\", deleted)
+"'
+```
+
+**Fail (T0):** hours/days of `phase=deleting` + `verified_not_deleted=0` + flat/high `retryable_skips` with the same handoff `paths=N` and no `day_close reclassify upgraded` / skip drain; `open_tar_n` does not decline for those days.
+
+**Pass (T0):** after deploy, sticky days log `janitor: day_close reclassify upgraded=` and/or `Day raw removal reclassify`; `retryable_skips` decline when membership+DB gate pass; handoff `paths=N` shrinks or clears; **`delete_disqualified` remains** while pins live; Branch H may still defer `chunk_in_progress_day` (healthy overlay).
+
+**Pass (T1):** `open_tar_n` declines; sticky days leave `phase=deleting` (toward done/tar-drop/complete); no multi-day Branch C loop of identical handoff path counts with undrained retryables.
+
 ### T0 / T1 — tar append exit 2 / large member (`out of off_t range`, 2026-07)
 
 Members larger than **8 GiB − 1** fail classic ustar without pax headers (`value N out of off_t range 0..8589934591`). Production always passes **`--posix`** on tar create/append (`-C /` + relative `-T` members). When the daily tar is **not pax-capable** (bare `POSIX tar archive` without pax headers; GNU labels need no convert), the **archive pool** job logs **`must_convert`**, attempts **extract + `tar --format=pax` recreate**, then appends. On convert failure: **`convert_fail_skip`** oversized members (original tar untouched) and continue with remaining paths. **`archive_job_done`** includes **`outcome=ok|fail`** (do not treat `archive_job_done` alone as success).

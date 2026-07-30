@@ -674,8 +674,17 @@ class _DayRawRemovalState:
     ]
 
   def _reclassify_retryable_skips_on_disk(self) -> int:
-    """Upgrade retryable skip entries when tar membership and DB gate now pass."""
-    if not self.delete_phase_done():
+    """Upgrade retryable skip entries when tar membership and DB gate now pass.
+
+    Branch C: must run under ``phase=deleting`` (and verification_complete), not
+    only after ``phase=done``. F15 refuses PHASE_DONE while retryables remain, so
+    a done-only gate left sticky handoff forever.
+    """
+    if self.phase() not in (
+        PHASE_DONE,
+        PHASE_DELETING,
+        PHASE_VERIFICATION_COMPLETE,
+    ):
       return 0
     retryable_paths = self._manifest_retryable_paths_on_disk()
     if not retryable_paths:
@@ -2365,6 +2374,15 @@ class DayRawRemovalCoordinator:
 
   def apply_batch_delete(self, tar_path: str) -> int:
     state = self._get_or_create_day(tar_path)
+    # Branch C: reclassify under deleting/verification_complete before delete or
+    # handoff so post-ingest upgrades are not skipped (F15 keeps phase=deleting).
+    upgraded = state._reclassify_retryable_skips_on_disk()
+    if upgraded and self.log_fn:
+      self.log_fn(
+          "Day raw removal reclassify before batch_delete tar=%s upgraded=%d"
+          % (tar_path, upgraded),
+          flush=True,
+      )
     deleted = state.apply_batch_delete()
     if state.should_handoff_day_close_to_ingest():
       self.complete_handoff_to_ingest(

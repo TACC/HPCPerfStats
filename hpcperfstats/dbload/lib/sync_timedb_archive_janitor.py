@@ -2340,22 +2340,24 @@ class ArchiveJanitor:
         self._enqueue_day_close(tar_norm, persist=False)
         self._persist_hints()
         return False
-      if coord.delete_phase_done(tar_norm):
-        upgraded = coord.reclassify_retryable_skips_after_handoff_sync(tar_norm)
-        if upgraded:
-          self.log_fn(
-              "janitor: day_close reclassify upgraded=%d tar=%s"
-              % (upgraded, tar_norm),
-              flush=True,
-          )
-          coord.begin_deleting(tar_norm)
-          coord.apply_batch_delete(tar_norm)
+      # Branch C: reclassify under deleting (not only when phase=done) before
+      # begin_deleting / apply_batch_delete so sticky retryables can upgrade.
+      upgraded = coord.reclassify_retryable_skips_after_handoff_sync(tar_norm)
+      if upgraded:
+        self.log_fn(
+            "janitor: day_close reclassify upgraded=%d tar=%s"
+            % (upgraded, tar_norm),
+            flush=True,
+        )
       coord.reopen_done_days_with_verified_on_disk()
       if not coord.delete_phase_done(tar_norm):
         self.log_fn(
             "janitor: day_close delete start tar=%s" % tar_norm,
             flush=True,
         )
+        coord.begin_deleting(tar_norm)
+        coord.apply_batch_delete(tar_norm)
+      elif upgraded:
         coord.begin_deleting(tar_norm)
         coord.apply_batch_delete(tar_norm)
       if coord.delete_phase_done(tar_norm):
