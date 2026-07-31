@@ -33,11 +33,13 @@ Prioritized follow-ups from [SECURITY_AUDIT.md](SECURITY_AUDIT.md). Update this 
 | URL href safety (F12) | `isSafeHttpUrl` + `encodeURIComponent` on Job Detail entity/external links; Vitest coverage. |
 | Bokeh CSP staging (F5) | Path-scoped CSP middleware; report-only without `unsafe-eval`; CustomJS hovers/ticks replaced with Python pre-formatting in analysis plots. |
 | Dependabot npm sweep (2026-07-26) | Cleared 15 open frontend Dependabot alerts: `next@^16.2.11` + overrides for `dompurify`, `postcss`, `brace-expansion`, `fast-uri`, `sharp`, `@hono/node-server`; `npm audit` 0; Vitest green. |
+| Frontend stack posture (2026-06 / doc 2026-07-31) | Mid-2026 migration to Next static export + TypeScript + OpenAPI/Orval/Zod documented as positive controls in SECURITY_AUDIT (attack-surface and contract validation), not only as DX. |
 
 ## History
 
 | Date       | Change |
 |------------|--------|
+| 2026-07-31 | SECURITY_AUDIT frontend stack security section synced (OpenAPI/TypeScript/static export); Done row added for posture documentation. |
 | 2026-07-26 | Dependabot npm sweep: Next patch + transitive overrides; SECURITY_AUDIT npm snapshot updated; local `npm audit` clean (GitHub alert dismiss awaits push/rescan). |
 | 2026-05-06 | Initial backlog; marked CSP report fix done. |
 | 2026-05-06 | Closed all P0/P1 items from initial memo and moved them to Done with implementation notes. |

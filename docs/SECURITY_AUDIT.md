@@ -1,10 +1,10 @@
 # Security audit memo (HPCPerfStats)
 
-Internal reference for security posture review. **Last reviewed:** 2026-07-26 (Dependabot npm sweep: Next 16.2.11+ and transitive overrides).
+Internal reference for security posture review. **Last reviewed:** 2026-07-31 (frontend stack security posture documented after Mid-2026 SPA migration; prior Dependabot npm sweep 2026-07-26).
 
 ## Executive summary
 
-HPCPerfStats combines a Django + DRF backend, session-based OAuth (Tapis) and hashed API keys, nginx TLS termination, Redis caching, and PostgreSQL. Transport and cookie flags are generally aligned with production hardening. Highest-priority controls from this memo are now implemented: runtime dependency floor bumps in `pyproject.toml`, production-context audit workflow in CI (`.github/workflows/security-audit.yaml` + `tests/run_security_audit_workflow.sh`), DRF throttling for expensive/staff-ingest APIs, bounded `sacct_ingest` body size, session idle/absolute timeout + token refresh/validation behavior in OAuth helper logic, and production CORS fail-fast validation.
+HPCPerfStats combines a Django + DRF backend, a **Next.js static-export React SPA** (strict **TypeScript**, **OpenAPI → Orval → Zod** API contract), session-based OAuth (Tapis) and hashed API keys, nginx TLS termination, Redis caching, and PostgreSQL. Transport and cookie flags are generally aligned with production hardening. Highest-priority controls from this memo are now implemented: runtime dependency floor bumps in `pyproject.toml`, production-context audit workflow in CI (`.github/workflows/security-audit.yaml` + `tests/run_security_audit_workflow.sh`), DRF throttling for expensive/staff-ingest APIs, bounded `sacct_ingest` body size, session idle/absolute timeout + token refresh/validation behavior in OAuth helper logic, production CORS fail-fast validation, and SPA-side CSRF fail-closed + runtime response validation (F10–F12).
 
 ## Methodology
 
@@ -13,7 +13,8 @@ HPCPerfStats combines a Django + DRF backend, session-based OAuth (Tapis) and ha
 3. **npm audit** in `hpcperfstats/site/frontend` (2026-07-26): **0** reported vulnerabilities after Dependabot sweep — `next@^16.2.11` plus raised/added `overrides` for `dompurify`, `postcss`, `brace-expansion`, `fast-uri`, `sharp`, and `@hono/node-server` (clears 15 open GitHub Dependabot alerts once the lockfile is pushed). Prior 2026-06-15: **0** after `dompurify` / `js-yaml` overrides.
 4. **bandit** (`-ll`, excluding `*/tests/*`) on `hpcperfstats/` (2026-06-05): **no high** findings; **6** medium B608 on SQL fragment builders (same modules as prior review); manual review confirms table/column identifiers come from internal constants, not request input. One B108 on `wsgi.py` `MPLCONFIGDIR=/tmp/` (matplotlib cache path; accepted).
 5. **Security regression tests** (host pytest, 2026-06-05): 9 passed (`test_settings_security`, throttles, API-key page, HTTP headers/cache); 5 compose-backed modules skipped/errored on host (`db` hostname). CI and compose workflows remain the gate for DB-dependent security tests.
-5. Manual review of [`settings.py`](../hpcperfstats/site/hpcperfstats_site/settings.py), [`middleware.py`](../hpcperfstats/site/hpcperfstats_site/middleware.py), [`oauth2.py`](../hpcperfstats/site/lib/machine/oauth2.py), [`api.py`](../hpcperfstats/site/lib/machine/api.py) (auth and staff gates), [`views.py`](../hpcperfstats/site/hpcperfstats_site/views.py) (`csp_report`), nginx templates under [`services-conf/`](../services-conf/), and high-risk patterns (`subprocess`, `cursor.execute`).
+6. Manual review of [`settings.py`](../hpcperfstats/site/hpcperfstats_site/settings.py), [`middleware.py`](../hpcperfstats/site/hpcperfstats_site/middleware.py), [`oauth2.py`](../hpcperfstats/site/lib/machine/oauth2.py), [`api.py`](../hpcperfstats/site/lib/machine/api.py) (auth and staff gates), [`views.py`](../hpcperfstats/site/hpcperfstats_site/views.py) (`csp_report`), nginx templates under [`services-conf/`](../services-conf/), and high-risk patterns (`subprocess`, `cursor.execute`).
+7. Frontend stack review (2026-06 migration + 2026-07-31 doc sync): committed OpenAPI schema, Orval client/Zod dual output, `customFetch` mutator, static-export / nginx delivery boundary, and production vs test build split — see **Frontend stack security posture** below.
 
 ## Automated scan snapshot (2026-06-05)
 
@@ -74,6 +75,27 @@ No high-severity issues. Production-code medium B608 locations (2026-06-05): `an
 | F11 | Medium | Input validation | Orval `@orval/zod` response parsing at `customFetch` boundary; hand-written `bokehJsonItemSchema` at embed boundaries. | **Fixed** |
 | F12 | Low | XSS (href) | `isSafeHttpUrl` guards `client_url` / `server_url` in Job Detail; entity paths use `encodeURIComponent`. | **Fixed** |
 
+## Frontend stack security posture (Mid-2026 migration)
+
+In **2026-06** the browser UI moved from a hand-rolled JS / Vite SPA to **Next.js (App Router) + strict TypeScript + OpenAPI-driven Orval clients**. Security value of that stack (not just DX):
+
+| Control | What it does | Where |
+|---------|--------------|--------|
+| **Static export, no Node in prod** | `next.config.ts` uses `output: "export"`. Production serves prebuilt HTML/JS/CSS from nginx/`STATIC_ROOT` only — **no Next.js Node server** in the trust boundary, so SSR/RSC remote-code and Node CVE classes do not apply to the live site. | `next.config.ts`, nginx SPA shells for `/machine/` and `/pub/` |
+| **Strict TypeScript** | `strict: true`; production typecheck via `tsconfig.app.json` (`ignoreBuildErrors: false`). Reduces classes of client bugs that become XSS, wrong-origin navigation, or silent misuse of privileged API fields. | `tsconfig.json`, `next.config.ts` |
+| **OpenAPI as the API contract** | Committed [`openapi/openapi.yaml`](../hpcperfstats/site/openapi/openapi.yaml) (drf-spectacular) is the single source of truth for SPA-facing routes/shapes. Drift is gated by `test_openapi_schema_drift.py` and wire-contract tests — hand-written `fetch` paths that bypass auth/CSRF conventions are discouraged. | `openapi-orval-sync`, `openapi-spa-wire-validation-contract` |
+| **Orval codegen (TanStack Query + Zod)** | `npm run generate:api` emits typed React Query clients **and** Zod response schemas (`generated/` + `generated-zod/`). Types alone are compile-time; Zod is the **runtime** defense. | `orval.config.ts` |
+| **Runtime response validation (F11)** | `customFetch` → `parseApiResponse` + `response-schema-registry.ts` validates success JSON against Zod before UI consumption. Unexpected or hostile payloads fail closed instead of being rendered as trusted data. Bokeh embeds use a separate structural schema (`bokehJsonItemSchema`). | `fetch-mutator.ts`, `parse-api-response.ts` |
+| **Session CSRF fail-closed (F10)** | Mutating methods require a `csrftoken` cookie or throw before the request; `X-CSRFToken` is attached when present. Session calls default to `credentials: "include"`. | `fetch-mutator.ts` |
+| **Anonymous public fetch hygiene** | Public cluster-dashboard helpers use `credentials: "omit"` so session cookies are not attached to AllowAny public JSON. | `fetchPubClusterDashboard` |
+| **Href / open-redirect hygiene (F12)** | External Job Detail links pass `isSafeHttpUrl`; path segments use `encodeURIComponent`. | `safe-external-url.ts` |
+| **No production CDNs** | Scripts, styles, fonts, and icons are bundled / self-hosted (`@fontsource`, `lucide-react`, `@bokeh/bokehjs`). Removes third-party script trust and supply-chain CDN takeover risk. | `no-cdn-in-production` rule |
+| **Prod vs test build boundary** | `npm run build:prod` omits test-only static export dirs (e.g. Playwright Bokeh smoke); `frontend/test/` is dockerignored and must not be imported from prod `app/`/`src/`. Shrinks what ships and what attackers can probe. | `frontend-prod-test-build-boundary` |
+| **Build telemetry opt-out** | Frontend image/rebuild paths set `NEXT_TELEMETRY_DISABLED=1` so build tooling does not phone home. | `scripts/rebuild_frontend.sh`, Docker frontend builder |
+| **Dependency floors** | npm `overrides` pin patched transitive packages (Orval/Next/Bokeh trees); CI + Dependabot keep `npm audit` clean (see snapshot above). | `package.json` `overrides` |
+
+**Residual SPA risks (unchanged by the migration):** Bokeh still needs path-scoped `unsafe-eval` CSP on plot API shells (F5); Zod only helps for **registered** routes — unregistered endpoints skip runtime parse and must not be added casually; OpenAPI/Orval drift remains a process risk if schema regen is skipped.
+
 ## Positive controls (summary)
 
 - `SECRET_KEY` required when `DEBUG` is false; dev-only default only when `DEBUG` is true.
@@ -82,7 +104,8 @@ No high-severity issues. Production-code medium B608 locations (2026-06-05): `an
 - HSTS, `SECURE_PROXY_SSL_HEADER`, `Permissions-Policy`, `COOP`, CSP + CSP-Report-Only in middleware.
 - API key material hashed at rest; staff ingest requires `_require_staff`.
 - API throttling is active for authenticated and expensive API routes, with stricter staff-ingest scope.
-- `robots.txt` defaults to **`Disallow: /`** with explicit **`Allow:`** prefixes only for anonymous **`/pub/`** HTML shell paths (canonical registry in [`publicRobotsAllowPrefixes.js`](../hpcperfstats/site/frontend/src/config/publicRobotsAllowPrefixes.js), emitted at Vite build into static files; nginx serves **`/robots.txt`** from **`STATIC_ROOT`**); **`/api/pub/`** remains uncrawlable by default.
+- SPA stack controls in **Frontend stack security posture** (static export, TypeScript, OpenAPI/Orval/Zod, CSRF mutator, no CDN, prod build boundary).
+- `robots.txt` defaults to **`Disallow: /`** with explicit **`Allow:`** prefixes only for anonymous **`/pub/`** HTML shell paths (canonical registry in [`publicRobotsAllowPrefixes.js`](../hpcperfstats/site/frontend/src/config/publicRobotsAllowPrefixes.js), emitted by **`scripts/generate-robots-txt.mjs`** during the Next static-export build; nginx serves **`/robots.txt`** from **`STATIC_ROOT`**); **`/api/pub/`** remains uncrawlable by default.
 - Anonymous **`GET /api/pub/cluster-dashboard/`** returns only pre-warmed JSON bundles; scoped DRF throttle **`public_cluster_dashboard`** limits abuse (`REST_FRAMEWORK` rate + env override; legacy `API_THROTTLE_PUBLIC_MONTHLY_METRICS_RATE` respected as fallback).
 - `SafeJSONRenderer` avoids non-finite JSON floats.
 
@@ -90,6 +113,7 @@ No high-severity issues. Production-code medium B608 locations (2026-06-05): `an
 
 - Ongoing checklist: [SECURITY_REMEDIATION_BACKLOG.md](SECURITY_REMEDIATION_BACKLOG.md)
 - Change triggers for developers/agents: [`hpcperfstats/cursor-rules/security-posture-and-review-triggers.mdc`](../hpcperfstats/cursor-rules/security-posture-and-review-triggers.mdc)
+- Frontend contract rules: `openapi-orval-sync.mdc`, `openapi-spa-wire-validation-contract.mdc`, `frontend-stack-wiring-contract.mdc`, `frontend-prod-test-build-boundary.mdc`, `no-cdn-in-production.mdc`
 
 ## History
 
@@ -99,7 +123,9 @@ No high-severity issues. Production-code medium B608 locations (2026-06-05): `an
 | 2026-05-06 | Closed F1/F2/F3/F4: dependency floor bumps, CI audit workflow, API throttles + ingest body cap, OAuth session/token hardening, and production CORS fail-fast checks. |
 | 2026-05-06 | Anonymous **`GET /api/pub/monthly-metrics/`** documented with scoped throttle + selective **`robots.txt`** `Allow` entries for **`/pub/`** HTML only. |
 | 2026-05-07 | **`/pub/monthly-metrics`** and **`GET /api/pub/monthly-metrics/`** rebranded to **`/pub/cluster-dashboard`** and **`GET /api/pub/cluster-dashboard/`** (throttle scope **`public_cluster_dashboard`**; legacy env **`API_THROTTLE_PUBLIC_MONTHLY_METRICS_RATE`** still honored as fallback). |
-| 2026-05-07 | **`robots.txt`**: nginx serves a Vite-built static file; Allow-list registry is **`publicRobotsAllowPrefixes.js`** (edge headers in **`nginx-edge-security-headers.inc`**). |
+| 2026-05-07 | **`robots.txt`**: nginx serves a build-emitted static file; Allow-list registry is **`publicRobotsAllowPrefixes.js`** (edge headers in **`nginx-edge-security-headers.inc`**). |
 | 2026-06-05 | Scheduled re-audit: production-image **pip-audit** clean; **npm audit** clean; bandit unchanged (6 prod B608); dependency floors bumped in **`pyproject.toml`**; documented local compose-overlay audit workflow caveat (F9). |
+| 2026-06-12 | SPA stack migration: Vite/JS → **Next.js static export + TypeScript**; OpenAPI/Orval client introduced; npm audit remediation via **`overrides`**. |
 | 2026-06-13 | Frontend + API security remediation: F10 CSRF parity, F11 Orval Zod + Bokeh structural validation, F12 URL href guards; F5 CSP path-scoped + CustomJS removal (partial). |
 | 2026-07-26 | Dependabot npm sweep: `next@^16.2.11` + transitive overrides; local `npm audit` 0 (690 pkgs); Vitest 562 green. |
+| 2026-07-31 | Documented Mid-2026 frontend stack as security controls (static export, TypeScript, OpenAPI/Orval/Zod, CSRF mutator, no CDN, prod/test build boundary); corrected `robots.txt` build wording (Next export, not Vite). |
