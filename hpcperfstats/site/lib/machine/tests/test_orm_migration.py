@@ -5,7 +5,10 @@ These tests are written to avoid touching a real database so they can run in
 isolated environments (no PostgreSQL server required).
 
 """
+import pytest
 from django.test import SimpleTestCase
+
+pytestmark = pytest.mark.machine_unit_mock
 
 
 class TestORMHelpers(SimpleTestCase):
@@ -38,8 +41,11 @@ class TestORMHelpers(SimpleTestCase):
     self.assertEqual(jt.schema, {})
 
   def test_host_data_primary_key_contract(self):
-    """host_data identity stays anchored on time in Django ORM."""
+    """host_data identity stays anchored on time; uniqueness includes ``dev``."""
     from hpcperfstats.site.lib.machine.models import host_data
 
     self.assertEqual(host_data._meta.pk.name, "time")
-    self.assertIn(("time", "host", "type", "event"), host_data._meta.unique_together)
+    self.assertIn(
+        ("time", "host", "type", "event", "dev"),
+        host_data._meta.unique_together,
+    )

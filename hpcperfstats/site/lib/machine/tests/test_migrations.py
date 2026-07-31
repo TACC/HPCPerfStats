@@ -1,7 +1,11 @@
 """Regression tests for migration SQL/contracts that are easy to break silently."""
 import importlib
 
+import pytest
 from django.db import migrations
+
+# Importlib / source-contract checks — no live PostgreSQL required on the host.
+pytestmark = pytest.mark.machine_unit_mock
 
 
 def test_0002_statsro_create_role_is_duplicate_safe():
@@ -79,3 +83,106 @@ def test_0020_restores_host_data_time_primary_key_contract():
   assert isinstance(op, migrations.RunSQL)
   assert "ADD CONSTRAINT host_data_pkey PRIMARY KEY (time)" in op.sql
   assert "UNIQUE (time, host, type, event)" in op.sql
+
+
+def _0030_ops():
+  mod = importlib.import_module(
+      "hpcperfstats.site.lib.machine.migrations.0030_host_data_unique_include_dev"
+  )
+  assert mod.Migration.dependencies == [("machine", "0029_proc_data_host_proc_fields")]
+  assert mod.Migration.atomic is False
+  assert len(mod.Migration.operations) == 1
+  sep = mod.Migration.operations[0]
+  assert isinstance(sep, migrations.SeparateDatabaseAndState)
+  return sep
+
+
+def test_0030_has_no_unbounded_host_data_update():
+  """Phase 1 must not full-table UPDATE host_data (statement_timeout crash loop)."""
+  sep = _0030_ops()
+  sql_blobs = []
+  for op in sep.database_operations:
+    if isinstance(op, migrations.RunSQL) and isinstance(op.sql, str):
+      sql_blobs.append(op.sql)
+  joined = "\n".join(sql_blobs).lower()
+  assert "update host_data" not in joined
+  assert "set dev" not in joined
+
+
+def test_0030_removes_compression_policy():
+  sep = _0030_ops()
+  sql_blobs = [
+      op.sql
+      for op in sep.database_operations
+      if isinstance(op, migrations.RunSQL) and isinstance(op.sql, str)
+  ]
+  joined = "\n".join(sql_blobs)
+  assert "remove_compression_policy('host_data'" in joined
+  assert "if_exists" in joined
+
+
+def test_0030_does_not_add_unique_dev_constraint():
+  """Phase 1 must not ADD CONSTRAINT / decompress — that is Phase 2 after decompress."""
+  sep = _0030_ops()
+  sql_blobs = [
+      op.sql
+      for op in sep.database_operations
+      if isinstance(op, migrations.RunSQL) and isinstance(op.sql, str)
+  ]
+  joined = "\n".join(sql_blobs).lower()
+  assert "add constraint" not in joined
+  assert "host_data_time_host_type_event_dev_key" not in joined
+  assert "decompress_chunk" not in joined
+  assert "unique (time, host, type, event, dev)" not in joined
+
+
+def test_0030_keeps_state_unique_together():
+  sep = _0030_ops()
+  state_ops = sep.state_operations
+  assert len(state_ops) == 1
+  assert isinstance(state_ops[0], migrations.AlterUniqueTogether)
+  assert state_ops[0].name == "host_data"
+  assert state_ops[0].unique_together == {("time", "host", "type", "event", "dev")}
+
+
+def test_0031_is_state_only():
+  """Reviewed drift migration must be AlterModelOptions only — no DDL on large tables."""
+  mod = importlib.import_module(
+      "hpcperfstats.site.lib.machine.migrations.0031_alter_job_plot_artifact_options_and_more"
+  )
+  assert mod.Migration.dependencies == [("machine", "0030_host_data_unique_include_dev")]
+  ops = mod.Migration.operations
+  assert len(ops) == 2
+  for op in ops:
+    assert isinstance(op, migrations.AlterModelOptions)
+  names = {op.name for op in ops}
+  assert names == {"job_plot_artifact", "public_metrics_artifact"}
+  for op in ops:
+    assert op.options == {"managed": True}
+  forbidden = (
+      migrations.RunSQL,
+      migrations.AddConstraint,
+      migrations.AddField,
+      migrations.AlterField,
+      migrations.CreateModel,
+      migrations.DeleteModel,
+  )
+  assert not any(isinstance(op, forbidden) for op in ops)
+
+
+def test_no_pending_model_migrations():
+  """Removing startup makemigrations must not leave model/migration drift.
+
+  Uses MigrationAutodetector (no live DB) — equivalent to ``makemigrations --check``.
+  """
+  from django.apps import apps
+  from django.db.migrations.autodetector import MigrationAutodetector
+  from django.db.migrations.loader import MigrationLoader
+  from django.db.migrations.state import ProjectState
+
+  loader = MigrationLoader(None, ignore_no_migrations=True)
+  changes = MigrationAutodetector(
+      loader.project_state(),
+      ProjectState.from_apps(apps),
+  ).changes(graph=loader.graph)
+  assert changes == {}, f"Pending model/migration drift: {sorted(changes)}"

@@ -55,6 +55,8 @@ If the failure reveals a **recurring** gap (not a one-off typo), also add a one-
 - Inventing `job_data.metrics_complete` — **`FieldError`**; use **`metrics_distinct_time_count`** (see **Anti-pattern — inventing `job_data.metrics_complete`** in `compose-operator-terminal-commands.mdc`).
 - Inventing `job_detail_artifact.schema_version` / `fingerprint` — **`FieldError`**; use **`artifact_schema`** / **`input_fingerprint`** (see **Anti-pattern — inventing `job_detail_artifact.schema_version` / `fingerprint`** in `compose-operator-terminal-commands.mdc`).
 - `host_data.filter(jid=…, type=\"nvidia_gpu\", event__in=[power/util/count])` returning **empty** while Job Detail shows GPU poison — host stats often lack accounting `jid`; use `job_data` → `metrics_data` by jid, then `host`+telemetry window (hpcperfstats01 JID `3351747`, 2026-07-30; see **Anti-pattern — `host_data.filter(jid=…)` for GPU** in `compose-operator-terminal-commands.mdc`).
+- Reading app/migration files from the **checkout tree** inside `web`/`pipeline` while Django loads the **pip-installed** package — `showmigrations` lists files `ls` under cwd cannot see (hpcperfstats04 2026-07-31); resolve `m.__path__[0]` first (see **Anti-pattern — reading app files from the checkout tree** in `compose-operator-terminal-commands.mdc`).
+- Querying `timescaledb_information.hypertable_compression_stats` as a view — **`relation does not exist`**; use function `hypertable_compression_stats('host_data')` (valid 2.17–2.28.2 on this fleet; see **Anti-pattern — `timescaledb_information.hypertable_compression_stats` is not a view** in `compose-operator-terminal-commands.mdc`).
 
 ## Same-task checklist
 

@@ -24,6 +24,7 @@ The **hpcperfstats** package is split into two parts:
 | [**design-document.md**](docs/design-document.md) | As-built system design: architecture, data flow, components, contracts, and operations context. |
 | [**using-the-website-as-a-researcher.md**](docs/using-the-website-as-a-researcher.md) | How to read the Django/React job UI—plots, metrics, and diagnostic themes—for HPC users and researchers. |
 | [**TESTING.md**](docs/TESTING.md) | Test commands, CI, compose-backed workflows, Playwright/Vitest, and host vs container pytest notes. |
+| [**OPERATOR_HOST_DATA_DEV_UNIQUENESS.md**](docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md) | Phase 1 operator decompress for `host_data` 5-col uniqueness (per-site batch sizes, `df` gate, Phase 2 prerequisite). |
 
 **Maintaining `MONITOR_VARIABLES.md`:** the catalog is generated and augmented by maintainer scripts in the same folder: [`regenerate_monitor_variables_catalog.py`](docs/regenerate_monitor_variables_catalog.py), [`augment_monitor_variables_diagnostics.py`](docs/augment_monitor_variables_diagnostics.py).
 
@@ -384,7 +385,8 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    ```
 
    On first startup (or after updating the code), the `web` container runs Django
-   migrations (`manage.py makemigrations` and `manage.py migrate`) and
+   migrations (`manage.py migrate` only — schema changes ship as reviewed,
+   committed migration files; production startup never runs `makemigrations`) and
    `collectstatic` so **`STATIC_ROOT`** (the volume nginx serves as `/static/`)
    is populated before Gunicorn starts. After `collectstatic`, startup verifies
    SPA shells under **`STATIC_ROOT/frontend/{machine,pub}/index.html`** and

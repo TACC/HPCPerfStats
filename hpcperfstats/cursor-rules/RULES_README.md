@@ -28,6 +28,7 @@ Notable contracts (see filename in `hpcperfstats/cursor-rules/`):
 - **`deploy-ini-with-code-no-phase-zero.mdc`** — no pre-code INI redeploy; proactive read-only operator data gathering for plans.
 - **`sync-timedb-change-regression-gate.mdc`** — mandatory `tests/run_sync_timedb_regression_battery.sh` before sync_timedb stall PR close; T0/T1/T2 operator verify (`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`); hooks enforce battery log citation on close.
 - **`sync-timedb-anti-log-spam.mdc`** — hot wait/poll/retry/defer INFO must rate-limit with `suppressed_n=` (Redis NX when multi-process); never bare `log_print` in those loops.
+- **`startup-migration-bounded-work.mdc`** — `django_startup` migrate must stay bounded (no unbounded hypertable work); production never runs `makemigrations`.
 - **`dockerignore-test-artifacts-sync.mdc`** — `.dockerignore` must exclude test-only paths; keep `test_dockerignore_test_artifacts.py` in sync when test layout changes.
 - **`frontend-prod-test-build-boundary.mdc`** — `build` vs `build:prod`, `tsconfig.app`/`test`, `frontend/test/` tree, production static export exclusions.
 

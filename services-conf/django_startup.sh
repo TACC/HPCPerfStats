@@ -64,8 +64,8 @@ echo "PostgreSQL started"
 
 chown -R hpcperfstats:hpcperfstats /hpcperfstats/
 
-# detect if the tables are existing and create if not
-/usr/local/bin/python3 hpcperfstats/site/manage.py makemigrations
+# Apply reviewed, committed migrations only — never auto-generate in production
+# (makemigrations would write ephemeral DDL into site-packages and race migrate).
 /usr/local/bin/python3 hpcperfstats/site/manage.py migrate
 /usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput
 # Fail-closed SPA shells; auto-heal Vite-era STATIC_ROOT/frontend from package Next export.

@@ -60,7 +60,8 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 | `hpcperfstats/site/lib/machine/api.py`, serializers, models | `django-python-cursor-rules.mdc`, `end-to-end-feature-wiring-contract.mdc` |
 | `hpcperfstats/site/lib/machine/job_list_filter_summary.py` | `design-focused-spa-ux.mdc` |
 | API routes, status bands, auth | `api-breaking-change-contract.mdc`, `pipeline-endpoint-matrix-drift-guard.mdc` |
-| Migrations | `django-migration-numbering.mdc` |
+| Migrations | `django-migration-numbering.mdc`, `startup-migration-bounded-work.mdc` |
+| `services-conf/django_startup.sh` | `startup-migration-bounded-work.mdc`, `readme-installation-sync.mdc` |
 | `hpcperfstats.ini`, compose image config | `immutable-image-ini-policy.mdc`, `hpcperfstats-ini-format.mdc` |
 
 ### React / SPA / frontend

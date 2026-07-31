@@ -162,6 +162,17 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
         "rules": [
             "django-migration-numbering.mdc",
+            "startup-migration-bounded-work.mdc",
+        ],
+    },
+    {
+        "id": "django_startup",
+        "patterns": [
+            "services-conf/django_startup.sh",
+        ],
+        "rules": [
+            "startup-migration-bounded-work.mdc",
+            "readme-installation-sync.mdc",
         ],
     },
     {

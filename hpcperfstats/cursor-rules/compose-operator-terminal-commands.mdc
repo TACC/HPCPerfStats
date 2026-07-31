@@ -228,6 +228,36 @@ docker compose logs pipeline
 
 Match **`README.md`** *Useful commands* and **`readme-installation-sync.mdc`** (`docker compose exec <service>` over hardcoded container names).
 
+### Anti-pattern — reading app files from the checkout tree instead of the installed package
+
+The image runs `pip install --no-deps .` so `web` / `pipeline` import `hpcperfstats` from **site-packages**. `/home/hpcperfstats/hpcperfstats/` under the container cwd is often a stale `COPY . .` snapshot. `showmigrations` can list a migration that `ls hpcperfstats/site/lib/machine/migrations/` never shows (hpcperfstats04, 2026-07-31 — ephemeral `0031` written by startup `makemigrations` into site-packages).
+
+| Do | Don't |
+|----|-------|
+| Resolve `importlib.import_module(…).__path__[0]` / `__file__` then `ls` / `cat` | `ls hpcperfstats/site/lib/machine/migrations/` relative to container cwd |
+| Source fingerprints via installed package path | Assume checkout tree matches running code |
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec web bash -lc 'python3 -c "
+import importlib
+m = importlib.import_module(\"hpcperfstats.site.lib.machine.migrations\")
+print(m.__path__[0])
+" && ls -la "$(python3 -c "import importlib; print(importlib.import_module(\"hpcperfstats.site.lib.machine.migrations\").__path__[0])")"/003*.py'
+```
+
+### Anti-pattern — `timescaledb_information.hypertable_compression_stats` is not a view
+
+Compression sizes are **functions**, not views: `hypertable_compression_stats('host_data')`, `chunk_compression_stats('host_data')`. Querying `timescaledb_information.hypertable_compression_stats` raises **`relation … does not exist`** on every fleet host (2026-07-31). The `timescaledb_information` schema exposes `hypertables`, `chunks`, `jobs`, `compression_settings` — not compression byte totals. Function name is valid across catalog **2.17.2–2.28.2** on this fleet (no `*_columnstore_stats` rename required for operator pastes).
+
+| Do | Don't |
+|----|-------|
+| `FROM hypertable_compression_stats('host_data')` | `FROM timescaledb_information.hypertable_compression_stats` |
+| Fallback: `pg_total_relation_size` on chunk regclasses from `timescaledb_information.chunks` | Invent a view under `timescaledb_information` for compression bytes |
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec db psql -h localhost -U hpcperfstats -c "SELECT pg_size_pretty(sum(before_compression_total_bytes)) AS before_compression, pg_size_pretty(sum(after_compression_total_bytes)) AS after_compression, round(sum(before_compression_total_bytes)::numeric / NULLIF(sum(after_compression_total_bytes), 0), 1) AS compression_ratio, pg_size_pretty(sum(before_compression_total_bytes) - sum(after_compression_total_bytes)) AS extra_space_needed_to_decompress FROM hypertable_compression_stats('host_data');"
+```
+
 ### Anti-pattern — inventing `job_data.metrics_complete`
 
 `job_data` has **no** `metrics_complete` field. Operator ORM `.values("metrics_complete")` raises **`FieldError: Cannot resolve keyword 'metrics_complete'`** (hpcperfstats03, 2026-07-23). Use **`metrics_distinct_time_count`** (and related telemetry fields) for metrics readiness.

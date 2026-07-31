@@ -102,3 +102,15 @@ def test_django_startup_invokes_spa_static_root_heal():
   assert "ensure_spa_shells_from_django_settings" in content
   assert "hpcperfstats.site.lib.spa_static_root_heal" in content
 
+
+@pytest.mark.machine_unit_mock
+def test_django_startup_does_not_run_makemigrations():
+  """Production startup must apply reviewed migrations only — never autogenerate."""
+  repo_root = Path(__file__).resolve().parents[2]
+  script_path = repo_root / "services-conf" / "django_startup.sh"
+  content = script_path.read_text()
+
+  assert "manage.py migrate" in content
+  # Comments may mention the forbidden command; the manage.py invocation must not.
+  assert "manage.py makemigrations" not in content
+

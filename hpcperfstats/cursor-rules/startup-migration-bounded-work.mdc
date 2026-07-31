@@ -1,0 +1,42 @@
+---
+description: Production django_startup migrate must be bounded; never run makemigrations in production
+alwaysApply: false
+globs: services-conf/django_startup.sh,hpcperfstats/site/lib/machine/migrations/**
+---
+
+# Startup Migration Bounded Work
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+`services-conf/django_startup.sh` runs under Compose `restart: always`. Anything that can exceed `statement_timeout` (or run for hours) crash-loops `web`.
+
+## Law
+
+1. **Bounded migrate only** — migrations applied at startup must finish quickly and idempotently. Forbidden inside migrate (and therefore at startup):
+   - Unbounded full-table `UPDATE` / `DELETE` on large hypertables (`host_data`, etc.)
+   - Per-chunk `decompress_chunk` loops
+   - Long `ADD CONSTRAINT` / `CREATE INDEX` without an explicit operator/maintenance path outside startup
+2. **Long I/O is operator-side** — decompress, backfill, and constraint swaps that need hours or terabytes of free space belong in operator docs / management commands, not in `django_startup.sh` migrate.
+3. **Never `makemigrations` in production startup** — schema changes ship as **reviewed, committed** migration files. Autogenerating at container start writes ephemeral files into the pip-installed package (`site-packages`) and can apply unreviewed DDL under `restart: always`.
+
+## Required patterns
+
+| Concern | Do | Don't |
+|---------|----|-------|
+| Compression policy change | Idempotent `remove_compression_policy(..., if_exists => true)` / bounded `add_compression_policy` | Full hypertable rewrite in the same migrate as a timeout-prone UPDATE |
+| Unique / PK rewrite on compressed hypertables | Phase 1: state + policy off; Phase 2 after `compressed_chunks=0` | `ADD UNIQUE` while compressed chunks exist |
+| Model drift | Commit a reviewed migration; keep `makemigrations --check` green in CI/tests | Rely on startup `makemigrations` to "heal" drift |
+| Startup script | `manage.py migrate` (+ collectstatic / heal) | `manage.py makemigrations` before migrate |
+
+## Regression coverage
+
+- `test_migrations.py` — Phase 1 `0030` has no unbounded `UPDATE`, removes policy, skips UNIQUE/decompress; `0031` is state-only; `makemigrations --check` clean
+- `test_rediswait.py::test_django_startup_does_not_run_makemigrations` — startup script guard
+- Operator decompress: `docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md`
+
+## Overlap
+
+- **`django-migration-numbering.mdc`** — next migration number and dependencies
+- **`compose-operator-terminal-commands.mdc`** — operator decompress / progress paste blocks
+- **`readme-installation-sync.mdc`** — README startup sequence must not claim `makemigrations` runs
+- **`bugfix-and-perf-change-playbook.mdc`** — timeout / crash-loop fixes stay root-cause and bounded

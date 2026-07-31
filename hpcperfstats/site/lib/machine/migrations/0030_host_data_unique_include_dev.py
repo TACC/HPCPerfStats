@@ -1,15 +1,25 @@
-"""Normalize host_data.dev NULL→'' and include ``dev`` in uniqueness.
+"""Phase 1: record 5-col unique_together in Django state; remove compression policy.
 
-Multi-GPU ingest must store one row per (time, host, type, event, dev).
-PostgreSQL UNIQUE treats NULL as distinct, so NULL ``dev`` must become '' first.
+Target uniqueness is ``(time, host, type, event, dev)``, but Timescale cannot
+``ADD UNIQUE`` while any compressed chunk exists. This migration therefore:
 
-On compressed Timescale hypertables the unique constraint rewrite is skipped
-(same guard as 0020); Django state still records the new unique_together.
+* Updates Django state to the 5-column ``unique_together`` (no DB UNIQUE swap).
+* Idempotently removes the ``host_data`` compression policy so operators can
+  decompress chunks outside migrate (Phase 2 later adds the DB UNIQUE / PK
+  rewrite and restores ``compress_after 8d``).
+
+Deliberately does **not** run an unbounded ``UPDATE host_data`` (that timed
+out under ``statement_timeout`` and crash-looped ``web``) and does **not**
+decompress chunks inside migrate.
 """
 from django.db import migrations
 
 
 class Migration(migrations.Migration):
+  # Policy remove is a single catalog call; non-atomic keeps the DO block free
+  # of wrapping transaction quirks on long-lived Timescale connections.
+  atomic = False
+
   dependencies = [
       ("machine", "0029_proc_data_host_proc_fields"),
   ]
@@ -36,46 +46,11 @@ class Migration(migrations.Migration):
                       RETURN;
                     END IF;
 
-                    -- Prefer empty string so UNIQUE(time,host,type,event,dev) is meaningful.
-                    UPDATE host_data SET dev = '' WHERE dev IS NULL;
-
-                    -- Avoid unsupported constraint rewrites on compressed hypertables.
-                    IF EXISTS (
-                      SELECT 1
-                      FROM timescaledb_information.hypertables
-                      WHERE hypertable_schema = 'public'
-                        AND hypertable_name = 'host_data'
-                        AND compression_enabled = true
-                    ) THEN
-                      RETURN;
-                    END IF;
-
-                    IF EXISTS (
-                      SELECT 1
-                      FROM pg_constraint c
-                      JOIN pg_class t ON c.conrelid = t.oid
-                      JOIN pg_namespace n ON t.relnamespace = n.oid
-                      WHERE n.nspname = 'public'
-                        AND t.relname = 'host_data'
-                        AND c.conname = 'host_data_time_host_type_event_key'
-                    ) THEN
-                      ALTER TABLE host_data
-                      DROP CONSTRAINT host_data_time_host_type_event_key;
-                    END IF;
-
-                    IF NOT EXISTS (
-                      SELECT 1
-                      FROM pg_constraint c
-                      JOIN pg_class t ON c.conrelid = t.oid
-                      JOIN pg_namespace n ON t.relnamespace = n.oid
-                      WHERE n.nspname = 'public'
-                        AND t.relname = 'host_data'
-                        AND c.conname = 'host_data_time_host_type_event_dev_key'
-                    ) THEN
-                      ALTER TABLE host_data
-                      ADD CONSTRAINT host_data_time_host_type_event_dev_key
-                      UNIQUE (time, host, type, event, dev);
-                    END IF;
+                    -- Stop scheduled compression so operator decompress is not
+                    -- racing a background job that re-compresses old chunks.
+                    -- if_exists => true is a no-op when the policy is already gone
+                    -- (fresh DBs, re-runs, or sites that never enabled it).
+                    PERFORM remove_compression_policy('host_data', if_exists => true);
                   END;
                   $$;
                   """,
